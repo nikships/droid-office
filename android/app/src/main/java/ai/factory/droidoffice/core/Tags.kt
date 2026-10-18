@@ -224,6 +224,11 @@ object Tags {
         const val GONE_BACK = "worker.gone.back"
         const val KEYS = "worker.keys"
         const val PHONE = "key.phone"
+        /** The button at the end of the quick keys that opens [KEYS_SHEET]. */
+        const val KEYS_ARRANGE = "worker.keys.arrange"
+        const val KEYS_SHEET = "worker.keys_sheet"
+        const val KEYS_RESET = "worker.keys_sheet.reset"
+        const val KEYS_DONE = "worker.keys_sheet.done"
         const val INPUT = "composer.input"
         const val ATTACH = "composer.attach"
         const val SEND = "composer.send"
@@ -240,6 +245,11 @@ object Tags {
 
         /** A quick key, by what TalkBack calls it: "Shift Tab" is `key.shift_tab`. */
         fun key(spoken: String) = "key." + spoken.lowercase().replace(' ', '_')
+
+        /** A quick key's row in [KEYS_SHEET], and its move buttons, by its id (`control_c`). */
+        fun arrangeKey(id: String) = "worker.keys_sheet.key/$id"
+        fun arrangeUp(id: String) = "worker.keys_sheet.up/$id"
+        fun arrangeDown(id: String) = "worker.keys_sheet.down/$id"
 
         fun removeImage(number: Int) = "composer.remove_image/$number"
     }
