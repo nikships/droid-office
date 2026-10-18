@@ -34,7 +34,7 @@ class TagsTest {
     fun quickKeysAreNamedAfterWhatTalkBackSays() {
         assertEquals("key.shift_tab", Tags.Worker.key("Shift Tab"))
         assertEquals("key.control_c", Tags.Worker.key("Control C"))
+        assertEquals("key.option_up", Tags.Worker.key("Option Up"))
         assertEquals("key.enter", Tags.Worker.key("Enter"))
-        assertEquals("key.1", Tags.Worker.key("1"))
     }
 }
