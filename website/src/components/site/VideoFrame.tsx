@@ -41,7 +41,7 @@ export function VideoFrame({ video, size = 'md', controls = false }: VideoFrameP
         className="block aspect-video w-full bg-bg-void object-cover"
         src={video.src}
         poster={video.poster}
-        muted
+        muted={!controls}
         loop={!controls}
         playsInline
         controls={controls}
