@@ -1210,6 +1210,223 @@ def build_pr_crate():
     return body, [("Status", loose(status), palette[0])]
 
 
+# The Droid worker's articulated pivots in worker space (+Z forward, +Y up). Must match
+# WORKER_PIVOTS in src/client/world/character.ts.
+DROID_WORKER = {
+    "rotor": (0.045, 0.465, 0.169),
+    "arm_l": (-0.30, 0.55, 0.05),
+    "arm_r": (0.30, 0.55, 0.05),
+    "foot_l": (-0.12, 0.20, 0.05),
+    "foot_r": (0.12, 0.20, 0.05),
+    "eye_l": (-0.098, 0.785, 0.192),
+    "eye_r": (0.098, 0.785, 0.192),
+    "pupil_l": (-0.098, 0.785, 0.200),
+    "pupil_r": (0.098, 0.785, 0.200),
+    "bulb": (0.0, 1.195, 0.0),
+}
+
+
+@prop("droid-worker", "factory", "hero", "part", recenter=False, multipart=True, draco=False)
+def build_droid_worker():
+    """Factory's autonomous Droid worker: a chamfered space-black and graphite industrial robot
+    with an oscilloscope-style sensor visor, expressive LED optics, side comms pods with a boom
+    mic, a roof-mounted status beacon, a V-tapered hydraulic torso with a ducted chest pinwheel
+    turbine and crew ID badge, a twin-cell rear reactor pack with the Factory pinwheel, two-jaw
+    servo gripper arms, and heavy stabilizer boots.
+
+    Every loose node is authored at its rest pose in worker space so the GLB stands whole, and
+    the client shifts each articulated node (`DroidRotor`, `DroidArmL`, `DroidArmR`, `DroidFootL`,
+    `DroidFootR`, `EyeL`, `EyeR`, `PupilL`, `PupilR`, `Bulb`) to its joint pivot in `DROID_WORKER`.
+    """
+    m_black = material("DroidBlack", "#161618", roughness=0.42, metallic=0.30)
+    m_graphite = material("DroidGraphite", "#2a2b30", roughness=0.38, metallic=0.40)
+    m_steel = material("DroidSteel", "#52545c", roughness=0.32, metallic=0.55)
+    m_light = material("DroidLight", "#eceeef", roughness=0.28, metallic=0.20)
+    m_orange = material("DroidOrange", "#ee6018", roughness=0.45, metallic=0.0, emission="#ee6018", emission_strength=0.40)
+    m_visor = material("DroidVisor", "#070709", roughness=0.10, metallic=0.0)
+    m_rubber = material("DroidRubber", "#101012", roughness=0.80, metallic=0.0)
+    m_skin = material("DroidSkin", "#3a86ff", roughness=0.36, metallic=0.18)
+    m_eye = material("DroidEye", "#f4f7fa", roughness=0.15, metallic=0.0, emission="#f4f7fa", emission_strength=0.45)
+    m_pupil = material("DroidPupil", "#0d0e11", roughness=0.20, metallic=0.10)
+    m_bulb = material("DroidBulb", "#3ccf91", roughness=0.20, metallic=0.0, emission="#3ccf91", emission_strength=0.75)
+
+    swatches = {
+        "base": m_rubber,
+        "body": m_black,
+        "graphite": m_graphite,
+        "steel": m_steel,
+        "light": m_light,
+        "orange": m_orange,
+        "glass": m_visor,
+        "skin": m_skin,
+    }
+
+    body_parts = []
+    skin_parts = []
+
+    def add_part(obj, swatch, into=None):
+        (body_parts if into is None else into).append((obj, swatches[swatch]))
+
+    def add_skin(obj, into=None):
+        (skin_parts if into is None else into).append((obj, m_skin))
+
+    def z_cyl(name, radius, depth, loc, verts=16, bevel_w=0.0):
+        return smooth_obj(cyl(name, radius, depth, loc=loc, rot=(math.radians(90), 0, 0), verts=verts, bevel_w=bevel_w))
+
+    # 1. Head unit: chamfered oscilloscope / tactical sensor pod (y = 0.63 .. 0.96)
+    add_part(box("DroidBody", (0.46, 0.295, 0.34), loc=(0, 0.785, -0.005), bevel_w=0.048, bevel_seg=1), "body")
+    add_part(box("RearCowl", (0.38, 0.23, 0.06), loc=(0, 0.785, -0.175), bevel_w=0.025, bevel_seg=1), "graphite")
+    for i in range(4):
+        add_part(box(f"HeadFin{i}", (0.28, 0.012, 0.022), loc=(0, 0.725 + i * 0.04, -0.202)), "steel")
+    add_part(box("HeadDeck", (0.34, 0.032, 0.26), loc=(0, 0.935, 0.0), bevel_w=0.01, bevel_seg=1), "graphite")
+
+    for sx in (-1, 1):
+        add_skin(box(f"HeadBrowSkin{sx}", (0.085, 0.038, 0.28), loc=(sx * 0.145, 0.928, 0.005), rot=(0, 0, sx * math.radians(-10)), bevel_w=0.01, bevel_seg=1))
+        add_skin(box(f"HeadCheekSkin{sx}", (0.036, 0.19, 0.22), loc=(sx * 0.222, 0.785, 0.015), bevel_w=0.012, bevel_seg=1))
+        add_part(box(f"RoofFin{sx}", (0.018, 0.062, 0.115), loc=(sx * 0.16, 0.962, -0.03), rot=(math.radians(-18), 0, sx * math.radians(-8)), bevel_w=0.004, bevel_seg=1), "steel")
+        add_part(box(f"RoofFinTip{sx}", (0.020, 0.012, 0.05), loc=(sx * 0.165, 0.988, -0.045), rot=(math.radians(-18), 0, sx * math.radians(-8))), "orange")
+
+    add_part(box("VisorBezel", (0.425, 0.22, 0.065), loc=(0, 0.785, 0.152), bevel_w=0.026, bevel_seg=1), "graphite")
+    add_part(box("VisorInnerRim", (0.395, 0.188, 0.025), loc=(0, 0.785, 0.176), bevel_w=0.018, bevel_seg=1), "steel")
+    add_part(box("VisorGlass", (0.37, 0.162, 0.018), loc=(0, 0.785, 0.184), bevel_w=0.014, bevel_seg=1), "glass")
+    add_part(box("VisorHood", (0.43, 0.024, 0.062), loc=(0, 0.892, 0.174), rot=(math.radians(8), 0, 0), bevel_w=0.006, bevel_seg=1), "steel")
+
+    add_part(box("JawGuard", (0.34, 0.036, 0.052), loc=(0, 0.660, 0.164), bevel_w=0.008, bevel_seg=1), "steel")
+    for i in range(-3, 4):
+        add_part(box(f"JawSlot{i}", (0.010, 0.020, 0.014), loc=(i * 0.026, 0.660, 0.186)), "base")
+
+    for sx in (-1, 1):
+        add_part(box(f"VisorTick{sx}", (0.042, 0.010, 0.012), loc=(sx * 0.165, 0.892, 0.200)), "orange")
+        add_part(box(f"JawTick{sx}", (0.028, 0.010, 0.012), loc=(sx * 0.135, 0.660, 0.186)), "orange")
+        add_part(x_cyl(f"EarBase{sx}", 0.088, 0.042, loc=(sx * 0.242, 0.785, 0.0), verts=14), "graphite")
+        add_part(x_cyl(f"EarRing{sx}", 0.091, 0.012, loc=(sx * 0.258, 0.785, 0.0), verts=14), "orange")
+        add_part(x_cyl(f"EarCap{sx}", 0.068, 0.024, loc=(sx * 0.270, 0.785, 0.0), verts=14), "steel")
+        add_part(x_cyl(f"EarHub{sx}", 0.026, 0.014, loc=(sx * 0.283, 0.785, 0.0), verts=10), "light")
+
+    boom_pts = [(0.270, 0.745, 0.03), (0.288, 0.68, 0.14), (0.215, 0.645, 0.218), (0.145, 0.645, 0.238)]
+    add_part(tube_path("MicBoom", boom_pts, 0.011, sides=6), "graphite")
+    add_part(sphere("MicCollar", 0.016, loc=(0.165, 0.645, 0.232), segs=8, rings=6), "steel")
+    add_part(sphere("MicLed", 0.022, loc=(0.142, 0.645, 0.240), segs=10, rings=6), "orange")
+
+    add_part(y_cyl("AntBase", 0.072, 0.034, loc=(0, 0.960, 0), verts=14, bevel_w=0.005), "steel")
+    add_part(y_cyl("AntRing", 0.058, 0.014, loc=(0, 0.984, 0), verts=14), "orange")
+    add_part(y_cyl("AntMast", 0.022, 0.135, loc=(0, 1.052, 0), verts=10), "graphite")
+    for h_y in (1.025, 1.080):
+        add_part(y_cyl(f"MastCollar{h_y}", 0.028, 0.010, loc=(0, h_y, 0), verts=10), "steel")
+    add_part(y_cyl("AntCup", 0.056, 0.028, loc=(0, 1.132, 0), verts=14, bevel_w=0.004), "steel")
+    add_part(y_cyl("AntCollar", 0.058, 0.010, loc=(0, 1.148, 0), verts=14), "orange")
+
+    # 2. Neck & V-tapered industrial torso chassis (y = 0.21 .. 0.63)
+    add_part(y_cyl("NeckCol", 0.108, 0.062, loc=(0, 0.618, 0), verts=14), "graphite")
+    add_part(y_cyl("NeckRing", 0.120, 0.016, loc=(0, 0.618, 0), verts=14), "orange")
+    add_part(box("UpperChest", (0.39, 0.21, 0.28), loc=(0, 0.495, 0), bevel_w=0.032, bevel_seg=1), "body")
+    add_part(box("LowerTorso", (0.28, 0.13, 0.23), loc=(0, 0.35, 0), bevel_w=0.024, bevel_seg=1), "graphite")
+
+    for sx in (-1, 1):
+        add_part(smooth_obj(cyl(f"WaistPiston{sx}", 0.025, 0.14, loc=(sx * 0.158, 0.355, 0.0), rot=(0, 0, sx * math.radians(-14)), verts=10)), "steel")
+        add_part(cyl(f"WaistPistonRing{sx}", 0.029, 0.016, loc=(sx * 0.161, 0.37, 0.0), rot=(0, 0, sx * math.radians(-14)), verts=10), "orange")
+        add_skin(box(f"Pauldron{sx}", (0.105, 0.185, 0.30), loc=(sx * 0.178, 0.515, 0.0), rot=(0, 0, sx * math.radians(-8)), bevel_w=0.024, bevel_seg=1))
+        add_part(x_cyl(f"TorsoArmBoss{sx}", 0.068, 0.055, loc=(sx * 0.238, 0.55, 0.05), verts=14), "steel")
+        add_part(x_cyl(f"TorsoArmRing{sx}", 0.072, 0.012, loc=(sx * 0.258, 0.55, 0.05), verts=14), "orange")
+
+    add_part(box("ChestArmor", (0.31, 0.22, 0.036), loc=(0, 0.47, 0.136), bevel_w=0.014, bevel_seg=1), "graphite")
+
+    rx, ry, rz = DROID_WORKER["rotor"]
+    add_part(z_cyl("TurbineHousing", 0.084, 0.022, loc=(rx, ry, 0.150), verts=18), "steel")
+    add_part(z_cyl("TurbineRing", 0.074, 0.024, loc=(rx, ry, 0.151), verts=18), "orange")
+    add_part(z_cyl("TurbineWell", 0.063, 0.026, loc=(rx, ry, 0.152), verts=18), "base")
+
+    add_part(box("HarnessStrapFront", (0.028, 0.078, 0.016), loc=(-0.095, 0.542, 0.150)), "orange")
+    add_part(box("HarnessStrapTop", (0.028, 0.016, 0.12), loc=(-0.095, 0.596, 0.095), bevel_w=0.004, bevel_seg=1), "orange")
+    add_part(box("BadgePlate", (0.070, 0.098, 0.016), loc=(-0.095, 0.455, 0.156), bevel_w=0.004, bevel_seg=1), "light")
+    add_part(box("BadgeHeader", (0.066, 0.022, 0.018), loc=(-0.095, 0.490, 0.159)), "orange")
+    add_part(box("BadgeClip", (0.026, 0.016, 0.020), loc=(-0.095, 0.508, 0.159)), "steel")
+    add_part(box("BadgePhoto", (0.022, 0.024, 0.018), loc=(-0.112, 0.455, 0.159)), "body")
+    for i in range(2):
+        add_part(box(f"BadgeLine{i}", (0.032, 0.008, 0.018), loc=(-0.080, 0.462 - i * 0.018, 0.159)), "graphite")
+
+    add_part(box("Backpack", (0.29, 0.23, 0.085), loc=(0, 0.47, -0.155), bevel_w=0.022, bevel_seg=1), "graphite")
+    add_part(box("BackPlate", (0.19, 0.19, 0.018), loc=(0, 0.47, -0.195), bevel_w=0.008, bevel_seg=1), "body")
+    back_emblem = glyph_solid("BackGlyph", 132.0, 12.0, curve=2)
+    back_emblem.data.transform(Matrix.Rotation(math.pi, 4, "Y"))
+    back_emblem.location = Vector((0, 0.47, -0.205))
+    add_part(back_emblem, "orange")
+    for sx in (-1, 1):
+        add_part(y_cyl(f"BackCell{sx}", 0.034, 0.18, loc=(sx * 0.122, 0.47, -0.165), verts=12, bevel_w=0.005), "steel")
+        add_part(y_cyl(f"BackCellRing{sx}", 0.036, 0.016, loc=(sx * 0.122, 0.525, -0.165), verts=12), "orange")
+
+    add_part(box("WaistBelt", (0.30, 0.024, 0.24), loc=(0, 0.285, 0), bevel_w=0.006, bevel_seg=1), "steel")
+    add_part(box("BeltBuckle", (0.075, 0.030, 0.020), loc=(0, 0.285, 0.122), bevel_w=0.004, bevel_seg=1), "orange")
+    add_part(box("Pelvis", (0.28, 0.075, 0.21), loc=(0, 0.242, 0), bevel_w=0.018, bevel_seg=1), "body")
+    for sx in (-1, 1):
+        add_part(y_cyl(f"HipJoint{sx}", 0.048, 0.05, loc=(sx * 0.12, 0.205, 0.02), verts=10), "steel")
+
+    # 3. Chest rotor
+    rotor_parts = []
+    rotor_glyph = glyph_solid("ChestRotorGlyph", 108.0, 10.0, curve=2)
+    rotor_glyph.location = Vector((rx, ry, rz))
+    add_part(rotor_glyph, "light", rotor_parts)
+    add_part(z_cyl("ChestRotorHub", 0.017, 0.014, loc=(rx, ry, rz + 0.003), verts=12), "orange", rotor_parts)
+
+    # 4. Articulated servo arms
+    def build_arm(side: int):
+        px, py, pz = DROID_WORKER["arm_l" if side < 0 else "arm_r"]
+        parts = []
+        add_part(x_cyl(f"ArmDrum{side}", 0.058, 0.076, loc=(px, py, pz), verts=14), "graphite", parts)
+        add_part(x_cyl(f"ArmRing{side}", 0.061, 0.014, loc=(px + side * 0.028, py, pz), verts=14), "orange", parts)
+        add_part(x_cyl(f"ArmCap{side}", 0.038, 0.016, loc=(px + side * 0.041, py, pz), verts=10), "steel", parts)
+        add_part(box(f"UpperArm{side}", (0.068, 0.11, 0.072), loc=(px, py - 0.065, pz), bevel_w=0.014, bevel_seg=1), "body", parts)
+        add_part(box(f"UpperArmSkin{side}", (0.022, 0.088, 0.058), loc=(px + side * 0.032, py - 0.065, pz), bevel_w=0.006, bevel_seg=1), "skin", parts)
+        add_part(x_cyl(f"Elbow{side}", 0.044, 0.078, loc=(px, py - 0.125, pz), verts=12), "steel", parts)
+        add_part(x_cyl(f"ElbowRing{side}", 0.046, 0.010, loc=(px + side * 0.034, py - 0.125, pz), verts=12), "orange", parts)
+        add_part(box(f"Forearm{side}", (0.066, 0.095, 0.076), loc=(px, py - 0.175, pz + 0.012), bevel_w=0.014, bevel_seg=1), "graphite", parts)
+        add_part(box(f"WristCuff{side}", (0.070, 0.016, 0.080), loc=(px, py - 0.218, pz + 0.014), bevel_w=0.004, bevel_seg=1), "orange", parts)
+        add_part(box(f"Palm{side}", (0.060, 0.022, 0.064), loc=(px, py - 0.232, pz + 0.016), bevel_w=0.005, bevel_seg=1), "steel", parts)
+        for fz in (-1, 1):
+            add_part(box(f"Jaw{side}_{fz}", (0.044, 0.044, 0.015), loc=(px, py - 0.258, pz + 0.016 + fz * 0.022), bevel_w=0.004, bevel_seg=1), "light", parts)
+        return parts
+
+    # 5. Heavy mech stabilizer boots
+    def build_foot(side: int):
+        px, py, pz = DROID_WORKER["foot_l" if side < 0 else "foot_r"]
+        parts = []
+        add_part(y_cyl(f"AnkleStrut{side}", 0.038, 0.07, loc=(px, py - 0.015, pz - 0.015), verts=10), "steel", parts)
+        add_part(y_cyl(f"AnkleCollar{side}", 0.045, 0.016, loc=(px, py - 0.035, pz - 0.015), verts=10), "orange", parts)
+        add_part(box(f"BootUpper{side}", (0.12, 0.065, 0.165), loc=(px, py - 0.072, pz + 0.01), bevel_w=0.016, bevel_seg=1), "body", parts)
+        add_part(box(f"BootSkin{side}", (0.076, 0.026, 0.065), loc=(px, py - 0.052, pz + 0.045), rot=(math.radians(16), 0, 0), bevel_w=0.006, bevel_seg=1), "skin", parts)
+        add_part(box(f"BootToe{side}", (0.114, 0.048, 0.088), loc=(px, py - 0.082, pz + 0.068), bevel_w=0.014, bevel_seg=1), "graphite", parts)
+        add_part(box(f"ToeBumper{side}", (0.088, 0.026, 0.022), loc=(px, py - 0.088, pz + 0.11), bevel_w=0.005, bevel_seg=1), "steel", parts)
+        add_part(box(f"BootSole{side}", (0.128, 0.022, 0.208), loc=(px, py - 0.109, pz + 0.012), bevel_w=0.006, bevel_seg=1), "base", parts)
+        add_part(box(f"BootWelt{side}", (0.130, 0.008, 0.210), loc=(px, py - 0.096, pz + 0.012)), "orange", parts)
+        return parts
+
+    # 6. Eyes, pupils & status beacon bulb
+    eye_l = box("EyeL", (0.098, 0.082, 0.014), loc=DROID_WORKER["eye_l"], bevel_w=0.018, bevel_seg=1)
+    eye_r = box("EyeR", (0.098, 0.082, 0.014), loc=DROID_WORKER["eye_r"], bevel_w=0.018, bevel_seg=1)
+    pupil_l = box("PupilL", (0.046, 0.048, 0.012), loc=DROID_WORKER["pupil_l"], bevel_w=0.010, bevel_seg=1)
+    pupil_r = box("PupilR", (0.046, 0.048, 0.012), loc=DROID_WORKER["pupil_r"], bevel_w=0.010, bevel_seg=1)
+    bulb_obj = y_cyl("Bulb", 0.056, 0.095, loc=DROID_WORKER["bulb"], verts=8, bevel_w=0.016)
+
+    def loose_multi(parts):
+        obj = assemble(parts, recenter=False, keep_uvs=False)
+        obj.data.transform(Matrix.Rotation(math.radians(-90), 4, "X"))
+        return obj
+
+    return body_parts, [
+        ("DroidSkin", loose_multi(skin_parts), None),
+        ("DroidRotor", loose_multi(rotor_parts), None),
+        ("DroidArmL", loose_multi(build_arm(-1)), None),
+        ("DroidArmR", loose_multi(build_arm(1)), None),
+        ("DroidFootL", loose_multi(build_foot(-1)), None),
+        ("DroidFootR", loose_multi(build_foot(1)), None),
+        ("EyeL", raw(eye_l), m_eye),
+        ("EyeR", raw(eye_r), m_eye),
+        ("PupilL", raw(pupil_l), m_pupil),
+        ("PupilR", raw(pupil_r), m_pupil),
+        ("Bulb", raw(bulb_obj), m_bulb),
+    ]
+
+
 # The .44 Magnum your first-person glove holds
 # --------------------------------------------------------------------------------------
 
