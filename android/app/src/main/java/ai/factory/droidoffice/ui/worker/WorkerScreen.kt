@@ -89,6 +89,7 @@ import ai.factory.droidoffice.core.Choices
 import ai.factory.droidoffice.core.ClientMsg
 import ai.factory.droidoffice.core.Keys
 import ai.factory.droidoffice.core.PhoneSizing
+import ai.factory.droidoffice.core.QuickKeys
 import ai.factory.droidoffice.core.ScreenState
 import ai.factory.droidoffice.core.Tags
 import ai.factory.droidoffice.core.TermSize
@@ -224,7 +225,7 @@ fun WorkerScreen(workerId: String, onBack: () -> Unit, embedded: Boolean = false
             // Snackbars rise above the quick keys and the composer instead of covering them.
             Column(Modifier.onSizeChanged { lift.value = with(density) { it.height.toDp() } + 8.dp }) {
                 if (!worker.isCloud && tty) {
-                    QuickKeys(workerId, phone) { phoneChoice = !phone }
+                    QuickKeyRow(workerId, phone) { phoneChoice = !phone }
                 }
                 Composer(worker, draft)
             }
@@ -471,28 +472,17 @@ private fun Gone(synced: Boolean, embedded: Boolean, onBack: () -> Unit) {
     }
 }
 
-/** The keys a TUI waits for that a phone keyboard doesn't have: menus, permission prompts, interrupts. */
+/**
+ * The keys a TUI waits for that a phone keyboard doesn't have: menus, permission prompts, interrupts.
+ * Phone stays first; the rest come in the owner's order, arranged from the button at the end.
+ */
 @Composable
-private fun QuickKeys(workerId: String, phone: Boolean, onPhone: () -> Unit) {
+private fun QuickKeyRow(workerId: String, phone: Boolean, onPhone: () -> Unit) {
     val graph = LocalGraph.current
     val haptics = LocalHapticFeedback.current
-    // Label, what TalkBack says, bytes.
-    val keys = listOf(
-        Triple("^C", "Control C", Keys.CTRL_C),
-        Triple("^D", "Control D", Keys.CTRL_D),
-        Triple("^X", "Control X", Keys.CTRL_X),
-        Triple("⌥↑", "Option Up", Keys.OPT_UP),
-        Triple("⌥↓", "Option Down", Keys.OPT_DOWN),
-        Triple("↓", "Down", Keys.DOWN),
-        Triple("↑", "Up", Keys.UP),
-        Triple("←", "Left", Keys.LEFT),
-        Triple("→", "Right", Keys.RIGHT),
-        Triple("⏎", "Enter", Keys.ENTER),
-        Triple("Tab", "Tab", Keys.TAB),
-        Triple("⇧Tab", "Shift Tab", Keys.SHIFT_TAB),
-        Triple("Esc", "Escape", Keys.ESC),
-        Triple("⌫", "Backspace", Keys.BACKSPACE),
-    )
+    val store by graph.store.snapshot.collectAsStateWithLifecycle()
+    val keys = QuickKeys.arrange(store.settings.quickKeys)
+    var arranging by rememberSaveable { mutableStateOf(false) }
     Row(
         Modifier.fillMaxWidth().tagged(Tags.Worker.KEYS).horizontalScroll(rememberScrollState()).padding(horizontal = 10.dp, vertical = 8.dp),
         horizontalArrangement = Arrangement.spacedBy(6.dp),
@@ -501,17 +491,22 @@ private fun QuickKeys(workerId: String, phone: Boolean, onPhone: () -> Unit) {
             haptics.performHapticFeedback(HapticFeedbackType.KeyboardTap)
             onPhone()
         }
-        keys.forEach { (label, spoken, bytes) ->
-            QuickKey(label, spoken, Tags.Worker.key(spoken), accent = label == "⏎") {
+        keys.forEach { key ->
+            QuickKey(key.label, key.spoken, Tags.Worker.key(key.spoken), accent = key.bytes == Keys.ENTER) {
                 haptics.performHapticFeedback(HapticFeedbackType.KeyboardTap)
-                graph.connection.send(ClientMsg.termInput(workerId, bytes))
+                graph.connection.send(ClientMsg.termInput(workerId, key.bytes))
             }
         }
+        QuickKey("", "Arrange the quick keys", Tags.Worker.KEYS_ARRANGE, icon = OfficeIcons.Sliders) {
+            haptics.performHapticFeedback(HapticFeedbackType.KeyboardTap)
+            arranging = true
+        }
     }
+    if (arranging) QuickKeysSheet(store.settings.quickKeys, onDismiss = { arranging = false })
 }
 
 @Composable
-private fun QuickKey(label: String, spoken: String, tag: String, accent: Boolean = false, selected: Boolean = false, checked: Boolean? = null, onClick: () -> Unit) {
+private fun QuickKey(label: String, spoken: String, tag: String, accent: Boolean = false, selected: Boolean = false, checked: Boolean? = null, icon: ImageVector? = null, onClick: () -> Unit) {
     val shape = RoundedCornerShape(7.dp)
     val interaction = if (checked == null) Modifier.clickable(onClick = onClick) else Modifier.toggleable(checked, role = Role.Switch) { onClick() }
     Box(
@@ -530,6 +525,10 @@ private fun QuickKey(label: String, spoken: String, tag: String, accent: Boolean
             .padding(horizontal = 10.dp),
         contentAlignment = Alignment.Center,
     ) {
-        Text(label, style = LocalOfficeType.current.monoBody.copy(fontSize = 13.sp, color = if (accent) Palette.Accent else Palette.Text))
+        if (icon != null) {
+            Icon(icon, null, tint = Palette.TextSecondary, modifier = Modifier.size(16.dp))
+        } else {
+            Text(label, style = LocalOfficeType.current.monoBody.copy(fontSize = 13.sp, color = if (accent) Palette.Accent else Palette.Text))
+        }
     }
 }
