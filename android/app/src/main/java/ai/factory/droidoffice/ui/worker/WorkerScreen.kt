@@ -478,10 +478,20 @@ private fun QuickKeys(workerId: String, phone: Boolean, onPhone: () -> Unit) {
     val haptics = LocalHapticFeedback.current
     // Label, what TalkBack says, bytes.
     val keys = listOf(
-        Triple("Esc", "Escape", Keys.ESC), Triple("↑", "Up", Keys.UP), Triple("↓", "Down", Keys.DOWN), Triple("⏎", "Enter", Keys.ENTER),
-        Triple("Tab", "Tab", Keys.TAB), Triple("⇧Tab", "Shift Tab", Keys.SHIFT_TAB), Triple("←", "Left", Keys.LEFT), Triple("→", "Right", Keys.RIGHT),
-        Triple("^C", "Control C", Keys.CTRL_C), Triple("⌫", "Backspace", Keys.BACKSPACE),
-        Triple("1", "1", "1"), Triple("2", "2", "2"), Triple("3", "3", "3"), Triple("y", "y", "y"), Triple("n", "n", "n"),
+        Triple("^C", "Control C", Keys.CTRL_C),
+        Triple("^D", "Control D", Keys.CTRL_D),
+        Triple("^X", "Control X", Keys.CTRL_X),
+        Triple("⌥↑", "Option Up", Keys.OPT_UP),
+        Triple("⌥↓", "Option Down", Keys.OPT_DOWN),
+        Triple("↓", "Down", Keys.DOWN),
+        Triple("↑", "Up", Keys.UP),
+        Triple("←", "Left", Keys.LEFT),
+        Triple("→", "Right", Keys.RIGHT),
+        Triple("⏎", "Enter", Keys.ENTER),
+        Triple("Tab", "Tab", Keys.TAB),
+        Triple("⇧Tab", "Shift Tab", Keys.SHIFT_TAB),
+        Triple("Esc", "Escape", Keys.ESC),
+        Triple("⌫", "Backspace", Keys.BACKSPACE),
     )
     Row(
         Modifier.fillMaxWidth().tagged(Tags.Worker.KEYS).horizontalScroll(rememberScrollState()).padding(horizontal = 10.dp, vertical = 8.dp),

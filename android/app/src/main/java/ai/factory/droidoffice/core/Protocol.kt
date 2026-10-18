@@ -345,9 +345,13 @@ object Keys {
     const val TAB = "\t"
     const val SHIFT_TAB = "\u001b[Z"
     const val CTRL_C = "\u0003"
+    const val CTRL_D = "\u0004"
+    const val CTRL_X = "\u0018"
     const val BACKSPACE = "\u007f"
     const val UP = "\u001b[A"
     const val DOWN = "\u001b[B"
     const val RIGHT = "\u001b[C"
     const val LEFT = "\u001b[D"
+    const val OPT_UP = "\u001b[1;3A"
+    const val OPT_DOWN = "\u001b[1;3B"
 }
