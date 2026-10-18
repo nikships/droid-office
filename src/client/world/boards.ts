@@ -613,13 +613,14 @@ export class PipelinesBoardTexture {
     const rows = runRows(state, now);
     const shown = rows.slice(0, 6);
     const groups = pipelineGroups(state.runs);
-    const finished = groups.recent.filter((r) => r.state === 'success' || r.state === 'failure').slice(0, 24);
+    const history = groups.recent.slice(0, 24);
+    const finished = history.filter((r) => r.state === 'success' || r.state === 'failure');
     const passed = finished.filter((r) => r.state === 'success').length;
     const live = groups.running.length > 0;
     // The spinner on a running row turns a step each second.
     const phase = live ? Math.floor(now / 1000) % 8 : 0;
     const copy = pipelinePolicy(forge).copy;
-    const key = JSON.stringify([shown, rows.length, finished.map((r) => r.state), state.error, state.fetchedAt > 0, forge, this.hovered, phase]);
+    const key = JSON.stringify([shown, rows.length, history.map((r) => r.state), state.error, state.fetchedAt > 0, forge, this.hovered, phase]);
     if (key === this.drawn) return;
     this.drawn = key;
     this.rows = [];
@@ -674,8 +675,8 @@ export class PipelinesBoardTexture {
     const gap = 4;
     const cell = (bw - gap * (slots - 1)) / slots;
     for (let i = 0; i < slots; i++) {
-      const r = finished[slots - 1 - i];
-      g.fillStyle = !r ? '#161616' : r.state === 'success' ? GREEN : RED;
+      const r = history[slots - 1 - i];
+      g.fillStyle = r ? RUN_MARK[r.state][1] : '#161616';
       g.globalAlpha = r ? 0.85 : 1;
       g.fillRect(bx + i * (cell + gap), barY - 9, cell, 18);
     }

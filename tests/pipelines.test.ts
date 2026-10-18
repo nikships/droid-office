@@ -6,6 +6,7 @@ import path from 'node:path';
 import { ago, clock, eventLabel, githubState, gitlabState, isLive, pipelineGroups, runTime, stateWord, waitTime, type PipelineRun } from '../src/shared/pipelines.js';
 import { floorPipelines, githubJob, githubRun, gitlabJob, gitlabPipeline, jobCount, parseYaml, Pipelines, workflowDispatch, type PipelineForge } from '../src/server/pipelines.js';
 import { runRows } from '../src/client/world/pipeline-rows.js';
+import { PipelinesBoardTexture } from '../src/client/world/boards.js';
 
 const NOW = Date.parse('2026-03-01T12:00:00Z');
 const iso = (msAgo: number) => new Date(NOW - msAgo).toISOString();
@@ -282,6 +283,61 @@ test('the board lists running runs with their progress, then waiting, then finis
   assert.deepEqual([by.get(3)?.side, by.get(3)?.sideSub], ['NEEDS APPROVAL', 'for 20s']);
   assert.deepEqual([by.get(1)?.side, by.get(1)?.sideSub, by.get(1)?.sub], ['2m 00s', '1m ago', 'main  ·  push  ·  @ada']);
   assert.deepEqual([by.get(5)?.side, by.get(5)?.sideSub, by.get(5)?.sub], ['cancelled', 'just now', 'main  ·  by hand']);
+});
+
+test('the board paints cancelled runs grey in its history and rows, not as failures', () => {
+  const fills: { color: unknown; args: number[] }[] = [];
+  const text: { color: unknown; label: string }[] = [];
+  const ctx = new Proxy(
+    {
+      fillStyle: '',
+      fillRect(...args: number[]) {
+        fills.push({ color: this.fillStyle, args });
+      },
+      fillText(label: string) {
+        text.push({ color: this.fillStyle, label });
+      },
+      measureText: () => ({ width: 10 }),
+    },
+    { get: (target, key) => Reflect.get(target, key) ?? (() => {}) },
+  );
+  const board = Object.assign(Object.create(PipelinesBoardTexture.prototype), { ctx, texture: {}, hovered: null }) as PipelinesBoardTexture;
+  board.render(
+    {
+      runs: [
+        run(1, { state: 'success', updatedAt: iso(40_000) }),
+        run(2, { state: 'failure', updatedAt: iso(30_000) }),
+        run(3, { state: 'cancelled', status: 'cancelled', updatedAt: iso(20_000) }),
+        run(4, { state: 'skipped', status: 'skipped', updatedAt: iso(10_000) }),
+        run(5, { state: 'running', status: 'in_progress' }),
+        run(6, { state: 'pending', status: 'queued' }),
+      ],
+      workflows: [],
+      fetchedAt: NOW,
+      loading: false,
+    },
+    'github',
+    NOW,
+  );
+  const history = fills.filter(({ args }) => args[1] === 111 && args[3] === 18);
+  assert.equal(history.length, 24);
+  assert.deepEqual(
+    history.slice(-4).map(({ color }) => color),
+    ['#3ccf91', '#ef4444', '#8c8c8c', 'rgba(255, 255, 255, .32)'],
+  );
+  assert.ok(
+    text.some(({ label }) => label === '1/2 PASSED'),
+    'cancelled and skipped runs do not count as failures',
+  );
+  for (const label of ['⊘', 'cancelled'])
+    assert.ok(
+      text.some((t) => t.label === label && t.color === '#8c8c8c'),
+      label,
+    );
+  assert.ok(
+    text.some(({ label, color }) => label === '✗' && color === '#ef4444'),
+    'real failures stay red',
+  );
 });
 
 /** A forge that answers from what the test sets, and remembers what it was asked to do. */
