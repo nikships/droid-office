@@ -474,6 +474,8 @@ export interface FloorInfo {
   busy: number;
   /** Workers waiting on someone: a question, a permission, or a finished turn nobody looked at. */
   waiting: number;
+  /** Open pull requests (merge requests on GitLab); absent until the floor's first fetch has finished. */
+  prs?: number;
 }
 
 /** The workspace folder on the office's machine: where the elevator's "add a project" looks for existing checkouts. Nothing is ever cloned. */

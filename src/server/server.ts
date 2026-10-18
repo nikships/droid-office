@@ -497,6 +497,7 @@ export async function startServer(cfg: Config) {
     droidModels: () => droidModels.get(),
     floor: (id) => floors.get(id),
     pullsChanged: (floor) => {
+      floorsChanged();
       for (const f of floors.values()) if (f !== floor && worksIn(f, floor)) f.sendLandedHome();
     },
     lent: (floor) => [...floors.values()].some((f) => f !== floor && worksIn(f, floor)),

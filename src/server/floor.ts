@@ -538,6 +538,7 @@ export class Floor {
       workers: ws.filter((w) => !DESK_BY_ID.get(w.deskId)?.station).length,
       busy: ws.filter((w) => w.status === 'working').length,
       waiting: ws.filter((w) => w.kind !== 'shell' && (w.status === 'needs_input' || (w.status === 'done' && !w.acked))).length,
+      ...(this.board.pulls.fetchedAt && !this.board.pulls.error ? { prs: this.board.pulls.items.filter((p) => p.state === 'OPEN').length } : {}),
     };
   }
 

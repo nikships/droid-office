@@ -44,6 +44,7 @@ export function floorStats(f: FloorInfo): HTMLElement {
     f.waiting ? stat('waiting', 'Workers waiting on someone', '🙋', f.waiting, 'waiting') : null,
     f.busy ? stat('', 'Working', '👷', f.busy, 'working') : null,
     stat('', 'Workers at desks', '💻', f.workers, 'at desks'),
+    f.prs ? stat('', 'Open pull requests', '🔀', f.prs, 'open PRs') : null,
   );
 }
 
