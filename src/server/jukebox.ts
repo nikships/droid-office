@@ -7,6 +7,7 @@ interface Saved {
   track: string;
   url?: string;
   by?: string;
+  shuffle?: boolean;
   /** When the track started, on this machine's clock. */
   startedAt: number;
 }
@@ -25,8 +26,8 @@ export class Jukebox {
   }
 
   state(): JukeboxState {
-    const { on, track, url, by, startedAt } = this.s;
-    return { on, track, ...(url && track === STREAM ? { url } : {}), ...(by ? { by } : {}), startedAt, elapsed: Math.max(0, Date.now() - startedAt) };
+    const { on, track, url, by, shuffle, startedAt } = this.s;
+    return { on, track, ...(url && track === STREAM ? { url } : {}), ...(by ? { by } : {}), ...(shuffle ? { shuffle } : {}), startedAt, elapsed: Math.max(0, Date.now() - startedAt) };
   }
 
   /** What's on, for toasts: “Rainy Window”, or where a stream comes from. */
@@ -50,10 +51,20 @@ export class Jukebox {
     return { changed: true };
   }
 
-  /** On to the next tune; from a stream, back to the first one. */
-  skip(by: string) {
+  /** On to the next tune (from a stream, the first one), or with shuffle on, any other tune. */
+  skip(by: string, random = Math.random) {
     const i = JUKEBOX_TUNES.findIndex((t) => t.id === this.s.track);
-    this.set({ on: true, track: JUKEBOX_TUNES[(i + 1) % JUKEBOX_TUNES.length].id, by });
+    const others = JUKEBOX_TUNES.filter((t) => t.id !== this.s.track);
+    const next = this.s.shuffle ? others[Math.floor(random() * others.length) % others.length] : JUKEBOX_TUNES[(i + 1) % JUKEBOX_TUNES.length];
+    this.set({ on: true, track: next.id, by });
+  }
+
+  /** Turns shuffle on or off. Says whether it changed. */
+  setShuffle(on: boolean): boolean {
+    if (!!this.s.shuffle === on) return false;
+    this.s = { ...this.s, shuffle: on };
+    this.save();
+    return true;
   }
 
   stop(by: string): boolean {
@@ -63,8 +74,8 @@ export class Jukebox {
     return true;
   }
 
-  private set(s: Omit<Saved, 'startedAt'>) {
-    this.s = { ...s, startedAt: Date.now() };
+  private set(s: Omit<Saved, 'startedAt' | 'shuffle'>) {
+    this.s = { ...s, ...(this.s.shuffle ? { shuffle: true } : {}), startedAt: Date.now() };
     this.save();
   }
 
@@ -79,6 +90,7 @@ export class Jukebox {
         track: s.track!,
         ...(url && 'url' in url ? { url: url.url } : {}),
         ...(typeof s.by === 'string' ? { by: s.by.slice(0, 24) } : {}),
+        ...(s.shuffle === true ? { shuffle: true } : {}),
         startedAt: typeof s.startedAt === 'number' && Number.isFinite(s.startedAt) ? s.startedAt : Date.now(),
       };
     } catch {

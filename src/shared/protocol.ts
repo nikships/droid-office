@@ -882,6 +882,8 @@ export type ClientMsg =
   | { t: 'jukebox.play'; track?: string; url?: string }
   /** On to the next tune. */
   | { t: 'jukebox.skip' }
+  /** Skip to a random tune instead of the next one, kept for the floor. */
+  | { t: 'jukebox.shuffle'; on: boolean }
   | { t: 'jukebox.stop' }
   /**
    * Go to another floor; the server answers with `floor.enter`. By elevator you arrive in the car;

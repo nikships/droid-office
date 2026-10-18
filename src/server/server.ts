@@ -2076,6 +2076,13 @@ export async function startServer(cfg: Config) {
         toastFloor(floor, `⏭️ ${who} skipped to “${floor.jukebox.title()}”`);
         break;
       }
+      case 'jukebox.shuffle': {
+        const floor = here();
+        if (!floor?.jukebox.setShuffle(msg.on === true)) break;
+        jukeboxChanged(floor);
+        toastFloor(floor, `🔀 ${who} turned shuffle ${msg.on === true ? 'on' : 'off'}`);
+        break;
+      }
       case 'jukebox.stop': {
         const floor = here();
         if (!floor?.jukebox.stop(who)) break;

@@ -62,6 +62,17 @@ export function openJukebox(net: Net, openVolume: () => void) {
         'div.row',
         {},
         j.on ? button(soundcloud ? 'Tunes' : 'Skip', 'On to the next built-in tune', () => net.send({ t: 'jukebox.skip' })) : button('Play', `Put ${trackTitle(j)} back on`, () => net.send({ t: 'jukebox.play' }), true),
+        h(
+          'button.btn.sm',
+          {
+            type: 'button',
+            class: j.shuffle ? 'primary' : '',
+            'aria-pressed': String(!!j.shuffle),
+            title: j.shuffle ? 'Skip picks a random tune. Click to play them in order.' : 'Skip to a random tune instead of the next one',
+            onclick: () => net.send({ t: 'jukebox.shuffle', on: !j.shuffle }),
+          },
+          'Shuffle',
+        ),
         j.on ? button('Stop', 'Turn the jukebox off', () => net.send({ t: 'jukebox.stop' })) : '',
       ),
     );

@@ -28,6 +28,8 @@ export interface JukeboxState {
   url?: string;
   /** Who last put something on, or turned it off. */
   by?: string;
+  /** Skip picks a random tune instead of the next one. Kept for the floor, on or off. */
+  shuffle?: boolean;
   /** When the track started, on the office's clock (see the 'pong' message), so everyone hears the same bar. */
   startedAt: number;
   /** How far into the track it was when this was sent, in ms, for until the clocks are compared. */
