@@ -19,9 +19,12 @@ import {
   changedCount,
   clampZoom,
   copyForAgent,
+  deleteConfirmText,
+  deleteOps,
   fitZoom,
   newId,
   ownerReadPoint,
+  selectedOnBoard,
   stepZoom,
   viewMoved,
   wheelNavigation,
@@ -356,4 +359,37 @@ test('ids, media types and folder uploads', () => {
   assert.equal(got.skipped, 3);
   assert.equal(folderFiles([{ path: 'x/b/deep.html' }, { path: 'x/top.html' }]).entry, 'top.html');
   assert.equal(folderFiles([{ path: 'x/a.css' }]).entry, undefined);
+});
+
+test('selecting: only cards still on the board, newest first, deleted in one batch', () => {
+  const b = play(
+    [PIXEL, [{ op: 'card.create', card: 'a', kind: 'canvas', title: 'A' }]],
+    [OWNER_AUTHOR, [{ op: 'card.create', card: 'b', kind: 'canvas', title: 'B' }]],
+    [BOLT, [{ op: 'card.create', card: 'c', kind: 'canvas', title: 'C' }]],
+  );
+  assert.deepEqual(selectedOnBoard(b, new Set(['a', 'c', 'gone'])), ['c', 'a']);
+  assert.deepEqual(selectedOnBoard(b, new Set()), []);
+  const ops = deleteOps(selectedOnBoard(b, new Set(['a', 'c'])));
+  assert.deepEqual(ops, [
+    { op: 'card.rm', card: 'c' },
+    { op: 'card.rm', card: 'a' },
+  ]);
+  const r = applyOps(b, ops, OWNER_AUTHOR, b.rev + 1, 5000);
+  assert.ok(r.ok);
+  if (r.ok)
+    assert.deepEqual(
+      r.board.cards.map((c) => c.id),
+      ['b'],
+    );
+});
+
+test('selecting: the delete confirm names one card, or lists several with the rest counted', () => {
+  const one = deleteConfirmText(['Plan']);
+  assert.equal(one.title, 'Delete this card?');
+  assert.match(one.lead, /“Plan” goes from the board/);
+  assert.deepEqual(one.more, []);
+  const many = deleteConfirmText(['1', '2', '3', '4', '5', '6', '7']);
+  assert.equal(many.title, 'Delete 7 cards?');
+  assert.match(many.lead, /These 7 cards/);
+  assert.deepEqual(many.more, ['“1”', '“2”', '“3”', '“4”', '“5”', 'and 2 more']);
 });

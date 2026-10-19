@@ -1993,6 +1993,12 @@ li.cmp-muted:hover { background: none; }
 .wb-tile-meta { display: flex; align-items: center; gap: 6px; min-width: 0; font: 400 var(--text-small)/var(--leading-small) var(--font-sans); color: var(--text-secondary); white-space: nowrap; }
 .wb-tile-who { min-width: 0; max-width: 40%; overflow: hidden; text-overflow: ellipsis; color: var(--text); }
 .wb-tile-marks { margin-left: auto; font-variant-numeric: tabular-nums; }
+.wb-tile { position: relative; }
+.wb-tile.selected { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent); }
+.wb-tile-check { position: absolute; top: var(--space-2); left: var(--space-2); z-index: 1; display: flex; align-items: center; justify-content: center; width: 20px; height: 20px; border: 1px solid var(--border-strong); border-radius: var(--radius); background: var(--surface-raised); color: var(--text); font-size: var(--text-small); line-height: 1; }
+.wb-tile.selected .wb-tile-check { border-color: var(--accent); background: var(--accent); }
+.wb-delete-list { margin: 0; padding-left: var(--space-5); color: var(--text-secondary); }
+.wb-delete-list li { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 /* A card: the toolbar, then the surface and the side panel. */
 .wb-toolbar { flex: none; display: flex; align-items: center; gap: var(--space-2); min-width: 0; padding: var(--space-2) var(--space-4); border-bottom: 1px solid var(--border); background: var(--surface); }

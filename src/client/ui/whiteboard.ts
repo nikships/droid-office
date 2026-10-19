@@ -14,12 +14,12 @@ import type { Net } from '../net';
 import { store } from '../state';
 import { withToken } from '../token';
 import { copy } from './clipboard';
-import { h, openModal, setDoing, timeAgo, toast, type Modal } from './dom';
+import { claimEscape, h, openModal, setDoing, timeAgo, toast, type Modal } from './dom';
 import { colorDot, emptyState } from './kit';
 import { confirmDelete, openAddHtml, openPing, routePinged } from './whiteboard-dialogs';
 import { Panel } from './whiteboard-panel';
 import { Surface } from './whiteboard-surface';
-import { authorColor, authorName, changedCount, copyForAgent, newId, ownerReadPoint, viewMoved, zoomLabel } from './whiteboard-view';
+import { authorColor, authorName, changedCount, copyForAgent, deleteOps, newId, ownerReadPoint, selectedOnBoard, viewMoved, zoomLabel } from './whiteboard-view';
 
 interface WindowCtl {
   floor: string;
@@ -83,6 +83,9 @@ export function openWhiteboard(net: Net, opts: { card?: string } = {}): void {
   let readTimer = 0;
   let lastView: CardView | undefined;
   let marksVisible = true;
+  /** The grid is picking cards to delete together rather than opening them. */
+  let selecting = false;
+  const selected = new Set<string>();
 
   const board = (): Board | null => sync.board(floor);
   const fileUrl = (hash: string) => withToken(`/api/whiteboard/file?${new URLSearchParams({ floor, card: card ?? '', hash })}`);
@@ -125,6 +128,7 @@ export function openWhiteboard(net: Net, opts: { card?: string } = {}): void {
     if (id === card && (id !== null || main.querySelector('.wb-grid-wrap'))) return;
     leaveCard();
     card = id;
+    if (id) stopSelecting(false);
     if (explicit) show(id ? { kind: 'card', id } : { kind: 'grid' });
     if (id && b) {
       since = ownerReadPoint(b, id);
@@ -155,7 +159,9 @@ export function openWhiteboard(net: Net, opts: { card?: string } = {}): void {
       return;
     }
     const cards = cardsNewestFirst(b);
+    for (const id of selected) if (!findCard(b, id)) selected.delete(id);
     if (!cards.length) {
+      selecting = false;
       main.replaceChildren(
         h(
           'div.wb-grid-wrap',
@@ -172,7 +178,7 @@ export function openWhiteboard(net: Net, opts: { card?: string } = {}): void {
     }
     const scroller = main.querySelector('.wb-grid-wrap');
     const top = scroller?.scrollTop ?? 0;
-    const grid = h('div.wb-grid', { role: 'list' }, ...cards.map((c) => tile(b, c)));
+    const grid = h('div.wb-grid', { role: 'list', class: selecting ? 'selecting' : '', 'aria-multiselectable': selecting ? 'true' : undefined }, ...cards.map((c) => tile(b, c)));
     const note = rendererNote();
     const wrap = h('div.wb-grid-wrap', {}, ...(note ? [h('p.note.info.wb-grid-note', {}, note)] : []), grid);
     main.replaceChildren(wrap);
@@ -190,9 +196,24 @@ export function openWhiteboard(net: Net, opts: { card?: string } = {}): void {
       thumb.append(img);
     } else placeholder();
     const marks = [c.threads.length && `💬 ${c.threads.filter((t) => !t.resolved).length}`, c.stickies.length && `🗒 ${c.stickies.length}`, c.pictures.length && `🖼 ${c.pictures.length}`].filter(Boolean).join('  ');
+    const on = selecting && selected.has(c.id);
+    const classes = [changed && 'changed', on && 'selected'].filter(Boolean).join(' ');
     return h(
       'button.wb-tile',
-      { type: 'button', role: 'listitem', 'data-card': c.id, class: changed ? 'changed' : '', title: `Open “${c.title}”`, onclick: () => go(c.id) },
+      {
+        type: 'button',
+        role: 'listitem',
+        'data-card': c.id,
+        class: classes,
+        title: selecting ? `${on ? 'Unselect' : 'Select'} “${c.title}”` : `Open “${c.title}” (${navigator.platform.startsWith('Mac') ? '⌘' : 'Ctrl'}-click to select)`,
+        'aria-pressed': selecting ? String(on) : undefined,
+        onclick: (e: Event) => {
+          const m = e as MouseEvent;
+          if (selecting || m.metaKey || m.ctrlKey || m.shiftKey) toggleSelected(c.id);
+          else go(c.id);
+        },
+      },
+      selecting ? h('span.wb-tile-check', { 'aria-hidden': 'true' }, on ? '✓' : '') : null,
       thumb,
       h(
         'span.wb-tile-body',
@@ -361,12 +382,24 @@ export function openWhiteboard(net: Net, opts: { card?: string } = {}): void {
     if (!c) {
       titleEl.replaceChildren('Whiteboard');
       const n = b ? cardsNewestFirst(b).length : 0;
+      if (selecting && b) {
+        const ids = selectedOnBoard(b, selected);
+        sub.replaceChildren(ids.length ? `${ids.length} of ${n} card${n === 1 ? '' : 's'} selected` : 'Click cards to select them');
+        const all = ids.length === n;
+        actions.replaceChildren(
+          h('button.btn.sm', { type: 'button', onclick: () => (all ? selected.clear() : cardsNewestFirst(b).forEach((x) => selected.add(x.id)), paintSelection()) }, all ? 'Select none' : 'Select all'),
+          h('button.btn.sm.ghost', { type: 'button', title: 'Stop selecting (Esc)', onclick: () => stopSelecting() }, 'Cancel'),
+          h('button.btn.sm.danger', { type: 'button', disabled: !ids.length, onclick: deleteSelected }, ids.length ? `Delete ${ids.length}` : 'Delete'),
+        );
+        return;
+      }
       const changedN = b ? changedCount(b) : 0;
       sub.replaceChildren(b ? `${n} card${n === 1 ? '' : 's'} on ${store.currentFloor()?.name ?? 'this floor'}${changedN ? `, ${changedN} changed since you looked` : ''}` : 'Loading…');
       actions.replaceChildren(
         h('button.btn.sm', { type: 'button', onclick: newCanvas }, 'New canvas'),
         h('button.btn.sm', { type: 'button', onclick: addHtml }, 'Add HTML'),
         h('button.btn.sm', { type: 'button', onclick: () => openPing(net) }, 'Ping a worker'),
+        ...(n ? [h('button.btn.sm', { type: 'button', title: 'Select cards to delete several at once', onclick: () => startSelecting() }, 'Select')] : []),
       );
       return;
     }
@@ -415,7 +448,7 @@ export function openWhiteboard(net: Net, opts: { card?: string } = {}): void {
         {
           type: 'button',
           onclick: () =>
-            confirmDelete(c.title, () => {
+            confirmDelete([c.title], () => {
               // Off the card first, so its going isn't news; the board puts the wall back on the grid itself.
               go(null, false);
               void apply([{ op: 'card.rm', card: c.id }], 'Deleting the card');
@@ -503,6 +536,50 @@ export function openWhiteboard(net: Net, opts: { card?: string } = {}): void {
     bars.replaceChildren(...out);
   }
 
+  // ---- Selecting ----
+
+  function paintSelection() {
+    paintGrid();
+    paintHeader();
+  }
+
+  function startSelecting(first?: string) {
+    selecting = true;
+    selected.clear();
+    if (first) selected.add(first);
+    paintSelection();
+  }
+
+  function stopSelecting(paint = true) {
+    if (!selecting) return;
+    selecting = false;
+    selected.clear();
+    if (paint) paintSelection();
+  }
+
+  function toggleSelected(id: string) {
+    if (!selecting) return startSelecting(id);
+    if (!selected.delete(id)) selected.add(id);
+    paintSelection();
+  }
+
+  function deleteSelected() {
+    const b = board();
+    if (!b) return;
+    const ids = selectedOnBoard(b, selected);
+    if (!ids.length) return;
+    confirmDelete(
+      ids.map((id) => findCard(b, id)!.title),
+      () => {
+        // Checked again: a worker may have deleted some while the confirm was up.
+        const now = board();
+        const still = now ? ids.filter((id) => findCard(now, id)) : [];
+        stopSelecting();
+        void apply(deleteOps(still), still.length === 1 ? 'Deleting the card' : 'Deleting the cards');
+      },
+    );
+  }
+
   // ---- Actions ----
 
   function newCanvas() {
@@ -583,6 +660,12 @@ export function openWhiteboard(net: Net, opts: { card?: string } = {}): void {
   };
   window.addEventListener('paste', onPaste);
 
+  const unclaimEsc = claimEscape(el, () => {
+    if (!selecting || card) return false;
+    stopSelecting();
+    return true;
+  });
+
   const modal: Modal = openModal(el, {
     size: 'full',
     doing: '🧑‍🎨 at the Whiteboard',
@@ -592,6 +675,7 @@ export function openWhiteboard(net: Net, opts: { card?: string } = {}): void {
       clearInterval(clock);
       window.removeEventListener('keydown', onKey, true);
       window.removeEventListener('paste', onPaste);
+      unclaimEsc();
       if (notice) clearTimeout(notice.timer);
       open = null;
     },

@@ -68,7 +68,8 @@ Two kinds of desk occupant are excluded, and the window and the guide say so:
 ### The window
 
 - A `.full` window, opened from the wall, the **☰** menu (`whiteboard`, with a count of cards changed since you looked) and `office.open('whiteboard')`.
-- **Grid:** cards newest-first, with their thumbnail, title, author, an "updated 2m ago" time and a changed dot. Actions: **New canvas**, **Add HTML** (paste, or upload a `.html` file or a folder with its assets), and **Ping a worker**.
+- **Grid:** cards newest-first, with their thumbnail, title, author, an "updated 2m ago" time and a changed dot. Actions: **New canvas**, **Add HTML** (paste, or upload a `.html` file or a folder with its assets), **Ping a worker**, and **Select**.
+  - **Select** (or ⌘/Ctrl- or Shift-clicking a card) puts the grid in selection mode: a click ticks or unticks a card instead of opening it, the header counts the selection and has **Select all** / **Select none**, **Cancel** (or **Esc**) and **Delete N**. One confirm lists the cards, and they go in one batch of `card.rm`, so workers see a single change. A card a worker deletes meanwhile drops out of the selection.
 - **Artifact:** the card large in its sandbox, a toolbar and a side panel.
   - Modes: **Use** (the default: click, type, press the artifact's buttons) and **Mark up** (a click pins a comment; drag places a sticky). One key toggles them, shown as a `.key`.
   - Navigation: pinch to zoom at the pointer and two-finger pan in both axes, over a live HTML page as well as its marks or a canvas. Ctrl/Cmd + scroll zooms; Shift + scroll pans sideways. Gestures are accumulated once per animation frame without rounding the transform, and old frame layout acknowledgements cannot rewind an in-flight scroll. Nested scrolling areas remain native until their edge.

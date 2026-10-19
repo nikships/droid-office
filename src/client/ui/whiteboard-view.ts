@@ -4,7 +4,7 @@
 // src/shared/whiteboard-marks.ts. Ping rows and folder uploads are whiteboard-picker.ts. No DOM
 // here: tests/whiteboard-window.test.ts runs it in Node.
 
-import { CANONICAL_WIDTH, OWNER, changesFor, readPoint, type Author, type Board, type Box, type Card, type CardView, type Point } from '../../shared/whiteboard';
+import { CANONICAL_WIDTH, OWNER, cardsNewestFirst, changesFor, readPoint, type Author, type Board, type Box, type Card, type CardView, type Op, type Point } from '../../shared/whiteboard';
 
 // ---- Zoom and pan ----
 
@@ -160,6 +160,26 @@ export function changedCount(board: Board | null): number {
 /** The owner's read point for a card. */
 export function ownerReadPoint(board: Board, cardId: string): number {
   return readPoint(board, OWNER, cardId);
+}
+
+// ---- Selecting cards ----
+
+/** The selected ids that are still cards on the board, newest first, as the grid lists them. */
+export function selectedOnBoard(board: Board, ids: ReadonlySet<string>): string[] {
+  return cardsNewestFirst(board).flatMap((c) => (ids.has(c.id) ? [c.id] : []));
+}
+
+/** One batch that deletes every one of the cards. */
+export function deleteOps(ids: readonly string[]): Op[] {
+  return ids.map((card) => ({ op: 'card.rm', card }));
+}
+
+/** What the delete confirm says, for one card or several. */
+export function deleteConfirmText(titles: readonly string[], shown = 5): { title: string; lead: string; more: string[] } {
+  if (titles.length === 1) return { title: 'Delete this card?', lead: `“${titles[0]}” goes from the board with its comments, stickies and pictures. Workers see it as removed.`, more: [] };
+  const list = titles.slice(0, shown).map((t) => `“${t}”`);
+  if (titles.length > shown) list.push(`and ${titles.length - shown} more`);
+  return { title: `Delete ${titles.length} cards?`, lead: `These ${titles.length} cards go from the board with their comments, stickies and pictures. Workers see them as removed.`, more: list };
 }
 
 // ---- Copy for agent ----

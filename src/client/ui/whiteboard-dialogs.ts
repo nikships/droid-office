@@ -9,7 +9,7 @@ import { STATUS_LABEL, h, openModal } from './dom';
 import { colorDot, emptyState, field, windowHeader } from './kit';
 import { uploadBlob } from './whiteboard-surface';
 import { folderFiles, mimeFor, pingRows, pingedText } from './whiteboard-picker';
-import { newId } from './whiteboard-view';
+import { deleteConfirmText, newId } from './whiteboard-view';
 
 const MB = 1024 * 1024;
 
@@ -81,13 +81,15 @@ export function openPing(net: Net) {
 
 // ---- Delete ----
 
-export function confirmDelete(title: string, onYes: () => void) {
-  const yes = h('button.btn.danger', { type: 'button' }, 'Delete');
+/** Confirms deleting one card or several; `titles` are the cards' titles. */
+export function confirmDelete(titles: string[], onYes: () => void) {
+  const text = deleteConfirmText(titles);
+  const yes = h('button.btn.danger', { type: 'button' }, titles.length === 1 ? 'Delete' : `Delete ${titles.length}`);
   const el = h(
     'div.modal',
-    { 'aria-label': 'Delete the card' },
-    windowHeader('Delete this card?'),
-    h('div.body', {}, h('p.wb-dialog-lead', {}, `“${title}” goes from the board with its comments, stickies and pictures. Workers see it as removed.`)),
+    { 'aria-label': titles.length === 1 ? 'Delete the card' : 'Delete the cards' },
+    windowHeader(text.title),
+    h('div.body.stack.tight', {}, h('p.wb-dialog-lead', {}, text.lead), ...(text.more.length ? [h('ul.wb-delete-list', {}, ...text.more.map((t) => h('li', { title: t }, t)))] : [])),
     h('footer', {}, h('span.grow'), h('button.btn.ghost', { type: 'button', onclick: () => modal.close() }, 'Cancel'), yes),
   );
   const modal = openModal(el, { size: 'sm' });
