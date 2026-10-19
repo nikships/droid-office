@@ -920,20 +920,8 @@ function buildDesk(def: DeskDef, index: number): DeskView {
   body.add(mesh(box(2 * lx, 0.05, 0.05), frame, 0, legH - 0.04, -lz));
   body.add(mesh(box(width - 0.3, 0.32, 0.02), toon('#7b7b7b'), 0, height - 0.26, -depth / 2 + 0.07));
   body.add(mesh(box(0.03, 0.03, 0.01), toon(PALETTE.accent, { emissive: PALETTE.accent }), width / 2 - 0.3, height - 0.17, -depth / 2 + 0.055));
-  // Little desk decorations
-  const deco = index % 3;
-  if (deco === 0) {
-    body.add(mesh(new THREE.CylinderGeometry(0.06, 0.05, 0.12, 10), toon(index % 2 ? '#eeeeee' : '#595959'), width / 2 - 0.25, height + 0.06, -0.2));
-  } else if (deco === 2) {
-    const books = new THREE.Group();
-    ['#727272', '#e0e0e0', '#d15010'].forEach((c, i) => books.add(mesh(box(0.08, 0.24, 0.18), toon(c), i * 0.09, 0.12, 0)));
-    books.position.set(width / 2 - 0.35, height, -0.3);
-    body.add(books);
-  } else {
-    const p = plant(0.35);
-    p.position.set(-width / 2 + 0.25, height, -0.25);
-    body.add(p);
-  }
+  // A mug on every third desk.
+  if (index % 3 === 0) body.add(mesh(new THREE.CylinderGeometry(0.06, 0.05, 0.12, 10), toon(index % 2 ? '#eeeeee' : '#595959'), width / 2 - 0.25, height + 0.06, -0.2));
   group.add(mergeByMaterial(body));
 
   const laptopAnchor = new THREE.Object3D();
@@ -948,7 +936,7 @@ function buildDesk(def: DeskDef, index: number): DeskView {
   seatAnchor.scale.setScalar(0.82);
   group.add(seatAnchor);
 
-  // Up on the desk beside the laptop, clear of the mug or books at the back, facing the chair.
+  // Up on the desk beside the laptop, clear of the mug at the back, facing the chair.
   const stage = new THREE.Object3D();
   stage.position.set(0.72, height - 0.07, 0.18);
   group.add(stage);
