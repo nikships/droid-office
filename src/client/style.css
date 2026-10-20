@@ -1537,6 +1537,10 @@ a.when:hover { text-decoration: underline; }
 .floor-menu { position: fixed; z-index: 30; width: min(380px, calc(100vw - 24px)); max-height: calc(100vh - 110px); overflow: auto; padding: 8px; display: grid; gap: 6px; animation: floor-menu-in 120ms var(--ease); }
 @keyframes floor-menu-in { from { opacity: 0; transform: translateY(-6px); } }
 .floor-menu-head { font: 500 10px/1.4 var(--font-mono); color: var(--text-secondary); text-transform: uppercase; letter-spacing: .1em; padding: 2px 6px 0; }
+.floor-branch-section { padding: var(--space-2); border-bottom: 1px solid var(--border); }
+.floor-branch-section:empty { display: none; }
+.floor-branch-section :where(select) { width: 100%; min-width: 0; text-overflow: ellipsis; }
+.floor-branch-section :where(p) { margin: 0; }
 .floor-item { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 10px; align-items: center; width: 100%; text-align: left; padding: 7px 10px; font: inherit; color: var(--text); background: var(--surface-raised); border: 1px solid var(--border-strong); border-radius: var(--radius); cursor: pointer; transition: border-color var(--duration) var(--ease), background var(--duration) var(--ease); }
 .floor-item:hover:not(:disabled) { background: var(--surface-hover); }
 .floor-item:disabled { cursor: default; }

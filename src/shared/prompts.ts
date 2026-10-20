@@ -235,13 +235,18 @@ const WORKER_SYSTEM_DEFAULT = [
   "The office puts two commands on your PATH. Both know who you are, so never call the office's HTTP API yourself. Run a command's `help` before you first use it: it is the whole guide, so don't guess flags.",
   "- `office-workers` hires subagents. Each one is a real worker who sits down at a desk near you, with its own terminal the owner can open and, by default, its own git worktree. Whenever you delegate work, hire with `office-workers`. Don't use the built-in Task tool or start agents any other way, so the owner can see and reach everyone who is working. `office-workers whoami` says whether you may hire. When you may not, do the work yourself. The droid-office-subagents skill has the rules for briefing, waiting for and dismissing subagents.",
   '- `office-whiteboard` puts cards on your floor\'s Whiteboard, a wall the owner and every worker on the floor share. Anything the owner should look at goes there, not into your terminal: a screenshot you took (`office-whiteboard push --title "…" --image shot.png`), a UI mockup, a diagram, a chart, a report, a plan to review, options to choose between with a button for each, or a form for several questions. Then say in your terminal which card to look at. Read what the owner did with `office-whiteboard read` (comments, stickies, form answers, button presses) and answer it. The droid-office-whiteboard skill has the rules.',
-  `Keep the default branch in sync, so the next worker the owner hires right after you starts from the latest code, not from what you left behind. The default branch is \`git symbolic-ref --short refs/remotes/origin/HEAD\` without the \`origin/\` (usually \`main\`).
-- Before you cut a branch for new work, run \`git fetch origin\` and cut it from \`origin/<default>\`, never from whatever is checked out.
-- When you merge a pull request (or find that yours was merged), or you moved the project's checkout onto another branch (\`gh pr checkout\`, a branch you made), put it back before you report. In the project's own checkout: \`git fetch origin && git switch <default> && git pull --ff-only\`. In your own worktree (under \`.droid-office/worktrees\`) the default branch is checked out elsewhere, so don't switch to it: run \`git fetch origin\` and leave your branch alone; your next piece of work starts with \`git switch -c <new-branch> origin/<default>\`.
-- \`gh pr merge\` and \`glab mr merge\` don't do this for you, even with the branch deleted.
-- Never stash, reset or discard anyone's uncommitted changes to get there. If something blocks it, say what in your report.`,
+  '{{branchPolicy}}',
   "Plain status updates and short answers stay in your terminal. When you're done, end with a short report: what changed, how you checked it, and any links.",
 ].join('\n\n');
+
+/** One branch policy for new work and returning the shared checkout, including saved custom prompts. */
+export function workerBranchPolicy(branch: string | undefined, settingsPath: string): string {
+  return `Keep the floor branch in sync so the next worker starts from the owner's chosen base. The floor branch is currently ${branch ? `\`${branch}\`` : 'the repository default'}.
+- At the start of each task and before returning the shared checkout, read \`${settingsPath}\`: its "branch" is the owner's floor override (a valid local or origin branch name). If the file is missing or "branch" is null, use \`git symbolic-ref --short refs/remotes/origin/HEAD\` without \`origin/\` (fall back to an existing main or master, then the checkout's current branch). The owner can change this setting while you work; report an unavailable selected branch rather than silently substituting another.
+- Use this floor branch, not a hard-coded main or the forge default, as the base for new work and pull requests unless the task explicitly names another target. Fetch origin before branching from \`origin/<floor>\`; use the local floor branch if it has no origin counterpart. Keep an existing worktree's task branch and its recorded base, including a subagent's lead branch.
+- After merging or temporarily switching the shared project checkout, return it to the floor branch: \`git fetch origin && git switch <floor>\`, then fast-forward from \`origin/<floor>\` if it exists. In your own worktree under \`.droid-office/worktrees\`, fetch but leave your task branch alone; never move a branch checked out elsewhere.
+- This floor choice takes priority over generic instructions to return to the repository default or a PR's base. Never stash, reset or discard anyone's uncommitted changes, and never move the shared checkout while another worker is using it. Report any blocker.`;
+}
 
 // --- Placeholders several prompts share -----------------------------------------------------------
 
@@ -292,7 +297,7 @@ const MERGE_VARS = {
   merge: 'The merge command for the method (and branch deletion) picked in the merge dialog',
 };
 const SYNC_AFTER_MERGE =
-  'Once it has merged, leave your checkout on the latest `{{base}}` for the next worker: `git fetch origin && git switch {{base}} && git pull --ff-only`. If git says `{{base}}` is checked out in another worktree, run `git fetch origin && git switch --detach origin/{{base}}` instead.';
+  "Once it has merged, fetch origin. Return the shared project checkout to the owner's floor branch: read .droid-office/floor-branch.json in the floor's original project checkout (not your worker worktree). Use its branch value when set, otherwise origin/HEAD's default branch (fall back to an existing main or master, then the checkout's branch). Run `git switch <floor>` and, when origin has it, `git merge --ff-only origin/<floor>`. In your own worktree, fetch but leave your task branch alone. Never discard changes or move a checkout another worker is using.";
 const CHECKOUT =
   'Get onto its branch: `{{checkout}}`. If git says `{{branch}}` is already checked out in another worktree, use `git fetch origin {{branch}} && git checkout --detach FETCH_HEAD` instead and push with `git push origin HEAD:{{branch}}`.';
 
@@ -302,7 +307,7 @@ const DEFS = {
     group: 'workers',
     label: 'Worker system prompt',
     used: 'Added to the system prompt of every Droid worker the office starts or resumes: at a desk, at a kiosk, and every subagent. A change reaches a worker the next time its session starts or resumes. Leave it empty to add nothing.',
-    vars: { name: "The worker's name" },
+    vars: { name: "The worker's name", branchPolicy: "The floor's selected branch and safe branching/checkout-return instructions" },
     optional: true,
     text: WORKER_SYSTEM_DEFAULT,
   },
@@ -552,7 +557,7 @@ const DEFS = {
     label: 'Ship it',
     used: 'A close-range Ship it confetti pop sends this intent to the one worker under the crosshair. The worker chooses how to ship its work.',
     vars: {},
-    text: 'Ship your current work: commit and push it to main, or merge its pull request if that is where the work is. Use your judgment for this repository, respect its checks and branch protections, and report what shipped or what is blocking it. When it has shipped, leave your checkout on the latest default branch (fetch origin and fast-forward it) so the next worker starts from it.',
+    text: "Ship your current work to its intended target branch, or merge its pull request if that is where the work is. Use your judgment for this repository, respect its checks and branch protections, and report what shipped or what is blocking it. For new work, use the floor branch in .droid-office/floor-branch.json in the floor's original project checkout, or origin/HEAD's default when none is selected. Follow this floor branch policy when returning the shared checkout, fetching and fast-forwarding it safely; leave your own worktree's task branch alone.",
   },
 
   // --- Worker signs ---

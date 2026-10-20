@@ -382,7 +382,7 @@ export function openSettings(
     freshRow.replaceChildren(
       ...(
         [
-          [true, 'Latest main'],
+          [true, 'Latest floor branch'],
           [false, 'Checkout’s branch'],
         ] as const
       ).map(([value, label]) =>
@@ -402,8 +402,8 @@ export function openSettings(
       ),
     );
     const now = on
-      ? 'A new worktree is cut from the latest main on origin, whatever the checkout is on. A worker without one gets the checkout switched to the latest main first, unless someone else is working there or it has uncommitted changes on another branch: then it starts as the checkout is, and a toast says why. Subagents start where their lead says.'
-      : 'A new worktree is cut from the latest of the branch the checkout is on, and the checkout is never moved for a worker.';
+      ? 'New workers start from the latest floor branch (the repository default unless picked in the top-left floor menu). The checkout switches safely for workers without worktrees. Subagents start where their lead says.'
+      : 'Without a floor branch override, new worktrees start from the checkout’s branch and the checkout stays put. A branch picked in the top-left floor menu takes priority. Subagents start where their lead says.';
     freshNote.textContent = `${now}${by ? ` Set by ${by}${at ? ` ${timeAgo(at)}` : ``}.` : ``}`;
   };
   paintFresh();

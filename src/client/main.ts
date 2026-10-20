@@ -111,7 +111,7 @@ import { forgeVars } from '../shared/prompts';
 import { INCLUDE_FILE, SETUP_FILE, describeSetup } from '../shared/worktree-setup';
 import { openPhone } from './ui/phone';
 import { elevatorPanelOpen, openElevator, routeElevatorMessage } from './ui/elevator';
-import { toggleFloorMenu } from './ui/floormenu';
+import { routeFloorMenuMessage, toggleFloorMenu } from './ui/floormenu';
 import { modelBadge, rememberedChoice } from './ui/models';
 import { officeFull, pressureNote } from './world/machine';
 import { CiBoardTexture } from './world/factory-ci';
@@ -981,6 +981,7 @@ net.onMessage((msg) => {
   routePipelinesMessage(msg);
   routeJiraMessage(msg);
   routeElevatorMessage(msg);
+  routeFloorMenuMessage(msg);
   routeWhiteboardMessage(msg);
   switch (msg.t) {
     case 'worker.open':
@@ -1097,12 +1098,13 @@ store.on('upgrade', renderUpgrade);
 
 function renderProject() {
   const p = store.project;
-  const branch = store.floor === ROOF || !p ? undefined : (store.floors.find((f) => f.id === store.floor) ?? p).branch;
+  const floor = store.floors.find((f) => f.id === store.floor);
+  const branch = store.floor === ROOF || !p ? undefined : (floor?.selectedBranch ?? (store.freshMain.on ? floor?.baseBranch : undefined) ?? (floor ?? p).branch);
   const branchLabel = branch === 'HEAD' ? 'Detached HEAD' : branch;
   const indicator = $('project-branch');
   indicator.classList.toggle('hidden', !branchLabel);
   indicator.textContent = branchLabel ? `⎇ ${branchLabel}` : '';
-  indicator.title = branchLabel ? `Current checkout branch: ${branchLabel}` : '';
+  indicator.title = branchLabel ? `Floor branch: ${branchLabel}${floor?.branch && floor.branch !== branch ? ` · Checkout: ${floor.branch}` : ''}` : '';
   indicator.setAttribute('aria-label', indicator.title);
   renderTitle();
   if (store.floor === ROOF) {
@@ -1128,6 +1130,7 @@ function renderProject() {
 }
 store.on('floors', renderProject);
 store.on('project', renderProject);
+store.on('freshMain', renderProject);
 
 /** The tab title counts workers waiting on someone, on every floor, while this tab is in the background. Focusing it clears the count. */
 function renderTitle() {
@@ -3205,7 +3208,7 @@ $('hud').addEventListener('click', (e) => {
 // The project in the corner is the floor you're on; click it for the list of floors to go to.
 $('project').addEventListener('click', () => {
   if (!store.floor) return showElevator();
-  toggleFloorMenu($('project'), { go: switchFloor, elevator: showElevator, roof: () => ride(ROOF) });
+  toggleFloorMenu($('project'), { net, go: switchFloor, elevator: showElevator, roof: () => ride(ROOF) });
 });
 
 // ---- The HUD: a few buttons on the top bar, everything else in the ☰ menu ----------------------------

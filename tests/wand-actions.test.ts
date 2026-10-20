@@ -25,7 +25,8 @@ test('Ship it sends only an intent prompt to the selected worker, leaving Git de
   const prompt = PROMPTS['wand.ship'].text;
   const request = wandShipRequest(worker(), prompt);
   assert.deepEqual(request, { t: 'worker.prompt', workerId: 'worker', prompt });
-  assert.match(prompt, /commit and push it to main/);
+  assert.match(prompt, /intended target branch/);
+  assert.match(prompt, /floor branch policy/);
   assert.match(prompt, /merge its pull request/);
   assert.match(prompt, /Use your judgment/);
   assert.doesNotMatch(prompt, /git |gh |glab |1\.|--force/);

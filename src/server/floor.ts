@@ -122,6 +122,7 @@ export class Floor {
   readonly id: string;
   readonly dir: string;
   readonly project: ProjectInfo;
+  private branchInfo: Pick<FloorInfo, 'baseBranch' | 'selectedBranch'> = {};
   readonly workers: WorkerManager;
   /** The login shell on the boss's monitor. Not a worker. */
   readonly shell: OfficeShell;
@@ -225,12 +226,14 @@ export class Floor {
         toast: (text, level, workerId) => ctx.toast(this, text, level, workerId),
         checkout: (branch) => {
           this.project.branch = branch;
+          this.branchInfo = { baseBranch: this.workers.baseBranch, selectedBranch: this.workers.selectedBranch };
         },
       },
       ctx.capacity,
       this.board,
       ctx.prompts,
     );
+    this.branchInfo = { baseBranch: this.workers.baseBranch, selectedBranch: this.workers.selectedBranch };
 
     // Someone's own droid (or claude, codex…) in this checkout: watched at a desk, never run by the office.
     const own = this.workers;
@@ -333,8 +336,8 @@ export class Floor {
             cwd: w.worktree ? path.join(def.dir, w.worktree.path) : def.dir,
             rel: w.worktree?.path ?? '',
             worktreeBase: w.worktree?.base,
-            baseBranch: w.worktree?.from ?? this.project.branch ?? null,
-            prBaseFallback: this.project.branch ?? null,
+            baseBranch: w.worktree?.from ?? this.workers.selectedBranch ?? this.project.branch ?? null,
+            prBaseFallback: this.workers.selectedBranch ?? this.project.branch ?? null,
           };
         // One of the other floors' repositories it works in: diffed against, and PRs opened against, that floor's branch.
         const r = w.repos?.find((x) => x.floor === repo);
@@ -346,7 +349,7 @@ export class Floor {
           rel: r.path,
           worktreeBase: r.base,
           baseBranch: r.from ?? null,
-          prBaseFallback: other?.project.branch ?? null,
+          prBaseFallback: other?.workers.selectedBranch ?? other?.project.branch ?? null,
           openPull: (branch) => (other ? openPull(other, branch) : undefined),
           refreshGitHub: () => void other?.board.refresh(),
         };
@@ -532,6 +535,7 @@ export class Floor {
       repo: this.def.repo,
       dir: this.dir,
       branch: this.project.branch,
+      ...this.branchInfo,
       palette: this.def.palette,
       addedBy: this.def.addedBy,
       addedAt: this.def.addedAt,
