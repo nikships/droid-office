@@ -24,6 +24,8 @@ export interface Lamp {
   power: number;
   /** Down by the street (a street lamp, the one over the exit): it's further down the higher your floor is. */
   ground?: boolean;
+  /** Lights the office rather than the street; outdoor pools never bleed through its walls. */
+  indoor?: boolean;
 }
 
 /** Everything that changes between day and night and with the weather, for the sky to drive. */

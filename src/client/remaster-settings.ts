@@ -430,7 +430,7 @@ export function resolveRemaster(s: RemasterSettings): RenderParams {
 }
 
 /** Bumped when a change to how the probes bake makes saved bakes wrong in a way the other inputs don't show. */
-export const BAKE_FORMAT = 1;
+export const BAKE_FORMAT = 2;
 
 /**
  * Everything the baked bounce light depends on: the grid, the lights the probes see and the shading they see it with,

@@ -34,6 +34,30 @@ test('unlit fogged materials get the room tests they need, but none of the light
   assert.ok('skyStreet' in shader.uniforms && 'skyDrop' in shader.uniforms);
 });
 
+test('factory lamps light the interior, separately from street lamps and within their own bounds', () => {
+  const shader = compile(new THREE.MeshToonMaterial(), 'toon');
+  assert.match(shader.fragmentShader, /skyIndoor > 0.0.*skyIndoorLampsAt\( vSkyWorld, skyN \)/);
+  assert.match(shader.fragmentShader, /skyIndoor < 1.0.*skyLampsAt\( vSkyWorld, skyN \)/);
+  assert.doesNotMatch(shader.fragmentShader, /skyLampRooms/, 'no per-light room branch in the long outdoor loop');
+  assert.match(shader.fragmentShader, /lessThan\( p, skyIndoorLampMin \)/);
+  const night = {
+    street: -3,
+    lamps: [
+      { x: -4, y: 2, z: 22, reach: 10, ground: true },
+      { x: 8, y: 0.55, z: -8, reach: 1.65, indoor: true },
+    ],
+  };
+  const sky = { night, groundHalos: new THREE.Group() };
+  (Sky.prototype as unknown as { placeLamps(): void }).placeLamps.call(sky);
+  assert.equal(shader.uniforms.skyLamps.value[0], -4);
+  assert.equal(shader.uniforms.skyIndoorLamps.value[0], 8);
+  const min = shader.uniforms.skyIndoorLampMin.value as THREE.Vector3;
+  const max = shader.uniforms.skyIndoorLampMax.value as THREE.Vector3;
+  assert.ok(min.distanceTo(new THREE.Vector3(6.35, -1.1, -9.65)) < 1e-6);
+  assert.ok(max.distanceTo(new THREE.Vector3(9.65, 2.2, -6.35)) < 1e-6);
+  assert.ok(!new THREE.Box3(min, max).containsPoint(new THREE.Vector3(-4, 0, 22)), 'street pixels skip the indoor lights');
+});
+
 test('sprites, which skip <project_vertex>, still write where they are in the world', () => {
   const shader = compile(new THREE.SpriteMaterial(), 'sprite');
   assert.doesNotMatch(THREE.ShaderLib.sprite.vertexShader, /#include <project_vertex>/);

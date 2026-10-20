@@ -13,6 +13,7 @@ import { casualtyMarkers } from './world/casualties';
 import { toonifyProp } from './world/factory-props';
 import { BloodSpray, Muzzle, Puff, magnum } from './world/gun';
 import { toonUnique } from './world/toon';
+import { surfaceFinish } from './world/surface';
 import { SpellBolt, SpellImpact, Sparkles, TipTrail, Wand } from './world/wand';
 
 /**
@@ -78,6 +79,9 @@ export function materialFeatures(root: THREE.Object3D): string[] {
       if ('map' in entry && (entry as THREE.MeshBasicMaterial).map) bits.push('map');
       if ('gradientMap' in entry && (entry as THREE.MeshToonMaterial).gradientMap) bits.push('gradient');
       if ('vertexColors' in entry && (entry as THREE.MeshBasicMaterial).vertexColors) bits.push('vertexColors');
+      if (surfaceFinish(entry)) bits.push('surface');
+      if (entry.userData.floorContact === true) bits.push('contact');
+      if (entry.userData.wallContact === true) bits.push('wallContact');
       if (entry.blending === THREE.AdditiveBlending) bits.push('additive');
       if (entry.side === THREE.DoubleSide) bits.push('double');
       if (mesh.isMesh === true && mesh.geometry && !normals) bits.push('noNormals');

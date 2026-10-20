@@ -3,6 +3,7 @@ import { FLOOR, SLAB, STREET_Y, WALL_T } from '../../shared/layout';
 import type { SkyState, Weather } from '../../shared/protocol';
 import { guessPlace } from '../../shared/sun';
 import type { NightParts } from './outside';
+import { CONTACT_LIGHT, SURFACE_LIGHT, SURFACE_VERTEX, surfaceFinish, surfaceUniforms, WALL_CONTACT } from './surface';
 
 /*
  * The night city and the weather outside the windows. It is always night: the server says what the
@@ -18,6 +19,7 @@ import type { NightParts } from './outside';
  */
 
 const MAX_LAMPS = 24;
+const MAX_INDOOR_LAMPS = 4;
 /** The laptop screens that light the room at once: the nearest ones to you. */
 const MAX_SCREENS = 16;
 /** How far a laptop screen's light reaches (m), and how strongly it shines in the units of three.js lights. */
@@ -61,6 +63,8 @@ class Slots {
 
 const lampSlots = new Slots(MAX_LAMPS, 4);
 const lampColorSlots = new Slots(MAX_LAMPS, 3);
+const indoorLampSlots = new Slots(MAX_INDOOR_LAMPS, 4);
+const indoorLampColorSlots = new Slots(MAX_INDOOR_LAMPS, 3);
 const screenSlots = new Slots(MAX_SCREENS, 4);
 const screenDirSlots = new Slots(MAX_SCREENS, 3);
 const screenColorSlots = new Slots(MAX_SCREENS, 3);
@@ -81,6 +85,12 @@ const uniforms = {
   /** Around all the lamps' pools, so everywhere else skips them. */
   skyLampMin: { value: new THREE.Vector3() },
   skyLampMax: { value: new THREE.Vector3() },
+  /** Indoor pools have their own small box, so the rest of the room skips their loop. */
+  skyIndoorLampMin: { value: new THREE.Vector3() },
+  skyIndoorLampMax: { value: new THREE.Vector3() },
+  skyIndoorLampCount: { value: 0 },
+  skyIndoorLamps: { value: indoorLampSlots.data },
+  skyIndoorLampColors: { value: indoorLampColorSlots.data },
   /** Each laptop screen's position and reach, which way it faces, and its color × strength. */
   skyScreenCount: { value: 0 },
   skyScreens: { value: screenSlots.data },
@@ -153,6 +163,11 @@ uniform vec4 skyLamps[${MAX_LAMPS}];
 uniform vec3 skyLampColors[${MAX_LAMPS}];
 uniform vec3 skyLampMin;
 uniform vec3 skyLampMax;
+uniform vec3 skyIndoorLampMin;
+uniform vec3 skyIndoorLampMax;
+uniform int skyIndoorLampCount;
+uniform vec4 skyIndoorLamps[${MAX_INDOOR_LAMPS}];
+uniform vec3 skyIndoorLampColors[${MAX_INDOOR_LAMPS}];
 uniform int skyScreenCount;
 uniform vec4 skyScreens[${MAX_SCREENS}];
 uniform vec3 skyScreenDirs[${MAX_SCREENS}];
@@ -190,6 +205,20 @@ vec3 skyLampsAt( vec3 p, vec3 n ) {
   return sum;
 }
 
+// A separate short loop avoids a per-light room branch in the street lamps' much longer loop.
+vec3 skyIndoorLampsAt( vec3 p, vec3 n ) {
+  vec3 sum = vec3( 0.0 );
+  if ( any( lessThan( p, skyIndoorLampMin ) ) || any( greaterThan( p, skyIndoorLampMax ) ) ) return sum;
+  for ( int i = 0; i < ${MAX_INDOOR_LAMPS}; i ++ ) {
+    if ( i >= skyIndoorLampCount ) break;
+    vec3 d = skyIndoorLamps[ i ].xyz - p;
+    float r = length( d );
+    float k = 1.0 - clamp( r / skyIndoorLamps[ i ].w, 0.0, 1.0 );
+    sum += skyIndoorLampColors[ i ] * k * k * ( 0.3 + 0.7 * max( dot( n, d / max( r, 0.001 ) ), 0.0 ) );
+  }
+  return sum;
+}
+
 // A laptop screen throws its light forward, and a little all round from the glow off the lid.
 vec3 skyScreensAt( vec3 p, vec3 n ) {
   vec3 sum = vec3( 0.0 );
@@ -220,7 +249,8 @@ material.diffuseColor = mix( material.diffuseColor, vec3( 0.93, 0.96, 1.0 ), sky
 const LIGHT = /* glsl */ `
 if ( skyOn > 0.0 ) {
   vec3 skyLight = rmFill * skyIndoor * skyOffice * ( 0.65 + 0.35 * skyN.y ) + rmScreens * skyScreensAt( vSkyWorld, skyN );
-  // The lamps and the garage light only what's outside the office, so indoors skips their loop.
+  // Each side of the walls gets only its own lamps. The tiny indoor box skips the loop elsewhere.
+  if ( skyIndoor > 0.0 ) skyLight += rmLamps * skyIndoor * skyIndoorLampsAt( vSkyWorld, skyN );
   if ( skyIndoor < 1.0 ) skyLight += rmLamps * ( 1.0 - skyIndoor ) * ( skyGar * skyGarage + skyLampsAt( vSkyWorld, skyN ) );
   reflectedLight.indirectDiffuse += skyLight * BRDF_Lambert( material.diffuseColor );
   if ( rmGIOnly > 0.5 ) {
@@ -325,9 +355,22 @@ THREE.Material.prototype.onBeforeCompile = function (this: THREE.Material, shade
     shader.fragmentShader = shader.fragmentShader.replace('#include <fog_pars_fragment>', `#include <fog_pars_fragment>\n${HAZE_PARS}`).replace('#include <fog_fragment>', HAZE);
   }
   if (lit) {
+    Object.assign(shader.uniforms, surfaceUniforms);
+    const finish = surfaceFinish(this);
+    if (finish) {
+      shader.uniforms.rmFinish = { value: new THREE.Vector2(...finish) };
+      const surfacePars = 'uniform float rmSurface;\nuniform vec2 rmFinish;\nvarying vec3 vRmSurface;';
+      shader.vertexShader = shader.vertexShader.replace('#include <common>', `#include <common>\n${surfacePars}\nuniform vec3 skyOffice;\nuniform float rmFill;`).replace(WORLD, `${WORLD}\n${SURFACE_VERTEX}`);
+      shader.fragmentShader = shader.fragmentShader.replace('#include <common>', `#include <common>\n${surfacePars}`);
+      if ((this as THREE.MeshToonMaterial).isMeshToonMaterial) shader.fragmentShader = shader.fragmentShader.replace('#include <opaque_fragment>', 'outgoingLight += reflectedLight.indirectSpecular;\n#include <opaque_fragment>');
+    }
+    const contact = this.userData.floorContact === true;
+    const wall = this.userData.wallContact === true;
+    if (contact || wall) shader.fragmentShader = shader.fragmentShader.replace('#include <common>', '#include <common>\nuniform float rmContact;');
+    if (contact) shader.fragmentShader = shader.fragmentShader.replace('#include <common>', '#include <common>\nuniform sampler2D rmContactMap;');
     shader.fragmentShader = shader.fragmentShader
       .replace('#include <lights_fragment_begin>', `${SURFACE}\n#include <lights_fragment_begin>`)
-      .replace('#include <lights_fragment_end>', `#include <lights_fragment_end>\n${LIGHT}`)
+      .replace('#include <lights_fragment_end>', `#include <lights_fragment_end>\n${LIGHT}\n${finish ? SURFACE_LIGHT : ''}\n${contact ? CONTACT_LIGHT : ''}\n${wall ? WALL_CONTACT : ''}`)
       .replace('#include <emissivemap_fragment>', `#include <emissivemap_fragment>\n${EMISSIVE}`);
   }
 };
@@ -336,7 +379,7 @@ THREE.Material.prototype.onBeforeCompile = function (this: THREE.Material, shade
 // an onBeforeCompile of its own keeps that source in its key, as three.js's default would.
 THREE.Material.prototype.customProgramCacheKey = function (this: THREE.Material) {
   const own = Object.hasOwn(this, 'onBeforeCompile') ? `|${this.onBeforeCompile.toString()}` : '';
-  return `${this.toneMapped === false ? 'sky:glow' : 'sky'}${own}`;
+  return `${this.toneMapped === false ? 'sky:glow' : 'sky'}|surface:${surfaceFinish(this) ? 'on' : 'off'}|contact:${this.userData.floorContact === true}|wall:${this.userData.wallContact === true}${own}`;
 };
 
 // ---- The sky ------------------------------------------------------------------------------------
@@ -485,6 +528,8 @@ export class Sky {
   private readonly groundHalos = new THREE.Group();
   /** Where the street was when the lamps were last put in place (see NightParts.street). */
   private street = NaN;
+  private outdoorLamps: NightParts['lamps'] = [];
+  private indoorLamps: NightParts['lamps'] = [];
   private readonly rainLines: THREE.LineSegments<THREE.BufferGeometry, THREE.LineBasicMaterial>;
   private readonly drops: Float32Array;
   private readonly flakes: THREE.Points<THREE.BufferGeometry, THREE.PointsMaterial>;
@@ -593,11 +638,20 @@ export class Sky {
     this.groundHalos.position.y = -drop;
     const lo = uniforms.skyLampMin.value.set(Infinity, Infinity, Infinity);
     const hi = uniforms.skyLampMax.value.set(-Infinity, -Infinity, -Infinity);
-    this.night.lamps.slice(0, MAX_LAMPS).forEach((l, i) => {
+    const indoorLo = uniforms.skyIndoorLampMin.value.set(Infinity, Infinity, Infinity);
+    const indoorHi = uniforms.skyIndoorLampMax.value.set(-Infinity, -Infinity, -Infinity);
+    this.outdoorLamps = this.night.lamps.filter((l) => !l.indoor).slice(0, MAX_LAMPS);
+    this.indoorLamps = this.night.lamps.filter((l) => l.indoor).slice(0, MAX_INDOOR_LAMPS);
+    this.outdoorLamps.forEach((l, i) => {
       const y = l.ground ? l.y - drop : l.y;
       lampSlots.set(i, l.x, y, l.z, l.reach);
       lo.min(new THREE.Vector3(l.x - l.reach, y - l.reach, l.z - l.reach));
       hi.max(new THREE.Vector3(l.x + l.reach, y + l.reach, l.z + l.reach));
+    });
+    this.indoorLamps.forEach((l, i) => {
+      indoorLampSlots.set(i, l.x, l.y, l.z, l.reach);
+      indoorLo.min(new THREE.Vector3(l.x - l.reach, l.y - l.reach, l.z - l.reach));
+      indoorHi.max(new THREE.Vector3(l.x + l.reach, l.y + l.reach, l.z + l.reach));
     });
   }
 
@@ -713,12 +767,14 @@ export class Sky {
     this.level = clamp01((hemiI + ambI + 0.6 * moonI) / FULL_DAY);
 
     // The lamps are always on: the ones outside, and the office's and the garage's faint fill (set up in the constructor).
-    const lamps = Math.min(this.night.lamps.length, MAX_LAMPS);
+    const lamps = this.outdoorLamps.length;
     uniforms.skyLampCount.value = this.roof ? 0 : lamps;
     for (let i = 0; i < lamps; i++) {
-      const l = this.night.lamps[i];
+      const l = this.outdoorLamps[i];
       lampColorSlots.setColor(i, _lampColor.set(l.color), l.power * this.lampsOn);
     }
+    uniforms.skyIndoorLampCount.value = this.roof ? 0 : this.indoorLamps.length;
+    this.indoorLamps.forEach((l, i) => indoorLampColorSlots.setColor(i, _lampColor.set(l.color), l.power * this.lampsOn));
     for (const b of this.night.bulbs) b.mat.emissiveIntensity = lerp(b.day, 1, this.lampsOn) * (b.overhead ? this.overhead : 1);
     for (const m of this.night.windows) m.emissiveIntensity = this.lampsOn * 1.1;
     for (const h of this.halos) {

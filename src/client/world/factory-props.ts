@@ -494,7 +494,7 @@ function buildCell(kit: DressingKit, waiting: Waiting[], updates: ((t: number, d
   }
   cell.add(mergeByMaterial(stat));
   // Reuse the office's bounded lamp pools instead of adding scene-wide three.js lights.
-  for (const lane of [-1, 1]) kit.night.lamps.push({ x, y: 0.55, z: z + lane * LANE, reach: 1.65, color: ORANGE, power: 1.8 });
+  for (const lane of [-1, 1]) kit.night.lamps.push({ x, y: 0.55, z: z + lane * LANE, reach: 1.65, color: ORANGE, power: 1.8, indoor: true });
   kit.colliders.push({ minX: x - width / 2, maxX: x + width / 2, minZ: z - depth / 2, maxZ: z + depth / 2, top: ROBOT_CELL.top, fence: true });
 
   // The conveyors: crates come in from code review on the far lane and leave shipped on the near one.
