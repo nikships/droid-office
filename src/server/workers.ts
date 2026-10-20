@@ -18,7 +18,7 @@ import { normalizeRepo } from '../shared/floors.js';
 import { DESK_BY_ID, STATION_AGENT } from '../shared/layout.js';
 import { stationBrief } from './stations.js';
 import { officePrompt, type PromptSource } from './prompts.js';
-import { forgeVars } from '../shared/prompts.js';
+import { forgeVars, PROMPTS, workerBranchPolicy } from '../shared/prompts.js';
 import { isBusy } from '../shared/status.js';
 import { githubPulls } from './github.js';
 import type { PullHost } from './forge.js';
@@ -386,10 +386,50 @@ export class WorkerManager {
    * when there's nothing to wait for.
    */
   fetchBase(checkout = false): Promise<void> | undefined {
-    const fresh = this.freshMain?.() ?? false;
+    const fresh = this.freshBase();
     if (checkout && !fresh) return undefined;
     return this.trees.fetch(fresh ? 'main' : 'checkout');
   }
+
+  private freshBase(): boolean {
+    return !!this.trees.selectedBranch() || (this.freshMain?.() ?? false);
+  }
+
+  branchState() {
+    return { branches: this.trees.branches(), defaultBranch: this.trees.defaultBranch(), selectedBranch: this.trees.selectedBranch() };
+  }
+
+  get baseBranch(): string | undefined {
+    return this.trees.baseBranch();
+  }
+
+  get selectedBranch(): string | undefined {
+    return this.trees.selectedBranch();
+  }
+
+  /** An explicit floor switch has the same no-data-loss and checkout-occupancy guards as a hire. */
+  async selectBranch(branch: string | null): Promise<string | undefined> {
+    if (this.selectingBranch) return 'A floor branch switch is already in progress';
+    if (branch !== null && (!this.trees.validBranch(branch) || !this.trees.branches().includes(branch))) return 'Choose an existing local or origin branch';
+    const target = branch ?? this.trees.defaultBranch();
+    if (!target) return 'This floor has no default branch';
+    this.selectingBranch = true;
+    try {
+      await this.trees.fetchRef(`origin/${target}`);
+      const r = this.freshenWith(false, target);
+      if (r.kept && r.branch !== target) return `Couldn't switch the floor to ${target}: ${r.kept}`;
+      this.trees.saveBranch(branch);
+      this.events.checkout?.(r.branch ?? target);
+      this.events.toast(`🌿 Floor branch set to ${target}${branch === null ? ' (repository default)' : ''}${r.kept ? `: ${r.kept}` : ''}`, 'info');
+      return undefined;
+    } catch (err) {
+      return `Couldn't switch the floor branch: ${(err as Error).message}`;
+    } finally {
+      this.selectingBranch = false;
+    }
+  }
+
+  private selectingBranch = false;
 
   /**
    * Fetches what a subagent of `lead` starts from, independently of freshMain: the origin branch the
@@ -480,6 +520,7 @@ export class WorkerManager {
     images?: readonly string[],
     from?: string,
   ): WorkerInfo | string {
+    if (this.selectingBranch) return 'Wait for the floor branch switch to finish before hiring';
     // Nobody picked (a board agent, say): the office's default worker, model and effort included.
     const picked = kind === 'agent' && model === undefined ? this.officeDefault : undefined;
     if (picked) ({ model, effort } = picked);
@@ -493,7 +534,7 @@ export class WorkerManager {
     if (kind === 'shell' && seat.station) return 'A board agent is always an agent, not a shell';
     if (repos.length && (kind !== 'agent' || !worktree || seat.station)) return 'Only a worker in its own worktree can work in other repositories too';
     if (repos.length > MAX_REPOS) return `A worker can take on at most ${MAX_REPOS} other repositories`;
-    const fresh = this.freshMain?.() ?? false;
+    const fresh = this.freshBase();
     let start: WorktreeStart = fresh ? 'main' : 'checkout';
     if (from !== undefined && (lead === undefined || !worktree)) return 'Only a subagent in its own worktree starts from a branch its lead picks';
     if (lead !== undefined) {
@@ -594,11 +635,11 @@ export class WorkerManager {
    * workers at rest only block leaving a branch they may come back to, which they don't once its
    * work has landed (`delivered`).
    */
-  private freshenWith(delivered: boolean) {
+  private freshenWith(delivered: boolean, target?: string) {
     const there = [...this.workers.values()].filter((w) => w.pty && !w.info.worktree && !boardAgent(w.info));
     const active = there.filter((w) => isBusy(w.info.status)).map((w) => w.info.name);
     const resting = delivered ? [] : there.filter((w) => !isBusy(w.info.status)).map((w) => w.info.name);
-    return this.trees.freshen([...active, ...(this.holds?.inCheckout?.() ?? [])], resting);
+    return this.trees.freshen([...active, ...(this.holds?.inCheckout?.() ?? [])], resting, target);
   }
 
   /**
@@ -609,12 +650,13 @@ export class WorkerManager {
    * off. Never touches a branch whose work hasn't landed, uncommitted changes, or a worker mid-turn.
    */
   async settleCheckout(): Promise<void> {
-    if (this.settling || !(this.freshMain?.() ?? false)) return;
+    if (this.settling || this.selectingBranch || !this.freshBase()) return;
     const landed = () => this.trees.delivered(this.pullList?.() ?? []);
     if (!landed()) return;
     this.settling = true;
     try {
       await this.trees.fetch('main');
+      if (this.selectingBranch) return;
       if (!landed()) return;
       const r = this.freshenWith(true);
       if (!r.switchedFrom) return;
@@ -1330,7 +1372,7 @@ export class WorkerManager {
         return { prs: [{ ...open, existed: true, dirty }], failed: [] };
       }
       await pushBranch(cwd, branch, 90_000);
-      const base = await choosePullBase(this.trees, branch, { from: wt.from, configured: this.configuredBase, current: this.trees.currentBranch(), defaultBranch: this.trees.defaultBranch() });
+      const base = await choosePullBase(this.trees, branch, { from: wt.from, configured: this.trees.selectedBranch() ?? this.configuredBase, current: this.trees.currentBranch(), defaultBranch: this.trees.defaultBranch() });
       const { title, body } = draftPr(info, commits, by);
       const { number, url } = await this.pulls.createPull(cwd, branch, base, title, body);
       info.pr = { number, url };
@@ -1384,7 +1426,7 @@ export class WorkerManager {
           }
           await pushBranch(cwd, p.branch, 90_000);
           const repo = new Worktrees(p.dir);
-          const base = await choosePullBase(repo, p.branch, { from: p.from, configured: p.own ? this.configuredBase : undefined, current: repo.currentBranch(), defaultBranch: repo.defaultBranch() });
+          const base = await choosePullBase(repo, p.branch, { from: p.from, configured: repo.selectedBranch() ?? (p.own ? this.configuredBase : undefined), current: repo.currentBranch(), defaultBranch: repo.defaultBranch() });
           const { title, body } = draftPr(info, commits, by, p.own ? undefined : { home });
           const pr = await this.pulls.createPull(cwd, p.branch, base, title, body);
           p.set(pr);
@@ -2061,7 +2103,12 @@ process.stdin.on('end', () => {
    */
   private systemPromptFile(info: WorkerInfo): string | undefined {
     const file = path.join(this.dataDir, `system-${info.id}.md`);
-    const text = officePrompt(this.prompts, 'worker.system', { name: info.name });
+    const branchPolicy = workerBranchPolicy(this.trees.baseBranch() ?? this.trees.currentBranch(), this.trees.branchFile);
+    const template = this.prompts?.text('worker.system') ?? PROMPTS['worker.system'].text;
+    let text = officePrompt(this.prompts, 'worker.system', { name: info.name, branchPolicy });
+    // A saved system prompt may predate the floor selector. Keep it, but don't let its generic
+    // default-branch instructions override an explicit owner choice.
+    if (text && this.trees.selectedBranch() && !template.includes('{{branchPolicy}}')) text += `\n\n${branchPolicy}`;
     try {
       if (!text) {
         rmSync(file, { force: true });

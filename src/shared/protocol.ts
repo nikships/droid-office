@@ -463,6 +463,10 @@ export interface FloorInfo {
   dir: string;
   /** The branch that checkout is on ('HEAD' when detached): what a worktree cut from it targets. */
   branch?: string;
+  /** The floor's worker base, defaulting to the repository's default branch. */
+  baseBranch?: string;
+  /** Set only when the owner picked an override. */
+  selectedBranch?: string;
   /** Which of FLOOR_PALETTES it's painted in. */
   palette: number;
   /** The project the office was started in (`droid-office <dir>`): the office keeps its own data in its checkout. */
@@ -894,6 +898,10 @@ export type ClientMsg =
    * floor list), or the ladder or fire pole you came by.
    */
   | { t: 'floor.go'; floor: string; at?: { x: number; y: number; z: number; rotY: number } }
+  /** List selectable local/origin branches on the current floor, answered with the same request id. */
+  | { t: 'floor.branches'; floor: string; request: string }
+  /** Safely switch this floor's base; null restores the repository default. Answered with `floor.branches`. */
+  | { t: 'floor.branch'; floor: string; request: string; branch: string | null }
   /** The checkouts in the workspace folder that could become a floor; answered with `floor.repos`. */
   | { t: 'floor.repos'; refresh?: boolean }
   /** Make an existing checkout (its full path, in the workspace folder) a new floor, where it is; answered with `floor.added`. */
@@ -977,6 +985,8 @@ export type ServerMsg =
   /** You arrived on another floor: everything on it, replacing the last one's. */
   | ({ t: 'floor.enter'; arrival: Arrival } & FloorView)
   | { t: 'floors'; floors: FloorInfo[] }
+  /** Branch choices and switch result, sent only to whoever asked. */
+  | { t: 'floor.branches'; floor: string; request: string; branches: string[]; defaultBranch?: string; selectedBranch?: string; error?: string }
   /** Sent to whoever asked. */
   | { t: 'floor.repos'; repos: RepoChoice[]; error?: string }
   /** Sent to whoever asked for the floor (or couldn't get it). `dir` is the checkout they asked for. */

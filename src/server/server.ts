@@ -1438,6 +1438,21 @@ export async function startServer(cfg: Config) {
           (err: Error) => sendTo(c, { t: 'floor.repos', repos: [], error: `Couldn't look for checkouts: ${err.message}` }),
         );
         break;
+      case 'floor.branches':
+      case 'floor.branch': {
+        const floor = floorOf(c);
+        if (!floor || floor.id !== msg.floor) return warn(c, 'Choose a branch on the floor you are on');
+        const reply = (error?: string) => sendTo(c, { t: 'floor.branches', floor: floor.id, request: str(msg.request, 80), ...floor.workers.branchState(), ...(error ? { error } : {}) });
+        if (msg.t === 'floor.branches') reply();
+        else {
+          if (msg.branch !== null && (typeof msg.branch !== 'string' || msg.branch.length > 1024)) return reply('Invalid branch name');
+          void floor.workers.selectBranch(msg.branch).then((error) => {
+            if (!error) floorsChanged();
+            reply(error);
+          });
+        }
+        break;
+      }
       case 'floor.add': {
         const dir = str(msg.dir, 1024);
         const r = building.add(dir, who);

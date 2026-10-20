@@ -377,6 +377,10 @@ class Store {
         break;
       case 'floors':
         this.floors = msg.floors;
+        if (this.project) {
+          const floor = this.currentFloor();
+          if (floor) this.project.branch = floor.branch;
+        }
         this.emit('floors');
         break;
       case 'projectsDir':

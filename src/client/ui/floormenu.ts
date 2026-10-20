@@ -1,6 +1,7 @@
 import { floorPalette } from '../../shared/floors';
 import { ROOF, ROOF_NAME } from '../../shared/rooftop';
-import type { FloorInfo } from '../../shared/protocol';
+import type { FloorInfo, ServerMsg } from '../../shared/protocol';
+import type { Net } from '../net';
 import { store } from '../state';
 import { h } from './dom';
 
@@ -9,6 +10,7 @@ import { h } from './dom';
 // in now. Adding a project is still the elevator's job.
 
 export interface FloorMenuOptions {
+  net: Net;
   /** Go to that floor, staying where you are in the office. */
   go(floorId: string): void;
   /** Open the elevator's panel, to add a project. */
@@ -18,6 +20,12 @@ export interface FloorMenuOptions {
 }
 
 let current: { el: HTMLElement; close(): void } | null = null;
+const branchWaiters = new Set<(msg: Extract<ServerMsg, { t: 'floor.branches' }>) => void>();
+let branchRequest = 0;
+
+export function routeFloorMenuMessage(msg: ServerMsg) {
+  if (msg.t === 'floor.branches') for (const fn of branchWaiters) fn(msg);
+}
 
 export function floorMenuOpen(): boolean {
   return !!current;
@@ -54,6 +62,55 @@ export function toggleFloorMenu(anchor: HTMLElement, opts: FloorMenuOptions): vo
     return;
   }
   const el = h('div.floor-menu.panel', { role: 'menu', 'aria-label': 'Floors' });
+  const floor = store.currentFloor();
+  const branchSection = h('section.floor-branch-section.stack.tight');
+  const directory = h('div.stack.tight');
+  el.append(branchSection, directory);
+  const branchSelect = h('select.select', { 'aria-label': 'Floor branch', disabled: true }) as HTMLSelectElement;
+  const branchError = h('p.field-error', { role: 'alert' });
+  const branchNote = h('p.field-hint', {}, 'New workers start here. Existing worktrees stay on their branches.');
+  const apply = h('button.btn.accent.sm', { type: 'button', disabled: true }, 'Switch branch') as HTMLButtonElement;
+  let pending = true;
+  let selected: string | null = null;
+  let request = String(++branchRequest);
+  const changed = () => {
+    apply.disabled = pending || (branchSelect.value || null) === selected;
+  };
+  branchSelect.addEventListener('change', changed);
+  apply.addEventListener('click', () => {
+    if (!floor || pending) return;
+    pending = true;
+    changed();
+    branchSelect.disabled = true;
+    branchError.textContent = '';
+    request = String(++branchRequest);
+    if (!opts.net.send({ t: 'floor.branch', floor: floor.id, request, branch: branchSelect.value || null })) {
+      pending = false;
+      branchSelect.disabled = false;
+      branchError.textContent = 'Disconnected. Reconnect and try again.';
+      changed();
+    }
+  });
+  const onBranches = (msg: Extract<ServerMsg, { t: 'floor.branches' }>) => {
+    if (msg.floor !== floor?.id || msg.request !== request) return;
+    pending = false;
+    selected = msg.selectedBranch ?? null;
+    branchSelect.replaceChildren(
+      h('option', { value: '' }, `Repository default${msg.defaultBranch ? ` (${msg.defaultBranch})` : ''}`),
+      ...msg.branches.map((branch) => h('option', { value: branch }, branch)),
+      ...(selected && !msg.branches.includes(selected) ? [h('option', { value: selected }, `${selected} (unavailable)`)] : []),
+    );
+    branchSelect.value = selected ?? '';
+    branchSelect.title = selected ?? msg.defaultBranch ?? '';
+    branchSelect.disabled = !msg.branches.length && !selected;
+    branchError.textContent = msg.error ?? '';
+    changed();
+  };
+  if (floor?.branch) {
+    branchSection.append(h('label.eyebrow', {}, 'Floor branch'), branchSelect, branchNote, h('div.row', {}, apply), branchError);
+    branchWaiters.add(onBranches);
+    if (!opts.net.send({ t: 'floor.branches', floor: floor.id, request })) branchError.textContent = 'Disconnected. Reopen this menu after reconnecting.';
+  }
 
   const item = (f: FloorInfo, i: number, here: number) => {
     const isHere = f.id === store.floor;
@@ -103,7 +160,7 @@ export function toggleFloorMenu(anchor: HTMLElement, opts: FloorMenuOptions): vo
       close();
       opts.roof();
     });
-    el.replaceChildren(
+    directory.replaceChildren(
       h('div.floor-menu-head.eyebrow', {}, h('span.no', {}, String(floors.length)), `floor${floors.length === 1 ? '' : 's'}`),
       h('div.list.floor-menu-list', {}, ...(floors.length ? [roof] : []), ...items),
       h('div.floor-menu-foot', {}, add),
@@ -123,7 +180,17 @@ export function toggleFloorMenu(anchor: HTMLElement, opts: FloorMenuOptions): vo
   const onKey = (e: KeyboardEvent) => {
     if (e.key === 'Escape') close();
   };
-  const offs = [store.on('floors', render), store.on('floor', render)];
+  const offs = [
+    store.on('floors', () => {
+      render();
+      if (floor && !pending && selected !== (store.currentFloor()?.selectedBranch ?? null)) {
+        request = String(++branchRequest);
+        pending = opts.net.send({ t: 'floor.branches', floor: floor.id, request });
+        changed();
+      }
+    }),
+    store.on('floor', () => close()),
+  ];
   const close = () => {
     if (current?.el !== el) return;
     current = null;
@@ -133,6 +200,7 @@ export function toggleFloorMenu(anchor: HTMLElement, opts: FloorMenuOptions): vo
     window.removeEventListener('keydown', onKey, true);
     window.removeEventListener('resize', place);
     for (const off of offs) off();
+    branchWaiters.delete(onBranches);
   };
   render();
   document.body.append(el);

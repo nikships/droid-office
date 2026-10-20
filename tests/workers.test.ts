@@ -426,6 +426,19 @@ test('the worker system prompt is the office’s as rewritten, filled in for eac
   await workers.kill(a.id);
   assert.equal(existsSync(file), false, 'a worker going home takes its system prompt with it');
 
+  new Worktrees(f.root).saveBranch('release/next');
+  const overridden = workers.spawn('desk-2', 'test', 'work on the floor branch', true);
+  // This fixture isn't a repository; the worktree request must not silently start elsewhere.
+  assert.equal(typeof overridden, 'string');
+  const custom = workers.spawn('desk-2', 'test', 'read only');
+  if (typeof custom === 'string') return assert.fail(custom);
+  await launchOf(custom.id);
+  const customSystem = readFileSync(path.join(f.data, `system-${custom.id}.md`), 'utf8');
+  assert.match(customSystem, new RegExp(`^You are ${custom.name}, at a desk\\.`));
+  assert.match(customSystem, /floor branch is currently `release\/next`/);
+  assert.match(customSystem, /floor-branch\.json/);
+  await workers.kill(custom.id);
+
   system = '';
   const b = workers.spawn('desk-3', 'test', 'look around');
   if (typeof b === 'string') return assert.fail(b);
@@ -1928,6 +1941,36 @@ test('fresh workers start from the latest main, the checkout moved only when nob
   assert.equal(remote.worktree?.base, remoteHead);
   assert.equal(remote.worktree?.from, 'remote-start');
   assert.equal(git(f.root, 'rev-parse', '--abbrev-ref', 'HEAD'), 'feature');
+  // The explicit floor override wins even with FreshMain off, but cannot move shared workers.
+  git(f.root, 'branch', 'release/next', 'origin/main');
+  assert.match((await workers.selectBranch('release/next')) ?? '', /working in it/);
+  assert.equal(workers.selectedBranch, undefined);
+  for (const w of [direct, second, quiet]) await workers.kill(w.id);
+  writeFileSync(path.join(f.root, 'a.txt'), 'uncommitted');
+  assert.match((await workers.selectBranch('release/next')) ?? '', /uncommitted/);
+  assert.equal(workers.selectedBranch, undefined);
+  writeFileSync(path.join(f.root, 'a.txt'), 'a');
+  const switching = workers.selectBranch('release/next');
+  const concurrent = workers.selectBranch('main');
+  assert.match(String(workers.spawn('desk-8', 'test', 'wait')), /switch to finish/);
+  assert.match((await concurrent) ?? '', /already in progress/);
+  assert.equal(await switching, undefined);
+  assert.equal(workers.baseBranch, 'release/next');
+  assert.equal(git(f.root, 'branch', '--show-current'), 'release/next');
+  assert.equal(new Worktrees(f.root).selectedBranch(), 'release/next');
+  const onFloor = workers.spawn('desk-8', 'test', 'from the selected branch', true);
+  if (typeof onFloor === 'string') return assert.fail(onFloor);
+  assert.equal(onFloor.worktree?.from, 'release/next');
+  // A merged temporary checkout returns to the floor choice, not main.
+  git(f.root, 'switch', '-q', 'feature');
+  workers.pullList = () => [{ state: 'MERGED', headRefName: 'feature', headRefOid: git(f.root, 'rev-parse', 'HEAD') }] as GhPull[];
+  await workers.settleCheckout();
+  assert.equal(git(f.root, 'branch', '--show-current'), 'release/next');
+  assert.equal(await workers.selectBranch('missing'), 'Choose an existing local or origin branch');
+  assert.equal(await workers.selectBranch('--detach'), 'Choose an existing local or origin branch');
+  assert.equal(await workers.selectBranch(null), undefined);
+  assert.equal(workers.selectedBranch, undefined);
+  assert.equal(git(f.root, 'branch', '--show-current'), 'main');
 });
 
 test('the checkout goes back to main once its branch merged, and subagents of a lead on an old main start from the latest', async (t) => {

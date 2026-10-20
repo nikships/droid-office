@@ -1,5 +1,5 @@
 import { execFile, execFileSync } from 'node:child_process';
-import { existsSync, readdirSync, realpathSync, statSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, renameSync, statSync, writeFileSync } from 'node:fs';
 import { rm } from 'node:fs/promises';
 import path from 'node:path';
 import { promisify } from 'node:util';
@@ -83,9 +83,75 @@ export class Worktrees {
   private fetching = new Map<string, Promise<void>>();
   /** The last fetch's error, so the office's log says it once rather than on every hire. */
   private fetchError?: string;
+  private branchJson?: string;
+  private branchValue?: string;
 
   constructor(private dir: string) {
     this.root = real(dir);
+  }
+
+  /** The owner's floor override, shared by every Worktrees instance for this checkout. */
+  selectedBranch(): string | undefined {
+    try {
+      const json = readFileSync(this.branchFile, 'utf8');
+      if (json !== this.branchJson) {
+        const value = JSON.parse(json);
+        this.branchValue = typeof value?.branch === 'string' && this.validBranch(value.branch) ? value.branch : undefined;
+        this.branchJson = json;
+      }
+      return this.branchValue;
+    } catch {
+      this.branchJson = undefined;
+      this.branchValue = undefined;
+      return undefined;
+    }
+  }
+
+  get branchFile(): string {
+    return path.join(this.dir, '.droid-office', 'floor-branch.json');
+  }
+
+  baseBranch(): string | undefined {
+    return this.selectedBranch() ?? this.defaultBranch();
+  }
+
+  validBranch(branch: string): boolean {
+    if (!branch || branch.startsWith('-') || branch.includes('@{')) return false;
+    try {
+      this.gitSync(['check-ref-format', '--branch', branch]);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  branches(): string[] {
+    try {
+      const refs = this.gitSync(['for-each-ref', '--format=%(refname)%00%(worktreepath)', 'refs/heads/', 'refs/remotes/origin/'])
+        .split('\n')
+        .map((r) => r.split('\0'));
+      const elsewhere = new Set(refs.filter(([ref, cwd]) => ref.startsWith('refs/heads/') && cwd && real(cwd) !== this.root).map(([ref]) => ref.slice('refs/heads/'.length)));
+      return [
+        ...new Set(
+          refs
+            .map(([ref]) => ref)
+            .filter((r) => r && r !== 'refs/remotes/origin/HEAD')
+            .map((r) => r.replace(/^refs\/(heads|remotes\/origin)\//, '')),
+        ),
+      ]
+        .filter((b) => !elsewhere.has(b))
+        .sort();
+    } catch {
+      return [];
+    }
+  }
+
+  saveBranch(branch: string | null): void {
+    if (branch !== null && !this.validBranch(branch)) throw new Error('Invalid branch name');
+    const file = this.branchFile;
+    mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
+    writeFileSync(`${file}.tmp`, JSON.stringify({ branch }), { mode: 0o600 });
+    renameSync(`${file}.tmp`, file);
   }
 
   /**
@@ -111,12 +177,13 @@ export class Worktrees {
 
   /** The branch a worktree made from `start` is cut from: the default branch for 'main' (the checkout's when there's none). */
   private branchFor(start: 'main' | 'checkout'): string | undefined {
-    return start === 'main' ? (this.defaultBranch() ?? this.currentBranch()) : this.currentBranch();
+    return start === 'main' || this.selectedBranch() ? (this.baseBranch() ?? this.currentBranch()) : this.currentBranch();
   }
 
   private startOf(start: WorktreeStart): { base: string; from?: string; note?: string } {
     if (typeof start === 'object') return { base: start.commit, from: start.branch };
     const from = this.branchFor(start);
+    if (this.selectedBranch() && from && !this.commitOf(`refs/heads/${from}`) && !this.commitOf(`refs/remotes/origin/${from}`)) throw new Error(`The selected floor branch ${from} no longer exists`);
     return { from, ...this.startPoint(from) };
   }
 
@@ -142,7 +209,10 @@ export class Worktrees {
       if (at && (!at.branch || this.commitOf(`refs/heads/${ref}`))) return undefined;
     }
     const from = prefix ? ref.slice(prefix.length) : ref;
-    if (prefix && from === 'HEAD') return this.fetch('main');
+    if (prefix && from === 'HEAD') {
+      const branch = this.defaultBranch();
+      return branch ? this.fetchBranch(branch) : undefined;
+    }
     try {
       this.gitSync(['check-ref-format', `refs/heads/${from}`]);
     } catch {
@@ -234,8 +304,7 @@ export class Worktrees {
    * under way, a detached HEAD, commits on the default branch that origin doesn't have, or anything
    * git refuses (an untracked file in the way, say) keep it too. Never stashes, resets or discards.
    */
-  freshen(busy: string[] = [], parked: string[] = []): Freshened {
-    const main = this.defaultBranch();
+  freshen(busy: string[] = [], parked: string[] = [], main = this.baseBranch()): Freshened {
     if (!main) return {};
     const current = this.currentBranch();
     const latest = this.commitOf(`refs/remotes/origin/${main}`);
@@ -288,7 +357,7 @@ export class Worktrees {
   delivered(pulls: readonly { state: string; headRefName: string; headRefOid?: string }[]): boolean {
     const branch = this.currentBranch();
     const head = this.commitOf('HEAD');
-    if (!branch || !head || branch === this.defaultBranch()) return false;
+    if (!branch || !head || branch === this.baseBranch()) return false;
     return pulls.some((p) => p.state === 'MERGED' && p.headRefName === branch && p.headRefOid === head);
   }
 

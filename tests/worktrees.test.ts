@@ -43,6 +43,46 @@ function fixture(t: { after(fn: () => void): void }) {
   return { root, dir, git: (...args: string[]) => run(dir, ...args), commit: (file: string) => commit(dir, file), merge };
 }
 
+test('a saved floor branch overrides main and checkout starts, survives new instances, and resets to the default', async (t) => {
+  const f = fixture(t);
+  f.git('switch', '-q', '-c', 'release/next');
+  const release = f.commit('release.txt');
+  f.git('push', '-q', 'origin', 'release/next');
+  f.git('switch', '-q', 'main');
+  const trees = new Worktrees(f.dir);
+  assert.equal(trees.baseBranch(), 'main');
+  trees.saveBranch('release/next');
+  assert.equal(new Worktrees(f.dir).selectedBranch(), 'release/next');
+  assert.equal(trees.defaultBranch(), 'main', 'the forge default is unchanged');
+  assert.equal(trees.baseBranch(), 'release/next');
+  assert.ok(trees.branches().includes('release/next'));
+  await trees.fetch('main');
+  for (const start of ['main', 'checkout'] as const) {
+    const made = trees.create(`picked-${start}`, undefined, f.dir, start);
+    assert.notEqual(typeof made, 'string', String(made));
+    if (typeof made === 'string') return;
+    assert.equal(made.from, 'release/next');
+    assert.equal(made.base, release);
+    assert.ok(!trees.branches().includes(made.branch), 'a branch checked out in a worker worktree is not a selectable floor base');
+  }
+  assert.equal(f.git('branch', '--show-current'), 'main', 'worktree creation never moves the checkout');
+  assert.equal(trees.freshen().branch, 'release/next');
+  assert.equal(trees.delivered([{ state: 'MERGED', headRefName: 'release/next', headRefOid: release }]), false, 'never settle away from the selected base');
+  trees.saveBranch(null);
+  assert.equal(new Worktrees(f.dir).selectedBranch(), undefined);
+  assert.equal(trees.freshen().branch, 'main');
+});
+
+test('invalid and missing saved floor branches never become arbitrary worktree bases', (t) => {
+  const f = fixture(t);
+  const trees = new Worktrees(f.dir);
+  for (const branch of ['--detach', '@{-1}', 'bad name', 'bad..branch']) assert.throws(() => trees.saveBranch(branch), /Invalid branch/);
+  trees.saveBranch('gone');
+  assert.match(String(trees.create('missing', undefined, f.dir, 'main')), /selected floor branch gone no longer exists/);
+  writeFileSync(path.join(f.dir, '.droid-office', 'floor-branch.json'), '{broken');
+  assert.equal(trees.selectedBranch(), undefined);
+});
+
 test("a worktree starts from the PR merged on origin, not from the project's stale checkout", async (t) => {
   const f = fixture(t);
   const stale = f.git('rev-parse', 'HEAD');
