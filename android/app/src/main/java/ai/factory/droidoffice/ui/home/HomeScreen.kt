@@ -36,7 +36,6 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExtendedFloatingActionButton
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.SnackbarResult
 import androidx.compose.material3.Text
@@ -57,7 +56,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextOverflow
@@ -233,7 +231,6 @@ private fun WorkerList(
                     contentPadding = PaddingValues(start = 14.dp, end = 14.dp, top = 6.dp, bottom = 110.dp),
                     verticalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
-                    item(key = "summary") { Summary(data.workers.values) }
                     items(rows, key = { it.worker.id }) { row ->
                         WorkerCard(row, data, now, row.worker.id == selected, onOpen, Modifier.animateItem())
                     }
@@ -272,7 +269,6 @@ private fun TopBar(officeName: String, data: OfficeData, link: Link, onOffices: 
             }
         }
         RouteBadge(link.kind, link.phase == Phase.Connected, unpaired = link.phase == Phase.Unauthorized, tag = Tags.Home.ROUTE)
-        IconButton(onClick = onOffices, modifier = Modifier.tagged(Tags.Home.SETTINGS)) { Icon(OfficeIcons.Building, "Offices and settings", tint = Palette.TextSecondary) }
     }
 }
 
@@ -328,31 +324,6 @@ internal fun FloorChips(data: OfficeData, onFloor: (String) -> Unit) {
                 modifier = Modifier.tagged(Tags.Home.floor(f.id)),
             )
         }
-    }
-}
-
-@Composable
-private fun Summary(workers: Collection<WorkerInfo>) {
-    val needs = workers.count { it.state == WorkerStatus.NeedsInput }
-    val working = workers.count { it.state == WorkerStatus.Working || it.state == WorkerStatus.Starting }
-    val done = workers.count { it.state == WorkerStatus.Done && !it.acked }
-    Row(Modifier.fillMaxWidth().padding(bottom = 4.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        Stat("Needs you", needs, Palette.Danger, Modifier.weight(1f).tagged(Tags.Home.STAT_NEEDS_YOU))
-        Stat("Working", working, Palette.Warning, Modifier.weight(1f).tagged(Tags.Home.STAT_WORKING))
-        Stat("Done", done, Palette.Success, Modifier.weight(1f).tagged(Tags.Home.STAT_DONE))
-    }
-}
-
-@Composable
-private fun Stat(label: String, value: Int, color: Color, modifier: Modifier) {
-    val on = value > 0
-    Column(
-        modifier.panel(RoundedCornerShape(10.dp), if (on) color.copy(alpha = 0.07f) else Palette.Surface, if (on) color.copy(alpha = 0.3f) else Palette.Border)
-            .clearAndSetSemantics { contentDescription = "$label: $value" }
-            .padding(horizontal = 12.dp, vertical = 10.dp),
-    ) {
-        Text("$value", style = MaterialTheme.typography.headlineMedium, color = if (on) color else Palette.TextTertiary)
-        Eyebrow(label, color = if (on) Palette.Text else Palette.TextSecondary)
     }
 }
 
