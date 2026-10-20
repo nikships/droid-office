@@ -38,6 +38,20 @@ test('a spot in the elevator car, or blocked, or missing, means the car', () => 
   );
 });
 
+test('a spot saved under an upstairs floor is not a place to stand, but the ground floor street is', () => {
+  // A fall saved mid-drop, on the street under the building: back on the third floor would
+  // restore it under the slab on every reload, with no way back up.
+  assert.equal(
+    standSpot({ floor: 'api', at: { x: 5, y: -17.8, z: 3, rotY: 1.2 }, via: 'saved' }, () => false, 2),
+    null,
+  );
+  // Down on the street outside the ground floor is a real place to be standing.
+  assert.deepEqual(
+    standSpot({ floor: 'api', at: { x: 5, y: -3.6, z: 3, rotY: 1.2 }, via: 'saved' }, () => false, 0),
+    { x: 5, y: -3.6, z: 3, rotY: 1.2 },
+  );
+});
+
 test('a removed floor is noticed by name on the roof, briefly in the lobby', () => {
   const saved = { floor: 'api', name: 'API', x: 0, y: 0, z: 0, facing: 0 };
   assert.equal(removedFloorNotice({ floor: ROOF, via: 'roof', removed: true }, 'api', saved, ROOF), "🛗 API isn't in the building any more, so the elevator brought you up to the roof");

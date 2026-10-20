@@ -1,12 +1,18 @@
 import type { Arrival } from '../shared/protocol';
-import { inElevator } from '../shared/layout';
+import { inElevator, SLAB } from '../shared/layout';
 import { ROOF } from '../shared/rooftop';
 import type { Spot } from './state';
 
-/** Where the owner stands on arrival: the arrival spot when it is a real place to stand, else the elevator car (null). */
-export function standSpot(arrival: Arrival, blockedAt: (x: number, y: number, z: number) => boolean): { x: number; y: number; z: number; rotY: number } | null {
+/**
+ * Where the owner stands on arrival: the arrival spot when it is a real place to stand, else the elevator car (null).
+ * On any floor above the ground one there is nowhere to stand under the floor slab (the street and the garage are
+ * only reachable from the ground floor), so a remembered spot down there is a fall that got saved, not a place:
+ * the car it is, and the floor is under your feet again.
+ */
+export function standSpot(arrival: Arrival, blockedAt: (x: number, y: number, z: number) => boolean, floorIndex = -1): { x: number; y: number; z: number; rotY: number } | null {
   const at = arrival.at;
   if (!at || inElevator(at.x, at.z) || blockedAt(at.x, at.y, at.z)) return null;
+  if (floorIndex > 0 && at.y < -SLAB - 0.05) return null;
   return at;
 }
 

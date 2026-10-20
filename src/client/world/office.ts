@@ -1198,7 +1198,12 @@ export function buildOffice(): Office {
       if (show) {
         colliders.push(b.collider);
         appeared.push(b.collider);
-      } else colliders.splice(colliders.indexOf(b.collider), 1);
+      } else {
+        // Only ever take out this bag's own collider: splicing at -1 would remove the last collider
+        // in the list, which can be the floor itself.
+        const i = colliders.indexOf(b.collider);
+        if (i >= 0) colliders.splice(i, 1);
+      }
     }
     return appeared;
   };

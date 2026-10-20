@@ -995,7 +995,11 @@ net.onMessage((msg) => {
         // Where the office put you: back in the spot you left (if there's still room there), or in the elevator car.
         setPlace();
         syncStack();
-        const spot = standSpot(msg.arrival, (x, y, z) => player.blockedAt(x, z, y));
+        const spot = standSpot(
+          msg.arrival,
+          (x, y, z) => player.blockedAt(x, z, y),
+          builtFloors().findIndex((f) => f.id === msg.arrival.floor),
+        );
         if (spot) {
           placeAt(spot);
           arrive('back');
@@ -1174,6 +1178,10 @@ function spotHere(): Spot | null {
   if (!store.floor || trip || climber.active) return null;
   // Sitting, it's where you'd get up to.
   const at = player.standingSpot() ?? player.pos;
+  // Under an upstairs floor is not a spot: the street and the garage belong to the ground floor,
+  // so a y down there is a fall in progress. Saving it would put you back under the floor on
+  // every reload, forever (see standSpot).
+  if (store.floor !== ROOF && at.y < -SLAB - 0.05 && builtFloors().findIndex((f) => f.id === store.floor) > 0) return null;
   const name = store.floor === ROOF ? ROOF_NAME : (store.currentFloor()?.name ?? '');
   return { floor: store.floor, name, x: at.x, y: at.y, z: at.z, facing: player.facing };
 }
@@ -3714,6 +3722,27 @@ function drawFrame(dt: number, t: number, frame: { at: number; paced: boolean })
   // Walked into a pole's hole: you grab the pole on your way down it.
   const hole = office.stack.polesGoDown() ? office.stack.poles().find((s) => Math.hypot(player.pos.x - s.x, player.pos.z - s.z) < POLE.hole - 0.15) : undefined;
   if (hole && !climber.active && !trip && !player.seat && player.enabled && player.pos.y > -1.35 && player.pos.y < 0.6) climber.slide(hole);
+  // Under an upstairs floor, inside the building, with no ladder, pole or elevator carrying you:
+  // there is nowhere down there to be. However you got under the slab (a rebuild that dropped the
+  // floor, a spot saved mid-fall), you are put back on top of it rather than left on the street
+  // under the building with the floor gone for good. The ground floor keeps its street and garage.
+  if (
+    !upTop &&
+    !trip &&
+    !climber.active &&
+    !hanger.active &&
+    !player.seat &&
+    store.floor &&
+    player.pos.y < -SLAB - 0.05 &&
+    player.pos.x > FLOOR.minX &&
+    player.pos.x < FLOOR.maxX &&
+    player.pos.z > FLOOR.minZ &&
+    player.pos.z < FLOOR.maxZ &&
+    builtFloors().findIndex((f) => f.id === store.floor) > 0
+  ) {
+    if (player.blockedAt(player.pos.x, player.pos.z, 0)) placeInCar();
+    else placeAt({ x: player.pos.x, y: 0, z: player.pos.z, rotY: player.facing });
+  }
   // Pulled away with the gun out (off up the ladder, into the elevator, up to the roof): it goes back.
   if (gunOut && (trip || hanger.active || climber.active || upTop)) holsterGun(true);
   me.root.position.copy(player.pos);

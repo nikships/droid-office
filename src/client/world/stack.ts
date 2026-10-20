@@ -404,18 +404,7 @@ export function buildStack(colliders: Collider[], planks: THREE.Material): Stack
 
   const interactables = [ladderIt, ...poles.map((p) => p.interactable)];
 
-  const take = <T extends THREE.Object3D>(o: T): T => {
-    built.push(o);
-    group.add(o);
-    return o;
-  };
-
   const set = (s: StackState) => {
-    Object.assign(state, s);
-    delete state.up;
-    delete state.down;
-    if (s.up) state.up = s.up;
-    if (s.down) state.down = s.down;
     const { index, count } = s;
     const others = count > 1;
     const below = others && index > 0;
@@ -423,24 +412,21 @@ export function buildStack(colliders: Collider[], planks: THREE.Material): Stack
     // Every pole goes the whole way down: through this floor if there's one below, and the ceiling if there's one above.
     const holes = below ? POLES : [];
 
-    for (const o of built) {
-      o.removeFromParent();
-      o.traverse((m) => {
-        if ((m as THREE.Mesh).isMesh) (m as THREE.Mesh).geometry.dispose();
-      });
-    }
-    built = [];
-    for (const c of mine) {
-      const i = colliders.indexOf(c);
-      if (i >= 0) colliders.splice(i, 1);
-    }
-    mine = [];
+    // The new floor, slab and ceiling are built first, off to the side. Only once they exist are the
+    // old ones taken down: a build that fails partway (a shape the geometry builder rejects) must
+    // never leave this floor with no floor to stand on or to see.
+    const nextBuilt: THREE.Object3D[] = [];
+    const nextMine: Collider[] = [];
+    const takeNext = <T extends THREE.Object3D>(o: T): T => {
+      nextBuilt.push(o);
+      return o;
+    };
 
     // The floor: planks, with the hatch and the pole's hole cut out when they go somewhere.
     const floorHoles: Hole[] = [];
     if (below) floorHoles.push(LADDER.hatch);
     for (const p of holes) floorHoles.push({ x: p.x, z: p.z, r: POLE.hole });
-    take(new THREE.Mesh(surface(rectOutline(FLOOR), floorHoles, -1, FLOOR), planks));
+    takeNext(new THREE.Mesh(surface(rectOutline(FLOOR), floorHoles, -1, FLOOR), planks));
 
     // The slab under it (the garage's ceiling): concrete underneath, a peach band between the floors
     // outside. Where a hole goes through, the garage sees a lid of concrete, not up into the office.
@@ -449,23 +435,43 @@ export function buildStack(colliders: Collider[], planks: THREE.Material): Stack
     slabShape.holes = slabHoles.map((h) => holePath(h, -1));
     const slabGeo = new THREE.ExtrudeGeometry(slabShape, { depth: SLAB - 0.01, bevelEnabled: false, curveSegments: 24 }).rotateX(-Math.PI / 2).translate(0, -SLAB, 0);
     // Its top and bottom are concrete (group 0); its edges are the band.
-    take(mesh(slabGeo, concrete)).material = [concrete, band];
+    takeNext(mesh(slabGeo, concrete)).material = [concrete, band];
     for (const h of slabHoles.map((h) => ('r' in h ? around(h, h.r) : h))) {
-      const lid = take(mesh(new THREE.PlaneGeometry(h.maxX - h.minX, h.maxZ - h.minZ), concrete, (h.minX + h.maxX) / 2, -SLAB - 0.002, (h.minZ + h.maxZ) / 2));
+      const lid = takeNext(mesh(new THREE.PlaneGeometry(h.maxX - h.minX, h.maxZ - h.minZ), concrete, (h.minX + h.maxX) / 2, -SLAB - 0.002, (h.minZ + h.maxZ) / 2));
       lid.rotation.x = Math.PI / 2;
     }
     // You can walk over the ladder's hatch (its trapdoor), but not over a pole's hole: that's how you go down it.
     const floorCut = holes.map((p) => around(p, POLE.hole - 0.1));
-    for (const r of cutRect(B, floorCut)) mine.push({ ...r, bottom: -SLAB, top: 0 });
+    for (const r of cutRect(B, floorCut)) nextMine.push({ ...r, bottom: -SLAB, top: 0 });
     // Down the hole, the pole is right there to grab; this only catches anyone who somehow isn't sliding.
-    for (const p of holes) mine.push({ ...around(p, POLE.hole), bottom: -1.4, top: -1.2 });
+    for (const p of holes) nextMine.push({ ...around(p, POLE.hole), bottom: -1.4, top: -1.2 });
 
     // The ceiling: tiles, WALL_HEIGHT up, with the hatch and the poles' holes when they come from somewhere.
     const ceilingHoles: Hole[] = [];
     if (above) ceilingHoles.push(LADDER.hatch);
     if (above) for (const p of POLES) ceilingHoles.push({ x: p.x, z: p.z, r: POLE.hole });
-    take(mesh(surface(rectOutline(FLOOR), ceilingHoles, 1), ceilingMat, 0, WALL_HEIGHT, 0));
-    mine.push({ ...FLOOR, bottom: WALL_HEIGHT, top: WALL_HEIGHT + SLAB });
+    takeNext(mesh(surface(rectOutline(FLOOR), ceilingHoles, 1), ceilingMat, 0, WALL_HEIGHT, 0));
+    nextMine.push({ ...FLOOR, bottom: WALL_HEIGHT, top: WALL_HEIGHT + SLAB });
+
+    // The new floor is ready: take the old one down and put this one in its place.
+    Object.assign(state, s);
+    delete state.up;
+    delete state.down;
+    if (s.up) state.up = s.up;
+    if (s.down) state.down = s.down;
+    for (const o of built) {
+      o.removeFromParent();
+      o.traverse((m) => {
+        if ((m as THREE.Mesh).isMesh) (m as THREE.Mesh).geometry.dispose();
+      });
+    }
+    built = nextBuilt;
+    for (const o of built) group.add(o);
+    for (const c of mine) {
+      const i = colliders.indexOf(c);
+      if (i >= 0) colliders.splice(i, 1);
+    }
+    mine = nextMine;
 
     // The ladder, when there's anywhere to climb to.
     ladder.visible = others;
