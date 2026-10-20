@@ -6,7 +6,8 @@ import { fileURLToPath } from 'node:url';
 import headless from '@xterm/headless';
 import serialize from '@xterm/addon-serialize';
 import unicode11 from '@xterm/addon-unicode11';
-import type { AgentChoice, AgentEffort, GhPull, OutsideProcess, TerminalHit, WorkerInfo, WorkerKind, WorkerRepo, WorkerStatus, WorkerTask } from '../shared/protocol.js';
+import type { AgentChoice, AgentEffort, GhPull, OutsideProcess, TeamBadge, TeamEmblem, TerminalHit, WorkerInfo, WorkerKind, WorkerRepo, WorkerStatus, WorkerTask } from '../shared/protocol.js';
+import { TEAM_EMBLEMS, leadBadge, memberBadge, settleTeams } from '../shared/team.js';
 import { FAILS_TO_DESPAIR, outputFailed, toolAction } from '../shared/actions.js';
 import { isAgentEffort } from '../shared/protocol.js';
 import { OFFICE_SHELL_ID } from '../shared/office-shell.js';
@@ -570,6 +571,7 @@ export class WorkerManager {
         if (note) this.events.toast(`🌿 ${name}'s worktree ${note}`, 'info');
       }
     }
+    const team = lead !== undefined ? this.formTeam(lead) : undefined;
     const text = kind === 'agent' && images?.length ? withImages(prompt ?? '', this.drops.adopt(id, images)) : prompt?.trim();
     // What the card shows when the prompt was pictures alone.
     const shown = prompt?.trim() || (text ? 'See the attached images' : undefined);
@@ -593,6 +595,7 @@ export class WorkerManager {
       open: false,
       activity: shown && kind !== 'shell' ? truncate(shown, 80) : prompt ? truncate(prompt, 80) : undefined,
       ...(lead !== undefined ? { lead } : {}),
+      ...(team ? { team: memberBadge(team) } : {}),
     };
     const w = newWorker(info);
     if (info.worktree) w.worktreeOwnership = Object.fromEntries(this.treesOf(info).map((t) => [t.dir, t.trees.ownership(t.ref.branch)]));
@@ -602,6 +605,21 @@ export class WorkerManager {
     this.launch(w, this.briefed(w, kind === 'shell' ? undefined : text || undefined), undefined);
     this.persist();
     return info;
+  }
+
+  /** The team `leadId` leads, which it starts wearing the markings of with its first hire. */
+  private formTeam(leadId: string): TeamBadge | undefined {
+    const lead = this.workers.get(leadId);
+    if (!lead) return undefined;
+    const badge = leadBadge(
+      lead.info,
+      [...this.workers.values()].map((w) => w.info),
+    );
+    if (lead.info.team !== badge) {
+      lead.info.team = badge;
+      this.emitUpdate(lead);
+    }
+    return badge;
   }
 
   /**
@@ -2167,6 +2185,7 @@ process.stdin.on('end', () => {
       task: info.task,
       pr: info.pr,
       lead: info.lead,
+      team: info.team,
       // A terminal still running in the host, to pick back up after a restart. Its hooks keep the token.
       hookToken,
       // Its first message, while its droid hasn't taken it yet: the next office types it in at SessionStart.
@@ -2221,6 +2240,7 @@ process.stdin.on('end', () => {
           open: false,
           lastInputAt: legacyLastInputAt(s.lastInput),
           ...(typeof s.lead === 'string' && s.kind !== 'shell' ? { lead: s.lead } : {}),
+          ...(s.kind !== 'shell' && validTeam(s.team) ? { team: validTeam(s.team) } : {}),
         };
         const w = newWorker(info, typeof s.hookToken === 'string' && s.hookToken ? s.hookToken : undefined);
         w.worktreeOwnership = s.worktreeOwnership;
@@ -2246,6 +2266,13 @@ process.stdin.on('end', () => {
       for (const w of this.workers.values()) {
         const lead = w.info.lead && this.workers.get(w.info.lead);
         if (w.info.lead && (!lead || lead.info.lead)) delete w.info.lead;
+      }
+      // Markings follow who leads whom now; an office from before them gives each team its own.
+      const teams = settleTeams([...this.workers.values()].map((w) => w.info));
+      for (const w of this.workers.values()) {
+        const badge = teams.get(w.info.id);
+        if (badge) w.info.team = badge;
+        else delete w.info.team;
       }
     } catch {
       // corrupt state file: start fresh
@@ -2309,6 +2336,13 @@ export function childEnv(): Record<string, string> {
   const env: Record<string, string> = {};
   for (const [k, v] of Object.entries(process.env)) if (v !== undefined && !scrubbed(k)) env[k] = v;
   return env;
+}
+
+function validTeam(t: unknown): TeamBadge | undefined {
+  const v = t as Partial<TeamBadge> | undefined;
+  if (!v || typeof v.id !== 'string' || !v.id || (v.role !== 'lead' && v.role !== 'member') || typeof v.leadName !== 'string') return undefined;
+  if (typeof v.accent !== 'string' || !/^#[0-9a-f]{6}$/i.test(v.accent) || !TEAM_EMBLEMS.includes(v.emblem as TeamEmblem)) return undefined;
+  return { id: v.id, role: v.role, accent: v.accent, emblem: v.emblem as TeamEmblem, leadName: v.leadName.slice(0, 80) };
 }
 
 function validTask(t: unknown): WorkerTask | undefined {

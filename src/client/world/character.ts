@@ -3,7 +3,7 @@ import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { HAIR_COLORS, HAIR_STYLES, SKIN_TONES, type Look } from '../../shared/avatar';
 import { EMOTE_BY_ID, type Emote, type EmoteId } from '../../shared/emotes';
-import type { CarriedIssue, WorkerAction, WorkerStatus, WorkerTask } from '../../shared/protocol';
+import type { CarriedIssue, TeamBadge, WorkerAction, WorkerStatus, WorkerTask } from '../../shared/protocol';
 import { isAsleep, type WorkerPr } from '../../shared/status';
 import { HIPS } from '../player';
 import { OpenBook } from './book';
@@ -11,6 +11,7 @@ import { HeldCard } from './card';
 import { Muzzle, SPIN_AT, disposeGun, magnum, setCylinder } from './gun';
 import type { GunPose } from './gun-motion';
 import { glyphFlat } from './glyph3d';
+import { isTeamKitGeometry, setTeamKitModel, TeamKit } from './team-kit';
 import { cardSprite, disposeSprite, mesh, plainLabel, roundedBox, textSprite, toon, toonUnique } from './toon';
 
 export type Pose = 'stand' | 'walk' | 'sit' | 'type';
@@ -256,7 +257,7 @@ const kits = new Map<string, { plain: THREE.BufferGeometry; signal: THREE.Buffer
 const sharedGeometry = new WeakSet<THREE.BufferGeometry>();
 /** Whether `geo` is worn by everyone (a crew kit), so whoever frees a person's meshes must leave it be. */
 export function isSharedGeometry(geo: THREE.BufferGeometry): boolean {
-  return sharedGeometry.has(geo);
+  return sharedGeometry.has(geo) || isTeamKitGeometry(geo);
 }
 /** The kit `key` names, built by `make` the first time anyone wears one and shared after that: two meshes, plain and signal orange. */
 function kit(key: string, make: () => THREE.BufferGeometry[]): THREE.Group {
@@ -1230,6 +1231,11 @@ export function parseWorker(glb: ArrayBuffer): Promise<void> {
   });
 }
 
+/** Takes `droid-team-kit.glb`'s scene as the team markings workers wear (see team-kit.ts), framed in the droid's own materials. */
+export function setTeamKit(scene: THREE.Object3D) {
+  setTeamKitModel(scene, getWorkerMats());
+}
+
 /** True once `droid-worker.glb` has been registered via `setWorkerModel`. */
 export function workerReady(): boolean {
   return workerModel !== null;
@@ -1268,6 +1274,10 @@ export class Worker {
   /** Its worktree was deleted outside the office (WorkerInfo.lost): its bubble says so until it's fixed. */
   private lost = false;
   private nameTag: THREE.Sprite | null = null;
+  /** Its team's crown or comms kit and shoulder panels (WorkerInfo.team), on its body. */
+  private kit = new TeamKit();
+  /** Its team's accent, which outlines its name tag. */
+  private teamAccent: string | undefined;
   /** How opaque its card and name tag are (see seenFrom). */
   private labelAlpha = 1;
   private name = '';
@@ -1418,6 +1428,7 @@ export class Worker {
     for (const prop of [this.papers.group, this.globe.group]) prop.visible = false;
     this.root.add(this.globe.group);
 
+    this.body.add(this.kit.group);
     if (workerModel) this.fillModel();
     else waitingWorkers.add(this);
 
@@ -1476,9 +1487,22 @@ export class Worker {
       this.root.remove(this.nameTag);
       disposeSprite(this.nameTag);
     }
-    this.nameTag = textSprite(name, { bg: '#0a0a0a', color: '#eeeeee', size: 36, border: '#2f2f2f' });
+    this.nameTag = textSprite(name, { bg: '#0a0a0a', color: '#eeeeee', size: 36, border: this.teamAccent ?? '#2f2f2f' });
     this.nameTag.position.y = 1.55;
     this.root.add(this.nameTag);
+  }
+
+  /** The team markings it wears: a crown for a lead, the comms kit for a subagent, shoulder panels for both. Its status never changes them. */
+  setTeam(badge: TeamBadge | undefined) {
+    this.kit.set(badge);
+    if (badge?.accent === this.teamAccent) return;
+    this.teamAccent = badge?.accent;
+    this.setName(this.name);
+  }
+
+  /** What its markings show now: the crown, the comms kit, or none (also none until the kit's GLB has loaded). */
+  get teamRole(): TeamBadge['role'] | undefined {
+    return this.kit.role;
   }
 
   setStatus(status: WorkerStatus, bounce: boolean) {
@@ -1968,6 +1992,7 @@ export class Worker {
 
   dispose() {
     waitingWorkers.delete(this);
+    this.kit.dispose();
     if (this.bubble) disposeSprite(this.bubble);
     if (this.nameTag) disposeSprite(this.nameTag);
   }

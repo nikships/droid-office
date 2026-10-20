@@ -14,6 +14,7 @@ import { toonifyProp } from './world/factory-props';
 import { BloodSpray, Muzzle, Puff, magnum } from './world/gun';
 import { toonUnique } from './world/toon';
 import { surfaceFinish } from './world/surface';
+import { teamKitStandIn } from './world/team-kit';
 import { SpellBolt, SpellImpact, Sparkles, TipTrail, Wand } from './world/wand';
 
 /**
@@ -114,7 +115,7 @@ export function spellStandIns(): { world: THREE.Group; hands: THREE.Group } {
   world.add(new Puff(at, new THREE.Vector3(0, 1, 0)).group);
   world.add(new BloodSpray(at, new THREE.Vector3(0, 1, 0), new THREE.Vector3(0, 0, -1)).group);
   world.add(casualtyMarkers());
-  world.add(smokeWisp(), pageLeaf(false), pageLeaf(true), cord());
+  world.add(smokeWisp(), pageLeaf(false), pageLeaf(true), cord(), teamKitStandIn(dotTexture()));
   const superMuzzle = new Muzzle();
   superMuzzle.fire(true);
   hands.add(new Wand().group, magnum(), new Muzzle().group, superMuzzle.group, pageLeaf(true));

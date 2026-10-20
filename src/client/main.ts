@@ -54,7 +54,8 @@ import { buildOffice, type DeskView, type InteractKind, type Interactable } from
 import { loadPropManifest, preloadProps, propManifest, propScene } from './world/props';
 import { buildRooftop, type Rooftop } from './world/rooftop';
 import { ROOF, ROOF_NAME } from '../shared/rooftop';
-import { Person, type PrBadge, setWorkerModel, Worker, type Stage } from './world/character';
+import { Person, type PrBadge, setTeamKit, setWorkerModel, Worker, type Stage } from './world/character';
+import { focusTeamKit } from './world/team-kit';
 import { Hands } from './world/hands';
 import { Smoke } from './world/smoke';
 import { HAZE_MAX, Sky, describeSky, type ScreenGlow } from './world/sky';
@@ -66,7 +67,7 @@ import { Gallery } from './world/gallery';
 import { Departures } from './world/leaving';
 import { Casualties } from './world/casualties';
 import { TeamLines, type TeamLink } from './world/team-lines';
-import { teamSummary } from '../shared/team';
+import { TEAM_MARK, teamLinks, teamStanding, teamSummary } from '../shared/team';
 import { BloodSpray, gunHit, Puff, setMagnumModel } from './world/gun';
 import { GUN_TRICKS, GunMotion, type GunCue, type GunTrickId } from './world/gun-motion';
 import { type Sidearm, SPELL_CONFETTI, SPELL_SUPER, SPELL_TIP, SpellBolt, SpellImpact, Sparkles, TipTrail, setWandModel } from './world/wand';
@@ -189,6 +190,8 @@ const propsReady = loadPropManifest()
     if (wand) setWandModel(wand);
     const worker = propScene('droid-worker');
     if (worker) setWorkerModel(worker);
+    const teamKit = propScene('droid-team-kit');
+    if (teamKit) setTeamKit(teamKit);
   })
   .catch((err) => console.warn('office: prop GLBs unavailable, keeping procedural props', err));
 const sky = new Sky(scene, { sun, hemi, ambient }, office.night);
@@ -1505,6 +1508,7 @@ function syncWorkers() {
       noOutline(v.model.root);
     }
     v.model.setAction(w.action);
+    v.model.setTeam(w.team);
     if (v.heard && w.action === 'failing' && v.action !== 'failing') sound.ding('error');
     v.action = w.action;
     v.heard = true;
@@ -1547,7 +1551,7 @@ function syncWorkers() {
   renderTitle();
 }
 
-/** The dashes on the floor from each lead to its subagents, marching while any of them works. */
+/** The dashes on the floor from each lead to each of its subagents, whatever they're doing; a working subagent's march. */
 function syncTeamLines() {
   const seat = (deskId: string) => {
     const desk = office.desks.get(deskId);
@@ -1556,16 +1560,24 @@ function syncTeamLines() {
     return { x: p.x, y: desk.group.position.y, z: p.z };
   };
   const links: TeamLink[] = [];
-  let working = false;
-  for (const w of store.workers.values()) {
-    const lead = w.lead ? store.workers.get(w.lead) : undefined;
-    const from = lead && seat(lead.deskId);
-    const to = seat(w.deskId);
-    if (!lead || !from || !to) continue;
-    links.push({ from, to, color: lead.color });
-    working ||= w.status === 'working';
+  for (const l of teamLinks(store.workers.values())) {
+    const from = seat(l.lead.deskId);
+    const to = seat(l.member.deskId);
+    if (from && to) links.push({ from, to, color: l.accent, team: l.team, moving: l.moving });
   }
-  teamLines.set(links, working);
+  teamLines.set(links);
+}
+
+/** The team of whoever you're aiming at (at a desk or a kiosk), whose links and markings light up. */
+let focusedTeam: string | null = null;
+function focusTeam(it: Interactable | null) {
+  const w = it?.deskId ? store.workerAtDesk(it.deskId) : undefined;
+  const badge = w?.team;
+  const id = badge?.id ?? null;
+  if (id === focusedTeam) return;
+  focusedTeam = id;
+  teamLines.focus(id);
+  focusTeamKit(badge);
 }
 
 /**
@@ -2752,11 +2764,17 @@ function cloudKeyNote(w: WorkerInfo): string {
   return `${w.name} works on ${w.cloud ? cloudBadge(w.cloud) : 'a Factory computer'}, not in a checkout here: ask it to commit and open the pull request itself`;
 }
 
-/** The hint's word on a worker's team: whose subagent it is, or how its own subagents are doing. */
+/**
+ * The hint's word on a worker's team: what its markings say ("Team lead", "Ada's team · Follower",
+ * "Ada's team · Lead has left") with the team's emblem, and how a lead's subagents are doing.
+ */
 function teamNote(w: WorkerInfo): string {
+  const standing = teamStanding(w, (id) => store.workers.get(id));
+  const summary = teamSummary(store.teamOf(w.id));
+  if (standing) return [`${TEAM_MARK[standing.badge.emblem]} ${standing.label}`, summary].filter(Boolean).join(' · ');
   const lead = w.lead ? store.workers.get(w.lead) : undefined;
   if (lead) return `🧭 ${lead.name}'s subagent`;
-  return teamSummary(store.teamOf(w.id)) ?? '';
+  return summary ?? '';
 }
 
 /** The O in the desk hint of a worker across repositories: its pull requests so far, or opening them. */
@@ -3849,6 +3867,7 @@ function drawFrame(dt: number, t: number, frame: { at: number; paced: boolean })
       aimedRun = runUnder(aim);
     }
   }
+  focusTeam(target);
   issuesTex.lift(aimedNote?.number ?? null);
   issuesTex.hover(aimedSpot);
   pipelinesTex.hover(aimedRun ?? null);

@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { WALL_HEIGHT } from '../../shared/layout';
+import { isTeamKitGeometry } from './team-kit';
 
 /** A charged dismissal lifts the worker straight through the ceiling. No downed or revival phase. */
 export const BEAM_TIME = 0.8;
@@ -222,6 +223,6 @@ export class Casualties {
       if ((object as THREE.Mesh).isMesh) geometry.add((object as THREE.Mesh).geometry);
     });
     c.model.dispose();
-    for (const item of geometry) item.dispose();
+    for (const item of geometry) if (!isTeamKitGeometry(item)) item.dispose();
   }
 }

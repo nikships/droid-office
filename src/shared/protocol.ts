@@ -130,6 +130,12 @@ export interface WorkerInfo {
    */
   lead?: string;
   /**
+   * Which team it wears the markings of, and as what (see shared/team.ts). Display only: it outlives
+   * its lead, so a subagent whose lead left still shows whose team it was, but it never says who a
+   * worker reports to or may hire. That is `lead` alone.
+   */
+  team?: TeamBadge;
+  /**
    * How long it has spent working (ms), over the stretches that have ended, and when the one it's in
    * now started (while it's working).
    */
@@ -152,6 +158,21 @@ export interface WorkerInfo {
    * It has no terminal, worktree or hooks on this machine.
    */
   cloud?: CloudWorker;
+}
+
+/** The glyph a team wears beside its accent color, so two teams never differ by color alone. */
+export type TeamEmblem = 'chevron' | 'star' | 'diamond' | 'bolt' | 'ring' | 'cross' | 'hex' | 'triangle';
+
+/** A worker's team markings (see WorkerInfo.team): the crown or comms kit, its shoulder panels and its links. */
+export interface TeamBadge {
+  /** The team: the id of the worker that formed it, kept after that worker leaves. */
+  id: string;
+  /** `lead` wears the crown; `member` the comms kit. */
+  role: 'lead' | 'member';
+  accent: string;
+  emblem: TeamEmblem;
+  /** The lead's name when the team formed, for "Ada's team · Lead has left". */
+  leadName: string;
 }
 
 /** The agent CLIs whose processes the office recognises as guests. */
