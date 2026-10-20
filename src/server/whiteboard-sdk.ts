@@ -6,7 +6,7 @@
 // JavaScript in a string. Keep it ES2017, with no template literals (this is a String.raw).
 
 /** Changes whenever the script does, so cached card pages are fetched again. */
-export const SDK_VERSION = '5';
+export const SDK_VERSION = '6';
 
 export const SDK_SCRIPT = String.raw`(function () {
   'use strict';
@@ -364,21 +364,30 @@ export const SDK_SCRIPT = String.raw`(function () {
     }
   }
 
+  // Something in the page (a video's own full-screen button, say) has the screen, or just gave it
+  // back: its keys are its own, and the Esc that left full screen was the browser's, not the owner's.
+  var fsLeftAt = 0;
+  document.addEventListener('fullscreenchange', function () { if (!document.fullscreenElement) fsLeftAt = Date.now(); });
+  function pageFullscreen() { return !!document.fullscreenElement || Date.now() - fsLeftAt < 500; }
+
   // Esc in the frame never reaches the office's own key handling (another origin), so it's passed on:
   // only once the artifact has had its turn, and never while an IME composition is open.
   window.addEventListener('keydown', function (e) {
     if (e.key !== 'Escape' || e.isComposing || e.keyCode === 229 || (focus && focus.composing)) return;
+    var fs = pageFullscreen();
     setTimeout(function () {
-      if (!e.defaultPrevented && !rendering) post({ type: 'escape' });
+      if (!e.defaultPrevented && !rendering && !fs && !pageFullscreen()) post({ type: 'escape' });
     }, 0);
   });
 
   // Navigation must cross the iframe boundary. Pinches always belong to the board; ordinary
   // scrolling stays inside a nested scroller while it has room, then continues across the page.
   function editable(el) { return el && el.closest && el.closest('input, textarea, select, [contenteditable]:not([contenteditable="false"])'); }
+  // A focused video or audio element plays and pauses with Space, as it does in a tab.
+  function presses(el) { return el && el.closest && el.closest('button, a, [role="button"], video, audio'); }
   var space = false;
   window.addEventListener('keydown', function (e) {
-    if (!started || rendering || e.code !== 'Space' || e.isComposing || e.ctrlKey || e.metaKey || e.altKey || editable(e.target) || (e.target.closest && e.target.closest('button, a, [role="button"]'))) return;
+    if (!started || rendering || e.code !== 'Space' || e.isComposing || e.ctrlKey || e.metaKey || e.altKey || editable(e.target) || presses(e.target) || pageFullscreen()) return;
     e.preventDefault();
     if (!space) { space = true; post({ type: 'space', pressed: true }); }
   }, true);
@@ -390,7 +399,7 @@ export const SDK_SCRIPT = String.raw`(function () {
   window.addEventListener('keyup', function (e) { if (e.code === 'Space') releaseSpace(); }, true);
   window.addEventListener('blur', releaseSpace);
   window.addEventListener('keydown', function (e) {
-    if (!started || rendering || e.defaultPrevented || e.isComposing || e.ctrlKey || e.metaKey || e.altKey || editable(e.target)) return;
+    if (!started || rendering || e.defaultPrevented || e.isComposing || e.ctrlKey || e.metaKey || e.altKey || editable(e.target) || pageFullscreen()) return;
     var key = e.key.toLowerCase();
     if (key === '=') key = '+';
     if (key === '_') key = '-';

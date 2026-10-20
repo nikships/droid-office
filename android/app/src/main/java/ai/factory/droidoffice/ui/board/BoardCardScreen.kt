@@ -382,7 +382,16 @@ fun BoardCardScreen(floorId: String, cardId: String, onBack: () -> Unit) {
                 })
             }
         }
-        if (immersive) {
+        page?.fullscreen?.let { shown ->
+            key(shown) {
+                AndroidView(
+                    factory = { shown },
+                    modifier = Modifier.fillMaxSize().background(Color.Black).tagged(Tags.Board.VIDEO_FULLSCREEN),
+                )
+            }
+            BackHandler { page.leaveFullscreen() }
+        }
+        if (immersive && page?.fullscreen == null) {
             IconButton(
                 onClick = { immersive = false },
                 modifier = Modifier.align(Alignment.TopEnd).padding(10.dp).size(40.dp)
@@ -392,7 +401,7 @@ fun BoardCardScreen(floorId: String, cardId: String, onBack: () -> Unit) {
             BackHandler { immersive = false }
         }
     }
-    HideSystemBars(immersive)
+    HideSystemBars(immersive || page?.fullscreen != null)
 
     if (comments && card != null) {
         CommentsSheet(

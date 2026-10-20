@@ -45,6 +45,14 @@ test('keys the offscreen page leaves unhandled are never handed back to the app 
   assert.match(presenter, /this\.contents\.setIgnoreMenuShortcuts\(true\)/);
 });
 
+test("the page's HTML full screen never resizes its own invisible window", () => {
+  // Made full screen, the offscreen page's window took a black Space of its own and macOS switched to it (HtmlFullScreen).
+  const presenter = readFileSync(new URL('../src/desktop/presenter.ts', import.meta.url), 'utf8');
+  assert.match(presenter, /disableHtmlFullscreenWindowResize: true/);
+  assert.match(presenter, /this\.page\.on\('enter-html-full-screen', \(\) => this\.htmlFullScreen\.enter\(\)\)/);
+  assert.match(presenter, /this\.page\.on\('leave-html-full-screen', \(\) => this\.htmlFullScreen\.leave\(\)\)/);
+  assert.match(presenter, /this\.htmlFullScreen\.windowLeft\(\)/);
+});
 test('the monitor is installed once per window and removed when the view leaves it or is released', () => {
   assert.match(body('- (void)viewDidMoveToWindow'), /installEventMonitor/);
   assert.match(body('- (void)viewWillMoveToWindow:'), /removeEventMonitor/);

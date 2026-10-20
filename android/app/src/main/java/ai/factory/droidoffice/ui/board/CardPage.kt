@@ -12,6 +12,7 @@ import android.content.Intent
 import android.graphics.Color
 import android.net.Uri
 import android.os.Message
+import android.view.View
 import android.view.ViewGroup
 import android.webkit.RenderProcessGoneDetail
 import android.webkit.WebChromeClient
@@ -20,6 +21,9 @@ import android.webkit.WebResourceResponse
 import android.webkit.WebSettings
 import android.webkit.WebView
 import android.webkit.WebViewClient
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 import androidx.webkit.WebViewAssetLoader
 import androidx.webkit.WebViewCompat
 import androidx.webkit.WebViewFeature
@@ -50,6 +54,11 @@ class CardPage(
     var ready = false
         private set
     private var destroyed = false
+
+    /** What the card put in full screen (its video's own full-screen button), shown over the screen until it leaves. */
+    var fullscreen by mutableStateOf<View?>(null)
+        private set
+    private var leftFullscreen: WebChromeClient.CustomViewCallback? = null
 
     init {
         val loader = WebViewAssetLoader.Builder()
@@ -94,7 +103,16 @@ class CardPage(
         if (ready && !destroyed) view.evaluateJavascript(script, null)
     }
 
+    /** Back, or the screen going away, takes the card out of full screen. */
+    fun leaveFullscreen() {
+        val callback = leftFullscreen ?: return
+        fullscreen = null
+        leftFullscreen = null
+        callback.onCustomViewHidden()
+    }
+
     fun destroy() {
+        leaveFullscreen()
         destroyed = true
         ready = false
         (view.parent as? ViewGroup)?.removeView(view)
@@ -129,6 +147,21 @@ class CardPage(
     }
 
     private inner class Chrome : WebChromeClient() {
+        // A WebView only shows element full screen through these; without them the frame's fullscreen grant does nothing.
+        override fun onShowCustomView(view: View, callback: CustomViewCallback) {
+            if (destroyed || fullscreen != null) {
+                callback.onCustomViewHidden()
+                return
+            }
+            fullscreen = view
+            leftFullscreen = callback
+        }
+
+        override fun onHideCustomView() {
+            fullscreen = null
+            leftFullscreen = null
+        }
+
         // A card's popup (allow-popups-to-escape-sandbox, a link with target=_blank) opens in the browser, as it leaves the office's window.
         override fun onCreateWindow(view: WebView, isDialog: Boolean, isUserGesture: Boolean, resultMsg: Message): Boolean {
             if (!isUserGesture) return false

@@ -2,6 +2,7 @@ import { fileURLToPath } from 'node:url';
 import { app, BaseWindow, BrowserWindow, dialog, ipcMain, screen, type WebContents } from 'electron';
 import { requirePresenter } from './native.js';
 import {
+  HtmlFullScreen,
   InputFrameRate,
   layerPixelFormat,
   type NativeStats,
@@ -115,6 +116,7 @@ export class PresenterWindow {
   private hdr = false;
   private readonly visibility: PageVisibility;
   private readonly inputRate: InputFrameRate;
+  private readonly htmlFullScreen: HtmlFullScreen;
   private maxFps = 60;
   private readonly mode: PresentMode;
 
@@ -139,6 +141,8 @@ export class PresenterWindow {
         nodeIntegration: false,
         spellcheck: false,
         autoplayPolicy: 'no-user-gesture-required',
+        // The page's window is the invisible offscreen one: made full screen, it would take a Space of its own (see HtmlFullScreen).
+        disableHtmlFullscreenWindowResize: true,
         preload: PAGE_PRELOAD,
         offscreen: { useSharedTexture: true, sharedTexturePixelFormat: format, deviceScaleFactor: scaleFactor },
       },
@@ -208,8 +212,14 @@ export class PresenterWindow {
     this.base.on('minimize', () => this.setVisible(false));
     this.base.on('restore', () => this.setVisible(true));
     this.base.on('resize', () => this.resizePage());
+    this.htmlFullScreen = new HtmlFullScreen(this.base, () => this.onPage((contents) => void contents.executeJavaScript('document.fullscreenElement && document.exitFullscreen()').catch(() => {})));
+    this.page.on('enter-html-full-screen', () => this.htmlFullScreen.enter());
+    this.page.on('leave-html-full-screen', () => this.htmlFullScreen.leave());
     this.base.on('enter-full-screen', () => this.resizePage());
-    this.base.on('leave-full-screen', () => this.resizePage());
+    this.base.on('leave-full-screen', () => {
+      this.resizePage();
+      this.htmlFullScreen.windowLeft();
+    });
     this.base.once('closed', () => this.dispose());
     // Quitting closes the offscreen page's window, and destroys its contents, before the visible window's 'closed' arrives: a timer or event in between would touch a destroyed page.
     // 'before-quit' comes first of all, 'close' is the page's window beginning to go and 'destroyed' is the contents gone, so each of them ends the presenter's work with the page.

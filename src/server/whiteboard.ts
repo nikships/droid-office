@@ -24,7 +24,7 @@
 //       the iframe's flags, nosniff, no referrer, and Access-Control-Allow-Origin: * (no credentials).
 //       A capability reaches its own card's files only.
 //       The window's frame: `<iframe sandbox="${CARD_SANDBOX}" allow="${CARD_ALLOW}" src="/whiteboard/c/<cap>/<entry>#wb=<nonce>">`
-//       (CARD_ALLOW, in shared/whiteboard-bridge.ts, grants clipboard writes only).
+//       (CARD_FRAME, in shared/whiteboard-bridge.ts: CARD_ALLOW grants clipboard writes and full screen only).
 //
 //   GET /api/whiteboard/render?floor=<floor>&card=<card>[&size=full|thumb][&tile=<n>]
 //       The card's latest render as image/png, with x-whiteboard-rev (the board revision it shows),
@@ -69,6 +69,7 @@ import {
   type Point,
   type ReaderId,
 } from '../shared/whiteboard.js';
+import { CARD_SANDBOX } from '../shared/whiteboard-bridge.js';
 import { LoadError, fileRef, loadImageCard, loadPackage, loadPage, loadPicture, pageFromText, type Loaded } from './whiteboard-assets.js';
 import { SDK_SCRIPT, SDK_VERSION } from './whiteboard-sdk.js';
 
@@ -83,8 +84,7 @@ export const STAGE_TTL_MS = 60 * 60 * 1000;
 export const LINK_POLL_MS = 2000;
 const LINK_DEBOUNCE_MS = 150;
 
-/** The iframe's sandbox flags, which the card routes' CSP repeats: never allow-same-origin. */
-export const CARD_SANDBOX = 'allow-scripts allow-forms allow-popups allow-popups-to-escape-sandbox allow-modals allow-downloads';
+export { CARD_SANDBOX };
 /** The card routes' prefix: `/whiteboard/c/<cap>/<path>`. */
 export const CARD_ROUTE = '/whiteboard/c/';
 

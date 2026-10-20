@@ -18,12 +18,20 @@ import type { Anchor, Author, Json, Op, Point, StateObject } from './whiteboard.
 export const BRIDGE_CHANNEL = 'droid-office-whiteboard';
 export const BRIDGE_VERSION = 1;
 
+/** The card frame's sandbox flags, which the card routes' CSP repeats: never allow-same-origin. */
+export const CARD_SANDBOX = 'allow-scripts allow-forms allow-popups allow-popups-to-escape-sandbox allow-modals allow-downloads';
+
 /**
- * The window frame's `allow` list: clipboard writes only, so an artifact's own Copy button works.
- * Clipboard reads, media and the rest stay off, and the card routes' Permissions-Policy refuses them
- * as well. The allowlist is `*` because the frame's origin is opaque.
+ * The window frame's `allow` list: clipboard writes, so an artifact's own Copy button works, and full
+ * screen, which Chromium's own video controls need before a click on the picture plays or pauses it
+ * and before their full-screen button does anything. Clipboard reads, camera, microphone and the
+ * rest stay off, and the card routes' Permissions-Policy refuses them as well. The allowlist is `*`
+ * because the frame's origin is opaque.
  */
-export const CARD_ALLOW = 'clipboard-write *';
+export const CARD_ALLOW = 'clipboard-write *; fullscreen *';
+
+/** Every attribute of the window's card frame but its `src` and `title`, so whatever frames a card frames it the same way. */
+export const CARD_FRAME = { sandbox: CARD_SANDBOX, allow: CARD_ALLOW, referrerpolicy: 'no-referrer' } as const;
 
 /** Use: the artifact gets clicks and typing. Mark up: the host's overlay takes them for marks. */
 export type BridgeMode = 'use' | 'markup';

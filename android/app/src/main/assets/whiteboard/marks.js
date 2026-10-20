@@ -6,8 +6,8 @@
 export const CANONICAL_WIDTH = 1280;
 /** The frame's sandbox flags (CARD_SANDBOX): never allow-same-origin. */
 export const CARD_SANDBOX = 'allow-scripts allow-forms allow-popups allow-popups-to-escape-sandbox allow-modals allow-downloads';
-/** What the frame is granted (CARD_ALLOW): clipboard writes, for an artifact's own Copy button, and nothing else. */
-export const CARD_ALLOW = 'clipboard-write *';
+/** What the frame is granted (CARD_ALLOW): clipboard writes, for an artifact's own Copy button, and full screen, which a video's own controls need. */
+export const CARD_ALLOW = 'clipboard-write *; fullscreen *';
 export const BRIDGE_CHANNEL = 'droid-office-whiteboard';
 export const STICKY_COLORS = { yellow: '#ffd866', pink: '#ff9fc6', blue: '#8fd3ff', green: '#a6e3a1', orange: '#ffb070', purple: '#cdb4ff' };
 export const STICKY_SIZE = { w: 200, h: 160 };

@@ -680,3 +680,73 @@ test('F inside a live page enters full screen, and Esc puts the zoom and scroll 
   assert.equal(await page.evaluate('window.shut'), false, 'Esc leaves full screen and leaves the window open');
   assert.deepEqual(errors, []);
 });
+
+test("a card's own full screen (its video's control) is the card's: its keys stay in the page and the card's view is untouched", { skip, timeout: 60_000 }, async (t) => {
+  const browser = await launchBrowser();
+  t.after(() => closeBrowser());
+  const context = await newIsolatedContext(browser, { viewport: { width: 1280, height: 800 } });
+  t.after(() => context.close().catch(() => {}));
+  // A focusable box stands in for the video: what matters is something in the page holding the screen.
+  const pages = new Map([['tall', '<!doctype html><body style="margin:0"><h1>Media page</h1><video id="v" tabindex="0" style="display:block;width:400px;height:200px;background:#000"></video><div style="height:3000px"></div></body>']]);
+  await serve(context, () => livePageHost(bundle(SURFACE_ENTRY, 'WB')), pages);
+  const page = await context.newPage();
+  const errors: string[] = [];
+  page.on('pageerror', (e) => errors.push(String(e)));
+  await page.goto(`${ORIGIN}/host`);
+  await page.evaluate('start()');
+  const frame = await waitFor(() => page.frames().find((f) => f.url().includes('/card/tall/')), 'the card frame');
+  await frame.waitForFunction('window.whiteboard && whiteboard.card.id === "c1"');
+  await page.evaluate('surface.zoomTo(1.5)');
+  assert.equal(await frame.evaluate('document.fullscreenEnabled'), true, "the card frame may go full screen (CARD_FRAME's allow list)");
+
+  // Space on a focused video is the video's (play and pause), not the board's temporary pan.
+  await frame.focus('#v');
+  await page.keyboard.down('Space');
+  await delay(150);
+  assert.equal(await page.evaluate('surface.el.classList.contains("pan-tool")'), false, 'Space on a video is left to it');
+  await page.keyboard.up('Space');
+
+  // The page's own element takes the screen, as a video's full-screen button does.
+  await frame.evaluate("document.getElementById('v').requestFullscreen()");
+  await page.waitForFunction('!!document.fullscreenElement && document.fullscreenElement !== surface.el');
+  // Its keys are its own: F doesn't take the card full screen, and Esc (which a browser uses to leave
+  // full screen, before or just after the page sees it) never reaches the window as its own Esc.
+  await page.keyboard.press('f');
+  await delay(150);
+  assert.equal(await page.evaluate('surface.zoom'), 1.5, "the card's zoom is untouched");
+  assert.equal(await page.evaluate('surface.el.classList.contains("fs")'), false);
+  await page.keyboard.press('Escape');
+  await frame.evaluate('document.exitFullscreen()');
+  await page.waitForFunction('!document.fullscreenElement');
+  await page.keyboard.press('Escape');
+  await delay(300);
+  assert.equal(await page.evaluate('window.shut'), false, 'the Esc that left the video full screen does not close the window');
+  assert.equal(await page.evaluate('surface.zoom'), 1.5);
+  assert.equal(await page.evaluate('surface.el.classList.contains("fs")'), false);
+  // Once the page has given the screen back, Esc is the owner's again.
+  await delay(400);
+  await page.keyboard.press('Escape');
+  await page.waitForFunction('window.shut === true');
+  await page.reload();
+  await page.evaluate('start()');
+  const again = await waitFor(() => page.frames().find((f) => f.url().includes('/card/tall/')), 'the card frame again');
+  await again.waitForFunction('window.whiteboard && whiteboard.card.id === "c1"');
+  await page.evaluate('surface.zoomTo(1.5)');
+
+  // Inside a full-screen card the same: the card stays full screen at its fit when the video gives the screen back.
+  await page.evaluate('surface.toggleFullscreen()');
+  await page.waitForFunction('document.fullscreenElement === surface.el && surface.zoomMode.fit');
+  const fit = await page.evaluate('surface.zoom');
+  await again.evaluate("document.getElementById('v').requestFullscreen()");
+  await page.waitForFunction('document.fullscreenElement !== surface.el');
+  await again.evaluate('document.exitFullscreen()');
+  await page.waitForFunction('document.fullscreenElement === surface.el');
+  await delay(300);
+  assert.equal(await page.evaluate('surface.zoom'), fit, 'the full-screen card keeps its fit');
+  assert.equal(await page.evaluate('surface.el.classList.contains("fs")'), true);
+  await page.keyboard.press('Escape');
+  await page.waitForFunction('!document.fullscreenElement');
+  await page.waitForFunction('surface.zoom === 1.5');
+  assert.equal(await page.evaluate('window.shut'), false);
+  assert.deepEqual(errors, []);
+});

@@ -80,6 +80,52 @@ export class PageVisibility {
   }
 }
 
+/** The visible window as far as HTML full screen is concerned. */
+export interface FullScreenWindow {
+  isFullScreen(): boolean;
+  setFullScreen(on: boolean): void;
+}
+
+/**
+ * The page's own full screen (a Whiteboard card's **F**, a video's full-screen button). Electron would make the page's window full
+ * screen, and that window is the invisible offscreen one, so macOS moved to a new, black Space for it. The page keeps its window's size
+ * (`disableHtmlFullscreenWindowResize`), and the visible window is what goes full screen: if it isn't already, it is for as long as
+ * the page is, and then goes back. The owner leaving full screen themselves takes the page out of it too, as a browser does.
+ */
+export class HtmlFullScreen {
+  private active = false;
+  private raised = false;
+
+  constructor(
+    private readonly win: FullScreenWindow,
+    private readonly exitPage: () => void,
+  ) {}
+
+  get isActive(): boolean {
+    return this.active;
+  }
+
+  enter(): void {
+    this.active = true;
+    if (this.raised || this.win.isFullScreen()) return;
+    this.raised = true;
+    this.win.setFullScreen(true);
+  }
+
+  leave(): void {
+    this.active = false;
+    if (!this.raised) return;
+    this.raised = false;
+    this.win.setFullScreen(false);
+  }
+
+  /** The visible window left full screen. A page still full screen leaves it too, and the window stays where the owner put it. */
+  windowLeft(): void {
+    this.raised = false;
+    if (this.active) this.exitPage();
+  }
+}
+
 /** While input flows, the frame rate is set again this often (ms). */
 export const INPUT_REAPPLY_TICK_MS = 3;
 /**

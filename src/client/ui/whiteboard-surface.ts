@@ -10,7 +10,7 @@
 // and scroll back on the way out. The wall keeps the view from before, not the temporary fit.
 
 import type { WhiteboardRenderInfo } from '../../shared/protocol';
-import { CARD_ALLOW, actionOp, parseFrameMsg, wrap, writeOp, type BridgeMode, type FocusedField, type FrameMsg, type HostMsg } from '../../shared/whiteboard-bridge';
+import { CARD_FRAME, actionOp, parseFrameMsg, wrap, writeOp, type BridgeMode, type FocusedField, type FrameMsg, type HostMsg } from '../../shared/whiteboard-bridge';
 import {
   CANONICAL_WIDTH,
   MAX_ASSET_BYTES,
@@ -235,6 +235,8 @@ export class Surface {
   private fsPending = false;
   /** Set when we asked to leave, so the Esc the browser already used isn't swallowed twice. */
   private leavingFs = false;
+  /** Something inside the card (its own video) is full screen above it. */
+  private nestedFs = false;
   /** The frame forwards Esc after the browser has already left full screen. Swallow that one. */
   private swallowEsc = false;
   private swallowTimer = 0;
@@ -421,7 +423,17 @@ export class Surface {
 
   /** Fit once the top layer has a real box, and put the held view back once it doesn't. */
   private onFullscreenChange() {
-    const on = document.fullscreenElement === this.el;
+    const top = document.fullscreenElement;
+    // The card's own video going full screen, above the card or not, and coming back from it: the card's view stays as it was.
+    if (top && top !== this.el && this.el.contains(top)) {
+      this.nestedFs = true;
+      return;
+    }
+    if (this.nestedFs) {
+      this.nestedFs = false;
+      if ((top === this.el) === this.el.classList.contains('fs')) return;
+    }
+    const on = top === this.el;
     this.el.classList.toggle('fs', on);
     if (!on && this.fsHold && !this.leavingFs) {
       this.swallowEsc = true;
@@ -598,9 +610,7 @@ export class Surface {
       return;
     }
     const iframe = h('iframe.wb-frame', {
-      sandbox: 'allow-scripts allow-forms allow-popups allow-popups-to-escape-sandbox allow-modals allow-downloads',
-      allow: CARD_ALLOW,
-      referrerpolicy: 'no-referrer',
+      ...CARD_FRAME,
       title: this.card.title,
       src: url,
     });

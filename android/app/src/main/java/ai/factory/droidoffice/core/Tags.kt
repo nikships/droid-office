@@ -75,6 +75,8 @@ object Tags {
         const val STICKY_DELETE = "board.sticky.delete"
         /** Full screen for the live card, and the button that leaves it. */
         const val FULLSCREEN = "board.fullscreen"
+        /** What the live card itself put in full screen (its video's full-screen button); Back leaves it. */
+        const val VIDEO_FULLSCREEN = "board.video_fullscreen"
 
         fun card(id: String) = "board.card/$id"
         fun thread(id: String) = "board.thread/$id"

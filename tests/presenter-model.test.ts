@@ -4,6 +4,7 @@ import {
   CALIBRATION_FRAMES,
   CALIBRATION_WARMUP_SECONDS,
   HIDDEN_FRAME_RATE,
+  HtmlFullScreen,
   INPUT_REAPPLY_TICK_MS,
   INPUT_REAPPLY_TRAIL_MS,
   InputFrameRate,
@@ -385,4 +386,48 @@ test('a hidden page is never set again by input, and stopping ends the pace', ()
   h.keeper.onInput();
   h.keeper.stop();
   assert.equal(h.running(), false, 'a stopped keeper schedules nothing further');
+});
+
+test('page full screen takes the visible window full screen, never the page window, and gives it back', () => {
+  const calls: string[] = [];
+  let full = false;
+  const exits: number[] = [];
+  const win = {
+    isFullScreen: () => full,
+    setFullScreen: (on: boolean) => {
+      calls.push(on ? 'enter' : 'leave');
+      full = on;
+    },
+  };
+  const fs = new HtmlFullScreen(win, () => exits.push(1));
+
+  // A windowed app: the visible window goes full screen with the page and comes back with it.
+  fs.enter();
+  assert.equal(fs.isActive, true);
+  assert.deepEqual(calls, ['enter']);
+  fs.enter();
+  assert.deepEqual(calls, ['enter'], 'a second request (a video inside a full-screen card) changes nothing');
+  fs.leave();
+  assert.equal(fs.isActive, false);
+  assert.deepEqual(calls, ['enter', 'leave']);
+  fs.windowLeft();
+  assert.deepEqual(exits, [], 'the window leaving because the page left asks nothing more of the page');
+
+  // Already full screen (how the app opens): the window stays put on both sides.
+  calls.length = 0;
+  full = true;
+  fs.enter();
+  fs.leave();
+  assert.deepEqual(calls, []);
+  assert.equal(full, true);
+
+  // The owner leaves full screen (Ctrl+Cmd+F, the green button) while the page is: the page leaves too, and nothing reopens it.
+  calls.length = 0;
+  full = false;
+  fs.enter();
+  full = false;
+  fs.windowLeft();
+  assert.deepEqual(exits, [1]);
+  fs.leave();
+  assert.deepEqual(calls, ['enter'], 'the window is not toggled again once the owner has left');
 });
