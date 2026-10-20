@@ -42,6 +42,7 @@ import { PROVIDER_LABEL, guestKeyNote, outsideNote, processLabel, statusWord } f
 import { Net } from './net';
 import { removedFloorNotice, standSpot } from './arrival';
 import { floorShortcut } from './floor-shortcuts';
+import { nextTerminal, terminalShortcut } from './terminal-cycle';
 import { guardLeaving } from './leave';
 import { store, connectWhiteboard, lastFloor, lastSpot, loadProfile, loadSettings, rememberSpot, saveSettings, words, workerForPull, type Profile, type Spot, type Topic } from './state';
 import { officeTitle } from './tab-title';
@@ -83,7 +84,7 @@ import { NextUp, waitingInOrder, waitingLabel } from './nextup';
 import { $, h, clip, closeAllModals, hintToast, modalOpen, onModalChange, openModalList, readingNow, toast, STATUS_LABEL } from './ui/dom';
 import { deskApproach, type ApproachPose } from './approach';
 import { createAutomation, facingToward, pitchToward, runCommand, type CameraPose } from './automation';
-import { onBringIn, onOpenTeammate, openOfficeShell, openTerminal, openTerminalFor, routeTerminalMessage, type TerminalFind } from './ui/terminal';
+import { onBringIn, onOpenTeammate, openOfficeShell, openTerminal, openTerminalFor, routeTerminalMessage, terminalOnTop, type TerminalFind } from './ui/terminal';
 import { openSearch } from './ui/search';
 import { changesLogFor, openChanges, openChangesFor, routeChangesMessage } from './ui/changes';
 import { openRepoPulls, workerRepos } from './ui/repos';
@@ -3040,6 +3041,19 @@ function use(it: Interactable | null, key: DeskKey, note = aimedNote, spot = aim
 
 // ---- Input ----------------------------------------------------------------------------------------
 window.addEventListener('keydown', (e) => floorShortcut(e, store.floors, (floor) => switchFloor(floor, true)), true);
+window.addEventListener(
+  'keydown',
+  (e) => {
+    if (!store.floor || upTop || trip || climber.active || hanger.active) return;
+    if (modalOpen() ? !terminalOnTop() : isTyping(e)) return;
+    terminalShortcut(e, (direction) => {
+      const id = nextTerminal(store.workers.values(), openTerminalFor(), direction);
+      if (id === OFFICE_SHELL_ID) openOfficeShell(net);
+      else openWorkerTerminal(id);
+    });
+  },
+  true,
+);
 window.addEventListener('keydown', (e) => {
   if (modalOpen() || isTyping(e) || e.metaKey || e.ctrlKey || e.altKey) return;
   if (relookOnKey && e.key !== 'Escape' && player.canLock) player.lock();
