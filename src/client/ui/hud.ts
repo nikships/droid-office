@@ -85,12 +85,8 @@ export function openHelp(sidearm: Sidearm = 'wand') {
   const mac = typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.platform);
   const seven: HelpRow =
     sidearm === 'wand'
-      ? [
-          'Droid wand',
-          'Click puts a worker to sleep or opens its laptop UI. 2 lifts a worker, 3 starts a dance party, 4 asks one closely aimed worker to ship, and 6 revives downed workers within 6 meters. E wakes it; zap it again to send it home now',
-          ['7'],
-        ]
-      : ['.44 Magnum', 'Draw or holster it; click to fire at the worker under the crosshair. E revives a downed one; shoot it again to finish it and send it skyward', ['7']];
+      ? ['Droid wand', 'Click opens a worker’s terminal, including board agents. Hold for a charged shot to send a worker home. 2 lifts a worker, 3 starts a dance party, and 4 asks one closely aimed worker to ship', ['7']]
+      : ['.44 Magnum', 'Draw or holster it; click a worker to open its terminal. Hold for a charged shot to send it skyward', ['7']];
   const sections: [string, HelpRow[]][] = [
     [
       'Move',

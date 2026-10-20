@@ -321,8 +321,6 @@ class WhiteboardTest {
         assertTrue((WhiteboardPing.eligibility(worker("needs_input")) as PingCheck.No).reason.contains("waiting on an answer"))
         assertTrue((WhiteboardPing.eligibility(worker("idle", kind = "shell")) as PingCheck.No).reason.contains("plain shell"))
         assertTrue((WhiteboardPing.eligibility(worker("idle", extra = ""","lost":{"branch":"droid/atlas"}""")) as PingCheck.No).reason.contains("Rebuild"))
-        assertTrue((WhiteboardPing.eligibility(worker("idle", extra = ""","downedUntil":2000"""), now = 1000) as PingCheck.No).reason.contains("down"))
-        assertEquals(PingCheck.Ok("type"), WhiteboardPing.eligibility(worker("idle", extra = ""","downedUntil":2000"""), now = 3000))
     }
 
     @Test

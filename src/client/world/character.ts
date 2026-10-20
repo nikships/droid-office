@@ -1560,7 +1560,7 @@ export class Worker {
     } else d.t = Math.min(d.t, DANCE.up);
   }
 
-  /** Back in its seat at once, mid-dance or levitation (it's being sent home or downed). */
+  /** Back in its seat at once, mid-dance or levitation (it's being sent home). */
   stopDancing() {
     if (!this.dancing && this.levitating === null) return;
     this.dancing = null;
@@ -1658,17 +1658,6 @@ export class Worker {
     }
     this.bubbleKey = 'dead';
     for (const p of this.pupils) p.position.y = WORKER_EYE_Y - 0.028;
-  }
-
-  /** Revived: back on its feet with its session untouched, light and bubble as its status says. */
-  revive() {
-    if (!this.dead) return;
-    this.dead = false;
-    for (const p of this.pupils) p.position.y = WORKER_EYE_Y;
-    for (const e of this.eyes) e.scale.y = 1;
-    this.settle();
-    this.bubbleKey = '';
-    this.drawBubble();
   }
 
   private drawBubble() {

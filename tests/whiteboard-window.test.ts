@@ -276,16 +276,14 @@ test('ping picker: eligibility and why for each worker, the ones that can first'
       worker({ id: 'a', name: 'Ada', status: 'offline' }),
       worker({ id: 'q', name: 'Queue', status: 'working' }),
       worker({ id: 'b', name: 'Busy', status: 'working', kind: 'claude' as WorkerInfo['kind'] }),
-      worker({ id: 'd', name: 'Downed', status: 'idle', downedUntil: 2000 }),
       worker({ id: 's', name: 'Shell', kind: 'shell' }),
       worker({ id: 'c', name: 'Cloud', kind: 'cloud' }),
     ],
     labels,
-    1000,
   );
   assert.deepEqual(
     rows.map((r) => r.id),
-    ['a', 'q', 'z', 'b', 'c', 'd', 'g', 'n', 's'],
+    ['a', 'q', 'z', 'b', 'c', 'g', 'n', 's'],
   );
   const by = Object.fromEntries(rows.map((r) => [r.id, r]));
   assert.equal(by.z.how, 'type');
@@ -297,7 +295,6 @@ test('ping picker: eligibility and why for each worker, the ones that can first'
   assert.equal(by.g.guest, true);
   assert.equal(by.g.status, 'guest');
   assert.match(by.g.note, /Bring it in/);
-  assert.equal(by.d.status, 'down');
   assert.match(by.n.note, /waiting on an answer/);
   assert.match(by.z.note, /Types the line/);
   assert.equal(by.z.task, undefined);
@@ -317,7 +314,6 @@ test('ping picker: each row says what the worker is on and where', () => {
       worker({ id: 's', name: 'Sprocket', status: 'starting' }),
     ],
     labels,
-    1000,
     forgeWords('gitlab'),
   );
   const by = Object.fromEntries(rows.map((r) => [r.id, r]));

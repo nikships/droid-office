@@ -71,7 +71,7 @@ import { BloodSpray, gunHit, Puff, setMagnumModel } from './world/gun';
 import { GUN_TRICKS, GunMotion, type GunCue, type GunTrickId } from './world/gun-motion';
 import { type Sidearm, SPELL_CONFETTI, SPELL_SUPER, SPELL_TIP, SpellBolt, SpellImpact, Sparkles, TipTrail, setWandModel } from './world/wand';
 import { WAND_SPELLS, WandMotion, type WandCue, type WandSpellId } from './world/wand-motion';
-import { protegoWorkers, wandShipRequest, wandWorker, WAND_SHIP_COOLDOWN, WAND_SHIP_REACH } from './wand-actions';
+import { wandShipRequest, wandWorker, WAND_SHIP_COOLDOWN, WAND_SHIP_REACH } from './wand-actions';
 import { SidearmCharge, SHOT_CHARGE_PREVIEW_MS } from './sidearm-charge';
 import { ChargeHaptics } from './haptics';
 import { Confetti, type Area } from './world/confetti';
@@ -563,6 +563,7 @@ interface WorkerView {
 const workerViews = new Map<string, WorkerView>();
 /** Workers a `worker.remove` is taking out of the store right now. They walk out of the building; a worker that's gone because you changed floors just vanishes. */
 const sentHome = new Set<string>();
+const shotWorkers = new Set<string>();
 // Workers sent home, packing up and walking out with a box of their things.
 const departures = new Departures(
   scene,
@@ -570,17 +571,12 @@ const departures = new Departures(
   () => arrangeSeats(),
   () => office.stack.state.index > 0,
 );
-// Workers shot with the .44 Magnum or put to sleep by the wand: shared downed state, then revival or a heavenly ascent.
-const casualties = new Casualties(scene, (x, z, y) => groundAt(office.colliders, x, z, y), {
-  onLand: (at, look) => (look === 'spell' ? sound.doze(at) : sound.thud(at)),
-});
+// Only fully charged shots dismiss workers, with a heavenly ascent.
+const casualties = new Casualties(scene, (x, z, y) => groundAt(office.colliders, x, z, y));
 /** What `7` puts in your hand (Settings → You): the wand unless you opted into the Magnum. */
 const wandOut = () => settings.sidearm === 'wand';
 /** The words for what `7` does, by what's in your hand. Only the look and the words differ; what happens to the worker is the same. */
-const arms = () =>
-  wandOut()
-    ? { name: '🪄 Droid wand', fire: 'Cast', away: 'Put away', downed: '💤', isDown: 'is under a spell', revive: 'Wake up', reviveVerb: 'wake it', body: '', again: 'Zap it again to send it home now', target: 'to enchant' }
-    : { name: '🔫 .44 Magnum', fire: 'Fire', away: 'Holster', downed: '🩹', isDown: 'is down', revive: 'Revive', reviveVerb: 'revive', body: "'s body", again: 'Shoot again to finish it now', target: 'to shoot' };
+const arms = () => (wandOut() ? { name: '🪄 Droid wand', fire: 'Open terminal', away: 'Put away', target: 'to enchant' } : { name: '🔫 .44 Magnum', fire: 'Open terminal', away: 'Holster', target: 'to shoot' });
 /** The gun (or the wand) in your right hand (`7` draws and holsters it), mid-draw included, holstering not. */
 let gunOut = false;
 /** Which one is out (or on its way away): settings.sidearm when it was drawn. */
@@ -752,23 +748,6 @@ function wandLevitate() {
   addEffect(new Sparkles(target.point, null, { colors: SPELL_TIP, count: 28, speed: 0.6, size: 0.016, seconds: 2, lift: 1.2 }));
 }
 
-/** A rescue ward, not a wake-up call for offline processes or protection from the gun. */
-function wandRevive() {
-  const positions = [...workerViews].flatMap(([id, view]) => {
-    const worker = store.workers.get(id);
-    return worker ? [{ worker, pos: view.model.root.getWorldPosition(new THREE.Vector3()) }] : [];
-  });
-  const ids = protegoWorkers(positions, player.pos, store.officeNow());
-  let sent = 0;
-  for (const id of ids)
-    if (net.send({ t: 'worker.revive', workerId: id })) {
-      sent++;
-      const at = workerViews.get(id)!.model.root.getWorldPosition(new THREE.Vector3());
-      addEffect(new Sparkles(at, null, { colors: SPELL_TIP, count: 24, speed: 0.8, size: 0.016, seconds: 1, lift: 1 }));
-    }
-  hintToast(sent ? `Protego: reviving ${sent} downed worker${sent === 1 ? '' : 's'}` : 'No revivable workers within 6 meters', 'info');
-}
-
 /** Lumos on or off: the tip lights, and so does the room round you. */
 function setLumos(on: boolean) {
   if (on === lumos) return;
@@ -840,10 +819,6 @@ function wandCues(cues: readonly WandCue[]) {
         break;
       case 'confetti':
         wandShip();
-        break;
-      case 'shield':
-        hands.ward();
-        wandRevive();
         break;
       case 'done':
         if (tip) addEffect(new Sparkles(tip, null, { colors: SPELL_TIP, count: 10, speed: 0.4, size: 0.01, seconds: 0.6, lift: 0.3 }));
@@ -939,25 +914,24 @@ function missAt(hit: THREE.Intersection, superShot: boolean) {
 }
 
 /**
- * What a bullet (or a spell) does where it lands. Anything solid in front blocks it, and a miss
- * cracks into it with dust (a spell leaves its mark and fizzles). A worker sprays blood back out of
- * the wound with a wet smack (or the pinwheel flashes out on it in a burst of sparks, with the
- * wand) and is shot: the server starts its revival window (worker.shoot) and every client on the
- * floor sees it go down, its session still running. Shooting it again while it's down confirms the
- * kill; a super shot skips the revival window. An interactive surface instead opens its UI,
- * without a reach limit.
+ * Normal hits open the worker's terminal without changing its session or pose. Fully charged
+ * shots dismiss local workers. Interactive surfaces keep their usual UI-opening behavior.
  */
 function landShot(result: ReturnType<typeof gunHit>, direction: THREE.Vector3, superShot: boolean) {
   if (result?.laptopWorkerId) return openWorkerTerminal(result.laptopWorkerId);
   if (result?.hit.object === office.bossScreen) return openOfficeShell(net);
   if (result?.interactable && openPane(result.interactable, runUnder({ it: result.interactable, hit: result.hit }))) return;
+  if (!superShot && result?.interactable?.kind === 'station' && result.interactable.deskId) {
+    return openStationTerminal(result.interactable.deskId);
+  }
   const hit = result?.hit;
   const workerId = result?.workerId ?? null;
   if (!hit || workerId === null) {
     if (hit) missAt(hit, superShot);
     return;
   }
-  // A guest isn't the office's to shoot, nor is a cloud worker on its Factory computer: the round goes into its chair like a miss.
+  if (!superShot) return openWorkerTerminal(workerId);
+  // Guests and cloud workers aren't local processes the office can dismiss with a charged shot.
   const target = store.workers.get(workerId);
   if (target?.guest || target?.cloud) {
     missAt(hit, superShot);
@@ -972,30 +946,15 @@ function landShot(result: ReturnType<typeof gunHit>, direction: THREE.Vector3, s
     addEffect(new BloodSpray(hit.point, out, direction));
     sound.hit(hit.point);
   }
-  const v = workerViews.get(workerId);
-  const w = store.workers.get(workerId);
-  const desk = v ? office.desks.get(v.deskId) : undefined;
-  if (!v || !w || !desk) return;
-  // A second shot at a body on the floor confirms the kill: the server dismisses it now and the body ascends.
-  net.send({ t: 'worker.shoot', workerId, superShot });
+  net.send({ t: 'worker.shoot', workerId, superShot: true });
 }
 
-/** Walk up to a body to revive it; the gun can stay drawn. */
-function nearbyCasualty(): WorkerInfo | undefined {
-  if (!net.up || upTop) return undefined;
-  const id = casualties.nearby(player.pos);
-  const w = id ? store.workers.get(id) : undefined;
-  return w?.downedUntil !== undefined && w.downedUntil > store.officeNow() ? w : undefined;
+/** Idle board agents have no session yet; the server starts one and opens it for this user only. */
+function openStationTerminal(deskId: string) {
+  const worker = store.workerAtDesk(deskId);
+  if (worker) return openWorkerTerminal(worker.id);
+  if (!officeIsFull()) net.send({ t: 'station.open', deskId });
 }
-
-function reviveNearby(): boolean {
-  const w = nearbyCasualty();
-  if (!w) return false;
-  reach();
-  net.send({ t: 'worker.revive', workerId: w.id });
-  return true;
-}
-
 let firstWelcome = true;
 /** The server version this page was loaded with. */
 let bootVersion = '';
@@ -1013,9 +972,10 @@ net.onMessage((msg) => {
     departures.clear();
     casualties.clear();
   }
-  if (msg.t === 'worker.remove') sentHome.add(msg.workerId);
+  if (msg.t === 'worker.remove') (msg.shot ? shotWorkers : sentHome).add(msg.workerId);
   store.apply(msg);
   sentHome.clear();
+  shotWorkers.clear();
   routeTerminalMessage(msg);
   routeChangesMessage(msg);
   routePullMessage(msg);
@@ -1024,6 +984,9 @@ net.onMessage((msg) => {
   routeElevatorMessage(msg);
   routeWhiteboardMessage(msg);
   switch (msg.t) {
+    case 'worker.open':
+      openWorkerTerminal(msg.workerId);
+      break;
     case 'welcome': {
       // A few pings, to line this page's clock up with the office's for the jukebox.
       for (let i = 0; i < 5; i++) setTimeout(() => net.send({ t: 'ping', at: performance.now() }), 200 + i * 500);
@@ -1551,23 +1514,13 @@ function syncWorkers() {
     const lost = `🌿 ${w.name}'s worktree was deleted — press E to fix it`;
     const outside = w.guest ? `🚪 ${PROVIDER_LABEL[w.guest.provider]}, outside the office · ${w.guest.tty}` : w.cloud && (w.cloud.error ? `☁ ${w.cloud.error}` : `☁ Running on ${w.cloud.computerName} · E to open`);
     v.laptop.setPlaceholder(outside ? outside : w.lost ? lost : w.status === 'offline' ? `💤 ${w.name} is asleep — press R to ${again}` : w.status === 'exited' ? `${w.name} exited` : 'booting…');
-    if (w.downedUntil !== undefined) {
-      casualties.shoot(w.id, v.model, desk.seatAnchor, wandOut() ? 'spell' : 'blood');
-    } else if (casualties.revive(w.id)) v.model.cheer(0.8);
   }
   for (const [id, v] of workerViews) {
     if (store.workers.has(id)) continue;
     const desk = office.desks.get(v.deskId);
     // A shot worker: the body ascends instead of the send-home walk-out.
-    if (casualties.dying(id)) {
-      if (desk) casualties.confirm(id, v.laptop);
-      else {
-        casualties.revive(id);
-        v.model.root.removeFromParent();
-        v.laptop.root.removeFromParent();
-        v.model.dispose();
-        v.laptop.dispose();
-      }
+    if (shotWorkers.has(id)) {
+      casualties.ascend(id, v.model, v.laptop, wandOut() ? 'spell' : 'blood');
     } else if (desk && sentHome.has(id)) departures.add(v.model, v.laptop, desk);
     else {
       v.model.root.removeFromParent();
@@ -1772,11 +1725,6 @@ function hireForWorktreeSetup() {
 function killWorker(id: string) {
   const w = store.workers.get(id);
   if (!w) return;
-  if (w.downedUntil !== undefined) {
-    if (wandOut()) return toast(`Walk up to ${w.name} and press E to wake it, or zap it again to send it home now — otherwise it floats away in a heavenly beam and its worktree and branch are deleted`, 'warn');
-    const revive = `Walk up to ${w.name} and press E to revive, or shoot it again to finish it now — otherwise`;
-    return toast(`${revive} it floats away in a heavenly beam and its worktree and branch are deleted`, 'warn');
-  }
   if (w.cloud) return sendCloudHome(net, w);
   const where = DESK_BY_ID.get(w.deskId)?.label ?? 'the desk';
   const session = w.kind === 'shell' ? 'shared shell' : 'Droid session';
@@ -2299,13 +2247,6 @@ function boardActions() {
 /** `note` is the issue note you're pointing at on the issues board, if any (see aimedNote); `spot` the tab or Jira card (see aimedSpot). */
 function interact(target: Interactable | null, key: DeskKey, note = aimedNote, spot = aimedSpot) {
   if (!target) return;
-  if ((target.kind === 'desk' || target.kind === 'station') && target.deskId) {
-    const w = store.workerAtDesk(target.deskId);
-    if (w?.downedUntil !== undefined) {
-      if (key === 'E' && !reviveNearby()) hintToast(`Walk closer to ${w.name}${arms().body} to ${arms().reviveVerb}`, 'info');
-      return;
-    }
-  }
   if (target.kind !== 'issues') {
     note = null;
     spot = null;
@@ -2436,7 +2377,6 @@ function putDown() {
 
 /** Why the worker at a desk can't be handed an issue card right now, or '' when it can. */
 function cantTakeCard(w: WorkerInfo): string {
-  if (w.downedUntil !== undefined) return `Walk up to ${w.name}${arms().body} and press E to ${arms().reviveVerb} first`;
   if (w.kind === 'shell') return `${w.name} is a shell, not an agent`;
   if (w.guest) return guestKeyNote(w, 'P');
   if (w.lost) return `${w.name}'s worktree was deleted — press E at its desk to fix it`;
@@ -2616,16 +2556,6 @@ function renderHint() {
   const el = $('hint');
   if (hanger.active && !modalOpen()) return renderHangHint(el);
   if (climber.active && !modalOpen()) return renderClimbHint(el);
-  const casualty = !modalOpen() && nearbyCasualty();
-  if (casualty) {
-    const hint = casualtyHint(casualty, true);
-    if (hint.k !== hintKey) {
-      hintKey = hint.k;
-      el.replaceChildren(...hint.parts);
-      el.classList.remove('hidden');
-    }
-    return;
-  }
   if (gunOut && !modalOpen()) return renderGunHint(el);
   if ((!target && !carrying) || modalOpen()) {
     // Still up after a redraw was asked for (hintKey cleared) just as you walked away from it, too.
@@ -2761,20 +2691,6 @@ function carryHint(card: CarriedIssue, it: Interactable | null): Hint {
   return { k: '', parts: parts(aside('take it to an empty desk or a worker')) };
 }
 
-function casualtyHint(w: WorkerInfo, near: boolean): Hint {
-  const seconds = Math.max(0, Math.ceil((w.downedUntil! - store.officeNow()) / 1000));
-  const a = arms();
-  return {
-    k: `downed|${w.id}|${seconds}|${near}|${gunOut}|${settings.sidearm}`,
-    parts: [
-      h('span.title', {}, `${a.downed} ${w.name} ${a.isDown}`),
-      seconds ? (near ? key('E', a.revive) : aside(`Walk up to ${a.body ? 'the body' : 'it'} to ${a.reviveVerb}`)) : aside('Ascending to heaven'),
-      ...(seconds && gunOut ? [aside(a.again)] : []),
-      aside(`${seconds}s · then worktree + branch deleted`),
-    ],
-  };
-}
-
 function deskHint(deskId: string): Hint {
   const w = store.workerAtDesk(deskId);
   if (!w) {
@@ -2790,7 +2706,6 @@ function deskHint(deskId: string): Hint {
       ],
     };
   }
-  if (w.downedUntil !== undefined) return casualtyHint(w, nearbyCasualty()?.id === w.id);
   if (w.lost && w.worktree) {
     return {
       k: `lost|${w.id}|${w.lost.branch}`,
@@ -2874,7 +2789,6 @@ function stationHint(deskId: string): Hint {
       parts: [h('span.title', {}, `${info.icon} ${STATION_AGENT[kind].name}`), aside(info.offer.replace(/^Ask me /, '')), full ? h('span.cost', {}, `🚫 Office full · ${m.workers} of ${m.limit} workers`) : key('E', 'Prompt')],
     };
   }
-  if (w.downedUntil !== undefined) return casualtyHint(w, nearbyCasualty()?.id === w.id);
   const doing = w.activity ? clip(w.activity, 48) : '';
   const team = teamNote(w);
   return {
@@ -2890,7 +2804,7 @@ function stationHint(deskId: string): Hint {
   };
 }
 
-/** The spells on 1–6 as the hint and the wheel name them: Lumos is Nox while it's lit. */
+/** The spells on 1–5 as the hint and the wheel name them: Lumos is Nox while it's lit. */
 function wandSpells() {
   return WAND_SPELLS.map((x) => (x.id === 'lumos' && lumos ? { ...x, emoji: '🌑', label: 'Nox' } : x));
 }
@@ -2907,7 +2821,7 @@ function renderGunHint(el: HTMLElement) {
   hintKey = k;
   const a = arms();
   const title = doing ? `${doing.emoji} ${doing.label}` : wand && lumos ? '🪄 Wand · 💡 Lumos' : a.name;
-  el.replaceChildren(h('span.title', {}, title), key('Click', a.fire), key('Hold', 'Charge'), key('1–6', wand ? 'Spells' : 'Tricks'), key('7', a.away));
+  el.replaceChildren(h('span.title', {}, title), key('Click', a.fire), key('Hold', 'Charge'), key(wand ? '1–5' : '1–6', wand ? 'Spells' : 'Tricks'), key('7', a.away));
   el.classList.remove('hidden');
 }
 /** On the ladder: which way it goes from here, and how to get off. Down a pole: just hold on. */
@@ -2987,7 +2901,11 @@ function emote(id: EmoteId) {
 }
 /** Number `i` on the keys (0 for 1) and round the wheel: a trick with the gun out, else an emote. */
 function emoteOrTrick(i: number) {
-  if (gunOut && drawnArm === 'wand') return wandSpell(WAND_SPELLS[i].id);
+  if (gunOut && drawnArm === 'wand') {
+    const spell = WAND_SPELLS[i];
+    if (spell) wandSpell(spell.id);
+    return;
+  }
   if (gunOut) return gunTrick(GUN_TRICKS[i].id);
   emote(EMOTES[i].id);
 }
@@ -3050,11 +2968,6 @@ window.addEventListener('keydown', (e) => {
   // On the ladder, E gets you off it (and nothing else is in reach); W, S and Space climb.
   if (climber.active && (e.code === 'KeyE' || e.code === 'KeyF' || e.code in DESK_KEYS)) {
     if (e.code === 'KeyE') climber.letGo();
-    return;
-  }
-  // A nearby body takes E even with the gun or another object in your hands.
-  if (e.code === 'KeyE' && !e.repeat && reviveNearby()) {
-    e.preventDefault();
     return;
   }
   // 7 draws and holsters the wand or the .44 Magnum (1–6 are emotes).

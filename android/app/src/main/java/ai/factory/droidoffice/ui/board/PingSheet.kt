@@ -37,7 +37,6 @@ import ai.factory.droidoffice.ui.components.WorkerDot
 import ai.factory.droidoffice.ui.components.panel
 import ai.factory.droidoffice.ui.components.parseColor
 import ai.factory.droidoffice.ui.components.tagged
-import ai.factory.droidoffice.ui.home.rememberNow
 import ai.factory.droidoffice.ui.theme.Palette
 import kotlinx.coroutines.launch
 
@@ -54,8 +53,7 @@ fun PingSheet(onDismiss: () -> Unit) {
     val data by connection.data.collectAsStateWithLifecycle()
     val sheet = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     val scope = rememberCoroutineScope()
-    val now = rememberNow(5_000)
-    val rows = WhiteboardPing.order(data.workers.values, now)
+    val rows = WhiteboardPing.order(data.workers.values)
 
     ModalBottomSheet(onDismissRequest = onDismiss, sheetState = sheet, containerColor = Palette.Surface, shape = RoundedCornerShape(topStart = 22.dp, topEnd = 22.dp)) {
         Column(Modifier.fillMaxWidth().tagged(Tags.Board.PING_SHEET).padding(horizontal = 20.dp).navigationBarsPadding().padding(bottom = 14.dp)) {

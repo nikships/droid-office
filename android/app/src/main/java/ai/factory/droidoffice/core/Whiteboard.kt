@@ -576,12 +576,11 @@ sealed interface PingCheck {
 
 object WhiteboardPing {
     /** What the office does when the owner pings [w] now, or why it can't (pingEligibility). */
-    fun eligibility(w: WorkerInfo, now: Long = System.currentTimeMillis()): PingCheck {
+    fun eligibility(w: WorkerInfo): PingCheck {
         val name = w.name.ifBlank { w.id }
         if (w.isGuest) return PingCheck.No("$name is a guest the office only watches: it has no terminal the office can type into. Bring it in first.")
         if (w.isCloud) return PingCheck.No("$name runs on a Factory computer, which can't reach this office's Whiteboard yet.")
         if (w.isShell) return PingCheck.No("$name is a plain shell, not an agent.")
-        if (w.downedUntil != null && w.downedUntil > now) return PingCheck.No("$name is down. Revive it first.")
         if (w.lost != null) return PingCheck.No("$name's worktree is gone, so it can't start. Rebuild it first.")
         return when (w.state) {
             WorkerStatus.Idle, WorkerStatus.Done -> PingCheck.Ok("type")
@@ -598,8 +597,8 @@ object WhiteboardPing {
         Workers.title(w) ?: w.prompt?.lineSequence()?.map { it.trim() }?.firstOrNull { it.isNotEmpty() } ?: "No task yet"
 
     /** Pingable workers first, then the busy ones, then the rest; each group by name. */
-    fun order(workers: Collection<WorkerInfo>, now: Long = System.currentTimeMillis()): List<Pair<WorkerInfo, PingCheck>> =
-        workers.map { it to eligibility(it, now) }
+    fun order(workers: Collection<WorkerInfo>): List<Pair<WorkerInfo, PingCheck>> =
+        workers.map { it to eligibility(it) }
             .sortedWith(compareBy<Pair<WorkerInfo, PingCheck>>({ (_, c) -> if (c is PingCheck.Ok) 0 else if ((c as PingCheck.No).busy) 1 else 2 }, { it.first.name.lowercase() }))
 
     /** What the office said it did with a ping that went in. */

@@ -64,9 +64,6 @@ export interface WorkerTask {
   summary: string;
 }
 
-/** How long a shot worker can be revived before dismissal and worktree cleanup. */
-export const WORKER_REVIVE_MS = 30_000;
-
 export interface WorkerInfo {
   id: string;
   /** 'agent' runs Droid; 'shell' is a plain shared login shell; 'cloud' runs its Droid session on a Factory computer (see `cloud`). */
@@ -83,8 +80,6 @@ export interface WorkerInfo {
   name: string;
   color: string;
   status: WorkerStatus;
-  /** Shot: the server's revival deadline (ms since epoch); the session runs until then. */
-  downedUntil?: number;
   /** True once someone opened the terminal after the last done / needs_input. */
   acked: boolean;
   /** When it last went to done or needs_input (ms), so N goes to whoever has waited longest first. */
@@ -778,10 +773,8 @@ export type ClientMsg =
   | { t: 'worker.resume'; workerId: string }
   /** `deleteSession`: a cloud worker's Factory session is deleted too, not just left on the Factory account. */
   | { t: 'worker.kill'; workerId: string; cleanup?: WorktreeCleanup; deleteSession?: boolean }
-  /** Drops the worker for 30 seconds; a second hit or super shot immediately deletes its owned worktrees and branches. */
+  /** Only a fully charged shot dismisses a worker and deletes its owned worktrees and branches. */
   | { t: 'worker.shoot'; workerId: string; superShot?: boolean }
-  /** Revives a nearby shot worker before its deadline, without restarting its session. */
-  | { t: 'worker.revive'; workerId: string }
   /** Asks what the worker's worktree holds; answered with a `worker.worktree` message. */
   | { t: 'worker.worktree'; workerId: string }
   /** Puts a lost worker's worktree back and starts it again (see WorkerInfo.lost); `all`: every lost worker on the floor. */
@@ -799,6 +792,8 @@ export type ClientMsg =
    * behind what it is doing rather than sending it now (a shell gets Enter either way).
    */
   | { t: 'worker.prompt'; workerId: string; prompt: string; issue?: number; images?: string[]; queue?: boolean }
+  /** Opens a board agent's terminal, starting its session if nobody has asked it anything yet. */
+  | { t: 'station.open'; deskId: string }
   /**
    * A prompt for the agent standing by a board (`deskId` is its kiosk, see STATIONS in layout). It's
    * typed into its session, which is woken up first if it's asleep, or hired there when nobody is.
@@ -979,7 +974,8 @@ export type ServerMsg =
   /** The projects folder moved (see floor.projectsDir). */
   | { t: 'projectsDir'; state: ProjectsDirState }
   | { t: 'worker.update'; worker: WorkerInfo }
-  | { t: 'worker.remove'; workerId: string }
+  | { t: 'worker.remove'; workerId: string; shot?: boolean }
+  | { t: 'worker.open'; workerId: string }
   | { t: 'worker.worktree'; workerId: string; state: WorktreeState }
   | { t: 'screen'; workerId: string; cols: number; rows: number; lines: Record<number, Run[]>; full: boolean; cursor: [number, number] }
   /** `shared`: someone already had this terminal open, so the new window takes its size instead of changing it. */

@@ -8,7 +8,7 @@ import serialize from '@xterm/addon-serialize';
 import unicode11 from '@xterm/addon-unicode11';
 import type { AgentChoice, AgentEffort, GhPull, OutsideProcess, Run, TerminalHit, WorkerInfo, WorkerKind, WorkerRepo, WorkerStatus, WorkerTask } from '../shared/protocol.js';
 import { FAILS_TO_DESPAIR, outputFailed, toolAction } from '../shared/actions.js';
-import { WORKER_REVIVE_MS, isAgentEffort } from '../shared/protocol.js';
+import { isAgentEffort } from '../shared/protocol.js';
 import { OFFICE_SHELL_ID } from '../shared/office-shell.js';
 import { withImages } from '../shared/drops.js';
 import { CTRL_ENTER, wantsCsiEnter } from '../shared/csi-enter.js';
@@ -205,7 +205,6 @@ interface Worker {
   fresh?: { readonly line: number };
   /** Its lost worktree is being put back (see rebuild): the folder coming back mustn't wake it before that's done. */
   rebuilding?: boolean;
-  downedTimer?: NodeJS.Timeout;
   /** Branches present at hire time, per repository; never included in gun dismissal. */
   worktreeOwnership?: Record<string, WorktreeOwnership>;
   /** The plan its first terminal runs before the agent, to make its new worktree ready (see worktree-setup.ts). */
@@ -217,7 +216,7 @@ interface Worker {
 
 export interface WorkerEvents {
   update(info: WorkerInfo): void;
-  remove(workerId: string): void;
+  remove(workerId: string, shot?: boolean): void;
   data(workerId: string, data: string, connectionIds: string[]): void;
   screen(workerId: string, frame: { cols: number; rows: number; lines: Record<number, Run[]>; full: boolean; cursor: [number, number] }): void;
   /** `workerId` names the worker it is about, when one is (a shot worker's dismissal). */
@@ -335,7 +334,6 @@ export class WorkerManager {
     this.scrollback = new ScrollbackStore(dataDir);
     this.drops = new DropStore(dataDir);
     this.restore();
-    for (const w of this.workers.values()) if (w.info.downedUntil !== undefined) this.scheduleDismissal(w);
     this.scrollback.prune(new Set(this.workers.keys()));
     // The boss shell's drops live in the same folder and are not a worker's.
     this.drops.prune(new Set([...this.workers.keys(), OFFICE_SHELL_ID]));
@@ -360,19 +358,12 @@ export class WorkerManager {
     await this.host.connect();
     await Promise.all(
       [...this.workers.values()].map(async (w) => {
-        if (w.info.downedUntil !== undefined && w.info.downedUntil <= Date.now()) {
-          this.dismiss(w);
-          return;
-        }
         const saved = w.saved;
         w.saved = undefined;
         const adopted = saved && (await this.host.attach(saved.ptyId));
         if (adopted) {
           if (this.workers.get(w.info.id) !== w || this.closing) adopted.pty.kill();
-          else if (w.info.downedUntil !== undefined && w.info.downedUntil <= Date.now()) {
-            w.pty = adopted.pty;
-            this.dismiss(w);
-          } else this.adopt(w, adopted, saved);
+          else this.adopt(w, adopted, saved);
         }
       }),
     );
@@ -499,7 +490,6 @@ export class WorkerManager {
     if (!seat) return 'Unknown desk';
     if (this.deskOccupied(deskId)) return seat.station ? `The ${STATION_AGENT[seat.station].name} is already there` : `That ${seat.beanbag ? 'bean bag' : 'desk'} is taken`;
     if (kind === 'shell' && seat.station) return 'A board agent is always an agent, not a shell';
-    if (seat.station && !prompt?.trim() && !images?.length) return 'Tell the board agent what to do';
     if (repos.length && (kind !== 'agent' || !worktree || seat.station)) return 'Only a worker in its own worktree can work in other repositories too';
     if (repos.length > MAX_REPOS) return `A worker can take on at most ${MAX_REPOS} other repositories`;
     const fresh = this.freshMain?.() ?? false;
@@ -706,9 +696,9 @@ export class WorkerManager {
    * its card is the prompt alone.
    */
   private briefed(w: Worker, prompt: string | undefined): string | undefined {
-    if (!prompt) return prompt;
     const station = DESK_BY_ID.get(w.info.deskId)?.station;
-    if (station) return `${stationBrief(station, this.forge, this.prompts)}\n\n${prompt}`;
+    if (station) return `${stationBrief(station, this.forge, this.prompts)}\n\n${prompt ?? 'Wait for the owner to give you a task in this terminal.'}`;
+    if (!prompt) return prompt;
     const lead = w.info.lead ? this.workers.get(w.info.lead)?.info : undefined;
     if (!lead) return prompt;
     const wt = w.info.worktree;
@@ -816,10 +806,6 @@ export class WorkerManager {
   resume(id: string, prompt?: string): string | undefined {
     const w = this.workers.get(id);
     if (!w) return 'No such worker';
-    if (w.info.downedUntil !== undefined && w.info.downedUntil <= Date.now()) {
-      this.dismiss(w);
-      return 'This worker can no longer be revived';
-    }
     if (w.pty) return 'Worker is already running';
     if (this.checkLost(w, true)) return lostMessage(w.info);
     clockWork(w.info, 'starting');
@@ -836,6 +822,18 @@ export class WorkerManager {
     w.interrupted = false;
     this.launch(w, carryOn ? CARRY_ON_PROMPT : first, w.info.sessionId);
     return undefined;
+  }
+
+  /** Opens a pre-made agent without inventing an owner task, reusing its session when it exists. */
+  openStation(deskId: string, by: string): WorkerInfo | string {
+    if (!DESK_BY_ID.get(deskId)?.station) return 'There is no agent to ask there';
+    const w = [...this.workers.values()].find((worker) => worker.info.deskId === deskId);
+    if (!w) return this.spawn(deskId, by);
+    if (!w.pty) {
+      const error = this.resume(w.info.id);
+      if (error) return error;
+    }
+    return w.info;
   }
 
   /**
@@ -885,70 +883,20 @@ export class WorkerManager {
     return this.workers.has(id) ? this.drops.save(id, name, type, body) : undefined;
   }
 
-  /**
-   * Down a worker without interrupting its session. A shot at a worker already down confirms the
-   * kill: its revival window closes now and it is dismissed as if the deadline had passed.
-   * A super shot does both at once, publishing the downed state before removal for the ascent.
-   */
+  /** Normal hits only open terminals in the client. A fully charged shot dismisses immediately. */
   shoot(id: string, superShot = false): string | undefined {
     const w = this.workers.get(id);
     if (!w) return 'No such worker';
     if (this.closing) return 'The office is closing';
-    if (w.info.downedUntil === undefined) {
-      w.info.downedUntil = Date.now() + (superShot ? 0 : WORKER_REVIVE_MS);
-      this.persist();
-      this.emitUpdate(w);
-      if (!superShot) {
-        this.scheduleDismissal(w);
-        return undefined;
-      }
-    }
-    clearTimeout(w.downedTimer);
-    w.downedTimer = undefined;
-    // kill() refuses while the deadline is still ahead; closing it here is what lets it through.
-    w.info.downedUntil = Math.min(w.info.downedUntil, Date.now());
-    this.dismiss(w);
-    return undefined;
-  }
-
-  revive(id: string): string | undefined {
-    const w = this.workers.get(id);
-    if (!w) return 'No such worker';
-    if (this.closing) return 'The office is closing';
-    if (w.info.downedUntil === undefined) return undefined;
-    if (w.info.downedUntil <= Date.now()) {
-      this.dismiss(w);
-      return 'This worker can no longer be revived';
-    }
-    clearTimeout(w.downedTimer);
-    w.downedTimer = undefined;
-    w.info.downedUntil = undefined;
-    this.persist();
-    this.emitUpdate(w);
-    return undefined;
-  }
-
-  private scheduleDismissal(w: Worker) {
-    clearTimeout(w.downedTimer);
-    w.downedTimer = setTimeout(
-      () => {
-        if (this.closing || this.workers.get(w.info.id) !== w || w.info.downedUntil === undefined) return;
-        if (w.info.downedUntil > Date.now()) this.scheduleDismissal(w);
-        else this.dismiss(w);
-      },
-      Math.max(0, (w.info.downedUntil ?? Date.now()) - Date.now()),
-    );
-  }
-
-  private dismiss(w: Worker) {
-    const id = w.info.id;
-    void this.kill(id).then(
+    if (!superShot) return undefined;
+    void this.kill(id, undefined, undefined, undefined, true).then(
       ({ note, error }) => {
         if (note) this.events.toast(note, 'info', id);
         if (error) this.events.toast(error, 'warn', id);
       },
       (err: Error) => this.events.toast(`Couldn't dismiss ${w.info.name}: ${err.message}`, 'warn', id),
     );
+    return undefined;
   }
 
   /**
@@ -957,15 +905,12 @@ export class WorkerManager {
    * pull request's head commit) is work delivered. Resolves once that's done, with a line for the team
    * about the worktree.
    */
-  async kill(id: string, cleanup?: WorktreeCleanup, landed?: string, landedRepos?: Record<string, string | undefined>): Promise<{ note?: string; error?: string }> {
+  async kill(id: string, cleanup?: WorktreeCleanup, landed?: string, landedRepos?: Record<string, string | undefined>, shot = false): Promise<{ note?: string; error?: string }> {
     const w = this.workers.get(id);
     if (!w) return {};
-    if (w.info.downedUntil !== undefined && w.info.downedUntil > Date.now()) return { error: 'This worker is downed — revive them or wait until the revival window expires' };
-    const shot = w.info.downedUntil !== undefined;
     this.workers.delete(id);
     this.subscribers.delete(id);
     this.namer.forget(id);
-    clearTimeout(w.downedTimer);
     const proc = w.pty;
     w.pty = undefined; // so the exit handler knows this worker is gone and stays quiet
     try {
@@ -984,7 +929,7 @@ export class WorkerManager {
         // a leftover overlay is harmless: the next launch rewrites it
       }
     }
-    this.events.remove(id);
+    this.events.remove(id, shot);
     // Its subagents stay at their desks, working for nobody now.
     for (const sub of this.workers.values()) {
       if (sub.info.lead !== id) continue;
@@ -1743,7 +1688,6 @@ export class WorkerManager {
     clearInterval(this.statusTimer);
     clearInterval(this.saveTimer);
     for (const w of this.workers.values()) {
-      clearTimeout(w.downedTimer);
       // Before the process goes, so the next office shows what it was doing, not how it was stopped.
       if (w.unsaved) this.saveScrollback(w);
       if (keep && w.pty?.id) continue;
@@ -1764,10 +1708,6 @@ export class WorkerManager {
 
   private launch(w: Worker, prompt: string | undefined, resumeSessionId: string | undefined) {
     const { info } = w;
-    if (info.downedUntil !== undefined && info.downedUntil <= Date.now()) {
-      this.dismiss(w);
-      return;
-    }
     // Its folder was deleted meanwhile: it waits, marked lost, for someone to rebuild it or send it home.
     if (this.checkLost(w)) {
       clockWork(info, 'exited');
@@ -2169,7 +2109,6 @@ process.stdin.on('end', () => {
       color: info.color,
       createdBy: info.createdBy,
       createdAt: info.createdAt,
-      downedUntil: info.downedUntil,
       prompt: info.prompt,
       worktree: info.worktree,
       worktreeOwnership,
@@ -2221,7 +2160,6 @@ process.stdin.on('end', () => {
           acked: true,
           createdBy: s.createdBy ?? '?',
           createdAt: s.createdAt ?? Date.now(),
-          downedUntil: typeof s.downedUntil === 'number' && Number.isFinite(s.downedUntil) ? s.downedUntil : undefined,
           prompt: s.prompt,
           worktree: s.worktree,
           repos: s.worktree ? validRepos(s.repos) : undefined,

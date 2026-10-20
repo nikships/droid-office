@@ -1528,18 +1528,16 @@ export async function startServer(cfg: Config) {
         });
         break;
       }
-      case 'worker.shoot':
-      case 'worker.revive': {
+      case 'worker.shoot': {
         const w = worker(msg.workerId);
         if (!w) break;
-        warn(c, msg.t === 'worker.shoot' ? w.floor.workers.shoot(w.wid, msg.superShot === true) : w.floor.workers.revive(w.wid));
+        warn(c, w.floor.workers.shoot(w.wid, msg.superShot === true));
         break;
       }
       case 'worker.kill': {
         const w = worker(msg.workerId);
         if (!w) break;
         const { floor, info } = w;
-        if (info.downedUntil !== undefined && info.downedUntil > Date.now()) return warn(c, 'This worker is downed — revive them or wait until the revival window expires');
         // The worker leaves right away; its worktree is dealt with after that, and the outcome follows.
         const done = floor.workers.kill(info.id, CLEANUPS.has(String(msg.cleanup)) ? msg.cleanup : undefined);
         toastFloor(floor, `${who} sent ${info.name} home`);
@@ -1637,6 +1635,14 @@ export async function startServer(cfg: Config) {
           toastFloor(w.floor, `${who} handed issue #${issue} to ${w.info.name}`);
           takeIssue(c, w.floor, issue);
         }
+        break;
+      }
+      case 'station.open': {
+        const floor = here();
+        if (!floor) break;
+        const result = floor.workers.openStation(str(msg.deskId, 32), who);
+        if (typeof result === 'string') warn(c, result);
+        else sendTo(c, { t: 'worker.open', workerId: result.id });
         break;
       }
       case 'station.prompt': {

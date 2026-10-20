@@ -76,6 +76,20 @@ test('UI billboards and glow points are not solid shot targets or blockers', () 
   assert.equal(gunHit(f.ray, f.office, f.workers)?.hit.object, f.body);
 });
 
+test('idle pre-made worker models resolve their station even before they have a worker id', () => {
+  for (const deskId of ['station-issues', 'station-pulls', 'station-actions', 'station-lead']) {
+    const f = fixture();
+    const station: Interactable = { kind: 'station', deskId, x: 0, z: -4, radius: 1.3 };
+    f.office.userData.interact = station;
+    f.office.updateMatrixWorld(true);
+    const hit = gunHit(f.ray, f.office, new Map());
+    assert.equal(hit?.hit.object, f.body);
+    assert.equal(hit?.workerId, null);
+    assert.equal(hit?.interactable, station);
+    assert.equal(hit?.interactable?.deskId, deskId);
+  }
+});
+
 test('a hidden worker stays untargetable even when supplied as a separate root', () => {
   const f = fixture();
   f.worker.visible = false;

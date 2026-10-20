@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { protegoWorkers, wandShipRequest, wandWorker, PROTEGO_RADIUS, WAND_SHIP_REACH } from '../src/client/wand-actions.js';
+import { wandShipRequest, wandWorker, WAND_SHIP_REACH } from '../src/client/wand-actions.js';
 import { LEVITATE_HEIGHT, LEVITATE_TIME, Worker } from '../src/client/world/character.js';
 import { WAND_MOVES, WandMotion } from '../src/client/world/wand-motion.js';
 import { PROMPTS } from '../src/shared/prompts.js';
@@ -33,13 +33,12 @@ test('Ship it sends only an intent prompt to the selected worker, leaving Git de
   assert.deepEqual(wandShipRequest(worker({ kind: 'cloud', cloud, status: 'working' }), 'Ship my work'), { t: 'worker.prompt', workerId: 'worker', prompt: 'Ship my work' });
 });
 
-test('Ship it cannot type a shipping request into a shell or target a downed, missing, or unavailable worker', () => {
+test('Ship it cannot type a shipping request into a shell or target a missing or unavailable worker', () => {
   for (const w of [
     undefined,
     worker({ kind: 'shell' }),
     worker({ guest }),
     worker({ cloud: { ...cloud, error: 'Gone' } }),
-    worker({ downedUntil: 100 }),
     worker({ lost: true }),
     worker({ status: 'offline' }),
     worker({ status: 'exited' }),
@@ -47,25 +46,6 @@ test('Ship it cannot type a shipping request into a shell or target a downed, mi
   ])
     assert.equal(typeof wandShipRequest(w, 'Ship my work'), 'string');
   assert.equal(typeof wandShipRequest(worker(), '  '), 'string');
-});
-
-test('Protego revives only unexpired downed workers inside its six-metre sphere', () => {
-  const now = 1000;
-  const downed = (id: string, x: number, y = 0, z = 0, patch: Partial<WorkerInfo> = {}) => ({ worker: worker({ id, downedUntil: now + 100, ...patch }), pos: { x, y, z } });
-  const targets = [
-    downed('near', 2),
-    downed('edge', PROTEGO_RADIUS),
-    downed('far', PROTEGO_RADIUS + 0.01),
-    downed('above', 0, PROTEGO_RADIUS + 0.01),
-    downed('diagonal', 4, 0, 5),
-    downed('expired', 1, 0, 0, { downedUntil: now }),
-    downed('offline', 1, 0, 0, { status: 'offline', downedUntil: undefined }),
-    downed('awake', 1, 0, 0, { downedUntil: undefined }),
-    downed('guest', 1, 0, 0, { guest }),
-    downed('cloud', 1, 0, 0, { cloud }),
-  ];
-  assert.deepEqual(protegoWorkers(targets, { x: 0, y: 0, z: 0 }, now), ['near', 'edge']);
-  assert.deepEqual(protegoWorkers(targets, { x: 100, y: 0, z: 0 }, now), []);
 });
 
 test('the sparkler starts the party once per spell, not once for each spark', () => {
@@ -81,7 +61,7 @@ test('the sparkler starts the party once per spell, not once for each spark', ()
   motion.update(0.2);
   motion.cast();
   assert.ok(!motion.update(1).includes('confetti'), 'a canceled ship gesture cannot send a shipping request');
-  assert.ok(!WAND_MOVES.build.cues.some(([, cue]) => cue === 'party' || cue === 'confetti' || cue === 'shield'));
+  assert.ok(!WAND_MOVES.build.cues.some(([, cue]) => cue === 'party' || cue === 'confetti'));
 });
 
 function model(t: { after(fn: () => void): void }) {
@@ -128,18 +108,12 @@ test('levitation smoothly lifts a real worker and restores its seat, size, and w
   assert.equal(m.root.position.y, 0);
 });
 
-test('downing or dismissing a levitating worker cancels the lift without corrupting its next pose', (t) => {
+test('dismissing a levitating worker cancels the lift', (t) => {
   const m = model(t);
   assert.equal(m.levitate(), true);
   m.update(0.5, 0.5);
   assert.ok(m.root.position.y > 0);
   m.die(true);
-  assert.equal(m.root.position.y, 0);
-  assert.equal(m.levitate(), false);
-  m.revive();
-  assert.equal(m.levitate(), true);
-  m.update(0.5, 1);
-  m.leave('See you');
   assert.equal(m.root.position.y, 0);
   assert.equal(m.levitate(), false);
 });

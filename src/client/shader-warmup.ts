@@ -13,7 +13,7 @@ import { casualtyMarkers } from './world/casualties';
 import { toonifyProp } from './world/factory-props';
 import { BloodSpray, Muzzle, Puff, magnum } from './world/gun';
 import { toonUnique } from './world/toon';
-import { SpellBolt, SpellImpact, Sparkles, TipTrail, Wand, Ward } from './world/wand';
+import { SpellBolt, SpellImpact, Sparkles, TipTrail, Wand } from './world/wand';
 
 /**
  * Point lights the office shaders are compiled for: the wand's light, which stays in the scene, plus three
@@ -113,7 +113,7 @@ export function spellStandIns(): { world: THREE.Group; hands: THREE.Group } {
   world.add(smokeWisp(), pageLeaf(false), pageLeaf(true), cord());
   const superMuzzle = new Muzzle();
   superMuzzle.fire(true);
-  hands.add(new Wand().group, new Ward().group, magnum(), new Muzzle().group, superMuzzle.group, pageLeaf(true));
+  hands.add(new Wand().group, magnum(), new Muzzle().group, superMuzzle.group, pageLeaf(true));
   for (const root of [world, hands]) {
     hideLights(root);
     root.traverse((object) => {

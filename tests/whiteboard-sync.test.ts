@@ -194,7 +194,6 @@ test('ping eligibility for every status, kind and condition', () => {
     [worker({ kind: 'shell' }), /plain shell/],
     [worker({ kind: 'cloud' as WorkerInfo['kind'] }), /Factory computer/],
     [worker({ guest: { pid: 1, tty: 'x' } as WorkerInfo['guest'] }), /guest/],
-    [worker({ downedUntil: Date.now() + 10_000 }), /is down/],
     [worker({ lost: true } as Partial<WorkerInfo>), /worktree is gone/],
   ] as const) {
     const r = pingEligibility(w);

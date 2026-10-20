@@ -88,7 +88,6 @@ data class WorkerInfo(
     val name: String = "",
     val color: String = "#8c8c8c",
     val status: String = "idle",
-    val downedUntil: Long? = null,
     val acked: Boolean = true,
     val waitingSince: Long? = null,
     val createdBy: String = "",

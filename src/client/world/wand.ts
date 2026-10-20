@@ -15,7 +15,7 @@ import { toonUnique } from './toon';
  * lights and the progress bar fills while you hold it (Wand.update).
  *
  * Also here: the spells' effects in the world (SpellBolt, SpellImpact, TipTrail, Sparkles)
- * and the Protego ward in front of your eyes (Ward). Factory's palette: orange, white and steel.
+ * in Factory's palette: orange, white and steel.
  * No DOM or WebGL at import time, so tests can load it in Node.
  */
 
@@ -643,80 +643,5 @@ export class TipTrail {
   /** How many motes are still glowing. */
   get glowing(): number {
     return this.live;
-  }
-}
-
-/** How long Protego's ward holds in front of you, from flaring up to gone, in seconds. */
-export const WARD_TIME = 1.25;
-
-/**
- * Protego: a ward of light in front of your eyes, drawn the Factory way in hairlines. An outer
- * rim and an inner ring, a hexagon between them and spokes out to the rim, a faint fill, and the
- * pinwheel in the middle. It snaps up, holds with a slow turn, and fades. Lives in the hands'
- * scene, so the world never cuts through it.
- */
-export class Ward {
-  readonly group = new THREE.Group();
-  private t = 0;
-  private mats: { m: THREE.MeshBasicMaterial; full: number }[] = [];
-  private spin = new THREE.Group();
-
-  constructor() {
-    this.group.name = 'wand-ward';
-    const additive = (color: string, opacity: number) => {
-      const m = new THREE.MeshBasicMaterial({ color, transparent: true, opacity, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide });
-      this.mats.push({ m, full: opacity });
-      return m;
-    };
-    const R = 0.42;
-    this.spin.add(new THREE.Mesh(new THREE.CircleGeometry(R, 64), additive(ORANGE, 0.07)));
-    this.spin.add(new THREE.Mesh(new THREE.RingGeometry(R - 0.004, R, 96), additive(ORANGE_HOT, 0.95)));
-    this.spin.add(new THREE.Mesh(new THREE.RingGeometry(R * 0.93 - 0.0015, R * 0.93, 96), additive(WHITE, 0.4)));
-    this.spin.add(new THREE.Mesh(new THREE.RingGeometry(R * 0.36 - 0.003, R * 0.36, 64), additive(ORANGE_HOT, 0.8)));
-    // The hexagon, and spokes from it to the rim: hairlines laid as thin flat bars.
-    const bar = (len: number, width: number, opacity: number) => new THREE.Mesh(new THREE.PlaneGeometry(width, len), additive(WHITE, opacity));
-    for (let i = 0; i < 6; i++) {
-      const a = (i / 6) * Math.PI * 2;
-      const side = bar(R * 0.62, 0.0025, 0.55);
-      const r = R * 0.62 * Math.cos(Math.PI / 6);
-      side.position.set(Math.cos(a) * r, Math.sin(a) * r, 0);
-      side.rotation.z = a;
-      this.spin.add(side);
-      const spoke = bar(R * 0.62, 0.0018, 0.35);
-      const b = a + Math.PI / 6;
-      spoke.position.set(Math.cos(b) * R * 0.66, Math.sin(b) * R * 0.66, 0);
-      spoke.rotation.z = b - Math.PI / 2;
-      this.spin.add(spoke);
-    }
-    const sigil = new THREE.Mesh((sigilGeo ??= glyphFlat(1, 6)), additive(ORANGE_HOT, 0.9));
-    sigil.scale.setScalar(R * 0.5);
-    this.spin.add(sigil);
-    this.group.add(this.spin);
-    this.group.position.set(0, 0.02, -0.95);
-    this.show(0);
-  }
-
-  update(dt: number): boolean {
-    this.t += dt;
-    const u = this.t / WARD_TIME;
-    // Snap up, hold, fade.
-    const k = u < 0.12 ? 1 - (1 - u / 0.12) ** 3 : u < 0.7 ? 1 : Math.max(0, 1 - (u - 0.7) / 0.3);
-    this.show(k);
-    this.spin.rotation.z = -this.t * 0.9;
-    this.group.scale.setScalar(0.82 + 0.18 * Math.min(1, u / 0.12) + 0.04 * Math.sin(this.t * 14) * (u < 0.7 ? 1 : 0));
-    return u < 1;
-  }
-
-  private show(k: number) {
-    for (const { m, full } of this.mats) m.opacity = full * k;
-  }
-
-  dispose() {
-    this.group.removeFromParent();
-    this.group.traverse((o) => {
-      const m = o as THREE.Mesh;
-      if (m.geometry && m.geometry !== sigilGeo) m.geometry.dispose();
-    });
-    for (const { m } of this.mats) m.dispose();
   }
 }

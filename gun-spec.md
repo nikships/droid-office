@@ -1,100 +1,53 @@
-# Spec: .44 Magnum, worker Darwin Awards
+# Spec: worker sidearms
 
-> The Magnum is now opt-in. By default `7` draws a magic wand (`src/client/world/wand.ts`): the
-> same moves, deadline, revival and cleanup, with sparkles, a spell circle and a sleeping worker
-> in place of the gunshot, blood and slack face. Settings → You → "What 7 puts in your hand"
-> (`Settings.sidearm`, kept in the browser) picks the Magnum described below.
+`7` draws the droid wand by default. Settings → You → **What 7 puts in your hand**
+can select the .44 Magnum instead. Both sidearms use the same targeting and worker actions.
 
-## Summary
+## Normal hits
 
-Pressing `7` toggles a realistic silver .44 Magnum in your right hand.
-Click shoots. One shot drops a worker: it falls out of its chair and
-bleeds out on the floor. No menu opens. Walk up and press **E** within
-30 seconds to revive it with its session untouched. Otherwise medics
-collect it and its owned worktrees and branches are deleted.
+- One normal shot or wand bolt opens the hit worker's terminal for the user who fired it.
+- The worker stays at its desk with its task and session untouched. Repeated normal hits
+  only reopen that same terminal.
+- This includes the Pipeline agent, Team lead, Issues agent and PR agent, even before
+  their first task. `station.open` starts their session without inventing an owner task;
+  `worker.open` opens it only in the requesting window.
+- Guest and cloud workers open their usual views.
+- A registered laptop screen or other interactive display still opens its usual UI.
+- The nearest visible solid blocks the shot. There is no reach limit.
+- There is no downed state, fall, bleed-out, blood pool, spell circle, revival deadline,
+  revive action or revive key. Old saved deadlines are ignored on restore.
 
-## Behavior
+## Charged hits
 
-### Draw and holster (`7`)
+Hold the primary button for 0.75 seconds and release to fire a charged shot.
 
-- `7` toggles the gun on and off. Both draw and holster get an animation
-  and a sound (slide click out, soft click away).
-- The gun lives in the right hand. The left hand keeps its mug.
-- Blocked with a "hands full" toast while carrying an issue card, book,
-  or basketball, and while climbing or hanging a picture.
-- While drawn, the crosshair turns red and the hint bar reads
-  `Click: fire · 7: holster`.
-- The gun shows in `Hands`.
-- `1-6` are emotes, so `7` is free.
+- A charged worker-body hit immediately stops and dismisses a local worker.
+- Its owned worktrees and branches are deleted, including uncommitted changes and
+  unpublished commits. Pre-existing branches keep their ownership protection.
+- `worker.remove` carries `shot: true`, so all windows render a white-gold beam and
+  vertical heavenly ascent instead of the ordinary send-home walk.
+- The laptop shuts and shrinks; the worker, laptop and beam resources are released once.
+- There is no revival window.
+- Guests and cloud workers cannot be dismissed this way.
+- Screen hits still open their UI, and visible furniture still blocks shots.
+- Holstering, switching sidearms or spells, opening a window, Escape and losing focus
+  cancel a held charge without firing.
 
-### Firing
+See [Heavenly ascent](docs/heavenly-ascent.md) and the [feature guide](docs/guide/features.md).
 
-- Click fires.
-- Hit test is a raycast from the camera through the crosshair (first
-  person) or mouse (third): the nearest worker whose model the ray hits
-  first wins.
-- Anything solid in front blocks the shot, so line of sight is required.
-  Range covers the whole floor.
-- Workers only. Never players, never yourself.
-- A miss cracks against the wall or floor with an impact puff and sound.
-  Nothing dies.
-- One shot kills (visually). Muzzle flash, loud synthesized shot, one
-  shell of recoil.
+## Controls and effects
 
-### Bleed-out and revival
-
-- The shot worker tumbles out of its chair onto the floor, lands with a
-  thud, and a realistic blood pool spreads under it. Status light out,
-  face gone slack.
-- Session keeps running, laptop stays on, desk stays occupied.
-- `worker.shoot` starts a persisted, server-owned 30-second deadline.
-- Within 2.4 metres of the body, **E** sends `worker.revive`. The nearby
-  hint shows the remaining seconds even with the gun drawn.
-- Revival returns the worker to its seat, with session untouched and
-  blood gone. Escape does not revive it.
-
-### Deadline expiry
-
-- The server stops the session and deletes its owned worktrees and branches,
-  including uncommitted changes and unpublished commits. No cleanup choices.
-  Pre-existing branches retain their ownership protection.
-- When `worker.remove` arrives, clients route the worker to the
-  medic sequence instead of the walk-out: two white-uniform paramedics
-  walk in from the elevator with a stretcher, load the body (~4.8s, blood
-  pool drains as it lifts), carry it to the elevator, and fade.
-- Laptop shuts and shrinks as it does today.
-- Blood pool is gone with the body. No permanent stain.
-
-### Edge cases
-
-- Multiple bodies have independent deadlines; repeated shots do not extend them.
-- Shooting a body that is already down confirms the kill: the server closes its window at
-  once and dismisses it, and the medics come without waiting out the 30 seconds.
-- Floor switches, disconnects, reloads and server restarts do not cancel deadlines.
-- Revival at or after the deadline is refused; collected bodies cannot be revived.
-- Weird positions (beanbag, upstairs floors):
-  fall to the floor the same way everywhere.
-- Upstairs floors: medics use the elevator, never the balcony parachute.
-
-## Components
-
-| File | Change |
-| --- | --- |
-| `src/client/world/gun.ts` (new) | Silver .44 Magnum loaded from `public/props/magnum.glb` (built by `tools/props/generate.py`), muzzle-flash helper |
-| `src/client/world/hands.ts` | `holdGun(on)`, `fireGun()` recoil on the right arm |
-| `src/client/world/character.ts` | `Person.setGun/fire` (third-person arm + prop); `Worker.die/revive` visual states |
-| `src/client/world/casualties.ts` (new) | `Casualties` class mirroring `Departures`: fall, blood pool, medics + stretcher, revive-to-seat |
-| `src/client/main.ts` | Gun toggle, firing, shared casualty synchronization, nearby E revival and countdown hint, medic removal routing |
-| `src/shared/protocol.ts` | Revival duration, worker deadline, shoot and revive actions |
-| `src/server/workers.ts`, `src/server/worktrees.ts`, `src/server/server.ts` | Persisted deadlines, session-preserving revival and gun-specific owned-resource cleanup |
-| `src/client/sound.ts` | `gunshot`, `gunDraw`, `gunHolster`, body thud, medic siren sting (Web Audio synth, same patterns as `thunder`/`gong`) |
-| `docs/guide/controls.md` | `7` row in Controls plus a short section |
-| `tests/casualties.test.ts` (new) | State-machine and timeline unit tests (Node-loadable, like other world modules) |
-
-Out of scope: kill confirmations for other players,
-persistent blood.
+- `7` draws or holsters the selected sidearm.
+- Wand spells use `1–5` and the G wheel: Lumos, swish and flick, Sparkler, Ship it,
+  Run the build. The former Protego revival spell and `6` binding are removed.
+- Magnum tricks remain on `1–6` and the G wheel.
+- Misses retain their dust or fizzling spell effects. Charged hits retain their effects,
+  recoil, charge ring, sound and Mac trackpad haptics.
+- Players and the user are never shot targets.
 
 ## Validation
 
-`npm run lint`, `npm run typecheck`, `npm test`, plus a manual in-office
-shoot/revive/kill pass.
+`tests/worker-shot.test.ts` covers harmless normal shots, charged cleanup, old-state
+restoration and pre-made session opening. `tests/gun-hit.test.ts` covers visible targeting,
+blockers, screens and idle pre-made models. The casualty and wand tests cover immediate
+ascent, resource cleanup and the five-spell menu.
