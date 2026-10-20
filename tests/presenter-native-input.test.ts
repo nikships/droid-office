@@ -53,6 +53,17 @@ test("the page's HTML full screen never resizes its own invisible window", () =>
   assert.match(presenter, /this\.page\.on\('leave-html-full-screen', \(\) => this\.htmlFullScreen\.leave\(\)\)/);
   assert.match(presenter, /this\.htmlFullScreen\.windowLeft\(\)/);
 });
+test("sandboxed frames stay in the offscreen page's process, where its input reaches them", () => {
+  // In a process of their own (IsolateSandboxedIframes), a Whiteboard card's video and buttons never got a click in the Mac app.
+  const main = readFileSync(new URL('../src/desktop/main.ts', import.meta.url), 'utf8');
+  const model = readFileSync(new URL('../src/desktop/presenter-model.ts', import.meta.url), 'utf8');
+  assert.match(model, /DISABLED_CHROMIUM_FEATURES = \['IsolateSandboxedIframes'\]/);
+  const append = main.indexOf("app.commandLine.appendSwitch('disable-features', DISABLED_CHROMIUM_FEATURES.join(','))");
+  assert.ok(append > 0, 'main.ts does not turn the features off');
+  assert.ok(append < main.indexOf('.whenReady()'), 'the switch has to be set before the app is ready');
+  assert.equal(main.match(/appendSwitch\('disable-features'/g)?.length, 1, 'a second disable-features switch would replace the first');
+});
+
 test('the monitor is installed once per window and removed when the view leaves it or is released', () => {
   assert.match(body('- (void)viewDidMoveToWindow'), /installEventMonitor/);
   assert.match(body('- (void)viewWillMoveToWindow:'), /removeEventMonitor/);

@@ -21,6 +21,14 @@ export function presentMode(env: Record<string, string | undefined>): PresentMod
   return mode === 'link' || mode === 'paced' ? mode : 'direct';
 }
 
+/**
+ * Chromium features the Mac app turns off before it starts. `IsolateSandboxedIframes` puts every sandboxed iframe (a Whiteboard
+ * card) in a renderer process of its own, and input sent to an offscreen page never reaches a frame in another process: a click
+ * on a card's video or button landed on the office page's <iframe> element and did nothing, while the wheel still scrolled. The
+ * card keeps its sandbox and opaque origin; it shares the office page's process, as it does in a browser without the feature.
+ */
+export const DISABLED_CHROMIUM_FEATURES = ['IsolateSandboxedIframes'] as const;
+
 /** The frame rate a page that nobody can see is held to. Hiding the offscreen window does not change the page's `visibilityState` or stop its animation frames in Electron's offscreen mode; only a low frame rate slows them. */
 export const HIDDEN_FRAME_RATE = 1;
 

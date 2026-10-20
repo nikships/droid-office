@@ -12,6 +12,7 @@ import type { NativeEvent } from './input-events.js';
 import { createTrace, traceFile } from './input-trace.js';
 import { type InputNative, PresenterInput } from './presenter-input.js';
 import { PresenterWindow, presenterModule } from './presenter.js';
+import { DISABLED_CHROMIUM_FEATURES } from './presenter-model.js';
 import { officeRuntime } from './runtime.js';
 import { DEFAULT_PORT, defaultOfficeDir, type DesktopSettings, isolatedPortOk, loadSettings, officeArgs, saveSettings } from './settings.js';
 import { desktopEnv } from './shell-path.js';
@@ -19,6 +20,9 @@ import { enforceRequirements, isStartupCheck, runStartupCheck, StartupAborted } 
 import { Updates } from './updates.js';
 
 const BACKGROUND = '#050505';
+
+// Before ready, or Chromium never sees it: a card frame in a process of its own gets no clicks from the offscreen page.
+app.commandLine.appendSwitch('disable-features', DISABLED_CHROMIUM_FEATURES.join(','));
 /** How many ports past the chosen one to try when something that isn't an office holds it. */
 const PORT_TRIES = 20;
 
