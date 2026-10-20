@@ -1323,35 +1323,6 @@ export function buildOffice(): Office {
   interactables.push(shelf.interactable);
   fixture('south', BOOKSHELF.x, (BOOKSHELF.height + 0.55) / 2, BOOKSHELF.width + 0.2, BOOKSHELF.height + 0.55);
 
-  // Kitchen corner: counter + fridge
-  // Black cabinets under a stainless top, an orange LED under the top's front edge, and a brushed
-  // steel fridge. The counter's front faces -z, into the room.
-  const kitchen = new THREE.Group();
-  const counter = new THREE.Group();
-  counter.add(mesh(box(5, 0.88, 1), toon('#6a6a6a'), 0, 0.54, 0));
-  counter.add(mesh(box(4.9, 0.1, 0.9), toon(PALETTE.ink), 0, 0.05, 0.04));
-  counter.add(mesh(box(5.1, 0.05, 1.1), toon('#eeeeee'), 0, 1.005, 0));
-  counter.add(mesh(box(4.9, 0.012, 0.01), toon(PALETTE.accent, { emissive: PALETTE.accent }), 0, 0.96, -0.555));
-  const pull = toon(PALETTE.brushed);
-  for (let i = 0; i < 5; i++) {
-    const x = -2.5 + (i + 0.5);
-    if (i) counter.add(mesh(box(0.008, 0.8, 0.01), toon(PALETTE.ink), -2.5 + i, 0.52, -0.505));
-    counter.add(mesh(box(0.4, 0.025, 0.03), pull, x, 0.84, -0.52));
-  }
-  const fridgeSteel = toon(PALETTE.brushed);
-  counter.add(mesh(roundedBox(1.1, 2.2, 1, 0.03), fridgeSteel, 3.2, 1.1, 0));
-  counter.add(mesh(box(1.06, 0.01, 0.01), toon('#c0c0c0'), 3.2, 1.45, -0.505));
-  counter.add(mesh(box(0.04, 0.5, 0.05), toon('#808080'), 2.75, 1.75, -0.53));
-  counter.add(mesh(box(0.04, 0.4, 0.05), toon('#808080'), 2.75, 1.05, -0.53));
-  kitchen.add(mergeByMaterial(counter));
-  kitchen.position.set(-14.5, 0, 12.2);
-  group.add(kitchen);
-  colliders.push({ minX: -17, maxX: -12, minZ: 11.7, maxZ: 12.7, top: 1.03 });
-  colliders.push({ minX: -11.85, maxX: -10.75, minZ: 11.7, maxZ: 12.7, top: 2.2 });
-  // Counter and fridge, in front of the south wall.
-  fixture('south', -14.5, 0.55, 5.1, 1.1);
-  fixture('south', -11.3, 1.1, 1.1, 2.2);
-
   // The exposed structure overhead: steel beams and purlins, cable trays over the work cells, and the
   // light fixtures hung from them.
   group.add(buildCeiling(night));

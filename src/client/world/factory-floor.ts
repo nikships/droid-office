@@ -334,10 +334,7 @@ export function dressFactoryFloor(kit: DressingKit): Dressing {
   const atlas = new SignAtlas(200, 2);
   const blades = LINES.map((l) => ({ line: l, region: atlas.add(1.8, 0.5, paintBlade(l.name)) }));
   const stencils = LINES.map((l) => ({ line: l, region: atlas.add(2.2, 0.7, paintStencil(l.name)) }));
-  const walls: { wall: WallId; u: number; y: number; region: AtlasRegion }[] = [
-    { wall: 'south', u: -6.5, y: 3.2, region: atlas.add(1.6, 0.34, paintZone('06', 'DOCUMENTATION')) },
-    { wall: 'south', u: -14, y: 3.75, region: atlas.add(1.6, 0.36, paintZone('', 'FUEL', 'KITCHEN')) },
-  ];
+  const walls: { wall: WallId; u: number; y: number; region: AtlasRegion }[] = [{ wall: 'south', u: -6.5, y: 3.2, region: atlas.add(1.6, 0.34, paintZone('06', 'DOCUMENTATION')) }];
   const tex = atlas.finish();
   const faces: { geo: THREE.BufferGeometry; at: THREE.Matrix4 }[] = [];
 

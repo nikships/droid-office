@@ -43,6 +43,13 @@ function clear(a: Pt, b: Pt, what: string) {
   }
 }
 
+test('the cleared kitchen corner is walkable across the former counter and fridge', () => {
+  const start: Pt = [-16.5, 12.2];
+  const end: Pt = [-11, 12.2];
+  clear(start, end, 'player');
+  assert.deepEqual(route(start, end), [start, end]);
+});
+
 test('the unused glass room remains walkable through its doorway', () => {
   const way = route([8, 7], [10.75, 10]);
   for (let i = 1; i < way.length; i++) clear(way[i - 1], way[i], 'player');
