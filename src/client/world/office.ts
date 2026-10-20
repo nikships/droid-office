@@ -44,7 +44,7 @@ import { deskPoint } from '../../shared/nav';
 import { FLOOR_PALETTES, type FloorPalette } from '../../shared/floors';
 import { buildGarage, buildStreet, bulb, type NightParts } from './outside';
 import { ANISOTROPY, TILE_SCALE } from './texture-quality';
-import { mergeByMaterial, mesh, roundedBox, textPlane, toon, toonUnique } from './toon';
+import { beveledBox, mergeByMaterial, mesh, roundedBox, textPlane, toon, toonUnique } from './toon';
 import { buildElevator, type Elevator } from './elevator';
 import { buildGong, type Gong } from './gong';
 import { buildJukebox, type JukeboxView } from './jukebox';
@@ -55,6 +55,7 @@ import { dressFactoryFloor } from './factory-floor';
 import { placeFactoryProps } from './factory-props';
 import { glassRoomTexture } from './glass-room';
 import { screenMaterial } from './screen';
+import { type ContactFootprint, setContactFootprints } from './surface';
 
 export interface Collider {
   minX: number;
@@ -630,7 +631,8 @@ function buildExitStairs(group: THREE.Group, colliders: Collider[]) {
  * The four outside walls, built in pieces around their windows and doors. Each is painted inside in
  * the floor's colors and outside in the building's.
  */
-function buildWalls(group: THREE.Group, colliders: Collider[], openings: Opening[], looks: Looks) {
+function buildWalls(parent: THREE.Group, colliders: Collider[], openings: Opening[], looks: Looks) {
+  const group = new THREE.Group();
   const inside = looks.wall;
   const outside = toon(PALETTE.exterior);
   const trimMat = looks.trim;
@@ -690,6 +692,7 @@ function buildWalls(group: THREE.Group, colliders: Collider[], openings: Opening
       run(floorU, b);
     }
   }
+  parent.add(mergeByMaterial(group));
 }
 
 /** Wall where the exit door is, for the floors above the bottom one: painted like the rest of the wall, inside and out, with its baseboard. */
@@ -716,6 +719,7 @@ function workCells(night: NightParts): THREE.Group {
     return m;
   };
   const pad = flat(PALETTE.rugs[0]);
+  pad.userData.floorContact = true;
   const hairline = flat('#787878');
   const bracket = bulb(night, PALETTE.accent, 0.35);
   bracket.userData.outlineParameters = { visible: false };
@@ -851,13 +855,13 @@ function seatable(obj: THREE.Object3D, seatId: string, radius: number, interacta
 function chair(color: string): THREE.Group {
   const g = new THREE.Group();
   const mat = toon(color);
-  g.add(mesh(roundedBox(0.6, 0.1, 0.56, 0.04), mat, 0, 0.5, 0));
-  const back = mesh(roundedBox(0.58, 0.09, 0.6, 0.04), mat, 0, 0.86, 0.27);
+  g.add(mesh(beveledBox(0.6, 0.1, 0.56, 0.025), mat, 0, 0.5, 0));
+  const back = mesh(beveledBox(0.58, 0.09, 0.6, 0.025), mat, 0, 0.86, 0.27);
   back.rotation.x = Math.PI / 2 - 0.12;
   // In the back's own space +y is its outside face and -z its top edge.
   back.add(mesh(box(0.44, 0.012, 0.018), toon(PALETTE.accent), 0, 0.048, -0.24));
   g.add(back);
-  const steel = toon(PALETTE.deskLeg);
+  const steel = toon(PALETTE.deskLeg, { finish: 'metal' });
   g.add(mesh(box(0.42, 0.03, 0.04), steel, 0, 0.6, 0.27));
   g.add(mesh(new THREE.CylinderGeometry(0.035, 0.035, 0.42, 6), steel, 0, 0.26, 0));
   for (let i = 0; i < 5; i++) {
@@ -878,9 +882,9 @@ function buildDesk(def: DeskDef, index: number): DeskView {
   // steel modesty panel facing away from the worker with a power pip on it. One mesh per material.
   const body = new THREE.Group();
   const top = 0.05;
-  body.add(mesh(roundedBox(width - 0.06, top, depth - 0.04, 0.02), toon(PALETTE.desk), 0, height - top / 2, 0));
-  body.add(mesh(box(width - 0.06, 0.012, 0.012), toon('#c0c0c0'), 0, height - top / 2, depth / 2 - 0.022));
-  const frame = toon('#6a6a6a');
+  body.add(mesh(beveledBox(width - 0.06, top, depth - 0.04), toon(PALETTE.desk, { finish: 'paint' }), 0, height - top / 2, 0));
+  body.add(mesh(box(width - 0.06, 0.012, 0.012), toon('#c0c0c0', { finish: 'metal' }), 0, height - top / 2, depth / 2 - 0.022));
+  const frame = toon('#6a6a6a', { finish: 'paint' });
   const legH = height - top;
   const lx = width / 2 - 0.1;
   const lz = depth / 2 - 0.08;
@@ -1036,7 +1040,7 @@ function buildKiosk(def: DeskDef): DeskView {
 /** A framed board on a wall; the face gets a canvas texture (cork, chalk or whiteboard). */
 function wallBoard(width: number, height: number, frameColor: string): { group: THREE.Group; face: THREE.Mesh } {
   const group = new THREE.Group();
-  const frame = mesh(roundedBox(width + 0.3, 0.12, height + 0.3, 0.1), toon(frameColor), 0, 0, 0);
+  const frame = mesh(beveledBox(width + 0.3, 0.12, height + 0.3, 0.025), toon(frameColor, { finish: 'paint' }), 0, 0, 0);
   frame.rotation.x = Math.PI / 2;
   group.add(frame);
   const faceMat = screenMaterial();
@@ -1055,11 +1059,14 @@ export function buildOffice(): Office {
 
   // What each floor paints its own way (see setLook): the walls, their trim, the slab.
   const looks: Looks = { wall: toonUnique(PALETTE.wall), trim: toonUnique(PALETTE.wallTrim), slabs: [] };
+  looks.wall.userData.wallContact = true;
 
   // Floor, and the ceiling, with the ways up and down to the other floors through them (see stack.ts).
   const floorTex = floorTexture();
   looks.slabs.push(floorTex);
-  const stack = buildStack(colliders, new THREE.MeshToonMaterial({ map: floorTex, gradientMap: (toon('#fff') as THREE.MeshToonMaterial).gradientMap }));
+  const floorMaterial = new THREE.MeshToonMaterial({ map: floorTex, gradientMap: (toon('#fff') as THREE.MeshToonMaterial).gradientMap });
+  floorMaterial.userData.floorContact = true;
+  const stack = buildStack(colliders, floorMaterial);
   stack.set({ index: 0, count: 1 });
   group.add(stack.group);
   interactables.push(...stack.interactables);
@@ -1357,6 +1364,14 @@ export function buildOffice(): Office {
 
   const kit = { group, colliders, interactables, fixture, night };
   const dressing = [dressFactoryFloor(kit), placeFactoryProps(kit)];
+
+  // Contact under fixed, floor-level solids only: no occupants, invisible fences or loft furniture.
+  const contacts: ContactFootprint[] = colliders.filter((c) => !c.fence && (c.bottom ?? 0) <= 0.02 && c.top > 0.05 && c.top < WALL_HEIGHT).map((c) => ({ ...c, strength: 0.24, feather: 0.35 }));
+  for (const def of DESKS) {
+    const [x, z] = deskPoint(def, 0, 0.9);
+    contacts.push({ minX: x - 0.25, maxX: x + 0.25, minZ: z - 0.25, maxZ: z + 0.25, strength: 0.32, feather: 0.28 });
+  }
+  setContactFootprints(contacts);
 
   const setProjectName = (name: string) => elevator.setSign(name);
   const setLook = (p: FloorPalette) => {

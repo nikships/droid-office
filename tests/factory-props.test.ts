@@ -73,6 +73,10 @@ test('the robot cell has orange neon safety lighting and two local light pools',
     k.night.lamps.every((l) => !l.ground),
     'the cell light stays on its office floor',
   );
+  assert.ok(
+    k.night.lamps.every((l) => l.indoor),
+    'the shader routes these pools to machinery inside the office',
+  );
 });
 
 test('the compute wall is on the west wall, clear of its windows, the exit door, the ceiling and the kitchen', () => {

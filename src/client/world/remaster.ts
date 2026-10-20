@@ -6,6 +6,7 @@ import { BAKE_BUDGET_MAX_MS, probeCount, type RenderParams, type ToneMap, whiteB
 import { HdrPresenter } from './hdr-present';
 import { CLEAR_NIGHT, remasterUniforms } from './sky';
 import { setToonRamp } from './toon';
+import { surfaceUniforms } from './surface';
 
 /*
  * The Remastered renderer: the office drawn at a share of the screen's resolution (0.5× to 1.5×) into a float (HDR,
@@ -79,12 +80,14 @@ void main() {
   vec3 c = texture2D( tColor, vUv ).rgb;
   c *= exposure * balance;
   // Contrast around middle grey, in log space, so highlights are treated the same in SDR and HDR.
-  c = 0.18 * pow( max( c, 0.0 ) / 0.18, vec3( contrast ) );
-  float luma = dot( c, vec3( 0.2126, 0.7152, 0.0722 ) );
-  float hi = max( c.r, max( c.g, c.b ) );
-  float lo = min( c.r, min( c.g, c.b ) );
-  float chroma = hi > 0.0 ? ( hi - lo ) / hi : 0.0;
-  c = max( mix( vec3( luma ), c, saturation * ( 1.0 + vibrance * ( 1.0 - chroma ) ) ), 0.0 );
+  if ( contrast != 1.0 ) c = 0.18 * pow( max( c, 0.0 ) / 0.18, vec3( contrast ) );
+  if ( saturation != 1.0 || vibrance != 0.0 ) {
+    float luma = dot( c, vec3( 0.2126, 0.7152, 0.0722 ) );
+    float hi = max( c.r, max( c.g, c.b ) );
+    float lo = min( c.r, min( c.g, c.b ) );
+    float chroma = hi > 0.0 ? ( hi - lo ) / hi : 0.0;
+    c = max( mix( vec3( luma ), c, saturation * ( 1.0 + vibrance * ( 1.0 - chroma ) ) ), 0.0 );
+  }
   // Up to the display's peak: 1 in SDR, the HDR peak on an EDR display.
   c = peak * curve( c / peak );
   if ( view == 1 ) {
@@ -296,9 +299,12 @@ export class ProbeGI {
     const hide = this.hideWhileBaking();
     const was = hide.map((o) => o.visible);
     for (const o of hide) o.visible = false;
+    const surface = surfaceUniforms.rmSurface.value;
+    surfaceUniforms.rmSurface.value = 0;
     try {
       bake();
     } finally {
+      surfaceUniforms.rmSurface.value = surface;
       hide.forEach((o, i) => {
         o.visible = was[i];
       });
@@ -454,6 +460,8 @@ export class Remaster {
     u.lamps.value = on ? s.lampLight : 1;
     u.gi.value = on && s.gi ? s.giIntensity : 0;
     u.giOnly.value = on && s.gi && s.debug === 'gi' ? 1 : 0;
+    surfaceUniforms.rmSurface.value = on && s.toonRamp !== 'classic' ? 1 : 0;
+    surfaceUniforms.rmContact.value = on ? 1 : 0;
     this.gi.configure(on && s.gi, s.giSpacing, s.giBounces);
     this.hdr.set(on && s.hdr);
     const ramp = on ? s.toonRamp : 'classic';

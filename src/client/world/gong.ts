@@ -27,7 +27,7 @@ export function buildGong(): Gong {
   const { x, z, width, height } = GONG;
   const group = new THREE.Group();
   group.position.set(x, 0, z);
-  const lacquer = toon(LACQUER);
+  const lacquer = toon(LACQUER, { finish: 'paint' });
   const ink = toon(INK);
   const half = width / 2;
 
@@ -54,16 +54,16 @@ export function buildGong(): Gong {
   group.add(pivot);
   const R = 0.62;
   const drop = 1.02;
-  const brass = toonUnique(BRASS);
+  const brass = toonUnique(BRASS, 'metal');
   brass.emissive = new THREE.Color(ACCENT);
   brass.emissiveIntensity = 0;
   const disc = new THREE.Group();
   disc.position.y = -drop;
   pivot.add(disc);
-  disc.add(mesh(new THREE.CylinderGeometry(R, R, 0.05, 32).rotateX(Math.PI / 2), brass, 0, 0, 0));
-  disc.add(mesh(new THREE.TorusGeometry(R, 0.04, 6, 32), brass, 0, 0, 0));
-  disc.add(mesh(new THREE.TorusGeometry(R * 0.55, 0.018, 4, 32), toon('#c0c0c0'), 0, 0, 0.03));
-  const boss = mesh(new THREE.SphereGeometry(0.16, 16, 12), brass, 0, 0, 0.02);
+  disc.add(mesh(new THREE.CylinderGeometry(R, R, 0.05, 64).rotateX(Math.PI / 2), brass, 0, 0, 0));
+  disc.add(mesh(new THREE.TorusGeometry(R, 0.04, 8, 64), brass, 0, 0, 0));
+  disc.add(mesh(new THREE.TorusGeometry(R * 0.55, 0.018, 8, 64), toon('#c0c0c0', { finish: 'metal' }), 0, 0, 0.03));
+  const boss = mesh(new THREE.SphereGeometry(0.16, 24, 16), brass, 0, 0, 0.02);
   boss.scale.z = 0.45;
   disc.add(boss);
   for (const sx of [-1, 1]) {

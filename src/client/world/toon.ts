@@ -1,8 +1,10 @@
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
+import { RoundedBoxGeometry } from 'three/examples/jsm/geometries/RoundedBoxGeometry.js';
 import { MONO, SANS } from '../fonts';
 import { FACTORY_GLYPH_PATH, FACTORY_GLYPH_VIEWBOX, fillGlyphText, measureGlyphText as measure, withGlyph } from './glyph';
 import { ANISOTROPY, LABEL_SCALE } from './texture-quality';
+import { type SurfaceFinish, withFinish } from './surface';
 
 let gradient: THREE.DataTexture | null = null;
 
@@ -22,7 +24,7 @@ const RAMPS: Record<string, { levels: number[]; smooth: boolean }> = {
   classic: { levels: [90, 185, 255], smooth: false },
   bands5: { levels: [70, 125, 175, 220, 255], smooth: false },
   soft: { levels: [90, 185, 255], smooth: true },
-  smooth: { levels: [55, 255], smooth: true },
+  smooth: { levels: Array.from({ length: 64 }, (_, i) => Math.round(55 + (200 * i) / 63)), smooth: true },
 };
 
 /**
@@ -45,11 +47,12 @@ export function setToonRamp(style: string) {
 
 const cache = new Map<string, THREE.MeshToonMaterial>();
 
-export function toon(color: THREE.ColorRepresentation, opts: { emissive?: THREE.ColorRepresentation; transparent?: boolean; opacity?: number } = {}): THREE.MeshToonMaterial {
-  const key = `${new THREE.Color(color).getHexString()}|${opts.emissive ?? ''}|${opts.opacity ?? 1}`;
+export function toon(color: THREE.ColorRepresentation, opts: { emissive?: THREE.ColorRepresentation; transparent?: boolean; opacity?: number; finish?: SurfaceFinish } = {}): THREE.MeshToonMaterial {
+  const key = `${new THREE.Color(color).getHexString()}|${opts.emissive ?? ''}|${opts.opacity ?? 1}|${opts.transparent ?? false}|${opts.finish ?? ''}`;
   const hit = cache.get(key);
   if (hit) return hit;
   const m = new THREE.MeshToonMaterial({ color, gradientMap: gradientMap() });
+  if (opts.finish) withFinish(m, opts.finish);
   if (opts.emissive !== undefined) m.emissive = new THREE.Color(opts.emissive);
   if (opts.transparent || (opts.opacity ?? 1) < 1) {
     m.transparent = true;
@@ -60,8 +63,14 @@ export function toon(color: THREE.ColorRepresentation, opts: { emissive?: THREE.
 }
 
 /** A fresh (uncached) toon material, for things whose color animates. */
-export function toonUnique(color: THREE.ColorRepresentation): THREE.MeshToonMaterial {
-  return new THREE.MeshToonMaterial({ color, gradientMap: gradientMap() });
+export function toonUnique(color: THREE.ColorRepresentation, finish?: SurfaceFinish): THREE.MeshToonMaterial {
+  const material = new THREE.MeshToonMaterial({ color, gradientMap: gradientMap() });
+  return finish ? withFinish(material, finish) : material;
+}
+
+/** One bevel segment catches the light without changing the solid's dimensions or adding a draw. */
+export function beveledBox(w: number, h: number, d: number, radius = 0.012): THREE.BufferGeometry {
+  return new RoundedBoxGeometry(w, h, d, 1, radius);
 }
 
 export function mesh(geo: THREE.BufferGeometry, mat: THREE.Material, x = 0, y = 0, z = 0): THREE.Mesh {
@@ -420,20 +429,36 @@ export function disposeSprite(s: THREE.Sprite) {
   s.material.dispose();
 }
 
-/** Merges every (untextured) mesh under `root` into one per material: a few draw calls instead of dozens, for things that never move on their own. */
+/** Merges untextured solids, including a box's separately painted faces, into one mesh per material. */
 export function mergeByMaterial(root: THREE.Object3D): THREE.Group {
   root.updateMatrixWorld(true);
   const inv = root.matrixWorld.clone().invert();
   const byMat = new Map<THREE.Material, THREE.BufferGeometry[]>();
+  const add = (mat: THREE.Material, geo: THREE.BufferGeometry) => {
+    if (!byMat.has(mat)) byMat.set(mat, []);
+    byMat.get(mat)!.push(geo);
+  };
   root.traverse((o) => {
     const m = o as THREE.Mesh;
     if (!m.isMesh) return;
     const geo = m.geometry.index ? m.geometry.toNonIndexed() : m.geometry.clone();
     for (const k of Object.keys(geo.attributes)) if (k !== 'position' && k !== 'normal') geo.deleteAttribute(k);
     geo.applyMatrix4(new THREE.Matrix4().multiplyMatrices(inv, m.matrixWorld));
-    const mat = m.material as THREE.Material;
-    if (!byMat.has(mat)) byMat.set(mat, []);
-    byMat.get(mat)!.push(geo);
+    if (Array.isArray(m.material)) {
+      for (const group of geo.groups) {
+        const mat = m.material[group.materialIndex ?? 0];
+        if (!mat) continue;
+        const part = new THREE.BufferGeometry();
+        for (const name of Object.keys(geo.attributes)) {
+          const attribute = geo.getAttribute(name);
+          const values: number[] = [];
+          for (let i = group.start; i < group.start + group.count; i++) values.push(attribute.getX(i), attribute.getY(i), attribute.getZ(i));
+          part.setAttribute(name, new THREE.Float32BufferAttribute(values, 3));
+        }
+        add(mat, part);
+      }
+      geo.dispose();
+    } else add(m.material, geo);
   });
   const out = new THREE.Group();
   for (const [mat, geos] of byMat) {
