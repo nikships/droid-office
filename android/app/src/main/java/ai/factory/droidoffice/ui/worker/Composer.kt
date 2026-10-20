@@ -37,6 +37,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
@@ -51,10 +52,13 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.input.KeyboardType
@@ -89,7 +93,7 @@ private const val MAX_BYTES = 25 * 1024 * 1024
 private const val MAX_IMAGES = 10
 
 @Composable
-fun Composer(w: WorkerInfo, draft: String? = null) {
+fun Composer(w: WorkerInfo, draft: String? = null, visible: Boolean = true, focusRequest: Int = 0) {
     val graph = LocalGraph.current
     val snackbar = LocalSnackbar.current
     val context = LocalContext.current
@@ -99,6 +103,14 @@ fun Composer(w: WorkerInfo, draft: String? = null) {
     val images = remember(w.id) { mutableStateListOf<Attachment>() }
     var sending by remember { mutableStateOf(false) }
     val uploading = images.any { it.id == null }
+    val focus = remember { FocusRequester() }
+    val keyboard = LocalSoftwareKeyboardController.current
+    LaunchedEffect(visible, focusRequest) {
+        if (visible && focusRequest > 0) {
+            focus.requestFocus()
+            keyboard?.show()
+        }
+    }
 
     val picker = rememberLauncherForActivityResult(ActivityResultContracts.PickMultipleVisualMedia(MAX_IMAGES)) { uris ->
         val room = MAX_IMAGES - images.size
@@ -138,6 +150,8 @@ fun Composer(w: WorkerInfo, draft: String? = null) {
         }
     }
 
+    // Keep the composer's state and upload launcher alive while the terminal takes the keyboard.
+    if (!visible) return
     Column(Modifier.fillMaxWidth().padding(start = 10.dp, end = 10.dp, bottom = 10.dp)) {
         AnimatedVisibility(images.isNotEmpty()) {
             Row(Modifier.horizontalScroll(rememberScrollState()).padding(bottom = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -189,7 +203,7 @@ fun Composer(w: WorkerInfo, draft: String? = null) {
                         KeyboardOptions(capitalization = KeyboardCapitalization.Sentences)
                     },
                     keyboardActions = KeyboardActions(onSend = { send() }),
-                    modifier = Modifier.fillMaxWidth().semantics { contentDescription = hint.removeSuffix("…") }.tagged(Tags.Worker.INPUT),
+                    modifier = Modifier.fillMaxWidth().focusRequester(focus).semantics { contentDescription = hint.removeSuffix("…") }.tagged(Tags.Worker.INPUT),
                 )
             }
             val ready = (text.isNotBlank() || images.isNotEmpty()) && !uploading
