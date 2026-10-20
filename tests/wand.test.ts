@@ -5,7 +5,7 @@ import * as THREE from 'three';
 import { READY } from '../src/client/world/gun-motion.js';
 import { Hands, WAND_HOLD } from '../src/client/world/hands.js';
 import { Confetti } from '../src/client/world/confetti.js';
-import { BOLT_SPEED, GRIP_R, GRIP_Z, parseWand, SPELL_CONFETTI, SPELL_HIT, SpellBolt, SpellImpact, Sparkles, TipTrail, WAND_BACK, WAND_SEGMENTS, WAND_TIP, WARD_TIME, Wand, Ward, wandReady } from '../src/client/world/wand.js';
+import { BOLT_SPEED, GRIP_R, GRIP_Z, parseWand, SPELL_CONFETTI, SPELL_HIT, SpellBolt, SpellImpact, Sparkles, TipTrail, WAND_BACK, WAND_SEGMENTS, WAND_TIP, Wand, wandReady } from '../src/client/world/wand.js';
 import { CONFETTI_AT, RELEASE_AT, sampleWandMove, WAND_CHANNELS, WAND_MOVES, WAND_READY, WAND_SPELLS, type WandMoveId, WandMotion } from '../src/client/world/wand-motion.js';
 
 const input = { yaw: 0, pitch: 0, walkPhase: 0, walking: false, airborne: false, jitter: 0 };
@@ -77,9 +77,9 @@ test('the progress bar lights a segment per tenth of charge, and the rotor spins
   w.dispose();
 });
 
-test('the wand has six spells, each with a move that starts and ends at the ready', () => {
-  assert.equal(WAND_SPELLS.length, 6);
-  assert.equal(new Set(WAND_SPELLS.map((s) => s.id)).size, 6);
+test('the wand has five spells, each with a move that starts and ends at the ready', () => {
+  assert.equal(WAND_SPELLS.length, 5);
+  assert.equal(new Set(WAND_SPELLS.map((s) => s.id)).size, 5);
   assert.ok(WAND_SPELLS.every((s) => s.emoji && s.label && !/gun|cylinder|smoke/i.test(s.label)));
   for (const id of ['cast', ...WAND_SPELLS.map((s) => s.id)] as WandMoveId[]) {
     const move = WAND_MOVES[id];
@@ -371,13 +371,4 @@ test('the tip leaves a trail of light only while a move asks for one, and it fad
   for (let i = 0; i < 60; i++) trail.update(1 / 60);
   assert.equal(trail.glowing, 0);
   assert.equal(trail.points.visible, false);
-});
-
-test('Protego holds a ward in front of your eyes for WARD_TIME', () => {
-  const ward = new Ward();
-  assert.ok(ward.group.position.z < -0.5, 'in front of you');
-  let t = 0;
-  while (ward.update(1 / 60)) t += 1 / 60;
-  assert.ok(Math.abs(t - WARD_TIME) < 0.05, `${t}`);
-  ward.dispose();
 });

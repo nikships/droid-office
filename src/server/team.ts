@@ -455,7 +455,6 @@ export class Team {
     if (typeof w === 'string') return no(404, w);
     const text = str(b.text, TASK_MAX).trim();
     if (!text) return no(400, "Give the message on stdin (office-workers send <name> <<'EOF' … EOF)");
-    if (w.downedUntil !== undefined) return no(409, `${w.name} is down: it can't take a message until someone revives it`);
     if (w.status === 'starting') return no(409, `${w.name} is still starting up: try again in a few seconds`);
     if (w.status === 'needs_input') return no(409, `${w.name} is waiting on an answer in its own terminal (${w.activity ?? 'a prompt'}): someone has to answer it there, so tell the person`);
     const err = isAsleep(w.status) ? this.workers.resume(w.id, text) : this.workers.prompt(w.id, text);
@@ -518,7 +517,7 @@ export class Team {
     if (!this.opts.settings().wakeLead) return;
     const lead = this.workers.get(leadId);
     const news = this.unnudged(leadId);
-    if (!lead || !news.length || lead.kind !== 'agent' || lead.downedUntil !== undefined) return;
+    if (!lead || !news.length || lead.kind !== 'agent') return;
     // Busy: it hears when it next waits, or is woken once it comes to rest (onWorker).
     if (lead.status !== 'done' && lead.status !== 'idle') return;
     if (lead.lastInputAt !== undefined && this.now() - lead.lastInputAt < TYPING_MS) {

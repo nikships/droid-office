@@ -870,11 +870,11 @@ test('messages: a cloud worker takes prompts, opens and closes its window, and s
   send({ t: 'changes.unwatch' });
   assert.deepEqual(warned, []);
 
-  for (const t of ['worker.shoot', 'worker.revive', 'worker.pr', 'worker.worktree', 'worker.rebuild', 'changes.watch', 'changes.commit', 'guest.bringIn']) send({ t });
-  assert.equal(warned.length, 8);
+  for (const t of ['worker.shoot', 'worker.pr', 'worker.worktree', 'worker.rebuild', 'changes.watch', 'changes.commit', 'guest.bringIn']) send({ t });
+  assert.equal(warned.length, 7);
   assert.match(warned[0], /nobody really at this desk to shoot/);
-  assert.match(warned[2], /open the pull request itself/);
-  assert.match(warned[3], /only works for a worker on this machine/);
+  assert.match(warned[1], /open the pull request itself/);
+  assert.match(warned[2], /only works for a worker on this machine/);
   assert.equal(cloudRefusal({ ...w, cloud: undefined }, 'worker.pr').includes('a Factory computer'), true);
 
   send({ t: 'worker.prompt', prompt: 'look at issue 7', issue: 7 });

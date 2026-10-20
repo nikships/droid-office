@@ -36,7 +36,7 @@ export interface Landed {
 export function landedWorkers(workers: WorkerInfo[], pulls: GhPull[], pullsOf?: (floor: string) => GhPull[] | undefined): Landed[] {
   const out: Landed[] = [];
   for (const w of workers) {
-    if (w.downedUntil !== undefined || w.kind !== 'agent' || DESK_BY_ID.get(w.deskId)?.station) continue;
+    if (w.kind !== 'agent' || DESK_BY_ID.get(w.deskId)?.station) continue;
     if (isBusy(w.status) || w.prOpening || w.open) continue;
     const pr = workerPr(w, pulls);
     if (w.repos?.length) {

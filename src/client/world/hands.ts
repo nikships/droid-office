@@ -8,7 +8,7 @@ import { Muzzle, SPIN_AT, disposeGun, magnum, setCylinder } from './gun';
 import type { GunPose } from './gun-motion';
 import { Glove, gunHand, type HandShape, SHAPES, WAND_GRIP_AT, WAND_GRIP_AXIS } from './glove';
 import { mesh, toonUnique } from './toon';
-import { Wand, Ward } from './wand';
+import { Wand } from './wand';
 import type { WandPose } from './wand-motion';
 
 export interface HandsInput {
@@ -144,8 +144,6 @@ export class Hands {
   /** Lumos: wanted on, and how far it has come up (0 … 1). */
   private lumosOn = false;
   private lumosK = 0;
-  /** Protego's wards in front of your eyes, until each has faded. */
-  private wards: Ward[] = [];
 
   constructor(shirt: string, skin: string) {
     this.shirt = shirt;
@@ -198,13 +196,6 @@ export class Hands {
   /** How far Lumos has come up, 0 (out) … 1 (lit). */
   get lumos(): number {
     return this.lumosK;
-  }
-
-  /** Protego: a ward flares up in front of your eyes. */
-  ward() {
-    const w = new Ward();
-    this.scene.add(w.group);
-    this.wards.push(w);
   }
 
   /** Where the gun's muzzle is, in camera space, or null with the gun holstered. */
@@ -465,11 +456,6 @@ export class Hands {
     this.left.glove.update(dt);
     if (this.gun) this.gunStep(dt, r, l);
     if (this.wand) this.wandStep(dt, r, l);
-    for (let i = this.wards.length - 1; i >= 0; i--) {
-      if (this.wards[i].update(dt)) continue;
-      this.wards[i].dispose();
-      this.wards.splice(i, 1);
-    }
     if (this.emoting) this.emoteStep(dt, l);
   }
 

@@ -31,8 +31,8 @@ import {
 } from '../graphics';
 
 const SIDEARMS: [Sidearm, string, string, string][] = [
-  ['wand', '🪄', 'Droid wand', 'A flicked spell puts a worker to sleep on a glowing circle. Six spells on 1–6. No blood.'],
-  ['magnum', '🔫', '.44 Magnum', 'The original: a gunshot, blood, and a heavenly beam for the body.'],
+  ['wand', '🪄', 'Droid wand', 'Flick a spell at a worker to open its terminal. Five spells on 1–5.'],
+  ['magnum', '🔫', '.44 Magnum', 'Fire at a worker to open its terminal. Hold for a charged dismissal.'],
 ];
 
 const WEBHOOK_NAME: Record<WebhookKind, string> = { slack: 'Slack', discord: 'Discord', other: 'a webhook' };
@@ -889,7 +889,7 @@ export function openSettings(
       group(
         null,
         card('Your character', { desc: desc('How you look and the name above your head.'), control: character }),
-        card('What 7 puts in your hand', { desc: desc('Either way a hit worker waits 30 seconds for E, then goes home and its worktree and branch are deleted.'), below: [sidearm] }),
+        card('What 7 puts in your hand', { desc: desc('A normal hit opens the worker’s terminal. Only a fully charged shot sends it home and deletes its owned worktree and branch.'), below: [sidearm] }),
       ),
     ],
     sound: [

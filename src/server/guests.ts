@@ -506,7 +506,6 @@ export const GUEST_REFUSED = new Set<ClientMsg['t']>([
   'worker.resume',
   'worker.kill',
   'worker.shoot',
-  'worker.revive',
   'worker.worktree',
   'worker.rebuild',
   'worker.prompt',
@@ -523,7 +522,7 @@ export function guestRefusal(w: WorkerInfo, t: ClientMsg['t']): string {
   const where = `pid ${g.pid} on ${g.tty}`;
   if (t === 'worker.kill') return `${w.name} runs outside the office (${where}): the office never stops a process it didn't start. Quit it in its own terminal and it goes home by itself`;
   if (t === 'worker.prompt') return `${w.name} runs outside the office (${where}): type to it in its own terminal`;
-  if (t === 'worker.shoot' || t === 'worker.revive') return `${w.name} is a guest from outside the office (${where}): the office leaves it alone`;
+  if (t === 'worker.shoot') return `${w.name} is a guest from outside the office (${where}): the office leaves it alone`;
   return `${w.name} runs outside the office (${where}): the office only watches it`;
 }
 

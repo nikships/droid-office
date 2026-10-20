@@ -1,4 +1,4 @@
-// The droid wand's moves: drawing it, putting it away, casting, and the six spells on 1–6 (in
+// The droid wand's moves: drawing it, putting it away, casting, and the five spells on 1–5 (in
 // place of the emotes). Each move is a few keyframed channels sampled over time, the way the
 // .44 Magnum's are (gun-motion.ts), but on the wand's own channels: a wand is aimed, flicked and
 // waved, not spun on a trigger finger. Your hands in first person (hands.ts) read the pose, and
@@ -7,14 +7,13 @@
 
 import { type Key, sampleTrack } from './gun-motion';
 
-/** The spells, in key order (1–6) and round the wheel (G). */
+/** The spells, in key order (1–5) and round the wheel (G). */
 export const WAND_SPELLS = [
   { id: 'lumos', emoji: '💡', label: 'Lumos' },
   { id: 'leviosa', emoji: '🪶', label: 'Swish and flick' },
   { id: 'sparkler', emoji: '🎇', label: 'Sparkler' },
   { id: 'ship', emoji: '🎉', label: 'Ship it' },
   { id: 'build', emoji: '🔨', label: 'Run the build' },
-  { id: 'protego', emoji: '🛡️', label: 'Protego' },
 ] as const;
 
 export type WandSpellId = (typeof WAND_SPELLS)[number]['id'];
@@ -23,10 +22,10 @@ export type WandMoveId = 'draw' | 'holster' | 'cast' | 'super' | WandSpellId;
 /**
  * What a move sounds like and when its magic happens. main.ts turns these into sound (sound.ts
  * wandCue) and into the spell's effect: `release` sends a cast's bolt off the tip, `lumos` turns
- * the light at the tip on or off, `flick`, `confetti` and `shield` set off their spells, `spark`
+ * the light at the tip on or off, `flick` and `confetti` set off their spells, `spark`
  * is one spit of the sparkler, `party` starts the office dance, and `tick` is one segment of the progress bar lighting up.
  */
-export type WandCue = 'draw' | 'holster' | 'whoosh' | 'boot' | 'ready' | 'charge' | 'release' | 'superRelease' | 'lumos' | 'swish' | 'flick' | 'spark' | 'party' | 'confetti' | 'tick' | 'done' | 'shield';
+export type WandCue = 'draw' | 'holster' | 'whoosh' | 'boot' | 'ready' | 'charge' | 'release' | 'superRelease' | 'lumos' | 'swish' | 'flick' | 'spark' | 'party' | 'confetti' | 'tick' | 'done';
 
 export const WAND_CHANNELS = ['out', 'x', 'y', 'z', 'pitch', 'yaw', 'roll', 'twirl', 'spin', 'glow', 'charge', 'trail'] as const;
 export type WandChannel = (typeof WAND_CHANNELS)[number];
@@ -586,64 +585,6 @@ export const WAND_MOVES: Record<WandMoveId, WandMove> = {
       ],
     },
     cues: [[0, 'whoosh'], ...BUILD_TICKS, [1.78, 'done'], [2.05, 'whoosh']],
-  },
-  // Raised across you, the ward flaring up in front and holding a moment before it fades.
-  protego: {
-    seconds: 1.4,
-    tracks: {
-      x: [
-        [0, 0],
-        [0.22, -0.06, 'out'],
-        [1.1, -0.06],
-        [1.4, 0],
-      ],
-      y: [
-        [0, 0],
-        [0.22, 0.05, 'out'],
-        [1.1, 0.05],
-        [1.4, 0],
-      ],
-      yaw: [
-        [0, 0],
-        [0.22, 0.45, 'out'],
-        [1.1, 0.4],
-        [1.4, 0],
-      ],
-      roll: [
-        [0, 0],
-        [0.22, 0.65, 'out'],
-        [1.1, 0.6],
-        [1.4, 0],
-      ],
-      pitch: [
-        [0, 0],
-        [0.22, 0.06, 'out'],
-        [1.1, 0.04],
-        [1.4, 0],
-      ],
-      spin: [
-        [0, 0],
-        [0.25, 1],
-        [1.1, 0.6],
-        [1.4, 0],
-      ],
-      charge: [
-        [0, 0],
-        [0.22, 1, 'linear'],
-        [1.1, 1],
-        [1.4, 0],
-      ],
-      glow: [
-        [0.2, 0],
-        [0.26, 1, 'snap'],
-        [1.1, 0.6],
-        [1.4, 0],
-      ],
-    },
-    cues: [
-      [0, 'whoosh'],
-      [0.24, 'shield'],
-    ],
   },
 };
 

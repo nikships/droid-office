@@ -52,11 +52,10 @@ export function pingWhere(w: WorkerInfo, words: ForgeWords = forgeWords(undefine
 }
 
 /** The picker's rows: every worker on the floor with whether it can be pinged now and why not; the ones that can first, then A to Z. */
-export function pingRows(workers: Iterable<WorkerInfo>, statusLabel: Record<string, string>, now = Date.now(), words: ForgeWords = forgeWords(undefined)): PingRow[] {
+export function pingRows(workers: Iterable<WorkerInfo>, statusLabel: Record<string, string>, words: ForgeWords = forgeWords(undefined)): PingRow[] {
   const rows = [...workers].map((w): PingRow => {
-    const e = pingEligibility(w, now);
-    const down = w.downedUntil !== undefined && w.downedUntil > now;
-    const status = w.guest ? 'guest' : down ? 'down' : (statusLabel[w.status] ?? w.status);
+    const e = pingEligibility(w);
+    const status = w.guest ? 'guest' : (statusLabel[w.status] ?? w.status);
     const task = pingTask(w);
     const where = pingWhere(w, words);
     const base = {
@@ -66,7 +65,7 @@ export function pingRows(workers: Iterable<WorkerInfo>, statusLabel: Record<stri
       ...(task ? { task } : {}),
       ...(where ? { where } : {}),
       status,
-      statusClass: w.guest ? 'offline' : down ? 'needs_input' : w.status,
+      statusClass: w.guest ? 'offline' : w.status,
       ...(w.guest ? { guest: true } : {}),
     };
     return e.ok ? { ...base, ok: true, how: e.how, note: HOW_NOTE[e.how] } : { ...base, ok: false, note: e.reason, ...(e.busy ? { busy: true } : {}) };

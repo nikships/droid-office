@@ -37,7 +37,7 @@ export function openPing(net: Net) {
     h('footer', {}, h('span.grow', {}, 'Guests and cloud workers can’t use the board yet'), h('button.btn.ghost', { type: 'button', onclick: () => modal.close() }, 'Done')),
   );
   const paint = () => {
-    const rows = pingRows(store.workers.values(), STATUS_LABEL, Date.now(), words());
+    const rows = pingRows(store.workers.values(), STATUS_LABEL, words());
     // Both stay in the window, so a worker sitting down while the picker is open shows up in it.
     list.hidden = !rows.length;
     none.hidden = !!rows.length;

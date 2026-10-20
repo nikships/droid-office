@@ -89,7 +89,6 @@ test('droid-worker.glb upgrades waiting workers and mounts articulated droid par
     fresh.update(0.1, 1.3);
     waiting.die(false);
     waiting.update(0.1, 1.3);
-    waiting.revive();
     waiting.dispose();
     fresh.dispose();
   } finally {

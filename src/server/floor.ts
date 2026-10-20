@@ -212,9 +212,9 @@ export class Floor {
           // Its turn ended, or whoever had its terminal open closed it: it may be free to go now.
           this.sendLandedHome();
         },
-        remove: (workerId) => {
+        remove: (workerId, shot) => {
           this.changes?.forget(workerId);
-          ctx.emit(this, { t: 'worker.remove', workerId });
+          ctx.emit(this, { t: 'worker.remove', workerId, ...(shot ? { shot } : {}) });
           this.team?.onWorkerGone(workerId);
           // A dismissed worker's read points would hold the board's tombstones for good.
           this.whiteboard?.forgetReader(workerId);

@@ -29,7 +29,6 @@ test('spell stand-ins cover the wand, the gun and the effects that are built whe
   for (const feature of [
     'MeshBasicMaterial|transparent|additive',
     'MeshBasicMaterial|transparent|additive|double',
-    'MeshBasicMaterial|transparent|double',
     'MeshBasicMaterial|transparent|map',
     'SpriteMaterial|transparent|map|additive',
     'PointsMaterial|transparent|map|vertexColors|additive',

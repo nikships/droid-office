@@ -14,11 +14,10 @@ export type PingEligibility =
   | { ok: false; reason: string; busy?: true };
 
 /** What the office does when the owner pings `w` now, or why it can't. */
-export function pingEligibility(w: WorkerInfo, now = Date.now()): PingEligibility {
+export function pingEligibility(w: WorkerInfo): PingEligibility {
   if (w.guest) return { ok: false, reason: `${w.name} is a guest the office only watches: it has no terminal the office can type into. Bring it in first.` };
   if (w.kind === 'cloud') return { ok: false, reason: `${w.name} runs on a Factory computer, which can't reach this office's Whiteboard yet.` };
   if (w.kind === 'shell') return { ok: false, reason: `${w.name} is a plain shell, not an agent.` };
-  if (w.downedUntil !== undefined && w.downedUntil > now) return { ok: false, reason: `${w.name} is down. Revive it first.` };
   if (w.lost) return { ok: false, reason: `${w.name}'s worktree is gone, so it can't start. Rebuild it first.` };
   switch (w.status) {
     case 'idle':

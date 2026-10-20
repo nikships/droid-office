@@ -611,7 +611,7 @@ export function mountCloud(registry: FactoryRegistry, opts: Omit<CloudOptions, '
 /** Why something the office does with a local worker isn't done to a cloud one. */
 export function cloudRefusal(w: WorkerInfo, t: ClientMsg['t']): string {
   const where = w.cloud ? cloudBadge(w.cloud) : 'a Factory computer';
-  if (t === 'worker.shoot' || t === 'worker.revive') return `${w.name} works on ${where}: there's nobody really at this desk to shoot`;
+  if (t === 'worker.shoot') return `${w.name} works on ${where}: there's nobody really at this desk to shoot`;
   if (t === 'worker.pr' || t.startsWith('changes.')) return `${w.name} works on ${where}, not in a checkout on this machine: ask it to commit and open the pull request itself`;
   return `${w.name} works on ${where}: that only works for a worker on this machine`;
 }

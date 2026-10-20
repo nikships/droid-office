@@ -974,13 +974,6 @@ export class OfficeSound {
         [1047, 1319, 1568, 2093].forEach((f, i) => this.blip(this.ambience, t0 + i * 0.07, f, 1, 0.35, 0.06));
         this.shimmer(this.ambience, t0 + 0.2, 0.6, 0.04);
         break;
-      case 'shield':
-        // The ward going up: a low swell under a high ring.
-        this.count('wandShield');
-        this.blip(this.ambience, t0, 220, 1.5, 0.8, 0.08, 'triangle');
-        this.blip(this.ambience, t0 + 0.05, 1760, 0.98, 0.9, 0.04);
-        this.shimmer(this.ambience, t0, 0.9, 0.04);
-        break;
     }
   }
 
