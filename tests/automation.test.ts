@@ -25,8 +25,8 @@ function floorSpots(): Interactable[] {
     { kind: 'station', deskId: kiosk.id, x: kiosk.x, z: kiosk.z + 1, radius: 1.3 },
     board('issues'),
     board('pulls'),
-    { kind: 'coffee', x: -15.7, z: 10.9, radius: 1.4 },
-    { kind: 'coffee', x: -15.7, z: 11, radius: 1.4 },
+    { kind: 'jukebox', x: 17, z: 12, radius: 1.4 },
+    { kind: 'jukebox', x: 17, z: 12.1, radius: 1.4 },
     { kind: 'seat', seatId: 'couch', x: 10, z: 0, radius: 1.5 },
   ];
 }
@@ -49,15 +49,15 @@ function context(over: Partial<TargetContext> = {}): TargetContext {
 test('list() names the desks, kiosks, boards, places and floors you can go to from here', () => {
   const list = listTargets(context());
   const ids = list.map((t) => t.id);
-  assert.deepEqual(ids, ['desk-1', 'desk-2', 'station-issues', 'issues', 'pulls', 'coffee', 'f1', 'f2', ROOF]);
+  assert.deepEqual(ids, ['desk-1', 'desk-2', 'station-issues', 'issues', 'pulls', 'jukebox', 'f1', 'f2', ROOF]);
   assert.deepEqual(list[0], { id: 'desk-1', kind: 'desk', label: 'Desk 1', deskId: 'desk-1', worker: { id: 'w1', name: 'Ada', status: 'idle' } });
   assert.equal(list[1].worker, undefined, 'a free desk is listed without a worker');
   assert.equal(list.find((t) => t.id === 'station-issues')?.kind, 'kiosk');
   assert.equal(list.find((t) => t.id === 'issues')?.kind, 'board');
-  assert.equal(list.find((t) => t.id === 'coffee')?.kind, 'place');
+  assert.equal(list.find((t) => t.id === 'jukebox')?.kind, 'place');
   assert.ok(!ids.includes('beanbag-1'), 'a bean bag that is put away is nowhere to go');
   assert.ok(!ids.includes('couch'), 'seats are not named targets');
-  assert.equal(ids.filter((id) => id === 'coffee').length, 1, 'a place with several spots is listed once');
+  assert.equal(ids.filter((id) => id === 'jukebox').length, 1, 'a place with several spots is listed once');
   assert.deepEqual(
     list.filter((t) => t.kind === 'floor').map((t) => [t.id, !!t.here]),
     [
@@ -106,7 +106,7 @@ test('goTo targets resolve by id, worker, label, agent name and floor, and say w
   assert.equal(id('Issues agent').id, 'station-issues', "the board agent's name goes to its kiosk");
   assert.equal(id('issues').kind, 'board', 'the board, not its kiosk');
   assert.equal(id('issues').spot?.kind, 'issues');
-  assert.equal(id('Coffee machine').id, 'coffee');
+  assert.equal(id('Jukebox').id, 'jukebox');
   assert.equal(id('website').id, 'f2', 'a floor by name');
   assert.equal(id('f2').kind, 'floor');
   assert.equal(id('roof').id, ROOF);
@@ -172,17 +172,17 @@ test('standing at a board or a place uses its spot, stepping out of anything in 
   assert.equal(stand.lookPitch, pitchToward({ ...stand.at, y: 1.4 }, stand.face));
   assert.ok(stand.lookPitch > 0);
 
-  const coffee = resolveTarget('coffee', context());
-  assert.ok(coffee.ok);
-  const spot = coffee.target.spot!;
+  const jukebox = resolveTarget('jukebox', context());
+  assert.ok(jukebox.ok);
+  const spot = jukebox.target.spot!;
   // The machine stands on its own spot: step off it to the nearest free place, still within reach.
   const machine = (x: number, z: number) => Math.hypot(x - spot.x, z - spot.z) < 0.5;
-  const out = standFor(coffee.target, machine)!;
+  const out = standFor(jukebox.target, machine)!;
   const d = Math.hypot(out.at.x - spot.x, out.at.z - spot.z);
   assert.ok(d >= 0.5 && d < spot.radius, `stepped ${d} m out`);
   assert.deepEqual(out.face, { x: spot.x, y: 1.2, z: spot.z }, 'with no scene object, look at the spot itself');
   assert.equal(
-    standFor(coffee.target, () => true),
+    standFor(jukebox.target, () => true),
     null,
     'nowhere free at all',
   );
@@ -411,9 +411,9 @@ test('goTo a desk, open its terminal, go to the Issues board and open it, all wi
   s.raw = { ...s.raw, player: { ...s.raw.player, x: 100 } };
   assert.equal(office.state().using, null);
   await assert.rejects(office.interact(), /Nothing to use here/);
-  s.near = { kind: 'coffee', x: 0, z: 0, radius: 1 };
+  s.near = { kind: 'jukebox', x: 0, z: 0, radius: 1 };
   await office.interact('E');
-  assert.equal(log.at(-1), 'use coffee E');
+  assert.equal(log.at(-1), 'use jukebox E');
   await assert.rejects(office.interact('Z' as 'E'), /interact takes one of E P R X B C O/);
   await assert.rejects(office.goTo('nobody'), /No such target/);
   s.busy = 'riding to another floor';
@@ -433,7 +433,7 @@ test('goTo with walk: true walks there and resolves on arrival, or rejects stuck
   s.walk = 'never';
   await assert.rejects(office.goTo('issues', { walk: true, timeout: 30 }), /Still walking to Issues board after 0s/);
   s.raw = { ...s.raw, floor: ROOF };
-  await assert.rejects(office.goTo('coffee', { walk: true }), /Walking needs an office floor/);
+  await assert.rejects(office.goTo('jukebox', { walk: true }), /Walking needs an office floor/);
 });
 
 test('ride and goTo a floor resolve once the doors open there, and reject a trip that ends elsewhere', async () => {

@@ -91,11 +91,7 @@ export class PlayerController {
   private heightTarget = EYE_HEIGHT;
   /** Eased out after a step up or down, so the camera glides up stairs instead of popping. */
   stepOffset = 0;
-  /** Walking and running speed, as a multiple of normal (a coffee's buzz). */
-  speedBoost = 1;
-  /** Jump speed, as a multiple of normal. */
-  jumpBoost = 1;
-  /** 0 (steady) to 1: how hard the view trembles after one coffee too many. */
+  /** 0 (steady) to 1: how hard the view trembles (a hard landing, a charged shot going off). */
   jitter = 0;
   /** How far below the floor you're on the street is: further down the higher your floor (see streetBelow). */
   street = STREET_Y;
@@ -553,7 +549,7 @@ export class PlayerController {
       const cos = Math.cos(this.camYaw);
       const dx = ix * cos + iz * sin;
       const dz = -ix * sin + iz * cos;
-      const speed = (k.has('ShiftLeft') || k.has('ShiftRight') ? RUN : WALK) * this.speedBoost;
+      const speed = k.has('ShiftLeft') || k.has('ShiftRight') ? RUN : WALK;
       this.tryMove(this.pos.x + dx * speed * dt, this.pos.z);
       this.tryMove(this.pos.x, this.pos.z + dz * speed * dt);
     }
@@ -584,7 +580,7 @@ export class PlayerController {
     }
     this.stepOffset *= Math.exp(-dt * 16);
     const walking = this.moving && this.grounded;
-    this.walkPhase += dt * (walking ? (k.has('ShiftLeft') || k.has('ShiftRight') ? 14 : 11) * this.speedBoost : 0);
+    this.walkPhase += dt * (walking ? (k.has('ShiftLeft') || k.has('ShiftRight') ? 14 : 11) : 0);
     const bob = walking ? Math.abs(Math.sin(this.walkPhase)) * 0.035 : 0;
     this.bob += (bob - this.bob) * Math.min(1, dt * 18);
     this.jitterT += dt;
@@ -609,7 +605,7 @@ export class PlayerController {
     // Run the long way round, walk the last few meters.
     let left = dist;
     for (let i = 1; i < path.length; i++) left += Math.hypot(path[i].x - path[i - 1].x, path[i].z - path[i - 1].z);
-    const step = Math.min(dist, (left > 6 ? RUN : WALK) * this.speedBoost * dt);
+    const step = Math.min(dist, (left > 6 ? RUN : WALK) * dt);
     const x0 = this.pos.x;
     const z0 = this.pos.z;
     this.tryMove(this.pos.x + (dx / dist) * step, this.pos.z);
@@ -632,7 +628,7 @@ export class PlayerController {
     this.shake();
   }
 
-  /** The jitters: the view trembles a little, on top of wherever you're looking. */
+  /** The view trembles a little, on top of wherever you're looking. */
   private shake() {
     const t = this.jitterT;
     if (this.jitter <= 0) return;
@@ -665,7 +661,7 @@ export class PlayerController {
   /** Jump when grounded and outside a movement rig or seat. */
   jump(): void {
     if (!this.grounded || this.rig || this.seat) return;
-    this.vy = JUMP_V * this.jumpBoost;
+    this.vy = JUMP_V;
     this.grounded = false;
   }
 

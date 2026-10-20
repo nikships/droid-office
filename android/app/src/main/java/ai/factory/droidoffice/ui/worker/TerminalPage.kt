@@ -23,12 +23,13 @@ import java.io.ByteArrayInputStream
  * The WebView running the terminal page (assets/terminal/): xterm.js, the same emulator as the
  * office's own terminal window, fed the office's stream so it keeps the scrollback. The page and
  * its fonts load from the app itself, and every other request is refused: the page never reaches
- * the office, and never sees its address or a token. It types only what a swipe sends a
- * full-screen program; xterm's own replies to terminal queries stay in the page, so the phone
+ * the office, and never sees its address or a token. Direct typing uses a native input connection;
+ * xterm's own replies to terminal queries stay in the page, so the phone
  * never answers the program alongside the desktop.
  */
 class TerminalPage(context: Context, private val onMessage: (PageMsg) -> Unit, private val onGone: () -> Unit) {
-    val view = WebView(context)
+    private val keyboard = TerminalKeyboard(context) { onMessage(PageMsg.Input(it)) }
+    val view: WebView = keyboard
     var ready = false
         private set
 
@@ -70,7 +71,10 @@ class TerminalPage(context: Context, private val onMessage: (PageMsg) -> Unit, p
         if (ready) view.evaluateJavascript(script, null)
     }
 
+    fun typeDirectly(enabled: Boolean) = keyboard.typeDirectly(enabled)
+
     fun destroy() {
+        typeDirectly(false)
         ready = false
         (view.parent as? ViewGroup)?.removeView(view)
         view.destroy()

@@ -1,4 +1,3 @@
-import { BUZZ_SECONDS, type Caffeine } from '../caffeine';
 import { store, type Sidearm } from '../state';
 import { $, glyphText, h, openModal, STATUS_LABEL } from './dom';
 import { modelBadge } from './models';
@@ -59,24 +58,6 @@ export function renderWorkers(onOpen: (id: string) => void) {
   $('worker-count').textContent = hired ? String(hired) : '';
 }
 
-let caffeineKey = '';
-/** The caffeine meter: a cup per coffee in a row, and a bar that drains over the buzz's minute. */
-export function renderCaffeine(caffeine: Caffeine, now: number) {
-  const left = caffeine.left(now);
-  const jittery = caffeine.jitter(now) > 0;
-  const k = `${Math.ceil(left)}|${caffeine.cups}|${jittery}`;
-  if (k === caffeineKey) return;
-  caffeineKey = k;
-  const el = $('caffeine');
-  el.classList.toggle('hidden', !left);
-  el.classList.toggle('jittery', jittery);
-  if (!left) return;
-  $('caffeine-cups').textContent = '☕'.repeat(Math.min(caffeine.cups, 3));
-  // The bar eases down a second at a time (see its CSS transition), so aim for where it will be in one.
-  $('caffeine-fill').style.width = `${(Math.max(0, left - 1) / BUZZ_SECONDS) * 100}%`;
-  $('caffeine-left').textContent = `${Math.ceil(left)}s`;
-}
-
 /** A row of the help sheet: what it does, a line more about it, and its keys ('or' between two that each do it). */
 type HelpRow = [what: string, more: string, keys: string[]];
 
@@ -114,6 +95,7 @@ export function openHelp(sidearm: Sidearm = 'wand') {
         ['Prompt', 'Give a task to a new or existing worker at the desk you face', ['P']],
         ['Changes', 'Files and diff of the worker you face: commit, discard, open a PR', ['C']],
         ['Shared shell', 'Dev servers, git, tests, at an empty desk', ['B']],
+        ['Previous / next terminal', 'Cycle through this floor’s running agent and shell terminals in desk order, then the boss monitor’s shell. Wraps at either end; stopped workers stay asleep', ['⌘←', '⌘→']],
         ['Resume', 'Wake a sleeping worker', ['R']],
         ['Send home', 'Frees the desk', ['X']],
         ['Pull request', 'Open one for a worker on its own branch, or see the one it has', ['O']],
@@ -138,7 +120,6 @@ export function openHelp(sidearm: Sidearm = 'wand') {
           ['G', 'or', '1–6'],
         ],
         seven,
-        ['Coffee', 'At the kitchen machine: a minute of quicker walking and higher jumps. Three cups in a row gives you the jitters', ['E']],
         ['The gong', 'Rings when a pull request merges: confetti, and every worker dances on its desk. E bangs it yourself', ['E']],
         ['Rooftop', 'Up the elevator: an empty deck, and the city all around', ['E']],
       ],

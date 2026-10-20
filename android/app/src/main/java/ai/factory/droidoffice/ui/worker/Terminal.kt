@@ -73,6 +73,7 @@ fun Terminal(
     live: Boolean,
     modifier: Modifier = Modifier,
     onFit: (TermSize) -> Unit = {},
+    directInput: Boolean = false,
 ) {
     val connection = LocalGraph.current.connection
     val context = LocalContext.current
@@ -115,6 +116,7 @@ fun Terminal(
     }
     LaunchedEffect(page, view) { page.send(TermPage.view(view)) }
     LaunchedEffect(page, fontScale) { page.send(TermPage.config(fontScale, view)) }
+    LaunchedEffect(page, directInput, live) { page.typeDirectly(directInput && live) }
 
     Box(
         modifier.clip(RoundedCornerShape(12.dp)).background(TermBg)

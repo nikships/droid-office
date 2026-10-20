@@ -358,18 +358,6 @@ img.glyph { display: inline-block; width: 1em; height: 1em; vertical-align: -0.1
 
 .conn { position: absolute; top: 12px; left: 50%; transform: translateX(-50%); background: rgba(239, 68, 68, .12); color: var(--danger); font: 500 11px/1.4 var(--font-mono); text-transform: uppercase; letter-spacing: .08em; padding: 6px 14px; border-radius: var(--radius); border: 1px solid var(--danger); }
 
-/* Coffee: how much of the buzz is left, under the project name. */
-.caffeine { position: absolute; left: 12px; top: 72px; display: flex; align-items: center; gap: 8px; padding: 5px 10px; font: 500 10px/1.4 var(--font-mono); text-transform: uppercase; letter-spacing: .06em; pointer-events: none !important; }
-.caffeine .bar { width: 96px; height: 8px; border: 1px solid var(--border-strong); border-radius: var(--radius-xs); background: var(--surface-raised); overflow: hidden; }
-.caffeine .bar span { display: block; width: 0; height: 100%; background: #9c6644; transition: width 1s linear; }
-.caffeine .left { min-width: 24px; font-variant-numeric: tabular-nums; }
-.caffeine.jittery { animation: jitters .1s steps(2) infinite; }
-.caffeine.jittery .bar span { background: var(--danger); }
-@keyframes jitters { 50% { transform: translate(1px, -1px) rotate(-1.5deg); } }
-@media (prefers-reduced-motion: reduce) { .caffeine.jittery { animation: none; } }
-/* The floor details make the name taller: what's under it moves down. */
-#hud:has(#project-meta:not(.hud-off)) .caffeine { translate: 0 16px; }
-
 /* ---------- Modals ---------- */
 /* The window: .modal (560px; no .md, that is the Markdown body) or .sm 420 · .lg 760 · .xl 960 · .full; header > .titles (h2 + p.sub) + .actions + ✕,
    .body (.flush has no padding), footer (.grow on the left, the primary button last). The body scrolls, never the window. */

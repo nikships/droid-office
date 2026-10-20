@@ -28,9 +28,9 @@ Every configuration is laid over the owner's saved settings (`local-storage.json
 
 | Scenario | What it does |
 | --- | --- |
-| `idle` | Stand at the coffee machine looking ahead |
+| `idle` | Stand at the jukebox looking ahead |
 | `turn` | Turn at 2 rad/s, reversing every second, with mouse deltas every 8 ms on a captured mouse |
-| `walk` | Coffee machine to elevator and back along the office paths |
+| `walk` | Jukebox to elevator and back along the office paths |
 | `terminal` | A plain shell's terminal open over the office with output scrolling (a shell is opened at desk 1 of the clone) |
 | `load` | Reload with the light bake cached, then with it cleared (a full bake), from animation-frame timing since navigation |
 

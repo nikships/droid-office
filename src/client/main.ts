@@ -42,6 +42,7 @@ import { PROVIDER_LABEL, guestKeyNote, outsideNote, processLabel, statusWord } f
 import { Net } from './net';
 import { removedFloorNotice, standSpot } from './arrival';
 import { floorShortcut } from './floor-shortcuts';
+import { nextTerminal, terminalShortcut } from './terminal-cycle';
 import { guardLeaving } from './leave';
 import { store, connectWhiteboard, lastFloor, lastSpot, loadProfile, loadSettings, rememberSpot, saveSettings, words, workerForPull, type Profile, type Spot, type Topic } from './state';
 import { officeTitle } from './tab-title';
@@ -49,7 +50,6 @@ import { PlayerController, groundAt, isTyping } from './player';
 import { gongRinging, renderPace, sceneIsMoving, skyFalling, type RenderPace, type SceneMotion } from './render-pace';
 import { RenderLoop } from './render-loop';
 import { Climber, type Arrival, type Grip, type Way } from './climb';
-import { Caffeine } from './caffeine';
 import { buildOffice, type DeskView, type InteractKind, type Interactable } from './world/office';
 import { loadPropManifest, preloadProps, propManifest, propScene } from './world/props';
 import { buildRooftop, type Rooftop } from './world/rooftop';
@@ -83,7 +83,7 @@ import { NextUp, waitingInOrder, waitingLabel } from './nextup';
 import { $, h, clip, closeAllModals, hintToast, modalOpen, onModalChange, openModalList, readingNow, toast, STATUS_LABEL } from './ui/dom';
 import { deskApproach, type ApproachPose } from './approach';
 import { createAutomation, facingToward, pitchToward, runCommand, type CameraPose } from './automation';
-import { onBringIn, onOpenTeammate, openOfficeShell, openTerminal, openTerminalFor, routeTerminalMessage, type TerminalFind } from './ui/terminal';
+import { onBringIn, onOpenTeammate, openOfficeShell, openTerminal, openTerminalFor, routeTerminalMessage, terminalOnTop, type TerminalFind } from './ui/terminal';
 import { openSearch } from './ui/search';
 import { changesLogFor, openChanges, openChangesFor, routeChangesMessage } from './ui/changes';
 import { openRepoPulls, workerRepos } from './ui/repos';
@@ -100,7 +100,7 @@ import { loadingScreen } from './ui/loading';
 import { openPipelines, routePipelinesMessage, type PipelinesOpen } from './ui/pipelines';
 import { isLive, pipelinePolicy, stateWord } from '../shared/pipelines';
 import { openUpgrade, restarting, showRestarting, showUpgraded } from './ui/upgrade';
-import { openHelp, renderCaffeine, renderWorkers } from './ui/hud';
+import { openHelp, renderWorkers } from './ui/hud';
 import { cloudLine, hireCloud, openCloudWindow, runsOnPicker, sendCloudHome } from './ui/factory-cloud';
 import { cloudBadge } from '../shared/factory-cloud';
 import { Compass, type Bearing } from './ui/compass';
@@ -416,8 +416,7 @@ const player = new PlayerController(camera, canvas, office.colliders);
 // Everyone arrives by elevator (the welcome says exactly where).
 placeInCar();
 const hands = new Hands(store.profile.color, me.skinColor);
-const caffeine = new Caffeine();
-/** No shaking the view for the coffee jitters when the system asks for less motion. */
+/** No shaking the view when the system asks for less motion. */
 const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)');
 // Muzzle smoke, and the dust kicked up landing off a fire pole.
 const smoke = new Smoke();
@@ -2280,7 +2279,6 @@ function interact(target: Interactable | null, key: DeskKey, note = aimedNote, s
   if (key !== 'E') return;
   if (openPane(target, aimedRun)) return;
   if (target.kind === 'seat' && target.seatId) useSeat(target.seatId);
-  else if (target.kind === 'coffee') drinkCoffee();
   else if (target.kind === 'gong') hitGong();
   else if (target.kind === 'ladder') grabLadder();
   else if (target.kind === 'pole' && target.pole !== undefined) usePole(target.pole);
@@ -2301,16 +2299,6 @@ function openPane(target: Interactable, runId?: number): boolean {
   else if (target.kind === 'decor' && target.decorId) hanger.view(target.decorId);
   else return false;
   return true;
-}
-
-/** A cup from the kitchen machine: a minute of quicker feet and higher jumps, and a mug in your hand. */
-function drinkCoffee() {
-  const jittery = caffeine.drink(performance.now() / 1000);
-  sound.coffee();
-  hands.sip();
-  if (jittery) toast('☕ One cup too many… you’ve got the jitters!', 'warn');
-  else if (caffeine.cups > 1) toast('☕ Another cup: back to a full minute of buzz');
-  else toast('☕ Fresh coffee! A minute of quicker feet and higher jumps');
 }
 
 // ---- Carrying an issue card ------------------------------------------------------------------------
@@ -2621,10 +2609,6 @@ function hintFor(it: Interactable): Hint {
       const live = p.runs.filter((r) => isLive(r.state)).length;
       const about = p.error ? "can't read the runs" : live ? `${live} running or waiting` : p.runs.length ? 'all quiet' : '';
       return { k: about, parts: [title(pipelinePolicy(store.project?.forge).copy.hint), about ? aside(about) : '', key('E', 'Open')] };
-    }
-    case 'coffee': {
-      const buzzed = caffeine.buzzed(performance.now() / 1000);
-      return { k: String(buzzed), parts: [title('☕ Coffee machine'), key('E', buzzed ? 'Another cup' : 'Grab a cup')] };
     }
     case 'gong':
       return { k: '', parts: [title('🎉 Merge gong'), aside('rings when a PR merges'), key('E', 'Bang it')] };
@@ -2958,6 +2942,19 @@ function use(it: Interactable | null, key: DeskKey, note = aimedNote, spot = aim
 
 // ---- Input ----------------------------------------------------------------------------------------
 window.addEventListener('keydown', (e) => floorShortcut(e, store.floors, (floor) => switchFloor(floor, true)), true);
+window.addEventListener(
+  'keydown',
+  (e) => {
+    if (!store.floor || upTop || trip || climber.active || hanger.active) return;
+    if (modalOpen() ? !terminalOnTop() : isTyping(e)) return;
+    terminalShortcut(e, (direction) => {
+      const id = nextTerminal(store.workers.values(), openTerminalFor(), direction);
+      if (id === OFFICE_SHELL_ID) openOfficeShell(net);
+      else openWorkerTerminal(id);
+    });
+  },
+  true,
+);
 window.addEventListener('keydown', (e) => {
   if (modalOpen() || isTyping(e) || e.metaKey || e.ctrlKey || e.altKey) return;
   if (relookOnKey && e.key !== 'Escape' && player.canLock) player.lock();
@@ -3098,7 +3095,6 @@ const CROSSHAIR = new THREE.Vector2(0, 0);
 const REACH: Record<InteractKind, number> = {
   desk: 4.5,
   station: 4.5,
-  coffee: 3,
   issues: 9,
   pulls: 9,
   actions: 9,
@@ -3125,7 +3121,7 @@ function aimedAt(ndc: THREE.Vector2, slack = 0): { it: Interactable; near: boole
       it ??= o.userData.interact as Interactable | undefined;
     }
     if (!shown) continue;
-    if (!it) return null; // a wall, the floor, a plant… is in the way
+    if (!it) return null; // a wall, the floor… is in the way
     return { it, near: hit.point.distanceTo(camera.position) <= REACH[it.kind] + slack, hit };
   }
   return null;
@@ -3604,7 +3600,6 @@ function trafficInView(): boolean {
 /** What the pace decision needs. Hidden covers a background tab and, on macOS, a fully covered window. */
 function sceneMotion(): SceneMotion {
   const now = performance.now();
-  const secs = now / 1000;
   const playerBusy =
     player.moving ||
     player.changingHeight ||
@@ -3626,7 +3621,6 @@ function sceneMotion(): SceneMotion {
     worker: workerMoving(),
     confetti: confetti.count > 0,
     gong: gongRinging(now, gongStruckAt),
-    coffee: caffeine.jitter(secs) > 0,
     smoke: smoke.group.children.length > 0 || puffs.length > 0,
     cars: trafficInView(),
     elevator: !!trip,
@@ -3713,16 +3707,8 @@ function drawFrame(dt: number, t: number, frame: { at: number; paced: boolean })
   }
   const now = performance.now();
 
-  // Coffee: quicker feet, higher jumps, a mug in hand, and maybe the jitters.
-  const secs = now / 1000;
-  player.speedBoost = caffeine.speed(secs);
-  player.jumpBoost = caffeine.jump(secs);
   thud = Math.max(0, thud - dt * 2.5);
-  player.jitter = reduceMotion.matches ? 0 : Math.max(caffeine.jitter(secs), thud);
-  const mug = caffeine.buzzed(secs);
-  me.holdMug(mug);
-  hands.holdMug(mug);
-  renderCaffeine(caffeine, secs);
+  player.jitter = reduceMotion.matches ? 0 : thud;
   player.update(dt);
   bossMonitor.update(store.screens.get(OFFICE_SHELL_ID));
   // Walked into a pole's hole: you grab the pole on your way down it.
@@ -3746,7 +3732,7 @@ function drawFrame(dt: number, t: number, frame: { at: number; paced: boolean })
   me.setGunPose(gunMotion.pose);
   hands.setGunPose(gunMotion.pose);
   hands.setWandPose(wandMotion.pose);
-  me.update(dt, t, (player.moving && player.grounded) || (grip === 'ladder' && player.moving), !player.grounded && !grip, player.speedBoost);
+  me.update(dt, t, (player.moving && player.grounded) || (grip === 'ladder' && player.moving), !player.grounded && !grip);
   hands.update(dt, t, { yaw: player.camYaw, pitch: player.lookPitch, walkPhase: player.walkPhase, walking: player.moving && player.grounded, airborne: !player.grounded, jitter: player.jitter, grip });
   gunCues(gunCuesNow);
   wandCues(wandCuesNow);
@@ -3994,7 +3980,7 @@ loading.until([
 }
 
 // ---- window.office: the automation API agents and browser tests drive (see automation.ts) ----------
-/** The middle of the scene object an interactable belongs to (a board, the coffee machine), to look at. */
+/** The middle of the scene object an interactable belongs to (a board, the gong), to look at. */
 function centerOf(spot: Interactable): { x: number; y: number; z: number } | null {
   const root = upTop && roof ? roof.group : office.group;
   let found: THREE.Object3D | null = null;
@@ -4125,7 +4111,6 @@ const automation = createAutomation({
   roof: () => roof,
   store,
   player,
-  caffeine,
   camera,
   workerViews,
   departures,

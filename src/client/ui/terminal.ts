@@ -65,6 +65,12 @@ export function openTerminalFor(): string | null {
   return current?.workerId ?? null;
 }
 
+/** The terminal is the front window, not covered by another dialog. */
+export function terminalOnTop(): boolean {
+  const backdrop = current?.modal.backdrop;
+  return !!backdrop && backdrop.parentElement?.lastElementChild === backdrop;
+}
+
 export function openTerminal(net: Net, workerId: string, onChanges?: () => void, find?: TerminalFind) {
   if (current?.workerId === workerId) {
     if (find) current.find(find);

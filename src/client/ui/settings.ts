@@ -895,7 +895,7 @@ export function openSettings(
     sound: [
       group(
         null,
-        card('Office sounds', { desc: desc('Workers typing, the coffee machine and thunder. Muting this silences the worker tones too.'), control: soundRow }),
+        card('Office sounds', { desc: desc('Workers typing and thunder. Muting this silences the worker tones too.'), control: soundRow }),
         card('Alert sounds', { desc: desc('A short tone when a worker needs you, finishes, or its tests fail. Mute them without silencing the rest of the office.'), control: alertRow }),
         card('Jukebox', { desc: desc('Louder near the jukebox. This slider is only your volume.'), control: musicRow }),
       ),

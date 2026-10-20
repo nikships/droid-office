@@ -133,19 +133,6 @@ export const SHAPES = {
     1,
     [0, 0, -0.2],
   ),
-  /** Palm in, two fingers through a mug's handle, the thumb on top of it. */
-  mug: shape(
-    [
-      [1.05, 1.3],
-      [1.15, 1.4],
-      [1.45, 1.7],
-      [1.5, 1.7],
-    ],
-    0,
-    0.35,
-    0.5,
-    1,
-  ),
   /** A card or a book's corner between the thumb and fingers. */
   pinch: shape(
     [
