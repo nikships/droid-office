@@ -100,6 +100,7 @@ export function openHelp(sidearm: Sidearm = 'wand') {
         ['Look around', 'Click to capture the mouse, Esc frees it', ['Mouse']],
         ['Next worker that needs you', 'Whoever has waited longest. Arrows at the screen’s edge point to the ones out of sight', ['N']],
         ['Change floors', 'Every project is a floor: step into the elevator on the north wall, or click the project name top left. It goes up to the roof too', ['E']],
+        ['Teleport to a floor', 'Go straight to the numbered floor, keeping your position and view. Command+0 is floor 10. Works in terminals and windows too', ['⌘1–9', '⌘0']],
       ],
     ],
     [

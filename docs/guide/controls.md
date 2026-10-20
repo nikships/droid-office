@@ -14,6 +14,7 @@
 | X | Send a worker home (frees the desk; a worker with its own worktree asks what to do with it) |
 | O | Open a pull request for a worker on its own branch, or see the one it has (a worker across several projects gets one in each) |
 | N | Go to the worker that has waited longest on someone; again for the next one |
+| Command + 1–9 / 0 | Teleport to the numbered floor (0 is floor 10), keeping your position and view instead of arriving in the elevator. Works from terminals and windows too |
 | F | Hang a picture from the web on a wall (scroll to size it, click to hang it) |
 | Q | Put back the issue card you're carrying |
 | G / 1–6 | Emote: hold G for the wheel (point and let go) or press 1–6 to wave, give a thumbs up, clap, dance, point or facepalm; it plays on your character. With the wand drawn they're its spells: Lumos, swish and flick, sparkler, ship it, run the build, Protego. With the Magnum drawn they're its tricks: twirl, inspect, cylinder spin, yy, blow the smoke off, flip |

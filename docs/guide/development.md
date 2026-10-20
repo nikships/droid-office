@@ -53,6 +53,7 @@ Every office tab has `window.office`, so an agent or a browser test can check a 
 | `office.commands()` | Those commands, with whether each is offered here and why one is blocked |
 | `office.closeAll()` | Closes every open window |
 | `office.ride(floor)` | Takes the elevator to a floor (id or name) or `roof`, and resolves once the doors open there |
+| `office.teleport(floor)` | Instantly switches to a numbered floor (id or name), preserving position and view, like Command+number. Does not target the roof |
 | `office.camera(preset)` | A fixed camera so screenshots compare between runs: `first`, looking straight ahead, level |
 | `office.height(scale)` | Smoothly sets eye height to 1–3 times the default, resolving when it settles; `state().player.eyeHeight` reports it in meters |
 | `office.frameStats({ reset? })` | Frame pacing since the last `{ reset: true }`, or over the last minute: `frames`, `fps`, `frameTime` (p50, p95, p99, max ms), `missed`, `repeated`, `cpu` and `gpu` per pass, `refreshHz`, `fpsCap`, `renderer`, `backend`, `pace`, `output` and `rawMouse` |

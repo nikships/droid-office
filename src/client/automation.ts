@@ -22,7 +22,7 @@ export const CAMERA_PRESETS = ['first'] as const;
 export type CameraPreset = (typeof CAMERA_PRESETS)[number];
 
 /** The commands `window.office` answers, and the only ones the server relay may call. */
-export const AUTOMATION_COMMANDS = ['goTo', 'interact', 'open', 'closeAll', 'ride', 'camera', 'height', 'frameStats', 'presenterStats', 'state', 'list', 'commands'] as const;
+export const AUTOMATION_COMMANDS = ['goTo', 'interact', 'open', 'closeAll', 'ride', 'teleport', 'camera', 'height', 'frameStats', 'presenterStats', 'state', 'list', 'commands'] as const;
 export type AutomationCommand = (typeof AUTOMATION_COMMANDS)[number];
 
 /** The boards on the wall, which `goTo` lists as kind 'board'. */
@@ -346,6 +346,7 @@ export interface AutomationHost {
   run(id: string): void;
   closeAll(): void;
   ride(floor: string): void;
+  teleport(floor: string): void;
   setCamera(pose: CameraPose): void;
   setHeight(scale: number): void;
   /** Frames drawn so far. */
@@ -375,6 +376,8 @@ export interface OfficeAutomation {
   closeAll(): Promise<Snapshot>;
   /** Rides the elevator to a floor (id or name) or the roof, and resolves once its doors open there. */
   ride(floor: string, opts?: { timeout?: number }): Promise<Snapshot>;
+  /** Switches to a numbered floor (id or name), keeping your position and view, like Command+number. */
+  teleport(floor: string, opts?: { timeout?: number }): Promise<Snapshot>;
   /** Puts the camera at one of the fixed presets. */
   camera(preset: CameraPreset): Promise<Snapshot>;
   /** Smoothly changes eye height to 1–3 times the default, resolving once it settles. */
@@ -435,6 +438,18 @@ export function createAutomation(host: AutomationHost): OfficeAutomation {
     at = null;
     host.ride(floor);
     return arrive(floor, opts.timeout);
+  }
+
+  async function teleport(query: string, opts: { timeout?: number } = {}): Promise<Snapshot> {
+    const ctx = host.context();
+    const q = typeof query === 'string' ? query.trim() : '';
+    const floor = ctx.floors.find((f) => f.id === q) ?? ctx.floors.find((f) => f.name.toLowerCase() === q.toLowerCase());
+    if (!floor) throw new Error(`No such numbered floor "${q}"`);
+    if (floor.id === ctx.floor) return settle();
+    if (host.raw().riding) throw new Error("Can't teleport while traveling to another floor");
+    at = null;
+    host.teleport(floor.id);
+    return arrive(floor.id, opts.timeout);
   }
 
   /** Waits out a trip under way: the floor comes and you have the controls back (the doors are open). */
@@ -549,6 +564,7 @@ export function createAutomation(host: AutomationHost): OfficeAutomation {
     open,
     closeAll,
     ride,
+    teleport,
     camera,
     height,
     frameStats: (opts = {}) => host.frameStats(opts?.reset === true),

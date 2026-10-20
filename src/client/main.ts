@@ -41,6 +41,7 @@ import { isAsleep, isBusy, workerPr } from '../shared/status';
 import { PROVIDER_LABEL, guestKeyNote, outsideNote, processLabel, statusWord } from '../shared/guests';
 import { Net } from './net';
 import { removedFloorNotice, standSpot } from './arrival';
+import { floorShortcut } from './floor-shortcuts';
 import { guardLeaving } from './leave';
 import { store, connectWhiteboard, lastFloor, lastSpot, loadProfile, loadSettings, rememberSpot, saveSettings, words, workerForPull, type Profile, type Spot, type Topic } from './state';
 import { officeTitle } from './tab-title';
@@ -1070,6 +1071,11 @@ net.onMessage((msg) => {
       if (trip && openTerminalFor() === OFFICE_SHELL_ID) net.send({ t: 'shell.attach' });
       // Not a trip of yours: the floor you were on was taken off the building, and the elevator took you away.
       if (!trip) takenAway();
+      if (trip?.how === 'switch' && msg.arrival.at) {
+        const at = msg.arrival.at;
+        player.pos.set(at.x, at.y, at.z);
+        player.vy = 0;
+      }
       // The card belongs to the board downstairs (or up): the office already put it back there.
       if (carrying) {
         toast(`📌 #${carrying.issue} stayed behind on the other floor's board`);
@@ -1272,10 +1278,10 @@ function standingAt(to: string): Arrival {
   return { x: player.pos.x, y: below ? player.pos.y + (from - there) * STOREY : player.pos.y, z: player.pos.z, rotY: player.facing };
 }
 
-/** Straight to another floor from the floor list: a blink, and you're standing in the same spot there. */
-function switchFloor(floorId: string) {
-  // The roof isn't laid out like a floor: to and from it, it's the elevator.
-  if (upTop || floorId === ROOF) return ride(floorId);
+/** Straight to another floor in the same spot: a blink from the list, or no fade or delay with Command+number. */
+function switchFloor(floorId: string, instant = false) {
+  // The floor list uses the elevator for the roof; a numbered shortcut can leave it immediately.
+  if (floorId === ROOF || (upTop && !instant)) return ride(floorId);
   if (trip || floorId === store.floor) return;
   holsterGun(true);
   closeAllModals();
@@ -1287,6 +1293,11 @@ function switchFloor(floorId: string) {
   trip = { floor: floorId, how: 'switch', timer: window.setTimeout(tripFailed, 10_000) };
   player.enabled = false;
   player.clearKeys();
+  if (instant) {
+    net.send({ t: 'floor.go', floor: floorId, at: standingAt(floorId) });
+    renderWake();
+    return;
+  }
   fade(true, true);
   setTimeout(() => net.send({ t: 'floor.go', floor: floorId, at: standingAt(floorId) }), 170);
 }
@@ -3028,6 +3039,7 @@ function use(it: Interactable | null, key: DeskKey, note = aimedNote, spot = aim
 }
 
 // ---- Input ----------------------------------------------------------------------------------------
+window.addEventListener('keydown', (e) => floorShortcut(e, store.floors, (floor) => switchFloor(floor, true)), true);
 window.addEventListener('keydown', (e) => {
   if (modalOpen() || isTyping(e) || e.metaKey || e.ctrlKey || e.altKey) return;
   if (relookOnKey && e.key !== 'Escape' && player.canLock) player.lock();
@@ -4171,6 +4183,7 @@ const automation = createAutomation({
     ride(floor);
     renderWake();
   },
+  teleport: (floor) => switchFloor(floor, true),
   setCamera,
   setHeight: (scale) => {
     player.setHeight(scale);
