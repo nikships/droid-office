@@ -332,6 +332,10 @@ function fakeOffice() {
       setTimeout(() => (s.raw = { ...s.raw, riding: false, floor: s.rideTo ?? floor }), 20);
       setTimeout(() => (s.raw = { ...s.raw, player: { ...s.raw.player, enabled: true } }), 40);
     },
+    teleport: (floor) => {
+      log.push(`teleport ${floor}`);
+      s.raw = { ...s.raw, floor, modals: [], terminal: null };
+    },
     setCamera: (pose) => {
       log.push(`camera ${pose.lookPitch}`);
     },
@@ -359,6 +363,25 @@ function fakeOffice() {
   };
   return { s, log, office: createAutomation(host) };
 }
+
+test('teleport switches numbered floors without a ride or changing the pose, and rejects the roof', async () => {
+  const { office, log, s } = fakeOffice();
+  const before = { ...s.raw.player };
+  s.raw = { ...s.raw, terminal: 'w1', modals: [{ label: 'Ada terminal' }] };
+  const there = await office.teleport('website');
+  assert.equal(there.floor?.id, 'f2');
+  assert.deepEqual(s.raw.player, before);
+  assert.deepEqual(there.modals, []);
+  assert.equal(there.terminal, null);
+  assert.deepEqual(log, ['teleport f2']);
+  await office.teleport('f2');
+  assert.deepEqual(log, ['teleport f2'], 'the current floor is a no-op');
+  const back = (await runCommand(office, 'teleport', ['f1'])) as typeof there;
+  assert.equal(back.floor?.id, 'f1');
+  for (const floor of ['roof', ROOF, 'missing', '', null]) await assert.rejects(office.teleport(floor as string), /No such numbered floor/);
+  s.raw = { ...s.raw, riding: true };
+  await assert.rejects(office.teleport('f2'), /while traveling/);
+});
 
 test('height waits for the camera to settle and is available through the server relay', async () => {
   const { office, log, s } = fakeOffice();

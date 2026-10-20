@@ -65,7 +65,7 @@ export function toggleFloorMenu(anchor: HTMLElement, opts: FloorMenuOptions): vo
       { type: 'button', role: 'menuitem', class: isHere ? 'here on' : '', disabled: isHere, title: isHere ? "You're on this floor" : `Go to ${f.name}, right where you're standing` },
       floorNo(String(i + 1), p.trim),
       h('span.list-main', {}, h('span.list-title', { title: f.name }, f.name), h('span.list-meta', { title: f.repo ?? f.dir }, where || (f.repo ?? f.dir))),
-      h('span.list-end', {}, isHere ? h('span.pill.floor-here', {}, 'Here') : floorStats(f)),
+      h('span.list-end', {}, i < 10 ? h('span.key', {}, `⌘${(i + 1) % 10}`) : null, isHere ? h('span.pill.floor-here', {}, 'Here') : floorStats(f)),
     );
     btn.addEventListener('click', () => {
       if (isHere) return;
