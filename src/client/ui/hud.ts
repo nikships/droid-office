@@ -118,6 +118,7 @@ export function openHelp(sidearm: Sidearm = 'wand') {
         ['Prompt', 'Give a task to a new or existing worker at the desk you face', ['P']],
         ['Changes', 'Files and diff of the worker you face: commit, discard, open a PR', ['C']],
         ['Shared shell', 'Dev servers, git, tests, at an empty desk', ['B']],
+        ['Previous / next terminal', 'Cycle through this floor’s running agent and shell terminals in desk order, then the boss monitor’s shell. Wraps at either end; stopped workers stay asleep', ['⌘←', '⌘→']],
         ['Resume', 'Wake a sleeping worker', ['R']],
         ['Send home', 'Frees the desk', ['X']],
         ['Pull request', 'Open one for a worker on its own branch, or see the one it has', ['O']],
