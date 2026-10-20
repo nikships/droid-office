@@ -3,7 +3,7 @@ import { EMOTE_BY_ID, type Emote, type EmoteId } from '../../shared/emotes';
 import type { CarriedIssue } from '../../shared/protocol';
 import { OpenBook } from './book';
 import { HeldCard } from './card';
-import { REACH_TIME, coffeeMug, emoteEnvelope, reachCurve } from './character';
+import { REACH_TIME, emoteEnvelope, reachCurve } from './character';
 import { Muzzle, SPIN_AT, disposeGun, magnum, setCylinder } from './gun';
 import type { GunPose } from './gun-motion';
 import { Glove, gunHand, type HandShape, SHAPES, WAND_GRIP_AT, WAND_GRIP_AXIS } from './glove';
@@ -17,7 +17,7 @@ export interface HandsInput {
   walkPhase: number;
   walking: boolean;
   airborne: boolean;
-  /** 0 (steady) to 1: one coffee too many. */
+  /** 0 (steady) to 1: how hard the view shakes (a hard landing, a charged shot going off). */
   jitter: number;
   /** Holding on to the ladder (hand over hand, in time with walkPhase) or a fire pole (both hands on it, off to the left). */
   grip?: 'ladder' | 'pole' | null;
@@ -32,9 +32,6 @@ const CUFF = '#3a3a3a';
  * guard, in meters of the pose's `lift`, before it goes up.
  */
 const TOSS_SLIDE = 0.06;
-
-/** Lifting the mug for a sip and lowering it again, in seconds. */
-const SIP_TIME = 1.1;
 
 const lift = new THREE.Vector3();
 const handTurn = new THREE.Quaternion();
@@ -111,8 +108,6 @@ export class Hands {
   private right: Arm;
   private left: Arm;
   private reachT = -1;
-  private mug: THREE.Group;
-  private wantsMug = false;
   /** An issue card off the board, held low in front of you in both hands. */
   private holder = new THREE.Group();
   private card: HeldCard;
@@ -121,8 +116,6 @@ export class Hands {
   private book: OpenBook | null = null;
   /** 0 → 1 as the card (or the book) comes up into view and the hands close in on it. */
   private carryK = 0;
-  /** Seconds into a sip (negative while it waits for the reach to finish), or null. */
-  private sipT: number | null = null;
   private sway = new THREE.Vector2();
   private last: { yaw: number; pitch: number } | null = null;
   private air = 0;
@@ -173,12 +166,6 @@ export class Hands {
     }
     this.right = this.arm(1);
     this.left = this.arm(-1);
-    // In the left hand, handle in the palm, standing upright however the arm is turned.
-    this.mug = coffeeMug();
-    this.mug.position.set(0.09, -0.035, -0.03);
-    this.mug.quaternion.setFromEuler(this.left.baseRot).invert();
-    this.mug.visible = false;
-    this.left.group.add(this.mug);
     // Tipped back, so you look down onto its front.
     this.holder.rotation.x = -0.35;
     this.scene.add(this.holder);
@@ -262,19 +249,11 @@ export class Hands {
     this.reachT = 0;
   }
 
-  /** A mug of coffee in the left hand, or not. */
-  holdMug(on: boolean) {
-    this.wantsMug = on;
-    const full = this.card.held || !!this.book;
-    this.mug.visible = on && !full;
-  }
-
-  /** An issue card in both hands, or none (null). The mug waits while the hands are full. */
+  /** An issue card in both hands, or none (null). */
   carry(card: CarriedIssue | null) {
     const was = this.card.held;
     this.card.set(card);
     if (!was) this.carryK = 0;
-    this.holdMug(this.wantsMug);
   }
 
   /** An open book in both hands, its pages turning, or none. A card you carry waits. */
@@ -290,7 +269,6 @@ export class Hands {
       this.book = null;
     }
     this.holder.visible = !on;
-    this.holdMug(this.wantsMug);
   }
 
   /** Turns a page of the book you're reading now. */
@@ -302,11 +280,6 @@ export class Hands {
   emote(id: EmoteId) {
     const emote = EMOTE_BY_ID.get(id);
     this.emoting = emote ? { emote, t: 0 } : null;
-  }
-
-  /** Raise the mug for a sip, once the right hand is back from the coffee machine. */
-  sip() {
-    this.sipT = -REACH_TIME * 0.6;
   }
 
   /**
@@ -426,12 +399,6 @@ export class Hands {
       this.reachT += dt;
       if (this.reachT >= REACH_TIME) this.reachT = -1;
     }
-    let sip = 0;
-    if (this.sipT !== null) {
-      this.sipT += dt;
-      sip = reachCurve(this.sipT / SIP_TIME);
-      if (this.sipT >= SIP_TIME) this.sipT = null;
-    }
     const shake = s.jitter * 0.004;
     this.carryK += ((this.card.held || this.book ? 1 : 0) - this.carryK) * Math.min(1, dt * 7);
     const carry = this.carryK;
@@ -491,12 +458,7 @@ export class Hands {
     r.rotation.z += 0.22 * k;
     this.left.group.position.y -= 0.025 * k;
     this.left.group.position.z += 0.03 * k;
-    // The sip: the mug comes up to your mouth and tips toward you.
     const l = this.left.group;
-    l.position.x += 0.17 * sip;
-    l.position.y += 0.13 * sip;
-    l.position.z += 0.14 * sip;
-    l.rotation.x += 0.7 * sip;
     this.right.glove.shape(this.rightShape(k));
     this.left.glove.shape(this.leftShape());
     this.right.glove.update(dt);
@@ -540,11 +502,10 @@ export class Hands {
     const both = this.bothShape();
     if (both) return both;
     const g = this.gun;
-    if (g && g.pose.left > 0.25 && !this.wantsMug) return SHAPES.cylinder;
+    if (g && g.pose.left > 0.25) return SHAPES.cylinder;
     const id = this.emoting?.emote.id;
     if (id === 'clap') return SHAPES.flat;
     if (id === 'dance') return SHAPES.fist;
-    if (this.mug.visible) return SHAPES.mug;
     return SHAPES.relaxed;
   }
 
@@ -584,12 +545,11 @@ export class Hands {
     }
     g.pivot.rotation.set(p.spin, p.turn, p.tilt);
     setCylinder(g.prop, p.crane, p.cylinder);
-    const free = !this.wantsMug;
-    if (free) l.position.y -= 0.2 * p.out;
+    l.position.y -= 0.2 * p.out;
     // The left hand in at the cylinder as it swings out: in the gun's own frame, the palm flat on
     // its far side, the fingers along it toward the muzzle and the thumb up, sweeping round it
     // (`palm`) to spin it.
-    if (free && p.left > 0) {
+    if (p.left > 0) {
       const prop = g.prop;
       prop.updateMatrixWorld(true);
       const drum = prop.worldToLocal(prop.getObjectByName('gun-drum')!.getWorldPosition(lift));
@@ -652,7 +612,7 @@ export class Hands {
     r.updateMatrixWorld(true);
     w.twirl.rotation.y = p.twirl;
     // The left hand drops away out of view while the right one works.
-    if (!this.wantsMug) l.position.y -= 0.2 * p.out;
+    l.position.y -= 0.2 * p.out;
     w.item.update(dt, { spin: p.spin, glow: p.glow, charge: p.charge, lumos: this.lumosK });
   }
 

@@ -36,8 +36,6 @@ export interface SceneMotion {
   worker: boolean;
   confetti: boolean;
   gong: boolean;
-  /** The coffee jitters are shaking the view. */
-  coffee: boolean;
   smoke: boolean;
   /** Traffic is the picture: up on the roof, or you're standing outside. */
   cars: boolean;
@@ -48,10 +46,10 @@ export interface SceneMotion {
   sky: boolean;
 }
 
-export const SCENE_MOTIONS = ['player', 'worker', 'confetti', 'gong', 'coffee', 'smoke', 'cars', 'elevator', 'boardCard', 'sky'] as const satisfies readonly (keyof SceneMotion)[];
+export const SCENE_MOTIONS = ['player', 'worker', 'confetti', 'gong', 'smoke', 'cars', 'elevator', 'boardCard', 'sky'] as const satisfies readonly (keyof SceneMotion)[];
 
 export function stillScene(): SceneMotion {
-  return { player: false, worker: false, confetti: false, gong: false, coffee: false, smoke: false, cars: false, elevator: false, boardCard: false, sky: false };
+  return { player: false, worker: false, confetti: false, gong: false, smoke: false, cars: false, elevator: false, boardCard: false, sky: false };
 }
 
 export interface RenderSignals {

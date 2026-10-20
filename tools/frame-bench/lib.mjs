@@ -132,8 +132,8 @@ export const PAGE_LIB = `(() => {
   };
 })();`;
 
-/** Stands at the coffee machine looking straight ahead: the fixed start of every scenario. */
-export const START = `await office.closeAll(); await office.goTo('coffee'); await office.camera('first'); await window.__bench.sleep(1500);`;
+/** Stands at the jukebox looking straight ahead: the fixed start of every scenario. */
+export const START = `await office.closeAll(); await office.goTo('jukebox'); await office.camera('first'); await window.__bench.sleep(1500);`;
 
 export async function mouse(cdp, type, x, y, extra = {}) {
   await cdp.send('Input.dispatchMouseEvent', { type, x, y, button: 'none', buttons: 0, ...extra });
@@ -181,11 +181,11 @@ export const SCENARIOS = {
     await cdp.eval('window.__bench.end()');
     await releaseMouse(cdp);
   },
-  // Coffee machine to elevator and back along the office's paths, the walk the Phase 1 pull request measured.
+  // Jukebox to elevator and back along the office's paths, the walk the Phase 1 pull request measured.
   walk: async ({ cdp, seconds }) => {
     await cdp.eval(`(async () => { ${START} window.__bench.begin();
       const end = performance.now() + ${seconds * 1000}; let to = 'elevator';
-      while (performance.now() < end) { await office.goTo(to, { walk: true, timeout: 40000 }); to = to === 'elevator' ? 'coffee' : 'elevator'; }
+      while (performance.now() < end) { await office.goTo(to, { walk: true, timeout: 40000 }); to = to === 'elevator' ? 'jukebox' : 'elevator'; }
       window.__bench.end(); })()`);
   },
   // A shell's terminal open over the office, output scrolling through it.

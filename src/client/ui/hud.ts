@@ -1,4 +1,3 @@
-import { BUZZ_SECONDS, type Caffeine } from '../caffeine';
 import { store, type Sidearm } from '../state';
 import { $, glyphText, h, openModal, STATUS_LABEL } from './dom';
 import { modelBadge } from './models';
@@ -57,24 +56,6 @@ export function renderWorkers(onOpen: (id: string) => void) {
   // standing at the Issues, PR, Pipelines and Team kiosks are listed but aren't counted.
   const hired = workers.filter((w) => !DESK_BY_ID.get(w.deskId)?.station).length;
   $('worker-count').textContent = hired ? String(hired) : '';
-}
-
-let caffeineKey = '';
-/** The caffeine meter: a cup per coffee in a row, and a bar that drains over the buzz's minute. */
-export function renderCaffeine(caffeine: Caffeine, now: number) {
-  const left = caffeine.left(now);
-  const jittery = caffeine.jitter(now) > 0;
-  const k = `${Math.ceil(left)}|${caffeine.cups}|${jittery}`;
-  if (k === caffeineKey) return;
-  caffeineKey = k;
-  const el = $('caffeine');
-  el.classList.toggle('hidden', !left);
-  el.classList.toggle('jittery', jittery);
-  if (!left) return;
-  $('caffeine-cups').textContent = '☕'.repeat(Math.min(caffeine.cups, 3));
-  // The bar eases down a second at a time (see its CSS transition), so aim for where it will be in one.
-  $('caffeine-fill').style.width = `${(Math.max(0, left - 1) / BUZZ_SECONDS) * 100}%`;
-  $('caffeine-left').textContent = `${Math.ceil(left)}s`;
 }
 
 /** A row of the help sheet: what it does, a line more about it, and its keys ('or' between two that each do it). */
@@ -143,7 +124,6 @@ export function openHelp(sidearm: Sidearm = 'wand') {
           ['G', 'or', '1–6'],
         ],
         seven,
-        ['Coffee', 'At the kitchen machine: a minute of quicker walking and higher jumps. Three cups in a row gives you the jitters', ['E']],
         ['The gong', 'Rings when a pull request merges: confetti, and every worker dances on its desk. E bangs it yourself', ['E']],
         ['Rooftop', 'Up the elevator: an empty deck, and the city all around', ['E']],
       ],

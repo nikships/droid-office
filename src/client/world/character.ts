@@ -320,10 +320,6 @@ export class Person {
   private head: THREE.Group;
   private walkPhase = 0;
   private reachT = -1;
-  /** Held in the left hand, kept upright however the arm swings: a mug of coffee. */
-  private mug = new THREE.Group();
-  private cup: THREE.Group;
-  private wantsMug = false;
   /** An issue card off the board, held out in front in both hands. */
   private card: HeldCard;
   private cardHolder = new THREE.Group();
@@ -396,14 +392,6 @@ export class Person {
     this.armL = limb(0.24, 0.08, this.shirt, -0.33, 0.9);
     this.armR = limb(0.24, 0.08, this.shirt, 0.33, 0.9);
     for (const arm of [this.armL, this.armR]) arm.add(mesh(new THREE.SphereGeometry(0.085, 12, 10), skin, 0, -0.38, 0));
-    // Forward is +z, so the character's left arm is the one on +x. The handle faces the hand.
-    const cup = (this.cup = coffeeMug(1.4));
-    cup.position.set(0.02, -0.08, 0.1);
-    cup.rotation.y = -Math.PI / 2;
-    this.mug.add(cup);
-    this.mug.position.set(0, -0.38, 0);
-    this.mug.visible = false;
-    this.armR.add(this.mug);
     // Between the hands when both arms are out in front (see update), its front to whoever they walk up to.
     const holder = this.cardHolder;
     holder.position.set(0, 0.8, 0.36);
@@ -537,16 +525,9 @@ export class Person {
     this.reachT = 0;
   }
 
-  /** A mug of coffee in the left hand, or not. */
-  holdMug(on: boolean) {
-    this.wantsMug = on;
-    this.mug.visible = on && !this.card.held && !this.book;
-  }
-
-  /** Carries an issue card in both hands, or puts it down (null). The mug waits while the hands are full. */
+  /** Carries an issue card in both hands, or puts it down (null). */
   carry(card: CarriedIssue | null | undefined) {
     this.card.set(card);
-    this.holdMug(this.wantsMug);
   }
 
   /** Opens a book in both hands and reads it, turning the pages (or closes it). A card they carry waits. */
@@ -561,7 +542,6 @@ export class Person {
       this.book = null;
     }
     this.cardHolder.visible = !on;
-    this.holdMug(this.wantsMug);
   }
 
   /** Turns a page of the book they're reading now. */
@@ -834,7 +814,6 @@ export class Person {
       this.legR.rotation.set(-1.15, 0, 0.35);
       this.body.rotation.z = -0.16;
     }
-    if (this.mug.visible) this.mug.quaternion.copy(this.armR.quaternion).invert();
     this.body.position.y = moving && !airborne ? Math.abs(Math.sin(this.walkPhase)) * 0.06 : 0;
     // Down onto (or up onto) the seat: the hips go where it puts them.
     if (sit) this.body.position.y = THREE.MathUtils.lerp(this.body.position.y, this.seatHips - HIPS, sit);

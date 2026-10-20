@@ -90,7 +90,7 @@ export type StationKind = 'issues' | 'pulls' | 'actions' | 'lead';
  * wall, at PI / 2 by the east one. Nobody hires them from the desks.
  */
 export const STATIONS: DeskDef[] = [
-  // Between the plant in the north-west corner and the Issues board.
+  // Between the north-west corner and the Issues board.
   { id: 'station-issues', station: 'issues', x: -15.6, z: FLOOR.minZ + 1.3, rotY: Math.PI, label: 'Issues board' },
   // Between the Pipelines board and the PR board.
   { id: 'station-pulls', station: 'pulls', x: 0, z: FLOOR.minZ + 1.3, rotY: Math.PI, label: 'PR board' },
@@ -238,15 +238,6 @@ export const SPAWN = { x: 8, z: 7 } as const;
 
 /** The gong: on the north wall just past the elevator from the PR board, facing into the room. It rings when a PR merges. */
 export const GONG = { x: 11.8, z: FLOOR.minZ + 0.75, width: 1.9, height: 2.45 } as const;
-
-/** Potted plants around the room: where each stands, and how big it is. None stands in front of a board. */
-export const PLANTS: readonly (readonly [x: number, z: number, scale: number])[] = [
-  [-17.2, -12.2, 1.4],
-  [17.2, 12.2, 1.3],
-  [-6, 0, 1],
-  [3.5, 0, 0.9],
-  [8.5, 5, 1.1],
-];
 
 /**
  * The bottom floor of the building is its second storey: the street, and the open garage under the

@@ -1,6 +1,6 @@
 /**
  * Office sounds, synthesized with Web Audio so there are no audio files to ship: workers typing
- * while they work, the coffee machine, thunder after a flash, the gong, and the dings when a worker
+ * while they work, thunder after a flash, the gong, and the dings when a worker
  * needs you. And the lounge jukebox, whose tunes are in music.ts.
  *
  * Everything here is triggered by something: there is no background hum, no weather, no random
@@ -39,8 +39,6 @@ export interface Listener extends Pos {
   fz: number;
 }
 
-// The kitchen props (office.ts puts the kitchen at x -14.5, z 12.2).
-const COFFEE_MACHINE: Pos = { x: -15.7, y: 1.4, z: 12.2 };
 /** The middle of the gong's disc. */
 const GONG_AT: Pos = { x: GONG.x, y: GONG.height - 1.36, z: GONG.z };
 /** A gong's overtones don't line up like a string's: [ratio to the lowest, loudness, seconds to die away]. */
@@ -498,73 +496,6 @@ export class OfficeSound {
         o.start(when);
         o.stop(when + len + 0.02);
       }
-    }
-  }
-
-  // ---- The coffee machine -------------------------------------------------------------------------
-
-  /** Grind, gurgle and drip. */
-  coffee() {
-    const ctx = this.ctx;
-    if (!ctx) return;
-    this.count('coffee');
-    const out = this.panner(COFFEE_MACHINE, 1.2, 1);
-    out.connect(this.ambience);
-    const t0 = ctx.currentTime + 0.05;
-
-    // Grinder: a buzzing motor with beans crunching in it.
-    const motor = ctx.createOscillator();
-    motor.type = 'sawtooth';
-    motor.frequency.setValueAtTime(70, t0);
-    motor.frequency.linearRampToValueAtTime(118, t0 + 0.25);
-    motor.frequency.setValueAtTime(118, t0 + 1.2);
-    motor.frequency.linearRampToValueAtTime(60, t0 + 1.5);
-    const motorTone = biquad(ctx, 'lowpass', 1100, 0.8);
-    const crunch = this.noise(this.buf.white);
-    const crunchTone = biquad(ctx, 'bandpass', 2600, 1.2);
-    const grind = ctx.createGain();
-    envelope(grind.gain, t0, [
-      [0.08, 0.13],
-      [1.25, 0.13],
-      [1.5, 0],
-    ]);
-    const crunchAmp = ctx.createGain();
-    crunchAmp.gain.value = 0.5;
-    const rattle = this.noise(this.buf.gurgle, true);
-    rattle.playbackRate.value = 3;
-    rattle.connect(crunchAmp.gain);
-    motor.connect(motorTone).connect(grind);
-    crunch.connect(crunchTone).connect(crunchAmp).connect(grind);
-    grind.connect(out);
-
-    // Brewing: a hissing, gurgling pour with bubbles popping.
-    const t1 = t0 + 1.8;
-    const pour = this.noise(this.buf.white);
-    const pourTone = biquad(ctx, 'bandpass', 850, 0.9);
-    const gurgle = ctx.createGain();
-    gurgle.gain.value = 0.25;
-    const wobble = this.noise(this.buf.gurgle, true);
-    wobble.connect(gurgle.gain);
-    const brew = ctx.createGain();
-    envelope(brew.gain, t1, [
-      [0.2, 0.3],
-      [2.4, 0.26],
-      [3, 0],
-    ]);
-    pour.connect(pourTone).connect(gurgle).connect(brew).connect(out);
-    for (let i = 0; i < 14; i++) this.blip(out, t1 + rand(0.2, 2.6), rand(350, 800), rand(1.6, 2.4), 0.05, 0.1);
-
-    // The last few drips into the cup.
-    for (const dt of [3.3, 3.9, 4.7]) this.blip(out, t1 + dt + rand(-0.1, 0.1), rand(1100, 1400), 0.55, 0.05, 0.11);
-
-    const end = t1 + 3.2;
-    for (const s of [motor, crunch, rattle]) {
-      s.start(t0);
-      s.stop(t0 + 1.6);
-    }
-    for (const s of [pour, wobble]) {
-      s.start(t1);
-      s.stop(end);
     }
   }
 
@@ -1432,8 +1363,6 @@ interface Buffers {
   rustle: AudioBuffer;
   brown: AudioBuffer;
   white: AudioBuffer;
-  /** A slow, lumpy 0–1 signal for wobbling other sounds' volume. */
-  gurgle: AudioBuffer;
 }
 
 function makeBuffers(ctx: BaseAudioContext): Buffers {
@@ -1445,7 +1374,6 @@ function makeBuffers(ctx: BaseAudioContext): Buffers {
     rustle: rustle(ctx),
     brown: loopable(ctx, 6, brownNoise()),
     white: sample(ctx, 5, () => Math.random() * 2 - 1),
-    gurgle: loopable(ctx, 4, lumpy(ctx.sampleRate, 0.03, 0.11)),
   };
 }
 
@@ -1484,21 +1412,6 @@ function brownNoise(): () => number {
   return () => {
     last = (last + 0.02 * (Math.random() * 2 - 1)) / 1.02;
     return last * 3.5;
-  };
-}
-
-/** Wanders between random levels, holding each for `min`–`max` seconds. */
-function lumpy(sr: number, min: number, max: number): () => number {
-  let level = 0;
-  let target = 0;
-  let hold = 0;
-  return () => {
-    if (--hold <= 0) {
-      target = Math.random() ** 2;
-      hold = Math.floor(rand(min, max) * sr);
-    }
-    level += (target - level) * (100 / sr);
-    return level;
   };
 }
 

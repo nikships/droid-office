@@ -37,7 +37,6 @@ const PLACE_LABEL: Partial<Record<InteractKind, string>> = {
   ci: 'CI automations board',
   whiteboard: 'Whiteboard',
   computers: 'Compute wall',
-  coffee: 'Coffee machine',
   elevator: 'Elevator',
   gong: 'Merge gong',
   jukebox: 'Jukebox',
