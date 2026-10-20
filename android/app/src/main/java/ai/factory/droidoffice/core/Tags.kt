@@ -224,6 +224,7 @@ object Tags {
         const val GONE_BACK = "worker.gone.back"
         const val KEYS = "worker.keys"
         const val PHONE = "key.phone"
+        const val DIRECT_INPUT = "worker.input.direct"
         /** The button at the end of the quick keys that opens [KEYS_SHEET]. */
         const val KEYS_ARRANGE = "worker.keys.arrange"
         const val KEYS_SHEET = "worker.keys_sheet"

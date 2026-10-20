@@ -52,6 +52,7 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
@@ -174,11 +175,13 @@ fun WorkerScreen(workerId: String, onBack: () -> Unit, embedded: Boolean = false
         // Default to Raw TTY unless the thread has an answerable question. Wait for the first screen
         // before keeping the default, and never change the view after the owner picks one.
         var ttyChoice by rememberSaveable(workerId) { mutableStateOf<Boolean?>(if (draft != null) true else null) }
+        var directInput by rememberSaveable(workerId) { mutableStateOf(false) }
+        var composerFocus by remember(workerId) { mutableIntStateOf(0) }
         val tty = ttyChoice ?: (link.phase != Phase.Connected || !Asks.canAnswer(worker, screen))
         LaunchedEffect(workerId, screen) {
             if (ttyChoice == null && screen != null) ttyChoice = tty
         }
-        if (!worker.isShell && !worker.isCloud) ViewToggle(tty) { ttyChoice = it }
+        if (!worker.isShell && !worker.isCloud) ViewToggle(tty) { ttyChoice = it; directInput = false }
         if (tty) NeedsYou(worker, screen, live && link.phase == Phase.Connected)
         var phoneSize by remember(workerId) { mutableStateOf<TermSize?>(null) }
         val currentSize = TermSize(worker.cols, worker.rows)
@@ -215,6 +218,7 @@ fun WorkerScreen(workerId: String, onBack: () -> Unit, embedded: Boolean = false
                 workerId, screen, if (phone) TermView.Phone else TermView.Desktop, live && link.phase == Phase.Connected,
                 Modifier.fillMaxSize().border(1.dp, Palette.Border, RoundedCornerShape(12.dp)),
                 onFit = { phoneSize = it },
+                directInput = directInput && !worker.isCloud,
             )
             if (worker.isCloud) Cloud(worker) else if (worker.state.asleep) Asleep(worker)
         }
@@ -225,9 +229,16 @@ fun WorkerScreen(workerId: String, onBack: () -> Unit, embedded: Boolean = false
             // Snackbars rise above the quick keys and the composer instead of covering them.
             Column(Modifier.onSizeChanged { lift.value = with(density) { it.height.toDp() } + 8.dp }) {
                 if (!worker.isCloud && tty) {
-                    QuickKeyRow(workerId, phone) { phoneChoice = !phone }
+                    QuickKeyRow(
+                        workerId, phone, directInput, link.phase == Phase.Connected,
+                        onPhone = { phoneChoice = !phone },
+                        onDirect = {
+                            directInput = !directInput
+                            if (!directInput) composerFocus++
+                        },
+                    )
                 }
-                Composer(worker, draft)
+                Composer(worker, draft, visible = !directInput || !tty || worker.isCloud, focusRequest = composerFocus)
             }
         }
         if (sendingHome) SendHomeDialog(worker, onDismiss = { sendingHome = false }, onSent = {
@@ -477,7 +488,7 @@ private fun Gone(synced: Boolean, embedded: Boolean, onBack: () -> Unit) {
  * Phone stays first; the rest come in the owner's order, arranged from the button at the end.
  */
 @Composable
-private fun QuickKeyRow(workerId: String, phone: Boolean, onPhone: () -> Unit) {
+private fun QuickKeyRow(workerId: String, phone: Boolean, directInput: Boolean, connected: Boolean, onPhone: () -> Unit, onDirect: () -> Unit) {
     val graph = LocalGraph.current
     val haptics = LocalHapticFeedback.current
     val store by graph.store.snapshot.collectAsStateWithLifecycle()
@@ -490,6 +501,10 @@ private fun QuickKeyRow(workerId: String, phone: Boolean, onPhone: () -> Unit) {
         QuickKey("Phone", "Resize the terminal for this phone", Tags.Worker.PHONE, selected = phone, checked = phone) {
             haptics.performHapticFeedback(HapticFeedbackType.KeyboardTap)
             onPhone()
+        }
+        QuickKey("Direct", "Type directly into the terminal", Tags.Worker.DIRECT_INPUT, selected = directInput, checked = directInput, enabled = connected || directInput) {
+            haptics.performHapticFeedback(HapticFeedbackType.KeyboardTap)
+            onDirect()
         }
         keys.forEach { key ->
             QuickKey(key.label, key.spoken, Tags.Worker.key(key.spoken), accent = key.bytes == Keys.ENTER) {
@@ -506,9 +521,9 @@ private fun QuickKeyRow(workerId: String, phone: Boolean, onPhone: () -> Unit) {
 }
 
 @Composable
-private fun QuickKey(label: String, spoken: String, tag: String, accent: Boolean = false, selected: Boolean = false, checked: Boolean? = null, icon: ImageVector? = null, onClick: () -> Unit) {
+private fun QuickKey(label: String, spoken: String, tag: String, accent: Boolean = false, selected: Boolean = false, checked: Boolean? = null, icon: ImageVector? = null, enabled: Boolean = true, onClick: () -> Unit) {
     val shape = RoundedCornerShape(7.dp)
-    val interaction = if (checked == null) Modifier.clickable(onClick = onClick) else Modifier.toggleable(checked, role = Role.Switch) { onClick() }
+    val interaction = if (checked == null) Modifier.clickable(enabled = enabled, onClick = onClick) else Modifier.toggleable(checked, enabled = enabled, role = Role.Switch) { onClick() }
     Box(
         Modifier.height(34.dp).widthIn(min = 40.dp).clip(shape)
             .background(if (accent) Palette.AccentMuted else if (selected) Palette.SurfaceHigh else Palette.SurfaceRaised)
