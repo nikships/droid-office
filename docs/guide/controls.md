@@ -6,7 +6,7 @@
 | ↑ / ↓ | Smoothly raise / lower eye height, from normal to 3× |
 | Space | Jump (you can land on desks, couches and the cars in the garage) |
 | Mouse drag / wheel | Orbit / zoom the camera |
-| E | Interact: hire a worker, open its terminal, read a board, take an issue's note off the board, prompt a board agent, read the docs at the bookshelf, sit down (or get up), ride the elevator, climb the ladder (or get off it), slide down a fire pole, grab a coffee |
+| E | Interact: hire a worker, open its terminal, read a board, take an issue's note off the board, prompt a board agent, read the docs at the bookshelf, sit down (or get up), ride the elevator, climb the ladder (or get off it), slide down a fire pole |
 | P | Prompt: give a task to a new worker, or to the one at this desk |
 | C | Changes: the files the worker at this desk changed and their diff; commit, discard, open a PR, or Commit & open PR to have the worker do both (a tab per repository when the task spans several). In it, **T** switches between the diff and the worker's terminal |
 | B | Open a shell at an empty desk |

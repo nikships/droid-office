@@ -30,7 +30,7 @@ import {
   type CiEditRequest,
   type FactoryCiState,
 } from '../src/shared/factory-ci.js';
-import { BOARDS, ELEVATOR, FLOOR, GONG, PLANTS } from '../src/shared/layout.js';
+import { BOARDS, ELEVATOR, FLOOR, GONG } from '../src/shared/layout.js';
 
 const KEY = 'fk-test-ci-1234';
 const json = (status: number, body: unknown) => new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
@@ -506,7 +506,7 @@ test('CI board: what it says with nothing to show, and redrawing only when that 
   assert.equal(ago(T0 - 49 * HOUR, T0), '2D');
 });
 
-test('the CI board hangs on the north wall clear of the gong, the elevator, the corner, the mural and the plants', () => {
+test('the CI board hangs on the north wall clear of the gong, the elevator, the corner and the mural', () => {
   const b = BOARDS.ci;
   const left = b.x - b.width / 2;
   const right = b.x + b.width / 2;
@@ -519,7 +519,6 @@ test('the CI board hangs on the north wall clear of the gong, the elevator, the 
   // The Factory hero mural (world/factory-floor.ts) hangs over it, its bottom edge at 4.8 − 3.3 / 2.
   assert.ok(b.y + b.height / 2 < 4.8 - 3.3 / 2, 'under the mural');
   assert.ok(b.y - b.height / 2 > 0.5, 'off the floor');
-  for (const [x, z] of PLANTS) assert.ok(!(x > left - 0.6 && x < right + 0.6 && z < FLOOR.minZ + 2), `the plant at ${x}, ${z} stands in front of it`);
   for (const other of Object.values(BOARDS)) {
     if (other === b || other.rotY !== 0) continue;
     assert.ok(other.x + other.width / 2 < left || other.x - other.width / 2 > right, 'no other north-wall board overlaps it');

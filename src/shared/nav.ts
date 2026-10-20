@@ -23,7 +23,6 @@ import {
   GLASS_ROOM_CHAIRS,
   GLASS_ROOM_TABLE,
   PARACHUTE,
-  PLANTS,
   POLE,
   POLES,
   ROAD,
@@ -49,7 +48,7 @@ export function deskPoint(d: Pick<DeskDef, 'x' | 'z' | 'rotY'>, t: number, s: nu
   return [d.x + Math.cos(d.rotY) * t + Math.sin(d.rotY) * s, d.z - Math.sin(d.rotY) * t + Math.cos(d.rotY) * s];
 }
 
-/** What's in the way on the floor. The lounge, kitchen and plants are where office.ts puts them. */
+/** What's in the way on the floor. The lounge and kitchen are where office.ts puts them. */
 function obstacles(): { rects: Rect[]; circles: Circle[] } {
   const rects: Rect[] = [];
   const circles: Circle[] = [];
@@ -65,7 +64,6 @@ function obstacles(): { rects: Rect[]; circles: Circle[] } {
   rects.push([12.2, 13.8, -0.8, 0.8]); // coffee table
   circles.push([12.5, 3.5, 0.5], [14.5, -3.4, 0.5]); // beanbags
   rects.push([-17, -10.75, 11.7, 12.7]); // kitchen counter and fridge
-  for (const [x, z, s] of PLANTS) circles.push([x, z, 0.3 * s]);
   // The loft's posts, the stairs up to it, and the elevator shaft.
   for (const x of [LOFT.minX + 0.15, (LOFT.minX + LOFT.maxX) / 2]) circles.push([x, LOFT.minZ + 0.15, 0.14]);
   rects.push([STAIRS.fromX, STAIRS.toX, STAIRS.minZ - 0.1, STAIRS.maxZ]);

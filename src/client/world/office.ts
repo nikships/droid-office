@@ -21,7 +21,6 @@ import {
   GLASS_ROOM,
   GLASS_ROOM_CHAIRS,
   GLASS_ROOM_TABLE,
-  PLANTS,
   SEATING_BY_ID,
   SLAB,
   STAIRS,
@@ -51,7 +50,6 @@ import { buildJukebox, type JukeboxView } from './jukebox';
 import { buildBookshelf, type ShelfWiki } from './bookshelf';
 import { buildStack, type Stack } from './stack';
 import { buildTower } from './tower';
-import { buildCoffeeMachine } from './coffee';
 import { dressFactoryFloor } from './factory-floor';
 import { placeFactoryProps } from './factory-props';
 import { glassRoomTexture } from './glass-room';
@@ -69,7 +67,7 @@ export interface Collider {
   fence?: boolean;
 }
 
-export type InteractKind = 'desk' | 'station' | 'issues' | 'pulls' | 'actions' | 'ci' | 'whiteboard' | 'coffee' | 'decor' | 'elevator' | 'gong' | 'jukebox' | 'seat' | 'ladder' | 'pole' | 'bookshelf' | 'computers';
+export type InteractKind = 'desk' | 'station' | 'issues' | 'pulls' | 'actions' | 'ci' | 'whiteboard' | 'decor' | 'elevator' | 'gong' | 'jukebox' | 'seat' | 'ladder' | 'pole' | 'bookshelf' | 'computers';
 
 /** Something you can use. Its scene object carries it as `userData.interact`, for clicking. */
 export interface Interactable {
@@ -145,8 +143,6 @@ export interface Office {
   setLevel(index: number, count: number): void;
   /** Lights, windows and glass for the sky to change with the time of day and the weather. */
   night: NightParts;
-  /** The potted plants round the room. */
-  plants: THREE.Group[];
   /** Animates the office; doors open for anyone in `people` who comes up to them. */
   update(t: number, dt: number, people: Iterable<{ x: number; y: number; z: number }>): void;
 }
@@ -181,9 +177,6 @@ const PALETTE = {
   chairs: ['#808080', '#878787', '#787878', '#8a8a8a', '#7b7b7b', '#848484'],
   /** The work cells' floor pads under the desk clusters. */
   rugs: ['#565656', '#565656', '#565656', '#565656'],
-  plant: '#4f8a5b',
-  plantDark: '#356b44',
-  pot: '#7b7b7b',
   ink: '#484848',
   /** Structural steel: beams, frames, mullions, posts. */
   steel: '#a6a6a6',
@@ -304,22 +297,6 @@ function floorTexture(width = FLOOR.maxX - FLOOR.minX, depth = FLOOR.maxZ - FLOO
 
 function box(w: number, h: number, d: number) {
   return new THREE.BoxGeometry(w, h, d);
-}
-
-/**
- * A plant in a square black planter. The planter comes first and then the three clumps of leaves;
- * its rim and soil come after them.
- */
-function plant(scale = 1): THREE.Group {
-  const g = new THREE.Group();
-  g.add(mesh(box(0.5, 0.48, 0.5), toon(PALETTE.pot), 0, 0.24, 0));
-  g.add(mesh(new THREE.SphereGeometry(0.42, 10, 8), toon(PALETTE.plant), 0, 0.85, 0));
-  g.add(mesh(new THREE.SphereGeometry(0.3, 10, 8), toon(PALETTE.plantDark), 0.22, 1.1, 0.1));
-  g.add(mesh(new THREE.SphereGeometry(0.26, 10, 8), toon(PALETTE.plant), -0.2, 1.15, -0.08));
-  g.add(mesh(box(0.54, 0.04, 0.54), toon(PALETTE.steel), 0, 0.48, 0));
-  g.add(mesh(box(0.44, 0.02, 0.44), toon('#665f59'), 0, 0.5, 0));
-  g.scale.setScalar(scale);
-  return g;
 }
 
 /**
@@ -479,7 +456,7 @@ function stringLights(a: THREE.Vector3, b: THREE.Vector3, sag: number, bulbs: [s
 
 /**
  * The balcony off the south wall, over the garage entrance: a deck with a glass railing on its
- * three open sides, string lights, a bench under the window, a bistro table and plants.
+ * three open sides, string lights, a bench under the window and a bistro table.
  */
 function buildBalcony(group: THREE.Group, colliders: Collider[], interactables: Interactable[], night: NightParts) {
   const { minX, maxX, minZ, maxZ } = BALCONY;
@@ -540,7 +517,7 @@ function buildBalcony(group: THREE.Group, colliders: Collider[], interactables: 
   // At night they light the deck, the table and whoever's out there.
   for (const x of [cx - 3.2, cx + 3.2]) night.lamps.push({ x, y: 2.4, z: cz, reach: 5.5, color: '#ffc9a6', power: 2.4 });
 
-  // A bench under the window, a bistro table with two stools, and plants.
+  // A bench under the window, and a bistro table with two stools.
   const bench = new THREE.Group();
   bench.add(mesh(roundedBox(2, 0.08, 0.46, 0.05), wood, 0, 0.45, 0));
   bench.add(mesh(box(2, 0.32, 0.06), wood, 0, 0.78, -0.2));
@@ -556,7 +533,6 @@ function buildBalcony(group: THREE.Group, colliders: Collider[], interactables: 
   table.add(mesh(new THREE.CylinderGeometry(0.42, 0.42, 0.04, 20), toon('#727272'), 0, 0.74, 0));
   table.add(mesh(new THREE.CylinderGeometry(0.04, 0.04, 0.7, 8), ink, 0, 0.37, 0));
   table.add(mesh(new THREE.CylinderGeometry(0.25, 0.28, 0.04, 16), ink, 0, 0.02, 0));
-  table.add(mesh(new THREE.CylinderGeometry(0.06, 0.05, 0.12, 10), toon('#eeeeee'), 0.15, 0.82, 0.05));
   table.position.set(tx, 0, tz);
   parts.add(table);
   colliders.push({ minX: tx - 0.4, maxX: tx + 0.4, minZ: tz - 0.4, maxZ: tz + 0.4, top: 0.77 });
@@ -570,16 +546,6 @@ function buildBalcony(group: THREE.Group, colliders: Collider[], interactables: 
     group.add(stool);
     colliders.push({ minX: x - 0.2, maxX: x + 0.2, minZ: tz - 0.2, maxZ: tz + 0.2, top: 0.49 });
     seatable(stool, sx < 0 ? 'stool-1' : 'stool-2', 0.9, interactables);
-  }
-  for (const [px, pz, sc] of [
-    [maxX - 0.55, minZ + 0.5, 1.1],
-    [minX + 0.55, maxZ - 0.55, 0.9],
-  ]) {
-    const p = plant(sc);
-    p.position.set(px, 0, pz);
-    parts.add(p);
-    const r = 0.3 * sc;
-    colliders.push({ minX: px - r, maxX: px + r, minZ: pz - r, maxZ: pz + r, top: 0.5 * sc });
   }
 
   group.add(mergeByMaterial(parts));
@@ -920,8 +886,6 @@ function buildDesk(def: DeskDef, index: number): DeskView {
   body.add(mesh(box(2 * lx, 0.05, 0.05), frame, 0, legH - 0.04, -lz));
   body.add(mesh(box(width - 0.3, 0.32, 0.02), toon('#7b7b7b'), 0, height - 0.26, -depth / 2 + 0.07));
   body.add(mesh(box(0.03, 0.03, 0.01), toon(PALETTE.accent, { emissive: PALETTE.accent }), width / 2 - 0.3, height - 0.17, -depth / 2 + 0.055));
-  // A mug on every third desk.
-  if (index % 3 === 0) body.add(mesh(new THREE.CylinderGeometry(0.06, 0.05, 0.12, 10), toon(index % 2 ? '#eeeeee' : '#595959'), width / 2 - 0.25, height + 0.06, -0.2));
   group.add(mergeByMaterial(body));
 
   const laptopAnchor = new THREE.Object3D();
@@ -936,7 +900,7 @@ function buildDesk(def: DeskDef, index: number): DeskView {
   seatAnchor.scale.setScalar(0.82);
   group.add(seatAnchor);
 
-  // Up on the desk beside the laptop, clear of the mug at the back, facing the chair.
+  // Up on the desk beside the laptop, facing the chair.
   const stage = new THREE.Object3D();
   stage.position.set(0.72, height - 0.07, 0.18);
   group.add(stage);
@@ -1353,7 +1317,7 @@ export function buildOffice(): Office {
   interactables.push(shelf.interactable);
   fixture('south', BOOKSHELF.x, (BOOKSHELF.height + 0.55) / 2, BOOKSHELF.width + 0.2, BOOKSHELF.height + 0.55);
 
-  // Kitchen corner: counter + coffee machine + fridge
+  // Kitchen corner: counter + fridge
   // Black cabinets under a stainless top, an orange LED under the top's front edge, and a brushed
   // steel fridge. The counter's front faces -z, into the room.
   const kitchen = new THREE.Group();
@@ -1374,30 +1338,13 @@ export function buildOffice(): Office {
   counter.add(mesh(box(0.04, 0.5, 0.05), toon('#808080'), 2.75, 1.75, -0.53));
   counter.add(mesh(box(0.04, 0.4, 0.05), toon('#808080'), 2.75, 1.05, -0.53));
   kitchen.add(mergeByMaterial(counter));
-  const cup: Interactable = { kind: 'coffee', x: -15.7, z: 10.9, radius: 1.4 };
-  const { machine: coffee } = buildCoffeeMachine(cup);
-  coffee.position.set(-1.2, 1.03, 0);
-  kitchen.add(coffee);
   kitchen.position.set(-14.5, 0, 12.2);
   group.add(kitchen);
   colliders.push({ minX: -17, maxX: -12, minZ: 11.7, maxZ: 12.7, top: 1.03 });
   colliders.push({ minX: -11.85, maxX: -10.75, minZ: 11.7, maxZ: 12.7, top: 2.2 });
-  interactables.push(cup);
-  // Counter, coffee machine and fridge, in front of the south wall.
+  // Counter and fridge, in front of the south wall.
   fixture('south', -14.5, 0.55, 5.1, 1.1);
-  fixture('south', -15.7, 0.9, 0.6, 1.8);
   fixture('south', -11.3, 1.1, 1.1, 2.2);
-
-  // Plants around the room
-  const plants: THREE.Group[] = [];
-  for (const [x, z, s] of PLANTS) {
-    const p = plant(s);
-    p.position.set(x, 0, z);
-    group.add(p);
-    plants.push(p);
-    const r = 0.3 * s;
-    colliders.push({ minX: x - r, maxX: x + r, minZ: z - r, maxZ: z + r, top: 0.5 * s });
-  }
 
   // The exposed structure overhead: steel beams and purlins, cable trays over the work cells, and the
   // light fixtures hung from them.
@@ -1501,7 +1448,6 @@ export function buildOffice(): Office {
     setLook,
     setLevel,
     night,
-    plants,
     update,
   };
 }
@@ -1766,7 +1712,6 @@ function buildLoft(group: THREE.Group, colliders: Collider[], interactables: Int
   for (const sx of [-1, 1]) deskBody.add(mesh(box(0.08, 0.75, 1.0), toon('#6a6a6a'), sx * 1.15, 0.375, 0));
   deskBody.add(mesh(roundedBox(0.9, 0.55, 0.06, 0.01), toon(PALETTE.ink), 0, 1.18, -0.2));
   deskBody.add(mesh(box(0.08, 0.2, 0.08), toon(PALETTE.steel), 0, 0.93, -0.2));
-  deskBody.add(mesh(new THREE.CylinderGeometry(0.06, 0.05, 0.12, 10), toon('#eeeeee'), 0.9, 0.89, 0.15));
   desk.add(mergeByMaterial(deskBody));
   // The floor's shell plays on it (world/monitor.ts).
   const screen = mesh(new THREE.PlaneGeometry(0.8, 0.45), screenMaterial(), 0, 1.18, -0.165);
@@ -1823,17 +1768,6 @@ function buildLoft(group: THREE.Group, colliders: Collider[], interactables: Int
   group.add(scope);
   tube.lookAt(-6, 0.8, 0);
   colliders.push({ minX: minX + 0.65, maxX: minX + 1.15, minZ: minZ + 0.65, maxZ: minZ + 1.15, bottom: floorY, top: floorY + 1.3 });
-
-  for (const [px, pz, s] of [
-    [maxX - 0.6, minZ + 0.6, 1],
-    [maxX - 0.6, maxZ - 0.6, 1.2],
-  ]) {
-    const p = plant(s);
-    p.position.set(px, floorY, pz);
-    group.add(p);
-    const r = 0.3 * s;
-    colliders.push({ minX: px - r, maxX: px + r, minZ: pz - r, maxZ: pz + r, bottom: floorY, top: floorY + 0.5 * s });
-  }
 
   const lamp = mergeByMaterial(ledBar(2.2, 0.32, overheadLit(night)));
   lamp.position.set(deskX, roofY - 0.4, cz);
