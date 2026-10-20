@@ -13,6 +13,7 @@ import androidx.lifecycle.lifecycleScope
 import ai.factory.droidoffice.MainActivity
 import ai.factory.droidoffice.R
 import ai.factory.droidoffice.core.WorkerStatus
+import ai.factory.droidoffice.data.displayName
 import ai.factory.droidoffice.graph
 import ai.factory.droidoffice.session.Phase
 import kotlinx.coroutines.flow.combine
@@ -47,7 +48,7 @@ class StayConnectedService : LifecycleService() {
             graph.connection.hold(HOLD)
             lifecycleScope.launch {
                 combine(graph.connection.link, graph.connection.data, graph.store.snapshot) { link, data, store ->
-                    val office = store.active?.name ?: "the office"
+                    val office = store.active?.displayName ?: "the office"
                     when (link.phase) {
                         Phase.Connected -> {
                             val workers = data.workers.values.filterNot { it.isStation }

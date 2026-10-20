@@ -118,8 +118,13 @@ class Pairer(
                 runCatching { api.unpair(winner.base, OfficeAuth.Device(oldToken)) }
             }
         }
-        store.save(office, token)
+        // A name chosen on this phone stays when pairing the same office again.
+        val kept = store.snapshot.value.offices
+            .filter { it.id == office.id || it.sameOfficeAs(office) }
+            .firstNotNullOfOrNull { it.label?.trim()?.takeIf(String::isNotEmpty) }
+        val saved = if (kept == null) office else office.copy(label = kept)
+        store.save(saved, token)
         onStep(PairStep.Done, null)
-        return PairOutcome.Paired(office, winner.kind, winner.base)
+        return PairOutcome.Paired(saved, winner.kind, winner.base)
     }
 }

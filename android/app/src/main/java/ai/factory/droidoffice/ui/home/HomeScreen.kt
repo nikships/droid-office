@@ -68,6 +68,7 @@ import ai.factory.droidoffice.core.WorkerRow
 import ai.factory.droidoffice.core.WorkerStatus
 import ai.factory.droidoffice.core.Workers
 import ai.factory.droidoffice.data.AuthMode
+import ai.factory.droidoffice.data.displayName
 import ai.factory.droidoffice.net.nameOf
 import ai.factory.droidoffice.session.Link
 import ai.factory.droidoffice.session.OfficeData
@@ -134,7 +135,7 @@ fun HomeScreen(onOpenWorker: (String) -> Unit, onOffices: () -> Unit, onScan: ()
         Row(Modifier.fillMaxSize()) {
             Box(if (wide) Modifier.width(420.dp).fillMaxHeight() else Modifier.fillMaxSize()) {
                 WorkerList(
-                    officeName = office?.name ?: "Office",
+                    officeName = office?.displayName ?: "Office",
                     legacy = office?.auth == AuthMode.Lan,
                     link = link,
                     data = data,

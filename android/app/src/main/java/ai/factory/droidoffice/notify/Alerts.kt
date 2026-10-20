@@ -25,6 +25,7 @@ import ai.factory.droidoffice.core.WorkerInfo
 import ai.factory.droidoffice.core.WorkerStatus
 import ai.factory.droidoffice.core.Workers
 import ai.factory.droidoffice.data.OfficeStore
+import ai.factory.droidoffice.data.displayName
 import ai.factory.droidoffice.session.OfficeConnection
 import ai.factory.droidoffice.session.OfficeData
 import kotlinx.coroutines.CoroutineScope
@@ -139,7 +140,7 @@ class Alerts(
         }
         if (!canNotify()) return
         val officeId = d.officeId ?: return
-        val officeName = store.snapshot.value.offices.firstOrNull { it.id == officeId }?.name
+        val officeName = store.snapshot.value.offices.firstOrNull { it.id == officeId }?.displayName
         val title = if (needs) "${w.name} needs you" else "${w.name} is done"
         val menu = menu(w)
         val detail = menu?.question ?: text(w)

@@ -419,6 +419,7 @@ class OfficeConnection(
                 }
                 is RaceResult.Winner -> {
                     val probe: Probe.Ok = race.probe
+                    // name follows the office. label is this phone's rename and is left alone.
                     store.update(office.id) {
                         it.copy(lastBase = race.base, lastSeenAt = System.currentTimeMillis(), name = probe.officeName ?: it.name, version = probe.version ?: it.version)
                     }

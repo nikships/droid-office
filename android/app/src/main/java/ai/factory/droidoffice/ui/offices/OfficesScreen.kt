@@ -17,12 +17,16 @@ import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.windowInsetsPadding
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
@@ -34,11 +38,14 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -47,8 +54,11 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -57,7 +67,10 @@ import ai.factory.droidoffice.core.Routes
 import ai.factory.droidoffice.core.Tags
 import ai.factory.droidoffice.data.AppSettings
 import ai.factory.droidoffice.data.AuthMode
+import ai.factory.droidoffice.data.LOCAL_OFFICE_LABEL_MAX
 import ai.factory.droidoffice.data.PairedOffice
+import ai.factory.droidoffice.data.displayName
+import ai.factory.droidoffice.data.localOfficeLabel
 import ai.factory.droidoffice.session.Phase
 import ai.factory.droidoffice.ui.LocalGraph
 import ai.factory.droidoffice.ui.components.Eyebrow
@@ -81,6 +94,7 @@ fun OfficesScreen(onBack: () -> Unit, onPairNew: () -> Unit, onSwitched: () -> U
     val link by graph.connection.link.collectAsStateWithLifecycle()
     val scope = rememberCoroutineScope()
     var forgetting by remember { mutableStateOf<PairedOffice?>(null) }
+    var renaming by remember { mutableStateOf<PairedOffice?>(null) }
     val notify = rememberNotifyPermission()
     val canNotify = notify.granted
     val now = rememberNow(30_000)
@@ -120,6 +134,7 @@ fun OfficesScreen(onBack: () -> Unit, onPairNew: () -> Unit, onSwitched: () -> U
                                     onSwitched()
                                 }
                             },
+                            onRename = { renaming = o },
                             onForget = { forgetting = o },
                         )
                     }
@@ -203,7 +218,7 @@ fun OfficesScreen(onBack: () -> Unit, onPairNew: () -> Unit, onSwitched: () -> U
             modifier = Modifier.tagged(Tags.Offices.FORGET_DIALOG),
             containerColor = Palette.SurfaceRaised,
             shape = RoundedCornerShape(16.dp),
-            title = { Text("Forget ${o.name}?") },
+            title = { Text("Forget ${o.displayName}?") },
             text = {
                 Text(
                     if (o.auth == AuthMode.Device) "The office takes this phone's key back too (when it can be reached), so it stops working until you pair again."
@@ -220,11 +235,23 @@ fun OfficesScreen(onBack: () -> Unit, onPairNew: () -> Unit, onSwitched: () -> U
             dismissButton = { TextButton(onClick = { forgetting = null }, modifier = Modifier.tagged(Tags.Offices.FORGET_CANCEL)) { Text("Keep", color = Palette.TextSecondary) } },
         )
     }
+
+    renaming?.let { o ->
+        RenameDialog(
+            o,
+            onDismiss = { renaming = null },
+            onSave = { typed ->
+                renaming = null
+                val label = localOfficeLabel(typed, o.name)
+                scope.launch { graph.store.update(o.id) { it.copy(label = label) } }
+            },
+        )
+    }
 }
 
 @Composable
-private fun OfficeRow(o: PairedOffice, active: Boolean, connected: Boolean?, kind: ai.factory.droidoffice.core.RouteKind?, now: Long, onPick: () -> Unit, onForget: () -> Unit) {
-    Row(Modifier.fillMaxWidth().clickable(onClickLabel = "Switch to ${o.name}", onClick = onPick).tagged(Tags.Offices.office(o.id)).padding(start = 14.dp, end = 4.dp, top = 12.dp, bottom = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+private fun OfficeRow(o: PairedOffice, active: Boolean, connected: Boolean?, kind: ai.factory.droidoffice.core.RouteKind?, now: Long, onPick: () -> Unit, onRename: () -> Unit, onForget: () -> Unit) {
+    Row(Modifier.fillMaxWidth().clickable(onClickLabel = "Switch to ${o.displayName}", onClick = onPick).tagged(Tags.Offices.office(o.id)).padding(start = 14.dp, end = 4.dp, top = 12.dp, bottom = 12.dp), verticalAlignment = Alignment.CenterVertically) {
         Box(
             Modifier.size(38.dp).clip(RoundedCornerShape(9.dp)).background(if (active) Palette.AccentMuted else Palette.SurfaceRaised)
                 .border(1.dp, if (active) Palette.Accent.copy(alpha = 0.5f) else Palette.Border, RoundedCornerShape(9.dp)),
@@ -235,28 +262,75 @@ private fun OfficeRow(o: PairedOffice, active: Boolean, connected: Boolean?, kin
         Spacer(Modifier.width(12.dp))
         Column(Modifier.weight(1f)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(o.name, style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f, fill = false))
+                Text(o.displayName, style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f, fill = false).tagged(Tags.Offices.name(o.id)))
                 if (active) {
                     Spacer(Modifier.width(6.dp))
                     Icon(Icons.Default.Check, "Active", Modifier.size(16.dp), tint = Palette.Accent)
                 }
             }
             val routes = o.bases.map { Routes.kindOf(it).label }.distinct().joinToString(" + ")
+            val called = o.name.takeIf { it.isNotBlank() && it != o.displayName }
             val seen = when {
                 connected == true -> null
                 o.lastSeenAt > 0 -> "seen ${Workers.ago(o.lastSeenAt, now)}"
                 else -> null
             }
             Text(
-                listOfNotNull(o.project, routes, if (o.auth == AuthMode.Lan) "code until restart" else null, seen).joinToString(" · ").uppercase(),
+                listOfNotNull(called, o.project, routes, if (o.auth == AuthMode.Lan) "code until restart" else null, seen).joinToString(" · ").uppercase(),
                 style = LocalOfficeType.current.eyebrow,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
         }
         if (connected != null) RouteBadge(kind, connected)
-        TextButton(onClick = onForget, modifier = Modifier.tagged(Tags.Offices.forget(o.id))) { Text("Forget", color = Palette.TextSecondary) }
+        TextButton(onClick = onRename, modifier = Modifier.tagged(Tags.Offices.rename(o.id)), contentPadding = PaddingValues(horizontal = 8.dp)) {
+            Text("Rename", color = Palette.TextSecondary)
+        }
+        TextButton(onClick = onForget, modifier = Modifier.tagged(Tags.Offices.forget(o.id)), contentPadding = PaddingValues(horizontal = 8.dp)) {
+            Text("Forget", color = Palette.TextSecondary)
+        }
     }
+}
+
+@Composable
+private fun RenameDialog(o: PairedOffice, onDismiss: () -> Unit, onSave: (String) -> Unit) {
+    var draft by remember(o.id) { mutableStateOf(o.displayName) }
+    val focus = remember { FocusRequester() }
+    LaunchedEffect(o.id) { focus.requestFocus() }
+    fun save() = onSave(draft)
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        modifier = Modifier.tagged(Tags.Offices.RENAME_DIALOG).imePadding(),
+        containerColor = Palette.SurfaceRaised,
+        shape = RoundedCornerShape(16.dp),
+        title = { Text("Rename office") },
+        text = {
+            Column {
+                Text(
+                    "Only this phone uses this name. Leave it blank to show ${o.name} again.",
+                    style = MaterialTheme.typography.bodyMedium,
+                )
+                Spacer(Modifier.height(12.dp))
+                OutlinedTextField(
+                    value = draft,
+                    onValueChange = { draft = it.take(LOCAL_OFFICE_LABEL_MAX) },
+                    modifier = Modifier.fillMaxWidth().focusRequester(focus).tagged(Tags.Offices.RENAME_INPUT),
+                    placeholder = { Text(o.name, maxLines = 1, overflow = TextOverflow.Ellipsis, color = Palette.TextTertiary) },
+                    singleLine = true,
+                    shape = RoundedCornerShape(10.dp),
+                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done, autoCorrectEnabled = false),
+                    keyboardActions = KeyboardActions(onDone = { save() }),
+                    colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = Palette.Accent, unfocusedBorderColor = Palette.BorderStrong, cursorColor = Palette.Accent),
+                )
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = ::save, modifier = Modifier.tagged(Tags.Offices.RENAME_SAVE)) { Text("Save", color = Palette.Accent) }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss, modifier = Modifier.tagged(Tags.Offices.RENAME_CANCEL)) { Text("Cancel", color = Palette.TextSecondary) }
+        },
+    )
 }
 
 @Composable
