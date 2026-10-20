@@ -9,6 +9,7 @@ import { Laptop, paintScreen, type ScreenState } from '../src/client/world/lapto
 import { loadPropManifest, preloadProps, propReady } from '../src/client/world/props.js';
 import { fontRevision, loadFonts } from '../src/client/fonts.js';
 import { DESK_LAPTOP, DESK_SIZE, DESKS } from '../src/shared/layout.js';
+import { type Run, screenHistoryRows } from '../src/shared/protocol.js';
 
 // three's FileLoader reports progress with it; Node has none.
 if (typeof globalThis.ProgressEvent === 'undefined') {
@@ -86,6 +87,35 @@ test('preserves the plain narrow screen layout bounds', () => {
   assert.ok(ys.length > 0);
   assert.ok(Math.min(...ys) >= 10);
   assert.ok(Math.max(...ys) <= 670);
+});
+
+test('a terminal wider than the laptop fills its height from the scrollback above the screen', () => {
+  const wide = screen(145, 35, 34, 145);
+  const banded = canvasSpy();
+  paintScreen(banded.ctx, 1024, 680, wide, undefined, 22);
+  assert.ok(Math.min(...textYs(banded.ops)) > 60, 'without the rows above, the text sits between black bands');
+
+  wide.above = Array.from({ length: screenHistoryRows(145, 35) }, (): Run[] => [['y'.repeat(145), -1, -1, 0]]);
+  const { ctx, ops } = canvasSpy();
+  paintScreen(ctx, 1024, 680, wide, undefined, 22);
+  const ys = textYs(ops);
+  assert.ok(Math.min(...ys) < 20, `first glyph y=${Math.min(...ys)}`);
+  assert.ok(Math.max(...ys) > 640, `last glyph y=${Math.max(...ys)}`);
+  const rowY = (ch: string) => ops.filter((op) => op.kind === 'fillText' && String(op.args[0]).startsWith(ch)).map((op) => Number(op.args[2]));
+  assert.ok(rowY('y').length > 0, 'some of the scrollback is on screen');
+  assert.ok(Math.max(...rowY('y')) < Math.min(...rowY('x')), 'the scrollback sits above the screen it came from');
+});
+
+test('a terminal that already fills the laptop, or was cleared, leaves its scrollback off the screen', () => {
+  const history = Array.from({ length: 9 }, (): Run[] => [['y'.repeat(140), -1, -1, 0]]);
+  const short: ScreenState = { ...screen(140, 38, 38, 20), above: history };
+  const zoomed = canvasSpy();
+  paintScreen(zoomed.ctx, 1024, 680, short, undefined, 22);
+  assert.equal(zoomed.ops.filter((op) => op.kind === 'fillText' && String(op.args[0]).startsWith('y')).length, 0);
+
+  const cleared = canvasSpy();
+  paintScreen(cleared.ctx, 1024, 680, { ...screen(145, 35, 0), above: history }, undefined, 22);
+  assert.deepEqual(textYs(cleared.ops), []);
 });
 
 test('renders an empty screen as background without synthetic terminal text', () => {

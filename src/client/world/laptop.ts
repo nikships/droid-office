@@ -77,27 +77,41 @@ export interface ScreenState {
   cols: number;
   rows: number;
   lines: Run[][];
+  /** Scrollback rows just above the screen, oldest first, for a terminal wider than the laptop. */
+  above?: Run[][];
   cursor: [number, number];
   version: number;
 }
 
 const runLen = (runs: Run[] | undefined) => (runs ? runs.reduce((n, r) => n + [...r[0]].length, 0) : 0);
+const filled = (runs: Run[] | undefined) => !!runs?.some((r) => r[0].trim() || r[2] !== -1);
 const CHAR_WIDTH = 0.6;
 const LINE_HEIGHT = 1.25;
 const MIN_ZOOM_ROWS = 12;
 const MIN_ZOOM_COLS = 56;
 
+/** Which rows a screen shows. Rows count from the top of the `above` rows in use, so the screen's own rows start at `above`. */
+interface ScreenWindow {
+  top: number;
+  rows: number;
+  cols: number;
+  first: number;
+  last: number;
+  above: number;
+}
+
 /**
  * The part of a terminal worth showing on a small laptop. Keep the usual recent rows, then add
- * surrounding rows for its natural character aspect ratio to use the available canvas.
+ * surrounding rows for its natural character aspect ratio to use the available canvas: the
+ * terminal's own rows first, then the scrollback above them.
  */
-function activeWindow(s: ScreenState, width: number, height: number, preferredRows: number): { top: number; rows: number; cols: number; first: number; last: number } {
+function activeWindow(s: ScreenState, width: number, height: number, preferredRows: number): ScreenWindow {
   let first = -1;
   let last = -1;
   let cols = MIN_ZOOM_COLS;
   for (let y = 0; y < s.rows; y++) {
     const runs = s.lines[y];
-    if (!runs?.some((r) => r[0].trim() || r[2] !== -1)) continue;
+    if (!filled(runs)) continue;
     if (first < 0) first = y;
     last = y;
     cols = Math.max(cols, runLen(runs));
@@ -106,11 +120,21 @@ function activeWindow(s: ScreenState, width: number, height: number, preferredRo
   // A natural terminal cell is about .6 characters wide by 1.25 characters high. Add enough
   // surrounding rows for a wide PTY to use the laptop's height without vertically stretching glyphs.
   const aspectRows = Math.ceil((height * CHAR_WIDTH * cols) / (width * LINE_HEIGHT));
-  const rows = Math.min(s.rows, Math.max(MIN_ZOOM_ROWS, preferredRows, aspectRows));
-  const top = last < 0 ? 0 : Math.max(0, Math.min(last + 1 - rows, s.rows - rows));
+  const wanted = Math.max(MIN_ZOOM_ROWS, preferredRows, aspectRows);
+  // The scrollback only makes up rows the screen itself is short of, so a cleared or sparse screen
+  // still shows just what is on it, not the output it scrolled away.
+  const history = last >= 0 && wanted > s.rows ? (s.above ?? []) : [];
+  const above = history.length;
+  const earlier = history.findIndex(filled);
+  if (earlier >= 0) first = earlier;
+  else if (first >= 0) first += above;
+  if (last >= 0) last += above;
+  const total = above + s.rows;
+  const rows = Math.min(total, wanted);
+  const top = last < 0 ? 0 : Math.max(0, Math.min(last + 1 - rows, total - rows));
   const contentFirst = first < 0 ? top : Math.max(top, first);
   const contentLast = last < 0 ? top : Math.min(top + rows - 1, last);
-  return { top, rows, cols, first: contentFirst, last: contentLast };
+  return { top, rows, cols, first: contentFirst, last: contentLast, above };
 }
 
 export function paintScreen(ctx: CanvasRenderingContext2D, w: number, h: number, s: ScreenState | undefined, placeholder?: string, zoomRows = 0) {
@@ -126,7 +150,7 @@ export function paintScreen(ctx: CanvasRenderingContext2D, w: number, h: number,
     return;
   }
   const pad = w * 0.01;
-  const win = zoomRows ? activeWindow(s, w - pad * 2, h - pad * 2, zoomRows) : { top: 0, rows: s.rows, cols: s.cols, first: 0, last: s.rows - 1 };
+  const win = zoomRows ? activeWindow(s, w - pad * 2, h - pad * 2, zoomRows) : { top: 0, rows: s.rows, cols: s.cols, first: 0, last: s.rows - 1, above: 0 };
   const cellW = (w - pad * 2) / win.cols;
   const cellH = (h - pad * 2) / win.rows;
   const fontSize = Math.max(4, Math.min(cellW / CHAR_WIDTH, cellH / LINE_HEIGHT));
@@ -139,7 +163,8 @@ export function paintScreen(ctx: CanvasRenderingContext2D, w: number, h: number,
   const top = pad + (h - pad * 2 - gridH) / 2;
   ctx.textBaseline = 'top';
   for (let y = 0; y < win.rows; y++) {
-    const runs = s.lines[win.top + y];
+    const row = win.top + y;
+    const runs = row < win.above ? s.above?.[row] : s.lines[row - win.above];
     if (!runs) continue;
     let x = 0;
     const py = top + (win.top + y - win.first) * lineH;

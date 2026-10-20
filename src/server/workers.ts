@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url';
 import headless from '@xterm/headless';
 import serialize from '@xterm/addon-serialize';
 import unicode11 from '@xterm/addon-unicode11';
-import type { AgentChoice, AgentEffort, GhPull, OutsideProcess, Run, TerminalHit, WorkerInfo, WorkerKind, WorkerRepo, WorkerStatus, WorkerTask } from '../shared/protocol.js';
+import type { AgentChoice, AgentEffort, GhPull, OutsideProcess, TerminalHit, WorkerInfo, WorkerKind, WorkerRepo, WorkerStatus, WorkerTask } from '../shared/protocol.js';
 import { FAILS_TO_DESPAIR, outputFailed, toolAction } from '../shared/actions.js';
 import { isAgentEffort } from '../shared/protocol.js';
 import { OFFICE_SHELL_ID } from '../shared/office-shell.js';
@@ -29,7 +29,8 @@ import { DroidSessionReader } from './droid-session.js';
 import { isValidDroidModel, validateWorkerEffort, validateWorkerModel } from './agents.js';
 import { ScrollbackStore, searchTerminal, terminalTail } from './history.js';
 import { DropStore } from './drops.js';
-import { screenSnapshot, snapshotScreen } from './screen.js';
+import { screenSnapshot } from './screen.js';
+import { snapshotScreen, type ScreenFrame } from './screen-frame.js';
 import { SCREEN_SETTLE_MS, readDroidScreen, screenStatus, type DroidScreen } from './droid-screen.js';
 import type { Capacity } from './machine.js';
 import { setupStep, writePlan, writeSetupScript, type SetupStep } from './worktree-setup.js';
@@ -218,7 +219,7 @@ export interface WorkerEvents {
   update(info: WorkerInfo): void;
   remove(workerId: string, shot?: boolean): void;
   data(workerId: string, data: string, connectionIds: string[]): void;
-  screen(workerId: string, frame: { cols: number; rows: number; lines: Record<number, Run[]>; full: boolean; cursor: [number, number] }): void;
+  screen(workerId: string, frame: ScreenFrame): void;
   /** `workerId` names the worker it is about, when one is (a shot worker's dismissal). */
   toast(text: string, level: 'info' | 'warn' | 'error', workerId?: string): void;
   /** The office moved the project's checkout onto `branch` (see Worktrees.freshen). */
@@ -1967,7 +1968,7 @@ export class WorkerManager {
 
   /** Full screens for every running worker — sent to people as they walk in. */
   fullScreens() {
-    const out: { workerId: string; frame: NonNullable<ReturnType<typeof snapshotScreen>> }[] = [];
+    const out: { workerId: string; frame: ScreenFrame }[] = [];
     for (const w of this.workers.values()) {
       if (!w.term) continue;
       const frame = snapshotScreen(w.term, []);

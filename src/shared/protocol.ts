@@ -248,6 +248,16 @@ export const FLAG_BOLD = 1;
 export const FLAG_INVERSE = 2;
 export const FLAG_DIM = 4;
 
+/**
+ * How many scrollback rows a `screen` frame carries above the screen. Laptops paint a terminal at
+ * its cells' natural shape, so one wider than the laptop's screen would leave black bands above and
+ * below it; the rows above fill them. A third of a row per column covers the laptop's screen, the
+ * tallest in-world one, and the extra rows are never more than the screen itself has.
+ */
+export function screenHistoryRows(cols: number, rows: number): number {
+  return Math.max(0, Math.min(rows, Math.ceil(cols / 3) - rows));
+}
+
 /** A GitHub or GitLab label; `color` is a CSS color ("#d73a4a"). */
 export interface GhLabel {
   name: string;
@@ -977,7 +987,8 @@ export type ServerMsg =
   | { t: 'worker.remove'; workerId: string; shot?: boolean }
   | { t: 'worker.open'; workerId: string }
   | { t: 'worker.worktree'; workerId: string; state: WorktreeState }
-  | { t: 'screen'; workerId: string; cols: number; rows: number; lines: Record<number, Run[]>; full: boolean; cursor: [number, number] }
+  /** `above`: the scrollback rows just above the screen, oldest first, when they changed (see screenHistoryRows). */
+  | { t: 'screen'; workerId: string; cols: number; rows: number; lines: Record<number, Run[]>; full: boolean; cursor: [number, number]; above?: Run[][] }
   /** `shared`: someone already had this terminal open, so the new window takes its size instead of changing it. */
   | { t: 'term.snapshot'; workerId: string; data: string; cols: number; rows: number; shared?: boolean }
   | { t: 'term.data'; workerId: string; data: string }

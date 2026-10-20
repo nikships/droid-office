@@ -4,11 +4,11 @@ import headless from '@xterm/headless';
 import serialize from '@xterm/addon-serialize';
 import unicode11 from '@xterm/addon-unicode11';
 import { OFFICE_SHELL_ID } from '../shared/office-shell.js';
-import type { Run } from '../shared/protocol.js';
 import { DropStore } from './drops.js';
 import { terminalTail } from './history.js';
 import { type PtyHost, SCROLLBACK, type Pty } from './ptys.js';
-import { screenSnapshot, snapshotScreen } from './screen.js';
+import { screenSnapshot } from './screen.js';
+import { snapshotScreen, type ScreenFrame } from './screen-frame.js';
 import { childEnv, defaultShell } from './workers.js';
 
 type HeadlessTerminal = InstanceType<typeof headless.Terminal>;
@@ -22,13 +22,7 @@ const SAVE_SCROLLBACK_MS = 15_000;
 /** A shell that dies this soon was not a person typing `exit`: wait before starting another. */
 const FAST_EXIT_MS = 1000;
 
-export interface ShellFrame {
-  cols: number;
-  rows: number;
-  lines: Record<number, Run[]>;
-  full: boolean;
-  cursor: [number, number];
-}
+export type ShellFrame = ScreenFrame;
 
 /** What the office does with the boss shell's output. `screen` is the monitor; `data` is an open terminal. */
 export interface ShellEvents {

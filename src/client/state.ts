@@ -403,6 +403,7 @@ class Store {
           this.screens.set(msg.workerId, s);
         }
         for (const [k, v] of Object.entries(msg.lines)) s.lines[Number(k)] = v;
+        if (msg.above) s.above = msg.above;
         s.cursor = msg.cursor;
         s.version++;
         this.emit('screens');
