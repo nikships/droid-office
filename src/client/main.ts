@@ -1506,10 +1506,7 @@ function syncWorkers() {
       departures.vacate(w.deskId);
       const model = new Worker(w.name, w.color);
       desk.seatAnchor.add(model.root);
-      // Its globe floats beside the laptop (or the kiosk's counter), out from behind the card over
-      // its head and the back of its chair, so it shows from across the room.
-      const beside = desk.def.station ? new THREE.Vector3(0.62, 0.9, 0) : new THREE.Vector3(0.64, 0.5, -0.1);
-      model.setPropSpot(model.root.worldToLocal(desk.laptopAnchor.localToWorld(beside)));
+      model.setPropSpot(model.root.worldToLocal(desk.group.localToWorld(desk.propSpot.clone())));
       const laptop = new Laptop();
       desk.laptopAnchor.add(laptop.root);
       noOutline(desk.group);

@@ -7,6 +7,7 @@ import {
   BOOKSHELF,
   COMPUTE_WALL,
   DESKS,
+  DESK_LAPTOP,
   DESK_SIZE,
   ELEVATOR,
   EXIT_DOOR,
@@ -92,6 +93,11 @@ export interface DeskView {
   group: THREE.Group;
   /** The laptop goes in here: placed, turned and sized for this seat. */
   laptopAnchor: THREE.Object3D;
+  /**
+   * Where the worker's globe floats, in `group` space: beside the laptop, out from behind the card
+   * over its head and the back of its chair, so it shows from across the room.
+   */
+  propSpot: THREE.Vector3;
   /** The worker goes in here, the same way. */
   seatAnchor: THREE.Object3D;
   /** Where the worker gets up to dance when a pull request merges: its feet, and the way it faces. */
@@ -889,8 +895,8 @@ function buildDesk(def: DeskDef, index: number): DeskView {
   group.add(mergeByMaterial(body));
 
   const laptopAnchor = new THREE.Object3D();
-  laptopAnchor.position.set(0, height, -0.06);
-  laptopAnchor.scale.setScalar(1.74);
+  laptopAnchor.position.set(0, height, DESK_LAPTOP.z);
+  laptopAnchor.scale.setScalar(DESK_LAPTOP.scale);
   group.add(laptopAnchor);
 
   // On the chair, facing the desk.
@@ -912,7 +918,7 @@ function buildDesk(def: DeskDef, index: number): DeskView {
   const vacancy = new THREE.Group();
   group.add(vacancy);
 
-  return { def, group, laptopAnchor, seatAnchor, stage, chair: ch, vacancy };
+  return { def, group, laptopAnchor, propSpot: new THREE.Vector3(1.11, 1.65, -0.23), seatAnchor, stage, chair: ch, vacancy };
 }
 
 /** Bean bags in charcoal canvas, a shade apart from one to the next. */
@@ -945,7 +951,7 @@ function buildBeanbag(def: DeskDef, index: number): DeskView {
 
   const laptopAnchor = new THREE.Object3D();
   laptopAnchor.position.set(0, 0.445, -0.8);
-  laptopAnchor.scale.setScalar(1.404);
+  laptopAnchor.scale.setScalar(1.615);
   group.add(laptopAnchor);
 
   // Sunk into the bag, facing the lap desk.
@@ -964,7 +970,7 @@ function buildBeanbag(def: DeskDef, index: number): DeskView {
   const vacancy = new THREE.Group();
   group.add(vacancy);
 
-  return { def, group, laptopAnchor, seatAnchor, stage, chair: bag, vacancy };
+  return { def, group, laptopAnchor, propSpot: new THREE.Vector3(0.9, 1.15, -0.94), seatAnchor, stage, chair: bag, vacancy };
 }
 
 const KIOSK_SIGN: Record<StationKind, string> = { issues: '01 ASK ME', pulls: '03 ASK ME', actions: '02 ASK ME', lead: '04 ASK ME' };
@@ -1024,7 +1030,7 @@ function buildKiosk(def: DeskDef): DeskView {
   stage.rotation.y = Math.PI;
   group.add(stage);
 
-  return { def, group, laptopAnchor, seatAnchor, stage, chair: new THREE.Group(), vacancy };
+  return { def, group, laptopAnchor, propSpot: new THREE.Vector3(0.62, 0.9, 0), seatAnchor, stage, chair: new THREE.Group(), vacancy };
 }
 
 /** A framed board on a wall; the face gets a canvas texture (cork, chalk or whiteboard). */

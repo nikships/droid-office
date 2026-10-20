@@ -176,7 +176,7 @@ const SCREEN_H = 0.495;
 const SCREEN_Z = 0.02;
 
 /** Radians the open lid leans back past upright; negative tips the screen toward whoever sits at it. */
-const LID_LEAN = 0.08;
+const LID_LEAN = 0.04;
 
 /** The Factory-issue laptop's finish: a space-black shell with a graphite trackpad. */
 const SPACE_BLACK = '#1c1c1e';

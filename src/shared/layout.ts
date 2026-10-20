@@ -22,6 +22,12 @@ export interface DeskDef {
 const DESK_WIDTH = 2.2;
 const DESK_DEPTH = 1.1;
 export const DESK_SIZE = { width: DESK_WIDTH, depth: DESK_DEPTH, height: 0.78 } as const;
+/**
+ * Where a desk's laptop sits on its top (z from the desk's centre, + toward the worker) and how
+ * big it is. Back-to-back desks meet at the back edge, so each lid's screen has to stay on its own
+ * side of that edge (the shells behind them may touch), and the deck's front edge stays on the desk top.
+ */
+export const DESK_LAPTOP = { z: -0.035, scale: 2.001 } as const;
 
 function buildDesks(): DeskDef[] {
   const desks: DeskDef[] = [];

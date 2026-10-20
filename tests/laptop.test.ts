@@ -8,6 +8,7 @@ import * as THREE from 'three';
 import { Laptop, paintScreen, type ScreenState } from '../src/client/world/laptop.js';
 import { loadPropManifest, preloadProps, propReady } from '../src/client/world/props.js';
 import { fontRevision, loadFonts } from '../src/client/fonts.js';
+import { DESK_LAPTOP, DESK_SIZE, DESKS } from '../src/shared/layout.js';
 
 // three's FileLoader reports progress with it; Node has none.
 if (typeof globalThis.ProgressEvent === 'undefined') {
@@ -156,6 +157,65 @@ test('wireDisplay points a GLB Display node at the live screen, and ignores the 
   assert.equal(display.material, inner.screenMat);
   assert.equal(laptop.screen, display, 'shots follow the replacement display');
   laptop.dispose();
+});
+
+/** The four corners of a laptop's lit screen, in world space. */
+function screenCorners(laptop: Laptop): THREE.Vector3[] {
+  laptop.screen.geometry.computeBoundingBox();
+  const { min, max } = laptop.screen.geometry.boundingBox!;
+  return [
+    [min.x, min.y],
+    [max.x, min.y],
+    [min.x, max.y],
+    [max.x, max.y],
+  ].map(([x, y]) => laptop.screen.localToWorld(new THREE.Vector3(x, y, min.z)));
+}
+
+test('the screens of back-to-back desks stay on their own side, and each laptop on its desk', (t) => {
+  stubDocument(t);
+  const front = DESKS.find((d) => d.rotY === 0)!;
+  const back = DESKS.find((d) => d.rotY === Math.PI && d.x === front.x && Math.abs(d.z - (front.z - DESK_SIZE.depth)) < 1e-9);
+  assert.ok(back, 'every front-row desk has a desk back to back with it');
+  const meet = front.z - DESK_SIZE.depth / 2;
+  const scene = new THREE.Scene();
+  const place = (desk: typeof front) => {
+    const group = new THREE.Group();
+    group.position.set(desk.x, 0, desk.z);
+    group.rotation.y = desk.rotY;
+    const anchor = new THREE.Object3D();
+    anchor.position.set(0, DESK_SIZE.height, DESK_LAPTOP.z);
+    anchor.scale.setScalar(DESK_LAPTOP.scale);
+    group.add(anchor);
+    scene.add(group);
+    const laptop = new Laptop();
+    anchor.add(laptop.root);
+    laptop.update(10, undefined, 0);
+    t.after(() => laptop.dispose());
+    return laptop;
+  };
+  const near = place(front);
+  const far = place(back);
+  // The MacBook's Display node, as the lid GLB exports it, once the screen is stretched over it.
+  const glbDisplay = (laptop: Laptop) => {
+    const display = new THREE.Mesh(new THREE.PlaneGeometry(0.72, 0.46), new THREE.MeshBasicMaterial());
+    display.name = 'Display';
+    display.position.set(0, 0.253, 0.013);
+    const inner = laptop as unknown as { lidModel: THREE.Group; wireDisplay(): void };
+    inner.lidModel.add(display);
+    inner.wireDisplay();
+  };
+  for (const glb of [false, true]) {
+    if (glb) {
+      glbDisplay(near);
+      glbDisplay(far);
+    }
+    scene.updateMatrixWorld(true);
+    const label = glb ? 'MacBook display' : 'stand-in screen';
+    for (const c of screenCorners(near)) assert.ok(c.z > meet + 0.02, `${label}: the front row's screen reaches z ${c.z.toFixed(3)}, past the desks' meeting edge at ${meet}`);
+    for (const c of screenCorners(far)) assert.ok(c.z < meet - 0.02, `${label}: the back row's screen reaches z ${c.z.toFixed(3)}, past the desks' meeting edge at ${meet}`);
+  }
+  // The deck is authored z -0.24..0.28 in the laptop's own space.
+  assert.ok(DESK_LAPTOP.z + 0.28 * DESK_LAPTOP.scale <= DESK_SIZE.depth / 2 - 0.02, "the deck's front edge stays on the desk top");
 });
 
 /** A one-triangle GLB with a single named node and no compression, for the swap test. */
