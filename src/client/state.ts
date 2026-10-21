@@ -252,7 +252,7 @@ class Store {
   upgrade: UpgradeState = { available: false, phase: 'idle' };
   /** Pictures on the walls. */
   decor: Decoration[] = [];
-  /** What the lounge jukebox is playing; `since` is when the track started, on performance.now()'s clock. */
+  /** What the office-wide jukebox is playing; `since` is when the track started, on performance.now()'s clock. */
   jukebox: JukeboxState & { since: number } = { on: false, track: JUKEBOX_TUNES[0].id, startedAt: 0, elapsed: 0, since: 0 };
   /** The office's clock minus performance.now(), from the quickest ping (see 'pong'); for the jukebox. */
   private clock?: { offset: number; rtt: number };
@@ -332,10 +332,9 @@ class Store {
     this.jira = v.jira ?? {};
     this.jiraBoard = v.jiraBoard ?? null;
     this.decor = v.decor;
-    this.setJukebox(v.jukebox);
     this.autoHeal = v.autoHeal ?? { on: false };
     this.worktreeSetup = null;
-    for (const t of ['floor', 'project', 'workers', 'issues', 'pulls', 'pipelines', 'decor', 'jukebox', 'jira', 'jiraBoard', 'autoHeal', 'worktreeSetup'] as Topic[]) this.emit(t);
+    for (const t of ['floor', 'project', 'workers', 'issues', 'pulls', 'pipelines', 'decor', 'jira', 'jiraBoard', 'autoHeal', 'worktreeSetup'] as Topic[]) this.emit(t);
   }
 
   /** When the track started on this page's clock: from the office's clock once it's known, else from `elapsed`. */
@@ -362,6 +361,7 @@ class Store {
         this.machine = msg.machine;
         this.clock = undefined; // compared again, in case it's another office (or the same one, restarted)
         this.sky = msg.sky;
+        this.setJukebox(msg.jukebox);
         this.leaveOnMerge = msg.leaveOnMerge ?? { on: false };
         this.freshMain = msg.freshMain ?? { on: true };
         this.subagents = msg.subagents ?? { ...SUBAGENT_DEFAULTS };
@@ -369,7 +369,7 @@ class Store {
         this.prompts = msg.prompts ?? { custom: {} };
         this.factory = msg.factory ?? emptyFactoryState();
         this.enter(msg);
-        for (const t of ['upgrade', 'notify', 'machine', 'floors', 'projectsDir', 'sky', 'leaveOnMerge', 'freshMain', 'subagents', 'whiteboardSkill', 'prompts', 'factory'] as Topic[]) this.emit(t);
+        for (const t of ['upgrade', 'notify', 'machine', 'floors', 'projectsDir', 'sky', 'jukebox', 'leaveOnMerge', 'freshMain', 'subagents', 'whiteboardSkill', 'prompts', 'factory'] as Topic[]) this.emit(t);
         break;
       case 'floor.enter':
         this.arrival = msg.arrival;

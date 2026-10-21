@@ -20,7 +20,7 @@ import type { WandCue } from './world/wand-motion';
 
 type Pos = { x: number; y: number; z: number };
 
-/** What the jukebox on your floor plays: a tune or a stream, and when it started on performance.now()'s clock. */
+/** What the office-wide jukebox plays: a tune or a stream, and when it started on performance.now()'s clock. */
 export interface JukeboxPlay {
   track: string;
   url?: string;
@@ -1161,7 +1161,7 @@ export class OfficeSound {
 
   // ---- The jukebox ------------------------------------------------------------------------------
 
-  /** What the jukebox on your floor plays, or null for nothing. It starts once the browser allows audio. */
+  /** What the office-wide jukebox plays, or null for nothing. It starts once the browser allows audio. */
   setJukebox(play: JukeboxPlay | null) {
     const was = this.jukebox;
     this.jukebox = play;

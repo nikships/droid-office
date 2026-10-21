@@ -4,7 +4,7 @@
  * and a round bass, with a little melody, the crackle of an old record and a wobbly tape. It runs
  * in 32-bar rounds so it breathes: the keys alone at first, then the beat, a melody, a breakdown.
  *
- * Every note follows from the tune and how far into it you are, so everyone on the floor who starts
+ * Every note follows from the tune and how far into it you are, so every office window that starts
  * from the same moment hears exactly the same bar.
  */
 

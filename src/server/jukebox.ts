@@ -3,6 +3,8 @@ import path from 'node:path';
 import { JUKEBOX_TUNES, STREAM, checkStreamUrl, trackTitle, tuneById, type JukeboxState } from '../shared/jukebox.js';
 
 interface Saved {
+  /** Distinguishes the app's state from an older Home floor using the same file. */
+  scope?: 'office';
   on: boolean;
   track: string;
   url?: string;
@@ -12,16 +14,30 @@ interface Saved {
 }
 
 /**
- * The lounge jukebox on one floor, saved in .droid-office/jukebox.json. It only says what's on and
+ * The office-wide jukebox, saved in the office's .droid-office/jukebox.json. It only says what's on and
  * since when; every browser plays it for itself, from the same point.
  */
 export class Jukebox {
   private s: Saved = { on: false, track: JUKEBOX_TUNES[0].id, startedAt: Date.now() };
   private file: string;
 
-  constructor(dataDir: string) {
+  constructor(dataDir: string, legacyDirs: readonly string[] = []) {
     this.file = path.join(dataDir, 'jukebox.json');
-    this.load();
+    const current = this.read(this.file);
+    const wasFloor = legacyDirs.some((dir) => path.resolve(dir) === path.resolve(dataDir));
+    if (existsSync(this.file) && (!wasFloor || !current || current.scope === 'office')) {
+      this.s = current ?? this.s;
+      return;
+    }
+    // Keep the newest playing selection from the old per-floor jukeboxes, without restarting it.
+    const saved = legacyDirs
+      .map((dir) => this.read(path.join(dir, 'jukebox.json')))
+      .filter((s): s is Saved => !!s)
+      .sort((a, b) => Number(b.on) - Number(a.on) || b.startedAt - a.startedAt)[0];
+    if (saved) {
+      this.s = saved;
+      this.save();
+    }
   }
 
   state(): JukeboxState {
@@ -68,13 +84,13 @@ export class Jukebox {
     this.save();
   }
 
-  private load() {
-    if (!existsSync(this.file)) return;
+  private read(file: string): Saved | undefined {
     try {
-      const s = JSON.parse(readFileSync(this.file, 'utf8')) as Partial<Saved>;
+      const s = JSON.parse(readFileSync(file, 'utf8')) as Partial<Saved>;
       const url = s.track === STREAM ? checkStreamUrl(s.url) : undefined;
       if (s.track === STREAM ? !url || 'error' in url : typeof s.track !== 'string' || !tuneById(s.track)) return;
-      this.s = {
+      return {
+        ...(s.scope === 'office' ? { scope: 'office' } : {}),
         on: s.on === true,
         track: s.track!,
         ...(url && 'url' in url ? { url: url.url } : {}),
@@ -88,7 +104,7 @@ export class Jukebox {
 
   private save() {
     try {
-      writeFileSync(this.file, JSON.stringify(this.s, null, 2), { mode: 0o600 });
+      writeFileSync(this.file, JSON.stringify({ ...this.s, scope: 'office' }, null, 2), { mode: 0o600 });
     } catch {
       // disk issues shouldn't take the office down
     }

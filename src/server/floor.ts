@@ -22,7 +22,6 @@ import { healPromptVars } from '../shared/prompts.js';
 import { Changes } from './changes.js';
 import { Decor } from './decor.js';
 import { Docs } from './docs.js';
-import { Jukebox } from './jukebox.js';
 import { FloorJira, type JiraOffice } from './jira.js';
 import { landedWorkers } from './leave-on-merge.js';
 import type { Capacity } from './machine.js';
@@ -116,7 +115,7 @@ export function projectInfo(dir: string, name: string, agentCmd: string, agentAr
 
 /**
  * One floor of the building: a project's checkout with its own desks and workers, issues, pipelines
- * and PR boards, pictures and jukebox, all kept in that checkout's .droid-office folder.
+ * and PR boards and pictures, all kept in that checkout's .droid-office folder.
  */
 export class Floor {
   readonly id: string;
@@ -136,7 +135,6 @@ export class Floor {
   readonly autoHeal: AutoHeal;
   readonly changes: Changes;
   readonly decor: Decor;
-  readonly jukebox: Jukebox;
   /** The bookshelf: the project's Markdown files (see docs.ts). */
   readonly docs: Docs;
   /** Leads and the subagents they hire with office-workers (see team.ts). */
@@ -364,7 +362,6 @@ export class Floor {
     );
 
     this.decor = new Decor(dataDir);
-    this.jukebox = new Jukebox(dataDir);
     this.whiteboard = new WhiteboardStore(def.dir, {
       readers: () => boardReaders(this.workers.list()),
       renderer: ctx.renderer?.floor(this.id, {
