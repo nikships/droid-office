@@ -115,6 +115,19 @@
     "url": "/props/robot-arm.glb",
     "width": 0.62
   },
+  "task-chair": {
+    "bytes": 31724,
+    "depth": 0.7071,
+    "height": 1.1723,
+    "materials": 4,
+    "tags": [
+      "furniture",
+      "seating"
+    ],
+    "triangles": 5784,
+    "url": "/props/task-chair.glb",
+    "width": 0.74
+  },
   "wand": {
     "bytes": 240788,
     "depth": 0.3422,
