@@ -5,7 +5,7 @@ import { PROVIDER_LABEL, statusWord } from '../shared/guests';
 import { cardsNewestFirst, cardChanged, OWNER } from '../shared/whiteboard';
 import { ROOF } from '../shared/rooftop';
 import { sessionWebUrl } from '../shared/factory-sessions';
-import { BROWSER_KEY, DASHBOARD_FLOOR_KEY, browserCredential, draftKey, forgetBrowserCredential, saveBrowserCredential, type BrowserCredential } from './browser-session';
+import { BROWSER_KEY, DASHBOARD_FLOOR_KEY, browserCredential, draftKey, forgetBrowserCredential, isBrowserCredential, saveBrowserCredential, type BrowserCredential } from './browser-session';
 import { Net } from './net';
 import { connectWhiteboard, store } from './state';
 import { setBrowserAuth, withToken } from './token';
@@ -181,7 +181,10 @@ floors.addEventListener('change', () => {
   switching = true;
   selected = '';
   message = 'Loading the selected floor…';
-  net.send({ t: 'floor.go', floor: floors.value });
+  if (!net.send({ t: 'floor.go', floor: floors.value })) {
+    switching = false;
+    message = 'Disconnected. Nothing was sent.';
+  }
   paint();
 });
 
@@ -366,7 +369,7 @@ function paintQuestion(review = false) {
   const w = store.workers.get(detailId);
   if (!w || !question) return;
   const screen = lines(w.id);
-  const next = canAnswer(w, screen) ? readMenu(screen!) : undefined;
+  const next = screen && canAnswer(w, screen) ? readMenu(screen) : undefined;
   if (w.status !== 'needs_input') {
     shownMenu = undefined;
     answered = false;
@@ -513,8 +516,10 @@ function sendHome(w: WorkerInfo) {
 }
 async function openTerminal(id: string) {
   const intended = floor;
-  terminal ??= await import('./ui/terminal');
-  terminal.onOpenTeammate((id) => void openTerminal(id));
+  if (!terminal) {
+    terminal = await import('./ui/terminal');
+    terminal.onOpenTeammate((id) => void openTerminal(id));
+  }
   if (usable(id, intended)) terminal.openTerminal(net, id);
 }
 async function openBoard() {
@@ -589,8 +594,14 @@ function pairingDialog() {
     void (async () => {
       try {
         const res = await fetch(withToken('/api/mobile/pair'), { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ device: deviceName.value, kind: 'browser' }), signal: AbortSignal.timeout(8000) });
-        const body = (await res.json()) as BrowserCredential & { error?: string };
+        let body: BrowserCredential & { error?: string };
+        try {
+          body = (await res.json()) as BrowserCredential & { error?: string };
+        } catch {
+          throw new Error('The browser could not be paired.');
+        }
         if (!res.ok) throw new Error(body.error ?? 'The browser could not be paired.');
+        if (!isBrowserCredential(body)) throw new Error('The browser could not be paired.');
         credential = body;
         try {
           persisted = saveBrowserCredential(localStorage, body);

@@ -496,15 +496,16 @@ export function openOfficeShell(net: Net) {
   term.loadAddon(unicode);
   term.unicode.activeVersion = '11';
 
-  let ready = false;
   let opened = false;
   let shared = false;
   let lastSentSize = '';
   let ptyCols = 0;
   let ptyRows = 0;
+  const offQueries = suppressMirrorQueries(term);
+  let mirror: TerminalMirror | undefined;
 
   const sendSize = (typing = false) => {
-    if (!ready || !opened) return;
+    if (!mirror?.ready || !opened) return;
     if (!typing && shared) {
       if (ptyCols !== term.cols || ptyRows !== term.rows) term.resize(ptyCols, ptyRows);
       return;
@@ -522,26 +523,32 @@ export function openOfficeShell(net: Net) {
     }
   };
 
+  mirror = new TerminalMirror(
+    term,
+    (snapshot) => {
+      shared = snapshot.shared === true;
+      ptyCols = snapshot.cols;
+      ptyRows = snapshot.rows;
+      lastSentSize = '';
+      sendSize();
+      term.scrollToBottom();
+    },
+    () => net.send({ t: 'shell.attach' }),
+  );
   const onMsg = (msg: ServerMsg) => {
-    if (msg.t === 'term.data' && msg.workerId === OFFICE_SHELL_ID) term.write(msg.data);
+    if (msg.t === 'term.data' && msg.workerId === OFFICE_SHELL_ID) mirror?.data(msg.data);
     else if (msg.t === 'term.snapshot' && msg.workerId === OFFICE_SHELL_ID) {
       shared = msg.shared === true;
       ptyCols = msg.cols;
       ptyRows = msg.rows;
-      term.reset();
-      term.resize(msg.cols, msg.rows);
-      term.write(msg.data, () => {
-        ready = true;
-        sendSize();
-        term.scrollToBottom();
-      });
+      mirror?.snapshot(msg);
     }
   };
   listeners.add(onMsg);
   // Another window typed and changed the size: follow it, unless this one just sent that size.
   const unsub = store.on('screens', () => {
     const s = store.screens.get(OFFICE_SHELL_ID);
-    if (!s || !ready) return;
+    if (!s || !mirror?.ready) return;
     if (s.cols === ptyCols && s.rows === ptyRows) return;
     ptyCols = s.cols;
     ptyRows = s.rows;
@@ -565,6 +572,8 @@ export function openOfficeShell(net: Net) {
     onClose: () => {
       listeners.delete(onMsg);
       unsub();
+      offQueries();
+      mirror?.disconnect();
       offFont();
       ro.disconnect();
       net.send({ t: 'shell.detach' });

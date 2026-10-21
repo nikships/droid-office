@@ -39,9 +39,11 @@ export class Answers {
         if (!now.freeText) {
           const keys = menuTextKeys(now, line);
           if (!keys) return 'This menu cannot safely take a typed answer. Your text is kept; use the terminal.';
+          // One write, matching Android replyKeys. The number or arrows open the row; splitting them would drop the text the shortcut already carries.
           host.write(keys);
         } else {
-          host.write(ASK_KEYS.DOWN.repeat(now.choices.length - (now.pointer ?? 0)));
+          const steps = Math.max(0, now.choices.length - (now.pointer ?? 0));
+          host.write(ASK_KEYS.DOWN.repeat(steps));
           const until = Date.now() + 2500;
           while (Date.now() < until) {
             await delay(40);
@@ -52,6 +54,7 @@ export class Answers {
               return undefined;
             }
           }
+          if (sameMenu(now, current())) host.write(ASK_KEYS.UP.repeat(steps));
           return 'The typed-answer row could not be verified. Your text is kept; finish in the terminal.';
         }
       }

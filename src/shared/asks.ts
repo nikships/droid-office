@@ -94,7 +94,8 @@ export function readMenu(lines: readonly string[]): Menu | undefined {
     const description = descLines.join(' ').slice(0, MAX_DESCRIPTION);
     return { number: Number(m[2]), label: m[3]!.trim(), ...(description ? { description } : {}) };
   });
-  const pointerIdx = found.findIndex(({ m }) => !!m[1]);
+  const marked = found.flatMap(({ m }, i) => (m[1] ? [i] : []));
+  const pointerIdx = marked.length === 1 ? marked[0]! : -1;
   const top = found[0]!.row;
   let question: string | undefined;
   for (let r = top - 1; r >= Math.max(0, top - QUESTION_REACH); r--) {

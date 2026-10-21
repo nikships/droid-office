@@ -177,7 +177,9 @@ test('confirmed worker actions deduplicate on a socket, respect the active floor
   browser.send({ t: 'worker.spawn', kind: 'shell', deskId: 'auto', requestId: 'wrong-floor', requestFloor: 'gone' });
   const wrong = await browser.wait('action.result', (m) => m.requestId === 'wrong-floor');
   assert.equal(wrong.ok, false);
-  assert.equal(browser.messages.filter((m) => m.t === 'action.result' && m.requestId === 'hire').length, 1);
+  const hireResults = browser.messages.filter((m) => m.t === 'action.result' && m.requestId === 'hire');
+  assert.equal(hireResults.length, 2);
+  assert.equal(hireResults[1]?.ok, false);
   assert.equal(new Set(browser.messages.filter((m) => m.t === 'worker.update').map((m) => m.worker.id)).size, 1);
   browser.send({ t: 'worker.attach', workerId });
   assert.equal((await browser.wait('term.snapshot')).shared, false);
@@ -203,6 +205,10 @@ test('confirmed worker actions deduplicate on a socket, respect the active floor
   assert.equal(snapshot.rows, 40);
   observer.send({ t: 'worker.answer', workerId, menu: { choices: [], freeText: false }, choice: 1, requestId: 'unsupported' });
   assert.equal((await observer.wait('action.result', (m) => m.requestId === 'unsupported')).ok, false);
+  observer.send({ t: 'worker.answer', workerId, menu: { choices: [], freeText: false }, choice: 1, text: 'also', requestId: 'both' });
+  assert.equal((await observer.wait('action.result', (m) => m.requestId === 'both')).ok, false);
+  observer.send({ t: 'worker.answer', workerId, menu: { choices: [], freeText: false }, requestId: 'neither' });
+  assert.equal((await observer.wait('action.result', (m) => m.requestId === 'neither')).ok, false);
   observer.send({ t: 'worker.kill', workerId, cleanup: 'keep', requestId: 'home' });
   assert.equal((await observer.wait('action.result', (m) => m.requestId === 'home')).ok, true);
   await observer.wait('worker.remove', (m) => m.workerId === workerId);

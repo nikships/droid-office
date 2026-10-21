@@ -1397,14 +1397,20 @@ export async function startServer(cfg: Config) {
    * Worktrees.fetch): right away when that was just fetched, else after a fetch, if `c` and the floor
    * are still there. With `checkout`, for a worker in the floor's checkout instead.
    */
-  const withFreshBase = (c: Client, floor: Floor | Floor[], go: () => void, checkout = false) => {
+  const withFreshBase = (c: Client, floor: Floor | Floor[], go: () => void, checkout = false, onAbort?: () => void) => {
     const all = Array.isArray(floor) ? floor : [floor];
     const fetching = all.map((f) => f.workers.fetchBase(checkout)).filter((p): p is Promise<void> => p !== undefined);
     if (!fetching.length) return go();
-    void Promise.all(fetching).then(() => {
-      if (c.ws.readyState !== WebSocket.OPEN || all.some((f) => floors.get(f.id) !== f)) return;
-      go();
-    });
+    void Promise.all(fetching).then(
+      () => {
+        if (c.ws.readyState !== WebSocket.OPEN || all.some((f) => floors.get(f.id) !== f)) {
+          onAbort?.();
+          return;
+        }
+        go();
+      },
+      () => onAbort?.(),
+    );
   };
 
   /** Opens a worker's terminal for `c`, or the banner a guest has instead of one. */
@@ -1414,6 +1420,8 @@ export async function startServer(cfg: Config) {
     const who = c.peer.name;
     const requestId = str(msg.requestId, 64);
     let finished = false;
+    // An awaited action calls done() from a later callback. Do not complete the receipt at the end of this turn.
+    let pending = false;
     const done = (error?: string, workerId?: string) => {
       if (!requestId || finished) return;
       finished = true;
@@ -1423,11 +1431,22 @@ export async function startServer(cfg: Config) {
       warn(c, error);
       if (error) done(error);
     };
+    /** A refused action still closes a waiting receipt. */
+    const stop = (error: string) => {
+      warn(c, error);
+      done(error);
+    };
+    const defer = () => {
+      pending = true;
+    };
     if (requestId) {
-      if (c.requests.has(requestId)) return;
+      if (c.requests.has(requestId)) return done('That action was already received. It was not sent again.');
       c.requests.add(requestId);
       // No request is replayed on this connection. Close rather than forget old deduplication keys.
-      if (c.requests.size > 4096) return c.ws.close(1012, 'Reconnect to continue');
+      if (c.requests.size > 4096) {
+        done('Too many actions on this connection. Reconnect to continue.');
+        return c.ws.close(1012, 'Reconnect to continue');
+      }
     }
     if (msg.requestFloor && msg.requestFloor !== c.floor) return done('The active floor changed. Nothing was sent.');
     /** The floor `c` is on, or a note to them that they have to be on one. */
@@ -1485,7 +1504,7 @@ export async function startServer(cfg: Config) {
       case 'floor.branches':
       case 'floor.branch': {
         const floor = floorOf(c);
-        if (!floor || floor.id !== msg.floor) return warn(c, 'Choose a branch on the floor you are on');
+        if (!floor || floor.id !== msg.floor) return stop('Choose a branch on the floor you are on');
         const reply = (error?: string) => sendTo(c, { t: 'floor.branches', floor: floor.id, request: str(msg.request, 80), ...floor.workers.branchState(), ...(error ? { error } : {}) });
         if (msg.t === 'floor.branches') reply();
         else {
@@ -1515,7 +1534,7 @@ export async function startServer(cfg: Config) {
       case 'floor.remove': {
         const id = str(msg.floor, 64);
         const r = building.remove(id, who);
-        if (typeof r === 'string') return warn(c, r);
+        if (typeof r === 'string') return stop(r);
         console.log(`  ${who} took the ${r.name} floor off the building (${r.dir} stays where it is)`);
         const floor = floors.get(id);
         if (floor) closeFloor(floor, who);
@@ -1549,7 +1568,10 @@ export async function startServer(cfg: Config) {
           repos.push({ floor: other.id, name: other.def.name, repo: other.def.repo, dir: other.dir });
         }
         const hire = () => {
-          if (c.floor !== floor.id) return done('The active floor changed before hiring. No worker was hired.');
+          if (c.floor !== floor.id) {
+            floor.workers.unstage(images);
+            return done('The active floor changed before hiring. No worker was hired.');
+          }
           // AUTO_DESK is picked here, after any fetch, so two quick hires never get the same desk.
           const wanted = str(msg.deskId, 32);
           const deskId = wanted === AUTO_DESK ? nextFreeSeat((id) => floor.workers.deskOccupied(id))?.id : wanted;
@@ -1569,9 +1591,17 @@ export async function startServer(cfg: Config) {
         // Every project it gets a worktree of starts from what's on the forge now, and so does an
         // agent in the checkout (see WorkerManager.fetchBase).
         const fresh = [floor, ...repos.map((x) => floors.get(x.floor)!)];
-        if (msg.worktree === true) withFreshBase(c, fresh, hire);
-        else if (kind === 'agent') withFreshBase(c, floor, hire, true);
-        else hire();
+        const abortHire = () => {
+          floor.workers.unstage(images);
+          done('The office could not confirm the hire. Check the floor before trying again; it was not replayed.');
+        };
+        if (msg.worktree === true) {
+          defer();
+          withFreshBase(c, fresh, hire, false, abortHire);
+        } else if (kind === 'agent') {
+          defer();
+          withFreshBase(c, floor, hire, true, abortHire);
+        } else hire();
         break;
       }
       case 'worker.resume': {
@@ -1584,7 +1614,7 @@ export async function startServer(cfg: Config) {
       case 'guest.bringIn': {
         const wid = str(msg.workerId, 64);
         const floor = guestFloor(wid);
-        if (!floor) return warn(c, workerFloor(wid) ? "That's already one of the office's workers" : 'That guest has gone home');
+        if (!floor) return stop(workerFloor(wid) ? "That's already one of the office's workers" : 'That guest has gone home');
         void floor.bringIn(wid, who).then((r) => {
           if (typeof r === 'string') warn(c, r);
           else toastFloor(floor, `🚪 ${who} brought ${r.name} into the office: its session carries on at its desk`);
@@ -1604,13 +1634,14 @@ export async function startServer(cfg: Config) {
         // The worker leaves right away; its worktree is dealt with after that, and the outcome follows.
         const cleanup = floor.workers.kill(info.id, CLEANUPS.has(String(msg.cleanup)) ? msg.cleanup : undefined);
         toastFloor(floor, `${who} sent ${info.name} home`);
+        defer();
         void cleanup.then(
           ({ note, error }) => {
             if (note) toastFloor(floor, note);
             if (error) toastFloor(floor, error, 'warn');
             done(error, info.id);
           },
-          (error: Error) => refuse(error.message),
+          (error: unknown) => refuse(error instanceof Error ? error.message : 'The office could not confirm sending the worker home.'),
         );
         break;
       }
@@ -1708,19 +1739,18 @@ export async function startServer(cfg: Config) {
       case 'worker.answer': {
         const w = worker(msg.workerId);
         if (!w || c.floor !== w.floor.id) return done('That worker is no longer on this floor.');
+        const hasChoice = typeof msg.choice === 'number';
+        const hasText = typeof msg.text === 'string';
+        if (hasChoice === hasText) return done(hasChoice ? 'Send either a menu choice or a typed answer, not both.' : 'Send a menu choice or a typed answer.');
+        defer();
         const lines = () => w.floor.workers.screenLines(w.wid);
         void answers
-          .answer(
-            w.wid,
-            msg.menu,
-            { choice: msg.choice, text: str(msg.text, 20000) },
-            {
-              worker: () => w.floor.workers.get(w.wid),
-              lines,
-              write: (data) => w.floor.workers.write(w.wid, data),
-              live: () => c.ws.readyState === WebSocket.OPEN && c.floor === w.floor.id,
-            },
-          )
+          .answer(w.wid, msg.menu, hasChoice ? { choice: msg.choice } : { text: str(msg.text, 20000) }, {
+            worker: () => w.floor.workers.get(w.wid),
+            lines,
+            write: (data) => w.floor.workers.write(w.wid, data),
+            live: () => c.ws.readyState === WebSocket.OPEN && c.floor === w.floor.id,
+          })
           .then(
             (error) => done(error, w.wid),
             () => done('The answer could not be verified. Check the terminal.'),
@@ -1751,6 +1781,7 @@ export async function startServer(cfg: Config) {
         const w = worker(msg.workerId);
         if (!w) return done('No such worker');
         const { floor, wid } = w;
+        defer();
         void floor.workers.openPr(wid, who).then(
           (r) => {
             if (typeof r === 'string') return refuse(r);
@@ -1776,7 +1807,7 @@ export async function startServer(cfg: Config) {
             });
             for (const x of info?.repos ?? []) void floors.get(x.floor)?.board.refresh();
           },
-          (error: Error) => refuse(error.message),
+          (error: unknown) => refuse(error instanceof Error ? error.message : 'The office could not confirm the pull request.'),
         );
         break;
       }
@@ -1955,7 +1986,7 @@ export async function startServer(cfg: Config) {
       case 'subagents.set': {
         const before = subagents.settings;
         const err = subagents.set(msg.settings, who);
-        if (err) return warn(c, err);
+        if (err) return stop(err);
         const after = subagents.settings;
         if (before.on !== after.on) toastAll(after.on ? `🧭 ${who} let workers hire subagents` : `🧭 ${who} turned subagents off: nobody hires new ones`);
         else toastAll(`🧭 ${who} changed the Subagents settings`);
@@ -1985,7 +2016,7 @@ export async function startServer(cfg: Config) {
         if (!isPromptId(msg.id) || (msg.text !== null && typeof msg.text !== 'string')) return;
         const was = !!prompts.state().custom[msg.id];
         const err = prompts.setPrompt(msg.id, msg.text === null ? null : str(msg.text, PROMPT_MAX + 1), who);
-        if (err) return warn(c, err);
+        if (err) return stop(err);
         const now = !!prompts.state().custom[msg.id];
         const { label } = PROMPTS[msg.id];
         if (now) toastAll(`📝 ${who} rewrote the “${label}” prompt`);
@@ -2000,7 +2031,7 @@ export async function startServer(cfg: Config) {
           effort: ch.effort === undefined ? undefined : ch.effort,
         };
         const err = prompts.setAgent(choice, who);
-        if (err) return warn(c, err);
+        if (err) return stop(err);
         toastAll(choice ? `🤖 ${who} set the office’s default worker` : `🤖 ${who} put the office’s default worker back to Droid’s own default`);
         break;
       }
@@ -2012,7 +2043,7 @@ export async function startServer(cfg: Config) {
       case 'worktreeSetup.set': {
         const floor = here();
         if (!floor) break;
-        if (!floor.project.branch) return warn(c, "This floor's project isn't a git checkout, so its workers have no worktrees to set up");
+        if (!floor.project.branch) return stop("This floor's project isn't a git checkout, so its workers have no worktrees to set up");
         const s = msg.setup;
         if (s !== null && (!s || typeof s !== 'object' || typeof s.setup !== 'string' || !Array.isArray(s.copy))) return;
         const setup = s && {
@@ -2025,16 +2056,16 @@ export async function startServer(cfg: Config) {
         try {
           toFloor(floor, { t: 'worktreeSetup', state: floor.setWorktreeSetup(setup, who) });
         } catch (err) {
-          return warn(c, `Could not save the worktree setup: ${(err as Error).message}`);
+          return stop(`Could not save the worktree setup: ${(err as Error).message}`);
         }
         toastFloor(floor, setup ? `🌿 ${who} set how this floor's new worktrees are set up` : `🌿 ${who} put this floor's worktree setup back to the repository's`);
         break;
       }
       case 'machine.limit': {
         const limit = msg.limit === null ? undefined : parseWorkerLimit(msg.limit);
-        if (msg.limit !== null && limit === undefined) return warn(c, `The worker limit is a whole number from 1 to ${MAX_WORKER_LIMIT}`);
+        if (msg.limit !== null && limit === undefined) return stop(`The worker limit is a whole number from 1 to ${MAX_WORKER_LIMIT}`);
         const err = machine.setLimit(limit, who);
-        if (err) return warn(c, err);
+        if (err) return stop(err);
         const now = machine.limit;
         toastAll(limit !== undefined ? `⚙️ ${who} set the worker limit to ${now}` : now === undefined ? `⚙️ ${who} took the worker limit off` : `⚙️ ${who} put the worker limit back to ${now} (--max-workers)`);
         break;
@@ -2136,7 +2167,7 @@ export async function startServer(cfg: Config) {
         const floor = here();
         if (!floor) break;
         const d = floor.decor.add(msg.decor, who);
-        if (typeof d === 'string') return warn(c, d);
+        if (typeof d === 'string') return stop(d);
         decorChanged(floor);
         toastFloor(floor, `🖼️ ${who} hung ${d.title ? `“${d.title}”` : 'a picture'}`);
         break;
@@ -2145,7 +2176,7 @@ export async function startServer(cfg: Config) {
         const floor = here();
         if (!floor) break;
         const d = floor.decor.update(str(msg.id, 32), msg.decor);
-        if (typeof d === 'string') return warn(c, d);
+        if (typeof d === 'string') return stop(d);
         decorChanged(floor);
         break;
       }
@@ -2162,7 +2193,7 @@ export async function startServer(cfg: Config) {
         const floor = here();
         if (!floor) break;
         const r = floor.jukebox.play({ track: msg.track, url: msg.url }, who);
-        if ('error' in r) return warn(c, r.error);
+        if ('error' in r) return stop(r.error);
         if (!r.changed) break;
         jukeboxChanged(floor);
         toastFloor(floor, floor.jukebox.state().track === STREAM ? `📻 ${who} tuned the jukebox to ${floor.jukebox.title()}` : `🎵 ${who} put on “${floor.jukebox.title()}”`);
@@ -2193,6 +2224,8 @@ export async function startServer(cfg: Config) {
         sendTo(c, { t: 'pong', at: num(msg.at), now: Date.now() });
         break;
     }
+    // A request id is a receipt request. Sync handlers that did not answer, and actions the companion does not await, still close the receipt so the client does not wait out its timeout.
+    if (!pending) done('This action was not confirmed. Check the office before trying again; it was not replayed.');
   };
 
   const resync = setInterval(() => {

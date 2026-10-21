@@ -106,14 +106,20 @@ export function openPhone(onChange?: (devices: PairedDevice[]) => void) {
   };
 
   const paintAddresses = (state: PairingState) => {
-    const token = state.link ? (new URL(state.link).searchParams.get('t') ?? '') : '';
+    let token = '';
+    try {
+      token = state.link ? (new URL(state.link).searchParams.get('t') ?? '') : '';
+    } catch {
+      token = '';
+    }
     companions.replaceChildren(
       ...state.addresses.map((a) => {
-        const url = `${a.url}/dashboard?t=${encodeURIComponent(token)}`;
+        const base = a.url.replace(/\/+$/, '');
+        const url = token ? `${base}/dashboard?t=${encodeURIComponent(token)}` : `${base}/dashboard`;
         return h(
           'div.row',
           {},
-          h('a.list-main', { href: url, target: '_blank', rel: 'noopener noreferrer' }, `${KIND[a.kind]} · ${a.url}/dashboard`),
+          h('a.list-main', { href: url, target: '_blank', rel: 'noopener noreferrer' }, `${KIND[a.kind]} · ${base}/dashboard`),
           copyButton('Copy link', () => url, 'sm'),
         );
       }),

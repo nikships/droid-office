@@ -540,7 +540,7 @@ export interface CloudMessageContext {
   client: string;
   /** Just to the sender. */
   warn(text: string): void;
-  done?(error?: string): void;
+  done?(error?: string, workerId?: string): void;
   /** Hand an issue to it (a card dropped on its desk): assigned on the forge. */
   takeIssue?(issue: number): void;
 }
@@ -567,50 +567,60 @@ export function mountCloud(registry: FactoryRegistry, opts: Omit<CloudOptions, '
     const found = feature.find(msg.workerId);
     if (!found) return false;
     const { floor, info } = found;
+    const failed = (error: unknown, fallback: string) => (error instanceof Error ? error.message : fallback);
     switch (msg.t) {
       case 'worker.attach':
         floor.cloud.attach(info.id, ctx.client);
+        ctx.done?.(undefined, info.id);
         break;
       case 'worker.detach':
         floor.cloud.detach(info.id, ctx.client);
+        ctx.done?.(undefined, info.id);
         break;
       case 'worker.kill':
         opts.toast(floor.id, `${ctx.who} sent ${info.name} home`);
-        void feature.sendHome(info.id, msg.deleteSession === true).then(({ note, error }) => {
-          if (note) opts.toast(floor.id, note);
-          if (error) opts.toast(floor.id, error, 'warn');
-          ctx.done?.(error);
-        });
+        void feature.sendHome(info.id, msg.deleteSession === true).then(
+          ({ note, error }) => {
+            if (note) opts.toast(floor.id, note);
+            if (error) opts.toast(floor.id, error, 'warn');
+            ctx.done?.(error, info.id);
+          },
+          (error: unknown) => ctx.done?.(failed(error, 'The office could not confirm sending the worker home.'), info.id),
+        );
         break;
       case 'worker.prompt': {
         const issue = Number.isInteger(msg.issue) && (msg.issue as number) > 0 ? (msg.issue as number) : undefined;
-        void feature.send(info.id, str(msg.prompt, PROMPT_MAX), imageIds(msg.images)).then((why) => {
-          if (why) {
-            const error = why instanceof Error ? why.message : why;
-            ctx.warn(error);
-            return ctx.done?.(error);
-          }
-          ctx.done?.();
-          if (issue) {
-            opts.toast(floor.id, `${ctx.who} handed issue #${issue} to ${info.name}`);
-            ctx.takeIssue?.(issue);
-          }
-        });
+        void feature.send(info.id, str(msg.prompt, PROMPT_MAX), imageIds(msg.images)).then(
+          (why) => {
+            if (why) {
+              const error = why instanceof Error ? why.message : why;
+              ctx.warn(error);
+              return ctx.done?.(error, info.id);
+            }
+            ctx.done?.(undefined, info.id);
+            if (issue) {
+              opts.toast(floor.id, `${ctx.who} handed issue #${issue} to ${info.name}`);
+              ctx.takeIssue?.(issue);
+            }
+          },
+          (error: unknown) => ctx.done?.(failed(error, 'The office could not confirm the prompt.'), info.id),
+        );
         break;
       }
       case 'worker.resume':
         ctx.warn(`☁ Checking ${info.name}'s session on Factory again`);
         feature.recheck(info.id);
-        ctx.done?.();
+        ctx.done?.(undefined, info.id);
         break;
       case 'term.input':
       case 'term.resize':
       case 'changes.unwatch':
+        ctx.done?.(`${info.name} has no local terminal.`, info.id);
         break;
       default: {
         const error = cloudRefusal(info, msg.t);
         ctx.warn(error);
-        ctx.done?.(error);
+        ctx.done?.(error, info.id);
       }
     }
     return true;

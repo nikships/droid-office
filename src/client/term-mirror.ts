@@ -42,11 +42,19 @@ export class TerminalMirror {
       this.term.resize(snapshot.cols, snapshot.rows);
       this.term.write(snapshot.data, () => {
         if (generation !== this.generation) return;
-        this.ready = true;
-        for (const data of this.pending) this.term.write(data);
-        this.pending = [];
-        this.bytes = 0;
-        this.onReady(snapshot);
+        const flush = () => {
+          if (generation !== this.generation) return;
+          if (this.pending.length) {
+            const data = this.pending.join('');
+            this.pending = [];
+            this.bytes = 0;
+            this.term.write(data, flush);
+            return;
+          }
+          this.ready = true;
+          this.onReady(snapshot);
+        };
+        flush();
       });
     });
   }

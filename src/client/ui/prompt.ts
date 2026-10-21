@@ -146,16 +146,18 @@ export function openPrompt(opts: PromptOptions) {
   ) as HTMLFormElement;
   form.noValidate = true;
 
+  let waiting = false;
+  let submitted = false;
+  const failedText = (error: unknown) => (error instanceof Error ? error.message : 'Failed. Nothing was sent.');
   const modal = openModal(form, {
     onClose: () => {
-      if (waiting) images?.take();
+      if (submitted) images?.take();
       else images?.discard();
       extras?.dispose();
     },
   });
   images?.dropZone(modal.backdrop, modal.el);
   cancel.addEventListener('click', () => modal.close());
-  let waiting = false;
   const send = () => {
     if (waiting || !form.isConnected) return;
     const text = ta.value.trim();
@@ -176,31 +178,64 @@ export function openPrompt(opts: PromptOptions) {
     if (cloud && opts.onCloud) {
       // Making the session takes a while, and when Factory says no the box stays open saying why.
       waiting = true;
+      submitted = true;
       const label = submit.textContent;
       submit.toggleAttribute('disabled', true);
       submit.textContent = cloud.environmentId ? `☁ Starting a computer from ${cloud.computerName}…` : `☁ Starting on ${cloud.computerName}…`;
       failed.classList.add('hidden');
-      void opts.onCloud(text, { model: models?.model(), effort: models?.effort(), images: images?.ids() ?? [], cloud }).then((why) => {
+      let cloudResult: ReturnType<NonNullable<typeof opts.onCloud>>;
+      try {
+        cloudResult = opts.onCloud(text, { model: models?.model(), effort: models?.effort(), images: images?.ids() ?? [], cloud });
+      } catch (error) {
+        submitted = false;
         waiting = false;
         submit.toggleAttribute('disabled', false);
         submit.textContent = label;
-        if (why) {
-          failed.textContent = `☁ ${why}`;
+        failed.textContent = failedText(error);
+        failed.classList.remove('hidden');
+        return;
+      }
+      void Promise.resolve(cloudResult).then(
+        (why) => {
+          waiting = false;
+          submit.toggleAttribute('disabled', false);
+          submit.textContent = label;
+          if (why) {
+            failed.textContent = `☁ ${why}`;
+            failed.classList.remove('hidden');
+            return;
+          }
+          if (text) extras?.sent(text);
+          images?.take();
+          modal.close();
+        },
+        (error: unknown) => {
+          waiting = false;
+          submit.toggleAttribute('disabled', false);
+          submit.textContent = label;
+          failed.textContent = failedText(error);
           failed.classList.remove('hidden');
-          return;
-        }
-        if (text) extras?.sent(text);
-        images?.take();
-        modal.close();
-      });
+        },
+      );
       return;
     }
     if (opts.worktreeOption) setWorktreePref(wtBox.checked);
     const worktree = !!opts.worktreeOption && wtBox.checked;
     waiting = true;
+    submitted = true;
     submit.disabled = true;
     failed.classList.add('hidden');
-    const result = opts.onSubmit(text, { worktree, model: models?.model(), effort: models?.effort(), repos: worktree ? repos.value() : [], images: images?.ids() ?? [], queue: queue?.input.checked });
+    let result: ReturnType<typeof opts.onSubmit>;
+    try {
+      result = opts.onSubmit(text, { worktree, model: models?.model(), effort: models?.effort(), repos: worktree ? repos.value() : [], images: images?.ids() ?? [], queue: queue?.input.checked });
+    } catch (error) {
+      submitted = false;
+      waiting = false;
+      submit.disabled = false;
+      failed.textContent = failedText(error);
+      failed.classList.remove('hidden');
+      return;
+    }
     void Promise.resolve(result).then(
       (error) => {
         waiting = false;
@@ -214,10 +249,10 @@ export function openPrompt(opts: PromptOptions) {
         if (text) extras?.sent(text);
         modal.close();
       },
-      (error: Error) => {
+      (error: unknown) => {
         waiting = false;
         submit.disabled = false;
-        failed.textContent = error.message;
+        failed.textContent = failedText(error);
         failed.classList.remove('hidden');
       },
     );

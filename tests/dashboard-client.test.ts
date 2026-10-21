@@ -243,8 +243,11 @@ test('terminal snapshots drain old writes, preserve stream order, and invalidate
   assert.equal(reset, 1);
   assert.deepEqual(sizes, [[80, 24]]);
   callbacks.shift()!();
-  assert.equal(mirror.ready, true);
+  assert.equal(mirror.ready, false);
   assert.deepEqual(writes, ['', 'snapshot', 'first live']);
+  callbacks.shift()!();
+  assert.equal(mirror.ready, true);
+  assert.equal(ready, 1);
   mirror.data('second live');
   mirror.disconnect();
   mirror.data('dropped');

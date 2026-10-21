@@ -835,7 +835,8 @@ type ClientMessage =
    * behind what it is doing rather than sending it now (a shell gets Enter either way).
    */
   | { t: 'worker.prompt'; workerId: string; prompt: string; issue?: number; images?: string[]; queue?: boolean }
-  /** Rechecks the current worker and screen on the server before answering the menu shown to the owner. */
+  /** Rechecks the current worker and screen on the server before answering the menu shown to the owner.
+   * Send exactly one of `choice` or `text`. The server rejects neither and both. */
   | { t: 'worker.answer'; workerId: string; menu: Menu; choice?: number; text?: string }
   /** Opens a board agent's terminal, starting its session if nobody has asked it anything yet. */
   | { t: 'station.open'; deskId: string }

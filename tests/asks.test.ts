@@ -32,6 +32,7 @@ test('question parsing and keys agree with Android’s real menu fixtures', () =
   assert.equal(menuTextKeys(box, '  '), undefined);
   const pointer = readMenu(POINTER)!;
   assert.equal(pointer.pointer, 0);
+  assert.equal(readMenu(['Question?', '> 1. One', '> 2. Two'])?.pointer, undefined);
   assert.equal(menuKeys(pointer, pointer.choices[2]!), `${ASK_KEYS.DOWN.repeat(2)}\r`);
   const moved = { ...pointer, pointer: 2 };
   assert.equal(menuKeys(moved, moved.choices[1]!), `${ASK_KEYS.UP}\r`);

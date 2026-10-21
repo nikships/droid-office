@@ -95,7 +95,7 @@ export function openWhiteboard(net: Net, opts: { card?: string; queueOffline?: b
     if (!ops.length) return true;
     // The desktop companion does not author while disconnected. Batches already queued stay queued.
     if (opts.queueOffline === false && sync.state(floor) !== 'live') {
-      toast('Disconnected. This edit was not sent. Edits already waiting stay queued until the office confirms them.', 'warn');
+      if (ops.some((op) => op.op !== 'show' && op.op !== 'read')) toast('Disconnected. This edit was not sent. Edits already waiting stay queued until the office confirms them.', 'warn');
       return false;
     }
     const r = await sync.apply(floor, ops);

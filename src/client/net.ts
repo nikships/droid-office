@@ -159,7 +159,8 @@ export class Net {
       };
       const timer = setTimeout(() => done({ t: 'action.result', requestId, ok: false, error: 'Confirmation timed out. Check the office before trying again; the action was not replayed.' }), 60_000);
       this.requests.set(requestId, done);
-      if (!this.send({ ...msg, requestId, requestFloor: store.floor ?? undefined })) done({ t: 'action.result', requestId, ok: false, error: 'Disconnected. Nothing was sent.' });
+      const floor = this.options.floor ? this.options.floor() : (store.floor ?? null);
+      if (!this.send({ ...msg, requestId, requestFloor: floor ?? undefined })) done({ t: 'action.result', requestId, ok: false, error: 'Disconnected. Nothing was sent.' });
     });
   }
 

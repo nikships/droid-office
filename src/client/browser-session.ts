@@ -9,10 +9,16 @@ export interface BrowserCredential {
 
 type StorageLike = Pick<Storage, 'getItem' | 'setItem' | 'removeItem'>;
 
+export function isBrowserCredential(saved: unknown): saved is BrowserCredential {
+  if (!saved || typeof saved !== 'object') return false;
+  const value = saved as Partial<BrowserCredential>;
+  return typeof value.token === 'string' && /^[A-Za-z0-9_-]{43}$/.test(value.token) && typeof value.device?.id === 'string' && typeof value.device?.name === 'string';
+}
+
 export function browserCredential(storage: StorageLike): BrowserCredential | undefined {
   try {
-    const saved = JSON.parse(storage.getItem(BROWSER_KEY) ?? 'null');
-    if (typeof saved?.token === 'string' && /^[A-Za-z0-9_-]{43}$/.test(saved.token) && typeof saved.device?.id === 'string' && typeof saved.device?.name === 'string') return saved;
+    const saved = JSON.parse(storage.getItem(BROWSER_KEY) ?? 'null') as unknown;
+    if (isBrowserCredential(saved)) return saved;
   } catch {
     // Blocked or corrupt storage is not authentication.
   }

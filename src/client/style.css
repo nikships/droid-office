@@ -2,6 +2,7 @@
 
 /* Desktop companion: the same controls and windows, without a scene behind them. */
 .dashboard { font-size: var(--text-body); line-height: var(--leading-body); min-width: 960px; }
+html:has(body.dashboard), body.dashboard { overflow: auto; }
 #dashboard { height: 100%; display: flex; flex-direction: column; }
 .dashboard-header { display: flex; align-items: center; justify-content: space-between; gap: var(--space-6); padding: var(--space-5) var(--space-7); border-bottom: 1px solid var(--border); background: var(--surface); }
 .dashboard-brand { display: flex; align-items: center; gap: var(--space-3); min-width: 0; }
