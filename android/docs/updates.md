@@ -2,7 +2,7 @@
 
 ## Distribution and decision
 
-Droid Office ships one universal, release-signed APK on each public GitHub release, not through Google Play. CI sets Android's `versionCode` to the repository's global commit count, also the last number of `v<major>.<minor>.<count>`. The signing key stays the same, so an update keeps the app's data and paired offices.
+Droid Office ships one universal, release-signed APK through public GitHub releases, not Google Play. CI builds a new APK only when Android or its build inputs change. Its `versionCode` is the repository's global commit count at that build, also the last number in the APK's version. A Mac-only release carries the existing APK unchanged, with its original filename and version. The signing key stays the same, so an update keeps the app's data and paired offices.
 
 The best fit is a user-triggered **Update now** button that downloads the APK inside the app, shows progress and opens Android's installer. There is no browser download, file-picker hunt, additional app or storage permission in the normal flow. Android's install confirmation remains the final step. Updates never force the owner out of a worker's terminal.
 
@@ -20,7 +20,7 @@ The best fit is a user-triggered **Update now** button that downloads the APK in
 ## Implemented flow
 
 1. Check `GET https://api.github.com/repos/nikships/droid-office/releases/latest` when the app enters the foreground. Coalesce concurrent checks; throttle successful checks for an hour and failed checks for 15 minutes. Manual checks bypass that delay. OkHttp keeps HTTP cache validators, allowing conditional revalidation. There is no timer, background worker, GitHub credential or office token.
-2. Ignore drafts, prereleases and version codes not higher than the installed code. Show a dismissible update snackbar once per version in the activity's saved state, plus a persistent control on the welcome screen and under **Offices → About**. A failed check never claims the app is up to date or removes an already-known update.
+2. Ignore drafts and prereleases. Read Android's version from the release's APK filename, not the release tag, so a Mac-only release does not offer the unchanged APK again. Ignore version codes not higher than the installed code; reject APK versions newer than the containing release. Show a dismissible update snackbar once per version in the activity's saved state, plus a persistent control on the welcome screen and under **Offices → About**. A failed check never claims the app is up to date or removes an already-known update.
 3. Accept only the exact `Droid-Office-<version>.apk` URL on that release in `nikships/droid-office`, with uploaded state, a sensible size and GitHub's SHA-256 digest. A newer release with incomplete/ambiguous metadata still offers the browser link.
 4. Download only after **Update now**. Stream to a private `.part` file, limit the response size, verify the checksum, package, exact version, minimum Android version and installed signing certificates, then rename it to `.apk`. Errors and cancellations remove partial downloads. Never try a downgrade or a different package/key.
 5. Ask for install-source permission only when an APK is ready. On returning from Settings with permission enabled, continue into Android's installer without another tap. Cancelling permission or installation leaves a retry and the browser fallback.

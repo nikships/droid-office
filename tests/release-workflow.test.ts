@@ -1,0 +1,148 @@
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { execFileSync } from 'node:child_process';
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
+import { runInNewContext } from 'node:vm';
+import { androidVersionChanged, changedFiles, checksFor } from '../.github/scripts/release-changes.mjs';
+
+const none = { node: false, website: false, mac: false, android: false };
+const all = { node: true, website: true, mac: true, android: true };
+const workflow = readFileSync(new URL('../.github/workflows/release.yml', import.meta.url), 'utf8');
+
+test('CI checks only the affected platforms and builds every client change into the Mac app', () => {
+  for (const file of ['src/client/main.ts', 'src/server/cli.ts', 'src/shared/protocol.ts', 'src/desktop/main.ts', 'bin/office-workers.js', 'native/presenter/presenter.mm']) {
+    assert.deepEqual(checksFor([file]), { ...none, node: true, mac: true }, file);
+  }
+  assert.deepEqual(checksFor(['build/icon.png']), { ...none, mac: true });
+  assert.deepEqual(checksFor(['electron-builder.yml']), { ...none, mac: true });
+  assert.deepEqual(checksFor(['android/app/src/main/java/ai/factory/droidoffice/core/AppUpdate.kt']), { ...none, android: true });
+  assert.deepEqual(checksFor(['android/gradle/libs.versions.toml']), { ...none, android: true });
+  assert.deepEqual(checksFor(['android/app/src/main/assets/terminal/input.js']), { ...none, node: true, android: true });
+  assert.deepEqual(checksFor(['website/src/App.tsx']), { ...none, website: true });
+  assert.deepEqual(checksFor(['firebase.json', '.firebaserc']), { ...none, website: true });
+  assert.deepEqual(checksFor(['tests/desktop.test.ts']), { ...none, node: true });
+  assert.deepEqual(checksFor(['README.md', 'docs/guide/getting-started.md']), { ...none, node: true });
+  assert.deepEqual(checksFor(['tools/android-terminal.mjs']), { ...none, node: true });
+  assert.deepEqual(checksFor(['docs/whiteboard.md', 'android/README.md', 'android/docs/home.jpg', 'src/client/AGENTS.md']), none);
+});
+
+test('shared build inputs and manual runs trigger the relevant jobs', () => {
+  assert.deepEqual(checksFor(['package-lock.json']), { ...all, android: false });
+  assert.deepEqual(checksFor(['package.json']), { ...all, android: false });
+  assert.deepEqual(checksFor(['package.json'], { androidVersionChanged: true }), all);
+  assert.deepEqual(checksFor(['vite.config.ts', 'tsconfig.base.json']), { ...none, node: true, mac: true });
+  assert.deepEqual(checksFor(['biome.jsonc']), { ...none, node: true, website: true });
+  for (const file of ['.github/workflows/release.yml', '.github/scripts/release-changes.mjs']) assert.deepEqual(checksFor([file]), all);
+  assert.deepEqual(checksFor([], { manual: true }), all);
+  assert.deepEqual(checksFor([]), none);
+});
+
+test('pushes compare the entire before/after range, including deletions and both sides of renames', () => {
+  const calls: string[][] = [];
+  const files = changedFiles('push', { before: 'a'.repeat(40), after: 'b'.repeat(40) }, (args: string[]) => {
+    calls.push(args);
+    return 'android/app/build.gradle.kts\0archive/build.gradle.kts\0src/client/file with\nnewline.ts\0';
+  });
+  assert.deepEqual(calls, [['diff', '--name-only', '-z', '--no-renames', 'a'.repeat(40), 'b'.repeat(40), '--']]);
+  assert.deepEqual(files, ['android/app/build.gradle.kts', 'archive/build.gradle.kts', 'src/client/file with\nnewline.ts']);
+  assert.deepEqual(checksFor(files), { ...none, node: true, mac: true, android: true });
+});
+
+test('PRs use their merge-base diff and initial pushes use the full tree; manual runs do not diff', () => {
+  const calls: string[][] = [];
+  const git = (args: string[]) => {
+    calls.push(args);
+    return '';
+  };
+  changedFiles('pull_request', { pull_request: { base: { sha: 'a'.repeat(40) }, head: { sha: 'b'.repeat(40) } } }, git);
+  changedFiles('push', { before: '0'.repeat(40), after: 'b'.repeat(40) }, git);
+  assert.deepEqual(changedFiles('workflow_dispatch', {}, git), []);
+  assert.deepEqual(calls, [
+    ['diff', '--name-only', '-z', '--no-renames', `${'a'.repeat(40)}...${'b'.repeat(40)}`, '--'],
+    ['ls-tree', '-r', '--name-only', '-z', 'b'.repeat(40)],
+  ]);
+  assert.throws(() => changedFiles('unknown', {}, git), /Unsupported release event/);
+});
+
+test('only a major.minor version change in root package.json rebuilds Android', () => {
+  const calls: string[][] = [];
+  const git = (args: string[]) => {
+    calls.push(args);
+    return args[0] === 'merge-base' ? 'ancestor\n' : '{"version":"0.1.0"}';
+  };
+  const push = { before: 'previous' };
+  assert.equal(androidVersionChanged([], 'push', push, git, '0.2'), false);
+  assert.equal(androidVersionChanged(['package.json'], 'push', { before: '0'.repeat(40) }, git, '0.1'), true);
+  assert.deepEqual(calls, []);
+  assert.equal(androidVersionChanged(['package.json'], 'push', push, git, '0.1'), false);
+  assert.equal(androidVersionChanged(['package.json'], 'push', push, git, '0.2'), true);
+  const pr = { pull_request: { base: { sha: 'base' }, head: { sha: 'head' } } };
+  assert.equal(androidVersionChanged(['package.json'], 'pull_request', pr, git, '0.2'), true);
+  assert.deepEqual(calls, [
+    ['show', 'previous:package.json'],
+    ['show', 'previous:package.json'],
+    ['merge-base', 'base', 'head'],
+    ['show', 'ancestor:package.json'],
+  ]);
+});
+
+test('the classifier emits GitHub job outputs without installing dependencies', (t) => {
+  const dir = mkdtempSync(path.join(tmpdir(), 'office-release-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const output = path.join(dir, 'outputs');
+  const script = new URL('../.github/scripts/release-changes.mjs', import.meta.url);
+  // package.json is valid JSON and dispatch does not need any event-specific fields.
+  execFileSync(process.execPath, [script.pathname], {
+    cwd: new URL('../', import.meta.url),
+    env: { ...process.env, GITHUB_EVENT_NAME: 'workflow_dispatch', GITHUB_EVENT_PATH: new URL('../package.json', import.meta.url).pathname, GITHUB_OUTPUT: output },
+  });
+  const lines = readFileSync(output, 'utf8');
+  for (const job of ['node', 'website', 'mac', 'android']) assert.match(lines, new RegExp(`^${job}=true$`, 'm'));
+  assert.match(lines, /^version=\d+\.\d+\.\d+$/m);
+});
+
+type Result = 'success' | 'skipped' | 'failure' | 'cancelled';
+function publishes(results: Partial<Record<string, Result>>, event = 'push', ref = 'refs/heads/main', cancelled = false) {
+  const expression = workflow.match(/ {2}publish:\n[\s\S]*?\n {4}if: >-\n([\s\S]*?)\n {4}runs-on:/)?.[1];
+  assert.ok(expression);
+  return runInNewContext(expression.trim(), {
+    always: () => true,
+    cancelled: () => cancelled,
+    github: { event_name: event, ref },
+    needs: Object.fromEntries(['changes', 'release', 'website', 'mac', 'android'].map((job) => [job, { result: results[job] ?? 'skipped' }])),
+  });
+}
+
+test('publishing accepts unaffected skipped jobs but requires a successful app build on main', () => {
+  assert.equal(publishes({ changes: 'success', android: 'success' }), true);
+  assert.equal(publishes({ changes: 'success', release: 'success', mac: 'success' }), true);
+  assert.equal(publishes({ changes: 'success', release: 'success', website: 'success', mac: 'success', android: 'success' }), true);
+  assert.equal(publishes({ changes: 'success', release: 'success' }), false);
+  assert.equal(publishes({ changes: 'success', website: 'success' }), false);
+  assert.equal(publishes({ changes: 'success', mac: 'success' }, 'pull_request'), false);
+  assert.equal(publishes({ changes: 'success', mac: 'success' }, 'workflow_dispatch', 'refs/heads/feature'), false);
+  assert.equal(publishes({ changes: 'success', mac: 'success' }, 'push', 'refs/heads/main', true), false);
+  for (const job of ['changes', 'release', 'website', 'mac', 'android']) {
+    for (const result of ['failure', 'cancelled'] as const) assert.equal(publishes({ changes: 'success', mac: 'success', android: 'success', [job]: result }), false, `${job}: ${result}`);
+  }
+});
+
+test('each job is path-gated and the filter script and its tests trigger the workflow', () => {
+  for (const [job, output] of [
+    ['release', 'node'],
+    ['website', 'website'],
+    ['mac', 'mac'],
+    ['android', 'android'],
+  ]) {
+    assert.ok(workflow.includes(`  ${job}:\n    needs: changes\n    if: needs.changes.outputs.${output} == 'true'`), job);
+  }
+  for (const filter of ['.github/scripts/release-*.mjs', 'tools/android-terminal.mjs', 'tests/**']) {
+    assert.equal(workflow.split(`      - '${filter}'`).length - 1, 2, filter);
+  }
+  assert.match(workflow, /gh release download "\$latest" --dir assets[\s\S]*?--pattern 'latest-mac\.yml'/);
+  assert.match(workflow, /gh release download "\$latest" --dir assets --pattern '\*\.apk'/);
+  assert.match(workflow, /gh release create "\$TAG" assets\/\* --draft/);
+  assert.match(workflow, /gh release edit "\$TAG" --draft=false --latest/);
+});

@@ -39,7 +39,7 @@ You need Android 9 or newer and an office new enough to pair phones (one whose �
 2. Open it and allow your browser or file manager to install apps when Android asks.
 3. Open **Droid Office**, tap **Scan the office's QR code**, and scan the code from ⚙️ Settings → **Phone** on your computer.
 
-Each release's APK carries the same version as the office it shipped with. Installing a newer one over the old keeps your paired offices.
+The APK keeps its original version when a Mac-only release carries it forward unchanged. The app offers an update only when a newer Android APK is available. Installing it over the old keeps your paired offices.
 
 ### Update it
 

@@ -28,6 +28,24 @@ class AppUpdateTest {
         assertNull(AppUpdates.available(release(), 100))
     }
 
+    @Test fun macOnlyReleaseDoesNotOfferTheUnchangedApkAgain() {
+        val carried = apk("9").replace("/download/v0.1.9/", "/download/v0.1.10/")
+        assertNull(AppUpdates.available(release(asset = carried), 9))
+        val found = AppUpdates.available(release(asset = carried), 8)!!
+        assertEquals("0.1.9", found.version)
+        assertEquals(9, found.versionCode)
+        assertNotNull(found.apk)
+        assertEquals(
+            "https://github.com/nikships/droid-office/releases/download/v0.1.10/Droid-Office-0.1.9.apk",
+            found.apk?.url,
+        )
+    }
+
+    @Test fun carriedApkMustStillBelongToTheCurrentReleaseAndNotBeFromTheFuture() {
+        assertNull(AppUpdates.available(release(asset = apk("9")), 8)!!.apk)
+        assertThrows(IOException::class.java) { AppUpdates.available(release(asset = apk("11")), 8) }
+    }
+
     @Test fun draftAndPrereleaseAreIgnored() {
         assertNull(AppUpdates.available(release(extra = ""","draft":true"""), 1))
         assertNull(AppUpdates.available(release(extra = ""","prerelease":true"""), 1))

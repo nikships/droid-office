@@ -49,18 +49,21 @@ object AppUpdates {
     const val API_URL = "https://api.github.com/repos/nikships/droid-office/releases/latest"
     const val MAX_APK_BYTES = 150L * 1024 * 1024
     private val TAG = Regex("""v(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)""")
+    private val APK = Regex("""Droid-Office-((?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*))\.apk""")
     private val DIGEST = Regex("sha256:([a-fA-F0-9]{64})")
 
-    /** CI uses the commit count as both the tag's last number and Android's versionCode. */
+    /** An unchanged APK keeps its version when CI carries it onto a newer Mac-only release. */
     fun available(json: String, installedCode: Int): AppRelease? {
         val release = OfficeJson.decodeFromString<GitHubRelease>(json)
         if (release.draft || release.prerelease) return null
-        val match = TAG.matchEntire(release.tag) ?: throw IOException("The release version couldn't be read.")
-        val code = match.groupValues[3].toIntOrNull() ?: throw IOException("The release version couldn't be read.")
+        val releaseMatch = TAG.matchEntire(release.tag) ?: throw IOException("The release version couldn't be read.")
+        val releaseCode = releaseMatch.groupValues[3].toIntOrNull() ?: throw IOException("The release version couldn't be read.")
+        val asset = release.assets.singleOrNull { APK.matches(it.name) }
+        val version = asset?.let { APK.matchEntire(it.name)?.groupValues?.get(1) } ?: release.tag.removePrefix("v")
+        val code = version.substringAfterLast('.').toIntOrNull() ?: throw IOException("The release version couldn't be read.")
+        if (code > releaseCode) throw IOException("The APK version is newer than its release.")
         if (code <= installedCode) return null
-        val version = release.tag.removePrefix("v")
         val name = "Droid-Office-$version.apk"
-        val asset = release.assets.singleOrNull { it.name == name }
         val expectedUrl = "https://github.com/nikships/droid-office/releases/download/${release.tag}/$name"
         val hash = asset?.digest?.let { DIGEST.matchEntire(it)?.groupValues?.get(1)?.lowercase() }
         val apk = if (asset != null && asset.url == expectedUrl && asset.state == "uploaded" &&

@@ -1,17 +1,14 @@
 name: Release
 
-# Every change to the app that lands on main is built, tested and published as a GitHub release
-# marked Latest. The Mac app is the only supported production install and updates itself through
-# electron-updater, which reads the release's latest-mac.yml. Every release gets a new
+# App changes that land on main are built, tested and published as a GitHub release marked Latest.
+# Only affected platforms are rebuilt; unchanged platform assets retain their original versions
+# on the new release so both apps' existing Latest-release update feeds keep working.
+# The Mac app updates through electron-updater, which reads latest-mac.yml. Every release gets a new
 # version, package.json's major.minor plus the number of commits on main (v0.1.68, v0.1.69, ...),
 # so the app always sees it as newer; bump package.json for a new minor.
 #
-# The Android app (android/) is built and tested alongside, and its APK is attached to the release.
-#
-# Pull requests get the same build, tests and a startup check from the checkout, but publish
-# nothing. A pull request builds the unsigned Mac app only when it touches
-# what the app packages or runs on Electron's Node, and the Android APK only when it touches
-# android/ (the changes job); a push to main or a manual run always builds both apps.
+# PRs and pushes use the same path filters for Node checks, the website and each platform.
+# Test/docs-only changes publish nothing. Manual runs explicitly check and rebuild everything.
 
 on:
   push:
@@ -39,6 +36,8 @@ on:
       - 'native/**'
       - 'android/**'
       - '.github/workflows/release.yml'
+      - '.github/scripts/release-*.mjs'
+      - 'tools/android-terminal.mjs'
   pull_request:
     paths:
       - 'src/**'
@@ -63,6 +62,8 @@ on:
       - 'native/**'
       - 'android/**'
       - '.github/workflows/release.yml'
+      - '.github/scripts/release-*.mjs'
+      - 'tools/android-terminal.mjs'
   workflow_dispatch:
 
 permissions:
@@ -76,38 +77,31 @@ jobs:
   changes:
     runs-on: ubuntu-latest
     timeout-minutes: 5
-    permissions:
-      pull-requests: read
     outputs:
+      node: ${{ steps.paths.outputs.node }}
+      website: ${{ steps.paths.outputs.website }}
       mac: ${{ steps.paths.outputs.mac }}
       android: ${{ steps.paths.outputs.android }}
+      version: ${{ steps.paths.outputs.version }}
     steps:
-      - name: Find the platforms this change can affect
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+      - name: Find the checks and platforms this change can affect
         id: paths
-        env:
-          GH_TOKEN: ${{ github.token }}
-          PR: ${{ github.event.pull_request.number }}
-        run: |
-          if [ -z "$PR" ]; then
-            echo 'mac=true' >> "$GITHUB_OUTPUT"
-            echo 'android=true' >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-          files="$(gh api --paginate "repos/$GITHUB_REPOSITORY/pulls/$PR/files" --jq '.[].filename')"
-          printf '%s\n' "$files"
-          touches() { printf '%s\n' "$files" | grep -Eq "$1" && echo true || echo false; }
-          # The client is only static files to the app; the node job builds and serves it.
-          echo "mac=$(touches '^(src/(desktop|server|shared)/|bin/|build/|native/|electron-builder\.yml$|package(-lock)?\.json$|tsconfig[^/]*\.json$|\.github/workflows/release\.yml$)')" >> "$GITHUB_OUTPUT"
-          echo "android=$(touches '^(android/|\.github/workflows/release\.yml$)')" >> "$GITHUB_OUTPUT"
+        run: node .github/scripts/release-changes.mjs
 
   release:
+    needs: changes
+    if: needs.changes.outputs.node == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     env:
       # Electron is only for the Mac app, which the mac job builds.
       ELECTRON_SKIP_BINARY_DOWNLOAD: '1'
-    outputs:
-      version: ${{ steps.version.outputs.version }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -124,9 +118,6 @@ jobs:
       - run: npm run lint
 
       - run: npm run typecheck
-
-      - name: Build the website
-        run: npm run build:website
 
       # The Whiteboard renderer's tests start a real headless Chromium, with its sandbox on. It lives
       # outside the workspace, in the one folder the office and the Mac app share.
@@ -157,7 +148,7 @@ jobs:
       - name: Set the release version
         id: version
         run: |
-          version="$(node -p 'require("./package.json").version.split(".").slice(0, 2).join(".")').$(git rev-list --count HEAD)"
+          version="${{ needs.changes.outputs.version }}"
           npm version "$version" --no-git-tag-version --allow-same-version
           echo "version=$version" >> "$GITHUB_OUTPUT"
 
@@ -176,6 +167,25 @@ jobs:
           done
           cat office.log
           [ "$code" = 200 ] || { echo "the checkout's office didn't answer (last status: $code)"; exit 1; }
+
+  website:
+    needs: changes
+    if: needs.changes.outputs.website == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      ELECTRON_SKIP_BINARY_DOWNLOAD: '1'
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+      # No office build, Chromium or native dependencies are needed to check the website.
+      - run: npm ci --ignore-scripts
+      - run: npx biome check --error-on-warnings website
+      - run: npm run typecheck --workspace website
+      - run: npm run build:website
 
   mac:
     needs: changes
@@ -210,7 +220,7 @@ jobs:
       - name: Set the release version
         id: version
         run: |
-          version="$(node -p 'require("./package.json").version.split(".").slice(0, 2).join(".")').$(git rev-list --count HEAD)"
+          version="${{ needs.changes.outputs.version }}"
           npm version "$version" --no-git-tag-version --allow-same-version
           echo "version=$version" >> "$GITHUB_OUTPUT"
 
@@ -360,8 +370,8 @@ jobs:
         id: version
         working-directory: .
         run: |
-          count="$(git rev-list --count HEAD)"
-          version="$(node -p 'require("./package.json").version.split(".").slice(0, 2).join(".")').$count"
+          version="${{ needs.changes.outputs.version }}"
+          count="${version##*.}"
           echo "version=$version" >> "$GITHUB_OUTPUT"
           echo "code=$count" >> "$GITHUB_OUTPUT"
 
@@ -389,7 +399,7 @@ jobs:
           mkdir -p out
           apk="out/Droid-Office-${{ steps.version.outputs.version }}.apk"
           cp app/build/outputs/apk/release/app-release.apk "$apk"
-          apksigner="$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -n 1)/apksigner"
+          apksigner="$(printf '%s\n' "$ANDROID_HOME"/build-tools/* | sort -V | tail -n 1)/apksigner"
           certs="$("$apksigner" verify --print-certs "$apk")"
           echo "$certs" | grep -E 'certificate (DN|SHA-256)'
           # With the release keystore given, a debug-signed APK would be a release that can't update.
@@ -405,8 +415,18 @@ jobs:
           if-no-files-found: error
 
   publish:
-    needs: [release, mac, android]
-    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    needs: [changes, release, website, mac, android]
+    # always() lets unaffected (skipped) jobs coexist with the platform that actually built.
+    # Never publish after a failure/cancellation, or when no app changed.
+    if: >-
+      always() && !cancelled() &&
+      github.event_name != 'pull_request' && github.ref == 'refs/heads/main' &&
+      needs.changes.result == 'success' &&
+      (needs.release.result == 'success' || needs.release.result == 'skipped') &&
+      (needs.website.result == 'success' || needs.website.result == 'skipped') &&
+      (needs.mac.result == 'success' || needs.mac.result == 'skipped') &&
+      (needs.android.result == 'success' || needs.android.result == 'skipped') &&
+      (needs.mac.result == 'success' || needs.android.result == 'success')
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
@@ -421,14 +441,37 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
-          TAG: v${{ needs.release.outputs.version }}
+          TAG: v${{ needs.changes.outputs.version }}
+          MAC_CHANGED: ${{ needs.changes.outputs.mac }}
+          ANDROID_CHANGED: ${{ needs.changes.outputs.android }}
         run: |
-          grep -qx "version: ${{ needs.release.outputs.version }}" assets/latest-mac.yml
+          # Both installed apps read Latest. Preserve the other app's signed binaries and version
+          # rather than rebuilding it or leaving its update feed without an installable app.
+          latest="$(gh release view --json tagName --jq .tagName)"
+          if [ "${latest##*.}" -gt "${TAG##*.}" ]; then
+            echo "A newer release is already published; not promoting this older run."
+            exit 0
+          fi
+          if [ "$MAC_CHANGED" != true ]; then
+            gh release download "$latest" --dir assets \
+              --pattern '*.dmg' --pattern '*.zip' --pattern '*.blockmap' --pattern 'latest-mac.yml'
+          else
+            grep -qx "version: ${{ needs.changes.outputs.version }}" assets/latest-mac.yml
+          fi
+          if [ "$ANDROID_CHANGED" != true ]; then
+            gh release download "$latest" --dir assets --pattern '*.apk'
+          fi
+          test -f assets/latest-mac.yml
+          compgen -G 'assets/*.zip' > /dev/null
+          compgen -G 'assets/*.dmg' > /dev/null
+          compgen -G 'assets/*.apk' > /dev/null
+          notes="Rebuilt platforms: macOS=$MAC_CHANGED, Android=$ANDROID_CHANGED. Other platform assets retain their original versions."
           if gh release view "$TAG" > /dev/null 2>&1; then
             # A rerun: replace the assets together, so latest-mac.yml matches the zip it lists.
             gh release upload "$TAG" assets/* --clobber
-            gh release edit "$TAG" --latest
           else
-            gh release create "$TAG" assets/* \
-              --target "$GITHUB_SHA" --title "$TAG" --generate-notes --latest
+            # Publish only once all assets are uploaded, so neither updater sees a partial release.
+            gh release create "$TAG" assets/* --draft \
+              --target "$GITHUB_SHA" --title "$TAG" --notes "$notes" --generate-notes
           fi
+          gh release edit "$TAG" --draft=false --latest
