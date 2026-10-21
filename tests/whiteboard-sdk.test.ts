@@ -333,7 +333,8 @@ test('trackpad and drag navigation crosses the live iframe without breaking form
   await page.evaluate(`start('nav', '${hash(1)}'); surface.el.style.width = '800px'; surface.el.style.height = '550px'`);
   const frame = await waitFor(() => frameOf(page, 'nav'), 'the live frame');
   await frame.waitForFunction('whiteboard.card.id === "c1"');
-  await waitFor(() => page.evaluate('surface.zoom === 0.625 && surface.slot.layout.height === 6000'), 'Fit at the final viewport size');
+  // SDK init precedes the frame's first layout message, so the host may not have a layout yet.
+  await waitFor(() => page.evaluate('surface.zoom === 0.625 && surface.slot?.layout?.height === 6000'), 'Fit at the final viewport size');
 
   // Real diagonal wheel input over the iframe pans in device pixels, not zoomed page pixels.
   const rect = await page.locator('.wb-surface').boundingBox();
