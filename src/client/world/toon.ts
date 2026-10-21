@@ -5,6 +5,7 @@ import { MONO, SANS } from '../fonts';
 import { FACTORY_GLYPH_PATH, FACTORY_GLYPH_VIEWBOX, fillGlyphText, measureGlyphText as measure, withGlyph } from './glyph';
 import { ANISOTROPY, LABEL_SCALE } from './texture-quality';
 import { type SurfaceFinish, withFinish } from './surface';
+import { boundStaticRaycast, type RaycastChunk } from './picking';
 
 let gradient: THREE.DataTexture | null = null;
 
@@ -429,6 +430,36 @@ export function disposeSprite(s: THREE.Sprite) {
   s.material.dispose();
 }
 
+/** Reuse bit-identical vertices, keeping split normals at hard edges and the original triangle order. */
+function indexSolid(geometry: THREE.BufferGeometry) {
+  const position = geometry.getAttribute('position');
+  const normal = geometry.getAttribute('normal');
+  if (!(position.array instanceof Float32Array) || !(normal?.array instanceof Float32Array)) return;
+  const positions = new Uint32Array(position.array.buffer, position.array.byteOffset, position.array.length);
+  const normals = new Uint32Array(normal.array.buffer, normal.array.byteOffset, normal.array.length);
+  const unique = new Map<string, number>();
+  const points: number[] = [];
+  const directions: number[] = [];
+  const indices: number[] = [];
+  for (let i = 0; i < position.count; i++) {
+    const o = i * 3;
+    // Hash the float bits, not rounded coordinates: close but distinct bevel vertices must stay distinct.
+    const key = `${positions[o]},${positions[o + 1]},${positions[o + 2]},${normals[o]},${normals[o + 1]},${normals[o + 2]}`;
+    let index = unique.get(key);
+    if (index === undefined) {
+      index = unique.size;
+      unique.set(key, index);
+      points.push(position.getX(i), position.getY(i), position.getZ(i));
+      directions.push(normal.getX(i), normal.getY(i), normal.getZ(i));
+    }
+    indices.push(index);
+  }
+  if (unique.size === position.count) return;
+  geometry.setAttribute('position', new THREE.Float32BufferAttribute(points, 3));
+  geometry.setAttribute('normal', new THREE.Float32BufferAttribute(directions, 3));
+  geometry.setIndex(indices);
+}
+
 /** Merges untextured solids, including a box's separately painted faces, into one mesh per material. */
 export function mergeByMaterial(root: THREE.Object3D): THREE.Group {
   root.updateMatrixWorld(true);
@@ -462,7 +493,22 @@ export function mergeByMaterial(root: THREE.Object3D): THREE.Group {
   });
   const out = new THREE.Group();
   for (const [mat, geos] of byMat) {
-    out.add(mesh(mergeGeometries(geos)!, mat));
+    const merged = mergeGeometries(geos)!;
+    indexSolid(merged);
+    let start = 0;
+    const chunks: RaycastChunk[] = geos.map((geo) => {
+      geo.computeBoundingBox();
+      const count = geo.getAttribute('position').count;
+      const chunk = { box: geo.boundingBox!, start, count };
+      start += count;
+      return chunk;
+    });
+    // A merged wall or beam has a broad sphere but a thin box. Mesh.raycast uses this box
+    // to skip its triangles; the crosshair checks the office every frame.
+    merged.computeBoundingBox();
+    const solid = mesh(merged, mat);
+    boundStaticRaycast(solid, chunks);
+    out.add(solid);
     for (const geo of geos) geo.dispose();
   }
   return out;

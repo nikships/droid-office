@@ -4,6 +4,7 @@ import { FullScreenQuad } from 'three/examples/jsm/postprocessing/Pass.js';
 import { FLOOR, WALL_HEIGHT } from '../../shared/layout';
 import { BAKE_BUDGET_MAX_MS, probeCount, type RenderParams, type ToneMap, whiteBalance } from '../remaster-settings';
 import { HdrPresenter } from './hdr-present';
+import { axisProbeTexture, axisProbeUniforms } from './probe-axis';
 import { CLEAR_NIGHT, remasterUniforms } from './sky';
 import { setToonRamp } from './toon';
 import { surfaceUniforms } from './surface';
@@ -51,7 +52,6 @@ uniform float contrast;
 uniform float saturation;
 uniform float vibrance;
 uniform float peak;
-uniform int toneMap;
 uniform int view;
 uniform float dither;
 varying vec2 vUv;
@@ -59,12 +59,20 @@ varying vec2 vUv;
 vec3 curve( vec3 c ) {
   // AgX's log floor is slightly above zero. A switched-off OLED pixel stays switched off.
   if ( max( c.r, max( c.g, c.b ) ) <= 0.0 ) return vec3( 0.0 );
-  if ( toneMap == 0 ) return NeutralToneMapping( c );
-  if ( toneMap == 1 ) return AgXToneMapping( c );
-  if ( toneMap == 2 ) return ACESFilmicToneMapping( c );
-  if ( toneMap == 3 ) return ReinhardToneMapping( c );
-  if ( toneMap == 4 ) return CineonToneMapping( c );
-  return clamp( c, 0.0, 1.0 );
+  // Compile only the selected curve instead of selecting among every curve at each pixel.
+  #if RM_TONE_MAP == 0
+    return NeutralToneMapping( c );
+  #elif RM_TONE_MAP == 1
+    return AgXToneMapping( c );
+  #elif RM_TONE_MAP == 2
+    return ACESFilmicToneMapping( c );
+  #elif RM_TONE_MAP == 3
+    return ReinhardToneMapping( c );
+  #elif RM_TONE_MAP == 4
+    return CineonToneMapping( c );
+  #else
+    return clamp( c, 0.0, 1.0 );
+  #endif
 }
 
 // Grey up to white, then blue, green, yellow and red at 1×, 2×, 4× and 8× white.
@@ -193,6 +201,7 @@ export class ProbeGI {
   /** Bumped by each new key and each rebake, so a load that lands after either is dropped. */
   private ticket = 0;
   private restoring: SavedBake | null = null;
+  private axis: THREE.Data3DTexture | null = null;
 
   constructor(
     private readonly scene: THREE.Scene,
@@ -254,6 +263,8 @@ export class ProbeGI {
 
   /** Bakes the whole grid again over the next frames, and saves it once done; the old light stays up until each probe is redone. */
   rebake() {
+    // The grid changes in place, including the snapshots used for indirect bounce captures.
+    this.dropAxis();
     this.ticket++;
     this.restoring = null;
     this.cursor = 0;
@@ -323,15 +334,14 @@ export class ProbeGI {
     src.type = THREE.FloatType;
     renderer.copyTextureToTexture(src, atlas);
     src.dispose();
+    this.prepareAxis(saved);
     return true;
   }
 
   /** Reads the finished atlas back from the GPU, one layer at a time, and saves it under the key it was baked for. */
   private save(renderer: THREE.WebGLRenderer, grid: LightProbeGridWebGL) {
     const atlas = grid.texture;
-    // A bake started before the key is known ("Rebake now" before the office's version arrives) would replace the
-    // saved bake with one no key ever loads.
-    if (!this.store || !atlas || !this.key) return;
+    if (!atlas) return;
     const { width, height, depth } = atlas.image;
     // three.js only reads pixels from a render target it owns, so the atlas is copied into one first.
     const copy = new THREE.WebGL3DRenderTarget(width, height, depth, { format: THREE.RGBAFormat, type: THREE.FloatType, depthBuffer: false });
@@ -349,10 +359,28 @@ export class ProbeGI {
       renderer.setRenderTarget(was);
       copy.dispose();
     }
-    void this.store.save({ key: this.key, width, height, depth, data }).catch(() => {});
+    const saved = { key: this.key, width, height, depth, data };
+    this.prepareAxis(saved);
+    // A finished bake still gets its fast atlas without a store or a known cache key.
+    if (this.store && this.key) void this.store.save(saved).catch(() => {});
+  }
+
+  private prepareAxis(saved: SavedBake) {
+    this.dropAxis();
+    this.axis = axisProbeTexture(saved);
+    axisProbeUniforms.rmAxisSH.value = this.axis;
+    axisProbeUniforms.rmAxisReady.value = 1;
+  }
+
+  private dropAxis() {
+    axisProbeUniforms.rmAxisReady.value = 0;
+    axisProbeUniforms.rmAxisSH.value = null;
+    this.axis?.dispose();
+    this.axis = null;
   }
 
   private drop() {
+    this.dropAxis();
     if (this.grid) {
       this.scene.remove(this.grid);
       this.grid.dispose();
@@ -385,7 +413,6 @@ export class Remaster {
     saturation: { value: 1 },
     vibrance: { value: 0 },
     peak: { value: 1 },
-    toneMap: { value: 0 },
     view: { value: 0 },
     dither: { value: 0 },
   });
@@ -405,6 +432,7 @@ export class Remaster {
     bakes: BakeStore | null,
   ) {
     this.settings = settings;
+    this.grade.defines.RM_TONE_MAP = TONE_INDEX[settings.toneMap];
     this.hdr = new HdrPresenter(renderer.getContext() as WebGL2RenderingContext, renderer.domElement, onHdr);
     this.gi = new ProbeGI(scene, bakes);
   }
@@ -451,6 +479,11 @@ export class Remaster {
   /** Applies settings: the shader dials, the toon ramp, GI, HDR. Cheap to call again with the same ones. */
   configure(s: RenderParams) {
     this.settings = s;
+    const toneMap = TONE_INDEX[s.toneMap];
+    if (this.grade.defines.RM_TONE_MAP !== toneMap) {
+      this.grade.defines.RM_TONE_MAP = toneMap;
+      this.grade.needsUpdate = true;
+    }
     const on = s.enabled;
     const u = remasterUniforms;
     u.glow.value = on ? s.screenGlow : 1;
@@ -490,7 +523,9 @@ export class Remaster {
     if (this.sceneRT && this.sceneRT.width === w && this.sceneRT.height === h) return;
     this.disposeTargets();
     const hdr = { type: THREE.HalfFloatType, minFilter: THREE.LinearFilter, magFilter: THREE.LinearFilter } as const;
-    this.sceneRT = new THREE.WebGLRenderTarget(w, h, { ...hdr, depthBuffer: true, samples: this.msaaSamples() });
+    // Depth is only used while drawing this target. The grade reads color alone and the hands
+    // clear their own depth, so resolving or preserving the multisample depth wastes bandwidth.
+    this.sceneRT = new THREE.WebGLRenderTarget(w, h, { ...hdr, depthBuffer: true, samples: this.msaaSamples(), resolveDepthBuffer: false, storeMultisampledDepthBuffer: false });
     this.graded = new THREE.WebGLRenderTarget(w, h, { ...hdr, depthBuffer: false });
   }
 
@@ -542,7 +577,6 @@ export class Remaster {
     g.saturation.value = s.saturation;
     g.vibrance.value = s.vibrance;
     g.peak.value = this.peak;
-    g.toneMap.value = TONE_INDEX[s.toneMap];
     g.view.value = VIEW_INDEX[s.debug];
     // A float16 canvas has no 8-bit steps to hide.
     const dither = this.hdr.active ? 0 : 1;
