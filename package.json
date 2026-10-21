@@ -2,7 +2,9 @@
   "name": "droid-office",
   "version": "0.1.0",
   "private": true,
-  "workspaces": ["website"],
+  "workspaces": [
+    "website"
+  ],
   "description": "A 3D office in the browser where its owner hires Droid workers at desks and works in their live PTYs.",
   "type": "module",
   "productName": "Droid Office",
@@ -48,7 +50,7 @@
     "@xterm/addon-unicode11": "^0.9.0",
     "@xterm/headless": "^6.0.0",
     "electron-updater": "^6.8.9",
-    "mermaid": "^12.1.0",
+    "mermaid": "^12.2.0",
     "playwright-core": "1.64.0",
     "selfsigned": "^5.5.0",
     "uqr": "^0.1.3",
@@ -71,7 +73,7 @@
     "@xterm/addon-web-links": "^0.12.0",
     "@xterm/xterm": "^6.0.0",
     "codemirror": "^6.0.2",
-    "concurrently": "^10.0.5",
+    "concurrently": "^10.0.6",
     "dompurify": "^3.4.16",
     "electron": "^44.5.1",
     "electron-builder": "^26.15.3",
