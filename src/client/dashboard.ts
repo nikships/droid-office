@@ -406,8 +406,8 @@ function paintGate() {
       ? []
       : [
           h('span', {}, 'On the office’s computer, open ', h('b', {}, '⚙️ Settings → Phone → Web companion'), '.'),
-          h('span', {}, 'Copy the link for the network this computer is on, and open it here.'),
-          h('span', {}, 'Choose ', h('b', {}, 'Pair this browser'), '. Bookmark the page: it keeps working after restarts.'),
+          h('span', {}, 'Click ', h('b', {}, 'Copy pairing link'), ' beside Wi-Fi or Tailscale, then paste the complete link into this browser.'),
+          h('span', {}, 'Choose ', h('b', {}, 'Pair this browser'), ' before refreshing, then bookmark the page.'),
         ]
   ).map((s, i) => h('li', {}, h('span.dash-step-no', {}, String(i + 1)), s));
   const whereChip = h('p.dash-where-chip', {}, icon(WHERE[where].icon, 14), h('span', {}, `${WHERE[where].label} · ${location.host}`));
@@ -445,13 +445,15 @@ function paintGate() {
     ],
     access: () => [
       h('div.dash-gate-icon', {}, icon('lock', 28)),
-      h('h2', {}, where === 'local' ? 'The office didn’t let this page in' : 'Connect this browser to your office'),
+      h('h2', {}, where === 'local' ? 'The office didn’t let this page in' : 'Open a pairing link to connect'),
       h(
         'p',
         {},
         arrivedWithLink
           ? 'That link is from an earlier start of the office, so it no longer opens it. Links change every time the office starts; a paired browser doesn’t need one.'
-          : 'Your workers, their live terminals and the Whiteboard, in any desktop browser. No 3D, no install.',
+          : where === 'local'
+            ? 'Try connecting again.'
+            : 'You reached the office, but this browser has no access key. Typing the address alone won’t connect it or send an approval request to the office’s computer.',
       ),
       steps.length ? h('ol.dash-steps', {}, ...steps) : retry,
     ],

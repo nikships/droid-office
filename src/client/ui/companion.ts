@@ -26,33 +26,33 @@ interface Way {
   title: string;
   reach: string;
   tags: string[];
-  /** What the card shows: the address without its token. */
-  shown: string;
+  alternative?: boolean;
   /** What Copy and Open use. */
   link: string;
 }
 
 function ways(state: PairingState): Way[] {
   const token = lanTokenOf(state);
+  const wifi = state.addresses.find((a) => a.kind === 'wifi');
+  const tailscale = state.addresses.find((a) => a.kind === 'tailscale' && a.dns) ?? state.addresses.find((a) => a.kind === 'tailscale');
   const local: Way = {
     icon: 'monitor',
     kind: 'local',
     title: 'This computer',
     reach: 'In any browser on the computer running the office.',
     tags: ['No pairing'],
-    shown: companionLink(state.local),
     link: companionLink(state.local),
   };
   const other = (a: PairingAddress): Way =>
     a.kind === 'wifi'
-      ? { icon: 'wifi', kind: 'wifi', title: 'Wi-Fi', reach: 'From a computer on the same network as this one.', tags: ['Pair once'], shown: companionLink(a.url), link: companionLink(a.url, token) }
+      ? { icon: 'wifi', kind: 'wifi', title: a === wifi ? 'Wi-Fi' : 'Wi-Fi · alternative', reach: 'From a computer on the same network as this one.', tags: ['Pair once'], alternative: a !== wifi, link: companionLink(a.url, token) }
       : {
           icon: 'globe',
           kind: 'tailscale',
           title: a.dns ? 'Tailscale · MagicDNS' : 'Tailscale · tailnet IP',
           reach: 'From anywhere, on a computer signed in to the same tailnet.',
           tags: a.dns ? ['Pair once', 'Best to bookmark'] : ['Pair once'],
-          shown: companionLink(a.url),
+          alternative: a !== tailscale,
           link: companionLink(a.url, token),
         };
   return [local, ...state.addresses.map(other)];
@@ -64,13 +64,13 @@ export function openCompanion(onChange?: (state: PairingState) => void) {
   const statePill = h('span.pill');
   const heroText = h('small');
   const hero = h('section.wc-hero', {}, h('span.wc-hero-icon', {}, icon('monitor', 26)), h('div.wc-hero-text', {}, h('div.wc-hero-title', {}, h('b', {}, 'Your office in any desktop browser'), statePill), heroText), toggleEl);
-  const addrs = h('div.wc-ways', { 'aria-label': 'Addresses' });
+  const addrs = h('div.wc-ways', { 'aria-label': 'Ways to connect' });
   const reachNote = h('div.wc-notes');
   const steps = h(
     'ol.wc-steps',
     {},
-    h('li', {}, h('span', {}, h('b', {}, 'Copy the link'), ' for the network the other computer is on, and open it there in Chrome, Edge, Firefox or Safari.')),
-    h('li', {}, h('span', {}, 'Choose ', h('b', {}, 'Pair this browser'), '. A link works until the office restarts; the pairing lasts until you unpair it.')),
+    h('li', {}, h('span', {}, 'Click ', h('b', {}, 'Copy pairing link'), ' for Wi-Fi or Tailscale above, then paste it into the other computer’s browser.')),
+    h('li', {}, h('span', {}, 'Choose ', h('b', {}, 'Pair this browser'), ' there before refreshing. There is no approval pop-up on this computer: the link grants access.')),
     h('li', {}, h('span', {}, h('b', {}, 'Bookmark the page.'), ' Each address pairs on its own, so bookmark the one you’ll use. Tailscale’s name works at home and away.')),
   );
   const count = h('span.wc-count');
@@ -84,8 +84,9 @@ export function openCompanion(onChange?: (state: PairingState) => void) {
       {},
       hero,
       status,
-      h('section.section', {}, h('div.eyebrow', {}, h('span.no', {}, '01'), 'Open it'), addrs, reachNote),
+      h('section.section', {}, h('div.eyebrow', {}, h('span.no', {}, '01'), 'Choose how to connect'), addrs, reachNote),
       h('section.section', {}, h('div.eyebrow', {}, h('span.no', {}, '02'), 'Pair a browser on another computer'), steps),
+      h('p.note.info', {}, 'Pairing links include a private access key. Use the copy button, not a manually typed address. Keep the link private; it works until the office restarts.'),
       h('section.section', {}, h('div.eyebrow', {}, h('span.no', {}, '03'), 'Paired browsers', count), list),
     ),
   );
@@ -101,14 +102,15 @@ export function openCompanion(onChange?: (state: PairingState) => void) {
   let waysKey = '';
 
   const copyBtn = (w: Way, disabled: boolean) => {
-    const label = h('span', {}, w.kind === 'local' ? 'Copy' : 'Copy link');
-    const b = h('button.btn.sm', { type: 'button', disabled, title: w.kind === 'local' ? w.link : `${w.shown}, with this start’s link token` }, icon('copy', 13), label);
+    const label = h('span', {}, 'Copy pairing link');
+    const b = h('button.btn.sm', { type: 'button', disabled, 'aria-label': `Copy pairing link for ${w.title}`, title: 'Includes the private access key needed to connect this browser' }, icon('copy', 13), label);
     b.addEventListener('click', async () => {
       const ok = await copy(w.link);
       label.textContent = ok ? 'Copied' : 'Copy failed';
       b.classList.toggle('done', ok);
+      if (ok) toast('Pairing link copied. Paste it into the other computer’s browser, then choose Pair this browser.', 'info');
       setTimeout(() => {
-        label.textContent = w.kind === 'local' ? 'Copy' : 'Copy link';
+        label.textContent = 'Copy pairing link';
         b.classList.remove('done');
       }, 1600);
     });
@@ -120,29 +122,30 @@ export function openCompanion(onChange?: (state: PairingState) => void) {
     if (key === waysKey) return;
     waysKey = key;
     const off = !state.companion;
-    addrs.replaceChildren(
-      ...ways(state).map((w) =>
+    const way = (w: Way) =>
+      h(
+        'div.wc-way',
+        { class: w.kind },
+        h('span.wc-way-icon', {}, icon(w.icon, 18)),
+        h('div.wc-way-main', {}, h('div.wc-way-title', {}, h('b', {}, w.title), ...w.tags.map((t) => h('span.wc-tag', { class: t === 'Best to bookmark' ? 'best' : '' }, t))), h('small', {}, w.reach)),
         h(
-          'div.wc-way',
-          { class: w.kind },
-          h('span.wc-way-icon', {}, icon(w.icon, 18)),
-          h(
-            'div.wc-way-main',
-            {},
-            h('div.wc-way-title', {}, h('b', {}, w.title), ...w.tags.map((t) => h('span.wc-tag', { class: t === 'Best to bookmark' ? 'best' : '' }, t))),
-            h('code.wc-way-url', { title: w.shown }, w.shown.replace(/^https?:\/\//, '')),
-            h('small', {}, w.reach),
-          ),
-          h(
-            'div.wc-way-actions',
-            {},
-            w.kind === 'local'
-              ? h('a.btn.sm.primary', { href: w.link, target: '_blank', rel: 'noopener noreferrer', class: off ? 'disabled' : '', 'aria-disabled': off ? 'true' : undefined, tabindex: off ? '-1' : undefined }, icon('external', 13), 'Open')
-              : null,
-            copyBtn(w, off),
-          ),
+          'div.wc-way-actions',
+          {},
+          w.kind === 'local'
+            ? h(
+                'a.btn.sm.primary',
+                { href: w.link, target: '_blank', rel: 'noopener noreferrer', class: off ? 'disabled' : '', 'aria-disabled': off ? 'true' : undefined, tabindex: off ? '-1' : undefined },
+                icon('external', 13),
+                'Open here',
+              )
+            : copyBtn(w, off),
         ),
-      ),
+      );
+    const available = ways(state);
+    const alternatives = available.filter((w) => w.alternative);
+    addrs.replaceChildren(
+      ...available.filter((w) => !w.alternative).map(way),
+      ...(alternatives.length ? [h('details.wc-alternatives', {}, h('summary', {}, 'Other network connections'), h('div.stack.tight', {}, ...alternatives.map(way)))] : []),
     );
     const notes: HTMLElement[] = [];
     if (!state.reachable)
@@ -242,7 +245,7 @@ export function openCompanion(onChange?: (state: PairingState) => void) {
     statePill.className = `pill ${state.companion ? 'done' : 'offline'}`;
     statePill.textContent = state.companion ? 'On' : 'Off';
     heroText.textContent = state.companion
-      ? `Browsers open the office at ${companionLink(state.local).replace(/^https?:\/\//, '')} and its other addresses: every worker with its live terminal, prompts, hiring, questions and the Whiteboard.`
+      ? 'Open it on this computer, or copy a pairing link for another computer. Your workers, live terminals, prompts and Whiteboard are all there.'
       : 'Off: browsers can’t pair or connect, and any open companion tab was disconnected. Paired browsers stay paired and come back when you turn it on.';
     hero.classList.toggle('off', !state.companion);
     paintWays(state);
