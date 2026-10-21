@@ -1,6 +1,17 @@
 import { defineConfig } from 'vite';
 import { resolve } from 'node:path';
 export default defineConfig({
+  plugins: [
+    {
+      name: 'dashboard-entry',
+      configureServer(server) {
+        server.middlewares.use((req, _res, next) => {
+          if (req.url && /^\/dashboard\/?(?:\?|$)/.test(req.url)) req.url = req.url.replace(/^\/dashboard\/?/, '/dashboard.html');
+          next();
+        });
+      },
+    },
+  ],
   root: resolve(import.meta.dirname, 'src/client'),
   publicDir: resolve(import.meta.dirname, 'src/client/public'),
   build: {
@@ -10,6 +21,7 @@ export default defineConfig({
     rollupOptions: {
       input: {
         main: resolve(import.meta.dirname, 'src/client/index.html'),
+        dashboard: resolve(import.meta.dirname, 'src/client/dashboard.html'),
       },
     },
   },
@@ -20,6 +32,7 @@ export default defineConfig({
       // Vite's port, and the office's Origin check would turn the socket away.
       '/api': { target: 'http://localhost:4600', changeOrigin: false },
       '/ws': { target: 'ws://localhost:4600', ws: true },
+      '/whiteboard': { target: 'http://localhost:4600', changeOrigin: false },
     },
   },
 });

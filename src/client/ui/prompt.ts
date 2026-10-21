@@ -33,7 +33,10 @@ export interface PromptOptions {
   deskId?: string;
   /** Other floors' projects a new worker in its own worktree can work in too (see WorkerInfo.repos). */
   repoOptions?: { id: string; name: string }[];
-  onSubmit(text: string, opts: { worktree: boolean; model?: string; effort?: AgentEffort; repos: string[]; images: string[] }): void;
+  queueOption?: boolean;
+  onDraft?(text: string): void;
+  /** An async refusal keeps the box, text and attachments open rather than claiming delivery. */
+  onSubmit(text: string, opts: { worktree: boolean; model?: string; effort?: AgentEffort; repos: string[]; images: string[]; queue?: boolean }): undefined | boolean | Promise<string | undefined>;
   /** The "Runs on" choice of a hire: this machine, or one of the account's Factory computers (factory-cloud.ts). */
   runsOn?: RunsOn | null;
   /** Hires on a Factory computer instead of onSubmit; resolves to why it didn't, which the box stays open to show. */
@@ -102,6 +105,14 @@ export function openPrompt(opts: PromptOptions) {
   const ta = h('textarea.input', { rows: opts.modelOption ? 5 : 4, placeholder: opts.placeholder ?? 'What should the worker work on?', 'aria-label': 'Prompt' }) as HTMLTextAreaElement;
   ta.value = opts.initial ?? '';
   const images: PromptImages | null = opts.imagesOption ? promptImages(ta) : null;
+  ta.addEventListener('input', () => opts.onDraft?.(ta.value));
+  const file = images ? h('input.hidden', { type: 'file', accept: 'image/png,image/jpeg,image/gif,image/webp', multiple: true, 'aria-label': 'Choose pictures' }) : null;
+  file?.addEventListener('change', () => {
+    images?.add([...(file.files ?? [])]);
+    file.value = '';
+  });
+  const add = images ? h('button.btn.sm', { type: 'button', onclick: () => file?.click() }, 'Attach pictures') : null;
+  const queue = opts.queueOption ? toggle({ label: 'Queue after the current turn', checked: false }) : null;
   const extras = opts.recall === false ? null : promptExtras(ta);
   const wt = worktreeRow('wt-toggle', opts.worktreeChecked ?? worktreePref());
   const wtBox = wt.box;
@@ -126,7 +137,8 @@ export function openPrompt(opts: PromptOptions) {
       'div.body.stack',
       {},
       opts.warning ? h('p.note.bad', { role: 'alert' }, opts.warning) : null,
-      h('div.prompt-input', {}, extras?.element ?? ta, images ? pictureHint() : null, images?.element ?? null),
+      h('div.prompt-input', {}, extras?.element ?? ta, images ? pictureHint() : null, add, file, images?.element ?? null),
+      queue,
       rows.length ? h('div.group.prompt-opts', { role: 'group', 'aria-label': 'Options' }, ...rows) : null,
       failed,
     ),
@@ -134,17 +146,20 @@ export function openPrompt(opts: PromptOptions) {
   ) as HTMLFormElement;
   form.noValidate = true;
 
+  let waiting = false;
+  let submitted = false;
+  const failedText = (error: unknown) => (error instanceof Error ? error.message : 'Failed. Nothing was sent.');
   const modal = openModal(form, {
     onClose: () => {
-      images?.discard();
+      if (submitted) images?.take();
+      else images?.discard();
       extras?.dispose();
     },
   });
   images?.dropZone(modal.backdrop, modal.el);
   cancel.addEventListener('click', () => modal.close());
-  let waiting = false;
   const send = () => {
-    if (waiting) return;
+    if (waiting || !form.isConnected) return;
     const text = ta.value.trim();
     if (!text && !images?.ids().length && !images?.busy() && !opts.allowEmpty) {
       ta.focus();
@@ -163,31 +178,84 @@ export function openPrompt(opts: PromptOptions) {
     if (cloud && opts.onCloud) {
       // Making the session takes a while, and when Factory says no the box stays open saying why.
       waiting = true;
+      submitted = true;
       const label = submit.textContent;
       submit.toggleAttribute('disabled', true);
       submit.textContent = cloud.environmentId ? `☁ Starting a computer from ${cloud.computerName}…` : `☁ Starting on ${cloud.computerName}…`;
       failed.classList.add('hidden');
-      void opts.onCloud(text, { model: models?.model(), effort: models?.effort(), images: images?.ids() ?? [], cloud }).then((why) => {
+      let cloudResult: ReturnType<NonNullable<typeof opts.onCloud>>;
+      try {
+        cloudResult = opts.onCloud(text, { model: models?.model(), effort: models?.effort(), images: images?.ids() ?? [], cloud });
+      } catch (error) {
+        submitted = false;
         waiting = false;
         submit.toggleAttribute('disabled', false);
         submit.textContent = label;
-        if (why) {
-          failed.textContent = `☁ ${why}`;
+        failed.textContent = failedText(error);
+        failed.classList.remove('hidden');
+        return;
+      }
+      void Promise.resolve(cloudResult).then(
+        (why) => {
+          waiting = false;
+          submit.toggleAttribute('disabled', false);
+          submit.textContent = label;
+          if (why) {
+            failed.textContent = `☁ ${why}`;
+            failed.classList.remove('hidden');
+            return;
+          }
+          if (text) extras?.sent(text);
+          images?.take();
+          modal.close();
+        },
+        (error: unknown) => {
+          waiting = false;
+          submit.toggleAttribute('disabled', false);
+          submit.textContent = label;
+          failed.textContent = failedText(error);
+          failed.classList.remove('hidden');
+        },
+      );
+      return;
+    }
+    if (opts.worktreeOption) setWorktreePref(wtBox.checked);
+    const worktree = !!opts.worktreeOption && wtBox.checked;
+    waiting = true;
+    submitted = true;
+    submit.disabled = true;
+    failed.classList.add('hidden');
+    let result: ReturnType<typeof opts.onSubmit>;
+    try {
+      result = opts.onSubmit(text, { worktree, model: models?.model(), effort: models?.effort(), repos: worktree ? repos.value() : [], images: images?.ids() ?? [], queue: queue?.input.checked });
+    } catch (error) {
+      submitted = false;
+      waiting = false;
+      submit.disabled = false;
+      failed.textContent = failedText(error);
+      failed.classList.remove('hidden');
+      return;
+    }
+    void Promise.resolve(result).then(
+      (error) => {
+        waiting = false;
+        submit.disabled = false;
+        if (typeof error === 'string' || error === false) {
+          failed.textContent = error === false ? 'Disconnected. Nothing was sent.' : error;
           failed.classList.remove('hidden');
           return;
         }
-        if (text) extras?.sent(text);
         images?.take();
+        if (text) extras?.sent(text);
         modal.close();
-      });
-      return;
-    }
-    const picked = images?.take() ?? [];
-    if (text) extras?.sent(text);
-    modal.close();
-    if (opts.worktreeOption) setWorktreePref(wtBox.checked);
-    const worktree = !!opts.worktreeOption && wtBox.checked;
-    opts.onSubmit(text, { worktree, model: models?.model(), effort: models?.effort(), repos: worktree ? repos.value() : [], images: picked });
+      },
+      (error: unknown) => {
+        waiting = false;
+        submit.disabled = false;
+        failed.textContent = failedText(error);
+        failed.classList.remove('hidden');
+      },
+    );
   };
   form.addEventListener('submit', (e) => {
     e.preventDefault();
@@ -277,6 +345,7 @@ export function sendHomeDialog(opts: SendHomeOptions) {
         { value: 'keep', icon: '📦', title: 'Keep both', description: 'Leaves everything as it is; droid-office prune tidies up later.' },
       ];
   let touched = false;
+  let inspected = false;
   const yes = h('button.btn.danger', { type: 'submit' }, CLEANUP_LABEL.keep);
   const list = optionCards(
     'cleanup',
@@ -285,6 +354,7 @@ export function sendHomeDialog(opts: SendHomeOptions) {
     (v) => {
       touched = true;
       yes.textContent = CLEANUP_LABEL[v as WorktreeCleanup];
+      yes.disabled = v !== 'keep' && !inspected;
     },
     { rows: true },
   );
@@ -320,11 +390,14 @@ export function sendHomeDialog(opts: SendHomeOptions) {
   form.addEventListener('submit', (e) => {
     e.preventDefault();
     const cleanup = chosen();
+    if (cleanup !== 'keep' && !inspected) return;
     modal.close();
     opts.onConfirm(cleanup);
   });
   void inspectWorktree(opts.workerId, opts.ask).then((s) => {
     if (!form.isConnected) return;
+    inspected = !s.error && !s.repos?.some((r) => r.state.error);
+    yes.disabled = chosen() !== 'keep' && !inspected;
     // Across repositories, a line for each worktree, named.
     const each = s.repos?.length ? s.repos.map((r) => describeState(r.state, branch, `${r.name}: `)) : [describeState(s, branch)];
     const lines = each.flatMap((d) => d.lines);

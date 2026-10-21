@@ -12,6 +12,7 @@ import type { PromptId } from './prompts.js';
 import type { WorktreeSetupState } from './worktree-setup.js';
 import type { OpEnvelope, WhiteboardUpdate } from './whiteboard.js';
 import type { PingHow } from './whiteboard-ping.js';
+import type { Menu } from './asks.js';
 
 export type WorkerStatus =
   | 'starting' // PTY launched, agent booting
@@ -796,7 +797,14 @@ export interface SearchResults {
 /** Why the gong rang. */
 export type GongWhy = 'hit' | 'merged';
 
-export type ClientMsg =
+export type ClientMsg = ClientMessage & {
+  /** Optional business-action receipt. Never replay non-idempotent actions after an uncertain result. */
+  requestId?: string;
+  /** Refuse a delayed action if its intended floor is no longer this connection's floor. */
+  requestFloor?: string;
+};
+
+type ClientMessage =
   | { t: 'profile'; name: string; color: string; look: Look }
   /**
    * With `issue`, the worker is there for that GitHub issue: it's assigned on GitHub (so it moves to In progress).
@@ -825,6 +833,9 @@ export type ClientMsg =
    * behind what it is doing rather than sending it now (a shell gets Enter either way).
    */
   | { t: 'worker.prompt'; workerId: string; prompt: string; issue?: number; images?: string[]; queue?: boolean }
+  /** Rechecks the current worker and screen on the server before answering the menu shown to the owner.
+   * Send exactly one of `choice` or `text`. The server rejects neither and both. */
+  | { t: 'worker.answer'; workerId: string; menu: Menu; choice?: number; text?: string }
   /** Opens a board agent's terminal, starting its session if nobody has asked it anything yet. */
   | { t: 'station.open'; deskId: string }
   /**
@@ -975,6 +986,7 @@ export interface Arrival {
 }
 
 export type ServerMsg =
+  | { t: 'action.result'; requestId: string; ok: boolean; error?: string; workerId?: string }
   | ({
       t: 'welcome';
       /** This connection's transport id; never shown, never a player. */

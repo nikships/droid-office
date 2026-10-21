@@ -16,6 +16,8 @@ import type { TailscaleSelf } from './tailscale.js';
 interface DeviceRecord extends PairedDevice {
   /** SHA-256 of the device token, hex. The token itself is never written down. */
   hash: string;
+  /** Only written for browsers, so a phone-only devices.json keeps its exact old shape. */
+  kind?: 'phone' | 'browser';
 }
 
 /** How often a device's lastSeenAt is written back at most: being seen isn't worth a write per request. */
@@ -24,7 +26,7 @@ export const SEEN_EVERY_MS = 60_000;
 const sha256 = (text: string) => createHash('sha256').update(text).digest();
 
 /** A phone's name as it gave it: one line, no control characters, at most DEVICE_NAME_MAX long. */
-export function cleanDeviceName(raw: unknown): string {
+export function cleanDeviceName(raw: unknown, fallback = 'Android phone'): string {
   const text = typeof raw === 'string' ? raw : '';
   const name = Array.from(text.replace(/\s+/g, ' ').trim())
     .filter((ch) => {
@@ -32,7 +34,7 @@ export function cleanDeviceName(raw: unknown): string {
       return c >= 0x20 && (c < 0x7f || c > 0x9f);
     })
     .join('');
-  return Array.from(name).slice(0, DEVICE_NAME_MAX).join('').trim() || 'Android phone';
+  return Array.from(name).slice(0, DEVICE_NAME_MAX).join('').trim() || fallback;
 }
 
 export class DevicesStore {
@@ -50,7 +52,14 @@ export class DevicesStore {
         for (const d of raw.devices as Partial<DeviceRecord>[]) {
           if (typeof d?.id !== 'string' || typeof d.hash !== 'string' || !/^[0-9a-f]{64}$/.test(d.hash)) continue;
           const pairedAt = typeof d.pairedAt === 'string' ? d.pairedAt : new Date(0).toISOString();
-          this.devices.push({ id: d.id, name: cleanDeviceName(d.name), hash: d.hash, pairedAt, lastSeenAt: typeof d.lastSeenAt === 'string' ? d.lastSeenAt : pairedAt });
+          this.devices.push({
+            id: d.id,
+            name: cleanDeviceName(d.name, d.kind === 'browser' ? 'Web browser' : 'Android phone'),
+            hash: d.hash,
+            pairedAt,
+            lastSeenAt: typeof d.lastSeenAt === 'string' ? d.lastSeenAt : pairedAt,
+            ...(d.kind === 'browser' ? { kind: 'browser' as const } : {}),
+          });
         }
       }
     } catch {
@@ -58,15 +67,22 @@ export class DevicesStore {
     }
   }
 
-  /** Pairs a new phone; the token is returned this once and never again. Undefined when DEVICES_MAX are paired already. */
-  pair(rawName: unknown): { device: PairedDevice; token: string } | undefined {
+  /** Pairs a new phone (or, with kind 'browser', a desktop web browser); the token is returned this once and never again. Undefined when DEVICES_MAX are paired already. */
+  pair(rawName: unknown, kind?: 'browser'): { device: PairedDevice; token: string } | undefined {
     if (this.devices.length >= DEVICES_MAX) return undefined;
     const token = randomBytes(32).toString('base64url');
     const at = new Date(this.now()).toISOString();
     let id: string;
     do id = randomBytes(6).toString('hex');
     while (this.devices.some((d) => d.id === id));
-    const record: DeviceRecord = { id, name: cleanDeviceName(rawName), hash: sha256(token).toString('hex'), pairedAt: at, lastSeenAt: at };
+    const record: DeviceRecord = {
+      id,
+      name: cleanDeviceName(rawName, kind === 'browser' ? 'Web browser' : 'Android phone'),
+      hash: sha256(token).toString('hex'),
+      pairedAt: at,
+      lastSeenAt: at,
+      ...(kind === 'browser' ? { kind: 'browser' as const } : {}),
+    };
     this.devices.push(record);
     this.save();
     return { device: view(record), token };
@@ -117,7 +133,7 @@ export class DevicesStore {
   }
 }
 
-const view = ({ id, name, pairedAt, lastSeenAt }: DeviceRecord): PairedDevice => ({ id, name, pairedAt, lastSeenAt });
+const view = ({ id, name, pairedAt, lastSeenAt, kind }: DeviceRecord): PairedDevice => ({ id, name, pairedAt, lastSeenAt, ...(kind === 'browser' ? { kind } : {}) });
 
 let cachedMachineName: string | undefined;
 /** What this machine is called, for the phone's list of offices: the Mac's Computer Name, else its host name. */

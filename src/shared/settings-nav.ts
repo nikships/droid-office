@@ -21,7 +21,7 @@ export const SETTINGS_PANES: { id: SettingsPane; icon: string; label: string; bl
     blurb:
       'Workers that hire workers: a lead splits up a big job and hires subagents, who sit down at the desks nearest it, each with its own laptop and terminal, and report back to it. Ask the Team lead at its kiosk on the east wall, or any worker at a desk.',
   },
-  { id: 'phone', icon: '📱', label: 'Phone', blurb: 'Droid Office for Android: hire workers, watch their terminals and prompt them from your phone, on your Wi-Fi or over Tailscale.' },
+  { id: 'phone', icon: '📱', label: 'Phone', blurb: 'Droid Office for Android and the web companion: hire workers, watch their terminals and prompt them from your phone or another computer’s browser, on your Wi-Fi or over Tailscale.' },
 ];
 
 /** Which category each setting lives in. The page is built from these titles. */
@@ -65,6 +65,7 @@ export const SETTINGS_CARDS = [
   { pane: 'subagents', title: 'Droid skill' },
   { pane: 'subagents', title: 'Whiteboard skill' },
   { pane: 'phone', title: 'Droid Office for Android' },
+  { pane: 'phone', title: 'Web companion' },
 ] as const satisfies readonly { pane: SettingsPane; title: string }[];
 
 export type SettingsCardTitle = (typeof SETTINGS_CARDS)[number]['title'];

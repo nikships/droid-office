@@ -11,7 +11,8 @@ import type { AddressInfo } from 'node:net';
 import { bearerToken, isLoopback, lanAllowed, lanIPv4s, mintLanToken, tailscaleIPv4s } from './lan.js';
 import { DevicesStore, machineName, pairingAddresses } from './devices.js';
 import { TailscaleWatch } from './tailscale.js';
-import { pairingLink, type PairedDevice, type PairingState } from '../shared/devices.js';
+import { WebCompanion } from './web-companion.js';
+import { COMPANION_OFF, pairingLink, type PairedDevice, type PairingState } from '../shared/devices.js';
 import { MAX_REPOS, childEnv, resolveCommand, type RepoSource } from './workers.js';
 import { DROID_MODEL_MAX } from './agents.js';
 import { createDroidModelCatalogue } from './droid-models.js';
@@ -53,6 +54,7 @@ import { RenderEngine } from './whiteboard-render.js';
 import { handleAgent } from './whiteboard-agent.js';
 import { WhiteboardSkill } from './whiteboard-skill.js';
 import { officePrompt } from './prompts.js';
+import { Answers } from './answers.js';
 
 const MIME: Record<string, string> = {
   '.html': 'text/html; charset=utf-8',
@@ -102,6 +104,9 @@ interface Client {
   device?: string;
   /** Terminals this phone resized, put back when it disconnects (see phone-sizes.ts). */
   phoneSizes?: PhoneSizes;
+  /** A non-scene browser must never receive window.office automation commands. */
+  dashboard: boolean;
+  requests: Set<string>;
   /** The Whiteboard epoch this connection numbers its batches in, per floor (see WhiteboardStore.issueEpoch). */
   boards: Map<string, string>;
 }
@@ -203,6 +208,7 @@ export async function startServer(cfg: Config) {
   const devices = new DevicesStore(cfg.dataDir);
   const tailscale = new TailscaleWatch();
   void tailscale.get();
+  const companion = new WebCompanion(cfg.dataDir);
   const clients = new Map<string, Client>();
   /** The office Mac's trackpad taps for a charging shot; a silent no-op off macOS (see haptics.ts). */
   const trackpadHaptics = new TrackpadHaptics();
@@ -272,6 +278,7 @@ export async function startServer(cfg: Config) {
   const warn = (c: Client, error: string | undefined) => {
     if (error) sendTo(c, { t: 'toast', text: error, level: 'warn' });
   };
+  const answers = new Answers();
 
   // --- Loopback-only endpoint for authenticated agent events -------------------------------
   let webhook!: Webhook;
@@ -481,6 +488,7 @@ export async function startServer(cfg: Config) {
       }
     },
     workerChanged: (_floor, w) => {
+      answers.changed(typeof w === 'string' ? w : w.id, typeof w === 'string' ? undefined : w.status);
       if (typeof w === 'string') webhook.onWorkerGone(w);
       else webhook.onWorker(w);
       machine.workersChanged();
@@ -629,8 +637,11 @@ export async function startServer(cfg: Config) {
   /** The Phone window's view: the pairing link with the addresses it carries, and the paired phones. */
   const pairingState = async (): Promise<PairingState> => {
     const port = (server.address() as AddressInfo | null)?.port ?? cfg.port;
-    const addresses = pairingAddresses({ scheme: cfg.tls ? 'https' : 'http', host: cfg.host, port, lan: lanIPv4s(), tailscale: await tailscale.get(), tailscaleIps: tailscaleIPv4s() });
+    const scheme = cfg.tls ? 'https' : 'http';
+    const tailnet = await tailscale.get();
+    const addresses = pairingAddresses({ scheme, host: cfg.host, port, lan: lanIPv4s(), tailscale: tailnet, tailscaleIps: tailscaleIPv4s() });
     const office = officeCard();
+    const reachable = !(cfg.host === '127.0.0.1' || cfg.host === '::1' || cfg.host === 'localhost' || cfg.host.startsWith('127.'));
     const reason = addresses.length
       ? undefined
       : cfg.host === '0.0.0.0' || cfg.host === '::'
@@ -638,20 +649,37 @@ export async function startServer(cfg: Config) {
         : 'The office only listens on this machine (--host 127.0.0.1), so no phone can reach it. Start it without --host to pair one.';
     const urls = addresses.map((a) => a.url);
     const link = urls.length ? pairingLink(office.name, lanToken, urls) : undefined;
-    return { office, ...(link ? { link } : {}), addresses, ...(reason ? { reason } : {}), devices: devices.list() };
+    return {
+      office,
+      companion: companion.on,
+      local: `${scheme}://localhost:${port}`,
+      reachable,
+      tailscale: !!tailnet || tailscaleIPv4s().length > 0,
+      ...(link ? { link } : {}),
+      addresses,
+      ...(reason ? { reason } : {}),
+      devices: devices.list(),
+    };
+  };
+  /** Turns the web companion on or off. Off closes every companion socket; paired browsers stay paired. */
+  const setCompanion = (on: boolean) => {
+    if (companion.on === on) return;
+    companion.set(on, 'owner');
+    console.log(`  🌐  The web companion is ${on ? 'on' : 'off'}`);
+    if (!on) for (const c of clients.values()) if (c.dashboard) c.ws.close(4403, 'The web companion was turned off');
   };
   /** Unpairs a phone: its token stops working, and its open connections are closed. */
   const forgetDevice = (id: string): boolean => {
     const name = devices.list().find((d) => d.id === id)?.name;
     if (!devices.forget(id)) return false;
-    for (const c of clients.values()) if (c.device === id) c.ws.close(4401, 'This phone was unpaired');
+    for (const c of clients.values()) if (c.device === id) c.ws.close(4401, 'This device was unpaired');
     console.log(`  📱 ${name} is no longer paired with the office`);
     return true;
   };
 
   /** Off the machine without this start's token: APIs get JSON, pages get a pointer to the join link. */
   const refuseHttp = (res: http.ServerResponse, api: boolean, unpaired = false) => {
-    if (unpaired) return send(res, 401, { error: 'This phone is not paired with the office any more. Pair it again from ⚙️ Settings → Phone.' });
+    if (unpaired) return send(res, 401, { error: 'This device is not paired with the office any more. Pair it again from ⚙️ Settings → Phone.' });
     const hint = 'Open the join link from the office’s terminal (it prints a QR code on startup).';
     if (api) return send(res, 401, { error: `This office needs its join link (?t=). ${hint}` });
     res.writeHead(401, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store', 'x-content-type-options': 'nosniff', 'x-frame-options': 'DENY', 'referrer-policy': 'no-referrer' });
@@ -683,7 +711,7 @@ export async function startServer(cfg: Config) {
     const args = Array.isArray(body.args) ? body.args : body.args === undefined ? [] : [body.args];
     const timeout = Math.min(Math.max(num(body.timeout) || AUTOMATION_TIMEOUT, 1000), 5 * 60_000);
     let tab: Client | undefined;
-    for (const c of clients.values()) if (!c.device && c.ws.readyState === WebSocket.OPEN) tab = c;
+    for (const c of clients.values()) if (!c.device && !c.dashboard && c.ws.readyState === WebSocket.OPEN) tab = c;
     if (!tab) return send(res, 409, { ok: false, error: 'No office tab is open: open the office in a browser first' });
     const id = randomBytes(6).toString('hex');
     const answer = await new Promise<AutomationAnswer>((resolve) => {
@@ -841,27 +869,42 @@ export async function startServer(cfg: Config) {
       // A Whiteboard card's files (see whiteboard.ts): the capability in the path is the only credential,
       // so the sandboxed frame and its relative assets load without the LAN token.
       if (url.pathname.startsWith(CARD_ROUTE)) return serveCard(req, res, url.pathname.slice(CARD_ROUTE.length));
+      // Public bootstrap only: no office state or injected credentials. Saved browser tokens are
+      // origin-scoped JS storage and cannot accompany a top-level bookmarked navigation.
+      if (p === '/dashboard' || p === '/dashboard/' || p === '/dashboard.html') {
+        const file = publicFile('/dashboard.html');
+        if (!file) return send(res, 503, { error: 'Companion bundle missing. Rebuild or update Droid Office.' });
+        return serveFile(res, file, false);
+      }
       // A phone pairing: it scanned this start's QR code, so it has the LAN token (or it's on this
       // machine). A device token doesn't pair another device. A web page's cross-origin POST is refused.
       if (p === '/api/mobile/pair' && req.method === 'POST') {
         if (!lanAllowed(req, url, lanToken)) return refuseHttp(res, true);
         if (req.headers.origin && !sameOrigin(req, cfg)) return send(res, 403, { error: 'Forbidden' });
-        let body: { device?: unknown } | null;
+        let body: { device?: unknown; kind?: unknown } | null;
         try {
           const text = await readBody(req, 4096);
           body = text.trim() ? JSON.parse(text) : {};
         } catch {
           return send(res, 400, { error: 'Send JSON: {"device": "Pixel 10 Pro XL"}' });
         }
-        const paired = devices.pair(body && typeof body === 'object' ? body.device : undefined);
-        if (!paired) return send(res, 409, { error: 'Too many phones are paired with this office. Forget one in ⚙️ Settings → Phone first.' });
+        const browser = body?.kind === 'browser';
+        if (browser && !companion.on) return send(res, 403, { error: COMPANION_OFF, companionOff: true });
+        if (browser && !sameOrigin(req, cfg)) return send(res, 403, { error: 'Pair this browser from the office’s own address.' });
+        const paired = devices.pair(body && typeof body === 'object' ? body.device : undefined, browser ? 'browser' : undefined);
+        if (!paired) return send(res, 409, { error: 'Too many devices are paired with this office. Forget one in ⚙️ Settings → Phone first.' });
         console.log(`  📱 ${paired.device.name} paired with the office`);
         toastAll(`📱 ${paired.device.name} paired with the office`);
-        return send(res, 200, { deviceId: paired.device.id, token: paired.token, office: officeCard() });
+        return send(res, 200, { deviceId: paired.device.id, token: paired.token, office: officeCard(), ...(browser ? { device: paired.device } : {}) });
       }
       // Everything else needs this start's token or a paired phone's from off the machine (loopback connects freely).
       const gate = access(req, url);
       if (!gate.ok) return refuseHttp(res, p.startsWith('/api/'), gate.unpaired);
+      // Off, the companion's own check-in and every paired browser's request hear why, not a bare refusal.
+      if (!companion.on && (gate.device?.kind === 'browser' || (p === '/api/mobile/hello' && url.searchParams.get('client') === 'dashboard'))) return send(res, 403, { error: COMPANION_OFF, companionOff: true });
+      // Query credentials authenticate embedded resources too, but never make a foreign browser
+      // origin an office page. Native clients without Origin keep their existing bearer contract.
+      if (req.headers.origin && !sameOrigin(req, cfg)) return send(res, 403, { error: 'Forbidden' });
       if (gate.device) devices.seen(gate.device.id);
       // A paired phone's bearer header can't come from a web page (it would need a CORS preflight the
       // office never answers), so it counts as the office's own request where the Origin is checked.
@@ -873,12 +916,24 @@ export async function startServer(cfg: Config) {
       if (p === '/api/mobile/pair' && req.method === 'DELETE') {
         // The phone's own "Unpair": only with its device token.
         if (!gate.device) return send(res, 400, { error: 'Send the device token to unpair (Authorization: Bearer <token>)' });
+        if (!ownRequest()) return send(res, 403, { error: 'Forbidden' });
         forgetDevice(gate.device.id);
         return send(res, 200, { ok: true });
       }
-      if (p === '/api/mobile/pairing' || p.startsWith('/api/mobile/devices/')) {
-        if (!ownPage(req)) return send(res, 403, { error: 'Pair phones from the office itself, on its own machine' });
+      if (p === '/api/mobile/pairing' || p === '/api/mobile/companion' || p.startsWith('/api/mobile/devices/')) {
+        if (gate.device || !ownPage(req)) return send(res, 403, { error: 'Pair devices from the office itself, on its own machine' });
         if (p === '/api/mobile/pairing' && req.method === 'GET') return send(res, 200, await pairingState());
+        if (p === '/api/mobile/companion' && req.method === 'PUT') {
+          let body: { on?: unknown } | null;
+          try {
+            body = JSON.parse(await readBody(req, 1024));
+          } catch {
+            return send(res, 400, { error: 'Send JSON: {"on": true}' });
+          }
+          if (typeof body?.on !== 'boolean') return send(res, 400, { error: 'Send JSON: {"on": true}' });
+          setCompanion(body.on);
+          return send(res, 200, await pairingState());
+        }
         if (p.startsWith('/api/mobile/devices/') && req.method === 'DELETE') {
           return forgetDevice(p.slice('/api/mobile/devices/'.length)) ? send(res, 200, await pairingState()) : send(res, 404, { error: 'No such phone' });
         }
@@ -1133,11 +1188,12 @@ export async function startServer(cfg: Config) {
     if (url.pathname !== '/ws') return refuseUpgrade(socket);
     const gate = access(req, url);
     if (!gate.ok || (!(gate.device && gate.header) && !sameOrigin(req, cfg))) return refuseUpgrade(socket);
+    if (!companion.on && (gate.device?.kind === 'browser' || url.searchParams.get('client') === 'dashboard')) return refuseUpgrade(socket);
     if (gate.device) devices.seen(gate.device.id);
-    wss.handleUpgrade(req, socket, head, (ws) => onConnection(ws, url, gate.device?.id));
+    wss.handleUpgrade(req, socket, head, (ws) => onConnection(ws, url, gate.device));
   });
 
-  const onConnection = (ws: WebSocket, url: URL, device?: string) => {
+  const onConnection = (ws: WebSocket, url: URL, device?: PairedDevice) => {
     const id = randomBytes(5).toString('hex');
     // Back on the floor they were on before a reload, a restart or closing the tab, else the first floor.
     const wanted = url.searchParams.get('floor');
@@ -1166,7 +1222,9 @@ export async function startServer(cfg: Config) {
       lastGongAt: 0,
       isAlive: true,
       peer: { name, color: COLOR_RE.test(colorParam) ? colorParam : '#4f86f7' },
-      ...(device ? { device, phoneSizes: new PhoneSizes() } : {}),
+      ...(device ? { device: device.id, ...(device.kind !== 'browser' ? { phoneSizes: new PhoneSizes() } : {}) } : {}),
+      dashboard: url.searchParams.get('client') === 'dashboard' || device?.kind === 'browser',
+      requests: new Set(),
       boards: new Map(),
     };
     clients.set(id, client);
@@ -1202,6 +1260,7 @@ export async function startServer(cfg: Config) {
     }
 
     ws.on('message', (raw) => {
+      if (ws.readyState !== WebSocket.OPEN) return;
       let msg: ClientMsg;
       try {
         msg = JSON.parse(raw.toString());
@@ -1380,14 +1439,20 @@ export async function startServer(cfg: Config) {
    * Worktrees.fetch): right away when that was just fetched, else after a fetch, if `c` and the floor
    * are still there. With `checkout`, for a worker in the floor's checkout instead.
    */
-  const withFreshBase = (c: Client, floor: Floor | Floor[], go: () => void, checkout = false) => {
+  const withFreshBase = (c: Client, floor: Floor | Floor[], go: () => void, checkout = false, onAbort?: () => void) => {
     const all = Array.isArray(floor) ? floor : [floor];
     const fetching = all.map((f) => f.workers.fetchBase(checkout)).filter((p): p is Promise<void> => p !== undefined);
     if (!fetching.length) return go();
-    void Promise.all(fetching).then(() => {
-      if (c.ws.readyState !== WebSocket.OPEN || all.some((f) => floors.get(f.id) !== f)) return;
-      go();
-    });
+    void Promise.all(fetching).then(
+      () => {
+        if (c.ws.readyState !== WebSocket.OPEN || all.some((f) => floors.get(f.id) !== f)) {
+          onAbort?.();
+          return;
+        }
+        go();
+      },
+      () => onAbort?.(),
+    );
   };
 
   /** Opens a worker's terminal for `c`, or the banner a guest has instead of one. */
@@ -1395,10 +1460,41 @@ export async function startServer(cfg: Config) {
 
   const handleMessage = (c: Client, msg: ClientMsg) => {
     const who = c.peer.name;
+    const requestId = str(msg.requestId, 64);
+    let finished = false;
+    // An awaited action calls done() from a later callback. Do not complete the receipt at the end of this turn.
+    let pending = false;
+    const done = (error?: string, workerId?: string) => {
+      if (!requestId || finished) return;
+      finished = true;
+      sendTo(c, { t: 'action.result', requestId, ok: !error, ...(error ? { error } : {}), ...(workerId ? { workerId } : {}) });
+    };
+    const refuse = (error: string | undefined) => {
+      warn(c, error);
+      if (error) done(error);
+    };
+    /** A refused action still closes a waiting receipt. */
+    const stop = (error: string) => {
+      warn(c, error);
+      done(error);
+    };
+    const defer = () => {
+      pending = true;
+    };
+    if (requestId) {
+      if (c.requests.has(requestId)) return done('That action was already received. It was not sent again.');
+      c.requests.add(requestId);
+      // No request is replayed on this connection. Close rather than forget old deduplication keys.
+      if (c.requests.size > 4096) {
+        done('Too many actions on this connection. Reconnect to continue.');
+        return c.ws.close(1012, 'Reconnect to continue');
+      }
+    }
+    if (msg.requestFloor && msg.requestFloor !== c.floor) return done('The active floor changed. Nothing was sent.');
     /** The floor `c` is on, or a note to them that they have to be on one. */
     const here = (): Floor | undefined => {
       const f = floorOf(c);
-      if (!f) warn(c, 'Take the elevator to a floor first');
+      if (!f) refuse('Take the elevator to a floor first');
       return f;
     };
     /** A worker by id, with the floor it sits on. */
@@ -1409,13 +1505,17 @@ export async function startServer(cfg: Config) {
     };
     // A guest runs outside the office: nothing the office does with its own workers is done to it.
     const asked = (msg as { workerId?: unknown }).workerId;
+    if (requestId && typeof asked === 'string') {
+      const floor = workerFloor(asked) ?? guestFloor(asked) ?? floors.get(cloud.find(asked)?.floor.id ?? '');
+      if (floor && floor.id !== c.floor) return done('That worker is not on the active floor. Nothing was sent.');
+    }
     const guest = GUEST_REFUSED.has(msg.t) && typeof asked === 'string' ? guestFloor(asked)?.guests.get(asked) : undefined;
-    if (guest?.guest) return warn(c, guestRefusal(guest, msg.t));
+    if (guest?.guest) return refuse(guestRefusal(guest, msg.t));
     // A cloud worker's session runs on a Factory computer: factory/cloud.ts answers for it.
     const cloudie = typeof asked === 'string' && /^(worker|term|changes|guest)\./.test(msg.t) ? cloud.find(asked) : undefined;
     if (cloudie) {
       const floor = floors.get(cloudie.floor.id);
-      cloud.message(msg as Parameters<typeof cloud.message>[0], { who, client: c.id, warn: (text) => warn(c, text), takeIssue: (n) => floor && takeIssue(c, floor, n) });
+      cloud.message(msg as Parameters<typeof cloud.message>[0], { who, client: c.id, warn: (text) => warn(c, text), done, takeIssue: (n) => floor && takeIssue(c, floor, n) });
       return;
     }
     switch (msg.t) {
@@ -1446,7 +1546,7 @@ export async function startServer(cfg: Config) {
       case 'floor.branches':
       case 'floor.branch': {
         const floor = floorOf(c);
-        if (!floor || floor.id !== msg.floor) return warn(c, 'Choose a branch on the floor you are on');
+        if (!floor || floor.id !== msg.floor) return stop('Choose a branch on the floor you are on');
         const reply = (error?: string) => sendTo(c, { t: 'floor.branches', floor: floor.id, request: str(msg.request, 80), ...floor.workers.branchState(), ...(error ? { error } : {}) });
         if (msg.t === 'floor.branches') reply();
         else {
@@ -1476,7 +1576,7 @@ export async function startServer(cfg: Config) {
       case 'floor.remove': {
         const id = str(msg.floor, 64);
         const r = building.remove(id, who);
-        if (typeof r === 'string') return warn(c, r);
+        if (typeof r === 'string') return stop(r);
         console.log(`  ${who} took the ${r.name} floor off the building (${r.dir} stays where it is)`);
         const floor = floors.get(id);
         if (floor) closeFloor(floor, who);
@@ -1505,43 +1605,58 @@ export async function startServer(cfg: Config) {
           const other = floors.get(id);
           if (!other || other === floor) {
             floor.workers.unstage(images);
-            return warn(c, other ? "The worker's own floor's project is already in its workspace" : 'That project is no longer in the building');
+            return refuse(other ? "The worker's own floor's project is already in its workspace" : 'That project is no longer in the building');
           }
           repos.push({ floor: other.id, name: other.def.name, repo: other.def.repo, dir: other.dir });
         }
         const hire = () => {
+          if (c.floor !== floor.id) {
+            floor.workers.unstage(images);
+            return done('The active floor changed before hiring. No worker was hired.');
+          }
           // AUTO_DESK is picked here, after any fetch, so two quick hires never get the same desk.
           const wanted = str(msg.deskId, 32);
           const deskId = wanted === AUTO_DESK ? nextFreeSeat((id) => floor.workers.deskOccupied(id))?.id : wanted;
           if (!deskId) {
             floor.workers.unstage(images);
-            return warn(c, 'Every desk and bean bag on this floor is taken');
+            return refuse('Every desk and bean bag on this floor is taken');
           }
           const r = floor.workers.spawn(deskId, who, str(msg.prompt, 20000) || undefined, msg.worktree === true, kind, model, effort, repos, undefined, images);
           floor.workers.unstage(images);
           const issue = kind === 'agent' ? issueNumber(msg.issue) : undefined;
           const across = repos.length ? ` across ${[floor.def.name, ...repos.map((x) => x.name)].join(' + ')}` : '';
-          if (typeof r === 'string') warn(c, r);
+          if (typeof r === 'string') refuse(r);
           else toastFloor(floor, kind === 'shell' ? `${who} opened a shell at a desk` : `${who} hired ${r.name}${issue ? ` for issue #${issue}` : r.prompt ? ' with a task' : ''}${kind === 'agent' ? across : ''}`);
+          if (typeof r !== 'string') done(undefined, r.id);
           if (typeof r !== 'string' && issue) takeIssue(c, floor, issue);
         };
         // Every project it gets a worktree of starts from what's on the forge now, and so does an
         // agent in the checkout (see WorkerManager.fetchBase).
         const fresh = [floor, ...repos.map((x) => floors.get(x.floor)!)];
-        if (msg.worktree === true) withFreshBase(c, fresh, hire);
-        else if (kind === 'agent') withFreshBase(c, floor, hire, true);
-        else hire();
+        const abortHire = () => {
+          floor.workers.unstage(images);
+          done('The office could not confirm the hire. Check the floor before trying again; it was not replayed.');
+        };
+        if (msg.worktree === true) {
+          defer();
+          withFreshBase(c, fresh, hire, false, abortHire);
+        } else if (kind === 'agent') {
+          defer();
+          withFreshBase(c, floor, hire, true, abortHire);
+        } else hire();
         break;
       }
       case 'worker.resume': {
         const w = worker(msg.workerId);
-        warn(c, w ? w.floor.workers.resume(w.wid) : 'No such worker');
+        const error = w ? w.floor.workers.resume(w.wid) : 'No such worker';
+        warn(c, error);
+        done(error, w?.wid);
         break;
       }
       case 'guest.bringIn': {
         const wid = str(msg.workerId, 64);
         const floor = guestFloor(wid);
-        if (!floor) return warn(c, workerFloor(wid) ? "That's already one of the office's workers" : 'That guest has gone home');
+        if (!floor) return stop(workerFloor(wid) ? "That's already one of the office's workers" : 'That guest has gone home');
         void floor.bringIn(wid, who).then((r) => {
           if (typeof r === 'string') warn(c, r);
           else toastFloor(floor, `🚪 ${who} brought ${r.name} into the office: its session carries on at its desk`);
@@ -1556,15 +1671,20 @@ export async function startServer(cfg: Config) {
       }
       case 'worker.kill': {
         const w = worker(msg.workerId);
-        if (!w) break;
+        if (!w) return done('No such worker');
         const { floor, info } = w;
         // The worker leaves right away; its worktree is dealt with after that, and the outcome follows.
-        const done = floor.workers.kill(info.id, CLEANUPS.has(String(msg.cleanup)) ? msg.cleanup : undefined);
+        const cleanup = floor.workers.kill(info.id, CLEANUPS.has(String(msg.cleanup)) ? msg.cleanup : undefined);
         toastFloor(floor, `${who} sent ${info.name} home`);
-        void done.then(({ note, error }) => {
-          if (note) toastFloor(floor, note);
-          if (error) toastFloor(floor, error, 'warn');
-        });
+        defer();
+        void cleanup.then(
+          ({ note, error }) => {
+            if (note) toastFloor(floor, note);
+            if (error) toastFloor(floor, error, 'warn');
+            done(error, info.id);
+          },
+          (error: unknown) => refuse(error instanceof Error ? error.message : 'The office could not confirm sending the worker home.'),
+        );
         break;
       }
       case 'worker.worktree': {
@@ -1650,11 +1770,33 @@ export async function startServer(cfg: Config) {
         const err = w ? w.floor.workers.prompt(w.wid, str(msg.prompt, 20000), images, msg.queue === true) : 'No such worker';
         w?.floor.workers.unstage(images);
         warn(c, err);
+        done(err, w?.wid);
         const issue = w?.info.kind === 'agent' ? issueNumber(msg.issue) : undefined;
         if (w && !err && issue) {
           toastFloor(w.floor, `${who} handed issue #${issue} to ${w.info.name}`);
           takeIssue(c, w.floor, issue);
         }
+        break;
+      }
+      case 'worker.answer': {
+        const w = worker(msg.workerId);
+        if (!w || c.floor !== w.floor.id) return done('That worker is no longer on this floor.');
+        const hasChoice = typeof msg.choice === 'number';
+        const hasText = typeof msg.text === 'string';
+        if (hasChoice === hasText) return done(hasChoice ? 'Send either a menu choice or a typed answer, not both.' : 'Send a menu choice or a typed answer.');
+        defer();
+        const lines = () => w.floor.workers.screenLines(w.wid);
+        void answers
+          .answer(w.wid, msg.menu, hasChoice ? { choice: msg.choice } : { text: str(msg.text, 20000) }, {
+            worker: () => w.floor.workers.get(w.wid),
+            lines,
+            write: (data) => w.floor.workers.write(w.wid, data),
+            live: () => c.ws.readyState === WebSocket.OPEN && c.floor === w.floor.id,
+          })
+          .then(
+            (error) => done(error, w.wid),
+            () => done('The answer could not be verified. Check the terminal.'),
+          );
         break;
       }
       case 'station.open': {
@@ -1679,31 +1821,36 @@ export async function startServer(cfg: Config) {
       }
       case 'worker.pr': {
         const w = worker(msg.workerId);
-        if (!w) break;
+        if (!w) return done('No such worker');
         const { floor, wid } = w;
-        void floor.workers.openPr(wid, who).then((r) => {
-          if (typeof r === 'string') return warn(c, r);
-          const info = floor.workers.get(wid);
-          const name = info?.name ?? 'the worker';
-          const words = forgeWords(floor.board.forge);
-          const [one] = r.prs;
-          if (r.prs.length === 1 && one && !one.repo) toastFloor(floor, one.existed ? `${name}'s branch already has ${words.pr} ${words.ref(one.number)}` : `${who} opened ${words.pr} ${words.ref(one.number)} for ${name}`);
-          else {
-            const list = r.prs.map((p) => `${p.repo} ${words.ref(p.number)}`).join(', ');
-            toastFloor(floor, r.prs.every((p) => p.existed) ? `${name}'s ${words.pull}s are already open: ${list}` : `${who} opened ${name}'s ${words.pull}s: ${list}`);
-          }
-          const dirty = r.prs.filter((p) => p.dirty);
-          if (dirty.length)
-            warn(c, `${name} still has uncommitted changes in ${dirty.some((p) => p.repo) ? `its worktree${dirty.length > 1 ? 's' : ''} of ${dirty.map((p) => p.repo).join(', ')}` : 'its worktree'} — they are not in the ${words.pr}`);
-          for (const line of r.failed) warn(c, line);
-          // Put it on the board now rather than at the next poll. A refresh already in flight
-          // returns at once and can miss it, so look again shortly after.
-          const own = r.prs.find((p) => !p.repo || p.repo === info?.worktree?.path.split(/[\\/]/).pop());
-          void floor.board.refresh().then(() => {
-            if (own && !floor.board.pulls.items.some((p) => p.number === own.number)) setTimeout(() => void floor.board.refresh(), 3000);
-          });
-          for (const x of info?.repos ?? []) void floors.get(x.floor)?.board.refresh();
-        });
+        defer();
+        void floor.workers.openPr(wid, who).then(
+          (r) => {
+            if (typeof r === 'string') return refuse(r);
+            done(r.failed.length ? r.failed.join('; ') : undefined, wid);
+            const info = floor.workers.get(wid);
+            const name = info?.name ?? 'the worker';
+            const words = forgeWords(floor.board.forge);
+            const [one] = r.prs;
+            if (r.prs.length === 1 && one && !one.repo) toastFloor(floor, one.existed ? `${name}'s branch already has ${words.pr} ${words.ref(one.number)}` : `${who} opened ${words.pr} ${words.ref(one.number)} for ${name}`);
+            else {
+              const list = r.prs.map((p) => `${p.repo} ${words.ref(p.number)}`).join(', ');
+              toastFloor(floor, r.prs.every((p) => p.existed) ? `${name}'s ${words.pull}s are already open: ${list}` : `${who} opened ${name}'s ${words.pull}s: ${list}`);
+            }
+            const dirty = r.prs.filter((p) => p.dirty);
+            if (dirty.length)
+              warn(c, `${name} still has uncommitted changes in ${dirty.some((p) => p.repo) ? `its worktree${dirty.length > 1 ? 's' : ''} of ${dirty.map((p) => p.repo).join(', ')}` : 'its worktree'} — they are not in the ${words.pr}`);
+            for (const line of r.failed) warn(c, line);
+            // Put it on the board now rather than at the next poll. A refresh already in flight
+            // returns at once and can miss it, so look again shortly after.
+            const own = r.prs.find((p) => !p.repo || p.repo === info?.worktree?.path.split(/[\\/]/).pop());
+            void floor.board.refresh().then(() => {
+              if (own && !floor.board.pulls.items.some((p) => p.number === own.number)) setTimeout(() => void floor.board.refresh(), 3000);
+            });
+            for (const x of info?.repos ?? []) void floors.get(x.floor)?.board.refresh();
+          },
+          (error: unknown) => refuse(error instanceof Error ? error.message : 'The office could not confirm the pull request.'),
+        );
         break;
       }
       case 'term.input':
@@ -1881,7 +2028,7 @@ export async function startServer(cfg: Config) {
       case 'subagents.set': {
         const before = subagents.settings;
         const err = subagents.set(msg.settings, who);
-        if (err) return warn(c, err);
+        if (err) return stop(err);
         const after = subagents.settings;
         if (before.on !== after.on) toastAll(after.on ? `🧭 ${who} let workers hire subagents` : `🧭 ${who} turned subagents off: nobody hires new ones`);
         else toastAll(`🧭 ${who} changed the Subagents settings`);
@@ -1911,7 +2058,7 @@ export async function startServer(cfg: Config) {
         if (!isPromptId(msg.id) || (msg.text !== null && typeof msg.text !== 'string')) return;
         const was = !!prompts.state().custom[msg.id];
         const err = prompts.setPrompt(msg.id, msg.text === null ? null : str(msg.text, PROMPT_MAX + 1), who);
-        if (err) return warn(c, err);
+        if (err) return stop(err);
         const now = !!prompts.state().custom[msg.id];
         const { label } = PROMPTS[msg.id];
         if (now) toastAll(`📝 ${who} rewrote the “${label}” prompt`);
@@ -1926,7 +2073,7 @@ export async function startServer(cfg: Config) {
           effort: ch.effort === undefined ? undefined : ch.effort,
         };
         const err = prompts.setAgent(choice, who);
-        if (err) return warn(c, err);
+        if (err) return stop(err);
         toastAll(choice ? `🤖 ${who} set the office’s default worker` : `🤖 ${who} put the office’s default worker back to Droid’s own default`);
         break;
       }
@@ -1938,7 +2085,7 @@ export async function startServer(cfg: Config) {
       case 'worktreeSetup.set': {
         const floor = here();
         if (!floor) break;
-        if (!floor.project.branch) return warn(c, "This floor's project isn't a git checkout, so its workers have no worktrees to set up");
+        if (!floor.project.branch) return stop("This floor's project isn't a git checkout, so its workers have no worktrees to set up");
         const s = msg.setup;
         if (s !== null && (!s || typeof s !== 'object' || typeof s.setup !== 'string' || !Array.isArray(s.copy))) return;
         const setup = s && {
@@ -1951,16 +2098,16 @@ export async function startServer(cfg: Config) {
         try {
           toFloor(floor, { t: 'worktreeSetup', state: floor.setWorktreeSetup(setup, who) });
         } catch (err) {
-          return warn(c, `Could not save the worktree setup: ${(err as Error).message}`);
+          return stop(`Could not save the worktree setup: ${(err as Error).message}`);
         }
         toastFloor(floor, setup ? `🌿 ${who} set how this floor's new worktrees are set up` : `🌿 ${who} put this floor's worktree setup back to the repository's`);
         break;
       }
       case 'machine.limit': {
         const limit = msg.limit === null ? undefined : parseWorkerLimit(msg.limit);
-        if (msg.limit !== null && limit === undefined) return warn(c, `The worker limit is a whole number from 1 to ${MAX_WORKER_LIMIT}`);
+        if (msg.limit !== null && limit === undefined) return stop(`The worker limit is a whole number from 1 to ${MAX_WORKER_LIMIT}`);
         const err = machine.setLimit(limit, who);
-        if (err) return warn(c, err);
+        if (err) return stop(err);
         const now = machine.limit;
         toastAll(limit !== undefined ? `⚙️ ${who} set the worker limit to ${now}` : now === undefined ? `⚙️ ${who} took the worker limit off` : `⚙️ ${who} put the worker limit back to ${now} (--max-workers)`);
         break;
@@ -2062,7 +2209,7 @@ export async function startServer(cfg: Config) {
         const floor = here();
         if (!floor) break;
         const d = floor.decor.add(msg.decor, who);
-        if (typeof d === 'string') return warn(c, d);
+        if (typeof d === 'string') return stop(d);
         decorChanged(floor);
         toastFloor(floor, `🖼️ ${who} hung ${d.title ? `“${d.title}”` : 'a picture'}`);
         break;
@@ -2071,7 +2218,7 @@ export async function startServer(cfg: Config) {
         const floor = here();
         if (!floor) break;
         const d = floor.decor.update(str(msg.id, 32), msg.decor);
-        if (typeof d === 'string') return warn(c, d);
+        if (typeof d === 'string') return stop(d);
         decorChanged(floor);
         break;
       }
@@ -2086,7 +2233,7 @@ export async function startServer(cfg: Config) {
       }
       case 'jukebox.play': {
         const r = jukebox.play({ track: msg.track, url: msg.url }, who);
-        if ('error' in r) return warn(c, r.error);
+        if ('error' in r) return stop(r.error);
         if (!r.changed) break;
         jukeboxChanged();
         toastAll(jukebox.state().track === STREAM ? `📻 ${who} tuned the jukebox to ${jukebox.title()}` : `🎵 ${who} put on “${jukebox.title()}”`);
@@ -2114,6 +2261,8 @@ export async function startServer(cfg: Config) {
         sendTo(c, { t: 'pong', at: num(msg.at), now: Date.now() });
         break;
     }
+    // A request id is a receipt request. Sync handlers that did not answer, and actions the companion does not await, still close the receipt so the client does not wait out its timeout.
+    if (!pending) done('This action was not confirmed. Check the office before trying again; it was not replayed.');
   };
 
   const resync = setInterval(() => {
@@ -2172,5 +2321,17 @@ export async function startServer(cfg: Config) {
     hookServer.close();
   };
 
-  return { server, shutdown, lanToken, pairing: pairingState, devices, publicDir, hookPort, floors: () => [...floors.values()], projectsDir: () => building.projectsDir, resolvedAgent: resolveCommand(cfg.agentCmd) };
+  return {
+    server,
+    shutdown,
+    lanToken,
+    pairing: pairingState,
+    companion: () => companion.on,
+    devices,
+    publicDir,
+    hookPort,
+    floors: () => [...floors.values()],
+    projectsDir: () => building.projectsDir,
+    resolvedAgent: resolveCommand(cfg.agentCmd),
+  };
 }

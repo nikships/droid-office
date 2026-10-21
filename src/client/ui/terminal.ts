@@ -5,7 +5,9 @@ import { Unicode11Addon } from '@xterm/addon-unicode11';
 import type { Net } from '../net';
 import { store } from '../state';
 import { withToken } from '../token';
-import { TERM_THEME } from '../world/laptop';
+import { TERM_THEME } from '../term-theme';
+import { suppressMirrorQueries, TerminalMirror } from '../term-mirror';
+import { copy } from './clipboard';
 import { h, hintToast, openModal, STATUS_LABEL, toast, type Modal } from './dom';
 import { colorDot } from './kit';
 import { OFFICE_SHELL_ID } from '../../shared/office-shell';
@@ -71,7 +73,25 @@ export function terminalOnTop(): boolean {
   return !!backdrop && backdrop.parentElement?.lastElementChild === backdrop;
 }
 
-export function openTerminal(net: Net, workerId: string, onChanges?: () => void, find?: TerminalFind) {
+/** Closes the open terminal, in a window or inline, if there is one. */
+export function closeTerminal() {
+  current?.modal.close();
+}
+
+/** Where an inline terminal goes, the caller's controls for its header, and what Ctrl+] does there. */
+export interface InlineTerminal {
+  mount: HTMLElement;
+  /** Put first in the header's actions, before Copy and the text size. */
+  actions?: HTMLElement;
+  /** Ctrl+] in the terminal: leave it. Without one, Ctrl+] goes to the program. */
+  onLeave?: () => void;
+}
+
+/**
+ * Opens a worker's terminal in a window. With `inline`, it fills `inline.mount` instead: no window,
+ * backdrop or ✕, and Esc goes to the program. The caller closes it with `closeTerminal`.
+ */
+export function openTerminal(net: Net, workerId: string, onChanges?: () => void, find?: TerminalFind, inline?: InlineTerminal) {
   if (current?.workerId === workerId) {
     if (find) current.find(find);
     return;
@@ -90,6 +110,8 @@ export function openTerminal(net: Net, workerId: string, onChanges?: () => void,
   const bigger = h('button.btn.icon', { type: 'button', title: 'Bigger text', 'aria-label': 'Bigger terminal text' }, 'A+');
   const zoom = h('span.seg.term-zoom', { role: 'group', 'aria-label': 'Terminal text size' }, smaller, bigger);
   const changesBtn = h('button.btn', { type: 'button', title: 'What this worker changed: files, diff, commit, open a PR (C at the desk)' }, '🌿 Changes');
+  const copyBtn = h('button.btn', { type: 'button', title: 'Copy selected text, or the loaded scrollback when nothing is selected' }, 'Copy text');
+  const disconnected = h('p.note.warn.hidden', { role: 'status' }, 'Disconnected. Terminal input is disabled until a fresh snapshot arrives.');
   const bringInBtn = h('button.btn', { type: 'button' }, '🚪 Bring it in');
   const closeBtn = h('button.btn.icon.close', { title: 'Leave terminal (Shift+Esc or Ctrl+]) · Esc goes to the terminal', 'aria-label': 'Close' }, '✕');
   const host = h('div.term-host', guest ? {} : { 'data-drop': 'Drop screenshots or files to put them in the terminal' });
@@ -97,10 +119,18 @@ export function openTerminal(net: Net, workerId: string, onChanges?: () => void,
   const team = h('div.term-team.chips.hidden', { role: 'group', 'aria-label': 'Team' });
   let teamKey = '';
   const el = h(
-    'div.modal.full.term',
-    { role: 'dialog', 'aria-label': `${info.name} terminal` },
-    h('header', {}, colorDot(info.color), h('div.titles', {}, h('div.term-title', {}, title, pill), sub), h('div.actions', {}, zoom, onChanges ? changesBtn : null, guest ? bringInBtn : null), closeBtn),
+    inline ? 'div.modal.term.inline' : 'div.modal.full.term',
+    inline ? { role: 'region', 'aria-label': `${info.name} terminal` } : { role: 'dialog', 'aria-label': `${info.name} terminal` },
+    h(
+      'header',
+      {},
+      colorDot(info.color),
+      h('div.titles', {}, h('div.term-title', {}, title, pill), sub),
+      h('div.actions', {}, inline?.actions ?? null, copyBtn, zoom, onChanges ? changesBtn : null, guest ? bringInBtn : null),
+      inline ? null : closeBtn,
+    ),
     team,
+    disconnected,
     host,
   );
   const paintTeam = (w: WorkerInfo) => {
@@ -128,7 +158,7 @@ export function openTerminal(net: Net, workerId: string, onChanges?: () => void,
     lineHeight: 1.1,
     theme: TERM_THEME,
     cursorBlink: !guest,
-    disableStdin: guest,
+    disableStdin: true,
     scrollback: 5000,
     allowProposedApi: true,
     macOptionIsMeta: true,
@@ -149,7 +179,7 @@ export function openTerminal(net: Net, workerId: string, onChanges?: () => void,
   term.loadAddon(unicode);
   term.unicode.activeVersion = '11';
 
-  let ready = false;
+  const offQueries = suppressMirrorQueries(term);
   let opened = false;
   let lastSentSize = '';
   /**
@@ -161,7 +191,8 @@ export function openTerminal(net: Net, workerId: string, onChanges?: () => void,
   let adoptSharedSize = false;
   /** Sizes the shared PTY to this window, or this window to the shared PTY (see adoptSharedSize). */
   const sendSize = (typing = false) => {
-    if (!ready || !opened) return;
+    if (!mirror.ready || !opened || !net.up) return;
+    if (typing) adoptSharedSize = false;
     // No terminal to size: the banner just fills the window.
     if (guest) {
       try {
@@ -220,7 +251,8 @@ export function openTerminal(net: Net, workerId: string, onChanges?: () => void,
     // Another window claimed the shared PTY (the latest typist wins): follow it so this view
     // renders correctly. Typing here fits the terminal back to this window and reclaims the size.
     const ptySize = `${w.cols}x${w.rows}`;
-    if (ready && !guest && ptySize !== `${term.cols}x${term.rows}` && ptySize !== lastSentSize) {
+    if (mirror.ready && !guest && ptySize !== `${term.cols}x${term.rows}` && ptySize !== lastSentSize) {
+      adoptSharedSize = true;
       term.resize(w.cols, w.rows);
       lastSentSize = '';
     }
@@ -254,56 +286,88 @@ export function openTerminal(net: Net, workerId: string, onChanges?: () => void,
   };
   let pendingFind = find;
 
+  const mirror = new TerminalMirror(
+    term,
+    (snapshot) => {
+      adoptSharedSize = snapshot.shared ?? adoptSharedSize;
+      lastSentSize = '';
+      term.options.disableStdin = guest || !net.up;
+      disconnected.classList.add('hidden');
+      sendSize();
+      term.scrollToBottom();
+      refresh();
+      if (pendingFind) jumpTo(pendingFind);
+      pendingFind = undefined;
+    },
+    () => net.send({ t: 'worker.attach', workerId }),
+  );
   const onMsg = (msg: ServerMsg) => {
-    if (msg.t === 'term.data' && msg.workerId === workerId) term.write(msg.data);
+    if (msg.t === 'term.data' && msg.workerId === workerId) mirror.data(msg.data);
     else if (msg.t === 'term.snapshot' && msg.workerId === workerId) {
-      term.reset();
-      term.resize(msg.cols, msg.rows);
-      term.write(msg.data, () => {
-        ready = true;
-        sendSize();
-        term.scrollToBottom();
-        refresh();
-        if (pendingFind) jumpTo(pendingFind);
-        pendingFind = undefined;
-      });
+      term.options.disableStdin = true;
+      mirror.snapshot(msg);
     }
   };
   listeners.add(onMsg);
   const unsub = store.on('workers', refresh);
   const unsubCredits = store.on('factory', refresh);
   const ro = new ResizeObserver(() => sendSize());
-
-  const modal = openModal(el, {
-    backdropCloses: true,
-    // TUIs use Esc to back out of their own menus, so while you're typing in the terminal it goes
-    // to the program. Shift+Esc (or Ctrl+], or Esc once focus is off the terminal) leaves.
-    escCloses: (e) => {
-      if (e.shiftKey || !host.contains(document.activeElement)) return true;
-      if (!escHinted) {
-        escHinted = true;
-        hintToast('Esc went to the terminal. Shift+Esc or Ctrl+] leaves it');
-      }
-      return false;
-    },
-    doing: `💻 in ${info.name}'s terminal`,
-    onClose: () => {
-      listeners.delete(onMsg);
-      unsub();
-      unsubCredits();
-      offFont();
-      ro.disconnect();
-      net.send({ t: 'worker.detach', workerId });
-      term.dispose();
-      if (current?.modal === modal) current = null;
-    },
+  const offStatus = net.onStatus((up) => {
+    if (up) return; // The welcome handler reattaches only after the authoritative worker snapshot.
+    mirror.disconnect();
+    term.options.disableStdin = true;
+    disconnected.classList.remove('hidden');
   });
+
+  const onClose = () => {
+    listeners.delete(onMsg);
+    unsub();
+    unsubCredits();
+    offStatus();
+    offQueries();
+    mirror.disconnect();
+    offFont();
+    ro.disconnect();
+    net.send({ t: 'worker.detach', workerId });
+    term.dispose();
+    if (current?.modal === modal) current = null;
+  };
+  let modal: Modal;
+  if (inline) {
+    let closed = false;
+    modal = {
+      el,
+      backdrop: inline.mount,
+      close() {
+        if (closed) return;
+        closed = true;
+        el.remove();
+        onClose();
+      },
+    };
+    inline.mount.replaceChildren(el);
+  } else
+    modal = openModal(el, {
+      backdropCloses: true,
+      // TUIs use Esc to back out of their own menus, so while you're typing in the terminal it goes
+      // to the program. Shift+Esc (or Ctrl+], or Esc once focus is off the terminal) leaves.
+      escCloses: (e) => {
+        if (e.shiftKey || !host.contains(document.activeElement)) return true;
+        if (!escHinted) {
+          escHinted = true;
+          hintToast('Esc went to the terminal. Shift+Esc or Ctrl+] leaves it');
+        }
+        return false;
+      },
+      doing: `💻 in ${info.name}'s terminal`,
+      onClose,
+    });
   const csiEnter = () => wantsCsiEnter(store.workers.get(workerId)?.kind);
   current = {
     workerId,
     modal,
     find: (f) => {
-      if (ready) jumpTo(f);
+      if (mirror.ready) jumpTo(f);
       else pendingFind = f;
     },
   };
@@ -325,6 +389,11 @@ export function openTerminal(net: Net, workerId: string, onChanges?: () => void,
   smaller.addEventListener('click', () => zoomBy(-1));
   bigger.addEventListener('click', () => zoomBy(1));
   closeBtn.addEventListener('click', () => modal.close());
+  copyBtn.addEventListener('click', () => {
+    const buffer = term.buffer.active;
+    const text = term.getSelection() || Array.from({ length: buffer.length }, (_, i) => buffer.getLine(i)?.translateToString(true) ?? '').join('\n');
+    void copy(text).then((ok) => toast(ok ? 'Terminal text copied' : 'Copy failed. Select text and use your browser’s Copy command.', ok ? 'info' : 'warn'));
+  });
   bringInBtn.addEventListener('click', () => bringIn(workerId));
   changesBtn.addEventListener('click', () => {
     onChanges?.();
@@ -332,8 +401,9 @@ export function openTerminal(net: Net, workerId: string, onChanges?: () => void,
   });
 
   term.attachCustomKeyEventHandler((e) => {
-    if (e.type === 'keydown' && e.ctrlKey && e.key === ']') {
-      modal.close();
+    if (e.type === 'keydown' && e.ctrlKey && e.key === ']' && (!inline || inline.onLeave)) {
+      if (inline) inline.onLeave?.();
+      else modal.close();
       return false;
     }
     const enter = enterKeyAction(csiEnter(), e);
@@ -345,7 +415,7 @@ export function openTerminal(net: Net, workerId: string, onChanges?: () => void,
     return false;
   });
   term.onData((data) => {
-    if (guest) return;
+    if (guest || !mirror.ready || !net.up) return;
     sendSize(true);
     net.send({ t: 'term.input', workerId, data });
   });
@@ -355,11 +425,12 @@ export function openTerminal(net: Net, workerId: string, onChanges?: () => void,
   let uploading = 0;
   const insertFiles = async (files: File[]) => {
     if (!files.length) return;
+    if (!mirror.ready || !net.up) return toast('Disconnected. No files were sent.', 'warn');
     if (guest) return toast(`${info.name} runs outside the office: drop files into its own terminal`, 'warn');
     el.classList.toggle('uploading', ++uploading > 0);
     try {
       const paths = await Promise.all(files.map((f) => uploadDrop(workerId, f)));
-      if (current?.modal !== modal) return;
+      if (current?.modal !== modal || !mirror.ready || !net.up) return;
       sendSize(true);
       term.paste(droppedPaths(paths));
       term.focus();
@@ -467,15 +538,16 @@ export function openOfficeShell(net: Net) {
   term.loadAddon(unicode);
   term.unicode.activeVersion = '11';
 
-  let ready = false;
   let opened = false;
   let shared = false;
   let lastSentSize = '';
   let ptyCols = 0;
   let ptyRows = 0;
+  const offQueries = suppressMirrorQueries(term);
+  let mirror: TerminalMirror | undefined;
 
   const sendSize = (typing = false) => {
-    if (!ready || !opened) return;
+    if (!mirror?.ready || !opened) return;
     if (!typing && shared) {
       if (ptyCols !== term.cols || ptyRows !== term.rows) term.resize(ptyCols, ptyRows);
       return;
@@ -493,26 +565,32 @@ export function openOfficeShell(net: Net) {
     }
   };
 
+  mirror = new TerminalMirror(
+    term,
+    (snapshot) => {
+      shared = snapshot.shared === true;
+      ptyCols = snapshot.cols;
+      ptyRows = snapshot.rows;
+      lastSentSize = '';
+      sendSize();
+      term.scrollToBottom();
+    },
+    () => net.send({ t: 'shell.attach' }),
+  );
   const onMsg = (msg: ServerMsg) => {
-    if (msg.t === 'term.data' && msg.workerId === OFFICE_SHELL_ID) term.write(msg.data);
+    if (msg.t === 'term.data' && msg.workerId === OFFICE_SHELL_ID) mirror?.data(msg.data);
     else if (msg.t === 'term.snapshot' && msg.workerId === OFFICE_SHELL_ID) {
       shared = msg.shared === true;
       ptyCols = msg.cols;
       ptyRows = msg.rows;
-      term.reset();
-      term.resize(msg.cols, msg.rows);
-      term.write(msg.data, () => {
-        ready = true;
-        sendSize();
-        term.scrollToBottom();
-      });
+      mirror?.snapshot(msg);
     }
   };
   listeners.add(onMsg);
   // Another window typed and changed the size: follow it, unless this one just sent that size.
   const unsub = store.on('screens', () => {
     const s = store.screens.get(OFFICE_SHELL_ID);
-    if (!s || !ready) return;
+    if (!s || !mirror?.ready) return;
     if (s.cols === ptyCols && s.rows === ptyRows) return;
     ptyCols = s.cols;
     ptyRows = s.rows;
@@ -536,6 +614,8 @@ export function openOfficeShell(net: Net) {
     onClose: () => {
       listeners.delete(onMsg);
       unsub();
+      offQueries();
+      mirror?.disconnect();
       offFont();
       ro.disconnect();
       net.send({ t: 'shell.detach' });

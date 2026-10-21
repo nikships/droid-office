@@ -3,6 +3,8 @@ import type { PairedDevice, PairingAddress, PairingState } from '../../shared/de
 import { withToken } from '../token';
 import { h, openModal, timeAgo } from './dom';
 import { emptyState, windowHeader } from './kit';
+import { icon } from './icons';
+import { openCompanion } from './companion';
 
 // The 📱 Phone window: the QR code Droid Office for Android scans to pair, the addresses it carries,
 // and the phones that are paired. Only the office's own page on its own machine can read it (see
@@ -73,8 +75,15 @@ export function openPhone(onChange?: (devices: PairedDevice[]) => void) {
   );
   const pairCard = h('section.phone-pair', {}, h('div.phone-qr-col', {}, tile, caption), h('div.phone-side', {}, steps, h('div.section.phone-addr-section', {}, h('div.eyebrow', {}, 'In this code'), addresses, addressNote)));
   const paired = h('section.section.phone-paired', {}, h('div.eyebrow', {}, 'Paired phones', devicesCount), devicesList);
+  const companion = h(
+    'button.phone-web',
+    { type: 'button', onclick: () => openCompanion() },
+    h('span.phone-web-icon', {}, icon('monitor', 18)),
+    h('span.phone-web-text', {}, h('b', {}, 'On a computer instead?'), h('small', {}, 'The web companion opens this office in any desktop browser, here, on your Wi-Fi or over Tailscale.')),
+    h('span.btn.sm', {}, 'Web companion', icon('external', 12)),
+  );
   const footer = h('footer', {}, h('span.grow', {}, 'The code changes every time the office starts. A paired phone stays paired until you forget it.'));
-  const el = h('div.modal.lg.phone', { role: 'dialog', 'aria-label': 'Phone' }, windowHeader('📱 Phone', 'Pair Droid Office for Android'), h('div.body', {}, h('div.stack.loose', {}, pairCard, status, paired)), footer);
+  const el = h('div.modal.lg.phone', { role: 'dialog', 'aria-label': 'Phone' }, windowHeader('📱 Phone', 'Droid Office for Android'), h('div.body', {}, h('div.stack.loose', {}, pairCard, status, paired, companion)), footer);
 
   let link = '';
   let known: Set<string> | undefined;
@@ -140,10 +149,10 @@ export function openPhone(onChange?: (devices: PairedDevice[]) => void) {
   };
 
   const paintDevices = (state: PairingState) => {
-    const list = state.devices;
+    const list = state.devices.filter((d) => d.kind !== 'browser');
     devicesCount.textContent = list.length ? String(list.length) : '';
     if (!list.length) {
-      devicesList.replaceChildren(h('li.phone-empty', {}, emptyState('📵', 'No phones paired yet', 'Scan the code above with the app to pair one.')));
+      devicesList.replaceChildren(h('li.phone-empty', {}, emptyState('📵', 'No phones paired yet', 'Scan the code with Droid Office for Android.')));
       return;
     }
     devicesList.replaceChildren(
@@ -220,7 +229,7 @@ export async function pairedPhones(): Promise<PairedDevice[] | string> {
     const res = await fetch(withToken('/api/mobile/pairing'), { credentials: 'same-origin', cache: 'no-store' });
     if (res.status === 403) return 'Phones pair from the office on its own machine.';
     if (!res.ok) return 'Could not read the paired phones.';
-    return ((await res.json()) as PairingState).devices;
+    return ((await res.json()) as PairingState).devices.filter((d) => d.kind !== 'browser');
   } catch {
     return 'Could not reach the office.';
   }

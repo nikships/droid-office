@@ -1236,7 +1236,7 @@ export class WorkerManager {
   }
 
   /** Subscribes one connection to a worker's terminal; opening it acknowledges its wait for attention. */
-  attach(id: string, clientId: string): { data: string; cols: number; rows: number } | undefined {
+  attach(id: string, clientId: string): { data: string; cols: number; rows: number; shared: boolean } | undefined {
     const w = this.workers.get(id);
     if (!w) return undefined;
     let subs = this.subscribers.get(id);
@@ -1244,6 +1244,7 @@ export class WorkerManager {
       subs = new Set();
       this.subscribers.set(id, subs);
     }
+    const shared = [...subs].some((id) => id !== clientId);
     subs.add(clientId);
     let changed = this.syncOpen(w);
     if (!w.info.acked && w.info.status !== 'needs_input') {
@@ -1252,7 +1253,7 @@ export class WorkerManager {
     }
     if (changed) this.emitUpdate(w);
     const data = w.snapshot ? w.snapshot() : offlineBanner(w.info);
-    return { data, cols: w.info.cols, rows: w.info.rows };
+    return { data, cols: w.info.cols, rows: w.info.rows, shared };
   }
 
   /** Lines of every worker's terminal holding `needle` (a searchKey), newest first, at most `perWorker` each. */
@@ -2025,6 +2026,13 @@ export class WorkerManager {
 
   private emitUpdate(w: Worker) {
     this.events.update({ ...w.info });
+  }
+
+  /** One worker's current visible rows, for revalidating a question without serializing all PTYs. */
+  screenLines(id: string): string[] | undefined {
+    const term = this.workers.get(id)?.term;
+    const frame = term && snapshotScreen(term, []);
+    return frame ? Array.from({ length: frame.rows }, (_, row) => (frame.lines[row] ?? []).map((r) => r[0]).join('')) : undefined;
   }
 
   /** Full screens for every running worker — sent to people as they walk in. */
