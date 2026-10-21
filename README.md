@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="docs/hero.jpg" alt="A cutaway of the office building at night: five floors of desks with AI workers at glowing terminals, a glass elevator on the side, a fire pole through the floors and a rooftop" width="100%">
+<img src="docs/office-tour.gif" alt="A recording of walking through the real 3D office, past the wall boards and over to Droid workers at their live terminals" width="100%">
 
 # Droid Office
 
@@ -12,6 +12,8 @@
 [![Latest release](https://img.shields.io/github/v/release/nikships/droid-office?style=for-the-badge)](https://github.com/nikships/droid-office/releases)
 [![CI](https://img.shields.io/github/actions/workflow/status/nikships/droid-office/release.yml?branch=main&style=for-the-badge&label=CI)](https://github.com/nikships/droid-office/actions/workflows/release.yml)
 
+[Watch the full walkthrough and feature demos](https://droid-office.web.app/)
+
 </div>
 
 ---
@@ -22,7 +24,7 @@ Five agents in five terminals is a mess. You lose track of who is stuck, who fin
 
 Droid Office turns that into a place. Every agent sits at a desk with a laptop showing its real terminal. A worker that needs you jumps up and dings. A worker that is done does a little spin and throws confetti. You see the whole picture from across the room.
 
-<img src="docs/desk.jpg" alt="A robot worker at its desk with a green terminal, confetti bursting because it just finished" width="100%">
+<img src="docs/hire-worker.gif" alt="Hiring a Droid worker at an empty desk: choosing its model and reasoning effort, then watching it arrive at its laptop" width="100%">
 
 ## What you get
 
@@ -33,6 +35,8 @@ Droid Office turns that into a place. Every agent sits at a desk with a laptop s
 - **CI on the wall.** The Pipelines board shows your GitHub Actions runs (or GitLab pipelines) as they run, wait and finish. Open a run to see its jobs and steps, re-run what failed, or kick off a workflow. Or just tell the Pipeline agent beside it to do it. Turn on **Auto-heal** on a floor and a red run on that floor wakes the Pipeline agent, which finds the root cause and hires a worker to push the fix.
 - **A Whiteboard you share with your workers.** Workers put live HTML pages, screenshots and forms on the wall. You open them in the window or full screen, use them, and mark them up with comments, sticky notes and pictures, and the next time a worker reads the board it sees what you changed.
 - **A place worth being in.** A rooftop over the city, a jukebox, and weather outside the windows that follows a real city if you ask.
+
+<img src="docs/whiteboard.gif" alt="Opening a worker's page on the office Whiteboard, adding a comment, and placing a sticky note" width="100%">
 
 ## Why Droid Office
 
