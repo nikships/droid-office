@@ -52,6 +52,12 @@ const HOLD_MS = 500;
 const SLOP_DP = 10;
 /** How long a card from before the owner's own change waits, at most, for the board that has it. */
 const SETTLE_MS = 3000;
+/**
+ * How long a loaded frame may stay silent before it counts as not loaded. The office injects its SDK
+ * into every card, and the SDK says it's ready as the page parses, so a frame that has loaded and
+ * still says nothing got the app's error answer instead (the office out of reach).
+ */
+const SILENT_MS = 3000;
 
 const root = document.documentElement;
 const boardEl = document.getElementById('board');
@@ -345,6 +351,7 @@ function load() {
     slot = s;
     showPlaceholder('Loading…');
     s.restore = { x: 0, y: scrollY };
+    iframe.addEventListener('load', () => setTimeout(() => slot === s && !s.ready && notLoaded(s), SILENT_MS), { once: true });
   } else {
     incoming = s;
     iframe.classList.add('incoming');
@@ -354,6 +361,19 @@ function load() {
   }
   iframe.src = url;
   page.insertBefore(iframe, catcher);
+}
+
+function notLoaded(s) {
+  placeholder.replaceChildren(
+    h('span', '', "This card didn't load. The office may be out of reach."),
+    button('Try again', () => {
+      if (slot !== s) return;
+      s.iframe.remove();
+      slot = null;
+      load();
+    }),
+  );
+  placeholder.classList.remove('hidden');
 }
 
 /** A content change: reload now, or once the owner stops typing in the frame. */
