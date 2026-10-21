@@ -132,7 +132,6 @@ import { EmoteWheel } from './ui/emotes';
 import { wayTo } from './walkto';
 import { Upscaler } from './world/upscaler';
 import { Remaster } from './world/remaster';
-import { GraphicsLab } from './ui/graphics-lab';
 import { bakeBudget, bakeKey, loadRemaster, type RemasterSettings, resolveRemaster, saveRemaster } from './remaster-settings';
 import { bakeCache } from './gi-cache';
 import { FrameStats, pacingText } from './frame-stats';
@@ -155,7 +154,7 @@ renderer.outputColorSpace = THREE.SRGBColorSpace;
 const outlineEffect = (thickness = 1.8, alpha = 1) => new OutlineEffect(renderer, { defaultThickness: thickness / 1000, defaultColor: [0.035, 0.035, 0.035], defaultAlpha: alpha });
 let effect = outlineEffect();
 let outlineKey = '1.8|1';
-// Draw calls and triangles add up over a frame's passes and are cleared once a frame (see drawFrame), for the Graphics Lab.
+// Draw calls add up over a frame's passes and are cleared once a frame (see drawFrame).
 renderer.info.autoReset = false;
 const scene = new THREE.Scene();
 // It is always night; the sky's color and the fog change with the weather (world/sky.ts).
@@ -3297,17 +3296,6 @@ const hudActions: HudAction[] = [
     run: () => (hanger.active ? hanger.cancel() : startHanging()),
   },
   { id: 'settings', icon: '⚙️', label: 'Settings', section: 'Office', run: showSettings },
-  {
-    id: 'graphics-lab',
-    icon: '🎛️',
-    label: 'Graphics Lab',
-    section: 'Office',
-    key: '`',
-    // By its element: the HUD is drawn before the lab is made.
-    on: () => document.getElementById('graphics-lab')?.classList.contains('hidden') === false,
-    title: () => 'Graphics quality, resolution and picture, live, beside the game',
-    run: () => window.dispatchEvent(new Event('office:graphics-lab')),
-  },
   { id: 'phone', icon: '📱', label: 'Pair a phone', section: 'Office', title: () => 'Pair Droid Office for Android with the QR code', run: () => openPhone() },
   { id: 'help', icon: '❓', label: 'Controls', section: 'Office', key: 'H', run: () => openHelp(settings.sidearm) },
   {
@@ -3368,9 +3356,15 @@ function showSettings(pane?: SettingsPane) {
     hireForWorktreeSetup,
     {
       remastered: () => remasterSettings.enabled,
-      set: (on) => {
-        changeRemaster({ ...remasterSettings, enabled: on });
-        graphicsLab.paint();
+      set: (on) => changeRemaster({ ...remasterSettings, enabled: on }),
+      hdr: () => remasterSettings.hdr,
+      setHdr: (on) => changeRemaster({ ...remasterSettings, hdr: on }),
+      hdrNote: () => {
+        if (!remasterSettings.enabled || !remasterSettings.hdr) return '';
+        const h = remaster.hdr;
+        if (h.state === 'starting') return 'Starting HDR output…';
+        if (h.state === 'unsupported') return `HDR is off: ${h.reason}.`;
+        return h.reason ? `HDR is on, but ${h.reason}.` : '';
       },
     },
   );
@@ -3495,7 +3489,7 @@ const renderLoop = new RenderLoop({
   },
 });
 
-// ---- The Remastered renderer and its Graphics Lab (` toggles it) --------------------------------
+// ---- The Remastered renderer (Settings → Graphics → Renderer; the picture is fixed) --------------
 let remasterSettings: RemasterSettings = loadRemaster();
 let remasterParams = resolveRemaster(remasterSettings);
 const remaster = new Remaster(
@@ -3505,7 +3499,7 @@ const remaster = new Remaster(
   remasterParams,
   () => {
     reportHdr(remaster.hdr.active);
-    graphicsLab.paint();
+    window.dispatchEvent(new Event('office:hdr'));
     renderWake();
   },
   bakeCache,
@@ -3543,11 +3537,10 @@ function applyRemaster() {
   activeAt = performance.now();
   renderWake();
 }
-/** Applies and saves Remastered settings, from the Graphics Lab or Settings → Graphics → Renderer. */
+/** Applies and saves whether Remastered is on, and whether HDR is on. The picture itself does not change. */
 function changeRemaster(s: RemasterSettings) {
   remasterSettings = s;
   applyRemaster();
-  // The resolution slider sends a change every step; saved at most a few times a second.
   window.clearTimeout(remasterSaveTimer);
   const now = performance.now();
   if (now - remasterSavedAt > 400) {
@@ -3555,58 +3548,14 @@ function changeRemaster(s: RemasterSettings) {
     saveRemaster(s);
   } else remasterSaveTimer = window.setTimeout(() => saveRemaster(remasterSettings), 400);
 }
-const graphicsLab = new GraphicsLab({
-  settings: () => remasterSettings,
-  change: changeRemaster,
-  rebakeGI: () => remaster.gi.rebake(),
-  classicSettings: () => {
-    graphicsLab.hide();
-    showSettings('graphics');
-  },
-  freeMouse: () => player.unlock(),
-  backToGame: () => {
-    if (!modalOpen() && !isTyping()) canvas.focus({ preventScroll: true });
-  },
-  hdrNote: () => {
-    const s = remasterSettings;
-    if (!s.enabled || !s.hdr) return '';
-    const h = remaster.hdr;
-    if (h.state === 'starting') return 'Starting HDR output…';
-    if (h.state === 'unsupported') return `HDR is off: ${h.reason}.`;
-    return h.reason ? `HDR is on, but ${h.reason}.` : '';
-  },
-  renderSize: (resolution) => remaster.sizes(resolution).render,
-  fpsCap: () => settings.graphics.fpsCap,
-  setFpsCap: (fpsCap) => {
-    settings.graphics = { ...settings.graphics, fpsCap };
-    saveSettings(settings);
-    renderWake();
-  },
-  profile: () => {
-    const { output } = remaster.sizes(1);
-    return { gpu: gpuRendererName(), pixels: output.width * output.height, fpsCap: settings.graphics.fpsCap };
-  },
-});
+applyRemaster();
+remasterResized = () => remaster.resized();
 /** WebGL's name for the GPU. Chromium gives the real one as RENDERER; others only through the debug extension. */
 function gpuRendererName(): string {
   const gl = renderer.getContext();
   const ext = gl.getExtension('WEBGL_debug_renderer_info');
   return String((ext && gl.getParameter(ext.UNMASKED_RENDERER_WEBGL)) || gl.getParameter(gl.RENDERER) || '');
 }
-$('app').append(graphicsLab.el);
-applyRemaster();
-remasterResized = () => remaster.resized();
-window.addEventListener('keydown', (e) => {
-  if (e.code !== 'Backquote' || e.metaKey || e.ctrlKey || e.altKey || e.repeat) return;
-  // A backquote typed into a terminal or a text box is a backquote, unless it's typed in the lab itself.
-  if (isTyping(e) && !graphicsLab.el.contains(e.target as Node)) return;
-  e.preventDefault();
-  graphicsLab.toggle();
-});
-window.addEventListener('office:graphics-lab', () => {
-  closeAllModals();
-  graphicsLab.show();
-});
 
 /** A worker walking, hopping, mid-turn, leaving, or being carried out. */
 function workerMoving(): boolean {
@@ -3665,7 +3614,7 @@ function currentPace(): RenderPace {
   if (sceneIsMoving(motion)) activeAt = now;
   // A full GI bake runs in slices, one a frame: at the idle pace it would take minutes.
   // Render pace "full" never idles, but still stops while the window is hidden.
-  if ((remaster.active && remaster.gi.baking && !remaster.gi.paused) || remasterSettings.pace === 'full') activeAt = now;
+  if (remaster.active && remaster.gi.baking && !remaster.gi.paused) activeAt = now;
   // The warm-up line goes once a frame says the work is done; at the idle pace it would hang about.
   if (warmup.showing) activeAt = now;
   return renderPace({
@@ -3687,30 +3636,11 @@ function drawFrame(dt: number, t: number, frame: { at: number; paced: boolean })
   if (fpsNow - fpsSince >= 500) {
     const windowMs = fpsNow - fpsSince;
     const fps = (fpsFrames * 1000) / windowMs;
-    const timed = settings.graphics.stats || graphicsLab.isOpen;
+    const timed = settings.graphics.stats;
     const gpuPass = timed ? { scene: gpuScene.take(), hands: gpuHands.take() } : null;
     lastGpuPass = gpuPass;
     const gpuMs = gpuPass?.scene == null || gpuPass.hands == null ? null : gpuPass.scene + gpuPass.hands;
     const { render, output } = remaster.active ? remaster.sizes() : upscaler.sizes();
-    if (graphicsLab.isOpen) {
-      const info = renderer.info;
-      const gi = remaster.gi;
-      graphicsLab.stats({
-        fps,
-        frameMs: windowMs / fpsFrames,
-        fpsCap: settings.graphics.fpsCap,
-        gpuMs,
-        system: systemGpu,
-        render,
-        output,
-        calls: info.render.calls,
-        triangles: info.render.triangles,
-        textures: info.memory.textures,
-        programs: info.programs?.length ?? 0,
-        hdr: remaster.describe(),
-        gi: !remasterParams.enabled || !remasterParams.gi ? 'GI is off' : gi.paused ? 'Paused on the roof' : gi.baking ? `Baking ${gi.probes} probes… ${Math.round(gi.progress * 100)}%` : `${gi.probes} probes, baked`,
-      });
-    }
     if (settings.graphics.stats) {
       fpsEl.textContent = statsText({
         fps,
@@ -3874,7 +3804,7 @@ function drawFrame(dt: number, t: number, frame: { at: number; paced: boolean })
   renderHint();
   renderCrosshair();
 
-  const timing = settings.graphics.stats || graphicsLab.isOpen;
+  const timing = settings.graphics.stats;
   if (timing) gpuScene.begin();
   renderer.info.reset();
   const drawStart = performance.now();

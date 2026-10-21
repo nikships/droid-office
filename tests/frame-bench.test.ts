@@ -74,7 +74,7 @@ test('the clone must be a clone and never serve the default port', (t) => {
   assert.equal(clonePort(dir), 4677);
 });
 
-test('a configuration is laid over the owner settings and always runs at full render pace', (t) => {
+test('a configuration is laid over the owner settings, and the office ignores every remaster key but enabled and hdr', (t) => {
   const dir = mkdtempSync(path.join(os.tmpdir(), 'bench-storage-'));
   t.after(() => rmSync(dir, { recursive: true, force: true }));
   mkdirSync(dir, { recursive: true });
@@ -83,12 +83,12 @@ test('a configuration is laid over the owner settings and always runs at full re
     JSON.stringify({ 'droid-office.remaster': JSON.stringify({ enabled: false, antiAliasing: 'high', pace: 'adaptive' }), 'droid-office.settings': JSON.stringify({ volume: 1, graphics: { fpsCap: 60, scale: 1 } }), other: 'kept' }),
   );
   const s = storageFor(dir, { config: 'remastered-hdr', cap: 40 });
-  assert.deepEqual(JSON.parse(s['droid-office.remaster']), { enabled: true, antiAliasing: 'high', pace: 'full', hdr: true });
+  assert.deepEqual(JSON.parse(s['droid-office.remaster']), { enabled: true, antiAliasing: 'high', pace: 'adaptive', hdr: true });
   assert.deepEqual(JSON.parse(s['droid-office.settings']), { volume: 1, graphics: { fpsCap: 40, scale: 1, stats: true } });
   assert.equal(s.other, 'kept');
   assert.throws(() => storageFor(dir, { config: 'nope', cap: 60 }), /unknown config/);
   const v = storageFor(dir, { config: 'classic+antiAliasing=medium+resolution=0.8+hdr=false+graphics.scale=0.9', cap: 120 });
-  assert.deepEqual(JSON.parse(v['droid-office.remaster']), { enabled: false, antiAliasing: 'medium', pace: 'full', hdr: false, resolution: 0.8 });
+  assert.deepEqual(JSON.parse(v['droid-office.remaster']), { enabled: false, antiAliasing: 'medium', pace: 'adaptive', hdr: false, resolution: 0.8 });
   assert.equal(JSON.parse(v['droid-office.settings']).graphics.scale, 0.9);
 });
 

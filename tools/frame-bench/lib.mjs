@@ -19,7 +19,7 @@ const OWNER_REMASTER_KEY = 'droid-office.remaster';
 /** The owner's saved browser settings in the clone (clone-office.sh writes them), with the bench's configuration on top. */
 export function storageFor(clone, { config, cap, remaster = {}, graphics = {} }) {
   const saved = JSON.parse(readFileSync(path.join(clone, 'local-storage.json'), 'utf8'));
-  // `remastered-sdr+antiAliasing=medium+resolution=0.8+graphics.scale=0.9`: a named configuration with settings changed.
+  // `classic+graphics.scale=0.9`, or `remastered-hdr+hdr=false`. Remastered picture keys (anti-aliasing, resolution, pace) are saved and ignored.
   const [name, ...changes] = config.split('+');
   const base = CONFIGS[name];
   if (!base) throw new Error(`unknown config ${config}: ${Object.keys(CONFIGS).join(', ')}`);
@@ -31,8 +31,9 @@ export function storageFor(clone, { config, cap, remaster = {}, graphics = {} })
   }
   const ownerRemaster = JSON.parse(saved[OWNER_REMASTER_KEY] ?? '{}');
   const ownerSettings = JSON.parse(saved[OWNER_SETTINGS_KEY] ?? '{}');
-  // Render pace "full" keeps the loop from idling after 30 s of stillness, which would corrupt a long still measurement.
-  saved[OWNER_REMASTER_KEY] = JSON.stringify({ ...ownerRemaster, ...base.remaster, ...remaster, pace: 'full' });
+  // The office only reads `enabled` and `hdr`. Extra keys stay in the blob and are ignored. A still measurement
+  // stays at full pace because loadOffice opens the page with `?pace=full`, not because of a saved setting.
+  saved[OWNER_REMASTER_KEY] = JSON.stringify({ ...ownerRemaster, ...base.remaster, ...remaster });
   saved[OWNER_SETTINGS_KEY] = JSON.stringify({ ...ownerSettings, graphics: { ...ownerSettings.graphics, fpsCap: cap, stats: true, ...graphics } });
   return saved;
 }
@@ -66,7 +67,7 @@ export async function loadOffice(cdp, storage, { clearBake = false } = {}) {
   await cdp.eval(
     `(async () => { ${storage ? `for (const [k, v] of Object.entries(${JSON.stringify(storage)})) localStorage.setItem(k, v);` : ''}
       ${clearBake ? "await new Promise((r) => { const q = indexedDB.deleteDatabase('droid-office-gi'); q.onsuccess = q.onerror = q.onblocked = () => r(); });" : ''}
-      setTimeout(() => location.reload(), 30); return 1; })()`,
+      setTimeout(() => { const url = new URL(location.href); url.searchParams.set('pace', 'full'); location.assign(url.toString()); }, 30); return 1; })()`,
   );
   await sleep(1500);
   await waitFor(cdp, pageReady);

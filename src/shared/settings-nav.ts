@@ -32,7 +32,7 @@ export const SETTINGS_CARDS = [
   { pane: 'sound', title: 'Alert sounds' },
   { pane: 'sound', title: 'Jukebox' },
   { pane: 'graphics', title: 'Renderer' },
-  { pane: 'graphics', title: 'Graphics Lab' },
+  { pane: 'graphics', title: 'HDR' },
   { pane: 'graphics', title: 'Render resolution' },
   { pane: 'graphics', title: 'Temporal anti-aliasing' },
   { pane: 'graphics', title: 'Sharpening' },
