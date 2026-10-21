@@ -1741,6 +1741,7 @@ export class WorkerManager {
    * office to pick back up; otherwise every worker stops.
    */
   shutdown(keep = false) {
+    if (this.closing) return;
     this.closing = true;
     this.stopping = !keep;
     this.officeShell?.shutdown(keep);
@@ -1760,7 +1761,7 @@ export class WorkerManager {
         // ignore
       }
     }
-    this.persist();
+    this.persist(true);
     if (keep) this.host.detach();
     else this.host.stop();
   }
@@ -2164,7 +2165,9 @@ process.stdin.on('end', () => {
     this.scrollback.save(w.info.id, terminalTail(w.term, w.ser, SCROLLBACK));
   }
 
-  private persist() {
+  private persist(onShutdown = false) {
+    // A stopped manager's pending namer/terminal callbacks must not overwrite its successor's state.
+    if (this.closing && !onShutdown) return;
     const saved = [...this.workers.values()].map(({ info, hookToken, pty, bootBlocked, interrupted, worktreeOwnership, launchPrompt }) => ({
       id: info.id,
       kind: info.kind,

@@ -1780,11 +1780,21 @@ test('team markings form with the first hire, survive restarts and the lead leav
   assert.notEqual(`${own.accent}|${own.emblem}`, `${boTeam.accent}|${boTeam.emblem}`);
   assert.deepEqual(mine.team, { ...own, role: 'member' });
   assert.deepEqual(after.get(two.id)?.team, one.team, 'the teammate left behind keeps the old markings');
+  const currentState = readFileSync(path.join(f.data, 'workers.json'), 'utf8');
+  workers.shutdown(true);
+  assert.equal(readFileSync(path.join(f.data, 'workers.json'), 'utf8'), currentState, 'shutting down the old manager again cannot replace its successor’s state');
 
   // An office from before markings: its teams get them on the way in, and nobody gains a lead.
   after.shutdown(true);
   await new Promise((resolve) => setTimeout(resolve, 200));
   const old = (JSON.parse(readFileSync(path.join(f.data, 'workers.json'), 'utf8')) as WorkerInfo[]).map(({ team: _, ...w }) => w);
+  assert.equal(
+    old.some((w) => w.id === ada.id),
+    false,
+    'the departed lead stays removed on disk',
+  );
+  assert.equal(old.find((w) => w.id === one.id)?.lead, undefined, 'the new lead no longer reports to the departed lead');
+  assert.equal(old.find((w) => w.id === mine.id)?.lead, one.id, 'the new team survives shutdown');
   writeFileSync(path.join(f.data, 'workers.json'), JSON.stringify(old));
   const migrated = manager(f, [], []);
   t.after(() => migrated.shutdown());

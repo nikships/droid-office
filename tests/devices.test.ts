@@ -17,6 +17,7 @@ import { DEVICES_MAX, DEVICE_NAME_MAX, pairingLink, type PairingState } from '..
 import { AUTO_DESK } from '../src/shared/protocol.js';
 import { DESKS, nextFreeSeat } from '../src/shared/layout.js';
 import type { IncomingMessage } from 'node:http';
+import { reachableLan } from './lan-probe.js';
 
 const tmp = (t: { after(fn: () => unknown): unknown }, prefix: string) => {
   const dir = mkdtempSync(path.join(os.tmpdir(), prefix));
@@ -240,11 +241,11 @@ const socket = (url: string, headers: Record<string, string>) =>
   });
 
 test('pairing over the LAN: the token pairs, the bearer opens HTTP and the socket, forgetting refuses it', { timeout: 60_000 }, async (t) => {
-  const ip = lanIPv4s()[0];
-  if (!ip) return t.skip('no LAN address to arrive from');
   const home = mkdtempSync(path.join(os.tmpdir(), 'devices-office-'));
   t.after(() => rmSync(home, { recursive: true, force: true }));
   const { office, port, stop } = await startOffice(t, home, '--host', '0.0.0.0');
+  const ip = await reachableLan(t, office.server);
+  if (!ip) return;
   const lan = `http://${ip}:${port}`;
   const local = `http://127.0.0.1:${port}`;
   const wsLan = lan.replace('http:', 'ws:');
@@ -304,8 +305,7 @@ test('pairing over the LAN: the token pairs, the bearer opens HTTP and the socke
     link.searchParams.getAll('u'),
     state.addresses.map((a) => a.url),
   );
-  assert.equal(state.addresses[0].url, `http://${ip}:${port}`);
-  assert.equal(state.addresses[0].kind, 'wifi');
+  assert.ok(state.addresses.some((a) => a.url === `http://${ip}:${port}` && a.kind === 'wifi'));
   assert.deepEqual(
     state.devices.map((d) => d.name),
     ['Pixel 10 Pro XL'],

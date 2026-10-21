@@ -6,7 +6,9 @@ import { setTimeout as delay } from 'node:timers/promises';
 import type { AddressInfo } from 'node:net';
 import type { IncomingMessage } from 'node:http';
 import path from 'node:path';
+import { tmpdir } from 'node:os';
 import { WebSocket } from 'ws';
+import { reachableLan } from './lan-probe.js';
 import { isLoopback, lanAllowed, lanIPv4s, lanTokenOk, mintLanToken } from '../src/server/lan.js';
 import { loadConfig } from '../src/server/config.js';
 import { startServer } from '../src/server/server.js';
@@ -52,7 +54,7 @@ test('lanIPv4s lists dotted IPv4 addresses', () => {
 });
 
 async function startOffice(t: { after(fn: () => unknown): unknown }, ...argv: string[]) {
-  const home = mkdtempSync(path.resolve('tests/.lan-'));
+  const home = mkdtempSync(path.join(tmpdir(), 'droid-office-lan-'));
   const cfg = loadConfig(['--home', home, '--projects', home, '--weather', 'clear', ...argv]);
   cfg.port = 0;
   const office = await startServer(cfg);
@@ -96,9 +98,9 @@ test('the sign-in routes are gone', { timeout: 60_000 }, async (t) => {
 });
 
 test('off the machine, missing and wrong tokens are refused', { timeout: 60_000 }, async (t) => {
-  const ip = lanIPv4s()[0];
-  if (!ip) return t.skip('no LAN address to arrive from');
   const { office } = await startOffice(t, '--host', '0.0.0.0');
+  const ip = await reachableLan(t, office.server);
+  if (!ip) return;
   const port = (office.server.address() as AddressInfo).port;
   const base = `http://${ip}:${port}`;
   const token = office.lanToken;
