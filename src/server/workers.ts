@@ -21,6 +21,7 @@ import { stationBrief } from './stations.js';
 import { officePrompt, type PromptSource } from './prompts.js';
 import { forgeVars, PROMPTS, workerBranchPolicy } from '../shared/prompts.js';
 import { isBusy } from '../shared/status.js';
+import { forkRefusal, nearestForkSeat } from '../shared/worker-fork.js';
 import { githubPulls } from './github.js';
 import type { PullHost } from './forge.js';
 import { forgeWords, type Forge } from '../shared/floors.js';
@@ -214,6 +215,8 @@ interface Worker {
   /** Its terminal is running that plan; when it finished, so the agent gets its own time to start after it. */
   settingUp?: boolean;
   setupDoneAt?: number;
+  /** Until SessionStart gives the twin its own id, restarts must fork, never resume the source. */
+  pendingFork?: { sessionId: string; prompt?: string };
 }
 
 export interface WorkerEvents {
@@ -607,6 +610,89 @@ export class WorkerManager {
     return info;
   }
 
+  /** A peer with a private snapshot of the source's repositories and conversation, between turns only. */
+  async fork(id: string, by: string, prompt?: string): Promise<WorkerInfo | string> {
+    if (this.closing || this.selectingBranch) return 'Wait for the office to finish restarting or switching branches';
+    const source = this.workers.get(id);
+    if (!source) return 'No such worker';
+    const why = forkRefusal(source.info);
+    if (why) return why;
+    const screen = source.term && readDroidScreen(screenRows(source.term));
+    if (screen === 'busy' || screen === 'asking') return 'Wait until its turn ends before forking';
+    if (source.launchPrompt || source.settingUp) return 'Wait for its first prompt and worktree setup to finish';
+    const full = this.capacity?.full();
+    if (full) return full;
+    const sourceDesk = DESK_BY_ID.get(source.info.deskId);
+    if (!sourceDesk) return 'The source desk is no longer on this floor';
+    const seat = nearestForkSeat(sourceDesk, (desk) => this.deskOccupied(desk));
+    if (!seat) return 'Every desk and bean bag on this floor is taken';
+    const used = new Set([...this.workers.values()].map((w) => w.info.name).concat([...(this.holds?.names() ?? [])]));
+    const stem = `${source.info.name} ⑂`;
+    let name = stem;
+    for (let n = 2; used.has(name); n++) name = `${stem} ${n}`;
+    const twinId = randomBytes(6).toString('hex');
+    const slug = `fork-${twinId}`;
+    const many = !!source.info.repos?.length;
+    const originals = source.info.worktree ? this.treesOf(source.info) : [{ name: path.basename(this.dir), dir: this.dir, trees: this.trees, ref: undefined }];
+    const made: { trees: Worktrees; ref: WorktreeRef }[] = [];
+    let primary: WorkerInfo['worktree'];
+    const others: WorkerRepo[] = [];
+    try {
+      for (const [i, original] of originals.entries()) {
+        const cwd = original.ref?.path ? path.resolve(original.dir, original.ref.path) : original.dir;
+        const wt = original.trees.fork(slug, cwd, many ? original.name : undefined, this.dir);
+        if (typeof wt === 'string') throw new Error(wt);
+        made.push({ trees: original.trees, ref: { ...wt, path: path.relative(original.dir, path.join(this.dir, wt.path)) } });
+        if (i === 0) primary = { ...wt, from: source.info.worktree?.from ?? wt.from };
+        else others.push({ ...source.info.repos![i - 1], ...wt, from: source.info.repos![i - 1].from ?? wt.from, pr: undefined });
+      }
+      if (many)
+        this.writeBrief(
+          primary!,
+          others.map((r) => ({ name: r.name, project: r.repo ?? r.name, from: r.from })),
+        );
+    } catch (err) {
+      const errors: string[] = [];
+      for (const m of made.reverse()) {
+        const result = await m.trees.sendHome(m.ref, 'all');
+        if (result.error) errors.push(result.error);
+      }
+      if (many) clearWorkspace(path.join(this.dir, WORKTREES_DIR, slug));
+      return `${(err as Error).message}${errors.length ? `; incomplete fork cleanup failed: ${errors.join('; ')}` : ''}`;
+    }
+    const text = prompt?.trim() || undefined;
+    const info: WorkerInfo = {
+      id: twinId,
+      kind: 'agent',
+      model: source.info.activeModel ?? source.info.model,
+      effort: source.info.activeModel ? source.info.activeEffort : source.info.effort,
+      deskId: seat.id,
+      name,
+      color: source.info.color,
+      status: 'starting',
+      acked: true,
+      createdBy: by,
+      createdAt: Date.now(),
+      prompt: text ?? source.info.prompt,
+      task: source.info.task ? { ...source.info.task } : undefined,
+      worktree: primary,
+      repos: many ? others : undefined,
+      forkedFrom: { workerId: id, name: source.info.name, sessionId: source.info.sessionId! },
+      cols: source.info.cols,
+      rows: source.info.rows,
+      open: false,
+    };
+    const w = newWorker(info);
+    w.pendingFork = { sessionId: source.info.sessionId!, prompt: text };
+    w.worktreeOwnership = Object.fromEntries(this.treesOf(info).map((t) => [t.dir, t.trees.ownership(t.ref.branch)]));
+    w.setupPlan = this.planSetup(twinId, primary!, info.repos, source.info);
+    this.workers.set(twinId, w);
+    // Persist the fork intent before starting a process, so a restart cannot attach to the parent's session.
+    this.persist();
+    this.launch(w, text, undefined);
+    return info;
+  }
+
   /** The team `leadId` leads, which it starts wearing the markings of with its first hire. */
   private formTeam(leadId: string): TeamBadge | undefined {
     const lead = this.workers.get(leadId);
@@ -689,13 +775,13 @@ export class WorkerManager {
    * The plan that makes a new worker's worktrees ready (each repository's own, across repositories),
    * written for its terminal to run; nothing when no step has anything to do.
    */
-  private planSetup(id: string, wt: Worktree, others: WorkerRepo[] | undefined): string | undefined {
+  private planSetup(id: string, wt: Worktree, others: WorkerRepo[] | undefined, source?: WorkerInfo): string | undefined {
     if (!this.setupScript) return undefined;
     try {
       const many = !!others?.length;
       const steps = [
-        setupStep(this.dir, path.join(this.dir, wt.path), this.dataDir, many ? path.basename(wt.path) : undefined),
-        ...(others ?? []).map((r) => setupStep(r.dir, path.join(this.dir, r.path), path.join(r.dir, '.droid-office'), r.name)),
+        setupStep(source?.worktree ? path.join(this.dir, source.worktree.path) : this.dir, path.join(this.dir, wt.path), this.dataDir, many ? path.basename(wt.path) : undefined),
+        ...(others ?? []).map((r, i) => setupStep(source?.repos?.[i] ? path.join(this.dir, source.repos[i].path) : r.dir, path.join(this.dir, r.path), path.join(r.dir, '.droid-office'), r.name)),
       ].filter((s): s is SetupStep => !!s);
       return steps.length ? writePlan(this.dataDir, id, steps) : undefined;
     } catch {
@@ -1566,6 +1652,7 @@ export class WorkerManager {
     if (event === 'SessionStart') {
       if ((w.info.sessionId && w.info.sessionId !== session) || report.source === 'clear') this.clearTask(w);
       w.info.sessionId = session;
+      w.pendingFork = undefined;
       w.subSessions.clear();
       w.lastTool.clear();
       w.bootBlocked = false;
@@ -1801,10 +1888,12 @@ export class WorkerManager {
       const system = this.systemPromptFile(info);
       args.unshift('--settings', this.droidSettings(info), ...(system ? ['--append-system-prompt-file', system] : []));
       if (resumeSessionId) args.push('--resume', resumeSessionId);
+      else if (w.pendingFork) args.push('--cwd', this.cwd(info), '--fork', w.pendingFork.sessionId);
     }
     // Typed in at SessionStart rather than passed as `droid -- <prompt>`: droid started with a
     // prompt argument never opens /rewind-conversation for the rest of that run.
-    w.launchPrompt = !isShell && prompt ? { text: prompt, at: Date.now() } : undefined;
+    const first = w.pendingFork?.prompt ?? prompt;
+    w.launchPrompt = !isShell && first ? { text: first, at: Date.now() } : undefined;
     w.hookToken = randomBytes(16).toString('hex');
     // A new process: whatever subagents and prompts the last one had went with it.
     w.subSessions.clear();
@@ -2136,6 +2225,8 @@ process.stdin.on('end', () => {
     // A saved system prompt may predate the floor selector. Keep it, but don't let its generic
     // default-branch instructions override an explicit owner choice.
     if (text && this.trees.selectedBranch() && !template.includes('{{branchPolicy}}')) text += `\n\n${branchPolicy}`;
+    if (text && info.forkedFrom)
+      text += `\n\nYou are ${info.name}, an independent fork of ${info.forkedFrom.name}'s conversation. Your files are a private snapshot in your own worktree. The original may keep working. You are not the original worker or its subagent: use your own worker id and do not act on its terminal, worktree or team.`;
     try {
       if (!text) {
         rmSync(file, { force: true });
@@ -2176,7 +2267,7 @@ process.stdin.on('end', () => {
   private persist(onShutdown = false) {
     // A stopped manager's pending namer/terminal callbacks must not overwrite its successor's state.
     if (this.closing && !onShutdown) return;
-    const saved = [...this.workers.values()].map(({ info, hookToken, pty, bootBlocked, interrupted, worktreeOwnership, launchPrompt }) => ({
+    const saved = [...this.workers.values()].map(({ info, hookToken, pty, bootBlocked, interrupted, worktreeOwnership, launchPrompt, pendingFork }) => ({
       id: info.id,
       kind: info.kind,
       model: info.model,
@@ -2192,6 +2283,8 @@ process.stdin.on('end', () => {
       repos: info.repos,
       title: info.title,
       sessionId: info.sessionId,
+      forkedFrom: info.forkedFrom,
+      pendingFork,
       activity: info.activity,
       task: info.task,
       pr: info.pr,
@@ -2219,6 +2312,7 @@ process.stdin.on('end', () => {
         pty?: any;
         midTurn?: unknown;
         worktreeOwnership?: Record<string, WorktreeOwnership>;
+        pendingFork?: Worker['pendingFork'];
         /** An office from before subscriptions kept who last typed here; only the time carries over. */
         lastInput?: unknown;
       })[];
@@ -2243,6 +2337,7 @@ process.stdin.on('end', () => {
           repos: s.worktree ? validRepos(s.repos) : undefined,
           title: s.title,
           sessionId: s.sessionId,
+          forkedFrom: s.forkedFrom && typeof s.forkedFrom.workerId === 'string' && typeof s.forkedFrom.name === 'string' && typeof s.forkedFrom.sessionId === 'string' ? s.forkedFrom : undefined,
           activity: s.activity,
           task: validTask(s.task),
           pr: s.pr && typeof s.pr.number === 'number' && typeof s.pr.url === 'string' ? { number: s.pr.number, url: s.pr.url } : undefined,
@@ -2255,6 +2350,7 @@ process.stdin.on('end', () => {
         };
         const w = newWorker(info, typeof s.hookToken === 'string' && s.hookToken ? s.hookToken : undefined);
         w.worktreeOwnership = s.worktreeOwnership;
+        if (!info.sessionId && typeof s.pendingFork?.sessionId === 'string') w.pendingFork = { sessionId: s.pendingFork.sessionId, prompt: typeof s.pendingFork.prompt === 'string' ? s.pendingFork.prompt : undefined };
         w.screenDirty = false;
         if (typeof s.pty?.id === 'string') {
           const status: WorkerStatus = RUNNING.has(s.pty.status) ? s.pty.status : 'idle';

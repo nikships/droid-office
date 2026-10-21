@@ -36,6 +36,54 @@ test('a worker whose first frame has no time in it still has a body', (t) => {
   }
 });
 
+test('a fork splits from the source toward its new seat and lands exactly at its anchor', (t) => {
+  t.after(canvasDocument());
+  const worker = new Worker('Twin', '#e76f51');
+  worker.setStatus('idle', false);
+  worker.splitFrom(new THREE.Vector3(-2.2, 0, 0));
+  assert.equal(worker.root.position.x, -2.2, 'starts at the source to the left');
+  worker.update(0.325, 0.325);
+  assert.ok(Math.abs(worker.root.position.x + 1.1) < 1e-8, 'moves right toward the new seat');
+  assert.ok(worker.root.position.y > 0, 'rises slightly in the split');
+  assert.equal(worker.animating, true);
+  worker.update(0.325, 0.65);
+  assert.deepEqual(worker.root.position.toArray(), [0, 0, 0]);
+  worker.update(1, 1.65);
+  assert.equal(worker.animating, false);
+  worker.dispose();
+});
+
+test('a fork finishes its split before a dance or levitation can start', (t) => {
+  t.after(canvasDocument());
+  const worker = new Worker('Twin', '#e76f51');
+  worker.setStatus('idle', false);
+  worker.splitFrom(new THREE.Vector3(-2.2, 0, 0));
+  worker.update(0.325, 0.325);
+  assert.equal(worker.levitate(), false);
+  worker.dance({ pos: new THREE.Vector3(), yaw: 0 });
+  worker.update(0.325, 0.65);
+  assert.deepEqual(worker.root.position.toArray(), [0, 0, 0], 'a dance cannot freeze the split mid-flight');
+  assert.equal(worker.levitate(), true, 'other poses work again after landing');
+  worker.dispose();
+});
+
+test('stopping a pose, sending home or shooting a twin cancels its split at the seat', (t) => {
+  t.after(canvasDocument());
+  for (const action of ['stop', 'leave', 'die'] as const) {
+    const worker = new Worker('Twin', '#e76f51');
+    worker.setStatus('idle', false);
+    worker.splitFrom(new THREE.Vector3(-2.2, 0, 0));
+    worker.update(0.325, 0.325);
+    if (action === 'stop') worker.stopDancing();
+    else if (action === 'leave') worker.leave('Goodbye');
+    else worker.die();
+    assert.deepEqual(worker.root.position.toArray(), [0, 0, 0], action);
+    worker.update(0.1, 0.425);
+    assert.deepEqual(worker.root.position.toArray(), [0, 0, 0], `${action} cannot resume a stale split`);
+    worker.dispose();
+  }
+});
+
 test('a done worker idles only after landing beside its card, and resumes hopping when you leave', (t) => {
   t.after(canvasDocument());
   const worker = new Worker('Lead', '#e76f51');

@@ -67,6 +67,7 @@ import { Gallery } from './world/gallery';
 import { Departures } from './world/leaving';
 import { Casualties } from './world/casualties';
 import { TeamLines, type TeamLink } from './world/team-lines';
+import { forkLinks } from '../shared/worker-fork';
 import { TEAM_MARK, teamLinks, teamStanding, teamSummary } from '../shared/team';
 import { BloodSpray, gunHit, Puff, setMagnumModel } from './world/gun';
 import { GUN_TRICKS, GunMotion, type GunCue, type GunTrickId } from './world/gun-motion';
@@ -1485,6 +1486,8 @@ function syncWorkers() {
       const model = new Worker(w.name, w.color);
       desk.seatAnchor.add(model.root);
       model.setPropSpot(model.root.worldToLocal(desk.group.localToWorld(desk.propSpot.clone())));
+      const original = w.forkedFrom && workerViews.get(w.forkedFrom.workerId);
+      if (original && Date.now() - w.createdAt < 5000 && !reduceMotion.matches) model.splitFrom(desk.seatAnchor.worldToLocal(original.model.root.getWorldPosition(new THREE.Vector3())));
       const laptop = new Laptop();
       desk.laptopAnchor.add(laptop.root);
       noOutline(desk.group);
@@ -1566,6 +1569,11 @@ function syncTeamLines() {
     const to = seat(l.member.deskId);
     if (from && to) links.push({ from, to, color: l.accent, team: l.team, moving: l.moving });
   }
+  for (const { source, twin } of forkLinks(store.workers.values())) {
+    const from = seat(source.deskId);
+    const to = seat(twin.deskId);
+    if (from && to) links.push({ from, to, color: twin.color, team: `fork:${source.id}`, moving: twin.status === 'working' });
+  }
   teamLines.set(links);
 }
 
@@ -1574,7 +1582,7 @@ let focusedTeam: string | null = null;
 function focusTeam(it: Interactable | null) {
   const w = it?.deskId ? store.workerAtDesk(it.deskId) : undefined;
   const badge = w?.team;
-  const id = badge?.id ?? null;
+  const id = badge?.id ?? (w ? `fork:${w.forkedFrom?.workerId ?? w.id}` : null);
   if (id === focusedTeam) return;
   focusedTeam = id;
   teamLines.focus(id);

@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readlinkSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { Changes } from '../src/server/changes.js';
@@ -42,6 +42,102 @@ function fixture(t: { after(fn: () => void): void }) {
   };
   return { root, dir, git: (...args: string[]) => run(dir, ...args), commit: (file: string) => commit(dir, file), merge };
 }
+
+test('forks copy staged, unstaged, binary, deleted, executable and untracked files without touching the source', (t) => {
+  const f = fixture(t);
+  writeFileSync(path.join(f.dir, 'removed.txt'), 'remove me');
+  writeFileSync(path.join(f.dir, 'image.bin'), Buffer.from([0, 1, 2]));
+  writeFileSync(path.join(f.dir, '.gitignore'), '.env\n.droid-office/\n');
+  f.git('add', '.');
+  f.git('commit', '-qm', 'snapshot inputs');
+  writeFileSync(path.join(f.dir, 'a.txt'), 'staged\n');
+  f.git('add', 'a.txt');
+  writeFileSync(path.join(f.dir, 'a.txt'), 'staged\nand unstaged\n');
+  writeFileSync(path.join(f.dir, 'image.bin'), Buffer.from([0, 255, 17, 0]));
+  chmodSync(path.join(f.dir, 'a.txt'), 0o755);
+  unlinkSync(path.join(f.dir, 'removed.txt'));
+  const odd = 'a folder/untracked\nfile.txt';
+  mkdirSync(path.join(f.dir, 'a folder'));
+  writeFileSync(path.join(f.dir, odd), 'new file');
+  symlinkSync('a.txt', path.join(f.dir, 'link'));
+  writeFileSync(path.join(f.dir, '.env'), 'LOCAL=source');
+  const head = f.git('rev-parse', 'HEAD');
+  const status = f.git('status', '--porcelain=v1', '-z');
+  const staged = f.git('diff', '--cached', '--binary');
+  const unstaged = f.git('diff', '--binary');
+  const index = readFileSync(path.join(f.dir, '.git', 'index'));
+  const trees = new Worktrees(f.dir);
+  trees.saveBranch('missing-floor-override');
+  const made = trees.fork('twin', f.dir);
+  assert.ok(typeof made !== 'string', String(made));
+  if (typeof made === 'string') return;
+  const target = path.join(f.dir, made.path);
+  const git = (...args: string[]) => execFileSync('git', args, { cwd: target, encoding: 'utf8' }).trim();
+  assert.equal(made.base, head, 'does not fetch or use the floor override');
+  assert.equal(git('rev-parse', 'HEAD'), head);
+  assert.equal(git('diff', '--cached', '--binary'), staged);
+  assert.equal(git('diff', '--binary'), unstaged);
+  assert.deepEqual(readFileSync(path.join(target, 'image.bin')), Buffer.from([0, 255, 17, 0]));
+  assert.equal(readFileSync(path.join(target, odd), 'utf8'), 'new file');
+  assert.equal(readlinkSync(path.join(target, 'link')), 'a.txt');
+  assert.equal(existsSync(path.join(target, 'removed.txt')), false);
+  assert.equal(existsSync(path.join(target, '.env')), false, 'ignored files are left to the normal setup');
+  assert.equal(existsSync(path.join(target, '.droid-office')), false, 'runtime state is never copied');
+  assert.deepEqual(readFileSync(path.join(f.dir, '.git', 'index')), index);
+  assert.equal(f.git('status', '--porcelain=v1', '-z'), status);
+  assert.equal(f.git('rev-parse', 'HEAD'), head);
+  assert.equal(f.git('stash', 'list'), '');
+  writeFileSync(path.join(target, 'a.txt'), 'alternative');
+  assert.equal(readFileSync(path.join(f.dir, 'a.txt'), 'utf8'), 'staged\nand unstaged\n');
+});
+
+test('forks start at a detached source HEAD and preserve staged additions deleted from the working tree', (t) => {
+  const f = fixture(t);
+  f.git('switch', '--detach', '-q');
+  writeFileSync(path.join(f.dir, 'new.txt'), 'indexed');
+  f.git('add', 'new.txt');
+  unlinkSync(path.join(f.dir, 'new.txt'));
+  const made = new Worktrees(f.dir).fork('detached-twin', f.dir);
+  assert.ok(typeof made !== 'string', String(made));
+  if (typeof made === 'string') return;
+  const target = path.join(f.dir, made.path);
+  assert.equal(execFileSync('git', ['show', ':new.txt'], { cwd: target, encoding: 'utf8' }), 'indexed');
+  assert.equal(existsSync(path.join(target, 'new.txt')), false);
+});
+
+test('forks refuse unresolved conflicts and changed gitlinks without making a new branch', (t) => {
+  const f = fixture(t);
+  const trees = new Worktrees(f.dir);
+  f.git('switch', '-q', '-c', 'conflicting');
+  writeFileSync(path.join(f.dir, 'a.txt'), 'other');
+  f.git('commit', '-qam', 'other edit');
+  f.git('switch', '-q', 'main');
+  writeFileSync(path.join(f.dir, 'a.txt'), 'main');
+  f.git('commit', '-qam', 'main edit');
+  assert.throws(() => f.git('merge', 'conflicting'));
+  assert.match(String(trees.fork('conflicted', f.dir)), /conflicts before forking/);
+  assert.equal(trees.branchState('office/conflicted'), 'gone');
+  f.git('merge', '--abort');
+  f.git('update-index', '--add', '--cacheinfo', `160000,${f.git('rev-parse', 'HEAD')},submodule`);
+  assert.match(String(trees.fork('submodule', f.dir)), /submodule changes before forking/);
+  assert.equal(trees.branchState('office/submodule'), 'gone');
+});
+
+test('a failed fork cleans up only its new worktree and branch', (t) => {
+  const f = fixture(t);
+  writeFileSync(path.join(f.dir, 'untracked'), 'source');
+  const trees = new Worktrees(f.dir);
+  const create = trees.create.bind(trees);
+  trees.create = (...args) => {
+    const made = create(...args);
+    if (typeof made !== 'string') writeFileSync(path.join(f.dir, made.path, 'untracked'), 'collision');
+    return made;
+  };
+  assert.match(String(trees.fork('broken-twin', f.dir)), /Could not fork/);
+  assert.equal(existsSync(path.join(f.dir, '.droid-office', 'worktrees', 'broken-twin')), false);
+  assert.equal(trees.branchState('office/broken-twin'), 'gone');
+  assert.equal(readFileSync(path.join(f.dir, 'untracked'), 'utf8'), 'source');
+});
 
 test('a saved floor branch overrides main and checkout starts, survives new instances, and resets to the default', async (t) => {
   const f = fixture(t);
