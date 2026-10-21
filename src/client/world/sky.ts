@@ -3,6 +3,7 @@ import { FLOOR, SLAB, STREET_Y, WALL_T } from '../../shared/layout';
 import type { SkyState, Weather } from '../../shared/protocol';
 import { guessPlace } from '../../shared/sun';
 import type { NightParts } from './outside';
+import { AXIS_PROBE_GLSL, axisProbeUniforms } from './probe-axis';
 import { CONTACT_LIGHT, SURFACE_LIGHT, SURFACE_VERTEX, surfaceFinish, surfaceUniforms, WALL_CONTACT } from './surface';
 
 /*
@@ -145,7 +146,9 @@ if (THREE.ShaderChunk.lights_fragment_begin.includes(PROBE_LINE)) {
   THREE.ShaderChunk.lights_fragment_begin = THREE.ShaderChunk.lights_fragment_begin.replace(
     PROBE_LINE,
     /* glsl */ `vec3 rmProbeOut = max( max( probesMin - probeWorldPos, probeWorldPos - probesMax ), 0.0 );
-		rmProbeIrr = rmGI * ( 1.0 - smoothstep( 0.0, 1.0, length( rmProbeOut ) ) ) * getLightProbeGridIrradiance( probeWorldPos, probeWorldNormal );
+		float rmProbeWeight = rmGI * ( 1.0 - smoothstep( 0.0, 1.0, length( rmProbeOut ) ) );
+		// Outside the fade the contribution is exactly zero: skip all seven 3D atlas samples.
+		if ( rmProbeWeight > 0.0 ) rmProbeIrr = rmProbeWeight * getLightProbeGridIrradiance( probeWorldPos, probeWorldNormal );
 		irradiance += rmProbeIrr;`,
   );
 } else console.warn('sky: three.js light-probe chunk changed; probe GI is unscaled');
@@ -355,7 +358,9 @@ THREE.Material.prototype.onBeforeCompile = function (this: THREE.Material, shade
     shader.fragmentShader = shader.fragmentShader.replace('#include <fog_pars_fragment>', `#include <fog_pars_fragment>\n${HAZE_PARS}`).replace('#include <fog_fragment>', HAZE);
   }
   if (lit) {
-    Object.assign(shader.uniforms, surfaceUniforms);
+    Object.assign(shader.uniforms, surfaceUniforms, axisProbeUniforms);
+    // A uniform switches the finished atlas on, so baking/restoring never asks for a new shader.
+    shader.fragmentShader = shader.fragmentShader.replace('#include <lights_pars_begin>', `#include <lights_pars_begin>\n${AXIS_PROBE_GLSL}`);
     const finish = surfaceFinish(this);
     if (finish) {
       shader.uniforms.rmFinish = { value: new THREE.Vector2(...finish) };

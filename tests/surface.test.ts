@@ -171,7 +171,7 @@ test('static batching retains each painted face, triangle and local transform', 
   const counts = new Map<THREE.Material, number>();
   for (const object of merged.children) {
     const mesh = object as THREE.Mesh<THREE.BufferGeometry, THREE.Material>;
-    counts.set(mesh.material, mesh.geometry.getAttribute('position').count / 3);
+    counts.set(mesh.material, (mesh.geometry.index?.count ?? mesh.geometry.getAttribute('position').count) / 3);
     assert.deepEqual(Object.keys(mesh.geometry.attributes).sort(), ['normal', 'position']);
   }
   assert.equal(counts.get(outside), 4);
@@ -180,4 +180,65 @@ test('static batching retains each painted face, triangle and local transform', 
   assert.ok(bounds.min.distanceTo(new THREE.Vector3(-1, 0, -0.1)) < 1e-6);
   assert.ok(bounds.max.distanceTo(new THREE.Vector3(4, 3, 0.1)) < 1e-6);
   assert.equal((root.children[0] as THREE.Mesh).geometry.index?.count, 36, 'source geometry is untouched');
+});
+
+test('merged static geometry rejects box misses before reading triangles and preserves transformed hits', () => {
+  const root = new THREE.Group();
+  root.add(new THREE.Mesh(new THREE.BoxGeometry(20, 0.1, 0.1), toonUnique('#ffffff')));
+  const merged = mergeByMaterial(root);
+  const mesh = merged.children[0] as THREE.Mesh;
+  const position = mesh.geometry.getAttribute('position');
+  const getX = position.getX.bind(position);
+  let reads = 0;
+  position.getX = (i) => {
+    reads++;
+    return getX(i);
+  };
+  mesh.geometry.computeBoundingSphere();
+  reads = 0;
+  merged.position.set(2, 3, -4);
+  merged.rotation.y = Math.PI / 2;
+  merged.updateMatrixWorld(true);
+  const miss = new THREE.Raycaster(new THREE.Vector3(6, 3, 10), new THREE.Vector3(0, 0, -1));
+  assert.deepEqual(miss.intersectObject(merged, true), []);
+  assert.equal(reads, 0, 'a ray through the broad sphere but outside the thin box reads no triangles');
+  const hit = new THREE.Raycaster(new THREE.Vector3(2, 5, -4), new THREE.Vector3(0, -1, 0));
+  const bounded = hit.intersectObject(merged, true);
+  mesh.geometry.boundingBox = null;
+  const reference = hit.intersectObject(merged, true);
+  assert.ok(bounded.length > 0);
+  assert.deepEqual(bounded, reference, 'the same triangles and world-space hit points survive the box test');
+});
+
+test('static solids reuse only bit-identical position/normal pairs without changing a single triangle', () => {
+  const material = toonUnique('#ffffff');
+  for (const source of [new THREE.BoxGeometry(2, 3, 4), beveledBox(2, 3, 4)]) {
+    const root = new THREE.Group();
+    root.add(new THREE.Mesh(source, material));
+    const merged = (mergeByMaterial(root).children[0] as THREE.Mesh).geometry;
+    const before = source.index ? source.toNonIndexed() : source;
+    assert.ok(merged.index, 'the solid is indexed');
+    assert.ok(merged.getAttribute('position').count < before.getAttribute('position').count);
+    const after = merged.toNonIndexed();
+    for (const name of ['position', 'normal']) {
+      const bits = (geometry: THREE.BufferGeometry) => {
+        const array = geometry.getAttribute(name).array;
+        return new Uint32Array(array.buffer, array.byteOffset, array.byteLength / 4);
+      };
+      assert.deepEqual(bits(after), bits(before), `${name}: the same float bits, in the same triangle order`);
+    }
+  }
+});
+
+test('static vertex indexing keeps hard edges and nearly coincident vertices separate', () => {
+  const geometry = new THREE.BufferGeometry();
+  geometry.setAttribute('position', new THREE.Float32BufferAttribute([0, 0, 0, 1, 0, 0, 0, 1, 0, 0.0000001, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 1, 0], 3));
+  geometry.setAttribute('normal', new THREE.Float32BufferAttribute([0, 0, 1, 0, 0, 1, 0, 0, 1, 0, 0, 1, 0, 0, 1, 0, 0, 1, 0, 1, 0, 0, 1, 0, 0, 1, 0], 3));
+  const root = new THREE.Group();
+  root.add(new THREE.Mesh(geometry, toonUnique('#ffffff')));
+  const merged = (mergeByMaterial(root).children[0] as THREE.Mesh).geometry;
+  assert.equal(merged.getAttribute('position').count, 7);
+  assert.notEqual(merged.index!.getX(0), merged.index!.getX(3), 'positions 0.1 micrometres apart remain separate');
+  assert.notEqual(merged.index!.getX(0), merged.index!.getX(6), 'a different normal keeps the hard edge');
+  assert.equal(merged.index!.getX(1), merged.index!.getX(4), 'identical pairs reuse a vertex');
 });
