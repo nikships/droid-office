@@ -73,7 +73,16 @@ export function terminalOnTop(): boolean {
   return !!backdrop && backdrop.parentElement?.lastElementChild === backdrop;
 }
 
-export function openTerminal(net: Net, workerId: string, onChanges?: () => void, find?: TerminalFind) {
+/** Closes the open terminal, in a window or inline, if there is one. */
+export function closeTerminal() {
+  current?.modal.close();
+}
+
+/**
+ * Opens a worker's terminal in a window. With `inline`, it fills that element instead: no window,
+ * backdrop or ✕, and Esc and Ctrl+] go to the program. The caller closes it with `closeTerminal`.
+ */
+export function openTerminal(net: Net, workerId: string, onChanges?: () => void, find?: TerminalFind, inline?: HTMLElement) {
   if (current?.workerId === workerId) {
     if (find) current.find(find);
     return;
@@ -101,9 +110,9 @@ export function openTerminal(net: Net, workerId: string, onChanges?: () => void,
   const team = h('div.term-team.chips.hidden', { role: 'group', 'aria-label': 'Team' });
   let teamKey = '';
   const el = h(
-    'div.modal.full.term',
-    { role: 'dialog', 'aria-label': `${info.name} terminal` },
-    h('header', {}, colorDot(info.color), h('div.titles', {}, h('div.term-title', {}, title, pill), sub), h('div.actions', {}, copyBtn, zoom, onChanges ? changesBtn : null, guest ? bringInBtn : null), closeBtn),
+    inline ? 'div.modal.term.inline' : 'div.modal.full.term',
+    inline ? { role: 'region', 'aria-label': `${info.name} terminal` } : { role: 'dialog', 'aria-label': `${info.name} terminal` },
+    h('header', {}, colorDot(info.color), h('div.titles', {}, h('div.term-title', {}, title, pill), sub), h('div.actions', {}, copyBtn, zoom, onChanges ? changesBtn : null, guest ? bringInBtn : null), inline ? null : closeBtn),
     team,
     disconnected,
     host,
@@ -294,33 +303,49 @@ export function openTerminal(net: Net, workerId: string, onChanges?: () => void,
     disconnected.classList.remove('hidden');
   });
 
-  const modal = openModal(el, {
-    backdropCloses: true,
-    // TUIs use Esc to back out of their own menus, so while you're typing in the terminal it goes
-    // to the program. Shift+Esc (or Ctrl+], or Esc once focus is off the terminal) leaves.
-    escCloses: (e) => {
-      if (e.shiftKey || !host.contains(document.activeElement)) return true;
-      if (!escHinted) {
-        escHinted = true;
-        hintToast('Esc went to the terminal. Shift+Esc or Ctrl+] leaves it');
-      }
-      return false;
-    },
-    doing: `💻 in ${info.name}'s terminal`,
-    onClose: () => {
-      listeners.delete(onMsg);
-      unsub();
-      unsubCredits();
-      offStatus();
-      offQueries();
-      mirror.disconnect();
-      offFont();
-      ro.disconnect();
-      net.send({ t: 'worker.detach', workerId });
-      term.dispose();
-      if (current?.modal === modal) current = null;
-    },
-  });
+  const onClose = () => {
+    listeners.delete(onMsg);
+    unsub();
+    unsubCredits();
+    offStatus();
+    offQueries();
+    mirror.disconnect();
+    offFont();
+    ro.disconnect();
+    net.send({ t: 'worker.detach', workerId });
+    term.dispose();
+    if (current?.modal === modal) current = null;
+  };
+  let modal: Modal;
+  if (inline) {
+    let closed = false;
+    modal = {
+      el,
+      backdrop: inline,
+      close() {
+        if (closed) return;
+        closed = true;
+        el.remove();
+        onClose();
+      },
+    };
+    inline.replaceChildren(el);
+  } else
+    modal = openModal(el, {
+      backdropCloses: true,
+      // TUIs use Esc to back out of their own menus, so while you're typing in the terminal it goes
+      // to the program. Shift+Esc (or Ctrl+], or Esc once focus is off the terminal) leaves.
+      escCloses: (e) => {
+        if (e.shiftKey || !host.contains(document.activeElement)) return true;
+        if (!escHinted) {
+          escHinted = true;
+          hintToast('Esc went to the terminal. Shift+Esc or Ctrl+] leaves it');
+        }
+        return false;
+      },
+      doing: `💻 in ${info.name}'s terminal`,
+      onClose,
+    });
   const csiEnter = () => wantsCsiEnter(store.workers.get(workerId)?.kind);
   current = {
     workerId,
@@ -360,7 +385,7 @@ export function openTerminal(net: Net, workerId: string, onChanges?: () => void,
   });
 
   term.attachCustomKeyEventHandler((e) => {
-    if (e.type === 'keydown' && e.ctrlKey && e.key === ']') {
+    if (!inline && e.type === 'keydown' && e.ctrlKey && e.key === ']') {
       modal.close();
       return false;
     }

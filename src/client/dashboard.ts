@@ -60,7 +60,7 @@ const connection = h('span.pill', {}, 'Connecting');
 const title = h('h1', {}, officeName);
 const floors = h('select.select', { 'aria-label': 'Active floor' });
 const workerList = h('div.list.dashboard-workers', { 'aria-label': 'Workers' });
-const detail = h('main.dashboard-detail', { id: 'worker-detail', tabindex: '-1', 'aria-label': 'Worker details' });
+const detail = h('main.dashboard-detail', { id: 'worker-detail', tabindex: '-1', 'aria-label': 'Worker' });
 const boardLabel = h('span', {}, 'Whiteboard');
 const board = h('button.btn', { type: 'button', onclick: () => void openBoard() }, boardLabel);
 const agent = h('button.btn.accent', { type: 'button', onclick: () => hire('agent') }, 'Hire Droid');
@@ -82,7 +82,7 @@ const retry = h(
 const authPanel = h('section.dashboard-auth');
 const content = h('div.dashboard-content', {}, h('aside.dashboard-sidebar', {}, h('div.eyebrow', {}, 'Active floor'), floors, h('div.row.wrap', {}, agent, shell), h('div.eyebrow', {}, 'Workers'), workerList), detail);
 $('dashboard').replaceChildren(
-  h('a.dashboard-skip', { href: '#worker-detail' }, 'Skip to worker details'),
+  h('a.dashboard-skip', { href: '#worker-detail' }, 'Skip to worker'),
   h(
     'header.dashboard-header',
     {},
@@ -215,6 +215,8 @@ async function action(msg: ClientMsg, id = '', intendedFloor = floor): Promise<s
 }
 
 let detailId = '';
+let stageMode = '';
+let stage: HTMLElement;
 let name: HTMLElement;
 let meta: HTMLElement;
 let activity: HTMLElement;
@@ -276,32 +278,71 @@ function paint() {
   const w = store.workers.get(selected);
   if (!w) {
     detailId = '';
+    stageMode = '';
+    terminal?.closeTerminal();
     detail.replaceChildren(
-      emptyState(
-        '',
-        selected ? 'This worker has left' : 'A clear view of the work',
-        selected
-          ? 'Its session is no longer controlled here. Select another worker.'
-          : store.floors.length
-            ? 'Select a worker to inspect its task, answer a question or open its live terminal. The Whiteboard is one click away.'
-            : 'No floors are available. Add an existing project in the Mac office first.',
+      h(
+        'div.dashboard-info',
+        {},
+        emptyState(
+          '',
+          selected ? 'This worker has left' : 'A clear view of the work',
+          selected
+            ? 'Its session is no longer controlled here. Select another worker.'
+            : store.floors.length
+              ? 'Select a worker to see its live terminal. The Whiteboard is one click away.'
+              : 'No floors are available. Add an existing project in the Mac office first.',
+        ),
       ),
     );
     return;
   }
   if (detailId !== w.id) {
+    terminal?.closeTerminal();
     detailId = w.id;
+    stageMode = '';
     shownMenu = undefined;
     questionKey = '';
     questionDraft = read(draftKey(floor, `${w.id}:answer`));
     answered = false;
-    name = h('h2');
-    meta = h('div.dashboard-meta');
-    activity = h('p.dashboard-activity');
     buttons = h('div.row.wrap.dashboard-actions');
     question = h('section.stack.dashboard-question', { 'aria-label': 'Question requiring input' });
-    detail.replaceChildren(h('div.eyebrow', {}, 'Worker'), name, activity, buttons, meta, question);
+    stage = h('div.dashboard-stage');
+    detail.replaceChildren(buttons, question, stage);
   }
+  const local = !w.guest && !w.cloud;
+  // Anything without a local terminal to show (outside the office, in Factory, asleep) falls back to what the office knows of it.
+  const mode = local && !isAsleep(w.status) ? 'terminal' : 'info';
+  if (mode !== stageMode) {
+    stageMode = mode;
+    terminal?.closeTerminal();
+    if (mode === 'info') {
+      name = h('h2');
+      activity = h('p.dashboard-activity');
+      meta = h('div.dashboard-meta');
+      stage.replaceChildren(h('div.dashboard-info', {}, name, activity, meta));
+    } else stage.replaceChildren(h('p.field-hint.dashboard-info', {}, 'Connecting to the terminal…'));
+  }
+  if (mode === 'terminal') void showTerminal(w.id, stage);
+  else paintInfo(w);
+  const enabled = live() && !busy.has(w.id);
+  const btn = (label: string, ok: boolean, run: () => void, cls = '') => h('button.btn', { type: 'button', class: cls, disabled: !enabled || !ok, onclick: run }, label);
+  buttons.replaceChildren(
+    ...(w.cloud && w.sessionId ? [h('a.btn', { href: sessionWebUrl(w.sessionId), target: '_blank', rel: 'noopener noreferrer' }, 'Open Factory session')] : []),
+    btn(w.kind === 'shell' ? 'Send command' : 'Prompt', !w.guest && !w.lost && !isAsleep(w.status), () => prompt(w)),
+    btn(w.kind === 'shell' ? 'Restart shell' : 'Resume', !w.guest && !w.lost && isAsleep(w.status), () => void action({ t: 'worker.resume', workerId: w.id }, w.id)),
+    ...(w.pr
+      ? [h('a.btn', { href: safeLink(w.pr.url), target: '_blank', rel: 'noopener noreferrer' }, 'Open pull request')]
+      : [btn('Create pull request', local && !!w.worktree && !w.lost && !w.prOpening && !isBusy(w.status), () => void action({ t: 'worker.pr', workerId: w.id }, w.id))]),
+    btn('Send home…', !w.guest, () => sendHome(w), 'danger'),
+  );
+  const b = store.floor && store.whiteboard.board(store.floor);
+  const changed = b ? cardsNewestFirst(b).filter((c) => cardChanged(b, OWNER, c.id)).length : 0;
+  boardLabel.textContent = `Whiteboard${changed ? ` · ${changed} unread` : ''}`;
+  paintQuestion();
+}
+
+function paintInfo(w: WorkerInfo) {
   name.textContent = w.name;
   activity.textContent = w.activity ?? w.task?.summary ?? w.prompt ?? 'Waiting for a task.';
   const lead = w.lead && store.workers.get(w.lead);
@@ -331,23 +372,6 @@ function paint() {
     ['Other projects', w.repos?.map((r) => `${r.name} · ${r.branch}`).join(', ')],
   ];
   meta.replaceChildren(...info.filter(([, v]) => !!v).map(([label, value]) => h('div.dashboard-meta-row', {}, h('span.eyebrow', {}, label), h('span', { title: value }, value))));
-  const local = !w.guest && !w.cloud;
-  const enabled = live() && !busy.has(w.id);
-  const btn = (label: string, ok: boolean, run: () => void, cls = '') => h('button.btn', { type: 'button', class: cls, disabled: !enabled || !ok, onclick: run }, label);
-  buttons.replaceChildren(
-    btn('Open terminal', local && !isAsleep(w.status), () => void openTerminal(w.id)),
-    ...(w.cloud && w.sessionId ? [h('a.btn', { href: sessionWebUrl(w.sessionId), target: '_blank', rel: 'noopener noreferrer' }, 'Open Factory session')] : []),
-    btn(w.kind === 'shell' ? 'Send command' : 'Prompt', !w.guest && !w.lost && !isAsleep(w.status), () => prompt(w)),
-    btn(w.kind === 'shell' ? 'Restart shell' : 'Resume', !w.guest && !w.lost && isAsleep(w.status), () => void action({ t: 'worker.resume', workerId: w.id }, w.id)),
-    ...(w.pr
-      ? [h('a.btn', { href: safeLink(w.pr.url), target: '_blank', rel: 'noopener noreferrer' }, 'Open pull request')]
-      : [btn('Create pull request', local && !!w.worktree && !w.lost && !w.prOpening && !isBusy(w.status), () => void action({ t: 'worker.pr', workerId: w.id }, w.id))]),
-    btn('Send home…', !w.guest, () => sendHome(w), 'danger'),
-  );
-  const b = store.floor && store.whiteboard.board(store.floor);
-  const changed = b ? cardsNewestFirst(b).filter((c) => cardChanged(b, OWNER, c.id)).length : 0;
-  boardLabel.textContent = `Whiteboard${changed ? ` · ${changed} unread` : ''}`;
-  paintQuestion();
 }
 
 function kind(w: WorkerInfo) {
@@ -514,13 +538,17 @@ function sendHome(w: WorkerInfo) {
       () => confirm(),
     );
 }
-async function openTerminal(id: string) {
+async function showTerminal(id: string, mount: HTMLElement) {
   const intended = floor;
   if (!terminal) {
     terminal = await import('./ui/terminal');
-    terminal.onOpenTeammate((id) => void openTerminal(id));
+    terminal.onOpenTeammate((mate) => {
+      selected = mate;
+      paint();
+    });
   }
-  if (usable(id, intended)) terminal.openTerminal(net, id);
+  if (terminal.openTerminalFor() === id || selected !== id || !mount.isConnected || !usable(id, intended)) return;
+  terminal.openTerminal(net, id, undefined, undefined, mount);
 }
 async function openBoard() {
   const intended = floor;
