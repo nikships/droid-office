@@ -134,7 +134,7 @@ export function openSettings(
   outside?: { now: string; live: boolean },
   first?: SettingsPane,
   hireForSetup?: () => void,
-  renderer?: { remastered: () => boolean; set: (remastered: boolean) => void },
+  renderer?: { remastered: () => boolean; set: (remastered: boolean) => void; hdr: () => boolean; setHdr: (on: boolean) => void; hdrNote: () => string },
 ) {
   /** A volume slider with its mute button. Dragging it turns the sound back on; letting go plays `preview`. */
   const volumeRow = (label: string, level: 'volume' | 'music', muted: 'muted' | 'musicMuted', preview?: () => void) => {
@@ -798,6 +798,7 @@ export function openSettings(
   const overhead = percentSlider('Overhead lights', 0, OVERHEAD_STEP * 100, (v) => graphicsSet({ overhead: normalizeOverhead(v) }));
   const scaleNote = desc();
   const sharpenNote = desc();
+  const taaNote = desc('Moves each frame by a fraction of a pixel and blends it into the frames before, following the camera. Smooths edges and recovers detail below 100%; something moving fast can smear a little. Off, edges use 4× MSAA.');
   const taa = toggle(
     'Temporal anti-aliasing',
     () => settings.graphics.taa,
@@ -825,6 +826,16 @@ export function openSettings(
   const lookValue = h('span.vol-pct');
   look.addEventListener('input', () => graphicsSet({ lookSensitivity: normalizeLookSensitivity(Number(look.value) / 100) }));
   const lookRow = h('div.volume', {}, look, lookValue);
+  const resolutionRow = card('Render resolution', { desc: scaleNote, control: scale.row });
+  const taaRow = card('Temporal anti-aliasing', { desc: taaNote, control: taa.el });
+  const sharpenRow = card('Sharpening', { desc: sharpenNote, control: sharpen.row });
+  /** Remastered ignores these three. They stay visible, with the Classic values saved behind them. */
+  const lockClassic = (remastered: boolean) => {
+    for (const row of [resolutionRow, taaRow, sharpenRow]) row.classList.toggle('muted', remastered);
+    scale.slider.disabled = remastered;
+    taa.el.input.disabled = remastered;
+    if (remastered) sharpen.slider.disabled = true;
+  };
   const paintGraphics = () => {
     const g = settings.graphics;
     const lookPct = Math.round(g.lookSensitivity * 100);
@@ -845,15 +856,28 @@ export function openSettings(
     fpsCap.paint();
     stats.paint();
     rawMouse.paint();
+    const remastered = renderer?.remastered() ?? false;
     const upscaling = g.taa ? ' with TAA' : '. Turn on TAA to bring back the detail a plain stretch loses';
-    scaleNote.textContent =
-      g.scale >= 1
-        ? 'The office draws every pixel of your screen. Lower it to draw fewer and upscale them: the GPU does less work for each frame.'
-        : `The office draws ${Math.round(g.scale * g.scale * 100)}% of your screen’s pixels and upscales them${upscaling}.`;
-    const native = g.scale >= 1 && !g.taa;
-    sharpen.row.classList.toggle('muted', native);
-    sharpen.slider.toggleAttribute('disabled', native);
-    sharpenNote.textContent = native ? 'Only applies to an upscaled or TAA image. At 100% without TAA the office draws straight to the screen.' : 'Contrast-adaptive sharpening on the final image, to win back what upscaling and TAA soften.';
+    if (remastered) {
+      scaleNote.textContent = 'Classic only. Remastered always draws every pixel of the screen.';
+      taaNote.textContent = 'Classic only. Remastered uses 2× MSAA and ignores this.';
+      sharpen.row.classList.remove('muted');
+      sharpenNote.textContent = 'Classic only. Remastered does not sharpen.';
+    } else {
+      scaleNote.textContent =
+        g.scale >= 1
+          ? 'The office draws every pixel of your screen. Lower it to draw fewer and upscale them: the GPU does less work for each frame.'
+          : `The office draws ${Math.round(g.scale * g.scale * 100)}% of your screen’s pixels and upscales them${upscaling}.`;
+      taaNote.textContent =
+        'Moves each frame by a fraction of a pixel and blends it into the frames before, following the camera. Smooths edges and recovers detail below 100%; something moving fast can smear a little. Off, edges use 4× MSAA.';
+      const native = g.scale >= 1 && !g.taa;
+      sharpen.row.classList.toggle('muted', native);
+      sharpen.slider.disabled = native;
+      sharpenNote.textContent = native
+        ? 'Only applies to an upscaled or TAA image. At 100% without TAA the office draws straight to the screen.'
+        : 'Contrast-adaptive sharpening on the final image, to win back what upscaling and TAA soften.';
+    }
+    lockClassic(remastered);
   };
   paintGraphics();
 
@@ -873,12 +897,28 @@ export function openSettings(
   const paintRenderer = () => {
     rendererPick.paint();
     rendererNote.textContent = renderer?.remastered()
-      ? 'Drawn in high dynamic range, lit by baked global illumination, then graded, with native HDR on an EDR display. Its quality, resolution and picture are in the Graphics Lab. It replaces the resolution, anti-aliasing and sharpening settings below; the frame rate limit and overlay still apply.'
+      ? 'Drawn at the screen’s own resolution, with 2× MSAA and baked global illumination (a probe every 1.4 m, two extra bounces). Natural color, subtle light from screens and lamps, no sharpening. The three rows below are for Classic and do nothing while this is on. The frame rate limit and the overlay still apply.'
       : 'The office the way it has always drawn: toon shading, ink outlines and the resolution and anti-aliasing settings below.';
+    paintGraphics();
   };
+  const hdrNote = desc();
+  const hdrToggle = toggle(
+    'HDR',
+    () => renderer?.hdr() ?? false,
+    (on) => {
+      renderer?.setHdr(on);
+      paintHdr();
+    },
+  );
+  function paintHdr() {
+    hdrToggle.paint();
+    const why = renderer?.hdrNote() ?? '';
+    hdrNote.textContent = why || 'Highlights brighter than white on an EDR display, up to 4× white. Off keeps standard range. Applies when Remastered is on; where the display or browser can’t, the picture stays SDR.';
+  }
+  const onHdrStatus = () => paintHdr();
+  window.addEventListener('office:hdr', onHdrStatus);
   paintRenderer();
-  const labButton = h('button.btn', { type: 'button' }, 'Open the Graphics Lab');
-  labButton.addEventListener('click', () => window.dispatchEvent(new Event('office:graphics-lab')));
+  paintHdr();
   const character = h('button.btn', { type: 'button' }, 'Change your look & name');
   epicCard = card("This floor's Jira epic", { desc: epicNote, below: [epicRow, epicFail] });
   paintJira();
@@ -901,25 +941,8 @@ export function openSettings(
       ),
     ],
     graphics: [
-      group(
-        'Renderer',
-        card('Renderer', { desc: rendererNote, control: rendererPick.row }),
-        card('Graphics Lab', {
-          desc: desc(
-            'The Remastered renderer’s graphics menu, live, in a see-through panel beside the game: an overall quality from Low to Ultra or Auto, each quality setting, resolution from 0.5× to 1.5×, HDR and the picture. ` opens and closes it.',
-          ),
-          control: labButton,
-        }),
-      ),
-      group(
-        'Resolution',
-        card('Render resolution', { desc: scaleNote, control: scale.row }),
-        card('Temporal anti-aliasing', {
-          desc: desc('Moves each frame by a fraction of a pixel and blends it into the frames before, following the camera. Smooths edges and recovers detail below 100%; something moving fast can smear a little. Off, edges use 4× MSAA.'),
-          control: taa.el,
-        }),
-        card('Sharpening', { desc: sharpenNote, control: sharpen.row }),
-      ),
+      group('Renderer', card('Renderer', { desc: rendererNote, control: rendererPick.row }), card('HDR', { desc: hdrNote, control: hdrToggle.el })),
+      group('Resolution', resolutionRow, taaRow, sharpenRow),
       group(
         'Frame rate',
         card('Frame rate limit', {
@@ -1092,6 +1115,7 @@ export function openSettings(
       offWorktreeSetup.forEach((off) => off());
       sourceReload.dispose();
       factoryKey.dispose();
+      window.removeEventListener('office:hdr', onHdrStatus);
     },
   });
   show(first ?? lastPane);

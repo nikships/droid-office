@@ -22,7 +22,7 @@ test('every setting is in a category', () => {
     ['Alert sounds', 'sound'],
     ['Jukebox', 'sound'],
     ['Renderer', 'graphics'],
-    ['Graphics Lab', 'graphics'],
+    ['HDR', 'graphics'],
     ['Render resolution', 'graphics'],
     ['Temporal anti-aliasing', 'graphics'],
     ['Sharpening', 'graphics'],
