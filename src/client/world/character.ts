@@ -1291,6 +1291,7 @@ export class Worker {
   held = false;
   private bounceT = 0;
   private spawnT = 0;
+  private split: { from: THREE.Vector3; t: number } | null = null;
   /** Seconds left jumping for joy (its pull request just merged). */
   private cheerT = 0;
   /** Up on its desk dancing (a pull request merged): where, and how many seconds in. */
@@ -1312,6 +1313,7 @@ export class Worker {
       this.walking ||
       this.stride > 0 ||
       this.spawnT < 1 ||
+      this.split !== null ||
       !!this.dancing ||
       this.levitating !== null ||
       !!this.leaving ||
@@ -1474,6 +1476,12 @@ export class Worker {
     this.nextAction = action;
   }
 
+  /** A newly forked twin peels away from the source into its own seat. */
+  splitFrom(from: THREE.Vector3) {
+    this.split = { from: from.clone(), t: 0 };
+    this.root.position.copy(from);
+  }
+
   /** Just finished: a quick spin and a hop. */
   celebrate() {
     if (this.dead) return;
@@ -1541,7 +1549,7 @@ export class Worker {
 
   /** A harmless lift above its seat, easing up and back down at full size. */
   levitate(): boolean {
-    if (this.dead || this.leaving || this.walking || this.dancing || this.levitating !== null || isAsleep(this.status)) return false;
+    if (this.dead || this.leaving || this.walking || this.dancing || this.split || this.levitating !== null || isAsleep(this.status)) return false;
     this.levitating = 0;
     return true;
   }
@@ -1551,7 +1559,7 @@ export class Worker {
    * ball, and hops back down into its seat. Asked again mid-dance, it stays up and dances on.
    */
   dance(stage: Stage) {
-    if (this.leaving || this.dead || this.levitating !== null) return;
+    if (this.leaving || this.dead || this.split || this.levitating !== null) return;
     const d = this.dancing;
     if (!d) {
       this.dancing = { stage, t: 0 };
@@ -1563,9 +1571,9 @@ export class Worker {
     } else d.t = Math.min(d.t, DANCE.up);
   }
 
-  /** Back in its seat at once, mid-dance or levitation (it's being sent home). */
+  /** Back in its seat at once, mid-dance, levitation or split (it's being sent home). */
   stopDancing() {
-    if (!this.dancing && this.levitating === null) return;
+    if (!this.dancing && this.levitating === null && !this.split) return;
     this.dancing = null;
     this.levitating = null;
     this.settle();
@@ -1727,6 +1735,16 @@ export class Worker {
     if (this.leaving) return this.carry(this.leaving, dt, t);
     if (this.dancing) return this.boogie(this.dancing, dt, t);
     if (this.dead) return this.flatline(dt);
+    if (this.split) {
+      this.split.t = Math.min(1, this.split.t + dt / 0.65);
+      const p = this.split.t;
+      this.root.position.copy(this.split.from).multiplyScalar(1 - p * p * (3 - 2 * p));
+      this.root.position.y += Math.sin(p * Math.PI) * 0.35;
+      if (p === 1) {
+        this.root.position.set(0, 0, 0);
+        this.split = null;
+      }
+    }
     if (this.levitating !== null) {
       this.levitating = Math.min(LEVITATE_TIME, this.levitating + dt);
       this.root.position.y = LEVITATE_HEIGHT * Math.sin((Math.PI * this.levitating) / LEVITATE_TIME) ** 2;
@@ -1971,6 +1989,7 @@ export class Worker {
 
   /** Back in its seat, standing straight, its light showing its status again. */
   private settle() {
+    this.split = null;
     this.root.position.set(0, 0, 0);
     this.root.rotation.set(0, 0, 0);
     this.body.position.set(0, 0, 0);

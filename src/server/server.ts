@@ -1646,6 +1646,21 @@ export async function startServer(cfg: Config) {
         } else hire();
         break;
       }
+      case 'worker.fork': {
+        const w = worker(msg.workerId);
+        if (!w) return done('No such worker');
+        if (w.floor.id !== c.floor) return refuse('Take the elevator to that worker’s floor before forking');
+        defer();
+        void w.floor.workers.fork(w.wid, who, str(msg.prompt, 20000) || undefined).then(
+          (result) => {
+            if (typeof result === 'string') return refuse(result);
+            toastFloor(w.floor, `${who} forked ${w.info.name} into ${result.name}`);
+            done(undefined, result.id);
+          },
+          (error: unknown) => refuse(error instanceof Error ? error.message : 'The office could not confirm the fork. Check the floor before trying again.'),
+        );
+        break;
+      }
       case 'worker.resume': {
         const w = worker(msg.workerId);
         const error = w ? w.floor.workers.resume(w.wid) : 'No such worker';

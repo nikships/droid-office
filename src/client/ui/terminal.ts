@@ -14,6 +14,8 @@ import { OFFICE_SHELL_ID } from '../../shared/office-shell';
 import type { ServerMsg, WorkerInfo } from '../../shared/protocol';
 import { PROVIDER_LABEL, outsideNote, statusWord } from '../../shared/guests';
 import { teamSummary } from '../../shared/team';
+import { forkRefusal } from '../../shared/worker-fork';
+import { openForkWorker } from './fork-worker';
 import { creditsNote } from '../../shared/factory-sessions';
 import { findLine } from '../../shared/search';
 import { DROP_MAX_BYTES, droppedPaths } from '../../shared/drops';
@@ -111,6 +113,7 @@ export function openTerminal(net: Net, workerId: string, onChanges?: () => void,
   const zoom = h('span.seg.term-zoom', { role: 'group', 'aria-label': 'Terminal text size' }, smaller, bigger);
   const changesBtn = h('button.btn', { type: 'button', title: 'What this worker changed: files, diff, commit, open a PR (C at the desk)' }, '🌿 Changes');
   const copyBtn = h('button.btn', { type: 'button', title: 'Copy selected text, or the loaded scrollback when nothing is selected' }, 'Copy text');
+  const forkBtn = h('button.btn', { type: 'button', onclick: () => openForkWorker(net, workerId) }, 'Fork');
   const disconnected = h('p.note.warn.hidden', { role: 'status' }, 'Disconnected. Terminal input is disabled until a fresh snapshot arrives.');
   const bringInBtn = h('button.btn', { type: 'button' }, '🚪 Bring it in');
   const closeBtn = h('button.btn.icon.close', { title: 'Leave terminal (Shift+Esc or Ctrl+]) · Esc goes to the terminal', 'aria-label': 'Close' }, '✕');
@@ -126,7 +129,7 @@ export function openTerminal(net: Net, workerId: string, onChanges?: () => void,
       {},
       colorDot(info.color),
       h('div.titles', {}, h('div.term-title', {}, title, pill), sub),
-      h('div.actions', {}, inline?.actions ?? null, copyBtn, zoom, onChanges ? changesBtn : null, guest ? bringInBtn : null),
+      h('div.actions', {}, inline?.actions ?? null, copyBtn, zoom, onChanges ? changesBtn : null, info.kind === 'agent' && !guest ? forkBtn : null, guest ? bringInBtn : null),
       inline ? null : closeBtn,
     ),
     team,
@@ -232,6 +235,7 @@ export function openTerminal(net: Net, workerId: string, onChanges?: () => void,
       w.guest && `outside the office · pid ${w.guest.pid}`,
       outsideNote(w),
       w.title,
+      w.forkedFrom && `Fork of ${w.forkedFrom.name}`,
       w.worktree && `🌿 ${w.worktree.branch}`,
       creditsNote(store.factory.sessions, w.sessionId),
       w.repos?.length && `🗂️ ${[w.worktree?.path.split(/[\\/]/).pop(), ...w.repos.map((r) => r.name)].join(' + ')}`,
@@ -242,6 +246,9 @@ export function openTerminal(net: Net, workerId: string, onChanges?: () => void,
     sub.classList.toggle('hidden', !sub.textContent);
     pill.className = `pill ${w.status}`;
     pill.textContent = statusWord(w, STATUS_LABEL);
+    const forkWhy = forkRefusal(w);
+    forkBtn.disabled = !net.up || !!forkWhy;
+    forkBtn.title = forkWhy ?? 'Fork this conversation and its files into an independent worker';
     if (w.guest) {
       const why = w.guest.cantBringIn;
       bringInBtn.toggleAttribute('disabled', !!why);
@@ -313,6 +320,7 @@ export function openTerminal(net: Net, workerId: string, onChanges?: () => void,
   const unsubCredits = store.on('factory', refresh);
   const ro = new ResizeObserver(() => sendSize());
   const offStatus = net.onStatus((up) => {
+    forkBtn.disabled = !up || !!forkRefusal(store.workers.get(workerId) ?? info);
     if (up) return; // The welcome handler reattaches only after the authoritative worker snapshot.
     mirror.disconnect();
     term.options.disableStdin = true;

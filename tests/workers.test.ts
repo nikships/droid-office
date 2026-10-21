@@ -1032,6 +1032,168 @@ async function hireInState(f: Fixture, workers: WorkerManager, deskId: string, s
   return worker;
 }
 
+/** A local repository for fork tests, with no dependencies to install and no runtime state to copy. */
+function forkRepository(f: Fixture, dir = f.root) {
+  const git = (...args: string[]) => execFileSync('git', ['-c', 'user.email=t@t', '-c', 'user.name=t', ...args], { cwd: dir, encoding: 'utf8' }).trim();
+  mkdirSync(dir, { recursive: true });
+  git('init', '-q', '-b', 'main');
+  writeFileSync(path.join(dir, '.gitignore'), '.droid-office/\ndata/\nbin/\nhome/\nconfig/\nother/\nxdg-*/\n*.jsonl\n.env\n');
+  writeFileSync(path.join(dir, '.droid-office.json'), JSON.stringify({ worktree: { setup: '', copy: ['/.env'] } }));
+  writeFileSync(path.join(dir, 'file.txt'), 'committed');
+  git('add', '.');
+  git('commit', '-qm', 'init');
+  return git;
+}
+
+test('a fork gets its own session, worktree, source-local setup and seat, then resumes only its own id', async (t) => {
+  const f = carryOnFixture(t);
+  const git = forkRepository(f);
+  const workers = manager(f, []);
+  t.after(() => workers.shutdown());
+  workers.holds = { desk: (id) => id === 'desk-3', names: () => [] };
+  const source = await hireInState(f, workers, 'desk-1', 'source-session', 'done');
+  writeFileSync(path.join(f.root, 'file.txt'), 'staged');
+  git('add', 'file.txt');
+  writeFileSync(path.join(f.root, 'file.txt'), 'unstaged');
+  writeFileSync(path.join(f.root, '.env'), 'LOCAL=source');
+  const twin = await workers.fork(source.id, 'test', 'Try the alternative');
+  assert.ok(typeof twin !== 'string', String(twin));
+  if (typeof twin === 'string') return;
+  assert.equal(twin.deskId, 'desk-2', 'the nearest desk is held by a guest');
+  assert.equal(twin.name, `${source.name} ⑂`);
+  assert.equal(twin.color, source.color);
+  assert.equal(twin.sessionId, undefined, 'never temporarily claims the source session');
+  assert.equal(twin.lead, undefined, 'a peer, not a subagent');
+  assert.equal(twin.worktree?.base, git('rev-parse', 'HEAD'));
+  assert.equal(twin.forkedFrom?.workerId, source.id);
+  const launch = (await waitFor(() => launchesOf(f).find((r) => r.env.workerId === twin.id), Boolean))!;
+  assert.deepEqual(launch.args.slice(-2), ['--fork', 'source-session']);
+  assert.ok(!launch.args.includes('--resume'));
+  const cwd = path.join(f.root, twin.worktree!.path);
+  assert.equal(launch.args[launch.args.indexOf('--cwd') + 1], cwd, 'Droid must not restore the source session’s working directory');
+  assert.equal(readFileSync(path.join(cwd, 'file.txt'), 'utf8'), 'unstaged');
+  assert.equal(readFileSync(path.join(cwd, '.env'), 'utf8'), 'LOCAL=source');
+  assert.match(readFileSync(path.join(f.data, `system-${twin.id}.md`), 'utf8'), /independent fork/);
+  assert.equal(await startedWith(f, workers, launch, 'twin-session'), 'Try the alternative');
+  assert.equal(source.sessionId, 'source-session');
+  assert.equal(twin.sessionId, 'twin-session');
+  const saved = JSON.parse(readFileSync(path.join(f.data, 'workers.json'), 'utf8')).find((w: WorkerInfo) => w.id === twin.id);
+  assert.equal(saved.pendingFork, undefined);
+  workers.shutdown(true);
+  await new Promise((resolve) => setTimeout(resolve, 200));
+  const after = manager(f, []);
+  t.after(() => after.shutdown());
+  assert.deepEqual(after.get(twin.id)?.forkedFrom, twin.forkedFrom);
+  assert.equal(after.resume(twin.id), undefined);
+  const resumed = (
+    await waitFor(
+      () => launchesOf(f).filter((r) => r.env.workerId === twin.id),
+      (r) => r.length === 2,
+    )
+  )[1];
+  assert.deepEqual(resumed.args.slice(-2), ['--resume', 'twin-session']);
+});
+
+test('a fork interrupted before SessionStart retries the fork, never resumes the source', async (t) => {
+  const f = carryOnFixture(t);
+  forkRepository(f);
+  const before = manager(f, []);
+  const source = await hireInState(f, before, 'desk-1', 'source-pending', 'done');
+  const twin = await before.fork(source.id, 'test', 'alternative after restart');
+  assert.ok(typeof twin !== 'string', String(twin));
+  if (typeof twin === 'string') return;
+  await waitFor(() => launchesOf(f).find((r) => r.env.workerId === twin.id), Boolean);
+  before.shutdown(true);
+  await new Promise((resolve) => setTimeout(resolve, 200));
+  const after = manager(f, []);
+  t.after(() => after.shutdown());
+  assert.equal(after.resume(twin.id), undefined);
+  const launch = (
+    await waitFor(
+      () => launchesOf(f).filter((r) => r.env.workerId === twin.id),
+      (r) => r.length === 2,
+    )
+  )[1];
+  assert.deepEqual(launch.args.slice(-2), ['--fork', 'source-pending']);
+  assert.equal(await startedWith(f, after, launch, 'separate-session'), 'alternative after restart');
+});
+
+test('a fork copies every repository in a workspace and leaves team relationships behind', async (t) => {
+  const f = carryOnFixture(t);
+  forkRepository(f);
+  const other = path.join(f.root, 'other');
+  forkRepository(f, other);
+  const workers = manager(f, []);
+  t.after(() => workers.shutdown());
+  const source = workers.spawn('desk-1', 'test', undefined, true, 'agent', undefined, undefined, [{ floor: 'other', name: 'other', dir: other }]);
+  assert.ok(typeof source !== 'string', String(source));
+  if (typeof source === 'string') return;
+  const launch = (await waitFor(() => launchesOf(f).find((r) => r.env.workerId === source.id), Boolean))!;
+  await startedWith(f, workers, launch, 'workspace-source');
+  writeFileSync(path.join(f.root, source.worktree!.path, 'file.txt'), 'primary edits');
+  writeFileSync(path.join(f.root, source.repos![0].path, 'file.txt'), 'other edits');
+  writeFileSync(path.join(f.root, '.env'), 'LOCAL=floor');
+  writeFileSync(path.join(f.root, source.worktree!.path, '.env'), 'LOCAL=source');
+  writeFileSync(path.join(f.root, source.repos![0].path, '.env'), 'LOCAL=other-source');
+  source.activeModel = 'custom:current';
+  source.effort = 'high';
+  source.activeEffort = undefined;
+  const twin = await workers.fork(source.id, 'test');
+  assert.ok(typeof twin !== 'string', String(twin));
+  if (typeof twin === 'string') return;
+  assert.equal(readFileSync(path.join(f.root, twin.worktree!.path, 'file.txt'), 'utf8'), 'primary edits');
+  assert.equal(readFileSync(path.join(f.root, twin.repos![0].path, 'file.txt'), 'utf8'), 'other edits');
+  assert.equal(twin.repos![0].floor, 'other');
+  assert.notEqual(twin.repos![0].path, source.repos![0].path);
+  assert.equal(twin.lead, undefined);
+  assert.equal(twin.team, undefined);
+  assert.equal(twin.model, 'custom:current');
+  assert.equal(twin.effort, undefined, 'a /model change without effort must not inherit an old pinned effort');
+  const twinLaunch = (await waitFor(() => launchesOf(f).find((r) => r.env.workerId === twin.id), Boolean))!;
+  assert.equal(await startedWith(f, workers, twinLaunch, 'workspace-twin'), undefined, 'a blank fork never starts a turn');
+  assert.equal(readFileSync(path.join(f.root, twin.worktree!.path, '.env'), 'utf8'), 'LOCAL=source');
+  assert.equal(readFileSync(path.join(f.root, twin.repos![0].path, '.env'), 'utf8'), 'LOCAL=other-source');
+  const another = await workers.fork(source.id, 'test');
+  assert.ok(typeof another !== 'string', String(another));
+  if (typeof another === 'string') return;
+  assert.equal(another.name, `${source.name} ⑂ 2`);
+  rmSync(path.join(f.root, source.repos![0].path), { recursive: true, force: true });
+  const beforeBranches = execFileSync('git', ['branch', '--format=%(refname)'], { cwd: f.root, encoding: 'utf8' });
+  assert.match(String(await workers.fork(source.id, 'test')), /not a worktree/);
+  assert.equal(execFileSync('git', ['branch', '--format=%(refname)'], { cwd: f.root, encoding: 'utf8' }), beforeBranches, 'a failure in the second repository removes the first new branch');
+  assert.equal(workers.list().length, 3, 'a failed fork seats nobody');
+});
+
+test('forks refuse busy workers, missing sessions, missing sources, full offices and occupied floors before making worktrees', async (t) => {
+  const f = carryOnFixture(t);
+  forkRepository(f);
+  let limited = false;
+  const workers = new WorkerManager(f.root, f.data, f.droid, [], { url: 'http://127.0.0.1:1', token: '' }, events([]), {
+    full: () => (limited ? 'The office is at its limit' : undefined),
+    room: () => (limited ? 0 : 1),
+  });
+  t.after(() => workers.shutdown());
+  const source = await hireInState(f, workers, 'desk-1', 'guarded-source', 'working');
+  assert.match(String(await workers.fork(source.id, 'test')), /turn ends/);
+  source.status = 'needs_input';
+  assert.match(String(await workers.fork(source.id, 'test')), /turn ends/);
+  source.status = 'done';
+  source.sessionId = undefined;
+  assert.match(String(await workers.fork(source.id, 'test')), /session to start/);
+  source.sessionId = 'guarded-source';
+  limited = true;
+  assert.match(String(await workers.fork(source.id, 'test')), /at its limit/);
+  limited = false;
+  assert.match(String(await workers.fork('missing', 'test')), /No such worker/);
+  source.deskId = 'retired-desk';
+  assert.match(String(await workers.fork(source.id, 'test')), /source desk is no longer/);
+  source.deskId = 'desk-1';
+  workers.holds = { desk: () => true, names: () => [] };
+  assert.match(String(await workers.fork(source.id, 'test')), /Every desk/);
+  assert.equal(workers.list().length, 1);
+  assert.equal(existsSync(path.join(f.root, '.droid-office', 'worktrees')), false);
+});
+
 test('a restart that takes a mid-turn worker down resumes it with continue; a finished one just wakes up', async (t) => {
   const f = carryOnFixture(t);
   const before = manager(f, []);

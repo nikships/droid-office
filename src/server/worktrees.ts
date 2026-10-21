@@ -1,5 +1,5 @@
 import { execFile, execFileSync } from 'node:child_process';
-import { existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, renameSync, statSync, writeFileSync } from 'node:fs';
+import { cpSync, existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, renameSync, statSync, writeFileSync } from 'node:fs';
 import { rm } from 'node:fs/promises';
 import path from 'node:path';
 import { promisify } from 'node:util';
@@ -172,6 +172,49 @@ export class Worktrees {
       return { path: rel, branch, base, from, note };
     } catch (err) {
       return `Could not create a git worktree: ${gitError(err)}`;
+    }
+  }
+
+  /** Copy HEAD, index, working files and non-ignored untracked files, without stashing or changing the source. */
+  fork(slug: string, source: string, sub?: string, root = this.dir): ReturnType<Worktrees['create']> {
+    let made: Exclude<ReturnType<Worktrees['create']>, string> | undefined;
+    const git = (args: string[], cwd = source, input?: Buffer) => execFileSync('git', args, { cwd, input, env: { ...process.env, GIT_OPTIONAL_LOCKS: '0' }, maxBuffer: 64 * 1024 * 1024, timeout: 20_000, stdio: ['pipe', 'pipe', 'pipe'] });
+    try {
+      const at = this.resolve('HEAD', source);
+      if (!at || new Worktrees(source).commonDir() !== this.commonDir()) return 'The source is not a worktree of this repository';
+      if (git(['diff', '--name-only', '--diff-filter=U']).length) return 'Resolve the source worktree conflicts before forking';
+      const gitlinks = [git(['diff', '--cached', '--raw', 'HEAD', '--ignore-submodules=none']), git(['diff', '--raw', '--ignore-submodules=none'])];
+      if (gitlinks.some((diff) => /^:.*160000/m.test(diff.toString()))) return 'Commit or clean up submodule changes before forking';
+      const options = ['--binary', '--full-index', '--no-ext-diff', '--no-textconv'];
+      const staged = git(['diff', '--cached', ...options, at.commit, '--', '.', ':(exclude).droid-office']);
+      const unstaged = git(['diff', ...options, '--', '.', ':(exclude).droid-office']);
+      const untracked = git(['ls-files', '--others', '--exclude-standard', '-z'])
+        .toString()
+        .split('\0')
+        .filter((f) => f && f !== '.droid-office' && !f.startsWith('.droid-office/'));
+      const result = this.create(slug, sub, root, at);
+      if (typeof result === 'string') return result;
+      made = result;
+      const target = path.resolve(root, made.path);
+      if (staged.length) git(['apply', '--index', '--binary', '-'], target, staged);
+      if (unstaged.length) git(['apply', '--binary', '-'], target, unstaged);
+      for (const file of untracked) {
+        const dest = path.join(target, file);
+        mkdirSync(path.dirname(dest), { recursive: true });
+        cpSync(path.join(source, file), dest, { dereference: false, verbatimSymlinks: true, errorOnExist: true, force: false });
+      }
+      return made;
+    } catch (err) {
+      let cleanup = '';
+      if (made) {
+        try {
+          this.gitSync(['worktree', 'remove', '--force', path.resolve(root, made.path)]);
+          this.gitSync(['branch', '-D', made.branch]);
+        } catch (error) {
+          cleanup = `; could not clean up the incomplete fork: ${gitError(error)}`;
+        }
+      }
+      return `Could not fork the git worktree: ${gitError(err)}${cleanup}`;
     }
   }
 

@@ -504,6 +504,7 @@ const label = (p: GuestProvider) => PROVIDER_LABEL[p];
 /** What the office does to its own workers and never to a guest, which it only watches (see guests.ts). */
 export const GUEST_REFUSED = new Set<ClientMsg['t']>([
   'worker.resume',
+  'worker.fork',
   'worker.kill',
   'worker.shoot',
   'worker.worktree',

@@ -112,6 +112,8 @@ export interface WorkerInfo {
   prOpening?: boolean;
   title?: string;
   sessionId?: string;
+  /** The conversation this worker forked. Independent of subagent teams and kept after the source leaves. */
+  forkedFrom?: { workerId: string; name: string; sessionId: string };
   exitCode?: number;
   cols: number;
   rows: number;
@@ -812,6 +814,7 @@ type ClientMessage =
    */
   | { t: 'worker.spawn'; deskId: string; prompt?: string; worktree?: boolean; kind?: WorkerKind; model?: string; effort?: AgentEffort; issue?: number; repos?: string[]; images?: string[] }
   | { t: 'worker.resume'; workerId: string }
+  | { t: 'worker.fork'; workerId: string; prompt?: string }
   /** `deleteSession`: a cloud worker's Factory session is deleted too, not just left on the Factory account. */
   | { t: 'worker.kill'; workerId: string; cleanup?: WorktreeCleanup; deleteSession?: boolean }
   /** Only a fully charged shot dismisses a worker and deletes its owned worktrees and branches. */
