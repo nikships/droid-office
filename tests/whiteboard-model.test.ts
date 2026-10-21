@@ -701,32 +701,43 @@ test('limits are enforced, each refusal naming the limit', () => {
   s.apply(ME, { op: 'state.set', card: 'c', path: ['big'], value: 'x'.repeat(MAX_STATE_BYTES - 100) });
 
   assert.match(s.fail(ME, { op: 'card.content', card: 'c', content: page(MAX_HTML_BYTES + 1) }).reason, /the limit per card is 2 MB/);
-  assert.match(s.fail(ME, { op: 'card.content', card: 'c', content: page(10, { 'big.bin': file(MAX_ASSET_BYTES + 1, 'application/octet-stream') }) }).reason, /the limit per file is 10 MB/);
-  assert.match(s.fail(ME, { op: 'picture.add', card: 'c', id: 'p', file: png(MAX_ASSET_BYTES + 1), anchor: at(0, 0), box: { w: 50, h: 50 } }).reason, /limit per file is 10 MB/);
+  assert.match(s.fail(ME, { op: 'card.content', card: 'c', content: page(10, { 'big.bin': file(MAX_ASSET_BYTES + 1, 'application/octet-stream') }) }).reason, /the limit per file is 100 MB/);
+  assert.match(s.fail(ME, { op: 'picture.add', card: 'c', id: 'p', file: png(MAX_ASSET_BYTES + 1), anchor: at(0, 0), box: { w: 50, h: 50 } }).reason, /limit per file is 100 MB/);
 
   // Per card: content and pictures together, the same file counted once.
-  const shared = file(MAX_ASSET_BYTES, 'image/png');
-  // Four distinct 10 MB files, one of them twice, and the page: 40 MB and a little.
+  const assetSize = MAX_CARD_BYTES / 5;
+  const shared = file(assetSize, 'image/png');
+  // Four distinct 20 MB files, one of them twice, and the page: 80 MB and a little.
   const assets: Record<string, FileRef> = {};
-  for (let i = 0; i < 3; i++) assets[`a${i}.png`] = file(MAX_ASSET_BYTES, 'image/png');
+  for (let i = 0; i < 3; i++) assets[`a${i}.png`] = file(assetSize, 'image/png');
   assets['shared.png'] = shared;
   assets['again.png'] = shared;
   s.apply(ME, { op: 'card.content', card: 'c', content: page(100, assets) });
-  s.apply(ME, { op: 'picture.add', card: 'c', id: 'p0', file: png(MAX_ASSET_BYTES - 1000), anchor: at(0, 0), box: { w: 50, h: 50 } });
-  assert.match(s.fail(ME, { op: 'picture.add', card: 'c', id: 'p', file: png(1000), anchor: at(0, 0), box: { w: 50, h: 50 } }).reason, /limit per card is 50 MB/);
+  s.apply(ME, { op: 'picture.add', card: 'c', id: 'p0', file: png(assetSize - 100), anchor: at(0, 0), box: { w: 50, h: 50 } });
+  assert.match(s.fail(ME, { op: 'picture.add', card: 'c', id: 'p', file: png(1), anchor: at(0, 0), box: { w: 50, h: 50 } }).reason, /limit per card is 100 MB/);
   s.apply(ME, { op: 'picture.add', card: 'c', id: 'p', file: shared, anchor: at(0, 0), box: { w: 50, h: 50 } });
-  assert.equal(MAX_CARD_BYTES, 5 * MAX_ASSET_BYTES);
+  assert.equal(MAX_CARD_BYTES, 100 * 1024 * 1024);
+  assert.equal(MAX_ASSET_BYTES, MAX_CARD_BYTES);
+});
+
+test('a canvas accepts a 100 MB picture and HTML leaves room for its assets within 100 MB', () => {
+  const s = new Sim();
+  s.apply(ME, { op: 'card.create', card: 'canvas', kind: 'canvas', title: 'Large picture' });
+  s.apply(ME, { op: 'picture.add', card: 'canvas', id: 'p', file: png(MAX_ASSET_BYTES), anchor: at(0, 0), box: { w: 50, h: 50 } });
+  s.apply(ME, { op: 'card.create', card: 'html', kind: 'html', title: 'Large video', content: page(100, { 'video.mp4': file(MAX_CARD_BYTES - 100, 'video/mp4') }) });
+  assert.match(s.fail(ME, { op: 'card.content', card: 'html', content: page(100, { 'video.mp4': file(MAX_CARD_BYTES - 99, 'video/mp4') }) }).reason, /limit per card is 100 MB/);
 });
 
 test('the floor’s storage limit counts each distinct file on the board once', () => {
   const s = new Sim();
-  const perCard = Math.floor(MAX_CARD_BYTES / MAX_ASSET_BYTES) - 1;
+  const perCard = 1;
+  const assetSize = MAX_CARD_BYTES - 100;
   const full = () => {
     const files: Record<string, FileRef> = {};
-    for (let i = 0; i < perCard; i++) files[`f${i}.bin`] = file(MAX_ASSET_BYTES, 'application/octet-stream');
+    for (let i = 0; i < perCard; i++) files[`f${i}.bin`] = file(assetSize, 'application/octet-stream');
     return page(100, files);
   };
-  const cards = Math.floor(MAX_FLOOR_BYTES / (perCard * MAX_ASSET_BYTES));
+  const cards = Math.floor(MAX_FLOOR_BYTES / MAX_CARD_BYTES);
   const ops: Op[] = [];
   for (let i = 0; i < cards; i++) ops.push({ op: 'card.create', card: `c${i}`, kind: 'html', title: `Card ${i}`, content: full() });
   s.apply(PIXEL, ...ops);

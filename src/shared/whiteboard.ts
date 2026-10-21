@@ -22,9 +22,9 @@ export const MAX_TITLE_LENGTH = 120;
 /** A card's entry HTML file. */
 export const MAX_HTML_BYTES = 2 * MB;
 /** Any other file: an asset of a card's content, or a picture. */
-export const MAX_ASSET_BYTES = 10 * MB;
+export const MAX_ASSET_BYTES = 100 * MB;
 /** Everything one card holds: its content's files and its pictures, each distinct file counted once. */
-export const MAX_CARD_BYTES = 50 * MB;
+export const MAX_CARD_BYTES = 100 * MB;
 /** Every distinct file on the floor's board. */
 export const MAX_FLOOR_BYTES = 1024 * MB;
 export const MAX_FILES_PER_CARD = 500;
