@@ -105,6 +105,13 @@ function createWindow(loadOffice = true) {
     shimSource: readFileSync(fileURLToPath(new URL('./page/shim.js', import.meta.url)), 'utf8'),
     officeOrigin: () => (officeUrl ? new URL(officeUrl).origin : undefined),
     focused: () => created.base.isFocused(),
+    chooseFiles: async ({ multiple, directory, filters }) => {
+      const picked = await dialog.showOpenDialog(created.base, {
+        properties: [directory ? 'openDirectory' : 'openFile', ...(multiple ? (['multiSelections'] as const) : [])],
+        ...(filters.length ? { filters } : {}),
+      });
+      return picked.canceled ? [] : picked.filePaths;
+    },
     log: (message) => console.warn(`droid-office: ${message}`),
     trace: createTrace(traceFile()),
   });

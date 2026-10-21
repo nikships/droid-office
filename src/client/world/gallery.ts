@@ -1,10 +1,11 @@
 import * as THREE from 'three';
 import { ANISOTROPY } from './texture-quality';
-import { FRAMES, FRAME_BORDER, WALLS, frameRect, wallPose, wallTop, type Decoration, type WallId, type WallRect } from '../../shared/decor';
+import { FRAMES, FRAME_BORDER, WALLS, frameRect, uploadName, wallPose, wallTop, type Decoration, type WallId, type WallRect } from '../../shared/decor';
 import { FLOOR, LOFT } from '../../shared/layout';
 import type { Interactable } from './office';
 import { toon } from './toon';
 import { SANS } from '../fonts';
+import { store } from '../state';
 import { withToken } from '../token';
 
 // ---- Pictures -------------------------------------------------------------------------------------
@@ -14,6 +15,9 @@ export interface Picture {
   texture: THREE.CanvasTexture;
   /** The image's width / height. */
   aspect: number;
+  /** The image's own size in pixels. */
+  width: number;
+  height: number;
   /** An object URL of the full-size image, for showing it in the page. */
   src: string;
 }
@@ -23,8 +27,13 @@ const MAX_TEXTURE = 4096;
 const pictures = new Map<string, Promise<Picture>>();
 const holds = new Map<string, number>();
 
-/** The office fetches images for us, so a picture shows up whatever its host allows. */
-export function imageUrl(url: string): string {
+/**
+ * The office fetches images for us, so a picture shows up whatever its host allows. A picture from
+ * the owner's computer comes from the floor that keeps it (`floor`, this page's floor by default).
+ */
+export function imageUrl(url: string, floor = store.floor ?? ''): string {
+  const name = uploadName(url);
+  if (name) return withToken(`/api/decor/picture?${new URLSearchParams({ floor, name })}`);
   return withToken(`/api/image?url=${encodeURIComponent(url)}`);
 }
 
@@ -60,7 +69,7 @@ async function fetchPicture(url: string): Promise<Picture> {
     const texture = new THREE.CanvasTexture(canvas);
     texture.colorSpace = THREE.SRGBColorSpace;
     texture.anisotropy = ANISOTROPY;
-    return { url, texture, aspect: iw / ih, src };
+    return { url, texture, aspect: iw / ih, width: iw, height: ih, src };
   } catch {
     URL.revokeObjectURL(src);
     throw new Error("Your browser can't show that image");

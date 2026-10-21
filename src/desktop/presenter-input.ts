@@ -2,6 +2,7 @@ import type { KeyboardInputEvent, MouseInputEvent, MouseWheelInputEvent } from '
 import { BINDING_NAME, type ExecutionContext, type HostMessage, parseHostMessage, trustedContext } from './input-bridge.js';
 import { nativeCursor } from './input-cursor.js';
 import { BUTTON, captured, type NativeEvent, type NativeFlags, type NativeKey, type Pointer, pointerAt, mouseEvent, wheelEvent, type NativeMouse, type NativeDelta } from './input-events.js';
+import { type ChooserOptions, chooserFilters, parseChooserOpened } from './file-chooser.js';
 import { cdpFlagEvents, cdpKeyEvent } from './input-keys.js';
 import { PointerLock } from './input-lock.js';
 
@@ -42,6 +43,8 @@ export interface PresenterInputOptions {
   officeOrigin: () => string | undefined;
   /** Whether the native window is the key window right now. */
   focused: () => boolean;
+  /** Shows the open panel for a file input in the office page; the paths chosen, or none when cancelled. */
+  chooseFiles?: (options: ChooserOptions) => Promise<string[]>;
   log?: (message: string) => void;
   /** Diagnostic: one line per input step (`input-trace.ts`). */
   trace?: (line: string) => void;
@@ -69,6 +72,8 @@ export class PresenterInput {
   private stopped = false;
   private focus = false;
   private pageHidden = false;
+  /** An open panel is up; another file input asking meanwhile is ignored. */
+  private choosing = false;
 
   constructor(private readonly options: PresenterInputOptions) {
     this.lock = new PointerLock(() => options.native.inputCapabilities().rawMouse);
@@ -168,6 +173,7 @@ export class PresenterInput {
       // Before the script, so the binding is there when it runs at the start of every document.
       await dbg.sendCommand('Runtime.enable');
       await dbg.sendCommand('Page.enable');
+      if (this.options.chooseFiles) await dbg.sendCommand('Page.setInterceptFileChooserDialog', { enabled: true });
       await dbg.sendCommand('Runtime.addBinding', { name: BINDING_NAME });
       await dbg.sendCommand('Page.addScriptToEvaluateOnNewDocument', { source: this.options.shimSource, runImmediately: true });
       const tree = (await dbg.sendCommand('Page.getFrameTree')) as { frameTree?: { frame?: { id?: string } } };
@@ -202,7 +208,54 @@ export class PresenterInput {
       case 'Runtime.bindingCalled':
         if (params.name === BINDING_NAME) this.hostCalled(params.executionContextId as number, params.payload);
         break;
+      case 'Page.fileChooserOpened':
+        void this.fileChooser(params);
+        break;
     }
+  }
+
+  // --- File inputs --------------------------------------------------------------------------------------------------
+
+  /** A file input in the page was clicked: the open panel on the visible window, and what was chosen handed to the input. */
+  private async fileChooser(params: Record<string, unknown>) {
+    const req = parseChooserOpened(params);
+    const choose = this.options.chooseFiles;
+    if (!req || !choose) return this.trace('file chooser: bad parameters');
+    if (!this.officeFrame(req.frameId)) return this.trace(`file chooser from frame ${req.frameId} refused`);
+    if (this.choosing) return this.trace('file chooser: one is already open');
+    this.choosing = true;
+    const dbg = this.options.page.debugger;
+    try {
+      const resolved = (await dbg.sendCommand('DOM.resolveNode', { backendNodeId: req.backendNodeId })) as { object?: { objectId?: string } };
+      const objectId = resolved.object?.objectId;
+      let accept: unknown = '';
+      let directory = false;
+      if (objectId) {
+        const read = (await dbg.sendCommand('Runtime.callFunctionOn', {
+          objectId,
+          functionDeclaration: 'function () { return { accept: String(this.accept || ""), directory: !!this.webkitdirectory }; }',
+          returnByValue: true,
+        })) as { result?: { value?: { accept?: unknown; directory?: unknown } } };
+        accept = read.result?.value?.accept;
+        directory = read.result?.value?.directory === true;
+        void dbg.sendCommand('Runtime.releaseObject', { objectId }).catch(() => {});
+      }
+      if (this.stopped) return;
+      const files = await choose({ multiple: req.multiple, directory, filters: directory ? [] : chooserFilters(accept) });
+      // The panel can stay up a long while: the page may have gone somewhere else meanwhile.
+      if (this.stopped || !files.length || !this.officeFrame(req.frameId)) return;
+      await dbg.sendCommand('DOM.setFileInputFiles', { files: req.multiple ? files : files.slice(0, 1), backendNodeId: req.backendNodeId });
+    } catch (err) {
+      this.log(`input: file chooser: ${(err as Error).message}`);
+    } finally {
+      this.choosing = false;
+    }
+  }
+
+  /** Whether `frameId` is the office's own main frame, with the office's page in it. */
+  private officeFrame(frameId: string): boolean {
+    const office = this.options.officeOrigin();
+    return !!office && frameId === this.mainFrameId && originOf(this.options.page.getURL()) === office;
   }
 
   // --- The page's channel to main -----------------------------------------------------------------------------------
@@ -414,6 +467,14 @@ export class PresenterInput {
     const c = this.cursor;
     if ('name' in c) this.options.native.inputSetCursor(c.name);
     else this.options.native.inputSetCursorImage(c.png, c.hotspot.x, c.hotspot.y, c.scale);
+  }
+}
+
+function originOf(url: string): string | undefined {
+  try {
+    return new URL(url).origin;
+  } catch {
+    return undefined;
   }
 }
 

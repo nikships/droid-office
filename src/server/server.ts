@@ -19,6 +19,7 @@ import { createDroidModelCatalogue } from './droid-models.js';
 import { Upgrader } from './upgrade.js';
 import { GUEST_REFUSED, GuestScanner, guestRefusal, type AgentProcess } from './guests.js';
 import { PhoneSizes } from './phone-sizes.js';
+import { UPLOAD_MAX_BYTES } from '../shared/decor.js';
 import { ImageProxy } from './decor.js';
 import { Webhook } from './webhook.js';
 import { JiraOffice } from './jira.js';
@@ -1048,6 +1049,36 @@ export async function startServer(cfg: Config) {
         }
         const id = floor.workers.stageImage(str(url.searchParams.get('name'), 256), body);
         return id ? send(res, 200, { id }) : send(res, 415, { error: 'Only PNG, JPEG, GIF and WebP pictures can be sent with a prompt' });
+      }
+      if (p === '/api/decor/picture') {
+        // A picture from the owner's computer for this floor's walls: kept (POST, converted when browsers can't draw it), or shown (GET).
+        if (!floor) return send(res, 404, { error: 'No such floor' });
+        if (req.method === 'GET') {
+          const r = await floor.decor.pictures.read(str(url.searchParams.get('name'), 128));
+          if (!r) return send(res, 404, { error: 'That picture is no longer kept on this floor' });
+          res.writeHead(200, {
+            'content-type': r.type,
+            'content-length': String(r.body.length),
+            // Named by the hash of its bytes, which never change.
+            'cache-control': 'private, max-age=31536000, immutable',
+            'x-content-type-options': 'nosniff',
+            'content-security-policy': "default-src 'none'; style-src 'unsafe-inline'; sandbox",
+            'cross-origin-resource-policy': 'same-origin',
+          });
+          return res.end(r.body);
+        }
+        if (req.method !== 'POST') return send(res, 405, { error: 'GET or POST' }, { allow: 'GET, POST' });
+        if (!ownRequest()) return send(res, 403, { error: 'Forbidden' });
+        const tooBig = `That file is over ${UPLOAD_MAX_BYTES / 1024 / 1024} MB. Try a smaller copy of it.`;
+        if (Number(req.headers['content-length']) > UPLOAD_MAX_BYTES) return send(res, 413, { error: tooBig });
+        let body: Buffer;
+        try {
+          body = await readBytes(req, UPLOAD_MAX_BYTES);
+        } catch (err) {
+          return (err as Error).message === 'too large' ? send(res, 413, { error: tooBig }) : send(res, 400, { error: 'Bad request' });
+        }
+        const r = await floor.decor.pictures.save(body, str(url.searchParams.get('name'), 256));
+        return 'error' in r ? send(res, r.status, { error: r.error }) : send(res, 200, r);
       }
       if (p === '/api/changes/file') {
         // A changed picture in the Changes window at a desk: before (old) or after (new) the worker's edits.

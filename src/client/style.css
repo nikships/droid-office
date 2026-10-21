@@ -938,16 +938,22 @@ label.choice:has(> input:disabled) { opacity: .5; cursor: default; }
 }
 
 /* Pictures on the walls */
-.modal.hang { width: min(560px, 100%); }
+.modal.hang { position: relative; width: min(560px, 100%); }
 .hang .seg { gap: 6px; }
 .hang .seg .btn { padding: 4px 10px; }
 .hang .seg .dot { width: 12px; height: 12px; }
-.hang-preview { display: flex; justify-content: center; margin-top: 14px; }
-.hang-preview:empty { display: none; }
-.hang-preview img { display: block; max-width: 100%; max-height: 240px; border: 12px solid var(--frame, #c98b5a); outline: 1px solid var(--border-strong); background: #fff; }
-.hang-status { display: flex; gap: 8px; align-items: center; margin: 12px 0 0; font-size: 13px; color: var(--text-secondary); line-height: 1.45; }
-.hang-status:empty { display: none; }
-.hang-status.error { color: var(--danger); background: rgba(239, 68, 68, .08); border: 1px solid rgba(239, 68, 68, .45); border-radius: var(--radius); padding: 8px 12px; }
+/* The picture: a drop target until one is chosen, then the picture in its frame, cropped to its shape. */
+.hang-stage { display: grid; gap: var(--space-2); }
+.hang-empty { display: grid; justify-items: center; gap: var(--space-1); padding: var(--space-6) var(--space-4); border: 1px dashed var(--border-strong); border-radius: var(--radius-lg); background: var(--surface-raised); text-align: center; }
+.hang-empty b { font-weight: 500; }
+.hang-empty small { color: var(--text-secondary); font-size: var(--text-small); }
+.hang-empty .btn { margin-top: var(--space-3); }
+.hang-empty-icon { font-size: 28px; line-height: 1; }
+.hang-frame { justify-self: center; box-sizing: content-box; width: min(calc(100% - 24px), calc(220px * var(--shape, 1))); aspect-ratio: var(--shape, 1); border: 12px solid var(--frame, #c98b5a); outline: 1px solid var(--border-strong); background: #fff; }
+.hang-frame img { display: block; width: 100%; height: 100%; object-fit: cover; }
+.hang-meta { display: flex; gap: var(--space-2); align-items: center; font-size: var(--text-small); color: var(--text-secondary); }
+.hang-meta .grow { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.hang.dropping::after { content: 'Drop it to hang it'; position: absolute; inset: 0; z-index: 3; display: grid; place-items: center; border: 2px dashed var(--accent); border-radius: var(--radius-lg); background: rgba(10, 10, 10, .82); color: var(--text); font-size: 15px; pointer-events: none; }
 .modal.picture { width: min(980px, 100%); }
 .picture-stage { display: grid; place-items: center; min-height: 200px; padding: 16px; background: var(--surface-raised); border: 1px solid var(--border); border-radius: var(--radius); }
 .picture-stage img { display: block; max-width: 100%; max-height: calc(100vh - 260px); object-fit: contain; }

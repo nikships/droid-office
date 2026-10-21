@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { contextMenu, type EditTarget, editMenu } from '../src/desktop/edit-menu.ts';
+import { type ChooserOptions, chooserFilters, parseChooserOpened } from '../src/desktop/file-chooser.ts';
 import { BINDING_NAME } from '../src/desktop/input-bridge.ts';
 import { nativeCursor } from '../src/desktop/input-cursor.ts';
 import { BUTTON, MOD, type NativeEvent } from '../src/desktop/input-events.ts';
@@ -8,7 +9,7 @@ import { type InputNative, type InputPage, PresenterInput } from '../src/desktop
 
 const ORIGIN = 'http://localhost:4600';
 
-function setup(opts: { rawMouse?: boolean; focused?: boolean } = {}) {
+function setup(opts: { rawMouse?: boolean; focused?: boolean; chooseFiles?: (o: ChooserOptions) => Promise<string[]>; answers?: Record<string, unknown> } = {}) {
   const sent: unknown[] = [];
   const commands: { method: string; params: any }[] = [];
   const native: string[] = [];
@@ -26,7 +27,7 @@ function setup(opts: { rawMouse?: boolean; focused?: boolean } = {}) {
       sendCommand: async (method: string, params?: object) => {
         commands.push({ method, params });
         if (method === 'Page.getFrameTree') return { frameTree: { frame: { id: 'MAIN' } } };
-        return {};
+        return opts.answers?.[method] ?? {};
       },
       on: (event: string, l: (...args: any[]) => void) => void debuggerListeners.set(event, [...(debuggerListeners.get(event) ?? []), l]),
     } as InputPage['debugger'],
@@ -42,7 +43,7 @@ function setup(opts: { rawMouse?: boolean; focused?: boolean } = {}) {
     inputSetImeRect: (x, y, w, h) => void native.push(`ime ${x},${y},${w},${h}`),
     inputFocus: () => void native.push('focus'),
   };
-  const input = new PresenterInput({ page, native: nativeApi, shimSource: '/*shim*/', officeOrigin: () => ORIGIN, focused: () => opts.focused ?? true });
+  const input = new PresenterInput({ page, native: nativeApi, shimSource: '/*shim*/', officeOrigin: () => ORIGIN, focused: () => opts.focused ?? true, chooseFiles: opts.chooseFiles });
   const emitPage = (event: string, ...args: any[]) => (listeners.get(event) ?? []).forEach((l) => l(...args));
   const emitDebugger = (...args: any[]) => (debuggerListeners.get('message') ?? []).forEach((l) => l(...args));
   const flush = () => new Promise((r) => setImmediate(r));
@@ -382,4 +383,52 @@ test('the page is told when its window can no longer be seen, and again after it
   t.emitPage('did-finish-load');
   await t.flush();
   assert.equal(t.evaluated().filter((e) => e.includes('?.visibility(')).length, 3);
+});
+
+test('a file input in the office opens the open panel on the visible window, and what was chosen goes to that input', async () => {
+  const asked: ChooserOptions[] = [];
+  const t = setup({
+    chooseFiles: async (o) => (asked.push(o), ['/Users/nik/Pictures/IMG_0001.HEIC']),
+    answers: {
+      'DOM.resolveNode': { object: { objectId: 'obj-1' } },
+      'Runtime.callFunctionOn': { result: { value: { accept: 'image/png,.heic', directory: false } } },
+    },
+  });
+  t.emitPage('did-finish-load');
+  await t.flush();
+  assert.ok(t.commands.some((c) => c.method === 'Page.setInterceptFileChooserDialog' && c.params.enabled === true));
+  t.trust();
+  t.emitDebugger({}, 'Page.fileChooserOpened', { frameId: 'MAIN', mode: 'selectSingle', backendNodeId: 42 });
+  for (let i = 0; i < 5; i++) await t.flush();
+  assert.deepEqual(asked, [{ multiple: false, directory: false, filters: chooserFilters('image/png,.heic') }]);
+  const set = t.commands.find((c) => c.method === 'DOM.setFileInputFiles');
+  assert.deepEqual(set?.params, { files: ['/Users/nik/Pictures/IMG_0001.HEIC'], backendNodeId: 42 });
+});
+
+test('a file input in another frame gets no open panel, and a cancelled panel sets nothing', async () => {
+  let asked = 0;
+  const t = setup({ chooseFiles: async () => (asked++, []) });
+  t.emitPage('did-finish-load');
+  await t.flush();
+  t.trust();
+  t.emitDebugger({}, 'Page.fileChooserOpened', { frameId: 'CARD', mode: 'selectSingle', backendNodeId: 7 });
+  t.emitDebugger({}, 'Page.fileChooserOpened', { frameId: 'MAIN', mode: 'folder', backendNodeId: 7 });
+  for (let i = 0; i < 5; i++) await t.flush();
+  assert.equal(asked, 0);
+  t.emitDebugger({}, 'Page.fileChooserOpened', { frameId: 'MAIN', mode: 'selectMultiple', backendNodeId: 7 });
+  for (let i = 0; i < 5; i++) await t.flush();
+  assert.equal(asked, 1);
+  assert.ok(!t.commands.some((c) => c.method === 'DOM.setFileInputFiles'));
+});
+
+test('the open panel filters by what the input accepts, keeps all files in reach, and ignores what it cannot read', () => {
+  assert.deepEqual(chooserFilters('image/png,.HEIC'), [
+    { name: 'Pictures', extensions: ['png', 'heic'] },
+    { name: 'All files', extensions: ['*'] },
+  ]);
+  assert.equal(chooserFilters('.html,.htm,text/html')[0]?.name, 'Supported files');
+  assert.ok(chooserFilters('image/*')[0]?.extensions.includes('heic'));
+  for (const odd of ['', 'video/*', '.tar.gz', '../x', 'x'.repeat(3000), 42]) assert.deepEqual(chooserFilters(odd), [], String(odd).slice(0, 20));
+  assert.deepEqual(parseChooserOpened({ frameId: 'MAIN', mode: 'selectMultiple', backendNodeId: 3 }), { frameId: 'MAIN', multiple: true, backendNodeId: 3 });
+  assert.equal(parseChooserOpened({ frameId: 'MAIN', mode: 'selectSingle', backendNodeId: -1 }), undefined);
 });

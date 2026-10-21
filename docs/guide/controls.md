@@ -16,7 +16,7 @@
 | N | Go to the worker that has waited longest on someone; again for the next one |
 | Command + 1–9 / 0 | Teleport to the numbered floor (0 is floor 10), keeping your position and view instead of arriving in the elevator. Works from terminals and windows too |
 | Command + ← / → | Previous / next running terminal on this floor, in desk order, then the boss monitor’s shell. Wraps at either end. From the office, opens the first / last terminal; other text fields and dialogs keep their normal shortcuts |
-| F | Hang a picture from the web on a wall (scroll to size it, click to hang it) |
+| F | Hang a picture from your computer or the web on a wall (scroll to size it, click to hang it) |
 | Q | Put back the issue card you're carrying |
 | G / 1–6 | Emote: hold G for the wheel (point and let go) or press 1–6 to wave, give a thumbs up, clap, dance, point or facepalm; it plays on your character. With the wand drawn, 1–5 are its spells: Lumos, swish and flick, sparkler, ship it, run the build. With the Magnum drawn they're its tricks: twirl, inspect, cylinder spin, yy, blow the smoke off, flip |
 | 7 | Draw the droid wand, or the .44 Magnum if you picked it in ⚙️ Settings → You (or put it away; mash it to cancel one into the other); tap left-click on a worker to open its terminal, hold for 0.75s and release to dismiss it; either opens a laptop screen's UI from any distance |

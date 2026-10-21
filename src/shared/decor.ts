@@ -1,5 +1,6 @@
 // Pictures people hang on the office walls. The server keeps the list; every browser draws them
-// in frames, loading each image through the office (GET /api/image), so any image host works.
+// in frames, loading each image through the office: a link through GET /api/image, so any image
+// host works, and a picture from the owner's computer from the floor's own copy (GET /api/decor/picture).
 
 import { FLOOR, LOFT, WALL_HEIGHT } from './layout.js';
 
@@ -7,7 +8,7 @@ export type WallId = 'north' | 'south' | 'east' | 'west';
 
 /** Where a picture hangs, what it shows and how it's framed: what a client sends. */
 export interface DecorPlacement {
-  /** The image, somewhere online (http or https). */
+  /** The image: a link online (http or https), or a picture kept by the office (`upload:<sha256>.<ext>`, see UPLOAD_REF). */
   url: string;
   title?: string;
   wall: WallId;
@@ -179,6 +180,38 @@ export function pictureSize(size: number, aspect: number): { w: number; h: numbe
   return { w, h };
 }
 
+/** The shapes a frame can take: the image's own (ratio 0), or a fixed width / height it's cropped to. */
+export const SHAPES = [
+  { name: 'Original', ratio: 0 },
+  { name: '1:1', ratio: 1 },
+  { name: '4:3', ratio: 4 / 3 },
+  { name: '3:4', ratio: 3 / 4 },
+  { name: '3:2', ratio: 3 / 2 },
+  { name: '16:9', ratio: 16 / 9 },
+  { name: '9:16', ratio: 9 / 16 },
+] as const;
+
+/** Starting sizes for a picture's longest side, in meters. Scrolling while aiming fine-tunes it. */
+export const SIZES = [
+  { name: 'Small', size: 0.6 },
+  { name: 'Medium', size: 1.2 },
+  { name: 'Large', size: 2 },
+  { name: 'Huge', size: 3 },
+] as const;
+
+/**
+ * A picture from the owner's computer, kept in the floor's .droid-office/pictures/ under the hash of
+ * its bytes, in a format every browser draws.
+ */
+export const UPLOAD_REF = /^upload:([0-9a-f]{64}\.(?:png|jpg|gif|webp|avif))$/;
+/** The biggest file the office takes from the computer to convert or keep (a camera's RAW photo fits). */
+export const UPLOAD_MAX_BYTES = 100 * 1024 * 1024;
+
+/** The file name of an uploaded picture's reference, or undefined when `url` is a link. */
+export function uploadName(url: string): string | undefined {
+  return UPLOAD_REF.exec(url)?.[1];
+}
+
 /** Checks a link someone wants to hang. Returns the tidied URL, or why it won't do. */
 export function checkImageUrl(raw: unknown): { url: string } | { error: string } {
   const s = typeof raw === 'string' ? raw.trim() : '';
@@ -194,12 +227,18 @@ export function checkImageUrl(raw: unknown): { url: string } | { error: string }
   return { url: u.href };
 }
 
+/** Checks where a picture's image comes from: a picture the office keeps, or a link. */
+export function checkPictureSource(raw: unknown): { url: string } | { error: string } {
+  if (typeof raw === 'string' && uploadName(raw.trim())) return { url: raw.trim() };
+  return checkImageUrl(raw);
+}
+
 const WALL_IDS = new Set<string>(Object.keys(WALLS));
 
 /** Checks and tidies a placement from a client: moves it onto its wall, or says why it can't hang. */
 export function sanitizePlacement(x: unknown): DecorPlacement | string {
   const o = (x && typeof x === 'object' ? x : {}) as Record<string, unknown>;
-  const url = checkImageUrl(o.url);
+  const url = checkPictureSource(o.url);
   if ('error' in url) return url.error;
   if (typeof o.wall !== 'string' || !WALL_IDS.has(o.wall)) return 'Pick a wall to hang it on';
   const wall = o.wall as WallId;

@@ -107,7 +107,7 @@ export class Hanger {
 
   /** Pick an image, then a spot on the wall. */
   start() {
-    openHangDialog({ onDone: (c) => this.begin(c, lastSize()) });
+    openHangDialog({ size: lastSize(), onDone: (c) => this.begin(c) });
   }
 
   /** A closer look at a picture on the wall. */
@@ -145,9 +145,23 @@ export class Hanger {
     openHangDialog({
       initial: d,
       onDone: (c) => {
-        // A new image keeps the picture's size along its longest side, in the new image's shape.
-        const { w, h } = c.picture.url === d.url ? d : pictureSize(Math.max(d.w, d.h), c.picture.aspect);
-        this.net.send({ t: 'decor.update', id, decor: { url: c.picture.url, title: c.title, frame: c.frame, w, h } });
+        const now = store.decor.find((x) => x.id === id);
+        if (!now) return;
+        const { w, h } = pictureSize(c.size, c.shape);
+        const look = { url: c.picture.url, title: c.title, frame: c.frame };
+        const on = clampToWall(now.wall, now.u, now.y, w, h);
+        const rect = on && frameRect({ wall: now.wall, u: on.u, y: on.y, w, h });
+        if (rect && ![...this.office.fixtures(), ...this.gallery.rects(id)].some((r) => overlaps(rect, r))) {
+          this.net.send({ t: 'decor.update', id, decor: { ...look, w, h } });
+          return;
+        }
+        // Its new size or shape doesn't fit where it hangs: the rest changes now, and you aim it somewhere it fits.
+        this.net.send({ t: 'decor.update', id, decor: look });
+        hintToast("At that size it doesn't fit there. Aim at a free spot and click to hang it");
+        this.stop();
+        this.cur = { ...look, texture: c.picture.texture, aspect: c.picture.aspect, shape: c.shape, size: c.size, moving: id, release: holdPicture(c.picture.url) };
+        this.gallery.hide(id);
+        this.onChange();
       },
     });
   }
@@ -208,10 +222,9 @@ export class Hanger {
     this.ghost.show(this.at, cur.frame, cur.texture, cur.aspect);
   }
 
-  private begin(c: HangChoice, size: number) {
+  private begin(c: HangChoice) {
     this.stop();
-    const aspect = c.picture.aspect;
-    this.cur = { url: c.picture.url, title: c.title, frame: c.frame, texture: c.picture.texture, aspect, shape: aspect, size, release: holdPicture(c.picture.url) };
+    this.cur = { url: c.picture.url, title: c.title, frame: c.frame, texture: c.picture.texture, aspect: c.picture.aspect, shape: c.shape, size: c.size, release: holdPicture(c.picture.url) };
     this.onChange();
   }
 
