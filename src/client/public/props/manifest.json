@@ -25,6 +25,19 @@
     "url": "/props/droid-computer.glb",
     "width": 0.45
   },
+  "droid-team-kit": {
+    "bytes": 170476,
+    "depth": 0.416,
+    "height": 0.606,
+    "materials": 5,
+    "tags": [
+      "factory",
+      "part"
+    ],
+    "triangles": 2956,
+    "url": "/props/droid-team-kit.glb",
+    "width": 0.605
+  },
   "droid-worker": {
     "bytes": 340648,
     "depth": 0.475,

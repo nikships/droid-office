@@ -329,8 +329,8 @@ class Prop:
     `recenter` parks the prop's origin at its footprint centre; props authored in
     another node's space (the laptop's base and lid) turn it off. A `multipart` build
     returns (body_parts, loose_parts) instead of one parts list: the body joins into a
-    single mesh as usual, and each loose (name, object, material) exports as its own
-    node, so the client can find it by name. `keep_uvs` keeps the body's UVs for props
+    single mesh as usual (an empty body exports only the loose nodes), and each loose
+    (name, object, material) exports as its own node, so the client can find it by name. `keep_uvs` keeps the body's UVs for props
     painted from a palette atlas (see `palette_material`); untextured props drop them.
     `draco` off exports plain buffers, for a prop the tests parse in Node, where three's
     DRACOLoader has no Web Worker to decode in.
@@ -1427,6 +1427,297 @@ def build_droid_worker():
     ]
 
 
+# The team kit a lead and its followers wear over `droid-worker.glb`, in the same worker space
+# (+Z forward, +Y up). UVs here are the glTF values the GLB stores: an emblem's outer face spans
+# 0..1, and every other face of the kit sits on the single point KIT_BLANK_UV.
+KIT_BLANK_UV = (0.04, 0.04)
+DROID_TEAM_KIT = {
+    # Centreline of the crown's rounded-rectangle wall round the top of the head.
+    "crown_loop": {"half_w": 0.24, "front": 0.185, "rear": -0.195, "corner": 0.05},
+    "crown_valley": 0.982,
+    "ear": {"x": 0.268, "y": 0.785, "radius": 0.104, "length": 0.050},
+    "shoulder_top_y": 0.628,
+}
+
+
+def kit_uv(obj, u=KIT_BLANK_UV[0], v=KIT_BLANK_UV[1]):
+    """Put every loop of a kit part on one UV point, on the layer name join matches."""
+    o = raw(obj)
+    layer = o.data.uv_layers.active or o.data.uv_layers.new(name="UVMap")
+    layer.name = "UVMap"
+    # The exporter writes glTF v as 1 - Blender v.
+    for loop in layer.data:
+        loop.uv = (u, 1.0 - v)
+    return obj
+
+
+def solid_mesh(name, vertices, faces):
+    """A closed mesh with outward faces, whatever winding `faces` was written in."""
+    obj = mesh_object(name, vertices, faces)
+    bm = bmesh.new()
+    bm.from_mesh(obj.data)
+    bmesh.ops.recalc_face_normals(bm, faces=bm.faces)
+    bm.to_mesh(obj.data)
+    bm.free()
+    obj.data.update()
+    return obj
+
+
+def emblem_plate(name, face_centre, normal, up, size, thick=0.003):
+    """A flat square emblem plate whose outer face carries the full 0..1 UV square, upright and
+    unmirrored as seen from outside (u to the viewer's right, v up, as stored in the GLB, which is
+    how the client paints a flipY canvas). `face_centre` is the outer face's centre."""
+    n = Vector(normal).normalized()
+    up_v = Vector(up).normalized()
+    right = up_v.cross(n)
+    c = Vector(face_centre)
+    h = size / 2
+    corners = [(-1, -1), (1, -1), (1, 1), (-1, 1)]
+    front = [c + right * (a * h) + up_v * (b * h) for a, b in corners]
+    back = [p - n * thick for p in front]
+    faces = [(0, 1, 2, 3), (7, 6, 5, 4), (0, 4, 5, 1), (1, 5, 6, 2), (2, 6, 7, 3), (3, 7, 4, 0)]
+    obj = mesh_object(name, front + back, faces)
+    kit_uv(obj)
+    layer = obj.data.uv_layers["UVMap"]
+    face = obj.data.polygons[0]
+    for loop_index in face.loop_indices:
+        a, b = corners[obj.data.loops[loop_index].vertex_index]
+        layer.data[loop_index].uv = ((a + 1) / 2, 1.0 - (b + 1) / 2)
+    return obj
+
+
+def rounded_loop_samples(half_w, front, rear, r, extra_s=(), arc_segs=6):
+    """Points on a rounded rectangle's centreline in the xz plane as (s, x, z, nx, nz), starting
+    at the front centre and running towards +x, with `extra_s` arclengths sampled exactly."""
+    a = half_w - r
+    segs = [
+        ("line", (0.0, front), (a, front)),
+        ("arc", (a, front - r), 90.0, 0.0),
+        ("line", (half_w, front - r), (half_w, rear + r)),
+        ("arc", (a, rear + r), 0.0, -90.0),
+        ("line", (a, rear), (-a, rear)),
+        ("arc", (-a, rear + r), -90.0, -180.0),
+        ("line", (-half_w, rear + r), (-half_w, front - r)),
+        ("arc", (-a, front - r), 180.0, 90.0),
+        ("line", (-a, front), (0.0, front)),
+    ]
+    arc_len = math.pi / 2 * r
+    lengths = [math.dist(s[1], s[2]) if s[0] == "line" else arc_len for s in segs]
+    total = sum(lengths)
+
+    def at(s):
+        s %= total
+        for seg, length in zip(segs, lengths):
+            if s <= length + 1e-9:
+                t = s / length
+                if seg[0] == "line":
+                    (x0, z0), (x1, z1) = seg[1], seg[2]
+                    dx, dz = (x1 - x0) / length, (z1 - z0) / length
+                    return x0 + (x1 - x0) * t, z0 + (z1 - z0) * t, -dz, dx
+                (cx, cz), a0, a1 = seg[1], seg[2], seg[3]
+                ang = math.radians(a0 + (a1 - a0) * t)
+                return cx + r * math.cos(ang), cz + r * math.sin(ang), math.cos(ang), math.sin(ang)
+            s -= length
+        raise ValueError(s)
+
+    stops, acc = [0.0], 0.0
+    for seg, length in zip(segs, lengths):
+        if seg[0] == "arc":
+            stops += [acc + length * k / arc_segs for k in range(1, arc_segs)]
+        acc += length
+        stops.append(acc)
+    stops += [s % total for s in extra_s]
+    unique = []
+    for s in sorted(x % total for x in stops):
+        if not unique or s - unique[-1] > 1e-6:
+            unique.append(s)
+    if total - unique[-1] < 1e-6:
+        unique.pop()
+    return total, [(s, *at(s)) for s in unique]
+
+
+def loop_wall(name, samples, off_in, off_out, y_bottom, y_top):
+    """A closed wall swept round `samples`, from `off_in` to `off_out` along each point's outward
+    normal; `y_bottom` and `y_top` give each sample's heights from its (s, x, z)."""
+    verts, faces = [], []
+    for s, x, z, nx, nz in samples:
+        y0, y1 = y_bottom(s, x, z), y_top(s, x, z)
+        xi, zi = x + nx * off_in, z + nz * off_in
+        xo, zo = x + nx * off_out, z + nz * off_out
+        verts += [(xi, y0, zi), (xo, y0, zo), (xo, y1, zo), (xi, y1, zi)]
+    n = len(samples)
+    for i in range(n):
+        a, b = i * 4, ((i + 1) % n) * 4
+        faces += [(a, b, b + 1, a + 1), (a + 1, b + 1, b + 2, a + 2), (a + 2, b + 2, b + 3, a + 3), (a + 3, b + 3, b, a)]
+    return solid_mesh(name, verts, faces)
+
+
+def strap(name, points, width, thick, across=(0.0, 0.0, 1.0)):
+    """A flat rectangular strap swept along `points`, its width kept as close to `across` as
+    the path allows (a headband's width runs front to back)."""
+    pts = [Vector(p) for p in points]
+    axis = Vector(across)
+    verts, faces = [], []
+    for i, p in enumerate(pts):
+        t = (pts[min(i + 1, len(pts) - 1)] - pts[max(i - 1, 0)]).normalized()
+        w = (axis - t * t.dot(axis)).normalized()
+        nrm = t.cross(w)
+        for a, b in ((1, 1), (-1, 1), (-1, -1), (1, -1)):
+            verts.append(p + w * (a * width / 2) + nrm * (b * thick / 2))
+    for i in range(len(pts) - 1):
+        for j in range(4):
+            a, b = i * 4 + j, i * 4 + (j + 1) % 4
+            faces.append((a, b, b + 4, a + 4))
+    faces += [(3, 2, 1, 0), tuple(len(verts) - 4 + k for k in range(4))]
+    return solid_mesh(name, verts, faces)
+
+
+def catmull_rom(points, steps=3):
+    """Points through `points` on a uniform Catmull-Rom spline, `steps` spans per segment."""
+    pts = [Vector(p) for p in points]
+    out = []
+    for i in range(len(pts) - 1):
+        p0, p1, p2, p3 = pts[max(i - 1, 0)], pts[i], pts[i + 1], pts[min(i + 2, len(pts) - 1)]
+        for k in range(steps):
+            t = k / steps
+            out.append(0.5 * ((2 * p1) + (p2 - p0) * t + (2 * p0 - 5 * p1 + 4 * p2 - p3) * t * t + (3 * p1 - p0 - 3 * p2 + p3) * t ** 3))
+    out.append(pts[-1])
+    return [tuple(p) for p in out]
+
+
+@prop("droid-team-kit", "factory", "part", recenter=False, multipart=True, keep_uvs=True, draco=False)
+def build_droid_team_kit():
+    """Team hardware worn over `droid-worker.glb`, authored in the same worker space so every node
+    drops onto the droid with no offset. Three loose nodes and no body:
+
+    - `TeamCrown`, the lead's command crown: a team-coloured wall on a graphite base round the
+      top of the head, rising to three points (front centre and the two rear corners) and a low
+      rear tab. It stays below y 1.12 and outside a 0.09 m radius round the beacon mast.
+    - `TeamComms`, a follower's comms: team-coloured caps sleeving both ear pods (the boom mic
+      still leaves the left cap) and a headband over the back of the head, behind the antenna.
+    - `TeamShoulders`, worn by both: a top, front and rear plate saddling each pauldron, within
+      |x| 0.25 so the arms swing clear, and clear of the crew badge, turbine and backpack.
+
+    `TeamAccent` is the team colour and `TeamEmblem` the emblem plates, the only faces with real
+    UVs (crown front and rear, each ear cap, each shoulder's front and rear plate).
+    """
+    m_accent = material("TeamAccent", "#3a86ff", roughness=0.36, metallic=0.18)
+    m_emblem = material("TeamEmblem", "#eceeef", roughness=0.30, metallic=0.10)
+    m_graphite = material("DroidGraphite", "#2a2b30", roughness=0.38, metallic=0.40)
+    m_steel = material("DroidSteel", "#52545c", roughness=0.32, metallic=0.55)
+    m_black = material("DroidBlack", "#161618", roughness=0.42, metallic=0.30)
+
+    def part(obj, mat, into):
+        into.append((kit_uv(obj), mat))
+
+    def kit_loose(parts):
+        obj = assemble(parts, recenter=False, keep_uvs=True)
+        obj.data.transform(Matrix.Rotation(math.radians(-90), 4, "X"))
+        # Bevels interpolate the blank point to within a float ulp, differently run to run;
+        # snapping it back keeps the GLB byte-identical across regenerations.
+        blank = Vector((KIT_BLANK_UV[0], 1.0 - KIT_BLANK_UV[1]))
+        for loop_uv in obj.data.uv_layers["UVMap"].data:
+            if (loop_uv.uv - blank).length < 1e-4:
+                loop_uv.uv = blank
+        return obj
+
+    def facing(obj, nx, nz):
+        """Turn a part about Y so its local +Z points along the outward (nx, nz)."""
+        raw(obj).rotation_euler = (0.0, math.atan2(nx, nz), 0.0)
+        return obj
+
+    # 1. Command crown
+    crown = []
+    loop = DROID_TEAM_KIT["crown_loop"]
+    valley = DROID_TEAM_KIT["crown_valley"]
+    probe_total, base_samples = rounded_loop_samples(loop["half_w"], loop["front"], loop["rear"], loop["corner"])
+    straight_x = loop["half_w"] - loop["corner"]
+    arc = math.pi / 2 * loop["corner"]
+    s_rear_right = straight_x + arc + (loop["front"] - loop["rear"] - 2 * loop["corner"]) + arc / 2
+    s_rear_centre = s_rear_right + arc / 2 + straight_x
+    s_rear_left = s_rear_centre + straight_x + arc / 2
+    # (centre, half base, half tip, peak): the three points, then the low rear emblem tab.
+    peaks = [
+        (0.0, 0.095, 0.012, 1.098),
+        (s_rear_right, 0.080, 0.012, 1.078),
+        (s_rear_left, 0.080, 0.012, 1.078),
+        (s_rear_centre, 0.075, 0.045, 1.018),
+    ]
+
+    def wrap(d):
+        return (d + probe_total / 2) % probe_total - probe_total / 2
+
+    def crown_top(s, x, z):
+        top = valley
+        for c, base, tip, peak in peaks:
+            d = abs(wrap(s - c))
+            if d <= tip:
+                top = max(top, peak)
+            elif d < base:
+                top = max(top, peak - (peak - valley) * (d - tip) / (base - tip))
+        return top
+
+    kinks = [c + k for c, base, tip, _ in peaks for k in (-base, -tip, tip, base)]
+    total, samples = rounded_loop_samples(loop["half_w"], loop["front"], loop["rear"], loop["corner"], extra_s=kinks)
+    base_ring = loop_wall("CrownBase", base_samples, -0.035, 0.014, lambda s, x, z: 0.909 if z > 0.12 else 0.898, lambda s, x, z: 0.932)
+    bevel(base_ring, 0.004, 1)
+    part(smooth_obj(base_ring), m_graphite, crown)
+    wall = loop_wall("CrownWall", samples, -0.008, 0.008, lambda s, x, z: 0.928, crown_top)
+    bevel(wall, 0.003, 1)
+    part(smooth_obj(wall), m_accent, crown)
+
+    by_s = {round(s, 6): (x, z, nx, nz) for s, x, z, nx, nz in samples}
+    for i, (c, _, _, peak) in enumerate(peaks[:3]):
+        x, z, nx, nz = by_s[round(c % total, 6)]
+        part(facing(box(f"CrownTipCap{i}", (0.036, 0.014, 0.026), loc=(x, peak + 0.003, z), bevel_w=0.003, bevel_seg=1), nx, nz), m_graphite, crown)
+    bolt_s = [0.13, -0.13, s_rear_centre + 0.11, s_rear_centre - 0.11, s_rear_right - arc / 2 - 0.14, s_rear_left + arc / 2 + 0.14]
+    _, bolt_samples = rounded_loop_samples(loop["half_w"], loop["front"], loop["rear"], loop["corner"], extra_s=bolt_s)
+    bolt_at = {round(s, 6): (x, z, nx, nz) for s, x, z, nx, nz in bolt_samples}
+    for i, s in enumerate(bolt_s):
+        x, z, nx, nz = bolt_at[round(s % total, 6)]
+        part(facing(box(f"CrownBolt{i}", (0.016, 0.012, 0.006), loc=(x + nx * 0.015, 0.920, z + nz * 0.015)), nx, nz), m_steel, crown)
+
+    crown.append((emblem_plate("CrownEmblemFront", (0.0, 0.979, loop["front"] + 0.0105), (0, 0, 1), (0, 1, 0), 0.082), m_emblem))
+    crown.append((emblem_plate("CrownEmblemRear", (0.0, 0.974, loop["rear"] - 0.0105), (0, 0, -1), (0, 1, 0), 0.070), m_emblem))
+
+    # 2. Team comms: ear-pod sleeves and a headband behind the antenna
+    comms = []
+    ear = DROID_TEAM_KIT["ear"]
+    for sx in (-1, 1):
+        shell = x_cyl(f"EarShell{sx}", ear["radius"], ear["length"], loc=(sx * ear["x"], ear["y"], 0.0), verts=16)
+        bevel(raw(shell), 0.007, 1)
+        part(shell, m_accent, comms)
+        face_x = ear["x"] + ear["length"] / 2
+        part(box(f"EarFrame{sx}", (0.008, 0.106, 0.106), loc=(sx * (face_x + 0.003), ear["y"], 0.0), bevel_w=0.003, bevel_seg=1), m_graphite, comms)
+        part(x_cyl(f"EarHinge{sx}", 0.017, 0.044, loc=(sx * 0.270, 0.858, -0.072), verts=10), m_graphite, comms)
+        part(box(f"EarSlider{sx}", (0.024, 0.040, 0.040), loc=(sx * 0.271, 0.902, -0.100), rot=(math.radians(-38), 0, 0), bevel_w=0.004, bevel_seg=1), m_black, comms)
+        comms.append((emblem_plate(f"EarEmblem{sx}", (sx * (face_x + 0.0095), ear["y"], 0.0), (sx, 0, 0), (0, 1, 0), 0.094), m_emblem))
+    band_right = [(0.268, 0.850, -0.066), (0.270, 0.905, -0.100), (0.258, 0.948, -0.120), (0.228, 0.970, -0.126), (0.170, 0.978, -0.126), (0.0, 0.982, -0.126)]
+    band_path = catmull_rom([(-x, y, z) for x, y, z in band_right] + [(x, y, z) for x, y, z in reversed(band_right[:-1])], steps=2)
+    headband = strap("Headband", band_path, 0.040, 0.018)
+    bevel(headband, 0.003, 1)
+    part(headband, m_accent, comms)
+    part(box("HeadbandBlock", (0.074, 0.012, 0.040), loc=(0.0, 0.992, -0.126), bevel_w=0.003, bevel_seg=1), m_graphite, comms)
+
+    # 3. Shoulder saddles over the pauldrons
+    shoulders = []
+    top_y = DROID_TEAM_KIT["shoulder_top_y"]
+    for sx in (-1, 1):
+        part(box(f"ShoulderTop{sx}", (0.096, 0.014, 0.330), loc=(sx * 0.200, top_y, 0.0), bevel_w=0.004, bevel_seg=1), m_accent, shoulders)
+        part(box(f"ShoulderRail{sx}", (0.050, 0.016, 0.300), loc=(sx * 0.180, top_y - 0.015, 0.0), bevel_w=0.003, bevel_seg=1), m_graphite, shoulders)
+        part(box(f"ShoulderFrontBack{sx}", (0.104, 0.132, 0.008), loc=(sx * 0.197, 0.568, 0.156), bevel_w=0.003, bevel_seg=1), m_graphite, shoulders)
+        part(box(f"ShoulderFront{sx}", (0.092, 0.126, 0.010), loc=(sx * 0.197, 0.569, 0.164), bevel_w=0.003, bevel_seg=1), m_accent, shoulders)
+        part(box(f"ShoulderRearBack{sx}", (0.088, 0.132, 0.008), loc=(sx * 0.2045, 0.568, -0.156), bevel_w=0.003, bevel_seg=1), m_graphite, shoulders)
+        part(box(f"ShoulderRear{sx}", (0.078, 0.126, 0.010), loc=(sx * 0.2045, 0.569, -0.164), bevel_w=0.003, bevel_seg=1), m_accent, shoulders)
+        shoulders.append((emblem_plate(f"ShoulderEmblemFront{sx}", (sx * 0.197, 0.566, 0.1715), (0, 0, 1), (0, 1, 0), 0.078), m_emblem))
+        shoulders.append((emblem_plate(f"ShoulderEmblemRear{sx}", (sx * 0.2045, 0.566, -0.1715), (0, 0, -1), (0, 1, 0), 0.070), m_emblem))
+
+    return [], [
+        ("TeamCrown", kit_loose(crown), None),
+        ("TeamComms", kit_loose(comms), None),
+        ("TeamShoulders", kit_loose(shoulders), None),
+    ]
+
 # The .44 Magnum your first-person glove holds
 # --------------------------------------------------------------------------------------
 
@@ -2127,7 +2418,7 @@ def assemble_multipart(body_parts, loose_parts, recenter: bool = True, keep_uvs:
     (name, object, material) finishes as its own node, keeping its UVs — the reason a
     part stays loose is that the client addresses it directly (the laptop's display is
     painted as a texture, which needs UVs and a node the client can find by name)."""
-    objs = [assemble(body_parts, recenter=recenter, keep_uvs=keep_uvs)]
+    objs = [assemble(body_parts, recenter=recenter, keep_uvs=keep_uvs)] if body_parts else []
     for name, obj, mat in loose_parts:
         obj = raw(obj)
         obj.name = name
@@ -2242,12 +2533,14 @@ def build_prop(entry: Prop, reset: bool = True) -> list:
         reset_scene()
         build_materials()
     result = entry.build()
+    has_body = True
     if entry.multipart:
         body_parts, loose_parts = result
+        has_body = bool(body_parts)
         objs = assemble_multipart(body_parts, loose_parts, entry.recenter, entry.keep_uvs)
     else:
         objs = [assemble(result, entry.recenter, entry.keep_uvs)]
-    if entry.keep_uvs:
+    if entry.keep_uvs and has_body:
         # A joined body keeps its first part's name; give it the prop's instead.
         objs[0].name = entry.name
     return objs

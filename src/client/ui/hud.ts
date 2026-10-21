@@ -4,7 +4,7 @@ import { modelBadge } from './models';
 import { windowHeader } from './kit';
 import { cloudLine } from './factory-cloud';
 import { DESK_BY_ID } from '../../shared/layout';
-import { teamSummary, workersByTeam } from '../../shared/team';
+import { TEAM_MARK, teamStanding, teamSummary, workersByTeam } from '../../shared/team';
 import { PROVIDER_LABEL, processLabel, statusWord } from '../../shared/guests';
 import { creditsNote } from '../../shared/factory-sessions';
 
@@ -16,7 +16,9 @@ export function renderWorkers(onOpen: (id: string) => void) {
     const lead = w.lead ? store.workers.get(w.lead) : undefined;
     const team = store.teamOf(w.id);
     const badge = w.kind === 'agent' ? modelBadge(w.activeModel ?? w.model, w.activeEffort ?? w.effort) : undefined;
+    const standing = teamStanding(w, (id) => store.workers.get(id));
     const sub = [
+      standing && `${TEAM_MARK[standing.badge.emblem]} ${standing.label}`,
       teamSummary(team),
       w.kind === 'agent' && `⚙️ ${w.guest ? PROVIDER_LABEL[w.guest.provider] : 'Droid'}${badge ? ` · ${badge}` : ''}`,
       w.cloud && cloudLine(w),

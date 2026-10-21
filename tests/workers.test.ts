@@ -1731,6 +1731,69 @@ test('a subagent sits down told who hired it and where it works; every agent get
   assert.equal(after.get(sub.id)?.lead, undefined);
 });
 
+test('team markings form with the first hire, survive restarts and the lead leaving, and never restore a lead', async (t) => {
+  const f = carryOnFixture(t);
+  const workers = manager(f, [], []);
+  t.after(() => workers.shutdown());
+  const hire = (desk: string, lead?: string) => {
+    const w = workers.spawn(desk, 'Ada', 'work', false, 'agent', undefined, undefined, [], lead);
+    assert.ok(typeof w === 'object', String(w));
+    return w as WorkerInfo;
+  };
+  const ada = hire('desk-1');
+  const bo = hire('desk-5');
+  assert.equal(ada.team, undefined, 'a worker who never hired wears nothing');
+
+  const one = hire('desk-2', ada.id);
+  const lead = workers.get(ada.id)!.team!;
+  assert.deepEqual({ id: lead.id, role: lead.role, leadName: lead.leadName }, { id: ada.id, role: 'lead', leadName: ada.name });
+  assert.deepEqual(one.team, { ...lead, role: 'member' });
+  const two = hire('desk-3', ada.id);
+  assert.deepEqual(two.team, one.team, 'a later subagent joins the same team');
+  assert.equal(workers.get(ada.id)!.team, lead, "the lead's markings don't change as the team grows");
+
+  const other = hire('desk-6', bo.id);
+  const boTeam = workers.get(bo.id)!.team!;
+  assert.notEqual(boTeam.accent, lead.accent);
+  assert.notEqual(boTeam.emblem, lead.emblem);
+  assert.equal(other.team?.id, bo.id);
+
+  // A restart puts every badge back as it was.
+  workers.shutdown(true);
+  await new Promise((resolve) => setTimeout(resolve, 200));
+  const saved = JSON.parse(readFileSync(path.join(f.data, 'workers.json'), 'utf8')) as WorkerInfo[];
+  assert.deepEqual(saved.find((w) => w.id === one.id)?.team, one.team);
+  const after = manager(f, [], []);
+  t.after(() => after.shutdown());
+  for (const w of [ada, one, two, bo, other]) assert.deepEqual(after.get(w.id)?.team, (w.id === ada.id ? lead : w.id === bo.id ? boTeam : workers.get(w.id)?.team) ?? w.team);
+
+  // Its lead goes home: the subagents keep whose team they were on, but report to nobody.
+  await after.kill(ada.id);
+  assert.equal(after.get(one.id)?.lead, undefined);
+  assert.deepEqual(after.get(one.id)?.team, one.team);
+  // One of them hires for itself: it leads a team of its own, in a look nobody on the floor wears.
+  const mine = after.spawn('desk-4', 'x', 'piece', false, 'agent', undefined, undefined, [], one.id) as WorkerInfo;
+  const own = after.get(one.id)!.team!;
+  assert.equal(own.role, 'lead');
+  assert.equal(own.id, one.id);
+  assert.notEqual(`${own.accent}|${own.emblem}`, `${lead.accent}|${lead.emblem}`, 'its old team is still worn by its old teammate');
+  assert.notEqual(`${own.accent}|${own.emblem}`, `${boTeam.accent}|${boTeam.emblem}`);
+  assert.deepEqual(mine.team, { ...own, role: 'member' });
+  assert.deepEqual(after.get(two.id)?.team, one.team, 'the teammate left behind keeps the old markings');
+
+  // An office from before markings: its teams get them on the way in, and nobody gains a lead.
+  after.shutdown(true);
+  await new Promise((resolve) => setTimeout(resolve, 200));
+  const old = (JSON.parse(readFileSync(path.join(f.data, 'workers.json'), 'utf8')) as WorkerInfo[]).map(({ team: _, ...w }) => w);
+  writeFileSync(path.join(f.data, 'workers.json'), JSON.stringify(old));
+  const migrated = manager(f, [], []);
+  t.after(() => migrated.shutdown());
+  assert.equal(migrated.get(one.id)?.team?.role, 'lead');
+  assert.deepEqual(migrated.get(mine.id)?.team, { ...migrated.get(one.id)!.team!, role: 'member' });
+  assert.equal(migrated.get(bo.id)?.team?.role, 'lead');
+  assert.equal(migrated.get(two.id)?.team, undefined, 'no history is invented for a subagent whose lead had already gone');
+  assert.equal(migrated.get(two.id)?.lead, undefined);
+});
 /** Everything the agent has read from its terminal so far: a pty hands it over a line at a time. */
 const typed = (records: Invocation[]) => records.map((r) => r.stdin ?? '').join('');
 
