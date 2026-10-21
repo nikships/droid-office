@@ -89,7 +89,7 @@ const title = h('h1.dash-office', {}, officeName);
 const brand = h(
   'button.dash-brand',
   { type: 'button', title: 'All workers (Esc)', onclick: () => select('') },
-  h('img', { src: '/favicon.svg', alt: '', width: 26, height: 26 }),
+  h('img', { src: '/factory-glyph.svg', alt: '', width: 26, height: 26 }),
   h('span.dash-brand-text', {}, h('span.eyebrow', {}, 'Web companion'), title),
 );
 const floors = h('select.select.dash-floor-select', { 'aria-label': 'Floor' });
