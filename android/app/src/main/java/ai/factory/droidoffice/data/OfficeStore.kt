@@ -25,10 +25,19 @@ enum class AuthMode {
     Lan,
 }
 
+/** How long a name typed on this phone can be. Longer text is cut so a title still fits. */
+const val LOCAL_OFFICE_LABEL_MAX = 64
+
 @Serializable
 data class PairedOffice(
     val id: String,
     val name: String,
+    /**
+     * A name this phone shows instead of [name]. Null means show [name]. The office never sees it,
+     * and a reconnect that refreshes [name] does not replace it. It lives in Preferences DataStore,
+     * so an app update keeps it.
+     */
+    val label: String? = null,
     val bases: List<String>,
     val auth: AuthMode = AuthMode.Device,
     val deviceId: String? = null,
@@ -44,6 +53,26 @@ data class PairedOffice(
 
 /** Whether [other] is this office paired again: one of the same addresses, under the same name. */
 fun PairedOffice.sameOfficeAs(other: PairedOffice) = bases.any { it in other.bases } && name == other.name
+
+/** What this phone shows. A local rename wins; the name the office reports is the fallback. */
+val PairedOffice.displayName: String
+    get() = label?.trim()?.takeIf { it.isNotEmpty() } ?: name
+
+/**
+ * A name typed on this phone. Blank, or the office's own name, clears the rename so that name
+ * shows again. The office never hears about it.
+ */
+fun localOfficeLabel(typed: String, officeName: String): String? {
+    val trimmed = typed.trim().take(LOCAL_OFFICE_LABEL_MAX)
+    return trimmed.takeIf { it.isNotEmpty() && it != officeName }
+}
+
+/** Pairing again replaces the record. A name chosen on this phone stays with the replacement. */
+private fun PairedOffice.keepingLocalLabel(previous: List<PairedOffice>): PairedOffice {
+    if (!label.isNullOrBlank()) return this
+    val kept = previous.firstNotNullOfOrNull { it.label?.trim()?.takeIf(String::isNotEmpty) } ?: return this
+    return copy(label = kept)
+}
 
 data class AppSettings(
     val stayConnected: Boolean = false,
@@ -107,10 +136,12 @@ class OfficeStore(context: Context, scope: CoroutineScope, private val vault: To
     suspend fun save(office: PairedOffice, token: String) {
         val sealed = vault.encrypt(token)
         store.edit { p ->
-            val list = current(p).filterNot { it.id == office.id || it.sameOfficeAs(office) }
+            val existing = current(p)
+            val replaced = existing.filter { it.id == office.id || it.sameOfficeAs(office) }
             // Pairing again replaces the old entry for the same office (same address), not just the same id.
-            current(p).filter { it.id != office.id && it.sameOfficeAs(office) }.forEach { p.remove(tokenKey(it.id)) }
-            p[OFFICES] = OfficeJson.encodeToString(listSerializer, list + office)
+            replaced.filter { it.id != office.id }.forEach { p.remove(tokenKey(it.id)) }
+            val saved = office.keepingLocalLabel(replaced)
+            p[OFFICES] = OfficeJson.encodeToString(listSerializer, existing.filterNot { it.id == office.id || it.sameOfficeAs(office) } + saved)
             p[tokenKey(office.id)] = sealed
             p[ACTIVE] = office.id
         }

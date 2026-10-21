@@ -91,7 +91,10 @@ sealed interface WbRangeAnswer {
 /** A file the app fetched from the office for the page: its status, Content-Type, headers (lower-case names) and body. */
 class WbFetched(val code: Int, val type: String?, val headers: Map<String, String>, val body: ByteArray)
 
-/** What the WebView gets for one of the page's requests: [length] bytes of [body] from [offset]. */
+/**
+ * What the WebView gets for one of the page's requests: [length] bytes of [body] from [offset]. For a
+ * 206 that is the file from its start, and the WebView skips to the range itself.
+ */
 class WbAnswer(val code: Int, val reason: String, val mime: String, val charset: String?, val headers: Map<String, String>, val body: ByteArray, val offset: Int, val length: Int)
 
 object WbPage {
@@ -179,10 +182,13 @@ object WbPage {
         return when (val r = range(range, size)) {
             WbRangeAnswer.Whole -> WbAnswer(200, "OK", mime, charset, whole, fetched.body, 0, fetched.body.size)
             WbRangeAnswer.Unsatisfiable -> WbAnswer(416, reason(416), mime, charset, whole + ("content-range" to "bytes */$size"), ByteArray(0), 0, 0)
+            // The WebView applies the request's Range to the stream itself: it skips to the start and
+            // sets Content-Length. So the stream is the file up to the range's end, never the range alone,
+            // or a video gets its bytes from twice the offset and fails to decode.
             is WbRangeAnswer.Part -> WbAnswer(
                 206, reason(206), mime, charset,
-                whole + ("content-range" to r.range.contentRange(size)) + ("content-length" to r.range.length.toString()),
-                fetched.body, r.range.start.toInt(), r.range.length.toInt(),
+                whole + ("content-range" to r.range.contentRange(size)),
+                fetched.body, 0, (r.range.end + 1).toInt(),
             )
         }
     }

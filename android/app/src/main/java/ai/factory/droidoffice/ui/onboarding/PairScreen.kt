@@ -53,6 +53,7 @@ import ai.factory.droidoffice.core.PairingInvite
 import ai.factory.droidoffice.core.RouteKind
 import ai.factory.droidoffice.core.Routes
 import ai.factory.droidoffice.core.Tags
+import ai.factory.droidoffice.data.displayName
 import ai.factory.droidoffice.session.PairOutcome
 import ai.factory.droidoffice.session.PairStep
 import ai.factory.droidoffice.session.Pairer
@@ -148,7 +149,7 @@ fun PairScreen(invite: PairingInvite, onDone: () -> Unit, onRescan: () -> Unit, 
                         Spacer(Modifier.height(4.dp))
                         Text(
                             if (s.outcome.office.auth == ai.factory.droidoffice.data.AuthMode.Device) {
-                                "This phone has its own key for ${s.outcome.office.name}. It keeps working after the office restarts, until you unpair it."
+                                "This phone has its own key for ${s.outcome.office.displayName}. It keeps working after the office restarts, until you unpair it."
                             } else {
                                 "This office is older than phone pairing, so the app uses the code itself. When the office restarts, scan its new code."
                             },

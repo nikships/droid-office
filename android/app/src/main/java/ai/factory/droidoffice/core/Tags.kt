@@ -274,8 +274,14 @@ object Tags {
         const val FORGET_DIALOG = "forget.dialog"
         const val FORGET_CONFIRM = "forget.confirm"
         const val FORGET_CANCEL = "forget.cancel"
+        const val RENAME_DIALOG = "offices.rename_dialog"
+        const val RENAME_INPUT = "offices.rename.input"
+        const val RENAME_SAVE = "offices.rename.save"
+        const val RENAME_CANCEL = "offices.rename.cancel"
 
         fun office(id: String) = "offices.office/$id"
         fun forget(id: String) = "offices.forget/$id"
+        fun rename(id: String) = "offices.rename/$id"
+        fun name(id: String) = "offices.name/$id"
     }
 }

@@ -28,4 +28,6 @@ The app sends `POST /api/mobile/pair?t=<token>` with `{"device": "Pixel 10 Pro X
 
 **Forgetting a phone.** **Forget** next to a phone in the Phone window (click it twice to be sure) unpairs it: its token stops working at once, and any connection it has open is closed. Unpairing in the app does the same from the phone (`DELETE /api/mobile/pair` with its token). Lost a phone? Forget it here. Pair it again any time by scanning the code.
 
+**Names on the phone.** Under **Me**, **Rename** on an office changes the name this phone shows. The office keeps its own name, and nothing is sent back. The name you chose stays through app updates and reconnects. Leave it blank to show the office's name again. Pairing that office again keeps it too.
+
 **Device tokens.** Each pairing mints a random 256-bit token, sent to the phone once. The office writes only its SHA-256, the phone's name and when it paired and was last seen to `devices.json` in the office's own `.droid-office/` (next to `subagents.json`), with mode 0600, and it compares tokens in constant time. *Last seen* is written at most once a minute. Up to 32 phones can be paired at once. Like the LAN token, a device token is as good as a shell on the office's machine: anyone holding one can drive Droid there.
