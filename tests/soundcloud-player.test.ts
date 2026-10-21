@@ -206,7 +206,7 @@ test('stopping during station resolution cancels the request and prevents late p
   assert.deepEqual(errors, []);
 });
 
-test('identical SoundCloud reconnects preserve playback, while explicit replay and floor return restart it', (t) => {
+test('identical SoundCloud updates preserve playback, while explicit replay and stop restart it', (t) => {
   const sound = Object.create(OfficeSound.prototype) as OfficeSound;
   const apply = t.mock.method(sound as unknown as { applyJukebox(changed: boolean): void }, 'applyJukebox', () => {});
   const play: JukeboxPlay = { track: 'stream', url: STATION, startedAt: 1000, since: 100 };
@@ -217,7 +217,7 @@ test('identical SoundCloud reconnects preserve playback, while explicit replay a
   sound.setJukebox({ ...play, startedAt: 2000 });
   assert.equal(apply.mock.callCount(), 2, 'a new play of the same URL must restart');
   sound.setJukebox(null);
-  assert.equal(apply.mock.callCount(), 3, 'leaving the floor must dispose playback');
+  assert.equal(apply.mock.callCount(), 3, 'stopping must dispose playback');
   sound.setJukebox(play);
-  assert.equal(apply.mock.callCount(), 4, 'returning to the floor must recreate playback');
+  assert.equal(apply.mock.callCount(), 4, 'playing again after a stop must recreate playback');
 });

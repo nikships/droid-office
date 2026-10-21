@@ -429,7 +429,7 @@ sound.setVolume(settings.volume, settings.muted);
 sound.setAlertsMuted(settings.alertsMuted);
 sound.setMusicVolume(settings.music, settings.musicMuted);
 sound.onMusicError = (text) => toast(text, 'warn');
-// The jukebox on your floor: everyone there hears it from the same bar, and its lights say what's on.
+// One jukebox across the office: changing floors keeps the same player and track position.
 store.on('jukebox', () => {
   const j = store.jukebox;
   sound.setJukebox(j.on ? { track: j.track, url: j.url, startedAt: j.startedAt, since: j.since } : null);

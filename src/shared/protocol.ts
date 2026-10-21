@@ -541,8 +541,6 @@ export interface FloorView {
   pipelines: PipelinesState;
   /** Pictures on this floor's walls. */
   decor: Decoration[];
-  /** What the lounge jukebox is playing. */
-  jukebox: JukeboxState;
   /** The office's Jira connection and this floor's epic. */
   jira: JiraFloorState;
   /** The Jira tab of the issue board; null on a floor without an epic. */
@@ -994,6 +992,8 @@ export type ServerMsg =
       machine: MachineState;
       /** Outside the windows: the same on every floor. */
       sky: SkyState;
+      /** What the office-wide jukebox is playing, independent of the current floor. */
+      jukebox: JukeboxState;
       leaveOnMerge: LeaveOnMergeState;
       freshMain: FreshMainState;
       subagents: SubagentsState;

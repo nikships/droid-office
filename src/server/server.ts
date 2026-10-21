@@ -37,7 +37,8 @@ import { OFFICE_SHELL_ID } from '../shared/office-shell.js';
 import type { Arrival, ClientMsg, FloorInfo, FloorView, SearchResults, ServerMsg } from '../shared/protocol.js';
 import { AUTO_DESK, GH_COMMENT_MAX, GH_LABEL_MAX, isAgentEffort } from '../shared/protocol.js';
 import { elevatorSpot, nextFreeSeat, streetBelow } from '../shared/layout.js';
-import { JUKEBOX_TUNES, STREAM } from '../shared/jukebox.js';
+import { STREAM } from '../shared/jukebox.js';
+import { Jukebox } from './jukebox.js';
 import { resolveSoundCloudStation } from './soundcloud.js';
 import { SEARCH_MAX, SEARCH_MIN, searchKey } from '../shared/search.js';
 import { DROP_MAX_BYTES, PROMPT_IMAGES_MAX, PROMPT_IMAGE_ID } from '../shared/drops.js';
@@ -523,6 +524,10 @@ export async function startServer(cfg: Config) {
   // The home folder is always a floor, after the projects.
   if (cfg.homeFloor) building.ensureHome(cfg.homeFloor);
   for (const def of building.list()) openFloor(def);
+  const jukebox = new Jukebox(
+    cfg.dataDir,
+    building.list().map((def) => path.join(def.dir, '.droid-office')),
+  );
   // Workers still running from the last office are back at their desks before anyone walks in.
   await Promise.all([...floors.values()].map((f) => f.ready));
 
@@ -535,7 +540,6 @@ export async function startServer(cfg: Config) {
     pulls: floor?.board.pulls ?? { items: [], fetchedAt: 0, loading: false },
     pipelines: floor?.pipelines.state ?? NO_PIPELINES,
     decor: floor?.decor.list() ?? [],
-    jukebox: floor?.jukebox.state() ?? { on: false, track: JUKEBOX_TUNES[0].id, startedAt: Date.now(), elapsed: 0 },
     jira: floor?.jira.state() ?? { connection: jira.connection() },
     jiraBoard: floor?.jira.board ?? null,
     autoHeal: floor?.autoHeal.state() ?? { on: false },
@@ -1179,6 +1183,7 @@ export async function startServer(cfg: Config) {
       notify: webhook.state(),
       machine: machine.state(),
       sky: sky.state,
+      jukebox: jukebox.state(),
       leaveOnMerge: leaveOnMerge.state(),
       freshMain: freshMain.state(),
       subagents: subagents.state(),
@@ -1282,7 +1287,7 @@ export async function startServer(cfg: Config) {
   };
 
   const decorChanged = (floor: Floor) => toFloor(floor, { t: 'decor', items: floor.decor.list() });
-  const jukeboxChanged = (floor: Floor) => toFloor(floor, { t: 'jukebox', state: floor.jukebox.state() });
+  const jukeboxChanged = () => broadcast({ t: 'jukebox', state: jukebox.state() });
 
   /**
    * Takes `c` to another floor: they get the new floor's everything. They arrive in the
@@ -2080,28 +2085,23 @@ export async function startServer(cfg: Config) {
         break;
       }
       case 'jukebox.play': {
-        const floor = here();
-        if (!floor) break;
-        const r = floor.jukebox.play({ track: msg.track, url: msg.url }, who);
+        const r = jukebox.play({ track: msg.track, url: msg.url }, who);
         if ('error' in r) return warn(c, r.error);
         if (!r.changed) break;
-        jukeboxChanged(floor);
-        toastFloor(floor, floor.jukebox.state().track === STREAM ? `📻 ${who} tuned the jukebox to ${floor.jukebox.title()}` : `🎵 ${who} put on “${floor.jukebox.title()}”`);
+        jukeboxChanged();
+        toastAll(jukebox.state().track === STREAM ? `📻 ${who} tuned the jukebox to ${jukebox.title()}` : `🎵 ${who} put on “${jukebox.title()}”`);
         break;
       }
       case 'jukebox.skip': {
-        const floor = here();
-        if (!floor) break;
-        floor.jukebox.skip(who);
-        jukeboxChanged(floor);
-        toastFloor(floor, `⏭️ ${who} skipped to “${floor.jukebox.title()}”`);
+        jukebox.skip(who);
+        jukeboxChanged();
+        toastAll(`⏭️ ${who} skipped to “${jukebox.title()}”`);
         break;
       }
       case 'jukebox.stop': {
-        const floor = here();
-        if (!floor?.jukebox.stop(who)) break;
-        jukeboxChanged(floor);
-        toastFloor(floor, `🔇 ${who} turned the jukebox off`);
+        if (!jukebox.stop(who)) break;
+        jukeboxChanged();
+        toastAll(`🔇 ${who} turned the jukebox off`);
         break;
       }
       case 'automation.result': {
