@@ -9,6 +9,8 @@ export interface PairedDevice {
   name: string;
   pairedAt: string;
   lastSeenAt: string;
+  /** What paired: a phone (the default, including every device paired before this field) or a desktop web browser (the dashboard). Browsers are not phones: they get no phone terminal sizing. */
+  kind?: 'phone' | 'browser';
 }
 
 /** How a pairing address reaches this machine: the local network, or a tailnet from anywhere. */

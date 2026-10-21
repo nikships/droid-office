@@ -6,33 +6,9 @@ import { propReady, useProp } from './props';
 import { fontRevision, TERM_FONT } from '../fonts';
 import { glyphFlat } from './glyph3d';
 import { SCREEN_BLACK, screenMaterial } from './screen';
+import { TERM_THEME } from '../term-theme';
 
-/**
- * The terminal's colors: an OLED-black ground with an orange cursor. The ANSI palette keeps its
- * distinct hues — agents paint with it, so only the base, cursor and selection are ours to restyle.
- */
-export const TERM_THEME = {
-  background: SCREEN_BLACK,
-  foreground: '#eeeeee',
-  cursor: '#ee6018',
-  selectionBackground: '#2a2a2a',
-  black: '#282a36',
-  red: '#ff5c7a',
-  green: '#7cf29a',
-  yellow: '#ffd166',
-  blue: '#6cb6ff',
-  magenta: '#d69cff',
-  cyan: '#72ddf7',
-  white: '#e6e6f0',
-  brightBlack: '#6c7086',
-  brightRed: '#ff8fa3',
-  brightGreen: '#a6f4b8',
-  brightYellow: '#ffe29a',
-  brightBlue: '#9ccfff',
-  brightMagenta: '#e5c1ff',
-  brightCyan: '#a5ecfb',
-  brightWhite: '#ffffff',
-};
+export { TERM_THEME };
 
 const BASE16 = [
   TERM_THEME.black,

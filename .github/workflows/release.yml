@@ -167,6 +167,8 @@ jobs:
           done
           cat office.log
           [ "$code" = 200 ] || { echo "the checkout's office didn't answer (last status: $code)"; exit 1; }
+          dash=$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:4700/dashboard || true)
+          [ "$dash" = 200 ] || { echo "the checkout's desktop companion didn't answer (last status: $dash)"; exit 1; }
 
   website:
     needs: changes
@@ -309,6 +311,8 @@ jobs:
           done
           cat office.log
           [ "$code" = 200 ] || { echo "the app's office didn't answer (last status: $code)"; exit 1; }
+          dash=$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:4700/dashboard || true)
+          [ "$dash" = 200 ] || { echo "the app's desktop companion didn't answer (last status: $dash)"; exit 1; }
           kill -INT "$office"
           grep -qx "version: ${{ steps.version.outputs.version }}" release/latest-mac.yml
 

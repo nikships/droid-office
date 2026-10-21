@@ -11,6 +11,7 @@ import { h, toast } from './dom';
 export interface PromptImages {
   /** The thumbnails, empty (and hidden) until a picture is added: put it under the prompt box. */
   element: HTMLElement;
+  add(files: File[]): void;
   /** The ids of the pictures that are up, in the order they were added, which is how they're numbered. */
   ids(): string[];
   /** Whether a picture is still going up. */
@@ -133,6 +134,7 @@ export function promptImages(textarea: HTMLTextAreaElement): PromptImages {
 
   return {
     element,
+    add,
     ids,
     busy,
     settled: () => (busy() ? new Promise<void>((resolve) => waiting.push(resolve)) : Promise.resolve()),

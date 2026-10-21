@@ -1638,12 +1638,13 @@ function officeIsFull(): boolean {
 }
 
 function hire(deskId: string, prompt?: string, worktree = false, model?: string, effort?: AgentEffort, issue?: number, repos?: string[], images?: string[]) {
-  net.send({ t: 'worker.spawn', deskId, prompt, worktree, model, effort, issue, repos: repos?.length ? repos : undefined, images: images?.length ? images : undefined });
+  const sent = net.send({ t: 'worker.spawn', deskId, prompt, worktree, model, effort, issue, repos: repos?.length ? repos : undefined, images: images?.length ? images : undefined });
   // The moment notifications start to matter: ask once (it has to come from a key press or click).
   if (settings.notify && notifyPermission() === 'default' && !askedToNotify) {
     askedToNotify = true;
     void askNotifyPermission();
   }
+  return sent;
 }
 
 /** The building's other projects a new worker can work in too, each in a worktree of its own (see WorkerInfo.repos). */

@@ -49,7 +49,7 @@ export function routeWhiteboardMessage(msg: ServerMsg) {
   if (show?.selection.kind === 'card') open.shown(actor.name, show.selection.id);
 }
 
-export function openWhiteboard(net: Net, opts: { card?: string } = {}): void {
+export function openWhiteboard(net: Net, opts: { card?: string; queueOffline?: boolean } = {}): void {
   if (open) {
     if (opts.card) open.go(opts.card);
     return;
@@ -93,6 +93,11 @@ export function openWhiteboard(net: Net, opts: { card?: string } = {}): void {
   /** Applies the owner's batch; what went wrong goes in a toast (an expired batch becomes a draft in the window). */
   async function apply(ops: Op[], what = 'That'): Promise<boolean> {
     if (!ops.length) return true;
+    // The desktop companion does not author while disconnected. Batches already queued stay queued.
+    if (opts.queueOffline === false && sync.state(floor) !== 'live') {
+      toast('Disconnected. This edit was not sent. Edits already waiting stay queued until the office confirms them.', 'warn');
+      return false;
+    }
     const r = await sync.apply(floor, ops);
     if (!r.ok && r.reason === 'invalid') toast(`${what} didn't work: ${r.error.reason}`, 'error');
     return r.ok;
@@ -463,7 +468,16 @@ export function openWhiteboard(net: Net, opts: { card?: string } = {}): void {
     const f = sync.floor(floor);
     const state = sync.state(floor);
     const out: HTMLElement[] = [];
-    if (state === 'offline') out.push(h('p.note.warn', {}, `The office connection is down. Your edits are kept here and go when it’s back${f.pending.length ? ` (${f.pending.length} waiting)` : ''}.`));
+    if (state === 'offline')
+      out.push(
+        h(
+          'p.note.warn',
+          {},
+          opts.queueOffline === false
+            ? `Disconnected. New edits are not sent.${f.pending.length ? ` ${f.pending.length} already waiting ${f.pending.length === 1 ? 'stays' : 'stay'} queued until the office confirms ${f.pending.length === 1 ? 'it' : 'them'}.` : ''}`
+            : `The office connection is down. Your edits are kept here and go when it’s back${f.pending.length ? ` (${f.pending.length} waiting)` : ''}.`,
+        ),
+      );
     else if (state === 'syncing') out.push(h('p.note.info', {}, `Reconnecting to the board…${f.pending.length ? ` ${f.pending.length} edit${f.pending.length === 1 ? '' : 's'} to send` : ''}`));
     for (const d of f.drafts) {
       const kinds = [...new Set(d.ops.map((o) => o.op))].join(', ');

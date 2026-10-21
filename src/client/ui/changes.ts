@@ -7,7 +7,7 @@ import { loadFonts, TERM_FONT } from '../fonts';
 import type { Net } from '../net';
 import { store, words } from '../state';
 import { withToken } from '../token';
-import { TERM_THEME } from '../world/laptop';
+import { TERM_THEME } from '../term-theme';
 import { h, openModal, toast, type Modal } from './dom';
 import { colorDot, emptyState } from './kit';
 import { confirmDialog, openPrompt } from './prompt';

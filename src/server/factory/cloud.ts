@@ -540,6 +540,7 @@ export interface CloudMessageContext {
   client: string;
   /** Just to the sender. */
   warn(text: string): void;
+  done?(error?: string): void;
   /** Hand an issue to it (a card dropped on its desk): assigned on the forge. */
   takeIssue?(issue: number): void;
 }
@@ -578,12 +579,18 @@ export function mountCloud(registry: FactoryRegistry, opts: Omit<CloudOptions, '
         void feature.sendHome(info.id, msg.deleteSession === true).then(({ note, error }) => {
           if (note) opts.toast(floor.id, note);
           if (error) opts.toast(floor.id, error, 'warn');
+          ctx.done?.(error);
         });
         break;
       case 'worker.prompt': {
         const issue = Number.isInteger(msg.issue) && (msg.issue as number) > 0 ? (msg.issue as number) : undefined;
         void feature.send(info.id, str(msg.prompt, PROMPT_MAX), imageIds(msg.images)).then((why) => {
-          if (why) return ctx.warn(why instanceof Error ? why.message : why);
+          if (why) {
+            const error = why instanceof Error ? why.message : why;
+            ctx.warn(error);
+            return ctx.done?.(error);
+          }
+          ctx.done?.();
           if (issue) {
             opts.toast(floor.id, `${ctx.who} handed issue #${issue} to ${info.name}`);
             ctx.takeIssue?.(issue);
@@ -594,13 +601,17 @@ export function mountCloud(registry: FactoryRegistry, opts: Omit<CloudOptions, '
       case 'worker.resume':
         ctx.warn(`☁ Checking ${info.name}'s session on Factory again`);
         feature.recheck(info.id);
+        ctx.done?.();
         break;
       case 'term.input':
       case 'term.resize':
       case 'changes.unwatch':
         break;
-      default:
-        ctx.warn(cloudRefusal(info, msg.t));
+      default: {
+        const error = cloudRefusal(info, msg.t);
+        ctx.warn(error);
+        ctx.done?.(error);
+      }
     }
     return true;
   };
