@@ -112,7 +112,8 @@ export class Net {
       this.uncertain();
       this.statusHandlers.forEach((h) => h(false));
       if (this.closedByUs) return;
-      if (event.code === 4401) return this.unauthorized();
+      // 4401: this device was unpaired. 4403: the owner turned the web companion off.
+      if (event.code === 4401 || event.code === 4403) return this.unauthorized();
       this.schedule();
     };
   }

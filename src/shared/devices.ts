@@ -24,9 +24,17 @@ export interface PairingAddress {
   dns?: boolean;
 }
 
-/** What `GET /api/mobile/pairing` answers the Phone window with. */
+/** What `GET /api/mobile/pairing` answers the Phone and Web companion windows with. */
 export interface PairingState {
   office: { name: string; version: string };
+  /** Whether the web companion (`/dashboard`) is on. Off, desktop browsers can't pair or connect; phones are unaffected. */
+  companion: boolean;
+  /** The office on this machine itself, `http://localhost:<port>` (`https` with TLS). */
+  local: string;
+  /** Whether anything off this machine can reach the office: false when it listens on loopback only (`--host 127.0.0.1`). */
+  reachable: boolean;
+  /** Whether Tailscale is running and signed in on this machine. */
+  tailscale: boolean;
   /** The QR code's text (`droidoffice://pair?…`), or none when nothing off this machine can reach the office. */
   link?: string;
   /** The addresses the link carries, in its order: Wi-Fi first, then Tailscale. */
@@ -40,6 +48,28 @@ export interface PairingState {
 export const DEVICE_NAME_MAX = 64;
 /** The most phones one office keeps paired at once. */
 export const DEVICES_MAX = 32;
+/** Where the web companion lives, on any of the office's addresses. */
+export const COMPANION_PATH = '/dashboard';
+/** What a browser hears while the owner has the web companion turned off. */
+export const COMPANION_OFF = 'The web companion is turned off. Turn it on in ⚙️ Settings → Phone → Web companion on the office’s own machine.';
+
+/** How a browser reached the office, by the page's host name: this machine, a tailnet, or the local network. */
+export type OriginKind = 'local' | 'tailscale' | 'lan';
+
+export function originKind(hostname: string): OriginKind {
+  const host = hostname.replace(/^\[|\]$/g, '').toLowerCase();
+  if (host === 'localhost' || host.endsWith('.localhost') || host === '::1' || /^127\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(host)) return 'local';
+  if (host.endsWith('.ts.net') || host.startsWith('fd7a:115c:a1e0:')) return 'tailscale';
+  const m = /^100\.(\d{1,3})\.\d{1,3}\.\d{1,3}$/.exec(host);
+  return m && Number(m[1]) >= 64 && Number(m[1]) <= 127 ? 'tailscale' : 'lan';
+}
+
+/** The web companion at one of the office's base URLs. This start's LAN token, when given, opens it the first time. */
+export function companionLink(base: string, token?: string): string {
+  const root = `${base.replace(/\/+$/, '')}${COMPANION_PATH}`;
+  return token ? `${root}?t=${encodeURIComponent(token)}` : root;
+}
+
 /** The pairing link's scheme and version (see pairingLink). */
 export const PAIRING_SCHEME = 'droidoffice://pair';
 export const PAIRING_VERSION = 1;

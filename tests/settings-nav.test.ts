@@ -55,6 +55,7 @@ test('every setting is in a category', () => {
     ['Droid skill', 'subagents'],
     ['Whiteboard skill', 'subagents'],
     ['Droid Office for Android', 'phone'],
+    ['Web companion', 'phone'],
   ];
   assert.equal(byTitle.size, expect.length);
   for (const [title, pane] of expect) {

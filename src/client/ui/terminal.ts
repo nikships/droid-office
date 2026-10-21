@@ -78,11 +78,20 @@ export function closeTerminal() {
   current?.modal.close();
 }
 
+/** Where an inline terminal goes, the caller's controls for its header, and what Ctrl+] does there. */
+export interface InlineTerminal {
+  mount: HTMLElement;
+  /** Put first in the header's actions, before Copy and the text size. */
+  actions?: HTMLElement;
+  /** Ctrl+] in the terminal: leave it. Without one, Ctrl+] goes to the program. */
+  onLeave?: () => void;
+}
+
 /**
- * Opens a worker's terminal in a window. With `inline`, it fills that element instead: no window,
- * backdrop or ✕, and Esc and Ctrl+] go to the program. The caller closes it with `closeTerminal`.
+ * Opens a worker's terminal in a window. With `inline`, it fills `inline.mount` instead: no window,
+ * backdrop or ✕, and Esc goes to the program. The caller closes it with `closeTerminal`.
  */
-export function openTerminal(net: Net, workerId: string, onChanges?: () => void, find?: TerminalFind, inline?: HTMLElement) {
+export function openTerminal(net: Net, workerId: string, onChanges?: () => void, find?: TerminalFind, inline?: InlineTerminal) {
   if (current?.workerId === workerId) {
     if (find) current.find(find);
     return;
@@ -112,7 +121,14 @@ export function openTerminal(net: Net, workerId: string, onChanges?: () => void,
   const el = h(
     inline ? 'div.modal.term.inline' : 'div.modal.full.term',
     inline ? { role: 'region', 'aria-label': `${info.name} terminal` } : { role: 'dialog', 'aria-label': `${info.name} terminal` },
-    h('header', {}, colorDot(info.color), h('div.titles', {}, h('div.term-title', {}, title, pill), sub), h('div.actions', {}, copyBtn, zoom, onChanges ? changesBtn : null, guest ? bringInBtn : null), inline ? null : closeBtn),
+    h(
+      'header',
+      {},
+      colorDot(info.color),
+      h('div.titles', {}, h('div.term-title', {}, title, pill), sub),
+      h('div.actions', {}, inline?.actions ?? null, copyBtn, zoom, onChanges ? changesBtn : null, guest ? bringInBtn : null),
+      inline ? null : closeBtn,
+    ),
     team,
     disconnected,
     host,
@@ -321,7 +337,7 @@ export function openTerminal(net: Net, workerId: string, onChanges?: () => void,
     let closed = false;
     modal = {
       el,
-      backdrop: inline,
+      backdrop: inline.mount,
       close() {
         if (closed) return;
         closed = true;
@@ -329,7 +345,7 @@ export function openTerminal(net: Net, workerId: string, onChanges?: () => void,
         onClose();
       },
     };
-    inline.replaceChildren(el);
+    inline.mount.replaceChildren(el);
   } else
     modal = openModal(el, {
       backdropCloses: true,
@@ -385,8 +401,9 @@ export function openTerminal(net: Net, workerId: string, onChanges?: () => void,
   });
 
   term.attachCustomKeyEventHandler((e) => {
-    if (!inline && e.type === 'keydown' && e.ctrlKey && e.key === ']') {
-      modal.close();
+    if (e.type === 'keydown' && e.ctrlKey && e.key === ']' && (!inline || inline.onLeave)) {
+      if (inline) inline.onLeave?.();
+      else modal.close();
       return false;
     }
     const enter = enterKeyAction(csiEnter(), e);

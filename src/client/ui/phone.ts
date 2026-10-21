@@ -3,7 +3,8 @@ import type { PairedDevice, PairingAddress, PairingState } from '../../shared/de
 import { withToken } from '../token';
 import { h, openModal, timeAgo } from './dom';
 import { emptyState, windowHeader } from './kit';
-import { copyButton } from './clipboard';
+import { icon } from './icons';
+import { openCompanion } from './companion';
 
 // The 📱 Phone window: the QR code Droid Office for Android scans to pair, the addresses it carries,
 // and the phones that are paired. Only the office's own page on its own machine can read it (see
@@ -62,8 +63,7 @@ export function openPhone(onChange?: (devices: PairedDevice[]) => void) {
   const caption = h('p.phone-qr-caption', {}, 'Scan with ', h('b', {}, 'Droid Office for Android'));
   const addresses = h('ul.list.boxed.phone-addrs', { 'aria-label': 'Addresses in the code' });
   const addressNote = h('p.field-hint.phone-addr-note');
-  const devicesList = h('ul.list.boxed.phone-devices', { 'aria-label': 'Paired devices' });
-  const companions = h('div.stack.tight');
+  const devicesList = h('ul.list.boxed.phone-devices', { 'aria-label': 'Paired phones' });
   const devicesCount = h('span.phone-count');
   const status = h('p.note.phone-status', { role: 'status', 'aria-live': 'polite' });
   const steps = h(
@@ -74,16 +74,16 @@ export function openPhone(onChange?: (devices: PairedDevice[]) => void) {
     h('li', {}, h('span', {}, 'Your phone shows up under ', h('b', {}, 'Paired phones'), '. Hire workers, watch their terminals and prompt them from it.')),
   );
   const pairCard = h('section.phone-pair', {}, h('div.phone-qr-col', {}, tile, caption), h('div.phone-side', {}, steps, h('div.section.phone-addr-section', {}, h('div.eyebrow', {}, 'In this code'), addresses, addressNote)));
-  const paired = h('section.section.phone-paired', {}, h('div.eyebrow', {}, 'Paired devices', devicesCount), devicesList);
+  const paired = h('section.section.phone-paired', {}, h('div.eyebrow', {}, 'Paired phones', devicesCount), devicesList);
   const companion = h(
-    'section.section',
-    {},
-    h('div.eyebrow', {}, 'Desktop browser companion'),
-    h('p.field-hint', {}, 'Use these links in a desktop browser, then choose Browser access → Pair this browser. The host must stay awake with the office running.'),
-    companions,
+    'button.phone-web',
+    { type: 'button', onclick: () => openCompanion() },
+    h('span.phone-web-icon', {}, icon('monitor', 18)),
+    h('span.phone-web-text', {}, h('b', {}, 'On a computer instead?'), h('small', {}, 'The web companion opens this office in any desktop browser, here, on your Wi-Fi or over Tailscale.')),
+    h('span.btn.sm', {}, 'Web companion', icon('external', 12)),
   );
   const footer = h('footer', {}, h('span.grow', {}, 'The code changes every time the office starts. A paired phone stays paired until you forget it.'));
-  const el = h('div.modal.lg.phone', { role: 'dialog', 'aria-label': 'Phone' }, windowHeader('📱 Phone', 'Android and desktop browser access'), h('div.body', {}, h('div.stack.loose', {}, pairCard, companion, status, paired)), footer);
+  const el = h('div.modal.lg.phone', { role: 'dialog', 'aria-label': 'Phone' }, windowHeader('📱 Phone', 'Droid Office for Android'), h('div.body', {}, h('div.stack.loose', {}, pairCard, status, paired, companion)), footer);
 
   let link = '';
   let known: Set<string> | undefined;
@@ -106,25 +106,6 @@ export function openPhone(onChange?: (devices: PairedDevice[]) => void) {
   };
 
   const paintAddresses = (state: PairingState) => {
-    let token = '';
-    try {
-      token = state.link ? (new URL(state.link).searchParams.get('t') ?? '') : '';
-    } catch {
-      token = '';
-    }
-    companions.replaceChildren(
-      ...state.addresses.map((a) => {
-        const base = a.url.replace(/\/+$/, '');
-        const url = token ? `${base}/dashboard?t=${encodeURIComponent(token)}` : `${base}/dashboard`;
-        return h(
-          'div.row',
-          {},
-          h('a.list-main', { href: url, target: '_blank', rel: 'noopener noreferrer' }, `${KIND[a.kind]} · ${base}/dashboard`),
-          copyButton('Copy link', () => url, 'sm'),
-        );
-      }),
-    );
-    if (!state.addresses.length) companions.append(h('a', { href: '/dashboard', target: '_blank', rel: 'noopener noreferrer' }, 'Open the local companion'));
     addresses.replaceChildren(
       ...state.addresses.map((a) =>
         h(
@@ -168,10 +149,10 @@ export function openPhone(onChange?: (devices: PairedDevice[]) => void) {
   };
 
   const paintDevices = (state: PairingState) => {
-    const list = state.devices;
+    const list = state.devices.filter((d) => d.kind !== 'browser');
     devicesCount.textContent = list.length ? String(list.length) : '';
     if (!list.length) {
-      devicesList.replaceChildren(h('li.phone-empty', {}, emptyState('📵', 'No devices paired yet', 'Scan the code with Android, or pair a desktop browser using a companion link.')));
+      devicesList.replaceChildren(h('li.phone-empty', {}, emptyState('📵', 'No phones paired yet', 'Scan the code with Droid Office for Android.')));
       return;
     }
     devicesList.replaceChildren(
@@ -179,7 +160,7 @@ export function openPhone(onChange?: (devices: PairedDevice[]) => void) {
         h(
           'li.list-row',
           { class: fresh.has(d.id) ? 'fresh' : '' },
-          h('span.list-icon.phone-icon', { 'aria-hidden': 'true' }, d.kind === 'browser' ? 'Web' : '📱'),
+          h('span.list-icon.phone-icon', { 'aria-hidden': 'true' }, '📱'),
           h(
             'div.list-main',
             {},
@@ -248,7 +229,7 @@ export async function pairedPhones(): Promise<PairedDevice[] | string> {
     const res = await fetch(withToken('/api/mobile/pairing'), { credentials: 'same-origin', cache: 'no-store' });
     if (res.status === 403) return 'Phones pair from the office on its own machine.';
     if (!res.ok) return 'Could not read the paired phones.';
-    return ((await res.json()) as PairingState).devices;
+    return ((await res.json()) as PairingState).devices.filter((d) => d.kind !== 'browser');
   } catch {
     return 'Could not reach the office.';
   }

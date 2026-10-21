@@ -12,6 +12,7 @@ import { loadConfig } from '../src/server/config.js';
 import { startServer } from '../src/server/server.js';
 import { DevicesStore } from '../src/server/devices.js';
 import type { ClientMsg, ServerMsg } from '../src/shared/protocol.js';
+import type { PairingState } from '../src/shared/devices.js';
 import { reachableLan } from './lan-probe.js';
 
 async function office(t: TestContext, home?: string) {
@@ -212,4 +213,56 @@ test('confirmed worker actions deduplicate on a socket, respect the active floor
   observer.send({ t: 'worker.kill', workerId, cleanup: 'keep', requestId: 'home' });
   assert.equal((await observer.wait('action.result', (m) => m.requestId === 'home')).ok, true);
   await observer.wait('worker.remove', (m) => m.workerId === workerId);
+});
+
+test('the web companion switch refuses browsers while off, keeps their pairing, leaves phones alone and survives a restart', async (t) => {
+  const first = await office(t);
+  const { base, dir } = first;
+  const own = { origin: base, 'content-type': 'application/json' };
+  const state = (await (await fetch(`${base}/api/mobile/pairing`, { headers: { 'sec-fetch-site': 'same-origin' } })).json()) as PairingState;
+  assert.equal(state.companion, true);
+  assert.equal(state.local, `http://localhost:${first.port}`);
+  assert.equal(state.reachable, true);
+  assert.equal(typeof state.tailscale, 'boolean');
+  const pair = (await (await fetch(`${base}/api/mobile/pair`, { method: 'POST', headers: own, body: '{"kind":"browser","device":"Desktop"}' })).json()) as { token: string };
+  const phone = (await (await fetch(`${base}/api/mobile/pair`, { method: 'POST', body: '{"device":"Phone"}' })).json()) as { token: string };
+  const browser = socket(t, base, `d=${pair.token}&client=dashboard`);
+  await browser.wait('welcome');
+  const local = socket(t, base, 'client=dashboard');
+  await local.wait('welcome');
+  const tab = socket(t, base, 'name=Owner');
+  await tab.wait('welcome');
+
+  assert.equal((await fetch(`${base}/api/mobile/companion`, { method: 'PUT', headers: own, body: '{"on":"no"}' })).status, 400);
+  assert.equal((await fetch(`${base}/api/mobile/companion?d=${phone.token}`, { method: 'PUT', headers: own, body: '{"on":false}' })).status, 403, 'a phone cannot turn it off');
+  const closed = Promise.all([once(browser.ws, 'close'), once(local.ws, 'close')]);
+  const off = await fetch(`${base}/api/mobile/companion`, { method: 'PUT', headers: own, body: '{"on":false}' });
+  assert.equal(off.status, 200);
+  assert.equal(((await off.json()) as PairingState).companion, false);
+  for (const [code] of await closed) assert.equal(code, 4403);
+  assert.equal(tab.ws.readyState, WebSocket.OPEN, 'the office’s own page stays connected');
+
+  const refusedHello = await fetch(`${base}/api/mobile/hello?client=dashboard`);
+  assert.equal(refusedHello.status, 403);
+  assert.equal(((await refusedHello.json()) as { companionOff?: boolean }).companionOff, true);
+  assert.equal((await fetch(`${base}/api/mobile/hello?d=${pair.token}`)).status, 403);
+  assert.equal((await fetch(`${base}/api/mobile/pair`, { method: 'POST', headers: own, body: '{"kind":"browser"}' })).status, 403);
+  assert.equal((await fetch(`${base}/api/mobile/hello?d=${phone.token}`)).status, 200, 'phones are not the companion');
+  assert.equal((await fetch(`${base}/api/mobile/hello`)).status, 200);
+  assert.equal((await fetch(`${base}/dashboard`)).status, 200, 'the bootstrap page still loads and explains');
+  for (const query of [`d=${pair.token}&client=dashboard`, 'client=dashboard']) {
+    const refused = new WebSocket(`${base.replace('http:', 'ws:')}/ws?${query}`, { origin: base });
+    refused.on('error', () => {});
+    assert.equal((await once(refused, 'unexpected-response'))[1].statusCode, 401);
+    refused.terminate();
+  }
+  assert.match(readFileSync(path.join(dir, '.droid-office/web-companion.json'), 'utf8'), /"on": false/);
+
+  await first.stop();
+  const second = await office(t, dir);
+  assert.equal((await fetch(`${second.base}/api/mobile/hello?d=${pair.token}`)).status, 403, 'off stays off across a restart');
+  assert.equal((await fetch(`${second.base}/api/mobile/companion`, { method: 'PUT', headers: { ...own, origin: second.base }, body: '{"on":true}' })).status, 200);
+  assert.equal((await fetch(`${second.base}/api/mobile/hello?d=${pair.token}`)).status, 200, 'the pairing outlived the switch');
+  const back = socket(t, second.base, `d=${pair.token}&client=dashboard`);
+  await back.wait('welcome');
 });

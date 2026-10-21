@@ -111,6 +111,7 @@ import { officePrompt } from './ui/prompts';
 import { forgeVars } from '../shared/prompts';
 import { INCLUDE_FILE, SETUP_FILE, describeSetup } from '../shared/worktree-setup';
 import { openPhone } from './ui/phone';
+import { openCompanion } from './ui/companion';
 import { elevatorPanelOpen, openElevator, routeElevatorMessage } from './ui/elevator';
 import { routeFloorMenuMessage, toggleFloorMenu } from './ui/floormenu';
 import { modelBadge, rememberedChoice } from './ui/models';
@@ -2097,6 +2098,7 @@ function paletteEntries(): PaletteEntry[] {
   });
   out.push({ icon: '⚙️', kind: 'Action', title: 'Settings', keywords: ['preferences', 'options'], open: () => showSettings() });
   out.push({ icon: '📱', kind: 'Action', title: 'Pair a phone', detail: 'Droid Office for Android', keywords: ['android', 'mobile', 'qr code', 'tailscale'], open: () => openPhone() });
+  out.push({ icon: '🌐', kind: 'Action', title: 'Web companion', detail: 'The office in a desktop browser', keywords: ['dashboard', 'browser', 'web server', 'url', 'link', 'tailscale', 'localhost', 'remote'], open: () => openCompanion() });
   out.push({ icon: '🖼️', kind: 'Action', title: 'Hang a picture', detail: 'On a wall of this floor', keywords: ['decorate', 'frame', 'art'], open: startHanging });
   out.push({ icon: '🔎', kind: 'Action', title: 'Search every terminal', keywords: ['find'], open: showSearch });
   const prWord = words().pr;
@@ -3299,6 +3301,7 @@ const hudActions: HudAction[] = [
   },
   { id: 'settings', icon: '⚙️', label: 'Settings', section: 'Office', run: showSettings },
   { id: 'phone', icon: '📱', label: 'Pair a phone', section: 'Office', title: () => 'Pair Droid Office for Android with the QR code', run: () => openPhone() },
+  { id: 'companion', icon: '🌐', label: 'Web companion', section: 'Office', title: () => 'Open the office in a desktop browser: its links for this computer, Wi-Fi and Tailscale', run: () => openCompanion() },
   { id: 'help', icon: '❓', label: 'Controls', section: 'Office', key: 'H', run: () => openHelp(settings.sidearm) },
   {
     id: 'upgrade',

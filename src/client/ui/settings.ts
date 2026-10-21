@@ -13,6 +13,8 @@ import { hotReloadSettings } from './hot-reload';
 import { presetEditor } from './prompt-box';
 import { factoryKeySettings } from './factory-settings';
 import { openPhone, pairedPhones } from './phone';
+import { companionState, openCompanion } from './companion';
+import type { PairingState } from '../../shared/devices';
 import type { PairedDevice } from '../../shared/devices';
 import { INCLUDE_FILE, SETUP_FILE, describeSetup, parsePatterns } from '../../shared/worktree-setup';
 import {
@@ -770,6 +772,20 @@ export function openSettings(
   void pairedPhones().then(paintPhones);
   phoneOpen.addEventListener('click', () => openPhone(paintPhones));
 
+  // The web companion: /dashboard in a desktop browser. Its links and paired browsers are their own window.
+  const webOpen = h('button.btn.primary', { type: 'button' }, 'Links & browsers…');
+  const webNote = desc('Your workers, their live terminals and the Whiteboard in any desktop browser, at /dashboard on this office’s address: this computer, your Wi-Fi or Tailscale. Browsers pair once and keep working after restarts.');
+  const webStatus = h('span.setting-meta', {}, 'Checking the web companion…');
+  const paintWeb = (s: PairingState | string) => {
+    if (typeof s === 'string') webStatus.textContent = s;
+    else {
+      const n = s.devices.filter((d) => d.kind === 'browser').length;
+      webStatus.textContent = `${s.companion ? 'On' : 'Off'} · ${n ? `${n} browser${n === 1 ? '' : 's'} paired` : 'no browsers paired'} · ${s.local.replace(/^https?:\/\//, '')}/dashboard`;
+    }
+  };
+  void companionState().then(paintWeb);
+  webOpen.addEventListener('click', () => openCompanion(paintWeb));
+
   const sidearm = choices(
     'sidearm',
     SIDEARMS.map(([value, icon, title, description]) => ({ value, icon, title, description })),
@@ -1041,7 +1057,7 @@ export function openSettings(
       ),
       group('Droid', card('Droid skill', { desc: subSkillNote, control: subSkill.el }), card('Whiteboard skill', { desc: boardSkillNote, control: boardSkill.el })),
     ],
-    phone: [group(null, card('Droid Office for Android', { desc: h('span.stack.tight', {}, phoneNote, phoneStatus), control: phoneOpen }))],
+    phone: [group(null, card('Droid Office for Android', { desc: h('span.stack.tight', {}, phoneNote, phoneStatus), control: phoneOpen }), card('Web companion', { desc: h('span.stack.tight', {}, webNote, webStatus), control: webOpen }))],
   };
 
   // The categories down the side, the one picked on the right. On a phone the row is across the top.

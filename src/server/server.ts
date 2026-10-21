@@ -11,7 +11,8 @@ import type { AddressInfo } from 'node:net';
 import { bearerToken, isLoopback, lanAllowed, lanIPv4s, mintLanToken, tailscaleIPv4s } from './lan.js';
 import { DevicesStore, machineName, pairingAddresses } from './devices.js';
 import { TailscaleWatch } from './tailscale.js';
-import { pairingLink, type PairedDevice, type PairingState } from '../shared/devices.js';
+import { WebCompanion } from './web-companion.js';
+import { COMPANION_OFF, pairingLink, type PairedDevice, type PairingState } from '../shared/devices.js';
 import { MAX_REPOS, childEnv, resolveCommand, type RepoSource } from './workers.js';
 import { DROID_MODEL_MAX } from './agents.js';
 import { createDroidModelCatalogue } from './droid-models.js';
@@ -206,6 +207,7 @@ export async function startServer(cfg: Config) {
   const devices = new DevicesStore(cfg.dataDir);
   const tailscale = new TailscaleWatch();
   void tailscale.get();
+  const companion = new WebCompanion(cfg.dataDir);
   const clients = new Map<string, Client>();
   /** The office Mac's trackpad taps for a charging shot; a silent no-op off macOS (see haptics.ts). */
   const trackpadHaptics = new TrackpadHaptics();
@@ -631,8 +633,11 @@ export async function startServer(cfg: Config) {
   /** The Phone window's view: the pairing link with the addresses it carries, and the paired phones. */
   const pairingState = async (): Promise<PairingState> => {
     const port = (server.address() as AddressInfo | null)?.port ?? cfg.port;
-    const addresses = pairingAddresses({ scheme: cfg.tls ? 'https' : 'http', host: cfg.host, port, lan: lanIPv4s(), tailscale: await tailscale.get(), tailscaleIps: tailscaleIPv4s() });
+    const scheme = cfg.tls ? 'https' : 'http';
+    const tailnet = await tailscale.get();
+    const addresses = pairingAddresses({ scheme, host: cfg.host, port, lan: lanIPv4s(), tailscale: tailnet, tailscaleIps: tailscaleIPv4s() });
     const office = officeCard();
+    const reachable = !(cfg.host === '127.0.0.1' || cfg.host === '::1' || cfg.host === 'localhost' || cfg.host.startsWith('127.'));
     const reason = addresses.length
       ? undefined
       : cfg.host === '0.0.0.0' || cfg.host === '::'
@@ -640,7 +645,24 @@ export async function startServer(cfg: Config) {
         : 'The office only listens on this machine (--host 127.0.0.1), so no phone can reach it. Start it without --host to pair one.';
     const urls = addresses.map((a) => a.url);
     const link = urls.length ? pairingLink(office.name, lanToken, urls) : undefined;
-    return { office, ...(link ? { link } : {}), addresses, ...(reason ? { reason } : {}), devices: devices.list() };
+    return {
+      office,
+      companion: companion.on,
+      local: `${scheme}://localhost:${port}`,
+      reachable,
+      tailscale: !!tailnet || tailscaleIPv4s().length > 0,
+      ...(link ? { link } : {}),
+      addresses,
+      ...(reason ? { reason } : {}),
+      devices: devices.list(),
+    };
+  };
+  /** Turns the web companion on or off. Off closes every companion socket; paired browsers stay paired. */
+  const setCompanion = (on: boolean) => {
+    if (companion.on === on) return;
+    companion.set(on, 'owner');
+    console.log(`  🌐  The web companion is ${on ? 'on' : 'off'}`);
+    if (!on) for (const c of clients.values()) if (c.dashboard) c.ws.close(4403, 'The web companion was turned off');
   };
   /** Unpairs a phone: its token stops working, and its open connections are closed. */
   const forgetDevice = (id: string): boolean => {
@@ -863,6 +885,7 @@ export async function startServer(cfg: Config) {
           return send(res, 400, { error: 'Send JSON: {"device": "Pixel 10 Pro XL"}' });
         }
         const browser = body?.kind === 'browser';
+        if (browser && !companion.on) return send(res, 403, { error: COMPANION_OFF, companionOff: true });
         if (browser && !sameOrigin(req, cfg)) return send(res, 403, { error: 'Pair this browser from the office’s own address.' });
         const paired = devices.pair(body && typeof body === 'object' ? body.device : undefined, browser ? 'browser' : undefined);
         if (!paired) return send(res, 409, { error: 'Too many devices are paired with this office. Forget one in ⚙️ Settings → Phone first.' });
@@ -873,6 +896,8 @@ export async function startServer(cfg: Config) {
       // Everything else needs this start's token or a paired phone's from off the machine (loopback connects freely).
       const gate = access(req, url);
       if (!gate.ok) return refuseHttp(res, p.startsWith('/api/'), gate.unpaired);
+      // Off, the companion's own check-in and every paired browser's request hear why, not a bare refusal.
+      if (!companion.on && (gate.device?.kind === 'browser' || (p === '/api/mobile/hello' && url.searchParams.get('client') === 'dashboard'))) return send(res, 403, { error: COMPANION_OFF, companionOff: true });
       // Query credentials authenticate embedded resources too, but never make a foreign browser
       // origin an office page. Native clients without Origin keep their existing bearer contract.
       if (req.headers.origin && !sameOrigin(req, cfg)) return send(res, 403, { error: 'Forbidden' });
@@ -891,9 +916,20 @@ export async function startServer(cfg: Config) {
         forgetDevice(gate.device.id);
         return send(res, 200, { ok: true });
       }
-      if (p === '/api/mobile/pairing' || p.startsWith('/api/mobile/devices/')) {
+      if (p === '/api/mobile/pairing' || p === '/api/mobile/companion' || p.startsWith('/api/mobile/devices/')) {
         if (gate.device || !ownPage(req)) return send(res, 403, { error: 'Pair devices from the office itself, on its own machine' });
         if (p === '/api/mobile/pairing' && req.method === 'GET') return send(res, 200, await pairingState());
+        if (p === '/api/mobile/companion' && req.method === 'PUT') {
+          let body: { on?: unknown } | null;
+          try {
+            body = JSON.parse(await readBody(req, 1024));
+          } catch {
+            return send(res, 400, { error: 'Send JSON: {"on": true}' });
+          }
+          if (typeof body?.on !== 'boolean') return send(res, 400, { error: 'Send JSON: {"on": true}' });
+          setCompanion(body.on);
+          return send(res, 200, await pairingState());
+        }
         if (p.startsWith('/api/mobile/devices/') && req.method === 'DELETE') {
           return forgetDevice(p.slice('/api/mobile/devices/'.length)) ? send(res, 200, await pairingState()) : send(res, 404, { error: 'No such phone' });
         }
@@ -1148,6 +1184,7 @@ export async function startServer(cfg: Config) {
     if (url.pathname !== '/ws') return refuseUpgrade(socket);
     const gate = access(req, url);
     if (!gate.ok || (!(gate.device && gate.header) && !sameOrigin(req, cfg))) return refuseUpgrade(socket);
+    if (!companion.on && (gate.device?.kind === 'browser' || url.searchParams.get('client') === 'dashboard')) return refuseUpgrade(socket);
     if (gate.device) devices.seen(gate.device.id);
     wss.handleUpgrade(req, socket, head, (ws) => onConnection(ws, url, gate.device));
   });
@@ -2284,5 +2321,17 @@ export async function startServer(cfg: Config) {
     hookServer.close();
   };
 
-  return { server, shutdown, lanToken, pairing: pairingState, devices, publicDir, hookPort, floors: () => [...floors.values()], projectsDir: () => building.projectsDir, resolvedAgent: resolveCommand(cfg.agentCmd) };
+  return {
+    server,
+    shutdown,
+    lanToken,
+    pairing: pairingState,
+    companion: () => companion.on,
+    devices,
+    publicDir,
+    hookPort,
+    floors: () => [...floors.values()],
+    projectsDir: () => building.projectsDir,
+    resolvedAgent: resolveCommand(cfg.agentCmd),
+  };
 }

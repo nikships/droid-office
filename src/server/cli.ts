@@ -6,6 +6,7 @@ import { startServer } from './server.js';
 import { tildify } from './building.js';
 import { lanIPv4s } from './lan.js';
 import { FACTORY_SKILLS_DIR } from './subagents.js';
+import { COMPANION_PATH } from '../shared/devices.js';
 
 const argv = process.argv.slice(2);
 if (argv[0] === 'prune') {
@@ -68,7 +69,7 @@ console.log(`
   ${floorsLine()}
 
   ${localUrl}
-
+${office.companion() ? `\n  🌐  Web companion, in any browser on this machine: ${localUrl}${COMPANION_PATH} (links for other computers: ⚙️ Settings → Phone → Web companion)\n` : ''}
   agent: ${[agent ?? `${cfg.agentCmd} (via login shell)`, ...cfg.agentArgs].join(' ')}`);
 if (joinUrl) {
   console.log(`
