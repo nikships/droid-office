@@ -55,6 +55,15 @@ class ProtocolTest {
     }
 
     @Test
+    fun knowsASubagentByItsLeadOrItsTeam() {
+        fun decode(json: String) = (Protocol.decode("""{"t":"worker.update","worker":$json}""") as ServerMsg.WorkerUpdate).worker
+        assertFalse(decode("""{"id":"w1","team":{"id":"w1","role":"lead","accent":"#fff","emblem":"star","leadName":"Ada"}}""").isSubagent)
+        assertTrue(decode("""{"id":"w2","lead":"w1"}""").isSubagent)
+        assertTrue(decode("""{"id":"w3","team":{"id":"w1","role":"member","accent":"#fff","emblem":"star","leadName":"Ada"}}""").isSubagent)
+        assertFalse(decode("""{"id":"w4"}""").isSubagent)
+    }
+
+    @Test
     fun anUnknownStatusIsUnknownNotACrash() {
         val m = Protocol.decode("""{"t":"worker.update","worker":{"id":"w9","status":"daydreaming"}}""") as ServerMsg.WorkerUpdate
         assertEquals(WorkerStatus.Unknown, m.worker.state)

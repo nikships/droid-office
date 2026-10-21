@@ -76,6 +76,10 @@ data class GuestInfo(val pid: Int = 0, val provider: String = "", val cwd: Strin
 @Serializable
 data class CloudRef(val computerId: String = "", val computerName: String = "", val cwd: String? = null, val error: String? = null)
 
+/** A worker's team markings (src/shared/protocol.ts TeamBadge): `lead` formed the team, `member` was hired into it. */
+@Serializable
+data class TeamBadge(val id: String = "", val role: String = "", val leadName: String = "")
+
 @Serializable
 data class WorkerInfo(
     val id: String,
@@ -107,6 +111,7 @@ data class WorkerInfo(
     val task: WorkerTask? = null,
     val lastInputAt: Long? = null,
     val lead: String? = null,
+    val team: TeamBadge? = null,
     val workedMs: Long? = null,
     val workingSince: Long? = null,
     val guest: GuestInfo? = null,
@@ -121,6 +126,8 @@ data class WorkerInfo(
     val isCloud: Boolean get() = kind == "cloud" || cloud != null
     /** A board agent standing at a kiosk (see STATIONS in src/shared/layout.ts), not hired at a desk. */
     val isStation: Boolean get() = deskId.startsWith("station-")
+    /** Hired by another worker with `office-workers hire`. `lead` is dropped when its lead leaves; the team badge isn't. */
+    val isSubagent: Boolean get() = lead != null || team?.role == "member"
 }
 
 @Serializable

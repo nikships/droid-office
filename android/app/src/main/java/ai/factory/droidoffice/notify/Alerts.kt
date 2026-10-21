@@ -95,7 +95,8 @@ class Alerts(
             if (w.state != prev) {
                 when {
                     w.state == WorkerStatus.NeedsInput && settings.notifyNeedsInput -> alert(w, d)
-                    w.state == WorkerStatus.Done && prev.busy && settings.notifyDone -> alert(w, d)
+                    // A subagent's finished turn is its lead's to read, not the owner's.
+                    w.state == WorkerStatus.Done && prev.busy && settings.notifyDone && !w.isSubagent -> alert(w, d)
                     else -> cancel(w.id)
                 }
             } else if (w.acked && wasAcked == false) {
