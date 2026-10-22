@@ -12,6 +12,45 @@
     "url": "/props/agent-kiosk.glb",
     "width": 0.8
   },
+  "balcony-bench": {
+    "bytes": 39712,
+    "depth": 0.46,
+    "height": 0.94,
+    "materials": 6,
+    "tags": [
+      "furniture",
+      "seat"
+    ],
+    "triangles": 7116,
+    "url": "/props/balcony-bench.glb",
+    "width": 2
+  },
+  "balcony-stool": {
+    "bytes": 41012,
+    "depth": 0.4,
+    "height": 0.49,
+    "materials": 5,
+    "tags": [
+      "furniture",
+      "seat"
+    ],
+    "triangles": 6102,
+    "url": "/props/balcony-stool.glb",
+    "width": 0.4
+  },
+  "balcony-table": {
+    "bytes": 43900,
+    "depth": 0.84,
+    "height": 0.76,
+    "materials": 4,
+    "tags": [
+      "furniture",
+      "table"
+    ],
+    "triangles": 6902,
+    "url": "/props/balcony-table.glb",
+    "width": 0.84
+  },
   "bookshelf": {
     "bytes": 61708,
     "depth": 0.47,
@@ -39,7 +78,7 @@
     "width": 3.6
   },
   "conveyor": {
-    "bytes": 7636,
+    "bytes": 34936,
     "depth": 0.736,
     "height": 0.91,
     "materials": 1,
@@ -47,12 +86,12 @@
       "factory",
       "hero"
     ],
-    "triangles": 1016,
+    "triangles": 7622,
     "url": "/props/conveyor.glb",
     "width": 2.61
   },
   "droid-computer": {
-    "bytes": 6628,
+    "bytes": 36816,
     "depth": 0.454,
     "height": 0.472,
     "materials": 2,
@@ -60,7 +99,7 @@
       "factory",
       "hero"
     ],
-    "triangles": 548,
+    "triangles": 6320,
     "url": "/props/droid-computer.glb",
     "width": 0.45
   },
@@ -116,6 +155,32 @@
     "triangles": 8000,
     "url": "/props/jukebox.glb",
     "width": 1.38
+  },
+  "loft-couch": {
+    "bytes": 28836,
+    "depth": 2.5065,
+    "height": 0.98,
+    "materials": 6,
+    "tags": [
+      "furniture",
+      "seating"
+    ],
+    "triangles": 4932,
+    "url": "/props/loft-couch.glb",
+    "width": 1.1
+  },
+  "lounge-beanbag": {
+    "bytes": 37900,
+    "depth": 1.1886,
+    "height": 0.6896,
+    "materials": 5,
+    "tags": [
+      "furniture",
+      "seat"
+    ],
+    "triangles": 7216,
+    "url": "/props/lounge-beanbag.glb",
+    "width": 1.1829
   },
   "lounge-sofa": {
     "bytes": 32656,
@@ -193,7 +258,7 @@
     "width": 2.335
   },
   "pr-crate": {
-    "bytes": 5272,
+    "bytes": 38584,
     "depth": 0.26,
     "height": 0.2,
     "materials": 1,
@@ -201,7 +266,7 @@
       "factory",
       "hero"
     ],
-    "triangles": 340,
+    "triangles": 6484,
     "url": "/props/pr-crate.glb",
     "width": 0.26
   },
