@@ -2279,6 +2279,83 @@ WAND = {
 }
 
 
+@prop("merge-gong", "furniture", "hero", recenter=False, multipart=True)
+def build_merge_gong():
+    """A hammered bronze gong, welded frame and felt mallet; separate animated disc and cords."""
+    paint = material("GongFramePaint", "#535960", roughness=.6, metallic=.2)
+    steel = material("GongSteel", "#a0a8af", roughness=.3, metallic=.85)
+    dark = material("GongRubber", "#292b2e", roughness=.95)
+    bronze = material("GongBronze", "#c7a877", roughness=.32, metallic=.85)
+    patina = material("GongPatina", "#75644d", roughness=.5, metallic=.7)
+    orange = material("GongSignal", "#ee6018", roughness=.6)
+    fixed, disc, cords = [], [], []
+    for sx in (-1, 1):
+        x = sx * .95
+        fixed += [
+            (box("BasePlate", (.24, .045, .60), (x, .0325, 0), bevel_w=.01), paint),
+            (box("RubberSole", (.22, .01, .56), (x, .005, 0), bevel_w=.004), dark),
+            (box("SquarePost", (.115, 2.38, .115), (x, 1.235, 0), bevel_w=.008, bevel_seg=3), paint),
+            (box("PostCap", (.135, .025, .135), (x, 2.44, 0), bevel_w=.006), steel),
+            (box("BeamCollar", (.18, .22, .19), (x, 2.30, 0), bevel_w=.008), paint),
+        ]
+        for z in (-.21, .21):
+            fixed.append((y_cyl("AnchorBolt", .018, .018, (x, .062, z), verts=6), steel))
+        for y in (2.24, 2.36):
+            fixed.append((cyl("CollarBolt", .015, .014, (x, y, .105), rot=(math.pi / 2, 0, 0), verts=6), steel))
+        fixed.append((tube_path("Brace", [(x, .09, -.20), (x, .35, -.065)], .018, sides=8), steel))
+    fixed += [
+        (box("TopBeam", (2.28, .15, .16), (0, 2.35, 0), bevel_w=.012, bevel_seg=3), paint),
+        (box("SuspensionRail", (1.90, .065, .08), (0, 2.13, 0), bevel_w=.006), steel),
+    ]
+    for sx in (-1, 1):
+        fixed.append((box("BeamEndCap", (.035, .17, .18), (sx * 1.15, 2.35, 0), bevel_w=.007), dark))
+        fixed.append((torus("HangerEye", .025, .006, (sx * .26, 2.08, 0), major_segs=16, minor_segs=6), steel))
+
+    # The complete profile is turned, including the rolled rim and raised central boss.
+    profile = [
+        (-30, 0), (-30, 140), (-26, 300), (-20, 480), (-8, 590),
+        (2, 625), (18, 637), (32, 632), (40, 614), (38, 590),
+        (26, 570), (20, 530), (18, 510), (20, 490), (16, 470),
+        (14, 400), (16, 360), (14, 340), (18, 270), (30, 190),
+        (58, 154), (82, 120), (94, 70), (98, 0),
+    ]
+    face = lathe("HammeredBronze", profile, sides=64)
+    for v in face.data.vertices:
+        r = math.hypot(v.co.x, v.co.y)
+        a = math.atan2(v.co.y, v.co.x)
+        # Deterministic, shallow hammer marks, not random noise that changes each export.
+        if .19 < r < .59 and v.co.z > 0:
+            v.co.z += .0012 * math.sin(a * 37 + r * 121) * math.sin(a * 19 - r * 213)
+    for poly in face.data.polygons:
+        poly.use_smooth = True
+    face.location.y = 1.09
+    disc.append((face, bronze))
+    for radius, z in ((.51, .021), (.36, .018)):
+        disc.append((torus("TurnedPatinaRing", radius, .0025, (0, 1.09, z), major_segs=64, minor_segs=5), patina))
+    for sx in (-1, 1):
+        points = [(sx * .26, 2.08, 0), (sx * .255, 1.91, .006), (sx * .23, 1.68, .012)]
+        cords.append((tube_path("HangingCord", points, .010, sides=8), dark))
+        for y in (1.70, 1.74, 2.05):
+            cords.append((torus("CordKnot", .013, .004, (sx * .24, y, .012), rot=(math.pi / 2, 0, 0), major_segs=12, minor_segs=5), dark))
+    # Felt mallet, leaned against the right post, with a turned handle and wrapped grip.
+    for obj, mat in [
+        (y_cyl("MalletShaft", .022, .82, (0, .46, 0), verts=16), steel),
+        (y_cyl("MalletGrip", .03, .28, (0, .19, 0), verts=16), dark),
+        (sphere("FeltHead", .105, (0, .91, 0), segs=24, rings=12, scale=(1, .85, 1)), dark),
+        (y_cyl("MalletCollar", .03, .025, (0, .81, 0), verts=16), orange),
+    ]:
+        o = raw(obj)
+        o.rotation_euler.z = .22
+        o.location = Matrix.Rotation(.22, 4, "Z") @ o.location
+        o.location += Vector((1.13, 0, .12))
+        fixed.append((o, mat))
+    return [], [
+        ("GongFrame", loose(fixed), None),
+        ("GongDisc", loose(disc), None),
+        ("GongCords", loose(cords), None),
+    ]
+
+
 def lathe(name, profile, sides=24, closed=False, phase=0.0):
     """A solid turned about +Z from a profile of (z, r) in mm. An open profile is capped at each end
     (an r of 0 comes to a point); a closed one is a loop in (z, r), turned into a ring."""

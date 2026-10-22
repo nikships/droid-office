@@ -20,6 +20,8 @@ export interface Gong {
   strike(strength?: number): void;
   /** Where confetti bursts from when there's no desk to burst over: just above the frame. */
   readonly top: THREE.Vector3;
+  /** Install the Blender model before shader warm-up; retain the stand-in if it is incomplete. */
+  setModel(source: THREE.Object3D): boolean;
   update(dt: number): void;
 }
 
@@ -42,7 +44,8 @@ export function buildGong(): Gong {
   frame.add(mesh(new THREE.BoxGeometry(width + 0.4, 0.16, 0.16), lacquer, 0, height - 0.08, 0));
   for (const sx of [-1, 1]) frame.add(mesh(new THREE.BoxGeometry(0.02, 0.18, 0.18), ink, sx * (half + 0.21), height - 0.08, 0));
   frame.add(mesh(new THREE.BoxGeometry(width, 0.07, 0.08), ink, 0, height - 0.32, 0));
-  group.add(mergeByMaterial(frame));
+  const fixed = mergeByMaterial(frame);
+  group.add(fixed);
   const plaque = textPlane('MERGE GONG', { bg: '#0a0a0a', color: '#eeeeee', border: '#2f2f2f', size: 48 });
   plaque.scale.multiplyScalar(0.5);
   plaque.position.set(0, height - 0.08, 0.1);
@@ -66,10 +69,12 @@ export function buildGong(): Gong {
   const boss = mesh(new THREE.SphereGeometry(0.16, 24, 16), brass, 0, 0, 0.02);
   boss.scale.z = 0.45;
   disc.add(boss);
+  const cords = new THREE.Group();
+  pivot.add(cords);
   for (const sx of [-1, 1]) {
     const cord = mesh(new THREE.CylinderGeometry(0.012, 0.012, drop - R + 0.08, 5), ink, sx * 0.22, -(drop - R) / 2, 0);
     cord.rotation.z = sx * 0.2;
-    pivot.add(cord);
+    cords.add(cord);
   }
 
   // The mallet leans against the right post.
@@ -103,6 +108,39 @@ export function buildGong(): Gong {
     colliders,
     interactable,
     top: new THREE.Vector3(x, height + 0.4, z + 0.3),
+    setModel(source) {
+      const names = ['GongFrame', 'GongDisc', 'GongCords'];
+      const parts = names.map((name) => source.getObjectByName(name));
+      if (parts.some((part) => !part)) return false;
+      const materials = new Map<THREE.Material, THREE.Material>();
+      const models = parts.map((part) => {
+        const copy = part!.clone(true);
+        copy.traverse((object) => {
+          if (!(object instanceof THREE.Mesh)) return;
+          const convert = (src: THREE.MeshStandardMaterial) => {
+            let out = materials.get(src);
+            if (!out) {
+              if (src.name === 'GongBronze') {
+                brass.color.copy(src.color);
+                out = brass;
+              } else out = toon(src.color, src.metalness > 0.5 ? { finish: 'metal' } : {});
+              materials.set(src, out);
+            }
+            return out;
+          };
+          object.material = Array.isArray(object.material) ? object.material.map(convert) : convert(object.material);
+        });
+        return copy;
+      });
+      models[1].position.y -= height - 0.34 - drop;
+      models[2].position.y -= pivot.position.y;
+      for (const [i, target] of [fixed, disc, cords].entries()) {
+        target.clear();
+        target.add(models[i]);
+      }
+      mallet.visible = false;
+      return true;
+    },
     strike(strength = 1) {
       // Hit from the front, it swings back towards the wall first.
       swing = Math.min(0.3, swing * 0.5 + 0.16 * strength);

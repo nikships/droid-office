@@ -194,6 +194,8 @@ const propsReady = loadPropManifest()
         workbench,
         DESKS.map(({ id }) => office.desks.get(id)!.group),
       );
+    const mergeGong = propScene('merge-gong');
+    if (mergeGong) office.gong.setModel(mergeGong);
     const gun = propScene('magnum');
     if (gun) setMagnumModel(gun);
     const wand = propScene('wand');
