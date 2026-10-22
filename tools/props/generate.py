@@ -1644,12 +1644,30 @@ def build_robot_arm():
     def add(obj, swatch, into=None):
         (body if into is None else into).append((paint(obj, palette, swatch), None))
 
+    def capscrew(name, radius, depth, loc, axis=1, sign=1, into=None):
+        rot=(0,0,math.pi/2) if axis==0 else (math.pi/2,0,0) if axis==2 else (0,0,0)
+        head=cyl(name,radius,depth,loc,rot=rot,verts=12)
+        drive=list(loc);drive[axis]+=sign*depth*.4
+        cut(head,cyl(name+"Socket",radius*.42,depth*.75,tuple(drive),rot=rot,verts=6))
+        add(head,"light",into)
+
     # Pedestal: a bolted base plate, a square column and a turned cap.
     add(box("BasePlate", (0.62, 0.04, 0.62), loc=(0, 0.02, 0), bevel_w=0.008, bevel_seg=1), "steel")
     for sx in (-1, 1):
         for sz in (-1, 1):
-            add(y_cyl(f"Bolt{sx}{sz}", 0.02, 0.022, loc=(sx * 0.255, 0.05, sz * 0.255), verts=8), "light")
-    add(box("Column", (0.42, 0.36, 0.42), loc=(0, 0.04 + 0.18, 0), bevel_w=0.02, bevel_seg=2), "body")
+            add(y_cyl("AnchorWasher",.025,.004,(sx*.255,.042,sz*.255),verts=16),"graphite")
+            capscrew(f"Bolt{sx}{sz}",.02,.022,(sx*.255,.05,sz*.255))
+    column=box("Column",(.42,.36,.42),(0,.22,0),bevel_w=.02,bevel_seg=2)
+    cut(column,box("ServicePocket",(.28,.20,.012),(0,.22,-.211),bevel_w=.008,bevel_seg=2))
+    add(column,"body")
+    add(box("ServiceLiner",(.27,.19,.001),(0,.22,-.205),bevel_w=.004),"base")
+    panel=box("ServicePanel",(.266,.186,.003),(0,.22,-.208),bevel_w=.004,bevel_seg=2)
+    for y in (.18,.21,.24):
+        cut(panel,box("CoolingSlot",(.20,.009,.012),(0,y,-.2095),bevel_w=.003,bevel_seg=2))
+    add(panel,"graphite")
+    for x in (-.115,.115):
+        for y in (.14,.30):
+            capscrew("ServiceScrew",.006,.003,(x,y,-.21),axis=2,sign=-1)
     add(box("ColumnBand", (0.43, 0.02, 0.43), loc=(0, 0.36, 0), bevel_w=0.004, bevel_seg=1), "graphite")
     add(y_cyl("Cap", 0.2, 0.04, loc=(0, 0.42, 0), verts=24), "steel")
 
@@ -1662,40 +1680,76 @@ def build_robot_arm():
         add(box(f"Cheek{sx}", (0.05, 0.2, 0.2), loc=(sx * 0.125, 0.19, 0), bevel_w=0.015, bevel_seg=2), "body", turret)
         add(x_cyl(f"ShoulderCap{sx}", 0.1, 0.05, loc=(sx * 0.125, s, 0), verts=20), "graphite", turret)
         add(x_cyl(f"ShoulderRing{sx}", 0.102, 0.014, loc=(sx * 0.157, s, 0), verts=20), "orange", turret)
-        add(x_cyl(f"ShoulderHub{sx}", 0.05, 0.012, loc=(sx * 0.17, s, 0), verts=12), "light", turret)
+        hub=x_cyl(f"ShoulderHub{sx}",.05,.012,(sx*.17,s,0),verts=24)
+        cut(hub,x_cyl("ShoulderCenterBore",.018,.03,(sx*.17,s,0),verts=16))
+        for i in range(4):
+            a=i*math.tau/4
+            pos=(sx*.173,s+.036*math.cos(a),.036*math.sin(a))
+            cut(hub,x_cyl("HubCounterbore",.0065,.010,(sx*.176,pos[1],pos[2]),verts=12))
+            capscrew("HubRetainer",.005,.006,pos,axis=0,sign=sx,into=turret)
+        add(hub,"light",turret)
 
     up = ARM["upper"]
     upper = []
     add(x_cyl("ShoulderBoss", 0.088, 0.19, loc=(0, 0, 0), verts=20), "steel", upper)
     add(box("UpperBeam", (0.15, up - 0.04, 0.13), loc=(0, up / 2, 0), bevel_w=0.03, bevel_seg=2), "body", upper)
-    add(box("UpperRib", (0.155, up - 0.24, 0.02), loc=(0, up / 2, 0.06), bevel_w=0.006, bevel_seg=1), "graphite", upper)
+    rib=box("UpperRib",(.155,up-.24,.02),(0,up/2,.06),bevel_w=.006,bevel_seg=1)
+    for y in (.24,.31,.38):
+        cut(rib,box("UpperVent",(.11,.009,.030),(0,y,.07),bevel_w=.003,bevel_seg=2))
+        add(box("UpperVentLiner",(.114,.013,.001),(0,y,.0655)),"base",upper)
+    add(rib,"graphite",upper)
     add(x_cyl("ElbowHub", 0.076, 0.17, loc=(0, up, 0), verts=20), "graphite", upper)
     for sx in (-1, 1):
-        add(x_cyl(f"ElbowRing{sx}", 0.078, 0.012, loc=(sx * 0.091, up, 0), verts=20), "orange", upper)
+        ring=x_cyl(f"ElbowRing{sx}",.078,.012,(sx*.091,up,0),verts=20)
+        cut(ring,x_cyl("ElbowRetainerBore",.023,.03,(sx*.091,up,0),verts=16))
+        add(ring,"orange",upper)
     cable = tube_path("UpperCable", [(0, 0.06, -0.075), (0, 0.16, -0.105), (0, up - 0.16, -0.105), (0, up - 0.06, -0.075)], 0.016, sides=6)
     add(cable, "base", upper)
+    for y in (.20,.42):
+        clamp=box("CableCleat",(.055,.018,.038),(0,y,-.085),bevel_w=.003,bevel_seg=1)
+        cut(clamp,y_cyl("CableRelief",.017,.04,(0,y,-.105),verts=12))
+        add(clamp,"steel",upper)
+        for x in (-.022,.022):
+            capscrew("CleatScrew",.003,.003,(x,y,-.103),axis=2,sign=-1,into=upper)
 
     fore = ARM["fore"]
     forearm = []
     add(box("ElbowHousing", (0.14, 0.16, 0.22), loc=(0, 0.01, -0.035), bevel_w=0.035, bevel_seg=2), "body", forearm)
-    add(box("ForeBeam", (0.1, fore - 0.1, 0.1), loc=(0, fore / 2 + 0.03, 0), bevel_w=0.022, bevel_seg=2), "body", forearm)
+    beam=box("ForeBeam",(.1,fore-.1,.1),(0,fore/2+.03,0),bevel_w=.022,bevel_seg=2)
+    cut(beam,box("ForeServicePocket",(.068,.28,.012),(0,.305,.051),bevel_w=.006,bevel_seg=2))
+    add(beam,"body",forearm)
+    add(box("ForeServiceLiner",(.066,.278,.001),(0,.305,.046),bevel_w=.003),"base",forearm)
+    panel=box("ForeServiceCover",(.062,.274,.002),(0,.305,.0475),bevel_w=.003,bevel_seg=2)
+    for y in (.23,.30,.37):
+        cut(panel,box("ForeVent",(.04,.008,.008),(0,y,.0485),bevel_w=.002,bevel_seg=2))
+    add(panel,"graphite",forearm)
+    for y in (.18,.43):
+        capscrew("ForeCoverScrew",.004,.003,(0,y,.0498),axis=2,into=forearm)
     add(x_cyl("WristHub", 0.058, 0.12, loc=(0, fore, 0), verts=16), "graphite", forearm)
     for sx in (-1, 1):
-        add(x_cyl(f"WristRing{sx}", 0.06, 0.01, loc=(sx * 0.065, fore, 0), verts=16), "orange", forearm)
+        ring=x_cyl(f"WristRing{sx}",.06,.01,(sx*.065,fore,0),verts=16)
+        cut(ring,x_cyl("WristRetainerBore",.020,.024,(sx*.065,fore,0),verts=16))
+        add(ring,"orange",forearm)
 
     wr = ARM["wrist"]
     wrist = []
     add(box("WristBody", (0.09, 0.1, 0.09), loc=(0, 0.05, 0), bevel_w=0.018, bevel_seg=2), "body", wrist)
     add(y_cyl("Flange", 0.046, 0.02, loc=(0, wr - 0.01, 0), verts=16), "steel", wrist)
+    add(y_cyl("WristSeal",.043,.004,(0,.102,0),verts=16),"base",wrist)
 
     tl = ARM["tool"]
     tool = []
     add(y_cyl("ToolRing", 0.048, 0.012, loc=(0, 0.006, 0), verts=16), "orange", tool)
     add(y_cyl("ToolNeck", 0.034, 0.06, loc=(0, 0.042, 0), verts=12), "graphite", tool)
+    for y in (.03,.055):
+        add(y_cyl("VacuumCollar",.0355,.004,(0,y,0),verts=16),"steel",tool)
+    add(tube_path("VacuumFeed",[(.025,.025,0),(.050,.04,0),(.055,.062,0),(.055,.074,0)],.005,sides=8,frame_axis=(0,0,1)),"base",tool)
     add(box("SuctionPlate", (0.16, 0.02, 0.16), loc=(0, 0.08, 0), bevel_w=0.006, bevel_seg=1), "steel", tool)
     for sx in (-1, 1):
         for sz in (-1, 1):
-            add(y_cyl(f"Cup{sx}{sz}", 0.022, tl - 0.09, loc=(sx * 0.048, 0.09 + (tl - 0.09) / 2, sz * 0.048), verts=10), "base", tool)
+            cup=cone(f"Cup{sx}{sz}",.012,.022,tl-.09,(sx*.048,.09+(tl-.09)/2,sz*.048),verts=16)
+            cut(cup,y_cyl("VacuumOpening",.016,.016,(sx*.048,.1105,sz*.048),verts=16))
+            add(cup,"base",tool)
 
     return body, [
         ("Turret", loose(turret), palette[0]),
