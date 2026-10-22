@@ -204,6 +204,8 @@ const propsReady = loadPropManifest()
     if (bookshelf) office.setShelfModel(bookshelf);
     const worker = propScene('droid-worker');
     if (worker) setWorkerModel(worker);
+    const jukebox = propScene('jukebox');
+    if (jukebox) office.jukebox.setModel(jukebox);
     const teamKit = propScene('droid-team-kit');
     if (teamKit) setTeamKit(teamKit);
     const taskChair = propScene('task-chair');

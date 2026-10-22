@@ -65,6 +65,19 @@
     "url": "/props/droid-worker.glb",
     "width": 0.698
   },
+  "jukebox": {
+    "bytes": 74016,
+    "depth": 0.838,
+    "height": 1.85,
+    "materials": 6,
+    "tags": [
+      "furniture",
+      "hero"
+    ],
+    "triangles": 8000,
+    "url": "/props/jukebox.glb",
+    "width": 1.38
+  },
   "macbook-base": {
     "bytes": 115328,
     "depth": 0.5305,
