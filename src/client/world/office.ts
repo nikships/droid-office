@@ -1540,6 +1540,7 @@ function buildGlassRoom(group: THREE.Group, colliders: Collider[], doors: Door[]
     slab.add(mesh(box(0.9, 0.04, 0.6), toon(PALETTE.deskLeg), sx * (top.width / 2 - 0.7), 0.02, 0));
   }
   const table = mergeByMaterial(slab);
+  table.name = 'conference-table';
   table.position.set(top.x, 0, top.z);
   group.add(table);
   colliders.push({ minX: top.x - top.width / 2, maxX: top.x + top.width / 2, minZ: top.z - top.depth / 2, maxZ: top.z + top.depth / 2, top: top.height });
