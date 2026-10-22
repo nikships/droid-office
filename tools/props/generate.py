@@ -1336,6 +1336,73 @@ def build_jukebox():
     return [],[("JukeboxCabinet",loose(parts),None),("JukeboxNeon",loose(neon),None)]
 
 
+@prop("loft-couch", "furniture", "seating", recenter=False)
+def build_loft_couch():
+    """The compact two-place couch faces -x, opposite the lounge's long sofa."""
+    fabric=material("LoftFabric","#87898c",roughness=.96,sheen=.25)
+    back=material("LoftBackShell","#85898c",roughness=.96,sheen=.25)
+    seam=material("LoftWelt","#555b61",roughness=.9)
+    steel=material("LoftSteel","#62686e",roughness=.4,metallic=.75)
+    light=material("LoftPillow","#deded8",roughness=.98,sheen=.3)
+    orange=material("LoftOrange","#ee6018",roughness=.85)
+    parts=[]
+    def add(obj,mat):
+        parts.append((obj,mat))
+        return raw(obj)
+    def welt(name,points,normal,mat):
+        axis=Vector(normal)
+        rings=[]
+        for i,p in enumerate(points):
+            tangent=(Vector(points[(i+1)%len(points)])-Vector(points[i-1])).normalized()
+            radial=tangent.cross(axis).normalized()
+            rings.append([Vector(p)+.0025*(axis*math.cos(j*math.tau/5)+radial*math.sin(j*math.tau/5)) for j in range(5)])
+        return add(loft(name,rings+[rings[0]],bottom=False,top=False,recalc=True),mat)
+    def padded(name,size,loc,mat,axis="y"):
+        start=len(parts)
+        w,h,d=size
+        a,t=(w,h) if axis=="y" else (h,w)
+        rings=[]
+        for u,s in [(-.5,.82),(-.39,.96),(-.18,1),(.18,1),(.39,.96),(.5,.82)]:
+            ring=rrect(-a*s/2,a*s/2,-d*s/2,d*s/2,min(a,d)*.16*s,t*u,k=4)
+            rings.append([(x+loc[0],y+loc[1],z+loc[2]) if axis=="y" else (y+loc[0],x+loc[1],z+loc[2]) for x,y,z in ring])
+        add(loft(name,rings,recalc=True),mat)
+        s=1 if axis=="y" else .96
+        ring=rrect(-a*s/2,a*s/2,-d*s/2,d*s/2,min(a,d)*.16*s,0 if axis=="y" else -t*.39,k=4)
+        points=[(x+loc[0],y+loc[1],z+loc[2]) if axis=="y" else (y+loc[0],x+loc[1],z+loc[2]) for x,y,z in ring]
+        welt(name+"Piping",points,(0,1,0) if axis=="y" else (1,0,0),seam)
+        return [raw(obj) for obj,_ in parts[start:]]
+    add(box("LoftCouch",(.92,.10,2.30),(0,.11,0),bevel_w=.012),steel)
+    for x in (-.36,.36):
+        for z in (-1.03,1.03):
+            add(box("SteelFoot",(.07,.09,.10),(x,.045,z),bevel_w=.008),steel)
+            add(box("FloorGlide",(.072,.012,.102),(x,.006,z),bevel_w=.004),seam)
+    add(box("UpholsteredRail",(.98,.20,2.38),(0,.27,0),bevel_w=.045,bevel_seg=3),fabric)
+    add(box("BackFrame",(.28,.82,2.40),(.46,.57,0),bevel_w=.05,bevel_seg=3),back)
+    for z in (-.485,.485):
+        padded("SeatCushion",(.78,.18,.94),(-.08,.44,z),fabric)
+        objects=padded("BackCushion",(.20,.44,.94),(.28,.73,z),fabric,"x")
+        center=Vector((.28,.73,z))
+        transform=Matrix.Translation(center) @ Matrix.Rotation(-.10,4,"Z") @ Matrix.Translation(-center)
+        for obj in objects:
+            obj.matrix_world=transform @ obj.matrix_world
+        for dz in (-.22,.22):
+            add(x_cyl("UpholsteryButton",.011,.003,(.178,.73,z+dz),verts=12),seam)
+    for side in (-1,1):
+        add(box("Armrest",(1,.62,.30),(0,.43,side*1.10),bevel_w=.065,bevel_seg=4),fabric)
+        points=[(x,z,side*1.251) for x,_,z in rrect(-.42,.42,.20,.66,.055,0,k=4)]
+        welt("ArmPanelSeam",points,(0,0,1),seam)
+    center=Vector((.13,.72,.43))
+    objects=padded("ThrowPillow",(.17,.36,.46),center,light,"x")
+    transform=Matrix.Translation(center) @ Matrix.Rotation(.14,4,"X") @ Matrix.Rotation(-.18,4,"Z") @ Matrix.Translation(-center)
+    for obj in objects:
+        obj.matrix_world=transform @ obj.matrix_world
+    add(box("OrangeFrontStitch",(.003,.009,2.0),(-.491,.325,0)),orange)
+    add(box("WovenTag",(.004,.035,.055),(-.493,.29,-.84),bevel_w=.002),orange)
+    for z in (-.85,0,.85):
+        add(x_cyl("PlinthFastener",.009,.003,(-.462,.11,z),verts=12),steel)
+    return parts
+
+
 @prop("lounge-sofa", "furniture", "seating", recenter=False)
 def build_lounge_sofa():
     """Three places facing +x, matching the lounge's existing asymmetric footprint."""
@@ -1589,12 +1656,12 @@ def loose(parts):
 @prop("droid-computer", "factory", "hero", recenter=False, multipart=True, keep_uvs=True)
 def build_droid_computer():
     """Factory's Droid Computer: a 0.45 m brushed black aluminium cube with softly rounded
-    edges on four small rubber feet, a status LED bezel at the top right of its front (+Z)
-    and a recessed glass readout at the bottom right.
+    edges on four rubber feet, real side vents, a recessed rear I/O/service panel,
+    and the original live LED and glass readout on its +z front.
 
     `Shell` is a loose node with its own material and box UVs, so the client can give it a
-    brushed finish. The client lights the LED (centre (0.145, 0.387, 0.229), r 0.011) and
-    paints the CPU/MEM/DSK readout (centre (0.085, 0.092, 0.2265), 0.15 x 0.058).
+    brushed finish. The client's live LED plane is at (0.145, 0.387, 0.2295), r 0.011;
+    its CPU/MEM/DSK plane is at (0.085, 0.092, 0.2276), 0.15 x 0.058.
     """
     palette = factory_palette()
     size, foot = 0.45, 0.022
@@ -1603,16 +1670,75 @@ def build_droid_computer():
     def add(obj, swatch):
         body.append((paint(obj, palette, swatch), None))
 
-    for sx in (-1, 1):
-        for sz in (-1, 1):
-            add(box(f"Foot{sx}{sz}", (0.07, foot + 0.004, 0.07), loc=(sx * 0.15, (foot + 0.004) / 2, sz * 0.15), bevel_w=0.006, bevel_seg=1), "base")
-    front = size / 2
-    bezel = cyl("LedBezel", 0.017, 0.006, loc=(0.145, foot + size - 0.085, front + 0.001), rot=(math.radians(90), 0, 0), verts=16)
-    add(smooth_obj(bezel), "graphite")
-    add(box("Readout", (0.156, 0.064, 0.003), loc=(0.085, foot + 0.07, front + 0.0)), "glass")
-
     shell_mat = material("DroidShell", "#1c1c1e", roughness=0.36, metallic=0.75)
     shell = box("Shell", (size, size, size), loc=(0, foot + size / 2, 0), bevel_w=0.03, bevel_seg=4)
+    cut(shell,box("CaseInterior",(.414,.414,.414),(0,foot+size/2,0),bevel_w=.014,bevel_seg=3))
+    for sx in (-1, 1):
+        for sz in (-1, 1):
+            add(box(f"Foot{sx}{sz}", (0.07, foot + 0.004, 0.07), loc=(sx * 0.15, (foot + 0.004) / 2, sz * 0.15), bevel_w=0.006, bevel_seg=2), "base")
+        cut(shell,*[box("VentSlot",(.06,.010,.20),(sx*.225,.235+i*.017,0),bevel_w=.003) for i in range(8)])
+        add(box("VentLiner",(.003,.145,.23),(sx*.2025,.2945,0)),"base")
+    front = size / 2
+    cut(shell,cyl("LedOpening",.0128,.05,(.145,.387,front),rot=(math.pi/2,0,0),verts=20),
+        box("ReadoutOpening",(.162,.070,.05),(.085,.092,front),bevel_w=.006))
+    bezel = cyl("LedBezel", 0.017, 0.006, loc=(0.145, foot + size - 0.085, front + 0.001), rot=(math.radians(90), 0, 0), verts=16)
+    cut(bezel,cyl("LedBore",.0118,.02,(.145,.387,front+.001),rot=(math.pi/2,0,0),verts=20))
+    add(smooth_obj(bezel), "graphite")
+    add(cyl("LedDarkWell",.0115,.002,(.145,.387,.223),rot=(math.pi/2,0,0),verts=20),"base")
+    add(box("Readout", (0.156, 0.064, 0.003), loc=(0.085, foot + 0.07, front + 0.0)), "glass")
+    readout_frame=box("ReadoutBezel",(.168,.076,.004),(.085,.092,.225),bevel_w=.004)
+    cut(readout_frame,box("ReadoutBezelOpening",(.154,.062,.02),(.085,.092,.225),bevel_w=.003))
+    add(readout_frame,"steel")
+    for x in (-.145,-.092):
+        cut(shell,box("FrontPortOpening",(.025,.013,.05),(x,.092,front),bevel_w=.006))
+        housing=box("FrontUsbHousing",(.029,.017,.014),(x,.092,.220),bevel_w=.006)
+        cut(housing,box("FrontUsbBore",(.025,.013,.04),(x,.092,.220),bevel_w=.004))
+        add(housing,"steel")
+        add(box("FrontUsbWell",(.025,.013,.002),(x,.092,.212)),"base")
+        add(box("FrontUsbTongue",(.017,.002,.014),(x,.092,.218)),"graphite")
+        for i in range(4):
+            add(box("FrontUsbContact",(.001,.001,.010),(x+(i-1.5)*.003,.0935,.219)),"light")
+    cut(shell,cyl("PowerOpening",.013,.05,(-.145,.387,front),rot=(math.pi/2,0,0),verts=20))
+    power=cyl("PowerTrim",.014,.004,(-.145,.387,.226),rot=(math.pi/2,0,0),verts=20)
+    cut(power,cyl("PowerBore",.010,.02,(-.145,.387,.226),rot=(math.pi/2,0,0),verts=20))
+    add(smooth_obj(power),"steel")
+    add(cyl("PowerButton",.009,.003,(-.145,.387,.225),rot=(math.pi/2,0,0),verts=20),"base")
+    arc=[(-.145+.0055*math.cos(a),.387+.0055*math.sin(a),.228)
+        for a in [math.pi*.70+(math.tau-math.pi*.40)*i/16 for i in range(17)]]
+    add(tube_path("PowerGlyph",arc,.0007,sides=4,frame_axis=(0,0,1)),"light")
+    add(tube_path("PowerStroke",[(-.145,.387,.228),(-.145,.394,.228)],.0007,sides=4),"light")
+    cut(shell,box("RearPanelRecess",(.30,.28,.012),(0,.25,-.225),bevel_w=.007))
+    panel=box("RearServicePanel",(.292,.272,.006),(0,.25,-.220),bevel_w=.005)
+    def rear_port(name,x,y,w,h):
+        for target in (shell,panel):
+            cut(target,box(name+"Opening",(w+.002,h+.002,.06),(x,y,-.225),bevel_w=.002))
+        housing=box(name+"Housing",(w,h,.020),(x,y,-.213),bevel_w=.002)
+        cut(housing,box(name+"Bore",(w-.008,h-.008,.05),(x,y,-.213),bevel_w=.001))
+        add(housing,"steel")
+        add(box(name+"Well",(w-.008,h-.008,.002),(x,y,-.201)),"base")
+    for x in (-.105,-.035,.035,.105):
+        rear_port("RearUsb",x,.30,.035,.018)
+        add(box("RearUsbTongue",(.025,.003,.019),(x,.30,-.2115)),"graphite")
+        for i in range(8):
+            add(box("RearUsbContact",(.001,.001,.014),(x+(i-3.5)*.0026,.302,-.2118)),"light")
+    rear_port("Ethernet",-.08,.21,.040,.035)
+    for i in range(8):
+        add(box("EthernetContact",(.0015,.002,.017),(-.08+(i-3.5)*.003,.2205,-.2105)),"light")
+    rear_port("Auxiliary",0,.21,.033,.017)
+    add(box("AuxiliaryTongue",(.023,.002,.018),(0,.21,-.211)),"graphite")
+    for target in (shell,panel):
+        cut(target,cyl("PowerInletOpening",.014,.06,(.09,.21,-.225),rot=(math.pi/2,0,0),verts=20))
+    inlet=cyl("PowerInlet",.0135,.012,(.09,.21,-.219),rot=(math.pi/2,0,0),verts=20)
+    cut(inlet,cyl("PowerInletBore",.008,.03,(.09,.21,-.219),rot=(math.pi/2,0,0),verts=16))
+    add(smooth_obj(inlet),"steel")
+    add(cyl("PowerInletWell",.008,.002,(.09,.21,-.205),rot=(math.pi/2,0,0),verts=16),"base")
+    add(cyl("PowerInletPin",.002,.012,(.09,.21,-.213),rot=(math.pi/2,0,0),verts=10),"light")
+    for x in (-.125,.125):
+        for y in (.135,.365):
+            screw=cyl("ServiceScrew",.006,.002,(x,y,-.2238),rot=(math.pi/2,0,0),verts=12)
+            cut(screw,cyl("ScrewSocket",.0025,.005,(x,y,-.2255),rot=(math.pi/2,0,0),verts=6))
+            add(smooth_obj(screw),"light")
+    add(panel,"body")
     smooth_obj(shell)
     return body, [("Shell", raw(shell), shell_mat)]
 
@@ -2274,6 +2400,108 @@ def build_telescope():
     return [],[("TelescopeStand",base,None),("TelescopeOptics",tube,None)]
 
 
+@prop("balcony-stool", "furniture", "seat", recenter=False, multipart=True)
+def build_balcony_stool():
+    """One shared stool, original .4 m footprint and .49 m seat, tinted per mount."""
+    seat=material("StoolSeat","#808080",roughness=.85)
+    welt=material("StoolWelt","#45494c",roughness=.88)
+    shell=material("StoolShell","#8b9398",roughness=.62,metallic=.2)
+    steel=material("StoolSteel","#afb9c0",roughness=.32,metallic=.85)
+    rubber=material("StoolRubber","#25292c",roughness=.94)
+    parts=[]
+    def add(obj,mat):
+        parts.append((obj,mat))
+    add(y_cyl("RoundedSeatPad",.2,.05,(0,.465,0),verts=48,bevel_w=.009),seat)
+    add(torus("SeatPiping",.1985,.0015,(0,.445,0),rot=(math.pi/2,0,0),major_segs=48,minor_segs=8),welt)
+    pan=y_cyl("MoldedSeatPan",.19,.014,(0,.433,0),verts=48,bevel_w=.003)
+    for i in range(4):
+        a=math.pi/4+i*math.pi/2
+        cut(pan,box("PanDrainSlot",(.015,.026,.045),(.115*math.sin(a),.433,.115*math.cos(a)),rot=(0,a,0),bevel_w=.005,bevel_seg=2))
+        x,z=.075*math.sin(i*math.pi/2),.075*math.cos(i*math.pi/2)
+        head=y_cyl("UndersideSocketHead",.006,.006,(x,.423,z),verts=16)
+        cut(head,y_cyl("UndersideHex",.0025,.004,(x,.421,z),verts=6))
+        add(head,steel)
+    add(pan,shell)
+    add(y_cyl("SeatMountCollar",.045,.027,(0,.4145,0),verts=32,bevel_w=.002),steel)
+    stem=y_cyl("HollowColumn",.03,.378,(0,.215,0),verts=32)
+    cut(stem,y_cyl("ColumnBore",.023,.40,(0,.215,0),verts=32))
+    add(stem,shell)
+    for y in (.04,.396):
+        add(y_cyl("ColumnCollet",.035,.007,(0,y,0),verts=32,bevel_w=.001),steel)
+    base=cone("CastBase",.18,.16,.024,(0,.018,0),verts=40)
+    bevel(base,.0015,2)
+    cut(base,y_cyl("BaseBore",.022,.06,(0,.018,0),verts=24))
+    for i in range(4):
+        a=math.pi/4+i*math.pi/2
+        x,z=.12*math.sin(a),.12*math.cos(a)
+        cut(base,y_cyl("BaseCounterbore",.0075,.012,(x,.031,z),verts=16))
+        head=y_cyl("BaseSocketHead",.0055,.004,(x,.027,z),verts=16)
+        cut(head,y_cyl("BaseHex",.0025,.005,(x,.029,z),verts=6))
+        add(head,steel)
+        a=i*math.pi/2
+        add(box("BaseReinforcementRib",(.012,.014,.07),(.062*math.sin(a),.031,.062*math.cos(a)),rot=(0,a,0),bevel_w=.002),shell)
+    add(base,shell)
+    foot=y_cyl("FloorIsolationRing",.175,.006,(0,.003,0),verts=40,bevel_w=.001)
+    cut(foot,y_cyl("FootOpening",.15,.02,(0,.003,0),verts=40))
+    add(foot,rubber)
+    for obj,_ in parts:
+        smooth_obj(obj)
+    return [],[("BalconyStool",loose(parts),None)]
+
+
+@prop("balcony-table", "furniture", "table", recenter=False, multipart=True)
+def build_balcony_table():
+    """The existing 0.84 m bistro table, with its flush top still at y .76."""
+    top=material("BistroTop","#727272",roughness=.78)
+    frame=material("BistroFrame","#8b9398",roughness=.58,metallic=.25)
+    steel=material("BistroSteel","#b6bdc5",roughness=.32,metallic=.85)
+    rubber=material("BistroRubber","#292d2f",roughness=.92)
+    parts=[]
+    def add(obj,mat):
+        parts.append((obj,mat))
+    rim=y_cyl("RolledTopRim",.42,.04,(0,.74,0),verts=64,bevel_w=.003)
+    cut(rim,y_cyl("TopOpening",.4035,.08,(0,.74,0),verts=64))
+    add(rim,steel)
+    add(y_cyl("FlushMatteTop",.402,.008,(0,.756,0),verts=64,bevel_w=.001),top)
+    gasket=y_cyl("InsetIsolationRing",.407,.006,(0,.747,0),verts=48)
+    cut(gasket,y_cyl("GasketOpening",.39,.02,(0,.747,0),verts=48))
+    add(gasket,rubber)
+    flange=y_cyl("UndersideMountFlange",.22,.012,(0,.746,0),verts=40,bevel_w=.002)
+    for i in range(4):
+        a=math.pi/4+i*math.pi/2
+        x,z=.16*math.sin(a),.16*math.cos(a)
+        cut(flange,y_cyl("MountBore",.005,.03,(x,.746,z),verts=12))
+        head=y_cyl("UndersideSocketHead",.009,.006,(x,.737,z),verts=20)
+        cut(head,y_cyl("UndersideHex",.004,.006,(x,.734,z),verts=6))
+        add(head,steel)
+    add(flange,frame)
+    add(y_cyl("TopAdapter",.07,.06,(0,.716,0),verts=32,bevel_w=.003),frame)
+    stem=y_cyl("HollowPedestal",.04,.65,(0,.365,0),verts=32)
+    cut(stem,y_cyl("PedestalBore",.032,.68,(0,.365,0),verts=32))
+    add(stem,frame)
+    add(y_cyl("LowerCollar",.055,.014,(0,.047,0),verts=32,bevel_w=.002),steel)
+    base=cone("CastBase",.28,.25,.032,(0,.024,0),verts=48)
+    bevel(base,.002,2)
+    cut(base,y_cyl("BaseBore",.031,.08,(0,.024,0),verts=24))
+    for i in range(4):
+        a=math.pi/4+i*math.pi/2
+        x,z=.19*math.sin(a),.19*math.cos(a)
+        cut(base,y_cyl("BaseCounterbore",.009,.012,(x,.041,z),verts=20))
+        head=y_cyl("BaseSocketHead",.007,.004,(x,.037,z),verts=20)
+        cut(head,y_cyl("BaseHexSocket",.003,.005,(x,.039,z),verts=6))
+        add(head,steel)
+    add(base,frame)
+    for i in range(6):
+        a=i*math.tau/6
+        add(box("CastReinforcementRib",(.012,.022,.14),(.10*math.sin(a),.045,.10*math.cos(a)),rot=(0,a,0),bevel_w=.003),frame)
+    foot=y_cyl("FloorIsolationRing",.276,.008,(0,.004,0),verts=48,bevel_w=.001)
+    cut(foot,y_cyl("FootOpening",.248,.025,(0,.004,0),verts=48))
+    add(foot,rubber)
+    for obj,_ in parts:
+        smooth_obj(obj)
+    return [],[("BalconyTable",loose(parts),None)]
+
+
 @prop("lounge-table", "furniture", "table", recenter=False, multipart=True)
 def build_lounge_table():
     """The lounge's 1.5 m square coffee table, with its top at the existing 0.46 m."""
@@ -2320,6 +2548,137 @@ def build_lounge_table():
     for obj,_ in parts:
         smooth_obj(obj)
     return [],[("LoungeTable",loose(parts),None)]
+
+
+@prop("balcony-bench", "furniture", "seat", recenter=False, multipart=True)
+def build_balcony_bench():
+    """Gray-finished slats on steel frames, +z front, original 2 x .94 x .46 m envelope."""
+    woods=[material("BalconySlatLight","#8c8d88",roughness=.82),
+           material("BalconySlatDark","#80817c",roughness=.85)]
+    back=material("BalconyBackWood","#80817c",roughness=.85)
+    steel=material("BalconySteel","#8d969c",roughness=.48,metallic=.8)
+    hardware=material("BalconyFastener","#b9c1c6",roughness=.3,metallic=.85)
+    rubber=material("BalconyRubber","#2a2d2f",roughness=.92)
+    parts=[]
+    def add(obj,mat):
+        parts.append((obj,mat))
+    for i in range(5):
+        z=(i-2)*.094
+        slat=box("RoundedSeatSlat",(2,.065,.084),(0,.4575,z),bevel_w=.006,bevel_seg=3)
+        for x in (-.85,.85):
+            cut(slat,y_cyl("SeatCounterbore",.0105,.012,(x,.492,z),verts=20))
+            head=y_cyl("RecessedSeatScrew",.008,.0025,(x,.48775,z),verts=20)
+            cut(head,y_cyl("SeatHexSocket",.0035,.005,(x,.49,z),verts=6))
+            add(head,hardware)
+        add(slat,woods[i%2])
+    for y in (.666,.782,.898):
+        slat=box("RoundedBackSlat",(2,.084,.034),(0,y,-.198),bevel_w=.006,bevel_seg=3)
+        for x in (-.85,.85):
+            cut(slat,cyl("BackCounterbore",.0105,.012,(x,y,-.180),rot=(math.pi/2,0,0),verts=20))
+            head=cyl("RecessedBackScrew",.008,.0025,(x,y,-.1835),rot=(math.pi/2,0,0),verts=20)
+            cut(head,cyl("BackHexSocket",.0035,.004,(x,y,-.181),rot=(math.pi/2,0,0),verts=6))
+            add(head,hardware)
+        add(slat,back)
+    for x in (-.85,.85):
+        add(box("SeatCrossrail",(.06,.025,.4),(x,.4125,0),bevel_w=.003),steel)
+        add(box("BackSupport",(.05,.52,.015),(x,.67,-.2225),bevel_w=.002),steel)
+        add(box("BackMountHeel",(.055,.025,.048),(x,.4125,-.206),bevel_w=.002),steel)
+        for z in (-.175,.175):
+            leg=box("HollowSteelLeg",(.05,.382,.05),(x,.209,z),bevel_w=.003)
+            cut(leg,box("LegBore",(.042,.40,.042),(x,.209,z),bevel_w=.001))
+            add(leg,steel)
+            add(box("RubberFoot",(.068,.018,.068),(x,.009,z),bevel_w=.003,bevel_seg=1),rubber)
+            add(box("TopMountTab",(.11,.006,.07),(x,.422,z),bevel_w=.002),steel)
+        add(box("LowerCrossrail",(.05,.035,.4),(x,.0475,0),bevel_w=.003),steel)
+        for z in (-.198,.198):
+            add(box("RailEndPlug",(.054,.019,.004),(x,.4125,z),bevel_w=.001,bevel_seg=1),rubber)
+        for y in (.15,.38):
+            head=cyl("FrameSocketHead",.0075,.003,(x+.026,y,.175),rot=(0,0,math.pi/2),verts=16)
+            cut(head,x_cyl("FrameHexSocket",.003,.005,(x+.028,y,.175),verts=6))
+            add(head,hardware)
+    add(box("LongitudinalStretcher",(1.65,.028,.028),(0,.0475,0),bevel_w=.002),steel)
+    for obj,_ in parts:
+        smooth_obj(obj)
+    return [],[("BalconyBench",loose(parts),None)]
+
+
+@prop("lounge-beanbag", "furniture", "seat", recenter=False, multipart=True)
+def build_lounge_beanbag():
+    """An eight-gore beanbag: low +z front, raised -z back, and the existing 0.42 m hip height."""
+    fabric=material("BeanFabric","#6a6a6a",roughness=.95)
+    binding=material("BeanBinding","#393d40",roughness=.92)
+    thread=material("BeanThread","#969b9e",roughness=.9)
+    metal=material("BeanHardware","#a6afb6",roughness=.3,metallic=.85)
+    orange=material("BeanSignal","#ee6018",roughness=.8)
+    parts=[]
+    def add(obj,mat):
+        parts.append((obj,mat))
+        return raw(obj)
+    profile=catmull_rom([(0,.012,0),(.25,.022,0),(.46,.065,0),(.565,.14,0),
+        (.59,.25,0),(.585,.355,.09),(.53,.405,.20),(.45,.400,.30),
+        (.34,.38,.23),(.24,.37,.10),(.12,.375,.01),(0,.375,0)],steps=2)
+    def surface(a,v):
+        v=max(0,min(len(profile)-1,v))
+        i=min(int(v),len(profile)-2)
+        f=v-i
+        r,y,lift=Vector(profile[i]).lerp(Vector(profile[i+1]),f)
+        env=math.sin(math.pi*v/(len(profile)-1))
+        r+=env*(.0025*math.sin(13*a+.8*v)-.010*math.exp(-(math.sin(4*a)/.11)**2))
+        y+=lift*(1-math.cos(a))/2+.002*env*math.sin(17*a+.5*v)
+        return Vector((r*math.sin(a),y,r*math.cos(a)))
+    def outside(a,v,offset=.001):
+        da=surface(a+.001,v)-surface(a-.001,v)
+        dv=surface(a,v+.001)-surface(a,v-.001)
+        return surface(a,v)+da.cross(dv).normalized()*offset
+    segments=64
+    vertices=[surface(i*math.tau/segments,j) for j in range(len(profile)) for i in range(segments)]
+    faces=[]
+    for j in range(len(profile)-1):
+        for i in range(segments):
+            a,b=j*segments+i,j*segments+(i+1)%segments
+            c,d=(j+1)*segments+(i+1)%segments,(j+1)*segments+i
+            faces.append((a,c,d) if j==0 else (a,b,d) if j==len(profile)-2 else (a,b,c,d))
+    add(solid_mesh("ShapedFabric",vertices,faces),fabric)
+    stitches,stitch_faces=[],[]
+    for panel in range(8):
+        a=panel*math.tau/8
+        add(tube_path("PanelWelt",[outside(a,j,.001) for j in range(2,21)],.0018,sides=5),binding)
+        for j in range(2,20):
+            for k in range(6):
+                v=j+(k+.5)/6
+                start=len(stitches)
+                stitches.extend([outside(a+da,v+dv,.0022) for da,dv in
+                    ((.007,-.045),(.010,-.045),(.010,.045),(.007,.045))])
+                stitch_faces.append(tuple(range(start,start+4)))
+    add(mesh_object("SaddleStitches",stitches,stitch_faces),thread)
+    add(tube_path("SeatPanelWelt",[outside(i*math.tau/64,20) for i in range(64)],.0018,sides=5,closed=True),binding)
+    tape_vertices=[]
+    for i in range(17):
+        a=math.pi-.30+i*.60/16
+        tape_vertices.extend((outside(a,9.82),outside(a,10.18)))
+    add(mesh_object("ZipperTape",tape_vertices,[(2*i,2*i+2,2*i+3,2*i+1) for i in range(16)]),binding)
+    for i in range(28):
+        a=math.pi-.27+i*.54/27
+        add(box("ZipperTooth",(.0045,.006,.004),outside(a,10+(.025 if i%2 else -.025),.003),rot=(0,a,0)),metal)
+    add(torus("ZipperPull",.008,.0015,(.13,.431,-.594),major_segs=12,minor_segs=4),metal)
+    add(box("OrangePullTab",(.024,.035,.006),(.13,.409,-.594),bevel_w=.003),orange)
+    handle=[outside(math.pi+.12,11.8),Vector((-.07,.65,-.565)),Vector((-.04,.68,-.575)),
+        Vector((.04,.68,-.575)),Vector((.07,.65,-.565)),outside(math.pi-.12,11.8)]
+    handle=[Vector(p) for p in catmull_rom(handle,steps=3)]
+    handle_vertices,handle_faces=[],[]
+    for i,p in enumerate(handle):
+        tangent=(handle[min(i+1,len(handle)-1)]-handle[max(i-1,0)]).normalized()
+        width=Vector((-tangent.y,tangent.x,0)).normalized()*.010
+        depth=Vector((0,0,.003))
+        handle_vertices.extend((p+width+depth,p-width+depth,p-width-depth,p+width-depth))
+    for i in range(len(handle)-1):
+        for k in range(4):
+            handle_faces.append((4*i+k,4*i+(k+1)%4,4*(i+1)+(k+1)%4,4*(i+1)+k))
+    handle_faces.extend(((3,2,1,0),tuple(range(len(handle_vertices)-4,len(handle_vertices)))))
+    add(solid_mesh("WebbingHandle",handle_vertices,handle_faces),binding)
+    for obj,_ in parts:
+        smooth_obj(obj)
+    return [],[("LoungeBeanbag",loose(parts),None)]
 
 
 @prop("droid-team-kit", "factory", "part", recenter=False, multipart=True, keep_uvs=True, draco=False)
