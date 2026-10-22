@@ -126,5 +126,18 @@
     "triangles": 7014,
     "url": "/props/wand.glb",
     "width": 0.0202
+  },
+  "workbench": {
+    "bytes": 40980,
+    "depth": 1.06,
+    "height": 0.78,
+    "materials": 5,
+    "tags": [
+      "furniture",
+      "desk"
+    ],
+    "triangles": 6872,
+    "url": "/props/workbench.glb",
+    "width": 2.14
   }
 }

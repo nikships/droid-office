@@ -896,7 +896,9 @@ function buildDesk(def: DeskDef, index: number): DeskView {
   body.add(mesh(box(2 * lx, 0.05, 0.05), frame, 0, legH - 0.04, -lz));
   body.add(mesh(box(width - 0.3, 0.32, 0.02), toon('#7b7b7b'), 0, height - 0.26, -depth / 2 + 0.07));
   body.add(mesh(box(0.03, 0.03, 0.01), toon(PALETTE.accent, { emissive: PALETTE.accent }), width / 2 - 0.3, height - 0.17, -depth / 2 + 0.055));
-  group.add(mergeByMaterial(body));
+  const workbench = mergeByMaterial(body);
+  workbench.name = 'workbench';
+  group.add(workbench);
 
   const laptopAnchor = new THREE.Object3D();
   laptopAnchor.position.set(0, height, DESK_LAPTOP.z);
