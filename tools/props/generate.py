@@ -880,6 +880,97 @@ def build_bookshelf():
     return parts
 
 
+@prop("cable-tray", "fixture", "ceiling", recenter=False, keep_uvs=True)
+def build_cable_tray():
+    """17 m ladder tray, centred on the existing run; suspension rods stay live."""
+    steel = material("TrayZinc", "#a4abb0", roughness=.48, metallic=.65)
+    rubber = material("TrayCable", "#3b4147", roughness=.85)
+    clamp = material("TrayClamp", "#5c6269", roughness=.6, metallic=.2)
+    orange = material("TraySignal", "#ee6018", roughness=.65)
+    parts = []
+
+    # Packed zinc-spangle map: jittered crystals, fine grain and gentle mottling.
+    n, cells = 512, 16
+    rng = np.random.default_rng(71)
+    seeds = rng.random((cells, cells, 2))*.8+.1
+    value = rng.random((cells, cells))
+    yy, xx = np.mgrid[0:n, 0:n]/n*cells
+    ix, iy = xx.astype(int), yy.astype(int)
+    distance = np.full((n, n), np.inf)
+    crystal = np.zeros((n, n))
+    for dy in (-1, 0, 1):
+        for dx in (-1, 0, 1):
+            cx, cy = ix+dx, iy+dy
+            point = seeds[cy%cells, cx%cells]
+            d = (xx-cx-point[:, :, 0])**2+(yy-cy-point[:, :, 1])**2
+            closer = d < distance
+            crystal = np.where(closer, value[cy%cells, cx%cells], crystal)
+            distance = np.minimum(distance, d)
+    variation = .88+.14*crystal+.035*rng.random((n, n))
+    rgba = np.ones((n, n, 4), dtype=np.float32)
+    rgba[:, :, :3] = np.array([164, 171, 176])[None, None, :]/255*variation[:, :, None]
+    image = bpy.data.images.new("GalvanizedZinc", width=n, height=n, alpha=True)
+    image.pixels.foreach_set(rgba.ravel())
+    image.pack()
+    texture = steel.node_tree.nodes.new("ShaderNodeTexImage")
+    texture.image = image
+    steel.node_tree.links.new(texture.outputs["Color"], steel.node_tree.nodes["Principled BSDF"].inputs["Base Color"])
+
+    def add(obj, mat):
+        obj = raw(obj)
+        apply_modifiers(obj)
+        uv = obj.data.uv_layers.active or obj.data.uv_layers.new(name="UVMap")
+        uv.name = "UVMap"
+        for face in obj.data.polygons:
+            normal = obj.matrix_world.to_3x3() @ face.normal
+            axis = max(range(3), key=lambda i: abs(normal[i]))
+            a, b = ((2, 1), (0, 2), (0, 1))[axis]
+            for loop in face.loop_indices:
+                p = obj.matrix_world @ obj.data.vertices[obj.data.loops[loop].vertex_index].co
+                uv.data[loop].uv = (p[a]*8, p[b]*8)
+        parts.append((obj, mat))
+        return obj
+
+    # Rolled channel rails, with separate upper/lower flanges and open rungs.
+    for side in (-1, 1):
+        add(box("CableTray", (17, .070, .006), (0, .032, side*.15), bevel_w=.002), steel)
+        for y in (.001, .065):
+            add(box("RolledFlange", (17, .006, .026), (0, y, side*.137), bevel_w=.002), steel)
+    for i in range(43):
+        x = -8.35+i*.395
+        add(box("LadderRung", (.032, .012, .274), (x, 0, 0), bevel_w=.003, bevel_seg=1), steel)
+        for side in (-1, 1):
+            add(box("RungTab", (.032, .022, .006), (x, .011, side*.135)), steel)
+
+    # Individual round cable jackets with restrained changes of height.
+    for cable in range(6):
+        z = -.09+cable*.017
+        points = [
+            (-8.49+i*16.98/24, .024+.003*math.sin(i*.7+cable), z+.002*math.sin(i*.45+cable))
+            for i in range(25)
+        ]
+        add(tube_path("CableJacket", points, .0075, sides=6, frame_axis=(0, 1, 0)), rubber)
+    add(tube_path("SignalCable", [(-8.49+i*16.98/24, .019+.002*math.sin(i*.8), .055+.003*math.sin(i*.5)) for i in range(25)], .006, sides=6, frame_axis=(0, 1, 0)), orange)
+
+    # Splice plates and captive hex bolts, at four-metre intervals.
+    for x in (-6.5, -2.5, 1.5, 5.5):
+        for side in (-1, 1):
+            add(box("SplicePlate", (.20, .052, .006), (x, .034, side*.156), bevel_w=.004), clamp)
+            for dx in (-.065, .065):
+                for y in (.020, .049):
+                    add(cyl("SpliceBolt", .007, .005, (x+dx, y, side*.162), rot=(math.pi/2, 0, 0), verts=6), steel)
+    for i in range(14):
+        x = -7.96+i*1.185
+        add(tube_path("BundleStrap", [(x, .009, -.107), (x, .040, -.107), (x, .045, -.09), (x, .045, -.004), (x, .038, .006), (x, .009, .006)], .003, sides=4), clamp)
+        add(box("StrapBuckle", (.019, .010, .014), (x, .043, -.018), bevel_w=.002), clamp)
+    # Existing hanger rods land at these six stations, without being replaced.
+    for x in (-8, -5, -2, 1, 4, 7):
+        add(box("TrapezeSupport", (.040, .018, .312), (x, -.015, 0), bevel_w=.003), clamp)
+        for side in (-1, 1):
+            add(y_cyl("HangerNut", .012, .008, (x, .006, side*.14), verts=6), steel)
+    return parts
+
+
 @prop("executive-desk", "furniture", "desk", recenter=False)
 def build_executive_desk():
     """Loft workstation; live display remains .8 x .45 at y=1.18,z=-.165 in the client."""
