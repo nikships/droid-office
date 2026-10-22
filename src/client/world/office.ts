@@ -1302,6 +1302,7 @@ export function buildOffice(): Office {
   for (const sx of [-1, 1]) for (const sz of [-1, 1]) low.add(mesh(box(0.05, 0.4, 0.05), lowFrame, sx * 0.68, 0.2, sz * 0.68));
   for (const sx of [-1, 1]) low.add(mesh(box(0.05, 0.04, 1.36), lowFrame, sx * 0.68, 0.06, 0));
   const table = mergeByMaterial(low);
+  table.name = 'lounge-table';
   table.position.set(13, 0, 0);
   group.add(table);
   colliders.push({ minX: 12.2, maxX: 13.8, minZ: -0.8, maxZ: 0.8, top: 0.46 });

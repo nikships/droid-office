@@ -1,0 +1,96 @@
+import assert from 'node:assert/strict';
+import test from 'node:test';
+import { readFileSync } from 'node:fs';
+import * as THREE from 'three';
+import { installLoungeTable } from '../src/client/world/lounge-table.js';
+import { surfaceFinish } from '../src/client/world/surface.js';
+
+test('lounge table retains its mount, metadata and neighboring furniture', () => {
+  const office = new THREE.Group();
+  const table = new THREE.Group();
+  table.name = 'lounge-table';
+  table.position.set(13, 0, 0);
+  table.rotation.y = 0.2;
+  table.userData.owner = 'lounge';
+  table.add(new THREE.Object3D());
+  const sofa = new THREE.Group();
+  office.add(table, sofa);
+  const source = new THREE.Group();
+  const part = new THREE.Group();
+  part.name = 'LoungeTable';
+  const edge = new THREE.MeshStandardMaterial({ name: 'TableEdge', color: '#929ba3', metalness: 0.8 });
+  const paint = new THREE.MeshStandardMaterial({ name: 'TableInlay', color: '#7f8383' });
+  const frame = new THREE.MeshStandardMaterial({ name: 'TableFrame', color: '#626b72', metalness: 0.8 });
+  const rubber = new THREE.MeshStandardMaterial({ name: 'TableRubber', color: '#24282a' });
+  const orange = new THREE.MeshStandardMaterial({ name: 'TableSignal', color: '#ee6018' });
+  const original = [edge, paint, frame, rubber, orange, edge];
+  const geometry = new THREE.BoxGeometry(1.5, 0.06, 1.5);
+  part.add(new THREE.Mesh(geometry, original), new THREE.Mesh(geometry, edge));
+  source.add(part);
+  assert.equal(installLoungeTable(source, office), true);
+  assert.deepEqual(table.position.toArray(), [13, 0, 0]);
+  assert.equal(table.rotation.y, 0.2);
+  assert.equal(table.userData.owner, 'lounge');
+  assert.equal(office.children[1], sofa);
+  assert.equal(table.children.length, 1);
+  const model = table.children[0];
+  const loaded = model.children[0] as THREE.Mesh;
+  assert.equal(loaded.geometry, geometry);
+  const materials = loaded.material as THREE.MeshToonMaterial[];
+  assert.ok(materials.every((m) => m.isMeshToonMaterial));
+  assert.deepEqual(materials.map(surfaceFinish), [[0.55, 0.3], [0.04, 0.72], [0.55, 0.3], null, null, [0.55, 0.3]]);
+  assert.equal(materials[0], materials[5]);
+  assert.equal((model.children[1] as THREE.Mesh).material, materials[0]);
+  assert.ok(materials[4].color.equals(orange.color));
+  assert.equal(materials[4].emissive.getHex(), 0);
+  assert.equal((part.children[0] as THREE.Mesh).material, original);
+  assert.equal(part.parent, source);
+});
+
+test('missing lounge table nodes preserve procedural geometry', () => {
+  const office = new THREE.Group();
+  const source = new THREE.Group();
+  const part = new THREE.Group();
+  part.name = 'LoungeTable';
+  source.add(part);
+  assert.equal(installLoungeTable(source, office), false);
+  const table = new THREE.Group();
+  table.name = 'lounge-table';
+  const fallback = new THREE.Object3D();
+  table.add(fallback);
+  office.add(table);
+  assert.equal(installLoungeTable(new THREE.Group(), office), false);
+  assert.equal(table.children[0], fallback);
+});
+
+test('a single-mesh lounge table source also converts without changing the source', () => {
+  const office = new THREE.Group();
+  const table = new THREE.Group();
+  table.name = 'lounge-table';
+  office.add(table);
+  const source = new THREE.Mesh(new THREE.BoxGeometry(), new THREE.MeshStandardMaterial({ name: 'TableRubber' }));
+  source.name = 'LoungeTable';
+  assert.equal(installLoungeTable(source, office), true);
+  assert.ok(((table.children[0] as THREE.Mesh).material as THREE.MeshToonMaterial).isMeshToonMaterial);
+  assert.ok(source.material.isMeshStandardMaterial);
+});
+
+test('lounge table GLB preserves the original square footprint and 0.46 m tabletop', () => {
+  const manifest = JSON.parse(readFileSync(new URL('../src/client/public/props/manifest.json', import.meta.url), 'utf8'));
+  const table = manifest['lounge-table'];
+  assert.deepEqual([table.width, table.height, table.depth], [1.5, 0.46, 1.5]);
+  assert.ok(table.triangles <= 8000);
+  assert.equal(table.materials, 5);
+  const glb = readFileSync(new URL('../src/client/public/props/lounge-table.glb', import.meta.url));
+  assert.equal(glb.byteLength, table.bytes);
+  const json = JSON.parse(glb.subarray(20, 20 + glb.readUInt32LE(12)).toString('utf8'));
+  assert.ok(json.nodes.some((n: { name: string }) => n.name === 'LoungeTable'));
+  type Primitive = { material: number; attributes: { POSITION: number } };
+  const primitives: Primitive[] = json.meshes.flatMap((m: { primitives: Primitive[] }) => m.primitives);
+  const bounds = primitives.map((p) => json.accessors[p.attributes.POSITION]);
+  assert.ok(Math.abs(Math.min(...bounds.map((b) => b.min[1]))) < 1e-4);
+  assert.ok(Math.abs(Math.max(...bounds.map((b) => b.max[1])) - 0.46) < 1e-4);
+  const inlay = primitives.find((p) => json.materials[p.material].name === 'TableInlay');
+  assert.ok(inlay);
+  assert.ok(Math.abs(json.accessors[inlay.attributes.POSITION].max[1] - 0.455) < 1e-4);
+});

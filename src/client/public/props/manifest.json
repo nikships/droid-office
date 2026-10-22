@@ -130,6 +130,19 @@
     "url": "/props/lounge-sofa.glb",
     "width": 1.1
   },
+  "lounge-table": {
+    "bytes": 47432,
+    "depth": 1.5,
+    "height": 0.46,
+    "materials": 5,
+    "tags": [
+      "furniture",
+      "table"
+    ],
+    "triangles": 7812,
+    "url": "/props/lounge-table.glb",
+    "width": 1.5
+  },
   "macbook-base": {
     "bytes": 115328,
     "depth": 0.5305,
