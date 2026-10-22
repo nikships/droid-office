@@ -1653,6 +1653,80 @@ def loose(parts):
     return obj
 
 
+@prop("exit-stairs", "architecture", "stairs", recenter=False, multipart=True)
+def build_exit_stairs():
+    """The existing 1.6 m concrete stair: 1.9 m landing, fourteen .34 m treads down to -3.36 m."""
+    concrete=material("ExitConcrete","#a9a9a9",roughness=.88)
+    tread_mat=material("ExitTread","#b2b2b2",roughness=.85)
+    rail_mat=material("ExitRail","#a6a6a6",roughness=.42,metallic=.8)
+    hardware=material("ExitAnchor","#b8bec3",roughness=.32,metallic=.85)
+    parts=[]
+    def add(obj,mat):
+        parts.append((obj,mat))
+        return raw(obj)
+    profile=[(0,-3.6),(0,0),(1.9,0)]
+    for i in range(1,15):
+        profile += [(1.9+(i-1)*.34,-i*.24),(1.9+i*.34,-i*.24)]
+    profile += [(1.9+14*.34,-3.6)]
+    n=len(profile)
+    # The cap overhangs the core by 2 mm: no coincident side faces or black self-intersection seams.
+    vertices=[(x,y,z) for x in (-.798,.798) for z,y in profile]
+    faces=[tuple(reversed(range(n))),tuple(range(n,2*n))]
+    faces += [(i,(i+1)%n,(i+1)%n+n,i+n) for i in range(n)]
+    body=mesh_object("ConcreteStair",vertices,faces)
+    bm=bmesh.new();bm.from_mesh(body.data)
+    bmesh.ops.recalc_face_normals(bm,faces=bm.faces)
+    bm.to_mesh(body.data);bm.free()
+    bevel(body,.005,1)
+    for z,top in [(.65,0),(1.3,0)]+[(1.9+i*.34,-(i+1)*.24) for i in range(14)]:
+        h=top+3.6-.10
+        cut(body,box("FormworkJoint",(.014,h,.008),(-.801,-3.55+h/2,z)))
+    add(body,concrete)
+    landing=box("LandingSurface",(1.6,.04,1.9),(0,-.015,.95),bevel_w=.003,bevel_seg=1)
+    for z in (.65,1.3):
+        cut(landing,box("LandingJoint",(1.44,.008,.008),(0,.005,z)))
+    add(landing,tread_mat)
+    tread=box("ConcreteTread",(1.6,.04,.36),(0,-.015,.17),bevel_w=.003,bevel_seg=1)
+    for z in (.24,.28,.32):
+        cut(tread,box("AntiSlipGroove",(1.36,.008,.008),(0,.005,z)))
+    apply_modifiers(raw(tread));smooth_obj(tread)
+    prototype=loose([(tread,tread_mat)])
+    for i in range(1,15):
+        step=prototype.copy();step.data=prototype.data
+        bpy.context.collection.objects.link(step)
+        step.location=(0,-i*.24,1.9+(i-1)*.34)
+        parts.append((step,None))
+    bpy.data.objects.remove(prototype,do_unlink=True)
+
+    bottom_z=1.9+13.5*.34
+    posts=[(.75,0,.06,1),(-.74,0,.06,1),(-.74,0,1.9,1)]
+    for i in range(2,15,3):
+        z=1.9+(i-.5)*.34
+        posts.append((-.74,-i*.24,z,1-3.36*(z-1.9)/(bottom_z-1.9)))
+    # The original final post was added twice at the same centre; retain its one visible surface.
+    for x,y,z,top in posts:
+        h=top-y-.017
+        add(y_cyl("RoundRailPost",.03,h,(x,y+.017+h/2,z),verts=24),rail_mat)
+        edge_post=abs(z-1.9)<1e-6
+        flange=box("LandingEdgeBracket",(.10,.012,.14),(x,y+.011,z-.04),bevel_w=.003,bevel_seg=1) if edge_post else y_cyl("PostBaseFlange",.05,.012,(x,y+.011,z),verts=24,bevel_w=.002)
+        for dz in ((-.085,-.055) if edge_post else (-.034,.034)):
+            cut(flange,y_cyl("AnchorCounterbore",.012,.008,(x,y+.017,z+dz),verts=12))
+            screw=y_cyl("RecessedAnchor",.010,.004,(x,y+.015,z+dz),verts=12)
+            cut(screw,y_cyl("AnchorHex",.004,.004,(x,y+.017,z+dz),verts=6))
+            add(screw,hardware)
+        add(flange,rail_mat)
+    for a,b in [((.75,1,.06),(-.74,1,.06)),
+                ((-.74,1,.06),(-.74,1,1.9)),
+                ((-.74,1,1.9),(-.74,-2.36,bottom_z))]:
+        add(tube_path("RoundHandrail",[a,b],.035,sides=24),rail_mat)
+    for obj,_ in parts:
+        apply_modifiers(raw(obj));smooth_obj(obj)
+        for face in raw(obj).data.polygons:
+            if max(abs(v) for v in face.normal)>.999:
+                face.use_smooth=False
+    return [],[("ExitStairs",loose(parts),None)]
+
+
 @prop("droid-computer", "factory", "hero", recenter=False, multipart=True, keep_uvs=True)
 def build_droid_computer():
     """Factory's Droid Computer: a 0.45 m brushed black aluminium cube with softly rounded

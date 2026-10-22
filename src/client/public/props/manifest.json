@@ -182,6 +182,19 @@
     "url": "/props/exit-door.glb",
     "width": 1.22
   },
+  "exit-stairs": {
+    "bytes": 35496,
+    "depth": 6.67,
+    "height": 4.635,
+    "materials": 4,
+    "tags": [
+      "architecture",
+      "stairs"
+    ],
+    "triangles": 7028,
+    "url": "/props/exit-stairs.glb",
+    "width": 1.6
+  },
   "floor-ladder": {
     "bytes": 10736,
     "depth": 1,

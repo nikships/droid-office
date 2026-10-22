@@ -63,6 +63,7 @@ import { installFloorLadder } from './world/floor-ladder';
 import { installDroidRack } from './world/droid-rack';
 import { installElevatorPanels } from './world/elevator-panels';
 import { installExitDoor } from './world/exit-door';
+import { installExitStairs } from './world/exit-stairs';
 import { installBalconyStools } from './world/balcony-stool';
 import { installBalconyTable } from './world/balcony-table';
 import { installBalconyBench } from './world/balcony-bench';
@@ -247,6 +248,8 @@ const propsReady = loadPropManifest()
     }
     const exitDoor = propScene('exit-door');
     if (exitDoor) installExitDoor(exitDoor, office.group);
+    const exitStairs = propScene('exit-stairs');
+    if (exitStairs) installExitStairs(exitStairs, office.group);
     const ledBar = propScene('led-bar');
     if (ledBar) installLedBarHousings(ledBar, office.group);
     const highBayLamp = propScene('high-bay-lamp');
