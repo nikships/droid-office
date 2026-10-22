@@ -925,6 +925,102 @@ def paint(obj, palette, swatch):
     return obj
 
 
+@prop("task-chair", "furniture", "seating", recenter=False)
+def build_task_chair():
+    """Ergonomic task chair; seat at .55 m, back on +z, swivel axis at the origin."""
+    fabric = material("ChairFabric", "#73777c", roughness=0.95)
+    shell = material("ChairShell", "#34383d", roughness=0.65)
+    steel = material("ChairSteel", "#969da5", roughness=0.3, metallic=0.8)
+    orange = material("ChairStitch", "#ee6018", roughness=0.8)
+    parts = []
+
+    def add(obj, mat):
+        parts.append((obj, mat))
+        return raw(obj)
+
+    # Waterfall seat: a rounded, slightly dished cushion over a separate moulded pan.
+    add(box("SeatPan", (.57, .045, .52), (0, .465, 0), bevel_w=.02), shell)
+    cushion = add(box("SeatCushion", (.60, .09, .56), (0, .505, -.01), bevel_w=.04, bevel_seg=4), fabric)
+    smooth_obj(cushion)
+    seam = rrect(-.284, .284, -.272, .252, .07, .51, k=5)
+    add(tube_path("SeatWelt", seam, .003, sides=5, closed=True), shell)
+
+    # A curved upholstered back, pinched at the lumbar and flared at the shoulders.
+    profile = [
+        (.61, .23, .24), (.66, .24, .22), (.74, .225, .205),
+        (.82, .24, .225), (.92, .27, .26), (1.04, .28, .29),
+        (1.13, .255, .32), (1.17, .205, .33),
+    ]
+
+    def back_surface(name, offset, thickness, mat):
+        vertices, faces = [], []
+        columns = 12
+        for side in (-1, 1):
+            for y, half, z in profile:
+                for i in range(columns + 1):
+                    u = 2 * i / columns - 1
+                    vertices.append((u * half, y, z + offset + .045 * u * u + side * thickness / 2))
+        stride = columns + 1
+        layer = len(profile) * stride
+        for side in range(2):
+            base = side * layer
+            for row in range(len(profile) - 1):
+                for col in range(columns):
+                    a = base + row * stride + col
+                    face = (a, a + 1, a + stride + 1, a + stride)
+                    faces.append(face if side == 0 else tuple(reversed(face)))
+        for row in range(len(profile) - 1):
+            for col in (0, columns):
+                a, b = row * stride + col, (row + 1) * stride + col
+                faces.append((a, b, b + layer, a + layer))
+        for row in (0, len(profile) - 1):
+            for col in range(columns):
+                a = row * stride + col
+                faces.append((a, a + layer, a + layer + 1, a + 1))
+        obj = add(mesh_object(name, vertices, faces), mat)
+        bm = bmesh.new()
+        bm.from_mesh(obj.data)
+        bmesh.ops.recalc_face_normals(bm, faces=bm.faces)
+        bm.to_mesh(obj.data)
+        bm.free()
+        for face in obj.data.polygons:
+            face.use_smooth = True
+        return obj
+
+    back_surface("BackShell", .022, .028, shell)
+    back_surface("BackCushion", -.014, .035, fabric)
+    for side in (-1, 1):
+        edge = [(side * half * .97, y, z - .031 + .045 * .97 ** 2) for y, half, z in profile]
+        add(tube_path("BackWelt", edge, .003, sides=5), shell)
+    add(tube_path("OrangeShoulderSeam", [(x, 1.125, .287 + .045 * (x / .255) ** 2) for x in (-.19, -.1, 0, .1, .19)], .004, sides=6), orange)
+
+    # Rear spine, lumbar support and height-adjustable armrests.
+    add(tube_path("BackSpine", [(0, .40, .12), (0, .53, .28), (0, .76, .29), (0, .9, .315)], .024, sides=8), shell)
+    add(box("LumbarBridge", (.34, .04, .025), (0, .75, .29), bevel_w=.012), steel)
+    for side in (-1, 1):
+        add(box("ArmUpright", (.035, .21, .045), (side * .325, .555, .08), bevel_w=.009), steel)
+        add(box("ArmSocket", (.055, .10, .063), (side * .325, .535, .08), bevel_w=.012), shell)
+        add(box("ArmPad", (.09, .04, .28), (side * .325, .68, -.005), bevel_w=.018, bevel_seg=3), shell)
+    add(y_cyl("TiltMechanism", .095, .09, (0, .395, .015), verts=20), shell)
+    add(y_cyl("GasLift", .025, .22, (0, .26, 0), verts=20), steel)
+    add(y_cyl("LiftShroud", .046, .13, (0, .16, 0), verts=20), shell)
+    add(tube_path("HeightLever", [(.08, .405, .04), (.20, .40, .07), (.24, .42, .07)], .009, sides=6), steel)
+    add(box("LeverPaddle", (.07, .018, .04), (.235, .42, .07), bevel_w=.008), shell)
+
+    # Five swept spokes and ten separate rubber wheels, with visible silver hubs.
+    for i in range(5):
+        a = i * math.tau / 5
+        dx, dz = math.sin(a), math.cos(a)
+        add(tube_path("StarSpoke", [(0, .14, 0), (dx * .12, .105, dz * .12), (dx * .28, .08, dz * .28)], .024, sides=8), steel)
+        add(y_cyl("CasterFork", .022, .055, (dx * .29, .069, dz * .29), verts=12), shell)
+        for side in (-1, 1):
+            x, z = dx * .30 + math.cos(a) * side * .022, dz * .30 - math.sin(a) * side * .022
+            wheel = add(cyl("CasterTyre", .041, .025, (x, .041, z), rot=(0, a, math.pi / 2), verts=16, bevel_w=.005), shell)
+            smooth_obj(wheel)
+            add(cyl("CasterHub", .016, .027, (x, .041, z), rot=(0, a, math.pi / 2), verts=12), steel)
+    return parts
+
+
 def mesh_object(name, vertices, faces):
     mesh = bpy.data.meshes.new(name)
     mesh.from_pydata(vertices, [], faces)

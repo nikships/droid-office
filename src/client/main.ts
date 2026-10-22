@@ -51,6 +51,7 @@ import { gongRinging, renderPace, sceneIsMoving, skyFalling, type RenderPace, ty
 import { RenderLoop } from './render-loop';
 import { Climber, type Arrival, type Grip, type Way } from './climb';
 import { buildOffice, type DeskView, type InteractKind, type Interactable } from './world/office';
+import { installTaskChairs } from './world/task-chair';
 import { loadPropManifest, preloadProps, propManifest, propScene } from './world/props';
 import { buildRooftop, type Rooftop } from './world/rooftop';
 import { ROOF, ROOF_NAME } from '../shared/rooftop';
@@ -194,6 +195,12 @@ const propsReady = loadPropManifest()
     if (worker) setWorkerModel(worker);
     const teamKit = propScene('droid-team-kit');
     if (teamKit) setTeamKit(teamKit);
+    const taskChair = propScene('task-chair');
+    if (taskChair)
+      installTaskChairs(
+        taskChair,
+        DESKS.map(({ id }) => office.desks.get(id)!.chair),
+      );
   })
   .catch((err) => console.warn('office: prop GLBs unavailable, keeping procedural props', err));
 const sky = new Sky(scene, { sun, hemi, ambient }, office.night);
