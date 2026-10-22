@@ -2232,6 +2232,55 @@ def build_telescope():
     return [],[("TelescopeStand",base,None),("TelescopeOptics",tube,None)]
 
 
+@prop("balcony-stool", "furniture", "seat", recenter=False, multipart=True)
+def build_balcony_stool():
+    """One shared stool, original .4 m footprint and .49 m seat, tinted per mount."""
+    seat=material("StoolSeat","#808080",roughness=.85)
+    welt=material("StoolWelt","#45494c",roughness=.88)
+    shell=material("StoolShell","#8b9398",roughness=.62,metallic=.2)
+    steel=material("StoolSteel","#afb9c0",roughness=.32,metallic=.85)
+    rubber=material("StoolRubber","#25292c",roughness=.94)
+    parts=[]
+    def add(obj,mat):
+        parts.append((obj,mat))
+    add(y_cyl("RoundedSeatPad",.2,.05,(0,.465,0),verts=48,bevel_w=.009),seat)
+    add(torus("SeatPiping",.1985,.0015,(0,.445,0),rot=(math.pi/2,0,0),major_segs=48,minor_segs=8),welt)
+    pan=y_cyl("MoldedSeatPan",.19,.014,(0,.433,0),verts=48,bevel_w=.003)
+    for i in range(4):
+        a=math.pi/4+i*math.pi/2
+        cut(pan,box("PanDrainSlot",(.015,.026,.045),(.115*math.sin(a),.433,.115*math.cos(a)),rot=(0,a,0),bevel_w=.005,bevel_seg=2))
+        x,z=.075*math.sin(i*math.pi/2),.075*math.cos(i*math.pi/2)
+        head=y_cyl("UndersideSocketHead",.006,.006,(x,.423,z),verts=16)
+        cut(head,y_cyl("UndersideHex",.0025,.004,(x,.421,z),verts=6))
+        add(head,steel)
+    add(pan,shell)
+    add(y_cyl("SeatMountCollar",.045,.027,(0,.4145,0),verts=32,bevel_w=.002),steel)
+    stem=y_cyl("HollowColumn",.03,.378,(0,.215,0),verts=32)
+    cut(stem,y_cyl("ColumnBore",.023,.40,(0,.215,0),verts=32))
+    add(stem,shell)
+    for y in (.04,.396):
+        add(y_cyl("ColumnCollet",.035,.007,(0,y,0),verts=32,bevel_w=.001),steel)
+    base=cone("CastBase",.18,.16,.024,(0,.018,0),verts=40)
+    bevel(base,.0015,2)
+    cut(base,y_cyl("BaseBore",.022,.06,(0,.018,0),verts=24))
+    for i in range(4):
+        a=math.pi/4+i*math.pi/2
+        x,z=.12*math.sin(a),.12*math.cos(a)
+        cut(base,y_cyl("BaseCounterbore",.0075,.012,(x,.031,z),verts=16))
+        head=y_cyl("BaseSocketHead",.0055,.004,(x,.027,z),verts=16)
+        cut(head,y_cyl("BaseHex",.0025,.005,(x,.029,z),verts=6))
+        add(head,steel)
+        a=i*math.pi/2
+        add(box("BaseReinforcementRib",(.012,.014,.07),(.062*math.sin(a),.031,.062*math.cos(a)),rot=(0,a,0),bevel_w=.002),shell)
+    add(base,shell)
+    foot=y_cyl("FloorIsolationRing",.175,.006,(0,.003,0),verts=40,bevel_w=.001)
+    cut(foot,y_cyl("FootOpening",.15,.02,(0,.003,0),verts=40))
+    add(foot,rubber)
+    for obj,_ in parts:
+        smooth_obj(obj)
+    return [],[("BalconyStool",loose(parts),None)]
+
+
 @prop("lounge-table", "furniture", "table", recenter=False, multipart=True)
 def build_lounge_table():
     """The lounge's 1.5 m square coffee table, with its top at the existing 0.46 m."""
