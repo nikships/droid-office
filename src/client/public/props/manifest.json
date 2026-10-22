@@ -12,6 +12,19 @@
     "url": "/props/agent-kiosk.glb",
     "width": 0.8
   },
+  "balcony-bench": {
+    "bytes": 39712,
+    "depth": 0.46,
+    "height": 0.94,
+    "materials": 6,
+    "tags": [
+      "furniture",
+      "seat"
+    ],
+    "triangles": 7116,
+    "url": "/props/balcony-bench.glb",
+    "width": 2.0
+  },
   "bookshelf": {
     "bytes": 61708,
     "depth": 0.47,

@@ -57,6 +57,7 @@ import { installTaskChairs } from './world/task-chair';
 import { installLoungeSofa } from './world/lounge-sofa';
 import { installAgentKiosks } from './world/agent-kiosk';
 import { installLoungeTable } from './world/lounge-table';
+import { installBalconyBench } from './world/balcony-bench';
 import { installLoungeBeanbags } from './world/lounge-beanbag';
 import { loadPropManifest, preloadProps, propManifest, propScene } from './world/props';
 import { buildRooftop, type Rooftop } from './world/rooftop';
@@ -226,6 +227,8 @@ const propsReady = loadPropManifest()
     if (telescope) installTelescope(telescope, office.group);
     const loungeTable = propScene('lounge-table');
     if (loungeTable) installLoungeTable(loungeTable, office.group);
+    const balconyBench = propScene('balcony-bench');
+    if (balconyBench) installBalconyBench(balconyBench, office.group);
     const loungeBeanbag = propScene('lounge-beanbag');
     if (loungeBeanbag) installLoungeBeanbags(loungeBeanbag, office.group);
     const teamKit = propScene('droid-team-kit');
