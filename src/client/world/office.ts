@@ -550,7 +550,10 @@ function buildBalcony(group: THREE.Group, colliders: Collider[], interactables: 
   for (const sx of [-1, 1]) {
     const x = tx + sx * 0.8;
     const stool = new THREE.Group();
-    stool.add(mesh(new THREE.CylinderGeometry(0.2, 0.2, 0.06, 16), toon(PALETTE.chairs[sx < 0 ? 0 : 3]), 0, 0.46, 0));
+    const seatColor = PALETTE.chairs[sx < 0 ? 0 : 3];
+    stool.name = sx < 0 ? 'balcony-stool-1' : 'balcony-stool-2';
+    stool.userData.seatColor = seatColor;
+    stool.add(mesh(new THREE.CylinderGeometry(0.2, 0.2, 0.06, 16), toon(seatColor), 0, 0.46, 0));
     stool.add(mesh(new THREE.CylinderGeometry(0.03, 0.03, 0.44, 6), ink, 0, 0.22, 0));
     stool.add(mesh(new THREE.CylinderGeometry(0.16, 0.18, 0.03, 12), ink, 0, 0.015, 0));
     stool.position.set(x, 0, tz);

@@ -25,6 +25,19 @@
     "url": "/props/balcony-bench.glb",
     "width": 2
   },
+  "balcony-stool": {
+    "bytes": 41012,
+    "depth": 0.4,
+    "height": 0.49,
+    "materials": 5,
+    "tags": [
+      "furniture",
+      "seat"
+    ],
+    "triangles": 6102,
+    "url": "/props/balcony-stool.glb",
+    "width": 0.4
+  },
   "balcony-table": {
     "bytes": 43900,
     "depth": 0.84,

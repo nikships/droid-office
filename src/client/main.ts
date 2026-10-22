@@ -57,6 +57,7 @@ import { installTaskChairs } from './world/task-chair';
 import { installLoungeSofa } from './world/lounge-sofa';
 import { installAgentKiosks } from './world/agent-kiosk';
 import { installLoungeTable } from './world/lounge-table';
+import { installBalconyStools } from './world/balcony-stool';
 import { installBalconyTable } from './world/balcony-table';
 import { installBalconyBench } from './world/balcony-bench';
 import { installLoungeBeanbags } from './world/lounge-beanbag';
@@ -228,6 +229,8 @@ const propsReady = loadPropManifest()
     if (telescope) installTelescope(telescope, office.group);
     const loungeTable = propScene('lounge-table');
     if (loungeTable) installLoungeTable(loungeTable, office.group);
+    const balconyStool = propScene('balcony-stool');
+    if (balconyStool) installBalconyStools(balconyStool, office.group);
     const balconyTable = propScene('balcony-table');
     if (balconyTable) installBalconyTable(balconyTable, office.group);
     const balconyBench = propScene('balcony-bench');
