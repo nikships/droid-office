@@ -527,6 +527,7 @@ function buildBalcony(group: THREE.Group, colliders: Collider[], interactables: 
 
   // A bench under the window, and a bistro table with two stools.
   const bench = new THREE.Group();
+  bench.name = 'balcony-bench';
   bench.add(mesh(roundedBox(2, 0.08, 0.46, 0.05), wood, 0, 0.45, 0));
   bench.add(mesh(box(2, 0.32, 0.06), wood, 0, 0.78, -0.2));
   for (const sx of [-0.85, 0.85]) bench.add(mesh(box(0.06, 0.45, 0.4), ink, sx, 0.22, 0));

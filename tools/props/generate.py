@@ -2280,6 +2280,58 @@ def build_lounge_table():
     return [],[("LoungeTable",loose(parts),None)]
 
 
+@prop("balcony-bench", "furniture", "seat", recenter=False, multipart=True)
+def build_balcony_bench():
+    """Gray-finished slats on steel frames, +z front, original 2 x .94 x .46 m envelope."""
+    woods=[material("BalconySlatLight","#8c8d88",roughness=.82),
+           material("BalconySlatDark","#80817c",roughness=.85)]
+    back=material("BalconyBackWood","#80817c",roughness=.85)
+    steel=material("BalconySteel","#8d969c",roughness=.48,metallic=.8)
+    hardware=material("BalconyFastener","#b9c1c6",roughness=.3,metallic=.85)
+    rubber=material("BalconyRubber","#2a2d2f",roughness=.92)
+    parts=[]
+    def add(obj,mat):
+        parts.append((obj,mat))
+    for i in range(5):
+        z=(i-2)*.094
+        slat=box("RoundedSeatSlat",(2,.065,.084),(0,.4575,z),bevel_w=.006,bevel_seg=3)
+        for x in (-.85,.85):
+            cut(slat,y_cyl("SeatCounterbore",.0105,.012,(x,.492,z),verts=20))
+            head=y_cyl("RecessedSeatScrew",.008,.0025,(x,.48775,z),verts=20)
+            cut(head,y_cyl("SeatHexSocket",.0035,.005,(x,.49,z),verts=6))
+            add(head,hardware)
+        add(slat,woods[i%2])
+    for y in (.666,.782,.898):
+        slat=box("RoundedBackSlat",(2,.084,.034),(0,y,-.198),bevel_w=.006,bevel_seg=3)
+        for x in (-.85,.85):
+            cut(slat,cyl("BackCounterbore",.0105,.012,(x,y,-.180),rot=(math.pi/2,0,0),verts=20))
+            head=cyl("RecessedBackScrew",.008,.0025,(x,y,-.1835),rot=(math.pi/2,0,0),verts=20)
+            cut(head,cyl("BackHexSocket",.0035,.004,(x,y,-.181),rot=(math.pi/2,0,0),verts=6))
+            add(head,hardware)
+        add(slat,back)
+    for x in (-.85,.85):
+        add(box("SeatCrossrail",(.06,.025,.4),(x,.4125,0),bevel_w=.003),steel)
+        add(box("BackSupport",(.05,.52,.015),(x,.67,-.2225),bevel_w=.002),steel)
+        add(box("BackMountHeel",(.055,.025,.048),(x,.4125,-.206),bevel_w=.002),steel)
+        for z in (-.175,.175):
+            leg=box("HollowSteelLeg",(.05,.382,.05),(x,.209,z),bevel_w=.003)
+            cut(leg,box("LegBore",(.042,.40,.042),(x,.209,z),bevel_w=.001))
+            add(leg,steel)
+            add(box("RubberFoot",(.068,.018,.068),(x,.009,z),bevel_w=.003,bevel_seg=1),rubber)
+            add(box("TopMountTab",(.11,.006,.07),(x,.422,z),bevel_w=.002),steel)
+        add(box("LowerCrossrail",(.05,.035,.4),(x,.0475,0),bevel_w=.003),steel)
+        for z in (-.198,.198):
+            add(box("RailEndPlug",(.054,.019,.004),(x,.4125,z),bevel_w=.001,bevel_seg=1),rubber)
+        for y in (.15,.38):
+            head=cyl("FrameSocketHead",.0075,.003,(x+.026,y,.175),rot=(0,0,math.pi/2),verts=16)
+            cut(head,x_cyl("FrameHexSocket",.003,.005,(x+.028,y,.175),verts=6))
+            add(head,hardware)
+    add(box("LongitudinalStretcher",(1.65,.028,.028),(0,.0475,0),bevel_w=.002),steel)
+    for obj,_ in parts:
+        smooth_obj(obj)
+    return [],[("BalconyBench",loose(parts),None)]
+
+
 @prop("droid-team-kit", "factory", "part", recenter=False, multipart=True, keep_uvs=True, draco=False)
 def build_droid_team_kit():
     """Team hardware worn over `droid-worker.glb`, authored in the same worker space so every node
