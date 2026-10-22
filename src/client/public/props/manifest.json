@@ -271,7 +271,7 @@
     "width": 0.26
   },
   "robot-arm": {
-    "bytes": 21840,
+    "bytes": 43068,
     "depth": 0.62,
     "height": 0.786,
     "materials": 1,
@@ -280,7 +280,7 @@
       "hero",
       "animated"
     ],
-    "triangles": 2848,
+    "triangles": 7232,
     "url": "/props/robot-arm.glb",
     "width": 0.62
   },
