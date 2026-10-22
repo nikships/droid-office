@@ -1,4 +1,17 @@
 {
+  "bookshelf": {
+    "bytes": 61708,
+    "depth": 0.47,
+    "height": 2.37,
+    "materials": 10,
+    "tags": [
+      "furniture",
+      "hero"
+    ],
+    "triangles": 8000,
+    "url": "/props/bookshelf.glb",
+    "width": 1.78
+  },
   "conveyor": {
     "bytes": 7636,
     "depth": 0.736,

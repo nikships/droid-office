@@ -730,6 +730,97 @@ def keycap(name, x0, x1, z0, z1):
     return obj
 
 
+@prop("bookshelf", "furniture", "hero", recenter=False)
+def build_bookshelf():
+    """Five-bay documentation library, leaving the fourth shelf's right .5 m for live AutoWiki."""
+    case=material("ShelfCase","#45494e",roughness=.7,metallic=.1)
+    steel=material("ShelfSteel","#969ea6",roughness=.32,metallic=.8)
+    pages=material("ShelfPages","#d3cdbf",roughness=.95)
+    green=material("ShelfPlant","#5c8264",roughness=.85)
+    spine_colors=["#282b30","#515760","#969ca4","#d0d0cb","#ee6018","#353b42"]
+    covers=[material(f"ShelfCover{i}",c,roughness=.85) for i,c in enumerate(spine_colors)]
+    parts=[(box("BookshelfStatic",(1.70,2.30,.025),(0,1.15,-.1975),bevel_w=.004,bevel_seg=1),case)]
+    for sx in (-1,1):
+        parts.append((box("SideStile",(.05,2.30,.42),(sx*.825,1.15,0),bevel_w=.006,bevel_seg=1),case))
+        parts.append((box("FrontStileInlay",(.012,2.22,.008),(sx*.80,1.15,.211),bevel_w=.003),steel))
+    parts += [
+        (box("Crown",(1.78,.07,.47),(0,2.335,.01),bevel_w=.009,bevel_seg=3),case),
+        (box("Kickboard",(1.60,.10,.39),(0,.05,-.015),bevel_w=.005),case),
+        (box("PlinthEdge",(1.60,.012,.015),(0,.105,.185),bevel_w=.003),steel),
+    ]
+    seed=20261021
+    def rand():
+        nonlocal seed
+        seed=(seed*16807)%2147483647
+        return seed/2147483647
+    bay=(2.30-.10-.03)/5
+    front=.19
+
+    def book(x,y,t,h,d,mat,lean=0):
+        group=[]
+        group += [
+            (box("PageBlock",(t-.010,h-.016,d-.018),(x+t/2,y+h/2,front-d/2-.005)),pages),
+            (box("LeftCover",(.004,h,d),(x+.002,y+h/2,front-d/2)),mat),
+            (box("RightCover",(.004,h,d),(x+t-.002,y+h/2,front-d/2)),mat),
+        ]
+        cross=[(x+t*i/4,front-.004+.010*math.sin(i*math.pi/4)) for i in range(5)]
+        cross += [(x+t,front-.010),(x,front-.010)]
+        rings=[[(xx,yy,zz) for xx,zz in cross] for yy in (y,y+h)]
+        group.append((loft("RoundedBookSpine",rings,recalc=True),mat))
+        # Printed spine label and a narrow foil band, kept flush rather than floating.
+        group.append((box("SpineLabel",(t*.62,.028,.001),(x+t/2,y+h*.62,front+.0065)),pages))
+        if rand()<.5:
+            group.append((box("SpineBand",(t*.84,.008,.001),(x+t/2,y+h*.83,front+.006)),steel))
+        if lean:
+            pivot=Vector((x,y,front-d/2))
+            transform=Matrix.Translation(pivot) @ Matrix.Rotation(lean,4,"Z") @ Matrix.Translation(-pivot)
+            for obj,_ in group:
+                raw(obj).matrix_world=transform @ raw(obj).matrix_world
+        parts.extend(group)
+
+    for s in range(5):
+        floor=.10+s*bay+.03
+        parts.append((box("ShelfBoard",(1.60,.03,.39),(0,floor-.015,-.015),bevel_w=.005,bevel_seg=1),case))
+        parts.append((box("ShelfFrontEdge",(1.59,.008,.01),(0,floor-.015,.184),bevel_w=.002),steel))
+        for sx in (-1,1):
+            for z in (-.13,.13):
+                parts.append((x_cyl("ShelfPin",.006,.01,(sx*.794,floor-.035,z),verts=6),steel))
+        end=.78-(.5 if s==3 else 0)
+        x=-.78
+        while x<end-.09:
+            # Leave a real footprint for the globe and the succulent.
+            if s==1 and x>.39:
+                break
+            if s==3 and -.70<x<-.33:
+                x=-.31
+            t=.090+.03*rand()
+            if x+t>end:
+                break
+            h=(bay-.07)*(.68+.31*rand())
+            d=.205+.055*rand()
+            mat=covers[int(rand()*len(covers))]
+            lean=-.14 if end-x<.23 and s!=3 else 0
+            book(x,floor,t,h,d,mat,lean)
+            x+=t+.006+(0.03 if lean else 0)
+        if s==1:
+            parts += [
+                (y_cyl("GlobeFoot",.065,.018,(.59,floor+.009,.015),verts=16),case),
+                (y_cyl("GlobeStand",.012,.055,(.59,floor+.045,.015),verts=12),steel),
+                (sphere("Globe",.103,(.59,floor+.16,.015),segs=20,rings=10),covers[2]),
+                (torus("GlobeMeridian",.109,.003,(.59,floor+.16,.015),rot=(0,.3,.25),major_segs=24,minor_segs=5),steel),
+                (torus("GlobeEquator",.104,.002,(.59,floor+.16,.015),rot=(math.pi/2,0,0),major_segs=24,minor_segs=4),case),
+            ]
+        if s==3:
+            parts.append((cone("PlantPot",.045,.064,.10,(-.54,floor+.05,.015),verts=16,bevel_w=.004),case))
+            parts.append((y_cyl("PlantSoil",.057,.008,(-.54,floor+.097,.015),verts=16),covers[0]))
+            for i in range(9):
+                a=i*math.tau/9
+                leaf=sphere("SucculentLeaf",1,(-.54+.032*math.cos(a),floor+.14,.015+.032*math.sin(a)),segs=8,rings=6,scale=(.022,.065,.012))
+                leaf.rotation=(math.sin(a)*.65,0,-math.cos(a)*.65)
+                parts.append((leaf,green))
+    return parts
+
+
 @prop("workbench", "furniture", "desk", recenter=False)
 def build_workbench():
     """Industrial workbench inside the existing 2.2 x 1.1 footprint; top exactly .78 m."""

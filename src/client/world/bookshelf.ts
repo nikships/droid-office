@@ -18,6 +18,8 @@ export interface BookshelfModel {
   interactable: Interactable;
   /** Shows the floor's AutoWiki on the shelf. Only swaps what's visible: nothing is built or drawn. */
   setWiki(state: ShelfWiki): void;
+  /** Replace only the static library, preserving the live wiki books and labels. */
+  setModel(source: THREE.Object3D): boolean;
 }
 
 // Binders and manuals in graphite, steel and light gray, with a Factory orange one now and then.
@@ -114,7 +116,8 @@ export function buildBookshelf(): BookshelfModel {
     }
   }
   const group = new THREE.Group();
-  group.add(mergeByMaterial(parts));
+  const staticParts = mergeByMaterial(parts);
+  group.add(staticParts);
 
   // The AutoWiki end: two sets of volumes in the same place, one shown at a time.
   const wikiFloor = BASE + WIKI_SHELF * bay + BOARD;
@@ -167,5 +170,31 @@ export function buildBookshelf(): BookshelfModel {
   const collider: Collider = { minX: BOOKSHELF.x - W / 2 - 0.04, maxX: BOOKSHELF.x + W / 2 + 0.04, minZ: BOOKSHELF.z - D / 2 - 0.03, maxZ: FLOOR.maxZ, top: H + 0.07 };
   const interactable: Interactable = { kind: 'bookshelf', x: BOOKSHELF.x, z: BOOKSHELF.z - 1.2, radius: 1.6 };
   group.userData.interact = interactable;
-  return { group, collider, interactable, setWiki };
+  return {
+    group,
+    collider,
+    interactable,
+    setWiki,
+    setModel(source) {
+      const body = source.getObjectByName('BookshelfStatic');
+      if (!body) return false;
+      const model = body.clone(true);
+      const materials = new Map<THREE.Material, THREE.Material>();
+      model.traverse((object) => {
+        if (!(object instanceof THREE.Mesh)) return;
+        const convert = (src: THREE.MeshStandardMaterial) => {
+          let out = materials.get(src);
+          if (!out) {
+            out = toon(src.color, src.name === 'ShelfCase' ? { finish: 'paint' } : src.metalness > 0.5 ? { finish: 'metal' } : {});
+            materials.set(src, out);
+          }
+          return out;
+        };
+        object.material = Array.isArray(object.material) ? object.material.map(convert) : convert(object.material);
+      });
+      staticParts.clear();
+      staticParts.add(model);
+      return true;
+    },
+  };
 }
