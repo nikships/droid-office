@@ -593,7 +593,8 @@ function buildBalconyPosts(group: THREE.Group, colliders: Collider[]) {
  * Outside the exit: a concrete landing level with the office floor, and steps running south
  * along the west wall down to the street, with a railing on the open side.
  */
-function buildExitStairs(group: THREE.Group, colliders: Collider[]) {
+export function buildExitStairs(colliders: Collider[]): THREE.Group {
+  const group = new THREE.Group();
   const { minX, maxX, landingZ0, landingZ1, steps, run } = EXIT_STAIRS;
   const width = maxX - minX;
   const rise = -STREET_Y / steps;
@@ -646,6 +647,9 @@ function buildExitStairs(group: THREE.Group, colliders: Collider[]) {
   rail(railX, 0, landingZ1, railX, -treads * rise, bottomZ);
   colliders.push({ minX: minX - 0.05, maxX: minX + 0.1, minZ: landingZ0, maxZ: bottomZ, bottom: STREET_Y, top: 99 });
   colliders.push({ minX, maxX, minZ: landingZ0 - 0.05, maxZ: landingZ0 + 0.1, bottom: STREET_Y, top: 99 });
+  const stairs = mergeByMaterial(group);
+  stairs.name = 'exit-stairs';
+  return stairs;
 }
 
 /**
@@ -1147,10 +1151,10 @@ export function buildOffice(): Office {
   const exit = exitDoor(night);
   ground.add(exit.group);
   doors.push(exit.door);
-  const stairs = new THREE.Group();
-  buildExitStairs(stairs, groundColliders);
-  buildBalconyPosts(stairs, groundColliders);
-  ground.add(mergeByMaterial(stairs));
+  ground.add(buildExitStairs(groundColliders));
+  const balconyPosts = new THREE.Group();
+  buildBalconyPosts(balconyPosts, groundColliders);
+  ground.add(mergeByMaterial(balconyPosts));
   // The door, its frame and the EXIT sign over it.
   fixture(EXIT_DOOR.wall, EXIT_DOOR.u, (EXIT_DOOR.y1 + 0.7) / 2, EXIT_DOOR.width + 0.3, EXIT_DOOR.y1 + 0.7);
   buildGarage(ground, groundColliders);
