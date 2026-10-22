@@ -126,6 +126,7 @@ export function buildElevator(): Elevator {
   const doorMat = toon(DOOR);
   const doors = [-1, 1].map((side) => {
     const d = new THREE.Group();
+    d.name = side < 0 ? 'elevator-panel-left' : 'elevator-panel-right';
     d.add(mesh(new THREE.BoxGeometry(half, doorHeight - 0.02, 0.05), doorMat, 0, 0, 0));
     // A seam line and a porthole of light, so they read as elevator doors from across the room.
     d.add(mesh(new THREE.BoxGeometry(0.02, doorHeight - 0.1, 0.055), steelDark, (-side * half) / 2 + side * 0.01, 0, 0));

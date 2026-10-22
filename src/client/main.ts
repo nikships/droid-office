@@ -52,11 +52,21 @@ import { RenderLoop } from './render-loop';
 import { Climber, type Arrival, type Grip, type Way } from './climb';
 import { buildOffice, type DeskView, type InteractKind, type Interactable } from './world/office';
 import { installExecutiveDesk } from './world/executive-desk';
+import { installLoftCouch } from './world/loft-couch';
 import { installTaskChairs } from './world/task-chair';
+import { installLedBarHousings } from './world/led-bar';
+import { installHighBayLamps } from './world/high-bay-lamp';
 import { installLoungeSofa } from './world/lounge-sofa';
 import { installAgentKiosks } from './world/agent-kiosk';
 import { installLoungeTable } from './world/lounge-table';
 import { installFloorLadder } from './world/floor-ladder';
+import { installDroidRack } from './world/droid-rack';
+import { installElevatorPanels } from './world/elevator-panels';
+import { installExitDoor } from './world/exit-door';
+import { installBalconyStools } from './world/balcony-stool';
+import { installBalconyTable } from './world/balcony-table';
+import { installBalconyBench } from './world/balcony-bench';
+import { installLoungeBeanbags } from './world/lounge-beanbag';
 import { loadPropManifest, preloadProps, propManifest, propScene } from './world/props';
 import { buildRooftop, type Rooftop } from './world/rooftop';
 import { installConferenceTable } from './world/conference-table';
@@ -207,6 +217,8 @@ const propsReady = loadPropManifest()
     if (mergeGong) office.gong.setModel(mergeGong);
     const executiveDesk = propScene('executive-desk');
     if (executiveDesk) installExecutiveDesk(executiveDesk, office.group);
+    const loftCouch = propScene('loft-couch');
+    if (loftCouch) installLoftCouch(loftCouch, office.group);
     const gun = propScene('magnum');
     if (gun) setMagnumModel(gun);
     const wand = propScene('wand');
@@ -225,6 +237,27 @@ const propsReady = loadPropManifest()
     if (loungeTable) installLoungeTable(loungeTable, office.group);
     const floorLadder = propScene('floor-ladder');
     if (floorLadder) installFloorLadder(floorLadder, office.group);
+    const droidRack = propScene('droid-rack');
+    if (droidRack) installDroidRack(droidRack, office.group);
+    const elevatorPanels = propScene('elevator-panels');
+    if (elevatorPanels) {
+      installElevatorPanels(elevatorPanels, office.elevator.group);
+      if (roof) installElevatorPanels(elevatorPanels, roof.elevator.group);
+    }
+    const exitDoor = propScene('exit-door');
+    if (exitDoor) installExitDoor(exitDoor, office.group);
+    const ledBar = propScene('led-bar');
+    if (ledBar) installLedBarHousings(ledBar, office.group);
+    const highBayLamp = propScene('high-bay-lamp');
+    if (highBayLamp) installHighBayLamps(highBayLamp, office.group);
+    const balconyStool = propScene('balcony-stool');
+    if (balconyStool) installBalconyStools(balconyStool, office.group);
+    const balconyTable = propScene('balcony-table');
+    if (balconyTable) installBalconyTable(balconyTable, office.group);
+    const balconyBench = propScene('balcony-bench');
+    if (balconyBench) installBalconyBench(balconyBench, office.group);
+    const loungeBeanbag = propScene('lounge-beanbag');
+    if (loungeBeanbag) installLoungeBeanbags(loungeBeanbag, office.group);
     const teamKit = propScene('droid-team-kit');
     if (teamKit) setTeamKit(teamKit);
     const agentKiosk = propScene('agent-kiosk');
@@ -430,6 +463,8 @@ let roof: Rooftop | null = null;
 function theRoof(): Rooftop {
   if (!roof) {
     roof = buildRooftop(office.night, roofFloors());
+    const elevatorPanels = propScene('elevator-panels');
+    if (elevatorPanels) installElevatorPanels(elevatorPanels, roof.elevator.group);
     roof.group.visible = false;
     scene.add(roof.group);
     noOutline(roof.group);

@@ -262,7 +262,9 @@ function buildRack(kit: DressingKit, waiting: Waiting[], updates: ((t: number, d
   // The backboard the cubes' glow washes onto, against the wall.
   stat.add(mesh(new THREE.BoxGeometry(0.02, BOARD_TOP, length), toon('#0e0e0e'), minX + 0.01, BOARD_TOP / 2, cz));
   stat.add(mesh(new THREE.BoxGeometry(0.024, 0.012, length + 0.004), toon('#2a2a2a'), minX + 0.012, BOARD_TOP, cz));
-  root.add(mergeByMaterial(stat));
+  const frame = mergeByMaterial(stat);
+  frame.name = 'droid-rack-frame';
+  root.add(frame);
 
   kit.colliders.push({ ...DROID_RACK });
   kit.fixture('west', cz, BOARD_TOP / 2, length + 0.1, BOARD_TOP + 0.05);
