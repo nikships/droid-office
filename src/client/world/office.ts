@@ -406,14 +406,17 @@ function exitDoor(night: NightParts): { group: THREE.Group; door: Door } {
   const leafGeo = new THREE.ExtrudeGeometry(shape, { depth: 0.06, bevelEnabled: false, curveSegments: 16 });
   leafGeo.translate(0, 0, -0.03);
   const leaf = new THREE.Group();
+  const hardware = new THREE.Group();
+  hardware.name = 'exit-door-hardware';
+  leaf.add(hardware);
   // Darker than the room's other lit greys: the lamp over the stairs outside lights it full on.
-  leaf.add(mesh(leafGeo, toon('#3a3a3a'), 0, 0.01, 0));
+  hardware.add(mesh(leafGeo, toon('#3a3a3a'), 0, 0.01, 0));
   leaf.add(mesh(new THREE.CircleGeometry(port.r, 20), GLASS, port.x, port.y + 0.01, 0));
-  leaf.add(mesh(new THREE.TorusGeometry(port.r, 0.035, 6, 20), toon(PALETTE.brushed), port.x, port.y + 0.01, 0));
+  hardware.add(mesh(new THREE.TorusGeometry(port.r, 0.035, 6, 20), toon(PALETTE.brushed), port.x, port.y + 0.01, 0));
   // A push bar inside, with an orange stripe along it, and a pull handle outside.
-  leaf.add(mesh(box(leafW * 0.7, 0.05, 0.05), toon(PALETTE.brushed), leafW * 0.5, 1.0, -0.07));
+  hardware.add(mesh(box(leafW * 0.7, 0.05, 0.05), toon(PALETTE.brushed), leafW * 0.5, 1.0, -0.07));
   leaf.add(mesh(box(leafW * 0.7 - 0.06, 0.012, 0.01), toon(PALETTE.accent), leafW * 0.5, 1.0, -0.1));
-  leaf.add(mesh(box(0.05, 0.3, 0.05), toon(PALETTE.brushed), leafW - 0.15, 1.0, 0.07));
+  hardware.add(mesh(box(0.05, 0.3, 0.05), toon(PALETTE.brushed), leafW - 0.15, 1.0, 0.07));
   // Hinged on the outer face, so it opens out of the building.
   const hinge = new THREE.Group();
   hinge.position.set(-o.width / 2 + F + 0.01, 0, WALL_T / 2 - 0.05);

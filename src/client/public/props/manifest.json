@@ -104,6 +104,19 @@
     "url": "/props/executive-desk.glb",
     "width": 2.6
   },
+  "exit-door": {
+    "bytes": 50228,
+    "depth": 0.19,
+    "height": 2.3,
+    "materials": 4,
+    "tags": [
+      "architecture",
+      "door"
+    ],
+    "triangles": 7694,
+    "url": "/props/exit-door.glb",
+    "width": 1.22
+  },
   "jukebox": {
     "bytes": 74016,
     "depth": 0.838,
