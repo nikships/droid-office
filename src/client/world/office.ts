@@ -1657,6 +1657,47 @@ interface Looks {
   slabs: THREE.CanvasTexture[];
 }
 
+/** The original static stair and its unchanged step/side colliders, separate from the loft frame. */
+export function buildLoftStairs(colliders: Collider[]): THREE.Group {
+  const stairBody = new THREE.Group();
+  const { fromX, toX, steps } = STAIRS;
+  const sw = STAIRS.maxZ - STAIRS.minZ;
+  const run = (toX - fromX) / steps;
+  const rise = LOFT.y / steps;
+  const steelMat = toon(PALETTE.steel);
+  const profile = new THREE.Shape();
+  profile.moveTo(0, 0);
+  for (let i = 0; i < steps; i++) {
+    profile.lineTo(i * run, (i + 1) * rise - 0.04);
+    profile.lineTo((i + 1) * run, (i + 1) * rise - 0.04);
+  }
+  profile.lineTo(toX - fromX, 0);
+  profile.closePath();
+  stairBody.add(mesh(new THREE.ExtrudeGeometry(profile, { depth: sw, bevelEnabled: false }), toon('#7b7b7b'), fromX, 0, STAIRS.minZ));
+  const nosing = toon(PALETTE.accent);
+  for (let i = 1; i <= steps; i++) {
+    stairBody.add(mesh(box(run + 0.04, 0.05, sw), steelMat, fromX + (i - 0.5) * run - 0.02, i * rise - 0.025, STAIRS.minZ + sw / 2));
+    stairBody.add(mesh(box(0.035, 0.012, sw - 0.1), nosing, fromX + (i - 1) * run, i * rise + 0.001, STAIRS.minZ + sw / 2));
+    colliders.push({ minX: fromX + (i - 1) * run, maxX: fromX + i * run, minZ: STAIRS.minZ, maxZ: STAIRS.maxZ, top: i * rise });
+  }
+  const railZ = STAIRS.minZ + 0.06;
+  const railH = 0.9;
+  const inkMat = toon(PALETTE.deskLeg);
+  for (let i = 1; i <= steps; i += 2) {
+    stairBody.add(mesh(box(0.04, railH, 0.04), inkMat, fromX + (i - 0.5) * run, i * rise + railH / 2, railZ));
+  }
+  const x0 = fromX + 0.5 * run;
+  const x1 = fromX + (steps - 0.5) * run;
+  const handrail = mesh(box(Math.hypot(x1 - x0, (x1 - x0) * (rise / run)) + 0.1, 0.05, 0.06), toon(PALETTE.ink), (x0 + x1) / 2, (rise + LOFT.y) / 2 + railH, railZ);
+  handrail.rotation.z = Math.atan2(rise, run);
+  stairBody.add(handrail);
+  const stairs = mergeByMaterial(stairBody);
+  stairs.name = 'loft-stairs';
+  // You can't step off the side of the stairs, or climb on from it.
+  colliders.push({ minX: fromX, maxX: toX, minZ: STAIRS.minZ - 0.1, maxZ: STAIRS.minZ, top: 99 });
+  return stairs;
+}
+
 /**
  * The upstairs office: a loft on posts in the south-east corner, with glass on the two sides that
  * face the desks, reached by stairs along the south wall.
@@ -1737,41 +1778,9 @@ function buildLoft(group: THREE.Group, colliders: Collider[], interactables: Int
   group.add(mesh(box(T + 0.04, roofY - doorTop, maxZ - doorZ), wallMat, westX, (roofY + doorTop) / 2, (doorZ + maxZ) / 2));
   colliders.push({ minX, maxX: minX + T, minZ: doorZ, maxZ, bottom: doorTop, top: roofY });
 
-  // Stairs: a solid run of steps up the south wall, wood treads, a handrail on the open side.
-  const { fromX, toX, steps } = STAIRS;
-  const sw = STAIRS.maxZ - STAIRS.minZ;
-  const run = (toX - fromX) / steps;
-  const rise = floorY / steps;
-  const profile = new THREE.Shape();
-  profile.moveTo(0, 0);
-  for (let i = 0; i < steps; i++) {
-    profile.lineTo(i * run, (i + 1) * rise - 0.04);
-    profile.lineTo((i + 1) * run, (i + 1) * rise - 0.04);
-  }
-  profile.lineTo(toX - fromX, 0);
-  profile.closePath();
-  // A black steel stair: its stringer, steel treads with an orange safety nosing, and a rail.
-  frame.add(mesh(new THREE.ExtrudeGeometry(profile, { depth: sw, bevelEnabled: false }), toon('#7b7b7b'), fromX, 0, STAIRS.minZ));
-  const nosing = toon(PALETTE.accent);
-  for (let i = 1; i <= steps; i++) {
-    frame.add(mesh(box(run + 0.04, 0.05, sw), steelMat, fromX + (i - 0.5) * run - 0.02, i * rise - 0.025, STAIRS.minZ + sw / 2));
-    frame.add(mesh(box(0.035, 0.012, sw - 0.1), nosing, fromX + (i - 1) * run + 0.0, i * rise + 0.001, STAIRS.minZ + sw / 2));
-    colliders.push({ minX: fromX + (i - 1) * run, maxX: fromX + i * run, minZ: STAIRS.minZ, maxZ: STAIRS.maxZ, top: i * rise });
-  }
-  const railZ = STAIRS.minZ + 0.06;
-  const railH = 0.9;
-  const inkMat = toon(PALETTE.deskLeg);
-  for (let i = 1; i <= steps; i += 2) {
-    frame.add(mesh(box(0.04, railH, 0.04), inkMat, fromX + (i - 0.5) * run, i * rise + railH / 2, railZ));
-  }
-  const x0 = fromX + 0.5 * run;
-  const x1 = fromX + (steps - 0.5) * run;
-  const handrail = mesh(box(Math.hypot(x1 - x0, (x1 - x0) * (rise / run)) + 0.1, 0.05, 0.06), toon(PALETTE.ink), (x0 + x1) / 2, (rise + floorY) / 2 + railH, railZ);
-  handrail.rotation.z = Math.atan2(rise, run);
-  frame.add(handrail);
+  group.add(buildLoftStairs(colliders));
   group.add(mergeByMaterial(frame));
-  // You can't step off the side of the stairs, or climb on from it.
-  colliders.push({ minX: fromX, maxX: toX, minZ: STAIRS.minZ - 0.1, maxZ: STAIRS.minZ, top: 99 });
+  const inkMat = toon(PALETTE.deskLeg);
 
   // Inside: the big desk facing the glass, a comfy couch, a telescope aimed at the desks.
   const deskX = cx + 0.5;

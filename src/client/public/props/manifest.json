@@ -260,6 +260,19 @@
     "url": "/props/loft-couch.glb",
     "width": 1.1
   },
+  "loft-stairs": {
+    "bytes": 42984,
+    "depth": 1.8,
+    "height": 3.9428,
+    "materials": 5,
+    "tags": [
+      "architecture",
+      "stairs"
+    ],
+    "triangles": 7800,
+    "url": "/props/loft-stairs.glb",
+    "width": 6.04
+  },
   "lounge-beanbag": {
     "bytes": 37900,
     "depth": 1.1886,

@@ -1727,6 +1727,81 @@ def build_exit_stairs():
     return [],[("ExitStairs",loose(parts),None)]
 
 
+@prop("loft-stairs", "architecture", "stairs", recenter=False, multipart=True)
+def build_loft_stairs():
+    """Original 6 m run: fifteen .4 x .2 m steps, 1.8 m wide, rising toward +x."""
+    body_mat=material("StairBody","#7b7b7b",roughness=.72)
+    tread_mat=material("StairSteel","#8c9296",roughness=.45,metallic=.8)
+    rail_mat=material("StairRail","#34383b",roughness=.48,metallic=.8)
+    hardware=material("StairHardware","#b6bcc0",roughness=.32,metallic=.85)
+    orange=material("StairSignal","#ee6018",roughness=.72)
+    parts=[]
+    def add(obj,mat):
+        parts.append((obj,mat))
+        return raw(obj)
+    # Retain the filled stepped side profile rather than inventing an open stair.
+    profile=[(0,0)]
+    for i in range(15):
+        profile += [(i*.4,(i+1)*.2-.04),((i+1)*.4,(i+1)*.2-.04)]
+    profile += [(6,0)]
+    n=len(profile)
+    vertices=[(x,y,z) for z in (0,1.8) for x,y in profile]
+    faces=[tuple(reversed(range(n))),tuple(range(n,2*n))]
+    faces += [(i,(i+1)%n,(i+1)%n+n,i+n) for i in range(n)]
+    body=mesh_object("SteppedCassette",vertices,faces)
+    bm=bmesh.new();bm.from_mesh(body.data)
+    bmesh.ops.recalc_face_normals(bm,faces=bm.faces)
+    bm.to_mesh(body.data);bm.free()
+    bevel(body,.006,1)
+    # Small pressed seams break up the original broad side, within its old envelope.
+    for i in range(1,15):
+        h=i*.2-.08
+        cut(body,box("SidePanelRebate",(.010,h,.016),(i*.4,.04+h/2,-.004)))
+    add(body,body_mat)
+
+    # Build one machined tread and duplicate it without decimating its cut geometry.
+    tread_parts=[]
+    tread=box("BeveledTread",(.44,.05,1.8),(.18,-.025,.9),bevel_w=.004,bevel_seg=1)
+    for x in (.11,.21,.31):
+        cut(tread,box("GripChannel",(.014,.008,1.54),(x,0,.9)))
+    for z in (.075,1.725):
+        cut(tread,y_cyl("Counterbore",.013,.010,(.30,-.001,z),verts=12))
+        screw=y_cyl("RecessedTreadScrew",.011,.004,(.30,-.004,z),verts=12)
+        cut(screw,y_cyl("HexDrive",.0045,.006,(.30,-.001,z),verts=6))
+        tread_parts.append((screw,hardware))
+    tread_parts += [(tread,tread_mat),(box("OrangeSafetyNosing",(.035,.012,1.7),(0,.001,.9),bevel_w=.002,bevel_seg=1),orange)]
+    for obj,_ in tread_parts:
+        apply_modifiers(raw(obj));smooth_obj(obj)
+        for face in raw(obj).data.polygons:
+            if max(abs(v) for v in face.normal)>.999:
+                face.use_smooth=False
+    prototype=loose(tread_parts)
+    for i in range(15):
+        step=prototype.copy()
+        step.data=prototype.data
+        bpy.context.collection.objects.link(step)
+        step.location=(i*.4,(i+1)*.2,0)
+        parts.append((step,None))
+    bpy.data.objects.remove(prototype,do_unlink=True)
+
+    # Keep all eight post centres and the original sloped rail's size/pose.
+    for i in range(1,16,2):
+        x,y=(i-.5)*.4,i*.2
+        post=box("SquareRailPost",(.04,.9,.04),(x,y+.45,.06),bevel_w=.004,bevel_seg=1)
+        add(post,rail_mat)
+        add(box("PostFootFlange",(.09,.012,.09),(x,y+.006,.06),bevel_w=.003,bevel_seg=1),rail_mat)
+        screw=y_cyl("PostAnchor",.009,.004,(x+.031,y+.012,.06),verts=12)
+        cut(screw,y_cyl("AnchorHex",.0035,.004,(x+.031,y+.014,.06),verts=6))
+        add(screw,hardware)
+    angle=math.atan2(.2,.4)
+    add(box("BeveledHandrail",(math.hypot(5.6,2.8)+.1,.05,.06),(3,2.5,.06),rot=(0,0,angle),bevel_w=.005,bevel_seg=2),rail_mat)
+    for obj,_ in parts:
+        apply_modifiers(raw(obj));smooth_obj(obj)
+        for face in raw(obj).data.polygons:
+            if max(abs(v) for v in face.normal)>.999:
+                face.use_smooth=False
+    return [],[("LoftStairs",loose(parts),None)]
+
 @prop("droid-computer", "factory", "hero", recenter=False, multipart=True, keep_uvs=True)
 def build_droid_computer():
     """Factory's Droid Computer: a 0.45 m brushed black aluminium cube with softly rounded

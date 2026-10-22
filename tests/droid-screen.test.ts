@@ -31,6 +31,17 @@ test("Droid's screen says whether it's busy, asking or at rest", () => {
   assert.equal(readDroidScreen([...BUSY, '', '', '', '', '', '', '', '', '', '']), 'busy');
 });
 
+test('a multiline input box cannot push a running spinner out of the live area', () => {
+  const multiline = [...BUSY];
+  multiline.splice(multiline.length - footer.length - 1, 0, ...Array.from({ length: 6 }, () => '│   more queued input                                          │'));
+  assert.equal(readDroidScreen(multiline), 'busy');
+  assert.equal(screenStatus('working', readDroidScreen(multiline)!, true), undefined);
+  assert.equal(readDroidScreen([...IDLE.slice(0, -footer.length - 3), ...box('what does (Press ESC to stop) mean?'), ...footer]), 'idle', 'quoted input is not a spinner');
+  // Queued messages or a todo list between the spinner and the box don't hide it either.
+  const between = Array.from({ length: 5 }, (_, i) => `   ☐ step ${i}`);
+  assert.equal(readDroidScreen([...history, ' ⠋ Executing...  (Press ESC to stop)', ...between, ' Auto (Off) · all actions require approval        Sonnet 5.5 (High)', ...box(''), ...footer]), 'busy');
+});
+
 test('only the bottom of the screen counts, not what scrolled by above it', () => {
   const quoted = ['  cat src/server/droid-screen.ts', '  /Press ESC to stop/  /inspect approval details/', ...Array.from({ length: 6 }, (_, i) => `  line ${i}`)];
   assert.equal(readDroidScreen([...quoted, ...IDLE]), 'idle');
