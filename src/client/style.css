@@ -1608,6 +1608,8 @@ a.when:hover { text-decoration: underline; }
 .elevator .note.busy { color: var(--text); }
 .elevator .dir-change { margin-left: 8px; padding: 3px 8px; font-size: 10px; vertical-align: baseline; }
 .elevator .dir-pick { margin-top: 8px; }
+.folder-browser .folder-list { max-height: 360px; overflow: auto; }
+.folder-browser .input-group input { flex: 1; min-width: 0; }
 .elevator .err { margin: 8px 0 0; font-size: 13px; font-weight: 600; color: var(--danger); overflow-wrap: anywhere; }
 
 /* ---------- The ☰ menu (ui/menu.ts): it hangs under its button, and the office stays in view ---------- */

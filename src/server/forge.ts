@@ -47,6 +47,61 @@ export interface Board extends PullHost {
   setLabels(kind: 'issue' | 'pull', n: number, add: string[], remove: string[]): Promise<{ labels?: GhLabel[]; error?: string }>;
 }
 
+const NOT_GIT = 'This floor is a plain folder, not a git checkout, so it has no issues or pull requests';
+const notGit = () => Promise.reject(new Error(NOT_GIT));
+
+/** A plain folder's floor: no repository, so the lists stay empty and nothing asks gh or glab. */
+export class NoBoard implements Board {
+  readonly forge = 'github' as const;
+  issues: GhState<GhIssue> = { items: [], fetchedAt: Date.now(), loading: false };
+  pulls: GhState<GhPull> = { items: [], fetchedAt: Date.now(), loading: false };
+  stop(): void {
+    // nothing runs
+  }
+  refresh(): Promise<void> {
+    return Promise.resolve();
+  }
+  repoInfo(): Promise<GhRepoInfo> {
+    return notGit();
+  }
+  viewer(): Promise<string> {
+    return Promise.resolve('');
+  }
+  pullDetail(): Promise<GhPullDetail> {
+    return notGit();
+  }
+  pullDiff(): Promise<string> {
+    return notGit();
+  }
+  issueDetail(): Promise<GhIssueDetail> {
+    return notGit();
+  }
+  comment(): Promise<{ comment?: GhComment; error?: string }> {
+    return Promise.resolve({ error: NOT_GIT });
+  }
+  merge(): Promise<string | undefined> {
+    return Promise.resolve(NOT_GIT);
+  }
+  close(): Promise<string | undefined> {
+    return Promise.resolve(NOT_GIT);
+  }
+  claim(): Promise<string | undefined> {
+    return Promise.resolve(NOT_GIT);
+  }
+  repoLabels(): Promise<GhLabel[]> {
+    return Promise.resolve([]);
+  }
+  setLabels(): Promise<{ labels?: GhLabel[]; error?: string }> {
+    return Promise.resolve({ error: NOT_GIT });
+  }
+  createPull(): Promise<PullRef> {
+    return notGit();
+  }
+  findOpenPull(): Promise<PullRef | undefined> {
+    return Promise.resolve(undefined);
+  }
+}
+
 export type BoardListener<T> = (s: GhState<T>) => void;
 
 /**

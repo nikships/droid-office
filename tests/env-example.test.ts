@@ -12,7 +12,7 @@ const SKIP = new Set(['node_modules', 'dist']);
 /** Set by the office for its own workers: not user settings. */
 const INTERNAL = new Set(['DROID_OFFICE_HOOK_URL', 'DROID_OFFICE_HOOK_TOKEN', 'DROID_OFFICE_WORKER_ID', 'DROID_OFFICE_SESSION_ID', 'DROID_OFFICE_ROOT_PATH', 'DROID_OFFICE_WORKTREE_PATH']);
 /** The operating system's own variables, read to find the shell and programs. */
-const SYSTEM = new Set(['PATH', 'PATHEXT', 'SHELL', 'COMSPEC', 'GROK_HOME', 'XDG_CONFIG_HOME', 'XDG_CACHE_HOME', 'LOCALAPPDATA']);
+const SYSTEM = new Set(['PATH', 'PATHEXT', 'SHELL', 'COMSPEC', 'GROK_HOME', 'XDG_CONFIG_HOME', 'XDG_CACHE_HOME', 'LOCALAPPDATA', 'GIT_CEILING_DIRECTORIES']);
 
 function sourceFiles(dir: string): string[] {
   return readdirSync(dir, { withFileTypes: true }).flatMap((e) => {

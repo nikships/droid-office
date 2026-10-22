@@ -1574,6 +1574,15 @@ export async function startServer(cfg: Config) {
           (err: Error) => sendTo(c, { t: 'floor.repos', repos: [], error: `Couldn't look for checkouts: ${err.message}` }),
         );
         break;
+      case 'floor.folders': {
+        const request = str(msg.request, 80);
+        const dir = msg.dir === undefined ? undefined : str(msg.dir, 1024);
+        void building.folders(dir).then(
+          (listing) => sendTo(c, { t: 'floor.folders', request, ...listing }),
+          (err: Error) => sendTo(c, { t: 'floor.folders', request, dir: dir ?? '', shown: dir ?? '', git: false, folders: [], error: `Couldn't list folders: ${err.message}` }),
+        );
+        break;
+      }
       case 'floor.branches':
       case 'floor.branch': {
         const floor = floorOf(c);
@@ -1637,6 +1646,10 @@ export async function startServer(cfg: Config) {
           if (!other || other === floor) {
             floor.workers.unstage(images);
             return refuse(other ? "The worker's own floor's project is already in its workspace" : 'That project is no longer in the building');
+          }
+          if (other.plain) {
+            floor.workers.unstage(images);
+            return refuse(`${other.def.name} is a plain folder, not a git checkout, so a worker can't have a worktree of it`);
           }
           repos.push({ floor: other.id, name: other.def.name, repo: other.def.repo, dir: other.dir });
         }

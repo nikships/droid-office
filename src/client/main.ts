@@ -50,7 +50,7 @@ import { PlayerController, groundAt, isTyping } from './player';
 import { gongRinging, renderPace, sceneIsMoving, skyFalling, type RenderPace, type SceneMotion } from './render-pace';
 import { RenderLoop } from './render-loop';
 import { Climber, type Arrival, type Grip, type Way } from './climb';
-import { buildOffice, type DeskView, type InteractKind, type Interactable } from './world/office';
+import { buildOffice, type Collider, type DeskView, type InteractKind, type Interactable } from './world/office';
 import { installExecutiveDesk } from './world/executive-desk';
 import { installLoftCouch } from './world/loft-couch';
 import { installTaskChairs } from './world/task-chair';
@@ -132,6 +132,7 @@ import { INCLUDE_FILE, SETUP_FILE, describeSetup } from '../shared/worktree-setu
 import { openPhone } from './ui/phone';
 import { openCompanion } from './ui/companion';
 import { elevatorPanelOpen, openElevator, routeElevatorMessage } from './ui/elevator';
+import { routeFolderMessage } from './ui/folder-browser';
 import { routeFloorMenuMessage, toggleFloorMenu } from './ui/floormenu';
 import { modelBadge, rememberedChoice } from './ui/models';
 import { officeFull, pressureNote } from './world/machine';
@@ -1066,6 +1067,7 @@ net.onMessage((msg) => {
   routePipelinesMessage(msg);
   routeJiraMessage(msg);
   routeElevatorMessage(msg);
+  routeFolderMessage(msg);
   routeFloorMenuMessage(msg);
   routeWhiteboardMessage(msg);
   switch (msg.t) {
@@ -1390,9 +1392,15 @@ function unstick() {
   p.set(spot.x + Math.sin(spot.open) * out, Math.max(0, p.y), spot.z + Math.cos(spot.open) * out);
 }
 
+/** The floor you're on is a plain folder, not a git checkout: no boards, board agents, pipelines or CI. */
+function plainFloor(): boolean {
+  return !!store.currentFloor()?.plain;
+}
+
 /** Which of the floor palettes the walls are painted in now. */
 let painted = -1;
 function paintFloor() {
+  liftOnto(office.setPlain(plainFloor()));
   const p = store.currentFloor()?.palette ?? 0;
   if (p === painted) return;
   painted = p;
@@ -1677,8 +1685,11 @@ function arrangeSeats() {
   // Someone sent home still counts until they get up, so a bean bag stays out under them.
   const free = vacantSeats(store.workers.values(), (id) => departures.seated(id));
   for (const [id, desk] of office.desks) desk.vacancy.visible = free.has(id);
-  const appeared = office.setBeanbags(beanbagsOut((id) => !free.has(id)));
-  // One came out right where you're standing (on the office floor, not down in the garage): you end up on top of it.
+  liftOnto(office.setBeanbags(beanbagsOut((id) => !free.has(id))));
+}
+
+/** Something solid just came out right where you're standing (on the office floor, not down in the garage): you end up on top of it. */
+function liftOnto(appeared: Collider[]) {
   const p = player.pos;
   for (const c of appeared) if (p.y > -0.1 && p.y < c.top && p.x > c.minX - 0.3 && p.x < c.maxX + 0.3 && p.z > c.minZ - 0.3 && p.z < c.maxZ + 0.3) p.y = c.top;
 }
@@ -2114,6 +2125,7 @@ function openWorkerChanges(id: string, repo?: string) {
   if (w.guest) return toast(guestKeyNote(w, 'C'), 'warn');
   if (w.cloud) return toast(cloudKeyNote(w), 'warn');
   if (w.lost) return fixLostWorktree(w);
+  if (plainFloor()) return toast('This floor is a plain folder, not a git checkout, so there are no changes to show', 'warn');
   openChanges(net, id, () => openWorkerTerminal(id), repo);
 }
 
@@ -2190,29 +2202,32 @@ function paletteEntries(): PaletteEntry[] {
   out.push({ icon: '🖼️', kind: 'Action', title: 'Hang a picture', detail: 'On a wall of this floor', keywords: ['decorate', 'frame', 'art'], open: startHanging });
   out.push({ icon: '🔎', kind: 'Action', title: 'Search every terminal', keywords: ['find'], open: showSearch });
   const prWord = words().pr;
-  out.push(atSpot('issues', 'the Issues board', { icon: '📌', kind: 'Board', title: 'Issues board', open: () => openBoard('issues', net, boardActions()) }));
-  out.push(atSpot('pulls', `the ${prWord} board`, { icon: '🔀', kind: 'Board', title: `${prWord} board`, keywords: ['pull requests', 'merge requests'], open: () => openBoard('pulls', net, boardActions()) }));
-  out.push(
-    atSpot('actions', 'the Pipelines board', {
-      icon: '🚀',
-      kind: 'Board',
-      title: 'Pipelines board',
-      detail: pipelinePolicy(store.project?.forge).copy.paletteDetail,
-      keywords: ['ci', 'actions', 'workflows', 'pipelines', 'builds', 'runs'],
-      open: () => showPipelines(),
-    }),
-  );
-  out.push(
-    atSpot('actions', 'the Pipelines board', {
-      icon: '▶',
-      kind: 'Action',
-      title: pipelinePolicy(store.project?.forge).copy.runAction,
-      detail: 'Start CI by hand on a branch',
-      keywords: ['kick off', 'dispatch', 'trigger', 'ci', 'deploy', 'release'],
-      open: () => showPipelines({ run: true }),
-    }),
-  );
-  if (store.factory.connection.connected) {
+  const git = !plainFloor();
+  if (git) out.push(atSpot('issues', 'the Issues board', { icon: '📌', kind: 'Board', title: 'Issues board', open: () => openBoard('issues', net, boardActions()) }));
+  if (git) out.push(atSpot('pulls', `the ${prWord} board`, { icon: '🔀', kind: 'Board', title: `${prWord} board`, keywords: ['pull requests', 'merge requests'], open: () => openBoard('pulls', net, boardActions()) }));
+  if (git)
+    out.push(
+      atSpot('actions', 'the Pipelines board', {
+        icon: '🚀',
+        kind: 'Board',
+        title: 'Pipelines board',
+        detail: pipelinePolicy(store.project?.forge).copy.paletteDetail,
+        keywords: ['ci', 'actions', 'workflows', 'pipelines', 'builds', 'runs'],
+        open: () => showPipelines(),
+      }),
+    );
+  if (git)
+    out.push(
+      atSpot('actions', 'the Pipelines board', {
+        icon: '▶',
+        kind: 'Action',
+        title: pipelinePolicy(store.project?.forge).copy.runAction,
+        detail: 'Start CI by hand on a branch',
+        keywords: ['kick off', 'dispatch', 'trigger', 'ci', 'deploy', 'release'],
+        open: () => showPipelines({ run: true }),
+      }),
+    );
+  if (git && store.factory.connection.connected) {
     out.push(
       atSpot('ci', 'the CI automations board', {
         icon: '🏭',
@@ -3331,13 +3346,14 @@ $('project').addEventListener('click', () => {
 // ---- The HUD: a few buttons on the top bar, everything else in the ☰ menu ----------------------------
 const waitingNow = () => waitingInOrder(store.workers.values());
 const hudActions: HudAction[] = [
-  { id: 'issues', icon: '📌', label: 'Issues', section: 'Open', count: () => store.issues.items.filter((i) => i.state === 'OPEN').length, run: () => openBoard('issues', net, boardActions()) },
-  { id: 'pulls', icon: '🔀', label: 'Pull requests', section: 'Open', count: () => store.pulls.items.filter((p) => p.state === 'OPEN').length, run: () => openBoard('pulls', net, boardActions()) },
+  { id: 'issues', icon: '📌', label: 'Issues', section: 'Open', shown: () => !plainFloor(), count: () => store.issues.items.filter((i) => i.state === 'OPEN').length, run: () => openBoard('issues', net, boardActions()) },
+  { id: 'pulls', icon: '🔀', label: 'Pull requests', section: 'Open', shown: () => !plainFloor(), count: () => store.pulls.items.filter((p) => p.state === 'OPEN').length, run: () => openBoard('pulls', net, boardActions()) },
   {
     id: 'pipelines',
     icon: '🚀',
     label: 'Pipelines',
     section: 'Open',
+    shown: () => !plainFloor(),
     count: () => store.pipelines.runs.filter((r) => isLive(r.state)).length,
     title: () => pipelinePolicy(store.project?.forge).copy.menuTitle,
     run: () => showPipelines(),
@@ -3347,7 +3363,7 @@ const hudActions: HudAction[] = [
     icon: '🏭',
     label: 'CI automations',
     section: 'Open',
-    shown: () => store.factory.connection.connected,
+    shown: () => store.factory.connection.connected && !plainFloor(),
     count: () => ciForFloor(store.factory.ci, floorGithubRepo()).workflows.length,
     title: () => 'Droid in GitHub Actions for this floor’s repository',
     run: () => showCi(),

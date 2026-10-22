@@ -165,15 +165,14 @@ test('adding a checkout uses it where it is: nothing is cloned, copied or writte
   assert.deepEqual(saved(dataDir), ['api']);
 });
 
-test('a checkout can only be added once, and only if it is a checkout in the workspace folder', (t) => {
+test('a checkout can only be added once, and only from the workspace folder', (t) => {
   const { building, work, api, outside } = workspace(t);
   assert.equal(typeof building.add(api, 'Sam'), 'object');
   assert.match(building.add(api, 'Sam') as string, /already has a floor/);
   assert.match(building.add(outside, 'Sam') as string, /isn't in the workspace folder/);
-  assert.match(building.add(path.join(work, 'acme'), 'Sam') as string, /isn't a git checkout/);
   assert.match(building.add(path.join(work, 'missing'), 'Sam') as string, /doesn't exist/);
   assert.match(building.add('acme/api', 'Sam') as string, /full path/);
-  assert.match(building.add('', 'Sam') as string, /Pick a checkout/);
+  assert.match(building.add('', 'Sam') as string, /Pick a project/);
   assert.match(building.add(path.join(work, '..', 'elsewhere', 'stray'), 'Sam') as string, /isn't in the workspace folder/);
 });
 
