@@ -1743,6 +1743,49 @@ def build_droid_computer():
     return body, [("Shell", raw(shell), shell_mat)]
 
 
+@prop("elevator-panels", "architecture", "door", recenter=False, multipart=True)
+def build_elevator_panels():
+    """Two identity-transform leaves in their original sliding-group coordinates."""
+    skin = material("LiftSkin", "#8c8c8c", roughness=0.58, metallic=0.8)
+    steel = material("LiftHardware", "#70767b", roughness=0.4, metallic=0.85)
+    seal = material("LiftSeal", "#161616", roughness=0.9)
+    leaves = []
+    for side, name in ((-1, "ElevatorPanelLeft"), (1, "ElevatorPanelRight")):
+        parts = []
+        body = box(name, (0.72, 2.38, 0.05), bevel_w=0.0035, bevel_seg=3)
+        for face in (-1, 1):
+            # Real shallow skin folds and a blind, not see-through, horizontal recess.
+            cut(body, box("Fold", (0.0015, 2.28, 0.002), loc=(side * 0.32, 0, face * 0.0252)))
+            for y in (-1.14, 1.14):
+                cut(body, box("Fold", (0.64, 0.0015, 0.002), loc=(0, y, face * 0.0252)))
+            cut(body, box("BlindBand", (0.52, 0.05, 0.018), loc=(0, 0.35, face * 0.025), bevel_w=0.009, bevel_seg=3))
+            parts.append((box("BandLiner", (0.50, 0.03, 0.002), loc=(0, 0.35, face * 0.017), bevel_w=0.001), seal))
+            for x in (-0.259, 0.259):
+                parts.append((box("BandLip", (0.002, 0.05, 0.005), loc=(x, 0.35, face * 0.025)), steel))
+            for y in (0.326, 0.374):
+                parts.append((box("BandLip", (0.516, 0.002, 0.005), loc=(0, y, face * 0.025)), steel))
+            for y, h, rows in ((-0.99, 0.24, (-1.075, -0.905)), (1.09, 0.06, (1.09,))):
+                cover = box("RetainerPlate", (0.56, h, 0.003), loc=(0, y, face * 0.0255), bevel_w=0.001, bevel_seg=2)
+                for x in (-0.245, 0.245):
+                    for sy in rows:
+                        hole = cyl("Counterbore", 0.0055, 0.005, loc=(x, sy, face * 0.0275), rot=(math.pi / 2, 0, 0), verts=12)
+                        cut(cover, hole)
+                        head = cyl("Socket", 0.004, 0.002, loc=(x, sy, face * 0.0255), rot=(math.pi / 2, 0, 0), verts=12)
+                        cut(head, cyl("HexDrive", 0.0019, 0.002, loc=(x, sy, face * 0.0267), rot=(math.pi / 2, 0, 0), verts=6))
+                        smooth_obj(head)
+                        parts.append((head, steel))
+                parts.append((cover, steel))
+        smooth_obj(body)
+        # Bevel-edge normals must not interpolate across the large planar skins.
+        for face in raw(body).data.polygons:
+            if abs(face.normal.z) > 0.999:
+                face.use_smooth = False
+        parts.insert(0, (body, skin))
+        parts.append((box("LeadingEdgeSeal", (0.02, 2.3, 0.055), loc=(-side * 0.35, 0, 0), bevel_w=0.001, bevel_seg=2), seal))
+        leaves.append((name, loose(parts), None))
+    return [], leaves
+
+
 @prop("exit-door", "architecture", "door", recenter=False, multipart=True)
 def build_exit_door():
     """Original hinge-local leaf; live glass and orange push-bar stripe stay in the client."""

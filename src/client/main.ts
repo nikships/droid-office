@@ -59,6 +59,7 @@ import { installHighBayLamps } from './world/high-bay-lamp';
 import { installLoungeSofa } from './world/lounge-sofa';
 import { installAgentKiosks } from './world/agent-kiosk';
 import { installLoungeTable } from './world/lounge-table';
+import { installElevatorPanels } from './world/elevator-panels';
 import { installExitDoor } from './world/exit-door';
 import { installBalconyStools } from './world/balcony-stool';
 import { installBalconyTable } from './world/balcony-table';
@@ -232,6 +233,11 @@ const propsReady = loadPropManifest()
     if (telescope) installTelescope(telescope, office.group);
     const loungeTable = propScene('lounge-table');
     if (loungeTable) installLoungeTable(loungeTable, office.group);
+    const elevatorPanels = propScene('elevator-panels');
+    if (elevatorPanels) {
+      installElevatorPanels(elevatorPanels, office.elevator.group);
+      if (roof) installElevatorPanels(elevatorPanels, roof.elevator.group);
+    }
     const exitDoor = propScene('exit-door');
     if (exitDoor) installExitDoor(exitDoor, office.group);
     const ledBar = propScene('led-bar');
@@ -451,6 +457,8 @@ let roof: Rooftop | null = null;
 function theRoof(): Rooftop {
   if (!roof) {
     roof = buildRooftop(office.night, roofFloors());
+    const elevatorPanels = propScene('elevator-panels');
+    if (elevatorPanels) installElevatorPanels(elevatorPanels, roof.elevator.group);
     roof.group.visible = false;
     scene.add(roof.group);
     noOutline(roof.group);
