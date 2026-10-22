@@ -182,6 +182,19 @@
     "url": "/props/exit-door.glb",
     "width": 1.22
   },
+  "floor-ladder": {
+    "bytes": 10736,
+    "depth": 1,
+    "height": 1.045,
+    "materials": 3,
+    "tags": [
+      "architecture",
+      "ladder"
+    ],
+    "triangles": 748,
+    "url": "/props/floor-ladder.glb",
+    "width": 0.205
+  },
   "high-bay-lamp": {
     "bytes": 32028,
     "depth": 0.8,
