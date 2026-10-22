@@ -2232,6 +2232,59 @@ def build_telescope():
     return [],[("TelescopeStand",base,None),("TelescopeOptics",tube,None)]
 
 
+@prop("balcony-table", "furniture", "table", recenter=False, multipart=True)
+def build_balcony_table():
+    """The existing 0.84 m bistro table, with its flush top still at y .76."""
+    top=material("BistroTop","#727272",roughness=.78)
+    frame=material("BistroFrame","#8b9398",roughness=.58,metallic=.25)
+    steel=material("BistroSteel","#b6bdc5",roughness=.32,metallic=.85)
+    rubber=material("BistroRubber","#292d2f",roughness=.92)
+    parts=[]
+    def add(obj,mat):
+        parts.append((obj,mat))
+    rim=y_cyl("RolledTopRim",.42,.04,(0,.74,0),verts=64,bevel_w=.003)
+    cut(rim,y_cyl("TopOpening",.4035,.08,(0,.74,0),verts=64))
+    add(rim,steel)
+    add(y_cyl("FlushMatteTop",.402,.008,(0,.756,0),verts=64,bevel_w=.001),top)
+    gasket=y_cyl("InsetIsolationRing",.407,.006,(0,.747,0),verts=48)
+    cut(gasket,y_cyl("GasketOpening",.39,.02,(0,.747,0),verts=48))
+    add(gasket,rubber)
+    flange=y_cyl("UndersideMountFlange",.22,.012,(0,.746,0),verts=40,bevel_w=.002)
+    for i in range(4):
+        a=math.pi/4+i*math.pi/2
+        x,z=.16*math.sin(a),.16*math.cos(a)
+        cut(flange,y_cyl("MountBore",.005,.03,(x,.746,z),verts=12))
+        head=y_cyl("UndersideSocketHead",.009,.006,(x,.737,z),verts=20)
+        cut(head,y_cyl("UndersideHex",.004,.006,(x,.734,z),verts=6))
+        add(head,steel)
+    add(flange,frame)
+    add(y_cyl("TopAdapter",.07,.06,(0,.716,0),verts=32,bevel_w=.003),frame)
+    stem=y_cyl("HollowPedestal",.04,.65,(0,.365,0),verts=32)
+    cut(stem,y_cyl("PedestalBore",.032,.68,(0,.365,0),verts=32))
+    add(stem,frame)
+    add(y_cyl("LowerCollar",.055,.014,(0,.047,0),verts=32,bevel_w=.002),steel)
+    base=cone("CastBase",.28,.25,.032,(0,.024,0),verts=48)
+    bevel(base,.002,2)
+    cut(base,y_cyl("BaseBore",.031,.08,(0,.024,0),verts=24))
+    for i in range(4):
+        a=math.pi/4+i*math.pi/2
+        x,z=.19*math.sin(a),.19*math.cos(a)
+        cut(base,y_cyl("BaseCounterbore",.009,.012,(x,.041,z),verts=20))
+        head=y_cyl("BaseSocketHead",.007,.004,(x,.037,z),verts=20)
+        cut(head,y_cyl("BaseHexSocket",.003,.005,(x,.039,z),verts=6))
+        add(head,steel)
+    add(base,frame)
+    for i in range(6):
+        a=i*math.tau/6
+        add(box("CastReinforcementRib",(.012,.022,.14),(.10*math.sin(a),.045,.10*math.cos(a)),rot=(0,a,0),bevel_w=.003),frame)
+    foot=y_cyl("FloorIsolationRing",.276,.008,(0,.004,0),verts=48,bevel_w=.001)
+    cut(foot,y_cyl("FootOpening",.248,.025,(0,.004,0),verts=48))
+    add(foot,rubber)
+    for obj,_ in parts:
+        smooth_obj(obj)
+    return [],[("BalconyTable",loose(parts),None)]
+
+
 @prop("lounge-table", "furniture", "table", recenter=False, multipart=True)
 def build_lounge_table():
     """The lounge's 1.5 m square coffee table, with its top at the existing 0.46 m."""
