@@ -145,6 +145,12 @@ export interface Office {
   /** Paints the walls, their trim and the floor in a floor's colors, so each project looks like itself. */
   setLook(p: FloorPalette): void;
   /**
+   * A plain folder's floor (not a git checkout) has no Issues, Pipelines, PR or CI board and no board
+   * agents: they're put away, with their kiosks' colliders and every way to use them. Returns the
+   * colliders that just came back, in case someone is standing there.
+   */
+  setPlain(plain: boolean): Collider[];
+  /**
    * You're on floor `index` of a building `count` floors tall (0 is the bottom one): the rest of the
    * building goes up over you and down under you, the street that many storeys down, and only the
    * bottom floor has its exit door.
@@ -1172,6 +1178,8 @@ export function buildOffice(): Office {
     const collider = { minX: Math.min(...xs), maxX: Math.max(...xs), minZ: Math.min(...zs), maxZ: Math.max(...zs), top: BEANBAG_BOX.top };
     beanbags.set(def.id, { view, it, collider });
   });
+  // What a plain folder's floor puts away (see setPlain): the git boards and their agents' kiosks.
+  const gitOnly: { objects: THREE.Object3D[]; colliders: Collider[]; spots: Interactable[] } = { objects: [], colliders: [], spots: [] };
   // The board agents' kiosks, each just west of its board.
   for (const def of STATIONS) {
     const view = buildKiosk(def);
@@ -1183,19 +1191,26 @@ export function buildOffice(): Office {
     const xs = corners.map(([x]) => x);
     const zs = corners.map(([, z]) => z);
     const wall = kioskWall(def);
-    colliders.push({
+    const collider: Collider = {
       minX: wall === 'west' ? FLOOR.minX : Math.min(...xs),
       maxX: wall === 'east' ? FLOOR.maxX : Math.max(...xs),
       minZ: wall === 'north' ? FLOOR.minZ : Math.min(...zs),
       maxZ: wall === 'south' ? FLOOR.maxZ : Math.max(...zs),
       top: 1.5,
       fence: true,
-    });
+    };
+    colliders.push(collider);
     // Walk up to its front.
     const [fx, fz] = deskPoint(def, 0, -1);
     const it: Interactable = { kind: 'station', deskId: def.id, x: fx, z: fz, radius: 1.3 };
     interactables.push(it);
     view.group.userData.interact = it;
+    // The Team lead needs no repository: only the board agents go with their boards.
+    if (def.station !== 'lead') {
+      gitOnly.objects.push(view.group);
+      gitOnly.colliders.push(collider);
+      gitOnly.spots.push(it);
+    }
     // The agent, its name tag and the card over its head, up against the wall.
     fixture(wall, wall === 'north' || wall === 'south' ? def.x : def.z, 1.45, 1.4, 2.9);
   }
@@ -1232,6 +1247,8 @@ export function buildOffice(): Office {
     bg.rotation.y = b.rotY;
     group.add(bg);
     boardMeshes[key] = face;
+    const git = key !== 'whiteboard';
+    if (git) gitOnly.objects.push(bg);
     // Its title on a sign over it, half as far out from the wall (a board without one has it painted on).
     if (b.label) {
       const label = textPlane(b.label, { bg: '#0a0a0a', color: '#eeeeee', border: '#2f2f2f', size: 64 });
@@ -1239,10 +1256,12 @@ export function buildOffice(): Office {
       label.position.set(b.x + nx * 0.04, b.y + b.height / 2 + 0.5, b.z + nz * 0.04);
       label.rotation.y = b.rotY;
       group.add(label);
+      if (git) gitOnly.objects.push(label);
     }
     const it: Interactable = { kind: key, x: b.x + nx * 1.6, z: b.z + nz * 1.6, radius: 2.4 };
     interactables.push(it);
     bg.userData.interact = it;
+    if (git) gitOnly.spots.push(it);
     // The board and its label above it, up to the ceiling.
     const wall = wallFacing(b.rotY);
     const bottom = b.y - (b.height + 0.3) / 2;
@@ -1399,6 +1418,24 @@ export function buildOffice(): Office {
     }
   };
 
+  let plainNow = false;
+  const setPlain = (plain: boolean) => {
+    const appeared: Collider[] = [];
+    if (plain === plainNow) return appeared;
+    plainNow = plain;
+    for (const o of gitOnly.objects) o.visible = !plain;
+    for (const it of gitOnly.spots) it.off = plain;
+    for (const c of gitOnly.colliders) {
+      const i = colliders.indexOf(c);
+      if (plain && i >= 0) colliders.splice(i, 1);
+      else if (!plain && i < 0) {
+        colliders.push(c);
+        appeared.push(c);
+      }
+    }
+    return appeared;
+  };
+
   const setLevel = (index: number, count: number) => {
     const drop = index * STOREY;
     ground.position.y = -drop;
@@ -1455,6 +1492,7 @@ export function buildOffice(): Office {
     stack,
     setProjectName,
     setLook,
+    setPlain,
     setLevel,
     night,
     update,

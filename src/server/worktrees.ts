@@ -86,8 +86,23 @@ export class Worktrees {
   private branchJson?: string;
   private branchValue?: string;
 
-  constructor(private dir: string) {
+  /**
+   * For a plain folder (see Floor.plain), the folder it's in as a GIT_CEILING_DIRECTORIES entry: git
+   * stops at the plain folder rather than answering for a checkout it's inside. Real, since git
+   * compares it with the real path of where it runs.
+   */
+  readonly ceiling?: string;
+  private env?: NodeJS.ProcessEnv;
+
+  constructor(
+    private dir: string,
+    plain = false,
+  ) {
     this.root = real(dir);
+    if (plain) {
+      this.ceiling = path.dirname(this.root);
+      this.env = { ...process.env, GIT_CEILING_DIRECTORIES: [this.ceiling, process.env.GIT_CEILING_DIRECTORIES].filter(Boolean).join(path.delimiter) };
+    }
   }
 
   /** The owner's floor override, shared by every Worktrees instance for this checkout. */
@@ -269,7 +284,7 @@ export class Worktrees {
     if (under) return under;
     if (Date.now() - (this.fetchedAt.get(from) ?? 0) < FETCH_FRESH_MS || !this.hasOrigin()) return undefined;
     // Never stop to ask for a password: there's nobody at the office's terminal to type it.
-    const env = { ...process.env, GIT_TERMINAL_PROMPT: '0' };
+    const env = { ...(this.env ?? process.env), GIT_TERMINAL_PROMPT: '0' };
     const fetching = execFileP('git', ['fetch', '--quiet', '--no-tags', 'origin', `+refs/heads/${from}:refs/remotes/origin/${from}`], { cwd: this.dir, env, timeout: FETCH_TIMEOUT_MS })
       .then(
         () => {
@@ -843,11 +858,11 @@ export class Worktrees {
   }
 
   private gitSync(args: string[], cwd = this.dir): string {
-    return execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: 20_000 }).trim();
+    return execFileSync('git', args, { cwd, env: this.env, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: 20_000 }).trim();
   }
 
   private async git(args: string[], cwd = this.dir): Promise<string> {
-    const { stdout } = await execFileP('git', args, { cwd, encoding: 'utf8', timeout: 60_000, maxBuffer: 16 * 1024 * 1024 });
+    const { stdout } = await execFileP('git', args, { cwd, env: this.env, encoding: 'utf8', timeout: 60_000, maxBuffer: 16 * 1024 * 1024 });
     return stdout.trim();
   }
 }

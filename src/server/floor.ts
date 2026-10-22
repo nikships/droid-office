@@ -4,7 +4,7 @@ import path from 'node:path';
 import type { ChangesState, FloorInfo, ProjectInfo, ServerMsg, WorkerInfo } from '../shared/protocol.js';
 import { isBusy } from '../shared/status.js';
 import { DESK_BY_ID, STATIONS } from '../shared/layout.js';
-import type { FloorDef } from './building.js';
+import { isCheckout, type FloorDef } from './building.js';
 import { excludeFromGit } from './config.js';
 import { OFFICE_SHELL_ID } from '../shared/office-shell.js';
 import { OfficeShell } from './office-shell.js';
@@ -13,7 +13,7 @@ import { Guests, attribute, stopGuest, type AgentProcess } from './guests.js';
 import { CloudWorkers } from './cloud-workers.js';
 import { GitHub, MergeWatch } from './github.js';
 import { GitLab } from './gitlab.js';
-import type { Board } from './forge.js';
+import { NoBoard, type Board } from './forge.js';
 import { forgeOf, forgeWords, type Forge, type ForgeWords } from '../shared/floors.js';
 import { floorPipelines, type Pipelines } from './pipelines.js';
 import { stateWord, type PipelineRun } from '../shared/pipelines.js';
@@ -94,9 +94,11 @@ const REFRESH_MS = 90_000;
 /** Pipelines are looked at again when someone walks in after this long. */
 const PIPELINES_STALE_MS = 20_000;
 
-/** What `git` says about a checkout: its name, branch and origin for the top bar. */
-export function projectInfo(dir: string, name: string, agentCmd: string, agentArgs: string[], forge: Forge = 'github'): ProjectInfo {
+/** What `git` says about a checkout: its name, branch and origin for the top bar. A plain folder has neither. */
+export function projectInfo(dir: string, name: string, agentCmd: string, agentArgs: string[], forge: Forge = 'github', plain = false): ProjectInfo {
   const git = (args: string[]) => {
+    // Inside someone else's checkout, git would answer for that one.
+    if (plain) return undefined;
     try {
       return execFileSync('git', args, { cwd: dir, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim();
     } catch {
@@ -120,6 +122,8 @@ export function projectInfo(dir: string, name: string, agentCmd: string, agentAr
 export class Floor {
   readonly id: string;
   readonly dir: string;
+  /** Not a git checkout of its own: no worktrees, branches, boards, pipelines or CI, and nothing asks gh or glab about it. */
+  readonly plain: boolean;
   readonly project: ProjectInfo;
   private branchInfo: Pick<FloorInfo, 'baseBranch' | 'selectedBranch'> = {};
   readonly workers: WorkerManager;
@@ -165,15 +169,17 @@ export class Floor {
   ) {
     this.id = def.id;
     this.dir = def.dir;
+    this.plain = !isCheckout(def.dir);
     const dataDir = path.join(def.dir, '.droid-office');
     mkdirSync(dataDir, { recursive: true, mode: 0o700 });
-    excludeFromGit(def.dir);
+    // A plain folder has no .git of its own: its info/exclude would be some other checkout's.
+    if (!this.plain) excludeFromGit(def.dir);
     seedAutoHeal(dataDir, ctx.officeDataDir);
     this.autoHeal = new AutoHeal(dataDir, (state) => ctx.emit(this, { t: 'autoHeal', state }));
     const forge = forgeOf(def.repo) ?? 'github';
     const words = forgeWords(forge);
     this.words = words;
-    this.project = projectInfo(def.dir, def.name, ctx.agentCmd, ctx.agentArgs, forge);
+    this.project = projectInfo(def.dir, def.name, ctx.agentCmd, ctx.agentArgs, forge, this.plain);
     this.docs = new Docs(def.dir);
     const onIssues = (state: Board['issues']) => ctx.emit(this, { t: 'gh.issues', state });
     const onPulls = (state: Board['pulls']) => {
@@ -194,7 +200,7 @@ export class Floor {
       state: (state) => ctx.emit(this, { t: 'jira', state }),
       board: (state) => ctx.emit(this, { t: 'jira.board', state }),
     });
-    this.board = forge === 'gitlab' && def.repo ? new GitLab(def.dir, def.repo, onIssues, onPulls) : new GitHub(def.dir, onIssues, onPulls);
+    this.board = this.plain ? new NoBoard() : forge === 'gitlab' && def.repo ? new GitLab(def.dir, def.repo, onIssues, onPulls) : new GitHub(def.dir, onIssues, onPulls);
 
     this.workers = new WorkerManager(
       def.dir,
@@ -230,6 +236,7 @@ export class Floor {
       ctx.capacity,
       this.board,
       ctx.prompts,
+      this.plain,
     );
     this.branchInfo = { baseBranch: this.workers.baseBranch, selectedBranch: this.workers.selectedBranch };
 
@@ -276,21 +283,28 @@ export class Floor {
     this.workers.pullList = () => this.board.pulls.items;
 
     // The 🚀 Pipelines board: runs that end while someone watches say so (a failure always, a pass when the office started it).
-    this.pipelines = floorPipelines(def.dir, forge, def.repo, {
-      state: (state) => ctx.emit(this, { t: 'pipelines', state }),
-      finished: (run, ours) => {
-        const heal = this.heals.finished(run, this.autoHeal.on);
-        if (heal) this.heal(run, heal);
-        if (run.state !== 'failure' && !(ours && run.state === 'success')) return;
-        const icon = run.state === 'failure' ? '❌' : '✅';
-        ctx.toast(this, `${icon} ${run.workflow} #${run.number} ${stateWord(run)} on ${run.branch}: ${run.title}`, run.state === 'failure' ? 'warn' : 'info');
+    this.pipelines = floorPipelines(
+      def.dir,
+      forge,
+      def.repo,
+      {
+        state: (state) => ctx.emit(this, { t: 'pipelines', state }),
+        finished: (run, ours) => {
+          const heal = this.heals.finished(run, this.autoHeal.on);
+          if (heal) this.heal(run, heal);
+          if (run.state !== 'failure' && !(ours && run.state === 'success')) return;
+          const icon = run.state === 'failure' ? '❌' : '✅';
+          ctx.toast(this, `${icon} ${run.workflow} #${run.number} ${stateWord(run)} on ${run.branch}: ${run.title}`, run.state === 'failure' ? 'warn' : 'info');
+        },
       },
-    });
-    // With auto-heal on for this floor, a failure is noticed within a minute even when nobody is on it.
-    this.pipelines.start(
-      () => this.ctx.connections(this) > 0,
-      () => this.autoHeal.on,
+      this.plain,
     );
+    // With auto-heal on for this floor, a failure is noticed within a minute even when nobody is on it.
+    if (!this.plain)
+      this.pipelines.start(
+        () => this.ctx.connections(this) > 0,
+        () => this.autoHeal.on,
+      );
 
     const workers = this.workers;
 
@@ -313,7 +327,7 @@ export class Floor {
       {
         dataDir,
         dir: def.dir,
-        git: !!this.project.branch,
+        git: !this.plain && !!this.project.branch,
         settings: () => ctx.subagents(),
         ...(ctx.droidModels ? { models: ctx.droidModels.bind(ctx) } : {}),
         prompts: ctx.prompts,
@@ -326,7 +340,8 @@ export class Floor {
       this.project.branch,
       (workerId, repo) => {
         const w = this.workers.get(workerId);
-        if (!w) return undefined;
+        // Nothing to diff, and git there could answer for a checkout the folder is inside.
+        if (!w || this.plain) return undefined;
         // Against the branch its worktree was cut from (which may not be the one the checkout is on), else the checkout's.
         if (!repo)
           return {
@@ -534,6 +549,7 @@ export class Floor {
       branch: this.project.branch,
       ...this.branchInfo,
       palette: this.def.palette,
+      ...(this.plain ? { plain: true } : {}),
       addedBy: this.def.addedBy,
       addedAt: this.def.addedAt,
       workers: ws.filter((w) => !DESK_BY_ID.get(w.deskId)?.station).length,

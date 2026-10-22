@@ -4,7 +4,7 @@ import { readdir, stat } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { FLOOR_PALETTES, MAX_FLOORS, forgeOf, normalizeRepo } from '../shared/floors.js';
-import type { ProjectsDirState, RepoChoice } from '../shared/protocol.js';
+import type { FolderChoice, ProjectsDirState, RepoChoice } from '../shared/protocol.js';
 import { isGitlabHost } from './gitlab.js';
 
 /** A floor as floors.json keeps it. */
@@ -33,6 +33,21 @@ interface LocalOff {
   at: number;
 }
 
+/** What the elevator's folder browser shows of one folder. */
+export interface FolderListing {
+  dir: string;
+  shown: string;
+  git: boolean;
+  /** Why this folder can't be added where it is: a checkout outside the workspace folder. */
+  blocked?: string;
+  parent?: string;
+  folders: FolderChoice[];
+  more?: boolean;
+  error?: string;
+}
+
+/** The most folders the folder browser lists in one folder. */
+const MAX_FOLDERS = 500;
 /** How long the list of checkouts found in the workspace folder is reused before the folder is searched again. */
 const REPOS_TTL_MS = 30_000;
 const MAX_REPOS = 1000;
@@ -212,29 +227,28 @@ export class Building {
   }
 
   /**
-   * Makes a checkout that already exists a floor, where it is: nothing is cloned, copied or moved.
-   * `input` is the checkout's full path, which has to be in the workspace folder (or be the
-   * checkout the office was started in). A symlink to a checkout that already has a floor is that
-   * floor: the path already saved is left as it was. Returns the floor, or why there's none.
+   * Makes a folder that already exists a floor, where it is: nothing is cloned, copied or moved.
+   * `input` is its full path. A git checkout has to be in the workspace folder (or be the checkout
+   * the office was started in). A plain folder, one without a `.git` of its own, can be anywhere the
+   * office can read and write. A symlink to a folder that already has a floor is that floor: the
+   * path already saved is left as it was. Returns the floor, or why there's none.
    */
   add(input: string, by: string): FloorDef | string {
     const text = input.trim();
-    if (!text) return 'Pick a checkout from the list, or type its full path, like ~/Workspace/my-project';
+    if (!text) return 'Pick a project from the list, browse to a folder, or type its full path, like ~/Workspace/my-project';
     const typed = untildify(text);
-    if (!path.isAbsolute(typed)) return 'Use the checkout’s full path, like ~/Workspace/my-project';
+    if (!path.isAbsolute(typed)) return 'Use the folder’s full path, like ~/Workspace/my-project';
     const dir = path.resolve(typed);
     const shown = tildify(dir);
     if (!existsSync(dir)) return `${shown} doesn't exist`;
-    if (!existsSync(path.join(dir, '.git'))) return `${shown} isn't a git checkout`;
-    // The started-in checkout can be put back by the path it was saved as, even outside the workspace.
-    // Any other path, including a symlink, still has to land inside the workspace after resolving it.
-    const back = this.localOff && path.resolve(this.localOff.dir) === dir;
-    if (!back && !within(realPath(dir), realPath(this.projectsDir))) return `${shown} isn't in the workspace folder (${tildify(this.projectsDir)}). Pick another workspace folder in ⚙️ Settings`;
+    const git = isCheckout(dir);
+    const why = git ? this.outsideWorkspace(dir) : plainProblem(dir);
+    if (why) return why;
     const known = this.knownCheckout(dir);
     if (known) return `${shown} already has a floor (${known.name})`;
     // A saved alias is not a second floor, so it does not fill the building.
     if (this.list().length >= MAX_FLOORS) return `The building is full (${MAX_FLOORS} floors)`;
-    const repo = originRepo(dir);
+    const repo = git ? originRepo(dir) : undefined;
     // The path as given is what is saved, not its real path, so a later start still finds it as written.
     const def = this.newDef(repo?.split('/').pop() ?? path.basename(dir), repo, dir, by);
     this.defs.push(def);
@@ -260,6 +274,51 @@ export class Building {
     const repos = findCheckouts(this.projectsDir);
     this.repoCache = { at: Date.now(), repos };
     return repos;
+  }
+
+  /** Why checkout `dir` can't be a floor where it is, if it can't: it has to be in the workspace folder. */
+  private outsideWorkspace(dir: string): string | undefined {
+    // The started-in checkout can be put back by the path it was saved as, even outside the workspace.
+    // Any other path, including a symlink, still has to land inside the workspace after resolving it.
+    const back = this.localOff && path.resolve(this.localOff.dir) === dir;
+    if (back || within(realPath(dir), realPath(this.projectsDir))) return undefined;
+    return `${tildify(dir)} isn't in the workspace folder (${tildify(this.projectsDir)}). Pick another workspace folder in ⚙️ Settings`;
+  }
+
+  /** The folders in `raw` (the workspace folder when unset), hidden ones left out, for the elevator's folder browser. */
+  async folders(raw?: string): Promise<FolderListing> {
+    const text = raw?.trim() ?? '';
+    const typed = text ? untildify(text) : this.projectsDir;
+    if (!path.isAbsolute(typed)) return { dir: this.projectsDir, shown: tildify(this.projectsDir), git: false, folders: [], error: 'Use a full path, like ~/Workspace' };
+    const dir = path.resolve(typed);
+    const up = path.dirname(dir);
+    const git = isCheckout(dir);
+    const blocked = git ? this.outsideWorkspace(dir) : undefined;
+    const base = { dir, shown: tildify(dir), git, ...(blocked ? { blocked } : {}), ...(up !== dir ? { parent: up } : {}) };
+    let entries: Dirent[];
+    try {
+      entries = await readdir(dir, { withFileTypes: true });
+    } catch {
+      return { ...base, folders: [], error: `${base.shown} can't be opened` };
+    }
+    const visible = entries.filter((e) => !e.name.startsWith('.')).map((e) => ({ e, full: path.join(dir, e.name) }));
+    // A symlink counts when it leads to a folder.
+    const isDir = await Promise.all(
+      visible.map(
+        ({ e, full }) =>
+          e.isDirectory() ||
+          (e.isSymbolicLink() &&
+            stat(full).then(
+              (s) => s.isDirectory(),
+              () => false,
+            )),
+      ),
+    );
+    const folders: FolderChoice[] = visible.filter((_, i) => isDir[i]).map(({ e, full }) => ({ name: e.name, dir: full, git: false }));
+    folders.sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base', numeric: true }));
+    const listed = folders.slice(0, MAX_FOLDERS);
+    for (const f of listed) f.git = isCheckout(f.dir);
+    return { ...base, folders: listed, ...(folders.length > MAX_FOLDERS ? { more: true } : {}) };
   }
 
   private newDef(name: string, repo: string | undefined, dir: string, by: string): FloorDef {
@@ -359,6 +418,26 @@ function within(dir: string, parent: string): boolean {
   return !rel || (rel !== '..' && !rel.startsWith(`..${path.sep}`) && !path.isAbsolute(rel));
 }
 
+/** A git checkout of its own: `.git` (a folder, or a worktree's file) in the folder itself, not in a folder it's inside. */
+export function isCheckout(dir: string): boolean {
+  return existsSync(path.join(dir, '.git'));
+}
+
+/** Why a folder that isn't a checkout can't be a floor, if it can't: the floor keeps its .droid-office in it. */
+function plainProblem(dir: string): string | undefined {
+  const shown = tildify(dir);
+  const real = realPath(dir);
+  if (path.dirname(real) === real) return `${shown} is the top of the disk: pick a folder in it`;
+  if (real.split(path.sep).includes('.droid-office')) return `${shown} is inside the office's own data`;
+  try {
+    if (!statSync(dir).isDirectory()) return `${shown} isn't a folder`;
+    accessSync(dir, constants.R_OK | constants.W_OK | constants.X_OK);
+  } catch {
+    return `${shown} isn't a folder the office can read and write`;
+  }
+  return undefined;
+}
+
 /** Why the office can't look for checkouts in `dir`, if it can't. */
 function unreadable(dir: string): string | undefined {
   try {
@@ -390,8 +469,9 @@ export function remoteRepo(url: string): string | undefined {
   return host && isGitlabHost(host) ? normalizeRepo(url) : undefined;
 }
 
-/** The GitHub or GitLab repository a checkout's origin points at. */
+/** The GitHub or GitLab repository a checkout's origin points at; none for a folder inside someone else's checkout. */
 export function originRepo(dir: string): string | undefined {
+  if (!isCheckout(dir)) return undefined;
   try {
     const url = execFileSync('git', ['remote', 'get-url', 'origin'], { cwd: dir, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], timeout: 10_000 }).trim();
     return remoteRepo(url);

@@ -450,9 +450,37 @@ class GitLabPipelines implements PipelineForge {
   }
 }
 
-/** A floor's pipelines: its GitLab project's on a GitLab floor, else its GitHub repository's Actions. */
-export function floorPipelines(dir: string, forge: Forge, repo: string | undefined, events: PipelineEvents): Pipelines {
-  return new Pipelines(forge === 'gitlab' && repo ? new GitLabPipelines(dir, repo) : new GitHubActions(dir), events);
+const NO_RUNS = 'This floor is a plain folder, not a git checkout, so it has no pipelines';
+
+/** A plain folder's floor: no repository, so no runs, and nothing asks gh or glab. */
+class NoPipelines implements PipelineForge {
+  constructor(readonly forge: Forge) {}
+  runs(): Promise<PipelineRun[]> {
+    return Promise.resolve([]);
+  }
+  jobs(): Promise<PipelineJob[]> {
+    return Promise.resolve([]);
+  }
+  workflows(): Promise<PipelineWorkflow[]> {
+    return Promise.resolve([]);
+  }
+  defaultBranch(): Promise<string | undefined> {
+    return Promise.resolve(undefined);
+  }
+  rerun(): Promise<void> {
+    return Promise.reject(new Error(NO_RUNS));
+  }
+  cancel(): Promise<void> {
+    return Promise.reject(new Error(NO_RUNS));
+  }
+  run(): Promise<void> {
+    return Promise.reject(new Error(NO_RUNS));
+  }
+}
+
+/** A floor's pipelines: its GitLab project's on a GitLab floor, else its GitHub repository's Actions; none for a plain folder. */
+export function floorPipelines(dir: string, forge: Forge, repo: string | undefined, events: PipelineEvents, plain = false): Pipelines {
+  return new Pipelines(plain ? new NoPipelines(forge) : forge === 'gitlab' && repo ? new GitLabPipelines(dir, repo) : new GitHubActions(dir), events);
 }
 
 // --- Which workflows can be started by hand -----------------------------------------------------

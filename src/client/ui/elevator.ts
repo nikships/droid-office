@@ -6,12 +6,14 @@ import { store } from '../state';
 import { h, openModal, timeAgo, type Modal } from './dom';
 import { floorNo, floorStats } from './floormenu';
 import { emptyState, windowHeader } from './kit';
+import { openFolderBrowser } from './folder-browser';
 import { confirmDialog } from './prompt';
 
 // The elevator's panel: a button for every floor (every project), and "add a project", which lists the
 // git checkouts already in the office's workspace folder and makes the one you pick a new floor, right
-// where it is: nothing is cloned or copied. The first time the office runs there are no floors, and
-// this is where you start. A floor can be taken off the building here too; its checkout stays on disk.
+// where it is: nothing is cloned or copied. Browse picks any other folder, which becomes a plain floor
+// when it isn't a git checkout. The first time the office runs there are no floors, and this is where
+// you start. A floor can be taken off the building here too; its folder stays on disk.
 
 export interface ElevatorOptions {
   net: Net;
@@ -52,11 +54,12 @@ export function openElevator(opts: ElevatorOptions): void {
 
   const floorsEl = h('div.list.boxed.floors', { role: 'list', 'aria-label': 'Floors' });
   const addEl = h('section.section.add');
-  const input = h('input', { type: 'text', placeholder: 'Search your projects, or type a checkout’s full path', 'aria-label': 'Project', autocomplete: 'off', spellcheck: 'false' }) as HTMLInputElement;
+  const input = h('input', { type: 'text', placeholder: 'Search your projects, or type a folder’s full path', 'aria-label': 'Project', autocomplete: 'off', spellcheck: 'false' }) as HTMLInputElement;
   const listEl = h('div.list.boxed.repo-list', { role: 'listbox', 'aria-label': 'Projects' });
   const statusEl = h('div.stack.tight.add-status');
   const addBtn = h('button.btn.primary', { type: 'button' }, 'Add floor');
   const refreshBtn = h('button.btn.icon', { type: 'button', title: 'Look in the workspace folder again', 'aria-label': 'Look again' }, '↻');
+  const browseBtn = h('button.btn', { type: 'button', title: 'Pick any folder on the office’s machine, git checkout or not' }, '📁 Browse');
 
   // Where checkouts are looked for. It can be moved right here: the first project is when it matters.
   const dirInput = h('input', { type: 'text', placeholder: '~/Workspace', 'aria-label': 'Workspace folder', spellcheck: 'false', autocomplete: 'off' }) as HTMLInputElement;
@@ -127,7 +130,9 @@ export function openElevator(opts: ElevatorOptions): void {
     const workers = f.workers ? `Its ${f.workers} worker${f.workers === 1 ? '' : 's'} stop${f.workers === 1 ? 's' : ''}. ` : '';
     const ride = f.id === store.floor ? `You ride the elevator to ${next ? next.name : 'the lobby'}. ` : '';
     const own = f.local ? ' The office keeps its own settings there too, so it carries on as before, just without this floor.' : '';
-    confirmDialog(`Take ${f.name} off the building?`, `${workers}${ride}Nothing is deleted: its checkout stays in ${f.dir}, .droid-office folder and all.${own}`, 'Remove floor', () => net.send({ t: 'floor.remove', floor: f.id }));
+    confirmDialog(`Take ${f.name} off the building?`, `${workers}${ride}Nothing is deleted: its ${f.plain ? 'folder' : 'checkout'} stays in ${f.dir}, .droid-office folder and all.${own}`, 'Remove floor', () =>
+      net.send({ t: 'floor.remove', floor: f.id }),
+    );
   };
 
   /** The roof, over every floor. */
@@ -222,7 +227,7 @@ export function openElevator(opts: ElevatorOptions): void {
             : r.error
               ? ''
               : q
-                ? 'Nothing matches. Type the full path of a checkout in the workspace folder to add one that isn’t listed.'
+                ? 'Nothing matches. Type a folder’s full path, or Browse to it, to add one that isn’t listed.'
                 : `No git projects in ${store.projectsDir.dir}. Change the folder below.`,
         ),
       );
@@ -237,7 +242,13 @@ export function openElevator(opts: ElevatorOptions): void {
         : h(
             'div.row.between.dir-line',
             {},
-            h('p.field-hint', {}, 'Looking in ', h('code', { title: store.projectsDir.dir }, store.projectsDir.dir || 'the workspace folder'), '. The new floor works in the checkout where it is: nothing is cloned or copied.'),
+            h(
+              'p.field-hint',
+              {},
+              'Looking in ',
+              h('code', { title: store.projectsDir.dir }, store.projectsDir.dir || 'the workspace folder'),
+              '. The new floor works in the folder where it is: nothing is cloned or copied. A folder that isn’t a git checkout is a plain floor, without boards or worktrees.',
+            ),
             change,
           ),
       ...[r.error, error].filter(Boolean).map((e) => h('p.note.bad', {}, e)),
@@ -245,11 +256,12 @@ export function openElevator(opts: ElevatorOptions): void {
     addBtn.disabled = !!adding || !pick || store.floors.some((f) => f.dir === pick);
     addBtn.textContent = adding ? 'Adding…' : 'Add floor';
     input.disabled = !!adding;
+    browseBtn.disabled = !!adding;
     if (!built) {
       built = true;
       addEl.replaceChildren(
         h('div.eyebrow', {}, h('span.no', {}, '02'), setup && !store.floors.length ? 'Pick your first project' : 'Add a project'),
-        h('div.stack.tight', {}, h('div.input-group.repo-search', {}, input, refreshBtn), listEl, statusEl, dirEl),
+        h('div.stack.tight', {}, h('div.row', {}, h('div.input-group.repo-search.grow', {}, input, refreshBtn), browseBtn), listEl, statusEl, dirEl),
       );
     }
   };
@@ -293,6 +305,7 @@ export function openElevator(opts: ElevatorOptions): void {
     const pick = choice();
     if (pick) add(pick);
   });
+  browseBtn.addEventListener('click', () => openFolderBrowser(net, add));
   refreshBtn.addEventListener('click', () => {
     store.repos = { ...store.repos, loading: true, error: undefined };
     renderAdd();
@@ -302,7 +315,7 @@ export function openElevator(opts: ElevatorOptions): void {
   const sub = setup
     ? store.floors.length
       ? 'Every project is a floor of this building. Pick a floor to ride to, or add another project.'
-      : "Every project is a floor of this building, and it doesn't have any yet. Pick one of your git projects: it becomes the first floor, and the office works in it right where it is."
+      : "Every project is a floor of this building, and it doesn't have any yet. Pick one of your git projects, or browse to any folder: it becomes the first floor, and the office works in it right where it is."
     : 'Every project is a floor. Pick one to ride to.';
   const floorsSection = h('section.section', {}, h('div.eyebrow', {}, h('span.no', {}, '01'), 'Floors'), floorsEl);
   const el = h(

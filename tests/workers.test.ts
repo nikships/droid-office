@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { accessSync, constants, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { accessSync, constants, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -19,6 +19,7 @@ type Invocation = {
     hookToken?: string;
     hookUrl?: string;
     path?: string;
+    ceiling?: string;
   };
 };
 
@@ -81,6 +82,7 @@ const record = (extra = {}) => fs.appendFileSync(log, JSON.stringify({
     hookToken: process.env.DROID_OFFICE_HOOK_TOKEN,
     hookUrl: process.env.DROID_OFFICE_HOOK_URL,
     path: process.env.PATH,
+    ceiling: process.env.GIT_CEILING_DIRECTORIES,
   },
 }) + '\\n');
 record();
@@ -445,6 +447,44 @@ test('the worker system prompt is the office’s as rewritten, filled in for eac
   const second = await launchOf(b.id);
   assert.ok(!second.args.includes('--append-system-prompt-file'), 'an empty prompt adds nothing');
   assert.equal(existsSync(path.join(f.data, `system-${b.id}.md`)), false);
+});
+
+test("a plain folder's workers get no branch policy, no worktrees, no board agents, and git that stops at the folder", async (t) => {
+  const f = fixture();
+  isolateAgentEnvironment(f, t);
+  const previousLog = process.env.FAKE_AGENT_LOG;
+  process.env.FAKE_AGENT_LOG = f.log;
+  t.after(() => {
+    if (previousLog === undefined) delete process.env.FAKE_AGENT_LOG;
+    else process.env.FAKE_AGENT_LOG = previousLog;
+    f.close();
+  });
+  // Inside someone else's checkout, as a docs folder in a repository is.
+  execFileSync('git', ['init', '-q', '-b', 'main', f.root]);
+  const folder = path.join(f.root, 'notes');
+  const data = path.join(folder, '.droid-office');
+  mkdirSync(data, { recursive: true });
+  const workers = new WorkerManager(folder, data, f.droid, [], { url: 'http://127.0.0.1:1', token: '' }, events([]), undefined, undefined, undefined, true);
+  t.after(() => workers.shutdown());
+
+  assert.match(String(workers.spawn('desk-2', 'test', 'branch out', true)), /plain folder.*can't have worktrees/);
+  assert.match(String(workers.station('station-issues', 'test', 'triage')), /plain folder.*no Issues agent/);
+  assert.match(String(workers.station('station-actions', 'test', 'heal')), /no Pipeline agent/);
+
+  const w = workers.spawn('desk-2', 'test', 'tidy the notes');
+  if (typeof w === 'string') return assert.fail(w);
+  const launch = (
+    await waitFor(
+      () => f.read(),
+      (records) => records.some((r) => r.kind === 'droid' && r.env.workerId === w.id && r.args.includes('--settings')),
+    )
+  ).find((r) => r.kind === 'droid' && r.env.workerId === w.id && r.args.includes('--settings'))!;
+  assert.equal(launch.env.ceiling?.split(path.delimiter)[0], realpathSync(f.root), "git run in the folder doesn't climb into the checkout around it");
+  assert.match(String(await workers.fork(w.id, 'test')), /plain folder.*fork/);
+  const system = readFileSync(path.join(data, `system-${w.id}.md`), 'utf8');
+  assert.match(system, new RegExp(`^You're ${w.name}, a worker in Droid Office`));
+  assert.doesNotMatch(system, /floor branch|floor-branch\.json|git fetch/);
+  assert.doesNotMatch(system, /\n{3,}/, 'no gap where the branch policy was');
 });
 
 test('board agents are hired with the requested model and effort', async (t) => {

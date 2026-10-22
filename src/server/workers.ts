@@ -82,6 +82,8 @@ const SCRUB_PREFIXES = ['NEBULA_', 'DROID_OFFICE_'];
 const scrubbed = (k: string) => SCRUB_ENV.has(k) || SCRUB_PREFIXES.some((p) => k.startsWith(p));
 
 const SCREEN_INTERVAL_MS = 250;
+/** How a refusal on a plain folder's floor starts (see Floor.plain). */
+const PLAIN_FLOOR = 'This floor is a plain folder, not a git checkout';
 /** What a worker with a live terminal can be doing. */
 const RUNNING = new Set<unknown>(['starting', 'idle', 'working', 'done', 'needs_input'] satisfies WorkerStatus[]);
 const KEYFRAME_MS = 8000;
@@ -303,8 +305,10 @@ export class WorkerManager {
     private pulls: PullHost & { forge?: Forge } = githubPulls,
     /** The office's prompts and the worker a new one starts on when nobody picks, as set in Settings (see prompts.ts). */
     private prompts?: PromptSource,
+    /** The floor is a plain folder, not a git checkout of its own (see Floor.plain). */
+    private plain = false,
   ) {
-    this.trees = new Worktrees(dir);
+    this.trees = new Worktrees(dir, plain);
     // The branch the checkout was on when this floor opened: a pull request's configured base. The
     // live branch is tried after it (see open-pull.ts). Freshening the checkout does not move this.
     this.configuredBase = this.trees.currentBranch();
@@ -536,9 +540,11 @@ export class WorkerManager {
     if (!seat) return 'Unknown desk';
     if (this.deskOccupied(deskId)) return seat.station ? `The ${STATION_AGENT[seat.station].name} is already there` : `That ${seat.beanbag ? 'bean bag' : 'desk'} is taken`;
     if (kind === 'shell' && seat.station) return 'A board agent is always an agent, not a shell';
+    if (this.plain && seat.station && seat.station !== 'lead') return `${PLAIN_FLOOR}, so it has no ${STATION_AGENT[seat.station].name}`;
+    if (this.plain && worktree) return `${PLAIN_FLOOR}, so workers can't have worktrees`;
     if (repos.length && (kind !== 'agent' || !worktree || seat.station)) return 'Only a worker in its own worktree can work in other repositories too';
     if (repos.length > MAX_REPOS) return `A worker can take on at most ${MAX_REPOS} other repositories`;
-    const fresh = this.freshBase();
+    const fresh = !this.plain && this.freshBase();
     let start: WorktreeStart = fresh ? 'main' : 'checkout';
     if (from !== undefined && (lead === undefined || !worktree)) return 'Only a subagent in its own worktree starts from a branch its lead picks';
     if (lead !== undefined) {
@@ -613,6 +619,7 @@ export class WorkerManager {
   /** A peer with a private snapshot of the source's repositories and conversation, between turns only. */
   async fork(id: string, by: string, prompt?: string): Promise<WorkerInfo | string> {
     if (this.closing || this.selectingBranch) return 'Wait for the office to finish restarting or switching branches';
+    if (this.plain) return `${PLAIN_FLOOR}, so there's no worktree to fork a worker into`;
     const source = this.workers.get(id);
     if (!source) return 'No such worker';
     const why = forkRefusal(source.info);
@@ -851,7 +858,9 @@ export class WorkerManager {
     const wt = w.info.worktree;
     const where = wt
       ? `You work in your own git worktree, ${path.join(this.dir, wt.path)}, on the branch ${wt.branch} made for this task from ${wt.from ?? wt.base.slice(0, 7)}: commit your work there.`
-      : "You work in the project's main checkout, which other people and workers use too: don't switch branches, stash, reset or commit in it unless your task says to.";
+      : this.plain
+        ? "You work in the floor's folder, which isn't a git checkout and which other people and workers use too: don't undo or overwrite anyone else's files."
+        : "You work in the project's main checkout, which other people and workers use too: don't switch branches, stash, reset or commit in it unless your task says to.";
     return `${officePrompt(this.prompts, 'subagent.brief', { name: w.info.name, lead: lead.name, where, ...forgeVars(this.forge) })}\n\n${prompt}`;
   }
 
@@ -1919,6 +1928,8 @@ export class WorkerManager {
     // A workspace isn't a repository, but it's inside this floor's checkout: git run in it must not
     // find that checkout (and switch its branch, say) instead of saying it's no repository.
     if (info.repos?.length) env.GIT_CEILING_DIRECTORIES = [path.dirname(cwd), env.GIT_CEILING_DIRECTORIES].filter(Boolean).join(path.delimiter);
+    // A plain folder can sit inside someone else's checkout: git run in it must not find that one.
+    else if (this.trees.ceiling) env.GIT_CEILING_DIRECTORIES = [this.trees.ceiling, env.GIT_CEILING_DIRECTORIES].filter(Boolean).join(path.delimiter);
     // The host keeps its own copy of the screen for the next office: it starts with the same history.
     const where = { cwd, env, cols: info.cols, rows: info.rows, prelude };
     // Only a new worktree's first terminal: a resume finds it ready.
@@ -2219,12 +2230,13 @@ process.stdin.on('end', () => {
    */
   private systemPromptFile(info: WorkerInfo): string | undefined {
     const file = path.join(this.dataDir, `system-${info.id}.md`);
-    const branchPolicy = workerBranchPolicy(this.trees.baseBranch() ?? this.trees.currentBranch(), this.trees.branchFile);
+    // A plain folder has no branches to keep in sync.
+    const branchPolicy = this.plain ? '' : workerBranchPolicy(this.trees.baseBranch() ?? this.trees.currentBranch(), this.trees.branchFile);
     const template = this.prompts?.text('worker.system') ?? PROMPTS['worker.system'].text;
     let text = officePrompt(this.prompts, 'worker.system', { name: info.name, branchPolicy });
     // A saved system prompt may predate the floor selector. Keep it, but don't let its generic
     // default-branch instructions override an explicit owner choice.
-    if (text && this.trees.selectedBranch() && !template.includes('{{branchPolicy}}')) text += `\n\n${branchPolicy}`;
+    if (text && branchPolicy && this.trees.selectedBranch() && !template.includes('{{branchPolicy}}')) text += `\n\n${branchPolicy}`;
     if (text && info.forkedFrom)
       text += `\n\nYou are ${info.name}, an independent fork of ${info.forkedFrom.name}'s conversation. Your files are a private snapshot in your own worktree. The original may keep working. You are not the original worker or its subagent: use your own worker id and do not act on its terminal, worktree or team.`;
     try {

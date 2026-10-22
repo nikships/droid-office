@@ -497,6 +497,8 @@ export interface FloorInfo {
   local?: boolean;
   /** The home folder's floor: always in the building, so it can't be taken off. */
   home?: boolean;
+  /** A plain folder, not a git checkout of its own: no worktrees, branches, boards, pipelines or CI. */
+  plain?: boolean;
   addedBy: string;
   addedAt: number;
   /**
@@ -530,6 +532,15 @@ export interface RepoChoice {
   forge?: Forge;
   /** ISO time it was last touched (committed to, checked out…). */
   activeAt?: string;
+}
+
+/** A folder on the office's machine, as the elevator's folder browser lists it. */
+export interface FolderChoice {
+  name: string;
+  /** Absolute. */
+  dir: string;
+  /** It has a `.git` of its own: a checkout. */
+  git: boolean;
 }
 
 /** Everything that belongs to the floor you're on: sent when you walk in, and when you change floors. */
@@ -937,9 +948,11 @@ type ClientMessage =
   | { t: 'floor.branch'; floor: string; request: string; branch: string | null }
   /** The checkouts in the workspace folder that could become a floor; answered with `floor.repos`. */
   | { t: 'floor.repos'; refresh?: boolean }
-  /** Make an existing checkout (its full path, in the workspace folder) a new floor, where it is; answered with `floor.added`. */
+  /** The folders in `dir` (the workspace folder when unset), for the elevator's folder browser; answered with `floor.folders`. */
+  | { t: 'floor.folders'; dir?: string; request?: string }
+  /** Make a folder a new floor, where it is: a checkout in the workspace folder, or a plain folder anywhere; answered with `floor.added`. */
   | { t: 'floor.add'; dir: string }
-  /** Take a floor off the building. Its checkout stays on disk; everyone on it rides to another floor. */
+  /** Take a floor off the building. Its folder stays on disk; everyone on it rides to another floor. */
   | { t: 'floor.remove'; floor: string }
   /** Workers whose pull request merged go home by themselves (true), or wait to be sent home. */
   | { t: 'leaveOnMerge.set'; on: boolean }
@@ -1025,6 +1038,8 @@ export type ServerMsg =
   | { t: 'floor.branches'; floor: string; request: string; branches: string[]; defaultBranch?: string; selectedBranch?: string; error?: string }
   /** Sent to whoever asked. */
   | { t: 'floor.repos'; repos: RepoChoice[]; error?: string }
+  /** Sent to whoever asked, with their `request`: `dir` (absolute) and `shown` (as ~/…), whether it's a checkout (and why it can't be added, if it can't), its parent, and the folders in it. */
+  | { t: 'floor.folders'; request?: string; dir: string; shown: string; git: boolean; blocked?: string; parent?: string; folders: FolderChoice[]; more?: boolean; error?: string }
   /** Sent to whoever asked for the floor (or couldn't get it). `dir` is the checkout they asked for. */
   | { t: 'floor.added'; dir: string; floor?: string; error?: string }
   /** The projects folder moved (see floor.projectsDir). */
