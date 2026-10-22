@@ -91,6 +91,19 @@
     "url": "/props/droid-worker.glb",
     "width": 0.698
   },
+  "elevator-panels": {
+    "bytes": 40944,
+    "depth": 0.055,
+    "height": 2.38,
+    "materials": 3,
+    "tags": [
+      "architecture",
+      "door"
+    ],
+    "triangles": 5456,
+    "url": "/props/elevator-panels.glb",
+    "width": 0.72
+  },
   "executive-desk": {
     "bytes": 41616,
     "depth": 1.21,

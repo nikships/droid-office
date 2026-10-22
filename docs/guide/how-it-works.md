@@ -1,5 +1,7 @@
 # How it works
 
+- **Elevator door panels.** Blender's `elevator-panels.glb` replaces only the contents of the original left/right sliding groups in the office and roof elevators, before shader warm-up/GI. Formed steel skins, blind recessed bands, leading-edge seals, kick/retainer plates and recessed socket hardware retain each leaf's 0.72 × 2.38 × 0.055 m local envelope. The original transforms, eased travel, collision timing, floor readout, call/interior buttons, cabin, lights and floor-change flow remain unchanged. Both source leaves are required; missing or incomplete assets retain both procedural panels.
+
 - **Lounge sofa.** Blender's `lounge-sofa.glb` replaces only the lounge couch's named static group, before shader warm-up and the light bake. Its three shaped seats, back cushions, piping, upholstered arm panels, throw pillows and steel plinth match the existing casework and +x facing. The original three seated-player anchors, picking and collider remain unchanged. Imported materials use the office's toon pipeline; a missing or incomplete asset keeps the procedural couch.
 
 - **Task chairs.** `task-chair.glb`, authored in `tools/props/generate.py` through Blender, replaces the procedural task chairs once props load, before shader warm-up and the light bake. The sculpted upholstery, arms and twin-wheel casters share geometry and toon materials across desks. Only each chair group's contents change: swivel transforms, worker seat anchors, desks and collisions stay unchanged. A failed asset load keeps the procedural chair.
