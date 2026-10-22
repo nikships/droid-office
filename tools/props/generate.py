@@ -1841,38 +1841,80 @@ def build_conveyor():
     """A 2.6 m belt conveyor along X (belt top y=0.52, 0.36 wide) on four legs, with a
     tunnel hood over its +X end: crates ride into it and out of sight. The open end of
     the hood carries an orange signal edge and a short strip-curtain valance; a beacon
-    base on its roof takes the client's emissive lamp at (1.05, 0.905, 0)."""
+    base top at y .91 takes the client's emissive lamp centred at (1.05, .93, 0).
+    The animated belt, neon and hood plaques remain separate client geometry."""
     palette = factory_palette()
     parts = []
 
     def add(obj, swatch):
         parts.append((paint(obj, palette, swatch), None))
 
+    def z_socket(name,x,y,z,r=.0075):
+        head=cyl(name,r,.002,(x,y,z),rot=(math.pi/2,0,0),verts=16)
+        sign=1 if z>0 else -1
+        cut(head,cyl("HexSocket",r*.43,.003,(x,y,z+sign*.0012),rot=(math.pi/2,0,0),verts=6))
+        add(head,"light")
+
     length, belt = CONVEYOR["length"], CONVEYOR["belt"]
     add(box("Belt", (length - 0.1, 0.03, CONVEYOR["width"]), loc=(0, belt - 0.015, 0)), "base")
     for sz in (-1, 1):
-        add(box(f"Rail{sz}", (length, 0.09, 0.03), loc=(0, belt - 0.02, sz * 0.2), bevel_w=0.006, bevel_seg=1), "graphite")
+        rail=box(f"Rail{sz}", (length, 0.09, 0.03), loc=(0, belt - 0.02, sz * 0.2), bevel_w=.004, bevel_seg=1)
+        cut(rail,box("RailBore",(2.7,.058,.018),(0,.494,sz*.2),bevel_w=.002,bevel_seg=1))
+        for x in (-1.05,-.35,.35,1.05):
+            cut(rail,cyl("RailCounterbore",.009,.02,(x,.474,sz*.215),rot=(math.pi/2,0,0),verts=16))
+            z_socket("RailSocket",x,.474,sz*.213)
+        add(rail,"graphite")
         add(box(f"RailLip{sz}", (length, 0.008, 0.034), loc=(0, belt + 0.029, sz * 0.2)), "steel")
     for sx in (-1, 1):
-        roller = cyl(f"Roller{sx}", 0.035, CONVEYOR["width"] + 0.01, loc=(sx * (length / 2 - 0.05), belt - 0.03, 0), rot=(math.radians(90), 0, 0), verts=12)
+        roller = cyl(f"Roller{sx}", 0.035, CONVEYOR["width"] + 0.01, loc=(sx * (length / 2 - 0.05), belt - 0.03, 0), rot=(math.radians(90), 0, 0), verts=24)
         add(smooth_obj(roller), "light")
         for sz in (-1, 1):
+            bearing=cyl("RollerBearing",.024,.008,(sx*1.25,.49,sz*.211),rot=(math.pi/2,0,0),verts=20)
+            cut(bearing,cyl("BearingBore",.009,.02,(sx*1.25,.49,sz*.211),rot=(math.pi/2,0,0),verts=12))
+            add(bearing,"steel")
             leg_x, leg_z = sx * 1.05, sz * 0.17
-            add(box(f"Leg{sx}{sz}", (0.05, belt - 0.065, 0.05), loc=(leg_x, (belt - 0.065) / 2, leg_z), bevel_w=0.006, bevel_seg=1), "graphite")
-            add(box(f"Pad{sx}{sz}", (0.09, 0.015, 0.09), loc=(leg_x, 0.0075, leg_z)), "base")
+            leg=box(f"Leg{sx}{sz}",(.05,.42,.05),(leg_x,.245,leg_z),bevel_w=.003,bevel_seg=1)
+            cut(leg,box("LegBore",(.04,.45,.04),(leg_x,.245,leg_z),bevel_w=.001,bevel_seg=1))
+            add(leg,"graphite")
+            add(box("FootMountPlate",(.047,.006,.047),(leg_x,.044,leg_z),bevel_w=.001),"steel")
+            add(y_cyl("LevelingStud",.009,.043,(leg_x,.0255,leg_z),verts=12),"light")
+            add(y_cyl("FootLocknut",.016,.008,(leg_x,.022,leg_z),verts=6),"steel")
+            add(box(f"Pad{sx}{sz}", (0.09, 0.015, 0.09), loc=(leg_x, 0.0075, leg_z),bevel_w=.003,bevel_seg=1), "base")
         add(box(f"Strut{sx}", (0.04, 0.04, 0.34), loc=(sx * 1.05, 0.15, 0)), "graphite")
     for sz in (-1, 1):
         add(box(f"Brace{sz}", (2.1, 0.04, 0.04), loc=(0, 0.15, sz * 0.17)), "graphite")
     # Drive: a gear motor hung under the hood end on the -Z side.
+    add(box("MotorHanger",(.08,.07,.035),(.9,.4425,-.208),bevel_w=.003),"steel")
     add(box("Gearbox", (0.16, 0.14, 0.12), loc=(0.9, 0.36, -0.27), bevel_w=0.012, bevel_seg=1), "body")
-    add(smooth_obj(cyl("Motor", 0.055, 0.17, loc=(0.9, 0.36, -0.39), rot=(math.radians(90), 0, 0), verts=14)), "graphite")
-    add(smooth_obj(cyl("MotorCap", 0.057, 0.012, loc=(0.9, 0.36, -0.48), rot=(math.radians(90), 0, 0), verts=14)), "steel")
+    add(smooth_obj(cyl("Motor",.0495,.17,(.9,.36,-.39),rot=(math.pi/2,0,0),verts=24)),"graphite")
+    for i in range(5):
+        add(smooth_obj(cyl("CoolingFin",.055,.006,(.9,.36,-.442+i*.028),rot=(math.pi/2,0,0),verts=24)),"graphite")
+    cap=cyl("VentedMotorCap",.057,.012,(.9,.36,-.48),rot=(math.pi/2,0,0),verts=24)
+    for i in range(10):
+        a=i*math.tau/10
+        cut(cap,cyl("FanOpening",.006,.03,(.9+.035*math.sin(a),.36+.035*math.cos(a),-.48),rot=(math.pi/2,0,0),verts=8))
+    cut(cap,cyl("RearBearingPocket",.0145,.02,(.9,.36,-.483),rot=(math.pi/2,0,0),verts=16))
+    add(cap,"steel")
+    add(cyl("RearBearing",.014,.007,(.9,.36,-.481),rot=(math.pi/2,0,0),verts=16),"base")
 
     # The hood, x 0.8..1.3, open toward -X.
     x0, x1, top = 0.8, 1.3, 0.86
     mid = (x0 + x1) / 2
     for sz in (-1, 1):
-        add(box(f"HoodSide{sz}", (x1 - x0, top - belt + 0.03, 0.02), loc=(mid, (top + belt) / 2, sz * 0.235), bevel_w=0.004, bevel_seg=1), "body")
+        side=box(f"HoodSide{sz}", (x1 - x0, top - belt + 0.03, 0.02), loc=(mid, (top + belt) / 2, sz * 0.235), bevel_w=.004, bevel_seg=2)
+        cut(side,box("ServicePocket",(.32,.16,.008),(mid,.63,sz*.2455),bevel_w=.006,bevel_seg=1))
+        panel=box("RecessedServicePanel",(.306,.146,.002),(mid,.63,sz*.2428),bevel_w=.003,bevel_seg=1)
+        for y in (.615,.645):
+            for dx in (-.08,0,.08):
+                for obj in (side,panel):
+                    cut(obj,box("HoodVent",(.052,.011,.05),(mid+dx,y,sz*.235),bevel_w=.004,bevel_seg=1))
+        for x in (.93,1.17):
+            for y in (.575,.685):
+                cut(panel,cyl("ServiceCounterbore",.009,.012,(x,y,sz*.243),rot=(math.pi/2,0,0),verts=16))
+                z_socket("ServiceSocket",x,y,sz*.2424)
+        add(side,"body")
+        add(panel,"graphite")
+        add(box("VentLiner",(.28,.10,.002),(mid,.63,sz*.2235),bevel_w=.002),"base")
         add(box(f"HoodJamb{sz}", (0.03, top - belt + 0.03, 0.03), loc=(x0, (top + belt) / 2, sz * 0.235), bevel_w=0.004, bevel_seg=1), "graphite")
     add(box("HoodRoof", (x1 - x0 + 0.02, 0.02, 0.5), loc=(mid, top + 0.01, 0), bevel_w=0.005, bevel_seg=1), "body")
     add(box("HoodBack", (0.02, top - belt + 0.03, 0.47), loc=(x1, (top + belt) / 2, 0)), "body")
