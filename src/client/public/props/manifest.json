@@ -104,6 +104,19 @@
     "url": "/props/executive-desk.glb",
     "width": 2.6
   },
+  "floor-ladder": {
+    "bytes": 10736,
+    "depth": 1.0,
+    "height": 1.045,
+    "materials": 3,
+    "tags": [
+      "architecture",
+      "ladder"
+    ],
+    "triangles": 748,
+    "url": "/props/floor-ladder.glb",
+    "width": 0.205
+  },
   "jukebox": {
     "bytes": 74016,
     "depth": 0.838,

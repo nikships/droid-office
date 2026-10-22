@@ -1617,6 +1617,52 @@ def build_droid_computer():
     return body, [("Shell", raw(shell), shell_mat)]
 
 
+@prop("floor-ladder", "architecture", "ladder", recenter=False, multipart=True)
+def build_floor_ladder():
+    """Unit-length rail/rung and rail-local wall mount, assembled on the existing rung grid."""
+    steel = material("LadderSteel", "#c0c0c0", roughness=0.45, metallic=0.8)
+    rung_mat = material("LadderRungs", "#eaeaea", roughness=0.32, metallic=0.85)
+    hardware = material("LadderHardware", "#70767b", roughness=0.35, metallic=0.85)
+    def profile(half, radius):
+        points = []
+        for cx, cz, start in ((half-radius,half-radius,0),(-half+radius,half-radius,90),(-half+radius,-half+radius,180),(half-radius,-half+radius,270)):
+            for step in range(4):
+                a = math.radians(start + step * 30)
+                points.append((cx + radius * math.cos(a), cz + radius * math.sin(a)))
+        return points
+    outer, inner = profile(0.035, 0.007), profile(0.027, 0.003)
+    vertices = [(x,y,z) for y in (0,1) for ring in (outer,inner) for x,z in ring]
+    faces = []
+    n = len(outer)
+    for i in range(n):
+        j = (i+1) % n
+        faces += [(i,2*n+i,2*n+j,j),(n+i,n+j,3*n+j,3*n+i),(i,j,n+j,n+i),(2*n+i,3*n+i,3*n+j,2*n+j)]
+    data = bpy.data.meshes.new("HollowRailProfile")
+    data.from_pydata(vertices, [], faces); data.update()
+    rail = bpy.data.objects.new("LadderRail", data)
+    bpy.context.collection.objects.link(rail)
+    smooth_obj(rail)
+    for face in data.polygons:
+        if max(abs(v) for v in face.normal) > 0.999:
+            face.use_smooth = False
+    rail_parts = [(rail, steel)]
+    rod = smooth_obj(cyl("LadderRung", 0.03, 1, rot=(math.pi/2,0,0), verts=16))
+    rung_parts = [(rod, rung_mat)]
+    for z in (-0.45,0.45):
+        rung_parts.append((smooth_obj(cyl("WeldCollar", 0.0345, 0.02, loc=(0,0,z), rot=(math.pi/2,0,0), verts=12)), steel))
+    mount = box("LadderMount", (0.18,0.05,0.05), loc=(-0.08,0,0), bevel_w=0.003, bevel_seg=2)
+    cut(mount, box("MountBore", (0.20,0.034,0.034), loc=(-0.08,0,0)))
+    plate = box("WallPlate", (0.02,0.09,0.07), loc=(-0.16,0,0), bevel_w=0.002, bevel_seg=2)
+    mount_parts = [(mount,steel),(plate,steel)]
+    for y in (-0.035,0.035):
+        cut(plate, cyl("AnchorCounterbore", 0.007, 0.008, loc=(-0.149,y,0), rot=(0,0,math.pi/2), verts=12))
+        head = cyl("AnchorSocket", 0.006, 0.002, loc=(-0.152,y,0), rot=(0,0,math.pi/2), verts=12)
+        cut(head, cyl("HexDrive", 0.0028, 0.002, loc=(-0.1508,y,0), rot=(0,0,math.pi/2), verts=6))
+        smooth_obj(head)
+        mount_parts.append((head,hardware))
+    return [], [("LadderRail",loose(rail_parts),None),("LadderRung",loose(rung_parts),None),("LadderMount",loose(mount_parts),None)]
+
+
 # The arm's links, in metres: each joint's pivot sits on the previous link's +Y axis.
 ARM = {
     "pedestal": 0.44,  # yaw axis origin, on top of the pedestal cap

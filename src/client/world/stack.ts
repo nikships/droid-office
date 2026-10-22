@@ -302,6 +302,9 @@ export function buildStack(colliders: Collider[], planks: THREE.Material): Stack
   for (let y = 0.9; y < WALL_HEIGHT - 0.4; y += 1.5) for (const s of [-1, 1]) ladderMain.add(mesh(new THREE.BoxGeometry(0.18, 0.05, 0.05), steel, FLOOR.minX + 0.08, y, LADDER.z + (s * LADDER.width) / 2));
   const ladderBelow = ladderPart(-2.2, 0);
   const ladderAbove = ladderPart(WALL_HEIGHT, WALL_HEIGHT + 2.2);
+  ladderMain.name = 'floor-ladder-main';
+  ladderBelow.name = 'floor-ladder-below';
+  ladderAbove.name = 'floor-ladder-above';
   ladder.add(ladderMain, ladderBelow, ladderAbove);
   // A stripe of hazard paint on the floor in front of it.
   const stripe = new THREE.Group();

@@ -1,5 +1,7 @@
 # How it works
 
+- **Inter-floor ladder.** Blender's `floor-ladder.glb` supplies shared hollow rail, rounded rung/weld-collar and recessed wall-anchor parts for the original main run and both 2.2 m extensions. Installation follows the original rail centres, 0.3 m rung grid and 0.03 m grip radius, then batches solids by toon metal material before shader warm-up/GI. The section groups and visibility, player grips, collider, invisible picking box, hazard stripe, hatches, floor-name signs and climb/floor-change code stay unchanged. Incomplete assets retain all procedural runs.
+
 - **Lounge sofa.** Blender's `lounge-sofa.glb` replaces only the lounge couch's named static group, before shader warm-up and the light bake. Its three shaped seats, back cushions, piping, upholstered arm panels, throw pillows and steel plinth match the existing casework and +x facing. The original three seated-player anchors, picking and collider remain unchanged. Imported materials use the office's toon pipeline; a missing or incomplete asset keeps the procedural couch.
 
 - **Task chairs.** `task-chair.glb`, authored in `tools/props/generate.py` through Blender, replaces the procedural task chairs once props load, before shader warm-up and the light bake. The sculpted upholstery, arms and twin-wheel casters share geometry and toon materials across desks. Only each chair group's contents change: swivel transforms, worker seat anchors, desks and collisions stay unchanged. A failed asset load keeps the procedural chair.
