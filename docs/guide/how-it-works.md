@@ -1,5 +1,7 @@
 # How it works
 
+- **Droid Computer rack frame.** Blender's `droid-rack.glb` replaces only the existing low plinth/backboard group before shader warm-up/GI. Its hollow case, recessed socket hardware, removable end caps and flush between-cube cable ports retain the original envelope and 0.14 m support surface. Its local geometry mounts from `DROID_RACK`; the original collider, three cube mounts, account-fed screens/LEDs, labels, glow planes and compute-wall interaction remain unchanged. Solids convert to toon paint/metal/rubber; missing assets keep the procedural frame.
+
 - **Lounge sofa.** Blender's `lounge-sofa.glb` replaces only the lounge couch's named static group, before shader warm-up and the light bake. Its three shaped seats, back cushions, piping, upholstered arm panels, throw pillows and steel plinth match the existing casework and +x facing. The original three seated-player anchors, picking and collider remain unchanged. Imported materials use the office's toon pipeline; a missing or incomplete asset keeps the procedural couch.
 
 - **Task chairs.** `task-chair.glb`, authored in `tools/props/generate.py` through Blender, replaces the procedural task chairs once props load, before shader warm-up and the light bake. The sculpted upholstery, arms and twin-wheel casters share geometry and toon materials across desks. Only each chair group's contents change: swivel transforms, worker seat anchors, desks and collisions stay unchanged. A failed asset load keeps the procedural chair.
