@@ -1083,6 +1083,78 @@ def paint(obj, palette, swatch):
     return obj
 
 
+@prop("jukebox", "furniture", "hero", recenter=False, multipart=True)
+def build_jukebox():
+    """Graphite jukebox with chrome arch, real speakers and a separately animated light tube."""
+    paint = material("JukeboxPaint", "#45494e", roughness=.45, metallic=.25)
+    steel = material("JukeboxSteel", "#b9c2ca", roughness=.24, metallic=.9)
+    dark = material("JukeboxRubber", "#202327", roughness=.9)
+    cone_mat = material("JukeboxSpeaker", "#41454a", roughness=.85)
+    orange = material("JukeboxSignal", "#ee6018", roughness=.55)
+    tube_mat = material("JukeboxTube", "#ee6018", roughness=.3, emission="#ee6018", emission_strength=.45)
+    parts = []
+    outline = [(-.65,.08),(.65,.08),(.65,1.20)]
+    outline += [(.65 * math.cos(i * math.pi / 40), 1.20 + .65 * math.sin(i * math.pi / 40)) for i in range(1,41)]
+    vertices = [(x,y,z) for z in (-.35,.35) for x,y in outline]
+    n=len(outline)
+    faces = [tuple(reversed(range(n))),tuple(range(n,2*n))]
+    faces += [(i,(i+1)%n,(i+1)%n+n,i+n) for i in range(n)]
+    cabinet=mesh_object("ArchedCabinet",vertices,faces)
+    bm=bmesh.new()
+    bm.from_mesh(cabinet.data)
+    bmesh.ops.recalc_face_normals(bm,faces=bm.faces)
+    bm.to_mesh(cabinet.data)
+    bm.free()
+    bevel(cabinet,.012,3)
+    smooth_obj(cabinet)
+    parts += [(cabinet,paint),
+        (box("Plinth",(1.38,.10,.79),(0,.05,0),bevel_w=.018,bevel_seg=3),dark),
+        (box("PlinthInlay",(1.30,.016,.02),(0,.10,.396),bevel_w=.006),steel),
+    ]
+    def arch(radius,z):
+        return [(-radius,.30,z),(-radius,1.20,z)] + [
+            (radius*math.cos(math.pi-i*math.pi/32),1.20+radius*math.sin(math.pi-i*math.pi/32),z)
+            for i in range(1,33)
+        ] + [(radius,.30,z)]
+    parts.append((tube_path("ChromeArch",arch(.60,.375),.017,sides=8,frame_axis=(0,0,1)),steel))
+    parts.append((tube_path("InnerArch",arch(.505,.372),.012,sides=8,frame_axis=(0,0,1)),steel))
+    # Recess and bezel sit behind the existing .82 x .41 live screen, at y=1.22,z=.40.
+    parts.append((box("DisplayRecess",(.89,.48,.035),(0,1.22,.366),bevel_w=.018,bevel_seg=3),dark))
+    for x in (-.435,.435):
+        parts.append((box("DisplaySide",(.018,.45,.012),(x,1.22,.390),bevel_w=.005),steel))
+    for y in (.992,1.448):
+        parts.append((box("DisplayEdge",(.87,.015,.012),(0,y,.390),bevel_w=.005),steel))
+    parts.append((box("ControlFascia",(.86,.11,.028),(0,.94,.369),bevel_w=.014),paint))
+    for i in range(5):
+        x=(i-2)*.14
+        parts.append((torus("ButtonBezel",.038,.005,(x,.955,.400),major_segs=16,minor_segs=5),steel))
+        parts.append((cyl("SelectorButton",.031,.025,(x,.955,.400),rot=(math.pi/2,0,0),verts=20,bevel_w=.004),orange if i==2 else dark))
+    parts.append((box("CoinPlate",(.085,.10,.012),(.46,.96,.373),bevel_w=.006),steel))
+    parts.append((box("CoinSlot",(.012,.06,.005),(.46,.965,.382),bevel_w=.004),dark))
+    # Actual speaker diaphragms behind a fine, open louver grille.
+    parts.append((box("SpeakerRecess",(.86,.53,.022),(0,.57,.360),bevel_w=.016),dark))
+    for x in (-.215,.215):
+        parts.append((cyl("SpeakerSurround",.18,.022,(x,.58,.378),rot=(math.pi/2,0,0),verts=32),dark))
+        parts.append((cone("SpeakerCone",.15,.075,.035,(x,.58,.395),rot=(math.pi/2,0,0),verts=24),cone_mat))
+        parts.append((sphere("DustCap",.06,(x,.58,.414),segs=16,rings=8,scale=(1,1,.35)),dark))
+    for i in range(12):
+        parts.append((box("GrilleLouver",(.82,.008,.012),(0,.325+i*.044,.430),bevel_w=.003,bevel_seg=1),steel))
+    for x in (-.41,0,.41):
+        parts.append((box("GrilleRib",(.009,.50,.012),(x,.57,.437),bevel_w=.003,bevel_seg=1),paint))
+    for x in (-.44,.44):
+        for y in (.29,.86):
+            parts.append((cyl("GrilleScrew",.007,.008,(x,y,.383),rot=(math.pi/2,0,0),verts=6),steel))
+    # Rear service panel, screws and cooling slots are real geometry as well.
+    parts.append((box("RearServicePanel",(.87,1.0,.012),(0,.66,-.357),bevel_w=.012),dark))
+    for y in (.42,.47,.52,.57):
+        parts.append((box("RearVent",(.54,.018,.006),(0,y,-.367),bevel_w=.004),paint))
+    for x in (-.39,.39):
+        for y in (.21,1.11):
+            parts.append((cyl("RearScrew",.008,.006,(x,y,-.369),rot=(math.pi/2,0,0),verts=6),steel))
+    neon = [(tube_path("Diffuser",arch(.55,.395),.035,sides=12,frame_axis=(0,0,1)),tube_mat)]
+    return [],[("JukeboxCabinet",loose(parts),None),("JukeboxNeon",loose(neon),None)]
+
+
 @prop("task-chair", "furniture", "seating", recenter=False)
 def build_task_chair():
     """Ergonomic task chair; seat at .55 m, back on +z, swivel axis at the origin."""
@@ -1188,7 +1260,7 @@ def mesh_object(name, vertices, faces):
     return obj
 
 
-def tube_path(name, points, radius, sides=8, closed=False):
+def tube_path(name, points, radius, sides=8, closed=False, frame_axis=None):
     """A low-poly swept tube along `points`, for cables and handles."""
     points = [Vector(p) for p in points]
     vertices, faces = [], []
@@ -1196,7 +1268,8 @@ def tube_path(name, points, radius, sides=8, closed=False):
         previous = points[(i - 1) % len(points)] if closed or i else point
         following = points[(i + 1) % len(points)] if closed or i < len(points) - 1 else point
         tangent = (following - previous).normalized()
-        axis = Vector((1, 0, 0)) if abs(tangent.x) < 0.9 else Vector((0, 1, 0))
+        # A planar arch can use its plane normal, avoiding a frame flip near horizontal.
+        axis = Vector(frame_axis) if frame_axis is not None else (Vector((1, 0, 0)) if abs(tangent.x) < 0.9 else Vector((0, 1, 0)))
         normal = tangent.cross(axis).normalized()
         bitangent = tangent.cross(normal).normalized()
         for j in range(sides):

@@ -16,6 +16,8 @@ export interface JukeboxView {
   interactable: Interactable;
   /** What the display says, and whether the lights are on. */
   show(on: boolean, title: string): void;
+  /** Install the Blender cabinet and tube without replacing the live screen or music state. */
+  setModel(source: THREE.Object3D): boolean;
   /** `beat` runs 1 → 0 after each beat while music plays (see OfficeSound.beat). */
   update(t: number, dt: number, beat: number): void;
 }
@@ -26,6 +28,9 @@ export function buildJukebox(): JukeboxView {
   const { width: W, depth: D, height: H } = JUKEBOX;
   const r = W / 2;
   const group = new THREE.Group();
+  const cabinet = new THREE.Group();
+  const tube = new THREE.Group();
+  group.add(cabinet, tube);
 
   // The cabinet: a tombstone shape, straight sides under a half-round top.
   const shape = new THREE.Shape();
@@ -36,8 +41,8 @@ export function buildJukebox(): JukeboxView {
   shape.lineTo(-r, 0);
   const body = new THREE.ExtrudeGeometry(shape, { depth: D, bevelEnabled: true, bevelThickness: 0.03, bevelSize: 0.03, bevelSegments: 2, curveSegments: 24 });
   body.translate(0, 0, -D / 2);
-  group.add(mesh(body, toon('#1c1c1c')));
-  group.add(mesh(new THREE.BoxGeometry(W + 0.12, 0.1, D + 0.12), toon('#0a0a0a'), 0, 0.05, 0));
+  cabinet.add(mesh(body, toon('#1c1c1c')));
+  cabinet.add(mesh(new THREE.BoxGeometry(W + 0.12, 0.1, D + 0.12), toon('#0a0a0a'), 0, 0.05, 0));
 
   const front = D / 2 + 0.035;
   // The LED tube: up one side, over the arch and down the other.
@@ -45,8 +50,8 @@ export function buildJukebox(): JukeboxView {
   neon.emissive = new THREE.Color('#5a2208');
   const tubeR = r - 0.1;
   const legLen = H - r - 0.3;
-  group.add(mesh(new THREE.TorusGeometry(tubeR, 0.045, 8, 36, Math.PI), neon, 0, H - r, front));
-  for (const sx of [-1, 1]) group.add(mesh(new THREE.CylinderGeometry(0.045, 0.045, legLen, 8), neon, sx * tubeR, 0.3 + legLen / 2, front));
+  tube.add(mesh(new THREE.TorusGeometry(tubeR, 0.045, 8, 36, Math.PI), neon, 0, H - r, front));
+  for (const sx of [-1, 1]) tube.add(mesh(new THREE.CylinderGeometry(0.045, 0.045, legLen, 8), neon, sx * tubeR, 0.3 + legLen / 2, front));
 
   // The display in the arch: what's playing.
   const canvas = document.createElement('canvas');
@@ -60,9 +65,9 @@ export function buildJukebox(): JukeboxView {
   group.add(screen);
 
   // Selector buttons, and the speaker grille below them.
-  ['#3a3a3a', '#3a3a3a', '#ee6018', '#3a3a3a', '#3a3a3a'].forEach((c, i) => group.add(mesh(roundedBox(0.1, 0.05, 0.05, 0.008), toon(c), (i - 2) * 0.14, 0.98, front)));
-  group.add(mesh(new THREE.BoxGeometry(0.82, 0.52, 0.03), toon('#0a0a0a'), 0, 0.58, front - 0.01));
-  for (let i = 0; i < 5; i++) group.add(mesh(new THREE.BoxGeometry(0.78, 0.035, 0.03), toon('#2a2a2a'), 0, 0.38 + i * 0.1, front + 0.01));
+  ['#3a3a3a', '#3a3a3a', '#ee6018', '#3a3a3a', '#3a3a3a'].forEach((c, i) => cabinet.add(mesh(roundedBox(0.1, 0.05, 0.05, 0.008), toon(c), (i - 2) * 0.14, 0.98, front)));
+  cabinet.add(mesh(new THREE.BoxGeometry(0.82, 0.52, 0.03), toon('#0a0a0a'), 0, 0.58, front - 0.01));
+  for (let i = 0; i < 5; i++) cabinet.add(mesh(new THREE.BoxGeometry(0.78, 0.035, 0.03), toon('#2a2a2a'), 0, 0.38 + i * 0.1, front + 0.01));
 
   // Notes drift up out of the top while it plays.
   const notes = NOTES.map((n, i) => {
@@ -141,5 +146,38 @@ export function buildJukebox(): JukeboxView {
     });
   };
 
-  return { group, collider, interactable, show, update };
+  return {
+    group,
+    collider,
+    interactable,
+    show,
+    update,
+    setModel(source) {
+      const body = source.getObjectByName('JukeboxCabinet');
+      const light = source.getObjectByName('JukeboxNeon');
+      if (!body || !light) return false;
+      const materials = new Map<THREE.Material, THREE.Material>();
+      const models = [body, light].map((part) => {
+        const copy = part.clone(true);
+        copy.traverse((object) => {
+          if (!(object instanceof THREE.Mesh)) return;
+          const convert = (src: THREE.MeshStandardMaterial) => {
+            let out = materials.get(src);
+            if (!out) {
+              out = src.name === 'JukeboxTube' ? neon : toon(src.color, /Rubber|Speaker/.test(src.name) ? {} : { finish: src.metalness > 0.5 ? 'metal' : 'paint' });
+              materials.set(src, out);
+            }
+            return out;
+          };
+          object.material = Array.isArray(object.material) ? object.material.map(convert) : convert(object.material);
+        });
+        return copy;
+      });
+      cabinet.clear();
+      tube.clear();
+      cabinet.add(models[0]);
+      tube.add(models[1]);
+      return true;
+    },
+  };
 }
