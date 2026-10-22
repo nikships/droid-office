@@ -117,6 +117,32 @@
     "url": "/props/jukebox.glb",
     "width": 1.38
   },
+  "loft-couch": {
+    "bytes": 28836,
+    "depth": 2.5065,
+    "height": 0.98,
+    "materials": 6,
+    "tags": [
+      "furniture",
+      "seating"
+    ],
+    "triangles": 4932,
+    "url": "/props/loft-couch.glb",
+    "width": 1.1
+  },
+  "lounge-beanbag": {
+    "bytes": 37900,
+    "depth": 1.1886,
+    "height": 0.6896,
+    "materials": 5,
+    "tags": [
+      "furniture",
+      "seat"
+    ],
+    "triangles": 7216,
+    "url": "/props/lounge-beanbag.glb",
+    "width": 1.1829
+  },
   "lounge-sofa": {
     "bytes": 32656,
     "depth": 4.3065,

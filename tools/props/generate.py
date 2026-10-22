@@ -1336,6 +1336,73 @@ def build_jukebox():
     return [],[("JukeboxCabinet",loose(parts),None),("JukeboxNeon",loose(neon),None)]
 
 
+@prop("loft-couch", "furniture", "seating", recenter=False)
+def build_loft_couch():
+    """The compact two-place couch faces -x, opposite the lounge's long sofa."""
+    fabric=material("LoftFabric","#87898c",roughness=.96,sheen=.25)
+    back=material("LoftBackShell","#85898c",roughness=.96,sheen=.25)
+    seam=material("LoftWelt","#555b61",roughness=.9)
+    steel=material("LoftSteel","#62686e",roughness=.4,metallic=.75)
+    light=material("LoftPillow","#deded8",roughness=.98,sheen=.3)
+    orange=material("LoftOrange","#ee6018",roughness=.85)
+    parts=[]
+    def add(obj,mat):
+        parts.append((obj,mat))
+        return raw(obj)
+    def welt(name,points,normal,mat):
+        axis=Vector(normal)
+        rings=[]
+        for i,p in enumerate(points):
+            tangent=(Vector(points[(i+1)%len(points)])-Vector(points[i-1])).normalized()
+            radial=tangent.cross(axis).normalized()
+            rings.append([Vector(p)+.0025*(axis*math.cos(j*math.tau/5)+radial*math.sin(j*math.tau/5)) for j in range(5)])
+        return add(loft(name,rings+[rings[0]],bottom=False,top=False,recalc=True),mat)
+    def padded(name,size,loc,mat,axis="y"):
+        start=len(parts)
+        w,h,d=size
+        a,t=(w,h) if axis=="y" else (h,w)
+        rings=[]
+        for u,s in [(-.5,.82),(-.39,.96),(-.18,1),(.18,1),(.39,.96),(.5,.82)]:
+            ring=rrect(-a*s/2,a*s/2,-d*s/2,d*s/2,min(a,d)*.16*s,t*u,k=4)
+            rings.append([(x+loc[0],y+loc[1],z+loc[2]) if axis=="y" else (y+loc[0],x+loc[1],z+loc[2]) for x,y,z in ring])
+        add(loft(name,rings,recalc=True),mat)
+        s=1 if axis=="y" else .96
+        ring=rrect(-a*s/2,a*s/2,-d*s/2,d*s/2,min(a,d)*.16*s,0 if axis=="y" else -t*.39,k=4)
+        points=[(x+loc[0],y+loc[1],z+loc[2]) if axis=="y" else (y+loc[0],x+loc[1],z+loc[2]) for x,y,z in ring]
+        welt(name+"Piping",points,(0,1,0) if axis=="y" else (1,0,0),seam)
+        return [raw(obj) for obj,_ in parts[start:]]
+    add(box("LoftCouch",(.92,.10,2.30),(0,.11,0),bevel_w=.012),steel)
+    for x in (-.36,.36):
+        for z in (-1.03,1.03):
+            add(box("SteelFoot",(.07,.09,.10),(x,.045,z),bevel_w=.008),steel)
+            add(box("FloorGlide",(.072,.012,.102),(x,.006,z),bevel_w=.004),seam)
+    add(box("UpholsteredRail",(.98,.20,2.38),(0,.27,0),bevel_w=.045,bevel_seg=3),fabric)
+    add(box("BackFrame",(.28,.82,2.40),(.46,.57,0),bevel_w=.05,bevel_seg=3),back)
+    for z in (-.485,.485):
+        padded("SeatCushion",(.78,.18,.94),(-.08,.44,z),fabric)
+        objects=padded("BackCushion",(.20,.44,.94),(.28,.73,z),fabric,"x")
+        center=Vector((.28,.73,z))
+        transform=Matrix.Translation(center) @ Matrix.Rotation(-.10,4,"Z") @ Matrix.Translation(-center)
+        for obj in objects:
+            obj.matrix_world=transform @ obj.matrix_world
+        for dz in (-.22,.22):
+            add(x_cyl("UpholsteryButton",.011,.003,(.178,.73,z+dz),verts=12),seam)
+    for side in (-1,1):
+        add(box("Armrest",(1,.62,.30),(0,.43,side*1.10),bevel_w=.065,bevel_seg=4),fabric)
+        points=[(x,z,side*1.251) for x,_,z in rrect(-.42,.42,.20,.66,.055,0,k=4)]
+        welt("ArmPanelSeam",points,(0,0,1),seam)
+    center=Vector((.13,.72,.43))
+    objects=padded("ThrowPillow",(.17,.36,.46),center,light,"x")
+    transform=Matrix.Translation(center) @ Matrix.Rotation(.14,4,"X") @ Matrix.Rotation(-.18,4,"Z") @ Matrix.Translation(-center)
+    for obj in objects:
+        obj.matrix_world=transform @ obj.matrix_world
+    add(box("OrangeFrontStitch",(.003,.009,2.0),(-.491,.325,0)),orange)
+    add(box("WovenTag",(.004,.035,.055),(-.493,.29,-.84),bevel_w=.002),orange)
+    for z in (-.85,0,.85):
+        add(x_cyl("PlinthFastener",.009,.003,(-.462,.11,z),verts=12),steel)
+    return parts
+
+
 @prop("lounge-sofa", "furniture", "seating", recenter=False)
 def build_lounge_sofa():
     """Three places facing +x, matching the lounge's existing asymmetric footprint."""
@@ -2337,6 +2404,85 @@ def build_lounge_table():
     for obj,_ in parts:
         smooth_obj(obj)
     return [],[("LoungeTable",loose(parts),None)]
+
+
+@prop("lounge-beanbag", "furniture", "seat", recenter=False, multipart=True)
+def build_lounge_beanbag():
+    """An eight-gore beanbag: low +z front, raised -z back, and the existing 0.42 m hip height."""
+    fabric=material("BeanFabric","#6a6a6a",roughness=.95)
+    binding=material("BeanBinding","#393d40",roughness=.92)
+    thread=material("BeanThread","#969b9e",roughness=.9)
+    metal=material("BeanHardware","#a6afb6",roughness=.3,metallic=.85)
+    orange=material("BeanSignal","#ee6018",roughness=.8)
+    parts=[]
+    def add(obj,mat):
+        parts.append((obj,mat))
+        return raw(obj)
+    profile=catmull_rom([(0,.012,0),(.25,.022,0),(.46,.065,0),(.565,.14,0),
+        (.59,.25,0),(.585,.355,.09),(.53,.405,.20),(.45,.400,.30),
+        (.34,.38,.23),(.24,.37,.10),(.12,.375,.01),(0,.375,0)],steps=2)
+    def surface(a,v):
+        v=max(0,min(len(profile)-1,v))
+        i=min(int(v),len(profile)-2)
+        f=v-i
+        r,y,lift=Vector(profile[i]).lerp(Vector(profile[i+1]),f)
+        env=math.sin(math.pi*v/(len(profile)-1))
+        r+=env*(.0025*math.sin(13*a+.8*v)-.010*math.exp(-(math.sin(4*a)/.11)**2))
+        y+=lift*(1-math.cos(a))/2+.002*env*math.sin(17*a+.5*v)
+        return Vector((r*math.sin(a),y,r*math.cos(a)))
+    def outside(a,v,offset=.001):
+        da=surface(a+.001,v)-surface(a-.001,v)
+        dv=surface(a,v+.001)-surface(a,v-.001)
+        return surface(a,v)+da.cross(dv).normalized()*offset
+    segments=64
+    vertices=[surface(i*math.tau/segments,j) for j in range(len(profile)) for i in range(segments)]
+    faces=[]
+    for j in range(len(profile)-1):
+        for i in range(segments):
+            a,b=j*segments+i,j*segments+(i+1)%segments
+            c,d=(j+1)*segments+(i+1)%segments,(j+1)*segments+i
+            faces.append((a,c,d) if j==0 else (a,b,d) if j==len(profile)-2 else (a,b,c,d))
+    add(solid_mesh("ShapedFabric",vertices,faces),fabric)
+    stitches,stitch_faces=[],[]
+    for panel in range(8):
+        a=panel*math.tau/8
+        add(tube_path("PanelWelt",[outside(a,j,.001) for j in range(2,21)],.0018,sides=5),binding)
+        for j in range(2,20):
+            for k in range(6):
+                v=j+(k+.5)/6
+                start=len(stitches)
+                stitches.extend([outside(a+da,v+dv,.0022) for da,dv in
+                    ((.007,-.045),(.010,-.045),(.010,.045),(.007,.045))])
+                stitch_faces.append(tuple(range(start,start+4)))
+    add(mesh_object("SaddleStitches",stitches,stitch_faces),thread)
+    add(tube_path("SeatPanelWelt",[outside(i*math.tau/64,20) for i in range(64)],.0018,sides=5,closed=True),binding)
+    tape_vertices=[]
+    for i in range(17):
+        a=math.pi-.30+i*.60/16
+        tape_vertices.extend((outside(a,9.82),outside(a,10.18)))
+    add(mesh_object("ZipperTape",tape_vertices,[(2*i,2*i+2,2*i+3,2*i+1) for i in range(16)]),binding)
+    for i in range(28):
+        a=math.pi-.27+i*.54/27
+        add(box("ZipperTooth",(.0045,.006,.004),outside(a,10+(.025 if i%2 else -.025),.003),rot=(0,a,0)),metal)
+    add(torus("ZipperPull",.008,.0015,(.13,.431,-.594),major_segs=12,minor_segs=4),metal)
+    add(box("OrangePullTab",(.024,.035,.006),(.13,.409,-.594),bevel_w=.003),orange)
+    handle=[outside(math.pi+.12,11.8),Vector((-.07,.65,-.565)),Vector((-.04,.68,-.575)),
+        Vector((.04,.68,-.575)),Vector((.07,.65,-.565)),outside(math.pi-.12,11.8)]
+    handle=[Vector(p) for p in catmull_rom(handle,steps=3)]
+    handle_vertices,handle_faces=[],[]
+    for i,p in enumerate(handle):
+        tangent=(handle[min(i+1,len(handle)-1)]-handle[max(i-1,0)]).normalized()
+        width=Vector((-tangent.y,tangent.x,0)).normalized()*.010
+        depth=Vector((0,0,.003))
+        handle_vertices.extend((p+width+depth,p-width+depth,p-width-depth,p+width-depth))
+    for i in range(len(handle)-1):
+        for k in range(4):
+            handle_faces.append((4*i+k,4*i+(k+1)%4,4*(i+1)+(k+1)%4,4*(i+1)+k))
+    handle_faces.extend(((3,2,1,0),tuple(range(len(handle_vertices)-4,len(handle_vertices)))))
+    add(solid_mesh("WebbingHandle",handle_vertices,handle_faces),binding)
+    for obj,_ in parts:
+        smooth_obj(obj)
+    return [],[("LoungeBeanbag",loose(parts),None)]
 
 
 @prop("droid-team-kit", "factory", "part", recenter=False, multipart=True, keep_uvs=True, draco=False)
