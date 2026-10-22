@@ -730,6 +730,65 @@ def keycap(name, x0, x1, z0, z1):
     return obj
 
 
+@prop("agent-kiosk", "furniture", "station", recenter=False)
+def build_agent_kiosk():
+    """Board-agent counter, .8 x .52 m and exactly .55 m high; front is -z."""
+    paint=material("KioskPaint","#72777d",roughness=.6,metallic=.2)
+    steel=material("KioskSteel","#a1aab3",roughness=.3,metallic=.85)
+    rubber=material("KioskRubber","#24282d",roughness=.9)
+    signal=material("KioskSignal","#ee6018",roughness=.6,emission="#ee6018",emission_strength=1)
+    parts=[]
+    def add(obj,mat):
+        parts.append((obj,mat))
+        return raw(obj)
+    body=loft("AgentKiosk",[
+        rrect(-.31,.31,-.18,.18,.018,.06,k=4),
+        rrect(-.32,.32,-.19,.19,.018,.495,k=4),
+    ])
+    add(body,paint)
+    # Real ventilation cuts in both flanks, with recessed dark liners.
+    cutters=[]
+    for sx in (-1,1):
+        for i in range(7):
+            z=-.105+i*.035
+            cutters.append(box("VentCut",(.13,.085,.012),(sx*.315,.17,z),bevel_w=.005,bevel_seg=2))
+            add(box("VentLiner",(.001,.083,.010),(sx*.251,.17,z)),rubber)
+    cut(body,*cutters)
+    add(box("Plinth",(.78,.045,.52),(0,.0375,0),bevel_w=.012,bevel_seg=3),rubber)
+    for sx in (-1,1):
+        for sz in (-1,1):
+            add(box("LevelingFoot",(.09,.015,.09),(sx*.29,.0075,sz*.16),bevel_w=.005),rubber)
+    top=box("Countertop",(.80,.05,.50),(0,.525,0),bevel_w=.018,bevel_seg=3)
+    cut(top,*[y_cyl("CablePortCut",.021,.09,(x,.53,.13),verts=24) for x in (-.28,.28)])
+    add(top,steel)
+    add(box("CounterApron",(.70,.042,.41),(0,.493,0),bevel_w=.009),paint)
+    for x in (-.28,.28):
+        add(torus("CablePortRim",.021,.0025,(x,.5475,.13),rot=(math.pi/2,0,0),major_segs=24,minor_segs=6),steel)
+        add(y_cyl("PortLiner",.018,.025,(x,.525,.13),verts=24),rubber)
+        add(box("PortSlot",(.019,.002,.006),(x,.539,.13),bevel_w=.002),paint)
+    # The real station label stays at z=-.202, in front of this empty mounting plate.
+    add(box("SignMount",(.62,.20,.008),(0,.3025,-.189),bevel_w=.008),rubber)
+    for x in (-.285,.285):
+        for y in (.2225,.3825):
+            add(cyl("SignFastener",.005,.003,(x,y,-.195),rot=(math.pi/2,0,0),verts=8),steel)
+    add(box("LightRecess",(.60,.023,.012),(0,.477,-.205),bevel_w=.006),rubber)
+    add(box("OrangeDiffuser",(.56,.012,.003),(0,.477,-.213),bevel_w=.003),signal)
+    # Rear service access, a hinge, a slotted lock and replaceable panel fasteners.
+    add(box("ServicePanel",(.48,.32,.008),(0,.275,.191),bevel_w=.010),rubber)
+    add(box("ServiceInset",(.445,.285,.004),(0,.275,.197),bevel_w=.008),paint)
+    for y in (.18,.37):
+        add(y_cyl("ServiceHinge",.008,.04,(-.24,y,.202),verts=12),steel)
+    add(cyl("ServiceLock",.014,.005,(.18,.28,.202),rot=(math.pi/2,0,0),verts=20),steel)
+    add(box("LockSlot",(.003,.017,.002),(.18,.28,.205)),rubber)
+    for x in (-.205,.205):
+        for y in (.15,.40):
+            add(cyl("PanelScrew",.005,.003,(x,y,.201),rot=(math.pi/2,0,0),verts=8),steel)
+    for sx in (-1,1):
+        add(box("CornerTrim",(.009,.36,.018),(sx*.316,.285,-.162),bevel_w=.003),steel)
+        add(box("BaseTrim",(.010,.015,.31),(sx*.324,.075,0),bevel_w=.003),steel)
+    return parts
+
+
 @prop("bookshelf", "furniture", "hero", recenter=False)
 def build_bookshelf():
     """Five-bay documentation library, leaving the fourth shelf's right .5 m for live AutoWiki."""

@@ -1008,7 +1008,9 @@ function buildKiosk(def: DeskDef): DeskView {
   body.add(mesh(roundedBox(width - 0.02, 0.06, depth + 0.02, 0.02), toon(PALETTE.ink), 0, 0.03, 0));
   body.add(mesh(roundedBox(width, 0.05, depth, 0.02), toon(PALETTE.steel), 0, height - 0.025, 0));
   body.add(mesh(box(width - 0.24, 0.014, 0.01), toon(PALETTE.accent, { emissive: PALETTE.accent }), 0, height - 0.08, -(depth - 0.12) / 2 - 0.004));
-  group.add(mergeByMaterial(body));
+  const kiosk = mergeByMaterial(body);
+  kiosk.name = 'agent-kiosk';
+  group.add(kiosk);
   const sign = textPlane(KIOSK_SIGN[kind], { bg: '#0a0a0a', color: '#eeeeee', border: '#2f2f2f', size: 56 });
   sign.scale.multiplyScalar(0.62);
   sign.position.set(0, height * 0.55, -(depth - 0.12) / 2 - 0.012);

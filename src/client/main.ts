@@ -53,6 +53,7 @@ import { Climber, type Arrival, type Grip, type Way } from './climb';
 import { buildOffice, type DeskView, type InteractKind, type Interactable } from './world/office';
 import { installTaskChairs } from './world/task-chair';
 import { installLoungeSofa } from './world/lounge-sofa';
+import { installAgentKiosks } from './world/agent-kiosk';
 import { loadPropManifest, preloadProps, propManifest, propScene } from './world/props';
 import { buildRooftop, type Rooftop } from './world/rooftop';
 import { ROOF, ROOF_NAME } from '../shared/rooftop';
@@ -211,6 +212,12 @@ const propsReady = loadPropManifest()
     if (jukebox) office.jukebox.setModel(jukebox);
     const teamKit = propScene('droid-team-kit');
     if (teamKit) setTeamKit(teamKit);
+    const agentKiosk = propScene('agent-kiosk');
+    if (agentKiosk)
+      installAgentKiosks(
+        agentKiosk,
+        STATIONS.map(({ id }) => office.desks.get(id)!.group),
+      );
     const taskChair = propScene('task-chair');
     if (taskChair)
       installTaskChairs(
