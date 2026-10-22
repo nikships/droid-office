@@ -54,6 +54,7 @@ import { buildOffice, type DeskView, type InteractKind, type Interactable } from
 import { installExecutiveDesk } from './world/executive-desk';
 import { installTaskChairs } from './world/task-chair';
 import { installLoungeSofa } from './world/lounge-sofa';
+import { installAgentKiosks } from './world/agent-kiosk';
 import { loadPropManifest, preloadProps, propManifest, propScene } from './world/props';
 import { buildRooftop, type Rooftop } from './world/rooftop';
 import { installConferenceTable } from './world/conference-table';
@@ -220,6 +221,12 @@ const propsReady = loadPropManifest()
     if (telescope) installTelescope(telescope, office.group);
     const teamKit = propScene('droid-team-kit');
     if (teamKit) setTeamKit(teamKit);
+    const agentKiosk = propScene('agent-kiosk');
+    if (agentKiosk)
+      installAgentKiosks(
+        agentKiosk,
+        STATIONS.map(({ id }) => office.desks.get(id)!.group),
+      );
     const taskChair = propScene('task-chair');
     if (taskChair)
       installTaskChairs(

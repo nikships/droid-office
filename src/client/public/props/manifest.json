@@ -1,4 +1,17 @@
 {
+  "agent-kiosk": {
+    "bytes": 29184,
+    "depth": 0.52,
+    "height": 0.55,
+    "materials": 4,
+    "tags": [
+      "furniture",
+      "station"
+    ],
+    "triangles": 4664,
+    "url": "/props/agent-kiosk.glb",
+    "width": 0.8
+  },
   "bookshelf": {
     "bytes": 61708,
     "depth": 0.47,
