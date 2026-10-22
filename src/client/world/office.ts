@@ -136,6 +136,7 @@ export interface Office {
   jukebox: JukeboxView;
   /** The bookshelf's AutoWiki volumes (world/bookshelf.ts). */
   setShelfWiki(state: ShelfWiki): void;
+  setShelfModel(source: THREE.Object3D): boolean;
   /** The ceiling, the floor, and the ladder and fire poles between the floors of the building. */
   stack: Stack;
   /** The sign over the elevator doors: which floor you're on. */
@@ -1442,6 +1443,7 @@ export function buildOffice(): Office {
     gong,
     jukebox,
     setShelfWiki: shelf.setWiki,
+    setShelfModel: shelf.setModel,
     stack,
     setProjectName,
     setLook,

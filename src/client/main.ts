@@ -200,6 +200,8 @@ const propsReady = loadPropManifest()
     if (gun) setMagnumModel(gun);
     const wand = propScene('wand');
     if (wand) setWandModel(wand);
+    const bookshelf = propScene('bookshelf');
+    if (bookshelf) office.setShelfModel(bookshelf);
     const worker = propScene('droid-worker');
     if (worker) setWorkerModel(worker);
     const teamKit = propScene('droid-team-kit');
