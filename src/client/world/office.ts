@@ -314,8 +314,10 @@ function box(w: number, h: number, d: number) {
  */
 function ledBar(length: number, drop: number, lit: THREE.Material): THREE.Group {
   const g = new THREE.Group();
-  const housing = toon(PALETTE.ink);
-  g.add(mesh(box(length, 0.07, 0.16), housing, 0, 0.035, 0));
+  const housing = new THREE.Group();
+  if (length === 3.6) housing.name = 'led-bar-housing';
+  housing.add(mesh(box(length, 0.07, 0.16), toon(PALETTE.ink), 0, 0.035, 0));
+  g.add(housing);
   g.add(mesh(box(length - 0.04, 0.02, 0.11), lit, 0, -0.005, 0));
   for (const sx of [-1, 1]) g.add(mesh(new THREE.CylinderGeometry(0.006, 0.006, drop, 3), toon(PALETTE.steel), sx * (length / 2 - 0.3), 0.07 + drop / 2, 0));
   g.add(mesh(box(0.03, 0.02, 0.02), toon(PALETTE.accent, { emissive: PALETTE.accent }), length / 2 - 0.08, 0.045, 0.085));
@@ -780,6 +782,7 @@ const PURLIN_DEPTH = 0.18;
 function buildCeiling(night: NightParts): THREE.Group {
   const H = WALL_HEIGHT;
   const g = new THREE.Group();
+  const linearHousings: THREE.Object3D[] = [];
   const fixtures = new THREE.Group();
   const steel = toon(PALETTE.steel);
   const dark = toon('#727272');
@@ -836,6 +839,10 @@ function buildCeiling(night: NightParts): THREE.Group {
     for (const dz of [-0.9, 0.9]) {
       const bar = ledBar(3.6, H - barY - 0.07, lit);
       bar.position.set(cx, barY, cz + dz);
+      const housing = bar.getObjectByName('led-bar-housing')!;
+      housing.removeFromParent();
+      housing.position.copy(bar.position);
+      linearHousings.push(housing);
       g.add(bar);
     }
   }
@@ -856,6 +863,7 @@ function buildCeiling(night: NightParts): THREE.Group {
     g.add(lamp);
   }
   const ceiling = mergeByMaterial(g);
+  ceiling.add(...linearHousings);
   ceiling.add(fixtures);
   return ceiling;
 }

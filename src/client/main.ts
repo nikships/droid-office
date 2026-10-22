@@ -54,6 +54,7 @@ import { buildOffice, type DeskView, type InteractKind, type Interactable } from
 import { installExecutiveDesk } from './world/executive-desk';
 import { installLoftCouch } from './world/loft-couch';
 import { installTaskChairs } from './world/task-chair';
+import { installLedBarHousings } from './world/led-bar';
 import { installHighBayLamps } from './world/high-bay-lamp';
 import { installLoungeSofa } from './world/lounge-sofa';
 import { installAgentKiosks } from './world/agent-kiosk';
@@ -230,6 +231,8 @@ const propsReady = loadPropManifest()
     if (telescope) installTelescope(telescope, office.group);
     const loungeTable = propScene('lounge-table');
     if (loungeTable) installLoungeTable(loungeTable, office.group);
+    const ledBar = propScene('led-bar');
+    if (ledBar) installLedBarHousings(ledBar, office.group);
     const highBayLamp = propScene('high-bay-lamp');
     if (highBayLamp) installHighBayLamps(highBayLamp, office.group);
     const balconyStool = propScene('balcony-stool');
