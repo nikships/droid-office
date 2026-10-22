@@ -143,6 +143,19 @@
     "url": "/props/executive-desk.glb",
     "width": 2.6
   },
+  "high-bay-lamp": {
+    "bytes": 32028,
+    "depth": 0.8,
+    "height": 0.34,
+    "materials": 5,
+    "tags": [
+      "ceiling",
+      "hero"
+    ],
+    "triangles": 4132,
+    "url": "/props/high-bay-lamp.glb",
+    "width": 0.8
+  },
   "jukebox": {
     "bytes": 74016,
     "depth": 0.838,

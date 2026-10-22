@@ -1743,6 +1743,63 @@ def build_droid_computer():
     return body, [("Shell", raw(shell), shell_mat)]
 
 
+@prop("high-bay-lamp", "ceiling", "hero", recenter=False, multipart=True)
+def build_high_bay_lamp():
+    """The existing pendant housing, mouth at y=0; its variable-length rod stays in the client."""
+    shell=material("BayShell","#727272",roughness=.45,metallic=.65)
+    reflector=material("BayReflector","#bcc2c8",roughness=.34,metallic=.85)
+    housing=material("BayHousing","#24272b",roughness=.68,metallic=.15)
+    steel=material("BaySteel","#939da5",roughness=.30,metallic=.85)
+    dark=material("BayRubber","#161719",roughness=.85)
+    parts=[]
+    def add(obj,mat):
+        parts.append((attach(obj,mat),None))
+    profile=[(-10,392),(-6,398),(0,400),(6,398),(10,392),(12,380),
+             (204,163),(210,158),(210,145),(204,145),(198,156),
+             (7,377),(2,386),(-4,388)]
+    shade=lathe("RolledReflector",profile,sides=48,closed=True)
+    shade.data.transform(Matrix.Rotation(-math.pi/2,4,"X"));shade.data.update()
+    shade.data.materials.append(shell);shade.data.materials.append(reflector)
+    for face in shade.data.polygons:
+        face.material_index=int(face.normal.dot(Vector((face.center.x,0,face.center.z)))<0)
+    parts.append((smooth_obj(shade),None))
+    driver=y_cyl("VentedDriver",.105,.136,(0,.258,0),verts=32)
+    cut(driver,y_cyl("DriverInterior",.097,.16,(0,.26,0),verts=32))
+    for i in range(6):
+        a=(i+.5)*math.tau/6
+        vent=box("DriverVent",(.03,.045,.020),(.102*math.cos(a),.267,.102*math.sin(a)),bevel_w=.003,bevel_seg=2)
+        vent.rotation=(0,-a,0)
+        cut(driver,vent)
+    add(smooth_obj(driver),housing)
+    liner=y_cyl("DarkDriverLiner",.094,.12,(0,.26,0),verts=32)
+    cut(liner,y_cyl("RodPassage",.024,.15,(0,.26,0),verts=24))
+    add(smooth_obj(liner),dark)
+    for i in range(12):
+        a=i*math.tau/12
+        fin=box("CoolingFin",(.016,.108,.004),(.109*math.cos(a),.26,.109*math.sin(a)),bevel_w=.001,bevel_seg=1)
+        fin.rotation=(0,-a,0)
+        add(fin,housing)
+    cap=y_cyl("DriverCap",.12,.004,(0,.328,0),verts=32)
+    cut(cap,y_cyl("SuspensionOpening",.024,.020,(0,.328,0),verts=24))
+    for i in range(4):
+        a=i*math.tau/4;x=.076*math.cos(a);z=.076*math.sin(a)
+        cut(cap,y_cyl("CapCounterbore",.0055,.006,(x,.331,z),verts=16))
+        head=y_cyl("CapSocketHead",.0045,.002,(x,.328,z),verts=12)
+        cut(head,y_cyl("CapHexSocket",.002,.002,(x,.329,z),verts=6))
+        add(smooth_obj(head),steel)
+    add(smooth_obj(cap),housing)
+    mount=y_cyl("ReflectorMount",.157,.006,(0,.205,0),verts=48)
+    cut(mount,y_cyl("MountCenterBore",.024,.020,(0,.207,0),verts=24))
+    for i in range(3):
+        a=i*math.tau/3;x=.135*math.cos(a);z=.135*math.sin(a)
+        cut(mount,y_cyl("MountCounterbore",.0055,.008,(x,.202,z),verts=12))
+        head=y_cyl("MountSocketHead",.0045,.002,(x,.205,z),verts=12)
+        cut(head,y_cyl("MountHexSocket",.002,.002,(x,.204,z),verts=6))
+        add(smooth_obj(head),steel)
+    add(smooth_obj(mount),steel)
+    return [],[("HighBayLamp",loose(parts),None)]
+
+
 # The arm's links, in metres: each joint's pivot sits on the previous link's +Y axis.
 ARM = {
     "pedestal": 0.44,  # yaw axis origin, on top of the pedestal cap

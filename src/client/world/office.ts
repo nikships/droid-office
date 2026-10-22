@@ -334,11 +334,14 @@ function highBay(drop: number): THREE.Group {
   const g = new THREE.Group();
   const steel = toon(PALETTE.steel);
   g.add(mesh(new THREE.CylinderGeometry(0.02, 0.02, drop, 4), steel, 0, drop / 2 + 0.3, 0));
-  g.add(mesh(new THREE.CylinderGeometry(0.12, 0.12, 0.14, 8), toon(PALETTE.ink), 0, 0.26, 0));
+  const housing = new THREE.Group();
+  housing.name = 'high-bay-lamp';
+  housing.add(mesh(new THREE.CylinderGeometry(0.12, 0.12, 0.14, 8), toon(PALETTE.ink), 0, 0.26, 0));
   // Both sides, so looking up into the open shade shows its inside rather than through it.
   const shade = toonUnique('#727272');
   shade.side = THREE.DoubleSide;
-  g.add(mesh(new THREE.CylinderGeometry(0.16, 0.4, 0.22, 10, 1, true), shade, 0, 0.1, 0));
+  housing.add(mesh(new THREE.CylinderGeometry(0.16, 0.4, 0.22, 10, 1, true), shade, 0, 0.1, 0));
+  g.add(housing);
   return g;
 }
 
@@ -777,6 +780,7 @@ const PURLIN_DEPTH = 0.18;
 function buildCeiling(night: NightParts): THREE.Group {
   const H = WALL_HEIGHT;
   const g = new THREE.Group();
+  const fixtures = new THREE.Group();
   const steel = toon(PALETTE.steel);
   const dark = toon('#727272');
   const lit = bulb(night, '#fff3e0', 0.7, true);
@@ -845,9 +849,15 @@ function buildCeiling(night: NightParts): THREE.Group {
   ]) {
     const lamp = highBay(top - bayY - 0.3);
     lamp.position.set(x, bayY, z);
+    const housing = lamp.getObjectByName('high-bay-lamp')!;
+    housing.removeFromParent();
+    housing.position.copy(lamp.position);
+    fixtures.add(housing);
     g.add(lamp);
   }
-  return mergeByMaterial(g);
+  const ceiling = mergeByMaterial(g);
+  ceiling.add(fixtures);
+  return ceiling;
 }
 
 /** Makes `obj` somewhere to sit (see SEATING): walk up to it, or look at it, and press E. */
