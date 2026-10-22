@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { buildLoungeBeanbag } from './lounge-beanbag';
 import {
   BALCONY,
   BALCONY_DOOR,
@@ -527,6 +528,7 @@ function buildBalcony(group: THREE.Group, colliders: Collider[], interactables: 
 
   // A bench under the window, and a bistro table with two stools.
   const bench = new THREE.Group();
+  bench.name = 'balcony-bench';
   bench.add(mesh(roundedBox(2, 0.08, 0.46, 0.05), wood, 0, 0.45, 0));
   bench.add(mesh(box(2, 0.32, 0.06), wood, 0, 0.78, -0.2));
   for (const sx of [-0.85, 0.85]) bench.add(mesh(box(0.06, 0.45, 0.4), ink, sx, 0.22, 0));
@@ -538,16 +540,20 @@ function buildBalcony(group: THREE.Group, colliders: Collider[], interactables: 
   const tx = 0.2;
   const tz = cz + 0.2;
   const table = new THREE.Group();
+  table.name = 'balcony-table';
   table.add(mesh(new THREE.CylinderGeometry(0.42, 0.42, 0.04, 20), toon('#727272'), 0, 0.74, 0));
   table.add(mesh(new THREE.CylinderGeometry(0.04, 0.04, 0.7, 8), ink, 0, 0.37, 0));
   table.add(mesh(new THREE.CylinderGeometry(0.25, 0.28, 0.04, 16), ink, 0, 0.02, 0));
   table.position.set(tx, 0, tz);
-  parts.add(table);
+  group.add(table);
   colliders.push({ minX: tx - 0.4, maxX: tx + 0.4, minZ: tz - 0.4, maxZ: tz + 0.4, top: 0.77 });
   for (const sx of [-1, 1]) {
     const x = tx + sx * 0.8;
     const stool = new THREE.Group();
-    stool.add(mesh(new THREE.CylinderGeometry(0.2, 0.2, 0.06, 16), toon(PALETTE.chairs[sx < 0 ? 0 : 3]), 0, 0.46, 0));
+    const seatColor = PALETTE.chairs[sx < 0 ? 0 : 3];
+    stool.name = sx < 0 ? 'balcony-stool-1' : 'balcony-stool-2';
+    stool.userData.seatColor = seatColor;
+    stool.add(mesh(new THREE.CylinderGeometry(0.2, 0.2, 0.06, 16), toon(seatColor), 0, 0.46, 0));
     stool.add(mesh(new THREE.CylinderGeometry(0.03, 0.03, 0.44, 6), ink, 0, 0.22, 0));
     stool.add(mesh(new THREE.CylinderGeometry(0.16, 0.18, 0.03, 12), ink, 0, 0.015, 0));
     stool.position.set(x, 0, tz);
@@ -1319,15 +1325,13 @@ export function buildOffice(): Office {
   const lounge = mergeByMaterial(rug);
   group.add(lounge);
 
-  [
-    ['#6a6a6a', 12.5, 3.5],
-    ['#5c5c5c', 14.5, -3.4],
-  ].forEach(([c, x, z], i) => {
-    const bean = mesh(new THREE.SphereGeometry(0.6, 14, 10), toon(c as string), x as number, 0.35, z as number);
-    bean.scale.y = 0.6;
+  ['#6a6a6a', '#5c5c5c'].forEach((c, i) => {
+    const seatId = `lounge-beanbag-${i + 1}`;
+    const seat = SEATING_BY_ID.get(seatId)!;
+    const bean = buildLoungeBeanbag(seatId, c);
     group.add(bean);
-    colliders.push({ minX: (x as number) - 0.5, maxX: (x as number) + 0.5, minZ: (z as number) - 0.5, maxZ: (z as number) + 0.5, top: 0.6 });
-    seatable(bean, `lounge-beanbag-${i + 1}`, 1.4, interactables);
+    colliders.push({ minX: seat.x - 0.5, maxX: seat.x + 0.5, minZ: seat.z - 0.5, maxZ: seat.z + 0.5, top: 0.6 });
+    seatable(bean, seatId, 1.4, interactables);
   });
   const jukebox = buildJukebox();
   group.add(jukebox.group);
@@ -1748,6 +1752,7 @@ function buildLoft(group: THREE.Group, colliders: Collider[], interactables: Int
   sofa.add(mesh(box(0.92, 0.12, 2.3), toon('#626262'), 0, 0.1, 0));
   sofa.add(mesh(roundedBox(0.18, 0.42, 0.5, 0.03), toon('#eaeaea'), 0.22, 0.72, 0.4));
   const couch = mergeByMaterial(sofa);
+  couch.name = 'loft-couch';
   couch.position.set(maxX - 0.65, floorY, cz);
   group.add(couch);
   colliders.push({ minX: maxX - 1.15, maxX, minZ: cz - 1.2, maxZ: cz + 1.2, bottom: floorY, top: floorY + 0.55 });
