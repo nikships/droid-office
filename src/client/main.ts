@@ -58,6 +58,7 @@ import { loadPropManifest, preloadProps, propManifest, propScene } from './world
 import { buildRooftop, type Rooftop } from './world/rooftop';
 import { installConferenceTable } from './world/conference-table';
 import { ROOF, ROOF_NAME } from '../shared/rooftop';
+import { installTelescope } from './world/telescope';
 import { Person, type PrBadge, setTeamKit, setWorkerModel, Worker, type Stage } from './world/character';
 import { focusTeamKit } from './world/team-kit';
 import { Hands } from './world/hands';
@@ -215,6 +216,8 @@ const propsReady = loadPropManifest()
     if (worker) setWorkerModel(worker);
     const jukebox = propScene('jukebox');
     if (jukebox) office.jukebox.setModel(jukebox);
+    const telescope = propScene('telescope');
+    if (telescope) installTelescope(telescope, office.group);
     const teamKit = propScene('droid-team-kit');
     if (teamKit) setTeamKit(teamKit);
     const taskChair = propScene('task-chair');
