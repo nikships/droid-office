@@ -193,7 +193,7 @@
     "width": 2.335
   },
   "pr-crate": {
-    "bytes": 5272,
+    "bytes": 38584,
     "depth": 0.26,
     "height": 0.2,
     "materials": 1,
@@ -201,7 +201,7 @@
       "factory",
       "hero"
     ],
-    "triangles": 340,
+    "triangles": 6484,
     "url": "/props/pr-crate.glb",
     "width": 0.26
   },
