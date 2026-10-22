@@ -1713,7 +1713,9 @@ function buildLoft(group: THREE.Group, colliders: Collider[], interactables: Int
   for (const sx of [-1, 1]) deskBody.add(mesh(box(0.08, 0.75, 1.0), toon('#6a6a6a'), sx * 1.15, 0.375, 0));
   deskBody.add(mesh(roundedBox(0.9, 0.55, 0.06, 0.01), toon(PALETTE.ink), 0, 1.18, -0.2));
   deskBody.add(mesh(box(0.08, 0.2, 0.08), toon(PALETTE.steel), 0, 0.93, -0.2));
-  desk.add(mergeByMaterial(deskBody));
+  const executive = mergeByMaterial(deskBody);
+  executive.name = 'executive-desk';
+  desk.add(executive);
   // The floor's shell plays on it (world/monitor.ts).
   const screen = mesh(new THREE.PlaneGeometry(0.8, 0.45), screenMaterial(), 0, 1.18, -0.165);
   desk.add(screen);

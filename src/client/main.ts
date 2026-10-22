@@ -51,6 +51,7 @@ import { gongRinging, renderPace, sceneIsMoving, skyFalling, type RenderPace, ty
 import { RenderLoop } from './render-loop';
 import { Climber, type Arrival, type Grip, type Way } from './climb';
 import { buildOffice, type DeskView, type InteractKind, type Interactable } from './world/office';
+import { installExecutiveDesk } from './world/executive-desk';
 import { installTaskChairs } from './world/task-chair';
 import { loadPropManifest, preloadProps, propManifest, propScene } from './world/props';
 import { buildRooftop, type Rooftop } from './world/rooftop';
@@ -196,6 +197,8 @@ const propsReady = loadPropManifest()
       );
     const mergeGong = propScene('merge-gong');
     if (mergeGong) office.gong.setModel(mergeGong);
+    const executiveDesk = propScene('executive-desk');
+    if (executiveDesk) installExecutiveDesk(executiveDesk, office.group);
     const gun = propScene('magnum');
     if (gun) setMagnumModel(gun);
     const wand = propScene('wand');
