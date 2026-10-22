@@ -112,6 +112,11 @@ const WATCH_MS = 10_000;
 /** How often each agent's screen is checked against its status (see reconcile). */
 const SCREEN_CHECK_MS = 1000;
 /**
+ * How long after its Stop a worker whose screen can't confirm it (an unreadable layout, a quoted
+ * spinner) counts as done anyway: no hook and nothing printed since, while a real turn prints every second.
+ */
+const STOP_FALLBACK_MS = 10_000;
+/**
  * How long a launch prompt waits for SessionStart before the input box on its screen is enough to
  * type it in: well past a normal start, so it only matters when the hooks can't reach the office.
  */
@@ -189,6 +194,8 @@ interface Worker {
   /** When its last hook came in, and its terminal last printed something (see reconcile). */
   hookAt: number;
   outputAt: number;
+  /** When its own session's Stop came, with no hook since: a finish its screen hasn't confirmed yet. */
+  stopAt?: number;
   /** What its screen has shown since when (see droid-screen.ts). */
   screenSeen?: { state: DroidScreen; since: number };
   /** Test runs and builds that have failed in a row (see FAILS_TO_DESPAIR). */
@@ -1618,6 +1625,7 @@ export class WorkerManager {
     const sub = w.subSessions.has(session);
     if (!sub && event !== 'SessionStart' && w.info.sessionId && session !== w.info.sessionId) return false;
     w.hookAt = Date.now();
+    w.stopAt = !sub && event === 'Stop' ? w.hookAt : undefined;
     if (sub) this.subagentHook(w, event, report);
     else this.sessionHook(w, event, report);
     this.emitUpdate(w);
@@ -1687,7 +1695,9 @@ export class WorkerManager {
       // Droid sends idle_prompt when a turn is cancelled (Esc) instead of Stop, prompt or no prompt.
       if (report.notification_type === 'idle_prompt' && (w.info.status === 'working' || (w.info.status === 'needs_input' && !w.bootBlocked))) this.setStatus(w, 'done');
       else this.notified(w, session, report);
-    } else if (event === 'Stop') this.setStatus(w, 'done');
+    }
+    // Stop runs before Droid finishes: another Stop hook can block it and continue the turn.
+    // Only reconcile's settled, quiet input box confirms completion, without publishing a false done.
     // /model can change it between turns, and droid writes the file a moment after SessionStart.
     if (event === 'SessionStart' || event === 'UserPromptSubmit' || event === 'Stop') this.refreshDroidModel(w);
   }
@@ -1736,9 +1746,8 @@ export class WorkerManager {
   }
 
   /**
-   * Heals a status the hooks left wrong: once an agent's screen has shown one thing for a while with
-   * no hook coming in, a status it contradicts follows the screen (see droid-screen.ts). Runs every
-   * second; `now` is for tests.
+   * Confirms completion and heals missed hooks: once the screen settles without recent hooks,
+   * status follows it (see droid-screen.ts). Runs every second; `now` is for tests.
    */
   reconcile(now = Date.now()) {
     for (const w of this.workers.values()) {
@@ -1750,6 +1759,10 @@ export class WorkerManager {
         continue;
       }
       const state = readDroidScreen(screenRows(w.term));
+      if (w.stopAt !== undefined && info.status === 'working' && state !== 'asking' && now - w.stopAt >= STOP_FALLBACK_MS && now - w.outputAt >= STOP_FALLBACK_MS) {
+        this.setStatus(w, 'done');
+        continue;
+      }
       if (!state) {
         w.screenSeen = undefined;
         continue;
@@ -2096,6 +2109,7 @@ export class WorkerManager {
     if (w.info.status === status) return;
     if (w.info.status === 'needs_input') w.leftNeedsInputAt = Date.now();
     w.info.status = status;
+    if (status !== 'working') w.stopAt = undefined;
     if (status !== 'needs_input') w.asking = undefined;
     // Done, idle or asleep: it's not acting anything out any more.
     if (status !== 'working' && status !== 'needs_input') w.info.action = undefined;
@@ -2279,7 +2293,7 @@ process.stdin.on('end', () => {
   private persist(onShutdown = false) {
     // A stopped manager's pending namer/terminal callbacks must not overwrite its successor's state.
     if (this.closing && !onShutdown) return;
-    const saved = [...this.workers.values()].map(({ info, hookToken, pty, bootBlocked, interrupted, worktreeOwnership, launchPrompt, pendingFork }) => ({
+    const saved = [...this.workers.values()].map(({ info, hookToken, pty, bootBlocked, stopAt, interrupted, worktreeOwnership, launchPrompt, pendingFork }) => ({
       id: info.id,
       kind: info.kind,
       model: info.model,
@@ -2307,7 +2321,7 @@ process.stdin.on('end', () => {
       // Its first message, while its droid hasn't taken it yet: the next office types it in at SessionStart.
       pty: pty?.id ? { id: pty.id, status: info.status, acked: info.acked, waitingSince: info.waitingSince, launchPrompt } : undefined,
       // In the middle of something: if its terminal doesn't make it through a restart, it carries on after.
-      midTurn: !this.stopping && (!!interrupted || midTurn({ info, bootBlocked })),
+      midTurn: !this.stopping && (!!interrupted || midTurn({ info, bootBlocked, stopAt })),
     }));
     try {
       writeFileSync(this.statePath, JSON.stringify([...saved, ...this.retired], null, 2), { mode: 0o600 });
@@ -2407,8 +2421,9 @@ function boardAgent(info: WorkerInfo): boolean {
   return !!station && station !== 'lead';
 }
 
-function midTurn({ info, bootBlocked }: Pick<Worker, 'info' | 'bootBlocked'>): boolean {
-  return info.kind === 'agent' && (info.status === 'working' || (info.status === 'needs_input' && !bootBlocked));
+/** Cut off if it stopped now. A turn that already sent its Stop has finished, even before its screen confirms it. */
+function midTurn({ info, bootBlocked, stopAt }: Pick<Worker, 'info' | 'bootBlocked' | 'stopAt'>): boolean {
+  return info.kind === 'agent' && stopAt === undefined && (info.status === 'working' || (info.status === 'needs_input' && !bootBlocked));
 }
 
 /** The rows a terminal shows now, its scrollback left out. */
