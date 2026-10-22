@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { buildLoungeBeanbag } from './lounge-beanbag';
 import {
   BALCONY,
   BALCONY_DOOR,
@@ -1319,15 +1320,13 @@ export function buildOffice(): Office {
   const lounge = mergeByMaterial(rug);
   group.add(lounge);
 
-  [
-    ['#6a6a6a', 12.5, 3.5],
-    ['#5c5c5c', 14.5, -3.4],
-  ].forEach(([c, x, z], i) => {
-    const bean = mesh(new THREE.SphereGeometry(0.6, 14, 10), toon(c as string), x as number, 0.35, z as number);
-    bean.scale.y = 0.6;
+  ['#6a6a6a', '#5c5c5c'].forEach((c, i) => {
+    const seatId = `lounge-beanbag-${i + 1}`;
+    const seat = SEATING_BY_ID.get(seatId)!;
+    const bean = buildLoungeBeanbag(seatId, c);
     group.add(bean);
-    colliders.push({ minX: (x as number) - 0.5, maxX: (x as number) + 0.5, minZ: (z as number) - 0.5, maxZ: (z as number) + 0.5, top: 0.6 });
-    seatable(bean, `lounge-beanbag-${i + 1}`, 1.4, interactables);
+    colliders.push({ minX: seat.x - 0.5, maxX: seat.x + 0.5, minZ: seat.z - 0.5, maxZ: seat.z + 0.5, top: 0.6 });
+    seatable(bean, seatId, 1.4, interactables);
   });
   const jukebox = buildJukebox();
   group.add(jukebox.group);
