@@ -1656,12 +1656,12 @@ def loose(parts):
 @prop("droid-computer", "factory", "hero", recenter=False, multipart=True, keep_uvs=True)
 def build_droid_computer():
     """Factory's Droid Computer: a 0.45 m brushed black aluminium cube with softly rounded
-    edges on four small rubber feet, a status LED bezel at the top right of its front (+Z)
-    and a recessed glass readout at the bottom right.
+    edges on four rubber feet, real side vents, a recessed rear I/O/service panel,
+    and the original live LED and glass readout on its +z front.
 
     `Shell` is a loose node with its own material and box UVs, so the client can give it a
-    brushed finish. The client lights the LED (centre (0.145, 0.387, 0.229), r 0.011) and
-    paints the CPU/MEM/DSK readout (centre (0.085, 0.092, 0.2265), 0.15 x 0.058).
+    brushed finish. The client's live LED plane is at (0.145, 0.387, 0.2295), r 0.011;
+    its CPU/MEM/DSK plane is at (0.085, 0.092, 0.2276), 0.15 x 0.058.
     """
     palette = factory_palette()
     size, foot = 0.45, 0.022
@@ -1670,16 +1670,75 @@ def build_droid_computer():
     def add(obj, swatch):
         body.append((paint(obj, palette, swatch), None))
 
-    for sx in (-1, 1):
-        for sz in (-1, 1):
-            add(box(f"Foot{sx}{sz}", (0.07, foot + 0.004, 0.07), loc=(sx * 0.15, (foot + 0.004) / 2, sz * 0.15), bevel_w=0.006, bevel_seg=1), "base")
-    front = size / 2
-    bezel = cyl("LedBezel", 0.017, 0.006, loc=(0.145, foot + size - 0.085, front + 0.001), rot=(math.radians(90), 0, 0), verts=16)
-    add(smooth_obj(bezel), "graphite")
-    add(box("Readout", (0.156, 0.064, 0.003), loc=(0.085, foot + 0.07, front + 0.0)), "glass")
-
     shell_mat = material("DroidShell", "#1c1c1e", roughness=0.36, metallic=0.75)
     shell = box("Shell", (size, size, size), loc=(0, foot + size / 2, 0), bevel_w=0.03, bevel_seg=4)
+    cut(shell,box("CaseInterior",(.414,.414,.414),(0,foot+size/2,0),bevel_w=.014,bevel_seg=3))
+    for sx in (-1, 1):
+        for sz in (-1, 1):
+            add(box(f"Foot{sx}{sz}", (0.07, foot + 0.004, 0.07), loc=(sx * 0.15, (foot + 0.004) / 2, sz * 0.15), bevel_w=0.006, bevel_seg=2), "base")
+        cut(shell,*[box("VentSlot",(.06,.010,.20),(sx*.225,.235+i*.017,0),bevel_w=.003) for i in range(8)])
+        add(box("VentLiner",(.003,.145,.23),(sx*.2025,.2945,0)),"base")
+    front = size / 2
+    cut(shell,cyl("LedOpening",.0128,.05,(.145,.387,front),rot=(math.pi/2,0,0),verts=20),
+        box("ReadoutOpening",(.162,.070,.05),(.085,.092,front),bevel_w=.006))
+    bezel = cyl("LedBezel", 0.017, 0.006, loc=(0.145, foot + size - 0.085, front + 0.001), rot=(math.radians(90), 0, 0), verts=16)
+    cut(bezel,cyl("LedBore",.0118,.02,(.145,.387,front+.001),rot=(math.pi/2,0,0),verts=20))
+    add(smooth_obj(bezel), "graphite")
+    add(cyl("LedDarkWell",.0115,.002,(.145,.387,.223),rot=(math.pi/2,0,0),verts=20),"base")
+    add(box("Readout", (0.156, 0.064, 0.003), loc=(0.085, foot + 0.07, front + 0.0)), "glass")
+    readout_frame=box("ReadoutBezel",(.168,.076,.004),(.085,.092,.225),bevel_w=.004)
+    cut(readout_frame,box("ReadoutBezelOpening",(.154,.062,.02),(.085,.092,.225),bevel_w=.003))
+    add(readout_frame,"steel")
+    for x in (-.145,-.092):
+        cut(shell,box("FrontPortOpening",(.025,.013,.05),(x,.092,front),bevel_w=.006))
+        housing=box("FrontUsbHousing",(.029,.017,.014),(x,.092,.220),bevel_w=.006)
+        cut(housing,box("FrontUsbBore",(.025,.013,.04),(x,.092,.220),bevel_w=.004))
+        add(housing,"steel")
+        add(box("FrontUsbWell",(.025,.013,.002),(x,.092,.212)),"base")
+        add(box("FrontUsbTongue",(.017,.002,.014),(x,.092,.218)),"graphite")
+        for i in range(4):
+            add(box("FrontUsbContact",(.001,.001,.010),(x+(i-1.5)*.003,.0935,.219)),"light")
+    cut(shell,cyl("PowerOpening",.013,.05,(-.145,.387,front),rot=(math.pi/2,0,0),verts=20))
+    power=cyl("PowerTrim",.014,.004,(-.145,.387,.226),rot=(math.pi/2,0,0),verts=20)
+    cut(power,cyl("PowerBore",.010,.02,(-.145,.387,.226),rot=(math.pi/2,0,0),verts=20))
+    add(smooth_obj(power),"steel")
+    add(cyl("PowerButton",.009,.003,(-.145,.387,.225),rot=(math.pi/2,0,0),verts=20),"base")
+    arc=[(-.145+.0055*math.cos(a),.387+.0055*math.sin(a),.228)
+        for a in [math.pi*.70+(math.tau-math.pi*.40)*i/16 for i in range(17)]]
+    add(tube_path("PowerGlyph",arc,.0007,sides=4,frame_axis=(0,0,1)),"light")
+    add(tube_path("PowerStroke",[(-.145,.387,.228),(-.145,.394,.228)],.0007,sides=4),"light")
+    cut(shell,box("RearPanelRecess",(.30,.28,.012),(0,.25,-.225),bevel_w=.007))
+    panel=box("RearServicePanel",(.292,.272,.006),(0,.25,-.220),bevel_w=.005)
+    def rear_port(name,x,y,w,h):
+        for target in (shell,panel):
+            cut(target,box(name+"Opening",(w+.002,h+.002,.06),(x,y,-.225),bevel_w=.002))
+        housing=box(name+"Housing",(w,h,.020),(x,y,-.213),bevel_w=.002)
+        cut(housing,box(name+"Bore",(w-.008,h-.008,.05),(x,y,-.213),bevel_w=.001))
+        add(housing,"steel")
+        add(box(name+"Well",(w-.008,h-.008,.002),(x,y,-.201)),"base")
+    for x in (-.105,-.035,.035,.105):
+        rear_port("RearUsb",x,.30,.035,.018)
+        add(box("RearUsbTongue",(.025,.003,.019),(x,.30,-.2115)),"graphite")
+        for i in range(8):
+            add(box("RearUsbContact",(.001,.001,.014),(x+(i-3.5)*.0026,.302,-.2118)),"light")
+    rear_port("Ethernet",-.08,.21,.040,.035)
+    for i in range(8):
+        add(box("EthernetContact",(.0015,.002,.017),(-.08+(i-3.5)*.003,.2205,-.2105)),"light")
+    rear_port("Auxiliary",0,.21,.033,.017)
+    add(box("AuxiliaryTongue",(.023,.002,.018),(0,.21,-.211)),"graphite")
+    for target in (shell,panel):
+        cut(target,cyl("PowerInletOpening",.014,.06,(.09,.21,-.225),rot=(math.pi/2,0,0),verts=20))
+    inlet=cyl("PowerInlet",.0135,.012,(.09,.21,-.219),rot=(math.pi/2,0,0),verts=20)
+    cut(inlet,cyl("PowerInletBore",.008,.03,(.09,.21,-.219),rot=(math.pi/2,0,0),verts=16))
+    add(smooth_obj(inlet),"steel")
+    add(cyl("PowerInletWell",.008,.002,(.09,.21,-.205),rot=(math.pi/2,0,0),verts=16),"base")
+    add(cyl("PowerInletPin",.002,.012,(.09,.21,-.213),rot=(math.pi/2,0,0),verts=10),"light")
+    for x in (-.125,.125):
+        for y in (.135,.365):
+            screw=cyl("ServiceScrew",.006,.002,(x,y,-.2238),rot=(math.pi/2,0,0),verts=12)
+            cut(screw,cyl("ScrewSocket",.0025,.005,(x,y,-.2255),rot=(math.pi/2,0,0),verts=6))
+            add(smooth_obj(screw),"light")
+    add(panel,"body")
     smooth_obj(shell)
     return body, [("Shell", raw(shell), shell_mat)]
 
