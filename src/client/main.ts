@@ -53,6 +53,7 @@ import { Climber, type Arrival, type Grip, type Way } from './climb';
 import { buildOffice, type Collider, type DeskView, type InteractKind, type Interactable } from './world/office';
 import { installExecutiveDesk } from './world/executive-desk';
 import { installLoftCouch } from './world/loft-couch';
+import { installLoftStairs } from './world/loft-stairs';
 import { installTaskChairs } from './world/task-chair';
 import { installLedBarHousings } from './world/led-bar';
 import { installHighBayLamps } from './world/high-bay-lamp';
@@ -220,6 +221,8 @@ const propsReady = loadPropManifest()
     if (executiveDesk) installExecutiveDesk(executiveDesk, office.group);
     const loftCouch = propScene('loft-couch');
     if (loftCouch) installLoftCouch(loftCouch, office.group);
+    const loftStairs = propScene('loft-stairs');
+    if (loftStairs) installLoftStairs(loftStairs, office.group);
     const gun = propScene('magnum');
     if (gun) setMagnumModel(gun);
     const wand = propScene('wand');
