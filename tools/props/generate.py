@@ -2232,6 +2232,54 @@ def build_telescope():
     return [],[("TelescopeStand",base,None),("TelescopeOptics",tube,None)]
 
 
+@prop("lounge-table", "furniture", "table", recenter=False, multipart=True)
+def build_lounge_table():
+    """The lounge's 1.5 m square coffee table, with its top at the existing 0.46 m."""
+    edge=material("TableEdge","#929ba3",roughness=.32,metallic=.8)
+    inlay=material("TableInlay","#7f8383",roughness=.78)
+    frame=material("TableFrame","#626b72",roughness=.45,metallic=.8)
+    rubber=material("TableRubber","#24282a",roughness=.9)
+    orange=material("TableSignal","#ee6018",roughness=.7)
+    parts=[]
+    def add(obj,mat):
+        parts.append((obj,mat))
+        return raw(obj)
+    rim=box("RecessedTop",(1.5,.06,1.5),(0,.43,0),bevel_w=.018,bevel_seg=3)
+    cut(rim,box("TopRecess",(1.39,.08,1.39),(0,.48,0),bevel_w=.016,bevel_seg=3))
+    for sx in (-1,1):
+        cut(rim,box("EdgeInlayPocket",(.008,.006,1.20),(sx*.747,.422,0),bevel_w=.002))
+        add(box("OrangeEdgeInlay",(.005,.004,1.196),(sx*.7465,.422,0),bevel_w=.001),orange)
+    add(rim,edge)
+    add(box("MatteInset",(1.38,.014,1.38),(0,.448,0),bevel_w=.004,bevel_seg=3),inlay)
+    for sx in (-1,1):
+        for sz in (-1,1):
+            x,z=sx*.68,sz*.68
+            post=box("HollowPost",(.05,.34,.05),(x,.22,z),bevel_w=.004)
+            cut(post,box("PostBore",(.036,.36,.036),(x,.22,z),bevel_w=.002))
+            add(post,frame)
+            add(y_cyl("AdjustableSpindle",.010,.034,(x,.038,z),verts=12),edge)
+            add(y_cyl("FootLocknut",.017,.009,(x,.047,z),verts=6,bevel_w=.001),frame)
+            add(y_cyl("RubberGlide",.032,.022,(x,.011,z),verts=16,bevel_w=.004),rubber)
+            add(y_cyl("MountIsolator",.028,.014,(x,.394,z),verts=16,bevel_w=.002),rubber)
+            for y in (.115,.363):
+                add(x_cyl("JointWasher",.011,.002,(sx*.706,y,z),verts=16),edge)
+                bolt=cyl("SocketHead",.008,.004,(sx*.708,y,z),rot=(0,0,math.pi/2),verts=16,bevel_w=.001)
+                cut(bolt,x_cyl("HexSocket",.0035,.005,(sx*.710,y,z),verts=6))
+                add(bolt,edge)
+            add(box("CornerGusset",(.20,.006,.08),(sx*.58,.389,sz*.64),bevel_w=.003,bevel_seg=1),frame)
+    for s in (-1,1):
+        add(box("TopSideRail",(.05,.045,1.36),(s*.68,.365,0),bevel_w=.004),frame)
+        add(box("TopEndRail",(1.36,.045,.05),(0,.365,s*.68),bevel_w=.004),frame)
+        add(box("ShelfSideRail",(.04,.035,1.36),(s*.68,.115,0),bevel_w=.003),frame)
+        add(box("ShelfCrossbar",(1.36,.035,.035),(0,.115,s*.57),bevel_w=.003),frame)
+    shelf=box("SlottedShelf",(1.24,.016,1.24),(0,.142,0),bevel_w=.006)
+    cut(shelf,*[box("ShelfSlot",(.055,.08,1.0),(i*.115,.142,0),bevel_w=.020,bevel_seg=3) for i in range(-4,5)])
+    add(shelf,frame)
+    for obj,_ in parts:
+        smooth_obj(obj)
+    return [],[("LoungeTable",loose(parts),None)]
+
+
 @prop("droid-team-kit", "factory", "part", recenter=False, multipart=True, keep_uvs=True, draco=False)
 def build_droid_team_kit():
     """Team hardware worn over `droid-worker.glb`, authored in the same worker space so every node
