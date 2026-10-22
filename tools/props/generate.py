@@ -888,6 +888,63 @@ def build_workbench():
     return parts
 
 
+@prop("conference-table", "furniture", "table", recenter=False)
+def build_conference_table():
+    """Mission Control table, 3.6 x 1.2 m, with its original .76 m surface height."""
+    top_mat=material("TableTop","#808489",roughness=.7)
+    frame=material("TableFrame","#596169",roughness=.5,metallic=.25)
+    steel=material("TableSteel","#b1b9c0",roughness=.3,metallic=.85)
+    rubber=material("TableRubber","#282c31",roughness=.9)
+    signal=material("TableSignal","#ee6018",roughness=.55,emission="#ee6018",emission_strength=1)
+    parts=[]
+    def add(obj,mat):
+        parts.append((obj,mat))
+        return raw(obj)
+    slab=box("ConferenceTable",(3.6,.045,1.2),(0,.7375,0),bevel_w=.015,bevel_seg=4)
+    cuts=[box("SignalInlayCut",(3.1,.022,.016),(0,.761,0),bevel_w=.003)]
+    cuts += [box("AccessWellCut",(.29,.09,.16),(x,.75,-.30),bevel_w=.009,bevel_seg=3) for x in (-.8,.8)]
+    cut(slab,*cuts)
+    add(slab,top_mat)
+    add(box("EdgeSubstrate",(3.58,.018,1.18),(0,.706,0),bevel_w=.008,bevel_seg=3),steel)
+    add(box("OrangeInlay",(3.08,.004,.012),(0,.758,0),bevel_w=.002),signal)
+    for x in (-.8,.8):
+        add(box("AccessWell",(.284,.012,.154),(x,.709,-.30),bevel_w=.006),rubber)
+        rim=box("AccessFrame",(.285,.006,.155),(x,.753,-.30),bevel_w=.008,bevel_seg=3)
+        cut(rim,box("AccessOpening",(.254,.03,.124),(x,.753,-.30),bevel_w=.006,bevel_seg=3))
+        add(rim,steel)
+        add(box("AccessLid",(.242,.009,.112),(x,.7475,-.30),bevel_w=.006),frame)
+        add(box("LidFingerSlot",(.085,.002,.008),(x,.753,-.247),bevel_w=.003),rubber)
+        add(x_cyl("LidHinge",.004,.22,(x,.752,-.355),verts=12),steel)
+        for dx in (-.112,.112):
+            for z in (-.363,-.237):
+                add(y_cyl("AccessScrew",.0035,.002,(x+dx,.756,z),verts=8),steel)
+    add(box("Crossbeam",(2.96,.07,.10),(0,.65,0),bevel_w=.008),frame)
+    for sx in (-1,1):
+        x=sx*1.1
+        add(box("PedestalFoot",(.9,.032,.6),(x,.028,0),bevel_w=.012,bevel_seg=3),steel)
+        for dx in (-.35,.35):
+            for z in (-.20,.20):
+                add(box("FloorPad",(.10,.012,.10),(x+dx,.006,z),bevel_w=.004),rubber)
+        add(box("Pedestal",(.16,.64,.5),(x,.364,0),bevel_w=.012,bevel_seg=3),frame)
+        add(box("PedestalCap",(.22,.03,.54),(x,.7,0),bevel_w=.008),steel)
+        add(box("PedestalInset",(.004,.40,.37),(x+sx*.081,.35,0),bevel_w=.006),rubber)
+        for y in (.16,.56):
+            for z in (-.16,.16):
+                add(x_cyl("PedestalBolt",.007,.006,(x+sx*.086,y,z),verts=12),steel)
+        add(tube_path("CableDrop",[(sx*.8,.705,-.30),(sx*.8,.64,-.30),(x,.64,-.30),(x,.58,-.30),(x,.14,-.30)],.006,sides=8,frame_axis=(0,0,1)),rubber)
+        for y in (.25,.53):
+            for z in (-.315,-.26):
+                add(box("CableClip",(.026,.016,.008),(x,y,z),bevel_w=.003),steel)
+            add(box("ClipReturn",(.026,.016,.06),(x,y,-.2875),bevel_w=.003),steel)
+    add(box("PowerBar",(.52,.05,.075),(.45,.65,.105),bevel_w=.009),rubber)
+    for x in (.27,.40,.53):
+        add(box("SocketFace",(.085,.03,.003),(x,.65,.144),bevel_w=.006),steel)
+        for dx in (-.014,.014):
+            add(box("SocketContact",(.006,.015,.002),(x+dx,.65,.146)),rubber)
+    add(box("PowerSwitch",(.033,.023,.003),(.65,.65,.145),bevel_w=.004),signal)
+    return parts
+
+
 @prop("macbook-base", "desk", recenter=False, keep_uvs=True)
 def build_macbook_base():
     """MacBook Pro 16 lower half: a space-black unibody slab with rounded corners on four round

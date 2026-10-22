@@ -55,6 +55,7 @@ import { installTaskChairs } from './world/task-chair';
 import { installLoungeSofa } from './world/lounge-sofa';
 import { loadPropManifest, preloadProps, propManifest, propScene } from './world/props';
 import { buildRooftop, type Rooftop } from './world/rooftop';
+import { installConferenceTable } from './world/conference-table';
 import { ROOF, ROOF_NAME } from '../shared/rooftop';
 import { Person, type PrBadge, setTeamKit, setWorkerModel, Worker, type Stage } from './world/character';
 import { focusTeamKit } from './world/team-kit';
@@ -205,6 +206,8 @@ const propsReady = loadPropManifest()
     if (wand) setWandModel(wand);
     const bookshelf = propScene('bookshelf');
     if (bookshelf) office.setShelfModel(bookshelf);
+    const conferenceTable = propScene('conference-table');
+    if (conferenceTable) installConferenceTable(conferenceTable, office.group);
     const worker = propScene('droid-worker');
     if (worker) setWorkerModel(worker);
     const jukebox = propScene('jukebox');

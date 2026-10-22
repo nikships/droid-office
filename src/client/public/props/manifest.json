@@ -12,6 +12,19 @@
     "url": "/props/bookshelf.glb",
     "width": 1.78
   },
+  "conference-table": {
+    "bytes": 38208,
+    "depth": 1.2,
+    "height": 0.76,
+    "materials": 5,
+    "tags": [
+      "furniture",
+      "table"
+    ],
+    "triangles": 6492,
+    "url": "/props/conference-table.glb",
+    "width": 3.6
+  },
   "conveyor": {
     "bytes": 7636,
     "depth": 0.736,
