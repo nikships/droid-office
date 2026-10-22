@@ -78,6 +78,19 @@
     "url": "/props/jukebox.glb",
     "width": 1.38
   },
+  "lounge-sofa": {
+    "bytes": 32656,
+    "depth": 4.3065,
+    "height": 0.98,
+    "materials": 6,
+    "tags": [
+      "furniture",
+      "seating"
+    ],
+    "triangles": 6328,
+    "url": "/props/lounge-sofa.glb",
+    "width": 1.1
+  },
   "macbook-base": {
     "bytes": 115328,
     "depth": 0.5305,

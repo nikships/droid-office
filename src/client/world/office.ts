@@ -1287,6 +1287,7 @@ export function buildOffice(): Office {
   sofa.add(mesh(box(0.012, 0.012, 3.5), toon(PALETTE.accent), 0.505, 0.47, 0));
   ['#e0e0e0', '#787878'].forEach((c, i) => sofa.add(mesh(roundedBox(0.18, 0.42, 0.5, 0.03), toon(c), -0.22, 0.72, i ? 0.9 : -0.9)));
   const couch = mergeByMaterial(sofa);
+  couch.name = 'lounge-sofa';
   couch.position.set(10.5, 0, 0);
   group.add(couch);
   colliders.push({ minX: 10, maxX: 11, minZ: -2.2, maxZ: 2.2, top: 0.55 });

@@ -1155,6 +1155,76 @@ def build_jukebox():
     return [],[("JukeboxCabinet",loose(parts),None),("JukeboxNeon",loose(neon),None)]
 
 
+@prop("lounge-sofa", "furniture", "seating", recenter=False)
+def build_lounge_sofa():
+    """Three places facing +x, matching the lounge's existing asymmetric footprint."""
+    fabric=material("SofaFabric","#87898c",roughness=.96,sheen=.25)
+    seam=material("SofaWelt","#555b61",roughness=.9)
+    steel=material("SofaSteel","#62686e",roughness=.4,metallic=.75)
+    light=material("SofaLightPillow","#d1d1cb",roughness=.98,sheen=.3)
+    dark=material("SofaDarkPillow","#596168",roughness=.98,sheen=.3)
+    orange=material("SofaOrange","#ee6018",roughness=.85)
+    parts=[]
+    def add(obj,mat):
+        parts.append((obj,mat))
+        return raw(obj)
+    def welt(name,points,normal,mat):
+        # Constant plane normal keeps these tiny closed sweeps free of frame flips.
+        axis=Vector(normal)
+        rings=[]
+        for i,p in enumerate(points):
+            tangent=(Vector(points[(i+1)%len(points)])-Vector(points[i-1])).normalized()
+            radial=tangent.cross(axis).normalized()
+            rings.append([Vector(p)+.0025*(axis*math.cos(j*math.tau/5)+radial*math.sin(j*math.tau/5)) for j in range(5)])
+        return add(loft(name,rings+[rings[0]],bottom=False,top=False,recalc=True),mat)
+    def padded(name,size,loc,mat,axis="y"):
+        start=len(parts)
+        w,h,d=size
+        a,t=(w,h) if axis=="y" else (h,w)
+        rings=[]
+        profile=[(-.5,.82),(-.39,.96),(-.18,1),(.18,1),(.39,.96),(.5,.82)]
+        for u,s in profile:
+            ring=rrect(-a*s/2,a*s/2,-d*s/2,d*s/2,min(a,d)*.16*s,t*u,k=4)
+            rings.append([(x+loc[0],y+loc[1],z+loc[2]) if axis=="y" else (y+loc[0],x+loc[1],z+loc[2]) for x,y,z in ring])
+        add(loft(name,rings,recalc=True),mat)
+        s=1 if axis=="y" else .96
+        ring=rrect(-a*s/2,a*s/2,-d*s/2,d*s/2,min(a,d)*.16*s,0 if axis=="y" else t*.39,k=4)
+        points=[(x+loc[0],y+loc[1],z+loc[2]) if axis=="y" else (y+loc[0],x+loc[1],z+loc[2]) for x,y,z in ring]
+        welt(name+"Piping",points,(0,1,0) if axis=="y" else (1,0,0),seam)
+        return [raw(obj) for obj,_ in parts[start:]]
+    add(box("LoungeSofa",(.92,.10,4.10),(0,.11,0),bevel_w=.012),steel)
+    for x in (-.36,.36):
+        for z in (-1.88,1.88):
+            add(box("SteelFoot",(.07,.09,.10),(x,.045,z),bevel_w=.008),steel)
+            add(box("FloorGlide",(.072,.012,.102),(x,.006,z),bevel_w=.004),seam)
+    add(box("UpholsteredRail",(.98,.20,4.18),(0,.27,0),bevel_w=.045,bevel_seg=3),fabric)
+    add(box("BackFrame",(.28,.82,4.20),(-.46,.57,0),bevel_w=.05,bevel_seg=3),fabric)
+    for z in (-1.2,0,1.2):
+        padded("SeatCushion",(.78,.18,1.16),(.08,.44,z),fabric)
+        objects=padded("BackCushion",(.20,.44,1.16),(-.28,.73,z),fabric,"x")
+        center=Vector((-.28,.73,z))
+        transform=Matrix.Translation(center) @ Matrix.Rotation(.10,4,"Z") @ Matrix.Translation(-center)
+        for obj in objects:
+            obj.matrix_world=transform @ obj.matrix_world
+        for dz in (-.28,.28):
+            add(x_cyl("UpholsteryButton",.011,.003,(-.178,.73,z+dz),verts=12),seam)
+    for side in (-1,1):
+        add(box("Armrest",(1,.62,.30),(0,.43,side*2),bevel_w=.065,bevel_seg=4),fabric)
+        points=[(x,z,side*2.151) for x,_,z in rrect(-.46,.46,.18,.69,.055,0,k=4)]
+        welt("ArmPanelSeam",points,(0,0,1),seam)
+    for mat,z,angle in ((light,-.92,-.17),(dark,.92,.14)):
+        center=Vector((-.11,.72,z))
+        objects=padded("ThrowPillow",(.17,.36,.46),center,mat,"x")
+        transform=Matrix.Translation(center) @ Matrix.Rotation(angle,4,"X") @ Matrix.Rotation(.18,4,"Z") @ Matrix.Translation(-center)
+        for obj in objects:
+            obj.matrix_world=transform @ obj.matrix_world
+    add(box("OrangeFrontStitch",(.003,.009,3.5),(.491,.325,0)),orange)
+    add(box("WovenTag",(.004,.035,.055),(.493,.29,-1.64),bevel_w=.002),orange)
+    for z in (-1.65,0,1.65):
+        add(x_cyl("PlinthFastener",.009,.003,(.462,.11,z),verts=12),steel)
+    return parts
+
+
 @prop("task-chair", "furniture", "seating", recenter=False)
 def build_task_chair():
     """Ergonomic task chair; seat at .55 m, back on +z, swivel axis at the origin."""

@@ -52,6 +52,7 @@ import { RenderLoop } from './render-loop';
 import { Climber, type Arrival, type Grip, type Way } from './climb';
 import { buildOffice, type DeskView, type InteractKind, type Interactable } from './world/office';
 import { installTaskChairs } from './world/task-chair';
+import { installLoungeSofa } from './world/lounge-sofa';
 import { loadPropManifest, preloadProps, propManifest, propScene } from './world/props';
 import { buildRooftop, type Rooftop } from './world/rooftop';
 import { ROOF, ROOF_NAME } from '../shared/rooftop';
@@ -188,6 +189,8 @@ office.group.add(teamLines.group);
 const propsReady = loadPropManifest()
   .then(() => preloadProps(Object.keys(propManifest())))
   .then(() => {
+    const loungeSofa = propScene('lounge-sofa');
+    if (loungeSofa) installLoungeSofa(loungeSofa, office.group);
     const workbench = propScene('workbench');
     if (workbench)
       installWorkbenches(
