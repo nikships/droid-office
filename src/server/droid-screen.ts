@@ -11,12 +11,19 @@ export type DroidScreen = 'busy' | 'asking' | 'idle';
 
 /**
  * How long the screen has to say one thing, with no hook coming in, before the status follows it.
- * The hooks are always right when they come; this only heals a status they left behind.
+ * Activity hooks take priority; Stop only announces an attempted finish, so completion needs this
+ * confirmation too.
  */
 export const SCREEN_SETTLE_MS = 4000;
 
-/** Droid's live area: the input box, the footer and the spinner or dialog right above them. */
+/** The usual live area; a multiline input box can make it taller. */
 const LIVE_ROWS = 8;
+/**
+ * How many rows above the input box can still hold the spinner: the mode line, and whatever Droid
+ * puts between them (queued messages, a todo list). A reply quoting the spinner this close to the
+ * box reads as busy, which only keeps a status (see screenStatus) and never finishes a turn.
+ */
+const ABOVE_BOX_ROWS = 8;
 
 /** A permission prompt ("Alt/Option+E to inspect approval details") or an AskUser dialog. */
 const ASKING = /inspect approval details|ESC stop agent/i;
@@ -24,10 +31,24 @@ const ASKING = /inspect approval details|ESC stop agent/i;
 const BUSY = /Press ESC to stop/i;
 /** The footer under the input box, shown only when no dialog covers it (a dialog's key hints are its last row instead). */
 const AT_REST = /\? for help/;
+const BOX_TOP = /^\s*╭─+╮\s*$/;
+const BOX_BOTTOM = /^\s*╰─+╯\s*$/;
+const BOX_ROW = /^\s*│.*│\s*$/;
 
 /** What the bottom of the screen shows; undefined for anything else (a menu, a login, another program). */
 export function readDroidScreen(rows: readonly string[]): DroidScreen | undefined {
-  const live = rows.filter((r) => r.trim()).slice(-LIVE_ROWS);
+  const nonempty = rows.filter((r) => r.trim());
+  // Find the actual input box instead of counting its text as status rows. A queued multiline
+  // prompt otherwise pushes the spinner above the eight-row window, leaving only the idle footer.
+  let footerRow = nonempty.length - 1;
+  while (footerRow >= 0 && !AT_REST.test(nonempty[footerRow])) footerRow--;
+  let top = footerRow - 2;
+  const hasBottom = BOX_BOTTOM.test(nonempty[footerRow - 1] ?? '');
+  if (hasBottom) {
+    while (top >= 0 && BOX_ROW.test(nonempty[top])) top--;
+  }
+  const hasBox = hasBottom && footerRow >= nonempty.length - LIVE_ROWS && BOX_TOP.test(nonempty[top] ?? '');
+  const live = hasBox ? [...nonempty.slice(Math.max(0, top - ABOVE_BOX_ROWS), top), ...nonempty.slice(footerRow)] : nonempty.slice(-LIVE_ROWS);
   const last = (re: RegExp) => {
     for (let i = live.length - 1; i >= 0; i--) if (re.test(live[i])) return i;
     return -1;

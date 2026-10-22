@@ -9,6 +9,7 @@ import { Worktrees } from '../src/server/worktrees.js';
 import type { PromptSource } from '../src/server/prompts.js';
 import { PROMPTS } from '../src/shared/prompts.js';
 import type { AgentChoice, AgentEffort, GhPull, WorkerInfo } from '../src/shared/protocol.js';
+import { SCREEN_SETTLE_MS } from '../src/server/droid-screen.js';
 
 type Invocation = {
   kind: string;
@@ -251,6 +252,7 @@ test('Droid workers launch with their own hook overlay and resume the correct se
   assert.equal(workers.get(worker.id)?.status, 'working', 'the tool it asked about ran: the prompt was answered');
   assert.equal(hook('UserPromptSubmit', { prompt: 'continue' }), true);
   assert.equal(hook('Stop', {}), true);
+  await settleIdle(workers, worker.id);
   assert.equal(workers.get(worker.id)?.status, 'done');
   // A hook payload without its event name, or one from another session, is turned away.
   assert.equal(workers.handleHook(worker.id, first.env.hookToken!, 'Stop', { session_id: 'droid-1' }), false);
@@ -779,6 +781,7 @@ test('a Droid worker acts out its latest tool call, and puts its head in its han
   hook('PostToolUse', { tool_name: 'Bash', tool_input: { command: 'git push' }, error: 'Exit code 1' });
   assert.equal(action(), 'test');
   hook('Stop', {});
+  await settleIdle(workers, worker.id);
   assert.equal(workers.get(worker.id)?.status, 'done');
   assert.equal(action(), undefined);
 });
@@ -812,6 +815,7 @@ test('a worker is stamped with when it started waiting on someone, afresh each t
   assert.ok(asked >= before && asked <= Date.now());
   await new Promise((resolve) => setTimeout(resolve, 5));
   hook('Stop', {});
+  await settleIdle(workers, worker.id);
   assert.equal(workers.get(worker.id)?.status, 'done');
   assert.ok(worker.waitingSince! > asked, 'finishing is a new wait');
 });
@@ -827,18 +831,19 @@ async function liveWorker(t: { after(fn: () => void): void }, session: string) {
     else process.env.FAKE_AGENT_LOG = oldLog;
     f.close();
   });
-  const workers = manager(f, []);
+  const updates: WorkerInfo[] = [];
+  const workers = manager(f, updates);
   t.after(() => workers.shutdown());
   const worker = workers.spawn('desk-1', 'test', 'fix the login');
   if (typeof worker === 'string') throw new Error(worker);
-  const token = (await waitFor(f.read, (x) => x.some((r) => r.kind === 'droid' && r.args.includes('--settings')))).find((r) => r.kind === 'droid')!.env.hookToken!;
+  const token = (await waitFor(f.read, (x) => x.some((r) => r.kind === 'droid' && r.args.includes('--settings')))).find((r) => r.kind === 'droid' && r.args.includes('--settings'))!.env.hookToken!;
   const hook = (event: string, extra: Record<string, unknown> = {}, from = session) => workers.handleHook(worker.id, token, event, { session_id: from, hook_event_name: event, ...extra });
   const status = () => workers.get(worker.id)?.status;
-  return { workers, worker, hook, status };
+  return { workers, worker, hook, status, updates, data: f.data };
 }
 
 test("a prompt answered in the terminal puts the worker back to work, and a cancelled one puts it at rest (droid's own hook order)", async (t) => {
-  const { hook, status } = await liveWorker(t, 'answered');
+  const { workers, worker, hook, status } = await liveWorker(t, 'answered');
   const execute = { tool_name: 'Execute', tool_input: { command: 'sleep 5 && echo done' } };
   hook('SessionStart', { source: 'startup' });
   // Approved: droid reports nothing more until the tool it asked about has run.
@@ -849,6 +854,7 @@ test("a prompt answered in the terminal puts the worker back to work, and a canc
   hook('PostToolUse', { ...execute, tool_response: 'done' });
   assert.equal(status(), 'working');
   hook('Stop', {});
+  await settleIdle(workers, worker.id);
   assert.equal(status(), 'done');
 
   // A question through droid's AskUser tool, answered.
@@ -909,6 +915,7 @@ test("a subagent's hooks don't take over its worker's session (droid's own hook 
   assert.equal(hook('PostToolUse', { ...task, tool_response: 'session_id: sub-session' }), true);
   assert.equal(status(), 'working');
   assert.equal(hook('Stop', {}), true);
+  await settleIdle(workers, worker.id);
   assert.equal(status(), 'done');
 
   // A subagent asks, and returns before anyone sees a tool of its finish: the Task coming back answers it.
@@ -927,10 +934,122 @@ test("a subagent's hooks don't take over its worker's session (droid's own hook 
 
 /** Types `text` into a worker's terminal, which echoes it back (the fake agent's tty is in cooked mode), and waits to see it. */
 async function show(workers: WorkerManager, id: string, text: string) {
+  const occurrences = () => (workers.tail(id, 2000) ?? '').split(text).length;
+  const before = occurrences();
   workers.write(id, `${text}\r`);
-  for (let i = 0; i < 200 && !workers.tail(id, 3)?.includes(text); i++) await new Promise((resolve) => setTimeout(resolve, 20));
-  assert.ok(workers.tail(id, 3)?.includes(text), `the terminal shows ${text}`);
+  for (let i = 0; i < 200 && occurrences() <= before; i++) await new Promise((resolve) => setTimeout(resolve, 20));
+  assert.ok(occurrences() > before, `the terminal shows new output: ${text}`);
 }
+
+async function showIdle(workers: WorkerManager, id: string) {
+  for (const row of [
+    '    ↳ done',
+    '⛬  Done.',
+    ' Auto (Off) · all actions require approval        Sonnet 5.5 (High)',
+    '╭──────────────────────────────────────────────────────────────╮',
+    '│ >                                                            │',
+    '╰──────────────────────────────────────────────────────────────╯',
+    '[⏱ 6s, context: 4%] ? for help                     MCP ✓ | IDE ◌',
+    '/private/tmp/proj | master',
+  ])
+    await show(workers, id, row);
+}
+
+/** Droid has actually returned to its input box, and remains quiet through the settle interval. */
+async function settleIdle(workers: WorkerManager, id: string) {
+  await showIdle(workers, id);
+  const now = Date.now();
+  workers.reconcile(now);
+  workers.reconcile(now + SCREEN_SETTLE_MS);
+}
+
+test('Stop cannot publish done while Droid continues working or runs corrective hooks', async (t) => {
+  const { workers, worker, hook, status, updates } = await liveWorker(t, 'premature-stop');
+  hook('SessionStart', { source: 'startup' });
+  hook('UserPromptSubmit', { prompt: 'fix the login' });
+  hook('PreToolUse', { tool_name: 'Read', tool_input: { file_path: 'a.ts' } });
+  await show(workers, worker.id, ' ⠋ Executing...  (Press ESC to stop)');
+  const before = { action: worker.action, acked: worker.acked, waitingSince: worker.waitingSince };
+  hook('Stop', { stop_hook_active: false });
+  assert.equal(status(), 'working', 'Stop runs before Droid has actually stopped');
+  assert.deepEqual({ action: worker.action, acked: worker.acked, waitingSince: worker.waitingSince }, before);
+  const start = Date.now();
+  t.mock.timers.enable({ apis: ['Date'], now: start });
+  workers.reconcile();
+  t.mock.timers.setTime(start + 5000);
+  workers.reconcile();
+  assert.equal(status(), 'working', 'even a quiet busy screen is not completion');
+  hook('PreToolUse', { tool_name: 'Read', tool_input: { file_path: 'b.ts' } });
+  hook('PostToolUse', { tool_name: 'Read' });
+  assert.equal(status(), 'working');
+  assert.ok(!updates.some((info) => info.status === 'done'), 'downstream consumers never receive the premature done state');
+  hook('Stop', { stop_hook_active: true });
+  assert.equal(status(), 'working', 'a repeated Stop is still not confirmation');
+  // Droid replaces the spinner with its reply; this terminal only appends, so the reply pushes it up.
+  for (let i = 0; i < 8; i++) await show(workers, worker.id, `Reply line ${i}`);
+  await settleIdle(workers, worker.id);
+  assert.equal(status(), 'done', 'the real idle screen confirms completion');
+  assert.equal(worker.action, undefined);
+  assert.equal(worker.acked, false);
+  assert.equal(updates.filter((info, i) => info.status === 'done' && updates[i - 1]?.status !== 'done').length, 1);
+});
+
+test('a Stop the screen cannot confirm still finishes once the terminal is quiet, and is never carried on after a restart', async (t) => {
+  const { workers, worker, hook, status, data } = await liveWorker(t, 'unreadable-stop');
+  const midTurn = () => (JSON.parse(readFileSync(path.join(data, 'workers.json'), 'utf8')) as { id: string; midTurn?: boolean }[]).find((s) => s.id === worker.id)?.midTurn;
+  hook('SessionStart', { source: 'startup' });
+  hook('UserPromptSubmit', { prompt: 'fix the login' });
+  assert.equal(midTurn(), true);
+  // A layout the screen reader doesn't know: no footer, no spinner.
+  await show(workers, worker.id, 'something droid has not shown before');
+  const start = Date.now();
+  t.mock.timers.enable({ apis: ['Date'], now: start });
+  hook('Stop', {});
+  assert.equal(status(), 'working');
+  assert.equal(midTurn(), false, 'a turn that sent its Stop is not resumed with the carry-on prompt');
+  workers.reconcile(start + 9999);
+  assert.equal(status(), 'working');
+  workers.reconcile(start + 10_000);
+  assert.equal(status(), 'done');
+  // A Stop followed by more work is not a finish.
+  hook('UserPromptSubmit', { prompt: 'again' });
+  hook('Stop', {});
+  hook('PreToolUse', { tool_name: 'Read', tool_input: { file_path: 'a.ts' } });
+  workers.reconcile(start + 30_000);
+  assert.equal(status(), 'working');
+  assert.equal(midTurn(), true);
+});
+
+test('completion waits for a quiet idle screen, and new activity prevents it', async (t) => {
+  const { workers, worker, hook, status, updates } = await liveWorker(t, 'confirmed-stop');
+  hook('SessionStart', { source: 'startup' });
+  hook('UserPromptSubmit', { prompt: 'fix the login' });
+  const start = Date.now();
+  t.mock.timers.enable({ apis: ['Date'], now: start });
+  const at = (ms: number) => {
+    t.mock.timers.setTime(start + ms);
+    workers.reconcile();
+  };
+  // The footer from the previous turn can still be visible when Stop runs.
+  await showIdle(workers, worker.id);
+  at(0);
+  at(3000);
+  hook('Stop', {});
+  at(4000);
+  assert.equal(status(), 'working');
+  at(6000);
+  hook('PreToolUse', { tool_name: 'Read', tool_input: { file_path: 'a.ts' } });
+  at(9000);
+  assert.equal(status(), 'working', 'new activity invalidates an attempted completion');
+  await show(workers, worker.id, '[⏱ 9s, context: 4%] ? for help');
+  at(10_000);
+  assert.equal(status(), 'working', 'an idle footer that is still printing is not done');
+  at(12_999);
+  assert.equal(status(), 'working');
+  assert.ok(!updates.some((info) => info.status === 'done'));
+  at(13_000);
+  assert.equal(status(), 'done');
+});
 
 test("a status the hooks left wrong follows the agent's screen once it has settled", async (t) => {
   const { workers, worker, hook, status } = await liveWorker(t, 'healed');
@@ -983,6 +1102,7 @@ test("a finished reply quoting a dialog's key hints above the input box leaves t
   hook('SessionStart', { source: 'startup' });
   hook('UserPromptSubmit', { prompt: 'how do I see what it asked to run?' });
   hook('Stop', {});
+  await settleIdle(workers, worker.id);
   assert.equal(status(), 'done');
   const start = Date.now();
   t.mock.timers.enable({ apis: ['Date'], now: start });
@@ -1067,7 +1187,10 @@ async function hireInState(f: Fixture, workers: WorkerManager, deskId: string, s
   hook('SessionStart', { source: 'startup' });
   hook('UserPromptSubmit', { prompt: `task for ${session}` });
   if (state === 'needs_input') hook('Notification', { notification_type: 'permission_prompt' });
-  if (state === 'done') hook('Stop', {});
+  if (state === 'done') {
+    hook('Stop', {});
+    await settleIdle(workers, worker.id);
+  }
   assert.equal(workers.get(worker.id)?.status, state);
   return worker;
 }
@@ -1428,6 +1551,7 @@ test('a worktree worker that makes its own branch is followed there: O finds the
   git(cwd, 'add', 'x.txt');
   git(cwd, 'commit', '-qm', 'fix x');
   hook('Stop', {});
+  await settleIdle(workers, worker.id);
   const info = await waitFor(
     () => workers.get(worker.id)!,
     (w) => w.worktree?.branch === 'fix-x',
@@ -1590,6 +1714,7 @@ test("a worker that renames the office's branch goes home with it; one that dele
   git(a.cwd, 'commit', '-qm', 'fix x');
   git(a.cwd, 'branch', '-m', 'fix-x');
   hook('Stop', {});
+  await settleIdle(workers, a.w.id);
   // Followed there, with nothing to remember: office/… is gone, fix-x is it.
   const info = await waitFor(
     () => workers.get(a.w.id)!,
