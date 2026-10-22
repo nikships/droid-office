@@ -1617,6 +1617,57 @@ def build_droid_computer():
     return body, [("Shell", raw(shell), shell_mat)]
 
 
+@prop("led-bar", "ceiling", "hero", recenter=False, multipart=True)
+def build_led_bar():
+    """Static 3.6 m housing only; the client's original diffuser, pip and wires stay separate."""
+    paint_mat=material("BarHousing","#1c2025",roughness=.60,metallic=.15)
+    metal=material("BarHardware","#8b939c",roughness=.30,metallic=.85)
+    rubber=material("BarRubber","#121417",roughness=.85)
+    parts=[]
+    def add(obj,mat):
+        parts.append((attach(obj,mat),None))
+    def socket(radius,depth,loc,axis=1,sign=1):
+        rot=(0,0,math.pi/2) if axis==0 else (0,0,0)
+        head=cyl("SocketHead",radius,depth,loc,rot=rot,verts=12)
+        p=list(loc);p[axis]+=sign*depth*.4
+        cut(head,cyl("HexSocket",radius*.42,depth*.75,tuple(p),rot=rot,verts=6))
+        add(smooth_obj(head),metal)
+    channel=box("ExtrudedChannel",(3.56,.058,.16),(0,.029,0),bevel_w=.003,bevel_seg=3)
+    cut(channel,box("DiffuserAperture",(3.58,.040,.118),(0,.005,0),bevel_w=.002,bevel_seg=2))
+    cut(channel,box("DriverCavity",(3.52,.043,.144),(0,.0265,0),bevel_w=.003,bevel_seg=2))
+    cut(channel,box("ServiceRecess",(.65,.014,.10),(0,.057,0),bevel_w=.004,bevel_seg=2))
+    for x in (-1.5,1.5):
+        cut(channel,y_cyl("WirePassage",.0065,.04,(x,.065,0),verts=16))
+        gland=y_cyl("SuspensionGland",.014,.016,(x,.062,0),verts=20)
+        cut(gland,y_cyl("WireBore",.0065,.03,(x,.062,0),verts=16))
+        add(smooth_obj(gland),metal)
+    add(channel,paint_mat)
+    for sign in (-1,1):
+        end=box("RemovableEndCap",(.020,.070,.16),(sign*1.79,.035,0),bevel_w=.004,bevel_seg=3)
+        for y in (.017,.053):
+            for z in (-.05,.05):
+                cut(end,x_cyl("EndCounterbore",.0048,.008,(sign*1.799,y,z),verts=12))
+                socket(.0035,.004,(sign*1.797,y,z),axis=0,sign=sign)
+        add(end,paint_mat)
+        gasket=box("EndGasket",(.004,.060,.152),(sign*1.777,.035,0),bevel_w=.001)
+        cut(gasket,box("GasketMouth",(.020,.054,.116),(sign*1.777,.029,0),bevel_w=.001))
+        add(gasket,rubber)
+        for z in (-.06,-.036,-.012,.012,.036,.06):
+            fin=box("CoolingRib",(1.37,.008,.006),(sign*1.015,.066,z),bevel_w=.001,bevel_seg=1)
+            if abs(z)<.018:
+                cut(fin,y_cyl("GlandRelief",.018,.04,(sign*1.5,.066,0),verts=16))
+            add(fin,paint_mat)
+    cover=box("ServiceCover",(.62,.004,.094),(0,.054,0),bevel_w=.001,bevel_seg=2)
+    for x in (-.28,.28):
+        cut(cover,y_cyl("CoverCounterbore",.0045,.010,(x,.056,0),verts=12))
+        socket(.0035,.003,(x,.0555,0))
+    add(cover,paint_mat)
+    bezel=box("OriginalPipFrame",(.042,.030,.004),(1.72,.045,.078),bevel_w=.002,bevel_seg=2)
+    cut(bezel,box("PipAperture",(.032,.022,.020),(1.72,.045,.078),bevel_w=.001))
+    add(bezel,metal)
+    return [],[("LedBarHousing",loose(parts),None)]
+
+
 # The arm's links, in metres: each joint's pivot sits on the previous link's +Y axis.
 ARM = {
     "pedestal": 0.44,  # yaw axis origin, on top of the pedestal cap

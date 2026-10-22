@@ -53,6 +53,7 @@ import { Climber, type Arrival, type Grip, type Way } from './climb';
 import { buildOffice, type DeskView, type InteractKind, type Interactable } from './world/office';
 import { installExecutiveDesk } from './world/executive-desk';
 import { installTaskChairs } from './world/task-chair';
+import { installLedBarHousings } from './world/led-bar';
 import { installLoungeSofa } from './world/lounge-sofa';
 import { installAgentKiosks } from './world/agent-kiosk';
 import { installLoungeTable } from './world/lounge-table';
@@ -222,6 +223,8 @@ const propsReady = loadPropManifest()
     if (telescope) installTelescope(telescope, office.group);
     const loungeTable = propScene('lounge-table');
     if (loungeTable) installLoungeTable(loungeTable, office.group);
+    const ledBar = propScene('led-bar');
+    if (ledBar) installLedBarHousings(ledBar, office.group);
     const teamKit = propScene('droid-team-kit');
     if (teamKit) setTeamKit(teamKit);
     const agentKiosk = propScene('agent-kiosk');

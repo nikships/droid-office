@@ -117,6 +117,19 @@
     "url": "/props/jukebox.glb",
     "width": 1.38
   },
+  "led-bar": {
+    "bytes": 31120,
+    "depth": 0.16,
+    "height": 0.07,
+    "materials": 3,
+    "tags": [
+      "ceiling",
+      "hero"
+    ],
+    "triangles": 3704,
+    "url": "/props/led-bar.glb",
+    "width": 3.6
+  },
   "lounge-sofa": {
     "bytes": 32656,
     "depth": 4.3065,
