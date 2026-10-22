@@ -103,6 +103,19 @@
     "url": "/props/droid-computer.glb",
     "width": 0.45
   },
+  "droid-rack": {
+    "bytes": 30596,
+    "depth": 2.31,
+    "height": 0.866,
+    "materials": 5,
+    "tags": [
+      "factory",
+      "furniture"
+    ],
+    "triangles": 4268,
+    "url": "/props/droid-rack.glb",
+    "width": 0.71
+  },
   "droid-team-kit": {
     "bytes": 170476,
     "depth": 0.416,

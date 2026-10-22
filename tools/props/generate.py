@@ -1743,6 +1743,55 @@ def build_droid_computer():
     return body, [("Shell", raw(shell), shell_mat)]
 
 
+@prop("droid-rack", "factory", "furniture", recenter=False, multipart=True)
+def build_droid_rack():
+    """Local to the original plinth centre; all live cubes, labels and glow remain client-side."""
+    paint = material("RackCase", "#141414", roughness=0.7, metallic=0.25)
+    deck = material("RackDeck", "#2a2a2a", roughness=0.45, metallic=0.8)
+    board = material("RackBackboard", "#0e0e0e", roughness=0.75, metallic=0.2)
+    steel = material("RackHardware", "#6e767e", roughness=0.32, metallic=0.85)
+    rubber = material("RackRubber", "#020202", roughness=0.9)
+    body = box("DroidRack", (0.7, 0.13, 2.3), loc=(0, 0.065, 0), bevel_w=0.012, bevel_seg=3)
+    cut(body, box("HollowPlinth", (0.66, 0.106, 2.26), loc=(0, 0.071, 0), bevel_w=0.006))
+    top = box("SupportDeck", (0.71, 0.012, 2.31), loc=(0, 0.134, 0), bevel_w=0.003, bevel_seg=3)
+    back = box("GlowBackboard", (0.02, 0.86, 2.3), loc=(-0.34, 0.43, 0), bevel_w=0.0015, bevel_seg=2)
+    parts = [(body, paint), (top, deck), (back, board)]
+    for z in (-0.39, 0.39):
+        # Between cubes, clear of every original foot contact patch; no top protrusion.
+        for target in (body, top):
+            cut(target, y_cyl("CablePassage", 0.042, 0.05, (-0.12, 0.13, z), 32))
+        cut(top, y_cyl("FlushLipRecess", 0.0555, 0.006, (-0.12, 0.139, z), 32))
+        grommet = y_cyl("FlushGrommet", 0.055, 0.004, (-0.12, 0.138, z), 32)
+        cut(grommet, y_cyl("CableBore", 0.037, 0.02, (-0.12, 0.138, z), 32))
+        smooth_obj(grommet)
+        parts.append((grommet, rubber))
+    for x in (-0.28, 0.28):
+        for z in (-1.06, -0.39, 0.39, 1.06):
+            cut(top, y_cyl("DeckCounterbore", 0.007, 0.01, (x, 0.14, z), 16))
+            head = y_cyl("DeckSocket", 0.0055, 0.004, (x, 0.136, z), 12)
+            cut(head, y_cyl("HexDrive", 0.0026, 0.004, (x, 0.138, z), 6))
+            smooth_obj(head)
+            parts.append((head, steel))
+    for side in (-1, 1):
+        end = box("RemovableEnd", (0.65, 0.1, 0.004), loc=(0, 0.075, side * 1.15), bevel_w=0.001)
+        for x in (-0.28, 0.28):
+            for y in (0.045, 0.105):
+                cut(end, cyl("EndCounterbore", 0.006, 0.006, loc=(x, y, side * 1.153), rot=(math.pi / 2, 0, 0), verts=12))
+                head = cyl("EndSocket", 0.0045, 0.002, loc=(x, y, side * 1.15), rot=(math.pi / 2, 0, 0), verts=12)
+                cut(head, cyl("HexDrive", 0.0021, 0.002, loc=(x, y, side * 1.1512), rot=(math.pi / 2, 0, 0), verts=6))
+                smooth_obj(head)
+                parts.append((head, steel))
+        parts.append((end, deck))
+    parts.append((box("BackboardCap", (0.024, 0.012, 2.304), loc=(-0.338, 0.86, 0), bevel_w=0.001), deck))
+    parts.append((box("FootShadow", (0.02, 0.025, 2.26), loc=(0.344, 0.0125, 0)), rubber))
+    for obj in (body, top, back):
+        smooth_obj(obj)
+        for face in raw(obj).data.polygons:
+            if max(abs(v) for v in face.normal) > 0.999:
+                face.use_smooth = False
+    return [], [("DroidRack", loose(parts), None)]
+
+
 @prop("elevator-panels", "architecture", "door", recenter=False, multipart=True)
 def build_elevator_panels():
     """Two identity-transform leaves in their original sliding-group coordinates."""

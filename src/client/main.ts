@@ -59,6 +59,7 @@ import { installHighBayLamps } from './world/high-bay-lamp';
 import { installLoungeSofa } from './world/lounge-sofa';
 import { installAgentKiosks } from './world/agent-kiosk';
 import { installLoungeTable } from './world/lounge-table';
+import { installDroidRack } from './world/droid-rack';
 import { installElevatorPanels } from './world/elevator-panels';
 import { installExitDoor } from './world/exit-door';
 import { installBalconyStools } from './world/balcony-stool';
@@ -233,6 +234,8 @@ const propsReady = loadPropManifest()
     if (telescope) installTelescope(telescope, office.group);
     const loungeTable = propScene('lounge-table');
     if (loungeTable) installLoungeTable(loungeTable, office.group);
+    const droidRack = propScene('droid-rack');
+    if (droidRack) installDroidRack(droidRack, office.group);
     const elevatorPanels = propScene('elevator-panels');
     if (elevatorPanels) {
       installElevatorPanels(elevatorPanels, office.elevator.group);
