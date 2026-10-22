@@ -52,7 +52,7 @@
     "width": 2.61
   },
   "droid-computer": {
-    "bytes": 6628,
+    "bytes": 36816,
     "depth": 0.454,
     "height": 0.472,
     "materials": 2,
@@ -60,7 +60,7 @@
       "factory",
       "hero"
     ],
-    "triangles": 548,
+    "triangles": 6320,
     "url": "/props/droid-computer.glb",
     "width": 0.45
   },
