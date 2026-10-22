@@ -1912,6 +1912,75 @@ def catmull_rom(points, steps=3):
     return [tuple(p) for p in out]
 
 
+@prop("telescope", "furniture", "optics", recenter=False, multipart=True)
+def build_telescope():
+    """Two nodes: floor-mounted tripod and optics authored at the existing 1.08 m pivot."""
+    paint=material("ScopePaint","#666f78",roughness=.5,metallic=.2)
+    steel=material("ScopeSteel","#b0bac3",roughness=.25,metallic=.85)
+    rubber=material("ScopeRubber","#23282d",roughness=.85)
+    orange=material("ScopeSignal","#ee6018",roughness=.7)
+    glass=material("ScopeLens","#294e63",roughness=.10,metallic=.35,coat=1,alpha=.8)
+    stand,optics=[],[]
+    def add(parts,obj,mat):
+        parts.append((obj,mat))
+        return raw(obj)
+    for i in range(3):
+        a=i*math.tau/3
+        dx,dz=math.sin(a),math.cos(a)
+        top=Vector((dx*.065,1.0,dz*.065))
+        foot=Vector((dx*.38,.03,dz*.38))
+        mid=top.lerp(foot,.55)
+        direction=(foot-top).normalized()
+        add(stand,tube_path("UpperTripodLeg",[top,mid],.019,sides=12),steel)
+        add(stand,tube_path("LowerTripodLeg",[mid,foot],.012,sides=10),paint)
+        add(stand,tube_path("LegClamp",[mid-direction*.025,mid+direction*.025],.025,sides=12),rubber)
+        add(stand,y_cyl("TripodFoot",.028,.022,(foot.x,.011,foot.z),verts=12,bevel_w=.004),rubber)
+        tangent=Vector((math.cos(a),0,-math.sin(a)))
+        add(stand,tube_path("ClampLever",[mid+tangent*.015,mid+tangent*.06],.0045,sides=6),steel)
+        add(stand,box("LeverPad",(.025,.014,.022),mid+tangent*.06,rot=(0,a,0),bevel_w=.004),orange)
+        r=.065+(.38-.065)*(1.0-.42)/.97
+        add(stand,tube_path("Spreader",[(0,.42,0),(dx*r,.42,dz*r)],.008,sides=8),steel)
+    tray=y_cyl("AccessoryTray",.09,.012,(0,.42,0),verts=24,bevel_w=.003)
+    cut(tray,*[y_cyl("TrayHole",.012,.04,(x,.42,0),verts=16) for x in (-.045,.045)])
+    add(stand,tray,paint)
+    add(stand,y_cyl("CenterColumn",.024,.46,(0,.76,0),verts=20),steel)
+    add(stand,y_cyl("AzimuthCollar",.073,.045,(0,.96,0),verts=24,bevel_w=.006),paint)
+    add(stand,sphere("BallHead",.055,(0,.99,0),segs=20,rings=10),steel)
+    add(stand,cyl("HeadLock",.019,.05,(.085,.96,0),rot=(0,0,math.pi/2),verts=16,bevel_w=.003),rubber)
+    add(optics,cone("OpticalTube",.062,.098,.86,(0,0,.10),rot=(math.pi/2,0,0),verts=32),paint)
+    collar=cyl("ObjectiveCollar",.11,.08,(0,0,.55),rot=(math.pi/2,0,0),verts=32,bevel_w=.004)
+    cut(collar,cyl("ObjectiveOpening",.095,.11,(0,0,.55),rot=(math.pi/2,0,0),verts=32))
+    add(optics,collar,rubber)
+    add(optics,cyl("LensChamber",.094,.018,(0,0,.539),rot=(math.pi/2,0,0),verts=32),rubber)
+    lens=add(optics,sphere("ObjectiveLens",1,(0,0,.575),segs=28,rings=10,scale=(.092,.092,.009)),glass)
+    smooth_obj(lens)
+    add(optics,torus("ObjectiveRim",.103,.003,(0,0,.588),major_segs=32,minor_segs=6),steel)
+    add(optics,torus("OrangeTubeBand",.099,.003,(0,0,.493),major_segs=32,minor_segs=6),orange)
+    add(optics,cyl("Focuser",.057,.085,(0,0,-.35),rot=(math.pi/2,0,0),verts=24,bevel_w=.004),steel)
+    add(optics,cyl("FocusRing",.063,.025,(0,0,-.315),rot=(math.pi/2,0,0),verts=32),rubber)
+    for i in range(24):
+        a=i*math.tau/24
+        add(optics,box("FocusGrip",(.004,.008,.023),(.063*math.cos(a),.063*math.sin(a),-.315),rot=(0,0,a)),rubber)
+    for sx in (-1,1):
+        add(optics,cyl("FocusKnob",.023,.03,(sx*.073,-.01,-.34),rot=(0,0,math.pi/2),verts=20,bevel_w=.004),rubber)
+        add(optics,x_cyl("KnobCap",.014,.002,(sx*.089,-.01,-.34),verts=16),steel)
+    add(optics,cyl("Eyepiece",.041,.07,(0,0,-.423),rot=(math.pi/2,0,0),verts=24,bevel_w=.005),rubber)
+    add(optics,sphere("EyepieceLens",1,(0,0,-.46),segs=20,rings=8,scale=(.028,.028,.003)),glass)
+    for z in (.09,.27):
+        add(optics,box("FinderBracket",(.018,.075,.025),(.105,.0875,z),bevel_w=.005),steel)
+    add(optics,cyl("FinderTube",.020,.24,(.125,.13,.20),rot=(math.pi/2,0,0),verts=20,bevel_w=.003),paint)
+    add(optics,cyl("FinderEyecup",.016,.04,(.125,.13,.06),rot=(math.pi/2,0,0),verts=16),rubber)
+    add(optics,sphere("FinderLens",1,(.125,.13,.322),segs=16,rings=8,scale=(.014,.014,.003)),glass)
+    for z in (-.12,.25):
+        add(optics,torus("TubeClamp",.064+(z+.33)/.86*.036,.004,(0,0,z),major_segs=32,minor_segs=6),steel)
+    for obj,_ in stand+optics:
+        smooth_obj(obj)
+    base=loose(stand)
+    tube=loose(optics)
+    tube.data.transform(Matrix.Translation((0,1.08,0)))
+    return [],[("TelescopeStand",base,None),("TelescopeOptics",tube,None)]
+
+
 @prop("droid-team-kit", "factory", "part", recenter=False, multipart=True, keep_uvs=True, draco=False)
 def build_droid_team_kit():
     """Team hardware worn over `droid-worker.glb`, authored in the same worker space so every node

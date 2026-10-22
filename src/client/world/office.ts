@@ -1752,13 +1752,17 @@ function buildLoft(group: THREE.Group, colliders: Collider[], interactables: Int
   group.add(rug);
 
   const scope = new THREE.Group();
+  const tripod = new THREE.Group();
+  tripod.name = 'telescope-stand';
   for (let i = 0; i < 3; i++) {
     const a = (i / 3) * Math.PI * 2;
     const leg = mesh(new THREE.CylinderGeometry(0.025, 0.025, 1.1, 6), inkMat, Math.sin(a) * 0.2, 0.52, Math.cos(a) * 0.2);
     leg.rotation.set(Math.cos(a) * -0.35, 0, Math.sin(a) * 0.35);
-    scope.add(leg);
+    tripod.add(leg);
   }
+  scope.add(tripod);
   const tube = new THREE.Group();
+  tube.name = 'telescope-tube';
   const tubeGeo = new THREE.CylinderGeometry(0.1, 0.06, 0.9, 14);
   tubeGeo.rotateX(Math.PI / 2);
   tube.add(mesh(tubeGeo, toon(PALETTE.brushed), 0, 0, 0.1));

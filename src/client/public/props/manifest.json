@@ -167,6 +167,19 @@
     "url": "/props/task-chair.glb",
     "width": 0.74
   },
+  "telescope": {
+    "bytes": 54124,
+    "depth": 1.0536,
+    "height": 1.23,
+    "materials": 5,
+    "tags": [
+      "furniture",
+      "optics"
+    ],
+    "triangles": 7976,
+    "url": "/props/telescope.glb",
+    "width": 0.7142
+  },
   "wand": {
     "bytes": 240788,
     "depth": 0.3422,
