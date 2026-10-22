@@ -39,7 +39,7 @@
     "width": 3.6
   },
   "conveyor": {
-    "bytes": 7636,
+    "bytes": 34936,
     "depth": 0.736,
     "height": 0.91,
     "materials": 1,
@@ -47,7 +47,7 @@
       "factory",
       "hero"
     ],
-    "triangles": 1016,
+    "triangles": 7622,
     "url": "/props/conveyor.glb",
     "width": 2.61
   },
