@@ -1747,6 +1747,7 @@ function buildLoft(group: THREE.Group, colliders: Collider[], interactables: Int
   sofa.add(mesh(box(0.92, 0.12, 2.3), toon('#626262'), 0, 0.1, 0));
   sofa.add(mesh(roundedBox(0.18, 0.42, 0.5, 0.03), toon('#eaeaea'), 0.22, 0.72, 0.4));
   const couch = mergeByMaterial(sofa);
+  couch.name = 'loft-couch';
   couch.position.set(maxX - 0.65, floorY, cz);
   group.add(couch);
   colliders.push({ minX: maxX - 1.15, maxX, minZ: cz - 1.2, maxZ: cz + 1.2, bottom: floorY, top: floorY + 0.55 });

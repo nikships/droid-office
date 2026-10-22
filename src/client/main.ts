@@ -52,6 +52,7 @@ import { RenderLoop } from './render-loop';
 import { Climber, type Arrival, type Grip, type Way } from './climb';
 import { buildOffice, type DeskView, type InteractKind, type Interactable } from './world/office';
 import { installExecutiveDesk } from './world/executive-desk';
+import { installLoftCouch } from './world/loft-couch';
 import { installTaskChairs } from './world/task-chair';
 import { installLoungeSofa } from './world/lounge-sofa';
 import { installAgentKiosks } from './world/agent-kiosk';
@@ -207,6 +208,8 @@ const propsReady = loadPropManifest()
     if (mergeGong) office.gong.setModel(mergeGong);
     const executiveDesk = propScene('executive-desk');
     if (executiveDesk) installExecutiveDesk(executiveDesk, office.group);
+    const loftCouch = propScene('loft-couch');
+    if (loftCouch) installLoftCouch(loftCouch, office.group);
     const gun = propScene('magnum');
     if (gun) setMagnumModel(gun);
     const wand = propScene('wand');
