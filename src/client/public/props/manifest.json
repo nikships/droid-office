@@ -23,7 +23,20 @@
     ],
     "triangles": 7116,
     "url": "/props/balcony-bench.glb",
-    "width": 2.0
+    "width": 2
+  },
+  "balcony-table": {
+    "bytes": 43900,
+    "depth": 0.84,
+    "height": 0.76,
+    "materials": 4,
+    "tags": [
+      "furniture",
+      "table"
+    ],
+    "triangles": 6902,
+    "url": "/props/balcony-table.glb",
+    "width": 0.84
   },
   "bookshelf": {
     "bytes": 61708,

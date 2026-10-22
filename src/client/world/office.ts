@@ -540,11 +540,12 @@ function buildBalcony(group: THREE.Group, colliders: Collider[], interactables: 
   const tx = 0.2;
   const tz = cz + 0.2;
   const table = new THREE.Group();
+  table.name = 'balcony-table';
   table.add(mesh(new THREE.CylinderGeometry(0.42, 0.42, 0.04, 20), toon('#727272'), 0, 0.74, 0));
   table.add(mesh(new THREE.CylinderGeometry(0.04, 0.04, 0.7, 8), ink, 0, 0.37, 0));
   table.add(mesh(new THREE.CylinderGeometry(0.25, 0.28, 0.04, 16), ink, 0, 0.02, 0));
   table.position.set(tx, 0, tz);
-  parts.add(table);
+  group.add(table);
   colliders.push({ minX: tx - 0.4, maxX: tx + 0.4, minZ: tz - 0.4, maxZ: tz + 0.4, top: 0.77 });
   for (const sx of [-1, 1]) {
     const x = tx + sx * 0.8;
