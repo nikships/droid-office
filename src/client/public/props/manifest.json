@@ -88,6 +88,19 @@
     "url": "/props/magnum.glb",
     "width": 0.0477
   },
+  "merge-gong": {
+    "bytes": 61156,
+    "depth": 0.6,
+    "height": 2.4525,
+    "materials": 6,
+    "tags": [
+      "furniture",
+      "hero"
+    ],
+    "triangles": 7964,
+    "url": "/props/merge-gong.glb",
+    "width": 2.335
+  },
   "pr-crate": {
     "bytes": 5272,
     "depth": 0.26,
