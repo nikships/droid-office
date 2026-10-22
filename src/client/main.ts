@@ -123,6 +123,7 @@ import { WhiteboardTexture, gridSummary, wallView } from './world/whiteboard-wal
 import { openCiWindow } from './ui/factory-ci';
 import { ComputeWallTextures, rackCubesOf, wallSummary } from './world/factory-computers';
 import { setRackCubes } from './world/factory-props';
+import { installWorkbenches } from './world/workbench';
 import { openComputers } from './ui/factory-computers';
 import { actionLabel, actionOffered, mountHud, type HudAction } from './ui/menu';
 import { openJukebox } from './ui/jukebox';
@@ -187,6 +188,12 @@ office.group.add(teamLines.group);
 const propsReady = loadPropManifest()
   .then(() => preloadProps(Object.keys(propManifest())))
   .then(() => {
+    const workbench = propScene('workbench');
+    if (workbench)
+      installWorkbenches(
+        workbench,
+        DESKS.map(({ id }) => office.desks.get(id)!.group),
+      );
     const gun = propScene('magnum');
     if (gun) setMagnumModel(gun);
     const wand = propScene('wand');

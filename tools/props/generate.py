@@ -730,6 +730,73 @@ def keycap(name, x0, x1, z0, z1):
     return obj
 
 
+@prop("workbench", "furniture", "desk", recenter=False)
+def build_workbench():
+    """Industrial workbench inside the existing 2.2 x 1.1 footprint; top exactly .78 m."""
+    top = material("BenchWorktop", "#969696", roughness=.72)
+    frame = material("BenchFrame", "#555b62", roughness=.55, metallic=.25)
+    steel = material("BenchSteel", "#b6bdc5", roughness=.28, metallic=.85)
+    rubber = material("BenchRubber", "#292d31", roughness=.9)
+    orange = material("BenchSignal", "#ee6018", roughness=.6)
+    parts = []
+
+    def add(obj, mat):
+        parts.append((obj, mat))
+        return raw(obj)
+
+    # Rounded HPL slab over an inset steel edge. Cable ports are actual through-holes.
+    slab = box("Worktop", (2.14, .045, 1.06), (0, .7575, 0), bevel_w=.014, bevel_seg=3)
+    holes = [cyl("GrommetCut", .044, .10, (x, .76, -.35), verts=24) for x in (-.84, .84)]
+    cut(slab, *holes)
+    add(slab, top)
+    add(box("EdgeSubstrate", (2.12, .018, 1.04), (0, .726, 0), bevel_w=.008), steel)
+    add(box("FrontEdgeInlay", (1.97, .006, .006), (0, .748, .527), bevel_w=.002), steel)
+    for x in (-.84, .84):
+        add(torus("GrommetRim", .041, .0035, (x, .776, -.35), rot=(math.pi / 2, 0, 0), major_segs=24, minor_segs=6), steel)
+        add(y_cyl("GrommetLiner", .038, .03, (x, .754, -.35), verts=24), rubber)
+        add(box("CableSlot", (.038, .002, .008), (x, .770, -.35), bevel_w=.002), frame)
+
+    # Inset square-tube frame, replaceable rubber feet and visible corner fasteners.
+    for sx in (-1, 1):
+        for sz in (-1, 1):
+            x, z = sx * .99, sz * .445
+            add(box("FootPad", (.09, .018, .09), (x, .009, z), bevel_w=.007), rubber)
+            add(box("FootCollar", (.067, .027, .067), (x, .029, z), bevel_w=.006), steel)
+            add(box("LegTube", (.056, .678, .056), (x, .379, z), bevel_w=.006), frame)
+            add(box("CornerBracket", (.09, .075, .035), (sx * .945, .677, z), bevel_w=.005), steel)
+            add(cyl("BracketBolt", .009, .006, (sx * .945, .677, z + sz * .021), rot=(math.pi / 2, 0, 0), verts=6), rubber)
+        add(box("SideApron", (.055, .06, .92), (sx * .99, .683, 0), bevel_w=.006), frame)
+        add(box("FootRail", (.045, .04, .89), (sx * .99, .13, 0), bevel_w=.006), frame)
+        # Recessed end plate and its paired screws read from the aisle.
+        add(box("EndPlate", (.008, .09, .32), (sx * 1.023, .62, 0), bevel_w=.005), steel)
+        for z in (-.12, .12):
+            add(cyl("EndPlateScrew", .006, .009, (sx * 1.028, .62, z), rot=(0, 0, math.pi / 2), verts=6), rubber)
+    for z in (-.445, .445):
+        add(box("LongApron", (1.98, .055, .045), (0, .68, z), bevel_w=.005), frame)
+
+    # Slotted privacy panel, folded cable tray, a power bar and a restrained orange switch.
+    panel = box("ModestyPanel", (1.80, .245, .018), (0, .49, -.472), bevel_w=.006)
+    slots = [box("VentCut", (.085, .016, .06), (x * .118, .52, -.472), bevel_w=.006) for x in range(-6, 7)]
+    cut(panel, *slots)
+    add(panel, frame)
+    add(box("PanelFold", (1.80, .016, .045), (0, .36, -.457), bevel_w=.004), steel)
+    add(box("CableTray", (1.65, .018, .16), (0, .61, -.39), bevel_w=.006), frame)
+    add(box("TrayLip", (1.65, .05, .014), (0, .64, -.315), bevel_w=.005), frame)
+    add(box("PowerBar", (.45, .052, .065), (.45, .65, -.39), bevel_w=.01), rubber)
+    for x in (.30, .42, .54):
+        add(box("SocketFace", (.075, .003, .045), (x, .678, -.39), bevel_w=.007), steel)
+        for dx in (-.012, .012):
+            add(box("SocketContact", (.006, .003, .014), (x + dx, .680, -.39), bevel_w=.002), rubber)
+    add(box("PowerSwitch", (.028, .012, .024), (.63, .682, -.39), bevel_w=.004), orange)
+    add(tube_path("PowerLead", [(.68, .65, -.39), (.78, .61, -.39), (.87, .61, -.40), (.92, .57, -.44), (.92, .30, -.44)], .007, sides=8), rubber)
+    add(box("CableClip", (.03, .028, .035), (.92, .39, -.44), bevel_w=.006), steel)
+    # A flush service inset is kept below the work surface, clear of laptops and hands.
+    add(box("ServiceInset", (.18, .002, .075), (.58, .779, -.37), bevel_w=.008), rubber)
+    for x in (.53, .57, .61):
+        add(box("ServiceSlot", (.022, .001, .007), (x, .7795, -.37), bevel_w=.002), steel)
+    return parts
+
+
 @prop("macbook-base", "desk", recenter=False, keep_uvs=True)
 def build_macbook_base():
     """MacBook Pro 16 lower half: a space-black unibody slab with rounded corners on four round
