@@ -1743,6 +1743,75 @@ def build_droid_computer():
     return body, [("Shell", raw(shell), shell_mat)]
 
 
+@prop("exit-door", "architecture", "door", recenter=False, multipart=True)
+def build_exit_door():
+    """Original hinge-local leaf; live glass and orange push-bar stripe stay in the client."""
+    paint = material("DoorPaint", "#3a3a3a", roughness=0.72, metallic=0.2)
+    steel = material("DoorSteel", "#a6afb6", roughness=0.3, metallic=0.85)
+    plate = material("DoorPlate", "#727c84", roughness=0.46, metallic=0.8)
+    rubber = material("DoorRubber", "#171b1e", roughness=0.9)
+    parts = []
+
+    def z_cyl(name, radius, depth, loc, verts=16):
+        return cyl(name, radius, depth, loc=loc, rot=(math.pi / 2, 0, 0), verts=verts)
+
+    def ring(name, outer, inner, depth, z, mat):
+        obj = z_cyl(name, outer, depth, (0.61, 1.76, z), 64)
+        cut(obj, z_cyl("PortholeBore", inner, depth + 0.02, (0.61, 1.76, z), 64))
+        smooth_obj(obj)
+        parts.append((obj, mat))
+        return obj
+
+    def socket(x, y, z, side, radius=0.0035):
+        head = z_cyl("RecessedSocket", radius, 0.002, (x, y, z), 12)
+        cut(head, z_cyl("HexDrive", radius * 0.48, 0.002, (x, y, z + side * 0.0012), 6))
+        smooth_obj(head)
+        parts.append((head, steel))
+
+    body = box("ExitDoorLeaf", (1.22, 2.3, 0.06), loc=(0.61, 1.16, 0), bevel_w=0.006, bevel_seg=3)
+    cut(body, z_cyl("OriginalPorthole", 0.2, 0.12, (0.61, 1.76, 0), 64))
+    for side in (-1, 1):
+        # Shallow folded-skin seams, not painted-on lines or a second coplanar panel.
+        for x in (0.04, 1.18):
+            cut(body, box("SkinFold", (0.0015, 2.12, 0.002), loc=(x, 1.16, side * 0.0302)))
+        for y in (0.10, 2.22):
+            cut(body, box("SkinFold", (1.14, 0.0015, 0.002), loc=(0.61, y, side * 0.0302)))
+        ring("WindowSeal", 0.222, 0.17, 0.002, side * 0.0305, rubber)
+        bezel = ring("PortholeClamp", 0.235, 0.165, 0.004, side * 0.033, steel)
+        for i in range(8):
+            a = i * math.tau / 8
+            x, y = 0.61 + 0.213 * math.cos(a), 1.76 + 0.213 * math.sin(a)
+            cut(bezel, z_cyl("ClampCounterbore", 0.0045, 0.006, (x, y, side * 0.036), 12))
+            socket(x, y, side * 0.0335, side)
+        smooth_obj(bezel)
+        kick = box("KickPlate", (1.08, 0.28, 0.004), loc=(0.61, 0.22, side * 0.032), bevel_w=0.001, bevel_seg=2)
+        for x in (0.10, 1.12):
+            for y in (0.11, 0.33):
+                cut(kick, z_cyl("KickCounterbore", 0.0045, 0.006, (x, y, side * 0.035), 12))
+                socket(x, y, side * 0.0325, side)
+        parts.append((kick, plate))
+    smooth_obj(body)
+    parts.insert(0, (body, paint))
+    # Keep the old contact surfaces: inside rail z=-.095, outside pull z=.095.
+    for x in (0.25, 0.97):
+        foot = box("PanicFoot", (0.07, 0.11, 0.01), loc=(x, 1, -0.035), bevel_w=0.003)
+        parts.append((foot, plate))
+        parts.append((smooth_obj(z_cyl("PanicStandoff", 0.016, 0.025, (x, 1, -0.045))), steel))
+        for y in (0.965, 1.035):
+            cut(foot, z_cyl("FootCounterbore", 0.0045, 0.006, (x, y, -0.041), 12))
+            socket(x, y, -0.0385, -1)
+    parts.append((box("PanicRail", (0.854, 0.05, 0.05), loc=(0.61, 1, -0.07), bevel_w=0.008, bevel_seg=3), steel))
+    for y in (0.88, 1.12):
+        foot = box("PullFoot", (0.08, 0.06, 0.004), loc=(1.07, y, 0.032), bevel_w=0.002)
+        parts.append((foot, plate))
+        parts.append((smooth_obj(z_cyl("PullStandoff", 0.014, 0.03, (1.07, y, 0.04))), steel))
+        for x in (1.045, 1.095):
+            cut(foot, z_cyl("FootCounterbore", 0.0045, 0.006, (x, y, 0.035), 12))
+            socket(x, y, 0.0325, 1)
+    parts.append((box("OutsidePull", (0.05, 0.3, 0.05), loc=(1.07, 1, 0.07), bevel_w=0.01, bevel_seg=3), steel))
+    return [], [("ExitDoorLeaf", loose(parts), None)]
+
+
 @prop("led-bar", "ceiling", "hero", recenter=False, multipart=True)
 def build_led_bar():
     """Static 3.6 m housing only; the client's original diffuser, pip and wires stay separate."""

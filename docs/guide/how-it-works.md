@@ -1,5 +1,7 @@
 # How it works
 
+- **Exit door.** Blender's `exit-door.glb` replaces only the original leaf's named solid-hardware group before shader warm-up and GI: folded steel skin, open porthole clamps, recessed screws, kick plates and supported push/pull handles. The hinge-local envelope and original contact surfaces stay unchanged. The real glass, orange stripe, EXIT sign, exterior lamp, outward swing, proximity control, upper-floor lock/plug and passage colliders remain the original objects and code. Materials convert to toon paint, metal and rubber; a missing asset keeps the procedural solids.
+
 - **Lounge sofa.** Blender's `lounge-sofa.glb` replaces only the lounge couch's named static group, before shader warm-up and the light bake. Its three shaped seats, back cushions, piping, upholstered arm panels, throw pillows and steel plinth match the existing casework and +x facing. The original three seated-player anchors, picking and collider remain unchanged. Imported materials use the office's toon pipeline; a missing or incomplete asset keeps the procedural couch.
 
 - **Task chairs.** `task-chair.glb`, authored in `tools/props/generate.py` through Blender, replaces the procedural task chairs once props load, before shader warm-up and the light bake. The sculpted upholstery, arms and twin-wheel casters share geometry and toon materials across desks. Only each chair group's contents change: swivel transforms, worker seat anchors, desks and collisions stay unchanged. A failed asset load keeps the procedural chair.
