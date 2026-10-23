@@ -103,6 +103,19 @@
     "url": "/props/ceiling-deck.glb",
     "width": 1.2
   },
+  "city-facades": {
+    "bytes": 2689780,
+    "depth": 0.0,
+    "height": 3.3,
+    "materials": 10,
+    "tags": [
+      "building",
+      "material"
+    ],
+    "triangles": 20,
+    "url": "/props/city-facades.glb",
+    "width": 31.6
+  },
   "conference-table": {
     "bytes": 38208,
     "depth": 1.2,

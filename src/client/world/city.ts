@@ -446,6 +446,7 @@ export function buildCity(night: NightParts): City {
       const lit = litTexture(p, i + 1);
       lit.repeat.set(1 / 16, 1 / 16);
       m = new THREE.MeshToonMaterial({ map: bayTexture(p), emissive: '#ffffff', emissiveMap: lit, emissiveIntensity: 0, gradientMap: gradient });
+      m.userData.facade = { style: i, columns: 1, rows: 1, lightsAcross: 16, lightsDown: 16 };
       night.windows.push(m);
       paintMats.set(i, m);
     }

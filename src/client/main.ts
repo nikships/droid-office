@@ -59,6 +59,7 @@ import { installLedBarHousings } from './world/led-bar';
 import { installHighBayLamps } from './world/high-bay-lamp';
 import { installRoofPlanters } from './world/rooftop-planter';
 import { installSportsCars } from './world/sports-cars';
+import { installCityFacades } from './world/city-facades';
 import { installCableTrays } from './world/cable-tray';
 import { installBoardFrames } from './world/board-frame';
 import { installLoungeSofa } from './world/lounge-sofa';
@@ -265,6 +266,8 @@ const propsReady = loadPropManifest()
     if (sportsCars) installSportsCars(sportsCars, office.group);
     const rooftopPlanter = propScene('rooftop-planter');
     if (rooftopPlanter && roof) installRoofPlanters(rooftopPlanter, roof.group);
+    const cityFacades = propScene('city-facades');
+    if (cityFacades) installCityFacades(cityFacades, office.group, ...(roof ? [roof.group] : []));
     const ceilingDeck = propScene('ceiling-deck');
     if (ceilingDeck) office.stack.setCeilingModel(ceilingDeck);
     const cableTray = propScene('cable-tray');
@@ -486,6 +489,8 @@ function theRoof(): Rooftop {
     roof = buildRooftop(office.night, roofFloors());
     const rooftopPlanter = propScene('rooftop-planter');
     if (rooftopPlanter) installRoofPlanters(rooftopPlanter, roof.group);
+    const cityFacades = propScene('city-facades');
+    if (cityFacades) installCityFacades(cityFacades, roof.group);
     const elevatorPanels = propScene('elevator-panels');
     if (elevatorPanels) installElevatorPanels(elevatorPanels, roof.elevator.group);
     roof.group.visible = false;
