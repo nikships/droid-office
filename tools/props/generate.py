@@ -4527,6 +4527,151 @@ def ceiling_deck():
     return [(low, mat)]
 
 
+@prop("city-facades", "building", "material", recenter=False, keep_uvs=True, draco=False)
+def city_facades():
+    """Bake recessed architecture into ten bay materials, not thousands of extra city meshes."""
+    profiles = [
+        ("#646962", "#1c2b31", .50, .55, .18),
+        ("#505a60", "#17262d", .45, .55, .18),
+        ("#858377", "#28343b", .55, .60, .18),
+        ("#78695f", "#253039", .60, .55, .18),
+        ("#596367", "#1b2b33", .50, .60, .18),
+        ("#96958b", "#2a353d", .50, .55, .18),
+        ("#4b535c", "#15232c", .45, .50, .18),
+        ("#536571", "#273e4a", .90, .82, .18),
+        ("#647480", "#324955", .90, .82, .18),
+        ("#747874", "#26353d", .50, 120 / 256, 70 / 256),
+    ]
+    W, H, S = 2.8, 3.3, 512
+    parts = []
+    scene = bpy.context.scene
+    engine, samples, seed = scene.render.engine, scene.cycles.samples, scene.cycles.seed
+    frame = material("FacadeBakeFrame", "#263238", roughness=.4, metallic=.45)
+    seam = material("FacadeBakeJoint", "#303a3c")
+    reflection = material("FacadeBakeReflection", "#3b515e", roughness=.3)
+    try:
+        scene.render.engine = "CYCLES"
+        scene.cycles.device = "CPU"
+        scene.cycles.samples = 16
+        scene.cycles.seed = 8
+        scene.render.bake.use_selected_to_active = True
+        scene.render.bake.cage_extrusion = .25
+        scene.render.bake.max_ray_distance = .55
+        scene.render.bake.margin = 0
+        scene.render.bake.normal_space = "TANGENT"
+        scene.render.bake.use_pass_direct = False
+        scene.render.bake.use_pass_indirect = False
+        scene.render.bake.use_pass_color = True
+        for i, (wall_color, glass_color, wide, tall, top) in enumerate(profiles):
+            # Blender UV +v is up; glTF exports +v down. The runtime repeats v negatively.
+            low = raw(mesh_object(f"FacadeBay{i}", [(-W/2, 0, 0), (W/2, 0, 0), (W/2, H, 0), (-W/2, H, 0)], [(0, 1, 2, 3)]))
+            uv = low.data.uv_layers.new(name="UVMap")
+            for loop in low.data.loops:
+                x, y, _ = low.data.vertices[loop.vertex_index].co
+                uv.data[loop.index].uv = (x / W + .5, y / H)
+            mat = material(f"CityFacade{i}", "#ffffff", roughness=.78)
+            attach(low, mat)
+            high = []
+            def add(obj, surface):
+                obj = raw(obj)
+                attach(obj, surface)
+                high.append(obj)
+                return obj
+            wall = material(f"FacadeBakeWall{i}", wall_color)
+            nodes, links = wall.node_tree.nodes, wall.node_tree.links
+            noise = nodes.new("ShaderNodeTexNoise")
+            noise.inputs["Scale"].default_value = 32
+            noise.inputs["Detail"].default_value = 2
+            ramp = nodes.new("ShaderNodeValToRGB")
+            rgb = srgb_to_linear(wall_color)
+            ramp.color_ramp.elements[0].color = (*(v * .82 for v in rgb), 1)
+            ramp.color_ramp.elements[1].color = (*(min(1, v * 1.12) for v in rgb), 1)
+            links.new(noise.outputs["Fac"], ramp.inputs[0])
+            links.new(ramp.outputs["Color"], nodes["Principled BSDF"].inputs["Base Color"])
+            win_w, win_h = W * wide, H * tall
+            bottom, upper = H * (1 - top - tall), H * (1 - top)
+            middle = (bottom + upper) / 2
+            body = add(box("FacadeWall", (W, H, .12), (0, H/2, -.06)), wall)
+            cutter = raw(box("FacadeOpening", (win_w, win_h, .5), (0, middle, -.06)))
+            cut = body.modifiers.new("Recessed opening", "BOOLEAN")
+            cut.operation, cut.object = "DIFFERENCE", cutter
+            apply_modifiers(body)
+            bpy.data.objects.remove(cutter, do_unlink=True)
+            bevel(body, .015, 3)
+            glass = material(f"FacadeBakeGlass{i}", glass_color, roughness=.3)
+            add(box("OpaqueGlass", (win_w, win_h, .012), (0, middle, -.10)), glass)
+            for side in (-1, 1):
+                add(box("WindowJamb", (.045, win_h + .09, .10), (side * (win_w/2 + .0225), middle, -.005), bevel_w=.01), frame)
+                add(box("WindowHead", (win_w + .09, .045, .10), (0, middle + side * (win_h/2 + .0225), -.005), bevel_w=.01), frame)
+            add(box("Mullion", (.035, win_h, .065), (0, middle, -.0475), bevel_w=.006), frame)
+            add(box("Transom", (win_w, .03, .065), (0, bottom + win_h * .62, -.0475), bevel_w=.005), frame)
+            add(box("ProjectedSill", (win_w + .16, .07, .23), (0, bottom - .045, -.005), bevel_w=.016, bevel_seg=3), wall)
+            add(box("FloorJoint", (W, .035, .012), (0, .0175, .004)), seam)
+            for side in (-1, 1):
+                add(box("GlazingReflection", (win_w * .065, win_h - .02, .003), (side * win_w * .28, middle, -.091)), reflection)
+            for obj in high:
+                apply_modifiers(obj)
+            bpy.ops.object.select_all(action="DESELECT")
+            for obj in high + [low]:
+                obj.select_set(True)
+            bpy.context.view_layer.objects.active = low
+            maps = {}
+            for kind in ("DIFFUSE", "NORMAL", "AO"):
+                image = bpy.data.images.new(f"CityFacade{i}-{kind}", width=S, height=S, alpha=False)
+                image.colorspace_settings.name = "sRGB" if kind == "DIFFUSE" else "Non-Color"
+                target = mat.node_tree.nodes.new("ShaderNodeTexImage")
+                target.image = image
+                mat.node_tree.nodes.active = target
+                bpy.ops.object.bake(type=kind)
+                maps[kind] = target
+            # Keep soft modeled relief in Classic's ambient fill as well as the tangent normals.
+            pixels = np.array(maps["DIFFUSE"].image.pixels[:], dtype=np.float32).reshape(S, S, 4)
+            normal = np.array(maps["NORMAL"].image.pixels[:], dtype=np.float32).reshape(S, S, 4)[..., :3] * 2 - 1
+            ao = np.array(maps["AO"].image.pixels[:], dtype=np.float32).reshape(S, S, 4)[..., :1]
+            rgb = pixels[..., :3]
+            linear = np.where(rgb <= .04045, rgb / 12.92, ((rgb + .055) / 1.055) ** 2.4)
+            relief = (.55 + .45 * np.maximum(0, normal @ np.array([.25, .4, .88]))) / .946
+            linear *= ao ** 1.5 * relief[..., None]
+            pixels[..., :3] = np.where(linear <= .0031308, linear * 12.92, 1.055 * linear ** (1 / 2.4) - .055)
+            maps["DIFFUSE"].image.pixels.foreach_set(pixels.ravel())
+            # A separate, aligned mask cuts frames and blinds into the existing occupied windows.
+            y, x = np.mgrid[0:S, 0:S] + .5
+            u, v = x / S, y / S
+            window = (np.abs(u - .5) < wide/2 - .008) & (v > bottom/H) & (v < upper/H)
+            mask = np.where(window, .58 + .30 * (v - bottom/H) / tall, 0)
+            mask[np.abs(u - .5) < .035 / W / 2] = 0
+            mask[np.abs(v - (bottom + win_h * .62) / H) < .015 / H] = 0
+            mask *= np.where(((v - bottom/H) * H * 9) % 1 < .13, .58, 1)
+            encoded = np.where(mask <= .0031308, mask * 12.92, 1.055 * mask ** (1 / 2.4) - .055)
+            rgba = np.ones((S, S, 4), dtype=np.float32)
+            rgba[..., :3] = encoded[..., None]
+            image = bpy.data.images.new(f"CityFacade{i}-Windows", width=S, height=S, alpha=False)
+            image.colorspace_settings.name = "sRGB"
+            image.pixels.foreach_set(rgba.ravel())
+            emission = mat.node_tree.nodes.new("ShaderNodeTexImage")
+            emission.image = image
+            bsdf = mat.node_tree.nodes["Principled BSDF"]
+            mat.node_tree.links.new(maps["DIFFUSE"].outputs["Color"], bsdf.inputs["Base Color"])
+            normal_node = mat.node_tree.nodes.new("ShaderNodeNormalMap")
+            mat.node_tree.links.new(maps["NORMAL"].outputs["Color"], normal_node.inputs["Color"])
+            mat.node_tree.links.new(normal_node.outputs["Normal"], bsdf.inputs["Normal"])
+            mat.node_tree.links.new(emission.outputs["Color"], bsdf.inputs["Emission Color"])
+            bsdf.inputs["Emission Strength"].default_value = 1
+            for node in [maps["DIFFUSE"], maps["NORMAL"], emission]:
+                node.image.pack()
+            for obj in high:
+                bpy.data.objects.remove(obj, do_unlink=True)
+            low.location.x = i * (W + .4)
+            low.hide_render = True
+            parts.append((low, mat))
+    finally:
+        scene.cycles.samples, scene.cycles.seed = samples, seed
+        scene.render.engine = engine
+        for obj, _ in parts:
+            obj.hide_render = False
+    return parts
+
+
 # build / measure / export
 # --------------------------------------------------------------------------------------
 

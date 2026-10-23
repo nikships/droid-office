@@ -256,6 +256,7 @@ function building(w: number, h: number, d: number, color: string, lit: THREE.Mes
     t.wrapT = THREE.RepeatWrapping;
     t.repeat.set(1, floors);
     const m = new THREE.MeshToonMaterial({ map: t, emissive: '#ffffff', emissiveMap: lights(n, floors), emissiveIntensity: 0, gradientMap: (toon('#fff') as THREE.MeshToonMaterial).gradientMap });
+    m.userData.facade = { style: 9, columns: n, rows: floors, lightsAcross: n, lightsDown: floors, tint: color };
     lit.push(m);
     return m;
   };
