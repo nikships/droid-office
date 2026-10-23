@@ -71,8 +71,6 @@ interface ScreenWindow {
   top: number;
   rows: number;
   cols: number;
-  first: number;
-  last: number;
   above: number;
 }
 
@@ -82,13 +80,11 @@ interface ScreenWindow {
  * terminal's own rows first, then the scrollback above them.
  */
 function activeWindow(s: ScreenState, width: number, height: number, preferredRows: number): ScreenWindow {
-  let first = -1;
   let last = -1;
   let cols = MIN_ZOOM_COLS;
   for (let y = 0; y < s.rows; y++) {
     const runs = s.lines[y];
     if (!filled(runs)) continue;
-    if (first < 0) first = y;
     last = y;
     cols = Math.max(cols, runLen(runs));
   }
@@ -101,16 +97,11 @@ function activeWindow(s: ScreenState, width: number, height: number, preferredRo
   // still shows just what is on it, not the output it scrolled away.
   const history = last >= 0 && wanted > s.rows ? (s.above ?? []) : [];
   const above = history.length;
-  const earlier = history.findIndex(filled);
-  if (earlier >= 0) first = earlier;
-  else if (first >= 0) first += above;
   if (last >= 0) last += above;
   const total = above + s.rows;
   const rows = Math.min(total, wanted);
   const top = last < 0 ? 0 : Math.max(0, Math.min(last + 1 - rows, total - rows));
-  const contentFirst = first < 0 ? top : Math.max(top, first);
-  const contentLast = last < 0 ? top : Math.min(top + rows - 1, last);
-  return { top, rows, cols, first: contentFirst, last: contentLast, above };
+  return { top, rows, cols, above };
 }
 
 export function paintScreen(ctx: CanvasRenderingContext2D, w: number, h: number, s: ScreenState | undefined, placeholder?: string, zoomRows = 0) {
@@ -126,24 +117,22 @@ export function paintScreen(ctx: CanvasRenderingContext2D, w: number, h: number,
     return;
   }
   const pad = w * 0.01;
-  const win = zoomRows ? activeWindow(s, w - pad * 2, h - pad * 2, zoomRows) : { top: 0, rows: s.rows, cols: s.cols, first: 0, last: s.rows - 1, above: 0 };
+  const win = zoomRows ? activeWindow(s, w - pad * 2, h - pad * 2, zoomRows) : { top: 0, rows: s.rows, cols: s.cols, above: 0 };
   const cellW = (w - pad * 2) / win.cols;
   const cellH = (h - pad * 2) / win.rows;
   const fontSize = Math.max(4, Math.min(cellW / CHAR_WIDTH, cellH / LINE_HEIGHT));
   const charW = fontSize * CHAR_WIDTH;
   const lineH = fontSize * LINE_HEIGHT;
-  const gridW = win.cols * charW;
-  const contentRows = Math.max(1, win.last - win.first + 1);
-  const gridH = contentRows * lineH;
-  const left = pad + (w - pad * 2 - gridW) / 2;
-  const top = pad + (h - pad * 2 - gridH) / 2;
+  // A terminal starts at the top-left, even when its natural cell aspect leaves unused space.
+  // Anchor the viewport, not its occupied rows, so prompts don't drift as output arrives.
+  ctx.textAlign = 'left';
   ctx.textBaseline = 'top';
   for (let y = 0; y < win.rows; y++) {
     const row = win.top + y;
     const runs = row < win.above ? s.above?.[row] : s.lines[row - win.above];
     if (!runs) continue;
     let x = 0;
-    const py = top + (win.top + y - win.first) * lineH;
+    const py = pad + y * lineH;
     for (const [text, fgc, bgc, flags] of runs) {
       const len = [...text].length;
       let fg = color(fgc, TERM_THEME.foreground);
@@ -153,7 +142,7 @@ export function paintScreen(ctx: CanvasRenderingContext2D, w: number, h: number,
         fg = bg ?? SCREEN_BLACK;
         bg = tmp;
       }
-      const px = left + x * charW;
+      const px = pad + x * charW;
       if (bg) {
         ctx.fillStyle = bg;
         ctx.fillRect(px, py, len * charW + 0.5, lineH + 0.5);
