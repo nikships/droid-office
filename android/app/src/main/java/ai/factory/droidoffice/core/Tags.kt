@@ -172,6 +172,7 @@ object Tags {
         const val REPAIR_SCAN = "home.repair.scan"
         const val REPAIR_FORGET = "home.repair.forget"
         const val PICK_WORKER = "home.pick_worker"
+        const val FLOOR_ORDER_HINT = "home.floor_order_hint"
 
         // Inside each worker card; the card itself is [worker].
         const val CARD_NAME = "home.worker.name"

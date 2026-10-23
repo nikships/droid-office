@@ -1,6 +1,6 @@
 import test, { type TestContext } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { once } from 'node:events';
 import type { AddressInfo } from 'node:net';
@@ -66,6 +66,40 @@ function socket(t: TestContext, base: string, query: string, origin = base) {
   const send = (msg: ClientMsg) => ws.send(JSON.stringify(msg));
   return { ws, messages, wait, send };
 }
+
+test('floor moves from a companion update every client and the next welcome, with invalid moves refused', async (t) => {
+  const { base, dir, server } = await office(t);
+  const desktop = socket(t, base, '');
+  const mobile = socket(t, base, 'client=mobile');
+  const initial = await desktop.wait('welcome');
+  await mobile.wait('welcome');
+  const addedDir = path.join(dir, 'notes');
+  mkdirSync(addedDir);
+  mobile.send({ t: 'floor.add', dir: addedDir });
+  const added = await mobile.wait('floor.added');
+  assert.ok(added.floor, added.error);
+  const first = initial.floors[0].id;
+  mobile.send({ t: 'floor.reorder', floor: added.floor, before: first, requestId: 'move-floor' });
+  assert.equal((await mobile.wait('action.result', (m) => m.requestId === 'move-floor')).ok, true);
+  const changed = await desktop.wait('floors', (m) => m.floors[0]?.id === added.floor);
+  assert.equal((await mobile.wait('floors', (m) => m.floors[0]?.id === added.floor)).floors[0].id, added.floor);
+  assert.deepEqual(
+    changed.floors.map((f) => f.id),
+    [added.floor, ...initial.floors.map((f) => f.id)],
+  );
+  const fresh = socket(t, base, '');
+  assert.equal((await fresh.wait('welcome')).floor, added.floor, 'new connections arrive on the new first floor');
+  assert.equal(server.floors()[0].id, added.floor, 'live floor readers use the canonical order');
+  assert.deepEqual(
+    (await fresh.wait('welcome')).floors.map((f) => f.id),
+    changed.floors.map((f) => f.id),
+  );
+  mobile.send({ t: 'floor.reorder', floor: added.floor, before: 'gone', requestId: 'stale-floor' });
+  assert.equal((await mobile.wait('action.result', (m) => m.requestId === 'stale-floor')).ok, false);
+  mobile.ws.send(JSON.stringify({ t: 'floor.reorder', floor: added.floor, before: 12, requestId: 'bad-floor' }));
+  assert.equal((await mobile.wait('action.result', (m) => m.requestId === 'bad-floor')).ok, false);
+  assert.equal(JSON.parse(readFileSync(path.join(dir, '.droid-office/floors.json'), 'utf8'))[0].id, added.floor);
+});
 
 test('production dashboard has a public data-free bootstrap, gated APIs and an independent non-3D bundle', async (t) => {
   const { base, server } = await office(t);

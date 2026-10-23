@@ -5,6 +5,7 @@ import type { Net } from '../net';
 import { store } from '../state';
 import { h, openModal, timeAgo, type Modal } from './dom';
 import { floorNo, floorStats } from './floormenu';
+import { floorDragHandle, floorReorder } from './floor-reorder';
 import { emptyState, windowHeader } from './kit';
 import { openFolderBrowser } from './folder-browser';
 import { confirmDialog } from './prompt';
@@ -122,7 +123,7 @@ export function openElevator(opts: ElevatorOptions): void {
     const btn = floorButton(f, i);
     const off = h('button.btn.icon.ghost.floor-off', { type: 'button', title: `Take ${f.name} off the building`, 'aria-label': `Remove ${f.name}` }, '🗑');
     off.addEventListener('click', () => confirmRemove(f));
-    return h('div.list-row.floor-row', { role: 'listitem', class: f.id === store.floor ? 'here on' : '' }, btn, f.home ? h('span.floor-off-slot') : off);
+    return h('div.list-row.floor-row', { role: 'listitem', 'data-floor-id': f.id, class: f.id === store.floor ? 'here on' : '' }, floorDragHandle(f.name), btn, f.home ? h('span.floor-off-slot') : off);
   };
 
   const confirmRemove = (f: FloorInfo) => {
@@ -150,7 +151,7 @@ export function openElevator(opts: ElevatorOptions): void {
       modal.close();
       opts.ride(ROOF);
     });
-    return h('div.list-row.floor-row', { role: 'listitem', class: here ? 'here on' : '' }, btn, h('span.floor-off-slot'));
+    return h('div.list-row.floor-row', { role: 'listitem', class: here ? 'here on' : '' }, h('span.floor-off-slot'), btn, h('span.floor-off-slot'));
   };
 
   const renderFloors = () => {
@@ -317,7 +318,7 @@ export function openElevator(opts: ElevatorOptions): void {
       ? 'Every project is a floor of this building. Pick a floor to ride to, or add another project.'
       : "Every project is a floor of this building, and it doesn't have any yet. Pick one of your git projects, or browse to any folder: it becomes the first floor, and the office works in it right where it is."
     : 'Every project is a floor. Pick one to ride to.';
-  const floorsSection = h('section.section', {}, h('div.eyebrow', {}, h('span.no', {}, '01'), 'Floors'), floorsEl);
+  const floorsSection = h('section.section', {}, h('div.eyebrow', {}, h('span.no', {}, '01'), 'Floors'), h('p.field-hint', {}, 'Drag the handles to change floor numbers and shortcuts.'), floorsEl);
   const el = h(
     'div.modal.elevator',
     { role: 'dialog', 'aria-label': 'Elevator' },
@@ -332,10 +333,12 @@ export function openElevator(opts: ElevatorOptions): void {
     backdropCloses: !setup,
     onClose: () => {
       current = null;
+      disposeReorder();
       addedWaiters.delete(onAdded);
       for (const off of unsubs) off();
     },
   });
+  const disposeReorder = floorReorder(floorsEl, net, true);
   current = modal;
   renderFloors();
   if (showAdd) needRepos();

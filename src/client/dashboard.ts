@@ -16,6 +16,7 @@ import { emptyState, windowHeader } from './ui/kit';
 import { icon, type IconName } from './ui/icons';
 import { confirmDialog, openPrompt, routeWorktreeMessage, sendHomeDialog } from './ui/prompt';
 import { modelBadge } from './ui/models';
+import { openFloorOrder } from './ui/floor-reorder';
 
 const read = (key: string) => {
   try {
@@ -93,7 +94,8 @@ const brand = h(
   h('span.dash-brand-text', {}, h('span.eyebrow', {}, 'Web companion'), title),
 );
 const floors = h('select.select.dash-floor-select', { 'aria-label': 'Floor' });
-const floorPicker = h('label.dash-floor', {}, h('span.eyebrow', {}, 'Floor'), floors);
+const reorderFloors = h('button.btn.icon.ghost', { type: 'button', 'aria-label': 'Reorder floors', title: 'Reorder floors', onclick: () => openFloorOrder(net) }, '⠿');
+const floorPicker = h('div.dash-floor', {}, h('span.eyebrow', {}, 'Floor'), floors, reorderFloors);
 const connDot = h('i.dash-conn-dot', { 'aria-hidden': 'true' });
 const connText = h('span', {}, 'Connecting');
 const conn = h('span.dash-conn', { 'data-state': 'loading' }, connDot, connText);
@@ -329,6 +331,7 @@ function paint() {
   connText.textContent = { live: 'Live', loading: 'Syncing', down: 'Offline', locked: 'Locked' }[state];
   const here = store.currentFloor();
   floors.disabled = !up;
+  reorderFloors.disabled = !up || store.floors.length < 2;
   agentBtn.disabled = shellBtn.disabled = !up || !here || busy.has('hire');
   board.disabled = !up || !here;
   content.classList.toggle('dash-stale', !up);

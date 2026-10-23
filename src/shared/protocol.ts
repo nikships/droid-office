@@ -942,6 +942,8 @@ type ClientMessage =
    * floor list), or the ladder or fire pole you came by.
    */
   | { t: 'floor.go'; floor: string; at?: { x: number; y: number; z: number; rotY: number } }
+  /** Move this floor before another in numbered order, or to the end with null. Broadcasts `floors`. */
+  | { t: 'floor.reorder'; floor: string; before: string | null }
   /** List selectable local/origin branches on the current floor, answered with the same request id. */
   | { t: 'floor.branches'; floor: string; request: string }
   /** Safely switch this floor's base; null restores the repository default. Answered with `floor.branches`. */

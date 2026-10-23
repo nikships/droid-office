@@ -1,9 +1,10 @@
 import { execFileSync } from 'node:child_process';
-import { type Dirent, accessSync, constants, existsSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { type Dirent, accessSync, constants, existsSync, readFileSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { readdir, stat } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { FLOOR_PALETTES, MAX_FLOORS, forgeOf, normalizeRepo } from '../shared/floors.js';
+import { moveFloor } from '../shared/floor-order.js';
 import type { FolderChoice, ProjectsDirState, RepoChoice } from '../shared/protocol.js';
 import { isGitlabHost } from './gitlab.js';
 
@@ -140,6 +141,29 @@ export class Building {
       active.push(def);
     }
     return active;
+  }
+
+  /** Persist the numbered order. Keep aliases behind their open floor, and never report a failed save as success. */
+  reorder(floor: string, before: string | null): string | undefined {
+    const ordered = moveFloor(this.list(), floor, before);
+    if (!ordered) return 'That floor is no longer in the building. Reopen the floor list and try again.';
+    const next = ordered.flatMap((f) => this.defs.filter((d) => checkoutKey(d.dir) === checkoutKey(f.dir)));
+    if (next.length === this.defs.length && next.every((d, i) => d === this.defs[i])) return undefined;
+    const temp = `${this.file}.tmp`;
+    try {
+      writeFileSync(temp, JSON.stringify(next, null, 2), { mode: 0o600 });
+      renameSync(temp, this.file);
+    } catch (err) {
+      console.error(`droid-office: couldn't save the floor order: ${(err as Error).message}`);
+      try {
+        rmSync(temp, { force: true });
+      } catch {
+        // A blocked temporary path must not turn a refused reorder into an exception.
+      }
+      return "Couldn't save the floor order. Nothing was reordered.";
+    }
+    this.defs = next;
+    return undefined;
   }
 
   /**

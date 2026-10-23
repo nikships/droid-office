@@ -8,6 +8,8 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
+import androidx.compose.foundation.gestures.scrollBy
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -47,22 +49,36 @@ import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.boundsInWindow
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.semantics.CustomAccessibilityAction
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.customActions
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import ai.factory.droidoffice.core.Tags
+import ai.factory.droidoffice.core.FloorOrder
 import ai.factory.droidoffice.core.WorkerInfo
 import ai.factory.droidoffice.core.WorkerRow
 import ai.factory.droidoffice.core.WorkerStatus
@@ -311,20 +327,113 @@ private fun ConnectionBanner(link: Link, legacy: Boolean, synced: Boolean, onRet
 
 @Composable
 internal fun FloorChips(data: OfficeData, onFloor: (String) -> Unit) {
-    Row(
-        Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 14.dp, vertical = 6.dp),
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
-    ) {
-        data.floors.forEach { f ->
-            Chip(
-                text = f.name.ifBlank { f.id },
-                selected = f.id == data.floorId,
-                onClick = { if (f.id != data.floorId) onFloor(f.id) },
-                icon = OfficeIcons.Layers,
-                badge = if (f.id == data.floorId) 0 else f.waiting,
-                modifier = Modifier.tagged(Tags.Home.floor(f.id)),
-            )
+    val connection = LocalGraph.current.connection
+    val link by connection.link.collectAsStateWithLifecycle()
+    val latestFloors by rememberUpdatedState(data.floors)
+    val snackbar = LocalSnackbar.current
+    val scope = rememberCoroutineScope()
+    val scroll = rememberScrollState()
+    val bounds = remember { mutableMapOf<String, Rect>() }
+    var viewport by remember { mutableStateOf(Rect.Zero) }
+    var dragging by remember { mutableStateOf<String?>(null) }
+    var pointerX by remember { mutableStateOf(0f) }
+    var startX by remember { mutableStateOf(0f) }
+    var scrollStart by remember { mutableStateOf(0) }
+    val edge = with(LocalDensity.current) { 48.dp.toPx() }
+    val live = link.phase == Phase.Connected && data.synced
+    val latestLive by rememberUpdatedState(live)
+    fun before(): String? = latestFloors.firstOrNull { f ->
+        f.id != dragging && bounds[f.id]?.let { pointerX < it.center.x } == true
+    }?.id
+    fun move(id: String, step: Int): Boolean {
+        if (!live) return false
+        val move = FloorOrder.step(latestFloors.map { it.id }, id, step) ?: return false
+        return connection.reorderFloor(move.floor, move.before)
+    }
+    fun drop(id: String, target: String?) {
+        if (!latestLive) {
+            scope.launch { snackbar.showSnackbar("Disconnected. Reconnect and try again.") }
+            return
         }
+        if (!FloorOrder.changed(latestFloors.map { it.id }, id, target)) return
+        if (!connection.reorderFloor(id, target)) scope.launch { snackbar.showSnackbar("Disconnected. The floor was not reordered.") }
+    }
+    LaunchedEffect(dragging) {
+        while (dragging != null) {
+            if (viewport.isEmpty) {
+                delay(16)
+                continue
+            }
+            val speed = when {
+                pointerX < viewport.left + edge -> -10f
+                pointerX > viewport.right - edge -> 10f
+                else -> 0f
+            }
+            if (speed != 0f) scroll.scrollBy(speed)
+            delay(16)
+        }
+    }
+    Column {
+        Row(
+            Modifier.fillMaxWidth().onGloballyPositioned { viewport = it.boundsInWindow() }
+                .horizontalScroll(scroll).padding(horizontal = 14.dp, vertical = 6.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            data.floors.forEachIndexed { index, f ->
+                key(f.id) {
+                    Box(
+                        Modifier.onGloballyPositioned { bounds[f.id] = it.boundsInWindow() }
+                            .pointerInput(f.id, data.floors.map { it.id }, live) {
+                                if (!live) return@pointerInput
+                                detectDragGesturesAfterLongPress(
+                                    onDragStart = { offset ->
+                                        bounds[f.id]?.let { rect ->
+                                            dragging = f.id
+                                            pointerX = rect.left + offset.x
+                                            startX = pointerX
+                                            scrollStart = scroll.value
+                                        }
+                                    },
+                                    onDragCancel = { dragging = null },
+                                    onDragEnd = {
+                                        val id = dragging
+                                        val target = before()
+                                        dragging = null
+                                        if (id != null) drop(id, target)
+                                    },
+                                    onDrag = { change, amount ->
+                                        change.consume()
+                                        pointerX += amount.x
+                                    },
+                                )
+                            }
+                            .drawBehind {
+                                if (dragging != null && before() == f.id) drawLine(Palette.Accent, Offset.Zero, Offset(0f, size.height), 2.dp.toPx())
+                            },
+                    ) {
+                        Chip(
+                            text = "${index + 1} · ${f.name.ifBlank { f.id }}",
+                            selected = f.id == data.floorId,
+                            onClick = { if (dragging == null && f.id != data.floorId) onFloor(f.id) },
+                            icon = if (live) OfficeIcons.Grip else OfficeIcons.Layers,
+                            badge = if (f.id == data.floorId) 0 else f.waiting,
+                            modifier = Modifier.tagged(Tags.Home.floor(f.id))
+                                .semantics {
+                                    customActions = listOf(
+                                        CustomAccessibilityAction("Move floor earlier") { move(f.id, -1) },
+                                        CustomAccessibilityAction("Move floor later") { move(f.id, 1) },
+                                    )
+                                }
+                                .graphicsLayer {
+                                    translationX = if (dragging == f.id) pointerX - startX + scroll.value - scrollStart else 0f
+                                    alpha = if (dragging == f.id) 0.65f else 1f
+                                },
+                        )
+                    }
+                }
+            }
+        }
+        if (live) Text("Long-press a floor and drag to reorder", style = MaterialTheme.typography.bodySmall, color = Palette.TextSecondary, modifier = Modifier.padding(start = 14.dp, bottom = 6.dp).tagged(Tags.Home.FLOOR_ORDER_HINT))
     }
 }
 

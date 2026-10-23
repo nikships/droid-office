@@ -261,7 +261,7 @@ export async function startServer(cfg: Config) {
   const toastFloor = (floor: Floor | undefined, text: string, level: ToastLevel = 'info', workerId?: string) => {
     if (floor) toFloor(floor, workerId === undefined ? { t: 'toast', text, level } : { t: 'toast', text, level, workerId });
   };
-  const floorInfos = (): FloorInfo[] => [...[...floors.values()].map((f) => ({ ...f.info(), ...(building.isLocal(f.id) ? { local: true } : {}), ...(building.isHome(f.id) ? { home: true } : {}) }))];
+  const floorInfos = (): FloorInfo[] => [...floors.values()].map((f) => ({ ...f.info(), ...(building.isLocal(f.id) ? { local: true } : {}), ...(building.isHome(f.id) ? { home: true } : {}) }));
   // The elevator's counts change with every worker update; tell everyone at most a few times a second.
   let floorsSent = '';
   let floorsTimer: NodeJS.Timeout | undefined;
@@ -1566,6 +1566,22 @@ export async function startServer(cfg: Config) {
         const floor = floors.get(str(msg.floor, 64));
         if (!floor) warn(c, 'No such floor');
         else goToFloor(c, floor, arrivalSpot(msg.at));
+        break;
+      }
+      case 'floor.reorder': {
+        if (typeof msg.floor !== 'string' || msg.floor.length > 64 || (msg.before !== null && (typeof msg.before !== 'string' || msg.before.length > 64))) return stop('Invalid floor order');
+        const error = building.reorder(msg.floor, msg.before);
+        if (error) return stop(error);
+        // Reinsert the same live floors in saved order. Default arrivals and every other Map
+        // reader must agree with the numbered list, without reopening a floor or its workers.
+        for (const def of building.list()) {
+          const floor = floors.get(def.id);
+          if (!floor) continue;
+          floors.delete(def.id);
+          floors.set(def.id, floor);
+        }
+        floorsChanged();
+        done();
         break;
       }
       case 'floor.repos':

@@ -335,6 +335,10 @@ object ClientMsg {
     }
 
     fun floorGo(floor: String) = obj("floor.go") { put("floor", floor) }
+    fun floorReorder(floor: String, before: String?) = obj("floor.reorder") {
+        put("floor", floor)
+        put("before", before?.let(::JsonPrimitive) ?: JsonNull)
+    }
     fun ping(at: Long) = obj("ping") { put("at", at) }
 
     private inline fun obj(t: String, crossinline body: kotlinx.serialization.json.JsonObjectBuilder.() -> Unit): String =
