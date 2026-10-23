@@ -77,6 +77,19 @@
     "url": "/props/bookshelf.glb",
     "width": 1.78
   },
+  "cable-tray": {
+    "bytes": 430696,
+    "depth": 0.329,
+    "height": 0.0917,
+    "materials": 4,
+    "tags": [
+      "fixture",
+      "ceiling"
+    ],
+    "triangles": 8000,
+    "url": "/props/cable-tray.glb",
+    "width": 17.0004
+  },
   "conference-table": {
     "bytes": 38208,
     "depth": 1.2,

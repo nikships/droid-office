@@ -57,6 +57,7 @@ import { installLoftStairs } from './world/loft-stairs';
 import { installTaskChairs } from './world/task-chair';
 import { installLedBarHousings } from './world/led-bar';
 import { installHighBayLamps } from './world/high-bay-lamp';
+import { installCableTrays } from './world/cable-tray';
 import { installBoardFrames } from './world/board-frame';
 import { installLoungeSofa } from './world/lounge-sofa';
 import { installAgentKiosks } from './world/agent-kiosk';
@@ -258,6 +259,8 @@ const propsReady = loadPropManifest()
     if (ledBar) installLedBarHousings(ledBar, office.group);
     const highBayLamp = propScene('high-bay-lamp');
     if (highBayLamp) installHighBayLamps(highBayLamp, office.group);
+    const cableTray = propScene('cable-tray');
+    if (cableTray) installCableTrays(cableTray, office.group);
     const boardFrame = propScene('board-frame');
     if (boardFrame) installBoardFrames(boardFrame, office.group);
     const balconyStool = propScene('balcony-stool');

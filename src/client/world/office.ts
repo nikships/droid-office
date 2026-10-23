@@ -796,6 +796,7 @@ function buildCeiling(night: NightParts): THREE.Group {
   const H = WALL_HEIGHT;
   const g = new THREE.Group();
   const linearHousings: THREE.Object3D[] = [];
+  const cableTrays: THREE.Group[] = [];
   const fixtures = new THREE.Group();
   const steel = toon(PALETTE.steel);
   const dark = toon('#727272');
@@ -831,10 +832,14 @@ function buildCeiling(night: NightParts): THREE.Group {
   const cable = toon('#535353');
   const signal = toon(PALETTE.accent);
   for (const z of [-4.33, 4.33]) {
-    g.add(mesh(box(trayLen, 0.012, 0.3), steel, trayX, trayY, z));
-    for (const s of [-1, 1]) g.add(mesh(box(trayLen, 0.07, 0.012), steel, trayX, trayY + 0.035, z + s * 0.15));
-    g.add(mesh(box(trayLen, 0.035, 0.08), cable, trayX, trayY + 0.024, z - 0.06));
-    g.add(mesh(box(trayLen, 0.022, 0.022), signal, trayX, trayY + 0.017, z + 0.05));
+    const mount = new THREE.Group();
+    mount.name = 'cable-tray-mount';
+    mount.position.set(trayX, trayY, z);
+    mount.add(mesh(box(trayLen, 0.012, 0.3), steel));
+    for (const s of [-1, 1]) mount.add(mesh(box(trayLen, 0.07, 0.012), steel, 0, 0.035, s * 0.15));
+    mount.add(mesh(box(trayLen, 0.035, 0.08), cable, 0, 0.024, -0.06));
+    mount.add(mesh(box(trayLen, 0.022, 0.022), signal, 0, 0.017, 0.05));
+    cableTrays.push(mount);
     const rodLen = H - PURLIN_DEPTH - trayY;
     for (let x = tray.x0 + 0.5; x <= tray.x1; x += 3) {
       for (const s of [-1, 1]) g.add(mesh(box(0.012, rodLen, 0.012), steel, x, trayY + rodLen / 2, z + s * 0.14));
@@ -877,6 +882,7 @@ function buildCeiling(night: NightParts): THREE.Group {
   }
   const ceiling = mergeByMaterial(g);
   ceiling.add(...linearHousings);
+  ceiling.add(...cableTrays);
   ceiling.add(fixtures);
   return ceiling;
 }
