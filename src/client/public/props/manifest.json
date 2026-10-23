@@ -64,6 +64,19 @@
     "url": "/props/bookshelf.glb",
     "width": 1.78
   },
+  "ceiling-deck": {
+    "bytes": 1053644,
+    "depth": 1.2,
+    "height": 0.0,
+    "materials": 1,
+    "tags": [
+      "building",
+      "material"
+    ],
+    "triangles": 2,
+    "url": "/props/ceiling-deck.glb",
+    "width": 1.2
+  },
   "conference-table": {
     "bytes": 38208,
     "depth": 1.2,

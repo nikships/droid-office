@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { FLOOR, LADDER, POLE, POLES, SLAB, WALL_HEIGHT, WALL_T, WINDOWS, type PoleSpot } from '../../shared/layout';
 import type { Collider, Interactable } from './office';
+import { installCeilingDeck } from './ceiling-deck';
 import { ANISOTROPY, TILE_SCALE } from './texture-quality';
 import { mesh, textPlane, toon } from './toon';
 
@@ -237,6 +238,7 @@ export interface StackState {
 export interface Stack {
   group: THREE.Group;
   interactables: Interactable[];
+  setCeilingModel(source: THREE.Object3D): boolean;
   /** The floor you're on: the ladder, the hatches and the poles go where there are floors to go to. */
   set(s: StackState): void;
   state: StackState;
@@ -565,6 +567,7 @@ export function buildStack(colliders: Collider[], planks: THREE.Material): Stack
   const stack: Stack = {
     group,
     interactables,
+    setCeilingModel: (source) => installCeilingDeck(source, ceilingMat),
     set,
     state,
     poles: () => (state.count > 1 ? POLES : []),

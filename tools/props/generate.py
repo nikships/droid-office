@@ -4108,6 +4108,147 @@ def build_wand():
     return body, loose_parts + segments
 
 
+@prop("ceiling-deck", "building", "material", recenter=False, keep_uvs=True, draco=False)
+def ceiling_deck():
+    """Bake a 1.2 m repeat from rounded steel folds onto a downward-facing material donor.
+
+    Runtime keeps its hole-cut ceiling geometry: the two-triangle donor supplies only
+    color, tangent normals and occlusion. The high mesh extends a tile past every edge
+    so the AO bake has no bright border where adjacent repeats meet.
+    """
+    mat = material("CeilingDeck", "#ffffff", roughness=0.72, metallic=0.35)
+    low = mesh_object("CeilingDeck", [(-0.6, 0, -0.6), (0.6, 0, -0.6), (0.6, 0, 0.6), (-0.6, 0, 0.6)], [(0, 1, 2, 3)])
+    low = attach(low, mat)
+    uv = low.data.uv_layers.new(name="UVMap")
+    for loop in low.data.loops:
+        v = low.data.vertices[loop.vertex_index].co
+        uv.data[loop.index].uv = ((v.x + 0.6) / 1.2, (v.z + 0.6) / 1.2)
+
+    def fold(z):
+        t = (z + 0.6) % 0.3
+        def ease(v):
+            return v * v * (3 - 2 * v)
+        if t < 0.04 or t > 0.26:
+            return 0
+        if t < 0.08:
+            return -0.032 * ease((t - 0.04) / 0.04)
+        if t > 0.22:
+            return -0.032 * (1 - ease((t - 0.22) / 0.04))
+        return -0.032
+
+    vertices = [(x, fold(z), z) for z in np.linspace(-1.8, 1.8, 1153) for x in (-1.8, 1.8)]
+    high = mesh_object("DeckBakeHigh", vertices, [(2*i, 2*i+1, 2*i+3, 2*i+2) for i in range(1152)])
+    high = raw(high)
+    for polygon in high.data.polygons:
+        polygon.use_smooth = True
+    steel = material("DeckBakeSteel", "#56616a")
+    attach(high, steel)
+    nodes, links = steel.node_tree.nodes, steel.node_tree.links
+    position = nodes.new("ShaderNodeNewGeometry")
+    split = nodes.new("ShaderNodeSeparateXYZ")
+    links.new(position.outputs["Position"], split.inputs[0])
+    # A 4D torus makes the rolled grain seamless in both tile directions.
+    periodic = []
+    for axis in ("X", "Z"):
+        angle = nodes.new("ShaderNodeMath")
+        angle.operation = "MULTIPLY"
+        angle.inputs[1].default_value = 2 * math.pi / 1.2
+        links.new(split.outputs[axis], angle.inputs[0])
+        for operation in ("SINE", "COSINE"):
+            trig = nodes.new("ShaderNodeMath")
+            trig.operation = operation
+            links.new(angle.outputs[0], trig.inputs[0])
+            periodic.append(trig)
+    vector = nodes.new("ShaderNodeCombineXYZ")
+    for i in range(3):
+        links.new(periodic[i].outputs[0], vector.inputs[i])
+    noise = nodes.new("ShaderNodeTexNoise")
+    noise.noise_dimensions = "4D"
+    noise.inputs["Scale"].default_value = 18
+    noise.inputs["Detail"].default_value = 3
+    links.new(vector.outputs[0], noise.inputs["Vector"])
+    links.new(periodic[3].outputs[0], noise.inputs["W"])
+    ramp = nodes.new("ShaderNodeValToRGB")
+    ramp.color_ramp.elements[0].color = (*srgb_to_linear("#465059"), 1)
+    ramp.color_ramp.elements[1].color = (*srgb_to_linear("#66717a"), 1)
+    links.new(noise.outputs["Fac"], ramp.inputs[0])
+    links.new(ramp.outputs[0], nodes["Principled BSDF"].inputs["Base Color"])
+
+    scene = bpy.context.scene
+    engine, samples, seed = scene.render.engine, scene.cycles.samples, scene.cycles.seed
+    maps = {}
+    try:
+        scene.render.engine = "CYCLES"
+        scene.cycles.device = "CPU"
+        scene.cycles.samples = 32
+        scene.cycles.seed = 0
+        scene.render.bake.use_selected_to_active = True
+        scene.render.bake.cage_extrusion = 0.08
+        scene.render.bake.max_ray_distance = 0.16
+        scene.render.bake.margin = 0
+        scene.render.bake.normal_space = "TANGENT"
+        scene.render.bake.use_pass_direct = False
+        scene.render.bake.use_pass_indirect = False
+        scene.render.bake.use_pass_color = True
+        bpy.ops.object.select_all(action="DESELECT")
+        high.select_set(True)
+        low.select_set(True)
+        bpy.context.view_layer.objects.active = low
+        for kind in ("DIFFUSE", "NORMAL", "AO"):
+            name = f"CeilingDeck-{kind}"
+            old = bpy.data.images.get(name)
+            if old and old.users == 0:
+                bpy.data.images.remove(old)
+            image = bpy.data.images.new(name, width=1024, height=1024, alpha=False)
+            image.colorspace_settings.name = "sRGB" if kind == "DIFFUSE" else "Non-Color"
+            target = mat.node_tree.nodes.new("ShaderNodeTexImage")
+            target.image = image
+            mat.node_tree.nodes.active = target
+            bpy.ops.object.bake(type=kind)
+            image.pack()
+            maps[kind] = target
+    finally:
+        scene.cycles.samples, scene.cycles.seed = samples, seed
+        scene.render.engine = engine
+        bpy.data.objects.remove(high, do_unlink=True)
+
+    # The room's Classic fill uses vertex normals, so retain a soft directional
+    # relief in the color bake too. Work in linear light, not encoded sRGB.
+    # Average the identical folds' AO to remove Monte Carlo grain and tile seams.
+    ao = np.array(maps["AO"].image.pixels[:], dtype=np.float32).reshape(4, 256, 1024, 4)
+    profile = ao[..., :3].mean(axis=(0, 2, 3))
+    occlusion = np.tile(profile, 4)[:, None, None]
+    ao = np.ones((1024, 1024, 4), dtype=np.float32)
+    ao[..., :3] = occlusion
+    maps["AO"].image.pixels.foreach_set(ao.ravel())
+    maps["AO"].image.pack()
+    normal_pixels = np.array(maps["NORMAL"].image.pixels[:], dtype=np.float32).reshape(1024, 1024, 4)
+    facing, slope = normal_pixels[..., 2:3] * 2 - 1, normal_pixels[..., 1:2] * 2 - 1
+    relief = (0.35 + 0.65 * np.maximum(0, 0.8 * facing + 0.6 * slope)) / 0.87
+    pixels = np.array(maps["DIFFUSE"].image.pixels[:], dtype=np.float32).reshape(1024, 1024, 4)
+    rgb = pixels[..., :3]
+    linear = np.where(rgb <= 0.04045, rgb / 12.92, ((rgb + 0.055) / 1.055) ** 2.4)
+    linear *= relief * occlusion ** 2
+    pixels[..., :3] = np.where(linear <= 0.0031308, linear * 12.92, 1.055 * linear ** (1 / 2.4) - 0.055)
+    maps["DIFFUSE"].image.pixels.foreach_set(pixels.ravel())
+    maps["DIFFUSE"].image.pack()
+
+    nodes, links = mat.node_tree.nodes, mat.node_tree.links
+    bsdf = nodes["Principled BSDF"]
+    links.new(maps["DIFFUSE"].outputs["Color"], bsdf.inputs["Base Color"])
+    normal = nodes.new("ShaderNodeNormalMap")
+    links.new(maps["NORMAL"].outputs["Color"], normal.inputs["Color"])
+    links.new(normal.outputs["Normal"], bsdf.inputs["Normal"])
+    group = bpy.data.node_groups.get("glTF Material Output")
+    if group is None:
+        group = bpy.data.node_groups.new("glTF Material Output", "ShaderNodeTree")
+        group.interface.new_socket(name="Occlusion", in_out="INPUT", socket_type="NodeSocketFloat")
+    output = nodes.new("ShaderNodeGroup")
+    output.node_tree = group
+    links.new(maps["AO"].outputs["Color"], output.inputs["Occlusion"])
+    return [(low, mat)]
+
+
 # build / measure / export
 # --------------------------------------------------------------------------------------
 
