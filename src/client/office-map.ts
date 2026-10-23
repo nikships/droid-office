@@ -238,6 +238,8 @@ export class OfficeMap {
   private returnView: MapView | null = null;
   /** The owner moved the camera themselves: a resize keeps their view rather than refitting the floor. */
   private moved = false;
+  /** The whole-floor framing's distance at the last fit, to scale the owner's own view by when the map resizes. */
+  private homeDistance = 0;
   private hovered = '';
   /** The highlighted worker by keys or roster, which a hover overrides while it lasts. */
   private cursor = '';
@@ -837,10 +839,20 @@ export class OfficeMap {
     else this.camera.clearViewOffset();
     this.camera.updateProjectionMatrix();
     const home = homeView(this.aspect());
+    const scale = this.homeDistance ? home.distance / this.homeDistance : 1;
+    this.homeDistance = home.distance;
     this.controls.maxDistance = home.distance * MAX_ZOOM_OUT;
     if (!this.moved && !this.returnView) {
       if (!this.flight) this.applyView(home);
       else if (this.homing) this.flight.to = home;
+    } else if (scale !== 1) {
+      // A fold or a new layout can halve the map: keep the owner's spot, zoomed as far in relative to the floor as before.
+      if (this.returnView) this.returnView = { ...this.returnView, distance: this.returnView.distance * scale };
+      if (this.moved && !this.flight) {
+        const v = this.view();
+        this.applyView({ ...v, distance: Math.min(this.controls.maxDistance, Math.max(MIN_DISTANCE, v.distance * scale)) });
+        this.controls.update();
+      }
     }
     if (this.active) this.render(performance.now());
   }
