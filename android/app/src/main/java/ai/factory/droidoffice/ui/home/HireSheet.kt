@@ -79,10 +79,13 @@ import ai.factory.droidoffice.ui.theme.OfficeIcons
 import ai.factory.droidoffice.ui.theme.Palette
 import kotlinx.coroutines.launch
 
-/** Hire a worker at the next free desk: a Droid agent with a task (or none yet), or a plain shell. */
+/**
+ * Hire a worker at the next free desk, or at [deskId] when one was picked on the map: a Droid agent
+ * with a task (or none yet), or a plain shell.
+ */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun HireSheet(onDismiss: () -> Unit) {
+fun HireSheet(onDismiss: () -> Unit, deskId: String? = null) {
     val graph = LocalGraph.current
     val snackbar = LocalSnackbar.current
     val connection = graph.connection
@@ -121,7 +124,7 @@ fun HireSheet(onDismiss: () -> Unit) {
     fun hire() {
         val kind = if (shell) "shell" else "agent"
         val e = effort?.takeIf { w -> efforts.isEmpty() || efforts.any { it.wire == w } }
-        val ok = connection.hire(prompt.trim().takeIf { !shell && it.isNotBlank() }, kind, modelId, e, worktree)
+        val ok = connection.hire(prompt.trim().takeIf { !shell && it.isNotBlank() }, kind, modelId, e, worktree, deskId)
         if (ok) {
             if (!shell && modelId != null) graph.scope.launch { graph.store.settings { it.copy(hireModel = modelId, hireEffort = e) } }
             close()
@@ -134,7 +137,7 @@ fun HireSheet(onDismiss: () -> Unit) {
         Column(
             Modifier.fillMaxWidth().tagged(Tags.Hire.SHEET).verticalScroll(rememberScrollState()).padding(horizontal = 20.dp).navigationBarsPadding().imePadding().padding(bottom = 14.dp),
         ) {
-            Eyebrow("Hire", color = Palette.Accent)
+            Eyebrow(if (deskId != null) "Hire at ${deskLabel(deskId)}" else "Hire", color = Palette.Accent)
             Spacer(Modifier.height(4.dp))
             Text("Who's starting?", style = MaterialTheme.typography.headlineSmall)
             Spacer(Modifier.height(14.dp))

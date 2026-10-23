@@ -234,6 +234,15 @@ class OfficeApi(base: OkHttpClient = OkHttpClient()) {
         }
     }
 
+    /**
+     * One of the client bundle's files the office serves openly (`/props/` models and `/fonts/`,
+     * which carry no office data), for the overview page. [path] is still percent-encoded. Blocking.
+     */
+    fun publicFile(base: String, path: String): WbFetched? {
+        val url = base.toHttpUrl().newBuilder().encodedPath(path).build()
+        return fetch(Request.Builder().url(url).header("Origin", base).get().build())
+    }
+
     private fun fetch(req: Request): WbFetched? = try {
         client.newCall(req).execute().use { res ->
             val headers = res.headers.names().associate { it.lowercase() to res.headers[it].orEmpty() }

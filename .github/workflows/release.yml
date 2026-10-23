@@ -38,6 +38,7 @@ on:
       - '.github/workflows/release.yml'
       - '.github/scripts/release-*.mjs'
       - 'tools/android-terminal.mjs'
+      - 'tools/android-overview.mjs'
       - 'tools/props/**'
   pull_request:
     paths:
@@ -65,6 +66,7 @@ on:
       - '.github/workflows/release.yml'
       - '.github/scripts/release-*.mjs'
       - 'tools/android-terminal.mjs'
+      - 'tools/android-overview.mjs'
       - 'tools/props/**'
   workflow_dispatch:
 

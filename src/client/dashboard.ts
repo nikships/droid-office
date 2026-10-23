@@ -1,7 +1,7 @@
 import type { ClientMsg, WorkerInfo } from '../shared/protocol';
 import { canAnswer, menuTakesText, readMenu, sameMenu, type Menu } from '../shared/asks';
 import { isAsleep, isBusy } from '../shared/status';
-import { PROVIDER_LABEL, statusWord } from '../shared/guests';
+import { statusWord } from '../shared/guests';
 import { cardsNewestFirst, cardChanged, OWNER } from '../shared/whiteboard';
 import { ROOF } from '../shared/rooftop';
 import { DESK_BY_ID } from '../shared/layout';
@@ -10,6 +10,7 @@ import { originKind, type OriginKind } from '../shared/devices';
 import { BROWSER_KEY, DASHBOARD_FLOOR_KEY, browserCredential, draftKey, forgetBrowserCredential, isBrowserCredential, saveBrowserCredential, type BrowserCredential } from './browser-session';
 import { Net } from './net';
 import { previewRows } from './screen-preview';
+import { doingLine, workerKind as kind } from './worker-words';
 import { connectWhiteboard, store } from './state';
 import { setBrowserAuth, withToken } from './token';
 import { $, closeAllModals, h, modalOpen, openModal, STATUS_LABEL, toast } from './ui/dom';
@@ -317,12 +318,6 @@ function avatar(w: WorkerInfo, size = '') {
   const el = h('span.dash-avatar', { class: size, 'aria-hidden': 'true' }, w.kind === 'shell' ? '$' : (Array.from(w.name.trim())[0] ?? '?').toUpperCase());
   el.style.setProperty('--who', w.color);
   return el;
-}
-function kind(w: WorkerInfo) {
-  return w.guest ? `${PROVIDER_LABEL[w.guest.provider]} · outside office` : w.cloud ? 'Droid · Factory' : w.kind === 'shell' ? 'Shell' : 'Droid';
-}
-function doingLine(w: WorkerInfo) {
-  return (w.status === 'needs_input' ? w.activity : undefined) ?? w.task?.name ?? w.title ?? w.activity ?? (w.kind === 'shell' ? 'Shell' : 'Waiting for a task');
 }
 function pill(w: WorkerInfo) {
   return h('span.pill', { class: w.status }, statusWord(w, STATUS_LABEL));

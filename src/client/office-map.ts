@@ -232,6 +232,8 @@ export class OfficeMap {
   private last = 0;
   private clock = 0;
   private flight: Flight | null = null;
+  /** The flight under way is to the whole floor, so a resize mid-way retargets it to the new framing. */
+  private homing = false;
   /** Where the camera was before flying in to a worker, to fly back out to. */
   private returnView: MapView | null = null;
   /** The owner moved the camera themselves: a resize keeps their view rather than refitting the floor. */
@@ -245,10 +247,14 @@ export class OfficeMap {
   /** Whether the cursor (not a hover) shows its card: yes for keys and the roster, no for coming back from a terminal. */
   private cursorCard = false;
   private cardAt = 0;
+  /** The last pointer was a finger or a pen: a tap shows a worker's card first, and a second tap opens it. */
+  private touch = typeof matchMedia === 'function' && matchMedia('(hover: none)').matches;
+  /** A free desk a tap picked: its "Hire here" stays up for a second tap. */
+  private tapDesk = '';
   private propsIn = false;
   private size = { w: 1, h: 1 };
   /** The page's panels over the map's left and bottom edges (px): the camera frames the floor beside them. */
-  private inset = { left: 0, bottom: 0 };
+  private inset = { left: 0, bottom: 0, top: 0 };
   private resize: ResizeObserver;
   private pxPerMeter = 30;
   private slow = 0;
@@ -335,19 +341,30 @@ export class OfficeMap {
     this.el = h('div.omap', {}, canvas, h('div.omap-vignette'), this.tags, this.vacancy, this.card);
     // Fade in once: coming back from a terminal re-attaches the map, which would replay the fade.
     this.el.addEventListener('animationend', (e) => e.target === this.el && this.el.classList.add('settled'), { once: false });
+    this.card.addEventListener('click', () => this.cardFor && this.hooks.open(this.cardFor));
+    this.vacancy.addEventListener('click', () => {
+      const desk = this.tapDesk;
+      if (!desk || !this.hireable(desk)) return;
+      this.tapDesk = '';
+      this.paintHighlight();
+      this.hooks.hire(desk);
+    });
 
     canvas.addEventListener('pointerdown', (e) => {
+      this.touch = e.pointerType !== 'mouse';
       this.down = { x: e.clientX, y: e.clientY, at: performance.now() };
     });
     canvas.addEventListener('pointermove', (e) => {
-      if (e.buttons) return;
+      if (e.buttons || e.pointerType !== 'mouse') return;
       this.pick(e.clientX, e.clientY);
     });
-    canvas.addEventListener('pointerleave', () => this.setHover('', ''));
+    // A finger "leaves" as it lifts, which would drop what the tap just lit.
+    canvas.addEventListener('pointerleave', (e) => e.pointerType === 'mouse' && this.setHover('', ''));
     canvas.addEventListener('pointerup', (e) => {
       const d = this.down;
       this.down = null;
-      if (!d || e.button !== 0 || Math.hypot(e.clientX - d.x, e.clientY - d.y) > 6 || performance.now() - d.at > 600) return;
+      if (!d || e.button !== 0 || Math.hypot(e.clientX - d.x, e.clientY - d.y) > (this.touch ? 12 : 6) || performance.now() - d.at > 600) return;
+      if (this.touch) return this.tap(e.clientX, e.clientY);
       this.pick(e.clientX, e.clientY);
       this.click();
     });
@@ -397,6 +414,7 @@ export class OfficeMap {
       this.moved = false;
       this.returnView = null;
       this.cursor = '';
+      this.tapDesk = '';
       this.arrive(first);
     } else if (floor) {
       if (floor.name !== this.floor?.name) this.map.setName(floor.name);
@@ -411,6 +429,7 @@ export class OfficeMap {
     for (const w of list) this.seat(w);
     this.syncLines(list);
     if (this.cursor && !this.seated.has(this.cursor)) this.cursor = '';
+    if (this.tapDesk && !this.hireable(this.tapDesk)) this.tapDesk = '';
     if (this.hovered && !this.seated.has(this.hovered)) this.hovered = '';
     this.paintHighlight();
   }
@@ -434,9 +453,12 @@ export class OfficeMap {
       ring.renderOrder = 2;
       this.map.group.add(ring);
       const tag = h('button.omap-tag', { type: 'button', tabindex: '-1', 'data-worker': w.id }) as HTMLButtonElement;
-      tag.addEventListener('click', () => this.hooks.open(w.id));
-      tag.addEventListener('pointerenter', () => this.setHover(w.id, w.deskId));
-      tag.addEventListener('pointerleave', () => this.setHover('', ''));
+      tag.addEventListener('pointerdown', (e) => {
+        this.touch = e.pointerType !== 'mouse';
+      });
+      tag.addEventListener('click', () => (this.touch ? this.tapWorker(w.id) : this.hooks.open(w.id)));
+      tag.addEventListener('pointerenter', (e) => e.pointerType === 'mouse' && this.setHover(w.id, w.deskId));
+      tag.addEventListener('pointerleave', (e) => e.pointerType === 'mouse' && this.setHover('', ''));
       this.tags.append(tag);
       s = { info: w, model, laptop, seat, spot, tag, tagKey: '', tagSize: { w: 0, h: 0 }, ring, status: '', acked: true };
       this.seated.set(w.id, s);
@@ -534,8 +556,14 @@ export class OfficeMap {
     if (reveal && this.cursor) this.reveal(this.cursor);
   }
 
+  /** The free desk lit up now: the one under the pointer, else the one a tap picked. */
+  private get litDesk(): string {
+    return this.hoverDesk || this.tapDesk;
+  }
+
   private paintHighlight() {
     const id = this.focusedId;
+    const desk = this.litDesk;
     for (const [wid, s] of this.seated) s.tag.classList.toggle('on', wid === id);
     const s = this.seated.get(id);
     if (s) {
@@ -544,8 +572,8 @@ export class OfficeMap {
       this.haloRing.material.color.set(color);
       this.halo.position.set(s.spot.x, 0.03, s.spot.z);
       this.haloRing.position.set(s.spot.x, 0.035, s.spot.z);
-    } else if (this.hoverDesk && this.hireable(this.hoverDesk)) {
-      const spot = seatSpot(this.hoverDesk);
+    } else if (desk && this.hireable(desk)) {
+      const spot = seatSpot(desk);
       if (spot) {
         this.halo.material.color.set(ACCENT);
         this.haloRing.material.color.set(ACCENT);
@@ -557,8 +585,12 @@ export class OfficeMap {
       this.cardFor = id;
       this.fillCard(s);
     } else if (!s) this.cardFor = '';
-    this.card.classList.toggle('show', !!s && (!!this.hovered || this.cursorCard));
-    this.vacancy.classList.toggle('show', !s && !!this.hoverDesk && this.hireable(this.hoverDesk));
+    const card = !!s && (!!this.hovered || this.cursorCard);
+    const vacant = !s && !!desk && this.hireable(desk);
+    this.card.classList.toggle('show', card);
+    this.card.classList.toggle('tap', card && this.touch);
+    this.vacancy.classList.toggle('show', vacant);
+    this.vacancy.classList.toggle('tap', vacant && this.touch);
     this.hooks.focused?.(id);
   }
 
@@ -577,7 +609,9 @@ export class OfficeMap {
       ),
       h('p.omap-card-doing', {}, words.doing),
       this.cardPreview,
-      h('div.omap-card-foot', {}, h('span.key', {}, '↵'), h('span', {}, w.guest ? 'See what the office knows' : isAsleep(w.status) ? 'Open to wake it' : 'Open its terminal')),
+      this.touch
+        ? h('div.omap-card-foot', {}, h('span', {}, `Tap again to ${w.guest ? 'see what the office knows' : isAsleep(w.status) ? 'wake it' : 'open its terminal'}`))
+        : h('div.omap-card-foot', {}, h('span.key', {}, '↵'), h('span', {}, w.guest ? 'See what the office knows' : isAsleep(w.status) ? 'Open to wake it' : 'Open its terminal')),
     );
     this.hooks.preview(this.cardPreview, w.id);
     this.cardAt = performance.now();
@@ -619,6 +653,29 @@ export class OfficeMap {
   private click() {
     if (this.hovered) this.hooks.open(this.hovered);
     else if (this.hoverDesk && this.hireable(this.hoverDesk)) this.hooks.hire(this.hoverDesk);
+  }
+
+  /** A tap on a touch screen: a worker shows its card, a free desk its "Hire here"; tapping either again goes ahead. */
+  private tap(x: number, y: number) {
+    this.pick(x, y);
+    const id = this.hovered;
+    const desk = this.hoverDesk;
+    this.hovered = '';
+    this.hoverDesk = '';
+    if (id) return this.tapWorker(id);
+    const again = desk && desk === this.tapDesk;
+    this.tapDesk = desk && this.hireable(desk) && !again ? desk : '';
+    this.cursor = '';
+    this.paintHighlight();
+    if (again && this.hireable(desk)) this.hooks.hire(desk);
+  }
+
+  private tapWorker(id: string) {
+    this.tapDesk = '';
+    if (this.cursor === id && this.cursorCard) return this.hooks.open(id);
+    // Refill the card, so its footer says to tap rather than press Enter.
+    this.cardFor = '';
+    this.setCursor(id);
   }
 
   // ---- Keys ------------------------------------------------------------------------------------------
@@ -663,6 +720,7 @@ export class OfficeMap {
 
   private fly(to: MapView, ms: number, ease: (t: number) => number): Promise<void> {
     this.cancelFlight();
+    this.homing = false;
     if (!ms || reduceMotion?.matches || !this.active) {
       this.applyView(to);
       this.controls.update();
@@ -689,12 +747,15 @@ export class OfficeMap {
       this.applyView({ ...home, distance: home.distance * 1.55, yaw: home.yaw - 0.75, pitch: 1.32 });
       void this.fly(home, 2400, easeOut);
     } else void this.fly(home, 900, easeInOut);
+    this.homing = true;
   }
 
   /** Back to the whole floor. */
   home() {
     this.moved = false;
-    return this.fly(homeView(this.aspect()), 800, easeInOut);
+    const flight = this.fly(homeView(this.aspect()), 800, easeInOut);
+    this.homing = true;
+    return flight;
   }
 
   zoom(factor: number) {
@@ -739,10 +800,10 @@ export class OfficeMap {
     void this.fly({ ...v, x: s.spot.x + Math.sin(v.yaw) * 1.5, z: s.spot.z + Math.cos(v.yaw) * 1.5 }, 450, easeInOut);
   }
 
-  /** Keeps the floor framed in the part of the map that `left` and `bottom` pixels of panels leave clear. */
-  setInsets(left: number, bottom: number) {
-    const next = { left: Math.max(0, Math.round(left)), bottom: Math.max(0, Math.round(bottom)) };
-    if (next.left === this.inset.left && next.bottom === this.inset.bottom) return;
+  /** Keeps the floor framed in the part of the map that `left`, `bottom` and `top` pixels of panels leave clear. */
+  setInsets(left: number, bottom: number, top = 0) {
+    const next = { left: Math.max(0, Math.round(left)), bottom: Math.max(0, Math.round(bottom)), top: Math.max(0, Math.round(top)) };
+    if (next.left === this.inset.left && next.bottom === this.inset.bottom && next.top === this.inset.top) return;
     this.inset = next;
     this.size = { w: 0, h: 0 };
     this.fit();
@@ -750,13 +811,14 @@ export class OfficeMap {
 
   /** The clear part's width over its height, which the camera's frustum is sized for. */
   private aspect() {
-    const { left, bottom } = this.clear();
-    return (this.size.w - left) / (this.size.h - bottom);
+    const { left, bottom, top } = this.clear();
+    return (this.size.w - left) / (this.size.h - bottom - top);
   }
 
   /** The insets, shrunk if the map is too small to leave a useful clear part. */
   private clear() {
-    return { left: this.inset.left < this.size.w * 0.6 ? this.inset.left : 0, bottom: this.inset.bottom < this.size.h * 0.6 ? this.inset.bottom : 0 };
+    const fits = this.inset.bottom + this.inset.top < this.size.h * 0.6;
+    return { left: this.inset.left < this.size.w * 0.6 ? this.inset.left : 0, bottom: fits ? this.inset.bottom : 0, top: fits ? this.inset.top : 0 };
   }
 
   private fit() {
@@ -768,15 +830,18 @@ export class OfficeMap {
     this.renderer.setSize(w, hgt, false);
     this.composer.setSize(w, hgt);
     this.bloom.resolution.set(w, hgt);
-    const { left, bottom } = this.clear();
-    this.camera.aspect = (w - left) / (hgt - bottom);
+    const { left, bottom, top } = this.clear();
+    this.camera.aspect = (w - left) / (hgt - bottom - top);
     // The frustum covers the clear part; the canvas extends past it, under the panels.
-    if (left || bottom) this.camera.setViewOffset(w - left, hgt - bottom, -left, 0, w, hgt);
+    if (left || bottom || top) this.camera.setViewOffset(w - left, hgt - bottom - top, -left, -top, w, hgt);
     else this.camera.clearViewOffset();
     this.camera.updateProjectionMatrix();
     const home = homeView(this.aspect());
     this.controls.maxDistance = home.distance * MAX_ZOOM_OUT;
-    if (!this.moved && !this.flight && !this.returnView) this.applyView(home);
+    if (!this.moved && !this.returnView) {
+      if (!this.flight) this.applyView(home);
+      else if (this.homing) this.flight.to = home;
+    }
     if (this.active) this.render(performance.now());
   }
 
@@ -851,7 +916,7 @@ export class OfficeMap {
         s.ring.scale.setScalar(1);
       }
     }
-    const lit = !!this.focusedId || (!!this.hoverDesk && this.hireable(this.hoverDesk));
+    const lit = !!this.focusedId || (!!this.litDesk && this.hireable(this.litDesk));
     const target = lit ? 1 : 0;
     const hm = this.halo.material;
     hm.opacity += (target * 0.55 - hm.opacity) * Math.min(1, dt * 10);
@@ -898,7 +963,7 @@ export class OfficeMap {
       if (id === lit) this.placeCard(b.x, b.y);
     }
     if (!lit && this.vacancy.classList.contains('show')) {
-      const spot = seatSpot(this.hoverDesk);
+      const spot = seatSpot(this.litDesk);
       if (spot) {
         this.tmp.set(spot.x, 1.2, spot.z).project(this.camera);
         this.vacancy.style.transform = `translate3d(${Math.round(((this.tmp.x + 1) / 2) * w)}px, ${Math.round(((1 - this.tmp.y) / 2) * hgt)}px, 0)`;
