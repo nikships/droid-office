@@ -25,6 +25,64 @@ function office(t: { after(fn: () => void): void }) {
 
 const saved = (dataDir: string) => (JSON.parse(readFileSync(path.join(dataDir, 'floors.json'), 'utf8')) as FloorDef[]).map((d) => d.id);
 
+test('reordering is persisted, preserves floor data, and survives restart and Home/local checks', (t) => {
+  const { root, dataDir, defs } = office(t);
+  const building = new Building(dataDir, root);
+  building.ensureHome(defs[0].dir);
+  building.ensureLocal(defs[1].dir, 'Sam');
+  assert.equal(building.reorder('api', null), undefined);
+  assert.deepEqual(saved(dataDir), ['web', 'docs', 'api']);
+  assert.deepEqual(building.list(), [defs[1], defs[2], defs[0]]);
+  const again = new Building(dataDir, root);
+  again.ensureHome(defs[0].dir);
+  again.ensureLocal(defs[1].dir, 'Sam');
+  assert.deepEqual(
+    again.list().map((f) => f.id),
+    ['web', 'docs', 'api'],
+  );
+  assert.equal(again.reorder('api', 'web'), undefined);
+  assert.deepEqual(saved(dataDir), ['api', 'web', 'docs']);
+});
+
+test('invalid, stale and unpersistable moves leave the floor order unchanged', (t) => {
+  const { root, dataDir } = office(t);
+  const building = new Building(dataDir, root);
+  for (const [floor, before] of [
+    ['missing', null],
+    ['api', 'gone'],
+    ['@roof', 'web'],
+  ] as const) {
+    assert.ok(building.reorder(floor, before));
+    assert.deepEqual(saved(dataDir), ['api', 'web', 'docs']);
+  }
+  mkdirSync(path.join(dataDir, 'floors.json.tmp'));
+  assert.match(building.reorder('api', null)!, /Couldn't save/);
+  assert.deepEqual(
+    building.list().map((f) => f.id),
+    ['api', 'web', 'docs'],
+  );
+  assert.deepEqual(saved(dataDir), ['api', 'web', 'docs']);
+});
+
+test('reordering an aliased checkout keeps the same open floor and retains its aliases', (t) => {
+  const { root, dataDir, defs } = office(t);
+  const alias = path.join(root, 'api-alias');
+  symlinkSync(defs[0].dir, alias, 'dir');
+  writeFileSync(path.join(dataDir, 'floors.json'), JSON.stringify([...defs, { ...defs[0], id: 'alias', dir: alias }]));
+  const building = new Building(dataDir, root);
+  assert.equal(building.reorder('api', null), undefined);
+  assert.deepEqual(
+    building.list().map((f) => f.id),
+    ['web', 'docs', 'api'],
+  );
+  assert.deepEqual(saved(dataDir), ['web', 'docs', 'api', 'alias']);
+  assert.ok(building.reorder('alias', 'web'));
+  assert.deepEqual(
+    new Building(dataDir, root).list().map((f) => f.id),
+    ['web', 'docs', 'api'],
+  );
+});
+
 test('a floor comes off the building and stays off, with its checkout left where it was', (t) => {
   const { root, dataDir, defs } = office(t);
   const building = new Building(dataDir, root);

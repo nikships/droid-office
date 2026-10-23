@@ -256,6 +256,8 @@ class OfficeConnection(
         if (send(ClientMsg.floorGo(floorId))) scope.launch { _data.value.officeId?.let { id -> store.update(id) { it.copy(lastFloor = floorId) } } }
     }
 
+    fun reorderFloor(floorId: String, before: String?): Boolean = send(ClientMsg.floorReorder(floorId, before))
+
     /**
      * Hires at a desk the office picks (`deskId: "auto"`). An older office (one paired by LAN token)
      * can't pick, so the lowest free desk is chosen here.

@@ -1546,6 +1546,16 @@ a.when:hover { text-decoration: underline; }
 .floor-menu { position: fixed; z-index: 30; width: min(380px, calc(100vw - 24px)); max-height: calc(100vh - 110px); overflow: auto; padding: 8px; display: grid; gap: 6px; animation: floor-menu-in 120ms var(--ease); }
 @keyframes floor-menu-in { from { opacity: 0; transform: translateY(-6px); } }
 .floor-menu-head { font: 500 10px/1.4 var(--font-mono); color: var(--text-secondary); text-transform: uppercase; letter-spacing: .1em; padding: 2px 6px 0; }
+.floor-menu-row { display: grid; grid-template-columns: var(--control-h) minmax(0, 1fr); align-items: center; gap: var(--space-1); position: relative; }
+.floor-menu-row > .floor-item { min-width: 0; }
+.floor-menu-row .floor-stat-label { display: none; }
+.floor-order-hint { margin: 0; padding: 0 var(--space-2); }
+.floor-drag { touch-action: none; user-select: none; cursor: grab; color: var(--text-secondary); }
+.floor-drag:active { cursor: grabbing; }
+.floor-dragging { opacity: .5; }
+.floor-drop-before { box-shadow: 0 -2px 0 var(--accent); }
+.floor-drop-after { box-shadow: 0 2px 0 var(--accent); }
+.floor-reorder-row { display: flex; align-items: center; gap: var(--space-3); }
 .floor-branch-section { padding: var(--space-2); border-bottom: 1px solid var(--border); }
 .floor-branch-section:empty { display: none; }
 .floor-branch-section :where(select) { width: 100%; min-width: 0; text-overflow: ellipsis; }
@@ -1581,7 +1591,7 @@ a.when:hover { text-decoration: underline; }
 .elevator .floors { display: grid; gap: 8px; }
 .elevator .floor-btn { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: var(--space-3); align-items: center; min-width: 0; width: 100%; text-align: left; padding: 0; font: inherit; color: var(--text); background: none; border: 0; cursor: pointer; }
 .elevator .floor-btn:disabled { cursor: default; color: var(--text); }
-.elevator .floor-row { display: grid; grid-template-columns: minmax(0, 1fr) var(--control-h); gap: var(--space-2); align-items: center; padding: var(--space-2) var(--space-3); }
+.elevator .floor-row { display: grid; grid-template-columns: var(--control-h) minmax(0, 1fr) var(--control-h); gap: var(--space-2); align-items: center; padding: var(--space-2) var(--space-3); }
 .elevator .floor-off, .elevator .floor-off-slot { width: var(--control-h); height: var(--control-h); }
 .elevator .floor-off { display: grid; place-items: center; padding: 0; font-size: 14px; }
 .elevator .floor-off:hover { border-color: var(--danger); color: var(--danger); background: rgba(239, 68, 68, .08); }

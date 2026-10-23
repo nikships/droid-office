@@ -4,6 +4,7 @@ import type { FloorInfo, ServerMsg } from '../../shared/protocol';
 import type { Net } from '../net';
 import { store } from '../state';
 import { h } from './dom';
+import { floorDragHandle, floorReorder } from './floor-reorder';
 
 // The floor list that drops down from the project in the corner: every floor of the building, top
 // floor first. Picking one takes you straight there, to the same spot in the office you're standing
@@ -129,7 +130,7 @@ export function toggleFloorMenu(anchor: HTMLElement, opts: FloorMenuOptions): vo
       close();
       opts.go(f.id);
     });
-    return btn;
+    return h('div.floor-menu-row', { 'data-floor-id': f.id }, floorDragHandle(f.name), btn);
   };
 
   const render = () => {
@@ -162,6 +163,7 @@ export function toggleFloorMenu(anchor: HTMLElement, opts: FloorMenuOptions): vo
     });
     directory.replaceChildren(
       h('div.floor-menu-head.eyebrow', {}, h('span.no', {}, String(floors.length)), `floor${floors.length === 1 ? '' : 's'}`),
+      h('p.field-hint.floor-order-hint', {}, 'Drag the handles to change floor numbers and shortcuts.'),
       h('div.list.floor-menu-list', {}, ...(floors.length ? [roof] : []), ...items),
       h('div.floor-menu-foot', {}, add),
     );
@@ -194,6 +196,7 @@ export function toggleFloorMenu(anchor: HTMLElement, opts: FloorMenuOptions): vo
   const close = () => {
     if (current?.el !== el) return;
     current = null;
+    disposeReorder();
     el.remove();
     anchor.classList.remove('open');
     window.removeEventListener('pointerdown', onDown, true);
@@ -204,6 +207,7 @@ export function toggleFloorMenu(anchor: HTMLElement, opts: FloorMenuOptions): vo
   };
   render();
   document.body.append(el);
+  const disposeReorder = floorReorder(directory, opts.net, true);
   place();
   anchor.classList.add('open');
   window.addEventListener('pointerdown', onDown, true);

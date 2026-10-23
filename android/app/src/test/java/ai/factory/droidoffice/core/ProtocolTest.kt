@@ -12,6 +12,16 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class ProtocolTest {
+    @Test
+    fun floorReorderingNamesOneFloorAndANullableInsertionPoint() {
+        val before = Json.parseToJsonElement(ClientMsg.floorReorder("home", "droid-office")).jsonObject
+        assertEquals("floor.reorder", before.getValue("t").jsonPrimitive.content)
+        assertEquals("home", before.getValue("floor").jsonPrimitive.content)
+        assertEquals("droid-office", before.getValue("before").jsonPrimitive.content)
+        val last = Json.parseToJsonElement(ClientMsg.floorReorder("home", null)).jsonObject
+        assertEquals(kotlinx.serialization.json.JsonNull, last["before"])
+    }
+
     private val welcome = """
         {"t":"welcome","connection":"c1","arrival":{"floor":"home","via":"start"},"version":"0.9.120",
          "floors":[{"id":"home","name":"droid-office","dir":"/x","palette":0,"local":true,"home":true,"workers":2,"busy":1,"waiting":1}],
