@@ -124,8 +124,9 @@ export interface Office {
   occupants: THREE.Object3D[];
   boardMeshes: Record<keyof typeof BOARDS, THREE.Mesh>;
   tvScreen: THREE.Mesh;
-  /** The monitor on the boss's desk upstairs, which shows the floor's shell (world/monitor.ts). */
-  bossScreen: THREE.Mesh;
+  /** The standard worker laptop mounted here shows the floor's shell. */
+  bossLaptopAnchor: THREE.Object3D;
+  bossChair: THREE.Group;
   /** The compute wall's two screens on the west wall: the office's machine, and the Droid Computers (world/factory-computers.ts). */
   machineScreen: THREE.Mesh;
   fleetScreen: THREE.Mesh;
@@ -1403,7 +1404,7 @@ export function buildOffice(): Office {
   // light fixtures hung from them.
   group.add(buildCeiling(night));
 
-  const bossScreen = buildLoft(group, colliders, interactables, looks, night);
+  const { bossChair, bossLaptopAnchor } = buildLoft(group, colliders, interactables, looks, night);
   // Under the loft: the unused glass room.
   buildGlassRoom(group, colliders, doors, night);
   fixture('south', GLASS_ROOM_BOARD.x, GLASS_ROOM_BOARD.y, GLASS_ROOM_BOARD.width + 0.4, GLASS_ROOM_BOARD.height + 0.4);
@@ -1514,7 +1515,8 @@ export function buildOffice(): Office {
     occupants,
     boardMeshes,
     tvScreen,
-    bossScreen,
+    bossChair,
+    bossLaptopAnchor,
     machineScreen,
     fleetScreen,
     fixtures: () => fixtures,
@@ -1711,7 +1713,7 @@ export function buildLoftStairs(colliders: Collider[]): THREE.Group {
  * The upstairs office: a loft on posts in the south-east corner, with glass on the two sides that
  * face the desks, reached by stairs along the south wall.
  */
-function buildLoft(group: THREE.Group, colliders: Collider[], interactables: Interactable[], looks: Looks, night: NightParts): THREE.Mesh {
+function buildLoft(group: THREE.Group, colliders: Collider[], interactables: Interactable[], looks: Looks, night: NightParts): Pick<Office, 'bossChair' | 'bossLaptopAnchor'> {
   const { minX, maxX, minZ, maxZ, y: floorY, height } = LOFT;
   const w = maxX - minX;
   const d = maxZ - minZ;
@@ -1722,7 +1724,6 @@ function buildLoft(group: THREE.Group, colliders: Collider[], interactables: Int
   const T = 0.12; // glass wall thickness
   const wallMat = looks.wall;
   const frameMat = toon('#727272');
-  const woodMat = toon(PALETTE.wood);
   const steelMat = toon(PALETTE.steel);
   const edge = toon(PALETTE.accent, { emissive: PALETTE.accent });
   // The loft's steel, merged at the end: the slab's fascia, posts, frames, stairs and rails.
@@ -1792,38 +1793,8 @@ function buildLoft(group: THREE.Group, colliders: Collider[], interactables: Int
   const inkMat = toon(PALETTE.deskLeg);
 
   // Inside: the big desk facing the glass, a comfy couch, a telescope aimed at the desks.
-  const deskX = cx + 0.5;
-  const deskZ = cz - 0.3;
-  // The boss's desk: a thick dark slab on blackened steel panels, an orange edge along its front.
-  const desk = new THREE.Group();
-  const deskBody = new THREE.Group();
-  deskBody.add(mesh(roundedBox(2.6, 0.08, 1.2, 0.02), woodMat, 0, 0.79, 0));
-  deskBody.add(mesh(box(2.4, 0.012, 0.01), toon(PALETTE.accent, { emissive: PALETTE.accent }), 0, 0.76, -0.605));
-  deskBody.add(mesh(box(2.4, 0.66, 0.06), toon('#6a6a6a'), 0, 0.4, -0.5));
-  for (const sx of [-1, 1]) deskBody.add(mesh(box(0.08, 0.75, 1.0), toon('#6a6a6a'), sx * 1.15, 0.375, 0));
-  deskBody.add(mesh(roundedBox(0.9, 0.55, 0.06, 0.01), toon(PALETTE.ink), 0, 1.18, -0.2));
-  deskBody.add(mesh(box(0.08, 0.2, 0.08), toon(PALETTE.steel), 0, 0.93, -0.2));
-  const executive = mergeByMaterial(deskBody);
-  executive.name = 'executive-desk';
-  desk.add(executive);
-  // The floor's shell plays on it (world/monitor.ts).
-  const screen = mesh(new THREE.PlaneGeometry(0.8, 0.45), screenMaterial(), 0, 1.18, -0.165);
-  desk.add(screen);
-  const plate = textPlane('BOSS', { bg: '#0a0a0a', color: '#ee6018', border: '#2f2f2f', size: 48 });
-  plate.scale.multiplyScalar(0.55);
-  plate.position.set(0, 0.5, -0.55);
-  plate.rotation.y = Math.PI;
-  desk.add(plate);
-  const bossChair = chair('#4f4f4f');
-  bossChair.scale.setScalar(1.2);
-  bossChair.position.set(0, 0, 1.0);
-  desk.add(bossChair);
-  seatable(bossChair, 'boss-chair', 1.2, interactables);
-  // Clicking the screen is using the chair: sit down, then E opens the shell.
-  screen.userData.interact = bossChair.userData.interact;
-  desk.position.set(deskX, floorY, deskZ);
+  const { group: desk, bossChair, bossLaptopAnchor } = buildBossDesk(colliders, interactables);
   group.add(desk);
-  colliders.push({ minX: deskX - 1.3, maxX: deskX + 1.3, minZ: deskZ - 0.6, maxZ: deskZ + 0.6, bottom: floorY, top: floorY + 0.8 });
 
   const sofa = new THREE.Group();
   const couchMat = toon('#878787');
@@ -1841,7 +1812,7 @@ function buildLoft(group: THREE.Group, colliders: Collider[], interactables: Int
 
   const felt = toonUnique('#757575');
   felt.userData.outlineParameters = { visible: false };
-  const rug = mesh(box(4.6, 0.008, 3.2), felt, deskX - 0.3, floorY + 0.01, cz + 0.1);
+  const rug = mesh(box(4.6, 0.008, 3.2), felt, desk.position.x - 0.3, floorY + 0.01, cz + 0.1);
   group.add(rug);
 
   const scope = new THREE.Group();
@@ -1868,7 +1839,7 @@ function buildLoft(group: THREE.Group, colliders: Collider[], interactables: Int
   colliders.push({ minX: minX + 0.65, maxX: minX + 1.15, minZ: minZ + 0.65, maxZ: minZ + 1.15, bottom: floorY, top: floorY + 1.3 });
 
   const lamp = mergeByMaterial(ledBar(2.2, 0.32, overheadLit(night)));
-  lamp.position.set(deskX, roofY - 0.4, cz);
+  lamp.position.set(desk.position.x, roofY - 0.4, cz);
   group.add(lamp);
 
   // Signs: one on the back wall inside, one over the glass for everyone downstairs.
@@ -1882,5 +1853,39 @@ function buildLoft(group: THREE.Group, colliders: Collider[], interactables: Int
   outside.position.set(cx, roofY + 0.2, minZ - 0.02);
   outside.rotation.y = Math.PI;
   group.add(outside);
-  return screen;
+  return { bossChair, bossLaptopAnchor };
+}
+
+/** The loft uses the same laptop mount and unscaled task chair as the worker desks. */
+export function buildBossDesk(colliders: Collider[], interactables: Interactable[]): Pick<Office, 'group' | 'bossChair' | 'bossLaptopAnchor'> {
+  const seat = SEATING_BY_ID.get('boss-chair')!;
+  const deskX = seat.x;
+  const deskZ = seat.z - 1;
+  const group = new THREE.Group();
+  const body = new THREE.Group();
+  body.add(mesh(roundedBox(2.6, 0.08, 1.2, 0.02), toon(PALETTE.wood), 0, 0.79, 0));
+  body.add(mesh(box(2.4, 0.012, 0.01), toon(PALETTE.accent, { emissive: PALETTE.accent }), 0, 0.76, -0.605));
+  body.add(mesh(box(2.4, 0.66, 0.06), toon('#6a6a6a'), 0, 0.4, -0.5));
+  for (const sx of [-1, 1]) body.add(mesh(box(0.08, 0.75, 1), toon('#6a6a6a'), sx * 1.15, 0.375, 0));
+  const executive = mergeByMaterial(body);
+  executive.name = 'executive-desk';
+  group.add(executive);
+  const bossLaptopAnchor = new THREE.Object3D();
+  bossLaptopAnchor.position.set(0, 0.83, DESK_LAPTOP.z);
+  bossLaptopAnchor.scale.setScalar(DESK_LAPTOP.scale);
+  group.add(bossLaptopAnchor);
+  const plate = textPlane('BOSS', { bg: '#0a0a0a', color: '#ee6018', border: '#2f2f2f', size: 48 });
+  plate.scale.multiplyScalar(0.55);
+  plate.position.set(0, 0.5, -0.55);
+  plate.rotation.y = Math.PI;
+  group.add(plate);
+  const bossChair = chair(PALETTE.chairs[0]);
+  bossChair.position.set(0, 0, 1);
+  group.add(bossChair);
+  seatable(bossChair, 'boss-chair', 1.2, interactables);
+  // The interaction stays on the anchor when the laptop swaps its stand-in for the GLB.
+  bossLaptopAnchor.userData.interact = bossChair.userData.interact;
+  group.position.set(deskX, seat.y, deskZ);
+  colliders.push({ minX: deskX - 1.3, maxX: deskX + 1.3, minZ: deskZ - 0.6, maxZ: deskZ + 0.6, bottom: seat.y, top: seat.y + 0.8 });
+  return { group, bossChair, bossLaptopAnchor };
 }

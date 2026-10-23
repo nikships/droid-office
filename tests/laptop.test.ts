@@ -52,31 +52,32 @@ function textYs(ops: Op[]) {
   return ops.filter((op) => op.kind === 'fillText').map((op) => Number(op.args[2]));
 }
 
-test('fills a sparse wide laptop screen instead of leaving text in its upper half', () => {
+test('anchors sparse shell output to the laptop screen top-left', () => {
   const { ctx, ops } = canvasSpy();
   paintScreen(ctx, 1024, 680, screen(100, 30, 8), undefined, 22);
   const ys = textYs(ops);
   assert.ok(ys.length > 0);
-  assert.ok(Math.min(...ys) > 200, `first glyph y=${Math.min(...ys)}`);
-  assert.ok(Math.max(...ys) < 480, `last glyph y=${Math.max(...ys)}`);
+  assert.ok(Math.min(...ys) < 15, `first glyph y=${Math.min(...ys)}`);
+  assert.ok(Math.max(...ys) < 180, `last glyph y=${Math.max(...ys)}`);
+  for (const op of ops.filter((op) => op.kind === 'fillText')) assert.equal(op.args[1], 10.24);
 });
 
-test('keeps very wide sparse output vertically centered within the laptop canvas', () => {
+test('anchors very wide sparse output to the top instead of centering its occupied rows', () => {
   const { ctx, ops } = canvasSpy();
   paintScreen(ctx, 1024, 680, screen(180, 45, 6), undefined, 22);
   const ys = textYs(ops);
   assert.ok(ys.length > 0);
-  assert.ok(Math.min(...ys) > 250, `first glyph y=${Math.min(...ys)}`);
-  assert.ok(Math.max(...ys) < 430, `last glyph y=${Math.max(...ys)}`);
+  assert.ok(Math.min(...ys) < 15, `first glyph y=${Math.min(...ys)}`);
+  assert.ok(Math.max(...ys) < 90, `last glyph y=${Math.max(...ys)}`);
 });
 
-test('keeps a tall full-screen styled terminal grid centered and complete', () => {
+test('keeps a tall full-screen styled terminal grid top-left aligned and complete', () => {
   const { ctx, ops } = canvasSpy();
   paintScreen(ctx, 1024, 680, screen(178, 45, 45, 178, 4), undefined, 22);
   const ys = textYs(ops);
   assert.equal(ys.length, 45);
-  assert.ok(Math.min(...ys) > 60, `first glyph y=${Math.min(...ys)}`);
-  assert.ok(Math.max(...ys) < 620, `last glyph y=${Math.max(...ys)}`);
+  assert.ok(Math.min(...ys) < 15, `first glyph y=${Math.min(...ys)}`);
+  assert.ok(Math.max(...ys) < 540, `last glyph y=${Math.max(...ys)}`);
   assert.equal(ops.filter((op) => op.kind === 'fillRect').length, 46, 'canvas fill plus one styled row per line');
 });
 
@@ -85,15 +86,15 @@ test('preserves the plain narrow screen layout bounds', () => {
   paintScreen(ctx, 1024, 680, screen(56, 22, 22, 20), undefined, 22);
   const ys = textYs(ops);
   assert.ok(ys.length > 0);
-  assert.ok(Math.min(...ys) >= 10);
+  assert.ok(Math.min(...ys) >= 10.24);
   assert.ok(Math.max(...ys) <= 670);
 });
 
 test('a terminal wider than the laptop fills its height from the scrollback above the screen', () => {
   const wide = screen(145, 35, 34, 145);
-  const banded = canvasSpy();
-  paintScreen(banded.ctx, 1024, 680, wide, undefined, 22);
-  assert.ok(Math.min(...textYs(banded.ops)) > 60, 'without the rows above, the text sits between black bands');
+  const withoutHistory = canvasSpy();
+  paintScreen(withoutHistory.ctx, 1024, 680, wide, undefined, 22);
+  assert.ok(Math.min(...textYs(withoutHistory.ops)) < 15, 'without history the screen still starts at the top');
 
   wide.above = Array.from({ length: screenHistoryRows(145, 35) }, (): Run[] => [['y'.repeat(145), -1, -1, 0]]);
   const { ctx, ops } = canvasSpy();
@@ -123,6 +124,51 @@ test('renders an empty screen as background without synthetic terminal text', ()
   paintScreen(ctx, 1024, 680, screen(100, 30, 0), undefined, 22);
   assert.deepEqual(textYs(ops), []);
   assert.deepEqual(ops[0], { kind: 'fillRect', args: [0, 0, 1024, 680] });
+});
+
+test('a short shell prompt stays at the top-left as more output arrives', () => {
+  const positions = [1, 4, 8].map((rows) => {
+    const { ctx, ops } = canvasSpy();
+    paintScreen(ctx, 2048, 1360, screen(80, 24, rows, 30), undefined, 22);
+    return ops.find((op) => op.kind === 'fillText')!.args.slice(1);
+  });
+  for (const position of positions) {
+    assert.equal(position[0], 20.48);
+    assert.ok(Number(position[1]) < 35, `first glyph y=${position[1]}`);
+    assert.deepEqual(position, positions[0], 'new lines do not recenter the prompt');
+  }
+});
+
+test('preserves blank terminal rows inside the selected viewport', () => {
+  const state = screen(56, 22, 0);
+  state.lines[3] = [['prompt', -1, -1, 0]];
+  const { ctx, ops } = canvasSpy();
+  paintScreen(ctx, 1024, 680, state, undefined, 22);
+  const lineH = (680 - 20.48) / 22;
+  assert.ok(Math.abs(textYs(ops)[0] - (10.24 + 3 * lineH + lineH * 0.1)) < 0.001);
+});
+
+test('keeps recent rows visible when zooming a tall terminal', () => {
+  const state = screen(80, 50, 50, 30);
+  state.lines[49] = [['latest prompt', -1, -1, 0]];
+  const { ctx, ops } = canvasSpy();
+  paintScreen(ctx, 1024, 680, state, undefined, 22);
+  const texts = ops.filter((op) => op.kind === 'fillText');
+  assert.equal(texts.length, 22);
+  assert.equal(texts.at(-1)!.args[0], 'latest prompt');
+  assert.ok(Number(texts[0].args[2]) < 15);
+  assert.ok(Number(texts.at(-1)!.args[2]) < 650);
+});
+
+test('the unzoomed renderer resets placeholder alignment and starts at the top-left', () => {
+  const { ctx, ops } = canvasSpy();
+  paintScreen(ctx, 1024, 680, undefined, 'waiting');
+  paintScreen(ctx, 1024, 680, screen(40, 50, 1, 20));
+  const prompt = ops.filter((op) => op.kind === 'fillText').at(-1)!;
+  assert.equal(ctx.textAlign, 'left');
+  assert.equal(ctx.textBaseline, 'top');
+  assert.equal(prompt.args[1], 10.24);
+  assert.ok(Number(prompt.args[2]) < 15);
 });
 
 // --- The MacBook swap --------------------------------------------------------------

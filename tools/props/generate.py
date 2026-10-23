@@ -1078,13 +1078,12 @@ def build_board_frame():
 
 @prop("executive-desk", "furniture", "desk", recenter=False)
 def build_executive_desk():
-    """Loft workstation; live display remains .8 x .45 at y=1.18,z=-.165 in the client."""
+    """Loft casework only; the client mounts the shared worker laptop and task chair."""
     top_mat=material("BossTop","#808489",roughness=.7)
     frame=material("BossFrame","#596169",roughness=.5,metallic=.25)
     steel=material("BossSteel","#b1b9c0",roughness=.3,metallic=.85)
     rubber=material("BossRubber","#24282d",roughness=.9)
     signal=material("BossSignal","#ee6018",roughness=.55,emission="#ee6018",emission_strength=1)
-    keys=material("BossKeys","#484f56",roughness=.85)
     parts=[]
     def add(obj,mat):
         parts.append((obj,mat))
@@ -1113,31 +1112,6 @@ def build_executive_desk():
         add(box("PanelBracket",(.10,.06,.06),(sx*1.08,.67,-.455),bevel_w=.006),steel)
     for z in (-.43,.43):
         add(box("TopRail",(2.3,.05,.06),(0,.73,z),bevel_w=.006),frame)
-    # Thin bezel around, never over, the live canvas plane. A dark well also reads in studio.
-    bezel=box("MonitorBezel",(.90,.55,.06),(0,1.18,-.20),bevel_w=.014,bevel_seg=3)
-    cut(bezel,box("DisplayOpening",(.82,.47,.10),(0,1.18,-.20),bevel_w=.006,bevel_seg=3))
-    add(bezel,rubber)
-    add(box("DisplayWell",(.818,.468,.006),(0,1.18,-.207),bevel_w=.005),rubber)
-    back=box("MonitorBack",(.86,.51,.012),(0,1.18,-.226),bevel_w=.012,bevel_seg=3)
-    cut(back,*[box("MonitorVent",(.042,.008,.04),(i*.06,1.36,-.226),bevel_w=.003) for i in range(-5,6)])
-    add(back,frame)
-    add(box("MonitorFoot",(.32,.018,.20),(0,.839,-.20),bevel_w=.012),steel)
-    add(box("MonitorStem",(.065,.18,.07),(0,.938,-.25),bevel_w=.009),steel)
-    add(cyl("PowerLight",.003,.003,(.38,.928,-.168),rot=(math.pi/2,0,0),verts=12),signal)
-    for x in (-.38,.38):
-        for y in (.98,1.38):
-            add(cyl("MonitorScrew",.004,.003,(x,y,-.234),rot=(math.pi/2,0,0),verts=8),steel)
-    add(tube_path("DisplayLead",[(0,.95,-.24),(0,.88,-.24),(.12,.86,-.26),(.20,.845,-.36),(.8,.845,-.4),(1.0,.82,-.4)],.004,sides=6),rubber)
-    # A compact physical keyboard and mouse, kept clear of the unchanged display and chair.
-    add(box("KeyboardCase",(.52,.016,.18),(0,.838,.23),bevel_w=.008),rubber)
-    for row in range(3):
-        for col in range(12-row//2):
-            x=-.228+row*.01+col*.038
-            add(box("Keycap",(.032,.008,.028),(x,.850,.17+row*.037)),keys)
-    for x,w in ((-.215,.035),(-.17,.035),(0,.22),(.15,.025),(.185,.025),(.22,.025)):
-        add(box("BottomKey",(w,.008,.028),(x,.850,.281)),keys)
-    add(sphere("Mouse",1,(.40,.848,.23),segs=20,rings=10,scale=(.035,.018,.055)),keys)
-    add(x_cyl("MouseWheel",.005,.010,(.40,.864,.208),verts=12),rubber)
     return parts
 
 
