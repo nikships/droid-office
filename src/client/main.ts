@@ -58,6 +58,7 @@ import { installTaskChairs } from './world/task-chair';
 import { installLedBarHousings } from './world/led-bar';
 import { installHighBayLamps } from './world/high-bay-lamp';
 import { installRoofPlanters } from './world/rooftop-planter';
+import { installSportsCars } from './world/sports-cars';
 import { installCableTrays } from './world/cable-tray';
 import { installBoardFrames } from './world/board-frame';
 import { installLoungeSofa } from './world/lounge-sofa';
@@ -260,6 +261,8 @@ const propsReady = loadPropManifest()
     if (ledBar) installLedBarHousings(ledBar, office.group);
     const highBayLamp = propScene('high-bay-lamp');
     if (highBayLamp) installHighBayLamps(highBayLamp, office.group);
+    const sportsCars = propScene('sports-cars');
+    if (sportsCars) installSportsCars(sportsCars, office.group);
     const rooftopPlanter = propScene('rooftop-planter');
     if (rooftopPlanter && roof) installRoofPlanters(rooftopPlanter, roof.group);
     const ceilingDeck = propScene('ceiling-deck');

@@ -4527,6 +4527,177 @@ def ceiling_deck():
     return [(low, mat)]
 
 
+@prop("sports-cars", "vehicle", "street", recenter=False, multipart=True, keep_uvs=True, draco=False)
+def sports_cars():
+    """Two +Z-forward sports cars in the existing 4.6 x 2 x 1.12 m collision envelope."""
+    paint = material("CarPaint", "#ffffff", roughness=.3, coat=.3)
+    rubber = material("CarRubber", "#17191b", roughness=.9)
+    metal = material("CarMetal", "#9eaab2", roughness=.28, metallic=.8)
+    carbon = material("CarCarbon", "#ffffff", roughness=.5)
+    glass = material("CarGlass", "#ffffff", roughness=.18)
+    head = material("CarHeadlight", "#e4f1ff", emission="#bdd8f5", emission_strength=.7)
+    tail = material("CarTaillight", "#ee233e", emission="#d6132d", emission_strength=.7)
+    caliper = material("CarCaliper", "#ee6018", roughness=.45)
+    # Packed twill weave and a restrained sky-reflection gradient, shared by both cars.
+    for mat, size, name in [(carbon, 512, "CarCarbonWeave"), (glass, 256, "CarGlazing")]:
+        y, x = np.mgrid[0:size, 0:size]
+        rgba = np.ones((size, size, 4), dtype=np.float32)
+        if mat == carbon:
+            warp = ((x // 8 + y // 8) % 4) < 2
+            strand = np.where(warp, np.cos(x * math.pi / 4), np.cos(y * math.pi / 4))
+            value = .17 + .045 * strand + .025 * warp
+            rgba[..., :3] = value[..., None] * np.array([.94, 1, 1.04])
+        else:
+            reflection = .10 + .16 * (y / size) + .14 * np.exp(-((x / size - .3) / .09) ** 2)
+            rgba[..., :3] = reflection[..., None] * np.array([.66, .87, 1.0])
+        for old in list(bpy.data.images):
+            if old.name.startswith(name) and old.users == 0:
+                bpy.data.images.remove(old)
+        image = bpy.data.images.new(name, width=size, height=size, alpha=False)
+        image.colorspace_settings.name = "sRGB"
+        image.pixels.foreach_set(rgba.ravel())
+        image.pack()
+        node = mat.node_tree.nodes.new("ShaderNodeTexImage")
+        node.image = image
+        mat.node_tree.links.new(node.outputs["Color"], mat.node_tree.nodes["Principled BSDF"].inputs["Base Color"])
+
+    def car(curved):
+        parts = []
+        def add(obj, mat):
+            obj = raw(obj)
+            if not obj.data.uv_layers:
+                uv = obj.data.uv_layers.new(name="UVMap")
+                for polygon in obj.data.polygons:
+                    for j, index in enumerate(polygon.loop_indices):
+                        uv.data[index].uv = [(0, 0), (1, 0), (1, 1), (0, 1)][j % 4]
+            parts.append((obj, mat))
+            return obj
+        def normals(obj):
+            bm = bmesh.new()
+            bm.from_mesh(obj.data)
+            bmesh.ops.recalc_face_normals(bm, faces=list(bm.faces))
+            bm.to_mesh(obj.data)
+            bm.free()
+        # A shaped, closed shell, with real wheel openings rather than wheels stuck to a block.
+        levels = [(-2.27, .79, .64), (-2.08, .92, .77), (-1.40, .96, .78),
+                  (-.78, .94, .73), (0, .91, .70), (.70, .92, .70),
+                  (1.40, .96, .68), (2.08, .88, .47), (2.30, .73, .35)]
+        if curved:
+            levels = [(-2.27,.76,.63),(-2.08,.90,.76),(-1.60,.96,.79),
+                      (-1.0,.95,.77),(-.5,.92,.75),(0,.90,.73),
+                      (.65,.92,.72),(1.36,.96,.69),(1.75,.93,.60),
+                      (2.08,.85,.46),(2.30,.66,.35)]
+        vertices = []
+        axle = 1.36 if curved else 1.42
+        for z, w, top in levels:
+            if curved:
+                top += .018 * math.sin((z + 2.27) / 4.57 * math.pi)
+            fender = min(.82, top + .13 * math.exp(-((abs(z) - axle) / .52) ** 2))
+            vertices.extend([(x, y, z) for x, y in [
+                (-w, .32), (-w, .48), (-w*.92, fender), (-w*.72, fender),
+                (-w*.48, top), (w*.48, top), (w*.72, fender), (w*.92, fender),
+                (w, .48), (w, .32), (w*.9, .20), (-w*.9, .20)]])
+        faces = [tuple(range(11, -1, -1))]
+        faces += [(i*12+j, i*12+(j+1)%12, (i+1)*12+(j+1)%12, (i+1)*12+j) for i in range(len(levels)-1) for j in range(12)]
+        faces.append(tuple((len(levels)-1)*12+j for j in range(12)))
+        body = raw(mesh_object("ShapedBody", vertices, faces))
+        normals(body)
+        for side in (-1, 1):
+            for z in (-axle, axle):
+                # Stop inside the outer fender, not through the lower centre of the hood.
+                cutter = raw(x_cyl("WheelOpening", .415, .64, (side*1.02, .36, z), verts=24))
+                modifier = body.modifiers.new("Wheel arch", "BOOLEAN")
+                modifier.operation, modifier.object = "DIFFERENCE", cutter
+                apply_modifiers(body)
+                bpy.data.objects.remove(cutter, do_unlink=True)
+        bevel(body, .025 if curved else .014, 2)
+        if curved:
+            apply_modifiers(body)
+            bpy.ops.object.select_all(action="DESELECT")
+            body.select_set(True)
+            bpy.context.view_layer.objects.active = body
+            smooth(body)
+        add(body, paint)
+        # Curved coupe glazing versus the wedge's straight, low canopy.
+        roof = [(-1.70, .79, .66), (-1.0, 1.03, .60), (-.60, 1.10, .56), (-.08, 1.08, .57), (.65, .73, .67)] if curved else [
+            (-1.60, .78, .67), (-.85, 1.09, .56), (-.10, 1.09, .56), (.85, .73, .67)]
+        for i in range(len(roof)-1):
+            for surface in range(3):
+                points = []
+                for z, top, width in (roof[i], roof[i+1]):
+                    ring = [(-.70, .74), (-width, top), (width, top), (.70, .74)]
+                    points.extend([(ring[surface][0], ring[surface][1], z), (ring[surface+1][0], ring[surface+1][1], z)])
+                mat = paint if surface == 1 and i not in (0, len(roof)-2) else glass
+                add(mesh_object("CanopyPanel", points, [(0, 2, 3, 1)]), mat)
+        # Four profiled tyres, hollow alloy rims, spokes, hubs, discs and orange calipers.
+        def ring(name, x, z, profile, mat, segments=20):
+            verts = [(x + dx, .36 + r*math.cos(a*2*math.pi/segments), z + r*math.sin(a*2*math.pi/segments)) for dx, r in profile for a in range(segments)]
+            faces = [(j*segments+a, j*segments+(a+1)%segments, ((j+1)%len(profile))*segments+(a+1)%segments, ((j+1)%len(profile))*segments+a) for j in range(len(profile)) for a in range(segments)]
+            obj = raw(mesh_object(name, verts, faces))
+            normals(obj)
+            for polygon in obj.data.polygons:
+                polygon.use_smooth = True
+            return add(obj, mat)
+        for side in (-1, 1):
+            for z in (-axle, axle):
+                x = side*.82
+                ring("ProfiledTyre", x, z, [(-.14,.24),(-.14,.30),(-.11,.35),(-.05,.36),(.05,.36),(.11,.35),(.14,.30),(.14,.24)], rubber)
+                ring("HollowAlloyRim", side*.961, z, [(-.009,.225),(-.009,.257),(.009,.257),(.009,.225)], metal)
+                add(x_cyl("BrakeDisc", .205, .012, (side*.93, .36, z), verts=20), metal)
+                add(x_cyl("WheelHub", .065, .022, (side*.97, .36, z), verts=12), metal)
+                add(box("BrakeCaliper", (.045,.17,.075), (side*.945,.36,z+.155), bevel_w=.012), caliper)
+                for j in range(5):
+                    angle = j * math.tau / 5
+                    for split in ([0] if curved else [-.035, .035]):
+                        spoke = add(box("AlloySpoke", (.018,.19,.025), (side*.965,.36+.13*math.cos(angle),z+.13*math.sin(angle)+split)), metal)
+                        spoke.rotation_euler.x = angle
+        for side in (-1, 1):
+            add(box("SillBlade", (.10,.065,2.0), (side*.90,.225,0), bevel_w=.012), carbon)
+            add(box("SideIntake", (.025,.23,.58), (side*.972,.55,-.88), bevel_w=.018), carbon)
+            for dz in (-.16, 0, .16):
+                add(box("IntakeFin", (.028,.18,.015), (side*.974,.55,-.88+dz)), metal)
+            add(box("MirrorStem", (.18,.022,.045), (side*.82,.82,.40)), carbon)
+            add(box("MirrorHousing", (.11,.07,.20), (side*.945,.85,.40), bevel_w=.024), paint)
+            add(box("DoorHandle", (.025,.025,.13), (side*.944,.68,-.47), bevel_w=.008), metal)
+            add(box("DoorJoint", (.008,.30,.009), (side*.942,.49,.65)), carbon)
+            add(box("CanopyPillar", (.035,.28,.05), (side*.62,.93,-.65), bevel_w=.006), carbon)
+            if curved:
+                add(box("LampRecess", (.17,.045,.43), (side*.67,.60,1.92), bevel_w=.018), carbon)
+                for dx in (-.035, .035):
+                    add(box("BladeHeadlamp", (.018,.015,.36), (side*.67+dx,.63,1.92), bevel_w=.004), head)
+            else:
+                add(box("LampRecess", (.50,.07,.25), (side*.62,.49,2.08), bevel_w=.018), carbon)
+                for dz in (-.055, .015, .085):
+                    add(box("LEDHeadlamp", (.42,.015,.022), (side*.62,.533,2.08+dz), bevel_w=.004), head)
+            if curved:
+                for off in (.31, .65):
+                    add(cyl("RoundTailLamp", .075,.035, (side*off,.61,-2.2825), rot=(math.pi/2,0,0), verts=16), tail)
+            else:
+                add(box("TailLamp", (.65,.036,.022), (side*.45,.61,-2.289), bevel_w=.009), tail)
+                add(box("WingStrut", (.045,.28,.07), (side*.58,.94,-1.93), bevel_w=.008), carbon)
+            add(cyl("ExhaustTip", .065,.13, (side*.46,.29,-2.235), rot=(math.pi/2,0,0), verts=12), metal)
+        add(box("FrontSplitter", (1.62,.045,.22), (0,.235,2.17), bevel_w=.015), carbon)
+        add(box("FrontGrille", (.96,.12,.035), (0,.36,2.275), bevel_w=.018), carbon)
+        add(box("RearDiffuser", (1.52,.11,.11), (0,.255,-2.245), bevel_w=.018), carbon)
+        for x in (-.58, -.29, 0, .29, .58):
+            add(box("DiffuserFin", (.02,.10,.29), (x,.205,-2.08)), carbon)
+        if not curved:
+            add(box("RearWing", (1.82,.04,.34), (0,1.10,-1.93), bevel_w=.012), carbon)
+        obj = loose(parts)
+        decimate_to_budget(obj, 3900)
+        # Collapse can move extrema by millimetres. Keep the parking envelope and tyres on y=0.
+        xs, ys, zs = zip(*(v.co for v in obj.data.vertices))
+        cx, cy, cz = (min(xs) + max(xs)) / 2, min(ys), (min(zs) + max(zs)) / 2
+        width, height, length = max(xs) - min(xs), max(ys) - min(ys), max(zs) - min(zs)
+        for vertex in obj.data.vertices:
+            vertex.co.x = (vertex.co.x - cx) * 2 / width
+            vertex.co.y = (vertex.co.y - cy) * 1.12 / height
+            vertex.co.z = (vertex.co.z - cz) * 4.6 / length
+        obj.data.update()
+        return obj
+    return [], [("SportsWedge", car(False), None), ("SportsCoupe", car(True), None)]
+
+
 # build / measure / export
 # --------------------------------------------------------------------------------------
 
