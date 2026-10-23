@@ -209,15 +209,15 @@
     "width": 0.72
   },
   "executive-desk": {
-    "bytes": 41616,
+    "bytes": 26680,
     "depth": 1.21,
-    "height": 1.455,
-    "materials": 6,
+    "height": 0.83,
+    "materials": 5,
     "tags": [
       "furniture",
       "desk"
     ],
-    "triangles": 6834,
+    "triangles": 4312,
     "url": "/props/executive-desk.glb",
     "width": 2.6
   },

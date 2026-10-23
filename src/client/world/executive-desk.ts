@@ -13,10 +13,7 @@ export function installExecutiveDesk(source: THREE.Object3D, office: THREE.Objec
     const convert = (source: THREE.MeshStandardMaterial): THREE.Material => {
       let material = materials.get(source);
       if (!material) {
-        material = toon(
-          source.color,
-          source.name === 'BossSignal' ? { emissive: source.color } : source.name === 'BossTop' || source.name === 'BossRubber' || source.name === 'BossKeys' ? {} : { finish: source.metalness > 0.5 ? 'metal' : 'paint' },
-        );
+        material = toon(source.color, source.name === 'BossSignal' ? { emissive: source.color } : source.name === 'BossTop' || source.name === 'BossRubber' ? {} : { finish: source.metalness > 0.5 ? 'metal' : 'paint' });
         materials.set(source, material);
       }
       return material;

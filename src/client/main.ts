@@ -154,7 +154,6 @@ import { actionLabel, actionOffered, mountHud, type HudAction } from './ui/menu'
 import { openJukebox } from './ui/jukebox';
 import { openBookshelf, type ShelfTab } from './ui/bookshelf';
 import { openWhiteboard, routeWhiteboardMessage, whiteboardChanged } from './ui/whiteboard';
-import { MonitorScreen } from './world/monitor';
 import { trackTitle } from '../shared/jukebox';
 import { EMOTES, EMOTE_BY_ID, EmoteBucket, type EmoteId } from '../shared/emotes';
 import { EmoteWheel } from './ui/emotes';
@@ -291,11 +290,7 @@ const propsReady = loadPropManifest()
         STATIONS.map(({ id }) => office.desks.get(id)!.group),
       );
     const taskChair = propScene('task-chair');
-    if (taskChair)
-      installTaskChairs(
-        taskChair,
-        DESKS.map(({ id }) => office.desks.get(id)!.chair),
-      );
+    if (taskChair) installTaskChairs(taskChair, [...DESKS.map(({ id }) => office.desks.get(id)!.chair), office.bossChair]);
   })
   .catch((err) => console.warn('office: prop GLBs unavailable, keeping procedural props', err));
 const sky = new Sky(scene, { sun, hemi, ambient }, office.night);
@@ -478,8 +473,10 @@ void loadFonts().then(() => {
   renderTv(true);
   redrawText();
 });
-// The boss's monitor upstairs: a login shell, always on, with nobody sitting at the desk.
-const bossMonitor = new MonitorScreen(office.bossScreen);
+// A worker laptop upstairs, always showing the floor's login shell.
+const bossLaptop = new Laptop();
+office.bossLaptopAnchor.add(bossLaptop.root);
+noOutline(bossLaptop.root);
 
 // ---- The rooftop ---------------------------------------------------------------------------------
 /** Up on the roof: built the first time anyone goes up there. */
@@ -1031,7 +1028,7 @@ function missAt(hit: THREE.Intersection, superShot: boolean) {
  */
 function landShot(result: ReturnType<typeof gunHit>, direction: THREE.Vector3, superShot: boolean) {
   if (result?.laptopWorkerId) return openWorkerTerminal(result.laptopWorkerId);
-  if (result?.hit.object === office.bossScreen) return openOfficeShell(net);
+  if (result?.hit.object === bossLaptop.screen) return openOfficeShell(net);
   if (result?.interactable && openPane(result.interactable, runUnder({ it: result.interactable, hit: result.hit }))) return;
   if (!superShot && result?.interactable?.kind === 'station' && result.interactable.deskId) {
     return openStationTerminal(result.interactable.deskId);
@@ -2791,7 +2788,7 @@ function hintFor(it: Interactable): Hint {
         return { k: `${seat.id}|sitting`, parts: [title(seat.label), aside('sitting'), key('E', 'Get up')] };
       }
       const full = !freePlace(seat);
-      return { k: `${seat.id}|${full}`, parts: [title(seat.label), seat.shell ? aside('shell on the monitor') : '', full ? aside('no room') : key('E', 'Sit down')] };
+      return { k: `${seat.id}|${full}`, parts: [title(seat.label), seat.shell ? aside('shell on the laptop') : '', full ? aside('no room') : key('E', 'Sit down')] };
     }
     case 'ladder': {
       const up = floorThere(1)?.name;
@@ -3802,7 +3799,7 @@ function drawFrame(dt: number, t: number, frame: { at: number; paced: boolean })
   thud = Math.max(0, thud - dt * 2.5);
   player.jitter = reduceMotion.matches ? 0 : thud;
   player.update(dt);
-  bossMonitor.update(store.screens.get(OFFICE_SHELL_ID));
+  bossLaptop.update(dt, store.screens.get(OFFICE_SHELL_ID));
   // Walked into a pole's hole: you grab the pole on your way down it.
   const hole = office.stack.polesGoDown() ? office.stack.poles().find((s) => Math.hypot(player.pos.x - s.x, player.pos.z - s.z) < POLE.hole - 0.15) : undefined;
   if (hole && !climber.active && !trip && !player.seat && player.enabled && player.pos.y > -1.35 && player.pos.y < 0.6) climber.slide(hole);
@@ -3897,7 +3894,7 @@ function drawFrame(dt: number, t: number, frame: { at: number; paced: boolean })
     if (glow.power > 0.01) screens++;
   }
   const bossGlow = (screenGlows[screens] ??= { pos: new THREE.Vector3(), dir: new THREE.Vector3(), power: 0 });
-  bossGlow.power = bossMonitor.glow(bossGlow.pos, bossGlow.dir);
+  bossGlow.power = bossLaptop.glow(bossGlow.pos, bossGlow.dir);
   if (bossGlow.power > 0.01) screens++;
   sky.setScreens(screenGlows, screens, camPos);
   for (const a of idleAgents) if (a.view.vacancy.visible) a.model.update(dt, t);
