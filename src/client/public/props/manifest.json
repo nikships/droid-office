@@ -51,6 +51,19 @@
     "url": "/props/balcony-table.glb",
     "width": 0.84
   },
+  "board-frame": {
+    "bytes": 1769468,
+    "depth": 0.116,
+    "height": 3.3,
+    "materials": 4,
+    "tags": [
+      "fixture",
+      "screen"
+    ],
+    "triangles": 6332,
+    "url": "/props/board-frame.glb",
+    "width": 6.3
+  },
   "bookshelf": {
     "bytes": 61708,
     "depth": 0.47,
@@ -63,6 +76,32 @@
     "triangles": 8000,
     "url": "/props/bookshelf.glb",
     "width": 1.78
+  },
+  "cable-tray": {
+    "bytes": 430696,
+    "depth": 0.329,
+    "height": 0.0917,
+    "materials": 4,
+    "tags": [
+      "fixture",
+      "ceiling"
+    ],
+    "triangles": 8000,
+    "url": "/props/cable-tray.glb",
+    "width": 17.0004
+  },
+  "ceiling-deck": {
+    "bytes": 1053644,
+    "depth": 1.2,
+    "height": 0,
+    "materials": 1,
+    "tags": [
+      "building",
+      "material"
+    ],
+    "triangles": 2,
+    "url": "/props/ceiling-deck.glb",
+    "width": 1.2
   },
   "conference-table": {
     "bytes": 38208,

@@ -880,6 +880,202 @@ def build_bookshelf():
     return parts
 
 
+@prop("cable-tray", "fixture", "ceiling", recenter=False, keep_uvs=True)
+def build_cable_tray():
+    """17 m ladder tray, centred on the existing run; suspension rods stay live."""
+    steel = material("TrayZinc", "#a4abb0", roughness=.48, metallic=.65)
+    rubber = material("TrayCable", "#3b4147", roughness=.85)
+    clamp = material("TrayClamp", "#5c6269", roughness=.6, metallic=.2)
+    orange = material("TraySignal", "#ee6018", roughness=.65)
+    parts = []
+
+    # Packed zinc-spangle map: jittered crystals, fine grain and gentle mottling.
+    n, cells = 512, 16
+    rng = np.random.default_rng(71)
+    seeds = rng.random((cells, cells, 2))*.8+.1
+    value = rng.random((cells, cells))
+    yy, xx = np.mgrid[0:n, 0:n]/n*cells
+    ix, iy = xx.astype(int), yy.astype(int)
+    distance = np.full((n, n), np.inf)
+    crystal = np.zeros((n, n))
+    for dy in (-1, 0, 1):
+        for dx in (-1, 0, 1):
+            cx, cy = ix+dx, iy+dy
+            point = seeds[cy%cells, cx%cells]
+            d = (xx-cx-point[:, :, 0])**2+(yy-cy-point[:, :, 1])**2
+            closer = d < distance
+            crystal = np.where(closer, value[cy%cells, cx%cells], crystal)
+            distance = np.minimum(distance, d)
+    variation = .88+.14*crystal+.035*rng.random((n, n))
+    rgba = np.ones((n, n, 4), dtype=np.float32)
+    rgba[:, :, :3] = np.array([164, 171, 176])[None, None, :]/255*variation[:, :, None]
+    image = bpy.data.images.new("GalvanizedZinc", width=n, height=n, alpha=True)
+    image.pixels.foreach_set(rgba.ravel())
+    image.pack()
+    texture = steel.node_tree.nodes.new("ShaderNodeTexImage")
+    texture.image = image
+    steel.node_tree.links.new(texture.outputs["Color"], steel.node_tree.nodes["Principled BSDF"].inputs["Base Color"])
+
+    def add(obj, mat):
+        obj = raw(obj)
+        apply_modifiers(obj)
+        uv = obj.data.uv_layers.active or obj.data.uv_layers.new(name="UVMap")
+        uv.name = "UVMap"
+        for face in obj.data.polygons:
+            normal = obj.matrix_world.to_3x3() @ face.normal
+            axis = max(range(3), key=lambda i: abs(normal[i]))
+            a, b = ((2, 1), (0, 2), (0, 1))[axis]
+            for loop in face.loop_indices:
+                p = obj.matrix_world @ obj.data.vertices[obj.data.loops[loop].vertex_index].co
+                uv.data[loop].uv = (p[a]*8, p[b]*8)
+        parts.append((obj, mat))
+        return obj
+
+    # Rolled channel rails, with separate upper/lower flanges and open rungs.
+    for side in (-1, 1):
+        add(box("CableTray", (17, .070, .006), (0, .032, side*.15), bevel_w=.002), steel)
+        for y in (.001, .065):
+            add(box("RolledFlange", (17, .006, .026), (0, y, side*.137), bevel_w=.002), steel)
+    for i in range(43):
+        x = -8.35+i*.395
+        add(box("LadderRung", (.032, .012, .274), (x, 0, 0), bevel_w=.003, bevel_seg=1), steel)
+        for side in (-1, 1):
+            add(box("RungTab", (.032, .022, .006), (x, .011, side*.135)), steel)
+
+    # Individual round cable jackets with restrained changes of height.
+    for cable in range(6):
+        z = -.09+cable*.017
+        points = [
+            (-8.49+i*16.98/24, .024+.003*math.sin(i*.7+cable), z+.002*math.sin(i*.45+cable))
+            for i in range(25)
+        ]
+        add(tube_path("CableJacket", points, .0075, sides=6, frame_axis=(0, 1, 0)), rubber)
+    add(tube_path("SignalCable", [(-8.49+i*16.98/24, .019+.002*math.sin(i*.8), .055+.003*math.sin(i*.5)) for i in range(25)], .006, sides=6, frame_axis=(0, 1, 0)), orange)
+
+    # Splice plates and captive hex bolts, at four-metre intervals.
+    for x in (-6.5, -2.5, 1.5, 5.5):
+        for side in (-1, 1):
+            add(box("SplicePlate", (.20, .052, .006), (x, .034, side*.156), bevel_w=.004), clamp)
+            for dx in (-.065, .065):
+                for y in (.020, .049):
+                    add(cyl("SpliceBolt", .007, .005, (x+dx, y, side*.162), rot=(math.pi/2, 0, 0), verts=6), steel)
+    for i in range(14):
+        x = -7.96+i*1.185
+        add(tube_path("BundleStrap", [(x, .009, -.107), (x, .040, -.107), (x, .045, -.09), (x, .045, -.004), (x, .038, .006), (x, .009, .006)], .003, sides=4), clamp)
+        add(box("StrapBuckle", (.019, .010, .014), (x, .043, -.018), bevel_w=.002), clamp)
+    # Existing hanger rods land at these six stations, without being replaced.
+    for x in (-8, -5, -2, 1, 4, 7):
+        add(box("TrapezeSupport", (.040, .018, .312), (x, -.015, 0), bevel_w=.003), clamp)
+        for side in (-1, 1):
+            add(y_cyl("HangerNut", .012, .008, (x, .006, side*.14), verts=6), steel)
+    return parts
+
+
+@prop("board-frame", "fixture", "screen", recenter=False, keep_uvs=True)
+def build_board_frame():
+    """North-wall 6 x 3 m live screens; all hardware stays outside the canvas."""
+    paint = material("BoardPaint", "#626a70", roughness=.55, metallic=.25)
+    steel = material("BoardSteel", "#b0b8c0", roughness=.3, metallic=.8)
+    rubber = material("BoardRubber", "#20252a", roughness=.9)
+    orange = material("BoardSignal", "#ee6018", roughness=.7)
+    parts = []
+
+    # Embedded, tileable colour and tangent-normal maps survive glTF export.
+    # Directional aluminium grain is distinct from the paint's fine stipple.
+    def finish_maps(mat, brushed):
+        n = 512
+        rng = np.random.default_rng(53 if brushed else 37)
+        noise = rng.random((n, n))
+        if brushed:
+            height = .7*rng.random((n, 1)) + .3*noise
+            variation = .90 + .16*height
+        else:
+            broad = rng.random((32, 32)).repeat(16, 0).repeat(16, 1)
+            # Periodic blur avoids a repeating block pattern or a tile seam.
+            for _ in range(12):
+                broad = (broad + np.roll(broad, 1, 0) + np.roll(broad, -1, 0) + np.roll(broad, 1, 1) + np.roll(broad, -1, 1))/5
+            height = .7*noise + .3*broad
+            variation = .89 + .18*height
+        base = np.array(mat.node_tree.nodes["Principled BSDF"].inputs["Base Color"].default_value[:3])
+        base = np.where(base <= .0031308, base*12.92, 1.055*np.power(base, 1/2.4)-.055)
+        rgba = np.ones((n, n, 4), dtype=np.float32)
+        rgba[:, :, :3] = base[None, None, :]*variation[:, :, None]
+        # Shader normal maps are linear data; keep the relief subtle, not hammered.
+        normals = np.ones((n, n, 4), dtype=np.float32)
+        dx = (np.roll(height, -1, 1)-np.roll(height, 1, 1))*.16
+        dy = (np.roll(height, -1, 0)-np.roll(height, 1, 0))*.16
+        xyz = np.stack((-dx, -dy, np.ones_like(dx)), axis=-1)
+        xyz /= np.linalg.norm(xyz, axis=-1, keepdims=True)
+        normals[:, :, :3] = xyz*.5+.5
+        nodes, links = mat.node_tree.nodes, mat.node_tree.links
+        bsdf = nodes["Principled BSDF"]
+        for suffix, pixels, socket in (("Color", rgba, "Base Color"), ("Normal", normals, "Normal")):
+            img = bpy.data.images.new(mat.name+suffix, width=n, height=n, alpha=True)
+            img.colorspace_settings.name = "Non-Color" if suffix == "Normal" else "sRGB"
+            img.pixels.foreach_set(pixels.ravel())
+            img.pack()
+            tex = nodes.new("ShaderNodeTexImage")
+            tex.image = img
+            if suffix == "Normal":
+                normal = nodes.new("ShaderNodeNormalMap")
+                links.new(tex.outputs["Color"], normal.inputs["Color"])
+                links.new(normal.outputs["Normal"], bsdf.inputs[socket])
+            else:
+                links.new(tex.outputs["Color"], bsdf.inputs[socket])
+    finish_maps(paint, False)
+    finish_maps(steel, True)
+
+    def add(obj, mat):
+        obj = raw(obj)
+        apply_modifiers(obj)
+        uv = obj.data.uv_layers.active or obj.data.uv_layers.new(name="UVMap")
+        uv.name = "UVMap"
+        # Metre-scaled box projection: no stretched grain on the long rails.
+        for face in obj.data.polygons:
+            axis = max(range(3), key=lambda i: abs((obj.matrix_world.to_3x3() @ face.normal)[i]))
+            a, b = ((2, 1), (0, 2), (0, 1))[axis]
+            for loop in face.loop_indices:
+                p = obj.matrix_world @ obj.data.vertices[obj.data.loops[loop].vertex_index].co
+                uv.data[loop].uv = (p[a]*8, p[b]*8)
+        parts.append((obj, mat))
+        return obj
+
+    # The four folded rails form an actual aperture, not a slab behind the screen.
+    # Front stays below z=.07, the unchanged live canvas plane.
+    add(box("BoardFrame", (6.30, .145, .10), (0, 1.5775, -.01), bevel_w=.012, bevel_seg=3), paint)
+    bottom = box("LowerServiceRail", (6.30, .145, .10), (0, -1.5775, -.01), bevel_w=.012, bevel_seg=3)
+    vents = [box("VentCut", (.065, .020, .15), (i*.112, -1.572, -.01), bevel_w=.006) for i in range(-20, 21)]
+    cut(bottom, *vents)
+    add(bottom, paint)
+    add(box("VentShadow", (4.65, .030, .006), (0, -1.572, -.045)), rubber)
+    for side in (-1, 1):
+        add(box("SideRail", (.145, 3.02, .10), (side*3.0775, 0, -.01), bevel_w=.010, bevel_seg=3), paint)
+        # Brushed inner return, dark gasket, and an outer raised edge.
+        add(box("VerticalReturn", (.014, 3.012, .012), (side*3.015, 0, .048), bevel_w=.003), steel)
+        add(box("VerticalGasket", (.010, 3.0, .008), (side*3.005, 0, .052), bevel_w=.002), rubber)
+        add(box("OuterSideSeam", (.008, 2.93, .005), (side*3.129, 0, .042), bevel_w=.002), steel)
+        add(box("HorizontalReturn", (6.022, .014, .012), (0, side*1.515, .048), bevel_w=.003), steel)
+        add(box("HorizontalGasket", (6.0, .010, .008), (0, side*1.505, .052), bevel_w=.002), rubber)
+        add(box("OuterHorizontalSeam", (5.88, .008, .005), (0, side*1.629, .042), bevel_w=.002), steel)
+        for y in (-1.575, 1.575):
+            add(box("CornerCover", (.11, .11, .008), (side*3.075, y, .044), bevel_w=.009, bevel_seg=3), rubber)
+            screw = add(cyl("CaptiveScrew", .016, .005, (side*3.075, y, .051), rot=(math.pi/2, 0, 0), verts=16, bevel_w=.002), steel)
+            smooth_obj(screw)
+            add(box("ScrewDrive", (.018, .003, .0015), (side*3.075, y, .054)), rubber)
+        for y in (-.98, .98):
+            add(cyl("RailFastener", .010, .004, (side*3.082, y, .044), rot=(math.pi/2, 0, 0), verts=12), steel)
+            add(box("FastenerDrive", (.010, .002, .001), (side*3.082, y, .047)), rubber)
+    # Flush service module, a restrained orange index and recessed controls.
+    add(box("ServiceModule", (.31, .064, .008), (-2.70, -1.574, .044), bevel_w=.006), rubber)
+    add(box("OrangeIndex", (.055, .035, .004), (-2.80, -1.574, .050), bevel_w=.003), orange)
+    for x in (-2.71, -2.66, -2.61):
+        add(cyl("ServiceButton", .010, .004, (x, -1.574, .050), rot=(math.pi/2, 0, 0), verts=12), steel)
+    add(box("AssetPlate", (.30, .060, .008), (2.68, -1.574, .044), bevel_w=.005), steel)
+    for i in range(9):
+        add(box("PlateEtch", (.007 if i%3 else .012, .038, .001), (2.59+i*.022, -1.574, .049)), rubber)
+    return parts
+
+
 @prop("executive-desk", "furniture", "desk", recenter=False)
 def build_executive_desk():
     """Loft workstation; live display remains .8 x .45 at y=1.18,z=-.165 in the client."""
@@ -4190,6 +4386,145 @@ def rooftop_planter():
                 parts.append((tube_path("SeedStalk", [(x, 0.58, z0), (x + 0.025, 0.58 + height, z0)], 0.004, sides=5), leaves[0]))
                 parts.append((cone("SeedPanicle", 0.022, 0.004, 0.16, (x + 0.025, 0.58 + height + 0.06, z0), verts=7), straw))
     return parts
+@prop("ceiling-deck", "building", "material", recenter=False, keep_uvs=True, draco=False)
+def ceiling_deck():
+    """Bake a 1.2 m repeat from rounded steel folds onto a downward-facing material donor.
+
+    Runtime keeps its hole-cut ceiling geometry: the two-triangle donor supplies only
+    color, tangent normals and occlusion. The high mesh extends a tile past every edge
+    so the AO bake has no bright border where adjacent repeats meet.
+    """
+    mat = material("CeilingDeck", "#ffffff", roughness=0.72, metallic=0.35)
+    low = mesh_object("CeilingDeck", [(-0.6, 0, -0.6), (0.6, 0, -0.6), (0.6, 0, 0.6), (-0.6, 0, 0.6)], [(0, 1, 2, 3)])
+    low = attach(low, mat)
+    uv = low.data.uv_layers.new(name="UVMap")
+    for loop in low.data.loops:
+        v = low.data.vertices[loop.vertex_index].co
+        uv.data[loop.index].uv = ((v.x + 0.6) / 1.2, (v.z + 0.6) / 1.2)
+
+    def fold(z):
+        t = (z + 0.6) % 0.3
+        def ease(v):
+            return v * v * (3 - 2 * v)
+        if t < 0.04 or t > 0.26:
+            return 0
+        if t < 0.08:
+            return -0.032 * ease((t - 0.04) / 0.04)
+        if t > 0.22:
+            return -0.032 * (1 - ease((t - 0.22) / 0.04))
+        return -0.032
+
+    vertices = [(x, fold(z), z) for z in np.linspace(-1.8, 1.8, 1153) for x in (-1.8, 1.8)]
+    high = mesh_object("DeckBakeHigh", vertices, [(2*i, 2*i+1, 2*i+3, 2*i+2) for i in range(1152)])
+    high = raw(high)
+    for polygon in high.data.polygons:
+        polygon.use_smooth = True
+    steel = material("DeckBakeSteel", "#56616a")
+    attach(high, steel)
+    nodes, links = steel.node_tree.nodes, steel.node_tree.links
+    position = nodes.new("ShaderNodeNewGeometry")
+    split = nodes.new("ShaderNodeSeparateXYZ")
+    links.new(position.outputs["Position"], split.inputs[0])
+    # A 4D torus makes the rolled grain seamless in both tile directions.
+    periodic = []
+    for axis in ("X", "Z"):
+        angle = nodes.new("ShaderNodeMath")
+        angle.operation = "MULTIPLY"
+        angle.inputs[1].default_value = 2 * math.pi / 1.2
+        links.new(split.outputs[axis], angle.inputs[0])
+        for operation in ("SINE", "COSINE"):
+            trig = nodes.new("ShaderNodeMath")
+            trig.operation = operation
+            links.new(angle.outputs[0], trig.inputs[0])
+            periodic.append(trig)
+    vector = nodes.new("ShaderNodeCombineXYZ")
+    for i in range(3):
+        links.new(periodic[i].outputs[0], vector.inputs[i])
+    noise = nodes.new("ShaderNodeTexNoise")
+    noise.noise_dimensions = "4D"
+    noise.inputs["Scale"].default_value = 18
+    noise.inputs["Detail"].default_value = 3
+    links.new(vector.outputs[0], noise.inputs["Vector"])
+    links.new(periodic[3].outputs[0], noise.inputs["W"])
+    ramp = nodes.new("ShaderNodeValToRGB")
+    ramp.color_ramp.elements[0].color = (*srgb_to_linear("#465059"), 1)
+    ramp.color_ramp.elements[1].color = (*srgb_to_linear("#66717a"), 1)
+    links.new(noise.outputs["Fac"], ramp.inputs[0])
+    links.new(ramp.outputs[0], nodes["Principled BSDF"].inputs["Base Color"])
+
+    scene = bpy.context.scene
+    engine, samples, seed = scene.render.engine, scene.cycles.samples, scene.cycles.seed
+    maps = {}
+    try:
+        scene.render.engine = "CYCLES"
+        scene.cycles.device = "CPU"
+        scene.cycles.samples = 32
+        scene.cycles.seed = 0
+        scene.render.bake.use_selected_to_active = True
+        scene.render.bake.cage_extrusion = 0.08
+        scene.render.bake.max_ray_distance = 0.16
+        scene.render.bake.margin = 0
+        scene.render.bake.normal_space = "TANGENT"
+        scene.render.bake.use_pass_direct = False
+        scene.render.bake.use_pass_indirect = False
+        scene.render.bake.use_pass_color = True
+        bpy.ops.object.select_all(action="DESELECT")
+        high.select_set(True)
+        low.select_set(True)
+        bpy.context.view_layer.objects.active = low
+        for kind in ("DIFFUSE", "NORMAL", "AO"):
+            name = f"CeilingDeck-{kind}"
+            old = bpy.data.images.get(name)
+            if old and old.users == 0:
+                bpy.data.images.remove(old)
+            image = bpy.data.images.new(name, width=1024, height=1024, alpha=False)
+            image.colorspace_settings.name = "sRGB" if kind == "DIFFUSE" else "Non-Color"
+            target = mat.node_tree.nodes.new("ShaderNodeTexImage")
+            target.image = image
+            mat.node_tree.nodes.active = target
+            bpy.ops.object.bake(type=kind)
+            image.pack()
+            maps[kind] = target
+    finally:
+        scene.cycles.samples, scene.cycles.seed = samples, seed
+        scene.render.engine = engine
+        bpy.data.objects.remove(high, do_unlink=True)
+
+    # The room's Classic fill uses vertex normals, so retain a soft directional
+    # relief in the color bake too. Work in linear light, not encoded sRGB.
+    # Average the identical folds' AO to remove Monte Carlo grain and tile seams.
+    ao = np.array(maps["AO"].image.pixels[:], dtype=np.float32).reshape(4, 256, 1024, 4)
+    profile = ao[..., :3].mean(axis=(0, 2, 3))
+    occlusion = np.tile(profile, 4)[:, None, None]
+    ao = np.ones((1024, 1024, 4), dtype=np.float32)
+    ao[..., :3] = occlusion
+    maps["AO"].image.pixels.foreach_set(ao.ravel())
+    maps["AO"].image.pack()
+    normal_pixels = np.array(maps["NORMAL"].image.pixels[:], dtype=np.float32).reshape(1024, 1024, 4)
+    facing, slope = normal_pixels[..., 2:3] * 2 - 1, normal_pixels[..., 1:2] * 2 - 1
+    relief = (0.35 + 0.65 * np.maximum(0, 0.8 * facing + 0.6 * slope)) / 0.87
+    pixels = np.array(maps["DIFFUSE"].image.pixels[:], dtype=np.float32).reshape(1024, 1024, 4)
+    rgb = pixels[..., :3]
+    linear = np.where(rgb <= 0.04045, rgb / 12.92, ((rgb + 0.055) / 1.055) ** 2.4)
+    linear *= relief * occlusion ** 2
+    pixels[..., :3] = np.where(linear <= 0.0031308, linear * 12.92, 1.055 * linear ** (1 / 2.4) - 0.055)
+    maps["DIFFUSE"].image.pixels.foreach_set(pixels.ravel())
+    maps["DIFFUSE"].image.pack()
+
+    nodes, links = mat.node_tree.nodes, mat.node_tree.links
+    bsdf = nodes["Principled BSDF"]
+    links.new(maps["DIFFUSE"].outputs["Color"], bsdf.inputs["Base Color"])
+    normal = nodes.new("ShaderNodeNormalMap")
+    links.new(maps["NORMAL"].outputs["Color"], normal.inputs["Color"])
+    links.new(normal.outputs["Normal"], bsdf.inputs["Normal"])
+    group = bpy.data.node_groups.get("glTF Material Output")
+    if group is None:
+        group = bpy.data.node_groups.new("glTF Material Output", "ShaderNodeTree")
+        group.interface.new_socket(name="Occlusion", in_out="INPUT", socket_type="NodeSocketFloat")
+    output = nodes.new("ShaderNodeGroup")
+    output.node_tree = group
+    links.new(maps["AO"].outputs["Color"], output.inputs["Occlusion"])
+    return [(low, mat)]
 
 
 # build / measure / export
