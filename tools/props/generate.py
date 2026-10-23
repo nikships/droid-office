@@ -971,6 +971,111 @@ def build_cable_tray():
     return parts
 
 
+@prop("board-frame", "fixture", "screen", recenter=False, keep_uvs=True)
+def build_board_frame():
+    """North-wall 6 x 3 m live screens; all hardware stays outside the canvas."""
+    paint = material("BoardPaint", "#626a70", roughness=.55, metallic=.25)
+    steel = material("BoardSteel", "#b0b8c0", roughness=.3, metallic=.8)
+    rubber = material("BoardRubber", "#20252a", roughness=.9)
+    orange = material("BoardSignal", "#ee6018", roughness=.7)
+    parts = []
+
+    # Embedded, tileable colour and tangent-normal maps survive glTF export.
+    # Directional aluminium grain is distinct from the paint's fine stipple.
+    def finish_maps(mat, brushed):
+        n = 512
+        rng = np.random.default_rng(53 if brushed else 37)
+        noise = rng.random((n, n))
+        if brushed:
+            height = .7*rng.random((n, 1)) + .3*noise
+            variation = .90 + .16*height
+        else:
+            broad = rng.random((32, 32)).repeat(16, 0).repeat(16, 1)
+            # Periodic blur avoids a repeating block pattern or a tile seam.
+            for _ in range(12):
+                broad = (broad + np.roll(broad, 1, 0) + np.roll(broad, -1, 0) + np.roll(broad, 1, 1) + np.roll(broad, -1, 1))/5
+            height = .7*noise + .3*broad
+            variation = .89 + .18*height
+        base = np.array(mat.node_tree.nodes["Principled BSDF"].inputs["Base Color"].default_value[:3])
+        base = np.where(base <= .0031308, base*12.92, 1.055*np.power(base, 1/2.4)-.055)
+        rgba = np.ones((n, n, 4), dtype=np.float32)
+        rgba[:, :, :3] = base[None, None, :]*variation[:, :, None]
+        # Shader normal maps are linear data; keep the relief subtle, not hammered.
+        normals = np.ones((n, n, 4), dtype=np.float32)
+        dx = (np.roll(height, -1, 1)-np.roll(height, 1, 1))*.16
+        dy = (np.roll(height, -1, 0)-np.roll(height, 1, 0))*.16
+        xyz = np.stack((-dx, -dy, np.ones_like(dx)), axis=-1)
+        xyz /= np.linalg.norm(xyz, axis=-1, keepdims=True)
+        normals[:, :, :3] = xyz*.5+.5
+        nodes, links = mat.node_tree.nodes, mat.node_tree.links
+        bsdf = nodes["Principled BSDF"]
+        for suffix, pixels, socket in (("Color", rgba, "Base Color"), ("Normal", normals, "Normal")):
+            img = bpy.data.images.new(mat.name+suffix, width=n, height=n, alpha=True)
+            img.colorspace_settings.name = "Non-Color" if suffix == "Normal" else "sRGB"
+            img.pixels.foreach_set(pixels.ravel())
+            img.pack()
+            tex = nodes.new("ShaderNodeTexImage")
+            tex.image = img
+            if suffix == "Normal":
+                normal = nodes.new("ShaderNodeNormalMap")
+                links.new(tex.outputs["Color"], normal.inputs["Color"])
+                links.new(normal.outputs["Normal"], bsdf.inputs[socket])
+            else:
+                links.new(tex.outputs["Color"], bsdf.inputs[socket])
+    finish_maps(paint, False)
+    finish_maps(steel, True)
+
+    def add(obj, mat):
+        obj = raw(obj)
+        apply_modifiers(obj)
+        uv = obj.data.uv_layers.active or obj.data.uv_layers.new(name="UVMap")
+        uv.name = "UVMap"
+        # Metre-scaled box projection: no stretched grain on the long rails.
+        for face in obj.data.polygons:
+            axis = max(range(3), key=lambda i: abs((obj.matrix_world.to_3x3() @ face.normal)[i]))
+            a, b = ((2, 1), (0, 2), (0, 1))[axis]
+            for loop in face.loop_indices:
+                p = obj.matrix_world @ obj.data.vertices[obj.data.loops[loop].vertex_index].co
+                uv.data[loop].uv = (p[a]*8, p[b]*8)
+        parts.append((obj, mat))
+        return obj
+
+    # The four folded rails form an actual aperture, not a slab behind the screen.
+    # Front stays below z=.07, the unchanged live canvas plane.
+    add(box("BoardFrame", (6.30, .145, .10), (0, 1.5775, -.01), bevel_w=.012, bevel_seg=3), paint)
+    bottom = box("LowerServiceRail", (6.30, .145, .10), (0, -1.5775, -.01), bevel_w=.012, bevel_seg=3)
+    vents = [box("VentCut", (.065, .020, .15), (i*.112, -1.572, -.01), bevel_w=.006) for i in range(-20, 21)]
+    cut(bottom, *vents)
+    add(bottom, paint)
+    add(box("VentShadow", (4.65, .030, .006), (0, -1.572, -.045)), rubber)
+    for side in (-1, 1):
+        add(box("SideRail", (.145, 3.02, .10), (side*3.0775, 0, -.01), bevel_w=.010, bevel_seg=3), paint)
+        # Brushed inner return, dark gasket, and an outer raised edge.
+        add(box("VerticalReturn", (.014, 3.012, .012), (side*3.015, 0, .048), bevel_w=.003), steel)
+        add(box("VerticalGasket", (.010, 3.0, .008), (side*3.005, 0, .052), bevel_w=.002), rubber)
+        add(box("OuterSideSeam", (.008, 2.93, .005), (side*3.129, 0, .042), bevel_w=.002), steel)
+        add(box("HorizontalReturn", (6.022, .014, .012), (0, side*1.515, .048), bevel_w=.003), steel)
+        add(box("HorizontalGasket", (6.0, .010, .008), (0, side*1.505, .052), bevel_w=.002), rubber)
+        add(box("OuterHorizontalSeam", (5.88, .008, .005), (0, side*1.629, .042), bevel_w=.002), steel)
+        for y in (-1.575, 1.575):
+            add(box("CornerCover", (.11, .11, .008), (side*3.075, y, .044), bevel_w=.009, bevel_seg=3), rubber)
+            screw = add(cyl("CaptiveScrew", .016, .005, (side*3.075, y, .051), rot=(math.pi/2, 0, 0), verts=16, bevel_w=.002), steel)
+            smooth_obj(screw)
+            add(box("ScrewDrive", (.018, .003, .0015), (side*3.075, y, .054)), rubber)
+        for y in (-.98, .98):
+            add(cyl("RailFastener", .010, .004, (side*3.082, y, .044), rot=(math.pi/2, 0, 0), verts=12), steel)
+            add(box("FastenerDrive", (.010, .002, .001), (side*3.082, y, .047)), rubber)
+    # Flush service module, a restrained orange index and recessed controls.
+    add(box("ServiceModule", (.31, .064, .008), (-2.70, -1.574, .044), bevel_w=.006), rubber)
+    add(box("OrangeIndex", (.055, .035, .004), (-2.80, -1.574, .050), bevel_w=.003), orange)
+    for x in (-2.71, -2.66, -2.61):
+        add(cyl("ServiceButton", .010, .004, (x, -1.574, .050), rot=(math.pi/2, 0, 0), verts=12), steel)
+    add(box("AssetPlate", (.30, .060, .008), (2.68, -1.574, .044), bevel_w=.005), steel)
+    for i in range(9):
+        add(box("PlateEtch", (.007 if i%3 else .012, .038, .001), (2.59+i*.022, -1.574, .049)), rubber)
+    return parts
+
+
 @prop("executive-desk", "furniture", "desk", recenter=False)
 def build_executive_desk():
     """Loft workstation; live display remains .8 x .45 at y=1.18,z=-.165 in the client."""

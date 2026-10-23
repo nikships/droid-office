@@ -51,6 +51,19 @@
     "url": "/props/balcony-table.glb",
     "width": 0.84
   },
+  "board-frame": {
+    "bytes": 1769468,
+    "depth": 0.116,
+    "height": 3.3,
+    "materials": 4,
+    "tags": [
+      "fixture",
+      "screen"
+    ],
+    "triangles": 6332,
+    "url": "/props/board-frame.glb",
+    "width": 6.3
+  },
   "bookshelf": {
     "bytes": 61708,
     "depth": 0.47,

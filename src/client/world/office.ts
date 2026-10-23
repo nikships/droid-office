@@ -1090,7 +1090,10 @@ function wallBoard(width: number, height: number, frameColor: string): { group: 
   const group = new THREE.Group();
   const frame = mesh(beveledBox(width + 0.3, 0.12, height + 0.3, 0.025), toon(frameColor, { finish: 'paint' }), 0, 0, 0);
   frame.rotation.x = Math.PI / 2;
-  group.add(frame);
+  const mount = new THREE.Group();
+  if (width === BOARDS.issues.width && height === BOARDS.issues.height) mount.name = 'board-frame-mount';
+  mount.add(frame);
+  group.add(mount);
   const faceMat = screenMaterial();
   const face = new THREE.Mesh(new THREE.PlaneGeometry(width, height), faceMat);
   face.position.z = 0.07;

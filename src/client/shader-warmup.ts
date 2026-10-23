@@ -78,6 +78,7 @@ export function materialFeatures(root: THREE.Object3D): string[] {
       const bits = [entry.type];
       if (entry.transparent) bits.push('transparent');
       if ('map' in entry && (entry as THREE.MeshBasicMaterial).map) bits.push('map');
+      if ('normalMap' in entry && (entry as THREE.MeshToonMaterial).normalMap) bits.push('normal');
       if ('gradientMap' in entry && (entry as THREE.MeshToonMaterial).gradientMap) bits.push('gradient');
       if ('vertexColors' in entry && (entry as THREE.MeshBasicMaterial).vertexColors) bits.push('vertexColors');
       if (surfaceFinish(entry)) bits.push('surface');
