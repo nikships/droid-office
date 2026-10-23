@@ -4304,6 +4304,88 @@ def build_wand():
     return body, loose_parts + segments
 
 
+@prop("rooftop-planter", "rooftop", "landscape", recenter=False, keep_uvs=True)
+def rooftop_planter():
+    """Cast-concrete trough, recessed soil and folded, opaque ornamental grass blades."""
+    rng = np.random.default_rng(31416)
+    concrete = material("PlanterConcrete", "#ffffff", roughness=0.92)
+    size = 512
+    y, x = np.mgrid[:size, :size]
+    grain = rng.normal(0, 0.014, (size, size))
+    grain += 0.012 * np.sin(x * math.tau / 128) * np.cos(y * math.tau / 64)
+    pores = rng.random((size, size))
+    grain += np.where(pores < 0.018, -0.11, np.where(pores > 0.985, 0.08, 0))
+    pixels = np.ones((size, size, 4), dtype=np.float32)
+    pixels[..., :3] = np.clip(np.array([0.55, 0.565, 0.53]) + grain[..., None], 0, 1)
+    old = bpy.data.images.get("PlanterCastConcrete")
+    if old and old.users == 0:
+        bpy.data.images.remove(old)
+    image = bpy.data.images.new("PlanterCastConcrete", width=size, height=size, alpha=False)
+    image.colorspace_settings.name = "sRGB"
+    image.pixels.foreach_set(pixels.ravel())
+    image.pack()
+    texture = concrete.node_tree.nodes.new("ShaderNodeTexImage")
+    texture.image = image
+    concrete.node_tree.links.new(texture.outputs["Color"], concrete.node_tree.nodes["Principled BSDF"].inputs["Base Color"])
+    soil = material("PlanterSoil", "#28261d", roughness=1)
+    steel = material("PlanterSteel", "#353b3a", roughness=0.65, metallic=0.7)
+    leaves = [material("PlanterSage", "#738659", roughness=0.9), material("PlanterEvergreen", "#3f6954", roughness=0.9)]
+    straw = material("PlanterSeedheads", "#b59b67", roughness=0.95)
+    parts = []
+
+    def stone(name, dimensions, location):
+        obj = box(name, dimensions, location, bevel_w=0.012)
+        uv = obj.data.uv_layers.active
+        uv.name = "UVMap"
+        for polygon in obj.data.polygons:
+            axes = (2, 1) if abs(polygon.normal.x) > 0.5 else (0, 2) if abs(polygon.normal.y) > 0.5 else (0, 1)
+            for index in polygon.loop_indices:
+                v = obj.data.vertices[obj.data.loops[index].vertex_index].co
+                uv.data[index].uv = (v[axes[0]] * 2, v[axes[1]] * 2)
+        parts.append((obj, concrete))
+
+    stone("BasinBottom", (2.4, 0.14, 0.8), (0, 0.13, 0))
+    for z in (-0.36, 0.36):
+        stone("BasinLongWall", (2.4, 0.42, 0.08), (0, 0.41, z))
+        stone("SoftRim", (2.4, 0.06, 0.08), (0, 0.61, z))
+    for x in (-1.16, 1.16):
+        stone("BasinEndWall", (0.08, 0.42, 0.64), (x, 0.41, 0))
+        stone("EndRim", (0.08, 0.06, 0.64), (x, 0.61, 0))
+    for x in (-0.85, 0.85):
+        parts.append((box("RecessedFoot", (0.28, 0.06, 0.62), (x, 0.03, 0), bevel_w=0.012), steel))
+    parts.append((box("RecessedSoil", (2.22, 0.04, 0.62), (0, 0.56, 0), bevel_w=0.012), soil))
+    for row, z in enumerate((-0.12, 0.12)):
+        for tuft, x in enumerate(np.linspace(-0.92, 0.92, 8)):
+            x, z0 = x + rng.uniform(-0.025, 0.025), z + rng.uniform(-0.02, 0.02)
+            for blade in range(9):
+                angle = blade * math.tau / 9 + rng.uniform(-0.3, 0.3)
+                dx, dz = math.cos(angle), math.sin(angle)
+                height, lean, width = rng.uniform(0.4, 0.8), rng.uniform(0.09, 0.19), rng.uniform(0.018, 0.032)
+                vertices = []
+                for t in (0, 0.4, 0.75):
+                    w = width * (0.2 + 0.8 * math.sin(math.pi * t))
+                    center = Vector((x + dx * lean * t*t, 0.58 + height*t - 0.08*t*t*t, z0 + dz * lean * t*t))
+                    across = Vector((-dz*w, 0, dx*w))
+                    vertices += [center - across, center + Vector((0, w*0.35, 0)), center + across]
+                vertices.append(Vector((x + dx*lean, 0.5 + height, z0 + dz*lean)))
+                faces = []
+                for i in (0, 3):
+                    faces += [(i, i+3, i+4, i+1), (i+1, i+4, i+5, i+2)]
+                faces += [(6, 9, 7), (7, 9, 8)]
+                # A thin closed blade, not coincident reversed faces (which glTF
+                # validation drops). Its crease catches light from either side.
+                front = list(faces)
+                vertices += [v - Vector((0, 0.0015, 0)) for v in list(vertices)]
+                faces += [tuple(i + 10 for i in reversed(face)) for face in front]
+                edge = (0, 3, 6, 9, 8, 5, 2, 1)
+                for a, b in zip(edge, edge[1:] + edge[:1]):
+                    faces.append((a, a+10, b+10, b))
+                parts.append((mesh_object("FoldedGrassBlade", vertices, faces), leaves[(blade + row + tuft) % 2]))
+            if tuft % 2 == row:
+                height = rng.uniform(0.78, 0.92)
+                parts.append((tube_path("SeedStalk", [(x, 0.58, z0), (x + 0.025, 0.58 + height, z0)], 0.004, sides=5), leaves[0]))
+                parts.append((cone("SeedPanicle", 0.022, 0.004, 0.16, (x + 0.025, 0.58 + height + 0.06, z0), verts=7), straw))
+    return parts
 @prop("ceiling-deck", "building", "material", recenter=False, keep_uvs=True, draco=False)
 def ceiling_deck():
     """Bake a 1.2 m repeat from rounded steel folds onto a downward-facing material donor.

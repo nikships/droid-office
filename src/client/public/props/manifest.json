@@ -427,6 +427,19 @@
     "url": "/props/robot-arm.glb",
     "width": 0.62
   },
+  "rooftop-planter": {
+    "bytes": 423656,
+    "depth": 0.8,
+    "height": 1.6335,
+    "materials": 6,
+    "tags": [
+      "rooftop",
+      "landscape"
+    ],
+    "triangles": 6800,
+    "url": "/props/rooftop-planter.glb",
+    "width": 2.4
+  },
   "task-chair": {
     "bytes": 31724,
     "depth": 0.7071,
