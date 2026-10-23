@@ -3,15 +3,15 @@ import { ELEVATOR, ELEVATOR_FRONT, FLOOR, WALL_HEIGHT, WALL_T } from '../../shar
 import { buildCity, type City } from './city';
 import { buildElevator, type Elevator } from './elevator';
 import type { Collider, Interactable } from './office';
+import { buildRoofPlanters } from './rooftop-planter';
 import { bulb, type NightParts } from './outside';
 import { Steam } from './smoke';
 import { STACK, buildStack, stackBeacon } from './tower';
 import { ANISOTROPY, TILE_SCALE, fitScale } from './texture-quality';
 import { mergeByMaterial, mesh, toon } from './toon';
 
-// The roof, on top of the building (see shared/rooftop.ts): an empty deck with a glass railing round
-// it, the elevator's housing where you arrive, the factory's stack, and the city all around. Nothing
-// else is up here yet.
+// The roof, on top of the building (see shared/rooftop.ts): a planted terrace with a glass railing,
+// the elevator's housing where you arrive, the factory's stack, and the city all around.
 
 /** The building, walls included: the roof's edge. */
 const B = { minX: FLOOR.minX - WALL_T, maxX: FLOOR.maxX + WALL_T, minZ: FLOOR.minZ - WALL_T, maxZ: FLOOR.maxZ + WALL_T } as const;
@@ -145,6 +145,7 @@ export function buildRooftop(night: NightParts, floors: number): Rooftop {
   colliders.push({ minX: STACK.x - half, maxX: STACK.x + half, minZ: STACK.z - half, maxZ: STACK.z + half, top: 99 });
 
   group.add(mergeByMaterial(statics));
+  group.add(buildRoofPlanters(colliders));
 
   return {
     group,
