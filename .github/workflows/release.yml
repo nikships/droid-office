@@ -121,9 +121,6 @@ jobs:
 
       - run: npm run typecheck
 
-      - name: Verify generated prop GLBs
-        run: node tools/props/verify.mjs
-
       # The Whiteboard renderer's tests start a real headless Chromium, with its sandbox on. It lives
       # outside the workspace, in the one folder the office and the Mac app share.
       - name: Choose the shared Chromium folder
@@ -149,6 +146,9 @@ jobs:
 
       - name: Test with coverage
         run: npm run test:coverage # fails below the line and function thresholds in package.json
+
+      - name: Verify prop geometry and embedded textures
+        run: node tools/props/verify.mjs
 
       - name: Set the release version
         id: version
