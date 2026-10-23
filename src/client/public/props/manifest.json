@@ -440,6 +440,19 @@
     "url": "/props/rooftop-planter.glb",
     "width": 2.4
   },
+  "sports-cars": {
+    "bytes": 613292,
+    "depth": 4.6,
+    "height": 1.12,
+    "materials": 8,
+    "tags": [
+      "vehicle",
+      "street"
+    ],
+    "triangles": 7800,
+    "url": "/props/sports-cars.glb",
+    "width": 2.0
+  },
   "task-chair": {
     "bytes": 31724,
     "depth": 0.7071,

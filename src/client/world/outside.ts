@@ -187,7 +187,20 @@ export function buildGarage(group: THREE.Group, colliders: Collider[]) {
   }
   // One left out front, for everyone upstairs to look at.
   park(lot, colliders, 'lambo', '#ee6018', 9, 18.2, Math.PI / 2);
-  group.add(mergeByMaterial(lot));
+  const parked = new THREE.Group();
+  parked.name = 'parked-cars';
+  for (const [i, car] of lot.children.entries()) {
+    const anchor = new THREE.Group();
+    anchor.name = `parked-car-${i + 1}`;
+    anchor.position.copy(car.position);
+    anchor.quaternion.copy(car.quaternion);
+    anchor.userData.parkedCar = car.userData.parkedCar;
+    parked.add(anchor);
+  }
+  const fallback = mergeByMaterial(lot);
+  fallback.name = 'parked-car-fallback';
+  parked.add(fallback);
+  group.add(parked);
 }
 
 /** Parks a car at (x, z) turned by `rotY` (a multiple of 90°), with colliders you can hop up on. */
@@ -195,6 +208,7 @@ function park(group: THREE.Group, colliders: Collider[], kind: CarKind, color: s
   const car = supercar(kind, color);
   car.position.set(x, G, z);
   car.rotation.y = rotY;
+  car.userData.parkedCar = { kind, color };
   group.add(car);
   // A rectangle in the car's own frame (x across, z nose-ward), in the world.
   const c = Math.round(Math.cos(rotY));
