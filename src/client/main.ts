@@ -259,6 +259,8 @@ const propsReady = loadPropManifest()
     if (ledBar) installLedBarHousings(ledBar, office.group);
     const highBayLamp = propScene('high-bay-lamp');
     if (highBayLamp) installHighBayLamps(highBayLamp, office.group);
+    const ceilingDeck = propScene('ceiling-deck');
+    if (ceilingDeck) office.stack.setCeilingModel(ceilingDeck);
     const cableTray = propScene('cable-tray');
     if (cableTray) installCableTrays(cableTray, office.group);
     const boardFrame = propScene('board-frame');
