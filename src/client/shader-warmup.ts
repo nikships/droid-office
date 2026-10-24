@@ -18,8 +18,8 @@ import { teamKitStandIn } from './world/team-kit';
 import { SpellBolt, SpellImpact, Sparkles, TipTrail, Wand } from './world/wand';
 
 /**
- * Point lights the office shaders are compiled for: the wand's light, which stays in the scene, plus three
- * heavenly beams. A dismissal past that still compiles, and it is the rare case.
+ * Maximum point lights the office shaders are compiled for: the lit wand plus three heavenly
+ * beams. Zero is compiled too, so a dark wand costs no point-light shading.
  */
 export const WORLD_POINT_LIGHTS = 4;
 
@@ -44,13 +44,13 @@ export const HAND_TONE_MAPS: readonly THREE.ToneMapping[] = [THREE.NoToneMapping
  * Every world lighting and target combination, with the one the first frame will use last, so each
  * material's current program is that one.
  */
-export function officeCombos(input: { pipelines: readonly DrawPipeline[]; grid: boolean; active: { pipeline: DrawPipeline; grid: boolean } }): OfficeCombo[] {
+export function officeCombos(input: { pipelines: readonly DrawPipeline[]; grid: boolean; active: { pipeline: DrawPipeline; grid: boolean; lights: 0 | 1 } }): OfficeCombo[] {
   const pipelines = input.pipelines.includes(input.active.pipeline) ? input.pipelines : [...input.pipelines, input.active.pipeline];
   const grids = input.grid ? [false, true] : [false];
   const activeGrid = input.grid && input.active.grid;
   const combos: OfficeCombo[] = [];
-  for (const pipeline of pipelines) for (const grid of grids) for (let lights = 1; lights <= WORLD_POINT_LIGHTS; lights++) combos.push({ lights, pipeline, grid });
-  const index = combos.findIndex((combo) => combo.lights === 1 && combo.pipeline === input.active.pipeline && combo.grid === activeGrid);
+  for (const pipeline of pipelines) for (const grid of grids) for (let lights = 0; lights <= WORLD_POINT_LIGHTS; lights++) combos.push({ lights, pipeline, grid });
+  const index = combos.findIndex((combo) => combo.lights === input.active.lights && combo.pipeline === input.active.pipeline && combo.grid === activeGrid);
   if (index >= 0) combos.push(combos.splice(index, 1)[0]);
   return combos;
 }
@@ -296,14 +296,13 @@ async function compileView(renderer: ShaderCompiler, scene: THREE.Scene, camera:
 /**
  * Compiles the office, the hands, the spell and gun effects, the prop models and the full-screen passes
  * for the light counts, targets, probe-grid counts and tone maps a session uses, including the office canvas
- * with tone mapping off. The wand's light is left
- * visible so a later glow does not change the count.
+ * with tone mapping off. Both the dark and lit wand's counts are ready before play starts.
  */
 export async function warmOfficeShaders(opts: WarmOptions): Promise<void> {
   const { renderer, world, hands } = opts;
   const toneWas = renderer.toneMapping;
   const gridWas = opts.grid?.visible ?? false;
-  world.wandLight.visible = true;
+  const wandWas = world.wandLight.visible;
   const targets = makeTargets();
   const spares: THREE.PointLight[] = [];
   const extras: THREE.Object3D[] = [];
@@ -348,7 +347,7 @@ export async function warmOfficeShaders(opts: WarmOptions): Promise<void> {
     const worldCombos = officeCombos({
       pipelines: ['canvas', 'float'],
       grid: true,
-      active: { pipeline: opts.pipeline === 'srgb' ? 'canvas' : opts.pipeline, grid: opts.grid ? gridWas : false },
+      active: { pipeline: opts.pipeline === 'srgb' ? 'canvas' : opts.pipeline, grid: opts.grid ? gridWas : false, lights: wandWas ? 1 : 0 },
     });
     const screenTones = toneWas === THREE.NoToneMapping ? [toneWas] : [THREE.NoToneMapping, toneWas];
     for (let pass = 0; pass < screenTones.length; pass++) {
@@ -357,6 +356,7 @@ export async function warmOfficeShaders(opts: WarmOptions): Promise<void> {
       for (let i = 0; i < worldCombos.length; i++) {
         const combo = worldCombos[i];
         if (!lastPass && combo.pipeline === 'float') continue;
+        world.wandLight.visible = combo.lights > 0;
         for (let n = 0; n < spares.length; n++) spares[n].visible = n < combo.lights - 1;
         probe.visible = combo.grid;
         renderer.toneMapping = combo.pipeline === 'float' ? toneWas : tone;
@@ -397,7 +397,7 @@ export async function warmOfficeShaders(opts: WarmOptions): Promise<void> {
     }
   } finally {
     renderer.toneMapping = toneWas;
-    world.wandLight.visible = true;
+    world.wandLight.visible = wandWas;
     for (const light of spares) light.removeFromParent();
     handsLight.removeFromParent();
     stand?.world.removeFromParent();
