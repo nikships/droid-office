@@ -3963,8 +3963,8 @@ function drawFrame(dt: number, t: number, frame: { at: number; paced: boolean })
     }),
   );
   pointToWaiting(now);
-  // Classic leaves scene depth on the canvas. Remastered's grade already clears that canvas
-  // and never writes depth, so clearing again only interrupts the GPU's pass before the hands.
+  // Classic leaves scene depth on the canvas. Remastered's last full-screen pass already clears
+  // that depth without writing it, so another clear only interrupts the GPU's pass before the hands.
   // The hands have lights of their own, turned down to match wherever you're standing.
   if (!remaster.active) renderer.clearDepth();
   hands.setLight(sky.lightAt(camera.position));

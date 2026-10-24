@@ -5,7 +5,7 @@ import * as THREE from 'three';
 import { resolveRemaster, type ToneMap } from '../src/client/remaster-settings.js';
 import { Remaster } from '../src/client/world/remaster.js';
 
-test('the final grade clears canvas depth without writing it, so only Classic needs another clear before hands', () => {
+test('the final full-screen pass clears canvas depth without writing it, so only Classic needs another clear before hands', () => {
   const draws: { target: THREE.WebGLRenderTarget | null; clear: boolean; depthWrite: boolean }[] = [];
   let target: THREE.WebGLRenderTarget | null = null;
   const renderer = {
@@ -31,6 +31,15 @@ test('the final grade clears canvas depth without writing it, so only Classic ne
   assert.equal(sceneTarget!.samples, 2);
   assert.equal(sceneTarget!.texture.type, THREE.HalfFloatType);
   assert.equal(sceneTarget!.resolveDepthBuffer, false);
+  for (const sharpen of [0.2, 0]) {
+    draws.length = 0;
+    renderer.capabilities.maxTextureSize = sharpen ? 4096 : 50;
+    remaster.configure({ ...settings, sharpen });
+    remaster.draw(() => {});
+    assert.equal(draws.length, 2, sharpen ? 'sharpening adds the present pass' : 'the texture-size limit adds the present pass');
+    assert.notEqual(draws[0].target, null, 'the grade now draws offscreen');
+    assert.deepEqual(draws[1], { target: null, clear: true, depthWrite: false }, 'the present pass clears canvas depth too');
+  }
   const main = readFileSync(new URL('../src/client/main.ts', import.meta.url), 'utf8');
   assert.match(main, /if \(!remaster.active\) renderer.clearDepth\(\);/);
   assert.match(main, /wandLight.visible = false;/);
@@ -84,8 +93,10 @@ test('identity grading is compiled out, while altered colors and the HDR debug v
 });
 
 test('the simplified linear grade is identical at SDR white and the locked HDR peak', () => {
-  for (const peak of [1, 4]) {
-    for (const value of [-100, -1, -0, 0, 0.00001, 0.0031308, 0.18, 0.5, 1, 2, 4, 8, 65504]) {
+  const hdrPeak = resolveRemaster({ enabled: true, hdr: true }).hdrPeak;
+  for (const peak of [1, hdrPeak]) {
+    assert.ok(Number.isInteger(Math.log2(peak)), 'the direct clamp relies on a power-of-two peak');
+    for (const value of [-Infinity, -100, -1, -0, 0, 0.00001, 0.0031308, 0.18, 0.5, 1, 2, 4, 8, 65504, Infinity]) {
       const color = Math.fround(value);
       const original = peak * Math.max(0, Math.min(1, Math.fround(color / peak)));
       const clamped = Math.max(0, Math.min(peak, color));

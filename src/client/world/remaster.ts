@@ -539,8 +539,8 @@ export class Remaster {
     if (this.sceneRT && this.sceneRT.width === w && this.sceneRT.height === h) return;
     this.disposeTargets();
     const hdr = { type: THREE.HalfFloatType, minFilter: THREE.LinearFilter, magFilter: THREE.LinearFilter } as const;
-    // Depth is only used while drawing this target. The grade reads color alone and clears the
-    // canvas depth for the hands, so resolving or preserving multisample depth wastes bandwidth.
+    // Depth is only used while drawing this target. The full-screen passes read color alone; the
+    // last one clears canvas depth for the hands, so resolving or preserving this depth wastes bandwidth.
     this.sceneRT = new THREE.WebGLRenderTarget(w, h, { ...hdr, depthBuffer: true, samples: this.msaaSamples(), resolveDepthBuffer: false, storeMultisampledDepthBuffer: false });
     this.graded = new THREE.WebGLRenderTarget(w, h, { ...hdr, depthBuffer: false });
   }
