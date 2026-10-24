@@ -4,12 +4,23 @@ import * as THREE from 'three';
 import { HAND_TONE_MAPS, WORLD_POINT_LIGHTS, handsCombos, materialFeatures, officeCombos, retainedStandIns, spellStandIns, warmOfficeShaders, warmOutlines, type ShaderCompiler } from '../src/client/shader-warmup.js';
 import { casualtyMarkers } from '../src/client/world/casualties.js';
 
-test('office combinations end on the first frame: one point light, its pipeline and its grid', () => {
-  const combos = officeCombos({ pipelines: ['canvas', 'float', 'srgb'], grid: true, active: { pipeline: 'srgb', grid: false } });
-  assert.equal(combos.length, 3 * 2 * WORLD_POINT_LIGHTS);
-  assert.deepEqual(combos.at(-1), { lights: 1, pipeline: 'srgb', grid: false });
+test('office combinations cover zero through four lights and end on the current count, pipeline and grid', () => {
+  const combos = officeCombos({ pipelines: ['canvas', 'float', 'srgb'], grid: true, active: { pipeline: 'srgb', grid: false, lights: 0 } });
+  assert.equal(combos.length, 3 * 2 * (WORLD_POINT_LIGHTS + 1));
+  assert.deepEqual(combos.at(-1), { lights: 0, pipeline: 'srgb', grid: false });
+  for (const pipeline of ['canvas', 'float', 'srgb']) {
+    for (const grid of [false, true]) {
+      assert.deepEqual(
+        combos
+          .filter((combo) => combo.pipeline === pipeline && combo.grid === grid)
+          .map((combo) => combo.lights)
+          .sort(),
+        [0, 1, 2, 3, 4],
+      );
+    }
+  }
   assert.ok(combos.some((combo) => combo.lights === WORLD_POINT_LIGHTS && combo.grid && combo.pipeline === 'float'));
-  const classic = officeCombos({ pipelines: ['canvas'], grid: false, active: { pipeline: 'canvas', grid: true } });
+  const classic = officeCombos({ pipelines: ['canvas'], grid: false, active: { pipeline: 'canvas', grid: true, lights: 1 } });
   assert.ok(classic.every((combo) => !combo.grid));
   assert.equal(classic.at(-1)?.lights, 1);
 });
@@ -55,7 +66,7 @@ test('spell stand-ins cover the wand, the gun and the effects that are built whe
 
 interface Stub {
   renderer: ShaderCompiler;
-  office: { spares: number; grid: boolean; tone: THREE.ToneMapping }[];
+  office: { spares: number; lights: number; grid: boolean; tone: THREE.ToneMapping }[];
   handsLit: boolean[];
   outlined: string[];
   sawStandard: boolean;
@@ -81,9 +92,11 @@ function stub(t: TestContext, fail?: 'compile' | 'draw'): Stub {
   let draws = 0;
   const lightsOf = (scene: THREE.Object3D) => {
     let n = 0;
+    let lights = 0;
     let grid = false;
     scene.traverse((object) => {
       if (object.name === 'shader-warmup-light' && object.visible) n++;
+      if ((object as THREE.PointLight).isPointLight && object.visible) lights++;
       if ((object as { isLightProbeGrid?: boolean }).isLightProbeGrid && object.visible) grid = true;
       if (object.name === 'hidden-probe' && object.visible) hiddenWhile = true;
       if (object.name === 'shown-probe' && !object.frustumCulled) shownUnculled = true;
@@ -91,7 +104,7 @@ function stub(t: TestContext, fail?: 'compile' | 'draw'): Stub {
       if (mesh.isMesh && !Array.isArray(mesh.material) && mesh.material.type === 'MeshStandardMaterial') sawStandard = true;
       if (mesh.isMesh && !Array.isArray(mesh.material) && mesh.material.name === 'grade-pass' && target?.texture.type === THREE.HalfFloatType) sawFloatPass = true;
     });
-    return { spares: n, grid, tone: toneMapping };
+    return { spares: n, lights, grid, tone: toneMapping };
   };
   const renderer: ShaderCompiler = {
     async compileAsync(scene) {
@@ -201,7 +214,7 @@ test('warmup compiles the hidden office, the props and both grids, then puts the
     extras: [extra],
     pulse: () => pulses++,
   });
-  assert.equal(wandLight.visible, true);
+  assert.equal(wandLight.visible, false);
   assert.equal(hidden.visible, false);
   assert.equal(hidden.frustumCulled, true);
   assert.equal(shown.frustumCulled, true);
@@ -218,6 +231,8 @@ test('warmup compiles the hidden office, the props and both grids, then puts the
   assert.ok(env.outlined.includes('office'));
   assert.ok(env.outlined.includes('hands'));
   assert.equal(env.office.at(-1)?.spares, 0);
+  assert.equal(env.office.at(-1)?.lights, 0);
+  assert.deepEqual([...new Set(env.office.map((snap) => snap.lights))].sort(), [0, 1, 2, 3, 4]);
   assert.equal(env.office.at(-1)?.grid, false);
   assert.equal(env.office.at(-1)?.tone, THREE.ACESFilmicToneMapping);
   assert.ok(env.office.some((snap) => snap.tone === THREE.NoToneMapping));
@@ -239,7 +254,7 @@ test('with no probe grid yet, a temporary one is compiled and not left in the sc
   const scene = new THREE.Scene();
   scene.name = 'office';
   const wandLight = new THREE.PointLight();
-  wandLight.visible = false;
+  wandLight.visible = true;
   scene.add(wandLight);
   const hands = new THREE.Scene();
   hands.name = 'hands';
@@ -255,6 +270,11 @@ test('with no probe grid yet, a temporary one is compiled and not left in the sc
   assert.ok(env.office.some((snap) => snap.grid));
   assert.equal(env.office.at(-1)?.grid, false);
   assert.equal(env.office.at(-1)?.spares, 0);
+  assert.equal(env.office.at(-1)?.lights, 1, 'an already-lit wand keeps its active program last');
+  assert.ok(
+    env.office.some((snap) => snap.lights === 0),
+    'the dark variant is ready too',
+  );
   assert.equal(env.office.at(-1)?.tone, THREE.ACESFilmicToneMapping);
   assert.ok(env.office.some((snap) => snap.tone === THREE.NoToneMapping));
   assert.equal(wandLight.visible, true);
@@ -283,7 +303,7 @@ test('a compile that fails puts the lights, the grid and the hidden mesh back', 
       }),
     /compile failed/,
   );
-  assert.equal(wandLight.visible, true);
+  assert.equal(wandLight.visible, false);
   assert.equal(hidden.visible, false);
   assert.equal(hidden.frustumCulled, true);
   assert.equal(grid.visible, true);
