@@ -259,12 +259,12 @@ class OfficeConnection(
     fun reorderFloor(floorId: String, before: String?): Boolean = send(ClientMsg.floorReorder(floorId, before))
 
     /**
-     * Hires at a desk the office picks (`deskId: "auto"`). An older office (one paired by LAN token)
-     * can't pick, so the lowest free desk is chosen here.
+     * Hires at [deskId], or at a desk the office picks (`deskId: "auto"`). An older office (one paired
+     * by LAN token) can't pick, so the lowest free desk is chosen here.
      */
-    fun hire(prompt: String?, kind: String, model: String?, effort: String?, worktree: Boolean): Boolean {
+    fun hire(prompt: String?, kind: String, model: String?, effort: String?, worktree: Boolean, deskId: String? = null): Boolean {
         val office = store.snapshot.value.active
-        val desk = if (office?.auth == AuthMode.Lan) Workers.freeDesk(_data.value.workers.values) else "auto"
+        val desk = deskId ?: if (office?.auth == AuthMode.Lan) Workers.freeDesk(_data.value.workers.values) else "auto"
         hireAskedAt = System.currentTimeMillis()
         return send(ClientMsg.spawn(desk, prompt, worktree, kind, model, effort))
     }
@@ -341,6 +341,12 @@ class OfficeConnection(
     fun cardFile(cap: String, path: String): WbFetched? {
         val (base, _) = current ?: return null
         return api.cardFile(base, cap, path)
+    }
+
+    /** A file of the office's 3D props or fonts, for the overview page. Blocking, like [cardFile]. */
+    fun officeFile(path: String): WbFetched? {
+        val (base, _) = current ?: return null
+        return api.publicFile(base, path)
     }
 
     /** A picture on a card, by hash. Blocking, like [cardFile]. */

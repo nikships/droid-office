@@ -140,6 +140,8 @@ data class FloorInfo(
     val palette: Int = 0,
     val local: Boolean = false,
     val home: Boolean = false,
+    /** A plain folder, not a git checkout of its own. */
+    val plain: Boolean = false,
     val workers: Int = 0,
     val busy: Int = 0,
     val waiting: Int = 0,

@@ -21,6 +21,8 @@ object Tags {
         const val ME = "screen.me"
         const val BOARD = "screen.board"
         const val BOARD_CARD = "screen.board_card"
+        /** The Office tab on a tablet or an open foldable: the floor as a 3D map. */
+        const val OVERVIEW = "screen.overview"
     }
 
     object App {
@@ -173,6 +175,8 @@ object Tags {
         const val REPAIR_FORGET = "home.repair.forget"
         const val PICK_WORKER = "home.pick_worker"
         const val FLOOR_ORDER_HINT = "home.floor_order_hint"
+        /** Back to the 3D map, on a screen big enough for it. */
+        const val MAP = "home.map"
 
         // Inside each worker card; the card itself is [worker].
         const val CARD_NAME = "home.worker.name"
@@ -183,6 +187,28 @@ object Tags {
 
         fun floor(id: String) = "home.floor/$id"
         fun worker(id: String) = "home.worker/$id"
+    }
+
+    /** The 3D floor on a tablet or an open foldable ([Screen.OVERVIEW]). */
+    object Overview {
+        /** The map itself: a WebView, so what's on it isn't in a dump. Its content-desc is the floor's name. */
+        const val MAP = "overview.map"
+        /** Readable state: its content-desc is the layout, `side`, `bottom`, `tabletop` or `book`. */
+        const val LAYOUT = "overview.layout"
+        const val LOADING = "overview.loading"
+        const val ROSTER = "overview.roster"
+        const val EMPTY = "overview.empty"
+        const val OFFICES = "overview.offices"
+        const val ROUTE = "overview.route"
+        const val LIST = "overview.list"
+        const val RECENTER = "overview.recenter"
+        const val ZOOM_IN = "overview.zoom_in"
+        const val ZOOM_OUT = "overview.zoom_out"
+        const val HIRE = "overview.hire"
+        /** A worker's terminal opened over the map. */
+        const val TERMINAL = "overview.terminal"
+
+        fun worker(id: String) = "overview.worker/$id"
     }
 
     object Hire {

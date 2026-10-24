@@ -44,8 +44,8 @@ import ai.factory.droidoffice.ui.asks.AsksScreen
 import ai.factory.droidoffice.ui.board.WhiteboardScreen
 import ai.factory.droidoffice.ui.components.tagged
 import ai.factory.droidoffice.ui.home.HireSheet
-import ai.factory.droidoffice.ui.home.HomeScreen
 import ai.factory.droidoffice.ui.offices.OfficesScreen
+import ai.factory.droidoffice.ui.overview.OfficeTab
 import ai.factory.droidoffice.ui.theme.LocalOfficeType
 import ai.factory.droidoffice.ui.theme.OfficeIcons
 import ai.factory.droidoffice.ui.theme.Palette
@@ -60,7 +60,7 @@ enum class MainTab(val label: String, val icon: ImageVector, val tag: String) {
 /**
  * The app once paired: Asks (questions waiting on you), Office (every worker, hiring), Board (the
  * floor's Whiteboard) and Me (this phone's offices and settings). A bar along the bottom on a phone, a rail down the side on a
- * tablet, where Office keeps its list-and-terminal panes.
+ * tablet. On a tablet or an open foldable, Office is the floor's 3D map; its list keeps the list-and-terminal panes.
  */
 @Composable
 fun MainTabs(onOpenWorker: (id: String, draft: String?) -> Unit, onOpenCard: (floor: String, card: String) -> Unit, onScan: () -> Unit) {
@@ -83,7 +83,7 @@ fun MainTabs(onOpenWorker: (id: String, draft: String?) -> Unit, onOpenCard: (fl
                 Crossfade(shown, animationSpec = tween(160), label = "tab") { t ->
                     when (t) {
                         MainTab.Asks -> AsksScreen(onOpenWorker = onOpenWorker, onHire = { hiring = true })
-                        MainTab.Office -> HomeScreen(onOpenWorker = { onOpenWorker(it, null) }, onOffices = { tab = MainTab.Me }, onScan = onScan)
+                        MainTab.Office -> OfficeTab(onOpenWorker = { onOpenWorker(it, null) }, onOffices = { tab = MainTab.Me }, onScan = onScan)
                         MainTab.Board -> WhiteboardScreen(onOpenCard = onOpenCard)
                         MainTab.Me -> OfficesScreen(onBack = { tab = MainTab.Office }, onPairNew = onScan, onSwitched = { tab = MainTab.Office }, embedded = true)
                     }

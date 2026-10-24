@@ -101,7 +101,7 @@ test('floor moves from a companion update every client and the next welcome, wit
   assert.equal(JSON.parse(readFileSync(path.join(dir, '.droid-office/floors.json'), 'utf8'))[0].id, added.floor);
 });
 
-test('production dashboard has a public data-free bootstrap, gated APIs and an independent non-3D bundle', async (t) => {
+test('production dashboard has a public data-free bootstrap, gated APIs and a bundle that loads 3D only for the overview floor', async (t) => {
   const { base, server } = await office(t);
   const ip = await reachableLan(t, server.server);
   const remote = ip ? base.replace('127.0.0.1', ip) : base;
@@ -138,8 +138,10 @@ test('production dashboard has a public data-free bootstrap, gated APIs and an i
   assert.ok(modules.some((id) => id.endsWith('/dashboard.ts')));
   assert.ok(modules.some((id) => id.endsWith('/ui/whiteboard.ts')));
   assert.ok(modules.some((id) => id.endsWith('/ui/terminal.ts')));
+  // The overview's 3D floor is the dashboard's only 3D: never the walkable office, its warm-up or its automation.
+  assert.ok(modules.some((id) => id.endsWith('/client/office-map.ts')));
   assert.deepEqual(
-    modules.filter((id) => /\/node_modules\/three\/|\/client\/(?:main|automation|shader-warmup)\.ts|\/client\/world\/(?!glyph\.ts)/.test(id)),
+    modules.filter((id) => /\/client\/(?:main|automation|shader-warmup)\.ts|\/client\/world\/office\.ts/.test(id)),
     [],
   );
   const cold = new Set<string>();
@@ -149,7 +151,13 @@ test('production dashboard has a public data-free bootstrap, gated APIs and an i
     for (const next of chunks.get(name)?.imports ?? []) initial(next);
   };
   initial(entry.fileName);
-  assert.ok(![...cold].flatMap((name) => Object.keys(chunks.get(name)?.modules ?? {})).some((id) => id.includes('/node_modules/@xterm/xterm/')));
+  const coldModules = [...cold].flatMap((name) => Object.keys(chunks.get(name)?.modules ?? {}));
+  assert.ok(!coldModules.some((id) => id.includes('/node_modules/@xterm/xterm/')));
+  // three.js and the floor's meshes load only when the overview first shows the floor.
+  assert.deepEqual(
+    coldModules.filter((id) => /\/node_modules\/three\/|\/client\/office-map\.ts|\/client\/world\/(?!glyph\.ts)/.test(id)),
+    [],
+  );
 });
 
 test('browser pairing preserves phone flow, refuses foreign origins and local management, survives restart and revokes active sockets', async (t) => {

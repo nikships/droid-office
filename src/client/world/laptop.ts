@@ -238,9 +238,10 @@ export class Laptop {
   private openT = 0;
   private placeholder = 'booting…';
 
-  constructor() {
-    this.canvas.width = 2048;
-    this.canvas.height = 1360;
+  /** `size` is the screen canvas in pixels: smaller for a laptop only ever seen from across a room (the web companion's map). */
+  constructor(size: { width: number; height: number } = { width: 2048, height: 1360 }) {
+    this.canvas.width = size.width;
+    this.canvas.height = size.height;
     this.ctx = this.canvas.getContext('2d')!;
     this.texture = new THREE.CanvasTexture(this.canvas);
     this.texture.colorSpace = THREE.SRGBColorSpace;

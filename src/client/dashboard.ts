@@ -1,14 +1,16 @@
 import type { ClientMsg, WorkerInfo } from '../shared/protocol';
 import { canAnswer, menuTakesText, readMenu, sameMenu, type Menu } from '../shared/asks';
 import { isAsleep, isBusy } from '../shared/status';
-import { PROVIDER_LABEL, statusWord } from '../shared/guests';
+import { statusWord } from '../shared/guests';
 import { cardsNewestFirst, cardChanged, OWNER } from '../shared/whiteboard';
 import { ROOF } from '../shared/rooftop';
+import { DESK_BY_ID } from '../shared/layout';
 import { sessionWebUrl } from '../shared/factory-sessions';
 import { originKind, type OriginKind } from '../shared/devices';
 import { BROWSER_KEY, DASHBOARD_FLOOR_KEY, browserCredential, draftKey, forgetBrowserCredential, isBrowserCredential, saveBrowserCredential, type BrowserCredential } from './browser-session';
 import { Net } from './net';
 import { previewRows } from './screen-preview';
+import { doingLine, workerKind as kind } from './worker-words';
 import { connectWhiteboard, store } from './state';
 import { setBrowserAuth, withToken } from './token';
 import { $, closeAllModals, h, modalOpen, openModal, STATUS_LABEL, toast } from './ui/dom';
@@ -17,6 +19,8 @@ import { icon, type IconName } from './ui/icons';
 import { confirmDialog, openPrompt, routeWorktreeMessage, sendHomeDialog } from './ui/prompt';
 import { modelBadge } from './ui/models';
 import { openFloorOrder } from './ui/floor-reorder';
+import type { MapDirection } from './office-map-view';
+import type { MapFloor, OfficeMap, OfficeMapHooks } from './office-map';
 
 const read = (key: string) => {
   try {
@@ -114,7 +118,7 @@ const authPanel = h('section.dash-gate', { hidden: true });
 
 const agentBtn = h('button.btn.accent.dash-hire', { type: 'button', title: 'Hire a Droid on this floor (N)', onclick: () => hire('agent') }, icon('plus'), h('span', {}, 'Hire Droid'));
 const shellBtn = h('button.btn.dash-hire', { type: 'button', title: 'Open a plain shell at a desk', onclick: () => hire('shell') }, icon('terminal'), h('span', {}, 'Shell'));
-const overviewRow = h('button.dash-nav', { type: 'button', onclick: () => select('') }, icon('grid'), h('span.grow', {}, 'Overview'), h('span.dash-nav-count'));
+const overviewRow = h('button.dash-nav', { type: 'button', title: 'Back to the floor (Esc)', onclick: () => select('') }, icon('cube'), h('span.grow', {}, 'Overview'), h('span.dash-nav-count'));
 const workerList = h('nav.dash-workers', { 'aria-label': 'Workers' });
 const side = h(
   'aside.dash-side',
@@ -127,7 +131,7 @@ const side = h(
     { 'aria-hidden': 'true' },
     ...keyHints([
       ['↑↓', 'workers'],
-      ['Esc', 'overview'],
+      ['Esc', 'floor'],
       ['N', 'hire'],
       ['P', 'prompt'],
       ['B', 'board'],
@@ -273,15 +277,17 @@ async function action(msg: ClientMsg, id = '', intendedFloor = floor, done?: str
   if (busy.has(key)) return 'An action for this worker is still waiting for confirmation.';
   busy.add(key);
   paint();
+  let hired = '';
   try {
     const result = await net.request(msg);
     if (!result.ok) return result.error ?? 'The office refused this action.';
     if (done) say(done);
-    if (msg.t === 'worker.spawn' && result.workerId && floor === intendedFloor) selected = result.workerId;
+    if (msg.t === 'worker.spawn' && result.workerId && floor === intendedFloor) hired = result.workerId;
   } finally {
     busy.delete(key);
     paint();
   }
+  if (hired) void enter(hired);
 }
 function say(text: string) {
   live$.textContent = text;
@@ -313,12 +319,6 @@ function avatar(w: WorkerInfo, size = '') {
   el.style.setProperty('--who', w.color);
   return el;
 }
-function kind(w: WorkerInfo) {
-  return w.guest ? `${PROVIDER_LABEL[w.guest.provider]} · outside office` : w.cloud ? 'Droid · Factory' : w.kind === 'shell' ? 'Shell' : 'Droid';
-}
-function doingLine(w: WorkerInfo) {
-  return (w.status === 'needs_input' ? w.activity : undefined) ?? w.task?.name ?? w.title ?? w.activity ?? (w.kind === 'shell' ? 'Shell' : 'Waiting for a task');
-}
 function pill(w: WorkerInfo) {
   return h('span.pill', { class: w.status }, statusWord(w, STATUS_LABEL));
 }
@@ -332,7 +332,7 @@ function paint() {
   const here = store.currentFloor();
   floors.disabled = !up;
   reorderFloors.disabled = !up || store.floors.length < 2;
-  agentBtn.disabled = shellBtn.disabled = !up || !here || busy.has('hire');
+  agentBtn.disabled = shellBtn.disabled = dockAgent.disabled = dockShell.disabled = !up || !here || busy.has('hire');
   board.disabled = !up || !here;
   content.classList.toggle('dash-stale', !up);
   content.hidden = !authorized;
@@ -341,7 +341,10 @@ function paint() {
   board.hidden = !authorized;
   accessLabel.textContent = credential && where !== 'local' ? `${WHERE[where].label} · paired` : WHERE[where].label;
   paintBanner();
-  if (!authorized) return paintGate();
+  if (!authorized) {
+    officeMap?.stop();
+    return paintGate();
+  }
   floors.replaceChildren(...(store.floor === ROOF ? [h('option', { value: ROOF }, 'Rooftop · choose a floor')] : []), ...store.floors.map((f) => h('option', { value: f.id }, `${f.name}  —  ${f.repo ?? 'no git'}`)));
   floors.value = store.floor ?? '';
   const b = store.floor && store.whiteboard.board(store.floor);
@@ -356,7 +359,9 @@ function paint() {
     toast('That worker has left the floor.', 'info');
     selected = '';
   }
-  if (!selected || !store.workers.get(selected)) paintOverview();
+  const overviewing = !selected || !store.workers.get(selected);
+  content.classList.toggle('dash-overviewing', overviewing);
+  if (overviewing) paintOverview();
   else paintWorker(store.workers.get(selected) as WorkerInfo);
 }
 
@@ -478,46 +483,57 @@ function paintGate() {
   authPanel.replaceChildren(h('div.dash-gate-card', {}, ...views[gate](), whereChip));
 }
 
+type Rows = Map<string, { el: HTMLButtonElement; key: string }>;
 /** Sidebar rows are kept per worker, so hover, focus and the selection survive repaints. */
-const rows = new Map<string, { el: HTMLButtonElement; key: string }>();
-function paintSide() {
-  const groups = grouped();
-  const total = store.workers.size;
-  overviewRow.classList.toggle('on', !selected);
-  overviewRow.setAttribute('aria-current', !selected ? 'page' : 'false');
-  (overviewRow.lastElementChild as HTMLElement).textContent = total ? String(total) : '';
+const rows: Rows = new Map();
+
+/** Fills `into` with the floor's workers in their groups, one row each from `cache`, lighting `lit`. */
+function paintRows(into: HTMLElement, cache: Rows, lit: string, open: (id: string) => void, empty: HTMLElement[], made?: (el: HTMLButtonElement, id: string) => void) {
   const seen = new Set<string>();
   const children: HTMLElement[] = [];
-  for (const g of groups) {
-    children.push(h('div.dash-group', {}, h('span', {}, g.title), h('span.dash-group-count', {}, String(g.workers.length))));
+  for (const g of grouped()) {
+    children.push(h('div.dash-group', { class: g.title === 'Needs you' ? 'attn' : undefined }, h('span', {}, g.title), h('span.dash-group-count', {}, String(g.workers.length))));
     for (const w of g.workers) {
       seen.add(w.id);
-      const key = JSON.stringify([w.name, w.color, w.status, doingLine(w), w.id === selected, busy.has(w.id), statusWord(w, STATUS_LABEL)]);
-      let row = rows.get(w.id);
+      const key = JSON.stringify([w.name, w.color, w.status, doingLine(w), statusWord(w, STATUS_LABEL)]);
+      let row = cache.get(w.id);
       if (!row || row.key !== key) {
-        const el =
-          row?.el ??
-          h('button.dash-row', {
-            type: 'button',
-            'data-worker': w.id,
-            onclick: () => select(w.id),
-          });
-        el.classList.toggle('on', w.id === selected);
+        let el = row?.el;
+        if (!el) {
+          el = h('button.dash-row', { type: 'button', 'data-worker': w.id, onclick: () => open(w.id) }) as HTMLButtonElement;
+          made?.(el, w.id);
+        }
         el.classList.toggle('attn', w.status === 'needs_input');
-        el.setAttribute('aria-current', w.id === selected ? 'true' : 'false');
+        el.classList.toggle('asleep', isAsleep(w.status));
         el.title = `${w.name} · ${kind(w)}`;
         el.replaceChildren(avatar(w), h('span.dash-row-main', {}, h('span.dash-row-name', {}, w.name), h('span.dash-row-meta', {}, doingLine(w))), pill(w));
         row = { el, key };
-        rows.set(w.id, row);
+        cache.set(w.id, row);
       }
       children.push(row.el);
     }
   }
-  for (const id of [...rows.keys()]) if (!seen.has(id)) rows.delete(id);
-  if (!total) children.push(h('p.dash-side-empty', {}, live() ? 'Nobody on this floor yet.' : 'Waiting for the office…'));
+  for (const id of [...cache.keys()]) if (!seen.has(id)) cache.delete(id);
+  if (!seen.size) children.push(...empty);
   const focused = document.activeElement;
-  workerList.replaceChildren(...children);
-  if (focused instanceof HTMLElement && focused.dataset.worker && !focused.isConnected) rows.get(focused.dataset.worker)?.el.focus({ preventScroll: true });
+  const had = focused instanceof HTMLElement && into.contains(focused) ? focused.dataset.worker : undefined;
+  into.replaceChildren(...children);
+  if (had && document.activeElement !== cache.get(had)?.el) cache.get(had)?.el.focus({ preventScroll: true });
+  lightRows(cache, lit);
+}
+function lightRows(cache: Rows, lit: string) {
+  for (const [id, { el }] of cache) {
+    el.classList.toggle('on', id === lit);
+    if (cache === rows) el.setAttribute('aria-current', id === lit ? 'true' : 'false');
+  }
+}
+
+function paintSide() {
+  const total = store.workers.size;
+  overviewRow.classList.toggle('on', !selected);
+  overviewRow.setAttribute('aria-current', !selected ? 'page' : 'false');
+  (overviewRow.lastElementChild as HTMLElement).textContent = total ? String(total) : '';
+  paintRows(workerList, rows, selected, select, [h('p.dash-side-empty', {}, live() ? 'Nobody on this floor yet.' : 'Waiting for the office…')]);
 }
 
 function select(id: string) {
@@ -525,24 +541,138 @@ function select(id: string) {
     if (id) rows.get(id)?.el.focus({ preventScroll: true });
     return;
   }
+  if (!id && selected) leaving = selected;
   selected = id;
   paint();
   if (id) rows.get(id)?.el.scrollIntoView({ block: 'nearest' });
 }
 
-// --- The overview: every worker at once, with its screen ------------------------------------------------
+/** Opens worker `id`: on the map, the camera flies in to its desk first. */
+async function enter(id: string) {
+  if (flying) return;
+  if (view === 'overview' && officeMap && mapShown && store.workers.has(id)) {
+    flying = true;
+    try {
+      await officeMap.flyTo(id);
+    } finally {
+      flying = false;
+    }
+    if (view !== 'overview' || !store.workers.has(id)) return;
+  }
+  select(id);
+}
 
+// --- The overview: the floor in 3D (or every worker's screen in a grid) -----------------------------
+
+const LAYOUT_KEY = 'droid-office.dashboard-layout';
 let view: 'overview' | 'worker' | '' = '';
+/** How the overview shows the floor: the 3D map, or the grid of screens. */
+let layout: 'map' | 'grid' = read(LAYOUT_KEY) === 'grid' ? 'grid' : 'map';
+let officeMap: OfficeMap | undefined;
+let mapLoading = false;
+/** The map can't be drawn here (no WebGL, its code failed to load, or the GPU gave up). */
+let mapBroken = false;
+let mapShown = false;
+/** The worker whose terminal was just closed, for the map to pull back out of. */
+let leaving = '';
+let flying = false;
+/** Who the map has lit up, mirrored in the roster. */
+let mapLit = '';
+let webgl: boolean | undefined;
+const mapUsable = () => {
+  webgl ??= (() => {
+    try {
+      return !!document.createElement('canvas').getContext('webgl2');
+    } catch {
+      return false;
+    }
+  })();
+  return webgl && !mapBroken;
+};
+
 const cards = new Map<string, { el: HTMLElement; preview: HTMLElement; key: string }>();
 const stats = h('div.dash-stats');
 const grid = h('div.dash-grid');
 const overviewTitle = h('h2', {});
 const overviewSub = h('p.dash-overview-sub');
-const overview = h('section.dash-overview', {}, h('header.dash-overview-head', {}, h('div.dash-overview-titles', {}, h('span.eyebrow', {}, 'Floor'), overviewTitle, overviewSub), stats), grid);
+const overviewHead = h('header.dash-overview-head', {}, h('div.dash-overview-titles', {}, h('span.eyebrow', {}, 'Floor'), overviewTitle, overviewSub), stats);
+const gridWrap = h('div.dash-grid-wrap', {}, grid);
+
+const mapStage = h('div.dash-map', {}, h('div.dash-map-wait', {}, h('div.spinner'), h('span', {}, 'Building the floor…')));
+const crew: Rows = new Map();
+const rosterList = h('nav.dash-roster-list', { 'aria-label': 'Workers on this floor' });
+const roster = h('aside.dash-roster', {}, rosterList);
+
+const dockAgent = h('button.btn.accent.dash-hire', { type: 'button', title: 'Hire a Droid (N), or click a free desk to seat it there', onclick: () => hire('agent') }, icon('plus', 14), h('span', {}, 'Hire Droid'));
+const dockShell = h('button.btn.dash-hire', { type: 'button', title: 'Open a plain shell at a desk', onclick: () => hire('shell') }, icon('terminal', 14), h('span', {}, 'Shell'));
+const homeBtn = h('button.btn.icon.ghost', { type: 'button', 'aria-label': 'Whole floor', title: 'Whole floor (0)', onclick: () => void officeMap?.home() }, icon('frame', 15));
+const zoomOut = h('button.btn.icon.ghost', { type: 'button', 'aria-label': 'Zoom out', title: 'Zoom out (−)', onclick: () => void officeMap?.zoom(1.3) }, icon('minus', 15));
+const zoomIn = h('button.btn.icon.ghost', { type: 'button', 'aria-label': 'Zoom in', title: 'Zoom in (+)', onclick: () => void officeMap?.zoom(0.75) }, icon('plus', 15));
+const mapTools = h('div.dash-dock-group', { role: 'group', 'aria-label': 'Camera' }, homeBtn, zoomOut, zoomIn);
+const mapBtn = h('button.btn.sm', { type: 'button', title: 'The floor in 3D (G)', onclick: () => setLayout('map') }, icon('cube', 14), h('span', {}, 'Floor'));
+const gridBtn = h('button.btn.sm', { type: 'button', title: 'Every screen in a grid (G)', onclick: () => setLayout('grid') }, icon('grid', 14), h('span', {}, 'Grid'));
+const layoutSeg = h('div.seg.dash-layout', { role: 'group', 'aria-label': 'Layout' }, mapBtn, gridBtn);
+const dockKeys = h('div.dash-dock-keys', { 'aria-hidden': 'true' });
+const dock = h('div.dash-dock', { role: 'toolbar', 'aria-label': 'Overview' }, h('div.dash-dock-group', {}, dockAgent, dockShell), mapTools, h('div.dash-dock-group', {}, layoutSeg), dockKeys);
+const overview = h('section.dash-overview', {}, mapStage, roster, gridWrap, dock);
+
+/** Tells the map how much of it the roster and the dock cover, so it frames the floor beside them. */
+function mapInsets() {
+  if (!officeMap || !mapShown) return;
+  const box = mapStage.getBoundingClientRect();
+  const r = roster.getBoundingClientRect();
+  const d = dock.getBoundingClientRect();
+  // A roster down the left side insets the left; one docked along the bottom (narrow screens) insets the bottom.
+  const beside = r.height > box.height * 0.45 || r.top < box.top + box.height * 0.4;
+  const top = Math.min(d.top, beside ? Infinity : r.top);
+  officeMap.setInsets(beside ? r.right - box.left : 0, box.bottom - top);
+}
+const insetWatch = typeof ResizeObserver === 'function' ? new ResizeObserver(() => mapInsets()) : undefined;
+for (const el of [overview, roster, dock]) insetWatch?.observe(el);
+
+function setLayout(next: 'map' | 'grid') {
+  if (next === 'map' && !mapUsable()) return toast('This browser can’t draw the 3D floor (WebGL 2 is off or unavailable).', 'warn');
+  if (layout === next) return;
+  layout = next;
+  remember(LAYOUT_KEY, next === 'grid' ? 'grid' : '');
+  say(next === 'map' ? 'Showing the floor in 3D.' : 'Showing every screen in a grid.');
+  paint();
+}
 
 function stat(label: string, value: number, tone = '') {
   return h('div.dash-stat', { class: tone }, h('b', {}, String(value)), h('span', {}, label));
 }
+
+function chip(w: WorkerInfo) {
+  if (w.pr) return `#${w.pr.number}`;
+  if (w.kind === 'agent') return modelBadge(w.activeModel ?? w.model, w.activeEffort ?? w.effort) || undefined;
+  return w.worktree?.branch;
+}
+
+function mapFloor(): MapFloor | undefined {
+  const here = store.currentFloor();
+  if (!here) return undefined;
+  return { id: here.id, name: here.name, palette: here.palette, plain: !!here.plain, bottom: store.floors[0]?.id === here.id };
+}
+
+const mapHooks: OfficeMapHooks = {
+  open: (id) => void enter(id),
+  hire: (deskId) => hire('agent', deskId),
+  canHire: () => live() && !!store.currentFloor() && !busy.has('hire'),
+  screen: (id) => store.screens.get(id),
+  preview: (into, id) => renderPreview(into, id, 14),
+  words: (w) => ({ status: statusWord(w, STATUS_LABEL), doing: doingLine(w), kind: kind(w), chip: chip(w) }),
+  focused: (id) => {
+    if (id === mapLit) return;
+    mapLit = id;
+    lightRows(crew, id);
+  },
+  lost: () => {
+    mapBroken = true;
+    toast('The 3D floor stopped: the browser’s graphics gave up. Showing the grid instead.', 'warn');
+    paint();
+  },
+};
 
 function paintOverview() {
   if (view !== 'overview') {
@@ -561,13 +691,10 @@ function paintOverview() {
       : 'No floors yet. Add a project from the office itself.';
   const workers = ordered();
   const n = (f: (w: WorkerInfo) => boolean) => workers.filter(f).length;
+  const needs = n((w) => w.status === 'needs_input');
   stats.replaceChildren(
     stat('Workers', workers.length),
-    stat(
-      'Need you',
-      n((w) => w.status === 'needs_input'),
-      n((w) => w.status === 'needs_input') ? 'attn' : '',
-    ),
+    stat('Need you', needs, needs ? 'attn' : ''),
     stat(
       'Working',
       n((w) => w.status === 'working' || w.status === 'starting'),
@@ -577,6 +704,99 @@ function paintOverview() {
       n((w) => isAsleep(w.status)),
     ),
   );
+  mapShown = layout === 'map' && mapUsable() && !!here;
+  overview.dataset.layout = mapShown ? 'map' : 'grid';
+  mapStage.hidden = roster.hidden = mapTools.hidden = !mapShown;
+  gridWrap.hidden = mapShown;
+  mapBtn.disabled = !mapUsable() || !here;
+  for (const [b, on] of [
+    [mapBtn, mapShown],
+    [gridBtn, !mapShown],
+  ] as const) {
+    b.classList.toggle('on', on);
+    b.setAttribute('aria-pressed', String(on));
+  }
+  dockKeys.replaceChildren(
+    ...keyHints(
+      mapShown
+        ? [
+            ['←↑↓→', 'move'],
+            ['↵', 'open'],
+            ['N', 'hire'],
+            ['G', 'grid'],
+          ]
+        : [
+            ['↑↓', 'open'],
+            ['N', 'hire'],
+            ['G', 'floor'],
+          ],
+    ),
+  );
+  const home = mapShown ? roster : gridWrap;
+  if (overviewHead.parentElement !== home) home.prepend(overviewHead);
+  if (mapShown) {
+    paintRoster();
+    void paintMap();
+  } else {
+    officeMap?.stop();
+    leaving = '';
+    paintGrid(workers);
+  }
+}
+
+function paintRoster() {
+  const hint = live() && store.currentFloor() ? 'Click any free desk on the floor to hire a Droid there, or press N.' : 'Waiting for the office…';
+  paintRows(
+    rosterList,
+    crew,
+    mapLit,
+    (id) => void enter(id),
+    [h('div.dash-roster-empty', {}, h('b', {}, 'Nobody on this floor yet'), h('p', {}, hint))],
+    (el, id) => {
+      el.addEventListener('pointerenter', () => officeMap?.setCursor(id, false));
+      el.addEventListener('pointerleave', () => {
+        if (document.activeElement !== el) officeMap?.setCursor('', false);
+      });
+      el.addEventListener('focus', () => {
+        if (officeMap?.focusedId !== id) officeMap?.setCursor(id);
+      });
+    },
+  );
+}
+
+async function paintMap() {
+  if (!officeMap) {
+    if (mapLoading) return;
+    mapLoading = true;
+    try {
+      const { OfficeMap } = await import('./office-map');
+      officeMap = new OfficeMap(mapHooks);
+      mapStage.replaceChildren(officeMap.el);
+    } catch (error) {
+      console.warn('office map unavailable', error);
+      mapBroken = true;
+      toast('The 3D floor couldn’t load. Showing the grid instead.', 'warn');
+    } finally {
+      mapLoading = false;
+    }
+    // The page may have moved on while the map's code was loading.
+    paint();
+    return;
+  }
+  if (view !== 'overview' || !mapShown) return;
+  // Drawing first, so the first look at a floor plays as a flight rather than a jump.
+  mapInsets();
+  officeMap.start();
+  officeMap.sync(store.workers.values(), mapFloor());
+  if (leaving) {
+    const id = leaving;
+    leaving = '';
+    void officeMap.returnFrom(id);
+  }
+}
+
+function paintGrid(workers: WorkerInfo[]) {
+  const here = store.currentFloor();
   const seen = new Set<string>();
   const children: HTMLElement[] = [];
   for (const w of workers) {
@@ -618,11 +838,10 @@ function paintOverview() {
   grid.replaceChildren(...children);
   paintPreviews();
 }
-
 let previewFrame = 0;
 let previewAt = 0;
 function schedulePreviews() {
-  if (view === 'worker' && stageMode === 'terminal') return;
+  if ((view === 'worker' && stageMode === 'terminal') || (view === 'overview' && mapShown)) return;
   if (previewFrame) return;
   // Screens stream a few times a second per worker; a quarter second is plenty for a glance.
   const wait = Math.max(0, 250 - (performance.now() - previewAt));
@@ -656,7 +875,7 @@ function renderPreview(into: HTMLElement, id: string, max: number) {
   );
 }
 function paintPreviews() {
-  if (view === 'overview') for (const [id, card] of cards) renderPreview(card.preview, id, 30);
+  if (view === 'overview' && !mapShown) for (const [id, card] of cards) renderPreview(card.preview, id, 30);
   else if (view === 'worker' && stageMode === 'info' && infoPreview && detailId) renderPreview(infoPreview, detailId, 40);
 }
 
@@ -678,6 +897,7 @@ let questionDraft = '';
 let answered = false;
 
 function paintWorker(w: WorkerInfo) {
+  if (view !== 'worker') officeMap?.stop();
   view = 'worker';
   if (detailId !== w.id) {
     terminal?.closeTerminal();
@@ -882,23 +1102,25 @@ function paintQuestion(review = false) {
 
 // --- Actions ------------------------------------------------------------------------------------------
 
-function hire(kind: 'agent' | 'shell') {
+function hire(kind: 'agent' | 'shell', deskId = 'auto') {
   if (!live() || !store.currentFloor()) return;
   const intended = floor;
   const key = draftKey(intended, `hire:${kind}`);
+  const desk = deskId === 'auto' ? undefined : DESK_BY_ID.get(deskId)?.label;
   openPrompt({
     title: kind === 'shell' ? 'Open a shell' : 'Hire Droid',
-    subtitle: store.currentFloor()?.name,
+    subtitle: [store.currentFloor()?.name, desk].filter(Boolean).join(' · '),
     submitLabel: kind === 'shell' ? 'Open shell' : 'Hire Droid',
     allowEmpty: true,
     initial: read(key),
     onDraft: (v) => remember(key, v),
     modelOption: kind === 'agent',
+    deskId: deskId === 'auto' ? undefined : deskId,
     imagesOption: kind === 'agent',
     recall: kind === 'agent',
     worktreeOption: !!store.currentFloor()?.repo,
     onSubmit: async (text, opts) => {
-      const error = await action({ t: 'worker.spawn', deskId: 'auto', kind, prompt: text, ...opts }, '', intended, kind === 'shell' ? 'Shell opened.' : 'Droid hired.');
+      const error = await action({ t: 'worker.spawn', deskId, kind, prompt: text, ...opts }, '', intended, kind === 'shell' ? 'Shell opened.' : 'Droid hired.');
       if (!error) remember(key, '');
       return error;
     },
@@ -1107,7 +1329,12 @@ window.addEventListener('keydown', (e) => {
     rows.get(w.id)?.el.focus({ preventScroll: true });
   };
   const k = e.key.length === 1 ? e.key.toLowerCase() : e.key;
-  if (k === 'ArrowDown' || k === 'j') go(at + 1);
+  if (view === 'overview' && officeMap && mapShown && mapKey(officeMap, k, t)) {
+    e.preventDefault();
+    return;
+  }
+  if (k === 'g' && view === 'overview') setLayout(layout === 'map' ? 'grid' : 'map');
+  else if (k === 'ArrowDown' || k === 'j') go(at + 1);
   else if (k === 'ArrowUp' || k === 'k') go(at < 0 ? list.length - 1 : at - 1);
   else if (k === 'Escape' && selected) select('');
   else if (k === 'n') hire('agent');
@@ -1119,6 +1346,25 @@ window.addEventListener('keydown', (e) => {
   } else return;
   e.preventDefault();
 });
+
+const MAP_MOVES: Record<string, MapDirection> = { ArrowLeft: 'left', ArrowRight: 'right', ArrowUp: 'up', ArrowDown: 'down', h: 'left', l: 'right', k: 'up', j: 'down' };
+/** The overview's keys while the 3D floor is up; false for a key it doesn't use. */
+function mapKey(map: OfficeMap, k: string, target: HTMLElement | null): boolean {
+  const dir = MAP_MOVES[k];
+  if (dir) {
+    const id = map.move(dir);
+    const w = id && store.workers.get(id);
+    if (w) say(`${w.name}, ${statusWord(w, STATUS_LABEL)}: ${doingLine(w)}. Enter opens it.`);
+  } else if (k === 'Enter' && !target?.closest('button, a')) {
+    if (!map.focusedId) return false;
+    void enter(map.focusedId);
+  } else if (k === 'Escape' && map.focusedId) map.setCursor('', false);
+  else if (k === '0' || k === 'Home') void map.home();
+  else if (k === '+' || k === '=') void map.zoom(0.75);
+  else if (k === '-' || k === '_') void map.zoom(1.3);
+  else return false;
+  return true;
+}
 
 window.addEventListener('storage', (event) => {
   if (event.key !== BROWSER_KEY) return;
