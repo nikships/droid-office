@@ -60,9 +60,9 @@ export function choices(name: string, options: ChoiceOption[], selected: string,
   });
 }
 
-/** A labeled form field: `.field` with its label (tied to the control when it's an input, select or textarea), the control and a hint. */
+/** A labeled form field: `.field` with its label (tied to the control when it's an input, select, textarea or button), the control and a hint. */
 export function field(label: string, control: HTMLElement, hint?: Child): HTMLDivElement {
-  const labelable = control instanceof HTMLInputElement || control instanceof HTMLSelectElement || control instanceof HTMLTextAreaElement;
+  const labelable = control instanceof HTMLInputElement || control instanceof HTMLSelectElement || control instanceof HTMLTextAreaElement || control instanceof HTMLButtonElement;
   if (labelable && !control.id) control.id = nextId('field');
   return h('div.field', {}, h('label', { for: labelable ? control.id : undefined }, label), control, hint ? h('p.field-hint', {}, hint) : null);
 }

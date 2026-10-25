@@ -24,6 +24,9 @@ import { factoryFetch, refreshFactory, watchFactory } from '../factory';
 import { store } from '../state';
 import { h, openModal, timeAgo, toast, type Modal } from './dom';
 import { emptyState, field, toggle } from './kit';
+import { modelPicker } from './model-picker';
+import type { PickerModel } from './model-search';
+import { droidCatalogue, factoryModels, pickerModel } from './models';
 import { confirmDialog } from './prompt';
 
 // The CI automations window, from the board on the north wall (world/factory-ci.ts): this floor's
@@ -34,7 +37,7 @@ import { confirmDialog } from './prompt';
 type Tab = 'workflows' | 'runs' | 'prs';
 
 const OUTCOME_WORD: Record<CiOutcome, string> = { pass: 'passed', fail: 'failed', running: 'running', skipped: 'skipped', unknown: 'finished' };
-/** The model aliases Factory's droid-action takes, for the model field's suggestions. */
+/** The model aliases Factory's droid-action takes: the newest model of a vendor at a tier. */
 const MODEL_ALIASES = [
   'anthropic-latest-premium',
   'anthropic-latest-balanced',
@@ -46,6 +49,15 @@ const MODEL_ALIASES = [
   'oss-latest-balanced',
   'oss-latest-fast',
 ];
+const ALIAS_VENDOR: Record<string, string> = { anthropic: 'Anthropic', openai: 'OpenAI', oss: 'Open source' };
+
+/** An alias as the picker lists it: "Anthropic: Latest premium", under the aliases chip. */
+function aliasModel(alias: string): PickerModel {
+  const [vendor, , tier] = alias.split('-');
+  const who = ALIAS_VENDOR[vendor] ?? vendor;
+  return { id: alias, name: `${who}: Latest ${tier}`, scope: 'Aliases', group: `${who} aliases`, provider: who, detail: `Factory’s alias for the newest ${tier} ${who} model` };
+}
+
 const EFFORTS = ['', 'low', 'medium', 'high'];
 /** A workflow's GitHub events as the edit's trigger ids, to fill in Change. */
 const EVENT_OF_TRIGGER: Record<string, CiEvent> = { pull_request: 'pull-request', pull_request_target: 'pull-request', issue_comment: 'comment-added', push: 'push', check_run: 'checks-completed' };
@@ -335,8 +347,16 @@ export function openCiWindow(opts: { floorRepo?: string; add?: boolean } = {}): 
     depth.value = w?.inputs.reviewDepth === 'shallow' ? 'shallow' : 'deep';
     const securityToggle = toggle({ label: 'Security review too', description: 'Factory’s security review runs alongside it', checked: w?.inputs.automaticSecurityReview === true });
     const security = securityToggle.input;
-    const modelList = h('datalist', { id: 'ci-models' }, ...MODEL_ALIASES.map((m) => h('option', { value: m })));
-    const model = h('input.input', { type: 'text', 'aria-label': 'Model', list: 'ci-models', placeholder: 'Factory’s default', value: w?.model ?? '' }) as HTMLInputElement;
+    const aliases = MODEL_ALIASES.map(aliasModel);
+    const modelChoices = (concrete: PickerModel[]): PickerModel[] => {
+      const listed = [...aliases, ...concrete];
+      return w?.model && !listed.some((m) => m.id === w.model) ? [{ id: w.model, name: w.model, scope: 'Not listed', group: 'Not listed', unavailable: true }, ...listed] : listed;
+    };
+    const model = modelPicker({ label: 'Model', models: modelChoices([]), value: w?.model ?? '', none: { label: 'Factory’s default', detail: 'The model Factory’s workflow runs when none is named' }, allowCustom: true });
+    void droidCatalogue()
+      .then(() => factoryModels())
+      .then((models) => model.setModels(modelChoices(models.map(pickerModel)), { label: 'Factory’s default', detail: 'The model Factory’s workflow runs when none is named' }))
+      .catch(() => undefined);
     const effort = h('select.select', { 'aria-label': 'Reasoning effort' }, ...EFFORTS.map((e) => h('option', { value: e }, e || 'Default'))) as HTMLSelectElement;
     effort.value = typeof w?.inputs.reasoningEffort === 'string' && EFFORTS.includes(w.inputs.reasoningEffort) ? w.inputs.reasoningEffort : '';
     const prompt = h('textarea.input', { rows: '5', 'aria-label': 'What it does', placeholder: 'What Droid does each time it runs, like “Triage new issues: label them and ask for missing details.”' }) as HTMLTextAreaElement;
@@ -355,7 +375,7 @@ export function openCiWindow(opts: { floorRepo?: string; add?: boolean } = {}): 
       ...(name.value.trim() ? { name: name.value.trim() } : {}),
       events: events.filter((e) => e.box.checked).map((e) => e.id),
       cron: cron.value.trim(),
-      ...(model.value.trim() ? { model: model.value.trim() } : {}),
+      ...(model.value() ? { model: model.value() } : {}),
       ...(effort.value ? { effort: effort.value } : {}),
       ...(template === 'code-review' ? { depth: depth.value as 'deep' | 'shallow', ...(security.checked ? { security: true } : {}) } : { prompt: prompt.value }),
     });
@@ -385,9 +405,8 @@ export function openCiWindow(opts: { floorRepo?: string; add?: boolean } = {}): 
       customOnly,
       h('div.field', {}, h('label', {}, 'Runs on'), h('div.ci-events', {}, ...events.map((e) => e.label))),
       h('div.ci-row', {}, field('Schedule (UTC)', cron), depthField),
-      h('div.ci-row', {}, field('Model', model), field('Reasoning effort', effort)),
+      h('div.ci-row', {}, field('Model', model.element), field('Reasoning effort', effort)),
       securityToggle,
-      modelList,
       h('p.note.info', {}, 'Factory writes ', file, ` in ${w?.repo ?? 'the repository'} and opens a pull request with it. Nothing runs until it merges. Manual runs (workflow_dispatch) are always on.`),
     );
     el.addEventListener('submit', (e) => {
