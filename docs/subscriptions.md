@@ -58,7 +58,7 @@ DroidProxy implements this in nikships/droidproxy; the office is its only client
 | `GET /status` | Everything but usage | `{ "api": 1, "version", "backend": { "running" }, "providers": [Provider], "factory": { "installed", "available", "stale" } }` |
 | `POST /connect` `{ "provider" }` | Starts the provider's sign-in, as its Connect button does (a browser OAuth on this Mac, or a device code) | 202 `{ "connecting": Connecting }`; 409 when one is already running; 400 for a provider whose `connect` is `app` |
 | `POST /connect/cancel` `{ "provider" }` | Stops it | 200 `{}` |
-| `POST /accounts/remove` `{ "provider", "account" }` | Forgets an account (its auth file), as the app's remove does | 200 status |
+| `POST /accounts/remove` `{ "provider", "account" }` | Forgets an account (its auth file), as the app's remove does. The office names it by id; an email that names several (Claude seats in more than one organization) is refused | 200 status; 404 unknown; 409 ambiguous |
 | `POST /providers` `{ "provider", "enabled" }` | The provider switch (hot reload) | 200 status |
 | `POST /factory-models` `{}` | Puts DroidProxy's models into `~/.factory/settings.json`, as "Add models to Droid" does, backup and all | 200 `{ "installed": 14, "backup": "<path>" \| null }` |
 | `GET /models` | Whether each of its models can run now | `{ "generated_at", "models": [{ "id", "name", "provider", "availability": Availability }] }` |
