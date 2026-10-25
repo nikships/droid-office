@@ -1,9 +1,9 @@
 import assert from 'node:assert/strict';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
-import { clonePort } from '../tools/frame-bench/launch.mjs';
+import { appCommand, clonePort, isolatedProfile } from '../tools/frame-bench/launch.mjs';
 import { displayPacing, pct, spread, storageFor } from '../tools/frame-bench/lib.mjs';
 import { latencies } from '../tools/frame-bench/latency.mjs';
 import { cpuSeconds, parseGpu, parsePs, roleOf, summarize } from '../tools/frame-bench/resource.mjs';
@@ -72,6 +72,51 @@ test('the clone must be a clone and never serve the default port', (t) => {
   assert.throws(() => clonePort(dir), /refusing port 4600/);
   writeFileSync(path.join(dir, 'start.sh'), 'exec node bin/droid-office.js --home x --port 4677 --host 127.0.0.1\n');
   assert.equal(clonePort(dir), 4677);
+});
+
+test('measurement profiles never overwrite existing data or follow a link into the owner profile', (t) => {
+  const dir = mkdtempSync(path.join(os.tmpdir(), 'bench-profile-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const owner = path.join(dir, 'owner');
+  mkdirSync(owner);
+  const alias = path.join(dir, 'alias');
+  symlinkSync(owner, alias);
+  assert.throws(() => isolatedProfile(owner, owner), /owner's userData/);
+  assert.throws(() => isolatedProfile(path.join(alias, 'nested', 'fresh'), owner), /owner's userData/);
+  const fresh = path.join(dir, 'new', 'nested', 'profile');
+  assert.equal(isolatedProfile(fresh, owner), fresh);
+  const used = path.join(dir, 'used');
+  mkdirSync(used);
+  writeFileSync(path.join(used, 'keep.txt'), 'not benchmark data');
+  assert.throws(() => isolatedProfile(used, owner), /nonempty userData/);
+});
+
+test('app selection refuses the installed app and requires exactly one source or package', (t) => {
+  assert.throws(() => appCommand({}), /exactly one/);
+  assert.throws(() => appCommand({ app: '/tmp/build', source: '/tmp/source' }), /exactly one/);
+  assert.throws(() => appCommand({ app: '/Applications/Droid Office.app' }), /installed app/);
+  const dir = realpathSync(mkdtempSync(path.join(os.tmpdir(), 'bench-app-')));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const exe = path.join(dir, 'Contents/MacOS/Droid Office');
+  mkdirSync(path.dirname(exe), { recursive: true });
+  writeFileSync(exe, '');
+  assert.deepEqual(appCommand({ app: dir }), { exe, prefix: [] });
+});
+
+test('a source launch uses that built checkout with its own Electron executable', (t) => {
+  const dir = realpathSync(mkdtempSync(path.join(os.tmpdir(), 'bench-source-')));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  writeFileSync(path.join(dir, 'package.json'), '{"name":"droid-office","main":"dist/desktop/main.js"}');
+  assert.throws(() => appCommand({ source: dir }), /npm run build/);
+  mkdirSync(path.join(dir, 'dist/desktop'), { recursive: true });
+  writeFileSync(path.join(dir, 'dist/desktop/main.js'), '');
+  const electron = path.join(dir, 'node_modules/electron');
+  mkdirSync(electron, { recursive: true });
+  const exe = path.join(electron, 'electron');
+  writeFileSync(exe, '');
+  writeFileSync(path.join(electron, 'package.json'), '{"main":"index.cjs"}');
+  writeFileSync(path.join(electron, 'index.cjs'), `module.exports = ${JSON.stringify(exe)};`);
+  assert.deepEqual(appCommand({ source: dir }), { exe, prefix: [dir] });
 });
 
 test('a configuration is laid over the owner settings, and the office ignores every remaster key but enabled and hdr', (t) => {

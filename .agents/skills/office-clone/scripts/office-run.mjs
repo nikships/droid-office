@@ -5,7 +5,7 @@
 // file, saves its screenshots and exits. Nothing outlives the run, so nothing can go stale between
 // commands the way a long-lived browser session does.
 //
-//   node .agents/skills/office-clone/scripts/office-run.mjs <clone-dir> [steps.mjs] [--out DIR] [--size 1440x900] [--timeout 120]
+//   node .agents/skills/office-clone/scripts/office-run.mjs <clone-dir> [steps.mjs] [--out DIR] [--size 1440x900] [--timeout 120] [--source BUILT_CHECKOUT]
 //
 // A steps file exports a default async function that gets the helpers below:
 //
@@ -18,26 +18,15 @@
 // Without a steps file it saves <out>/office.png: a smoke check that the clone renders.
 // Exit code 1 when the office never got ready, the page crashed or a step threw.
 
-import { existsSync, mkdirSync, readFileSync, readdirSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync } from 'node:fs';
+import { createServer } from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
-import { pathToFileURL } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
+import { nativeClonePage, runnerOptions, runnerUrl } from './office-run-options.mjs';
 
-const here = path.dirname(new URL(import.meta.url).pathname);
+const here = path.dirname(fileURLToPath(import.meta.url));
 const repo = path.resolve(here, '../../../..');
-
-function parseArgs(argv) {
-  const o = { out: undefined, size: '1440x900', timeout: 120, positional: [] };
-  for (let i = 0; i < argv.length; i++) {
-    const a = argv[i];
-    if (a === '--out') o.out = argv[++i];
-    else if (a === '--size') o.size = argv[++i];
-    else if (a === '--timeout') o.timeout = Number(argv[++i]);
-    else if (a === '-h' || a === '--help') o.help = true;
-    else o.positional.push(a);
-  }
-  return o;
-}
 
 /** The headless shell `droid-office browser install` puts in the office's browser cache. */
 function headlessShell() {
@@ -57,7 +46,7 @@ function headlessShell() {
   return undefined;
 }
 
-const opts = parseArgs(process.argv.slice(2));
+const opts = runnerOptions(process.argv.slice(2));
 const [cloneDir, stepsFile] = opts.positional;
 if (opts.help || !cloneDir) {
   console.log(
@@ -80,7 +69,7 @@ if (!port || port === 4600) {
   console.error(`office-run: refusing port ${port || '?'}: this only drives a clone, never the owner's own office`);
   process.exit(1);
 }
-const url = `http://127.0.0.1:${port}/`;
+const url = runnerUrl(port, opts.source);
 const out = path.resolve(opts.out ?? path.join(clone, 'shots'));
 mkdirSync(out, { recursive: true });
 const [width, height] = /^\d+x\d+$/.test(opts.size ?? '') ? opts.size.split('x').map(Number) : [];
@@ -104,7 +93,7 @@ if (stepsFile) {
 }
 
 const exe = headlessShell();
-if (!exe) {
+if (!exe && !opts.source) {
   console.error('office-run: no headless shell found: run `node bin/droid-office.js browser install` from the repository root');
   process.exit(1);
 }
@@ -129,15 +118,64 @@ try {
   console.warn(`office-run: can't read ${storage} (${err.message}): the office opens on the character picker`);
 }
 
-const browser = await chromium.launch({ executablePath: exe, headless: true, args: gpu });
+// Native source mode keeps the app's real window, display size and Metal presenter.
+// The default headless shell remains the lightweight GPU-backed UI test path.
+let running;
+let browser;
+let closing = false;
+let launching = true;
+let requestedExit;
+const launchAbort = new AbortController();
 const closeAndExit = async (code) => {
-  await browser.close().catch(() => undefined);
+  if (closing) return;
+  closing = true;
+  running?.quit();
+  if (browser) await browser.close().catch(() => undefined);
   process.exit(code);
 };
+const interrupt = (code) => {
+  requestedExit = code;
+  launchAbort.abort();
+  running?.quit();
+  if (!launching) void closeAndExit(code);
+};
+process.once('SIGINT', () => interrupt(130));
+process.once('SIGTERM', () => interrupt(143));
+if (opts.source) {
+  const socket = createServer();
+  await new Promise((resolve, reject) => {
+    socket.once('error', reject);
+    socket.listen(0, '127.0.0.1', resolve);
+  });
+  const debugPort = socket.address().port;
+  await new Promise((resolve) => socket.close(resolve));
+  const { launchApp } = await import(pathToFileURL(path.join(repo, 'tools/frame-bench/launch.mjs')).href);
+  running = await launchApp({ source: opts.source, clone, userData: mkdtempSync(path.join(out, 'profile-')), debugPort, log: path.join(out, 'app.log'), signal: launchAbort.signal });
+  try {
+    browser = await chromium.connectOverCDP(`http://127.0.0.1:${debugPort}`);
+  } catch (error) {
+    running.quit();
+    throw error;
+  }
+} else {
+  browser = await chromium.launch({ executablePath: exe, headless: true, args: gpu });
+}
+launching = false;
+if (requestedExit !== undefined) await closeAndExit(requestedExit);
 let context;
 let page;
+let nativeSession;
+const removeLeaveGuard = async () => {
+  if (!nativeSession) return;
+  const response = await nativeSession.send('Runtime.evaluate', {
+    expression: 'for (const { listener, useCapture } of getEventListeners(window).beforeunload ?? []) window.removeEventListener("beforeunload", listener, useCapture)',
+    includeCommandLineAPI: true,
+  });
+  if (response.exceptionDetails) throw new Error('could not remove the clone page leave guard');
+};
 try {
-  context = await browser.newContext({ viewport: { width, height }, deviceScaleFactor: 1 });
+  context = running ? browser.contexts()[0] : await browser.newContext({ viewport: { width, height }, deviceScaleFactor: 1 });
+  if (running) await context.addInitScript(() => window.addEventListener('beforeunload', (event) => event.stopImmediatePropagation(), true));
   // Once per tab, before the office's own code: a reload mid-run keeps what the run changed.
   if (settings)
     await context.addInitScript((d) => {
@@ -145,7 +183,12 @@ try {
       for (const [k, v] of Object.entries(d)) localStorage.setItem(k, v);
       sessionStorage.setItem('office-run.loaded', '1');
     }, settings);
-  page = await context.newPage();
+  page = running ? context.pages().find((p) => nativeClonePage(p.url(), port)) : await context.newPage();
+  if (!page) throw new Error('the native app has no clone page');
+  if (running) {
+    nativeSession = await context.newCDPSession(page);
+    await removeLeaveGuard();
+  }
 } catch (err) {
   console.error(`office-run: couldn't open a page: ${err.message}`);
   await closeAndExit(1);
@@ -203,6 +246,7 @@ const helpers = {
   },
   /** Reloads and waits for the office again. */
   reload: async () => {
+    await removeLeaveGuard();
     await page.reload();
     await ready();
   },

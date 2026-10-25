@@ -5,7 +5,7 @@
 // against it.
 //
 //   node tools/frame-bench/control.mjs --app "<Droid Office.app>" --clone <office clone> --display-trace <binary> [--out dir] [--seconds 12]
-import { appendFileSync, mkdirSync } from 'node:fs';
+import { appendFileSync, mkdirSync, mkdtempSync } from 'node:fs';
 import path from 'node:path';
 import { Cdp } from './cdp.mjs';
 import { launchApp } from './launch.mjs';
@@ -24,7 +24,7 @@ const out = path.resolve(arg('out', '/tmp/frame-bench'));
 const seconds = Number(arg('seconds', '12'));
 mkdirSync(out, { recursive: true });
 const debugPort = Number(arg('debug-port', '9333'));
-const running = await launchApp({ app, clone, userData: path.join(out, 'userdata-control'), debugPort });
+const running = await launchApp({ app, clone, userData: mkdtempSync(path.join(out, 'userdata-control-')), debugPort });
 const cdp = await Cdp.connect(debugPort, running.url);
 let code = 0;
 try {
