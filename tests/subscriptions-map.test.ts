@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { hireRefusal, mapAvailability, mapProviders, modelNames, providersFromUsage, usageWindows } from '../src/server/subscriptions/map.js';
+import { hireRefusal, mapAvailability, mapProviders, modelNames, modelProviders, providersFromUsage, usageWindows } from '../src/server/subscriptions/map.js';
 import { MODELS, NOW, USAGE, status } from './subscriptions-fixtures.js';
 
 test("providers come from /status, each account with its windows from DroidProxy's usage", () => {
@@ -101,6 +101,13 @@ test('/models turns into availability: exhausted until when, signed-out and disa
     {},
   );
   assert.equal(modelNames({ models: [{ id: 'custom:droidproxy:a', name: 'DroidProxy: A' }] })['custom:droidproxy:a'], 'A');
+  assert.deepEqual(Object.entries(modelProviders(MODELS)), [
+    ['custom:droidproxy:gpt-6.1-sol', 'codex'],
+    ['custom:droidproxy:claude-opus-5-5', 'claude'],
+    ['custom:droidproxy:grok-5', 'grok'],
+    ['custom:droidproxy:kimi-k3', 'kimi'],
+    ['custom:droidproxy:gpt-6-luna', 'codex'],
+  ]);
 });
 
 test('a refusal names the model and why', () => {

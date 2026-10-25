@@ -15,7 +15,7 @@ import {
   type SubscriptionsState,
 } from '../../shared/subscriptions.js';
 import { ControlError, controlClient, type RawProvider, type RawStatus, type RawUsage } from './control.js';
-import { fallbackName, hireRefusal, mapAvailability, mapProviders, modelNames, providersFromUsage, stripPrefix } from './map.js';
+import { fallbackName, hireRefusal, mapAvailability, mapProviders, modelNames, modelProviders, providersFromUsage, stripPrefix } from './map.js';
 import { APP_NAME, DROIDPROXY_BUNDLE_ID, InstallError, installProxy, latestRelease, readBundle, runCommand, type AppDirs, type Runner } from './proxy-install.js';
 
 /** The subscriptions.* messages a client sends (see protocol.ts). */
@@ -192,6 +192,7 @@ export function mountSubscriptions(opts: SubscriptionsOptions): Subscriptions {
       state.models = f ? { installed: Number(f.installed) || 0, available: Number(f.available) || 0, stale: f.stale === true } : null;
       if (models.status === 'fulfilled') {
         setAvailability(mapAvailability(models.value));
+        state.modelProviders = modelProviders(models.value);
         names = { ...names, ...modelNames(models.value) };
         served = (models.value.models ?? []).map((m) => m?.id).filter((id): id is string => typeof id === 'string');
       }

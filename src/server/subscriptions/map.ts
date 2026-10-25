@@ -7,6 +7,7 @@ import {
   type SubscriptionAccount,
   type SubscriptionConnectKind,
   type SubscriptionProvider,
+  type SubscriptionProviderKey,
   type UsageWindow,
 } from '../../shared/subscriptions.js';
 import type { RawConnecting, RawModels, RawStatus, RawUsage } from './control.js';
@@ -117,6 +118,13 @@ export function mapAvailability(models: RawModels): Record<string, ModelAvailabi
         break;
     }
   }
+  return out;
+}
+
+/** The provider that serves each of DroidProxy's models, in DroidProxy's order. */
+export function modelProviders(models: RawModels): Record<string, SubscriptionProviderKey> {
+  const out: Record<string, SubscriptionProviderKey> = {};
+  for (const m of models.models ?? []) if (m && typeof m.id === 'string' && isSubscriptionProvider(m.provider)) out[m.id] = m.provider;
   return out;
 }
 
