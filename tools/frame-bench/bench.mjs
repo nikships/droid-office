@@ -9,7 +9,7 @@
 //   node tools/frame-bench/bench.mjs --table /tmp/bench/results.jsonl     # the results as Markdown tables
 //
 // Results are appended to <out>/results.jsonl, one line per scenario run. See tools/frame-bench/README.md.
-import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { appendFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { startResourceSampler } from './resource.mjs';
 import { Cdp } from './cdp.mjs';
@@ -72,7 +72,7 @@ const shuffle = (items, rng) => {
 };
 const record = (row) => appendFileSync(results, `${JSON.stringify(row)}\n`);
 
-const running = await launchApp({ app, clone, userData: path.join(out, 'userdata'), debugPort: Number(arg('debug-port', '9333')) });
+const running = await launchApp({ app, clone, userData: mkdtempSync(path.join(out, 'userdata-')), debugPort: Number(arg('debug-port', '9333')) });
 const cdp = await Cdp.connect(Number(arg('debug-port', '9333')), running.url);
 let code = 0;
 try {

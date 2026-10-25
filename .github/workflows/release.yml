@@ -40,6 +40,10 @@ on:
       - 'tools/android-terminal.mjs'
       - 'tools/android-overview.mjs'
       - 'tools/props/**'
+      - 'tools/frame-bench/**'
+      - '.agents/skills/office-clone/**'
+      - '.agents/skills/office-3d-testing/**'
+      - '.agents/skills/office-thermals/**'
   pull_request:
     paths:
       - 'src/**'
@@ -68,6 +72,10 @@ on:
       - 'tools/android-terminal.mjs'
       - 'tools/android-overview.mjs'
       - 'tools/props/**'
+      - 'tools/frame-bench/**'
+      - '.agents/skills/office-clone/**'
+      - '.agents/skills/office-3d-testing/**'
+      - '.agents/skills/office-thermals/**'
   workflow_dispatch:
 
 permissions:

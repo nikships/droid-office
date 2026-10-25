@@ -12,7 +12,7 @@
 //
 //   node tools/frame-bench/latency.mjs --app "<Droid Office.app>" --clone <office clone> --out <dir> \
 //     --display-trace <binary> [--config remastered-sdr] [--caps 120,60,40] [--trials 80] [--label name]
-import { appendFileSync, mkdirSync } from 'node:fs';
+import { appendFileSync, mkdirSync, mkdtempSync } from 'node:fs';
 import path from 'node:path';
 import { Cdp } from './cdp.mjs';
 import { launchApp } from './launch.mjs';
@@ -70,7 +70,7 @@ if (import.meta.url === `file://${process.argv[1]}`) {
   const trials = Number(arg('trials', '80'));
   const label = arg('label', 'latency');
   const debugPort = Number(arg('debug-port', '9333'));
-  const running = await launchApp({ app, clone, userData: path.join(out, 'userdata-latency'), debugPort });
+  const running = await launchApp({ app, clone, userData: mkdtempSync(path.join(out, 'userdata-latency-')), debugPort });
   const cdp = await Cdp.connect(debugPort, running.url);
   let code = 0;
   try {

@@ -27,6 +27,9 @@ test('CI checks only the affected platforms and builds every client change into 
   assert.deepEqual(checksFor(['tools/android-terminal.mjs']), { ...none, node: true });
   assert.deepEqual(checksFor(['tools/props/generate.py']), { ...none, node: true });
   assert.deepEqual(checksFor(['tools/props/verify.mjs']), { ...none, node: true });
+  for (const file of ['tools/frame-bench/thermal.mjs', '.agents/skills/office-clone/scripts/office-run.mjs', '.agents/skills/office-3d-testing/SKILL.md', '.agents/skills/office-thermals/SKILL.md']) {
+    assert.deepEqual(checksFor([file]), { ...none, node: true }, file);
+  }
   assert.deepEqual(checksFor(['docs/whiteboard.md', 'android/README.md', 'android/docs/home.jpg', 'src/client/AGENTS.md']), none);
 });
 
@@ -140,7 +143,7 @@ test('each job is path-gated and the filter script and its tests trigger the wor
   ]) {
     assert.ok(workflow.includes(`  ${job}:\n    needs: changes\n    if: needs.changes.outputs.${output} == 'true'`), job);
   }
-  for (const filter of ['.github/scripts/release-*.mjs', 'tools/android-terminal.mjs', 'tests/**']) {
+  for (const filter of ['.github/scripts/release-*.mjs', 'tools/android-terminal.mjs', 'tests/**', 'tools/frame-bench/**', '.agents/skills/office-clone/**', '.agents/skills/office-3d-testing/**', '.agents/skills/office-thermals/**']) {
     assert.equal(workflow.split(`      - '${filter}'`).length - 1, 2, filter);
   }
   assert.match(workflow, /gh release download "\$latest" --dir assets[\s\S]*?--pattern 'latest-mac\.yml'/);

@@ -49,6 +49,8 @@ node .agents/skills/office-clone/scripts/office-run.mjs $T steps.mjs --out /tmp/
 
 It launches Playwright's headless shell (the one `node bin/droid-office.js browser install` puts in the office's browser cache) with GPU WebGL (Metal through ANGLE on macOS; SwiftShader on Linux). It writes the owner's `localStorage` from `$T/local-storage.json` before the first load, so the owner's profile, settings and floor are there with no character picker and no reload. It waits until `window.office` is in, the loading screen is gone and the warm-up line (shaders, the light bake) is done. Then it runs your steps, saves the screenshots, prints what the page logged as errors, and closes the browser. It reads the clone's port from `start.sh` and refuses :4600.
 
+For a native Electron check, including actual 120 FPS, pass `--source /absolute/path/to/built-checkout`. The runner launches that checkout's Electron app on a fresh profile inside the output folder, attaches to its actual clone page, uses the same steps/helpers, removes only that page's leave guard for controlled reloads, and kills only the app it launched when done. The clone server must already serve that checkout's build. Native output uses the real display size, not `--size`; default headless mode remains unchanged. Do not treat a requested cap as proof of drawn/presented FPS. For before/after sensor measurements use [office-thermals](../office-thermals/SKILL.md).
+
 A steps file is one async function. The helpers wrap `window.office` ([`office-3d-testing`](../office-3d-testing/SKILL.md) has the commands) and Playwright's `page`:
 
 ```js

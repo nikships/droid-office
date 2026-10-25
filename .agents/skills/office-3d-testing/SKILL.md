@@ -31,6 +31,8 @@ Drive the clone with [`office-clone`](../office-clone/SKILL.md)'s runner. Each r
 node .agents/skills/office-clone/scripts/office-run.mjs $T steps.mjs --out /tmp/shots
 ```
 
+Add `--source /absolute/path/to/built-checkout` to run the native Electron app on a fresh isolated profile instead of the headless shell. Use this for native-presenter and 120 FPS checks, and verify actual drawn/presented rates. The steps still use `window.office`; the runner owns and closes the app. See [office-thermals](../office-thermals/SKILL.md) for before/after thermal tests.
+
 Don't hold an `agent-browser` session open for checks. When its daemon dies, the next command quietly starts a headless Chrome for Testing, which closes the page (`about:blank`) about 30 seconds in. That, not WebGL, is why such sessions kept dropping.
 
 ## 3. Drive it

@@ -44,6 +44,30 @@ tools/frame-bench/matrix.sh "release/mac-arm64/Droid Office.app" /tmp/office-clo
 
 Runs everything unattended (about 40 minutes of display time; `quick` is about 8): 120 FPS with 3 rounds, input latency, 60 and 40 FPS, and the light bake load. Run it on each build and compare the tables. Each row also has `--resources`: the app's CPU (cumulative CPU time over the scenario, as a share of one core, by process role), memory, and the system's GPU utilization from IOKit (no per-process GPU without sudo), so a quiet machine matters. A build with the native presenter adds its own report to the same rows. Every step has a time limit and `DEADLINE_MIN` stops new steps, so a stuck step does not stall the rest. Every launch starts from an empty profile, so each configuration runs on its own to make its light bake once.
 
+## Before/after temperatures: `thermal.mjs`
+
+Build both revisions in separate worktrees first, including their native presenter. Make a real-office clone but **do not start its server**: this command owns the server, browser/app and sensor process for each trial. Supply an existing macmon executable from a verified release (tested with 0.10.0); the harness does not download or globally install it.
+
+```bash
+node tools/frame-bench/thermal.mjs --clone /tmp/office-clone-XXXX \
+  --before /absolute/path/to/baseline --after /absolute/path/to/candidate \
+  --macmon /absolute/path/to/macmon --out /tmp/thermal-120 --fps 120
+node tools/frame-bench/thermal.mjs --compare /tmp/thermal-120
+node tools/frame-bench/thermal-report.mjs /tmp/thermal-120
+```
+
+Default protocol: native Electron, Remastered SDR, Desk 1, clear weather, ABBA order (before, after, after, before). Each trial pauses rendering until a fresh 30-sample CPU/GPU window is below 34/33°C and its two halves differ by less than 0.3°C, with at least 90 seconds of cooling and a 900-second limit. It then warms the full-rate workload for 180 seconds and measures 120 seconds. `--help` lists overrides. These cool-start limits are presets, not universal operating temperatures: if unsuitable for the machine/room, select one protocol for both builds and start a new whole series.
+
+Native trials run each checkout on Electron with a fresh isolated profile, through the clone's `office-run.mjs --source BUILD` mode. They validate **actual drawn FPS**, frame-count/window coverage and **native presented FPS**, not just the saved cap. Native output is the app's real display size; `--size` only affects headless mode. `--backend headless --fps 60` retains the headless protocol. Headless 120 FPS is rejected. Merely removing Chromium's limiter measured only about 45 FPS on the M5 Pro and is not a substitute for native 120 FPS.
+
+Frame pacing is read/reset in ten-second chunks, because the app keeps only 7,200 frame samples (about one minute at 120 FPS). The harness validates every chunk and the full summed window. Chunk quantiles stay separate; it does not pretend their averages are whole-window percentiles.
+
+Each trial has its build ID, `protocol.json`, `sensors.jsonl`, `result.json`, and server/app logs. A failed trial keeps its logs but gets no result; existing trial folders are never overwritten. `--compare` checks all four valid results and writes `summary.json`, giving equal weight to independent trial means. `thermal-report.mjs` adds a standalone `report.html` and `temperature-traces.svg`, suitable for the Whiteboard. Keep these machine-specific files, profiles and downloaded binaries outside git.
+
+Do not run builds, test suites, another benchmark or a screen recorder during measurements. Leave the owner's background processes alone. Record room conditions if possible. Inspect start temperatures, repeat variation, temperature drift, fans, FPS and native-presenter counters. One-second samples are correlated, not hundreds of independent trials; five-minute runs are not automatically thermal equilibrium. CPU/GPU readings are sensor averages, not the hottest core, chassis or ambient. Missing fan/power readings mean unknown, not zero. GPU counters are system-wide estimates, not app-specific or wall power; this is not a battery-life or panel scan-out test.
+
+The command stops its server/app/sensor and only new clone PTY hosts. Check cleanup after a crash or cancellation. The agent playbook is [office-thermals](../../.agents/skills/office-thermals/SKILL.md).
+
 ## Latency: `latency.mjs`
 
 Each trial sends a mouse move through DevTools at a recorded `process.hrtime`; `display-trace` reports when the display's picture first changed after it (ScreenCaptureKit's `displayTime`). Latency is the difference. It includes DevTools delivery, input routing, the office's handler, the next frame, Chromium's compositing and the window server's composition. It excludes the operating system's dispatch of a real mouse event, the mouse sensor, and the panel's scan-out and pixel response (a high-speed camera measures those).
@@ -66,3 +90,4 @@ node tools/frame-bench/native-control.mjs --native-control /tmp/native-control -
 - `display-trace` writes every time in `CLOCK_MONOTONIC_RAW` nanoseconds (what `process.hrtime` reports on macOS; `CLOCK_MONOTONIC` is slewed and sits seconds behind it); ScreenCaptureKit's own clock is `mach_absolute_time`, which stops while the Mac sleeps.
 - The page's `performance.now()` is aligned to `hrtime` before and after each run from the shortest DevTools round trip; the drift is stored in the row.
 - The harness ends the app with SIGKILL by PID, never SIGTERM or `pkill` by name: on unload the packaged app asks "Leave the office?", and a terminated app stays frozen behind that dialog on the screen. `kill-own.sh list|kill [dir]` lists or force-kills the Droid Office processes whose executable is under `dir` (default `/tmp/droid-office-measure`), and `matrix.sh` runs it after every step.
+- Every app launch uses a new profile folder. The launcher refuses nonempty profiles rather than recursively deleting them, follows symlinks when protecting the owner's profile/installed app, and closes its own app on startup failure or cancellation.

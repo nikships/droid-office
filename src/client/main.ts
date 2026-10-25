@@ -748,12 +748,12 @@ const lastWandShip = new Map<string, number>();
 /** Lumos: the wand's emitter lit, throwing light round you until you put it out (1 again) or away. */
 let lumos = false;
 /**
- * The light Lumos (and a spell leaving the tip) throws on the room, following the tip. It stays visible at
- * intensity 0 while it's dark: hiding it would change how many point lights the office's shaders were
- * compiled for, and every lit material would compile again the moment the wand glows.
+ * The light Lumos (and a spell leaving the tip) throws on the room, following the tip. Warm-up
+ * covers zero through four point lights, so a dark wand can skip point-light shading entirely
+ * without compiling a shader when it lights up.
  */
 const wandLight = new THREE.PointLight('#ffc49a', 0, 7, 1.6);
-wandLight.visible = true;
+wandLight.visible = false;
 scene.add(wandLight);
 /** The tip's trail of light through the air. */
 const tipTrail = new TipTrail();
@@ -3852,8 +3852,9 @@ function drawFrame(dt: number, t: number, frame: { at: number; paced: boolean })
   tipTrail.emit(tipWorld, tipNow && wandPose ? wandPose.trail : 0);
   tipTrail.update(dt);
   const wandGlow = 2.4 * hands.lumos + 1.6 * (wandPose?.glow ?? 0);
-  // Visible either way (see where the light is made). Dark when the wand is away or the glow is too dim to read.
+  // Keep the same glow cutoff; only an exactly dark light leaves the shader's point-light count.
   wandLight.intensity = tipNow && wandGlow > 0.02 ? wandGlow : 0;
+  wandLight.visible = wandLight.intensity > 0;
   if (tipNow) {
     // A touch ahead of the tip, so it lights what's in front of you rather than the shaft's own shadow side.
     hands.wandDir(tipDir);
@@ -3962,9 +3963,10 @@ function drawFrame(dt: number, t: number, frame: { at: number; paced: boolean })
     }),
   );
   pointToWaiting(now);
-  // Hands go on top of everything, so they never clip into a desk you walk up to. They have
-  // lights of their own, turned down to match wherever you're standing.
-  renderer.clearDepth();
+  // Classic leaves scene depth on the canvas. Remastered's last full-screen pass already clears
+  // that depth without writing it, so another clear only interrupts the GPU's pass before the hands.
+  // The hands have lights of their own, turned down to match wherever you're standing.
+  if (!remaster.active) renderer.clearDepth();
   hands.setLight(sky.lightAt(camera.position));
   sky.shading(false);
   // The outline effect draws without clearing, but with outlines turned off it is a plain render, which would.

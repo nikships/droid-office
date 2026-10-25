@@ -87,6 +87,7 @@ vec3 heat( float l ) {
 void main() {
   vec3 c = texture2D( tColor, vUv ).rgb;
   c *= exposure * balance;
+  #if RM_IDENTITY_GRADE == 0
   // Contrast around middle grey, in log space, so highlights are treated the same in SDR and HDR.
   if ( contrast != 1.0 ) c = 0.18 * pow( max( c, 0.0 ) / 0.18, vec3( contrast ) );
   if ( saturation != 1.0 || vibrance != 0.0 ) {
@@ -96,12 +97,21 @@ void main() {
     float chroma = hi > 0.0 ? ( hi - lo ) / hi : 0.0;
     c = max( mix( vec3( luma ), c, saturation * ( 1.0 + vibrance * ( 1.0 - chroma ) ) ), 0.0 );
   }
+  #endif
   // Up to the display's peak: 1 in SDR, the HDR peak on an EDR display.
-  c = peak * curve( c / peak );
+  #if RM_TONE_MAP == 5
+    // Linear mapping needs only a clamp. SDR white and the locked HDR peak are powers of two,
+    // so this preserves the original divide/clamp/multiply result without its extra work.
+    c = clamp( c, 0.0, peak );
+  #else
+    c = peak * curve( c / peak );
+  #endif
+  #if RM_IDENTITY_GRADE == 0
   if ( view == 1 ) {
     gl_FragColor = vec4( srgb( heat( dot( c, vec3( 0.2126, 0.7152, 0.0722 ) ) ) ), 1.0 );
     return;
   }
+  #endif
   c = srgb( c );
   // Half a step of 8-bit noise, so the dark night sky doesn't band on an 8-bit canvas. Not grain: too faint to see.
   if ( dither > 0.0 && max( c.r, max( c.g, c.b ) ) > 0.0 ) c += ( hash( gl_FragCoord.xy ) - 0.5 ) / 255.0;
@@ -139,6 +149,12 @@ void main() {
 
 const TONE_INDEX: Record<ToneMap, number> = { neutral: 0, agx: 1, aces: 2, reinhard: 3, cineon: 4, linear: 5 };
 const VIEW_INDEX: Record<RenderParams['debug'], number> = { final: 0, gi: 0, hdr: 1 };
+
+/** Remove the locked picture's unused grading/debug code, without specializing exposure or HDR state. */
+function gradeDefines(s: RenderParams): Record<string, number> {
+  return { RM_TONE_MAP: TONE_INDEX[s.toneMap], RM_IDENTITY_GRADE: s.contrast === 1 && s.saturation === 1 && s.vibrance === 0 && s.debug !== 'hdr' ? 1 : 0 };
+}
+
 /** three.js's own tone mapping for what draws straight to the screen after the pipeline (your hands). */
 const THREE_TONE: Record<ToneMap, THREE.ToneMapping> = {
   neutral: THREE.NeutralToneMapping,
@@ -432,7 +448,7 @@ export class Remaster {
     bakes: BakeStore | null,
   ) {
     this.settings = settings;
-    this.grade.defines.RM_TONE_MAP = TONE_INDEX[settings.toneMap];
+    Object.assign(this.grade.defines, gradeDefines(settings));
     this.hdr = new HdrPresenter(renderer.getContext() as WebGL2RenderingContext, renderer.domElement, onHdr);
     this.gi = new ProbeGI(scene, bakes);
   }
@@ -479,9 +495,9 @@ export class Remaster {
   /** Applies settings: the shader dials, the toon ramp, GI, HDR. Cheap to call again with the same ones. */
   configure(s: RenderParams) {
     this.settings = s;
-    const toneMap = TONE_INDEX[s.toneMap];
-    if (this.grade.defines.RM_TONE_MAP !== toneMap) {
-      this.grade.defines.RM_TONE_MAP = toneMap;
+    const defines = gradeDefines(s);
+    if (Object.entries(defines).some(([key, value]) => this.grade.defines[key] !== value)) {
+      Object.assign(this.grade.defines, defines);
       this.grade.needsUpdate = true;
     }
     const on = s.enabled;
@@ -523,8 +539,8 @@ export class Remaster {
     if (this.sceneRT && this.sceneRT.width === w && this.sceneRT.height === h) return;
     this.disposeTargets();
     const hdr = { type: THREE.HalfFloatType, minFilter: THREE.LinearFilter, magFilter: THREE.LinearFilter } as const;
-    // Depth is only used while drawing this target. The grade reads color alone and the hands
-    // clear their own depth, so resolving or preserving the multisample depth wastes bandwidth.
+    // Depth is only used while drawing this target. The full-screen passes read color alone; the
+    // last one clears canvas depth for the hands, so resolving or preserving this depth wastes bandwidth.
     this.sceneRT = new THREE.WebGLRenderTarget(w, h, { ...hdr, depthBuffer: true, samples: this.msaaSamples(), resolveDepthBuffer: false, storeMultisampledDepthBuffer: false });
     this.graded = new THREE.WebGLRenderTarget(w, h, { ...hdr, depthBuffer: false });
   }
