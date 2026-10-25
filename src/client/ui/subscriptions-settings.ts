@@ -27,7 +27,7 @@ export function usageBars(a: SubscriptionAccount, now = Date.now()): HTMLElement
     ...a.windows.map((w) => {
       const bar = h('span.subs-usage-bar', { class: usageTone(w), 'aria-hidden': 'true' }, h('span'));
       bar.style.setProperty('--left', `${percentLeft(w)}%`);
-      return h('li', {}, h('span.subs-usage-name', {}, w.name), bar, h('span.subs-usage-words', {}, usageWords(w, now)));
+      return h('li', {}, h('span.subs-usage-name', {}, w.name), h('span.subs-usage-words', {}, usageWords(w, now)), bar);
     }),
   );
 }

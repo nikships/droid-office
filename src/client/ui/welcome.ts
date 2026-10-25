@@ -97,7 +97,7 @@ export function openWelcome(net: Net, first?: WelcomeStepId) {
     const el = h(
       'section.welcome-pane',
       { 'aria-labelledby': `welcome-${id}-title` },
-      h('div.welcome-head', {}, h('span.welcome-icon', { 'aria-hidden': 'true' }, STEP_ICON[id]), h('div.eyebrow', {}, no, 'Step')),
+      h('div.welcome-head', {}, h('span.welcome-icon', { 'aria-hidden': 'true' }, STEP_ICON[id]), h('div.eyebrow', {}, 'Step', no)),
       h('h3.welcome-title', { id: `welcome-${id}-title` }, stepTitle(id)),
       h('p.welcome-lede', {}, LEDE[id]),
       ...fixed,
@@ -178,7 +178,7 @@ export function openWelcome(net: Net, first?: WelcomeStepId) {
     );
     steps.forEach((id, i) => {
       const p = panes.get(id);
-      if (p) p.no.textContent = `${String(i + 1).padStart(2, '0')} / ${String(steps.length).padStart(2, '0')}`;
+      if (p) p.no.textContent = `${i + 1} of ${steps.length}`;
     });
   };
 
@@ -272,7 +272,7 @@ export function openWelcome(net: Net, first?: WelcomeStepId) {
                 h(
                   'div.row',
                   {},
-                  h('span.list-main', {}, h('span.list-title', {}, providerName(p.key)), h('span.list-meta', {}, p.accounts.length ? p.accounts.map((a) => a.label).join(', ') : 'Not connected')),
+                  h('span.list-main', {}, h('span.list-title', {}, providerName(p.key)), h('span.list-meta', {}, p.accounts.length ? `${p.accounts.length} account${p.accounts.length === 1 ? '' : 's'}` : 'Not connected')),
                   p.connecting && !p.connecting.error ? null : h('button.btn.sm', { type: 'button', onclick: () => pressConnect(p) }, connectLabel(p)),
                 ),
                 p.accounts.length ? h('ul.subs-accounts', {}, ...p.accounts.map((a) => accountRow(a))) : null,
@@ -349,7 +349,6 @@ export function openWelcome(net: Net, first?: WelcomeStepId) {
     const busy = a.kind === 'busy';
     const btn = h('button.btn.accent', { type: 'button', disabled: busy || a.kind === 'blocked', title: a.kind === 'blocked' ? a.why : undefined, onclick: () => run(a) }, busy ? h('span.spinner', { 'aria-hidden': 'true' }) : null, a.label);
     primarySlot.replaceChildren(btn);
-    if (document.activeElement === document.body || !el.contains(document.activeElement)) btn.focus({ preventScroll: true });
   };
 
   const paint = () => {
