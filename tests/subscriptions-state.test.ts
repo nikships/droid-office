@@ -330,11 +330,16 @@ test('connect starts DroidProxy first, polls fast while signing in, and puts the
   assert.equal(r.pending()[0], 60_000);
 });
 
-test("Droid's DroidProxy models that are stale are put back by themselves, but not over and over", async (t) => {
+test('stale DroidProxy models in Droid wait for Update models, and missing ones are put back, but not over and over', async (t) => {
   const r = await rig(t, { world: { status: status({ factory: { installed: 12, available: 14, stale: true } }) } });
   await r.advance(0);
+  await r.advance(60_000);
+  assert.equal(r.modelsChanged, 0, 'the owner may have taken some out on purpose');
+  assert.deepEqual(r.subs.state().models, { installed: 12, available: 14, stale: true });
+  r.world.status = status({ factory: { installed: 0, available: 14, stale: true } });
+  await r.advance(60_000);
   await r.until(() => r.modelsChanged === 1, 'the models in Droid');
-  r.world.status = status({ factory: { installed: 12, available: 14, stale: true } });
+  r.world.status = status({ factory: { installed: 0, available: 14, stale: true } });
   await r.advance(60_000);
   assert.equal(r.modelsChanged, 1);
 });

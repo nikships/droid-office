@@ -76,7 +76,7 @@ const RELEASE_EVERY_MS = 6 * 60 * 60_000;
 export const STALE_MS = 5 * 60_000;
 /** How long DroidProxy gets to answer after the office opens it. */
 const START_WAIT_MS = 30_000;
-/** The office puts DroidProxy's models into Droid by itself at most this often, when /status says they're stale. */
+/** The office puts DroidProxy's models into Droid by itself at most this often, while Droid has none of them. */
 const AUTO_MODELS_EVERY_MS = 10 * 60_000;
 
 const message = (err: unknown) => (err instanceof ControlError || err instanceof InstallError ? err.message : String((err as Error)?.message ?? err));
@@ -284,14 +284,16 @@ export function mountSubscriptions(opts: SubscriptionsOptions): Subscriptions {
 
   const usableRaw = (p: RawProvider | undefined) => !!p?.accounts?.some((a) => !a.expired && !a.disabled);
 
-  /** After a provider's first account connects, and whenever Droid's DroidProxy models are stale or missing. */
+  /**
+   * After a provider's first account connects, and while Droid has none of DroidProxy's models. Models
+   * that are only stale wait for Update models: the owner may have taken some out on purpose.
+   */
   function maybeApplyModels(prev: RawStatus | undefined, status: RawStatus) {
     if (applying) return;
     const first = !!prev && (status.providers ?? []).some((p) => usableRaw(p) && !usableRaw(prev.providers?.find((q) => q.key === p.key)));
     const f = status.factory;
     const missing = !!f && (Number(f.installed) || 0) === 0 && (Number(f.available) || 0) > 0;
-    const stale = f?.stale === true || missing;
-    if (first || (stale && now() - autoAppliedAt > AUTO_MODELS_EVERY_MS)) void applyModels(false);
+    if (first || (missing && now() - autoAppliedAt > AUTO_MODELS_EVERY_MS)) void applyModels(false);
   }
 
   const applyModels = (asked: boolean): Promise<void> => {
