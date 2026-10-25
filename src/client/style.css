@@ -2530,3 +2530,92 @@ html:has(body.dashboard), body.dashboard { overflow: auto; }
 .phone-web-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
 .phone-web-text b { font-weight: 500; }
 .phone-web-text small { font-size: var(--text-small); color: var(--text-secondary); }
+
+/* ---------- The welcome (ui/welcome.ts) and Settings → Subscriptions and Workers → Droid (ui/subscriptions-settings.ts, ui/droid-settings.ts) ---------- */
+.modal.welcome { height: min(580px, calc(100vh - 32px)); }
+.welcome-body { --split-side: 232px; }
+.welcome-steps { padding: var(--space-3) var(--space-2); }
+.welcome-step { gap: var(--space-3); min-height: 52px; }
+.welcome-step .list-meta { white-space: normal; overflow-wrap: anywhere; }
+.welcome-mark { flex: none; display: grid; place-items: center; width: 24px; height: 24px; border: 1px solid var(--border-strong); border-radius: 50%; font: 500 var(--text-label)/1 var(--font-mono); color: var(--text-secondary); font-variant-numeric: tabular-nums; transition: background var(--duration) var(--ease), border-color var(--duration) var(--ease), color var(--duration) var(--ease); }
+.welcome-step.on .welcome-mark { border-color: var(--accent); color: var(--text); }
+.welcome-step.done .welcome-mark { border-color: rgba(60, 207, 145, .45); background: var(--success-muted); color: var(--success); }
+.welcome-panes { padding: var(--space-7) var(--space-7) var(--space-6); }
+.welcome-pane { display: flex; flex-direction: column; gap: var(--space-3); max-width: 540px; animation: fade .2s var(--ease); }
+.welcome-head { display: flex; align-items: center; gap: var(--space-3); }
+.welcome-icon { font-size: 26px; line-height: 1; }
+.welcome-title { margin: 0; font: 500 22px/1.25 var(--font-sans); letter-spacing: -.01em; color: var(--text); }
+.welcome-lede { margin: 0; max-width: 46ch; font: 400 var(--text-body)/1.55 var(--font-sans); color: var(--text-secondary); }
+.welcome-content { display: flex; flex-direction: column; gap: var(--space-3); margin-top: var(--space-2); min-width: 0; }
+.welcome-content:empty { display: none; }
+.welcome-signin:empty { display: none; }
+.welcome-wait { display: flex; align-items: center; gap: var(--space-2); margin: 0; font: 400 var(--text-small)/var(--leading-small) var(--font-sans); color: var(--text-secondary); }
+.welcome-done { display: flex; align-items: baseline; gap: var(--space-2); margin: 0; font: 400 var(--text-body)/var(--leading-body) var(--font-sans); color: var(--text); overflow-wrap: anywhere; }
+.welcome-check { flex: none; color: var(--success); font-weight: 500; }
+.welcome-next { display: flex; align-items: center; flex-wrap: wrap; gap: var(--space-1); margin: 0; font: 400 var(--text-body)/var(--leading-body) var(--font-sans); color: var(--text-secondary); }
+.welcome-next .key { margin: 0 2px; }
+.welcome-picker { margin-top: var(--space-3); }
+.welcome-primary { display: inline-flex; }
+.welcome-cmd .input { font-family: var(--font-mono); font-size: var(--text-small); }
+
+/* A progress bar: --p filled, or a moving stripe while nobody knows how far. */
+.welcome-bar { position: relative; height: 4px; overflow: hidden; border-radius: 999px; background: rgba(255, 255, 255, .08); }
+.welcome-bar > span { position: absolute; inset: 0 auto 0 0; width: var(--p, 0%); border-radius: inherit; background: var(--accent); transition: width .3s var(--ease); }
+.welcome-bar.indeterminate > span { width: 30%; animation: welcome-bar 1.4s var(--ease) infinite; }
+@keyframes welcome-bar { from { left: -30%; } to { left: 100%; } }
+@media (prefers-reduced-motion: reduce) { .welcome-bar.indeterminate > span { animation: none; width: 100%; opacity: .4; } .welcome-pane { animation: none; } }
+
+/* A sign-in code, large enough to read across the room. */
+.device-code { display: flex; flex-direction: column; align-items: flex-start; gap: var(--space-3); padding: var(--space-5); border: 1px solid var(--border-strong); border-radius: var(--radius-lg); background: var(--surface-raised); min-width: 0; }
+.device-code-value { display: block; font: 500 30px/1.1 var(--font-mono); letter-spacing: .14em; color: var(--text); user-select: all; overflow-wrap: anywhere; }
+.device-code > .eyebrow { margin-bottom: calc(-1 * var(--space-2)); }
+.device-code > .row { flex-wrap: wrap; }
+
+/* Subscriptions: Claude and ChatGPT as two big choices, the rest under More. */
+.welcome-providers { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--space-3); }
+.welcome-provider { display: flex; flex-direction: column; align-items: flex-start; gap: var(--space-1); min-width: 0; min-height: 116px; margin: 0; padding: var(--space-4); border: 1px solid var(--border-strong); border-radius: var(--radius-lg); background: var(--surface-raised); color: var(--text); font: 400 var(--text-body)/var(--leading-body) var(--font-sans); text-align: left; text-transform: none; letter-spacing: 0; }
+:where(button).welcome-provider { cursor: pointer; transition: border-color var(--duration) var(--ease), background var(--duration) var(--ease); }
+:where(button).welcome-provider:hover { border-color: var(--accent); background: var(--accent-muted); }
+.welcome-provider > b { display: flex; align-items: baseline; gap: var(--space-2); font: 500 16px/1.3 var(--font-sans); }
+.welcome-provider > small { font: 400 var(--text-small)/var(--leading-small) var(--font-sans); color: var(--text-secondary); }
+.welcome-provider-go { margin-top: auto; padding-top: var(--space-3); font: 500 var(--text-label)/1.4 var(--font-mono); text-transform: uppercase; letter-spacing: .08em; color: var(--accent); }
+.welcome-provider.live { gap: var(--space-2); }
+.welcome-provider.connected { border-color: rgba(60, 207, 145, .4); }
+.welcome-provider > .subs-accounts, .welcome-provider > .device-code, .welcome-provider > .subs-connecting { align-self: stretch; }
+.welcome-provider .device-code { padding: var(--space-3); }
+.welcome-provider .device-code-value { font-size: 22px; }
+.welcome-more summary { cursor: pointer; padding: var(--space-1) 0; font: 400 var(--text-small)/var(--leading-small) var(--font-sans); color: var(--text-secondary); }
+.welcome-more summary:hover { color: var(--text); }
+.welcome-more[open] summary { margin-bottom: var(--space-2); }
+.welcome-other { display: flex; flex-direction: column; gap: var(--space-2); padding: var(--space-3); }
+@media (max-width: 720px) {
+  .welcome-panes { padding: var(--space-5); }
+  .welcome-providers { grid-template-columns: minmax(0, 1fr); }
+}
+
+/* Accounts and their usage, in the welcome and in Settings → Subscriptions. */
+.subs-meta { color: var(--text-tertiary); overflow-wrap: anywhere; }
+.subs-providers { display: flex; flex-direction: column; gap: var(--space-2); }
+.subs-provider { display: flex; flex-direction: column; gap: var(--space-3); padding: var(--space-3) var(--space-4); border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface); }
+.subs-provider-head { display: flex; align-items: center; gap: var(--space-3); min-width: 0; }
+.subs-accounts { display: flex; flex-direction: column; gap: var(--space-3); margin: 0; padding: 0; list-style: none; min-width: 0; }
+.subs-account { display: flex; flex-direction: column; gap: var(--space-2); min-width: 0; }
+.subs-account-head { display: flex; align-items: center; gap: var(--space-2); min-width: 0; min-height: var(--control-h-sm); }
+.subs-account-label { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: 500 var(--text-small)/var(--leading-small) var(--font-sans); color: var(--text); }
+/* Each window is a name, its words and its bar; dense placement keeps them on one line per window, the bars lined up. */
+.subs-usage { display: grid; grid-template-columns: minmax(64px, auto) minmax(60px, 1fr) auto; grid-auto-flow: row dense; align-items: center; gap: var(--space-1) var(--space-3); margin: 0; padding: 0; list-style: none; font: 400 var(--text-small)/var(--leading-small) var(--font-sans); color: var(--text-secondary); }
+.subs-usage > li { display: contents; }
+.subs-usage-name { grid-column: 1; white-space: nowrap; }
+.subs-usage-bar { grid-column: 2; }
+.subs-usage-words { grid-column: 3; white-space: nowrap; font-variant-numeric: tabular-nums; text-align: right; }
+/* In a narrow card the bar goes under its name and words. */
+.welcome-provider .subs-usage { grid-template-columns: minmax(0, 1fr) auto; row-gap: 2px; }
+.welcome-provider .subs-usage-words { grid-column: 2; }
+.welcome-provider .subs-usage-bar { grid-column: 1 / -1; margin-bottom: var(--space-1); }
+.subs-usage-bar { position: relative; height: 4px; overflow: hidden; border-radius: 999px; background: rgba(255, 255, 255, .08); }
+.subs-usage-bar > span { position: absolute; inset: 0 auto 0 0; width: var(--left, 0%); border-radius: inherit; background: var(--success); }
+.subs-usage-bar.warn > span { background: var(--warning); }
+.subs-usage-bar.bad { background: var(--danger-muted); }
+.subs-usage-error { color: var(--text-secondary); }
+.subs-connecting { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2) var(--space-3); }
+.subs-connecting > .device-code { flex: 1 1 auto; padding: 0; border: 0; background: none; }

@@ -12,6 +12,8 @@ import { openPromptEditor, rewrittenPrompts } from './prompts';
 import { hotReloadSettings } from './hot-reload';
 import { presetEditor } from './prompt-box';
 import { factoryKeySettings } from './factory-settings';
+import { subscriptionsSettings } from './subscriptions-settings';
+import { droidSettings } from './droid-settings';
 import { openPhone, pairedPhones } from './phone';
 import { companionState, openCompanion } from './companion';
 import type { PairingState } from '../../shared/devices';
@@ -952,6 +954,10 @@ export function openSettings(
   paintJira();
   const sourceReload = hotReloadSettings();
   const factoryKey = factoryKeySettings(net);
+  const subscriptions = subscriptionsSettings(net);
+  const subscriptionGroups = [group('DroidProxy', card('DroidProxy', subscriptions.proxy)), group('Accounts', card('Accounts', subscriptions.accounts)), group('Droid', card('Models in Droid', subscriptions.models))];
+  subscriptions.hideWhenUnsupported(...subscriptionGroups);
+  const droid = droidSettings(net);
   const panes: Record<SettingsPane, Node[]> = {
     you: [
       group(
@@ -1033,7 +1039,9 @@ export function openSettings(
       group('Development', card('Source hot reload', { below: [sourceReload.element] })),
     ],
     factory: [group('Connection', card('Factory API key', factoryKey.key)), factoryKey.reach],
+    subscriptions: [subscriptions.unsupported, ...subscriptionGroups],
     workers: [
+      group('Droid', card('Droid', droid.parts)),
       group(
         'New workers',
         card('Default worker', { desc: agentNote, below: [agent.element, agentActions] }),
@@ -1148,6 +1156,8 @@ export function openSettings(
       offWorktreeSetup.forEach((off) => off());
       sourceReload.dispose();
       factoryKey.dispose();
+      subscriptions.dispose();
+      droid.dispose();
       window.removeEventListener('office:hdr', onHdrStatus);
     },
   });
