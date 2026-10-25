@@ -1,4 +1,4 @@
-import { claimEscape, h } from './dom';
+import { type Child, claimEscape, h } from './dom';
 import { highlightRanges, multiplierLabel, type PickerModel, pushRecent, scopesOf, type Section, sectionsFor, splitFamily } from './model-search';
 
 /** What the picker offers on top, for "no choice": the model droid runs when nobody picks one. */
@@ -67,10 +67,19 @@ let counter = 0;
 /** The pinwheel that stands for DroidProxy (public/factory-glyph.svg). */
 const pinwheel = () => h('img.glyph', { src: '/factory-glyph.svg', alt: '', 'aria-hidden': 'true' });
 
+function costClass(cost: number): string {
+  if (cost <= 0.3) return 'cheap';
+  if (cost >= 4) return 'dear';
+  return '';
+}
+
 function costPill(cost: number | undefined): HTMLElement | null {
   if (cost === undefined) return null;
-  return h('span.mp-cost', { class: cost <= 0.3 ? 'cheap' : cost >= 4 ? 'dear' : '', title: 'Credits per token, against the base rate' }, multiplierLabel(cost));
+  return h('span.mp-cost', { class: costClass(cost), title: 'Credits per token, against the base rate' }, multiplierLabel(cost));
 }
+
+/** A typed id the office would accept as a model of its own. */
+const isCustomId = (text: string) => text !== '' && text.length <= MODEL_ID_MAX && !/[\s\p{Cc}\p{Cf}]/u.test(text);
 
 /** `text` with the parts the query matched wrapped in <mark>. */
 function marked(text: string, query: string): (string | HTMLElement)[] {
@@ -110,19 +119,21 @@ export function modelPicker(opts: ModelPickerOptions): ModelPicker {
 
   const known = (id: string) => models.find((m) => m.id === id);
 
+  /** The `none` option's glyph, label and note, as the trigger and its row both draw them. */
+  const noneParts = (option: NoneOption): Child[] => [option.glyph ? pinwheel() : null, h('span.mp-name', {}, option.label), option.note ? h('span.mp-note', {}, option.note) : null];
+
+  const triggerParts = (m: PickerModel | undefined): Child[] => {
+    if (!value) return none ? noneParts(none) : [h('span.mp-name.mp-placeholder', {}, opts.placeholder ?? 'Choose a model')];
+    if (!m) return [h('span.mp-name', {}, value)];
+    const { family, rest } = splitFamily(m.name);
+    return [m.glyph ? pinwheel() : null, h('span.mp-name', {}, family ? h('span.mp-family', {}, `${family}: `) : null, rest), m.unavailable ? h('span.mp-tag', {}, 'unavailable') : null];
+  };
+
   const paintTrigger = () => {
     const m = known(value);
-    const parts: (Node | string)[] = [];
-    if (!value) {
-      if (none) {
-        parts.push(none.glyph ? pinwheel() : '', h('span.mp-name', {}, none.label), none.note ? h('span.mp-note', {}, none.note) : '');
-      } else parts.push(h('span.mp-name.mp-placeholder', {}, opts.placeholder ?? 'Choose a model'));
-    } else if (m) {
-      const { family, rest } = splitFamily(m.name);
-      parts.push(m.glyph ? pinwheel() : '', h('span.mp-name', {}, family ? h('span.mp-family', {}, `${family}: `) : '', rest), m.unavailable ? h('span.mp-tag', {}, 'unavailable') : '');
-    } else parts.push(h('span.mp-name', {}, value));
-    const cost = !value ? none?.cost : m?.cost;
-    trigger.replaceChildren(h('span.mp-value', {}, ...parts.filter((p) => p !== '')), costPill(cost) ?? '');
+    const cost = value ? m?.cost : none?.cost;
+    const pill = costPill(cost);
+    trigger.replaceChildren(h('span.mp-value', {}, ...triggerParts(m)), ...(pill ? [pill] : []));
     trigger.title = m ? `${m.name} · ${m.id}` : value || none?.label || '';
   };
 
@@ -163,36 +174,42 @@ export function modelPicker(opts: ModelPickerOptions): ModelPicker {
     }
   };
 
+  /** What picking a row sets: nothing for `none`, the typed text for the custom row, else the model's id. */
+  const valueOfRow = (key: string, model?: PickerModel): string => {
+    if (key === NONE) return '';
+    if (key === CUSTOM) return customValue;
+    return model?.id ?? '';
+  };
+
+  const rowBody = (key: string, model: PickerModel | undefined, flat: boolean): Child[] => {
+    if (key === NONE) return none ? noneParts(none) : [];
+    if (key === CUSTOM) return [h('span.mp-name', {}, 'Use ', h('b', {}, customValue)), h('span.mp-note', {}, 'as typed')];
+    if (!model) return [];
+    const { family, rest } = splitFamily(model.name);
+    return [
+      model.glyph ? pinwheel() : null,
+      h('span.mp-name', {}, family ? h('span.mp-family', {}, ...marked(`${family}: `, query)) : null, ...marked(rest, query)),
+      ...(model.tags ?? []).map((t) => h('span.mp-tag', {}, t)),
+      model.unavailable ? h('span.mp-tag', {}, 'unavailable') : null,
+      flat ? h('span.mp-where', {}, model.group) : null,
+    ];
+  };
+
   const row = (key: string, model: PickerModel | undefined, flat: boolean): HTMLElement => {
     const id = `mp-${uid}-${rows.length}`;
-    const selected = key === NONE ? !value : key === CUSTOM ? false : model?.id === value;
-    const body: (Node | string)[] = [];
-    if (key === NONE && none) {
-      if (none.glyph) body.push(pinwheel());
-      body.push(h('span.mp-name', {}, none.label), none.note ? h('span.mp-note', {}, none.note) : '');
-    } else if (key === CUSTOM) {
-      body.push(h('span.mp-name', {}, 'Use ', h('b', {}, customValue)), h('span.mp-note', {}, 'as typed'));
-    } else if (model) {
-      const { family, rest } = splitFamily(model.name);
-      if (model.glyph) body.push(pinwheel());
-      body.push(h('span.mp-name', {}, family ? h('span.mp-family', {}, ...marked(`${family}: `, query)) : '', ...marked(rest, query)));
-      for (const t of model.tags ?? []) body.push(h('span.mp-tag', {}, t));
-      if (model.unavailable) body.push(h('span.mp-tag', {}, 'unavailable'));
-      if (flat) body.push(h('span.mp-where', {}, model.group));
-    }
-    const cost = key === NONE ? none?.cost : model?.cost;
+    const selected = key === NONE ? !value : model?.id === value;
     const el = h(
       'div.mp-row',
       { id, role: 'option', 'aria-selected': String(selected), class: selected ? 'on' : '' },
       h('span.mp-check', { 'aria-hidden': 'true' }, selected ? '✓' : ''),
-      h('span.mp-main', {}, ...body.filter((b) => b !== '')),
-      costPill(cost),
+      h('span.mp-main', {}, ...rowBody(key, model, flat)),
+      costPill(key === NONE ? none?.cost : model?.cost),
     );
     el.addEventListener('mousemove', () => {
       const i = rows.findIndex((r) => r.el === el);
       if (i >= 0 && i !== cursor) moveTo(i, false);
     });
-    el.addEventListener('click', () => choose(key === NONE ? '' : key === CUSTOM ? customValue : (model?.id ?? '')));
+    el.addEventListener('click', () => choose(valueOfRow(key, model)));
     rows.push({ key, model, el });
     return el;
   };
@@ -224,7 +241,13 @@ export function modelPicker(opts: ModelPickerOptions): ModelPicker {
   const paintDetail = () => {
     const r = rows[cursor];
     const m = r?.model;
-    ui.detail.replaceChildren(...(m ? [h('code', {}, m.id), m.detail ? h('span', {}, m.detail) : ''] : [r?.key === NONE ? (none?.detail ?? 'Droid’s own default') : r?.key === CUSTOM ? 'Sent as typed' : '']).filter((c) => c !== ''));
+    if (m) {
+      ui.detail.replaceChildren(h('code', {}, m.id), ...(m.detail ? [h('span', {}, m.detail)] : []));
+      return;
+    }
+    if (r?.key === NONE) ui.detail.replaceChildren(none?.detail ?? 'Droid’s own default');
+    else if (r?.key === CUSTOM) ui.detail.replaceChildren('Sent as typed');
+    else ui.detail.replaceChildren();
   };
 
   const moveTo = (i: number, scroll = true) => {
@@ -253,7 +276,7 @@ export function modelPicker(opts: ModelPickerOptions): ModelPicker {
       nodes.push(h('div.mp-head', { role: 'presentation' }, s.key.startsWith('g:') && s.models[0]?.glyph ? pinwheel() : '', s.label, h('small', {}, s.flat ? '' : String(s.models.length))));
       for (const m of s.models) nodes.push(row(m.id, m, !!s.flat));
     }
-    if (opts.allowCustom && typed && typed.length <= MODEL_ID_MAX && !/[\s\p{Cc}\p{Cf}]/u.test(typed) && !models.some((m) => m.id === typed)) {
+    if (opts.allowCustom && isCustomId(typed) && !known(typed)) {
       customValue = typed;
       nodes.push(row(CUSTOM, undefined, false));
     }
@@ -316,7 +339,7 @@ export function modelPicker(opts: ModelPickerOptions): ModelPicker {
     } else if (e.key === 'Enter' && !(e.target instanceof HTMLButtonElement)) {
       e.preventDefault();
       const r = rows[cursor];
-      if (r) choose(r.key === NONE ? '' : r.key === CUSTOM ? customValue : (r.model?.id ?? ''));
+      if (r) choose(valueOfRow(r.key, r.model));
     } else if (e.key.length === 1 && e.key !== ' ' && !e.metaKey && !e.ctrlKey && !e.altKey && !inInput) {
       ui.input.focus({ preventScroll: true });
     }

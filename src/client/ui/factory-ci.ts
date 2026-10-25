@@ -24,7 +24,7 @@ import { factoryFetch, refreshFactory, watchFactory } from '../factory';
 import { store } from '../state';
 import { h, openModal, timeAgo, toast, type Modal } from './dom';
 import { emptyState, field, toggle } from './kit';
-import { modelPicker } from './model-picker';
+import { modelPicker, type NoneOption } from './model-picker';
 import type { PickerModel } from './model-search';
 import { droidCatalogue, factoryModels, pickerModel } from './models';
 import { confirmDialog } from './prompt';
@@ -57,6 +57,8 @@ function aliasModel(alias: string): PickerModel {
   const who = ALIAS_VENDOR[vendor] ?? vendor;
   return { id: alias, name: `${who}: Latest ${tier}`, scope: 'Aliases', group: `${who} aliases`, provider: who, detail: `Factory’s alias for the newest ${tier} ${who} model` };
 }
+
+const FACTORY_DEFAULT: NoneOption = { label: 'Factory’s default', detail: 'The model Factory’s workflow runs when none is named' };
 
 const EFFORTS = ['', 'low', 'medium', 'high'];
 /** A workflow's GitHub events as the edit's trigger ids, to fill in Change. */
@@ -352,10 +354,10 @@ export function openCiWindow(opts: { floorRepo?: string; add?: boolean } = {}): 
       const listed = [...aliases, ...concrete];
       return w?.model && !listed.some((m) => m.id === w.model) ? [{ id: w.model, name: w.model, scope: 'Not listed', group: 'Not listed', unavailable: true }, ...listed] : listed;
     };
-    const model = modelPicker({ label: 'Model', models: modelChoices([]), value: w?.model ?? '', none: { label: 'Factory’s default', detail: 'The model Factory’s workflow runs when none is named' }, allowCustom: true });
+    const model = modelPicker({ label: 'Model', models: modelChoices([]), value: w?.model ?? '', none: FACTORY_DEFAULT, allowCustom: true });
     void droidCatalogue()
       .then(() => factoryModels())
-      .then((models) => model.setModels(modelChoices(models.map(pickerModel)), { label: 'Factory’s default', detail: 'The model Factory’s workflow runs when none is named' }))
+      .then((models) => model.setModels(modelChoices(models.map(pickerModel)), FACTORY_DEFAULT))
       .catch(() => undefined);
     const effort = h('select.select', { 'aria-label': 'Reasoning effort' }, ...EFFORTS.map((e) => h('option', { value: e }, e || 'Default'))) as HTMLSelectElement;
     effort.value = typeof w?.inputs.reasoningEffort === 'string' && EFFORTS.includes(w.inputs.reasoningEffort) ? w.inputs.reasoningEffort : '';

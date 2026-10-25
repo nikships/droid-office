@@ -50,6 +50,12 @@ function words(query: string): string[] {
   return query.toLowerCase().split(/\s+/).filter(Boolean);
 }
 
+/** A hit at the start of the name beats one at the start of a later word, which beats one inside a word. */
+function nameStartBonus(name: string, at: number): number {
+  if (at === 0) return 6;
+  return /[^\p{L}\p{N}]/u.test(name[at - 1]) ? 4 : 0;
+}
+
 /**
  * How well `m` answers `query`, or 0 when some word of it hits nothing. A word in the name beats one
  * in the id, provider or section; one that starts a word of the name beats one inside it.
@@ -63,7 +69,7 @@ export function scoreModel(m: PickerModel, query: string): number {
   let score = 0;
   for (const w of want) {
     const at = name.indexOf(w);
-    if (at >= 0) score += 6 + (at === 0 ? 6 : /[^\p{L}\p{N}]/u.test(name[at - 1]) ? 4 : 0);
+    if (at >= 0) score += 6 + nameStartBonus(name, at);
     else if (squash(w) && squashed.includes(squash(w))) score += 4;
     else if (elsewhere.includes(w)) score += 2;
     else if (squash(w) && squash(elsewhere).includes(squash(w))) score += 1;
@@ -72,12 +78,18 @@ export function scoreModel(m: PickerModel, query: string): number {
   return score + (name === query.trim().toLowerCase() ? 20 : 0);
 }
 
+const SCOPE_RANK = new Map([
+  ['Yours', -1],
+  ['Other', 1],
+  ['Legacy', 2],
+  ['Not listed', 2],
+]);
+
 /** The filter chips: "Yours" first, then providers in the order the catalogue lists them, "Other" and "Legacy" last. */
 export function scopesOf(models: PickerModel[]): Scope[] {
   const seen = new Map<string, number>();
   for (const m of models) seen.set(m.scope, (seen.get(m.scope) ?? 0) + 1);
-  const rank = (key: string) => (key === 'Yours' ? -1 : key === 'Other' ? 1 : key === 'Legacy' || key === 'Not listed' ? 2 : 0);
-  return [...seen].map(([key, count]) => ({ key, count })).sort((a, b) => rank(a.key) - rank(b.key));
+  return [...seen].map(([key, count]) => ({ key, count })).sort((a, b) => (SCOPE_RANK.get(a.key) ?? 0) - (SCOPE_RANK.get(b.key) ?? 0));
 }
 
 /**
