@@ -1,75 +1,231 @@
 <div align="center">
 
-<img src="docs/office-tour.gif" alt="A recording of walking through the real 3D office, past the wall boards and over to Droid workers at their live terminals" width="100%">
+<img src="build/icon.png" alt="Droid Office" width="80">
 
 # Droid Office
 
 ### Your AI agents deserve a desk.
 
-**A 3D office in your browser where you hire Factory Droid workers, walk over to their desks and step into their live terminals.**
+**Hire Factory Droid workers. Walk over to their desks. Step into their live terminals.**
 
+[![Release](https://img.shields.io/github/v/release/nikships/droid-office?style=for-the-badge&color=f06000)](https://github.com/nikships/droid-office/releases/latest)
+[![Stars](https://img.shields.io/github/stars/nikships/droid-office?style=for-the-badge&color=f06000)](https://github.com/nikships/droid-office/stargazers)
 [![License](https://img.shields.io/badge/license-MIT-blue?style=for-the-badge)](LICENSE)
-[![Latest release](https://img.shields.io/github/v/release/nikships/droid-office?style=for-the-badge)](https://github.com/nikships/droid-office/releases)
 [![CI](https://img.shields.io/github/actions/workflow/status/nikships/droid-office/release.yml?branch=main&style=for-the-badge&label=CI)](https://github.com/nikships/droid-office/actions/workflows/release.yml)
 
-[Watch the full walkthrough and feature demos](https://droid-office.web.app/)
+### [Download for macOS](https://github.com/nikships/droid-office/releases/latest)
+
+macOS 14 Sonoma+ · Apple M-series **Pro, Max or Ultra** · Built for 120 Hz ProMotion
+
+[Watch the walkthrough](https://droid-office.web.app/) · [Read the guide](docs/guide/) · [Android companion](#your-office-in-your-pocket)
+
+<picture>
+  <source media="(prefers-reduced-motion: reduce)" srcset="docs/assets/readme/hero-tour.poster.jpg">
+  <source type="image/webp" srcset="docs/assets/readme/hero-tour.webp">
+  <img src="docs/assets/readme/hero-tour.gif" alt="A smooth walk down the Droid Office aisle toward the live issue, pipeline and pull request boards" width="960">
+</picture>
 
 </div>
 
----
+## Stop babysitting terminal tabs
 
-## Stop babysitting tabs
+Five agents in five terminals is a mess. **Droid Office turns your agents into a place you can read at a glance:** who is working, who needs you and who just shipped.
 
-Five agents in five terminals is a mess. You lose track of who is stuck, who finished and who is waiting on you.
+It's a walkable 3D office with real Droid sessions, real git checkouts and real work on the walls. The Mac app runs it locally with a native Metal presenter; your browser can join the same office.
 
-Droid Office turns that into a place. Every agent sits at a desk with a laptop showing its real terminal. A worker that needs you jumps up and dings. A worker that is done does a little spin and throws confetti. You see the whole picture from across the room.
+## See the office at work
 
-<img src="docs/hire-worker.gif" alt="Hiring a Droid worker at an empty desk: choosing its model and reasoning effort, then watching it arrive at its laptop" width="100%">
+<table>
+<tr>
+<td width="50%" valign="middle">
 
-## What you get
+### Hand over an issue
 
-- **A desk for every agent.** Walk up, press **E**, pick a model, and a Droid worker sits down. Its live terminal opens on the laptop in front of it.
-- **One terminal, every window.** Open the same live session in a second browser tab; it keeps streaming in each, with full scrollback.
-- **A floor per project.** Ride the elevator, pick one of the git projects you already have, and the office opens a new floor in it, right where it is. Nothing is cloned. Each floor has its own desks, boards and workers.
-- **Boards you can touch.** Issues and pull requests hang on the wall. Take a card off the board, carry it across the room, and hand it to a worker.
-- **CI on the wall.** The Pipelines board shows your GitHub Actions runs (or GitLab pipelines) as they run, wait and finish. Open a run to see its jobs and steps, re-run what failed, or kick off a workflow. Or just tell the Pipeline agent beside it to do it. Turn on **Auto-heal** on a floor and a red run on that floor wakes the Pipeline agent, which finds the root cause and hires a worker to push the fix.
-- **A Whiteboard you share with your workers.** Workers put live HTML pages, screenshots and forms on the wall. You open them in the window or full screen, use them, and mark them up with comments, sticky notes and pictures, and the next time a worker reads the board it sees what you changed.
-- **A place worth being in.** A rooftop over the city, a jukebox, and weather outside the windows that follows a real city if you ask.
+Take a GitHub issue or GitLab ticket off the wall, carry it across the room and deliver it to a desk. A worker sits down with the task already in hand.
 
-<img src="docs/whiteboard.gif" alt="Opening a worker's page on the office Whiteboard, adding a comment, and placing a sticky note" width="100%">
+[Explore the boards →](docs/guide/features.md)
 
-## Why Droid Office
+</td>
+<td width="50%">
+<picture>
+  <source media="(prefers-reduced-motion: reduce)" srcset="docs/assets/readme/card-grab.poster.jpg">
+  <source type="image/webp" srcset="docs/assets/readme/card-grab.webp">
+  <img src="docs/assets/readme/card-grab.gif" alt="Picking an issue card off the wall and holding it ready to deliver to a worker" width="480">
+</picture>
+</td>
+</tr>
+<tr>
+<td width="50%">
+<picture>
+  <source media="(prefers-reduced-motion: reduce)" srcset="docs/assets/readme/worker-status.poster.jpg">
+  <source type="image/webp" srcset="docs/assets/readme/worker-status.webp">
+  <img src="docs/assets/readme/worker-status.gif" alt="A worker finishing its task with a jump, a spin and a burst of confetti" width="480">
+</picture>
+</td>
+<td width="50%" valign="middle">
 
-This started as a fork of [agent-office](https://github.com/AgentSystemLabs/agent-office) and went its own way. It's built for teams that live in Factory.
+### Know who needs you
 
-### Droid is the star
-Every worker is a Droid session. Hire a worker on any model you've configured — including your custom models — at the reasoning effort you choose. The office remembers your pick per desk and keeps it with the worker across restarts. It shows you when a Droid worker is working, waiting on you or done.
+Workers flip through papers when reading, type when editing and lean back while tests run. When one needs you, it jumps and dings; when it's done, confetti goes up.
 
-### GitLab is a first-class citizen
-A floor can be a GitLab project, on gitlab.com or your own host. Merge requests fill the PR board, workers open them with `glab`, and every prompt the office sends speaks GitLab.
+[How live status works →](docs/guide/features.md)
 
-### Jira on the wall
-Connect Jira Cloud once with a read-only token, give a floor an epic, and its tickets appear as a **Jira** tab on the board. Hand any ticket to a worker with one click. The office never writes to Jira.
+</td>
+</tr>
+<tr>
+<td width="50%" valign="middle">
 
-### Built like a Factory
-A dark, industrial look in Factory orange. The Mac app opens your office full screen and keeps itself up to date.
+### Shipping deserves a gong
 
-### Always improving
-Every new feature that ships in the original project is brought over, adapted to this fork and its Droid and GitLab work. The latest additions: rewrite every prompt the office sends, set a default worker, edit and filter issues by label on the boards, keep workers running through upgrades, send workers home when their PR merges, and browse your project's docs at the office bookshelf.
+A merged pull request rings the brass gong, showers the floor in confetti and sends workers dancing on their desks. GitHub or GitLab, merged inside the office or out.
 
-## Get started in a minute
+[Celebrations and sounds →](docs/guide/features.md)
 
-**The Mac app release is the only supported production install.** It needs **macOS 14 (Sonoma) or later on a Mac with an Apple M-series Pro, Max or Ultra chip**, ideally with a 120 Hz ProMotion display. Intel Macs and base M chips (plain M1 to M5) aren't supported: the app tells you so and quits.
+</td>
+<td width="50%">
+<picture>
+  <source media="(prefers-reduced-motion: reduce)" srcset="docs/assets/readme/merge-gong.poster.jpg">
+  <source type="image/webp" srcset="docs/assets/readme/merge-gong.webp">
+  <img src="docs/assets/readme/merge-gong.gif" alt="Striking the brass merge gong by hand and watching it swing" width="480">
+</picture>
+</td>
+</tr>
+<tr>
+<td width="50%">
+<picture>
+  <source media="(prefers-reduced-motion: reduce)" srcset="docs/assets/readme/worktrees.poster.jpg">
+  <source type="image/webp" srcset="docs/assets/readme/worktrees.webp">
+  <img src="docs/assets/readme/worktrees.gif" alt="Worktree settings showing the project's automatic setup command and files to copy" width="480">
+</picture>
+</td>
+<td width="50%" valign="middle">
 
-Download `Droid-Office-<version>-arm64.dmg` from the [latest release](https://github.com/nikships/droid-office/releases/latest), open it and drag **Droid Office** into Applications. It starts the office itself, opens it full screen and keeps itself up to date. Node.js isn't needed.
+### Parallel work, separate checkouts
 
-You need `git` and the [Droid CLI](https://docs.factory.ai/cli/getting-started/quickstart) (`droid`) signed in. For the boards, sign in to `gh` for GitHub or `glab` for GitLab. See [the Mac app](docs/guide/getting-started.md#the-mac-app).
+Give each worker its own branch and git worktree. Project setup runs before the agent starts, with the untracked files it needs copied in, so workers don't edit the same checkout.
 
-There are no supported command-line installers or standalone server releases.
+[Worktrees, diffs and pull requests →](docs/guide/features.md)
 
-### For developers
+</td>
+</tr>
+<tr>
+<td width="50%" valign="middle">
 
-Clone the repository to run, modify or experiment with the source. You need Node.js 20+ and the tools above.
+### A floor per project
+
+Ride the elevator between your existing repositories, each with its own workers, boards and decor. Nothing is re-cloned; the rooftop is one more stop when you need a break.
+
+[Floors and navigation →](docs/guide/features.md)
+
+</td>
+<td width="50%">
+<picture>
+  <source media="(prefers-reduced-motion: reduce)" srcset="docs/assets/readme/elevator-floors.poster.jpg">
+  <source type="image/webp" srcset="docs/assets/readme/elevator-floors.webp">
+  <img src="docs/assets/readme/elevator-floors.gif" alt="Riding the elevator from the project floor to the rooftop above the city" width="480">
+</picture>
+</td>
+</tr>
+<tr>
+<td width="50%">
+<picture>
+  <source media="(prefers-reduced-motion: reduce)" srcset="docs/assets/readme/whiteboard-collab.poster.jpg">
+  <source type="image/webp" srcset="docs/assets/readme/whiteboard-collab.webp">
+  <img src="docs/assets/readme/whiteboard-collab.gif" alt="Adding a sticky note to a worker's live page on the shared Whiteboard" width="480">
+</picture>
+</td>
+<td width="50%" valign="middle">
+
+### Point at what you mean
+
+Workers pin live HTML pages, screenshots and forms to the Whiteboard. Open one, try it, leave a comment or sticky note, and tell the worker to read your feedback.
+
+[The shared Whiteboard →](docs/guide/features.md)
+
+</td>
+</tr>
+<tr>
+<td width="50%" valign="middle">
+
+### Give the lead a team
+
+Hand a larger task to the Team lead and let it hire subagents at nearby desks. Team markings and floor links show who belongs together; each worker still has a terminal you can open.
+
+[Team leads and subagents →](docs/guide/features.md)
+
+</td>
+<td width="50%">
+<picture>
+  <source media="(prefers-reduced-motion: reduce)" srcset="docs/assets/readme/team-subagents.poster.jpg">
+  <source type="image/webp" srcset="docs/assets/readme/team-subagents.webp">
+  <img src="docs/assets/readme/team-subagents.gif" alt="A Team lead's workers at nearby desks, joined by glowing team links on the floor" width="480">
+</picture>
+</td>
+</tr>
+</table>
+
+<sub>Short loops from real office captures. Prefer stills? <a href="docs/assets/readme/posters.md">Browse the static gallery</a>. <a href="https://droid-office.web.app/">Watch the full demos</a>.</sub>
+
+### Also in the box
+
+- **CI that can heal itself.** GitHub Actions and GitLab pipelines on the wall, with an opt-in Pipeline agent that diagnoses failures and hires a fixer.
+- **Live terminals that stay with you.** Multiple windows, searchable scrollback and workers that keep running through server restarts.
+- **Peer visits.** Independent workers walk over, read each other's screens, ask questions and hand over tasks.
+- **Jira Cloud.** Connect a read-only token, choose an epic and hand its tickets to workers. The office never writes to Jira.
+- **Cross-repository tasks.** One worker, several project worktrees, and a pull request for each.
+- **A place worth staying.** City weather, a rooftop, a shared jukebox and spatial sound.
+- **The practical bits.** Plain shells, safe worktree pruning, editable prompts, a project bookshelf and Factory computer secrets.
+
+[Everything the office can do →](docs/guide/features.md)
+
+## Your models. Your tools.
+
+<p align="center">
+  <a href="https://factory.ai"><kbd>Factory Droid</kbd></a>
+  &nbsp; <kbd>Claude</kbd>
+  &nbsp; <kbd>OpenAI / Codex models</kbd>
+  &nbsp; <kbd>Gemini</kbd>
+  &nbsp; <kbd>Grok</kbd>
+  &nbsp; <a href="https://docs.factory.com/model-independence/byok"><kbd>Custom models / BYOK</kbd></a>
+</p>
+<p align="center">
+  <kbd>GitHub</kbd> &nbsp; <kbd>GitLab + self-managed</kbd> &nbsp; <kbd>Jira Cloud</kbd>
+</p>
+
+Every hired worker runs **Factory Droid**, not a separate agent harness. Pick from [Droid's current model catalog](https://docs.factory.com/models) or your configured custom models, with the reasoning effort each supports. Availability follows your Droid configuration and account, not a hard-coded model list.
+
+## Get your office
+
+| Mac app · production | Android · companion |
+| --- | --- |
+| **[Download the Mac app](https://github.com/nikships/droid-office/releases/latest)** | **[Download the APK](https://github.com/nikships/droid-office/releases/latest)** |
+| macOS 14+ on Apple M-series **Pro, Max or Ultra** | Pairs with an office running on your computer |
+| Signed, notarized and auto-updating. No Node.js install. | Wi-Fi or Tailscale. [Pairing guide →](android/README.md) |
+
+1. Open `Droid-Office-<version>-arm64.dmg`, drag **Droid Office** into **Applications**, then launch it.
+2. Have `git` and the [Droid CLI](https://docs.factory.com/droid-cli/quickstart) installed, with Droid signed in.
+3. Sign in to `gh` for GitHub boards or `glab` for GitLab boards, then choose a project.
+
+> [!IMPORTANT]
+> The Mac app is the **only supported production install**. Intel Macs and base M-series chips are not supported. A 120 Hz ProMotion display is recommended. [Full requirements →](docs/guide/getting-started.md#requirements)
+
+## Your office in your pocket
+
+**Droid Office for Android** shows every floor and worker, streams live terminals and lets you send the next prompt. A worker that finishes or needs input buzzes your phone; reply right from the notification.
+
+<p align="center">
+  <img src="android/docs/home.jpg" alt="Android companion: workers grouped by project floor" width="31%">
+  <img src="android/docs/worker.jpg" alt="Android companion: a worker's live terminal and prompt composer" width="31%">
+  <img src="android/docs/notification.jpg" alt="Android companion: worker notifications with an inline reply box" width="31%">
+</p>
+
+Install `Droid-Office-<version>.apk`, then scan the QR code in **Settings → Phone**. The computer hosting your office must stay awake; the phone app is a companion, not a standalone office installation.
+
+[Download Android](https://github.com/nikships/droid-office/releases/latest) · [Wi-Fi and Tailscale pairing](android/README.md)
+
+## For developers
+
+Run the source to modify or contribute. You need **Node.js 20+**, npm and the tools above; macOS builds also need Xcode Command Line Tools.
 
 ```bash
 git clone https://github.com/nikships/droid-office.git
@@ -78,25 +234,15 @@ npm ci
 npm run dev
 ```
 
-Open `http://localhost:5173`. This is a developer checkout, not a production install. See [Development](docs/guide/development.md) for builds, tests and running the Mac app from source.
+Open `http://localhost:5173`. A developer checkout is not a supported production installation.
 
-## Your office in your pocket
-
-**Droid Office for Android** is a companion to your running office, not a standalone office installation. Install `Droid-Office-<version>.apk` from the [latest release](https://github.com/nikships/droid-office/releases/latest), then scan the code from ⚙️ Settings → **Phone** in the office. On your Wi-Fi, or from anywhere over Tailscale, you see every worker on every floor, hire new ones, watch their live terminals and prompt them. A worker that needs you or finishes buzzes your phone, and you answer it right from the notification.
-
-<p>
-  <img src="android/docs/home.jpg" alt="The Android app listing the office's workers by floor" width="32%">
-  <img src="android/docs/worker.jpg" alt="A worker's live terminal on the phone, with a composer and quick keys" width="32%">
-  <img src="android/docs/notification.jpg" alt="Phone notifications that a worker is done and another needs you, with a reply box" width="32%">
-</p>
-
-## Take it further
-
-| Guide | What's in it |
+| Go deeper | What's inside |
 | --- | --- |
-| [The full guide](docs/guide/) | The Mac app, every feature, controls, developer setup, and how it all works |
-| [Droid Office for Android](android/README.md) | Installing and pairing the phone app, how it connects over Wi-Fi and Tailscale, and building it |
+| [Getting started](docs/guide/getting-started.md) | Requirements, first launch and connections |
+| [Features](docs/guide/features.md) · [Controls](docs/guide/controls.md) | Everything in the office and how to use it |
+| [Development](docs/guide/development.md) | Architecture, builds, tests and contributing |
+| [Android](android/README.md) | Pairing, notifications and building the companion |
 
 ## Credits and license
 
-Droid Office began as a fork of [AgentSystemLabs/agent-office](https://github.com/AgentSystemLabs/agent-office), whose authors built the office, the desks, the terminals and the boards. It's released under the same [MIT license](LICENSE).
+Droid Office began as a fork of [AgentSystemLabs/agent-office](https://github.com/AgentSystemLabs/agent-office), whose authors built the office, desks, terminals and boards. This fork focuses on Factory Droid, GitLab and a native Mac experience. Released under the [MIT license](LICENSE).
