@@ -188,7 +188,9 @@ data class FloorView(
 )
 
 sealed interface ServerMsg {
-    data class Welcome(val connection: String, val arrival: Arrival, val floors: List<FloorInfo>, val version: String, val view: FloorView) : ServerMsg
+    data class Welcome(val connection: String, val arrival: Arrival, val floors: List<FloorInfo>, val version: String, val view: FloorView, val availability: Map<String, ModelAvailability> = emptyMap()) : ServerMsg
+    /** Which Claude, ChatGPT and other plan models can run now. */
+    data class Subscriptions(val availability: Map<String, ModelAvailability>) : ServerMsg
     data class FloorEnter(val arrival: Arrival, val view: FloorView) : ServerMsg
     data class Floors(val floors: List<FloorInfo>) : ServerMsg
     data class WorkerUpdate(val worker: WorkerInfo) : ServerMsg
@@ -231,12 +233,14 @@ object Protocol {
             floors = floors(o["floors"]),
             version = o.str("version").orEmpty(),
             view = floorView(o),
+            availability = Availability.parse(o["subscriptions"]),
         )
         "floor.enter" -> ServerMsg.FloorEnter(
             arrival = o.obj("arrival")?.let { OfficeJson.decodeFromJsonElement<Arrival>(it) } ?: Arrival(),
             view = floorView(o),
         )
         "floors" -> ServerMsg.Floors(floors(o["floors"]))
+        "subscriptions" -> ServerMsg.Subscriptions(Availability.parse(o["state"]))
         "worker.update" -> ServerMsg.WorkerUpdate(OfficeJson.decodeFromJsonElement(o.getValue("worker")))
         "worker.remove" -> ServerMsg.WorkerRemove(o.str("workerId").orEmpty())
         "worker.worktree" -> ServerMsg.Worktree(o.str("workerId").orEmpty(), o.obj("state")?.let { OfficeJson.decodeFromJsonElement<WorktreeState>(it) } ?: WorktreeState())

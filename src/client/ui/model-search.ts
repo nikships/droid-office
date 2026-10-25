@@ -1,5 +1,7 @@
 // What the model picker shows and in which order: pure, so tests load it without a DOM.
 
+import { availabilityWords, cannotRun, modelAvailability, type SubscriptionsState } from '../../shared/subscriptions';
+
 /** One model in a picker, whatever list it came from. */
 export interface PickerModel {
   id: string;
@@ -19,8 +21,39 @@ export interface PickerModel {
   tags?: string[];
   /** One line in the footer while the row is under the cursor: the id, efforts it takes. */
   detail?: string;
-  /** Marks a model droid no longer lists. */
+  /** Marks a model that is listed but not offered: droid no longer lists it, or `reason` says it can't run. */
   unavailable?: boolean;
+  /** Why an `unavailable` model can't run now ("Out of quota (5-hour) for another 3 h"). Drawn dimmed beside it; with a reason, the picker won't pick it. */
+  reason?: string;
+  /** A quiet remark that doesn't stop anyone choosing it ("DroidProxy isn't running: the office starts it"). */
+  note?: string;
+}
+
+/** Whether the picker may choose `m`: an unlisted model stays choosable (it may be the current pick); one with a reason doesn't. */
+export function canPick(m: PickerModel | undefined): boolean {
+  return !(m?.unavailable && m.reason);
+}
+
+/** What the office knows about whether `id` can run: a reason it can't, or a quiet note. Neither when it can, or nobody can tell. */
+export function availabilityOf(id: string | undefined, s: SubscriptionsState, now: number): { reason?: string; note?: string } {
+  const a = modelAvailability(s, id);
+  const words = availabilityWords(a, now);
+  if (!words) return {};
+  return cannotRun(a) ? { reason: words } : { note: words };
+}
+
+/** `models` with the ones that can't run marked `unavailable` with their reason, and the quiet notes added. */
+export function withAvailability(models: PickerModel[], s: SubscriptionsState, now: number): PickerModel[] {
+  return models.map((m) => {
+    const { reason, note } = availabilityOf(m.id, s, now);
+    if (reason) return { ...m, unavailable: true, reason };
+    return note ? { ...m, note } : m;
+  });
+}
+
+/** The footer offers Subscriptions on a Mac that can have them when no provider has an account yet. */
+export function offersSubscriptions(s: SubscriptionsState): boolean {
+  return s.proxy.phase !== 'unsupported' && s.providers.every((p) => p.accounts.length === 0);
 }
 
 export interface Section {

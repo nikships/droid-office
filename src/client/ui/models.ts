@@ -106,6 +106,7 @@ function defaultOption(runs: string | undefined, models: DroidModelOption[]): No
   return {
     label: 'Default',
     note: name,
+    model: runs,
     ...(shown?.cost !== undefined ? { cost: shown.cost } : {}),
     ...(shown?.glyph ? { glyph: true } : {}),
     detail: `Runs ${name}, as set in the office and Droid settings`,

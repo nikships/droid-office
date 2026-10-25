@@ -223,6 +223,9 @@ object Tags {
 
         fun effort(wire: String) = "hire.effort/$wire"
         fun model(id: String) = "hire.model/$id"
+
+        /** Why a model in the list can't be chosen, or the quiet note that DroidProxy will be started. */
+        fun modelWhy(id: String) = "hire.model_why/$id"
     }
 
     object Worker {

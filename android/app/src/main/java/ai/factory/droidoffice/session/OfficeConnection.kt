@@ -5,6 +5,7 @@ import ai.factory.droidoffice.core.ClientMsg
 import ai.factory.droidoffice.core.FloorInfo
 import ai.factory.droidoffice.core.FloorView
 import ai.factory.droidoffice.core.GhPull
+import ai.factory.droidoffice.core.ModelAvailability
 import ai.factory.droidoffice.core.Probe
 import ai.factory.droidoffice.core.ProjectInfo
 import ai.factory.droidoffice.core.Protocol
@@ -123,6 +124,11 @@ class OfficeConnection(
 
     private val _data = MutableStateFlow(OfficeData())
     val data: StateFlow<OfficeData> = _data.asStateFlow()
+
+    private val _availability = MutableStateFlow<Map<String, ModelAvailability>>(emptyMap())
+
+    /** Whether each subscription model can run now, by model id; empty from an office that doesn't say. */
+    val availability: StateFlow<Map<String, ModelAvailability>> = _availability.asStateFlow()
 
     private val _screens = MutableStateFlow<Map<String, ScreenState>>(emptyMap())
     val screens: StateFlow<Map<String, ScreenState>> = _screens.asStateFlow()
@@ -519,6 +525,7 @@ class OfficeConnection(
             is ServerMsg.Welcome -> {
                 whiteboard.status(true)
                 whiteboard.welcome(msg.view.floor)
+                _availability.value = msg.availability
                 enter(officeId, msg.view, msg.floors, msg.version)
                 msg.view.project?.name?.ifBlank { null }?.let { p -> scope.launch { store.update(officeId) { it.copy(project = p) } } }
             }
@@ -528,6 +535,7 @@ class OfficeConnection(
                 msg.view.floor?.let { f -> scope.launch { store.update(officeId) { it.copy(lastFloor = f, project = msg.view.project?.name?.ifBlank { null } ?: it.project) } } }
             }
             is ServerMsg.Floors -> _data.update { it.copy(floors = msg.floors) }
+            is ServerMsg.Subscriptions -> _availability.value = msg.availability
             is ServerMsg.WorkerUpdate -> {
                 val w = msg.worker
                 val before = _data.value.workers

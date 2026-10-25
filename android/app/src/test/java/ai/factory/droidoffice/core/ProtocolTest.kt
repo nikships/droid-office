@@ -53,6 +53,18 @@ class ProtocolTest {
     }
 
     @Test
+    fun readsWhichSubscriptionModelsCanRunFromTheWelcomeAndTheMessage() {
+        assertTrue((Protocol.decode(welcome) as ServerMsg.Welcome).availability.isEmpty())
+        val withSubs = welcome.replace(""""pulls":""", """"subscriptions":{"availability":{"custom:droidproxy:gpt-6.1-sol":{"state":"signed-out","provider":"codex"}}},"pulls":""")
+        assertEquals(
+            mapOf("custom:droidproxy:gpt-6.1-sol" to ModelAvailability.SignedOut("codex")),
+            (Protocol.decode(withSubs) as ServerMsg.Welcome).availability,
+        )
+        val msg = Protocol.decode("""{"t":"subscriptions","state":{"availability":{"custom:droidproxy:gpt-6.1-sol":{"state":"ok"}}}}""") as ServerMsg.Subscriptions
+        assertEquals(mapOf("custom:droidproxy:gpt-6.1-sol" to ModelAvailability.Ok), msg.availability)
+    }
+
+    @Test
     fun readsACloudWorker() {
         val m = Protocol.decode(
             """{"t":"worker.update","worker":{"id":"w3","kind":"cloud","status":"working","sessionId":"s1",
