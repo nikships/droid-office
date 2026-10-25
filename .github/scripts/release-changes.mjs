@@ -16,7 +16,7 @@ export function checksFor(files, { manual = false, androidVersionChanged = false
       touches(packages) ||
       touches(config) ||
       touches(
-        /^(?:src\/|bin\/|tests\/|native\/|\.husky\/|android\/app\/src\/main\/assets\/|tools\/(?:props|frame-bench)\/|tools\/android-terminal\.mjs$|README\.md$|docs\/guide\/|biome\.jsonc$|\.env\.example$|\.gitignore$|\.agents\/skills\/(?:office-clone|office-3d-testing|office-thermals)\/|\.agents\/skills\/office-video-capture\/references\/example-launch\/example-composition\.html$)/,
+        /^(?:src\/|bin\/|tests\/|native\/|\.husky\/|android\/app\/src\/main\/assets\/|tools\/(?:props|frame-bench)\/|tools\/android-terminal\.mjs$|README\.md$|docs\/guide\/|biome\.jsonc$|\.env\.example$|\.gitignore$|\.agents\/skills\/(?:office-clone|office-3d-testing|office-thermals|performance-proof)\/|\.agents\/skills\/office-video-capture\/references\/example-launch\/example-composition\.html$)/,
       ),
     website: all || touches(packages) || touches(/^(?:website\/|firebase\.json$|\.firebaserc$|biome\.jsonc$)/),
     // The client is shipped inside the Mac app, even though Linux can build its static files.

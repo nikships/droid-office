@@ -1,0 +1,38 @@
+{
+  "schema_version":1,
+  "notice":"SANITIZED TEMPLATE ONLY. Values are illustrative, not measured app proof.",
+  "manifest":{
+    "schema_version":1,
+    "run_id":"desktop-panel-comparison-001",
+    "workload":{"device":"device-redacted","profile":"isolated-returning-profile","settings_sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","resolution":[1920,1080],"quality":{"preset":"high","msaa":4},"target_fps":120,"background_conditions":{"apps":"unchanged","other_benchmarks":false},"runtime":"electron","scenario":"open-large-project-panel","power_mode":"AC-default"},
+    "builds":{"before":"before-revision:build-id","after":"after-revision:build-id"},
+    "metrics":{"cpu_ms":{"direction":"lower","unit":"ms","practical_change":0.2,"nonnegative":true},"memory_mb":{"direction":"lower","unit":"MB","practical_change":5,"nonnegative":true}},
+    "primary_metric":"cpu_ms",
+    "min_trials":3,
+    "min_trial_seconds":60,
+    "min_coverage":0.95,
+    "fps_tolerance":0.025,
+    "thermal":false
+  },
+  "trial":{
+    "schema_version":1,
+    "id":"A1",
+    "variant":"before",
+    "build":"before-revision:build-id",
+    "workload":{"device":"device-redacted","profile":"isolated-returning-profile","settings_sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","resolution":[1920,1080],"quality":{"preset":"high","msaa":4},"target_fps":120,"background_conditions":{"apps":"unchanged","other_benchmarks":false},"runtime":"electron","scenario":"open-large-project-panel","power_mode":"AC-default"},
+    "started_at":1700000000,
+    "ended_at":1700000060,
+    "independent":true,
+    "functional_parity":true,
+    "visual_parity":true,
+    "coverage":0.99,
+    "drawn_fps":119.9,
+    "presented_fps":119.8,
+    "fps_source":"native-presenter-counter",
+    "metrics":{"cpu_ms":5.2,"memory_mb":null},
+    "raw_artifacts":["/isolated/perf/raw/A1/counters.jsonl","/isolated/perf/raw/A1/runtime.json"],
+    "parity_artifact":"/isolated/perf/raw/A1/parity-report.json",
+    "excluded_reason":null
+  },
+  "thermal_override":{"thermal":true,"min_trials":2,"note":"Collect complete chronological ABBA blocks with existing Office thermal runner; never infer thermal equilibrium from duration."}
+}

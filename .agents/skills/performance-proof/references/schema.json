@@ -1,0 +1,380 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://local.invalid/performance-proof/v1",
+  "$ref": "#/$defs/manifest",
+  "$defs": {
+    "text": {
+      "type": "string",
+      "minLength": 1
+    },
+    "path": {
+      "type": "string",
+      "pattern": "^/",
+      "minLength": 2
+    },
+    "hash": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "workload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "device",
+        "profile",
+        "settings_sha256",
+        "resolution",
+        "quality",
+        "target_fps",
+        "background_conditions",
+        "runtime",
+        "scenario",
+        "power_mode"
+      ],
+      "properties": {
+        "device": {
+          "$ref": "#/$defs/text"
+        },
+        "profile": {
+          "$ref": "#/$defs/text"
+        },
+        "settings_sha256": {
+          "$ref": "#/$defs/hash"
+        },
+        "resolution": {
+          "type": "array",
+          "minItems": 2,
+          "items": {
+            "type": "integer",
+            "minimum": 1
+          }
+        },
+        "quality": {
+          "type": "object"
+        },
+        "target_fps": {
+          "type": "number",
+          "minimum": 1
+        },
+        "background_conditions": {
+          "type": "object"
+        },
+        "runtime": {
+          "enum": [
+            "electron",
+            "browser",
+            "native",
+            "android"
+          ]
+        },
+        "scenario": {
+          "$ref": "#/$defs/text"
+        },
+        "power_mode": {
+          "$ref": "#/$defs/text"
+        }
+      }
+    },
+    "metric": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "direction",
+        "unit",
+        "practical_change",
+        "nonnegative"
+      ],
+      "properties": {
+        "direction": {
+          "enum": [
+            "lower",
+            "higher"
+          ]
+        },
+        "unit": {
+          "$ref": "#/$defs/text"
+        },
+        "practical_change": {
+          "type": "number",
+          "minimum": 0
+        },
+        "nonnegative": {
+          "type": "boolean"
+        }
+      }
+    },
+    "manifest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "run_id",
+        "workload",
+        "builds",
+        "metrics",
+        "primary_metric",
+        "min_trials",
+        "min_trial_seconds",
+        "min_coverage",
+        "fps_tolerance",
+        "thermal"
+      ],
+      "properties": {
+        "schema_version": {
+          "const": 1,
+          "type": "integer"
+        },
+        "run_id": {
+          "$ref": "#/$defs/text"
+        },
+        "workload": {
+          "$ref": "#/$defs/workload"
+        },
+        "builds": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "before",
+            "after"
+          ],
+          "properties": {
+            "before": {
+              "$ref": "#/$defs/text"
+            },
+            "after": {
+              "$ref": "#/$defs/text"
+            }
+          }
+        },
+        "metrics": {
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/$defs/metric"
+          }
+        },
+        "primary_metric": {
+          "$ref": "#/$defs/text"
+        },
+        "min_trials": {
+          "type": "integer",
+          "minimum": 2
+        },
+        "min_trial_seconds": {
+          "type": "number",
+          "minimum": 1
+        },
+        "min_coverage": {
+          "type": "number",
+          "minimum": 0.9,
+          "maximum": 1
+        },
+        "fps_tolerance": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 0.05
+        },
+        "thermal": {
+          "type": "boolean"
+        }
+      }
+    },
+    "trial": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "id",
+        "variant",
+        "build",
+        "workload",
+        "started_at",
+        "ended_at",
+        "independent",
+        "functional_parity",
+        "visual_parity",
+        "coverage",
+        "drawn_fps",
+        "presented_fps",
+        "fps_source",
+        "metrics",
+        "raw_artifacts",
+        "parity_artifact",
+        "excluded_reason"
+      ],
+      "properties": {
+        "schema_version": {
+          "type": "integer",
+          "const": 1
+        },
+        "id": {
+          "$ref": "#/$defs/text"
+        },
+        "variant": {
+          "enum": [
+            "before",
+            "after"
+          ]
+        },
+        "build": {
+          "$ref": "#/$defs/text"
+        },
+        "workload": {
+          "$ref": "#/$defs/workload"
+        },
+        "started_at": {
+          "type": "number",
+          "minimum": 0
+        },
+        "ended_at": {
+          "type": "number",
+          "minimum": 0
+        },
+        "independent": {
+          "type": "boolean"
+        },
+        "functional_parity": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "visual_parity": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "coverage": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "drawn_fps": {
+          "type": "number",
+          "minimum": 0
+        },
+        "presented_fps": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "fps_source": {
+          "enum": [
+            "drawn-frame-counter",
+            "native-presenter-counter",
+            "platform-frame-timeline",
+            "requested-cap"
+          ]
+        },
+        "metrics": {
+          "type": "object",
+          "additionalProperties": {
+            "type": [
+              "number",
+              "null"
+            ]
+          }
+        },
+        "raw_artifacts": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/$defs/path"
+          }
+        },
+        "parity_artifact": {
+          "$ref": "#/$defs/path"
+        },
+        "excluded_reason": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      }
+    },
+    "artifact": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "path",
+        "sha256",
+        "bytes"
+      ],
+      "properties": {
+        "path": {
+          "$ref": "#/$defs/path"
+        },
+        "sha256": {
+          "$ref": "#/$defs/hash"
+        },
+        "bytes": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "entry": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "trial",
+        "raw_artifacts",
+        "parity_artifact",
+        "input_artifact"
+      ],
+      "properties": {
+        "trial": {
+          "$ref": "#/$defs/trial"
+        },
+        "raw_artifacts": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/$defs/artifact"
+          }
+        },
+        "parity_artifact": {
+          "$ref": "#/$defs/artifact"
+        },
+        "input_artifact": {
+          "$ref": "#/$defs/artifact"
+        }
+      }
+    },
+    "state": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "kind",
+        "root",
+        "manifest",
+        "trials"
+      ],
+      "properties": {
+        "schema_version": {
+          "type": "integer",
+          "const": 1
+        },
+        "kind": {
+          "const": "performance-proof"
+        },
+        "root": {
+          "$ref": "#/$defs/path"
+        },
+        "manifest": {
+          "$ref": "#/$defs/manifest"
+        },
+        "trials": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/entry"
+          }
+        }
+      }
+    }
+  }
+}

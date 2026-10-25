@@ -1,0 +1,13 @@
+{
+  "schema_version":1,
+  "fixture_policy":"Synthetic contract fixtures only; no live performance, thermal, scan-out or battery claim.",
+  "cases":[
+    {"id":"resolution-quality-cheat","scenario":"A renderer looks faster because candidate output pixels or MSAA were reduced.","expected":"Changed workload is rejected with exit 3 before aggregation.","test":"test_workload_changes_rejected"},
+    {"id":"cap-is-not-fps","scenario":"A thermal experiment requests 120 FPS but Chrome draws or native presenter presents only 60.","expected":"Actual counters fail; requested-cap source cannot establish proof.","test":"test_actual_drawn_and_presented_rate_rejected"},
+    {"id":"thermal-repeat-variation","scenario":"A tiny mean temperature reduction is smaller than trial-to-trial variation.","expected":"Independent-trial variation yields inconclusive, exit 5; one-second readings are not replications.","test":"test_noise_inconclusive"},
+    {"id":"functional-regression","scenario":"GPU time drops because a panel no longer renders or a workflow stopped working.","expected":"Failed visual/functional parity invalidates the included trial.","test":"test_parity_and_missing_coverage_rejected"},
+    {"id":"thermal-order-confound","scenario":"Before/after runs are interleaved ABAB despite a drifting thermal baseline.","expected":"Thermal contract requires full ABBA blocks; generic performance does not mandate ABBA.","test":"test_thermal_requires_abba; test_thermal_abba_passes"},
+    {"id":"unknown-power","scenario":"A sensor has no fan or power reading, while measured CPU time improves.","expected":"Missing value remains unknown; do not substitute zero or claim all metrics improved.","test":"test_unknown_not_zero"},
+    {"id":"keep-calibration","scenario":"A low-FPS calibration is excluded from an otherwise controlled comparison.","expected":"Reason and raw hashes remain in the report; excluded trial is not a replication.","test":"test_exclusions_preserved"}
+  ]
+}
