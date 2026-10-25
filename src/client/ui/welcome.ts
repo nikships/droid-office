@@ -7,7 +7,7 @@ import { h, openModal, toast, type Modal } from './dom';
 import { field, windowHeader } from './kit';
 import { modelPicker } from './model-picker';
 import { droidCatalogue, officeChoice, pickerModel } from './models';
-import { accountRow, connect, connectingBlock, connectLabel, placeholderProvider } from './subscriptions-settings';
+import { accountRow, connect, connectingBlock, connectLabel, placeholderProvider, UPDATES_FIRST_NOTE, updatesFirst } from './subscriptions-settings';
 import { progressBar, signInPanel, waitLine } from './welcome-signin';
 import {
   currentStep,
@@ -237,7 +237,7 @@ export function openWelcome(net: Net, first?: WelcomeStepId) {
         { type: 'button', onclick: () => pressConnect(p), 'aria-label': `Connect ${name}` },
         h('b', {}, name),
         h('small', {}, plan),
-        h('span.welcome-provider-go', {}, p.connect === 'app' ? 'Connect in DroidProxy' : 'Connect →'),
+        h('span.welcome-provider-go', {}, p.connect === 'app' || updatesFirst() ? connectLabel(p) : 'Connect →'),
       );
     }
     return h(
@@ -291,6 +291,7 @@ export function openWelcome(net: Net, first?: WelcomeStepId) {
     content.replaceChildren(
       h('div.welcome-providers', {}, ...FEATURED_PROVIDERS.map((k) => featuredCard(providerOf(k)))),
       ...setUp,
+      ...(updatesFirst() ? [h('p.note.warn', {}, UPDATES_FIRST_NOTE)] : []),
       ...(subs.proxy.error ? [h('p.note.bad', { role: 'alert' }, subs.proxy.error)] : []),
       ...(more ? [more] : []),
       h('p.field-hint', {}, 'Optional. You can connect plans later in Settings → Subscriptions.'),

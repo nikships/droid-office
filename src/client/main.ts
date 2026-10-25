@@ -137,6 +137,8 @@ import { Compass, type Bearing } from './ui/compass';
 import { openCharacter } from './ui/character';
 import { openSettings, type SettingsPane } from './ui/settings';
 import { openWelcome, watchWelcome } from './ui/welcome';
+import { OPEN_SETTINGS_EVENT } from './ui/model-picker';
+import { SETTINGS_PANES } from '../shared/settings-nav';
 import { officePrompt } from './ui/prompts';
 import { forgeVars } from '../shared/prompts';
 import { INCLUDE_FILE, SETUP_FILE, describeSetup } from '../shared/worktree-setup';
@@ -3515,6 +3517,14 @@ const hudActions: HudAction[] = [
   },
 ];
 const hud = mountHud(hudActions, settings, () => saveSettings(settings));
+// A model picker's "Use your Claude or ChatGPT plan": Settings on that pane, or the open Settings turned to it.
+window.addEventListener(OPEN_SETTINGS_EVENT, (e) => {
+  const want = (e as CustomEvent<{ pane?: string }>).detail?.pane;
+  const pane = SETTINGS_PANES.find((p) => p.id === want)?.id;
+  const tab = pane && document.getElementById(`settings-tab-${pane}`);
+  if (tab) tab.click();
+  else showSettings(pane);
+});
 function droidMissing(): boolean {
   const d = store.setup.droid;
   return d.busy !== 'checking' && (!d.path || d.signedIn === false);

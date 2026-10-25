@@ -57,8 +57,16 @@ export function connectingBlock(p: SubscriptionProvider, net: Net, actions = tru
 /** What Connect says for a provider: connect, add a second account, or go to DroidProxy for one it connects only there. */
 export function connectLabel(p: SubscriptionProvider): string {
   if (p.connect === 'app') return 'Connect in DroidProxy';
+  if (updatesFirst()) return 'Update DroidProxy and connect';
   return p.accounts.length ? 'Add another' : 'Connect';
 }
+
+/** DroidProxy is too old to drive, so a connect installs the new one first: that quits and restarts the app. */
+export function updatesFirst(): boolean {
+  return store.subscriptions.proxy.phase === 'outdated';
+}
+
+export const UPDATES_FIRST_NOTE = 'DroidProxy on this Mac is too old for the office. Connecting updates it first, which quits and restarts it.';
 
 /** Sends the connect for `p`: through DroidProxy's own window when it connects only there. */
 export function connect(net: Net, p: SubscriptionProvider) {
@@ -81,7 +89,7 @@ export function proxyWords(p: ProxyState): string {
     case 'starting':
       return 'Starting…';
     case 'outdated':
-      return `DroidProxy${v} is too old for the office to drive. Update it.`;
+      return `DroidProxy${v} is too old for the office to drive. Updating quits it and starts the new version.`;
     case 'running':
       return `Running · version${v || ' unknown'}`;
   }
@@ -144,7 +152,7 @@ export function subscriptionsSettings(net: Net): { proxy: Parts; accounts: Parts
     const next = JSON.stringify([s.providers, p.phase, Math.floor(Date.now() / 60_000)]);
     if (next !== accountsKey) {
       accountsKey = next;
-      accountsList.replaceChildren(...shownProviders().map((pr) => providerBlock(pr, s.providers.length > 0)));
+      accountsList.replaceChildren(...(updatesFirst() ? [h('p.note.warn', {}, UPDATES_FIRST_NOTE)] : []), ...shownProviders().map((pr) => providerBlock(pr, s.providers.length > 0)));
     }
 
     const m = s.models;
