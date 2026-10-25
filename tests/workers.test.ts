@@ -464,6 +464,55 @@ test('the worker system prompt is the office’s as rewritten, filled in for eac
   assert.equal(existsSync(path.join(f.data, `system-${b.id}.md`)), false);
 });
 
+test('only a worker with no lead is told about office-visit, and only while visits are on', async (t) => {
+  const f = fixture();
+  isolateAgentEnvironment(f, t);
+  const previousLog = process.env.FAKE_AGENT_LOG;
+  process.env.FAKE_AGENT_LOG = f.log;
+  t.after(() => {
+    if (previousLog === undefined) delete process.env.FAKE_AGENT_LOG;
+    else process.env.FAKE_AGENT_LOG = previousLog;
+    f.close();
+  });
+  let on = true;
+  let system = PROMPTS['worker.system'].text;
+  const prompts: PromptSource = { text: (id) => (id === 'worker.system' ? system : PROMPTS[id].text), agent: () => undefined };
+  const workers = new WorkerManager(f.root, f.data, f.droid, [], { url: 'http://127.0.0.1:1', token: '' }, events([]), undefined, undefined, prompts);
+  workers.visitsOn = () => on;
+  t.after(() => workers.shutdown());
+  const launched = (id: string) =>
+    waitFor(
+      () => f.read(),
+      (records) => records.some((r) => r.kind === 'droid' && r.env.workerId === id && r.args.includes('--settings')),
+    );
+  const systemOf = (id: string) => readFileSync(path.join(f.data, `system-${id}.md`), 'utf8');
+
+  const lead = workers.spawn('desk-2', 'test', 'look around');
+  if (typeof lead === 'string') return assert.fail(lead);
+  await launched(lead.id);
+  assert.match(systemOf(lead.id), /- `office-visit` lets you work with the other independent workers on this floor/);
+  assert.match(systemOf(lead.id), /The office puts its commands on your PATH/);
+
+  const sub = workers.spawn('desk-3', 'test', 'help out', false, 'agent', undefined, undefined, [], lead.id);
+  if (typeof sub === 'string') return assert.fail(sub);
+  await launched(sub.id);
+  assert.doesNotMatch(systemOf(sub.id), /office-visit/, 'a subagent is never told');
+  assert.doesNotMatch(systemOf(sub.id), /\n{3,}/, 'no gap where it would have been');
+
+  // An owner's own system prompt from before visits still tells a worker about them.
+  system = 'You are {{name}}, at a desk.';
+  const custom = workers.spawn('desk-4', 'test', 'read');
+  if (typeof custom === 'string') return assert.fail(custom);
+  await launched(custom.id);
+  assert.match(systemOf(custom.id), /^You are .*, at a desk\.\n\n- `office-visit`/);
+
+  on = false;
+  system = PROMPTS['worker.system'].text;
+  const off = workers.spawn('desk-5', 'test', 'read');
+  if (typeof off === 'string') return assert.fail(off);
+  await launched(off.id);
+  assert.doesNotMatch(systemOf(off.id), /office-visit/);
+});
 test("a plain folder's workers get no branch policy, no worktrees, no board agents, and git that stops at the folder", async (t) => {
   const f = fixture();
   isolateAgentEnvironment(f, t);
@@ -2475,4 +2524,30 @@ test('a log read ignores a trailing partial line', (t) => {
   assert.deepEqual(f.read(), [done]);
   writeFileSync(f.log, `${JSON.stringify(done)}\n${tornLine}\n`);
   assert.deepEqual(f.read(), [done, torn]);
+});
+
+test('cancelTurn sends one Escape, and only to a droid that works and shows its spinner', async (t) => {
+  const { workers, worker, hook, status } = await liveWorker(t, 'cancel-turn');
+  const inner = (workers as unknown as { workers: Map<string, { pty?: { write(data: string): void } }> }).workers.get(worker.id)!;
+  const pty = inner.pty!;
+  const write = pty.write.bind(pty);
+  const sent: string[] = [];
+  pty.write = (data: string) => {
+    sent.push(data);
+    write(data);
+  };
+  hook('SessionStart', { source: 'startup' });
+  await showIdle(workers, worker.id);
+  assert.equal(workers.cancelTurn(worker.id), false, 'at rest');
+  hook('UserPromptSubmit', { prompt: 'run it' });
+  assert.equal(status(), 'working');
+  assert.equal(workers.turnScreen(worker.id), 'idle');
+  assert.equal(workers.cancelTurn(worker.id), false, 'working by its status, but at its input box on screen');
+  assert.ok(!sent.includes('\x1b'), 'an idle droid never gets the key');
+  await show(workers, worker.id, ' ⠋ Executing...  (Press ESC to stop)');
+  assert.equal(workers.turnScreen(worker.id), 'busy');
+  sent.length = 0;
+  assert.equal(workers.cancelTurn(worker.id), true);
+  assert.deepEqual(sent, ['\x1b'], 'one Escape, never Ctrl+C');
+  assert.equal(workers.cancelTurn('nobody'), false);
 });

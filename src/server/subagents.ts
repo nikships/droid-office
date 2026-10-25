@@ -82,6 +82,7 @@ export function cleanSettings(raw: unknown, base: SubagentSettings = SUBAGENT_DE
     skill: bool('skill'),
     worktree: bool('worktree'),
     wakeLead: bool('wakeLead'),
+    visits: bool('visits'),
     maxPerLead: max,
     ...(agent ? { agent } : {}),
     ...(models?.length ? { models: models.map((m) => ({ ...m })) } : {}),

@@ -334,7 +334,7 @@ export function walkOff(from: Pt): Pt[] {
 }
 
 /** From beside `seat`, where it hops down, round the furniture to `door` on the office floor. */
-function wayTo(seat: DeskDef, door: Pt): Pt[] {
+export function wayTo(seat: DeskDef, door: Pt): Pt[] {
   const ways = [-1, 1].map((side) => {
     // Beside the chair and back from the desk into the aisle, off the bean bag and round behind it, or
     // out from behind the kiosk and round its front, into the room.

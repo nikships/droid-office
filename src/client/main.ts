@@ -90,6 +90,9 @@ import type { BoardSpot } from './world/board-layout';
 import { loadFonts } from './fonts';
 import { Gallery } from './world/gallery';
 import { Departures } from './world/leaving';
+import { Visitors } from './world/visitors';
+import { sayFor, trimSay } from './world/visit-path';
+import type { VisitKind } from '../shared/visits';
 import { Casualties } from './world/casualties';
 import { TeamLines, type TeamLink } from './world/team-lines';
 import { forkLinks } from '../shared/worker-fork';
@@ -103,7 +106,7 @@ import { SidearmCharge, SHOT_CHARGE_PREVIEW_MS } from './sidearm-charge';
 import { ChargeHaptics } from './haptics';
 import { Confetti, type Area } from './world/confetti';
 import { Hanger } from './hanging';
-import { redrawText } from './world/toon';
+import { plainLabel, redrawText } from './world/toon';
 import { OfficeSound } from './sound';
 import { DesktopNotifier, askNotifyPermission, notifyPermission, waitingOnSomeone } from './notify';
 import { NextUp, waitingInOrder, waitingLabel } from './nextup';
@@ -680,6 +683,17 @@ const departures = new Departures(
   () => arrangeSeats(),
   () => office.stack.state.index > 0,
 );
+// Workers away from their desks visiting others (see world/visitors.ts).
+const visitors = new Visitors(
+  scene,
+  (x, z, y) => groundAt(office.colliders, x, z, y),
+  (id) => {
+    const v = workerViews.get(id);
+    const desk = v && office.desks.get(v.deskId);
+    return v && desk ? { model: v.model, desk } : undefined;
+  },
+  () => store.officeNow(),
+);
 // Only fully charged shots dismiss workers, with a heavenly ascent.
 const casualties = new Casualties(scene, (x, z, y) => groundAt(office.colliders, x, z, y));
 /** What `7` puts in your hand (Settings → You): the wand unless you opted into the Magnum. */
@@ -1080,6 +1094,7 @@ net.onMessage((msg) => {
   if (msg.t === 'welcome' || msg.t === 'floor.enter') {
     departures.clear();
     casualties.clear();
+    visitors.clear();
   }
   if (msg.t === 'worker.remove') (msg.shot ? shotWorkers : sentHome).add(msg.workerId);
   store.apply(msg);
@@ -1644,6 +1659,8 @@ function syncWorkers() {
   }
   for (const [id, v] of workerViews) {
     if (store.workers.has(id)) continue;
+    // Out on a visit: back in its seat first, where walking out (or the beam) starts from.
+    visitors.release(id);
     const desk = office.desks.get(v.deskId);
     // A shot worker: the body ascends instead of the send-home walk-out.
     if (shotWorkers.has(id)) {
@@ -1660,6 +1677,7 @@ function syncWorkers() {
     workerViews.delete(id);
   }
   arrangeSeats();
+  visitors.sync(store.visits);
   syncTeamLines();
   renderWorkers((id) => openWorkerTerminal(id));
   renderWaiting();
@@ -1718,6 +1736,29 @@ function liftOnto(appeared: Collider[]) {
   for (const c of appeared) if (p.y > -0.1 && p.y < c.top && p.x > c.minX - 0.3 && p.x < c.maxX + 0.3 && p.z > c.minZ - 0.3 && p.z < c.maxZ + 0.3) p.y = c.top;
 }
 store.on('workers', syncWorkers);
+store.on('visits', () => {
+  visitors.sync(store.visits);
+  renderWake();
+});
+
+/** What a visitor's speech card says it's doing. */
+const SAY_CHIP: Record<VisitKind, string> = { look: 'SAYS', tell: 'TELLS', ask: 'ASKS', handoff: 'HANDS OFF' };
+store.on('visitSay', () => {
+  const said = store.lastSay;
+  const view = said && workerViews.get(said.worker);
+  if (!said || !view) return;
+  const text = trimSay(said.text);
+  if (!text) return;
+  const visit = store.visits.find((v) => v.id === said.visit);
+  const how = !visit ? 'SAYS' : said.worker === visit.visitor ? SAY_CHIP[visit.kind] : 'REPLIES';
+  const name = plainLabel(store.workers.get(said.worker)?.name ?? '').toUpperCase();
+  const chip = name ? `${name} ${how}` : how;
+  // One line at a time in a conversation: the other side's last line makes way for this one.
+  const other = visit && (said.worker === visit.visitor ? visit.host : visit.visitor);
+  if (other) workerViews.get(other)?.model.hush(said.visit);
+  view.model.speak(text, chip, said.visit, sayFor(text));
+  renderWake();
+});
 
 /** A worker's pull request for its bubble, named the way this floor's forge names it ("🎉 MR !12 merged"). */
 function prBadge(w: WorkerInfo): PrBadge | undefined {
@@ -3694,7 +3735,7 @@ function gpuRendererName(): string {
 function workerMoving(): boolean {
   for (const v of workerViews.values()) if (v.model.animating) return true;
   for (const a of idleAgents) if (a.view.vacancy.visible && a.model.animating) return true;
-  return departures.positions().length > 0 || casualties.active;
+  return departures.positions().length > 0 || casualties.active || visitors.moving;
 }
 
 /** Traffic is the thing you're looking at, not just the street outside the windows. */
@@ -3879,6 +3920,7 @@ function drawFrame(dt: number, t: number, frame: { at: number; paced: boolean })
 
   const camPos = camera.position;
   let screens = 0;
+  visitors.update(dt);
   for (const [id, v] of workerViews) {
     const desk = DESK_BY_ID.get(v.deskId)!;
     // A jumping worker holds still while you're near enough to read its card, and jumps again once you walk away.
@@ -4216,6 +4258,13 @@ const automation = createAutomation({
     };
   },
   wait: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+  visits: () => ({
+    visits: store.visits,
+    workers: [...store.workers.values()].map((w) => {
+      const model = workerViews.get(w.id)?.model;
+      return { id: w.id, name: w.name, deskId: w.deskId, visit: visitors.info(w.id), says: model?.saying ?? null };
+    }),
+  }),
 });
 (window as unknown as { office: typeof automation }).office = automation;
 
@@ -4228,6 +4277,7 @@ const automation = createAutomation({
   workerViews,
   departures,
   casualties,
+  visitors,
   scene,
   net,
   renderer,

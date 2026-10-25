@@ -7,11 +7,13 @@
 import { DESK_BY_ID, STATION_AGENT, type DeskDef } from '../shared/layout';
 import type { FloorInfo, WorkerInfo } from '../shared/protocol';
 import { ROOF, ROOF_NAME } from '../shared/rooftop';
+import type { Visit } from '../shared/visits';
 import { deskApproach, type ApproachPose } from './approach';
 import type { FrameReport } from './frame-stats';
 import { waitingOnSomeone } from './notify';
 import { EYE_HEIGHT } from './player';
 import type { InteractKind, Interactable } from './world/office';
+import type { VisitorInfo } from './world/visitors';
 
 /** The keys that use what you stand at (see DESK_KEYS in main.ts). */
 export const AUTOMATION_KEYS = ['E', 'P', 'R', 'X', 'B', 'C', 'O'] as const;
@@ -22,7 +24,7 @@ export const CAMERA_PRESETS = ['first'] as const;
 export type CameraPreset = (typeof CAMERA_PRESETS)[number];
 
 /** The commands `window.office` answers, and the only ones the server relay may call. */
-export const AUTOMATION_COMMANDS = ['goTo', 'interact', 'open', 'closeAll', 'ride', 'teleport', 'camera', 'height', 'frameStats', 'presenterStats', 'state', 'list', 'commands'] as const;
+export const AUTOMATION_COMMANDS = ['goTo', 'interact', 'open', 'closeAll', 'ride', 'teleport', 'camera', 'height', 'frameStats', 'presenterStats', 'state', 'list', 'commands', 'visits'] as const;
 export type AutomationCommand = (typeof AUTOMATION_COMMANDS)[number];
 
 /** The boards on the wall, which `goTo` lists as kind 'board'. */
@@ -320,6 +322,31 @@ export interface PacingReport extends FrameReport {
   rawMouse: boolean | null;
 }
 
+/** A worker on the floor as `office.visits()` reports it: where it is on a visit, and what it's saying. */
+export interface VisitWorker {
+  id: string;
+  name: string;
+  deskId: string;
+  /** Null while it isn't on a visit (sitting at its own desk). */
+  visit: VisitorInfo | null;
+  /** The speech card over its head, if one is up. */
+  says: string | null;
+}
+
+/** The floor's visits as the server sent them, and every worker's part in them. */
+export interface VisitsReport {
+  visits: Visit[];
+  workers: VisitWorker[];
+}
+
+/** `report` with positions to centimetres and angles to hundredths, so it compares between runs. */
+export function roundVisits(report: VisitsReport): VisitsReport {
+  return {
+    visits: report.visits,
+    workers: report.workers.map((w) => ({ ...w, visit: w.visit && { ...w.visit, x: r2(w.visit.x), z: r2(w.visit.z), facing: angle(w.visit.facing), lean: r2(w.visit.lean) } })),
+  };
+}
+
 /** What `window.office` needs from main.ts: the scene's own functions, nothing reimplemented. */
 export interface AutomationHost {
   context(): TargetContext;
@@ -355,6 +382,8 @@ export interface AutomationHost {
   /** The Mac app's native presenter numbers since the last reset; null in a browser. */
   presenterStats(reset: boolean, samples: boolean): Promise<unknown | null>;
   wait(ms: number): Promise<void>;
+  /** Every worker's visit and speech card, unrounded. */
+  visits(): VisitsReport;
 }
 
 export interface GoToOptions {
@@ -392,6 +421,8 @@ export interface OfficeAutomation {
   state(): Snapshot;
   list(): TargetInfo[];
   commands(): CommandInfo[];
+  /** The floor's visits, and where each worker is on one: its step, pose, spot, facing, lean and speech card. */
+  visits(): VisitsReport;
 }
 
 /** Frames to let go by after a command, so the scene, the hint and the windows have caught up. */
@@ -571,6 +602,7 @@ export function createAutomation(host: AutomationHost): OfficeAutomation {
     state,
     list: () => listTargets(host.context()),
     commands: () => host.commands(),
+    visits: () => roundVisits(host.visits()),
   };
 }
 

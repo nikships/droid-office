@@ -280,6 +280,8 @@ export interface CardOpts {
   muted?: string;
   /** Widest a line of text may get, in textSprite `size` pixels. */
   maxWidth?: number;
+  /** Most lines of body text before it ends in "…" (3 unless given). */
+  bodyLines?: number;
 }
 
 /** Cards draw their text in smaller type than other labels, so they get a density of their own. */
@@ -309,9 +311,9 @@ export function cardSprite(o: CardOpts): THREE.Sprite {
   const ctx = document.createElement('canvas').getContext('2d')!;
   ctx.font = titleFont;
   const title = wrapText(ctx, withGlyph(o.title), maxW, 2, titlePx);
-  const titleW = Math.max(...title.map((l) => measure(ctx, l, titlePx)));
+  const titleW = Math.max(0, ...title.map((l) => measure(ctx, l, titlePx)));
   ctx.font = bodyFont;
-  const body = o.body ? wrapText(ctx, withGlyph(o.body), maxW, 3, bodyPx) : [];
+  const body = o.body ? wrapText(ctx, withGlyph(o.body), maxW, o.bodyLines ?? 3, bodyPx) : [];
   const bodyW = body.length ? Math.max(...body.map((l) => measure(ctx, l, bodyPx))) : 0;
   ctx.font = chipFont;
   const chipW = o.chip ? ctx.measureText(o.chip.text).width + 24 * R : 0;

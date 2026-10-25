@@ -360,6 +360,13 @@ function fakeOffice() {
       };
     },
     wait: (ms) => new Promise((r) => setTimeout(r, Math.min(ms, 5))),
+    visits: () => ({
+      visits: [{ id: 'v1', visitor: 'w1', host: 'w2', kind: 'ask', phase: 'reading', slot: 0, since: 1000 }],
+      workers: [
+        { id: 'w1', name: 'Ada', deskId: 'desk-1', visit: { visit: 'v1', host: 'w2', phase: 'reading', step: 'at spot', pose: 'peer', x: 1.23456, z: -2.34567, facing: 7, lean: 0.41999 }, says: 'Can you look?' },
+        { id: 'w2', name: 'Bo', deskId: 'desk-2', visit: null, says: null },
+      ],
+    }),
   };
   return { s, log, office: createAutomation(host) };
 }
@@ -522,4 +529,16 @@ test('frameStats reports pacing, starts over when asked, and is available throug
   const relayed = (await runCommand(office, 'frameStats', [{ reset: true }])) as typeof r;
   assert.equal(relayed.fpsCap, 120);
   assert.deepEqual(log, ['frameStats false', 'frameStats true', 'frameStats true']);
+});
+
+test('visits reports each worker’s visit, pose and speech card, rounded, and is available through the server relay', async () => {
+  const { office } = fakeOffice();
+  const r = office.visits();
+  assert.equal(r.visits[0].phase, 'reading');
+  const ada = r.workers.find((w) => w.id === 'w1')!;
+  assert.deepEqual(ada.visit, { visit: 'v1', host: 'w2', phase: 'reading', step: 'at spot', pose: 'peer', x: 1.23, z: -2.35, facing: 0.72, lean: 0.42 });
+  assert.equal(ada.says, 'Can you look?');
+  assert.equal(r.workers.find((w) => w.id === 'w2')!.visit, null);
+  const relayed = (await runCommand(office, 'visits', [])) as typeof r;
+  assert.deepEqual(relayed, r);
 });

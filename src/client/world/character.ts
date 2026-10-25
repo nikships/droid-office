@@ -883,7 +883,13 @@ function cardChip(status: WorkerStatus, pr: PrBadge | undefined, lost: boolean):
  * What a worker's body is doing: resting, arms up for joy, arms crossed waiting on you, typing, or
  * acting out its latest tool call.
  */
-type Act = 'rest' | 'up' | 'waiting' | 'type' | WorkerAction;
+type Act = 'rest' | 'up' | 'waiting' | 'type' | WorkerAction | VisitPose;
+
+/**
+ * How it holds itself on a visit to another worker's desk (see visitors.ts): on its feet, leaning
+ * over the other laptop to read it, or talking with a hand out.
+ */
+export type VisitPose = 'stand' | 'peer' | 'talk';
 
 /** One way of holding itself, blended into the next over a moment (see Worker.update). */
 interface Stance {
@@ -971,6 +977,31 @@ function stanceOf(act: Act, t: number, s: Stance): Stance {
       s.lid = 0.55;
       s.look = -0.035;
       s.lift = 0;
+      break;
+    case 'stand':
+      // On its feet at someone else's desk, arms easy at its sides.
+      s.armLx = s.armRx = -0.15;
+      s.armLz = -0.08;
+      s.armRz = 0.08;
+      break;
+    case 'peer':
+      // Bent over the other worker's laptop, one hand down on the desk, eyes on the screen.
+      s.armLx = -0.55;
+      s.armRx = -1.25;
+      s.armLz = -0.1;
+      s.armRz = 0.12;
+      s.lean = 0.42;
+      s.lift = 0;
+      s.look = -0.03 - ((t * 0.7) % 1) * 0.015;
+      break;
+    case 'talk':
+      // Talking it over: one hand out, moving with the words.
+      s.armLx = -0.25;
+      s.armRx = -1.05 + Math.sin(t * 5.5) * 0.28;
+      s.armRz = -0.18 + Math.sin(t * 3.1) * 0.1;
+      s.lean = 0.06;
+      s.turn = Math.sin(t * 1.7) * 0.08;
+      s.lift = Math.abs(Math.sin(t * 5.5)) * 0.012;
       break;
     case 'waiting': {
       // Arms crossed, hip cocked, tapping a foot.
@@ -1074,6 +1105,8 @@ const HOP = 0.5;
 
 /** Task cards are drawn this much smaller than other labels: at full size one is wider than the desk under it. */
 const CARD_SCALE = 0.55;
+/** A line said on a visit is read in passing, so it's drawn a little larger than a task card. */
+const SPEECH_SCALE = 0.68;
 /** Over a worker's head, its card and name tag are gone this close to your eyes (metres) and fully shown from FADE_FAR. */
 export const FADE_NEAR = 1.4;
 export const FADE_FAR = 6.4;
@@ -1306,11 +1339,17 @@ export class Worker {
   private dead = false;
   /** Walking instead of standing, on its way out. */
   walking = false;
+  /** Away from its seat on a visit (see visitors.ts): how it stands, in place of what its status acts out. */
+  visitPose: VisitPose | null = null;
+  /** A line it's saying on a visit, over its head in place of its card until `left` runs out. */
+  private speech: { sprite: THREE.Sprite; text: string; visit: string; left: number } | null = null;
   /** Full-rate motion, rather than a hop enabled but held still beside its finished task card. */
   get animating(): boolean {
     if (this.dead) return false;
     return (
       this.walking ||
+      this.visitPose !== null ||
+      this.speech !== null ||
       this.stride > 0 ||
       this.spawnT < 1 ||
       this.split !== null ||
@@ -1549,7 +1588,7 @@ export class Worker {
 
   /** A harmless lift above its seat, easing up and back down at full size. */
   levitate(): boolean {
-    if (this.dead || this.leaving || this.walking || this.dancing || this.split || this.levitating !== null || isAsleep(this.status)) return false;
+    if (this.dead || this.leaving || this.walking || this.visitPose || this.dancing || this.split || this.levitating !== null || isAsleep(this.status)) return false;
     this.levitating = 0;
     return true;
   }
@@ -1559,7 +1598,7 @@ export class Worker {
    * ball, and hops back down into its seat. Asked again mid-dance, it stays up and dances on.
    */
   dance(stage: Stage) {
-    if (this.leaving || this.dead || this.split || this.levitating !== null) return;
+    if (this.leaving || this.dead || this.split || this.levitating !== null || this.visitPose) return;
     const d = this.dancing;
     if (!d) {
       this.dancing = { stage, t: 0 };
@@ -1598,6 +1637,8 @@ export class Worker {
   /** Sent home: its light goes out, its face falls, and its things pop into a box in its arms. `farewell` goes over its head. */
   leave(farewell: string) {
     if (this.leaving) return;
+    this.hush();
+    this.visitPose = null;
     this.stopDancing();
     this.bouncing = false;
     this.cheerT = 0;
@@ -1633,6 +1674,48 @@ export class Worker {
     this.leaving = { box, boxT: 0, stride: 0 };
   }
 
+  /**
+   * Says `text` on visit `visit`: a speech card over its head for `seconds`, in place of its status
+   * card and name tag, which come back once it's done. `chip` says who says it and how (BYTE ASKS).
+   */
+  speak(text: string, chip: string, visit: string, seconds: number) {
+    if (this.leaving || this.dead) return;
+    this.hush();
+    const sprite = cardSprite({
+      chip: { text: chip, bg: CHIP_BG, color: this.color },
+      title: '',
+      body: text,
+      bodyLines: 4,
+      maxWidth: 360,
+      bg: '#0a0a0a',
+      border: this.color,
+      color: '#ffffff',
+      muted: '#eeeeee',
+    });
+    sprite.scale.multiplyScalar(SPEECH_SCALE);
+    this.root.add(sprite);
+    this.speech = { sprite, text, visit, left: seconds };
+  }
+
+  /** Stops saying what it was saying (on `visit`, if one is given), and its card shows again. */
+  hush(visit?: string) {
+    const s = this.speech;
+    if (!s || (visit !== undefined && s.visit !== visit)) return;
+    this.root.remove(s.sprite);
+    disposeSprite(s.sprite);
+    this.speech = null;
+  }
+
+  /** What it's saying on a visit right now, if anything. */
+  get saying(): string | null {
+    return this.speech?.text ?? null;
+  }
+
+  /** How far its body leans forward (radians), for checks. */
+  get lean(): number {
+    return this.body.rotation.x;
+  }
+
   /** On its way out: says something else over its head in place of its farewell. */
   say(text: string) {
     if (!this.leaving) return;
@@ -1650,6 +1733,8 @@ export class Worker {
    */
   die(asleep = false) {
     if (this.dead) return;
+    this.hush();
+    this.visitPose = null;
     this.dead = true;
     this.asleep = asleep;
     this.stopDancing();
@@ -1727,7 +1812,11 @@ export class Worker {
    * `visible` belongs to whoever hides the labels outright (a heavenly ascent).
    */
   private fadeLabels() {
-    for (const sprite of [this.bubble, this.nameTag]) if (sprite) sprite.material.opacity = this.labelAlpha;
+    // A line said on a visit stands in for the card and the name tag (its chip names who says it), and
+    // stays readable from right beside it.
+    const alpha = this.speech ? 0 : this.labelAlpha;
+    for (const sprite of [this.bubble, this.nameTag]) if (sprite) sprite.material.opacity = alpha;
+    if (this.speech) this.speech.sprite.material.opacity = Math.max(this.labelAlpha, 0.85);
   }
 
   update(dt: number, t: number) {
@@ -1758,7 +1847,7 @@ export class Worker {
     this.waitT = this.status === 'needs_input' ? this.waitT + dt : 0;
     const tapping = this.status === 'needs_input' && (this.held || this.waitT % WAIT_CYCLE >= WAIT_HOPS);
     // Jump up and down when done / waiting on a human (except while held or tapping), or cheering.
-    if (this.bouncing || this.cheerT > 0) {
+    if (!this.visitPose && (this.bouncing || this.cheerT > 0)) {
       const landAt = Math.ceil(this.bounceT / Math.PI) * Math.PI;
       this.bounceT += dt * 7;
       if ((this.held || tapping) && !this.cheerT && this.bounceT >= landAt) this.bounceT = 0;
@@ -1773,11 +1862,17 @@ export class Worker {
       this.action = this.nextAction;
       this.actionT = 0;
     }
-    const act: Act = hopping || (this.bouncing && this.status === 'done') ? 'up' : this.status === 'needs_input' ? 'waiting' : this.status === 'working' ? (this.action ?? 'type') : 'rest';
+    const act: Act = hopping ? 'up' : (this.visitPose ?? (this.bouncing && this.status === 'done' ? 'up' : this.status === 'needs_input' ? 'waiting' : this.status === 'working' ? (this.action ?? 'type') : 'rest'));
     const s = this.pose(act, dt, t);
 
     this.armL.rotation.set(s.armLx, 0, s.armLz);
     this.armR.rotation.set(s.armRx, 0, s.armRz);
+    if (this.visitPose && this.walking) {
+      // Arms swing against the stride on the way over.
+      const swing = Math.sin(this.stride) * 0.45;
+      this.armL.rotation.x += swing;
+      this.armR.rotation.x -= swing;
+    }
     this.armL.position.set(-0.3 + s.reach * 0.07, 0.55 - s.drop, 0.05 + s.reach * 0.12);
     this.armR.position.set(0.3 - s.reach * 0.07, 0.55 - s.drop + s.reach * 0.04, 0.05 + s.reach * 0.14);
     this.feet.forEach((f, i) => f.position.set(i ? 0.12 : -0.12, 0.2 + (i ? s.tap * 0.07 : 0), 0.05 + s.kick + (i ? s.tap * 0.03 : 0)));
@@ -1810,6 +1905,12 @@ export class Worker {
     this.bulbScale(this.status === 'needs_input' ? 1 + Math.abs(Math.sin(t * 8)) * 0.5 : 1);
     if (this.bubble) this.bubble.position.y = (this.bubbleIsCard ? 1.74 : 1.95) + (hopping ? this.body.position.y : 0) + Math.sin(t * 3) * 0.03;
     if (this.nameTag) this.nameTag.position.y = 1.55 + (hopping ? this.body.position.y : 0);
+    const said = this.speech;
+    if (said) {
+      said.sprite.position.y = 1.74 + (hopping ? this.body.position.y : 0) + Math.sin(t * 3) * 0.03;
+      said.left -= dt;
+      if (said.left <= 0) this.hush();
+    }
     // Walking uses the same waddle as on the way out, without the box.
     if (this.walking || this.stride) {
       this.stride = this.walking ? this.stride + dt * 9 : 0;
@@ -2010,6 +2111,7 @@ export class Worker {
   }
 
   dispose() {
+    this.hush();
     waitingWorkers.delete(this);
     this.kit.dispose();
     if (this.bubble) disposeSprite(this.bubble);

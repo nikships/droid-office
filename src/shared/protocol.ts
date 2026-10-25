@@ -13,6 +13,7 @@ import type { WorktreeSetupState } from './worktree-setup.js';
 import type { OpEnvelope, WhiteboardUpdate } from './whiteboard.js';
 import type { PingHow } from './whiteboard-ping.js';
 import type { Menu } from './asks.js';
+import type { Visit } from './visits.js';
 
 export type WorkerStatus =
   | 'starting' // PTY launched, agent booting
@@ -732,6 +733,12 @@ export interface SubagentSettings {
   maxPerLead: number;
   /** A lead at rest is prompted to read what its subagents said once they report or finish. */
   wakeLead: boolean;
+  /**
+   * Independent workers (no lead) on a floor may visit each other's desks with office-visit: read a
+   * terminal, tell, ask and hand off work (see server/visits.ts and shared/visits.ts). Off: every
+   * office-visit command is refused.
+   */
+  visits: boolean;
 }
 
 /** A model a lead may give its subagents, and what the office's owner says it's for. */
@@ -741,7 +748,7 @@ export interface SubagentModel {
   note?: string;
 }
 
-export const SUBAGENT_DEFAULTS: SubagentSettings = { on: true, deskWorkers: true, skill: true, worktree: true, maxPerLead: 4, wakeLead: true };
+export const SUBAGENT_DEFAULTS: SubagentSettings = { on: true, deskWorkers: true, skill: true, worktree: true, maxPerLead: 4, wakeLead: true, visits: true };
 export const SUBAGENT_MAX_PER_LEAD = 8;
 export const SUBAGENT_MODELS_MAX = 100;
 export const SUBAGENT_MODEL_NOTE_MAX = 200;
@@ -1101,6 +1108,16 @@ export type ServerMsg =
   /** To everyone on the floor: whether a failed run there wakes the Pipeline agent. */
   | { t: 'autoHeal'; state: AutoHealState }
   | { t: 'subagents'; state: SubagentsState }
+  /**
+   * Every visit on the floor (see shared/visits.ts), to everyone on it: after `welcome` and
+   * `floor.enter`, and whenever a visit starts, changes phase or ends.
+   */
+  | { t: 'visits'; visits: Visit[] }
+  /**
+   * A speech bubble over `worker` during `visit`: the visitor's message over the visitor, the host's
+   * reply over the host. The full text; the client trims it.
+   */
+  | { t: 'visit_say'; visit: string; worker: string; text: string }
   | { t: 'whiteboardSkill'; state: WhiteboardSkillState }
   /**
    * A floor's Whiteboard (see shared/whiteboard.ts and server/whiteboard.ts). A `snapshot` comes after

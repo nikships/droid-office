@@ -116,8 +116,8 @@ function choiceLabel(c: AgentChoice): string {
 
 /** The Subagents settings as the office keeps them, without who set them or where the skill is. */
 function subagentSettings(): SubagentSettings {
-  const { on, deskWorkers, skill, worktree, maxPerLead, wakeLead, agent, models } = store.subagents;
-  return { on, deskWorkers, skill, worktree, maxPerLead, wakeLead, ...(agent ? { agent } : {}), ...(models?.length ? { models } : {}) };
+  const { on, deskWorkers, skill, worktree, maxPerLead, wakeLead, visits, agent, models } = store.subagents;
+  return { on, deskWorkers, skill, worktree, maxPerLead, wakeLead, visits: visits ?? true, ...(agent ? { agent } : {}), ...(models?.length ? { models } : {}) };
 }
 
 /**
@@ -706,6 +706,14 @@ export function openSettings(
     (wakeLead) => subSet({ wakeLead }),
   );
   const subWakeNote = desc('When a subagent reports back, a resting lead is nudged to read the news with office-workers wait. A busy lead hears it the next time it stops.');
+  // Visits between the floor's independent workers (office-visit), for the whole office.
+  const visitsOn = toggle(
+    'Visits between workers',
+    () => store.subagents.visits ?? true,
+    (visits) => subSet({ visits }),
+  );
+  const visitsNote = desc();
+  const visitPrompts = h('button.btn.sm', { type: 'button', onclick: () => openPromptEditor(net, 'visit.ask') }, 'Edit prompts…');
   const subSkill = toggle(
     'Droid skill installed',
     () => store.subagents.skill,
@@ -734,7 +742,11 @@ export function openSettings(
 
   const paintSubagents = () => {
     const s = store.subagents;
-    for (const r of [subOn, subWho, subSize, subTree, subWake, subSkill]) r.paint();
+    for (const r of [subOn, subWho, subSize, subTree, subWake, subSkill, visitsOn]) r.paint();
+    visitsNote.textContent =
+      (s.visits ?? true)
+        ? 'Workers you hired (not subagents) can see each other on a roster with office-visit, walk to each other’s desks, read each other’s screens, and tell, ask and hand off work. A normal message waits for the other worker’s turn to end; an urgent one cancels the turn and goes in as its next prompt.'
+        : 'Every office-visit command is refused, and visits under way end. Workers can still hire and run subagents.';
     subWho.row.classList.toggle('disabled', !s.on);
     subNote.textContent =
       (s.on
@@ -1054,6 +1066,11 @@ export function openSettings(
         card('Team size', { desc: subSizeNote, control: subSize.row }),
         card('Where subagents work', { desc: subTreeNote, control: subTree.row }),
         card('Waking the lead', { desc: subWakeNote, control: subWake.row }),
+      ),
+      group(
+        'Visits',
+        card('Visits between workers', { desc: visitsNote, control: visitsOn.el }),
+        setting('Visit prompts', { desc: desc('What a worker’s session gets when another worker tells, asks or hands it something.'), control: visitPrompts }),
       ),
       group('Droid', card('Droid skill', { desc: subSkillNote, control: subSkill.el }), card('Whiteboard skill', { desc: boardSkillNote, control: boardSkill.el })),
     ],
