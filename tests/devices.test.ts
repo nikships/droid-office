@@ -165,10 +165,14 @@ test('tailscaleSelf asks the first CLI that answers, and copes with none', { ski
   const junk = path.join(dir, 'tailscale-junk');
   writeFileSync(junk, '#!/bin/sh\necho not json\n');
   const slow = path.join(dir, 'tailscale-slow');
-  writeFileSync(slow, '#!/bin/sh\nsleep 5\n');
+  writeFileSync(slow, '#!/bin/sh\nexec sleep 5\n');
   for (const f of [ok, junk, slow]) chmodSync(f, 0o755);
-  assert.deepEqual(await tailscaleSelf([path.join(dir, 'missing'), junk, slow, ok], 300), { dnsName: 'box.tail1.ts.net', ips: ['100.100.1.1'] });
-  assert.equal(await tailscaleSelf([path.join(dir, 'missing'), junk], 300), undefined);
+  // The first run of a freshly written script is slow (30-150ms here, more when the machine is
+  // busy), so run the stubs that have to answer once before the timed calls. The hanging stub
+  // outlasts the budget, so the budget is the only thing this test waits for.
+  for (const f of [ok, junk]) execFileSync(f, ['status', '--json']);
+  assert.deepEqual(await tailscaleSelf([path.join(dir, 'missing'), junk, slow, ok], 1000), { dnsName: 'box.tail1.ts.net', ips: ['100.100.1.1'] });
+  assert.equal(await tailscaleSelf([path.join(dir, 'missing'), junk], 1000), undefined);
 });
 
 test('TailscaleWatch asks once per interval, even when asked at the same time', async () => {
