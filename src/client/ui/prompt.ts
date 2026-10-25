@@ -219,6 +219,13 @@ export function openPrompt(opts: PromptOptions) {
       );
       return;
     }
+    // The office would refuse it: say why here, with the prompt still in the box.
+    const refused = models?.cannotRun();
+    if (refused) {
+      failed.textContent = `${refused}. Pick another model.`;
+      failed.classList.remove('hidden');
+      return;
+    }
     if (opts.worktreeOption) setWorktreePref(wtBox.checked);
     const worktree = !!opts.worktreeOption && wtBox.checked;
     waiting = true;

@@ -30,6 +30,7 @@ import { Team } from './team.js';
 import { Visits } from './visits.js';
 import type { DroidModelCatalogue } from './droid-models.js';
 import type { SubagentSettings } from '../shared/protocol.js';
+import type { ModelAvailability } from '../shared/subscriptions.js';
 import type { WorktreeSetupState } from '../shared/worktree-setup.js';
 import { setupState, writeOverride } from './worktree-setup.js';
 import { WhiteboardStore, renderInfo } from './whiteboard.js';
@@ -71,6 +72,10 @@ export interface FloorContext {
   officeDataDir: string;
   /** Droid's model list, which leads choose subagents' models from. */
   droidModels?(): Promise<DroidModelCatalogue>;
+  /** Subscriptions: why an agent on `model` can't start now, or undefined when it can (docs/subscriptions.md). */
+  modelGate?(model: string | undefined): string | undefined;
+  /** Subscriptions: whether a subscription model can run now; undefined when it isn't one or nobody can tell. */
+  modelAvailability?(model: string): ModelAvailability | undefined;
   /** Another floor of the building: a worker across repositories works in its project too (see WorkerInfo.repos). */
   floor(id: string): Floor | undefined;
   /** This floor's pull requests came back: a worker on another floor with a repository here may have landed. */
@@ -287,6 +292,7 @@ export class Floor {
     this.workers.freshMain = () => ctx.freshMain();
     this.workers.visitsOn = () => ctx.subagents().visits;
     this.workers.pullList = () => this.board.pulls.items;
+    this.workers.modelGate = (model) => ctx.modelGate?.(model);
 
     // The 🚀 Pipelines board: runs that end while someone watches say so (a failure always, a pass when the office started it).
     this.pipelines = floorPipelines(
@@ -336,6 +342,7 @@ export class Floor {
         git: !this.plain && !!this.project.branch,
         settings: () => ctx.subagents(),
         ...(ctx.droidModels ? { models: ctx.droidModels.bind(ctx) } : {}),
+        availability: (model) => ctx.modelAvailability?.(model),
         prompts: ctx.prompts,
         toast: (text, level, workerId) => ctx.toast(this, text, level, workerId),
       },

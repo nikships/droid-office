@@ -2,14 +2,14 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { SETTINGS_CARDS, SETTINGS_PANES, settingsPaneAfter, type SettingsPane } from '../src/shared/settings-nav.js';
 
-test('settings has the nine categories, in order', () => {
+test('settings has the ten categories, in order', () => {
   assert.deepEqual(
     SETTINGS_PANES.map((p) => p.label),
-    ['You', 'Sound', 'Graphics', 'Notifications', 'Building', 'Factory', 'Workers', 'Subagents', 'Phone'],
+    ['You', 'Sound', 'Graphics', 'Notifications', 'Building', 'Factory', 'Subscriptions', 'Workers', 'Subagents', 'Phone'],
   );
   assert.deepEqual(
     SETTINGS_PANES.map((p) => p.id),
-    ['you', 'sound', 'graphics', 'notify', 'building', 'factory', 'workers', 'subagents', 'phone'],
+    ['you', 'sound', 'graphics', 'notify', 'building', 'factory', 'subscriptions', 'workers', 'subagents', 'phone'],
   );
 });
 
@@ -39,6 +39,10 @@ test('every setting is in a category', () => {
     ['Workspace folder', 'building'],
     ['Source hot reload', 'building'],
     ['Factory API key', 'factory'],
+    ['DroidProxy', 'subscriptions'],
+    ['Accounts', 'subscriptions'],
+    ['Models in Droid', 'subscriptions'],
+    ['Droid', 'workers'],
     ['Default worker', 'workers'],
     ['Where fresh workers start', 'workers'],
     ['Prompts', 'workers'],
@@ -75,7 +79,9 @@ test('arrow keys move between categories and wrap, Home and End jump', () => {
   assert.equal(settingsPaneAfter('phone', 'ArrowDown'), 'you');
   assert.equal(settingsPaneAfter('building', 'ArrowUp'), 'notify');
   assert.equal(settingsPaneAfter('building', 'ArrowDown'), 'factory');
-  assert.equal(settingsPaneAfter('factory', 'ArrowDown'), 'workers');
+  assert.equal(settingsPaneAfter('factory', 'ArrowDown'), 'subscriptions');
+  assert.equal(settingsPaneAfter('subscriptions', 'ArrowDown'), 'workers');
+  assert.equal(settingsPaneAfter('workers', 'ArrowUp'), 'subscriptions');
   assert.equal(settingsPaneAfter('sound', 'ArrowDown'), 'graphics');
   assert.equal(settingsPaneAfter('graphics', 'ArrowDown'), 'notify');
   assert.equal(settingsPaneAfter('sound', 'Home'), 'you');

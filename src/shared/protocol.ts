@@ -14,6 +14,8 @@ import type { OpEnvelope, WhiteboardUpdate } from './whiteboard.js';
 import type { PingHow } from './whiteboard-ping.js';
 import type { Menu } from './asks.js';
 import type { Visit } from './visits.js';
+import type { SetupState } from './setup.js';
+import type { SubscriptionProviderKey, SubscriptionsState } from './subscriptions.js';
 
 export type WorkerStatus =
   | 'starting' // PTY launched, agent booting
@@ -920,6 +922,29 @@ type ClientMessage =
   | { t: 'factory.refresh'; feature?: FactoryFeatureId }
   /** A board or window of `feature` opened (`on`) or closed in this tab: it polls fast while one is open. */
   | { t: 'factory.watch'; feature: FactoryFeatureId; on: boolean }
+  /** Look at Droid (installed, signed in, newest release) and DroidProxy again now (docs/subscriptions.md). */
+  | { t: 'setup.check' }
+  /** Install Droid, or update it to the newest release. */
+  | { t: 'setup.droid.install' }
+  /** Sign Droid in to Factory: the office runs Droid's own sign-in and shows its code in SetupState.droid.signIn. */
+  | { t: 'setup.droid.signIn' }
+  /** Stop a sign-in that's waiting. */
+  | { t: 'setup.droid.signInCancel' }
+  /** The owner finished the welcome (`done`), or asked to see it again (false). */
+  | { t: 'setup.onboarded'; done: boolean }
+  /** Install or update DroidProxy, start it, or open its own settings window. */
+  | { t: 'subscriptions.proxy'; action: 'install' | 'start' | 'open' }
+  /** Connect an account of a provider (a browser sign-in on the office's Mac, or a device code shown in its state). */
+  | { t: 'subscriptions.connect'; provider: SubscriptionProviderKey }
+  | { t: 'subscriptions.connectCancel'; provider: SubscriptionProviderKey }
+  /** Forget one account of a provider. */
+  | { t: 'subscriptions.disconnect'; provider: SubscriptionProviderKey; account: string }
+  /** Switch a provider's models on or off. */
+  | { t: 'subscriptions.provider'; provider: SubscriptionProviderKey; enabled: boolean }
+  /** Put DroidProxy's models into Droid's settings, replacing the ones it put there before. */
+  | { t: 'subscriptions.models' }
+  /** Ask DroidProxy again now. */
+  | { t: 'subscriptions.refresh' }
   /**
    * Follow what a worker changed (the office polls its checkout while anyone watches). `repo` is another
    * floor's repository of a worker across repositories; none follows its own.
@@ -1039,6 +1064,10 @@ export type ServerMsg =
       prompts: PromptsState;
       /** The office's Factory connection and every Factory feature's read state (see docs/factory.md). */
       factory: FactoryState;
+      /** Droid installed and signed in, and whether the owner has been through the welcome (docs/subscriptions.md). */
+      setup: SetupState;
+      /** DroidProxy, the subscriptions it serves, and which of their models can run now. */
+      subscriptions: SubscriptionsState;
     } & FloorView)
   /** You arrived on another floor: everything on it, replacing the last one's. */
   | ({ t: 'floor.enter'; arrival: Arrival } & FloorView)
@@ -1101,6 +1130,10 @@ export type ServerMsg =
   | { t: 'factory'; state: FactoryState }
   /** To whoever sent `factory.connect`: connected, or why not. */
   | { t: 'factory.setup'; ok: boolean; error?: string }
+  /** Droid's install or sign-in changed, or the welcome was finished: all of it, to everyone. */
+  | { t: 'setup'; state: SetupState }
+  /** DroidProxy, an account or a model's quota changed: all of it, to everyone. */
+  | { t: 'subscriptions'; state: SubscriptionsState }
   | { t: 'machine'; state: MachineState }
   | { t: 'sky'; state: SkyState }
   | { t: 'leaveOnMerge'; state: LeaveOnMergeState }

@@ -1,6 +1,8 @@
 import { SUBAGENT_MODEL_NOTE_MAX, type SubagentModel } from '../../shared/protocol';
+import { store } from '../state';
 import { withoutGlyph } from '../world/glyph';
 import { h } from './dom';
+import { availabilityOf } from './model-search';
 import { droidCatalogue, droidDisplayName, multiplierLabel, type DroidModelOption } from './models';
 
 export interface SubagentModelPicker {
@@ -10,7 +12,8 @@ export interface SubagentModelPicker {
 }
 
 /** What a model costs and can do, in one line under its name. */
-function facts(m: DroidModelOption | undefined, id: string): string {
+function facts(m: DroidModelOption | undefined, id: string, why?: string): string {
+  if (why) return `${why} · ${id}`;
   if (!m) return `${id} · droid doesn't list it now`;
   const cost = m.custom ? 'own API key, no Factory credits' : m.tokenMultiplier !== undefined ? `${multiplierLabel(m.tokenMultiplier)} credits` : '';
   return [id, m.provider, cost, m.noImages ? 'no images' : '', m.legacy ? 'legacy' : '', m.promo].filter(Boolean).join(' · ');
@@ -48,7 +51,8 @@ export function subagentModelPicker(save: (models: SubagentModel[] | undefined) 
 
   const row = (id: string, m: DroidModelOption | undefined) => {
     const on = picked.has(id);
-    const box = h('input', { type: 'checkbox', checked: on, 'aria-label': `Let leads pick ${m?.displayName ?? id}` }) as HTMLInputElement;
+    const { reason, note: remark } = availabilityOf(id, store.subscriptions, Date.now());
+    const box = h('input', { type: 'checkbox', checked: on, disabled: !!reason && !on, 'aria-label': `Let leads pick ${m?.displayName ?? id}` }) as HTMLInputElement;
     const note = h('input.input.sub-model-note', {
       type: 'text',
       maxlength: SUBAGENT_MODEL_NOTE_MAX,
@@ -74,12 +78,12 @@ export function subagentModelPicker(save: (models: SubagentModel[] | undefined) 
     const name = withoutGlyph(m?.displayName ?? droidDisplayName(id));
     const li = h(
       'li.list-row.sub-model',
-      { class: on ? 'on' : '' },
+      { class: `${on ? 'on' : ''} ${reason ? 'refused' : ''}` },
       h(
         'label.sub-model-pick',
         { title: id },
         h('span.list-icon', {}, box),
-        h('span.list-main', {}, h('span.list-title', {}, name), h('span.list-meta', {}, facts(m, id))),
+        h('span.list-main', {}, h('span.list-title', {}, name), h('span.list-meta', {}, facts(m, id, reason ?? remark))),
         !m?.custom && m?.tokenMultiplier !== undefined ? h('span.list-end', {}, multiplierLabel(m.tokenMultiplier)) : null,
       ),
       note,
@@ -97,6 +101,7 @@ export function subagentModelPicker(save: (models: SubagentModel[] | undefined) 
     const rows: [string, DroidModelOption | undefined][] = [...[...picked.keys()].filter((id) => !known.has(id)).map((id): [string, undefined] => [id, undefined]), ...sorted.map((m): [string, DroidModelOption] => [m.id, m])];
     const shown = rows.filter(([id, m]) => !want || [id, m?.displayName, m?.provider].some((s) => s?.toLowerCase().includes(want)));
     list.replaceChildren(...(shown.length ? shown.map(([id, m]) => row(id, m)) : [h('li.list-row.sub-model', {}, h('span.list-meta', {}, loaded === 'loading' ? 'Loading Droid models…' : 'No model matches.'))]));
+    drawn = availabilityStamp();
     paintButtons();
   };
 
@@ -119,6 +124,15 @@ export function subagentModelPicker(save: (models: SubagentModel[] | undefined) 
     paintList();
   });
   revert.addEventListener('click', reset);
+  // A quota running out or coming back redraws the list, but only then: a redraw would take focus from a note being typed.
+  const availabilityStamp = () => JSON.stringify(models.map((m) => availabilityOf(m.id, store.subscriptions, 0)));
+  let drawn = '';
+  let seen = false;
+  const stopWatching = store.on('subscriptions', () => {
+    if (list.isConnected) seen = true;
+    else if (seen) stopWatching();
+    if (list.isConnected && availabilityStamp() !== drawn) paintList();
+  });
 
   void droidCatalogue()
     .then((c) => {

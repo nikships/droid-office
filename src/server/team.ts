@@ -12,7 +12,9 @@ import { DESK_BY_ID, STATION_AGENT, nearestFreeSeat } from '../shared/layout.js'
 import { AGENT_EFFORTS, isAgentEffort, type AgentChoice, type SubagentSettings, type WorkerInfo, type WorkerStatus, type WorkerTask } from '../shared/protocol.js';
 import { isAsleep } from '../shared/status.js';
 import type { DroidModelCatalogue, DroidModelOption } from './droid-models.js';
+import { availabilityWords, cannotRun, type ModelAvailability } from '../shared/subscriptions.js';
 import { officePrompt, type PromptSource } from './prompts.js';
+import { hireRefusal } from './subscriptions/map.js';
 
 /** What the team needs from the floor's workers. Narrow on purpose, so a test can fake it. */
 export interface TeamWorkers {
@@ -42,6 +44,8 @@ export interface TeamOptions {
   settings(): SubagentSettings;
   /** Droid's model list, for `office-workers models`. None: only what the settings name. */
   models?: () => Promise<DroidModelCatalogue>;
+  /** Subscriptions: whether a subscription model can run now; undefined when it isn't one or nobody can tell (docs/subscriptions.md). */
+  availability?: (model: string) => ModelAvailability | undefined;
   prompts?: PromptSource;
   toast(text: string, level: 'info' | 'warn', workerId?: string): void;
   /** How long news waits before a lead at rest is told, so a report and the turn ending with it go as one. */
@@ -109,6 +113,8 @@ export interface TeamModel {
   default?: true;
   /** Allowed in Settings, but droid doesn't list it now. */
   unlisted?: true;
+  /** Why a worker on it can't run now (out of quota, nobody signed in): hire refuses it. */
+  cannotRun?: string;
 }
 
 const TASK_MAX = 20_000;
@@ -293,26 +299,66 @@ export class Team {
     const catalogue = await this.catalogue();
     const known = new Map((catalogue?.models ?? []).map((m) => [m.id, m]));
     const fallback = this.defaultModel(catalogue?.defaultModel);
-    const describe = (id: string, m: DroidModelOption | undefined, note?: string): TeamModel => ({
-      id,
-      name: m?.displayName ?? id,
-      ...(m?.provider ? { provider: m.provider } : {}),
-      ...(m?.tokenMultiplier !== undefined && !m.custom ? { multiplier: m.tokenMultiplier } : {}),
-      ...(m?.custom ? { custom: true as const } : {}),
-      ...(m?.legacy ? { legacy: true as const } : {}),
-      ...(m?.defaultReasoningEffort ? { defaultEffort: m.defaultReasoningEffort } : {}),
-      ...(m?.supportedReasoningEfforts?.length ? { efforts: m.supportedReasoningEfforts } : {}),
-      ...(m?.noImages ? { noImages: true as const } : {}),
-      ...(m?.promo ? { promo: m.promo } : {}),
-      ...(note ? { note } : {}),
-      ...(id === fallback ? { default: true as const } : {}),
-      ...(catalogue && !m ? { unlisted: true as const } : {}),
-    });
+    const describe = (id: string, m: DroidModelOption | undefined, note?: string): TeamModel => {
+      const stuck = this.whyNot(id);
+      return {
+        id,
+        name: m?.displayName ?? id,
+        ...(m?.provider ? { provider: m.provider } : {}),
+        ...(m?.tokenMultiplier !== undefined && !m.custom ? { multiplier: m.tokenMultiplier } : {}),
+        ...(m?.custom ? { custom: true as const } : {}),
+        ...(m?.legacy ? { legacy: true as const } : {}),
+        ...(m?.defaultReasoningEffort ? { defaultEffort: m.defaultReasoningEffort } : {}),
+        ...(m?.supportedReasoningEfforts?.length ? { efforts: m.supportedReasoningEfforts } : {}),
+        ...(m?.noImages ? { noImages: true as const } : {}),
+        ...(m?.promo ? { promo: m.promo } : {}),
+        ...(note ? { note } : {}),
+        ...(id === fallback ? { default: true as const } : {}),
+        ...(catalogue && !m ? { unlisted: true as const } : {}),
+        ...(stuck ? { cannotRun: stuck } : {}),
+      };
+    };
     const allowed = s.models?.length ? s.models : undefined;
     const models = allowed ? allowed.map((a) => describe(a.id, known.get(a.id), a.note)) : (catalogue?.models ?? []).filter((m) => !m.legacy).map((m) => describe(m.id, m));
-    // The default always runs, so the lead sees it even when the list leaves it out.
+    // The default is what a hire without --model runs, so the lead sees it even when the list leaves it out.
     if (fallback && !models.some((m) => m.id === fallback)) models.unshift(describe(fallback, known.get(fallback)));
     return ok({ restricted: !!allowed, models, ...(fallback ? { defaultModel: fallback } : {}), ...(catalogue ? {} : { unavailable: true }) });
+  }
+
+  /** What subscriptions say about `model`: undefined when it can run, or nobody can tell. */
+  private blocked(model: string | undefined): ModelAvailability | undefined {
+    if (!model) return undefined;
+    const a = this.opts.availability?.(model);
+    return cannotRun(a) ? a : undefined;
+  }
+
+  /** Why a worker on `model` can't run now, as `office-workers models` says it; undefined when it can. */
+  private whyNot(model: string): string | undefined {
+    const a = this.blocked(model);
+    return a ? availabilityWords(a, this.now()) : undefined;
+  }
+
+  /**
+   * Why a subagent can't be hired on `model` (`undefined`: the default), naming the models the lead
+   * may pick that can run; undefined when it can. `named`: the lead asked for it with --model.
+   */
+  private async refuseModel(model: string | undefined, named: boolean): Promise<string | undefined> {
+    if (!this.opts.availability) return undefined;
+    const picked = model ?? this.defaultModel();
+    const catalogue = picked && !this.blocked(picked) ? undefined : await this.catalogue();
+    const id = picked ?? catalogue?.defaultModel;
+    const a = this.blocked(id);
+    if (!a || !id) return undefined;
+    const known = new Map((catalogue?.models ?? []).map((m) => [m.id, m]));
+    const name = (x: string) => known.get(x)?.displayName?.replace(/^DroidProxy:\s*/i, '') ?? x;
+    const s = this.opts.settings();
+    const pool = s.models?.length ? s.models.map((m) => m.id) : (catalogue?.models ?? []).filter((m) => !m.legacy).map((m) => m.id);
+    const fine = pool.filter((x) => x !== id && !this.blocked(x));
+    const head = hireRefusal(name(id), a, this.now());
+    const which = named ? '' : ' It is the default subagent model, so pass --model.';
+    if (!fine.length) return `${head}${which} No other model a subagent may run can run now either: tell whoever asked you.`;
+    const shown = fine.slice(0, 8);
+    return `${head}${which} Pick one that can: ${shown.join(', ')}${fine.length > shown.length ? `, and ${fine.length - shown.length} more in office-workers models` : ''}.`;
   }
 
   private teamOf(leadId: string): WorkerInfo[] {
@@ -386,6 +432,8 @@ export class Team {
     const outside = asked && s.models?.length && !s.models.some((m) => m.id === asked) && !this.defaultModel();
     const choice = this.choice(b, outside ? (await this.catalogue())?.defaultModel : undefined);
     if (typeof choice === 'string') return no(400, choice);
+    const refused = await this.refuseModel(choice.model, !!asked);
+    if (refused) return no(409, refused);
     const full = () => {
       const n = this.teamOf(lead.id).length;
       return n >= s.maxPerLead ? `You have ${n} subagents, the most one lead has at once in this office: dismiss one you're done with first (office-workers dismiss <name>)` : undefined;

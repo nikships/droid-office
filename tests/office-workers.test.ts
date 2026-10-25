@@ -163,6 +163,19 @@ test('prints who you are, your team and its news readably', () => {
   );
   assert.equal(formatModel({ id: 'custom:bunny', name: 'Bunny', custom: true, unlisted: true }), ['  custom:bunny', "      Bunny · own API key, no Factory credits · droid doesn't list it now"].join('\n'));
   assert.equal(formatModel({ id: 'x', name: 'x', legacy: true, promo: 'Half off' }), ['  x', '      credits unknown · Half off · legacy'].join('\n'));
+  assert.equal(
+    formatModel({ id: 'custom:droidproxy:gpt-6.1-sol', name: 'DroidProxy: GPT 6.1 Sol', custom: true, default: true, cannotRun: 'Out of quota, back in 41 min (5-hour)' }),
+    ["  custom:droidproxy:gpt-6.1-sol (default, can't run now)", '      DroidProxy: GPT 6.1 Sol · own API key, no Factory credits', "      can't run now: Out of quota, back in 41 min (5-hour). Hire refuses it."].join('\n'),
+  );
+  assert.match(
+    formatModels({
+      models: [
+        { id: 'sol', name: 'Sol', default: true, cannotRun: 'No ChatGPT account is connected' },
+        { id: 'luna', name: 'Luna' },
+      ],
+    }),
+    /Leave --model out and a subagent would run sol, which can't run now \(No ChatGPT account is connected\): pass --model with one that can\./,
+  );
   const all = formatModels({
     restricted: false,
     models: [

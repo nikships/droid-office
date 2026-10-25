@@ -1,6 +1,7 @@
 import { randomBytes } from 'node:crypto';
 import { existsSync, readFileSync, writeFileSync, accessSync, chmodSync, mkdirSync, readdirSync, rmdirSync, rmSync, unlinkSync, constants } from 'node:fs';
 import { execFile, execFileSync } from 'node:child_process';
+import { homedir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import headless from '@xterm/headless';
@@ -267,6 +268,8 @@ export class WorkerManager {
   visitsOn?: () => boolean;
   /** The floor's pull requests as the board last listed them, to tell a checkout whose branch merged (see settleCheckout). */
   pullList?: () => GhPull[];
+  /** Subscriptions: why an agent on this model can't start now (out of quota, say); undefined when it can (docs/subscriptions.md). */
+  modelGate?: (model: string | undefined) => string | undefined;
   private settling = false;
 
   private get forge(): Forge {
@@ -337,7 +340,7 @@ export class WorkerManager {
     } catch {
       // without it, new worktrees just aren't set up
     }
-    this.agentPath = resolveCommand(agentCmd);
+    this.agentPath = resolveAgent(agentCmd);
     this.namer = new TaskNamer(
       this.agentPath,
       childEnv(),
@@ -468,6 +471,12 @@ export class WorkerManager {
     return this.agentPath;
   }
 
+  /** Droid was installed after the floor opened (Setup): new workers and the task namer run it from `file`. */
+  setAgentPath(file: string) {
+    this.agentPath = file;
+    this.namer.setDroid(file);
+  }
+
   /** What an agent starts on when whoever starts it doesn't pick, when one was set in Settings (else Droid's own default). */
   get officeDefault(): AgentChoice | undefined {
     return this.prompts?.agent();
@@ -547,6 +556,8 @@ export class WorkerManager {
     if (modelError) return modelError;
     const effortError = validateWorkerEffort(kind, effort);
     if (effortError) return effortError;
+    const gated = kind === 'agent' ? this.modelGate?.(model) : undefined;
+    if (gated) return gated;
     const seat = DESK_BY_ID.get(deskId);
     if (!seat) return 'Unknown desk';
     if (this.deskOccupied(deskId)) return seat.station ? `The ${STATION_AGENT[seat.station].name} is already there` : `That ${seat.beanbag ? 'bean bag' : 'desk'} is taken`;
@@ -2596,6 +2607,22 @@ export function resolveCommand(cmd: string): string | null {
     // fall through
   }
   return null;
+}
+
+/**
+ * The office's Droid: `cmd` on PATH (or the login shell's), else where Droid's installer puts it,
+ * ~/.local/bin/droid, which the Mac app's PATH lacks until the owner's shell profile adds it.
+ */
+export function resolveAgent(cmd: string): string | null {
+  const found = resolveCommand(cmd);
+  if (found || cmd !== 'droid' || WIN) return found;
+  const installed = path.join(homedir(), '.local', 'bin', 'droid');
+  try {
+    accessSync(installed, constants.X_OK);
+    return installed;
+  } catch {
+    return null;
+  }
 }
 
 function describeTool(payload: any): string {

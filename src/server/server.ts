@@ -13,7 +13,7 @@ import { DevicesStore, machineName, pairingAddresses } from './devices.js';
 import { TailscaleWatch } from './tailscale.js';
 import { WebCompanion } from './web-companion.js';
 import { COMPANION_OFF, pairingLink, type PairedDevice, type PairingState } from '../shared/devices.js';
-import { MAX_REPOS, childEnv, resolveCommand, type RepoSource } from './workers.js';
+import { MAX_REPOS, childEnv, resolveAgent, type RepoSource } from './workers.js';
 import { DROID_MODEL_MAX } from './agents.js';
 import { createDroidModelCatalogue } from './droid-models.js';
 import { Upgrader } from './upgrade.js';
@@ -24,6 +24,8 @@ import { ImageProxy } from './decor.js';
 import { Webhook } from './webhook.js';
 import { JiraOffice } from './jira.js';
 import { mountFactory, sendDownload } from './factory/index.js';
+import { mountSetup } from './setup/index.js';
+import { mountSubscriptions } from './subscriptions/index.js';
 import { MAX_WORKER_LIMIT, Machine, parseWorkerLimit } from './machine.js';
 import { Building, type FloorDef } from './building.js';
 import { Floor, type FloorContext } from './floor.js';
@@ -215,8 +217,10 @@ export async function startServer(cfg: Config) {
   const trackpadHaptics = new TrackpadHaptics();
   /** What the office is called where it has no project of its own to go by (webhooks). */
   const officeName = cfg.project ? path.basename(cfg.project) : 'the office';
+  /** The droid every floor runs, by absolute path; null until it's installed (Setup sets it then). */
+  let agentPath = resolveAgent(cfg.agentCmd);
   // Droid lists its own models (built-in and custom); its settings file is the fallback.
-  const droidModels = createDroidModelCatalogue({ command: cfg.agentCmd.includes('/') ? path.resolve(cfg.agentCmd) : cfg.agentCmd, cwd: cfg.dir });
+  const droidModels = createDroidModelCatalogue({ command: () => agentPath ?? cfg.agentCmd, cwd: cfg.dir });
 
   const sendTo = (c: Client, msg: ServerMsg) => {
     if (c.ws.readyState === WebSocket.OPEN) c.ws.send(JSON.stringify(msg));
@@ -468,10 +472,30 @@ export async function startServer(cfg: Config) {
       ),
     wiki: {
       floors: () => [...floors.values()].map((f) => ({ id: f.id, dir: f.dir, repo: f.def.repo, name: f.def.name })),
-      runner: { command: () => resolveCommand(cfg.agentCmd), env: childEnv },
+      runner: { command: () => agentPath, env: childEnv },
     },
   });
   const cloud = factory.cloud!;
+
+  // Droid installed and signed in, and the welcome a fresh office opens with (docs/subscriptions.md).
+  const setup = mountSetup({
+    dataDir: cfg.dataDir,
+    agentCmd: cfg.agentCmd,
+    broadcast: (state) => broadcast({ t: 'setup', state }),
+    toast: (text, level) => toastAll(text, level),
+    agentChanged: (file) => {
+      agentPath = file;
+      droidModels.forget();
+      for (const f of floors.values()) f.workers.setAgentPath(file);
+    },
+  });
+  // DroidProxy, and the Claude, ChatGPT and other subscriptions workers run on through it.
+  const subscriptions = mountSubscriptions({
+    dataDir: cfg.dataDir,
+    broadcast: (state) => broadcast({ t: 'subscriptions', state }),
+    toast: (text, level) => toastAll(text, level),
+    modelsChanged: () => droidModels.forget(),
+  });
 
   // The machine's CPU and memory, for the monitor on the wall and a warning before hiring, and the
   // most workers the office runs at once, across every floor (--max-workers, or ⚙️ Settings).
@@ -530,6 +554,8 @@ export async function startServer(cfg: Config) {
     officeDataDir: cfg.dataDir,
     subagents: () => subagents.settings,
     droidModels: () => droidModels.get(),
+    modelGate: (model) => subscriptions.gate(model),
+    modelAvailability: (model) => subscriptions.availability(model),
     floor: (id) => floors.get(id),
     pullsChanged: (floor) => {
       for (const f of floors.values()) if (f !== floor && worksIn(f, floor)) f.sendLandedHome();
@@ -1304,6 +1330,8 @@ export async function startServer(cfg: Config) {
       whiteboardSkill: whiteboardSkill.state(),
       prompts: prompts.state(),
       factory: factory.state(),
+      setup: setup.state(),
+      subscriptions: subscriptions.state(),
       ...(onRoof ? roofView() : floorView(floor)),
     });
     screensOf(client, floor);
@@ -2257,6 +2285,25 @@ export async function startServer(cfg: Config) {
       case 'factory.watch':
         factory.message(c.id, who, msg, (reply) => sendTo(c, reply));
         break;
+      case 'setup.check':
+        setup.message(who, msg);
+        subscriptions.message(who, { t: 'subscriptions.refresh' });
+        break;
+      case 'setup.droid.install':
+      case 'setup.droid.signIn':
+      case 'setup.droid.signInCancel':
+      case 'setup.onboarded':
+        setup.message(who, msg);
+        break;
+      case 'subscriptions.proxy':
+      case 'subscriptions.connect':
+      case 'subscriptions.connectCancel':
+      case 'subscriptions.disconnect':
+      case 'subscriptions.provider':
+      case 'subscriptions.models':
+      case 'subscriptions.refresh':
+        subscriptions.message(who, msg);
+        break;
       case 'changes.watch': {
         const w = worker(msg.workerId);
         if (w) w.floor.changes.watch(w.wid, c.id, repoOf(msg.repo));
@@ -2416,6 +2463,8 @@ export async function startServer(cfg: Config) {
     machine.stop();
     sky.stop();
     factory.stop();
+    setup.stop();
+    subscriptions.stop();
     for (const f of floors.values()) f.shutdown(keep);
     void renderer?.close();
     for (const c of clients.values()) c.ws.close();
@@ -2434,6 +2483,6 @@ export async function startServer(cfg: Config) {
     hookPort,
     floors: () => [...floors.values()],
     projectsDir: () => building.projectsDir,
-    resolvedAgent: resolveCommand(cfg.agentCmd),
+    resolvedAgent: agentPath,
   };
 }

@@ -189,7 +189,7 @@ Every hired worker runs **Factory Droid**, not a separate agent harness. Pick fr
 | Signed, notarized and auto-updating. No Node.js install. | Wi-Fi or Tailscale. [Pairing guide →](android/README.md) |
 
 1. Open `Droid-Office-<version>-arm64.dmg`, drag **Droid Office** into **Applications**, then launch it.
-2. Have `git` and the [Droid CLI](https://docs.factory.com/droid-cli/quickstart) installed, with Droid signed in.
+2. Follow the welcome. It installs the [Droid CLI](https://docs.factory.com/droid-cli/quickstart) if you don't have it, signs it in to your Factory account, and connects the Claude or ChatGPT plan you already pay for. You need `git` installed.
 3. Sign in to `gh` for GitHub boards or `glab` for GitLab boards, then choose a project.
 
 > [!IMPORTANT]
