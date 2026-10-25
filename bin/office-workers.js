@@ -45,7 +45,8 @@ COMMANDS
       Hires a subagent and gives it the brief. Prints its name, desk and worktree. The title goes
       on the card over its head. Options:
         --model <id>     an id from office-workers models. Default: what ⚙️ Settings → Subagents
-                         picks, else the office's default worker.
+                         picks, else the office's default worker. One that can't run now is
+                         refused before a desk is taken.
         --effort <e>     low, medium, high, xhigh or max.
         --from <ref>     the branch, tag or commit its worktree starts from (origin/main for the
                          latest main). Default: where you are, your HEAD, so it has what you've
@@ -57,7 +58,9 @@ COMMANDS
   office-workers models
       The models you may give a subagent with --model: each one's id, provider, credit multiplier,
       efforts, and what the office's owner wrote about it. The office may limit leads to some of
-      them (⚙️ Settings → Subagents); hire refuses any other.
+      them (⚙️ Settings → Subagents); hire refuses any other. A model that can't run now says why
+      (a subscription out of quota, nobody signed in, DroidProxy not installed); hire refuses it too,
+      the default included, and names the models that can.
 
   office-workers list
       Your subagents: status, desk, model, worktree, what each is doing, and what it last reported.
@@ -327,7 +330,9 @@ function cost(m) {
 export function formatModel(m) {
   const efforts = m.efforts?.length ? `effort ${m.efforts.join('/')}${m.defaultEffort ? ` (${m.defaultEffort} by default)` : ''}` : '';
   const facts = [m.name !== m.id ? m.name : '', m.provider, cost(m), m.noImages ? 'no images' : '', efforts, m.promo, m.legacy ? 'legacy' : '', m.unlisted ? "droid doesn't list it now" : ''].filter(Boolean);
-  const lines = [`  ${m.id}${m.default ? ' (default)' : ''}`, `      ${facts.join(' · ')}`];
+  const marks = [m.default ? 'default' : '', m.cannotRun ? "can't run now" : ''].filter(Boolean);
+  const lines = [`  ${m.id}${marks.length ? ` (${marks.join(', ')})` : ''}`, `      ${facts.join(' · ')}`];
+  if (m.cannotRun) lines.push(`      can't run now: ${m.cannotRun}. Hire refuses it.`);
   if (m.note) lines.push(`      owner's note: ${m.note}`);
   return lines.join('\n');
 }
@@ -346,7 +351,8 @@ export function formatModels(res) {
   if (!models.length) lines.push('  (none known: leave --model out)');
   else lines.push(models.map(formatModel).join('\n'));
   const fallback = models.find((m) => m.default);
-  lines.push('', fallback ? `Leave --model out and a subagent runs ${fallback.id}.` : 'Leave --model out and a subagent runs droid’s own default.');
+  if (fallback?.cannotRun) lines.push('', `Leave --model out and a subagent would run ${fallback.id}, which can't run now (${fallback.cannotRun}): pass --model with one that can.`);
+  else lines.push('', fallback ? `Leave --model out and a subagent runs ${fallback.id}.` : 'Leave --model out and a subagent runs droid’s own default.');
   lines.push('Pick per piece: cheap models for mechanical work, strong ones for hard work (office-workers help, CHOOSING A MODEL).');
   return lines.join('\n');
 }

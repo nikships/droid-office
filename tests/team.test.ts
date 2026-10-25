@@ -4,6 +4,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import type { DroidModelCatalogue } from '../src/server/droid-models.js';
+import type { ModelAvailability } from '../src/shared/subscriptions.js';
 import { Team, settled, type TeamOptions, type TeamWorkers } from '../src/server/team.js';
 import { teamOf, teamSummary, workersByTeam } from '../src/shared/team.js';
 import { SUBAGENT_DEFAULTS, type AgentChoice, type SubagentSettings, type WorkerInfo, type WorkerStatus, type WorkerTask } from '../src/shared/protocol.js';
@@ -213,7 +214,7 @@ test('models lists what a lead may pick, with credit multipliers and notes, and 
   ]);
   assert.equal((await r.call('lead', { action: 'hire', task: 'a', model: 'old' })).status, 200, 'any model goes when Settings picks none');
 
-  // A list in Settings: only those, with the owner's notes, plus the default that always runs.
+  // A list in Settings: only those, with the owner's notes, plus the default a hire without --model runs.
   r.settings.models = [{ id: 'glm-5.3-flash', note: 'tests and docs' }, { id: 'gone' }];
   res = (await r.call('lead', { action: 'models' })).body;
   assert.equal(res.restricted, true);
@@ -263,6 +264,59 @@ test("hire checks droid's own default against a fresh model list, not one a lead
   assert.equal(asks, 1, 'and droid is not asked');
 });
 
+test("models says which subscription models can't run and why, and hire refuses them before a desk is taken", async (t) => {
+  const SOL = 'custom:droidproxy:gpt-6.1-sol';
+  const LUNA = 'custom:droidproxy:gpt-6-luna';
+  const OPUS = 'custom:droidproxy:claude-opus-5-5';
+  const now = Date.parse('2026-10-25T21:31:54Z');
+  const catalogue: DroidModelCatalogue = {
+    models: [
+      { id: SOL, displayName: 'DroidProxy: GPT 6.1 Sol', custom: true },
+      { id: LUNA, displayName: 'DroidProxy: GPT 6 Luna', custom: true },
+      { id: OPUS, displayName: 'DroidProxy: Claude Opus 5.5', custom: true },
+      { id: 'glm-5.3-flash', displayName: 'GLM-5.3-Flash', tokenMultiplier: 0.06 },
+    ],
+    defaultModel: 'glm-5.3-flash',
+  };
+  const availability: Record<string, ModelAvailability> = {
+    [SOL]: { state: 'exhausted', until: now + 41 * 60_000, window: '5-hour' },
+    [LUNA]: { state: 'ok' },
+    [OPUS]: { state: 'signed-out', provider: 'claude' },
+  };
+  const r = rig(t, { models: () => Promise.resolve(catalogue), availability: (m) => availability[m], now: () => now });
+  r.fake.officeDefault = { model: SOL };
+  const res = (await r.call('lead', { action: 'models' })).body;
+  assert.deepEqual(
+    res.models.map((m: Record<string, unknown>) => [m.id, m.default, m.cannotRun]),
+    [
+      [SOL, true, 'Out of quota (5-hour) for another 41 min'],
+      [LUNA, undefined, undefined],
+      [OPUS, undefined, 'No Claude account is connected'],
+      ['glm-5.3-flash', undefined, undefined],
+    ],
+  );
+
+  const named = await r.call('lead', { action: 'hire', task: 'a', model: OPUS });
+  assert.equal(named.status, 409);
+  assert.equal(named.body.error, `Can't hire on Claude Opus 5.5: no Claude account is connected. Pick one that can: ${LUNA}, glm-5.3-flash.`);
+  const byDefault = await r.call('lead', { action: 'hire', task: 'b' });
+  assert.equal(byDefault.status, 409);
+  assert.match(byDefault.body.error, /^Can't hire on GPT 6.1 Sol: out of quota \(5-hour\) for another 41 min\. It is the default subagent model, so pass --model\. Pick one that can:/);
+  assert.equal(r.fake.hired.length, 0, 'no desk was taken');
+  assert.equal(r.fake.fetched, 0);
+  assert.equal((await r.call('lead', { action: 'hire', task: 'c', model: LUNA })).status, 200);
+
+  // Droid's own default is judged too, and with nothing else that can run the lead is told to ask.
+  r.fake.officeDefault = undefined;
+  availability['glm-5.3-flash'] = { state: 'proxy-down', installed: false };
+  availability[LUNA] = { state: 'disabled', provider: 'codex' };
+  const none = await r.call('lead', { action: 'hire', task: 'd' });
+  assert.equal(none.status, 409);
+  assert.match(none.body.error, /^Can't hire on GLM-5.3-Flash: DroidProxy isn't installed\. It is the default subagent model, so pass --model\. No other model a subagent may run can run now either/);
+  // A stopped DroidProxy doesn't refuse: the office starts it.
+  availability[LUNA] = { state: 'proxy-down', installed: true };
+  assert.equal((await r.call('lead', { action: 'hire', task: 'e', model: LUNA })).status, 200);
+});
 test('models without a model list still names the default and the picks', async (t) => {
   const r = rig(t, { models: () => Promise.reject(new Error('no droid')) }, { agent: { model: 'glm-5.3' }, models: [{ id: 'glm-5.3-flash' }] });
   const res = (await r.call('lead', { action: 'models' })).body;
