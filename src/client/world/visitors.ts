@@ -47,6 +47,11 @@ interface Walker {
   spotHeading: number;
   /** Where it is (see visit-path.ts): -1 seated, up to `length` on its spot. */
   u: number;
+  /**
+   * How far along its route it was when told to walk back (its route's length if it was on its spot):
+   * one turned back short of the spot walks home from there, rather than on to the spot first.
+   */
+  backFrom: number | null;
   /** Off its seat, in the scene. */
   out: boolean;
   seat: THREE.Vector3;
@@ -103,6 +108,7 @@ export class Visitors {
         this.walkers.set(v.visitor, w);
         this.plan(w, v);
         // Seen mid-visit (the page just opened, or you came to this floor): it's already where it would be.
+        w.backFrom = w.length;
         w.u = this.target(w);
         if (w.u > SEATED) {
           this.getUp(w);
@@ -200,6 +206,7 @@ export class Visitors {
       offHeading: heading,
       spotHeading: heading,
       u: SEATED,
+      backFrom: null,
       out: false,
       seat: new THREE.Vector3(),
       seatHeading: heading,
@@ -215,6 +222,7 @@ export class Visitors {
     const route = visitRoute(w.desk.def.id, hostDesk, v.slot);
     const spot = visitSpot(hostDesk, v.slot);
     w.visit = v;
+    w.backFrom = null;
     w.key = this.keyOf(v);
     w.route = route;
     w.length = routeLength(route);
@@ -224,7 +232,13 @@ export class Visitors {
 
   private target(w: Walker, now = this.now()): number {
     const v = w.visit;
-    return v ? visitProgress(v.phase, now - v.since, w.length) : SEATED;
+    if (!v) return SEATED;
+    if (v.phase !== 'returning') {
+      w.backFrom = null;
+      return visitProgress(v.phase, now - v.since, w.length);
+    }
+    w.backFrom ??= Math.min(w.u, w.length);
+    return visitProgress('returning', now - v.since, w.backFrom);
   }
 
   /** Off its chair and into the scene, the same size and facing the way it sat. */

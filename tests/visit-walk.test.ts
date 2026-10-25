@@ -263,3 +263,30 @@ test('the lead at the kiosk walks out round its front to visit, and is visited o
   assert.equal(visitors.info('lead'), null);
   assert.equal(visitors.info('b'), null);
 });
+
+test('told to walk back before it reached its spot, a visitor turns round where it is', () => {
+  const { visitors, clock, run } = floor({ a: 'desk-3', h: 'desk-9' });
+  visitors.sync([visit({ phase: 'walking', since: clock.now })]);
+  run(1.5);
+  const z0 = visitors.info('a')!.z;
+  visitors.sync([visit({ phase: 'returning', since: clock.now })]);
+  run(0.2);
+  const z1 = visitors.info('a')!.z;
+  assert.equal(visitors.info('a')!.step, 'walking back');
+  // Desk 3 is toward -z from Desk 9: walking back, z only falls.
+  assert.ok(z1 < z0, `${z1} < ${z0}`);
+  run(3);
+  assert.equal(visitors.info('a')!.step, 'seated');
+  // Told to walk back before it was even up: it stays in its seat.
+  visitors.sync([]);
+  run(0.1);
+  visitors.sync([visit({ id: 'v3', phase: 'walking', since: clock.now })]);
+  run(0.05);
+  visitors.sync([visit({ id: 'v3', phase: 'returning', since: clock.now })]);
+  let most = -1;
+  for (let i = 0; i < 60; i++) {
+    run(1 / 60);
+    most = Math.max(most, (visitors as unknown as { walkers: Map<string, { u: number }> }).walkers.get('a')?.u ?? -1);
+  }
+  assert.ok(most < -0.7, `it never got further up than ${most}`);
+});
