@@ -20,9 +20,9 @@ macOS 14 Sonoma+ · Apple M-series **Pro, Max or Ultra** · Built for 120 Hz Pro
 [Watch the walkthrough](https://droid-office.web.app/) · [Read the guide](docs/guide/) · [Android companion](#your-office-in-your-pocket)
 
 <picture>
-  <source media="(prefers-reduced-motion: reduce)" srcset="docs/assets/readme/hero-tour.poster.jpg">
-  <source type="image/webp" srcset="docs/assets/readme/hero-tour.webp">
-  <img src="docs/assets/readme/hero-tour.gif" alt="A smooth walk down the Droid Office aisle toward the live issue, pipeline and pull request boards" width="960">
+  <source media="(prefers-reduced-motion: reduce)" srcset="docs/assets/readme/hero-workers.poster.jpg">
+  <source type="image/webp" srcset="docs/assets/readme/hero-workers.webp">
+  <img src="docs/assets/readme/hero-workers.gif" alt="Walking between occupied desks, with Droid workers and their large live terminal screens visible throughout the 3D office" width="960">
 </picture>
 
 </div>
@@ -31,7 +31,9 @@ macOS 14 Sonoma+ · Apple M-series **Pro, Max or Ultra** · Built for 120 Hz Pro
 
 Five agents in five terminals is a mess. **Droid Office turns your agents into a place you can read at a glance:** who is working, who needs you and who just shipped.
 
-It's a walkable 3D office with real Droid sessions, real git checkouts and real work on the walls. The Mac app runs it locally with a native Metal presenter; your browser can join the same office.
+Workers sit at desks with **large, live terminal screens right in the 3D world**. Walk between them to see the code flowing, then open any terminal to read, type and steer the work. These are real Droid sessions and git checkouts, not decorative dashboards.
+
+The Mac app runs the office locally with a native Metal presenter; your browser can join the same office.
 
 ## See the office at work
 
@@ -39,18 +41,54 @@ It's a walkable 3D office with real Droid sessions, real git checkouts and real 
 <tr>
 <td width="50%" valign="middle">
 
-### Hand over an issue
+### Big terminals. Right in the room.
 
-Take a GitHub issue or GitLab ticket off the wall, carry it across the room and deliver it to a desk. A worker sits down with the task already in hand.
+Code scrolls on the screens in front of your workers as they work. See several live sessions together, with each agent, task and terminal attached to a desk you can walk up to.
 
-[Explore the boards →](docs/guide/features.md)
+[Workers and live screens →](docs/guide/features.md)
 
 </td>
 <td width="50%">
 <picture>
-  <source media="(prefers-reduced-motion: reduce)" srcset="docs/assets/readme/card-grab.poster.jpg">
-  <source type="image/webp" srcset="docs/assets/readme/card-grab.webp">
-  <img src="docs/assets/readme/card-grab.gif" alt="Picking an issue card off the wall and holding it ready to deliver to a worker" width="480">
+  <source media="(prefers-reduced-motion: reduce)" srcset="docs/assets/readme/spatial-terminals.poster.jpg">
+  <source type="image/webp" srcset="docs/assets/readme/spatial-terminals.webp">
+  <img src="docs/assets/readme/spatial-terminals.gif" alt="Two seated workers with large in-world terminal screens streaming their live sessions side by side" width="480">
+</picture>
+</td>
+</tr>
+<tr>
+<td width="50%">
+<picture>
+  <source media="(prefers-reduced-motion: reduce)" srcset="docs/assets/readme/live-terminal.poster.jpg">
+  <source type="image/webp" srcset="docs/assets/readme/live-terminal.webp">
+  <img src="docs/assets/readme/live-terminal.gif" alt="Opening a seated worker's terminal into a large interactive window while the surrounding office stays visible" width="480">
+</picture>
+</td>
+<td width="50%" valign="middle">
+
+### Step into any session
+
+Walk up to a worker and open its terminal in a large interactive window. Read the output, search the scrollback or type your next prompt; the worker keeps going when you close it.
+
+[Working in a terminal →](docs/guide/features.md)
+
+</td>
+</tr>
+<tr>
+<td width="50%" valign="middle">
+
+### Give the lead a team
+
+Hand a larger task to the Team lead and let it hire subagents at nearby desks. Glowing floor links show who belongs together, and every worker has a live terminal you can open.
+
+[Team leads and subagents →](docs/guide/features.md)
+
+</td>
+<td width="50%">
+<picture>
+  <source media="(prefers-reduced-motion: reduce)" srcset="docs/assets/readme/team-subagents.poster.jpg">
+  <source type="image/webp" srcset="docs/assets/readme/team-subagents.webp">
+  <img src="docs/assets/readme/team-subagents.gif" alt="A Team lead's workers at nearby desks, joined by glowing team links on the floor" width="480">
 </picture>
 </td>
 </tr>
@@ -75,54 +113,18 @@ Workers flip through papers when reading, type when editing and lean back while 
 <tr>
 <td width="50%" valign="middle">
 
-### Shipping deserves a gong
+### Hand over an issue
 
-A merged pull request rings the brass gong, showers the floor in confetti and sends workers dancing on their desks. GitHub or GitLab, merged inside the office or out.
+Take a GitHub issue or GitLab ticket off the wall, carry it across the room and deliver it to a desk. A worker sits down with the task already in hand.
 
-[Celebrations and sounds →](docs/guide/features.md)
-
-</td>
-<td width="50%">
-<picture>
-  <source media="(prefers-reduced-motion: reduce)" srcset="docs/assets/readme/merge-gong.poster.jpg">
-  <source type="image/webp" srcset="docs/assets/readme/merge-gong.webp">
-  <img src="docs/assets/readme/merge-gong.gif" alt="Striking the brass merge gong by hand and watching it swing" width="480">
-</picture>
-</td>
-</tr>
-<tr>
-<td width="50%">
-<picture>
-  <source media="(prefers-reduced-motion: reduce)" srcset="docs/assets/readme/worktrees.poster.jpg">
-  <source type="image/webp" srcset="docs/assets/readme/worktrees.webp">
-  <img src="docs/assets/readme/worktrees.gif" alt="Worktree settings showing the project's automatic setup command and files to copy" width="480">
-</picture>
-</td>
-<td width="50%" valign="middle">
-
-### Parallel work, separate checkouts
-
-Give each worker its own branch and git worktree. Project setup runs before the agent starts, with the untracked files it needs copied in, so workers don't edit the same checkout.
-
-[Worktrees, diffs and pull requests →](docs/guide/features.md)
-
-</td>
-</tr>
-<tr>
-<td width="50%" valign="middle">
-
-### A floor per project
-
-Ride the elevator between your existing repositories, each with its own workers, boards and decor. Nothing is re-cloned; the rooftop is one more stop when you need a break.
-
-[Floors and navigation →](docs/guide/features.md)
+[Explore the boards →](docs/guide/features.md)
 
 </td>
 <td width="50%">
 <picture>
-  <source media="(prefers-reduced-motion: reduce)" srcset="docs/assets/readme/elevator-floors.poster.jpg">
-  <source type="image/webp" srcset="docs/assets/readme/elevator-floors.webp">
-  <img src="docs/assets/readme/elevator-floors.gif" alt="Riding the elevator from the project floor to the rooftop above the city" width="480">
+  <source media="(prefers-reduced-motion: reduce)" srcset="docs/assets/readme/card-grab.poster.jpg">
+  <source type="image/webp" srcset="docs/assets/readme/card-grab.webp">
+  <img src="docs/assets/readme/card-grab.gif" alt="Picking an issue card off the wall and holding it ready to deliver to a worker" width="480">
 </picture>
 </td>
 </tr>
@@ -144,24 +146,6 @@ Workers pin live HTML pages, screenshots and forms to the Whiteboard. Open one, 
 
 </td>
 </tr>
-<tr>
-<td width="50%" valign="middle">
-
-### Give the lead a team
-
-Hand a larger task to the Team lead and let it hire subagents at nearby desks. Team markings and floor links show who belongs together; each worker still has a terminal you can open.
-
-[Team leads and subagents →](docs/guide/features.md)
-
-</td>
-<td width="50%">
-<picture>
-  <source media="(prefers-reduced-motion: reduce)" srcset="docs/assets/readme/team-subagents.poster.jpg">
-  <source type="image/webp" srcset="docs/assets/readme/team-subagents.webp">
-  <img src="docs/assets/readme/team-subagents.gif" alt="A Team lead's workers at nearby desks, joined by glowing team links on the floor" width="480">
-</picture>
-</td>
-</tr>
 </table>
 
 <sub>Short loops from real office captures. Prefer stills? <a href="docs/assets/readme/posters.md">Browse the static gallery</a>. <a href="https://droid-office.web.app/">Watch the full demos</a>.</sub>
@@ -169,11 +153,13 @@ Hand a larger task to the Team lead and let it hire subagents at nearby desks. T
 ### Also in the box
 
 - **CI that can heal itself.** GitHub Actions and GitLab pipelines on the wall, with an opt-in Pipeline agent that diagnoses failures and hires a fixer.
-- **Live terminals that stay with you.** Multiple windows, searchable scrollback and workers that keep running through server restarts.
+- **Separate checkouts for parallel work.** Give each worker its own git worktree and branch, with automatic project setup and the untracked files it needs copied in.
+- **A floor per project.** Ride the elevator between existing repositories, each with its own workers and boards. No re-cloning.
 - **Peer visits.** Independent workers walk over, read each other's screens, ask questions and hand over tasks.
 - **Jira Cloud.** Connect a read-only token, choose an epic and hand its tickets to workers. The office never writes to Jira.
 - **Cross-repository tasks.** One worker, several project worktrees, and a pull request for each.
-- **A place worth staying.** City weather, a rooftop, a shared jukebox and spatial sound.
+- **Celebrate a merge.** The brass gong rings, confetti falls and workers dance on their desks.
+- **A place worth staying.** City weather, a shared jukebox and spatial sound.
 - **The practical bits.** Plain shells, safe worktree pruning, editable prompts, a project bookshelf and Factory computer secrets.
 
 [Everything the office can do →](docs/guide/features.md)
