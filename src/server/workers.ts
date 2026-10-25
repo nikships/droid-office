@@ -316,6 +316,7 @@ export class WorkerManager {
     private plain = false,
   ) {
     this.trees = new Worktrees(dir, plain);
+    if (!plain) this.trees.ensureBranchFile();
     // The branch the checkout was on when this floor opened: a pull request's configured base. The
     // live branch is tried after it (see open-pull.ts). Freshening the checkout does not move this.
     this.configuredBase = this.trees.currentBranch();

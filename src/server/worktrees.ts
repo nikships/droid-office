@@ -126,6 +126,17 @@ export class Worktrees {
     return path.join(this.dir, '.droid-office', 'floor-branch.json');
   }
 
+  /** Give workers a readable default setting without replacing an owner's saved choice. */
+  ensureBranchFile(): void {
+    const file = this.branchFile;
+    mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
+    try {
+      writeFileSync(file, JSON.stringify({ branch: null }), { flag: 'wx', mode: 0o600 });
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code !== 'EEXIST') throw err;
+    }
+  }
+
   baseBranch(): string | undefined {
     return this.selectedBranch() ?? this.defaultBranch();
   }
