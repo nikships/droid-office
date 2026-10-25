@@ -42,6 +42,8 @@ export interface ModelPicker {
 const RECENTS_KEY = 'droid-office.model-recents';
 const NONE = '\u0000none';
 const CUSTOM = '\u0000custom';
+/** The longest model id the office accepts (see fetchCatalogue in models.ts). */
+const MODEL_ID_MAX = 256;
 
 function loadRecents(): string[] {
   try {
@@ -226,12 +228,15 @@ export function modelPicker(opts: ModelPickerOptions): ModelPicker {
   };
 
   const moveTo = (i: number, scroll = true) => {
-    if (!rows.length) return;
+    rows[cursor]?.el.classList.remove('cursor');
+    if (!rows.length) {
+      ui.input.removeAttribute('aria-activedescendant');
+      paintDetail();
+      return;
+    }
     cursor = (i + rows.length) % rows.length;
-    rows.forEach((r, n) => {
-      r.el.classList.toggle('cursor', n === cursor);
-    });
     const el = rows[cursor].el;
+    el.classList.add('cursor');
     ui.input.setAttribute('aria-activedescendant', el.id);
     if (scroll) el.scrollIntoView({ block: 'nearest' });
     paintDetail();
@@ -248,7 +253,7 @@ export function modelPicker(opts: ModelPickerOptions): ModelPicker {
       nodes.push(h('div.mp-head', { role: 'presentation' }, s.key.startsWith('g:') && s.models[0]?.glyph ? pinwheel() : '', s.label, h('small', {}, s.flat ? '' : String(s.models.length))));
       for (const m of s.models) nodes.push(row(m.id, m, !!s.flat));
     }
-    if (opts.allowCustom && typed && !models.some((m) => m.id === typed)) {
+    if (opts.allowCustom && typed && typed.length <= MODEL_ID_MAX && !/[\s\p{Cc}\p{Cf}]/u.test(typed) && !models.some((m) => m.id === typed)) {
       customValue = typed;
       nodes.push(row(CUSTOM, undefined, false));
     }
@@ -391,6 +396,7 @@ export function modelPicker(opts: ModelPickerOptions): ModelPicker {
     set(next) {
       value = next;
       paintTrigger();
+      if (pop) paintList();
     },
     setModels(next, nextNone) {
       models = next;

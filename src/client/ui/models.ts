@@ -60,7 +60,7 @@ export function pickerModel(m: DroidModelOption): PickerModel {
   const provider = m.provider ? (PROVIDER_LABEL[m.provider] ?? titleCase(m.provider)) : undefined;
   const gateway = m.custom ? gatewayOf(m.id) : undefined;
   const name = m.displayName.replace(/\s*\[Deprecated\]$/i, '');
-  const stripped = gateway ? name.replace(new RegExp(`^${gateway.replace(/[^\w]/g, '.')}[\\w.-]*:\\s*`, 'i'), '') : name;
+  const stripped = gateway ? name.replace(new RegExp(`^${gateway.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}[\\w.-]*:\\s*`, 'i'), '') : name;
   const group = m.custom ? (gateway as string) : m.legacy ? 'Legacy' : (provider ?? 'Other');
   return {
     id: m.id,
