@@ -27,6 +27,7 @@ import { landedWorkers } from './leave-on-merge.js';
 import type { Capacity } from './machine.js';
 import { officePrompt, type PromptSource } from './prompts.js';
 import { Team } from './team.js';
+import { Visits } from './visits.js';
 import type { DroidModelCatalogue } from './droid-models.js';
 import type { SubagentSettings } from '../shared/protocol.js';
 import type { WorktreeSetupState } from '../shared/worktree-setup.js';
@@ -143,6 +144,8 @@ export class Floor {
   readonly docs: Docs;
   /** Leads and the subagents they hire with office-workers (see team.ts). */
   readonly team: Team;
+  /** Independent workers visiting each other's desks with office-visit (see visits.ts). */
+  readonly visits: Visits;
   /** Agent processes started by hand in this checkout, outside the office, at desks of their own (see guests.ts). */
   readonly guests: Guests;
   /** Workers whose Droid session runs on a Factory computer, not on this machine (see cloud-workers.ts). */
@@ -213,6 +216,7 @@ export class Floor {
           ctx.emit(this, { t: 'worker.update', worker });
           // Still being built: the first updates come from waking the workers already at their desks.
           this.team?.onWorker(worker);
+          this.visits?.onWorker(worker);
           ctx.workerChanged(this, worker);
           // Its turn ended, or whoever had its terminal open closed it: it may be free to go now.
           this.sendLandedHome();
@@ -221,6 +225,7 @@ export class Floor {
           this.changes?.forget(workerId);
           ctx.emit(this, { t: 'worker.remove', workerId, ...(shot ? { shot } : {}) });
           this.team?.onWorkerGone(workerId);
+          this.visits?.onWorkerGone(workerId);
           // A dismissed worker's read points would hold the board's tombstones for good.
           this.whiteboard?.forgetReader(workerId);
           ctx.workerChanged(this, workerId);
@@ -280,6 +285,7 @@ export class Floor {
       inCheckout: () => this.guests.list().map((g) => g.name),
     };
     this.workers.freshMain = () => ctx.freshMain();
+    this.workers.visitsOn = () => ctx.subagents().visits;
     this.workers.pullList = () => this.board.pulls.items;
 
     // The 🚀 Pipelines board: runs that end while someone watches say so (a failure always, a pass when the office started it).
@@ -334,6 +340,24 @@ export class Floor {
         toast: (text, level, workerId) => ctx.toast(this, text, level, workerId),
       },
     );
+
+    this.visits = new Visits(
+      {
+        list: () => workers.list(),
+        get: (id) => workers.get(id),
+        tail: (id, lines) => workers.tail(id, lines),
+        prompt: (id, text, queue) => workers.prompt(id, text, undefined, queue),
+        resume: (id, text) => workers.resume(id, text),
+        interrupt: (id) => workers.interrupt(id),
+      },
+      {
+        on: () => ctx.subagents().visits,
+        emit: (msg) => ctx.emit(this, msg),
+        prompts: ctx.prompts,
+        toast: (text, level, workerId) => ctx.toast(this, text, level, workerId),
+      },
+    );
+    this.visits.start();
 
     // What each worker changed, for the Changes window at its desk (see changes.ts).
     this.changes = new Changes(
@@ -565,6 +589,7 @@ export class Floor {
     this.board.stop();
     this.pipelines.stop();
     this.team.stop();
+    this.visits.stop();
     this.guests.stop();
     this.changes.stop();
     this.whiteboard.stop();

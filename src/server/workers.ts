@@ -19,7 +19,7 @@ import { normalizeRepo } from '../shared/floors.js';
 import { DESK_BY_ID, STATION_AGENT } from '../shared/layout.js';
 import { stationBrief } from './stations.js';
 import { officePrompt, type PromptSource } from './prompts.js';
-import { forgeVars, PROMPTS, workerBranchPolicy } from '../shared/prompts.js';
+import { forgeVars, PROMPTS, WORKER_VISITS, workerBranchPolicy } from '../shared/prompts.js';
 import { isBusy } from '../shared/status.js';
 import { forkRefusal, nearestForkSeat } from '../shared/worker-fork.js';
 import { githubPulls } from './github.js';
@@ -263,6 +263,8 @@ export class WorkerManager {
    * from the branch the checkout is on, which is left alone.
    */
   freshMain?: () => boolean;
+  /** ⚙️ Settings → Subagents → Visits: a worker with no lead is told about office-visit when it starts. */
+  visitsOn?: () => boolean;
   /** The floor's pull requests as the board last listed them, to tell a checkout whose branch merged (see settleCheckout). */
   pullList?: () => GhPull[];
   private settling = false;
@@ -328,6 +330,7 @@ export class WorkerManager {
     this.teamBin = this.writeOfficeCommand(path.join('bin', 'team'), 'office-workers', "Droid Office's subagents, for every agent");
     // In the same folder, so it's on every agent's PATH with office-workers.
     this.writeOfficeCommand(path.join('bin', 'team'), 'office-whiteboard', "The floor's Whiteboard, for every agent");
+    this.writeOfficeCommand(path.join('bin', 'team'), 'office-visit', 'Visits between independent workers on a floor');
     try {
       this.setupScript = writeSetupScript(dataDir);
     } catch {
@@ -1393,6 +1396,14 @@ export class WorkerManager {
     return true;
   }
 
+  /**
+   * Stops an agent's turn, as Escape in its terminal does (Droid shows "Press ESC to stop"). Not
+   * keystrokes from anyone, so it doesn't count as someone typing.
+   */
+  interrupt(id: string) {
+    this.workers.get(id)?.pty?.write('\x1b');
+  }
+
   /** Keystrokes from an attached browser. */
   write(id: string, data: string) {
     const w = this.workers.get(id);
@@ -2247,7 +2258,11 @@ process.stdin.on('end', () => {
     // A plain folder has no branches to keep in sync.
     const branchPolicy = this.plain ? '' : workerBranchPolicy(this.trees.baseBranch() ?? this.trees.currentBranch(), this.trees.branchFile);
     const template = this.prompts?.text('worker.system') ?? PROMPTS['worker.system'].text;
-    let text = officePrompt(this.prompts, 'worker.system', { name: info.name, branchPolicy });
+    // Only a worker with no lead may visit the others; a subagent isn't told office-visit exists.
+    const visits = info.kind === 'agent' && !info.lead && this.visitsOn?.() ? WORKER_VISITS : '';
+    let text = officePrompt(this.prompts, 'worker.system', { name: info.name, visits, branchPolicy });
+    // A saved system prompt from before visits existed still tells the worker about them.
+    if (text && visits && !template.includes('{{visits}}')) text += `\n\n${visits}`;
     // A saved system prompt may predate the floor selector. Keep it, but don't let its generic
     // default-branch instructions override an explicit owner choice.
     if (text && branchPolicy && this.trees.selectedBranch() && !template.includes('{{branchPolicy}}')) text += `\n\n${branchPolicy}`;

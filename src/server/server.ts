@@ -292,6 +292,7 @@ export async function startServer(cfg: Config) {
     }
     if (url.pathname === '/office/workers') return officeWorkers(req, res, url);
     if (url.pathname === '/office/whiteboard') return officeWhiteboard(req, res, url);
+    if (url.pathname === '/office/visits') return officeVisits(req, res, url);
     if (req.method !== 'POST' || url.pathname !== '/hooks/droid') return send(res, 404, { ok: false });
     let payload: unknown = {};
     try {
@@ -327,6 +328,30 @@ export async function startServer(cfg: Config) {
     }
     try {
       const r = await floor.team.handle(agent, body);
+      send(res, r.status, r.body);
+    } catch (err) {
+      send(res, 500, { error: (err as Error).message });
+    }
+  };
+  /**
+   * Visits between the floor's independent workers, for the office-visit command (see visits.ts): a
+   * POST with the action in its JSON body. The worker's own hook token says who's asking.
+   */
+  const officeVisits = async (req: http.IncomingMessage, res: http.ServerResponse, url: URL) => {
+    const workerId = url.searchParams.get('worker') ?? '';
+    const token = (req.headers.authorization ?? '').replace(/^Bearer\s+/i, '');
+    const floor = workerFloor(workerId);
+    const agent = floor?.workers.authenticate(workerId, token);
+    if (!floor || !agent) return send(res, 401, { error: 'Send your own DROID_OFFICE_WORKER_ID as ?worker= and DROID_OFFICE_HOOK_TOKEN as the bearer token' });
+    if (req.method !== 'POST') return send(res, 405, { error: 'POST, with the action in a JSON body' });
+    let body: unknown;
+    try {
+      body = JSON.parse(await readBody(req));
+    } catch {
+      return send(res, 400, { error: 'Send JSON: {"action": "roster"}' });
+    }
+    try {
+      const r = floor.visits.handle(agent, body);
       send(res, r.status, r.body);
     } catch (err) {
       send(res, 500, { error: (err as Error).message });
@@ -1283,6 +1308,7 @@ export async function startServer(cfg: Config) {
     });
     screensOf(client, floor);
     if (floor) sendBoard(client, floor);
+    if (floor) sendTo(client, { t: 'visits', visits: floor.visits.list() });
     floorsChanged();
     if (floor) {
       floor.arrived();
@@ -1391,6 +1417,7 @@ export async function startServer(cfg: Config) {
     sendTo(c, { t: 'floor.enter', arrival: { floor: floor.id, at: { x: spot.x, y: spot.y, z: spot.z, rotY: spot.rotY }, via: at ? 'requested' : 'elevator' }, ...floorView(floor) });
     screensOf(c, floor);
     sendBoard(c, floor);
+    sendTo(c, { t: 'visits', visits: floor.visits.list() });
     floor.arrived();
     floor.workers.wakeAll();
     floorsChanged();
