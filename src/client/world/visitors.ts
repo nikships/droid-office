@@ -121,18 +121,19 @@ export class Visitors {
       if (w.key === this.keyOf(v)) {
         w.visit = v;
         w.next = null;
-      } else if (!w.out) this.plan(w, v);
-      else {
+      } else if (!w.out) {
+        this.plan(w, v);
+      } else {
         // Out on another errand: back to its seat first, then off to this one.
         w.visit = null;
         w.next = v;
       }
     }
-    for (const w of this.walkers.values())
-      if (!on.has(w.id)) {
-        w.visit = null;
-        w.next = null;
-      }
+    for (const w of this.walkers.values()) {
+      if (on.has(w.id)) continue;
+      w.visit = null;
+      w.next = null;
+    }
   }
 
   update(dt: number) {
@@ -292,10 +293,14 @@ export class Visitors {
       pos.set(at.x, this.ground(at.x, at.z, w.seat.y) - FEET, at.z);
       walking = Math.abs(moved) > 1e-6;
       there = !walking && w.u >= w.length - 1e-3;
-      if (walking) want = moved > 0 ? at.heading : at.heading + Math.PI;
-      else if (there) want = w.spotHeading;
-      w.step = walking ? (moved > 0 ? 'walking' : 'walking back') : there ? 'at spot' : w.step;
-      if (walking) this.stirring = true;
+      if (walking) {
+        want = moved > 0 ? at.heading : at.heading + Math.PI;
+        w.step = moved > 0 ? 'walking' : 'walking back';
+        this.stirring = true;
+      } else if (there) {
+        want = w.spotHeading;
+        w.step = 'at spot';
+      }
     }
     w.heading = snap ? want : w.heading + wrap(want - w.heading) * Math.min(1, dt * 8);
     m.root.rotation.set(0, w.heading, 0);

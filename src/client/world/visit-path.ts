@@ -3,6 +3,8 @@
 
 import { VISIT_HOP_MS, VISIT_WALK_SPEED, type VisitPhase } from '../../shared/visits';
 
+export { routeLength } from '../../shared/visits';
+
 type Pt = readonly [number, number];
 
 /**
@@ -15,12 +17,6 @@ export const SEATED = -1;
 export const CATCH_UP = 1.5;
 
 const HOP_S = VISIT_HOP_MS / 1000;
-
-export function routeLength(path: readonly Pt[]): number {
-  let m = 0;
-  for (let i = 1; i < path.length; i++) m += Math.hypot(path[i][0] - path[i - 1][0], path[i][1] - path[i - 1][1]);
-  return m;
-}
 
 /**
  * Where the server's timing puts a visitor `elapsedMs` into `phase` on a route `length` metres long:

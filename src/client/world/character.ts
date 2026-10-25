@@ -886,7 +886,7 @@ function cardChip(status: WorkerStatus, pr: PrBadge | undefined, lost: boolean):
 type Act = 'rest' | 'up' | 'waiting' | 'type' | WorkerAction | VisitPose;
 
 /**
- * How it holds itself on a visit to another worker's desk (see visit-walks.ts): on its feet, leaning
+ * How it holds itself on a visit to another worker's desk (see visitors.ts): on its feet, leaning
  * over the other laptop to read it, or talking with a hand out.
  */
 export type VisitPose = 'stand' | 'peer' | 'talk';
@@ -1339,7 +1339,7 @@ export class Worker {
   private dead = false;
   /** Walking instead of standing, on its way out. */
   walking = false;
-  /** Away from its seat on a visit (see visit-walks.ts): how it stands, in place of what its status acts out. */
+  /** Away from its seat on a visit (see visitors.ts): how it stands, in place of what its status acts out. */
   visitPose: VisitPose | null = null;
   /** A line it's saying on a visit, over its head in place of its card until `left` runs out. */
   private speech: { sprite: THREE.Sprite; text: string; visit: string; left: number } | null = null;
@@ -1812,8 +1812,8 @@ export class Worker {
   private fadeLabels() {
     // A line said on a visit stands in for the card and the name tag (its chip names who says it), and
     // stays readable from right beside it.
-    if (this.nameTag) this.nameTag.material.opacity = this.speech ? 0 : this.labelAlpha;
-    if (this.bubble) this.bubble.material.opacity = this.speech ? 0 : this.labelAlpha;
+    const alpha = this.speech ? 0 : this.labelAlpha;
+    for (const sprite of [this.bubble, this.nameTag]) if (sprite) sprite.material.opacity = alpha;
     if (this.speech) this.speech.sprite.material.opacity = Math.max(this.labelAlpha, 0.85);
   }
 
@@ -1860,7 +1860,7 @@ export class Worker {
       this.action = this.nextAction;
       this.actionT = 0;
     }
-    const act: Act = hopping ? 'up' : this.visitPose ? this.visitPose : this.bouncing && this.status === 'done' ? 'up' : this.status === 'needs_input' ? 'waiting' : this.status === 'working' ? (this.action ?? 'type') : 'rest';
+    const act: Act = hopping ? 'up' : (this.visitPose ?? (this.bouncing && this.status === 'done' ? 'up' : this.status === 'needs_input' ? 'waiting' : this.status === 'working' ? (this.action ?? 'type') : 'rest'));
     const s = this.pose(act, dt, t);
 
     this.armL.rotation.set(s.armLx, 0, s.armLz);

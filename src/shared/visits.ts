@@ -145,9 +145,14 @@ export function visitRoute(visitorDeskId: string, hostDeskId: string, slot: numb
   return pts;
 }
 
-/** How long a route takes at VISIT_WALK_SPEED, with getting up (or sitting back down) at its end. */
-export function visitWalkMs(path: readonly [number, number][]): number {
+/** How long a route is, in metres. */
+export function routeLength(path: readonly (readonly [number, number])[]): number {
   let m = 0;
   for (let i = 1; i < path.length; i++) m += Math.hypot(path[i][0] - path[i - 1][0], path[i][1] - path[i - 1][1]);
-  return Math.round((m / VISIT_WALK_SPEED) * 1000) + VISIT_HOP_MS;
+  return m;
+}
+
+/** How long a route takes at VISIT_WALK_SPEED, with getting up (or sitting back down) at its end. */
+export function visitWalkMs(path: readonly [number, number][]): number {
+  return Math.round((routeLength(path) / VISIT_WALK_SPEED) * 1000) + VISIT_HOP_MS;
 }

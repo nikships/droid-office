@@ -1397,14 +1397,6 @@ export class WorkerManager {
   }
 
   /**
-   * Stops an agent's turn, as Escape in its terminal does (Droid shows "Press ESC to stop"). Not
-   * keystrokes from anyone, so it doesn't count as someone typing.
-   */
-  interrupt(id: string) {
-    this.workers.get(id)?.pty?.write('\x1b');
-  }
-
-  /**
    * Cancels a Droid agent's turn with one Escape, and only while it's really mid-turn: its status
    * is working and its screen shows droid's busy spinner. Says whether it sent it. An agent at rest
    * never gets the key. Not Ctrl+C: droid only arms "press again to exit" with one, and two quit it.
@@ -1422,6 +1414,7 @@ export class WorkerManager {
     const w = this.workers.get(id);
     return w?.term && w.info.kind === 'agent' ? readDroidScreen(screenRows(w.term)) : undefined;
   }
+
   /** Keystrokes from an attached browser. */
   write(id: string, data: string) {
     const w = this.workers.get(id);

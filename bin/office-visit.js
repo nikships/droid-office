@@ -121,6 +121,7 @@ const RETRY_MS = 6000;
 const TIMEOUT_MS = 30_000;
 export const ASK_DEFAULT_S = 300;
 export const ASK_MAX_S = 1800;
+const LINES_MAX = 400;
 export const POLL_MS = 1000;
 /** How long look, tell and handoff wait on the office before giving up on it: a long walk and a busy host. */
 export const VISIT_WAIT_S = 180;
@@ -147,7 +148,8 @@ const TEXT_CMDS = new Set(['tell', 'ask', 'handoff', 'reply']);
 export function parseArgs(argv) {
   const [first, ...rest] = argv;
   const help = (a) => a === '-h' || a === '--help';
-  if (first === undefined || first === 'help' || help(first) || rest.some(help)) return { cmd: 'help', full: first === undefined || first === 'help' || help(first) };
+  const full = first === undefined || first === 'help' || help(first);
+  if (full || rest.some(help)) return { cmd: 'help', full };
   const cmd = ALIASES[first] ?? first;
   const allowed = OPTIONS[cmd];
   if (!allowed) throw new UsageError(`Unknown command: ${first}`);
@@ -178,7 +180,7 @@ export function parseArgs(argv) {
   if (names.length > most) throw new UsageError(most ? `${cmd} takes one ${cmd === 'reply' ? 'visit id' : "worker's name"} (got ${names.join(' ')}): give the text on stdin` : `Unexpected argument: ${names[0]}`);
   for (const [flag, max] of [
     ['--timeout', ASK_MAX_S],
-    ['--lines', 400],
+    ['--lines', LINES_MAX],
   ]) {
     if (opts[flag] === undefined) continue;
     const n = Number(opts[flag]);

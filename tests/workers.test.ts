@@ -499,11 +499,6 @@ test('only a worker with no lead is told about office-visit, and only while visi
   if (typeof off === 'string') return assert.fail(off);
   await launched(off.id);
   assert.doesNotMatch(systemOf(off.id), /office-visit/);
-  // Escape goes to the agent's terminal as it is, without counting as someone typing.
-  const before = workers.get(off.id)?.lastInputAt;
-  workers.interrupt(off.id);
-  workers.interrupt('nobody');
-  assert.equal(workers.get(off.id)?.lastInputAt, before);
 });
 test("a plain folder's workers get no branch policy, no worktrees, no board agents, and git that stops at the folder", async (t) => {
   const f = fixture();
