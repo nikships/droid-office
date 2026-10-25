@@ -12,6 +12,14 @@ For the production Mac app:
 
 Developer checkouts also need **Node.js 20+** and npm. On macOS, `npm run build` also compiles the native Metal presenter (`native/presenter`, with node-gyp), which needs Xcode or its command line tools; elsewhere that step is skipped. The source can run on macOS, Linux and Windows, but those checkouts are not supported production installations.
 
+## Learn the office
+
+After choosing your character and entering your first project, the office offers a hands-on tutorial. Untick sections you do not want, or choose **Not now**. Orange markers point to objects and outlines mark UI controls. Action steps advance when you actually do the action; only explanations have **Next**.
+
+You can **Skip step**, **Skip section**, or **End tutorial** at any time. Progress and your current step survive reloads and server restarts in this browser. **Settings → You → Tutorial** lists all eleven sections with their state and a **Replay** button, plus **Restart the whole tutorial**. Replay sections in any order. **☰ → Tutorial** also opens the section chooser.
+
+This is your real office, not a sandbox. Hiring and agent prompts can spend credits; publishing, saving and sending feedback have their normal effects. The tutorial warns before those actions and never performs them for you. Sending home and charged shots are explanations only: you are never asked to delete work. Use **Move guide** if it covers something you need. Esc keeps its normal job: free the mouse or close the top window, and use Shift+Esc to leave a terminal.
+
 ## Install & run
 
 **The Mac app release is the only supported production install.** Download `Droid-Office-<version>-arm64.dmg` from the [latest release](https://github.com/nikships/droid-office/releases/latest), open it, and drag **Droid Office** into Applications. Launch the app to start your office. It keeps itself up to date; see [The Mac app](#the-mac-app) for first launch, logs and updates.

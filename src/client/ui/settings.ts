@@ -12,6 +12,7 @@ import { openPromptEditor, rewrittenPrompts } from './prompts';
 import { hotReloadSettings } from './hot-reload';
 import { presetEditor } from './prompt-box';
 import { factoryKeySettings } from './factory-settings';
+import { tutorialSettings } from './tutorial';
 import { openPhone, pairedPhones } from './phone';
 import { companionState, openCompanion } from './companion';
 import type { PairingState } from '../../shared/devices';
@@ -947,6 +948,7 @@ export function openSettings(
         card('Your character', { desc: desc('How you look and the name above your head.'), control: character }),
         card('What 7 puts in your hand', { desc: desc('A normal hit opens the worker’s terminal. Only a fully charged shot sends it home and deletes its owned worktree and branch.'), below: [sidearm] }),
       ),
+      tutorialSettings(),
     ],
     sound: [
       group(

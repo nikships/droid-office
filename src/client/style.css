@@ -1,5 +1,60 @@
 @import '@xterm/xterm/css/xterm.css';
 
+/* Tutorial HUD is deliberately outside the modal stack: it must not take game keys. */
+.tutorial-panel {
+  position: fixed;
+  left: var(--space-4);
+  bottom: var(--space-4);
+  z-index: 180;
+  width: min(360px, calc(100vw - 32px));
+  max-height: calc(100vh - 120px);
+  overflow-y: auto;
+  padding: var(--space-4);
+  color: var(--text);
+  background: var(--surface-raised);
+  border: 1px solid var(--border-strong);
+  border-top: 3px solid var(--accent);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-window);
+  font-size: var(--text-small);
+}
+.tutorial-panel[hidden], .tutorial-pin[hidden] { display: none; }
+.tutorial-panel.right { left: auto; right: var(--space-4); }
+.tutorial-panel h3 { font-size: 16px; font-weight: 500; margin: 0; }
+.tutorial-panel p { margin: 0; line-height: 1.5; }
+.tutorial-panel .eyebrow { color: var(--accent); }
+.tutorial-do { color: var(--text-secondary); flex: 1; }
+.tutorial-feedback { color: var(--text-secondary); }
+.tutorial-highlight { outline: 2px solid var(--accent) !important; outline-offset: 3px; }
+.tutorial-pin {
+  position: fixed;
+  top: 0;
+  left: 0;
+  z-index: 45;
+  pointer-events: none;
+  color: var(--accent);
+  text-shadow: 0 1px 3px #000;
+}
+.tutorial-arrow { display: block; font-size: 32px; width: 32px; height: 32px; margin-left: calc(-1 * var(--space-4)); }
+.tutorial-pin-label {
+  display: block;
+  transform: translateX(-50%);
+  background: var(--surface);
+  border: 1px solid var(--accent);
+  border-radius: var(--radius);
+  padding: var(--space-1) var(--space-2);
+  font-size: var(--text-small);
+  white-space: nowrap;
+  max-width: 200px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.tutorial-pin.in-view .tutorial-arrow { color: var(--text); }
+.tutorial-chooser .toggle { padding: var(--space-2); border-bottom: 1px solid var(--border); }
+@media (max-height: 750px) {
+  .tutorial-panel { width: 320px; max-height: 46vh; }
+}
+
 /* Geist and Geist Mono, bundled locally (public/fonts, SIL OFL — see fonts/OFL-LICENSE.txt). */
 @font-face {
   font-family: 'Geist';

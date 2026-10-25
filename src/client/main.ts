@@ -18,6 +18,7 @@ import {
   STATIONS,
   STATION_AGENT,
   STOREY,
+  TV,
   WALL_HEIGHT,
   beanbagsOut,
   inElevator,
@@ -133,6 +134,7 @@ import { cloudBadge } from '../shared/factory-cloud';
 import { Compass, type Bearing } from './ui/compass';
 import { openCharacter } from './ui/character';
 import { openSettings, type SettingsPane } from './ui/settings';
+import { mountTutorial, openTutorial, tutorialEvent, type TutorialTarget } from './ui/tutorial';
 import { officePrompt } from './ui/prompts';
 import { forgeVars } from '../shared/prompts';
 import { INCLUDE_FILE, SETUP_FILE, describeSetup } from '../shared/worktree-setup';
@@ -1027,7 +1029,11 @@ function missAt(hit: THREE.Intersection, superShot: boolean) {
  * shots dismiss local workers. Interactive surfaces keep their usual UI-opening behavior.
  */
 function landShot(result: ReturnType<typeof gunHit>, direction: THREE.Vector3, superShot: boolean) {
-  if (result?.laptopWorkerId) return openWorkerTerminal(result.laptopWorkerId);
+  if (result?.laptopWorkerId) {
+    openWorkerTerminal(result.laptopWorkerId);
+    if (wandOut() && openTerminalFor() === result.laptopWorkerId) tutorialEvent('wand-open');
+    return;
+  }
   if (result?.hit.object === bossLaptop.screen) return openOfficeShell(net);
   if (result?.interactable && openPane(result.interactable, runUnder({ it: result.interactable, hit: result.hit }))) return;
   if (!superShot && result?.interactable?.kind === 'station' && result.interactable.deskId) {
@@ -1039,7 +1045,11 @@ function landShot(result: ReturnType<typeof gunHit>, direction: THREE.Vector3, s
     if (hit) missAt(hit, superShot);
     return;
   }
-  if (!superShot) return openWorkerTerminal(workerId);
+  if (!superShot) {
+    openWorkerTerminal(workerId);
+    if (wandOut() && openTerminalFor() === workerId) tutorialEvent('wand-open');
+    return;
+  }
   // Guests and cloud workers aren't local processes the office can dismiss with a charged shot.
   const target = store.workers.get(workerId);
   if (target?.guest || target?.cloud) {
@@ -2071,6 +2081,7 @@ function goToNextWaiting() {
   }
   closeAllModals();
   standAt(desk);
+  tutorialEvent('next-worker');
   const waiting = waitingInOrder(store.workers.values());
   const of = waiting.length > 1 ? ` (${waiting.findIndex((x) => x.id === w.id) + 1} of ${waiting.length})` : '';
   nextToast = toast(`${w.status === 'needs_input' ? `🙋 ${w.name} needs input` : `✅ ${w.name} is done`}${of}. E opens its terminal`);
@@ -3431,6 +3442,7 @@ const hudActions: HudAction[] = [
   { id: 'phone', icon: '📱', label: 'Pair a phone', section: 'Office', title: () => 'Pair Droid Office for Android with the QR code', run: () => openPhone() },
   { id: 'companion', icon: '🌐', label: 'Web companion', section: 'Office', title: () => 'Open the office in a desktop browser: its links for this computer, Wi-Fi and Tailscale', run: () => openCompanion() },
   { id: 'help', icon: '❓', label: 'Controls', section: 'Office', key: 'H', run: () => openHelp(settings.sidearm) },
+  { id: 'tutorial', icon: '◎', label: 'Tutorial', section: 'Office', run: openTutorial },
   {
     id: 'upgrade',
     icon: '⬆️',
@@ -4218,6 +4230,61 @@ const automation = createAutomation({
   wait: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
 });
 (window as unknown as { office: typeof automation }).office = automation;
+
+/** Resolve against this floor on every step: skipping never depends on a previous desk or floor. */
+function tutorialTarget(name: string): TutorialTarget | null {
+  if (!store.floor || upTop) return null;
+  // The lounge TV is a passive screen, not an E interactable.
+  if (name === 'tv') return { ...TV, label: 'Lounge TV', near: Math.hypot(TV.x - player.pos.x, TV.z - player.pos.z) <= TV.width && player.pos.y < 1 };
+  const workers = [...store.workers.values()].filter((w) => w.kind === 'agent' && !w.guest && !w.cloud && !w.lost);
+  const candidates = usable()
+    .flat()
+    .filter((spot) => {
+      if (spot.off) return false;
+      if (name === 'empty-desk') return spot.kind === 'desk' && !!spot.deskId && !store.workerAtDesk(spot.deskId);
+      if (name === 'worker' || name === 'waiting-worker') return spot.kind === 'desk' && workers.some((w) => w.deskId === spot.deskId && (name !== 'waiting-worker' || waitingOnSomeone(w)));
+      return spot.kind === name || spot.deskId === name;
+    });
+  candidates.sort((a, b) => Math.hypot(a.x - player.pos.x, a.z - player.pos.z) - Math.hypot(b.x - player.pos.x, b.z - player.pos.z));
+  const spot = candidates[0];
+  if (!spot) return null;
+  const desk = spot.deskId ? DESK_BY_ID.get(spot.deskId) : undefined;
+  return {
+    x: desk?.x ?? spot.x,
+    y: (spot.y ?? 0) + 1.5,
+    z: desk?.z ?? spot.z,
+    label: (spot.deskId && store.workerAtDesk(spot.deskId)?.name) || desk?.label || automation.list().find((t) => t.id === name)?.label || name,
+    near: Math.hypot(spot.x - player.pos.x, spot.z - player.pos.z) <= spot.radius && Math.abs(player.pos.y - (spot.y ?? 0)) < 1,
+  };
+}
+
+mountTutorial({
+  camera,
+  ready: () => !firstWelcome && !!store.floor && !trip && shadersWarmed && !document.querySelector('#loading:not(.hidden)'),
+  offerReady: () => !upTop && store.floors.some((f) => f.id === store.floor && !f.home),
+  target: tutorialTarget,
+  observe: () => ({
+    x: player.pos.x,
+    y: player.pos.y,
+    z: player.pos.z,
+    facing: player.facing,
+    pitch: player.lookPitch,
+    floor: store.floor,
+    grounded: player.grounded,
+    controls: player.enabled,
+    riding: !!trip,
+    near: false,
+    workers: [...store.workers.values()].filter((w) => w.kind === 'agent' && !w.guest).map((w) => w.id),
+    screens: [...store.workers.values()].filter((w) => w.kind === 'agent' && store.screens.has(w.id)).map((w) => w.id),
+    terminal: !!openTerminalFor() && openTerminalFor() !== OFFICE_SHELL_ID,
+    carrying: !!carrying,
+    wand: gunOut && wandOut(),
+    armed: gunOut,
+    lumos,
+    wheel: emoteWheel.isOpen,
+    hanging: hanger.active,
+  }),
+});
 
 // Debug handle for quick checks from the console / headless screenshots.
 (window as any).__office = {

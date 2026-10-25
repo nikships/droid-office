@@ -296,7 +296,7 @@ export function openWhiteboard(net: Net, opts: { card?: string; queueOffline?: b
 
   /** The toolbar, made once per card; paintToolbar keeps it current, so a click never lands on a button being replaced. */
   function buildToolbar(s: Surface): HTMLElement {
-    const modeBtn = (m: 'use' | 'markup', label: string) => h('button.btn.sm', { type: 'button', role: 'radio', onclick: () => s.setMode(m) }, label);
+    const modeBtn = (m: 'use' | 'markup', label: string) => h('button.btn.sm', { type: 'button', role: 'radio', 'data-wb-mode': m, onclick: () => s.setMode(m) }, label);
     const pick = h('input.hidden', { type: 'file', accept: 'image/png,image/jpeg,image/webp,image/gif', multiple: true });
     pick.addEventListener('change', () => {
       void s.addPictures([...(pick.files ?? [])]);
@@ -403,7 +403,7 @@ export function openWhiteboard(net: Net, opts: { card?: string; queueOffline?: b
       actions.replaceChildren(
         h('button.btn.sm', { type: 'button', onclick: newCanvas }, 'New canvas'),
         h('button.btn.sm', { type: 'button', onclick: addHtml }, 'Add HTML'),
-        h('button.btn.sm', { type: 'button', onclick: () => openPing(net) }, 'Ping a worker'),
+        h('button.btn.sm', { type: 'button', 'data-tutorial': 'ping', onclick: () => openPing(net) }, 'Ping a worker'),
         ...(n ? [h('button.btn.sm', { type: 'button', title: 'Select cards to delete several at once', onclick: () => startSelecting() }, 'Select')] : []),
       );
       return;
@@ -447,7 +447,7 @@ export function openWhiteboard(net: Net, opts: { card?: string; queueOffline?: b
     });
     actions.replaceChildren(
       copyBtn,
-      h('button.btn.sm', { type: 'button', onclick: () => openPing(net) }, 'Ping a worker'),
+      h('button.btn.sm', { type: 'button', 'data-tutorial': 'ping', onclick: () => openPing(net) }, 'Ping a worker'),
       h(
         'button.btn.sm.danger',
         {
