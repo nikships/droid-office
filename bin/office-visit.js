@@ -53,9 +53,11 @@ COMMANDS
   …the message…
   EOF
       Walks over and puts a message into its session, headed with your name and desk and how to
-      answer. Normal priority waits until it finishes its current turn; --urgent interrupts the
-      turn it's in. If it's still busy after a few seconds you walk back and the message waits in
-      its queue: the office types it in when the turn ends. Prints whether it went in.
+      answer. Normal priority waits until it finishes its current turn: if it's still busy after
+      a few seconds you walk back and the message waits in its queue, and the office types it in
+      when the turn ends. --urgent cancels the turn it's in (one Escape, as the owner would press)
+      and puts the message in as its next prompt once the turn has stopped, at most 5 seconds
+      later. A worker at rest gets it straight away. Prints whether it went in.
 
   office-visit ask <name> [--urgent] [--timeout <seconds>] <<'EOF'
   …the question…
@@ -87,8 +89,10 @@ PRIORITY
 
   Normal is right almost always: it reaches the other worker between its turns, the way a person
   waits for someone to look up. Use --urgent only when waiting would waste real work: it is about to
-  change code you're changing, or it's blocked on what you know. Even an urgent message waits while
-  the other worker's terminal shows a permission prompt: that's for the owner to answer.
+  change code you're changing, or it's blocked on what you know. Urgent stops what the other worker
+  is doing, a running command included; it decides afterwards whether to go back to it. Even an
+  urgent message waits while the other worker's terminal shows a permission prompt: that's for the
+  owner to answer.
 
 ONE VISIT AT A TIME
 

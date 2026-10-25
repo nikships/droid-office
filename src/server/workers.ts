@@ -1404,6 +1404,24 @@ export class WorkerManager {
     this.workers.get(id)?.pty?.write('\x1b');
   }
 
+  /**
+   * Cancels a Droid agent's turn with one Escape, and only while it's really mid-turn: its status
+   * is working and its screen shows droid's busy spinner. Says whether it sent it. An agent at rest
+   * never gets the key. Not Ctrl+C: droid only arms "press again to exit" with one, and two quit it.
+   */
+  cancelTurn(id: string): boolean {
+    const w = this.workers.get(id);
+    if (!w?.pty || !w.term || w.info.kind !== 'agent' || w.info.status !== 'working') return false;
+    if (readDroidScreen(screenRows(w.term)) !== 'busy') return false;
+    w.pty.write('\x1b');
+    return true;
+  }
+
+  /** What a Droid agent's screen shows now: busy on a turn, asking, or at rest (see droid-screen.ts). */
+  turnScreen(id: string): DroidScreen | undefined {
+    const w = this.workers.get(id);
+    return w?.term && w.info.kind === 'agent' ? readDroidScreen(screenRows(w.term)) : undefined;
+  }
   /** Keystrokes from an attached browser. */
   write(id: string, data: string) {
     const w = this.workers.get(id);

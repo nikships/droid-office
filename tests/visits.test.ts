@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { ABANDON_MS, ASK_DEFAULT_S, LINGER_MS, READ_MS, TALK_MAX_MS, TALK_MIN_MS, Visits, independent, waitWords, type VisitWorkers } from '../src/server/visits.js';
+import { ABANDON_MS, ASK_DEFAULT_S, LINGER_MS, READ_MS, TALK_MAX_MS, TALK_MIN_MS, URGENT_WAIT_MS, Visits, independent, waitWords, type VisitWorkers } from '../src/server/visits.js';
+import type { DroidScreen } from '../src/server/droid-screen.js';
 import { Team, type TeamWorkers } from '../src/server/team.js';
 import { SUBAGENT_DEFAULTS, type AgentChoice, type ServerMsg, type WorkerInfo, type WorkerStatus } from '../src/shared/protocol.js';
 import { visitRoute, visitWalkMs, type Visit } from '../src/shared/visits.js';
@@ -14,9 +15,14 @@ function worker(over: Partial<WorkerInfo> & { id: string; deskId: string }): Wor
 
 class Fake implements VisitWorkers {
   ws = new Map<string, WorkerInfo>();
-  typed: { id: string; text: string; queue: boolean }[] = [];
+  typed: { id: string; text: string }[] = [];
   resumed: { id: string; text: string }[] = [];
-  interrupts: string[] = [];
+  /** Every Escape the office sent to cancel a turn. */
+  escapes: string[] = [];
+  /** Escapes and prompts in the order they went in, with the clock: what the host's terminal got. */
+  keys: { id: string; key: 'escape' | 'prompt'; at: number }[] = [];
+  /** What each host's screen shows; by default droid's spinner while it works, its input box otherwise. */
+  screens = new Map<string, DroidScreen | undefined>();
   tails = new Map<string, string>();
   refuse?: string;
   clock = () => 0;
@@ -34,9 +40,10 @@ class Fake implements VisitWorkers {
     const t = this.tails.get(id);
     return t === undefined ? undefined : t.split('\n').slice(-lines).join('\n');
   }
-  prompt(id: string, text: string, queue = false) {
+  prompt(id: string, text: string) {
     if (this.refuse) return this.refuse;
-    this.typed.push({ id, text, queue });
+    this.typed.push({ id, text });
+    this.keys.push({ id, key: 'prompt', at: this.clock() });
     const w = this.ws.get(id);
     if (w) w.lastInputAt = this.clock();
     return undefined;
@@ -45,8 +52,16 @@ class Fake implements VisitWorkers {
     this.resumed.push({ id, text });
     return undefined;
   }
-  interrupt(id: string) {
-    this.interrupts.push(id);
+  turnScreen(id: string) {
+    if (this.screens.has(id)) return this.screens.get(id);
+    return this.ws.get(id)?.status === 'working' ? 'busy' : 'idle';
+  }
+  /** As WorkerManager.cancelTurn: only a host that works and shows the spinner gets Escape. */
+  cancelTurn(id: string) {
+    if (this.ws.get(id)?.status !== 'working' || this.turnScreen(id) !== 'busy') return false;
+    this.escapes.push(id);
+    this.keys.push({ id, key: 'escape', at: this.clock() });
+    return true;
   }
 }
 
@@ -211,15 +226,14 @@ test('a normal tell waits for the host to finish its turn; the visitor leaves it
   assert.deepEqual(r.says(), [{ t: 'visit_say', visit: id, worker: 'pixel', text: 'I renamed auth.ts to session.ts' }]);
   r.advance(TALK_MAX_MS);
   assert.equal(r.fake.typed.length, 0, 'not while it works');
-  assert.equal(r.fake.interrupts.length, 0);
+  assert.deepEqual(r.fake.escapes, [], 'a normal message never cancels a turn');
   assert.equal(r.lastList()[0].phase, 'returning');
   assert.deepEqual(r.status('pixel', id).body, { visit: id, kind: 'tell', phase: 'returning', host: 'Nibble', done: true, ok: true, queued: true });
 
   r.set('nibble', 'done');
   r.advance(250);
   assert.equal(r.fake.typed.length, 1);
-  const { text, queue } = r.fake.typed[0];
-  assert.equal(queue, false);
+  const { text } = r.fake.typed[0];
   assert.match(text, /^💬 Pixel \(Desk 3\), another worker on this floor, walked over to tell you this\.\n\nI renamed auth\.ts to session\.ts\n\n/);
   assert.match(text, /office-visit tell Pixel/);
   assert.doesNotMatch(text, /urgent/i);
@@ -243,38 +257,95 @@ test('a tell to a host at rest goes straight in, and a sleeping host is woken wi
   assert.match(r.fake.resumed[0].text, /wake up/);
 });
 
-test('an urgent message interrupts the host’s turn, and is queued behind it if the turn won’t stop', (t) => {
+test('an urgent message to a busy host: one Escape, then the message as a new prompt once the turn stops', (t) => {
   const r = rig(t);
   r.set('nibble', 'working');
   const id = r.call('pixel', { action: 'visit', kind: 'tell', worker: 'Nibble', text: 'Stop: main is broken', urgent: true }).body.visit;
   r.advance(walk('desk-3', 'desk-9', 0));
-  assert.deepEqual(r.fake.interrupts, ['nibble'], 'Escape goes in at once');
+  assert.deepEqual(r.fake.escapes, ['nibble'], 'one Escape goes in at once');
+  assert.equal(r.fake.typed.length, 0, 'not while the turn is still on screen');
+  r.advance(1000);
   assert.equal(r.fake.typed.length, 0);
-  r.set('nibble', 'done');
+  // Droid prints "Request cancelled by user" and shows its input box; the status follows seconds later.
+  r.fake.screens.set('nibble', 'idle');
   r.advance(250);
   assert.equal(r.fake.typed.length, 1);
-  assert.match(r.fake.typed[0].text, /It's urgent, so the office interrupted what you were doing/);
+  assert.deepEqual(
+    r.fake.keys.map((k) => [k.id, k.key]),
+    [
+      ['nibble', 'escape'],
+      ['nibble', 'prompt'],
+    ],
+  );
+  assert.ok(r.fake.keys[1].at > r.fake.keys[0].at, 'the prompt goes in after the Escape');
+  assert.match(r.fake.typed[0].text, /It's urgent, so the office interrupted what you were doing: deal with it first, and go back to what you were doing only if it still makes sense\./);
   r.advance(TALK_MIN_MS);
   assert.equal(r.status('pixel', id).body.delivered, true);
   assert.match(r.toasts.join('\n'), /Pixel told Nibble \(urgent\)/);
+});
 
-  // A host that keeps working after Escape gets it queued behind its turn.
-  r.set('dot', 'working');
+test('an urgent message goes in once the status says the turn ended, or after 5 seconds anyway', (t) => {
+  const r = rig(t);
+  r.set('nibble', 'working');
+  r.call('pixel', { action: 'visit', kind: 'tell', worker: 'Nibble', text: 'one', urgent: true });
   r.advance(walk('desk-3', 'desk-9', 0));
-  r.call('pixel', { action: 'visit', kind: 'tell', worker: 'Dot', text: 'Now', urgent: true });
-  r.advance(walk('desk-3', 'desk-10', 0));
-  assert.deepEqual(r.fake.interrupts, ['nibble', 'dot']);
-  r.advance(6000);
-  assert.deepEqual(r.fake.typed.at(-1), { id: 'dot', text: r.fake.typed.at(-1)!.text, queue: true });
+  assert.deepEqual(r.fake.escapes, ['nibble']);
+  r.set('nibble', 'done');
+  r.advance(250);
+  assert.deepEqual(
+    r.fake.typed.map((x) => x.id),
+    ['nibble'],
+    'the status left working',
+  );
 
-  // A permission prompt is the owner's: even urgent waits.
-  r.set('nibble', 'needs_input');
+  // A turn that won't stop: the message is typed in with Enter (droid steers its turn with it) 5 seconds after the Escape.
+  r.set('dot', 'working');
+  r.advance(TALK_MIN_MS + walk('desk-3', 'desk-9', 0));
+  r.call('pixel', { action: 'visit', kind: 'tell', worker: 'Dot', text: 'two', urgent: true });
   r.advance(walk('desk-3', 'desk-10', 0));
-  const before = r.fake.typed.length;
+  assert.deepEqual(r.fake.escapes, ['nibble', 'dot'], 'one Escape each, never a second');
+  const escaped = r.fake.keys.at(-1)!.at;
+  r.advance(URGENT_WAIT_MS - 250);
+  assert.equal(r.fake.typed.length, 1, 'not before 5 seconds');
+  r.advance(250);
+  assert.equal(r.fake.typed.length, 2);
+  assert.equal(r.fake.keys.at(-1)!.key, 'prompt');
+  assert.equal(r.fake.keys.at(-1)!.at - escaped, URGENT_WAIT_MS);
+  assert.deepEqual(r.fake.escapes, ['nibble', 'dot']);
+});
+
+test('an urgent message to a host at rest goes straight in, with no Escape before it', (t) => {
+  const r = rig(t);
+  r.call('pixel', { action: 'visit', kind: 'tell', worker: 'Nibble', text: 'now', urgent: true });
+  r.advance(walk('desk-3', 'desk-9', 0));
+  assert.equal(r.fake.typed.length, 1);
+  assert.deepEqual(r.fake.escapes, []);
+
+  // Its status still says working, but its screen is back at the input box: no Escape either.
+  r.set('dot', 'working');
+  r.fake.screens.set('dot', 'idle');
+  r.advance(TALK_MIN_MS + walk('desk-3', 'desk-9', 0));
+  r.call('pixel', { action: 'visit', kind: 'tell', worker: 'Dot', text: 'now', urgent: true });
+  r.advance(walk('desk-3', 'desk-10', 0));
+  assert.equal(r.fake.typed.length, 2);
+  assert.deepEqual(r.fake.escapes, []);
+});
+
+test('an urgent message waits for a permission prompt, even one the status has not caught', (t) => {
+  const r = rig(t);
+  r.set('nibble', 'needs_input');
   r.call('pixel', { action: 'visit', kind: 'tell', worker: 'Nibble', text: 'again', urgent: true });
-  r.advance(walk('desk-3', 'desk-9', 0) + 3000);
-  assert.equal(r.fake.typed.length, before);
-  assert.deepEqual(r.fake.interrupts, ['nibble', 'dot']);
+  r.advance(walk('desk-3', 'desk-9', 0) + URGENT_WAIT_MS + 1000);
+  assert.equal(r.fake.typed.length, 0);
+  assert.deepEqual(r.fake.escapes, []);
+  r.set('nibble', 'working');
+  r.fake.screens.set('nibble', 'asking');
+  r.advance(URGENT_WAIT_MS + 1000);
+  assert.equal(r.fake.typed.length, 0, 'Enter would answer the dialog');
+  assert.deepEqual(r.fake.escapes, []);
+  r.fake.screens.set('nibble', 'busy');
+  r.advance(250);
+  assert.deepEqual(r.fake.escapes, ['nibble'], 'answered, the turn goes on, and the Escape goes in');
 });
 
 test('an ask waits at the desk for the answer, which reaches the asker and shows over the host', (t) => {

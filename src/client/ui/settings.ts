@@ -745,7 +745,7 @@ export function openSettings(
     for (const r of [subOn, subWho, subSize, subTree, subWake, subSkill, visitsOn]) r.paint();
     visitsNote.textContent =
       (s.visits ?? true)
-        ? 'Workers you hired (not subagents) can see each other on a roster with office-visit, walk to each other’s desks, read each other’s screens, and tell, ask and hand off work. A normal message waits for the other worker’s turn to end; an urgent one interrupts it.'
+        ? 'Workers you hired (not subagents) can see each other on a roster with office-visit, walk to each other’s desks, read each other’s screens, and tell, ask and hand off work. A normal message waits for the other worker’s turn to end; an urgent one cancels the turn and goes in as its next prompt.'
         : 'Every office-visit command is refused, and visits under way end. Workers can still hire and run subagents.';
     subWho.row.classList.toggle('disabled', !s.on);
     subNote.textContent =

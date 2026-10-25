@@ -2516,3 +2516,29 @@ test('a log read ignores a trailing partial line', (t) => {
   writeFileSync(f.log, `${JSON.stringify(done)}\n${tornLine}\n`);
   assert.deepEqual(f.read(), [done, torn]);
 });
+
+test('cancelTurn sends one Escape, and only to a droid that works and shows its spinner', async (t) => {
+  const { workers, worker, hook, status } = await liveWorker(t, 'cancel-turn');
+  const inner = (workers as unknown as { workers: Map<string, { pty?: { write(data: string): void } }> }).workers.get(worker.id)!;
+  const pty = inner.pty!;
+  const write = pty.write.bind(pty);
+  const sent: string[] = [];
+  pty.write = (data: string) => {
+    sent.push(data);
+    write(data);
+  };
+  hook('SessionStart', { source: 'startup' });
+  await showIdle(workers, worker.id);
+  assert.equal(workers.cancelTurn(worker.id), false, 'at rest');
+  hook('UserPromptSubmit', { prompt: 'run it' });
+  assert.equal(status(), 'working');
+  assert.equal(workers.turnScreen(worker.id), 'idle');
+  assert.equal(workers.cancelTurn(worker.id), false, 'working by its status, but at its input box on screen');
+  assert.ok(!sent.includes('\x1b'), 'an idle droid never gets the key');
+  await show(workers, worker.id, ' ⠋ Executing...  (Press ESC to stop)');
+  assert.equal(workers.turnScreen(worker.id), 'busy');
+  sent.length = 0;
+  assert.equal(workers.cancelTurn(worker.id), true);
+  assert.deepEqual(sent, ['\x1b'], 'one Escape, never Ctrl+C');
+  assert.equal(workers.cancelTurn('nobody'), false);
+});

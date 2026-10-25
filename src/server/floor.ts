@@ -346,9 +346,10 @@ export class Floor {
         list: () => workers.list(),
         get: (id) => workers.get(id),
         tail: (id, lines) => workers.tail(id, lines),
-        prompt: (id, text, queue) => workers.prompt(id, text, undefined, queue),
+        prompt: (id, text) => workers.prompt(id, text),
         resume: (id, text) => workers.resume(id, text),
-        interrupt: (id) => workers.interrupt(id),
+        cancelTurn: (id) => workers.cancelTurn(id),
+        turnScreen: (id) => workers.turnScreen(id),
       },
       {
         on: () => ctx.subagents().visits,

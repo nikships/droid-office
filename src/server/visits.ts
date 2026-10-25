@@ -6,12 +6,14 @@
 // each phase by the same walk the browser shows.
 //
 // What a visitor says goes into the host's queue and is typed into its session one message at a time:
-// a normal one once the host is at rest, an urgent one at once (Escape first, when it's mid-turn).
+// a normal one once the host is at rest, an urgent one at once. A host that's mid-turn gets one
+// Escape first, which cancels droid's turn, and the message goes in as a new prompt once it stops.
 // Visits aren't kept on disk: a restart ends them, and an asker still waiting hears so.
 
 import { randomBytes } from 'node:crypto';
 import { DESK_BY_ID } from '../shared/layout.js';
 import type { ServerMsg, WorkerInfo } from '../shared/protocol.js';
+import type { DroidScreen } from './droid-screen.js';
 import { isAsleep, isBusy } from '../shared/status.js';
 import { type Visit, type VisitKind, type VisitPhase, VISIT_KINDS, visitRoute, visitWalkMs } from '../shared/visits.js';
 import { officePrompt, type PromptSource } from './prompts.js';
@@ -21,11 +23,13 @@ export interface VisitWorkers {
   list(): WorkerInfo[];
   get(id: string): WorkerInfo | undefined;
   tail(id: string, lines: number): string | undefined;
-  /** Types and submits `text`; with `queue`, so the agent takes it after its current turn. */
-  prompt(id: string, text: string, queue?: boolean): string | undefined;
+  /** Types `text` in and submits it with Enter. */
+  prompt(id: string, text: string): string | undefined;
   resume(id: string, text: string): string | undefined;
-  /** Stops the agent's turn, as Escape does in its terminal. */
-  interrupt(id: string): void;
+  /** Sends one Escape to cancel the agent's turn, only if it's mid-turn on screen; says whether it did. */
+  cancelTurn(id: string): boolean;
+  /** What the agent's screen shows now. */
+  turnScreen(id: string): DroidScreen | undefined;
 }
 
 export interface VisitOptions {
@@ -106,7 +110,7 @@ interface Note {
   text: string;
   title?: string;
   deadline?: number;
-  /** When Escape went in for it. */
+  /** When the office set about cancelling the host's turn for it. */
   interruptedAt?: number;
 }
 
@@ -132,13 +136,16 @@ const TYPING_MS = 5000;
 const GAP_MS = 2000;
 /** After a message goes in, the next normal one waits for that turn, or this long if no turn starts. */
 const SETTLE_MS = 15_000;
-/** After Escape, how long a host may take to stop before an urgent message is queued behind its turn. */
-const URGENT_WAIT_MS = 6000;
+/**
+ * After Escape, how long an urgent message waits for the turn to stop. Then it's typed in anyway:
+ * Enter mid-turn steers droid's running turn.
+ */
+export const URGENT_WAIT_MS = 5000;
 /** How long a finished visit's outcome is kept for office-visit to collect, and to explain a late reply. */
 const KEEP_MS = 10 * 60_000;
 const TICK_MS = 250;
 
-const URGENT_LINE = " It's urgent, so the office interrupted what you were doing: deal with it, then carry on where you left off.";
+const URGENT_LINE = " It's urgent, so the office interrupted what you were doing: deal with it first, and go back to what you were doing only if it still makes sense.";
 
 const ok = (body: Record<string, unknown>): VisitReply => ({ status: 200, body });
 const no = (status: number, error: string): VisitReply => ({ status, body: { error } });
@@ -544,7 +551,6 @@ export class Visits {
     // Typed into lately by someone (not by the last message from here): they may be mid-sentence.
     const typed = host.lastInputAt !== undefined && now - host.lastInputAt < TYPING_MS && !(last && host.lastInputAt <= last.at + 1000);
     if (typed) return;
-    let queue = false;
     switch (host.status) {
       case 'starting':
       case 'needs_input':
@@ -552,19 +558,21 @@ export class Visits {
         return;
       case 'working':
         if (!note.urgent) return;
+        // A dialog the status hasn't caught up with: Enter would answer it.
+        if (this.workers.turnScreen(hostId) === 'asking') return;
         if (note.interruptedAt === undefined) {
           note.interruptedAt = now;
-          this.workers.interrupt(hostId);
-          return;
+          // The status can lag the screen: a turn that has just ended on screen gets no key at all.
+          if (this.workers.cancelTurn(hostId)) return;
         }
-        if (now - note.interruptedAt < URGENT_WAIT_MS) return;
-        queue = true;
+        // Stopped on screen before its status catches up (the Stop hook and the screen settle take seconds).
+        if (this.workers.turnScreen(hostId) !== 'idle' && now - note.interruptedAt < URGENT_WAIT_MS) return;
         break;
       default:
         break;
     }
     const text = this.noteText(note, now);
-    const err = isAsleep(host.status) ? this.workers.resume(hostId, text) : this.workers.prompt(hostId, text, queue);
+    const err = isAsleep(host.status) ? this.workers.resume(hostId, text) : this.workers.prompt(hostId, text);
     notes.shift();
     if (!notes.length) this.inbox.delete(hostId);
     const run = this.runs.get(note.visit);
