@@ -116,8 +116,8 @@ function choiceLabel(c: AgentChoice): string {
 
 /** The Subagents settings as the office keeps them, without who set them or where the skill is. */
 function subagentSettings(): SubagentSettings {
-  const { on, deskWorkers, skill, worktree, maxPerLead, wakeLead, agent, models } = store.subagents;
-  return { on, deskWorkers, skill, worktree, maxPerLead, wakeLead, ...(agent ? { agent } : {}), ...(models?.length ? { models } : {}) };
+  const { on, deskWorkers, skill, worktree, maxPerLead, wakeLead, visits, agent, models } = store.subagents;
+  return { on, deskWorkers, skill, worktree, maxPerLead, wakeLead, visits: visits ?? true, ...(agent ? { agent } : {}), ...(models?.length ? { models } : {}) };
 }
 
 /**

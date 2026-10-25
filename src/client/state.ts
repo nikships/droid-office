@@ -32,6 +32,7 @@ import { forgeWords, type ForgeWords } from '../shared/floors';
 import type { JiraBoardState, JiraFloorState } from '../shared/jira';
 import { emptyFactoryState, type FactoryState } from '../shared/factory';
 import { teamOf } from '../shared/team';
+import type { Visit } from '../shared/visits';
 import type { WorktreeSetupState } from '../shared/worktree-setup';
 import { NO_PIPELINES, type PipelinesState } from '../shared/pipelines';
 import { defaultPresets, normalizePresets, type PromptPreset } from './prompt-recall';
@@ -65,7 +66,9 @@ export type Topic =
   | 'factory'
   | 'worktreeSetup'
   | 'whiteboard'
-  | 'whiteboardSkill';
+  | 'whiteboardSkill'
+  | 'visits'
+  | 'visitSay';
 
 export interface Profile {
   name: string;
@@ -286,6 +289,10 @@ class Store {
   factory: FactoryState = emptyFactoryState();
   /** How new worktrees on this floor are set up, once Settings asked (see worktreeSetup.get); null before, or on another floor. */
   worktreeSetup: WorktreeSetupState | null = null;
+  /** Every visit on the floor you're on (see shared/visits.ts), as the server last sent them. */
+  visits: Visit[] = [];
+  /** The last speech bubble said during a visit, for whoever shows it ('visitSay'). */
+  lastSay: { visit: string; worker: string; text: string } | null = null;
   private subs = new Map<Topic, Set<() => void>>();
 
   on(topic: Topic, fn: () => void) {
@@ -334,7 +341,9 @@ class Store {
     this.decor = v.decor;
     this.autoHeal = v.autoHeal ?? { on: false };
     this.worktreeSetup = null;
-    for (const t of ['floor', 'project', 'workers', 'issues', 'pulls', 'pipelines', 'decor', 'jira', 'jiraBoard', 'autoHeal', 'worktreeSetup'] as Topic[]) this.emit(t);
+    // The new floor's visits follow in their own message.
+    this.visits = [];
+    for (const t of ['floor', 'project', 'workers', 'issues', 'pulls', 'pipelines', 'decor', 'jira', 'jiraBoard', 'autoHeal', 'worktreeSetup', 'visits'] as Topic[]) this.emit(t);
   }
 
   /** When the track started on this page's clock: from the office's clock once it's known, else from `elapsed`. */
@@ -494,6 +503,14 @@ class Store {
       case 'factory':
         this.factory = msg.state;
         this.emit('factory');
+        break;
+      case 'visits':
+        this.visits = msg.visits;
+        this.emit('visits');
+        break;
+      case 'visit_say':
+        this.lastSay = { visit: msg.visit, worker: msg.worker, text: msg.text };
+        this.emit('visitSay');
         break;
       case 'worktreeSetup':
         if (msg.state.floor !== this.floor) break;
