@@ -1,6 +1,6 @@
 # Setup and Subscriptions
 
-Someone who has never used Droid or Factory downloads Droid Office, opens it, and is hiring workers a few minutes later, on the Claude or ChatGPT plan they already pay for, without having to know what Droid or DroidProxy is. This is the plan for that work and the contract its pieces follow. Status: **in progress** (nikships/droid-office#293).
+Someone who has never used Droid or Factory downloads Droid Office, opens it, and is hiring workers a few minutes later, on the Claude or ChatGPT plan they already pay for, without having to know what Droid or DroidProxy is. This is the plan for that work and the contract its pieces follow. Status: **implemented** (nikships/droid-office#293). Subscriptions need DroidProxy 1.8.180 or later, the first release with the control API.
 
 Three things stand between a fresh Mac and a first worker, and the office does each one itself:
 
