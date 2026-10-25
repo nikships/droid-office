@@ -4,6 +4,8 @@ import { withoutGlyph } from '../world/glyph';
 import { store } from '../state';
 import { withToken } from '../token';
 import { h } from './dom';
+import { modelPicker, type NoneOption } from './model-picker';
+import { multiplierLabel, type PickerModel } from './model-search';
 
 export const EFFORT_LABEL: Record<AgentEffort, string> = {
   low: 'Low',
@@ -32,19 +34,82 @@ export interface DroidModelOption {
   promo?: string;
 }
 
-/** A credit multiplier as droid's picker says it: ×0.06, ×1.6, ×4. */
-export function multiplierLabel(n: number): string {
-  return `×${Number(n.toFixed(3))}`;
+export { multiplierLabel };
+
+const PROVIDER_LABEL: Record<string, string> = { anthropic: 'Anthropic', openai: 'OpenAI', google: 'Google', xai: 'xAI', factory: 'Other' };
+const titleCase = (word: string) => word.replace(/^./, (c) => c.toUpperCase());
+
+/** The gateway a BYOK model id goes through: "custom:droidproxy:gpt-6" is DroidProxy, "custom:openrouter:x" OpenRouter. */
+function gatewayOf(id: string): string {
+  const seg = /^custom:([^:]+):/.exec(id)?.[1];
+  if (!seg) return 'Your models';
+  if (/^droidproxy/i.test(seg)) return 'DroidProxy';
+  if (/^openrouter$/i.test(seg)) return 'OpenRouter';
+  return titleCase(seg.replace(/-\d+$/, ''));
 }
 
-/** The catalogue's groups, in the order the server sends them: your own models, Factory's, then the old ones. */
-export function droidModelGroups(models: DroidModelOption[]): { label: string; models: DroidModelOption[] }[] {
-  const groups = [
-    { label: 'Your models', models: models.filter((m) => m.custom) },
-    { label: 'Factory', models: models.filter((m) => !m.custom && !m.legacy) },
-    { label: 'Legacy', models: models.filter((m) => !m.custom && m.legacy) },
-  ];
-  return groups.filter((g) => g.models.length);
+function effortRange(efforts: AgentEffort[]): string {
+  if (!efforts.length) return 'no effort setting';
+  const first = EFFORT_LABEL[efforts[0]];
+  if (efforts.length === 1) return `${first} effort only`;
+  return `effort ${first} to ${EFFORT_LABEL[efforts[efforts.length - 1]]}`;
+}
+
+function effortsLine(m: DroidModelOption): string {
+  if (!m.supportedReasoningEfforts) return '';
+  const range = effortRange(m.supportedReasoningEfforts);
+  return m.defaultReasoningEffort ? `${range}, default ${EFFORT_LABEL[m.defaultReasoningEffort]}` : range;
+}
+
+/** Where a model sits in the picker: your own under their gateway, Factory's legacy ones together, the rest under their provider. */
+function groupAndScope(m: DroidModelOption, gateway: string | undefined, provider: string | undefined): { group: string; scope: string } {
+  if (gateway) return { group: gateway, scope: 'Yours' };
+  if (m.legacy) return { group: 'Legacy', scope: 'Legacy' };
+  const group = provider ?? 'Other';
+  return { group, scope: group };
+}
+
+/** A catalogue model as the picker lists it: your own under the gateway that serves them, Factory's under their provider. */
+export function pickerModel(m: DroidModelOption): PickerModel {
+  const provider = m.provider ? (PROVIDER_LABEL[m.provider] ?? titleCase(m.provider)) : undefined;
+  const gateway = m.custom ? gatewayOf(m.id) : undefined;
+  const name = m.displayName.replace(/\s*\[Deprecated\]$/i, '');
+  const stripped = gateway ? name.replace(new RegExp(`^${gateway.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}[\\w.-]*:\\s*`, 'i'), '') : name;
+  const isDroidProxy = gateway === 'DroidProxy';
+  return {
+    id: m.id,
+    name: isDroidProxy ? withoutGlyph(stripped) : stripped,
+    ...groupAndScope(m, gateway, provider),
+    ...(provider ? { provider } : {}),
+    ...(m.custom || m.tokenMultiplier === undefined ? {} : { cost: m.tokenMultiplier }),
+    ...(isDroidProxy ? { glyph: true } : {}),
+    tags: [m.promo, m.noImages ? 'no images' : ''].filter((t): t is string => !!t),
+    detail: [m.custom ? 'your own key' : provider, effortsLine(m)].filter(Boolean).join(' · '),
+  };
+}
+
+/** A model the catalogue does not list (a remembered pick, a lost list) so the choice is not silently dropped. */
+function unlisted(id: string): PickerModel {
+  return { id, name: withoutGlyph(droidDisplayName(id)), scope: 'Not listed', group: 'Not listed', unavailable: true };
+}
+
+const SETTINGS_DEFAULT: NoneOption = { label: 'Default', note: 'Droid settings' };
+const LOADING_HINT = 'Loading Droid models…';
+const OVERRIDE_HINT = 'Overrides the office default for this worker; pinned in its Droid settings overlay.';
+
+/** The picker's top row: Default, naming the model droid runs when none is picked. */
+function defaultOption(runs: string | undefined, models: DroidModelOption[]): NoneOption {
+  if (!runs) return { ...SETTINGS_DEFAULT, detail: 'Droid’s own default model' };
+  const m = models.find((x) => x.id === runs);
+  const shown = m ? pickerModel(m) : undefined;
+  const name = shown?.name ?? withoutGlyph(droidDisplayName(runs));
+  return {
+    label: 'Default',
+    note: name,
+    ...(shown?.cost !== undefined ? { cost: shown.cost } : {}),
+    ...(shown?.glyph ? { glyph: true } : {}),
+    detail: `Runs ${name}, as set in the office and Droid settings`,
+  };
 }
 
 const MODEL_MAX = 256;
@@ -214,9 +279,10 @@ export function agentFields(id: string, initial: AgentChoice): AgentFields {
  * the office's default worker from the server, so its picker has to name that one, not Droid's.
  */
 function buildFields(id: string, key: string | undefined, initialModel: string | undefined, initialEffort: AgentEffort | undefined, fallback: () => AgentChoice): AgentFields {
-  const modelSelect = h('select.select.model-select', { id, 'aria-label': 'Droid model' }) as HTMLSelectElement;
+  const picker = modelPicker({ id, label: 'Droid model', models: initialModel ? [unlisted(initialModel)] : [], value: initialModel, none: SETTINGS_DEFAULT });
   const effortSelect = h('select.select.effort-select', { id: `${id}-effort`, 'aria-label': 'Reasoning effort' }) as HTMLSelectElement;
-  const hint = h('small.model-hint', {}, 'Loading Droid models…');
+  const hint = h('small.model-hint', {}, LOADING_HINT);
+  const selectedEffort = () => (effortSelect.value ? (effortSelect.value as AgentEffort) : undefined);
   const remember = (kind: 'model' | 'effort', value: string) => {
     if (key === undefined) return;
     try {
@@ -233,7 +299,7 @@ function buildFields(id: string, key: string | undefined, initialModel: string |
   /** The model "Default" runs: the office's default worker, else Droid's own default. */
   const defaultModel = () => fallback().model ?? catalogue?.defaultModel;
   /** The model picked, or the one droid runs on "Default". */
-  const pickedModel = () => catalogue?.models.find((x) => x.id === (modelSelect.value || defaultModel()));
+  const pickedModel = () => catalogue?.models.find((x) => x.id === (picker.value() || defaultModel()));
   /** The efforts to offer: the model's own list, else its default plus the fixed ladder. */
   const effortOptions = (): AgentEffort[] => {
     const m = pickedModel();
@@ -244,7 +310,7 @@ function buildFields(id: string, key: string | undefined, initialModel: string |
   /** Only the efforts the picked model takes, its own default named on "Default". */
   const applyEfforts = () => {
     const options = effortOptions();
-    const runs = (!modelSelect.value && (fallback().effort ?? catalogue?.defaultReasoningEffort)) || pickedModel()?.defaultReasoningEffort;
+    const runs = (!picker.value() && (fallback().effort ?? catalogue?.defaultReasoningEffort)) || pickedModel()?.defaultReasoningEffort;
     effortSelect.replaceChildren(h('option', { value: '' }, runs ? `Default (${EFFORT_LABEL[runs]})` : 'Default'), ...options.map((e) => h('option', { value: e }, EFFORT_LABEL[e])));
     effortSelect.value = wantedEffort && options.includes(wantedEffort) ? wantedEffort : '';
     effortSelect.disabled = !options.length;
@@ -252,49 +318,42 @@ function buildFields(id: string, key: string | undefined, initialModel: string |
 
   const fill = () => {
     const selected = wantedModel;
-    hint.textContent = catalogue ? 'Overrides the office default for this worker; pinned in its Droid settings overlay.' : 'Loading Droid models…';
+    hint.textContent = catalogue ? OVERRIDE_HINT : LOADING_HINT;
     void fetchCatalogue()
       .then(({ models }) => {
-        const runs = defaultModel();
-        modelSelect.replaceChildren(
-          h('option', { value: '' }, runs ? `Default (${withoutGlyph(droidDisplayName(runs))})` : 'Default (Droid settings)'),
-          ...droidModelGroups(models).map((g) => h('optgroup', { label: `${g.label} (${g.models.length})` }, ...g.models.map((m) => h('option', { value: m.id }, withoutGlyph(m.displayName))))),
-        );
         // A remembered id the catalogue no longer lists is still offered, so the choice isn't silently dropped.
-        if (selected && !models.some((m) => m.id === selected)) modelSelect.append(h('option', { value: selected }, `${withoutGlyph(droidDisplayName(selected))} (unavailable)`));
-        modelSelect.value = selected ?? '';
-        hint.textContent = models.length ? 'Overrides the office default for this worker; pinned in its Droid settings overlay.' : 'No Droid models found in the office settings — the worker runs the global default.';
+        const listed = models.map(pickerModel);
+        picker.setModels(selected && !models.some((m) => m.id === selected) ? [unlisted(selected), ...listed] : listed, defaultOption(defaultModel(), models));
+        picker.set(selected ?? '');
+        hint.textContent = models.length ? OVERRIDE_HINT : 'No Droid models found in the office settings — the worker runs the global default.';
         applyEfforts();
       })
       .catch(() => {
-        modelSelect.replaceChildren(h('option', { value: '' }, 'Default (Droid settings)'));
-        if (selected) {
-          modelSelect.append(h('option', { value: selected }, withoutGlyph(droidDisplayName(selected))));
-          modelSelect.value = selected;
-        }
+        picker.setModels(selected ? [unlisted(selected)] : [], SETTINGS_DEFAULT);
+        picker.set(selected ?? '');
         hint.textContent = 'Model list unavailable; the worker runs the global default.';
         applyEfforts();
       });
   };
-  modelSelect.addEventListener('change', () => {
-    wantedModel = modelSelect.value || undefined;
-    remember('model', modelSelect.value);
+  picker.element.addEventListener('change', () => {
+    wantedModel = picker.value() || undefined;
+    remember('model', picker.value());
     applyEfforts();
   });
   effortSelect.addEventListener('change', () => {
-    wantedEffort = effortSelect.value ? (effortSelect.value as AgentEffort) : undefined;
+    wantedEffort = selectedEffort();
     remember('effort', effortSelect.value);
   });
   fill();
   return {
-    element: h('div.model-choice', {}, h('label.model-label', { for: id }, 'Model'), modelSelect, h('label.effort-label', { for: `${id}-effort` }, 'Effort'), effortSelect, hint),
-    model: () => modelSelect.value || undefined,
-    effort: () => (effortSelect.value ? (effortSelect.value as AgentEffort) : undefined),
+    element: h('div.model-choice', {}, h('div.model-field', {}, h('label.model-label', { for: id }, 'Model'), picker.element), h('div.effort-field', {}, h('label.effort-label', { for: `${id}-effort` }, 'Effort'), effortSelect), hint),
+    model: () => picker.value() || undefined,
+    effort: selectedEffort,
     set: (choice) => {
       wantedModel = choice.model;
       wantedEffort = choice.effort;
       fill();
     },
-    choice: () => ({ ...(modelSelect.value ? { model: modelSelect.value } : {}), ...(effortSelect.value ? { effort: effortSelect.value as AgentEffort } : {}) }),
+    choice: () => ({ ...(picker.value() ? { model: picker.value() } : {}), ...(effortSelect.value ? { effort: effortSelect.value as AgentEffort } : {}) }),
   };
 }

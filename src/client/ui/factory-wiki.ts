@@ -22,6 +22,8 @@ import { drawDiagram } from './diagram';
 import { clip, h, timeAgo, toast } from './dom';
 import { emptyState } from './kit';
 import { markdownFile } from './markdown';
+import { modelPicker } from './model-picker';
+import { droidCatalogue, pickerModel, type Catalogue } from './models';
 
 // The bookshelf's AutoWiki tab: the wiki Factory keeps for the floor's repository, read the way the
 // Docs tab reads the project's Markdown (the page tree down the side, the page beside it, links
@@ -124,6 +126,8 @@ export function mountWikiTab(root: HTMLElement, deps: WikiTabDeps): WikiTab {
   let confirming: 'generate' | 'delete' | null = null;
   /** The models Generate offers (read when its confirm first opens), and the one picked. */
   let models: DroidModel[] | undefined;
+  /** Droid's own catalogue, to give those models a provider and a price (Factory's list has neither). */
+  let catalogue: Catalogue | null = null;
   let model = WIKI_DEFAULT_MODEL;
   let busy = false;
   let turnedAt = 0;
@@ -164,7 +168,8 @@ export function mountWikiTab(root: HTMLElement, deps: WikiTabDeps): WikiTab {
   const loadModels = async () => {
     if (models) return;
     models = [];
-    const r = await call<{ models: DroidModel[]; default: string }>('/models');
+    const [r, known] = await Promise.all([call<{ models: DroidModel[]; default: string }>('/models'), droidCatalogue().catch(() => null)]);
+    catalogue = known;
     models = r?.models ?? [];
     if (r?.default && !models.some((m) => m.id === model)) model = r.default;
     paint(true);
@@ -172,21 +177,18 @@ export function mountWikiTab(root: HTMLElement, deps: WikiTabDeps): WikiTab {
 
   const modelName = (id: string | undefined) => (id ? (models?.find((m) => m.id === id)?.name ?? id) : '');
 
-  /** Generate's model picker: Factory's models, then the owner's own. */
-  const modelPicker = () => {
+  /** Generate's model picker: Factory's models and the owner's own. */
+  const modelField = () => {
     const list = models?.length ? models : [{ id: model, name: model }];
-    const opt = (m: DroidModel) => h('option', { value: m.id, selected: m.id === model }, m.name);
-    const own = list.filter((m) => m.custom);
-    const select = h(
-      'select.select.sm.wk-model',
-      { 'aria-label': 'Model', title: 'The model /wiki and its subagents run on' },
-      ...(own.length ? [h('optgroup', { label: 'Factory' }, ...list.filter((m) => !m.custom).map(opt)), h('optgroup', { label: 'Your own models' }, ...own.map(opt))] : list.map(opt)),
-    ) as HTMLSelectElement;
-    select.addEventListener('change', () => {
-      model = select.value;
+    const listed = list.map((m: DroidModel) => {
+      const known = catalogue?.models.find((x) => x.id === m.id);
+      return pickerModel({ ...(known ?? { id: m.id, ...(m.custom ? { custom: true } : {}) }), id: m.id, displayName: m.name });
     });
-    select.id = 'wk-model';
-    return h('div.field.inline.wk-model-row', {}, h('label', { for: select.id }, 'Model'), select);
+    const picker = modelPicker({ id: 'wk-model', label: 'Model', small: true, models: listed, value: model });
+    picker.element.addEventListener('change', () => {
+      model = picker.value();
+    });
+    return h('div.wk-model-row', {}, h('label', { for: 'wk-model' }, 'Model'), picker.element);
   };
 
   const stop = async () => {
@@ -201,7 +203,7 @@ export function mountWikiTab(root: HTMLElement, deps: WikiTabDeps): WikiTab {
       'div.note.wk-confirm',
       { role: 'alertdialog', class: danger ? 'bad' : 'info' },
       h('p', {}, text),
-      danger ? '' : modelPicker(),
+      danger ? '' : modelField(),
       h(
         'div.row.wrap.wk-actions',
         {},
