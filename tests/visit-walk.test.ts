@@ -290,3 +290,23 @@ test('told to walk back before it reached its spot, a visitor turns round where 
   }
   assert.ok(most < -0.7, `it never got further up than ${most}`);
 });
+
+test('an interrupted return uses the server duration, also when the page joins mid-return', () => {
+  for (const elapsed of [250, 1500]) {
+    const live = floor({ a: 'desk-3', h: 'desk-9' });
+    live.visitors.sync([visit({ phase: 'walking', since: live.clock.now })]);
+    live.run(elapsed / 1000);
+    const since = live.clock.now;
+    const returning = visit({ phase: 'returning', since, returnMs: elapsed });
+    live.visitors.sync([returning]);
+    live.run(elapsed / 2000);
+    const joined = floor({ a: 'desk-3', h: 'desk-9' });
+    joined.clock.now = live.clock.now;
+    joined.visitors.sync([returning]);
+    for (const coordinate of ['x', 'z'] as const) near(joined.visitors.info('a')![coordinate], live.visitors.info('a')![coordinate], 0.04);
+    for (const f of [live, joined]) {
+      f.run(elapsed / 2000 + 0.05);
+      assert.equal(f.visitors.info('a')?.step, 'seated');
+    }
+  }
+});

@@ -249,8 +249,6 @@ export class Visits {
         this.dirty = true;
       } else if (run.visit.host === id) {
         this.fail(run, `${run.hostName} left the floor`, now);
-        if (run.after !== undefined) this.end(run, now);
-        else if (run.visit.phase !== 'returning') this.setPhase(run, 'returning', now);
       }
     }
     this.inbox.delete(id);
@@ -366,7 +364,7 @@ export class Visits {
       lines: whole(b.lines, LINES_MAX, LINES_DEFAULT),
       walkMs: 0,
       lastPoll: now,
-      ...(kind === 'ask' ? { deadline: now + timeoutS * 1000, timeoutS } : {}),
+      ...(kind === 'ask' ? { timeoutS } : {}),
     };
     const title = str(b.title, TITLE_MAX);
     if (kind === 'handoff' && title) run.title = title;
@@ -374,7 +372,7 @@ export class Visits {
     if (back) run.after = back.visit.id;
     this.runs.set(id, run);
     if (!back) this.appear(run, now);
-    return ok({ visit: id, kind, host: { id: host.id, name: host.name, desk: run.hostDesk }, ...(back ? { after: this.homeIn(back, now) } : { walkMs: run.walkMs }), ...(run.deadline ? { timeout: timeoutS } : {}) });
+    return ok({ visit: id, kind, host: { id: host.id, name: host.name, desk: run.hostDesk }, ...(back ? { after: this.homeIn(back, now) } : { walkMs: run.walkMs }), ...(run.timeoutS !== undefined ? { timeout: timeoutS } : {}) });
   }
 
   /** How `caller`'s visit is going, for office-visit to wait on. */
@@ -412,7 +410,7 @@ export class Visits {
   /** About how long until a visit that's finishing up has its visitor back at its own desk. */
   private homeIn(run: Run, now: number): number {
     const spent = now - run.visit.since;
-    if (run.visit.phase === 'returning') return Math.max(0, run.walkMs - spent);
+    if (run.visit.phase === 'returning') return Math.max(0, (run.visit.returnMs ?? run.walkMs) - spent);
     let stay = 0;
     if (run.visit.phase === 'reading') stay = READ_MS - spent;
     else if (run.visit.phase === 'talking') stay = TALK_MIN_MS - spent;
@@ -424,6 +422,7 @@ export class Visits {
   /** It sets off: a place at the host's desk, and the walk there. */
   private appear(run: Run, now: number) {
     run.after = undefined;
+    if (run.timeoutS !== undefined) run.deadline = now + run.timeoutS * 1000;
     const taken = new Set([...this.runs.values()].filter((r) => r !== run && r.after === undefined && r.visit.host === run.visit.host).map((r) => r.visit.slot));
     let slot = 0;
     while (taken.has(slot)) slot++;
@@ -433,6 +432,7 @@ export class Visits {
   }
 
   private setPhase(run: Run, phase: VisitPhase, now: number) {
+    if (phase === 'returning' && run.visit.phase === 'walking') run.visit.returnMs = Math.min(run.walkMs, Math.max(0, now - run.visit.since));
     run.visit.phase = phase;
     run.visit.since = now;
     this.dirty = true;
@@ -447,7 +447,8 @@ export class Visits {
   private fail(run: Run, error: string, now: number) {
     if (!run.result) run.result = { ok: false, error };
     this.dropNote(run.visit.host, run.visit.id);
-    if (run.visit.phase === 'waiting' || run.visit.phase === 'talking' || run.visit.phase === 'reading') this.setPhase(run, 'returning', now);
+    if (run.after !== undefined) this.end(run, now);
+    else if (run.visit.phase !== 'returning') this.setPhase(run, 'returning', now);
   }
 
   private step(run: Run, now: number) {
@@ -488,7 +489,7 @@ export class Visits {
         else if (now - run.lastPoll > ABANDON_MS) this.fail(run, 'You stopped waiting', now);
         return;
       case 'returning':
-        if (spent >= run.walkMs) {
+        if (spent >= (visit.returnMs ?? run.walkMs)) {
           this.end(run, now);
           this.dirty = true;
         }
@@ -562,6 +563,8 @@ export class Visits {
     // Typed into lately by someone (not by the last message from here): they may be mid-sentence.
     const typed = host.lastInputAt !== undefined && now - host.lastInputAt < TYPING_MS && !(last && host.lastInputAt <= last.at + 1000);
     if (typed) return;
+    // A dialog the status hasn't caught up with: Enter would answer it, even if the last status was done.
+    if (this.workers.turnScreen(hostId) === 'asking') return;
     switch (host.status) {
       case 'starting':
       case 'needs_input':
@@ -569,8 +572,6 @@ export class Visits {
         return;
       case 'working':
         if (!note.urgent) return;
-        // A dialog the status hasn't caught up with: Enter would answer it.
-        if (this.workers.turnScreen(hostId) === 'asking') return;
         if (note.interruptedAt === undefined) {
           note.interruptedAt = now;
           // The status can lag the screen: a turn that has just ended on screen gets no key at all.

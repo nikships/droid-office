@@ -25,6 +25,8 @@ export interface Visit {
   slot: number;
   /** When the current phase began (ms since epoch, the office's clock). */
   since: number;
+  /** Returning after an interrupted outbound walk: time back to the seat from the turn-around point. */
+  returnMs?: number;
 }
 
 export const VISIT_KINDS: readonly VisitKind[] = ['look', 'tell', 'ask', 'handoff'];

@@ -238,6 +238,9 @@ export class Visitors {
       w.backFrom = null;
       return visitProgress(v.phase, now - v.since, w.length);
     }
+    // Reverse the elapsed outbound walk, including a partly completed hop off the chair. The server
+    // uses this same duration to end the visit; a page joining mid-return needs no earlier frames.
+    if (v.returnMs !== undefined) return visitProgress('walking', v.returnMs - Math.max(0, now - v.since), w.length);
     w.backFrom ??= Math.min(w.u, w.length);
     return visitProgress('returning', now - v.since, w.backFrom);
   }

@@ -128,3 +128,45 @@ test('spawn, work, attention, cheers and dances count as motion, but sleeping an
   worker.die();
   assert.equal(worker.animating, false, 'the casualty scene owns the fall');
 });
+
+test('visit poses and speech keep an otherwise idle worker animating until they end', (t) => {
+  t.after(canvasDocument());
+  const worker = new Worker('Visitor', '#e76f51');
+  worker.setStatus('idle', false);
+  const frames = (n: number) => {
+    for (let i = 0; i < n; i++) worker.update(1 / 60, i / 60);
+  };
+  frames(360);
+  assert.equal(worker.animating, false);
+  for (const pose of ['stand', 'peer', 'talk'] as const) {
+    worker.visitPose = pose;
+    assert.equal(worker.animating, true, pose);
+  }
+  worker.visitPose = null;
+  worker.speak('Checking your screen', 'VISITOR SAYS', 'v-1', 1);
+  assert.equal(worker.animating, true);
+  frames(180);
+  assert.equal(worker.saying, null);
+  assert.equal(worker.animating, false);
+  worker.dispose();
+});
+
+test('a cheer never overrides a visitor leaning over the host laptop', (t) => {
+  t.after(canvasDocument());
+  const worker = new Worker('Visitor', '#e76f51');
+  const control = new Worker('Control', '#e76f51');
+  for (const model of [worker, control]) {
+    model.setStatus('idle', false);
+    model.visitPose = 'peer';
+    for (let i = 0; i < 120; i++) model.update(1 / 60, i / 60);
+  }
+  worker.cheer(3);
+  for (let i = 120; i < 180; i++) {
+    worker.update(1 / 60, i / 60);
+    control.update(1 / 60, i / 60);
+    assert.ok(Math.abs(worker.lean - control.lean) < 1e-9, 'the peer pose still controls the body');
+    assert.equal(worker.root.children[0].position.y, control.root.children[0].position.y, 'no celebration hop');
+  }
+  worker.dispose();
+  control.dispose();
+});

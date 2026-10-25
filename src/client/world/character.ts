@@ -1348,6 +1348,8 @@ export class Worker {
     if (this.dead) return false;
     return (
       this.walking ||
+      this.visitPose !== null ||
+      this.speech !== null ||
       this.stride > 0 ||
       this.spawnT < 1 ||
       this.split !== null ||
@@ -1845,7 +1847,7 @@ export class Worker {
     this.waitT = this.status === 'needs_input' ? this.waitT + dt : 0;
     const tapping = this.status === 'needs_input' && (this.held || this.waitT % WAIT_CYCLE >= WAIT_HOPS);
     // Jump up and down when done / waiting on a human (except while held or tapping), or cheering.
-    if ((this.bouncing && !this.visitPose) || this.cheerT > 0) {
+    if (!this.visitPose && (this.bouncing || this.cheerT > 0)) {
       const landAt = Math.ceil(this.bounceT / Math.PI) * Math.PI;
       this.bounceT += dt * 7;
       if ((this.held || tapping) && !this.cheerT && this.bounceT >= landAt) this.bounceT = 0;

@@ -546,6 +546,94 @@ test('how long an asker still waits, in words', () => {
   assert.equal(waitWords(240_000), 'about 4 minutes');
 });
 
+test('turning visits off mid-walk cancels delivery and a pending next visit', (t) => {
+  for (const kind of ['look', 'tell', 'ask', 'handoff']) {
+    const r = rig(t);
+    const first = r.call('pixel', { action: 'visit', kind, worker: 'Nibble', text: 'never deliver' }).body.visit;
+    r.advance(1000);
+    r.settings.on = false;
+    r.advance(250);
+    assert.equal(r.lastList()[0].phase, 'returning', kind);
+    r.advance(20_000);
+    r.settings.on = true;
+    assert.match(r.status('pixel', first).body.error, /Visits were turned off/, kind);
+    assert.equal(r.fake.typed.length, 0, kind);
+    assert.equal(r.says().length, 0, kind);
+  }
+
+  const r = rig(t);
+  r.call('pixel', { action: 'visit', kind: 'look', worker: 'Nibble' });
+  r.advance(walk('desk-3', 'desk-9', 0));
+  const next = r.call('pixel', { action: 'visit', kind: 'tell', worker: 'Dot', text: 'never set off' }).body.visit;
+  r.settings.on = false;
+  r.advance(250);
+  r.settings.on = true;
+  r.advance(30_000);
+  assert.match(r.status('pixel', next).body.error, /Visits were turned off/);
+  assert.equal(r.fake.typed.length, 0, 'a cancelled pending visit never sets off after re-enabling visits');
+});
+
+test('a dialog on screen blocks normal and urgent delivery even while the status still says done', (t) => {
+  for (const urgent of [false, true]) {
+    const r = rig(t);
+    r.fake.screens.set('nibble', 'asking');
+    r.call('pixel', { action: 'visit', kind: 'tell', worker: 'Nibble', text: 'wait for the owner', urgent });
+    r.advance(walk('desk-3', 'desk-9', 0) + 1000);
+    assert.equal(r.fake.typed.length, 0);
+    assert.deepEqual(r.fake.escapes, []);
+    r.fake.screens.set('nibble', 'idle');
+    r.advance(250);
+    assert.equal(r.fake.typed.length, 1);
+  }
+});
+
+test('an ask queued behind a completed look gets its timeout when it sets off', (t) => {
+  const r = rig(t);
+  r.call('pixel', { action: 'visit', kind: 'look', worker: 'Nibble' });
+  r.advance(walk('desk-3', 'desk-9', 0));
+  r.set('dot', 'working');
+  const next = r.call('pixel', { action: 'visit', kind: 'ask', worker: 'Dot', text: 'Still time?', timeout: 10 });
+  assert.equal(next.body.timeout, 10);
+  r.advance(READ_MS + walk('desk-3', 'desk-9', 0));
+  const departed = r.now;
+  assert.equal(r.status('pixel', next.body.visit).body.phase, 'walking');
+  r.advance(walk('desk-3', 'desk-10', 0) + 250);
+  assert.equal(r.status('pixel', next.body.visit).body.done, false, 'time in the previous visit is not charged to this ask');
+  r.advance(departed + 10_000 - r.now);
+  assert.match(r.status('pixel', next.body.visit).body.error, /didn't answer within 10 seconds/);
+});
+
+test('an unanswered ask and an undelivered tell cannot queue a second visit or use a home estimate', (t) => {
+  for (const kind of ['ask', 'tell']) {
+    const r = rig(t);
+    r.set('nibble', 'working');
+    r.call('pixel', { action: 'visit', kind, worker: 'Nibble', text: 'still waiting' });
+    r.advance(walk('desk-3', 'desk-9', 0) + TALK_MIN_MS);
+    const next = r.call('pixel', { action: 'visit', kind: 'tell', worker: 'Dot', text: 'not yet' });
+    assert.equal(next.status, 409);
+    assert.equal(next.body.after, undefined);
+  }
+});
+
+test('a visitor turned back mid-walk reaches home on the same shortened clock as the client', (t) => {
+  for (const elapsed of [250, 1500]) {
+    const r = rig(t);
+    const first = r.call('pixel', { action: 'visit', kind: 'tell', worker: 'Nibble', text: 'cancelled' }).body.visit;
+    r.advance(elapsed);
+    r.fake.ws.delete('nibble');
+    r.visits.onWorkerGone('nibble');
+    assert.equal(r.lastList()[0].returnMs, elapsed);
+    const next = r.call('pixel', { action: 'visit', kind: 'tell', worker: 'Dot', text: 'after home' });
+    assert.equal(next.body.after, elapsed);
+    r.advance(elapsed - 1);
+    assert.equal(r.status('pixel', first).body.phase, 'returning');
+    assert.equal(r.status('pixel', next.body.visit).body.phase, 'pending');
+    r.advance(1);
+    assert.equal(r.status('pixel', first).body.phase, 'ended');
+    assert.equal(r.status('pixel', next.body.visit).body.phase, 'walking');
+  }
+});
+
 test('office-workers carries on as before beside visits: a lead reaches its subagent with no walk and no visit', async (t) => {
   const dir = mkdtempSync(path.join(tmpdir(), 'droid-office-visits-team-'));
   t.after(() => rmSync(dir, { recursive: true, force: true }));
