@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { createHook } from 'node:async_hooks';
 import { createHash } from 'node:crypto';
 import { cpSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
@@ -51,7 +52,6 @@ interface Rig {
   /** Moves the clock on, running each timer that comes due, and lets what they started finish. */
   advance(ms: number): Promise<void>;
   send(msg: SubscriptionsMsg): Promise<void>;
-  until(pred: () => boolean, what: string): Promise<void>;
 }
 
 interface RigOptions {
@@ -62,7 +62,37 @@ interface RigOptions {
   world?: Partial<World>;
 }
 
-const tick = () => new Promise((r) => setTimeout(r, 1));
+/**
+ * Real work the fake clock doesn't drive, by async id: native requests (the file reads, writes and
+ * renames the subscriptions code does between timers) and immediates. `settle` waits for none to be
+ * left, so a slow machine can't make a look land after the test has moved on.
+ */
+const real = new Map<number, { type: string; resource: object }>();
+/** The immediates `settle` itself waits on. */
+const own = new WeakSet<object>();
+createHook({
+  init(id, type, _trigger, resource) {
+    if (type.includes('REQ') || type === 'Immediate') real.set(id, { type, resource });
+  },
+  destroy(id) {
+    real.delete(id);
+  },
+}).enable();
+
+/**
+ * Resolves once the code under test is waiting on nothing but the fake clock: nothing `busy` (a fake
+ * run or fetch unanswered, or work the subscriptions say is under way), no native request or foreign
+ * immediate pending, and every microtask run.
+ */
+async function settle(busy: () => boolean): Promise<void> {
+  const deadline = Date.now() + 10_000;
+  for (;;) {
+    await new Promise<void>((r) => own.add(setImmediate(r)));
+    const left = [...real.values()].filter((w) => !own.has(w.resource));
+    if (!busy() && left.length === 0) return;
+    if (Date.now() > deadline) throw new Error(`never settled: ${left.map((w) => w.type).join(', ') || 'a fake call or the subscriptions'} still under way`);
+  }
+}
 
 async function rig(t: { after(fn: () => void): void }, o: RigOptions = {}): Promise<Rig> {
   const home = tempDir(t, 'subscriptions');
@@ -79,7 +109,19 @@ async function rig(t: { after(fn: () => void): void }, o: RigOptions = {}): Prom
   }
   const world: World = { running: true, api: true, startsUp: true, slow: false, status: status(), models: MODELS, usage: USAGE, posts: [], ...o.world };
   const runs: string[][] = [];
-  const run: Runner = async (cmd, args) => {
+  let busy = 0;
+  /** A fake that may do real async work: counted until it answers, so `settle` waits for it. */
+  const counted =
+    <A extends unknown[], R>(fn: (...args: A) => Promise<R>) =>
+    async (...args: A): Promise<R> => {
+      busy++;
+      try {
+        return await fn(...args);
+      } finally {
+        busy--;
+      }
+    };
+  const run: Runner = counted(async (cmd, args) => {
     runs.push([cmd, ...args]);
     if (cmd === 'plutil') return ok(readFileSync(args.at(-1) as string, 'utf8'));
     if (cmd === 'open' && args[0] === '-g' && world.startsUp) world.running = true;
@@ -91,8 +133,8 @@ async function rig(t: { after(fn: () => void): void }, o: RigOptions = {}): Prom
     if (cmd === 'spctl') return ok('', SPCTL);
     if (cmd === 'osascript') world.running = false;
     return ok();
-  };
-  const answer = async (input: string | URL | Request, init?: RequestInit) => {
+  });
+  const fetchImpl = counted(async (input: string | URL | Request, init?: RequestInit) => {
     const url = String(input);
     if (url === 'https://api.github.com/repos/nikships/droidproxy/releases/latest') return json(RELEASE);
     if (url.endsWith('.zip.sha256')) return new Response(`${createHash('sha256').update(ZIP).digest('hex')}  DroidProxy-arm64.zip\n`);
@@ -122,27 +164,8 @@ async function rig(t: { after(fn: () => void): void }, o: RigOptions = {}): Prom
     if (route === '/status') return json(world.status);
     if (route === '/models') return json(world.models);
     return new Response('{"error":"no such call"}', { status: 404 });
-  };
-  let calls = 0;
-  const fetchImpl = (async (input: string | URL | Request, init?: RequestInit) => {
-    calls++;
-    try {
-      return await answer(input, init);
-    } finally {
-      calls--;
-    }
   }) as typeof fetch;
-  /**
-   * Lets what is under way finish (a look, an install, a models update, a call to DroidProxy) before
-   * the test goes on, so a slow machine sees the same timers as a fast one. Nothing it waits for
-   * waits on the fake clock.
-   */
-  const quiet = async () => {
-    for (let idle = 0, i = 0; idle < 2 && i < 5000; i++) {
-      await tick();
-      idle = r.subs.busy() || calls > 0 ? 0 : idle + 1;
-    }
-  };
+  const idle = () => settle(() => busy > 0 || r.subs.busy());
 
   const clock = { now: NOW };
   let seq = 0;
@@ -163,7 +186,7 @@ async function rig(t: { after(fn: () => void): void }, o: RigOptions = {}): Prom
     async advance(ms) {
       const end = clock.now + ms;
       for (;;) {
-        await quiet();
+        await idle();
         const due = [...queue.entries()].filter(([, q]) => q.at <= end).sort((a, b) => a[1].at - b[1].at)[0];
         if (!due) break;
         queue.delete(due[0]);
@@ -171,15 +194,11 @@ async function rig(t: { after(fn: () => void): void }, o: RigOptions = {}): Prom
         due[1].fn();
       }
       clock.now = end;
-      await quiet();
+      await idle();
     },
     async send(msg) {
       r.subs.message('owner', msg);
-      await quiet();
-    },
-    async until(pred, what) {
-      for (let i = 0; i < 2000 && !pred(); i++) await tick();
-      assert.ok(pred(), `timed out waiting for ${what}`);
+      await idle();
     },
   };
   r.subs = mountSubscriptions({
@@ -228,8 +247,6 @@ test("with no DroidProxy, its models in Droid's settings can't run, and it looks
     ],
   });
   await r.advance(0);
-  // Droid's settings are read on their own, so a slow machine sees them a little after the first look.
-  await r.until(() => Object.keys(r.subs.state().availability).length === 2, "the models in Droid's settings");
   const s = r.subs.state();
   assert.equal(s.proxy.phase, 'missing');
   assert.equal(s.proxy.latest, '1.8.179');
@@ -288,7 +305,6 @@ test('a running DroidProxy: providers with their windows, models in Droid, and w
   // The owner switches Claude on with nobody signed in.
   r.world.models = { ...MODELS, models: MODELS.models?.map((m) => (m.id === OPUS ? { ...m, availability: { state: 'signed-out' as const } } : m)) };
   await r.send({ t: 'subscriptions.refresh' });
-  await r.until(() => r.subs.availability(OPUS)?.state === 'signed-out', 'the refreshed availability');
   assert.equal(r.subs.gate(OPUS), "Can't hire on Opus 5.5: no Claude account is connected. Pick another model.");
 });
 
@@ -341,10 +357,9 @@ test('connect starts DroidProxy first, polls fast while signing in, and puts the
   assert.equal(r.subs.state().proxy.phase, 'stopped');
   assert.deepEqual(opens(r), [], 'no DroidProxy models in Droid: nothing starts it');
   await r.send({ t: 'subscriptions.connect', provider: 'claude' });
-  await r.until(() => r.world.posts.length > 0, 'the connect');
   assert.equal(opens(r).length, 1);
   assert.deepEqual(r.world.posts, [['/connect', { provider: 'claude' }]]);
-  await r.until(() => !!r.subs.state().providers.find((p) => p.key === 'claude')?.connecting, 'the connect in the state');
+  assert.ok(r.subs.state().providers.find((p) => p.key === 'claude')?.connecting);
   assert.equal(r.pending()[0], 2000);
   // The owner signs in in the browser; DroidProxy's /status has the account next time.
   r.world.status = {
@@ -352,7 +367,7 @@ test('connect starts DroidProxy first, polls fast while signing in, and puts the
     providers: r.world.status.providers?.map((p) => (p.key === 'claude' ? { ...p, connecting: null, accounts: [{ id: 'claude-owner@example.com.json', label: 'owner@example.com' }] } : p)),
   };
   await r.advance(2000);
-  await r.until(() => r.modelsChanged === 1, 'the models in Droid');
+  assert.equal(r.modelsChanged, 1);
   assert.deepEqual(r.world.posts.at(-1), ['/factory-models', {}]);
   assert.equal(r.pending()[0], 60_000);
 });
@@ -365,7 +380,7 @@ test('stale DroidProxy models in Droid wait for Update models, and missing ones 
   assert.deepEqual(r.subs.state().models, { installed: 14, available: 16, stale: true });
   r.world.status = status({ factory: { installed: 0, available: 16, stale: true } });
   await r.advance(60_000);
-  await r.until(() => r.modelsChanged === 1, 'the models in Droid');
+  assert.equal(r.modelsChanged, 1);
   r.world.status = status({ factory: { installed: 0, available: 16, stale: true } });
   await r.advance(60_000);
   assert.equal(r.modelsChanged, 1);
@@ -379,7 +394,7 @@ test('the Subscriptions buttons drive the control API and say what failed', asyn
   await r.send({ t: 'subscriptions.connectCancel', provider: 'claude' });
   await r.send({ t: 'subscriptions.proxy', action: 'open' });
   await r.send({ t: 'subscriptions.models' });
-  await r.until(() => r.modelsChanged === 1, 'the models');
+  assert.equal(r.modelsChanged, 1);
   assert.deepEqual(r.world.posts, [
     ['/providers', { provider: 'grok', enabled: true }],
     ['/accounts/remove', { provider: 'codex', account: 'codex-83bf45ca-codex-user@example.com-plus.json' }],
@@ -398,7 +413,7 @@ test('install downloads, checks and installs DroidProxy, then starts it', async 
   await r.advance(0);
   assert.equal(r.subs.state().proxy.phase, 'missing');
   await r.send({ t: 'subscriptions.proxy', action: 'install' });
-  await r.until(() => r.subs.state().proxy.phase === 'running', 'DroidProxy to run');
+  assert.equal(r.subs.state().proxy.phase, 'running');
   const s = r.subs.state();
   assert.equal(s.proxy.version, '1.8.179');
   assert.equal(s.proxy.path, path.join(r.dirs.system, 'DroidProxy.app'));
