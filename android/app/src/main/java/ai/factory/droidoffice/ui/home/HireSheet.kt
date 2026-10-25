@@ -59,7 +59,9 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import ai.factory.droidoffice.core.Availability
 import ai.factory.droidoffice.core.Effort
+import ai.factory.droidoffice.core.ModelAvailability
 import ai.factory.droidoffice.core.Models
 import ai.factory.droidoffice.core.Tags
 import ai.factory.droidoffice.net.ModelCatalogue
@@ -90,6 +92,7 @@ fun HireSheet(onDismiss: () -> Unit, deskId: String? = null) {
     val snackbar = LocalSnackbar.current
     val connection = graph.connection
     val link by connection.link.collectAsStateWithLifecycle()
+    val availability by connection.availability.collectAsStateWithLifecycle()
     val sheet = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     val scope = rememberCoroutineScope()
 
@@ -161,7 +164,7 @@ fun HireSheet(onDismiss: () -> Unit, deskId: String? = null) {
                     Spacer(Modifier.height(16.dp))
                     Eyebrow("Model")
                     Spacer(Modifier.height(6.dp))
-                    ModelPicker(catalogue, loadingModels && link.phase == Phase.Connected, modelId) { m ->
+                    ModelPicker(catalogue, loadingModels && link.phase == Phase.Connected, modelId, availability) { m ->
                         modelId = m.id
                         effort = m.defaultReasoningEffort ?: effort
                     }
@@ -228,7 +231,7 @@ private fun KindCard(icon: ImageVector, title: String, sub: String, selected: Bo
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun ModelPicker(catalogue: ModelCatalogue?, loading: Boolean, selected: String?, onPick: (ModelOption) -> Unit) {
+private fun ModelPicker(catalogue: ModelCatalogue?, loading: Boolean, selected: String?, availability: Map<String, ModelAvailability>, onPick: (ModelOption) -> Unit) {
     var open by rememberSaveable { mutableStateOf(false) }
     val current = catalogue?.models?.firstOrNull { it.id == selected }
     Row(
@@ -247,7 +250,9 @@ private fun ModelPicker(catalogue: ModelCatalogue?, loading: Boolean, selected: 
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
-            if (current != null) Text(if (current.custom) "Your model" else if (current.legacy) "Legacy" else "Factory", style = LocalOfficeType.current.eyebrow, maxLines = 1)
+            val why = current?.let { Availability.reason(availability[it.id], System.currentTimeMillis()) }
+            if (why != null) Text(why, style = MaterialTheme.typography.bodySmall, color = Palette.Warning, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            else if (current != null) Text(if (current.custom) "Your model" else if (current.legacy) "Legacy" else "Factory", style = LocalOfficeType.current.eyebrow, maxLines = 1)
         }
         Icon(Icons.Default.KeyboardArrowDown, null, tint = Palette.TextSecondary)
     }
@@ -284,16 +289,21 @@ private fun ModelPicker(catalogue: ModelCatalogue?, loading: Boolean, selected: 
                     }
                     items(group.models, key = { it.id }) { m ->
                         val on = m.id == selected
+                        val now = System.currentTimeMillis()
+                        val refusal = Availability.reason(availability[m.id], now)
+                        val note = Availability.note(availability[m.id], now)
                         Row(
-                            Modifier.fillMaxWidth().selectable(on) {
+                            Modifier.fillMaxWidth().selectable(on, enabled = refusal == null) {
                                 open = false
                                 onPick(m)
                             }.tagged(Tags.Hire.model(m.id)).background(if (on) Palette.AccentMuted else Color.Transparent).padding(horizontal = 20.dp, vertical = 11.dp),
                             verticalAlignment = Alignment.CenterVertically,
                         ) {
                             Column(Modifier.weight(1f)) {
-                                Text(catalogue.nameOf(m.id), style = MaterialTheme.typography.bodyLarge, color = if (on) Palette.Accent else Palette.Text)
-                                Text(m.id, style = LocalOfficeType.current.eyebrow.copy(letterSpacing = 0.sp), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                Text(catalogue.nameOf(m.id), style = MaterialTheme.typography.bodyLarge, color = if (refusal != null) Palette.TextTertiary else if (on) Palette.Accent else Palette.Text)
+                                val line = refusal ?: note
+                                if (line != null) Text(line, style = MaterialTheme.typography.bodySmall, color = if (refusal != null) Palette.Warning else Palette.TextTertiary, modifier = Modifier.tagged(Tags.Hire.modelWhy(m.id)))
+                                else Text(m.id, style = LocalOfficeType.current.eyebrow.copy(letterSpacing = 0.sp), maxLines = 1, overflow = TextOverflow.Ellipsis)
                             }
                             if (on) Icon(Icons.Default.Check, "Selected", tint = Palette.Accent)
                         }

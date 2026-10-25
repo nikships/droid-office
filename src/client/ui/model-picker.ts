@@ -1,5 +1,6 @@
+import { store } from '../state';
 import { type Child, claimEscape, h } from './dom';
-import { highlightRanges, multiplierLabel, type PickerModel, pushRecent, scopesOf, type Section, sectionsFor, splitFamily } from './model-search';
+import { availabilityOf, canPick, highlightRanges, multiplierLabel, offersSubscriptions, type PickerModel, pushRecent, scopesOf, type Section, sectionsFor, splitFamily, withAvailability } from './model-search';
 
 /** What the picker offers on top, for "no choice": the model droid runs when nobody picks one. */
 export interface NoneOption {
@@ -10,6 +11,8 @@ export interface NoneOption {
   cost?: number;
   glyph?: boolean;
   detail?: string;
+  /** The model it runs, so the picker can say when that one can't run now. */
+  model?: string;
 }
 
 export interface ModelPickerOptions {
@@ -42,6 +45,8 @@ export interface ModelPicker {
 const RECENTS_KEY = 'droid-office.model-recents';
 const NONE = '\u0000none';
 const CUSTOM = '\u0000custom';
+/** Fired on `window` to open Settings on a pane: `detail.pane` is the pane id. main.ts opens it. */
+export const OPEN_SETTINGS_EVENT = 'office:settings';
 /** The longest model id the office accepts (see fetchCatalogue in models.ts). */
 const MODEL_ID_MAX = 256;
 
@@ -103,7 +108,7 @@ function marked(text: string, query: string): (string | HTMLElement)[] {
  */
 export function modelPicker(opts: ModelPickerOptions): ModelPicker {
   const uid = ++counter;
-  let models = opts.models;
+  let source = opts.models;
   let none = opts.none;
   let value = opts.value ?? '';
   let customValue = '';
@@ -117,7 +122,11 @@ export function modelPicker(opts: ModelPickerOptions): ModelPicker {
     class: opts.small ? 'sm' : '',
   });
 
-  const known = (id: string) => models.find((m) => m.id === id);
+  /** The models as they can run right now: read when drawn, so a quota that runs out shows up in an open list. */
+  const listed = (): PickerModel[] => withAvailability(source, store.subscriptions, Date.now());
+  const known = (id: string) => listed().find((m) => m.id === id);
+  /** Why the `none` row's model can't run now, if it can't. */
+  const noneReason = () => availabilityOf(none?.model, store.subscriptions, Date.now()).reason;
 
   /** The `none` option's glyph, label and note, as the trigger and its row both draw them. */
   const noneParts = (option: NoneOption): Child[] => [option.glyph ? pinwheel() : null, h('span.mp-name', {}, option.label), option.note ? h('span.mp-note', {}, option.note) : null];
@@ -126,7 +135,7 @@ export function modelPicker(opts: ModelPickerOptions): ModelPicker {
     if (!value) return none ? noneParts(none) : [h('span.mp-name.mp-placeholder', {}, opts.placeholder ?? 'Choose a model')];
     if (!m) return [h('span.mp-name', {}, value)];
     const { family, rest } = splitFamily(m.name);
-    return [m.glyph ? pinwheel() : null, h('span.mp-name', {}, family ? h('span.mp-family', {}, `${family}: `) : null, rest), m.unavailable ? h('span.mp-tag', {}, 'unavailable') : null];
+    return [m.glyph ? pinwheel() : null, h('span.mp-name', {}, family ? h('span.mp-family', {}, `${family}: `) : null, rest), m.unavailable ? h('span.mp-tag', {}, m.reason ? 'can’t run' : 'unavailable') : null];
   };
 
   const paintTrigger = () => {
@@ -134,7 +143,7 @@ export function modelPicker(opts: ModelPickerOptions): ModelPicker {
     const cost = value ? m?.cost : none?.cost;
     const pill = costPill(cost);
     trigger.replaceChildren(h('span.mp-value', {}, ...triggerParts(m)), ...(pill ? [pill] : []));
-    trigger.title = m ? `${m.name} · ${m.id}` : value || none?.label || '';
+    trigger.title = m ? `${m.name} · ${m.id}${m.reason ? ` · ${m.reason}` : ''}` : value || none?.label || '';
   };
 
   // ---- The popover ------------------------------------------------------------------------------
@@ -149,7 +158,10 @@ export function modelPicker(opts: ModelPickerOptions): ModelPicker {
   let cursor = 0;
   /** The rows on screen, in order: the `none` row, then each section's models. */
   let rows: { key: string; model?: PickerModel; el: HTMLElement }[] = [];
-  let ui: { input: HTMLInputElement; chips: HTMLElement; list: HTMLElement; detail: HTMLElement; count: HTMLElement };
+  let ui: { input: HTMLInputElement; chips: HTMLElement; list: HTMLElement; detail: HTMLElement; count: HTMLElement; offer: HTMLElement };
+  let stopWatching: (() => void) | null = null;
+  /** What the open list showed last, to redraw only when a `subscriptions` message changes it. */
+  let drawn = '';
 
   const place = () => {
     if (!pop) return;
@@ -182,7 +194,7 @@ export function modelPicker(opts: ModelPickerOptions): ModelPicker {
   };
 
   const rowBody = (key: string, model: PickerModel | undefined, flat: boolean): Child[] => {
-    if (key === NONE) return none ? noneParts(none) : [];
+    if (key === NONE) return none ? [...noneParts(none), noneReason() ? h('span.mp-why', {}, noneReason()) : null] : [];
     if (key === CUSTOM) return [h('span.mp-name', {}, 'Use ', h('b', {}, customValue)), h('span.mp-note', {}, 'as typed')];
     if (!model) return [];
     const { family, rest } = splitFamily(model.name);
@@ -190,7 +202,8 @@ export function modelPicker(opts: ModelPickerOptions): ModelPicker {
       model.glyph ? pinwheel() : null,
       h('span.mp-name', {}, family ? h('span.mp-family', {}, ...marked(`${family}: `, query)) : null, ...marked(rest, query)),
       ...(model.tags ?? []).map((t) => h('span.mp-tag', {}, t)),
-      model.unavailable ? h('span.mp-tag', {}, 'unavailable') : null,
+      model.unavailable && !model.reason ? h('span.mp-tag', {}, 'unavailable') : null,
+      model.reason ? h('span.mp-why', {}, model.reason) : null,
       flat ? h('span.mp-where', {}, model.group) : null,
     ];
   };
@@ -198,9 +211,10 @@ export function modelPicker(opts: ModelPickerOptions): ModelPicker {
   const row = (key: string, model: PickerModel | undefined, flat: boolean): HTMLElement => {
     const id = `mp-${uid}-${rows.length}`;
     const selected = key === NONE ? !value : model?.id === value;
+    const refused = key === NONE ? !!noneReason() : !canPick(model);
     const el = h(
       'div.mp-row',
-      { id, role: 'option', 'aria-selected': String(selected), class: selected ? 'on' : '' },
+      { id, role: 'option', 'aria-selected': String(selected), 'aria-disabled': refused ? 'true' : undefined, class: `${selected ? 'on' : ''} ${refused ? 'refused' : ''}` },
       h('span.mp-check', { 'aria-hidden': 'true' }, selected ? '✓' : ''),
       h('span.mp-main', {}, ...rowBody(key, model, flat)),
       costPill(key === NONE ? none?.cost : model?.cost),
@@ -209,12 +223,15 @@ export function modelPicker(opts: ModelPickerOptions): ModelPicker {
       const i = rows.findIndex((r) => r.el === el);
       if (i >= 0 && i !== cursor) moveTo(i, false);
     });
-    el.addEventListener('click', () => choose(valueOfRow(key, model)));
+    el.addEventListener('click', () => {
+      if (!refused) choose(valueOfRow(key, model));
+    });
     rows.push({ key, model, el });
     return el;
   };
 
   const paintChips = () => {
+    const models = listed();
     const scopes = scopesOf(models);
     ui.chips.classList.toggle('hidden', scopes.length < 2);
     const chip = (key: string, label: string, count: number) => {
@@ -242,10 +259,10 @@ export function modelPicker(opts: ModelPickerOptions): ModelPicker {
     const r = rows[cursor];
     const m = r?.model;
     if (m) {
-      ui.detail.replaceChildren(h('code', {}, m.id), ...(m.detail ? [h('span', {}, m.detail)] : []));
+      ui.detail.replaceChildren(h('code', {}, m.id), ...(m.reason || m.note || m.detail ? [h('span', {}, m.reason ?? m.note ?? m.detail)] : []));
       return;
     }
-    if (r?.key === NONE) ui.detail.replaceChildren(none?.detail ?? 'Droid’s own default');
+    if (r?.key === NONE) ui.detail.replaceChildren(noneReason() ?? none?.detail ?? 'Droid’s own default');
     else if (r?.key === CUSTOM) ui.detail.replaceChildren('Sent as typed');
     else ui.detail.replaceChildren();
   };
@@ -267,6 +284,7 @@ export function modelPicker(opts: ModelPickerOptions): ModelPicker {
 
   const paintList = () => {
     rows = [];
+    const models = listed();
     const typed = query.trim();
     const sections: Section[] = sectionsFor(models, { query, scope, recents: loadRecents() });
     const nodes: HTMLElement[] = [];
@@ -284,13 +302,56 @@ export function modelPicker(opts: ModelPickerOptions): ModelPicker {
     const total = models.length;
     ui.count.textContent = typed || scope ? `${rows.filter((r) => r.model).length} of ${total}` : `${total} models`;
     paintChips();
-    const selectedAt = typed ? 0 : rows.findIndex((r) => r.el.classList.contains('on'));
+    paintOffer();
+    drawn = stamp();
+    const selectedAt = typed
+      ? Math.max(
+          0,
+          rows.findIndex((r) => !r.el.classList.contains('refused')),
+        )
+      : rows.findIndex((r) => r.el.classList.contains('on'));
     moveTo(selectedAt >= 0 ? selectedAt : 0, false);
     if (selectedAt >= 0 && !typed) rows[selectedAt].el.scrollIntoView({ block: 'center' });
     else ui.list.scrollTop = 0;
   };
 
+  /** What the open list shows that a `subscriptions` message can change. */
+  const stamp = () => JSON.stringify([listed().map((m) => [m.id, m.reason, m.note]), noneReason(), offersSubscriptions(store.subscriptions)]);
+
+  const paintOffer = () => {
+    const offered = offersSubscriptions(store.subscriptions);
+    ui.offer.classList.toggle('hidden', !offered);
+    if (!offered || ui.offer.firstChild) return;
+    ui.offer.append(
+      h(
+        'button.mp-offer-btn',
+        {
+          type: 'button',
+          onclick: () => {
+            close();
+            window.dispatchEvent(new CustomEvent(OPEN_SETTINGS_EVENT, { detail: { pane: 'subscriptions' } }));
+          },
+        },
+        'Use your Claude or ChatGPT plan',
+        h('span', { 'aria-hidden': 'true' }, '→'),
+      ),
+    );
+  };
+
+  /** A `subscriptions` message while the list is open: redraw if it changed what is shown, and keep the place in the list. */
+  const onSubscriptions = () => {
+    if (!pop || drawn === stamp()) return;
+    const at = rows[cursor]?.key;
+    const top = ui.list.scrollTop;
+    paintList();
+    const back = rows.findIndex((r) => r.key === at);
+    if (back >= 0) moveTo(back, false);
+    ui.list.scrollTop = top;
+    paintTrigger();
+  };
+
   function choose(next: string) {
+    if (next && !canPick(known(next))) return;
     const changed = next !== value;
     value = next;
     if (next) saveRecent(next);
@@ -309,6 +370,8 @@ export function modelPicker(opts: ModelPickerOptions): ModelPicker {
     withdraw?.();
     withdraw = null;
     clearInterval(watchTrigger);
+    stopWatching?.();
+    stopWatching = null;
     pop.remove();
     scrim?.remove();
     pop = null;
@@ -363,13 +426,15 @@ export function modelPicker(opts: ModelPickerOptions): ModelPicker {
     const list = h('div.mp-list', { id: `mp-${uid}-list`, role: 'listbox', 'aria-label': opts.label });
     const detail = h('span.mp-detail');
     const count = h('span.mp-count');
-    ui = { input, chips, list, detail, count };
+    const offer = h('div.mp-offer.hidden');
+    ui = { input, chips, list, detail, count, offer };
     pop = h(
       'div.mp-pop',
       { role: 'dialog', 'aria-label': opts.label, tabindex: -1 },
       h('div.mp-search', {}, h('span.mp-glass', { 'aria-hidden': 'true' }, '⌕'), input, h('kbd.key', {}, 'esc')),
       chips,
       list,
+      offer,
       h('div.mp-foot', {}, detail, count),
     );
     scrim = h('div.mp-scrim');
@@ -395,6 +460,7 @@ export function modelPicker(opts: ModelPickerOptions): ModelPicker {
     });
     window.addEventListener('resize', place);
     window.addEventListener('scroll', onScroll, true);
+    stopWatching = store.on('subscriptions', onSubscriptions);
     watchTrigger = setInterval(() => {
       if (!trigger.isConnected) close();
     }, 400);
@@ -422,7 +488,7 @@ export function modelPicker(opts: ModelPickerOptions): ModelPicker {
       if (pop) paintList();
     },
     setModels(next, nextNone) {
-      models = next;
+      source = next;
       none = nextNone;
       paintTrigger();
       if (pop) paintList();
