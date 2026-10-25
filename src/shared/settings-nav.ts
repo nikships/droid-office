@@ -19,7 +19,7 @@ export const SETTINGS_PANES: { id: SettingsPane; icon: string; label: string; bl
     icon: '🧭',
     label: 'Subagents',
     blurb:
-      'Workers that hire workers: a lead splits up a big job and hires subagents, who sit down at the desks nearest it, each with its own laptop and terminal, and report back to it. Ask the Team lead at its kiosk on the east wall, or any worker at a desk.',
+      'Workers that hire workers: a lead splits up a big job and hires subagents, who sit down at the desks nearest it, each with its own laptop and terminal, and report back to it. Ask the Team lead at its kiosk on the east wall, or any worker at a desk. The workers you hire yourself can also visit each other’s desks to read, talk and hand off work.',
   },
   { id: 'phone', icon: '📱', label: 'Phone', blurb: 'Droid Office for Android and the web companion: hire workers, watch their terminals and prompt them from your phone or another computer’s browser, on your Wi-Fi or over Tailscale.' },
 ];
@@ -62,6 +62,7 @@ export const SETTINGS_CARDS = [
   { pane: 'subagents', title: 'Team size' },
   { pane: 'subagents', title: 'Where subagents work' },
   { pane: 'subagents', title: 'Waking the lead' },
+  { pane: 'subagents', title: 'Visits between workers' },
   { pane: 'subagents', title: 'Droid skill' },
   { pane: 'subagents', title: 'Whiteboard skill' },
   { pane: 'phone', title: 'Droid Office for Android' },
