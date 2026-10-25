@@ -12,6 +12,7 @@ import { DESK_BY_ID, STATION_AGENT, nearestFreeSeat } from '../shared/layout.js'
 import { AGENT_EFFORTS, isAgentEffort, type AgentChoice, type SubagentSettings, type WorkerInfo, type WorkerStatus, type WorkerTask } from '../shared/protocol.js';
 import { isAsleep } from '../shared/status.js';
 import type { DroidModelCatalogue, DroidModelOption } from './droid-models.js';
+import type { ModelAvailability } from '../shared/subscriptions.js';
 import { officePrompt, type PromptSource } from './prompts.js';
 
 /** What the team needs from the floor's workers. Narrow on purpose, so a test can fake it. */
@@ -42,6 +43,8 @@ export interface TeamOptions {
   settings(): SubagentSettings;
   /** Droid's model list, for `office-workers models`. None: only what the settings name. */
   models?: () => Promise<DroidModelCatalogue>;
+  /** Subscriptions: whether a subscription model can run now; undefined when it isn't one or nobody can tell (docs/subscriptions.md). */
+  availability?: (model: string) => ModelAvailability | undefined;
   prompts?: PromptSource;
   toast(text: string, level: 'info' | 'warn', workerId?: string): void;
   /** How long news waits before a lead at rest is told, so a report and the turn ending with it go as one. */

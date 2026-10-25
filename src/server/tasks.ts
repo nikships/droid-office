@@ -50,6 +50,11 @@ export class TaskNamer {
     return this.droid !== null && Date.now() >= this.pausedUntil;
   }
 
+  /** Droid was installed after the office started. */
+  setDroid(droid: string) {
+    this.droid = droid;
+  }
+
   /** Asks for a fresh label. Calls for the same worker close together collapse into one. */
   request(workerId: string, ctx: TaskContext) {
     if (!this.enabled || !ctx.prompts.length) return;

@@ -203,8 +203,8 @@ export const listDroidModels: DroidModelLister = (command, cwd) =>
   });
 
 export interface DroidCatalogueOptions {
-  /** The droid binary to ask. */
-  command?: string;
+  /** The droid binary to ask, or how to find it now (it may be installed after the office starts). */
+  command?: string | (() => string);
   cwd?: string;
   settingsPath?: string;
   lister?: DroidModelLister;
@@ -213,6 +213,8 @@ export interface DroidCatalogueOptions {
 
 export interface DroidCatalogue {
   get(): Promise<DroidModelCatalogue>;
+  /** Drops the cached list, so the next get() asks droid again (Droid was installed, or DroidProxy rewrote its models). */
+  forget(): void;
 }
 
 /**
@@ -229,7 +231,7 @@ export function createDroidModelCatalogue(options: DroidCatalogueOptions = {}): 
     const settings = readDroidModels(settingsPath);
     let listed: DroidModelOption[] = [];
     try {
-      listed = parseDroidModelList(await lister(command, cwd));
+      listed = parseDroidModelList(await lister(typeof command === 'function' ? command() : command, cwd));
     } catch {
       // Settings alone are still a usable list.
     }
@@ -251,6 +253,9 @@ export function createDroidModelCatalogue(options: DroidCatalogueOptions = {}): 
           pending = undefined;
         });
       return pending;
+    },
+    forget() {
+      cached = undefined;
     },
   };
 }

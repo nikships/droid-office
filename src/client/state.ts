@@ -31,6 +31,8 @@ import { JUKEBOX_TUNES, type JukeboxState } from '../shared/jukebox';
 import { forgeWords, type ForgeWords } from '../shared/floors';
 import type { JiraBoardState, JiraFloorState } from '../shared/jira';
 import { emptyFactoryState, type FactoryState } from '../shared/factory';
+import { emptySetupState, type SetupState } from '../shared/setup';
+import { emptySubscriptionsState, type SubscriptionsState } from '../shared/subscriptions';
 import { teamOf } from '../shared/team';
 import type { Visit } from '../shared/visits';
 import type { WorktreeSetupState } from '../shared/worktree-setup';
@@ -64,6 +66,8 @@ export type Topic =
   | 'jira'
   | 'jiraBoard'
   | 'factory'
+  | 'setup'
+  | 'subscriptions'
   | 'worktreeSetup'
   | 'whiteboard'
   | 'whiteboardSkill'
@@ -287,6 +291,10 @@ class Store {
   prompts: PromptsState = { custom: {} };
   /** The office's Factory connection and every Factory feature's read state (see docs/factory.md). */
   factory: FactoryState = emptyFactoryState();
+  /** Droid installed and signed in, and whether the owner has been through the welcome (docs/subscriptions.md). */
+  setup: SetupState = emptySetupState();
+  /** DroidProxy, the subscriptions it serves, and which of their models can run now. */
+  subscriptions: SubscriptionsState = emptySubscriptionsState();
   /** How new worktrees on this floor are set up, once Settings asked (see worktreeSetup.get); null before, or on another floor. */
   worktreeSetup: WorktreeSetupState | null = null;
   /** Every visit on the floor you're on (see shared/visits.ts), as the server last sent them. */
@@ -377,8 +385,10 @@ class Store {
         this.whiteboardSkill = msg.whiteboardSkill ?? { on: true };
         this.prompts = msg.prompts ?? { custom: {} };
         this.factory = msg.factory ?? emptyFactoryState();
+        this.setup = msg.setup ?? emptySetupState();
+        this.subscriptions = msg.subscriptions ?? emptySubscriptionsState();
         this.enter(msg);
-        for (const t of ['upgrade', 'notify', 'machine', 'floors', 'projectsDir', 'sky', 'jukebox', 'leaveOnMerge', 'freshMain', 'subagents', 'whiteboardSkill', 'prompts', 'factory'] as Topic[]) this.emit(t);
+        for (const t of ['upgrade', 'notify', 'machine', 'floors', 'projectsDir', 'sky', 'jukebox', 'leaveOnMerge', 'freshMain', 'subagents', 'whiteboardSkill', 'prompts', 'factory', 'setup', 'subscriptions'] as Topic[]) this.emit(t);
         break;
       case 'floor.enter':
         this.arrival = msg.arrival;
@@ -503,6 +513,14 @@ class Store {
       case 'factory':
         this.factory = msg.state;
         this.emit('factory');
+        break;
+      case 'setup':
+        this.setup = msg.state;
+        this.emit('setup');
+        break;
+      case 'subscriptions':
+        this.subscriptions = msg.state;
+        this.emit('subscriptions');
         break;
       case 'visits':
         this.visits = msg.visits;
