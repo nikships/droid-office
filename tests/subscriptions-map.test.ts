@@ -8,10 +8,11 @@ test("providers come from /status, each account with its windows from DroidProxy
   assert.deepEqual(
     ps.map((p) => [p.key, p.name, p.enabled, p.connect, p.accounts.length]),
     [
-      ['claude', 'Claude', true, 'browser', 0],
+      ['claude', 'Claude', false, 'browser', 0],
       ['codex', 'Codex', true, 'browser', 1],
-      ['grok', 'Grok', false, 'device', 1],
-      ['kimi', 'Kimi', true, 'app', 0],
+      ['junie', 'Junie', true, 'app', 1],
+      ['grok', 'Grok', true, 'device', 1],
+      ['meta', 'Meta Muse', true, 'device', 1],
     ],
   );
   const codex = ps[1].accounts[0];
@@ -21,9 +22,14 @@ test("providers come from /status, each account with its windows from DroidProxy
     { name: 'Weekly', usedPercent: 16, resetsAt: Date.parse('2026-11-01T08:15:41Z') },
   ]);
   assert.deepEqual(
-    ps[2].accounts[0].windows.map((w) => w.usedPercent),
+    ps[3].accounts[0].windows.map((w) => w.usedPercent),
     [66],
   );
+  assert.deepEqual(
+    ps[4].accounts[0].windows.map((w) => w.usedPercent),
+    [0, 99],
+  );
+  assert.deepEqual(ps[2].accounts[0].windows, [], 'Junie has no usage to go by');
 });
 
 test('an account is matched to its usage by id, else by its email in any case, and only within its provider', () => {
@@ -86,10 +92,13 @@ test('usage windows take remaining when used is missing, clamp, and skip what ha
 
 test('/models turns into availability: exhausted until when, signed-out and disabled with their provider, unknown left out', () => {
   assert.deepEqual(mapAvailability(MODELS), {
-    'custom:droidproxy:gpt-6.1-sol': { state: 'exhausted', until: Date.parse('2026-10-25T22:12:45Z'), window: '5-hour', account: 'codex-user@example.com' },
-    'custom:droidproxy:claude-opus-5-5': { state: 'signed-out', provider: 'claude' },
-    'custom:droidproxy:grok-5': { state: 'disabled', provider: 'grok' },
-    'custom:droidproxy:gpt-6-luna': { state: 'ok' },
+    'custom:droidproxy:opus-5-5': { state: 'disabled', provider: 'claude' },
+    'custom:droidproxy:gpt-6.1-sol': { state: 'exhausted', until: Date.parse('2026-10-25T22:12:46Z'), window: '5-hour', account: 'codex-user@example.com' },
+    'custom:droidproxy:grok-4.7': { state: 'ok' },
+  });
+  // Claude switched on with nobody signed in.
+  assert.deepEqual(mapAvailability({ models: [{ id: 'custom:droidproxy:opus-5-5', name: 'Opus 5.5', provider: 'claude', availability: { state: 'signed-out' } }] }), {
+    'custom:droidproxy:opus-5-5': { state: 'signed-out', provider: 'claude' },
   });
   assert.deepEqual(
     mapAvailability({
@@ -102,11 +111,10 @@ test('/models turns into availability: exhausted until when, signed-out and disa
   );
   assert.equal(modelNames({ models: [{ id: 'custom:droidproxy:a', name: 'DroidProxy: A' }] })['custom:droidproxy:a'], 'A');
   assert.deepEqual(Object.entries(modelProviders(MODELS)), [
+    ['custom:droidproxy:opus-5-5', 'claude'],
     ['custom:droidproxy:gpt-6.1-sol', 'codex'],
-    ['custom:droidproxy:claude-opus-5-5', 'claude'],
-    ['custom:droidproxy:grok-5', 'grok'],
-    ['custom:droidproxy:kimi-k3', 'kimi'],
-    ['custom:droidproxy:gpt-6-luna', 'codex'],
+    ['custom:droidproxy:junie-gpt-6.1-sol', 'junie'],
+    ['custom:droidproxy:grok-4.7', 'grok'],
   ]);
 });
 
@@ -114,6 +122,6 @@ test('a refusal names the model and why', () => {
   const until = NOW + (3 * 60 + 10) * 60_000;
   assert.equal(hireRefusal('GPT 6.1 Sol', { state: 'exhausted', until, window: '5-hour' }, NOW), "Can't hire on GPT 6.1 Sol: out of quota, back in 3 h 10 min (5-hour).");
   assert.equal(hireRefusal('Opus', { state: 'signed-out', provider: 'claude' }, NOW), "Can't hire on Opus: no Claude account is connected.");
-  assert.equal(hireRefusal('Grok 5', { state: 'disabled', provider: 'grok' }, NOW), "Can't hire on Grok 5: Grok is switched off in Subscriptions.");
+  assert.equal(hireRefusal('Opus 5.5', { state: 'disabled', provider: 'claude' }, NOW), "Can't hire on Opus 5.5: Claude is switched off in Subscriptions.");
   assert.equal(hireRefusal('X', { state: 'proxy-down', installed: false }, NOW), "Can't hire on X: DroidProxy isn't installed.");
 });

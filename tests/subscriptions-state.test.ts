@@ -10,7 +10,8 @@ import type { SubscriptionsState } from '../src/shared/subscriptions.js';
 import { CODESIGN_DV, CONTROL_FILE, MODELS, NOW, SPCTL, TOKEN, USAGE, fakeApp, json, ok, refused, status, tempDir } from './subscriptions-fixtures.js';
 
 const SOL = 'custom:droidproxy:gpt-6.1-sol';
-const LUNA = 'custom:droidproxy:gpt-6-luna';
+const GROK = 'custom:droidproxy:grok-4.7';
+const OPUS = 'custom:droidproxy:opus-5-5';
 const ZIP = Buffer.from('DroidProxy 1.8.179');
 const RELEASE = {
   tag_name: 'v1.8.179',
@@ -113,8 +114,8 @@ async function rig(t: { after(fn: () => void): void }, o: RigOptions = {}): Prom
         return json({ connecting }, 202);
       }
       if (route === '/factory-models') {
-        world.status = { ...world.status, factory: { installed: 14, available: 14, stale: false } };
-        return json({ installed: 14, backup: null });
+        world.status = { ...world.status, factory: { installed: 16, available: 16, stale: false } };
+        return json({ installed: 16, backup: null });
       }
       return json(route === '/providers' || route === '/accounts/remove' ? world.status : {});
     }
@@ -203,14 +204,14 @@ test("with no DroidProxy, its models in Droid's settings can't run, and it looks
     app: null,
     settings: [
       { id: SOL, displayName: 'DroidProxy: GPT 6.1 Sol' },
-      { id: LUNA, displayName: 'DroidProxy: GPT 6 Luna' },
+      { id: GROK, displayName: 'DroidProxy: Grok 4.7' },
     ],
   });
   await r.advance(0);
   const s = r.subs.state();
   assert.equal(s.proxy.phase, 'missing');
   assert.equal(s.proxy.latest, '1.8.179');
-  assert.deepEqual(s.availability, { [SOL]: { state: 'proxy-down', installed: false }, [LUNA]: { state: 'proxy-down', installed: false } });
+  assert.deepEqual(s.availability, { [SOL]: { state: 'proxy-down', installed: false }, [GROK]: { state: 'proxy-down', installed: false } });
   assert.equal(r.subs.gate(SOL), "Can't hire on GPT 6.1 Sol: DroidProxy isn't installed. Pick another model.");
   assert.equal(r.subs.gate('claude-opus-5-5'), undefined);
   assert.equal(r.subs.availability('custom:my-key'), undefined);
@@ -249,20 +250,23 @@ test('a running DroidProxy: providers with their windows, models in Droid, and w
   const s = r.subs.state();
   assert.equal(s.proxy.phase, 'running');
   assert.equal(s.proxy.error, null);
-  assert.deepEqual(s.models, { installed: 14, available: 14, stale: false });
+  assert.deepEqual(s.models, { installed: 16, available: 16, stale: false });
   assert.deepEqual(
     s.providers.find((p) => p.key === 'codex')?.accounts[0].windows.map((w) => w.name),
     ['5-hour', 'Weekly'],
   );
   assert.equal(r.subs.availability(SOL)?.state, 'exhausted');
   assert.equal(r.subs.gate(SOL), "Can't hire on GPT 6.1 Sol: out of quota, back in 41 min (5-hour). Pick another model.");
-  assert.equal(r.subs.gate('custom:droidproxy:claude-opus-5-5'), "Can't hire on Claude Opus 5.5: no Claude account is connected. Pick another model.");
-  assert.equal(r.subs.gate('custom:droidproxy:grok-5'), "Can't hire on Grok 5: Grok is switched off in Subscriptions. Pick another model.");
-  assert.equal(r.subs.gate(LUNA), undefined);
-  assert.equal(r.subs.gate('custom:droidproxy:kimi-k3'), undefined, 'unknown is never refused');
+  assert.equal(r.subs.gate(OPUS), "Can't hire on Opus 5.5: Claude is switched off in Subscriptions. Pick another model.");
+  assert.equal(r.subs.gate(GROK), undefined);
+  assert.equal(r.subs.gate('custom:droidproxy:junie-gpt-6.1-sol'), undefined, 'unknown is never refused');
   assert.equal(r.subs.gate(undefined), undefined);
   assert.deepEqual(r.pending()[0], 60_000);
   assert.deepEqual(r.world.posts, [], 'models in Droid that are up to date are left alone');
+  // The owner switches Claude on with nobody signed in.
+  r.world.models = { ...MODELS, models: MODELS.models?.map((m) => (m.id === OPUS ? { ...m, availability: { state: 'signed-out' as const } } : m)) };
+  await r.send({ t: 'subscriptions.refresh' });
+  assert.equal(r.subs.gate(OPUS), "Can't hire on Opus 5.5: no Claude account is connected. Pick another model.");
 });
 
 test('when DroidProxy stops answering, the last state stays, and after 5 minutes it refuses nobody', async (t) => {
@@ -279,7 +283,7 @@ test('when DroidProxy stops answering, the last state stays, and after 5 minutes
   s = r.subs.state();
   assert.deepEqual(s.availability, {});
   assert.equal(r.subs.gate(SOL), undefined);
-  assert.equal(s.providers.length, 4, 'what it last said about accounts stays');
+  assert.equal(s.providers.length, 5, 'what it last said about accounts stays');
   r.world.slow = false;
   await r.advance(60_000);
   assert.equal(r.subs.state().proxy.error, null);
@@ -331,15 +335,15 @@ test('connect starts DroidProxy first, polls fast while signing in, and puts the
 });
 
 test('stale DroidProxy models in Droid wait for Update models, and missing ones are put back, but not over and over', async (t) => {
-  const r = await rig(t, { world: { status: status({ factory: { installed: 12, available: 14, stale: true } }) } });
+  const r = await rig(t, { world: { status: status({ factory: { installed: 14, available: 16, stale: true } }) } });
   await r.advance(0);
   await r.advance(60_000);
   assert.equal(r.modelsChanged, 0, 'the owner may have taken some out on purpose');
-  assert.deepEqual(r.subs.state().models, { installed: 12, available: 14, stale: true });
-  r.world.status = status({ factory: { installed: 0, available: 14, stale: true } });
+  assert.deepEqual(r.subs.state().models, { installed: 14, available: 16, stale: true });
+  r.world.status = status({ factory: { installed: 0, available: 16, stale: true } });
   await r.advance(60_000);
   await r.until(() => r.modelsChanged === 1, 'the models in Droid');
-  r.world.status = status({ factory: { installed: 0, available: 14, stale: true } });
+  r.world.status = status({ factory: { installed: 0, available: 16, stale: true } });
   await r.advance(60_000);
   assert.equal(r.modelsChanged, 1);
 });
@@ -360,7 +364,7 @@ test('the Subscriptions buttons drive the control API and say what failed', asyn
     ['/open', {}],
     ['/factory-models', {}],
   ]);
-  assert.deepEqual(r.toasts.at(-1), ['DroidProxy put 14 models in Droid', 'info']);
+  assert.deepEqual(r.toasts.at(-1), ['DroidProxy put 16 models in Droid', 'info']);
   r.world.api = false;
   await r.send({ t: 'subscriptions.refresh' });
   assert.equal(r.subs.state().proxy.phase, 'outdated');

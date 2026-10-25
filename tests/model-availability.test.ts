@@ -5,7 +5,7 @@ import { emptySubscriptionsState, type SubscriptionsState } from '../src/shared/
 
 const NOW = Date.parse('2026-10-25T12:00:00Z');
 const SOL = 'custom:droidproxy:gpt-6.1-sol';
-const OPUS = 'custom:droidproxy:claude-opus-5-5';
+const OPUS = 'custom:droidproxy:opus-5-5';
 
 const model = (id: string, name: string): PickerModel => ({ id, name, scope: 'Yours', group: 'DroidProxy', glyph: true });
 const models = [model(SOL, 'GPT 6.1 Sol'), model(OPUS, 'Opus 5.5'), { id: 'claude-opus-5-5', name: 'Opus 5.5', scope: 'Anthropic', group: 'Anthropic' }];

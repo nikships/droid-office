@@ -50,8 +50,8 @@ test('calls carry the token from control.json, JSON bodies, and no Origin', asyn
   });
   writeControl(home, { ...CONTROL_FILE, port: proxy.port });
   const c = controlClient({ home });
-  assert.equal((await c.status()).providers?.length, 4);
-  assert.equal((await c.models()).models?.length, 5);
+  assert.equal((await c.status()).providers?.length, 5);
+  assert.equal((await c.models()).models?.length, 4);
   assert.equal((await c.usage()).accounts?.length, 3);
   assert.ok((await c.connect('claude')).connecting);
   await c.cancelConnect('claude');

@@ -266,21 +266,21 @@ test("hire checks droid's own default against a fresh model list, not one a lead
 
 test("models says which subscription models can't run and why, and hire refuses them before a desk is taken", async (t) => {
   const SOL = 'custom:droidproxy:gpt-6.1-sol';
-  const LUNA = 'custom:droidproxy:gpt-6-luna';
-  const OPUS = 'custom:droidproxy:claude-opus-5-5';
+  const GROK = 'custom:droidproxy:grok-4.7';
+  const OPUS = 'custom:droidproxy:opus-5-5';
   const now = Date.parse('2026-10-25T21:31:54Z');
   const catalogue: DroidModelCatalogue = {
     models: [
       { id: SOL, displayName: 'DroidProxy: GPT 6.1 Sol', custom: true },
-      { id: LUNA, displayName: 'DroidProxy: GPT 6 Luna', custom: true },
-      { id: OPUS, displayName: 'DroidProxy: Claude Opus 5.5', custom: true },
+      { id: GROK, displayName: 'DroidProxy: Grok 4.7', custom: true },
+      { id: OPUS, displayName: 'DroidProxy: Opus 5.5', custom: true },
       { id: 'glm-5.3-flash', displayName: 'GLM-5.3-Flash', tokenMultiplier: 0.06 },
     ],
     defaultModel: 'glm-5.3-flash',
   };
   const availability: Record<string, ModelAvailability> = {
     [SOL]: { state: 'exhausted', until: now + 41 * 60_000, window: '5-hour' },
-    [LUNA]: { state: 'ok' },
+    [GROK]: { state: 'ok' },
     [OPUS]: { state: 'signed-out', provider: 'claude' },
   };
   const r = rig(t, { models: () => Promise.resolve(catalogue), availability: (m) => availability[m], now: () => now });
@@ -290,7 +290,7 @@ test("models says which subscription models can't run and why, and hire refuses 
     res.models.map((m: Record<string, unknown>) => [m.id, m.default, m.cannotRun]),
     [
       [SOL, true, 'Out of quota, back in 41 min (5-hour)'],
-      [LUNA, undefined, undefined],
+      [GROK, undefined, undefined],
       [OPUS, undefined, 'No Claude account is connected'],
       ['glm-5.3-flash', undefined, undefined],
     ],
@@ -298,24 +298,24 @@ test("models says which subscription models can't run and why, and hire refuses 
 
   const named = await r.call('lead', { action: 'hire', task: 'a', model: OPUS });
   assert.equal(named.status, 409);
-  assert.equal(named.body.error, `Can't hire on Claude Opus 5.5: no Claude account is connected. Pick one that can: ${LUNA}, glm-5.3-flash.`);
+  assert.equal(named.body.error, `Can't hire on Opus 5.5: no Claude account is connected. Pick one that can: ${GROK}, glm-5.3-flash.`);
   const byDefault = await r.call('lead', { action: 'hire', task: 'b' });
   assert.equal(byDefault.status, 409);
   assert.match(byDefault.body.error, /^Can't hire on GPT 6.1 Sol: out of quota, back in 41 min \(5-hour\)\. It is the default subagent model, so pass --model\. Pick one that can:/);
   assert.equal(r.fake.hired.length, 0, 'no desk was taken');
   assert.equal(r.fake.fetched, 0);
-  assert.equal((await r.call('lead', { action: 'hire', task: 'c', model: LUNA })).status, 200);
+  assert.equal((await r.call('lead', { action: 'hire', task: 'c', model: GROK })).status, 200);
 
   // Droid's own default is judged too, and with nothing else that can run the lead is told to ask.
   r.fake.officeDefault = undefined;
   availability['glm-5.3-flash'] = { state: 'proxy-down', installed: false };
-  availability[LUNA] = { state: 'disabled', provider: 'codex' };
+  availability[GROK] = { state: 'disabled', provider: 'grok' };
   const none = await r.call('lead', { action: 'hire', task: 'd' });
   assert.equal(none.status, 409);
   assert.match(none.body.error, /^Can't hire on GLM-5.3-Flash: DroidProxy isn't installed\. It is the default subagent model, so pass --model\. No other model a subagent may run can run now either/);
   // A stopped DroidProxy doesn't refuse: the office starts it.
-  availability[LUNA] = { state: 'proxy-down', installed: true };
-  assert.equal((await r.call('lead', { action: 'hire', task: 'e', model: LUNA })).status, 200);
+  availability[GROK] = { state: 'proxy-down', installed: true };
+  assert.equal((await r.call('lead', { action: 'hire', task: 'e', model: GROK })).status, 200);
 });
 test('models without a model list still names the default and the picks', async (t) => {
   const r = rig(t, { models: () => Promise.reject(new Error('no droid')) }, { agent: { model: 'glm-5.3' }, models: [{ id: 'glm-5.3-flash' }] });
