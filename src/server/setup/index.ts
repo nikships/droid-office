@@ -122,7 +122,8 @@ export function mountSetup(opts: SetupOptions): Setup {
   const state: SetupState = {
     ...emptySetupState(),
     onboarded: file?.onboarded ?? false,
-    droid: { ...emptySetupState().droid, busy: 'checking', canInstall: canInstall(platform, arch) },
+    // An owner who named another agent command (--agent) runs that one: the office doesn't install a droid beside it.
+    droid: { ...emptySetupState().droid, busy: 'checking', canInstall: opts.agentCmd === 'droid' && canInstall(platform, arch) },
   };
   let stopped = false;
   /** Whether a check has told ready from not yet: only the first decides an office without setup.json. */
@@ -214,7 +215,10 @@ export function mountSetup(opts: SetupOptions): Setup {
   const doInstall = async () => {
     if (state.droid.busy === 'installing' || state.droid.busy === 'signing-in') return;
     if (!state.droid.canInstall) {
-      state.droid.error = `Droid Office can't install Droid on ${platform} ${arch}. Install it yourself with: curl -fsSL https://app.factory.ai/cli | sh`;
+      state.droid.error =
+        opts.agentCmd === 'droid'
+          ? `Droid Office can't install Droid on ${platform} ${arch}. Install it yourself with: curl -fsSL https://app.factory.ai/cli | sh`
+          : `The office runs ${opts.agentCmd} (--agent), so it doesn't install Droid itself.`;
       send();
       return;
     }
