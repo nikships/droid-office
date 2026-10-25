@@ -153,19 +153,21 @@ test('an office with Droid ready and no setup.json is onboarded, and says so in 
   assert.deepEqual(o.changed, []);
 });
 
-test('signed out with no setup.json opens the welcome, and nothing is written until it is done', async (t) => {
+test('signed out with no setup.json opens the welcome and writes it down, and signing in does not end it', async (t) => {
   let signedIn = false;
   const o = office(t, { signedIn: () => signedIn });
   await until(() => o.last().droid.signedIn === false && o.last().droid.busy === null);
   assert.equal(o.last().onboarded, false);
   assert.equal(needsWelcome(o.last()), true);
-  assert.equal(existsSync(path.join(o.dataDir, 'setup.json')), false);
+  await until(() => existsSync(path.join(o.dataDir, 'setup.json')));
+  assert.equal(readSetupFile(o.dataDir)?.onboarded, false);
 
-  // Signing in during the welcome doesn't end it: the owner still has its other steps.
+  // The owner still has the welcome's other steps.
   signedIn = true;
   o.setup.message('owner', { t: 'setup.check' });
   await until(() => o.last().droid.signedIn === true && o.last().droid.busy === null);
   assert.equal(o.last().onboarded, false);
+  assert.equal(needsWelcome(o.last()), true);
 
   o.setup.message('owner', { t: 'setup.onboarded', done: true });
   await until(() => readSetupFile(o.dataDir)?.onboarded === true);
@@ -181,6 +183,14 @@ test('no Droid, no setup.json: onboarded false; an existing setup.json is kept',
   assert.equal(missing.last().droid.path, null);
   assert.equal(missing.last().onboarded, false);
   assert.equal(needsWelcome(missing.last()), true);
+  await until(() => readSetupFile(missing.dataDir)?.onboarded === false);
+
+  // A restart in the middle of the welcome, Droid ready by then, keeps it open.
+  const midway = office(t, { setupJson: { onboarded: false, at: 1 } });
+  await until(() => midway.last().droid.signedIn === true && midway.last().droid.busy === null);
+  assert.equal(midway.last().onboarded, false);
+  assert.equal(needsWelcome(midway.last()), true);
+  assert.equal(readSetupFile(midway.dataDir)?.at, 1);
 
   const done = office(t, { droid: null, setupJson: { onboarded: true, at: 1 } });
   await until(() => done.last().droid.busy === null);

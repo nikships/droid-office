@@ -82,7 +82,7 @@ An office whose Droid isn't installed or signed in opens the welcome by itself o
 3. **Subscriptions** (Macs only). **Connect** Claude or ChatGPT, or another provider under **More**. The office installs DroidProxy if it has to, starts it in the background, and opens the provider's sign-in in your browser (or shows a device code). Once an account is connected, its models go into Droid and the step shows how much of each usage window is left. **Skip** leaves workers on Factory's own models; ⚙️ Settings → **Subscriptions** connects one later.
 4. **Ready.** Pick the model new workers start on (the best one that can run is already picked) and **Start**. It becomes the office's Default worker (⚙️ Settings → **Workers**).
 
-An office that already worked never sees it. The ☰ menu opens it again at any time. ⚙️ Settings → **Workers** → **Droid** shows the version, updates it, and signs it in again.
+Until you press **Start**, or close it once Droid is signed in, it opens again at its next step whenever the office loads, so a reload or a restart halfway through doesn't lose the last steps. An office that already worked never sees it. The ☰ menu opens it again at any time. ⚙️ Settings → **Workers** → **Droid** shows the version, updates it, and signs it in again.
 
 ### Open the running office in a browser app window
 

@@ -311,7 +311,6 @@ export function openWelcome(net: Net, first?: WelcomeStepId) {
   const start = () => {
     const change = defaultWorkerChange(picker.value(), officeChoice());
     if (change !== undefined) net.send({ t: 'prompts.agent', choice: change });
-    net.send({ t: 'setup.onboarded', done: true });
     modal.close();
     toast(HIRE_HINT);
   };
@@ -377,6 +376,8 @@ export function openWelcome(net: Net, first?: WelcomeStepId) {
     onClose: () => {
       current = null;
       closedHere = true;
+      // Closed once Droid can run, with Start or not, the welcome is done: the steps left are optional.
+      if (droidReady(store.setup) && !store.setup.onboarded) net.send({ t: 'setup.onboarded', done: true });
       picker.close();
       clearInterval(timer);
       for (const off of offs) off();

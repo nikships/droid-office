@@ -181,17 +181,19 @@ export function justConnected(subs: SubscriptionsState, pressed: readonly Subscr
 
 /**
  * The model the Ready step starts on: the first model (in Droid's order) of a just-connected
- * subscription that can run now, else the office's default worker unless it can't run, then any
- * subscription model that can. '' is Droid's own default. `models` is Droid's model list, by id.
+ * subscription that can run now; else the office's default worker, unless it can't run; else Claude's
+ * or ChatGPT's, then any subscription model that can. '' is Droid's own default. `models` is Droid's
+ * model list, by id.
  */
 export function readyModel(subs: SubscriptionsState, models: readonly string[], officeDefault: string | undefined, connected?: SubscriptionProviderKey): string {
   const fresh = models.filter((id) => isSubscriptionModel(id) && subs.availability[id]?.state === 'ok');
+  const of = (key: SubscriptionProviderKey) => fresh.find((id) => subs.modelProviders?.[id] === key);
   if (connected) {
-    const own = subs.modelProviders ? fresh.find((id) => subs.modelProviders?.[id] === connected) : fresh[0];
+    const own = subs.modelProviders ? of(connected) : fresh[0];
     if (own) return own;
   }
-  if (!officeDefault) return '';
-  return cannotRun(subs.availability[officeDefault]) ? (fresh[0] ?? '') : officeDefault;
+  if (officeDefault && !cannotRun(subs.availability[officeDefault])) return officeDefault;
+  return FEATURED_PROVIDERS.map(of).find((id) => id !== undefined) ?? fresh[0] ?? '';
 }
 
 /** What Start saves as the office's default worker: undefined leaves it as it is, null goes back to the agent the office started with. */

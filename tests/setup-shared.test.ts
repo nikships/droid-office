@@ -15,10 +15,11 @@ test('compareVersions orders dotted numbers, not strings', () => {
   assert.ok(compareVersions('1.2.0-beta', '1.2.1') < 0);
 });
 
-test('the welcome opens only for an office whose Droid cannot run workers yet', () => {
+test('the welcome opens until it is done, once the office knows where Droid stands', () => {
   assert.equal(needsWelcome(emptySetupState()), false, 'not before the server has looked');
   assert.equal(needsWelcome(ready({ path: null, signedIn: null })), true);
   assert.equal(needsWelcome(ready({ signedIn: false })), true);
+  assert.equal(needsWelcome(ready()), true, 'a fresh office keeps it after Droid is ready');
   assert.equal(needsWelcome(ready({ signedIn: null })), false, "an unknown sign-in isn't a reason to open it");
   assert.equal(needsWelcome(ready({ path: null }, true)), false, 'never once it is done');
   assert.equal(droidReady(ready()), true);

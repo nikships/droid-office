@@ -145,13 +145,16 @@ export function mountSetup(opts: SetupOptions): Setup {
     state.droid.account = auth.account;
   };
 
+  /**
+   * The first check that can tell decides an office without setup.json and writes it down: Droid
+   * ready is an office that already worked, anything else a fresh one, whose welcome then survives
+   * reloads and restarts until the owner finishes it.
+   */
   const settleOnboarded = async () => {
-    if (decided || state.droid.signedIn === null) return;
+    if (decided || (state.droid.path && state.droid.signedIn === null)) return;
     decided = true;
-    if (droidReady(state)) {
-      state.onboarded = true;
-      await writeSetupFile(opts.dataDir, true).catch(() => {});
-    }
+    state.onboarded = droidReady(state);
+    await writeSetupFile(opts.dataDir, state.onboarded).catch(() => {});
   };
 
   const look = async (first: boolean) => {
@@ -169,11 +172,7 @@ export function mountSetup(opts: SetupOptions): Setup {
       state.droid.version = version;
       if (state.droid.busy !== 'signing-in') applyAuth(auth);
     }
-    if (!found && !decided) {
-      decided = true;
-    } else {
-      await settleOnboarded();
-    }
+    await settleOnboarded();
   };
 
   /** Looks at Droid again; a call while one is running runs once more after it. */

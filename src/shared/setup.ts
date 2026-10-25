@@ -53,9 +53,13 @@ export function droidReady(s: SetupState): boolean {
   return !!s.droid.path && s.droid.signedIn === true;
 }
 
-/** The welcome should open by itself: the owner hasn't finished it and Droid can't run workers yet. */
+/**
+ * The welcome should open by itself: the owner hasn't finished it, and the office knows where Droid
+ * stands (missing, or its sign-in known). It keeps opening once Droid is ready, so a reload doesn't
+ * lose its last two steps.
+ */
 export function needsWelcome(s: SetupState): boolean {
-  return !s.onboarded && s.droid.busy !== 'checking' && (!s.droid.path || s.droid.signedIn === false);
+  return !s.onboarded && s.droid.busy !== 'checking' && (!s.droid.path || s.droid.signedIn !== null);
 }
 
 /** A newer Droid than the one installed is out. Versions are dotted numbers (0.249.0). */

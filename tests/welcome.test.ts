@@ -155,10 +155,11 @@ test('it opens by itself only while the office needs it, once per tab', () => {
   assert.equal(shouldAutoOpen(setup({}, true), false, false), false);
   assert.equal(shouldAutoOpen(emptySetupState(), false, false), false);
   assert.equal(shouldAutoOpen(setup({ ...installed, signedIn: false }), false, false), true);
-  assert.equal(shouldAutoOpen(setup({ ...installed, signedIn: true }), false, false), false);
+  assert.equal(shouldAutoOpen(setup({ ...installed, signedIn: true }), false, false), true);
+  assert.equal(shouldAutoOpen(setup({ ...installed, signedIn: true }, true), false, false), false);
 });
 
-test('Ready starts on a just-connected plan’s first model that can run, else the office default', () => {
+test('Ready starts on a just-connected plan’s first model that can run, else the office default, else a subscription’s', () => {
   const ids = ['claude-opus-5-5', 'custom:droidproxy:gpt-6-astra', 'custom:droidproxy:gpt-6.1-sol', 'custom:droidproxy:ag-c55o-high'];
   const p = subs({
     providers: [codex({ accounts: [account('owner@example.com')] })],
@@ -174,7 +175,10 @@ test('Ready starts on a just-connected plan’s first model that can run, else t
   assert.equal(readyModel(p, ids, 'claude-opus-5-5', 'codex'), 'custom:droidproxy:gpt-6.1-sol');
   assert.equal(readyModel(p, ids, 'claude-opus-5-5', 'antigravity'), 'custom:droidproxy:ag-c55o-high');
   assert.equal(readyModel(p, ids, 'claude-opus-5-5'), 'claude-opus-5-5');
-  assert.equal(readyModel(p, ids, undefined), '');
+  // No default of its own: ChatGPT's before another provider's, even when another comes first.
+  assert.equal(readyModel(p, ids, undefined), 'custom:droidproxy:gpt-6.1-sol');
+  assert.equal(readyModel(p, ['custom:droidproxy:ag-c55o-high', ...ids], undefined), 'custom:droidproxy:gpt-6.1-sol');
+  assert.equal(readyModel({ ...p, availability: {} }, ids, undefined), '');
   // Without the provider of each model, any subscription model that runs.
   assert.equal(readyModel({ ...p, modelProviders: undefined }, ids, undefined, 'codex'), 'custom:droidproxy:gpt-6.1-sol');
   // An office default that can't run gives way to one that can.
