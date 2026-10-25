@@ -65,6 +65,8 @@ export interface Subscriptions {
    * refuse the hire: this starts it.
    */
   gate(model: string | undefined): string | undefined;
+  /** Whether a look at DroidProxy, an install, a models update or another call on DroidProxy is under way. */
+  busy(): boolean;
   stop(): void;
 }
 
@@ -121,6 +123,8 @@ export function mountSubscriptions(opts: SubscriptionsOptions): Subscriptions {
   let lastUsage: RawUsage | undefined;
   /** The error on the proxy came from looking, not from something the owner asked for, so the next good look clears it. */
   let errorFromLook = false;
+  /** Droid's settings had DroidProxy models at the last look. */
+  let droidHasModels = false;
   let startingSince: number | null = null;
   let lastStartAt = Number.NEGATIVE_INFINITY;
   let installing: Promise<string | undefined> | null = null;
@@ -128,11 +132,21 @@ export function mountSubscriptions(opts: SubscriptionsOptions): Subscriptions {
   let autoAppliedAt = Number.NEGATIVE_INFINITY;
   const connects = new Set<SubscriptionProviderKey>();
   let inflight: Promise<void> | null = null;
+  /** Calls on DroidProxy made outside a look that haven't answered yet. */
+  let calling = 0;
   let pollTimer: unknown;
   let releaseTimer: unknown;
   let stopped = false;
 
   const sleep = (ms: number) => new Promise<void>((r) => timers.setTimeout(r, ms));
+  const call = async <T>(fn: () => Promise<T>): Promise<T> => {
+    calling++;
+    try {
+      return await fn();
+    } finally {
+      calling--;
+    }
+  };
   const fresh = () => now() - judgedAt <= STALE_MS;
   const view = (): SubscriptionsState => (fresh() ? state : { ...state, availability: {} });
   const publish = () => {
@@ -168,6 +182,7 @@ export function mountSubscriptions(opts: SubscriptionsOptions): Subscriptions {
 
   const lookOnce = async () => {
     const inSettings = await settingsModels(home);
+    droidHasModels = inSettings.size > 0;
     names = { ...Object.fromEntries(inSettings), ...names };
     const app = await findApp();
     if (!app) {
@@ -440,7 +455,7 @@ export function mountSubscriptions(opts: SubscriptionsOptions): Subscriptions {
         fail(`Couldn't connect ${providerName(key)}: ${err}`);
         return;
       }
-      const r = await control.connect(key);
+      const r = await call(() => control.connect(key));
       const c = r.connecting;
       if (c) setConnecting(key, { since: c.started_at ? Date.parse(c.started_at) || now() : now(), ...(c.user_code ? { code: c.user_code } : {}), ...(c.verification_uri ? { url: c.verification_uri } : {}) });
       publish();
@@ -460,7 +475,7 @@ export function mountSubscriptions(opts: SubscriptionsOptions): Subscriptions {
       return;
     }
     try {
-      await fn();
+      await call(fn);
     } catch (err) {
       fail(`Couldn't ${what}: ${message(err)}`);
     }
@@ -516,7 +531,7 @@ export function mountSubscriptions(opts: SubscriptionsOptions): Subscriptions {
       void (async () => {
         await look();
         // Droid's settings already have DroidProxy models: workers will need it running.
-        if (state.proxy.phase === 'stopped' && (await settingsModels(home)).size) await start();
+        if (state.proxy.phase === 'stopped' && droidHasModels) await start();
       })();
     }, 0);
   }
@@ -534,6 +549,7 @@ export function mountSubscriptions(opts: SubscriptionsOptions): Subscriptions {
       if (a.state === 'proxy-down' && a.installed) startForHire();
       return undefined;
     },
+    busy: () => inflight !== null || applying !== null || installing !== null || calling > 0,
     stop() {
       stopped = true;
       timers.clearTimeout(pollTimer);

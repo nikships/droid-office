@@ -62,7 +62,7 @@ interface RigOptions {
   world?: Partial<World>;
 }
 
-const settle = () => new Promise((r) => setTimeout(r, 5));
+const tick = () => new Promise((r) => setTimeout(r, 1));
 
 async function rig(t: { after(fn: () => void): void }, o: RigOptions = {}): Promise<Rig> {
   const home = tempDir(t, 'subscriptions');
@@ -92,7 +92,7 @@ async function rig(t: { after(fn: () => void): void }, o: RigOptions = {}): Prom
     if (cmd === 'osascript') world.running = false;
     return ok();
   };
-  const fetchImpl = (async (input: string | URL | Request, init?: RequestInit) => {
+  const answer = async (input: string | URL | Request, init?: RequestInit) => {
     const url = String(input);
     if (url === 'https://api.github.com/repos/nikships/droidproxy/releases/latest') return json(RELEASE);
     if (url.endsWith('.zip.sha256')) return new Response(`${createHash('sha256').update(ZIP).digest('hex')}  DroidProxy-arm64.zip\n`);
@@ -122,7 +122,27 @@ async function rig(t: { after(fn: () => void): void }, o: RigOptions = {}): Prom
     if (route === '/status') return json(world.status);
     if (route === '/models') return json(world.models);
     return new Response('{"error":"no such call"}', { status: 404 });
+  };
+  let calls = 0;
+  const fetchImpl = (async (input: string | URL | Request, init?: RequestInit) => {
+    calls++;
+    try {
+      return await answer(input, init);
+    } finally {
+      calls--;
+    }
   }) as typeof fetch;
+  /**
+   * Lets what is under way finish (a look, an install, a models update, a call to DroidProxy) before
+   * the test goes on, so a slow machine sees the same timers as a fast one. Nothing it waits for
+   * waits on the fake clock.
+   */
+  const quiet = async () => {
+    for (let idle = 0, i = 0; idle < 2 && i < 5000; i++) {
+      await tick();
+      idle = r.subs.busy() || calls > 0 ? 0 : idle + 1;
+    }
+  };
 
   const clock = { now: NOW };
   let seq = 0;
@@ -143,7 +163,7 @@ async function rig(t: { after(fn: () => void): void }, o: RigOptions = {}): Prom
     async advance(ms) {
       const end = clock.now + ms;
       for (;;) {
-        await settle();
+        await quiet();
         const due = [...queue.entries()].filter(([, q]) => q.at <= end).sort((a, b) => a[1].at - b[1].at)[0];
         if (!due) break;
         queue.delete(due[0]);
@@ -151,14 +171,14 @@ async function rig(t: { after(fn: () => void): void }, o: RigOptions = {}): Prom
         due[1].fn();
       }
       clock.now = end;
-      await settle();
+      await quiet();
     },
     async send(msg) {
       r.subs.message('owner', msg);
-      await settle();
+      await quiet();
     },
     async until(pred, what) {
-      for (let i = 0; i < 400 && !pred(); i++) await settle();
+      for (let i = 0; i < 2000 && !pred(); i++) await tick();
       assert.ok(pred(), `timed out waiting for ${what}`);
     },
   };
