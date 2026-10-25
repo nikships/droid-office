@@ -208,6 +208,8 @@ test("with no DroidProxy, its models in Droid's settings can't run, and it looks
     ],
   });
   await r.advance(0);
+  // Droid's settings are read on their own, so a slow machine sees them a little after the first look.
+  await r.until(() => Object.keys(r.subs.state().availability).length === 2, "the models in Droid's settings");
   const s = r.subs.state();
   assert.equal(s.proxy.phase, 'missing');
   assert.equal(s.proxy.latest, '1.8.179');
@@ -266,6 +268,7 @@ test('a running DroidProxy: providers with their windows, models in Droid, and w
   // The owner switches Claude on with nobody signed in.
   r.world.models = { ...MODELS, models: MODELS.models?.map((m) => (m.id === OPUS ? { ...m, availability: { state: 'signed-out' as const } } : m)) };
   await r.send({ t: 'subscriptions.refresh' });
+  await r.until(() => r.subs.availability(OPUS)?.state === 'signed-out', 'the refreshed availability');
   assert.equal(r.subs.gate(OPUS), "Can't hire on Opus 5.5: no Claude account is connected. Pick another model.");
 });
 
