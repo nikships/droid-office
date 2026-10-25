@@ -105,7 +105,7 @@ test('/models turns into availability: exhausted until when, signed-out and disa
 
 test('a refusal names the model and why', () => {
   const until = NOW + (3 * 60 + 10) * 60_000;
-  assert.equal(hireRefusal('GPT 6.1 Sol', { state: 'exhausted', until, window: '5-hour' }, NOW), "Can't hire on GPT 6.1 Sol: out of quota (5-hour) for another 3 h 10 min.");
+  assert.equal(hireRefusal('GPT 6.1 Sol', { state: 'exhausted', until, window: '5-hour' }, NOW), "Can't hire on GPT 6.1 Sol: out of quota, back in 3 h 10 min (5-hour).");
   assert.equal(hireRefusal('Opus', { state: 'signed-out', provider: 'claude' }, NOW), "Can't hire on Opus: no Claude account is connected.");
   assert.equal(hireRefusal('Grok 5', { state: 'disabled', provider: 'grok' }, NOW), "Can't hire on Grok 5: Grok is switched off in Subscriptions.");
   assert.equal(hireRefusal('X', { state: 'proxy-down', installed: false }, NOW), "Can't hire on X: DroidProxy isn't installed.");

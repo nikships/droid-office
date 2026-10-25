@@ -23,7 +23,7 @@ export interface PickerModel {
   detail?: string;
   /** Marks a model that is listed but not offered: droid no longer lists it, or `reason` says it can't run. */
   unavailable?: boolean;
-  /** Why an `unavailable` model can't run now ("Out of quota (5-hour) for another 3 h"). Drawn dimmed beside it; with a reason, the picker won't pick it. */
+  /** Why an `unavailable` model can't run now ("Out of quota, back in 3 h (5-hour)"). Drawn dimmed beside it; with a reason, the picker won't pick it. */
   reason?: string;
   /** A quiet remark that doesn't stop anyone choosing it ("DroidProxy isn't running: the office starts it"). */
   note?: string;

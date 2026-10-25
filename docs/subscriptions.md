@@ -82,7 +82,7 @@ A window covers a model unless it is named for another model family: Claude's "W
 
 | Where | What happens |
 | --- | --- |
-| `WorkerManager.spawn` (`modelGate`) | Every hire of an agent: the owner's, board agents', subagents'. Refused with `availabilityWords`: "Can't hire on GPT 6.1 Sol: out of quota (5-hour) for another 3 h 10 min. Pick another model." |
+| `WorkerManager.spawn` (`modelGate`) | Every hire of an agent: the owner's, board agents', subagents'. Refused with `availabilityWords`: "Can't hire on GPT 6.1 Sol: out of quota, back in 3 h 10 min (5-hour). Pick another model." |
 | `office-workers models` | Each model that can't run says why on its own line, and the default too. |
 | `office-workers hire` | A model that can't run, named or the default, is refused before a desk is taken, naming the ones that can. |
 | Model pickers (web and Android) | Shown dimmed with the reason and not pickable; a stopped DroidProxy only shows a note. |

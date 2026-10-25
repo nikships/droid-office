@@ -5,7 +5,7 @@ import { store } from '../state';
 import { withToken } from '../token';
 import { h } from './dom';
 import { modelPicker, type NoneOption } from './model-picker';
-import { multiplierLabel, type PickerModel } from './model-search';
+import { availabilityOf, multiplierLabel, type PickerModel } from './model-search';
 
 export const EFFORT_LABEL: Record<AgentEffort, string> = {
   low: 'Low',
@@ -258,6 +258,8 @@ export interface AgentFields {
   /** Puts the fields on this model and effort. */
   set(choice: AgentChoice): void;
   choice(): AgentChoice;
+  /** Why a worker on the picked model (or the one Default runs) can't run now; undefined when it can. */
+  cannotRun(): string | undefined;
 }
 
 /**
@@ -356,5 +358,6 @@ function buildFields(id: string, key: string | undefined, initialModel: string |
       fill();
     },
     choice: () => ({ ...(picker.value() ? { model: picker.value() } : {}), ...(effortSelect.value ? { effort: effortSelect.value as AgentEffort } : {}) }),
+    cannotRun: () => availabilityOf(picker.value() || defaultModel(), store.subscriptions, Date.now()).reason,
   };
 }

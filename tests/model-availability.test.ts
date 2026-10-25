@@ -18,7 +18,7 @@ test('a model that is out of quota is unavailable with its reason, and the picke
   const s = state({ availability: { [SOL]: { state: 'exhausted', until: NOW + 190 * 60_000, window: '5-hour' }, [OPUS]: { state: 'ok' } } });
   const [sol, opus, factory] = withAvailability(models, s, NOW);
   assert.equal(sol.unavailable, true);
-  assert.equal(sol.reason, 'Out of quota (5-hour) for another 3 h 10 min');
+  assert.equal(sol.reason, 'Out of quota, back in 3 h 10 min (5-hour)');
   assert.equal(canPick(sol), false);
   assert.equal(canPick(opus), true);
   assert.equal(opus.unavailable, undefined);

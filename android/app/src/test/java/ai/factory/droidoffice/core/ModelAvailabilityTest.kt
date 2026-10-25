@@ -45,7 +45,7 @@ class ModelAvailabilityTest {
 
     @Test
     fun saysWhyAModelCannotRunInTheOfficesWords() {
-        assertEquals("Out of quota (5-hour) for another 3 h 10 min", Availability.reason(parsed["custom:droidproxy:gpt-6.1-sol"], now))
+        assertEquals("Out of quota, back in 3 h 10 min (5-hour)", Availability.reason(parsed["custom:droidproxy:gpt-6.1-sol"], now))
         assertEquals("No Kimi account is connected", Availability.reason(parsed["custom:droidproxy:kimi-k3"], now))
         assertEquals("Antigravity is switched off in Subscriptions", Availability.reason(parsed["custom:droidproxy:ag-c55o-high"], now))
         assertEquals("DroidProxy isn't installed", Availability.reason(parsed["custom:droidproxy:grok-5"], now))

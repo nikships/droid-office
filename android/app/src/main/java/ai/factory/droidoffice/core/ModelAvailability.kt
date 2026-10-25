@@ -73,8 +73,7 @@ object Availability {
     fun words(a: ModelAvailability?, now: Long): String = when (a) {
         null, ModelAvailability.Ok -> ""
         is ModelAvailability.Exhausted -> {
-            val left = if (a.until != null && a.until > now) " for another ${duration(a.until - now)}" else ""
-            "Out of quota (${a.window})$left"
+            if (a.until != null && a.until > now) "Out of quota, back in ${duration(a.until - now)} (${a.window})" else "Out of quota (${a.window})"
         }
         is ModelAvailability.SignedOut -> "No ${provider(a.provider)} account is connected"
         is ModelAvailability.Disabled -> "${provider(a.provider)} is switched off in Subscriptions"

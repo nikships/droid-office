@@ -142,7 +142,7 @@ export function reasonWords(a: ModelAvailability, now: number): string {
   return a.state === 'exhausted' || a.state === 'signed-out' ? words.charAt(0).toLowerCase() + words.slice(1) : words;
 }
 
-/** The refusal of a hire on a model that can't run: "Can't hire on GPT 6.1 Sol: out of quota (5-hour) for another 3 h 10 min. Pick another model." */
+/** The refusal of a hire on a model that can't run: "Can't hire on GPT 6.1 Sol: out of quota, back in 3 h 10 min (5-hour). Pick another model." */
 export function hireRefusal(name: string, a: ModelAvailability, now: number): string {
   return `Can't hire on ${name}: ${reasonWords(a, now)}.`;
 }

@@ -289,7 +289,7 @@ test("models says which subscription models can't run and why, and hire refuses 
   assert.deepEqual(
     res.models.map((m: Record<string, unknown>) => [m.id, m.default, m.cannotRun]),
     [
-      [SOL, true, 'Out of quota (5-hour) for another 41 min'],
+      [SOL, true, 'Out of quota, back in 41 min (5-hour)'],
       [LUNA, undefined, undefined],
       [OPUS, undefined, 'No Claude account is connected'],
       ['glm-5.3-flash', undefined, undefined],
@@ -301,7 +301,7 @@ test("models says which subscription models can't run and why, and hire refuses 
   assert.equal(named.body.error, `Can't hire on Claude Opus 5.5: no Claude account is connected. Pick one that can: ${LUNA}, glm-5.3-flash.`);
   const byDefault = await r.call('lead', { action: 'hire', task: 'b' });
   assert.equal(byDefault.status, 409);
-  assert.match(byDefault.body.error, /^Can't hire on GPT 6.1 Sol: out of quota \(5-hour\) for another 41 min\. It is the default subagent model, so pass --model\. Pick one that can:/);
+  assert.match(byDefault.body.error, /^Can't hire on GPT 6.1 Sol: out of quota, back in 41 min \(5-hour\)\. It is the default subagent model, so pass --model\. Pick one that can:/);
   assert.equal(r.fake.hired.length, 0, 'no desk was taken');
   assert.equal(r.fake.fetched, 0);
   assert.equal((await r.call('lead', { action: 'hire', task: 'c', model: LUNA })).status, 200);

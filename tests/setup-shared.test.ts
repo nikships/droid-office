@@ -54,7 +54,7 @@ test('availability is looked up only for subscription models', () => {
 test('availability reads as one line', () => {
   const now = Date.UTC(2026, 9, 25, 19, 2);
   assert.equal(availabilityWords({ state: 'ok' }, now), '');
-  assert.equal(availabilityWords({ state: 'exhausted', until: now + (3 * 60 + 10) * 60_000, window: '5-hour' }, now), 'Out of quota (5-hour) for another 3 h 10 min');
+  assert.equal(availabilityWords({ state: 'exhausted', until: now + (3 * 60 + 10) * 60_000, window: '5-hour' }, now), 'Out of quota, back in 3 h 10 min (5-hour)');
   assert.equal(availabilityWords({ state: 'exhausted', until: now - 1000, window: 'Weekly' }, now), 'Out of quota (Weekly)');
   assert.equal(availabilityWords({ state: 'signed-out', provider: 'codex' }, now), 'No ChatGPT account is connected');
   assert.equal(availabilityWords({ state: 'disabled', provider: 'claude' }, now), 'Claude is switched off in Subscriptions');

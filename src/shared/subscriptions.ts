@@ -173,8 +173,9 @@ export function availabilityWords(a: ModelAvailability | undefined, now: number)
     case 'ok':
       return '';
     case 'exhausted': {
-      const left = a.until !== null && a.until > now ? ` for another ${durationWords(a.until - now)}` : '';
-      return `Out of quota (${a.window})${left}`;
+      // The wait comes before the window's name, so a narrow picker row that cuts the line keeps it.
+      if (a.until !== null && a.until > now) return `Out of quota, back in ${durationWords(a.until - now)} (${a.window})`;
+      return `Out of quota (${a.window})`;
     }
     case 'signed-out':
       return `No ${providerName(a.provider)} account is connected`;

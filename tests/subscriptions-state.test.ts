@@ -255,7 +255,7 @@ test('a running DroidProxy: providers with their windows, models in Droid, and w
     ['5-hour', 'Weekly'],
   );
   assert.equal(r.subs.availability(SOL)?.state, 'exhausted');
-  assert.equal(r.subs.gate(SOL), "Can't hire on GPT 6.1 Sol: out of quota (5-hour) for another 41 min. Pick another model.");
+  assert.equal(r.subs.gate(SOL), "Can't hire on GPT 6.1 Sol: out of quota, back in 41 min (5-hour). Pick another model.");
   assert.equal(r.subs.gate('custom:droidproxy:claude-opus-5-5'), "Can't hire on Claude Opus 5.5: no Claude account is connected. Pick another model.");
   assert.equal(r.subs.gate('custom:droidproxy:grok-5'), "Can't hire on Grok 5: Grok is switched off in Subscriptions. Pick another model.");
   assert.equal(r.subs.gate(LUNA), undefined);

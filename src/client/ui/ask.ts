@@ -57,6 +57,7 @@ export function openAsk(opts: AskOptions) {
   const modelRow = models ? h('div.group-row.block', {}, models.element) : null;
   const newOpts = h('div.group.prompt-opts', { role: 'group', 'aria-label': 'New worker options' }, modelRow, wtRow, repos.element);
   const submit = h('button.btn.primary', { type: 'submit' });
+  const refusedNote = h('p.note.bad.hidden', { role: 'alert' });
 
   const choices = h('div.seg.ask-to', { role: 'group', 'aria-label': 'Send to' });
   const pick = (id: string | null) => {
@@ -69,6 +70,7 @@ export function openAsk(opts: AskOptions) {
     submit.textContent = id ? 'Send' : 'Hire & start';
     submit.classList.toggle('accent', !id);
     submit.classList.toggle('primary', !!id);
+    refusedNote.classList.add('hidden');
   };
   if (opts.newDesk) choices.append(h('button.btn', { type: 'button', 'data-to': '', onclick: () => pick(null) }, `New worker · ${opts.newDesk}`));
   for (const w of opts.workers) {
@@ -88,6 +90,7 @@ export function openAsk(opts: AskOptions) {
       opts.context ? h('details.ask-context', {}, h('summary', {}, 'The worker is told first…'), h('pre', {}, opts.context)) : null,
       h('div.field', {}, h('label', { for: 'ask-prompt' }, 'Prompt'), h('div.prompt-input', {}, extras.element, pictureHint(), images.element)),
       newOpts,
+      refusedNote,
     ),
     h('footer', {}, sendHint(false), cancel, submit),
   ) as HTMLFormElement;
@@ -117,6 +120,12 @@ export function openAsk(opts: AskOptions) {
         waiting = false;
         send();
       });
+      return;
+    }
+    const refused = !to && models?.cannotRun();
+    if (refused) {
+      refusedNote.textContent = `${refused}. Pick another model.`;
+      refusedNote.classList.remove('hidden');
       return;
     }
     const picked = images.take();
