@@ -57,7 +57,7 @@ export const USAGE: RawUsage = {
   generated_at: '2026-10-25T21:31:54Z',
 };
 
-export const TOKEN = '0123456789abcdef'.repeat(4);
+export const TOKEN = 'fake-control-token-for-tests';
 export const CONTROL_FILE = { api: 1, port: 8317, token: TOKEN, version: '1.8.180', pid: 87978 };
 
 export function status(over: Partial<RawStatus> = {}): RawStatus {
