@@ -139,6 +139,39 @@ test('a failed fork cleans up only its new worktree and branch', (t) => {
   assert.equal(readFileSync(path.join(f.dir, 'untracked'), 'utf8'), 'source');
 });
 
+test('floor branch initialization creates a readable setting without pinning the repository default', (t) => {
+  const f = fixture(t);
+  const trees = new Worktrees(f.dir);
+  assert.equal(existsSync(trees.branchFile), false);
+  trees.ensureBranchFile();
+  assert.deepEqual(JSON.parse(readFileSync(trees.branchFile, 'utf8')), { branch: null });
+  assert.equal(trees.selectedBranch(), undefined);
+  assert.equal(trees.baseBranch(), 'main');
+
+  f.git('branch', 'release/next');
+  f.git('symbolic-ref', 'refs/remotes/origin/HEAD', 'refs/remotes/origin/release/next');
+  new Worktrees(f.dir).ensureBranchFile();
+  assert.equal(trees.baseBranch(), 'release/next', 'a later repository-default change still applies');
+  assert.deepEqual(JSON.parse(readFileSync(trees.branchFile, 'utf8')), { branch: null });
+});
+
+test('floor branch initialization leaves every existing setting untouched', (t) => {
+  const f = fixture(t);
+  const trees = new Worktrees(f.dir);
+  mkdirSync(path.dirname(trees.branchFile), { recursive: true });
+  for (const saved of ['{\n  "branch": "release/next"\n}\n', '{"branch":null}\n', '{broken', '']) {
+    writeFileSync(trees.branchFile, saved);
+    trees.ensureBranchFile();
+    assert.equal(readFileSync(trees.branchFile, 'utf8'), saved);
+  }
+});
+
+test('floor branch initialization reports filesystem errors instead of hiding them', (t) => {
+  const f = fixture(t);
+  writeFileSync(path.join(f.dir, '.droid-office'), 'not a directory');
+  assert.throws(() => new Worktrees(f.dir).ensureBranchFile(), { code: 'EEXIST' });
+});
+
 test('a saved floor branch overrides main and checkout starts, survives new instances, and resets to the default', async (t) => {
   const f = fixture(t);
   f.git('switch', '-q', '-c', 'release/next');

@@ -399,6 +399,19 @@ test('Droid workers pin their model and effort in a per-worker settings overlay,
   assert.equal(existsSync(overlayPath), false, 'a worker going home takes its overlay with it');
 });
 
+test('opening a git floor creates the branch setting in its checkout before any workers launch', (t) => {
+  const f = fixture();
+  t.after(() => f.close());
+  execFileSync('git', ['init', '-q', '-b', 'main', f.root]);
+  const file = path.join(f.root, '.droid-office', 'floor-branch.json');
+  assert.equal(existsSync(file), false);
+  const workers = manager(f, []);
+  t.after(() => workers.shutdown());
+  assert.deepEqual(JSON.parse(readFileSync(file, 'utf8')), { branch: null });
+  assert.equal(existsSync(path.join(f.data, 'floor-branch.json')), false, 'use the project checkout, not a separate worker data directory');
+  assert.deepEqual(f.read(), [], 'no agent has launched');
+});
+
 test('the worker system prompt is the office’s as rewritten, filled in for each worker, and none when it is empty', async (t) => {
   const f = fixture();
   isolateAgentEnvironment(f, t);
@@ -468,6 +481,7 @@ test("a plain folder's workers get no branch policy, no worktrees, no board agen
   mkdirSync(data, { recursive: true });
   const workers = new WorkerManager(folder, data, f.droid, [], { url: 'http://127.0.0.1:1', token: '' }, events([]), undefined, undefined, undefined, true);
   t.after(() => workers.shutdown());
+  assert.equal(existsSync(path.join(data, 'floor-branch.json')), false, 'plain floors have no branch setting');
 
   assert.match(String(workers.spawn('desk-2', 'test', 'branch out', true)), /plain folder.*can't have worktrees/);
   assert.match(String(workers.station('station-issues', 'test', 'triage')), /plain folder.*no Issues agent/);
