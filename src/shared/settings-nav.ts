@@ -1,5 +1,5 @@
 /** The categories down the side of Settings. */
-export type SettingsPane = 'you' | 'sound' | 'graphics' | 'notify' | 'building' | 'factory' | 'workers' | 'subagents' | 'phone';
+export type SettingsPane = 'you' | 'sound' | 'graphics' | 'notify' | 'building' | 'factory' | 'subscriptions' | 'workers' | 'subagents' | 'phone';
 
 export const SETTINGS_PANES: { id: SettingsPane; icon: string; label: string; blurb: string }[] = [
   { id: 'you', icon: '🧍', label: 'You', blurb: 'How you look, how you see the office, and what you hold.' },
@@ -12,6 +12,12 @@ export const SETTINGS_PANES: { id: SettingsPane; icon: string; label: string; bl
     icon: '🏭',
     label: 'Factory',
     blurb: 'Connect the office to Factory with an API key: its cloud computers, Droid sessions and credits, CI automations and AutoWiki, on the office’s walls and in its windows.',
+  },
+  {
+    id: 'subscriptions',
+    icon: '🔌',
+    label: 'Subscriptions',
+    blurb: 'Use the Claude or ChatGPT plan you already pay for: connect your accounts, and workers run on their models. DroidProxy, a small menu-bar app on this Mac, connects them.',
   },
   { id: 'workers', icon: '🤖', label: 'Workers', blurb: 'What workers start on and from, how many run at once, when they go home, what the office tells them and how their worktrees are set up.' },
   {
@@ -49,6 +55,10 @@ export const SETTINGS_CARDS = [
   { pane: 'building', title: 'Workspace folder' },
   { pane: 'building', title: 'Source hot reload' },
   { pane: 'factory', title: 'Factory API key' },
+  { pane: 'subscriptions', title: 'DroidProxy' },
+  { pane: 'subscriptions', title: 'Accounts' },
+  { pane: 'subscriptions', title: 'Models in Droid' },
+  { pane: 'workers', title: 'Droid' },
   { pane: 'workers', title: 'Default worker' },
   { pane: 'workers', title: 'Where fresh workers start' },
   { pane: 'workers', title: 'Prompts' },

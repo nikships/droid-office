@@ -136,6 +136,7 @@ import { cloudBadge } from '../shared/factory-cloud';
 import { Compass, type Bearing } from './ui/compass';
 import { openCharacter } from './ui/character';
 import { openSettings, type SettingsPane } from './ui/settings';
+import { openWelcome, watchWelcome } from './ui/welcome';
 import { officePrompt } from './ui/prompts';
 import { forgeVars } from '../shared/prompts';
 import { INCLUDE_FILE, SETUP_FILE, describeSetup } from '../shared/worktree-setup';
@@ -3469,6 +3470,18 @@ const hudActions: HudAction[] = [
     run: () => (hanger.active ? hanger.cancel() : startHanging()),
   },
   { id: 'settings', icon: '⚙️', label: 'Settings', section: 'Office', run: showSettings },
+  {
+    id: 'welcome',
+    icon: '👋',
+    label: 'Welcome',
+    section: 'Office',
+    // On the top bar while workers can't start: Droid is missing or signed out.
+    status: droidMissing,
+    chip: () => 'Set up Droid',
+    tone: () => (droidMissing() ? 'primary' : undefined),
+    title: () => 'Droid, your Factory account and Subscriptions',
+    run: () => openWelcome(net),
+  },
   { id: 'phone', icon: '📱', label: 'Pair a phone', section: 'Office', title: () => 'Pair Droid Office for Android with the QR code', run: () => openPhone() },
   { id: 'companion', icon: '🌐', label: 'Web companion', section: 'Office', title: () => 'Open the office in a desktop browser: its links for this computer, Wi-Fi and Tailscale', run: () => openCompanion() },
   { id: 'help', icon: '❓', label: 'Controls', section: 'Office', key: 'H', run: () => openHelp(settings.sidearm) },
@@ -3502,6 +3515,10 @@ const hudActions: HudAction[] = [
   },
 ];
 const hud = mountHud(hudActions, settings, () => saveSettings(settings));
+function droidMissing(): boolean {
+  const d = store.setup.droid;
+  return d.busy !== 'checking' && (!d.path || d.signedIn === false);
+}
 /** F: hang a picture on a wall of this floor. There are no walls for them up on the roof. */
 function startHanging() {
   if (upTop) return toast('No walls to hang pictures on up here — take the elevator down to a floor', 'warn');
@@ -4110,6 +4127,7 @@ loading.until([
   { say: 'Unpacking the office', done: propsReady },
   { say: 'Compiling shaders', done: shadersReady },
 ]);
+watchWelcome(net, shadersReady);
 {
   // The sign-in page's remembered name, from before there was no signing in: gone once, here.
   try {

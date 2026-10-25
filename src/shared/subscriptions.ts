@@ -113,6 +113,11 @@ export interface SubscriptionsState {
    * never refused: a model that isn't a subscription model, or one DroidProxy couldn't judge.
    */
   availability: Record<string, ModelAvailability>;
+  /**
+   * The provider that serves each of DroidProxy's models, by model id, in DroidProxy's order (from
+   * `/models`). The welcome picks a just-connected plan's first model with it.
+   */
+  modelProviders?: Record<string, SubscriptionProviderKey>;
   /** When DroidProxy last answered, ms since the epoch. */
   checkedAt: number | null;
 }
