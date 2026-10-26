@@ -157,6 +157,11 @@ class OfficeConnection(
     /** What became of a Whiteboard ping this phone sent. */
     val pinged: SharedFlow<WbPinged> = _pinged.asSharedFlow()
 
+    private val _threads = MutableSharedFlow<ServerMsg.ThreadSnapshot>(extraBufferCapacity = 16)
+
+    /** Pages of workers' conversations, each answering one `thread.read`; a [ai.factory.droidoffice.core.ThreadFeed] keeps the ones it asked for. */
+    val threads: SharedFlow<ServerMsg.ThreadSnapshot> = _threads.asSharedFlow()
+
     private val boardWatchers = HashSet<String>()
     private var whiteboard = newWhiteboard()
 
@@ -578,6 +583,7 @@ class OfficeConnection(
             is ServerMsg.Worktree -> _worktrees.tryEmit(msg)
             is ServerMsg.Whiteboard -> whiteboard.handle(msg.t, msg.obj)
             is ServerMsg.Pinged -> _pinged.tryEmit(msg.result)
+            is ServerMsg.ThreadSnapshot -> _threads.tryEmit(msg)
             is ServerMsg.Pong, is ServerMsg.Ignored -> Unit
         }
     }

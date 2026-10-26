@@ -134,6 +134,47 @@ class ProtocolTest {
     }
 
     @Test
+    fun readsThreadPagesAndSkipsEntriesItCantPlace() {
+        val msg = Protocol.decode(
+            """{"t":"thread.snapshot","workerId":"w1","request":"ab-3","before":40,"sessionId":"s1","hasMore":true,"future":1,"entries":[
+              {"id":"u1","seq":1,"role":"user","kind":"text","text":"Fix the build"},
+              {"id":"t1","seq":2,"role":"assistant","kind":"tool","name":"Execute","input":"{\n  \"command\": \"npm test\"\n}","output":"ok","error":false},
+              {"id":"x1","seq":3,"role":"assistant","kind":"image"},
+              {"id":"x2","seq":4,"role":"robot","kind":"text"},
+              {"seq":5,"role":"user","kind":"text"},
+              {"id":"n1","seq":6.0,"role":"system","kind":"notice","text":"Turn ended","error":true}
+            ]}""",
+        ) as ServerMsg.ThreadSnapshot
+        assertEquals("w1", msg.workerId)
+        assertEquals("ab-3", msg.request)
+        assertEquals(40L, msg.before)
+        assertEquals("s1", msg.sessionId)
+        assertTrue(msg.hasMore)
+        assertNull(msg.error)
+        assertEquals(listOf("u1", "t1", "n1"), msg.entries.map { it.id })
+        assertEquals(ThreadEntry("t1", 2, ThreadRole.Assistant, ThreadKind.Tool, name = "Execute", input = "{\n  \"command\": \"npm test\"\n}", output = "ok"), msg.entries[1])
+        assertEquals(6L, msg.entries[2].seq)
+        assertTrue(msg.entries[2].error)
+
+        val failed = Protocol.decode("""{"t":"thread.snapshot","workerId":"w1","request":"ab-4","entries":[],"hasMore":false,"error":"No Droid session"}""") as ServerMsg.ThreadSnapshot
+        assertEquals("No Droid session", failed.error)
+        assertNull(failed.before)
+        assertNull(failed.sessionId)
+        // Without the request it answers, a page can't be matched to anything.
+        assertEquals(ServerMsg.Ignored("thread.snapshot"), Protocol.decode("""{"t":"thread.snapshot","workerId":"w1","entries":[]}"""))
+    }
+
+    @Test
+    fun asksForThreadPages() {
+        val latest = json(ClientMsg.threadRead("w1", "ab-1"))
+        assertEquals("thread.read", latest.getValue("t").jsonPrimitive.content)
+        assertEquals("w1", latest.getValue("workerId").jsonPrimitive.content)
+        assertEquals("ab-1", latest.getValue("request").jsonPrimitive.content)
+        assertFalse(latest.containsKey("before"))
+        assertEquals(12L, json(ClientMsg.threadRead("w1", "ab-2", 12)).getValue("before").jsonPrimitive.content.toLong())
+    }
+
+    @Test
     fun readsToastsAndWorktrees() {
         assertEquals(ServerMsg.Toast("Nik sent Atlas home", "info", null), Protocol.decode("""{"t":"toast","text":"Nik sent Atlas home","level":"info"}"""))
         val wt = Protocol.decode("""{"t":"worker.worktree","workerId":"w1","state":{"exists":true,"dirty":2,"ahead":1,"unpushed":1}}""") as ServerMsg.Worktree
