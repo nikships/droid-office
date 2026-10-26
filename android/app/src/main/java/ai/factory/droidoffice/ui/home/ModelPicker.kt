@@ -132,7 +132,8 @@ internal fun ModelPicker(catalogue: ModelCatalogue?, loading: Boolean, selected:
             Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 20.dp, vertical = 4.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 Chip("All · ${models.size}", scope.isEmpty(), { scope = "" }, Modifier.tagged(Tags.Hire.modelScope("All")))
                 ModelSearch.scopes(models).forEach { group ->
-                    Chip("${group.name} · ${group.count}", scope == group.name, { scope = group.name }, Modifier.tagged(Tags.Hire.modelScope(group.name)), icon = ModelBrand.provider(group.name)?.let { ai.factory.droidoffice.ui.theme.OfficeIcons.model(androidx.compose.ui.platform.LocalContext.current, it) })
+                    val brand = ModelBrand.provider(group.name)
+                    Chip("${group.name} · ${group.count}", scope == group.name, { scope = group.name }, Modifier.tagged(Tags.Hire.modelScope(group.name)), leading = brand?.let { { BrandLogo(it, Modifier.size(15.dp), monoTint = if (scope == group.name) Palette.Bg else Palette.TextSecondary) } })
                 }
             }
             LazyColumn(Modifier.fillMaxWidth().weight(1f, fill = false), state = listState, contentPadding = PaddingValues(bottom = 16.dp)) {

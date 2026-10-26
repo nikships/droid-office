@@ -4,6 +4,9 @@ import java.util.Locale
 
 /** Model-first marks, kept in step with src/client/ui/model-brand.ts. A gateway is not a model. */
 object ModelBrand {
+    /** Only these upstream marks have no colored variant; tests check against MODEL_BRANDS. */
+    val monochrome = setOf("openai", "grok", "copilot")
+
     private val families = listOf(
         "claude" to """\b(?:claude|opus|sonnet|haiku)\b""",
         "codex" to """\bcodex\b""",

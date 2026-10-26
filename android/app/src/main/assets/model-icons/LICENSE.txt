@@ -2,7 +2,7 @@ LobeHub Icons, @lobehub/icons-static-svg 1.100.0
 https://icons.lobehub.com/
 https://github.com/lobehub/lobe-icons
 
-These SVGs are unmodified upstream assets. Brand marks belong to their respective owners.
+These PNGs are rendered from the unmodified upstream SVGs, preserving their colors. Brand marks belong to their respective owners.
 
 MIT License
 

@@ -1,40 +1,29 @@
 package ai.factory.droidoffice.ui.theme
 
 import android.content.Context
-import android.util.Xml
+import android.graphics.BitmapFactory
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.PathFillType
+import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.graphics.vector.PathParser
 import androidx.compose.ui.unit.dp
-import org.xmlpull.v1.XmlPullParser
 
 /**
  * The app's own line icons, drawn on a 24 grid with a 1.75 stroke so they sit with Geist's weight.
  * Material's core set covers the rest.
  */
 object OfficeIcons {
-    private val modelMarks = mutableMapOf<String, ImageVector>()
+    private val modelMarks = mutableMapOf<String, ImageBitmap>()
 
-    /** Trusted, bundled LobeHub mono SVGs contain only 24×24 path data, not arbitrary SVG content. */
-    fun model(context: Context, brand: String): ImageVector = modelMarks.getOrPut(brand) {
-        val vector = ImageVector.Builder(name = brand, defaultWidth = 24.dp, defaultHeight = 24.dp, viewportWidth = 24f, viewportHeight = 24f)
-        context.assets.open("model-icons/$brand.svg").use { source ->
-            val xml = Xml.newPullParser()
-            xml.setInput(source, "UTF-8")
-            var fill = PathFillType.NonZero
-            while (xml.eventType != XmlPullParser.END_DOCUMENT) {
-                if (xml.eventType == XmlPullParser.START_TAG) {
-                    if (xml.name == "svg") fill = if (xml.getAttributeValue(null, "fill-rule") == "evenodd") PathFillType.EvenOdd else PathFillType.NonZero
-                    if (xml.name == "path") vector.addPath(pathData = PathParser().parsePathString(xml.getAttributeValue(null, "d")).toNodes(), fill = SolidColor(Color.White), pathFillType = fill)
-                }
-                xml.next()
-            }
+    /** Exact official artwork, including gradients and masks, rendered from the web's bundled SVGs. */
+    fun model(context: Context, brand: String): ImageBitmap = modelMarks.getOrPut(brand) {
+        context.assets.open("model-icons/$brand.png").use { source ->
+            requireNotNull(BitmapFactory.decodeStream(source)) { "Invalid model logo: $brand" }.asImageBitmap()
         }
-        vector.build()
     }
 
     private fun icon(name: String, vararg strokes: String, fills: List<Pair<String, Float>> = emptyList()): ImageVector {

@@ -8,7 +8,7 @@ export const MODEL_BRANDS = {
   deepseek: { file: 'deepseek-color.svg' },
   qwen: { file: 'qwen-color.svg' },
   grok: { file: 'grok.svg', mono: true },
-  kimi: { file: 'kimi.svg', mono: true },
+  kimi: { file: 'kimi-color.svg', tile: true },
   glm: { file: 'chatglm-color.svg' },
   minimax: { file: 'minimax-color.svg' },
   mistral: { file: 'mistral-color.svg' },
@@ -17,11 +17,11 @@ export const MODEL_BRANDS = {
   junie: { file: 'junie-color.svg' },
   copilot: { file: 'githubcopilot.svg', mono: true },
   antigravity: { file: 'antigravity-color.svg' },
-  openrouter: { file: 'openrouter.svg', mono: true },
+  openrouter: { file: 'openrouter-color.svg' },
   nvidia: { file: 'nvidia-color.svg' },
   cohere: { file: 'cohere-color.svg' },
   perplexity: { file: 'perplexity-color.svg' },
-} satisfies Record<string, { file: string; mono?: boolean }>;
+} satisfies Record<string, { file: string; mono?: boolean; tile?: boolean }>;
 
 export type ModelBrand = keyof typeof MODEL_BRANDS;
 

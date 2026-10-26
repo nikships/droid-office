@@ -295,7 +295,7 @@ fun GlyphMark(modifier: Modifier = Modifier, size: Dp = 96.dp, spin: Boolean = t
 }
 
 @Composable
-fun Chip(text: String, selected: Boolean, onClick: () -> Unit, modifier: Modifier = Modifier, icon: ImageVector? = null, badge: Int = 0, badgeColor: Color = Palette.Danger) {
+fun Chip(text: String, selected: Boolean, onClick: () -> Unit, modifier: Modifier = Modifier, icon: ImageVector? = null, badge: Int = 0, badgeColor: Color = Palette.Danger, leading: (@Composable () -> Unit)? = null) {
     val haptics = LocalHapticFeedback.current
     val shape = RoundedCornerShape(8.dp)
     Row(
@@ -310,7 +310,8 @@ fun Chip(text: String, selected: Boolean, onClick: () -> Unit, modifier: Modifie
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(7.dp),
     ) {
-        if (icon != null) Icon(icon, null, Modifier.size(15.dp), tint = if (selected) Palette.Bg else Palette.TextSecondary)
+        if (leading != null) leading()
+        else if (icon != null) Icon(icon, null, Modifier.size(15.dp), tint = if (selected) Palette.Bg else Palette.TextSecondary)
         Text(text, style = MaterialTheme.typography.labelLarge, color = if (selected) Palette.Bg else Palette.Text, maxLines = 1)
         if (badge > 0) {
             Box(Modifier.clip(RoundedCornerShape(4.dp)).background(badgeColor).padding(horizontal = 5.dp, vertical = 1.dp)) {

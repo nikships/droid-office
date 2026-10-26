@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import test from 'node:test';
 import { SUBSCRIPTION_PROVIDERS } from '../src/shared/subscriptions.js';
@@ -73,13 +74,37 @@ test('every mapped mark is bundled locally as a standalone SVG, with attribution
   assert.match(readFileSync(new URL('LICENSE.txt', root), 'utf8'), /Copyright \(c\) 2023 LobeHub/);
 });
 
-test('Android bundles every brand as trusted 24×24 path-only SVGs its vector reader supports', () => {
+test('Android preserves the official colored SVGs in its generated bitmap assets', () => {
   const root = new URL('../android/app/src/main/assets/model-icons/', import.meta.url);
-  for (const brand of Object.keys(MODEL_BRANDS)) {
-    const svg = readFileSync(new URL(`${brand}.svg`, root), 'utf8');
-    assert.match(svg, /viewBox="0 0 24 24"/);
-    assert.match(svg, /<path\b/);
-    assert.doesNotMatch(svg, /<(?!\/?(?:svg|path|title)\b)[a-z]|transform=|(?:href|src)=|<(?:linearGradient|radialGradient)\b/i, brand);
+  const source = new URL('../src/client/public/icons/models/', import.meta.url);
+  const manifest = JSON.parse(readFileSync(new URL('manifest.json', root), 'utf8'));
+  const hash = (data: Buffer) => createHash('sha256').update(data).digest('hex');
+  assert.equal(manifest.size, 128);
+  assert.deepEqual(Object.keys(manifest.icons), Object.keys(MODEL_BRANDS));
+  for (const [brand, mark] of Object.entries(MODEL_BRANDS)) {
+    const png = readFileSync(new URL(`${brand}.png`, root));
+    const svg = readFileSync(new URL(mark.file, source));
+    assert.deepEqual(
+      manifest.icons[brand],
+      { file: mark.file, mono: 'mono' in mark && mark.mono, tile: 'tile' in mark && mark.tile, svgSha256: hash(svg), pngSha256: hash(png) },
+      `${brand}: run node --import tsx tools/android-model-icons.mjs`,
+    );
+    assert.equal(png.subarray(1, 4).toString(), 'PNG');
+    assert.equal(png.readUInt32BE(16), 128);
+    assert.equal(png.readUInt32BE(20), 128);
   }
   assert.match(readFileSync(new URL('LICENSE.txt', root), 'utf8'), /LobeHub/);
+  assert.equal(MODEL_BRANDS.kimi.file, 'kimi-color.svg');
+  assert.equal(MODEL_BRANDS.openrouter.file, 'openrouter-color.svg');
+  const native = readFileSync(new URL('../android/app/src/main/java/ai/factory/droidoffice/core/ModelBrand.kt', import.meta.url), 'utf8');
+  const mono = [...native.match(/val monochrome = setOf\(([^)]+)\)/)![1].matchAll(/"([^"]+)"/g)].map((m) => m[1]).sort();
+  assert.deepEqual(
+    mono,
+    Object.entries(MODEL_BRANDS)
+      .filter(([, m]) => 'mono' in m && m.mono)
+      .map(([brand]) => brand)
+      .sort(),
+  );
+  const component = readFileSync(new URL('../android/app/src/main/java/ai/factory/droidoffice/ui/components/ModelLogo.kt', import.meta.url), 'utf8');
+  assert.match(component, /colorFilter = if \(brand in ModelBrand\.monochrome\) ColorFilter\.tint\(monoTint\) else null/);
 });

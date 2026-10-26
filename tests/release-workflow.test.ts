@@ -25,6 +25,7 @@ test('CI checks only the affected platforms and builds every client change into 
   assert.deepEqual(checksFor(['tests/desktop.test.ts']), { ...none, node: true });
   assert.deepEqual(checksFor(['README.md', 'docs/guide/getting-started.md']), { ...none, node: true });
   assert.deepEqual(checksFor(['tools/android-terminal.mjs']), { ...none, node: true });
+  assert.deepEqual(checksFor(['tools/android-model-icons.mjs']), { ...none, node: true, android: true });
   assert.deepEqual(checksFor(['tools/props/generate.py']), { ...none, node: true });
   assert.deepEqual(checksFor(['tools/props/verify.mjs']), { ...none, node: true });
   for (const file of [
