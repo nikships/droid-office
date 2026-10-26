@@ -167,7 +167,7 @@ import { EmoteWheel } from './ui/emotes';
 import { wayTo } from './walkto';
 import { Upscaler } from './world/upscaler';
 import { Remaster } from './world/remaster';
-import { visibleIntersections } from './world/picking';
+import { preparePicking, visibleIntersections } from './world/picking';
 import { bakeBudget, bakeKey, loadRemaster, type RemasterSettings, resolveRemaster, saveRemaster } from './remaster-settings';
 import { bakeCache } from './gi-cache';
 import { FrameStats, pacingText } from './frame-stats';
@@ -4125,6 +4125,7 @@ const shadersReady = propsReady
       const loaded = propScene(name);
       return loaded ? [loaded] : [];
     });
+    preparePicking(scene);
     await warmOfficeShaders({
       renderer,
       outline: (scene, camera) => effect.renderOutline(scene, camera),

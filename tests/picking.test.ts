@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import * as THREE from 'three';
-import { boundStaticRaycast, visibleIntersections } from '../src/client/world/picking.js';
+import { boundStaticRaycast, preparePicking, visibleIntersections } from '../src/client/world/picking.js';
 import { mergeByMaterial, toonUnique } from '../src/client/world/toon.js';
 
 function box(z: number): THREE.Mesh {
@@ -130,4 +130,144 @@ test('bounded picking intersects the original draw range and restores it, includ
   boundStaticRaycast(mesh, chunks);
   assert.throws(() => mesh.raycast(ray(), []), /test/);
   assert.deepEqual(geometry.drawRange, { start: 3, count: 18 });
+});
+
+for (const indexed of [true, false]) {
+  test(`triangle bounds preserve exact ${indexed ? 'indexed' : 'non-indexed'} hits and draw ranges`, () => {
+    const source = new THREE.TorusKnotGeometry(1, 0.3, 80, 8);
+    const geometry = indexed ? source : source.toNonIndexed();
+    const mesh = new THREE.Mesh(geometry, new THREE.MeshBasicMaterial({ side: THREE.DoubleSide }));
+    mesh.position.set(1, 0.2, -2);
+    mesh.rotation.set(0.2, 0.4, -0.1);
+    mesh.scale.set(1.1, 0.8, 1.4);
+    mesh.updateMatrixWorld(true);
+    preparePicking(mesh);
+    for (const range of [
+      { start: 0, count: Infinity },
+      { start: 12, count: 900 },
+      { start: 1, count: 101 },
+      { start: 0, count: 0 },
+    ]) {
+      geometry.setDrawRange(range.start, range.count);
+      for (let x = -1; x <= 3; x += 0.2) {
+        const cast = new THREE.Raycaster(new THREE.Vector3(x, 0.2, 5), new THREE.Vector3(0, 0, -1), 0.1, 20);
+        assert.deepEqual(visibleIntersections(cast, [mesh]), cast.intersectObject(mesh));
+        assert.deepEqual(geometry.drawRange, range);
+      }
+    }
+  });
+}
+
+test('shared triangle bounds skip detailed geometry across empty space without changing buffers', () => {
+  const geometry = new THREE.TorusGeometry(2, 0.1, 12, 80);
+  const mesh = new THREE.Mesh(geometry, new THREE.MeshBasicMaterial({ side: THREE.DoubleSide }));
+  mesh.updateMatrixWorld(true);
+  const index = geometry.index;
+  const positions = geometry.getAttribute('position');
+  const original = positions.array.slice();
+  preparePicking(mesh);
+  let reads = 0;
+  const get = mesh.getVertexPosition;
+  const getX = positions.getX.bind(positions);
+  positions.getX = (i) => {
+    reads++;
+    return getX(i);
+  };
+  const cast = new THREE.Raycaster(new THREE.Vector3(0, 0, 5), new THREE.Vector3(0, 0, -1));
+  assert.deepEqual(visibleIntersections(cast, [mesh]), []);
+  const boundedReads = reads;
+  cast.intersectObject(mesh);
+  assert.ok(reads > boundedReads * 10, `${boundedReads} bounded reads versus ${reads - boundedReads} unbounded reads`);
+  assert.equal(mesh.getVertexPosition, get);
+  assert.equal(geometry.index, index);
+  assert.deepEqual(positions.array, original);
+  const clone = mesh.clone();
+  clone.position.z = 1;
+  clone.updateMatrixWorld(true);
+  assert.deepEqual(visibleIntersections(cast, [clone]), cast.intersectObject(clone));
+});
+
+test('triangle bounds rebuild for changed or replaced position and index buffers', () => {
+  const geometry = new THREE.PlaneGeometry(2, 2, 20, 20);
+  const mesh = new THREE.Mesh(geometry, new THREE.MeshBasicMaterial({ side: THREE.DoubleSide }));
+  preparePicking(mesh);
+  for (let i = 0; i < 3; i++) {
+    const positions = geometry.getAttribute('position');
+    for (let j = 0; j < positions.count; j++) positions.setX(j, positions.getX(j) + 2);
+    positions.needsUpdate = true;
+    geometry.computeBoundingSphere();
+    if (i === 1) geometry.setAttribute('position', positions.clone());
+    if (i === 2) geometry.setIndex(geometry.index!.clone());
+    const cast = new THREE.Raycaster(new THREE.Vector3(2 * (i + 1), 0, 5), new THREE.Vector3(0, 0, -1));
+    const expected = cast.intersectObject(mesh);
+    assert.ok(expected.length);
+    assert.deepEqual(visibleIntersections(cast, [mesh]), expected);
+  }
+});
+
+test('morphed, custom and multi-material meshes keep their original raycaster', () => {
+  const geometry = new THREE.PlaneGeometry(2, 2, 20, 20);
+  const mesh = new THREE.Mesh(geometry, new THREE.MeshBasicMaterial({ side: THREE.DoubleSide }));
+  geometry.morphAttributes.position = [geometry.getAttribute('position').clone()];
+  mesh.updateMorphTargets();
+  mesh.morphTargetInfluences![0] = 0.5;
+  const cast = ray();
+  assert.deepEqual(visibleIntersections(cast, [mesh]), cast.intersectObject(mesh));
+  delete geometry.morphAttributes.position;
+  const original = mesh.getVertexPosition;
+  mesh.getVertexPosition = (index, point) => original.call(mesh, index, point);
+  assert.deepEqual(visibleIntersections(cast, [mesh]), cast.intersectObject(mesh));
+  mesh.getVertexPosition = original;
+  const multi = new THREE.Mesh(geometry, [mesh.material]);
+  geometry.addGroup(0, geometry.index!.count, 0);
+  assert.deepEqual(visibleIntersections(cast, [multi]), cast.intersectObject(multi));
+});
+
+test('interleaved positions invalidate their bounds when the shared buffer changes', () => {
+  const geometry = new THREE.PlaneGeometry(2, 2, 20, 20);
+  const original = geometry.getAttribute('position');
+  const values = new Float32Array(original.count * 4);
+  for (let i = 0; i < original.count; i++) values.set([original.getX(i), original.getY(i), original.getZ(i), 9], i * 4);
+  const position = new THREE.InterleavedBufferAttribute(new THREE.InterleavedBuffer(values, 4), 3, 0);
+  geometry.setAttribute('position', position);
+  const mesh = new THREE.Mesh(geometry, new THREE.MeshBasicMaterial({ side: THREE.DoubleSide }));
+  preparePicking(mesh);
+  for (let i = 0; i < position.count; i++) position.setX(i, position.getX(i) + 3);
+  position.needsUpdate = true;
+  geometry.computeBoundingSphere();
+  const cast = new THREE.Raycaster(new THREE.Vector3(3, 0, 5), new THREE.Vector3(0, 0, -1));
+  const expected = cast.intersectObject(mesh);
+  assert.ok(expected.length);
+  assert.deepEqual(visibleIntersections(cast, [mesh]), expected);
+});
+
+test('changed index data rebuilds triangle bounds without changing face or UV results', () => {
+  const geometry = new THREE.PlaneGeometry(2, 2, 20, 20);
+  const mesh = new THREE.Mesh(geometry, new THREE.MeshBasicMaterial({ side: THREE.DoubleSide }));
+  preparePicking(mesh);
+  const index = geometry.index!;
+  for (let i = 0; i < index.count; i++) index.setX(i, (index.getX(i) + 200) % geometry.getAttribute('position').count);
+  index.needsUpdate = true;
+  for (let x = -0.9; x < 1; x += 0.3) {
+    const cast = new THREE.Raycaster(new THREE.Vector3(x, 0.2, 5), new THREE.Vector3(0, 0, -1), 0, 6);
+    assert.deepEqual(visibleIntersections(cast, [mesh]), cast.intersectObject(mesh));
+    cast.far = 4;
+    assert.deepEqual(visibleIntersections(cast, [mesh]), []);
+    cast.far = 6;
+    cast.near = 5.1;
+    assert.deepEqual(visibleIntersections(cast, [mesh]), []);
+  }
+});
+
+test('triangle picking restores the shared geometry range when an exact vertex read throws', () => {
+  const geometry = new THREE.PlaneGeometry(2, 2, 20, 20);
+  const mesh = new THREE.Mesh(geometry, new THREE.MeshBasicMaterial());
+  preparePicking(mesh);
+  geometry.computeBoundingSphere();
+  const range = { ...geometry.drawRange };
+  geometry.getAttribute('position').getX = () => {
+    throw new Error('vertex read failed');
+  };
+  assert.throws(() => visibleIntersections(ray(), [mesh]), /vertex read failed/);
+  assert.deepEqual(geometry.drawRange, range);
 });
