@@ -217,26 +217,41 @@ test('a look walks over, reads the screen while leaning over the laptop, and wal
   assert.deepEqual(r.toasts, ["👀 Pixel is reading Nibble's screen"]);
 });
 
-test('a normal tell waits for the host to finish its turn; the visitor leaves it in the queue', (t) => {
+test('a normal tell to a busy host goes in at once as a steer, with no Escape and no queueing for the turn to end', (t) => {
   const r = rig(t);
   r.set('nibble', 'working');
   const id = r.call('pixel', { action: 'visit', kind: 'tell', worker: 'Nibble', text: 'I renamed auth.ts to session.ts' }).body.visit;
   r.advance(walk('desk-3', 'desk-9', 0));
   assert.equal(r.lastList()[0].phase, 'talking');
   assert.deepEqual(r.says(), [{ t: 'visit_say', visit: id, worker: 'pixel', text: 'I renamed auth.ts to session.ts' }]);
-  r.advance(TALK_MAX_MS);
-  assert.equal(r.fake.typed.length, 0, 'not while it works');
+  // Typed into the busy host's session the moment the visitor arrived: plain Enter steers
+  // droid's running turn, so it reads the message once its current tool call finishes.
+  assert.equal(r.fake.typed.length, 1, 'in at once, while it still works');
   assert.deepEqual(r.fake.escapes, [], 'a normal message never cancels a turn');
+  const { text } = r.fake.typed[0];
+  assert.match(text, /^💬 Pixel \(Desk 3\), another worker on this floor, walked over to tell you this\.\n\nI renamed auth\.ts to session\.ts\n\n/);
+  assert.match(text, /office-visit tell Pixel/);
+  assert.doesNotMatch(text, /urgent/i);
+  r.advance(TALK_MIN_MS);
+  assert.equal(r.lastList()[0].phase, 'returning');
+  assert.deepEqual(r.status('pixel', id).body, { visit: id, kind: 'tell', phase: 'returning', host: 'Nibble', done: true, ok: true, delivered: true });
+});
+
+test('a tell that cannot go in while the visitor stands there is left queued, and goes in as soon as the host can take it', (t) => {
+  const r = rig(t);
+  r.set('nibble', 'needs_input');
+  const id = r.call('pixel', { action: 'visit', kind: 'tell', worker: 'Nibble', text: 'I renamed auth.ts to session.ts' }).body.visit;
+  r.advance(walk('desk-3', 'desk-9', 0));
+  assert.equal(r.lastList()[0].phase, 'talking');
+  r.advance(TALK_MAX_MS);
+  assert.equal(r.fake.typed.length, 0, 'not while it waits on the owner');
   assert.equal(r.lastList()[0].phase, 'returning');
   assert.deepEqual(r.status('pixel', id).body, { visit: id, kind: 'tell', phase: 'returning', host: 'Nibble', done: true, ok: true, queued: true });
 
   r.set('nibble', 'done');
   r.advance(250);
   assert.equal(r.fake.typed.length, 1);
-  const { text } = r.fake.typed[0];
-  assert.match(text, /^💬 Pixel \(Desk 3\), another worker on this floor, walked over to tell you this\.\n\nI renamed auth\.ts to session\.ts\n\n/);
-  assert.match(text, /office-visit tell Pixel/);
-  assert.doesNotMatch(text, /urgent/i);
+  assert.match(r.fake.typed[0].text, /I renamed auth\.ts to session\.ts/);
 });
 
 test('a tell to a host at rest goes straight in, and a sleeping host is woken with it', (t) => {
@@ -393,7 +408,7 @@ test('an ask gives up when the asker’s timeout runs out, or when the asker sto
   assert.equal(r.lastList()[0].phase, 'returning');
   r.set('nibble', 'done');
   r.advance(1000);
-  assert.equal(r.fake.typed.length, 0, 'a question nobody waits for any more is never typed in');
+  assert.equal(r.fake.typed.length, 1, 'the question went in as a steer when the asker arrived; nothing more goes in once it has given up');
   assert.match(r.call('nibble', { action: 'reply', visit: id, text: 'late' }).body.error, /Pixel isn't waiting any more: Nibble didn't answer/);
 
   // The asker's own office-visit went away (its turn was stopped): it stops waiting too.
@@ -506,7 +521,7 @@ test('a host or visitor leaving mid-visit ends it cleanly', (t) => {
 
   // The visitor leaving takes its visit, and what it left in a queue, with it.
   const q = rig(t);
-  q.set('nibble', 'working');
+  q.set('nibble', 'needs_input');
   const v = q.call('pixel', { action: 'visit', kind: 'tell', worker: 'Nibble', text: 'later' }).body.visit;
   q.advance(walk('desk-3', 'desk-9', 0));
   q.fake.ws.delete('pixel');
@@ -536,7 +551,7 @@ test('turning visits off ends the ones under way', (t) => {
   assert.match(r.status('pixel', id).body.error, /Visits were turned off/);
   r.set('nibble', 'done');
   r.advance(1000);
-  assert.equal(r.fake.typed.length, 0);
+  assert.equal(r.fake.typed.length, 1, 'the question went in as a steer on arrival, before visits were turned off; nothing more goes in');
   assert.equal(r.status('pixel', 'v-nope').status, 404);
 });
 
@@ -604,9 +619,14 @@ test('an ask queued behind a completed look gets its timeout when it sets off', 
 });
 
 test('an unanswered ask and an undelivered tell cannot queue a second visit or use a home estimate', (t) => {
-  for (const kind of ['ask', 'tell']) {
+  // An ask to a busy host goes in as a steer at once, but its asker is still standing there
+  // waiting for the answer. A tell to a host that needs the owner can't go in at all yet.
+  for (const [kind, hostStatus] of [
+    ['ask', 'working'],
+    ['tell', 'needs_input'],
+  ] as const) {
     const r = rig(t);
-    r.set('nibble', 'working');
+    r.set('nibble', hostStatus);
     r.call('pixel', { action: 'visit', kind, worker: 'Nibble', text: 'still waiting' });
     r.advance(walk('desk-3', 'desk-9', 0) + TALK_MIN_MS);
     const next = r.call('pixel', { action: 'visit', kind: 'tell', worker: 'Dot', text: 'not yet' });

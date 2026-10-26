@@ -53,11 +53,13 @@ COMMANDS
   …the message…
   EOF
       Walks over and puts a message into its session, headed with your name and desk and how to
-      answer. Normal priority waits until it finishes its current turn: if it's still busy after
-      a few seconds you walk back and the message waits in its queue, and the office types it in
-      when the turn ends. --urgent cancels the turn it's in (one Escape, as the owner would press)
-      and puts the message in as its next prompt once the turn has stopped, at most 5 seconds
-      later. A worker at rest gets it straight away. Prints whether it went in.
+      answer. It goes in as soon as you arrive: typed with Enter while it's mid-turn, it steers
+      that turn, so it reads your message once its current tool call finishes and carries on; at
+      rest it's simply its next prompt. Only when its session can't take it while you stand there
+      (a permission prompt is showing, say) do you walk back after a few seconds and leave it to
+      go in as soon as it can. --urgent cancels the turn it's in (one Escape, as the owner would
+      press) and puts the message in as its next prompt once the turn has stopped, at most 5
+      seconds later. Prints whether it went in.
 
   office-visit ask <name> [--urgent] [--timeout <seconds>] <<'EOF'
   …the question…
@@ -87,12 +89,12 @@ COMMANDS
 
 PRIORITY
 
-  Normal is right almost always: it reaches the other worker between its turns, the way a person
-  waits for someone to look up. Use --urgent only when waiting would waste real work: it is about to
-  change code you're changing, or it's blocked on what you know. Urgent stops what the other worker
-  is doing, a running command included; it decides afterwards whether to go back to it. Even an
-  urgent message waits while the other worker's terminal shows a permission prompt: that's for the
-  owner to answer.
+  Normal is right almost always: it steers the other worker's turn, so it reads your message as
+  soon as its current tool call finishes, and its work carries on. Use --urgent only when even
+  that wait would waste real work: it is about to change code you're changing, or it's blocked on
+  what you know. Urgent stops what the other worker is doing, a running command included; it
+  decides afterwards whether to go back to it. Even an urgent message waits while the other
+  worker's terminal shows a permission prompt: that's for the owner to answer.
 
 ONE VISIT AT A TIME
 
@@ -285,7 +287,7 @@ export function formatOutcome(kind, host, res) {
   if (kind === 'look') return { text: `${host}'s screen:\n\n${res.text || '(its terminal is empty)'}`, code: 0 };
   if (kind === 'ask') return { text: `${host} answered:\n${indent(res.answer ?? '')}`, code: 0 };
   const what = kind === 'handoff' ? 'The task' : 'Your message';
-  if (res.queued) return { text: `${host} is busy, so you walked back and left it: ${what.toLowerCase()} waits in its queue and is typed into its session when it finishes its turn.`, code: 0 };
+  if (res.queued) return { text: `${host}'s session couldn't take it while you stood there, so you walked back and left it: ${what.toLowerCase()} is typed in as soon as its session can take it.`, code: 0 };
   return { text: `${what} is in ${host}'s session now.${kind === 'handoff' ? ` ${host} decides whether to take it on, and tells you back with office-visit tell.` : ''}`, code: 0 };
 }
 

@@ -91,7 +91,7 @@ test('prints the roster and each visit’s outcome readably', () => {
   assert.deepEqual(formatOutcome('ask', 'Nibble', { ok: true, answer: '5173\nand 4600' }), { text: 'Nibble answered:\n    5173\n    and 4600', code: 0 });
   assert.deepEqual(formatOutcome('tell', 'Nibble', { ok: true, delivered: true }), { text: "Your message is in Nibble's session now.", code: 0 });
   assert.match(formatOutcome('handoff', 'Nibble', { ok: true, delivered: true }).text, /^The task is in Nibble's session now\. Nibble decides/);
-  assert.match(formatOutcome('tell', 'Nibble', { ok: true, queued: true }).text, /^Nibble is busy, so you walked back and left it: your message waits in its queue/);
+  assert.match(formatOutcome('tell', 'Nibble', { ok: true, queued: true }).text, /^Nibble's session couldn't take it while you stood there, so you walked back and left it: your message is typed in as soon as its session can take it\./);
   assert.deepEqual(formatOutcome('ask', 'Nibble', { ok: false, error: "Nibble didn't answer within 5 seconds" }), { text: "office-visit: Nibble didn't answer within 5 seconds.", code: 1 });
   assert.equal(formatOutcome('ask', 'Nibble', undefined).code, 1);
   assert.match(refusal(401, {}), /didn't accept this agent's token \(401\)/);
@@ -147,7 +147,7 @@ test('look, tell, handoff and reply print what the office sent back', async () =
   assert.equal(look.code, 0);
   assert.equal(look.out, "Walking over to Nibble at Desk 9 to read its screen…\nNibble's screen:\n\nok 12 tests");
   const tell = await run(['tell', 'Nibble'], { stdin: 'fyi', replies: [{ body: { ...STARTED, kind: 'tell', after: 2000 } }, { body: { done: true, ok: true, queued: true } }] });
-  assert.match(tell.out, /^You're finishing your last visit; then you go over to Nibble at Desk 9 to tell it\.\nNibble is busy/);
+  assert.match(tell.out, /^You're finishing your last visit; then you go over to Nibble at Desk 9 to tell it\.\nNibble's session couldn't take it while you stood there/);
   const hand = await run(['handoff', 'Nibble', '--title', 'Tests'], { stdin: 'Write them', replies: [{ body: { ...STARTED, kind: 'handoff' } }, { body: { done: true, ok: true, delivered: true } }] });
   assert.match(hand.out, /The task is in Nibble's session now/);
   const reply = await run(['reply', 'v-1'], { stdin: '5173', replies: [{ body: { to: 'Pixel' } }] });

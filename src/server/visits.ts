@@ -5,9 +5,12 @@
 // visitor stands, the way it walks and how long that takes are shared/visits.ts, so the office times
 // each phase by the same walk the browser shows.
 //
-// What a visitor says goes into the host's queue and is typed into its session one message at a time:
-// a normal one once the host is at rest, an urgent one at once. A host that's mid-turn gets one
-// Escape first, which cancels droid's turn, and the message goes in as a new prompt once it stops.
+// What a visitor says is typed into the host's session one message at a time, as soon as the
+// visitor arrives: a normal message goes in with plain Enter, which steers a host that's mid-turn
+// (droid reads it once its current tool call finishes) and is the next prompt for one at rest. An
+// urgent message to a mid-turn host gets one Escape first, which cancels droid's turn, and goes in
+// as a new prompt once it stops. A message that can't go in while the visitor stands there (a
+// dialog is showing, the host needs the owner, someone just typed) waits in the host's queue.
 // Visits aren't kept on disk: a restart ends them, and an asker still waiting hears so.
 
 import { randomBytes } from 'node:crypto';
@@ -55,7 +58,7 @@ export interface VisitResult {
   answer?: string;
   /** tell, handoff: typed into the host's session while the visitor stood there. */
   delivered?: boolean;
-  /** tell, handoff: still in the host's queue, typed in once it's at rest. */
+  /** tell, handoff: its session couldn't take it while the visitor stood there, so it's still queued to go in as soon as it can. */
   queued?: boolean;
   error?: string;
 }
@@ -124,7 +127,7 @@ export const ASK_MAX_S = 1800;
 export const READ_MS = 3500;
 /** Standing at the desk while the message goes in: at least this long, so the bubble can be read. */
 export const TALK_MIN_MS = 3000;
-/** A normal message to a busy host: the visitor waits this long, then leaves it in the queue. */
+/** A message that can't go in (a dialog, a host that needs the owner): the visitor waits this long, then leaves it in the queue. */
 export const TALK_MAX_MS = 12_000;
 /** After the answer, before walking back, so the reply's bubble can be read. */
 export const LINGER_MS = 3000;
@@ -571,7 +574,9 @@ export class Visits {
         // A permission prompt is the owner's to answer: even an urgent message waits for it.
         return;
       case 'working':
-        if (!note.urgent) return;
+        // A normal message steers the running turn: plain Enter puts it in front of droid now,
+        // and droid reads it once its current tool call finishes. Only an urgent one stops it.
+        if (!note.urgent) break;
         if (note.interruptedAt === undefined) {
           note.interruptedAt = now;
           // The status can lag the screen: a turn that has just ended on screen gets no key at all.
