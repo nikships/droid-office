@@ -279,6 +279,15 @@ static __weak DOPresenterView *gCurrent;
       [window makeFirstResponder:self];
       TRACE(@"monitor took first responder: now %@", ClassOf(window.firstResponder));
     }
+    // A Control key down without Command goes through the window's performKeyEquivalent: before keyDown:, and something there can claim
+    // it: Ctrl+Return reached the view only as a key up, so the page never saw Ctrl+Enter (#299). No menu item uses Control alone, so the
+    // view takes those itself; Command shortcuts still go to the menu.
+    NSEventModifierFlags flags = e.modifierFlags;
+    if (e.type == NSEventTypeKeyDown && (flags & NSEventModifierFlagControl) && !(flags & NSEventModifierFlagCommand) && window.isKeyWindow && window.firstResponder == self) {
+      TRACE(@"monitor delivers a Control key down itself");
+      [self keyDown:e];
+      return nil;
+    }
     return e;
   }
   if (!NSPointInRect([self convertPoint:e.locationInWindow fromView:nil], self.bounds)) return e;

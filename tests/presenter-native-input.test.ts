@@ -27,11 +27,15 @@ test('the monitor leaves the window frame, other windows, sheets and menu key eq
   assert.match(routed, /modalWindow/);
   // Only what the content view itself took is redirected: the title bar, traffic lights and resize edges belong to the frame.
   assert.match(routed, /hit == content \|\| \[hit isDescendantOf:content\]/);
-  // Keys only get the first responder back; they are returned, never consumed.
+  // Keys get the first responder back and are returned, except a Control key down without Command, which the view takes itself so
+  // performKeyEquivalent: can't swallow it (Ctrl+Return reached the view only as a key up, #299).
   const keys = routed.slice(routed.indexOf('NSEventTypeKeyDown'), routed.indexOf('NSPointInRect'));
   assert.match(keys, /makeFirstResponder:self/);
   assert.match(keys, /return e;/);
-  assert.doesNotMatch(keys, /return nil/);
+  const taken = keys.slice(keys.indexOf('if (e.type == NSEventTypeKeyDown'), keys.indexOf('return nil;'));
+  assert.match(taken, /NSEventModifierFlagControl\) && !\(flags & NSEventModifierFlagCommand\)/);
+  assert.match(taken, /window\.firstResponder == self/);
+  assert.match(taken, /\[self keyDown:e\]/);
 });
 
 test('a mouse-moved event that reaches the view twice (first responder and tracking area) is taken once', () => {
