@@ -490,6 +490,13 @@ export class WorkerManager {
     return this.workers.get(id)?.info;
   }
 
+  /** Read-only conversation identity. Never accepts a caller-supplied path or session. */
+  threadSession(id: string): { sessionId: string; cwd: string } | undefined {
+    const info = this.workers.get(id)?.info;
+    if (info?.kind !== 'agent' || info.cloud || info.guest || !info.sessionId) return undefined;
+    return { sessionId: info.sessionId, cwd: this.cwd(info) };
+  }
+
   /** The workers' terminal process IDs, so the guest scan leaves them out. */
   owners(): number[] {
     return [...this.workers.values()].flatMap((w) => (w.pty?.pid ? [w.pty.pid] : []));

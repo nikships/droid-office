@@ -16,6 +16,7 @@ import type { Menu } from './asks.js';
 import type { Visit } from './visits.js';
 import type { SetupState } from './setup.js';
 import type { SubscriptionProviderKey, SubscriptionsState } from './subscriptions.js';
+import type { ThreadEntry } from './worker-thread.js';
 
 export type WorkerStatus =
   | 'starting' // PTY launched, agent booting
@@ -870,6 +871,7 @@ type ClientMessage =
   /** Push a worktree worker's branch and open a pull request for it, drafted from its task. */
   | { t: 'worker.pr'; workerId: string }
   | { t: 'term.input'; workerId: string; data: string }
+  | { t: 'thread.read'; workerId: string; request: string; before?: number }
   | { t: 'term.resize'; workerId: string; cols: number; rows: number }
   /** Open the boss monitor's shell (see OFFICE_SHELL_ID). It is not a worker. */
   | { t: 'shell.attach' }
@@ -1038,6 +1040,7 @@ export interface Arrival {
 }
 
 export type ServerMsg =
+  | { t: 'thread.snapshot'; workerId: string; request: string; before?: number; sessionId?: string; entries: ThreadEntry[]; hasMore: boolean; error?: string }
   | { t: 'action.result'; requestId: string; ok: boolean; error?: string; workerId?: string }
   | ({
       t: 'welcome';
