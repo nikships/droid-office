@@ -71,6 +71,7 @@ export interface Subscriptions {
 }
 
 const POLL_RUNNING_MS = 60_000;
+const POLL_USAGE_MS = 5 * 60_000;
 const POLL_FAST_MS = 2000;
 const POLL_DOWN_MS = 30_000;
 const RELEASE_EVERY_MS = 6 * 60 * 60_000;
@@ -121,6 +122,7 @@ export function mountSubscriptions(opts: SubscriptionsOptions): Subscriptions {
   let served: string[] = [];
   let lastStatus: RawStatus | undefined;
   let lastUsage: RawUsage | undefined;
+  let nextUsageAt = Number.NEGATIVE_INFINITY;
   /** The error on the proxy came from looking, not from something the owner asked for, so the next good look clears it. */
   let errorFromLook = false;
   /** Droid's settings had DroidProxy models at the last look. */
@@ -193,8 +195,12 @@ export function mountSubscriptions(opts: SubscriptionsOptions): Subscriptions {
       return;
     }
     setProxy({ path: app.path, version: app.version });
-    const [status, models, usage] = await Promise.allSettled([control.status(), control.models(), control.usage()]);
-    if (usage.status === 'fulfilled') lastUsage = usage.value;
+    // Status/availability stay responsive, but fast connects and manual refreshes never
+    // accelerate quota reads. DroidProxy shares its upstream quota cache with /models.
+    const usageDue = now() >= nextUsageAt;
+    if (usageDue) nextUsageAt = now() + POLL_USAGE_MS;
+    const [status, models, usage] = await Promise.allSettled([control.status(), control.models(), usageDue ? control.usage() : Promise.resolve(undefined)]);
+    if (usage.status === 'fulfilled' && usage.value) lastUsage = usage.value;
     const keep = (phase: ProxyState['phase']) => (installing ? 'installing' : phase);
     if (status.status === 'fulfilled') {
       const prev = lastStatus;
@@ -202,7 +208,7 @@ export function mountSubscriptions(opts: SubscriptionsOptions): Subscriptions {
       startingSince = null;
       setProxy({ phase: keep('running'), ...(errorFromLook ? { error: null } : {}) });
       errorFromLook = false;
-      state.providers = mapProviders(status.value, usage.status === 'fulfilled' ? usage.value : lastUsage, now());
+      state.providers = mapProviders(status.value, lastUsage, now());
       const f = status.value.factory;
       state.models = f ? { installed: Number(f.installed) || 0, available: Number(f.available) || 0, stale: f.stale === true } : null;
       if (models.status === 'fulfilled') {
@@ -216,8 +222,10 @@ export function mountSubscriptions(opts: SubscriptionsOptions): Subscriptions {
       return;
     }
     const err = status.reason as ControlError;
-    const portAnswered = usage.status === 'fulfilled' || (usage.reason instanceof ControlError && usage.reason.kind !== 'refused' && usage.reason.kind !== 'timeout');
-    const notRunning = err?.kind === 'refused' || ((err?.kind === 'no-file' || err?.kind === 'no-api') && !portAnswered);
+    const portAnswered =
+      err?.kind === 'no-api' || (usage.status === 'fulfilled' && usage.value !== undefined) || (usage.status === 'rejected' && usage.reason instanceof ControlError && usage.reason.kind !== 'refused' && usage.reason.kind !== 'timeout');
+    const previouslyOutdated = state.proxy.phase === 'outdated' && !usageDue;
+    const notRunning = err?.kind === 'refused' || ((err?.kind === 'no-file' || err?.kind === 'no-api') && !portAnswered && !previouslyOutdated);
     if (notRunning) {
       const waiting = startingSince !== null && now() - startingSince < START_WAIT_MS;
       if (startingSince !== null && !waiting) {
@@ -239,7 +247,7 @@ export function mountSubscriptions(opts: SubscriptionsOptions): Subscriptions {
       lastStatus = undefined;
       setProxy({ phase: keep('outdated'), ...(errorFromLook ? { error: null } : {}) });
       errorFromLook = false;
-      state.providers = providersFromUsage(usage.status === 'fulfilled' ? usage.value : undefined);
+      state.providers = providersFromUsage(lastUsage);
       state.models = null;
       setAvailability({});
       state.checkedAt = now();

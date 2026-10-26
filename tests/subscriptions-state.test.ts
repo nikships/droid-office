@@ -35,6 +35,7 @@ interface World {
   models: RawModels;
   usage: RawUsage;
   posts: [string, unknown][];
+  gets: string[];
 }
 
 interface Rig {
@@ -60,6 +61,7 @@ interface RigOptions {
   control?: boolean;
   settings?: { id: string; displayName: string }[];
   world?: Partial<World>;
+  delay?: boolean;
 }
 
 /**
@@ -107,7 +109,7 @@ async function rig(t: { after(fn: () => void): void }, o: RigOptions = {}): Prom
     mkdirSync(path.join(home, '.factory'));
     writeFileSync(path.join(home, '.factory', 'settings.json'), JSON.stringify({ customModels: [...o.settings, { id: 'custom:my-key', displayName: 'Mine' }] }));
   }
-  const world: World = { running: true, api: true, startsUp: true, slow: false, status: status(), models: MODELS, usage: USAGE, posts: [], ...o.world };
+  const world: World = { running: true, api: true, startsUp: true, slow: false, status: status(), models: MODELS, usage: USAGE, posts: [], gets: [], ...o.world };
   const runs: string[][] = [];
   let busy = 0;
   /** A fake that may do real async work: counted until it answers, so `settle` waits for it. */
@@ -116,6 +118,7 @@ async function rig(t: { after(fn: () => void): void }, o: RigOptions = {}): Prom
     async (...args: A): Promise<R> => {
       busy++;
       try {
+        if (o.delay) await new Promise((resolve) => setTimeout(resolve, Math.random() * 4));
         return await fn(...args);
       } finally {
         busy--;
@@ -140,6 +143,7 @@ async function rig(t: { after(fn: () => void): void }, o: RigOptions = {}): Prom
     if (url.endsWith('.zip.sha256')) return new Response(`${createHash('sha256').update(ZIP).digest('hex')}  DroidProxy-arm64.zip\n`);
     if (url.endsWith('.zip')) return new Response(ZIP, { headers: { 'content-length': String(ZIP.length) } });
     const u = new URL(url);
+    if (init?.method !== 'POST') world.gets.push(u.pathname);
     assert.equal(u.host, '127.0.0.1:8317');
     if (world.slow) throw Object.assign(new Error('The operation was aborted due to timeout'), { name: 'TimeoutError' });
     if (!world.running) throw refused();
@@ -306,6 +310,35 @@ test('a running DroidProxy: providers with their windows, models in Droid, and w
   r.world.models = { ...MODELS, models: MODELS.models?.map((m) => (m.id === OPUS ? { ...m, availability: { state: 'signed-out' as const } } : m)) };
   await r.send({ t: 'subscriptions.refresh' });
   assert.equal(r.subs.gate(OPUS), "Can't hire on Opus 5.5: no Claude account is connected. Pick another model.");
+});
+
+test('fast status checks and concurrent manual refreshes share a five-minute usage cadence', async (t) => {
+  const r = await rig(t, { delay: true });
+  const usageCalls = () => r.world.gets.filter((route) => route === '/droidproxy/usage').length;
+  await r.advance(0);
+  assert.equal(usageCalls(), 1);
+  const sampleAt = r.subs.state().providers[1].accounts[0].usageUpdatedAt;
+  r.world.status = status({ providers: status().providers?.map((p) => (p.key === 'claude' ? { ...p, connecting: { started_at: new Date(NOW).toISOString() } } : p)) });
+  await Promise.all(Array.from({ length: 8 }, () => r.send({ t: 'subscriptions.refresh' })));
+  await r.advance(4 * 60_000 + 58_000);
+  assert.equal(usageCalls(), 1);
+  assert.ok(r.world.gets.filter((route) => route.endsWith('/status')).length > 100);
+  assert.equal(r.subs.state().providers[1].accounts[0].usageUpdatedAt, sampleAt, 'status checks cannot revive a cached sample');
+  await r.advance(2000);
+  assert.equal(usageCalls(), 2);
+});
+
+test('a failed usage request is not retried by each status or manual refresh', async (t) => {
+  const r = await rig(t, { delay: true, world: { slow: true } });
+  await r.advance(0);
+  assert.equal(r.world.gets.filter((route) => route === '/droidproxy/usage').length, 1);
+  r.world.slow = false;
+  await r.send({ t: 'subscriptions.refresh' });
+  await r.advance(4 * 60_000);
+  assert.equal(r.world.gets.filter((route) => route === '/droidproxy/usage').length, 1);
+  await r.advance(60_000);
+  assert.equal(r.world.gets.filter((route) => route === '/droidproxy/usage').length, 2);
+  assert.ok(r.subs.state().providers[1].accounts[0].windows.length);
 });
 
 test('when DroidProxy stops answering, the last state stays, and after 5 minutes it refuses nobody', async (t) => {

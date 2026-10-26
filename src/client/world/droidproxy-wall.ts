@@ -114,7 +114,7 @@ export function quotaView(s: SubscriptionsState, now: number): QuotaView {
     stopped: 'DroidProxy stopped · last known usage',
     starting: 'Starting DroidProxy…',
     outdated: 'Update DroidProxy in Settings → Subscriptions',
-    running: accounts ? 'Usage refreshes every minute · bars show quota remaining' : 'Connect an account in Settings → Subscriptions',
+    running: accounts ? 'Usage checked every 5 minutes · bars show quota remaining' : 'Connect an account in Settings → Subscriptions',
   };
   return {
     phase: s.proxy.phase,
