@@ -388,3 +388,55 @@ test('the full-list query preserves custom raycaster side effects while the near
   assert.equal(firstVisibleIntersection(cast, [object]), null);
   assert.equal(cast.far, 12);
 });
+
+test('world-sphere rejection skips local matrix inversion for misses and finite far clipping', () => {
+  const mesh = new THREE.Mesh(new THREE.SphereGeometry(1, 24, 12), new THREE.MeshBasicMaterial());
+  mesh.position.z = -5;
+  mesh.updateMatrixWorld(true);
+  mesh.geometry.computeBoundingSphere();
+  preparePicking(mesh);
+  let inversions = 0;
+  const invert = THREE.Matrix4.prototype.invert;
+  THREE.Matrix4.prototype.invert = function () {
+    inversions++;
+    return invert.call(this);
+  };
+  try {
+    const miss = new THREE.Raycaster(new THREE.Vector3(3, 0, 5), new THREE.Vector3(0, 0, -1));
+    assert.deepEqual(visibleIntersections(miss, [mesh]), []);
+    const clipped = new THREE.Raycaster(new THREE.Vector3(0, 0, 5), new THREE.Vector3(0, 0, -1), 0.1, 4);
+    assert.equal(firstVisibleIntersection(clipped, [mesh]), null);
+    assert.equal(clipped.far, 4);
+    assert.equal(inversions, 0);
+  } finally {
+    THREE.Matrix4.prototype.invert = invert;
+  }
+});
+
+test('world-sphere filtering preserves exact hits from inside, with clipping, reflection and parent shear', () => {
+  const geometry = new THREE.SphereGeometry(2, 24, 12);
+  const mesh = new THREE.Mesh(geometry, new THREE.MeshBasicMaterial({ side: THREE.DoubleSide }));
+  const parent = new THREE.Group();
+  parent.add(mesh);
+  parent.scale.set(1.5, 0.8, 1.1);
+  mesh.rotation.set(0.2, 0.4, -0.1);
+  geometry.computeBoundingSphere();
+  preparePicking(parent);
+  let hits = 0;
+  for (const scale of [1, -1]) {
+    mesh.scale.set(scale * 1.2, 0.7, 1.4);
+    parent.updateMatrixWorld(true);
+    for (const z of [0, 5]) {
+      for (const near of [0, 0.5, 4]) {
+        for (const far of [2, 8, Infinity]) {
+          const cast = new THREE.Raycaster(new THREE.Vector3(0.1, 0.2, z), new THREE.Vector3(0, 0, -1), near, far);
+          const expected = cast.intersectObject(mesh);
+          hits += expected.length;
+          assert.deepEqual(visibleIntersections(cast, [mesh]), expected);
+          assert.deepEqual(firstVisibleIntersection(cast, [mesh]), expected[0] ?? null);
+        }
+      }
+    }
+  }
+  assert.ok(hits > 0);
+});

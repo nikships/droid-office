@@ -59,13 +59,22 @@ export function preparePicking(root: THREE.Object3D): void {
   root.traverse(boundsFor);
 }
 
-function boundedIntersections(mesh: THREE.Mesh, tree: TriangleBounds, ray: THREE.Raycaster, hits: THREE.Intersection[], local: THREE.Ray, inverse: THREE.Matrix4): void {
+function boundedIntersections(mesh: THREE.Mesh, tree: TriangleBounds, ray: THREE.Raycaster, hits: THREE.Intersection[], local: THREE.Ray, inverse: THREE.Matrix4, sphere: THREE.Sphere, sphereHit: THREE.Vector3): void {
   const geometry = mesh.geometry;
   const { start, count } = geometry.drawRange;
   // An unusual, non-triangle-aligned range keeps three.js's original iteration semantics.
   if (start % 3 !== 0 || (Number.isFinite(count) && count % 3 !== 0)) {
     mesh.raycast(ray, hits);
     return;
+  }
+  // Match the exact raycaster's conservative world-sphere test before local traversal.
+  if (geometry.boundingSphere !== null) {
+    sphere.copy(geometry.boundingSphere).applyMatrix4(mesh.matrixWorld);
+    local.copy(ray.ray).recast(ray.near);
+    if (!sphere.containsPoint(local.origin)) {
+      if (local.intersectSphere(sphere, sphereHit) === null) return;
+      if (local.origin.distanceToSquared(sphereHit) > (ray.far - ray.near) ** 2) return;
+    }
   }
   local.copy(ray.ray).applyMatrix4(inverse.copy(mesh.matrixWorld).invert());
   const visit = (node: TriangleBounds) => {
@@ -132,6 +141,8 @@ function intersections(ray: THREE.Raycaster, roots: readonly THREE.Object3D[], f
   const hits: THREE.Intersection[] = [];
   const local = new THREE.Ray();
   const inverse = new THREE.Matrix4();
+  const sphere = new THREE.Sphere();
+  const sphereHit = new THREE.Vector3();
   const far = ray.far;
   let checked = 0;
   const visit = (object: THREE.Object3D) => {
@@ -139,7 +150,7 @@ function intersections(ray: THREE.Raycaster, roots: readonly THREE.Object3D[], f
     if (object.layers.test(ray.layers)) {
       const tree = boundsFor(object);
       let propagate: unknown;
-      if (tree) boundedIntersections(object as THREE.Mesh, tree, ray, hits, local, inverse);
+      if (tree) boundedIntersections(object as THREE.Mesh, tree, ray, hits, local, inverse, sphere, sphereHit);
       else propagate = object.raycast(ray, hits);
       if (firstOnly) {
         for (; checked < hits.length; checked++) {
