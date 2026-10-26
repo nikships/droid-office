@@ -28,4 +28,14 @@ class ModelBrandTest {
         assertNull(ModelBrand.provider("DroidProxy"))
         assertNull(ModelBrand.of("megptastic"))
     }
+
+    @Test fun workerBrandsFollowTheActiveModelAndOnlyThenFallBackToTheProvider() {
+        val worker = WorkerInfo(id = "worker", model = "gpt-6.1-sol", activeModel = "custom:droidproxy:ag-c55o-high")
+        assertEquals("claude", ModelBrand.of(Workers.modelId(worker), "DroidProxy: Antigravity: Claude Opus 5.5 (High)", "openai"))
+        assertEquals("openai", ModelBrand.of(Workers.modelId(worker.copy(activeModel = null))))
+        assertNull(Workers.modelId(worker.copy(model = null, activeModel = null)))
+        assertEquals("claude", ModelBrand.of("opaque", "Unrecognized", "anthropic"))
+        assertEquals("gemini", ModelBrand.of("opaque", "Unrecognized", "google"))
+        assertNull(ModelBrand.of("opaque", "Unrecognized", "generic-chat-completion-api"))
+    }
 }

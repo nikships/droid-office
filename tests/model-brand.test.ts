@@ -63,6 +63,19 @@ test('provider-only displays prefer the model brand and cover every subscription
   assert.equal(modelBrand({ id: 'megptastic', name: 'unrelated' }), undefined);
 });
 
+test('Android worker logos share active-model and catalogue-provider wiring on every surface', () => {
+  const root = new URL('../android/app/src/main/java/ai/factory/droidoffice/ui/', import.meta.url);
+  const component = readFileSync(new URL('components/ModelLogo.kt', root), 'utf8');
+  assert.match(component, /val id = Workers\.modelId\(worker\) \?: return/);
+  assert.match(component, /catalogue\?\.models\?\.firstOrNull \{ it\.id == id \}/);
+  assert.match(component, /ModelLogo\(id, model\?\.displayName, model\?\.provider, modifier\)/);
+  for (const file of ['home/HomeScreen.kt', 'worker/WorkerScreen.kt', 'overview/OverviewScreen.kt']) {
+    const screen = readFileSync(new URL(file, root), 'utf8');
+    assert.match(screen, /WorkerModelLogo\(w, catalogue,/, file);
+    assert.doesNotMatch(screen, /\bModelLogo\(/, file);
+  }
+});
+
 test('every mapped mark is bundled locally as a standalone SVG, with attribution', () => {
   const root = new URL('../src/client/public/icons/models/', import.meta.url);
   for (const { file } of Object.values(MODEL_BRANDS)) {

@@ -9,6 +9,9 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ColorFilter
 import androidx.compose.ui.platform.LocalContext
 import ai.factory.droidoffice.core.ModelBrand
+import ai.factory.droidoffice.core.WorkerInfo
+import ai.factory.droidoffice.core.Workers
+import ai.factory.droidoffice.net.ModelCatalogue
 import ai.factory.droidoffice.ui.theme.OfficeIcons
 import ai.factory.droidoffice.ui.theme.Palette
 
@@ -16,6 +19,15 @@ import ai.factory.droidoffice.ui.theme.Palette
 @Composable
 fun ModelLogo(id: String? = null, name: String? = null, provider: String? = null, modifier: Modifier = Modifier) {
     BrandLogo(ModelBrand.of(id, name, provider), modifier)
+}
+
+/** Every worker surface resolves the active model against the same catalogue entry. */
+@Composable
+fun WorkerModelLogo(worker: WorkerInfo, catalogue: ModelCatalogue?, modifier: Modifier = Modifier) {
+    if (worker.isShell) return
+    val id = Workers.modelId(worker) ?: return
+    val model = catalogue?.models?.firstOrNull { it.id == id }
+    ModelLogo(id, model?.displayName, model?.provider, modifier)
 }
 
 @Composable

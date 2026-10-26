@@ -87,7 +87,7 @@ import ai.factory.droidoffice.core.Workers
 import ai.factory.droidoffice.data.AuthMode
 import ai.factory.droidoffice.data.displayName
 import ai.factory.droidoffice.net.nameOf
-import ai.factory.droidoffice.ui.components.ModelLogo
+import ai.factory.droidoffice.ui.components.WorkerModelLogo
 import ai.factory.droidoffice.session.Link
 import ai.factory.droidoffice.session.OfficeData
 import ai.factory.droidoffice.session.Phase
@@ -482,7 +482,7 @@ private fun WorkerCard(row: WorkerRow, data: OfficeData, now: Long, selected: Bo
                         if (row.subagents > 0) Tag("+${row.subagents}")
                     }
                     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                        if (!w.isShell && model != null) ModelLogo(Workers.modelId(w), model, modifier = Modifier.size(14.dp))
+                        WorkerModelLogo(w, catalogue, modifier = Modifier.size(14.dp))
                         Text(meta(w, now, model, graph.connection.officeName), style = LocalOfficeType.current.eyebrow.copy(fontSize = 10.sp), maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.tagged(Tags.Home.CARD_META))
                     }
                 }

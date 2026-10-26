@@ -82,6 +82,7 @@ import ai.factory.droidoffice.core.Tags
 import ai.factory.droidoffice.core.WorkerInfo
 import ai.factory.droidoffice.core.Workers
 import ai.factory.droidoffice.data.displayName
+import ai.factory.droidoffice.net.ModelCatalogue
 import ai.factory.droidoffice.net.nameOf
 import ai.factory.droidoffice.session.OfficeData
 import ai.factory.droidoffice.session.Phase
@@ -93,6 +94,7 @@ import ai.factory.droidoffice.ui.components.RouteBadge
 import ai.factory.droidoffice.ui.components.Spinner
 import ai.factory.droidoffice.ui.components.StatusPill
 import ai.factory.droidoffice.ui.components.WorkerDot
+import ai.factory.droidoffice.ui.components.WorkerModelLogo
 import ai.factory.droidoffice.ui.components.panel
 import ai.factory.droidoffice.ui.components.parseColor
 import ai.factory.droidoffice.ui.components.tagged
@@ -290,7 +292,7 @@ fun OverviewScreen(onList: () -> Unit, onBroken: (String) -> Unit, onOffices: ()
 
         val header: @Composable (Modifier) -> Unit = { m -> Header(officeName, data, link.kind, link.phase, onOffices, onList, m) }
         val dock: @Composable (Modifier) -> Unit = { m -> Dock(page, canHire, { hiring = true }, m) }
-        val card: @Composable (WorkerInfo, Modifier) -> Unit = { w, m -> RosterCard(w, w.id == focused, { open(w.id) }, m) }
+        val card: @Composable (WorkerInfo, Modifier) -> Unit = { w, m -> RosterCard(w, catalogue, w.id == focused, { open(w.id) }, m) }
 
         when (shape) {
             MapShape.Side, MapShape.List -> {
@@ -436,7 +438,7 @@ private fun Empty(modifier: Modifier) {
 }
 
 @Composable
-private fun RosterCard(w: WorkerInfo, lit: Boolean, onOpen: () -> Unit, modifier: Modifier) {
+private fun RosterCard(w: WorkerInfo, catalogue: ModelCatalogue?, lit: Boolean, onOpen: () -> Unit, modifier: Modifier) {
     val shape = RoundedCornerShape(12.dp)
     Column(
         modifier.clip(shape).background(if (lit) Palette.AccentMuted else Palette.SurfaceRaised)
@@ -445,8 +447,8 @@ private fun RosterCard(w: WorkerInfo, lit: Boolean, onOpen: () -> Unit, modifier
         verticalArrangement = Arrangement.spacedBy(6.dp),
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            if (!w.isShell) {
-                ai.factory.droidoffice.ui.components.ModelLogo(w.model, modifier = Modifier.size(16.dp))
+            if (!w.isShell && Workers.modelId(w) != null) {
+                WorkerModelLogo(w, catalogue, modifier = Modifier.size(16.dp))
                 Spacer(Modifier.width(8.dp))
             }
             WorkerDot(parseColor(w.color), w.state, size = 10.dp)
