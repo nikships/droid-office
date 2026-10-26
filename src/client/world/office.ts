@@ -1316,7 +1316,7 @@ export function buildOffice(): Office {
   group.add(tvGroup);
   fixture('east', TV.z, TV.y, TV.width + 0.3, TV.height + 0.3);
 
-  // Three screens in one bezel, above the exit sign and windows.
+  // Three screens in one bezel: a low strip at eye level, south of the exit door (see COMPUTE_WALL).
   const CW = COMPUTE_WALL;
   const computeWall = new THREE.Group();
   const bezel = mesh(roundedBox(CW.width + 0.16, 0.1, CW.height + 0.16, 0.06), toon(PALETTE.ink), 0, 0, 0);

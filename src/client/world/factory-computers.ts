@@ -130,14 +130,15 @@ export function wallView(factory: FactoryState, now: number): WallView {
   return { ...view, updated: old };
 }
 
-/** How the fleet screen lays out `n` tiles: big tiles in a grid up to six, then compact rows (two columns), the last one "+N more" past twelve. */
+/**
+ * How the fleet screen lays out `n` tiles on the low panel: a lone computer gets one big tile;
+ * anything more is a single column of full-width rows, at most six deep, the last row saying
+ * "+N more" when the fleet runs past five rows.
+ */
 export function gridOf(n: number): { cols: number; rows: number; compact: boolean; shown: number } {
   if (n <= 1) return { cols: 1, rows: 1, compact: false, shown: n };
-  if (n === 2) return { cols: 1, rows: 2, compact: false, shown: 2 };
-  if (n <= 4) return { cols: 2, rows: 2, compact: false, shown: n };
-  if (n <= 6) return { cols: 3, rows: 2, compact: false, shown: n };
-  const rows = Math.min(6, Math.ceil(n / 2));
-  return { cols: 2, rows, compact: true, shown: n > 12 ? 11 : n };
+  if (n <= 6) return { cols: 1, rows: n, compact: true, shown: n };
+  return { cols: 1, rows: 6, compact: true, shown: 5 };
 }
 
 /** The hint bar's few words about the wall: "2 active · 1 asleep". */
@@ -317,14 +318,15 @@ export class ComputeWallTextures {
     g.textAlign = 'left';
     g.fillStyle = ORANGE;
     g.fillRect(30, 34, 14, 14);
-    g.font = `600 34px ${MONO}`;
-    track(g, 3);
-    g.fillStyle = INK;
-    g.fillText(fit(g, (here?.name ?? 'This machine').toUpperCase(), W - 90), 58, 54);
-    track(g, 0);
     const full = officeFull(s);
     const status: [string, string] = !s.memTotal ? ['…', MUTED] : s.pressure ? ['UNDER PRESSURE', RED] : full ? ['OFFICE FULL', AMBER] : ['ROOM TO HIRE', GREEN];
-    badge(g, status[0], W - 30, 80, status[1]);
+    // The status badge shares the title line; the title is fitted to the space left of it.
+    const badgeLeft = badge(g, status[0], W - 30, 28, status[1], 16);
+    g.font = `600 26px ${MONO}`;
+    track(g, 3);
+    g.fillStyle = INK;
+    g.fillText(fit(g, (here?.name ?? 'This machine').toUpperCase(), badgeLeft - 68), 58, 54);
+    track(g, 0);
     if (here) {
       g.fillStyle = ORANGE;
       paintGlyph(g, 44, 101, 26);
@@ -336,21 +338,24 @@ export class ComputeWallTextures {
     g.fillRect(30, 145, 48, 4);
 
     const memP = s.memTotal ? Math.round((s.memUsed / s.memTotal) * 100) : 0;
+    // Side by side, and as tall as the panel gives them: their sparklines fill the gauge.
+    const gw = (W - 60 - 20) / 2;
+    const gh = Math.max(300, H - 168 - 150);
     this.gauge(
       30,
       168,
-      W - 60,
-      330,
+      gw,
+      gh,
       'CPU',
       s.cpu,
       s.cores ? `${s.cores} core${s.cores === 1 ? '' : 's'}` : '',
       s.history.map(([c]) => c),
     );
     this.gauge(
-      30,
-      518,
-      W - 60,
-      330,
+      50 + gw,
+      168,
+      gw,
+      gh,
       'MEM',
       memP,
       s.memTotal ? `${fmtGb(s.memUsed)} of ${fmtGb(s.memTotal)}` : '',
@@ -358,24 +363,24 @@ export class ComputeWallTextures {
     );
 
     // The workers, one pip each, against the limit.
-    const y = 906;
+    const y = 168 + gh + 48;
     label(g, 'WRK', 30, y, 22, MUTED, 3);
-    g.font = `500 30px ${MONO}`;
+    g.font = `500 26px ${MONO}`;
     g.fillStyle = INK;
     const words = s.limit === undefined ? `${s.workers} worker${s.workers === 1 ? '' : 's'} · no limit` : `${s.workers} / ${s.limit} workers`;
-    g.fillText(words, 104, y);
+    g.fillText(fit(g, words, W - 134), 104, y);
     if (s.limit !== undefined) {
       const n = Math.max(s.limit, s.workers);
       const pip = Math.min(40, (W - 60) / Math.max(1, n));
       for (let i = 0; i < n; i++) {
         g.fillStyle = i >= s.limit ? RED : i < s.workers ? (full ? AMBER : ORANGE) : '#1c1c1c';
-        g.fillRect(30 + i * pip, y + 30, Math.max(2, pip - 6), 40);
+        g.fillRect(30 + i * pip, y + 22, Math.max(2, pip - 6), 32);
       }
     } else {
       const pip = Math.min(40, (W - 60) / Math.max(1, s.workers));
       for (let i = 0; i < s.workers; i++) {
         g.fillStyle = ORANGE;
-        g.fillRect(30 + i * pip, y + 30, Math.max(2, pip - 6), 40);
+        g.fillRect(30 + i * pip, y + 22, Math.max(2, pip - 6), 32);
       }
     }
   }
@@ -390,16 +395,17 @@ export class ComputeWallTextures {
     g.lineWidth = 2;
     g.strokeRect(x + 1, y + 1, w - 2, h - 2);
     g.fillStyle = color;
-    g.fillRect(x + 22, y + 28, 12, 12);
-    label(g, name, x + 46, y + 44, 26, MUTED, 4);
-    g.font = `500 112px ${MONO}`;
+    g.fillRect(x + 18, y + 24, 12, 12);
+    label(g, name, x + 40, y + 38, 24, MUTED, 4);
+    g.font = `500 ${Math.min(72, Math.max(48, w * 0.3))}px ${MONO}`;
     g.fillStyle = INK;
-    g.fillText(`${pct}%`, x + 16, y + 158);
-    label(g, sub.toUpperCase(), x + 22, y + 196, 22, MUTED, 1, 500);
-    const gx = x + 22;
-    const gy = y + 214;
-    const gw = w - 44;
-    const gh = h - 234;
+    g.fillText(`${pct}%`, x + 14, y + 112);
+    g.font = `500 19px ${MONO}`;
+    label(g, fit(g, sub.toUpperCase(), w - 36), x + 18, y + 142, 19, MUTED, 1, 500);
+    const gx = x + 18;
+    const gy = y + 158;
+    const gw = w - 36;
+    const gh = h - 176;
     // The 90% line: past it, hiring comes with a warning.
     g.strokeStyle = 'rgba(255, 255, 255, .14)';
     g.lineWidth = 2;
@@ -643,43 +649,44 @@ export class ComputeWallTextures {
     spark(g, x, y + 46, w, Math.max(10, h - 50), points, span, asleep ? DIM : ORANGE);
   }
 
-  /** A compact row: the name and phase, then CPU / MEM / DISK with a small sparkline each. */
+  /** A full-width row on the low strip: the name and phase on the left, then CPU / MEM / DISK across the rest, sparkline under each when the row is tall enough. */
   private row(t: ComputerTile, x: number, y: number, w: number, h: number) {
     const g = this.f;
     this.frame(t, x, y, w, h);
     const pad = 22;
     const meters = t.managed ? 3 : 0;
-    const mw = 96;
-    const left = w - pad * 2 - meters * (mw + 12);
+    const left = Math.min(330, w * 0.36);
+    const mw = meters ? (w - pad * 2 - left - 24 * (meters - 1)) / meters : 0;
     g.font = `600 30px ${MONO}`;
     g.fillStyle = INK;
-    g.fillText(fit(g, t.name, left - 10), x + pad, y + 44);
-    this.phaseLine(t, x + pad, y + 80, left - 10, 18);
-    label(g, t.provider.toUpperCase(), x + pad, y + h - 18, 16, t.managed ? ORANGE : DIM, 2);
+    g.fillText(fit(g, t.name, left - 10), x + pad, y + 42);
+    this.phaseLine(t, x + pad, y + 74, left - 10, 18);
+    if (h > 96) label(g, t.provider.toUpperCase(), x + pad, y + h - 16, 16, t.managed ? ORANGE : DIM, 2);
     if (!t.managed) {
-      label(g, 'NO METRICS', x + w - pad - 150, y + h / 2 + 8, 18, DIM, 2, 500);
+      label(g, 'NO METRICS FOR BYOM', x + pad + left, y + h / 2 + 8, 18, DIM, 2, 500);
       return;
     }
     const asleep = t.phase !== 'active';
     (['CPU', 'MEM', 'DSK'] as const).forEach((name, i) => {
       const v = [t.cpu, t.mem, t.disk][i];
-      const mx = x + pad + left + i * (mw + 12);
-      label(g, name, mx, y + 30, 16, MUTED, 2);
+      const mx = x + pad + left + i * (mw + 24);
+      label(g, name, mx, y + 32, 16, MUTED, 2);
       g.globalAlpha = asleep ? 0.45 : 1;
       g.font = `500 32px ${MONO}`;
       g.fillStyle = v === undefined ? DIM : loadColor(v);
-      g.fillText(v === undefined ? '—' : `${v}%`, mx, y + 66);
+      g.fillText(v === undefined ? '—' : `${v}%`, mx, y + 68);
       g.globalAlpha = 1;
-      spark(
-        g,
-        mx,
-        y + 78,
-        mw,
-        h - 92,
-        t.spark.map((p) => [p[0], p[i + 1]]),
-        METRICS_HOURS * 60,
-        asleep ? DIM : ORANGE,
-      );
+      if (h > 96)
+        spark(
+          g,
+          mx,
+          y + 80,
+          mw,
+          h - 94,
+          t.spark.map((p) => [p[0], p[i + 1]]),
+          METRICS_HOURS * 60,
+          asleep ? DIM : ORANGE,
+        );
     });
   }
 }
