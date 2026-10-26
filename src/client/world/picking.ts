@@ -120,21 +120,49 @@ export function boundStaticRaycast(mesh: THREE.Mesh, chunks: readonly RaycastChu
  * still tests all their triangles, including the detailed models kept out of sight for shader warmup.
  */
 export function visibleIntersections(ray: THREE.Raycaster, roots: readonly THREE.Object3D[]): THREE.Intersection[] {
+  return intersections(ray, roots, false);
+}
+
+/** The crosshair only needs the closest visible surface, including non-interactive occluders. */
+export function firstVisibleIntersection(ray: THREE.Raycaster, roots: readonly THREE.Object3D[]): THREE.Intersection | null {
+  return intersections(ray, roots, true)[0] ?? null;
+}
+
+function intersections(ray: THREE.Raycaster, roots: readonly THREE.Object3D[], firstOnly: boolean): THREE.Intersection[] {
   const hits: THREE.Intersection[] = [];
   const local = new THREE.Ray();
   const inverse = new THREE.Matrix4();
+  const far = ray.far;
+  let checked = 0;
   const visit = (object: THREE.Object3D) => {
     if (!object.visible) return;
     if (object.layers.test(ray.layers)) {
       const tree = boundsFor(object);
+      let propagate: unknown;
       if (tree) boundedIntersections(object as THREE.Mesh, tree, ray, hits, local, inverse);
-      else {
-        const propagate: unknown = object.raycast(ray, hits);
-        if (propagate === false) return;
+      else propagate = object.raycast(ray, hits);
+      if (firstOnly) {
+        for (; checked < hits.length; checked++) {
+          const distance = hits[checked].distance;
+          // Leave a conservative margin for exact equal-distance hits and bounding-sphere rounding.
+          ray.far = Math.min(ray.far, distance + Math.max(1, distance) * 1e-10);
+        }
       }
+      if (propagate === false) return;
     }
     for (const child of object.children) visit(child);
   };
-  for (const root of roots) visit(root);
-  return hits.sort((a, b) => a.distance - b.distance);
+  try {
+    for (const root of roots) {
+      if (firstOnly) {
+        let shown = true;
+        for (let parent = root.parent; parent; parent = parent.parent) if (!parent.visible) shown = false;
+        if (!shown) continue;
+      }
+      visit(root);
+    }
+    return hits.sort((a, b) => a.distance - b.distance);
+  } finally {
+    if (firstOnly) ray.far = far;
+  }
 }

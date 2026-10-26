@@ -167,7 +167,7 @@ import { EmoteWheel } from './ui/emotes';
 import { wayTo } from './walkto';
 import { Upscaler } from './world/upscaler';
 import { Remaster } from './world/remaster';
-import { preparePicking, visibleIntersections } from './world/picking';
+import { firstVisibleIntersection, preparePicking } from './world/picking';
 import { bakeBudget, bakeKey, loadRemaster, type RemasterSettings, resolveRemaster, saveRemaster } from './remaster-settings';
 import { bakeCache } from './gi-cache';
 import { FrameStats, pacingText } from './frame-stats';
@@ -3319,18 +3319,16 @@ const REACH: Record<InteractKind, number> = {
 /** What the ray through `ndc` lands on first, whether it is within reach (plus `slack` meters), and where it hit. */
 function aimedAt(ndc: THREE.Vector2, slack = 0): { it: Interactable; near: boolean; hit: THREE.Intersection } | null {
   raycaster.setFromCamera(ndc, camera);
-  for (const hit of visibleIntersections(raycaster, upTop && roof ? roof.pickables : [office.group])) {
-    let it: Interactable | undefined;
-    let shown = true;
-    for (let o: THREE.Object3D | null = hit.object; o; o = o.parent) {
-      if (!o.visible) shown = false;
-      it ??= o.userData.interact as Interactable | undefined;
-    }
-    if (!shown) continue;
-    if (!it) return null; // a wall, the floor… is in the way
-    return { it, near: hit.point.distanceTo(camera.position) <= REACH[it.kind] + slack, hit };
+  const hit = firstVisibleIntersection(raycaster, upTop && roof ? roof.pickables : [office.group]);
+  if (!hit) return null;
+  let it: Interactable | undefined;
+  let shown = true;
+  for (let o: THREE.Object3D | null = hit.object; o; o = o.parent) {
+    if (!o.visible) shown = false;
+    it ??= o.userData.interact as Interactable | undefined;
   }
-  return null;
+  if (!shown || !it) return null; // a wall, the floor… is in the way
+  return { it, near: hit.point.distanceTo(camera.position) <= REACH[it.kind] + slack, hit };
 }
 
 /** The issue whose note on the issues board an aim lands on, or null (bare cork, the frame, anything else). */
