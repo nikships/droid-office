@@ -32,7 +32,7 @@ A worktree the office cuts of this repository sets itself up from [`.droid-offic
 
 ### Source hot reload with the normal local launch
 
-For a local checkout started with **`npm run build && npm run start`**, open **⚙️ Settings → Building → Source hot reload** and enable it. The choice is saved in the office’s `.droid-office/hot-reload.json`. Enabling it builds once immediately; after that, saving client source, shared code, styles, HTML, public assets or the Vite/TypeScript build configuration triggers another build. It watches the checkout the office itself runs from, not whichever project floor is open. No separate dev server is needed.
+For a local checkout started with **`npm run build && npm run start`**, open **⚙️ Settings → Office & floors → Source hot reload** and enable it. The choice is saved in the office’s `.droid-office/hot-reload.json`. Enabling it builds once immediately; after that, saving client source, shared code, styles, HTML, public assets or the Vite/TypeScript build configuration triggers another build. It watches the checkout the office itself runs from, not whichever project floor is open. No separate dev server is needed.
 
 The office checks for changes every second and waits briefly for saves to settle. It typechecks and builds the client in child processes into a private staging folder, then switches to the complete bundle and refreshes the browser. It does **not** replace individual live three.js modules: a full page refresh avoids stale scene objects, event listeners and incompatible module state after arbitrary game changes. The server, workers and PTYs keep running. Your saved browser settings, floor and position return, but open windows, unsent drafts and browser-only game state may need reopening.
 

@@ -282,7 +282,7 @@ class Store {
   freshMain: FreshMainState = { on: true };
   /** Whether a run that fails on this floor wakes the Pipeline agent to heal it (the Pipelines window). */
   autoHeal: AutoHealState = { on: false };
-  /** How workers hire subagents (⚙️ Settings → Subagents), and where the Droid skill is. */
+  /** How workers hire subagents (⚙️ Settings → Subagents & visits), and where the Droid skill is. */
   subagents: SubagentsState = { ...SUBAGENT_DEFAULTS };
   hiddenModels: string[] = [];
   /** Whether the droid-office-whiteboard skill is installed (⚙️ Settings), and where. */

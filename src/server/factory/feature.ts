@@ -150,8 +150,8 @@ export class HttpError extends Error {
 
 export const badRequest = (message: string) => new HttpError(400, message);
 export const notFound = (message = 'Not found') => new HttpError(404, message);
-export const notConnected = () => new HttpError(409, 'The office isn’t connected to Factory. Connect it in ⚙️ Settings → Factory.');
-export const keyRejected = (why: string) => new HttpError(409, `Factory rejected the office’s API key (${why}). Check it again or replace it in ⚙️ Settings → Factory.`);
+export const notConnected = () => new HttpError(409, 'The office isn’t connected to Factory. Connect it in ⚙️ Settings → Connections.');
+export const keyRejected = (why: string) => new HttpError(409, `Factory rejected the office’s API key (${why}). Check it again or replace it in ⚙️ Settings → Connections.`);
 
 /** The status and message to answer a failed route with. */
 export function httpErrorOf(err: unknown): { status: number; error: string } {

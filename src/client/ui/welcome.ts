@@ -298,7 +298,7 @@ export function openWelcome(net: Net, first?: WelcomeStepId) {
       ...(updatesFirst() ? [h('p.note.warn', {}, UPDATES_FIRST_NOTE)] : []),
       ...(subs.proxy.error ? [h('p.note.bad', { role: 'alert' }, subs.proxy.error)] : []),
       ...(more ? [more] : []),
-      h('p.field-hint', {}, 'Optional. You can connect plans later in Settings → Subscriptions.'),
+      h('p.field-hint', {}, 'Optional. You can connect plans later in Settings → Connections.'),
     );
   };
 

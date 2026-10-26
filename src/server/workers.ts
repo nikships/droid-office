@@ -264,7 +264,7 @@ export class WorkerManager {
    * from the branch the checkout is on, which is left alone.
    */
   freshMain?: () => boolean;
-  /** ⚙️ Settings → Subagents → Visits: a worker with no lead is told about office-visit when it starts. */
+  /** ⚙️ Settings → Subagents & visits → Visits: a worker with no lead is told about office-visit when it starts. */
   visitsOn?: () => boolean;
   /** The floor's pull requests as the board last listed them, to tell a checkout whose branch merged (see settleCheckout). */
   pullList?: () => GhPull[];

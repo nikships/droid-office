@@ -28,7 +28,7 @@ export interface ShelfDeps {
   onTurn(): void;
   /** Which tab it opens on: the project's docs (the default) or its AutoWiki. */
   tab?: ShelfTab;
-  /** ⚙️ Settings → Factory, for connecting the office from the AutoWiki tab. */
+  /** ⚙️ Settings → Connections, for connecting the office from the AutoWiki tab. */
   openFactorySettings?: () => void;
 }
 

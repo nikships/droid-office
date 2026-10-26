@@ -359,10 +359,10 @@ export function mountWikiTab(root: HTMLElement, deps: WikiTabDeps): WikiTab {
           'p',
           {},
           conn.rejected
-            ? `Factory rejected the office’s API key (${conn.rejected}). Check it again or replace it in Settings → Factory.`
-            : 'Connect the office to Factory with an API key in Settings → Factory, and the wiki Factory keeps for this repository shows up here, next to its docs.',
+            ? `Factory rejected the office’s API key (${conn.rejected}). Check it again or replace it in Settings → Connections.`
+            : 'Connect the office to Factory with an API key in Settings → Connections, and the wiki Factory keeps for this repository shows up here, next to its docs.',
         ),
-        deps.openSettings ? h('div.row', {}, h('button.btn.primary', { type: 'button', onclick: deps.openSettings }, 'Open Settings → Factory')) : '',
+        deps.openSettings ? h('div.row', {}, h('button.btn.primary', { type: 'button', onclick: deps.openSettings }, 'Open Settings → Connections')) : '',
       ];
     if (mode === 'denied') return [h('div.empty-icon', { 'aria-hidden': 'true' }, '🔒'), h('b', {}, 'The key can’t reach AutoWiki'), h('p', {}, capabilityOf(conn, 'wiki')?.reason ?? 'Factory said no to the office’s key for AutoWiki.')];
     if (mode === 'why') return [h('div.empty-icon', { 'aria-hidden': 'true' }, '📭'), h('b', {}, 'No AutoWiki for this floor'), h('p', {}, f.why ?? '')];

@@ -48,7 +48,7 @@ function shortTime(at: number, hours: number): string {
 
 /**
  * Opens the Computers window, on one computer when `id` is given, or on the Environments tab (one
- * Environment with `envId`). `settings` opens ⚙️ Settings → Factory.
+ * Environment with `envId`). `settings` opens ⚙️ Settings → Connections.
  */
 export function openComputers(opts: { settings: () => void; id?: string; tab?: Tab; envId?: string }) {
   let view: View = opts.envId ? { kind: 'env', id: opts.envId } : opts.tab === 'environments' ? { kind: 'envs' } : opts.id ? { kind: 'detail', id: opts.id } : { kind: 'list' };
@@ -185,7 +185,7 @@ export function openComputers(opts: { settings: () => void; id?: string; tab?: T
       footActions.replaceChildren();
       const what = tab === 'environments' ? 'Environments' : 'Droid Computers';
       const why = !conn.connected ? 'Connect the office to Factory to see your Droid Computers and Environments here, make new ones and run workers on them.' : `This Factory key can’t reach ${what}.`;
-      body.replaceChildren(emptyState('🖥️', !conn.connected ? 'Not connected to Factory' : `No access to ${what}`, why, h('button.btn.primary', { type: 'button', onclick: () => opts.settings() }, 'Settings → Factory')));
+      body.replaceChildren(emptyState('🖥️', !conn.connected ? 'Not connected to Factory' : `No access to ${what}`, why, h('button.btn.primary', { type: 'button', onclick: () => opts.settings() }, 'Settings → Connections')));
       return;
     }
     if (body.firstElementChild !== split) body.replaceChildren(split);

@@ -69,7 +69,7 @@ console.log(`
   ${floorsLine()}
 
   ${localUrl}
-${office.companion() ? `\n  🌐  Web companion, in any browser on this machine: ${localUrl}${COMPANION_PATH} (links for other computers: ⚙️ Settings → Phone → Web companion)\n` : ''}
+${office.companion() ? `\n  🌐  Web companion, in any browser on this machine: ${localUrl}${COMPANION_PATH} (links for other computers: ⚙️ Settings → Phone & web → Web companion)\n` : ''}
   agent: ${[agent ?? `${cfg.agentCmd} (via login shell)`, ...cfg.agentArgs].join(' ')}`);
 if (joinUrl) {
   console.log(`
@@ -81,12 +81,12 @@ if (joinUrl) {
   const others = lanIps.slice(1).map((ip) => `${scheme}://${ip}:${cfg.port}/?t=${office.lanToken}`);
   if (others.length) console.log(`  Other addresses of this machine:\n\n  ${others.join('\n  ')}`);
 }
-// The Android app pairs from that same QR code, or from ⚙️ Settings → Phone (the Mac app shows no terminal).
+// The Android app pairs from that same QR code, or from ⚙️ Settings → Phone & web (the Mac app shows no terminal).
 const pairing = await office.pairing().catch(() => undefined);
 if (pairing?.link) {
   const tailnet = pairing.addresses.filter((a) => a.kind === 'tailscale').map((a) => `${a.url}/?t=${office.lanToken}`);
   console.log(`
-  🤖 Droid Office for Android: ${joinUrl ? 'scan this QR code in the app to pair your phone, or open' : 'pair your phone from'} ⚙️ Settings → Phone in the office.`);
+  🤖 Droid Office for Android: ${joinUrl ? 'scan this QR code in the app to pair your phone, or open' : 'pair your phone from'} ⚙️ Settings → Phone & web in the office.`);
   if (tailnet.length) console.log(`  🔒 Over Tailscale, from anywhere on your tailnet:\n\n  ${tailnet.join('\n  ')}`);
 }
 

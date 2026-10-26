@@ -35,7 +35,7 @@ it walks back to its own desk. Everything works both ways: the host can visit yo
 
 Subagents take no part. A subagent can't see the roster or visit anyone, and nobody can visit a
 subagent: only its own lead reaches it, with office-workers. Workers on other floors aren't listed.
-The owner can turn visits off for the whole office (⚙️ Settings → Subagents → Visits); then every
+The owner can turn visits off for the whole office (⚙️ Settings → Subagents & visits → Visits); then every
 command here is refused.
 
 COMMANDS

@@ -588,12 +588,23 @@ label.choice:has(> input:disabled) { opacity: .5; cursor: default; }
 .model-visibility-list { max-height: 320px; overflow: auto; }
 .model-visibility-list .toggle { flex: none; }
 .settings-head p { margin: 4px 0 0; font-size: 12.5px; font-weight: 500; line-height: 1.4; color: var(--text-secondary); }
+.settings-head-row { display: flex; align-items: center; gap: var(--space-2); }
+.settings-head-row .pill { margin-left: auto; flex: none; }
+.settings-search-wrap { flex: none; padding: 2px 2px var(--space-2); }
+.settings-search { width: 100%; }
+.settings-nav-section { flex: none; padding: var(--space-3) 10px var(--space-1); font: 500 var(--text-label)/1.4 var(--font-mono); text-transform: uppercase; letter-spacing: .1em; color: var(--text-tertiary); }
+.settings-hit .icon { flex: none; width: 18px; font-size: 14px; text-align: center; }
+.group-row.flash { animation: settings-flash 2s var(--ease); }
+@keyframes settings-flash { 0%, 60% { background: var(--accent-muted); box-shadow: inset 0 0 0 1px var(--accent); } 100% { background: transparent; box-shadow: none; } }
+@media (prefers-reduced-motion: reduce) { .group-row.flash { animation: none; box-shadow: inset 0 0 0 1px var(--accent); } }
 .setting { flex: none; padding: 12px 14px; background: var(--surface-raised); border: 1px solid var(--border); border-radius: var(--radius); }
 .setting-head { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
 .setting-head h4 { margin: 0; font: 600 13px/1.3 var(--font-sans); }
 @media (max-width: 720px) {
   .settings-body { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr); }
   .settings-nav { flex-direction: row; overflow-x: auto; border-right: 0; border-bottom: 1px solid var(--border); }
+  .settings-search-wrap { flex: none; width: 180px; padding: 2px; }
+  .settings-nav-section { display: none; }
   .settings-tab { flex: none; width: auto; white-space: nowrap; }
   .settings-pane { padding: 12px; }
 }
@@ -616,7 +627,7 @@ label.choice:has(> input:disabled) { opacity: .5; cursor: default; }
 .seg:is([role=radiogroup], [role=group], :has(> .btn.on)) > .btn:is(.on, [aria-checked=true], [aria-pressed=true]) { position: relative; z-index: 2; border-color: var(--accent); background: var(--accent-muted); color: var(--text); }
 .setting .seg + .seg { margin-top: 8px; }
 .seg.disabled { opacity: .45; }
-/* ⚙️ Settings → Subagents: the models leads can pick, each picked one with a note for the lead. */
+/* ⚙️ Settings → Subagents & visits: the models leads can pick, each picked one with a note for the lead. */
 .sub-models-filter { flex: 1; min-width: 0; }
 .sub-models-count { flex: none; color: var(--text-secondary); font-size: var(--text-small); }
 .sub-models { max-height: 340px; overflow: auto; }
@@ -1793,7 +1804,7 @@ a.when:hover { text-decoration: underline; }
   #loading, .loading-fill { transition: none; }
 }
 
-/* ⚙️ Settings → Factory: what the office's key reaches. */
+/* ⚙️ Settings → Connections: what the office's key reaches. */
 .factory-caps { list-style: none; margin: 10px 0 0; padding: 0; display: grid; gap: 5px; font-size: 13px; }
 .factory-caps li { display: flex; align-items: baseline; gap: 8px; min-width: 0; }
 .factory-caps .mark { flex: none; width: 1.2em; text-align: center; font: 700 13px/1.3 var(--font-mono); color: var(--text-tertiary); }
@@ -2545,7 +2556,7 @@ html:has(body.dashboard), body.dashboard { overflow: auto; }
 .phone-web-text b { font-weight: 500; }
 .phone-web-text small { font-size: var(--text-small); color: var(--text-secondary); }
 
-/* ---------- The welcome (ui/welcome.ts) and Settings → Subscriptions and Workers → Droid (ui/subscriptions-settings.ts, ui/droid-settings.ts) ---------- */
+/* ---------- The welcome (ui/welcome.ts) and Settings → Connections and Workers → Droid (ui/subscriptions-settings.ts, ui/droid-settings.ts) ---------- */
 .modal.welcome { height: min(580px, calc(100vh - 32px)); }
 .welcome-body { --split-side: 232px; }
 .welcome-steps { padding: var(--space-3) var(--space-2); }
@@ -2607,7 +2618,7 @@ html:has(body.dashboard), body.dashboard { overflow: auto; }
   .welcome-providers { grid-template-columns: minmax(0, 1fr); }
 }
 
-/* Accounts and their usage, in the welcome and in Settings → Subscriptions. */
+/* Accounts and their usage, in the welcome and in Settings → Connections. */
 .subs-meta { color: var(--text-tertiary); overflow-wrap: anywhere; }
 .subs-providers { display: flex; flex-direction: column; gap: var(--space-2); }
 .subs-provider { display: flex; flex-direction: column; gap: var(--space-3); padding: var(--space-3) var(--space-4); border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface); }

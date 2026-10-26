@@ -181,7 +181,7 @@ test('subagents, other workers’ subagents and a turned-off office get a clear 
   for (const action of ['whoami', 'roster', 'visit', 'status', 'reply']) {
     const res = r.call('pixel', { action, kind: 'tell', worker: 'Nibble', text: 'hi', visit: 'v-1' });
     assert.equal(res.status, 403, action);
-    assert.match(res.body.error, /Visits between workers are turned off in this office \(⚙️ Settings → Subagents → Visits\)/);
+    assert.match(res.body.error, /Visits between workers are turned off in this office \(⚙️ Settings → Subagents & visits → Visits\)/);
   }
   assert.equal(r.emitted.length, 0, 'nothing was shown');
 });

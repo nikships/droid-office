@@ -1,7 +1,7 @@
 // Paired phones (Droid Office for Android). A phone that scanned the pairing QR code, and so has this
 // start's LAN token, POSTs /api/mobile/pair once and gets a long random device token back. That token
 // opens the office like the LAN token does, but across restarts, until the owner forgets the phone in
-// ⚙️ Settings → Phone or the phone unpairs itself. Only the token's SHA-256 is kept, in the office's
+// ⚙️ Settings → Phone & web or the phone unpairs itself. Only the token's SHA-256 is kept, in the office's
 // own `.droid-office/devices.json` (mode 0600, written atomically).
 
 import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';

@@ -138,7 +138,7 @@ import { openCharacter } from './ui/character';
 import { openSettings, type SettingsPane } from './ui/settings';
 import { openWelcome, watchWelcome } from './ui/welcome';
 import { OPEN_SETTINGS_EVENT } from './ui/model-picker';
-import { SETTINGS_PANES } from '../shared/settings-nav';
+import { resolveSettingsPane } from '../shared/settings-nav';
 import { officePrompt } from './ui/prompts';
 import { forgeVars } from '../shared/prompts';
 import { INCLUDE_FILE, SETUP_FILE, describeSetup } from '../shared/worktree-setup';
@@ -386,7 +386,7 @@ const renderMachineBoard = () => {
 mountBoard(office.fleetScreen, computeWall.fleet, () => {}, []);
 mountBoard(office.machineScreen, computeWall.machine, renderMachineBoard, ['machine', 'factory']);
 /** The Computers window, on one computer when `id` is given. */
-const showComputers = (id?: string) => openComputers({ settings: () => showSettings('factory'), id });
+const showComputers = (id?: string) => openComputers({ settings: () => showSettings('connections'), id });
 // Ages and asleep-ness move on by themselves; the wall paints only when what it says changed.
 setInterval(renderMachineBoard, 30_000);
 // Someone near the wall is watching it: Factory's computers are read more often meanwhile.
@@ -2382,7 +2382,7 @@ function blobBase(): { url: string; site: string } | undefined {
 
 function showBookshelf(tab?: ShelfTab) {
   if (!store.floor) return toast('Take the elevator to a floor first');
-  openBookshelf({ floor: store.floor, project: store.project?.name, blob: blobBase(), onTurn: turnPage, tab, openFactorySettings: () => showSettings('factory') });
+  openBookshelf({ floor: store.floor, project: store.project?.name, blob: blobBase(), onTurn: turnPage, tab, openFactorySettings: () => showSettings('connections') });
 }
 
 // The bookshelf's AutoWiki volumes: there once Factory has a wiki of this floor's repository, a
@@ -3455,7 +3455,7 @@ const hudActions: HudAction[] = [
     shown: () => store.factory.connection.connected,
     count: () => store.factory.environments.items.length,
     title: () => 'Your Factory Environments: what computers start from',
-    run: () => openComputers({ settings: () => showSettings('factory'), tab: 'environments' }),
+    run: () => openComputers({ settings: () => showSettings('connections'), tab: 'environments' }),
   },
   { id: 'search', icon: '🔎', label: 'Search', section: 'Open', key: '/', title: () => 'Search every terminal', run: showSearch },
   { id: 'autowiki', icon: '🏭', label: 'AutoWiki', section: 'Open', title: () => "Factory's wiki of this repository, on the bookshelf", run: () => showBookshelf('wiki') },
@@ -3520,7 +3520,7 @@ const hud = mountHud(hudActions, settings, () => saveSettings(settings));
 // A model picker's "Use your Claude or ChatGPT plan": Settings on that pane, or the open Settings turned to it.
 window.addEventListener(OPEN_SETTINGS_EVENT, (e) => {
   const want = (e as CustomEvent<{ pane?: string }>).detail?.pane;
-  const pane = SETTINGS_PANES.find((p) => p.id === want)?.id;
+  const pane = resolveSettingsPane(want);
   const tab = pane && document.getElementById(`settings-tab-${pane}`);
   if (tab) tab.click();
   else showSettings(pane);
@@ -3690,7 +3690,7 @@ const renderLoop = new RenderLoop({
   },
 });
 
-// ---- The Remastered renderer (Settings → Graphics → Renderer; the picture is fixed) --------------
+// ---- The Remastered renderer (Settings → Display → Renderer; the picture is fixed) --------------
 let remasterSettings: RemasterSettings = loadRemaster();
 let remasterParams = resolveRemaster(remasterSettings);
 const remaster = new Remaster(

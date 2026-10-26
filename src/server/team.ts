@@ -238,7 +238,7 @@ export class Team {
   cannotHire(w: WorkerInfo): string | undefined {
     const s = this.opts.settings();
     const lead = STATION_AGENT.lead.name;
-    if (!s.on) return 'Subagents are turned off in this office (⚙️ Settings → Subagents)';
+    if (!s.on) return 'Subagents are turned off in this office (⚙️ Settings → Subagents & visits)';
     if (w.kind !== 'agent') return 'Only agents hire subagents';
     if (w.lead) {
       const boss = this.workers.get(w.lead)?.name ?? 'your lead';
@@ -248,7 +248,7 @@ export class Team {
     // The Pipeline agent hires the worker that heals a failed run.
     if (station === 'actions') return undefined;
     if (station && station !== 'lead') return `The ${STATION_AGENT[station].name} doesn't hire subagents: suggest the Team lead at the kiosk on the east wall for work that needs a team`;
-    if (!station && !s.deskWorkers) return `Only the ${lead} hires subagents in this office (⚙️ Settings → Subagents)`;
+    if (!station && !s.deskWorkers) return `Only the ${lead} hires subagents in this office (⚙️ Settings → Subagents & visits)`;
     return undefined;
   }
 
@@ -410,7 +410,7 @@ export class Team {
     const effort = b.effort === undefined || b.effort === '' ? undefined : b.effort;
     if (effort !== undefined && !isAgentEffort(effort)) return `Effort is one of ${AGENT_EFFORTS.join(', ')}`;
     if (model !== undefined && s.models?.length && model !== this.defaultModel(droidDefault) && !s.models.some((m) => m.id === model)) {
-      return `${clip(model, 60)} isn't one of the models this office lets subagents use (⚙️ Settings → Subagents): pick one from office-workers models, or leave --model out for the default`;
+      return `${clip(model, 60)} isn't one of the models this office lets subagents use (⚙️ Settings → Subagents & visits): pick one from office-workers models, or leave --model out for the default`;
     }
     if (model === undefined && effort === undefined) return s.agent ? { ...s.agent } : {};
     // A worker hired with no model starts on the office default, effort and all, so what the lead

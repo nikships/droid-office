@@ -4,7 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import test, { type TestContext } from 'node:test';
 import { HiddenModels } from '../src/server/hidden-models.js';
-import { visibleModels } from '../src/shared/model-visibility.js';
+import { offeredModels, visibleModels } from '../src/shared/model-visibility.js';
 import { sectionsFor } from '../src/client/ui/model-search.js';
 import { store } from '../src/client/state.js';
 
@@ -70,6 +70,17 @@ test('hidden models stay out of searches, groups and recents without changing th
   assert.deepEqual(sectionsFor(filtered, { query: 'gpt', scope: '', recents: ['gpt-6.1-sol'] }), []);
   assert.deepEqual(visibleModels(models, []), models);
   assert.equal(models.length, 2);
+});
+
+test('offeredModels hides unpicked models while preserving already-picked hidden models', () => {
+  const models = [
+    { id: 'gpt-6.1-sol', name: 'GPT-6.1 Sol' },
+    { id: 'claude-opus-5-5', name: 'Opus 5.5' },
+    { id: 'gemini-2.5-pro', name: 'Gemini 2.5 Pro' },
+  ];
+  assert.deepEqual(offeredModels(models, ['gpt-6.1-sol'], new Set()), [models[1], models[2]]);
+  assert.deepEqual(offeredModels(models, ['gpt-6.1-sol'], new Set(['gpt-6.1-sol'])), models);
+  assert.deepEqual(offeredModels(models, [], new Set()), models);
 });
 
 test('live hidden-model messages update the web store and notify open pickers', () => {

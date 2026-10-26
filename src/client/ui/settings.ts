@@ -2,8 +2,8 @@ import type { Net } from '../net';
 import { store, type Settings, type Sidearm } from '../state';
 import { askNotifyPermission, notifyPermission, type DesktopNotifier } from '../notify';
 import { SUBAGENT_MAX_PER_LEAD, type AgentChoice, type SubagentSettings, type WebhookKind } from '../../shared/protocol';
-import { SETTINGS_PANES, settingsPaneAfter, type SettingsCardTitle, type SettingsPane } from '../../shared/settings-nav';
-import { h, openModal, timeAgo } from './dom';
+import { SETTINGS_CARDS, SETTINGS_PANES, searchSettings, settingsPaneAfter, type SettingsCardTitle, type SettingsPane } from '../../shared/settings-nav';
+import { claimEscape, h, openModal, timeAgo } from './dom';
 import { onJiraSetup } from './jira';
 import { choices, field, toggle as kitToggle } from './kit';
 import { agentFields, modelBadge, officeChoice } from './models';
@@ -956,16 +956,42 @@ export function openSettings(
   const sourceReload = hotReloadSettings();
   const factoryKey = factoryKeySettings(net);
   const subscriptions = subscriptionsSettings(net);
-  const subscriptionGroups = [group('DroidProxy', card('DroidProxy', subscriptions.proxy)), group('Accounts', card('Accounts', subscriptions.accounts)), group('Droid', card('Models in Droid', subscriptions.models))];
+  const subscriptionGroups = [
+    group('DroidProxy', card('DroidProxy', subscriptions.proxy)),
+    group('Subscription accounts', card('Accounts', subscriptions.accounts)),
+    group('Subscription models', card('Models in Droid', subscriptions.models)),
+  ];
   subscriptions.hideWhenUnsupported(...subscriptionGroups);
   const droid = droidSettings(net);
   const modelVisibility = hiddenModelSettings(net);
   const panes: Record<SettingsPane, Node[]> = {
     you: [
+      group('Profile', card('Your character', { desc: desc('How you look and the name above your head.'), control: character })),
       group(
-        null,
-        card('Your character', { desc: desc('How you look and the name above your head.'), control: character }),
+        'Controls',
         card('What 7 puts in your hand', { desc: desc('A normal hit opens the worker’s terminal. Only a fully charged shot sends it home and deletes its owned worktree and branch.'), below: [sidearm] }),
+        card('Raw mouse input', {
+          desc: desc(
+            'Looking around follows the mouse’s own movement, without the pointer acceleration macOS adds, so the same hand movement always turns the view the same amount. Where the browser can’t, the mouse works as usual. Takes effect the next time the office captures the mouse.',
+          ),
+          control: rawMouse.el,
+        }),
+        card('Look sensitivity', {
+          desc: desc('How far the view turns for the same mouse movement while the office has the mouse. 1× is the office’s own speed; lower turns slower, higher faster. Raw input on or off, it applies at once.'),
+          control: lookRow,
+        }),
+      ),
+      group(
+        'Shortcuts',
+        card('Prompt chips', {
+          desc: desc('One tap fills a prompt box. Kept in this browser, not on the office.'),
+          below: [
+            presetEditor(settings.presets, (presets) => {
+              settings = { ...settings, presets };
+              onChange(settings);
+            }),
+          ],
+        }),
       ),
     ],
     sound: [
@@ -989,19 +1015,6 @@ export function openSettings(
         }),
       ),
       group(
-        'Mouse',
-        card('Raw mouse input', {
-          desc: desc(
-            'Looking around follows the mouse’s own movement, without the pointer acceleration macOS adds, so the same hand movement always turns the view the same amount. Where the browser can’t, the mouse works as usual. Takes effect the next time the office captures the mouse.',
-          ),
-          control: rawMouse.el,
-        }),
-        card('Look sensitivity', {
-          desc: desc('How far the view turns for the same mouse movement while the office has the mouse. 1× is the office’s own speed; lower turns slower, higher faster. Raw input on or off, it applies at once.'),
-          control: lookRow,
-        }),
-      ),
-      group(
         'Lighting',
         card('Overhead lights', {
           desc: desc(
@@ -1021,46 +1034,18 @@ export function openSettings(
       ),
     ],
     notify: [
-      group('This browser', card('Desktop notifications', { desc: notifyNote, control: notifyRow })),
-      group('The office', card('Channel notifications (Slack / Discord)', { desc: hookStatus, below: [h('div.input-group', {}, hookInput, hookSave), hookError, hookActions] })),
+      group('Just you', card('Desktop notifications', { desc: notifyNote, control: notifyRow })),
+      group('Everyone in the office', card('Channel notifications (Slack / Discord)', { desc: hookStatus, below: [h('div.input-group', {}, hookInput, hookSave), hookError, hookActions] })),
     ],
-    building: [
-      ...(outside
-        ? [
-            group(
-              'Outside',
-              card('Outside', {
-                desc: desc(outside.live ? 'The office’s clock, and the live weather where it is.' : 'The office’s clock, and weather that comes and goes. Start the office with --city to use a real city’s forecast.'),
-                control: outsideNow(outside.now),
-              }),
-            ),
-          ]
-        : []),
-      group('Jira', card('Jira', { desc: jiraNote, below: [jiraForm, jiraFail, jiraActions] }), epicCard),
-      group('Projects', card('Workspace folder', { desc: dirNote, below: [dirRow] })),
-      group('Development', card('Source hot reload', { below: [sourceReload.element] })),
-    ],
-    factory: [group('Connection', card('Factory API key', factoryKey.key)), factoryKey.reach],
-    subscriptions: [subscriptions.unsupported, ...subscriptionGroups],
     workers: [
-      group('Droid', card('Droid', droid.parts)),
+      group('Agent', card('Droid', droid.parts), card('Default worker', { desc: agentNote, below: [agent.element, agentActions] }), card('Models shown in pickers', { below: [modelVisibility.element] })),
       group(
-        'New workers',
-        card('Default worker', { desc: agentNote, below: [agent.element, agentActions] }),
-        card('Models shown in pickers', { below: [modelVisibility.element] }),
+        'Hiring',
         card('Where fresh workers start', { desc: freshNote, control: freshRow }),
-        card('Prompts', { desc: promptsNote, control: promptsOpen }),
-        card('Prompt chips', {
-          desc: desc('One tap fills a prompt box. Kept in this browser, not on the office.'),
-          below: [
-            presetEditor(settings.presets, (presets) => {
-              settings = { ...settings, presets };
-              onChange(settings);
-            }),
-          ],
-        }),
+        card('Worker limit', { desc: limitNote, control: limitRow }),
+        card('Workers whose pull request merged', { desc: leaveNote, control: leaveRow }),
       ),
-      group('Running', card('Worker limit', { desc: limitNote, control: limitRow }), card('Workers whose pull request merged', { desc: leaveNote, control: leaveRow })),
+      group('Guidance', card('Prompts', { desc: promptsNote, control: promptsOpen })),
       group('Worktrees', card('Worktree setup', { desc: setupNote, control: setupMode.row, below: [setupFail, setupForm, setupActions] })),
     ],
     subagents: [
@@ -1085,14 +1070,46 @@ export function openSettings(
       ),
       group('Droid', card('Droid skill', { desc: subSkillNote, control: subSkill.el }), card('Whiteboard skill', { desc: boardSkillNote, control: boardSkill.el })),
     ],
+    connections: [
+      subscriptions.unsupported,
+      group('Factory', card('Factory API key', factoryKey.key)),
+      factoryKey.reach,
+      ...subscriptionGroups,
+      group('Jira', card('Jira', { desc: jiraNote, below: [jiraForm, jiraFail, jiraActions] }), epicCard),
+    ],
+    office: [
+      ...(outside
+        ? [
+            group(
+              'Environment',
+              card('Outside', {
+                desc: desc(outside.live ? 'The office’s clock, and the live weather where it is.' : 'The office’s clock, and weather that comes and goes. Start the office with --city to use a real city’s forecast.'),
+                control: outsideNow(outside.now),
+              }),
+            ),
+          ]
+        : []),
+      group('Floors & projects', card('Workspace folder', { desc: dirNote, below: [dirRow] })),
+      group('Developer', card('Source hot reload', { below: [sourceReload.element] })),
+    ],
     phone: [group(null, card('Droid Office for Android', { desc: h('span.stack.tight', {}, phoneNote, phoneStatus), control: phoneOpen }), card('Web companion', { desc: h('span.stack.tight', {}, webNote, webStatus), control: webOpen }))],
   };
 
-  // The categories down the side, the one picked on the right. On a phone the row is across the top.
-  const nav = h('nav.settings-nav', { role: 'tablist', 'aria-label': 'Settings' });
+  // The categories down the side, grouped under Personal / Workers / Office, the one picked on the right.
+  // On a phone the row is across the top. The search at the top of the side finds a setting by name
+  // without knowing its category, and a pick jumps to its row and flashes it.
+  const searchInput = h('input.input.settings-search', { type: 'search', placeholder: 'Search settings…', 'aria-label': 'Search settings' }) as HTMLInputElement;
+  const results = h('section.settings-pane.settings-results', { 'aria-label': 'Search results' });
+  results.classList.add('hidden');
+  const nav = h('nav.settings-nav', { role: 'tablist', 'aria-label': 'Settings' }, h('div.settings-search-wrap', {}, searchInput));
   const tabs = new Map<SettingsPane, HTMLButtonElement>();
   const bodies = new Map<SettingsPane, HTMLElement>();
+  let navSection = '';
   for (const p of SETTINGS_PANES) {
+    if (p.section !== navSection) {
+      navSection = p.section;
+      nav.append(h('div.settings-nav-section', { 'aria-hidden': 'true' }, p.section));
+    }
     const tab = h(
       'button.settings-tab',
       { type: 'button', role: 'tab', id: `settings-tab-${p.id}`, 'aria-controls': `settings-pane-${p.id}`, onclick: () => show(p.id) },
@@ -1106,13 +1123,36 @@ export function openSettings(
       h(
         'section.settings-pane',
         { role: 'tabpanel', id: `settings-pane-${p.id}`, 'aria-labelledby': `settings-tab-${p.id}` },
-        h('div.settings-head', {}, h('h3', {}, h('span.icon', { 'aria-hidden': 'true' }, p.icon), p.label), h('p', {}, p.blurb)),
+        h('div.settings-head', {}, h('div.settings-head-row', {}, h('h3', {}, h('span.icon', { 'aria-hidden': 'true' }, p.icon), p.label), h('span.pill', {}, p.scope)), h('p', {}, p.blurb)),
         ...panes[p.id],
       ),
     );
   }
+  /** Each card's row, by its title, so a search pick can jump to it. Only rows the registry names count. */
+  const rowByTitle = new Map<string, { pane: SettingsPane; row: HTMLElement }>();
+  {
+    const known = new Set<string>(SETTINGS_CARDS.map((c) => c.title));
+    for (const [pane, body] of bodies) {
+      for (const row of body.querySelectorAll<HTMLElement>('.group-row')) {
+        const title = row.querySelector(':scope > .group-label > b')?.textContent ?? '';
+        if (known.has(title) && !rowByTitle.has(title)) rowByTitle.set(title, { pane, row });
+      }
+    }
+  }
+  let flashTimer: ReturnType<typeof setTimeout> | undefined;
+  const flashRow = (title: string) => {
+    const hit = rowByTitle.get(title);
+    if (!hit) return;
+    clearTimeout(flashTimer);
+    for (const { row } of rowByTitle.values()) row.classList.remove('flash');
+    hit.row.classList.add('flash');
+    hit.row.scrollIntoView({ block: 'center' });
+    flashTimer = setTimeout(() => hit.row.classList.remove('flash'), 2000);
+  };
   const show = (id: SettingsPane) => {
     lastPane = id;
+    searchInput.value = '';
+    results.classList.add('hidden');
     for (const [t, tab] of tabs) {
       tab.classList.toggle('on', t === id);
       tab.setAttribute('aria-selected', String(t === id));
@@ -1124,6 +1164,57 @@ export function openSettings(
     // On a phone the categories are a row across the top that scrolls sideways.
     tabs.get(id)!.scrollIntoView({ block: 'nearest', inline: 'nearest' });
   };
+  const paintSearch = () => {
+    const query = searchInput.value.trim();
+    if (!query) return show(lastPane);
+    const hits = searchSettings(query);
+    const paneLabel = new Map(SETTINGS_PANES.map((p) => [p.id, p]));
+    results.replaceChildren(
+      h(
+        'div.settings-head',
+        {},
+        h('h3', {}, 'Search results'),
+        h('p', {}, hits.length ? `${hits.length} setting${hits.length === 1 ? '' : 's'} match “${query}”. Pick one to jump to it.` : `No settings match “${query}”. Try a setting's name, like “Jira”, “models” or “volume”.`),
+      ),
+      ...(hits.length
+        ? [
+            h(
+              'div.list.boxed.settings-hit-list',
+              {},
+              ...hits.map((hit) => {
+                const pane = paneLabel.get(hit.pane)!;
+                return h(
+                  'button.list-row.settings-hit',
+                  {
+                    type: 'button',
+                    onclick: () => {
+                      show(hit.pane);
+                      flashRow(hit.title);
+                    },
+                  },
+                  h('span.icon', { 'aria-hidden': 'true' }, pane.icon),
+                  h('span.list-main', {}, h('span.list-title', {}, hit.title), h('span.list-meta', {}, `${pane.section} · ${pane.label}`)),
+                );
+              }),
+            ),
+          ]
+        : []),
+    );
+    for (const tab of tabs.values()) {
+      tab.classList.remove('on');
+      tab.setAttribute('aria-selected', 'false');
+    }
+    for (const body of bodies.values()) body.classList.add('hidden');
+    results.classList.remove('hidden');
+    results.scrollTop = 0;
+  };
+  searchInput.addEventListener('input', paintSearch);
+  const offSearchEscape = claimEscape(searchInput, () => {
+    if (!searchInput.value) return false;
+    searchInput.value = '';
+    show(lastPane);
+    return true;
+  });
   nav.addEventListener('keydown', (e) => {
     const next = settingsPaneAfter(lastPane, e.key);
     if (!next) return;
@@ -1137,7 +1228,7 @@ export function openSettings(
   wide.addEventListener('change', orient);
 
   const close = h('button.btn.close', { 'aria-label': 'Close' }, '✕');
-  const el = h('div.modal.xl.settings', { role: 'dialog', 'aria-label': 'Settings' }, h('header', {}, h('h2', {}, 'Settings'), close), h('div.split.settings-body', {}, nav, ...bodies.values()));
+  const el = h('div.modal.xl.settings', { role: 'dialog', 'aria-label': 'Settings' }, h('header', {}, h('h2', {}, 'Settings'), close), h('div.split.settings-body', {}, nav, ...bodies.values(), results));
   const offNotify = store.on('notify', paintHook);
   const offLeave = store.on('leaveOnMerge', paintLeave);
   const offFresh = store.on('freshMain', paintFresh);
@@ -1148,6 +1239,8 @@ export function openSettings(
   const modal = openModal(el, {
     doing: '⚙️ in settings',
     onClose: () => {
+      offSearchEscape();
+      clearTimeout(flashTimer);
       wide.removeEventListener('change', orient);
       offNotify();
       offLeave();

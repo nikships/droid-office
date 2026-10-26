@@ -150,7 +150,7 @@ export class PlayerController {
   private lockedAt = 0;
   /** Ask for the mouse raw (`unadjustedMovement`: no OS pointer acceleration) when capturing it. */
   rawInput = false;
-  /** Multiplies how far a captured move turns the view (Settings → Graphics → Mouse). Dragging to look is not changed. */
+  /** Multiplies how far a captured move turns the view (Settings → You → Controls). Dragging to look is not changed. */
   lookSensitivity = 1;
   /** This browser said it can't read the mouse raw; later locks don't ask. */
   private rawUnsupported = false;

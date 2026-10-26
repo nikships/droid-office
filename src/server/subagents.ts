@@ -10,7 +10,7 @@ import { agentChoiceProblem } from './prompts.js';
 export const FACTORY_SKILLS_DIR = path.join(homedir(), '.factory', 'skills');
 export const SKILL_NAME = 'droid-office-subagents';
 /** The line that says the office wrote the skill, so it rewrites or removes only its own file. */
-export const SKILL_MARK = '<!-- Written by Droid Office (⚙️ Settings → Subagents), which keeps this file up to date: edits here are overwritten. Turn the skill off there to remove it. -->';
+export const SKILL_MARK = '<!-- Written by Droid Office (⚙️ Settings → Subagents & visits), which keeps this file up to date: edits here are overwritten. Turn the skill off there to remove it. -->';
 
 /**
  * The Droid skill that tells a Droid worker how to hire subagents in the office. It lives with the
@@ -105,7 +105,7 @@ function cleanModels(list: unknown[]): SubagentModel[] {
 }
 
 /**
- * How workers hire subagents (⚙️ Settings → Subagents), for every floor, kept in
+ * How workers hire subagents (⚙️ Settings → Subagents & visits), for every floor, kept in
  * .droid-office/subagents.json, and the Droid skill that goes with it in ~/.factory/skills.
  */
 export class Subagents {

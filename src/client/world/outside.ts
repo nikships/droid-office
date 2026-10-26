@@ -30,7 +30,7 @@ export interface Lamp {
 
 /** Everything that changes between day and night and with the weather, for the sky to drive. */
 export interface NightParts {
-  /** Bulbs whose glow goes from `day` (emissive intensity by day) up to full at night. `overhead` ones are the office's ceiling fixtures, which Settings → Graphics dims. */
+  /** Bulbs whose glow goes from `day` (emissive intensity by day) up to full at night. `overhead` ones are the office's ceiling fixtures, which Settings → Display dims. */
   bulbs: { mat: THREE.MeshToonMaterial; day: number; overhead?: boolean }[];
   /** Where each bulb's soft halo goes at night, and its color; `ground` as for a Lamp. */
   halos: { at: THREE.Vector3; size: number; color: string; ground?: boolean }[];

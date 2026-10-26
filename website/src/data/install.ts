@@ -13,6 +13,6 @@ npm run dev`;
 
 export const pocketSteps = [
   { title: 'Install the APK', body: 'Grab Droid-Office-<version>.apk from the latest release.' },
-  { title: 'Scan to pair', body: 'In the office, open Settings → Phone and scan the code.' },
+  { title: 'Scan to pair', body: 'In the office, open Settings → Phone & web and scan the code.' },
   { title: 'Answer from anywhere', body: 'On your Wi-Fi or over Tailscale. Reply to a worker right from the notification.' },
 ];

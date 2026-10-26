@@ -190,7 +190,7 @@ export class WikiFeature extends SliceFeature<'wiki'> {
         if ('why' in where) throw new HttpError(409, where.why);
         if (!this.runner) throw new HttpError(409, 'This office can’t run /wiki.');
         const key = this.opts.key?.();
-        if (!key) throw new HttpError(409, 'The office’s Factory key isn’t usable now. Check it in ⚙️ Settings → Factory.');
+        if (!key) throw new HttpError(409, 'The office’s Factory key isn’t usable now. Check it in ⚙️ Settings → Connections.');
         const id = body.model === undefined || body.model === '' ? WIKI_DEFAULT_MODEL : body.model;
         if (!isModelId(id)) throw badRequest('model is a Droid model id, like glm-5.3-flash');
         const models = await this.runner.models();

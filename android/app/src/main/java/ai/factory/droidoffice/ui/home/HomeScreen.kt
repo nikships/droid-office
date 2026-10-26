@@ -597,7 +597,7 @@ private fun Repair(officeName: String, legacy: Boolean, onScan: () -> Unit) {
         Spacer(Modifier.height(6.dp))
         Text(
             if (legacy) "This office pairs by the code it shows at start, and a restart makes a new one. Scan it again to get back in."
-            else "The office forgot this phone, so its key no longer opens the door. Scan the code in the office's Settings → Phone to pair again.",
+            else "The office forgot this phone, so its key no longer opens the door. Scan the code in the office's Settings → Phone & web to pair again.",
             style = MaterialTheme.typography.bodyMedium,
             color = Palette.TextSecondary,
             textAlign = androidx.compose.ui.text.style.TextAlign.Center,

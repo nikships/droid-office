@@ -453,7 +453,7 @@ export async function startServer(cfg: Config) {
 
   // The office's one Jira Cloud account, which every floor's epic board reads through (⚙️ Settings).
   const jira = new JiraOffice(cfg.dataDir);
-  // The office's Factory API key and every Factory feature read with it (⚙️ Settings → Factory, docs/factory.md).
+  // The office's Factory API key and every Factory feature read with it (⚙️ Settings → Connections, docs/factory.md).
   // AutoWiki's /wiki runs on a floor's default branch with the office's Droid command (factory/wiki-run.ts).
   const factory = mountFactory({
     dataDir: cfg.dataDir,
@@ -733,7 +733,7 @@ export async function startServer(cfg: Config) {
 
   /** Off the machine without this start's token: APIs get JSON, pages get a pointer to the join link. */
   const refuseHttp = (res: http.ServerResponse, api: boolean, unpaired = false) => {
-    if (unpaired) return send(res, 401, { error: 'This device is not paired with the office any more. Pair it again from ⚙️ Settings → Phone.' });
+    if (unpaired) return send(res, 401, { error: 'This device is not paired with the office any more. Pair it again from ⚙️ Settings → Phone & web.' });
     const hint = 'Open the join link from the office’s terminal (it prints a QR code on startup).';
     if (api) return send(res, 401, { error: `This office needs its join link (?t=). ${hint}` });
     res.writeHead(401, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store', 'x-content-type-options': 'nosniff', 'x-frame-options': 'DENY', 'referrer-policy': 'no-referrer' });
@@ -946,7 +946,7 @@ export async function startServer(cfg: Config) {
         if (browser && !companion.on) return send(res, 403, { error: COMPANION_OFF, companionOff: true });
         if (browser && !sameOrigin(req, cfg)) return send(res, 403, { error: 'Pair this browser from the office’s own address.' });
         const paired = devices.pair(body && typeof body === 'object' ? body.device : undefined, browser ? 'browser' : undefined);
-        if (!paired) return send(res, 409, { error: 'Too many devices are paired with this office. Forget one in ⚙️ Settings → Phone first.' });
+        if (!paired) return send(res, 409, { error: 'Too many devices are paired with this office. Forget one in ⚙️ Settings → Phone & web first.' });
         console.log(`  📱 ${paired.device.name} paired with the office`);
         toastAll(`📱 ${paired.device.name} paired with the office`);
         return send(res, 200, { deviceId: paired.device.id, token: paired.token, office: officeCard(), ...(browser ? { device: paired.device } : {}) });
