@@ -1,4 +1,5 @@
 import { SUBAGENT_MODEL_NOTE_MAX, type SubagentModel } from '../../shared/protocol';
+import { offeredModels } from '../../shared/model-visibility';
 import { store } from '../state';
 import { withoutGlyph } from '../world/glyph';
 import { h } from './dom';
@@ -21,9 +22,10 @@ function facts(m: DroidModelOption | undefined, id: string, why?: string): strin
 }
 
 /**
- * ⚙️ Settings → Subagents & visits: a checkbox for every model droid lists, cheapest first, and a note for
- * each one picked that the Team lead reads in `office-workers models` when it chooses one.
- * Nothing picked lets leads run any model.
+ * ⚙️ Settings → Subagents & visits: a checkbox for every model droid lists that is not hidden in
+ * Workers → Models shown in pickers, cheapest first, and a note for each one picked that the Team
+ * lead reads in `office-workers models` when it chooses one. A pick hidden since stays listed,
+ * marked, so it can be unticked. Nothing picked lets leads run any model.
  */
 export function subagentModelPicker(save: (models: SubagentModel[] | undefined) => void): SubagentModelPicker {
   /** Picked ids, in the order they were picked, with their notes. */
@@ -46,7 +48,7 @@ export function subagentModelPicker(save: (models: SubagentModel[] | undefined) 
     saveBtn.toggleAttribute('disabled', !changed);
     revert.classList.toggle('hidden', !changed);
     anyBtn.classList.toggle('hidden', !saved?.length && !picked.size);
-    const total = models.length;
+    const total = offeredModels(models, store.hiddenModels, new Set(picked.keys())).length;
     count.textContent = loaded === 'loading' ? 'Loading Droid models…' : picked.size ? `${picked.size} picked${total ? ` of ${total}` : ''}` : loaded === 'failed' ? 'Model list unavailable' : `None picked: leads can run any of ${total}`;
   };
 
@@ -77,6 +79,7 @@ export function subagentModelPicker(save: (models: SubagentModel[] | undefined) 
       paintButtons();
     });
     const name = withoutGlyph(m?.displayName ?? droidDisplayName(id));
+    const line = facts(m, id, reason ?? remark);
     const li = h(
       'li.list-row.sub-model',
       { class: `${on ? 'on' : ''} ${reason ? 'refused' : ''}` },
@@ -85,7 +88,7 @@ export function subagentModelPicker(save: (models: SubagentModel[] | undefined) 
         { title: id },
         h('span.list-icon', {}, box),
         modelLogo({ id, name: m?.displayName, provider: m?.provider }),
-        h('span.list-main', {}, h('span.list-title', {}, name), h('span.list-meta', {}, facts(m, id, reason ?? remark))),
+        h('span.list-main', {}, h('span.list-title', {}, name), h('span.list-meta', {}, store.hiddenModels.includes(id) ? `${line} · hidden from pickers` : line)),
         !m?.custom && m?.tokenMultiplier !== undefined ? h('span.list-end', {}, multiplierLabel(m.tokenMultiplier)) : null,
       ),
       note,
@@ -95,11 +98,13 @@ export function subagentModelPicker(save: (models: SubagentModel[] | undefined) 
 
   const paintList = () => {
     const want = filter.value.trim().toLowerCase();
-    const known = new Set(models.map((m) => m.id));
+    // Hidden models are not offered; one picked before it was hidden stays, so it can be unticked.
+    const offered = offeredModels(models, store.hiddenModels, new Set(picked.keys()));
+    const known = new Set(offered.map((m) => m.id));
     // The saved picks on top, then own-key models, then cheapest first; one picked that droid no
     // longer lists stays visible. Rows reorder only on a repaint, never under the pointer mid-pick.
     const rank = (m: DroidModelOption) => (m.custom ? -1 : (m.tokenMultiplier ?? Number.POSITIVE_INFINITY));
-    const sorted = [...models].sort((a, b) => Number(picked.has(b.id)) - Number(picked.has(a.id)) || Number(!!a.legacy) - Number(!!b.legacy) || rank(a) - rank(b));
+    const sorted = [...offered].sort((a, b) => Number(picked.has(b.id)) - Number(picked.has(a.id)) || Number(!!a.legacy) - Number(!!b.legacy) || rank(a) - rank(b));
     const rows: [string, DroidModelOption | undefined][] = [...[...picked.keys()].filter((id) => !known.has(id)).map((id): [string, undefined] => [id, undefined]), ...sorted.map((m): [string, DroidModelOption] => [m.id, m])];
     const shown = rows.filter(([id, m]) => !want || [id, m?.displayName, m?.provider].some((s) => s?.toLowerCase().includes(want)));
     list.replaceChildren(...(shown.length ? shown.map(([id, m]) => row(id, m)) : [h('li.list-row.sub-model', {}, h('span.list-meta', {}, loaded === 'loading' ? 'Loading Droid models…' : 'No model matches.'))]));
@@ -134,6 +139,12 @@ export function subagentModelPicker(save: (models: SubagentModel[] | undefined) 
     if (list.isConnected) seen = true;
     else if (seen) stopWatching();
     if (list.isConnected && availabilityStamp() !== drawn) paintList();
+  });
+  // Hiding or showing a model under Workers → Models shown in pickers redraws this list at once.
+  const stopHidden = store.on('hiddenModels', () => {
+    if (list.isConnected) seen = true;
+    else if (seen) stopHidden();
+    if (list.isConnected) paintList();
   });
 
   void droidCatalogue()
