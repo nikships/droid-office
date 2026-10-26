@@ -17,8 +17,9 @@ import { $, closeAllModals, h, modalOpen, openModal, STATUS_LABEL, toast } from 
 import { emptyState, windowHeader } from './ui/kit';
 import { icon, type IconName } from './ui/icons';
 import { confirmDialog, openPrompt, routeWorktreeMessage, sendHomeDialog } from './ui/prompt';
-import { modelBadge } from './ui/models';
+import { modelBadge, modelBadgeNode } from './ui/models';
 import { openFloorOrder } from './ui/floor-reorder';
+import { openSubscriptionsStatus } from './ui/subscriptions-status';
 import type { MapDirection } from './office-map-view';
 import type { MapFloor, OfficeMap, OfficeMapHooks } from './office-map';
 
@@ -105,9 +106,10 @@ const connText = h('span', {}, 'Connecting');
 const conn = h('span.dash-conn', { 'data-state': 'loading' }, connDot, connText);
 const boardCount = h('span.dash-count.hidden');
 const board = h('button.btn.dash-top-btn', { type: 'button', title: 'The floor’s Whiteboard (B)', onclick: () => void openBoard() }, icon('board'), h('span', {}, 'Whiteboard'), boardCount);
+const subscriptions = h('button.btn.dash-top-btn', { type: 'button', title: 'Subscriptions and account usage', onclick: () => openSubscriptionsStatus() }, icon('key'), h('span', {}, 'Subscriptions'));
 const accessLabel = h('span', {}, WHERE[where].label);
 const access = h('button.btn.ghost.dash-top-btn', { type: 'button', title: 'How this browser reaches the office, and its pairing', onclick: () => accessDialog() }, icon(WHERE[where].icon), accessLabel);
-const top = h('header.dash-top', {}, brand, floorPicker, h('span.grow'), conn, board, access);
+const top = h('header.dash-top', {}, brand, floorPicker, h('span.grow'), conn, subscriptions, board, access);
 
 const bannerIcon = h('span.dash-banner-icon');
 const bannerText = h('p.dash-banner-text');
@@ -334,6 +336,7 @@ function paint() {
   reorderFloors.disabled = !up || store.floors.length < 2;
   agentBtn.disabled = shellBtn.disabled = dockAgent.disabled = dockShell.disabled = !up || !here || busy.has('hire');
   board.disabled = !up || !here;
+  subscriptions.disabled = !up;
   content.classList.toggle('dash-stale', !up);
   content.hidden = !authorized;
   authPanel.hidden = authorized;
@@ -816,7 +819,13 @@ function paintGrid(workers: WorkerInfo[]) {
       card.el.classList.toggle('asleep', isAsleep(w.status));
       card.el.setAttribute('aria-label', `${w.name}, ${statusWord(w, STATUS_LABEL)}: ${doingLine(w)}`);
       card.el.replaceChildren(
-        h('span.dash-card-head', {}, avatar(w), h('span.dash-card-titles', {}, h('span.dash-card-name', {}, w.name), h('span.dash-card-kind', {}, [kind(w), model].filter(Boolean).join(' · '))), pill(w)),
+        h(
+          'span.dash-card-head',
+          {},
+          avatar(w),
+          h('span.dash-card-titles', {}, h('span.dash-card-name', {}, w.name), h('span.dash-card-kind', {}, kind(w), model ? ' · ' : null, model ? modelBadgeNode(w.activeModel ?? w.model, w.activeEffort ?? w.effort) : null)),
+          pill(w),
+        ),
         card.preview,
         h(
           'span.dash-card-foot',
@@ -985,7 +994,7 @@ function paintInfo(w: WorkerInfo) {
     ['Subagents', team.length ? team.map((s) => s.name).join(', ') : undefined],
     ['Other projects', w.repos?.map((r) => `${r.name} · ${r.branch}`).join(', ')],
   ];
-  infoMeta.replaceChildren(...info.filter(([, v]) => !!v).flatMap(([label, value]) => [h('dt', {}, label), h('dd', { title: value }, value)]));
+  infoMeta.replaceChildren(...info.filter(([, v]) => !!v).flatMap(([label, value]) => [h('dt', {}, label), h('dd', { title: value }, label === 'Model' ? modelBadgeNode(w.activeModel ?? w.model, w.activeEffort ?? w.effort) : value)]));
   if (infoPreview) renderPreview(infoPreview, w.id, 40);
 }
 

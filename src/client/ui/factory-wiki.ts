@@ -16,6 +16,7 @@ import {
 } from '../../shared/factory-wiki';
 import { factoryFetch, refreshFactory, watchFactory } from '../factory';
 import { store } from '../state';
+import { modelLogo } from './model-logo';
 import { withToken } from '../token';
 import { anchorHeadings, jumpTo } from './bookshelf';
 import { drawDiagram } from './diagram';
@@ -253,7 +254,8 @@ export function mountWikiTab(root: HTMLElement, deps: WikiTabDeps): WikiTab {
     const who = h(
       'div.wk-job-who',
       {},
-      [`started by ${job.by}`, job.startedAt ? timeAgo(job.startedAt) : '', job.commit ? `at ${job.commit}` : '', job.model ? `on ${job.modelName ?? modelName(job.model)}` : ''].filter(Boolean).join(' · '),
+      [`started by ${job.by}`, job.startedAt ? timeAgo(job.startedAt) : '', job.commit ? `at ${job.commit}` : ''].filter(Boolean).join(' · '),
+      job.model ? h('span.model-badge', {}, ' · on ', modelLogo({ id: job.model, name: job.modelName ?? modelName(job.model) }), h('span', {}, job.modelName ?? modelName(job.model))) : null,
     );
     const lines = running || !job.error ? h('pre.wk-lines', {}, job.lines.join('\n')) : h('pre.wk-lines.bad', {}, job.error);
     const actions = h('div.row.wrap.wk-actions');
@@ -315,10 +317,10 @@ export function mountWikiTab(root: HTMLElement, deps: WikiTabDeps): WikiTab {
         run.branch && run.branch !== 'HEAD' ? run.branch : '',
         run.commitHash ? run.commitHash.slice(0, 7) : '',
         run.hasLocalChanges ? 'with local changes' : '',
-        run.model ? `by ${modelName(run.model)}` : '',
       ]
         .filter(Boolean)
         .join(' · '),
+      run.model ? h('span.model-badge', {}, ' · by ', modelLogo({ id: run.model, name: modelName(run.model) }), h('span', {}, modelName(run.model))) : null,
     );
     const rows: (HTMLElement | string)[] = [h('div.wk-row', {}, picker), age, h('div.row.wrap.wk-actions', {}, writing ? '' : generateButton('Regenerate', true), exportLink, factoryLink, del), h('div.wk-row', {}, privacy)];
     if (confirming === 'generate') rows.push(confirmBox('Regenerate', () => void generate()));

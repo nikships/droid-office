@@ -1,6 +1,8 @@
 import { store, type Sidearm } from '../state';
-import { $, glyphText, h, openModal, STATUS_LABEL } from './dom';
-import { modelBadge } from './models';
+import { $, h, openModal, STATUS_LABEL } from './dom';
+import { droidDisplayName, modelBadge } from './models';
+import { modelLogo } from './model-logo';
+import { withoutGlyph } from '../world/glyph';
 import { windowHeader } from './kit';
 import { cloudLine } from './factory-cloud';
 import { DESK_BY_ID } from '../../shared/layout';
@@ -15,7 +17,8 @@ export function renderWorkers(onOpen: (id: string) => void) {
   for (const w of workers) {
     const lead = w.lead ? store.workers.get(w.lead) : undefined;
     const team = store.teamOf(w.id);
-    const badge = w.kind === 'agent' ? modelBadge(w.activeModel ?? w.model, w.activeEffort ?? w.effort) : undefined;
+    const model = w.kind === 'agent' ? (w.activeModel ?? w.model) : undefined;
+    const badge = w.kind === 'agent' ? modelBadge(model, w.activeEffort ?? w.effort) : undefined;
     const standing = teamStanding(w, (id) => store.workers.get(id));
     const sub = [
       standing && `${TEAM_MARK[standing.badge.emblem]} ${standing.label}`,
@@ -48,7 +51,7 @@ export function renderWorkers(onOpen: (id: string) => void) {
           style: lead ? `--lead:${lead.color}` : undefined,
         },
         h('span.dot', { style: `background:${w.color}` }),
-        h('span.name', {}, w.name, sub ? h('span.sub', {}, ...glyphText(sub)) : null),
+        h('span.name', {}, w.name, sub ? h('span.sub', {}, model ? modelLogo({ id: model, name: droidDisplayName(model) }) : null, withoutGlyph(sub)) : null),
         w.lost ? h('span.pill.lost', { title: 'Its worktree was deleted outside droid-office: open it to fix it' }, 'worktree deleted') : h('span.pill', { class: w.status }, statusWord(w, STATUS_LABEL)),
       ),
     );

@@ -445,6 +445,10 @@ private fun RosterCard(w: WorkerInfo, lit: Boolean, onOpen: () -> Unit, modifier
         verticalArrangement = Arrangement.spacedBy(6.dp),
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
+            if (!w.isShell) {
+                ai.factory.droidoffice.ui.components.ModelLogo(w.model, modifier = Modifier.size(16.dp))
+                Spacer(Modifier.width(8.dp))
+            }
             WorkerDot(parseColor(w.color), w.state, size = 10.dp)
             Spacer(Modifier.width(8.dp))
             Text(w.name.ifBlank { "Worker" }, style = MaterialTheme.typography.titleSmall, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))

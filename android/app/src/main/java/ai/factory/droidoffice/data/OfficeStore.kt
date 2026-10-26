@@ -84,6 +84,7 @@ data class AppSettings(
     /** The model and effort the last Droid was hired with, which the hire sheet starts on. */
     val hireModel: String? = null,
     val hireEffort: String? = null,
+    val recentModels: List<String> = emptyList(),
     /** The quick keys' ids in the order the owner arranged them; null is the default order. */
     val quickKeys: List<String>? = null,
 )
@@ -122,6 +123,7 @@ class OfficeStore(context: Context, scope: CoroutineScope, private val vault: To
                 answerDelay = p[ANSWER_DELAY] ?: true,
                 hireModel = p[HIRE_MODEL],
                 hireEffort = p[HIRE_EFFORT],
+                recentModels = p[RECENT_MODELS]?.split('\n')?.filter { it.isNotBlank() }?.distinct()?.take(4).orEmpty(),
                 quickKeys = QuickKeys.decode(p[QUICK_KEYS]),
             ),
             loaded = true,
@@ -181,6 +183,7 @@ class OfficeStore(context: Context, scope: CoroutineScope, private val vault: To
             p[ANSWER_DELAY] = s.answerDelay
             s.hireModel?.let { p[HIRE_MODEL] = it } ?: p.remove(HIRE_MODEL)
             s.hireEffort?.let { p[HIRE_EFFORT] = it } ?: p.remove(HIRE_EFFORT)
+            p[RECENT_MODELS] = s.recentModels.take(4).joinToString("\n")
             s.quickKeys?.let { p[QUICK_KEYS] = QuickKeys.encode(it) } ?: p.remove(QUICK_KEYS)
         }
     }
@@ -197,6 +200,7 @@ class OfficeStore(context: Context, scope: CoroutineScope, private val vault: To
         val ANSWER_DELAY = booleanPreferencesKey("answer_delay")
         val HIRE_MODEL = stringPreferencesKey("hire_model")
         val HIRE_EFFORT = stringPreferencesKey("hire_effort")
+        val RECENT_MODELS = stringPreferencesKey("recent_models")
         val QUICK_KEYS = stringPreferencesKey("quick_keys")
         fun tokenKey(id: String) = stringPreferencesKey("token.$id")
     }

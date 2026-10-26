@@ -4,6 +4,7 @@ import { withoutGlyph } from '../world/glyph';
 import { store } from '../state';
 import { withToken } from '../token';
 import { h } from './dom';
+import { modelLogo } from './model-logo';
 import { modelPicker, type NoneOption } from './model-picker';
 import { availabilityOf, multiplierLabel, type PickerModel } from './model-search';
 
@@ -108,7 +109,6 @@ function defaultOption(runs: string | undefined, models: DroidModelOption[]): No
     note: name,
     model: runs,
     ...(shown?.cost !== undefined ? { cost: shown.cost } : {}),
-    ...(shown?.glyph ? { glyph: true } : {}),
     detail: `Runs ${name}, as set in the office and Droid settings`,
   };
 }
@@ -210,6 +210,14 @@ export function droidDisplayName(id: string): string {
 export function modelBadge(model: string | undefined, effort: AgentEffort | undefined): string | undefined {
   const parts = [model ? droidDisplayName(model) : undefined, effort ? EFFORT_LABEL[effort] : undefined].filter((v): v is string => !!v);
   return parts.length ? parts.join(' · ') : undefined;
+}
+
+/** A model badge for DOM surfaces; canvas labels keep the plain-text modelBadge above. */
+export function modelBadgeNode(model: string | undefined, effort: AgentEffort | undefined): HTMLElement | undefined {
+  const text = modelBadge(model, effort);
+  if (!text) return undefined;
+  const known = catalogue?.models.find((m) => m.id === model);
+  return h('span.model-badge', { title: text }, model ? modelLogo({ id: model, name: known?.displayName, provider: known?.provider }) : null, h('span', {}, withoutGlyph(text)));
 }
 
 /** Remembers the last model/effort chosen at a picker's key (a desk, or a fixed key). */

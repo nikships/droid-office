@@ -220,12 +220,24 @@ object Tags {
         const val WORKTREE = "hire.worktree"
         const val SUBMIT = "hire.submit"
         const val MODEL_SHEET = "hire.model_sheet"
+        const val MODEL_SEARCH = "hire.model_search"
+        const val MODEL_CUSTOM = "hire.model_custom"
+        const val MODEL_CLOSE = "hire.model_close"
+        fun modelScope(name: String) = "hire.model_scope/$name"
 
         fun effort(wire: String) = "hire.effort/$wire"
         fun model(id: String) = "hire.model/$id"
 
         /** Why a model in the list can't be chosen, or the quiet note that DroidProxy will be started. */
         fun modelWhy(id: String) = "hire.model_why/$id"
+    }
+
+    object Subscriptions {
+        const val OPEN = "subscriptions.open"
+        const val SHEET = "subscriptions.sheet"
+        const val STATUS = "subscriptions.status"
+        const val CLOSE = "subscriptions.close"
+        fun provider(key: String) = "subscriptions.provider/$key"
     }
 
     object Worker {

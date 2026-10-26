@@ -95,9 +95,11 @@ fun OfficesScreen(onBack: () -> Unit, onPairNew: () -> Unit, onSwitched: () -> U
     val scope = rememberCoroutineScope()
     var forgetting by remember { mutableStateOf<PairedOffice?>(null) }
     var renaming by remember { mutableStateOf<PairedOffice?>(null) }
+    var subscriptions by remember { mutableStateOf(false) }
     val notify = rememberNotifyPermission()
     val canNotify = notify.granted
     val now = rememberNow(30_000)
+    if (subscriptions) SubscriptionsSheet { subscriptions = false }
 
     fun settings(change: (AppSettings) -> AppSettings) {
         scope.launch { graph.store.settings(change) }
@@ -141,6 +143,8 @@ fun OfficesScreen(onBack: () -> Unit, onPairNew: () -> Unit, onSwitched: () -> U
                 }
                 Spacer(Modifier.height(10.dp))
                 SecondaryButton("Pair another office", onPairNew, Modifier.fillMaxWidth().tagged(Tags.Offices.PAIR_NEW), icon = OfficeIcons.Scan)
+                Spacer(Modifier.height(10.dp))
+                SecondaryButton("Subscriptions", { subscriptions = true }, Modifier.fillMaxWidth().tagged(Tags.Subscriptions.OPEN), enabled = store.active != null, icon = OfficeIcons.Sparkle)
 
                 Eyebrow("Notifications", Modifier.padding(start = 4.dp, top = 26.dp, bottom = 8.dp))
                 Column(Modifier.fillMaxWidth().panel()) {

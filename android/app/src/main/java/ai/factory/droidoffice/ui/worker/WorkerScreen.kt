@@ -99,6 +99,7 @@ import ai.factory.droidoffice.core.WorkerInfo
 import ai.factory.droidoffice.core.WorkerStatus
 import ai.factory.droidoffice.core.Workers
 import ai.factory.droidoffice.net.nameOf
+import ai.factory.droidoffice.ui.components.ModelLogo
 import ai.factory.droidoffice.session.Phase
 import ai.factory.droidoffice.ui.LocalGraph
 import ai.factory.droidoffice.ui.LocalSnackbar
@@ -269,7 +270,10 @@ private fun Header(w: WorkerInfo, embedded: Boolean, onBack: () -> Unit, onSendH
                 Workers.effort(w)?.let { if (!w.isShell) add(it.label.lowercase()) }
                 Workers.workedMs(w, now).takeIf { it >= 1000 }?.let { add(Workers.duration(it)) }
             }
-            Text(parts.joinToString(" · ").uppercase(), style = LocalOfficeType.current.eyebrow.copy(fontSize = 10.sp), maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.tagged(Tags.Worker.META))
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                if (!w.isShell) Workers.modelId(w)?.let { ModelLogo(it, catalogue.nameOf(it), modifier = Modifier.size(14.dp)) }
+                Text(parts.joinToString(" · ").uppercase(), style = LocalOfficeType.current.eyebrow.copy(fontSize = 10.sp), maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.tagged(Tags.Worker.META))
+            }
         }
         StatusPill(w.state, acked = w.acked, tag = Tags.Worker.STATUS)
         Box {

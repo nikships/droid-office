@@ -3,12 +3,10 @@ package ai.factory.droidoffice.ui.home
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -20,16 +18,12 @@ import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Check
-import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -51,32 +45,24 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.input.KeyboardCapitalization
-import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import ai.factory.droidoffice.core.Availability
 import ai.factory.droidoffice.core.Effort
-import ai.factory.droidoffice.core.ModelAvailability
-import ai.factory.droidoffice.core.Models
+import ai.factory.droidoffice.core.ModelSearch
 import ai.factory.droidoffice.core.Tags
 import ai.factory.droidoffice.net.ModelCatalogue
-import ai.factory.droidoffice.net.ModelOption
-import ai.factory.droidoffice.net.nameOf
 import ai.factory.droidoffice.session.Phase
 import ai.factory.droidoffice.ui.LocalGraph
 import ai.factory.droidoffice.ui.LocalSnackbar
 import ai.factory.droidoffice.ui.components.Chip
 import ai.factory.droidoffice.ui.components.Eyebrow
 import ai.factory.droidoffice.ui.components.PrimaryButton
-import ai.factory.droidoffice.ui.components.Spinner
 import ai.factory.droidoffice.ui.components.panel
 import ai.factory.droidoffice.ui.components.tagged
-import ai.factory.droidoffice.ui.theme.LocalOfficeType
 import ai.factory.droidoffice.ui.theme.OfficeIcons
 import ai.factory.droidoffice.ui.theme.Palette
 import kotlinx.coroutines.launch
@@ -112,7 +98,7 @@ fun HireSheet(onDismiss: () -> Unit, deskId: String? = null) {
         val c = catalogue ?: return@LaunchedEffect
         // Start on what the last Droid was hired with, when this office still offers it.
         val last = graph.store.snapshot.value.settings
-        val remembered = last.hireModel?.takeIf { id -> c.models.any { it.id == id } }
+        val remembered = last.hireModel?.takeIf(ModelSearch::customId)
         if (modelId == null) modelId = remembered ?: c.defaultModel ?: c.models.firstOrNull { !it.legacy }?.id
         if (effort == null) effort = last.hireEffort.takeIf { remembered != null && modelId == remembered }
             ?: c.models.firstOrNull { it.id == modelId }?.defaultReasoningEffort ?: c.defaultReasoningEffort
@@ -200,7 +186,7 @@ fun HireSheet(onDismiss: () -> Unit, deskId: String? = null) {
                 if (shell) "Open a shell" else "Hire",
                 { hire() },
                 Modifier.fillMaxWidth().tagged(Tags.Hire.SUBMIT),
-                enabled = link.phase == Phase.Connected,
+                enabled = link.phase == Phase.Connected && (shell || !Availability.cannotRun(availability[modelId])),
                 icon = if (shell) OfficeIcons.Shell else OfficeIcons.Sparkle,
             )
             if (link.phase != Phase.Connected) {
@@ -226,90 +212,5 @@ private fun KindCard(icon: ImageVector, title: String, sub: String, selected: Bo
         Spacer(Modifier.height(10.dp))
         Text(title, style = MaterialTheme.typography.titleMedium)
         Text(sub, style = MaterialTheme.typography.bodySmall)
-    }
-}
-
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-private fun ModelPicker(catalogue: ModelCatalogue?, loading: Boolean, selected: String?, availability: Map<String, ModelAvailability>, onPick: (ModelOption) -> Unit) {
-    var open by rememberSaveable { mutableStateOf(false) }
-    val current = catalogue?.models?.firstOrNull { it.id == selected }
-    Row(
-        Modifier.fillMaxWidth().panel(RoundedCornerShape(10.dp), Palette.SurfaceRaised, Palette.BorderStrong)
-            .clickable(enabled = catalogue != null, onClickLabel = "Choose a model") { open = true }.tagged(Tags.Hire.MODEL).padding(horizontal = 14.dp, vertical = 12.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        if (loading) {
-            Spinner(Modifier.size(14.dp))
-            Spacer(Modifier.width(10.dp))
-        }
-        Column(Modifier.weight(1f)) {
-            Text(
-                current?.let { catalogue.nameOf(it.id) } ?: if (loading) "Loading models…" else "The office's default",
-                style = MaterialTheme.typography.bodyLarge,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
-            val why = current?.let { Availability.reason(availability[it.id], System.currentTimeMillis()) }
-            if (why != null) Text(why, style = MaterialTheme.typography.bodySmall, color = Palette.Warning, maxLines = 1, overflow = TextOverflow.Ellipsis)
-            else if (current != null) Text(if (current.custom) "Your model" else if (current.legacy) "Legacy" else "Factory", style = LocalOfficeType.current.eyebrow, maxLines = 1)
-        }
-        Icon(Icons.Default.KeyboardArrowDown, null, tint = Palette.TextSecondary)
-    }
-    if (open && catalogue != null) {
-        // A full sheet, grouped like the office's own picker: a long list doesn't fit a dropdown on a phone.
-        ModalBottomSheet(
-            onDismissRequest = { open = false },
-            sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
-            containerColor = Palette.Surface,
-            shape = RoundedCornerShape(topStart = 22.dp, topEnd = 22.dp),
-        ) {
-            val groups = remember(catalogue) { Models.groups(catalogue.models, { it.custom }, { it.legacy }) }
-            // Open on the chosen model: the title, then each group's header and rows, in order.
-            val at = remember(groups, selected) {
-                var i = 1
-                for (g in groups) {
-                    val j = g.models.indexOfFirst { it.id == selected }
-                    if (j >= 0) return@remember (i + 1 + j - 2).coerceAtLeast(0)
-                    i += 1 + g.models.size
-                }
-                0
-            }
-            LazyColumn(
-                Modifier.fillMaxWidth().tagged(Tags.Hire.MODEL_SHEET).navigationBarsPadding(),
-                state = rememberLazyListState(initialFirstVisibleItemIndex = at),
-                contentPadding = PaddingValues(bottom = 16.dp),
-            ) {
-                item {
-                    Text("Model", style = MaterialTheme.typography.headlineSmall, modifier = Modifier.padding(horizontal = 20.dp, vertical = 4.dp))
-                }
-                groups.forEach { group ->
-                    item(key = "h:" + group.label) {
-                        Eyebrow("${group.label} · ${group.models.size}", modifier = Modifier.padding(start = 20.dp, end = 20.dp, top = 16.dp, bottom = 6.dp))
-                    }
-                    items(group.models, key = { it.id }) { m ->
-                        val on = m.id == selected
-                        val now = System.currentTimeMillis()
-                        val refusal = Availability.reason(availability[m.id], now)
-                        val note = Availability.note(availability[m.id], now)
-                        Row(
-                            Modifier.fillMaxWidth().selectable(on, enabled = refusal == null) {
-                                open = false
-                                onPick(m)
-                            }.tagged(Tags.Hire.model(m.id)).background(if (on) Palette.AccentMuted else Color.Transparent).padding(horizontal = 20.dp, vertical = 11.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                        ) {
-                            Column(Modifier.weight(1f)) {
-                                Text(catalogue.nameOf(m.id), style = MaterialTheme.typography.bodyLarge, color = if (refusal != null) Palette.TextTertiary else if (on) Palette.Accent else Palette.Text)
-                                val line = refusal ?: note
-                                if (line != null) Text(line, style = MaterialTheme.typography.bodySmall, color = if (refusal != null) Palette.Warning else Palette.TextTertiary, modifier = Modifier.tagged(Tags.Hire.modelWhy(m.id)))
-                                else Text(m.id, style = LocalOfficeType.current.eyebrow.copy(letterSpacing = 0.sp), maxLines = 1, overflow = TextOverflow.Ellipsis)
-                            }
-                            if (on) Icon(Icons.Default.Check, "Selected", tint = Palette.Accent)
-                        }
-                    }
-                }
-            }
-        }
     }
 }

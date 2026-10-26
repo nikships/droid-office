@@ -35,6 +35,7 @@ import {
   viewOf,
 } from './office-map-view';
 import { h } from './ui/dom';
+import { modelLogo } from './ui/model-logo';
 import { setTeamKit, setWorkerModel, Worker } from './world/character';
 import { buildFloorMap, type FloorMap, type MapSeat } from './world/floor-map';
 import { Laptop, type ScreenState } from './world/laptop';
@@ -606,7 +607,12 @@ export class OfficeMap {
         'div.omap-card-head',
         {},
         h('span.omap-card-dot', { 'aria-hidden': 'true' }),
-        h('span.omap-card-titles', {}, h('b', {}, w.name), h('small', {}, [words.kind, words.chip].filter(Boolean).join(' · '))),
+        h(
+          'span.omap-card-titles',
+          {},
+          h('b', {}, w.name),
+          h('small', {}, w.kind === 'agent' && !w.pr && (w.activeModel ?? w.model) ? modelLogo({ id: w.activeModel ?? w.model, name: words.chip }) : null, [words.kind, words.chip].filter(Boolean).join(' · ')),
+        ),
         h('span.pill', { class: w.status }, words.status),
       ),
       h('p.omap-card-doing', {}, words.doing),
