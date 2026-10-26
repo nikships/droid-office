@@ -83,9 +83,9 @@ test('account and quota-window overflow rotates complete pages instead of droppi
   const second = quotaView(s, t + 20_000);
   assert.equal(first.pages, 2);
   assert.equal(first.page, 0);
-  assert.equal(first.tiles.length, 4);
+  assert.equal(first.tiles.length, 6);
   assert.equal(second.page, 1);
-  assert.equal(second.tiles.length, 4);
+  assert.equal(second.tiles.length, 2);
   assert.equal(new Set([...first.tiles, ...second.tiles].map((a) => a.id)).size, 8);
   s.providers[0].accounts = [{ ...a, windows: [...a.windows, ...a.windows, ...a.windows] }];
   const v = quotaView(s, t);
@@ -95,7 +95,7 @@ test('account and quota-window overflow rotates complete pages instead of droppi
   assert.equal(v.tiles[1].windows.length, 1);
   assert.equal(v.tiles[1].continuation, 'WINDOWS 3–3 OF 3');
   assert.deepEqual(quotaLayout(1), { cols: 1, rows: 1 });
-  assert.deepEqual(quotaLayout(6), { cols: 1, rows: 4 });
+  assert.deepEqual(quotaLayout(6), { cols: 1, rows: 6 });
 });
 
 test('empty, installing, unsupported and failed proxy states explain what is missing', () => {
@@ -114,8 +114,8 @@ test('empty, installing, unsupported and failed proxy states explain what is mis
 test('the low wall sits at eye level south of the exit door, clear of the door, windows and ceiling', () => {
   const c = COMPUTE_WALL;
   assert.ok(Math.abs(c.width - (c.machineWidth + c.fleetWidth + c.proxyWidth + c.gap * 2)) < 1e-10);
-  assert.ok(c.height <= 1.5 && c.y - c.height / 2 >= 1.2, 'a short strip whose bottom is at standing eye level, not a billboard overhead');
-  assert.ok(c.y + c.height / 2 <= 2.8, 'its top is within easy view from the floor');
+  assert.ok(c.height >= 2.8 && c.y - c.height / 2 >= 1.1, 'a tall panel whose bottom is at standing eye level, not a billboard overhead');
+  assert.ok(c.y + c.height / 2 <= 4, 'its top stays well below the old billboard top of 6.05 m');
   const south = c.z + c.width / 2;
   assert.equal(south, 12.55);
   const fleetZ = south - c.machineWidth - c.gap - c.fleetWidth / 2;

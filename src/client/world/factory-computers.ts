@@ -131,14 +131,14 @@ export function wallView(factory: FactoryState, now: number): WallView {
 }
 
 /**
- * How the fleet screen lays out `n` tiles on the low strip: a lone computer gets one big tile;
- * anything more is a single column of full-width rows, at most four deep, the last row saying
- * "+N more" when the fleet runs past three rows.
+ * How the fleet screen lays out `n` tiles on the low panel: a lone computer gets one big tile;
+ * anything more is a single column of full-width rows, at most six deep, the last row saying
+ * "+N more" when the fleet runs past five rows.
  */
 export function gridOf(n: number): { cols: number; rows: number; compact: boolean; shown: number } {
   if (n <= 1) return { cols: 1, rows: 1, compact: false, shown: n };
-  if (n <= 4) return { cols: 1, rows: n, compact: true, shown: n };
-  return { cols: 1, rows: 4, compact: true, shown: 3 };
+  if (n <= 6) return { cols: 1, rows: n, compact: true, shown: n };
+  return { cols: 1, rows: 6, compact: true, shown: 5 };
 }
 
 /** The hint bar's few words about the wall: "2 active · 1 asleep". */
@@ -338,13 +338,14 @@ export class ComputeWallTextures {
     g.fillRect(30, 145, 48, 4);
 
     const memP = s.memTotal ? Math.round((s.memUsed / s.memTotal) * 100) : 0;
-    // Side by side, not stacked: the low strip has no room for two tall gauges.
+    // Side by side, and as tall as the panel gives them: their sparklines fill the gauge.
     const gw = (W - 60 - 20) / 2;
+    const gh = Math.max(300, H - 168 - 150);
     this.gauge(
       30,
       168,
       gw,
-      300,
+      gh,
       'CPU',
       s.cpu,
       s.cores ? `${s.cores} core${s.cores === 1 ? '' : 's'}` : '',
@@ -354,7 +355,7 @@ export class ComputeWallTextures {
       50 + gw,
       168,
       gw,
-      300,
+      gh,
       'MEM',
       memP,
       s.memTotal ? `${fmtGb(s.memUsed)} of ${fmtGb(s.memTotal)}` : '',
@@ -362,7 +363,7 @@ export class ComputeWallTextures {
     );
 
     // The workers, one pip each, against the limit.
-    const y = 516;
+    const y = 168 + gh + 48;
     label(g, 'WRK', 30, y, 22, MUTED, 3);
     g.font = `500 26px ${MONO}`;
     g.fillStyle = INK;

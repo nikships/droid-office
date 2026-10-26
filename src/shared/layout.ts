@@ -219,13 +219,14 @@ export const BOARDS = {
 export const TV = { x: FLOOR.maxX - 0.1, y: 2.2, z: 0, width: 6.4, height: 3.6 } as const;
 /**
  * The compute wall, facing into the room: this machine, Factory Droid Computers, then DroidProxy.
- * A low, wide strip at eye level (centre 1.95 m, bottom 1.2 m) instead of the old tall billboard
- * hung at 4.75 m. It fits the one stretch of west wall with nothing in it: south of the exit door
- * (which ends at z 7.2) to near the south wall, clear of every west window. Because it is only
- * 1.5 m tall, its three screens paint compact single-row layouts (see world/factory-computers.ts
- * and world/droidproxy-wall.ts) rather than the stacked gauges and tile grids the tall wall used.
+ * A tall panel whose bottom is at 1.15 m (centre 2.55 m) instead of the old billboard hung at
+ * 4.75 m with its bottom at 3.45 m. It fits the one stretch of west wall with nothing in it:
+ * south of the exit door (which ends at z 7.2) to near the south wall, clear of every west
+ * window, so it can be 2.8 m tall and carry more on each screen while still reading from
+ * standing height. Its three screens paint the compact layouts in world/factory-computers.ts
+ * and world/droidproxy-wall.ts, stretched to whatever height this gives them.
  */
-export const COMPUTE_WALL = { x: FLOOR.minX, y: 1.95, z: 10, width: 5.1, height: 1.5, machineWidth: 1.1, fleetWidth: 2.4, proxyWidth: 1.4, gap: 0.1 } as const;
+export const COMPUTE_WALL = { x: FLOOR.minX, y: 2.55, z: 10, width: 5.1, height: 2.8, machineWidth: 1.1, fleetWidth: 2.4, proxyWidth: 1.4, gap: 0.1 } as const;
 /** Where along the west wall the middle screen is centered. */
 const FLEET_Z = COMPUTE_WALL.z + COMPUTE_WALL.width / 2 - COMPUTE_WALL.machineWidth - COMPUTE_WALL.gap - COMPUTE_WALL.fleetWidth / 2;
 /** The Droid Computer rack (world/factory-props.ts): a low plinth against the west wall, under the compute wall's Droid Computers screen. */

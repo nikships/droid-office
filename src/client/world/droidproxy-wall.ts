@@ -16,7 +16,7 @@ const RED = '#ef6363';
 const HAIR = '#292929';
 const STALE_MS = 5 * 60_000;
 const PAGE_MS = 20_000;
-const PAGE_SIZE = 4;
+const PAGE_SIZE = 6;
 
 export type QuotaStatus = 'reporting' | 'low' | 'limited' | 'paused' | 'sign-in' | 'unavailable' | 'unreported' | 'cached';
 
@@ -261,7 +261,7 @@ export class QuotaWallTexture {
       return;
     }
     const colorOf = (q: QuotaTile['windows'][number]) => (q.due || t.status === 'cached' || t.status === 'paused' || t.status === 'sign-in' || t.status === 'unavailable' ? MUTED : q.remaining <= 0 ? RED : q.remaining <= 20 ? AMBER : GREEN);
-    if (t.windows.length > 1 && ww > 340) {
+    if (t.windows.length > 1 && ww > 340 && h < 180) {
       // Windows side by side: each gets a name, the percent left, a bar and its reset line.
       const colW = (ww - 18 * (t.windows.length - 1)) / t.windows.length;
       t.windows.forEach((q, i) => {
