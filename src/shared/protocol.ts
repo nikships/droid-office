@@ -996,6 +996,8 @@ type ClientMessage =
   | { t: 'autoHeal.set'; on: boolean }
   /** How workers hire subagents (⚙️ Settings → Subagents), for every floor. */
   | { t: 'subagents.set'; settings: SubagentSettings }
+  /** Hide one model from every device's picker, or show all with a null id and hidden=false. */
+  | { t: 'models.hide'; id: string | null; hidden: boolean }
   /** Where the office looks for checkouts from now on; '' goes back to the default. */
   | { t: 'floor.projectsDir'; dir: string }
   /** Rewrite one of the office's prompts; null puts the default back. */
@@ -1059,6 +1061,7 @@ export type ServerMsg =
       leaveOnMerge: LeaveOnMergeState;
       freshMain: FreshMainState;
       subagents: SubagentsState;
+      hiddenModels?: string[];
       whiteboardSkill: WhiteboardSkillState;
       /** The office's prompts, and the worker a new one starts on when nobody picks. */
       prompts: PromptsState;
@@ -1141,6 +1144,7 @@ export type ServerMsg =
   /** To everyone on the floor: whether a failed run there wakes the Pipeline agent. */
   | { t: 'autoHeal'; state: AutoHealState }
   | { t: 'subagents'; state: SubagentsState }
+  | { t: 'models.hidden'; ids: string[] }
   /**
    * Every visit on the floor (see shared/visits.ts), to everyone on it: after `welcome` and
    * `floor.enter`, and whenever a visit starts, changes phase or ends.

@@ -4,6 +4,8 @@ import java.util.Locale
 
 /** The phone's counterpart to model-search.ts: no Android state, views or network. */
 object ModelSearch {
+    fun visible(models: List<Model>, hidden: Set<String>): List<Model> = models.filterNot { it.id in hidden }
+
     data class Model(
         val id: String,
         val name: String,

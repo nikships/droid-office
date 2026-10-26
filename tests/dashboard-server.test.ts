@@ -67,6 +67,34 @@ function socket(t: TestContext, base: string, query: string, origin = base) {
   return { ws, messages, wait, send };
 }
 
+test('hidden models sync to every device and new connections, with invalid changes refused', async (t) => {
+  const { base, dir } = await office(t);
+  const desktop = socket(t, base, '');
+  const web = socket(t, base, 'client=dashboard');
+  const phone = socket(t, base, 'client=mobile');
+  assert.deepEqual((await desktop.wait('welcome')).hiddenModels, []);
+  await web.wait('welcome');
+  await phone.wait('welcome');
+  desktop.send({ t: 'models.hide', id: 'gpt-6.1-sol', hidden: true, requestId: 'hide-model' });
+  assert.equal((await desktop.wait('action.result', (m) => m.requestId === 'hide-model')).ok, true);
+  for (const client of [desktop, web, phone]) assert.deepEqual((await client.wait('models.hidden')).ids, ['gpt-6.1-sol']);
+  const fresh = socket(t, base, '');
+  assert.deepEqual((await fresh.wait('welcome')).hiddenModels, ['gpt-6.1-sol']);
+  desktop.ws.send(JSON.stringify({ t: 'models.hide', id: 'two words', hidden: true, requestId: 'invalid-model' }));
+  await desktop.wait('toast', (m) => m.text.includes('valid model'));
+  assert.equal((await desktop.wait('action.result', (m) => m.requestId === 'invalid-model')).ok, false);
+  const temporary = path.join(dir, '.droid-office/hidden-models.json.tmp');
+  mkdirSync(temporary);
+  desktop.send({ t: 'models.hide', id: null, hidden: false, requestId: 'failed-save' });
+  const failed = await desktop.wait('action.result', (m) => m.requestId === 'failed-save');
+  assert.equal(failed.ok, false);
+  assert.match(failed.error ?? '', /Could not save/);
+  rmSync(temporary, { recursive: true });
+  assert.deepEqual(JSON.parse(readFileSync(path.join(dir, '.droid-office/hidden-models.json'), 'utf8')), ['gpt-6.1-sol']);
+  desktop.send({ t: 'models.hide', id: null, hidden: false });
+  for (const client of [desktop, web, phone]) await client.wait('models.hidden', (m) => m.ids.length === 0);
+});
+
 test('floor moves from a companion update every client and the next welcome, with invalid moves refused', async (t) => {
   const { base, dir, server } = await office(t);
   const desktop = socket(t, base, '');

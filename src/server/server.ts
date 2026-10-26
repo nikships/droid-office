@@ -16,6 +16,7 @@ import { COMPANION_OFF, pairingLink, type PairedDevice, type PairingState } from
 import { MAX_REPOS, childEnv, resolveAgent, type RepoSource } from './workers.js';
 import { DROID_MODEL_MAX } from './agents.js';
 import { createDroidModelCatalogue } from './droid-models.js';
+import { HiddenModels } from './hidden-models.js';
 import { Upgrader } from './upgrade.js';
 import { GUEST_REFUSED, GuestScanner, guestRefusal, type AgentProcess } from './guests.js';
 import { PhoneSizes } from './phone-sizes.js';
@@ -221,6 +222,7 @@ export async function startServer(cfg: Config) {
   let agentPath = resolveAgent(cfg.agentCmd);
   // Droid lists its own models (built-in and custom); its settings file is the fallback.
   const droidModels = createDroidModelCatalogue({ command: () => agentPath ?? cfg.agentCmd, cwd: cfg.dir });
+  const hiddenModels = new HiddenModels(cfg.dataDir);
 
   const sendTo = (c: Client, msg: ServerMsg) => {
     if (c.ws.readyState === WebSocket.OPEN) c.ws.send(JSON.stringify(msg));
@@ -1327,6 +1329,7 @@ export async function startServer(cfg: Config) {
       leaveOnMerge: leaveOnMerge.state(),
       freshMain: freshMain.state(),
       subagents: subagents.state(),
+      hiddenModels: hiddenModels.state(),
       whiteboardSkill: whiteboardSkill.state(),
       prompts: prompts.state(),
       factory: factory.state(),
@@ -2153,6 +2156,13 @@ export async function startServer(cfg: Config) {
         if (on === floor.autoHeal.on) break;
         floor.autoHeal.set(on, who);
         toastFloor(floor, on ? `🩹 ${who} turned auto-heal on for this floor: a run that fails wakes the Pipeline agent to fix it` : `🩹 ${who} turned auto-heal off for this floor`);
+        break;
+      }
+      case 'models.hide': {
+        const error = hiddenModels.set(msg.id, msg.hidden);
+        if (error) return stop(error);
+        broadcast({ t: 'models.hidden', ids: hiddenModels.state() });
+        done();
         break;
       }
       case 'subagents.set': {

@@ -14,6 +14,7 @@ import { presetEditor } from './prompt-box';
 import { factoryKeySettings } from './factory-settings';
 import { subscriptionsSettings } from './subscriptions-settings';
 import { droidSettings } from './droid-settings';
+import { hiddenModelSettings } from './hidden-models';
 import { openPhone, pairedPhones } from './phone';
 import { companionState, openCompanion } from './companion';
 import type { PairingState } from '../../shared/devices';
@@ -958,6 +959,7 @@ export function openSettings(
   const subscriptionGroups = [group('DroidProxy', card('DroidProxy', subscriptions.proxy)), group('Accounts', card('Accounts', subscriptions.accounts)), group('Droid', card('Models in Droid', subscriptions.models))];
   subscriptions.hideWhenUnsupported(...subscriptionGroups);
   const droid = droidSettings(net);
+  const modelVisibility = hiddenModelSettings(net);
   const panes: Record<SettingsPane, Node[]> = {
     you: [
       group(
@@ -1045,6 +1047,7 @@ export function openSettings(
       group(
         'New workers',
         card('Default worker', { desc: agentNote, below: [agent.element, agentActions] }),
+        card('Models shown in pickers', { below: [modelVisibility.element] }),
         card('Where fresh workers start', { desc: freshNote, control: freshRow }),
         card('Prompts', { desc: promptsNote, control: promptsOpen }),
         card('Prompt chips', {
@@ -1158,6 +1161,7 @@ export function openSettings(
       factoryKey.dispose();
       subscriptions.dispose();
       droid.dispose();
+      modelVisibility.dispose();
       window.removeEventListener('office:hdr', onHdrStatus);
     },
   });
