@@ -8,7 +8,8 @@ name: Release
 # so the app always sees it as newer; bump package.json for a new minor.
 #
 # PRs and pushes use the same path filters for Node checks, the website and each platform.
-# Test/docs-only changes publish nothing. Manual runs explicitly check and rebuild everything.
+# PRs compile and test, but never version, package, sign or upload release artifacts.
+# Test/docs-only changes publish nothing. Manual runs check everything, releasing only on main.
 
 on:
   push:
@@ -85,6 +86,9 @@ on:
 permissions:
   contents: read
 
+env:
+  PUBLISHING: ${{ github.event_name != 'pull_request' && github.ref == 'refs/heads/main' }}
+
 concurrency:
   group: release-${{ github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
@@ -120,8 +124,6 @@ jobs:
       ELECTRON_SKIP_BINARY_DOWNLOAD: '1'
     steps:
       - uses: actions/checkout@v7
-        with:
-          fetch-depth: 0 # the version counts the commits on main
 
       - uses: actions/setup-node@v7
         with:
@@ -170,6 +172,7 @@ jobs:
         run: node tools/props/verify.mjs
 
       - name: Set the release version
+        if: env.PUBLISHING == 'true'
         id: version
         run: |
           version="${{ needs.changes.outputs.version }}"
@@ -209,8 +212,11 @@ jobs:
           cache: npm
       # No office build, Chromium or native dependencies are needed to check the website.
       - run: npm ci --ignore-scripts
+      # The Node job's repository-wide checks already include the website.
       - run: npx biome check --error-on-warnings website
+        if: needs.changes.outputs.node != 'true'
       - run: npm run typecheck --workspace website
+        if: needs.changes.outputs.node != 'true'
       - run: npm run build:website
 
   mac:
@@ -218,13 +224,8 @@ jobs:
     if: needs.changes.outputs.mac == 'true'
     runs-on: macos-26
     timeout-minutes: 45
-    env:
-      # Signed and notarized only for a release; a pull request's build skips both.
-      PUBLISHING: ${{ github.event_name != 'pull_request' && github.ref == 'refs/heads/main' }}
     steps:
       - uses: actions/checkout@v7
-        with:
-          fetch-depth: 0 # the version counts the commits on main
 
       - uses: actions/setup-node@v7
         with:
@@ -232,6 +233,9 @@ jobs:
           cache: npm
 
       - name: Install and build
+        env:
+          # PRs compile the Node-API presenter without downloading the unused Electron runtime.
+          ELECTRON_SKIP_BINARY_DOWNLOAD: ${{ env.PUBLISHING != 'true' && '1' || '' }}
         run: npm ci # its prepare script builds the client, the server, the app's main process and the native Metal presenter
 
       - name: Check the native Metal presenter was built for the Mac app
@@ -244,6 +248,7 @@ jobs:
           grep -Eq 'minos 14\.0' vtool.log
 
       - name: Set the release version
+        if: env.PUBLISHING == 'true'
         id: version
         run: |
           version="${{ needs.changes.outputs.version }}"
@@ -280,15 +285,10 @@ jobs:
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         run: npx electron-builder --mac --arm64 --publish never
 
-      - name: Build the app unsigned
-        if: env.PUBLISHING != 'true'
-        env:
-          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
-        run: npx electron-builder --mac --arm64 --publish never -c.mac.identity=null
-
       # The macOS 14 floor for electron-updater, which compares it with the Darwin version (23 is macOS 14),
       # so a Mac on macOS 13 or earlier is never offered a build that refuses to open there.
       - name: Require macOS 14 in the update metadata
+        if: env.PUBLISHING == 'true'
         run: |
           grep -q '^minimumSystemVersion:' release/latest-mac.yml || echo 'minimumSystemVersion: 23.0.0' >> release/latest-mac.yml
           grep -qx 'minimumSystemVersion: 23.0.0' release/latest-mac.yml
@@ -300,6 +300,7 @@ jobs:
       # DROID_OFFICE_ALLOW_ANY_CHIP, and must refuse without it. A fresh user-data folder keeps it off any other
       # instance's lock and settings.
       - name: Check the app's startup gates
+        if: env.PUBLISHING == 'true'
         run: |
           app="release/mac-arm64/Droid Office.app"
           bin="$app/Contents/MacOS/Droid Office"
@@ -323,11 +324,13 @@ jobs:
 
       # On the Helper binary, as src/desktop/runtime.ts runs it, so this is the signed binary the app uses.
       - name: Start the office on the app's own Electron
+        if: env.PUBLISHING == 'true'
         run: |
           app="release/mac-arm64/Droid Office.app"
           ELECTRON_RUN_AS_NODE=1 "$app/Contents/Frameworks/Droid Office Helper.app/Contents/MacOS/Droid Office Helper" "$app/Contents/Resources/app/bin/droid-office.js" \
             --home "$RUNNER_TEMP/office" --host 127.0.0.1 --port 4700 > office.log 2>&1 &
           office=$!
+          trap 'kill -INT "$office" 2>/dev/null || true' EXIT
           for _ in $(seq 60); do
             code=$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:4700/ || true)
             [ "$code" = 200 ] && break
@@ -365,6 +368,7 @@ jobs:
           grep -q 'source=Notarized Developer ID' spctl-dmg.log
 
       - uses: actions/upload-artifact@v7
+        if: env.PUBLISHING == 'true'
         with:
           name: mac
           if-no-files-found: error
@@ -384,8 +388,6 @@ jobs:
         working-directory: android
     steps:
       - uses: actions/checkout@v7
-        with:
-          fetch-depth: 0 # the version counts the commits on main
 
       - uses: actions/setup-java@v6
         with:
@@ -395,6 +397,7 @@ jobs:
       - uses: gradle/actions/setup-gradle@v6
 
       - name: Set the release version
+        if: env.PUBLISHING == 'true'
         id: version
         working-directory: .
         run: |
@@ -407,10 +410,9 @@ jobs:
         run: ./gradlew --no-daemon testDebugUnitTest lintDebug
 
       # Signed with the repository's release keystore (the ANDROID_KEYSTORE_* and ANDROID_KEY_*
-      # secrets), so each release installs over the last. A pull request from a fork gets no secrets:
-      # its APK is signed with a debug key this runner just made, new each run, which installs but
-      # never as an update over a release.
+      # secrets), so each release installs over the last. PRs only run debug unit tests and lint.
       - name: Build the release APK
+        if: env.PUBLISHING == 'true'
         env:
           ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
           ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
@@ -437,6 +439,7 @@ jobs:
           fi
 
       - uses: actions/upload-artifact@v7
+        if: env.PUBLISHING == 'true'
         with:
           name: android
           path: android/out/*.apk

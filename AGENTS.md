@@ -107,7 +107,7 @@ npm run typecheck
 npm run test:coverage
 ```
 
-CI then sets the release version and starts the built office from the checkout (step "Start the office from the checkout"). When changing server startup, also run that smoke test locally as the workflow writes it. The Mac job packages the app and starts the office on the app's own Electron; when changing app packaging or startup, also run that smoke test.
+CI starts the built office from the checkout (step "Start the office from the checkout"). When changing server startup, also run that smoke test locally as the workflow writes it. PRs compile the Mac app and native presenter and run Android tests/lint, but never set release versions, package apps or upload artifacts. On main, the Mac job also packages the app and starts the office on the app's own Electron; when changing app packaging or startup, run that smoke test locally before merging.
 
 CI runs on a pull request only when it touches a path in the workflow's `pull_request.paths` filter. A new check goes into `release.yml` as a step in the same change, and its files go into both `paths` filters. Within a pull request, the `changes` job also skips the `mac` and `android` jobs unless the PR touches their files. A new path one of them depends on goes into that job's pattern too.
 

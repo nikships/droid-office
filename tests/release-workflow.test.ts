@@ -170,3 +170,67 @@ test('each job is path-gated and the filter script and its tests trigger the wor
   assert.match(workflow, /gh release edit "\$TAG" --draft=false --latest/);
   assert.match(workflow, /run: python3 -B -m unittest discover -s \.agents\/skills\/performance-proof\/tests -p 'test\*\.py' -v/);
 });
+
+function jobSteps(job: string) {
+  const start = workflow.indexOf(`  ${job}:\n`);
+  assert.ok(start >= 0, job);
+  return workflow
+    .slice(start)
+    .split(/\n(?= {2}\w+:\n)/)[0]
+    .split(/(?=^ {6}- )/m)
+    .slice(1);
+}
+
+function stepRuns(step: string, event = 'pull_request', ref = 'refs/pull/1/merge', node = 'true') {
+  const publishing = workflow.match(/^ {2}PUBLISHING: \$\{\{ (.+) \}\}$/m)?.[1];
+  assert.ok(publishing);
+  const github = { event_name: event, ref };
+  const env = { PUBLISHING: String(runInNewContext(publishing, { github })) };
+  const condition = step.match(/^ {8}if: (.+)$/m)?.[1] ?? 'true';
+  return runInNewContext(condition, { github, env, needs: { changes: { outputs: { node } } } });
+}
+
+test('release versions, packages, signing, bundle smoke checks and uploads only run on main', () => {
+  const releaseSteps = [
+    ...jobSteps('release').filter((step) => step.includes('name: Set the release version')),
+    ...jobSteps('mac').filter((step) => !/actions\/checkout|actions\/setup-node|name: Install and build|name: Check the native Metal presenter/.test(step)),
+    ...jobSteps('android').filter((step) => /name: Set the release version|name: Build the release APK|actions\/upload-artifact/.test(step)),
+  ];
+  assert.equal(releaseSteps.length, 12);
+  assert.doesNotMatch(workflow, /Build the app unsigned|mac\.identity=null/);
+  for (const step of releaseSteps) {
+    const label = step.trim().split('\n')[0];
+    assert.equal(stepRuns(step), false, `PR: ${label}`);
+    assert.equal(stepRuns(step, 'pull_request', 'refs/heads/main'), false, `PR event on main: ${label}`);
+    assert.equal(stepRuns(step, 'workflow_dispatch', 'refs/heads/feature'), false, `manual feature: ${label}`);
+    assert.equal(stepRuns(step, 'push', 'refs/heads/main'), true, `main: ${label}`);
+    assert.equal(stepRuns(step, 'workflow_dispatch', 'refs/heads/main'), true, `manual main: ${label}`);
+  }
+});
+
+test('PRs retain builds, native compilation, coverage, Android tests and checkout smoke checks', () => {
+  for (const [job, fragments] of [
+    ['release', ['name: Install and build', 'run: npm run lint', 'run: npm run typecheck', 'name: Test with coverage', 'name: Start the office from the checkout']],
+    ['mac', ['name: Install and build', 'name: Check the native Metal presenter']],
+    ['android', ['name: Unit tests and lint']],
+    ['website', ['run: npm run build:website']],
+  ] as const) {
+    for (const fragment of fragments) {
+      const step = jobSteps(job).find((candidate) => candidate.includes(fragment));
+      assert.ok(step, `${job}: ${fragment}`);
+      assert.equal(stepRuns(step), true, `${job}: ${fragment}`);
+    }
+  }
+  assert.match(workflow, /ELECTRON_SKIP_BINARY_DOWNLOAD: \$\{\{ env\.PUBLISHING != 'true' && '1' \|\| '' \}\}/);
+});
+
+test('only change detection fetches history, and website checks are not repeated by two jobs', () => {
+  assert.equal(workflow.match(/fetch-depth: 0/g)?.length, 1);
+  assert.match(jobSteps('changes')[0], /fetch-depth: 0/);
+  for (const fragment of ['npx biome check', 'npm run typecheck --workspace website']) {
+    const step = jobSteps('website').find((candidate) => candidate.includes(fragment));
+    assert.ok(step);
+    assert.equal(stepRuns(step, 'pull_request', 'refs/pull/1/merge', 'true'), false);
+    assert.equal(stepRuns(step, 'pull_request', 'refs/pull/1/merge', 'false'), true);
+  }
+});
