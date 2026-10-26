@@ -153,6 +153,7 @@ import { CiBoardTexture } from './world/factory-ci';
 import { WhiteboardTexture, gridSummary, wallView } from './world/whiteboard-wall';
 import { openCiWindow } from './ui/factory-ci';
 import { ComputeWallTextures, rackCubesOf, wallSummary } from './world/factory-computers';
+import { QuotaWallTexture } from './world/droidproxy-wall';
 import { setRackCubes } from './world/factory-props';
 import { installWorkbenches } from './world/workbench';
 import { openComputers } from './ui/factory-computers';
@@ -377,14 +378,18 @@ setInterval(() => {
 }, 1000);
 // Ages on finished runs tick by the minute.
 setInterval(renderPipelinesBoard, 60_000);
-// The compute wall on the west wall: this machine, and the Factory Droid Computers (world/factory-computers.ts).
+// The compute wall: this machine, Factory Droid Computers, and DroidProxy account quotas.
 const computeWall = new ComputeWallTextures();
+const quotaWall = new QuotaWallTexture();
+const renderQuotaBoard = (force = false) => quotaWall.render(store.subscriptions, Date.now(), force);
 const renderMachineBoard = () => {
   computeWall.render(store.machine, store.factory);
   setRackCubes(rackCubesOf(store.factory));
 };
 mountBoard(office.fleetScreen, computeWall.fleet, () => {}, []);
 mountBoard(office.machineScreen, computeWall.machine, renderMachineBoard, ['machine', 'factory']);
+mountBoard(office.proxyScreen, quotaWall.texture, () => renderQuotaBoard(), ['subscriptions']);
+setInterval(() => renderQuotaBoard(), 10_000);
 /** The Computers window, on one computer when `id` is given. */
 const showComputers = (id?: string) => openComputers({ settings: () => showSettings('connections'), id });
 // Ages and asleep-ness move on by themselves; the wall paints only when what it says changed.
@@ -475,6 +480,7 @@ void loadFonts().then(() => {
   renderPipelinesBoard();
   computeWall.repaint();
   renderMachineBoard();
+  renderQuotaBoard(true);
   renderCiBoard(true);
   renderTv(true);
   redrawText();

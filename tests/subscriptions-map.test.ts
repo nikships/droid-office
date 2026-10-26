@@ -17,6 +17,7 @@ test("providers come from /status, each account with its windows from DroidProxy
   );
   const codex = ps[1].accounts[0];
   assert.equal(codex.label, 'codex-user@example.com');
+  assert.equal(codex.usageUpdatedAt, Date.parse('2026-10-25T21:31:55Z'), 'usage keeps its own sample time');
   assert.deepEqual(codex.windows, [
     { name: '5-hour', usedPercent: 100, resetsAt: Date.parse('2026-10-25T22:12:45Z') },
     { name: 'Weekly', usedPercent: 16, resetsAt: Date.parse('2026-11-01T08:15:41Z') },
@@ -30,6 +31,16 @@ test("providers come from /status, each account with its windows from DroidProxy
     [0, 99],
   );
   assert.deepEqual(ps[2].accounts[0].windows, [], 'Junie has no usage to go by');
+  assert.equal(ps[2].accounts[0].usageUpdatedAt, undefined);
+});
+
+test('usage freshness falls back to generation time, not a later status check', () => {
+  const u = structuredClone(USAGE);
+  delete u.accounts![0].as_of;
+  assert.equal(mapProviders(status(), u, NOW + 600_000)[1].accounts[0].usageUpdatedAt, NOW);
+  assert.equal(providersFromUsage(u)[0].accounts[0].usageUpdatedAt, NOW);
+  u.generated_at = 'invalid';
+  assert.equal(mapProviders(status(), u, NOW)[1].accounts[0].usageUpdatedAt, undefined);
 });
 
 test('an account is matched to its usage by id, else by its email in any case, and only within its provider', () => {

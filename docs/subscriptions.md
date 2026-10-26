@@ -89,6 +89,7 @@ A window covers a model unless it is named for another model family: Claude's "W
 
 ## The UI
 
+- **Compute wall**: a third screen to the right of Droid Computers shows every connected DroidProxy account, remaining quota for each reported window, reset countdowns and local reset dates. Paused, expired, unreported and cached usage have separate states. Account sample timestamps, not control-status checks, establish freshness; an elapsed reset waits for confirmation. More than two windows continue on additional cards; complete pages rotate every 20 seconds beyond six cards. The wider bezel sits above the exit sign and windows; the rack stays put.
 - **Welcome**: `src/client/ui/welcome.ts`, opened from `main.ts` and the ☰ menu.
 - **⚙️ Settings → Connections**, with Factory and Jira: "DroidProxy" (what it is, its phase and version, Install / Update / Start / Open DroidProxy), "Accounts" (each provider: switch, its accounts with a usage bar per window and when it resets, Connect / Add another / Remove, a connect in flight with its code), "Models in Droid" (how many, Update models when stale). Off a Mac with Apple silicon, those groups say Subscriptions need DroidProxy on a Mac and stop there.
 - **⚙️ Settings → Workers → "Droid"**: version and Update to …, signed in as … or Sign in, Check again.

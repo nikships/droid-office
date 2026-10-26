@@ -16,6 +16,11 @@ import type { RawConnecting, RawModels, RawStatus, RawUsage } from './control.js
 
 type UsageAccount = NonNullable<RawUsage['accounts']>[number];
 
+function usageStamp(u: UsageAccount | undefined, usage: RawUsage | undefined): { usageUpdatedAt?: number } {
+  const at = time(u?.as_of) ?? time(usage?.generated_at);
+  return u && at !== null ? { usageUpdatedAt: at } : {};
+}
+
 const time = (iso: string | null | undefined): number | null => {
   if (!iso) return null;
   const ms = Date.parse(iso);
@@ -63,7 +68,7 @@ export function mapProviders(status: RawStatus, usage: RawUsage | undefined, now
       if (!a || typeof a.id !== 'string') continue;
       const label = typeof a.label === 'string' && a.label ? a.label : a.id;
       const u = usageOf(usage, p.key, a.id, label);
-      accounts.push({ id: a.id, label, expired: a.expired === true, disabled: a.disabled === true, windows: usageWindows(u), ...(u?.error ? { usageError: u.error } : {}) });
+      accounts.push({ id: a.id, label, expired: a.expired === true, disabled: a.disabled === true, windows: usageWindows(u), ...usageStamp(u, usage), ...(u?.error ? { usageError: u.error } : {}) });
     }
     const c = connecting(p.connecting, now);
     out.push({
@@ -93,7 +98,7 @@ export function providersFromUsage(usage: RawUsage | undefined): SubscriptionPro
       by.set(a.provider, p);
     }
     const id = a.id ?? a.account ?? `${a.provider}-${p.accounts.length + 1}`;
-    p.accounts.push({ id, label: a.account || id, expired: false, disabled: false, windows: usageWindows(a), ...(a.error ? { usageError: a.error } : {}) });
+    p.accounts.push({ id, label: a.account || id, expired: false, disabled: false, windows: usageWindows(a), ...usageStamp(a, usage), ...(a.error ? { usageError: a.error } : {}) });
   }
   return [...by.values()];
 }

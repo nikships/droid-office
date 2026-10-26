@@ -42,6 +42,8 @@ export interface SubscriptionAccount {
   disabled: boolean;
   /** Its usage windows; empty when the provider has none or they couldn't be read. */
   windows: UsageWindow[];
+  /** When DroidProxy sampled this account's usage, not when its control status was checked. */
+  usageUpdatedAt?: number;
   /** Why its usage couldn't be read. */
   usageError?: string;
 }

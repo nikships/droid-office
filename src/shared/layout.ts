@@ -218,14 +218,13 @@ export const BOARDS = {
 /** The big TV on the east wall, showing its idle screen. */
 export const TV = { x: FLOOR.maxX - 0.1, y: 2.2, z: 0, width: 6.4, height: 3.6 } as const;
 /**
- * The compute wall: a big screen on the west wall between the exit door and the kitchen corner,
- * facing into the room. The office's own machine is on its left `machineWidth` (how busy it is, and
- * how many workers it runs of the most it takes), then a `gap` of bezel, then every Factory Droid
- * Computer. Its bottom clears the Droid Computer rack under it; its north edge clears the door's EXIT sign.
+ * The compute wall, facing into the room: this machine, Factory Droid Computers, then DroidProxy.
+ * The added screen extends north (right when seen from the room). The whole bezel sits above the
+ * exit sign and windows, with the original machine/fleet horizontal positions and rack unchanged.
  */
-export const COMPUTE_WALL = { x: FLOOR.minX, y: 2.45, z: 10.15, width: 4.8, height: 2.6, machineWidth: 1.7, gap: 0.1 } as const;
-/** Where along the west wall the compute wall's Droid Computers screen is centered (its right-hand part, seen from the room). */
-const FLEET_Z = COMPUTE_WALL.z - (COMPUTE_WALL.width - (COMPUTE_WALL.width - COMPUTE_WALL.machineWidth - COMPUTE_WALL.gap)) / 2;
+export const COMPUTE_WALL = { x: FLOOR.minX, y: 4.75, z: 8.1, width: 8.9, height: 2.6, machineWidth: 1.7, fleetWidth: 3, proxyWidth: 4, gap: 0.1 } as const;
+/** Where along the west wall the middle screen is centered. */
+const FLEET_Z = COMPUTE_WALL.z + COMPUTE_WALL.width / 2 - COMPUTE_WALL.machineWidth - COMPUTE_WALL.gap - COMPUTE_WALL.fleetWidth / 2;
 /** The Droid Computer rack (world/factory-props.ts): a low plinth against the west wall, under the compute wall's Droid Computers screen. */
 export const DROID_RACK = { minX: FLOOR.minX, maxX: FLOOR.minX + 0.7, minZ: FLEET_Z - 1.15, maxZ: FLEET_Z + 1.15, top: 0.62 } as const;
 /** The fenced robot cell (world/factory-props.ts): an arm between two conveyors, out on the open floor between the desks and the elevator. */
