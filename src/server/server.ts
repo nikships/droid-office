@@ -1,7 +1,7 @@
 import http from 'node:http';
 import https from 'node:https';
 import { randomBytes } from 'node:crypto';
-import { createReadStream, existsSync, readFileSync, statSync, writeFileSync } from 'node:fs';
+import { createReadStream, existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import type { Duplex } from 'node:stream';
 import { fileURLToPath } from 'node:url';
@@ -28,6 +28,7 @@ import { mountSetup } from './setup/index.js';
 import { mountSubscriptions } from './subscriptions/index.js';
 import { MAX_WORKER_LIMIT, Machine, parseWorkerLimit } from './machine.js';
 import { Building, type FloorDef } from './building.js';
+import { KEY_REPORT_MAX_BYTES, keyReportName } from '../shared/key-report.js';
 import { Floor, type FloorContext } from './floor.js';
 import { Sky } from './sky.js';
 import { LeaveOnMerge } from './leave-on-merge.js';
@@ -1060,6 +1061,34 @@ export async function startServer(cfg: Config) {
       }
       // Which floor a request is about: its boards and its workers.
       const floor = floors.get(url.searchParams.get('floor') ?? '');
+      if (p === '/api/diagnostics/keys') {
+        // A terminal key report from Settings: the page's side, with the office's own view of each worker in it added.
+        if (req.method !== 'POST') return send(res, 405, { error: 'Method not allowed' });
+        if (!ownRequest()) return send(res, 403, { error: 'Forbidden' });
+        let report: Record<string, unknown>;
+        try {
+          const body = JSON.parse(await readBody(req, KEY_REPORT_MAX_BYTES)) as unknown;
+          if (!body || typeof body !== 'object' || Array.isArray(body)) throw new Error('not an object');
+          report = body as Record<string, unknown>;
+        } catch {
+          return send(res, 400, { error: 'That is not a key report' });
+        }
+        const ids = Array.isArray(report.workers) ? report.workers.map((w) => str((w as { id?: unknown } | null)?.id, 32)).filter(Boolean) : [];
+        report.office = {
+          savedAt: new Date().toISOString(),
+          version: upgrader.version,
+          agent: agentPath,
+          workers: ids.map((id) => workerFloor(id)?.workers.keyReport(id) ?? { id, missing: true }),
+        };
+        const file = path.join(cfg.dataDir, 'diagnostics', keyReportName(new Date()));
+        try {
+          mkdirSync(path.dirname(file), { recursive: true });
+          writeFileSync(file, `${JSON.stringify(report, null, 2)}\n`);
+        } catch (err) {
+          return send(res, 500, { error: `The office could not save the report: ${(err as Error).message}` });
+        }
+        return send(res, 200, { path: file });
+      }
       if (p === '/api/term/drop') {
         // A file dropped or pasted into a worker's terminal, kept on this machine for the terminal to type its path.
         if (req.method !== 'POST') return send(res, 405, { error: 'Method not allowed' });

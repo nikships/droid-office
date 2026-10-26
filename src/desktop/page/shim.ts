@@ -9,6 +9,7 @@
  * - `<select>` menus and `title` tooltips, which Chromium shows with native widgets an offscreen page does not have. They are
  *   drawn in the page, so they are part of the frame.
  * - A report of where the caret is while a text field has focus, which the input method needs to place its candidate window.
+ * - The main process's own key steps, for the page's terminal key report (`keyTrace`).
  *
  * This file is compiled on its own (`tsconfig.desktop-page.json`, DOM types) into a plain script, and the main process reads
  * it at startup. It cannot import anything. The page-to-main channel is the one binding `__droidOfficeHost`, and the main
@@ -16,7 +17,15 @@
  */
 (() => {
   type Host = (message: string) => void;
-  type Api = { granted(id: number, raw: boolean): void; denied(id: number, error: string): void; revoked(): void; visibility(hidden: boolean): void };
+  type Api = {
+    granted(id: number, raw: boolean): void;
+    denied(id: number, error: string): void;
+    revoked(): void;
+    visibility(hidden: boolean): void;
+    /** The office page's terminal key report starting or ending (`key-diagnostics.ts`); the main process answers an end with keyTraceLines. */
+    keyTrace(on: boolean): void;
+    keyTraceLines(lines: string[]): void;
+  };
 
   const w = window as unknown as Record<string | symbol, unknown>;
   if (window !== window.top || w[Symbol.for('droid-office.shim')]) return;
@@ -73,6 +82,12 @@
       fire('pointerlockchange');
     },
     visibility() {},
+    keyTrace(on) {
+      post({ t: 'keyTrace', on: on === true });
+    },
+    keyTraceLines(lines) {
+      window.dispatchEvent(new CustomEvent('droid-office-key-trace', { detail: Array.isArray(lines) ? lines : [] }));
+    },
   };
   // An offscreen page is never told it is hidden: its window can be minimized or covered and `document.visibilityState` stays
   // "visible", so the page would keep drawing for nobody. The main process says when the window is hidden, and the page

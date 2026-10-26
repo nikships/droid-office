@@ -51,6 +51,8 @@ export interface PresenterInputOptions {
 }
 
 const SHIM = "globalThis[Symbol.for('droid-office.shim')]";
+/** The most key-trace lines kept for one terminal key report. */
+export const KEY_TRACE_MAX_LINES = 5000;
 
 /**
  * Carries what happens in the native view to the offscreen office page, as a browser window would have: mouse and wheel through
@@ -74,6 +76,8 @@ export class PresenterInput {
   private pageHidden = false;
   /** An open panel is up; another file input asking meanwhile is ignored. */
   private choosing = false;
+  /** While the page records a terminal key report: the input steps since it started (see keyTraceSet). */
+  private keyTrace: string[] | null = null;
 
   constructor(private readonly options: PresenterInputOptions) {
     this.lock = new PointerLock(() => options.native.inputCapabilities().rawMouse);
@@ -148,6 +152,7 @@ export class PresenterInput {
 
   private trace(line: string) {
     this.options.trace?.(line);
+    if (this.keyTrace && !line.startsWith('native {"type":"mouse"') && this.keyTrace.length < KEY_TRACE_MAX_LINES) this.keyTrace.push(`${(Date.now() / 1000).toFixed(3)} ${line}`);
   }
 
   /** Tells the page whether its window can be seen. A page nobody sees stops drawing, as a background tab does; the page learns it only from here. */
@@ -282,7 +287,20 @@ export class PresenterInput {
         this.options.native.inputSetTextInput(m.on);
         if (m.on) this.options.native.inputSetImeRect(m.x, m.y, m.w, m.h);
         return;
+      case 'keyTrace':
+        return this.keyTraceSet(m.on);
     }
+  }
+
+  /** Starts keeping the key steps for the page's report, or ends it and gives the page what was kept. Text typed is in them: they go only to the owner's own report. */
+  private keyTraceSet(on: boolean) {
+    if (on) {
+      this.keyTrace = [`${(Date.now() / 1000).toFixed(3)} key trace on: attached=${this.attached} focus=${this.focus} window focused=${this.options.focused()} captured=${this.lock.locked}`];
+      return;
+    }
+    const lines = this.keyTrace ?? [];
+    this.keyTrace = null;
+    this.evaluate(`${SHIM}?.keyTraceLines(${JSON.stringify(lines)})`);
   }
 
   private lockRequested(id: number, raw: boolean, activation: boolean) {

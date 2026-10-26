@@ -21,6 +21,7 @@ import { findLine } from '../../shared/search';
 import { DROP_MAX_BYTES, droppedPaths } from '../../shared/drops';
 import { loadFonts, TERM_FONT } from '../fonts';
 import { enterKeyAction, wantsCsiEnter } from '../term-keys';
+import { keyFields, keyRecording, noteKey, noteScreen, noteSent, registerTerminalScreen } from '../key-diagnostics';
 import { onTermFontSize, setTermFontSize, stepTermFont, termFontSize, TERM_FONT_MAX, TERM_FONT_MIN } from './term-font';
 
 /** A line to scroll to once the terminal has loaded: a search hit (see search.ts). */
@@ -311,6 +312,7 @@ export function openTerminal(net: Net, workerId: string, onChanges?: () => void,
   const onMsg = (msg: ServerMsg) => {
     if (msg.t === 'term.data' && msg.workerId === workerId) mirror.data(msg.data);
     else if (msg.t === 'term.snapshot' && msg.workerId === workerId) {
+      noteKey('mirror.snapshot', { worker: workerId });
       term.options.disableStdin = true;
       mirror.snapshot(msg);
     }
@@ -328,6 +330,7 @@ export function openTerminal(net: Net, workerId: string, onChanges?: () => void,
   });
 
   const onClose = () => {
+    offScreen();
     listeners.delete(onMsg);
     unsub();
     unsubCredits();
@@ -415,6 +418,10 @@ export function openTerminal(net: Net, workerId: string, onChanges?: () => void,
       return false;
     }
     const enter = enterKeyAction(csiEnter(), e);
+    if (keyRecording()) {
+      noteKey('xterm.key', { worker: workerId, ...keyFields(e), csiEnter: csiEnter(), action: enter.do, stdinOff: !!term.options.disableStdin, ready: mirror.ready, up: net.up });
+      if (e.type === 'keydown' && e.key === 'Enter') setTimeout(() => noteScreen(workerId, 'after Enter'), 800);
+    }
     if (enter.do === 'default') return true;
     if (enter.do === 'send') {
       e.preventDefault();
@@ -423,9 +430,15 @@ export function openTerminal(net: Net, workerId: string, onChanges?: () => void,
     return false;
   });
   term.onData((data) => {
-    if (guest || !mirror.ready || !net.up) return;
+    const dropped = guest ? 'guest' : !mirror.ready ? 'terminal not ready' : !net.up ? 'disconnected' : undefined;
+    noteSent(workerId, data, dropped);
+    if (dropped) return;
     sendSize(true);
     net.send({ t: 'term.input', workerId, data });
+  });
+  const offScreen = registerTerminalScreen(workerId, () => {
+    const buf = term.buffer.active;
+    return Array.from({ length: term.rows }, (_, i) => buf.getLine(buf.baseY + i)?.translateToString(true) ?? '');
   });
 
   // Files dropped in, or a screenshot pasted, go up to the office's machine and the terminal types

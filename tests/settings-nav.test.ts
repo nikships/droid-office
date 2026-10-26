@@ -50,6 +50,7 @@ test('every setting is in a category', () => {
     ['Worker limit', 'workers'],
     ['Workers whose pull request merged', 'workers'],
     ['Worktree setup', 'workers'],
+    ['Terminal key report', 'workers'],
     ['Subagents', 'subagents'],
     ['Subagent worker', 'subagents'],
     ['Models leads can pick', 'subagents'],

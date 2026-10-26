@@ -3,7 +3,7 @@ import { store, type Settings, type Sidearm } from '../state';
 import { askNotifyPermission, notifyPermission, type DesktopNotifier } from '../notify';
 import { SUBAGENT_MAX_PER_LEAD, type AgentChoice, type SubagentSettings, type WebhookKind } from '../../shared/protocol';
 import { SETTINGS_PANES, settingsPaneAfter, type SettingsCardTitle, type SettingsPane } from '../../shared/settings-nav';
-import { h, openModal, timeAgo } from './dom';
+import { h, openModal, timeAgo, toast } from './dom';
 import { onJiraSetup } from './jira';
 import { choices, field, toggle as kitToggle } from './kit';
 import { agentFields, modelBadge, officeChoice } from './models';
@@ -19,6 +19,8 @@ import { companionState, openCompanion } from './companion';
 import type { PairingState } from '../../shared/devices';
 import type { PairedDevice } from '../../shared/devices';
 import { INCLUDE_FILE, SETUP_FILE, describeSetup, parsePatterns } from '../../shared/worktree-setup';
+import { KEY_REPORT_MS } from '../../shared/key-report';
+import { keyRecording, lastKeyReport, onKeyRecording, startKeyRecording, stopKeyRecording } from '../key-diagnostics';
 import {
   FPS_CAPS,
   LOOK_SENSITIVITY_MAX,
@@ -300,6 +302,35 @@ export function openSettings(
   agentBack.addEventListener('click', () => {
     agentTouched = false;
     net.send({ t: 'prompts.agent', choice: null });
+  });
+
+  // A recording of what each key did on its way to a worker's terminal, for when one does nothing.
+  const keyBtn = h('button.btn.sm', { type: 'button' }) as HTMLButtonElement;
+  const keyNote = desc();
+  const paintKeys = (recording: boolean) => {
+    keyBtn.textContent = recording ? 'Stop and save' : 'Record';
+    keyBtn.classList.toggle('accent', recording);
+    const saved = lastKeyReport();
+    keyNote.textContent = [
+      `When a key does nothing in a worker's terminal (Ctrl+Enter not queueing, say), record, open that terminal and press it. The office saves what the page, the terminal and the Mac app did with each key, and the worker's screen, for a worker to read. It stops by itself after ${KEY_REPORT_MS / 1000} seconds. What you type while it records is in the report.`,
+      recording ? 'Recording now.' : saved?.path ? `Last report: ${saved.path}` : saved?.error ? `Last report: ${saved.error}` : '',
+    ]
+      .filter(Boolean)
+      .join(' ');
+  };
+  paintKeys(keyRecording());
+  const offKeys = onKeyRecording((recording) => {
+    if (!keyBtn.isConnected) return offKeys();
+    paintKeys(recording);
+  });
+  keyBtn.addEventListener('click', () => {
+    if (keyRecording()) {
+      keyBtn.disabled = true;
+      void stopKeyRecording().finally(() => (keyBtn.disabled = false));
+      return;
+    }
+    startKeyRecording();
+    toast(`Recording terminal keys for ${KEY_REPORT_MS / 1000} seconds. Open the worker's terminal and press the key that does nothing.`);
   });
 
   // The prompts the office writes for workers by itself, for the whole office.
@@ -1059,6 +1090,7 @@ export function openSettings(
       ),
       group('Running', card('Worker limit', { desc: limitNote, control: limitRow }), card('Workers whose pull request merged', { desc: leaveNote, control: leaveRow })),
       group('Worktrees', card('Worktree setup', { desc: setupNote, control: setupMode.row, below: [setupFail, setupForm, setupActions] })),
+      group('Troubleshooting', card('Terminal key report', { desc: keyNote, control: keyBtn })),
     ],
     subagents: [
       group(

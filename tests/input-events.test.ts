@@ -215,12 +215,14 @@ test('pointer lock: losing focus lets go and the next request needs a click agai
   assert.equal(lock.windowBlurred(), false);
 });
 
-test('host messages: only the four known shapes pass, and size and numbers are checked', () => {
+test('host messages: only the known shapes pass, and size and numbers are checked', () => {
   assert.equal(BINDING_NAME, '__droidOfficeHost');
   assert.deepEqual(parseHostMessage('{"t":"lock","id":3,"raw":true,"activation":false}'), { t: 'lock', id: 3, raw: true, activation: false });
   assert.deepEqual(parseHostMessage('{"t":"exit"}'), { t: 'exit' });
   assert.deepEqual(parseHostMessage('{"t":"escUp","prevented":true}'), { t: 'escUp', prevented: true });
   assert.deepEqual(parseHostMessage('{"t":"editable","on":true,"x":1,"y":2,"w":3,"h":4}'), { t: 'editable', on: true, x: 1, y: 2, w: 3, h: 4 });
+  assert.deepEqual(parseHostMessage('{"t":"keyTrace","on":true}'), { t: 'keyTrace', on: true });
+  assert.deepEqual(parseHostMessage('{"t":"keyTrace","on":false,"file":"/etc/passwd"}'), { t: 'keyTrace', on: false });
   // Extra fields are dropped, not forwarded.
   assert.deepEqual(parseHostMessage('{"t":"exit","cmd":"rm -rf /"}'), { t: 'exit' });
   for (const bad of [
@@ -234,6 +236,8 @@ test('host messages: only the four known shapes pass, and size and numbers are c
     '{"t":"lock","id":"3","raw":true,"activation":true}',
     '{"t":"lock","id":1,"raw":1,"activation":true}',
     '{"t":"escUp"}',
+    '{"t":"keyTrace"}',
+    '{"t":"keyTrace","on":"yes"}',
     '{"t":"editable","on":true,"x":1,"y":2,"w":3}',
     '{"t":"editable","on":true,"x":1e9,"y":2,"w":3,"h":4}',
     '{"t":"editable","on":true,"x":"1","y":2,"w":3,"h":4}',
