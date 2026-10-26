@@ -1,0 +1,153 @@
+{
+  "size": 128,
+  "chromium": "156.0.8078.4",
+  "icons": {
+    "claude": {
+      "file": "claude-color.svg",
+      "mono": false,
+      "tile": false,
+      "svgSha256": "a3101f3047a119aa11825ad9369510f0c472428c8c52d420e31bc62db44a8364",
+      "pngSha256": "04ecc7277dfa7502a003e9035e4e4498e159ede1379515dd9bcd00de259e98ad"
+    },
+    "openai": {
+      "file": "openai.svg",
+      "mono": true,
+      "tile": false,
+      "svgSha256": "a595df6b423920c67a7f8f73c063e4bfb72d415948097b6cac063a2366bb5186",
+      "pngSha256": "13917768feb36b8e7922e338ef6e12e18c8d587d9393f24c1bcc67de5c149652"
+    },
+    "codex": {
+      "file": "codex-color.svg",
+      "mono": false,
+      "tile": false,
+      "svgSha256": "4a2f43ce46b5b6e3722c95088f88d26ef91e6a8c2e598e70642a1c54367386e4",
+      "pngSha256": "781986779e7943c540a4e77f87f1f913fa1bee42660cceee071f052fc56173f6"
+    },
+    "gemini": {
+      "file": "gemini-color.svg",
+      "mono": false,
+      "tile": false,
+      "svgSha256": "8ab0a9bafec11f7e69bcb9fc4ffd8f1bc927d1ddcbbb6ff36dee5ae8b5a9d602",
+      "pngSha256": "393ce37f86b0d665d509b1f329066f318b04d619d6a2e895fe86aaca155129cf"
+    },
+    "gemma": {
+      "file": "gemma-color.svg",
+      "mono": false,
+      "tile": false,
+      "svgSha256": "8cdc48e35113d2f76f602fc93977ce8b8eebe41bc66a65f532ed9c89f6a68e2d",
+      "pngSha256": "c26d28cc5aa0d65179f2a0ee03cdbe8804fc343527874ac62fe6668173a07917"
+    },
+    "deepseek": {
+      "file": "deepseek-color.svg",
+      "mono": false,
+      "tile": false,
+      "svgSha256": "deba5f98a5c1796e20fcac3149bcd7eb8a32f0bdd04d048819400b1f28bd1439",
+      "pngSha256": "8a9673357c54657a7c2924b6844ef1f61a3a0cfcee5ed9c3e0ead51da3d6f5a0"
+    },
+    "qwen": {
+      "file": "qwen-color.svg",
+      "mono": false,
+      "tile": false,
+      "svgSha256": "a158a0e3ed5b541e4f91384ece02c3acf0a0d81b7b11a46d77bafb248b09e32c",
+      "pngSha256": "8ed8e4da44afc27f1d54470bb3dddf0dfbf0c6d5473725680ad5001cbe3bc077"
+    },
+    "grok": {
+      "file": "grok.svg",
+      "mono": true,
+      "tile": false,
+      "svgSha256": "9175fc90c22655160231976c849f25a03b888d7cc0e04c5f1b987b659bb07c95",
+      "pngSha256": "530d72f602a0e3f13a2b6cc2a27bb2cc797f15e7233b54fc6813ff4926c676cf"
+    },
+    "kimi": {
+      "file": "kimi-color.svg",
+      "mono": false,
+      "tile": true,
+      "svgSha256": "0bdb95375d7c6e90a1850e91cd36770da2bc98fa33ec2d783f4a8fed027da85f",
+      "pngSha256": "0ab77a3bea64765bd95ce83132006db391bf94235fea820b19ba5a9cb473e1de"
+    },
+    "glm": {
+      "file": "chatglm-color.svg",
+      "mono": false,
+      "tile": false,
+      "svgSha256": "6e935f6ccad7a776edef259b33bbbfe5b51d6486318d4a0f423708ffe2a27287",
+      "pngSha256": "b2a3bc6e798e619dfeaa418e06d55c48221277dadb72c03c7a039e00af4d527f"
+    },
+    "minimax": {
+      "file": "minimax-color.svg",
+      "mono": false,
+      "tile": false,
+      "svgSha256": "7f7187fa6d9b341ac5f22f6c5a970523afb439dc45566d64eb4f4b9b604d6b01",
+      "pngSha256": "df34840d5a36491d21b3a80ac2ceb8c26f1440be1c8af3b95d881567d3adeade"
+    },
+    "mistral": {
+      "file": "mistral-color.svg",
+      "mono": false,
+      "tile": false,
+      "svgSha256": "722f74b289d95486b43662fe24fa883b333701296f618406cd0ed502299170b6",
+      "pngSha256": "d4c47186fcbc134bcbfd186e7f4753ebec04247974496f0ea75339a9707f7cc3"
+    },
+    "meta": {
+      "file": "meta-color.svg",
+      "mono": false,
+      "tile": false,
+      "svgSha256": "adf9f2c1a646ccd3a37ca8c2e7e5985d64630cd633f4b95fba393d1d44e0578c",
+      "pngSha256": "a9179c5b4549f7ff66d33d4f51972999e66fe73bd8b3355ebbb38728151099d4"
+    },
+    "muse": {
+      "file": "muse-color.svg",
+      "mono": false,
+      "tile": false,
+      "svgSha256": "c39c74b14ec4c5be771f75a45bf9d34c2e5fd99fe7aefedcb0fd409c3e6ac621",
+      "pngSha256": "ecd9f7b14dd3f0c7625a4a6379f435180e4d1be521c8f255442263268fdba16a"
+    },
+    "junie": {
+      "file": "junie-color.svg",
+      "mono": false,
+      "tile": false,
+      "svgSha256": "cec54c8be10ba733af250feb2bd78523d2aa2bab6b3599f0717faf1a740bb031",
+      "pngSha256": "88dd90f9f7fbc08bd542e774f805e74c1adde35201b4875298dc06353e9b5bb8"
+    },
+    "copilot": {
+      "file": "githubcopilot.svg",
+      "mono": true,
+      "tile": false,
+      "svgSha256": "bbc7fddc13448236e5edea8c399d2072dc40aa5da5bca07f7a2f412405c500a3",
+      "pngSha256": "cbebb87bcffa5eb8040a68cbd82cc9a82cbb4f6ecab715215a2bf5769cced564"
+    },
+    "antigravity": {
+      "file": "antigravity-color.svg",
+      "mono": false,
+      "tile": false,
+      "svgSha256": "652128cf55a28bb958563ee372d0bd00208d9e6fd446f523f77aafd811eef8ca",
+      "pngSha256": "e534b8db14689f79c5c29506536cd5740256d4051ae6dbc5949842ebbdbff248"
+    },
+    "openrouter": {
+      "file": "openrouter-color.svg",
+      "mono": false,
+      "tile": false,
+      "svgSha256": "17bede1b89166f824ee06753dc526a3f5e18b769706deaab09d04a3a98de1a78",
+      "pngSha256": "02b5c9bac3222fcac48df52a3211b2c00c6df2ee5d31b2157fcbadecd59d9c0d"
+    },
+    "nvidia": {
+      "file": "nvidia-color.svg",
+      "mono": false,
+      "tile": false,
+      "svgSha256": "8c941e4eb8b782eccaaea1240c059d20be33ab8eda28d7c9ed9b53ac802fe683",
+      "pngSha256": "859a59533a756d0224050b1472a5f0c98bced1b4f17d43fc44205249d8671468"
+    },
+    "cohere": {
+      "file": "cohere-color.svg",
+      "mono": false,
+      "tile": false,
+      "svgSha256": "84d0ee3cbe66f030e5a18cb2c86da9166ab2137c7a98781693bb1fbf31e392b9",
+      "pngSha256": "2ea146d65a3a2ed943fabdf7facc8e3d62364cbbc0e2dab20e08bc31803ca4fc"
+    },
+    "perplexity": {
+      "file": "perplexity-color.svg",
+      "mono": false,
+      "tile": false,
+      "svgSha256": "8353f3ab20822f1a933224b0ea32cc39f0c32d5740f4af8c254b0f418e0a3a70",
+      "pngSha256": "470a877344f3e5f2deb28563de6e457d14d4318fe5c80b43c326bd174f5f535c"
+    }
+  }
+}

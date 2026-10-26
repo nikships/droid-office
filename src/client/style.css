@@ -635,6 +635,17 @@ label.choice:has(> input:disabled) { opacity: .5; cursor: default; }
 .modal.gh-window.issue footer .model-choice label { font-size: 10px; }
 .modal.gh-window.issue footer .model-hint { flex: 0 1 auto; max-width: 150px; }
 
+/* Model identities share local LobeHub marks, never remote image requests. */
+.ai-logo { display: inline-block; width: 20px; height: 20px; flex: none; object-fit: contain; vertical-align: -.2em; }
+.ai-logo:where(.mono) { filter: brightness(0) invert(1); }
+.ai-logo:where(.tile) { background: #fff; border-radius: var(--radius); }
+.ai-logo:where(.fallback) { display: inline-flex; align-items: center; justify-content: center; border: 1px solid var(--border-strong); border-radius: var(--radius); color: var(--text-tertiary); font: 400 14px/1 var(--font-sans); }
+.model-badge { display: inline-flex; align-items: center; gap: var(--space-2); min-width: 0; max-width: 100%; vertical-align: middle; }
+.model-badge > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.model-badge .ai-logo, .sub .ai-logo { width: 14px; height: 14px; }
+.sub .ai-logo { margin-right: var(--space-1); }
+.omap-card-titles .ai-logo { width: 14px; height: 14px; margin-right: var(--space-1); }
+
 /* Model picker (ui/model-picker.ts): a button that opens a searchable list of models, in a popover on the page (a bottom sheet on a phone). */
 .mp-trigger { display: flex; align-items: center; gap: var(--space-2); width: 100%; min-width: 0; min-height: var(--control-h); padding: 0 30px 0 10px; font: 400 var(--text-body)/18px var(--font-sans); text-align: left; color: var(--text); background: var(--surface-raised) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'%3E%3Cpath d='M1 1l4 4 4-4' fill='none' stroke='%238c8c8c' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") no-repeat right 10px center; border: 1px solid var(--border-strong); border-radius: var(--radius); cursor: pointer; transition: border-color var(--duration) var(--ease), box-shadow var(--duration) var(--ease); }
 .mp-trigger.sm { min-height: var(--control-h-sm); font-size: 12.5px; }
@@ -669,6 +680,7 @@ label.choice:has(> input:disabled) { opacity: .5; cursor: default; }
 .mp-head { position: sticky; top: 0; z-index: 1; display: flex; align-items: center; gap: 6px; padding: var(--space-3) var(--space-2) var(--space-1); background: var(--surface-raised); color: var(--text-secondary); font: 500 var(--text-label)/1.4 var(--font-mono); text-transform: uppercase; letter-spacing: .1em; }
 .mp-head small { margin-left: auto; color: var(--text-tertiary); font-size: var(--text-label); }
 .mp-head .glyph { width: 12px; height: 12px; }
+.mp-head .ai-logo, .mp-chip .ai-logo { width: 14px; height: 14px; }
 .mp-row { display: flex; align-items: center; gap: var(--space-2); min-height: var(--control-h); padding: var(--space-1) var(--space-2); border-radius: var(--radius); color: var(--text); font: 400 var(--text-body)/var(--leading-body) var(--font-sans); cursor: pointer; }
 .mp-row.cursor { background: rgba(255, 255, 255, .06); }
 .mp-row.on .mp-name { font-weight: 500; }
@@ -2598,6 +2610,10 @@ html:has(body.dashboard), body.dashboard { overflow: auto; }
 .subs-providers { display: flex; flex-direction: column; gap: var(--space-2); }
 .subs-provider { display: flex; flex-direction: column; gap: var(--space-3); padding: var(--space-3) var(--space-4); border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface); }
 .subs-provider-head { display: flex; align-items: center; gap: var(--space-3); min-width: 0; }
+.subs-provider-logo { display: flex; align-items: center; justify-content: center; width: 40px; height: 40px; flex: none; border: 1px solid var(--border); border-radius: var(--radius-lg); background: var(--surface-raised); }
+.subs-provider-logo .ai-logo { width: 24px; height: 24px; }
+.welcome-provider-logo { display: flex; align-items: center; justify-content: center; width: 40px; height: 40px; margin-bottom: var(--space-2); }
+.welcome-provider-logo .ai-logo { width: 32px; height: 32px; }
 .subs-accounts { display: flex; flex-direction: column; gap: var(--space-3); margin: 0; padding: 0; list-style: none; min-width: 0; }
 .subs-account { display: flex; flex-direction: column; gap: var(--space-2); min-width: 0; }
 .subs-account-head { display: flex; align-items: center; gap: var(--space-2); min-width: 0; min-height: var(--control-h-sm); }

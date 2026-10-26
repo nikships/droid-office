@@ -20,8 +20,8 @@ import java.io.ByteArrayInputStream
 /**
  * The WebView running the overview page (assets/overview/, built from src/client/android-overview.ts):
  * the web companion's 3D floor, fed the floor, its workers and their screens through [MapPage]. The
- * page loads from the app itself. Its 3D props and fonts come from the office's open `/props/` and
- * `/fonts/` routes, fetched here by [file], so the page never sees the office's address or a token;
+ * page loads from the app itself. Its 3D props, fonts and model logos come from the office's open
+ * `/props/`, `/fonts/` and `/icons/models/` routes, fetched here by [file], so the page never sees the office's address or a token;
  * every other request is refused and it can't navigate away.
  */
 class OverviewPage(context: Context, private val file: (String) -> WbFetched?, private val onMessage: (MapMsg) -> Unit, private val onGone: () -> Unit) {
@@ -34,6 +34,7 @@ class OverviewPage(context: Context, private val file: (String) -> WbFetched?, p
             .addPathHandler("/assets/", WebViewAssetLoader.AssetsPathHandler(context))
             .addPathHandler("/props/", OfficeFiles("/props/"))
             .addPathHandler("/fonts/", OfficeFiles("/fonts/"))
+            .addPathHandler("/icons/models/", OfficeFiles("/icons/models/"))
             .build()
         view.settings.apply {
             javaScriptEnabled = true

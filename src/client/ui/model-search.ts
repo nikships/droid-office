@@ -15,7 +15,7 @@ export interface PickerModel {
   provider?: string;
   /** Droid's credit multiplier. Missing for models on the owner's own key. */
   cost?: number;
-  /** Drawn as the Factory pinwheel before the name. */
+  /** The gateway section uses the Factory pinwheel; model rows use their own brand. */
   glyph?: boolean;
   /** Small labels after the name: "20% off", "no images". */
   tags?: string[];

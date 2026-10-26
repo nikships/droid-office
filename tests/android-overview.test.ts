@@ -22,4 +22,7 @@ test('the Android overview page loads nothing from the network but through the a
   const js = readFileSync(path.join(OVERVIEW_DIR, 'overview.js'), 'utf8');
   // The Draco decoder comes from the office's /props/draco/, never a copy bundled into the APK.
   assert.doesNotMatch(js, /draco_decoder-[\w-]+\.wasm/);
+  assert.match(js, /\/icons\/models\//);
+  const host = readFileSync(new URL('../android/app/src/main/java/ai/factory/droidoffice/ui/overview/OverviewPage.kt', import.meta.url), 'utf8');
+  assert.ok(host.includes('.addPathHandler("/icons/models/", OfficeFiles("/icons/models/"))'), 'model marks use the same office-only asset bridge as props and fonts');
 });

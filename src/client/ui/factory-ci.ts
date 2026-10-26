@@ -22,6 +22,7 @@ import {
 } from '../../shared/factory-ci';
 import { factoryFetch, refreshFactory, watchFactory } from '../factory';
 import { store } from '../state';
+import { modelLogo } from './model-logo';
 import { h, openModal, timeAgo, toast, type Modal } from './dom';
 import { emptyState, field, toggle } from './kit';
 import { modelPicker, type NoneOption } from './model-picker';
@@ -206,7 +207,7 @@ export function openCiWindow(opts: { floorRepo?: string; add?: boolean } = {}): 
       ['Runs on', w.triggers.length ? w.triggers.map(triggerLabel).join(', ') : 'nothing listed'],
     ];
     if (w.cron) facts.push(['Schedule', `${w.cron} (UTC)`]);
-    if (w.model) facts.push(['Model', w.model]);
+    if (w.model) facts.push(['Model', h('span.model-badge', {}, modelLogo({ id: w.model }), h('span', {}, w.model))]);
     for (const [k, v] of Object.entries(w.inputs)) facts.push([k, String(v)]);
     if (w.templateId) facts.push(['Template', w.templateId]);
     if (w.author) facts.push(['Last change by', w.authorName ? `${w.authorName} (@${w.author})` : `@${w.author}`]);

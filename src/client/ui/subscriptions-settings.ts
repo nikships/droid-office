@@ -4,6 +4,7 @@ import { compareVersions } from '../../shared/setup';
 import { providerName, type ProxyState, type SubscriptionAccount, type SubscriptionProvider, type SubscriptionProviderKey } from '../../shared/subscriptions';
 import { h } from './dom';
 import { toggle } from './kit';
+import { providerLogo } from './model-logo';
 import { deviceCode, progressBar } from './welcome-signin';
 import { FEATURED_PROVIDERS, percentLeft, providerConnected, usageTone, usageWords } from './welcome-steps';
 
@@ -198,7 +199,14 @@ export function subscriptionsSettings(net: Net): { proxy: Parts; accounts: Parts
     return h(
       'section.subs-provider',
       { class: providerConnected(pr) ? 'connected' : '' },
-      h('div.subs-provider-head', {}, h('div.group-label', {}, h('b', {}, name), h('small', {}, summary)), busy ? null : h('button.btn.sm', { type: 'button', onclick: () => connect(net, pr) }, connectLabel(pr)), sw),
+      h(
+        'div.subs-provider-head',
+        {},
+        h('span.subs-provider-logo', {}, providerLogo(pr.key)),
+        h('div.group-label', {}, h('b', {}, name), h('small', {}, summary)),
+        busy ? null : h('button.btn.sm', { type: 'button', onclick: () => connect(net, pr) }, connectLabel(pr)),
+        sw,
+      ),
       count ? h('ul.subs-accounts', {}, ...pr.accounts.map((a) => accountRow(a, remove(a)))) : null,
       connectingBlock(pr, net),
     );

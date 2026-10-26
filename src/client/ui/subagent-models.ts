@@ -3,6 +3,7 @@ import { store } from '../state';
 import { withoutGlyph } from '../world/glyph';
 import { h } from './dom';
 import { availabilityOf } from './model-search';
+import { modelLogo } from './model-logo';
 import { droidCatalogue, droidDisplayName, multiplierLabel, type DroidModelOption } from './models';
 
 export interface SubagentModelPicker {
@@ -83,6 +84,7 @@ export function subagentModelPicker(save: (models: SubagentModel[] | undefined) 
         'label.sub-model-pick',
         { title: id },
         h('span.list-icon', {}, box),
+        modelLogo({ id, name: m?.displayName, provider: m?.provider }),
         h('span.list-main', {}, h('span.list-title', {}, name), h('span.list-meta', {}, facts(m, id, reason ?? remark))),
         !m?.custom && m?.tokenMultiplier !== undefined ? h('span.list-end', {}, multiplierLabel(m.tokenMultiplier)) : null,
       ),

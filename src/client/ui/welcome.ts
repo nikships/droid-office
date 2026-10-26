@@ -6,6 +6,7 @@ import { copyButton } from './clipboard';
 import { h, openModal, toast, type Modal } from './dom';
 import { field, windowHeader } from './kit';
 import { modelPicker } from './model-picker';
+import { providerLogo } from './model-logo';
 import { droidCatalogue, officeChoice, pickerModel } from './models';
 import { accountRow, connect, connectingBlock, connectLabel, placeholderProvider, UPDATES_FIRST_NOTE, updatesFirst } from './subscriptions-settings';
 import { progressBar, signInPanel, waitLine } from './welcome-signin';
@@ -235,6 +236,7 @@ export function openWelcome(net: Net, first?: WelcomeStepId) {
       return h(
         'button.welcome-provider',
         { type: 'button', onclick: () => pressConnect(p), 'aria-label': `Connect ${name}` },
+        h('span.welcome-provider-logo', {}, providerLogo(p.key)),
         h('b', {}, name),
         h('small', {}, plan),
         h('span.welcome-provider-go', {}, p.connect === 'app' || updatesFirst() ? connectLabel(p) : 'Connect →'),
@@ -243,6 +245,7 @@ export function openWelcome(net: Net, first?: WelcomeStepId) {
     return h(
       'div.welcome-provider.live',
       { class: providerConnected(p) ? 'connected' : '' },
+      h('span.welcome-provider-logo', {}, providerLogo(p.key)),
       h('b', {}, name, providerConnected(p) ? h('span.welcome-check', { 'aria-hidden': 'true' }, '✓') : null),
       h('small', {}, plan),
       p.accounts.length ? h('ul.subs-accounts', {}, ...p.accounts.map((a) => accountRow(a))) : null,
@@ -272,6 +275,7 @@ export function openWelcome(net: Net, first?: WelcomeStepId) {
                 h(
                   'div.row',
                   {},
+                  providerLogo(p.key),
                   h('span.list-main', {}, h('span.list-title', {}, providerName(p.key)), h('span.list-meta', {}, p.accounts.length ? `${p.accounts.length} account${p.accounts.length === 1 ? '' : 's'}` : 'Not connected')),
                   p.connecting && !p.connecting.error ? null : h('button.btn.sm', { type: 'button', onclick: () => pressConnect(p) }, connectLabel(p)),
                 ),

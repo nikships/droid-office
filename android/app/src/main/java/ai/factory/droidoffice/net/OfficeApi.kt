@@ -51,6 +51,10 @@ data class ModelOption(
     val legacy: Boolean = false,
     val defaultReasoningEffort: String? = null,
     val supportedReasoningEfforts: List<String>? = null,
+    val provider: String? = null,
+    val tokenMultiplier: Double? = null,
+    val noImages: Boolean = false,
+    val promo: String? = null,
 )
 
 @Serializable

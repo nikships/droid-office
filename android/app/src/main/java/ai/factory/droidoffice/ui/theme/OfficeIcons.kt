@@ -1,6 +1,10 @@
 package ai.factory.droidoffice.ui.theme
 
+import android.content.Context
+import android.graphics.BitmapFactory
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.StrokeJoin
@@ -13,6 +17,15 @@ import androidx.compose.ui.unit.dp
  * Material's core set covers the rest.
  */
 object OfficeIcons {
+    private val modelMarks = mutableMapOf<String, ImageBitmap>()
+
+    /** Exact official artwork, including gradients and masks, rendered from the web's bundled SVGs. */
+    fun model(context: Context, brand: String): ImageBitmap = modelMarks.getOrPut(brand) {
+        context.assets.open("model-icons/$brand.png").use { source ->
+            requireNotNull(BitmapFactory.decodeStream(source)) { "Invalid model logo: $brand" }.asImageBitmap()
+        }
+    }
+
     private fun icon(name: String, vararg strokes: String, fills: List<Pair<String, Float>> = emptyList()): ImageVector {
         val b = ImageVector.Builder(name = name, defaultWidth = 24.dp, defaultHeight = 24.dp, viewportWidth = 24f, viewportHeight = 24f)
         for (d in strokes) {

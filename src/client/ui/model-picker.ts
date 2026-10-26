@@ -1,5 +1,6 @@
 import { store } from '../state';
 import { type Child, claimEscape, h } from './dom';
+import { modelLogo, providerLogo } from './model-logo';
 import { availabilityOf, canPick, highlightRanges, multiplierLabel, offersSubscriptions, type PickerModel, pushRecent, scopesOf, type Section, sectionsFor, splitFamily, withAvailability } from './model-search';
 
 /** What the picker offers on top, for "no choice": the model droid runs when nobody picks one. */
@@ -9,7 +10,6 @@ export interface NoneOption {
   note?: string;
   /** Its cost, drawn like a model's. */
   cost?: number;
-  glyph?: boolean;
   detail?: string;
   /** The model it runs, so the picker can say when that one can't run now. */
   model?: string;
@@ -128,14 +128,14 @@ export function modelPicker(opts: ModelPickerOptions): ModelPicker {
   /** Why the `none` row's model can't run now, if it can't. */
   const noneReason = () => availabilityOf(none?.model, store.subscriptions, Date.now()).reason;
 
-  /** The `none` option's glyph, label and note, as the trigger and its row both draw them. */
-  const noneParts = (option: NoneOption): Child[] => [option.glyph ? pinwheel() : null, h('span.mp-name', {}, option.label), option.note ? h('span.mp-note', {}, option.note) : null];
+  /** The default model's logo, label and note, as the trigger and its row both draw them. */
+  const noneParts = (option: NoneOption): Child[] => [modelLogo({ id: option.model, name: option.note }), h('span.mp-name', {}, option.label), option.note ? h('span.mp-note', {}, option.note) : null];
 
   const triggerParts = (m: PickerModel | undefined): Child[] => {
     if (!value) return none ? noneParts(none) : [h('span.mp-name.mp-placeholder', {}, opts.placeholder ?? 'Choose a model')];
-    if (!m) return [h('span.mp-name', {}, value)];
+    if (!m) return [modelLogo({ id: value }), h('span.mp-name', {}, value)];
     const { family, rest } = splitFamily(m.name);
-    return [m.glyph ? pinwheel() : null, h('span.mp-name', {}, family ? h('span.mp-family', {}, `${family}: `) : null, rest), m.unavailable ? h('span.mp-tag', {}, m.reason ? 'can’t run' : 'unavailable') : null];
+    return [modelLogo(m), h('span.mp-name', {}, family ? h('span.mp-family', {}, `${family}: `) : null, rest), m.unavailable ? h('span.mp-tag', {}, m.reason ? 'can’t run' : 'unavailable') : null];
   };
 
   const paintTrigger = () => {
@@ -195,11 +195,11 @@ export function modelPicker(opts: ModelPickerOptions): ModelPicker {
 
   const rowBody = (key: string, model: PickerModel | undefined, flat: boolean): Child[] => {
     if (key === NONE) return none ? [...noneParts(none), noneReason() ? h('span.mp-why', {}, noneReason()) : null] : [];
-    if (key === CUSTOM) return [h('span.mp-name', {}, 'Use ', h('b', {}, customValue)), h('span.mp-note', {}, 'as typed')];
+    if (key === CUSTOM) return [modelLogo({ id: customValue }), h('span.mp-name', {}, 'Use ', h('b', {}, customValue)), h('span.mp-note', {}, 'as typed')];
     if (!model) return [];
     const { family, rest } = splitFamily(model.name);
     return [
-      model.glyph ? pinwheel() : null,
+      modelLogo(model),
       h('span.mp-name', {}, family ? h('span.mp-family', {}, ...marked(`${family}: `, query)) : null, ...marked(rest, query)),
       ...(model.tags ?? []).map((t) => h('span.mp-tag', {}, t)),
       model.unavailable && !model.reason ? h('span.mp-tag', {}, 'unavailable') : null,
@@ -248,6 +248,7 @@ export function modelPicker(opts: ModelPickerOptions): ModelPicker {
             ui.input.focus({ preventScroll: true });
           },
         },
+        providerLogo(key),
         label,
         h('small', {}, String(count)),
       );
@@ -291,7 +292,7 @@ export function modelPicker(opts: ModelPickerOptions): ModelPicker {
     const wantsNone = none && !scope && (!typed || `${none.label} ${none.note ?? ''} default`.toLowerCase().includes(typed.toLowerCase()));
     if (wantsNone) nodes.push(row(NONE, undefined, false));
     for (const s of sections) {
-      nodes.push(h('div.mp-head', { role: 'presentation' }, s.key.startsWith('g:') && s.models[0]?.glyph ? pinwheel() : '', s.label, h('small', {}, s.flat ? '' : String(s.models.length))));
+      nodes.push(h('div.mp-head', { role: 'presentation' }, s.key.startsWith('g:') ? (s.models[0]?.glyph ? pinwheel() : providerLogo(s.label)) : null, s.label, h('small', {}, s.flat ? '' : String(s.models.length))));
       for (const m of s.models) nodes.push(row(m.id, m, !!s.flat));
     }
     if (opts.allowCustom && isCustomId(typed) && !known(typed)) {
