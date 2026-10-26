@@ -432,28 +432,3 @@ test('the open panel filters by what the input accepts, keeps all files in reach
   assert.deepEqual(parseChooserOpened({ frameId: 'MAIN', mode: 'selectMultiple', backendNodeId: 3 }), { frameId: 'MAIN', multiple: true, backendNodeId: 3 });
   assert.equal(parseChooserOpened({ frameId: 'MAIN', mode: 'selectSingle', backendNodeId: -1 }), undefined);
 });
-
-test('a terminal key report gets the key steps of its stretch, and no mouse moves or clicks', async () => {
-  const t = setup();
-  t.emitPage('did-finish-load');
-  await t.flush();
-  t.trust();
-  t.input.handle({ type: 'key', kind: 'down', keyCode: 0x24, chars: '\r', base: '\r', mods: 0, repeat: false, handled: false, commands: [] });
-  t.host({ t: 'keyTrace', on: true });
-  t.input.handle(mouse('down', 1, 2));
-  t.input.handle({ type: 'key', kind: 'down', keyCode: 0x24, chars: '', base: '', mods: MOD.ctrl, repeat: false, handled: false, commands: ['insertLineBreak:'] });
-  t.host({ t: 'keyTrace', on: false });
-  await t.flush();
-  const last = t.evaluated().at(-1)!;
-  assert.match(last, /\?\.keyTraceLines\(/);
-  const lines = JSON.parse(last.slice(last.indexOf('keyTraceLines(') + 'keyTraceLines('.length, -1)) as string[];
-  assert.match(lines[0]!, /key trace on: attached=true/);
-  assert.ok(lines.some((l) => l.includes('native {"type":"key"') && l.includes('"mods":2')));
-  assert.ok(lines.some((l) => l.includes('Input.dispatchKeyEvent') && l.includes('"commands":["InsertLineBreak"]')));
-  assert.ok(!lines.some((l) => l.includes('"type":"mouse"')));
-  // Before it started, and once it ended, nothing is kept.
-  assert.ok(!lines.some((l) => l.includes('"chars":"\\r"')));
-  t.host({ t: 'keyTrace', on: false });
-  await t.flush();
-  assert.equal(t.evaluated().at(-1), "globalThis[Symbol.for('droid-office.shim')]?.keyTraceLines([])");
-});

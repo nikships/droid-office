@@ -14,7 +14,6 @@ import { isAgentEffort } from '../shared/protocol.js';
 import { OFFICE_SHELL_ID } from '../shared/office-shell.js';
 import { withImages } from '../shared/drops.js';
 import { CTRL_ENTER, wantsCsiEnter } from '../shared/csi-enter.js';
-import { PTY_INPUT_LOG, visibleBytes } from '../shared/key-report.js';
 import { WORKSPACE_FILES, WORKTREES_DIR, Worktrees, describeWork, workspaceOf, type WorktreeCleanup, type WorktreeOwnership, type WorktreeRef, type WorktreeStart, type WorktreeState } from './worktrees.js';
 import { checkoutDirty, choosePullBase, pushBranch } from './open-pull.js';
 import { normalizeRepo } from '../shared/floors.js';
@@ -196,8 +195,6 @@ interface Worker {
   /** When its last hook came in, and its terminal last printed something (see reconcile). */
   hookAt: number;
   outputAt: number;
-  /** Its last few PTY writes from attached browsers, for a terminal key report (see keyReport). Kept in memory only. */
-  inputLog: { at: number; data: string }[];
   /** When its own session's Stop came, with no hook since: a finish its screen hasn't confirmed yet. */
   stopAt?: number;
   /** What its screen has shown since when (see droid-screen.ts). */
@@ -1430,29 +1427,11 @@ export class WorkerManager {
     return w?.term && w.info.kind === 'agent' ? readDroidScreen(screenRows(w.term)) : undefined;
   }
 
-  /** What the office knows of a worker for a terminal key report: its state, its screen as the office reads it, and its last PTY writes. */
-  keyReport(id: string): Record<string, unknown> | undefined {
-    const w = this.workers.get(id);
-    if (!w) return undefined;
-    return {
-      id,
-      name: w.info.name,
-      kind: w.info.kind,
-      status: w.info.status,
-      running: !!w.pty,
-      droidScreen: w.term && w.info.kind === 'agent' ? readDroidScreen(screenRows(w.term)) : undefined,
-      screen: w.term ? screenRows(w.term) : undefined,
-      input: w.inputLog.map((e) => ({ at: new Date(e.at).toISOString(), bytes: visibleBytes(e.data) })),
-    };
-  }
-
   /** Keystrokes from an attached browser. */
   write(id: string, data: string) {
     const w = this.workers.get(id);
     if (!w?.pty) return;
     w.pty.write(data);
-    w.inputLog.push({ at: Date.now(), data: data.slice(0, 256) });
-    if (w.inputLog.length > PTY_INPUT_LOG) w.inputLog.splice(0, w.inputLog.length - PTY_INPUT_LOG);
     let changed = this.typed(w);
     if (w.info.status === 'needs_input' && w.info.acked === false) {
       w.info.acked = true;
@@ -2511,7 +2490,6 @@ function newWorker(info: WorkerInfo, hookToken = randomBytes(16).toString('hex')
     lastTool: new Map(),
     hookAt: 0,
     outputAt: 0,
-    inputLog: [],
   };
 }
 

@@ -66,7 +66,6 @@ export const SETTINGS_CARDS = [
   { pane: 'workers', title: 'Worker limit' },
   { pane: 'workers', title: 'Workers whose pull request merged' },
   { pane: 'workers', title: 'Worktree setup' },
-  { pane: 'workers', title: 'Terminal key report' },
   { pane: 'subagents', title: 'Subagents' },
   { pane: 'subagents', title: 'Subagent worker' },
   { pane: 'subagents', title: 'Models leads can pick' },

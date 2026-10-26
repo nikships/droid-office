@@ -15,9 +15,7 @@ export type HostMessage =
   /** An Esc key up reached the end of the page's handlers; `prevented` is whether one of them took it. */
   | { t: 'escUp'; prevented: boolean }
   /** An editable element took or lost focus. The rectangle is where the caret is, in CSS pixels. */
-  | { t: 'editable'; on: boolean; x: number; y: number; w: number; h: number }
-  /** Settings → Terminal key report started (`on`) or ended: keep this process's key steps, then hand them to the page. */
-  | { t: 'keyTrace'; on: boolean };
+  | { t: 'editable'; on: boolean; x: number; y: number; w: number; h: number };
 
 function num(v: unknown, limit = 1e5): number | null {
   return typeof v === 'number' && Number.isFinite(v) && Math.abs(v) <= limit ? v : null;
@@ -49,8 +47,6 @@ export function parseHostMessage(payload: unknown): HostMessage | null {
       if (x === null || y === null || w === null || h === null) return null;
       return { t: 'editable', on: o.on, x, y, w, h };
     }
-    case 'keyTrace':
-      return typeof o.on === 'boolean' ? { t: 'keyTrace', on: o.on } : null;
     default:
       return null;
   }
