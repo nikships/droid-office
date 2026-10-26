@@ -127,9 +127,10 @@ export interface Office {
   /** The standard worker laptop mounted here shows the floor's shell. */
   bossLaptopAnchor: THREE.Object3D;
   bossChair: THREE.Group;
-  /** The compute wall's two screens on the west wall: the office's machine, and the Droid Computers (world/factory-computers.ts). */
+  /** The compute wall's three independently updated screens. */
   machineScreen: THREE.Mesh;
   fleetScreen: THREE.Mesh;
+  proxyScreen: THREE.Mesh;
   /** What's already on the walls (boards, the TV, windows…), so pictures don't hang over it. */
   fixtures(): WallRect[];
   elevator: Elevator;
@@ -1315,25 +1316,27 @@ export function buildOffice(): Office {
   group.add(tvGroup);
   fixture('east', TV.z, TV.y, TV.width + 0.3, TV.height + 0.3);
 
-  // The compute wall between the exit door and the kitchen, facing the desks: two screens in one
-  // bezel, this machine on the left and the Droid Computers on the right (see world/factory-computers.ts).
+  // Three screens in one bezel, above the exit sign and windows.
   const CW = COMPUTE_WALL;
   const computeWall = new THREE.Group();
   const bezel = mesh(roundedBox(CW.width + 0.16, 0.1, CW.height + 0.16, 0.06), toon(PALETTE.ink), 0, 0, 0);
   bezel.rotation.x = Math.PI / 2;
   computeWall.add(bezel);
-  const fleetWidth = CW.width - CW.machineWidth - CW.gap;
   const machineScreen = new THREE.Mesh(new THREE.PlaneGeometry(CW.machineWidth, CW.height), screenMaterial());
   machineScreen.position.set(-CW.width / 2 + CW.machineWidth / 2, 0, 0.06);
-  const fleetScreen = new THREE.Mesh(new THREE.PlaneGeometry(fleetWidth, CW.height), screenMaterial());
-  fleetScreen.position.set(CW.width / 2 - fleetWidth / 2, 0, 0.06);
-  // The orange seam between the two screens.
-  computeWall.add(machineScreen, fleetScreen, mesh(box(0.012, CW.height - 0.3, 0.004), toon(PALETTE.accent, { emissive: PALETTE.accent }), -CW.width / 2 + CW.machineWidth + CW.gap / 2, 0, 0.056));
+  const fleetScreen = new THREE.Mesh(new THREE.PlaneGeometry(CW.fleetWidth, CW.height), screenMaterial());
+  fleetScreen.position.set(-CW.width / 2 + CW.machineWidth + CW.gap + CW.fleetWidth / 2, 0, 0.06);
+  const proxyScreen = new THREE.Mesh(new THREE.PlaneGeometry(CW.proxyWidth, CW.height), screenMaterial());
+  proxyScreen.position.set(CW.width / 2 - CW.proxyWidth / 2, 0, 0.06);
+  computeWall.add(machineScreen, fleetScreen, proxyScreen);
+  for (const offset of [CW.machineWidth + CW.gap / 2, CW.machineWidth + CW.fleetWidth + CW.gap * 1.5]) {
+    computeWall.add(mesh(box(0.012, CW.height - 0.3, 0.004), toon(PALETTE.accent, { emissive: PALETTE.accent }), -CW.width / 2 + offset, 0, 0.056));
+  }
   // Facing +x, its local +x runs toward -z: seen from the room, the machine's screen is the south end, by the kitchen.
   computeWall.position.set(CW.x + 0.07, CW.y, CW.z);
   computeWall.rotation.y = Math.PI / 2;
   group.add(computeWall);
-  const computers: Interactable = { kind: 'computers', x: CW.x + 2.6, z: CW.z, radius: 2.8 };
+  const computers: Interactable = { kind: 'computers', x: CW.x + 5.5, z: CW.z, radius: 5.7 };
   interactables.push(computers);
   computeWall.userData.interact = computers;
   // Pictures keep clear of it, so it never covers one.
@@ -1519,6 +1522,7 @@ export function buildOffice(): Office {
     bossLaptopAnchor,
     machineScreen,
     fleetScreen,
+    proxyScreen,
     fixtures: () => fixtures,
     elevator,
     gong,

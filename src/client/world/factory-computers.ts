@@ -274,7 +274,7 @@ export class ComputeWallTextures {
 
   constructor() {
     const left = canvas(Math.round(COMPUTE_WALL.machineWidth * PX_PER_M), H_PX);
-    const right = canvas(Math.round((COMPUTE_WALL.width - COMPUTE_WALL.machineWidth - COMPUTE_WALL.gap) * PX_PER_M), H_PX);
+    const right = canvas(Math.round(COMPUTE_WALL.fleetWidth * PX_PER_M), H_PX);
     this.m = left.ctx;
     this.machine = left.texture;
     this.f = right.ctx;

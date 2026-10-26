@@ -87,11 +87,11 @@ test('the compute wall is on the west wall, clear of its windows, the exit door,
   const top = CW.y + CW.height / 2 + 0.08;
   assert.equal(CW.x, FLOOR.minX);
   for (const w of WINDOWS.filter((o) => o.wall === 'west')) {
-    assert.ok(maxZ <= w.u - w.width / 2 || minZ >= w.u + w.width / 2, `clear of the window at ${w.u}`);
+    assert.ok(maxZ <= w.u - w.width / 2 || minZ >= w.u + w.width / 2 || bottom > w.y1 + 0.05, `clear of the window at ${w.u}`);
   }
   // The door and the EXIT sign over it, which reaches about 3.1 m.
-  assert.ok(minZ > EXIT_DOOR.u + EXIT_DOOR.width / 2 + 0.3, 'clear of the exit door and its sign');
-  assert.ok(top < WALL_HEIGHT - 1, 'well under the ceiling');
+  assert.ok(minZ > EXIT_DOOR.u + EXIT_DOOR.width / 2 + 0.3 || bottom > EXIT_DOOR.y1 + 0.75, 'clear of the exit door and its sign');
+  assert.ok(top < WALL_HEIGHT - 0.5, 'under the ceiling and its purlins');
   assert.ok(maxZ < FLOOR.maxZ, 'inside the south wall');
   // The counter top is 1.03 m high and starts at x -17, so the wall's screen is above and behind it.
   assert.ok(bottom > 1.03);
