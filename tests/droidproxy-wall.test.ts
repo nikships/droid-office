@@ -83,9 +83,9 @@ test('account and quota-window overflow rotates complete pages instead of droppi
   const second = quotaView(s, t + 20_000);
   assert.equal(first.pages, 2);
   assert.equal(first.page, 0);
-  assert.equal(first.tiles.length, 6);
+  assert.equal(first.tiles.length, 4);
   assert.equal(second.page, 1);
-  assert.equal(second.tiles.length, 2);
+  assert.equal(second.tiles.length, 4);
   assert.equal(new Set([...first.tiles, ...second.tiles].map((a) => a.id)).size, 8);
   s.providers[0].accounts = [{ ...a, windows: [...a.windows, ...a.windows, ...a.windows] }];
   const v = quotaView(s, t);
@@ -95,7 +95,7 @@ test('account and quota-window overflow rotates complete pages instead of droppi
   assert.equal(v.tiles[1].windows.length, 1);
   assert.equal(v.tiles[1].continuation, 'WINDOWS 3–3 OF 3');
   assert.deepEqual(quotaLayout(1), { cols: 1, rows: 1 });
-  assert.deepEqual(quotaLayout(6), { cols: 2, rows: 3 });
+  assert.deepEqual(quotaLayout(6), { cols: 1, rows: 4 });
 });
 
 test('empty, installing, unsupported and failed proxy states explain what is missing', () => {
@@ -111,18 +111,20 @@ test('empty, installing, unsupported and failed proxy states explain what is mis
   assert.match(quotaView(s, NOW).note, /could not refresh/);
 });
 
-test('the wider wall extends right without moving the original screen positions or the rack, and clears openings', () => {
+test('the low wall sits at eye level south of the exit door, clear of the door, windows and ceiling', () => {
   const c = COMPUTE_WALL;
   assert.ok(Math.abs(c.width - (c.machineWidth + c.fleetWidth + c.proxyWidth + c.gap * 2)) < 1e-10);
+  assert.ok(c.height <= 1.5 && c.y - c.height / 2 >= 1.2, 'a short strip whose bottom is at standing eye level, not a billboard overhead');
+  assert.ok(c.y + c.height / 2 <= 2.8, 'its top is within easy view from the floor');
   const south = c.z + c.width / 2;
   assert.equal(south, 12.55);
   const fleetZ = south - c.machineWidth - c.gap - c.fleetWidth / 2;
-  assert.ok(Math.abs(fleetZ - 9.25) < 1e-10);
   assert.ok(Math.abs((DROID_RACK.minZ + DROID_RACK.maxZ) / 2 - fleetZ) < 1e-10);
-  const bottom = c.y - c.height / 2 - 0.08;
-  assert.ok(bottom > EXIT_DOOR.y1 + 0.7, 'the exit sign stays clear');
+  // Clear of the exit door and its sign beside it, not by hanging above them.
+  const north = c.z - c.width / 2;
+  assert.ok(north > EXIT_DOOR.u + EXIT_DOOR.width / 2, 'the strip starts south of the exit door');
   assert.ok(
-    WINDOWS.filter((w) => w.wall === 'west').every((w) => bottom > w.y1),
+    WINDOWS.filter((w) => w.wall === 'west').every((w) => north > w.u + w.width / 2 || south < w.u - w.width / 2),
     'the windows stay clear',
   );
   assert.ok(c.y + c.height / 2 + 0.08 < WALL_HEIGHT);

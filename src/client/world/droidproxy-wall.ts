@@ -16,7 +16,7 @@ const RED = '#ef6363';
 const HAIR = '#292929';
 const STALE_MS = 5 * 60_000;
 const PAGE_MS = 20_000;
-const PAGE_SIZE = 6;
+const PAGE_SIZE = 4;
 
 export type QuotaStatus = 'reporting' | 'low' | 'limited' | 'paused' | 'sign-in' | 'unavailable' | 'unreported' | 'cached';
 
@@ -129,8 +129,9 @@ export function quotaView(s: SubscriptionsState, now: number): QuotaView {
   };
 }
 
+/** The low strip lists accounts one per row, so a row can carry its quota windows beside its name. */
 export function quotaLayout(n: number): { cols: number; rows: number } {
-  return { cols: n === 1 ? 1 : 2, rows: Math.max(1, Math.ceil(Math.min(PAGE_SIZE, n) / 2)) };
+  return { cols: 1, rows: Math.max(1, Math.min(PAGE_SIZE, n)) };
 }
 
 const STATUS: Record<QuotaStatus, [string, string]> = {
@@ -189,36 +190,36 @@ export class QuotaWallTexture {
     g.fillRect(0, 0, W, H);
     g.fillStyle = ORANGE;
     g.fillRect(30, 33, 16, 16);
-    this.text('DROIDPROXY', 64, 56, 36, INK, W - 350, 600);
+    this.text('DROIDPROXY', 64, 56, 30, INK, W - 320, 600);
     const phase = v.phase === 'running' ? 'CONNECTED' : v.phase.toUpperCase();
     this.pill(phase, W - 30, 22, v.phase === 'running' ? GREEN : AMBER);
-    this.text('SUBSCRIPTION QUOTAS', 30, 102, 24, MUTED);
+    this.text('SUBSCRIPTION QUOTAS', 30, 96, 18, MUTED);
     const summary = `${v.accounts} ACCOUNTS  /  ${v.reporting} REPORTING${v.limited ? `  /  ${v.limited} LIMITED` : ''}`;
-    g.font = `500 22px ${MONO}`;
-    this.text(summary, W - 30 - g.measureText(summary).width, 102, 22, MUTED);
+    g.font = `500 18px ${MONO}`;
+    this.text(summary, W - 30 - g.measureText(summary).width, 96, 18, MUTED);
     g.fillStyle = HAIR;
-    g.fillRect(30, 126, W - 60, 2);
+    g.fillRect(30, 112, W - 60, 2);
     g.fillStyle = ORANGE;
-    g.fillRect(30, 125, 48, 4);
+    g.fillRect(30, 111, 48, 4);
 
     if (!v.tiles.length) {
-      this.text('YOUR PLANS. YOUR QUOTAS.', 60, H / 2 - 30, 40, INK, W - 120, 600);
+      this.text('YOUR PLANS. YOUR QUOTAS.', 60, H / 2 - 30, 28, INK, W - 120, 600);
       this.text(v.note, 60, H / 2 + 30, 25, MUTED, W - 120);
       this.text('Claude · ChatGPT · Grok · Meta · and more', 60, H / 2 + 80, 24, DIM, W - 120);
     } else {
       const { cols, rows } = quotaLayout(v.tiles.length);
-      const gap = 18;
+      const gap = 14;
       const w = (W - 60 - (cols - 1) * gap) / cols;
-      const h = (H - 250 - (rows - 1) * gap) / rows;
-      v.tiles.forEach((tile, i) => this.card(tile, 30 + (i % cols) * (w + gap), 150 + Math.floor(i / cols) * (h + gap), w, h));
+      const h = (H - 196 - (rows - 1) * gap) / rows;
+      v.tiles.forEach((tile, i) => this.card(tile, 30 + (i % cols) * (w + gap), 132 + Math.floor(i / cols) * (h + gap), w, h));
     }
     g.fillStyle = HAIR;
-    g.fillRect(30, H - 78, W - 60, 2);
+    g.fillRect(30, H - 64, W - 60, 2);
     const page = v.pages > 1 ? `PAGE ${v.page + 1}/${v.pages} · AUTO 20s` : v.version ? `v${v.version}` : '';
     g.font = `500 20px ${MONO}`;
     const pw = g.measureText(page).width;
-    this.text(v.note, 30, H - 36, 20, MUTED, W - 90 - pw);
-    this.text(page, W - 30 - pw, H - 36, 20, DIM);
+    this.text(v.note, 30, H - 24, 20, MUTED, W - 90 - pw);
+    this.text(page, W - 30 - pw, H - 24, 20, DIM);
   }
 
   private pill(text: string, right: number, y: number, color: string) {
@@ -236,6 +237,7 @@ export class QuotaWallTexture {
     return right - w;
   }
 
+  /** One account as a row: who it is on the left, its quota windows as bars on the right. */
   private card(t: QuotaTile, x: number, y: number, w: number, h: number) {
     const g = this.g;
     const [status, color] = STATUS[t.status];
@@ -245,27 +247,52 @@ export class QuotaWallTexture {
     g.strokeRect(x + 0.5, y + 0.5, w - 1, h - 1);
     g.fillStyle = color;
     g.fillRect(x, y, 4, h);
-    const left = this.pill(status, x + w - 20, y + 16, color);
-    this.text(t.provider.toUpperCase(), x + 22, y + 42, 25, INK, left - x - 36, 600);
-    this.text(t.label, x + 22, y + 74, 23, MUTED, w - 44);
+    // Who it is on one line across the top, its status at the right, then its windows underneath.
+    g.font = `600 16px ${MONO}`;
+    const statusW = g.measureText(status).width;
+    this.text(status, x + w - 20 - statusW, y + 30, 16, color, w, 600);
+    this.text(t.provider.toUpperCase(), x + 20, y + 32, 23, INK, 170, 600);
+    this.text(t.label, x + 178, y + 32, 18, MUTED, w - 198 - statusW);
+    const wx = x + 20;
+    const ww = w - 40;
     if (!t.windows.length) {
-      this.text(t.status === 'sign-in' ? 'Account needs reconnecting' : t.status === 'paused' ? 'Provider or account is switched off' : 'No usage reported', x + 22, y + 130, 25, t.status === 'sign-in' ? AMBER : MUTED, w - 44);
-      this.text(t.detail, x + 22, y + 166, 20, DIM, w - 44);
-    } else {
-      t.windows.forEach((q, i) => {
-        const yy = y + 103 + i * 70;
-        const qc = q.due || t.status === 'cached' || t.status === 'paused' || t.status === 'sign-in' || t.status === 'unavailable' ? MUTED : q.remaining <= 0 ? RED : q.remaining <= 20 ? AMBER : GREEN;
-        this.text(q.name, x + 22, yy, 23, INK, w - 210);
-        const pct = `${Number(q.remaining.toFixed(1))}% left`;
-        g.font = `600 26px ${MONO}`;
-        this.text(pct, x + w - 22 - g.measureText(pct).width, yy, 26, qc, 200, 600);
-        g.fillStyle = '#252525';
-        g.fillRect(x + 22, yy + 12, w - 44, 7);
-        g.fillStyle = qc;
-        g.fillRect(x + 22, yy + 12, ((w - 44) * q.remaining) / 100, 7);
-        this.text(q.reset, x + 22, yy + 44, 20, q.due ? AMBER : MUTED, w - 44);
-      });
-      this.text(t.continuation ?? t.detail, x + 22, y + h - 14, 17, DIM, w - 44);
+      this.text(t.status === 'sign-in' ? 'Account needs reconnecting' : t.status === 'paused' ? 'Provider or account is switched off' : 'No usage reported', wx, y + 64, 21, t.status === 'sign-in' ? AMBER : MUTED, ww);
+      if (h > 84) this.text(t.detail, wx, y + 90, 17, DIM, ww);
+      return;
     }
+    const colorOf = (q: QuotaTile['windows'][number]) => (q.due || t.status === 'cached' || t.status === 'paused' || t.status === 'sign-in' || t.status === 'unavailable' ? MUTED : q.remaining <= 0 ? RED : q.remaining <= 20 ? AMBER : GREEN);
+    if (t.windows.length > 1 && ww > 340) {
+      // Windows side by side: each gets a name, the percent left, a bar and its reset line.
+      const colW = (ww - 18 * (t.windows.length - 1)) / t.windows.length;
+      t.windows.forEach((q, i) => {
+        const cx = wx + i * (colW + 18);
+        const qc = colorOf(q);
+        this.text(q.name, cx, y + 58, 19, INK, colW - 90);
+        const pct = `${Number(q.remaining.toFixed(1))}% left`;
+        g.font = `600 20px ${MONO}`;
+        this.text(pct, cx + colW - g.measureText(pct).width, y + 58, 20, qc, colW, 600);
+        g.fillStyle = '#252525';
+        g.fillRect(cx, y + 68, colW, 6);
+        g.fillStyle = qc;
+        g.fillRect(cx, y + 68, (colW * q.remaining) / 100, 6);
+        if (h >= 88) this.text(q.reset, cx, y + 90, 13, q.due ? AMBER : MUTED, colW);
+      });
+    } else {
+      const slot = (h - 40) / t.windows.length;
+      t.windows.forEach((q, i) => {
+        const yy = y + 54 + i * slot;
+        const qc = colorOf(q);
+        this.text(q.name, wx, yy, 20, INK, ww - 150);
+        const pct = `${Number(q.remaining.toFixed(1))}% left`;
+        g.font = `600 22px ${MONO}`;
+        this.text(pct, x + w - 20 - g.measureText(pct).width, yy, 22, qc, 190, 600);
+        g.fillStyle = '#252525';
+        g.fillRect(wx, yy + 9, ww, 6);
+        g.fillStyle = qc;
+        g.fillRect(wx, yy + 9, (ww * q.remaining) / 100, 6);
+        if (slot >= 52) this.text(q.reset, wx, yy + 38, 17, q.due ? AMBER : MUTED, ww);
+      });
+    }
+    if (h > 150) this.text(t.continuation ?? t.detail, wx, y + h - 12, 16, DIM, ww);
   }
 }

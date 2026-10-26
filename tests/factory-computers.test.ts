@@ -567,13 +567,11 @@ test('the wall keeps the last data with its age and the reason when the key is r
   assert.equal(age(2 * 86400_000), '2d ago');
 });
 
-test('the wall lays out 0 to a dozen computers and more: a grid, then compact rows', () => {
+test('the low wall lays out computers as one big tile, then full-width rows four deep', () => {
   assert.deepEqual(gridOf(0), { cols: 1, rows: 1, compact: false, shown: 0 });
   assert.deepEqual(gridOf(1), { cols: 1, rows: 1, compact: false, shown: 1 });
-  assert.deepEqual(gridOf(2), { cols: 1, rows: 2, compact: false, shown: 2 });
-  assert.deepEqual(gridOf(4), { cols: 2, rows: 2, compact: false, shown: 4 });
-  assert.deepEqual(gridOf(6), { cols: 3, rows: 2, compact: false, shown: 6 });
-  assert.deepEqual(gridOf(7), { cols: 2, rows: 4, compact: true, shown: 7 });
-  assert.deepEqual(gridOf(12), { cols: 2, rows: 6, compact: true, shown: 12 });
-  assert.deepEqual(gridOf(30), { cols: 2, rows: 6, compact: true, shown: 11 }, 'the twelfth cell says how many more');
+  assert.deepEqual(gridOf(2), { cols: 1, rows: 2, compact: true, shown: 2 });
+  assert.deepEqual(gridOf(4), { cols: 1, rows: 4, compact: true, shown: 4 });
+  assert.deepEqual(gridOf(6), { cols: 1, rows: 4, compact: true, shown: 3 });
+  assert.deepEqual(gridOf(30), { cols: 1, rows: 4, compact: true, shown: 3 }, 'the fourth row says how many more');
 });
