@@ -188,7 +188,8 @@ data class FloorView(
 )
 
 sealed interface ServerMsg {
-    data class Welcome(val connection: String, val arrival: Arrival, val floors: List<FloorInfo>, val version: String, val view: FloorView, val availability: Map<String, ModelAvailability> = emptyMap(), val subscriptions: SubscriptionState? = null) : ServerMsg
+    data class Welcome(val connection: String, val arrival: Arrival, val floors: List<FloorInfo>, val version: String, val view: FloorView, val availability: Map<String, ModelAvailability> = emptyMap(), val subscriptions: SubscriptionState? = null, val hiddenModels: Set<String> = emptySet()) : ServerMsg
+    data class HiddenModels(val ids: Set<String>) : ServerMsg
     /** Which Claude, ChatGPT and other plan models can run now. */
     data class Subscriptions(val availability: Map<String, ModelAvailability>, val state: SubscriptionState? = null) : ServerMsg
     data class FloorEnter(val arrival: Arrival, val view: FloorView) : ServerMsg
@@ -235,12 +236,14 @@ object Protocol {
             view = floorView(o),
             availability = Availability.parse(o["subscriptions"]),
             subscriptions = Subscriptions.parse(o["subscriptions"]),
+            hiddenModels = strings(o["hiddenModels"]),
         )
         "floor.enter" -> ServerMsg.FloorEnter(
             arrival = o.obj("arrival")?.let { OfficeJson.decodeFromJsonElement<Arrival>(it) } ?: Arrival(),
             view = floorView(o),
         )
         "floors" -> ServerMsg.Floors(floors(o["floors"]))
+        "models.hidden" -> ServerMsg.HiddenModels(strings(o["ids"]))
         "subscriptions" -> ServerMsg.Subscriptions(Availability.parse(o["state"]), Subscriptions.parse(o["state"]))
         "worker.update" -> ServerMsg.WorkerUpdate(OfficeJson.decodeFromJsonElement(o.getValue("worker")))
         "worker.remove" -> ServerMsg.WorkerRemove(o.str("workerId").orEmpty())
@@ -255,6 +258,9 @@ object Protocol {
         "whiteboard.pinged" -> WbPinged.of(o)?.let { ServerMsg.Pinged(it) } ?: ServerMsg.Ignored(t)
         else -> ServerMsg.Ignored(t)
     }
+
+    private fun strings(e: JsonElement?): Set<String> =
+        (e as? JsonArray)?.mapNotNull { (it as? JsonPrimitive)?.takeIf { value -> value.isString }?.contentOrNull }?.toSet().orEmpty()
 
     private fun floors(e: JsonElement?): List<FloorInfo> =
         (e as? JsonArray)?.mapNotNull { runCatching { OfficeJson.decodeFromJsonElement<FloorInfo>(it) }.getOrNull() }.orEmpty()

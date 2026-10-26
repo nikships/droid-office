@@ -62,6 +62,7 @@ export type Topic =
   | 'freshMain'
   | 'autoHeal'
   | 'subagents'
+  | 'hiddenModels'
   | 'prompts'
   | 'jira'
   | 'jiraBoard'
@@ -283,6 +284,7 @@ class Store {
   autoHeal: AutoHealState = { on: false };
   /** How workers hire subagents (⚙️ Settings → Subagents), and where the Droid skill is. */
   subagents: SubagentsState = { ...SUBAGENT_DEFAULTS };
+  hiddenModels: string[] = [];
   /** Whether the droid-office-whiteboard skill is installed (⚙️ Settings), and where. */
   whiteboardSkill: WhiteboardSkillState = { on: true };
   /** Each floor's Whiteboard as this window has it, with the owner's batches until they're committed (see whiteboard-sync.ts). */
@@ -382,6 +384,8 @@ class Store {
         this.leaveOnMerge = msg.leaveOnMerge ?? { on: false };
         this.freshMain = msg.freshMain ?? { on: true };
         this.subagents = msg.subagents ?? { ...SUBAGENT_DEFAULTS };
+        this.hiddenModels = msg.hiddenModels ?? [];
+        this.emit('hiddenModels');
         this.whiteboardSkill = msg.whiteboardSkill ?? { on: true };
         this.prompts = msg.prompts ?? { custom: {} };
         this.factory = msg.factory ?? emptyFactoryState();
@@ -497,6 +501,10 @@ class Store {
       case 'autoHeal':
         this.autoHeal = msg.state;
         this.emit('autoHeal');
+        break;
+      case 'models.hidden':
+        this.hiddenModels = msg.ids;
+        this.emit('hiddenModels');
         break;
       case 'subagents':
         this.subagents = msg.state;

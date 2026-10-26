@@ -84,6 +84,7 @@ private fun Cost(cost: Double?) {
 internal fun ModelPicker(catalogue: ModelCatalogue?, loading: Boolean, selected: String?, availability: Map<String, ModelAvailability>, onPick: (ModelOption) -> Unit) {
     val graph = LocalGraph.current
     val stored by graph.store.snapshot.collectAsStateWithLifecycle()
+    val hidden by graph.connection.hiddenModels.collectAsStateWithLifecycle()
     val coroutine = rememberCoroutineScope()
     var open by rememberSaveable { mutableStateOf(false) }
     var query by rememberSaveable { mutableStateOf("") }
@@ -107,13 +108,14 @@ internal fun ModelPicker(catalogue: ModelCatalogue?, loading: Boolean, selected:
         Icon(Icons.Default.KeyboardArrowDown, null, tint = Palette.TextSecondary)
     }
     if (!open || catalogue == null) return
-    val models = remember(catalogue) { catalogue.models.map { it.pick() } }
+    val models = remember(catalogue, hidden) { ModelSearch.visible(catalogue.models.map { it.pick() }, hidden) }
     val recent = stored.settings.recentModels.filter { !Availability.cannotRun(availability[it]) }
     val sections = remember(models, query, scope, recent) { ModelSearch.sections(models, query, scope, recent) }
     val listState = rememberLazyListState()
     val now = rememberNow(30_000)
     LaunchedEffect(query, scope) { listState.scrollToItem(0) }
     fun choose(option: ModelOption) {
+        if (option.id in hidden) return
         if (Availability.cannotRun(availability[option.id])) return
         open = false
         coroutine.launch { graph.store.settings { it.copy(recentModels = ModelSearch.recent(it.recentModels, option.id)) } }
@@ -171,7 +173,7 @@ internal fun ModelPicker(catalogue: ModelCatalogue?, loading: Boolean, selected:
                     }
                 }
                 val typed = query.trim()
-                if (ModelSearch.customId(typed) && models.none { it.id == typed }) {
+                if (ModelSearch.customId(typed) && typed !in hidden && models.none { it.id == typed }) {
                     item(key = "custom") {
                         TextButton(onClick = { choose(ModelOption(typed, typed, custom = true)) }, modifier = Modifier.fillMaxWidth().tagged(Tags.Hire.MODEL_CUSTOM)) {
                             ModelLogo(typed, modifier = Modifier.size(20.dp))

@@ -1,4 +1,5 @@
 import { store } from '../state';
+import { visibleModels } from '../../shared/model-visibility';
 import { type Child, claimEscape, h } from './dom';
 import { modelLogo, providerLogo } from './model-logo';
 import { availabilityOf, canPick, highlightRanges, multiplierLabel, offersSubscriptions, type PickerModel, pushRecent, scopesOf, type Section, sectionsFor, splitFamily, withAvailability } from './model-search';
@@ -123,8 +124,8 @@ export function modelPicker(opts: ModelPickerOptions): ModelPicker {
   });
 
   /** The models as they can run right now: read when drawn, so a quota that runs out shows up in an open list. */
-  const listed = (): PickerModel[] => withAvailability(source, store.subscriptions, Date.now());
-  const known = (id: string) => listed().find((m) => m.id === id);
+  const listed = (): PickerModel[] => withAvailability(visibleModels(source, store.hiddenModels), store.subscriptions, Date.now());
+  const known = (id: string) => withAvailability(source, store.subscriptions, Date.now()).find((m) => m.id === id);
   /** Why the `none` row's model can't run now, if it can't. */
   const noneReason = () => availabilityOf(none?.model, store.subscriptions, Date.now()).reason;
 
@@ -295,7 +296,7 @@ export function modelPicker(opts: ModelPickerOptions): ModelPicker {
       nodes.push(h('div.mp-head', { role: 'presentation' }, s.key.startsWith('g:') ? (s.models[0]?.glyph ? pinwheel() : providerLogo(s.label)) : null, s.label, h('small', {}, s.flat ? '' : String(s.models.length))));
       for (const m of s.models) nodes.push(row(m.id, m, !!s.flat));
     }
-    if (opts.allowCustom && isCustomId(typed) && !known(typed)) {
+    if (opts.allowCustom && isCustomId(typed) && !known(typed) && !store.hiddenModels.includes(typed)) {
       customValue = typed;
       nodes.push(row(CUSTOM, undefined, false));
     }
@@ -316,8 +317,8 @@ export function modelPicker(opts: ModelPickerOptions): ModelPicker {
     else ui.list.scrollTop = 0;
   };
 
-  /** What the open list shows that a `subscriptions` message can change. */
-  const stamp = () => JSON.stringify([listed().map((m) => [m.id, m.reason, m.note]), noneReason(), offersSubscriptions(store.subscriptions)]);
+  /** Hidden ids also affect typed custom choices that aren't in this picker's catalogue. */
+  const stamp = () => JSON.stringify([store.hiddenModels, listed().map((m) => [m.id, m.reason, m.note]), noneReason(), offersSubscriptions(store.subscriptions)]);
 
   const paintOffer = () => {
     const offered = offersSubscriptions(store.subscriptions);
@@ -352,6 +353,7 @@ export function modelPicker(opts: ModelPickerOptions): ModelPicker {
   };
 
   function choose(next: string) {
+    if (next && store.hiddenModels.includes(next)) return;
     if (next && !canPick(known(next))) return;
     const changed = next !== value;
     value = next;
@@ -461,7 +463,12 @@ export function modelPicker(opts: ModelPickerOptions): ModelPicker {
     });
     window.addEventListener('resize', place);
     window.addEventListener('scroll', onScroll, true);
-    stopWatching = store.on('subscriptions', onSubscriptions);
+    const offSubscriptions = store.on('subscriptions', onSubscriptions);
+    const offHidden = store.on('hiddenModels', onSubscriptions);
+    stopWatching = () => {
+      offSubscriptions();
+      offHidden();
+    };
     watchTrigger = setInterval(() => {
       if (!trigger.isConnected) close();
     }, 400);

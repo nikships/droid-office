@@ -129,6 +129,8 @@ class OfficeConnection(
 
     /** Whether each subscription model can run now, by model id; empty from an office that doesn't say. */
     val availability: StateFlow<Map<String, ModelAvailability>> = _availability.asStateFlow()
+    private val _hiddenModels = MutableStateFlow<Set<String>>(emptySet())
+    val hiddenModels = _hiddenModels.asStateFlow()
     private val _subscriptions = MutableStateFlow<ai.factory.droidoffice.core.SubscriptionState?>(null)
     val subscriptions = _subscriptions.asStateFlow()
 
@@ -390,6 +392,7 @@ class OfficeConnection(
     private suspend fun run(d: Desire) {
         val office = d.office
         if (office == null) {
+            _hiddenModels.value = emptySet()
             _subscriptions.value = null
             _availability.value = emptyMap()
             _link.value = Link()
@@ -398,6 +401,7 @@ class OfficeConnection(
             return
         }
         if (_data.value.officeId != office.id) {
+            _hiddenModels.value = emptySet()
             _subscriptions.value = null
             _availability.value = emptyMap()
             _data.value = OfficeData(officeId = office.id)
@@ -532,6 +536,7 @@ class OfficeConnection(
                 whiteboard.status(true)
                 whiteboard.welcome(msg.view.floor)
                 _availability.value = msg.availability
+                _hiddenModels.value = msg.hiddenModels
                 _subscriptions.value = msg.subscriptions
                 enter(officeId, msg.view, msg.floors, msg.version)
                 msg.view.project?.name?.ifBlank { null }?.let { p -> scope.launch { store.update(officeId) { it.copy(project = p) } } }
@@ -541,6 +546,7 @@ class OfficeConnection(
                 enter(officeId, msg.view, null, null)
                 msg.view.floor?.let { f -> scope.launch { store.update(officeId) { it.copy(lastFloor = f, project = msg.view.project?.name?.ifBlank { null } ?: it.project) } } }
             }
+            is ServerMsg.HiddenModels -> _hiddenModels.value = msg.ids
             is ServerMsg.Floors -> _data.update { it.copy(floors = msg.floors) }
             is ServerMsg.Subscriptions -> {
                 _availability.value = msg.availability

@@ -5,6 +5,16 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class ModelSearchTest {
+    @Test fun hiddenModelsNeverAppearInSearchScopesOrRecentsAndCanBeRestored() {
+        val hidden = setOf("custom:droidproxy:gpt-6.1-sol", "gpt-6.1-sol")
+        val visible = ModelSearch.visible(models, hidden)
+        assertEquals(models.size - 2, visible.size)
+        assertTrue(ModelSearch.sections(visible, "gpt", "", hidden.toList()).isEmpty())
+        assertFalse(ModelSearch.scopes(visible).any { it.name == "OpenAI" })
+        assertEquals(models, ModelSearch.visible(models, emptySet()))
+        assertEquals(8, models.size)
+    }
+
     // The owner's catalogue entries, also exercised by tests/model-search.test.ts.
     private val models = listOf(
         ModelSearch.Model("custom:zen:space-bunny-free", "Space Alpha Bunny", custom = true, provider = "generic-chat-completion-api"),

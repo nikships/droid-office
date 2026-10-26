@@ -60,6 +60,7 @@ export const SETTINGS_CARDS = [
   { pane: 'subscriptions', title: 'Models in Droid' },
   { pane: 'workers', title: 'Droid' },
   { pane: 'workers', title: 'Default worker' },
+  { pane: 'workers', title: 'Models shown in pickers' },
   { pane: 'workers', title: 'Where fresh workers start' },
   { pane: 'workers', title: 'Prompts' },
   { pane: 'workers', title: 'Prompt chips' },

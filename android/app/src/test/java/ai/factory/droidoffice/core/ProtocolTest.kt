@@ -13,6 +13,15 @@ import org.junit.Test
 
 class ProtocolTest {
     @Test
+    fun hiddenModelsArriveOnWelcomeAndLiveUpdatesWithOldOfficesShowingAll() {
+        assertTrue((Protocol.decode(welcome) as ServerMsg.Welcome).hiddenModels.isEmpty())
+        val updated = welcome.replace(""""pulls":""", """"hiddenModels":["gpt-6.1-sol","gpt-6.1-sol"],"pulls":""")
+        assertEquals(setOf("gpt-6.1-sol"), (Protocol.decode(updated) as ServerMsg.Welcome).hiddenModels)
+        assertEquals(setOf("gpt-6.1-sol"), (Protocol.decode("""{"t":"models.hidden","ids":["gpt-6.1-sol",null,5]}""") as ServerMsg.HiddenModels).ids)
+        assertTrue((Protocol.decode("""{"t":"models.hidden","ids":[]}""") as ServerMsg.HiddenModels).ids.isEmpty())
+    }
+
+    @Test
     fun floorReorderingNamesOneFloorAndANullableInsertionPoint() {
         val before = Json.parseToJsonElement(ClientMsg.floorReorder("home", "droid-office")).jsonObject
         assertEquals("floor.reorder", before.getValue("t").jsonPrimitive.content)
