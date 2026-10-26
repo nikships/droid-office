@@ -90,9 +90,9 @@ A window covers a model unless it is named for another model family: Claude's "W
 ## The UI
 
 - **Welcome**: `src/client/ui/welcome.ts`, opened from `main.ts` and the ☰ menu.
-- **⚙️ Settings → Subscriptions** (a new pane after Factory): "DroidProxy" (what it is, its phase and version, Install / Update / Start / Open DroidProxy), "Accounts" (each provider: switch, its accounts with a usage bar per window and when it resets, Connect / Add another / Remove, a connect in flight with its code), "Models in Droid" (how many, Update models when stale). Off a Mac with Apple silicon, the pane says Subscriptions need DroidProxy on a Mac and stops there.
+- **⚙️ Settings → Connections**, with Factory and Jira: "DroidProxy" (what it is, its phase and version, Install / Update / Start / Open DroidProxy), "Accounts" (each provider: switch, its accounts with a usage bar per window and when it resets, Connect / Add another / Remove, a connect in flight with its code), "Models in Droid" (how many, Update models when stale). Off a Mac with Apple silicon, those groups say Subscriptions need DroidProxy on a Mac and stop there.
 - **⚙️ Settings → Workers → "Droid"**: version and Update to …, signed in as … or Sign in, Check again.
-- **Model pickers**: `PickerModel` carries why a model can't run; the picker shows it and won't pick it. When no subscription is connected on a Mac, the picker's footer offers "Use your Claude or ChatGPT plan" (opens Settings → Subscriptions).
+- **Model pickers**: `PickerModel` carries why a model can't run; the picker shows it and won't pick it. When no subscription is connected on a Mac, the picker's footer offers "Use your Claude or ChatGPT plan" (opens Settings → Connections).
 - **Android**: the hire sheet's model list does the same as the web picker, from the welcome's `subscriptions` and the `subscriptions` message.
 
 ## Security

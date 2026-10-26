@@ -44,7 +44,7 @@ COMMANDS
   EOF
       Hires a subagent and gives it the brief. Prints its name, desk and worktree. The title goes
       on the card over its head. Options:
-        --model <id>     an id from office-workers models. Default: what ⚙️ Settings → Subagents
+        --model <id>     an id from office-workers models. Default: what ⚙️ Settings → Subagents & visits
                          picks, else the office's default worker. One that can't run now is
                          refused before a desk is taken.
         --effort <e>     low, medium, high, xhigh or max.
@@ -58,7 +58,7 @@ COMMANDS
   office-workers models
       The models you may give a subagent with --model: each one's id, provider, credit multiplier,
       efforts, and what the office's owner wrote about it. The office may limit leads to some of
-      them (⚙️ Settings → Subagents); hire refuses any other. A model that can't run now says why
+      them (⚙️ Settings → Subagents & visits); hire refuses any other. A model that can't run now says why
       (a subscription out of quota, nobody signed in, DroidProxy not installed); hire refuses it too,
       the default included, and names the models that can.
 

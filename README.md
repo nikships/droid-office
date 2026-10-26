@@ -205,7 +205,7 @@ Every hired worker runs **Factory Droid**, not a separate agent harness. Pick fr
   <img src="android/docs/notification.jpg" alt="Android companion: worker notifications with an inline reply box" width="31%">
 </p>
 
-Install `Droid-Office-<version>.apk`, then scan the QR code in **Settings → Phone**. The computer hosting your office must stay awake; the phone app is a companion, not a standalone office installation.
+Install `Droid-Office-<version>.apk`, then scan the QR code in **Settings → Phone & web**. The computer hosting your office must stay awake; the phone app is a companion, not a standalone office installation.
 
 [Download Android](https://github.com/nikships/droid-office/releases/latest) · [Wi-Fi and Tailscale pairing](android/README.md)
 

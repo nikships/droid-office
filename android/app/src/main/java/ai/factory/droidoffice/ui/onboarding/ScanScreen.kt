@@ -232,7 +232,7 @@ private fun Scanner(onInvite: (PairingInvite) -> Unit) {
                 )
                 Spacer(Modifier.height(2.dp))
                 Text(
-                    "The office shows it in its terminal when it starts, and under Settings → Phone.",
+                    "The office shows it in its terminal when it starts, and under Settings → Phone & web.",
                     style = MaterialTheme.typography.bodySmall,
                 )
                 if (camera?.cameraInfo?.hasFlashUnit() == true) {

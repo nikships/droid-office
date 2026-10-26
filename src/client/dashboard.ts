@@ -416,7 +416,7 @@ function paintGate() {
     where === 'local'
       ? []
       : [
-          h('span', {}, 'On the office’s computer, open ', h('b', {}, '⚙️ Settings → Phone → Web companion'), '.'),
+          h('span', {}, 'On the office’s computer, open ', h('b', {}, '⚙️ Settings → Phone & web → Web companion'), '.'),
           h('span', {}, 'Click ', h('b', {}, 'Copy pairing link'), ' beside Wi-Fi or Tailscale, then paste the complete link into this browser.'),
           h('span', {}, 'Choose ', h('b', {}, 'Pair this browser'), ' before refreshing, then bookmark the page.'),
         ]
@@ -478,7 +478,7 @@ function paintGate() {
     off: () => [
       h('div.dash-gate-icon', {}, icon('power', 28)),
       h('h2', {}, 'The web companion is off'),
-      h('p', {}, 'It’s turned off on the office’s computer, in ', h('b', {}, '⚙️ Settings → Phone → Web companion'), '. Paired browsers stay paired, and this page opens by itself once it’s back on.'),
+      h('p', {}, 'It’s turned off on the office’s computer, in ', h('b', {}, '⚙️ Settings → Phone & web → Web companion'), '. Paired browsers stay paired, and this page opens by itself once it’s back on.'),
       h('div.row.dash-gate-actions', {}, retry),
     ],
   };
@@ -1224,7 +1224,7 @@ function accessDialog() {
   const modal = openModal(el);
 
   if (where === 'local') {
-    body.append(h('p.note.good', {}, 'Nothing to pair here. To open the office in a browser on another computer, use the links in ', h('b', {}, '⚙️ Settings → Phone → Web companion'), ' on this computer.'));
+    body.append(h('p.note.good', {}, 'Nothing to pair here. To open the office in a browser on another computer, use the links in ', h('b', {}, '⚙️ Settings → Phone & web → Web companion'), ' on this computer.'));
     footer.append(h('span.grow'), h('button.btn.primary', { type: 'button', onclick: () => modal.close() }, 'Done'));
   } else if (credential) {
     const saved = credential;
@@ -1318,7 +1318,7 @@ function accessDialog() {
     });
     deviceName.select();
   } else {
-    body.append(h('p.note.info', {}, 'Open a fresh link from ', h('b', {}, '⚙️ Settings → Phone → Web companion'), ' on the office’s computer, then pair from there.'));
+    body.append(h('p.note.info', {}, 'Open a fresh link from ', h('b', {}, '⚙️ Settings → Phone & web → Web companion'), ' on the office’s computer, then pair from there.'));
     footer.append(h('span.grow'), h('button.btn.primary', { type: 'button', onclick: () => modal.close() }, 'Done'));
   }
 }

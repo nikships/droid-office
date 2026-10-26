@@ -27,7 +27,7 @@ A paired phone (Droid Office for Android) is a device of the same owner, not a
 second user. Pairing gives it a device token, sent as `Authorization: Bearer` or
 `?d=`, that opens the office like the LAN token but survives restarts. The office
 stores only its SHA-256 in `.droid-office/devices.json`; forgetting the phone in
-Settings → Phone revokes it at once. A device record names a phone, never a
+Settings → Phone & web revokes it at once. A device record names a phone, never a
 person: it has no role, profile or presence.
 
 The default bind address remains `0.0.0.0`. Use `--host 127.0.0.1` to keep access

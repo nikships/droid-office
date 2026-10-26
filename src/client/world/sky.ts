@@ -502,7 +502,7 @@ export class Sky {
   snow = 0;
   /** How far the lamps are on, 0–1: always all the way, it is always night. */
   readonly lampsOn = 1;
-  /** The office's ceiling lights, 0–1 (Settings → Graphics): their glow, and the fill light they give the room. */
+  /** The office's ceiling lights, 0–1 (Settings → Display): their glow, and the fill light they give the room. */
   private overhead = 1;
   /** Up on the roof: out in the open, over the whole city (see setRoof). */
   private roof = false;

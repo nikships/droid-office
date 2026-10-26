@@ -90,10 +90,10 @@ export class FactoryTvTexture {
     g.fillText('OFFICE TV', 186, 512);
     const c = state.connection;
     const lines = c.rejected
-      ? ['Factory rejected the office’s key.', 'Connect a new one in ⚙️ Settings → Factory']
+      ? ['Factory rejected the office’s key.', 'Connect a new one in ⚙️ Settings → Connections']
       : c.connected
         ? ['Reading Droid sessions from Factory…']
-        : ['Connect Factory in ⚙️ Settings → Factory', 'to see Droid sessions and credits here'];
+        : ['Connect Factory in ⚙️ Settings → Connections', 'to see Droid sessions and credits here'];
     g.font = `500 44px ${MONO}`;
     g.fillStyle = c.rejected ? RED : MUTED;
     lines.forEach((line, i) => g.fillText(fit(g, line, W - 330), 190, 610 + i * 62));

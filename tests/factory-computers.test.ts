@@ -488,7 +488,7 @@ function connected(slice: Partial<FactoryState['computers']>, conn: Partial<Fact
 test('the wall: not connected, no access, reading, and the computers with this machine merged in', () => {
   const off = wallView(emptyFactoryState(), T0);
   assert.equal(off.state, 'off');
-  assert.equal(off.note, 'Connect Factory in ⚙️ Settings → Factory to see your Droid Computers');
+  assert.equal(off.note, 'Connect Factory in ⚙️ Settings → Connections to see your Droid Computers');
   assert.equal(wallSummary(off), 'not connected');
   assert.equal(rackCubesOf(emptyFactoryState(), T0), null, 'the rack runs its demo');
 

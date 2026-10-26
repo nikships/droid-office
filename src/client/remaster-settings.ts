@@ -1,13 +1,13 @@
 /**
- * The Remastered renderer's picture is fixed. Settings → Graphics only remembers whether it is on, and whether HDR is
+ * The Remastered renderer's picture is fixed. Settings → Display only remembers whether it is on, and whether HDR is
  * on. `resolveRemaster` turns that into the numbers the renderer draws with: the screenshot's mix, not a menu.
  * Nothing here touches the DOM or WebGL; localStorage is only read inside try.
  */
 
 export interface RemasterSettings {
-  /** Off draws the office the classic way. The same switch as Settings → Graphics → Renderer. */
+  /** Off draws the office the classic way. The same switch as Settings → Display → Renderer. */
   enabled: boolean;
-  /** Highlights past white on an EDR display. Settings → Graphics → HDR. Off until turned on. */
+  /** Highlights past white on an EDR display. Settings → Display → HDR. Off until turned on. */
   hdr: boolean;
 }
 
@@ -125,7 +125,7 @@ export const BAKE_FORMAT = 2;
 
 /**
  * Everything the baked bounce light depends on: the grid, the lights the probes see and the shading they see it with,
- * the ceiling lights' brightness (Settings → Graphics) and the office's build. A saved bake is used only under the same
+ * the ceiling lights' brightness (Settings → Display) and the office's build. A saved bake is used only under the same
  * key. '' (no GI, or no build yet) means nothing to bake.
  */
 export function bakeKey(p: RenderParams, overhead: number, build: string): string {

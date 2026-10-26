@@ -331,7 +331,7 @@ export function modelPicker(opts: ModelPickerOptions): ModelPicker {
           type: 'button',
           onclick: () => {
             close();
-            window.dispatchEvent(new CustomEvent(OPEN_SETTINGS_EVENT, { detail: { pane: 'subscriptions' } }));
+            window.dispatchEvent(new CustomEvent(OPEN_SETTINGS_EVENT, { detail: { pane: 'connections' } }));
           },
         },
         'Use your Claude or ChatGPT plan',

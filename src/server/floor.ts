@@ -66,7 +66,7 @@ export interface FloorContext {
   leaveOnMerge(): boolean;
   /** ⚙️ Settings: a fresh worker starts from the latest of the default branch (see WorkerManager.freshMain). */
   freshMain(): boolean;
-  /** ⚙️ Settings → Subagents: how workers hire subagents. */
+  /** ⚙️ Settings → Subagents & visits: how workers hire subagents. */
   subagents(): SubagentSettings;
   /** The office's .droid-office, so a floor with no auto-heal.json yet can start from the old office-wide file. */
   officeDataDir: string;

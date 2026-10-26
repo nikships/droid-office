@@ -48,7 +48,7 @@ fun SubscriptionsSheet(onDismiss: () -> Unit) {
                 Text("Subscriptions", style = MaterialTheme.typography.headlineSmall, modifier = Modifier.weight(1f))
                 TextButton(onClick = onDismiss, modifier = Modifier.tagged(Tags.Subscriptions.CLOSE)) { Text("Done") }
             }
-            Text("The plans your office's workers run on. Manage sign-ins, accounts and DroidProxy in the office's Settings → Subscriptions on its Mac.", style = MaterialTheme.typography.bodyMedium)
+            Text("The plans your office's workers run on. Manage sign-ins, accounts and DroidProxy in the office's Settings → Connections on its Mac.", style = MaterialTheme.typography.bodyMedium)
             val s = state
             if (s == null) {
                 Text("No subscription status yet. Connect to the office; older offices may need an update.", style = MaterialTheme.typography.bodyMedium, modifier = Modifier.tagged(Tags.Subscriptions.STATUS))

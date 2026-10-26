@@ -21,7 +21,7 @@ function facts(m: DroidModelOption | undefined, id: string, why?: string): strin
 }
 
 /**
- * ⚙️ Settings → Subagents: a checkbox for every model droid lists, cheapest first, and a note for
+ * ⚙️ Settings → Subagents & visits: a checkbox for every model droid lists, cheapest first, and a note for
  * each one picked that the Team lead reads in `office-workers models` when it chooses one.
  * Nothing picked lets leads run any model.
  */

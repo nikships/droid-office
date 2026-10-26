@@ -10,7 +10,7 @@ This is the plan for that work and the contract every Factory feature follows. S
 - Actions are full: create and delete computers, start cloud sessions, open CI workflow PRs and start wiki runs, along with the safe ones (wake or restart, refresh, send a message, interrupt).
 - Only non-enterprise features. Service accounts (402, "requires a Teams plan") are out. Enterprise controls history and org admin (invites, removing members, credit limits) are of little use in a single-owner office: at most a small read-only org and limits line, and no admin UIs.
 - The basketball hoop is gone. Its west-wall slot, between the exit door and the kitchen, is for the expanded compute wall.
-- The key is entered in ⚙️ Settings → **Factory**, the office's own Settings window, which the Mac app shows and which works in a browser too.
+- The key is entered in ⚙️ Settings → **Connections**, the office's own Settings window, which the Mac app shows and which works in a browser too.
 
 ## Factory's public API
 
@@ -51,7 +51,7 @@ How the API behaves, and what the office does about it:
 | `src/shared/factory.ts` | `FactoryState`, `FactoryConnection`, the probe's groups and capabilities. |
 | `src/shared/factory-<feature>.ts` | Each feature's slice type and the parsers that turn the API's answers into it. |
 | `src/client/factory.ts` | `factoryFetch`, `watchFactory`, `refreshFactory`, `onFactorySetup`. `store.factory` (topic `'factory'`) in `src/client/state.ts` holds the state. |
-| `src/client/ui/factory-settings.ts` | ⚙️ Settings → Factory → *Factory API key*. |
+| `src/client/ui/factory-settings.ts` | ⚙️ Settings → Connections → *Factory API key*. |
 | `src/client/ui/factory-*.ts`, `src/client/world/factory-*.ts` | A feature's windows, and its wall textures and meshes. |
 
 The key is the building's, like the Jira connection: browsers never get it. They get `FactoryConnection`: whether it's connected, the fingerprint (`fk-…` and the last four), whose key it is (name and email), the organization's member count, who connected it and when, what it can reach, when it was last checked, and whether Factory has rejected it since. The key never goes into a worker's environment or a log, and error messages are scrubbed of it. The one process that gets it is an AutoWiki run the office starts (`droid exec "/wiki"`, as `FACTORY_API_KEY` in that child's environment only), so the wiki lands in the connected account; its output is scrubbed of the key before anyone sees a line.
@@ -250,7 +250,7 @@ It reads the newest page at once, pages back with **Load earlier messages**, and
 
 The work is split into pieces with their own branches, each merged into the `feat/factory` integration branch, and that into `main` at the end.
 
-- **Phase 1.** *Foundation*: the connection, the API client, `FactoryState`, the registry and its routes, the client store and fetch helper, Settings → Factory, this document and the guide's bullets. *Hoop removal*: the basketball hoop, ball and court, gone.
+- **Phase 1.** *Foundation*: the connection, the API client, `FactoryState`, the registry and its routes, the client store and fetch helper, Settings → Connections, this document and the guide's bullets. *Hoop removal*: the basketball hoop, ball and court, gone.
 - **Phase 2**, in parallel. *Compute wall and Computers window*: the machine monitor grows into a big west-wall board in the hoop's old slot, with this machine and every Factory computer (status, provider, CPU, memory and disk now and recently), and a Computers window to list, inspect and act on them (create, bulk create, rename, restart or wake, refresh credentials, retry dependencies, delete with a confirm, computer secret names). *Sessions and credits*: the lounge TV becomes the Factory sessions dashboard (running sessions, recent ones, credits today and over 7 days, the top spenders), and credits per office worker. *CI automations board*: a board on the north wall's north-east corner past the gong, with this floor's Droid workflows and recent runs only (other repositories stay off it), and a window to see a workflow and open a workflow PR through `POST /automations/ci/edit`. *AutoWiki on the bookshelf*: the floor's AutoWiki next to its Markdown docs (runs and history for the floor's repository, pages, search, export, generate a run, privacy, delete).
 - **Phase 3.** *Cloud workers*: a hire option that runs a worker's Droid session on a Factory computer (the Sessions API: create with model, effort, autonomy and folder, send a prompt, poll its status, interrupt). It sits at a desk with a cloud badge; its window is the transcript and a prompt box, not a terminal.
 

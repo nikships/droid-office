@@ -714,7 +714,7 @@ export interface AutoHealState {
   at?: number;
 }
 
-/** What ⚙️ Settings → Subagents sets: how workers hire subagents with office-workers (see server/team.ts). */
+/** What ⚙️ Settings → Subagents & visits sets: how workers hire subagents with office-workers (see server/team.ts). */
 export interface SubagentSettings {
   /** Workers may hire subagents at all. Off: `office-workers hire` is refused; a team already working carries on. */
   on: boolean;
@@ -994,7 +994,7 @@ type ClientMessage =
   | { t: 'freshMain.set'; on: boolean }
   /** A run that fails on the floor you're on wakes the Pipeline agent to heal it (true), or only toasts. */
   | { t: 'autoHeal.set'; on: boolean }
-  /** How workers hire subagents (⚙️ Settings → Subagents), for every floor. */
+  /** How workers hire subagents (⚙️ Settings → Subagents & visits), for every floor. */
   | { t: 'subagents.set'; settings: SubagentSettings }
   /** Hide one model from every device's picker, or show all with a null id and hidden=false. */
   | { t: 'models.hide'; id: string | null; hidden: boolean }

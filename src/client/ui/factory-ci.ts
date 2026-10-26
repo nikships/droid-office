@@ -89,8 +89,8 @@ const READING = 'Reading Factory…';
 function blocked(): string | undefined {
   const c = store.factory.connection;
   const ci = store.factory.ci;
-  if (!c.connected) return 'Connect Factory in ⚙️ Settings → Factory to see the Droid workflows in your repositories.';
-  if (c.rejected) return `Factory turned the key down (${c.rejected}). Check it again in ⚙️ Settings → Factory.`;
+  if (!c.connected) return 'Connect Factory in ⚙️ Settings → Connections to see the Droid workflows in your repositories.';
+  if (c.rejected) return `Factory turned the key down (${c.rejected}). Check it again in ⚙️ Settings → Connections.`;
   const cap = capabilityOf(c, 'ci');
   if (cap?.status === 'denied') return `The key can’t read CI automations: ${cap.reason ?? 'no access'}.`;
   if (!ci.fetchedAt) return READING;

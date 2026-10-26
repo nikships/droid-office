@@ -36,7 +36,7 @@ export interface VisitWorkers {
 }
 
 export interface VisitOptions {
-  /** ⚙️ Settings → Subagents → Visits. */
+  /** ⚙️ Settings → Subagents & visits → Visits. */
   on(): boolean;
   emit(msg: Extract<ServerMsg, { t: 'visits' } | { t: 'visit_say' }>): void;
   toast?(text: string, level: 'info' | 'warn', workerId?: string): void;
@@ -218,7 +218,7 @@ export class Visits {
 
   /** Why `w` can't visit anyone, if it can't. */
   cannotVisit(w: WorkerInfo): string | undefined {
-    if (!this.opts.on()) return 'Visits between workers are turned off in this office (⚙️ Settings → Subagents → Visits)';
+    if (!this.opts.on()) return 'Visits between workers are turned off in this office (⚙️ Settings → Subagents & visits → Visits)';
     if (w.lead) {
       const boss = this.workers.get(w.lead)?.name ?? 'your lead';
       return `You're a subagent of ${boss}: subagents don't visit other workers or see the roster. Ask ${boss} with office-workers report --question instead`;

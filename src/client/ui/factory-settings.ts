@@ -20,7 +20,7 @@ function capabilityRow(c: FactoryCapability, label: string) {
 }
 
 /**
- * ⚙️ Settings → Factory → "Factory API key": the password field and Connect while there's no key,
+ * ⚙️ Settings → Connections → "Factory API key": the password field and Connect while there's no key,
  * then whose key it is, its fingerprint and Check again / Replace key / Disconnect; and, in a group
  * of its own, what the key reaches.
  */

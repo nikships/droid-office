@@ -451,7 +451,7 @@ class OfficeConnection(
                     _link.value = Link(Phase.Connecting, office.id, base = race.base, kind = race.kind, attempt = backoff.attempt)
                     val end = session(office, race.base, race.kind, auth)
                     if (end.unpaired) {
-                        // Unpaired from the office (its Settings → Phone, or here): no point retrying the same token.
+                        // Unpaired from the office (its Settings → Phone & web, or here): no point retrying the same token.
                         _link.value = Link(Phase.Unauthorized, office.id, base = race.base, detail = "This phone was unpaired from the office")
                         _data.update { it.copy(synced = false) }
                         awaitCancellation()

@@ -110,7 +110,7 @@ export function wallView(factory: FactoryState, now: number): WallView {
   const conn = factory.connection;
   const slice = factory.computers;
   const base: WallView = { state: 'ok', tiles: [], total: slice.items.length, counts: {} };
-  if (!conn.connected) return { ...base, state: 'off', total: 0, note: 'Connect Factory in ⚙️ Settings → Factory to see your Droid Computers' };
+  if (!conn.connected) return { ...base, state: 'off', total: 0, note: 'Connect Factory in ⚙️ Settings → Connections to see your Droid Computers' };
   if (!conn.rejected && !factoryCan(conn, 'computers')) {
     const cap = capabilityOf(conn, 'computers');
     return { ...base, state: 'denied', total: 0, note: `This Factory key can’t reach Droid Computers${cap?.reason ? ` (${cap.reason})` : ''}`, warn: true };

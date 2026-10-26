@@ -320,7 +320,7 @@ const DEFS = {
     used: 'Added to the system prompt of every Droid worker the office starts or resumes: at a desk, at a kiosk, and every subagent. A change reaches a worker the next time its session starts or resumes. Leave it empty to add nothing.',
     vars: {
       name: "The worker's name",
-      visits: 'How to visit the other independent workers with office-visit, for a worker that may (no lead, Visits on in Settings → Subagents); empty for a subagent',
+      visits: 'How to visit the other independent workers with office-visit, for a worker that may (no lead, Visits on in Settings → Subagents & visits); empty for a subagent',
       branchPolicy: "The floor's selected branch and safe branching/checkout-return instructions",
     },
     optional: true,
@@ -488,7 +488,7 @@ const DEFS = {
   'subagent.nudge': {
     group: 'subagents',
     label: 'Wake the lead',
-    used: 'Typed to a lead at rest when its subagents report, finish their turn, need input or leave (⚙️ Settings → Subagents → Waking the lead).',
+    used: 'Typed to a lead at rest when its subagents report, finish their turn, need input or leave (⚙️ Settings → Subagents & visits → Waking the lead).',
     vars: { news: 'What happened, one sentence per subagent: "Pixel reported back. Nova finished its turn."' },
     needs: ['news'],
     text: '📨 {{news}} Run `office-workers wait` to read what your team said, then carry on with what you were asked.',

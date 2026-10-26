@@ -1,5 +1,5 @@
 // Phones paired with the office (Droid Office for Android), as the office's own page sees them in
-// ⚙️ Settings → Phone. A phone pairs by scanning the pairing link's QR code and keeps a device token;
+// ⚙️ Settings → Phone & web. A phone pairs by scanning the pairing link's QR code and keeps a device token;
 // the office keeps only that token's hash (see server/devices.ts).
 
 /** A paired phone, without its token. Times are ISO strings. */
@@ -51,7 +51,7 @@ export const DEVICES_MAX = 32;
 /** Where the web companion lives, on any of the office's addresses. */
 export const COMPANION_PATH = '/dashboard';
 /** What a browser hears while the owner has the web companion turned off. */
-export const COMPANION_OFF = 'The web companion is turned off. Turn it on in ⚙️ Settings → Phone → Web companion on the office’s own machine.';
+export const COMPANION_OFF = 'The web companion is turned off. Turn it on in ⚙️ Settings → Phone & web → Web companion on the office’s own machine.';
 
 /** How a browser reached the office, by the page's host name: this machine, a tailnet, or the local network. */
 export type OriginKind = 'local' | 'tailscale' | 'lan';

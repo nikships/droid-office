@@ -103,7 +103,7 @@ interface Parts {
 }
 
 /**
- * ⚙️ Settings → Subscriptions: "DroidProxy" (its phase, version and actions), "Accounts" (each
+ * ⚙️ Settings → Connections: "DroidProxy" (its phase, version and actions), "Accounts" (each
  * provider's switch, accounts and usage, Connect, Remove) and "Models in Droid". Off a Mac with
  * Apple silicon the pane says so in one line and `hideWhenUnsupported` hides the rest.
  */

@@ -318,7 +318,7 @@ export class CloudFeature extends SliceFeature<'cloud'> {
     const message = text.trim() || (pictures.length ? 'See the attached images' : '');
     if (!message) return 'Type something to send';
     const api = this.host.api();
-    if (!api) return "The office isn't connected to Factory: connect it in ⚙️ Settings → Factory";
+    if (!api) return "The office isn't connected to Factory: connect it in ⚙️ Settings → Connections";
     if (info.cloud?.error) return `${info.name} can't take prompts right now: ${info.cloud.error}`;
     const before = info.status;
     const catchUp = info.cloud?.catchUp === true;
