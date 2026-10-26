@@ -117,6 +117,7 @@ private fun Segment(text: String, icon: androidx.compose.ui.graphics.vector.Imag
 
 private const val POLL_MS = 1_000L
 private const val HEAD = "thread.head"
+private const val NEWER = "thread.newer"
 private const val ACTIVITY = "thread.activity"
 private const val ASK = "thread.ask"
 /** A tool's arguments or result longer than this shows its start, so one huge log can't stall the list. */
@@ -177,7 +178,7 @@ internal fun Thread(w: WorkerInfo, screen: ScreenState?, canAnswer: Boolean, con
         }
     }
     // Head, the entries, the activity and the question: counted here, since the list's layout lags a new page.
-    val itemCount = state.entries.size + 2 + if (showAsk) 1 else 0
+    val itemCount = state.entries.size + 2 + (if (state.newerTrimmed) 1 else 0) + (if (showAsk) 1 else 0)
     suspend fun toBottom() {
         list.scrollToItem(itemCount - 1)
         list.scrollBy(100_000f)
@@ -185,7 +186,7 @@ internal fun Thread(w: WorkerInfo, screen: ScreenState?, canAnswer: Boolean, con
     val last = state.entries.lastOrNull()
     val growth = listOf(state.entries.size, last?.id, last?.text?.length, last?.output?.length, showAsk, menu?.question, menu?.choices?.size, w.state)
     LaunchedEffect(growth) {
-        if (follow && anchor == null) toBottom()
+        if (follow && anchor == null && !state.newerTrimmed) toBottom()
     }
     LaunchedEffect(state.entries.firstOrNull()?.id, state.loadingEarlier) {
         val (id, offset) = anchor ?: return@LaunchedEffect
@@ -209,6 +210,14 @@ internal fun Thread(w: WorkerInfo, screen: ScreenState?, canAnswer: Boolean, con
         state = feed.state
     }
 
+    fun newer() {
+        if (!connected) return
+        feed.backToLatest()
+        state = feed.state
+        follow = true
+        polls++
+    }
+
     fun retry() {
         if (!connected) return
         feed.retry()
@@ -228,6 +237,15 @@ internal fun Thread(w: WorkerInfo, screen: ScreenState?, canAnswer: Boolean, con
                 itemsIndexed(state.entries, key = { _, e -> e.id }, contentType = { _, e -> e.kind }) { i, e ->
                     val prev = if (i > 0) state.entries[i - 1] else null
                     Entry(w, e, prev, open[e.id] == true, onToggle = { open[e.id] = open[e.id] != true })
+                }
+                if (state.newerTrimmed) item(key = NEWER) {
+                    Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
+                        Text(
+                            "Newer messages were let go to make room for older ones.",
+                            style = MaterialTheme.typography.bodySmall, textAlign = TextAlign.Center,
+                        )
+                        SecondaryButton("Back to the latest", ::newer, Modifier.padding(top = 6.dp).tagged(Tags.Worker.THREAD_NEWER), enabled = connected, icon = OfficeIcons.ArrowDown)
+                    }
                 }
                 item(key = ACTIVITY) { Activity(w) }
                 if (showAsk) item(key = ASK) {
@@ -270,7 +288,7 @@ internal fun Thread(w: WorkerInfo, screen: ScreenState?, canAnswer: Boolean, con
                     }
                 }
             }
-            if (!follow && state.entries.isNotEmpty()) {
+            if (!follow && state.entries.isNotEmpty() && !state.newerTrimmed) {
                 Box(
                     Modifier.align(Alignment.BottomCenter).padding(bottom = 10.dp).clip(RoundedCornerShape(16.dp))
                         .background(Palette.SurfaceHigh).border(1.dp, Palette.BorderStrong, RoundedCornerShape(16.dp))

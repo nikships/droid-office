@@ -298,6 +298,8 @@ object Tags {
         const val THREAD_ERROR = "worker.thread.error"
         /** In place of the composer while the worker waits on its terminal: prompts aren't sent into a question. */
         const val THREAD_WAITING = "worker.thread.waiting"
+        /** After Load earlier pushed the newest entries out: loads the newest page again. */
+        const val THREAD_NEWER = "worker.thread.newer"
 
         /** A message, tool call, thought, to-do list or notice in the thread, by its entry id. */
         fun threadEntry(id: String) = "worker.thread.entry/$id"

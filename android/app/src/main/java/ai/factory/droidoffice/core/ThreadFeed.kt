@@ -96,6 +96,11 @@ data class ThreadState(
     val error: String? = null,
     val loadingEarlier: Boolean = false,
     val earlierError: String? = null,
+    /**
+     * Earlier pages pushed the newest entries out of the [ThreadFeed.MAX_ENTRIES] window: the list
+     * stops following, and [ThreadFeed.backToLatest] loads the newest page again.
+     */
+    val newerTrimmed: Boolean = false,
 )
 
 /**
@@ -104,9 +109,12 @@ data class ThreadState(
  * worker, floor, connection or an earlier visit never lands here. Only the newest latest-page request
  * and the one earlier-page request are accepted; anything else is stale and ignored.
  *
- * The latest page is merged by entry id into what is loaded, so older pages stay. A new session
- * clears everything. A full latest page with no overlap after a long gap replaces what was here, so
- * the list never shows a hole.
+ * The latest page is the truth from its first entry on: it replaces whatever was loaded from that
+ * seq onward, so an entry the session rewound or rewrote is dropped, while older pages before it stay.
+ * When its first entry isn't the one loaded at that seq (a rewrite reaching back past the page, or a
+ * gap of more than a page), it replaces everything, as does a new session, a page with no more before
+ * it, or an empty one. At most [MAX_ENTRIES] stay loaded: the oldest go as new ones arrive (Load
+ * earlier fetches them again), and the newest go when an earlier page needs the room.
  */
 class ThreadFeed(val workerId: String, private val prefix: String = UUID.randomUUID().toString().take(8)) {
     var state = ThreadState()
@@ -178,6 +186,13 @@ class ThreadFeed(val workerId: String, private val prefix: String = UUID.randomU
         }
     }
 
+    /** Leaves older history for the newest page, after earlier pages pushed it out. */
+    fun backToLatest() {
+        latest = null
+        earlier = null
+        state = state.copy(phase = ThreadPhase.Loading, entries = emptyList(), hasMore = false, error = null, loadingEarlier = false, earlierError = null, newerTrimmed = false)
+    }
+
     /** Ask again after an error or no answer. */
     fun retry() {
         latest = null
@@ -197,12 +212,14 @@ class ThreadFeed(val workerId: String, private val prefix: String = UUID.randomU
         if (!isLatest && !isEarlier) return false
         answered = true
         if (isEarlier) {
+            val before = earlier?.before
             earlier = null
             state = when {
                 msg.error != null -> state.copy(loadingEarlier = false, earlierError = msg.error)
-                // The session moved on while this page was out: it belongs to a thread no longer shown.
-                msg.sessionId != state.sessionId -> state.copy(loadingEarlier = false)
-                else -> state.copy(entries = merge(state.entries, msg.entries), hasMore = msg.hasMore, loadingEarlier = false, earlierError = null)
+                // The session moved on, or the list's first entry changed, while this page was out: it
+                // no longer joins onto what is shown.
+                msg.sessionId != state.sessionId || state.entries.firstOrNull()?.seq != before -> state.copy(loadingEarlier = false)
+                else -> older(msg, before ?: Long.MAX_VALUE)
             }
             return true
         }
@@ -211,43 +228,65 @@ class ThreadFeed(val workerId: String, private val prefix: String = UUID.randomU
             state = state.copy(phase = if (state.entries.isEmpty()) ThreadPhase.Error else ThreadPhase.Ready, error = msg.error)
             return true
         }
+        val page = msg.entries.sortedBy { it.seq }.distinctBy { it.id }
         val newSession = msg.sessionId != state.sessionId && (state.sessionId != null || state.entries.isNotEmpty())
-        if (newSession) earlier = null
-        var base = if (newSession) emptyList() else state.entries
-        val page = msg.entries.sortedBy { it.seq }
-        val gap = base.isNotEmpty() && msg.hasMore && page.isNotEmpty() && page.first().seq > base.last().seq && page.none { e -> base.any { it.id == e.id } }
-        if (gap) base = emptyList()
-        val hasMore = when {
-            base.isEmpty() -> msg.hasMore
-            page.isNotEmpty() && page.first().seq <= base.first().seq -> msg.hasMore
-            else -> state.hasMore
+        val base = if (newSession) emptyList() else state.entries
+        val first = page.firstOrNull()
+        val anchored = first != null && base.any { it.id == first.id && it.seq == first.seq }
+        val rewritten = page.any { e -> base.any { it.seq == e.seq && it.id != e.id } }
+        if (state.newerTrimmed && !newSession && page.isNotEmpty() && !rewritten) {
+            // Reading older history: keep the window where it is and only update what's in it.
+            val byId = page.associateBy { it.id }
+            state = state.copy(phase = ThreadPhase.Ready, entries = base.map { byId[it.id] ?: it }, error = null)
+            return true
         }
+        val (entries, hasMore, reset) = when {
+            page.isEmpty() -> Triple(emptyList(), msg.hasMore, true)
+            !msg.hasMore -> Triple(page, false, true)
+            base.isEmpty() -> Triple(page, true, newSession)
+            anchored -> page.first().let { f -> Triple(base.filter { it.seq < f.seq } + page, f.seq <= base.first().seq || state.hasMore, false) }
+            else -> Triple(page, true, true)
+        }
+        val kept = if (entries.size > MAX_ENTRIES) entries.takeLast(MAX_ENTRIES) else entries
+        if (reset || kept.size < entries.size) earlier = null
         state = state.copy(
             phase = ThreadPhase.Ready,
             sessionId = msg.sessionId,
-            entries = merge(base, page),
-            hasMore = hasMore,
+            entries = kept,
+            hasMore = hasMore || kept.size < entries.size,
             error = null,
-            loadingEarlier = if (newSession || gap) false else state.loadingEarlier,
-            earlierError = if (newSession || gap) null else state.earlierError,
+            loadingEarlier = if (reset || kept.size < entries.size) false else state.loadingEarlier,
+            earlierError = if (reset) null else state.earlierError,
+            newerTrimmed = false,
         )
-        if (gap) earlier = null
         return true
     }
 
+    /** An earlier page joined in front of what's loaded; past [MAX_ENTRIES], the newest entries make room. */
+    private fun older(msg: ServerMsg.ThreadSnapshot, before: Long): ThreadState {
+        val loaded = state.entries.mapTo(HashSet()) { it.id }
+        val page = msg.entries.filter { it.seq < before && it.id !in loaded }.sortedBy { it.seq }.distinctBy { it.id }
+        val all = page + state.entries
+        val kept = if (all.size > MAX_ENTRIES) all.take(MAX_ENTRIES) else all
+        return state.copy(
+            entries = kept,
+            hasMore = msg.hasMore,
+            loadingEarlier = false,
+            earlierError = null,
+            newerTrimmed = state.newerTrimmed || kept.size < all.size,
+        )
+    }
+
     companion object {
+        /** The most entries kept loaded: twenty pages. */
+        const val MAX_ENTRIES = 2_000
         /** A latest-page request unanswered this long is asked again. */
         const val RESEND_MS = 5_000L
         /** No answer at all for this long means the office can't show threads. */
         const val UNAVAILABLE_MS = 6_000L
 
-        fun merge(base: List<ThreadEntry>, page: List<ThreadEntry>): List<ThreadEntry> {
-            if (page.isEmpty()) return base
-            val byId = LinkedHashMap<String, ThreadEntry>(base.size + page.size)
-            for (e in base) byId[e.id] = e
-            for (e in page) byId[e.id] = e
-            return byId.values.sortedBy { it.seq }
-        }
+        /** A prompt the thread mustn't send: Droid runs a leading `/` as one of its commands, in the terminal. */
+        fun slashCommand(prompt: String) = prompt.trimStart().startsWith("/")
 
         /** A tool call with no result yet is running while the worker is in a turn, and never got one otherwise. */
         fun toolState(e: ThreadEntry, busy: Boolean): ToolState = when {

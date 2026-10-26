@@ -95,6 +95,7 @@ import ai.factory.droidoffice.core.ScreenState
 import ai.factory.droidoffice.core.Tags
 import ai.factory.droidoffice.core.TermSize
 import ai.factory.droidoffice.core.TermView
+import ai.factory.droidoffice.core.ThreadFeed
 import ai.factory.droidoffice.core.WorkerInfo
 import ai.factory.droidoffice.core.WorkerStatus
 import ai.factory.droidoffice.core.Workers
@@ -252,7 +253,19 @@ fun WorkerScreen(workerId: String, onBack: () -> Unit, embedded: Boolean = false
                 // A prompt from the thread would be typed into the question its terminal is showing.
                 val waiting = !tty && worker.state == WorkerStatus.NeedsInput
                 if (waiting) ThreadWaiting(worker, onTty = { ttyChoice = true })
-                Composer(worker, draft, visible = !waiting && (!directInput || !tty || worker.isCloud), focusRequest = composerFocus)
+                val snackbar = LocalSnackbar.current
+                Composer(
+                    worker, draft, visible = !waiting && (!directInput || !tty || worker.isCloud), focusRequest = composerFocus,
+                    // A slash command is Droid's own, run in its terminal: the thread hands the draft to Raw TTY unsent.
+                    intercept = if (tty) null else { prompt ->
+                        ThreadFeed.slashCommand(prompt).also { slash ->
+                            if (slash) {
+                                ttyChoice = true
+                                scope.launch { snackbar.showSnackbar("Slash commands run in the terminal. Your message is waiting here in Raw TTY.") }
+                            }
+                        }
+                    },
+                )
             }
         }
         if (sendingHome) SendHomeDialog(worker, onDismiss = { sendingHome = false }, onSent = {

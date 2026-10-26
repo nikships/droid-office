@@ -141,6 +141,126 @@ class ThreadFeedTest {
         assertTrue(feed.state.earlierError != null)
     }
 
+    /** A feed with [latest] loaded as the newest page and [older] as the page before it. */
+    private fun loaded(latest: List<ThreadEntry>, older: List<ThreadEntry>): ThreadFeed {
+        val feed = ThreadFeed("w1")
+        feed.receive(page(feed, feed.latest(0)!!, latest, hasMore = true))
+        val (req, before) = feed.earlier(1)!!
+        feed.receive(page(feed, req, older, hasMore = false, before = before))
+        return feed
+    }
+
+    @Test
+    fun aRewriteInTheSameSessionDropsWhatItReplacedAndKeepsOlderPages() {
+        val feed = loaded(listOf(text("c", 3), text("d", 4), text("e", 5)), listOf(text("a", 1), text("b", 2)))
+        // The session rewound to after "c": seq 4 is a new entry, and 5 is gone.
+        feed.receive(page(feed, feed.latest(10)!!, listOf(text("c", 3), text("x", 4)), hasMore = true))
+        assertEquals(listOf("a", "b", "c", "x"), feed.state.entries.map { it.id })
+        assertFalse(feed.state.hasMore)
+    }
+
+    @Test
+    fun aRewindThatOnlyShortensTheThreadDropsTheNewestEntries() {
+        val feed = loaded(listOf(text("c", 3), text("d", 4), text("e", 5)), listOf(text("a", 1), text("b", 2)))
+        feed.receive(page(feed, feed.latest(10)!!, listOf(text("c", 3), text("d", 4)), hasMore = true))
+        assertEquals(listOf("a", "b", "c", "d"), feed.state.entries.map { it.id })
+    }
+
+    @Test
+    fun aRewriteReachingPastTheLatestPageReplacesEverything() {
+        val feed = loaded(listOf(text("c", 3), text("d", 4)), listOf(text("a", 1), text("b", 2)))
+        // Its first entry isn't the one loaded at seq 3: where the rewrite starts can't be told.
+        feed.receive(page(feed, feed.latest(10)!!, listOf(text("y", 3), text("z", 4)), hasMore = true))
+        assertEquals(listOf("y", "z"), feed.state.entries.map { it.id })
+        assertTrue(feed.state.hasMore)
+    }
+
+    @Test
+    fun aWholeSessionPageIsTheWholeThread() {
+        val feed = loaded(listOf(text("c", 3), text("d", 4)), listOf(text("a", 1), text("b", 2)))
+        feed.receive(page(feed, feed.latest(10)!!, listOf(text("a", 1), text("q", 2)), hasMore = false))
+        assertEquals(listOf("a", "q"), feed.state.entries.map { it.id })
+        assertFalse(feed.state.hasMore)
+    }
+
+    @Test
+    fun anEmptyLatestPageClearsTheThread() {
+        val feed = loaded(listOf(text("c", 3)), listOf(text("a", 1)))
+        assertTrue(feed.receive(page(feed, feed.latest(10)!!, emptyList())))
+        assertEquals(ThreadPhase.Ready, feed.state.phase)
+        assertTrue(feed.state.entries.isEmpty())
+        assertFalse(feed.state.hasMore)
+    }
+
+    private fun run(from: Long, to: Long) = (from..to).map { text("e$it", it) }
+
+    @Test
+    fun loadedHistoryIsCappedAndLoadEarlierStillWorks() {
+        val feed = ThreadFeed("w1")
+        var now = 0L
+        var newest = 100L
+        feed.receive(page(feed, feed.latest(now)!!, run(1, newest), hasMore = false))
+        // 50 new entries a poll, each latest page the newest 100.
+        while (newest < 2_500) {
+            newest += 50
+            now += 1_000
+            feed.receive(page(feed, feed.latest(now)!!, run(newest - 99, newest), hasMore = true))
+        }
+        assertEquals(ThreadFeed.MAX_ENTRIES, feed.state.entries.size)
+        assertEquals(newest, feed.state.entries.last().seq)
+        assertEquals(newest - ThreadFeed.MAX_ENTRIES + 1, feed.state.entries.first().seq)
+        assertTrue("the oldest let go can be fetched again", feed.state.hasMore)
+
+        // An earlier page past the cap makes room by letting the newest go, and stops following.
+        val firstSeq = feed.state.entries.first().seq
+        val (req, before) = feed.earlier(now + 1)!!
+        assertEquals(firstSeq, before)
+        feed.receive(page(feed, req, run(before - 100, before - 1), hasMore = true, before = before))
+        assertEquals(ThreadFeed.MAX_ENTRIES, feed.state.entries.size)
+        assertEquals(before - 100, feed.state.entries.first().seq)
+        assertTrue(feed.state.newerTrimmed)
+        assertTrue(feed.state.hasMore)
+        val window = feed.state.entries.map { it.id }
+
+        // Reading older history: a newer latest page updates entries in the window but doesn't move it.
+        val inWindow = feed.state.entries.last()
+        feed.receive(page(feed, feed.latest(now + 10_000)!!, listOf(inWindow.copy(text = "edited")) + run(newest + 1, newest + 10), hasMore = true))
+        assertEquals(window, feed.state.entries.map { it.id })
+        assertEquals("edited", feed.state.entries.last().text)
+
+        feed.backToLatest()
+        assertEquals(ThreadPhase.Loading, feed.state.phase)
+        assertFalse(feed.state.newerTrimmed)
+        feed.receive(page(feed, feed.latest(now + 10_001)!!, run(newest - 89, newest + 10), hasMore = true))
+        assertEquals(newest + 10, feed.state.entries.last().seq)
+        assertEquals(100, feed.state.entries.size)
+    }
+
+    @Test
+    fun anEarlierPageThatNoLongerJoinsOnIsDropped() {
+        val feed = ThreadFeed("w1")
+        feed.receive(page(feed, feed.latest(0)!!, run(901, 1_000), hasMore = true))
+        // Grow past the cap so the window's first entry moves while an earlier page is out.
+        var newest = 1_000L
+        val (req, before) = feed.earlier(1)!!
+        var now = 1L
+        while (feed.state.entries.first().seq == before) {
+            newest += 50
+            now += 1_000
+            feed.receive(page(feed, feed.latest(now)!!, run(newest - 99, newest), hasMore = true))
+            if (newest > 10_000) break
+        }
+        assertFalse(feed.receive(page(feed, req, run(before - 100, before - 1), hasMore = true, before = before)))
+    }
+
+    @Test
+    fun slashCommandsAreToldApartFromMessages() {
+        assertTrue(ThreadFeed.slashCommand("/help"))
+        assertTrue(ThreadFeed.slashCommand("  /model gpt"))
+        assertFalse(ThreadFeed.slashCommand("look at /etc/hosts"))
+        assertFalse(ThreadFeed.slashCommand(""))
+    }
+
     @Test
     fun toolCallsAreRunningOnlyInATurn() {
         val tool = ThreadEntry("t", 1, ThreadRole.Assistant, ThreadKind.Tool, name = "Execute", input = "{\n  \"command\": \"npm test\"\n}")
