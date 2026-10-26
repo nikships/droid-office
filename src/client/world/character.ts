@@ -13,6 +13,7 @@ import type { GunPose } from './gun-motion';
 import { glyphFlat } from './glyph3d';
 import { isTeamKitGeometry, setTeamKitModel, TeamKit } from './team-kit';
 import { cardSprite, disposeSprite, mesh, plainLabel, roundedBox, textSprite, toon, toonUnique } from './toon';
+import { mergeWorkerPaint, type WorkerPart } from './worker-parts';
 
 export type Pose = 'stand' | 'walk' | 'sit' | 'type';
 
@@ -1135,11 +1136,6 @@ export const WORKER_PIVOTS = {
 
 const WORKER_EYE_Y = WORKER_PIVOTS.eyeL.y;
 
-interface WorkerPart {
-  geo: THREE.BufferGeometry;
-  mat: THREE.MeshToonMaterial | 'skin';
-}
-
 interface WorkerModel {
   skin: THREE.BufferGeometry;
   body: WorkerPart[];
@@ -1243,6 +1239,7 @@ export function setWorkerModel(scene: THREE.Object3D) {
     }
   });
   if (next.skin && next.eyeL && next.eyeR && next.pupilL && next.pupilR && next.bulb) {
+    for (const joint of ['body', 'rotor', 'armL', 'armR', 'footL', 'footR'] as const) next[joint] = mergeWorkerPaint(next[joint]!);
     workerModel = next as WorkerModel;
     for (const w of waitingWorkers) w.fillModel();
     waitingWorkers.clear();
