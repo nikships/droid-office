@@ -141,9 +141,8 @@ class ThreadViewTest {
     fun aRunOfOnlyBookkeepingLeavesNoRowAndThoughtsJoinTheActivity() {
         val entries = listOf(say("a"), todoWrite(), tool("ToolSearch", "{}"), tool("Skill", "{\n  \"skill\": \"factory-design\"\n}"), todo("1. [pending] x"), say("b"))
         assertEquals(2, ThreadView.project(entries, busy = false).size)
-        // A script that only kept the books still did something of its own.
-        val booksOnly = ThreadView.project(listOf(say("a"), script(), todoWrite(), say("b")), busy = false)[1] as ThreadView.Activity
-        assertEquals("Ran a script", booksOnly.summary)
+        // A script followed by any call of its own is a wrapper, even when that call only kept the books.
+        assertEquals(2, ThreadView.project(listOf(say("a"), script(), todoWrite(), say("b")), busy = false).size)
         val thinking = listOf(say("q", ThreadRole.User), think("**Considering the flow**\nmore"), read("$home/x.kt"), think("next"))
         val rows = ThreadView.project(thinking, busy = false)
         assertEquals(2, rows.size)
@@ -151,6 +150,31 @@ class ThreadViewTest {
         assertEquals("Considering the flow", (a.items.first() as ThreadView.Thought).preview)
         assertEquals("Read a file", a.summary)
         assertEquals("Thought", (ThreadView.project(listOf(think("hm")), busy = false).single() as ThreadView.Activity).summary)
+    }
+
+    @Test
+    fun aPlanFromARunWithNothingToShowGoesWithTheNextRunShown() {
+        val plan = "1. [in progress] A"
+        val rows = ThreadView.project(listOf(say("1"), script(), todoWrite(), todo(plan), say("2"), read("/tmp/a")), busy = false)
+        assertEquals(3, rows.size)
+        assertEquals("A", (rows[2] as ThreadView.Activity).plan!!.single().text)
+    }
+
+    @Test
+    fun waitsAreBookkeepingButTheirFailuresAndTaskControlsShow() {
+        val rows = ThreadView.project(
+            listOf(
+                say("x"),
+                tool("WaitForScript", "{}"), tool("TaskOutput", "{}"),
+                tool("WaitForScript", "{}", output = "timed out", error = true), tool("TaskOutput", "{}", output = "gone", error = true),
+                tool("TaskStop", "{}"), tool("Loop", "{}"),
+            ),
+            busy = false,
+        )
+        val a = rows[1] as ThreadView.Activity
+        assertEquals(listOf("Couldn't read script results", "Couldn't read task output", "Stopped a background task", "Scheduled a loop"), a.actions.map { it.title })
+        assertEquals(2, a.failed.size)
+        assertEquals("Used 2 tools", a.summary)
     }
 
     @Test
@@ -244,5 +268,15 @@ class ThreadViewTest {
         val rows = ThreadView.project(listOf(say("hi", ThreadRole.User), say("a"), read("/tmp/x"), say("b"), say("again", ThreadRole.User), say("c")), busy = false)
         val messages = rows.filterIsInstance<ThreadView.Message>()
         assertEquals(listOf(false, true, false, false, true), messages.map { it.startsTurn })
+    }
+
+    @Test
+    fun theLineUnderTheThreadNeverHeadlinesBookkeeping() {
+        assertEquals("Execute: npm test", ThreadView.onNow("Execute: npm test", "fix it", "Fix the thread"))
+        assertEquals("Fix the thread", ThreadView.onNow("TodoWrite", "fix it", "Fix the thread"))
+        assertEquals("Fix the thread", ThreadView.onNow("WaitForScript: abc", null, "Fix the thread"))
+        assertNull(ThreadView.onNow("ToolSearch", null, null))
+        assertEquals("Fix the thread", ThreadView.onNow("fix it", "fix it", "Fix the thread"))
+        assertEquals("Waiting for input", ThreadView.onNow("Waiting for input", null, " "))
     }
 }

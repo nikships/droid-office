@@ -220,7 +220,7 @@ internal fun Thread(w: WorkerInfo, screen: ScreenState?, canAnswer: Boolean, con
         if (follow) seen = rows.lastOrNull()?.key
     }
     // Head, the rows, the activity and the question: counted here, since the list's layout lags a new page.
-    val itemCount = rows.size + 2 + (if (state.newerTrimmed) 1 else 0) + (if (showAsk) 1 else 0)
+    val itemCount = rows.size + 1 + (if (busy) 1 else 0) + (if (state.newerTrimmed) 1 else 0) + (if (showAsk) 1 else 0)
     suspend fun toBottom() {
         list.scrollToItem(itemCount - 1)
         list.scrollBy(100_000f)
@@ -304,7 +304,8 @@ internal fun Thread(w: WorkerInfo, screen: ScreenState?, canAnswer: Boolean, con
                         QuietButton("Back to the latest", OfficeIcons.ArrowDown, Tags.Worker.THREAD_NEWER, connected, ::newer, Modifier.padding(top = 8.dp))
                     }
                 }
-                item(key = ACTIVITY) { OnNow(w) }
+                // Once it's done, the conversation ends the thread: no status line restating the last tool call.
+                if (busy) item(key = ACTIVITY) { OnNow(w) }
                 if (showAsk) item(key = ASK) {
                     Box(Modifier.padding(top = 12.dp)) {
                         if (menu == null) {
@@ -361,7 +362,7 @@ internal fun Thread(w: WorkerInfo, screen: ScreenState?, canAnswer: Boolean, con
                 Icon(OfficeIcons.Terminal, null, Modifier.size(12.dp), tint = Palette.TextTertiary)
                 Spacer(Modifier.width(8.dp))
                 Text(
-                    live, style = LocalOfficeType.current.monoBody.copy(fontSize = 11.5.sp, lineHeight = 16.sp, color = Palette.TextTertiary), maxLines = 1, overflow = TextOverflow.Ellipsis,
+                    live, style = LocalOfficeType.current.monoBody.copy(fontSize = 11.5.sp, lineHeight = 16.sp, color = Palette.TextSecondary), maxLines = 1, overflow = TextOverflow.Ellipsis,
                     modifier = Modifier.weight(1f).tagged(Tags.Worker.LIVE_LINE),
                 )
             }
@@ -442,7 +443,7 @@ private fun Head(w: WorkerInfo, state: ThreadState, connected: Boolean, onEarlie
                 QuietButton("Load earlier", OfficeIcons.ArrowUp, Tags.Worker.THREAD_EARLIER, connected, onEarlier)
                 state.earlierError?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = Palette.Danger, modifier = Modifier.padding(top = 6.dp)) }
             }
-            else -> Eyebrow("Start of the session", Modifier.padding(vertical = 10.dp).tagged(Tags.Worker.THREAD_START), color = Palette.TextTertiary)
+            else -> Eyebrow("Start of the session", Modifier.padding(vertical = 10.dp).tagged(Tags.Worker.THREAD_START), color = Palette.TextSecondary)
         }
         state.error?.let {
             Row(
@@ -537,7 +538,7 @@ private fun Notice(n: ThreadView.Notice) {
     val tag = Modifier.fillMaxWidth().tagged(Tags.Worker.threadEntry(n.entry.id))
     when (n.tone) {
         ThreadView.Tone.Attachment -> Box(tag, contentAlignment = if (n.entry.role == ThreadRole.User) Alignment.CenterEnd else Alignment.CenterStart) {
-            Text(n.text, style = MaterialTheme.typography.bodySmall.copy(color = Palette.TextTertiary))
+            Text(n.text, style = MaterialTheme.typography.bodySmall.copy(color = Palette.TextSecondary))
         }
         ThreadView.Tone.Danger -> Row(
             tag.panel(RoundedCornerShape(4.dp), Palette.Danger.copy(alpha = 0.07f), Palette.Danger.copy(alpha = 0.3f)).padding(horizontal = 12.dp, vertical = 9.dp),
@@ -550,7 +551,7 @@ private fun Notice(n: ThreadView.Notice) {
         ThreadView.Tone.Quiet -> Row(tag, verticalAlignment = Alignment.CenterVertically) {
             Box(Modifier.weight(1f).height(1.dp).background(Palette.Border))
             Text(
-                n.text.uppercase(), style = LocalOfficeType.current.eyebrow.copy(color = Palette.TextTertiary), textAlign = TextAlign.Center,
+                n.text.uppercase(), style = LocalOfficeType.current.eyebrow.copy(color = Palette.TextSecondary), textAlign = TextAlign.Center,
                 modifier = Modifier.padding(horizontal = 10.dp).weight(4f, fill = false),
             )
             Box(Modifier.weight(1f).height(1.dp).background(Palette.Border))
@@ -586,7 +587,7 @@ private fun Activity(a: ThreadView.Activity, isOpen: Boolean, open: SnapshotStat
                 failed > 0 -> Text("$failed FAILED", style = LocalOfficeType.current.eyebrow.copy(color = Palette.Danger), modifier = Modifier.padding(start = 10.dp))
                 !a.live && a.noResult > 0 -> Text(
                     if (a.noResult == a.actions.size) "NO RESULT" else "${a.noResult} NO RESULT",
-                    style = LocalOfficeType.current.eyebrow.copy(color = Palette.TextTertiary), modifier = Modifier.padding(start = 10.dp),
+                    style = LocalOfficeType.current.eyebrow.copy(color = Palette.TextSecondary), modifier = Modifier.padding(start = 10.dp),
                 )
             }
         }
@@ -604,7 +605,7 @@ private fun Activity(a: ThreadView.Activity, isOpen: Boolean, open: SnapshotStat
             }
             a.running?.takeIf { a.live && failed == 0 }?.let {
                 Text(
-                    "${it.title}…", style = MaterialTheme.typography.bodySmall.copy(color = Palette.TextTertiary), maxLines = 1, overflow = TextOverflow.Ellipsis,
+                    "${it.title}…", style = MaterialTheme.typography.bodySmall.copy(color = Palette.TextSecondary), maxLines = 1, overflow = TextOverflow.Ellipsis,
                     modifier = Modifier.padding(start = 24.dp, bottom = 4.dp),
                 )
             }
@@ -661,12 +662,12 @@ private fun ActionRow(a: ThreadView.Action, open: Boolean, onToggle: () -> Unit)
                     maxLines = 2, overflow = TextOverflow.Ellipsis,
                 )
                 a.detail?.let {
-                    Text(it, style = LocalOfficeType.current.monoBody.copy(fontSize = 11.sp, lineHeight = 15.sp, color = Palette.TextTertiary), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Text(it, style = LocalOfficeType.current.monoBody.copy(fontSize = 11.sp, lineHeight = 15.sp, color = Palette.TextSecondary), maxLines = 1, overflow = TextOverflow.Ellipsis)
                 }
             }
             when (a.state) {
                 ToolState.Failed -> Text("FAILED", style = LocalOfficeType.current.eyebrow.copy(color = Palette.Danger), modifier = Modifier.padding(start = 8.dp))
-                ToolState.NoResult -> Text("NO RESULT", style = LocalOfficeType.current.eyebrow.copy(color = Palette.TextTertiary), modifier = Modifier.padding(start = 8.dp))
+                ToolState.NoResult -> Text("NO RESULT", style = LocalOfficeType.current.eyebrow.copy(color = Palette.TextSecondary), modifier = Modifier.padding(start = 8.dp))
                 else -> Unit
             }
         }
@@ -700,7 +701,7 @@ private fun ThoughtRow(t: ThreadView.Thought, open: Boolean, onToggle: () -> Uni
             Text("Thought", style = MaterialTheme.typography.bodySmall.copy(fontSize = 13.sp, color = Palette.TextSecondary))
             if (!open) {
                 Text(
-                    t.preview, style = MaterialTheme.typography.bodySmall.copy(fontStyle = FontStyle.Italic, color = Palette.TextTertiary),
+                    t.preview, style = MaterialTheme.typography.bodySmall.copy(fontStyle = FontStyle.Italic, color = Palette.TextSecondary),
                     maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(start = 8.dp).weight(1f),
                 )
             }
@@ -719,7 +720,7 @@ private fun ThoughtRow(t: ThreadView.Thought, open: Boolean, onToggle: () -> Uni
 @Composable
 private fun Plan(group: String, steps: List<ThreadView.PlanStep>) {
     Column(Modifier.fillMaxWidth().padding(top = 8.dp, bottom = 6.dp).tagged(Tags.Worker.threadGroupPlan(group))) {
-        Eyebrow("Plan · ${steps.count { it.done }} of ${steps.size} done", Modifier.padding(bottom = 4.dp), color = Palette.TextTertiary)
+        Eyebrow("Plan · ${steps.count { it.done }} of ${steps.size} done", Modifier.padding(bottom = 4.dp), color = Palette.TextSecondary)
         for (s in steps) {
             Row(Modifier.padding(vertical = 2.dp)) {
                 Text(
@@ -736,7 +737,7 @@ private fun Plan(group: String, steps: List<ThreadView.PlanStep>) {
                     style = MaterialTheme.typography.bodySmall.copy(
                         fontSize = 13.sp,
                         color = when {
-                            s.done -> Palette.TextTertiary
+                            s.done -> Palette.TextSecondary
                             s.active -> Palette.Text
                             else -> Palette.TextSecondary
                         },
@@ -750,7 +751,7 @@ private fun Plan(group: String, steps: List<ThreadView.PlanStep>) {
 
 @Composable
 private fun Mono(label: String, body: String, color: Color) {
-    Eyebrow(label, color = Palette.TextTertiary)
+    Eyebrow(label, color = Palette.TextSecondary)
     val shown = if (body.length > SHOWN_CHARS) body.take(SHOWN_CHARS) else body
     Box(Modifier.fillMaxWidth().background(Palette.Bg, RoundedCornerShape(3.dp)).border(1.dp, Palette.Border, RoundedCornerShape(3.dp))) {
         SelectionContainer {
@@ -763,11 +764,11 @@ private fun Mono(label: String, body: String, color: Color) {
     if (shown.length < body.length) Text("Showing the first $SHOWN_CHARS of ${body.length} characters. Raw TTY has the rest.", style = MaterialTheme.typography.bodySmall)
 }
 
-/** What it's on now, in one quiet line under the conversation: its status, then its action or title. */
+/** What it's on now, in one quiet line under the conversation while it works or asks: its status, then its activity or title. */
 @Composable
 private fun OnNow(w: WorkerInfo) {
     val look = statusLook(w.state, w.acked)
-    val what = (w.action ?: w.activity)?.takeIf { it.isNotBlank() && it != w.prompt } ?: Workers.title(w)
+    val what = ThreadView.onNow(w.activity, w.prompt, Workers.title(w))
     Row(Modifier.fillMaxWidth().padding(top = 22.dp).tagged(Tags.Worker.THREAD_ACTIVITY), verticalAlignment = Alignment.CenterVertically) {
         if (w.state == WorkerStatus.Working) WorkingBars(look.color) else Box(Modifier.size(6.dp).background(look.color, RoundedCornerShape(1.dp)))
         Spacer(Modifier.width(8.dp))

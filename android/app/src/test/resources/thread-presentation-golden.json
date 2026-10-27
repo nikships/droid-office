@@ -11,9 +11,10 @@
     "planStep": "{ status: 'completed' | 'in_progress' | 'pending', text: string }",
     "rules": [
       "A run is every consecutive tool, thinking and todo entry between messages and shown notices; a run with nothing to show leaves no row.",
-      "Hidden when they succeed: TodoWrite, TodoRead, ToolSearch, Skill, and a Script followed (before the next Script) by a call the run shows. A failed one of any of them is always shown.",
-      "A Script with no shown calls after it stays as 'Ran a script' (its source and result in its details).",
-      "Todo snapshots are never rows.",
+      "Hidden when they succeed: TodoWrite, TodoRead, ToolSearch, Skill, WaitForScript, TaskOutput, and a Script followed by any tool call (bookkeeping included) before the next Script or the end of the run. A failed one of any of them is always shown, with its exact failure title (\"Couldn't read script results\", \"Couldn't read task output\", ...).",
+      "A Script with no tool call after it (before the next Script or the end of the run) stays as 'Ran a script' (its source and result in its details).",
+      "TaskStop and Loop are shown: 'Stopped a background task' / 'Couldn't stop the background task', 'Scheduled a loop' / 'Couldn't schedule the loop'.",
+      "Todo snapshots are never rows. A run's latest plan goes on its own activity; a run with no row passes its plan on to the next activity shown (even past a message), and a plan counts as shown only once an activity carries it.",
       "Turn ended · completed is hidden; Turn cancelled is a quiet notice; any other ending is a danger notice in words.",
       "A call with no output is 'running' only in the live run; otherwise 'no_result'. Never 'done' without output.",
       "summary: verb phrases per kind in first-seen order, files counted once each, then 'N more' actions past three kinds; failed bookkeeping isn't counted; 'Thought' for a run of only thoughts."
@@ -725,24 +726,6 @@
           "startsTurn": true
         },
         {
-          "kind": "activity",
-          "id": "activity:tool:toolu_2",
-          "summary": "Ran a script",
-          "live": false,
-          "items": [
-            {
-              "type": "action",
-              "id": "tool:toolu_2",
-              "title": "Ran a script",
-              "detail": null,
-              "state": "done"
-            }
-          ],
-          "failed": [],
-          "noResult": 0,
-          "plan": null
-        },
-        {
           "kind": "message",
           "id": "msg-4:0",
           "role": "assistant",
@@ -1427,6 +1410,291 @@
           "failed": [],
           "noResult": 0,
           "plan": null
+        }
+      ]
+    },
+    {
+      "name": "plan_carried_past_a_message",
+      "busy": false,
+      "entries": [
+        {
+          "id": "msg-1:0",
+          "role": "assistant",
+          "kind": "text",
+          "text": "Planning first.",
+          "seq": 0
+        },
+        {
+          "id": "tool:toolu_2",
+          "role": "assistant",
+          "kind": "tool",
+          "name": "Script",
+          "input": "{\n  \"script\": \"await tools.TodoWrite({todos:\\\"1. [in_progress] Audit the thread\\\"})\"\n}",
+          "output": "[{\"type\":\"text\",\"text\":\"exit 0\"}]",
+          "seq": 1
+        },
+        {
+          "id": "tool:toolu_3",
+          "role": "assistant",
+          "kind": "tool",
+          "name": "TodoWrite",
+          "input": "{\n  \"todos\": \"1. [in_progress] Audit the thread\\n2. [pending] Report back\"\n}",
+          "output": "TODO List Updated",
+          "seq": 2
+        },
+        {
+          "id": "rec-4:todo",
+          "role": "system",
+          "kind": "todo",
+          "text": "1. [in progress] Audit the thread\n2. [pending] Report back",
+          "seq": 3
+        },
+        {
+          "id": "msg-5:0",
+          "role": "assistant",
+          "kind": "text",
+          "text": "Now reading the view.",
+          "seq": 4
+        },
+        {
+          "id": "tool:toolu_6",
+          "role": "assistant",
+          "kind": "tool",
+          "name": "Read",
+          "input": "{\n  \"file_path\": \"/Users/nik/repos/droid-office/.droid-office/worktrees/byte-090d/src/client/ui/worker-thread.ts\"\n}",
+          "output": "export {}",
+          "seq": 5
+        },
+        {
+          "id": "msg-7:0",
+          "role": "assistant",
+          "kind": "text",
+          "text": "Read it.",
+          "seq": 6
+        }
+      ],
+      "expected": [
+        {
+          "kind": "message",
+          "id": "msg-1:0",
+          "role": "assistant",
+          "startsTurn": true
+        },
+        {
+          "kind": "message",
+          "id": "msg-5:0",
+          "role": "assistant",
+          "startsTurn": false
+        },
+        {
+          "kind": "activity",
+          "id": "activity:tool:toolu_6",
+          "summary": "Read a file",
+          "live": false,
+          "items": [
+            {
+              "type": "action",
+              "id": "tool:toolu_6",
+              "title": "Read worker-thread.ts",
+              "detail": "…/client/ui/worker-thread.ts",
+              "state": "done"
+            }
+          ],
+          "failed": [],
+          "noResult": 0,
+          "plan": [
+            {
+              "status": "in_progress",
+              "text": "Audit the thread"
+            },
+            {
+              "status": "pending",
+              "text": "Report back"
+            }
+          ]
+        },
+        {
+          "kind": "message",
+          "id": "msg-7:0",
+          "role": "assistant",
+          "startsTurn": false
+        }
+      ]
+    },
+    {
+      "name": "waits_and_task_controls",
+      "busy": false,
+      "entries": [
+        {
+          "id": "msg-1:0",
+          "role": "assistant",
+          "kind": "text",
+          "text": "Waiting on the background work.",
+          "seq": 0
+        },
+        {
+          "id": "tool:toolu_2",
+          "role": "assistant",
+          "kind": "tool",
+          "name": "Script",
+          "input": "{\n  \"script\": \"await tools.WaitForScript({toolCallId:\\\"toolu_bg\\\"})\"\n}",
+          "output": "[{\"type\":\"text\",\"text\":\"exit 0\"}]",
+          "seq": 1
+        },
+        {
+          "id": "tool:toolu_3",
+          "role": "assistant",
+          "kind": "tool",
+          "name": "WaitForScript",
+          "input": "{\n  \"toolCallId\": \"toolu_bg\"\n}",
+          "output": "exit 0",
+          "seq": 2
+        },
+        {
+          "id": "tool:toolu_4",
+          "role": "assistant",
+          "kind": "tool",
+          "name": "TaskOutput",
+          "input": "{\n  \"task_id\": \"task-1\",\n  \"block\": false\n}",
+          "output": "still running",
+          "seq": 3
+        },
+        {
+          "id": "tool:toolu_5",
+          "role": "assistant",
+          "kind": "tool",
+          "name": "WaitForScript",
+          "input": "{\n  \"toolCallId\": \"toolu_gone\"\n}",
+          "output": "No script with that id",
+          "error": true,
+          "seq": 4
+        },
+        {
+          "id": "tool:toolu_6",
+          "role": "assistant",
+          "kind": "tool",
+          "name": "TaskOutput",
+          "input": "{\n  \"task_id\": \"task-gone\"\n}",
+          "output": "No task with that id",
+          "error": true,
+          "seq": 5
+        },
+        {
+          "id": "tool:toolu_7",
+          "role": "assistant",
+          "kind": "tool",
+          "name": "TaskStop",
+          "input": "{\n  \"task_id\": \"task-1\"\n}",
+          "output": "Stopped",
+          "seq": 6
+        },
+        {
+          "id": "tool:toolu_8",
+          "role": "assistant",
+          "kind": "tool",
+          "name": "TaskStop",
+          "input": "{\n  \"task_id\": \"task-gone\"\n}",
+          "output": "No task with that id",
+          "error": true,
+          "seq": 7
+        },
+        {
+          "id": "tool:toolu_9",
+          "role": "assistant",
+          "kind": "tool",
+          "name": "Loop",
+          "input": "{\n  \"prompt\": \"check CI\",\n  \"interval\": \"5m\"\n}",
+          "output": "Scheduled",
+          "seq": 8
+        },
+        {
+          "id": "tool:toolu_10",
+          "role": "assistant",
+          "kind": "tool",
+          "name": "Loop",
+          "input": "{\n  \"prompt\": \"check CI\",\n  \"interval\": \"never\"\n}",
+          "output": "Invalid interval",
+          "error": true,
+          "seq": 9
+        },
+        {
+          "id": "msg-11:0",
+          "role": "assistant",
+          "kind": "text",
+          "text": "The background work finished.",
+          "seq": 10
+        }
+      ],
+      "expected": [
+        {
+          "kind": "message",
+          "id": "msg-1:0",
+          "role": "assistant",
+          "startsTurn": true
+        },
+        {
+          "kind": "activity",
+          "id": "activity:tool:toolu_2",
+          "summary": "Used 4 tools",
+          "live": false,
+          "items": [
+            {
+              "type": "action",
+              "id": "tool:toolu_5",
+              "title": "Couldn't read script results",
+              "detail": null,
+              "state": "failed"
+            },
+            {
+              "type": "action",
+              "id": "tool:toolu_6",
+              "title": "Couldn't read task output",
+              "detail": null,
+              "state": "failed"
+            },
+            {
+              "type": "action",
+              "id": "tool:toolu_7",
+              "title": "Stopped a background task",
+              "detail": null,
+              "state": "done"
+            },
+            {
+              "type": "action",
+              "id": "tool:toolu_8",
+              "title": "Couldn't stop the background task",
+              "detail": null,
+              "state": "failed"
+            },
+            {
+              "type": "action",
+              "id": "tool:toolu_9",
+              "title": "Scheduled a loop",
+              "detail": null,
+              "state": "done"
+            },
+            {
+              "type": "action",
+              "id": "tool:toolu_10",
+              "title": "Couldn't schedule the loop",
+              "detail": null,
+              "state": "failed"
+            }
+          ],
+          "failed": [
+            "Couldn't read script results",
+            "Couldn't read task output",
+            "Couldn't stop the background task",
+            "Couldn't schedule the loop"
+          ],
+          "noResult": 0,
+          "plan": null
+        },
+        {
+          "kind": "message",
+          "id": "msg-11:0",
+          "role": "assistant",
+          "startsTurn": false
         }
       ]
     }

@@ -10,9 +10,10 @@ import kotlinx.serialization.json.JsonPrimitive
  * of them is one [ThreadRow.Activity] with a human summary ("Read 3 files · Ran 2 commands").
  *
  * Bookkeeping a reader gets nothing from is left out of the rows and the counts: a successful
- * TodoWrite, TodoRead, ToolSearch or Skill, the plan snapshots the office reads from the session (the
- * latest changed one shows only inside the open run), a Script whose own calls are in the same run
- * (Droid logs each call a script makes as its own tool call after the script), and a turn that ended
+ * TodoWrite, TodoRead, ToolSearch, Skill, WaitForScript or TaskOutput, the plan snapshots the office
+ * reads from the session (the latest changed one shows only inside an open run, the next one shown
+ * when its own run has nothing else), a Script followed by calls of its own in the same run (Droid
+ * logs each call a script makes as its own tool call after the script), and a turn that ended
  * normally. A failed one of any of them is always shown. Raw TTY still has everything. The web
  * companion projects the same way (src/shared/thread-presentation.ts).
  */
@@ -38,7 +39,7 @@ object ThreadView {
         override val ids get() = setOf(entry.id)
     }
 
-    enum class Kind { Read, List, Search, Command, Edit, Create, Web, WebSearch, Delegate, Skill, Ask, Memory, Script, Plan, Other }
+    enum class Kind { Read, List, Search, Command, Edit, Create, Web, WebSearch, Delegate, Skill, Ask, Memory, Script, Plan, Wait, Other }
 
     sealed interface Item {
         val entry: ThreadEntry
@@ -81,21 +82,27 @@ object ThreadView {
     }
 
     /** Tool calls that only keep the agent's own books. */
-    private val BOOKKEEPING = setOf("TodoWrite", "TodoRead", "ToolSearch", "Skill", "todo_write", "todo_read", "update_plan")
+    private val BOOKKEEPING = setOf("TodoWrite", "TodoRead", "ToolSearch", "Skill", "WaitForScript", "TaskOutput", "todo_write", "todo_read", "update_plan")
 
     fun project(entries: List<ThreadEntry>, busy: Boolean): List<Row> {
         val rows = ArrayList<Row>()
         val run = ArrayList<ThreadEntry>()
         var lastPlan: String? = null
+        // The plan of a run with nothing to show waits for the next run that has a row.
+        var carried: List<PlanStep>? = null
         var prevMessage: ThreadEntry? = null
 
         fun flush(at: Int) {
             if (run.isEmpty()) return
+            val own = run.lastOrNull { it.kind == ThreadKind.Todo }?.text?.let(::plan)?.takeIf { it.isNotEmpty() }
             // Only the newest run can still be going: a call with no result before a later message never got one.
-            val group = activity(run.toList(), live = busy && at == entries.size, lastPlan)
+            val group = activity(run.toList(), live = busy && at == entries.size, own ?: carried, lastPlan)
             run.clear()
-            if (group != null) {
+            if (group == null) {
+                if (own != null) carried = own
+            } else {
                 rows += group
+                carried = null
                 if (group.plan != null) lastPlan = planKey(group.plan)
             }
         }
@@ -124,9 +131,18 @@ object ThreadView {
     /** The row index holding [entryId], or -1. */
     fun rowOf(rows: List<Row>, entryId: String): Int = rows.indexOfFirst { entryId in it.ids }
 
+    /**
+     * What the line under a working or asking worker's conversation says: its latest activity, unless
+     * that is a prompt the thread already shows or a bookkeeping call ("TodoWrite"), then its title.
+     */
+    fun onNow(activity: String?, prompt: String?, title: String?): String? {
+        val a = activity?.trim()?.takeIf { it.isNotEmpty() && it != prompt?.trim() && it.substringBefore(':').trim() !in BOOKKEEPING }
+        return a ?: title?.takeIf { it.isNotBlank() }
+    }
+
     private fun planKey(plan: List<PlanStep>) = plan.joinToString("\n") { "${it.done}${it.active}${it.text}" }
 
-    private fun activity(run: List<ThreadEntry>, live: Boolean, lastPlan: String?): Activity? {
+    private fun activity(run: List<ThreadEntry>, live: Boolean, plan: List<PlanStep>?, lastPlan: String?): Activity? {
         val items = ArrayList<Item>()
         for ((i, e) in run.withIndex()) {
             when (e.kind) {
@@ -144,7 +160,6 @@ object ThreadView {
         }
         if (items.isEmpty()) return null
         val actions = items.filterIsInstance<Action>()
-        val plan = run.lastOrNull { it.kind == ThreadKind.Todo }?.text?.let(::plan)?.takeIf { it.isNotEmpty() }
         val planKey = plan?.let(::planKey)
         return Activity(
             key = "activity:" + run.first().id,
@@ -162,14 +177,12 @@ object ThreadView {
     }
 
     /**
-     * The Script at [at] made calls of its own that the run shows: Droid logs them after the script,
-     * before the next one. A script with none, or only bookkeeping, keeps its own row and result.
+     * The Script at [at] made calls of its own: Droid logs them after the script, before the next
+     * one, bookkeeping included. Only a script with none keeps its own row and result.
      */
     private fun wraps(run: List<ThreadEntry>, at: Int): Boolean {
         for (e in run.subList(at + 1, run.size)) {
-            if (e.kind != ThreadKind.Tool) continue
-            if (e.name == "Script") return false
-            if (e.name !in BOOKKEEPING || e.error) return true
+            if (e.kind == ThreadKind.Tool) return e.name != "Script"
         }
         return false
     }
@@ -249,6 +262,10 @@ object ThreadView {
             "AskUser" -> a(Kind.Ask, "Asked you a question")
             "Script" -> a(Kind.Script, if (failedVerb) "A script failed" else "Ran a script")
             "ToolSearch" -> a(Kind.Plan, if (failedVerb) "Couldn't load tools" else "Loaded tools")
+            "WaitForScript" -> a(Kind.Wait, if (failedVerb) "Couldn't read script results" else "Read script results")
+            "TaskOutput" -> a(Kind.Wait, if (failedVerb) "Couldn't read task output" else "Read task output")
+            "TaskStop" -> a(Kind.Other, if (failedVerb) "Couldn't stop the background task" else "Stopped a background task")
+            "Loop" -> a(Kind.Other, if (failedVerb) "Couldn't schedule the loop" else "Scheduled a loop")
             in BOOKKEEPING -> a(Kind.Plan, if (failedVerb) "Couldn't update the plan" else "Updated the plan")
             else -> when {
                 name.startsWith("memory___") -> a(Kind.Memory, if (name.contains("save") || name.contains("update")) "Saved to memory" else "Checked memory")
@@ -282,6 +299,7 @@ object ThreadView {
         Kind.Memory to ("Checked memory" to "Used memory %d times"),
         Kind.Script to ("Ran a script" to "Ran %d scripts"),
         Kind.Plan to ("Updated the plan" to "Updated the plan %d times"),
+        Kind.Wait to ("Read results" to "Read results %d times"),
         Kind.Other to ("Used a tool" to "Used %d tools"),
     ).toMap()
 
@@ -291,7 +309,7 @@ object ThreadView {
      */
     fun summary(actions: List<Action>): String {
         if (actions.isEmpty()) return "Thought"
-        val counted = actions.filterNot { it.state == ToolState.Failed && (it.kind == Kind.Plan || it.kind == Kind.Skill) }
+        val counted = actions.filterNot { it.state == ToolState.Failed && (it.kind == Kind.Plan || it.kind == Kind.Skill || it.kind == Kind.Wait) }
         if (counted.isEmpty()) return actions.first().title
         val byKind = LinkedHashMap<Kind, Int>()
         val seen = HashMap<Kind, MutableSet<String>>()
