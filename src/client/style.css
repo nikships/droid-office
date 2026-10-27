@@ -2338,6 +2338,7 @@ html:has(body.dashboard), body.dashboard { overflow: auto; }
 .dash-stage-wait { display: flex; align-items: center; gap: var(--space-3); margin: auto; color: var(--text-secondary); }
 .dash-view-toggle { align-self: flex-start; margin: var(--space-2) var(--space-4); flex-shrink: 0; }
 .dash-view-toggle[hidden] { display: none; }
+.dash-thread-back { display: none; }
 .worker-thread { flex: 1; min-height: 0; display: flex; flex-direction: column; position: relative; background: var(--bg); }
 .wt-head { display: flex; align-items: center; flex-wrap: wrap; gap: var(--space-3); padding: var(--space-3) var(--space-5); border-bottom: 1px solid var(--border); }
 .wt-head .titles { flex: 1; min-width: 0; }
@@ -2378,6 +2379,15 @@ html:has(body.dashboard), body.dashboard { overflow: auto; }
 .wt-compose-actions .toggle { font-size: var(--text-small); }
 .wt-send-hint { color: var(--text-tertiary); font-size: var(--text-small); }
 @media (max-width: 720px) {
+  body.dashboard:has(.worker-thread) { min-width: 0; }
+  .dashboard:has(.worker-thread) .dash-body { grid-template-columns: minmax(0, 1fr); }
+  .dashboard:has(.worker-thread) .dash-side { display: none; }
+  .dashboard:has(.worker-thread) .dash-top { height: auto; flex-wrap: wrap; gap: var(--space-2); padding: var(--space-3); }
+  .dashboard:has(.worker-thread) :is(.dash-brand-text, .dash-floor > .eyebrow, .dash-top > .grow) { display: none; }
+  .dashboard:has(.worker-thread) .dash-floor { flex: 1; min-width: 0; margin: 0; padding: 0; border: 0; }
+  .dashboard:has(.worker-thread) .dash-floor-select { flex: 1; min-width: 0; max-width: none; width: 100%; }
+  .dashboard:has(.worker-thread) .dash-top-btn > span:not(.dash-count) { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+  .dash-thread-back { display: inline-flex; }
   .wt-head, .wt-scroll, .wt-feedback, .wt-composer { padding: var(--space-3); }
   .wt-head .dash-controls { flex-wrap: wrap; }
   .wt-head .dash-controls .btn { height: var(--control-h-sm); font-size: var(--text-label); }

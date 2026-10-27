@@ -935,6 +935,7 @@ function paintWorker(w: WorkerInfo) {
   const threaded = local && w.kind === 'agent' && workerView === 'thread';
   viewToggle.hidden = !local || w.kind !== 'agent';
   viewToggle.replaceChildren(
+    ...(threaded ? [h('button.btn.dash-thread-back', { type: 'button', onclick: () => select('') }, 'All workers')] : []),
     ...(['thread', 'terminal'] as const).map((value) =>
       h(
         'button',
