@@ -163,9 +163,10 @@ fun Composer(
         if (!connected) return
         haptics.performHapticFeedback(HapticFeedbackType.Confirm)
         val ids = images.mapNotNull { it.id }
-        val after = queueState?.sequence ?: -1
+        // Without a loaded history fence, no old matching message can prove delivery of this send.
+        val after = queueState?.sequence?.takeIf { it >= 0 } ?: Long.MAX_VALUE
         if (graph.connection.send(ClientMsg.prompt(w.id, prompt, ids, queue))) {
-            if (queue && queueState != null) {
+            if (queue && w.state.busy && queueState != null) {
                 queueState.sent(prompt, ids.isNotEmpty(), after)
                 onQueued()
             }

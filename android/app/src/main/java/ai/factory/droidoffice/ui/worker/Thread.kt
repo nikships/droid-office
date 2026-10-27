@@ -411,7 +411,7 @@ internal fun Thread(
         ) {
             // A receipt, not a claim: no message says what Droid's queue holds now, so this says only
             // what this phone sent and that it hasn't shown up in the conversation yet.
-            Eyebrow("Sent to Droid’s queue", Modifier.padding(bottom = 4.dp), color = Palette.TextSecondary)
+            Eyebrow("Queue request sent", Modifier.padding(bottom = 4.dp), color = Palette.TextSecondary)
             for (prompt in pendingQueue) Text(
                 prompt.text.ifEmpty { "Image attached" },
                 style = MaterialTheme.typography.bodySmall.copy(color = Palette.TextSecondary),
@@ -419,7 +419,7 @@ internal fun Thread(
                 modifier = Modifier.padding(bottom = 4.dp),
             )
             if (!busy) Text(
-                "Not yet in the conversation. Check Raw TTY; it may have been cleared elsewhere.",
+                "Delivery isn’t confirmed here. Check Raw TTY before sending again.",
                 style = MaterialTheme.typography.bodySmall.copy(color = Palette.TextTertiary),
                 modifier = Modifier.padding(bottom = 6.dp),
             )

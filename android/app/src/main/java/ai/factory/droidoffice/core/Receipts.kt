@@ -60,6 +60,7 @@ class Receipts(private val dir: File) {
             temp.writeText(key + "\n" + snapshot)
             if (!temp.renameTo(file)) {
                 temp.delete()
+                file.delete()
                 return Saved.Failed
             }
             trim()

@@ -86,10 +86,10 @@ export function mountWorkerThread(net: Net, opts: ThreadOptions): WorkerThread {
     if (key === queueKey) return;
     queueKey = key;
     queuedNotice.hidden = !messages.length;
-    queuedNotice.replaceChildren(...messages.map((message) => h('p', {}, `Sent to Droid’s queue · ${message.text || 'Image attached'}`)));
+    queuedNotice.replaceChildren(...messages.map((message) => h('p', {}, `Queue request sent · ${message.text || 'Image attached'}`)));
     if (messages.length && !busy)
       queuedNotice.append(
-        h('p', {}, 'Not yet in the conversation. It may have been cleared elsewhere.'),
+        h('p', {}, 'Delivery isn’t confirmed here. Check Raw TTY before sending again.'),
         h('p', {}, 'Dismissing this receipt only hides it here. Droid’s queue is unchanged.'),
         h(
           'div.row.wrap',
@@ -294,7 +294,7 @@ export function mountWorkerThread(net: Net, opts: ThreadOptions): WorkerThread {
       details.append(body);
       node.append(details);
       const current = row.actions.filter((action) => action.state === 'working').at(-1);
-      if (row.live && !row.failed.length && current) node.append(h('p.wt-running', { role: 'status' }, current.title));
+      if (row.live && !row.failed.length && current && current.title !== row.label) node.append(h('p.wt-running', { role: 'status' }, current.title));
       if (row.failed.length) {
         node.append(
           h(
@@ -435,8 +435,8 @@ export function mountWorkerThread(net: Net, opts: ThreadOptions): WorkerThread {
     waitingShown = waiting;
     input.disabled = !allowed || sending || waiting;
     attach.disabled = input.disabled;
-    send.disabled = input.disabled;
-    queue.input.disabled = input.disabled;
+    send.disabled = input.disabled || (queue.input.checked && !received);
+    queue.input.disabled = input.disabled || !received;
     stop.hidden = !isBusy(worker.status) && !waiting;
     stop.disabled = !allowed || sending;
     send.textContent = sending ? 'Sending…' : queue.input.checked ? 'Queue' : 'Send';
@@ -476,7 +476,7 @@ export function mountWorkerThread(net: Net, opts: ThreadOptions): WorkerThread {
     updateControls();
   };
   const submit = async () => {
-    if (input.disabled || sending) return;
+    if (send.disabled || sending) return;
     if (input.value.trimStart().startsWith('/')) {
       error = 'Slash commands open CLI dialogs. Your draft is kept; run this command in Raw TTY.';
       updateControls();
@@ -493,12 +493,13 @@ export function mountWorkerThread(net: Net, opts: ThreadOptions): WorkerThread {
       return;
     }
     const queueSend = queue.input.checked;
+    const queueReceipt = queueSend && isBusy(worker.status);
     const after = queued.sequence;
     const hasImage = images.ids().length > 0;
     const result = await opts.send({ t: 'worker.prompt', workerId: worker.id, prompt: text, images: images.ids(), queue: queueSend });
     sending = false;
     if (!result) {
-      if (queueSend) queued.sent(text, hasImage, after);
+      if (queueReceipt) queued.sent(text, hasImage, after);
       images.take();
       input.value = '';
       opts.onDraft('');
