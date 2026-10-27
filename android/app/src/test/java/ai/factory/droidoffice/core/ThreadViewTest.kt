@@ -121,6 +121,16 @@ class ThreadViewTest {
     }
 
     @Test
+    fun onlyAScriptFollowedByItsOwnCallsIsHidden() {
+        // Read, then a script that called nothing: the script keeps its row and its result.
+        val alone = ThreadView.project(listOf(say("x"), read("$home/a.ts"), script("text('hi')")), busy = false)[1] as ThreadView.Activity
+        assertEquals(listOf("Read a.ts", "Ran a script"), alone.actions.map { it.title })
+        // A wrapper, its calls, then a second script that called nothing.
+        val mixed = ThreadView.project(listOf(say("x"), script(), read("$home/b.ts"), script("text('x')")), busy = false)[1] as ThreadView.Activity
+        assertEquals(listOf("Read b.ts", "Ran a script"), mixed.actions.map { it.title })
+    }
+
+    @Test
     fun aScriptWithNoCallsOfItsOwnIsOneQuietAction() {
         val a = ThreadView.project(listOf(say("x"), script("text('hi')")), busy = false)[1] as ThreadView.Activity
         assertEquals("Ran a script", a.summary)
@@ -169,7 +179,7 @@ class ThreadViewTest {
         val rows = ThreadView.project(entries, busy = false)
         assertEquals(listOf("Message", "Activity", "Notice", "Activity", "Notice", "Notice"), rows.map { it::class.simpleName })
         assertEquals("Read 2 files", (rows[1] as ThreadView.Activity).summary)
-        assertEquals("Stopped", (rows[2] as ThreadView.Notice).text)
+        assertEquals("Turn cancelled", (rows[2] as ThreadView.Notice).text)
         assertEquals(ThreadView.Tone.Danger, (rows[4] as ThreadView.Notice).tone)
         assertEquals("The turn stopped: the model was rate limited", (rows[4] as ThreadView.Notice).text)
         assertEquals(ThreadView.Tone.Attachment, (rows[5] as ThreadView.Notice).tone)

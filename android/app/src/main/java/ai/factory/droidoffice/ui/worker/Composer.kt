@@ -93,7 +93,7 @@ private const val MAX_BYTES = 25 * 1024 * 1024
 private const val MAX_IMAGES = 10
 
 @Composable
-fun Composer(w: WorkerInfo, draft: String? = null, visible: Boolean = true, focusRequest: Int = 0, intercept: ((String) -> Boolean)? = null) {
+fun Composer(w: WorkerInfo, draft: String? = null, visible: Boolean = true, focusRequest: Int = 0, intercept: ((String) -> Boolean)? = null, thread: Boolean = false) {
     val graph = LocalGraph.current
     val snackbar = LocalSnackbar.current
     val context = LocalContext.current
@@ -154,11 +154,15 @@ fun Composer(w: WorkerInfo, draft: String? = null, visible: Boolean = true, focu
 
     // Keep the composer's state and upload launcher alive while the terminal takes the keyboard.
     if (!visible) return
+    // The Thread view's composer is near-square and mono like the rest of its chrome; Raw TTY's keeps its round controls.
+    val field = RoundedCornerShape(if (thread) 4.dp else 14.dp)
+    val control = if (thread) RoundedCornerShape(3.dp) else CircleShape
+    val thumb = RoundedCornerShape(if (thread) 3.dp else 9.dp)
     Column(Modifier.fillMaxWidth().padding(start = 10.dp, end = 10.dp, bottom = 10.dp)) {
         AnimatedVisibility(images.isNotEmpty()) {
             Row(Modifier.horizontalScroll(rememberScrollState()).padding(bottom = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 images.forEachIndexed { i, a ->
-                    Box(Modifier.size(58.dp).clip(RoundedCornerShape(9.dp)).border(1.dp, Palette.BorderStrong, RoundedCornerShape(9.dp))) {
+                    Box(Modifier.size(58.dp).clip(thumb).border(1.dp, Palette.BorderStrong, thumb)) {
                         a.thumb?.let { Image(it, "Image ${i + 1}", Modifier.fillMaxSize(), contentScale = ContentScale.Crop) }
                         if (a.id == null) Box(Modifier.fillMaxSize().background(Color(0x99000000)), contentAlignment = Alignment.Center) { Spinner(Modifier.size(16.dp)) }
                         Text(
@@ -178,13 +182,13 @@ fun Composer(w: WorkerInfo, draft: String? = null, visible: Boolean = true, focu
             }
         }
         Row(
-            Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(Palette.Surface).border(1.dp, Palette.BorderStrong, RoundedCornerShape(14.dp))
+            Modifier.fillMaxWidth().clip(field).background(Palette.Surface).border(1.dp, Palette.BorderStrong, field)
                 .padding(start = 6.dp, end = 6.dp, top = 6.dp, bottom = 6.dp),
             verticalAlignment = Alignment.Bottom,
         ) {
             if (!w.isShell) {
                 Box(
-                    Modifier.size(38.dp).clip(CircleShape).clickable { picker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) }.tagged(Tags.Worker.ATTACH),
+                    Modifier.size(38.dp).clip(control).clickable { picker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) }.tagged(Tags.Worker.ATTACH),
                     contentAlignment = Alignment.Center,
                 ) { Icon(Icons.Default.Add, "Attach pictures", tint = Palette.TextSecondary) }
             }
@@ -212,8 +216,8 @@ fun Composer(w: WorkerInfo, draft: String? = null, visible: Boolean = true, focu
             // Ctrl+Enter in a desktop terminal: Droid takes the message after what it's doing now.
             if (!w.isShell && !w.isCloud) {
                 Box(
-                    Modifier.padding(end = 6.dp).height(38.dp).clip(CircleShape)
-                        .border(1.dp, if (ready) Palette.Accent.copy(alpha = 0.6f) else Palette.BorderStrong, CircleShape)
+                    Modifier.padding(end = 6.dp).height(38.dp).clip(control)
+                        .border(1.dp, if (ready && !thread) Palette.Accent.copy(alpha = 0.6f) else Palette.BorderStrong, control)
                         .clickable(enabled = ready && !sending) { send(queue = true) }
                         .semantics { contentDescription = "Queue message" }
                         .tagged(Tags.Worker.QUEUE)
@@ -221,14 +225,20 @@ fun Composer(w: WorkerInfo, draft: String? = null, visible: Boolean = true, focu
                     contentAlignment = Alignment.Center,
                 ) {
                     Text(
-                        "Queue",
-                        style = LocalOfficeType.current.monoBody.copy(fontSize = 13.sp, color = if (ready) Palette.Accent else Palette.TextTertiary),
+                        if (thread) "QUEUE" else "Queue",
+                        style = if (thread) {
+                            LocalOfficeType.current.eyebrow.copy(color = if (ready) Palette.Text else Palette.TextTertiary)
+                        } else {
+                            LocalOfficeType.current.monoBody.copy(fontSize = 13.sp, color = if (ready) Palette.Accent else Palette.TextTertiary)
+                        },
                         modifier = Modifier.clearAndSetSemantics {},
                     )
                 }
             }
+            // In the thread, Send inverts against the surface (light on dark), so orange stays for what's live.
+            val sendFill = if (!ready) Palette.SurfaceHigh else if (thread) Palette.Text else Palette.Accent
             Box(
-                Modifier.size(38.dp).clip(CircleShape).background(if (ready) Palette.Accent else Palette.SurfaceHigh).clickable(enabled = ready && !sending) { send() }.tagged(Tags.Worker.SEND),
+                Modifier.size(38.dp).clip(control).background(sendFill).clickable(enabled = ready && !sending) { send() }.tagged(Tags.Worker.SEND),
                 contentAlignment = Alignment.Center,
             ) {
                 if (sending) Spinner(Modifier.size(16.dp), Palette.Bg)

@@ -259,7 +259,7 @@ fun WorkerScreen(workerId: String, onBack: () -> Unit, embedded: Boolean = false
                 if (waiting) ThreadWaiting(worker, onTty = { ttyChoice = true })
                 val snackbar = LocalSnackbar.current
                 Composer(
-                    worker, draft, visible = !waiting && (!directInput || !tty || worker.isCloud), focusRequest = composerFocus,
+                    worker, draft, visible = !waiting && (!directInput || !tty || worker.isCloud), focusRequest = composerFocus, thread = !tty,
                     // A slash command is Droid's own, run in its terminal: the thread hands the draft to Raw TTY unsent.
                     intercept = if (tty) null else { prompt ->
                         ThreadFeed.slashCommand(prompt).also { slash ->
@@ -343,6 +343,7 @@ private fun Actions(w: WorkerInfo, onSendHome: () -> Unit, lead: (@Composable ()
     val uri = LocalUriHandler.current
     val pr = Workers.pr(w, data.pulls)
     val branch = w.worktree?.branch?.takeIf { it.isNotBlank() }
+    val square = lead != null
     Row(
         Modifier.fillMaxWidth().then(if (lead != null) Modifier.tagged(Tags.Worker.THREAD_BAR) else Modifier)
             .horizontalScroll(rememberScrollState()).padding(horizontal = 12.dp, vertical = 4.dp),
@@ -350,22 +351,22 @@ private fun Actions(w: WorkerInfo, onSendHome: () -> Unit, lead: (@Composable ()
         verticalAlignment = Alignment.CenterVertically,
     ) {
         lead?.invoke()
-        if (w.state.asleep) ActionChip(OfficeIcons.Bolt, "Resume", Palette.Accent, Tags.Worker.RESUME) { graph.connection.send(ClientMsg.resume(w.id)) }
+        if (w.state.asleep) ActionChip(OfficeIcons.Bolt, "Resume", Palette.Accent, Tags.Worker.RESUME, square = square) { graph.connection.send(ClientMsg.resume(w.id)) }
         when (pr?.first) {
-            Workers.PrState.Open -> ActionChip(OfficeIcons.PullRequest, "PR #${pr.second.number}", Palette.Success, Tags.Worker.PR) { if (pr.second.url.isNotBlank()) uri.openUri(pr.second.url) }
-            Workers.PrState.Merged -> ActionChip(OfficeIcons.PullRequest, "#${pr.second.number} merged", Color(0xFFB689EF), Tags.Worker.PR) { if (pr.second.url.isNotBlank()) uri.openUri(pr.second.url) }
-            Workers.PrState.Opening -> ActionChip(OfficeIcons.PullRequest, "Opening PR…", Palette.Warning, Tags.Worker.PR, loading = true) {}
-            null -> if (branch != null && !w.isShell) ActionChip(OfficeIcons.PullRequest, "Open PR", Palette.Text, Tags.Worker.PR) { graph.connection.send(ClientMsg.pr(w.id)) }
+            Workers.PrState.Open -> ActionChip(OfficeIcons.PullRequest, "PR #${pr.second.number}", Palette.Success, Tags.Worker.PR, square = square) { if (pr.second.url.isNotBlank()) uri.openUri(pr.second.url) }
+            Workers.PrState.Merged -> ActionChip(OfficeIcons.PullRequest, "#${pr.second.number} merged", Color(0xFFB689EF), Tags.Worker.PR, square = square) { if (pr.second.url.isNotBlank()) uri.openUri(pr.second.url) }
+            Workers.PrState.Opening -> ActionChip(OfficeIcons.PullRequest, "Opening PR…", Palette.Warning, Tags.Worker.PR, loading = true, square = square) {}
+            null -> if (branch != null && !w.isShell) ActionChip(OfficeIcons.PullRequest, "Open PR", Palette.Text, Tags.Worker.PR, square = square) { graph.connection.send(ClientMsg.pr(w.id)) }
         }
-        if (branch != null) ActionChip(OfficeIcons.Branch, branch, Palette.TextSecondary, Tags.Worker.BRANCH, onClick = null)
+        if (branch != null) ActionChip(OfficeIcons.Branch, branch, Palette.TextSecondary, Tags.Worker.BRANCH, square = square, onClick = null)
         if (lead == null) ActionChip(OfficeIcons.Door, "Send home", Palette.Danger, Tags.Worker.SEND_HOME, onClick = onSendHome)
     }
 }
 
 @Composable
-private fun ActionChip(icon: ImageVector, text: String, color: Color, tag: String, loading: Boolean = false, onClick: (() -> Unit)?) {
+private fun ActionChip(icon: ImageVector, text: String, color: Color, tag: String, loading: Boolean = false, square: Boolean = false, onClick: (() -> Unit)?) {
     val haptics = LocalHapticFeedback.current
-    val shape = RoundedCornerShape(8.dp)
+    val shape = RoundedCornerShape(if (square) 4.dp else 8.dp)
     Row(
         Modifier.clip(shape).background(Palette.Surface).border(1.dp, if (onClick != null) color.copy(alpha = 0.35f) else Palette.Border, shape)
             .then(if (onClick != null) Modifier.clickable { haptics.performHapticFeedback(HapticFeedbackType.ContextClick); onClick() } else Modifier)

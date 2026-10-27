@@ -53,6 +53,7 @@ import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextDecoration
@@ -84,7 +85,6 @@ import ai.factory.droidoffice.ui.LocalGraph
 import ai.factory.droidoffice.ui.LocalSnackbar
 import ai.factory.droidoffice.ui.asks.AskCard
 import ai.factory.droidoffice.ui.components.Eyebrow
-import ai.factory.droidoffice.ui.components.SecondaryButton
 import ai.factory.droidoffice.ui.components.Spinner
 import ai.factory.droidoffice.ui.components.WorkingBars
 import ai.factory.droidoffice.ui.components.panel
@@ -505,6 +505,13 @@ private fun Empty(w: WorkerInfo, state: ThreadState, connected: Boolean, onRetry
     }
 }
 
+/**
+ * Opens and closes like a disclosure: TalkBack says expanded or collapsed, not on or off, while a
+ * dump still reports it as `checked` when open.
+ */
+private fun Modifier.disclosure(open: Boolean, onToggle: () -> Unit) =
+    this.toggleable(open, role = Role.Button) { onToggle() }.semantics { stateDescription = if (open) "Expanded" else "Collapsed" }
+
 /** The owner's own words: a flat, near-square block on the right. */
 private fun Modifier.userBlock() = this.background(Palette.SurfaceHover, RoundedCornerShape(4.dp)).border(1.dp, Palette.Border, RoundedCornerShape(4.dp))
     .padding(horizontal = 12.dp, vertical = 9.dp)
@@ -560,7 +567,7 @@ private fun Activity(a: ThreadView.Activity, isOpen: Boolean, open: SnapshotStat
     val failed = a.failed.size
     Column(Modifier.fillMaxWidth().tagged(Tags.Worker.threadGroup(a.first))) {
         Row(
-            Modifier.fillMaxWidth().clip(RoundedCornerShape(4.dp)).toggleable(isOpen, role = Role.Switch) { onToggle() }
+            Modifier.fillMaxWidth().clip(RoundedCornerShape(4.dp)).disclosure(isOpen, onToggle)
                 .tagged(Tags.Worker.threadGroupToggle(a.first)).heightIn(min = 40.dp).padding(vertical = 6.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
@@ -627,7 +634,7 @@ private fun ActionRow(a: ThreadView.Action, open: Boolean, onToggle: () -> Unit)
     val e = a.entry
     Column(Modifier.fillMaxWidth().tagged(Tags.Worker.threadEntry(e.id))) {
         Row(
-            Modifier.fillMaxWidth().clip(RoundedCornerShape(3.dp)).toggleable(open, role = Role.Switch) { onToggle() }
+            Modifier.fillMaxWidth().clip(RoundedCornerShape(3.dp)).disclosure(open, onToggle)
                 .tagged(Tags.Worker.threadToggle(e.id)).heightIn(min = 40.dp).padding(vertical = 5.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
@@ -682,7 +689,7 @@ private fun ThoughtRow(t: ThreadView.Thought, open: Boolean, onToggle: () -> Uni
     val e = t.entry
     Column(Modifier.fillMaxWidth().tagged(Tags.Worker.threadEntry(e.id))) {
         Row(
-            Modifier.fillMaxWidth().clip(RoundedCornerShape(3.dp)).toggleable(open, role = Role.Switch) { onToggle() }
+            Modifier.fillMaxWidth().clip(RoundedCornerShape(3.dp)).disclosure(open, onToggle)
                 .tagged(Tags.Worker.threadToggle(e.id)).heightIn(min = 40.dp).padding(vertical = 5.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
@@ -778,7 +785,7 @@ private fun OnNow(w: WorkerInfo) {
 @Composable
 private fun NeedsTty(question: String, onTty: () -> Unit) {
     Column(
-        Modifier.fillMaxWidth().panel(RoundedCornerShape(12.dp), Palette.Danger.copy(alpha = 0.08f), Palette.Danger.copy(alpha = 0.4f))
+        Modifier.fillMaxWidth().panel(RoundedCornerShape(4.dp), Palette.Danger.copy(alpha = 0.07f), Palette.Danger.copy(alpha = 0.4f))
             .tagged(Tags.Asks.CARD).padding(12.dp),
     ) {
         Eyebrow("Needs you", color = Palette.Danger)
@@ -788,7 +795,7 @@ private fun NeedsTty(question: String, onTty: () -> Unit) {
             style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(top = 6.dp).tagged(Tags.Asks.WAITING),
         )
         Row(Modifier.fillMaxWidth().padding(top = 10.dp), horizontalArrangement = Arrangement.End) {
-            SecondaryButton("Answer in Raw TTY", onTty, Modifier.tagged(Tags.Worker.THREAD_RAW_TTY), icon = OfficeIcons.Terminal, color = Palette.Accent)
+            QuietButton("Answer in Raw TTY", OfficeIcons.Terminal, Tags.Worker.THREAD_RAW_TTY, true, onTty)
         }
     }
 }
@@ -800,7 +807,7 @@ private fun NeedsTty(question: String, onTty: () -> Unit) {
 @Composable
 internal fun ThreadWaiting(w: WorkerInfo, onTty: () -> Unit) {
     Row(
-        Modifier.fillMaxWidth().padding(start = 10.dp, end = 10.dp, bottom = 10.dp).panel(RoundedCornerShape(14.dp), Palette.Surface, Palette.BorderStrong)
+        Modifier.fillMaxWidth().padding(start = 10.dp, end = 10.dp, bottom = 10.dp).panel(RoundedCornerShape(4.dp), Palette.Surface, Palette.BorderStrong)
             .tagged(Tags.Worker.THREAD_WAITING).padding(start = 12.dp, end = 6.dp, top = 6.dp, bottom = 6.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
@@ -809,6 +816,6 @@ internal fun ThreadWaiting(w: WorkerInfo, onTty: () -> Unit) {
             style = MaterialTheme.typography.bodySmall, modifier = Modifier.weight(1f).padding(vertical = 6.dp),
         )
         Spacer(Modifier.width(8.dp))
-        SecondaryButton("Raw TTY", onTty, icon = OfficeIcons.Terminal)
+        QuietButton("Raw TTY", OfficeIcons.Terminal, Tags.Worker.THREAD_WAITING_TTY, true, onTty)
     }
 }

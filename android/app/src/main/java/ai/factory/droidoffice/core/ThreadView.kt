@@ -45,7 +45,15 @@ object ThreadView {
     }
 
     /** A tool call as a person would say it: [title] in words, [detail] a short path or pattern, never the raw arguments. */
-    data class Action(override val entry: ThreadEntry, val kind: Kind, val title: String, val detail: String?, val state: ToolState) : Item
+    data class Action(
+        override val entry: ThreadEntry,
+        val kind: Kind,
+        val title: String,
+        val detail: String?,
+        val state: ToolState,
+        /** The files it read or changed, for counting them: a patch can touch several. */
+        val paths: List<String> = emptyList(),
+    ) : Item
 
     data class Thought(override val entry: ThreadEntry, val preview: String) : Item
 
@@ -119,9 +127,8 @@ object ThreadView {
     private fun planKey(plan: List<PlanStep>) = plan.joinToString("\n") { "${it.done}${it.active}${it.text}" }
 
     private fun activity(run: List<ThreadEntry>, live: Boolean, lastPlan: String?): Activity? {
-        val concrete = run.any { it.kind == ThreadKind.Tool && it.name != "Script" && it.name !in BOOKKEEPING }
         val items = ArrayList<Item>()
-        for (e in run) {
+        for ((i, e) in run.withIndex()) {
             when (e.kind) {
                 ThreadKind.Thinking -> e.text?.lineSequence()?.firstOrNull { it.isNotBlank() }?.let { items += Thought(e, it.trim().trim('*').trim()) }
                 ThreadKind.Tool -> {
@@ -129,7 +136,7 @@ object ThreadView {
                     val name = e.name.orEmpty()
                     val failed = state == ToolState.Failed
                     if (!failed && name in BOOKKEEPING) continue
-                    if (!failed && name == "Script" && concrete) continue
+                    if (!failed && name == "Script" && wraps(run, i)) continue
                     items += action(e, state)
                 }
                 else -> Unit
@@ -154,6 +161,19 @@ object ThreadView {
         )
     }
 
+    /**
+     * The Script at [at] made calls of its own that the run shows: Droid logs them after the script,
+     * before the next one. A script with none, or only bookkeeping, keeps its own row and result.
+     */
+    private fun wraps(run: List<ThreadEntry>, at: Int): Boolean {
+        for (e in run.subList(at + 1, run.size)) {
+            if (e.kind != ThreadKind.Tool) continue
+            if (e.name == "Script") return false
+            if (e.name !in BOOKKEEPING || e.error) return true
+        }
+        return false
+    }
+
     /** "1. [in progress] Check the merge" lines, as the office writes a plan snapshot. */
     fun plan(text: String): List<PlanStep> = text.lineSequence().mapNotNull { line ->
         val m = PLAN_LINE.matchEntire(line.trim()) ?: return@mapNotNull null
@@ -169,7 +189,7 @@ object ThreadView {
             val reason = e.id.takeIf { it.startsWith("turn:") }?.substringAfterLast(':')?.ifEmpty { null }
                 ?: text.substringAfter("·", "").trim().ifEmpty { null }
             return when {
-                text == "Turn cancelled" || reason == "cancelled" -> Notice(e, "Stopped", Tone.Quiet)
+                text == "Turn cancelled" || reason == "cancelled" -> Notice(e, "Turn cancelled", Tone.Quiet)
                 reason == null || reason == "completed" -> null
                 else -> Notice(e, turnStop(reason), Tone.Danger)
             }
@@ -206,7 +226,7 @@ object ThreadView {
         val o = obj(e.input)
         val path = o?.str("file_path") ?: o?.str("path") ?: o?.str("directory_path") ?: o?.str("folder")
         val failedVerb = state == ToolState.Failed
-        fun a(kind: Kind, title: String, detail: String? = null) = Action(e, kind, clip(title, 90), detail?.let { clip(it, 70) }, state)
+        fun a(kind: Kind, title: String, detail: String? = null, paths: List<String> = listOfNotNull(path)) = Action(e, kind, clip(title, 90), detail?.let { clip(it, 70) }, state, paths)
         return when (name) {
             "Read" -> a(Kind.Read, "Read ${path?.let(::baseName) ?: "a file"}", path?.let(::shortPath))
             "LS" -> a(Kind.List, "Listed ${path?.let(::baseName) ?: "a folder"}", path?.let(::shortPath))
@@ -220,7 +240,7 @@ object ThreadView {
             "Create", "Write" -> a(Kind.Create, "Created ${path?.let(::baseName) ?: "a file"}", path?.let(::shortPath))
             "ApplyPatch" -> {
                 val files = patchFiles(o?.str("input") ?: o?.str("patch") ?: e.input.orEmpty())
-                a(Kind.Edit, if (files.isEmpty()) "Edited files" else "Edited ${files.map(::baseName).distinct().joinToString(", ")}", files.firstOrNull()?.let(::shortPath)?.takeIf { files.size == 1 })
+                a(Kind.Edit, if (files.isEmpty()) "Edited files" else "Edited ${files.map(::baseName).distinct().joinToString(", ")}", files.firstOrNull()?.let(::shortPath)?.takeIf { files.size == 1 }, files)
             }
             "FetchUrl" -> a(Kind.Web, o?.str("url")?.let { "Read ${host(it)}" } ?: "Read a web page")
             "WebSearch" -> a(Kind.WebSearch, o?.str("query")?.let { "Searched the web for “${clip(it, 48)}”" } ?: "Searched the web")
@@ -265,26 +285,34 @@ object ThreadView {
         Kind.Other to ("Used a tool" to "Used %d tools"),
     ).toMap()
 
-    /** "Read 3 files · Ran 2 commands", in the order the run first did each; past three kinds, "and 4 more". */
+    /**
+     * "Read 3 files · Ran 2 commands", in the order the run first did each; past three kinds, how many more actions.
+     * Bookkeeping shown only because it failed isn't counted as done: its failure says it instead.
+     */
     fun summary(actions: List<Action>): String {
         if (actions.isEmpty()) return "Thought"
+        val counted = actions.filterNot { it.state == ToolState.Failed && (it.kind == Kind.Plan || it.kind == Kind.Skill) }
+        if (counted.isEmpty()) return actions.first().title
         val byKind = LinkedHashMap<Kind, Int>()
         val seen = HashMap<Kind, MutableSet<String>>()
-        for (a in actions) {
+        for (a in counted) {
             // Reading or editing the same file twice is still one file.
-            val unit = if (a.kind == Kind.Read || a.kind == Kind.Edit || a.kind == Kind.Create) a.detail ?: a.title else a.entry.id
-            if (seen.getOrPut(a.kind) { HashSet() }.add(unit)) byKind[a.kind] = (byKind[a.kind] ?: 0) + 1
-            else byKind.putIfAbsent(a.kind, 0)
+            val units = if (a.kind == Kind.Read || a.kind == Kind.Edit || a.kind == Kind.Create) a.paths.ifEmpty { listOf(a.title) } else listOf(a.entry.id)
+            val set = seen.getOrPut(a.kind) { HashSet() }
+            byKind.putIfAbsent(a.kind, 0)
+            for (u in units) if (set.add(u)) byKind[a.kind] = byKind.getValue(a.kind) + 1
         }
         val parts = byKind.entries.map { (k, n) -> COUNTED.getValue(k).let { (one, many) -> if (n <= 1) one else many.format(n) } }
         val shown = parts.take(3)
-        val rest = byKind.entries.drop(3).sumOf { maxOf(it.value, 1) }
+        val folded = byKind.keys.drop(3).toSet()
+        val rest = counted.count { it.kind in folded }
         return (shown + listOfNotNull(if (rest > 0) "$rest more" else null)).joinToString(" · ")
     }
 
     /** A path as short as still says which file: inside a worktree, from its root; under a home folder, from `~`; past three folders deep, its last three. */
     fun shortPath(path: String): String {
         var p = path.trim()
+        WORKTREE_ROOT.matchEntire(p)?.let { return it.groupValues[1] }
         WORKTREE.find(p)?.let { p = p.substring(it.range.last + 1) }
             ?: HOME.find(p)?.let { p = "~/" + p.substring(it.range.last + 1) }
         val parts = p.split('/').filter { it.isNotEmpty() }
@@ -295,6 +323,7 @@ object ThreadView {
     fun baseName(path: String) = path.trimEnd('/').substringAfterLast('/').ifEmpty { path }
 
     private val WORKTREE = Regex("""^.*?/\.droid-office/worktrees/[^/]+/""")
+    private val WORKTREE_ROOT = Regex("""^.*?/\.droid-office/worktrees/([^/]+)/?$""")
     private val HOME = Regex("""^/(?:Users|home)/[^/]+/""")
     private val HOME_ANYWHERE = Regex("""/(?:Users|home)/[^/\s'"]+/""")
     private val WORKTREE_ANYWHERE = Regex("""[^\s'"]*/\.droid-office/worktrees/[^/\s'"]+/?""")

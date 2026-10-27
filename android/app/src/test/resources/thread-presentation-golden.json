@@ -1,0 +1,1434 @@
+{
+  "version": 1,
+  "about": "The Thread's presentation contract, shared by the Android app (android/.../core/ThreadView.kt, ThreadGoldenTest) and the web companion. Each case is the wire ThreadEntry list the office sends (src/shared/worker-thread.ts) and the rows a platform shows for it. Change the fixture and both projections together.",
+  "schema": {
+    "case": "{ name: string (unique), busy: boolean (the worker is in a turn), entries: ThreadEntry[] (wire shape, oldest first), expected: Row[] }",
+    "message": "{ kind: 'message', id: entry id, role: 'user' | 'assistant', startsTurn: boolean (first assistant message after the owner's, or the first one: the only one that carries the worker's name) }",
+    "notice": "{ kind: 'notice', id: entry id, text: string (the copy shown), tone: 'quiet' | 'danger' | 'attachment' }",
+    "activity": "{ kind: 'activity', id: 'activity:' + first raw entry id of the run (hidden ones included), summary: string (the closed line), live: boolean (newest run while busy), items: Item[] (shown actions and thoughts, in order), failed: string[] (titles of failed actions, shown even closed), noResult: number, plan: PlanStep[] | null (the run's latest plan only when it changed since the last one shown; never a row) }",
+    "action": "{ type: 'action', id: entry id, title: string (human, never a raw command, JSON or absolute home path), detail: string | null (quiet secondary line: a short path, pattern, subagent type, or a command shortened only when there is no summary), state: 'done' | 'running' | 'failed' | 'no_result' }",
+    "thought": "{ type: 'thought', id: entry id, preview: string (first non-blank line, ** trimmed) }",
+    "planStep": "{ status: 'completed' | 'in_progress' | 'pending', text: string }",
+    "rules": [
+      "A run is every consecutive tool, thinking and todo entry between messages and shown notices; a run with nothing to show leaves no row.",
+      "Hidden when they succeed: TodoWrite, TodoRead, ToolSearch, Skill, and a Script followed (before the next Script) by a call the run shows. A failed one of any of them is always shown.",
+      "A Script with no shown calls after it stays as 'Ran a script' (its source and result in its details).",
+      "Todo snapshots are never rows.",
+      "Turn ended · completed is hidden; Turn cancelled is a quiet notice; any other ending is a danger notice in words.",
+      "A call with no output is 'running' only in the live run; otherwise 'no_result'. Never 'done' without output.",
+      "summary: verb phrases per kind in first-seen order, files counted once each, then 'N more' actions past three kinds; failed bookkeeping isn't counted; 'Thought' for a run of only thoughts."
+    ]
+  },
+  "cases": [
+    {
+      "name": "reported_release_turn",
+      "busy": false,
+      "entries": [
+        {
+          "id": "msg-1:0",
+          "role": "assistant",
+          "kind": "text",
+          "text": "The PR was pushed and merged. I'll check the release workflow now to see whether it finished, failed, or never started.",
+          "seq": 0
+        },
+        {
+          "id": "tool:toolu_2",
+          "role": "assistant",
+          "kind": "tool",
+          "name": "Script",
+          "input": "{\n  \"script\": \"await Promise.allSettled([\\ntools.Read({file_path:\\\"/Users/nik/repos/droid-office/.droid-office/worktrees/byte-090d/src/a.ts\\\"})\\n])\"\n}",
+          "output": "[{\"type\":\"text\",\"text\":\"exit 0\"}]",
+          "seq": 1
+        },
+        {
+          "id": "tool:toolu_3",
+          "role": "assistant",
+          "kind": "tool",
+          "name": "TodoWrite",
+          "input": "{\n  \"todos\": \"1. [in_progress] Check the merged commit and main release workflow\\n2. [pending] Identify any release blocker and report the published status\"\n}",
+          "output": "TODO List Updated",
+          "seq": 2
+        },
+        {
+          "id": "tool:toolu_4",
+          "role": "assistant",
+          "kind": "tool",
+          "name": "Read",
+          "input": "{\n  \"file_path\": \"/Users/nik/repos/droid-office/.droid-office/worktrees/byte-090d/.github/workflows/release.yml\"\n}",
+          "output": "name: release\n...",
+          "seq": 3
+        },
+        {
+          "id": "tool:toolu_5",
+          "role": "assistant",
+          "kind": "tool",
+          "name": "Execute",
+          "input": "{\n  \"command\": \"gh pr view 307 --repo nikships/droid-office --json state,mergeCommit\",\n  \"summary\": \"Check PR 307 merge state\",\n  \"riskLevel\": \"low\"\n}",
+          "output": "{\"state\":\"MERGED\"}",
+          "seq": 4
+        },
+        {
+          "id": "rec-6:todo",
+          "role": "system",
+          "kind": "todo",
+          "text": "1. [in progress] Check the merged commit and main release workflow\n2. [pending] Identify any release blocker and report the published status",
+          "seq": 5
+        },
+        {
+          "id": "tool:toolu_7",
+          "role": "assistant",
+          "kind": "tool",
+          "name": "Script",
+          "input": "{\n  \"script\": \"await Promise.allSettled([\\ntools.Read({file_path:\\\"/Users/nik/repos/droid-office/.droid-office/worktrees/byte-090d/src/a.ts\\\"})\\n])\"\n}",
+          "output": "[{\"type\":\"text\",\"text\":\"exit 0\"}]",
+          "seq": 6
+        },
+        {
+          "id": "tool:toolu_8",
+          "role": "assistant",
+          "kind": "tool",
+          "name": "Execute",
+          "input": "{\n  \"command\": \"gh release view v0.1.611 --repo nikships/droid-office\",\n  \"summary\": \"View the published release\",\n  \"riskLevel\": \"low\"\n}",
+          "output": "v0.1.611",
+          "seq": 7
+        },
+        {
+          "id": "tool:toolu_9",
+          "role": "assistant",
+          "kind": "tool",
+          "name": "Execute",
+          "input": "{\n  \"command\": \"gh run view 40426951831 --repo nikships/droid-office --log > /Users/nik/repos/droid-office/.droid-office/worktrees/byte-090d/run.log\",\n  \"riskLevel\": \"low\"\n}",
+          "output": "completed success",
+          "seq": 8
+        },
+        {
+          "id": "tool:toolu_10",
+          "role": "assistant",
+          "kind": "tool",
+          "name": "TodoWrite",
+          "input": "{\n  \"todos\": \"1. [completed] Check the merged commit and main release workflow\\n2. [in_progress] Identify any release blocker and report the published status\"\n}",
+          "output": "TODO List Updated",
+          "seq": 9
+        },
+        {
+          "id": "rec-11:todo",
+          "role": "system",
+          "kind": "todo",
+          "text": "1. [completed] Check the merged commit and main release workflow\n2. [in progress] Identify any release blocker and report the published status",
+          "seq": 10
+        },
+        {
+          "id": "msg-12:0",
+          "role": "assistant",
+          "kind": "text",
+          "text": "Release **v0.1.611** is published and the workflow succeeded.",
+          "seq": 11
+        }
+      ],
+      "expected": [
+        {
+          "kind": "message",
+          "id": "msg-1:0",
+          "role": "assistant",
+          "startsTurn": true
+        },
+        {
+          "kind": "activity",
+          "id": "activity:tool:toolu_2",
+          "summary": "Read a file · Ran 3 commands",
+          "live": false,
+          "items": [
+            {
+              "type": "action",
+              "id": "tool:toolu_4",
+              "title": "Read release.yml",
+              "detail": ".github/workflows/release.yml",
+              "state": "done"
+            },
+            {
+              "type": "action",
+              "id": "tool:toolu_5",
+              "title": "Check PR 307 merge state",
+              "detail": null,
+              "state": "done"
+            },
+            {
+              "type": "action",
+              "id": "tool:toolu_8",
+              "title": "View the published release",
+              "detail": null,
+              "state": "done"
+            },
+            {
+              "type": "action",
+              "id": "tool:toolu_9",
+              "title": "Ran a command",
+              "detail": "gh run view 40426951831 --repo nikships/droid-office --log > run.log",
+              "state": "done"
+            }
+          ],
+          "failed": [],
+          "noResult": 0,
+          "plan": [
+            {
+              "status": "completed",
+              "text": "Check the merged commit and main release workflow"
+            },
+            {
+              "status": "in_progress",
+              "text": "Identify any release blocker and report the published status"
+            }
+          ]
+        },
+        {
+          "kind": "message",
+          "id": "msg-12:0",
+          "role": "assistant",
+          "startsTurn": false
+        }
+      ]
+    },
+    {
+      "name": "failed_bookkeeping_and_wrappers",
+      "busy": false,
+      "entries": [
+        {
+          "id": "msg-1:0",
+          "role": "assistant",
+          "kind": "text",
+          "text": "Checking the plan and skills.",
+          "seq": 0
+        },
+        {
+          "id": "tool:toolu_2",
+          "role": "assistant",
+          "kind": "tool",
+          "name": "TodoWrite",
+          "input": "{\n  \"todos\": 7\n}",
+          "output": "Invalid todos: expected a string",
+          "error": true,
+          "seq": 1
+        },
+        {
+          "id": "tool:toolu_3",
+          "role": "assistant",
+          "kind": "tool",
+          "name": "Skill",
+          "input": "{\n  \"skill\": \"factory-design\"\n}",
+          "output": "Skill \"factory-design\" not found",
+          "error": true,
+          "seq": 2
+        },
+        {
+          "id": "tool:toolu_4",
+          "role": "assistant",
+          "kind": "tool",
+          "name": "Script",
+          "input": "{\n  \"script\": \"await tools.Read({file_path:\\\"/nope\\\"})\"\n}",
+          "output": "SyntaxError: Unexpected token",
+          "error": true,
+          "seq": 3
+        },
+        {
+          "id": "tool:toolu_5",
+          "role": "assistant",
+          "kind": "tool",
+          "name": "Read",
+          "input": "{\n  \"file_path\": \"/Users/nik/repos/droid-office/.droid-office/worktrees/byte-090d/src/b.ts\"\n}",
+          "output": "export {}",
+          "seq": 4
+        },
+        {
+          "id": "msg-6:0",
+          "role": "assistant",
+          "kind": "text",
+          "text": "Two tools failed.",
+          "seq": 5
+        }
+      ],
+      "expected": [
+        {
+          "kind": "message",
+          "id": "msg-1:0",
+          "role": "assistant",
+          "startsTurn": true
+        },
+        {
+          "kind": "activity",
+          "id": "activity:tool:toolu_2",
+          "summary": "Ran a script · Read a file",
+          "live": false,
+          "items": [
+            {
+              "type": "action",
+              "id": "tool:toolu_2",
+              "title": "Couldn't update the plan",
+              "detail": null,
+              "state": "failed"
+            },
+            {
+              "type": "action",
+              "id": "tool:toolu_3",
+              "title": "Couldn't load the factory-design skill",
+              "detail": null,
+              "state": "failed"
+            },
+            {
+              "type": "action",
+              "id": "tool:toolu_4",
+              "title": "A script failed",
+              "detail": null,
+              "state": "failed"
+            },
+            {
+              "type": "action",
+              "id": "tool:toolu_5",
+              "title": "Read b.ts",
+              "detail": "src/b.ts",
+              "state": "done"
+            }
+          ],
+          "failed": [
+            "Couldn't update the plan",
+            "Couldn't load the factory-design skill",
+            "A script failed"
+          ],
+          "noResult": 0,
+          "plan": null
+        },
+        {
+          "kind": "message",
+          "id": "msg-6:0",
+          "role": "assistant",
+          "startsTurn": false
+        }
+      ]
+    },
+    {
+      "name": "live_run_while_busy",
+      "busy": true,
+      "entries": [
+        {
+          "id": "msg-1:0",
+          "role": "user",
+          "kind": "text",
+          "text": "Run the tests",
+          "seq": 0
+        },
+        {
+          "id": "tool:toolu_2",
+          "role": "assistant",
+          "kind": "tool",
+          "name": "Read",
+          "input": "{\n  \"file_path\": \"/Users/nik/repos/droid-office/.droid-office/worktrees/byte-090d/package.json\"\n}",
+          "output": "{}",
+          "seq": 1
+        },
+        {
+          "id": "tool:toolu_3",
+          "role": "assistant",
+          "kind": "tool",
+          "name": "Execute",
+          "input": "{\n  \"command\": \"npm test\",\n  \"summary\": \"Run the tests\",\n  \"riskLevel\": \"low\"\n}",
+          "seq": 2
+        }
+      ],
+      "expected": [
+        {
+          "kind": "message",
+          "id": "msg-1:0",
+          "role": "user",
+          "startsTurn": false
+        },
+        {
+          "kind": "activity",
+          "id": "activity:tool:toolu_2",
+          "summary": "Read a file · Ran a command",
+          "live": true,
+          "items": [
+            {
+              "type": "action",
+              "id": "tool:toolu_2",
+              "title": "Read package.json",
+              "detail": "package.json",
+              "state": "done"
+            },
+            {
+              "type": "action",
+              "id": "tool:toolu_3",
+              "title": "Run the tests",
+              "detail": null,
+              "state": "running"
+            }
+          ],
+          "failed": [],
+          "noResult": 0,
+          "plan": null
+        }
+      ]
+    },
+    {
+      "name": "no_result_when_idle",
+      "busy": false,
+      "entries": [
+        {
+          "id": "msg-1:0",
+          "role": "user",
+          "kind": "text",
+          "text": "Run the tests",
+          "seq": 0
+        },
+        {
+          "id": "tool:toolu_2",
+          "role": "assistant",
+          "kind": "tool",
+          "name": "Read",
+          "input": "{\n  \"file_path\": \"/Users/nik/repos/droid-office/.droid-office/worktrees/byte-090d/package.json\"\n}",
+          "output": "{}",
+          "seq": 1
+        },
+        {
+          "id": "tool:toolu_3",
+          "role": "assistant",
+          "kind": "tool",
+          "name": "Execute",
+          "input": "{\n  \"command\": \"npm test\",\n  \"summary\": \"Run the tests\",\n  \"riskLevel\": \"low\"\n}",
+          "seq": 2
+        }
+      ],
+      "expected": [
+        {
+          "kind": "message",
+          "id": "msg-1:0",
+          "role": "user",
+          "startsTurn": false
+        },
+        {
+          "kind": "activity",
+          "id": "activity:tool:toolu_2",
+          "summary": "Read a file · Ran a command",
+          "live": false,
+          "items": [
+            {
+              "type": "action",
+              "id": "tool:toolu_2",
+              "title": "Read package.json",
+              "detail": "package.json",
+              "state": "done"
+            },
+            {
+              "type": "action",
+              "id": "tool:toolu_3",
+              "title": "Run the tests",
+              "detail": null,
+              "state": "no_result"
+            }
+          ],
+          "failed": [],
+          "noResult": 1,
+          "plan": null
+        }
+      ]
+    },
+    {
+      "name": "no_result_before_a_later_message_while_busy",
+      "busy": true,
+      "entries": [
+        {
+          "id": "msg-1:0",
+          "role": "user",
+          "kind": "text",
+          "text": "Wait for it",
+          "seq": 0
+        },
+        {
+          "id": "tool:toolu_2",
+          "role": "assistant",
+          "kind": "tool",
+          "name": "Execute",
+          "input": "{\n  \"command\": \"sleep 600\",\n  \"summary\": \"Wait for the build\",\n  \"riskLevel\": \"low\"\n}",
+          "seq": 1
+        },
+        {
+          "id": "msg-3:0",
+          "role": "assistant",
+          "kind": "text",
+          "text": "The wait was interrupted, so I'll check directly.",
+          "seq": 2
+        },
+        {
+          "id": "tool:toolu_4",
+          "role": "assistant",
+          "kind": "tool",
+          "name": "Read",
+          "input": "{\n  \"file_path\": \"/Users/nik/repos/droid-office/.droid-office/worktrees/byte-090d/build.log\"\n}",
+          "output": "ok",
+          "seq": 3
+        }
+      ],
+      "expected": [
+        {
+          "kind": "message",
+          "id": "msg-1:0",
+          "role": "user",
+          "startsTurn": false
+        },
+        {
+          "kind": "activity",
+          "id": "activity:tool:toolu_2",
+          "summary": "Ran a command",
+          "live": false,
+          "items": [
+            {
+              "type": "action",
+              "id": "tool:toolu_2",
+              "title": "Wait for the build",
+              "detail": null,
+              "state": "no_result"
+            }
+          ],
+          "failed": [],
+          "noResult": 1,
+          "plan": null
+        },
+        {
+          "kind": "message",
+          "id": "msg-3:0",
+          "role": "assistant",
+          "startsTurn": true
+        },
+        {
+          "kind": "activity",
+          "id": "activity:tool:toolu_4",
+          "summary": "Read a file",
+          "live": true,
+          "items": [
+            {
+              "type": "action",
+              "id": "tool:toolu_4",
+              "title": "Read build.log",
+              "detail": "build.log",
+              "state": "done"
+            }
+          ],
+          "failed": [],
+          "noResult": 0,
+          "plan": null
+        }
+      ]
+    },
+    {
+      "name": "script_followed_by_its_calls",
+      "busy": false,
+      "entries": [
+        {
+          "id": "msg-1:0",
+          "role": "assistant",
+          "kind": "text",
+          "text": "Reading.",
+          "seq": 0
+        },
+        {
+          "id": "tool:toolu_2",
+          "role": "assistant",
+          "kind": "tool",
+          "name": "Script",
+          "input": "{\n  \"script\": \"await Promise.allSettled([\\ntools.Read({file_path:\\\"/Users/nik/repos/droid-office/.droid-office/worktrees/byte-090d/src/a.ts\\\"})\\n])\"\n}",
+          "output": "[{\"type\":\"text\",\"text\":\"exit 0\"}]",
+          "seq": 1
+        },
+        {
+          "id": "tool:toolu_3",
+          "role": "assistant",
+          "kind": "tool",
+          "name": "Read",
+          "input": "{\n  \"file_path\": \"/Users/nik/repos/droid-office/.droid-office/worktrees/byte-090d/src/a.ts\"\n}",
+          "output": "a",
+          "seq": 2
+        },
+        {
+          "id": "tool:toolu_4",
+          "role": "assistant",
+          "kind": "tool",
+          "name": "Execute",
+          "input": "{\n  \"command\": \"git status --short\",\n  \"summary\": \"Show working tree status\",\n  \"riskLevel\": \"low\"\n}",
+          "output": "",
+          "seq": 3
+        },
+        {
+          "id": "msg-5:0",
+          "role": "assistant",
+          "kind": "text",
+          "text": "Done reading.",
+          "seq": 4
+        }
+      ],
+      "expected": [
+        {
+          "kind": "message",
+          "id": "msg-1:0",
+          "role": "assistant",
+          "startsTurn": true
+        },
+        {
+          "kind": "activity",
+          "id": "activity:tool:toolu_2",
+          "summary": "Read a file · Ran a command",
+          "live": false,
+          "items": [
+            {
+              "type": "action",
+              "id": "tool:toolu_3",
+              "title": "Read a.ts",
+              "detail": "src/a.ts",
+              "state": "done"
+            },
+            {
+              "type": "action",
+              "id": "tool:toolu_4",
+              "title": "Show working tree status",
+              "detail": null,
+              "state": "done"
+            }
+          ],
+          "failed": [],
+          "noResult": 0,
+          "plan": null
+        },
+        {
+          "kind": "message",
+          "id": "msg-5:0",
+          "role": "assistant",
+          "startsTurn": false
+        }
+      ]
+    },
+    {
+      "name": "unrelated_read_before_a_standalone_script",
+      "busy": false,
+      "entries": [
+        {
+          "id": "msg-1:0",
+          "role": "assistant",
+          "kind": "text",
+          "text": "Checking.",
+          "seq": 0
+        },
+        {
+          "id": "tool:toolu_2",
+          "role": "assistant",
+          "kind": "tool",
+          "name": "Read",
+          "input": "{\n  \"file_path\": \"/Users/nik/repos/droid-office/.droid-office/worktrees/byte-090d/src/a.ts\"\n}",
+          "output": "a",
+          "seq": 1
+        },
+        {
+          "id": "tool:toolu_3",
+          "role": "assistant",
+          "kind": "tool",
+          "name": "Script",
+          "input": "{\n  \"script\": \"text('hello')\"\n}",
+          "output": "[{\"type\":\"text\",\"text\":\"hello\"}]",
+          "seq": 2
+        },
+        {
+          "id": "msg-4:0",
+          "role": "assistant",
+          "kind": "text",
+          "text": "Checked.",
+          "seq": 3
+        }
+      ],
+      "expected": [
+        {
+          "kind": "message",
+          "id": "msg-1:0",
+          "role": "assistant",
+          "startsTurn": true
+        },
+        {
+          "kind": "activity",
+          "id": "activity:tool:toolu_2",
+          "summary": "Read a file · Ran a script",
+          "live": false,
+          "items": [
+            {
+              "type": "action",
+              "id": "tool:toolu_2",
+              "title": "Read a.ts",
+              "detail": "src/a.ts",
+              "state": "done"
+            },
+            {
+              "type": "action",
+              "id": "tool:toolu_3",
+              "title": "Ran a script",
+              "detail": null,
+              "state": "done"
+            }
+          ],
+          "failed": [],
+          "noResult": 0,
+          "plan": null
+        },
+        {
+          "kind": "message",
+          "id": "msg-4:0",
+          "role": "assistant",
+          "startsTurn": false
+        }
+      ]
+    },
+    {
+      "name": "script_with_only_bookkeeping_calls",
+      "busy": false,
+      "entries": [
+        {
+          "id": "msg-1:0",
+          "role": "assistant",
+          "kind": "text",
+          "text": "Planning.",
+          "seq": 0
+        },
+        {
+          "id": "tool:toolu_2",
+          "role": "assistant",
+          "kind": "tool",
+          "name": "Script",
+          "input": "{\n  \"script\": \"await tools.TodoWrite({todos:\\\"1. [pending] x\\\"})\"\n}",
+          "output": "[{\"type\":\"text\",\"text\":\"exit 0\"}]",
+          "seq": 1
+        },
+        {
+          "id": "tool:toolu_3",
+          "role": "assistant",
+          "kind": "tool",
+          "name": "TodoWrite",
+          "input": "{\n  \"todos\": \"1. [pending] x\"\n}",
+          "output": "TODO List Updated",
+          "seq": 2
+        },
+        {
+          "id": "msg-4:0",
+          "role": "assistant",
+          "kind": "text",
+          "text": "Planned.",
+          "seq": 3
+        }
+      ],
+      "expected": [
+        {
+          "kind": "message",
+          "id": "msg-1:0",
+          "role": "assistant",
+          "startsTurn": true
+        },
+        {
+          "kind": "activity",
+          "id": "activity:tool:toolu_2",
+          "summary": "Ran a script",
+          "live": false,
+          "items": [
+            {
+              "type": "action",
+              "id": "tool:toolu_2",
+              "title": "Ran a script",
+              "detail": null,
+              "state": "done"
+            }
+          ],
+          "failed": [],
+          "noResult": 0,
+          "plan": null
+        },
+        {
+          "kind": "message",
+          "id": "msg-4:0",
+          "role": "assistant",
+          "startsTurn": false
+        }
+      ]
+    },
+    {
+      "name": "bookkeeping_only_run_leaves_no_row",
+      "busy": false,
+      "entries": [
+        {
+          "id": "msg-1:0",
+          "role": "assistant",
+          "kind": "text",
+          "text": "Loading tools.",
+          "seq": 0
+        },
+        {
+          "id": "tool:toolu_2",
+          "role": "assistant",
+          "kind": "tool",
+          "name": "ToolSearch",
+          "input": "{\n  \"query\": \"select:WebSearch\"\n}",
+          "output": "Loaded",
+          "seq": 1
+        },
+        {
+          "id": "tool:toolu_3",
+          "role": "assistant",
+          "kind": "tool",
+          "name": "Skill",
+          "input": "{\n  \"skill\": \"factory-design\"\n}",
+          "output": "Skill \"factory-design\" is now active.",
+          "seq": 2
+        },
+        {
+          "id": "tool:toolu_4",
+          "role": "assistant",
+          "kind": "tool",
+          "name": "TodoWrite",
+          "input": "{\n  \"todos\": \"1. [pending] x\"\n}",
+          "output": "TODO List Updated",
+          "seq": 3
+        },
+        {
+          "id": "rec-5:todo",
+          "role": "system",
+          "kind": "todo",
+          "text": "1. [pending] x",
+          "seq": 4
+        },
+        {
+          "id": "msg-6:0",
+          "role": "assistant",
+          "kind": "text",
+          "text": "Ready.",
+          "seq": 5
+        }
+      ],
+      "expected": [
+        {
+          "kind": "message",
+          "id": "msg-1:0",
+          "role": "assistant",
+          "startsTurn": true
+        },
+        {
+          "kind": "message",
+          "id": "msg-6:0",
+          "role": "assistant",
+          "startsTurn": false
+        }
+      ]
+    },
+    {
+      "name": "changed_plan_dedup",
+      "busy": false,
+      "entries": [
+        {
+          "id": "msg-1:0",
+          "role": "assistant",
+          "kind": "text",
+          "text": "Step one.",
+          "seq": 0
+        },
+        {
+          "id": "tool:toolu_2",
+          "role": "assistant",
+          "kind": "tool",
+          "name": "Read",
+          "input": "{\n  \"file_path\": \"/tmp/a.txt\"\n}",
+          "output": "a",
+          "seq": 1
+        },
+        {
+          "id": "rec-3:todo",
+          "role": "system",
+          "kind": "todo",
+          "text": "1. [in progress] Read the files\n2. [pending] Write the report",
+          "seq": 2
+        },
+        {
+          "id": "msg-4:0",
+          "role": "assistant",
+          "kind": "text",
+          "text": "Step two.",
+          "seq": 3
+        },
+        {
+          "id": "tool:toolu_5",
+          "role": "assistant",
+          "kind": "tool",
+          "name": "Read",
+          "input": "{\n  \"file_path\": \"/tmp/b.txt\"\n}",
+          "output": "b",
+          "seq": 4
+        },
+        {
+          "id": "rec-6:todo",
+          "role": "system",
+          "kind": "todo",
+          "text": "1. [in progress] Read the files\n2. [pending] Write the report",
+          "seq": 5
+        },
+        {
+          "id": "msg-7:0",
+          "role": "assistant",
+          "kind": "text",
+          "text": "Step three.",
+          "seq": 6
+        },
+        {
+          "id": "tool:toolu_8",
+          "role": "assistant",
+          "kind": "tool",
+          "name": "Read",
+          "input": "{\n  \"file_path\": \"/tmp/c.txt\"\n}",
+          "output": "c",
+          "seq": 7
+        },
+        {
+          "id": "rec-9:todo",
+          "role": "system",
+          "kind": "todo",
+          "text": "1. [completed] Read the files\n2. [in progress] Write the report",
+          "seq": 8
+        }
+      ],
+      "expected": [
+        {
+          "kind": "message",
+          "id": "msg-1:0",
+          "role": "assistant",
+          "startsTurn": true
+        },
+        {
+          "kind": "activity",
+          "id": "activity:tool:toolu_2",
+          "summary": "Read a file",
+          "live": false,
+          "items": [
+            {
+              "type": "action",
+              "id": "tool:toolu_2",
+              "title": "Read a.txt",
+              "detail": "/tmp/a.txt",
+              "state": "done"
+            }
+          ],
+          "failed": [],
+          "noResult": 0,
+          "plan": [
+            {
+              "status": "in_progress",
+              "text": "Read the files"
+            },
+            {
+              "status": "pending",
+              "text": "Write the report"
+            }
+          ]
+        },
+        {
+          "kind": "message",
+          "id": "msg-4:0",
+          "role": "assistant",
+          "startsTurn": false
+        },
+        {
+          "kind": "activity",
+          "id": "activity:tool:toolu_5",
+          "summary": "Read a file",
+          "live": false,
+          "items": [
+            {
+              "type": "action",
+              "id": "tool:toolu_5",
+              "title": "Read b.txt",
+              "detail": "/tmp/b.txt",
+              "state": "done"
+            }
+          ],
+          "failed": [],
+          "noResult": 0,
+          "plan": null
+        },
+        {
+          "kind": "message",
+          "id": "msg-7:0",
+          "role": "assistant",
+          "startsTurn": false
+        },
+        {
+          "kind": "activity",
+          "id": "activity:tool:toolu_8",
+          "summary": "Read a file",
+          "live": false,
+          "items": [
+            {
+              "type": "action",
+              "id": "tool:toolu_8",
+              "title": "Read c.txt",
+              "detail": "/tmp/c.txt",
+              "state": "done"
+            }
+          ],
+          "failed": [],
+          "noResult": 0,
+          "plan": [
+            {
+              "status": "completed",
+              "text": "Read the files"
+            },
+            {
+              "status": "in_progress",
+              "text": "Write the report"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "notices",
+      "busy": false,
+      "entries": [
+        {
+          "id": "msg-1:0",
+          "role": "user",
+          "kind": "text",
+          "text": "Go",
+          "seq": 0
+        },
+        {
+          "id": "msg-u:1",
+          "role": "user",
+          "kind": "notice",
+          "text": "[Image attachment]",
+          "seq": 1
+        },
+        {
+          "id": "tool:toolu_2",
+          "role": "assistant",
+          "kind": "tool",
+          "name": "Read",
+          "input": "{\n  \"file_path\": \"/tmp/a.txt\"\n}",
+          "output": "a",
+          "seq": 2
+        },
+        {
+          "id": "turn:t1:completed",
+          "role": "system",
+          "kind": "notice",
+          "text": "Turn ended · completed",
+          "seq": 3
+        },
+        {
+          "id": "tool:toolu_3",
+          "role": "assistant",
+          "kind": "tool",
+          "name": "Read",
+          "input": "{\n  \"file_path\": \"/tmp/b.txt\"\n}",
+          "output": "b",
+          "seq": 4
+        },
+        {
+          "id": "turn:t2:cancelled",
+          "role": "system",
+          "kind": "notice",
+          "text": "Turn cancelled",
+          "seq": 5
+        },
+        {
+          "id": "msg-4:0",
+          "role": "user",
+          "kind": "text",
+          "text": "Try again",
+          "seq": 6
+        },
+        {
+          "id": "turn:t3:model_rate_limited",
+          "role": "system",
+          "kind": "notice",
+          "text": "Turn ended · model_rate_limited",
+          "seq": 7
+        },
+        {
+          "id": "oversized:42",
+          "role": "system",
+          "kind": "notice",
+          "text": "A conversation record was too large to display.",
+          "seq": 8
+        }
+      ],
+      "expected": [
+        {
+          "kind": "message",
+          "id": "msg-1:0",
+          "role": "user",
+          "startsTurn": false
+        },
+        {
+          "kind": "notice",
+          "id": "msg-u:1",
+          "text": "Image attached",
+          "tone": "attachment"
+        },
+        {
+          "kind": "activity",
+          "id": "activity:tool:toolu_2",
+          "summary": "Read 2 files",
+          "live": false,
+          "items": [
+            {
+              "type": "action",
+              "id": "tool:toolu_2",
+              "title": "Read a.txt",
+              "detail": "/tmp/a.txt",
+              "state": "done"
+            },
+            {
+              "type": "action",
+              "id": "tool:toolu_3",
+              "title": "Read b.txt",
+              "detail": "/tmp/b.txt",
+              "state": "done"
+            }
+          ],
+          "failed": [],
+          "noResult": 0,
+          "plan": null
+        },
+        {
+          "kind": "notice",
+          "id": "turn:t2:cancelled",
+          "text": "Turn cancelled",
+          "tone": "quiet"
+        },
+        {
+          "kind": "message",
+          "id": "msg-4:0",
+          "role": "user",
+          "startsTurn": false
+        },
+        {
+          "kind": "notice",
+          "id": "turn:t3:model_rate_limited",
+          "text": "The turn stopped: the model was rate limited",
+          "tone": "danger"
+        },
+        {
+          "kind": "notice",
+          "id": "oversized:42",
+          "text": "A conversation record was too large to display.",
+          "tone": "quiet"
+        }
+      ]
+    },
+    {
+      "name": "chronology_with_thinking",
+      "busy": false,
+      "entries": [
+        {
+          "id": "msg-1:0",
+          "role": "user",
+          "kind": "text",
+          "text": "Why is the thread ugly?",
+          "seq": 0
+        },
+        {
+          "id": "msg-2:1",
+          "role": "assistant",
+          "kind": "thinking",
+          "text": "**Considering user interaction flow**\n\nI should read the Thread view first.",
+          "seq": 1
+        },
+        {
+          "id": "tool:toolu_3",
+          "role": "assistant",
+          "kind": "tool",
+          "name": "Read",
+          "input": "{\n  \"file_path\": \"/Users/nik/repos/droid-office/.droid-office/worktrees/byte-090d/android/app/src/main/java/ai/factory/droidoffice/ui/worker/Thread.kt\",\n  \"limit\": 300\n}",
+          "output": "package",
+          "seq": 2
+        },
+        {
+          "id": "msg-4:1",
+          "role": "assistant",
+          "kind": "thinking",
+          "text": "\n\nThe tool rows are equal weight.",
+          "seq": 3
+        },
+        {
+          "id": "tool:toolu_5",
+          "role": "assistant",
+          "kind": "tool",
+          "name": "Grep",
+          "input": "{\n  \"pattern\": \"Promise.allSettled\",\n  \"path\": \"/Users/nik/repos/droid-office/.droid-office/worktrees/byte-090d/src\",\n  \"output_mode\": \"content\"\n}",
+          "output": "[]",
+          "seq": 4
+        },
+        {
+          "id": "msg-6:0",
+          "role": "assistant",
+          "kind": "text",
+          "text": "Every tool call is a card of its own.",
+          "seq": 5
+        },
+        {
+          "id": "msg-7:0",
+          "role": "assistant",
+          "kind": "text",
+          "text": "I would group them between messages.",
+          "seq": 6
+        }
+      ],
+      "expected": [
+        {
+          "kind": "message",
+          "id": "msg-1:0",
+          "role": "user",
+          "startsTurn": false
+        },
+        {
+          "kind": "activity",
+          "id": "activity:msg-2:1",
+          "summary": "Read a file · Searched the code",
+          "live": false,
+          "items": [
+            {
+              "type": "thought",
+              "id": "msg-2:1",
+              "preview": "Considering user interaction flow"
+            },
+            {
+              "type": "action",
+              "id": "tool:toolu_3",
+              "title": "Read Thread.kt",
+              "detail": "…/ui/worker/Thread.kt",
+              "state": "done"
+            },
+            {
+              "type": "thought",
+              "id": "msg-4:1",
+              "preview": "The tool rows are equal weight."
+            },
+            {
+              "type": "action",
+              "id": "tool:toolu_5",
+              "title": "Searched for “Promise.allSettled”",
+              "detail": "src",
+              "state": "done"
+            }
+          ],
+          "failed": [],
+          "noResult": 0,
+          "plan": null
+        },
+        {
+          "kind": "message",
+          "id": "msg-6:0",
+          "role": "assistant",
+          "startsTurn": true
+        },
+        {
+          "kind": "message",
+          "id": "msg-7:0",
+          "role": "assistant",
+          "startsTurn": false
+        }
+      ]
+    },
+    {
+      "name": "titles_paths_and_overflow",
+      "busy": false,
+      "entries": [
+        {
+          "id": "tool:toolu_1",
+          "role": "assistant",
+          "kind": "tool",
+          "name": "Glob",
+          "input": "{\n  \"patterns\": [\n    \"**/*.kt\",\n    \"**/*.ts\"\n  ],\n  \"folder\": \"/Users/nik/repos/droid-office/.droid-office/worktrees/byte-090d\"\n}",
+          "output": "[]",
+          "seq": 0
+        },
+        {
+          "id": "tool:toolu_2",
+          "role": "assistant",
+          "kind": "tool",
+          "name": "LS",
+          "input": "{\n  \"directory_path\": \"/Users/nik/repos/droid-office/.droid-office/worktrees/byte-090d/android\"\n}",
+          "output": "[]",
+          "seq": 1
+        },
+        {
+          "id": "tool:toolu_3",
+          "role": "assistant",
+          "kind": "tool",
+          "name": "Edit",
+          "input": "{\n  \"file_path\": \"/Users/nik/repos/droid-office/.droid-office/worktrees/byte-090d/android/README.md\",\n  \"old_str\": \"a\",\n  \"new_str\": \"b\"\n}",
+          "output": "ok",
+          "seq": 2
+        },
+        {
+          "id": "tool:toolu_4",
+          "role": "assistant",
+          "kind": "tool",
+          "name": "Create",
+          "input": "{\n  \"file_path\": \"/Users/nik/notes/thread.md\",\n  \"content\": \"# x\"\n}",
+          "output": "ok",
+          "seq": 3
+        },
+        {
+          "id": "tool:toolu_5",
+          "role": "assistant",
+          "kind": "tool",
+          "name": "ApplyPatch",
+          "input": "{\n  \"input\": \"*** Begin Patch\\n*** Update File: /Users/nik/repos/droid-office/.droid-office/worktrees/byte-090d/src/client/ui/worker-thread.ts\\n*** Add File: /Users/nik/repos/droid-office/.droid-office/worktrees/byte-090d/src/shared/thread-presentation.ts\\n*** End Patch\"\n}",
+          "output": "ok",
+          "seq": 4
+        },
+        {
+          "id": "tool:toolu_6",
+          "role": "assistant",
+          "kind": "tool",
+          "name": "FetchUrl",
+          "input": "{\n  \"url\": \"https://www.docs.factory.ai/llms.txt\"\n}",
+          "output": "ok",
+          "seq": 5
+        },
+        {
+          "id": "tool:toolu_7",
+          "role": "assistant",
+          "kind": "tool",
+          "name": "WebSearch",
+          "input": "{\n  \"query\": \"compose disclosure accessibility stateDescription\"\n}",
+          "output": "ok",
+          "seq": 6
+        },
+        {
+          "id": "tool:toolu_8",
+          "role": "assistant",
+          "kind": "tool",
+          "name": "Task",
+          "input": "{\n  \"subagent_type\": \"worker\",\n  \"description\": \"audit the thread\",\n  \"prompt\": \"x\"\n}",
+          "output": "ok",
+          "seq": 7
+        },
+        {
+          "id": "tool:toolu_9",
+          "role": "assistant",
+          "kind": "tool",
+          "name": "memory___recall",
+          "input": "{\n  \"query\": \"droid office thread\"\n}",
+          "output": "ok",
+          "seq": 8
+        },
+        {
+          "id": "tool:toolu_10",
+          "role": "assistant",
+          "kind": "tool",
+          "name": "AskUser",
+          "input": "{\n  \"questionnaire\": \"1. [question] Which?\"\n}",
+          "output": "ok",
+          "seq": 9
+        },
+        {
+          "id": "tool:toolu_11",
+          "role": "assistant",
+          "kind": "tool",
+          "name": "gemini-aio___generate_image",
+          "input": "{\n  \"prompt\": \"a desk\"\n}",
+          "output": "ok",
+          "seq": 10
+        }
+      ],
+      "expected": [
+        {
+          "kind": "activity",
+          "id": "activity:tool:toolu_1",
+          "summary": "Searched the code · Listed a folder · Edited 3 files · 7 more",
+          "live": false,
+          "items": [
+            {
+              "type": "action",
+              "id": "tool:toolu_1",
+              "title": "Found files matching **/*.kt, **/*.ts",
+              "detail": "byte-090d",
+              "state": "done"
+            },
+            {
+              "type": "action",
+              "id": "tool:toolu_2",
+              "title": "Listed android",
+              "detail": "android",
+              "state": "done"
+            },
+            {
+              "type": "action",
+              "id": "tool:toolu_3",
+              "title": "Edited README.md",
+              "detail": "android/README.md",
+              "state": "done"
+            },
+            {
+              "type": "action",
+              "id": "tool:toolu_4",
+              "title": "Created thread.md",
+              "detail": "~/notes/thread.md",
+              "state": "done"
+            },
+            {
+              "type": "action",
+              "id": "tool:toolu_5",
+              "title": "Edited worker-thread.ts, thread-presentation.ts",
+              "detail": null,
+              "state": "done"
+            },
+            {
+              "type": "action",
+              "id": "tool:toolu_6",
+              "title": "Read docs.factory.ai",
+              "detail": null,
+              "state": "done"
+            },
+            {
+              "type": "action",
+              "id": "tool:toolu_7",
+              "title": "Searched the web for “compose disclosure accessibility stateDescripti…”",
+              "detail": null,
+              "state": "done"
+            },
+            {
+              "type": "action",
+              "id": "tool:toolu_8",
+              "title": "Audit the thread",
+              "detail": "worker",
+              "state": "done"
+            },
+            {
+              "type": "action",
+              "id": "tool:toolu_9",
+              "title": "Checked memory",
+              "detail": null,
+              "state": "done"
+            },
+            {
+              "type": "action",
+              "id": "tool:toolu_10",
+              "title": "Asked you a question",
+              "detail": null,
+              "state": "done"
+            },
+            {
+              "type": "action",
+              "id": "tool:toolu_11",
+              "title": "Used gemini-aio generate image",
+              "detail": null,
+              "state": "done"
+            }
+          ],
+          "failed": [],
+          "noResult": 0,
+          "plan": null
+        }
+      ]
+    }
+  ]
+}
