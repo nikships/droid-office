@@ -20,6 +20,7 @@ import { confirmDialog, openPrompt, routeWorktreeMessage, sendHomeDialog } from 
 import { modelBadge, modelBadgeNode } from './ui/models';
 import { openFloorOrder } from './ui/floor-reorder';
 import { openSubscriptionsStatus } from './ui/subscriptions-status';
+import { mountWorkerThread, type WorkerThread } from './ui/worker-thread';
 import type { MapDirection } from './office-map-view';
 import type { MapFloor, OfficeMap, OfficeMapHooks } from './office-map';
 
@@ -346,6 +347,7 @@ function paint() {
   paintBanner();
   if (!authorized) {
     officeMap?.stop();
+    thread?.activate(false);
     return paintGate();
   }
   floors.replaceChildren(...(store.floor === ROOF ? [h('option', { value: ROOF }, 'Rooftop · choose a floor')] : []), ...store.floors.map((f) => h('option', { value: f.id }, `${f.name}  —  ${f.repo ?? 'no git'}`)));
@@ -364,8 +366,10 @@ function paint() {
   }
   const overviewing = !selected || !store.workers.get(selected);
   content.classList.toggle('dash-overviewing', overviewing);
-  if (overviewing) paintOverview();
-  else paintWorker(store.workers.get(selected) as WorkerInfo);
+  if (overviewing) {
+    thread?.activate(false);
+    paintOverview();
+  } else paintWorker(store.workers.get(selected) as WorkerInfo);
 }
 
 function paintBanner() {
@@ -892,6 +896,9 @@ function paintPreviews() {
 
 let detailId = '';
 let stageMode = '';
+let thread: WorkerThread | undefined;
+let workerView = read('droid-office.companion-view') === 'thread' ? 'thread' : 'terminal';
+let viewToggle: HTMLElement;
 let stage: HTMLElement;
 let controls: HTMLElement;
 let question: HTMLElement;
@@ -909,6 +916,8 @@ function paintWorker(w: WorkerInfo) {
   if (view !== 'worker') officeMap?.stop();
   view = 'worker';
   if (detailId !== w.id) {
+    thread?.dispose();
+    thread = undefined;
     terminal?.closeTerminal();
     detailId = w.id;
     stageMode = '';
@@ -919,13 +928,35 @@ function paintWorker(w: WorkerInfo) {
     controls = h('div.dash-controls', { role: 'group', 'aria-label': 'Worker actions' });
     question = h('section.dash-question', { 'aria-label': 'Question requiring input', hidden: true });
     stage = h('div.dash-stage');
-    mainEl.replaceChildren(h('div.dash-worker', {}, question, stage));
+    viewToggle = h('div.seg.dash-view-toggle', { role: 'group', 'aria-label': 'Worker view' });
+    mainEl.replaceChildren(h('div.dash-worker', {}, viewToggle, question, stage));
   }
   const local = !w.guest && !w.cloud;
+  const threaded = local && w.kind === 'agent' && workerView === 'thread';
+  viewToggle.hidden = !local || w.kind !== 'agent';
+  viewToggle.replaceChildren(
+    ...(['thread', 'terminal'] as const).map((value) =>
+      h(
+        'button',
+        {
+          type: 'button',
+          class: `btn ${(threaded ? 'thread' : 'terminal') === value ? 'on' : ''}`,
+          'aria-pressed': String((threaded ? 'thread' : 'terminal') === value),
+          onclick: () => {
+            workerView = value;
+            remember('droid-office.companion-view', value);
+            paint();
+          },
+        },
+        value === 'thread' ? 'Thread' : 'Raw TTY',
+      ),
+    ),
+  );
   // Anything without a local terminal to show (outside the office, in Factory, asleep) gets what the office knows of it.
-  const mode = local && !isAsleep(w.status) ? 'terminal' : 'info';
+  const mode = threaded ? 'thread' : local && !isAsleep(w.status) ? 'terminal' : 'info';
   if (mode !== stageMode) {
     stageMode = mode;
+    thread?.activate(false);
     terminal?.closeTerminal();
     infoPreview = undefined;
     if (mode === 'info') {
@@ -936,10 +967,30 @@ function paintWorker(w: WorkerInfo) {
       const s = store.screens.get(w.id);
       infoPreview = s ? h('pre.dash-preview.big', { 'aria-label': `${w.name}’s screen` }) : undefined;
       stage.replaceChildren(h('div.dash-info', {}, h('header.dash-info-head', {}, infoHead, controls), infoActivity, infoPreview ?? null, infoMeta));
+    } else if (mode === 'thread') {
+      const intended = floor;
+      const key = draftKey(intended, w.id);
+      thread ??= mountWorkerThread(net, {
+        worker: w,
+        controls,
+        draft: read(key),
+        onDraft: (text) => remember(key, text),
+        send: (msg) => action(msg, w.id, intended),
+        raw: () => {
+          workerView = 'terminal';
+          remember('droid-office.companion-view', 'terminal');
+          paint();
+        },
+      });
+      stage.replaceChildren(thread.element);
+      thread.activate(true);
     } else stage.replaceChildren(h('div.dash-stage-wait', {}, h('div.spinner'), h('span', {}, 'Opening the terminal…')));
   }
   if (mode === 'terminal') void showTerminal(w.id, stage);
-  else paintInfo(w);
+  else if (mode === 'thread') {
+    thread?.activate(true);
+    thread?.update(w, live());
+  } else paintInfo(w);
   paintControls(w);
   paintQuestion();
 }
@@ -1043,7 +1094,9 @@ function paintQuestion(review = false) {
             ? 'There is no local menu to answer: open its Factory session.'
             : w.guest
               ? 'Answer it in its own terminal; the office won’t type for it.'
-              : 'Its screen has no menu the companion can answer safely. Answer it in the terminal below.',
+              : stageMode === 'thread'
+                ? 'This CLI dialog cannot be answered safely here. Open Raw TTY to continue.'
+                : 'Its screen has no menu the companion can answer safely. Answer it in the terminal below.',
         ),
       ),
     );
@@ -1136,6 +1189,10 @@ function hire(kind: 'agent' | 'shell', deskId = 'auto') {
   });
 }
 function prompt(w: WorkerInfo) {
+  if (stageMode === 'thread' && w.status === 'needs_input') {
+    toast('Answer the current question, or open Raw TTY for this CLI dialog.', 'warn');
+    return;
+  }
   const intended = floor;
   const key = draftKey(intended, w.id);
   openPrompt({
@@ -1146,6 +1203,7 @@ function prompt(w: WorkerInfo) {
     recall: w.kind !== 'shell',
     queueOption: w.kind === 'agent',
     onSubmit: async (text, opts) => {
+      if (stageMode === 'thread' && (store.workers.get(w.id)?.status === 'needs_input' || text.trimStart().startsWith('/'))) return 'Use Raw TTY for CLI dialogs and slash commands. Your draft is kept.';
       const error = await action({ t: 'worker.prompt', workerId: w.id, prompt: text, images: opts.images, queue: opts.queue }, w.id, intended, `Sent to ${w.name}.`);
       if (!error) remember(key, '');
       return error;
@@ -1180,7 +1238,7 @@ async function showTerminal(id: string, mount: HTMLElement) {
     terminal = await import('./ui/terminal');
     terminal.onOpenTeammate((mate) => select(mate));
   }
-  if (terminal.openTerminalFor() === id || selected !== id || !mount.isConnected || !usable(id, intended)) return;
+  if (stageMode !== 'terminal' || terminal.openTerminalFor() === id || selected !== id || !mount.isConnected || !usable(id, intended)) return;
   terminal.openTerminal(net, id, undefined, undefined, { mount, actions: controls, onLeave: () => rows.get(id)?.el.focus() });
 }
 async function openBoard() {

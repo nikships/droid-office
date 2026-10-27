@@ -60,7 +60,7 @@ test('projects actual text, thinking, tool/error, attachment and nested todo rec
       },
       messageIndex: 5,
     },
-    { type: 'agent_turn_outcome', turnId: 'turn', reason: 'complete', resultKind: 'success' },
+    { type: 'agent_turn_outcome', turnId: 'turn', reason: 'cancelled', resultKind: 'text' },
     { type: 'compaction_state', id: 'compact', summaryText: 'PRIVATE_SYSTEM', systemInfoText: 'PRIVATE_SYSTEM' },
   ]);
   const page = await reader.read(source);
@@ -69,7 +69,7 @@ test('projects actual text, thinking, tool/error, attachment and nested todo rec
   assert.equal(page.hasMore, false);
   assert.deepEqual(
     page.entries.map((entry) => entry.kind),
-    ['text', 'notice', 'thinking', 'text', 'tool', 'todo'],
+    ['text', 'notice', 'thinking', 'text', 'tool', 'todo', 'notice'],
   );
   const tool = page.entries[4];
   assert.equal(tool.id, 'tool:call-1');
@@ -78,9 +78,10 @@ test('projects actual text, thinking, tool/error, attachment and nested todo rec
   assert.equal(tool.output, 'File not found');
   assert.equal(tool.error, true);
   assert.equal(page.entries[5].text, '1. [completed] Inspect code\n2. [in progress] Fix bug\n3. [pending] Run tests');
+  assert.equal(page.entries[6].text, 'Turn cancelled');
   assert.deepEqual(
     page.entries.map((entry) => entry.seq),
-    [0, 1, 2, 3, 4, 5],
+    [0, 1, 2, 3, 4, 5, 6],
   );
   assert.doesNotMatch(JSON.stringify(page), /PRIVATE_|base64|signature|userMessageSource|compaction/);
 });

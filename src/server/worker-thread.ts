@@ -273,6 +273,11 @@ export class WorkerThreadReader {
       return;
     }
     const id = clean(row.id, 160) || `record:${state.seq}`;
+    if (row.type === 'agent_turn_outcome') {
+      const reason = clean(row.reason, 80);
+      this.add(state, { id: `turn:${clean(row.turnId, 160) || id}:${reason}`, role: 'system', kind: 'notice', text: reason === 'cancelled' ? 'Turn cancelled' : reason ? `Turn ended · ${reason}` : 'Turn ended' });
+      return;
+    }
     if (row.type === 'todo_state') {
       const todos = object(row.todos).todos;
       if (Array.isArray(todos)) {
