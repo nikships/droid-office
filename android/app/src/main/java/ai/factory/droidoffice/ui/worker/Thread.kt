@@ -365,13 +365,13 @@ internal fun Thread(w: WorkerInfo, screen: ScreenState?, canAnswer: Boolean, con
                     }
                 }
             }
-            if (!follow && rows.isNotEmpty() && !state.newerTrimmed) {
-                val from = rows.indexOfFirst { it.key == seen }
-                val fresh = if (from < 0) 0 else rows.drop(from + 1).count { it is ThreadView.Message && it.entry.role != ThreadRole.User }
-                Jump(fresh, Modifier.align(Alignment.BottomCenter).padding(bottom = 12.dp)) {
-                    follow = true
-                    scope.launch { toBottom() }
-                }
+        }
+        if (!follow && rows.isNotEmpty() && !state.newerTrimmed) {
+            val from = rows.indexOfFirst { it.key == seen }
+            val fresh = if (from < 0) 0 else rows.drop(from + 1).count { it is ThreadView.Message && it.entry.role != ThreadRole.User }
+            Jump(fresh, Modifier.align(Alignment.CenterHorizontally).padding(vertical = 4.dp)) {
+                follow = true
+                scope.launch { toBottom() }
             }
         }
         if (live != null) {
