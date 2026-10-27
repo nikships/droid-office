@@ -285,7 +285,7 @@ export function presentThread(entries: readonly ThreadEntry[], busy: boolean): T
           const nextScript = following.findIndex((e) => e.kind === 'tool' && leaf(e.name) === 'script');
           if ((nextScript < 0 ? following : following.slice(0, nextScript)).some((e) => e.kind === 'tool')) continue;
         }
-        items.push(threadAction(entry, live, cancelledTurn && !!entry.error && /\b(cancelled|canceled|interrupted|aborted)\b/i.test(entry.output ?? '')));
+        items.push(threadAction(entry, live, cancelledTurn && !!entry.error && /\btool execution (?:was )?(?:cancelled|canceled|interrupted|aborted) by (?:the )?user\b/i.test(entry.output ?? '')));
       }
     }
     if (!items.length) return;

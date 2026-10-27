@@ -219,6 +219,18 @@ class ThreadViewTest {
     }
 
     @Test
+    fun aFilenameMentioningCancelledCannotHideAGenuineReadFailure() {
+        val entries = listOf(
+            tool("Read", """{"file_path":"/tmp/office-clone-qeTy/floors/droid-office/cancelled.json"}""", output = "Error reading file: ENOENT: no such file or directory, access '/tmp/office-clone-qeTy/floors/droid-office/cancelled.json'", error = true),
+            notice("turn:t:cancelled", "Turn cancelled"),
+        )
+        val group = ThreadView.project(entries, busy = false).first() as ThreadView.Activity
+        assertEquals(ToolState.Failed, group.actions.single().state)
+        assertEquals(0, group.cancelled)
+        assertEquals(1, group.failed.size)
+    }
+
+    @Test
     fun loadingEarlierKeepsTheAnchorRowFindable() {
         val all = reported()
         val newest = all.drop(4)

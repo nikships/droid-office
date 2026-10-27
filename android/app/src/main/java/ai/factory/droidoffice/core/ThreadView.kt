@@ -150,7 +150,7 @@ object ThreadView {
                 ThreadKind.Thinking -> e.text?.lineSequence()?.firstOrNull { it.isNotBlank() }?.let { items += Thought(e, it.trim().trim('*').trim()) }
                 ThreadKind.Tool -> {
                     val recorded = ThreadFeed.toolState(e, live)
-                    val state = if (cancelledTurn && recorded == ToolState.Failed && Regex("\\b(cancelled|canceled|interrupted|aborted)\\b", RegexOption.IGNORE_CASE).containsMatchIn(e.output.orEmpty())) ToolState.Cancelled else recorded
+                    val state = if (cancelledTurn && recorded == ToolState.Failed && Regex("\\btool execution (?:was )?(?:cancelled|canceled|interrupted|aborted) by (?:the )?user\\b", RegexOption.IGNORE_CASE).containsMatchIn(e.output.orEmpty())) ToolState.Cancelled else recorded
                     val name = e.name.orEmpty()
                     val failed = state == ToolState.Failed || state == ToolState.Cancelled
                     if (!failed && name in BOOKKEEPING) continue

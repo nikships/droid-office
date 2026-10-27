@@ -154,6 +154,27 @@ test('a real cancellation stays quiet without concealing an earlier genuine fail
   }
 });
 
+test('a filename mentioning cancelled cannot turn a genuine read failure into a cancellation', () => {
+  const rows = presentThread(
+    [
+      tool(
+        'r1',
+        'Read',
+        { file_path: '/tmp/office-clone-qeTy/floors/droid-office/cancelled.json' },
+        { error: true, output: "Error reading file: ENOENT: no such file or directory, access '/tmp/office-clone-qeTy/floors/droid-office/cancelled.json'" },
+      ),
+      { id: 'turn:t:cancelled', seq: 2, role: 'system', kind: 'notice', text: 'Turn cancelled' },
+    ],
+    false,
+  );
+  assert.equal(rows[0].kind, 'activity');
+  if (rows[0].kind === 'activity') {
+    assert.equal(rows[0].state, 'failed');
+    assert.equal(rows[0].actions[0].state, 'failed');
+    assert.equal(rows[0].cancelled, 0);
+  }
+});
+
 test('read counts agree with the visible rows even when the same path was read twice', () => {
   const rows = presentThread([tool('r1', 'Read', { file_path: '/same' }), tool('r2', 'Read', { file_path: '/same' })], false);
   assert.equal(rows[0].kind, 'activity');
