@@ -43,10 +43,12 @@ import androidx.compose.runtime.snapshots.SnapshotStateMap
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.layout
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.liveRegion
@@ -58,6 +60,7 @@ import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -156,6 +159,10 @@ private const val ASK = "thread.ask"
 private const val SHOWN_CHARS = 6_000
 /** Where a call's open details are kept in the open map, apart from the runs keyed by their entry ids. */
 private const val DETAIL = "detail:"
+/** Where a long message from the owner is kept shown in full, in the same map. */
+private const val MORE = "more:"
+/** A message from the owner taller than this many lines shows its start, so a long brief can't fill the screen. */
+private const val USER_LINES = 8
 
 /**
  * The worker's conversation, read from its Droid session by the office: what it was asked and what
@@ -278,6 +285,16 @@ internal fun Thread(w: WorkerInfo, screen: ScreenState?, canAnswer: Boolean, con
         }
     }
 
+    fun expand(m: ThreadView.Message) {
+        val key = MORE + m.key
+        if (open[key] == true) {
+            open.remove(key)
+        } else {
+            open[key] = true
+            follow = false
+        }
+    }
+
     Column(modifier.tagged(Tags.Worker.THREAD)) {
         Box(Modifier.weight(1f).fillMaxWidth()) {
             LazyColumn(
@@ -289,7 +306,7 @@ internal fun Thread(w: WorkerInfo, screen: ScreenState?, canAnswer: Boolean, con
                 itemsIndexed(rows, key = { _, r -> r.key }, contentType = { _, r -> r::class }) { i, r ->
                     Box(Modifier.padding(top = gap(if (i > 0) rows[i - 1] else null, r))) {
                         when (r) {
-                            is ThreadView.Message -> Message(w, r)
+                            is ThreadView.Message -> Message(w, r, open[MORE + r.key] == true) { expand(r) }
                             is ThreadView.Notice -> Notice(r)
                             is ThreadView.Activity -> Activity(r, r.ids.any { open[it] == true }, open, onToggle = { toggle(r) })
                         }
@@ -513,17 +530,44 @@ private fun Empty(w: WorkerInfo, state: ThreadState, connected: Boolean, onRetry
 private fun Modifier.disclosure(open: Boolean, onToggle: () -> Unit) =
     this.toggleable(open, role = Role.Button) { onToggle() }.semantics { stateDescription = if (open) "Expanded" else "Collapsed" }
 
+/**
+ * Lays the text out in full and shows its first [lines] lines of message type (15 sp on 22 sp), saying
+ * whether it cut any off. The text underneath stays whole, so copying it copies all of it.
+ */
+private fun Modifier.clampLines(lines: Int, onClipped: (Boolean) -> Unit) = this.clipToBounds().layout { measurable, constraints ->
+    val p = measurable.measure(constraints.copy(maxHeight = Constraints.Infinity))
+    val limit = (22.sp * lines).roundToPx()
+    onClipped(p.height > limit)
+    layout(p.width, p.height.coerceAtMost(limit).coerceIn(constraints.minHeight, constraints.maxHeight)) { p.place(0, 0) }
+}
+
 /** The owner's own words: a flat, near-square block on the right. */
 private fun Modifier.userBlock() = this.background(Palette.SurfaceHover, RoundedCornerShape(4.dp)).border(1.dp, Palette.Border, RoundedCornerShape(4.dp))
     .padding(horizontal = 12.dp, vertical = 9.dp)
 
 @Composable
-private fun Message(w: WorkerInfo, m: ThreadView.Message) {
+private fun Message(w: WorkerInfo, m: ThreadView.Message, all: Boolean, onMore: () -> Unit) {
     val e = m.entry
     val tag = Modifier.fillMaxWidth().tagged(Tags.Worker.threadEntry(e.id))
     if (e.role == ThreadRole.User) {
         Box(tag.padding(start = 48.dp), contentAlignment = Alignment.CenterEnd) {
-            Box(Modifier.userBlock()) { SelectionContainer { MarkdownText(e.text.orEmpty()) } }
+            Column(Modifier.userBlock()) {
+                var clipped by remember(e.id) { mutableStateOf(false) }
+                SelectionContainer {
+                    MarkdownText(e.text.orEmpty(), if (all) Modifier else Modifier.clampLines(USER_LINES) { if (clipped != it) clipped = it })
+                }
+                if (all || clipped) {
+                    Row(
+                        Modifier.clip(RoundedCornerShape(3.dp)).disclosure(all, onMore).tagged(Tags.Worker.threadMore(e.id))
+                            .heightIn(min = 40.dp).padding(top = 4.dp, end = 4.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Icon(OfficeIcons.Chevron, null, Modifier.size(13.dp).rotate(if (all) -90f else 90f), tint = Palette.TextSecondary)
+                        Spacer(Modifier.width(6.dp))
+                        Text(if (all) "SHOW LESS" else "SHOW ALL", style = LocalOfficeType.current.eyebrow.copy(color = Palette.Text))
+                    }
+                }
+            }
         }
     } else {
         Column(tag) {

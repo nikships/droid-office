@@ -312,6 +312,8 @@ object Tags {
         fun threadEntry(id: String) = "worker.thread.entry/$id"
         /** Expands or collapses a tool call's arguments and result, or a thought (`checked` is open). */
         fun threadToggle(id: String) = "worker.thread.toggle/$id"
+        /** Shows all of a long message from the owner, or only its first lines again (`checked` is all of it). */
+        fun threadMore(id: String) = "worker.thread.more/$id"
         /** One run of tool calls and thoughts between messages, by the id of its first entry. */
         fun threadGroup(id: String) = "worker.thread.group/$id"
         /** Opens or closes a run's list of actions (`checked` is open). */
