@@ -1,11 +1,25 @@
 package ai.factory.droidoffice.ui.worker
 
+import androidx.compose.foundation.ScrollState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.size
+import androidx.compose.material3.Icon
+import androidx.compose.runtime.derivedStateOf
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.graphics.drawscope.DrawScope
+import androidx.compose.ui.layout.Layout
+import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.unit.Constraints
+import ai.factory.droidoffice.ui.theme.OfficeIcons
 import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.Row
@@ -90,6 +104,7 @@ internal fun MarkdownText(source: String, modifier: Modifier = Modifier, compact
                     )
                 }
                 Markdown.Block.Rule -> Box(Modifier.fillMaxWidth().padding(vertical = 4.dp).height(1.dp).background(Palette.Border))
+                is Markdown.Block.Table -> Table(b, body.copy(fontSize = 13.5.sp, lineHeight = 19.sp), mono)
             }
         }
     }
@@ -99,23 +114,122 @@ internal fun MarkdownText(source: String, modifier: Modifier = Modifier, compact
 @Composable
 internal fun CodeScroll(background: Color, content: @Composable (Modifier) -> Unit) {
     val scroll = rememberScrollState()
-    Column(Modifier.fillMaxWidth()) {
-        Box(Modifier.fillMaxWidth().background(background, RoundedCornerShape(4.dp)).border(1.dp, Palette.Border, RoundedCornerShape(4.dp))) {
-            content(Modifier.fillMaxWidth().horizontalScroll(scroll))
-            if (scroll.value < scroll.maxValue) Box(
-                Modifier.matchParentSize().drawBehind {
-                    val edge = 24.dp.toPx().coerceAtMost(size.width)
-                    drawRect(
-                        Brush.horizontalGradient(listOf(Color.Transparent, background), startX = size.width - edge, endX = size.width),
-                        topLeft = Offset(size.width - edge, 0f), size = Size(edge, size.height),
-                    )
-                },
+    Box(Modifier.fillMaxWidth().background(background, RoundedCornerShape(4.dp)).border(1.dp, Palette.Border, RoundedCornerShape(4.dp))) {
+        content(Modifier.fillMaxWidth().horizontalScroll(scroll))
+        OverflowCue(scroll, background)
+    }
+}
+
+/**
+ * While there is more to the right: a short fade at the edge and a small chevron in it, instead of
+ * a caption under every box. Gone once scrolled to the end, and never there when nothing overflows.
+ */
+@Composable
+private fun BoxScope.OverflowCue(scroll: ScrollState, background: Color) {
+    val more by remember(scroll) { derivedStateOf { scroll.value < scroll.maxValue } }
+    if (!more) return
+    Box(
+        Modifier.matchParentSize().drawBehind {
+            val edge = 28.dp.toPx().coerceAtMost(size.width)
+            drawRect(
+                Brush.horizontalGradient(listOf(Color.Transparent, background), startX = size.width - edge, endX = size.width),
+                topLeft = Offset(size.width - edge, 0f), size = Size(edge, size.height),
             )
+        },
+    )
+    Icon(
+        OfficeIcons.Chevron, "Scrolls sideways", tint = Palette.TextSecondary,
+        modifier = Modifier.align(Alignment.TopEnd).padding(top = 9.dp, end = 3.dp).size(12.dp).tagged(Tags.Worker.THREAD_CODE_HINT),
+    )
+}
+
+/** Above this a cell wraps, at its words, rather than making its column wider. */
+private val CELL_MAX = 260.dp
+private val CELL_MIN = 48.dp
+
+/**
+ * A Markdown table: every row lines its columns up with the others, each column as wide as its
+ * widest cell up to [CELL_MAX], and the whole table scrolls sideways as one when it's wider than
+ * the message, with the same edge cue as code.
+ */
+@Composable
+private fun Table(t: Markdown.Block.Table, style: TextStyle, mono: FontFamily) {
+    val scroll = rememberScrollState()
+    val grid = remember(t) { Grid() }
+    val head = style.copy(fontWeight = FontWeight.SemiBold)
+    Box(Modifier.fillMaxWidth().tagged(Tags.Worker.THREAD_TABLE)) {
+        Layout(
+            content = {
+                for (row in listOf(t.header) + t.rows) {
+                    row.forEachIndexed { c, cell ->
+                        Text(
+                            styled(cell, mono),
+                            style = if (row === t.header) head else style,
+                            textAlign = when (t.align.getOrNull(c)) {
+                                Markdown.Align.Center -> TextAlign.Center
+                                Markdown.Align.Right -> TextAlign.End
+                                else -> TextAlign.Start
+                            },
+                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 7.dp),
+                        )
+                    }
+                }
+            },
+            modifier = Modifier.horizontalScroll(scroll).drawBehind { grid.draw(this) },
+        ) { measurables, _ ->
+            val cols = t.align.size.coerceAtLeast(1)
+            val rows = measurables.size / cols
+            val cap = CELL_MAX.roundToPx()
+            val floor = CELL_MIN.roundToPx()
+            val widths = IntArray(cols) { c ->
+                (0 until rows).maxOf { r -> measurables[r * cols + c].maxIntrinsicWidth(Constraints.Infinity) }.coerceIn(floor, cap)
+            }
+            val placeables = measurables.mapIndexed { i, m -> m.measure(Constraints(minWidth = widths[i % cols], maxWidth = widths[i % cols])) }
+            val heights = IntArray(rows) { r -> (0 until cols).maxOf { c -> placeables[r * cols + c].height } }
+            val width = widths.sum()
+            val height = heights.sum()
+            grid.columns = widths.runningFold(0) { a, w -> a + w }
+            grid.rows = heights.toList().runningFold(0) { a, h -> a + h }
+            grid.line = 1.dp.toPx()
+            layout(width, height) {
+                var y = 0
+                for (r in 0 until rows) {
+                    var x = 0
+                    for (c in 0 until cols) {
+                        placeables[r * cols + c].place(x, y)
+                        x += widths[c]
+                    }
+                    y += heights[r]
+                }
+            }
         }
-        if (scroll.maxValue > 0) Text(
-            "Scroll horizontally ↔", style = LocalOfficeType.current.eyebrow.copy(color = Palette.TextSecondary, fontSize = 10.sp),
-            modifier = Modifier.align(Alignment.End).tagged(Tags.Worker.THREAD_CODE_HINT),
-        )
+        OverflowCue(scroll, Palette.Bg)
+    }
+}
+
+/** Where the last layout put a table's column and row edges, for its hairlines and header fill. */
+private class Grid {
+    // State, so a relayout that moves the edges without resizing the table still redraws them.
+    var columns by mutableStateOf(emptyList<Int>())
+    var rows by mutableStateOf(emptyList<Int>())
+    var line = 1f
+
+    fun draw(scope: DrawScope) = with(scope) {
+        val cs = columns
+        val rs = rows
+        if (cs.size < 2 || rs.size < 2) return@with
+        val w = cs.last().toFloat()
+        val h = rs.last().toFloat()
+        val half = line / 2
+        drawRect(Palette.Surface, Offset.Zero, Size(w, rs[1].toFloat()))
+        for (y in rs) {
+            val at = y.toFloat().coerceIn(half, h - half)
+            drawLine(Palette.Border, Offset(0f, at), Offset(w, at), line)
+        }
+        for (x in cs) {
+            val at = x.toFloat().coerceIn(half, w - half)
+            drawLine(Palette.Border, Offset(at, 0f), Offset(at, h), line)
+        }
     }
 }
 

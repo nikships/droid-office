@@ -137,10 +137,25 @@ fun WorkerScreen(workerId: String, onBack: () -> Unit, embedded: Boolean = false
     val screens by connection.screens.collectAsStateWithLifecycle()
     val link by connection.link.collectAsStateWithLifecycle()
     val worker = data.workers[workerId]
-    val queueState = remember(data.officeId, data.floorId, workerId) {
-        localThreadQueues.getOrPut("${data.officeId}/${data.floorId}/$workerId") { ThreadQueue() }
+    // Receipts for messages sent to Droid's queue: one per office, floor and worker, shared by both
+    // views for this process, and kept on disk while any is unconfirmed so a restart, rotation or
+    // force-stop brings them back with their session, sequence and matched ids.
+    val storeState by graph.store.snapshot.collectAsStateWithLifecycle()
+    val queueKey = "${data.officeId}/${data.floorId}/$workerId"
+    val keepable = !data.officeId.isNullOrBlank() && !data.floorId.isNullOrBlank()
+    val queueState = remember(queueKey, keepable && storeState.loaded) {
+        localThreadQueues[queueKey] ?: if (keepable && storeState.loaded) {
+            ThreadQueue(storeState.receipts[queueKey]).also { localThreadQueues[queueKey] = it }
+        } else ThreadQueue()
     }
     var queueRevision by remember(queueState) { mutableIntStateOf(0) }
+    LaunchedEffect(queueState, queueRevision) {
+        if (!keepable || !storeState.loaded) return@LaunchedEffect
+        // Coalesce a burst of syncs into one write.
+        delay(250)
+        if (queueState.pending.isEmpty() && queueKey !in storeState.receipts) return@LaunchedEffect
+        graph.store.receipts(queueKey, queueState.snapshot().takeIf { queueState.pending.isNotEmpty() })
+    }
     // Phone view is the point of a phone: open a worker's terminal readable, sized for this screen.
     // A cloud worker has no terminal here and no Phone key to leave the mode with, so it keeps the fit.
     // The worker may not have synced yet, so the default is read live until the owner picks a view.
@@ -197,16 +212,15 @@ fun WorkerScreen(workerId: String, onBack: () -> Unit, embedded: Boolean = false
             directInput = false
             if (store.settings.threadView == it) scope.launch { graph.store.settings { s -> s.copy(threadView = !it) } }
         }
-        // The thread gives the conversation the room: its switch shares the PR and branch row, and
-        // Send home stays in the menu. Raw TTY keeps its rows as they are.
-        if (threadable && !tty) Column(Modifier.fillMaxWidth().background(Palette.Bg)) {
-            Actions(worker, onSendHome = { sendingHome = true }, lead = { InlineViewToggle(false, pickView) })
+        // One band in both views: the switch shares the PR and branch row, so its tabs sit in the same
+        // place either way and Send home, in the menu, is never where a tab was a moment ago.
+        if (threadable) Column(Modifier.fillMaxWidth().background(Palette.Bg)) {
+            Actions(worker, onSendHome = { sendingHome = true }, lead = { InlineViewToggle(tty, pickView) })
             Box(Modifier.fillMaxWidth().height(4.dp))
             Box(Modifier.fillMaxWidth().height(1.dp).background(Palette.Border))
         }
         else Actions(worker, onSendHome = { sendingHome = true })
         Offline(link.phase)
-        if (threadable && tty) ViewToggle(true, pickView)
         if (tty) NeedsYou(worker, screen, live && link.phase == Phase.Connected)
         var phoneSize by remember(workerId) { mutableStateOf<TermSize?>(null) }
         val currentSize = TermSize(worker.cols, worker.rows)
@@ -240,6 +254,7 @@ fun WorkerScreen(workerId: String, onBack: () -> Unit, embedded: Boolean = false
             worker, screen, live && link.phase == Phase.Connected, link.phase == Phase.Connected,
             Modifier.weight(1f).fillMaxWidth(),
             queued = queueState, queueRevision = queueRevision,
+            onQueueChanged = { queueRevision++ },
             onTty = { ttyChoice = true },
         ) else Box(Modifier.weight(1f).fillMaxWidth().padding(horizontal = 10.dp)) {
             Terminal(
@@ -270,9 +285,19 @@ fun WorkerScreen(workerId: String, onBack: () -> Unit, embedded: Boolean = false
                 val waiting = !tty && worker.state == WorkerStatus.NeedsInput
                 if (waiting) ThreadWaiting(worker, onTty = { ttyChoice = true })
                 val snackbar = LocalSnackbar.current
+                val connected = link.phase == Phase.Connected
                 Composer(
                     worker, draft, visible = !waiting && (!directInput || !tty || worker.isCloud), focusRequest = composerFocus, thread = !tty,
                     queueState = queueState, onQueued = { queueRevision++ },
+                    connected = connected,
+                    // The same Esc Raw TTY's key sends, through the terminal this screen is attached to.
+                    onStop = if (!tty && worker.state.busy && !worker.isCloud) {
+                        {
+                            if (!connection.send(ClientMsg.termInput(workerId, Keys.ESC))) {
+                                scope.launch { snackbar.showSnackbar("Couldn't reach the office. Nothing was sent.") }
+                            }
+                        }
+                    } else null,
                     // A slash command is Droid's own, run in its terminal: the thread hands the draft to Raw TTY unsent.
                     intercept = if (tty) null else { prompt ->
                         ThreadFeed.slashCommand(prompt).also { slash ->
@@ -427,7 +452,7 @@ private fun NeedsYou(w: WorkerInfo, screen: ScreenState?, canAnswer: Boolean) {
     val read = remember(screen) { screen?.let(Choices::read) }
     val asking = w.state == WorkerStatus.NeedsInput
     val menu = read?.takeIf { !w.isShell && (asking || it.pointer != null) }
-    val text = menu?.question ?: if (asking) Workers.detail(w) ?: "Waiting on an answer" else null
+    val text = menu?.question ?: if (asking) Workers.detail(w)?.takeUnless(Asks::generic) ?: "Waiting on an answer" else null
     AnimatedVisibility(asking || menu != null, enter = expandVertically() + fadeIn(), exit = shrinkVertically() + fadeOut()) {
         Column(
             Modifier.fillMaxWidth().tagged(Tags.Worker.NEEDS_YOU).padding(horizontal = 10.dp, vertical = 4.dp)

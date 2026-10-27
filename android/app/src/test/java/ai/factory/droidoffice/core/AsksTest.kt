@@ -69,9 +69,58 @@ class AsksTest {
 
     @Test
     fun theQuestionFallsBackToWhatTheOfficeSays() {
-        val w = WorkerInfo(id = "a", name = "Ada", status = "needs_input", activity = "Factory CLI is asking the user 1 question(s)")
-        assertEquals("Factory CLI is asking the user 1 question(s)", Asks.question(PendingAsk(w, null)))
+        val w = WorkerInfo(id = "a", name = "Ada", status = "needs_input", activity = "Waiting on the deploy approval")
+        assertEquals("Waiting on the deploy approval", Asks.question(PendingAsk(w, null)))
         assertEquals("Ada is waiting on an answer", Asks.question(PendingAsk(w.copy(activity = null), null)))
+    }
+
+    @Test
+    fun theCliNoticeThatAQuestionWasAskedNeverStandsInForIt() {
+        val w = WorkerInfo(id = "a", name = "Ada", status = "needs_input", activity = "Factory CLI is asking the user 1 question(s)")
+        assertEquals("Ada is waiting on an answer", Asks.question(PendingAsk(w, null)))
+        assertTrue(Asks.generic("Factory CLI is asking the user 3 question(s)"))
+        assertFalse(Asks.generic("Which size should the summary use"))
+    }
+
+    private fun askCall(input: String, output: String? = null) =
+        ThreadEntry(id = "t1", seq = 5, role = ThreadRole.Assistant, kind = ThreadKind.Tool, name = "AskUser", input = input, output = output)
+
+    private val noMark = screen(
+        "  Ask User",
+        "  Which size should the summary use",
+        "  1. Short",
+        "  2. Long",
+        "  Or type your own answer...",
+    )
+
+    @Test
+    fun aQuestionWithoutAQuestionMarkComesFromItsOpenAskCall() {
+        val w = WorkerInfo(id = "a", name = "Ada", status = "needs_input", activity = "Factory CLI is asking the user 1 question(s)")
+        val menu = Choices.read(noMark)!!
+        assertNull(menu.question)
+        val call = askCall("""{"questionnaire":"1. [question] Which size should the summary use\n\n[topic] Size\n[option] Short\n[option] Long"}""")
+        assertEquals("Which size should the summary use", Asks.question(PendingAsk(w, menu), listOf(call)))
+        // Answered: the call has its result, so it no longer speaks for what's on screen.
+        assertEquals("Ada is waiting on an answer", Asks.question(PendingAsk(w, menu), listOf(call.copy(output = "Short"))))
+    }
+
+    @Test
+    fun ofSeveralQuestionsTheOneWhoseOptionsAreOnScreenIsShown() {
+        val call = askCall(
+            """{"questionnaire":"1. [question] Which colour?\n[topic] Colour\n[option] Orange\n[option] Blue\n\n2. [question] Which size should the summary use\n[topic] Size\n[option] Short: a line\n[option] Long: a page"}""",
+        )
+        val menu = Choices.read(noMark)!!
+        assertEquals("Which size should the summary use", Asks.asked(listOf(call), menu))
+        // Two questions and neither matches the screen: show neither rather than guess.
+        val other = Menu(null, listOf(Choice(1, "Yes"), Choice(2, "No")), null)
+        assertNull(Asks.asked(listOf(call), other))
+    }
+
+    @Test
+    fun aQuestionsArrayReadsTheSame() {
+        val call = askCall("""{"questions":[{"question":"Ship it now","options":[{"label":"Short"},{"label":"Long"}]}]}""").copy(name = "AskUserQuestion")
+        assertEquals("Ship it now", Asks.asked(listOf(call), Choices.read(noMark)))
+        assertNull(Asks.asked(listOf(call.copy(input = "not json")), null))
     }
 
     @Test

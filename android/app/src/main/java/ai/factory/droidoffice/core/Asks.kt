@@ -1,5 +1,9 @@
 package ai.factory.droidoffice.core
 
+import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
+
 /** A worker waiting on a question, with the menu its terminal shows when one can be read. */
 data class PendingAsk(val worker: WorkerInfo, val menu: Menu?)
 
@@ -22,9 +26,88 @@ object Asks {
     fun context(w: WorkerInfo): String? =
         (Workers.title(w) ?: w.prompt?.lineSequence()?.firstOrNull { it.isNotBlank() })?.trim()?.take(140)?.takeIf { it.isNotBlank() }
 
-    /** The question to show: the one on the screen, else what the office says it's waiting on. */
-    fun question(ask: PendingAsk): String =
-        ask.menu?.question ?: Workers.detail(ask.worker) ?: "${ask.worker.name.ifBlank { "It" }} is waiting on an answer"
+    /**
+     * The question to show: the one on the screen, else the one its open ask call in the thread
+     * carries, else what the office says it's waiting on. The CLI's own notice ("Factory CLI is
+     * asking the user 1 question(s)") says nothing a reader can answer, so it never stands in.
+     */
+    fun question(ask: PendingAsk, entries: List<ThreadEntry> = emptyList()): String =
+        ask.menu?.question
+            ?: asked(entries, ask.menu)
+            ?: Workers.detail(ask.worker)?.takeUnless(::generic)
+            ?: "${ask.worker.name.ifBlank { "It" }} is waiting on an answer"
+
+    private val GENERIC = Regex("""\bis asking the user\b|\basking (you|the user) \d+ question""", RegexOption.IGNORE_CASE)
+
+    /** A notification line that only says a question was asked, not which. */
+    fun generic(text: String): Boolean = GENERIC.containsMatchIn(text)
+
+    private val ASK_TOOLS = setOf("AskUser", "AskUserQuestion", "request_user_input")
+    private val QUESTION_LINE = Regex("""^\s*(?:\d+[.)]\s*)?\[question]\s*(.+)$""")
+    private val OPTION_LINE = Regex("""^\s*\[option]\s*(.+)$""")
+
+    /** A question as its ask call wrote it, with the options it offered. */
+    data class Asked(val question: String, val options: List<String>)
+
+    /**
+     * The questions of the newest ask call still waiting on a result: Droid's `questionnaire`
+     * ("1. [question] …" then "[option] …" lines) or a `questions` array of `{question, options}`.
+     */
+    fun questions(entries: List<ThreadEntry>): List<Asked> {
+        val call = entries.lastOrNull { it.kind == ThreadKind.Tool && it.name in ASK_TOOLS } ?: return emptyList()
+        if (call.output != null) return emptyList()
+        val o = call.input?.trim()?.takeIf { it.startsWith("{") }
+            ?.let { runCatching { OfficeJson.parseToJsonElement(it) as? JsonObject }.getOrNull() } ?: return emptyList()
+        (o["questionnaire"] as? JsonPrimitive)?.takeIf { it.isString }?.content?.let { text ->
+            val out = ArrayList<Asked>()
+            var question: String? = null
+            val options = ArrayList<String>()
+            fun flush() {
+                question?.let { out += Asked(it, options.toList()) }
+                question = null
+                options.clear()
+            }
+            for (line in text.lines()) {
+                QUESTION_LINE.matchEntire(line)?.let {
+                    flush()
+                    question = it.groupValues[1].trim()
+                } ?: OPTION_LINE.matchEntire(line)?.let { if (question != null) options += it.groupValues[1].trim() }
+            }
+            flush()
+            return out.filter { it.question.isNotEmpty() }
+        }
+        return (o["questions"] as? JsonArray).orEmpty().mapNotNull { q ->
+            val qo = q as? JsonObject ?: return@mapNotNull null
+            val text = (qo["question"] as? JsonPrimitive)?.takeIf { it.isString }?.content?.trim()?.ifEmpty { null } ?: return@mapNotNull null
+            val options = (qo["options"] as? JsonArray).orEmpty().mapNotNull { opt ->
+                when (opt) {
+                    is JsonPrimitive -> opt.takeIf { it.isString }?.content
+                    is JsonObject -> (opt["label"] as? JsonPrimitive)?.takeIf { it.isString }?.content
+                    else -> null
+                }?.trim()
+            }
+            Asked(text, options)
+        }
+    }
+
+    /**
+     * The open ask call's question for [menu]: the one whose options are the menu's choices, or the
+     * only one asked. Several questions with none matching shows none rather than the wrong one.
+     */
+    fun asked(entries: List<ThreadEntry>, menu: Menu?): String? {
+        val all = questions(entries)
+        if (all.isEmpty()) return null
+        fun norm(s: String) = s.lowercase().replace(Regex("""\s+"""), " ").trim().trimEnd('…', '.')
+        val match = menu?.let { m ->
+            all.firstOrNull { a ->
+                a.options.size >= m.choices.size && m.choices.all { c ->
+                    val label = norm(c.label)
+                    label.isNotEmpty() && a.options.any { o -> norm(o).startsWith(label) || label.startsWith(norm(o)) }
+                }
+            }
+        }
+        return (match ?: all.singleOrNull())?.question?.take(240)
+    }
 
     /** The bottom line of its terminal with the box drawing taken off: the live line under a thread. */
     fun liveLine(screen: ScreenState?): String? = screen?.lines

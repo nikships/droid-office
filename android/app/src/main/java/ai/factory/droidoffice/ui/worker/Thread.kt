@@ -8,7 +8,11 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -95,39 +99,14 @@ import ai.factory.droidoffice.ui.components.tagged
 import ai.factory.droidoffice.ui.theme.LocalOfficeType
 import ai.factory.droidoffice.ui.theme.OfficeIcons
 import ai.factory.droidoffice.ui.theme.Palette
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 
-/** Thread or Raw TTY: what a worker's screen shows under its header. */
-@Composable
-internal fun ViewToggle(tty: Boolean, onTty: (Boolean) -> Unit) {
-    Row(
-        Modifier.padding(horizontal = 10.dp, vertical = 4.dp).background(Palette.Surface, RoundedCornerShape(10.dp))
-            .border(1.dp, Palette.Border, RoundedCornerShape(10.dp)).padding(3.dp),
-    ) {
-        Segment("Thread", null, !tty, Tags.Worker.VIEW_THREAD) { onTty(false) }
-        Segment("Raw TTY", OfficeIcons.Terminal, tty, Tags.Worker.VIEW_TTY) { onTty(true) }
-    }
-}
-
-@Composable
-private fun Segment(text: String, icon: androidx.compose.ui.graphics.vector.ImageVector?, on: Boolean, tag: String, onClick: () -> Unit) {
-    Row(
-        Modifier.clip(RoundedCornerShape(8.dp)).background(if (on) Palette.SurfaceHigh else Palette.Surface)
-            .clickable(role = Role.Tab, onClick = onClick).semantics { selected = on }.tagged(tag)
-            .padding(horizontal = 12.dp, vertical = 6.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        if (icon != null) {
-            Icon(icon, null, Modifier.size(14.dp), tint = if (on) Palette.Text else Palette.TextSecondary)
-            Spacer(Modifier.width(6.dp))
-        }
-        Text(text, style = MaterialTheme.typography.labelMedium, color = if (on) Palette.Text else Palette.TextSecondary)
-    }
-}
-
-/** The same switch at the start of the Thread view's one row of chrome: compact, near-square, mono. */
+/** Thread or Raw TTY, at the start of the worker's one band of chrome in both views: compact, near-square, mono. */
 @Composable
 internal fun InlineViewToggle(tty: Boolean, onTty: (Boolean) -> Unit) {
     val shape = RoundedCornerShape(4.dp)
@@ -171,7 +150,17 @@ private const val USER_LINES = 8
  * can't read, says so and offers Raw TTY, which always has everything.
  */
 @Composable
-internal fun Thread(w: WorkerInfo, screen: ScreenState?, canAnswer: Boolean, connected: Boolean, modifier: Modifier, queued: ThreadQueue, queueRevision: Int, onTty: () -> Unit) {
+internal fun Thread(
+    w: WorkerInfo,
+    screen: ScreenState?,
+    canAnswer: Boolean,
+    connected: Boolean,
+    modifier: Modifier,
+    queued: ThreadQueue,
+    queueRevision: Int,
+    onQueueChanged: () -> Unit,
+    onTty: () -> Unit,
+) {
     val graph = LocalGraph.current
     val connection = graph.connection
     val snackbar = LocalSnackbar.current
@@ -209,16 +198,23 @@ internal fun Thread(w: WorkerInfo, screen: ScreenState?, canAnswer: Boolean, con
     val busy = w.state.busy
     val rows = remember(state.entries, busy) { ThreadView.project(state.entries, busy) }
     val pendingQueue = remember(queued, queueRevision, state.sessionId, state.entries) { queued.sync(state.sessionId, state.entries) }
+    // A sync can confirm a receipt, start a new session or move the sequence on: the owner of the
+    // receipts keeps them (on disk too) after each one, whatever changed.
+    LaunchedEffect(queued, state.sessionId, state.entries) { onQueueChanged() }
     val list = rememberLazyListState()
     // Runs are open while any entry of theirs is in here, so a run stays open as it grows either way.
     val open = remember(feed) { mutableStateMapOf<String, Boolean>() }
     var follow by remember(feed) { mutableStateOf(true) }
     var anchor by remember(feed) { mutableStateOf<Pair<String, Int>?>(null) }
     var seen by remember(feed) { mutableStateOf<String?>(null) }
+    // Set while the thread scrolls itself to the bottom, so its own scroll never reads as the owner's.
+    var autoScrolling by remember(feed) { mutableStateOf(false) }
+    // Following, yet the bottom stayed below the fold: the strip shows rather than hide where the latest is.
+    var stuck by remember(feed) { mutableStateOf(false) }
 
     LaunchedEffect(list) {
         snapshotFlow { Triple(list.isScrollInProgress, list.canScrollForward, list.lastScrolledBackward) }.collect { (scrolling, more, back) ->
-            if (scrolling) {
+            if (scrolling && !autoScrolling) {
                 if (back) follow = false else if (!more) follow = true
             }
         }
@@ -226,16 +222,39 @@ internal fun Thread(w: WorkerInfo, screen: ScreenState?, canAnswer: Boolean, con
     LaunchedEffect(follow, rows.lastOrNull()?.key) {
         if (follow) seen = rows.lastOrNull()?.key
     }
-    // Head, the rows, the activity and the question: counted here, since the list's layout lags a new page.
-    val itemCount = rows.size + 1 + (if (state.newerTrimmed) 1 else 0) + (if (showAsk) 1 else 0)
-    suspend fun toBottom() {
-        list.scrollToItem(itemCount - 1)
-        list.scrollBy(100_000f)
+    /** False when the owner's touch took the list over part way: their scroll wins. */
+    suspend fun toBottom(): Boolean {
+        autoScrolling = true
+        return try {
+            val lastItem = list.layoutInfo.totalItemsCount - 1
+            if (lastItem >= 0 && list.layoutInfo.visibleItemsInfo.none { it.index == lastItem }) list.scrollToItem(lastItem)
+            list.scrollBy(100_000f)
+            true
+        } catch (e: CancellationException) {
+            currentCoroutineContext().ensureActive()
+            false
+        } finally {
+            autoScrolling = false
+        }
     }
-    val last = state.entries.lastOrNull()
-    val growth = listOf(rows.size, rows.lastOrNull()?.key, last?.id, last?.text?.length, last?.output?.length, showAsk, menu?.question, menu?.choices?.size, w.state)
-    LaunchedEffect(growth) {
-        if (follow && anchor == null && !state.newerTrimmed) toBottom()
+    // Following means staying at the bottom through anything that pushes it down: a new entry or
+    // result, a queued turn, the question card, or a font, density or window change re-laying it out.
+    LaunchedEffect(list, feed) {
+        snapshotFlow { (follow && anchor == null && !state.newerTrimmed && list.canScrollForward) to (list.isScrollInProgress && !autoScrolling) }
+            .collect { (behind, ownerScrolling) ->
+                if (!behind) stuck = false
+                if (!behind || ownerScrolling || autoScrolling) return@collect
+                // A layout can lag the first scroll by a frame: try again, then say so with the strip.
+                repeat(3) {
+                    if (!toBottom()) return@collect
+                    withFrameNanos { }
+                    if (!list.canScrollForward) {
+                        stuck = false
+                        return@collect
+                    }
+                }
+                stuck = true
+            }
     }
     LaunchedEffect(state.entries.firstOrNull()?.id, state.loadingEarlier) {
         val (id, offset) = anchor ?: return@LaunchedEffect
@@ -308,7 +327,7 @@ internal fun Thread(w: WorkerInfo, screen: ScreenState?, canAnswer: Boolean, con
                         when (r) {
                             is ThreadView.Message -> Message(w, r, open[MORE + r.key] == true) { expand(r) }
                             is ThreadView.Notice -> Notice(r)
-                            is ThreadView.Activity -> Activity(r, r.ids.any { open[it] == true }, open, onToggle = { toggle(r) })
+                            is ThreadView.Activity -> Activity(r, r.ids.any { open[it] == true }, open, onToggle = { toggle(r) }, onInspect = { follow = false })
                         }
                     }
                 }
@@ -324,12 +343,12 @@ internal fun Thread(w: WorkerInfo, screen: ScreenState?, canAnswer: Boolean, con
                 if (showAsk) item(key = ASK) {
                     Box(Modifier.padding(top = 12.dp)) {
                         if (menu == null) {
-                            NeedsTty(Asks.question(PendingAsk(w, null)), onTty)
+                            NeedsTty(Asks.question(PendingAsk(w, null), state.entries), onTty)
                         } else {
                             AskCard(
                                 worker = w,
                                 menu = menu,
-                                question = Asks.question(PendingAsk(w, menu)),
+                                question = remember(w, menu, state.entries) { Asks.question(PendingAsk(w, menu), state.entries) },
                                 where = null,
                                 context = null,
                                 enabled = canAnswer,
@@ -365,7 +384,7 @@ internal fun Thread(w: WorkerInfo, screen: ScreenState?, canAnswer: Boolean, con
             }
             Box(Modifier.align(Alignment.TopCenter).fillMaxWidth().height(8.dp).background(Brush.verticalGradient(listOf(Palette.Bg, Color.Transparent))))
         }
-        if (!follow && rows.isNotEmpty() && !state.newerTrimmed) {
+        if ((!follow || stuck) && rows.isNotEmpty() && !state.newerTrimmed) {
             val from = rows.indexOfFirst { it.key == seen }
             val fresh = if (from < 0) 0 else rows.drop(from + 1).count { it is ThreadView.Message && it.entry.role != ThreadRole.User }
             Box(
@@ -384,12 +403,35 @@ internal fun Thread(w: WorkerInfo, screen: ScreenState?, canAnswer: Boolean, con
                 .drawBehind { drawLine(Palette.Border, Offset.Zero, Offset(size.width, 0f), 1.dp.toPx()) }
                 .padding(horizontal = 12.dp, vertical = 8.dp).tagged(Tags.Worker.THREAD_QUEUED),
         ) {
+            // A receipt, not a claim: no message says what Droid's queue holds now, so this says only
+            // what this phone sent and that it hasn't shown up in the conversation yet.
+            Eyebrow("Sent to Droid’s queue", Modifier.padding(bottom = 4.dp), color = Palette.TextSecondary)
             for (prompt in pendingQueue) Text(
-                "Queued · ${prompt.text.ifEmpty { "Image attached" }}",
+                prompt.text.ifEmpty { "Image attached" },
                 style = MaterialTheme.typography.bodySmall.copy(color = Palette.TextSecondary),
+                maxLines = 3, overflow = TextOverflow.Ellipsis,
                 modifier = Modifier.padding(bottom = 4.dp),
             )
-            if (!busy) QuietButton("Still queued, manage in Raw TTY", OfficeIcons.Terminal, Tags.Worker.THREAD_QUEUED_TTY, true, onTty)
+            if (!busy) Text(
+                "Not yet in the conversation. Check Raw TTY; it may have been cleared elsewhere.",
+                style = MaterialTheme.typography.bodySmall.copy(color = Palette.TextTertiary),
+                modifier = Modifier.padding(bottom = 6.dp),
+            )
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                QuietButton("Check queue in Raw TTY", OfficeIcons.Terminal, Tags.Worker.THREAD_QUEUED_TTY, true, onTty)
+                QuietButton(
+                    "Dismiss receipt", Icons.Default.Close, Tags.Worker.THREAD_QUEUED_DISMISS, true,
+                    {
+                        queued.clear()
+                        onQueueChanged()
+                    },
+                )
+            }
+            Text(
+                "Dismissing clears this phone’s receipt only. It doesn’t remove anything from Droid’s queue.",
+                style = MaterialTheme.typography.bodySmall.copy(fontSize = 11.5.sp, color = Palette.TextTertiary),
+                modifier = Modifier.padding(top = 4.dp),
+            )
         }
     }
 }
@@ -615,7 +657,7 @@ private fun Notice(n: ThreadView.Notice) {
  * it even while closed, opening to one row per action and thought, and the plan as the run left it.
  */
 @Composable
-private fun Activity(a: ThreadView.Activity, isOpen: Boolean, open: SnapshotStateMap<String, Boolean>, onToggle: () -> Unit) {
+private fun Activity(a: ThreadView.Activity, isOpen: Boolean, open: SnapshotStateMap<String, Boolean>, onToggle: () -> Unit, onInspect: () -> Unit) {
     val failed = a.failed.size
     Column(Modifier.fillMaxWidth().tagged(Tags.Worker.threadGroup(a.first))) {
         Row(
@@ -655,7 +697,8 @@ private fun Activity(a: ThreadView.Activity, isOpen: Boolean, open: SnapshotStat
                     }
                 }
             }
-            a.running?.takeIf { a.live && failed == 0 }?.let {
+            // The summary already says it when the run is that one call ("Working · Asked you a question").
+            a.running?.takeIf { a.live && failed == 0 && it.title != a.summary }?.let {
                 Text(
                     "${it.title}…", style = MaterialTheme.typography.bodySmall.copy(color = Palette.TextSecondary), maxLines = 1, overflow = TextOverflow.Ellipsis,
                     modifier = Modifier.padding(start = 24.dp, bottom = 4.dp),
@@ -670,7 +713,15 @@ private fun Activity(a: ThreadView.Activity, isOpen: Boolean, open: SnapshotStat
                 for (item in a.items) {
                     val key = DETAIL + item.entry.id
                     val detailOpen = open[key] == true
-                    val flip = { if (detailOpen) open.remove(key) else open[key] = true }
+                    // Opening details is reading: the next poll mustn't scroll them away.
+                    val flip = {
+                        if (detailOpen) {
+                            open.remove(key)
+                        } else {
+                            open[key] = true
+                            onInspect()
+                        }
+                    }
                     when (item) {
                         is ThreadView.Action -> ActionRow(item, detailOpen) { flip() }
                         is ThreadView.Thought -> ThoughtRow(item, detailOpen) { flip() }

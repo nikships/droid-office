@@ -18,6 +18,8 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.ime
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -57,6 +59,10 @@ import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.semantics.LiveRegionMode
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.text.input.ImeAction
@@ -94,7 +100,18 @@ private const val MAX_BYTES = 25 * 1024 * 1024
 private const val MAX_IMAGES = 10
 
 @Composable
-fun Composer(w: WorkerInfo, draft: String? = null, visible: Boolean = true, focusRequest: Int = 0, intercept: ((String) -> Boolean)? = null, thread: Boolean = false, queueState: ThreadQueue? = null, onQueued: () -> Unit = {}) {
+fun Composer(
+    w: WorkerInfo,
+    draft: String? = null,
+    visible: Boolean = true,
+    focusRequest: Int = 0,
+    intercept: ((String) -> Boolean)? = null,
+    thread: Boolean = false,
+    queueState: ThreadQueue? = null,
+    onQueued: () -> Unit = {},
+    connected: Boolean = true,
+    onStop: (() -> Unit)? = null,
+) {
     val graph = LocalGraph.current
     val snackbar = LocalSnackbar.current
     val context = LocalContext.current
@@ -102,8 +119,9 @@ fun Composer(w: WorkerInfo, draft: String? = null, visible: Boolean = true, focu
     val scope = rememberCoroutineScope()
     var text by rememberSaveable(w.id) { mutableStateOf(draft.orEmpty()) }
     val images = remember(w.id) { mutableStateListOf<Attachment>() }
-    var sending by remember { mutableStateOf(false) }
     val uploading = images.any { it.id == null }
+    // With the keyboard up the conversation keeps most of the room: the field shows three lines and scrolls the rest.
+    val ime = WindowInsets.ime.getBottom(LocalDensity.current) > 0
     val focus = remember { FocusRequester() }
     val keyboard = LocalSoftwareKeyboardController.current
     LaunchedEffect(visible, focusRequest) {
@@ -137,25 +155,23 @@ fun Composer(w: WorkerInfo, draft: String? = null, visible: Boolean = true, focu
 
     fun send(queue: Boolean = false) {
         val prompt = text.trim()
-        if ((prompt.isEmpty() && images.isEmpty()) || uploading || sending) return
+        if ((prompt.isEmpty() && images.isEmpty()) || uploading) return
         // The draft and pictures stay as they are for whatever took the prompt instead.
         if (intercept?.invoke(prompt) == true) return
-        sending = true
+        // Offline, Send is off: a message held for the reconnect would land later, unseen, maybe
+        // into a different turn. The draft stays until the owner sends it again.
+        if (!connected) return
         haptics.performHapticFeedback(HapticFeedbackType.Confirm)
         val ids = images.mapNotNull { it.id }
         val after = queueState?.sequence ?: -1
-        scope.launch {
-            val ok = graph.connection.sendWhenConnected(ClientMsg.prompt(w.id, prompt, ids, queue))
-            sending = false
-            if (ok) {
-                if (queue && queueState != null) {
-                    queueState.sent(prompt, ids.isNotEmpty(), after)
-                    onQueued()
-                }
-                text = ""
-                images.clear()
-            } else snackbar.showSnackbar("Couldn't reach the office; your message is still here")
-        }
+        if (graph.connection.send(ClientMsg.prompt(w.id, prompt, ids, queue))) {
+            if (queue && queueState != null) {
+                queueState.sent(prompt, ids.isNotEmpty(), after)
+                onQueued()
+            }
+            text = ""
+            images.clear()
+        } else scope.launch { snackbar.showSnackbar("Couldn't reach the office. Nothing was sent; your message is still here.") }
     }
 
     // Keep the composer's state and upload launcher alive while the terminal takes the keyboard.
@@ -187,6 +203,13 @@ fun Composer(w: WorkerInfo, draft: String? = null, visible: Boolean = true, focu
                 }
             }
         }
+        if (!connected && (text.isNotBlank() || images.isNotEmpty())) {
+            Text(
+                "Not connected. Send is off, and nothing is sent later on its own. Your message stays here.",
+                style = MaterialTheme.typography.bodySmall, color = Palette.Warning,
+                modifier = Modifier.padding(start = 4.dp, end = 4.dp, bottom = 6.dp).semantics { liveRegion = LiveRegionMode.Polite }.tagged(Tags.Worker.COMPOSER_OFFLINE),
+            )
+        }
         Row(
             Modifier.fillMaxWidth().clip(field).background(Palette.Surface).border(1.dp, Palette.BorderStrong, field)
                 .padding(start = 6.dp, end = 6.dp, top = 6.dp, bottom = 6.dp),
@@ -208,7 +231,7 @@ fun Composer(w: WorkerInfo, draft: String? = null, visible: Boolean = true, focu
                     cursorBrush = SolidColor(Palette.Accent),
                     // A shell takes one command line, sent with the keyboard's action key; a prompt can run to paragraphs.
                     singleLine = w.isShell,
-                    maxLines = if (w.isShell) 1 else 6,
+                    maxLines = if (w.isShell) 1 else if (ime) 3 else 6,
                     keyboardOptions = if (w.isShell) {
                         KeyboardOptions(capitalization = KeyboardCapitalization.None, autoCorrectEnabled = false, keyboardType = KeyboardType.Ascii, imeAction = ImeAction.Send)
                     } else {
@@ -218,13 +241,29 @@ fun Composer(w: WorkerInfo, draft: String? = null, visible: Boolean = true, focu
                     modifier = Modifier.fillMaxWidth().focusRequester(focus).semantics { contentDescription = hint.removeSuffix("…") }.tagged(Tags.Worker.INPUT),
                 )
             }
-            val ready = (text.isNotBlank() || images.isNotEmpty()) && !uploading
+            val ready = (text.isNotBlank() || images.isNotEmpty()) && !uploading && connected
+            // Esc in Droid's terminal: stops the turn it's on.
+            if (onStop != null) {
+                Box(
+                    Modifier.padding(end = 6.dp).size(38.dp).clip(control)
+                        .border(1.dp, Palette.BorderStrong, control)
+                        .clickable(enabled = connected, role = Role.Button, onClickLabel = "Stop turn") {
+                            haptics.performHapticFeedback(HapticFeedbackType.Confirm)
+                            onStop()
+                        }
+                        .semantics { contentDescription = "Stop turn" }
+                        .tagged(Tags.Worker.STOP),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Box(Modifier.size(11.dp).background(if (connected) Palette.Text else Palette.TextTertiary, RoundedCornerShape(1.dp)))
+                }
+            }
             // Ctrl+Enter in a desktop terminal: Droid takes the message after what it's doing now.
             if (!w.isShell && !w.isCloud) {
                 Box(
                     Modifier.padding(end = 6.dp).height(38.dp).clip(control)
                         .border(1.dp, if (ready && !thread) Palette.Accent.copy(alpha = 0.6f) else Palette.BorderStrong, control)
-                        .clickable(enabled = ready && !sending) { send(queue = true) }
+                        .clickable(enabled = ready) { send(queue = true) }
                         .semantics { contentDescription = "Queue message" }
                         .tagged(Tags.Worker.QUEUE)
                         .padding(horizontal = 12.dp),
@@ -244,11 +283,10 @@ fun Composer(w: WorkerInfo, draft: String? = null, visible: Boolean = true, focu
             // In the thread, Send inverts against the surface (light on dark), so orange stays for what's live.
             val sendFill = if (!ready) Palette.SurfaceHigh else if (thread) Palette.Text else Palette.Accent
             Box(
-                Modifier.size(38.dp).clip(control).background(sendFill).clickable(enabled = ready && !sending) { send() }.tagged(Tags.Worker.SEND),
+                Modifier.size(38.dp).clip(control).background(sendFill).clickable(enabled = ready) { send() }.tagged(Tags.Worker.SEND),
                 contentAlignment = Alignment.Center,
             ) {
-                if (sending) Spinner(Modifier.size(16.dp), Palette.Bg)
-                else Icon(OfficeIcons.ArrowUp, "Send", Modifier.size(20.dp), tint = if (ready) Palette.Bg else Palette.TextTertiary)
+                Icon(OfficeIcons.ArrowUp, "Send", Modifier.size(20.dp), tint = if (ready) Palette.Bg else Palette.TextTertiary)
             }
         }
     }

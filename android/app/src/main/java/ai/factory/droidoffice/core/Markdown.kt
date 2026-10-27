@@ -2,9 +2,10 @@ package ai.factory.droidoffice.core
 
 /**
  * The part of Markdown a worker's replies use, parsed into blocks of styled runs for the thread to
- * lay out: headings, paragraphs, lists (with task boxes), quotes, rules, fenced code, and inline
- * code, bold, italic, strikethrough and links. Tables and anything else stay as their own text in
- * a code block, so nothing is lost or guessed at.
+ * lay out: headings, paragraphs, lists (with task boxes), quotes, rules, fenced code, GitHub tables,
+ * and inline code, bold, italic, strikethrough and links. Pipe rows that aren't a well-formed table
+ * (no delimiter row, or one with a different number of columns than its header) stay as their own
+ * text in a code block, so nothing is lost or guessed at.
  */
 object Markdown {
     data class Span(
@@ -24,7 +25,11 @@ object Markdown {
         data class Quote(val spans: List<Span>) : Block
         data class Code(val text: String, val language: String? = null) : Block
         data object Rule : Block
+        /** Every row has [align]'s number of cells; a short row is padded with empty ones, a long one widens the table. */
+        data class Table(val align: List<Align>, val header: List<List<Span>>, val rows: List<List<List<Span>>>) : Block
     }
+
+    enum class Align { None, Left, Center, Right }
 
     private val heading = Regex("""^(#{1,6})\s+(.*?)\s*#*\s*$""")
     private val bullet = Regex("""^(\s*)[-*+]\s+(.*)$""")
@@ -53,6 +58,13 @@ object Markdown {
                 while (i < lines.size && !lines[i].trimStart().startsWith(close)) body += lines[i++]
                 out += Block.Code(body.joinToString("\n"), f.groupValues[2].ifBlank { null })
                 i++
+                continue
+            }
+            val table = if ('|' in line && i + 1 < lines.size) table(lines, i) else null
+            if (table != null) {
+                flush()
+                out += table.first
+                i = table.second
                 continue
             }
             if (line.trimStart().startsWith("|")) {
@@ -98,6 +110,77 @@ object Markdown {
             i++
         }
         flush()
+        return out
+    }
+
+    private val delimiterCell = Regex("""^:?-+:?$""")
+
+    /**
+     * A table whose header is [lines] at [at]: the header, a delimiter row with as many cells
+     * (`---`, `:--`, `:-:`, `--:`), then every following line with a pipe up to a blank line or a
+     * fence. Returns the table and the line after it, or null when it isn't one.
+     */
+    private fun table(lines: List<String>, at: Int): Pair<Block.Table, Int>? {
+        val delimiter = lines[at + 1]
+        if ('|' !in delimiter || fence.containsMatchIn(lines[at])) return null
+        val marks = cells(delimiter)
+        if (marks.isEmpty() || !marks.all { delimiterCell.matches(it.replace(" ", "")) }) return null
+        val head = cells(lines[at])
+        if (head.size != marks.size) return null
+        val align = marks.map {
+            val m = it.replace(" ", "")
+            when {
+                m.startsWith(':') && m.endsWith(':') -> Align.Center
+                m.endsWith(':') -> Align.Right
+                m.startsWith(':') -> Align.Left
+                else -> Align.None
+            }
+        }
+        var i = at + 2
+        val body = ArrayList<List<String>>()
+        while (i < lines.size && lines[i].isNotBlank() && '|' in lines[i] && fence.find(lines[i]) == null) body += cells(lines[i++])
+        val width = maxOf(head.size, body.maxOfOrNull { it.size } ?: 0)
+        fun row(cells: List<String>) = List(width) { c -> inline(cells.getOrElse(c) { "" }) }
+        return Block.Table(List(width) { align.getOrElse(it) { Align.None } }, row(head), body.map(::row)) to i
+    }
+
+    /**
+     * A table line's cells, trimmed, without the outer pipes. `\|` is a pipe in the cell (unescaped
+     * by [inline]), and so is a pipe inside a code span, so `a || b` in backticks stays whole.
+     */
+    internal fun cells(line: String): List<String> {
+        var s = line.trim()
+        if (s.startsWith('|')) s = s.substring(1)
+        if (s.endsWith('|') && !s.endsWith("\\|")) s = s.dropLast(1)
+        val out = ArrayList<String>()
+        val cell = StringBuilder()
+        var ticks = 0
+        var i = 0
+        while (i < s.length) {
+            val c = s[i]
+            when {
+                c == '\\' && i + 1 < s.length -> {
+                    cell.append(c).append(s[i + 1])
+                    i += 2
+                    continue
+                }
+                c == '`' -> {
+                    val run = s.substring(i).takeWhile { it == '`' }.length
+                    // A code span opens only where its closing run exists, as [inline] reads it.
+                    ticks = if (ticks == 0) (if (s.indexOf("`".repeat(run), i + run) > 0) run else 0) else if (run == ticks) 0 else ticks
+                    cell.append("`".repeat(run))
+                    i += run
+                    continue
+                }
+                c == '|' && ticks == 0 -> {
+                    out += cell.toString().trim()
+                    cell.setLength(0)
+                }
+                else -> cell.append(c)
+            }
+            i++
+        }
+        out += cell.toString().trim()
         return out
     }
 

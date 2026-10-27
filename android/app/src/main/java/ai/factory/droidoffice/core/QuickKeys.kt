@@ -9,6 +9,8 @@ data class QuickKey(val label: String, val spoken: String, val bytes: String) {
 /** The quick keys under a worker's terminal, and the order the owner arranged them in. */
 object QuickKeys {
     val all: List<QuickKey> = listOf(
+        // First by default: Esc is how Droid stops a turn, so it's in reach without scrolling the row.
+        QuickKey("Esc", "Escape", Keys.ESC),
         QuickKey("^C", "Control C", Keys.CTRL_C),
         QuickKey("^D", "Control D", Keys.CTRL_D),
         QuickKey("^X", "Control X", Keys.CTRL_X),
@@ -21,7 +23,6 @@ object QuickKeys {
         QuickKey("⏎", "Enter", Keys.ENTER),
         QuickKey("Tab", "Tab", Keys.TAB),
         QuickKey("⇧Tab", "Shift Tab", Keys.SHIFT_TAB),
-        QuickKey("Esc", "Escape", Keys.ESC),
         QuickKey("⌫", "Backspace", Keys.BACKSPACE),
         QuickKey("/", "Slash", "/"),
     )

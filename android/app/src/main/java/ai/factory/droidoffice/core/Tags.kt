@@ -274,6 +274,10 @@ object Tags {
         const val ATTACH = "composer.attach"
         const val SEND = "composer.send"
         const val QUEUE = "composer.queue"
+        /** In the Thread view while the worker is on a turn: stops it with Esc, as Droid's own Esc does. */
+        const val STOP = "composer.stop"
+        /** Why Send is off while the office is out of reach: the draft stays and nothing is sent later on its own. */
+        const val COMPOSER_OFFLINE = "composer.offline"
 
         /** A numbered menu choice above the terminal, by the number the menu shows. */
         fun choice(number: Int) = "worker.choice/$number"
@@ -310,6 +314,10 @@ object Tags {
         const val THREAD_BAR = "worker.thread.bar"
         /** "Follow latest" at the bottom while inspecting, "Jump to latest" above it, or the new-message count. */
         const val THREAD_JUMP_LABEL = "worker.thread.jump.label"
+        /** A Markdown table in a message: its columns line up and it scrolls sideways as one. */
+        const val THREAD_TABLE = "worker.thread.table"
+        /** Forgets this phone's receipts for messages it sent to Droid's queue; Droid's own queue is untouched. */
+        const val THREAD_QUEUED_DISMISS = "worker.thread.queued.dismiss"
 
         /** A message, tool call, thought or notice in the thread, by its entry id. */
         fun threadEntry(id: String) = "worker.thread.entry/$id"
