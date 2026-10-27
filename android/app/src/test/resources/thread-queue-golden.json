@@ -2,6 +2,13 @@
   "about": "Client-local queue bookkeeping. Sends are successful local queue:true sends; only later matching user entries acknowledge them. This is unit evidence, not a staged runtime transcript.",
   "cases": [
     {
+      "name": "real_two_queued_text_sends_concatenate_without_separator",
+      "steps": [
+        {"session":"a","entries":[],"sends":[{"text":"Reply only \"Receipt alpha\". Do not use tools.","hasImage":false},{"text":"Reply only \"Receipt beta\". Do not use tools.","hasImage":false}],"expected":["Reply only \"Receipt alpha\". Do not use tools.","Reply only \"Receipt beta\". Do not use tools."]},
+        {"session":"a","entries":[{"id":"merged","seq":1,"role":"user","kind":"text","text":"Reply only \"Receipt alpha\". Do not use tools.Reply only \"Receipt beta\". Do not use tools."}],"expected":[]}
+      ]
+    },
+    {
       "name": "matching_user_not_assistant_clears",
       "steps": [
         {"session":"a","entries":[{"id":"u1","seq":1,"role":"user","kind":"text","text":"repeat"}],"sends":[{"text":"repeat","hasImage":false}],"expected":["repeat"]},

@@ -20,3 +20,40 @@ for (const example of fixture.cases) {
     }
   });
 }
+
+test('queue receipts survive a reload without claiming delivery', () => {
+  const queue = new ThreadQueue();
+  queue.sync('real-session', []);
+  queue.sent('same', false);
+  queue.sent('same', false);
+  const first: ThreadEntry = { id: 'u1', seq: 1, role: 'user', kind: 'text', text: 'same' };
+  queue.sync('real-session', [first]);
+  const reloaded = new ThreadQueue(JSON.parse(JSON.stringify(queue)));
+  assert.equal(reloaded.pending.length, 1);
+  reloaded.sync('real-session', [first]);
+  assert.equal(reloaded.pending.length, 1, 'one observed message cannot acknowledge two receipts');
+  reloaded.sync('real-session', [first, { ...first, id: 'u2', seq: 2 }]);
+  assert.equal(reloaded.pending.length, 0);
+});
+
+test('dismiss only clears local receipts and rejects malformed persisted state', () => {
+  const queue = new ThreadQueue();
+  queue.sync('session', []);
+  queue.sent('draft', false);
+  queue.clear();
+  assert.deepEqual(queue.pending, []);
+  assert.deepEqual(new ThreadQueue({ items: ['bad'] }).pending, []);
+  const saved = {
+    session: 'session',
+    sequence: 2,
+    consumed: [1, 'entry'],
+    items: [
+      { id: 1, text: 'valid', hasImage: false, after: 2 },
+      { id: 'bad', text: 'invalid', after: 2 },
+    ],
+  };
+  assert.deepEqual(
+    new ThreadQueue(saved).pending.map((item) => item.text),
+    ['valid'],
+  );
+});

@@ -974,6 +974,8 @@ function paintWorker(w: WorkerInfo) {
       thread ??= mountWorkerThread(net, {
         worker: w,
         controls,
+        question,
+        queueKey: `${key}:queue-receipts`,
         draft: read(key),
         onDraft: (text) => remember(key, text),
         send: (msg) => action(msg, w.id, intended),
@@ -986,6 +988,12 @@ function paintWorker(w: WorkerInfo) {
       stage.replaceChildren(thread.element);
       thread.activate(true);
     } else stage.replaceChildren(h('div.dash-stage-wait', {}, h('div.spinner'), h('span', {}, 'Opening the terminal…')));
+  }
+  if (mode !== 'thread') {
+    if (question.nextElementSibling !== stage) stage.before(question);
+  } else {
+    const reading = thread?.element.querySelector('.wt-scroll');
+    if (reading && question.parentElement !== reading) reading.append(question);
   }
   if (mode === 'terminal') void showTerminal(w.id, stage);
   else if (mode === 'thread') {
@@ -1006,7 +1014,7 @@ function paintControls(w: WorkerInfo) {
     ...(w.cloud && w.sessionId ? [h('a.btn', { href: sessionWebUrl(w.sessionId), target: '_blank', rel: 'noopener noreferrer' }, icon('external', 14), h('span', {}, 'Factory session'))] : []),
     asleep && !w.guest
       ? btn(w.kind === 'shell' ? 'Restart' : 'Resume', 'play', !w.lost, () => void action({ t: 'worker.resume', workerId: w.id }, w.id, floor, `${w.name} is waking up.`).then(warn), 'primary')
-      : btn(w.kind === 'shell' ? 'Command' : 'Prompt', 'message', !w.guest && !w.lost, () => prompt(w), 'primary', w.kind === 'shell' ? 'Send a command (P)' : 'Send a prompt (P)'),
+      : btn(w.kind === 'shell' ? 'Command' : 'Prompt', 'message', !w.guest && !w.lost, () => prompt(w), stageMode === 'thread' ? 'ghost' : 'primary', w.kind === 'shell' ? 'Send a command (P)' : 'Send a prompt (P)'),
     ...(w.pr
       ? [h('a.btn', { href: safeLink(w.pr.url), target: '_blank', rel: 'noopener noreferrer', title: `Pull request #${w.pr.number}` }, icon('pr', 14), h('span', {}, `#${w.pr.number}`))]
       : local && w.worktree

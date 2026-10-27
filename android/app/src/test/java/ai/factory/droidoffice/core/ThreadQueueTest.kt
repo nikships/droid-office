@@ -9,6 +9,26 @@ import org.junit.Test
 
 class ThreadQueueTest {
     @Test
+    fun receiptsRestoreWithoutMatchingOneUserMessageTwice() {
+        val queue = ThreadQueue()
+        queue.sync("session", emptyList())
+        queue.sent("same", false)
+        queue.sent("same", false)
+        val entry = ThreadEntry.of(OfficeJson.parseToJsonElement("""{"id":"u1","seq":1,"role":"user","kind":"text","text":"same"}"""))!!
+        queue.sync("session", listOf(entry))
+        val restored = ThreadQueue(queue.snapshot())
+        restored.sync("session", listOf(entry))
+        assertEquals(1, restored.pending.size)
+        val next = ThreadEntry.of(OfficeJson.parseToJsonElement("""{"id":"u2","seq":2,"role":"user","kind":"text","text":"same"}"""))!!
+        restored.sync("session", listOf(entry, next))
+        assertEquals(0, restored.pending.size)
+        restored.sent("local receipt", false)
+        restored.clear()
+        assertEquals(0, restored.pending.size)
+        assertEquals(0, ThreadQueue("malformed").pending.size)
+    }
+
+    @Test
     fun sameLocalQueueCasesAsTheWeb() {
         val file = javaClass.classLoader!!.getResource("thread-queue-golden.json")!!
         val fixture = OfficeJson.parseToJsonElement(file.readText()).jsonObject

@@ -21,6 +21,8 @@ export interface WorkerThread {
 interface ThreadOptions {
   worker: WorkerInfo;
   controls: HTMLElement;
+  question: HTMLElement;
+  queueKey: string;
   draft: string;
   onDraft(text: string): void;
   send(msg: ClientMsg): Promise<string | undefined>;
@@ -41,7 +43,11 @@ export function mountWorkerThread(net: Net, opts: ThreadOptions): WorkerThread {
   let pending: { request: string; before?: number; at: number } | undefined;
   let lastReadAt = 0;
   const history = new ThreadHistory();
-  const queued = localQueues.get(worker.id) ?? new ThreadQueue();
+  let savedQueue: unknown;
+  try {
+    savedQueue = JSON.parse(sessionStorage.getItem(opts.queueKey) ?? 'null');
+  } catch {}
+  const queued = localQueues.get(opts.queueKey) ?? new ThreadQueue(savedQueue);
   const title = h('h2', {}, worker.name);
   const status = h('span.pill');
   const model = h('div.wt-model');
@@ -49,7 +55,7 @@ export function mountWorkerThread(net: Net, opts: ThreadOptions): WorkerThread {
   const earlier = h('button.btn.sm.wt-earlier.hidden', { type: 'button', onclick: () => read(history.entries[0]?.seq) }, 'Load earlier messages');
   const list = h('div.wt-list');
   const empty = h('div.wt-empty', { role: 'status' }, 'Reading the conversation…');
-  const scroll = h('div.wt-scroll', { tabindex: 0, 'aria-label': 'Conversation history' }, earlier, list, empty);
+  const scroll = h('div.wt-scroll', { tabindex: 0, 'aria-label': 'Conversation history' }, earlier, list, empty, opts.question);
   const latest = h(
     'button.btn.sm.wt-latest.hidden',
     {
@@ -69,14 +75,39 @@ export function mountWorkerThread(net: Net, opts: ThreadOptions): WorkerThread {
   let queueKey = '';
   const paintQueue = () => {
     const messages = queued.sync(worker.sessionId, history.entries);
-    if (messages.length) localQueues.set(worker.id, queued);
-    else localQueues.delete(worker.id);
-    const key = JSON.stringify([messages, isBusy(worker.status)]);
+    if (messages.length) localQueues.set(opts.queueKey, queued);
+    else localQueues.delete(opts.queueKey);
+    try {
+      if (messages.length) sessionStorage.setItem(opts.queueKey, JSON.stringify(queued));
+      else sessionStorage.removeItem(opts.queueKey);
+    } catch {}
+    const busy = isBusy(worker.status);
+    const key = JSON.stringify([messages, connected, busy]);
     if (key === queueKey) return;
     queueKey = key;
     queuedNotice.hidden = !messages.length;
-    queuedNotice.replaceChildren(...messages.map((message) => h('p', {}, `Queued · ${message.text || 'Image attached'}`)));
-    if (messages.length && !isBusy(worker.status)) queuedNotice.append(h('button.btn.sm', { type: 'button', onclick: opts.raw }, 'Still queued, manage in Raw TTY'));
+    queuedNotice.replaceChildren(...messages.map((message) => h('p', {}, `Sent to Droid’s queue · ${message.text || 'Image attached'}`)));
+    if (messages.length && !busy)
+      queuedNotice.append(
+        h('p', {}, 'Not yet in the conversation. It may have been cleared elsewhere.'),
+        h('p', {}, 'Dismissing this receipt only hides it here. Droid’s queue is unchanged.'),
+        h(
+          'div.row.wrap',
+          {},
+          h('button.btn.sm', { type: 'button', disabled: !connected, onclick: opts.raw }, 'Check queue in Raw TTY'),
+          h(
+            'button.btn.sm.ghost',
+            {
+              type: 'button',
+              onclick: () => {
+                queued.clear();
+                paintQueue();
+              },
+            },
+            'Dismiss receipt',
+          ),
+        ),
+      );
   };
   const notice = h('p.wt-notice', { role: 'status' });
   const retry = h(
@@ -114,7 +145,7 @@ export function mountWorkerThread(net: Net, opts: ThreadOptions): WorkerThread {
   const nodes = new Map<string, { key: string; node: HTMLElement; sourceIds: string[] }>();
   const expandedMessages = new Set<string>();
   const updateCode = (frame: HTMLElement) => {
-    const pre = frame.querySelector('pre');
+    const pre = frame.querySelector<HTMLElement>('.wt-horizontal-content');
     const cue = frame.querySelector<HTMLElement>('.wt-code-cue');
     if (!pre || !cue) return;
     const overflowing = pre.scrollWidth > pre.clientWidth + 1;
@@ -123,14 +154,17 @@ export function mountWorkerThread(net: Net, opts: ThreadOptions): WorkerThread {
     cue.hidden = !overflowing;
   };
   const prepareCode = (body: HTMLElement) => {
-    for (const pre of body.querySelectorAll('pre')) {
+    for (const pre of body.querySelectorAll<HTMLElement>('pre, table')) {
+      const table = pre instanceof HTMLTableElement;
       const frame = h('div.wt-code-scroll');
       const cue = h('span.wt-code-cue', {}, 'Scroll horizontally ↔');
       pre.replaceWith(frame);
-      frame.append(pre, cue);
-      pre.tabIndex = 0;
-      pre.setAttribute('aria-label', 'Code block, scroll horizontally');
-      pre.addEventListener('scroll', () => updateCode(frame));
+      const content = table ? h('div.wt-table-scroll', {}, pre) : pre;
+      content.classList.add('wt-horizontal-content');
+      frame.append(content, cue);
+      content.tabIndex = 0;
+      content.setAttribute('aria-label', `${table ? 'Table' : 'Code block'}, scroll horizontally`);
+      content.addEventListener('scroll', () => updateCode(frame));
     }
   };
   const updateClamps = () => {
@@ -140,12 +174,22 @@ export function mountWorkerThread(net: Net, opts: ThreadOptions): WorkerThread {
     }
     for (const frame of list.querySelectorAll<HTMLElement>('.wt-code-scroll')) updateCode(frame);
   };
-  const resize = new ResizeObserver(updateClamps);
+  let followingLayout = true;
+  let viewportWidth = scroll.clientWidth;
+  let viewportHeight = scroll.clientHeight;
+  const resize = new ResizeObserver(() => {
+    updateClamps();
+    if (followingLayout && !inspecting && !history.historical) follow();
+    viewportWidth = scroll.clientWidth;
+    viewportHeight = scroll.clientHeight;
+    updateLatest();
+  });
   resize.observe(scroll);
   let inspecting = false;
   const atBottom = () => scroll.scrollHeight - scroll.scrollTop - scroll.clientHeight < 80;
   const follow = () => {
     inspecting = false;
+    followingLayout = true;
     scroll.scrollTop = scroll.scrollHeight;
     latest.classList.add('hidden');
   };
@@ -153,7 +197,18 @@ export function mountWorkerThread(net: Net, opts: ThreadOptions): WorkerThread {
     latest.classList.toggle('hidden', !history.historical && !inspecting && atBottom());
     latest.textContent = inspecting && atBottom() ? 'Follow latest' : 'Jump to latest';
   };
-  scroll.addEventListener('scroll', updateLatest);
+  let questionContent = '';
+  const questionChanges = new MutationObserver(() => {
+    const content = opts.question.textContent ?? '';
+    if (content === questionContent) return;
+    questionContent = content;
+    if (active && worker.status === 'needs_input' && !opts.question.hidden) requestAnimationFrame(() => opts.question.scrollIntoView({ block: 'nearest' }));
+  });
+  questionChanges.observe(opts.question, { childList: true, subtree: true });
+  scroll.addEventListener('scroll', () => {
+    if (viewportWidth === scroll.clientWidth && viewportHeight === scroll.clientHeight) followingLayout = atBottom();
+    updateLatest();
+  });
   list.addEventListener('click', (event) => {
     const summary = event.target instanceof Element ? event.target.closest('summary') : null;
     const details = summary?.parentElement;
@@ -167,6 +222,7 @@ export function mountWorkerThread(net: Net, opts: ThreadOptions): WorkerThread {
     (event) => {
       if (event.target instanceof HTMLDetailsElement && event.target.open) {
         inspecting = true;
+        followingLayout = false;
         latest.classList.remove('hidden');
         latest.textContent = atBottom() ? 'Follow latest' : 'Jump to latest';
       }
@@ -370,9 +426,13 @@ export function mountWorkerThread(net: Net, opts: ThreadOptions): WorkerThread {
     else updateLatest();
     if (history.historical) latest.classList.remove('hidden');
   };
+  let waitingShown = false;
   const updateControls = () => {
     const allowed = active && connected && !disposed && !isAsleep(worker.status) && !worker.lost;
     const waiting = worker.status === 'needs_input';
+    form.hidden = waiting;
+    if (waiting && !waitingShown) requestAnimationFrame(() => opts.question.scrollIntoView({ block: 'nearest' }));
+    waitingShown = waiting;
     input.disabled = !allowed || sending || waiting;
     attach.disabled = input.disabled;
     send.disabled = input.disabled;
@@ -386,10 +446,8 @@ export function mountWorkerThread(net: Net, opts: ThreadOptions): WorkerThread {
     empty.classList.toggle('error', !!error && !history.entries.length);
     if (!history.entries.length)
       empty.textContent = error ? 'Conversation unavailable. Retry below, or open Raw TTY.' : received ? 'Start a conversation. Your messages and the worker’s replies will appear here.' : 'Reading the conversation…';
-    notice.textContent = !connected
-      ? 'Disconnected. Messages are kept here; nothing will be sent automatically.'
-      : error || (waiting ? 'Answer the question above. For other CLI dialogs, use Raw TTY.' : isAsleep(worker.status) ? 'Resume this worker to send another message.' : '');
-    raw.classList.toggle('hidden', !error && connected && !waiting && !isAsleep(worker.status));
+    notice.textContent = connected ? error || (isAsleep(worker.status) ? 'Resume this worker to send another message.' : '') : '';
+    raw.classList.toggle('hidden', !connected || (!error && !isAsleep(worker.status)));
     element.classList.toggle('has-feedback', !!notice.textContent);
     paintQueue();
   };
@@ -506,7 +564,7 @@ export function mountWorkerThread(net: Net, opts: ThreadOptions): WorkerThread {
       }
       title.textContent = worker.name;
       status.className = `pill ${worker.status}`;
-      status.textContent = STATUS_LABEL[worker.status] ?? worker.status;
+      status.textContent = isAsleep(worker.status) ? 'Asleep' : (STATUS_LABEL[worker.status] ?? worker.status);
       const badge = modelBadgeNode(worker.activeModel ?? worker.model, worker.activeEffort ?? worker.effort);
       model.replaceChildren(...(badge ? [badge] : []));
       if (active) head.append(opts.controls);
@@ -534,6 +592,7 @@ export function mountWorkerThread(net: Net, opts: ThreadOptions): WorkerThread {
       document.removeEventListener('visibilitychange', visibility);
       off();
       resize.disconnect();
+      questionChanges.disconnect();
       images.discard();
     },
   };
