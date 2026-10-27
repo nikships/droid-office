@@ -14,8 +14,9 @@ import kotlinx.serialization.json.JsonPrimitive
  * reads from the session (the latest changed one shows only inside an open run, the next one shown
  * when its own run has nothing else), a Script followed by calls of its own in the same run (Droid
  * logs each call a script makes as its own tool call after the script), and a turn that ended
- * normally. A failed one of any of them is always shown. Raw TTY still has everything. The web
- * companion projects the same way (src/shared/thread-presentation.ts).
+ * normally. Failed wrappers retain their diagnostics, but an exact repeated child failure is
+ * counted only on the child. Independent wrapper failures are always counted. Raw TTY still has
+ * everything. The web companion projects the same way (src/shared/thread-presentation.ts).
  */
 object ThreadView {
     sealed interface Row {
@@ -39,7 +40,7 @@ object ThreadView {
         override val ids get() = setOf(entry.id)
     }
 
-    enum class Kind { Read, List, Search, Command, Edit, Create, Web, WebSearch, Delegate, Skill, Ask, Memory, Script, Plan, Wait, Other }
+    enum class Kind { Read, List, Search, Command, Edit, Create, Web, WebSearch, Delegate, Skill, Ask, Memory, Script, Plan, Wait, TaskStop, LoopCreate, LoopList, LoopPause, LoopResume, LoopCancel, Other }
 
     sealed interface Item {
         val entry: ThreadEntry
@@ -54,6 +55,8 @@ object ThreadView {
         val state: ToolState,
         /** The files it read or changed, for counting them: a patch can touch several. */
         val paths: List<String> = emptyList(),
+        /** Keep wrapper diagnostics accessible without counting its child's failure twice. */
+        val causedBy: String? = null,
     ) : Item
 
     data class Thought(override val entry: ThreadEntry, val preview: String) : Item
@@ -155,7 +158,9 @@ object ThreadView {
                     val failed = state == ToolState.Failed || state == ToolState.Cancelled
                     if (!failed && name in BOOKKEEPING) continue
                     if (!failed && name == "Script" && wraps(run, i)) continue
-                    items += action(e, state)
+                    val cause = if (name == "Script" && state == ToolState.Failed) scriptFailureCause(run, i) else null
+                    val action = action(e, state)
+                    items += if (cause != null) action.copy(title = "Script stopped after a tool failed", causedBy = cause) else action
                 }
                 else -> Unit
             }
@@ -173,7 +178,7 @@ object ThreadView {
             summary = summary(actions),
             running = actions.lastOrNull { it.state == ToolState.Running },
             live = live,
-            failed = actions.filter { it.state == ToolState.Failed },
+            failed = actions.filter { it.state == ToolState.Failed && it.causedBy == null },
             noResult = actions.count { it.state == ToolState.NoResult },
         )
     }
@@ -187,6 +192,20 @@ object ThreadView {
             if (e.kind == ThreadKind.Tool) return e.name != "Script"
         }
         return false
+    }
+
+    /** Only the CLI's exact causal error envelope, never just a nearby failed call. */
+    private fun scriptFailureCause(run: List<ThreadEntry>, at: Int): String? {
+        val e = run[at]
+        val lines = e.output?.trim()?.lines() ?: return null
+        if (lines.size != 2 || !Regex("""^\[Script failed · .* · after call \d+ \(.+\) · log: .+]$""").matches(lines[0])) return null
+        val result = obj(lines[1]) ?: return null
+        if (result.keys != setOf("error", "status", "toolCallId")) return null
+        fun exact(key: String) = (result[key] as? JsonPrimitive)?.takeIf { it.isString }?.content
+        if (exact("status") != "failed" || exact("toolCallId") != e.id.removePrefix("tool:")) return null
+        return run.drop(at + 1).takeWhile { it.kind != ThreadKind.Tool || it.name != "Script" }.firstOrNull { child ->
+            child.kind == ThreadKind.Tool && child.error && !child.output.isNullOrBlank() && exact("error") == "Error: tools.${child.name}: ${child.output.trim()}"
+        }?.id
     }
 
     /** "1. [in progress] Check the merge" lines, as the office writes a plan snapshot. */
@@ -266,16 +285,16 @@ object ThreadView {
             "ToolSearch" -> a(Kind.Plan, if (failedVerb) "Couldn't load tools" else "Loaded tools")
             "WaitForScript" -> a(Kind.Wait, if (failedVerb) "Couldn't read script results" else "Read script results")
             "TaskOutput" -> a(Kind.Wait, if (failedVerb) "Couldn't read task output" else "Read task output")
-            "TaskStop" -> a(Kind.Other, if (failedVerb) "Couldn't stop the background task" else "Stopped a background task")
+            "TaskStop" -> a(Kind.TaskStop, if (failedVerb) "Couldn't stop the background task" else "Stopped a background task")
             "Loop" -> {
-                val (done, error) = when (o?.str("action")) {
-                    "list" -> "Checked scheduled loops" to "Couldn't read scheduled loops"
-                    "pause" -> "Paused a loop" to "Couldn't pause the loop"
-                    "resume" -> "Resumed a loop" to "Couldn't resume the loop"
-                    "cancel" -> "Cancelled a loop" to "Couldn't cancel the loop"
-                    else -> "Scheduled a loop" to "Couldn't schedule the loop"
+                val (kind, done, error) = when (o?.str("action")) {
+                    "list" -> Triple(Kind.LoopList, "Checked scheduled loops", "Couldn't read scheduled loops")
+                    "pause" -> Triple(Kind.LoopPause, "Paused a loop", "Couldn't pause the loop")
+                    "resume" -> Triple(Kind.LoopResume, "Resumed a loop", "Couldn't resume the loop")
+                    "cancel" -> Triple(Kind.LoopCancel, "Cancelled a loop", "Couldn't cancel the loop")
+                    else -> Triple(Kind.LoopCreate, "Scheduled a loop", "Couldn't schedule the loop")
                 }
-                a(Kind.Other, if (failedVerb) error else done)
+                a(kind, if (failedVerb) error else done)
             }
             in BOOKKEEPING -> a(Kind.Plan, if (failedVerb) "Couldn't update the plan" else "Updated the plan")
             else -> when {
@@ -311,8 +330,23 @@ object ThreadView {
         Kind.Script to ("Ran a script" to "Ran %d scripts"),
         Kind.Plan to ("Updated the plan" to "Updated the plan %d times"),
         Kind.Wait to ("Read results" to "Read results %d times"),
+        Kind.TaskStop to ("Stopped a background task" to "Stopped %d background tasks"),
+        Kind.LoopCreate to ("Scheduled a loop" to "Scheduled %d loops"),
+        Kind.LoopList to ("Checked scheduled loops" to "Checked scheduled loops %d times"),
+        Kind.LoopPause to ("Paused a loop" to "Paused %d loops"),
+        Kind.LoopResume to ("Resumed a loop" to "Resumed %d loops"),
+        Kind.LoopCancel to ("Cancelled a loop" to "Cancelled %d loops"),
         Kind.Other to ("Used a tool" to "Used %d tools"),
     ).toMap()
+
+    private val CONTROLS = mapOf(
+        Kind.TaskStop to Triple("stop background tasks", "Stopping a background task", "Background task stop cancelled"),
+        Kind.LoopCreate to Triple("schedule loops", "Scheduling a loop", "Loop scheduling cancelled"),
+        Kind.LoopList to Triple("check scheduled loops", "Checking scheduled loops", "Loop check cancelled"),
+        Kind.LoopPause to Triple("pause loops", "Pausing a loop", "Loop pause cancelled"),
+        Kind.LoopResume to Triple("resume loops", "Resuming a loop", "Loop resume cancelled"),
+        Kind.LoopCancel to Triple("cancel loops", "Cancelling a loop", "Loop cancellation cancelled"),
+    )
 
     /**
      * "Read 3 files · Ran 2 commands", in the order the run first did each; past three kinds, how many more actions.
@@ -320,8 +354,8 @@ object ThreadView {
      */
     fun summary(actions: List<Action>): String {
         if (actions.isEmpty()) return "Thought"
-        val counted = actions.filterNot { it.state == ToolState.Failed && (it.kind == Kind.Plan || it.kind == Kind.Skill || it.kind == Kind.Wait) }
-        if (counted.isEmpty()) return actions.first().title
+        val counted = actions.filterNot { it.causedBy != null || (it.state == ToolState.Failed && (it.kind == Kind.Plan || it.kind == Kind.Skill || it.kind == Kind.Wait)) }
+        if (counted.isEmpty()) return (actions.firstOrNull { it.causedBy == null } ?: actions.first()).title
         val byKind = LinkedHashMap<Kind, Int>()
         val seen = HashMap<Kind, MutableSet<String>>()
         for (a in counted) {
@@ -331,7 +365,21 @@ object ThreadView {
             byKind.putIfAbsent(a.kind, 0)
             for (u in units) if (set.add(u)) byKind[a.kind] = byKind.getValue(a.kind) + 1
         }
-        val parts = byKind.entries.map { (k, n) -> COUNTED.getValue(k).let { (one, many) -> if (n <= 1) one else many.format(n) } }
+        val parts = byKind.entries.map { (k, n) ->
+            val control = CONTROLS[k]
+            val group = counted.filter { it.kind == k }
+            when {
+                control != null && n == 1 -> group.first().let {
+                    when (it.state) {
+                        ToolState.Cancelled -> control.third
+                        ToolState.Running, ToolState.NoResult -> control.second
+                        else -> it.title
+                    }
+                }
+                control != null && group.any { it.state != ToolState.Done } -> "$n attempts to ${control.first}"
+                else -> COUNTED.getValue(k).let { (one, many) -> if (n <= 1) one else many.format(n) }
+            }
+        }
         val shown = parts.take(3)
         val folded = byKind.keys.drop(3).toSet()
         val rest = counted.count { it.kind in folded }

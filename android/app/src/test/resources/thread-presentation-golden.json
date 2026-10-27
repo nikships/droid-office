@@ -12,6 +12,7 @@
     "rules": [
       "A run is every consecutive tool, thinking and todo entry between messages and shown notices; a run with nothing to show leaves no row.",
       "Hidden when they succeed: TodoWrite, TodoRead, ToolSearch, Skill, WaitForScript, TaskOutput, and a Script followed by any tool call (bookkeeping included) before the next Script or the end of the run. A failed one of any of them is always shown, with its exact failure title (\"Couldn't read script results\", \"Couldn't read task output\", ...).",
+      "A failed Script with the CLI's exact error envelope repeating an enclosed child's full failure stays available as diagnostics but is excluded from the summary and failed count. Independent, unmatched, truncated or incomplete wrapper failures remain counted.",
       "A Script with no tool call after it (before the next Script or the end of the run) stays as 'Ran a script' (its source and result in its details).",
       "TaskStop and Loop are shown: 'Stopped a background task' / 'Couldn't stop the background task', 'Scheduled a loop' / 'Couldn't schedule the loop'.",
       "Todo snapshots are never rows. A run's latest plan goes on its own activity; a run with no row passes its plan on to the next activity shown (even past a message), and a plan counts as shown only once an activity carries it.",
@@ -1635,7 +1636,7 @@
         {
           "kind": "activity",
           "id": "activity:tool:toolu_2",
-          "summary": "Used 4 tools",
+          "summary": "2 attempts to stop background tasks · 2 attempts to schedule loops",
           "live": false,
           "items": [
             {
@@ -1721,6 +1722,42 @@
       "expected": [
         {"kind":"activity","id":"activity:read-error","summary":"Read a file · Ran a command","live":false,"items":[{"type":"action","id":"read-error","title":"Read README.md","detail":"README.md","state":"failed"},{"type":"action","id":"cancel-exec","title":"Verify the live reading layout","detail":null,"state":"cancelled"}],"failed":["Read README.md"],"cancelled":1,"noResult":0,"plan":null},
         {"kind":"notice","id":"turn:actual:cancelled","text":"Turn cancelled","tone":"quiet"}
+      ]
+    },
+    {
+      "name": "unit_real_missing_read_causal_wrapper",
+      "source": "Byte hands-on d7509d5, web/05-failure and android/a03-360-p5; session 7129eccc seq 41,43,45,46, Script log call_VQcFUTlfVZhozstnKccatcj3. Unit projection of captured entries, not a runtime check.",
+      "busy": false,
+      "entries": [
+        {"id":"tool:call_VQcFUTlfVZhozstnKccatcj3","seq":41,"role":"assistant","kind":"tool","name":"Script","input":"{\"script\":\"text(await tools.Read({file_path:\\\"/tmp/office-clone-qeTy/floors/droid-office/.droid-office/thread-cancelled-check-missing.txt\\\"}));\\n\"}","error":true,"output":"[Script failed · 0.1 s elapsed · after call 1 (Read thread-cancelled-check-missing.txt) · log: /tmp/office-clone-qeTy/home/.factory/artifacts/scripts/7129eccc-d2a8-4d15-a5a9-cea503e25ed3/call_VQcFUTlfVZhozstnKccatcj3.log]\n{\"toolCallId\":\"call_VQcFUTlfVZhozstnKccatcj3\",\"status\":\"failed\",\"error\":\"Error: tools.Read: Error reading file: ENOENT: no such file or directory, access '/tmp/office-clone-qeTy/floors/droid-office/.droid-office/thread-cancelled-check-missing.txt'\"}"},
+        {"id":"tool:7d7fdb70-0682-46b9-8a9a-fc9e2ca18575-1","seq":43,"role":"assistant","kind":"tool","name":"Read","input":"{\"file_path\":\"/tmp/office-clone-qeTy/floors/droid-office/.droid-office/thread-cancelled-check-missing.txt\"}","error":true,"output":"Error reading file: ENOENT: no such file or directory, access '/tmp/office-clone-qeTy/floors/droid-office/.droid-office/thread-cancelled-check-missing.txt'"}
+      ],
+      "expected": [
+        {"kind":"activity","id":"activity:tool:call_VQcFUTlfVZhozstnKccatcj3","summary":"Read a file","live":false,"items":[{"type":"action","id":"tool:call_VQcFUTlfVZhozstnKccatcj3","title":"Script stopped after a tool failed","detail":null,"state":"failed"},{"type":"action","id":"tool:7d7fdb70-0682-46b9-8a9a-fc9e2ca18575-1","title":"Read thread-cancelled-check-missing.txt","detail":"…/droid-office/.droid-office/thread-cancelled-check-missing.txt","state":"failed"}],"failed":["Read thread-cancelled-check-missing.txt"],"noResult":0,"plan":null}
+      ]
+    },
+    {
+      "name": "unit_real_taskstop_failure_summary",
+      "source": "Byte hands-on android/a03-360-p8; session 7129eccc seq 91,93. Unit projection of captured TaskStop failure.",
+      "busy": false,
+      "entries": [
+        {"id":"tool:call_RjMKNJ5YECZzR8v7nL8qIF8b","seq":91,"role":"assistant","kind":"tool","name":"TaskStop","input":"{\"task_id\":\"49137\"}","error":true,"output":"Error: No task found with ID: 49137. No session-backed tasks found."}
+      ],
+      "expected": [
+        {"kind":"activity","id":"activity:tool:call_RjMKNJ5YECZzR8v7nL8qIF8b","summary":"Couldn't stop the background task","live":false,"items":[{"type":"action","id":"tool:call_RjMKNJ5YECZzR8v7nL8qIF8b","title":"Couldn't stop the background task","detail":null,"state":"failed"}],"failed":["Couldn't stop the background task"],"noResult":0,"plan":null}
+      ]
+    },
+    {
+      "name": "unit_real_loop_create_cancel_list_summary",
+      "source": "Byte hands-on android/a07; session 7129eccc seq 384,386,391,393,394,396. Unit projection of captured Loop calls, successful Script bookkeeping omitted.",
+      "busy": false,
+      "entries": [
+        {"id":"tool:470475c1-285b-437b-ad46-4aff10045eac-1","seq":384,"role":"assistant","kind":"tool","name":"Loop","input":"{\"action\":\"create\",\"prompt\":\"Reply only: loop check\",\"cron\":\"0 0 1 1 *\",\"runImmediately\":false}","output":"Loop created:\n5ddb7746 · active · next 12:00am · #0 · Reply only: loop check"},
+        {"id":"tool:5dab4e53-c5fb-4a7c-8572-e4a7e2adcb0d-1","seq":391,"role":"assistant","kind":"tool","name":"Loop","input":"{\"action\":\"cancel\",\"loopId\":\"5ddb7746\"}","output":"Loop 5ddb7746 cancelled."},
+        {"id":"tool:5dab4e53-c5fb-4a7c-8572-e4a7e2adcb0d-3","seq":394,"role":"assistant","kind":"tool","name":"Loop","input":"{\"action\":\"list\"}","output":"No scheduled loops."}
+      ],
+      "expected": [
+        {"kind":"activity","id":"activity:tool:470475c1-285b-437b-ad46-4aff10045eac-1","summary":"Scheduled a loop · Cancelled a loop · Checked scheduled loops","live":false,"items":[{"type":"action","id":"tool:470475c1-285b-437b-ad46-4aff10045eac-1","title":"Scheduled a loop","detail":null,"state":"done"},{"type":"action","id":"tool:5dab4e53-c5fb-4a7c-8572-e4a7e2adcb0d-1","title":"Cancelled a loop","detail":null,"state":"done"},{"type":"action","id":"tool:5dab4e53-c5fb-4a7c-8572-e4a7e2adcb0d-3","title":"Checked scheduled loops","detail":null,"state":"done"}],"failed":[],"noResult":0,"plan":null}
       ]
     }
   ]

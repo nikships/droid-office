@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import { test } from 'node:test';
 import { presentThread, threadAction } from '../src/shared/thread-presentation.js';
 import type { ThreadEntry } from '../src/shared/worker-thread.js';
@@ -15,6 +16,8 @@ const tool = (id: string, name: string, input: Record<string, unknown> = {}, ext
   ...extra,
 });
 const text = (id: string, role: 'user' | 'assistant' = 'assistant'): ThreadEntry => ({ id, seq: 0, role, kind: 'text', text: 'The release is published.' });
+const capturedFailure = (): ThreadEntry[] =>
+  JSON.parse(readFileSync(new URL('../android/app/src/test/resources/thread-presentation-golden.json', import.meta.url), 'utf8')).cases.find((example: { name: string }) => example.name === 'unit_real_missing_read_causal_wrapper').entries;
 
 test('the reported release-check turn becomes one activity disclosure without bookkeeping', () => {
   const rows = presentThread(
@@ -65,6 +68,55 @@ test('failed wrappers and bookkeeping cannot be silently hidden', () => {
   assert.equal(rows[0].state, 'failed');
   assert.equal(rows[0].failed.length, 2);
   assert.equal(rows[0].actions.length, 3);
+});
+
+test('unit: the captured causal Script diagnostics stay accessible but only Read counts as failed', () => {
+  const entries = capturedFailure();
+  const row = presentThread(entries, false)[0];
+  assert.equal(row.kind, 'activity');
+  if (row.kind !== 'activity') return;
+  assert.equal(row.label, 'Read a file');
+  assert.equal(row.failed.length, 1);
+  assert.equal(row.failed[0].entry.id, entries[1].id);
+  assert.match(row.failed[0].entry.output ?? '', /^Error reading file: ENOENT/);
+  assert.equal(row.actions[0].causedBy, entries[1].id);
+  assert.equal(row.actions[0].entry, entries[0]);
+  assert.equal(row.actions[0].state, 'failed');
+  assert.equal(row.state, 'failed');
+  assert.deepEqual(
+    row.sourceIds,
+    entries.map((entry) => entry.id),
+  );
+});
+
+test('unit variants of the capture never deduplicate unrelated or unproven wrapper failures', () => {
+  const [wrapper, child] = capturedFailure();
+  for (const output of [
+    wrapper.output?.replace('Error: tools.Read: Error reading file:', 'SyntaxError:'),
+    wrapper.output?.replace('"status":"failed"', '"status":"complete"'),
+    wrapper.output?.replace('"toolCallId":"call_', '"toolCallId":"other_'),
+    wrapper.output?.split('\n')[0],
+    wrapper.output?.replace('"status":"failed"', '"status":"failed","independentError":"SyntaxError"'),
+    wrapper.output?.replace(/{"toolCallId".*$/, '{invalid JSON'),
+    `${wrapper.output}\nAdditional independent failure`,
+    'SyntaxError: Unexpected token',
+  ]) {
+    const row = presentThread([{ ...wrapper, output }, child], false)[0];
+    assert.equal(row.kind, 'activity');
+    if (row.kind === 'activity') assert.equal(row.failed.length, 2, output);
+  }
+  for (const entries of [
+    [wrapper],
+    [wrapper, { ...child, error: false }],
+    [wrapper, { ...child, output: undefined }],
+    [wrapper, { ...child, output: 'An independent error' }],
+    [child, wrapper],
+    [wrapper, tool('next-script', 'Script'), child],
+  ]) {
+    const row = presentThread(entries, false)[0];
+    assert.equal(row.kind, 'activity');
+    if (row.kind === 'activity') assert.equal(row.actions.find((action) => action.entry.id === wrapper.id)?.causedBy, undefined);
+  }
 });
 
 test('todo snapshots never become repeated transcript cards', () => {
@@ -195,4 +247,29 @@ test('Loop management actions do not claim that a read or cancellation scheduled
     assert.equal(threadAction(tool('l1', 'Loop', { action })).title, title);
   }
   assert.equal(threadAction(tool('l1', 'Loop', { action: 'cancel' }, { error: true })).title, "Couldn't cancel the loop");
+});
+
+test('task controls have meaningful summaries without claiming missing or failed results succeeded', () => {
+  for (const [name, input, done, pending, failed] of [
+    ['TaskStop', {}, 'Stopped a background task', 'Stopping a background task', "Couldn't stop the background task"],
+    ['Loop', { action: 'create' }, 'Scheduled a loop', 'Scheduling a loop', "Couldn't schedule the loop"],
+    ['Loop', { action: 'cancel' }, 'Cancelled a loop', 'Cancelling a loop', "Couldn't cancel the loop"],
+    ['Loop', { action: 'list' }, 'Checked scheduled loops', 'Checking scheduled loops', "Couldn't read scheduled loops"],
+    ['Loop', { action: 'pause' }, 'Paused a loop', 'Pausing a loop', "Couldn't pause the loop"],
+    ['Loop', { action: 'resume' }, 'Resumed a loop', 'Resuming a loop', "Couldn't resume the loop"],
+  ] as const) {
+    for (const [extra, expected] of [
+      [{}, done],
+      [{ output: undefined }, pending],
+      [{ error: true }, failed],
+    ] as const) {
+      const row = presentThread([tool('t1', name, input, extra)], false)[0];
+      assert.equal(row.kind, 'activity');
+      if (row.kind === 'activity') assert.equal(row.label, expected);
+    }
+  }
+  const row = presentThread([tool('s1', 'TaskStop'), tool('s2', 'TaskStop', {}, { error: true })], false)[0];
+  if (row.kind === 'activity') assert.equal(row.label, '2 attempts to stop background tasks');
+  const cancelled = presentThread([tool('s1', 'TaskStop', {}, { error: true, output: 'Tool execution cancelled by user' }), { id: 'turn:stop:cancelled', seq: 2, role: 'system', kind: 'notice', text: 'Turn cancelled' }], false)[0];
+  if (cancelled.kind === 'activity') assert.equal(cancelled.label, 'Background task stop cancelled');
 });

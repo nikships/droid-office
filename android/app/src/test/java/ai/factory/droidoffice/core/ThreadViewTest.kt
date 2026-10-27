@@ -1,5 +1,8 @@
 package ai.factory.droidoffice.core
 
+import kotlinx.serialization.json.jsonArray
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -23,6 +26,13 @@ class ThreadViewTest {
     private fun exec(command: String, summary: String? = null, output: String? = "exit 0", error: Boolean = false) =
         tool("Execute", "{\n  \"command\": \"$command\"" + (summary?.let { ",\n  \"summary\": \"$it\"" } ?: "") + ",\n  \"riskLevel\": \"low\"\n}", output, error)
     private fun todoWrite() = tool("TodoWrite", "{\n  \"todos\": \"1. [in_progress] Check the merged commit\"\n}", output = "TODO List Updated")
+
+    private fun capturedFailure(): List<ThreadEntry> {
+        val fixture = OfficeJson.parseToJsonElement(javaClass.classLoader!!.getResource("thread-presentation-golden.json")!!.readText()).jsonObject
+        return fixture.getValue("cases").jsonArray.map { it.jsonObject }
+            .single { it.getValue("name").jsonPrimitive.content == "unit_real_missing_read_causal_wrapper" }
+            .getValue("entries").jsonArray.map { ThreadEntry.of(it)!! }
+    }
 
     /** The released v0.1.611 screen the owner reported: wrapper scripts, TodoWrite, raw paths and duplicate plans. */
     private fun reported(): List<ThreadEntry> = listOf(
@@ -121,6 +131,50 @@ class ThreadViewTest {
     }
 
     @Test
+    fun unitCapturedCausalScriptKeepsDiagnosticsButOnlyTheReadCountsAsFailed() {
+        val entries = capturedFailure()
+        val a = ThreadView.project(entries, busy = false).single() as ThreadView.Activity
+        assertEquals("Read a file", a.summary)
+        assertEquals(entries[1], a.failed.single().entry)
+        // The existing native preview reads the first failed action's output, not the wrapper log.
+        assertTrue(a.failed.single().entry.output!!.startsWith("Error reading file: ENOENT"))
+        assertEquals(entries[1].id, a.actions.first().causedBy)
+        assertEquals(entries[0], a.actions.first().entry)
+        assertEquals(ToolState.Failed, a.actions.first().state)
+        assertEquals(entries.map { it.id }.toSet(), a.ids)
+    }
+
+    @Test
+    fun unitCaptureVariantsKeepIndependentOrUnprovenWrapperFailuresCounted() {
+        val (wrapper, child) = capturedFailure()
+        val output = wrapper.output!!
+        for (variant in listOf(
+            output.replace("Error: tools.Read: Error reading file:", "SyntaxError:"),
+            output.replace("\"status\":\"failed\"", "\"status\":\"complete\""),
+            output.replace("\"toolCallId\":\"call_", "\"toolCallId\":\"other_"),
+            output.lineSequence().first(),
+            output.replace("\"status\":\"failed\"", "\"status\":\"failed\",\"independentError\":\"SyntaxError\""),
+            output.substringBefore('\n') + "\n{invalid JSON",
+            "$output\nAdditional independent failure",
+            "SyntaxError: Unexpected token",
+        )) {
+            val a = ThreadView.project(listOf(wrapper.copy(output = variant), child), busy = false).single() as ThreadView.Activity
+            assertEquals(variant, 2, a.failed.size)
+        }
+        for (entries in listOf(
+            listOf(wrapper),
+            listOf(wrapper, child.copy(error = false)),
+            listOf(wrapper, child.copy(output = null)),
+            listOf(wrapper, child.copy(output = "An independent error")),
+            listOf(child, wrapper),
+            listOf(wrapper, script(), child),
+        )) {
+            val a = ThreadView.project(entries, busy = false).single() as ThreadView.Activity
+            assertNull(a.actions.single { it.entry.id == wrapper.id }.causedBy)
+        }
+    }
+
+    @Test
     fun onlyAScriptFollowedByItsOwnCallsIsHidden() {
         // Read, then a script that called nothing: the script keeps its row and its result.
         val alone = ThreadView.project(listOf(say("x"), read("$home/a.ts"), script("text('hi')")), busy = false)[1] as ThreadView.Activity
@@ -174,7 +228,7 @@ class ThreadViewTest {
         val a = rows[1] as ThreadView.Activity
         assertEquals(listOf("Couldn't read script results", "Couldn't read task output", "Stopped a background task", "Scheduled a loop"), a.actions.map { it.title })
         assertEquals(2, a.failed.size)
-        assertEquals("Used 2 tools", a.summary)
+        assertEquals("Stopped a background task · Scheduled a loop", a.summary)
     }
 
     @Test
@@ -184,6 +238,32 @@ class ThreadViewTest {
             assertEquals(title, ThreadView.action(tool("Loop", """{"action":"$action"}"""), ToolState.Done).title)
         }
         assertEquals("Couldn't cancel the loop", ThreadView.action(tool("Loop", """{"action":"cancel"}""", error = true), ToolState.Failed).title)
+    }
+
+    @Test
+    fun controlsSummarizeTheirActualActionWithoutClaimingMissingOrFailedResultsSucceeded() {
+        val cases = listOf(
+            listOf("TaskStop", "{}", "Stopped a background task", "Stopping a background task", "Couldn't stop the background task"),
+            listOf("Loop", """{"action":"create"}""", "Scheduled a loop", "Scheduling a loop", "Couldn't schedule the loop"),
+            listOf("Loop", """{"action":"cancel"}""", "Cancelled a loop", "Cancelling a loop", "Couldn't cancel the loop"),
+            listOf("Loop", """{"action":"list"}""", "Checked scheduled loops", "Checking scheduled loops", "Couldn't read scheduled loops"),
+            listOf("Loop", """{"action":"pause"}""", "Paused a loop", "Pausing a loop", "Couldn't pause the loop"),
+            listOf("Loop", """{"action":"resume"}""", "Resumed a loop", "Resuming a loop", "Couldn't resume the loop"),
+        )
+        for (c in cases) {
+            for ((entry, expected) in listOf(
+                tool(c[0], c[1]) to c[2],
+                tool(c[0], c[1], output = null) to c[3],
+                tool(c[0], c[1], error = true) to c[4],
+            )) {
+                val a = ThreadView.project(listOf(entry), busy = false).single() as ThreadView.Activity
+                assertEquals(expected, a.summary)
+            }
+        }
+        val mixed = ThreadView.project(listOf(tool("TaskStop", "{}"), tool("TaskStop", "{}", error = true)), busy = false).single() as ThreadView.Activity
+        assertEquals("2 attempts to stop background tasks", mixed.summary)
+        val cancelled = ThreadView.project(listOf(tool("TaskStop", "{}", output = "Tool execution cancelled by user", error = true), notice("turn:stop:cancelled", "Turn cancelled")), busy = false).first() as ThreadView.Activity
+        assertEquals("Background task stop cancelled", cancelled.summary)
     }
 
     @Test

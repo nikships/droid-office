@@ -1,7 +1,28 @@
 import type { ThreadEntry } from './worker-thread.js';
 
 export type ActivityState = 'working' | 'complete' | 'incomplete' | 'failed' | 'cancelled';
-type ActionKind = 'read' | 'list' | 'search' | 'command' | 'edit' | 'create' | 'web' | 'webSearch' | 'delegate' | 'skill' | 'ask' | 'memory' | 'script' | 'plan' | 'other';
+type ActionKind =
+  | 'read'
+  | 'list'
+  | 'search'
+  | 'command'
+  | 'edit'
+  | 'create'
+  | 'web'
+  | 'webSearch'
+  | 'delegate'
+  | 'skill'
+  | 'ask'
+  | 'memory'
+  | 'script'
+  | 'plan'
+  | 'taskStop'
+  | 'loopCreate'
+  | 'loopList'
+  | 'loopPause'
+  | 'loopResume'
+  | 'loopCancel'
+  | 'other';
 export interface ThreadAction {
   type: 'action';
   entry: ThreadEntry;
@@ -10,6 +31,8 @@ export interface ThreadAction {
   category: ActionKind;
   state: ActivityState;
   paths: string[];
+  /** A wrapper's diagnostics remain available, but its child's failure is counted only once. */
+  causedBy?: string;
 }
 interface ThreadThought {
   type: 'thought';
@@ -162,16 +185,16 @@ export function threadAction(entry: ThreadEntry, live = false, cancelled = false
     case 'taskoutput':
       return action('plan', failed ? "Couldn't read task output" : 'Read task output');
     case 'taskstop':
-      return action('other', failed ? "Couldn't stop the background task" : 'Stopped a background task');
+      return action('taskStop', failed ? "Couldn't stop the background task" : 'Stopped a background task');
     case 'loop': {
-      const verbs: Record<string, [string, string]> = {
-        list: ['Checked scheduled loops', "Couldn't read scheduled loops"],
-        pause: ['Paused a loop', "Couldn't pause the loop"],
-        resume: ['Resumed a loop', "Couldn't resume the loop"],
-        cancel: ['Cancelled a loop', "Couldn't cancel the loop"],
+      const verbs: Record<string, [ActionKind, string, string]> = {
+        list: ['loopList', 'Checked scheduled loops', "Couldn't read scheduled loops"],
+        pause: ['loopPause', 'Paused a loop', "Couldn't pause the loop"],
+        resume: ['loopResume', 'Resumed a loop', "Couldn't resume the loop"],
+        cancel: ['loopCancel', 'Cancelled a loop', "Couldn't cancel the loop"],
       };
-      const [done, error] = verbs[str(args.action)] ?? ['Scheduled a loop', "Couldn't schedule the loop"];
-      return action('other', failed ? error : done);
+      const [kind, done, error] = verbs[str(args.action)] ?? ['loopCreate', 'Scheduled a loop', "Couldn't schedule the loop"];
+      return action(kind, failed ? error : done);
     }
     default:
       if (bookkeeping.has(name)) return action('plan', failed ? "Couldn't update the plan" : 'Updated the plan');
@@ -204,11 +227,25 @@ const counts: Record<ActionKind, [string, string]> = {
   memory: ['Checked memory', 'Used memory %d times'],
   script: ['Ran a script', 'Ran %d scripts'],
   plan: ['Updated the plan', 'Updated the plan %d times'],
+  taskStop: ['Stopped a background task', 'Stopped %d background tasks'],
+  loopCreate: ['Scheduled a loop', 'Scheduled %d loops'],
+  loopList: ['Checked scheduled loops', 'Checked scheduled loops %d times'],
+  loopPause: ['Paused a loop', 'Paused %d loops'],
+  loopResume: ['Resumed a loop', 'Resumed %d loops'],
+  loopCancel: ['Cancelled a loop', 'Cancelled %d loops'],
   other: ['Used a tool', 'Used %d tools'],
 };
+const controls: Partial<Record<ActionKind, [string, string, string]>> = {
+  taskStop: ['stop background tasks', 'Stopping a background task', 'Background task stop cancelled'],
+  loopCreate: ['schedule loops', 'Scheduling a loop', 'Loop scheduling cancelled'],
+  loopList: ['check scheduled loops', 'Checking scheduled loops', 'Loop check cancelled'],
+  loopPause: ['pause loops', 'Pausing a loop', 'Loop pause cancelled'],
+  loopResume: ['resume loops', 'Resuming a loop', 'Loop resume cancelled'],
+  loopCancel: ['cancel loops', 'Cancelling a loop', 'Loop cancellation cancelled'],
+};
 function activityLabel(actions: ThreadAction[]): string {
-  const counted = actions.filter((action) => !(action.state === 'failed' && (action.category === 'plan' || action.category === 'skill')));
-  if (!counted.length && actions.length) return actions[0].title;
+  const counted = actions.filter((action) => !action.causedBy && !(action.state === 'failed' && (action.category === 'plan' || action.category === 'skill')));
+  if (!counted.length && actions.length) return (actions.find((action) => !action.causedBy) ?? actions[0]).title;
   const kinds = new Map<ActionKind, Set<string>>();
   for (const action of counted) {
     const units = ['edit', 'create'].includes(action.category) ? (action.paths.length ? action.paths : [action.title]) : [action.entry.id];
@@ -216,11 +253,35 @@ function activityLabel(actions: ThreadAction[]): string {
     for (const unit of units) kinds.get(action.category)?.add(unit);
   }
   const entries = [...kinds.entries()];
-  const parts = entries.slice(0, 3).map(([kind, units]) => (units.size === 1 ? counts[kind][0] : counts[kind][1].replace('%d', String(units.size))));
+  const parts = entries.slice(0, 3).map(([kind, units]) => {
+    const control = controls[kind];
+    const group = counted.filter((action) => action.category === kind);
+    if (control && units.size === 1) {
+      const first = group[0];
+      if (first.state === 'cancelled') return control[2];
+      return first.state === 'working' || first.state === 'incomplete' ? control[1] : first.title;
+    }
+    if (control && group.some((action) => action.state !== 'complete')) return `${units.size} attempts to ${control[0]}`;
+    return units.size === 1 ? counts[kind][0] : counts[kind][1].replace('%d', String(units.size));
+  });
   const folded = new Set(entries.slice(3).map(([kind]) => kind));
   const more = counted.filter((action) => folded.has(action.category)).length;
   if (more) parts.push(`${more} more`);
   return parts.join(' · ') || 'Thought';
+}
+
+/** Only the CLI's exact causal error envelope can deduplicate a failed wrapper, not proximity. */
+function scriptFailureCause(entry: ThreadEntry, children: ThreadEntry[]): string | undefined {
+  const lines = entry.output?.trim().split('\n') ?? [];
+  if (lines.length !== 2 || !/^\[Script failed · .* · after call \d+ \(.+\) · log: .+]$/.test(lines[0])) return;
+  try {
+    const result = JSON.parse(lines[1]);
+    if (Object.keys(result).sort().join(',') !== 'error,status,toolCallId') return;
+    if (result.status !== 'failed' || result.toolCallId !== entry.id.replace(/^tool:/, '')) return;
+    return children.find((child) => child.error && child.output?.trim() && result.error === `Error: tools.${child.name}: ${child.output.trim()}`)?.id;
+  } catch {
+    return;
+  }
 }
 
 export function threadPlan(text: string): PlanStep[] {
@@ -280,17 +341,25 @@ export function presentThread(entries: readonly ThreadEntry[], busy: boolean): T
       } else if (entry.kind === 'tool') {
         const name = leaf(entry.name);
         if (!entry.error && bookkeeping.has(name)) continue;
-        if (!entry.error && name === 'script') {
+        let causedBy: string | undefined;
+        if (name === 'script') {
           const following = source.slice(index + 1);
           const nextScript = following.findIndex((e) => e.kind === 'tool' && leaf(e.name) === 'script');
-          if ((nextScript < 0 ? following : following.slice(0, nextScript)).some((e) => e.kind === 'tool')) continue;
+          const children = (nextScript < 0 ? following : following.slice(0, nextScript)).filter((e) => e.kind === 'tool');
+          if (!entry.error && children.length) continue;
+          if (entry.error) causedBy = scriptFailureCause(entry, children);
         }
-        items.push(threadAction(entry, live, cancelledTurn && !!entry.error && /\btool execution (?:was )?(?:cancelled|canceled|interrupted|aborted) by (?:the )?user\b/i.test(entry.output ?? '')));
+        const action = threadAction(entry, live, cancelledTurn && !!entry.error && /\btool execution (?:was )?(?:cancelled|canceled|interrupted|aborted) by (?:the )?user\b/i.test(entry.output ?? ''));
+        if (causedBy && action.state === 'failed') {
+          action.causedBy = causedBy;
+          action.title = 'Script stopped after a tool failed';
+        }
+        items.push(action);
       }
     }
     if (!items.length) return;
     const actions = items.filter((item): item is ThreadAction => item.type === 'action');
-    const failed = actions.filter((a) => a.state === 'failed');
+    const failed = actions.filter((a) => a.state === 'failed' && !a.causedBy);
     const cancelled = actions.filter((a) => a.state === 'cancelled').length;
     const noResult = actions.filter((a) => a.state === 'incomplete').length;
     const planKey = JSON.stringify(plan);
