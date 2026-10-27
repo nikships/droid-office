@@ -170,8 +170,6 @@ fun WorkerScreen(workerId: String, onBack: () -> Unit, embedded: Boolean = false
         }
         var sendingHome by remember { mutableStateOf(false) }
         Header(worker, embedded, onBack, onSendHome = { sendingHome = true })
-        Actions(worker, onSendHome = { sendingHome = true })
-        Offline(link.phase)
         val live = !worker.state.asleep
         val screen = screens[workerId]
         // Default to Raw TTY unless the owner last picked Thread or the thread has an answerable
@@ -187,11 +185,17 @@ fun WorkerScreen(workerId: String, onBack: () -> Unit, embedded: Boolean = false
         LaunchedEffect(workerId, screen, store.loaded) {
             if (ttyChoice == null && screen != null && store.loaded) ttyChoice = tty
         }
-        if (threadable) ViewToggle(tty) {
+        val pickView: (Boolean) -> Unit = {
             ttyChoice = it
             directInput = false
             if (store.settings.threadView == it) scope.launch { graph.store.settings { s -> s.copy(threadView = !it) } }
         }
+        // The thread gives the conversation the room: its switch shares the PR and branch row, and
+        // Send home stays in the menu. Raw TTY keeps its rows as they are.
+        if (threadable && !tty) Actions(worker, onSendHome = { sendingHome = true }, lead = { InlineViewToggle(false, pickView) })
+        else Actions(worker, onSendHome = { sendingHome = true })
+        Offline(link.phase)
+        if (threadable && tty) ViewToggle(true, pickView)
         if (tty) NeedsYou(worker, screen, live && link.phase == Phase.Connected)
         var phoneSize by remember(workerId) { mutableStateOf<TermSize?>(null) }
         val currentSize = TermSize(worker.cols, worker.rows)
@@ -333,17 +337,19 @@ private fun Header(w: WorkerInfo, embedded: Boolean, onBack: () -> Unit, onSendH
 }
 
 @Composable
-private fun Actions(w: WorkerInfo, onSendHome: () -> Unit) {
+private fun Actions(w: WorkerInfo, onSendHome: () -> Unit, lead: (@Composable () -> Unit)? = null) {
     val graph = LocalGraph.current
     val data by graph.connection.data.collectAsStateWithLifecycle()
     val uri = LocalUriHandler.current
     val pr = Workers.pr(w, data.pulls)
     val branch = w.worktree?.branch?.takeIf { it.isNotBlank() }
     Row(
-        Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 12.dp, vertical = 4.dp),
+        Modifier.fillMaxWidth().then(if (lead != null) Modifier.tagged(Tags.Worker.THREAD_BAR) else Modifier)
+            .horizontalScroll(rememberScrollState()).padding(horizontal = 12.dp, vertical = 4.dp),
         horizontalArrangement = Arrangement.spacedBy(8.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
+        lead?.invoke()
         if (w.state.asleep) ActionChip(OfficeIcons.Bolt, "Resume", Palette.Accent, Tags.Worker.RESUME) { graph.connection.send(ClientMsg.resume(w.id)) }
         when (pr?.first) {
             Workers.PrState.Open -> ActionChip(OfficeIcons.PullRequest, "PR #${pr.second.number}", Palette.Success, Tags.Worker.PR) { if (pr.second.url.isNotBlank()) uri.openUri(pr.second.url) }
@@ -352,7 +358,7 @@ private fun Actions(w: WorkerInfo, onSendHome: () -> Unit) {
             null -> if (branch != null && !w.isShell) ActionChip(OfficeIcons.PullRequest, "Open PR", Palette.Text, Tags.Worker.PR) { graph.connection.send(ClientMsg.pr(w.id)) }
         }
         if (branch != null) ActionChip(OfficeIcons.Branch, branch, Palette.TextSecondary, Tags.Worker.BRANCH, onClick = null)
-        ActionChip(OfficeIcons.Door, "Send home", Palette.Danger, Tags.Worker.SEND_HOME, onClick = onSendHome)
+        if (lead == null) ActionChip(OfficeIcons.Door, "Send home", Palette.Danger, Tags.Worker.SEND_HOME, onClick = onSendHome)
     }
 }
 
