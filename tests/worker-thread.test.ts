@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { appendFile, mkdir, mkdtemp, rename, rm, writeFile } from 'node:fs/promises';
+import { appendFile, mkdir, mkdtemp, rename, rm, symlink, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { test, type TestContext } from 'node:test';
@@ -325,6 +325,20 @@ test('discovery fallback requires the actual session header working directory', 
   assert.equal((await reader.read(source)).entries[0].text, 'Found');
   assert.ok((await reader.read({ ...source, cwd: '/unrelated' })).error);
   assert.ok((await reader.read({ ...source, sessionId: 'missing-session' })).error);
+});
+
+test('discovers canonical and fallback session paths through a checkout symlink', async (t) => {
+  const { source, root, file } = await rig(t, [text('a', 'Canonical checkout')]);
+  await mkdir(source.cwd);
+  const link = path.join(root, 'checkout-alias');
+  await symlink(source.cwd, link, 'dir');
+  const alias = { ...source, cwd: link };
+  assert.equal((await new WorkerThreadReader(root).read(alias)).entries[0].text, 'Canonical checkout');
+  const alternate = path.join(root, 'alternate-session-directory');
+  await mkdir(alternate);
+  await rename(file, path.join(alternate, path.basename(file)));
+  assert.equal((await new WorkerThreadReader(root).read(alias)).entries[0].text, 'Canonical checkout');
+  assert.ok((await new WorkerThreadReader(root).read({ ...source, cwd: root })).error);
 });
 
 test('bounds field/response/cache sizes and skips oversized complete records without losing later records', async (t) => {

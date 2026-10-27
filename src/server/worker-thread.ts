@@ -1,4 +1,4 @@
-import { open, readdir, stat, type FileHandle } from 'node:fs/promises';
+import { open, readdir, realpath, stat, type FileHandle } from 'node:fs/promises';
 import path from 'node:path';
 import type { ThreadEntry } from '../shared/worker-thread.js';
 import { DROID_SESSIONS_DIR } from './droid-session.js';
@@ -150,14 +150,17 @@ export class WorkerThreadReader {
 
   private async find({ sessionId, cwd }: ThreadSession): Promise<string | undefined> {
     const name = `${sessionId}.jsonl`;
-    const guess = path.join(this.root, cwd.replace(/[^a-zA-Z0-9-]/g, '-'), name);
-    if (
-      await stat(guess).then(
-        (s) => s.isFile(),
-        () => false,
+    const canonical = await realpath(cwd).catch(() => cwd);
+    for (const directory of new Set([cwd, canonical])) {
+      const guess = path.join(this.root, directory.replace(/[^a-zA-Z0-9-]/g, '-'), name);
+      if (
+        await stat(guess).then(
+          (s) => s.isFile(),
+          () => false,
+        )
       )
-    )
-      return guess;
+        return guess;
+    }
     // Match Droid's discovery fallback, but validate the recorded cwd before using a fallback.
     for (const directory of await readdir(this.root, { withFileTypes: true }).catch(() => [])) {
       if (!directory.isDirectory()) continue;
@@ -169,7 +172,7 @@ export class WorkerThreadReader {
         const newline = head.indexOf(10);
         if (newline < 0) continue;
         const start = object(JSON.parse(head.subarray(0, newline).toString('utf8')));
-        if (start.type === 'session_start' && start.cwd === cwd) return file;
+        if (start.type === 'session_start' && typeof start.cwd === 'string' && (start.cwd === cwd || (await realpath(start.cwd).catch(() => start.cwd)) === canonical)) return file;
       } catch {
         // An incomplete header can be retried on the next read.
       } finally {
