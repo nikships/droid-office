@@ -190,7 +190,7 @@ export function openChanges(net: Net, workerId: string, onTerminal?: () => void,
 
   const openLog = () => {
     if (term) return term.scrollToBottom();
-    const t = new Terminal({ fontFamily: TERM_FONT, fontSize: termFontSize(), lineHeight: 1.1, theme: TERM_THEME, cursorBlink: false, disableStdin: true, scrollback: 5000, allowProposedApi: true });
+    const t = new Terminal({ fontFamily: TERM_FONT, fontSize: termFontSize(), lineHeight: 1.1, theme: TERM_THEME, minimumContrastRatio: 4.5, cursorBlink: false, disableStdin: true, scrollback: 5000, allowProposedApi: true });
     const unicode = new Unicode11Addon();
     t.loadAddon(unicode);
     t.unicode.activeVersion = '11';
