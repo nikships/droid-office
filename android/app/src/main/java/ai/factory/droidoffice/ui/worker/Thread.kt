@@ -4,7 +4,8 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.scrollBy
-import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.relocation.BringIntoViewRequester
+import androidx.compose.foundation.relocation.bringIntoViewRequester
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -26,7 +27,6 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
-import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.selection.SelectionContainer
@@ -41,6 +41,8 @@ import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.Saver
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.snapshots.SnapshotStateMap
@@ -55,13 +57,14 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.layout.layout
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.clearAndSetSemantics
+import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.stateDescription
-import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.style.TextOverflow
@@ -132,6 +135,8 @@ private const val POLL_MS = 1_000L
 private const val HEAD = "thread.head"
 private const val NEWER = "thread.newer"
 private const val ASK = "thread.ask"
+/** The receipts' item in the list, and its open state in the open map. */
+private const val QUEUED = "thread.queued"
 /** A tool's arguments or result longer than this shows its start, so one huge log can't stall the list. */
 private const val SHOWN_CHARS = 6_000
 /** Where a call's open details are kept in the open map, apart from the runs keyed by their entry ids. */
@@ -164,6 +169,8 @@ internal fun Thread(
     queueNote: String?,
     onQueueChanged: () -> Unit,
     onTty: () -> Unit,
+    /** Goes up when the owner sends a message from the composer: the thread follows the latest again. */
+    followRequest: Int = 0,
 ) {
     val graph = LocalGraph.current
     val connection = graph.connection
@@ -208,9 +215,16 @@ internal fun Thread(
     // receipts keeps them (on disk too) after each one, whatever changed.
     LaunchedEffect(queued, queueReady, state.sessionId, state.entries) { if (queueReady) onQueueChanged() }
     val list = rememberLazyListState()
+    // What the owner opened, whether they're following and where they were reading survive a font,
+    // density or theme change recreating the screen, for this office, floor and worker only.
+    val kept = "${data.officeId}/${data.floorId}/${w.id}"
     // Runs are open while any entry of theirs is in here, so a run stays open as it grows either way.
-    val open = remember(feed) { mutableStateMapOf<String, Boolean>() }
-    var follow by remember(feed) { mutableStateOf(true) }
+    val open = rememberSaveable(kept, saver = OpenSaver) { mutableStateMapOf() }
+    var follow by rememberSaveable(kept) { mutableStateOf(true) }
+    // Set by opening anything to read it: reaching the bottom then doesn't follow again until the
+    // owner says so with Follow latest, so what they opened isn't scrolled away by the next entry.
+    var inspecting by rememberSaveable(kept) { mutableStateOf(false) }
+    val place = rememberSaveable(kept, saver = PlaceSaver) { Place() }
     var anchor by remember(feed) { mutableStateOf<Pair<String, Int>?>(null) }
     var seen by remember(feed) { mutableStateOf<String?>(null) }
     // Set while the thread scrolls itself to the bottom, so its own scroll never reads as the owner's.
@@ -221,8 +235,31 @@ internal fun Thread(
     LaunchedEffect(list) {
         snapshotFlow { Triple(list.isScrollInProgress, list.canScrollForward, list.lastScrolledBackward) }.collect { (scrolling, more, back) ->
             if (scrolling && !autoScrolling) {
-                if (back) follow = false else if (!more) follow = true
+                if (back) follow = false else if (!more && !inspecting) follow = true
             }
+        }
+    }
+    // Where the owner is reading, by row key rather than index: after a recreation the rows load
+    // again from nothing, and an index would point at whatever happens to be there first.
+    LaunchedEffect(list, rows) {
+        snapshotFlow { list.firstVisibleItemIndex to list.firstVisibleItemScrollOffset }.collect { (index, offset) ->
+            if (place.pending || rows.isEmpty()) return@collect
+            place.key = if (index == 0) null else rows.getOrNull(index - 1)?.key
+            place.offset = offset
+            place.session = state.sessionId
+        }
+    }
+    LaunchedEffect(rows) {
+        if (!place.pending || rows.isEmpty()) return@LaunchedEffect
+        val key = place.key
+        val at = rows.indexOfFirst { it.key == key }
+        place.pending = false
+        if (follow || key == null || at < 0 || (place.session != null && place.session != state.sessionId)) return@LaunchedEffect
+        autoScrolling = true
+        try {
+            list.scrollToItem(at + 1, place.offset)
+        } finally {
+            autoScrolling = false
         }
     }
     LaunchedEffect(follow, rows.lastOrNull()?.key) {
@@ -285,12 +322,33 @@ internal fun Thread(
         state = feed.state
     }
 
+    /** Opening something to read it: the next entry mustn't scroll it away, even at the bottom. */
+    fun inspect() {
+        follow = false
+        inspecting = true
+    }
+
+    /** The owner's own way back to following: Follow latest, Back to the latest, or sending a message. */
+    fun resume() {
+        inspecting = false
+        follow = true
+        scope.launch { toBottom() }
+    }
+
     fun newer() {
         if (!connected) return
         feed.backToLatest()
         state = feed.state
+        inspecting = false
         follow = true
         polls++
+    }
+
+    var resumed by remember(feed) { mutableIntStateOf(followRequest) }
+    LaunchedEffect(followRequest) {
+        if (followRequest == resumed) return@LaunchedEffect
+        resumed = followRequest
+        resume()
     }
 
     fun retry() {
@@ -305,18 +363,17 @@ internal fun Thread(
             a.ids.forEach { open.remove(it) }
         } else {
             open[a.lastId] = true
-            // Opening a run near the bottom mustn't be scrolled away by the next poll.
-            follow = false
+            inspect()
         }
     }
 
-    fun expand(m: ThreadView.Message) {
-        val key = MORE + m.key
+    /** Opens or closes a call's details, a thought, a long message or the receipts, by their key in [open]. */
+    fun flip(key: String) {
         if (open[key] == true) {
             open.remove(key)
         } else {
             open[key] = true
-            follow = false
+            inspect()
         }
     }
 
@@ -331,9 +388,9 @@ internal fun Thread(
                 itemsIndexed(rows, key = { _, r -> r.key }, contentType = { _, r -> r::class }) { i, r ->
                     Box(Modifier.padding(top = gap(if (i > 0) rows[i - 1] else null, r))) {
                         when (r) {
-                            is ThreadView.Message -> Message(w, r, open[MORE + r.key] == true) { expand(r) }
+                            is ThreadView.Message -> Message(w, r, open[MORE + r.key] == true) { flip(MORE + r.key) }
                             is ThreadView.Notice -> Notice(r)
-                            is ThreadView.Activity -> Activity(r, r.ids.any { open[it] == true }, open, onToggle = { toggle(r) }, onInspect = { follow = false })
+                            is ThreadView.Activity -> Activity(r, r.ids.any { open[it] == true }, open, asking, onToggle = { toggle(r) }, onFlip = ::flip)
                         }
                     }
                 }
@@ -349,7 +406,7 @@ internal fun Thread(
                 if (showAsk) item(key = ASK) {
                     Box(Modifier.padding(top = 12.dp)) {
                         if (menu == null) {
-                            NeedsTty(Asks.question(PendingAsk(w, null), state.entries), onTty)
+                            NeedsTty(w.name, Asks.question(PendingAsk(w, null), state.entries), onTty)
                         } else {
                             AskCard(
                                 worker = w,
@@ -387,6 +444,20 @@ internal fun Thread(
                         }
                     }
                 }
+                // The last thing in the conversation, read like the rest of it: one quiet line until
+                // opened, so it never takes the screen from the messages or hides its own buttons.
+                if (pendingQueue.isNotEmpty()) item(key = QUEUED) {
+                    Receipts(
+                        pendingQueue, busy, queueNote, open[QUEUED] == true,
+                        onToggle = { flip(QUEUED) },
+                        onTty = onTty,
+                        onDismiss = {
+                            open.remove(QUEUED)
+                            queued.clear()
+                            onQueueChanged()
+                        },
+                    )
+                }
             }
             Box(Modifier.align(Alignment.TopCenter).fillMaxWidth().height(8.dp).background(Brush.verticalGradient(listOf(Palette.Bg, Color.Transparent))))
         }
@@ -398,55 +469,117 @@ internal fun Thread(
                     .heightIn(min = 48.dp).padding(vertical = 4.dp),
                 contentAlignment = Alignment.Center,
             ) {
-                Jump(fresh, !list.canScrollForward, Modifier) {
-                    follow = true
-                    scope.launch { toBottom() }
-                }
+                Jump(fresh, inspecting && !list.canScrollForward, Modifier, ::resume)
             }
         }
-        if (pendingQueue.isNotEmpty()) Column(
-            Modifier.fillMaxWidth().heightIn(max = 144.dp).verticalScroll(rememberScrollState())
-                .drawBehind { drawLine(Palette.Border, Offset.Zero, Offset(size.width, 0f), 1.dp.toPx()) }
-                .padding(horizontal = 12.dp, vertical = 8.dp).tagged(Tags.Worker.THREAD_QUEUED),
+    }
+}
+
+/**
+ * What this phone sent to Droid's queue that hasn't shown up in the conversation yet: a receipt, not
+ * a claim, since no message says what Droid's queue holds now. Closed, one line with the count; open,
+ * what's known about delivery, Raw TTY and Dismiss, then the messages themselves.
+ */
+@Composable
+private fun Receipts(pending: List<ThreadQueue.Prompt>, busy: Boolean, note: String?, isOpen: Boolean, onToggle: () -> Unit, onTty: () -> Unit, onDismiss: () -> Unit) {
+    val reveal = rememberReveal()
+    Column(Modifier.fillMaxWidth().padding(top = 16.dp).then(reveal.modifier).tagged(Tags.Worker.THREAD_QUEUED)) {
+        Row(
+            Modifier.fillMaxWidth().clip(RoundedCornerShape(4.dp)).disclosure(isOpen) {
+                if (!isOpen) reveal.ask()
+                onToggle()
+            }.tagged(Tags.Worker.THREAD_QUEUED_TOGGLE).heightIn(min = 44.dp).drawBehind {
+                drawLine(Palette.Border, Offset.Zero, Offset(size.width, 0f), 1.dp.toPx())
+            },
+            verticalAlignment = Alignment.CenterVertically,
         ) {
-            // A receipt, not a claim: no message says what Droid's queue holds now, so this says only
-            // what this phone sent and that it hasn't shown up in the conversation yet.
-            Eyebrow("Queue request sent", Modifier.padding(bottom = 4.dp), color = Palette.TextSecondary)
-            for (prompt in pendingQueue) Text(
-                prompt.text.ifEmpty { "Image attached" },
-                style = MaterialTheme.typography.bodySmall.copy(color = Palette.TextSecondary),
-                maxLines = 3, overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.padding(bottom = 4.dp),
-            )
-            if (!busy) Text(
-                "Delivery isn’t confirmed here. Check Raw TTY before sending again.",
-                style = MaterialTheme.typography.bodySmall.copy(color = Palette.TextTertiary),
-                modifier = Modifier.padding(bottom = 6.dp),
-            )
-            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                QuietButton("Check queue in Raw TTY", OfficeIcons.Terminal, Tags.Worker.THREAD_QUEUED_TTY, true, onTty)
-                QuietButton(
-                    "Dismiss receipt", Icons.Default.Close, Tags.Worker.THREAD_QUEUED_DISMISS, true,
-                    {
-                        queued.clear()
-                        onQueueChanged()
-                    },
-                )
-            }
             Text(
-                "Dismissing clears this phone’s receipt only. It doesn’t remove anything from Droid’s queue.",
-                style = MaterialTheme.typography.bodySmall.copy(fontSize = 11.5.sp, color = Palette.TextTertiary),
-                modifier = Modifier.padding(top = 4.dp),
+                "Queue request sent · ${pending.size}",
+                style = MaterialTheme.typography.bodyMedium.copy(fontSize = 13.5.sp, lineHeight = 19.sp, color = Palette.TextSecondary),
+                modifier = Modifier.weight(1f).tagged(Tags.Worker.THREAD_QUEUED_SUMMARY),
             )
-            queueNote?.let {
+            Icon(OfficeIcons.Chevron, null, Modifier.padding(start = 8.dp).size(14.dp).rotate(if (isOpen) 90f else 0f), tint = Palette.TextSecondary)
+        }
+        // Said even while closed: these receipts may not come back, and that's worth knowing now.
+        note?.let {
+            Text(
+                it, style = MaterialTheme.typography.bodySmall.copy(fontSize = 12.sp, color = Palette.Warning),
+                modifier = Modifier.padding(bottom = 6.dp).tagged(Tags.Worker.THREAD_QUEUED_UNSAVED),
+            )
+        }
+        if (isOpen) {
+            Column(Modifier.fillMaxWidth().padding(bottom = 4.dp)) {
+                if (!busy) Text(
+                    "Delivery isn’t confirmed here. Check Raw TTY before sending again.",
+                    style = MaterialTheme.typography.bodySmall,
+                    modifier = Modifier.padding(bottom = 10.dp),
+                )
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    QuietButton("Open Raw TTY", OfficeIcons.Terminal, Tags.Worker.THREAD_QUEUED_TTY, true, onTty, tall = true)
+                    QuietButton(if (pending.size == 1) "Dismiss receipt" else "Dismiss receipts", Icons.Default.Close, Tags.Worker.THREAD_QUEUED_DISMISS, true, onDismiss, tall = true)
+                }
                 Text(
-                    it, style = MaterialTheme.typography.bodySmall.copy(fontSize = 11.5.sp, color = Palette.Warning),
-                    modifier = Modifier.padding(top = 4.dp).tagged(Tags.Worker.THREAD_QUEUED_UNSAVED),
+                    "Dismissing clears this phone’s receipt only. It doesn’t remove anything from Droid’s queue.",
+                    style = MaterialTheme.typography.bodySmall.copy(fontSize = 12.sp, color = Palette.TextTertiary),
+                    modifier = Modifier.padding(top = 8.dp, bottom = 6.dp),
+                )
+                for (prompt in pending) Text(
+                    prompt.text.ifEmpty { "Image attached" },
+                    style = MaterialTheme.typography.bodySmall.copy(color = Palette.TextSecondary),
+                    maxLines = 6, overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.fillMaxWidth().padding(top = 6.dp).userBlock(),
                 )
             }
         }
     }
 }
+
+/** Brings what was just opened into view once it's laid out, as far as it fits, without following the bottom. */
+private class Reveal(val modifier: Modifier, val ask: () -> Unit)
+
+@Composable
+private fun rememberReveal(): Reveal {
+    val requester = remember { BringIntoViewRequester() }
+    var asked by remember { mutableIntStateOf(0) }
+    LaunchedEffect(asked) {
+        if (asked == 0) return@LaunchedEffect
+        // Twice: once for the open content to compose, once for it to be measured.
+        withFrameNanos { }
+        withFrameNanos { }
+        requester.bringIntoView()
+    }
+    return remember(requester) { Reveal(Modifier.bringIntoViewRequester(requester)) { asked++ } }
+}
+
+/** What the owner opened, saved as the keys that are open. */
+private val OpenSaver = Saver<SnapshotStateMap<String, Boolean>, ArrayList<String>>(
+    save = { m -> ArrayList(m.filterValues { it }.keys) },
+    restore = { keys -> mutableStateMapOf<String, Boolean>().apply { keys.forEach { put(it, true) } } },
+)
+
+/**
+ * Where the owner was reading: the row at the top of the list and how far into it, in the session it
+ * belonged to. Written as they scroll without recomposing anything; read only when the state is saved.
+ */
+private class Place {
+    var key: String? = null
+    var offset = 0
+    var session: String? = null
+    /** Restored and not yet scrolled back to. */
+    var pending = false
+}
+
+private val PlaceSaver = Saver<Place, ArrayList<String?>>(
+    save = { arrayListOf(it.key, it.offset.toString(), it.session) },
+    restore = { saved ->
+        Place().apply {
+            key = saved.getOrNull(0)
+            offset = saved.getOrNull(1)?.toIntOrNull() ?: 0
+            session = saved.getOrNull(2)
+            pending = key != null
+        }
+    },
+)
 
 /** Air between rows: most between turns, least between a message and the work that follows it. */
 private fun gap(prev: ThreadView.Row?, row: ThreadView.Row): Dp {
@@ -463,13 +596,16 @@ private fun gap(prev: ThreadView.Row?, row: ThreadView.Row): Dp {
     }
 }
 
-/** Back to the newest message, saying how many came in while the owner was reading further up. */
+/**
+ * Back to the newest message and following it, saying how many came in while the owner was reading
+ * further up. At the bottom with something open it says Follow latest: being there isn't enough.
+ */
 @Composable
-private fun Jump(fresh: Int, atBottom: Boolean, modifier: Modifier, onClick: () -> Unit) {
+private fun Jump(fresh: Int, followHere: Boolean, modifier: Modifier, onClick: () -> Unit) {
     val shape = RoundedCornerShape(4.dp)
     Row(
         modifier.clip(shape).background(Palette.SurfaceHigh).border(1.dp, Palette.BorderStrong, shape)
-            .clickable(onClickLabel = "Jump to the latest message", onClick = onClick)
+            .clickable(onClickLabel = if (followHere) "Follow the latest messages" else "Jump to the latest message", onClick = onClick)
             .tagged(Tags.Worker.THREAD_JUMP)
             .heightIn(min = 36.dp).padding(horizontal = 12.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -479,7 +615,7 @@ private fun Jump(fresh: Int, atBottom: Boolean, modifier: Modifier, onClick: () 
             Spacer(Modifier.width(8.dp))
         }
         Text(
-            (if (fresh > 0) "$fresh new message${if (fresh == 1) "" else "s"}" else if (atBottom) "Follow latest" else "Jump to latest").uppercase(),
+            (if (fresh > 0) "$fresh new message${if (fresh == 1) "" else "s"}" else if (followHere) "Follow latest" else "Latest").uppercase(),
             style = LocalOfficeType.current.eyebrow.copy(color = Palette.Text),
             modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite }.tagged(Tags.Worker.THREAD_JUMP_LABEL),
         )
@@ -490,11 +626,11 @@ private fun Jump(fresh: Int, atBottom: Boolean, modifier: Modifier, onClick: () 
 
 /** A low, hairline, mono button for the thread's own chrome: Load earlier, Back to the latest. */
 @Composable
-private fun QuietButton(text: String, icon: androidx.compose.ui.graphics.vector.ImageVector, tag: String, enabled: Boolean, onClick: () -> Unit, modifier: Modifier = Modifier) {
+private fun QuietButton(text: String, icon: androidx.compose.ui.graphics.vector.ImageVector, tag: String, enabled: Boolean, onClick: () -> Unit, modifier: Modifier = Modifier, tall: Boolean = false) {
     val shape = RoundedCornerShape(4.dp)
     Row(
         modifier.clip(shape).border(1.dp, Palette.BorderStrong, shape).clickable(enabled = enabled, role = Role.Button, onClick = onClick).tagged(tag)
-            .heightIn(min = 36.dp).padding(horizontal = 12.dp),
+            .heightIn(min = if (tall) 44.dp else 36.dp).padding(horizontal = 12.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Icon(icon, null, Modifier.size(13.dp), tint = if (enabled) Palette.TextSecondary else Palette.TextTertiary)
@@ -551,7 +687,7 @@ private fun Empty(w: WorkerInfo, state: ThreadState, connected: Boolean, onRetry
         state.phase == ThreadPhase.Loading -> Look("Loading the conversation", "Loading the thread…", Palette.TextSecondary, retry = false, tty = false)
         state.phase == ThreadPhase.Error -> Look("Couldn't read the thread", "The office couldn't read the thread: ${state.error ?: "no reason given"}.", Palette.Danger, retry = true, tty = true)
         state.phase == ThreadPhase.Unavailable -> Look("No thread to show", "This office doesn't send threads, or can't read this worker's session. Raw TTY shows everything.", Palette.Warning, retry = true, tty = true)
-        else -> Look("Nothing here yet", "Nothing in this session yet.", Palette.TextTertiary, retry = false, tty = false)
+        else -> Look("Start a conversation", "Your messages and the worker’s replies will appear here.", Palette.TextTertiary, retry = false, tty = false)
     }
     val loading = connected && state.phase == ThreadPhase.Loading
     Column(Modifier.fillMaxWidth().padding(top = 56.dp, bottom = 12.dp), horizontalAlignment = Alignment.CenterHorizontally) {
@@ -611,7 +747,8 @@ private fun Message(w: WorkerInfo, m: ThreadView.Message, all: Boolean, onMore: 
     val e = m.entry
     val tag = Modifier.fillMaxWidth().tagged(Tags.Worker.threadEntry(e.id))
     if (e.role == ThreadRole.User) {
-        Box(tag.padding(start = 48.dp), contentAlignment = Alignment.CenterEnd) {
+        val reveal = rememberReveal()
+        Box(tag.padding(start = 48.dp).then(reveal.modifier), contentAlignment = Alignment.CenterEnd) {
             Column(Modifier.userBlock()) {
                 var clipped by remember(e.id) { mutableStateOf(false) }
                 SelectionContainer {
@@ -619,7 +756,10 @@ private fun Message(w: WorkerInfo, m: ThreadView.Message, all: Boolean, onMore: 
                 }
                 if (all || clipped) {
                     Row(
-                        Modifier.clip(RoundedCornerShape(3.dp)).disclosure(all, onMore).tagged(Tags.Worker.threadMore(e.id))
+                        Modifier.clip(RoundedCornerShape(3.dp)).disclosure(all) {
+                            if (!all) reveal.ask()
+                            onMore()
+                        }.tagged(Tags.Worker.threadMore(e.id))
                             .heightIn(min = 40.dp).padding(top = 4.dp, end = 4.dp),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
@@ -667,22 +807,36 @@ private fun Notice(n: ThreadView.Notice) {
 /**
  * One run of work between messages: a single quiet line saying what it did, with what failed under
  * it even while closed, opening to one row per action and thought, and the plan as the run left it.
+ * A run that only thought is its thoughts, each its own disclosure, with no line around them.
  */
 @Composable
-private fun Activity(a: ThreadView.Activity, isOpen: Boolean, open: SnapshotStateMap<String, Boolean>, onToggle: () -> Unit, onInspect: () -> Unit) {
+private fun Activity(a: ThreadView.Activity, isOpen: Boolean, open: SnapshotStateMap<String, Boolean>, asking: Boolean, onToggle: () -> Unit, onFlip: (String) -> Unit) {
     val failed = a.failed.size
-    Column(Modifier.fillMaxWidth().tagged(Tags.Worker.threadGroup(a.first))) {
+    // While the worker waits on the owner, its run isn't working: the question card says what it's on.
+    val working = a.live && !asking
+    if (a.actions.isEmpty() && a.plan == null) {
+        Column(Modifier.fillMaxWidth().tagged(Tags.Worker.threadGroup(a.first))) {
+            for (t in a.items.filterIsInstance<ThreadView.Thought>()) {
+                ThoughtRow(t, open[DETAIL + t.entry.id] == true, live = working && t === a.items.last()) { onFlip(DETAIL + t.entry.id) }
+            }
+        }
+        return
+    }
+    val reveal = rememberReveal()
+    Column(Modifier.fillMaxWidth().then(reveal.modifier).tagged(Tags.Worker.threadGroup(a.first))) {
         Row(
-            Modifier.fillMaxWidth().clip(RoundedCornerShape(4.dp)).disclosure(isOpen, onToggle)
-                .tagged(Tags.Worker.threadGroupToggle(a.first)).heightIn(min = 40.dp).padding(vertical = 6.dp),
+            Modifier.fillMaxWidth().clip(RoundedCornerShape(4.dp)).disclosure(isOpen) {
+                if (!isOpen) reveal.ask()
+                onToggle()
+            }.tagged(Tags.Worker.threadGroupToggle(a.first)).heightIn(min = 40.dp).padding(vertical = 6.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            if (a.live) {
+            if (working) {
                 Spinner(Modifier.size(11.dp), Palette.Accent)
                 Spacer(Modifier.width(8.dp))
             }
             Text(
-                if (a.live) "Working · ${a.summary}" else a.summary,
+                if (working) "Working · ${a.summary}" else a.summary,
                 style = MaterialTheme.typography.bodyMedium.copy(fontSize = 13.5.sp, lineHeight = 19.sp, color = Palette.TextSecondary),
                 maxLines = if (isOpen) 3 else 1, overflow = TextOverflow.Ellipsis,
                 modifier = Modifier.weight(1f).tagged(Tags.Worker.threadGroupSummary(a.first)),
@@ -690,7 +844,7 @@ private fun Activity(a: ThreadView.Activity, isOpen: Boolean, open: SnapshotStat
             when {
                 failed > 0 -> Text("$failed FAILED", style = LocalOfficeType.current.eyebrow.copy(color = Palette.Danger), modifier = Modifier.padding(start = 10.dp))
                 !a.live && a.noResult > 0 -> Text(
-                    if (a.noResult == a.actions.size) "NO RESULT" else "${a.noResult} NO RESULT",
+                    "${a.noResult} NO RESULT",
                     style = LocalOfficeType.current.eyebrow.copy(color = Palette.TextSecondary), modifier = Modifier.padding(start = 10.dp),
                 )
             }
@@ -709,8 +863,8 @@ private fun Activity(a: ThreadView.Activity, isOpen: Boolean, open: SnapshotStat
                     }
                 }
             }
-            // The summary already says it when the run is that one call ("Working · Asked you a question").
-            a.running?.takeIf { a.live && failed == 0 && it.title != a.summary }?.let {
+            // The summary already says it when the run is that one call ("Working · Ran a command").
+            a.running?.takeIf { working && failed == 0 && it.title != a.summary }?.let {
                 Text(
                     "${it.title}…", style = MaterialTheme.typography.bodySmall.copy(color = Palette.TextSecondary), maxLines = 1, overflow = TextOverflow.Ellipsis,
                     modifier = Modifier.padding(start = 24.dp, bottom = 4.dp),
@@ -724,19 +878,9 @@ private fun Activity(a: ThreadView.Activity, isOpen: Boolean, open: SnapshotStat
             ) {
                 for (item in a.items) {
                     val key = DETAIL + item.entry.id
-                    val detailOpen = open[key] == true
-                    // Opening details is reading: the next poll mustn't scroll them away.
-                    val flip = {
-                        if (detailOpen) {
-                            open.remove(key)
-                        } else {
-                            open[key] = true
-                            onInspect()
-                        }
-                    }
                     when (item) {
-                        is ThreadView.Action -> ActionRow(item, detailOpen) { flip() }
-                        is ThreadView.Thought -> ThoughtRow(item, detailOpen) { flip() }
+                        is ThreadView.Action -> ActionRow(item, open[key] == true) { onFlip(key) }
+                        is ThreadView.Thought -> ThoughtRow(item, open[key] == true, live = false) { onFlip(key) }
                     }
                 }
                 a.plan?.let { Plan(a.first, it) }
@@ -748,10 +892,13 @@ private fun Activity(a: ThreadView.Activity, isOpen: Boolean, open: SnapshotStat
 @Composable
 private fun ActionRow(a: ThreadView.Action, open: Boolean, onToggle: () -> Unit) {
     val e = a.entry
-    Column(Modifier.fillMaxWidth().tagged(Tags.Worker.threadEntry(e.id))) {
+    val reveal = rememberReveal()
+    Column(Modifier.fillMaxWidth().then(reveal.modifier).tagged(Tags.Worker.threadEntry(e.id))) {
         Row(
-            Modifier.fillMaxWidth().clip(RoundedCornerShape(3.dp)).disclosure(open, onToggle)
-                .tagged(Tags.Worker.threadToggle(e.id)).heightIn(min = 40.dp).padding(vertical = 5.dp),
+            Modifier.fillMaxWidth().clip(RoundedCornerShape(3.dp)).disclosure(open) {
+                if (!open) reveal.ask()
+                onToggle()
+            }.tagged(Tags.Worker.threadToggle(e.id)).heightIn(min = 40.dp).padding(vertical = 5.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             if (a.state == ToolState.Running) {
@@ -797,30 +944,39 @@ private fun ActionRow(a: ThreadView.Action, open: Boolean, onToggle: () -> Unit)
     }
 }
 
+/** One thought: its label and first line while closed, the whole of it, once, while open. */
 @Composable
-private fun ThoughtRow(t: ThreadView.Thought, open: Boolean, onToggle: () -> Unit) {
+private fun ThoughtRow(t: ThreadView.Thought, open: Boolean, live: Boolean, onToggle: () -> Unit) {
     val e = t.entry
-    Column(Modifier.fillMaxWidth().tagged(Tags.Worker.threadEntry(e.id))) {
+    val reveal = rememberReveal()
+    Column(Modifier.fillMaxWidth().then(reveal.modifier).tagged(Tags.Worker.threadEntry(e.id))) {
         Row(
-            Modifier.fillMaxWidth().clip(RoundedCornerShape(3.dp)).disclosure(open, onToggle)
-                .tagged(Tags.Worker.threadToggle(e.id)).heightIn(min = 40.dp).padding(vertical = 5.dp),
+            Modifier.fillMaxWidth().clip(RoundedCornerShape(3.dp)).disclosure(open) {
+                if (!open) reveal.ask()
+                onToggle()
+            }.tagged(Tags.Worker.threadToggle(e.id)).heightIn(min = 40.dp).padding(vertical = 5.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            Text("Thought", style = MaterialTheme.typography.bodySmall.copy(fontSize = 13.sp, color = Palette.TextSecondary))
-            if (!open) {
-                Text(
-                    t.preview, style = MaterialTheme.typography.bodySmall.copy(fontStyle = FontStyle.Italic, color = Palette.TextSecondary),
-                    maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(start = 8.dp).weight(1f),
-                )
+            if (live) {
+                Spinner(Modifier.size(10.dp), Palette.Accent)
+                Spacer(Modifier.width(8.dp))
             }
-            if (open) Spacer(Modifier.weight(1f))
+            Text("Thought", style = MaterialTheme.typography.bodySmall.copy(fontSize = 13.sp, color = Palette.TextSecondary), maxLines = 1, softWrap = false)
+            Box(Modifier.weight(1f)) {
+                if (!open) {
+                    Text(
+                        t.preview, style = MaterialTheme.typography.bodySmall.copy(color = Palette.TextTertiary),
+                        maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(start = 8.dp),
+                    )
+                }
+            }
             Icon(OfficeIcons.Chevron, null, Modifier.padding(start = 8.dp).size(13.dp).rotate(if (open) 90f else 0f), tint = Palette.TextSecondary)
         }
         if (open) {
             SelectionContainer {
                 Text(
-                    e.text.orEmpty(), style = MaterialTheme.typography.bodySmall.copy(fontStyle = FontStyle.Italic, lineHeight = 19.sp),
-                    modifier = Modifier.padding(start = 22.dp, bottom = 10.dp),
+                    e.text.orEmpty(), style = MaterialTheme.typography.bodySmall.copy(lineHeight = 19.sp),
+                    modifier = Modifier.padding(start = 12.dp, bottom = 10.dp),
                 )
             }
         }
@@ -833,14 +989,15 @@ private fun Plan(group: String, steps: List<ThreadView.PlanStep>) {
         Eyebrow("Plan · ${steps.count { it.done }} of ${steps.size} done", Modifier.padding(bottom = 4.dp), color = Palette.TextSecondary)
         for (s in steps) {
             Row(Modifier.padding(vertical = 2.dp)) {
+                // Marks, not arrows: a › here would read as something to open. Said as the web says them.
                 Text(
                     when {
                         s.done -> "✓"
-                        s.active -> "›"
-                        else -> "·"
+                        s.active -> "●"
+                        else -> "○"
                     },
-                    style = LocalOfficeType.current.monoBody.copy(fontSize = 12.sp, color = if (s.active) Palette.Text else Palette.TextTertiary),
-                    modifier = Modifier.width(18.dp),
+                    style = LocalOfficeType.current.monoBody.copy(fontSize = 12.sp, color = if (s.active) Palette.Accent else Palette.TextTertiary),
+                    modifier = Modifier.width(18.dp).clearAndSetSemantics { contentDescription = if (s.done) "Done" else if (s.active) "Now" else "Next" },
                 )
                 Text(
                     s.text,
@@ -876,12 +1033,12 @@ private fun Mono(label: String, body: String, color: Color) {
 
 /** A question the phone can't read off the terminal: it's answered in Raw TTY, never with a prompt typed into it. */
 @Composable
-private fun NeedsTty(question: String, onTty: () -> Unit) {
+private fun NeedsTty(name: String, question: String, onTty: () -> Unit) {
     Column(
         Modifier.fillMaxWidth().panel(RoundedCornerShape(4.dp), Palette.Danger.copy(alpha = 0.07f), Palette.Danger.copy(alpha = 0.4f))
             .tagged(Tags.Asks.CARD).padding(12.dp),
     ) {
-        Eyebrow("Needs you", color = Palette.Danger)
+        Eyebrow("${name.ifBlank { "Droid" }} needs your answer", color = Palette.Danger)
         Text(question, style = MaterialTheme.typography.titleMedium, modifier = Modifier.padding(top = 6.dp).tagged(Tags.Asks.QUESTION))
         Text(
             "The phone can't read this question off the terminal. Answer it in Raw TTY.",

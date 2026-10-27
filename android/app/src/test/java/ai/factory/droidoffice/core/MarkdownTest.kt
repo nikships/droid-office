@@ -130,4 +130,15 @@ class MarkdownTest {
         assertEquals(listOf(Span("*literal*")), Markdown.inline("\\*literal\\*"))
         assertEquals(listOf(Span("[x](javascript:alert(1))")), Markdown.inline("[x](javascript:alert(1))"))
     }
+
+    @Test
+    fun tableCellsBreakOnlyBetweenWordsNeverInsideCode() {
+        val cell = Markdown.inline("Run `node --test tests/*.test.ts` then **check** it")
+        val pieces = Markdown.unbroken(cell)
+        assertEquals(listOf("Run ", "node --test tests/*.test.ts ", "then ", "check ", "it"), pieces.map { p -> p.joinToString("") { it.text } })
+        assertEquals(cell.joinToString("") { it.text }, pieces.flatten().joinToString("") { it.text })
+        assertEquals(Span("node --test tests/*.test.ts", code = true), pieces[1][0])
+        assertEquals(listOf(listOf(Span("a/b/c", code = true), Span("d"))), Markdown.unbroken(listOf(Span("a/b/c", code = true), Span("d"))))
+        assertEquals(emptyList<List<Span>>(), Markdown.unbroken(emptyList()))
+    }
 }

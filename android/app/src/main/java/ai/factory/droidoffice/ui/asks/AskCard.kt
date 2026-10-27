@@ -113,7 +113,8 @@ fun AskCard(
             }
             Box(Modifier.padding(vertical = 14.dp).fillMaxWidth().height(1.dp).background(Palette.Border))
         }
-        Eyebrow("Ask user", color = Palette.Accent)
+        // In the thread the card stands alone, so it says whose question it is, as the web's does.
+        Eyebrow(if (inline) "${worker.name.ifBlank { "Droid" }} needs your answer" else "Ask user", color = Palette.Accent)
         Text(
             question,
             style = if (inline) MaterialTheme.typography.titleMedium else MaterialTheme.typography.titleLarge,

@@ -71,8 +71,10 @@ import androidx.compose.ui.platform.LocalClipboard
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.LocalUriHandler
+import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.clearAndSetSemantics
+import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.selected
@@ -239,7 +241,7 @@ fun WorkerScreen(workerId: String, onBack: () -> Unit, embedded: Boolean = false
             return@Column
         }
         var sendingHome by remember { mutableStateOf(false) }
-        Header(worker, embedded, onBack, onSendHome = { sendingHome = true })
+        Header(worker, embedded, link.phase == Phase.Connected, onBack, onSendHome = { sendingHome = true })
         val live = !worker.state.asleep
         val screen = screens[workerId]
         // Default to Raw TTY unless the owner last picked Thread or the thread has an answerable
@@ -251,6 +253,7 @@ fun WorkerScreen(workerId: String, onBack: () -> Unit, embedded: Boolean = false
         var ttyChoice by rememberSaveable(workerId) { mutableStateOf<Boolean?>(if (draft != null) true else null) }
         var directInput by rememberSaveable(workerId) { mutableStateOf(false) }
         var composerFocus by remember(workerId) { mutableIntStateOf(0) }
+        var sent by remember(workerId) { mutableIntStateOf(0) }
         val tty = ttyChoice ?: if (threadable && store.settings.threadView) false else (link.phase != Phase.Connected || !Asks.canAnswer(worker, screen))
         LaunchedEffect(workerId, screen, store.loaded) {
             if (ttyChoice == null && screen != null && store.loaded) ttyChoice = tty
@@ -268,7 +271,7 @@ fun WorkerScreen(workerId: String, onBack: () -> Unit, embedded: Boolean = false
             Box(Modifier.fillMaxWidth().height(1.dp).background(Palette.Border))
         }
         else Actions(worker, onSendHome = { sendingHome = true })
-        Offline(link.phase)
+        Offline(link.phase, thread = !tty, composing = live && !(!tty && worker.state == WorkerStatus.NeedsInput))
         if (tty) NeedsYou(worker, screen, live && link.phase == Phase.Connected)
         var phoneSize by remember(workerId) { mutableStateOf<TermSize?>(null) }
         val currentSize = TermSize(worker.cols, worker.rows)
@@ -304,6 +307,7 @@ fun WorkerScreen(workerId: String, onBack: () -> Unit, embedded: Boolean = false
             queued = queueState, queueRevision = queueRevision, queueReady = queueReady, queueNote = receipts.note,
             onQueueChanged = { queueRevision++ },
             onTty = { ttyChoice = true },
+            followRequest = sent,
         ) else Box(Modifier.weight(1f).fillMaxWidth().padding(horizontal = 10.dp)) {
             Terminal(
                 workerId, screen, if (phone) TermView.Phone else TermView.Desktop, live && link.phase == Phase.Connected,
@@ -336,7 +340,7 @@ fun WorkerScreen(workerId: String, onBack: () -> Unit, embedded: Boolean = false
                 val connected = link.phase == Phase.Connected
                 Composer(
                     worker, draft, visible = !waiting && (!directInput || !tty || worker.isCloud), focusRequest = composerFocus, thread = !tty,
-                    queueState = queueState, onQueued = { queueRevision++ },
+                    queueState = queueState, onQueued = { queueRevision++ }, onSent = { sent++ },
                     connected = connected,
                     // The same Esc Raw TTY's key sends, through the terminal this screen is attached to.
                     onStop = if (!tty && worker.state.busy && !worker.isCloud) {
@@ -366,7 +370,7 @@ fun WorkerScreen(workerId: String, onBack: () -> Unit, embedded: Boolean = false
 }
 
 @Composable
-private fun Header(w: WorkerInfo, embedded: Boolean, onBack: () -> Unit, onSendHome: () -> Unit) {
+private fun Header(w: WorkerInfo, embedded: Boolean, connected: Boolean, onBack: () -> Unit, onSendHome: () -> Unit) {
     val now = rememberNow()
     val clipboard = LocalClipboard.current
     val graph = LocalGraph.current
@@ -381,17 +385,24 @@ private fun Header(w: WorkerInfo, embedded: Boolean, onBack: () -> Unit, onSendH
             Text(w.name.ifBlank { w.id }, style = MaterialTheme.typography.titleLarge, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.tagged(Tags.Worker.NAME))
             val parts = buildList {
                 w.cloud?.computerName?.takeIf { it.isNotBlank() }?.let { add("☁ $it") }
-                if (w.isShell) add("shell") else Workers.modelId(w)?.let { add(catalogue.nameOf(it).replace(Regex("^DroidProxy:\\s*", RegexOption.IGNORE_CASE), "")) }
-                Workers.effort(w)?.let { if (!w.isShell) add(it.label.lowercase()) }
-                add(deskLabel(w.deskId))
+                if (w.isShell) add("Shell") else Workers.modelId(w)?.let { add(catalogue.nameOf(it).replace(Regex("^DroidProxy:\\s*", RegexOption.IGNORE_CASE), "")) }
+                Workers.effort(w)?.let { if (!w.isShell) add(it.label) }
+                add(deskLabel(w.deskId).replaceFirstChar { it.uppercaseChar() })
                 Workers.workedMs(w, now).takeIf { it >= 1000 }?.let { add(Workers.duration(it)) }
             }
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                WorkerModelLogo(w, catalogue, modifier = Modifier.size(14.dp))
-                Text(parts.joinToString(" · ").uppercase(), style = LocalOfficeType.current.eyebrow.copy(fontSize = 10.sp), maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.tagged(Tags.Worker.META))
+            // Model names as they're written ("GPT 6.1 Sol", "Sonnet 5.5"), and all of it: a narrow
+            // screen or a large font wraps between the parts rather than cutting the desk off.
+            Row(verticalAlignment = Alignment.Top, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                WorkerModelLogo(w, catalogue, modifier = Modifier.padding(top = 1.dp).size(14.dp))
+                Text(
+                    parts.joinToString(" · ") { it.replace(' ', '\u00A0') },
+                    style = LocalOfficeType.current.monoBody.copy(fontSize = 11.sp, lineHeight = 15.sp, color = Palette.TextSecondary),
+                    modifier = Modifier.weight(1f).tagged(Tags.Worker.META),
+                )
             }
         }
-        StatusPill(w.state, acked = w.acked, tag = Tags.Worker.STATUS)
+        // Out of reach, the last status the office sent may be long gone: the offline notice says so instead.
+        if (connected) StatusPill(w.state, acked = w.acked, tag = Tags.Worker.STATUS)
         Box {
             IconButton(onClick = { menu = true }, modifier = Modifier.tagged(Tags.Worker.MENU)) { Icon(Icons.Default.MoreVert, "More") }
             DropdownMenu(menu, onDismissRequest = { menu = false }, containerColor = Palette.SurfaceHover) {
@@ -467,23 +478,37 @@ private fun ActionChip(icon: ImageVector, text: String, color: Color, tag: Strin
     }
 }
 
-/** The terminal shows the last frame it got; say so when the connection is down. */
+/**
+ * The one notice while the connection is down: the screen or thread is the last one the office sent,
+ * and, under it when there's a composer, that Send is off and nothing goes later on its own.
+ */
 @Composable
-private fun Offline(phase: Phase) {
+private fun Offline(phase: Phase, thread: Boolean, composing: Boolean) {
     AnimatedVisibility(phase != Phase.Connected, enter = expandVertically() + fadeIn(), exit = shrinkVertically() + fadeOut()) {
-        Row(Modifier.fillMaxWidth().tagged(Tags.Worker.OFFLINE).padding(horizontal = 14.dp, vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
-            if (phase == Phase.Connecting || phase == Phase.Reconnecting) Spinner(Modifier.size(12.dp), Palette.Warning)
-            else Box(Modifier.size(7.dp).background(Palette.TextSecondary, RoundedCornerShape(1.dp)))
+        Row(Modifier.fillMaxWidth().tagged(Tags.Worker.OFFLINE).padding(horizontal = 14.dp, vertical = 4.dp), verticalAlignment = Alignment.Top) {
+            Box(Modifier.height(18.dp), contentAlignment = Alignment.Center) {
+                if (phase == Phase.Connecting || phase == Phase.Reconnecting) Spinner(Modifier.size(12.dp), Palette.Warning)
+                else Box(Modifier.size(7.dp).background(Palette.TextSecondary, RoundedCornerShape(1.dp)))
+            }
             Spacer(Modifier.width(8.dp))
-            Text(
-                when (phase) {
-                    Phase.Offline -> "No network. This is the last screen the office sent."
-                    Phase.Unauthorized -> "The office no longer lets this phone in."
-                    else -> "Reconnecting. This is the last screen the office sent."
-                },
-                style = MaterialTheme.typography.bodySmall,
-                color = Palette.Warning,
-            )
+            Column(Modifier.semantics { liveRegion = LiveRegionMode.Polite }) {
+                val last = if (thread) "This is the last of the thread the office sent." else "This is the last screen the office sent."
+                Text(
+                    when (phase) {
+                        Phase.Offline -> "No network. $last"
+                        Phase.Unauthorized -> "The office no longer lets this phone in."
+                        else -> "Reconnecting. $last"
+                    },
+                    style = MaterialTheme.typography.bodySmall,
+                    color = Palette.Warning,
+                )
+                if (composing) Text(
+                    "Send is off, and nothing is sent later on its own. Your message stays here.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = Palette.Warning,
+                    modifier = Modifier.tagged(Tags.Worker.COMPOSER_OFFLINE),
+                )
+            }
         }
     }
 }

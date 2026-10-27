@@ -60,17 +60,22 @@ import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
-import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.Role
-import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.foundation.selection.toggleable
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.testTag
+import androidx.compose.ui.semantics.testTagsAsResourceId
+import androidx.compose.ui.semantics.toggleableState
+import androidx.compose.ui.state.ToggleableState
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import ai.factory.droidoffice.core.ClientMsg
@@ -109,6 +114,8 @@ fun Composer(
     thread: Boolean = false,
     queueState: ThreadQueue? = null,
     onQueued: () -> Unit = {},
+    /** After the office took a message from here, queued or not. */
+    onSent: () -> Unit = {},
     connected: Boolean = true,
     onStop: (() -> Unit)? = null,
 ) {
@@ -118,6 +125,9 @@ fun Composer(
     val haptics = LocalHapticFeedback.current
     val scope = rememberCoroutineScope()
     var text by rememberSaveable(w.id) { mutableStateOf(draft.orEmpty()) }
+    // Queue after this turn, as the web's toggle: Send then hands the message to Droid's queue (Ctrl+Enter).
+    val queueable = !w.isShell && !w.isCloud
+    var queueOn by rememberSaveable(w.id) { mutableStateOf(false) }
     val images = remember(w.id) { mutableStateListOf<Attachment>() }
     val uploading = images.any { it.id == null }
     // With the keyboard up the conversation keeps most of the room: the field shows three lines and scrolls the rest.
@@ -153,7 +163,8 @@ fun Composer(
         }
     }
 
-    fun send(queue: Boolean = false) {
+    fun send() {
+        val queue = queueable && queueOn
         val prompt = text.trim()
         if ((prompt.isEmpty() && images.isEmpty()) || uploading) return
         // The draft and pictures stay as they are for whatever took the prompt instead.
@@ -172,6 +183,8 @@ fun Composer(
             }
             text = ""
             images.clear()
+            queueOn = false
+            onSent()
         } else scope.launch { snackbar.showSnackbar("Couldn't reach the office. Nothing was sent; your message is still here.") }
     }
 
@@ -204,13 +217,7 @@ fun Composer(
                 }
             }
         }
-        if (!connected && (text.isNotBlank() || images.isNotEmpty())) {
-            Text(
-                "Not connected. Send is off, and nothing is sent later on its own. Your message stays here.",
-                style = MaterialTheme.typography.bodySmall, color = Palette.Warning,
-                modifier = Modifier.padding(start = 4.dp, end = 4.dp, bottom = 6.dp).semantics { liveRegion = LiveRegionMode.Polite }.tagged(Tags.Worker.COMPOSER_OFFLINE),
-            )
-        }
+        // Offline, the screen's one notice under the header says Send is off (Tags.Worker.COMPOSER_OFFLINE).
         Row(
             Modifier.fillMaxWidth().clip(field).background(Palette.Surface).border(1.dp, Palette.BorderStrong, field)
                 .padding(start = 6.dp, end = 6.dp, top = 6.dp, bottom = 6.dp),
@@ -224,7 +231,10 @@ fun Composer(
             }
             val hint = if (w.isShell) "Run a command…" else "Reply to ${w.name}…"
             Box(Modifier.weight(1f).heightIn(min = 38.dp).padding(horizontal = 8.dp, vertical = 9.dp), contentAlignment = Alignment.CenterStart) {
-                if (text.isEmpty()) Text(hint, style = MaterialTheme.typography.bodyLarge, color = Palette.TextTertiary, modifier = Modifier.clearAndSetSemantics {})
+                if (text.isEmpty()) Text(
+                    hint, style = MaterialTheme.typography.bodyLarge, color = Palette.TextTertiary, maxLines = 1, overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.clearAndSetSemantics {},
+                )
                 BasicTextField(
                     value = text,
                     onValueChange = { text = it },
@@ -259,26 +269,27 @@ fun Composer(
                     Box(Modifier.size(11.dp).background(if (connected) Palette.Text else Palette.TextTertiary, RoundedCornerShape(1.dp)))
                 }
             }
-            // Ctrl+Enter in a desktop terminal: Droid takes the message after what it's doing now.
-            if (!w.isShell && !w.isCloud) {
+            // Ctrl+Enter in a desktop terminal: Droid takes the message after what it's doing now. A
+            // switch, so the next Send queues, in the same square mono control in both views.
+            if (queueable) {
+                val square = RoundedCornerShape(3.dp)
+                val on = queueOn && connected
                 Box(
-                    Modifier.padding(end = 6.dp).height(38.dp).clip(control)
-                        .border(1.dp, if (ready && !thread) Palette.Accent.copy(alpha = 0.6f) else Palette.BorderStrong, control)
-                        .clickable(enabled = ready) { send(queue = true) }
-                        .semantics { contentDescription = "Queue message" }
-                        .tagged(Tags.Worker.QUEUE)
+                    Modifier.padding(end = 6.dp).height(38.dp).clip(square)
+                        .background(if (on) Palette.AccentMuted else Color.Transparent)
+                        .border(1.dp, if (on) Palette.Accent.copy(alpha = 0.6f) else Palette.BorderStrong, square)
+                        .toggleable(queueOn, enabled = connected, role = Role.Switch) { queueOn = it }
+                        .clearAndSetSemantics {
+                            contentDescription = "Queue after this turn"
+                            role = Role.Switch
+                            toggleableState = ToggleableState(queueOn)
+                            testTagsAsResourceId = true
+                            testTag = Tags.Worker.QUEUE
+                        }
                         .padding(horizontal = 12.dp),
                     contentAlignment = Alignment.Center,
                 ) {
-                    Text(
-                        if (thread) "QUEUE" else "Queue",
-                        style = if (thread) {
-                            LocalOfficeType.current.eyebrow.copy(color = if (ready) Palette.Text else Palette.TextTertiary)
-                        } else {
-                            LocalOfficeType.current.monoBody.copy(fontSize = 13.sp, color = if (ready) Palette.Accent else Palette.TextTertiary)
-                        },
-                        modifier = Modifier.clearAndSetSemantics {},
-                    )
+                    Text("QUEUE", style = LocalOfficeType.current.eyebrow.copy(color = if (on) Palette.Accent else if (connected) Palette.Text else Palette.TextTertiary))
                 }
             }
             // In the thread, Send inverts against the surface (light on dark), so orange stays for what's live.
@@ -287,7 +298,7 @@ fun Composer(
                 Modifier.size(38.dp).clip(control).background(sendFill).clickable(enabled = ready) { send() }.tagged(Tags.Worker.SEND),
                 contentAlignment = Alignment.Center,
             ) {
-                Icon(OfficeIcons.ArrowUp, "Send", Modifier.size(20.dp), tint = if (ready) Palette.Bg else Palette.TextTertiary)
+                Icon(OfficeIcons.ArrowUp, if (queueable && queueOn) "Queue message" else "Send", Modifier.size(20.dp), tint = if (ready) Palette.Bg else Palette.TextTertiary)
             }
         }
     }

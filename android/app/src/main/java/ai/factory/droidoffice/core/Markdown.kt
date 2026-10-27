@@ -31,6 +31,42 @@ object Markdown {
 
     enum class Align { None, Left, Center, Right }
 
+    /**
+     * A table cell cut into the pieces a line may break between: after the spaces in its prose, and
+     * never inside inline code, so a path like `docs/guide/android.md` or `npm run lint` stays whole on one line.
+     * Each piece keeps its spans' styles; joined back up, the pieces are the cell's text.
+     */
+    fun unbroken(spans: List<Span>): List<List<Span>> {
+        val pieces = ArrayList<List<Span>>()
+        var piece = ArrayList<Span>()
+        fun end() {
+            if (piece.isNotEmpty()) pieces += piece
+            piece = ArrayList()
+        }
+        for (s in spans) {
+            if (s.code) {
+                piece += s
+                continue
+            }
+            var from = 0
+            for (i in s.text.indices) {
+                val c = s.text[i]
+                val next = s.text.getOrNull(i + 1)
+                if (c.isWhitespace() && next != null && !next.isWhitespace()) {
+                    piece += s.copy(text = s.text.substring(from, i + 1))
+                    end()
+                    from = i + 1
+                }
+            }
+            if (from < s.text.length) {
+                piece += s.copy(text = s.text.substring(from))
+                if (s.text.last().isWhitespace()) end()
+            }
+        }
+        end()
+        return pieces
+    }
+
     private val heading = Regex("""^(#{1,6})\s+(.*?)\s*#*\s*$""")
     private val bullet = Regex("""^(\s*)[-*+]\s+(.*)$""")
     private val ordered = Regex("""^(\s*)(\d{1,9})[.)]\s+(.*)$""")

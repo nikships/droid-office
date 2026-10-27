@@ -26,6 +26,9 @@ const term = new Terminal({
   fontSize: READABLE_PX,
   lineHeight: 1.1,
   theme: THEME,
+  // Droid can draw in its light theme's near-black (its queue hint's key names, a reply), which
+  // vanishes on this black: lift any text that can't be read against its own background.
+  minimumContrastRatio: 4.5,
   scrollback: 5000,
   allowProposedApi: true,
   disableStdin: true,

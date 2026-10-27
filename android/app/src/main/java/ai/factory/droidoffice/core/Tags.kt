@@ -312,7 +312,7 @@ object Tags {
 
         /** The row in the Thread view with the Thread and Raw TTY switch, the PR and the branch. */
         const val THREAD_BAR = "worker.thread.bar"
-        /** "Follow latest" at the bottom while inspecting, "Jump to latest" above it, or the new-message count. */
+        /** "Follow latest" at the bottom with something opened to read, "Latest" anywhere else, or the new-message count. */
         const val THREAD_JUMP_LABEL = "worker.thread.jump.label"
         /** A Markdown table in a message: its columns line up and it scrolls sideways as one. */
         const val THREAD_TABLE = "worker.thread.table"
@@ -320,6 +320,10 @@ object Tags {
         const val THREAD_QUEUED_DISMISS = "worker.thread.queued.dismiss"
         /** Why receipts in [THREAD_QUEUED] aren't kept on the phone (too large, a disk error) or older ones may be missing. */
         const val THREAD_QUEUED_UNSAVED = "worker.thread.queued.unsaved"
+        /** Opens or closes [THREAD_QUEUED], the last item in the thread (`checked` is open). */
+        const val THREAD_QUEUED_TOGGLE = "worker.thread.queued.toggle"
+        /** "Queue request sent · 2": the receipts' one line while closed. */
+        const val THREAD_QUEUED_SUMMARY = "worker.thread.queued.summary"
 
         /** A message, tool call, thought or notice in the thread, by its entry id. */
         fun threadEntry(id: String) = "worker.thread.entry/$id"

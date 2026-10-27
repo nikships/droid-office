@@ -8,6 +8,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.size
 import androidx.compose.material3.Icon
 import androidx.compose.runtime.derivedStateOf
@@ -164,18 +165,7 @@ private fun Table(t: Markdown.Block.Table, style: TextStyle, mono: FontFamily, s
         Layout(
             content = {
                 for (row in listOf(t.header) + t.rows) {
-                    row.forEachIndexed { c, cell ->
-                        Text(
-                            styled(cell, mono),
-                            style = if (row === t.header) head else style,
-                            textAlign = when (t.align.getOrNull(c)) {
-                                Markdown.Align.Center -> TextAlign.Center
-                                Markdown.Align.Right -> TextAlign.End
-                                else -> TextAlign.Start
-                            },
-                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 7.dp),
-                        )
-                    }
+                    row.forEachIndexed { c, cell -> Cell(cell, if (row === t.header) head else style, t.align.getOrNull(c), mono) }
                 }
             },
             modifier = Modifier.horizontalScroll(scroll).drawBehind { grid.draw(this) },
@@ -184,8 +174,11 @@ private fun Table(t: Markdown.Block.Table, style: TextStyle, mono: FontFamily, s
             val rows = measurables.size / cols
             val cap = CELL_MAX.roundToPx()
             val floor = CELL_MIN.roundToPx()
+            // Never narrower than a cell's widest unbreakable piece (a long word, a command in code):
+            // the table scrolls sideways instead of breaking it.
             val widths = IntArray(cols) { c ->
-                (0 until rows).maxOf { r -> measurables[r * cols + c].maxIntrinsicWidth(Constraints.Infinity) }.coerceIn(floor, cap)
+                val natural = (0 until rows).maxOf { r -> measurables[r * cols + c].maxIntrinsicWidth(Constraints.Infinity) }.coerceIn(floor, cap)
+                maxOf(natural, (0 until rows).maxOf { r -> measurables[r * cols + c].minIntrinsicWidth(Constraints.Infinity) })
             }
             val placeables = measurables.mapIndexed { i, m -> m.measure(Constraints(minWidth = widths[i % cols], maxWidth = widths[i % cols])) }
             val heights = IntArray(rows) { r -> (0 until cols).maxOf { c -> placeables[r * cols + c].height } }
@@ -207,6 +200,37 @@ private fun Table(t: Markdown.Block.Table, style: TextStyle, mono: FontFamily, s
             }
         }
         OverflowCue(scroll, surface)
+    }
+}
+
+/**
+ * One cell. With inline code in it, the cell flows its pieces itself, breaking only between them
+ * ([Markdown.unbroken]): Android's line breaker would otherwise split a path at its slashes.
+ */
+@Composable
+private fun Cell(spans: List<Markdown.Span>, style: TextStyle, align: Markdown.Align?, mono: FontFamily) {
+    val pad = Modifier.padding(horizontal = 10.dp, vertical = 7.dp)
+    if (spans.none { it.code }) {
+        Text(
+            styled(spans, mono), style = style, modifier = pad,
+            textAlign = when (align) {
+                Markdown.Align.Center -> TextAlign.Center
+                Markdown.Align.Right -> TextAlign.End
+                else -> TextAlign.Start
+            },
+        )
+        return
+    }
+    val pieces = remember(spans) { Markdown.unbroken(spans) }
+    FlowRow(
+        pad,
+        horizontalArrangement = when (align) {
+            Markdown.Align.Center -> Arrangement.Center
+            Markdown.Align.Right -> Arrangement.End
+            else -> Arrangement.Start
+        },
+    ) {
+        for (p in pieces) Text(styled(p, mono), style = style, softWrap = false, maxLines = 1)
     }
 }
 

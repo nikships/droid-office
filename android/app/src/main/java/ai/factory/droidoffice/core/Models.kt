@@ -6,6 +6,8 @@ object Models {
     private val CUSTOM = Regex("""^custom:(?:[^:]+:)?""")
     private val DIGITS = Regex("""(\d) (?=\d)""")
     private val WORD_START = Regex("""\b\w""")
+    /** Names a model family spells in capitals: "gpt-6.1-sol" is "GPT 6.1 Sol", not "Gpt 6.1 Sol". */
+    private val CAPITALS = Regex("""\b(?:gpt|glm)\b""", RegexOption.IGNORE_CASE)
 
     /**
      * A model id as a person reads it, when the catalogue has no name for it: the office's own
@@ -21,6 +23,7 @@ object Models {
             .replace(Regex("""[-_]+"""), " ")
             .replace(DIGITS, "$1.")
             .replace(WORD_START) { it.value.uppercase() }
+            .replace(CAPITALS) { it.value.uppercase() }
         return if (proxy != null) "DroidProxy: $name" else name
     }
 

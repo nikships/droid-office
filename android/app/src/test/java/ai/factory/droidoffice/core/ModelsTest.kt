@@ -8,7 +8,9 @@ class ModelsTest {
     fun tidiesAnIdTheCatalogueHasNoNameFor() {
         assertEquals("Haiku 4.5", Models.displayName("claude-haiku-4-5-20251001"))
         assertEquals("Opus 4.6", Models.displayName("claude-opus-4-6"))
-        assertEquals("Gpt 5.2", Models.displayName("gpt-5.2"))
+        assertEquals("GPT 5.2", Models.displayName("gpt-5.2"))
+        assertEquals("GPT 6.1 Sol", Models.displayName("custom:droidproxy:gpt-6.1-sol").removePrefix("DroidProxy: "))
+        assertEquals("GLM 5.3", Models.displayName("glm-5.3"))
         assertEquals("DroidProxy: Opus 5.5", Models.displayName("custom:droidproxy:opus-5-5"))
         assertEquals("DroidProxy: Sonnet 5", Models.displayName("custom:droidproxy-2:sonnet-5"))
         assertEquals("Kimi K2", Models.displayName("custom:openrouter:kimi-k2"))
