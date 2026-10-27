@@ -298,13 +298,32 @@ object Tags {
         const val THREAD_ERROR = "worker.thread.error"
         /** In place of the composer while the worker waits on its terminal: prompts aren't sent into a question. */
         const val THREAD_WAITING = "worker.thread.waiting"
+        /** The Raw TTY button in [THREAD_WAITING]. */
+        const val THREAD_WAITING_TTY = "worker.thread.waiting.raw_tty"
         /** After Load earlier pushed the newest entries out: loads the newest page again. */
         const val THREAD_NEWER = "worker.thread.newer"
 
-        /** A message, tool call, thought, to-do list or notice in the thread, by its entry id. */
+        /** The row in the Thread view with the Thread and Raw TTY switch, the PR and the branch. */
+        const val THREAD_BAR = "worker.thread.bar"
+        /** The jump to the newest message's readable label: "Latest", or how many new messages are below. */
+        const val THREAD_JUMP_LABEL = "worker.thread.jump.label"
+
+        /** A message, tool call, thought or notice in the thread, by its entry id. */
         fun threadEntry(id: String) = "worker.thread.entry/$id"
-        /** Expands or collapses a tool call or a thought (`checked` is open). */
+        /** Expands or collapses a tool call's arguments and result, or a thought (`checked` is open). */
         fun threadToggle(id: String) = "worker.thread.toggle/$id"
+        /** Shows all of a long message from the owner, or only its first lines again (`checked` is all of it). */
+        fun threadMore(id: String) = "worker.thread.more/$id"
+        /** One run of tool calls and thoughts between messages, by the id of its first entry. */
+        fun threadGroup(id: String) = "worker.thread.group/$id"
+        /** Opens or closes a run's list of actions (`checked` is open). */
+        fun threadGroupToggle(id: String) = "worker.thread.group.toggle/$id"
+        /** A run's one-line summary: "Read 3 files · Ran 2 commands". */
+        fun threadGroupSummary(id: String) = "worker.thread.group.summary/$id"
+        /** What failed in a run, shown even while it is closed. */
+        fun threadGroupError(id: String) = "worker.thread.group.error/$id"
+        /** The plan as the run left it, inside the open run. */
+        fun threadGroupPlan(id: String) = "worker.thread.group.plan/$id"
 
         /** A quick key, by what TalkBack calls it: "Shift Tab" is `key.shift_tab`. */
         fun key(spoken: String) = "key." + spoken.lowercase().replace(' ', '_')

@@ -88,10 +88,12 @@ fun AskCard(
     connected: Boolean = enabled,
 ) {
     val haptics = LocalHapticFeedback.current
+    // Inline in a thread, the card is near-square like the thread around it.
+    val shape = RoundedCornerShape(if (inline) 4.dp else 12.dp)
     Column(
         modifier.fillMaxWidth().tagged(Tags.Asks.CARD)
-            .background(Palette.Surface, RoundedCornerShape(12.dp))
-            .border(1.dp, if (inline) Palette.BorderStrong else Palette.Border, RoundedCornerShape(12.dp))
+            .background(Palette.Surface, shape)
+            .border(1.dp, if (inline) Palette.BorderStrong else Palette.Border, shape)
             .padding(if (inline) 12.dp else 16.dp),
     ) {
         if (!inline) {
@@ -125,7 +127,7 @@ fun AskCard(
                         onChoose(c)
                     }
                 }
-                if (Choices.takesText(menu)) OwnAnswer(worker.id, enabled, onType)
+                if (Choices.takesText(menu)) OwnAnswer(worker.id, enabled, onType, square = inline)
             }
             Row(Modifier.fillMaxWidth().padding(top = 12.dp), verticalAlignment = Alignment.CenterVertically) {
                 Text(
@@ -162,10 +164,12 @@ private fun OpenThread(onClick: () -> Unit) {
 
 @Composable
 private fun OptionRow(choice: Choice, compact: Boolean, enabled: Boolean, onClick: () -> Unit) {
+    val shape = RoundedCornerShape(if (compact) 4.dp else 10.dp)
+    val badge = RoundedCornerShape(if (compact) 3.dp else 6.dp)
     Row(
-        Modifier.fillMaxWidth().clip(RoundedCornerShape(10.dp))
+        Modifier.fillMaxWidth().clip(shape)
             .background(Palette.SurfaceRaised)
-            .border(1.dp, Palette.BorderStrong, RoundedCornerShape(10.dp))
+            .border(1.dp, Palette.BorderStrong, shape)
             .clickable(enabled = enabled, role = Role.Button, onClickLabel = "Send ${choice.number}", onClick = onClick)
             .semantics { contentDescription = "${choice.number}. ${choice.label}" + (choice.description?.let { ". $it" } ?: "") }
             .tagged(Tags.Asks.option(choice.number))
@@ -174,7 +178,7 @@ private fun OptionRow(choice: Choice, compact: Boolean, enabled: Boolean, onClic
         verticalAlignment = Alignment.Top,
     ) {
         Box(
-            Modifier.size(24.dp).background(Palette.Surface, RoundedCornerShape(6.dp)).border(1.dp, Palette.BorderStrong, RoundedCornerShape(6.dp)),
+            Modifier.size(24.dp).background(Palette.Surface, badge).border(1.dp, Palette.BorderStrong, badge),
             contentAlignment = Alignment.Center,
         ) {
             Text("${choice.number}", style = LocalOfficeType.current.monoBody.copy(fontSize = 12.sp))
@@ -189,16 +193,17 @@ private fun OptionRow(choice: Choice, compact: Boolean, enabled: Boolean, onClic
 
 /** "Or type your own answer…": a dashed row that opens into a text field with Send. */
 @Composable
-private fun OwnAnswer(workerId: String, enabled: Boolean, onSend: (String) -> Unit) {
+private fun OwnAnswer(workerId: String, enabled: Boolean, onSend: (String) -> Unit, square: Boolean = false) {
+    val corner = if (square) 4.dp else 10.dp
     var open by rememberSaveable(workerId) { mutableStateOf(false) }
     var text by rememberSaveable(workerId) { mutableStateOf("") }
     AnimatedContent(open, label = "own answer") { typing ->
         if (!typing) {
             val dash = remember { PathEffect.dashPathEffect(floatArrayOf(10f, 8f)) }
             Row(
-                Modifier.fillMaxWidth().height(44.dp).clip(RoundedCornerShape(10.dp))
+                Modifier.fillMaxWidth().height(44.dp).clip(RoundedCornerShape(corner))
                     .drawBehind {
-                        drawRoundRect(Palette.BorderStrong, cornerRadius = CornerRadius(10.dp.toPx()), style = Stroke(1.dp.toPx(), pathEffect = dash))
+                        drawRoundRect(Palette.BorderStrong, cornerRadius = CornerRadius(corner.toPx()), style = Stroke(1.dp.toPx(), pathEffect = dash))
                     }
                     .clickable(enabled = enabled, onClickLabel = "Type your own answer") { open = true }
                     .tagged(Tags.Asks.OWN_ANSWER)
@@ -227,7 +232,7 @@ private fun OwnAnswer(workerId: String, enabled: Boolean, onSend: (String) -> Un
                 textStyle = MaterialTheme.typography.bodyMedium,
                 singleLine = false,
                 maxLines = 4,
-                shape = RoundedCornerShape(10.dp),
+                shape = RoundedCornerShape(corner),
                 keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Sentences, imeAction = ImeAction.Send),
                 keyboardActions = KeyboardActions(onSend = { send() }),
                 colors = OutlinedTextFieldDefaults.colors(

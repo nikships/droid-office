@@ -30,6 +30,9 @@ class TagsTest {
         assertEquals("send_home.option/all", Tags.SendHome.option("all"))
         assertEquals("worker.thread.entry/u1", Tags.Worker.threadEntry("u1"))
         assertEquals("worker.thread.toggle/t1", Tags.Worker.threadToggle("t1"))
+        assertEquals("worker.thread.group/t1", Tags.Worker.threadGroup("t1"))
+        assertEquals("worker.thread.group.toggle/t1", Tags.Worker.threadGroupToggle("t1"))
+        assertEquals("worker.thread.more/u1", Tags.Worker.threadMore("u1"))
     }
 
     @Test
