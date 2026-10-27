@@ -93,7 +93,7 @@ private const val MAX_BYTES = 25 * 1024 * 1024
 private const val MAX_IMAGES = 10
 
 @Composable
-fun Composer(w: WorkerInfo, draft: String? = null, visible: Boolean = true, focusRequest: Int = 0) {
+fun Composer(w: WorkerInfo, draft: String? = null, visible: Boolean = true, focusRequest: Int = 0, intercept: ((String) -> Boolean)? = null) {
     val graph = LocalGraph.current
     val snackbar = LocalSnackbar.current
     val context = LocalContext.current
@@ -137,6 +137,8 @@ fun Composer(w: WorkerInfo, draft: String? = null, visible: Boolean = true, focu
     fun send(queue: Boolean = false) {
         val prompt = text.trim()
         if ((prompt.isEmpty() && images.isEmpty()) || uploading || sending) return
+        // The draft and pictures stay as they are for whatever took the prompt instead.
+        if (intercept?.invoke(prompt) == true) return
         sending = true
         haptics.performHapticFeedback(HapticFeedbackType.Confirm)
         val ids = images.mapNotNull { it.id }

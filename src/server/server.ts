@@ -59,6 +59,7 @@ import { handleAgent } from './whiteboard-agent.js';
 import { WhiteboardSkill } from './whiteboard-skill.js';
 import { officePrompt } from './prompts.js';
 import { Answers } from './answers.js';
+import { WorkerThreadReader } from './worker-thread.js';
 
 const MIME: Record<string, string> = {
   '.html': 'text/html; charset=utf-8',
@@ -214,6 +215,7 @@ export async function startServer(cfg: Config) {
   void tailscale.get();
   const companion = new WebCompanion(cfg.dataDir);
   const clients = new Map<string, Client>();
+  const workerThreads = new WorkerThreadReader();
   /** The office Mac's trackpad taps for a charging shot; a silent no-op off macOS (see haptics.ts). */
   const trackpadHaptics = new TrackpadHaptics();
   /** What the office is called where it has no project of its own to go by (webhooks). */
@@ -1984,6 +1986,31 @@ export async function startServer(cfg: Config) {
           },
           (error: unknown) => refuse(error instanceof Error ? error.message : 'The office could not confirm the pull request.'),
         );
+        break;
+      }
+      case 'thread.read': {
+        const workerId = str(msg.workerId, 32);
+        const request = str(msg.request, 128);
+        const before = typeof msg.before === 'number' ? msg.before : undefined;
+        const floor = floorOf(c);
+        const source = floor?.workers.threadSession(workerId);
+        const reply = { t: 'thread.snapshot' as const, workerId, request, ...(before !== undefined ? { before } : {}) };
+        if (!source || !floor) {
+          sendTo(c, { ...reply, entries: [], hasMore: false, error: 'Thread is available only for local office-owned Droid workers with an active session on this floor. Shells, guests and cloud workers have no local thread.' });
+          break;
+        }
+        if (msg.before !== undefined && (before === undefined || !Number.isSafeInteger(before) || before < 0)) {
+          sendTo(c, { ...reply, entries: [], hasMore: false, error: 'Invalid conversation page.' });
+          break;
+        }
+        void workerThreads.read(source, before).then((page) => {
+          const current = floor.workers.threadSession(workerId);
+          if (floorOf(c) !== floor || current?.sessionId !== source.sessionId || current.cwd !== source.cwd) {
+            sendTo(c, { ...reply, entries: [], hasMore: false, error: 'The active floor or worker session changed. Read the thread again.' });
+            return;
+          }
+          sendTo(c, { ...reply, ...page });
+        });
         break;
       }
       case 'term.input':

@@ -28,6 +28,8 @@ class TagsTest {
         assertEquals("hire.model/custom:droidproxy:opus-5-5", Tags.Hire.model("custom:droidproxy:opus-5-5"))
         assertEquals("worker.choice/2", Tags.Worker.choice(2))
         assertEquals("send_home.option/all", Tags.SendHome.option("all"))
+        assertEquals("worker.thread.entry/u1", Tags.Worker.threadEntry("u1"))
+        assertEquals("worker.thread.toggle/t1", Tags.Worker.threadToggle("t1"))
     }
 
     @Test

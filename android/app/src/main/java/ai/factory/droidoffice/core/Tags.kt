@@ -283,6 +283,28 @@ object Tags {
         const val THREAD_PROMPT = "worker.thread.prompt"
         const val THREAD_ACTIVITY = "worker.thread.activity"
         const val LIVE_LINE = "worker.live_line"
+        /** The conversation, a lazy list: swipe it to scroll. */
+        const val THREAD_LIST = "worker.thread.list"
+        /** Readable state when there are no messages to show: its text says loading, empty, unavailable or why not. */
+        const val THREAD_STATE = "worker.thread.state"
+        const val THREAD_RETRY = "worker.thread.retry"
+        /** Switches to Raw TTY from a state, notice or question the thread can't handle. */
+        const val THREAD_RAW_TTY = "worker.thread.raw_tty"
+        const val THREAD_EARLIER = "worker.thread.earlier"
+        const val THREAD_START = "worker.thread.start"
+        /** Shown when scrolled up from the newest message: back to the bottom, which follows new ones again. */
+        const val THREAD_JUMP = "worker.thread.jump"
+        /** An error from the office shown over messages already here. */
+        const val THREAD_ERROR = "worker.thread.error"
+        /** In place of the composer while the worker waits on its terminal: prompts aren't sent into a question. */
+        const val THREAD_WAITING = "worker.thread.waiting"
+        /** After Load earlier pushed the newest entries out: loads the newest page again. */
+        const val THREAD_NEWER = "worker.thread.newer"
+
+        /** A message, tool call, thought, to-do list or notice in the thread, by its entry id. */
+        fun threadEntry(id: String) = "worker.thread.entry/$id"
+        /** Expands or collapses a tool call or a thought (`checked` is open). */
+        fun threadToggle(id: String) = "worker.thread.toggle/$id"
 
         /** A quick key, by what TalkBack calls it: "Shift Tab" is `key.shift_tab`. */
         fun key(spoken: String) = "key." + spoken.lowercase().replace(' ', '_')

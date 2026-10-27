@@ -95,6 +95,7 @@ import ai.factory.droidoffice.core.ScreenState
 import ai.factory.droidoffice.core.Tags
 import ai.factory.droidoffice.core.TermSize
 import ai.factory.droidoffice.core.TermView
+import ai.factory.droidoffice.core.ThreadFeed
 import ai.factory.droidoffice.core.WorkerInfo
 import ai.factory.droidoffice.core.WorkerStatus
 import ai.factory.droidoffice.core.Workers
@@ -173,25 +174,35 @@ fun WorkerScreen(workerId: String, onBack: () -> Unit, embedded: Boolean = false
         Offline(link.phase)
         val live = !worker.state.asleep
         val screen = screens[workerId]
-        // Default to Raw TTY unless the thread has an answerable question. Wait for the first screen
-        // before keeping the default, and never change the view after the owner picks one.
+        // Default to Raw TTY unless the owner last picked Thread or the thread has an answerable
+        // question. Wait for the first screen before keeping the default, and never change the view
+        // after the owner picks one.
+        val store by graph.store.snapshot.collectAsStateWithLifecycle()
+        val scope = rememberCoroutineScope()
+        val threadable = !worker.isShell && !worker.isCloud
         var ttyChoice by rememberSaveable(workerId) { mutableStateOf<Boolean?>(if (draft != null) true else null) }
         var directInput by rememberSaveable(workerId) { mutableStateOf(false) }
         var composerFocus by remember(workerId) { mutableIntStateOf(0) }
-        val tty = ttyChoice ?: (link.phase != Phase.Connected || !Asks.canAnswer(worker, screen))
-        LaunchedEffect(workerId, screen) {
-            if (ttyChoice == null && screen != null) ttyChoice = tty
+        val tty = ttyChoice ?: if (threadable && store.settings.threadView) false else (link.phase != Phase.Connected || !Asks.canAnswer(worker, screen))
+        LaunchedEffect(workerId, screen, store.loaded) {
+            if (ttyChoice == null && screen != null && store.loaded) ttyChoice = tty
         }
-        if (!worker.isShell && !worker.isCloud) ViewToggle(tty) { ttyChoice = it; directInput = false }
+        if (threadable) ViewToggle(tty) {
+            ttyChoice = it
+            directInput = false
+            if (store.settings.threadView == it) scope.launch { graph.store.settings { s -> s.copy(threadView = !it) } }
+        }
         if (tty) NeedsYou(worker, screen, live && link.phase == Phase.Connected)
         var phoneSize by remember(workerId) { mutableStateOf<TermSize?>(null) }
         val currentSize = TermSize(worker.cols, worker.rows)
         val canResize = live && link.phase == Phase.Connected && screen != null
-        LaunchedEffect(phone, phoneSize, canResize, currentSize) {
+        LaunchedEffect(phone, phoneSize, canResize, currentSize, tty) {
             if (!canResize) {
                 sizing.disconnected()
                 return@LaunchedEffect
             }
+            // The thread shows no terminal, so it never sizes the shared PTY; the phone view picks up again in Raw TTY.
+            if (!tty) return@LaunchedEffect
             if (phone) {
                 // The desktop typed into it and took the size back: show it as the desktop has it.
                 if (sizing.takenOver(currentSize)) {
@@ -211,9 +222,9 @@ fun WorkerScreen(workerId: String, onBack: () -> Unit, embedded: Boolean = false
             }
         }
         if (!tty) Thread(
-            worker, screen, live && link.phase == Phase.Connected,
+            worker, screen, live && link.phase == Phase.Connected, link.phase == Phase.Connected,
             Modifier.weight(1f).fillMaxWidth(),
-            onType = { ttyChoice = true },
+            onTty = { ttyChoice = true },
         ) else Box(Modifier.weight(1f).fillMaxWidth().padding(horizontal = 10.dp)) {
             Terminal(
                 workerId, screen, if (phone) TermView.Phone else TermView.Desktop, live && link.phase == Phase.Connected,
@@ -239,7 +250,22 @@ fun WorkerScreen(workerId: String, onBack: () -> Unit, embedded: Boolean = false
                         },
                     )
                 }
-                Composer(worker, draft, visible = !directInput || !tty || worker.isCloud, focusRequest = composerFocus)
+                // A prompt from the thread would be typed into the question its terminal is showing.
+                val waiting = !tty && worker.state == WorkerStatus.NeedsInput
+                if (waiting) ThreadWaiting(worker, onTty = { ttyChoice = true })
+                val snackbar = LocalSnackbar.current
+                Composer(
+                    worker, draft, visible = !waiting && (!directInput || !tty || worker.isCloud), focusRequest = composerFocus,
+                    // A slash command is Droid's own, run in its terminal: the thread hands the draft to Raw TTY unsent.
+                    intercept = if (tty) null else { prompt ->
+                        ThreadFeed.slashCommand(prompt).also { slash ->
+                            if (slash) {
+                                ttyChoice = true
+                                scope.launch { snackbar.showSnackbar("Slash commands run in the terminal. Your message is waiting here in Raw TTY.") }
+                            }
+                        }
+                    },
+                )
             }
         }
         if (sendingHome) SendHomeDialog(worker, onDismiss = { sendingHome = false }, onSent = {

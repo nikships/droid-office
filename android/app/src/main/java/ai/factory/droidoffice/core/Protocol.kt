@@ -208,6 +208,16 @@ sealed interface ServerMsg {
     /** `whiteboard`, `whiteboard.rendered` or `whiteboard.renderer`, read by [WhiteboardSync]. */
     data class Whiteboard(val t: String, val obj: JsonObject) : ServerMsg
     data class Pinged(val result: WbPinged) : ServerMsg
+    /** One page of a worker's conversation, answering the `thread.read` named by [request]. */
+    data class ThreadSnapshot(
+        val workerId: String,
+        val request: String,
+        val before: Long?,
+        val sessionId: String?,
+        val entries: List<ThreadEntry>,
+        val hasMore: Boolean,
+        val error: String?,
+    ) : ServerMsg
     data class Ignored(val t: String) : ServerMsg
 }
 
@@ -256,6 +266,7 @@ object Protocol {
         "pong" -> ServerMsg.Pong(o.long("at") ?: 0, o.long("now") ?: 0)
         "whiteboard", "whiteboard.rendered", "whiteboard.renderer" -> ServerMsg.Whiteboard(t, o)
         "whiteboard.pinged" -> WbPinged.of(o)?.let { ServerMsg.Pinged(it) } ?: ServerMsg.Ignored(t)
+        "thread.snapshot" -> threadSnapshot(o) ?: ServerMsg.Ignored(t)
         else -> ServerMsg.Ignored(t)
     }
 
@@ -289,6 +300,21 @@ object Protocol {
             lines = lines,
             full = o.bool("full") ?: false,
             cursor = cursor,
+        )
+    }
+
+    /** A page without the worker or request it answers can't be matched to anything, so it's dropped. */
+    private fun threadSnapshot(o: JsonObject): ServerMsg.ThreadSnapshot? {
+        val workerId = o.str("workerId")?.takeIf { it.isNotEmpty() } ?: return null
+        val request = o.str("request")?.takeIf { it.isNotEmpty() } ?: return null
+        return ServerMsg.ThreadSnapshot(
+            workerId = workerId,
+            request = request,
+            before = o.long("before") ?: (o["before"] as? JsonPrimitive)?.contentOrNull?.toDoubleOrNull()?.toLong(),
+            sessionId = o.str("sessionId")?.takeIf { it.isNotEmpty() },
+            entries = (o["entries"] as? JsonArray)?.mapNotNull(ThreadEntry::of).orEmpty(),
+            hasMore = o.bool("hasMore") ?: false,
+            error = o.str("error")?.takeIf { it.isNotBlank() },
         )
     }
 
@@ -334,6 +360,13 @@ object ClientMsg {
         put("workerId", workerId)
         put("cols", cols)
         put("rows", rows)
+    }
+
+    /** The latest page of a worker's conversation, or the page before seq [before]; [request] comes back on the answer. */
+    fun threadRead(workerId: String, request: String, before: Long? = null) = obj("thread.read") {
+        put("workerId", workerId)
+        put("request", request)
+        if (before != null) put("before", before)
     }
 
     fun attach(workerId: String) = obj("worker.attach") { put("workerId", workerId) }
