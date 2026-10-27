@@ -69,6 +69,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import ai.factory.droidoffice.core.ClientMsg
 import ai.factory.droidoffice.core.Tags
+import ai.factory.droidoffice.core.ThreadQueue
 import ai.factory.droidoffice.core.WorkerInfo
 import ai.factory.droidoffice.ui.LocalGraph
 import ai.factory.droidoffice.ui.LocalSnackbar
@@ -93,7 +94,7 @@ private const val MAX_BYTES = 25 * 1024 * 1024
 private const val MAX_IMAGES = 10
 
 @Composable
-fun Composer(w: WorkerInfo, draft: String? = null, visible: Boolean = true, focusRequest: Int = 0, intercept: ((String) -> Boolean)? = null, thread: Boolean = false) {
+fun Composer(w: WorkerInfo, draft: String? = null, visible: Boolean = true, focusRequest: Int = 0, intercept: ((String) -> Boolean)? = null, thread: Boolean = false, queueState: ThreadQueue? = null, onQueued: () -> Unit = {}) {
     val graph = LocalGraph.current
     val snackbar = LocalSnackbar.current
     val context = LocalContext.current
@@ -142,10 +143,15 @@ fun Composer(w: WorkerInfo, draft: String? = null, visible: Boolean = true, focu
         sending = true
         haptics.performHapticFeedback(HapticFeedbackType.Confirm)
         val ids = images.mapNotNull { it.id }
+        val after = queueState?.sequence ?: -1
         scope.launch {
             val ok = graph.connection.sendWhenConnected(ClientMsg.prompt(w.id, prompt, ids, queue))
             sending = false
             if (ok) {
+                if (queue && queueState != null) {
+                    queueState.sent(prompt, ids.isNotEmpty(), after)
+                    onQueued()
+                }
                 text = ""
                 images.clear()
             } else snackbar.showSnackbar("Couldn't reach the office; your message is still here")

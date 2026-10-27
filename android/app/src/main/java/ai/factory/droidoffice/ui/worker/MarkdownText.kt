@@ -20,6 +20,11 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.LinkAnnotation
@@ -37,6 +42,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.em
 import androidx.compose.ui.unit.sp
 import ai.factory.droidoffice.core.Markdown
+import ai.factory.droidoffice.core.Tags
+import ai.factory.droidoffice.ui.components.tagged
 import ai.factory.droidoffice.ui.theme.LocalOfficeType
 import ai.factory.droidoffice.ui.theme.Palette
 
@@ -74,19 +81,41 @@ internal fun MarkdownText(source: String, modifier: Modifier = Modifier, compact
                     Box(Modifier.width(2.dp).fillMaxHeight().background(Palette.BorderStrong))
                     Text(styled(b.spans, mono), style = body.copy(color = Palette.TextSecondary), modifier = Modifier.padding(start = 10.dp))
                 }
-                is Markdown.Block.Code -> Box(
-                    Modifier.fillMaxWidth().background(Palette.Surface, RoundedCornerShape(8.dp)).border(1.dp, Palette.Border, RoundedCornerShape(8.dp)),
-                ) {
+                is Markdown.Block.Code -> CodeScroll(Palette.Surface) { scroll ->
                     Text(
                         b.text,
                         style = LocalOfficeType.current.monoBody.copy(fontSize = 12.5.sp, lineHeight = 18.sp),
                         softWrap = false,
-                        modifier = Modifier.horizontalScroll(rememberScrollState()).padding(horizontal = 10.dp, vertical = 8.dp),
+                        modifier = scroll.background(Palette.Surface, RoundedCornerShape(4.dp)).padding(horizontal = 10.dp, vertical = 8.dp),
                     )
                 }
                 Markdown.Block.Rule -> Box(Modifier.fillMaxWidth().padding(vertical = 4.dp).height(1.dp).background(Palette.Border))
             }
         }
+    }
+}
+
+/** A visible cue only when the code really overflows, shared by messages and tool details. */
+@Composable
+internal fun CodeScroll(background: Color, content: @Composable (Modifier) -> Unit) {
+    val scroll = rememberScrollState()
+    Column(Modifier.fillMaxWidth()) {
+        Box(Modifier.fillMaxWidth().background(background, RoundedCornerShape(4.dp)).border(1.dp, Palette.Border, RoundedCornerShape(4.dp))) {
+            content(Modifier.fillMaxWidth().horizontalScroll(scroll))
+            if (scroll.value < scroll.maxValue) Box(
+                Modifier.matchParentSize().drawBehind {
+                    val edge = 24.dp.toPx().coerceAtMost(size.width)
+                    drawRect(
+                        Brush.horizontalGradient(listOf(Color.Transparent, background), startX = size.width - edge, endX = size.width),
+                        topLeft = Offset(size.width - edge, 0f), size = Size(edge, size.height),
+                    )
+                },
+            )
+        }
+        if (scroll.maxValue > 0) Text(
+            "Scroll horizontally ↔", style = LocalOfficeType.current.eyebrow.copy(color = Palette.TextSecondary, fontSize = 10.sp),
+            modifier = Modifier.align(Alignment.End).tagged(Tags.Worker.THREAD_CODE_HINT),
+        )
     }
 }
 

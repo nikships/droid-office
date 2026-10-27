@@ -6,7 +6,7 @@
     "message": "{ kind: 'message', id: entry id, role: 'user' | 'assistant', startsTurn: boolean (first assistant message after the owner's, or the first one: the only one that carries the worker's name) }",
     "notice": "{ kind: 'notice', id: entry id, text: string (the copy shown), tone: 'quiet' | 'danger' | 'attachment' }",
     "activity": "{ kind: 'activity', id: 'activity:' + first raw entry id of the run (hidden ones included), summary: string (the closed line), live: boolean (newest run while busy), items: Item[] (shown actions and thoughts, in order), failed: string[] (titles of failed actions, shown even closed), noResult: number, plan: PlanStep[] | null (the run's latest plan only when it changed since the last one shown; never a row) }",
-    "action": "{ type: 'action', id: entry id, title: string (human, never a raw command, JSON or absolute home path), detail: string | null (quiet secondary line: a short path, pattern, subagent type, or a command shortened only when there is no summary), state: 'done' | 'running' | 'failed' | 'no_result' }",
+    "action": "{ type: 'action', id: entry id, title: string (human, never a raw command, JSON or absolute home path), detail: string | null (quiet secondary line: a short path, pattern, subagent type, or a command shortened only when there is no summary), state: 'done' | 'running' | 'failed' | 'no_result' | 'cancelled' }",
     "thought": "{ type: 'thought', id: entry id, preview: string (first non-blank line, ** trimmed) }",
     "planStep": "{ status: 'completed' | 'in_progress' | 'pending', text: string }",
     "rules": [
@@ -15,9 +15,9 @@
       "A Script with no tool call after it (before the next Script or the end of the run) stays as 'Ran a script' (its source and result in its details).",
       "TaskStop and Loop are shown: 'Stopped a background task' / 'Couldn't stop the background task', 'Scheduled a loop' / 'Couldn't schedule the loop'.",
       "Todo snapshots are never rows. A run's latest plan goes on its own activity; a run with no row passes its plan on to the next activity shown (even past a message), and a plan counts as shown only once an activity carries it.",
-      "Turn ended · completed is hidden; Turn cancelled is a quiet notice; any other ending is a danger notice in words.",
+      "Turn ended · completed is hidden; Turn cancelled is a quiet notice. A cancellation error in the run immediately preceding that notice is cancelled, not failed; genuine earlier errors stay failed. Activity.cancelled counts those cancelled actions when nonzero. Any other ending is a danger notice in words.",
       "A call with no output is 'running' only in the live run; otherwise 'no_result'. Never 'done' without output.",
-      "summary: verb phrases per kind in first-seen order, files counted once each, then 'N more' actions past three kinds; failed bookkeeping isn't counted; 'Thought' for a run of only thoughts."
+      "summary: verb phrases per kind in first-seen order, Read counts match the visible calls (including repeated reads); edited and created files are unique. Then 'N more' actions past three kinds; failed bookkeeping isn't counted; 'Thought' for a run of only thoughts."
     ]
   },
   "cases": [
@@ -1696,6 +1696,31 @@
           "role": "assistant",
           "startsTurn": false
         }
+      ]
+    },
+    {
+      "name": "owner_cancelled_execution_is_not_failure",
+      "busy": false,
+      "entries": [
+        {"id":"cancel-exec","seq":1,"role":"assistant","kind":"tool","name":"Execute","input":"{\"summary\":\"Verify the live reading layout\"}","output":"Tool execution cancelled by user","error":true},
+        {"id":"turn:actual:cancelled","seq":2,"role":"system","kind":"notice","text":"Turn cancelled"}
+      ],
+      "expected": [
+        {"kind":"activity","id":"activity:cancel-exec","summary":"Ran a command","live":false,"items":[{"type":"action","id":"cancel-exec","title":"Verify the live reading layout","detail":null,"state":"cancelled"}],"failed":[],"cancelled":1,"noResult":0,"plan":null},
+        {"kind":"notice","id":"turn:actual:cancelled","text":"Turn cancelled","tone":"quiet"}
+      ]
+    },
+    {
+      "name": "cancellation_does_not_hide_a_real_read_error",
+      "busy": false,
+      "entries": [
+        {"id":"read-error","seq":1,"role":"assistant","kind":"tool","name":"Read","input":"{\"file_path\":\"README.md\"}","output":"File not found","error":true},
+        {"id":"cancel-exec","seq":2,"role":"assistant","kind":"tool","name":"Execute","input":"{\"summary\":\"Verify the live reading layout\"}","output":"Tool execution cancelled by user","error":true},
+        {"id":"turn:actual:cancelled","seq":3,"role":"system","kind":"notice","text":"Turn cancelled"}
+      ],
+      "expected": [
+        {"kind":"activity","id":"activity:read-error","summary":"Read a file · Ran a command","live":false,"items":[{"type":"action","id":"read-error","title":"Read README.md","detail":"README.md","state":"failed"},{"type":"action","id":"cancel-exec","title":"Verify the live reading layout","detail":null,"state":"cancelled"}],"failed":["Read README.md"],"cancelled":1,"noResult":0,"plan":null},
+        {"kind":"notice","id":"turn:actual:cancelled","text":"Turn cancelled","tone":"quiet"}
       ]
     }
   ]

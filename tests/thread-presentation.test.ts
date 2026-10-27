@@ -129,3 +129,49 @@ test('human summaries tolerate plain text, missing fields, namespaces and long p
   assert.equal(threadAction(tool('x6', 'Custom_Tool', {}, { input: 'old format' })).title, 'Used custom tool');
   assert.ok(threadAction(tool('r7', 'Read', { file_path: `/${'long'.repeat(50)}` })).title.length <= 90);
 });
+
+test('a real cancellation stays quiet without concealing an earlier genuine failure', () => {
+  const rows = presentThread(
+    [
+      tool('r1', 'Read', { file_path: '/missing' }, { error: true, output: 'File not found' }),
+      tool('e2', 'Execute', {}, { error: true, output: 'Tool execution cancelled by user' }),
+      { id: 'turn:t:cancelled', seq: 3, role: 'system', kind: 'notice', text: 'Turn cancelled' },
+    ],
+    false,
+  );
+  assert.equal(rows[0].kind, 'activity');
+  if (rows[0].kind !== 'activity') return;
+  assert.equal(rows[0].cancelled, 1);
+  assert.equal(rows[0].failed.length, 1);
+  assert.equal(rows[0].actions[1].state, 'cancelled');
+  assert.equal(rows[0].actions[1].entry.error, true);
+  const unconfirmed = presentThread([tool('e2', 'Execute', {}, { error: true, output: 'Tool execution cancelled by user' })], false)[0];
+  assert.equal(unconfirmed.kind, 'activity');
+  if (unconfirmed.kind === 'activity') {
+    assert.equal(unconfirmed.state, 'failed');
+    assert.equal(unconfirmed.actions[0].state, 'failed');
+    assert.equal(unconfirmed.cancelled, 0);
+  }
+});
+
+test('read counts agree with the visible rows even when the same path was read twice', () => {
+  const rows = presentThread([tool('r1', 'Read', { file_path: '/same' }), tool('r2', 'Read', { file_path: '/same' })], false);
+  assert.equal(rows[0].kind, 'activity');
+  if (rows[0].kind === 'activity') {
+    assert.equal(rows[0].label, 'Read 2 files');
+    assert.equal(rows[0].actions.length, 2);
+  }
+});
+
+test('Loop management actions do not claim that a read or cancellation scheduled work', () => {
+  for (const [action, title] of [
+    ['list', 'Checked scheduled loops'],
+    ['pause', 'Paused a loop'],
+    ['resume', 'Resumed a loop'],
+    ['cancel', 'Cancelled a loop'],
+    ['create', 'Scheduled a loop'],
+  ]) {
+    assert.equal(threadAction(tool('l1', 'Loop', { action })).title, title);
+  }
+  assert.equal(threadAction(tool('l1', 'Loop', { action: 'cancel' }, { error: true })).title, "Couldn't cancel the loop");
+});

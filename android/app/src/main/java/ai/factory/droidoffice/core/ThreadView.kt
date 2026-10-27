@@ -79,6 +79,7 @@ object ThreadView {
         val noResult: Int,
     ) : Row {
         val actions get() = items.filterIsInstance<Action>()
+        val cancelled get() = actions.count { it.state == ToolState.Cancelled }
     }
 
     /** Tool calls that only keep the agent's own books. */
@@ -92,11 +93,11 @@ object ThreadView {
         var carried: List<PlanStep>? = null
         var prevMessage: ThreadEntry? = null
 
-        fun flush(at: Int) {
+        fun flush(at: Int, cancelledTurn: Boolean = false) {
             if (run.isEmpty()) return
             val own = run.lastOrNull { it.kind == ThreadKind.Todo }?.text?.let(::plan)?.takeIf { it.isNotEmpty() }
             // Only the newest run can still be going: a call with no result before a later message never got one.
-            val group = activity(run.toList(), live = busy && at == entries.size, own ?: carried, lastPlan)
+            val group = activity(run.toList(), live = busy && at == entries.size, own ?: carried, lastPlan, cancelledTurn)
             run.clear()
             if (group == null) {
                 if (own != null) carried = own
@@ -117,7 +118,7 @@ object ThreadView {
                 e.kind == ThreadKind.Notice || (e.kind == ThreadKind.Text && e.role == ThreadRole.System) -> {
                     val n = notice(e)
                     if (n != null) {
-                        flush(i)
+                        flush(i, n.text == "Turn cancelled")
                         rows += n
                     }
                 }
@@ -142,15 +143,16 @@ object ThreadView {
 
     private fun planKey(plan: List<PlanStep>) = plan.joinToString("\n") { "${it.done}${it.active}${it.text}" }
 
-    private fun activity(run: List<ThreadEntry>, live: Boolean, plan: List<PlanStep>?, lastPlan: String?): Activity? {
+    private fun activity(run: List<ThreadEntry>, live: Boolean, plan: List<PlanStep>?, lastPlan: String?, cancelledTurn: Boolean): Activity? {
         val items = ArrayList<Item>()
         for ((i, e) in run.withIndex()) {
             when (e.kind) {
                 ThreadKind.Thinking -> e.text?.lineSequence()?.firstOrNull { it.isNotBlank() }?.let { items += Thought(e, it.trim().trim('*').trim()) }
                 ThreadKind.Tool -> {
-                    val state = ThreadFeed.toolState(e, live)
+                    val recorded = ThreadFeed.toolState(e, live)
+                    val state = if (cancelledTurn && recorded == ToolState.Failed && Regex("\\b(cancelled|canceled|interrupted|aborted)\\b", RegexOption.IGNORE_CASE).containsMatchIn(e.output.orEmpty())) ToolState.Cancelled else recorded
                     val name = e.name.orEmpty()
-                    val failed = state == ToolState.Failed
+                    val failed = state == ToolState.Failed || state == ToolState.Cancelled
                     if (!failed && name in BOOKKEEPING) continue
                     if (!failed && name == "Script" && wraps(run, i)) continue
                     items += action(e, state)
@@ -265,7 +267,16 @@ object ThreadView {
             "WaitForScript" -> a(Kind.Wait, if (failedVerb) "Couldn't read script results" else "Read script results")
             "TaskOutput" -> a(Kind.Wait, if (failedVerb) "Couldn't read task output" else "Read task output")
             "TaskStop" -> a(Kind.Other, if (failedVerb) "Couldn't stop the background task" else "Stopped a background task")
-            "Loop" -> a(Kind.Other, if (failedVerb) "Couldn't schedule the loop" else "Scheduled a loop")
+            "Loop" -> {
+                val (done, error) = when (o?.str("action")) {
+                    "list" -> "Checked scheduled loops" to "Couldn't read scheduled loops"
+                    "pause" -> "Paused a loop" to "Couldn't pause the loop"
+                    "resume" -> "Resumed a loop" to "Couldn't resume the loop"
+                    "cancel" -> "Cancelled a loop" to "Couldn't cancel the loop"
+                    else -> "Scheduled a loop" to "Couldn't schedule the loop"
+                }
+                a(Kind.Other, if (failedVerb) error else done)
+            }
             in BOOKKEEPING -> a(Kind.Plan, if (failedVerb) "Couldn't update the plan" else "Updated the plan")
             else -> when {
                 name.startsWith("memory___") -> a(Kind.Memory, if (name.contains("save") || name.contains("update")) "Saved to memory" else "Checked memory")
@@ -314,8 +325,8 @@ object ThreadView {
         val byKind = LinkedHashMap<Kind, Int>()
         val seen = HashMap<Kind, MutableSet<String>>()
         for (a in counted) {
-            // Reading or editing the same file twice is still one file.
-            val units = if (a.kind == Kind.Read || a.kind == Kind.Edit || a.kind == Kind.Create) a.paths.ifEmpty { listOf(a.title) } else listOf(a.entry.id)
+            // Read counts match the visible calls, including repeated reads of the same file.
+            val units = if (a.kind == Kind.Edit || a.kind == Kind.Create) a.paths.ifEmpty { listOf(a.title) } else listOf(a.entry.id)
             val set = seen.getOrPut(a.kind) { HashSet() }
             byKind.putIfAbsent(a.kind, 0)
             for (u in units) if (set.add(u)) byKind[a.kind] = byKind.getValue(a.kind) + 1

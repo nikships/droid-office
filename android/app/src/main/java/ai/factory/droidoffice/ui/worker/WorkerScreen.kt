@@ -96,6 +96,7 @@ import ai.factory.droidoffice.core.Tags
 import ai.factory.droidoffice.core.TermSize
 import ai.factory.droidoffice.core.TermView
 import ai.factory.droidoffice.core.ThreadFeed
+import ai.factory.droidoffice.core.ThreadQueue
 import ai.factory.droidoffice.core.WorkerInfo
 import ai.factory.droidoffice.core.WorkerStatus
 import ai.factory.droidoffice.core.Workers
@@ -126,6 +127,8 @@ private val PhoneSizingSaver = Saver<PhoneSizing, List<Int>>(
     restore = { PhoneSizing(if (it[0] > 0) TermSize(it[0], it[1]) else null, it.drop(2).chunked(2).map { size -> TermSize(size[0], size[1]) }) },
 )
 
+private val localThreadQueues = mutableMapOf<String, ThreadQueue>()
+
 @Composable
 fun WorkerScreen(workerId: String, onBack: () -> Unit, embedded: Boolean = false, draft: String? = null) {
     val graph = LocalGraph.current
@@ -134,6 +137,10 @@ fun WorkerScreen(workerId: String, onBack: () -> Unit, embedded: Boolean = false
     val screens by connection.screens.collectAsStateWithLifecycle()
     val link by connection.link.collectAsStateWithLifecycle()
     val worker = data.workers[workerId]
+    val queueState = remember(data.officeId, data.floorId, workerId) {
+        localThreadQueues.getOrPut("${data.officeId}/${data.floorId}/$workerId") { ThreadQueue() }
+    }
+    var queueRevision by remember(queueState) { mutableIntStateOf(0) }
     // Phone view is the point of a phone: open a worker's terminal readable, sized for this screen.
     // A cloud worker has no terminal here and no Phone key to leave the mode with, so it keeps the fit.
     // The worker may not have synced yet, so the default is read live until the owner picks a view.
@@ -192,7 +199,11 @@ fun WorkerScreen(workerId: String, onBack: () -> Unit, embedded: Boolean = false
         }
         // The thread gives the conversation the room: its switch shares the PR and branch row, and
         // Send home stays in the menu. Raw TTY keeps its rows as they are.
-        if (threadable && !tty) Actions(worker, onSendHome = { sendingHome = true }, lead = { InlineViewToggle(false, pickView) })
+        if (threadable && !tty) Column(Modifier.fillMaxWidth().background(Palette.Bg)) {
+            Actions(worker, onSendHome = { sendingHome = true }, lead = { InlineViewToggle(false, pickView) })
+            Box(Modifier.fillMaxWidth().height(4.dp))
+            Box(Modifier.fillMaxWidth().height(1.dp).background(Palette.Border))
+        }
         else Actions(worker, onSendHome = { sendingHome = true })
         Offline(link.phase)
         if (threadable && tty) ViewToggle(true, pickView)
@@ -228,6 +239,7 @@ fun WorkerScreen(workerId: String, onBack: () -> Unit, embedded: Boolean = false
         if (!tty) Thread(
             worker, screen, live && link.phase == Phase.Connected, link.phase == Phase.Connected,
             Modifier.weight(1f).fillMaxWidth(),
+            queued = queueState, queueRevision = queueRevision,
             onTty = { ttyChoice = true },
         ) else Box(Modifier.weight(1f).fillMaxWidth().padding(horizontal = 10.dp)) {
             Terminal(
@@ -260,6 +272,7 @@ fun WorkerScreen(workerId: String, onBack: () -> Unit, embedded: Boolean = false
                 val snackbar = LocalSnackbar.current
                 Composer(
                     worker, draft, visible = !waiting && (!directInput || !tty || worker.isCloud), focusRequest = composerFocus, thread = !tty,
+                    queueState = queueState, onQueued = { queueRevision++ },
                     // A slash command is Droid's own, run in its terminal: the thread hands the draft to Raw TTY unsent.
                     intercept = if (tty) null else { prompt ->
                         ThreadFeed.slashCommand(prompt).also { slash ->
@@ -294,10 +307,10 @@ private fun Header(w: WorkerInfo, embedded: Boolean, onBack: () -> Unit, onSendH
         Column(Modifier.weight(1f).padding(start = 2.dp)) {
             Text(w.name.ifBlank { w.id }, style = MaterialTheme.typography.titleLarge, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.tagged(Tags.Worker.NAME))
             val parts = buildList {
-                add(deskLabel(w.deskId))
                 w.cloud?.computerName?.takeIf { it.isNotBlank() }?.let { add("☁ $it") }
-                if (w.isShell) add("shell") else Workers.modelId(w)?.let { add(catalogue.nameOf(it)) }
+                if (w.isShell) add("shell") else Workers.modelId(w)?.let { add(catalogue.nameOf(it).replace(Regex("^DroidProxy:\\s*", RegexOption.IGNORE_CASE), "")) }
                 Workers.effort(w)?.let { if (!w.isShell) add(it.label.lowercase()) }
+                add(deskLabel(w.deskId))
                 Workers.workedMs(w, now).takeIf { it >= 1000 }?.let { add(Workers.duration(it)) }
             }
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {

@@ -10,7 +10,7 @@ const fixture = JSON.parse(readFileSync(new URL('../android/app/src/test/resourc
 const snapshot = (row: ThreadRow): unknown => {
   if (row.kind === 'message') return { kind: row.kind, id: row.id, role: row.entry.role, startsTurn: row.startsTurn };
   if (row.kind === 'notice') return { kind: row.kind, id: row.id, text: row.text, tone: row.tone };
-  const states = { complete: 'done', working: 'running', failed: 'failed', incomplete: 'no_result' };
+  const states = { complete: 'done', working: 'running', failed: 'failed', incomplete: 'no_result', cancelled: 'cancelled' };
   return {
     kind: row.kind,
     id: row.id,
@@ -20,6 +20,7 @@ const snapshot = (row: ThreadRow): unknown => {
       item.type === 'thought' ? { type: item.type, id: item.entry.id, preview: item.preview } : { type: item.type, id: item.entry.id, title: item.title, detail: item.detail ?? null, state: states[item.state] },
     ),
     failed: row.failed.map((action) => action.title),
+    ...(row.cancelled ? { cancelled: row.cancelled } : {}),
     noResult: row.noResult,
     plan: row.plan?.map((step) => ({ status: step.done ? 'completed' : step.active ? 'in_progress' : 'pending', text: step.text })) ?? null,
   };

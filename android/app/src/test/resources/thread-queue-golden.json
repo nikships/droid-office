@@ -1,0 +1,48 @@
+{
+  "about": "Client-local queue bookkeeping. Sends are successful local queue:true sends; only later matching user entries acknowledge them. This is unit evidence, not a staged runtime transcript.",
+  "cases": [
+    {
+      "name": "matching_user_not_assistant_clears",
+      "steps": [
+        {"session":"a","entries":[{"id":"u1","seq":1,"role":"user","kind":"text","text":"repeat"}],"sends":[{"text":"repeat","hasImage":false}],"expected":["repeat"]},
+        {"session":"a","entries":[{"id":"u1","seq":1,"role":"user","kind":"text","text":"repeat"},{"id":"a2","seq":2,"role":"assistant","kind":"text","text":"repeat"}],"expected":["repeat"]},
+        {"session":"a","entries":[{"id":"u3","seq":3,"role":"user","kind":"text","text":"repeat"}],"expected":[]}
+      ]
+    },
+    {
+      "name": "duplicates_clear_once_not_on_older_or_repeated_poll",
+      "steps": [
+        {"session":"a","entries":[{"id":"u10","seq":10,"role":"user","kind":"text","text":"repeat"}],"sends":[{"text":"repeat","hasImage":false},{"text":"repeat","hasImage":false}],"expected":["repeat","repeat"]},
+        {"session":"a","entries":[{"id":"u2","seq":2,"role":"user","kind":"text","text":"repeat"}],"expected":["repeat","repeat"]},
+        {"session":"a","entries":[{"id":"u11","seq":11,"role":"user","kind":"text","text":"repeat"}],"expected":["repeat"]},
+        {"session":"a","entries":[{"id":"u11","seq":11,"role":"user","kind":"text","text":"repeat"}],"expected":["repeat"]},
+        {"session":"a","entries":[{"id":"u11","seq":11,"role":"user","kind":"text","text":"repeat"},{"id":"u12","seq":12,"role":"user","kind":"text","text":"repeat"}],"expected":[]}
+      ]
+    },
+    {
+      "name": "cancellation_does_not_claim_queued_delivery",
+      "steps": [
+        {"session":"a","entries":[],"sends":[{"text":"Queue verified","hasImage":false}],"expected":["Queue verified"]},
+        {"session":"a","entries":[{"id":"turn:t:cancelled","seq":1,"role":"system","kind":"notice","text":"Turn cancelled"}],"expected":["Queue verified"]},
+        {"session":"a","entries":[{"id":"a2","seq":2,"role":"assistant","kind":"text","text":"Wait finished"}],"expected":["Queue verified"]},
+        {"session":"a","entries":[{"id":"u3","seq":3,"role":"user","kind":"text","text":"Queue verified"}],"expected":[]}
+      ]
+    },
+    {
+      "name": "session_change_clears_only_old_session_markers",
+      "steps": [
+        {"session":"a","entries":[],"sends":[{"text":"old session","hasImage":false}],"expected":["old session"]},
+        {"session":"b","entries":[],"sends":[{"text":"new session","hasImage":false}],"expected":["new session"]},
+        {"session":"b","entries":[{"id":"u1","seq":1,"role":"user","kind":"text","text":"new session"}],"expected":[]}
+      ]
+    },
+    {
+      "name": "image_only_message_matches_attachment_notice",
+      "steps": [
+        {"session":"a","entries":[],"sends":[{"text":"","hasImage":true}],"expected":[""]},
+        {"session":"a","entries":[],"expected":[""]},
+        {"session":"a","entries":[{"id":"u1:1","seq":1,"role":"user","kind":"notice","text":"[Image attachment]"}],"expected":[]}
+      ]
+    }
+  ]
+}

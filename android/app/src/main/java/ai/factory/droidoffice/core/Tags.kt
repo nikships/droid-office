@@ -290,6 +290,9 @@ object Tags {
         const val THREAD_RETRY = "worker.thread.retry"
         /** Switches to Raw TTY from a state, notice or question the thread can't handle. */
         const val THREAD_RAW_TTY = "worker.thread.raw_tty"
+        const val THREAD_CODE_HINT = "worker.thread.code.hint"
+        const val THREAD_QUEUED = "worker.thread.queued"
+        const val THREAD_QUEUED_TTY = "worker.thread.queued.raw_tty"
         const val THREAD_EARLIER = "worker.thread.earlier"
         const val THREAD_START = "worker.thread.start"
         /** Shown when scrolled up from the newest message: back to the bottom, which follows new ones again. */
@@ -305,7 +308,7 @@ object Tags {
 
         /** The row in the Thread view with the Thread and Raw TTY switch, the PR and the branch. */
         const val THREAD_BAR = "worker.thread.bar"
-        /** The jump to the newest message's readable label: "Latest", or how many new messages are below. */
+        /** "Follow latest" at the bottom while inspecting, "Jump to latest" above it, or the new-message count. */
         const val THREAD_JUMP_LABEL = "worker.thread.jump.label"
 
         /** A message, tool call, thought or notice in the thread, by its entry id. */

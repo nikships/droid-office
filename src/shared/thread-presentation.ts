@@ -1,6 +1,6 @@
 import type { ThreadEntry } from './worker-thread.js';
 
-export type ActivityState = 'working' | 'complete' | 'incomplete' | 'failed';
+export type ActivityState = 'working' | 'complete' | 'incomplete' | 'failed' | 'cancelled';
 type ActionKind = 'read' | 'list' | 'search' | 'command' | 'edit' | 'create' | 'web' | 'webSearch' | 'delegate' | 'skill' | 'ask' | 'memory' | 'script' | 'plan' | 'other';
 export interface ThreadAction {
   type: 'action';
@@ -35,6 +35,7 @@ export type ThreadRow =
       state: ActivityState;
       live: boolean;
       failed: ThreadAction[];
+      cancelled: number;
       noResult: number;
     };
 
@@ -87,11 +88,11 @@ export function threadArguments(entry: ThreadEntry): { label: string; text: stri
 }
 
 /** Matches Android's ThreadView.action; a shared golden fixture guards the words and hierarchy. */
-export function threadAction(entry: ThreadEntry, live = false): ThreadAction {
+export function threadAction(entry: ThreadEntry, live = false, cancelled = false): ThreadAction {
   const name = leaf(entry.name);
   const args = argumentsOf(entry);
   const path = str(args.file_path ?? args.path ?? args.directory_path ?? args.folder);
-  const failed = !!entry.error;
+  const failed = !!entry.error && !cancelled;
   const action = (category: ActionKind, title: string, detail?: string, paths = path ? [path] : []): ThreadAction => ({
     type: 'action',
     entry,
@@ -99,7 +100,7 @@ export function threadAction(entry: ThreadEntry, live = false): ThreadAction {
     paths,
     title: clip(title, 90),
     ...(detail ? { detail: clip(detail, 70) } : {}),
-    state: failed ? 'failed' : entry.output !== undefined ? 'complete' : live ? 'working' : 'incomplete',
+    state: cancelled ? 'cancelled' : failed ? 'failed' : entry.output !== undefined ? 'complete' : live ? 'working' : 'incomplete',
   });
   const file = path ? baseName(path) : 'a file';
   const detail = path ? threadShortPath(path) : undefined;
@@ -162,8 +163,16 @@ export function threadAction(entry: ThreadEntry, live = false): ThreadAction {
       return action('plan', failed ? "Couldn't read task output" : 'Read task output');
     case 'taskstop':
       return action('other', failed ? "Couldn't stop the background task" : 'Stopped a background task');
-    case 'loop':
-      return action('other', failed ? "Couldn't schedule the loop" : 'Scheduled a loop');
+    case 'loop': {
+      const verbs: Record<string, [string, string]> = {
+        list: ['Checked scheduled loops', "Couldn't read scheduled loops"],
+        pause: ['Paused a loop', "Couldn't pause the loop"],
+        resume: ['Resumed a loop', "Couldn't resume the loop"],
+        cancel: ['Cancelled a loop', "Couldn't cancel the loop"],
+      };
+      const [done, error] = verbs[str(args.action)] ?? ['Scheduled a loop', "Couldn't schedule the loop"];
+      return action('other', failed ? error : done);
+    }
     default:
       if (bookkeeping.has(name)) return action('plan', failed ? "Couldn't update the plan" : 'Updated the plan');
       if (name.startsWith('memory___')) return action('memory', /save|update/.test(name) ? 'Saved to memory' : 'Checked memory');
@@ -202,7 +211,7 @@ function activityLabel(actions: ThreadAction[]): string {
   if (!counted.length && actions.length) return actions[0].title;
   const kinds = new Map<ActionKind, Set<string>>();
   for (const action of counted) {
-    const units = ['read', 'edit', 'create'].includes(action.category) ? (action.paths.length ? action.paths : [action.title]) : [action.entry.id];
+    const units = ['edit', 'create'].includes(action.category) ? (action.paths.length ? action.paths : [action.title]) : [action.entry.id];
     if (!kinds.has(action.category)) kinds.set(action.category, new Set());
     for (const unit of units) kinds.get(action.category)?.add(unit);
   }
@@ -252,7 +261,7 @@ export function presentThread(entries: readonly ThreadEntry[], busy: boolean): T
   let lastPlan = '';
   let plan: PlanStep[] = [];
   let previousRole: ThreadEntry['role'] | undefined;
-  const flush = (live: boolean) => {
+  const flush = (live: boolean, cancelledTurn = false) => {
     if (!run.length) return;
     const source = run;
     run = [];
@@ -276,12 +285,13 @@ export function presentThread(entries: readonly ThreadEntry[], busy: boolean): T
           const nextScript = following.findIndex((e) => e.kind === 'tool' && leaf(e.name) === 'script');
           if ((nextScript < 0 ? following : following.slice(0, nextScript)).some((e) => e.kind === 'tool')) continue;
         }
-        items.push(threadAction(entry, live));
+        items.push(threadAction(entry, live, cancelledTurn && !!entry.error && /\b(cancelled|canceled|interrupted|aborted)\b/i.test(entry.output ?? '')));
       }
     }
     if (!items.length) return;
     const actions = items.filter((item): item is ThreadAction => item.type === 'action');
     const failed = actions.filter((a) => a.state === 'failed');
+    const cancelled = actions.filter((a) => a.state === 'cancelled').length;
     const noResult = actions.filter((a) => a.state === 'incomplete').length;
     const planKey = JSON.stringify(plan);
     const changedPlan = plan.length && planKey !== lastPlan ? plan : undefined;
@@ -296,8 +306,9 @@ export function presentThread(entries: readonly ThreadEntry[], busy: boolean): T
       label: activityLabel(actions),
       live,
       failed,
+      cancelled,
       noResult,
-      state: failed.length ? 'failed' : live ? 'working' : noResult ? 'incomplete' : 'complete',
+      state: failed.length ? 'failed' : live ? 'working' : noResult ? 'incomplete' : cancelled ? 'cancelled' : 'complete',
     });
   };
   for (const entry of entries) {
@@ -308,7 +319,7 @@ export function presentThread(entries: readonly ThreadEntry[], busy: boolean): T
     } else if (entry.kind === 'notice' || (entry.kind === 'text' && entry.role === 'system')) {
       const important = notice(entry);
       if (important) {
-        flush(false);
+        flush(false, important.text === 'Turn cancelled');
         rows.push(important);
       }
     } else run.push(entry);

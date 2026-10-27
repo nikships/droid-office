@@ -999,7 +999,7 @@ function paintWorker(w: WorkerInfo) {
 function paintControls(w: WorkerInfo) {
   const enabled = live() && !busy.has(w.id);
   const btn = (label: string, glyph: IconName, ok: boolean, run: () => void, cls = '', tip = '') =>
-    h('button.btn', { type: 'button', class: cls, title: tip || label, disabled: !enabled || !ok, onclick: run }, icon(glyph, 14), h('span', {}, label));
+    h('button.btn', { type: 'button', class: cls, title: tip || label, 'aria-label': label, disabled: !enabled || !ok, onclick: run }, icon(glyph, 14), h('span', {}, label));
   const asleep = isAsleep(w.status);
   const local = !w.guest && !w.cloud;
   controls.replaceChildren(

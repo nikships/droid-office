@@ -4,7 +4,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.scrollBy
-import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -48,6 +48,7 @@ import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.layout.layout
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.heading
@@ -76,6 +77,7 @@ import ai.factory.droidoffice.core.Tags
 import ai.factory.droidoffice.core.ThreadEntry
 import ai.factory.droidoffice.core.ThreadFeed
 import ai.factory.droidoffice.core.ThreadPhase
+import ai.factory.droidoffice.core.ThreadQueue
 import ai.factory.droidoffice.core.ThreadRole
 import ai.factory.droidoffice.core.ThreadState
 import ai.factory.droidoffice.core.ThreadView
@@ -169,7 +171,7 @@ private const val USER_LINES = 8
  * can't read, says so and offers Raw TTY, which always has everything.
  */
 @Composable
-internal fun Thread(w: WorkerInfo, screen: ScreenState?, canAnswer: Boolean, connected: Boolean, modifier: Modifier, onTty: () -> Unit) {
+internal fun Thread(w: WorkerInfo, screen: ScreenState?, canAnswer: Boolean, connected: Boolean, modifier: Modifier, queued: ThreadQueue, queueRevision: Int, onTty: () -> Unit) {
     val graph = LocalGraph.current
     val connection = graph.connection
     val snackbar = LocalSnackbar.current
@@ -206,6 +208,7 @@ internal fun Thread(w: WorkerInfo, screen: ScreenState?, canAnswer: Boolean, con
     val showAsk = asking || menu?.pointer != null
     val busy = w.state.busy
     val rows = remember(state.entries, busy) { ThreadView.project(state.entries, busy) }
+    val pendingQueue = remember(queued, queueRevision, state.sessionId, state.entries) { queued.sync(state.sessionId, state.entries) }
     val list = rememberLazyListState()
     // Runs are open while any entry of theirs is in here, so a run stays open as it grows either way.
     val open = remember(feed) { mutableStateMapOf<String, Boolean>() }
@@ -215,14 +218,16 @@ internal fun Thread(w: WorkerInfo, screen: ScreenState?, canAnswer: Boolean, con
 
     LaunchedEffect(list) {
         snapshotFlow { Triple(list.isScrollInProgress, list.canScrollForward, list.lastScrolledBackward) }.collect { (scrolling, more, back) ->
-            if (!more) follow = true else if (scrolling && back) follow = false
+            if (scrolling) {
+                if (back) follow = false else if (!more) follow = true
+            }
         }
     }
     LaunchedEffect(follow, rows.lastOrNull()?.key) {
         if (follow) seen = rows.lastOrNull()?.key
     }
     // Head, the rows, the activity and the question: counted here, since the list's layout lags a new page.
-    val itemCount = rows.size + 1 + (if (busy) 1 else 0) + (if (state.newerTrimmed) 1 else 0) + (if (showAsk) 1 else 0)
+    val itemCount = rows.size + 1 + (if (state.newerTrimmed) 1 else 0) + (if (showAsk) 1 else 0)
     suspend fun toBottom() {
         list.scrollToItem(itemCount - 1)
         list.scrollBy(100_000f)
@@ -358,14 +363,33 @@ internal fun Thread(w: WorkerInfo, screen: ScreenState?, canAnswer: Boolean, con
                     }
                 }
             }
+            Box(Modifier.align(Alignment.TopCenter).fillMaxWidth().height(8.dp).background(Brush.verticalGradient(listOf(Palette.Bg, Color.Transparent))))
         }
         if (!follow && rows.isNotEmpty() && !state.newerTrimmed) {
             val from = rows.indexOfFirst { it.key == seen }
             val fresh = if (from < 0) 0 else rows.drop(from + 1).count { it is ThreadView.Message && it.entry.role != ThreadRole.User }
-            Jump(fresh, Modifier.align(Alignment.CenterHorizontally).heightIn(min = 48.dp).padding(vertical = 4.dp)) {
-                follow = true
-                scope.launch { toBottom() }
+            Box(
+                Modifier.fillMaxWidth().background(Palette.Bg).drawBehind { drawLine(Palette.Border, Offset.Zero, Offset(size.width, 0f), 1.dp.toPx()) }
+                    .heightIn(min = 48.dp).padding(vertical = 4.dp),
+                contentAlignment = Alignment.Center,
+            ) {
+                Jump(fresh, !list.canScrollForward, Modifier) {
+                    follow = true
+                    scope.launch { toBottom() }
+                }
             }
+        }
+        if (pendingQueue.isNotEmpty()) Column(
+            Modifier.fillMaxWidth().heightIn(max = 144.dp).verticalScroll(rememberScrollState())
+                .drawBehind { drawLine(Palette.Border, Offset.Zero, Offset(size.width, 0f), 1.dp.toPx()) }
+                .padding(horizontal = 12.dp, vertical = 8.dp).tagged(Tags.Worker.THREAD_QUEUED),
+        ) {
+            for (prompt in pendingQueue) Text(
+                "Queued · ${prompt.text.ifEmpty { "Image attached" }}",
+                style = MaterialTheme.typography.bodySmall.copy(color = Palette.TextSecondary),
+                modifier = Modifier.padding(bottom = 4.dp),
+            )
+            if (!busy) QuietButton("Still queued, manage in Raw TTY", OfficeIcons.Terminal, Tags.Worker.THREAD_QUEUED_TTY, true, onTty)
         }
     }
 }
@@ -387,7 +411,7 @@ private fun gap(prev: ThreadView.Row?, row: ThreadView.Row): Dp {
 
 /** Back to the newest message, saying how many came in while the owner was reading further up. */
 @Composable
-private fun Jump(fresh: Int, modifier: Modifier, onClick: () -> Unit) {
+private fun Jump(fresh: Int, atBottom: Boolean, modifier: Modifier, onClick: () -> Unit) {
     val shape = RoundedCornerShape(4.dp)
     Row(
         modifier.clip(shape).background(Palette.SurfaceHigh).border(1.dp, Palette.BorderStrong, shape)
@@ -401,7 +425,7 @@ private fun Jump(fresh: Int, modifier: Modifier, onClick: () -> Unit) {
             Spacer(Modifier.width(8.dp))
         }
         Text(
-            (if (fresh > 0) "$fresh new message${if (fresh == 1) "" else "s"}" else "Latest").uppercase(),
+            (if (fresh > 0) "$fresh new message${if (fresh == 1) "" else "s"}" else if (atBottom) "Follow latest" else "Jump to latest").uppercase(),
             style = LocalOfficeType.current.eyebrow.copy(color = Palette.Text),
             modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite }.tagged(Tags.Worker.THREAD_JUMP_LABEL),
         )
@@ -545,9 +569,9 @@ private fun Message(w: WorkerInfo, m: ThreadView.Message, all: Boolean, onMore: 
                             .heightIn(min = 40.dp).padding(top = 4.dp, end = 4.dp),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
-                        Icon(OfficeIcons.Chevron, null, Modifier.size(13.dp).rotate(if (all) -90f else 90f), tint = Palette.TextSecondary)
-                        Spacer(Modifier.width(6.dp))
                         Text(if (all) "SHOW LESS" else "SHOW ALL", style = LocalOfficeType.current.eyebrow.copy(color = Palette.Text))
+                        Spacer(Modifier.width(6.dp))
+                        Icon(OfficeIcons.Chevron, null, Modifier.size(13.dp).rotate(if (all) -90f else 90f), tint = Palette.TextSecondary)
                     }
                 }
             }
@@ -599,11 +623,10 @@ private fun Activity(a: ThreadView.Activity, isOpen: Boolean, open: SnapshotStat
                 .tagged(Tags.Worker.threadGroupToggle(a.first)).heightIn(min = 40.dp).padding(vertical = 6.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            Box(Modifier.size(16.dp), contentAlignment = Alignment.Center) {
-                if (a.live) Spinner(Modifier.size(11.dp), Palette.Accent)
-                else Icon(OfficeIcons.Chevron, null, Modifier.size(14.dp).rotate(if (isOpen) 90f else 0f), tint = Palette.TextTertiary)
+            if (a.live) {
+                Spinner(Modifier.size(11.dp), Palette.Accent)
+                Spacer(Modifier.width(8.dp))
             }
-            Spacer(Modifier.width(8.dp))
             Text(
                 if (a.live) "Working · ${a.summary}" else a.summary,
                 style = MaterialTheme.typography.bodyMedium.copy(fontSize = 13.5.sp, lineHeight = 19.sp, color = Palette.TextSecondary),
@@ -617,6 +640,8 @@ private fun Activity(a: ThreadView.Activity, isOpen: Boolean, open: SnapshotStat
                     style = LocalOfficeType.current.eyebrow.copy(color = Palette.TextSecondary), modifier = Modifier.padding(start = 10.dp),
                 )
             }
+            if (a.cancelled > 0) Text("${a.cancelled} CANCELLED", style = LocalOfficeType.current.eyebrow.copy(color = Palette.TextSecondary), modifier = Modifier.padding(start = 10.dp))
+            Icon(OfficeIcons.Chevron, null, Modifier.padding(start = 8.dp).size(14.dp).rotate(if (isOpen) 90f else 0f), tint = Palette.TextSecondary)
         }
         if (!isOpen) {
             a.failed.firstOrNull()?.let { f ->
@@ -666,15 +691,10 @@ private fun ActionRow(a: ThreadView.Action, open: Boolean, onToggle: () -> Unit)
                 .tagged(Tags.Worker.threadToggle(e.id)).heightIn(min = 40.dp).padding(vertical = 5.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            Box(Modifier.size(12.dp), contentAlignment = Alignment.Center) {
-                when (a.state) {
-                    ToolState.Running -> Spinner(Modifier.size(10.dp), Palette.Accent)
-                    ToolState.Failed -> Box(Modifier.size(6.dp).background(Palette.Danger, RoundedCornerShape(1.dp)))
-                    ToolState.NoResult -> Box(Modifier.size(6.dp).border(1.dp, Palette.TextTertiary, RoundedCornerShape(1.dp)))
-                    ToolState.Done -> Box(Modifier.size(4.dp).background(Palette.TextTertiary, RoundedCornerShape(1.dp)))
-                }
+            if (a.state == ToolState.Running) {
+                Spinner(Modifier.size(10.dp), Palette.Accent)
+                Spacer(Modifier.width(10.dp))
             }
-            Spacer(Modifier.width(10.dp))
             Column(Modifier.weight(1f)) {
                 Text(
                     a.title,
@@ -695,14 +715,16 @@ private fun ActionRow(a: ThreadView.Action, open: Boolean, onToggle: () -> Unit)
             when (a.state) {
                 ToolState.Failed -> Text("FAILED", style = LocalOfficeType.current.eyebrow.copy(color = Palette.Danger), modifier = Modifier.padding(start = 8.dp))
                 ToolState.NoResult -> Text("NO RESULT", style = LocalOfficeType.current.eyebrow.copy(color = Palette.TextSecondary), modifier = Modifier.padding(start = 8.dp))
+                ToolState.Cancelled -> Text("CANCELLED", style = LocalOfficeType.current.eyebrow.copy(color = Palette.TextSecondary), modifier = Modifier.padding(start = 8.dp))
                 else -> Unit
             }
+            Icon(OfficeIcons.Chevron, null, Modifier.padding(start = 8.dp).size(13.dp).rotate(if (open) 90f else 0f), tint = Palette.TextSecondary)
         }
         if (open) {
             Column(Modifier.fillMaxWidth().padding(start = 22.dp, top = 2.dp, bottom = 10.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                 remember(e.input, e.name) { ThreadView.arguments(e) }?.let { (label, body) -> Mono(label, body, Palette.Text) }
                 when {
-                    e.output != null -> Mono(if (e.error) "Error" else "Result", e.output.ifEmpty { "(empty)" }, if (e.error) Palette.Danger else Palette.Text)
+                    e.output != null -> Mono(if (a.state == ToolState.Cancelled) "Cancelled" else if (e.error) "Error" else "Result", e.output.ifEmpty { "(empty)" }, if (a.state == ToolState.Cancelled) Palette.TextSecondary else if (e.error) Palette.Danger else Palette.Text)
                     a.state == ToolState.Running -> Text("Still running…", style = MaterialTheme.typography.bodySmall)
                     a.state == ToolState.Failed -> Text("It failed without saying why.", style = MaterialTheme.typography.bodySmall, color = Palette.Danger)
                     else -> Text("No result was recorded.", style = MaterialTheme.typography.bodySmall)
@@ -721,10 +743,6 @@ private fun ThoughtRow(t: ThreadView.Thought, open: Boolean, onToggle: () -> Uni
                 .tagged(Tags.Worker.threadToggle(e.id)).heightIn(min = 40.dp).padding(vertical = 5.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            Box(Modifier.size(12.dp), contentAlignment = Alignment.Center) {
-                Box(Modifier.size(4.dp).background(Palette.TextTertiary, RoundedCornerShape(1.dp)))
-            }
-            Spacer(Modifier.width(10.dp))
             Text("Thought", style = MaterialTheme.typography.bodySmall.copy(fontSize = 13.sp, color = Palette.TextSecondary))
             if (!open) {
                 Text(
@@ -732,6 +750,8 @@ private fun ThoughtRow(t: ThreadView.Thought, open: Boolean, onToggle: () -> Uni
                     maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(start = 8.dp).weight(1f),
                 )
             }
+            if (open) Spacer(Modifier.weight(1f))
+            Icon(OfficeIcons.Chevron, null, Modifier.padding(start = 8.dp).size(13.dp).rotate(if (open) 90f else 0f), tint = Palette.TextSecondary)
         }
         if (open) {
             SelectionContainer {
@@ -780,11 +800,11 @@ private fun Plan(group: String, steps: List<ThreadView.PlanStep>) {
 private fun Mono(label: String, body: String, color: Color) {
     Eyebrow(label, color = Palette.TextSecondary)
     val shown = if (body.length > SHOWN_CHARS) body.take(SHOWN_CHARS) else body
-    Box(Modifier.fillMaxWidth().background(Palette.Bg, RoundedCornerShape(3.dp)).border(1.dp, Palette.Border, RoundedCornerShape(3.dp))) {
+    CodeScroll(Palette.Bg) { scroll ->
         SelectionContainer {
             Text(
                 shown, style = LocalOfficeType.current.monoBody.copy(fontSize = 11.5.sp, lineHeight = 16.sp, color = color), softWrap = false,
-                modifier = Modifier.horizontalScroll(rememberScrollState()).padding(horizontal = 10.dp, vertical = 8.dp),
+                modifier = scroll.background(Palette.Bg, RoundedCornerShape(3.dp)).padding(horizontal = 10.dp, vertical = 8.dp),
             )
         }
     }

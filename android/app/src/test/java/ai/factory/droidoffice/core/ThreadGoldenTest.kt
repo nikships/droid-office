@@ -58,6 +58,7 @@ class ThreadGoldenTest {
             ToolState.Done -> "done"
             ToolState.Failed -> "failed"
             ToolState.NoResult -> "no_result"
+            ToolState.Cancelled -> "cancelled"
         }
 
         /** The fixture's row shape; its schema is in the fixture's `schema`. */
@@ -100,6 +101,7 @@ class ThreadGoldenTest {
                             )
                         })
                         put("failed", buildJsonArray { r.failed.forEach { add(JsonPrimitive(it.title)) } })
+                        if (r.cancelled > 0) put("cancelled", r.cancelled)
                         put("noResult", r.noResult)
                         put("plan", r.plan?.let { steps ->
                             buildJsonArray {

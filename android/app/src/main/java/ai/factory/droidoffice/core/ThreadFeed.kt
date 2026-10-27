@@ -73,7 +73,7 @@ data class ThreadEntry(
 }
 
 /** Where a tool call stands, as far as the transcript shows. */
-enum class ToolState { Running, Done, Failed, NoResult }
+enum class ToolState { Running, Done, Failed, NoResult, Cancelled }
 
 enum class ThreadPhase {
     /** Asked, and nothing has come back yet. */

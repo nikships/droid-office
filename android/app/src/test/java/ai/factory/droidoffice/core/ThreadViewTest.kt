@@ -55,7 +55,7 @@ class ThreadViewTest {
         assertEquals(0, a.noResult)
         // The plan is inside the disclosure once, as its latest state.
         assertEquals(listOf(true, false), a.plan!!.map { it.done })
-        assertTrue(a.plan!![1].active)
+        assertTrue(a.plan[1].active)
         assertTrue("every raw entry belongs to the row", entries.drop(1).dropLast(1).all { it.id in a.ids })
     }
 
@@ -178,6 +178,15 @@ class ThreadViewTest {
     }
 
     @Test
+    fun loopManagementDoesNotClaimThatAReadOrCancellationScheduledWork() {
+        val titles = mapOf("list" to "Checked scheduled loops", "pause" to "Paused a loop", "resume" to "Resumed a loop", "cancel" to "Cancelled a loop", "create" to "Scheduled a loop")
+        for ((action, title) in titles) {
+            assertEquals(title, ThreadView.action(tool("Loop", """{"action":"$action"}"""), ToolState.Done).title)
+        }
+        assertEquals("Couldn't cancel the loop", ThreadView.action(tool("Loop", """{"action":"cancel"}""", error = true), ToolState.Failed).title)
+    }
+
+    @Test
     fun aPlanThatDidNotChangeIsNotShownAgain() {
         val plan = "1. [in progress] A\n2. [pending] B"
         val entries = listOf(say("1"), read("/tmp/a"), todo(plan), say("2"), read("/tmp/b"), todo(plan), say("3"), read("/tmp/c"), todo(plan.replace("in progress", "completed")))
@@ -234,7 +243,7 @@ class ThreadViewTest {
             tool("FetchUrl", "{\n  \"url\": \"https://www.example.com/docs?a=1\"\n}"),
         )
         val a = ThreadView.project(entries, busy = false).single() as ThreadView.Activity
-        assertEquals("Read 2 files · Ran a command · Searched the code · 3 more", a.summary)
+        assertEquals("Read 3 files · Ran a command · Searched the code · 3 more", a.summary)
         assertEquals("Searched for “Thread”", a.actions[4].title)
         assertEquals("Edited y.ts, z.ts", a.actions[6].title)
         assertEquals("Read example.com", a.actions[7].title)

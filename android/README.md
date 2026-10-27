@@ -92,6 +92,8 @@ adb shell "am start -a android.intent.action.VIEW -d 'droidoffice://pair?v=1&nam
 
 ## Drive it with adb
 
+In Thread, **Follow latest** resumes following at the bottom while inspecting, and **Jump to latest** returns from further up. Wide code has a **Scroll horizontally ↔** cue (`worker.thread.code.hint`). A successful queue send stays as a client-local **Queued · message** line (`worker.thread.queued`) until its matching user entry arrives. If the turn ends first, **Still queued, manage in Raw TTY** (`worker.thread.queued.raw_tty`) opens the real queue controls. These markers last for this app process, survive switching views, and do not claim to list messages queued in another client. Owner-cancelled tool execution is **Cancelled**, not a red failure; the underlying error remains in its details.
+
 Every screen and control has a stable name from [`core/Tags.kt`](app/src/main/java/ai/factory/droidoffice/core/Tags.kt), which `uiautomator dump` prints as the node's `resource-id`. An agent can see where the app is and tap a control by name instead of by its text or position:
 
 ```bash
