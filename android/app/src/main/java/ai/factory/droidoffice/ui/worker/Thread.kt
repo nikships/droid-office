@@ -158,6 +158,10 @@ internal fun Thread(
     modifier: Modifier,
     queued: ThreadQueue,
     queueRevision: Int,
+    /** False while this worker's receipts are still being read from the phone: they aren't matched against the thread until then. */
+    queueReady: Boolean,
+    /** Why some receipts here aren't kept on the phone, said under them. */
+    queueNote: String?,
     onQueueChanged: () -> Unit,
     onTty: () -> Unit,
 ) {
@@ -197,10 +201,12 @@ internal fun Thread(
     val showAsk = asking || menu?.pointer != null
     val busy = w.state.busy
     val rows = remember(state.entries, busy) { ThreadView.project(state.entries, busy) }
-    val pendingQueue = remember(queued, queueRevision, state.sessionId, state.entries) { queued.sync(state.sessionId, state.entries) }
+    val pendingQueue = remember(queued, queueRevision, queueReady, state.sessionId, state.entries) {
+        if (queueReady) queued.sync(state.sessionId, state.entries) else queued.pending
+    }
     // A sync can confirm a receipt, start a new session or move the sequence on: the owner of the
     // receipts keeps them (on disk too) after each one, whatever changed.
-    LaunchedEffect(queued, state.sessionId, state.entries) { onQueueChanged() }
+    LaunchedEffect(queued, queueReady, state.sessionId, state.entries) { if (queueReady) onQueueChanged() }
     val list = rememberLazyListState()
     // Runs are open while any entry of theirs is in here, so a run stays open as it grows either way.
     val open = remember(feed) { mutableStateMapOf<String, Boolean>() }
@@ -432,6 +438,12 @@ internal fun Thread(
                 style = MaterialTheme.typography.bodySmall.copy(fontSize = 11.5.sp, color = Palette.TextTertiary),
                 modifier = Modifier.padding(top = 4.dp),
             )
+            queueNote?.let {
+                Text(
+                    it, style = MaterialTheme.typography.bodySmall.copy(fontSize = 11.5.sp, color = Palette.Warning),
+                    modifier = Modifier.padding(top = 4.dp).tagged(Tags.Worker.THREAD_QUEUED_UNSAVED),
+                )
+            }
         }
     }
 }
@@ -603,7 +615,7 @@ private fun Message(w: WorkerInfo, m: ThreadView.Message, all: Boolean, onMore: 
             Column(Modifier.userBlock()) {
                 var clipped by remember(e.id) { mutableStateOf(false) }
                 SelectionContainer {
-                    MarkdownText(e.text.orEmpty(), if (all) Modifier else Modifier.clampLines(USER_LINES) { if (clipped != it) clipped = it })
+                    MarkdownText(e.text.orEmpty(), if (all) Modifier else Modifier.clampLines(USER_LINES) { if (clipped != it) clipped = it }, surface = Palette.SurfaceHover)
                 }
                 if (all || clipped) {
                     Row(

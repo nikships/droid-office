@@ -8,7 +8,11 @@ import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import ai.factory.droidoffice.core.OfficeJson
 import ai.factory.droidoffice.core.QuickKeys
+import ai.factory.droidoffice.core.Receipts
+import java.io.File
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.first
@@ -95,21 +99,10 @@ data class StoreSnapshot(
     val offices: List<PairedOffice> = emptyList(),
     val activeId: String? = null,
     val settings: AppSettings = AppSettings(),
-    /**
-     * This phone's receipts for messages it sent to a worker's Droid queue, by
-     * `officeId/floorId/workerId`: the worker's `ThreadQueue` snapshot. Only workers with receipts
-     * still unconfirmed are kept, at most [MAX_RECEIPT_WORKERS] of them.
-     */
-    val receipts: Map<String, String> = emptyMap(),
     val loaded: Boolean = false,
 ) {
     val active: PairedOffice? get() = offices.firstOrNull { it.id == activeId } ?: offices.firstOrNull()
 }
-
-/** How many workers' queue receipts the phone keeps on disk; the least recently written go first. */
-const val MAX_RECEIPT_WORKERS = 12
-/** One worker's receipts larger than this aren't kept on disk: they last for this process only. */
-const val MAX_RECEIPT_CHARS = 100_000
 
 private val Context.officeData by preferencesDataStore(name = "offices")
 
@@ -140,34 +133,21 @@ class OfficeStore(context: Context, scope: CoroutineScope, private val vault: To
                 quickKeys = QuickKeys.decode(p[QUICK_KEYS]),
                 threadView = p[THREAD_VIEW] ?: false,
             ),
-            receipts = receiptEntries(p).mapValues { (_, v) -> v.substringAfter('\n') },
             loaded = true,
         )
     }
 
-    /** Stored receipts by worker key, each value `<written at ms>\n<snapshot>`. */
-    private fun receiptEntries(p: Preferences): Map<String, String> = p.asMap().entries
-        .mapNotNull { (k, v) -> if (k.name.startsWith(RECEIPTS) && v is String && '\n' in v) k.name.removePrefix(RECEIPTS) to v else null }
-        .toMap()
-
     /**
-     * Keeps [snapshot] as the receipts of the worker at [key] (`officeId/floorId/workerId`), or
-     * forgets them when it's null (none left unconfirmed, a new session, or dismissed). Too large to
-     * keep, they're forgotten on disk too, so a stale copy never comes back.
+     * Queue receipts, a file per worker apart from this store: they can be large (32 long messages),
+     * and this store is read whole on every change. Not backed up, like the rest.
      */
-    suspend fun receipts(key: String, snapshot: String?) {
-        store.edit { p ->
-            val name = stringPreferencesKey(RECEIPTS + key)
-            if (snapshot == null || snapshot.length > MAX_RECEIPT_CHARS) {
-                p.remove(name)
-                return@edit
-            }
-            if (p[name]?.substringAfter('\n') == snapshot) return@edit
-            p[name] = "${System.currentTimeMillis()}\n$snapshot"
-            receiptEntries(p).entries.sortedByDescending { it.value.substringBefore('\n').toLongOrNull() ?: 0 }
-                .drop(MAX_RECEIPT_WORKERS).forEach { p.remove(stringPreferencesKey(RECEIPTS + it.key)) }
-        }
-    }
+    private val receiptFiles = Receipts(File(context.applicationContext.noBackupFilesDir, "receipts"))
+
+    /** The receipts kept for the worker at `officeId/floorId/workerId`, read off the main thread. */
+    suspend fun loadReceipts(key: String): Receipts.Loaded = withContext(Dispatchers.IO) { receiptFiles.load(key) }
+
+    /** Keeps [snapshot] as that worker's receipts, or forgets them when it's null. */
+    suspend fun saveReceipts(key: String, snapshot: String?): Receipts.Saved = withContext(Dispatchers.IO) { receiptFiles.save(key, snapshot) }
 
     suspend fun loaded(): StoreSnapshot = snapshot.first { it.loaded }
 
@@ -201,12 +181,12 @@ class OfficeStore(context: Context, scope: CoroutineScope, private val vault: To
             val rest = current(p).filterNot { it.id == officeId }
             p[OFFICES] = OfficeJson.encodeToString(listSerializer, rest)
             p.remove(tokenKey(officeId))
-            receiptEntries(p).keys.filter { it.startsWith("$officeId/") }.forEach { p.remove(stringPreferencesKey(RECEIPTS + it)) }
             if (p[ACTIVE] == officeId) {
                 val next = rest.maxByOrNull { it.lastSeenAt }?.id
                 if (next != null) p[ACTIVE] = next else p.remove(ACTIVE)
             }
         }
+        withContext(Dispatchers.IO) { receiptFiles.removeOffice(officeId) }
     }
 
     suspend fun setActive(officeId: String) {
@@ -245,6 +225,5 @@ class OfficeStore(context: Context, scope: CoroutineScope, private val vault: To
         val QUICK_KEYS = stringPreferencesKey("quick_keys")
         val THREAD_VIEW = booleanPreferencesKey("thread_view")
         fun tokenKey(id: String) = stringPreferencesKey("token.$id")
-        const val RECEIPTS = "receipts."
     }
 }

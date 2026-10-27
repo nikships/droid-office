@@ -91,6 +91,7 @@ import ai.factory.droidoffice.core.ClientMsg
 import ai.factory.droidoffice.core.Keys
 import ai.factory.droidoffice.core.PhoneSizing
 import ai.factory.droidoffice.core.QuickKeys
+import ai.factory.droidoffice.core.Receipts
 import ai.factory.droidoffice.core.ScreenState
 import ai.factory.droidoffice.core.Tags
 import ai.factory.droidoffice.core.TermSize
@@ -127,7 +128,18 @@ private val PhoneSizingSaver = Saver<PhoneSizing, List<Int>>(
     restore = { PhoneSizing(if (it[0] > 0) TermSize(it[0], it[1]) else null, it.drop(2).chunked(2).map { size -> TermSize(size[0], size[1]) }) },
 )
 
-private val localThreadQueues = mutableMapOf<String, ThreadQueue>()
+/** A worker's queue receipts for this process: what's on disk for them, and what the owner is told about that. */
+private class QueueReceipts(val queue: ThreadQueue, var onDisk: String?) {
+    /** Why the receipts on screen aren't all kept on the phone, from the last write. */
+    var saveNote by mutableStateOf<String?>(null)
+    /** Why older receipts may be missing, from reading them. */
+    var readNote by mutableStateOf<String?>(null)
+    val note get() = saveNote ?: readNote
+}
+
+private val localThreadQueues = mutableMapOf<String, QueueReceipts>()
+
+private const val NOT_KEPT = "won’t come back if the app is closed."
 
 @Composable
 fun WorkerScreen(workerId: String, onBack: () -> Unit, embedded: Boolean = false, draft: String? = null) {
@@ -140,21 +152,57 @@ fun WorkerScreen(workerId: String, onBack: () -> Unit, embedded: Boolean = false
     // Receipts for messages sent to Droid's queue: one per office, floor and worker, shared by both
     // views for this process, and kept on disk while any is unconfirmed so a restart, rotation or
     // force-stop brings them back with their session, sequence and matched ids.
-    val storeState by graph.store.snapshot.collectAsStateWithLifecycle()
     val queueKey = "${data.officeId}/${data.floorId}/$workerId"
     val keepable = !data.officeId.isNullOrBlank() && !data.floorId.isNullOrBlank()
-    val queueState = remember(queueKey, keepable && storeState.loaded) {
-        localThreadQueues[queueKey] ?: if (keepable && storeState.loaded) {
-            ThreadQueue(storeState.receipts[queueKey]).also { localThreadQueues[queueKey] = it }
-        } else ThreadQueue()
+    // Until the disk answers for this worker (or its office and floor are known), receipts go into a
+    // queue of their own that is never synced, and join what the disk held once it has: none is lost.
+    var receipts by remember(workerId) { mutableStateOf(localThreadQueues[queueKey]?.takeIf { keepable } ?: QueueReceipts(ThreadQueue(), null)) }
+    var receiptsFor by remember(workerId) { mutableStateOf(queueKey.takeIf { keepable && localThreadQueues[it] != null }) }
+    val queueState = receipts.queue
+    val queueReady = keepable && receiptsFor == queueKey
+    var queueRevision by remember(workerId) { mutableIntStateOf(0) }
+    val receiptsSnackbar = LocalSnackbar.current
+    LaunchedEffect(queueKey, keepable) {
+        if (!keepable || receiptsFor == queueKey) return@LaunchedEffect
+        val next = localThreadQueues[queueKey] ?: when (val loaded = graph.store.loadReceipts(queueKey)) {
+            is Receipts.Loaded.Found -> QueueReceipts(ThreadQueue(loaded.snapshot), loaded.snapshot)
+            is Receipts.Loaded.Failed -> QueueReceipts(ThreadQueue(), null).also {
+                it.readNote = "This phone couldn’t read the receipts it kept before, so older ones may be missing."
+                launch { receiptsSnackbar.showSnackbar("Couldn't read this phone's saved queue receipts.") }
+            }
+        }
+        // Only an early queue that was never synced joins: one that belonged to another floor stays there.
+        if (receiptsFor == null) Receipts.merge(next.queue, receipts.queue)
+        localThreadQueues[queueKey] = next
+        receipts = next
+        receiptsFor = queueKey
+        queueRevision++
     }
-    var queueRevision by remember(queueState) { mutableIntStateOf(0) }
-    LaunchedEffect(queueState, queueRevision) {
-        if (!keepable || !storeState.loaded) return@LaunchedEffect
+    LaunchedEffect(receipts, queueRevision, queueReady) {
+        if (!queueReady) return@LaunchedEffect
         // Coalesce a burst of syncs into one write.
         delay(250)
-        if (queueState.pending.isEmpty() && queueKey !in storeState.receipts) return@LaunchedEffect
-        graph.store.receipts(queueKey, queueState.snapshot().takeIf { queueState.pending.isNotEmpty() })
+        val r = receipts
+        val snapshot = r.queue.snapshot().takeIf { r.queue.pending.isNotEmpty() }
+        if (snapshot == r.onDisk) return@LaunchedEffect
+        r.saveNote = when (graph.store.saveReceipts(queueKey, snapshot)) {
+            Receipts.Saved.Kept -> {
+                r.onDisk = snapshot
+                if (snapshot != null && !Receipts.restorable(r.queue, snapshot)) "A message here is too long to keep on this phone, so its receipt $NOT_KEPT" else null
+            }
+            Receipts.Saved.Removed -> {
+                r.onDisk = null
+                null
+            }
+            Receipts.Saved.TooLarge -> {
+                r.onDisk = null
+                "These receipts are too large to keep on this phone, so they $NOT_KEPT"
+            }
+            Receipts.Saved.Failed -> {
+                r.onDisk = null
+                "This phone couldn’t save these receipts, so they $NOT_KEPT"
+            }
+        }
     }
     // Phone view is the point of a phone: open a worker's terminal readable, sized for this screen.
     // A cloud worker has no terminal here and no Phone key to leave the mode with, so it keeps the fit.
@@ -253,7 +301,7 @@ fun WorkerScreen(workerId: String, onBack: () -> Unit, embedded: Boolean = false
         if (!tty) Thread(
             worker, screen, live && link.phase == Phase.Connected, link.phase == Phase.Connected,
             Modifier.weight(1f).fillMaxWidth(),
-            queued = queueState, queueRevision = queueRevision,
+            queued = queueState, queueRevision = queueRevision, queueReady = queueReady, queueNote = receipts.note,
             onQueueChanged = { queueRevision++ },
             onTty = { ttyChoice = true },
         ) else Box(Modifier.weight(1f).fillMaxWidth().padding(horizontal = 10.dp)) {

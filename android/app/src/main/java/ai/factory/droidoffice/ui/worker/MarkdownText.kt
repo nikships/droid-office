@@ -61,9 +61,12 @@ import ai.factory.droidoffice.ui.components.tagged
 import ai.factory.droidoffice.ui.theme.LocalOfficeType
 import ai.factory.droidoffice.ui.theme.Palette
 
-/** A message's Markdown, laid out with the office's type. Links open in the browser. */
+/**
+ * A message's Markdown, laid out with the office's type. Links open in the browser. [surface] is
+ * what the message sits on, which a table's overflow fade blends into.
+ */
 @Composable
-internal fun MarkdownText(source: String, modifier: Modifier = Modifier, compact: Boolean = false) {
+internal fun MarkdownText(source: String, modifier: Modifier = Modifier, compact: Boolean = false, surface: Color = Palette.Bg) {
     val blocks = remember(source) { Markdown.parse(source) }
     val mono = LocalOfficeType.current.mono
     val body = if (compact) MaterialTheme.typography.bodyMedium else MaterialTheme.typography.bodyLarge.copy(fontSize = 15.sp, lineHeight = 22.sp)
@@ -104,7 +107,7 @@ internal fun MarkdownText(source: String, modifier: Modifier = Modifier, compact
                     )
                 }
                 Markdown.Block.Rule -> Box(Modifier.fillMaxWidth().padding(vertical = 4.dp).height(1.dp).background(Palette.Border))
-                is Markdown.Block.Table -> Table(b, body.copy(fontSize = 13.5.sp, lineHeight = 19.sp), mono)
+                is Markdown.Block.Table -> Table(b, body.copy(fontSize = 13.5.sp, lineHeight = 19.sp), mono, surface)
             }
         }
     }
@@ -153,7 +156,7 @@ private val CELL_MIN = 48.dp
  * the message, with the same edge cue as code.
  */
 @Composable
-private fun Table(t: Markdown.Block.Table, style: TextStyle, mono: FontFamily) {
+private fun Table(t: Markdown.Block.Table, style: TextStyle, mono: FontFamily, surface: Color) {
     val scroll = rememberScrollState()
     val grid = remember(t) { Grid() }
     val head = style.copy(fontWeight = FontWeight.SemiBold)
@@ -203,7 +206,7 @@ private fun Table(t: Markdown.Block.Table, style: TextStyle, mono: FontFamily) {
                 }
             }
         }
-        OverflowCue(scroll, Palette.Bg)
+        OverflowCue(scroll, surface)
     }
 }
 

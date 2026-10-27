@@ -318,6 +318,8 @@ object Tags {
         const val THREAD_TABLE = "worker.thread.table"
         /** Forgets this phone's receipts for messages it sent to Droid's queue; Droid's own queue is untouched. */
         const val THREAD_QUEUED_DISMISS = "worker.thread.queued.dismiss"
+        /** Why receipts in [THREAD_QUEUED] aren't kept on the phone (too large, a disk error) or older ones may be missing. */
+        const val THREAD_QUEUED_UNSAVED = "worker.thread.queued.unsaved"
 
         /** A message, tool call, thought or notice in the thread, by its entry id. */
         fun threadEntry(id: String) = "worker.thread.entry/$id"
