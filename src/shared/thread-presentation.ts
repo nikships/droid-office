@@ -284,6 +284,32 @@ function scriptFailureCause(entry: ThreadEntry, children: ThreadEntry[]): string
   }
 }
 
+function scriptChildren(source: ThreadEntry[], at: number): ThreadEntry[] {
+  const following = source.slice(at + 1);
+  const nextScript = following.findIndex((entry) => entry.kind === 'tool' && leaf(entry.name) === 'script');
+  return (nextScript < 0 ? following : following.slice(0, nextScript)).filter((entry) => entry.kind === 'tool');
+}
+
+/**
+ * An exact CLI by-user result is owner evidence even when it arrives late, without a turn notice.
+ * Bare "was interrupted" (including crash/resume) remains failed, except for a lone child enclosed
+ * by an explicitly owner-cancelled Script. Never infer across another Script or message boundary.
+ */
+function ownerCancellations(source: ThreadEntry[]): { ids: Set<string>; causes: Map<string, string> } {
+  const ids = new Set(
+    source.filter((entry) => entry.kind === 'tool' && entry.error && /^(?:Error: )?tool execution (?:was )?(?:cancelled|canceled|interrupted|aborted) by (?:the )?user$/i.test(entry.output?.trim() ?? '')).map((entry) => entry.id),
+  );
+  const causes = new Map<string, string>();
+  for (const [at, entry] of source.entries()) {
+    if (leaf(entry.name) !== 'script' || !ids.has(entry.id)) continue;
+    const children = scriptChildren(source, at);
+    if (children.length === 1 && children[0].error && children[0].output?.trim() === 'Tool execution was interrupted') ids.add(children[0].id);
+    const cause = children.find((child) => ids.has(child.id));
+    if (cause) causes.set(entry.id, cause.id);
+  }
+  return { ids, causes };
+}
+
 export function threadPlan(text: string): PlanStep[] {
   return text.split('\n').flatMap((line) => {
     const match = /^\d+\.\s*\[(completed|in progress|in_progress|pending)]\s*(.*)$/.exec(line.trim());
@@ -322,13 +348,14 @@ export function presentThread(entries: readonly ThreadEntry[], busy: boolean): T
   let lastPlan = '';
   let plan: PlanStep[] = [];
   let previousRole: ThreadEntry['role'] | undefined;
-  const flush = (live: boolean, cancelledTurn = false) => {
+  const flush = (live: boolean) => {
     if (!run.length) return;
     const source = run;
     run = [];
     const todo = source.filter((entry) => entry.kind === 'todo').at(-1);
     if (todo) plan = threadPlan(todo.text ?? '');
     const items: (ThreadAction | ThreadThought)[] = [];
+    const cancellations = ownerCancellations(source);
     for (const [index, entry] of source.entries()) {
       if (entry.kind === 'thinking') {
         const preview = entry.text
@@ -341,18 +368,16 @@ export function presentThread(entries: readonly ThreadEntry[], busy: boolean): T
       } else if (entry.kind === 'tool') {
         const name = leaf(entry.name);
         if (!entry.error && bookkeeping.has(name)) continue;
-        let causedBy: string | undefined;
+        let causedBy = cancellations.causes.get(entry.id);
         if (name === 'script') {
-          const following = source.slice(index + 1);
-          const nextScript = following.findIndex((e) => e.kind === 'tool' && leaf(e.name) === 'script');
-          const children = (nextScript < 0 ? following : following.slice(0, nextScript)).filter((e) => e.kind === 'tool');
+          const children = scriptChildren(source, index);
           if (!entry.error && children.length) continue;
-          if (entry.error) causedBy = scriptFailureCause(entry, children);
+          if (entry.error) causedBy ??= scriptFailureCause(entry, children);
         }
-        const action = threadAction(entry, live, cancelledTurn && !!entry.error && /\btool execution (?:was )?(?:cancelled|canceled|interrupted|aborted) by (?:the )?user\b/i.test(entry.output ?? ''));
-        if (causedBy && action.state === 'failed') {
+        const action = threadAction(entry, live, cancellations.ids.has(entry.id));
+        if (causedBy) {
           action.causedBy = causedBy;
-          action.title = 'Script stopped after a tool failed';
+          action.title = action.state === 'cancelled' ? 'Script stopped after a tool was cancelled' : 'Script stopped after a tool failed';
         }
         items.push(action);
       }
@@ -360,7 +385,7 @@ export function presentThread(entries: readonly ThreadEntry[], busy: boolean): T
     if (!items.length) return;
     const actions = items.filter((item): item is ThreadAction => item.type === 'action');
     const failed = actions.filter((a) => a.state === 'failed' && !a.causedBy);
-    const cancelled = actions.filter((a) => a.state === 'cancelled').length;
+    const cancelled = actions.filter((a) => a.state === 'cancelled' && !a.causedBy).length;
     const noResult = actions.filter((a) => a.state === 'incomplete').length;
     const planKey = JSON.stringify(plan);
     const changedPlan = plan.length && planKey !== lastPlan ? plan : undefined;
@@ -388,7 +413,7 @@ export function presentThread(entries: readonly ThreadEntry[], busy: boolean): T
     } else if (entry.kind === 'notice' || (entry.kind === 'text' && entry.role === 'system')) {
       const important = notice(entry);
       if (important) {
-        flush(false, important.text === 'Turn cancelled');
+        flush(false);
         rows.push(important);
       }
     } else run.push(entry);

@@ -27,12 +27,14 @@ class ThreadViewTest {
         tool("Execute", "{\n  \"command\": \"$command\"" + (summary?.let { ",\n  \"summary\": \"$it\"" } ?: "") + ",\n  \"riskLevel\": \"low\"\n}", output, error)
     private fun todoWrite() = tool("TodoWrite", "{\n  \"todos\": \"1. [in_progress] Check the merged commit\"\n}", output = "TODO List Updated")
 
-    private fun capturedFailure(): List<ThreadEntry> {
+    private fun capturedFailure(name: String = "unit_real_missing_read_causal_wrapper"): List<ThreadEntry> {
         val fixture = OfficeJson.parseToJsonElement(javaClass.classLoader!!.getResource("thread-presentation-golden.json")!!.readText()).jsonObject
         return fixture.getValue("cases").jsonArray.map { it.jsonObject }
-            .single { it.getValue("name").jsonPrimitive.content == "unit_real_missing_read_causal_wrapper" }
+            .single { it.getValue("name").jsonPrimitive.content == name }
             .getValue("entries").jsonArray.map { ThreadEntry.of(it)!! }
     }
+
+    private fun capturedCancellation() = capturedFailure("unit_real_late_script_owner_cancelled_interrupted_child").filter { it.kind == ThreadKind.Tool }
 
     /** The released v0.1.611 screen the owner reported: wrapper scripts, TodoWrite, raw paths and duplicate plans. */
     private fun reported(): List<ThreadEntry> = listOf(
@@ -171,6 +173,93 @@ class ThreadViewTest {
         )) {
             val a = ThreadView.project(entries, busy = false).single() as ThreadView.Activity
             assertNull(a.actions.single { it.entry.id == wrapper.id }.causedBy)
+        }
+    }
+
+    @Test
+    fun unitCapturedLateScriptOwnerEvidenceCancelsItsLoneInterruptedChildOnce() {
+        val entries = capturedCancellation()
+        val a = ThreadView.project(entries, busy = false).single() as ThreadView.Activity
+        assertTrue(a.failed.isEmpty())
+        assertEquals(1, a.cancelled)
+        assertEquals("Ran a command", a.summary)
+        assertEquals(listOf(ToolState.Cancelled, ToolState.Cancelled), a.actions.map { it.state })
+        assertEquals(entries[1].id, a.actions[0].causedBy)
+        assertEquals(entries, a.actions.map { it.entry })
+        assertEquals("Tool execution was interrupted", a.actions[1].entry.output)
+        assertTrue(a.actions.all { it.entry.error })
+        val earlier = ThreadView.project(listOf(entries[0].copy(output = null, error = false), entries[1]), busy = false).single() as ThreadView.Activity
+        assertEquals("late results preserve the activity key", earlier.key, a.key)
+        // An exact by-user CLI result is itself evidence, even without a turn notice.
+        val explicit = ThreadView.project(listOf(entries[1].copy(output = "Tool execution cancelled by user")), busy = false).single() as ThreadView.Activity
+        assertTrue(explicit.failed.isEmpty())
+        assertEquals(1, explicit.cancelled)
+    }
+
+    @Test
+    fun unitCaptureVariantsNeverTreatMalformedTruncatedOrUnknownOutcomesAsOwnerEvidence() {
+        val (wrapper, child) = capturedCancellation()
+        for (output in listOf(
+            "Tool execution was interrupted",
+            "Tool execution was cancelled",
+            "Error: Tool execution cancelled by us",
+            "Error: Tool execution cancelled by user.json",
+            "Error: Tool execution cancelled by user\nSyntaxError: Unexpected token",
+            """{"error":"Error: Tool execution cancelled by user"}""",
+        )) {
+            val a = ThreadView.project(listOf(wrapper.copy(output = output), child), busy = false).single() as ThreadView.Activity
+            assertEquals(output, 2, a.failed.size)
+            assertEquals(output, 0, a.cancelled)
+        }
+        val a = ThreadView.project(listOf(wrapper.copy(error = false), child), busy = false).single() as ThreadView.Activity
+        assertEquals("a non-error wrapper is not cancellation evidence", 1, a.failed.size)
+        assertEquals(0, a.cancelled)
+    }
+
+    @Test
+    fun unitCaptureVariantsNeverConcealIndependentChildOrWrapperErrors() {
+        val (wrapper, child) = capturedCancellation()
+        val missing = tool("Read", """{"file_path":"/tmp/cancelled.json"}""", output = "Error reading file: ENOENT: no such file or directory, access '/tmp/cancelled.json'", error = true)
+        for (failedChild in listOf(missing, child.copy(output = "SyntaxError: Unexpected token"), child.copy(output = "Tool execution was interrupted by an external signal"))) {
+            val a = ThreadView.project(listOf(wrapper, failedChild), busy = false).single() as ThreadView.Activity
+            assertEquals(failedChild, a.failed.single().entry)
+            assertEquals(1, a.cancelled)
+            assertNull(a.actions.first().causedBy)
+        }
+        val a = ThreadView.project(listOf(wrapper.copy(output = "SyntaxError: Unexpected token"), child.copy(output = "Tool execution cancelled by user")), busy = false).single() as ThreadView.Activity
+        assertEquals(wrapper.id, a.failed.single().entry.id)
+        assertEquals(1, a.cancelled)
+    }
+
+    @Test
+    fun unitCaptureOwnerEvidenceDoesNotCrossScriptOrMessageBoundariesOrGuessMissingResults() {
+        val (wrapper, child) = capturedCancellation()
+        val independent = tool("Script", "{}", output = "SyntaxError: Unexpected token", error = true)
+        for (entries in listOf(
+            listOf(wrapper, independent, child),
+            listOf(child, wrapper, independent),
+            listOf(wrapper, child, child.copy(id = "another-interrupted-call")),
+        )) {
+            val a = ThreadView.project(entries, busy = false).single() as ThreadView.Activity
+            assertEquals(2, a.failed.size)
+            assertEquals(1, a.cancelled)
+            assertNull(a.actions.single { it.entry.id == wrapper.id }.causedBy)
+        }
+        val separated = ThreadView.project(listOf(wrapper, say("boundary"), child), busy = false)
+        assertEquals(1, (separated[0] as ThreadView.Activity).cancelled)
+        assertEquals(1, (separated[2] as ThreadView.Activity).failed.size)
+        val missing = ThreadView.project(listOf(wrapper, child.copy(output = null, error = false)), busy = false).single() as ThreadView.Activity
+        assertEquals(1, missing.cancelled)
+        assertEquals(1, missing.noResult)
+    }
+
+    @Test
+    fun unitCrashResumeInterruptionStaysFailedWithoutExplicitOwnerEvidenceEvenBesideACancelledNotice() {
+        val child = capturedCancellation()[1]
+        for (entries in listOf(listOf(child), listOf(child, notice("turn:unknown:cancelled", "Turn cancelled")))) {
+            val a = ThreadView.project(entries, busy = false).first() as ThreadView.Activity
+            assertEquals(child, a.failed.single().entry)
+            assertEquals(0, a.cancelled)
         }
     }
 

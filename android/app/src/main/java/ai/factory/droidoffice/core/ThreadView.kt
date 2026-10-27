@@ -82,7 +82,7 @@ object ThreadView {
         val noResult: Int,
     ) : Row {
         val actions get() = items.filterIsInstance<Action>()
-        val cancelled get() = actions.count { it.state == ToolState.Cancelled }
+        val cancelled get() = actions.count { it.state == ToolState.Cancelled && it.causedBy == null }
     }
 
     /** Tool calls that only keep the agent's own books. */
@@ -96,11 +96,11 @@ object ThreadView {
         var carried: List<PlanStep>? = null
         var prevMessage: ThreadEntry? = null
 
-        fun flush(at: Int, cancelledTurn: Boolean = false) {
+        fun flush(at: Int) {
             if (run.isEmpty()) return
             val own = run.lastOrNull { it.kind == ThreadKind.Todo }?.text?.let(::plan)?.takeIf { it.isNotEmpty() }
             // Only the newest run can still be going: a call with no result before a later message never got one.
-            val group = activity(run.toList(), live = busy && at == entries.size, own ?: carried, lastPlan, cancelledTurn)
+            val group = activity(run.toList(), live = busy && at == entries.size, own ?: carried, lastPlan)
             run.clear()
             if (group == null) {
                 if (own != null) carried = own
@@ -121,7 +121,7 @@ object ThreadView {
                 e.kind == ThreadKind.Notice || (e.kind == ThreadKind.Text && e.role == ThreadRole.System) -> {
                     val n = notice(e)
                     if (n != null) {
-                        flush(i, n.text == "Turn cancelled")
+                        flush(i)
                         rows += n
                     }
                 }
@@ -146,21 +146,22 @@ object ThreadView {
 
     private fun planKey(plan: List<PlanStep>) = plan.joinToString("\n") { "${it.done}${it.active}${it.text}" }
 
-    private fun activity(run: List<ThreadEntry>, live: Boolean, plan: List<PlanStep>?, lastPlan: String?, cancelledTurn: Boolean): Activity? {
+    private fun activity(run: List<ThreadEntry>, live: Boolean, plan: List<PlanStep>?, lastPlan: String?): Activity? {
         val items = ArrayList<Item>()
+        val cancellations = ownerCancellations(run)
         for ((i, e) in run.withIndex()) {
             when (e.kind) {
                 ThreadKind.Thinking -> e.text?.lineSequence()?.firstOrNull { it.isNotBlank() }?.let { items += Thought(e, it.trim().trim('*').trim()) }
                 ThreadKind.Tool -> {
                     val recorded = ThreadFeed.toolState(e, live)
-                    val state = if (cancelledTurn && recorded == ToolState.Failed && Regex("\\btool execution (?:was )?(?:cancelled|canceled|interrupted|aborted) by (?:the )?user\\b", RegexOption.IGNORE_CASE).containsMatchIn(e.output.orEmpty())) ToolState.Cancelled else recorded
+                    val state = if (e.id in cancellations.ids) ToolState.Cancelled else recorded
                     val name = e.name.orEmpty()
                     val failed = state == ToolState.Failed || state == ToolState.Cancelled
                     if (!failed && name in BOOKKEEPING) continue
                     if (!failed && name == "Script" && wraps(run, i)) continue
-                    val cause = if (name == "Script" && state == ToolState.Failed) scriptFailureCause(run, i) else null
+                    val cause = cancellations.causes[e.id] ?: if (name == "Script" && state == ToolState.Failed) scriptFailureCause(run, i) else null
                     val action = action(e, state)
-                    items += if (cause != null) action.copy(title = "Script stopped after a tool failed", causedBy = cause) else action
+                    items += if (cause != null) action.copy(title = if (state == ToolState.Cancelled) "Script stopped after a tool was cancelled" else "Script stopped after a tool failed", causedBy = cause) else action
                 }
                 else -> Unit
             }
@@ -188,10 +189,30 @@ object ThreadView {
      * one, bookkeeping included. Only a script with none keeps its own row and result.
      */
     private fun wraps(run: List<ThreadEntry>, at: Int): Boolean {
-        for (e in run.subList(at + 1, run.size)) {
-            if (e.kind == ThreadKind.Tool) return e.name != "Script"
+        return scriptChildren(run, at).isNotEmpty()
+    }
+
+    private fun scriptChildren(run: List<ThreadEntry>, at: Int): List<ThreadEntry> =
+        run.drop(at + 1).takeWhile { it.kind != ThreadKind.Tool || it.name != "Script" }.filter { it.kind == ThreadKind.Tool }
+
+    private data class Cancellations(val ids: Set<String>, val causes: Map<String, String>)
+
+    /**
+     * An exact CLI by-user result is owner evidence even when it arrives late, without a turn notice.
+     * Bare "was interrupted" (including crash/resume) stays failed, except for a lone child enclosed
+     * by an explicitly owner-cancelled Script. Never infer across another Script or message.
+     */
+    private fun ownerCancellations(run: List<ThreadEntry>): Cancellations {
+        val marker = Regex("""^(?:Error: )?tool execution (?:was )?(?:cancelled|canceled|interrupted|aborted) by (?:the )?user$""", RegexOption.IGNORE_CASE)
+        val ids = run.filter { it.kind == ThreadKind.Tool && it.error && marker.matches(it.output.orEmpty().trim()) }.mapTo(HashSet()) { it.id }
+        val causes = HashMap<String, String>()
+        for ((at, e) in run.withIndex()) {
+            if (e.name != "Script" || e.id !in ids) continue
+            val children = scriptChildren(run, at)
+            children.singleOrNull()?.takeIf { it.error && it.output?.trim() == "Tool execution was interrupted" }?.let { ids += it.id }
+            children.firstOrNull { it.id in ids }?.let { causes[e.id] = it.id }
         }
-        return false
+        return Cancellations(ids, causes)
     }
 
     /** Only the CLI's exact causal error envelope, never just a nearby failed call. */
@@ -203,8 +224,8 @@ object ThreadView {
         if (result.keys != setOf("error", "status", "toolCallId")) return null
         fun exact(key: String) = (result[key] as? JsonPrimitive)?.takeIf { it.isString }?.content
         if (exact("status") != "failed" || exact("toolCallId") != e.id.removePrefix("tool:")) return null
-        return run.drop(at + 1).takeWhile { it.kind != ThreadKind.Tool || it.name != "Script" }.firstOrNull { child ->
-            child.kind == ThreadKind.Tool && child.error && !child.output.isNullOrBlank() && exact("error") == "Error: tools.${child.name}: ${child.output.trim()}"
+        return scriptChildren(run, at).firstOrNull { child ->
+            child.error && !child.output.isNullOrBlank() && exact("error") == "Error: tools.${child.name}: ${child.output.trim()}"
         }?.id
     }
 

@@ -16,8 +16,10 @@ const tool = (id: string, name: string, input: Record<string, unknown> = {}, ext
   ...extra,
 });
 const text = (id: string, role: 'user' | 'assistant' = 'assistant'): ThreadEntry => ({ id, seq: 0, role, kind: 'text', text: 'The release is published.' });
-const capturedFailure = (): ThreadEntry[] =>
-  JSON.parse(readFileSync(new URL('../android/app/src/test/resources/thread-presentation-golden.json', import.meta.url), 'utf8')).cases.find((example: { name: string }) => example.name === 'unit_real_missing_read_causal_wrapper').entries;
+const capturedEntries = (name: string): ThreadEntry[] =>
+  JSON.parse(readFileSync(new URL('../android/app/src/test/resources/thread-presentation-golden.json', import.meta.url), 'utf8')).cases.find((example: { name: string }) => example.name === name).entries;
+const capturedFailure = () => capturedEntries('unit_real_missing_read_causal_wrapper');
+const capturedCancellation = () => capturedEntries('unit_real_late_script_owner_cancelled_interrupted_child').filter((entry) => entry.kind === 'tool');
 
 test('the reported release-check turn becomes one activity disclosure without bookkeeping', () => {
   const rows = presentThread(
@@ -197,12 +199,128 @@ test('a real cancellation stays quiet without concealing an earlier genuine fail
   assert.equal(rows[0].failed.length, 1);
   assert.equal(rows[0].actions[1].state, 'cancelled');
   assert.equal(rows[0].actions[1].entry.error, true);
-  const unconfirmed = presentThread([tool('e2', 'Execute', {}, { error: true, output: 'Tool execution cancelled by user' })], false)[0];
-  assert.equal(unconfirmed.kind, 'activity');
-  if (unconfirmed.kind === 'activity') {
-    assert.equal(unconfirmed.state, 'failed');
-    assert.equal(unconfirmed.actions[0].state, 'failed');
-    assert.equal(unconfirmed.cancelled, 0);
+  // An exact by-user CLI result is itself owner evidence, even without a turn notice.
+  const explicit = presentThread([tool('e2', 'Execute', {}, { error: true, output: 'Tool execution cancelled by user' })], false)[0];
+  assert.equal(explicit.kind, 'activity');
+  if (explicit.kind === 'activity') {
+    assert.equal(explicit.state, 'cancelled');
+    assert.equal(explicit.actions[0].state, 'cancelled');
+    assert.equal(explicit.cancelled, 1);
+  }
+});
+
+test('unit: late captured Script owner evidence cancels its lone interrupted child once without rewriting errors', () => {
+  const entries = capturedCancellation();
+  const original = JSON.stringify(entries);
+  const row = presentThread(entries, false)[0];
+  assert.equal(row.kind, 'activity');
+  if (row.kind !== 'activity') return;
+  assert.equal(row.state, 'cancelled');
+  assert.equal(row.failed.length, 0);
+  assert.equal(row.cancelled, 1);
+  assert.equal(row.label, 'Ran a command');
+  assert.deepEqual(
+    row.actions.map((action) => action.state),
+    ['cancelled', 'cancelled'],
+  );
+  assert.equal(row.actions[0].causedBy, entries[1].id);
+  assert.equal(row.actions[1].entry.output, 'Tool execution was interrupted');
+  assert.ok(row.actions.every((action) => action.entry.error));
+  assert.equal(JSON.stringify(entries), original);
+  const earlier = presentThread([{ ...entries[0], output: undefined, error: undefined }, entries[1]], false)[0];
+  assert.equal(earlier.id, row.id, 'late results preserve the activity key');
+});
+
+test('unit capture variants: malformed, truncated or unknown wrapper outcomes never prove owner cancellation', () => {
+  const [wrapper, child] = capturedCancellation();
+  for (const output of [
+    'Tool execution was interrupted',
+    'Tool execution was cancelled',
+    'Error: Tool execution cancelled by us',
+    'Error: Tool execution cancelled by user.json',
+    'Error: Tool execution cancelled by user\nSyntaxError: Unexpected token',
+    '{"error":"Error: Tool execution cancelled by user"}',
+  ]) {
+    const row = presentThread([{ ...wrapper, output }, child], false)[0];
+    assert.equal(row.kind, 'activity');
+    if (row.kind === 'activity') {
+      assert.equal(row.failed.length, 2, output);
+      assert.equal(row.cancelled, 0, output);
+    }
+  }
+  const row = presentThread([{ ...wrapper, error: false }, child], false)[0];
+  if (row.kind === 'activity') {
+    assert.equal(row.failed.length, 1, 'a non-error wrapper is not cancellation evidence');
+    assert.equal(row.cancelled, 0);
+  }
+});
+
+test('unit capture variants: owner-cancelled wrappers never conceal independent child or wrapper errors', () => {
+  const [wrapper, child] = capturedCancellation();
+  const missing = tool('read-cancelled-file', 'Read', { file_path: '/tmp/cancelled.json' }, { error: true, output: "Error reading file: ENOENT: no such file or directory, access '/tmp/cancelled.json'" });
+  for (const failedChild of [missing, { ...child, output: 'SyntaxError: Unexpected token' }, { ...child, output: 'Tool execution was interrupted by an external signal' }]) {
+    const row = presentThread([wrapper, failedChild], false)[0];
+    assert.equal(row.kind, 'activity');
+    if (row.kind === 'activity') {
+      assert.equal(row.failed.length, 1);
+      assert.equal(row.failed[0].entry, failedChild);
+      assert.equal(row.cancelled, 1);
+      assert.equal(row.actions[0].causedBy, undefined);
+    }
+  }
+  const row = presentThread(
+    [
+      { ...wrapper, output: 'SyntaxError: Unexpected token' },
+      { ...child, output: 'Tool execution cancelled by user' },
+    ],
+    false,
+  )[0];
+  if (row.kind === 'activity') {
+    assert.equal(row.failed[0].entry.id, wrapper.id);
+    assert.equal(row.cancelled, 1);
+  }
+});
+
+test('unit capture variants: owner evidence stays inside its Script and message boundaries', () => {
+  const [wrapper, child] = capturedCancellation();
+  const independent = tool('independent-script', 'Script', {}, { error: true, output: 'SyntaxError: Unexpected token' });
+  for (const entries of [
+    [wrapper, independent, child],
+    [child, wrapper, independent],
+    [wrapper, child, { ...child, id: 'another-interrupted-call' }],
+  ]) {
+    const row = presentThread(entries, false)[0];
+    assert.equal(row.kind, 'activity');
+    if (row.kind === 'activity') {
+      assert.equal(row.failed.length, 2);
+      assert.equal(row.cancelled, 1);
+      assert.equal(row.actions.find((action) => action.entry.id === wrapper.id)?.causedBy, undefined);
+    }
+  }
+  const separated = presentThread([wrapper, text('boundary'), child], false);
+  assert.equal(separated[0].kind, 'activity');
+  assert.equal(separated[2].kind, 'activity');
+  if (separated[0].kind === 'activity' && separated[2].kind === 'activity') {
+    assert.equal(separated[0].cancelled, 1);
+    assert.equal(separated[2].failed.length, 1);
+  }
+  const missing = presentThread([wrapper, { ...child, output: undefined, error: false }], false)[0];
+  if (missing.kind === 'activity') {
+    assert.equal(missing.cancelled, 1);
+    assert.equal(missing.noResult, 1);
+  }
+});
+
+test('unit: crash/resume interruption stays Failed without explicit owner evidence, even next to a cancellation notice', () => {
+  const child = capturedCancellation()[1];
+  for (const entries of [[child], [child, { id: 'turn:unknown:cancelled', seq: 2, role: 'system', kind: 'notice', text: 'Turn cancelled' } as ThreadEntry]]) {
+    const row = presentThread(entries, false)[0];
+    assert.equal(row.kind, 'activity');
+    if (row.kind === 'activity') {
+      assert.equal(row.failed.length, 1);
+      assert.equal(row.cancelled, 0);
+      assert.equal(row.state, 'failed');
+    }
   }
 });
 

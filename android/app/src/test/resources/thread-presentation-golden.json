@@ -16,7 +16,8 @@
       "A Script with no tool call after it (before the next Script or the end of the run) stays as 'Ran a script' (its source and result in its details).",
       "TaskStop and Loop are shown: 'Stopped a background task' / 'Couldn't stop the background task', 'Scheduled a loop' / 'Couldn't schedule the loop'.",
       "Todo snapshots are never rows. A run's latest plan goes on its own activity; a run with no row passes its plan on to the next activity shown (even past a message), and a plan counts as shown only once an activity carries it.",
-      "Turn ended · completed is hidden; Turn cancelled is a quiet notice. A cancellation error in the run immediately preceding that notice is cancelled, not failed; genuine earlier errors stay failed. Activity.cancelled counts those cancelled actions when nonzero. Any other ending is a danger notice in words.",
+      "Turn ended · completed is hidden; Turn cancelled is a quiet notice. Only an exact CLI tool-result marker explicitly saying execution was cancelled/canceled/interrupted/aborted by the user proves owner cancellation, even without a turn notice (a late Script result may arrive afterwards). Genuine errors stay failed. A bare 'Tool execution was interrupted' after crash/resume is deliberately Failed, not evidence of owner action.",
+      "An explicitly owner-cancelled Script may pass that evidence to its lone enclosed child whose exact result is 'Tool execution was interrupted'. A causal cancelled wrapper retains its diagnostics but does not duplicate the child's cancellation count. Other failed/missing/malformed child results are not reclassified. Message and next-Script boundaries block inference. Multiple ambiguous interrupted children remain Failed conservatively.",
       "A call with no output is 'running' only in the live run; otherwise 'no_result'. Never 'done' without output.",
       "summary: verb phrases per kind in first-seen order, Read counts match the visible calls (including repeated reads); edited and created files are unique. Then 'N more' actions past three kinds; failed bookkeeping isn't counted; 'Thought' for a run of only thoughts."
     ]
@@ -1758,6 +1759,34 @@
       ],
       "expected": [
         {"kind":"activity","id":"activity:tool:470475c1-285b-437b-ad46-4aff10045eac-1","summary":"Scheduled a loop · Cancelled a loop · Checked scheduled loops","live":false,"items":[{"type":"action","id":"tool:470475c1-285b-437b-ad46-4aff10045eac-1","title":"Scheduled a loop","detail":null,"state":"done"},{"type":"action","id":"tool:5dab4e53-c5fb-4a7c-8572-e4a7e2adcb0d-1","title":"Cancelled a loop","detail":null,"state":"done"},{"type":"action","id":"tool:5dab4e53-c5fb-4a7c-8572-e4a7e2adcb0d-3","title":"Checked scheduled loops","detail":null,"state":"done"}],"failed":[],"noResult":0,"plan":null}
+      ]
+    },
+    {
+      "name": "unit_real_late_script_owner_cancelled_interrupted_child",
+      "source": "Byte c965 hands-on web/05-entries/e58-1440-open and android/b42-find-Ran_a_script; real session 7129eccc seq 492,494,496,500,550. The wrapper's exact by-user error arrived late at seq 550, updating its original call. No Turn cancelled notice exists in this group. Unit projection, not runtime verification.",
+      "busy": false,
+      "entries": [
+        {"id":"tool:call_R5hLkXpPVQuUKNbqvGnjqA5V","seq":0,"role":"assistant","kind":"tool","name":"Script","input":"{\"script\":\"text(await tools.Execute({command:\\\"python3 -c 'import time; time.sleep(120)'\\\",summary:\\\"Wait for crash check\\\",timeout:150,riskLevel:\\\"low\\\"}));\\n\"}","output":"Error: Tool execution cancelled by user","error":true},
+        {"id":"tool:17df3d74-4d35-4185-b98c-c6b1cf2d1154-1","seq":1,"role":"assistant","kind":"tool","name":"Execute","input":"{\"command\":\"python3 -c 'import time; time.sleep(120)'\",\"summary\":\"Wait for crash check\",\"timeout\":150,\"riskLevel\":\"low\"}","output":"Tool execution was interrupted","error":true},
+        {"id":"17c26893-ef32-46f5-9864-87a86bc2920c:0","seq":2,"role":"assistant","kind":"text","text":"The crash check was cancelled before the wait finished."}
+      ],
+      "expected": [
+        {"kind":"activity","id":"activity:tool:call_R5hLkXpPVQuUKNbqvGnjqA5V","summary":"Ran a command","live":false,"items":[{"type":"action","id":"tool:call_R5hLkXpPVQuUKNbqvGnjqA5V","title":"Script stopped after a tool was cancelled","detail":null,"state":"cancelled"},{"type":"action","id":"tool:17df3d74-4d35-4185-b98c-c6b1cf2d1154-1","title":"Wait for crash check","detail":null,"state":"cancelled"}],"failed":[],"cancelled":1,"noResult":0,"plan":null},
+        {"kind":"message","id":"17c26893-ef32-46f5-9864-87a86bc2920c:0","role":"assistant","startsTurn":true}
+      ]
+    },
+    {
+      "name": "unit_real_crash_resume_interruption_without_owner_evidence",
+      "source": "Byte c965 hands-on android/b49-after-cleanup; session 7129eccc seq 641,643,645,649. The child has only 'Tool execution was interrupted'; wrapper has no recorded tool result. Deliberately Failed absent explicit by-user evidence, regardless of the assistant's prose. Unit projection, not runtime verification.",
+      "busy": false,
+      "entries": [
+        {"id":"tool:call_xbxG6sCnSkQ2JvkQj4FY11Cy","seq":0,"role":"assistant","kind":"tool","name":"Script","input":"{\"script\":\"text(await tools.Execute({command:\\\"python3 -c 'import time; time.sleep(120)'\\\",summary:\\\"Wait for c965 crash\\\",timeout:150,riskLevel:\\\"low\\\"}));\\n\"}"},
+        {"id":"tool:7fdacbd3-892b-458a-a5e0-940b7fcdbee3-1","seq":1,"role":"assistant","kind":"tool","name":"Execute","input":"{\"command\":\"python3 -c 'import time; time.sleep(120)'\",\"summary\":\"Wait for c965 crash\",\"timeout\":150,\"riskLevel\":\"low\"}","output":"Tool execution was interrupted","error":true},
+        {"id":"6732a9e2-7dae-4469-bd70-0ab085e20e2e:0","seq":2,"role":"assistant","kind":"text","text":"The c965 crash wait was cancelled before completion."}
+      ],
+      "expected": [
+        {"kind":"activity","id":"activity:tool:call_xbxG6sCnSkQ2JvkQj4FY11Cy","summary":"Ran a command","live":false,"items":[{"type":"action","id":"tool:7fdacbd3-892b-458a-a5e0-940b7fcdbee3-1","title":"Wait for c965 crash","detail":null,"state":"failed"}],"failed":["Wait for c965 crash"],"noResult":0,"plan":null},
+        {"kind":"message","id":"6732a9e2-7dae-4469-bd70-0ab085e20e2e:0","role":"assistant","startsTurn":true}
       ]
     }
   ]
