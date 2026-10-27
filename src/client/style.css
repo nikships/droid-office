@@ -2351,13 +2351,14 @@ html:has(body.dashboard), body.dashboard { overflow: auto; }
 .wt-who { font: 400 var(--text-label)/1.6 var(--font-mono); color: var(--text-secondary); text-transform: uppercase; letter-spacing: .08em; margin-bottom: var(--space-1); }
 .wt-entry.user .wt-who { text-align: right; color: var(--accent); }
 .wt-user-text { white-space: pre-wrap; padding: var(--space-3) var(--space-4); border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface); font-size: 14px; line-height: 1.65; }
-.wt-user-text.clamped { display: -webkit-box; -webkit-line-clamp: 8; -webkit-box-orient: vertical; overflow: hidden; }
-.wt-message-more { display: block; margin: var(--space-1) 0 0 auto; color: var(--text-secondary); }
+.wt-user-content.clamped { display: -webkit-box; -webkit-line-clamp: 8; -webkit-box-orient: vertical; overflow: hidden; }
+.wt-message-actions { display: flex; justify-content: flex-end; align-items: center; gap: var(--space-2); margin-top: var(--space-1); }
+.wt-message-more { color: var(--text-secondary); }
 .wt-message-more[hidden] { display: none; }
-.wt-entry .md { font-size: 14px; line-height: 1.75; }
+.wt-entry .md { padding: 0; font-size: 14px; line-height: 1.75; }
 .wt-entry .md > :first-child { margin-top: 0; }
 .wt-entry .md > :last-child { margin-bottom: 0; }
-.wt-copy { opacity: 0; display: block; margin: var(--space-1) 0 0 auto; height: var(--control-h-sm); font-size: var(--text-label); transition: opacity 150ms ease-out; }
+.wt-copy { opacity: 0; height: var(--control-h-sm); font-size: var(--text-label); transition: opacity 150ms ease-out; }
 .wt-entry:hover .wt-copy, .wt-copy:focus-visible { opacity: 1; }
 .wt-entry.activity { margin-top: calc(-1 * var(--space-2)); margin-bottom: calc(-1 * var(--space-2)); }
 .wt-activity > summary, .wt-tool > summary, .wt-thinking > summary { display: flex; align-items: center; gap: var(--space-2); min-height: 44px; cursor: pointer; list-style: none; color: var(--text-secondary); font: 400 var(--text-small)/1.5 var(--font-sans); transition: color 150ms ease-out; }
@@ -2366,8 +2367,8 @@ html:has(body.dashboard), body.dashboard { overflow: auto; }
 .wt-activity summary:focus-visible { outline: 1px solid var(--accent); outline-offset: var(--space-1); border-radius: var(--radius); }
 .wt-activity-label { min-width: 0; }
 .wt-activity-status { margin-left: auto; flex-shrink: 0; color: var(--text-secondary); font: 400 var(--text-label)/1.5 var(--font-mono); text-transform: uppercase; letter-spacing: .04em; }
-.wt-activity-mark { width: 8px; height: 8px; flex-shrink: 0; border: 1px solid var(--text-tertiary); border-radius: 2px; }
-.wt-activity.working > summary .wt-activity-mark { border-color: var(--accent); background: var(--accent); }
+.wt-activity-mark { display: none; width: 6px; height: 6px; flex-shrink: 0; border-radius: 50%; }
+.wt-activity.working > summary .wt-activity-mark { display: block; background: var(--accent); }
 .wt-activity.failed > summary .wt-activity-status { color: var(--danger); }
 .wt-activity.failed > summary .wt-activity-mark { border-color: currentColor; }
 .wt-chevron { margin-left: auto; flex-shrink: 0; color: var(--text-secondary); font-size: 18px; transform: rotate(0deg); transition: transform 150ms ease-out; }
@@ -2402,13 +2403,17 @@ html:has(body.dashboard), body.dashboard { overflow: auto; }
 .wt-earlier { display: block; margin: 0 auto var(--space-5); }
 .wt-empty { max-width: 420px; margin: var(--space-8) auto; padding: var(--space-7); text-align: center; color: var(--text-secondary); line-height: 1.7; }
 .wt-empty.error { color: var(--danger); }
-.wt-latest-anchor { position: sticky; bottom: var(--space-3); display: flex; justify-content: center; pointer-events: none; }
-.wt-latest { pointer-events: auto; z-index: 1; background: var(--surface); border-color: var(--border-strong); }
+.wt-latest-anchor { flex-shrink: 0; display: flex; justify-content: center; padding: var(--space-1); border-top: 1px solid var(--border); background: var(--bg); }
+.wt-latest-anchor:has(.wt-latest.hidden) { display: none; }
+.wt-latest { background: var(--surface); border-color: var(--border-strong); }
 .wt-feedback { display: none; align-items: center; flex-wrap: wrap; gap: var(--space-2); padding: var(--space-2) var(--space-5); border-top: 1px solid var(--border); }
 .worker-thread.has-feedback .wt-feedback { display: flex; }
 .wt-notice { flex: 1; min-width: 200px; margin: 0; color: var(--text-secondary); font-size: var(--text-small); line-height: 1.5; }
 .wt-composer { padding: var(--space-3) var(--space-5); display: flex; flex-direction: column; gap: var(--space-2); border-top: 1px solid var(--border); }
 .wt-input { width: 100%; resize: vertical; min-height: 60px; max-height: 200px; }
+.wt-compose-input { display: flex; align-items: flex-end; gap: var(--space-2); }
+.wt-compose-input .wt-input { flex: 1; min-width: 0; }
+.wt-send-buttons { display: flex; gap: var(--space-2); }
 .wt-compose-actions { display: flex; align-items: center; flex-wrap: wrap; gap: var(--space-2); }
 .wt-compose-actions > .grow { flex: 1; }
 .wt-compose-actions > button[type="submit"] { margin-left: auto; }
@@ -2420,7 +2425,7 @@ html:has(body.dashboard), body.dashboard { overflow: auto; }
   .dashboard:has(.worker-thread) .dash-side { display: none; }
   .dashboard:has(.worker-thread) .dash-top { height: auto; flex-wrap: wrap; gap: var(--space-2); padding: var(--space-3); }
   .dashboard:has(.worker-thread) :is(.dash-brand-text, .dash-floor > .eyebrow, .dash-top > .grow) { display: none; }
-  .dashboard:has(.worker-thread) .dash-floor { flex: 1; min-width: 0; margin: 0; padding: 0; border: 0; }
+  .dashboard:has(.worker-thread) .dash-floor { display: none; }
   .dashboard:has(.worker-thread) .dash-floor-select { flex: 1; min-width: 0; max-width: none; width: 100%; }
   .dashboard:has(.worker-thread) .dash-top-btn > span:not(.dash-count) { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
   .dash-thread-back { display: inline-flex; }
@@ -2437,6 +2442,12 @@ html:has(body.dashboard), body.dashboard { overflow: auto; }
   .wt-entry .md, .wt-user-text { font-size: 14px; }
   .wt-send-hint { display: none; }
   .wt-composer .wt-input { font-size: 16px; }
+}
+@media (max-width: 480px) {
+  .wt-composer .wt-input { field-sizing: content; min-height: 44px; max-height: 160px; resize: none; }
+}
+@media (hover: none) {
+  .wt-copy { opacity: 1; }
 }
 @media (prefers-reduced-motion: reduce) {
   .wt-copy, .wt-chevron, .wt-activity summary { transition: none; }

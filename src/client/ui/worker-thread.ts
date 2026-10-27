@@ -60,7 +60,7 @@ export function mountWorkerThread(net: Net, opts: ThreadOptions): WorkerThread {
     },
     'Jump to latest',
   );
-  scroll.append(h('div.wt-latest-anchor', {}, latest));
+  const latestAnchor = h('div.wt-latest-anchor', {}, latest);
   const notice = h('p.wt-notice', { role: 'status' });
   const retry = h(
     'button.btn.sm.hidden',
@@ -74,7 +74,7 @@ export function mountWorkerThread(net: Net, opts: ThreadOptions): WorkerThread {
     'Retry',
   );
   const raw = h('button.btn.sm.ghost', { type: 'button', onclick: opts.raw }, 'Open Raw TTY');
-  const input = h('textarea.input.wt-input', { rows: 2, maxlength: 20000, placeholder: `Reply to ${worker.name}…`, 'aria-label': 'Message to worker' });
+  const input = h('textarea.input.wt-input', { rows: 1, maxlength: 20000, placeholder: `Reply to ${worker.name}…`, 'aria-label': 'Message to worker' });
   input.value = opts.draft;
   input.addEventListener('input', () => {
     opts.onDraft(input.value);
@@ -91,14 +91,14 @@ export function mountWorkerThread(net: Net, opts: ThreadOptions): WorkerThread {
   const send = h('button.btn.primary', { type: 'submit' }, 'Send');
   const stop = h('button.btn', { type: 'button', onclick: () => void stopTurn() }, 'Stop');
   const hint = h('span.wt-send-hint', {}, 'Enter to send · Shift+Enter for a new line');
-  const form = h('form.wt-composer', {}, input, images.element, file, h('div.wt-compose-actions', {}, attach, queue, h('span.grow'), stop, send), hint);
-  const element = h('section.worker-thread', { 'aria-label': `${worker.name} thread` }, head, scroll, h('div.wt-feedback', {}, notice, retry, raw), form);
+  const form = h('form.wt-composer', {}, images.element, file, h('div.wt-compose-input', {}, input, h('div.wt-send-buttons', {}, stop, send)), h('div.wt-compose-actions', {}, attach, queue), hint);
+  const element = h('section.worker-thread', { 'aria-label': `${worker.name} thread` }, head, scroll, latestAnchor, h('div.wt-feedback', {}, notice, retry, raw), form);
   images.dropZone(form);
   const nodes = new Map<string, { key: string; node: HTMLElement; sourceIds: string[] }>();
   const expandedMessages = new Set<string>();
   const updateClamps = () => {
-    for (const text of list.querySelectorAll<HTMLElement>('.wt-user-text')) {
-      const button = text.nextElementSibling;
+    for (const text of list.querySelectorAll<HTMLElement>('.wt-user-content')) {
+      const button = text.parentElement?.nextElementSibling?.querySelector<HTMLButtonElement>('.wt-message-more');
       if (button instanceof HTMLButtonElement) button.hidden = text.classList.contains('clamped') && text.scrollHeight <= text.clientHeight + 1;
     }
   };
@@ -215,8 +215,9 @@ export function mountWorkerThread(net: Net, opts: ThreadOptions): WorkerThread {
     node.classList.add(entry.role, entry.kind);
     if (row.kind === 'message') {
       if (entry.role === 'user' || row.startsTurn) node.append(h('div.wt-who', {}, entry.role === 'user' ? 'You' : worker.name));
+      const actions = h('div.wt-message-actions');
       if (entry.role === 'user') {
-        const text = h('div.wt-user-text', { id: `wt-message-${entry.id}`, class: expandedMessages.has(entry.id) ? '' : 'clamped' }, entry.text ?? '');
+        const text = h('div.wt-user-content', { id: `wt-message-${entry.id}`, class: expandedMessages.has(entry.id) ? '' : 'clamped' }, entry.text ?? '');
         const more = h(
           'button.btn.sm.ghost.wt-message-more',
           {
@@ -235,7 +236,8 @@ export function mountWorkerThread(net: Net, opts: ThreadOptions): WorkerThread {
           },
           expandedMessages.has(entry.id) ? 'Show less' : 'Show all',
         );
-        node.append(text, more);
+        node.append(h('div.wt-user-text', {}, text));
+        actions.append(more);
       } else node.append(markdown(entry.text ?? ''));
       const copy = h(
         'button.btn.sm.ghost.wt-copy',
@@ -249,7 +251,8 @@ export function mountWorkerThread(net: Net, opts: ThreadOptions): WorkerThread {
         },
         'Copy',
       );
-      node.append(copy);
+      actions.append(copy);
+      node.append(actions);
     } else node.append(h('p.wt-turn', { class: row.tone }, row.text));
     return node;
   };
@@ -321,7 +324,7 @@ export function mountWorkerThread(net: Net, opts: ThreadOptions): WorkerThread {
     stop.disabled = !allowed || sending;
     send.textContent = sending ? 'Sending…' : queue.input.checked ? 'Queue' : 'Send';
     earlier.disabled = !!pending || !connected;
-    retry.classList.toggle('hidden', !error);
+    retry.classList.toggle('hidden', !error || error.startsWith('Slash commands'));
     retry.disabled = !connected || !!pending;
     empty.classList.toggle('error', !!error && !history.entries.length);
     if (!history.entries.length)
