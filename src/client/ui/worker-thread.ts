@@ -95,6 +95,15 @@ export function mountWorkerThread(net: Net, opts: ThreadOptions): WorkerThread {
   const element = h('section.worker-thread', { 'aria-label': `${worker.name} thread` }, head, scroll, h('div.wt-feedback', {}, notice, retry, raw), form);
   images.dropZone(form);
   const nodes = new Map<string, { key: string; node: HTMLElement; sourceIds: string[] }>();
+  const expandedMessages = new Set<string>();
+  const updateClamps = () => {
+    for (const text of list.querySelectorAll<HTMLElement>('.wt-user-text')) {
+      const button = text.nextElementSibling;
+      if (button instanceof HTMLButtonElement) button.hidden = text.classList.contains('clamped') && text.scrollHeight <= text.clientHeight + 1;
+    }
+  };
+  const resize = new ResizeObserver(updateClamps);
+  resize.observe(scroll);
   let inspecting = false;
   const atBottom = () => scroll.scrollHeight - scroll.scrollTop - scroll.clientHeight < 80;
   const follow = () => {
@@ -175,6 +184,8 @@ export function mountWorkerThread(net: Net, opts: ThreadOptions): WorkerThread {
       }
       details.append(body);
       node.append(details);
+      const current = row.actions.filter((action) => action.state === 'working').at(-1);
+      if (row.live && !row.failed.length && current) node.append(h('p.wt-running', { role: 'status' }, current.title));
       if (row.failed.length) {
         node.append(
           h(
@@ -204,7 +215,28 @@ export function mountWorkerThread(net: Net, opts: ThreadOptions): WorkerThread {
     node.classList.add(entry.role, entry.kind);
     if (row.kind === 'message') {
       if (entry.role === 'user' || row.startsTurn) node.append(h('div.wt-who', {}, entry.role === 'user' ? 'You' : worker.name));
-      node.append(entry.role === 'user' ? h('div.wt-user-text', {}, entry.text ?? '') : markdown(entry.text ?? ''));
+      if (entry.role === 'user') {
+        const text = h('div.wt-user-text', { id: `wt-message-${entry.id}`, class: expandedMessages.has(entry.id) ? '' : 'clamped' }, entry.text ?? '');
+        const more = h(
+          'button.btn.sm.ghost.wt-message-more',
+          {
+            type: 'button',
+            'aria-expanded': String(expandedMessages.has(entry.id)),
+            'aria-controls': text.id,
+            onclick: () => {
+              const expanded = !expandedMessages.has(entry.id);
+              if (expanded) expandedMessages.add(entry.id);
+              else expandedMessages.delete(entry.id);
+              text.classList.toggle('clamped', !expanded);
+              more.setAttribute('aria-expanded', String(expanded));
+              more.textContent = expanded ? 'Show less' : 'Show all';
+              updateClamps();
+            },
+          },
+          expandedMessages.has(entry.id) ? 'Show less' : 'Show all',
+        );
+        node.append(text, more);
+      } else node.append(markdown(entry.text ?? ''));
       const copy = h(
         'button.btn.sm.ghost.wt-copy',
         {
@@ -251,6 +283,7 @@ export function mountWorkerThread(net: Net, opts: ThreadOptions): WorkerThread {
       want.push(had.node);
     }
     for (const id of nodes.keys()) if (!keep.has(id)) nodes.delete(id);
+    for (const id of expandedMessages) if (!keep.has(id)) expandedMessages.delete(id);
     let at = list.firstElementChild;
     for (const node of want) {
       if (node === at) at = at.nextElementSibling;
@@ -261,6 +294,7 @@ export function mountWorkerThread(net: Net, opts: ThreadOptions): WorkerThread {
       at.remove();
       at = next;
     }
+    updateClamps();
     if (focusedDisclosure && focused && !focused.isConnected) {
       [...list.querySelectorAll<HTMLDetailsElement>('details[data-disclosure]')]
         .find((el) => el.dataset.disclosure === focusedDisclosure)
@@ -395,6 +429,7 @@ export function mountWorkerThread(net: Net, opts: ThreadOptions): WorkerThread {
         pending = undefined;
         error = '';
         nodes.clear();
+        expandedMessages.clear();
         list.replaceChildren();
         paintEntries(false);
       }
@@ -433,6 +468,7 @@ export function mountWorkerThread(net: Net, opts: ThreadOptions): WorkerThread {
       clearInterval(timer);
       document.removeEventListener('visibilitychange', visibility);
       off();
+      resize.disconnect();
       images.discard();
     },
   };

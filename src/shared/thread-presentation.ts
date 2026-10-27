@@ -38,7 +38,7 @@ export type ThreadRow =
       noResult: number;
     };
 
-const bookkeeping = new Set(['todowrite', 'todoread', 'toolsearch', 'skill', 'todo_write', 'todo_read', 'update_plan']);
+const bookkeeping = new Set(['todowrite', 'todoread', 'toolsearch', 'skill', 'todo_write', 'todo_read', 'update_plan', 'waitforscript', 'taskoutput']);
 const leaf = (name = '') => name.split(/[.:/]/).at(-1)?.toLowerCase() ?? '';
 const clip = (text: string, max: number) => (text.length > max ? `${text.slice(0, max - 1).trimEnd()}…` : text);
 const str = (value: unknown) => (typeof value === 'string' ? value.trim() : '');
@@ -156,6 +156,14 @@ export function threadAction(entry: ThreadEntry, live = false): ThreadAction {
       return action('script', failed ? 'A script failed' : 'Ran a script');
     case 'toolsearch':
       return action('plan', failed ? "Couldn't load tools" : 'Loaded tools');
+    case 'waitforscript':
+      return action('plan', failed ? "Couldn't read script results" : 'Read script results');
+    case 'taskoutput':
+      return action('plan', failed ? "Couldn't read task output" : 'Read task output');
+    case 'taskstop':
+      return action('other', failed ? "Couldn't stop the background task" : 'Stopped a background task');
+    case 'loop':
+      return action('other', failed ? "Couldn't schedule the loop" : 'Scheduled a loop');
     default:
       if (bookkeeping.has(name)) return action('plan', failed ? "Couldn't update the plan" : 'Updated the plan');
       if (name.startsWith('memory___')) return action('memory', /save|update/.test(name) ? 'Saved to memory' : 'Checked memory');
@@ -242,11 +250,14 @@ export function presentThread(entries: readonly ThreadEntry[], busy: boolean): T
   const rows: ThreadRow[] = [];
   let run: ThreadEntry[] = [];
   let lastPlan = '';
+  let plan: PlanStep[] = [];
   let previousRole: ThreadEntry['role'] | undefined;
   const flush = (live: boolean) => {
     if (!run.length) return;
     const source = run;
     run = [];
+    const todo = source.filter((entry) => entry.kind === 'todo').at(-1);
+    if (todo) plan = threadPlan(todo.text ?? '');
     const items: (ThreadAction | ThreadThought)[] = [];
     for (const [index, entry] of source.entries()) {
       if (entry.kind === 'thinking') {
@@ -263,7 +274,7 @@ export function presentThread(entries: readonly ThreadEntry[], busy: boolean): T
         if (!entry.error && name === 'script') {
           const following = source.slice(index + 1);
           const nextScript = following.findIndex((e) => e.kind === 'tool' && leaf(e.name) === 'script');
-          if ((nextScript < 0 ? following : following.slice(0, nextScript)).some((e) => e.kind === 'tool' && (e.error || !bookkeeping.has(leaf(e.name))))) continue;
+          if ((nextScript < 0 ? following : following.slice(0, nextScript)).some((e) => e.kind === 'tool')) continue;
         }
         items.push(threadAction(entry, live));
       }
@@ -272,7 +283,6 @@ export function presentThread(entries: readonly ThreadEntry[], busy: boolean): T
     const actions = items.filter((item): item is ThreadAction => item.type === 'action');
     const failed = actions.filter((a) => a.state === 'failed');
     const noResult = actions.filter((a) => a.state === 'incomplete').length;
-    const plan = threadPlan(source.filter((e) => e.kind === 'todo').at(-1)?.text ?? '');
     const planKey = JSON.stringify(plan);
     const changedPlan = plan.length && planKey !== lastPlan ? plan : undefined;
     if (changedPlan) lastPlan = planKey;
