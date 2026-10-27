@@ -202,7 +202,8 @@ export function droidDisplayName(id: string): string {
     .replace(/^claude-/, '')
     .replace(/[-_]+/g, ' ')
     .replace(/(\d) (?=\d)/g, '$1.')
-    .replace(/\b\w/g, (c) => c.toUpperCase());
+    .replace(/\b\w/g, (c) => c.toUpperCase())
+    .replace(/\bGpt\b/g, 'GPT');
   return proxy ? `DroidProxy: ${name}` : name;
 }
 

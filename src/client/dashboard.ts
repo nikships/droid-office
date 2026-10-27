@@ -911,6 +911,8 @@ let shownMenu: Menu | undefined;
 let questionKey = '';
 let questionDraft = '';
 let answered = false;
+let questionReplying = false;
+let answerSettlesAt = 0;
 
 function paintWorker(w: WorkerInfo) {
   if (view !== 'worker') officeMap?.stop();
@@ -925,6 +927,8 @@ function paintWorker(w: WorkerInfo) {
     questionKey = '';
     questionDraft = read(draftKey(floor, `${w.id}:answer`));
     answered = false;
+    questionReplying = false;
+    answerSettlesAt = 0;
     controls = h('div.dash-controls', { role: 'group', 'aria-label': 'Worker actions' });
     question = h('section.dash-question', { 'aria-label': 'Question requiring input', hidden: true });
     stage = h('div.dash-stage');
@@ -1013,7 +1017,7 @@ function paintControls(w: WorkerInfo) {
   controls.replaceChildren(
     ...(w.cloud && w.sessionId ? [h('a.btn', { href: sessionWebUrl(w.sessionId), target: '_blank', rel: 'noopener noreferrer' }, icon('external', 14), h('span', {}, 'Factory session'))] : []),
     asleep && !w.guest
-      ? btn(w.kind === 'shell' ? 'Restart' : 'Resume', 'play', !w.lost, () => void action({ t: 'worker.resume', workerId: w.id }, w.id, floor, `${w.name} is waking up.`).then(warn), 'primary')
+      ? btn(w.kind === 'shell' ? 'Restart' : 'Resume', 'play', !w.lost, () => void action({ t: 'worker.resume', workerId: w.id }, w.id, floor, `${w.name} is waking up.`).then(warn), stageMode === 'thread' ? 'ghost dash-resume' : 'primary')
       : btn(w.kind === 'shell' ? 'Command' : 'Prompt', 'message', !w.guest && !w.lost, () => prompt(w), stageMode === 'thread' ? 'ghost' : 'primary', w.kind === 'shell' ? 'Send a command (P)' : 'Send a prompt (P)'),
     ...(w.pr
       ? [h('a.btn', { href: safeLink(w.pr.url), target: '_blank', rel: 'noopener noreferrer', title: `Pull request #${w.pr.number}` }, icon('pr', 14), h('span', {}, `#${w.pr.number}`))]
@@ -1084,12 +1088,17 @@ function paintQuestion(review = false) {
     answered = false;
   }
   const current = sameMenu(shownMenu, next);
-  const key = JSON.stringify([shownMenu, current, live(), busy.has(w.id), answered, w.status]);
+  const settling = questionReplying || Date.now() < answerSettlesAt;
+  const key = JSON.stringify([shownMenu, current, live(), busy.has(w.id), answered, questionReplying, settling, w.status]);
   if (key === questionKey) return;
   questionKey = key;
   question.hidden = !shownMenu && w.status !== 'needs_input';
-  const enabled = live() && current && !busy.has(w.id) && !answered;
+  const enabled = live() && current && !busy.has(w.id) && !answered && !questionReplying;
   if (!shownMenu) {
+    if (settling) {
+      question.replaceChildren(h('div.dash-question-card.quiet', { role: 'status' }, h('p', {}, questionReplying ? 'Sending your answer…' : 'Answer sent. Waiting for the worker’s next move.')));
+      return;
+    }
     question.replaceChildren(
       h(
         'div.dash-question-card.quiet',
@@ -1119,11 +1128,24 @@ function paintQuestion(review = false) {
     remember(draftKey(floor, `${w.id}:answer`), questionDraft);
   });
   const reply = async (value: { choice?: number; text?: string }) => {
+    questionReplying = true;
+    questionKey = '';
+    paintQuestion();
     const error = await action({ t: 'worker.answer', workerId: w.id, menu, ...value }, w.id, floor, 'Answer sent.');
     if (detailId !== w.id) return;
-    if (error) toast(error, 'warn');
-    else {
+    questionReplying = false;
+    if (error) {
+      answerSettlesAt = 0;
+      toast(error, 'warn');
+    } else {
       answered = true;
+      const until = Date.now() + 3000;
+      answerSettlesAt = until;
+      setTimeout(() => {
+        if (detailId !== w.id || answerSettlesAt !== until) return;
+        questionKey = '';
+        paintQuestion();
+      }, 3000);
       questionDraft = '';
       remember(draftKey(floor, `${w.id}:answer`), '');
     }
@@ -1149,11 +1171,13 @@ function paintQuestion(review = false) {
         ),
       ),
       ...(menuTakesText(menu) ? [h('div.input-group.dash-answer', {}, text, h('button.btn.primary', { type: 'button', disabled: !enabled, onclick: () => void reply({ text: text.value }) }, 'Send'))] : []),
-      !current
-        ? h('p.note.warn', {}, 'The question changed or was answered elsewhere. Your text is kept; look at the current question before sending anything.')
+      questionReplying
+        ? h('p.note.info', {}, 'Sending your answer…')
         : answered
           ? h('p.note.info', {}, 'Answer sent. Waiting for the worker’s next move.')
-          : null,
+          : !current
+            ? h('p.note.warn', {}, 'The question changed or was answered elsewhere. Your text is kept; look at the current question before sending anything.')
+            : null,
       !current && next
         ? h(
             'button.btn',

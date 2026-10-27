@@ -20,7 +20,9 @@ test('plain-text labels drop DroidProxy and its colon', () => {
 test('a Droid model id keeps DroidProxy for the pinwheel before the catalogue loads', async () => {
   const { droidDisplayName, modelBadge } = await import('../src/client/ui/models.js');
   assert.equal(droidDisplayName('custom:droidproxy:opus-5-5'), 'DroidProxy: Opus 5.5');
-  assert.equal(droidDisplayName('custom:droidproxy:gpt-6-sol'), 'DroidProxy: Gpt 6 Sol');
+  assert.equal(droidDisplayName('custom:droidproxy:gpt-6-sol'), 'DroidProxy: GPT 6 Sol');
+  assert.equal(modelBadge('custom:droidproxy:gpt-6.1-sol', 'low'), 'DroidProxy: GPT 6.1 Sol · Low');
+  assert.equal(droidDisplayName('gpt-6.1-sol'), 'GPT 6.1 Sol');
   assert.equal(droidDisplayName('glm-5.3-flash'), 'Glm 5.3 Flash');
   assert.equal(withGlyph(modelBadge('custom:droidproxy:opus-5-5', 'high')!), '\uE000 Opus 5.5 · High');
 });
