@@ -82,16 +82,13 @@ import ai.factory.droidoffice.core.ThreadView
 import ai.factory.droidoffice.core.ToolState
 import ai.factory.droidoffice.core.WorkerInfo
 import ai.factory.droidoffice.core.WorkerStatus
-import ai.factory.droidoffice.core.Workers
 import ai.factory.droidoffice.session.Answered
 import ai.factory.droidoffice.ui.LocalGraph
 import ai.factory.droidoffice.ui.LocalSnackbar
 import ai.factory.droidoffice.ui.asks.AskCard
 import ai.factory.droidoffice.ui.components.Eyebrow
 import ai.factory.droidoffice.ui.components.Spinner
-import ai.factory.droidoffice.ui.components.WorkingBars
 import ai.factory.droidoffice.ui.components.panel
-import ai.factory.droidoffice.ui.components.statusLook
 import ai.factory.droidoffice.ui.components.tagged
 import ai.factory.droidoffice.ui.theme.LocalOfficeType
 import ai.factory.droidoffice.ui.theme.OfficeIcons
@@ -153,7 +150,6 @@ private fun InlineSegment(text: String, on: Boolean, tag: String, onClick: () ->
 private const val POLL_MS = 1_000L
 private const val HEAD = "thread.head"
 private const val NEWER = "thread.newer"
-private const val ACTIVITY = "thread.activity"
 private const val ASK = "thread.ask"
 /** A tool's arguments or result longer than this shows its start, so one huge log can't stall the list. */
 private const val SHOWN_CHARS = 6_000
@@ -209,7 +205,6 @@ internal fun Thread(w: WorkerInfo, screen: ScreenState?, canAnswer: Boolean, con
     val asking = w.state == WorkerStatus.NeedsInput
     val showAsk = asking || menu?.pointer != null
     val busy = w.state.busy
-    val live = remember(screen) { Asks.liveLine(screen) }?.takeIf { busy || asking }
     val rows = remember(state.entries, busy) { ThreadView.project(state.entries, busy) }
     val list = rememberLazyListState()
     // Runs are open while any entry of theirs is in here, so a run stays open as it grows either way.
@@ -296,7 +291,7 @@ internal fun Thread(w: WorkerInfo, screen: ScreenState?, canAnswer: Boolean, con
     }
 
     Column(modifier.tagged(Tags.Worker.THREAD)) {
-        Box(Modifier.weight(1f).fillMaxWidth()) {
+        Box(Modifier.weight(1f).fillMaxWidth().clipToBounds()) {
             LazyColumn(
                 state = list,
                 modifier = Modifier.fillMaxSize().tagged(Tags.Worker.THREAD_LIST),
@@ -321,8 +316,6 @@ internal fun Thread(w: WorkerInfo, screen: ScreenState?, canAnswer: Boolean, con
                         QuietButton("Back to the latest", OfficeIcons.ArrowDown, Tags.Worker.THREAD_NEWER, connected, ::newer, Modifier.padding(top = 8.dp))
                     }
                 }
-                // Once it's done, the conversation ends the thread: no status line restating the last tool call.
-                if (busy) item(key = ACTIVITY) { OnNow(w) }
                 if (showAsk) item(key = ASK) {
                     Box(Modifier.padding(top = 12.dp)) {
                         if (menu == null) {
@@ -369,19 +362,9 @@ internal fun Thread(w: WorkerInfo, screen: ScreenState?, canAnswer: Boolean, con
         if (!follow && rows.isNotEmpty() && !state.newerTrimmed) {
             val from = rows.indexOfFirst { it.key == seen }
             val fresh = if (from < 0) 0 else rows.drop(from + 1).count { it is ThreadView.Message && it.entry.role != ThreadRole.User }
-            Jump(fresh, Modifier.align(Alignment.CenterHorizontally).padding(vertical = 4.dp)) {
+            Jump(fresh, Modifier.align(Alignment.CenterHorizontally).heightIn(min = 48.dp).padding(vertical = 4.dp)) {
                 follow = true
                 scope.launch { toBottom() }
-            }
-        }
-        if (live != null) {
-            Row(Modifier.fillMaxWidth().padding(start = 18.dp, end = 18.dp, top = 2.dp, bottom = 6.dp), verticalAlignment = Alignment.CenterVertically) {
-                Icon(OfficeIcons.Terminal, null, Modifier.size(12.dp), tint = Palette.TextTertiary)
-                Spacer(Modifier.width(8.dp))
-                Text(
-                    live, style = LocalOfficeType.current.monoBody.copy(fontSize = 11.5.sp, lineHeight = 16.sp, color = Palette.TextSecondary), maxLines = 1, overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.weight(1f).tagged(Tags.Worker.LIVE_LINE),
-                )
             }
         }
     }
@@ -806,24 +789,6 @@ private fun Mono(label: String, body: String, color: Color) {
         }
     }
     if (shown.length < body.length) Text("Showing the first $SHOWN_CHARS of ${body.length} characters. Raw TTY has the rest.", style = MaterialTheme.typography.bodySmall)
-}
-
-/** What it's on now, in one quiet line under the conversation while it works or asks: its status, then its activity or title. */
-@Composable
-private fun OnNow(w: WorkerInfo) {
-    val look = statusLook(w.state, w.acked)
-    val what = ThreadView.onNow(w.activity, w.prompt, Workers.title(w))
-    Row(Modifier.fillMaxWidth().padding(top = 22.dp).tagged(Tags.Worker.THREAD_ACTIVITY), verticalAlignment = Alignment.CenterVertically) {
-        if (w.state == WorkerStatus.Working) WorkingBars(look.color) else Box(Modifier.size(6.dp).background(look.color, RoundedCornerShape(1.dp)))
-        Spacer(Modifier.width(8.dp))
-        Eyebrow(look.label, color = look.color)
-        if (what != null) {
-            Text(
-                what, style = MaterialTheme.typography.bodySmall, maxLines = 2, overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.padding(start = 10.dp).weight(1f),
-            )
-        }
-    }
 }
 
 /** A question the phone can't read off the terminal: it's answered in Raw TTY, never with a prompt typed into it. */

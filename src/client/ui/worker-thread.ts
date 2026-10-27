@@ -111,13 +111,18 @@ export function mountWorkerThread(net: Net, opts: ThreadOptions): WorkerThread {
     scroll.scrollTop = scroll.scrollHeight;
     latest.classList.add('hidden');
   };
-  scroll.addEventListener('scroll', () => latest.classList.toggle('hidden', !history.historical && !inspecting && atBottom()));
+  const updateLatest = () => {
+    latest.classList.toggle('hidden', !history.historical && !inspecting && atBottom());
+    latest.textContent = inspecting && atBottom() ? 'Follow latest' : 'Jump to latest';
+  };
+  scroll.addEventListener('scroll', updateLatest);
   list.addEventListener(
     'toggle',
     (event) => {
       if (event.target instanceof HTMLDetailsElement && event.target.open) {
         inspecting = true;
         latest.classList.remove('hidden');
+        latest.textContent = atBottom() ? 'Follow latest' : 'Jump to latest';
       }
     },
     true,
@@ -310,7 +315,7 @@ export function mountWorkerThread(net: Net, opts: ThreadOptions): WorkerThread {
     empty.textContent = received ? 'No conversation messages yet. Send a prompt to get started.' : 'Reading the conversation…';
     if (stick) follow();
     else if (older) scroll.scrollTop = top + scroll.scrollHeight - height;
-    else latest.classList.toggle('hidden', !history.historical && !inspecting && atBottom());
+    else updateLatest();
     if (history.historical) latest.classList.remove('hidden');
   };
   const updateControls = () => {
@@ -331,7 +336,7 @@ export function mountWorkerThread(net: Net, opts: ThreadOptions): WorkerThread {
       empty.textContent = error ? 'Conversation unavailable. Retry below, or open Raw TTY.' : received ? 'Start a conversation. Your messages and the worker’s replies will appear here.' : 'Reading the conversation…';
     notice.textContent = !connected
       ? 'Disconnected. Messages are kept here; nothing will be sent automatically.'
-      : error || (waiting ? 'Answer the question above. For other CLI dialogs, use Raw TTY.' : isAsleep(worker.status) ? 'Resume this worker to send another message.' : isBusy(worker.status) ? 'Working' : '');
+      : error || (waiting ? 'Answer the question above. For other CLI dialogs, use Raw TTY.' : isAsleep(worker.status) ? 'Resume this worker to send another message.' : '');
     raw.classList.toggle('hidden', !error && connected && !waiting && !isAsleep(worker.status));
     element.classList.toggle('has-feedback', !!notice.textContent);
   };
