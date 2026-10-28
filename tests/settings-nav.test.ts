@@ -41,7 +41,6 @@ test('every setting is in a category', () => {
     ['Overhead lights', 'graphics'],
     ['Performance overlay', 'graphics'],
     ['Desktop notifications', 'notify'],
-    ['Channel notifications (Slack / Discord)', 'notify'],
     ['Droid', 'workers'],
     ['Default worker', 'workers'],
     ['Models shown in pickers', 'workers'],
@@ -86,6 +85,15 @@ test('pane ids from before the reorganization still resolve', () => {
   assert.equal(resolveSettingsPane('you'), 'you');
   assert.equal(resolveSettingsPane('nope'), undefined);
   assert.equal(resolveSettingsPane(undefined), undefined);
+});
+
+test('notifications settings are personal and only offer desktop notifications', () => {
+  assert.equal(SETTINGS_PANES.find((p) => p.id === 'notify')?.scope, 'Just you');
+  assert.deepEqual(
+    SETTINGS_CARDS.filter((c) => c.pane === 'notify').map((c) => c.title),
+    ['Desktop notifications'],
+  );
+  for (const query of ['slack', 'discord', 'webhook', 'channel notifications']) assert.deepEqual(searchSettings(query), []);
 });
 
 test('search finds a setting by name, pane or keyword, every word required', () => {

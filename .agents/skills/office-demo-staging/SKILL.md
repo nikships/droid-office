@@ -23,7 +23,7 @@ D=.agents/skills/office-demo-staging/scripts
 $D/demo-issues.sh nikships/droid-office .agents/skills/office-demo-staging/references/demo-issues.tsv
 ```
 
-The TSV has one issue per row: `title<TAB>labels<TAB>body`, and the labels must already exist. The example file holds ten small, plausible Droid Office issues (jukebox shuffle, coffee meter pulse, fire-pole help, and so on). Mix in `bug`, `enhancement`, `documentation` and `good first issue` labels so the cards vary. Assigning one or two to the owner (`gh issue edit N --add-assignee <owner>`) puts avatars on the cards.
+The TSV has one issue per row: `title<TAB>labels<TAB>body`, and the labels must already exist. The example file holds ten small, plausible Droid Office issues (jukebox shuffle, coffee meter pulse, ladder help, and so on). Mix in `bug`, `enhancement`, `documentation` and `good first issue` labels so the cards vary. Assigning one or two to the owner (`gh issue edit N --add-assignee <owner>`) puts avatars on the cards.
 
 ## 2. Workers at desks
 

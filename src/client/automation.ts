@@ -30,7 +30,7 @@ export type AutomationCommand = (typeof AUTOMATION_COMMANDS)[number];
 /** The boards on the wall, which `goTo` lists as kind 'board'. */
 const BOARD_KINDS = new Set<InteractKind>(['issues', 'pulls', 'actions', 'ci', 'whiteboard', 'computers']);
 /** Interactables that aren't a place to go to by name: there are many of them, or they move. */
-const UNNAMED_KINDS = new Set<InteractKind>(['desk', 'station', 'seat', 'decor', 'pole']);
+const UNNAMED_KINDS = new Set<InteractKind>(['desk', 'station', 'seat', 'decor']);
 
 const PLACE_LABEL: Partial<Record<InteractKind, string>> = {
   issues: 'Issues board',
@@ -198,7 +198,7 @@ export function cameraPose(_preset: CameraPreset, facing: number): CameraPose {
 export interface RawState {
   floor: string | null;
   floors: Pick<FloorInfo, 'id' | 'name' | 'waiting'>[];
-  /** On the way to another floor (the elevator, the ladder, a pole). */
+  /** On the way to another floor (the elevator or the ladder). */
   riding: boolean;
   player: { x: number; y: number; z: number; eyeHeight: number; facing: number; lookPitch: number; seat: string | null; enabled: boolean; walking: boolean; climbing: boolean };
   camera: { x: number; y: number; z: number };

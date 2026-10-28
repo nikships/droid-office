@@ -454,7 +454,7 @@ test('ride and goTo a floor resolve once the doors open there, and reject a trip
   s.rideTo = 'f2';
   await assert.rejects(office.ride('roof'), /The ride to @roof didn't get there: you're on f2/);
   await assert.rejects(office.ride('basement'), /No such floor "basement": one of droid-office \(f1\), website \(f2\), roof/);
-  s.busy = 'on the ladder or a fire pole';
+  s.busy = 'on the ladder';
   s.rideTo = null;
   await assert.rejects(office.ride('f1'), /Can't ride now: on the ladder/);
   assert.deepEqual(log, ['ride f2', 'ride f1', `ride ${ROOF}`]);

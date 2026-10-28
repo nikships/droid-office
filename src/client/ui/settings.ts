@@ -1,7 +1,7 @@
 import type { Net } from '../net';
 import { store, type Settings, type Sidearm } from '../state';
 import { askNotifyPermission, notifyPermission, type DesktopNotifier } from '../notify';
-import { SUBAGENT_MAX_PER_LEAD, type AgentChoice, type SubagentSettings, type WebhookKind } from '../../shared/protocol';
+import { SUBAGENT_MAX_PER_LEAD, type AgentChoice, type SubagentSettings } from '../../shared/protocol';
 import { SETTINGS_CARDS, SETTINGS_PANES, searchSettings, settingsPaneAfter, type SettingsCardTitle, type SettingsPane } from '../../shared/settings-nav';
 import { claimEscape, h, openModal, timeAgo } from './dom';
 import { onJiraSetup } from './jira';
@@ -39,8 +39,6 @@ const SIDEARMS: [Sidearm, string, string, string][] = [
   ['wand', '🪄', 'Droid wand', 'Flick a spell at a worker to open its terminal. Five spells on 1–5.'],
   ['magnum', '🔫', '.44 Magnum', 'Fire at a worker to open its terminal. Hold for a charged dismissal.'],
 ];
-
-const WEBHOOK_NAME: Record<WebhookKind, string> = { slack: 'Slack', discord: 'Discord', other: 'a webhook' };
 
 export type { SettingsPane };
 
@@ -241,38 +239,6 @@ export function openSettings(
           : 'When a worker needs input or finishes while you’re elsewhere, you get a notification; click it to jump to that worker’s terminal. The tab title counts the waiting workers while this tab is in the background.';
   };
   paintNotify();
-
-  // The office's Slack / Discord webhook, shared by everyone.
-  const hookStatus = desc();
-  const hookError = h('p.note.bad', { role: 'alert' });
-  const hookInput = h('input.input', { type: 'text', placeholder: 'https://hooks.slack.com/services/…', 'aria-label': 'Slack or Discord webhook URL', spellcheck: 'false', autocomplete: 'off' }) as HTMLInputElement;
-  const hookSave = h('button.btn', { type: 'button' }, 'Save');
-  const hookTest = h('button.btn.sm', { type: 'button' }, 'Send a test');
-  const hookRemove = h('button.btn.sm.danger', { type: 'button' }, 'Remove');
-  const hookActions = h('div.row', {}, hookTest, hookRemove);
-  const paintHook = () => {
-    const { webhook, error, lastSentAt } = store.notify;
-    hookActions.classList.toggle('hidden', !webhook);
-    hookSave.textContent = webhook ? 'Replace' : 'Save';
-    hookError.classList.toggle('hidden', !webhook || !error);
-    hookError.textContent = webhook && error ? `Posting to ${WEBHOOK_NAME[webhook.kind]} (${webhook.hint}) failed: ${error}` : '';
-    hookStatus.textContent = !webhook
-      ? 'Paste an incoming webhook from Slack or Discord, and the office posts to that channel when a worker needs input or finishes and nobody has its terminal open.'
-      : `Posting to ${WEBHOOK_NAME[webhook.kind]} (${webhook.hint}), set by ${webhook.by} ${timeAgo(webhook.at)}${lastSentAt ? ` · last message ${timeAgo(lastSentAt)}` : ''}.`;
-  };
-  paintHook();
-  const saveHook = () => {
-    const url = hookInput.value.trim();
-    if (!url) return hookInput.focus();
-    net.send({ t: 'notify.webhook', url });
-    hookInput.value = '';
-  };
-  hookSave.addEventListener('click', saveHook);
-  hookInput.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter') saveHook();
-  });
-  hookTest.addEventListener('click', () => net.send({ t: 'notify.test' }));
-  hookRemove.addEventListener('click', () => net.send({ t: 'notify.webhook', url: '' }));
 
   // The worker a new one starts on when whoever starts it picks no model.
   const agent = agentFields('office-agent', officeChoice());
@@ -1033,10 +999,7 @@ export function openSettings(
         }),
       ),
     ],
-    notify: [
-      group('Just you', card('Desktop notifications', { desc: notifyNote, control: notifyRow })),
-      group('Everyone in the office', card('Channel notifications (Slack / Discord)', { desc: hookStatus, below: [h('div.input-group', {}, hookInput, hookSave), hookError, hookActions] })),
-    ],
+    notify: [group('Just you', card('Desktop notifications', { desc: notifyNote, control: notifyRow }))],
     workers: [
       group('Agent', card('Droid', droid.parts), card('Default worker', { desc: agentNote, below: [agent.element, agentActions] }), card('Models shown in pickers', { below: [modelVisibility.element] })),
       group(
@@ -1229,7 +1192,6 @@ export function openSettings(
 
   const close = h('button.btn.close', { 'aria-label': 'Close' }, '✕');
   const el = h('div.modal.xl.settings', { role: 'dialog', 'aria-label': 'Settings' }, h('header', {}, h('h2', {}, 'Settings'), close), h('div.split.settings-body', {}, nav, ...bodies.values(), results));
-  const offNotify = store.on('notify', paintHook);
   const offLeave = store.on('leaveOnMerge', paintLeave);
   const offFresh = store.on('freshMain', paintFresh);
   const offLimit = [store.on('machine', paintLimit)];
@@ -1242,7 +1204,6 @@ export function openSettings(
       offSearchEscape();
       clearTimeout(flashTimer);
       wide.removeEventListener('change', orient);
-      offNotify();
       offLeave();
       offFresh();
       offLimit.forEach((off) => off());

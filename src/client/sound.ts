@@ -342,9 +342,9 @@ export class OfficeSound {
     this.count('paper');
   }
 
-  // ---- The ladder and the fire poles -----------------------------------------------------------
+  // ---- The ladder -----------------------------------------------------------
 
-  /** Your hand closing on a steel rung, or on the pole: a soft clank. */
+  /** Your hand closing on a steel rung: a soft clank. */
   rung(soft = false) {
     const ctx = this.ctx;
     if (!ctx) return;
@@ -398,105 +398,6 @@ export class OfficeSound {
     this.count('bonk');
     this.play(pick(this.buf.steps), { gain: 0.35, rate: 0.5 });
     this.blip(this.ambience, this.ctx.currentTime + 0.01, 180, 0.6, 0.18, 0.12);
-  }
-
-  /** Whoosh: the rush of air and the squeal of hands on brass, all the way down a fire pole. */
-  slide(seconds = 1.6) {
-    const ctx = this.ctx;
-    if (!ctx) return;
-    this.count('slide');
-    const t0 = ctx.currentTime + 0.01;
-    const end = t0 + seconds;
-    const air = this.noise(this.buf.white, true);
-    const tone = biquad(ctx, 'bandpass', 500, 0.9);
-    tone.frequency.setValueAtTime(400, t0);
-    tone.frequency.exponentialRampToValueAtTime(2200, end);
-    const ag = ctx.createGain();
-    envelope(ag.gain, t0, [
-      [0.25, 0.22],
-      [seconds * 0.85, 0.3],
-      [seconds, 0],
-    ]);
-    air.connect(tone).connect(ag).connect(this.ambience);
-    air.start(t0);
-    air.stop(end + 0.05);
-    // Palms squeaking on the brass, higher as you speed up.
-    const squeal = ctx.createOscillator();
-    squeal.type = 'triangle';
-    squeal.frequency.setValueAtTime(1100, t0 + 0.1);
-    squeal.frequency.exponentialRampToValueAtTime(1900, end);
-    const vib = ctx.createOscillator();
-    vib.frequency.value = 9;
-    const vd = ctx.createGain();
-    vd.gain.value = 35;
-    vib.connect(vd).connect(squeal.frequency);
-    const sg = ctx.createGain();
-    envelope(sg.gain, t0, [
-      [0.15, 0],
-      [0.3, 0.035],
-      [seconds * 0.8, 0.045],
-      [seconds, 0],
-    ]);
-    squeal.connect(sg).connect(this.ambience);
-    for (const n of [squeal, vib]) {
-      n.start(t0);
-      n.stop(end + 0.05);
-    }
-  }
-
-  /** A little "wheee!" whistle, swinging round the pole. */
-  twirl() {
-    const ctx = this.ctx;
-    if (!ctx) return;
-    this.count('twirl');
-    const t0 = ctx.currentTime + 0.01;
-    const o = ctx.createOscillator();
-    o.type = 'sine';
-    o.frequency.setValueAtTime(600, t0);
-    o.frequency.exponentialRampToValueAtTime(1500, t0 + 0.45);
-    o.frequency.exponentialRampToValueAtTime(900, t0 + 1.0);
-    const g = ctx.createGain();
-    envelope(g.gain, t0, [
-      [0.08, 0.09],
-      [0.8, 0.07],
-      [1.05, 0],
-    ]);
-    o.connect(g).connect(this.ambience);
-    o.start(t0);
-    o.stop(t0 + 1.1);
-  }
-
-  /**
-   * Down the pole and onto the mat: a thump (harder the faster you came), and the firehouse bell,
-   * ding-ding-ding. `at` is someone else landing; without it, it's you.
-   */
-  poleLanding(speed: number, at?: { x: number; y: number; z: number }) {
-    const ctx = this.ctx;
-    if (!ctx) return;
-    this.count('poleLanding');
-    const out = at ? this.panner(at, 2.5, 0.9) : ctx.createGain();
-    out.connect(this.ambience);
-    this.play(pick(this.buf.steps), { gain: Math.min(0.9, 0.35 + speed * 0.07), rate: 0.55, dest: out });
-    const t0 = ctx.currentTime + 0.08;
-    for (let i = 0; i < 3; i++) {
-      const when = t0 + i * 0.16;
-      // A bell: a bright strike, then partials that ring on.
-      for (const [ratio, amp, len] of [
-        [1, 0.16, 1.1],
-        [2.76, 0.07, 0.6],
-        [5.4, 0.035, 0.3],
-      ] as const) {
-        const o = ctx.createOscillator();
-        o.frequency.value = 1320 * ratio;
-        const g = ctx.createGain();
-        g.gain.setValueAtTime(0.0001, when);
-        g.gain.exponentialRampToValueAtTime(amp, when + 0.004);
-        g.gain.exponentialRampToValueAtTime(0.0001, when + len);
-        o.connect(g).connect(out);
-        o.start(when);
-        o.stop(when + len + 0.02);
-      }
-    }
   }
 
   /** A short pitched blip: a bubble when `ratio` > 1, a drip when < 1. */

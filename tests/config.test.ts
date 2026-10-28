@@ -53,6 +53,11 @@ test('passwords are gone: no password flags and no secrets on the config', (t) =
   assert.deepEqual(JSON.parse(readFileSync(path.join(cfg.dataDir as string, 'config.json'), 'utf8')), {});
 });
 
+test('channel notifications are gone: no webhook flag or config', (t) => {
+  assert.throws(() => load(t, '--webhook', 'https://example.com/hook'), /exit 2: droid-office: unknown option --webhook/);
+  assert.ok(!('webhook' in load(t)), 'no webhook on the config');
+});
+
 test('starting drops legacy password state left in config.json', (t) => {
   const home = mkdtempSync(path.join(tmpdir(), 'droid-office-config-'));
   t.after(() => rmSync(home, { recursive: true, force: true }));

@@ -723,8 +723,6 @@ label.choice:has(> input:disabled) { opacity: .5; cursor: default; }
   .mp-row { min-height: var(--control-h-lg); }
   .mp-chip { min-height: var(--control-h); }
 }
-.webhook { display: flex; gap: 8px; }
-.webhook input[type=text] { flex: 1; min-width: 0; }
 .outside-now { margin: 0; font-size: 14px; font-weight: 600; }
 
 .swatches { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 12px; }
@@ -1671,8 +1669,6 @@ a.when:hover { text-decoration: underline; }
 .floor-stats .waiting, .floor-stats .waiting b, .floor-stats .waiting .floor-stat-label { color: var(--danger); }
 .floor-no { background: var(--floor-trim, var(--surface-raised)); }
 .floor-no.roof { background: var(--surface-raised); }
-/* Sliding down a fire pole: streaks of speed round the edge of the screen. */
-#whoosh { position: fixed; inset: 0; pointer-events: none; z-index: 5; opacity: 0; background: repeating-conic-gradient(from 0deg at 50% 50%, rgba(255, 255, 255, .55) 0deg 1.2deg, transparent 1.2deg 9deg); -webkit-mask: radial-gradient(circle at 50% 50%, transparent 38%, #000 78%); mask: radial-gradient(circle at 50% 50%, transparent 38%, #000 78%); }
 #fade.quick { transition-duration: .16s; }
 
 /* ---- The elevator: floors, one per project ---------------------------------------------------- */

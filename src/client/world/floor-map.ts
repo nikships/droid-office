@@ -22,8 +22,6 @@ import {
   KIOSK,
   LADDER,
   LOFT,
-  POLE,
-  POLES,
   STATION_AGENT,
   STATIONS,
   TV,
@@ -254,7 +252,7 @@ function paintFloor(ctx: CanvasRenderingContext2D, p: FloorPalette, bottom: bool
   ctx.lineWidth = 2;
   ctx.strokeRect(fx(10), fz(-3.4), 6.8 * PX, 6.8 * PX);
 
-  // Hazard stripes at the elevator doors, and the hole round the fire pole (a mat on the bottom floor).
+  // Hazard stripes at the elevator doors.
   {
     const x0 = fx(ELEVATOR.x - ELEVATOR.width / 2);
     const z0 = fz(ELEVATOR_FRONT);
@@ -276,12 +274,6 @@ function paintFloor(ctx: CanvasRenderingContext2D, p: FloorPalette, bottom: bool
       ctx.fill();
     }
     ctx.restore();
-  }
-  for (const pole of POLES) {
-    ctx.fillStyle = bottom ? 'rgba(238, 96, 24, .35)' : 'rgba(0, 0, 0, .85)';
-    ctx.beginPath();
-    ctx.arc(fx(pole.x), fz(pole.z), POLE.hole * PX, 0, Math.PI * 2);
-    ctx.fill();
   }
   // The ladder's hatch by the west wall.
   ctx.fillStyle = 'rgba(0, 0, 0, .8)';
@@ -858,13 +850,6 @@ export function buildFloorMap(): FloorMap {
   const elevator = buildElevator(group);
   buildBalcony(group);
 
-  // The fire pole and its railing, the ladder up the west wall.
-  for (const p of POLES) {
-    group.add(mesh(new THREE.CylinderGeometry(POLE.radius, POLE.radius, CUT + 1.6, 12), toon('#c9a24a', { finish: 'metal' }), p.x, (CUT + 1.6) / 2, p.z));
-    const ring = mesh(new THREE.TorusGeometry(POLE.rail, 0.025, 6, 40, Math.PI * 1.7), toon('#8a8a8a', { finish: 'metal' }), p.x, 1, p.z);
-    ring.rotation.set(Math.PI / 2, 0, p.open + Math.PI / 2 + Math.PI * 0.15);
-    group.add(ring);
-  }
   {
     const ladder = new THREE.Group();
     const steel = toon('#7a7a7a', { finish: 'metal' });

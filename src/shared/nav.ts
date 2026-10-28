@@ -23,8 +23,6 @@ import {
   GLASS_ROOM_CHAIRS,
   GLASS_ROOM_TABLE,
   PARACHUTE,
-  POLE,
-  POLES,
   ROAD,
   STAIRS,
   STATIONS,
@@ -73,10 +71,8 @@ function obstacles(): { rects: Rect[]; circles: Circle[] } {
   rects.push([JUKEBOX.x - JUKEBOX.depth / 2 - 0.05, FLOOR.maxX, JUKEBOX.z - JUKEBOX.width / 2 - 0.05, JUKEBOX.z + JUKEBOX.width / 2 + 0.05]);
   // The bookshelf against the south wall, as world/bookshelf.ts puts it.
   rects.push([BOOKSHELF.x - BOOKSHELF.width / 2 - 0.04, BOOKSHELF.x + BOOKSHELF.width / 2 + 0.04, BOOKSHELF.z - BOOKSHELF.depth / 2 - 0.03, FLOOR.maxZ]);
-  // The ladder up the west wall, and the fire poles: a hole with a railing round it, or a landing mat.
-  // Which spot has which changes floor by floor, so workers keep off both.
+  // The ladder up the west wall.
   rects.push([FLOOR.minX, FLOOR.minX + 0.3, LADDER.z - LADDER.width / 2 - 0.05, LADDER.z + LADDER.width / 2 + 0.05]);
-  for (const p of POLES) rects.push([p.x - POLE.rail - 0.05, p.x + POLE.rail + 0.05, p.z - POLE.rail - 0.05, p.z + POLE.rail + 0.05]);
   // The overflow bean bags and their lap desks. They're only out while every desk is taken, but they
   // always come out in the same spots, so workers keep off those.
   for (const b of BEANBAGS) {

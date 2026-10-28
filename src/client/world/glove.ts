@@ -147,8 +147,6 @@ export const SHAPES = {
   ),
   /** Round a ladder rung. */
   rung: shape(all([1.25, 1.45]), 0, 0.85, 0.7),
-  /** Round a fire pole, palm in. */
-  pole: shape(all([1.25, 1.45]), 0, 0.85, 0.7, 1),
 } as const satisfies Record<string, HandShape>;
 
 /** How a shape turns the thumb's root: [about y, x, z] for the right hand (the left mirrors y and z). */

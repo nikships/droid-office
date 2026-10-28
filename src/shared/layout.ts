@@ -459,22 +459,3 @@ export const LADDER = {
   /** How far in from the wall the trapdoor starts: the ladder goes through a slot along the wall. */
   slot: 0.24,
 } as const;
-
-/** Where a fire pole can be. `open` is the way into its hole, where its railing has a gap (0 = +z, like rotY). */
-export interface PoleSpot {
-  x: number;
-  z: number;
-  open: number;
-}
-
-/**
- * The fire pole, slid down to the floor below. It goes the whole way down the building, through a hole
- * in every floor but the bottom one (where there's a mat to land on): it takes you down one floor, and
- * on a floor with another below you swing off it through the railing, ready to go again.
- */
-export const POLES: readonly PoleSpot[] = [
-  // Out in the open between the desks and the lounge, where you step out of the elevator.
-  { x: 6.8, z: 1.6, open: Math.PI },
-];
-/** A pole's hole in the floor, the railing round it, and how far from the pole you hang on. */
-export const POLE = { hole: 0.68, rail: 0.9, grip: 0.4, radius: 0.055 } as const;

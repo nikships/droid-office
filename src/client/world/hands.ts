@@ -19,8 +19,8 @@ export interface HandsInput {
   airborne: boolean;
   /** 0 (steady) to 1: how hard the view shakes (a hard landing, a charged shot going off). */
   jitter: number;
-  /** Holding on to the ladder (hand over hand, in time with walkPhase) or a fire pole (both hands on it, off to the left). */
-  grip?: 'ladder' | 'pole' | null;
+  /** Holding on to the ladder (hand over hand, in time with walkPhase). */
+  grip?: 'ladder' | null;
 }
 
 /** Factory work gloves: black, with graphite steel at the cuff and knuckles. */
@@ -121,7 +121,6 @@ export class Hands {
   private air = 0;
   private walk = 0;
   private ladderK = 0;
-  private poleK = 0;
   /** Each light, and how bright it is where it's brightest. */
   private lights: [THREE.Light, number][] = [];
   private lightLevel = 1;
@@ -379,7 +378,6 @@ export class Hands {
     this.last = { yaw: s.yaw, pitch: s.pitch };
     this.air += ((s.airborne && !s.grip ? 1 : 0) - this.air) * Math.min(1, dt * 8);
     this.ladderK += ((s.grip === 'ladder' ? 1 : 0) - this.ladderK) * Math.min(1, dt * 10);
-    this.poleK += ((s.grip === 'pole' ? 1 : 0) - this.poleK) * Math.min(1, dt * 10);
     this.walk += ((s.walking ? 1 : 0) - this.walk) * Math.min(1, dt * 8);
 
     const breathe = Math.sin(t * 1.7) * 0.004;
@@ -412,7 +410,7 @@ export class Hands {
       p.z -= 0.03 * carry;
       arm.group.rotation.z += side * 0.35 * carry;
     }
-    // Up the ladder, hand over hand; round a pole, both hands on it, one over the other.
+    // Up the ladder, hand over hand.
     const climb = Math.sin(s.walkPhase);
     for (const [arm, side] of [
       [this.right, 1],
@@ -424,14 +422,6 @@ export class Hands {
       g.position.y += (0.06 + side * climb * 0.09 - g.position.y) * lk;
       g.position.z += (-0.46 - g.position.z) * lk;
       g.rotation.x += -0.55 * lk;
-      // The pole's a little to your left: the left hand on it, the right reaching across to it from
-      // below, its sleeve angled away so it doesn't cross your view.
-      const pk = this.poleK;
-      g.position.x += ((side > 0 ? 0.03 : -0.18) - g.position.x) * pk;
-      g.position.y += ((side > 0 ? 0.02 : -0.04) - g.position.y) * pk;
-      g.position.z += ((side > 0 ? -0.56 : -0.47) - g.position.z) * pk;
-      g.rotation.x += (side > 0 ? 0.45 : 0.25) * pk;
-      g.rotation.y += (side > 0 ? 0.55 : 0) * pk;
     }
     // The card rides along with the hands, coming up from below as you take it; so does the book.
     this.holder.position.set(this.sway.x + step * 0.008, this.sway.y + breathe + bounce + this.air * 0.05 - 0.115 - 0.3 * (1 - carry), -0.5);
@@ -495,10 +485,9 @@ export class Hands {
     return SHAPES.relaxed;
   }
 
-  /** Both hands on one thing (a rung, a pole, a card or a book), or null. */
+  /** Both hands on one thing (a rung, a card or a book), or null. */
   private bothShape(): HandShape | null {
     if (this.ladderK > 0.5) return SHAPES.rung;
-    if (this.poleK > 0.5) return SHAPES.pole;
     if (this.card.held || this.book) return SHAPES.pinch;
     return null;
   }

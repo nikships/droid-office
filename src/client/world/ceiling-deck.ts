@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import { withFinish } from './surface';
 import { ANISOTROPY } from './texture-quality';
 
-/** Swap only the retained material, so Stack.set keeps its real hatch/pole holes and colliders. */
+/** Swap only the retained material, so Stack.set keeps its real hatch and colliders. */
 export function installCeilingDeck(source: THREE.Object3D, target: THREE.MeshToonMaterial): boolean {
   let steel: THREE.MeshStandardMaterial | undefined;
   source.traverse((object) => {
