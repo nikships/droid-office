@@ -11,6 +11,28 @@ import org.junit.Test
 
 /** Entry shapes as the office's thread reader writes them from a real Droid session (src/server/worker-thread.ts). */
 class ThreadViewTest {
+    @Test
+    fun theLatestPositionNeverShowsJumpEvenWhenFollowIsPausedOrStuck() {
+        for (follow in listOf(false, true)) for (stuck in listOf(false, true)) {
+            assertFalse(ThreadView.showJump(follow, stuck, canScrollForward = false))
+        }
+    }
+
+    @Test
+    fun pausedFollowShowsJumpOnlyWhileThereIsContentBelow() {
+        assertTrue(ThreadView.showJump(follow = false, stuck = false, canScrollForward = true))
+        assertFalse(ThreadView.showJump(follow = false, stuck = false, canScrollForward = false))
+        // Opening details still pauses follow: later content below makes the button available again.
+        assertTrue(ThreadView.showJump(follow = false, stuck = false, canScrollForward = true))
+    }
+
+    @Test
+    fun followingOnlyShowsJumpIfAutomaticScrollingIsStuckBehind() {
+        assertFalse(ThreadView.showJump(follow = true, stuck = false, canScrollForward = true))
+        assertTrue(ThreadView.showJump(follow = true, stuck = true, canScrollForward = true))
+        assertFalse(ThreadView.showJump(follow = true, stuck = true, canScrollForward = false))
+    }
+
     private var seq = 0L
     private val home = "/Users/nik/repos/droid-office/.droid-office/worktrees/byte-090d"
 
