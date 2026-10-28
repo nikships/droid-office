@@ -36,6 +36,8 @@ The Mac app supplies `--finder-bridge <signed helper executable>` only when it o
 
 Once the daemon is ready, it calls the bridge with `--publish http://127.0.0.1:<hook-port>/`. The bridge owns the shared Keychain item, preserving its random token while updating the endpoint. Its JSON response is consumed privately by the daemon, never written to a state file, environment variable or log. Missing Keychain/signing access fails closed.
 
+The sandboxed extension cannot read the selected items, so macOS refuses to open them as documents with the prompt. It starts one prompt process per dispatch with `--dispatch <absolute paths>` instead. The prompt only needs the path text; the daemon does the file checks. A prompt process exits when its last window closes.
+
 Keychain items normally survive application deletion and reinstall. Reinstall is not treated as a reliable token-rotation event; the integration never silently destroys a stored credential.
 
 Finder Extensions require explicit owner activation in System Settings. The extension must not silently enable itself. A native activation notice and a menu entry provide the route to the system controls.
