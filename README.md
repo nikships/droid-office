@@ -211,7 +211,7 @@ Install `Droid-Office-<version>.apk`, then scan the QR code in **Settings → Ph
 
 ## For developers
 
-Run the source to modify or contribute. You need **Node.js 20+**, npm and the tools above; macOS builds also need Xcode Command Line Tools.
+Run the source to modify or contribute. Use **Node.js 22.13+ on the 22.x line** (CI uses Node 22), npm and the tools above; macOS builds also need Xcode Command Line Tools.
 
 ```bash
 git clone https://github.com/nikships/droid-office.git
