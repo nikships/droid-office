@@ -24,7 +24,7 @@ import './companion-tools.css';
 import { mountWorkerThread, type WorkerThread } from './ui/worker-thread';
 import { forgetAllStagedImages, forgetStagedImages } from './ui/images';
 import type { WorkerStatus } from '../shared/protocol';
-import { companionCapabilities, companionRoster, companionWorkedMs, type RosterFilter } from '../shared/companion-roster';
+import { companionCapabilities, companionRoster, companionView, companionWorkedMs, type RosterFilter } from '../shared/companion-roster';
 import {
   companionFloorWorkspace,
   companionWorkspaceLayout,
@@ -39,6 +39,8 @@ import type { TerminalPane } from './ui/terminal';
 import { parseWorkerLink } from './worker-link';
 import { DashboardWorkerLink } from './dashboard-worker-link';
 import { acknowledgeDraft } from './draft-ack';
+import { DashboardQuestion } from './dashboard-question';
+import { retainFocus } from './dashboard-focus';
 
 const drafts = new Map<string, string>();
 try {
@@ -451,7 +453,7 @@ async function action(msg: ClientMsg, id = '', intendedFloor = floor, done?: str
     busy.delete(key);
     paint();
   }
-  if (hired) void enter(hired);
+  if (hired) select(hired);
 }
 function say(text: string) {
   live$.textContent = text;
@@ -667,6 +669,7 @@ type Rows = Map<string, { el: HTMLButtonElement }>;
 const rows: Rows = new Map();
 const panes = new Map<string, WorkspacePane>();
 let workspace = restoreWorkspace();
+let savedLayout = JSON.stringify(companionWorkspaceLayout(workspace));
 let navigationEpoch = 0;
 const narrow = matchMedia('(max-width: 760px)');
 const paneHost = h('div.cw-panes');
@@ -698,7 +701,11 @@ function dispatch(action: WorkspaceAction) {
     }
   }
   workspace = reduceCompanionWorkspace(workspace, action);
-  remember(DASHBOARD_WORKSPACE_KEY, JSON.stringify(companionWorkspaceLayout(workspace)));
+  if (action.type === 'draft' || action.type === 'disconnect') return;
+  const layout = JSON.stringify(companionWorkspaceLayout(workspace));
+  if (layout === savedLayout) return;
+  savedLayout = layout;
+  remember(DASHBOARD_WORKSPACE_KEY, layout);
 }
 function currentWorkspace() {
   return companionFloorWorkspace(workspace, floor);
@@ -716,9 +723,10 @@ const ordered = () =>
     .map((row) => row.worker);
 
 function paintSide() {
+  const restoreFocus = retainFocus(workerList);
   overviewRow.classList.toggle('on', !selected);
+  overviewRow.setAttribute('aria-current', !selected ? 'page' : 'false');
   (overviewRow.lastElementChild as HTMLElement).textContent = String(store.workers.size);
-  const active = document.activeElement instanceof HTMLElement ? document.activeElement.dataset.worker : undefined;
   const visible = roster();
   const seen = new Set<string>();
   const children: HTMLElement[] = [];
@@ -727,7 +735,7 @@ function paintSide() {
     seen.add(w.id);
     let cached = rows.get(w.id);
     if (!cached) {
-      cached = { el: h('button.dash-row', { type: 'button', 'data-worker': w.id, onclick: () => select(w.id) }) };
+      cached = { el: h('button.dash-row', { type: 'button', 'data-worker': w.id, 'data-focus-key': `worker:${w.id}`, onclick: () => select(w.id) }) };
       rows.set(w.id, cached);
     }
     const el = cached.el;
@@ -753,6 +761,7 @@ function paintSide() {
       'button.btn.sm.ghost',
       {
         type: 'button',
+        'data-focus-key': `collapse:${w.id}`,
         disabled: !row.childCount,
         'aria-label': `${row.collapsed ? 'Expand' : 'Collapse'} ${w.name}'s children`,
         'aria-expanded': String(!row.collapsed),
@@ -765,7 +774,13 @@ function paintSide() {
     );
     const pin = h(
       'button.btn.sm',
-      { type: 'button', disabled: !live() || (currentWorkspace().panes.length >= 4 && !currentWorkspace().panes.some((p) => p.workerId === w.id)), 'aria-label': `Pin ${w.name}`, onclick: () => select(w.id, true) },
+      {
+        type: 'button',
+        'data-focus-key': `pin:${w.id}`,
+        disabled: !live() || (currentWorkspace().panes.length >= 4 && !currentWorkspace().panes.some((p) => p.workerId === w.id)),
+        'aria-label': `Pin ${w.name}`,
+        onclick: () => select(w.id, true),
+      },
       'Pin',
     );
     const item = h('div.cw-roster-item', {}, collapse, el, pin);
@@ -785,22 +800,24 @@ function paintSide() {
   for (const id of rows.keys()) if (!seen.has(id)) rows.delete(id);
   if (!children.length) children.push(h('p.dash-side-empty', {}, store.workers.size ? 'No workers match these filters.' : 'Nobody on this floor yet.'));
   workerList.replaceChildren(...children);
-  if (active) rows.get(active)?.el.focus({ preventScroll: true });
+  restoreFocus();
   const value = selected;
-  quickSwitch.replaceChildren(h('option', { value: '' }, 'Choose worker'), ...ordered().map((w) => h('option', { value: w.id }, w.name)));
+  const choices = ordered();
+  const chosen = store.workers.get(selected);
+  if (chosen && !choices.some((w) => w.id === chosen.id)) choices.unshift(chosen);
+  quickSwitch.replaceChildren(h('option', { value: '' }, 'Choose worker'), ...choices.map((w) => h('option', { value: w.id }, w.name)));
   quickSwitch.value = value;
 }
 function select(id: string, pin = false) {
   if (id && !store.workers.has(id)) return;
+  const state = currentWorkspace();
+  if (id && !state.active && state.panes.length >= 4 && !state.panes.some((p) => p.workerId === id)) return toast('Four panes are pinned. Close one or select a pane to replace.', 'warn');
   tools.close();
   showTools = false;
   if (id) dispatch({ type: 'open', floor, workerId: id, pin });
   else dispatch({ type: 'focus', floor, workerId: '' });
   selected = currentWorkspace().active;
   paint();
-}
-async function enter(id: string) {
-  select(id);
 }
 function moveWorker(step: number) {
   const all = ordered();
@@ -814,8 +831,16 @@ function disposePanes() {
   panes.clear();
 }
 function paintWorkspace() {
-  if (switching || !fresh || !net.ready) return;
   const state = currentWorkspace();
+  const ready = !switching && fresh && net.ready;
+  const managing = !!tools.current();
+  content.classList.toggle('cw-conversation', (ready && !!selected) || managing);
+  content.classList.toggle('cw-show-tools', showTools);
+  emptyWorkspace.hidden = !ready || state.panes.length > 0 || managing;
+  paneHost.hidden = !ready || state.panes.length === 0 || managing;
+  mobileNav.hidden = !ready || !selected || managing;
+  toolStage.hidden = !managing;
+  if (!ready) return;
   for (const [id, pane] of panes) {
     if (pane.floor !== floor || !state.panes.some((p) => p.workerId === id) || !store.workers.has(id)) {
       pane.dispose();
@@ -833,13 +858,6 @@ function paintWorkspace() {
     }
     pane.update(worker, spec);
   }
-  const managing = !!tools.current();
-  content.classList.toggle('cw-conversation', !!selected || managing);
-  content.classList.toggle('cw-show-tools', showTools);
-  emptyWorkspace.hidden = state.panes.length > 0 || managing;
-  paneHost.hidden = state.panes.length === 0 || managing;
-  mobileNav.hidden = !selected || managing;
-  toolStage.hidden = !managing;
 }
 class WorkspacePane {
   readonly element = h('section.cw-pane', { tabindex: -1 });
@@ -856,9 +874,7 @@ class WorkspacePane {
   private disposed = false;
   private threadRevision = 0;
   private menuKey = '';
-  private answering = false;
-  private answered = false;
-  private shownMenu: ReturnType<typeof readMenu>;
+  private answerState = new DashboardQuestion();
   private questionDraft = '';
   private epoch: number;
   constructor(
@@ -931,16 +947,18 @@ class WorkspacePane {
       .filter(Boolean)
       .join(' · ');
     const capability = companionCapabilities(worker);
-    const mode = spec.view === 'thread' && capability.thread ? 'thread' : spec.view === 'terminal' && capability.terminal ? 'terminal' : 'info';
+    const mode = companionView(worker, spec.view);
+    const restoreTabsFocus = retainFocus(this.tabs);
     this.tabs.replaceChildren(
       ...(['thread', 'terminal'] as const).map((view) =>
         h(
           'button.btn.sm',
           {
             type: 'button',
-            class: spec.view === view ? 'on' : '',
-            'aria-pressed': String(spec.view === view),
-            disabled: view === 'terminal' && !capability.terminal,
+            'data-focus-key': view,
+            class: mode === view ? 'on' : '',
+            'aria-pressed': String(mode === view),
+            disabled: view === 'terminal' ? !capability.terminal : !capability.thread,
             onclick: () => {
               dispatch({ type: 'view', floor: this.floor, workerId: worker.id, view });
               paintWorkspace();
@@ -950,6 +968,7 @@ class WorkspacePane {
         ),
       ),
     );
+    restoreTabsFocus();
     if (mode !== this.mode) {
       const revision = ++this.threadRevision;
       this.thread?.dispose();
@@ -997,6 +1016,7 @@ class WorkspacePane {
             if (this.valid()) select(id);
           },
           raw: () => {
+            if (!this.valid() || revision !== this.threadRevision) return;
             dispatch({ type: 'view', floor: this.floor, workerId: worker.id, view: 'terminal' });
             paintWorkspace();
           },
@@ -1054,32 +1074,36 @@ class WorkspacePane {
     }
   }
   private paintControls() {
+    const restoreFocus = retainFocus(this.controls);
     const w = this.worker;
     const enabled = this.valid() && !busy.has(w.id);
-    const btn = (label: string, ok: boolean, run: () => void) => h('button.btn.sm', { type: 'button', disabled: !enabled || !ok, onclick: run }, label);
+    const btn = (label: string, ok: boolean, run: () => void) => h('button.btn.sm', { type: 'button', 'data-focus-key': label, disabled: !enabled || !ok, onclick: run }, label);
     this.controls.replaceChildren(
       isAsleep(w.status) && !w.guest
         ? btn(w.kind === 'shell' ? 'Restart' : 'Resume', !w.lost, () => void action({ t: 'worker.resume', workerId: w.id }, w.id, this.floor).then(warn))
         : btn(w.kind === 'shell' ? 'Command' : 'Prompt', !w.guest && !w.lost, () => prompt(w)),
-      ...(w.cloud && w.sessionId ? [h('a.btn.sm', { href: sessionWebUrl(w.sessionId), target: '_blank', rel: 'noopener noreferrer' }, 'Factory session')] : []),
+      ...(w.cloud && w.sessionId ? [h('a.btn.sm', { 'data-focus-key': 'session', href: sessionWebUrl(w.sessionId), target: '_blank', rel: 'noopener noreferrer' }, 'Factory session')] : []),
       ...(w.pr
-        ? [h('a.btn.sm', { href: safeLink(w.pr.url), target: '_blank', rel: 'noopener noreferrer' }, `PR #${w.pr.number}`)]
+        ? [h('a.btn.sm', { 'data-focus-key': 'pull', href: safeLink(w.pr.url), target: '_blank', rel: 'noopener noreferrer' }, `PR #${w.pr.number}`)]
         : w.worktree && !w.guest && !w.cloud
           ? [btn('Open PR', !w.lost && !w.prOpening && !isBusy(w.status), () => void action({ t: 'worker.pr', workerId: w.id }, w.id, this.floor).then(warn))]
           : []),
       btn('Manage', true, () => openWorkerActions(w.id)),
       btn('Send home', !w.guest, () => sendHome(w)),
     );
+    restoreFocus();
   }
   paintQuestion() {
     const w = this.worker;
     const screen = lines(w.id);
     const menu = screen && canAnswer(w, screen) ? readMenu(screen) : undefined;
-    const key = JSON.stringify([menu, w.status, live(), this.answering, this.answered]);
+    const state = this.answerState;
+    state.sync(menu, w.waitingSince);
+    const revision = state.revision;
+    const key = JSON.stringify([menu, w.status, w.waitingSince, this.valid(), busy.has(w.id), state.answering, state.answered]);
     if (key === this.menuKey) return;
-    if (!sameMenu(menu, this.shownMenu)) this.answered = false;
-    this.shownMenu = menu;
     this.menuKey = key;
+    const restoreFocus = retainFocus(this.question);
     this.question.hidden = w.status !== 'needs_input';
     if (this.question.hidden) return;
     if (!menu) {
@@ -1088,6 +1112,7 @@ class WorkspacePane {
     }
     const text = h('textarea.input', {
       rows: 2,
+      'data-focus-key': 'answer-text',
       'aria-label': 'Typed answer',
       oninput: () => {
         this.questionDraft = text.value;
@@ -1095,18 +1120,19 @@ class WorkspacePane {
       },
     });
     text.value = this.questionDraft;
-    const enabled = this.valid() && !this.answering && !this.answered;
+    const enabled = this.valid() && !busy.has(w.id) && !state.answering && !state.answered;
     text.disabled = !enabled;
     const reply = async (value: { choice?: number; text?: string }) => {
-      if (this.answering || this.answered) return;
+      if (state.answering || state.answered || busy.has(w.id)) return;
       const current = lines(w.id);
-      if (!this.valid() || !current || !sameMenu(menu, readMenu(current))) return toast('The question changed. Review it before answering.', 'warn');
-      this.answering = true;
+      if (!this.valid() || revision !== state.revision || w.waitingSince !== this.worker.waitingSince || !current || !canAnswer(this.worker, current) || !sameMenu(menu, readMenu(current)))
+        return toast('The question changed. Review it before answering.', 'warn');
+      state.answering = true;
       this.paintQuestion();
       const error = await action({ t: 'worker.answer', workerId: w.id, menu, ...value }, w.id, this.floor);
-      if (!this.valid()) return;
-      this.answering = false;
-      this.answered = !error;
+      if (!this.valid() || revision !== state.revision) return;
+      state.answering = false;
+      state.answered = !error;
       if (error) warn(error);
       else {
         this.questionDraft = '';
@@ -1116,10 +1142,11 @@ class WorkspacePane {
     };
     this.question.replaceChildren(
       h('h3', {}, menu.question ?? 'Choose an answer'),
-      ...menu.choices.map((c) => h('button.btn', { type: 'button', disabled: !enabled, onclick: () => void reply({ choice: c.number }) }, `${c.number}. ${c.label}`)),
-      ...(menuTakesText(menu) ? [text, h('button.btn', { type: 'button', disabled: !enabled, onclick: () => void reply({ text: text.value }) }, 'Send answer')] : []),
-      ...(this.answering || this.answered ? [h('p.note', {}, this.answering ? 'Sending answer…' : 'Answer sent. Waiting for worker.')] : []),
+      ...menu.choices.map((c) => h('button.btn', { type: 'button', 'data-focus-key': `choice:${c.number}`, disabled: !enabled, onclick: () => void reply({ choice: c.number }) }, `${c.number}. ${c.label}`)),
+      ...(menuTakesText(menu) ? [text, h('button.btn', { type: 'button', 'data-focus-key': 'send-answer', disabled: !enabled, onclick: () => void reply({ text: text.value }) }, 'Send answer')] : []),
+      ...(state.answering || state.answered ? [h('p.note', {}, state.answering ? 'Sending answer…' : 'Answer sent. Waiting for worker.')] : []),
     );
+    restoreFocus();
   }
   dispose() {
     this.disposed = true;
@@ -1143,9 +1170,6 @@ function lines(id: string) {
 const warn = (error: string | undefined) => {
   if (error) toast(error, 'warn');
 };
-function selectedMode() {
-  return panes.get(selected)?.mode;
-}
 type ToolId = Parameters<ReturnType<typeof createCompanionTools>['open']>[0];
 function openTool(id: ToolId) {
   if (!live()) return;
@@ -1154,6 +1178,7 @@ function openTool(id: ToolId) {
   paint();
 }
 function paintTools() {
+  const restoreFocus = retainFocus(toolRail);
   const nodes: HTMLElement[] = [];
   let group = '';
   for (const tool of tools.list()) {
@@ -1166,6 +1191,7 @@ function paintTools() {
         'button.btn.ghost.cw-tool-entry',
         {
           type: 'button',
+          'data-focus-key': tool.id,
           disabled: !live() || !tool.available,
           title: tool.reason || tool.label,
           onclick: () => openTool(tool.id),
@@ -1177,6 +1203,7 @@ function paintTools() {
     if (!tool.available && tool.reason) nodes.push(h('p.cw-tool-reason', {}, tool.reason));
   }
   toolRail.replaceChildren(...nodes);
+  restoreFocus();
   content.classList.toggle('cw-show-tools', showTools);
 }
 function openWorkerActions(workerId: string) {
@@ -1237,7 +1264,7 @@ function hire(kind: 'agent' | 'shell', deskId = 'auto') {
   });
 }
 function prompt(w: WorkerInfo) {
-  if (selectedMode() === 'thread' && w.status === 'needs_input') {
+  if (panes.get(w.id)?.mode === 'thread' && w.status === 'needs_input') {
     toast('Answer the current question, or open Raw TTY for this CLI dialog.', 'warn');
     return;
   }
@@ -1261,13 +1288,13 @@ function prompt(w: WorkerInfo) {
     onSubmit: async (text, opts) => {
       if (epoch !== navigationEpoch) return 'The connection or floor changed. Nothing was sent.';
       const now = store.workers.get(w.id) ?? w;
-      if (selectedMode() === 'thread' && now.status === 'needs_input') return 'Answer the current question, or open Raw TTY for this CLI dialog. Your draft is kept.';
+      if (panes.get(w.id)?.mode === 'thread' && now.status === 'needs_input') return 'Answer the current question, or open Raw TTY for this CLI dialog. Your draft is kept.';
       const refused = w.kind === 'agent' ? slashRefusal(text, w.name, isBusy(now.status)) : undefined;
       if (refused) return `${refused} Your draft is kept.`;
       const error = await action({ t: 'worker.prompt', workerId: w.id, prompt: text, images: opts.images, queue: opts.queue && isBusy(now.status) }, w.id, intended, `Sent to ${w.name}.`);
       if (!error) remember(key, '');
       // Droid answers most of its slash commands with a dialog, which only its terminal shows.
-      if (!error && selectedMode() === 'thread' && w.kind === 'agent' && slashOf(text)?.command?.kind === 'tty') {
+      if (!error && epoch === navigationEpoch && panes.get(w.id)?.mode === 'thread' && w.kind === 'agent' && slashOf(text)?.command?.kind === 'tty') {
         dispatch({ type: 'view', floor: intended, workerId: w.id, view: 'terminal' });
         paint();
       }

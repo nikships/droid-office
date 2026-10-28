@@ -1,4 +1,5 @@
 import type { WorkerInfo, WorkerStatus } from './protocol.js';
+import type { CompanionView } from './companion-workspace.js';
 
 export interface RosterFilter {
   query?: string;
@@ -84,4 +85,12 @@ export function companionCapabilities(worker: WorkerInfo) {
 
 export function companionWorkedMs(worker: WorkerInfo, now: number): number {
   return Math.max(0, worker.workedMs ?? 0) + (worker.workingSince ? Math.max(0, now - worker.workingSince) : 0);
+}
+
+/** Resolve available content without changing the pane's saved preference. */
+export function companionView(worker: WorkerInfo, preferred: CompanionView): CompanionView | 'info' {
+  const caps = companionCapabilities(worker);
+  if (preferred === 'thread' && caps.thread) return 'thread';
+  if (preferred === 'terminal' && caps.terminal) return 'terminal';
+  return caps.thread ? 'thread' : caps.terminal ? 'terminal' : 'info';
 }

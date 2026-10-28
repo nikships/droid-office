@@ -54,14 +54,10 @@ export function reduceCompanionWorkspace(state: CompanionWorkspace, action: Work
       else {
         const pane: CompanionPane = { workerId: id, view: 'thread', size: 1 };
         const panes = [...current.panes];
-        if (action.pin || !panes.length) panes.push(pane);
-        else
-          panes[
-            Math.max(
-              0,
-              panes.findIndex((p) => p.workerId === current.active),
-            )
-          ] = pane;
+        const active = panes.findIndex((p) => p.workerId === current.active);
+        if (action.pin || (active < 0 && panes.length < MAX_COMPANION_PANES)) panes.push(pane);
+        else if (active >= 0) panes[active] = pane;
+        else return state;
         next = { ...current, panes, active: id };
       }
       break;
@@ -104,7 +100,7 @@ export function reduceCompanionWorkspace(state: CompanionWorkspace, action: Work
 
 /** Persist layouts only. Drafts and attachment handles must never survive a new connection. */
 export function companionWorkspaceLayout(state: CompanionWorkspace): CompanionWorkspace {
-  return { ...state, floors: Object.fromEntries(Object.entries(state.floors).map(([id, value]) => [id, { ...value, drafts: {} }])) };
+  return { epoch: 0, floors: Object.fromEntries(Object.entries(state.floors).map(([id, value]) => [id, { ...value, drafts: {} }])) };
 }
 
 /** Storage is untrusted: restore bounded, distinct panes, never drafts or a connection epoch. */

@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { companionCapabilities, companionRoster, companionWorkedMs } from '../src/shared/companion-roster.js';
+import { companionCapabilities, companionRoster, companionView, companionWorkedMs } from '../src/shared/companion-roster.js';
 import { companionFloorWorkspace, companionWorkspaceLayout, createCompanionWorkspace, reduceCompanionWorkspace, restoreCompanionWorkspace } from '../src/shared/companion-workspace.js';
 import type { WorkerInfo } from '../src/shared/protocol.js';
 
@@ -18,6 +18,18 @@ const worker = (id: string, patch: Partial<WorkerInfo> = {}): WorkerInfo => ({
   rows: 24,
   open: false,
   ...patch,
+});
+
+test('available pane content falls back without overwriting the saved preference', () => {
+  const state = reduceCompanionWorkspace(createCompanionWorkspace(), { type: 'open', floor: 'one', workerId: 'worker' });
+  const pane = state.floors.one!.panes[0]!;
+  assert.equal(companionView(worker('worker'), pane.view), 'thread');
+  assert.equal(companionView(worker('worker', { kind: 'shell' }), pane.view), 'terminal');
+  assert.equal(companionView(worker('worker', { kind: 'shell', status: 'exited' }), pane.view), 'info');
+  assert.equal(companionView(worker('worker', { kind: 'cloud' }), pane.view), 'info');
+  assert.equal(pane.view, 'thread');
+  assert.equal(companionView(worker('worker'), 'terminal'), 'terminal');
+  assert.equal(companionView(worker('worker', { status: 'exited' }), 'terminal'), 'thread');
 });
 
 test('roster uses supervision, not fork ancestry or team identity; all kinds remain visible', () => {
@@ -100,6 +112,51 @@ test('reconciliation cannot select an unpinned worker and preserves an intention
   state = reduceCompanionWorkspace(state, { type: 'focus', floor: 'one', workerId: '' });
   state = reduceCompanionWorkspace(state, { type: 'reconcile', floor: 'one', workerIds: ['pinned'] });
   assert.equal(state.floors.one!.active, '');
+});
+
+test('opening from the roster appends with room, replaces only an active pane, and preserves full pins without a target', () => {
+  let state = createCompanionWorkspace();
+  const open = (workerId: string) => {
+    state = reduceCompanionWorkspace(state, { type: 'open', floor: 'one', workerId });
+  };
+  const roster = () => {
+    state = reduceCompanionWorkspace(state, { type: 'focus', floor: 'one', workerId: '' });
+  };
+  open('a');
+  roster();
+  open('b');
+  assert.deepEqual(
+    state.floors.one!.panes.map((p) => p.workerId),
+    ['a', 'b'],
+  );
+  open('c');
+  assert.deepEqual(
+    state.floors.one!.panes.map((p) => p.workerId),
+    ['a', 'c'],
+  );
+  roster();
+  open('d');
+  roster();
+  open('e');
+  roster();
+  const full = state;
+  open('f');
+  assert.equal(state, full);
+  assert.deepEqual(
+    state.floors.one!.panes.map((p) => p.workerId),
+    ['a', 'c', 'd', 'e'],
+  );
+});
+
+test('layout serialization stays identical for drafts, no-op reconciliation and actual disconnect', () => {
+  let state = reduceCompanionWorkspace(createCompanionWorkspace(), { type: 'open', floor: 'one', workerId: 'a' });
+  const saved = JSON.stringify(companionWorkspaceLayout(state));
+  state = reduceCompanionWorkspace(state, { type: 'draft', floor: 'one', workerId: 'a', draft: { text: 'unsent', attachments: ['local-handle'] } });
+  assert.equal(JSON.stringify(companionWorkspaceLayout(state)), saved);
+  state = reduceCompanionWorkspace(state, { type: 'reconcile', floor: 'one', workerIds: ['a'] });
+  assert.equal(JSON.stringify(companionWorkspaceLayout(state)), saved);
+  state = reduceCompanionWorkspace(state, { type: 'disconnect' });
+  assert.equal(JSON.stringify(companionWorkspaceLayout(state)), saved);
 });
 
 test('untrusted persisted layouts restore four distinct panes and no drafts, epochs or invalid active ID', () => {
