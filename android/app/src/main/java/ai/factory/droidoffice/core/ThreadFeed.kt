@@ -290,9 +290,6 @@ class ThreadFeed(val workerId: String, private val prefix: String = UUID.randomU
         /** No answer at all for this long means the office can't show threads. */
         const val UNAVAILABLE_MS = 6_000L
 
-        /** A prompt the thread mustn't send: Droid runs a leading `/` as one of its commands, in the terminal. */
-        fun slashCommand(prompt: String) = prompt.trimStart().startsWith("/")
-
         /** A tool call with no result yet is running while the worker is in a turn, and never got one otherwise. */
         fun toolState(e: ThreadEntry, busy: Boolean): ToolState = when {
             e.error -> ToolState.Failed

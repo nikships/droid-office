@@ -1,5 +1,7 @@
 package ai.factory.droidoffice.net
 
+import ai.factory.droidoffice.core.DroidCommand
+import ai.factory.droidoffice.core.DroidCommands
 import ai.factory.droidoffice.core.Models
 import ai.factory.droidoffice.core.HostUpdateState
 import ai.factory.droidoffice.core.HostUpdateAction
@@ -156,6 +158,17 @@ class OfficeApi(base: OkHttpClient = OkHttpClient()) {
         try {
             client.newCall(request(base, "api/agents/droid/models", auth).get().build()).await().use { res ->
                 if (!res.isSuccessful) null else runCatching { OfficeJson.decodeFromString<ModelCatalogue>(res.body.string()) }.getOrNull()
+            }
+        } catch (_: IOException) {
+            null
+        }
+    }
+
+    /** The skills and custom commands a worker's droid offers as slash commands; null when the office can't say. */
+    suspend fun slashCommands(base: String, auth: OfficeAuth, workerId: String): List<DroidCommand>? = withContext(Dispatchers.IO) {
+        try {
+            client.newCall(request(base, "api/agents/droid/commands", auth, "worker" to workerId).get().build()).await().use { res ->
+                if (!res.isSuccessful) null else runCatching { OfficeJson.decodeFromString<DroidCommands>(res.body.string()).commands }.getOrNull()
             }
         } catch (_: IOException) {
             null

@@ -45,6 +45,7 @@
   },
   "license": "MIT",
   "dependencies": {
+    "@factory/droid-sdk": "^0.10.0",
     "@lydell/node-pty": "^1.2.0-beta.15",
     "@xterm/addon-serialize": "^0.14.0",
     "@xterm/addon-unicode11": "^0.9.0",

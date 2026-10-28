@@ -6,6 +6,7 @@ import { cardsNewestFirst, cardChanged, OWNER } from '../shared/whiteboard';
 import { ROOF } from '../shared/rooftop';
 import { DESK_BY_ID } from '../shared/layout';
 import { sessionWebUrl } from '../shared/factory-sessions';
+import { slashOf, slashRefusal } from '../shared/slash-commands';
 import { originKind, type OriginKind } from '../shared/devices';
 import { BROWSER_KEY, DASHBOARD_FLOOR_KEY, browserCredential, draftKey, forgetBrowserCredential, isBrowserCredential, saveBrowserCredential, type BrowserCredential } from './browser-session';
 import { Net } from './net';
@@ -1080,6 +1081,10 @@ function paintWorker(w: WorkerInfo) {
         draft: read(key),
         onDraft: (text) => remember(key, text),
         send: (msg) => action(msg, w.id, intended),
+        screen: () => {
+          const s = store.screens.get(w.id);
+          return s && Array.from({ length: s.rows }, (_, i) => (s.lines[i] ?? []).map((run) => run[0]).join(''));
+        },
         team: () => (floor === intended ? [...store.workers.values()] : []),
         openWorker: (id) => {
           if (!usable(id, intended)) return;
@@ -1337,11 +1342,20 @@ function prompt(w: WorkerInfo) {
     onDraft: (v) => remember(key, v),
     imagesOption: w.kind !== 'shell',
     recall: w.kind !== 'shell',
-    queueOption: w.kind === 'agent',
+    queueOption: w.kind === 'agent' && isBusy(w.status),
     onSubmit: async (text, opts) => {
-      if (stageMode === 'thread' && (store.workers.get(w.id)?.status === 'needs_input' || text.trimStart().startsWith('/'))) return 'Use Raw TTY for CLI dialogs and slash commands. Your draft is kept.';
-      const error = await action({ t: 'worker.prompt', workerId: w.id, prompt: text, images: opts.images, queue: opts.queue }, w.id, intended, `Sent to ${w.name}.`);
+      const now = store.workers.get(w.id) ?? w;
+      if (stageMode === 'thread' && now.status === 'needs_input') return 'Answer the current question, or open Raw TTY for this CLI dialog. Your draft is kept.';
+      const refused = w.kind === 'agent' ? slashRefusal(text, w.name, isBusy(now.status)) : undefined;
+      if (refused) return `${refused} Your draft is kept.`;
+      const error = await action({ t: 'worker.prompt', workerId: w.id, prompt: text, images: opts.images, queue: opts.queue && isBusy(now.status) }, w.id, intended, `Sent to ${w.name}.`);
       if (!error) remember(key, '');
+      // Droid answers most of its slash commands with a dialog, which only its terminal shows.
+      if (!error && stageMode === 'thread' && w.kind === 'agent' && slashOf(text)?.command?.kind === 'tty') {
+        workerView = 'terminal';
+        remember('droid-office.companion-view', 'terminal');
+        paint();
+      }
       return error;
     },
   });

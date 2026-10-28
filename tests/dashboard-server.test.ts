@@ -169,9 +169,11 @@ test('production dashboard has a public data-free bootstrap, gated APIs and a bu
   if (ip) {
     assert.equal((await fetch(`${remote}/api/mobile/hello`)).status, 401);
     assert.equal((await fetch(`${remote}/api/agents/droid/models`)).status, 401);
+    assert.equal((await fetch(`${remote}/api/agents/droid/commands?worker=missing`)).status, 401);
     assert.equal((await fetch(`${remote}/api/whiteboard/render?floor=missing&card=missing`)).status, 401);
     assert.equal((await fetch(`${remote}/`)).status, 401);
   }
+  assert.equal((await fetch(`${base}/api/agents/droid/commands?worker=missing`)).status, 404);
   assert.match(await (await fetch(`${base}/`)).text(), /id="loading"/);
   const result = await build({ configFile: path.resolve('vite.config.ts'), logLevel: 'silent', build: { write: false, reportCompressedSize: false } });
   assert.ok(!Array.isArray(result) && 'output' in result);
@@ -281,6 +283,9 @@ test('confirmed worker actions deduplicate on a socket, respect the active floor
   browser.send({ t: 'worker.prompt', workerId, prompt: 'printf "dashboard-stream-check\\n"', requestId: 'prompt', requestFloor: floor });
   assert.equal((await browser.wait('action.result', (m) => m.requestId === 'prompt')).ok, true);
   await browser.wait('term.data', (m) => m.data.includes('dashboard-stream-check'));
+  browser.send({ t: 'term.input', workerId, data: 'printf "typed-keys-check\\n"\r', requestId: 'keys', requestFloor: floor });
+  assert.equal((await browser.wait('action.result', (m) => m.requestId === 'keys')).ok, true, 'keys typed into an attached terminal are confirmed');
+  await browser.wait('term.data', (m) => m.data.includes('typed-keys-check'));
   const observer = socket(t, base, 'client=dashboard');
   await observer.wait('welcome');
   const phonePair = (await (await fetch(`${base}/api/mobile/pair`, { method: 'POST', body: '{"device":"Phone"}' })).json()) as { token: string };

@@ -1,14 +1,12 @@
-import { spawn } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import path from 'node:path';
 import { isAgentEffort, type AgentEffort } from '../shared/protocol.js';
 import { DROID_MODEL_MAX, isValidDroidModel } from './agents.js';
+import { askDroid, DROID_LIST } from './droid-rpc.js';
 
 export const DROID_SETTINGS_PATH = path.join(homedir(), '.factory', 'settings.json');
 export const DROID_CATALOGUE_TTL_MS = 60_000;
-export const DROID_LIST_TIMEOUT_MS = 20_000;
-const DROID_LIST_MAX_OUTPUT = 4 * 1024 * 1024;
 
 /** A Droid model the hire dialog can offer. */
 export interface DroidModelOption {
@@ -149,58 +147,16 @@ export function parseDroidModelList(list: unknown[]): DroidModelOption[] {
 /** Asks droid for its models; resolves with the raw `models` array of the `droid.list_models` result. */
 export type DroidModelLister = (command: string, cwd: string) => Promise<unknown[]>;
 
-const LIST_REQUEST_ID = 'office-list-models';
-
 /**
  * `droid exec` in stream-jsonrpc mode answers `droid.list_models` without starting a session or
  * calling a model: it is the same list the droid CLI's model picker shows, built-in and custom.
  */
-export const listDroidModels: DroidModelLister = (command, cwd) =>
-  new Promise((resolve, reject) => {
-    let child: ReturnType<typeof spawn>;
-    try {
-      child = spawn(command, ['exec', '--input-format', 'stream-jsonrpc', '--output-format', 'stream-jsonrpc'], { cwd, stdio: ['pipe', 'pipe', 'ignore'], windowsHide: true });
-    } catch (err) {
-      reject(err instanceof Error ? err : new Error(String(err)));
-      return;
-    }
-    let buffered = '';
-    let total = 0;
-    let settled = false;
-    const finish = (error: Error | undefined, models?: unknown[]) => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timer);
-      if (child.exitCode === null && child.signalCode === null) child.kill();
-      if (error) reject(error);
-      else resolve(models ?? []);
-    };
-    const timer = setTimeout(() => finish(new Error('droid did not list its models in time')), DROID_LIST_TIMEOUT_MS);
-    child.on('error', (err) => finish(err));
-    child.on('close', () => finish(new Error('droid exited without listing its models')));
-    child.stdin?.on('error', () => {});
-    child.stdout?.setEncoding('utf8');
-    child.stdout?.on('data', (chunk: string) => {
-      total += chunk.length;
-      if (total > DROID_LIST_MAX_OUTPUT) return finish(new Error('droid printed too much'));
-      buffered += chunk;
-      for (let nl = buffered.indexOf('\n'); nl >= 0; nl = buffered.indexOf('\n')) {
-        const line = buffered.slice(0, nl).trim();
-        buffered = buffered.slice(nl + 1);
-        let msg: { type?: unknown; id?: unknown; error?: unknown; result?: { models?: unknown } };
-        try {
-          msg = JSON.parse(line) as typeof msg;
-        } catch {
-          continue;
-        }
-        if (msg?.type !== 'response' || msg.id !== LIST_REQUEST_ID) continue;
-        const models = msg.result?.models;
-        if (msg.error || !Array.isArray(models)) return finish(new Error('droid refused to list its models'));
-        return finish(undefined, models);
-      }
-    });
-    child.stdin?.end(`${JSON.stringify({ factoryApiVersion: '1.0.0', factoryProtocolVersion: '1.201.1', type: 'request', jsonrpc: '2.0', id: LIST_REQUEST_ID, method: 'droid.list_models', params: {} })}\n`);
-  });
+export const listDroidModels: DroidModelLister = async (command, cwd) => {
+  const [result] = await askDroid(command, cwd, [DROID_LIST.models]);
+  const models = (result as { models?: unknown } | undefined)?.models;
+  if (!Array.isArray(models)) throw new Error('droid refused to list its models');
+  return models;
+};
 
 export interface DroidCatalogueOptions {
   /** The droid binary to ask, or how to find it now (it may be installed after the office starts). */

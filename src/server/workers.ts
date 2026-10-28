@@ -490,6 +490,12 @@ export class WorkerManager {
     return this.workers.get(id)?.info;
   }
 
+  /** The folder an agent's droid runs in, where its project skills and commands come from. */
+  agentFolder(id: string): string | undefined {
+    const info = this.workers.get(id)?.info;
+    return info?.kind === 'agent' && !info.cloud && !info.guest ? this.cwd(info) : undefined;
+  }
+
   /** Read-only conversation identity. Never accepts a caller-supplied path or session. */
   threadSession(id: string): { sessionId: string; cwd: string } | undefined {
     const info = this.workers.get(id)?.info;
@@ -1468,7 +1474,7 @@ export class WorkerManager {
   /** Keystrokes from an attached browser. */
   write(id: string, data: string) {
     const w = this.workers.get(id);
-    if (!w?.pty) return;
+    if (!w?.pty) return false;
     w.pty.write(data);
     let changed = this.typed(w);
     if (w.info.status === 'needs_input' && w.info.acked === false) {
@@ -1476,6 +1482,7 @@ export class WorkerManager {
       changed = true;
     }
     if (changed) this.emitUpdate(w);
+    return true;
   }
 
   /**

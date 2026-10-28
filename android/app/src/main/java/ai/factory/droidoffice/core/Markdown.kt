@@ -74,7 +74,8 @@ object Markdown {
     private val rule = Regex("""^\s{0,3}([-*_])(\s*\1){2,}\s*$""")
     private val fence = Regex("""^\s{0,3}(```+|~~~+)\s*([^\s`]*)""")
 
-    fun parse(source: String): List<Block> {
+    /** With [breaks], a line break inside a paragraph stays one, as the owner typed it, rather than joining the lines with a space. */
+    fun parse(source: String, breaks: Boolean = false): List<Block> {
         val lines = source.replace("\r\n", "\n").split('\n')
         val out = ArrayList<Block>()
         val para = StringBuilder()
@@ -139,7 +140,7 @@ object Markdown {
                     out += item("${m.groupValues[2]}.", m.groupValues[1], m.groupValues[3])
                 }
                 else -> {
-                    if (para.isNotEmpty()) para.append(' ')
+                    if (para.isNotEmpty()) para.append(if (breaks) '\n' else ' ')
                     para.append(line.trim())
                 }
             }

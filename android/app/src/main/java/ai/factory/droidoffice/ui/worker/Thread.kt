@@ -8,6 +8,7 @@ import androidx.compose.foundation.relocation.BringIntoViewRequester
 import androidx.compose.foundation.relocation.bringIntoViewRequester
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
@@ -37,6 +38,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -78,6 +80,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.compose.currentStateAsState
 import ai.factory.droidoffice.core.Asks
 import ai.factory.droidoffice.core.ClientMsg
+import ai.factory.droidoffice.core.DroidQueue
 import ai.factory.droidoffice.core.PendingAsk
 import ai.factory.droidoffice.core.ScreenState
 import ai.factory.droidoffice.core.Tags
@@ -163,10 +166,8 @@ internal fun Thread(
     modifier: Modifier,
     queued: ThreadQueue,
     queueRevision: Int,
-    /** False while this worker's receipts are still being read from the phone: they aren't matched against the thread until then. */
+    /** False while this worker's queued messages are still being read from the phone: they aren't matched against the thread until then. */
     queueReady: Boolean,
-    /** Why some receipts here aren't kept on the phone, said under them. */
-    queueNote: String?,
     onQueueChanged: () -> Unit,
     onTty: () -> Unit,
     /** Goes up when the owner sends a message from the composer: the thread follows the latest again. */
@@ -208,12 +209,25 @@ internal fun Thread(
     val showAsk = asking || menu?.pointer != null
     val busy = w.state.busy
     val rows = remember(state.entries, busy) { ThreadView.project(state.entries, busy) }
-    val pendingQueue = remember(queued, queueRevision, queueReady, state.sessionId, state.entries) {
-        if (queueReady) queued.sync(state.sessionId, state.entries) else queued.pending
+    // Droid's queue as its screen shows it, with the whole text of what this phone sent to it.
+    val droidQueue = remember(screen) { screen?.let(DroidQueue::read) }
+    var clock by remember(feed) { mutableLongStateOf(0L) }
+    var pendingQueue by remember(queued) { mutableStateOf(emptyList<ThreadQueue.Shown>()) }
+    var holding by remember(queued) { mutableStateOf(false) }
+    LaunchedEffect(queued, queueRevision, queueReady, state.sessionId, state.entries, droidQueue, clock) {
+        val before = queued.snapshot()
+        if (queueReady) queued.sync(state.sessionId, state.entries)
+        pendingQueue = queued.shown(droidQueue, System.currentTimeMillis())
+        holding = queued.pending.isNotEmpty()
+        if (queueReady && before != queued.snapshot()) onQueueChanged()
     }
-    // A sync can confirm a receipt, start a new session or move the sequence on: the owner of the
-    // receipts keeps them (on disk too) after each one, whatever changed.
-    LaunchedEffect(queued, queueReady, state.sessionId, state.entries) { if (queueReady) onQueueChanged() }
+    // A message sent to the queue that Droid never draws goes after a few seconds: look again until then.
+    LaunchedEffect(holding) {
+        while (holding) {
+            delay(1_000)
+            clock = System.currentTimeMillis()
+        }
+    }
     val list = rememberLazyListState()
     // What the owner opened, whether they're following and where they were reading survive a font,
     // density or theme change recreating the screen, for this office, floor and worker only.
@@ -283,8 +297,10 @@ internal fun Thread(
     // Following means staying at the bottom through anything that pushes it down: a new entry or
     // result, a queued turn, the question card, or a font, density or window change re-laying it out.
     LaunchedEffect(list, feed) {
-        snapshotFlow { (follow && anchor == null && !state.newerTrimmed && list.canScrollForward) to (list.isScrollInProgress && !autoScrolling) }
-            .collect { (behind, ownerScrolling) ->
+        // The viewport's size is in the key: the keyboard opening shrinks it over several frames, and
+        // once it settles, a list that couldn't reach the bottom while it moved tries again.
+        snapshotFlow { Triple(follow && anchor == null && !state.newerTrimmed && list.canScrollForward, list.isScrollInProgress && !autoScrolling, list.layoutInfo.viewportSize) }
+            .collect { (behind, ownerScrolling, _) ->
                 if (!behind) stuck = false
                 if (!behind || ownerScrolling || autoScrolling) return@collect
                 // A layout can lag the first scroll by a frame: try again, then say so with the strip.
@@ -378,11 +394,13 @@ internal fun Thread(
     }
 
     Column(modifier.tagged(Tags.Worker.THREAD)) {
-        Box(Modifier.weight(1f).fillMaxWidth().clipToBounds()) {
+        BoxWithConstraints(Modifier.weight(1f).fillMaxWidth().clipToBounds()) {
+            // On a wide screen the conversation keeps a reading width, centred, rather than lines across the whole window.
+            val side = maxOf(18.dp, (maxWidth - READING_WIDTH) / 2)
             LazyColumn(
                 state = list,
                 modifier = Modifier.fillMaxSize().tagged(Tags.Worker.THREAD_LIST),
-                contentPadding = PaddingValues(start = 18.dp, end = 18.dp, top = 4.dp, bottom = 16.dp),
+                contentPadding = PaddingValues(start = side, end = side, top = 4.dp, bottom = 16.dp),
             ) {
                 item(key = HEAD) { Head(w, state, connected, onEarlier = ::earlier, onRetry = ::retry, onTty = onTty) }
                 itemsIndexed(rows, key = { _, r -> r.key }, contentType = { _, r -> r::class }) { i, r ->
@@ -444,17 +462,16 @@ internal fun Thread(
                         }
                     }
                 }
-                // The last thing in the conversation, read like the rest of it: one quiet line until
-                // opened, so it never takes the screen from the messages or hides its own buttons.
+                // The messages Droid sends next, after the conversation, as the owner's own words waiting their turn.
                 if (pendingQueue.isNotEmpty()) item(key = QUEUED) {
-                    Receipts(
-                        pendingQueue, busy, queueNote, open[QUEUED] == true,
-                        onToggle = { flip(QUEUED) },
-                        onTty = onTty,
-                        onDismiss = {
-                            open.remove(QUEUED)
-                            queued.clear()
-                            onQueueChanged()
+                    QueuedMessages(
+                        pendingQueue,
+                        canClear = connected && !droidQueue.isNullOrEmpty(),
+                        onClear = {
+                            if (screen?.let(DroidQueue::read).isNullOrEmpty()) return@QueuedMessages
+                            if (!connection.send(ClientMsg.termInput(w.id, DroidQueue.CLEAR))) {
+                                scope.launch { snackbar.showSnackbar("Couldn't reach the office. The queue is unchanged.") }
+                            }
                         },
                     )
                 }
@@ -476,63 +493,51 @@ internal fun Thread(
 }
 
 /**
- * What this phone sent to Droid's queue that hasn't shown up in the conversation yet: a receipt, not
- * a claim, since no message says what Droid's queue holds now. Closed, one line with the count; open,
- * what's known about delivery, Raw TTY and Dismiss, then the messages themselves.
+ * The messages waiting in Droid's queue, oldest first: the owner's words on the right like their
+ * other messages, quieter, under a line that says how many and offers to clear them. A row Droid
+ * cut short shows what Droid shows, saying how many lines it left off.
  */
 @Composable
-private fun Receipts(pending: List<ThreadQueue.Prompt>, busy: Boolean, note: String?, isOpen: Boolean, onToggle: () -> Unit, onTty: () -> Unit, onDismiss: () -> Unit) {
-    val reveal = rememberReveal()
-    Column(Modifier.fillMaxWidth().padding(top = 16.dp).then(reveal.modifier).tagged(Tags.Worker.THREAD_QUEUED)) {
-        Row(
-            Modifier.fillMaxWidth().clip(RoundedCornerShape(4.dp)).disclosure(isOpen) {
-                if (!isOpen) reveal.ask()
-                onToggle()
-            }.tagged(Tags.Worker.THREAD_QUEUED_TOGGLE).heightIn(min = 44.dp).drawBehind {
-                drawLine(Palette.Border, Offset.Zero, Offset(size.width, 0f), 1.dp.toPx())
-            },
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
+private fun QueuedMessages(items: List<ThreadQueue.Shown>, canClear: Boolean, onClear: () -> Unit) {
+    Column(Modifier.fillMaxWidth().padding(top = 24.dp).tagged(Tags.Worker.THREAD_QUEUED)) {
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            Box(Modifier.weight(1f).height(1.dp).background(Palette.Border))
             Text(
-                "Queue request sent · ${pending.size}",
-                style = MaterialTheme.typography.bodyMedium.copy(fontSize = 13.5.sp, lineHeight = 19.sp, color = Palette.TextSecondary),
-                modifier = Modifier.weight(1f).tagged(Tags.Worker.THREAD_QUEUED_SUMMARY),
+                "QUEUED · ${items.size}", style = LocalOfficeType.current.eyebrow.copy(color = Palette.TextSecondary),
+                modifier = Modifier.padding(horizontal = 10.dp).semantics { liveRegion = LiveRegionMode.Polite },
             )
-            Icon(OfficeIcons.Chevron, null, Modifier.padding(start = 8.dp).size(14.dp).rotate(if (isOpen) 90f else 0f), tint = Palette.TextSecondary)
+            Box(Modifier.weight(1f).height(1.dp).background(Palette.Border))
         }
-        // Said even while closed: these receipts may not come back, and that's worth knowing now.
-        note?.let {
-            Text(
-                it, style = MaterialTheme.typography.bodySmall.copy(fontSize = 12.sp, color = Palette.Warning),
-                modifier = Modifier.padding(bottom = 6.dp).tagged(Tags.Worker.THREAD_QUEUED_UNSAVED),
-            )
-        }
-        if (isOpen) {
-            Column(Modifier.fillMaxWidth().padding(bottom = 4.dp)) {
-                if (!busy) Text(
-                    "Delivery isn’t confirmed here. Check Raw TTY before sending again.",
-                    style = MaterialTheme.typography.bodySmall,
-                    modifier = Modifier.padding(bottom = 10.dp),
-                )
-                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    QuietButton("Open Raw TTY", OfficeIcons.Terminal, Tags.Worker.THREAD_QUEUED_TTY, true, onTty, tall = true)
-                    QuietButton(if (pending.size == 1) "Dismiss receipt" else "Dismiss receipts", Icons.Default.Close, Tags.Worker.THREAD_QUEUED_DISMISS, true, onDismiss, tall = true)
+        items.forEachIndexed { i, q ->
+            Box(Modifier.fillMaxWidth().padding(start = 48.dp, top = 10.dp), contentAlignment = Alignment.CenterEnd) {
+                Column(Modifier.queuedBlock().tagged(Tags.Worker.threadQueued(i + 1))) {
+                    Text(
+                        q.text.ifEmpty { "Image attached" },
+                        style = MaterialTheme.typography.bodyMedium.copy(fontSize = 15.sp, lineHeight = 22.sp, color = Palette.TextSecondary),
+                        maxLines = USER_LINES, overflow = TextOverflow.Ellipsis,
+                    )
+                    val more = when {
+                        q.more > 0 -> "${q.more} more line${if (q.more == 1) "" else "s"}"
+                        q.preview -> "Shortened"
+                        q.hasImage && q.text.isNotEmpty() -> "Image attached"
+                        else -> null
+                    }
+                    more?.let { Text(it, style = MaterialTheme.typography.bodySmall.copy(fontSize = 12.sp, color = Palette.TextTertiary), modifier = Modifier.padding(top = 2.dp)) }
                 }
-                Text(
-                    "Dismissing clears this phone’s receipt only. It doesn’t remove anything from Droid’s queue.",
-                    style = MaterialTheme.typography.bodySmall.copy(fontSize = 12.sp, color = Palette.TextTertiary),
-                    modifier = Modifier.padding(top = 8.dp, bottom = 6.dp),
-                )
-                for (prompt in pending) Text(
-                    prompt.text.ifEmpty { "Image attached" },
-                    style = MaterialTheme.typography.bodySmall.copy(color = Palette.TextSecondary),
-                    maxLines = 6, overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.fillMaxWidth().padding(top = 6.dp).userBlock(),
-                )
             }
+        }
+        Row(Modifier.fillMaxWidth().padding(top = 10.dp), verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                if (items.size == 1) "Sent once this turn is over." else "Sent in order once this turn is over.",
+                style = MaterialTheme.typography.bodySmall.copy(fontSize = 12.sp, color = Palette.TextTertiary), modifier = Modifier.weight(1f),
+            )
+            if (canClear) QuietButton("Clear queue", Icons.Default.Close, Tags.Worker.THREAD_QUEUED_CLEAR, true, onClear)
         }
     }
 }
+
+/** A message waiting its turn: the owner's block, hollow, so it reads as not sent yet. */
+private fun Modifier.queuedBlock() = this.border(1.dp, Palette.BorderStrong, RoundedCornerShape(4.dp)).padding(horizontal = 12.dp, vertical = 9.dp)
 
 /** Brings what was just opened into view once it's laid out, as far as it fits, without following the bottom. */
 private class Reveal(val modifier: Modifier, val ask: () -> Unit)
@@ -752,7 +757,7 @@ private fun Message(w: WorkerInfo, m: ThreadView.Message, all: Boolean, onMore: 
             Column(Modifier.userBlock()) {
                 var clipped by remember(e.id) { mutableStateOf(false) }
                 SelectionContainer {
-                    MarkdownText(e.text.orEmpty(), if (all) Modifier else Modifier.clampLines(USER_LINES) { if (clipped != it) clipped = it }, surface = Palette.SurfaceHover)
+                    MarkdownText(e.text.orEmpty(), if (all) Modifier else Modifier.clampLines(USER_LINES) { if (clipped != it) clipped = it }, surface = Palette.SurfaceHover, breaks = true)
                 }
                 if (all || clipped) {
                     Row(

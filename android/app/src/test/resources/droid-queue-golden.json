@@ -1,0 +1,94 @@
+{
+  "cases": [
+    {
+      "name": "two queued during a turn, one cut short and one with more lines",
+      "rows": [
+        "   Execute sleep 45",
+        "",
+        "   Queued messages:",
+        "   This is a deliberately long queued message to see how Droid shows a queued item that r…",
+        "                                                                                          ",
+        "   Line one of a multi-line queued message (1 more line)                                  ",
+        "   Ctrl+R to modify queue   Ctrl+G to pull top   Ctrl+X to clear queue",
+        "",
+        " ⠋ Executing...  (Press ESC to stop)",
+        "",
+        " Auto (High) · allow all commands                                    DroidProxy: GPT 6.1 Terra (Low)",
+        "╭───────────────────────────────────────────────────────────────────────────────────────────────────╮",
+        "│ > Enter to steer · Ctrl+Enter to queue                                                            │",
+        "╰───────────────────────────────────────────────────────────────────────────────────────────────────╯",
+        "[⏱ 4m 20s, context: 3%] ? for help                                                      MCP ✗ | IDE ◌",
+        "~/droid-office | main"
+      ],
+      "expected": [
+        { "text": "This is a deliberately long queued message to see how Droid shows a queued item that r", "cut": true, "more": 0 },
+        { "text": "Line one of a multi-line queued message", "cut": false, "more": 1 }
+      ]
+    },
+    {
+      "name": "a turn with nothing queued",
+      "rows": [
+        "   Run sleep 40 in a shell command, then say done.",
+        " ⠋ Executing...  (Press ESC to stop)",
+        "",
+        " Auto (High) · allow all commands                                   DroidProxy: GPT 6.1 Terra (Low)",
+        "╭──────────────────────────────────────────────────────────────────────────────────────────────────╮",
+        "│ > Enter to steer · Ctrl+Enter to queue                                                           │",
+        "╰──────────────────────────────────────────────────────────────────────────────────────────────────╯",
+        "[⏱ 3m 20s, context: 3%] ? for help                                                     MCP ✗ | IDE ◌",
+        "~/droid-office | main"
+      ],
+      "expected": []
+    },
+    {
+      "name": "at rest, with a reply that mentions a queue",
+      "rows": [
+        "⛬  Queued messages:",
+        "   apple",
+        "",
+        " Auto (High) · allow all commands                                   DroidProxy: GPT 6.1 Terra (Low)",
+        "╭──────────────────────────────────────────────────────────────────────────────────────────────────╮",
+        "│ >                                                                                                │",
+        "╰──────────────────────────────────────────────────────────────────────────────────────────────────╯",
+        "[⏱ 2m 4s, context: 3%] ? for help                                                      MCP ✗ | IDE ◌"
+      ],
+      "expected": []
+    },
+    {
+      "name": "an idle reply quoting both queue labels",
+      "rows": [
+        "   Queued messages:",
+        "   example message",
+        "   Ctrl+X to clear queue",
+        "",
+        " Auto (High) · allow all commands",
+        "╭──────────────────────────────────────────────────╮",
+        "│ >                                                │",
+        "╰──────────────────────────────────────────────────╯"
+      ],
+      "expected": []
+    },
+    {
+      "name": "a dialog's box, not the input box",
+      "rows": [
+        "⛬  Ready.",
+        "╭─────────────────────────────────────────────────╮",
+        "│ DROID STATUS                                    │",
+        "│ 🤖 Droid Version:     v0.251.0                   │",
+        "╰─────────────────────────────────────────────────╯"
+      ],
+      "expected": null
+    },
+    {
+      "name": "no screen to read",
+      "rows": [],
+      "expected": null
+    }
+  ],
+  "matches": [
+    { "row": { "text": "This is a deliberately long queued message to see how Droid shows a queued item that r", "cut": true, "more": 0 }, "text": "This is a deliberately long queued message to see how Droid shows a queued item that runs past the width", "shows": true },
+    { "row": { "text": "Line one of a multi-line queued message", "cut": false, "more": 1 }, "text": "Line one of a multi-line queued message\nline two of it", "shows": true },
+    { "row": { "text": "Line one", "cut": false, "more": 0 }, "text": "Line one of a multi-line queued message", "shows": false },
+    { "row": { "text": "say   apple", "cut": false, "more": 0 }, "text": "say apple", "shows": true }
+  ]
+}

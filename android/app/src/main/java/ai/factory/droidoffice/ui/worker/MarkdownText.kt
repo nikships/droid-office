@@ -67,8 +67,8 @@ import ai.factory.droidoffice.ui.theme.Palette
  * what the message sits on, which a table's overflow fade blends into.
  */
 @Composable
-internal fun MarkdownText(source: String, modifier: Modifier = Modifier, compact: Boolean = false, surface: Color = Palette.Bg) {
-    val blocks = remember(source) { Markdown.parse(source) }
+internal fun MarkdownText(source: String, modifier: Modifier = Modifier, compact: Boolean = false, surface: Color = Palette.Bg, breaks: Boolean = false) {
+    val blocks = remember(source, breaks) { Markdown.parse(source, breaks) }
     val mono = LocalOfficeType.current.mono
     val body = if (compact) MaterialTheme.typography.bodyMedium else MaterialTheme.typography.bodyLarge.copy(fontSize = 15.sp, lineHeight = 22.sp)
     Column(modifier, verticalArrangement = Arrangement.spacedBy(if (compact) 3.dp else 8.dp)) {

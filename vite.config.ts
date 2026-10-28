@@ -32,7 +32,8 @@ export default defineConfig({
       // Vite's port, and the office's Origin check would turn the socket away.
       '/api': { target: 'http://localhost:4600', changeOrigin: false },
       '/ws': { target: 'ws://localhost:4600', ws: true },
-      '/whiteboard': { target: 'http://localhost:4600', changeOrigin: false },
+      // With the slash: a bare prefix would also send the client's own whiteboard-*.ts modules to the office.
+      '/whiteboard/': { target: 'http://localhost:4600', changeOrigin: false },
     },
   },
 });

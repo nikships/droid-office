@@ -1,16 +1,19 @@
 import type { ClientMsg, ServerMsg, WorkerInfo } from '../../shared/protocol';
 import { isAsleep, isBusy } from '../../shared/status';
 import { presentThread, threadArguments, type ThreadRow } from '../../shared/thread-presentation';
+import { CLEAR_DROID_QUEUE, readDroidQueue } from '../../shared/droid-queue';
+import { slashCommands, slashOf, slashRefusal, slashSuggestions, type DroidSlashCommand, type SlashCommand } from '../../shared/slash-commands';
 import { ThreadQueue } from '../../shared/thread-queue';
 import type { Net } from '../net';
 import { ThreadHistory } from '../thread-history';
 import { TeamThread, TeamThreadPaint, teamThreadVisible } from '../team-thread';
 import { h, STATUS_LABEL } from './dom';
-import { colorDot, toggle } from './kit';
+import { colorDot } from './kit';
 import { markdown } from './markdown';
 import { promptImages } from './images';
 import { modelBadgeNode } from './models';
 import { copy as copyText } from './clipboard';
+import { withToken } from '../token';
 
 export interface WorkerThread {
   element: HTMLElement;
@@ -28,6 +31,8 @@ export interface ThreadOptions {
   onDraft(text: string): void;
   send(msg: ClientMsg): Promise<string | undefined>;
   raw(): void;
+  /** The worker's terminal as text, one string per row, or undefined before it has drawn one. */
+  screen?(): readonly string[] | undefined;
   /** Current floor only; return no workers once the mounted floor is no longer current. */
   team?(): readonly WorkerInfo[];
   /** Open this child's Thread view, without starting or resuming a worker. */
@@ -46,6 +51,8 @@ export function mountWorkerThread(net: Net, opts: ThreadOptions): WorkerThread {
   let resuming = false;
   let received = false;
   let error = '';
+  /** Why the last thing the owner tried wasn't sent: shown until they change the draft. */
+  let told = '';
   let pending: { request: string; before?: number; at: number } | undefined;
   let lastReadAt = 0;
   const history = new ThreadHistory();
@@ -61,14 +68,14 @@ export function mountWorkerThread(net: Net, opts: ThreadOptions): WorkerThread {
   const earlier = h('button.btn.sm.wt-earlier.hidden', { type: 'button', onclick: () => read(history.entries[0]?.seq) }, 'Load earlier messages');
   const list = h('div.wt-list');
   const empty = h('div.wt-empty', { role: 'status' }, 'Reading the conversation…');
-  const queuedNotice = h('details.wt-queued', { hidden: true });
+  const queuedBox = h('div.wt-queued', { hidden: true });
   const team = new TeamThread();
   const teamPaint = new TeamThreadPaint();
   const teamTitle = h('span', {}, 'Team activity');
   const teamBody = h('div.wt-team-body');
   const teamLimit = h('p.wt-team-note', { hidden: true });
   const teamSection = h('details.wt-team', { hidden: true }, h('summary', {}, teamTitle, h('span.wt-chevron', { 'aria-hidden': true }, '›')), teamBody, teamLimit);
-  const scroll = h('div.wt-scroll', { tabindex: 0, 'aria-label': 'Conversation history' }, earlier, list, empty, queuedNotice, opts.question);
+  const scroll = h('div.wt-scroll', { tabindex: 0, 'aria-label': 'Conversation history' }, earlier, list, empty, queuedBox, opts.question);
   const latest = h(
     'button.btn.sm.wt-latest.hidden',
     {
@@ -85,49 +92,54 @@ export function mountWorkerThread(net: Net, opts: ThreadOptions): WorkerThread {
   );
   const latestAnchor = h('div.wt-latest-anchor', {}, latest);
   let queueKey = '';
-  const paintQueue = () => {
-    const messages = queued.sync(worker.sessionId, history.entries);
-    if (messages.length) localQueues.set(opts.queueKey, queued);
-    else localQueues.delete(opts.queueKey);
-    try {
-      if (messages.length) sessionStorage.setItem(opts.queueKey, JSON.stringify(queued));
-      else sessionStorage.removeItem(opts.queueKey);
-    } catch {}
-    const key = JSON.stringify([messages, connected]);
-    if (key === queueKey) return;
-    queueKey = key;
-    queuedNotice.hidden = !messages.length;
-    if (!messages.length) {
-      queuedNotice.open = false;
-      queuedNotice.replaceChildren();
+  // Keys go straight to the attached terminal, as Raw TTY types them: an office before term.input
+  // confirmations would answer a confirmed send with a refusal after typing the keys anyway.
+  const typeKeys = (data: string) => net.send({ t: 'term.input', workerId: worker.id, data });
+  const clearQueue = () => {
+    const rows = opts.screen?.();
+    if (!rows || !readDroidQueue(rows)?.length) {
+      paintQueue();
       return;
     }
-    queuedNotice.replaceChildren(
-      h('summary', {}, h('span.wt-queue-title', { 'aria-live': 'polite' }, `Queue request sent${messages.length > 1 ? ` · ${messages.length}` : ''}`), h('span.wt-chevron', { 'aria-hidden': true }, '›')),
-      h(
-        'div.wt-queue-body',
-        {},
-        h('p', {}, 'Delivery isn’t confirmed here. Check Raw TTY before sending again.'),
-        h(
-          'div.wt-queue-actions',
-          {},
-          h('button.btn', { type: 'button', disabled: !connected, onclick: opts.raw }, 'Open Raw TTY'),
-          h(
-            'button.btn.ghost',
-            {
-              type: 'button',
-              onclick: () => {
-                queued.clear();
-                paintQueue();
-              },
-            },
-            messages.length === 1 ? 'Dismiss receipt' : 'Dismiss receipts',
-          ),
-        ),
-        h('p', {}, 'Dismiss only hides these receipts here. Droid’s queue is unchanged.'),
-        ...messages.map((message) => h('p.wt-queue-message', {}, message.text || 'Image attached')),
-      ),
+    if (!typeKeys(CLEAR_DROID_QUEUE)) told = 'Disconnected. Nothing was sent.';
+    updateControls();
+  };
+  // Droid's own queue, read off its screen, is what waits: messages sent from here fill in the rows it cut short.
+  const paintQueue = () => {
+    queued.sync(worker.sessionId, history.entries);
+    const rows = opts.screen?.();
+    const droid = rows ? readDroidQueue(rows) : undefined;
+    const shown = queued.shown(droid);
+    if (queued.pending.length) localQueues.set(opts.queueKey, queued);
+    else localQueues.delete(opts.queueKey);
+    try {
+      if (queued.pending.length) sessionStorage.setItem(opts.queueKey, JSON.stringify(queued));
+      else sessionStorage.removeItem(opts.queueKey);
+    } catch {}
+    const canClear = connected && !!droid?.length;
+    const key = JSON.stringify([shown, canClear]);
+    if (key === queueKey) return;
+    queueKey = key;
+    const stick = received && !inspecting && atBottom();
+    queuedBox.hidden = !shown.length;
+    queuedBox.replaceChildren(
+      ...(shown.length
+        ? [
+            h('div.wt-queued-title', { 'aria-live': 'polite' }, h('span', {}, `Queued · ${shown.length}`)),
+            ...shown.map((message) => {
+              const more = message.more > 0 ? `${message.more} more line${message.more === 1 ? '' : 's'}` : message.preview ? 'Shortened' : message.hasImage && message.text ? 'Image attached' : '';
+              return h('div.wt-entry.user.wt-queued-message', { 'data-queued': message.key }, h('div.wt-user-text', {}, message.text || 'Image attached'), more ? h('div.wt-queued-more', {}, more) : null);
+            }),
+            h(
+              'div.wt-queued-foot',
+              {},
+              h('span', {}, shown.length === 1 ? 'Sent once this turn is over.' : 'Sent in order once this turn is over.'),
+              canClear ? h('button.btn.sm.ghost', { type: 'button', onclick: clearQueue }, 'Clear queue') : null,
+            ),
+          ]
+        : []),
     );
+    if (stick) follow();
   };
   const notice = h('p.wt-notice', { role: 'status' });
   const retry = h(
@@ -161,6 +173,11 @@ export function mountWorkerThread(net: Net, opts: ThreadOptions): WorkerThread {
   input.value = opts.draft;
   input.addEventListener('input', () => {
     opts.onDraft(input.value);
+    told = '';
+    slashClosed = false;
+    slashCursor = 0;
+    if (input.value.trimStart().startsWith('/')) loadSlash();
+    paintSlash();
     updateControls();
   });
   const images = promptImages(input);
@@ -170,11 +187,71 @@ export function mountWorkerThread(net: Net, opts: ThreadOptions): WorkerThread {
     file.value = '';
   });
   const attach = h('button.btn.sm.ghost', { type: 'button', onclick: () => file.click() }, 'Attach pictures');
-  const queue = toggle({ label: 'Queue after this turn', checked: false });
+  // While a turn runs, Send steers it (Droid reads the message now) and Queue holds it for after the turn.
+  const queue = h('button.btn.wt-queue', { type: 'button', title: 'Send once this turn is over', onclick: () => void submit(true) }, 'Queue');
   const send = h('button.btn.primary', { type: 'submit' }, 'Send');
-  const stop = h('button.btn.wt-stop', { type: 'button', 'aria-label': 'Stop turn', title: 'Stop turn', onclick: () => void stopTurn() }, h('span.wt-stop-label', {}, 'Stop'), h('span.wt-stop-symbol', { 'aria-hidden': true }, '■'));
-  const hint = h('span.wt-send-hint', {}, 'Enter to send · Shift+Enter for a new line');
-  const form = h('form.wt-composer', {}, images.element, file, h('div.wt-compose-input', {}, input, h('div.wt-send-buttons', {}, stop, send)), h('div.wt-compose-actions', {}, attach, queue, hint));
+  // Droid's slash commands, offered while a draft is a `/` and the start of a name.
+  const slashMenu = h('div.wt-slash', { role: 'listbox', 'aria-label': 'Slash commands', hidden: true });
+  let slashShown: SlashCommand[] = [];
+  let slashCursor = 0;
+  let slashClosed = false;
+  // The built-in commands at once; the worker's skills and custom commands once its droid lists them.
+  let slashList = slashCommands();
+  let slashAsked = 0;
+  const loadSlash = () => {
+    if (worker.kind !== 'agent' || Date.now() - slashAsked < 60_000) return;
+    slashAsked = Date.now();
+    fetch(withToken(`/api/agents/droid/commands?worker=${encodeURIComponent(worker.id)}`), { credentials: 'same-origin', cache: 'no-store' })
+      .then((res) => {
+        if (!res.ok) throw new Error('Could not load slash commands');
+        return res.json() as Promise<{ commands?: unknown }>;
+      })
+      .then((body) => {
+        if (disposed || !Array.isArray(body?.commands)) return;
+        slashList = slashCommands(body.commands as DroidSlashCommand[]);
+        paintSlash();
+      })
+      .catch(() => {
+        slashAsked = 0;
+      });
+  };
+  const pickSlash = (command: SlashCommand) => {
+    input.value = `/${command.name} `;
+    opts.onDraft(input.value);
+    told = '';
+    input.focus();
+    input.setSelectionRange(input.value.length, input.value.length);
+    paintSlash();
+    updateControls();
+  };
+  const paintSlash = () => {
+    slashShown = slashClosed || input.disabled ? [] : slashSuggestions(input.value, slashList);
+    slashCursor = Math.min(slashCursor, Math.max(0, slashShown.length - 1));
+    slashMenu.hidden = !slashShown.length;
+    input.setAttribute('aria-expanded', String(!!slashShown.length));
+    slashMenu.replaceChildren(
+      ...slashShown.map((command, i) =>
+        h(
+          'button.wt-slash-item',
+          {
+            type: 'button',
+            role: 'option',
+            tabindex: -1,
+            'aria-selected': String(i === slashCursor),
+            onmousedown: (event: Event) => event.preventDefault(),
+            onclick: () => pickSlash(command),
+          },
+          h('span.wt-slash-name', {}, `/${command.name}`),
+          h('span.wt-slash-desc', { title: command.argumentHint ? `${command.description}\n/${command.name} ${command.argumentHint}` : command.description }, command.description),
+          command.kind === 'tty' ? h('span.wt-slash-tag', { title: 'Opens one of Droid’s dialogs, in Raw TTY' }, 'Raw TTY') : null,
+          command.source ? h('span.wt-slash-tag', { title: command.source === 'skill' ? 'One of this worker’s skills' : 'A custom command' }, command.source === 'skill' ? 'Skill' : 'Command') : null,
+        ),
+      ),
+    );
+  };
+  const stop = h('button.btn.wt-stop', { type: 'button', 'aria-label': 'Stop turn', title: 'Stop turn', onclick: () => stopTurn() }, h('span.wt-stop-label', {}, 'Stop'), h('span.wt-stop-symbol', { 'aria-hidden': true }, '■'));
+  const hint = h('span.wt-send-hint');
+  const form = h('form.wt-composer', {}, slashMenu, images.element, file, h('div.wt-compose-input', {}, input, h('div.wt-send-buttons', {}, stop, queue, send)), h('div.wt-compose-actions', {}, attach, hint));
   const element = h('section.worker-thread', { 'aria-label': `${worker.name} thread` }, head, teamSection, scroll, latestAnchor, h('div.wt-feedback', {}, notice, retry, raw, resume), form);
   images.dropZone(form);
   const nodes = new Map<string, { key: string; node: HTMLElement; sourceIds: string[] }>();
@@ -643,17 +720,26 @@ export function mountWorkerThread(net: Net, opts: ThreadOptions): WorkerThread {
     waitingShown = waiting;
     input.disabled = !allowed || sending || waiting;
     attach.disabled = input.disabled;
-    send.disabled = input.disabled || (queue.input.checked && !received);
-    queue.input.disabled = input.disabled || !received;
-    stop.hidden = !isBusy(worker.status) && !waiting;
+    const busy = isBusy(worker.status);
+    send.disabled = input.disabled;
+    queue.hidden = !busy;
+    queue.disabled = input.disabled || !received || !!slashOf(input.value);
+    stop.hidden = !busy && !waiting;
     stop.disabled = !allowed || sending;
-    send.textContent = sending ? 'Sending…' : queue.input.checked ? 'Queue' : 'Send';
+    send.textContent = sending ? 'Sending…' : busy ? 'Send now' : 'Send';
+    send.title = busy ? `Steer ${worker.name}: it reads this now, during the turn` : '';
+    input.placeholder = busy ? `Steer ${worker.name}, or queue for after this turn…` : `Reply to ${worker.name}…`;
+    hint.replaceChildren(
+      ...(busy
+        ? [h('span.key', {}, 'Enter'), ' steer · ', h('span.key', {}, 'Ctrl Enter'), ' queue · ', h('span.key', {}, '⇧ Enter'), ' new line']
+        : [h('span.key', {}, 'Enter'), ' send · ', h('span.key', {}, '⇧ Enter'), ' new line · ', h('span.key', {}, '/'), ' commands']),
+    );
     earlier.disabled = !!pending || !connected;
-    retry.classList.toggle('hidden', !error || error.startsWith('Slash commands'));
+    retry.classList.toggle('hidden', !error);
     retry.disabled = !connected || !!pending;
     empty.classList.toggle('error', !!error && !history.entries.length);
     if (!history.entries.length) paintEmpty();
-    notice.textContent = connected ? error || (isAsleep(worker.status) ? 'Resume this worker to send another message.' : '') : '';
+    notice.textContent = connected ? error || told || (isAsleep(worker.status) ? 'Resume this worker to send another message.' : '') : '';
     raw.classList.toggle('hidden', !connected || !error);
     resume.hidden = !isAsleep(worker.status);
     resume.disabled = !active || !connected || !!worker.lost || resuming;
@@ -697,14 +783,15 @@ export function mountWorkerThread(net: Net, opts: ThreadOptions): WorkerThread {
     }
     updateControls();
   };
-  const submit = async () => {
-    if (send.disabled || sending) return;
-    if (input.value.trimStart().startsWith('/')) {
-      error = 'Slash commands open CLI dialogs. Your draft is kept; run this command in Raw TTY.';
+  const submit = async (queueSend = false) => {
+    if ((queueSend ? queue.disabled || queue.hidden : send.disabled) || sending) return;
+    const text = input.value.trim();
+    const refused = slashRefusal(text, worker.name, isBusy(worker.status));
+    if (refused) {
+      told = refused;
       updateControls();
       return;
     }
-    const text = input.value.trim();
     if (!text && !images.ids().length && !images.busy()) return input.focus();
     sending = true;
     updateControls();
@@ -714,7 +801,6 @@ export function mountWorkerThread(net: Net, opts: ThreadOptions): WorkerThread {
       updateControls();
       return;
     }
-    const queueSend = queue.input.checked;
     const queueReceipt = queueSend && isBusy(worker.status);
     const after = queued.sequence;
     const hasImage = images.ids().length > 0;
@@ -725,19 +811,21 @@ export function mountWorkerThread(net: Net, opts: ThreadOptions): WorkerThread {
       images.take();
       input.value = '';
       opts.onDraft('');
-      queue.input.checked = false;
+      told = '';
+      paintSlash();
       if (history.historical) history.clear(worker.sessionId);
       follow();
       read();
     }
     error = result ?? '';
     updateControls();
+    // Droid answers most of its slash commands with a dialog, which only its terminal shows.
+    if (!result && slashOf(text)?.command?.kind === 'tty') opts.raw();
   };
-  const stopTurn = async () => {
+  const stopTurn = () => {
     if (stop.disabled) return;
     // Escape is the CLI's own cancel path, and requires the normal worker attachment.
-    const result = await opts.send({ t: 'term.input', workerId: worker.id, data: '\u001b' });
-    error = result ?? '';
+    told = typeKeys('\u001b') ? '' : 'Disconnected. Nothing was sent.';
     updateControls();
   };
   form.addEventListener('submit', (event) => {
@@ -745,16 +833,39 @@ export function mountWorkerThread(net: Net, opts: ThreadOptions): WorkerThread {
     void submit();
   });
   input.addEventListener('keydown', (event) => {
-    if (event.key === 'Enter' && !event.shiftKey && !event.isComposing) {
+    if (event.isComposing) return;
+    if (slashShown.length) {
+      const typed = slashOf(input.value)?.name;
+      if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+        event.preventDefault();
+        slashCursor = (slashCursor + (event.key === 'ArrowDown' ? 1 : slashShown.length - 1)) % slashShown.length;
+        paintSlash();
+        return;
+      }
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        event.stopPropagation();
+        slashClosed = true;
+        paintSlash();
+        return;
+      }
+      // Tab, or Enter on a name only partly typed, completes it; Enter on a whole name sends it.
+      if (event.key === 'Tab' || (event.key === 'Enter' && !event.shiftKey && slashShown[slashCursor].name !== typed)) {
+        event.preventDefault();
+        pickSlash(slashShown[slashCursor]);
+        return;
+      }
+    }
+    if (event.key === 'Enter' && !event.shiftKey) {
       event.preventDefault();
-      void submit();
+      void submit((event.ctrlKey || event.metaKey) && isBusy(worker.status));
     }
   });
-  queue.input.addEventListener('change', updateControls);
   const off = net.onMessage(receive);
   const timer = setInterval(() => {
     if (!active || !connected || document.hidden) return;
     readTeam();
+    paintQueue();
     if (pending && Date.now() - pending.at > 8000) {
       pending = undefined;
       error = 'The office did not return this conversation. Retry, or use Raw TTY on an older office.';
@@ -808,6 +919,7 @@ export function mountWorkerThread(net: Net, opts: ThreadOptions): WorkerThread {
         net.send({ t: 'worker.attach', workerId: worker.id });
         head.append(opts.controls);
         read();
+        loadSlash();
       } else net.send({ t: 'worker.detach', workerId: worker.id });
       updateControls();
       readTeam();
