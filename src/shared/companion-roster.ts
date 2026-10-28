@@ -30,7 +30,8 @@ export function companionRoster(workers: readonly WorkerInfo[], filter: RosterFi
       seen.add(id);
       id = byId.get(id)?.lead;
     }
-    if (!id) parents.set(w.id, w.lead);
+    // Only a member of the cycle loses its parent; valid descendants retain their supervision.
+    if (id !== w.id) parents.set(w.id, w.lead);
   }
   const children = new Map<string, WorkerInfo[]>();
   for (const w of ordered) {

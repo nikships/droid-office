@@ -71,6 +71,27 @@ test('prototype-like floor IDs are ordinary isolated workspaces', () => {
   assert.equal(Object.getPrototypeOf(state.floors), Object.prototype);
 });
 
+test('valid descendants remain under a lead whose own supervision is malformed', () => {
+  for (const ancestors of [[worker('a', { lead: 'a' })], [worker('a', { lead: 'b' }), worker('b', { lead: 'a' })]]) {
+    const workers = [...ancestors, worker('c', { lead: 'a', status: 'needs_input' }), worker('d', { lead: 'c' })];
+    const rows = companionRoster(workers);
+    assert.equal(rows.length, workers.length);
+    assert.equal(rows.find((r) => r.worker.id === 'a')?.depth, 0);
+    assert.equal(rows.find((r) => r.worker.id === 'c')?.depth, 1);
+    assert.equal(rows.find((r) => r.worker.id === 'c')?.parentId, 'a');
+    assert.equal(rows.find((r) => r.worker.id === 'd')?.depth, 2);
+    assert.equal(rows.find((r) => r.worker.id === 'a')?.descendantCount, 2);
+    assert.deepEqual(
+      companionRoster(workers, {}, new Set(['a'])).map((r) => r.worker.id),
+      ancestors.map((w) => w.id),
+    );
+    assert.deepEqual(
+      companionRoster(workers, { query: 'd' }).map((r) => r.worker.id),
+      ['a', 'c', 'd'],
+    );
+  }
+});
+
 test('reconciliation cannot select an unpinned worker and preserves an intentional roster view', () => {
   let state = reduceCompanionWorkspace(createCompanionWorkspace(), { type: 'open', floor: 'one', workerId: 'pinned' });
   state.floors.one!.active = 'unpinned';
