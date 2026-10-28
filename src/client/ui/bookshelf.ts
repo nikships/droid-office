@@ -1,5 +1,5 @@
 import { isDocPath, isEditablePath, resolveDocLink, type DocFile, type DocList, type DocSaveResult, type DocSearchHit, type DocSearchResults, type DocText } from '../../shared/docs';
-import { withToken } from '../token';
+import { officeFetch, officeUrl } from '../office-http';
 import { claimEscape, clip, h, openModal, setDoing, timeAgo, toast } from './dom';
 import type { CodeEditor, CodeEditorCursor } from './editor';
 import { mountWikiTab, type WikiTab } from './factory-wiki';
@@ -140,7 +140,7 @@ export function jumpTo(page: HTMLElement, hash: string) {
 }
 
 async function getJson<T>(url: string): Promise<T> {
-  const r = await fetch(withToken(url), { credentials: 'same-origin' });
+  const r = await officeFetch(url, { credentials: 'same-origin' });
   if (!r.ok) throw new Error((await r.json().catch(() => null))?.error ?? `HTTP ${r.status}`);
   return r.json() as Promise<T>;
 }
@@ -155,7 +155,7 @@ class SaveConflictError extends Error {
 }
 
 async function putFileJson(url: string, body: { path: string; text: string; baseMtime?: number }): Promise<DocSaveResult> {
-  const r = await fetch(withToken(url), {
+  const r = await officeFetch(url, {
     method: 'PUT',
     credentials: 'same-origin',
     headers: { 'content-type': 'application/json' },
@@ -995,7 +995,7 @@ export function openBookshelf(deps: ShelfDeps) {
     }
     for (const img of body.querySelectorAll<HTMLImageElement>('img[src]')) {
       const to = resolveDocLink(path, img.getAttribute('src') ?? '');
-      if (to) img.src = withToken(`/api/docs/picture?${q({ path: to.path })}`);
+      if (to) img.src = officeUrl(`/api/docs/picture?${q({ path: to.path })}`);
     }
   }
 

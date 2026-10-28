@@ -1,5 +1,5 @@
 import type { Net } from '../net';
-import { store, type Settings, type Sidearm } from '../state';
+import { loadSettings, store, type Settings, type Sidearm } from '../state';
 import { askNotifyPermission, notifyPermission, type DesktopNotifier } from '../notify';
 import { SUBAGENT_MAX_PER_LEAD, type AgentChoice, type SubagentSettings } from '../../shared/protocol';
 import { SETTINGS_CARDS, SETTINGS_PANES, searchSettings, settingsPaneAfter, type SettingsCardTitle, type SettingsPane } from '../../shared/settings-nav';
@@ -62,6 +62,37 @@ const group = (title: string | null, ...rows: Node[]) => h('div.settings-group',
 
 /** A setting's description, its text set by whoever paints it. */
 const desc = (text = '') => h('small', {}, text);
+
+/** What each pane is about on this device only: a companion opens Settings without them. */
+const COMPANION_HIDDEN_PANES = new Set<SettingsPane>(['you', 'sound', 'graphics', 'notify']);
+const PAIRING_HOST_ONLY = 'Pairing a phone or a browser, and forgetting one, is done on the office’s own computer (Settings → Phone & web there). A paired device cannot pair or unpair devices, so a lost one can’t lock you out.';
+const HOT_RELOAD_HOST_ONLY = 'Source hot reload rebuilds the office from source on its own computer, so it is only offered there.';
+
+/** Why a setting isn't offered here. */
+const hostOnly = (text: string) => h('p.note.info.host-only', {}, text);
+
+/**
+ * Settings for a companion: the office-wide panes (workers, subagents, connections, office, phone & web),
+ * without what belongs to the 3D office on its own screen (your character, sound, display, browser
+ * notifications) and with pairing and source hot reload explained as the office computer's.
+ */
+export function openOfficeSettings(net: Net, opts: { first?: SettingsPane; hireForSetup?: () => void } = {}) {
+  openSettings(
+    net,
+    loadSettings(),
+    () => {},
+    () => {},
+    () => {},
+    () => {},
+    null,
+    undefined,
+    opts.first,
+
+    opts.hireForSetup,
+    undefined,
+    true,
+  );
+}
 
 /** Where Settings was last, so it opens there again. */
 let lastPane: SettingsPane = 'you';
@@ -134,11 +165,13 @@ export function openSettings(
   onCharacter: () => void,
   previewSound: () => void,
   previewAlerts: () => void,
-  notifier: DesktopNotifier,
+  notifier: DesktopNotifier | null,
   outside?: { now: string; live: boolean },
   first?: SettingsPane,
   hireForSetup?: () => void,
   renderer?: { remastered: () => boolean; set: (remastered: boolean) => void; hdr: () => boolean; setHdr: (on: boolean) => void; hdrNote: () => string },
+  /** Opened from a companion (another computer's browser or the phone): only the office's own settings. */
+  companion = false,
 ) {
   /** A volume slider with its mute button. Dragging it turns the sound back on; letting go plays `preview`. */
   const volumeRow = (label: string, level: 'volume' | 'music', muted: 'muted' | 'musicMuted', preview?: () => void) => {
@@ -204,7 +237,7 @@ export function openSettings(
       paintNotify();
     },
   );
-  const notifySample = h('button.btn.sm', { type: 'button', onclick: () => notifier.sample() }, 'Show me one');
+  const notifySample = h('button.btn.sm', { type: 'button', onclick: () => notifier?.sample() }, 'Show me one');
   const paintNotify = () => {
     const perm = notifyPermission();
     const on = perm === 'granted' && settings.notify;
@@ -219,7 +252,7 @@ export function openSettings(
               if ((await askNotifyPermission()) === 'granted') {
                 settings = { ...settings, notify: true };
                 onChange(settings);
-                notifier.sample();
+                notifier?.sample();
               }
               paintNotify();
             },
@@ -751,7 +784,7 @@ export function openSettings(
     else if (!list.length) phoneStatus.textContent = 'No phones paired yet.';
     else phoneStatus.textContent = `${list.length} paired: ${list.map((d) => `${d.name} (seen ${timeAgo(d.lastSeenAt)})`).join(', ')}.`;
   };
-  void pairedPhones().then(paintPhones);
+  if (!companion) void pairedPhones().then(paintPhones);
   phoneOpen.addEventListener('click', () => openPhone(paintPhones));
 
   // The web companion: /dashboard in a desktop browser. Its links and paired browsers are their own window.
@@ -765,7 +798,7 @@ export function openSettings(
       webStatus.textContent = `${s.companion ? 'On' : 'Off'} · ${n ? `${n} browser${n === 1 ? '' : 's'} paired` : 'no browsers paired'} · ${s.local.replace(/^https?:\/\//, '')}/dashboard`;
     }
   };
-  void companionState().then(paintWeb);
+  if (!companion) void companionState().then(paintWeb);
   webOpen.addEventListener('click', () => openCompanion(paintWeb));
 
   const sidearm = choices(
@@ -920,7 +953,7 @@ export function openSettings(
   const character = h('button.btn', { type: 'button' }, 'Change your look & name');
   epicCard = card("This floor's Jira epic", { desc: epicNote, below: [epicRow, epicFail] });
   paintJira();
-  const sourceReload = hotReloadSettings();
+  const sourceReload = companion ? { element: hostOnly(HOT_RELOAD_HOST_ONLY), dispose: () => {} } : hotReloadSettings();
   const factoryKey = factoryKeySettings(net);
   const subscriptions = subscriptionsSettings(net);
   const subscriptionGroups = [
@@ -1063,12 +1096,15 @@ export function openSettings(
       ),
       group('Developer', card('Source hot reload', { below: [sourceReload.element] })),
     ],
-    phone: [group(null, card('Droid Office for Android', { desc: h('span.stack.tight', {}, phoneNote, phoneStatus), control: phoneOpen }), card('Web companion', { desc: h('span.stack.tight', {}, webNote, webStatus), control: webOpen }))],
+    phone: companion
+      ? [group(null, card('Droid Office for Android', { desc: hostOnly(PAIRING_HOST_ONLY) }), card('Web companion', { desc: hostOnly(PAIRING_HOST_ONLY) }))]
+      : [group(null, card('Droid Office for Android', { desc: h('span.stack.tight', {}, phoneNote, phoneStatus), control: phoneOpen }), card('Web companion', { desc: h('span.stack.tight', {}, webNote, webStatus), control: webOpen }))],
   };
 
   // The categories down the side, grouped under Personal / Workers / Office, the one picked on the right.
   // On a phone the row is across the top. The search at the top of the side finds a setting by name
   // without knowing its category, and a pick jumps to its row and flashes it.
+  const shownPanes = SETTINGS_PANES.filter((p) => !companion || !COMPANION_HIDDEN_PANES.has(p.id));
   const searchInput = h('input.input.settings-search', { type: 'search', placeholder: 'Search settings…', 'aria-label': 'Search settings' }) as HTMLInputElement;
   const results = h('section.settings-pane.settings-results', { 'aria-label': 'Search results' });
   results.classList.add('hidden');
@@ -1076,7 +1112,7 @@ export function openSettings(
   const tabs = new Map<SettingsPane, HTMLButtonElement>();
   const bodies = new Map<SettingsPane, HTMLElement>();
   let navSection = '';
-  for (const p of SETTINGS_PANES) {
+  for (const p of shownPanes) {
     if (p.section !== navSection) {
       navSection = p.section;
       nav.append(h('div.settings-nav-section', { 'aria-hidden': 'true' }, p.section));
@@ -1138,7 +1174,7 @@ export function openSettings(
   const paintSearch = () => {
     const query = searchInput.value.trim();
     if (!query) return show(lastPane);
-    const hits = searchSettings(query);
+    const hits = searchSettings(query).filter((hit) => tabs.has(hit.pane));
     const paneLabel = new Map(SETTINGS_PANES.map((p) => [p.id, p]));
     results.replaceChildren(
       h(
@@ -1187,8 +1223,15 @@ export function openSettings(
     return true;
   });
   nav.addEventListener('keydown', (e) => {
-    const next = settingsPaneAfter(lastPane, e.key);
+    let next = settingsPaneAfter(lastPane, e.key);
     if (!next) return;
+    // Panes a companion leaves out are skipped: Home and End land on the first and last shown.
+    if (!tabs.has(next)) {
+      if (e.key === 'Home') next = shownPanes[0].id;
+      else if (e.key === 'End') next = shownPanes[shownPanes.length - 1].id;
+      else for (let i = 0; i < SETTINGS_PANES.length && next && !tabs.has(next); i++) next = settingsPaneAfter(next, e.key);
+    }
+    if (!next || !tabs.has(next)) return;
     e.preventDefault();
     show(next);
     tabs.get(next)!.focus();
@@ -1227,7 +1270,8 @@ export function openSettings(
       window.removeEventListener('office:hdr', onHdrStatus);
     },
   });
-  show(first ?? lastPane);
+  const opening = first ?? lastPane;
+  show(tabs.has(opening) ? opening : shownPanes[0].id);
   close.addEventListener('click', () => modal.close());
   character.addEventListener('click', () => {
     modal.close();

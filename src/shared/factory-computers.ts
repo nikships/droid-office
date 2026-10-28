@@ -183,6 +183,9 @@ export function mergeMetrics(last: FactoryComputerMetrics | undefined, fresh: Fa
 /** What a computer is doing, as the wall and the window say it. */
 export type ComputerPhase = 'provisioning' | 'active' | 'asleep' | 'waking' | 'error';
 
+/** A phase in words, as the compute wall and the Computers window show it. */
+export const PHASE_WORD: Record<ComputerPhase, string> = { active: 'Active', asleep: 'Asleep', provisioning: 'Provisioning', waking: 'Waking', error: 'Error' };
+
 /**
  * Its phase: Factory's status, except that a managed computer that's active by Factory's lights
  * but has sent no sample for a while is asleep (Factory pauses idle ones), or waking once someone

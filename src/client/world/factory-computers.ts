@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { factoryCan, capabilityOf, type FactoryState } from '../../shared/factory';
-import { computerPhase, currentStep, diskPct, memPct, METRICS_HOURS, type ComputerPhase, type FactoryComputer, type FactoryMetricPoint } from '../../shared/factory-computers';
+import { PHASE_WORD, computerPhase, currentStep, diskPct, memPct, METRICS_HOURS, type ComputerPhase, type FactoryComputer, type FactoryMetricPoint } from '../../shared/factory-computers';
 import { COMPUTE_WALL } from '../../shared/layout';
 import type { MachineState } from '../../shared/protocol';
 import { MONO } from '../fonts';
@@ -31,7 +31,6 @@ const PX_PER_M = 400;
 const H_PX = Math.round(COMPUTE_WALL.height * PX_PER_M);
 
 export const PHASE_COLOR: Record<ComputerPhase, string> = { active: GREEN, asleep: MUTED, provisioning: ORANGE, waking: ORANGE, error: RED };
-export const PHASE_WORD: Record<ComputerPhase, string> = { active: 'Active', asleep: 'Asleep', provisioning: 'Provisioning', waking: 'Waking', error: 'Error' };
 
 /** A short age: "just now", "4m", "3h", "2d". */
 export function age(ms: number): string {

@@ -2,7 +2,7 @@ import type { AgentChoice, AgentEffort } from '../../shared/protocol';
 import { AGENT_EFFORTS } from '../../shared/protocol';
 import { withoutGlyph } from '../world/glyph';
 import { store } from '../state';
-import { withToken } from '../token';
+import { officeFetch } from '../office-http';
 import { h } from './dom';
 import { modelLogo } from './model-logo';
 import { modelPicker, type NoneOption } from './model-picker';
@@ -138,7 +138,7 @@ function asEfforts(value: unknown): AgentEffort[] | undefined {
 function fetchCatalogue(): Promise<Catalogue> {
   if (catalogue && Date.now() - catalogueAt < 60_000) return Promise.resolve(catalogue);
   if (request) return request;
-  request = fetch(withToken('/api/agents/droid/models'), { credentials: 'same-origin', cache: 'no-store' })
+  request = officeFetch('/api/agents/droid/models', { credentials: 'same-origin', cache: 'no-store' })
     .then(async (res) => {
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const body = (await res.json()) as { models?: unknown; defaultModel?: unknown; defaultReasoningEffort?: unknown };

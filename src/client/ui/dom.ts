@@ -53,6 +53,33 @@ export interface Modal {
 const stack: Modal[] = [];
 const escapeClaims: { owner: HTMLElement; claim: () => boolean }[] = [];
 const listeners = new Set<(open: boolean) => void>();
+const openWatchers = new Set<(modal: Modal) => void>();
+/** Where the next window goes instead of over the page (see openInline). */
+let inlineHost: { mount: HTMLElement; take(modal: Modal): void; closed(): void } | null = null;
+
+/**
+ * Runs `open` with the first window it opens placed inside `mount` instead of over the page: not on
+ * the window stack (so it is no modal), no backdrop, Esc only while focus is in it and nothing is
+ * stacked over it. Windows it opens later are ordinary ones. `closed` is called when that window
+ * closes, by its own ✕ or by code. Returns the window, or undefined when `open` opened none.
+ */
+export function openInline(mount: HTMLElement, open: () => void, closed: () => void): Modal | undefined {
+  let taken: Modal | undefined;
+  const was = inlineHost;
+  inlineHost = { mount, take: (m) => (taken = m), closed };
+  try {
+    open();
+  } finally {
+    inlineHost = was;
+  }
+  return taken;
+}
+
+/** Called with every window opened from now on, inline or not, until the returned function is called. */
+export function watchModals(fn: (modal: Modal) => void): () => void {
+  openWatchers.add(fn);
+  return () => openWatchers.delete(fn);
+}
 
 export function onModalChange(fn: (open: boolean) => void) {
   listeners.add(fn);
@@ -121,6 +148,11 @@ export function openModal(
   opts: { escCloses?: boolean | ((e: KeyboardEvent) => boolean); onClose?: () => void; backdropCloses?: boolean; closeButton?: boolean; doing?: string; reading?: boolean; size?: ModalSize } = {},
 ): Modal {
   if (opts.size) content.classList.add(opts.size);
+  if (inlineHost) {
+    const host = inlineHost;
+    inlineHost = null;
+    return openInlineModal(content, host, opts);
+  }
   const backdrop = h('div.backdrop', {}, content);
   const root = document.getElementById('modal-root')!;
   root.append(backdrop);
@@ -162,6 +194,48 @@ export function openModal(
   window.addEventListener('keydown', onKey, true);
   stack.push(modal);
   listeners.forEach((fn) => fn(true));
+  for (const fn of openWatchers) fn(modal);
+  return modal;
+}
+
+function openInlineModal(
+  content: HTMLElement,
+  host: { mount: HTMLElement; take(modal: Modal): void; closed(): void },
+  opts: { escCloses?: boolean | ((e: KeyboardEvent) => boolean); onClose?: () => void; closeButton?: boolean; doing?: string },
+): Modal {
+  const backdrop = h('div.inline-window', {}, content);
+  host.mount.append(backdrop);
+  let closed = false;
+  const onKey = (e: KeyboardEvent) => {
+    if (stack.length || e.key !== 'Escape' || !(e.target instanceof Node) || !backdrop.contains(e.target)) return;
+    if (escapeClaimed(content)) {
+      e.preventDefault();
+      e.stopPropagation();
+      return;
+    }
+    if (typeof opts.escCloses === 'function' ? opts.escCloses(e) : opts.escCloses !== false) {
+      e.preventDefault();
+      e.stopPropagation();
+      modal.close();
+    }
+  };
+  const modal: Modal = {
+    el: content,
+    backdrop,
+    doing: opts.doing,
+    close() {
+      if (closed) return;
+      closed = true;
+      backdrop.remove();
+      window.removeEventListener('keydown', onKey, true);
+      opts.onClose?.();
+      host.closed();
+    },
+  };
+  if (opts.closeButton ?? opts.escCloses !== false) addCloseButton(content, () => modal.close());
+  window.addEventListener('keydown', onKey, true);
+  host.take(modal);
+  for (const fn of openWatchers) fn(modal);
   return modal;
 }
 

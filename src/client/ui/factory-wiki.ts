@@ -17,7 +17,7 @@ import {
 import { factoryFetch, refreshFactory, watchFactory } from '../factory';
 import { store } from '../state';
 import { modelLogo } from './model-logo';
-import { withToken } from '../token';
+import { officeUrl } from '../office-http';
 import { anchorHeadings, jumpTo } from './bookshelf';
 import { drawDiagram } from './diagram';
 import { clip, h, timeAgo, toast } from './dom';
@@ -293,7 +293,7 @@ export function mountWikiTab(root: HTMLElement, deps: WikiTabDeps): WikiTab {
       if (!ok) privacy.value = run.privacyLevel ?? 'private';
       paint(true);
     });
-    const exportLink = h('a.btn.sm', { href: withToken(`/api/factory/wiki/runs/${encodeURIComponent(run.id)}/export`), download: '', title: 'Download its pages as a .zip' }, '⬇ .zip');
+    const exportLink = h('a.btn.sm', { href: officeUrl(`/api/factory/wiki/runs/${encodeURIComponent(run.id)}/export`), download: '', title: 'Download its pages as a .zip' }, '⬇ .zip');
     const factoryLink = h('a.btn.sm', { href: `https://app.factory.ai/wiki/${encodeURIComponent(run.id)}`, target: '_blank', rel: 'noopener noreferrer', title: 'Open it on Factory' }, 'Factory ↗');
     const del = h(
       'button.btn.sm.danger',

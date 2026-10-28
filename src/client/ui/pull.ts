@@ -1,7 +1,7 @@
 import type { GhCheck, GhCloseReason, GhComment, GhIssue, GhIssueDetail, GhLabel, GhMergeMethod, GhPull, GhPullDetail, GhReviewComment, ServerMsg } from '../../shared/protocol';
 import type { Net } from '../net';
 import { AVATAR_COLORS, store, words, workerForPull } from '../state';
-import { withToken } from '../token';
+import { officeFetch } from '../office-http';
 import { deskChip, issuePrompt, issueVars, type BoardActions } from './boards';
 import { officePrompt } from './prompts';
 import { mergeCommand, pullPromptVars } from '../../shared/prompts';
@@ -17,17 +17,17 @@ import { emptyState, field, toggle } from './kit';
 /** The board windows ask about the floor you're on. */
 function onFloor(url: string): string {
   const u = store.floor ? `${url}${url.includes('?') ? '&' : '?'}floor=${encodeURIComponent(store.floor)}` : url;
-  return withToken(u);
+  return u;
 }
 
 async function getJson<T>(url: string): Promise<T> {
-  const r = await fetch(onFloor(url), { credentials: 'same-origin' });
+  const r = await officeFetch(onFloor(url));
   if (!r.ok) throw new Error((await r.json().catch(() => null))?.error ?? `HTTP ${r.status}`);
   return r.json() as Promise<T>;
 }
 
 async function getText(url: string): Promise<string> {
-  const r = await fetch(onFloor(url), { credentials: 'same-origin' });
+  const r = await officeFetch(onFloor(url));
   if (!r.ok) throw new Error((await r.json().catch(() => null))?.error ?? `HTTP ${r.status}`);
   return r.text();
 }
@@ -832,7 +832,11 @@ export function openPull(first: GhPull, net: Net, actions: BoardActions) {
       ...actionGroups(
         [h('button.btn', { type: 'button', title: `Send a worker your own prompt about this ${fw.pr}`, onclick: () => actions.ask(pullContext(it), `Ask about ${pr}`) }, 'Ask a worker…')],
         [
-          w ? h('button.btn', { type: 'button', onclick: () => actions.goToDesk(w.deskId) }, `Go to ${w.name}'s desk`) : null,
+          w && actions.goToDesk
+            ? h('button.btn', { type: 'button', onclick: () => actions.goToDesk?.(w.deskId) }, `Go to ${w.name}'s desk`)
+            : w && actions.openWorker
+              ? h('button.btn', { type: 'button', onclick: () => actions.openWorker?.(w.id) }, `Open ${w.name}`)
+              : null,
           isOpen ? h('button.btn', { type: 'button', onclick: () => actions.assign(reviewPrompt(it), `Review ${pr}`) }, 'Review') : null,
           conflicts
             ? h('button.btn.primary', { type: 'button', title: 'A new worker merges the base in, resolves the conflicts, gets the checks green, then merges', onclick: handToWorker }, 'Fix conflicts & merge')
@@ -1265,7 +1269,7 @@ export function openIssue(first: GhIssue, net: Net, actions: BoardActions) {
   });
   // The footer stays put and renderFrame only shows and hides its buttons.
   const closeIssue = h('button.btn.danger', { type: 'button', title: `Close this issue on ${words().site}`, onclick: () => openClose('issue', it, net, load) }, 'Close issue…');
-  const pickUp = h('button.btn', { type: 'button', title: 'Carry its card to an empty desk or a worker, and press E there', onclick: () => actions.pickUp(it) }, 'Pick it up');
+  const pickUp = h('button.btn', { type: 'button', title: 'Carry its card to an empty desk or a worker, and press E there', onclick: () => actions.pickUp?.(it) }, 'Pick it up');
   const info = h('div.gh-side-info');
   conv.append(h('div.gh-detail', {}, h('div.gh-col', {}, thread, comment.el), h('aside.gh-side', {}, info)));
   const title = h('h3.gh-title', { title: it.title }, h('span.gh-ref', {}, `#${it.number}`), ' ', it.title);
@@ -1312,7 +1316,7 @@ export function openIssue(first: GhIssue, net: Net, actions: BoardActions) {
     pill.className = `pill ${isOpen ? 'done' : 'offline'}`;
     pill.textContent = isOpen ? 'open' : 'closed';
     closeIssue.classList.toggle('hidden', !isOpen);
-    pickUp.classList.toggle('hidden', !isOpen);
+    pickUp.classList.toggle('hidden', !isOpen || !actions.pickUp);
   };
   const render = () => {
     thread.replaceChildren(commentCard({ id: 'body', author: it.author, body: detail?.body ?? it.body, createdAt: it.createdAt, url: it.url }, itemUrl, 'opened this'));

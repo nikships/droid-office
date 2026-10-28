@@ -1,6 +1,6 @@
 import type { HostUpdateCommand, HostUpdateState } from '../../shared/host-update';
 import { isHostUpdateState } from '../../shared/host-update-state';
-import { withToken } from '../token';
+import { officeFetch } from '../office-http';
 import { h, openModal } from './dom';
 import { windowHeader } from './kit';
 import { confirmDialog } from './prompt';
@@ -49,7 +49,7 @@ export function openHostUpdate() {
     pending = true;
     controls();
     try {
-      const res = await fetch(withToken('/api/host/update'), {
+      const res = await officeFetch('/api/host/update', {
         method: command.action === 'status' ? 'GET' : 'POST',
         ...(command.action === 'status' ? {} : { headers: { 'content-type': 'application/json' }, body: JSON.stringify(command) }),
         cache: 'no-store',

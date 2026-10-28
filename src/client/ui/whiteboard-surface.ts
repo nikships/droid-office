@@ -37,7 +37,7 @@ import {
   type Thread,
 } from '../../shared/whiteboard';
 import { canvasBounds, dragBox, dragMarkOps, dragPreview, pictureSize, reattachMarkOps } from '../../shared/whiteboard-marks';
-import { withToken } from '../token';
+import { officeFetch } from '../office-http';
 import { claimEscape, h } from './dom';
 import { colorDot } from './kit';
 import {
@@ -164,7 +164,7 @@ function save(floor: string, card: string, v: Saved) {
 /** Uploads a file the board will hold (a picture, a page, an asset) and answers with its FileRef. */
 export async function uploadBlob(floor: string, body: Blob, mime: string): Promise<FileRef> {
   const q = new URLSearchParams({ floor, mime });
-  const r = await fetch(withToken(`/api/whiteboard/blob?${q}`), { method: 'POST', headers: { 'content-type': mime }, body });
+  const r = await officeFetch(`/api/whiteboard/blob?${q}`, { method: 'POST', headers: { 'content-type': mime }, body });
   const j = await r.json().catch(() => null);
   if (!r.ok) throw new Error(j?.error ?? `The upload failed (HTTP ${r.status})`);
   return j as FileRef;

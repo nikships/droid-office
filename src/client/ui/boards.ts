@@ -15,10 +15,12 @@ export interface BoardActions {
   assign(prompt: string, title: string, issue?: number): void;
   /** Your own prompt about an issue or PR; `context` goes first so the worker knows which. */
   ask(context: string, title: string): void;
-  /** Walks you to the desk a pull request came from. */
-  goToDesk(deskId: string): void;
-  /** Take the issue's card off the board, to carry to a desk or a worker. */
-  pickUp(issue: GhIssue): void;
+  /** Walks you to the desk a pull request came from (the 3D office). */
+  goToDesk?(deskId: string): void;
+  /** Opens the worker a pull request came from, where there's no desk to walk to (the companion). */
+  openWorker?(workerId: string): void;
+  /** Take the issue's card off the board, to carry to a desk or a worker (the 3D office). */
+  pickUp?(issue: GhIssue): void;
 }
 
 /** The task a worker gets for an issue, from the board or a carried card (the 'issue.work' prompt). */

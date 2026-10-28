@@ -12,7 +12,7 @@ import { changesSince, type ChangeItem } from '../../shared/whiteboard-marks';
 import { OWNER, cardChanged, cardsNewestFirst, findCard, type Board, type Card, type CardView, type Op, type Selection } from '../../shared/whiteboard';
 import type { Net } from '../net';
 import { store } from '../state';
-import { withToken } from '../token';
+import { officeUrl } from '../office-http';
 import { copy } from './clipboard';
 import { claimEscape, h, openModal, setDoing, timeAgo, toast, type Modal } from './dom';
 import { colorDot, emptyState } from './kit';
@@ -88,7 +88,7 @@ export function openWhiteboard(net: Net, opts: { card?: string; queueOffline?: b
   const selected = new Set<string>();
 
   const board = (): Board | null => sync.board(floor);
-  const fileUrl = (hash: string) => withToken(`/api/whiteboard/file?${new URLSearchParams({ floor, card: card ?? '', hash })}`);
+  const fileUrl = (hash: string) => officeUrl(`/api/whiteboard/file?${new URLSearchParams({ floor, card: card ?? '', hash })}`);
 
   /** Applies the owner's batch; what went wrong goes in a toast (an expired batch becomes a draft in the window). */
   async function apply(ops: Op[], what = 'That'): Promise<boolean> {
@@ -196,7 +196,7 @@ export function openWhiteboard(net: Net, opts: { card?: string; queueOffline?: b
     const thumb = h('div.wb-thumb', { class: c.kind });
     const placeholder = () => thumb.replaceChildren(h('div.wb-thumb-empty', {}, h('span.wb-thumb-icon', { 'aria-hidden': 'true' }, c.kind === 'canvas' ? '🧑‍🎨' : '📄'), h('span', {}, previewNote(c))));
     if (url) {
-      const img = h('img', { src: withToken(url), alt: '', loading: 'lazy' });
+      const img = h('img', { src: officeUrl(url), alt: '', loading: 'lazy' });
       img.addEventListener('error', placeholder);
       thumb.append(img);
     } else placeholder();

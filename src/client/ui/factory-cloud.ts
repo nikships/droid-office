@@ -306,7 +306,7 @@ export function openCloudWindow(net: Net, workerId: string) {
   const unsub = store.on('workers', refresh);
   const unsubCredits = store.on('factory', refresh);
   const unwatch = watchFactory('cloud');
-  net.send({ t: 'worker.attach', workerId });
+  const hold = net.acquireTerminal(workerId);
   const modal = openModal(el, {
     backdropCloses: true,
     doing: `☁ in ${info.name}'s window`,
@@ -317,7 +317,7 @@ export function openCloudWindow(net: Net, workerId: string) {
       transcript?.dispose();
       images.discard();
       extras.dispose();
-      net.send({ t: 'worker.detach', workerId });
+      hold.release();
       if (current?.modal === modal) current = null;
     },
   });

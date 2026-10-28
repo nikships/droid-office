@@ -2,7 +2,7 @@ import type { FactoryFeatureId } from '../shared/factory';
 import type { ServerMsg } from '../shared/protocol';
 import type { Net } from './net';
 import { store } from './state';
-import { withToken } from './token';
+import { officeFetch } from './office-http';
 
 // The browser's side of the Factory connection (docs/factory.md): the HTTP helper for a feature's
 // routes, the watches that make a feature poll fast while its board or window is open, and the answer
@@ -85,7 +85,7 @@ export async function factoryFetch<T = unknown>(feature: FactoryFeatureId, path 
   const url = `/api/factory/${feature}${path && !path.startsWith('/') ? `/${path}` : path}${qs ? `?${qs}` : ''}`;
   let res: Response;
   try {
-    res = await fetch(withToken(url), {
+    res = await officeFetch(url, {
       method: init.method ?? 'GET',
       credentials: 'same-origin',
       cache: 'no-store',

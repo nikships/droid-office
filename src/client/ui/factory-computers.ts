@@ -1,10 +1,9 @@
 import { factoryCan } from '../../shared/factory';
-import { BULK_MAX, computerPhase, currentStep, DEFAULT_REMOTE_USER, diskPct, memPct, NAME_MAX, NAME_PREFIX, SECRET_NAME, type ComputerPhase, type FactoryComputer, type FactoryMetricSample } from '../../shared/factory-computers';
+import { BULK_MAX, PHASE_WORD, computerPhase, currentStep, DEFAULT_REMOTE_USER, diskPct, memPct, NAME_MAX, NAME_PREFIX, SECRET_NAME, type ComputerPhase, type FactoryComputer, type FactoryMetricSample } from '../../shared/factory-computers';
 import { canStartFrom } from '../../shared/factory-environments';
 import { factoryFetch, refreshFactory, watchFactory } from '../factory';
 import { store } from '../state';
 import { fmtGb, loadColor } from '../world/machine';
-import { PHASE_WORD } from '../world/factory-computers';
 import { h, openModal, timeAgo, toast } from './dom';
 import { envDetail, envForm, envOverview, envRows } from './factory-environments';
 import { actionButton, duration, floorRepo, floorSlug, onPick, repoPicker, type Section, shortRepo } from './factory-pane';

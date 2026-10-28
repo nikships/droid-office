@@ -4,9 +4,9 @@ import { changedImageType, type ChangedFile, type ChangesState, type ServerMsg }
 import { shipPromptVars } from '../../shared/prompts';
 import { isAsleep } from '../../shared/status';
 import { loadFonts, TERM_FONT } from '../fonts';
-import type { Net } from '../net';
+import type { Net, TerminalHold } from '../net';
 import { store, words } from '../state';
-import { withToken } from '../token';
+import { officeUrl } from '../office-http';
 import { TERM_THEME } from '../term-theme';
 import { h, openModal, toast, type Modal } from './dom';
 import { colorDot, emptyState } from './kit';
@@ -104,7 +104,7 @@ function renderDiff(text: string, truncated: boolean): HTMLElement {
 /** Where one side of a changed picture loads from. The file's signature makes a new URL whenever it changes. */
 function imageUrl(workerId: string, repo: string | undefined, f: ChangedFile, side: 'old' | 'new'): string {
   const q = new URLSearchParams({ floor: store.floor ?? '', worker: workerId, path: f.path, side, v: f.sig, ...(repo ? { repo } : {}) });
-  return withToken(`/api/changes/file?${q}`);
+  return officeUrl(`/api/changes/file?${q}`);
 }
 
 /** A changed picture, before and after; new and deleted files only have the one side. */
@@ -185,7 +185,7 @@ export function openChanges(net: Net, workerId: string, onTerminal?: () => void,
 
   /** The worker's terminal, read-only, made the first time T shows it and attached until the window closes. */
   let term: Terminal | null = null;
-  let attached = false;
+  let hold: TerminalHold | undefined;
   let view: 'diff' | 'log' = 'diff';
 
   const openLog = () => {
@@ -203,8 +203,8 @@ export function openChanges(net: Net, workerId: string, onTerminal?: () => void,
       // The PTY is shared and sized by whoever types to it, so this view takes its size rather than fitting.
       const w = store.workers.get(workerId);
       if (w) t.resize(w.cols, w.rows);
-      attached = true;
-      net.send({ t: 'worker.attach', workerId });
+      // Its own snapshot, even when a terminal pane already holds this worker.
+      hold = net.acquireTerminal(workerId, { snapshot: true });
     });
   };
 
@@ -528,7 +528,7 @@ export function openChanges(net: Net, workerId: string, onTerminal?: () => void,
     renderTabs();
     renderFooter();
     // Someone typing in its terminal resized the PTY: follow it, as the terminal window does.
-    if (term && attached && (w.cols !== term.cols || w.rows !== term.rows)) term.resize(w.cols, w.rows);
+    if (term && hold && (w.cols !== term.cols || w.rows !== term.rows)) term.resize(w.cols, w.rows);
   });
   const modal = openModal(el, {
     doing: `🌿 looking over ${info.name}'s changes`,
@@ -536,13 +536,14 @@ export function openChanges(net: Net, workerId: string, onTerminal?: () => void,
       listeners.delete(onMsg);
       unsub();
       net.send({ t: 'changes.unwatch', workerId, repo });
-      if (attached) net.send({ t: 'worker.detach', workerId });
+      hold?.release();
+      hold = undefined;
       term?.dispose();
       term = null;
       if (current?.modal === modal) current = null;
     },
   });
-  current = { workerId, repo: () => repo, show, logging: () => attached, modal };
+  current = { workerId, repo: () => repo, show, logging: () => !!hold, modal };
   previous?.modal.close();
   closeBtn.addEventListener('click', () => modal.close());
   if (repo && !info.repos?.some((r) => r.floor === repo)) repo = undefined;

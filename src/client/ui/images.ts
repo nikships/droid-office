@@ -1,7 +1,7 @@
 import { DROP_MAX_BYTES, PROMPT_IMAGES_MAX, PROMPT_IMAGE_TYPES } from '../../shared/drops';
 import { ImageStaging } from '../image-staging';
 import { store } from '../state';
-import { withToken } from '../token';
+import { officeFetch } from '../office-http';
 import { h, toast } from './dom';
 
 // Pictures pasted or dropped into a prompt box: each goes up to the office as soon as it's added
@@ -12,13 +12,13 @@ import { h, toast } from './dom';
 const staging = new ImageStaging<File>({
   async upload(floor, f) {
     const name = f.name || 'That picture';
-    const res = await fetch(withToken(`/api/prompt/image?${new URLSearchParams({ floor, name: f.name })}`), { method: 'POST', headers: { 'content-type': f.type }, body: f });
+    const res = await officeFetch(`/api/prompt/image?${new URLSearchParams({ floor, name: f.name })}`, { method: 'POST', headers: { 'content-type': f.type }, body: f });
     const r = (await res.json().catch(() => ({}))) as { id?: string; error?: string };
     if (!res.ok || !r.id) throw new Error(r.error ?? `${name} could not be attached`);
     return r.id;
   },
   forget(floor, id) {
-    void fetch(withToken(`/api/prompt/image?${new URLSearchParams({ floor, id })}`), { method: 'DELETE' }).catch(() => {});
+    void officeFetch(`/api/prompt/image?${new URLSearchParams({ floor, id })}`, { method: 'DELETE' }).catch(() => {});
   },
 });
 
