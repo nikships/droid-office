@@ -15,6 +15,7 @@ import { factoryKeySettings } from './factory-settings';
 import { subscriptionsSettings } from './subscriptions-settings';
 import { droidSettings } from './droid-settings';
 import { hiddenModelSettings } from './hidden-models';
+import { openHostUpdate } from './host-update';
 import { openPhone, pairedPhones } from './phone';
 import { companionState, openCompanion } from './companion';
 import type { PairingState } from '../../shared/devices';
@@ -1053,6 +1054,13 @@ export function openSettings(
           ]
         : []),
       group('Floors & projects', card('Workspace folder', { desc: dirNote, below: [dirRow] })),
+      group(
+        'App',
+        card('Host desktop app', {
+          desc: desc('Check for a signed update to the Mac app that runs this office. Installing restarts the host while workers keep running.'),
+          control: h('button.btn', { type: 'button', onclick: openHostUpdate }, 'Check for updates…'),
+        }),
+      ),
       group('Developer', card('Source hot reload', { below: [sourceReload.element] })),
     ],
     phone: [group(null, card('Droid Office for Android', { desc: h('span.stack.tight', {}, phoneNote, phoneStatus), control: phoneOpen }), card('Web companion', { desc: h('span.stack.tight', {}, webNote, webStatus), control: webOpen }))],

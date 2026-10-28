@@ -47,6 +47,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -96,10 +97,15 @@ fun OfficesScreen(onBack: () -> Unit, onPairNew: () -> Unit, onSwitched: () -> U
     var forgetting by remember { mutableStateOf<PairedOffice?>(null) }
     var renaming by remember { mutableStateOf<PairedOffice?>(null) }
     var subscriptions by remember { mutableStateOf(false) }
+    var hostUpdate by remember { mutableStateOf(false) }
+    LaunchedEffect(store.active?.id) { hostUpdate = false }
     val notify = rememberNotifyPermission()
     val canNotify = notify.granted
     val now = rememberNow(30_000)
     if (subscriptions) SubscriptionsSheet { subscriptions = false }
+    if (hostUpdate) store.active?.let { office ->
+        key(office.id) { HostUpdateSheet(office.id) { hostUpdate = false } }
+    }
 
     fun settings(change: (AppSettings) -> AppSettings) {
         scope.launch { graph.store.settings(change) }
@@ -205,6 +211,7 @@ fun OfficesScreen(onBack: () -> Unit, onPairNew: () -> Unit, onSwitched: () -> U
                     About("App", "Droid Office ${BuildConfig.VERSION_NAME}")
                     store.active?.version?.let { About("Office", "droid-office $it") }
                     UpdateRow()
+                    SecondaryButton("Host desktop app", { hostUpdate = true }, Modifier.fillMaxWidth().tagged(Tags.HostUpdate.OPEN), enabled = store.active != null)
                     Text(
                         "Geist and Geist Mono by Vercel, and the terminal's symbol font, under the SIL Open Font License.",
                         style = MaterialTheme.typography.bodySmall,

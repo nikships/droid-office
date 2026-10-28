@@ -12,6 +12,7 @@ import { officeRuntime } from '../src/desktop/runtime.ts';
 import { DEFAULT_PORT, defaultOfficeDir, isolatedPortOk, loadSettings, officeArgs, saveSettings, startedInProject } from '../src/desktop/settings.ts';
 import { desktopEnv, fencedEnv, knownDirs, loginShellEnv, mergeEnv, mergePath } from '../src/desktop/shell-path.ts';
 import { briefError, type UpdatePhase, updateBusy, updateView } from '../src/desktop/update-view.ts';
+import { serveHostUpdates } from '../src/desktop/update-ipc.js';
 import { runAsNode } from '../src/server/workers.ts';
 
 function tmp(t: { after: (fn: () => void) => void }): string {
@@ -182,6 +183,37 @@ test('an office that exits as it starts is reported with the end of its log', as
   assert.equal(logTail(path.join(dir, 'missing.log')), '');
 });
 
+test('the app attaches its private updater channel before the office becomes ready', async (t) => {
+  const dir = tmp(t);
+  const port = await freePort();
+  const file = path.join(dir, 'ipc-office.mjs');
+  writeFileSync(
+    file,
+    `
+import http from 'node:http';
+process.on('message', (reply) => {
+  if (reply.t !== 'host.update.result' || reply.id !== 'startup') return;
+  console.log(JSON.stringify(reply.state));
+  http.createServer((_req, res) => res.end('<title>Droid Office</title>')).listen(${port}, '127.0.0.1');
+});
+process.send({t: 'host.update', id: 'startup', command: {action: 'status'}});
+`,
+  );
+  const log = path.join(dir, 'ipc.log');
+  const office = await startOffice({
+    runtime: process.execPath,
+    cli: file,
+    args: [],
+    port,
+    env: process.env,
+    log,
+    onSpawn: (child) => serveHostUpdates(child, () => ({ supported: false, currentVersion: '0.1.0', phase: 'unpackaged', title: 'Checkout', busy: false, canInstall: false })),
+  });
+  t.after(() => office.stop(true));
+  assert.match(readFileSync(log, 'utf8'), /"phase":"unpackaged"/);
+  assert.equal(await probePort(port), 'office');
+});
+
 test('an office that never answers is given up on', async (t) => {
   const dir = tmp(t);
   const port = await freePort();
@@ -194,6 +226,29 @@ test('commands written for workers run Electron as Node only under the Mac app',
   assert.deepEqual(runAsNode({ ...process.versions, electron: '44.5.1' }), { sh: 'ELECTRON_RUN_AS_NODE=1 ', cmd: 'set "ELECTRON_RUN_AS_NODE=1" & ' });
   const { electron: _, ...plainNode } = process.versions as NodeJS.ProcessVersions & { electron?: string };
   assert.deepEqual(runAsNode(plainNode as NodeJS.ProcessVersions), { sh: '', cmd: '' });
+});
+
+test('a failed control-channel setup stops the spawned office instead of leaking it', async (t) => {
+  const dir = tmp(t);
+  const port = await freePort();
+  let spawned: import('node:child_process').ChildProcess | undefined;
+  await assert.rejects(
+    startOffice({
+      runtime: process.execPath,
+      cli: fakeCli(dir, 'serve'),
+      args: ['--port', String(port)],
+      port,
+      env: process.env,
+      log: path.join(dir, 'failed-control.log'),
+      onSpawn: (child) => {
+        spawned = child;
+        throw new Error('Control setup failed');
+      },
+    }),
+    /Control setup failed/,
+  );
+  assert.ok(spawned?.killed);
+  assert.equal(await probePort(port), 'free');
 });
 
 test('the Mac app runs its office on the helper binary, which has no Dock icon, and falls back to Electron itself', () => {

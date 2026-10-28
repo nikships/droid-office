@@ -104,6 +104,7 @@ export const SETTINGS_CARDS = [
   { pane: 'connections', title: "This floor's Jira epic", keywords: 'jira epic floor issue board tickets' },
   { pane: 'office', title: 'Outside', keywords: 'outside sky weather clock time city' },
   { pane: 'office', title: 'Workspace folder', keywords: 'workspace folder projects elevator floors git look for' },
+  { pane: 'office', title: 'Host desktop app', keywords: 'host desktop mac app update version install restart' },
   { pane: 'office', title: 'Source hot reload', keywords: 'source hot reload development build reload local vite developer' },
   { pane: 'phone', title: 'Droid Office for Android', keywords: 'android phone pair pairing qr app mobile' },
   { pane: 'phone', title: 'Web companion', keywords: 'web companion dashboard browser pair desktop link' },

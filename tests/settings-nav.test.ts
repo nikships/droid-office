@@ -66,6 +66,7 @@ test('every setting is in a category', () => {
     ["This floor's Jira epic", 'connections'],
     ['Outside', 'office'],
     ['Workspace folder', 'office'],
+    ['Host desktop app', 'office'],
     ['Source hot reload', 'office'],
     ['Droid Office for Android', 'phone'],
     ['Web companion', 'phone'],
@@ -105,6 +106,7 @@ test('search finds a setting by name, pane or keyword, every word required', () 
     { pane: 'connections', title: "This floor's Jira epic" },
   ]);
   assert.deepEqual(searchSettings('hide models'), [{ pane: 'workers', title: 'Models shown in pickers' }]);
+  assert.deepEqual(searchSettings('host update'), [{ pane: 'office', title: 'Host desktop app' }]);
   assert.deepEqual(searchSettings('prompt chips'), [{ pane: 'you', title: 'Prompt chips' }]);
   assert.deepEqual(searchSettings('mouse'), [
     { pane: 'you', title: 'Raw mouse input' },
