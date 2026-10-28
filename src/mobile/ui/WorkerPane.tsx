@@ -221,9 +221,10 @@ function SendHome({ session, snap, worker, onClose }: { session: Session; snap: 
     return () => clearTimeout(t);
   }, [check, session, worker.id]);
   const described = state && worker.worktree ? describeWorktree(state, worker.worktree.branch) : undefined;
+  const risky = described ? described.risky : undefined;
   useEffect(() => {
-    if (described && !touched) setCleanup(described.risky ? 'keep' : 'all');
-  }, [described?.risky, touched]);
+    if (risky !== undefined && !touched) setCleanup(risky ? 'keep' : 'all');
+  }, [risky, touched]);
   const subagents = teamOf(Object.values(snap.office.workers), worker.id).length;
   const where = snap.office.floors.find((f) => f.id === snap.office.floor)?.name ?? 'this floor';
   const allowed = cleanupAllowed(cleanup, described);

@@ -25,6 +25,8 @@ import { dropToast, emptyOffice, expireToasts, type OfficeState, officeDisconnec
 import { FeedPool, requestId } from './thread-feed';
 import { type HireRequest, hireMsg, stopMsg } from './actions';
 
+type Early = { msg: ServerMsg; meta: HostMessageMeta } | { link: HostLink } | { offices: HostOffices } | { incoming: HostIncoming };
+
 /** What a delayed action was started under. Any change to it means the owner is looking at something else. */
 export interface ActionToken {
   /** The office it was started in: pictures it staged are forgotten there, never on another. */
@@ -104,7 +106,12 @@ export class Session {
   private disposed = false;
   private run = 0;
   /** Confirmed actions sent and not yet answered, by message: a second tap is refused, not sent. */
-  private inflight = new Set<string>();
+  /** In-flight actions by message, each owned by the call that started it. */
+  private inflight = new Map<string, object>();
+  /** Who is sending each draft: a send from before a reconnect never clears one started after it. */
+  private senders = new Map<string, object>();
+  /** The cold-start link this session already followed. */
+  private coldIncoming?: string;
   /** The `floor.go` receipts of the floor change in progress, by requestId: unanswered, ok or refused. */
   private floorRequests = new Map<string, 'sent' | 'ok' | 'refused'>();
   /** Staged pictures dropped while the office couldn't be told, forgotten on its next welcome. */
@@ -159,17 +166,16 @@ export class Session {
     // React may dispose and start again (StrictMode): an earlier run's bootstrap must not continue.
     const run = ++this.run;
     this.disposed = false;
-    // Messages and link changes share one counter: whatever came before the bootstrap answered is
-    // applied after it, in the order it happened.
-    const early: ({ msg: ServerMsg; meta: HostMessageMeta } | { link: HostLink })[] = [];
-    // An office change before the bootstrap answered is newer than it: applied after, never under it.
-    let lateOffices: HostOffices | undefined;
+    // Everything native says before the bootstrap answered is kept in the one order it arrived in
+    // (native emits it all on one channel) and applied after the bootstrap's replay: an office change
+    // followed by the new office's link and welcome lands as change, link, welcome, never reordered.
+    const early: Early[] = [];
     let booted = false;
     this.offs.push(
       this.host.onMessage((msg, meta) => (booted ? this.message(msg, meta) : early.push({ msg, meta }))),
       this.host.onLink((link) => (booted ? this.linked(link) : early.push({ link }))),
-      this.host.onOffices((offices) => (booted ? void this.officesChanged(offices) : (lateOffices = offices))),
-      this.host.onIncoming((incoming) => this.incoming(incoming)),
+      this.host.onOffices((offices) => (booted ? void this.officesChanged(offices) : early.push({ offices }))),
+      this.host.onIncoming((incoming) => (booted ? this.incoming(incoming) : early.push({ incoming }))),
       this.host.onScreen(() => this.emit()),
       this.feeds.subscribe(() => this.emit()),
     );
@@ -191,15 +197,28 @@ export class Session {
     this.set({ started: true, bootError: undefined, offices: { offices: boot.offices, active: boot.active }, link: boot.link, workspace });
     for (const msg of boot.replay) this.message(msg, { seq: boot.seq, epoch: boot.link.epoch }, true);
     booted = true;
-    const seqOf = (e: (typeof early)[number]) => ('link' in e ? e.link.seq : e.meta.seq);
-    for (const e of early.sort((a, b) => seqOf(a) - seqOf(b))) {
-      if (seqOf(e) <= boot.seq) continue;
-      if ('link' in e) this.linked(e.link);
-      else this.message(e.msg, e.meta);
+    // The link that started the app is older than anything tapped since. A bootstrap read again
+    // (React's StrictMode starts twice) may hand over the same one: it is followed once.
+    const cold = boot.incoming && JSON.stringify(boot.incoming);
+    if (boot.incoming && cold !== this.coldIncoming) {
+      this.coldIncoming = cold;
+      this.incoming(boot.incoming);
+    }
+    const changes: Promise<void>[] = [];
+    for (const e of early.splice(0)) {
+      // What the bootstrap already reflects is not applied again; an office list without a seq can't
+      // be placed against it, so it counts as newer.
+      if ('msg' in e) {
+        if (e.meta.seq > boot.seq) this.message(e.msg, e.meta);
+      } else if ('link' in e) {
+        if (e.link.seq > boot.seq) this.linked(e.link);
+      } else if ('offices' in e) {
+        if (e.offices.seq === undefined || e.offices.seq > boot.seq) changes.push(this.officesChanged(e.offices));
+      } else this.incoming(e.incoming);
     }
     this.timer = setInterval(() => this.tick(), 1000);
     this.sync();
-    if (lateOffices) await this.officesChanged(lateOffices);
+    await Promise.all(changes);
   }
 
   dispose(): void {
@@ -307,6 +326,8 @@ export class Session {
     this.feeds.disconnected();
     this.orphanDropped(this.state.offices.active);
     this.inflight.clear();
+    this.senders.clear();
+    this.hiring = undefined;
     // The office can't be asked to forget pictures now; they are dropped here and never re-sent.
     this.set({ workspace: reduceCompanionWorkspace(this.state.workspace, { type: 'disconnect' }), previews: {}, sending: {}, picking: {}, switching: undefined, floorSlow: undefined, hire: undefined });
   }
@@ -320,6 +341,8 @@ export class Session {
     this.orphanDropped(before);
     this.flushOrphans(before);
     this.inflight.clear();
+    this.senders.clear();
+    this.hiring = undefined;
     this.set({
       offices,
       office: emptyOffice(),
@@ -404,7 +427,8 @@ export class Session {
     // The same action twice before the first is answered (a double tap) is one action.
     const key = JSON.stringify(msg);
     if (this.inflight.has(key)) return { ok: false, error: IN_FLIGHT };
-    this.inflight.add(key);
+    const mine = {};
+    this.inflight.set(key, mine);
     try {
       const r = await this.host.request({ ...msg, ...(token.floor ? { requestFloor: token.floor } : {}) });
       return r && typeof r.ok === 'boolean' ? r : { ok: false, error: UNCONFIRMED };
@@ -412,7 +436,8 @@ export class Session {
       // A native bridge failure is an unconfirmed action: the UI never waits on it for ever.
       return { ok: false, error: UNCONFIRMED };
     } finally {
-      this.inflight.delete(key);
+      // A reconnect cleared this one and a new call may own the key now: that one is left alone.
+      if (this.inflight.get(key) === mine) this.inflight.delete(key);
     }
   }
 
@@ -447,9 +472,11 @@ export class Session {
   /** `floor.go` with a receipt: sent directly, so its `action.result` comes back as a message, not a guess. */
   private sendFloorGo(floor: string, from: string | null): boolean {
     const id = requestId('floor');
-    if (!this.host.send({ t: 'floor.go', floor, requestId: id, ...(from ? { requestFloor: from } : {}) })) return false;
+    // Registered first: a host may hand the receipt back before send returns.
     this.floorRequests.set(id, 'sent');
-    return true;
+    if (this.host.send({ t: 'floor.go', floor, requestId: id, ...(from ? { requestFloor: from } : {}) })) return true;
+    this.floorRequests.delete(id);
+    return false;
   }
 
   private armFloorTimer(floor: string): void {
@@ -786,14 +813,15 @@ export class Session {
    */
   async hire(request: Omit<HireRequest, 'images'>, token = this.token()): Promise<HostActionResult> {
     if (this.hiring) return { ok: false, error: IN_FLIGHT };
-    this.hiring = true;
+    const mine = {};
+    this.hiring = mine;
     try {
       return await this.hireNow(request, token);
     } finally {
-      this.hiring = false;
+      if (this.hiring === mine) this.hiring = undefined;
     }
   }
-  private hiring = false;
+  private hiring?: object;
   private async hireNow(request: Omit<HireRequest, 'images'>, token: ActionToken): Promise<HostActionResult> {
     const hire = this.state.hire;
     const images = request.kind === 'agent' && hire && this.valid(hire.token) ? hire.images.map((i) => i.id) : [];
@@ -842,10 +870,15 @@ export class Session {
     const token = this.token();
     const receipts = this.feeds.queue(floor, workerId);
     const after = receipts.sequence;
+    const mine = {};
+    this.senders.set(key, mine);
     this.set({ sending: { ...this.state.sending, [key]: true } });
     const result = await this.request({ t: 'worker.prompt', workerId, prompt: text, images: draft.attachments, queue: queueSend }, token);
-    const { [key]: _sent, ...sending } = this.state.sending;
-    this.set({ sending });
+    if (this.senders.get(key) === mine) {
+      this.senders.delete(key);
+      const { [key]: _sent, ...sending } = this.state.sending;
+      this.set({ sending });
+    }
     if (!result.ok) return result.error ?? 'The office did not confirm this message. Check the thread before sending it again.';
     if (queueSend) receipts.sent(text, draft.attachments.length > 0, after, this.now());
     // Cleared on the floor it was written on, even after a floor change; a reconnect while it went

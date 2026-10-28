@@ -5,7 +5,7 @@ import { cleanupAllowed, describeWorktree, hireMsg, rebuildMsg, sendHomeMsg, sen
 import { ago, childSummary, duration, modelLabel, statusLabel } from '../src/mobile/format.js';
 import { emptyOffice, expireToasts, reduceOffice, withToast } from '../src/mobile/office-state.js';
 import { FeedPool } from '../src/mobile/thread-feed.js';
-import { decodeEntities, parseMarkdown, safeHref } from '../src/mobile/markdown.js';
+import { decodeEntities, parseMarkdown, safeHref, keyed } from '../src/mobile/markdown.js';
 import { emptyOffice as office0, toolContext } from '../src/mobile/office-state.js';
 import { TOOLS, toolAvailability } from '../src/shared/companion-tools.js';
 
@@ -177,4 +177,14 @@ test('management tools come from the shared catalogue, judged on what the office
   assert.equal(toolAvailability('cloud', toolContext(s, true, { workerId: 'w' }), { workerId: 'w' }).available, false);
   assert.equal(toolAvailability('cloud', toolContext(s, true, { workerId: '__proto__' }), { workerId: '__proto__' }).available, false);
   assert.ok(TOOLS.some((t) => t.id === 'hire' && t.listed));
+});
+
+test('list keys name what an item says, and repeats stay distinct', () => {
+  assert.deepEqual(
+    keyed(['a', 'b', 'a'], (x) => x).map(([k]) => k),
+    ['a#0', 'b#0', 'a#1'],
+  );
+  const before = keyed(['x', 'y'], (v) => v).find(([, v]) => v === 'y')?.[0];
+  const after = keyed(['new', 'x', 'y'], (v) => v).find(([, v]) => v === 'y')?.[0];
+  assert.equal(before, after, 'an item keeps its key when another is added before it');
 });

@@ -202,6 +202,20 @@ export function parseMarkdown(src: string): MdBlock[] {
   }
 }
 
+/**
+ * React keys for a list that never reorders: what each item says, counted when it repeats, so a key
+ * names the item rather than its position.
+ */
+export function keyed<T>(items: readonly T[], name: (item: T) => string): [string, T][] {
+  const seen = new Map<string, number>();
+  return items.map((item) => {
+    const k = name(item);
+    const n = seen.get(k) ?? 0;
+    seen.set(k, n + 1);
+    return [`${k}#${n}`, item];
+  });
+}
+
 /** A block's text with no marks, for copying a table cell or a heading. */
 export function plainText(s: readonly MdSpan[]): string {
   return s.map((x) => x.text).join('');

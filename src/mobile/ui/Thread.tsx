@@ -4,11 +4,15 @@ import { canAnswer, menuTakesText, readMenu, sameMenu, type Menu } from '../../s
 import type { WorkerInfo } from '../../shared/protocol';
 import { slashCommands, slashOf, slashSuggestions, type DroidSlashCommand, type SlashCommand } from '../../shared/slash-commands';
 import { isAsleep, isBusy } from '../../shared/status';
+import type { ThreadEntry } from '../../shared/worker-thread';
 import { presentThread, threadArguments, type ThreadRow } from '../../shared/thread-presentation';
 import { statusLabel } from '../format';
+import { keyed } from '../markdown';
 import type { Session, SessionSnapshot } from '../session';
 import { Button, colors, Label, Note, Row, StatusPill, s } from './kit';
 import { Markdown } from './Markdown';
+
+const NO_ENTRIES: readonly ThreadEntry[] = [];
 
 /** Thread first: the conversation, its question, Droid's queue and the composer, all from shared logic. */
 export function ThreadView(props: { session: Session; snap: SessionSnapshot; worker: WorkerInfo; focused: boolean; onRaw: () => void; onAction: (message: string) => void }) {
@@ -16,8 +20,9 @@ export function ThreadView(props: { session: Session; snap: SessionSnapshot; wor
   const feed = session.feeds.feed(worker.id);
   const ready = session.ready();
   const busy = isBusy(worker.status);
-  const entries = feed?.history.entries ?? [];
-  const rows = useMemo(() => presentThread(entries, busy), [entries, busy, feed?.revision]);
+  // The history replaces its entries array whenever they change, so the array is the memo key.
+  const entries = feed?.history.entries ?? NO_ENTRIES;
+  const rows = useMemo(() => presentThread(entries, busy), [entries, busy]);
   const screen = session.host.screen(worker.id);
   // Receipts are matched in the session, outside render; render only reads them.
   const { views: queued, droid: droidQueued } = session.queuedFor(worker.id);
@@ -206,8 +211,8 @@ function Activity({ row, asking }: { row: Extract<ThreadRow, { kind: 'activity' 
           {row.plan ? (
             <View>
               <Label>Plan</Label>
-              {row.plan.map((step, i) => (
-                <Text key={`${i}:${step.text}`} style={s.muted}>
+              {keyed(row.plan, (step) => step.text).map(([key, step]) => (
+                <Text key={key} style={s.muted}>
                   {step.done ? 'Done' : step.active ? 'Now' : 'Next'} · {step.text}
                 </Text>
               ))}

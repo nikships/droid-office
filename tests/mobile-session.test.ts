@@ -83,7 +83,10 @@ class FakeHost implements MobileHost {
   openPairing() {}
   openOffices() {}
   openSettings() {}
-  selectOffice() {}
+  selected: string[] = [];
+  selectOffice(id: string) {
+    this.selected.push(id);
+  }
   haptic() {}
   views = { Terminal: () => null, Management: () => null };
   say(msg: ServerMsg, epoch = this.link.epoch) {
@@ -706,4 +709,134 @@ test('opening a tool from a worker uses the shared catalogue and closes when the
   session.openTool('docs');
   host.say(enter('b', []));
   assert.equal(session.snapshot().tool, undefined, 'a floor tool closes with its floor');
+});
+
+test('a link that started the app is followed once, after the replay, and a newer tap wins', async (t) => {
+  const host = new FakeHost();
+  const workers = [worker('w1'), worker('w2')];
+  host.boot = { offices: [{ id: 'o1', name: 'Office' }], active: 'o1', link: host.link, replay: [welcome('a', workers)], seq: host.seq, incoming: { kind: 'worker', office: 'o1', worker: 'w1' } };
+  const first = new Session(host);
+  t.after(() => first.dispose());
+  await first.start();
+  assert.equal(first.floorWorkspace().active, 'w1', 'opened once the replay knew the worker');
+  first.focus('');
+  first.dispose();
+  await first.start();
+  assert.equal(first.floorWorkspace().active, '', 'a bootstrap read again does not open it twice');
+
+  let open!: () => void;
+  host.bootGate = new Promise((r) => (open = r));
+  const second = new Session(host);
+  t.after(() => second.dispose());
+  const starting = second.start();
+  host.incoming({ kind: 'worker', office: 'o1', worker: 'w2' });
+  assert.equal(second.snapshot().pendingLink, undefined, 'nothing is followed before the bootstrap');
+  open();
+  await starting;
+  assert.equal(second.floorWorkspace().active, 'w2', 'the tap after launch is newer than the launch link');
+});
+
+test('a cold-start link to another office selects it once the office list is known', async (t) => {
+  const host = new FakeHost();
+  host.boot = {
+    offices: [
+      { id: 'o1', name: 'One' },
+      { id: 'o2', name: 'Two' },
+    ],
+    active: 'o1',
+    link: host.link,
+    replay: [welcome('a', [worker('w1')])],
+    seq: host.seq,
+    incoming: { kind: 'floor', office: 'o2', floor: 'b' },
+  };
+  const session = new Session(host);
+  t.after(() => session.dispose());
+  await session.start();
+  assert.deepEqual(host.selected, ['o2']);
+  assert.equal(session.snapshot().pendingLink?.office, 'o2', 'kept until o2 welcomes');
+});
+
+test('an office change during a warm bootstrap keeps the new office’s link and welcome that followed it', async (t) => {
+  const host = new FakeHost();
+  let open!: () => void;
+  host.bootGate = new Promise((r) => (open = r));
+  host.seq = 5;
+  const offices = [
+    { id: 'o1', name: 'One' },
+    { id: 'o2', name: 'Two' },
+  ];
+  host.boot = { offices, active: 'o1', link: { ...host.link, seq: 4 }, replay: [welcome('a', [worker('w1')])], seq: 5 };
+  const session = new Session(host);
+  t.after(() => session.dispose());
+  const starting = session.start();
+  const listeners = (host as unknown as { offices: Set<(o: HostOffices) => void> }).offices;
+  for (const h of listeners) h({ offices, active: 'o2', seq: ++host.seq });
+  host.setLink({ phase: 'connected', epoch: 2, office: 'o2' });
+  host.say(welcome('c', [worker('w9')], ['c']));
+  open();
+  await starting;
+  assert.equal(session.snapshot().offices.active, 'o2');
+  assert.equal(session.snapshot().office.floor, 'c', 'the welcome after the change is not wiped by it');
+  assert.ok(session.worker('w9'));
+  assert.equal(session.ready(), true);
+});
+
+test('an office list the bootstrap already reflects is not applied again', async (t) => {
+  const host = new FakeHost();
+  let open!: () => void;
+  host.bootGate = new Promise((r) => (open = r));
+  host.seq = 5;
+  host.boot = { offices: [{ id: 'o1', name: 'One' }], active: 'o1', link: { ...host.link, seq: 4 }, replay: [welcome('a', [worker('w1')])], seq: 6 };
+  const session = new Session(host);
+  t.after(() => session.dispose());
+  const starting = session.start();
+  const listeners = (host as unknown as { offices: Set<(o: HostOffices) => void> }).offices;
+  for (const h of listeners) h({ offices: [{ id: 'o0', name: 'Old' }], active: 'o0', seq: 6 });
+  open();
+  await starting;
+  assert.equal(session.snapshot().offices.active, 'o1');
+  assert.equal(session.ready(), true);
+});
+
+test('a floor receipt handed back while floor.go is still being sent is not lost', async (t) => {
+  const { host, session } = await started();
+  t.after(() => session.dispose());
+  const send = host.send;
+  host.send = (msg) => {
+    const ok = send(msg);
+    if (msg.t === 'floor.go') host.say({ t: 'action.result', requestId: (msg as { requestId: string }).requestId, ok: false, error: 'No such floor' });
+    return ok;
+  };
+  assert.equal(session.goFloor('b'), true);
+  assert.equal(session.ready(), true, 'the refusal restored the old floor');
+  assert.equal(session.snapshot().office.floor, 'a');
+});
+
+test('a send from before a reconnect never unlocks one started after it', async (t) => {
+  const { host, session } = await started();
+  t.after(() => session.dispose());
+  session.open('w1');
+  session.draft('w1', 'old');
+  const old = session.submit('w1');
+  const oldResume = session.request({ t: 'worker.resume', workerId: 'w1' });
+  host.setLink({ phase: 'offline', epoch: 1 });
+  host.setLink({ phase: 'connected', epoch: 2, office: 'o1' });
+  host.say(welcome('a', [worker('w1'), worker('w2')]));
+  session.draft('w1', 'new');
+  const fresh = session.submit('w1');
+  const freshResume = session.request({ t: 'worker.resume', workerId: 'w1' });
+  assert.equal(session.isSending('w1'), true);
+  host.requests[0].resolve({ ok: false, error: 'gone' });
+  host.requests[1].resolve({ ok: false, error: 'gone' });
+  await old;
+  await oldResume;
+  assert.equal(session.isSending('w1'), true, 'the new send is still guarded');
+  assert.equal(await session.submit('w1'), IN_FLIGHT);
+  assert.equal((await session.request({ t: 'worker.resume', workerId: 'w1' })).error, IN_FLIGHT);
+  assert.equal(host.requests.length, 4, 'nothing sent twice');
+  host.requests[2].resolve({ ok: true });
+  host.requests[3].resolve({ ok: true });
+  assert.equal(await fresh, undefined);
+  assert.equal((await freshResume).ok, true);
+  assert.equal(session.isSending('w1'), false);
 });

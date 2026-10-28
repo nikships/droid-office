@@ -1,6 +1,6 @@
 import { memo, useMemo } from 'react';
 import { Alert, Linking, ScrollView, Text, type TextStyle, View } from 'react-native';
-import { type MdBlock, type MdSpan, parseMarkdown } from '../markdown';
+import { keyed, type MdBlock, type MdSpan, parseMarkdown, plainText } from '../markdown';
 import { colors, s } from './kit';
 
 /** Asks before leaving the app: a reply's link text can say anything. */
@@ -14,9 +14,9 @@ function openLink(href: string) {
 function Spans({ spans, style }: { spans: readonly MdSpan[]; style?: TextStyle }) {
   return (
     <Text selectable style={[s.text, style]}>
-      {spans.map((x, i) => (
+      {keyed(spans, (x) => x.text).map(([key, x]) => (
         <Text
-          key={i}
+          key={key}
           style={[x.bold && { fontWeight: '600' }, x.italic && { fontStyle: 'italic' }, x.strike && { textDecorationLine: 'line-through' }, x.code && s.code, x.href ? { color: colors.accent, textDecorationLine: 'underline' } : null]}
           onPress={x.href ? () => openLink(x.href as string) : undefined}
           accessibilityRole={x.href ? 'link' : undefined}
@@ -50,8 +50,8 @@ function Block({ block }: { block: MdBlock }) {
     case 'list':
       return (
         <View style={{ gap: 2 }}>
-          {block.items.map((item, i) => (
-            <View key={i} style={{ flexDirection: 'row', gap: 6 }}>
+          {keyed(block.items, (item) => blockName(item.blocks[0])).map(([key, item], i) => (
+            <View key={key} style={{ flexDirection: 'row', gap: 6 }}>
               <Text style={[s.text, { minWidth: 18, textAlign: 'right' }]}>{item.checked !== undefined ? (item.checked ? '☑' : '☐') : block.ordered ? `${block.start + i}.` : '•'}</Text>
               <View style={{ flex: 1, gap: 4 }}>
                 <Blocks blocks={item.blocks} />
@@ -70,10 +70,10 @@ function Block({ block }: { block: MdBlock }) {
       return (
         <ScrollView horizontal>
           <View style={{ borderWidth: 1, borderColor: colors.border, borderRadius: 4 }}>
-            {[block.header, ...block.rows].map((row, r) => (
-              <View key={r} style={{ flexDirection: 'row', borderTopWidth: r ? 1 : 0, borderColor: colors.border, backgroundColor: r ? undefined : colors.raised }}>
-                {row.map((cell, c) => (
-                  <View key={c} style={{ width: 140, padding: 6, borderLeftWidth: c ? 1 : 0, borderColor: colors.border }}>
+            {keyed([block.header, ...block.rows], (row) => row.map(plainText).join('|')).map(([rowKey, row], r) => (
+              <View key={rowKey} style={{ flexDirection: 'row', borderTopWidth: r ? 1 : 0, borderColor: colors.border, backgroundColor: r ? undefined : colors.raised }}>
+                {keyed(row, plainText).map(([cellKey, cell], c) => (
+                  <View key={cellKey} style={{ width: 140, padding: 6, borderLeftWidth: c ? 1 : 0, borderColor: colors.border }}>
                     <Spans spans={cell} style={{ textAlign: block.align[c] ?? 'left', ...(r ? {} : { fontWeight: '600' }) }} />
                   </View>
                 ))}
@@ -87,11 +87,18 @@ function Block({ block }: { block: MdBlock }) {
   }
 }
 
+function blockName(b: MdBlock | undefined): string {
+  if (!b) return '';
+  if (b.kind === 'paragraph' || b.kind === 'heading') return `${b.kind}:${plainText(b.spans).slice(0, 64)}`;
+  if (b.kind === 'code') return `code:${b.text.slice(0, 64)}`;
+  return b.kind;
+}
+
 function Blocks({ blocks }: { blocks: readonly MdBlock[] }) {
   return (
     <>
-      {blocks.map((b, i) => (
-        <Block key={i} block={b} />
+      {keyed(blocks, blockName).map(([key, b]) => (
+        <Block key={key} block={b} />
       ))}
     </>
   );

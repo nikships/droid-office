@@ -98,6 +98,11 @@ export interface HostBootstrap extends HostOffices {
   replay: ServerMsg[];
   /** The `seq` of the newest message `replay` reflects. */
   seq: number;
+  /**
+   * A notification or link that started the app before it subscribed, handed over once. One that
+   * arrives after the subscription goes through `onIncoming` instead, and is newer than this.
+   */
+  incoming?: HostIncoming;
 }
 
 export interface HostMessageMeta {
@@ -115,6 +120,12 @@ export interface HostOffice {
 export interface HostOffices {
   offices: HostOffice[];
   active?: string;
+  /**
+   * From the same counter as message `seq`, on an `onOffices` event: one with `seq <= bootstrap.seq`
+   * is already reflected in the bootstrap. Without it, an event that came before the bootstrap answered
+   * is taken as newer than it.
+   */
+  seq?: number;
 }
 
 export interface HostLink {
