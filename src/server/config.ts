@@ -34,8 +34,6 @@ export interface Config {
   trustProxy: boolean;
   /** The most workers the office runs at once, across every floor; ⚙️ Settings can't go past it. */
   maxWorkers?: number;
-  /** Slack / Discord webhook to post to when a worker needs input or finishes ('' turns it off). */
-  webhook?: string;
   /** Where the office is: its sun and live weather follow this city's forecast. */
   city?: string;
   /** Weather pinned for good, instead of made up or forecast. */
@@ -100,9 +98,6 @@ Options:
                           floor (env DROID_OFFICE_MAX_WORKERS). Hiring past it
                           is refused. It can be lowered from ⚙️
                           Settings, but not raised past this
-      --webhook <url>     Post to this Slack or Discord webhook when a worker
-                          needs input or finishes (env DROID_OFFICE_WEBHOOK).
-                          Also settable from ⚙️ Settings in the office; "" turns it off
       --city <name>       Put the office in a real city, e.g. "Berlin" or
                           "Portland, Oregon" (env DROID_OFFICE_CITY): the weather
                           outside follows its live forecast from open-meteo.com
@@ -194,7 +189,6 @@ export function loadConfig(argv: string[]): Config {
   let trustProxy = false;
   let finderBridge: string | undefined;
   let maxWorkers = process.env.DROID_OFFICE_MAX_WORKERS || '';
-  let webhook = process.env.DROID_OFFICE_WEBHOOK;
   let city = process.env.DROID_OFFICE_CITY || '';
   let weather = process.env.DROID_OFFICE_WEATHER || '';
 
@@ -238,9 +232,6 @@ export function loadConfig(argv: string[]): Config {
         break;
       case '--max-workers':
         maxWorkers = takeValue(argv, i++, a);
-        break;
-      case '--webhook':
-        webhook = takeValue(argv, i++, a);
         break;
       case '--home':
         home = path.resolve(takeValue(argv, i++, a));
@@ -324,7 +315,6 @@ export function loadConfig(argv: string[]): Config {
     trustProxy,
     finderBridge,
     maxWorkers: workerLimit,
-    webhook,
     city: city.trim() || undefined,
     weather: (weather as Weather) || undefined,
   };
