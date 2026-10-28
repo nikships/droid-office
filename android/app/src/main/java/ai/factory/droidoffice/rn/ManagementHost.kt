@@ -17,13 +17,6 @@ interface ManagementHost {
     fun join(listener: ManagementListener): ManagementJoin
 
     /**
-     * Sends a ClientMsg (JSON text) now on socket [epoch], or returns false: when that socket is
-     * gone, the message isn't one, or it is a `floor.go` (the workspace alone moves the connection).
-     * Never queued, never replayed.
-     */
-    fun send(epoch: Long, json: String): Boolean
-
-    /**
      * Forwards one request to [officeId] with the device's credential, only while it is still the
      * active office on socket [epoch]; the policy (ToolPolicy) is checked again here. Fails with the
      * reason as a sentence when refused or unreachable.
@@ -51,7 +44,14 @@ interface ManagementListener {
     fun onLink(link: ManagementLink?, replay: List<String>)
 }
 
-class ManagementJoin(val link: ManagementLink?, val replay: List<String>, val close: () -> Unit)
+/**
+ * One view's join. [send] sends a ClientMsg (JSON text) now on socket epoch, or returns false: when
+ * that socket is gone, the message isn't one, or it is a `floor.go` (the workspace alone moves the
+ * connection). Never queued, never replayed. The join's `worker.attach`/`worker.detach` are holds of
+ * its own on the app's shared attachments: [close] (or a new link) releases exactly those, never
+ * another view's or another join's.
+ */
+class ManagementJoin(val link: ManagementLink?, val replay: List<String>, val send: (epoch: Long, json: String) -> Boolean, val close: () -> Unit)
 
 class ToolHttpRequest(val method: String, val path: String, val query: String?, val contentType: String?, val body: ByteArray?)
 

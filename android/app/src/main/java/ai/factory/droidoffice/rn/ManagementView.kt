@@ -247,7 +247,7 @@ class ManagementView(
                 val msg = value["msg"] as? JsonObject ?: return
                 if (msg.string("t") == null || msg.string("t") == "floor.go" || msg.toString().length > ToolPolicy.JSON_MAX) return
                 val epoch = binding.epoch
-                if (binding.officeId == null || epoch == null || !host.send(epoch, msg.toString())) {
+                if (binding.officeId == null || epoch == null || join?.send?.invoke(epoch, msg.toString()) != true) {
                     send(buildJsonObject { put("t", "status"); put("up", false) })
                 }
             }
