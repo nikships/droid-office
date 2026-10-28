@@ -3,7 +3,8 @@
     uv run --with pillow python tools/tray-icon.py
 
 Writes src/desktop/tray-icon.ts: the glyph at 18 pt (@1x and @2x) in the office's orange for a running
-office, and as a black template image macOS tints for an office that isn't running. Commit what it writes.
+office, and the same orange dimmed for an office that isn't running. Never a template image: DroidProxy's
+icon is the same glyph in the menu bar's own colour. Commit what it writes.
 """
 
 import base64
@@ -16,6 +17,8 @@ ROOT = Path(__file__).resolve().parent.parent
 SOURCE = ROOT / "build" / "icon.png"
 OUT = ROOT / "src" / "desktop" / "tray-icon.ts"
 ORANGE = (0xEF, 0x6F, 0x2E)
+# How much of the glyph's opacity a stopped office keeps.
+DIMMED = 0.4
 POINTS = 18
 # The glyph fills 16 of the 18 points, as Apple's menu bar icons leave a point of air on each side.
 GLYPH_POINTS = 16
@@ -34,11 +37,11 @@ def glyph_mask() -> Image.Image:
     return mask.crop((cx - side // 2, cy - side // 2, cx + side // 2, cy + side // 2))
 
 
-def render(mask: Image.Image, scale: int, color: tuple[int, int, int]) -> str:
+def render(mask: Image.Image, scale: int, opacity: float) -> str:
     size, glyph = POINTS * scale, GLYPH_POINTS * scale
-    alpha = mask.resize((glyph, glyph), Image.LANCZOS)
+    alpha = mask.resize((glyph, glyph), Image.LANCZOS).point(lambda v: round(v * opacity))
     image = Image.new("RGBA", (size, size), (0, 0, 0, 0))
-    fill = Image.new("RGBA", (glyph, glyph), (*color, 255))
+    fill = Image.new("RGBA", (glyph, glyph), (*ORANGE, 255))
     fill.putalpha(alpha)
     offset = (size - glyph) // 2
     image.paste(fill, (offset, offset))
@@ -50,13 +53,13 @@ def render(mask: Image.Image, scale: int, color: tuple[int, int, int]) -> str:
 def main() -> None:
     mask = glyph_mask()
     icons = {
-        "running": {scale: render(mask, scale, ORANGE) for scale in (1, 2)},
-        "stopped": {scale: render(mask, scale, (0, 0, 0)) for scale in (1, 2)},
+        "running": {scale: render(mask, scale, 1.0) for scale in (1, 2)},
+        "stopped": {scale: render(mask, scale, DIMMED) for scale in (1, 2)},
     }
     lines = [
         "// Written by tools/tray-icon.py from build/icon.png; run it again rather than editing this file.",
         "",
-        "/** The menu bar icon, base64 PNGs at 18 pt: orange for a running office, a template image macOS tints for one that isn't. */",
+        "/** The menu bar icon, base64 PNGs at 18 pt: orange for a running office, dimmed orange for one that isn't. */",
         "export const TRAY_ICON = {",
     ]
     for state, scales in icons.items():

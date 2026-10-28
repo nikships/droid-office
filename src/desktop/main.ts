@@ -362,9 +362,9 @@ async function leaveToMenuBar() {
   if (!settings.menuBarExplained) {
     const { response } = await dialog.showMessageBox(current.base, {
       type: 'info',
-      message: 'The office keeps running in the menu bar',
-      detail: 'Workers keep working, and phones and browsers stay connected. Open the office again from the Droid Office icon in the menu bar, and quit it from that menu.',
-      buttons: ['OK', 'Quit Droid Office'],
+      message: 'Cmd+Q closes the window and keeps the office running',
+      detail: 'Workers keep working, and phones and browsers stay connected. Open the office again from the Droid Office icon in the menu bar. To stop the office, choose Quit Droid Office in that menu, or press Option+Cmd+Q.',
+      buttons: ['Keep Running in Menu Bar', 'Stop the Office and Quit'],
       defaultId: 0,
       cancelId: 0,
     });

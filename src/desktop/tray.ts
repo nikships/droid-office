@@ -7,8 +7,6 @@ function icon(running: boolean): NativeImage {
   const image = nativeImage.createEmpty();
   image.addRepresentation({ scaleFactor: 1, buffer: Buffer.from(set.x1, 'base64') });
   image.addRepresentation({ scaleFactor: 2, buffer: Buffer.from(set.x2, 'base64') });
-  // The stopped glyph is black: as a template image macOS draws it in the menu bar's own colour.
-  image.setTemplateImage(!running);
   return image;
 }
 
