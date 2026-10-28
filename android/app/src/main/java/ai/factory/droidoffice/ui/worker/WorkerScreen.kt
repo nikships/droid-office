@@ -322,7 +322,7 @@ fun WorkerScreen(workerId: String, onBack: () -> Unit, embedded: Boolean = false
             Column(Modifier.onSizeChanged { lift.value = with(density) { it.height.toDp() } + 8.dp }) {
                 if (!worker.isCloud && tty) {
                     QuickKeyRow(
-                        workerId, phone, directInput, link.phase == Phase.Connected,
+                        workerId, worker.isShell, phone, directInput, link.phase == Phase.Connected,
                         onPhone = { phoneChoice = !phone },
                         onDirect = {
                             directInput = !directInput
@@ -600,11 +600,11 @@ private fun Gone(synced: Boolean, embedded: Boolean, onBack: () -> Unit) {
  * Phone stays first; the rest come in the owner's order, arranged from the button at the end.
  */
 @Composable
-private fun QuickKeyRow(workerId: String, phone: Boolean, directInput: Boolean, connected: Boolean, onPhone: () -> Unit, onDirect: () -> Unit) {
+private fun QuickKeyRow(workerId: String, shell: Boolean, phone: Boolean, directInput: Boolean, connected: Boolean, onPhone: () -> Unit, onDirect: () -> Unit) {
     val graph = LocalGraph.current
     val haptics = LocalHapticFeedback.current
     val store by graph.store.snapshot.collectAsStateWithLifecycle()
-    val keys = QuickKeys.arrange(store.settings.quickKeys)
+    val keys = if (shell) QuickKeys.shell else QuickKeys.arrange(store.settings.quickKeys)
     var arranging by rememberSaveable { mutableStateOf(false) }
     Row(
         Modifier.fillMaxWidth().tagged(Tags.Worker.KEYS).horizontalScroll(rememberScrollState()).padding(horizontal = 10.dp, vertical = 8.dp),
@@ -624,9 +624,11 @@ private fun QuickKeyRow(workerId: String, phone: Boolean, directInput: Boolean, 
                 graph.connection.send(ClientMsg.termInput(workerId, key.bytes))
             }
         }
-        QuickKey("", "Arrange the quick keys", Tags.Worker.KEYS_ARRANGE, icon = OfficeIcons.Sliders) {
-            haptics.performHapticFeedback(HapticFeedbackType.KeyboardTap)
-            arranging = true
+        if (!shell) {
+            QuickKey("", "Arrange the quick keys", Tags.Worker.KEYS_ARRANGE, icon = OfficeIcons.Sliders) {
+                haptics.performHapticFeedback(HapticFeedbackType.KeyboardTap)
+                arranging = true
+            }
         }
     }
     if (arranging) QuickKeysSheet(store.settings.quickKeys, onDismiss = { arranging = false })

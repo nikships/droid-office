@@ -27,6 +27,25 @@ object QuickKeys {
         QuickKey("/", "Slash", "/"),
     )
 
+    /** Ctrl+U: clears whatever is half typed, so a command key never lands after it. */
+    private const val CLEAR_LINE = "\u0015"
+
+    private fun command(line: String) = QuickKey(line, line, CLEAR_LINE + line + Keys.ENTER)
+
+    /** What a shell worker's row shows instead of [all]: Tab and the commands a novice reaches for. Fixed, not arrangeable. */
+    val shell: List<QuickKey> = listOf(
+        QuickKey("Tab", "Tab", Keys.TAB),
+        command("git status"),
+        command("git fetch"),
+        command("git pull"),
+        command("git add ."),
+        command("git push"),
+        command("git diff"),
+        command("ls"),
+        command("cd .."),
+        command("clear"),
+    )
+
     val defaultOrder: List<String> = all.map { it.id }
 
     private val byId = all.associateBy { it.id }

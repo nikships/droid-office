@@ -12,6 +12,15 @@ class QuickKeysTest {
     }
 
     @Test
+    fun aShellGetsTabAndGitCommandsInstead() {
+        assertEquals("Tab", QuickKeys.shell.first().label)
+        assertEquals("\u0015git fetch\r", QuickKeys.shell.single { it.label == "git fetch" }.bytes)
+        assertEquals("\u0015git pull\r", QuickKeys.shell.single { it.label == "git pull" }.bytes)
+        assertEquals(QuickKeys.shell.size, QuickKeys.shell.map { it.id }.toSet().size)
+        assertEquals(emptySet<String>(), QuickKeys.shell.map { it.id }.toSet() intersect (QuickKeys.all.map { it.id }.toSet() - "tab"))
+    }
+
+    @Test
     fun slashTypesASlash() {
         val slash = QuickKeys.all.single { it.id == "slash" }
         assertEquals("/", slash.label)
