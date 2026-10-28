@@ -72,6 +72,15 @@ class StateReplayTest {
     }
 
     @Test
+    fun visitsBelongToTheFloorTheyHappenedOn() {
+        val r = StateReplay()
+        r.record(welcome("f1"))
+        r.record(f("""{"t":"visits","visits":[{"worker":"w1"}]}"""))
+        r.record(enter("roof"))
+        assertEquals(listOf("welcome", "floor.enter"), kinds(r))
+    }
+
+    @Test
     fun aNewWelcomeOrAClosedSocketStartsOver() {
         val r = StateReplay()
         r.record(welcome("f1"))
@@ -140,6 +149,26 @@ class HostLogTest {
         assertEquals(second, log.welcomed)
         assertTrue(log.frame(first, floors, "o1").isEmpty())
         assertEquals(1, log.frame(second, floors, "o1").size)
+    }
+
+    @Test
+    fun aQueuedWelcomeFromAClosedSocketIsRefused() {
+        val log = HostLog()
+        val e = log.opened()
+        log.closed(e)
+        val seq = log.seq
+        assertTrue(log.frame(e, welcome, "o1").isEmpty())
+        assertNull(log.welcomed)
+        assertEquals(HostLinkState.IDLE, log.link.phase)
+        assertEquals(seq, log.seq)
+        assertTrue(log.replay.snapshot().isEmpty())
+        // Closed after its welcome too: a late frame changes nothing.
+        val next = log.opened()
+        log.frame(next, welcome, "o1")
+        log.closed(next)
+        assertTrue(log.frame(next, welcome, "o1").isEmpty())
+        assertTrue(log.frame(next, floors, "o1").isEmpty())
+        assertNull(log.open)
     }
 
     @Test

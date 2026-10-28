@@ -13,7 +13,7 @@ class Frame(val t: String, val text: String, val workerId: String? = null, val f
             val t = o.str("t") ?: return null
             val worker = when (t) {
                 "worker.update" -> (o["worker"] as? JsonObject)?.str("id")
-                "worker.remove" -> o.str("workerId")
+                "worker.remove", "screen" -> o.str("workerId")
                 else -> null
             }
             val floor = if (t == "welcome" || t == "floor.enter") o.str("floor") else null
@@ -97,11 +97,11 @@ class StateReplay {
         /** State broadcasts about the whole office: a new welcome replaces them, a floor change doesn't. */
         val OFFICE_TOPICS = setOf(
             "floors", "projectsDir", "upgrade", "machine", "sky", "jukebox", "leaveOnMerge", "freshMain", "subagents",
-            "models.hidden", "whiteboardSkill", "prompts", "factory", "setup", "subscriptions", "visits",
+            "models.hidden", "whiteboardSkill", "prompts", "factory", "setup", "subscriptions",
         )
 
         /** State broadcasts about the floor this connection is on: a floor change replaces them. */
-        val FLOOR_TOPICS = setOf("gh.issues", "gh.pulls", "pipelines", "jira", "jira.board", "autoHeal", "decor", "worktreeSetup")
+        val FLOOR_TOPICS = setOf("gh.issues", "gh.pulls", "pipelines", "jira", "jira.board", "autoHeal", "decor", "worktreeSetup", "visits")
     }
 }
 
@@ -138,6 +138,10 @@ class HostLog {
     /** The socket whose `welcome` has arrived and that is still open, or null. */
     var welcomed: Long? = null
         private set
+
+    /** The newest socket while it is open, or null once it closed. */
+    var open: Long? = null
+        private set
     var link = HostLinkState(HostLinkState.IDLE, 0, null, null)
         private set
 
@@ -152,6 +156,7 @@ class HostLog {
     /** A new socket opened: its number. */
     fun opened(): Long {
         epoch++
+        open = epoch
         welcomed = null
         replay.reset()
         return epoch
@@ -160,6 +165,7 @@ class HostLog {
     /** Socket [e] closed. */
     fun closed(e: Long) {
         if (e != epoch) return
+        open = null
         welcomed = null
         replay.reset()
     }
@@ -175,10 +181,11 @@ class HostLog {
 
     /**
      * A frame from socket [e]: the events it makes, in order (a `connected` link first for a welcome
-     * the link hadn't announced). Nothing from a socket that isn't the newest, or before its welcome.
+     * the link hadn't announced). Nothing from a socket that isn't the newest and still open, or
+     * before its welcome.
      */
     fun frame(e: Long, f: Frame, office: String?): List<Event> {
-        if (e != epoch) return emptyList()
+        if (e != epoch || open != e) return emptyList()
         val out = ArrayList<Event>(2)
         if (f.t == "welcome") {
             welcomed = e
@@ -223,6 +230,11 @@ class ImageOrigins<Route>(private val max: Int = 200) {
     /** An office was forgotten on this phone: its uploads can't be reached any more. */
     fun dropOffice(office: String) {
         origins.values.removeAll { it.office == office }
+    }
+
+    /** Only the offices still paired keep their uploads. */
+    fun keep(offices: Set<String>) {
+        origins.values.removeAll { it.office !in offices }
     }
 
     val size: Int get() = origins.size
