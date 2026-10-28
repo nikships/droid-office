@@ -10,14 +10,15 @@ import { TeamThread, TeamThreadPaint, teamThreadBudget, teamThreadVisible, threa
 import { h, STATUS_LABEL } from './dom';
 import { colorDot } from './kit';
 import { markdown } from './markdown';
-import { promptImages } from './images';
+import { forgetAllStagedImages, promptImages } from './images';
 import { modelBadgeNode } from './models';
 import { copy as copyText } from './clipboard';
 import { withToken } from '../token';
 
-/** What the owner typed and the pictures staged for it, not sent yet. Same shape as CompanionDraft. */
+/** What the owner typed and the pictures chosen for it, not sent yet. Same shape as CompanionDraft. */
 export interface ThreadDraft {
   text: string;
+  /** Opaque local handles, valid in this page only. */
   attachments: string[];
 }
 
@@ -40,13 +41,14 @@ export interface ThreadOptions {
   queueKey: string;
   draft: string;
   onDraft(text: string): void;
-  /** Pictures staged for the kept draft, put back under the box. */
+  /** The kept draft's pictures, as the opaque local handles onAttachments gave, put back under the box. */
   attachments?: readonly string[];
   /**
-   * The staged pictures changed. With this, the caller keeps the draft's pictures: disposing the view
-   * leaves them staged, and the caller takes them out (forgetStagedImages) when it drops the draft.
+   * The pictures changed: opaque local handles, uploads still going included. With this, the caller
+   * keeps the draft's pictures: disposing the view keeps them, and the caller takes them out
+   * (forgetStagedImages, or forgetAllStagedImages on connection loss) when it drops the draft.
    */
-  onAttachments?(ids: string[]): void;
+  onAttachments?(handles: string[]): void;
   /** The connection was lost and the composer cleared itself (text and pictures). */
   onDraftReset?(): void;
   /** The floor the view was opened on, where its pictures are staged. */
@@ -209,7 +211,7 @@ export function mountWorkerThread(net: Net, opts: ThreadOptions): WorkerThread {
   });
   const images = promptImages(input, { floor: opts.floor });
   if (opts.attachments?.length) images.restore(opts.attachments);
-  images.onChange(() => opts.onAttachments?.(images.ids()));
+  images.onChange(() => opts.onAttachments?.(images.handles()));
   const file = h('input.hidden', { type: 'file', accept: 'image/png,image/jpeg,image/gif,image/webp', multiple: true, 'aria-label': 'Choose pictures' });
   file.addEventListener('change', () => {
     images.add([...(file.files ?? [])]);
@@ -914,6 +916,8 @@ export function mountWorkerThread(net: Net, opts: ThreadOptions): WorkerThread {
   const offLost = net.onConnectionLost(() => {
     if (disposed) return;
     clearDraft();
+    // Drafts kept for other panes and floors hold pictures too; the workspace drops their text.
+    forgetAllStagedImages();
     opts.onDraftReset?.();
   });
   const timer = setInterval(() => {
@@ -992,7 +996,7 @@ export function mountWorkerThread(net: Net, opts: ThreadOptions): WorkerThread {
         read();
       }
     },
-    getDraft: () => ({ text: input.value, attachments: images.ids() }),
+    getDraft: () => ({ text: input.value, attachments: images.handles() }),
     resetDraft() {
       if (!disposed) clearDraft();
     },

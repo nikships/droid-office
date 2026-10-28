@@ -1,4 +1,5 @@
 import { DROP_MAX_BYTES, PROMPT_IMAGES_MAX, PROMPT_IMAGE_TYPES } from '../../shared/drops';
+import { ImageStaging } from '../image-staging';
 import { store } from '../state';
 import { withToken } from '../token';
 import { h, toast } from './dom';
@@ -8,15 +9,27 @@ import { h, toast } from './dom';
 // comes out again with the ✕ that appears when you hover it. What's sent with the prompt is just
 // their ids, in order; the office lists where it keeps them after your text.
 
-/** Staged pictures by id, so a draft restored in another view still shows its thumbnails. Bounded by what drafts hold. */
-const stagedFiles = new Map<string, File>();
-
-/** Takes staged pictures out on the office (a draft dropped while its box wasn't mounted). Best effort. */
-export function forgetStagedImages(floor: string, ids: readonly string[]) {
-  for (const id of ids) {
-    stagedFiles.delete(id);
+const staging = new ImageStaging<File>({
+  async upload(floor, f) {
+    const name = f.name || 'That picture';
+    const res = await fetch(withToken(`/api/prompt/image?${new URLSearchParams({ floor, name: f.name })}`), { method: 'POST', headers: { 'content-type': f.type }, body: f });
+    const r = (await res.json().catch(() => ({}))) as { id?: string; error?: string };
+    if (!res.ok || !r.id) throw new Error(r.error ?? `${name} could not be attached`);
+    return r.id;
+  },
+  forget(floor, id) {
     void fetch(withToken(`/api/prompt/image?${new URLSearchParams({ floor, id })}`), { method: 'DELETE' }).catch(() => {});
-  }
+  },
+});
+
+/** Throws away a kept draft's pictures (local handles), uploaded or still going up. Best effort on the office. */
+export function forgetStagedImages(handles: readonly string[]) {
+  for (const handle of handles) staging.remove(handle);
+}
+
+/** The connection was lost: every picture a draft kept outside a mounted box goes, on every floor. */
+export function forgetAllStagedImages() {
+  staging.removeKept();
 }
 
 export interface PromptImages {
@@ -25,6 +38,8 @@ export interface PromptImages {
   add(files: File[]): void;
   /** The ids of the pictures that are up, in the order they were added, which is how they're numbered. */
   ids(): string[];
+  /** Every picture here, up or still going up, as opaque local handles: what a kept draft holds. */
+  handles(): string[];
   /** Whether a picture is still going up. */
   busy(): boolean;
   /** Resolves once no picture is going up. */
@@ -33,23 +48,20 @@ export interface PromptImages {
   take(): string[];
   /** Throws away what was never sent: the box was closed. */
   discard(): void;
-  /** Lets go of the thumbnails but leaves the pictures staged on the office: a draft keeps them. */
+  /** Lets go of the thumbnails but keeps the pictures, uploads still going included: a draft holds their handles. */
   detach(): void;
-  /** Puts back pictures staged earlier (a kept draft), in order, after what is already here. */
-  restore(ids: readonly string[]): void;
-  /** Called whenever the staged ids change (added, uploaded, removed, taken, discarded). */
+  /** Puts back a kept draft's pictures by handle, in order, after what is already here. */
+  restore(handles: readonly string[]): void;
+  /** Called whenever the pictures change (added, uploaded, removed, taken, discarded, restored). */
   onChange(fn: () => void): void;
   /** Takes pictures dropped on `zone`, which gets the `dropping` class while one is held over it. */
   dropZone(zone: HTMLElement, mark?: HTMLElement): void;
 }
 
 interface Item {
-  file?: File;
+  handle: string;
+  file: File;
   url: string;
-  /** Set once it's up. */
-  id?: string;
-  /** Taken out while it was still going up. */
-  removed?: boolean;
 }
 
 export function promptImages(textarea: HTMLTextAreaElement, opts: { floor?: string } = {}): PromptImages {
@@ -59,21 +71,9 @@ export function promptImages(textarea: HTMLTextAreaElement, opts: { floor?: stri
   let changed: () => void = () => {};
   const element = h('div.pimgs', { role: 'list', 'aria-label': 'Attached pictures' });
 
-  const query = (extra: Record<string, string>) => new URLSearchParams({ floor, ...extra });
-  const upload = async (f: File): Promise<string> => {
-    const name = f.name || 'That picture';
-    const res = await fetch(withToken(`/api/prompt/image?${query({ name: f.name })}`), { method: 'POST', headers: { 'content-type': f.type }, body: f });
-    const r = (await res.json().catch(() => ({}))) as { id?: string; error?: string };
-    if (!res.ok || !r.id) throw new Error(r.error ?? `${name} could not be attached`);
-    return r.id;
-  };
-  const forget = (id: string) => {
-    stagedFiles.delete(id);
-    void fetch(withToken(`/api/prompt/image?${query({ id })}`), { method: 'DELETE' }).catch(() => {});
-  };
-
-  const ids = () => items.flatMap((i) => (i.id ? [i.id] : []));
-  const busy = () => items.some((i) => !i.id);
+  const idOf = (item: Item) => staging.get(item.handle)?.id;
+  const ids = () => items.flatMap((i) => idOf(i) ?? []);
+  const busy = () => items.some((i) => !idOf(i));
   const settle = () => {
     if (!busy()) for (const fn of waiting.splice(0)) fn();
   };
@@ -82,23 +82,38 @@ export function promptImages(textarea: HTMLTextAreaElement, opts: { floor?: stri
       ...items.map((item, i) =>
         h(
           'div.pimg',
-          { role: 'listitem', class: item.id ? '' : 'uploading', title: `Image ${i + 1}: ${item.file?.name || 'pasted picture'}` },
-          item.url ? h('img', { src: item.url, alt: `Image ${i + 1}` }) : null,
+          { role: 'listitem', class: idOf(item) ? '' : 'uploading', title: `Image ${i + 1}: ${item.file.name || 'pasted picture'}` },
+          h('img', { src: item.url, alt: `Image ${i + 1}` }),
           h('span.pimg-n', {}, String(i + 1)),
           h('button.pimg-x', { type: 'button', 'aria-label': `Remove image ${i + 1}`, title: 'Remove', onclick: () => remove(item) }, '✕'),
         ),
       ),
     );
   };
+  const drop = (item: Item) => {
+    const at = items.indexOf(item);
+    if (at >= 0) items.splice(at, 1);
+    URL.revokeObjectURL(item.url);
+  };
   const remove = (item: Item) => {
-    items.splice(items.indexOf(item), 1);
-    item.removed = true;
-    if (item.url) URL.revokeObjectURL(item.url);
-    if (item.id) forget(item.id);
+    drop(item);
+    staging.remove(item.handle);
     render();
     settle();
     changed();
     textarea.focus();
+  };
+  /** Repaints once this picture's upload settles, if it is still shown here. A failed one is gone from staging. */
+  const watch = (item: Item) => {
+    const entry = staging.get(item.handle);
+    if (!entry || entry.id) return;
+    void entry.settled.then(() => {
+      if (!items.includes(item)) return;
+      if (!staging.get(item.handle)) drop(item);
+      render();
+      settle();
+      changed();
+    });
   };
 
   const add = (files: File[]) => {
@@ -115,30 +130,13 @@ export function promptImages(textarea: HTMLTextAreaElement, opts: { floor?: stri
         toast(`A prompt takes at most ${PROMPT_IMAGES_MAX} pictures`, 'warn');
         break;
       }
-      const item: Item = { file, url: URL.createObjectURL(file) };
+      const staged = staging.stage(floor, file, (err) => toast(err.message, 'warn'));
+      const item: Item = { handle: staged.handle, file, url: URL.createObjectURL(file) };
       items.push(item);
-      upload(file).then(
-        (id) => {
-          // Taken out while it was going up: it was kept after all, so let it go.
-          if (item.removed) return forget(id);
-          item.id = id;
-          stagedFiles.set(id, file);
-          render();
-          settle();
-          changed();
-        },
-        (err: Error) => {
-          if (item.removed) return;
-          const at = items.indexOf(item);
-          if (at >= 0) items.splice(at, 1);
-          if (item.url) URL.revokeObjectURL(item.url);
-          toast(err.message, 'warn');
-          render();
-          settle();
-        },
-      );
+      watch(item);
     }
     render();
+    changed();
   };
 
   // A picture on the clipboard with no text (a screenshot) is attached; anything with text pastes as text.
@@ -150,7 +148,7 @@ export function promptImages(textarea: HTMLTextAreaElement, opts: { floor?: stri
   });
 
   const release = () => {
-    for (const item of items.splice(0)) if (item.url) URL.revokeObjectURL(item.url);
+    for (const item of items.splice(0)) URL.revokeObjectURL(item.url);
     render();
     settle();
   };
@@ -159,33 +157,32 @@ export function promptImages(textarea: HTMLTextAreaElement, opts: { floor?: stri
     element,
     add,
     ids,
+    handles: () => items.map((i) => i.handle),
     busy,
     settled: () => (busy() ? new Promise<void>((resolve) => waiting.push(resolve)) : Promise.resolve()),
     take() {
-      const taken = ids();
-      for (const id of taken) stagedFiles.delete(id);
+      const taken = items.flatMap((i) => staging.take(i.handle) ?? []);
       release();
       changed();
       return taken;
     },
     discard() {
-      for (const item of items) {
-        item.removed = true;
-        if (item.id) forget(item.id);
-      }
+      for (const item of items) staging.remove(item.handle);
       release();
       changed();
     },
     detach() {
-      // Still going up: nobody will hold its id, so it is forgotten once it arrives.
-      for (const item of items) if (!item.id) item.removed = true;
+      for (const item of items) staging.keep(item.handle);
       release();
     },
-    restore(staged) {
-      for (const id of staged) {
-        if (items.length >= PROMPT_IMAGES_MAX || items.some((i) => i.id === id)) continue;
-        const file = stagedFiles.get(id);
-        items.push({ id, file, url: file ? URL.createObjectURL(file) : '' });
+    restore(kept) {
+      for (const handle of kept) {
+        if (items.length >= PROMPT_IMAGES_MAX || items.some((i) => i.handle === handle)) continue;
+        const entry = staging.adopt(handle);
+        if (!entry) continue;
+        const item: Item = { handle, file: entry.file, url: URL.createObjectURL(entry.file) };
+        items.push(item);
+        watch(item);
       }
       render();
       changed();
