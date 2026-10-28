@@ -35,7 +35,7 @@ test('CI checks only the affected platforms and builds every client change into 
   assert.deepEqual(checksFor(['README.md', 'docs/guide/getting-started.md']), { ...none, node: true });
   assert.deepEqual(checksFor(['tools/android-terminal.mjs']), { ...none, node: true, android: true });
   assert.deepEqual(checksFor(['tools/android-model-icons.mjs']), { ...none, node: true, android: true });
-  assert.deepEqual(checksFor(['tools/android-management.mjs']), { ...none, node: true, android: true });
+  assert.deepEqual(checksFor(['tools/android-companion-tools.mjs']), { ...none, node: true, android: true });
   assert.deepEqual(checksFor(['tools/props/generate.py']), { ...none, node: true });
   assert.deepEqual(checksFor(['tools/props/verify.mjs']), { ...none, node: true });
   for (const file of [
@@ -226,7 +226,7 @@ test('PRs retain builds, native compilation, coverage, Android tests and checkou
   for (const [job, fragments] of [
     ['release', ['name: Install and build', 'run: npm run lint', 'run: npm run typecheck', 'name: Test with coverage', 'name: Start the office from the checkout']],
     ['mac', ['name: Install and build', 'name: Check the native Metal presenter', 'name: Check the native Finder integration']],
-    ['android', ['name: Install React Native build dependencies', 'name: Unit tests and lint', 'name: Compile the Android release on pull requests']],
+    ['android', ['name: Install React Native build dependencies', 'name: Build shared Android management panels', 'name: Unit tests and lint', 'name: Compile the Android release on pull requests']],
     ['website', ['run: npm run build:website']],
   ] as const) {
     for (const fragment of fragments) {

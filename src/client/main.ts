@@ -1118,10 +1118,9 @@ net.onMessage((msg) => {
         const notice = removedFloorNotice(msg.arrival, wasOn, lastSpot(), store.floor);
         if (notice) toast(notice, 'warn');
       } else if (!store.floor) arrive();
-      // After a reconnect the server has forgotten which terminal we had open.
+      // Worker terminal holds reattach in Net; the office shell has its own subscription.
       const openId = openTerminalFor();
       if (openId === OFFICE_SHELL_ID) net.send({ t: 'shell.attach' });
-      else if (openId && store.workers.has(openId)) net.send({ t: 'worker.attach', workerId: openId });
       const watching = openChangesFor();
       if (watching && store.workers.has(watching.workerId)) net.send({ t: 'changes.watch', ...watching });
       const following = changesLogFor();

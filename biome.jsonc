@@ -7,8 +7,8 @@
   },
   "files": {
     // The Draco decoder wrapper is vendored from three.js, the Android terminal page's vendor/ is
-    // xterm.js copied from node_modules (tools/android-terminal.mjs), and the Android overview is a
-    // Vite build (tools/android-overview.mjs); linting their output is noise.
+    // xterm.js copied from node_modules (tools/android-terminal.mjs), and the Android management host
+    // is a Vite build (tools/android-companion-tools.mjs); check their authored sources, not output.
     "includes": [
       "**",
       "!!**/dist",
@@ -19,7 +19,7 @@
       "!**/*.svg",
       "!**/public/props/draco/draco_wasm_wrapper.js",
       "!android/app/src/main/assets/terminal/vendor",
-      "!android/app/src/main/assets/overview"
+      "!android/app/src/main/assets/companion-tools"
     ]
   },
   "formatter": {

@@ -456,6 +456,10 @@ jobs:
         working-directory: .
         run: npm ci --ignore-scripts
 
+      - name: Build shared Android management panels
+        working-directory: .
+        run: node tools/android-companion-tools.mjs
+
       - uses: actions/setup-java@v6
         with:
           distribution: temurin

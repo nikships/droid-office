@@ -197,7 +197,7 @@ Every hired worker runs **Factory Droid**, not a separate agent harness. Pick fr
 
 ## Your office in your pocket
 
-**Droid Office for Android** shows every floor and worker, streams live terminals and lets you send the next prompt. A worker that finishes or needs input buzzes your phone; reply right from the notification.
+**Droid Office for Android** is a React Native agent workspace with a selected-floor roster, lead/subagent groups, conversations and live terminals. Wide screens can pin up to four workers. Shared office tools handle boards, pipelines, changes, documentation, cloud computers and Whiteboard. A worker that finishes or needs input buzzes your phone; reply right from the notification. The web companion at `/dashboard` offers the same management workspace without a 3D renderer.
 
 <p align="center">
   <img src="android/docs/home.jpg" alt="Android companion: workers grouped by project floor" width="31%">

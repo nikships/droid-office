@@ -19,12 +19,13 @@ Planned work has written plans; follow them and keep them current when doing tha
 | Path | Contents |
 | --- | --- |
 | `src/server/` | Node server: CLI and config, workers, PTY host, hooks, GitHub/GitLab boards and pipelines, floors |
-| `src/shared/` | Types and pure logic compiled into both server and client, including the WebSocket protocol (`protocol.ts`) |
+| `src/shared/` | Types and pure logic shared by server, browser and React Native, including the WebSocket protocol (`protocol.ts`) |
 | `src/client/` | Vite root: HTML entry pages, `main.ts`, `ui/` (DOM windows and panels), `world/` (three.js scene) |
+| `src/mobile/` | React Native companion workspace, native host contract, session controller and Thread UI |
 | `src/desktop/` | The Mac app's Electron main process: starts the office on Electron's Node, full-screen window, electron-updater (`tsconfig.desktop.json`, built to `dist/desktop`) |
 | `native/` | The Mac app's native Metal presenter (`native/presenter`, Objective-C++ Node-API addon built by `npm run build:native`) and its build script |
 | `electron-builder.yml`, `build/` | How the Mac app is packaged, signed and notarized; its icon and entitlements |
-| `android/` | Droid Office for Android, the phone companion app (Kotlin, Compose; its own Gradle build) |
+| `android/` | Android Gradle app: React Native host, Kotlin transport/security, pairing, notifications and native terminal views |
 | `bin/droid-office.js` | Source checkout and Mac app CLI entry; loads the built `dist/server/server/cli.js` |
 | `bin/office-workers.js` | Plain-Node `office-workers` command that agents use to hire and run subagents (`src/server/team.ts`) |
 | `tests/` | `node:test` suites run through `tsx` |
@@ -42,6 +43,7 @@ This file is the layer that applies everywhere. Each directory below has its own
 | [`src/client/AGENTS.md`](src/client/AGENTS.md) | change the Vite app, or anything `ui/` and `world/` share |
 | [`src/client/ui/AGENTS.md`](src/client/ui/AGENTS.md) | change a DOM window or panel |
 | [`src/client/world/AGENTS.md`](src/client/world/AGENTS.md) | change the three.js scene, movement, camera or a mesh |
+| [`src/mobile/AGENTS.md`](src/mobile/AGENTS.md) | change the React Native workspace or native host contract |
 | [`src/desktop/AGENTS.md`](src/desktop/AGENTS.md) | change the Mac app |
 | [`android/AGENTS.md`](android/AGENTS.md) | change the Android app |
 | [`tests/AGENTS.md`](tests/AGENTS.md) | add or change a test (`tests/*.test.ts` only; a file in a subdirectory never runs) |
