@@ -55,7 +55,9 @@ enum FinderPolicy {
         guard !urls.isEmpty, urls.count <= 100 else { throw FinderFailure.message("Select between 1 and 100 local items.") }
         return try urls.map { url in
             guard url.isFileURL, allowedPath(url.path, home: home) else { throw FinderFailure.message("This location cannot be dispatched.") }
-            let canonical = url.resolvingSymlinksInPath().standardizedFileURL
+            guard let resolved = realpath(url.path, nil) else { throw FinderFailure.message("This location is unavailable.") }
+            defer { free(resolved) }
+            let canonical = URL(fileURLWithPath: String(cString: resolved))
             guard allowedPath(canonical.path, home: home) else { throw FinderFailure.message("This location cannot be dispatched.") }
             let info = try canonical.resourceValues(forKeys: [.volumeIsLocalKey, .volumeIsReadOnlyKey, .volumeURLKey])
             guard info.volumeIsLocal == true, info.volumeIsReadOnly == false else {
@@ -114,7 +116,7 @@ enum FinderKeychain {
         return try JSONDecoder().decode(BridgeRecord.self, from: data).validated()
     }
 
-    static func publish(_ url: String) throws -> BridgeRecord {
+    static func publish(_ url: String, retryDuplicate: Bool = true) throws -> BridgeRecord {
         guard FinderPolicy.endpoint(url) != nil else { throw FinderFailure.message("Invalid loopback endpoint.") }
         if let previous = try read() {
             let record = BridgeRecord(token: previous.token, url: url)
@@ -132,7 +134,7 @@ enum FinderKeychain {
         item[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
         let status = SecItemAdd(item as CFDictionary, nil)
         // Another app startup may have created it first. Never replace or rotate that token.
-        if status == errSecDuplicateItem { return try publish(url) }
+        if status == errSecDuplicateItem, retryDuplicate { return try publish(url, retryDuplicate: false) }
         guard status == errSecSuccess else { throw FinderFailure.message("Cannot save Finder connection (\(status)).") }
         return record
     }

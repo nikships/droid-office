@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
@@ -126,6 +126,14 @@ test('packaging embeds FinderSync outside Resources and preserves native entitle
   assert.doesNotMatch(source, /SecItemDelete/);
   assert.match(source, /token: previous\.token/);
   assert.match(source, /completionHandler\(nil\)/);
+  assert.match(source, /realpath\(url\.path, nil\)/);
+  assert.match(source, /retryDuplicate: false/);
+  const menu = readFileSync(path.join(root, 'native/mac/FinderSync.swift'), 'utf8');
+  assert.doesNotMatch(menu, /representedObject|currentItem|isEnabled = false/);
+  assert.match(menu, /sender\.tag == 1/);
+  const workflow = readFileSync(path.join(root, '.github/workflows/release.yml'), 'utf8');
+  assert.match(workflow, /Final Finder signature lost its required entitlements/);
+  assert.match(workflow, /codesign -d --entitlements/);
 });
 
 test('Swift policy checks compile and execute without Keychain or extension activation', { skip: process.platform !== 'darwin' }, (t) => {
@@ -134,4 +142,10 @@ test('Swift policy checks compile and execute without Keychain or extension acti
   const output = path.join(dir, 'policy-tests');
   execFileSync('xcrun', ['swiftc', '-swift-version', '5', '-parse-as-library', path.join(root, 'native/mac/FinderCore.swift'), path.join(root, 'native/mac/PolicyTests.swift'), '-o', output], { timeout: 60_000 });
   assert.match(execFileSync(output, [], { encoding: 'utf8', timeout: 10_000 }), /Finder policy checks passed/);
+  const entitlements = path.join(dir, 'test-entitlements.plist');
+  const signed = path.join(dir, 'signed-policy');
+  copyFileSync(output, signed);
+  writeFileSync(entitlements, '<?xml version="1.0"?><plist version="1.0"><dict><key>office.test-marker</key><true/></dict></plist>');
+  execFileSync('/usr/bin/codesign', ['--force', '--sign', '-', '--entitlements', entitlements, signed], { timeout: 10_000 });
+  assert.match(execFileSync(output, ['--signing-info', signed], { encoding: 'utf8', timeout: 10_000 }), /exposes entitlements without requirement flags/);
 });

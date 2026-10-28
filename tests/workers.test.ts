@@ -790,6 +790,12 @@ test('Finder dispatch keeps the Team lead session and standard brief, refuses bu
   assert.match(workers.dispatchLead('Not an answer') as string, /busy/);
   info.status = 'done';
   info.lastInputAt = Date.now() - 3000;
+  info.worktree = { path: '.droid-office/worktrees/missing-finder', branch: 'missing-finder', base: 'main' };
+  assert.equal(typeof workers.dispatchLead('Cannot switch a lost checkout', 'glm-5.3-flash'), 'string');
+  assert.equal(info.model, 'gpt-6.1-sol');
+  assert.equal(launches().length, 1);
+  info.worktree = undefined;
+  info.lost = undefined;
   const again = workers.dispatchLead('Follow up', 'gpt-6.1-sol');
   assert.deepEqual(typeof again === 'object' && [again.hired, again.info.id], [false, info.id]);
   await waitFor(

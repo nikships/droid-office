@@ -1,8 +1,21 @@
 import Foundation
+import Security
 
 @main
 enum PolicyTests {
     static func main() throws {
+        if CommandLine.arguments.dropFirst().first == "--signing-info" {
+            var staticCode: SecStaticCode?
+            var info: CFDictionary?
+            let binary = URL(fileURLWithPath: CommandLine.arguments[2])
+            precondition(SecStaticCodeCreateWithPath(binary as CFURL, [], &staticCode) == errSecSuccess)
+            precondition(SecCodeCopySigningInformation(staticCode!, SecCSFlags(rawValue: kSecCSSigningInformation), &info) == errSecSuccess)
+            let values = info as! [String: Any]
+            let entitlements = values[kSecCodeInfoEntitlementsDict as String] as! [String: Any]
+            precondition(entitlements["office.test-marker"] as? Bool == true)
+            print("Signing information exposes entitlements without requirement flags.")
+            return
+        }
         let home = "/Users/test-owner"
         for path in ["/", "/System", "/System/Volumes/Data/file", "/Library/a", home + "/Library/a",
                      home + "/.Trash/a", "/Volumes/Disk/.Trashes/501/file",
@@ -35,6 +48,12 @@ enum PolicyTests {
             _ = try FinderPolicy.paths([])
             preconditionFailure("accepted empty selection")
         } catch {}
+        for systemAlias in ["/etc", "/var", "/tmp"] {
+            do {
+                _ = try FinderPolicy.paths([URL(fileURLWithPath: systemAlias)])
+                preconditionFailure("accepted system alias " + systemAlias)
+            } catch {}
+        }
         do {
             _ = try FinderPolicy.paths(Array(repeating: URL(fileURLWithPath: "/Users/test-owner/Code"), count: 101))
             preconditionFailure("accepted oversized selection")

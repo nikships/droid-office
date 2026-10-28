@@ -6,6 +6,8 @@ import { companionNavigation, finderBridgeArgs, type ThreadLink, threadDashboard
 
 export class FinderThreads {
   private window: BrowserWindow | undefined;
+  private load = 0;
+  constructor(private onClosed: () => void = () => {}) {}
   focusedWindow(): BrowserWindow | undefined {
     return this.window && !this.window.isDestroyed() && this.window.isFocused() ? this.window : undefined;
   }
@@ -18,7 +20,7 @@ export class FinderThreads {
   open(officeUrl: string, link: ThreadLink) {
     const target = threadDashboardUrl(officeUrl, link);
     if (this.window && !this.window.isDestroyed()) {
-      void this.window.loadURL(target).catch(() => {});
+      this.navigate(this.window, target);
       this.window.show();
       this.window.focus();
       return;
@@ -57,8 +59,17 @@ export class FinderThreads {
     });
     win.once('closed', () => {
       if (this.window === win) this.window = undefined;
+      this.onClosed();
     });
-    void win.loadURL(target).catch(() => {});
+    this.navigate(win, target);
+  }
+  private navigate(win: BrowserWindow, target: string) {
+    const load = ++this.load;
+    void win.loadURL(target).catch(() => {
+      if (load !== this.load || this.window !== win || win.isDestroyed()) return;
+      win.destroy();
+      void dialog.showMessageBox({ type: 'error', message: 'The Thread could not open', detail: 'The office may be restarting. Open Droid Office and try the thread again.', buttons: ['OK'] }).catch(() => {});
+    });
   }
   close() {
     this.window?.destroy();
@@ -86,6 +97,10 @@ export async function explainFinder(userData: string) {
     defaultId: 1,
     cancelId: 1,
   });
-  writeFileSync(marker, '1\n', { mode: 0o600 });
+  try {
+    writeFileSync(marker, '1\n', { mode: 0o600 });
+  } catch {
+    // Best effort: a full or read-only disk must not break the running office.
+  }
   if (response === 0) openFinderSettings();
 }

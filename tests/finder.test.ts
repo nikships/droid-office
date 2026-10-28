@@ -96,7 +96,20 @@ test('too many roots or malformed selections are refused before any floors are r
 
 test('system, library, trash, office data and symlinks into them are ineligible', async (t) => {
   const f = fixture(t);
-  for (const blocked of ['/System/x', '/Library/x', '/Network/remote', '/', path.join(f.home, 'Library/x'), path.join(f.home, '.Trash/x'), path.join(f.root, '.droid-office/x'), '/Volumes/disk/Backups.backupdb/x']) {
+  for (const blocked of [
+    '/System/x',
+    '/Library/x',
+    '/Network/remote',
+    '/net/server',
+    '/private/etc/passwd',
+    '/Volumes/.timemachine/x',
+    '/Volumes/disk/com.apple.TimeMachine.test/x',
+    '/',
+    path.join(f.home, 'Library/x'),
+    path.join(f.home, '.Trash/x'),
+    path.join(f.root, '.droid-office/x'),
+    '/Volumes/disk/Backups.backupdb/x',
+  ]) {
     assert.equal(finderPathAllowed(blocked, f.home), false, blocked);
   }
   assert.equal(finderPathAllowed('/Users/someone/project'), true);
@@ -127,6 +140,54 @@ test('dispatch is plain user text and quoted selected paths, reuses Team lead ad
   const again = new FinderDispatch(f.options);
   assert.equal((await again.resolve([repo]))[0].model, 'gpt-6.1-sol');
   assert.equal(JSON.parse(readFileSync(path.join(f.dataDir, 'finder.json'), 'utf8')).project, 'gpt-6.1-sol');
+});
+
+test('floor default leaves an unremembered lead model alone and only explicit choices are saved', async (t) => {
+  const f = fixture(t);
+  const repo = f.repo('project');
+  await f.finder.dispatch({ paths: [repo], prompt: 'Inspect', model: 'floor-default', requestId: 'request-floor-default-01' });
+  assert.equal(f.calls[0].model, undefined);
+  assert.deepEqual(JSON.parse(readFileSync(path.join(f.dataDir, 'finder.json'), 'utf8')), {});
+  await f.finder.dispatch({ paths: [repo], prompt: 'Inspect', model: 'gpt-6.1-sol', requestId: 'request-floor-default-02' });
+  await f.finder.dispatch({ paths: [repo], prompt: 'Inspect', model: 'floor-default', requestId: 'request-floor-default-03' });
+  assert.equal(f.calls[2].model, 'gpt-6.1-sol');
+});
+
+test('a partially registered preview still publishes its successful floors', async (t) => {
+  const f = fixture(t);
+  const a = f.repo('a');
+  const b = f.repo('b');
+  let changed = 0;
+  f.options.changed = () => changed++;
+  const register = f.building.finderFloor.bind(f.building);
+  f.building.finderFloor = (dir) => (dir === b ? 'Cannot register b' : register(dir));
+  await assert.rejects(new FinderDispatch(f.options).resolve([a, b]), /Cannot register b/);
+  assert.equal(changed, 1);
+  assert.equal(
+    f.building.list().some((def) => def.dir === a),
+    true,
+  );
+});
+
+test('shutdown after resolution or between groups never sends further tasks or saves preferences', async (t) => {
+  const f = fixture(t);
+  const paths = [f.repo('a'), f.repo('b')];
+  const finder = new FinderDispatch(f.options);
+  f.options.changed = () => finder.stop();
+  await assert.rejects(finder.dispatch({ paths, prompt: 'Inspect', requestId: 'request-stop-resolved-01' }), /shutting down/);
+  assert.equal(f.calls.length, 0);
+  f.options.changed = () => {};
+  const next = new FinderDispatch(f.options);
+  f.options.dispatch = (def, text, model) => {
+    f.calls.push({ floor: def.id, text, model });
+    next.stop();
+    return { leadId: 'abc123' };
+  };
+  const result = await next.dispatch({ paths, prompt: 'Inspect', requestId: 'request-stop-between-01' });
+  assert.equal(f.calls.length, 1);
+  assert.equal(result.dispatches.length, 1);
+  assert.match(result.errors[0].error, /shutting down/);
+  assert.throws(() => readFileSync(path.join(f.dataDir, 'finder.json')));
 });
 
 test('concurrent retries dispatch once and changed payloads cannot reuse a receipt', async (t) => {

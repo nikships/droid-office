@@ -54,8 +54,13 @@ function within(file: string, dir: string): boolean {
 /** Apply after resolving aliases too: a symlink must not bypass the native presenter's exclusions. */
 export function finderPathAllowed(file: string, home = os.homedir()): boolean {
   if (!path.isAbsolute(file) || file === path.parse(file).root || /[\u0000-\u001f\u007f]/u.test(file)) return false;
-  if (['/System', '/Library', '/Network', '/Volumes/Time Machine', path.join(home, 'Library')].some((dir) => within(file, dir))) return false;
-  return !file.split(path.sep).some((part) => ['.Trash', '.Trashes', '.MobileBackups', 'Backups.backupdb', '.droid-office'].includes(part));
+  if (
+    ['/System', '/Library', '/Network', '/net', '/dev', '/bin', '/sbin', '/usr', '/etc', '/private/etc', '/private/var/root', '/private/var/db', '/private/var/run', '/Volumes/Time Machine', path.join(home, 'Library')].some((dir) =>
+      within(file, dir),
+    )
+  )
+    return false;
+  return !file.split(path.sep).some((part) => ['.Trash', '.Trashes', '.timemachine', '.MobileBackups', 'Backups.backupdb', '.droid-office'].includes(part) || part.startsWith('com.apple.TimeMachine.'));
 }
 
 /** Finder supplies paths, never a git command or a floor id chosen by an untrusted client. */
@@ -132,24 +137,28 @@ export class FinderDispatch {
         return dir;
       }
     };
-    const unknown = targets.filter((g) => g.repoRoot && !existing.some((d) => key(d.dir) === g.repoRoot));
+    const byCheckout = new Map(existing.map((def) => [key(def.dir), def]));
+    const unknown = targets.filter((g) => g.repoRoot && !byCheckout.has(g.repoRoot));
     if (existing.length + unknown.length > MAX_FLOORS) throw new FinderError('The building is full. Remove a floor in Settings first.', 409);
-    const groups = targets.map((target) => {
-      const known = target.repoRoot ? existing.find((d) => key(d.dir) === target.repoRoot) : existing.find((d) => building.isHome(d.id));
-      const def = known ?? (target.repoRoot ? building.finderFloor(target.repoRoot) : undefined);
-      if (!def || typeof def === 'string') throw new FinderError(typeof def === 'string' ? def : 'The Home floor is unavailable.', 409);
-      return {
-        floorId: def.id,
-        floorName: def.name,
-        repoRoot: target.repoRoot,
-        paths: target.paths,
-        relativePaths: target.paths.map((p) => (target.repoRoot ? path.relative(target.repoRoot, p) || '.' : p)),
-        isNewFloor: !known,
-        ...(this.remembered[def.id] ? { model: this.remembered[def.id] } : {}),
-      };
-    });
-    this.options.changed();
-    return groups;
+    try {
+      return targets.map((target) => {
+        const known = target.repoRoot ? byCheckout.get(target.repoRoot) : existing.find((d) => building.isHome(d.id));
+        const def = known ?? (target.repoRoot ? building.finderFloor(target.repoRoot) : undefined);
+        if (!def || typeof def === 'string') throw new FinderError(typeof def === 'string' ? def : 'The Home floor is unavailable.', 409);
+        return {
+          floorId: def.id,
+          floorName: def.name,
+          repoRoot: target.repoRoot,
+          paths: target.paths,
+          relativePaths: target.paths.map((p) => (target.repoRoot ? path.relative(target.repoRoot, p) || '.' : p)),
+          isNewFloor: !known,
+          ...(this.remembered[def.id] ? { model: this.remembered[def.id] } : {}),
+        };
+      });
+    } finally {
+      // Earlier groups may already be persisted when a later registration fails.
+      this.options.changed();
+    }
   }
 
   dispatch(raw: unknown): Promise<Receipt> {
@@ -179,15 +188,21 @@ export class FinderDispatch {
     const catalogue = await this.options.models();
     if (body.model && body.model !== 'floor-default' && !catalogue.models.some((m) => m.id === body.model)) throw new FinderError('That model is no longer available in the picker.');
     const groups = await this.resolve(body.paths);
+    if (this.stopped) throw new FinderError('The office is shutting down. Nothing was dispatched.', 503);
     const result: Receipt = { dispatches: [], errors: [] };
     for (const group of groups) {
+      if (this.stopped) {
+        result.errors.push({ floorId: group.floorId, error: 'The office is shutting down. Nothing was dispatched to this floor.' });
+        continue;
+      }
       const def = this.options.building.list().find((d) => d.id === group.floorId);
       if (!def) {
         result.errors.push({ floorId: group.floorId, error: 'That floor was removed. Nothing was dispatched.' });
         continue;
       }
-      const model = body.model && body.model !== 'floor-default' ? (body.model as string) : (group.model ?? catalogue.defaultModel);
-      // Quoted paths cannot masquerade as further user instructions; no planning or orchestration text is added.
+      const explicitModel = body.model && body.model !== 'floor-default';
+      const model = explicitModel ? (body.model as string) : group.model;
+      // Keep paths quoted and separate; no planning or orchestration text is added.
       const text = `${(body.prompt as string).trim()}\n\n${group.paths.map((p) => JSON.stringify(p)).join('\n')}`;
       try {
         const sent = this.options.dispatch(def, text, model);
@@ -202,11 +217,12 @@ export class FinderDispatch {
           threadUrl: new URL(`dashboard#${hash}`, this.options.officeUrl()).toString(),
           deepLink: `droid-office://thread/${encodeURIComponent(sent.leadId)}?floor=${encodeURIComponent(def.id)}`,
         });
-        if (sent.model ?? model) this.remembered[def.id] = (sent.model ?? model)!;
+        if (explicitModel && (sent.model ?? model)) this.remembered[def.id] = (sent.model ?? model)!;
       } catch {
         result.errors.push({ floorId: def.id, error: 'The office failed during dispatch. Open the Team lead thread before trying again.' });
       }
     }
+    if (this.stopped) return result;
     try {
       writeFileSync(`${this.file}.tmp`, JSON.stringify(this.remembered, null, 2), { mode: 0o600 });
       renameSync(`${this.file}.tmp`, this.file);

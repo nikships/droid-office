@@ -6,7 +6,6 @@ final class FinderSync: FIFinderSync {
     private var online = false
     private var checked = Date.distantPast
     private var checking = false
-    private weak var currentItem: NSMenuItem?
 
     override init() {
         super.init()
@@ -28,10 +27,6 @@ final class FinderSync: FIFinderSync {
             }.value
             self.checking = false
             self.checked = Date()
-            if let item = self.currentItem {
-                item.title = self.online ? "Dispatch to Office…" : "Open Droid Office"
-                item.action = self.online ? #selector(self.dispatchSelection(_:)) : #selector(self.openOffice(_:))
-            }
         }
     }
 
@@ -52,15 +47,10 @@ final class FinderSync: FIFinderSync {
         let item = NSMenuItem(title: isOnline ? "Dispatch to Office…" : "Open Droid Office",
                               action: isOnline ? #selector(dispatchSelection(_:)) : #selector(openOffice(_:)), keyEquivalent: "")
         item.target = self
-        currentItem = item
-        item.representedObject = urls
-        item.isEnabled = false
+        // Finder copies the menu across processes. Only supported item fields survive.
+        item.tag = menuKind == .contextualMenuForContainer ? 1 : 0
+        item.isEnabled = true
         menu.addItem(item)
-        Task { @MainActor in
-            let allowed = await Task.detached { (try? FinderPolicy.paths(urls)) != nil }.value
-            if allowed { item.isEnabled = true }
-            else { menu.removeItem(item) }
-        }
         return menu
     }
 
@@ -70,7 +60,11 @@ final class FinderSync: FIFinderSync {
     }
 
     @objc private func dispatchSelection(_ sender: NSMenuItem) {
-        guard let urls = sender.representedObject as? [URL] else { return }
+        let controller = FIFinderSyncController.default()
+        let selected = controller.selectedItemURLs().flatMap { $0.isEmpty ? nil : $0 }
+        let urls = (sender.tag == 1 ? nil : selected) ?? controller.targetedURL().map { [$0] } ?? []
+        guard !urls.isEmpty, urls.count <= 100 else { return }
+        // The prompt does canonical/volume eligibility checks off Finder's menu callback.
         // Launch the embedded native prompt with file URLs, never a shell, a temporary file or credentials.
         let app = Bundle.main.bundleURL.deletingLastPathComponent().deletingLastPathComponent()
         let helper = app.appendingPathComponent("Resources/app/native/mac/build/DroidOfficeFinderBridge.app")

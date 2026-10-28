@@ -41,7 +41,9 @@ if (userDataSwitch) app.setPath('logs', path.join(userDataSwitch, 'logs'));
 /** A run with its own userData is a test run: it only shows an office that is already up, and never moves, updates or installs anything. */
 const isolated = Boolean(userDataSwitch);
 const finderEnabled = app.isPackaged && !isolated && !isStartupCheck();
-const finderThreads = new FinderThreads();
+const finderThreads = new FinderThreads(() => {
+  if (!win || win.base.isDestroyed()) app.dock?.hide();
+});
 let pendingThread: ThreadLink | undefined;
 function receiveThread(raw: string): boolean {
   if (!finderEnabled) return false;
@@ -313,9 +315,11 @@ async function openOffice() {
       finderThreads.open(officeUrl, pendingThread);
       pendingThread = undefined;
     }
-    if (finderEnabled && office) void explainFinder(app.getPath('userData'));
+    if (finderEnabled && office) void explainFinder(app.getPath('userData')).catch(() => {});
     void refreshTray();
   } catch (err) {
+    pendingThread = undefined;
+    windowWanted = true;
     officeUrl = undefined;
     opening = false;
     void refreshTray();
@@ -629,7 +633,8 @@ if (!isStartupCheck() && !app.requestSingleInstanceLock()) {
     if (!argv.some((arg) => receiveThread(arg))) openWindow();
   });
   app.on('activate', () => {
-    if (!pendingThread && !finderThreads.focus()) openWindow();
+    if (opening && pendingThread) return;
+    if (!finderThreads.focus()) openWindow();
   });
 
   // Closing the window leaves the app, the office and the menu bar icon running until you quit.

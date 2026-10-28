@@ -1044,6 +1044,8 @@ export class WorkerManager {
 
   /** Finder reuses the Team lead and its standard brief; never type a task into a running turn or a CLI question. */
   dispatchLead(text: string, model?: string): { info: WorkerInfo; hired: boolean } | string {
+    if (this.closing) return 'The office is closing';
+    if (!text.trim()) return 'Empty prompt';
     const w = [...this.workers.values()].find((x) => x.info.deskId === 'station-lead');
     if (w) {
       if (isBusy(w.info.status) || w.launchPrompt || (w.info.lastInputAt !== undefined && Date.now() - w.info.lastInputAt < 2000)) {
@@ -1053,6 +1055,7 @@ export class WorkerManager {
       const error = validateWorkerModel('agent', effectiveModel) ?? this.modelGate?.(effectiveModel);
       if (error) return error;
       if (model && model !== (w.info.activeModel ?? w.info.model)) {
+        if (this.checkLost(w, true)) return lostMessage(w.info);
         // Model overlays apply at launch, so resume the same conversation rather than typing a CLI command.
         const proc = w.pty;
         w.pty = undefined;

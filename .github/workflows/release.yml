@@ -385,6 +385,25 @@ jobs:
           test -f "$bridge/Contents/embedded.provisionprofile"
           codesign --verify --strict --verbose=2 "$extension"
           codesign --verify --strict --verbose=2 "$bridge"
+          for bundle in "$extension" "$bridge"; do
+            codesign -d --entitlements - "$bundle" > finder-entitlements.plist 2>/dev/null
+            plutil -convert json -o finder-entitlements.json finder-entitlements.plist
+            node --input-type=module -e '
+              import { readFileSync } from "node:fs";
+              const e = JSON.parse(readFileSync("finder-entitlements.json", "utf8"));
+              if (e["com.apple.security.app-sandbox"] !== true ||
+                  e["com.apple.security.network.client"] !== true ||
+                  e["com.apple.developer.team-identifier"] !== "NW6B3R27LQ" ||
+                  !e["com.apple.security.application-groups"]?.includes("group.com.nikships.droid-office") ||
+                  !e["keychain-access-groups"]?.includes("NW6B3R27LQ.group.com.nikships.droid-office"))
+                throw new Error("Final Finder signature lost its required entitlements");
+            '
+            codesign -dvv "$bundle" 2> finder-signature.log
+            grep -q 'TeamIdentifier=NW6B3R27LQ' finder-signature.log
+            grep -q 'flags=0x10000(runtime)' finder-signature.log
+            executable="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "$bundle/Contents/Info.plist")"
+            lipo -archs "$bundle/Contents/MacOS/$executable" | grep -qx arm64
+          done
           # The presenter is its own signed Mach-O: Developer ID, hardened runtime, the app's team.
           node="$app/Contents/Resources/app/native/presenter/build/Release/presenter.node"
           codesign --verify --strict --verbose=2 "$node"
