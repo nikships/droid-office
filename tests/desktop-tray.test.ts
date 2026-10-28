@@ -22,7 +22,7 @@ import { linkStep, parseWorkerLink } from '../src/client/worker-link.ts';
 const ada: StatusWaiting = { id: 'w-ada', name: 'Ada', status: 'needs_input', floor: 'f-web', floorName: 'web-app', task: 'Fix Login Redirect', since: 100 };
 const bob: StatusWaiting = { id: 'w-bob', name: 'Bob', status: 'done', floor: 'f-api', floorName: 'api', since: 50 };
 const status: OfficeStatus = { workers: 4, working: 2, needsInput: 1, done: 1, phones: 1, browsers: 2, floors: 2, waiting: [ada, bob] };
-const base = { ownWindow: false, external: false, notify: true, version: '0.1.420', url: 'http://localhost:4600/' };
+const base = { ownWindows: 0, external: false, notify: true, version: '0.1.420', url: 'http://localhost:4600/' };
 const running: TrayView = { state: 'running', status, ...base };
 
 const labels = (v: TrayView) => trayMenu(v).flatMap((i) => ('label' in i ? [i.label] : []));
@@ -82,8 +82,9 @@ test('a status the office sends is read, an older office’s counts still are, a
 
 test('the menu says what the office is doing, leaving out the app’s own window', () => {
   assert.deepEqual(statusLines(running), ['4 workers · 2 working · 1 needs input · 1 done', '1 phone · 2 browsers connected']);
-  assert.deepEqual(statusLines({ ...running, ownWindow: true }), ['4 workers · 2 working · 1 needs input · 1 done', '1 phone · 1 browser connected']);
-  assert.deepEqual(statusLines({ ...running, status: { ...status, workers: 3, working: 0, needsInput: 2, done: 0, phones: 0, browsers: 1 }, ownWindow: true }), ['3 workers · 2 need input', 'No phones or browsers connected']);
+  assert.deepEqual(statusLines({ ...running, ownWindows: 2 }), ['4 workers · 2 working · 1 needs input · 1 done', '1 phone connected']);
+  assert.deepEqual(statusLines({ ...running, ownWindows: 1 }), ['4 workers · 2 working · 1 needs input · 1 done', '1 phone · 1 browser connected']);
+  assert.deepEqual(statusLines({ ...running, status: { ...status, workers: 3, working: 0, needsInput: 2, done: 0, phones: 0, browsers: 1 }, ownWindows: 1 }), ['3 workers · 2 need input', 'No phones or browsers connected']);
   assert.deepEqual(statusLines({ ...running, status: { ...status, workers: 1, working: 0, needsInput: 0, done: 0, phones: 2, browsers: 0 } }), ['1 worker, none busy', '2 phones connected']);
   assert.deepEqual(statusLines({ ...running, status: { ...status, workers: 0, working: 0, needsInput: 0, done: 0, phones: 0, browsers: 0 } }), ['No workers', 'No phones or browsers connected']);
   assert.deepEqual(statusLines({ state: 'running', ...base, external: true }), ['The office is running', 'Started outside the app']);
@@ -130,12 +131,12 @@ test('past the first few, the rest are one line that opens the office', () => {
 
 test('the menu offers only what the office can do in its state', () => {
   const enabled = (v: TrayView) => Object.fromEntries(trayMenu(v).flatMap((i) => ('action' in i && i.action && i.action !== 'worker' ? [[i.action, i.enabled]] : [])));
-  const all = { open: true, browser: true, restart: true, log: true, notify: true, updates: true, quit: true, quitStoppingWorkers: true };
+  const all = { open: true, companion: true, restart: true, log: true, notify: true, updates: true, quit: true, quitStoppingWorkers: true };
   assert.deepEqual(enabled({ ...running, status: { ...status, needsInput: 0, done: 0, waiting: [] } }), all);
   const actions = labels(running);
   assert.deepEqual(actions.slice(actions.indexOf('Open Office')), [
     'Open Office',
-    'Open in Browser',
+    'Open Office Companion',
     'Restart Office',
     'Show Office Log',
     'Notify When Workers Wait on You',
@@ -147,16 +148,16 @@ test('the menu offers only what the office can do in its state', () => {
     { label: '4 workers · 2 working · 1 needs input · 1 done', enabled: false },
     { label: '1 phone · 2 browsers connected', enabled: false },
   ]);
-  assert.equal(item(running, 'Open in Browser')?.sublabel, 'localhost:4600');
+  assert.equal(item(running, 'Open Office Companion')?.sublabel, 'localhost:4600');
   assert.equal(item(running, 'Check for Updates…')?.sublabel, 'Version 0.1.420');
   assert.equal(item(running, 'Notify When Workers Wait on You')?.checked, true);
   assert.equal(item({ ...running, notify: false }, 'Notify When Workers Wait on You')?.checked, false);
   assert.deepEqual(enabled({ ...running, status: undefined, external: true }), { ...all, restart: false, quitStoppingWorkers: false });
   const stopped: TrayView = { state: 'stopped', ...base };
-  assert.deepEqual(enabled(stopped), { ...all, browser: false, quitStoppingWorkers: false });
-  assert.equal(item(stopped, 'Open in Browser')?.sublabel, undefined);
+  assert.deepEqual(enabled(stopped), { ...all, companion: false, quitStoppingWorkers: false });
+  assert.equal(item(stopped, 'Open Office Companion')?.sublabel, undefined);
   assert.ok(labels(stopped).includes('Start Office'));
-  assert.deepEqual(enabled({ state: 'starting', ...base }), { ...all, open: false, browser: false, restart: false, quitStoppingWorkers: false });
+  assert.deepEqual(enabled({ state: 'starting', ...base }), { ...all, open: false, companion: false, restart: false, quitStoppingWorkers: false });
 });
 
 test('a notification goes out only for a wait that started since the last status', () => {

@@ -8,6 +8,9 @@ export class FinderThreads {
   private window: BrowserWindow | undefined;
   private load = 0;
   constructor(private onClosed: () => void = () => {}) {}
+  currentWindow(): BrowserWindow | undefined {
+    return this.window && !this.window.isDestroyed() ? this.window : undefined;
+  }
   focusedWindow(): BrowserWindow | undefined {
     return this.window && !this.window.isDestroyed() && this.window.isFocused() ? this.window : undefined;
   }

@@ -27,19 +27,19 @@ export interface TrayView {
   state: TrayOfficeState;
   /** Unset when the office didn't answer, or is older than the status route. */
   status?: OfficeStatus;
-  /** The app's own window has the office open; its page is one of the browsers the office counts. */
-  ownWindow: boolean;
+  /** The app's open office and companion pages, included in the server's browser count. */
+  ownWindows: number;
   /** The app is showing an office it didn't start (a terminal's `npm start`), which quitting leaves running. */
   external: boolean;
   /** Whether the app notifies while its window is closed and a worker starts to wait on the owner. */
   notify: boolean;
   /** The app's version, for Check for Updates. */
   version: string;
-  /** The office's address, for Open in Browser. */
+  /** The office's address, for Open Office Companion. */
   url?: string;
 }
 
-export type TrayAction = 'open' | 'browser' | 'worker' | 'restart' | 'updates' | 'log' | 'notify' | 'quit' | 'quitStoppingWorkers';
+export type TrayAction = 'open' | 'companion' | 'worker' | 'restart' | 'updates' | 'log' | 'notify' | 'quit' | 'quitStoppingWorkers';
 
 /** Which worker a click opens: the office goes to its floor and opens its terminal (see src/client/worker-link.ts). */
 export interface WorkerLink {
@@ -109,7 +109,7 @@ export function statusLines(v: TrayView): string[] {
   else {
     const busy = [...(s.working ? [`${s.working} working`] : []), ...(s.needsInput ? [`${count(s.needsInput, 'needs', 'need')} input`] : []), ...(s.done ? [`${s.done} done`] : [])];
     lines.push(!s.workers ? 'No workers' : busy.length ? [count(s.workers, 'worker'), ...busy].join(' · ') : `${count(s.workers, 'worker')}, none busy`);
-    const browsers = Math.max(0, s.browsers - (v.ownWindow ? 1 : 0));
+    const browsers = Math.max(0, s.browsers - v.ownWindows);
     const devices = [...(s.phones ? [count(s.phones, 'phone')] : []), ...(browsers ? [count(browsers, 'browser')] : [])];
     lines.push(devices.length ? `${devices.join(' · ')} connected` : 'No phones or browsers connected');
   }
@@ -160,7 +160,7 @@ function waitingSection(v: TrayView): TrayItem[] {
   ];
 }
 
-/** "localhost:4600" for Open in Browser. */
+/** "localhost:4600" for Open Office Companion. */
 function address(url: string | undefined): string | undefined {
   if (!url) return undefined;
   try {
@@ -178,7 +178,7 @@ export function trayMenu(v: TrayView): TrayItem[] {
     ...waitingSection(v),
     { type: 'separator' },
     { label: 'Open Office', enabled: v.state !== 'starting', action: 'open' },
-    { label: 'Open in Browser', enabled: running, ...(where ? { sublabel: where } : {}), action: 'browser' },
+    { label: 'Open Office Companion', enabled: running, ...(where ? { sublabel: where } : {}), action: 'companion' },
     { type: 'separator' },
     { label: v.state === 'stopped' ? 'Start Office' : 'Restart Office', enabled: v.state !== 'starting' && !v.external, action: 'restart' },
     { label: 'Show Office Log', enabled: true, action: 'log' },

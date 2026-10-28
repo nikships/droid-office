@@ -4,6 +4,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { app, type BaseWindow, clipboard, dialog, Menu, type MenuItemConstructorOptions, Notification, shell } from 'electron';
 import { downloadBrowser } from './browser.js';
+import { OfficeCompanion } from './companion.js';
 import { contextMenu, editMenu } from './edit-menu.js';
 import { finderBridgeArgs, parseThreadLink, type ThreadLink } from './finder-links.js';
 import { explainFinder, FinderThreads, openFinderSettings } from './finder.js';
@@ -42,8 +43,17 @@ if (userDataSwitch) app.setPath('logs', path.join(userDataSwitch, 'logs'));
 const isolated = Boolean(userDataSwitch);
 const finderEnabled = app.isPackaged && !isolated && !isStartupCheck();
 const finderThreads = new FinderThreads(() => {
-  if (!win || win.base.isDestroyed()) app.dock?.hide();
+  hideDockIfNoWindows();
 });
+const companion = new OfficeCompanion(() => {
+  hideDockIfNoWindows();
+  void refreshTray();
+});
+
+function hideDockIfNoWindows() {
+  if ((!win || win.base.isDestroyed()) && !companion.currentWindow() && !finderThreads.currentWindow()) app.dock?.hide();
+}
+
 let pendingThread: ThreadLink | undefined;
 function receiveThread(raw: string): boolean {
   if (!finderEnabled) return false;
@@ -213,7 +223,7 @@ function createWindow(loadOffice = true, hash = '') {
     if (quitting) return;
     // The window is gone, with its page and its GPU work; the office and the menu bar icon stay.
     windowWanted = false;
-    app.dock?.hide();
+    hideDockIfNoWindows();
     void refreshTray();
   });
   if (loadOffice && officeUrl) void contents.loadURL(new URL(hash, officeUrl).toString()).catch(() => {});
@@ -311,6 +321,7 @@ async function openOffice() {
     }
     opening = false;
     show(officeUrl);
+    companion.reconnect(officeUrl);
     if (pendingThread) {
       finderThreads.open(officeUrl, pendingThread);
       pendingThread = undefined;
@@ -484,7 +495,8 @@ async function leaveToMenuBar() {
   const current = win;
   if (!current || current.base.isDestroyed()) {
     windowWanted = false;
-    app.dock?.hide();
+    companion.currentWindow()?.close();
+    hideDockIfNoWindows();
     return;
   }
   if (!settings.menuBarExplained) {
@@ -502,6 +514,7 @@ async function leaveToMenuBar() {
   }
   if (current.base.isDestroyed()) return;
   leavingToMenuBar = true;
+  companion.currentWindow()?.close();
   current.base.close();
 }
 
@@ -524,8 +537,13 @@ function trayAction(action: TrayAction, link?: WorkerLink) {
   if (action === 'open') openWindow();
   else if (action === 'worker') link ? openWorker(link) : openWindow();
   else if (action === 'notify') toggleNotify();
-  else if (action === 'browser') officeUrl && void shell.openExternal(new URL('/dashboard', officeUrl).href);
-  else if (action === 'restart') void restartOffice();
+  else if (action === 'companion') {
+    if (officeUrl) {
+      toFront();
+      companion.open(officeUrl);
+      void refreshTray();
+    }
+  } else if (action === 'restart') void restartOffice();
   else if (action === 'updates') {
     toFront();
     void updates.check(true);
@@ -549,7 +567,7 @@ async function refreshTray() {
   const view: TrayView = {
     state: opening ? 'starting' : officeUrl ? 'running' : 'stopped',
     ...(status ? { status } : {}),
-    ownWindow: Boolean(officeUrl && win && !win.base.isDestroyed()),
+    ownWindows: officeUrl ? Number(Boolean(win && !win.base.isDestroyed())) + Number(Boolean(companion.currentWindow())) : 0,
     external: Boolean(officeUrl && !office),
     notify: settings.notify !== false,
     version: app.getVersion(),
@@ -567,8 +585,8 @@ async function restartOffice() {
 }
 
 function menu(): Menu {
-  const contents = () => finderThreads.focusedWindow()?.webContents ?? win?.contents;
-  const base = () => finderThreads.focusedWindow() ?? win?.base;
+  const contents = () => companion.focusedWindow()?.webContents ?? finderThreads.focusedWindow()?.webContents ?? win?.contents;
+  const base = () => companion.focusedWindow() ?? finderThreads.focusedWindow() ?? win?.base;
   const template: MenuItemConstructorOptions[] = [
     {
       label: app.name,
@@ -592,7 +610,7 @@ function menu(): Menu {
     {
       label: 'Office',
       submenu: [
-        { label: 'Open in Browser', click: () => trayAction('browser') },
+        { label: 'Open Office Companion', click: () => trayAction('companion') },
         { label: 'Restart Office', click: () => void restartOffice() },
         { label: 'Change Office Folder…', click: () => void changeOfficeDir() },
         ...(finderEnabled ? [{ label: 'Finder Extension Settings…', click: () => openFinderSettings() }] : []),
@@ -634,7 +652,7 @@ if (!isStartupCheck() && !app.requestSingleInstanceLock()) {
   });
   app.on('activate', () => {
     if (opening && pendingThread) return;
-    if (!finderThreads.focus()) openWindow();
+    if (!companion.focus() && !finderThreads.focus()) openWindow();
   });
 
   // Closing the window leaves the app, the office and the menu bar icon running until you quit.
