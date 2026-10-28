@@ -186,7 +186,9 @@ final class FinderAPI {
 struct APIError: Decodable { let error: String }
 struct APIStatus: Decodable { let ok: Bool }
 struct ResolveRequest: Encodable { let paths: [String] }
-struct FinderModel: Decodable, Identifiable { let id: String; let label: String }
+struct FinderModel: Decodable, Identifiable {
+    let id: String; let label: String; let provider: String?; let cost: Double?; let custom: Bool?; let legacy: Bool?
+}
 struct FinderGroup: Decodable, Identifiable {
     let floorId: String; let floorName: String; let repoRoot: String?
     let paths: [String]; let relativePaths: [String]; let isNewFloor: Bool; let model: String?
@@ -202,3 +204,158 @@ struct FinderDispatch: Decodable, Identifiable {
 }
 struct DispatchError: Decodable { let floorId: String; let error: String }
 struct DispatchResult: Decodable { let dispatches: [FinderDispatch]; let errors: [DispatchError] }
+
+/// The same brand rules as src/client/ui/model-brand.ts; tests/finder-native.test.ts checks both give the same answers.
+enum ModelBrands {
+    /// Each brand's mark is `<brand>.png`, the Android app's Chromium render of the web SVG: CoreSVG drops Gemini's gradients and blurs Antigravity's filters.
+    struct Mark { var mono = false; var tile = false }
+    static let marks: [String: Mark] = [
+        "claude": Mark(), "openai": Mark(mono: true), "codex": Mark(), "gemini": Mark(), "gemma": Mark(), "deepseek": Mark(), "qwen": Mark(),
+        "grok": Mark(mono: true), "kimi": Mark(tile: true), "glm": Mark(), "minimax": Mark(), "mistral": Mark(), "meta": Mark(), "muse": Mark(),
+        "junie": Mark(), "copilot": Mark(mono: true), "antigravity": Mark(), "openrouter": Mark(), "nvidia": Mark(), "cohere": Mark(), "perplexity": Mark(),
+    ]
+    private static let families: [(String, NSRegularExpression)] = [
+        ("claude", #"\b(?:claude|opus|sonnet|haiku)\b"#), ("codex", #"\bcodex\b"#), ("gemini", #"\bgemini\b"#), ("gemma", #"\bgemma\b"#),
+        ("deepseek", #"\bdeep[\s-]?seek\b"#), ("qwen", #"\bqwen(?:\d|\b)"#), ("grok", #"\bgrok\b"#), ("kimi", #"\bkimi\b"#),
+        ("glm", #"\b(?:chat)?glm(?:\d|\b)"#), ("minimax", #"\bminimax\b"#), ("mistral", #"\b(?:mistral|mixtral|codestral|devstral|magistral)\b"#),
+        ("muse", #"\bmuse\b"#), ("meta", #"\bllama(?:\d|\b)"#), ("cohere", #"\b(?:command(?:[ -][ar])?|aya)\b"#), ("nvidia", #"\bnemotron\b"#),
+        ("perplexity", #"\bsonar\b"#), ("openai", #"\b(?:gpt(?:\d|\b)|chatgpt|o[1-9](?:\b|[ -]))"#),
+    ].map { ($0.0, try! NSRegularExpression(pattern: $0.1, options: .caseInsensitive)) }
+    private static let providers: [String: String] = [
+        "anthropic": "claude", "claude": "claude", "openai": "openai", "chatgpt": "openai", "codex": "codex", "google": "gemini",
+        "gemini": "gemini", "antigravity": "antigravity", "deepseek": "deepseek", "qwen": "qwen", "alibaba": "qwen", "xai": "grok",
+        "grok": "grok", "moonshot": "kimi", "moonshotai": "kimi", "kimi": "kimi", "zai": "glm", "zhipu": "glm", "glm": "glm",
+        "minimax": "minimax", "mistral": "mistral", "meta": "meta", "muse": "muse", "junie": "junie", "copilot": "copilot",
+        "githubcopilot": "copilot", "openrouter": "openrouter", "nvidia": "nvidia", "cohere": "cohere", "perplexity": "perplexity",
+    ]
+
+    static func provider(_ provider: String?) -> String? {
+        guard let key = provider?.lowercased().replacingOccurrences(of: "[^a-z0-9]", with: "", options: .regularExpression), !key.isEmpty else { return nil }
+        return providers[key]
+    }
+
+    static func brand(id: String?, name: String?, provider: String?) -> String? {
+        // IDs are canonical; a display name may mention a different family in a gateway or description.
+        for text in [id, name].compactMap({ $0 }) where !text.isEmpty {
+            let bare = text
+                .replacingOccurrences(of: "^custom:(?:[^:]+:)?", with: "", options: [.regularExpression, .caseInsensitive])
+                .replacingOccurrences(of: "^[^:]+:\\s*", with: "", options: .regularExpression)
+                .replacingOccurrences(of: "_", with: "-")
+            let range = NSRange(bare.startIndex..., in: bare)
+            if let match = families.first(where: { $0.1.firstMatch(in: bare, range: range) != nil }) { return match.0 }
+        }
+        return self.provider(provider)
+    }
+}
+
+/// One row of the model picker, named and grouped as src/client/ui/models.ts `pickerModel` does.
+struct PickerEntry: Identifiable {
+    let id: String
+    let family: String?
+    let name: String
+    let group: String
+    let yours: Bool
+    let provider: String?
+    let cost: Double?
+    let brand: String?
+
+    private static let providerLabels = ["anthropic": "Anthropic", "openai": "OpenAI", "google": "Google", "xai": "xAI", "factory": "Other"]
+
+    init(_ model: FinderModel) {
+        let provider = model.provider.map { Self.providerLabels[$0] ?? ($0.prefix(1).uppercased() + $0.dropFirst()) }
+        let gateway = model.custom == true ? Self.gateway(model.id) : nil
+        var name = model.label.replacingOccurrences(of: "\\s*\\[Deprecated\\]$", with: "", options: [.regularExpression, .caseInsensitive])
+        if let gateway {
+            name = name.replacingOccurrences(of: "^" + NSRegularExpression.escapedPattern(for: gateway) + "[\\w.-]*:\\s*", with: "", options: [.regularExpression, .caseInsensitive])
+            if gateway == "DroidProxy" { name = name.replacingOccurrences(of: "droidproxy:?\\s*", with: "", options: [.regularExpression, .caseInsensitive]) }
+        }
+        let split = Self.splitFamily(name)
+        id = model.id
+        family = split.family
+        self.name = split.rest
+        group = gateway ?? (model.legacy == true ? "Legacy" : provider ?? "Other")
+        yours = gateway != nil
+        self.provider = provider
+        cost = model.custom == true ? nil : model.cost
+        brand = ModelBrands.brand(id: model.id, name: name, provider: provider)
+    }
+
+    var fullName: String { family.map { "\($0): \(name)" } ?? name }
+
+    /// The gateway a BYOK model id goes through: "custom:droidproxy:gpt-6" is DroidProxy, "custom:openrouter:x" OpenRouter.
+    static func gateway(_ id: String) -> String {
+        guard let match = id.range(of: "^custom:[^:]+:", options: .regularExpression) else { return "Your models" }
+        let segment = String(id[match].dropFirst("custom:".count).dropLast())
+        if segment.range(of: "^droidproxy", options: [.regularExpression, .caseInsensitive]) != nil { return "DroidProxy" }
+        if segment.caseInsensitiveCompare("openrouter") == .orderedSame { return "OpenRouter" }
+        let base = segment.replacingOccurrences(of: "-\\d+$", with: "", options: .regularExpression)
+        return base.prefix(1).uppercased() + base.dropFirst()
+    }
+
+    /// "Antigravity: Claude Opus 5.5" draws its family muted.
+    static func splitFamily(_ name: String) -> (family: String?, rest: String) {
+        guard let at = name.range(of: ": ") else { return (nil, name) }
+        let offset = name.distance(from: name.startIndex, to: at.lowerBound)
+        return offset > 0 && offset < 24 ? (String(name[..<at.lowerBound]), String(name[at.upperBound...])) : (nil, name)
+    }
+
+    /// A credit multiplier as droid's picker says it: ×0.06, ×1.6, ×4.
+    static func multiplier(_ value: Double) -> String {
+        var text = String(format: "%.3f", value)
+        while text.hasSuffix("0") { text.removeLast() }
+        if text.hasSuffix(".") { text.removeLast() }
+        return "×" + text
+    }
+
+    private static func squash(_ text: String) -> String {
+        String(String.UnicodeScalarView(text.lowercased().unicodeScalars.filter { CharacterSet.alphanumerics.contains($0) }))
+    }
+
+    /// The web picker's scoring (model-search.ts `scoreModel`): 0 when some word hits nothing; hits in the name beat the rest.
+    func score(_ query: String) -> Int {
+        let words = query.lowercased().split(whereSeparator: \.isWhitespace).map(String.init)
+        guard !words.isEmpty else { return 1 }
+        let name = fullName.lowercased()
+        let squashed = Self.squash(fullName)
+        let elsewhere = "\(id) \(provider ?? "") \(group) \(yours ? "Yours" : group)".lowercased()
+        var score = 0
+        for word in words {
+            let w = Self.squash(word)
+            if let at = name.range(of: word) {
+                let start = at.lowerBound == name.startIndex
+                let before = start ? nil : name[name.index(before: at.lowerBound)]
+                let afterBreak = before.map { !$0.isLetter && !$0.isNumber } ?? false
+                score += 6 + (start ? 6 : afterBreak ? 4 : 0)
+            } else if !w.isEmpty, squashed.contains(w) {
+                score += 4
+            } else if elsewhere.contains(word) {
+                score += 2
+            } else if !w.isEmpty, Self.squash(elsewhere).contains(w) {
+                score += 1
+            } else {
+                return 0
+            }
+        }
+        return score + (name == query.trimmingCharacters(in: .whitespaces).lowercased() ? 20 : 0)
+    }
+
+    struct Section { let label: String; let entries: [PickerEntry]; let flat: Bool }
+
+    /// Sections in catalogue order, the owner's own gateways first with the biggest on top; a query gives one flat list, best first.
+    static func sections(_ entries: [PickerEntry], query: String) -> [Section] {
+        if !query.trimmingCharacters(in: .whitespaces).isEmpty {
+            let scored: [(index: Int, entry: PickerEntry, score: Int)] = entries.enumerated().map { ($0.offset, $0.element, $0.element.score(query)) }
+            let ranked = scored.filter { $0.score > 0 }.sorted { a, b in a.score != b.score ? a.score > b.score : a.index < b.index }
+            let hits = ranked.map { $0.entry }
+            return hits.isEmpty ? [] : [Section(label: "\(hits.count) \(hits.count == 1 ? "match" : "matches")", entries: hits, flat: true)]
+        }
+        var order: [String] = []
+        var grouped: [String: [PickerEntry]] = [:]
+        for entry in entries {
+            if grouped[entry.group] == nil { order.append(entry.group) }
+            grouped[entry.group, default: []].append(entry)
+        }
+        let yours = order.filter { grouped[$0]?.first?.yours == true }.sorted { grouped[$0]!.count > grouped[$1]!.count }
+        return (yours + order.filter { grouped[$0]?.first?.yours != true }).map { Section(label: $0, entries: grouped[$0]!, flat: false) }
+    }
+}

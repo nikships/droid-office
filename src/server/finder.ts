@@ -7,8 +7,10 @@ import os from 'node:os';
 import path from 'node:path';
 import { promisify } from 'node:util';
 import { MAX_FLOORS } from '../shared/floors.js';
+import { visibleModels } from '../shared/model-visibility.js';
 import { isValidDroidModel } from './agents.js';
 import type { Building, FloorDef } from './building.js';
+import type { DroidModelCatalogue, DroidModelOption } from './droid-models.js';
 
 const execute = promisify(execFile);
 const BODY_MAX = 512 * 1024;
@@ -97,11 +99,38 @@ export async function finderTargets(raw: unknown, home = os.homedir()): Promise<
   return [...groups].map(([repoRoot, paths]) => ({ repoRoot, paths }));
 }
 
+/** What the native picker needs to draw a row as the office's picker does: its brand, section and credit cost. */
+export interface FinderModel {
+  id: string;
+  label: string;
+  provider?: string;
+  /** Droid's credit multiplier. Missing on the owner's own key, which Factory does not bill. */
+  cost?: number;
+  custom?: true;
+  legacy?: true;
+}
+
+function finderModel(m: DroidModelOption): FinderModel {
+  return {
+    id: m.id,
+    label: m.displayName,
+    ...(m.provider ? { provider: m.provider } : {}),
+    ...(m.custom ? { custom: true } : m.tokenMultiplier === undefined ? {} : { cost: m.tokenMultiplier }),
+    ...(m.legacy ? { legacy: true } : {}),
+  };
+}
+
+/** The models hidden in Settings stay out of Finder, as they do in every other picker, and cannot be dispatched. */
+export function finderCatalogue(catalogue: DroidModelCatalogue, hidden: readonly string[], defaultModel?: string): { models: FinderModel[]; defaultModel?: string } {
+  const model = defaultModel ?? catalogue.defaultModel;
+  return { models: visibleModels(catalogue.models, hidden).map(finderModel), ...(model ? { defaultModel: model } : {}) };
+}
+
 export interface FinderOptions {
   building: Building;
   dataDir: string;
   officeUrl: () => string;
-  models: () => Promise<{ models: { id: string; label: string }[]; defaultModel?: string }>;
+  models: () => Promise<{ models: FinderModel[]; defaultModel?: string }>;
   dispatch: (floor: FloorDef, text: string, model?: string) => { leadId: string; model?: string } | string;
   changed: () => void;
 }

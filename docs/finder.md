@@ -23,7 +23,7 @@ All routes require `X-Droid-Office-Token`, a literal `127.0.0.1` Host and a loop
 | Route | Result |
 | --- | --- |
 | `GET /api/finder/status` | Authenticated liveness check |
-| `POST /api/finder/resolve` with `paths` | `groups`, visible `models` and `defaultModel` |
+| `POST /api/finder/resolve` with `paths` | `groups`, the `models` not hidden in Settings (each with `id`, `label`, and when known `provider`, credit `cost`, `custom` and `legacy`) and `defaultModel` |
 | `POST /api/finder/dispatch` with `paths`, `prompt`, optional `model` and unique `requestId` | `dispatches` and per-floor `errors` |
 
 Use `model: "floor-default"` to use the floor's remembered explicit Finder model choice. Without a remembered choice, an existing lead keeps its current model; only a new lead uses the normal office/Droid default. Explicit model IDs must appear in the visible model catalogue; normal subscription and worker-capacity gates still apply.

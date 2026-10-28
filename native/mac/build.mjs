@@ -1,5 +1,5 @@
 import { spawnSync } from 'node:child_process';
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { cpSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -38,6 +38,11 @@ ${extra}</dict></plist>
 }
 const shared = ['-swift-version', '5', '-target', 'arm64-apple-macos14.0', '-O', '-parse-as-library', path.join(root, 'FinderCore.swift')];
 run('xcrun', ['swiftc', ...shared, path.join(root, 'Bridge.swift'), path.join(root, 'DispatchPrompt.swift'), '-o', bundle('DroidOfficeFinderBridge', 'app', 'com.nikships.droid-office.finder-bridge', false)]);
+// The dispatch prompt draws the office pickers' model marks, as the Android app's Chromium renders of the
+// web SVGs (CoreSVG drops some of their gradients and filters), with their license.
+const icons = path.join(root, 'build/DroidOfficeFinderBridge.app/Contents/Resources/ModelIcons');
+rmSync(icons, { recursive: true, force: true });
+cpSync(path.join(root, '../../android/app/src/main/assets/model-icons'), icons, { recursive: true, filter: (file) => !file.endsWith('manifest.json') });
 run('xcrun', [
   'swiftc',
   ...shared,

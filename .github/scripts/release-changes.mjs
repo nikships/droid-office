@@ -20,7 +20,7 @@ export function checksFor(files, { manual = false, androidVersionChanged = false
       ),
     website: all || touches(packages) || touches(/^(?:website\/|firebase\.json$|\.firebaserc$|biome\.jsonc$)/),
     // The client is shipped inside the Mac app, even though Linux can build its static files.
-    mac: all || touches(packages) || touches(config) || touches(/^(?:src\/|bin\/|build\/|native\/|electron-builder\.yml$)/),
+    mac: all || touches(packages) || touches(config) || touches(/^(?:src\/|bin\/|build\/|native\/|android\/app\/src\/main\/assets\/model-icons\/|electron-builder\.yml$)/),
     // Root npm dependency/script edits don't rebuild Android; its terminal dependencies are vendored.
     android: all || androidVersionChanged || touches(/^(?:android\/(?!docs\/|.*\.md$)|tools\/android-model-icons\.mjs$)/),
   };
