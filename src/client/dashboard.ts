@@ -102,9 +102,9 @@ const brand = h(
   h('img', { src: '/factory-glyph.svg', alt: '', width: 26, height: 26 }),
   h('span.dash-brand-text', {}, h('span.eyebrow', {}, 'Web companion'), title),
 );
-const floors = h('select.select.dash-floor-select', { 'aria-label': 'Floor' });
+const floors = h('nav.dash-floor-strip', { 'aria-label': 'Floors' });
 const reorderFloors = h('button.btn.icon.ghost', { type: 'button', 'aria-label': 'Reorder floors', title: 'Reorder floors', onclick: () => openFloorOrder(net) }, '⠿');
-const floorPicker = h('div.dash-floor', {}, h('span.eyebrow', {}, 'Floor'), floors, reorderFloors);
+const floorPicker = h('div.dash-floor', {}, floors, reorderFloors);
 const connDot = h('i.dash-conn-dot', { 'aria-hidden': 'true' });
 const connText = h('span', {}, 'Connecting');
 const conn = h('span.dash-conn', { 'data-state': 'loading' }, connDot, connText);
@@ -113,7 +113,7 @@ const board = h('button.btn.dash-top-btn', { type: 'button', title: 'The floor�
 const subscriptions = h('button.btn.dash-top-btn', { type: 'button', title: 'Subscriptions and account usage', onclick: () => openSubscriptionsStatus() }, icon('key'), h('span', {}, 'Subscriptions'));
 const accessLabel = h('span', {}, WHERE[where].label);
 const access = h('button.btn.ghost.dash-top-btn', { type: 'button', title: 'How this browser reaches the office, and its pairing', onclick: () => accessDialog() }, icon(WHERE[where].icon), accessLabel);
-const top = h('header.dash-top', {}, brand, floorPicker, h('span.grow'), conn, subscriptions, board, access);
+const top = h('header.dash-top', {}, brand, conn, subscriptions, board, access, floorPicker);
 
 const bannerIcon = h('span.dash-banner-icon');
 const bannerText = h('p.dash-banner-text');
@@ -266,17 +266,40 @@ store.on('screens', () => {
   paintQuestion();
   schedulePreviews();
 });
-floors.addEventListener('change', () => {
-  if (!live() || floors.value === store.floor) return;
+function goFloor(id: string) {
+  if (!live() || id === store.floor) return;
   closeAllModals();
   switching = true;
   selected = '';
-  if (!net.send({ t: 'floor.go', floor: floors.value })) {
+  if (!net.send({ t: 'floor.go', floor: id })) {
     switching = false;
     toast('Disconnected. Nothing was sent.', 'warn');
   }
   paint();
+}
+floors.addEventListener('keydown', (event) => {
+  const buttons = [...floors.querySelectorAll<HTMLButtonElement>('button:not(:disabled)')];
+  const at = buttons.indexOf(event.target as HTMLButtonElement);
+  if (at < 0 || event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return;
+  const targets: Record<string, number> = { ArrowLeft: at - 1, ArrowRight: at + 1, Home: 0, End: buttons.length - 1 };
+  const next = targets[event.key];
+  if (next === undefined) return;
+  event.preventDefault();
+  event.stopPropagation();
+  buttons[(next + buttons.length) % buttons.length]?.focus();
 });
+floors.addEventListener(
+  'wheel',
+  (event) => {
+    if (event.ctrlKey || Math.abs(event.deltaX) >= Math.abs(event.deltaY) || floors.scrollWidth <= floors.clientWidth) return;
+    const before = floors.scrollLeft;
+    const unit = event.deltaMode === 1 ? 32 : event.deltaMode === 2 ? floors.clientWidth : 1;
+    floors.scrollLeft += event.deltaY * unit;
+    if (floors.scrollLeft !== before) event.preventDefault();
+  },
+  { passive: false },
+);
+if (typeof ResizeObserver === 'function') new ResizeObserver(() => floors.querySelector('.on')?.scrollIntoView({ block: 'nearest', inline: 'nearest' })).observe(floors);
 
 function live() {
   return authorized && net.up && fresh && !switching;
@@ -364,6 +387,41 @@ function pill(w: WorkerInfo) {
   return h('span.pill', { class: w.status }, statusWord(w, STATUS_LABEL));
 }
 
+let floorListKey = '';
+let shownFloor: string | null | undefined;
+function paintFloors(up: boolean) {
+  const key = JSON.stringify([store.floor === ROOF, store.floors.map((f) => [f.id, f.name, f.repo])]);
+  const changed = key !== floorListKey;
+  if (changed) {
+    const focused = document.activeElement instanceof HTMLElement && floors.contains(document.activeElement) ? document.activeElement.dataset.floor : undefined;
+    floors.replaceChildren(
+      ...(store.floor === ROOF ? [h('span.dash-floor-roof', {}, 'Rooftop')] : []),
+      ...store.floors.map((f, i) =>
+        h(
+          'button.btn.dash-floor-chip',
+          {
+            type: 'button',
+            'data-floor': f.id,
+            title: `${f.name} — ${f.repo ?? 'no git'}`,
+            onclick: () => goFloor(f.id),
+          },
+          h('span.dash-floor-number', { 'aria-hidden': 'true' }, `${i + 1} ·`),
+          h('span.dash-floor-name', {}, f.name),
+        ),
+      ),
+    );
+    floorListKey = key;
+    if (focused) [...floors.querySelectorAll<HTMLButtonElement>('button')].find((b) => b.dataset.floor === focused)?.focus({ preventScroll: true });
+  }
+  for (const button of floors.querySelectorAll<HTMLButtonElement>('button')) {
+    button.disabled = !up;
+    button.classList.toggle('on', button.dataset.floor === store.floor);
+    button.setAttribute('aria-pressed', String(button.dataset.floor === store.floor));
+  }
+  if (changed || shownFloor !== store.floor) floors.querySelector('.on')?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+  shownFloor = store.floor;
+}
+
 function paint() {
   title.textContent = officeName;
   const up = live();
@@ -371,7 +429,6 @@ function paint() {
   conn.dataset.state = state;
   connText.textContent = { live: 'Live', loading: 'Syncing', down: 'Offline', locked: 'Locked' }[state];
   const here = store.currentFloor();
-  floors.disabled = !up;
   reorderFloors.disabled = !up || store.floors.length < 2;
   agentBtn.disabled = shellBtn.disabled = dockAgent.disabled = dockShell.disabled = !up || !here || busy.has('hire');
   board.disabled = !up || !here;
@@ -388,8 +445,7 @@ function paint() {
     thread?.activate(false);
     return paintGate();
   }
-  floors.replaceChildren(...(store.floor === ROOF ? [h('option', { value: ROOF }, 'Rooftop · choose a floor')] : []), ...store.floors.map((f) => h('option', { value: f.id }, `${f.name}  —  ${f.repo ?? 'no git'}`)));
-  floors.value = store.floor ?? '';
+  paintFloors(up);
   const b = store.floor && store.whiteboard.board(store.floor);
   const changed = b ? cardsNewestFirst(b).filter((c) => cardChanged(b, OWNER, c.id)).length : 0;
   boardCount.textContent = String(changed);
