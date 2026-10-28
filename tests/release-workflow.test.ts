@@ -19,7 +19,7 @@ test('CI checks only the affected platforms and builds every client change into 
     assert.deepEqual(checksFor([file]), { ...none, node: true, mac: true, android: true }, file);
   }
   assert.deepEqual(checksFor(['src/mobile/App.tsx']), { ...none, node: true, android: true });
-  for (const file of ['metro.config.cjs', 'babel.config.cjs', 'react-native.config.cjs', 'index.mobile.js']) {
+  for (const file of ['metro.config.cjs', 'babel.config.cjs', 'react-native.config.cjs', 'index.mobile.js', 'tsconfig.mobile.json']) {
     assert.deepEqual(checksFor([file]), { ...none, node: true, android: true }, file);
   }
   assert.deepEqual(checksFor(['build/icon.png']), { ...none, mac: true });

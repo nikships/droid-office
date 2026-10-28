@@ -114,7 +114,7 @@ import { deskApproach, type ApproachPose } from './approach';
 import { createAutomation, facingToward, pitchToward, runCommand, type CameraPose } from './automation';
 import { onBringIn, onOpenTeammate, openOfficeShell, openTerminal, openTerminalFor, routeTerminalMessage, terminalOnTop, type TerminalFind } from './ui/terminal';
 import { openSearch } from './ui/search';
-import { changesLogFor, openChanges, openChangesFor, routeChangesMessage } from './ui/changes';
+import { openChanges, openChangesFor, routeChangesMessage } from './ui/changes';
 import { openRepoPulls, workerRepos } from './ui/repos';
 import { openPrompt, confirmDialog, sendHomeDialog, lostWorktreeDialog, routeWorktreeMessage, worktreePref } from './ui/prompt';
 import { issuePrompt, openBoard } from './ui/boards';
@@ -1123,8 +1123,6 @@ net.onMessage((msg) => {
       if (openId === OFFICE_SHELL_ID) net.send({ t: 'shell.attach' });
       const watching = openChangesFor();
       if (watching && store.workers.has(watching.workerId)) net.send({ t: 'changes.watch', ...watching });
-      const following = changesLogFor();
-      if (following && following !== openId && store.workers.has(following)) net.send({ t: 'worker.attach', workerId: following });
       renderProject();
       hud.refresh();
       // Back from a restart on another version: this page's code is stale, so load the new one.

@@ -4,8 +4,8 @@ import { fileURLToPath } from 'node:url';
 
 const workflow = /^(?:\.github\/workflows\/release\.yml|\.github\/scripts\/release-[^/]+\.mjs)$/;
 const packages = /^package(?:-lock)?\.json$/;
-const config = /^(?:tsconfig[^/]*\.json|vite\.config\.ts)$/;
-const mobileConfig = /^(?:(?:metro|babel|react-native)\.config\.cjs|index\.mobile\.js)$/;
+const config = /^(?:tsconfig(?!\.mobile\.json$)[^/]*\.json|vite\.config\.ts)$/;
+const mobileConfig = /^(?:(?:metro|babel|react-native)\.config\.cjs|index\.mobile\.js|tsconfig\.mobile\.json)$/;
 
 export function checksFor(files, { manual = false, androidVersionChanged = false } = {}) {
   const changed = files.filter((file) => !file.endsWith('/AGENTS.md'));
