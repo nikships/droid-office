@@ -27,7 +27,6 @@ import {
   type DeskDef,
   type SeatDef,
   type SeatPlace,
-  type StationKind,
 } from '../shared/layout';
 import { floorPalette, forgeOf, forgeWords, normalizeRepo, repoWebUrl } from '../shared/floors';
 import { OFFICE_SHELL_ID } from '../shared/office-shell';
@@ -114,6 +113,7 @@ import { deskApproach, type ApproachPose } from './approach';
 import { createAutomation, facingToward, pitchToward, runCommand, type CameraPose } from './automation';
 import { onBringIn, onOpenTeammate, openOfficeShell, openTerminal, openTerminalFor, routeTerminalMessage, terminalOnTop, type TerminalFind } from './ui/terminal';
 import { openSearch } from './ui/search';
+import { STATION_INFO } from './ui/stations';
 import { openChanges, openChangesFor, routeChangesMessage } from './ui/changes';
 import { openRepoPulls, workerRepos } from './ui/repos';
 import { openPrompt, confirmDialog, sendHomeDialog, lostWorktreeDialog, routeWorktreeMessage, worktreePref } from './ui/prompt';
@@ -317,12 +317,6 @@ noOutline(office.group);
 
 // ---- Board agents -------------------------------------------------------------------------------
 
-const STATION_INFO: Record<StationKind, { icon: string; offer: string; does: string; example: string }> = {
-  issues: { icon: '📌', offer: 'Ask me about issues', does: 'I file, find, triage, label and close them', example: 'File an issue: the bean bag walks straight through the jukebox' },
-  pulls: { icon: '🔀', offer: 'Ask me about PRs', does: 'I sum up, review, comment on and merge them', example: 'Review the newest PR and tell me if it’s ready to merge' },
-  actions: { icon: '🚀', offer: 'Ask me about CI', does: 'I kick off pipelines, re-run failures and explain what broke', example: 'Kick off the release workflow on main and tell me when it’s done' },
-  lead: { icon: '🧭', offer: 'Give me a big job', does: 'I split it up and hire a team of subagents at the desks', example: 'Add dark mode: one subagent on the settings, one on the styles, one on the tests' },
-};
 /** The board agents waiting by their boards before anyone has asked them anything (see buildKiosk). */
 const idleAgents = STATIONS.map((def) => {
   const kind = def.station!;
@@ -2436,7 +2430,7 @@ function interact(target: Interactable | null, key: DeskKey, note = aimedNote, s
     spot = null;
   }
   if (key === 'E' && carrying && dropCard(target, carrying, note)) return;
-  if (useSpot(spot, key)) return;
+  if (interactWithSpot(spot, key)) return;
   if (target.kind === 'desk' && target.deskId) {
     const w = store.workerAtDesk(target.deskId);
     if (key === 'B' && !w) return openShell(target.deskId);
@@ -2463,7 +2457,7 @@ function interact(target: Interactable | null, key: DeskKey, note = aimedNote, s
   if (note && key === 'O') return openIssue(note, net, boardActions());
   if (key !== 'E') return;
   if (openPane(target, aimedRun)) return;
-  if (target.kind === 'seat' && target.seatId) useSeat(target.seatId);
+  if (target.kind === 'seat' && target.seatId) interactWithSeat(target.seatId);
   else if (target.kind === 'gong') hitGong();
   else if (target.kind === 'ladder') grabLadder();
 }
@@ -2574,7 +2568,7 @@ function freePlace(seat: SeatDef): SeatPlace | null {
 }
 
 /** E at a seat: sit down on it. Sitting there already, get up (or open the shell, in the boss's chair). */
-function useSeat(seatId: string) {
+function interactWithSeat(seatId: string) {
   const seat = SEATING_BY_ID.get(seatId);
   if (!seat) return;
   if (player.seat?.seatId === seatId) {
@@ -3313,7 +3307,7 @@ function spotUnder(aim: { it: Interactable; hit: THREE.Intersection } | null): B
 }
 
 /** E on a tab or Jira card on the issues board: switch to the tab, or open the ticket. False for anything else. */
-function useSpot(spot: BoardSpot | null, key: DeskKey): boolean {
+function interactWithSpot(spot: BoardSpot | null, key: DeskKey): boolean {
   if (!spot || (key !== 'E' && key !== 'O')) return false;
   if (spot.kind === 'tab') {
     if (key !== 'E') return false;

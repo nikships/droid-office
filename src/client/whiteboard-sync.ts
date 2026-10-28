@@ -15,7 +15,7 @@
 import type { ClientMsg, ServerMsg, WhiteboardRenderInfo, WhiteboardRendererStatus } from '../shared/protocol';
 import { OWNER_AUTHOR, applyOps, applyPatch, findCard, type Board, type Op, type OpError } from '../shared/whiteboard';
 
-export type ApplyResult = { ok: true; rev: number } | { ok: false; reason: 'invalid'; error: OpError } | { ok: false; reason: 'expired' };
+export type ApplyResult = { ok: true; rev: number } | { ok: false; reason: 'invalid'; error: OpError } | { ok: false; reason: 'expired' } | { ok: false; reason: 'discarded' };
 
 /** A batch the server hasn't acknowledged yet. */
 export interface PendingBatch {
@@ -155,6 +155,22 @@ export class WhiteboardSync {
     const f = this.floor(floorId);
     f.drafts = f.drafts.filter((x) => x.id !== draftId);
     this.changed(floorId);
+  }
+
+  /**
+   * Forgets every batch the server hasn't acknowledged and every expired draft, on every floor, without
+   * sending anything: for a companion, whose edits never outlive the connection they were made on.
+   * A batch the server committed before the loss is in the next snapshot; one it never got is gone.
+   */
+  discardUnsent() {
+    for (const f of this.floors.values()) {
+      if (!f.pending.length && !f.drafts.length) continue;
+      const pending = f.pending;
+      f.pending = [];
+      f.drafts = [];
+      for (const p of pending) p.done({ ok: false, reason: 'discarded' });
+      this.changed(f.floor);
+    }
   }
 
   /** The connection went up or down. Up, the snapshot the server sends next starts the resends. */

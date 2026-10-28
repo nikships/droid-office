@@ -201,3 +201,26 @@ test('ping eligibility for every status, kind and condition', () => {
     assert.match(!r.ok ? r.reason : '', re);
   }
 });
+
+test('a companion discards what the server never acknowledged, and nothing is resent after the reconnect', async () => {
+  const { server, sync } = setup();
+  server.welcome();
+  server.drop = true;
+  const committed = sync.apply('f1', [create('kept')]);
+  server.drop = false;
+  server.up = false;
+  sync.status(false);
+  const unsent = sync.apply('f1', [create('lost')]);
+  sync.discardUnsent();
+  assert.deepEqual(await committed, { ok: false, reason: 'discarded' });
+  assert.deepEqual(await unsent, { ok: false, reason: 'discarded' });
+  assert.equal(sync.floor('f1').pending.length, 0);
+  assert.equal(sync.floor('f1').drafts.length, 0);
+  server.up = true;
+  server.sent = [];
+  server.welcome();
+  assert.ok(!server.sent.some((m) => m.t === 'whiteboard.apply'), 'nothing is replayed');
+  const b = sync.board('f1')!;
+  assert.ok(findCard(b, 'kept'), 'what the server committed before the loss stays on the board');
+  assert.equal(findCard(b, 'lost'), undefined);
+});
