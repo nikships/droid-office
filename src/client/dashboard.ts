@@ -1213,7 +1213,7 @@ function hire(kind: 'agent' | 'shell', deskId = 'auto') {
     deskId: deskId === 'auto' ? undefined : deskId,
     imagesOption: kind === 'agent',
     recall: kind === 'agent',
-    worktreeOption: !!store.currentFloor()?.repo,
+    worktreeOption: !store.currentFloor()?.home && !store.currentFloor()?.plain && !!store.currentFloor()?.branch,
     onSubmit: async (text, opts) => {
       const error = await action({ t: 'worker.spawn', deskId, kind, prompt: text, ...opts }, '', intended, kind === 'shell' ? 'Shell opened.' : 'Droid hired.');
       if (!error) remember(key, '');
