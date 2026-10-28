@@ -32,6 +32,7 @@ class ToolPolicyTest {
             assertEquals(item.toString(), v.getValue("allowed").jsonPrimitive.boolean, ToolPolicy.isExternalUrl(v.text("url")))
         }
         assertEquals(fixture.getValue("passthroughPrefixes").jsonArray.map { it.jsonPrimitive.content }, ToolPolicy.PASSTHROUGH_PREFIXES)
+        assertEquals(fixture.text("passthroughSandbox"), ToolPolicy.PASSTHROUGH_SANDBOX)
         for (item in fixture.getValue("passthrough").jsonArray) {
             val v = item.jsonObject
             assertEquals(item.toString(), v.getValue("allowed").jsonPrimitive.boolean, ToolPolicy.passthrough(v.text("path")))
@@ -61,7 +62,7 @@ class ToolPolicyTest {
     @Test
     fun everyMethodRejectsEncodedTraversalAndUrlInjection() {
         for (method in listOf("GET", "POST", "PUT", "PATCH", "DELETE")) {
-            for (suffix in listOf("../x", "%2e%2e/x", "%252e%252e/x", "a%2Fb", "a%5Cb", "a\\b", "a//b", "a?x=1", "a#x", "a\nb")) {
+            for (suffix in listOf(".", "./x", "x/.", "../x", "%2e%2e/x", "%252e%252e/x", "a%2Fb", "a%5Cb", "a\\b", "a//b", "a?x=1", "a#x", "a\nb")) {
                 assertFalse("$method $suffix", ToolPolicy.allowed(method, "/api/factory/$suffix"))
             }
             assertTrue(ToolPolicy.allowed(method, "/api/factory/" + "a".repeat(499)))
@@ -111,6 +112,87 @@ class ToolPolicyTest {
         }
         assertTrue(ToolPolicy.validContentType("application/octet-stream"))
         assertTrue(ToolPolicy.validContentType("multipart/form-data; boundary=abc"))
+    }
+
+    @Test
+    fun artifactsKeepBrowserNetworkingButNeverGainTheHostsAuthority() {
+        for (url in listOf("https://cdn.example.com/script.js", "http://example.com/image.png", "https://example.com:8443/api?q=one")) {
+            assertTrue(url, ToolPolicy.artifactNetwork(url, false))
+            assertFalse(url, ToolPolicy.artifactNetwork(url, true))
+            assertNull(ToolPolicy.download(url))
+        }
+        for (url in listOf(
+            "${ToolPolicy.ORIGIN}/api/mobile/pair", "${ToolPolicy.ORIGIN}:443/fonts/a",
+            "https://user:pass@example.com", "https://appassets.androidplatform.net@evil.test",
+            "file:///data/local/a", "content://provider/file", "javascript:alert(1)", "intent://example.com", "//example.com/a",
+        )) assertFalse(url, ToolPolicy.artifactNetwork(url, false))
+        val empty = ToolPolicy.passthroughHeaders(emptyMap())
+        assertEquals(ToolPolicy.PASSTHROUGH_SANDBOX, empty["content-security-policy"])
+        val original = "sandbox allow-scripts allow-same-origin; default-src https:"
+        val ceiling = ToolPolicy.passthroughHeaders(mapOf("Content-Security-Policy" to original, "permissions-policy" to "camera=()"))
+        assertEquals("$original, ${ToolPolicy.PASSTHROUGH_SANDBOX}", ceiling["content-security-policy"])
+        assertFalse(ToolPolicy.PASSTHROUGH_SANDBOX.contains("allow-same-origin"))
+        assertFalse(ToolPolicy.PASSTHROUGH_SANDBOX.contains("connect-src"))
+        assertTrue(ToolPolicy.PASSTHROUGH_SANDBOX.contains("allow-downloads"))
+        assertEquals("camera=()", ceiling["permissions-policy"])
+        assertEquals("no-store", ceiling["cache-control"])
+    }
+
+    @Test
+    fun exportsOnlyFetchOriginalSealedPassthroughUrls() {
+        assertEquals(ToolDownload("/api/factory/wiki/runs/123/export", "floor=home"),
+            ToolPolicy.download("${ToolPolicy.ORIGIN}/api/factory/wiki/runs/123/export?floor=home"))
+        assertEquals(ToolDownload("/api/whiteboard/file", "hash=abc"), ToolPolicy.download("${ToolPolicy.ORIGIN}/api/whiteboard/file?hash=abc"))
+        for (url in listOf(
+            "https://example.com/api/factory/wiki/runs/1/export", "http://appassets.androidplatform.net/fonts/a",
+            "${ToolPolicy.ORIGIN}:443/fonts/a", "https://user@appassets.androidplatform.net/fonts/a",
+            "${ToolPolicy.ORIGIN}/api/mobile/pair", "${ToolPolicy.ORIGIN}/fonts/a#fragment",
+            "${ToolPolicy.ORIGIN}/fonts/../secret", "${ToolPolicy.ORIGIN}/fonts/%2e%2e/secret",
+            "${ToolPolicy.ORIGIN}/fonts/a%2fb", "${ToolPolicy.ORIGIN}/fonts/a%5cb",
+            "file:///data/file.zip", "content://provider/file.zip", "blob:${ToolPolicy.ORIGIN}/file",
+        )) assertNull(url, ToolPolicy.download(url))
+        assertTrue(ToolPolicy.responseFits(0))
+        assertTrue(ToolPolicy.responseFits(ToolPolicy.RESPONSE_MAX.toLong()))
+        assertFalse(ToolPolicy.responseFits(-1))
+        assertFalse(ToolPolicy.responseFits(ToolPolicy.RESPONSE_MAX.toLong() + 1))
+        assertFalse(ToolPolicy.responseFits(Long.MAX_VALUE))
+    }
+
+    @Test
+    fun pickerHintsAndExportNamesAreNotArbitraryPathsOrIntents() {
+        assertEquals(listOf("text/html", "image/png"), ToolPolicy.pickerTypes(listOf(".html,.htm,text/html", "image/png")))
+        assertEquals(listOf("image/*"), ToolPolicy.pickerTypes(listOf("image/*")))
+        assertEquals(listOf("*/*"), ToolPolicy.pickerTypes(listOf("file:///secret", "image/png\nX:1")))
+        assertEquals("report.zip", ToolPolicy.safeFilename("../../report.zip"))
+        assertEquals("report.zip", ToolPolicy.safeFilename("C:\\secret\\report.zip"))
+        assertEquals("office-file", ToolPolicy.safeFilename("..."))
+        assertEquals("file.zip", ToolPolicy.safeFilename("file\u0000.zip"))
+        assertEquals(120, ToolPolicy.safeFilename("a".repeat(300)).length)
+        val picked = "content://documents/document/user-selected"
+        assertTrue(ToolPolicy.selectedContentUri(picked, true, true, 200, 100))
+        assertFalse(ToolPolicy.selectedContentUri(picked, false, true, 200, 100))
+        assertFalse(ToolPolicy.selectedContentUri(picked, true, false, 200, 100))
+        assertFalse(ToolPolicy.selectedContentUri(picked, true, true, 100, 100))
+        for (url in listOf("file:///data/private", "https://example.com/file", "content://user@documents/file", "$picked#fragment", "content:///file")) {
+            assertFalse(url, ToolPolicy.selectedContentUri(url, true, true, 200, 100))
+        }
+    }
+
+    @Test
+    fun aClosedJoinCannotReuseAnEpochOrRebindThePage() {
+        val subscription = ToolLifetime()
+        val first = subscription.snapshot()
+        val oldPage = ToolLifetime()
+        val oldRequest = oldPage.replace("office", 7)
+        subscription.replace(null, null)
+        val next = subscription.snapshot()
+        oldPage.replace("office", 7)
+        // Queued onLink/onFrame from the first join must not mutate the second join's state.
+        assertFalse(subscription.matches(first))
+        assertTrue(subscription.matches(next))
+        assertFalse(oldPage.matches(oldRequest))
+        subscription.replace(null, null)
+        assertFalse(subscription.matches(next))
     }
 
     @Test

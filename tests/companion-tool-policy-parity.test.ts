@@ -2,12 +2,14 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import test from 'node:test';
 import { cleanToolArgs, isAllowedToolRequest, isExternalUrl, TOOL_JSON_MAX, TOOL_PASSTHROUGH_PREFIXES, TOOL_UPLOAD_MAX } from '../src/shared/companion-tools.js';
+import { CARD_SANDBOX } from '../src/shared/whiteboard-bridge.js';
 
 // JUnit reads this exact resource, not a generated copy of either policy implementation.
 const fixture = JSON.parse(readFileSync(new URL('../android/app/src/test/resources/companion-tool-policy.json', import.meta.url), 'utf8')) as {
   requests: { method: string; path: string; allowed: boolean }[];
   external: { url: string; allowed: boolean }[];
   passthroughPrefixes: string[];
+  passthroughSandbox: string;
   passthrough: { path: string; allowed: boolean }[];
   args: { input: unknown; expected: unknown }[];
 };
@@ -16,7 +18,7 @@ test('TypeScript and Kotlin share every allowed management route and rejection f
   assert.ok(fixture.requests.length >= 60);
   for (const { method, path, allowed } of fixture.requests) assert.equal(isAllowedToolRequest(method, path), allowed, `${method} ${JSON.stringify(path)}`);
   for (const method of ['GET', 'POST', 'PUT', 'PATCH', 'DELETE']) {
-    for (const suffix of ['../x', '%2e%2e/x', '%252e%252e/x', 'a%2Fb', 'a%5Cb', 'a\\b', 'a//b', 'a?x=1', 'a#x', 'a\nb']) {
+    for (const suffix of ['.', './x', 'x/.', '../x', '%2e%2e/x', '%252e%252e/x', 'a%2Fb', 'a%5Cb', 'a\\b', 'a//b', 'a?x=1', 'a#x', 'a\nb']) {
       assert.equal(isAllowedToolRequest(method, `/api/factory/${suffix}`), false, `${method} ${suffix}`);
     }
     assert.equal(isAllowedToolRequest(method, `/api/factory/${'a'.repeat(499)}`), true);
@@ -27,6 +29,7 @@ test('TypeScript and Kotlin share every allowed management route and rejection f
 test('external links, passthrough prefixes and tool arguments stay in parity', () => {
   for (const { url, allowed } of fixture.external) assert.equal(isExternalUrl(url), allowed, url);
   assert.deepEqual(TOOL_PASSTHROUGH_PREFIXES, fixture.passthroughPrefixes);
+  assert.equal(fixture.passthroughSandbox, `sandbox ${CARD_SANDBOX}`);
   for (const { path, allowed } of fixture.passthrough) {
     if (allowed)
       assert.ok(

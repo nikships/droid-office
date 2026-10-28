@@ -288,7 +288,7 @@ const ALLOWED: Record<Method, readonly RegExp[]> = {
  */
 export function isAllowedToolRequest(method: string, path: string): boolean {
   if (typeof path !== 'string' || !path.startsWith('/api/') || path.length > 512) return false;
-  if (path.includes('..') || path.includes('//') || /%2f|%5c|\\/i.test(path) || /[?#\s]/.test(path)) return false;
+  if (path.includes('..') || path.includes('//') || path.split('/').includes('.') || /%2f|%5c|\\/i.test(path) || /[?#\s]/.test(path)) return false;
   if (REFUSED.some((r) => r.test(path))) return false;
   const rules = Object.hasOwn(ALLOWED, method) ? ALLOWED[method as Method] : undefined;
   return !!rules?.some((r) => r.test(path));

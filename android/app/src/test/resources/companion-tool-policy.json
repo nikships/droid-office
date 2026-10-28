@@ -38,7 +38,9 @@
     { "method": "OPTIONS", "path": "/api/docs/file", "allowed": false },
     { "method": "get", "path": "/api/docs/file", "allowed": false },
     { "method": "__proto__", "path": "/api/docs/file", "allowed": false },
-    { "method": "GET", "path": "/api/factory/./computers", "allowed": true },
+    { "method": "GET", "path": "/api/factory/./computers", "allowed": false },
+    { "method": "GET", "path": "/api/factory/.", "allowed": false },
+    { "method": "GET", "path": "/api/factory/computers/.", "allowed": false },
     { "method": "GET", "path": "/api/factory/../mobile/pair", "allowed": false },
     { "method": "GET", "path": "/api/factory/a..b", "allowed": false },
     { "method": "GET", "path": "/api/factory//computers", "allowed": false },
@@ -87,6 +89,7 @@
     { "url": "data:text/html,hello", "allowed": false },
     { "url": "https://", "allowed": false }
   ],
+  "passthroughSandbox": "sandbox allow-scripts allow-forms allow-popups allow-popups-to-escape-sandbox allow-modals allow-downloads",
   "passthroughPrefixes": [
     "/fonts/", "/icons/", "/factory-glyph.svg", "/favicon.svg", "/api/docs/picture",
     "/api/changes/file", "/api/whiteboard/render", "/api/whiteboard/file",

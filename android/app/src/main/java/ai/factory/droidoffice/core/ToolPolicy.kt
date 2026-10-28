@@ -14,6 +14,10 @@ object ToolPolicy {
     const val ORIGIN = "https://appassets.androidplatform.net"
     const val UPLOAD_MAX = 25 * 1024 * 1024
     const val JSON_MAX = 3 * 1024 * 1024
+    const val RESPONSE_MAX = 25 * 1024 * 1024
+    const val PICK_MAX = 200
+    // CARD_SANDBOX, enforced even on repo HTML/SVG whose upstream response has no CSP.
+    const val PASSTHROUGH_SANDBOX = "sandbox allow-scripts allow-forms allow-popups allow-popups-to-escape-sandbox allow-modals allow-downloads"
     private val factory = Regex("""/api/factory/[\w./-]+""")
     private val gets = listOf(
         Regex("""/api/gh/(pull|issue|labels|pull/diff)"""),
@@ -23,18 +27,25 @@ object ToolPolicy {
         Regex("""/api/changes/file"""), Regex("""/api/whiteboard/(render|render/status|file)"""),
     )
     private val forbiddenPath = Regex("""%2f|%5c|\\|[?#\s]""", RegexOption.IGNORE_CASE)
+    private val bundled = setOf("/assets/companion-tools/index.html", "/assets/companion-tools/tools.js", "/assets/companion-tools/tools.css")
+    private val chunk = Regex("""/assets/companion-tools/chunks/[A-Za-z0-9_-]+(?:\.[A-Za-z0-9_-]+)*\.(js|css)""")
+    private val escapedPath = Regex("""%(?:2e|25|0[0-9a-f]|1[0-9a-f]|7f)""", RegexOption.IGNORE_CASE)
+    private val badEscape = Regex("""%(?![0-9a-fA-F]{2})""")
+    private val mime = Regex("""[A-Za-z0-9!#$&^_.+-]+/[A-Za-z0-9!#$&^_.+-]+(?:;[ -~]*)?""")
+    private val pickerMime = Regex("""(?:[a-z0-9!#$&^_.+-]+|\*)/(?:[a-z0-9!#$&^_.+-]+|\*)""")
+    private val posts = setOf("/api/whiteboard/blob", "/api/prompt/image", "/api/host/update")
+    private val stringArgs = mapOf("workerId" to 64, "repo" to 200, "card" to 200, "pane" to 40, "deskId" to 32)
+    private val workerKinds = setOf("agent", "shell", "station")
 
     fun trustedMessage(origin: String, isMainFrame: Boolean): Boolean = isMainFrame && origin == ORIGIN
 
-    fun bundledAsset(path: String): Boolean = path in setOf(
-        "/assets/companion-tools/index.html", "/assets/companion-tools/tools.js", "/assets/companion-tools/tools.css",
-    ) || Regex("""/assets/companion-tools/chunks/[A-Za-z0-9_-]+(?:\.[A-Za-z0-9_-]+)*\.(js|css)""").matches(path)
+    fun bundledAsset(path: String): Boolean = path in bundled || chunk.matches(path)
 
     fun allowed(method: String, path: String): Boolean {
-        if (!path.startsWith("/api/") || path.length > 512 || ".." in path || "//" in path || forbiddenPath.containsMatchIn(path)) return false
+        if (!path.startsWith("/api/") || path.length > 512 || ".." in path || "//" in path || path.split('/').any { it == "." } || forbiddenPath.containsMatchIn(path)) return false
         return when (method) {
             "GET" -> gets.any { it.matches(path) }
-            "POST" -> factory.matches(path) || path in setOf("/api/whiteboard/blob", "/api/prompt/image", "/api/host/update")
+            "POST" -> factory.matches(path) || path in posts
             "PUT" -> factory.matches(path) || path == "/api/docs/file"
             "PATCH" -> factory.matches(path)
             "DELETE" -> factory.matches(path) || path == "/api/prompt/image"
@@ -48,6 +59,57 @@ object ToolPolicy {
             uri.port in -1..65535 && '\\' !in url && url.none { it <= ' ' || it == '\u007f' }
     }.getOrDefault(false)
 
+    /** Untrusted card networking uses WebView's browser stack, never the authenticated host. */
+    fun artifactNetwork(url: String, isMainFrame: Boolean): Boolean = !isMainFrame && runCatching {
+        val uri = URI(url)
+        uri.scheme in setOf("https", "http") && !uri.host.isNullOrEmpty() &&
+            !uri.host.equals("appassets.androidplatform.net", true) && uri.rawUserInfo == null &&
+            uri.port in -1..65535 && '\\' !in url && url.none { it <= ' ' || it == '\u007f' }
+    }.getOrDefault(false)
+
+    /** A download is an original sealed-origin passthrough URL, never a redirect or browser URL. */
+    fun download(url: String): ToolDownload? = runCatching {
+        val uri = URI(url)
+        if (uri.scheme != "https" || uri.rawAuthority != "appassets.androidplatform.net" ||
+            uri.rawFragment != null || !passthrough(uri.rawPath) || !validQuery(uri.rawQuery)) return null
+        ToolDownload(uri.rawPath, uri.rawQuery)
+    }.getOrNull()
+
+    fun responseFits(size: Long): Boolean = size in 0..RESPONSE_MAX.toLong()
+
+    fun passthroughHeaders(headers: Map<String, String>): Map<String, String> {
+        val normalized = headers.mapKeys { it.key.lowercase() }
+        return normalized + mapOf(
+            "content-security-policy" to listOfNotNull(normalized["content-security-policy"], PASSTHROUGH_SANDBOX).joinToString(", "),
+            "cache-control" to "no-store",
+        )
+    }
+
+    fun safeFilename(name: String): String = name.substringAfterLast('/').substringAfterLast('\\')
+        .filter { it >= ' ' && it != '\u007f' && it !in ":*?\"<>|" }
+        .trim(' ', '.').take(120).ifEmpty { "office-file" }
+
+    fun selectedContentUri(url: String, returnedPermission: Boolean, granted: Boolean, providerUid: Int, ownUid: Int): Boolean =
+        returnedPermission && granted && providerUid != ownUid && runCatching {
+            val uri = URI(url)
+            uri.scheme == "content" && !uri.rawAuthority.isNullOrEmpty() && uri.rawUserInfo == null &&
+                uri.rawFragment == null && '\\' !in url
+        }.getOrDefault(false)
+
+    /** Filter hints only, never permission to read files the system picker did not return. */
+    fun pickerTypes(types: List<String>): List<String> = types.flatMap { it.split(',') }.mapNotNull {
+        val type = it.trim().lowercase()
+        when {
+            pickerMime.matches(type) -> type
+            type in setOf(".html", ".htm") -> "text/html"
+            type in setOf(".jpg", ".jpeg") -> "image/jpeg"
+            type == ".png" -> "image/png"
+            type == ".webp" -> "image/webp"
+            type == ".gif" -> "image/gif"
+            else -> null
+        }
+    }.distinct().take(16).ifEmpty { listOf("*/*") }
+
     val PASSTHROUGH_PREFIXES = listOf(
         "/fonts/", "/icons/", "/factory-glyph.svg", "/favicon.svg",
         "/api/docs/picture", "/api/changes/file", "/api/whiteboard/render",
@@ -58,8 +120,7 @@ object ToolPolicy {
     fun passthrough(path: String): Boolean {
         if (path.length > 4096 || !path.startsWith("/") || ".." in path || "//" in path ||
             forbiddenPath.containsMatchIn(path) || path.any { it < ' ' || it == '\u007f' } ||
-            Regex("""%(?:2e|25|0[0-9a-f]|1[0-9a-f]|7f)""", RegexOption.IGNORE_CASE).containsMatchIn(path) ||
-            Regex("""%(?![0-9a-fA-F]{2})""").containsMatchIn(path) ||
+            escapedPath.containsMatchIn(path) || badEscape.containsMatchIn(path) ||
             path.split('/').any { it == "." }) return false
         return PASSTHROUGH_PREFIXES.any { if (it.endsWith('/')) path.startsWith(it) else path == it }
     }
@@ -69,7 +130,7 @@ object ToolPolicy {
 
     fun validContentType(contentType: String?): Boolean = contentType == null ||
         (contentType.length in 1..256 && contentType.all { it in ' '..'~' } &&
-            Regex("""[A-Za-z0-9!#$&^_.+-]+/[A-Za-z0-9!#$&^_.+-]+(?:;[ -~]*)?""").matches(contentType))
+            mime.matches(contentType))
 
     /** Reject before allocating the decoded upload, then enforce the actual UTF-8/decoded byte limit. */
     fun decodeBody(body: String?, base64: Boolean, contentType: String?): ByteArray? {
@@ -97,7 +158,7 @@ object ToolPolicy {
 
     fun cleanToolArgs(value: JsonElement?): JsonObject = buildJsonObject {
         val source = value as? JsonObject ?: return@buildJsonObject
-        for ((key, max) in mapOf("workerId" to 64, "repo" to 200, "card" to 200, "pane" to 40, "deskId" to 32)) {
+        for ((key, max) in stringArgs) {
             val v = source[key] as? JsonPrimitive ?: continue
             if (v.isString && v.content.length in 1..max) put(key, v)
         }
@@ -107,9 +168,11 @@ object ToolPolicy {
             if (n > 0 && n <= 9007199254740991.0 && n % 1.0 == 0.0) put(key, n.toLong())
         }
         val kind = source["kind"] as? JsonPrimitive
-        if (kind?.isString == true && kind.content in setOf("agent", "shell", "station")) put("kind", kind)
+        if (kind?.isString == true && kind.content in workerKinds) put("kind", kind)
     }
 }
+
+data class ToolDownload(val path: String, val query: String?)
 
 /** A document/office/socket identity, read by both the UI and WebView's request thread. */
 data class ToolBinding(val generation: Long, val officeId: String?, val epoch: Long?)
