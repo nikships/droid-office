@@ -6,7 +6,7 @@ import { wayTo } from '../src/client/walkto.js';
 import type { DressingKit } from '../src/client/world/factory-floor.js';
 import { placeFactoryProps } from '../src/client/world/factory-props.js';
 import type { Collider } from '../src/client/world/office.js';
-import { DESK_BY_ID, DESKS, deskSeat, ELEVATOR, ELEVATOR_FRONT, FLOOR, ROBOT_CELL, SLAB } from '../src/shared/layout.js';
+import { DESK_BY_ID, DESKS, deskSeat, ELEVATOR, ELEVATOR_FRONT, FLOOR, SLAB } from '../src/shared/layout.js';
 import { walkable } from '../src/shared/nav.js';
 
 /** The office floor and the factory props' own colliders, as world/factory-props.ts builds them. */
@@ -44,10 +44,6 @@ function walk(player: PlayerController, from: { x: number; z: number }, to: { x:
 
 test("every factory prop's collider is off the walking map, so routes go round it", () => {
   const colliders = propColliders();
-  assert.ok(
-    colliders.some((c) => c.fence && c.minX === ROBOT_CELL.x - ROBOT_CELL.width / 2),
-    'the robot cell is fenced',
-  );
   for (const c of colliders) {
     for (let x = c.minX + 0.05; x < c.maxX; x += 0.2) {
       for (let z = c.minZ + 0.05; z < c.maxZ; z += 0.2) assert.equal(walkable(x, z), false, `(${x.toFixed(2)}, ${z.toFixed(2)}) is inside a prop but on the map`);
@@ -55,7 +51,12 @@ test("every factory prop's collider is off the walking map, so routes go round i
   }
 });
 
-test('the walk from Desk 7 to the elevator goes round the robot cell instead of into its fence', (t) => {
+test('the former robot cell is open to walkers', () => {
+  assert.equal(walkable(5, -6), true);
+  assert.ok(!propColliders().some((c) => c.minX <= 5 && c.maxX >= 5 && c.minZ <= -6 && c.maxZ >= -6));
+});
+
+test('the walk from Desk 7 to the elevator reaches its destination', (t) => {
   const player = walker(t, propColliders());
   const to = { x: ELEVATOR.x, y: 0, z: ELEVATOR_FRONT - 0.4 };
   const { path, result, at } = walk(player, deskSeat(DESK_BY_ID.get('desk-7')!, 2.4), to);

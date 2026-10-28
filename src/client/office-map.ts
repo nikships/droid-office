@@ -108,8 +108,6 @@ const MAP_PROPS = [
   'merge-gong',
   'bookshelf',
   'jukebox',
-  'robot-arm',
-  'conveyor',
 ] as const;
 
 /** The status light colors, the same as the droids' beacon bulbs (world/character.ts). */
