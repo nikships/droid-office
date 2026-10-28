@@ -321,6 +321,7 @@ export class WorkerThreadReader {
         state.bytes -= entryBytes(tool);
         tool.output = contentText(part.content);
         tool.error = part.is_error === true;
+        tool.resultSeq = state.seq;
         state.bytes += entryBytes(tool);
         this.trim(state);
       } else if (part.type === 'tool_use') {

@@ -94,13 +94,14 @@ object ThreadView {
         var lastPlan: String? = null
         // The plan of a run with nothing to show waits for the next run that has a row.
         var carried: List<PlanStep>? = null
+        val late = lateResults(entries)
         var prevMessage: ThreadEntry? = null
 
         fun flush(at: Int) {
             if (run.isEmpty()) return
             val own = run.lastOrNull { it.kind == ThreadKind.Todo }?.text?.let(::plan)?.takeIf { it.isNotEmpty() }
             // Only the newest run can still be going: a call with no result before a later message never got one.
-            val group = activity(run.toList(), live = busy && at == entries.size, own ?: carried, lastPlan)
+            val group = activity(run.toList(), live = busy && at == entries.size, own ?: carried, lastPlan, late)
             run.clear()
             if (group == null) {
                 if (own != null) carried = own
@@ -146,9 +147,9 @@ object ThreadView {
 
     private fun planKey(plan: List<PlanStep>) = plan.joinToString("\n") { "${it.done}${it.active}${it.text}" }
 
-    private fun activity(run: List<ThreadEntry>, live: Boolean, plan: List<PlanStep>?, lastPlan: String?): Activity? {
+    private fun activity(run: List<ThreadEntry>, live: Boolean, plan: List<PlanStep>?, lastPlan: String?, late: Set<String>): Activity? {
         val items = ArrayList<Item>()
-        val cancellations = ownerCancellations(run)
+        val cancellations = ownerCancellations(run, late)
         for ((i, e) in run.withIndex()) {
             when (e.kind) {
                 ThreadKind.Thinking -> e.text?.lineSequence()?.firstOrNull { it.isNotBlank() }?.let { items += Thought(e, it.trim().trim('*').trim()) }
@@ -197,20 +198,46 @@ object ThreadView {
 
     private data class Cancellations(val ids: Set<String>, val causes: Map<String, String>)
 
+    private val BY_USER = Regex("""^(?:Error: )?tool execution (?:was )?(?:cancelled|canceled|interrupted|aborted) by (?:the )?user$""", RegexOption.IGNORE_CASE)
+
+    private fun byUser(e: ThreadEntry) = e.kind == ThreadKind.Tool && e.error && BY_USER.matches(e.output.orEmpty().trim())
+
     /**
-     * An exact CLI by-user result is owner evidence even when it arrives late, without a turn notice.
-     * Bare "was interrupted" (including crash/resume) stays failed, except for a lone child enclosed
-     * by an explicitly owner-cancelled Script. Never infer across another Script or message.
+     * Results that came only after a later message, notice or Script, or past the loaded entries. The
+     * CLI flushes the calls a crash orphaned as "cancelled by user" when the owner later stops another
+     * Script, so such a result says nothing about why its call stopped.
      */
-    private fun ownerCancellations(run: List<ThreadEntry>): Cancellations {
-        val marker = Regex("""^(?:Error: )?tool execution (?:was )?(?:cancelled|canceled|interrupted|aborted) by (?:the )?user$""", RegexOption.IGNORE_CASE)
-        val ids = run.filter { it.kind == ThreadKind.Tool && it.error && marker.matches(it.output.orEmpty().trim()) }.mapTo(HashSet()) { it.id }
+    private fun lateResults(entries: List<ThreadEntry>): Set<String> {
+        val end = (entries.lastOrNull()?.seq ?: 0) + 1
+        val late = HashSet<String>()
+        for ((at, e) in entries.withIndex()) {
+            val result = e.resultSeq ?: continue
+            if (!byUser(e)) continue
+            val crossed = result > end || entries.drop(at + 1).takeWhile { it.seq < result }.any {
+                it.kind == ThreadKind.Text || it.kind == ThreadKind.Notice || (it.kind == ThreadKind.Tool && it.name == "Script")
+            }
+            if (crossed) late += e.id
+        }
+        return late
+    }
+
+    /**
+     * An exact CLI by-user result that came in time is owner evidence, without a turn notice. A bare
+     * "was interrupted" (a crash or restart) stays failed, and so does a Script whose by-user result
+     * came late or whose child was interrupted that way: the owner's Stop cancels the running child by
+     * user too. Such a Script is counted on its failed child. Never infer across another Script or message.
+     */
+    private fun ownerCancellations(run: List<ThreadEntry>, late: Set<String>): Cancellations {
+        val marked = run.filter(::byUser)
+        val ids = marked.filter { it.id !in late }.mapTo(HashSet()) { it.id }
         val causes = HashMap<String, String>()
         for ((at, e) in run.withIndex()) {
-            if (e.name != "Script" || e.id !in ids) continue
+            if (e.name != "Script" || e !in marked) continue
             val children = scriptChildren(run, at)
-            children.singleOrNull()?.takeIf { it.error && it.output?.trim() == "Tool execution was interrupted" }?.let { ids += it.id }
-            children.firstOrNull { it.id in ids }?.let { causes[e.id] = it.id }
+            val failed = children.firstOrNull { it.error && it.id !in ids }
+            if (failed?.output?.trim() == "Tool execution was interrupted") ids -= e.id
+            val cause = if (e.id in ids) children.firstOrNull { it.id in ids } else failed
+            if (cause != null) causes[e.id] = cause.id
         }
         return Cancellations(ids, causes)
     }

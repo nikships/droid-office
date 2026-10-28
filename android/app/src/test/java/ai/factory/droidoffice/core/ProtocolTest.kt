@@ -138,7 +138,7 @@ class ProtocolTest {
         val msg = Protocol.decode(
             """{"t":"thread.snapshot","workerId":"w1","request":"ab-3","before":40,"sessionId":"s1","hasMore":true,"future":1,"entries":[
               {"id":"u1","seq":1,"role":"user","kind":"text","text":"Fix the build"},
-              {"id":"t1","seq":2,"role":"assistant","kind":"tool","name":"Execute","input":"{\n  \"command\": \"npm test\"\n}","output":"ok","error":false},
+              {"id":"t1","seq":2,"role":"assistant","kind":"tool","name":"Execute","input":"{\n  \"command\": \"npm test\"\n}","output":"ok","error":false,"resultSeq":3},
               {"id":"x1","seq":3,"role":"assistant","kind":"image"},
               {"id":"x2","seq":4,"role":"robot","kind":"text"},
               {"seq":5,"role":"user","kind":"text"},
@@ -152,7 +152,8 @@ class ProtocolTest {
         assertTrue(msg.hasMore)
         assertNull(msg.error)
         assertEquals(listOf("u1", "t1", "n1"), msg.entries.map { it.id })
-        assertEquals(ThreadEntry("t1", 2, ThreadRole.Assistant, ThreadKind.Tool, name = "Execute", input = "{\n  \"command\": \"npm test\"\n}", output = "ok"), msg.entries[1])
+        assertEquals(ThreadEntry("t1", 2, ThreadRole.Assistant, ThreadKind.Tool, name = "Execute", input = "{\n  \"command\": \"npm test\"\n}", output = "ok", resultSeq = 3), msg.entries[1])
+        assertNull(msg.entries[0].resultSeq)
         assertEquals(6L, msg.entries[2].seq)
         assertTrue(msg.entries[2].error)
 

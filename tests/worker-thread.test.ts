@@ -77,6 +77,7 @@ test('projects actual text, thinking, tool/error, attachment and nested todo rec
   assert.equal(tool.input, '{\n  "file_path": "/project/a.ts",\n  "nested": {}\n}');
   assert.equal(tool.output, 'File not found');
   assert.equal(tool.error, true);
+  assert.equal(tool.resultSeq, 5, 'the result came before the todo snapshot took seq 5');
   assert.equal(page.entries[5].text, '1. [completed] Inspect code\n2. [in progress] Fix bug\n3. [pending] Run tests');
   assert.equal(page.entries[6].text, 'Turn cancelled');
   assert.deepEqual(
@@ -131,6 +132,7 @@ test('correlates appended results onto stable call IDs and supports text-only re
   assert.equal(next.entries[0].seq, first.entries[0].seq);
   assert.equal(next.entries[0].output, 'Tests passed\n[Image attachment]');
   assert.equal(next.entries[0].error, false);
+  assert.equal(next.entries[0].resultSeq, 1);
   assert.equal(first.entries[0].output, undefined, 'returned pages cannot mutate with later polls');
   await appendFile(file, lines(message('hidden', 'user', [{ type: 'text', text: 'Hidden context' }], { visibility: 'llm_only' }), text('visible', 'Next visible entry')));
   const appended = await reader.read(source);

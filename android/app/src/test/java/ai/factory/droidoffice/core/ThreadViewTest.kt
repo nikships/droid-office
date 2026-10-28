@@ -34,7 +34,10 @@ class ThreadViewTest {
             .getValue("entries").jsonArray.map { ThreadEntry.of(it)!! }
     }
 
-    private fun capturedCancellation() = capturedFailure("unit_real_late_script_owner_cancelled_interrupted_child").filter { it.kind == ThreadKind.Tool }
+    private fun capturedCrash() = capturedFailure("unit_real_crash_wrapper_flushed_by_a_later_stop")
+
+    /** The crash's Script and its interrupted child, with the wrapper's by-user result as if it had come in time. */
+    private fun capturedCancellation() = capturedCrash().take(2).let { (wrapper, child) -> listOf(wrapper.copy(resultSeq = null), child) }
 
     /** The released v0.1.611 screen the owner reported: wrapper scripts, TodoWrite, raw paths and duplicate plans. */
     private fun reported(): List<ThreadEntry> = listOf(
@@ -177,23 +180,50 @@ class ThreadViewTest {
     }
 
     @Test
-    fun unitCapturedLateScriptOwnerEvidenceCancelsItsLoneInterruptedChildOnce() {
-        val entries = capturedCancellation()
-        val a = ThreadView.project(entries, busy = false).single() as ThreadView.Activity
-        assertTrue(a.failed.isEmpty())
-        assertEquals(1, a.cancelled)
+    fun unitCrashWrapperFlushedByALaterStopStaysOneFailureCountedOnItsInterruptedChild() {
+        val entries = capturedCrash()
+        val (wrapper, child) = entries
+        val rows = ThreadView.project(entries, busy = false)
+        val a = rows.first() as ThreadView.Activity
+        assertEquals(listOf(child), a.failed.map { it.entry })
+        assertEquals(0, a.cancelled)
         assertEquals("Ran a command", a.summary)
-        assertEquals(listOf(ToolState.Cancelled, ToolState.Cancelled), a.actions.map { it.state })
-        assertEquals(entries[1].id, a.actions[0].causedBy)
-        assertEquals(entries, a.actions.map { it.entry })
-        assertEquals("Tool execution was interrupted", a.actions[1].entry.output)
-        assertTrue(a.actions.all { it.entry.error })
-        val earlier = ThreadView.project(listOf(entries[0].copy(output = null, error = false), entries[1]), busy = false).single() as ThreadView.Activity
+        assertEquals(listOf(ToolState.Failed, ToolState.Failed), a.actions.map { it.state })
+        assertEquals(child.id, a.actions[0].causedBy)
+        assertEquals("Script stopped after a tool failed", a.actions[0].title)
+        assertEquals(listOf(wrapper, child), a.actions.map { it.entry })
+        val stop = rows.filterIsInstance<ThreadView.Activity>().last()
+        assertEquals("the later genuine Stop stays cancelled", 1, stop.cancelled)
+        assertTrue(stop.failed.isEmpty())
+        // An office from before resultSeq, or a by-user wrapper that came in time: the interrupted child still marks a crash.
+        for (late in listOf(wrapper.copy(resultSeq = null), wrapper.copy(resultSeq = child.seq + 1))) {
+            val again = ThreadView.project(listOf(late, child), busy = false).single() as ThreadView.Activity
+            assertEquals(1, again.failed.size)
+            assertEquals(0, again.cancelled)
+            assertEquals(child.id, again.actions[0].causedBy)
+        }
+        val earlier = ThreadView.project(listOf(wrapper.copy(output = null, error = false, resultSeq = null), child), busy = false).single() as ThreadView.Activity
         assertEquals("late results preserve the activity key", earlier.key, a.key)
         // An exact by-user CLI result is itself evidence, even without a turn notice.
-        val explicit = ThreadView.project(listOf(entries[1].copy(output = "Tool execution cancelled by user")), busy = false).single() as ThreadView.Activity
+        val explicit = ThreadView.project(listOf(child.copy(output = "Tool execution cancelled by user")), busy = false).single() as ThreadView.Activity
         assertTrue(explicit.failed.isEmpty())
         assertEquals(1, explicit.cancelled)
+    }
+
+    @Test
+    fun aByUserResultIsOwnerEvidenceOnlyWhenItCameBeforeALaterMessageNoticeOrScript() {
+        fun stopped(resultSeq: Long?, between: List<ThreadEntry> = emptyList(), last: Long = 3): Boolean {
+            val call = ThreadEntry("tool:e1", 1, ThreadRole.Assistant, ThreadKind.Tool, name = "Execute", input = "{}", output = "Tool execution cancelled by user", error = true, resultSeq = resultSeq)
+            val end = ThreadEntry("turn:t:cancelled", last, ThreadRole.System, ThreadKind.Notice, text = "Turn cancelled")
+            return (ThreadView.project(listOf(call) + between + end, busy = false).first() as ThreadView.Activity).cancelled == 1
+        }
+        assertTrue(stopped(2))
+        assertTrue(stopped(null))
+        assertTrue("calls of the same run are not a boundary", stopped(3, listOf(ThreadEntry("tool:r2", 2, ThreadRole.Assistant, ThreadKind.Tool, name = "Read", input = "{}", output = "ok"))))
+        assertFalse(stopped(4, listOf(ThreadEntry("m2:0", 2, ThreadRole.Assistant, ThreadKind.Text, text = "Done"))))
+        assertFalse(stopped(4, listOf(ThreadEntry("turn:x:completed", 2, ThreadRole.System, ThreadKind.Notice, text = "Turn ended · completed"))))
+        assertFalse(stopped(4, listOf(ThreadEntry("tool:s2", 2, ThreadRole.Assistant, ThreadKind.Tool, name = "Script", input = "{}", output = "SyntaxError", error = true))))
+        assertFalse("a result past the loaded entries cannot be placed", stopped(9))
     }
 
     @Test
@@ -238,13 +268,15 @@ class ThreadViewTest {
         for (entries in listOf(
             listOf(wrapper, independent, child),
             listOf(child, wrapper, independent),
-            listOf(wrapper, child, child.copy(id = "another-interrupted-call")),
         )) {
             val a = ThreadView.project(entries, busy = false).single() as ThreadView.Activity
             assertEquals(2, a.failed.size)
             assertEquals(1, a.cancelled)
             assertNull(a.actions.single { it.entry.id == wrapper.id }.causedBy)
         }
+        val twice = ThreadView.project(listOf(wrapper, child, child.copy(id = "another-interrupted-call")), busy = false).single() as ThreadView.Activity
+        assertEquals(2, twice.failed.size)
+        assertEquals("interrupted children mark a crash, not a Stop", 0, twice.cancelled)
         val separated = ThreadView.project(listOf(wrapper, say("boundary"), child), busy = false)
         assertEquals(1, (separated[0] as ThreadView.Activity).cancelled)
         assertEquals(1, (separated[2] as ThreadView.Activity).failed.size)
@@ -255,7 +287,7 @@ class ThreadViewTest {
 
     @Test
     fun unitCrashResumeInterruptionStaysFailedWithoutExplicitOwnerEvidenceEvenBesideACancelledNotice() {
-        val child = capturedCancellation()[1]
+        val child = capturedCrash()[1]
         for (entries in listOf(listOf(child), listOf(child, notice("turn:unknown:cancelled", "Turn cancelled")))) {
             val a = ThreadView.project(entries, busy = false).first() as ThreadView.Activity
             assertEquals(child, a.failed.single().entry)

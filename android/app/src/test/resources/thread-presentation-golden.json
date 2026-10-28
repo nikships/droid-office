@@ -1762,22 +1762,30 @@
       ]
     },
     {
-      "name": "unit_real_late_script_owner_cancelled_interrupted_child",
-      "source": "Byte c965 hands-on web/05-entries/e58-1440-open and android/b42-find-Ran_a_script; real session 7129eccc seq 492,494,496,500,550. The wrapper's exact by-user error arrived late at seq 550, updating its original call. No Turn cancelled notice exists in this group. Unit projection, not runtime verification.",
+      "name": "unit_real_crash_wrapper_flushed_by_a_later_stop",
+      "source": "Real session 7129eccc, projected by WorkerThreadReader (seq 196-199, 222-225; the owner's prompt shortened). The CLI was killed during the Script at seq 196: its child got 'Tool execution was interrupted' at once (resultSeq 198). The wrapper's 'Error: Tool execution cancelled by user' came only at resultSeq 225, flushed when the owner stopped the later Script at seq 223. A result that came after later messages or Scripts is not owner evidence, so the crash stays one failure, counted on the child. The later Script is a genuine Stop: its child's by-user result came in time.",
       "busy": false,
       "entries": [
-        {"id":"tool:call_R5hLkXpPVQuUKNbqvGnjqA5V","seq":0,"role":"assistant","kind":"tool","name":"Script","input":"{\"script\":\"text(await tools.Execute({command:\\\"python3 -c 'import time; time.sleep(120)'\\\",summary:\\\"Wait for crash check\\\",timeout:150,riskLevel:\\\"low\\\"}));\\n\"}","output":"Error: Tool execution cancelled by user","error":true},
-        {"id":"tool:17df3d74-4d35-4185-b98c-c6b1cf2d1154-1","seq":1,"role":"assistant","kind":"tool","name":"Execute","input":"{\"command\":\"python3 -c 'import time; time.sleep(120)'\",\"summary\":\"Wait for crash check\",\"timeout\":150,\"riskLevel\":\"low\"}","output":"Tool execution was interrupted","error":true},
-        {"id":"17c26893-ef32-46f5-9864-87a86bc2920c:0","seq":2,"role":"assistant","kind":"text","text":"The crash check was cancelled before the wait finished."}
+        {"id":"tool:call_R5hLkXpPVQuUKNbqvGnjqA5V","role":"assistant","kind":"tool","name":"Script","input":"{\n  \"script\": \"text(await tools.Execute({command:\\\"python3 -c 'import time; time.sleep(120)'\\\",summary:\\\"Wait for crash check\\\",timeout:150,riskLevel:\\\"low\\\"}));\"\n}","seq":196,"output":"Error: Tool execution cancelled by user","error":true,"resultSeq":225},
+        {"id":"tool:17df3d74-4d35-4185-b98c-c6b1cf2d1154-1","role":"assistant","kind":"tool","name":"Execute","input":"{\n  \"command\": \"python3 -c 'import time; time.sleep(120)'\",\n  \"summary\": \"Wait for crash check\",\n  \"timeout\": 150,\n  \"riskLevel\": \"low\"\n}","seq":197,"output":"Tool execution was interrupted","error":true,"resultSeq":198},
+        {"id":"17c26893-ef32-46f5-9864-87a86bc2920c:0","role":"assistant","kind":"text","text":"The crash check was cancelled before the wait finished.","seq":198},
+        {"id":"turn:script-completion:7129eccc-d2a8-4d15-a5a9-cea503e25ed3:call_R5hLkXpPVQuUKNbqvGnjqA5V:call_R5hLkXpPVQuUKNbqvGnjqA5V:completed","role":"system","kind":"notice","text":"Turn ended · completed","seq":199},
+        {"id":"18ea64b8-d625-4e8c-b071-29e134a98d89:0","role":"user","kind":"text","text":"Read only UI check. Use Script for one Execute that waits.","seq":222},
+        {"id":"tool:call_uGbP58i5lkzER4c33Zukobxv","role":"assistant","kind":"tool","name":"Script","input":"{\n  \"script\": \"text(await tools.Execute({command:\\\"sleep 90\\\",summary:\\\"Wait for native Stop\\\",timeout:120,riskLevel:\\\"low\\\"}));\"\n}","seq":223,"output":"[Script cancelled · 33.1 s elapsed · 1 interrupted call]\n{\"toolCallId\":\"call_uGbP58i5lkzER4c33Zukobxv\",\"status\":\"cancelled\",\"interruptedCalls\":[{\"toolUseId\":\"5c8a4c65-8f54-4a4d-a67f-bba5f34bc311-1\",\"name\":\"Execute\",\"input\":{\"command\":\"sleep 90\",\"summary\":\"Wait for native Stop\",\"timeout\":120,\"riskLevel\":\"low\"}}]}","error":false,"resultSeq":225},
+        {"id":"tool:5c8a4c65-8f54-4a4d-a67f-bba5f34bc311-1","role":"assistant","kind":"tool","name":"Execute","input":"{\n  \"command\": \"sleep 90\",\n  \"summary\": \"Wait for native Stop\",\n  \"timeout\": 120,\n  \"riskLevel\": \"low\"\n}","seq":224,"output":"Tool execution cancelled by user","error":true,"resultSeq":225},
+        {"id":"turn:18ea64b8-d625-4e8c-b071-29e134a98d89:cancelled","role":"system","kind":"notice","text":"Turn cancelled","seq":225}
       ],
       "expected": [
-        {"kind":"activity","id":"activity:tool:call_R5hLkXpPVQuUKNbqvGnjqA5V","summary":"Ran a command","live":false,"items":[{"type":"action","id":"tool:call_R5hLkXpPVQuUKNbqvGnjqA5V","title":"Script stopped after a tool was cancelled","detail":null,"state":"cancelled"},{"type":"action","id":"tool:17df3d74-4d35-4185-b98c-c6b1cf2d1154-1","title":"Wait for crash check","detail":null,"state":"cancelled"}],"failed":[],"cancelled":1,"noResult":0,"plan":null},
-        {"kind":"message","id":"17c26893-ef32-46f5-9864-87a86bc2920c:0","role":"assistant","startsTurn":true}
+        {"kind":"activity","id":"activity:tool:call_R5hLkXpPVQuUKNbqvGnjqA5V","summary":"Ran a command","live":false,"items":[{"type":"action","id":"tool:call_R5hLkXpPVQuUKNbqvGnjqA5V","title":"Script stopped after a tool failed","detail":null,"state":"failed"},{"type":"action","id":"tool:17df3d74-4d35-4185-b98c-c6b1cf2d1154-1","title":"Wait for crash check","detail":null,"state":"failed"}],"failed":["Wait for crash check"],"noResult":0,"plan":null},
+        {"kind":"message","id":"17c26893-ef32-46f5-9864-87a86bc2920c:0","role":"assistant","startsTurn":true},
+        {"kind":"message","id":"18ea64b8-d625-4e8c-b071-29e134a98d89:0","role":"user","startsTurn":false},
+        {"kind":"activity","id":"activity:tool:call_uGbP58i5lkzER4c33Zukobxv","summary":"Ran a command","live":false,"items":[{"type":"action","id":"tool:5c8a4c65-8f54-4a4d-a67f-bba5f34bc311-1","title":"Wait for native Stop","detail":null,"state":"cancelled"}],"failed":[],"cancelled":1,"noResult":0,"plan":null},
+        {"kind":"notice","id":"turn:18ea64b8-d625-4e8c-b071-29e134a98d89:cancelled","text":"Turn cancelled","tone":"quiet"}
       ]
     },
     {
       "name": "unit_real_crash_resume_interruption_without_owner_evidence",
-      "source": "Byte c965 hands-on android/b49-after-cleanup; session 7129eccc seq 641,643,645,649. The child has only 'Tool execution was interrupted'; wrapper has no recorded tool result. Deliberately Failed absent explicit by-user evidence, regardless of the assistant's prose. Unit projection, not runtime verification.",
+      "source": "Byte c965 hands-on android/b49-after-cleanup; real session 7129eccc seq 269-271. The child has only 'Tool execution was interrupted'. The wrapper is shown as it was before the CLI flushed a late by-user result into it at seq 279 (that flush is unit_real_crash_wrapper_flushed_by_a_later_stop). Deliberately Failed absent explicit by-user evidence, regardless of the assistant's prose. Unit projection, not runtime verification.",
       "busy": false,
       "entries": [
         {"id":"tool:call_xbxG6sCnSkQ2JvkQj4FY11Cy","seq":0,"role":"assistant","kind":"tool","name":"Script","input":"{\"script\":\"text(await tools.Execute({command:\\\"python3 -c 'import time; time.sleep(120)'\\\",summary:\\\"Wait for c965 crash\\\",timeout:150,riskLevel:\\\"low\\\"}));\\n\"}"},

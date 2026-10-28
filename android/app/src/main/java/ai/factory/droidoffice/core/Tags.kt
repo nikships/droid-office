@@ -312,7 +312,7 @@ object Tags {
 
         /** The row in the Thread view with the Thread and Raw TTY switch, the PR and the branch. */
         const val THREAD_BAR = "worker.thread.bar"
-        /** "Follow latest" at the bottom with something opened to read, "Latest" anywhere else, or the new-message count. */
+        /** "Follow latest" at the bottom with something opened to read, "Jump to latest" anywhere else, or the new-message count. */
         const val THREAD_JUMP_LABEL = "worker.thread.jump.label"
         /** A Markdown table in a message: its columns line up and it scrolls sideways as one. */
         const val THREAD_TABLE = "worker.thread.table"
