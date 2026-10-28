@@ -10,7 +10,7 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const committed = () =>
   readdirSync(COMPANION_TOOLS_DIR, { recursive: true, withFileTypes: true })
     .filter((d) => d.isFile())
-    .map((d) => path.relative(COMPANION_TOOLS_DIR, path.join(d.parentPath, d.name)).replaceAll('\\', '/'))
+    .map((d) => path.relative(COMPANION_TOOLS_DIR, path.join(d.parentPath ?? (d as { path?: string }).path ?? '', d.name)).replaceAll('\\', '/'))
     .sort();
 
 test("the Android management page is built from the office's own windows (node tools/android-companion-tools.mjs)", async (t) => {

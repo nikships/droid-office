@@ -44,10 +44,13 @@ export async function buildCompanionTools(outDir = COMPANION_TOOLS_DIR) {
   });
   const html = path.join(outDir, 'companion-tools.html');
   if (existsSync(html)) renameSync(html, path.join(outDir, 'index.html'));
-  return readdirSync(outDir, { recursive: true, withFileTypes: true })
-    .filter((d) => d.isFile())
-    .map((d) => path.relative(outDir, path.join(d.parentPath, d.name)).replaceAll('\\', '/'))
-    .sort();
+  return (
+    readdirSync(outDir, { recursive: true, withFileTypes: true })
+      .filter((d) => d.isFile())
+      // Dirent.parentPath is Node 20.12+; earlier 20.x name it `path`.
+      .map((d) => path.relative(outDir, path.join(d.parentPath ?? d.path, d.name)).replaceAll('\\', '/'))
+      .sort()
+  );
 }
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) {

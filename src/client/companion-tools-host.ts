@@ -1,8 +1,9 @@
 import './style.css';
 import './companion-tools.css';
-import { isAllowedToolRequest, isExternalUrl, isToolId, parseNativeToTools, TOOL_JSON_MAX, TOOL_UPLOAD_MAX, type NativeToTools, type ToolArgs, type ToolsToNative } from '../shared/companion-tools';
+import { isExternalUrl, isToolId, parseNativeToTools, type ToolArgs, type ToolsToNative } from '../shared/companion-tools';
 import type { ClientMsg, ServerMsg } from '../shared/protocol';
 import { createCompanionTools } from './companion-tools';
+import { createBridgeHttp, linkAction } from './companion-tools-bridge';
 import { Net, type NetTransport } from './net';
 import { setOfficeHttp } from './office-http';
 import { store } from './state';
@@ -39,6 +40,7 @@ const statusFns = new Set<(up: boolean) => void>();
 const setUp = (next: boolean) => {
   if (next === up) return;
   up = next;
+  http.setUp(up);
   for (const fn of statusFns) fn(up);
 };
 const transport: NetTransport = {
@@ -69,69 +71,9 @@ const net = new Net(
 
 // ---- HTTP, through native ---------------------------------------------------------------------------
 
-let httpSeq = 0;
-const waiting = new Map<number, { resolve(r: Response): void; reject(e: Error): void; timer: ReturnType<typeof setTimeout> }>();
-
-function toBase64(bytes: Uint8Array): string {
-  let s = '';
-  for (let i = 0; i < bytes.length; i += 0x8000) s += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
-  return btoa(s);
-}
-function fromBase64(b64: string): Uint8Array<ArrayBuffer> {
-  const s = atob(b64);
-  const out = new Uint8Array(s.length);
-  for (let i = 0; i < s.length; i++) out[i] = s.charCodeAt(i);
-  return out;
-}
-
-async function bridgeFetch(path: string, init: RequestInit = {}): Promise<Response> {
-  const method = (init.method ?? 'GET').toUpperCase();
-  const q = path.indexOf('?');
-  const bare = q < 0 ? path : path.slice(0, q);
-  const query = q < 0 ? undefined : path.slice(q + 1);
-  if (!isAllowedToolRequest(method, bare)) return Promise.reject(new TypeError(`${method} ${bare} is only available on the office’s own computer.`));
-  if (!port) return Promise.reject(new TypeError('This page only works inside Droid Office for Android.'));
-  const headers = new Headers(init.headers);
-  let body: string | undefined;
-  let base64 = false;
-  const raw = init.body;
-  if (typeof raw === 'string') {
-    if (raw.length > TOOL_JSON_MAX) throw new TypeError('That is too much to send at once.');
-    body = raw;
-  } else if (raw instanceof Blob) {
-    if (raw.size > TOOL_UPLOAD_MAX) throw new TypeError('That file is too large to send from here (25 MB at most).');
-    body = toBase64(new Uint8Array(await raw.arrayBuffer()));
-    base64 = true;
-    if (!headers.has('content-type') && raw.type) headers.set('content-type', raw.type);
-  } else if (raw != null) throw new TypeError('This kind of request body cannot be sent from here.');
-  const id = ++httpSeq;
-  return new Promise<Response>((resolve, reject) => {
-    const timer = setTimeout(() => {
-      waiting.delete(id);
-      reject(new TypeError('The office did not answer in time.'));
-    }, 60_000);
-    waiting.set(id, { resolve, reject, timer });
-    init.signal?.addEventListener('abort', () => {
-      if (!waiting.delete(id)) return;
-      clearTimeout(timer);
-      reject(new DOMException('Aborted', 'AbortError'));
-    });
-    post({ t: 'http', id, method, path: bare, ...(query ? { query } : {}), ...(headers.get('content-type') ? { contentType: headers.get('content-type')! } : {}), ...(body !== undefined ? { body, base64 } : {}) });
-  });
-}
-
-function httpResult(m: Extract<NativeToTools, { t: 'http.result' }>) {
-  const w = waiting.get(m.id);
-  if (!w) return;
-  waiting.delete(m.id);
-  clearTimeout(w.timer);
-  if (m.error) return w.reject(new TypeError(m.error));
-  const bytes = m.body === undefined ? null : m.base64 ? fromBase64(m.body) : m.body;
-  w.resolve(new Response(m.status === 204 || m.status === 304 ? null : bytes, { status: m.status, headers: m.contentType ? { 'content-type': m.contentType } : {} }));
-}
-
+const http = createBridgeHttp(port ? (m) => post(m) : null);
 // Pictures, fonts and card frames load from this page's own origin; native serves those paths.
-setOfficeHttp({ fetch: bridgeFetch, url: (path) => path });
+setOfficeHttp({ fetch: http.fetch, url: (path) => path });
 
 // ---- Links out ---------------------------------------------------------------------------------------
 
@@ -148,12 +90,10 @@ document.addEventListener(
   (e) => {
     const a = e.target instanceof Element ? e.target.closest('a[href]') : null;
     if (!(a instanceof HTMLAnchorElement)) return;
-    const href = a.getAttribute('href') ?? '';
-    if (href.startsWith('#')) return;
-    // Downloads of the office's own files (a wiki export) stay with native's passthrough.
-    if (href.startsWith('/') && !href.startsWith('//')) return;
+    const act = linkAction(a.getAttribute('href') ?? '', a.href, location.origin, a.hasAttribute('download'));
+    if (act.do === 'stay') return;
     e.preventDefault();
-    external(a.href);
+    if (act.do === 'external') external(act.url);
   },
   true,
 );
@@ -163,7 +103,6 @@ document.addEventListener(
 const mount = document.getElementById('tools')!;
 const notice = h('div.cth-notice', { role: 'status' });
 let want: { tool: string; floor: string; args: ToolArgs } | null = null;
-let wasOpen = false;
 
 const tools = createCompanionTools({
   net,
@@ -172,6 +111,9 @@ const tools = createCompanionTools({
   openWorker: (workerId, view) => post({ t: 'open-worker', workerId, view }),
   openExternal: external,
   onChange: () => queueMicrotask(paint),
+  // Only the tool's own ✕ or its finishing: a close for a lost connection or a floor change opens
+  // again by itself once the office is ready.
+  onClosed: () => post({ t: 'closed' }),
 });
 
 /** Opens what native asked for, once the shared connection is on that floor. */
@@ -190,10 +132,7 @@ function tryOpen() {
 }
 
 function paint(reason?: string) {
-  const open = !!tools.current();
-  if (wasOpen && !open && !want) post({ t: 'closed' });
-  wasOpen = open;
-  if (open) return notice.remove();
+  if (tools.current()) return notice.remove();
   notice.textContent = reason ?? (!up ? 'Not connected to the office.' : !net.ready ? 'Connecting to the office…' : want ? 'Opening…' : 'Nothing open.');
   if (!notice.isConnected) mount.append(notice);
 }
@@ -237,12 +176,11 @@ function receive(value: unknown) {
       break;
     case 'close':
       want = null;
-      wasOpen = false;
       tools.close();
       paint();
       break;
     case 'http.result':
-      httpResult(m);
+      http.result(m);
       break;
   }
 }

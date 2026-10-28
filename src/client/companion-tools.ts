@@ -17,7 +17,7 @@ import { DESK_BY_ID, STATION_AGENT, nextFreeSeat } from '../shared/layout';
 import { ciForFloor } from '../shared/factory-ci';
 import { forgeOf, forgeWords, normalizeRepo, repoWebUrl } from '../shared/floors';
 import { isLive } from '../shared/pipelines';
-import { forgeVars } from '../shared/prompts';
+import { forgeVars, isPromptId } from '../shared/prompts';
 import { resolveSettingsPane } from '../shared/settings-nav';
 import { isAsleep, isBusy } from '../shared/status';
 import { forkRefusal } from '../shared/worker-fork';
@@ -82,6 +82,8 @@ export interface CompanionToolsDeps {
   onChange?(): void;
   /** A link out of the office; defaults to a new tab. */
   openExternal?(url: string): void;
+  /** The shown tool closed itself (its ✕, or it finished). Never called for close() or a connection or floor change. */
+  onClosed?(): void;
 }
 
 export interface CompanionTools {
@@ -89,6 +91,7 @@ export interface CompanionTools {
   route(msg: ServerMsg): void;
   list(): ToolEntry[];
   open(id: ToolId, args?: ToolArgs): OpenResult;
+  /** Closes the tool for good: it does not open again when the office is ready. */
   close(): void;
   current(): { id: ToolId; args: ToolArgs } | null;
   workerActions(workerId: string): WorkerActionEntry[];
@@ -424,7 +427,7 @@ export function createCompanionTools(deps: CompanionToolsDeps): CompanionTools {
     cloud: (a) => a.workerId && openCloudWindow(net, a.workerId),
     floors: () => openElevator({ net, ride: (id) => deps.switchFloor(id) }),
     settings: (a) => openOfficeSettings(net, { first: resolveSettingsPane(a.pane), hireForSetup: hireForWorktreeSetup }),
-    prompts: (a) => (a.pane ? openPromptEditor(net, a.pane as Parameters<typeof openPromptEditor>[1]) : openPromptEditor(net)),
+    prompts: (a) => (isPromptId(a.pane) ? openPromptEditor(net, a.pane) : openPromptEditor(net)),
     subscriptions: () => openSubscriptionsStatus(),
     'host-update': () => openHostUpdate(),
     upgrade: () => openUpgrade(net),
@@ -447,9 +450,12 @@ export function createCompanionTools(deps: CompanionToolsDeps): CompanionTools {
         deps.mount,
         () => OPENERS[id](args),
         () => {
+          // Closed by its own ✕ or because it finished, not by close() or the lifecycle.
           if (shown?.modal !== modal) return;
           shown = null;
+          closeOwned();
           changed();
+          deps.onClosed?.();
         },
       );
     });
@@ -464,6 +470,7 @@ export function createCompanionTools(deps: CompanionToolsDeps): CompanionTools {
     return { ok: true };
   }
 
+  /** Closes the tool and every dialog it opened, without telling `onClosed`: the caller or the lifecycle did it. */
   function close() {
     const was = shown;
     shown = null;
@@ -472,18 +479,31 @@ export function createCompanionTools(deps: CompanionToolsDeps): CompanionTools {
     if (was) changed();
   }
 
+  /** Closes the shown tool for now, keeping only its descriptor to open again, empty, once ready. */
+  const suspend = (anyFloor: boolean) => {
+    const was = shown;
+    if (!was) return;
+    // The descriptor only: drafts and pending forms go with the window.
+    resume = { id: was.id, args: was.args, floor: was.floor, any: anyFloor };
+    close();
+  };
+
   const offs: (() => void)[] = [];
   offs.push(
+    // Tied to the loss itself, not to readiness: a loss while not ready (before the first welcome, or
+    // mid floor switch) fires no onReady(false), and no unconfirmed write may survive it.
+    net.onConnectionLost(() => {
+      store.whiteboard.discardUnsent();
+      suspend(shown ? TOOL_BY_ID.get(shown.id)?.scope === 'office' : false);
+      closeOwned();
+      changed();
+    }),
     net.onReady((ready) => {
       if (!ready) {
-        const lost = !net.up;
-        if (lost) store.whiteboard.discardUnsent();
         const was = shown;
-        if (was && (lost || TOOL_BY_ID.get(was.id)?.scope !== 'office')) {
-          // The descriptor only: drafts and pending forms go with the window.
-          resume = { id: was.id, args: was.args, floor: was.floor, any: TOOL_BY_ID.get(was.id)?.scope === 'office' };
-          close();
-        } else closeOwned();
+        const office = !!was && TOOL_BY_ID.get(was.id)?.scope === 'office';
+        if (was && (!net.up || !office)) suspend(office);
+        else closeOwned();
         changed();
         return;
       }
@@ -551,7 +571,10 @@ export function createCompanionTools(deps: CompanionToolsDeps): CompanionTools {
       });
     },
     open,
-    close,
+    close() {
+      resume = null;
+      close();
+    },
     current: () => (shown ? { id: shown.id, args: shown.args } : null),
     workerActions: actionsFor,
     async runWorkerAction(workerId, id) {
