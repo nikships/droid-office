@@ -14,6 +14,7 @@ import { isAsleep } from '../shared/status.js';
 import type { DroidModelCatalogue, DroidModelOption } from './droid-models.js';
 import { availabilityWords, cannotRun, type ModelAvailability } from '../shared/subscriptions.js';
 import { officePrompt, type PromptSource } from './prompts.js';
+import { workerMessageVars } from '../shared/prompts.js';
 import { hireRefusal } from './subscriptions/map.js';
 
 /** What the team needs from the floor's workers. Narrow on purpose, so a test can fake it. */
@@ -505,7 +506,8 @@ export class Team {
     if (!text) return no(400, "Give the message on stdin (office-workers send <name> <<'EOF' … EOF)");
     if (w.status === 'starting') return no(409, `${w.name} is still starting up: try again in a few seconds`);
     if (w.status === 'needs_input') return no(409, `${w.name} is waiting on an answer in its own terminal (${w.activity ?? 'a prompt'}): someone has to answer it there, so tell the person`);
-    const err = isAsleep(w.status) ? this.workers.resume(w.id, text) : this.workers.prompt(w.id, text);
+    const message = officePrompt(this.opts.prompts, 'subagent.message', { from: lead.name, ...workerMessageVars(text) });
+    const err = isAsleep(w.status) ? this.workers.resume(w.id, message) : this.workers.prompt(w.id, message);
     if (err) return no(409, `${w.name}: ${err}`);
     this.reported.delete(w.id);
     return ok({ worker: this.member(this.workers.get(w.id) ?? w) });

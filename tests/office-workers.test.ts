@@ -150,11 +150,11 @@ test('prints who you are, your team and its news readably', () => {
       { kind: 'left', name: 'Fizz' },
     ]),
     [
-      '❓ Pixel asked:\n    v1 or v2?',
-      '✅ Byte finished its turn without reporting: Fix the tests. Read its terminal with office-workers read Byte.',
-      '✋ Dot is waiting on an answer in its own terminal (Allow edit?): someone has to answer it there.',
-      '⛔ Echo stopped (exit code 1).',
-      '👋 Fizz left the floor.',
+      'Worker question from Pixel:\n    v1 or v2?',
+      'Office status: Byte finished its turn without reporting: Fix the tests.\nOffice guidance: Read its terminal with office-workers read Byte.',
+      'Office status: Dot needs input in its own terminal (Allow edit?).\nOffice guidance: The owner must answer that terminal prompt.',
+      'Office status: Echo stopped (exit code 1).',
+      'Office status: Fizz left the floor.',
     ].join('\n\n'),
   );
   assert.equal(
@@ -274,7 +274,7 @@ test('wait returns at the first news, or once the team is at rest with --all, or
   assert.equal(first.code, 0);
   assert.equal(first.sent.length, 2, 'it polls until there is news');
   assert.deepEqual(first.sent[0], { action: 'events' });
-  assert.equal(first.out, '📨 Pixel reported:\n    Fixed it\n\nAt rest: Pixel (done, Desk 3).');
+  assert.equal(first.out, 'Worker report from Pixel:\n    Fixed it\n\nAt rest: Pixel (done, Desk 3).');
 
   const byte = { ...busy, id: 'w3', name: 'Byte', desk: 'Desk 2' };
   const all = await run(['wait', '--all'], {
@@ -285,7 +285,7 @@ test('wait returns at the first news, or once the team is at rest with --all, or
     ],
   });
   assert.equal(all.sent.length, 3, '--all keeps going until everyone is at rest');
-  assert.match(all.out, /📨 Pixel reported[\s\S]*✅ Byte finished its turn[\s\S]*At rest: Pixel \(done, Desk 3\), Byte \(done, Desk 2\)\.$/);
+  assert.match(all.out, /Worker report from Pixel[\s\S]*Office status: Byte finished its turn[\s\S]*At rest: Pixel \(done, Desk 3\), Byte \(done, Desk 2\)\.$/);
 
   const named = await run(['wait', 'pixel', '--all'], { replies: [{ body: { events: [], team: [PIXEL, byte] } }] });
   assert.equal(named.sent.length, 1, 'only the named subagents count');

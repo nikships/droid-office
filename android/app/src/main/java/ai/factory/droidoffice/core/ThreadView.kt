@@ -136,6 +136,9 @@ object ThreadView {
     /** The row index holding [entryId], or -1. */
     fun rowOf(rows: List<Row>, entryId: String): Int = rows.indexOfFirst { entryId in it.ids }
 
+    /** Pausing follow alone isn't a reason to jump: there must be content below the viewport. */
+    fun showJump(follow: Boolean, stuck: Boolean, canScrollForward: Boolean): Boolean = canScrollForward && (!follow || stuck)
+
     /**
      * What the line under a working or asking worker's conversation says: its latest activity, unless
      * that is a prompt the thread already shows or a bookkeeping call ("TodoWrite"), then its title.

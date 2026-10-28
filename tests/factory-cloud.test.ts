@@ -390,8 +390,8 @@ test('hire on an Environment: a computer of its own, waited for, the session in 
   // The clone is the Environment's build's: the first message says to bring it up to date first, the next ones don't.
   await tick();
   const texts = () => f.calls.filter((c) => c.method === 'POST' && c.path === '/sessions/s1/messages').map((c) => (c.body as { text: string }).text);
-  assert.match(texts()[0], /^This computer was started from the Factory Environment droid-office-default, so `\/home\/factory-user\/repos\/droid-office` holds/);
-  assert.match(texts()[0], /git fetch origin && git pull --ff-only[\s\S]*Then do this:\n\nsay hi$/);
+  assert.match(texts()[0], /^Droid Office environment: droid-office-default\n`\/home\/factory-user\/repos\/droid-office` contains/);
+  assert.match(texts()[0], /git fetch origin && git pull --ff-only[\s\S]*Task:\n\nsay hi$/);
   assert.equal(r.feature.find(w.id)?.info.cloud?.catchUp, undefined);
   assert.equal(await r.feature.send(w.id, 'and again', []), undefined);
   assert.equal(texts()[1], 'and again');

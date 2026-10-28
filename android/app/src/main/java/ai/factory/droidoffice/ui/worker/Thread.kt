@@ -222,7 +222,7 @@ internal fun Thread(
     val open = rememberSaveable(kept, saver = OpenSaver) { mutableStateMapOf() }
     var follow by rememberSaveable(kept) { mutableStateOf(true) }
     // Set by opening anything to read it: reaching the bottom then doesn't follow again until the
-    // owner says so with Follow latest, so what they opened isn't scrolled away by the next entry.
+    // owner jumps to the latest or sends a message, so what they opened isn't scrolled away by the next entry.
     var inspecting by rememberSaveable(kept) { mutableStateOf(false) }
     val place = rememberSaveable(kept, saver = PlaceSaver) { Place() }
     var anchor by remember(feed) { mutableStateOf<Pair<String, Int>?>(null) }
@@ -328,7 +328,7 @@ internal fun Thread(
         inspecting = true
     }
 
-    /** The owner's own way back to following: Follow latest, Back to the latest, or sending a message. */
+    /** The owner's own way back to following: Jump to latest, Back to the latest, or sending a message. */
     fun resume() {
         inspecting = false
         follow = true
@@ -461,7 +461,7 @@ internal fun Thread(
             }
             Box(Modifier.align(Alignment.TopCenter).fillMaxWidth().height(8.dp).background(Brush.verticalGradient(listOf(Palette.Bg, Color.Transparent))))
         }
-        if ((!follow || stuck) && rows.isNotEmpty() && !state.newerTrimmed) {
+        if (ThreadView.showJump(follow, stuck, list.canScrollForward) && rows.isNotEmpty() && !state.newerTrimmed) {
             val from = rows.indexOfFirst { it.key == seen }
             val fresh = if (from < 0) 0 else rows.drop(from + 1).count { it is ThreadView.Message && it.entry.role != ThreadRole.User }
             Box(
@@ -469,7 +469,7 @@ internal fun Thread(
                     .heightIn(min = 48.dp).padding(vertical = 4.dp),
                 contentAlignment = Alignment.Center,
             ) {
-                Jump(fresh, inspecting && !list.canScrollForward, Modifier, ::resume)
+                Jump(fresh, Modifier, ::resume)
             }
         }
     }
@@ -598,14 +598,14 @@ private fun gap(prev: ThreadView.Row?, row: ThreadView.Row): Dp {
 
 /**
  * Back to the newest message and following it, saying how many came in while the owner was reading
- * further up. At the bottom with something open it says Follow latest: being there isn't enough.
+ * further up. Only shown while there is content below the viewport, even when following is paused.
  */
 @Composable
-private fun Jump(fresh: Int, followHere: Boolean, modifier: Modifier, onClick: () -> Unit) {
+private fun Jump(fresh: Int, modifier: Modifier, onClick: () -> Unit) {
     val shape = RoundedCornerShape(4.dp)
     Row(
         modifier.clip(shape).background(Palette.SurfaceHigh).border(1.dp, Palette.BorderStrong, shape)
-            .clickable(onClickLabel = if (followHere) "Follow the latest messages" else "Jump to the latest message", onClick = onClick)
+            .clickable(onClickLabel = "Jump to the latest message", onClick = onClick)
             .tagged(Tags.Worker.THREAD_JUMP)
             .heightIn(min = 36.dp).padding(horizontal = 12.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -615,7 +615,7 @@ private fun Jump(fresh: Int, followHere: Boolean, modifier: Modifier, onClick: (
             Spacer(Modifier.width(8.dp))
         }
         Text(
-            (if (fresh > 0) "$fresh new message${if (fresh == 1) "" else "s"}" else if (followHere) "Follow latest" else "Jump to latest").uppercase(),
+            (if (fresh > 0) "$fresh new message${if (fresh == 1) "" else "s"}" else "Jump to latest").uppercase(),
             style = LocalOfficeType.current.eyebrow.copy(color = Palette.Text),
             modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite }.tagged(Tags.Worker.THREAD_JUMP_LABEL),
         )

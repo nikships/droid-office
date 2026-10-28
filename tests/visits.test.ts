@@ -127,6 +127,19 @@ function rig(t: { after(fn: () => void): void }) {
 
 const walk = (from: string, to: string, slot: number) => visitWalkMs(visitRoute(from, to, slot));
 
+test('worker arrivals, status changes and departures never prompt independent workers automatically', (t) => {
+  const r = rig(t);
+  const newcomer = r.fake.add(worker({ id: 'newcomer', deskId: 'desk-11' }));
+  r.visits.onWorker(newcomer);
+  r.set('nibble', 'working');
+  r.set('nibble', 'done');
+  r.visits.onWorkerGone(newcomer.id);
+  r.advance(60_000);
+  assert.deepEqual(r.fake.typed, []);
+  assert.deepEqual(r.fake.resumed, []);
+  assert.deepEqual(r.emitted, []);
+});
+
 test('the roster lists only the independent workers on this floor: no subagents, no shells, none from other floors', (t) => {
   const r = rig(t);
   const res = r.call('pixel', { action: 'roster' });
@@ -229,7 +242,7 @@ test('a normal tell to a busy host goes in at once as a steer, with no Escape an
   assert.equal(r.fake.typed.length, 1, 'in at once, while it still works');
   assert.deepEqual(r.fake.escapes, [], 'a normal message never cancels a turn');
   const { text } = r.fake.typed[0];
-  assert.match(text, /^💬 Pixel \(Desk 3\), another worker on this floor, walked over to tell you this\.\n\nI renamed auth\.ts to session\.ts\n\n/);
+  assert.match(text, /^Droid Office delivery: message from Pixel \(Desk 3\), a worker, not the owner\n+## Worker message\n```text\nI renamed auth\.ts to session\.ts\n```\n\n## Office guidance\n/);
   assert.match(text, /office-visit tell Pixel/);
   assert.doesNotMatch(text, /urgent/i);
   r.advance(TALK_MIN_MS);
@@ -259,7 +272,7 @@ test('a tell to a host at rest goes straight in, and a sleeping host is woken wi
   const id = r.call('pixel', { action: 'visit', kind: 'handoff', worker: 'Nibble', text: 'Write tests for session.ts', title: 'Session tests' }).body.visit;
   r.advance(walk('desk-3', 'desk-9', 0));
   assert.equal(r.fake.typed.length, 1);
-  assert.match(r.fake.typed[0].text, /^📦 Pixel \(Desk 3\), another worker on this floor, walked over to hand you a task\.\n\nTask: Session tests\n\nWrite tests for session\.ts/);
+  assert.match(r.fake.typed[0].text, /^Droid Office delivery: handoff from Pixel \(Desk 3\), a worker, not the owner\n+## Worker message\n```text\nTask: Session tests\nWrite tests for session\.ts\n```\n\n## Office guidance/);
   assert.equal(r.says()[0].text, 'Session tests: Write tests for session.ts');
   r.advance(TALK_MIN_MS);
   assert.equal(r.status('pixel', id).body.delivered, true);
@@ -293,7 +306,7 @@ test('an urgent message to a busy host: one Escape, then the message as a new pr
     ],
   );
   assert.ok(r.fake.keys[1].at > r.fake.keys[0].at, 'the prompt goes in after the Escape');
-  assert.match(r.fake.typed[0].text, /It's urgent, so the office interrupted what you were doing: deal with it first, and go back to what you were doing only if it still makes sense\./);
+  assert.match(r.fake.typed[0].text, /Delivery: urgent\. The sender requested cancellation of your running turn\./);
   r.advance(TALK_MIN_MS);
   assert.equal(r.status('pixel', id).body.delivered, true);
   assert.match(r.toasts.join('\n'), /Pixel told Nibble \(urgent\)/);
@@ -371,9 +384,9 @@ test('an ask waits at the desk for the answer, which reaches the asker and shows
   r.advance(walk('desk-3', 'desk-9', 0));
   assert.equal(r.lastList()[0].phase, 'waiting');
   const text = r.fake.typed[0].text;
-  assert.match(text, /^❓ Pixel \(Desk 3\), another worker on this floor, is standing at your desk waiting for an answer to this question\.\n\nWhich port/);
+  assert.match(text, /^Droid Office delivery: question from Pixel \(Desk 3\), a worker, not the owner\n+## Worker message\n```text\nWhich port/);
   assert.ok(text.includes(`office-visit reply ${id} <<'EOF'`), text);
-  assert.match(text, /It waits about 2 minutes more/);
+  assert.match(text, /The sender waits about 2 minutes more/);
 
   assert.equal(r.call('dot', { action: 'reply', visit: id, text: '5173' }).status, 404, 'only the host answers');
   assert.match(r.call('nibble', { action: 'reply', visit: id, text: '' }).body.error, /Give the answer on stdin/);
@@ -678,7 +691,9 @@ test('office-workers carries on as before beside visits: a lead reaches its suba
   t.after(() => team.stop());
   const res = await team.handle(r.fake.get('pixel')!, { action: 'send', worker: 'Byte', text: 'Use v2' });
   assert.equal(res.status, 200);
-  assert.deepEqual(sent, [['byte', 'Use v2']], 'typed in as it is, with no visit label');
+  assert.equal(sent[0][0], 'byte');
+  assert.match(sent[0][1], /^Droid Office delivery: message from your lead Pixel \(a worker, not the owner\)/);
+  assert.match(sent[0][1], /## Worker message\n```text\nUse v2\n```\n\n## Office guidance/);
   r.advance(5000);
   assert.deepEqual(r.emitted, [], 'nobody walked anywhere');
   // The visits setting changes nothing about hiring.
