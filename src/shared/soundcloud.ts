@@ -4,10 +4,8 @@ export function soundCloudUrl(raw: string): string | undefined {
     const u = new URL(raw);
     if (!['http:', 'https:'].includes(u.protocol) || u.username || u.password || u.port) return;
     if (!['soundcloud.com', 'www.soundcloud.com', 'm.soundcloud.com'].includes(u.hostname)) return;
-    u.protocol = 'https:';
-    u.hostname = 'soundcloud.com';
-    u.hash = '';
-    return u.href;
+    // Built afresh rather than by assigning to the URL: React Native's URL is read-only.
+    return `https://soundcloud.com${u.pathname}${u.search}`;
   } catch {
     return;
   }
@@ -17,11 +15,9 @@ export function soundCloudUrl(raw: string): string | undefined {
 export function soundCloudStationUrl(raw: string): string | undefined {
   const url = soundCloudUrl(raw);
   if (!url) return;
-  const u = new URL(url);
-  if (!/^\/discover\/sets\/(?:artist|track)-stations:\d+\/?$/.test(u.pathname)) return;
-  u.pathname = u.pathname.replace(/\/$/, '');
-  u.search = '';
-  return u.href;
+  const { pathname } = new URL(url);
+  if (!/^\/discover\/sets\/(?:artist|track)-stations:\d+\/?$/.test(pathname)) return;
+  return `https://soundcloud.com${pathname.replace(/\/$/, '')}`;
 }
 
 export const SOUNDCLOUD_STATION_MAX_TRACKS = 200;

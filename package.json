@@ -17,6 +17,14 @@
     "bin",
     "dist"
   ],
+  "codegenConfig": {
+    "name": "DroidOfficeSpec",
+    "type": "all",
+    "jsSrcsDir": "src/mobile/specs",
+    "android": {
+      "javaPackageName": "ai.factory.droidoffice.rn"
+    }
+  },
   "scripts": {
     "test": "node --import tsx --test --test-timeout=120000 tests/*.test.ts",
     "test:coverage": "node --import tsx --test --test-timeout=120000 --experimental-test-coverage --test-coverage-lines=78 --test-coverage-functions=61 --test-coverage-exclude='tests/**' tests/*.test.ts",
@@ -29,7 +37,10 @@
     "build:website": "npm run build --workspace website",
     "dev:website": "npm run dev --workspace website",
     "deploy:website": "firebase deploy --only hosting --project droid-office",
-    "typecheck": "tsc -p tsconfig.server.json --noEmit && tsc -p tsconfig.client.json --noEmit && tsc -p tsconfig.desktop.json --noEmit && tsc -p tsconfig.desktop-page.json --noEmit && npm run typecheck --workspace website",
+    "typecheck": "tsc -p tsconfig.server.json --noEmit && tsc -p tsconfig.client.json --noEmit && tsc -p tsconfig.desktop.json --noEmit && tsc -p tsconfig.desktop-page.json --noEmit && npm run typecheck:mobile && npm run typecheck --workspace website",
+    "typecheck:mobile": "tsc -p tsconfig.mobile.json --noEmit",
+    "mobile:start": "react-native start --config metro.config.cjs",
+    "mobile:bundle": "react-native bundle --config metro.config.cjs --platform android --dev false --entry-file index.mobile.js --bundle-output dist/mobile/index.android.bundle --assets-dest dist/mobile/res",
     "lint": "biome check --error-on-warnings .",
     "format": "biome format --write .",
     "start": "node bin/droid-office.js",
@@ -58,6 +69,8 @@
     "ws": "^8.21.3"
   },
   "devDependencies": {
+    "@babel/core": "7.29.7",
+    "@babel/runtime": "7.29.10",
     "@biomejs/biome": "^2.5.14",
     "@codemirror/commands": "^6.11.1",
     "@codemirror/lang-markdown": "^6.5.2",
@@ -67,7 +80,14 @@
     "@codemirror/state": "^6.7.6",
     "@codemirror/view": "^6.43.14",
     "@lezer/highlight": "^1.2.5",
+    "@react-native-community/cli": "20.2.0",
+    "@react-native-community/cli-platform-android": "20.2.0",
+    "@react-native/babel-preset": "0.88.1",
+    "@react-native/gradle-plugin": "0.88.1",
+    "@react-native/metro-config": "0.88.1",
+    "@react-native/typescript-config": "0.88.1",
     "@types/node": "^26.6.3",
+    "@types/react": "19.3.0",
     "@types/three": "^0.186.0",
     "@types/ws": "^8.18.1",
     "@xterm/addon-fit": "^0.11.0",
@@ -83,6 +103,8 @@
     "marked": "^18.0.14",
     "node-addon-api": "^8.9.2",
     "node-gyp": "^12.4.0",
+    "react": "19.3.0",
+    "react-native": "0.88.1",
     "three": "^0.186.1",
     "tsx": "^4.23.15",
     "typescript": "^7.0.2",
