@@ -17,6 +17,14 @@ export function isLoopback(ip: string | undefined): boolean {
   return ip === '127.0.0.1' || ip === '::1' || ip === '::ffff:127.0.0.1';
 }
 
+/** Whether a Host header names this machine by a loopback name or address (any port), not by a site's name. */
+export function loopbackHost(host: string | undefined): boolean {
+  if (!host) return false;
+  const m = /^(\[[^\]]+\]|[^:]+)(?::\d{1,5})?$/.exec(host.trim().toLowerCase());
+  const name = m?.[1];
+  return name === 'localhost' || name === '[::1]' || (!!name && /^127(?:\.\d{1,3}){3}$/.test(name));
+}
+
 /** Timing-safe compare that also hides the length: both sides go through SHA-256 first. */
 export function lanTokenOk(candidate: string | null | undefined, token: string): boolean {
   if (!candidate) return false;

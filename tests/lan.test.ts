@@ -9,7 +9,7 @@ import path from 'node:path';
 import { tmpdir } from 'node:os';
 import { WebSocket } from 'ws';
 import { reachableLan } from './lan-probe.js';
-import { isLoopback, lanAllowed, lanIPv4s, lanTokenOk, mintLanToken } from '../src/server/lan.js';
+import { isLoopback, lanAllowed, lanIPv4s, lanTokenOk, loopbackHost, mintLanToken } from '../src/server/lan.js';
 import { loadConfig } from '../src/server/config.js';
 import { startServer } from '../src/server/server.js';
 
@@ -23,6 +23,11 @@ test('LAN tokens are unique and URL-safe', () => {
 test('only loopback bypasses the gate', () => {
   for (const ip of ['127.0.0.1', '::1', '::ffff:127.0.0.1']) assert.equal(isLoopback(ip), true, ip);
   for (const ip of [undefined, '', '0.0.0.0', '::', '10.0.0.1', '192.168.1.5', '100.96.217.59', '::ffff:192.168.1.1', '8.8.8.8']) assert.equal(isLoopback(ip), false, String(ip));
+});
+
+test('a loopback host name is this machine by name or address, never a site that resolves here', () => {
+  for (const host of ['localhost', 'localhost:4600', 'LOCALHOST:4600', '127.0.0.1', '127.0.0.1:4677', '127.1.2.3:80', '[::1]', '[::1]:4600']) assert.equal(loopbackHost(host), true, host);
+  for (const host of [undefined, '', 'foreign.test', 'foreign.test:4600', 'localhost.foreign.test', '127.0.0.1.foreign.test:4600', '10.0.0.1:4600', '[::2]:4600', 'localhost:x']) assert.equal(loopbackHost(host), false, String(host));
 });
 
 test('the token compare needs the exact token', () => {

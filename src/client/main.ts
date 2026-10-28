@@ -110,6 +110,7 @@ import { plainLabel, redrawText } from './world/toon';
 import { OfficeSound } from './sound';
 import { DesktopNotifier, askNotifyPermission, notifyPermission, waitingOnSomeone } from './notify';
 import { NextUp, waitingInOrder, waitingLabel } from './nextup';
+import { linkStep, parseWorkerLink, type WorkerLink } from './worker-link';
 import { $, h, clip, closeAllModals, hintToast, modalOpen, onModalChange, openModalList, readingNow, toast, STATUS_LABEL } from './ui/dom';
 import { deskApproach, type ApproachPose } from './approach';
 import { createAutomation, facingToward, pitchToward, runCommand, type CameraPose } from './automation';
@@ -1166,6 +1167,7 @@ net.onMessage((msg) => {
       if (!bootVersion) bootVersion = msg.version;
       else if (msg.version !== bootVersion || restarting()) showUpgraded(msg.upgrade);
       upgradePhase = msg.upgrade.phase;
+      followWorkerLink();
       break;
     }
     case 'floor.enter':
@@ -1184,6 +1186,7 @@ net.onMessage((msg) => {
         setCarrying(null);
       }
       arrive();
+      followWorkerLink();
       break;
     case 'floors':
       noticeWaiting();
@@ -1424,6 +1427,8 @@ function tripFailed() {
   const t = trip;
   if (!t) return;
   trip = null;
+  // The link asked for a floor that never came: don't open it on some later arrival.
+  linkedWorker = undefined;
   fade(false);
   if (t.how === 'elevator') lift().setOpen(!!store.floor);
   if (t.how === 'ladder' || t.how === 'pole') climber.abort();
@@ -2169,6 +2174,36 @@ function pointToWaiting(now: number) {
     }
   }
   compass.update(camera, bearings, now);
+}
+
+/** A worker a link asked to open (`#worker=<id>&floor=<id>`, see worker-link.ts) until the office has it here. */
+let linkedWorker = takeWorkerLink();
+
+/** Reads a worker link from the address and takes it off, so a reload doesn't open the terminal again. */
+function takeWorkerLink(): WorkerLink | undefined {
+  const link = parseWorkerLink(location.hash);
+  if (link) history.replaceState(history.state, '', location.pathname + location.search);
+  return link;
+}
+
+// The Mac app's menu bar sets the hash of a page that is already open.
+window.addEventListener('hashchange', () => {
+  const link = takeWorkerLink();
+  if (!link) return;
+  linkedWorker = link;
+  followWorkerLink();
+});
+
+/** Opens the linked worker's terminal, after a trip to its floor when it's on another one. */
+function followWorkerLink() {
+  const link = linkedWorker;
+  if (!link || firstWelcome || trip) return;
+  const step = linkStep(link, { floor: store.floor, hasWorker: (id) => store.workers.has(id), hasFloor: (id) => store.floors.some((f) => f.id === id) });
+  // The floor's arrival (floor.enter) comes back here.
+  if (step === 'go' && link.floor) return switchFloor(link.floor);
+  linkedWorker = undefined;
+  if (step === 'open') openWorkerTerminal(link.worker);
+  else toast('👋 That worker is no longer in the office', 'warn');
 }
 
 /** Opening a sleeping worker's terminal wakes it, so there's nothing to press first. */

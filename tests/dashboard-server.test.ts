@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdirSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { once } from 'node:events';
+import http from 'node:http';
 import type { AddressInfo } from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
@@ -293,10 +294,28 @@ test('the status route counts connected phones and browsers for this Mac only', 
   const phone = socket(t, base, `d=${pair.token}`);
   const again = socket(t, base, `d=${pair.token}`);
   await Promise.all([scene, web, phone, again].map((c) => c.wait('welcome')));
-  assert.deepEqual(await (await fetch(`${base}/api/status`)).json(), { workers: 0, working: 0, needsInput: 0, phones: 1, browsers: 2 });
+  const status = (await (await fetch(`${base}/api/status`)).json()) as Record<string, unknown>;
+  assert.deepEqual({ ...status, floors: undefined }, { workers: 0, working: 0, needsInput: 0, done: 0, phones: 1, browsers: 2, floors: undefined, waiting: [] });
+  assert.ok(Number.isInteger(status.floors) && (status.floors as number) >= 1);
   assert.equal((await fetch(`${base}/api/status`, { headers: { authorization: `Bearer ${pair.token}` } })).status, 403);
   assert.equal((await fetch(`${base}/api/status`, { headers: { origin: 'https://foreign.test' } })).status, 403);
+  // A site that a DNS rebinding pointed at 127.0.0.1 asks by its own name; the app asks by localhost.
+  assert.equal(await statusFor(base, 'foreign.test'), 403);
+  assert.equal(await statusFor(base, 'localhost'), 200);
 });
+
+/** The status route's answer to a request that names the office `host` (fetch can't set Host). */
+function statusFor(base: string, host: string): Promise<number> {
+  const url = new URL('/api/status', base);
+  return new Promise((resolve, reject) => {
+    http
+      .get({ host: url.hostname, port: url.port, path: url.pathname, headers: { host: `${host}:${url.port}` } }, (res) => {
+        res.resume();
+        resolve(res.statusCode ?? 0);
+      })
+      .on('error', reject);
+  });
+}
 
 test('the web companion switch refuses browsers while off, keeps their pairing, leaves phones alone and survives a restart', async (t) => {
   const first = await office(t);

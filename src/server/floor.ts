@@ -36,6 +36,7 @@ import { setupState, writeOverride } from './worktree-setup.js';
 import { WhiteboardStore, renderInfo } from './whiteboard.js';
 import type { WhiteboardRenderers } from './whiteboard-render.js';
 import { boardReaders } from './whiteboard-agent.js';
+import { waitingStatus } from './office-status.js';
 
 type ToastLevel = 'info' | 'warn' | 'error';
 
@@ -586,7 +587,7 @@ export class Floor {
       addedAt: this.def.addedAt,
       workers: ws.filter((w) => !DESK_BY_ID.get(w.deskId)?.station).length,
       busy: ws.filter((w) => w.status === 'working').length,
-      waiting: ws.filter((w) => w.kind !== 'shell' && (w.status === 'needs_input' || (w.status === 'done' && !w.acked))).length,
+      waiting: ws.filter((w) => waitingStatus(w)).length,
     };
   }
 

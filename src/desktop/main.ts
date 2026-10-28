@@ -2,7 +2,7 @@ import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { app, type BaseWindow, clipboard, dialog, Menu, type MenuItemConstructorOptions, shell } from 'electron';
+import { app, type BaseWindow, clipboard, dialog, Menu, type MenuItemConstructorOptions, Notification, shell } from 'electron';
 import { downloadBrowser } from './browser.js';
 import { contextMenu, editMenu } from './edit-menu.js';
 import { gpuReport } from './gpu.js';
@@ -18,7 +18,7 @@ import { DEFAULT_PORT, defaultOfficeDir, type DesktopSettings, isolatedPortOk, l
 import { desktopEnv } from './shell-path.js';
 import { enforceRequirements, isStartupCheck, runStartupCheck, StartupAborted } from './startup.js';
 import { OfficeTray } from './tray.js';
-import { parseStatus, type TrayAction } from './tray-model.js';
+import { listCut, type OfficeStatus, parseStatus, type TrayAction, trayTitle, type TrayView, WaitingWatch, waitingNotice, type WorkerLink, workerHash } from './tray-model.js';
 import { Updates } from './updates.js';
 
 const BACKGROUND = '#050505';
@@ -67,6 +67,16 @@ let leavingToMenuBar = false;
 /** Set by the menu bar's Quit and Stop Workers: the quit ends the workers instead of keeping them for the next office. */
 let stopWorkersOnQuit = false;
 let tray: OfficeTray | undefined;
+/** Which workers already waited at the last status, so only a new wait is notified. */
+const waitingWatch = new WaitingWatch();
+/** The office the watch is on: another one (or none) starts it over. */
+let watchedUrl: string | undefined;
+/** The status asked for last: an answer to an older request is dropped. */
+let trayRequest = 0;
+/** The notification up for each waiting worker, taken down once it stops waiting or the window opens. */
+const notices = new Map<string, Notification>();
+/** How many new waits get a notification each of their own at once. */
+const NOTICES_AT_ONCE = 3;
 
 const updates = new Updates({
   log: path.join(logDir, 'updates.log'),
@@ -103,8 +113,10 @@ function show(url: string) {
     });
 }
 
-function createWindow(loadOffice = true) {
+/** `hash` is a worker link (see tray-model.ts `workerHash`) for the office page to open. */
+function createWindow(loadOffice = true, hash = '') {
   windowWanted = true;
+  clearNotices();
   void app.dock?.show();
   const created = new PresenterWindow({
     title: 'Droid Office',
@@ -182,7 +194,7 @@ function createWindow(loadOffice = true) {
     app.dock?.hide();
     void refreshTray();
   });
-  if (loadOffice && officeUrl) void contents.loadURL(officeUrl).catch(() => {});
+  if (loadOffice && officeUrl) void contents.loadURL(new URL(hash, officeUrl).toString()).catch(() => {});
 }
 
 /**
@@ -344,6 +356,7 @@ function toFront() {
 /** The office window again, from the menu bar icon, the Dock or a second launch. */
 function openWindow() {
   toFront();
+  clearNotices();
   if (win && !win.base.isDestroyed()) {
     win.base.show();
     win.base.focus();
@@ -353,6 +366,78 @@ function openWindow() {
   createWindow(false);
   if (opening) show(page('Opening the office…'));
   else void openOffice();
+}
+
+/** A waiting worker's terminal, from the menu bar or a notification: the office page goes to its floor and opens it. */
+function openWorker(link: WorkerLink) {
+  if (!officeUrl) return openWindow();
+  const hash = workerHash(link);
+  toFront();
+  clearNotices();
+  const current = win && !win.base.isDestroyed() ? win : undefined;
+  if (!current) return createWindow(true, hash);
+  current.base.show();
+  current.base.focus();
+  // The office page reads the hash as it changes (src/client/main.ts); any other page (an error, the splash) is replaced.
+  if (onOffice(current.contents.getURL())) void current.contents.executeJavaScript(`location.hash = ${JSON.stringify(hash)}`).catch(() => {});
+  else show(new URL(hash, officeUrl).toString());
+}
+
+function onOffice(url: string): boolean {
+  try {
+    return Boolean(officeUrl) && new URL(url).origin === new URL(officeUrl!).origin;
+  } catch {
+    return false;
+  }
+}
+
+function clearNotices() {
+  for (const n of notices.values()) n.close();
+  notices.clear();
+}
+
+/**
+ * While the window is closed, a worker that starts to wait on the owner gets a notification, as the office page
+ * gives one while it's in the background (src/client/notify.ts). With the window open, the page does that itself.
+ */
+function noticeWaiting(status: OfficeStatus | undefined) {
+  const fresh = waitingWatch.next(status);
+  // A failed fetch or a cut-off list says nothing about who stopped waiting.
+  if (status && !listCut(status)) {
+    const still = new Set(status.waiting.map((w) => w.id));
+    for (const [id, n] of notices) {
+      if (still.has(id)) continue;
+      n.close();
+      notices.delete(id);
+    }
+  }
+  if (!status || settings.notify === false || (win && !win.base.isDestroyed()) || !Notification.isSupported()) return;
+  for (const w of fresh.slice(0, NOTICES_AT_ONCE)) {
+    notices.get(w.id)?.close();
+    const n = new Notification(waitingNotice(w, status.floors));
+    n.on('click', () => {
+      notices.delete(w.id);
+      openWorker({ worker: w.id, floor: w.floor });
+    });
+    n.on('close', () => {
+      if (notices.get(w.id) === n) notices.delete(w.id);
+    });
+    notices.set(w.id, n);
+    n.show();
+  }
+  const rest = fresh.length - NOTICES_AT_ONCE;
+  if (rest > 0) {
+    const n = new Notification({ title: `${rest} more worker${rest === 1 ? '' : 's'} waiting on you`, body: '' });
+    n.on('click', () => openWindow());
+    n.show();
+  }
+}
+
+function toggleNotify() {
+  settings = { ...settings, notify: settings.notify === false };
+  saveSettings(settingsFile, settings);
+  if (settings.notify === false) clearNotices();
+  void refreshTray();
 }
 
 /** Cmd+Q: closes the window and leaves the office running behind the menu bar icon. The first time, says so. */
@@ -392,8 +477,10 @@ async function quitStoppingWorkers() {
   app.quit();
 }
 
-function trayAction(action: TrayAction) {
+function trayAction(action: TrayAction, link?: WorkerLink) {
   if (action === 'open') openWindow();
+  else if (action === 'worker') link ? openWorker(link) : openWindow();
+  else if (action === 'notify') toggleNotify();
   else if (action === 'browser') officeUrl && void shell.openExternal(officeUrl);
   else if (action === 'restart') void restartOffice();
   else if (action === 'updates') {
@@ -406,15 +493,28 @@ function trayAction(action: TrayAction) {
 
 async function refreshTray() {
   if (!tray) return;
+  const request = ++trayRequest;
   const url = opening ? undefined : officeUrl;
   const status = url ? parseStatus(await fetchStatus(url)) : undefined;
-  if (url !== (opening ? undefined : officeUrl)) return;
-  tray.render({
+  if (request !== trayRequest || url !== (opening ? undefined : officeUrl)) return;
+  if (url !== watchedUrl) {
+    waitingWatch.reset();
+    clearNotices();
+    watchedUrl = url;
+  }
+  noticeWaiting(status);
+  const view: TrayView = {
     state: opening ? 'starting' : officeUrl ? 'running' : 'stopped',
     ...(status ? { status } : {}),
     ownWindow: Boolean(officeUrl && win && !win.base.isDestroyed()),
     external: Boolean(officeUrl && !office),
-  });
+    notify: settings.notify !== false,
+    version: app.getVersion(),
+    ...(officeUrl ? { url: officeUrl } : {}),
+  };
+  tray.render(view);
+  // The Dock icon counts them too while the window is open (the Dock icon is hidden while it's closed).
+  app.dock?.setBadge(trayTitle(view));
 }
 
 async function restartOffice() {
