@@ -2,6 +2,8 @@
 
 Developers can clone, run and modify the source on their own machines. Source checkouts and custom deployments are not supported production installs; the production distribution is the [Mac app release](getting-started.md#the-mac-app).
 
+Use Node 22.13 or newer on the 22.x line, matching CI, and npm. Android builds also need JDK 21 and the Android SDK.
+
 ```bash
 git clone https://github.com/nikships/droid-office.git
 cd droid-office
@@ -26,7 +28,9 @@ A worktree the office cuts of this repository sets itself up from [`.droid-offic
 
 **Pre-commit hook.** `npm ci` or `npm install` in a clone points git at [`.husky/`](../../.husky) (through the `prepare` script), and every commit then runs [lint-staged](https://github.com/lint-staged/lint-staged) and `npm run typecheck`. lint-staged runs `biome check --write` on the staged files, so formatting is fixed and added to the commit, and a lint finding stops it. The hook is a convenience; CI runs the same `npm run lint` and `npm run typecheck`. `git commit --no-verify` skips it, and `HUSKY=0` skips installing it. It isn't installed in CI (`CI=true`) or where dev dependencies aren't.
 
-`npm run test:coverage` fails when line or function coverage of `src/` and `bin/` drops below the thresholds in its `package.json` script, and CI runs it in place of `npm test`. `npm test` still runs on Node 20.
+`npm run test:coverage` fails when line or function coverage of `src/` and `bin/` drops below the thresholds in its `package.json` script, and CI runs it in place of `npm test`. The checkout's Node requirement includes its React Native build tools.
+
+The Android workspace lives in `src/mobile/`. `npm run typecheck` includes it; `npm run mobile:start` starts Metro for debug builds, and `npm run mobile:bundle` checks a standalone Android bundle. Gradle bundles JavaScript into release APKs. Rebuild the shared management page with `node tools/android-companion-tools.mjs` after its client/shared imports change. See [Android builds](../../android/README.md#build) for native checks.
 
 `npm run dev` runs Vite with hot reload on :5173 and proxies to the server on :4600. Server edits restart the server, not the workers.
 
@@ -89,7 +93,7 @@ Rules for changing the code are in [`AGENTS.md`](../../AGENTS.md). A directory w
 
 Every change to the app that lands on `main` is published as a GitHub release by [`.github/workflows/release.yml`](../../.github/workflows/release.yml). The Mac app is the only supported production installation; there is no standalone server tarball or npm publication, and `package.json` marks the package private.
 
-Pull requests run only the checks affected by their paths: the office build, lint, typecheck, coverage and checkout startup smoke test; the website build and checks; Mac source and native presenter compilation; and Android debug unit tests and lint. They never set release versions, download Electron, package an unsigned Mac app, build a release APK or upload release artifacts. Website lint and typecheck run only once when the repository-wide Node checks also run. Only the change-detection job fetches git history to compare the complete change and count commits for release versions. New pushes to a PR cancel its older run.
+Pull requests run only the checks affected by their paths: the office build, lint, typecheck, coverage and checkout startup smoke test; the website build and checks; Mac source and native presenter compilation; and Android debug unit tests, lint and release APK compilation, including its React Native bundle. They never set release versions, package an unsigned Mac app, use production Android signing credentials or publish release artifacts. Website lint and typecheck run only once when the repository-wide Node checks also run. Only the change-detection job fetches git history to compare the complete change and count commits for release versions. New pushes to a PR cancel its older run.
 
 On `main`, the affected platforms also build release artifacts. The Mac job signs the app with the Developer ID from the repository's secrets (`MAC_CERTS`, `CERT_PASSWORD`), notarizes the app and its disk image with Apple (`APPLE_ID`, `APPLE_APP_SPECIFIC_PASSWORD`, `APPLE_TEAM_ID`), starts the office on the app's own Electron, and checks that the native presenter (`presenter.node`, built for arm64 and macOS 14) is bundled and signed under the hardened runtime with the app's Developer ID. The app's startup check loads the presenter, runs its Metal probe, and tests its macOS 14 and chip gates (`--startup-check`, with the CI-only `DROID_OFFICE_ALLOW_ANY_CHIP=1` because GitHub's runners are base-chip virtual machines). The release's `latest-mac.yml` carries `minimumSystemVersion: 23.0.0`, so Macs on macOS 13 or earlier are not offered it. The Android job builds the signed companion APK.
 

@@ -64,14 +64,14 @@ Run from the repository root. npm with `package-lock.json` is the only package m
 | Build `dist/public` (client), `dist/server` (server), `dist/desktop` (Mac app) and, on macOS, `native/presenter/build` (the Metal presenter, via `build:native`) | `npm run build` |
 | Lint and format check with Biome (`biome.jsonc`); any warning fails | `npm run lint` |
 | Rewrite files in the Biome format | `npm run format` |
-| Typecheck server and client | `npm run typecheck` |
+| Typecheck server, client, React Native and website | `npm run typecheck` |
 | All tests | `npm test` |
 | All tests with the coverage thresholds in its script (Node 22.8+) | `npm run test:coverage` |
 | One test file | `node --import tsx --test tests/<name>.test.ts` |
 | Run the built office against a project | `node bin/droid-office.js <project>` |
 | Run the Mac app from the checkout | `npm run desktop` |
 | Package the Mac app into `release/` (signed when the keychain has the Developer ID) | `npm run package:mac` |
-| Android app tests, lint and release APK (JDK 17+, Android SDK) | `cd android && ./gradlew testDebugUnitTest lintDebug assembleRelease` |
+| Android app tests, lint and release APK (JDK 21, Android SDK) | `cd android && ./gradlew testDebugUnitTest lintDebug assembleRelease` |
 
 `node bin/droid-office.js` runs `dist/`, so run `npm run build` after changing source.
 
