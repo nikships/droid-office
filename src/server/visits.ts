@@ -20,6 +20,7 @@ import type { DroidScreen } from './droid-screen.js';
 import { isAsleep, isBusy } from '../shared/status.js';
 import { type Visit, type VisitKind, type VisitPhase, VISIT_KINDS, visitRoute, visitWalkMs } from '../shared/visits.js';
 import { officePrompt, type PromptSource } from './prompts.js';
+import { workerMessageVars } from '../shared/prompts.js';
 
 /** What visits need from the floor's workers. Narrow on purpose, so a test can fake it. */
 export interface VisitWorkers {
@@ -148,7 +149,7 @@ export const URGENT_WAIT_MS = 5000;
 const KEEP_MS = 10 * 60_000;
 const TICK_MS = 250;
 
-const URGENT_LINE = " It's urgent, so the office interrupted what you were doing: deal with it first, and go back to what you were doing only if it still makes sense.";
+const URGENT_LINE = "Delivery: urgent. The sender requested cancellation of your running turn. Handle promptly without overriding the owner's task.";
 
 const ok = (body: Record<string, unknown>): VisitReply => ({ status: 200, body });
 const no = (status: number, error: string): VisitReply => ({ status, body: { error } });
@@ -604,6 +605,7 @@ export class Visits {
     return officePrompt(this.opts.prompts, `visit.${n.kind}`, {
       from: n.fromName,
       desk: n.fromDesk,
+      ...workerMessageVars(`${n.title ?? ''}\n${n.text}`),
       text: n.text,
       urgent: n.urgent ? URGENT_LINE : '',
       visit: n.visit,

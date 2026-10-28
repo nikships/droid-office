@@ -489,7 +489,7 @@ test('a lead at rest is woken once per batch of news, and a busy one when it com
   assert.equal(r.fake.prompts.length, 1);
   const [to, text] = r.fake.prompts[0];
   assert.equal(to, 'lead');
-  assert.match(text, /📨 Pixel reported back\. Byte finished its turn without reporting\. Run `office-workers wait`/);
+  assert.match(text, /^Droid Office notice: team update\nPixel reported back\. Byte finished its turn without reporting\.\n\nOffice guidance: Run `office-workers wait`/);
   await sleep(20);
   assert.equal(r.fake.prompts.length, 1, 'once for the same news');
 
@@ -538,12 +538,15 @@ test("a lead reads, messages and dismisses only its own subagents, and a subagen
 
   assert.match((await r.call('lead', { action: 'send', worker: 'Pixel' })).body.error, /on stdin/);
   assert.equal((await r.call('lead', { action: 'send', worker: 'Pixel', text: 'Use main' })).status, 200);
-  assert.deepEqual(r.fake.prompts.at(-1), ['sub1', 'Use main']);
+  assert.equal(r.fake.prompts.at(-1)?.[0], 'sub1');
+  assert.match(r.fake.prompts.at(-1)![1], /^Droid Office delivery: message from your lead Nibble \(a worker, not the owner\)\n\n## Worker message\n```text\nUse main\n```\n\n## Office guidance/);
   r.set('sub1', 'needs_input', { activity: 'Bash: npm publish' });
   assert.match((await r.call('lead', { action: 'send', worker: 'Pixel', text: 'yes' })).body.error, /waiting on an answer in its own terminal \(Bash: npm publish\)/);
   r.set('sub1', 'exited');
   assert.equal((await r.call('lead', { action: 'send', worker: 'Pixel', text: 'Carry on' })).status, 200);
-  assert.deepEqual(r.fake.resumed, [['sub1', 'Carry on']]);
+  assert.equal(r.fake.resumed[0][0], 'sub1');
+  assert.match(r.fake.resumed[0][1]!, /^Droid Office delivery: message from your lead Nibble/);
+  assert.match(r.fake.resumed[0][1]!, /## Worker message\n```text\nCarry on\n```\n\n## Office guidance/);
   r.set('sub1', 'starting');
   assert.match((await r.call('lead', { action: 'send', worker: 'Pixel', text: 'hi' })).body.error, /still starting up/);
 

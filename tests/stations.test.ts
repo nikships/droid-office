@@ -10,10 +10,10 @@ test('every board agent is briefed without a task queue, and ends where the requ
     for (const forge of ['github', 'gitlab'] as const) {
       const brief = stationBrief(kind, forge);
       assert.doesNotMatch(brief, /office-queue|task queue|curl|DROID_OFFICE_HOOK_TOKEN|Authorization/, `${kind} on ${forge}`);
-      assert.match(brief, /You don't change code yourself/, kind);
-      assert.match(brief, /a worker at a desk/, kind);
+      assert.match(brief, /Office instructions:\n- Don't edit files, commit or switch branches in this shared checkout\./, kind);
+      assert.match(brief, /give a desk worker/, kind);
       assert.match(brief, /the Team lead/, kind);
-      assert.match(brief, /say in a few lines what you did, with links/, kind);
+      assert.match(brief, /Report the result briefly with links, then wait for another request/, kind);
       assert.ok(brief.endsWith('The request:'), kind);
     }
   }

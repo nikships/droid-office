@@ -104,7 +104,7 @@ test('a workflow that keeps failing on a branch is left to a person, until it pa
 
 test('the heal prompt sends a worker to push to the failing branch, or to open a pull request against the default one', () => {
   const onMain = officePrompt(undefined, 'pipeline.heal', healPromptVars('github', run(), 'main'));
-  assert.match(onMain, /^CI #7 failed on `main` \(https:\/\/github\.com\/o\/r\/actions\/runs\/101\): "feat: a thing", commit abcdef1, started by push/);
+  assert.match(onMain, /^Droid Office notice: CI failure \(auto-heal enabled\)\nCI #7 on `main`: "feat: a thing"\nCommit: abcdef1 \| Event: push\nhttps:\/\/github\.com\/o\/r\/actions\/runs\/101/);
   assert.match(onMain, /gh run view 101 --log-failed/);
   assert.match(onMain, /gh run rerun 101 --failed/);
   assert.match(onMain, /office-workers hire --title "Fix CI on main" --from origin\/main/);

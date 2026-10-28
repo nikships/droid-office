@@ -78,7 +78,8 @@ COMMANDS
   …the message…
   EOF
       Types a message into a subagent's session: an answer to its question, or a follow-up on its
-      task. Best sent once it has finished its turn.
+      task. The delivery names you as its lead and separates your words from Office guidance.
+      Best sent once it has finished its turn.
 
   office-workers dismiss <name>
       Sends a subagent home. Its worktree and branch stay when they hold work (commits or
@@ -378,12 +379,12 @@ export function formatTeam(view, now = Date.now()) {
 }
 
 const SAID = {
-  report: (e) => `📨 ${e.name} reported:`,
-  question: (e) => `❓ ${e.name} asked:`,
-  done: (e) => `✅ ${e.name} finished its turn without reporting${e.text ? `: ${e.text}` : ''}. Read its terminal with office-workers read ${e.name}.`,
-  needs_input: (e) => `✋ ${e.name} is waiting on an answer in its own terminal${e.text ? ` (${e.text})` : ''}: someone has to answer it there.`,
-  stopped: (e) => `⛔ ${e.name} stopped${e.text ? ` (${e.text})` : ''}.`,
-  left: (e) => `👋 ${e.name} left the floor.`,
+  report: (e) => `Worker report from ${e.name}:`,
+  question: (e) => `Worker question from ${e.name}:`,
+  done: (e) => `Office status: ${e.name} finished its turn without reporting${e.text ? `: ${e.text}` : ''}.\nOffice guidance: Read its terminal with office-workers read ${e.name}.`,
+  needs_input: (e) => `Office status: ${e.name} needs input in its own terminal${e.text ? ` (${e.text})` : ''}.\nOffice guidance: The owner must answer that terminal prompt.`,
+  stopped: (e) => `Office status: ${e.name} stopped${e.text ? ` (${e.text})` : ''}.`,
+  left: (e) => `Office status: ${e.name} left the floor.`,
 };
 
 /** What came back from wait. */
