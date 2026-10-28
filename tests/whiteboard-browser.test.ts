@@ -271,16 +271,18 @@ test('a real launch runs headless Chromium with its sandbox on', { skip: skipRea
   await context.close();
 
   if (process.platform !== 'win32') {
-    // Playwright adds --no-sandbox exactly when chromiumSandbox is off; no browser process may carry it.
-    const executable = browserStatus().executable as string;
-    const lines = execFileSync('ps', ['-axo', 'args='], { encoding: 'utf8', maxBuffer: 32 * 1024 * 1024 })
-      .split('\n')
-      .filter((line) => line.startsWith(executable));
-    assert.ok(lines.length > 0, 'the browser process is running');
-    assert.ok(
-      lines.every((line) => !line.includes('--no-sandbox')),
-      lines.join('\n'),
-    );
+    // Inspect this browser, not unrelated clone checks using the same Chromium executable.
+    const cdp = await browser.newBrowserCDPSession();
+    try {
+      const { processInfo } = await cdp.send('SystemInfo.getProcessInfo');
+      const pid = processInfo.find((info) => info.type === 'browser')?.id;
+      assert.ok(pid && Number.isInteger(pid) && pid > 0, 'the running browser reports its process');
+      const args = execFileSync('ps', ['-p', String(pid), '-o', 'args='], { encoding: 'utf8' }).trim();
+      assert.ok(args.startsWith(browserStatus().executable as string), 'the process is the expected browser');
+      assert.doesNotMatch(args, /(?:^|\s)--no-sandbox(?:\s|$)/);
+    } finally {
+      await cdp.detach();
+    }
   }
 });
 
