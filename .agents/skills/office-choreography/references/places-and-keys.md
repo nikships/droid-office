@@ -23,7 +23,6 @@ The positions below come from `office.state().player` on commit `208c6a6`. Desks
 | Beside desk 4 | About (−6.9, −3.43), `__look(-Math.PI/2, -0.1)` | |
 | A desk | `goTo('desk-6')` → in front of it, facing the laptop | E opens the worker's terminal, or the hire dialog when the desk is empty |
 | Elevator | `goTo('elevator')` → (8.5, −11) | `open('elevator')` shows the panel. `ride(floor)` resolves when the doors open |
-| Fire pole | `POLES` in layout.ts: (6.8, 1.6), with the railing gap toward −z | E slides one floor down. On the bottom floor it only twirls |
 | Rooftop | `goTo('roof')` → (8.5, −11.87). Walk out to (8.5, −5) for the skyline | The sidearm can't come out on the roof |
 
 Use `goTo(floorId)` or `ride(floorId)` to change floors. `state().floors` lists them, but not in stacking order. The pole tells you: if E only twirls, you are on the bottom floor, so ride up one and slide from there.

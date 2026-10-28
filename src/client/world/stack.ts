@@ -1,19 +1,14 @@
 import * as THREE from 'three';
-import { FLOOR, LADDER, POLE, POLES, SLAB, WALL_HEIGHT, WALL_T, WINDOWS, type PoleSpot } from '../../shared/layout';
+import { FLOOR, LADDER, SLAB, WALL_HEIGHT, WALL_T, WINDOWS } from '../../shared/layout';
 import type { Collider, Interactable } from './office';
 import { installCeilingDeck } from './ceiling-deck';
 import { ANISOTROPY, TILE_SCALE } from './texture-quality';
 import { mesh, textPlane, toon } from './toon';
 
-/** A fire pole's railing: how high its top bar is, and how thick its bars and the caps on its posts are (meters). */
-const RAIL_TOP = 1.02;
-const RAIL_BAR = 0.035;
-const RAIL_CAP = 0.07;
-/** Factory orange: the hazard stripe, the rim of a pole's hole and the ring on its mat. */
 const ACCENT = '#ee6018';
 
 // The floors above and below this one: the ceiling (and the hatches and holes in it and in the floor),
-// the ladder up the west wall, and the fire poles. Every floor is built from the same office, so
+// the ladder up the west wall. Every floor is built from the same office, so
 // what's here depends on which floor of the building you're on (see Stack.set).
 
 /** The top of the windows either side of the ladder, where the sign to the floor above hangs over. */
@@ -26,65 +21,15 @@ interface Rect {
   maxZ: number;
 }
 
-/** `r` less the `holes` in it, as a few rectangles: rows of the grid the holes' edges make, stacked where they line up. */
-export function cutRect(r: Rect, holes: Rect[]): Rect[] {
-  const hs = holes.map((h) => ({ minX: Math.max(r.minX, h.minX), maxX: Math.min(r.maxX, h.maxX), minZ: Math.max(r.minZ, h.minZ), maxZ: Math.min(r.maxZ, h.maxZ) })).filter((h) => h.maxX > h.minX && h.maxZ > h.minZ);
-  const edges = (lo: number, hi: number, more: number[]) => [...new Set([lo, hi, ...more])].sort((a, b) => a - b);
-  const xs = edges(
-    r.minX,
-    r.maxX,
-    hs.flatMap((h) => [h.minX, h.maxX]),
-  );
-  const zs = edges(
-    r.minZ,
-    r.maxZ,
-    hs.flatMap((h) => [h.minZ, h.maxZ]),
-  );
-  const out: Rect[] = [];
-  for (let j = 0; j < zs.length - 1; j++) {
-    const zm = (zs[j] + zs[j + 1]) / 2;
-    let run: Rect | null = null;
-    for (let i = 0; i < xs.length - 1; i++) {
-      const xm = (xs[i] + xs[i + 1]) / 2;
-      if (hs.some((h) => xm > h.minX && xm < h.maxX && zm > h.minZ && zm < h.maxZ)) {
-        if (run) out.push(run);
-        run = null;
-      } else if (run) run.maxX = xs[i + 1];
-      else run = { minX: xs[i], maxX: xs[i + 1], minZ: zs[j], maxZ: zs[j + 1] };
-    }
-    if (run) out.push(run);
-  }
-  // Rows with the same span, one on top of the other, become one.
-  for (let i = 0; i < out.length; i++) {
-    for (let j = i + 1; j < out.length; j++) {
-      const a = out[i];
-      const b = out[j];
-      if (a.minX === b.minX && a.maxX === b.maxX && a.maxZ === b.minZ) {
-        a.maxZ = b.maxZ;
-        out.splice(j--, 1);
-      }
-    }
-  }
-  return out;
-}
-
-/** The square round a pole's hole. */
-function around(p: { x: number; z: number }, half: number): Rect {
-  return { minX: p.x - half, maxX: p.x + half, minZ: p.z - half, maxZ: p.z + half };
-}
-
-/** A hole in a flat shape: a rectangle, or a circle round (x, z). `flip` is the shape's y for world z. */
-type Hole = Rect | { x: number; z: number; r: number };
+/** A rectangular hatch in a flat shape. `flip` is the shape's y for world z. */
+type Hole = Rect;
 function holePath(h: Hole, flip: 1 | -1): THREE.Path {
   const p = new THREE.Path();
-  if ('r' in h) p.absarc(h.x, flip * h.z, h.r, 0, Math.PI * 2, true);
-  else {
-    p.moveTo(h.minX, flip * h.minZ);
-    p.lineTo(h.minX, flip * h.maxZ);
-    p.lineTo(h.maxX, flip * h.maxZ);
-    p.lineTo(h.maxX, flip * h.minZ);
-    p.closePath();
-  }
+  p.moveTo(h.minX, flip * h.minZ);
+  p.lineTo(h.minX, flip * h.maxZ);
+  p.lineTo(h.maxX, flip * h.maxZ);
+  p.lineTo(h.maxX, flip * h.minZ);
+  p.closePath();
   return p;
 }
 
@@ -145,10 +90,10 @@ function tileTexture(): THREE.CanvasTexture {
 }
 
 /** A shaft going on past the hole into the dark: its walls fade out the further they go. */
-function shaft(shape: 'square' | 'round', half: number, from: number, to: number, center: { x: number; z: number }): THREE.Group {
+function shaft(half: number, from: number, to: number, center: { x: number; z: number }): THREE.Group {
   const g = new THREE.Group();
   const h = Math.abs(to - from);
-  const geo = shape === 'round' ? new THREE.CylinderGeometry(half, half, h, 24, 6, true) : new THREE.CylinderGeometry(half * Math.SQRT2, half * Math.SQRT2, h, 4, 6, true).rotateY(Math.PI / 4);
+  const geo = new THREE.CylinderGeometry(half * Math.SQRT2, half * Math.SQRT2, h, 4, 6, true).rotateY(Math.PI / 4);
   const pos = geo.getAttribute('position');
   const colors: number[] = [];
   const near = new THREE.Color('#3a3a3a');
@@ -164,7 +109,7 @@ function shaft(shape: 'square' | 'round', half: number, from: number, to: number
   const walls = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({ vertexColors: true, side: THREE.BackSide }));
   walls.position.set(center.x, (from + to) / 2, center.z);
   g.add(walls);
-  const end = new THREE.Mesh(shape === 'round' ? new THREE.CircleGeometry(half, 24) : new THREE.PlaneGeometry(half * 2, half * 2), new THREE.MeshBasicMaterial({ color: far }));
+  const end = new THREE.Mesh(new THREE.PlaneGeometry(half * 2, half * 2), new THREE.MeshBasicMaterial({ color: far }));
   end.rotation.x = to < from ? -Math.PI / 2 : Math.PI / 2;
   end.position.set(center.x, from > to ? Math.min(from, to) + 0.01 : Math.max(from, to) - 0.01, center.z);
   g.add(end);
@@ -203,29 +148,6 @@ function trapdoor(down: boolean): Trapdoor {
   return { pivot, open: 0, down };
 }
 
-/** A spot a pole can be (see POLES): what's there on this floor. */
-interface PoleView {
-  spot: PoleSpot;
-  index: number;
-  group: THREE.Group;
-  /** The pole from the floor to the ceiling; through the hole or up into the ceiling there's more of it. */
-  below: THREE.Object3D;
-  above: THREE.Object3D;
-  /** Going down: the hole's railing and its sign, and the dark under it. */
-  down: THREE.Group;
-  downShaft: THREE.Group;
-  sign: THREE.Mesh | null;
-  signText: string;
-  /** On the top floor, where it's bolted to the ceiling. */
-  flange: THREE.Object3D;
-  /** On the bottom floor, the mat you land on. */
-  landing: THREE.Group;
-  /** Coming down from above: the collar round the hole in the ceiling, and the dark over it. */
-  collar: THREE.Object3D;
-  upShaft: THREE.Group;
-  interactable: Interactable;
-}
-
 export interface StackState {
   /** Which floor of the building you're on (0 is the bottom one), and how many there are. */
   index: number;
@@ -239,13 +161,9 @@ export interface Stack {
   group: THREE.Group;
   interactables: Interactable[];
   setCeilingModel(source: THREE.Object3D): boolean;
-  /** The floor you're on: the ladder, the hatches and the poles go where there are floors to go to. */
+  /** The floor you're on: the ladder and the hatches go where there are floors to go to. */
   set(s: StackState): void;
   state: StackState;
-  /** The poles on this floor, when there's another floor for them to go to. */
-  poles(): readonly PoleSpot[];
-  /** Whether the poles go on down through holes in this floor (there's a floor below). */
-  polesGoDown(): boolean;
   /**
    * Opens the hatches for anyone passing through them (on the ladder, or down in its shaft), and hides
    * the shafts from anyone looking up from the garage or the street.
@@ -256,8 +174,8 @@ export interface Stack {
 }
 
 /**
- * The floor you walk on (planks from `planks`), the slab under it, the ceiling over it, the ladder
- * and the fire poles. Their colliders go in `colliders` and change as floors come and go.
+ * The floor you walk on (planks from `planks`), the slab under it, the ceiling over it and the ladder.
+ * Their colliders go in `colliders` and change as floors come and go.
  */
 export function buildStack(colliders: Collider[], planks: THREE.Material): Stack {
   const group = new THREE.Group();
@@ -273,10 +191,6 @@ export function buildStack(colliders: Collider[], planks: THREE.Material): Stack
   tiles.emissive = new THREE.Color('#3a3a3a');
   tiles.emissiveMap = tiles.map;
   const ceilingMat = tiles;
-  // Brushed steel for the poles and their caps, black for the rails, and the ladder in steel with
-  // orange rungs' worth of signal kept to its hazard stripe on the floor.
-  const chrome = toon('#eeeeee', { emissive: '#565656' });
-  const rail = toon('#808080');
   const steel = toon('#c0c0c0');
   const rungMat = toon('#eaeaea');
 
@@ -332,90 +246,15 @@ export function buildStack(colliders: Collider[], planks: THREE.Material): Stack
   group.add(floorHatch.pivot, ceilingHatch.pivot);
   const hatchCenter = { x: (LADDER.hatch.minX + LADDER.hatch.maxX) / 2, z: (LADDER.hatch.minZ + LADDER.hatch.maxZ) / 2 };
   const hatchHalf = (LADDER.hatch.maxX - LADDER.hatch.minX) / 2;
-  const ladderDownShaft = shaft('square', hatchHalf, 0, -2.3, hatchCenter);
-  const ladderUpShaft = shaft('square', hatchHalf, WALL_HEIGHT, WALL_HEIGHT + 2.3, hatchCenter);
+  const ladderDownShaft = shaft(hatchHalf, 0, -2.3, hatchCenter);
+  const ladderUpShaft = shaft(hatchHalf, WALL_HEIGHT, WALL_HEIGHT + 2.3, hatchCenter);
   group.add(ladderDownShaft, ladderUpShaft);
-
-  // The poles: one at each spot, with what goes round it either way.
-  const poles: PoleView[] = POLES.map((spot, index) => {
-    const g = new THREE.Group();
-    const r = POLE.radius;
-    g.add(mesh(new THREE.CylinderGeometry(r, r, WALL_HEIGHT, 14), chrome, spot.x, WALL_HEIGHT / 2, spot.z));
-    const below = mesh(new THREE.CylinderGeometry(r, r, 2.3, 14), chrome, spot.x, -1.15, spot.z);
-    const above = mesh(new THREE.CylinderGeometry(r, r, 2.3, 14), chrome, spot.x, WALL_HEIGHT + 1.15, spot.z);
-    g.add(below, above);
-
-    // Going down: a railing round three sides of the hole, rail with chrome caps, open on the fourth.
-    const down = new THREE.Group();
-    const half = POLE.rail;
-    const post = (x: number, z: number) => {
-      down.add(mesh(new THREE.CylinderGeometry(0.045, 0.045, RAIL_TOP, 10), rail, x, RAIL_TOP / 2, z));
-      down.add(mesh(new THREE.SphereGeometry(RAIL_CAP, 10, 8), chrome, x, RAIL_TOP + 0.03, z));
-    };
-    // The sides, as [dx0, dz0, dx1, dz1] from the pole, turned so the open one faces `open`.
-    const c = Math.round(Math.cos(spot.open));
-    const s = Math.round(Math.sin(spot.open));
-    const turn = (lx: number, lz: number): [number, number] => [spot.x + lx * c + lz * s, spot.z - lx * s + lz * c];
-    const sides: [number, number, number, number][] = [
-      [-half, -half, half, -half],
-      [-half, -half, -half, half],
-      [half, -half, half, half],
-    ];
-    for (const [ax, az, bx, bz] of sides) {
-      const [x0, z0] = turn(ax, az);
-      const [x1, z1] = turn(bx, bz);
-      const len = Math.hypot(x1 - x0, z1 - z0);
-      for (const y of [RAIL_TOP, RAIL_TOP * 0.55]) {
-        const bar = mesh(new THREE.CylinderGeometry(RAIL_BAR, RAIL_BAR, len, 8), y === RAIL_TOP ? chrome : rail, (x0 + x1) / 2, y, (z0 + z1) / 2);
-        bar.rotation.z = Math.PI / 2;
-        bar.rotation.y = -Math.atan2(z1 - z0, x1 - x0);
-        down.add(bar);
-      }
-      post(x0, z0);
-      post(x1, z1);
-    }
-    // The rim of the hole.
-    const rim = mesh(new THREE.TorusGeometry(POLE.hole, 0.035, 6, 32), toon(ACCENT), spot.x, 0.005, spot.z);
-    rim.rotation.x = Math.PI / 2;
-    down.add(rim);
-    g.add(down);
-    const downShaft = shaft('round', POLE.hole, 0, -2.3, spot);
-    g.add(downShaft);
-    // At the top, a steel flange where it's bolted to the ceiling.
-    const flange = mesh(new THREE.CylinderGeometry(0.16, 0.2, 0.08, 16), chrome, spot.x, WALL_HEIGHT - 0.04, spot.z);
-    g.add(flange);
-
-    // At the bottom, a fat black landing mat with an orange ring to aim for.
-    const landing = new THREE.Group();
-    landing.add(mesh(new THREE.CylinderGeometry(0.85, 0.9, 0.07, 24), rail, spot.x, 0.035, spot.z));
-    const ring = mesh(new THREE.TorusGeometry(0.62, 0.025, 4, 24), toon(ACCENT), spot.x, 0.07, spot.z);
-    ring.rotation.x = Math.PI / 2;
-    landing.add(ring);
-    g.add(landing);
-    // Coming down from above: a steel collar round the hole it comes out of.
-    const collar = mesh(new THREE.TorusGeometry(POLE.hole, 0.06, 8, 32), chrome, spot.x, WALL_HEIGHT - 0.02, spot.z);
-    collar.rotation.x = Math.PI / 2;
-    g.add(collar);
-    const upShaft = shaft('round', POLE.hole, WALL_HEIGHT, WALL_HEIGHT + 2.3, spot);
-    g.add(upShaft);
-
-    // A pole is thin: anywhere near it counts, when you aim at it.
-    g.add(new THREE.Mesh(new THREE.CylinderGeometry(0.3, 0.3, WALL_HEIGHT, 8).translate(spot.x, WALL_HEIGHT / 2, spot.z), hitMat));
-    group.add(g);
-    const interactable: Interactable = { kind: 'pole', pole: index, x: spot.x, z: spot.z, radius: 1.7, off: true };
-    g.userData.interact = interactable;
-    return { spot, index, group: g, below, above, down, downShaft, sign: null, signText: '', flange, landing, collar, upShaft, interactable };
-  });
-
-  const interactables = [ladderIt, ...poles.map((p) => p.interactable)];
 
   const set = (s: StackState) => {
     const { index, count } = s;
     const others = count > 1;
     const below = others && index > 0;
     const above = others && index < count - 1;
-    // Every pole goes the whole way down: through this floor if there's one below, and the ceiling if there's one above.
-    const holes = below ? POLES : [];
 
     // The new floor, slab and ceiling are built first, off to the side. Only once they exist are the
     // old ones taken down: a build that fails partway (a shape the geometry builder rejects) must
@@ -427,34 +266,28 @@ export function buildStack(colliders: Collider[], planks: THREE.Material): Stack
       return o;
     };
 
-    // The floor: planks, with the hatch and the pole's hole cut out when they go somewhere.
+    // The floor: planks, with the hatch cut out when it leads somewhere.
     const floorHoles: Hole[] = [];
     if (below) floorHoles.push(LADDER.hatch);
-    for (const p of holes) floorHoles.push({ x: p.x, z: p.z, r: POLE.hole });
     takeNext(new THREE.Mesh(surface(rectOutline(FLOOR), floorHoles, -1, FLOOR), planks));
 
     // The slab under it (the garage's ceiling): concrete underneath, a peach band between the floors
     // outside. Where a hole goes through, the garage sees a lid of concrete, not up into the office.
-    const slabHoles: Hole[] = [...(below ? [LADDER.hatch] : []), ...holes.map((p) => ({ x: p.x, z: p.z, r: POLE.hole + 0.02 }))];
+    const slabHoles: Hole[] = below ? [LADDER.hatch] : [];
     const slabShape = new THREE.Shape(rectOutline(B).map(([x, z]) => new THREE.Vector2(x, -z)));
     slabShape.holes = slabHoles.map((h) => holePath(h, -1));
     const slabGeo = new THREE.ExtrudeGeometry(slabShape, { depth: SLAB - 0.01, bevelEnabled: false, curveSegments: 24 }).rotateX(-Math.PI / 2).translate(0, -SLAB, 0);
     // Its top and bottom are concrete (group 0); its edges are the band.
     takeNext(mesh(slabGeo, concrete)).material = [concrete, band];
-    for (const h of slabHoles.map((h) => ('r' in h ? around(h, h.r) : h))) {
+    for (const h of below ? [LADDER.hatch] : []) {
       const lid = takeNext(mesh(new THREE.PlaneGeometry(h.maxX - h.minX, h.maxZ - h.minZ), concrete, (h.minX + h.maxX) / 2, -SLAB - 0.002, (h.minZ + h.maxZ) / 2));
       lid.rotation.x = Math.PI / 2;
     }
-    // You can walk over the ladder's hatch (its trapdoor), but not over a pole's hole: that's how you go down it.
-    const floorCut = holes.map((p) => around(p, POLE.hole - 0.1));
-    for (const r of cutRect(B, floorCut)) nextMine.push({ ...r, bottom: -SLAB, top: 0 });
-    // Down the hole, the pole is right there to grab; this only catches anyone who somehow isn't sliding.
-    for (const p of holes) nextMine.push({ ...around(p, POLE.hole), bottom: -1.4, top: -1.2 });
+    nextMine.push({ ...B, bottom: -SLAB, top: 0 });
 
-    // The ceiling: tiles, WALL_HEIGHT up, with the hatch and the poles' holes when they come from somewhere.
+    // The ceiling: tiles, WALL_HEIGHT up, with the hatch when they come from somewhere.
     const ceilingHoles: Hole[] = [];
     if (above) ceilingHoles.push(LADDER.hatch);
-    if (above) for (const p of POLES) ceilingHoles.push({ x: p.x, z: p.z, r: POLE.hole });
     takeNext(mesh(surface(rectOutline(FLOOR), ceilingHoles, 1), ceilingMat, 0, WALL_HEIGHT, 0));
     nextMine.push({ ...FLOOR, bottom: WALL_HEIGHT, top: WALL_HEIGHT + SLAB });
 
@@ -509,69 +342,15 @@ export function buildStack(colliders: Collider[], planks: THREE.Material): Stack
       ladderSigns.push(sign);
     }
 
-    for (const p of poles) {
-      p.group.visible = others;
-      p.interactable.off = !others;
-      p.down.visible = p.downShaft.visible = p.below.visible = below;
-      p.flange.visible = !above;
-      p.landing.visible = !below;
-      p.collar.visible = p.upShaft.visible = p.above.visible = above;
-      if (below) {
-        // The railing, three sides of the square round the hole.
-        const c = Math.round(Math.cos(p.spot.open));
-        const sn = Math.round(Math.sin(p.spot.open));
-        const h = POLE.rail;
-        const t = 0.06;
-        const rails: Rect[] = [
-          [-h - t, h + t, -h - t, -h + t],
-          [-h - t, -h + t, -h - t, h],
-          [h - t, h + t, -h - t, h],
-        ].map(([x0, x1, z0, z1]) => {
-          const xs = [x0 * c + z0 * sn, x1 * c + z1 * sn];
-          const zs = [-x0 * sn + z0 * c, -x1 * sn + z1 * c];
-          return { minX: p.spot.x + Math.min(...xs), maxX: p.spot.x + Math.max(...xs), minZ: p.spot.z + Math.min(...zs), maxZ: p.spot.z + Math.max(...zs) };
-        });
-        for (const r of rails) mine.push({ ...r, top: 1.05 });
-      } else if (others) {
-        mine.push({ ...around(p.spot, POLE.radius + 0.03), top: 99 });
-      }
-      const text = below && s.down ? `🚒 ⬇ ${s.down}` : '';
-      if (text !== p.signText) {
-        if (p.sign) {
-          p.sign.removeFromParent();
-          p.sign.geometry.dispose();
-          (p.sign.material as THREE.MeshBasicMaterial).map?.dispose();
-          (p.sign.material as THREE.MeshBasicMaterial).dispose();
-          p.sign = null;
-        }
-        p.signText = text;
-        if (text) {
-          // Hung on the rail across from the way in, facing it, beside the pole rather than behind it.
-          const sign = textPlane(text, { bg: '#0a0a0a', color: '#ef4444', size: 40, border: '#2f2f2f' });
-          sign.scale.multiplyScalar(0.6);
-          const back = POLE.rail + 0.06;
-          const side = POLE.rail * 0.5;
-          const y = 0.72;
-          const c = Math.cos(p.spot.open);
-          const sn = Math.sin(p.spot.open);
-          sign.position.set(p.spot.x - sn * back + c * side, y, p.spot.z - c * back - sn * side);
-          sign.rotation.y = p.spot.open;
-          p.sign = sign;
-          p.group.add(sign);
-        }
-      }
-    }
     colliders.push(...mine);
   };
 
   const stack: Stack = {
     group,
-    interactables,
+    interactables: [ladderIt],
     setCeilingModel: (source) => installCeilingDeck(source, ceilingMat),
     set,
     state,
-    poles: () => (state.count > 1 ? POLES : []),
-    polesGoDown: () => state.count > 1 && state.index > 0,
     onHatch: null,
     update(dt, people, eye) {
       const inHatch = (p: { x: number; z: number }) => p.x > LADDER.hatch.minX - 0.1 && p.x < LADDER.hatch.maxX && p.z > LADDER.hatch.minZ - 0.1 && p.z < LADDER.hatch.maxZ + 0.1;
@@ -593,15 +372,11 @@ export function buildStack(colliders: Collider[], planks: THREE.Material): Stack
         if (!want && h.open === 0) stack.onHatch?.(where, false);
         h.pivot.rotation.z = (h.down ? 1 : -1) * h.open * (Math.PI / 2 + 0.12);
       }
-      // From the garage or the street (or anywhere outside), the shafts, and the ladder and poles in
+      // From the garage or the street (or anywhere outside), the shafts, and the ladder in
       // them, would hang in mid-air under the building or stick up out of its roof.
       const inside = eye.x > FLOOR.minX && eye.x < FLOOR.maxX && eye.z > FLOOR.minZ && eye.z < FLOOR.maxZ && eye.y > -SLAB;
       ladderDownShaft.visible = ladderBelow.visible = inside && floorHatch.pivot.visible;
       ladderUpShaft.visible = ladderAbove.visible = inside && ceilingHatch.pivot.visible;
-      for (const p of poles) {
-        p.downShaft.visible = p.below.visible = inside && p.down.visible;
-        p.upShaft.visible = p.above.visible = inside && p.collar.visible;
-      }
     },
   };
   return stack;

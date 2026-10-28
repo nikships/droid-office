@@ -23,7 +23,6 @@ export const funThings: FunThing[] = [
   { name: 'Jukebox', note: 'put something on while they work' },
   { name: 'Weather', note: 'outside the windows, follows a real city' },
   { name: 'Merge gong', note: 'ring it when a PR lands' },
-  { name: 'Fire pole', note: 'the fast way down a floor' },
   { name: 'Lounge TV', note: 'every Droid session on one screen' },
   { name: 'Bean bags', note: 'for when all 16 desks are taken' },
   { name: 'Droid wand', note: 'send a finished worker home' },

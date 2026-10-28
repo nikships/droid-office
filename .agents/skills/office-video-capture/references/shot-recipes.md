@@ -14,7 +14,6 @@ These takes worked on the `droid-office` floor. The move files are in `office-ch
 | Terminal B-roll | `terminal-hold.setup` + `hold` | desk, then ms | 30 | Static. Run the setup alone first, then `MOVE_ARG=3000` for the hold |
 | Board pan | `board-pan` | `issues` `pulls` `actions` `ci` `computers` | 60 | ~3.9 s |
 | Elevator panel and ride | `elevator-ride` | floor id | 30 | Panel at 0.5–3.5 s. Doors open at 5–6 s |
-| Fire pole slide | `pole-slide` | | 30 | 8.6 s. Start on a floor with another floor below it |
 | Rooftop skyline pan | `roof-pan` | | 30 | ~4.5 s |
 | Wand draw and spells | `wand` | | 30 | 12.8 s. Ship-it confetti at 5–6.5 s |
 

@@ -1,6 +1,6 @@
 ---
 name: office-choreography
-description: Script smooth first-person movement in the Droid Office 3D office from JavaScript, on top of `window.office` — eased camera pans and turns, walks that steer to a point, held and tapped keys, aiming the crosshair at a card or worker, and reusable move scripts (aisle walk, board pan, terminal, elevator, fire pole, rooftop, wand). Use whenever you need to move, look or press keys in the office beyond what `goTo`/`interact` give: driving a live demo, setting up a camera move for a recording, reproducing an input bug, or testing walking, climbing or the sidearm.
+description: Script smooth first-person movement in the Droid Office 3D office from JavaScript, on top of `window.office` — eased camera pans and turns, walks that steer to a point, held and tapped keys, aiming the crosshair at a card or worker, and reusable move scripts (aisle walk, board pan, terminal, elevator, rooftop, wand). Use whenever you need to move, look or press keys in the office beyond what `goTo`/`interact` give: driving a live demo, setting up a camera move for a recording, reproducing an input bug, or testing walking, climbing or the sidearm.
 ---
 
 # Scripting movement in the office

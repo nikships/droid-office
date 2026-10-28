@@ -957,7 +957,7 @@ type ClientMessage =
   /**
    * Go to another floor; the server answers with `floor.enter`. By elevator you arrive in the car;
    * `at` is where you arrive instead: the same spot on the other floor (switching floors from the
-   * floor list), or the ladder or fire pole you came by.
+   * floor list), or the ladder you came by.
    */
   | { t: 'floor.go'; floor: string; at?: { x: number; y: number; z: number; rotY: number } }
   /** Move this floor before another in numbered order, or to the end with null. Broadcasts `floors`. */

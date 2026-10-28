@@ -7,7 +7,7 @@ import { buildStack, type Stack } from '../src/client/world/stack.js';
 import { materialFeatures } from '../src/client/shader-warmup.js';
 import { ANISOTROPY } from '../src/client/world/texture-quality.js';
 import type { Collider } from '../src/client/world/office.js';
-import { LADDER, POLES, WALL_HEIGHT } from '../src/shared/layout.js';
+import { LADDER, WALL_HEIGHT } from '../src/shared/layout.js';
 
 function sourceKit() {
   const source = new THREE.Group();
@@ -98,7 +98,15 @@ test('baked ceiling retains its material, geometry, picking, hatches and collide
     const uv = hits(2, 3)[0].uv!;
     assert.ok(Math.abs(uv.x - 2) < 1e-5 && Math.abs(uv.y - 3) < 1e-5);
     assert.equal(hits((LADDER.hatch.minX + LADDER.hatch.maxX) / 2, (LADDER.hatch.minZ + LADDER.hatch.maxZ) / 2).length > 0, index === 3);
-    for (const p of POLES) assert.equal(hits(p.x, p.z).length > 0, index === 3);
+    assert.ok(hits(6.8, 1.6).length > 0);
+    const floor = stack.group.children.find((object) => object instanceof THREE.Mesh && object.material instanceof THREE.MeshToonMaterial && !object.material.emissiveMap && object.position.y === 0);
+    assert.ok(floor);
+    assert.ok(new THREE.Raycaster(new THREE.Vector3(6.8, 1, 1.6), new THREE.Vector3(0, -1, 0)).intersectObject(floor).length > 0);
+    assert.ok(colliders.some((c) => c.minX <= 6.8 && c.maxX >= 6.8 && c.minZ <= 1.6 && c.maxZ >= 1.6 && c.top === 0));
+    assert.deepEqual(
+      stack.interactables.map((item) => item.kind),
+      ['ladder'],
+    );
   }
   const events: string[] = [];
   stack.onHatch = (where, open) => events.push(`${where}:${open}`);
