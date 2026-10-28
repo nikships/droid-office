@@ -1,6 +1,21 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { type OfficeStatus, parseStatus, type StatusWaiting, statusLines, TRAY_WAITING_MAX, type TrayItem, trayMenu, trayTitle, trayTooltip, type TrayView, WaitingWatch, waitingNotice, workerHash } from '../src/desktop/tray-model.ts';
+import {
+  type OfficeStatus,
+  parseStatus,
+  type StatusWaiting,
+  statusLines,
+  listCut,
+  TRAY_WAITING_MAX,
+  type TrayItem,
+  trayMenu,
+  trayTitle,
+  trayTooltip,
+  type TrayView,
+  WaitingWatch,
+  waitingNotice,
+  workerHash,
+} from '../src/desktop/tray-model.ts';
 import { officeStatus, STATUS_WAITING_MAX } from '../src/server/office-status.ts';
 import { linkStep, parseWorkerLink } from '../src/client/worker-link.ts';
 
@@ -157,6 +172,18 @@ test('a notification goes out only for a wait that started since the last status
   assert.deepEqual(watch.next(at([again, bob])), [], 'a restarted office starts over');
   assert.deepEqual(waitingNotice(ada, 2), { title: 'Ada needs input', body: 'Fix Login Redirect\nweb-app floor' });
   assert.deepEqual(waitingNotice(bob, 1), { title: 'Bob is done', body: '' });
+});
+
+test("a wait that drops off the server's capped list is not new when it comes back", () => {
+  const watch = new WaitingWatch();
+  const cut = { ...status, needsInput: 2, done: 0, waiting: [ada] };
+  assert.ok(listCut(cut));
+  assert.ok(!listCut(status));
+  watch.next({ ...status, waiting: [ada, bob] });
+  assert.deepEqual(watch.next({ ...status, needsInput: 1, done: 1, waiting: [ada] }), [], 'bob is cut off, not gone');
+  assert.deepEqual(watch.next({ ...status, waiting: [ada, bob] }), [], 'and back with the same wait');
+  assert.deepEqual(watch.next({ ...status, needsInput: 1, done: 0, waiting: [ada] }), []);
+  assert.deepEqual(watch.next({ ...status, waiting: [ada, bob] }), [bob], 'it really stopped waiting in between');
 });
 
 test('a worker link survives the trip to the page and takes you to its floor first', () => {

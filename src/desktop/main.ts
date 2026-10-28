@@ -18,7 +18,7 @@ import { DEFAULT_PORT, defaultOfficeDir, type DesktopSettings, isolatedPortOk, l
 import { desktopEnv } from './shell-path.js';
 import { enforceRequirements, isStartupCheck, runStartupCheck, StartupAborted } from './startup.js';
 import { OfficeTray } from './tray.js';
-import { type OfficeStatus, parseStatus, type TrayAction, trayTitle, type TrayView, WaitingWatch, waitingNotice, type WorkerLink, workerHash } from './tray-model.js';
+import { listCut, type OfficeStatus, parseStatus, type TrayAction, trayTitle, type TrayView, WaitingWatch, waitingNotice, type WorkerLink, workerHash } from './tray-model.js';
 import { Updates } from './updates.js';
 
 const BACKGROUND = '#050505';
@@ -402,11 +402,14 @@ function clearNotices() {
  */
 function noticeWaiting(status: OfficeStatus | undefined) {
   const fresh = waitingWatch.next(status);
-  const still = new Set(status?.waiting.map((w) => w.id));
-  for (const [id, n] of notices) {
-    if (still.has(id)) continue;
-    n.close();
-    notices.delete(id);
+  // A failed fetch or a cut-off list says nothing about who stopped waiting.
+  if (status && !listCut(status)) {
+    const still = new Set(status.waiting.map((w) => w.id));
+    for (const [id, n] of notices) {
+      if (still.has(id)) continue;
+      n.close();
+      notices.delete(id);
+    }
   }
   if (!status || settings.notify === false || (win && !win.base.isDestroyed()) || !Notification.isSupported()) return;
   for (const w of fresh.slice(0, NOTICES_AT_ONCE)) {
@@ -420,6 +423,12 @@ function noticeWaiting(status: OfficeStatus | undefined) {
       if (notices.get(w.id) === n) notices.delete(w.id);
     });
     notices.set(w.id, n);
+    n.show();
+  }
+  const rest = fresh.length - NOTICES_AT_ONCE;
+  if (rest > 0) {
+    const n = new Notification({ title: `${rest} more worker${rest === 1 ? '' : 's'} waiting on you`, body: '' });
+    n.on('click', () => openWindow());
     n.show();
   }
 }

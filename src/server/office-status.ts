@@ -46,7 +46,7 @@ export interface StatusFloor {
 }
 
 /** Waiting on someone, as the elevator counts it (src/server/floor.ts): a shell never is. */
-function waitingStatus(w: Pick<WorkerInfo, 'kind' | 'status' | 'acked'>): 'needs_input' | 'done' | undefined {
+export function waitingStatus(w: Pick<WorkerInfo, 'kind' | 'status' | 'acked'>): 'needs_input' | 'done' | undefined {
   if (w.kind === 'shell') return undefined;
   if (w.status === 'needs_input') return 'needs_input';
   if (w.status === 'done' && !w.acked) return 'done';

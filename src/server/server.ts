@@ -1012,7 +1012,7 @@ export async function startServer(cfg: Config) {
           res,
           200,
           officeStatus(
-            [...floors.values()].map((f) => ({ id: f.id, name: f.def.name, workers: f.workers.list() })),
+            [...floors.values()].map((f) => ({ id: f.id, name: f.def.name, workers: f.everyone() })),
             [...clients.values()].map((c) => ({ device: c.device, phone: !!c.phoneSizes })),
           ),
         );

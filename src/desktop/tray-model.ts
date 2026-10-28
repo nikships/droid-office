@@ -127,11 +127,15 @@ export function trayTitle(v: TrayView): string {
   return n ? String(n) : '';
 }
 
+function waitingLabel(w: StatusWaiting): string {
+  return `${w.name} ${w.status === 'needs_input' ? 'needs input' : 'is done'}`;
+}
+
 /** "Ada needs input", and under it the task and, in a building of several floors, the floor. */
 export function waitingItem(w: StatusWaiting, floors: number): TrayItem {
   const sublabel = [w.task, floors > 1 ? w.floorName : undefined].filter(Boolean).join(' · ');
   return {
-    label: `${w.name} ${w.status === 'needs_input' ? 'needs input' : 'is done'}`,
+    label: waitingLabel(w),
     enabled: true,
     ...(sublabel ? { sublabel } : {}),
     action: 'worker',
@@ -189,7 +193,12 @@ export function trayMenu(v: TrayView): TrayItem[] {
 
 /** The notification for a worker that started to wait: the same words as the office's own (src/client/notify.ts). */
 export function waitingNotice(w: StatusWaiting, floors: number): { title: string; body: string } {
-  return { title: `${w.name} ${w.status === 'needs_input' ? 'needs input' : 'is done'}`, body: [w.task, floors > 1 ? `${w.floorName} floor` : undefined].filter(Boolean).join('\n') };
+  return { title: waitingLabel(w), body: [w.task, floors > 1 ? `${w.floorName} floor` : undefined].filter(Boolean).join('\n') };
+}
+
+/** The status names fewer waiting workers than there are: the rest are cut off by the server's cap. */
+export function listCut(status: OfficeStatus): boolean {
+  return status.needsInput + status.done > status.waiting.length;
 }
 
 /**
@@ -203,6 +212,8 @@ export class WaitingWatch {
     if (!status) return [];
     const before = this.seen;
     this.seen = new Map(status.waiting.map((w) => [w.id, w.since]));
+    // Past the server's cap a worker can drop out of the list while still waiting; keep it so it isn't new when it returns.
+    if (before && listCut(status)) for (const [id, since] of before) if (!this.seen.has(id)) this.seen.set(id, since);
     return before ? status.waiting.filter((w) => before.get(w.id) !== w.since) : [];
   }
 

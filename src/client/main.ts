@@ -1427,6 +1427,8 @@ function tripFailed() {
   const t = trip;
   if (!t) return;
   trip = null;
+  // The link asked for a floor that never came: don't open it on some later arrival.
+  linkedWorker = undefined;
   fade(false);
   if (t.how === 'elevator') lift().setOpen(!!store.floor);
   if (t.how === 'ladder' || t.how === 'pole') climber.abort();
