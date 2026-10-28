@@ -52,7 +52,7 @@
     "*.{js,mjs,cjs,ts,mts,cts}": "biome check --write --error-on-warnings --no-errors-on-unmatched"
   },
   "engines": {
-    "node": ">=20"
+    "node": "^22.13.0 || ^24.3.0 || >=26.0.0"
   },
   "license": "MIT",
   "dependencies": {

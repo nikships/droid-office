@@ -2,6 +2,14 @@ plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.compose.compiler)
     alias(libs.plugins.kotlin.serialization)
+    id("com.facebook.react")
+}
+
+// The React Native companion: Metro bundles index.mobile.js from the repository root (root = ../..) into
+// release builds; a debug build loads it from Metro (npm run mobile:start) instead.
+react {
+    entryFile = file("../../index.mobile.js")
+    autolinkLibrariesWithApp()
 }
 
 android {
@@ -16,9 +24,12 @@ android {
         // the APK on a GitHub release carries the same number as the office it shipped with.
         versionCode = providers.gradleProperty("officeVersionCode").orNull?.toIntOrNull() ?: 1
         versionName = providers.gradleProperty("officeVersion").orNull ?: "0.1.0"
-        // ML Kit's scanner ships native code per ABI; 32-bit x86 is neither phones nor today's emulators.
+        // ML Kit and React Native ship native code per ABI (reactNativeArchitectures in gradle.properties);
+        // 32-bit x86 is neither phones nor today's emulators.
         ndk { abiFilters += setOf("arm64-v8a", "armeabi-v7a", "x86_64") }
     }
+    // React Native's prebuilt native libraries are built with this NDK.
+    ndkVersion = "27.1.12297006"
 
     // A release APK is signed with the keystore CI is given (ANDROID_KEYSTORE_FILE and friends), so
     // each new one installs over the last. Without one it falls back to this machine's debug key:
@@ -104,6 +115,10 @@ dependencies {
     implementation(libs.androidx.datastore.preferences)
     implementation(libs.androidx.webkit)
     implementation(libs.androidx.window)
+
+    // Versions come from the react-native package the React Native Gradle plugin reads.
+    implementation("com.facebook.react:react-android")
+    implementation("com.facebook.react:hermes-android")
 
     implementation(libs.kotlinx.coroutines.android)
     implementation(libs.kotlinx.serialization.json)

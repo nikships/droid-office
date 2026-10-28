@@ -1,6 +1,7 @@
 # Gradle and Kotlin caches, build output, and the SDK path Android Studio writes for this machine.
 .gradle/
 .kotlin/
+.cxx/
 build/
 local.properties
 *.iml
