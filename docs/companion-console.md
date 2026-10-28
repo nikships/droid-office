@@ -45,13 +45,13 @@ Remove companion-only map source, Android map assets and bridge, camera controls
 
 ## Acceptance
 
-- [ ] Shared roster and workspace logic, including missing leads, all worker types, filtering, pane limits and stale saved state.
+- [x] Shared roster and workspace logic, including missing leads, all worker types, filtering, pane limits and stale saved state.
 - [ ] Four live panes, independent content, safe focus/sizing and shared attachment disposal.
 - [ ] Floor navigation restores panes and drafts; disconnect clears unsent drafts across all floors and never replays actions.
 - [ ] Android React Native startup, pairing, office switching, notifications, deep links, photo upload and terminal keyboard.
 - [ ] Shared management tools open, receive responses and preserve existing action eligibility and confirmations.
-- [ ] Companion bundles contain no overhead map or three.js dependency.
-- [ ] Existing first-person terminal behavior remains intact.
+- [x] Companion bundles contain no overhead map or three.js dependency.
+- [x] Existing first-person terminal behavior remains intact.
 - [ ] Root install/build, lint, typecheck and coverage checks pass; Android unit tests, lint and release build pass.
 - [ ] Runtime checks use the owner's real-office clone and temporary local test workers. Android checks use emulators, not physical devices.
 - [ ] Open code review findings are resolved. The pull request targets the floor base in `nikships/droid-office` and remains unmerged.
