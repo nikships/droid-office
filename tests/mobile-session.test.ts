@@ -881,3 +881,119 @@ test('queue receipts read each worker’s screen once per screen event, and stil
   t.mock.timers.tick(5000);
   assert.deepEqual(session.queuedFor('w1').views, [], 'the clock still expires it');
 });
+
+/** A session whose native screen is the test's to set, with screen events it sends by hand. */
+async function screenRig(t: { after: (fn: () => void) => void }, workers = [worker('w1', { status: 'working' })]) {
+  const host = new FakeHost();
+  const golden = JSON.parse(readFileSync(new URL('../android/app/src/test/resources/droid-queue-golden.json', import.meta.url), 'utf8')) as { cases: { name: string; rows: string[] }[] };
+  const rows = golden.cases.find((c) => c.name.startsWith('two queued during a turn'))!.rows;
+  const rig = { screen: undefined as string[] | undefined, reads: 0 };
+  host.screen = (() => {
+    rig.reads++;
+    return rig.screen;
+  }) as never;
+  const screens = new Set<(id: string) => void>();
+  host.onScreen = ((h: (id: string) => void) => (screens.add(h), () => screens.delete(h))) as never;
+  const { session } = await started(host, workers);
+  t.after(() => session.dispose());
+  session.open('w1');
+  const event = (id = 'w1') => {
+    for (const h of screens) h(id);
+  };
+  return { host, session, rows, rig, event };
+}
+
+test('Droid’s queue off an old connection’s screen is not shown after a reconnect', async (t) => {
+  const { host, session, rows, rig, event } = await screenRig(t);
+  rig.screen = rows;
+  event();
+  assert.equal(session.queuedFor('w1').droid, true);
+  // Native drops its mirror with the socket and says nothing until the new one draws.
+  rig.screen = undefined;
+  host.setLink({ phase: 'offline', epoch: 1 });
+  assert.equal(session.queuedFor('w1').droid, false, 'no Droid queue, and no Clear queue, while down');
+  host.setLink({ phase: 'connected', epoch: 2, office: 'o1' });
+  host.say(welcome('a', [worker('w1', { status: 'working' }), worker('w2')]));
+  assert.equal(session.queuedFor('w1').droid, false, 'nor on the new connection before its first screen');
+  const reads = rig.reads;
+  session.tick();
+  session.tick();
+  assert.equal(rig.reads, reads, 'ticks still read no screen');
+  rig.screen = rows;
+  event();
+  assert.equal(session.queuedFor('w1').droid, true, 'the new connection’s screen is read');
+});
+
+test('Droid’s queue of a worker’s old session is not shown on its new one', async (t) => {
+  const { host, session, rows, rig, event } = await screenRig(t);
+  rig.screen = rows;
+  event();
+  assert.equal(session.queuedFor('w1').droid, true);
+  rig.screen = undefined;
+  host.say({ t: 'worker.update', worker: worker('w1', { status: 'working', sessionId: 's-new' }) });
+  assert.equal(session.queuedFor('w1').droid, false);
+});
+
+test('receipts this phone queued survive a reconnect while the cached screen does not', async (t) => {
+  const { host, session, rows, rig, event } = await screenRig(t);
+  session.draft('w1', 'Line one of a multi-line queued message\nLine two');
+  const sending = session.submit('w1', true);
+  host.requests[0].resolve({ ok: true });
+  await sending;
+  rig.screen = rows;
+  event();
+  assert.equal(session.queuedFor('w1').views[1]?.text, 'Line one of a multi-line queued message\nLine two');
+  rig.screen = undefined;
+  host.setLink({ phase: 'offline', epoch: 1 });
+  host.setLink({ phase: 'connected', epoch: 2, office: 'o1' });
+  host.say(welcome('a', [worker('w1', { status: 'working' })]));
+  const q = session.queuedFor('w1');
+  assert.equal(q.droid, false);
+  assert.deepEqual(
+    q.views.map((v) => v.text),
+    ['Line one of a multi-line queued message\nLine two'],
+    'the receipt stands in while the screen can’t be read',
+  );
+});
+
+test('a fifth worker over four pinned panes with none active says why instead of doing nothing', async (t) => {
+  const workers = ['w1', 'w2', 'w3', 'w4', 'w5'].map((id) => worker(id));
+  const { session } = await started(new FakeHost(), workers);
+  t.after(() => session.dispose());
+  session.setPhone(false);
+  for (const w of workers.slice(0, 4)) session.open(w.id, true);
+  session.focus('');
+  const nav = session.snapshot().navigation;
+  assert.equal(session.open('w5'), false);
+  assert.deepEqual(
+    session.floorWorkspace().panes.map((p) => p.workerId),
+    ['w1', 'w2', 'w3', 'w4'],
+    'every pin kept',
+  );
+  assert.equal(session.snapshot().navigation, nav, 'nothing navigates');
+  assert.match(session.snapshot().office.toasts.at(-1)?.text ?? '', /Four panes are pinned\. Close one or select a pane to replace\./);
+  session.focus('w2');
+  assert.equal(session.open('w5'), true, 'with a pane selected, it is replaced as before');
+  assert.deepEqual(
+    session.floorWorkspace().panes.map((p) => p.workerId),
+    ['w1', 'w5', 'w3', 'w4'],
+  );
+});
+
+test('a phone back on the roster opens a fifth worker over the conversation it came back from', async (t) => {
+  const workers = ['w1', 'w2', 'w3', 'w4', 'w5'].map((id) => worker(id));
+  const { session } = await started(new FakeHost(), workers);
+  t.after(() => session.dispose());
+  session.setPhone(false);
+  for (const w of workers.slice(0, 4)) session.open(w.id, true);
+  session.setPhone(true);
+  session.focus('w3');
+  session.focus('');
+  assert.equal(session.open('w5'), true);
+  assert.equal(session.floorWorkspace().active, 'w5');
+  assert.deepEqual(
+    session.floorWorkspace().panes.map((p) => p.workerId),
+    ['w1', 'w2', 'w5', 'w4'],
+    'only the pane it came back from is replaced',
+  );
+});

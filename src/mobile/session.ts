@@ -119,10 +119,12 @@ export class Session {
   /** Receipts for messages queued behind a turn, as the thread shows them; computed outside render. */
   private queued = new Map<string, { views: QueuedView[]; droid: boolean }>();
   /** What each pane's queue was last matched on: it is matched again only when one of these moved. */
-  private queueInputs = new Map<string, { entries: readonly unknown[]; session?: string; screen: number; items: readonly unknown[] }>();
+  private queueInputs = new Map<string, { entries: readonly unknown[]; scope: string; screen: number; items: readonly unknown[] }>();
   /** Grows on each native screen event for a worker; its parsed Droid queue is kept until it does. */
   private screenRevs = new Map<string, number>();
-  private screens = new Map<string, { rev: number; droid?: DroidQueued[] }>();
+  private screens = new Map<string, { rev: number; scope: string; droid?: DroidQueued[] }>();
+  /** On a phone, the conversation each floor last came back from: a worker opened from the roster takes its place. */
+  private returnedFrom = new Map<string, string>();
   /** The Hire in flight, owned by the call that started it. */
   private hiring?: object;
   readonly feeds = new FeedPool();
@@ -339,6 +341,7 @@ export class Session {
     this.inflight.clear();
     this.senders.clear();
     this.hiring = undefined;
+    this.screens.clear();
     // The office can't be asked to forget pictures now; they are dropped here and never re-sent.
     this.set({ workspace: reduceCompanionWorkspace(this.state.workspace, { type: 'disconnect' }), previews: {}, sending: {}, picking: {}, switching: undefined, floorSlow: undefined, hire: undefined });
   }
@@ -351,6 +354,8 @@ export class Session {
     // The last office's unsent pictures are forgotten there, not on the new one.
     this.orphanDropped(before);
     this.flushOrphans(before);
+    this.screens.clear();
+    this.returnedFrom.clear();
     this.inflight.clear();
     this.senders.clear();
     this.hiring = undefined;
@@ -525,9 +530,22 @@ export class Session {
     if (!own(this.state.office.workers, workerId)) return false;
     const ws = this.floorWorkspace();
     const pinned = !this.phone && pin;
-    if (pinned && !ws.panes.some((p) => p.workerId === workerId) && ws.panes.length >= MAX_COMPANION_PANES) {
+    const full = !ws.panes.some((p) => p.workerId === workerId) && ws.panes.length >= MAX_COMPANION_PANES;
+    if (pinned && full) {
       this.toast(`At most ${MAX_COMPANION_PANES} panes. Close one first.`, 'warn');
       return false;
+    }
+    // Four pins and none selected: the shared workspace keeps every pin rather than pick one to lose.
+    if (full && !ws.active) {
+      // A phone shows no panes to pick from: the conversation it last came back from is the one
+      // replaced, or the newest pane when it never had one (a layout restored from a tablet).
+      const back = this.phone ? this.returnedFrom.get(this.state.office.floor ?? '') : undefined;
+      const replace = this.phone ? (back && ws.panes.some((p) => p.workerId === back) ? back : ws.panes.at(-1)?.workerId) : undefined;
+      if (!replace) {
+        this.toast('Four panes are pinned. Close one or select a pane to replace.', 'warn');
+        return false;
+      }
+      this.dispatch({ type: 'focus', workerId: replace });
     }
     this.dispatch({ type: 'open', workerId, pin: pinned });
     this.set({ navigation: this.state.navigation + 1, tool: undefined });
@@ -558,6 +576,9 @@ export class Session {
   }
   /** `''` is the roster: on a phone that is back from the conversation; panes and drafts stay. */
   focus(workerId: string): void {
+    const floor = this.state.office.floor;
+    const active = this.floorWorkspace().active;
+    if (!workerId && active && floor) this.returnedFrom.set(floor, active);
     this.dispatch({ type: 'focus', workerId });
   }
   view(workerId: string, view: CompanionView, floor = this.state.office.floor): void {
@@ -924,7 +945,9 @@ export class Session {
   private refreshQueues(timed = false): boolean {
     const floor = this.state.office.floor;
     const next = new Map<string, { views: QueuedView[]; droid: boolean }>();
-    const inputs = new Map<string, { entries: readonly unknown[]; session?: string; screen: number; items: readonly unknown[] }>();
+    const inputs = new Map<string, { entries: readonly unknown[]; scope: string; screen: number; items: readonly unknown[] }>();
+    const link = this.state.link;
+    const up = link.phase === 'connected';
     let changed = false;
     if (floor) {
       for (const p of companionFloorWorkspace(this.state.workspace, floor).panes) {
@@ -934,21 +957,24 @@ export class Session {
         const queue = this.feeds.queue(floor, w.id);
         const entries = this.feeds.feed(w.id)?.history.entries ?? NO_ENTRIES;
         const screen = this.screenRevs.get(w.id) ?? 0;
+        // A screen belongs to one office, socket and session: one parsed under another is never shown.
+        const scope = `${this.state.offices.active ?? ''}\u0000${up ? link.epoch : 'down'}\u0000${w.sessionId ?? ''}`;
         const was = this.queueInputs.get(key);
         const prev = this.queued.get(w.id);
-        if (prev && was && was.entries === entries && was.session === w.sessionId && was.screen === screen && was.items === queue.pending && !(timed && queue.pending.length)) {
+        if (prev && was && was.entries === entries && was.scope === scope && was.screen === screen && was.items === queue.pending && !(timed && queue.pending.length)) {
           next.set(w.id, prev);
           inputs.set(key, was);
           continue;
         }
         queue.sync(w.sessionId, entries);
-        const droid = this.droidQueue(w.id, screen);
+        // Down, native has no screen worth reading; the receipts stand in for Droid's queue.
+        const droid = up ? this.droidQueue(w.id, screen, scope) : undefined;
         const view = { views: queue.shown(droid, this.now()), droid: !!droid?.length };
         const same = prev && JSON.stringify(prev) === JSON.stringify(view);
         if (!same) changed = true;
         next.set(w.id, same ? prev : view);
         // `shown` replaces the receipts array; what it left is what the next match compares against.
-        inputs.set(key, { entries, session: w.sessionId, screen, items: queue.pending });
+        inputs.set(key, { entries, scope, screen, items: queue.pending });
       }
     }
     if (next.size !== this.queued.size) changed = true;
@@ -957,13 +983,13 @@ export class Session {
     return changed;
   }
 
-  /** Droid's queue off a worker's screen, read from native once per screen event. */
-  private droidQueue(workerId: string, rev: number): DroidQueued[] | undefined {
+  /** Droid's queue off a worker's screen, read from native once per screen event and once per new scope. */
+  private droidQueue(workerId: string, rev: number, scope: string): DroidQueued[] | undefined {
     const had = this.screens.get(workerId);
-    if (had && had.rev === rev) return had.droid;
+    if (had && had.rev === rev && had.scope === scope) return had.droid;
     const rows = this.host.screen(workerId);
     const droid = rows ? readDroidQueue(rows) : undefined;
-    this.screens.set(workerId, { rev, ...(droid ? { droid } : {}) });
+    this.screens.set(workerId, { rev, scope, ...(droid ? { droid } : {}) });
     return droid;
   }
 
