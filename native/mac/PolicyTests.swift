@@ -1,0 +1,44 @@
+import Foundation
+
+@main
+enum PolicyTests {
+    static func main() throws {
+        let home = "/Users/test-owner"
+        for path in ["/", "/System", "/System/Volumes/Data/file", "/Library/a", home + "/Library/a",
+                     home + "/.Trash/a", "/Volumes/Disk/.Trashes/501/file",
+                     home + "/.droid-office/worktrees/a", "/Volumes/Disk/.MobileBackups/a",
+                     "/Volumes/.timemachine/a", "/Volumes/Backup/Backups.backupdb/a",
+                     "/Network/server/share", "/net/server/file", "relative", "/private/var/a"] {
+            precondition(!FinderPolicy.allowedPath(path, home: home), path)
+        }
+        for path in [home + "/Code/a", home + "/Library-project", "/Volumes/Work/repo"] {
+            precondition(FinderPolicy.allowedPath(path, home: home), path)
+        }
+        precondition(FinderPolicy.endpoint("http://127.0.0.1:4321/") != nil)
+        for url in ["https://127.0.0.1:4321/", "http://localhost:4321/", "http://127.0.0.1:0/",
+                    "http://127.0.0.1:65536/", "http://u:p@127.0.0.1:4321/", "http://127.0.0.1:4321/?a=b",
+                    "http://127.0.0.1:4321/#x", "http://127.0.0.1:4321/api", "http://127.0.0.1:04321/"] {
+            precondition(FinderPolicy.endpoint(url) == nil, url)
+        }
+        let record = BridgeRecord(token: String(repeating: "a", count: 64), url: "http://127.0.0.1:4321/")
+        _ = try record.validated()
+        do {
+            _ = try BridgeRecord(token: "invalid", url: record.url).validated()
+            preconditionFailure("accepted invalid token")
+        } catch {}
+        // This executable has no Keychain entitlements or profile. It must fail before any Keychain query.
+        do {
+            try FinderKeychain.requireEntitlements()
+            preconditionFailure("accepted unprovisioned executable")
+        } catch {}
+        do {
+            _ = try FinderPolicy.paths([])
+            preconditionFailure("accepted empty selection")
+        } catch {}
+        do {
+            _ = try FinderPolicy.paths(Array(repeating: URL(fileURLWithPath: "/Users/test-owner/Code"), count: 101))
+            preconditionFailure("accepted oversized selection")
+        } catch {}
+        print("Finder policy checks passed; no Keychain or Finder extension was accessed.")
+    }
+}

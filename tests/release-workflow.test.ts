@@ -193,10 +193,10 @@ function stepRuns(step: string, event = 'pull_request', ref = 'refs/pull/1/merge
 test('release versions, packages, signing, bundle smoke checks and uploads only run on main', () => {
   const releaseSteps = [
     ...jobSteps('release').filter((step) => step.includes('name: Set the release version')),
-    ...jobSteps('mac').filter((step) => !/actions\/checkout|actions\/setup-node|name: Install and build|name: Check the native Metal presenter/.test(step)),
+    ...jobSteps('mac').filter((step) => !/actions\/checkout|actions\/setup-node|name: Install and build|name: Check the native (?:Metal presenter|Finder integration)/.test(step)),
     ...jobSteps('android').filter((step) => /name: Set the release version|name: Build the release APK|actions\/upload-artifact/.test(step)),
   ];
-  assert.equal(releaseSteps.length, 12);
+  assert.equal(releaseSteps.length, 14);
   assert.doesNotMatch(workflow, /Build the app unsigned|mac\.identity=null/);
   for (const step of releaseSteps) {
     const label = step.trim().split('\n')[0];
@@ -211,7 +211,7 @@ test('release versions, packages, signing, bundle smoke checks and uploads only 
 test('PRs retain builds, native compilation, coverage, Android tests and checkout smoke checks', () => {
   for (const [job, fragments] of [
     ['release', ['name: Install and build', 'run: npm run lint', 'run: npm run typecheck', 'name: Test with coverage', 'name: Start the office from the checkout']],
-    ['mac', ['name: Install and build', 'name: Check the native Metal presenter']],
+    ['mac', ['name: Install and build', 'name: Check the native Metal presenter', 'name: Check the native Finder integration']],
     ['android', ['name: Unit tests and lint']],
     ['website', ['run: npm run build:website']],
   ] as const) {

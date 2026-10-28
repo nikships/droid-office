@@ -2347,6 +2347,23 @@ html:has(body.dashboard), body.dashboard { overflow: auto; }
 .wt-model { color: var(--text-secondary); font-size: var(--text-small); margin-top: var(--space-1); }
 .wt-scroll { flex: 1; min-height: 0; overflow: auto; overscroll-behavior: contain; padding: var(--space-7) var(--space-5); scrollbar-gutter: stable; }
 .wt-list { max-width: 760px; margin: 0 auto; display: flex; flex-direction: column; gap: var(--space-5); }
+.wt-team { flex-shrink: 0; width: calc(100% - var(--space-5) * 2); max-width: 760px; margin: var(--space-3) auto 0; border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface); }
+.wt-team[hidden] { display: none; }
+.wt-team > summary, .wt-team-member > summary { display: flex; align-items: center; gap: var(--space-2); min-height: 44px; padding: var(--space-2) var(--space-3); cursor: pointer; list-style: none; font-size: var(--text-small); }
+.wt-team summary::-webkit-details-marker { display: none; }
+.wt-team > summary:focus-visible, .wt-team-member > summary:focus-visible { outline: 1px solid var(--accent); outline-offset: var(--space-1); }
+.wt-team[open] > summary > .wt-chevron, .wt-team-member[open] > summary > .wt-chevron { transform: rotate(90deg); }
+.wt-team-body { max-height: min(320px, 35vh); overflow: auto; overscroll-behavior: contain; }
+.wt-team-member { border-top: 1px solid var(--border); }
+.wt-team-who { min-width: 0; flex: 1; display: flex; flex-direction: column; gap: var(--space-1); }
+.wt-team-name, .wt-team-latest { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.wt-team-name { font-weight: 500; }
+.wt-team-latest { color: var(--text-secondary); }
+.wt-team-content { padding: 0 var(--space-3) var(--space-3); }
+.wt-team-actions { display: flex; justify-content: flex-end; margin-bottom: var(--space-3); }
+.wt-team-entries { min-width: 0; display: flex; flex-direction: column; gap: var(--space-4); }
+.wt-team-note { margin: var(--space-3); color: var(--text-secondary); font-size: var(--text-small); line-height: 1.5; overflow-wrap: anywhere; }
+.wt-team-note[hidden] { display: none; }
 .wt-entry { min-width: 0; overflow-wrap: anywhere; position: relative; }
 .wt-entry.user { align-self: flex-end; max-width: 88%; }
 .wt-who { font: 400 var(--text-label)/1.6 var(--font-mono); color: var(--text-secondary); text-transform: uppercase; letter-spacing: .08em; margin-bottom: var(--space-1); }

@@ -17,6 +17,18 @@ files:
   # Only the compiled presenter (npm run build:native), not its sources or node-gyp's intermediates. It
   # stays a file on disk (no asar), signed with the app by electron-builder, and src/desktop loads it by path.
   - native/presenter/build/Release/presenter.node
+  - native/mac/build/DroidOfficeFinderBridge.app/**/*
+
+extraFiles:
+  - from: native/mac/build/DroidOfficeFinderSync.appex
+    to: PlugIns/DroidOfficeFinderSync.appex
+
+# Sign provisioned native bundles before Electron seals its outer app.
+afterPack: build/signFinder.mjs
+
+protocols:
+  - name: Droid Office Thread
+    schemes: [droid-office]
 
 # The office runs bin/droid-office.js, its PTY host and the workers' office-workers
 # command as files on disk with Electron's Node, and node-pty spawns its spawn-helper from disk,
@@ -38,6 +50,10 @@ mac:
   gatekeeperAssess: false
   entitlements: build/entitlements.mac.plist
   entitlementsInherit: build/entitlements.mac.plist
+  # These bundles have their own sandbox, team and Keychain entitlements, never Electron's.
+  signIgnore:
+    - 'DroidOfficeFinderBridge\.app(/|$)'
+    - 'DroidOfficeFinderSync\.appex(/|$)'
   # GitHub turns spaces in asset names into dots, which would break the names latest-mac.yml lists.
   artifactName: Droid-Office-${version}-${arch}.${ext}
   target:

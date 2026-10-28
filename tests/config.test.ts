@@ -67,6 +67,12 @@ test('the office binds everywhere by default, with loopback one flag away', (t) 
   assert.equal(load(t, '--host', '127.0.0.1').host, '127.0.0.1');
 });
 
+test('Finder integration is opt-in and uses the explicit native bridge path', (t) => {
+  assert.equal(load(t).finderBridge, undefined);
+  assert.equal(load(t, '--finder-bridge', '/Applications/Droid Office.app/Contents/MacOS/bridge').finderBridge, '/Applications/Droid Office.app/Contents/MacOS/bridge');
+  assert.throws(() => load(t, '--finder-bridge'), /needs a value/);
+});
+
 test('the office looks for checkouts in a code folder in the home folder, else the home folder itself', (t) => {
   const cfg = load(t);
   assert.equal(cfg.projectsDir, suggestedFolder(homedir()));

@@ -23,6 +23,7 @@ import { openSubscriptionsStatus } from './ui/subscriptions-status';
 import { mountWorkerThread, type WorkerThread } from './ui/worker-thread';
 import type { MapDirection } from './office-map-view';
 import type { MapFloor, OfficeMap, OfficeMapHooks } from './office-map';
+import { linkStep, parseWorkerLink } from './worker-link';
 
 const read = (key: string) => {
   try {
@@ -47,9 +48,11 @@ let credential = (() => {
   }
 })();
 let bootstrap = new URLSearchParams(location.search).get('t') ?? '';
+let workerLink = parseWorkerLink(location.hash);
+let linkTravelling = false;
 const arrivedWithLink = !!bootstrap;
 // Remove credentials before loading a card or navigating anywhere else.
-if (location.search) history.replaceState(null, '', location.pathname);
+if (location.search || workerLink) history.replaceState(null, '', location.pathname);
 const auth = () => setBrowserAuth(credential?.token ?? '', credential ? '' : bootstrap);
 auth();
 
@@ -245,11 +248,14 @@ net.onMessage((msg) => {
   if (msg.t === 'toast') {
     toast(msg.text, msg.level);
     if (switching && msg.level !== 'info') {
+      workerLink = undefined;
+      linkTravelling = false;
       switching = false;
       notice = msg.text;
       paint();
     }
   }
+  if (entering || msg.t === 'floors' || msg.t === 'worker.update') followWorkerLink();
 });
 for (const topic of ['floors', 'workers', 'whiteboard', 'project'] as const) store.on(topic, paint);
 store.on('screens', () => {
@@ -271,6 +277,35 @@ floors.addEventListener('change', () => {
 function live() {
   return authorized && net.up && fresh && !switching;
 }
+function followWorkerLink() {
+  if (!workerLink || !live()) return;
+  const step = linkStep(workerLink, { floor: store.floor, hasWorker: (id) => store.workers.has(id), hasFloor: (id) => store.floors.some((f) => f.id === id) });
+  if (step === 'go') {
+    if (linkTravelling) return;
+    linkTravelling = true;
+    switching = true;
+    if (!net.send({ t: 'floor.go', floor: workerLink.floor! })) {
+      switching = false;
+      linkTravelling = false;
+    }
+    return;
+  }
+  const link = workerLink;
+  workerLink = undefined;
+  linkTravelling = false;
+  if (step === 'gone') return toast('That worker or floor is no longer available.', 'warn');
+  if (link.view === 'thread') workerView = 'thread';
+  select(link.worker);
+  paint();
+}
+window.addEventListener('hashchange', () => {
+  const next = parseWorkerLink(location.hash);
+  if (!next) return;
+  workerLink = next;
+  linkTravelling = false;
+  history.replaceState(null, '', location.pathname);
+  followWorkerLink();
+});
 function usable(id: string, intendedFloor: string) {
   return live() && floor === intendedFloor && store.workers.has(id);
 }
@@ -983,6 +1018,12 @@ function paintWorker(w: WorkerInfo) {
         draft: read(key),
         onDraft: (text) => remember(key, text),
         send: (msg) => action(msg, w.id, intended),
+        team: () => (floor === intended ? [...store.workers.values()] : []),
+        openWorker: (id) => {
+          if (!usable(id, intended)) return;
+          workerView = 'thread';
+          select(id);
+        },
         raw: () => {
           workerView = 'terminal';
           remember('droid-office.companion-view', 'terminal');

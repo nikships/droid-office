@@ -1042,6 +1042,32 @@ export class WorkerManager {
     return err ?? { info: w.info, hired: false };
   }
 
+  /** Finder reuses the Team lead and its standard brief; never type a task into a running turn or a CLI question. */
+  dispatchLead(text: string, model?: string): { info: WorkerInfo; hired: boolean } | string {
+    const w = [...this.workers.values()].find((x) => x.info.deskId === 'station-lead');
+    if (w) {
+      if (isBusy(w.info.status) || w.launchPrompt || (w.info.lastInputAt !== undefined && Date.now() - w.info.lastInputAt < 2000)) {
+        return 'The Team lead is busy or waiting on input. Open its thread and try again when it is ready.';
+      }
+      const effectiveModel = model ?? w.info.activeModel ?? w.info.model;
+      const error = validateWorkerModel('agent', effectiveModel) ?? this.modelGate?.(effectiveModel);
+      if (error) return error;
+      if (model && model !== (w.info.activeModel ?? w.info.model)) {
+        // Model overlays apply at launch, so resume the same conversation rather than typing a CLI command.
+        const proc = w.pty;
+        w.pty = undefined;
+        proc?.kill();
+        w.info.model = model;
+        w.info.effort = undefined;
+        w.info.activeModel = undefined;
+        w.info.activeEffort = undefined;
+      }
+    }
+    const result = this.station('station-lead', 'Finder', text, model);
+    if (typeof result !== 'string') result.info.lastInputAt = Date.now();
+    return result;
+  }
+
   /** Keeps a picture pasted into a prompt that isn't sent yet; its id, or undefined when it isn't a picture or couldn't be kept. */
   stageImage(name: string, body: Buffer): string | undefined {
     return this.drops.stage(name, body);
@@ -1492,7 +1518,10 @@ export class WorkerManager {
     const pending = w.launchPrompt;
     w.launchPrompt = undefined;
     if (!pending) return;
-    if (w.pty) this.typeIn(w, pending.text);
+    if (w.pty) {
+      w.info.lastInputAt = Date.now();
+      this.typeIn(w, pending.text);
+    }
     // Saved at once, so an office restarting now doesn't type it in a second time.
     this.persist();
   }

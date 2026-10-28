@@ -5,6 +5,7 @@
 export interface WorkerLink {
   worker: string;
   floor?: string;
+  view?: 'thread';
 }
 
 const ID_MAX = 200;
@@ -15,7 +16,7 @@ export function parseWorkerLink(hash: string): WorkerLink | undefined {
   const worker = params.get('worker')?.trim();
   if (!worker || worker.length > ID_MAX) return undefined;
   const floor = params.get('floor')?.trim();
-  return { worker, ...(floor && floor.length <= ID_MAX ? { floor } : {}) };
+  return { worker, ...(floor && floor.length <= ID_MAX ? { floor } : {}), ...(params.get('view') === 'thread' ? { view: 'thread' as const } : {}) };
 }
 
 /** Where the office is now, for a link to act on. */

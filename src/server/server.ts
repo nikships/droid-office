@@ -61,6 +61,7 @@ import { WhiteboardSkill } from './whiteboard-skill.js';
 import { officePrompt } from './prompts.js';
 import { Answers } from './answers.js';
 import { WorkerThreadReader } from './worker-thread.js';
+import { FinderDispatch, handleFinder, publishFinder } from './finder.js';
 
 const MIME: Record<string, string> = {
   '.html': 'text/html; charset=utf-8',
@@ -300,6 +301,16 @@ export async function startServer(cfg: Config) {
 
   // --- Loopback-only endpoint for authenticated agent events -------------------------------
   let webhook!: Webhook;
+  let finder: FinderDispatch | undefined;
+  let finderToken: string | undefined;
+  const finderModels = async () => {
+    const catalogue = await droidModels.get();
+    const hidden = new Set(hiddenModels.state());
+    return {
+      models: catalogue.models.filter((m) => !hidden.has(m.id)).map((m) => ({ id: m.id, label: m.displayName })),
+      defaultModel: prompts.agent()?.model ?? catalogue.defaultModel,
+    };
+  };
   const hookServer = http.createServer(async (req, res) => {
     let url: URL;
     try {
@@ -307,6 +318,7 @@ export async function startServer(cfg: Config) {
     } catch {
       return send(res, 400, {});
     }
+    if (url.pathname.startsWith('/api/finder/')) return handleFinder(req, res, url.pathname, finderToken, finder, finderModels);
     if (url.pathname === '/office/workers') return officeWorkers(req, res, url);
     if (url.pathname === '/office/whiteboard') return officeWhiteboard(req, res, url);
     if (url.pathname === '/office/visits') return officeVisits(req, res, url);
@@ -2512,6 +2524,8 @@ export async function startServer(cfg: Config) {
 
   /** With `keep` (a restart), workers' terminals keep running for the next office to pick up. */
   const shutdown = (keep = false) => {
+    finder?.stop();
+    finderToken = undefined;
     clearInterval(heartbeat);
     clearInterval(resync);
     clearTimeout(floorsTimer);
@@ -2530,6 +2544,33 @@ export async function startServer(cfg: Config) {
     server.close();
     hookServer.close();
   };
+
+  if (cfg.finderBridge) {
+    finder = new FinderDispatch({
+      building,
+      dataDir: cfg.dataDir,
+      officeUrl: () => `${cfg.tls ? 'https' : 'http'}://127.0.0.1:${(server.address() as AddressInfo).port}/`,
+      models: finderModels,
+      dispatch: (def, text, model) => {
+        const floor = floors.get(def.id) ?? openFloor(def);
+        if (!floor) return 'The floor could not be opened. Check the office log.';
+        const result = floor.workers.dispatchLead(text, model);
+        if (typeof result === 'string') return result;
+        return { leadId: result.info.id, model: result.info.activeModel ?? result.info.model };
+      },
+      changed: () => {
+        // Open newly registered floors immediately so every companion and elevator sees the same registry.
+        for (const def of building.list()) if (!floors.has(def.id)) openFloor(def);
+        floorsChanged();
+      },
+    });
+    try {
+      finderToken = await publishFinder(cfg.finderBridge, `http://127.0.0.1:${hookPort}/`);
+    } catch (err) {
+      shutdown(true);
+      throw err;
+    }
+  }
 
   return {
     server,
