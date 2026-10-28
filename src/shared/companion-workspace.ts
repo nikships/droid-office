@@ -109,22 +109,31 @@ export function companionWorkspaceLayout(state: CompanionWorkspace): CompanionWo
 
 /** Storage is untrusted: restore bounded, distinct panes, never drafts or a connection epoch. */
 export function restoreCompanionWorkspace(value: unknown): CompanionWorkspace {
-  let state = createCompanionWorkspace();
-  if (!value || typeof value !== 'object' || !('floors' in value) || !value.floors || typeof value.floors !== 'object' || Array.isArray(value.floors)) return state;
-  for (const [floor, saved] of Object.entries(value.floors)) {
+  if (!value || typeof value !== 'object' || !('floors' in value) || !value.floors || typeof value.floors !== 'object' || Array.isArray(value.floors)) return createCompanionWorkspace();
+  const floors = value.floors as Record<string, unknown>;
+  const restored: [string, FloorWorkspace][] = [];
+  const validId = (id: unknown): id is string => typeof id === 'string' && id.length > 0 && id.length <= 200;
+  let scanned = 0;
+  for (const floor in floors) {
+    if (scanned++ >= 200) break;
+    if (!Object.hasOwn(floors, floor) || !validId(floor)) continue;
+    const saved = floors[floor];
     if (!saved || typeof saved !== 'object' || Array.isArray(saved) || !('panes' in saved) || !Array.isArray(saved.panes)) continue;
-    for (const pane of saved.panes) {
-      if (!pane || typeof pane !== 'object' || typeof pane.workerId !== 'string' || !pane.workerId) continue;
-      if (companionFloorWorkspace(state, floor).panes.some((p) => p.workerId === pane.workerId)) continue;
-      if (companionFloorWorkspace(state, floor).panes.length >= MAX_COMPANION_PANES) break;
-      state = reduceCompanionWorkspace(state, { type: 'open', floor, workerId: pane.workerId, pin: true });
-      if (pane.view === 'terminal') state = reduceCompanionWorkspace(state, { type: 'view', floor, workerId: pane.workerId, view: 'terminal' });
-      if (typeof pane.size === 'number') state = reduceCompanionWorkspace(state, { type: 'resize', floor, workerId: pane.workerId, size: pane.size });
+    const next = emptyFloorWorkspace();
+    // Bound invalid entries too, rather than scanning until four valid panes eventually appear.
+    for (const pane of saved.panes.slice(0, 100)) {
+      if (!pane || typeof pane !== 'object' || !validId(pane.workerId) || next.panes.some((p) => p.workerId === pane.workerId)) continue;
+      next.panes.push({
+        workerId: pane.workerId,
+        view: pane.view === 'terminal' ? 'terminal' : 'thread',
+        size: typeof pane.size === 'number' && Number.isFinite(pane.size) ? Math.min(4, Math.max(0.25, pane.size)) : 1,
+      });
+      next.active = pane.workerId;
+      if (next.panes.length === MAX_COMPANION_PANES) break;
     }
-    if ('active' in saved && typeof saved.active === 'string') state = reduceCompanionWorkspace(state, { type: 'focus', floor, workerId: saved.active });
-    if ('collapsed' in saved && Array.isArray(saved.collapsed)) {
-      for (const workerId of new Set(saved.collapsed)) if (typeof workerId === 'string') state = reduceCompanionWorkspace(state, { type: 'collapse', floor, workerId });
-    }
+    if ('active' in saved && (saved.active === '' || (validId(saved.active) && next.panes.some((p) => p.workerId === saved.active)))) next.active = saved.active;
+    if ('collapsed' in saved && Array.isArray(saved.collapsed)) next.collapsed = [...new Set(saved.collapsed.slice(0, 500).filter(validId))];
+    restored.push([floor, next]);
   }
-  return state;
+  return { floors: Object.fromEntries(restored), epoch: 0 };
 }

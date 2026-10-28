@@ -110,6 +110,41 @@ test('capabilities and duration do not infer activity timestamps', () => {
   assert.equal(companionWorkedMs(worker('a'), 160), 0);
 });
 
+test('persisted restore bounds floor count, IDs, collapsed rows and scanned invalid panes', () => {
+  const floor = { panes: [{ workerId: 'worker' }], collapsed: Array.from({ length: 501 }, (_, i) => `child-${i}`) };
+  const floors = Object.fromEntries(Array.from({ length: 201 }, (_, i) => [`floor-${i}`, floor]));
+  const state = restoreCompanionWorkspace({ floors });
+  assert.equal(Object.keys(state.floors).length, 200);
+  assert.equal(Object.hasOwn(state.floors, 'floor-200'), false);
+  assert.equal(state.floors['floor-0']?.collapsed.length, 500);
+  assert.equal(state.floors['floor-0']?.collapsed.at(-1), 'child-499');
+  const long = 'x'.repeat(201);
+  const boundary = 'x'.repeat(200);
+  const bounded = restoreCompanionWorkspace({
+    floors: {
+      [long]: floor,
+      [boundary]: { panes: [{ workerId: long }, { workerId: boundary }], collapsed: [long, boundary], active: long },
+      invalid: { panes: [...Array.from({ length: 100 }, () => null), { workerId: 'not-scanned' }] },
+    },
+  });
+  assert.equal(Object.hasOwn(bounded.floors, long), false);
+  assert.deepEqual(
+    bounded.floors[boundary]?.panes.map((p) => p.workerId),
+    [boundary],
+  );
+  assert.deepEqual(bounded.floors[boundary]?.collapsed, [boundary]);
+  assert.equal(bounded.floors[boundary]?.active, boundary);
+  assert.deepEqual(bounded.floors.invalid?.panes, []);
+  // The cap applies before accessing later values, not only after filtering or building arrays.
+  Object.defineProperty(floors, 'beyond-cap', {
+    enumerable: true,
+    get: () => {
+      throw Error('Read beyond floor bound');
+    },
+  });
+  assert.equal(Object.keys(restoreCompanionWorkspace({ floors }).floors).length, 200);
+});
+
 test('one to four distinct panes, new panes default Thread and existing panes focus without duplication', () => {
   let state = createCompanionWorkspace();
   for (const workerId of ['a', 'b', 'c', 'd', 'e']) state = reduceCompanionWorkspace(state, { type: 'open', floor: 'one', workerId, pin: true });
