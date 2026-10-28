@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { companionCapabilities, companionRoster, companionWorkedMs } from '../src/shared/companion-roster.js';
-import { companionWorkspaceLayout, createCompanionWorkspace, reduceCompanionWorkspace } from '../src/shared/companion-workspace.js';
+import { companionFloorWorkspace, companionWorkspaceLayout, createCompanionWorkspace, reduceCompanionWorkspace, restoreCompanionWorkspace } from '../src/shared/companion-workspace.js';
 import type { WorkerInfo } from '../src/shared/protocol.js';
 
 const worker = (id: string, patch: Partial<WorkerInfo> = {}): WorkerInfo => ({
@@ -58,6 +58,48 @@ test('malformed supervision cycles stay bounded and visible', () => {
     rows.map((r) => r.depth),
     [0, 0, 0],
   );
+});
+
+test('prototype-like floor IDs are ordinary isolated workspaces', () => {
+  let state = createCompanionWorkspace();
+  for (const floor of ['__proto__', 'constructor', 'toString']) {
+    assert.deepEqual(companionFloorWorkspace(state, floor).panes, []);
+    state = reduceCompanionWorkspace(state, { type: 'open', floor, workerId: floor });
+  }
+  assert.equal(Object.keys(state.floors).length, 3);
+  for (const floor of ['__proto__', 'constructor', 'toString']) assert.equal(companionFloorWorkspace(state, floor).panes[0]?.workerId, floor);
+  assert.equal(Object.getPrototypeOf(state.floors), Object.prototype);
+});
+
+test('reconciliation cannot select an unpinned worker and preserves an intentional roster view', () => {
+  let state = reduceCompanionWorkspace(createCompanionWorkspace(), { type: 'open', floor: 'one', workerId: 'pinned' });
+  state.floors.one!.active = 'unpinned';
+  state = reduceCompanionWorkspace(state, { type: 'reconcile', floor: 'one', workerIds: ['pinned', 'unpinned'] });
+  assert.equal(state.floors.one!.active, 'pinned');
+  state = reduceCompanionWorkspace(state, { type: 'focus', floor: 'one', workerId: '' });
+  state = reduceCompanionWorkspace(state, { type: 'reconcile', floor: 'one', workerIds: ['pinned'] });
+  assert.equal(state.floors.one!.active, '');
+});
+
+test('untrusted persisted layouts restore four distinct panes and no drafts, epochs or invalid active ID', () => {
+  for (const value of [null, 5, [], { floors: [] }, { floors: { a: 4 } }]) assert.deepEqual(restoreCompanionWorkspace(value), createCompanionWorkspace());
+  const saved = JSON.parse(
+    '{"epoch":9,"floors":{"__proto__":{"panes":[null,{},{"workerId":"a","view":"terminal","size":99},{"workerId":"a"},{"workerId":"b","view":"unknown","size":-1},{"workerId":"c"},{"workerId":"d"},{"workerId":"e"}],"active":"not-pinned","collapsed":["a","a",2],"drafts":{"a":{"text":"never replay","attachments":["image"]}}}}}',
+  );
+  const state = restoreCompanionWorkspace(saved);
+  const floor = companionFloorWorkspace(state, '__proto__');
+  assert.equal(state.epoch, 0);
+  assert.deepEqual(
+    floor.panes.map((p) => p.workerId),
+    ['a', 'b', 'c', 'd'],
+  );
+  assert.equal(floor.panes[0]?.view, 'terminal');
+  assert.equal(floor.panes[0]?.size, 4);
+  assert.equal(floor.panes[1]?.view, 'thread');
+  assert.equal(floor.panes[1]?.size, 0.25);
+  assert.equal(floor.active, 'd');
+  assert.deepEqual(floor.collapsed, ['a']);
+  assert.deepEqual(floor.drafts, {});
 });
 
 test('capabilities and duration do not infer activity timestamps', () => {

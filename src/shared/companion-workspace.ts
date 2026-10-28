@@ -26,6 +26,9 @@ export function emptyFloorWorkspace(): FloorWorkspace {
 export function createCompanionWorkspace(): CompanionWorkspace {
   return { floors: {}, epoch: 0 };
 }
+export function companionFloorWorkspace(state: CompanionWorkspace, floor: string): FloorWorkspace {
+  return Object.hasOwn(state.floors, floor) ? state.floors[floor]! : emptyFloorWorkspace();
+}
 export type WorkspaceAction =
   | { type: 'open'; floor: string; workerId: string; pin?: boolean }
   | { type: 'close'; floor: string; workerId: string }
@@ -40,7 +43,7 @@ export type WorkspaceAction =
 /** No sends or replay queue: this model holds only local view state and unsent drafts. */
 export function reduceCompanionWorkspace(state: CompanionWorkspace, action: WorkspaceAction): CompanionWorkspace {
   if (action.type === 'disconnect') return { epoch: state.epoch + 1, floors: Object.fromEntries(Object.entries(state.floors).map(([id, value]) => [id, { ...value, drafts: {} }])) };
-  const current = state.floors[action.floor] ?? emptyFloorWorkspace();
+  const current = companionFloorWorkspace(state, action.floor);
   let next = current;
   const id = 'workerId' in action ? action.workerId : '';
   switch (action.type) {
@@ -89,7 +92,7 @@ export function reduceCompanionWorkspace(state: CompanionWorkspace, action: Work
       next = {
         ...current,
         panes,
-        active: valid.has(current.active) ? current.active : (panes[0]?.workerId ?? ''),
+        active: !current.active || panes.some((p) => p.workerId === current.active) ? current.active : (panes[0]?.workerId ?? ''),
         collapsed: current.collapsed.filter((v) => valid.has(v)),
         drafts: Object.fromEntries(Object.entries(current.drafts).filter(([key]) => valid.has(key))),
       };
@@ -102,4 +105,26 @@ export function reduceCompanionWorkspace(state: CompanionWorkspace, action: Work
 /** Persist layouts only. Drafts and attachment handles must never survive a new connection. */
 export function companionWorkspaceLayout(state: CompanionWorkspace): CompanionWorkspace {
   return { ...state, floors: Object.fromEntries(Object.entries(state.floors).map(([id, value]) => [id, { ...value, drafts: {} }])) };
+}
+
+/** Storage is untrusted: restore bounded, distinct panes, never drafts or a connection epoch. */
+export function restoreCompanionWorkspace(value: unknown): CompanionWorkspace {
+  let state = createCompanionWorkspace();
+  if (!value || typeof value !== 'object' || !('floors' in value) || !value.floors || typeof value.floors !== 'object' || Array.isArray(value.floors)) return state;
+  for (const [floor, saved] of Object.entries(value.floors)) {
+    if (!saved || typeof saved !== 'object' || Array.isArray(saved) || !('panes' in saved) || !Array.isArray(saved.panes)) continue;
+    for (const pane of saved.panes) {
+      if (!pane || typeof pane !== 'object' || typeof pane.workerId !== 'string' || !pane.workerId) continue;
+      if (companionFloorWorkspace(state, floor).panes.some((p) => p.workerId === pane.workerId)) continue;
+      if (companionFloorWorkspace(state, floor).panes.length >= MAX_COMPANION_PANES) break;
+      state = reduceCompanionWorkspace(state, { type: 'open', floor, workerId: pane.workerId, pin: true });
+      if (pane.view === 'terminal') state = reduceCompanionWorkspace(state, { type: 'view', floor, workerId: pane.workerId, view: 'terminal' });
+      if (typeof pane.size === 'number') state = reduceCompanionWorkspace(state, { type: 'resize', floor, workerId: pane.workerId, size: pane.size });
+    }
+    if ('active' in saved && typeof saved.active === 'string') state = reduceCompanionWorkspace(state, { type: 'focus', floor, workerId: saved.active });
+    if ('collapsed' in saved && Array.isArray(saved.collapsed)) {
+      for (const workerId of new Set(saved.collapsed)) if (typeof workerId === 'string') state = reduceCompanionWorkspace(state, { type: 'collapse', floor, workerId });
+    }
+  }
+  return state;
 }
