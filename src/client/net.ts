@@ -373,17 +373,31 @@ export class Net {
       if (this.holds.has(msg.workerId)) return true;
       this.attachedIn.delete(msg.workerId);
     } else if (msg.t === 'worker.attach') {
-      if (!this.holds.has(msg.workerId)) this.rawAttached.add(msg.workerId);
+      // A view that attaches without a hold detaches itself, so holds releasing around it leave it attached.
+      this.rawAttached.add(msg.workerId);
       this.attachedIn.set(msg.workerId, this.epoch);
     } else if (msg.t === 'floor.go' && msg.floor !== this.floor) {
-      // The old floor's views go before the switch is on the wire; nothing of theirs applies after it.
-      if (!this.write(msg)) return false;
-      this.switching = true;
-      this.epoch++;
-      this.unready();
-      return true;
+      return this.leaveFloor(msg);
     }
     return this.write(msg);
+  }
+
+  /**
+   * The old floor's views go before the switch is on the wire: a transport may deliver the arrival
+   * while the send is still running, and nothing of theirs may apply after it.
+   */
+  private leaveFloor(msg: Extract<ClientMsg, { t: 'floor.go' }>): boolean {
+    const before = this.epoch;
+    this.switching = true;
+    this.epoch++;
+    this.unready();
+    if (this.write(msg)) return true;
+    // Never sent, so the connection is still on its floor; a lost socket says so itself.
+    if (!this.switching || !this.up) return false;
+    this.switching = false;
+    for (const [id, epoch] of this.attachedIn) if (epoch === before) this.attachedIn.set(id, this.epoch);
+    this.arrive();
+    return false;
   }
 
   private write(msg: ClientMsg): boolean {

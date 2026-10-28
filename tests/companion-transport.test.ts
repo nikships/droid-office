@@ -123,6 +123,18 @@ test('terminal holds are reference counted: closing one view never detaches anot
   assert.equal(thread.attached, false);
 });
 
+test('a raw attach while a hold exists survives that hold, until the raw viewer detaches', () => {
+  const { net, transport } = online();
+  const hold = net.acquireTerminal('w1');
+  assert.deepEqual(transport.take(), ['worker.attach:w1']);
+  assert.equal(net.send({ t: 'worker.attach', workerId: 'w1' }), true);
+  assert.deepEqual(transport.take(), ['worker.attach:w1'], 'the legacy viewer gets its own snapshot');
+  hold.release();
+  assert.deepEqual(transport.take(), [], 'the legacy viewer is still watching');
+  net.send({ t: 'worker.detach', workerId: 'w1' });
+  assert.deepEqual(transport.take(), ['worker.detach:w1']);
+});
+
 test('a raw attach by an unmigrated view keeps the stream after the last hold goes', () => {
   const { net, transport } = online();
   const hold = net.acquireTerminal('w1');
@@ -181,7 +193,7 @@ test('floor.go makes the connection unready before it is sent, and arrival resto
   const stamp = net.stamp();
   assert.equal(net.current(stamp), true);
   assert.equal(net.send({ t: 'floor.go', floor: 'b' }), true);
-  assert.deepEqual(order, ['ready:false:1']);
+  assert.deepEqual(order, ['ready:false:0'], 'old-floor views are told before floor.go is on the wire');
   assert.equal(net.ready, false);
   assert.equal(net.current(stamp), false, 'an upload started before the switch is stale');
   assert.equal(hold.attached, false);
@@ -193,6 +205,53 @@ test('floor.go makes the connection unready before it is sent, and arrival resto
   transport.deliver(enter('a', ['w1']));
   assert.deepEqual(transport.take(), ['worker.attach:w1'], 'back on its floor, the held worker is attached again');
   hold.release();
+});
+
+test('a transport that delivers the arrival while floor.go is being sent leaves the connection ready on the new floor', () => {
+  const { net, transport } = online();
+  const order: string[] = [];
+  net.onReady((ready) => order.push(`ready:${ready}:${transport.sent.length}`));
+  const hold = net.acquireTerminal('w1');
+  transport.take();
+  const send = transport.send.bind(transport);
+  transport.send = (msg) => {
+    const ok = send(msg);
+    if (msg.t === 'floor.go') transport.deliver(enter(msg.floor, ['w1']));
+    return ok;
+  };
+  assert.equal(net.send({ t: 'floor.go', floor: 'b' }), true);
+  assert.deepEqual(order, ['ready:false:0', 'ready:true:2'], 'unready before the send reached the transport');
+  assert.equal(net.ready, true);
+  assert.equal(net.floor, 'b');
+  assert.equal(hold.attached, true);
+  assert.deepEqual(transport.take(), ['floor.go', 'worker.attach:w1']);
+});
+
+test('a floor.go the transport refuses leaves the connection ready where it was, without re-attaching', () => {
+  const { net, transport } = online();
+  const hold = net.acquireTerminal('w1');
+  transport.take();
+  const order: boolean[] = [];
+  net.onReady((ready) => order.push(ready));
+  const stamp = net.stamp();
+  transport.send = () => false;
+  assert.equal(net.send({ t: 'floor.go', floor: 'b' }), false);
+  assert.deepEqual(order, [false, true]);
+  assert.equal(net.ready, true);
+  assert.equal(net.floor, 'a');
+  assert.equal(net.current(stamp), false, 'views disposed for the attempt start a new epoch');
+  assert.equal(hold.attached, true, 'the server never left the floor, so the attachment still stands');
+  assert.deepEqual(transport.take(), []);
+});
+
+test('a floor.go to a socket that is already down sends nothing and changes nothing', () => {
+  const { net, transport } = online();
+  transport.status(false);
+  const order: boolean[] = [];
+  net.onReady((ready) => order.push(ready));
+  assert.equal(net.send({ t: 'floor.go', floor: 'b' }), false);
+  assert.deepEqual(order, []);
+  assert.equal(net.ready, false);
 });
 
 test('floor.go to the current floor is sent without leaving ready, and a refused switch comes back ready', () => {
