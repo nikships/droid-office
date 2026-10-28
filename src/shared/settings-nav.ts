@@ -13,8 +13,8 @@ export const SETTINGS_PANES: { id: SettingsPane; icon: string; label: string; se
     icon: '🔔',
     label: 'Notifications',
     section: 'Personal',
-    scope: 'You · everyone',
-    blurb: 'Hear about a worker that needs someone, or finished, while you are somewhere else: in this browser, or in the office’s channel for everyone.',
+    scope: 'Just you',
+    blurb: 'Get desktop notifications when a worker needs input or finishes while you are in another tab or app.',
   },
   {
     id: 'workers',
@@ -79,7 +79,6 @@ export const SETTINGS_CARDS = [
   { pane: 'graphics', title: 'Overhead lights', keywords: 'lights brightness ceiling lamps lighting dark' },
   { pane: 'graphics', title: 'Performance overlay', keywords: 'fps gpu frame pacing stats overlay diagnostics performance' },
   { pane: 'notify', title: 'Desktop notifications', keywords: 'browser notifications permission alert desktop' },
-  { pane: 'notify', title: 'Channel notifications (Slack / Discord)', keywords: 'slack discord webhook channel notifications team' },
   { pane: 'workers', title: 'Droid', keywords: 'droid version update sign in install agent account factory' },
   { pane: 'workers', title: 'Default worker', keywords: 'default worker model effort agent new hire board agents' },
   { pane: 'workers', title: 'Models shown in pickers', keywords: 'models hide hidden pickers visibility list' },

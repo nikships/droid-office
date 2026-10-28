@@ -23,7 +23,6 @@ import { officeStatus } from './office-status.js';
 import { PhoneSizes } from './phone-sizes.js';
 import { UPLOAD_MAX_BYTES } from '../shared/decor.js';
 import { ImageProxy } from './decor.js';
-import { Webhook } from './webhook.js';
 import { JiraOffice } from './jira.js';
 import { mountFactory, sendDownload } from './factory/index.js';
 import { mountSetup } from './setup/index.js';
@@ -228,8 +227,6 @@ export async function startServer(cfg: Config) {
   const workerThreads = new WorkerThreadReader();
   /** The office Mac's trackpad taps for a charging shot; a silent no-op off macOS (see haptics.ts). */
   const trackpadHaptics = new TrackpadHaptics();
-  /** What the office is called where it has no project of its own to go by (webhooks). */
-  const officeName = cfg.project ? path.basename(cfg.project) : 'the office';
   /** The droid every floor runs, by absolute path; null until it's installed (Setup sets it then). */
   let agentPath = resolveAgent(cfg.agentCmd);
   // Droid lists its own models (built-in and custom); its settings file is the fallback.
@@ -300,7 +297,6 @@ export async function startServer(cfg: Config) {
   const answers = new Answers();
 
   // --- Loopback-only endpoint for authenticated agent events -------------------------------
-  let webhook!: Webhook;
   let finder: FinderDispatch | undefined;
   let finderToken: string | undefined;
   const finderModels = async () => finderCatalogue(await droidModels.get(), hiddenModels.state(), prompts.agent()?.model);
@@ -456,17 +452,6 @@ export async function startServer(cfg: Config) {
       })
     : undefined;
 
-  // Slack / Discord pings for workers that need input or finish (set from ⚙️ Settings or --webhook).
-  webhook = new Webhook(
-    cfg.dataDir,
-    (workerId) => (workerId && (workerFloor(workerId) ?? guestFloor(workerId))?.def.name) || officeName,
-    (state) => broadcast({ t: 'notify', state }),
-  );
-  if (cfg.webhook !== undefined) {
-    const err = webhook.set(cfg.webhook, 'the command line');
-    if (err) console.error(`droid-office: --webhook: ${err}`);
-  }
-
   // The office's one Jira Cloud account, which every floor's epic board reads through (⚙️ Settings).
   const jira = new JiraOffice(cfg.dataDir);
   // The office's Factory API key and every Factory feature read with it (⚙️ Settings → Connections, docs/factory.md).
@@ -557,8 +542,6 @@ export async function startServer(cfg: Config) {
     },
     workerChanged: (_floor, w) => {
       answers.changed(typeof w === 'string' ? w : w.id, typeof w === 'string' ? undefined : w.status);
-      if (typeof w === 'string') webhook.onWorkerGone(w);
-      else webhook.onWorker(w);
       machine.workersChanged();
       floorsChanged();
     },
@@ -1351,7 +1334,6 @@ export async function startServer(cfg: Config) {
       projectsDir: building.projectsDirState(),
       version: upgrader.version,
       upgrade: upgrader.state,
-      notify: webhook.state(),
       machine: machine.state(),
       sky: sky.state,
       jukebox: jukebox.state(),
@@ -2177,16 +2159,6 @@ export async function startServer(cfg: Config) {
         });
         break;
       }
-      case 'notify.webhook': {
-        const url = str(msg.url, 4096).trim();
-        const err = webhook.set(url, who);
-        warn(c, err);
-        if (!err) toastAll(url ? `📣 ${who} set up channel notifications` : `${who} turned off channel notifications`);
-        break;
-      }
-      case 'notify.test':
-        void webhook.test(who).then((err) => sendTo(c, { t: 'toast', text: err ?? '📣 Sent a test message', level: err ? 'warn' : 'info' }));
-        break;
       case 'leaveOnMerge.set': {
         const on = msg.on === true;
         if (on === leaveOnMerge.on) break;
@@ -2525,7 +2497,6 @@ export async function startServer(cfg: Config) {
     upgrader.stop();
     void hotReload.stop().catch((err) => console.error('droid-office: source reload cleanup:', err));
     guestScanner.stop();
-    webhook.stop();
     machine.stop();
     sky.stop();
     factory.stop();
