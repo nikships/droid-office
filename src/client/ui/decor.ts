@@ -219,7 +219,7 @@ export function openHangDialog(opts: { initial?: Decoration; size?: number; onDo
     await show(my, checked.url, host ? `From ${host}` : 'From the web');
   };
 
-  const useFile = async (file: File) => {
+  const applyFile = async (file: File) => {
     clearTimeout(timer);
     submitWhenLoaded = false;
     urlIn.value = '';
@@ -245,7 +245,7 @@ export function openHangDialog(opts: { initial?: Decoration; size?: number; onDo
     const file = fileIn.files?.[0];
     // Cleared so choosing the same file again still counts as a change.
     fileIn.value = '';
-    if (file) void useFile(file);
+    if (file) void applyFile(file);
   });
 
   let timer = 0;
@@ -273,7 +273,7 @@ export function openHangDialog(opts: { initial?: Decoration; size?: number; onDo
     if (!files?.length) return;
     e.preventDefault();
     const file = pictureFile(e.clipboardData);
-    if (file) void useFile(file);
+    if (file) void applyFile(file);
     else setStatus(notPicture(files[0]), 'error');
   });
 
@@ -304,7 +304,7 @@ export function openHangDialog(opts: { initial?: Decoration; size?: number; onDo
     const files = e.dataTransfer?.files;
     if (files?.length) {
       const file = pictureFile(e.dataTransfer);
-      if (file) void useFile(file);
+      if (file) void applyFile(file);
       else setStatus(notPicture(files[0]), 'error');
       return;
     }

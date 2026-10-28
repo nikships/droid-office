@@ -163,7 +163,7 @@ const pending: Pending[] = [];
  * references to these groups - `main.ts` turns `desk.chair` to face the desk - so the node has
  * to keep its identity, transform, and children order.
  */
-export function useProp(node: THREE.Object3D, name: string): boolean {
+export function applyProp(node: THREE.Object3D, name: string): boolean {
   const entry = cache.get(name);
   if (!entry) {
     pending.push({ node, name });

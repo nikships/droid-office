@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import { ANISOTROPY } from './texture-quality';
 import { FLAG_BOLD, FLAG_DIM, FLAG_INVERSE, RGB_FLAG, type Run } from '../../shared/protocol';
 import { mesh, roundedBox, toon } from './toon';
-import { propReady, useProp } from './props';
+import { propReady, applyProp } from './props';
 import { fontRevision, TERM_FONT } from '../fonts';
 import { glyphFlat } from './glyph3d';
 import { SCREEN_BLACK, screenMaterial } from './screen';
@@ -322,11 +322,11 @@ export class Laptop {
    */
   private maybeSwap() {
     if (!this.baseSwapped && propReady('macbook-base')) {
-      this.baseSwapped = useProp(this.baseModel, 'macbook-base');
+      this.baseSwapped = applyProp(this.baseModel, 'macbook-base');
       if (this.baseSwapped) retone(this.baseModel);
     }
     if (this.lidSwapped || !propReady('macbook-lid')) return;
-    if (useProp(this.lidModel, 'macbook-lid')) {
+    if (applyProp(this.lidModel, 'macbook-lid')) {
       this.lidSwapped = true;
       retone(this.lidModel);
       this.lidModel.add(pinwheelDecal());
