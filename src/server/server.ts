@@ -61,7 +61,7 @@ import { WhiteboardSkill } from './whiteboard-skill.js';
 import { officePrompt } from './prompts.js';
 import { Answers } from './answers.js';
 import { WorkerThreadReader } from './worker-thread.js';
-import { FinderDispatch, handleFinder, publishFinder } from './finder.js';
+import { FinderDispatch, finderCatalogue, handleFinder, publishFinder } from './finder.js';
 
 const MIME: Record<string, string> = {
   '.html': 'text/html; charset=utf-8',
@@ -303,14 +303,7 @@ export async function startServer(cfg: Config) {
   let webhook!: Webhook;
   let finder: FinderDispatch | undefined;
   let finderToken: string | undefined;
-  const finderModels = async () => {
-    const catalogue = await droidModels.get();
-    const hidden = new Set(hiddenModels.state());
-    return {
-      models: catalogue.models.filter((m) => !hidden.has(m.id)).map((m) => ({ id: m.id, label: m.displayName })),
-      defaultModel: prompts.agent()?.model ?? catalogue.defaultModel,
-    };
-  };
+  const finderModels = async () => finderCatalogue(await droidModels.get(), hiddenModels.state(), prompts.agent()?.model);
   const hookServer = http.createServer(async (req, res) => {
     let url: URL;
     try {

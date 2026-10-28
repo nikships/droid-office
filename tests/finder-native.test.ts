@@ -6,7 +6,11 @@ import path from 'node:path';
 import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 import signFinder, { validateFinderProfile } from '../build/signFinder.mjs';
+import { pickerModel } from '../src/client/ui/models.js';
+import { MODEL_BRANDS, modelBrand } from '../src/client/ui/model-brand.js';
+import { multiplierLabel, sectionsFor } from '../src/client/ui/model-search.js';
 import { companionNavigation, finderBridgeArgs, parseThreadLink, threadDashboardUrl } from '../src/desktop/finder-links.js';
+import { finderCatalogue } from '../src/server/finder.js';
 
 const root = fileURLToPath(new URL('../', import.meta.url));
 
@@ -161,4 +165,60 @@ test('Swift policy checks compile and execute without Keychain or extension acti
   const decoded = execFileSync('/usr/bin/plutil', ['-convert', 'json', '-o', '-', '-'], { input: xml, encoding: 'utf8' });
   assert.equal(JSON.parse(decoded)['office.test-marker'], true);
   assert.match(execFileSync(output, ['--signing-info', signed], { encoding: 'utf8', timeout: 10_000 }), /exposes entitlements without requirement flags/);
+});
+
+// Entries from the owner's Droid catalogue (GET /api/agents/droid/models), one or more per section, trimmed.
+const CATALOGUE = [
+  { id: 'custom:openrouter:kimi-k3.1-pro', displayName: 'OpenRouter: Kimi K3.1 Pro', custom: true as const, provider: 'anthropic' },
+  { id: 'custom:droidproxy:gpt-6-astra', displayName: 'DroidProxy: GPT 6 Astra', custom: true as const, provider: 'openai' },
+  { id: 'custom:droidproxy:gpt-6.1-sol', displayName: 'DroidProxy: GPT 6.1 Sol', custom: true as const, provider: 'openai' },
+  { id: 'custom:droidproxy:ag-c55o-high', displayName: 'DroidProxy: Antigravity: Claude Opus 5.5 (High)', custom: true as const, provider: 'openai' },
+  { id: 'custom:droidproxy:fable-5', displayName: 'custom:droidproxy:fable-5' },
+  { id: 'custom:meta:muse-spark-1.3', displayName: 'custom:meta:muse-spark-1.3' },
+  { id: 'auto', displayName: 'Auto Model', provider: 'factory', tokenMultiplier: 1 },
+  { id: 'claude-fable-5.1', displayName: 'Fable 5.1', provider: 'anthropic', tokenMultiplier: 4 },
+  { id: 'gpt-6.1-sol', displayName: 'GPT-6.1 Sol', provider: 'openai', tokenMultiplier: 0.8 },
+  { id: 'gemini-4-argon', displayName: 'Gemini 4 Argon', provider: 'google', tokenMultiplier: 0.8 },
+  { id: 'inkling', displayName: 'Inkling', provider: 'factory', tokenMultiplier: 0.4 },
+  { id: 'grok-4.7', displayName: 'Grok 4.7', provider: 'xai', tokenMultiplier: 0.8 },
+  { id: 'deepseek-v4-flash-0731', displayName: 'DeepSeek V4 Flash 0731 [Deprecated]', legacy: true as const, provider: 'factory', tokenMultiplier: 0.176 },
+  { id: 'deepseek-v4-pro', displayName: 'DeepSeek V4 Pro [Deprecated]', legacy: true as const, provider: 'factory', tokenMultiplier: 0.528 },
+];
+
+test('the native model picker names, groups, brands, searches and prices models as the office picker does', { skip: process.platform !== 'darwin' }, (t) => {
+  const dir = mkdtempSync(path.join(os.tmpdir(), 'finder-models-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const output = path.join(dir, 'policy-tests');
+  execFileSync('xcrun', ['swiftc', '-swift-version', '5', '-parse-as-library', path.join(root, 'native/mac/FinderCore.swift'), path.join(root, 'native/mac/PolicyTests.swift'), '-o', output], { timeout: 60_000 });
+  const identities = [
+    ...CATALOGUE.map((m) => ({ id: m.id, name: m.displayName, provider: m.provider })),
+    ...['claude-opus-5-5', 'OPUS 5.5', 'gpt-5-codex', 'Antigravity: Gemini', 'deep-seek', 'Qwen3-Coder', 'chatglm', 'Codestral', 'Llama4', 'command-r-plus', 'Nemotron', 'Sonar Pro', 'gpt_6', 'o4-mini', 'megptastic'].map((name) => ({
+      name,
+    })),
+    { provider: 'Z.ai' },
+    { provider: 'DroidProxy' },
+    { id: 'custom:zen:space-bunny-free', name: 'Space Alpha Bunny', provider: 'generic-chat-completion-api' },
+  ];
+  const queries = ['', 'opus', 'gpt sol', 'gpt61sol', 'yours', 'deepseek', 'nothing at all'];
+  const multipliers = [0.176, 4, 1.6, 0.06, 0.528, 1];
+  const input = { models: finderCatalogue({ models: CATALOGUE }, []).models, identities, queries, multipliers };
+  const answer = JSON.parse(execFileSync(output, ['--models'], { input: JSON.stringify(input), encoding: 'utf8', timeout: 10_000 }));
+  assert.deepEqual(answer.marks, Object.fromEntries(Object.entries(MODEL_BRANDS).map(([brand, m]) => [brand, { mono: 'mono' in m && m.mono, tile: 'tile' in m && m.tile }])));
+  assert.deepEqual(
+    answer.brands,
+    identities.map((i) => modelBrand(i) ?? null),
+  );
+  const picked = CATALOGUE.map(pickerModel);
+  assert.deepEqual(
+    answer.entries,
+    picked.map((m) => ({ id: m.id, name: m.name, group: m.group, cost: m.cost ?? null, brand: modelBrand(m) ?? null })),
+  );
+  assert.deepEqual(
+    answer.sections,
+    queries.map((query) => sectionsFor(picked, { query, scope: '', recents: [] }).map((s) => ({ label: s.label, ids: s.models.map((m) => m.id) }))),
+  );
+  assert.deepEqual(answer.multipliers, multipliers.map(multiplierLabel));
+  const build = readFileSync(path.join(root, 'native/mac/build.mjs'), 'utf8');
+  // The marks are the Android app's PNGs, which tests/model-brand.test.ts keeps in step with the web SVGs.
+  assert.match(build, /android\/app\/src\/main\/assets\/model-icons/);
 });

@@ -16,9 +16,9 @@ enum Bridge {
                 // The request is delivered over XPC on the main run loop. Exiting at once drops it and System Settings never opens.
                 RunLoop.main.run(until: Date().addingTimeInterval(2))
             } else if args.count == 1 || args.dropFirst().allSatisfy({ $0.hasPrefix("-psn_") }) {
-                run(PromptApplication(initial: []))
+                run(initial: [])
             } else if (3...101).contains(args.count), args[1] == "--dispatch", args.dropFirst(2).allSatisfy({ $0.hasPrefix("/") }) {
-                run(PromptApplication(initial: args.dropFirst(2).map { URL(fileURLWithPath: $0) }))
+                run(initial: args.dropFirst(2).map { URL(fileURLWithPath: $0) })
             } else {
                 throw FinderFailure.message("Expected --publish <loopback URL>, --settings or --dispatch <absolute paths>.")
             }
@@ -28,8 +28,9 @@ enum Bridge {
             exit(1)
         }
     }
-    @MainActor private static func run(_ delegate: PromptApplication) {
+    @MainActor private static func run(initial: [URL]) {
         let application = NSApplication.shared
+        let delegate = PromptApplication(initial: initial)
         application.delegate = delegate
         withExtendedLifetime(delegate) { application.run() }
     }
@@ -68,9 +69,18 @@ final class PromptApplication: NSObject, NSApplicationDelegate {
     }
     private func show(_ urls: [URL], in application: NSApplication) {
         let model = DispatchPrompt(urls: urls)
-        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 570, height: 540),
-                              styleMask: [.titled, .closable, .resizable], backing: .buffered, defer: false)
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 560, height: 520),
+                              styleMask: [.titled, .closable, .resizable, .fullSizeContentView], backing: .buffered, defer: false)
         window.title = "Dispatch to Office"
+        // The view draws its own header band under a transparent title bar, in Factory's dark product surface.
+        window.titlebarAppearsTransparent = true
+        window.titleVisibility = .hidden
+        window.appearance = NSAppearance(named: .darkAqua)
+        window.backgroundColor = NSColor(srgbRed: 2 / 255, green: 2 / 255, blue: 2 / 255, alpha: 1)
+        window.isMovableByWindowBackground = true
+        window.minSize = NSSize(width: 520, height: 480)
+        window.standardWindowButton(.miniaturizeButton)?.isHidden = true
+        window.standardWindowButton(.zoomButton)?.isHidden = true
         window.isReleasedWhenClosed = false
         window.contentView = NSHostingView(rootView: DispatchView(model: model, close: { [weak window] in window?.close() }))
         windows.removeAll { !$0.isVisible }

@@ -20,6 +20,8 @@ test('CI checks only the affected platforms and builds every client change into 
   assert.deepEqual(checksFor(['android/app/src/main/java/ai/factory/droidoffice/core/AppUpdate.kt']), { ...none, android: true });
   assert.deepEqual(checksFor(['android/gradle/libs.versions.toml']), { ...none, android: true });
   assert.deepEqual(checksFor(['android/app/src/main/assets/terminal/input.js']), { ...none, node: true, android: true });
+  // The Mac Finder prompt bundles the Android model marks.
+  assert.deepEqual(checksFor(['android/app/src/main/assets/model-icons/gemini.png']), { ...none, node: true, mac: true, android: true });
   assert.deepEqual(checksFor(['website/src/App.tsx']), { ...none, website: true });
   assert.deepEqual(checksFor(['firebase.json', '.firebaserc']), { ...none, website: true });
   assert.deepEqual(checksFor(['tests/desktop.test.ts']), { ...none, node: true });

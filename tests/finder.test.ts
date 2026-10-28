@@ -6,7 +6,7 @@ import path from 'node:path';
 import test from 'node:test';
 import { Building } from '../src/server/building.js';
 import { startServer } from '../src/server/server.js';
-import { FinderDispatch, finderAuthorized, finderPathAllowed, finderTargets, handleFinder, publishFinder } from '../src/server/finder.js';
+import { FinderDispatch, finderAuthorized, finderCatalogue, finderPathAllowed, finderTargets, handleFinder, publishFinder } from '../src/server/finder.js';
 
 function fixture(t: { after(fn: () => void): void }) {
   const root = realpathSync(mkdtempSync(path.join(tmpdir(), 'office-finder-')));
@@ -313,4 +313,33 @@ test('the office mounts Finder exclusively on its IPv4 loopback listener and sha
   const resolved = await response.json();
   assert.equal(resolved.groups[0].floorId, f.homeDef.id);
   assert.equal(office.floors().length, 1);
+});
+
+test('Finder lists only the models Settings shows, with the brand, section and cost the picker draws', () => {
+  // Entries from the owner's Droid catalogue (GET /api/agents/droid/models), trimmed.
+  const catalogue = {
+    models: [
+      { id: 'custom:droidproxy:gpt-6-astra', displayName: 'DroidProxy: GPT 6 Astra', custom: true as const, defaultReasoningEffort: 'medium' as const, provider: 'openai' },
+      { id: 'claude-fable-5.1', displayName: 'Fable 5.1', defaultReasoningEffort: 'high' as const, provider: 'anthropic', tokenMultiplier: 4 },
+      { id: 'auto', displayName: 'Auto Model', supportedReasoningEfforts: [], provider: 'factory', tokenMultiplier: 1 },
+      { id: 'deepseek-v4-flash-0731', displayName: 'DeepSeek V4 Flash 0731 [Deprecated]', legacy: true as const, provider: 'factory', tokenMultiplier: 0.176, noImages: true as const },
+    ],
+    defaultModel: 'claude-sonnet-5-5',
+  };
+  assert.deepEqual(finderCatalogue(catalogue, ['auto']), {
+    models: [
+      { id: 'custom:droidproxy:gpt-6-astra', label: 'DroidProxy: GPT 6 Astra', provider: 'openai', custom: true },
+      { id: 'claude-fable-5.1', label: 'Fable 5.1', provider: 'anthropic', cost: 4 },
+      { id: 'deepseek-v4-flash-0731', label: 'DeepSeek V4 Flash 0731 [Deprecated]', provider: 'factory', cost: 0.176, legacy: true },
+    ],
+    defaultModel: 'claude-sonnet-5-5',
+  });
+  assert.equal(finderCatalogue(catalogue, [], 'claude-fable-5.1').defaultModel, 'claude-fable-5.1');
+  assert.deepEqual(
+    finderCatalogue(
+      catalogue,
+      catalogue.models.map((m) => m.id),
+    ).models,
+    [],
+  );
 });
