@@ -130,6 +130,8 @@ test('packaging embeds FinderSync outside Resources and preserves native entitle
   assert.match(source, /retryDuplicate: false/);
   const bridge = readFileSync(path.join(root, 'native/mac/Bridge.swift'), 'utf8');
   assert.match(bridge, /showExtensionManagementInterface\(\)\s*\n[^\n]*\n\s*RunLoop\.main\.run\(until:/);
+  const build = readFileSync(path.join(root, 'native/mac/build.mjs'), 'utf8');
+  assert.match(build, /CFBundleDocumentTypes[\s\S]*LSHandlerRank<\/key><string>None[\s\S]*public\.item<\/string><string>public\.folder/);
   const menu = readFileSync(path.join(root, 'native/mac/FinderSync.swift'), 'utf8');
   assert.doesNotMatch(menu, /representedObject|currentItem|isEnabled = false/);
   assert.match(menu, /sender\.tag == 1/);

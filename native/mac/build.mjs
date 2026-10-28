@@ -15,7 +15,8 @@ function bundle(name, suffix, id, extension) {
   mkdirSync(path.join(contents, 'MacOS'), { recursive: true });
   const extra = extension
     ? '<key>NSExtension</key><dict><key>NSExtensionPointIdentifier</key><string>com.apple.FinderSync</string><key>NSExtensionPrincipalClass</key><string>FinderSync</string><key>NSExtensionAttributes</key><dict/></dict>'
-    : '<key>LSUIElement</key><true/>';
+    : // A sandboxed caller (the Finder extension) can only open files with an app that claims their type. LSHandlerRank None keeps the helper out of Open With and default-app choices.
+      '<key>LSUIElement</key><true/><key>CFBundleDocumentTypes</key><array><dict><key>CFBundleTypeName</key><string>Finder selection</string><key>CFBundleTypeRole</key><string>Viewer</string><key>LSHandlerRank</key><string>None</string><key>LSItemContentTypes</key><array><string>public.item</string><string>public.folder</string></array></dict></array>';
   writeFileSync(
     path.join(contents, 'Info.plist'),
     `<?xml version="1.0" encoding="UTF-8"?>
