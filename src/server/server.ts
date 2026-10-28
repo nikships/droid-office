@@ -2042,9 +2042,16 @@ export async function startServer(cfg: Config) {
         });
         break;
       }
-      case 'term.input':
-        if (c.attached.has(msg.workerId)) workerFloor(msg.workerId)?.workers.write(msg.workerId, str(msg.data, 64 * 1024));
+      case 'term.input': {
+        const f = c.attached.has(msg.workerId) ? workerFloor(msg.workerId) : undefined;
+        if (!f) {
+          done('Open this worker first. Nothing was typed.');
+          break;
+        }
+        f.workers.write(msg.workerId, str(msg.data, 64 * 1024));
+        done();
         break;
+      }
       case 'term.resize': {
         const w = c.attached.has(msg.workerId) ? worker(msg.workerId) : undefined;
         if (!w) break;

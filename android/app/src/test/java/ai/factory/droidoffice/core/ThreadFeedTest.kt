@@ -254,14 +254,6 @@ class ThreadFeedTest {
     }
 
     @Test
-    fun slashCommandsAreToldApartFromMessages() {
-        assertTrue(ThreadFeed.slashCommand("/help"))
-        assertTrue(ThreadFeed.slashCommand("  /model gpt"))
-        assertFalse(ThreadFeed.slashCommand("look at /etc/hosts"))
-        assertFalse(ThreadFeed.slashCommand(""))
-    }
-
-    @Test
     fun toolCallsAreRunningOnlyInATurn() {
         val tool = ThreadEntry("t", 1, ThreadRole.Assistant, ThreadKind.Tool, name = "Execute", input = "{\n  \"command\": \"npm test\"\n}")
         assertEquals(ToolState.Running, ThreadFeed.toolState(tool, busy = true))

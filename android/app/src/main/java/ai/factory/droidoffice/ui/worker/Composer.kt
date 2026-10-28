@@ -26,6 +26,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -79,6 +80,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import ai.factory.droidoffice.core.ClientMsg
+import ai.factory.droidoffice.core.SlashCommands
 import ai.factory.droidoffice.core.Tags
 import ai.factory.droidoffice.core.ThreadQueue
 import ai.factory.droidoffice.core.WorkerInfo
@@ -114,8 +116,8 @@ fun Composer(
     thread: Boolean = false,
     queueState: ThreadQueue? = null,
     onQueued: () -> Unit = {},
-    /** After the office took a message from here, queued or not. */
-    onSent: () -> Unit = {},
+    /** After the office took a message from here, queued or not, with what was sent. */
+    onSent: (String) -> Unit = {},
     connected: Boolean = true,
     onStop: (() -> Unit)? = null,
 ) {
@@ -125,9 +127,9 @@ fun Composer(
     val haptics = LocalHapticFeedback.current
     val scope = rememberCoroutineScope()
     var text by rememberSaveable(w.id) { mutableStateOf(draft.orEmpty()) }
-    // Queue after this turn, as the web's toggle: Send then hands the message to Droid's queue (Ctrl+Enter).
-    val queueable = !w.isShell && !w.isCloud
-    var queueOn by rememberSaveable(w.id) { mutableStateOf(false) }
+    // While Droid is on a turn, Send steers it (Enter) and Queue holds the message for after the turn
+    // (Ctrl+Enter), as Droid's own input box offers both.
+    val queueable = !w.isShell && !w.isCloud && w.state.busy
     val images = remember(w.id) { mutableStateListOf<Attachment>() }
     val uploading = images.any { it.id == null }
     // With the keyboard up the conversation keeps most of the room: the field shows three lines and scrolls the rest.
@@ -163,8 +165,7 @@ fun Composer(
         }
     }
 
-    fun send() {
-        val queue = queueable && queueOn
+    fun send(queue: Boolean) {
         val prompt = text.trim()
         if ((prompt.isEmpty() && images.isEmpty()) || uploading) return
         // The draft and pictures stay as they are for whatever took the prompt instead.
@@ -177,14 +178,13 @@ fun Composer(
         // Without a loaded history fence, no old matching message can prove delivery of this send.
         val after = queueState?.sequence?.takeIf { it >= 0 } ?: Long.MAX_VALUE
         if (graph.connection.send(ClientMsg.prompt(w.id, prompt, ids, queue))) {
-            if (queue && w.state.busy && queueState != null) {
+            if (queue && queueState != null) {
                 queueState.sent(prompt, ids.isNotEmpty(), after)
                 onQueued()
             }
             text = ""
             images.clear()
-            queueOn = false
-            onSent()
+            onSent(prompt)
         } else scope.launch { snackbar.showSnackbar("Couldn't reach the office. Nothing was sent; your message is still here.") }
     }
 
@@ -194,7 +194,16 @@ fun Composer(
     val field = RoundedCornerShape(if (thread) 4.dp else 14.dp)
     val control = if (thread) RoundedCornerShape(3.dp) else CircleShape
     val thumb = RoundedCornerShape(if (thread) 3.dp else 9.dp)
-    Column(Modifier.fillMaxWidth().padding(start = 10.dp, end = 10.dp, bottom = 10.dp)) {
+    // On a wide screen the Thread's composer keeps to the conversation's reading width.
+    Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.TopCenter) {
+    Column(Modifier.then(if (thread) Modifier.widthIn(max = READING_WIDTH + 20.dp) else Modifier).fillMaxWidth().padding(start = 10.dp, end = 10.dp, bottom = 10.dp)) {
+        val suggestions = if (w.isShell) emptyList() else SlashCommands.suggestions(text)
+        AnimatedVisibility(suggestions.isNotEmpty()) {
+            SlashMenu(suggestions, thread, w.state.busy) { c ->
+                text = "/${c.name} "
+                focus.requestFocus()
+            }
+        }
         AnimatedVisibility(images.isNotEmpty()) {
             Row(Modifier.horizontalScroll(rememberScrollState()).padding(bottom = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 images.forEachIndexed { i, a ->
@@ -229,7 +238,11 @@ fun Composer(
                     contentAlignment = Alignment.Center,
                 ) { Icon(Icons.Default.Add, "Attach pictures", tint = Palette.TextSecondary) }
             }
-            val hint = if (w.isShell) "Run a command…" else "Reply to ${w.name}…"
+            val hint = when {
+                w.isShell -> "Run a command…"
+                queueable -> "Steer ${w.name}, or queue for after this turn…"
+                else -> "Reply to ${w.name}…"
+            }
             Box(Modifier.weight(1f).heightIn(min = 38.dp).padding(horizontal = 8.dp, vertical = 9.dp), contentAlignment = Alignment.CenterStart) {
                 if (text.isEmpty()) Text(
                     hint, style = MaterialTheme.typography.bodyLarge, color = Palette.TextTertiary, maxLines = 1, overflow = TextOverflow.Ellipsis,
@@ -248,7 +261,7 @@ fun Composer(
                     } else {
                         KeyboardOptions(capitalization = KeyboardCapitalization.Sentences)
                     },
-                    keyboardActions = KeyboardActions(onSend = { send() }),
+                    keyboardActions = KeyboardActions(onSend = { send(false) }),
                     modifier = Modifier.fillMaxWidth().focusRequester(focus).semantics { contentDescription = hint.removeSuffix("…") }.tagged(Tags.Worker.INPUT),
                 )
             }
@@ -269,40 +282,77 @@ fun Composer(
                     Box(Modifier.size(11.dp).background(if (connected) Palette.Text else Palette.TextTertiary, RoundedCornerShape(1.dp)))
                 }
             }
-            // Ctrl+Enter in a desktop terminal: Droid takes the message after what it's doing now. A
-            // switch, so the next Send queues, in the same square mono control in both views.
+            // Ctrl+Enter in a desktop terminal: Droid sends the message once this turn is over. Its
+            // own button beside Send, which steers the turn now, so neither needs a mode switched first.
             if (queueable) {
                 val square = RoundedCornerShape(3.dp)
-                val on = queueOn && connected
+                val canQueue = ready && SlashCommands.of(text) == null
                 Box(
                     Modifier.padding(end = 6.dp).height(38.dp).clip(square)
-                        .background(if (on) Palette.AccentMuted else Color.Transparent)
-                        .border(1.dp, if (on) Palette.Accent.copy(alpha = 0.6f) else Palette.BorderStrong, square)
-                        .toggleable(queueOn, enabled = connected, role = Role.Switch) { queueOn = it }
-                        .clearAndSetSemantics {
-                            contentDescription = "Queue after this turn"
-                            role = Role.Switch
-                            toggleableState = ToggleableState(queueOn)
-                            testTagsAsResourceId = true
-                            testTag = Tags.Worker.QUEUE
-                        }
+                        .border(1.dp, if (canQueue) Palette.BorderStrong else Palette.Border, square)
+                        .clickable(enabled = canQueue, role = Role.Button, onClickLabel = "Queue for after this turn") { send(true) }
+                        .semantics { contentDescription = "Queue for after this turn" }
+                        .tagged(Tags.Worker.QUEUE_SEND)
                         .padding(horizontal = 12.dp),
                     contentAlignment = Alignment.Center,
                 ) {
-                    Text("QUEUE", style = LocalOfficeType.current.eyebrow.copy(color = if (on) Palette.Accent else if (connected) Palette.Text else Palette.TextTertiary))
+                    Text("QUEUE", style = LocalOfficeType.current.eyebrow.copy(color = if (canQueue) Palette.Text else Palette.TextTertiary))
                 }
             }
             // In the thread, Send inverts against the surface (light on dark), so orange stays for what's live.
             val sendFill = if (!ready) Palette.SurfaceHigh else if (thread) Palette.Text else Palette.Accent
             Box(
-                Modifier.size(38.dp).clip(control).background(sendFill).clickable(enabled = ready) { send() }.tagged(Tags.Worker.SEND),
+                Modifier.size(38.dp).clip(control).background(sendFill).clickable(enabled = ready) { send(false) }.tagged(Tags.Worker.SEND),
                 contentAlignment = Alignment.Center,
             ) {
-                Icon(OfficeIcons.ArrowUp, if (queueable && queueOn) "Queue message" else "Send", Modifier.size(20.dp), tint = if (ready) Palette.Bg else Palette.TextTertiary)
+                Icon(OfficeIcons.ArrowUp, if (queueable) "Send now" else "Send", Modifier.size(20.dp), tint = if (ready) Palette.Bg else Palette.TextTertiary)
+            }
+        }
+    }
+    }
+}
+
+/**
+ * Droid's slash commands that start with what's typed, over the composer: tapping one fills it in.
+ * Each says what it does, and in the Thread whether it opens in Raw TTY, where Droid shows its dialogs.
+ */
+@Composable
+private fun SlashMenu(commands: List<SlashCommands.Command>, thread: Boolean, busy: Boolean, onPick: (SlashCommands.Command) -> Unit) {
+    val shape = RoundedCornerShape(4.dp)
+    Column(
+        Modifier.fillMaxWidth().padding(bottom = 8.dp).clip(shape).background(Palette.Surface).border(1.dp, Palette.BorderStrong, shape)
+            .tagged(Tags.Worker.SLASH_MENU).padding(vertical = 4.dp),
+    ) {
+        if (busy && thread) Text(
+            "Slash commands run once this turn is over. Stop it to run one now.",
+            style = MaterialTheme.typography.bodySmall.copy(fontSize = 12.sp, color = Palette.TextSecondary),
+            modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
+        )
+        for (c in commands) {
+            Row(
+                Modifier.fillMaxWidth().clickable(role = Role.Button, onClickLabel = "Use /${c.name}") { onPick(c) }
+                    .tagged(Tags.Worker.slash(c.name)).heightIn(min = 44.dp).padding(horizontal = 12.dp, vertical = 6.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    "/${c.name}",
+                    style = LocalOfficeType.current.monoBody.copy(fontSize = 13.sp, color = if (c.kind == SlashCommands.Kind.Blocked) Palette.TextTertiary else Palette.Text),
+                    modifier = Modifier.widthIn(min = 120.dp),
+                )
+                Text(
+                    c.description, style = MaterialTheme.typography.bodySmall.copy(fontSize = 12.5.sp, color = Palette.TextSecondary),
+                    maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f).padding(start = 10.dp),
+                )
+                if (thread && c.kind == SlashCommands.Kind.Tty) Text(
+                    "RAW TTY", style = LocalOfficeType.current.eyebrow.copy(fontSize = 9.sp, color = Palette.TextTertiary), modifier = Modifier.padding(start = 8.dp),
+                )
             }
         }
     }
 }
+
+/** How wide the Thread's conversation reads on a large screen: about eighty characters of message type. */
+internal val READING_WIDTH = 760.dp
 
 private class Picture(val name: String, val type: String, val bytes: ByteArray, val thumb: ImageBitmap?)
 

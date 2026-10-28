@@ -281,6 +281,9 @@ test('confirmed worker actions deduplicate on a socket, respect the active floor
   browser.send({ t: 'worker.prompt', workerId, prompt: 'printf "dashboard-stream-check\\n"', requestId: 'prompt', requestFloor: floor });
   assert.equal((await browser.wait('action.result', (m) => m.requestId === 'prompt')).ok, true);
   await browser.wait('term.data', (m) => m.data.includes('dashboard-stream-check'));
+  browser.send({ t: 'term.input', workerId, data: 'printf "typed-keys-check\\n"\r', requestId: 'keys', requestFloor: floor });
+  assert.equal((await browser.wait('action.result', (m) => m.requestId === 'keys')).ok, true, 'keys typed into an attached terminal are confirmed');
+  await browser.wait('term.data', (m) => m.data.includes('typed-keys-check'));
   const observer = socket(t, base, 'client=dashboard');
   await observer.wait('welcome');
   const phonePair = (await (await fetch(`${base}/api/mobile/pair`, { method: 'POST', body: '{"device":"Phone"}' })).json()) as { token: string };

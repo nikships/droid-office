@@ -93,6 +93,7 @@ import ai.factory.droidoffice.core.PhoneSizing
 import ai.factory.droidoffice.core.QuickKeys
 import ai.factory.droidoffice.core.Receipts
 import ai.factory.droidoffice.core.ScreenState
+import ai.factory.droidoffice.core.SlashCommands
 import ai.factory.droidoffice.core.Tags
 import ai.factory.droidoffice.core.TermSize
 import ai.factory.droidoffice.core.TermView
@@ -128,18 +129,10 @@ private val PhoneSizingSaver = Saver<PhoneSizing, List<Int>>(
     restore = { PhoneSizing(if (it[0] > 0) TermSize(it[0], it[1]) else null, it.drop(2).chunked(2).map { size -> TermSize(size[0], size[1]) }) },
 )
 
-/** A worker's queue receipts for this process: what's on disk for them, and what the owner is told about that. */
-private class QueueReceipts(val queue: ThreadQueue, var onDisk: String?) {
-    /** Why the receipts on screen aren't all kept on the phone, from the last write. */
-    var saveNote by mutableStateOf<String?>(null)
-    /** Why older receipts may be missing, from reading them. */
-    var readNote by mutableStateOf<String?>(null)
-    val note get() = saveNote ?: readNote
-}
+/** The messages this phone sent to a worker's queue, for this process, and what's on disk for them. */
+private class QueueReceipts(val queue: ThreadQueue, var onDisk: String?)
 
 private val localThreadQueues = mutableMapOf<String, QueueReceipts>()
-
-private const val NOT_KEPT = "won’t come back if the app is closed."
 
 @Composable
 fun WorkerScreen(workerId: String, onBack: () -> Unit, embedded: Boolean = false, draft: String? = null) {
@@ -161,15 +154,12 @@ fun WorkerScreen(workerId: String, onBack: () -> Unit, embedded: Boolean = false
     val queueState = receipts.queue
     val queueReady = keepable && receiptsFor == queueKey
     var queueRevision by remember(workerId) { mutableIntStateOf(0) }
-    val receiptsSnackbar = LocalSnackbar.current
     LaunchedEffect(queueKey, keepable) {
         if (!keepable || receiptsFor == queueKey) return@LaunchedEffect
+        // Without what was kept, Droid's queue still shows on its screen: only its whole text is lost.
         val next = localThreadQueues[queueKey] ?: when (val loaded = graph.store.loadReceipts(queueKey)) {
             is Receipts.Loaded.Found -> QueueReceipts(ThreadQueue(loaded.snapshot), loaded.snapshot)
-            is Receipts.Loaded.Failed -> QueueReceipts(ThreadQueue(), null).also {
-                it.readNote = "This phone couldn’t read the receipts it kept before, so older ones may be missing."
-                launch { receiptsSnackbar.showSnackbar("Couldn't read this phone's saved queue receipts.") }
-            }
+            is Receipts.Loaded.Failed -> QueueReceipts(ThreadQueue(), null)
         }
         // Only an early queue that was never synced joins: one that belonged to another floor stays there.
         if (receiptsFor == null) Receipts.merge(next.queue, receipts.queue)
@@ -185,24 +175,7 @@ fun WorkerScreen(workerId: String, onBack: () -> Unit, embedded: Boolean = false
         val r = receipts
         val snapshot = r.queue.snapshot().takeIf { r.queue.pending.isNotEmpty() }
         if (snapshot == r.onDisk) return@LaunchedEffect
-        r.saveNote = when (graph.store.saveReceipts(queueKey, snapshot)) {
-            Receipts.Saved.Kept -> {
-                r.onDisk = snapshot
-                if (snapshot != null && !Receipts.restorable(r.queue, snapshot)) "A message here is too long to keep on this phone, so its receipt $NOT_KEPT" else null
-            }
-            Receipts.Saved.Removed -> {
-                r.onDisk = null
-                null
-            }
-            Receipts.Saved.TooLarge -> {
-                r.onDisk = null
-                "These receipts are too large to keep on this phone, so they $NOT_KEPT"
-            }
-            Receipts.Saved.Failed -> {
-                r.onDisk = null
-                "This phone couldn’t save these receipts, so they $NOT_KEPT"
-            }
-        }
+        r.onDisk = if (graph.store.saveReceipts(queueKey, snapshot) == Receipts.Saved.Kept) snapshot else null
     }
     // Phone view is the point of a phone: open a worker's terminal readable, sized for this screen.
     // A cloud worker has no terminal here and no Phone key to leave the mode with, so it keeps the fit.
@@ -301,7 +274,7 @@ fun WorkerScreen(workerId: String, onBack: () -> Unit, embedded: Boolean = false
         if (!tty) Thread(
             worker, screen, live && link.phase == Phase.Connected, link.phase == Phase.Connected,
             Modifier.weight(1f).fillMaxWidth(),
-            queued = queueState, queueRevision = queueRevision, queueReady = queueReady, queueNote = receipts.note,
+            queued = queueState, queueRevision = queueRevision, queueReady = queueReady,
             onQueueChanged = { queueRevision++ },
             onTty = { ttyChoice = true },
             followRequest = sent,
@@ -337,7 +310,20 @@ fun WorkerScreen(workerId: String, onBack: () -> Unit, embedded: Boolean = false
                 val connected = link.phase == Phase.Connected
                 Composer(
                     worker, draft, visible = !waiting && (!directInput || !tty || worker.isCloud), focusRequest = composerFocus, thread = !tty,
-                    queueState = queueState, onQueued = { queueRevision++ }, onSent = { sent++ },
+                    queueState = queueState, onQueued = { queueRevision++ },
+                    onSent = { prompt ->
+                        sent++
+                        // A slash command that opens one of Droid's dialogs is answered there: show it.
+                        val slash = SlashCommands.of(prompt)
+                        if (!tty && slash != null) {
+                            if (slash.second?.kind == SlashCommands.Kind.Tty) {
+                                ttyChoice = true
+                                scope.launch { snackbar.showSnackbar("/${slash.first} opens in Raw TTY, where Droid shows it.") }
+                            } else {
+                                scope.launch { snackbar.showSnackbar("Sent /${slash.first} to ${worker.name}.") }
+                            }
+                        }
+                    },
                     connected = connected,
                     // The same Esc Raw TTY's key sends, through the terminal this screen is attached to.
                     onStop = if (!tty && worker.state.busy && !worker.isCloud) {
@@ -347,13 +333,21 @@ fun WorkerScreen(workerId: String, onBack: () -> Unit, embedded: Boolean = false
                             }
                         }
                     } else null,
-                    // A slash command is Droid's own, run in its terminal: the thread hands the draft to Raw TTY unsent.
+                    // Slash commands go to Droid's input box like a message, except one that would end
+                    // the CLI, and none while a turn runs, when Droid would take it as steering.
                     intercept = if (tty) null else { prompt ->
-                        ThreadFeed.slashCommand(prompt).also { slash ->
-                            if (slash) {
-                                ttyChoice = true
-                                scope.launch { snackbar.showSnackbar("Slash commands run in the terminal. Your message is waiting here in Raw TTY.") }
+                        val slash = SlashCommands.of(prompt)
+                        when {
+                            slash == null -> false
+                            slash.second?.kind == SlashCommands.Kind.Blocked -> {
+                                scope.launch { snackbar.showSnackbar("/${slash.first} would end ${worker.name}’s Droid. Send it home instead.") }
+                                true
                             }
+                            worker.state.busy -> {
+                                scope.launch { snackbar.showSnackbar("Slash commands run once ${worker.name} finishes this turn. Stop it to run one now.") }
+                                true
+                            }
+                            else -> false
                         }
                     },
                 )

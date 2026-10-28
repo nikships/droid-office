@@ -283,7 +283,10 @@ object Tags {
         const val INPUT = "composer.input"
         const val ATTACH = "composer.attach"
         const val SEND = "composer.send"
-        const val QUEUE = "composer.queue"
+        /** While Droid is on a turn: sends the draft to Droid's queue, for after the turn (Send steers the turn now). */
+        const val QUEUE_SEND = "composer.queue_send"
+        /** Droid's slash commands matching a draft that starts with `/`, over the composer. */
+        const val SLASH_MENU = "composer.slash_menu"
         /** In the Thread view while the worker is on a turn: stops it with Esc, as Droid's own Esc does. */
         const val STOP = "composer.stop"
         /** Why Send is off while the office is out of reach: the draft stays and nothing is sent later on its own. */
@@ -305,8 +308,10 @@ object Tags {
         /** Switches to Raw TTY from a state, notice or question the thread can't handle. */
         const val THREAD_RAW_TTY = "worker.thread.raw_tty"
         const val THREAD_CODE_HINT = "worker.thread.code.hint"
+        /** The messages waiting in Droid's queue, after the conversation. */
         const val THREAD_QUEUED = "worker.thread.queued"
-        const val THREAD_QUEUED_TTY = "worker.thread.queued.raw_tty"
+        /** Clears Droid's queue (Ctrl+X), shown while its screen shows one. */
+        const val THREAD_QUEUED_CLEAR = "worker.thread.queued.clear"
         const val THREAD_EARLIER = "worker.thread.earlier"
         const val THREAD_START = "worker.thread.start"
         /** Shown when scrolled up from the newest message: back to the bottom, which follows new ones again. */
@@ -326,15 +331,11 @@ object Tags {
         const val THREAD_JUMP_LABEL = "worker.thread.jump.label"
         /** A Markdown table in a message: its columns line up and it scrolls sideways as one. */
         const val THREAD_TABLE = "worker.thread.table"
-        /** Forgets this phone's receipts for messages it sent to Droid's queue; Droid's own queue is untouched. */
-        const val THREAD_QUEUED_DISMISS = "worker.thread.queued.dismiss"
-        /** Why receipts in [THREAD_QUEUED] aren't kept on the phone (too large, a disk error) or older ones may be missing. */
-        const val THREAD_QUEUED_UNSAVED = "worker.thread.queued.unsaved"
-        /** Opens or closes [THREAD_QUEUED], the last item in the thread (`checked` is open). */
-        const val THREAD_QUEUED_TOGGLE = "worker.thread.queued.toggle"
-        /** "Queue request sent · 2": the receipts' one line while closed. */
-        const val THREAD_QUEUED_SUMMARY = "worker.thread.queued.summary"
 
+        /** A slash command in [SLASH_MENU], by its name: `composer.slash/model`. */
+        fun slash(name: String) = "composer.slash/$name"
+        /** A message waiting in Droid's queue, by its place in it from 1. */
+        fun threadQueued(n: Int) = "worker.thread.queued/$n"
         /** A message, tool call, thought or notice in the thread, by its entry id. */
         fun threadEntry(id: String) = "worker.thread.entry/$id"
         /** Expands or collapses a tool call's arguments and result, or a thought (`checked` is open). */

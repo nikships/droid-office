@@ -13,6 +13,7 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.ime
 import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.width
 import androidx.compose.material3.Badge
@@ -34,6 +35,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
@@ -111,10 +113,13 @@ fun MainTabs(onOpenWorker: (id: String, draft: String?) -> Unit, onOpenCard: (fl
                 content(Modifier.weight(1f).fillMaxHeight())
             }
         } else {
+            // With the keyboard up the bar steps aside: a composer then sits right on the keyboard,
+            // where the keyboard's inset alone puts it, rather than the bar's height above it.
+            val typing = WindowInsets.ime.getBottom(LocalDensity.current) > 0
             Column(Modifier.fillMaxSize()) {
-                content(Modifier.weight(1f).fillMaxWidth().consumeWindowInsets(WindowInsets.navigationBars))
-                Box(Modifier.fillMaxWidth().height(1.dp).background(Palette.Border))
-                NavigationBar(containerColor = Palette.Surface, tonalElevation = 0.dp, modifier = Modifier.tagged(Tags.Tab.BAR)) {
+                content(Modifier.weight(1f).fillMaxWidth().then(if (typing) Modifier else Modifier.consumeWindowInsets(WindowInsets.navigationBars)))
+                if (!typing) Box(Modifier.fillMaxWidth().height(1.dp).background(Palette.Border))
+                if (!typing) NavigationBar(containerColor = Palette.Surface, tonalElevation = 0.dp, modifier = Modifier.tagged(Tags.Tab.BAR)) {
                     MainTab.entries.forEach { t ->
                         NavigationBarItem(
                             selected = t == shown,

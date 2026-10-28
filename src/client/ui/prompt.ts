@@ -33,6 +33,7 @@ export interface PromptOptions {
   deskId?: string;
   /** Other floors' projects a new worker in its own worktree can work in too (see WorkerInfo.repos). */
   repoOptions?: { id: string; name: string }[];
+  /** Offer Queue beside Send, for a worker on a turn: Send steers the turn, Queue waits until it's over. */
   queueOption?: boolean;
   onDraft?(text: string): void;
   /** An async refusal keeps the box, text and attachments open rather than claiming delivery. */
@@ -112,7 +113,7 @@ export function openPrompt(opts: PromptOptions) {
     file.value = '';
   });
   const add = images ? h('button.btn.sm', { type: 'button', onclick: () => file?.click() }, 'Attach pictures') : null;
-  const queue = opts.queueOption ? toggle({ label: 'Queue after the current turn', checked: false }) : null;
+  const queue = opts.queueOption ? h('button.btn', { type: 'button', title: 'Send once the current turn is over', onclick: () => send(true) }, 'Queue') : null;
   const extras = opts.recall === false ? null : promptExtras(ta);
   const wt = worktreeRow('wt-toggle', opts.worktreeChecked ?? worktreePref());
   const wtBox = wt.box;
@@ -138,11 +139,10 @@ export function openPrompt(opts: PromptOptions) {
       {},
       opts.warning ? h('p.note.bad', { role: 'alert' }, opts.warning) : null,
       h('div.prompt-input', {}, extras?.element ?? ta, images ? pictureHint() : null, add, file, images?.element ?? null),
-      queue,
       rows.length ? h('div.group.prompt-opts', { role: 'group', 'aria-label': 'Options' }, ...rows) : null,
       failed,
     ),
-    h('footer', {}, sendHint(false), cancel, submit),
+    h('footer', {}, sendHint(false), cancel, queue, submit),
   ) as HTMLFormElement;
   form.noValidate = true;
 
@@ -158,7 +158,7 @@ export function openPrompt(opts: PromptOptions) {
   });
   images?.dropZone(modal.backdrop, modal.el);
   cancel.addEventListener('click', () => modal.close());
-  const send = () => {
+  const send = (queueSend = false) => {
     if (waiting || !form.isConnected) return;
     const text = ta.value.trim();
     if (!text && !images?.ids().length && !images?.busy() && !opts.allowEmpty) {
@@ -170,7 +170,7 @@ export function openPrompt(opts: PromptOptions) {
       waiting = true;
       void images.settled().then(() => {
         waiting = false;
-        send();
+        send(queueSend);
       });
       return;
     }
@@ -234,7 +234,7 @@ export function openPrompt(opts: PromptOptions) {
     failed.classList.add('hidden');
     let result: ReturnType<typeof opts.onSubmit>;
     try {
-      result = opts.onSubmit(text, { worktree, model: models?.model(), effort: models?.effort(), repos: worktree ? repos.value() : [], images: images?.ids() ?? [], queue: queue?.input.checked });
+      result = opts.onSubmit(text, { worktree, model: models?.model(), effort: models?.effort(), repos: worktree ? repos.value() : [], images: images?.ids() ?? [], queue: queueSend });
     } catch (error) {
       submitted = false;
       waiting = false;
