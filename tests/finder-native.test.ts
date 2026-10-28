@@ -135,6 +135,12 @@ test('packaging embeds FinderSync outside Resources and preserves native entitle
   const menu = readFileSync(path.join(root, 'native/mac/FinderSync.swift'), 'utf8');
   assert.doesNotMatch(menu, /representedObject|currentItem|isEnabled = false/);
   assert.match(menu, /sender\.tag == 1/);
+  // The sandboxed extension cannot read the selection, so handing it over as documents fails with a permission error.
+  assert.match(menu, /configuration\.arguments = \["--dispatch"\] \+ urls\.map\(\\\.path\)/);
+  assert.match(menu, /createsNewApplicationInstance = true/);
+  assert.doesNotMatch(menu, /\.open\(urls/);
+  assert.match(bridge, /args\[1\] == "--dispatch"/);
+  assert.match(bridge, /applicationShouldTerminateAfterLastWindowClosed/);
   const workflow = readFileSync(path.join(root, '.github/workflows/release.yml'), 'utf8');
   assert.match(workflow, /Final Finder signature lost its required entitlements/);
   assert.match(workflow, /codesign -d --entitlements/);
