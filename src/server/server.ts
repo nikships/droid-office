@@ -8,7 +8,7 @@ import { fileURLToPath } from 'node:url';
 import { WebSocketServer, WebSocket } from 'ws';
 import type { Config } from './config.js';
 import type { AddressInfo } from 'node:net';
-import { bearerToken, isLoopback, lanAllowed, lanIPv4s, mintLanToken, tailscaleIPv4s } from './lan.js';
+import { bearerToken, isLoopback, lanAllowed, loopbackHost, lanIPv4s, mintLanToken, tailscaleIPv4s } from './lan.js';
 import { DevicesStore, machineName, pairingAddresses } from './devices.js';
 import { TailscaleWatch } from './tailscale.js';
 import { WebCompanion } from './web-companion.js';
@@ -159,6 +159,14 @@ function sameOrigin(req: http.IncomingMessage, cfg: Config): boolean {
   } catch {
     return false;
   }
+}
+
+/**
+ * Whether a request for `/api/status` comes from the Mac app's main process: from this machine, to a loopback
+ * host name (not a site whose name a DNS rebinding pointed here), and not from another site's page (which sends Origin).
+ */
+function statusRequest(req: http.IncomingMessage): boolean {
+  return isLoopback(req.socket.remoteAddress) && loopbackHost(req.headers.host) && !req.headers.origin;
 }
 
 function refuseUpgrade(socket: Duplex) {
@@ -996,14 +1004,15 @@ export async function startServer(cfg: Config) {
         }
         return send(res, 405, { error: 'Method not allowed' });
       }
-      // The Mac app's menu bar icon: busy workers and connected devices. Only a request from this Mac without a device token gets them.
+      // The Mac app's menu bar icon: busy workers, who is waiting and connected devices. Only the app itself gets them:
+      // a request from this Mac, to a loopback host name, with no device token and no Origin.
       if (p === '/api/status' && req.method === 'GET') {
-        if (gate.device || !isLoopback(req.socket.remoteAddress)) return send(res, 403, { error: 'Forbidden' });
+        if (gate.device || !statusRequest(req)) return send(res, 403, { error: 'Forbidden' });
         return send(
           res,
           200,
           officeStatus(
-            [...floors.values()].flatMap((f) => f.workers.list()),
+            [...floors.values()].map((f) => ({ id: f.id, name: f.def.name, workers: f.workers.list() })),
             [...clients.values()].map((c) => ({ device: c.device, phone: !!c.phoneSizes })),
           ),
         );

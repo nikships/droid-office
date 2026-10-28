@@ -10,6 +10,8 @@ export interface DesktopSettings {
   port?: number;
   /** Whether the app has said once that Cmd+Q leaves the office running in the menu bar. */
   menuBarExplained?: boolean;
+  /** Whether the app notifies while its window is closed and a worker starts to wait on the owner. Unset: it does. */
+  notify?: boolean;
 }
 
 export const DEFAULT_PORT = 4600;
@@ -21,6 +23,7 @@ export function loadSettings(file: string): DesktopSettings {
     if (typeof raw.officeDir === 'string' && raw.officeDir) out.officeDir = raw.officeDir;
     if (Number.isInteger(raw.port) && (raw.port as number) > 0 && (raw.port as number) <= 65535) out.port = raw.port as number;
     if (raw.menuBarExplained === true) out.menuBarExplained = true;
+    if (typeof raw.notify === 'boolean') out.notify = raw.notify;
     return out;
   } catch {
     return {};

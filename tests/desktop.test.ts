@@ -92,9 +92,9 @@ test('settings survive a round trip and ignore what makes no sense', (t) => {
   const dir = tmp(t);
   const file = path.join(dir, 'nested', 'settings.json');
   assert.deepEqual(loadSettings(file), {});
-  saveSettings(file, { officeDir: '/x/office', port: 4700, menuBarExplained: true });
-  assert.deepEqual(loadSettings(file), { officeDir: '/x/office', port: 4700, menuBarExplained: true });
-  writeFileSync(file, JSON.stringify({ officeDir: 3, port: 99999, menuBarExplained: 'yes' }));
+  saveSettings(file, { officeDir: '/x/office', port: 4700, menuBarExplained: true, notify: false });
+  assert.deepEqual(loadSettings(file), { officeDir: '/x/office', port: 4700, menuBarExplained: true, notify: false });
+  writeFileSync(file, JSON.stringify({ officeDir: 3, port: 99999, menuBarExplained: 'yes', notify: 'no' }));
   assert.deepEqual(loadSettings(file), {});
   writeFileSync(file, '{not json');
   assert.deepEqual(loadSettings(file), {});
