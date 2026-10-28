@@ -36,12 +36,16 @@ export function App({ host }: { host: MobileHost }) {
     setSeen(snap.navigation);
     setTab('workers');
     setSwitcher(false);
+    // The Hire sheet is full screen: left open it would cover the worker this went to. Closing it
+    // discards its pictures.
+    setHiring(false);
   }
   const [toolSeen, setToolSeen] = useState(snap.toolNavigation);
   if (toolSeen !== snap.toolNavigation) {
     setToolSeen(snap.toolNavigation);
     setTab('tools');
     setSwitcher(false);
+    setHiring(false);
   }
   const tool = snap.tool;
   useEffect(() => {

@@ -5,7 +5,7 @@ import { cleanupAllowed, describeWorktree, hireMsg, rebuildMsg, sendHomeMsg, sen
 import { ago, childSummary, duration, modelLabel, statusLabel } from '../src/mobile/format.js';
 import { emptyOffice, expireToasts, reduceOffice, withToast } from '../src/mobile/office-state.js';
 import { FeedPool } from '../src/mobile/thread-feed.js';
-import { decodeEntities, parseMarkdown, safeHref, keyed } from '../src/mobile/markdown.js';
+import { decodeEntities, keyed, type MdBlock, parseMarkdown, safeHref } from '../src/mobile/markdown.js';
 import { emptyOffice as office0, toolContext } from '../src/mobile/office-state.js';
 import { TOOLS, toolAvailability } from '../src/shared/companion-tools.js';
 
@@ -26,7 +26,6 @@ test('each kind of worker offers only what the office lets it do', () => {
   assert.ok(agent.includes('thread') && agent.includes('terminal') && agent.includes('stop') && agent.includes('pr') && agent.includes('fork') && agent.includes('changes'));
   assert.equal(refusal(worker('a', { status: 'working', worktree: { path: 'p', branch: 'b', base: 'x' } }), 'pr'), 'It is mid-turn: wait until it is done');
   assert.equal(refusal(worker('a', { status: 'working' }), 'fork'), 'Wait until its turn ends before forking');
-  assert.equal(refusal(worker('a', { status: 'idle' }), 'resume'), 'It is awake');
   const lost = worker('l', { status: 'offline', lost: { branch: 'origin' }, worktree: { path: 'p', branch: 'b', base: 'x' } });
   assert.equal(refusal(lost, 'rebuild'), undefined);
   assert.equal(refusal(lost, 'pr'), 'Its worktree is missing: rebuild it first');
@@ -187,4 +186,48 @@ test('list keys name what an item says, and repeats stay distinct', () => {
   const before = keyed(['x', 'y'], (v) => v).find(([, v]) => v === 'y')?.[0];
   const after = keyed(['new', 'x', 'y'], (v) => v).find(([, v]) => v === 'y')?.[0];
   assert.equal(before, after, 'an item keeps its key when another is added before it');
+});
+
+test('actions that don’t apply are left out, and an open pull request always opens', () => {
+  const awake = ids(worker('a', { worktree: { path: 'p', branch: 'b', base: 'x' } }));
+  assert.ok(!awake.includes('resume') && !awake.includes('rebuild'), 'no Resume while awake, no Rebuild while the worktree is there');
+  assert.equal(
+    workerActions(worker('a', { worktree: { path: 'p', branch: 'b', base: 'x' } }), true).find((a) => a.refusal),
+    undefined,
+    'so the hint line never reads "It is awake"',
+  );
+  assert.equal(workerActions(worker('s', { kind: 'shell', status: 'exited' }), true).find((a) => a.id === 'resume')?.label, 'Restart');
+  assert.equal(workerActions(worker('a', { status: 'exited' }), true).find((a) => a.id === 'resume')?.label, 'Resume');
+  const lost = worker('l', { status: 'offline', lost: { branch: 'origin' }, worktree: { path: 'p', branch: 'b', base: 'x' }, pr: { number: 3, url: 'https://github.com/o/r/pull/3' } });
+  const pr = workerActions(lost, true).find((a) => a.id === 'pr');
+  assert.deepEqual([pr?.label, pr?.refusal], ['PR #3', undefined]);
+  assert.equal(workerActions(lost, false).find((a) => a.id === 'pr')?.refusal, undefined, 'a link needs no office');
+  assert.ok(ids(lost).includes('rebuild'));
+});
+
+test('a kind:cloud worker is cloud to its tools as well as its actions', () => {
+  const s = reduceOffice(office0(), { t: 'floor.enter', floor: 'a', project: null, workers: [worker('k', { kind: 'cloud' })], pulls: { items: [], fetchedAt: 0, loading: false }, jira: {} } as never);
+  assert.ok(ids(worker('k', { kind: 'cloud' })).includes('cloud'));
+  assert.equal(toolAvailability('cloud', toolContext(s, true, { workerId: 'k' }), { workerId: 'k' }).available, true);
+});
+
+test('code spans keep entities as written, and task boxes never show as text', () => {
+  assert.deepEqual(parseMarkdown('`&lt;div&gt;` and `&amp;`')[0], { kind: 'paragraph', spans: [{ text: '&lt;div&gt;', code: true }, { text: ' and ' }, { text: '&amp;', code: true }] });
+  for (const src of ['- [ ] foo\n- [x] bar\n', '- [ ] foo\n\n- [x] bar\n']) {
+    const list = parseMarkdown(src)[0] as Extract<MdBlock, { kind: 'list' }>;
+    assert.deepEqual(
+      list.items.map((i) => [i.checked, i.blocks[0]]),
+      [
+        [false, { kind: 'paragraph', spans: [{ text: 'foo' }] }],
+        [true, { kind: 'paragraph', spans: [{ text: 'bar' }] }],
+      ],
+      src,
+    );
+  }
+});
+
+test('links open only on the app’s one https rule', () => {
+  assert.equal(safeHref('https://user:pass@example.com/'), undefined);
+  assert.equal(safeHref('http://example.com/'), undefined);
+  assert.equal(safeHref('https://example.com/x'), 'https://example.com/x');
 });

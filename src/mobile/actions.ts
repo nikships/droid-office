@@ -24,6 +24,7 @@ const local = (w: WorkerInfo) => !w.guest && !w.cloud && w.kind !== 'cloud';
 
 /** What the shared catalogue judges a worker's actions on. */
 export function actionFacts(w: WorkerInfo, plainFloor: boolean): WorkerActionFacts {
+  const fork = forkRefusal(w);
   return {
     kind: w.kind,
     asleep: isAsleep(w.status),
@@ -37,9 +38,16 @@ export function actionFacts(w: WorkerInfo, plainFloor: boolean): WorkerActionFac
     prOpening: !!w.prOpening,
     repos: !!w.repos?.length,
     station: !!DESK_BY_ID.get(w.deskId)?.station,
-    ...(forkRefusal(w) ? { forkRefusal: forkRefusal(w) } : {}),
+    ...(fork ? { forkRefusal: fork } : {}),
     plainFloor,
   };
+}
+
+/** The catalogue's "doesn't apply now" refusals: not an action to offer, only noise under the row. */
+function applies(w: WorkerInfo, id: WorkerActionId): boolean {
+  if (id === 'resume') return isAsleep(w.status);
+  if (id === 'rebuild') return !!w.lost;
+  return true;
 }
 
 /**
@@ -54,8 +62,12 @@ export function workerActions(w: WorkerInfo, connected: boolean, plainFloor = fa
   if (local(w)) out.push({ id: 'terminal', label: 'Raw TTY', refusal: caps.terminal ? undefined : w.lost ? 'Its worktree is missing.' : 'Resume it to open its terminal.' });
   if (w.kind === 'agent' && local(w) && (isBusy(w.status) || w.status === 'needs_input')) out.push({ id: 'stop', label: 'Stop turn', refusal: off() });
   for (const a of sharedWorkerActions(actionFacts(w, plainFloor))) {
+    if (!applies(w, a.id)) continue;
     const confirm = a.id === 'send-home' || a.id === 'rebuild';
-    out.push({ id: a.id, label: a.label, ...(off(a.reason) ? { refusal: off(a.reason) } : {}), ...(confirm ? { confirm } : {}), ...(a.danger ? { danger: true } : {}) });
+    // An open pull request is a link: it opens whatever state the worktree is in, online or not.
+    const refusal = a.id === 'pr' && w.pr ? undefined : off(a.reason);
+    const label = a.id === 'resume' && w.kind === 'shell' ? 'Restart' : a.id === 'pr' && w.pr ? `PR #${w.pr.number}` : a.label;
+    out.push({ id: a.id, label, ...(refusal ? { refusal } : {}), ...(confirm ? { confirm } : {}), ...(a.danger ? { danger: true } : {}) });
   }
   return out;
 }

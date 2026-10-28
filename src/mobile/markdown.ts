@@ -1,7 +1,8 @@
 import { Marked, type Token, type Tokens } from 'marked';
+import { isExternalUrl } from '../shared/companion-tools';
 
 // Worker replies as GitHub-flavored Markdown, turned into a small tree the app draws with native Text
-// and View. Nothing here is HTML: raw HTML stays literal text, pictures stay links, and only web and
+// and View. Nothing here is HTML: raw HTML stays literal text, pictures stay links, and only https and
 // mail links can be opened, so a reply can't run anything or load anything by itself.
 
 /** Like the web Thread, a lone newline in a reply is a line break. */
@@ -13,7 +14,7 @@ export interface MdSpan {
   italic?: boolean;
   strike?: boolean;
   code?: boolean;
-  /** Only http(s) and mailto: anything else is shown as text. */
+  /** Only https and mailto: anything else is shown as text. */
   href?: string;
 }
 
@@ -48,11 +49,11 @@ export function decodeEntities(text: string): string {
   });
 }
 
-/** A link the app may hand to the system: web and mail only. */
+/** A link the app may hand to the system: https (the app's one external-link rule) and mail only. */
 export function safeHref(href: string | undefined): string | undefined {
   const h = href?.trim();
   if (!h || h.length > 4096) return undefined;
-  return /^(https?:\/\/|mailto:)/i.test(h) ? h : undefined;
+  return /^mailto:/i.test(h) || isExternalUrl(h) ? h : undefined;
 }
 
 type Marks = Omit<MdSpan, 'text'>;
@@ -80,8 +81,12 @@ function spans(tokens: readonly Token[] | undefined, marks: Marks, depth: number
       case 'del':
         spans((t as Tokens.Del).tokens, { ...marks, strike: true }, depth + 1, out);
         break;
+      // marked leaves a code span's text as written, and CommonMark decodes no entities in one.
       case 'codespan':
-        push(decodeEntities((t as Tokens.Codespan).text), { code: true });
+        push((t as Tokens.Codespan).text, { code: true });
+        break;
+      // A task item's box is drawn from the item; marked may nest its token in the first paragraph.
+      case 'checkbox':
         break;
       case 'br':
         push('\n');

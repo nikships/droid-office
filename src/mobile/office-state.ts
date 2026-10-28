@@ -132,7 +132,7 @@ export function toolContext(state: OfficeState, ready: boolean, args: ToolArgs =
     factoryConnected: state.factoryConnected,
     jiraEpic: state.jiraEpic,
     upgradeAvailable: state.upgradeAvailable,
-    ...(w ? { worker: { kind: w.kind, cloud: !!w.cloud, guest: !!w.guest, lost: !!w.lost } } : {}),
+    ...(w ? { worker: { kind: w.kind, cloud: !!w.cloud || w.kind === 'cloud', guest: !!w.guest, lost: !!w.lost } } : {}),
   };
 }
 

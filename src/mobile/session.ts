@@ -13,15 +13,15 @@ import {
 } from '../shared/companion-workspace';
 import { PROMPT_IMAGES_MAX } from '../shared/drops';
 import type { Menu } from '../shared/asks';
-import { CLEAR_DROID_QUEUE } from '../shared/droid-queue';
+import { CLEAR_DROID_QUEUE, type DroidQueued, readDroidQueue } from '../shared/droid-queue';
 import type { ClientMsg, ServerMsg, WorkerInfo } from '../shared/protocol';
 import { slashOf, slashRefusal } from '../shared/slash-commands';
-import { readDroidQueue } from '../shared/droid-queue';
 import type { QueuedView } from '../shared/thread-queue';
 import { isBusy } from '../shared/status';
 import { linkStep } from '../client/worker-link';
 import type { HostActionResult, HostImage, HostIncoming, HostLink, HostMessageMeta, HostOffices, ManagementEvent, MobileHost } from './host';
 import { dropToast, emptyOffice, expireToasts, type OfficeState, officeDisconnected, reduceOffice, toolContext, withToast } from './office-state';
+import type { ThreadEntry } from '../shared/worker-thread';
 import { FeedPool, requestId } from './thread-feed';
 import { type HireRequest, hireMsg, stopMsg } from './actions';
 
@@ -84,6 +84,7 @@ type FloorAction = WorkspaceAction extends infer A ? (A extends { floor: string 
 
 const own = <T>(record: Record<string, T>, key: string): T | undefined => (Object.hasOwn(record, key) ? record[key] : undefined);
 const sendKey = (floor: string, worker: string) => `${floor}\u0000${worker}`;
+const NO_ENTRIES: readonly ThreadEntry[] = [];
 
 function layoutOf(ws: CompanionWorkspace): unknown {
   return { floors: Object.fromEntries(Object.entries(ws.floors).map(([id, f]) => [id, { panes: f.panes, active: f.active, collapsed: f.collapsed }])) };
@@ -105,8 +106,7 @@ export class Session {
   private bootSeq = -1;
   private disposed = false;
   private run = 0;
-  /** Confirmed actions sent and not yet answered, by message: a second tap is refused, not sent. */
-  /** In-flight actions by message, each owned by the call that started it. */
+  /** Confirmed actions sent and not yet answered, by message, each owned by the call that started it: a second tap is refused, not sent. */
   private inflight = new Map<string, object>();
   /** Who is sending each draft: a send from before a reconnect never clears one started after it. */
   private senders = new Map<string, object>();
@@ -118,6 +118,13 @@ export class Session {
   private orphans: { office: string; floor: string; id: string }[] = [];
   /** Receipts for messages queued behind a turn, as the thread shows them; computed outside render. */
   private queued = new Map<string, { views: QueuedView[]; droid: boolean }>();
+  /** What each pane's queue was last matched on: it is matched again only when one of these moved. */
+  private queueInputs = new Map<string, { entries: readonly unknown[]; session?: string; screen: number; items: readonly unknown[] }>();
+  /** Grows on each native screen event for a worker; its parsed Droid queue is kept until it does. */
+  private screenRevs = new Map<string, number>();
+  private screens = new Map<string, { rev: number; droid?: DroidQueued[] }>();
+  /** The Hire in flight, owned by the call that started it. */
+  private hiring?: object;
   readonly feeds = new FeedPool();
   /** The app is in the foreground. */
   visible = true;
@@ -153,10 +160,10 @@ export class Session {
   };
   snapshot = (): SessionSnapshot => this.state;
 
-  private set(next: Partial<SessionSnapshot>): void {
+  private set(next: Partial<SessionSnapshot>, timed = false): void {
     this.state = { ...this.state, ...next };
     this.syncAttachments();
-    this.refreshQueues();
+    this.refreshQueues(timed);
     for (const fn of this.listeners) fn();
   }
 
@@ -176,7 +183,10 @@ export class Session {
       this.host.onLink((link) => (booted ? this.linked(link) : early.push({ link }))),
       this.host.onOffices((offices) => (booted ? void this.officesChanged(offices) : early.push({ offices }))),
       this.host.onIncoming((incoming) => (booted ? this.incoming(incoming) : early.push({ incoming }))),
-      this.host.onScreen(() => this.emit()),
+      this.host.onScreen((workerId) => {
+        this.screenRevs.set(workerId, (this.screenRevs.get(workerId) ?? 0) + 1);
+        this.emit();
+      }),
       this.feeds.subscribe(() => this.emit()),
     );
     let boot: Awaited<ReturnType<MobileHost['bootstrap']>>;
@@ -251,8 +261,9 @@ export class Session {
     const s = this.state;
     this.feeds.tick(this.now(), { connected: this.ready(), visible: this.visible && this.workspaceShown, focused: this.floorWorkspace().active || undefined, teamOpen: this.teamOpen }, (msg) => this.send(msg));
     const office = expireToasts(s.office, this.now());
-    if (office !== s.office) this.set({ office });
-    else if (this.refreshQueues()) this.emit();
+    // The clock is an input only for receipts Droid hasn't shown yet, which expire after a grace.
+    if (office !== s.office) this.set({ office }, true);
+    else if (this.refreshQueues(true)) this.emit();
   }
 
   // --- What the host says ---------------------------------------------------------------------------
@@ -821,7 +832,6 @@ export class Session {
       if (this.hiring === mine) this.hiring = undefined;
     }
   }
-  private hiring?: object;
   private async hireNow(request: Omit<HireRequest, 'images'>, token: ActionToken): Promise<HostActionResult> {
     const hire = this.state.hire;
     const images = request.kind === 'agent' && hire && this.valid(hire.token) ? hire.images.map((i) => i.id) : [];
@@ -906,25 +916,55 @@ export class Session {
     return this.queued.get(workerId) ?? { views: [], droid: false };
   }
 
-  /** Matches queue receipts against each Thread pane's conversation and Droid's screen. True when it changed. */
-  private refreshQueues(): boolean {
+  /**
+   * Matches queue receipts against each Thread pane's conversation and Droid's screen. A pane is
+   * matched again only when its conversation, session, screen or receipts moved, or, on the clock
+   * (`timed`), while it holds receipts that can expire. True when what a pane shows changed.
+   */
+  private refreshQueues(timed = false): boolean {
     const floor = this.state.office.floor;
     const next = new Map<string, { views: QueuedView[]; droid: boolean }>();
+    const inputs = new Map<string, { entries: readonly unknown[]; session?: string; screen: number; items: readonly unknown[] }>();
+    let changed = false;
     if (floor) {
       for (const p of companionFloorWorkspace(this.state.workspace, floor).panes) {
         const w = own(this.state.office.workers, p.workerId);
         if (w?.kind !== 'agent') continue;
+        const key = `${floor}\u0000${w.id}`;
         const queue = this.feeds.queue(floor, w.id);
-        const feed = this.feeds.feed(w.id);
-        queue.sync(w.sessionId, feed?.history.entries ?? []);
-        const screen = this.host.screen(w.id);
-        const droid = screen ? readDroidQueue(screen) : undefined;
-        next.set(w.id, { views: queue.shown(droid, this.now()), droid: !!droid?.length });
+        const entries = this.feeds.feed(w.id)?.history.entries ?? NO_ENTRIES;
+        const screen = this.screenRevs.get(w.id) ?? 0;
+        const was = this.queueInputs.get(key);
+        const prev = this.queued.get(w.id);
+        if (prev && was && was.entries === entries && was.session === w.sessionId && was.screen === screen && was.items === queue.pending && !(timed && queue.pending.length)) {
+          next.set(w.id, prev);
+          inputs.set(key, was);
+          continue;
+        }
+        queue.sync(w.sessionId, entries);
+        const droid = this.droidQueue(w.id, screen);
+        const view = { views: queue.shown(droid, this.now()), droid: !!droid?.length };
+        const same = prev && JSON.stringify(prev) === JSON.stringify(view);
+        if (!same) changed = true;
+        next.set(w.id, same ? prev : view);
+        // `shown` replaces the receipts array; what it left is what the next match compares against.
+        inputs.set(key, { entries, session: w.sessionId, screen, items: queue.pending });
       }
     }
-    const same = next.size === this.queued.size && [...next].every(([id, v]) => JSON.stringify(v) === JSON.stringify(this.queued.get(id)));
-    if (!same) this.queued = next;
-    return !same;
+    if (next.size !== this.queued.size) changed = true;
+    this.queueInputs = inputs;
+    if (changed) this.queued = next;
+    return changed;
+  }
+
+  /** Droid's queue off a worker's screen, read from native once per screen event. */
+  private droidQueue(workerId: string, rev: number): DroidQueued[] | undefined {
+    const had = this.screens.get(workerId);
+    if (had && had.rev === rev) return had.droid;
+    const rows = this.host.screen(workerId);
+    const droid = rows ? readDroidQueue(rows) : undefined;
+    this.screens.set(workerId, { rev, ...(droid ? { droid } : {}) });
+    return droid;
   }
 
   /** Asks what a worker's worktree holds; the answer arrives as `office.worktrees[id]`, never an older one. */

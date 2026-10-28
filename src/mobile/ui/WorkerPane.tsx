@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Alert, Linking, Modal, ScrollView, Text, TextInput, View } from 'react-native';
 import { companionCapabilities, companionWorkedMs } from '../../shared/companion-roster';
+import { isExternalUrl } from '../../shared/companion-tools';
 import type { CompanionView } from '../../shared/companion-workspace';
 import { sessionWebUrl } from '../../shared/factory-sessions';
 import type { WorkerInfo, WorktreeCleanup } from '../../shared/protocol';
@@ -114,7 +115,7 @@ export function WorkerPane(props: {
               a.id === 'thread' || a.id === 'terminal' ? (
                 <Chip key={a.id} label={a.label} on={shown === a.id} disabled={!!a.refusal} onPress={() => act(a)} testID={`pane-view-${a.id}`} />
               ) : (
-                <Button key={a.id} small label={a.id === 'pr' && worker.pr ? `PR #${worker.pr.number}` : a.label} tone={a.danger ? 'danger' : undefined} disabled={!!a.refusal || busy} onPress={() => act(a)} testID={`action-${a.id}`} />
+                <Button key={a.id} small label={a.label} tone={a.danger ? 'danger' : undefined} disabled={!!a.refusal || busy} onPress={() => act(a)} testID={`action-${a.id}`} />
               ),
             )}
             {worker.cloud && worker.sessionId ? <Button small label="Factory session" onPress={() => openLink(sessionWebUrl(worker.sessionId!), 'Could not open the Factory session.')} /> : null}
@@ -161,7 +162,7 @@ export function WorkerPane(props: {
 
 /** Only https links leave the app; one that can't be opened says so instead of failing silently. */
 function openLink(url: string, failed: string): void {
-  if (!/^https:\/\//i.test(url)) return void Alert.alert(failed);
+  if (!isExternalUrl(url)) return void Alert.alert(failed);
   Linking.openURL(url).catch(() => Alert.alert(failed));
 }
 

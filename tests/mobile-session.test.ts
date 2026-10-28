@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import { test } from 'node:test';
 import type { ClientMsg, FloorInfo, ServerMsg, WorkerInfo } from '../src/shared/protocol.js';
 import type { HostBootstrap, HostImage, HostLink, HostMessageMeta, HostOffices, MobileHost } from '../src/mobile/host.js';
@@ -839,4 +840,44 @@ test('a send from before a reconnect never unlocks one started after it', async 
   assert.equal(await fresh, undefined);
   assert.equal((await freshResume).ok, true);
   assert.equal(session.isSending('w1'), false);
+});
+
+test('queue receipts read each worker’s screen once per screen event, and still expire on the clock', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout', 'setInterval', 'Date'] });
+  const host = new FakeHost();
+  // Droid's real queue screen (droid-queue-golden.json), less its first row: a message this phone queued.
+  const golden = JSON.parse(readFileSync(new URL('../android/app/src/test/resources/droid-queue-golden.json', import.meta.url), 'utf8')) as { cases: { name: string; rows: string[] }[] };
+  const full = golden.cases.find((c) => c.name.startsWith('two queued during a turn'))!.rows;
+  const rows = full.filter((_, i) => i !== 3 && i !== 4);
+  let screen: string[] | undefined;
+  let reads = 0;
+  host.screen = (() => {
+    reads++;
+    return screen;
+  }) as never;
+  const screens = new Set<(id: string) => void>();
+  host.onScreen = ((h: (id: string) => void) => (screens.add(h), () => screens.delete(h))) as never;
+  const session = new Session(host, () => Date.now());
+  host.boot = { offices: [{ id: 'o1', name: 'Office' }], active: 'o1', link: host.link, replay: [welcome('a', [worker('w1', { status: 'working' })])], seq: host.seq };
+  await session.start();
+  t.after(() => session.dispose());
+  session.open('w1');
+  session.draft('w1', 'Line one of a multi-line queued message\nLine two');
+  const sending = session.submit('w1', true);
+  host.requests[0].resolve({ ok: true });
+  await sending;
+  const before = reads;
+  for (let i = 0; i < 20; i++) session.dismissToast(-1);
+  assert.equal(reads, before, 'unrelated state changes read no screen');
+  screen = rows;
+  for (const h of screens) h('w1');
+  assert.equal(reads, before + 1, 'one read for one screen event');
+  assert.equal(session.queuedFor('w1').droid, true);
+  assert.equal(session.queuedFor('w1').views[0]?.text, 'Line one of a multi-line queued message\nLine two', 'the whole text of the row Droid cut short');
+  screen = full.slice(9);
+  for (const h of screens) h('w1');
+  assert.equal(session.queuedFor('w1').droid, false);
+  assert.equal(session.queuedFor('w1').views.length, 1, 'kept for a grace after Droid stops showing it');
+  t.mock.timers.tick(5000);
+  assert.deepEqual(session.queuedFor('w1').views, [], 'the clock still expires it');
 });
