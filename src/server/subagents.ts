@@ -57,7 +57,7 @@ It covers every command and flag, and how to brief, wait for, read, answer and d
 - Split the work so no two subagents edit the same files, and don't hire more subagents than the work needs.
 - Pick each subagent's model from \`office-workers models\` with \`--model\`: the cheapest one that can do its piece well for simple work, a strong one for hard work. Follow the owner's notes on a model, and weigh its credit multiplier.
 - After hiring, run \`office-workers wait\` until each one has reported, and answer questions with \`office-workers send\`. Look at their changes before you count the work as done.
-- When a subagent is done, review and integrate its changes as needed. Once neither the worker nor its worktree is needed, dismiss it with \`office-workers dismiss\`. Tell the user what each subagent did.
+- When a subagent is done, review and integrate its changes as needed. Dismiss it with \`office-workers dismiss\` only if both the worker and its worktree are no longer needed. Tell the user what each subagent did.
 `;
 }
 
