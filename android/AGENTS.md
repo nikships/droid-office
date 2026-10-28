@@ -39,7 +39,4 @@ CI's `android` job runs `testDebugUnitTest lintDebug` and `assembleRelease`; run
 - Never move a node's bounds every frame (a rotating `graphicsLayer`, an animated offset or size) on something that loops forever: the accessibility events it sends keep `uiautomator dump` from idling. Animate in the draw phase instead.
 - Fix what lint reports. Don't add `@SuppressLint` or widen `lint { disable }` to pass; the ones disabled there only flag that newer library versions exist.
 - Bump a library in `gradle/libs.versions.toml`. Updating Gradle itself also updates `distributionSha256Sum` in `gradle/wrapper/gradle-wrapper.properties`.
-
-## Pictures
-
-`docs/*.jpg` are the screenshots `README.md` shows, taken on the emulator at 540 px wide. Replacing one is its own change.
+- `react-native-plugin/` builds the pinned npm React Native Gradle plugin sources with this app's Kotlin and AGP versions. Keep those sources in root `node_modules`; do not copy or patch vendored plugin code to fix a toolchain mismatch.
