@@ -6,6 +6,7 @@ import { slashCommands, slashOf, slashRefusal, slashSuggestions, type DroidSlash
 import { ThreadQueue } from '../../shared/thread-queue';
 import type { Net, TerminalHold } from '../net';
 import { ThreadHistory } from '../thread-history';
+import { SubmittedDrafts, type SubmittedDraft } from '../draft-ack';
 import { TeamThread, TeamThreadPaint, teamThreadBudget, teamThreadVisible, threadReadInterval } from '../team-thread';
 import { h, STATUS_LABEL } from './dom';
 import { colorDot } from './kit';
@@ -51,6 +52,12 @@ export interface ThreadOptions {
   onAttachments?(handles: string[]): void;
   /** The connection was lost and the composer cleared itself (text and pictures). */
   onDraftReset?(): void;
+  /**
+   * A send succeeded: exactly the text (as kept in the draft) and picture handles it took. Fires even
+   * when the view was disposed while the send was out, and then nothing else does: no onDraft('') and
+   * no onAttachments. Apply it with acknowledgeDraft, which keeps anything added or edited since.
+   */
+  onSubmitted?(sent: SubmittedDraft): void;
   /** The floor the view was opened on, where its pictures are staged. */
   floor?: string;
   send(msg: ClientMsg): Promise<string | undefined>;
@@ -64,6 +71,7 @@ export interface ThreadOptions {
 }
 
 const localQueues = new Map<string, ThreadQueue>();
+const submittedDrafts = new SubmittedDrafts();
 /** Mounted views reading their own conversation now, which share the server reader's cache with team reads. */
 const pollingViews = new Set<object>();
 
@@ -74,8 +82,7 @@ export function mountWorkerThread(net: Net, opts: ThreadOptions): WorkerThread {
   let active = false;
   let focused = true;
   let hold: TerminalHold | undefined;
-  /** The pictures the caller's draft kept when this view was disposed. */
-  let keptHandles: string[] = [];
+
   const self = {};
   let disposed = false;
   let sending = false;
@@ -829,6 +836,8 @@ export function mountWorkerThread(net: Net, opts: ThreadOptions): WorkerThread {
       return;
     }
     if (!text && !images.ids().length && !images.busy()) return input.focus();
+    // The draft as kept, so the acknowledgement can tell whether anyone changed it since.
+    const draftText = input.value;
     sending = true;
     const stamp = net.stamp();
     updateControls();
@@ -849,15 +858,12 @@ export function mountWorkerThread(net: Net, opts: ThreadOptions): WorkerThread {
     sending = false;
     if (!result) {
       if (queueReceipt) queued.sent(text, hasImage, after);
+      // Only what went: a newer view of this draft may have added pictures or changed the text since.
+      const sent: SubmittedDraft = { text: draftText, attachments: outgoing.handles };
       images.take(outgoing.handles);
-      // Disposed while the send was out: the caller's kept draft still lists the sent pictures.
-      if (disposed) {
-        const sent = new Set(outgoing.handles);
-        keptHandles = keptHandles.filter((handle) => !sent.has(handle));
-        opts.onAttachments?.(keptHandles);
-      }
-      input.value = '';
-      opts.onDraft('');
+      if (!disposed) acknowledge(sent);
+      submittedDrafts.emit(opts.queueKey, sent, acknowledge);
+      opts.onSubmitted?.(sent);
       told = '';
       paintSlash();
       if (history.historical) history.clear(worker.sessionId);
@@ -909,6 +915,16 @@ export function mountWorkerThread(net: Net, opts: ThreadOptions): WorkerThread {
     }
   });
   const off = net.onMessage(receive);
+  // This view's draft sent by another view of it (one disposed mid-send): drop the text only if unchanged.
+  // Its pictures already left this box through the staging.
+  const acknowledge = (sent: SubmittedDraft) => {
+    if (disposed || input.value !== sent.text) return;
+    input.value = '';
+    opts.onDraft('');
+    paintSlash();
+    updateControls();
+  };
+  const offSubmitted = submittedDrafts.on(opts.queueKey, acknowledge);
   const offReady = net.onReady((ready) => {
     if (disposed) return;
     updateControls();
@@ -1032,10 +1048,9 @@ export function mountWorkerThread(net: Net, opts: ThreadOptions): WorkerThread {
       off();
       resize.disconnect();
       questionChanges.disconnect();
-      if (opts.onAttachments) {
-        keptHandles = images.handles();
-        images.detach();
-      } else images.discard();
+      if (opts.onAttachments) images.detach();
+      else images.discard();
+      offSubmitted();
       team.dispose();
       teamNodes.clear();
     },
