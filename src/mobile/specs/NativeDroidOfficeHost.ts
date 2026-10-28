@@ -13,7 +13,7 @@ export interface Spec extends TurboModule {
   release(token: number): void;
   http(json: string): Promise<string>;
   pickImages(floor: string, max: number): Promise<string>;
-  forgetImage(floor: string, id: string): void;
+  forgetImage(floor: string, id: string, office: string | null): void;
   layoutLoad(office: string): Promise<string | null>;
   layoutSave(office: string, json: string): void;
   openPairing(): void;

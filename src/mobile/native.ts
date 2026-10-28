@@ -22,7 +22,8 @@ export interface NativeOfficeHost {
   http(json: string): Promise<string>;
   /** JSON {@link HostImage}[]. */
   pickImages(floor: string, max: number): Promise<string>;
-  forgetImage(floor: string, id: string): void;
+  /** Deletes only on the office the picture was uploaded to; `office`, when given, must be that one. */
+  forgetImage(floor: string, id: string, office: string | null): void;
   layoutLoad(office: string): Promise<string | null>;
   layoutSave(office: string, json: string): void;
   openPairing(): void;
@@ -77,6 +78,63 @@ function parse<T>(text: string | null | undefined): T | undefined {
   }
 }
 
+const isObject = (v: unknown): v is Record<string, unknown> => !!v && typeof v === 'object' && !Array.isArray(v);
+const isSeq = (v: unknown): v is number => typeof v === 'number' && Number.isSafeInteger(v) && v >= 0;
+const isText = (v: unknown): v is string => typeof v === 'string' && v.length > 0;
+const PHASES: readonly string[] = ['idle', 'connecting', 'connected', 'offline', 'unauthorized'];
+
+function isLink(v: unknown): v is HostLink {
+  return isObject(v) && typeof v.phase === 'string' && PHASES.includes(v.phase) && isSeq(v.epoch) && isSeq(v.seq) && (v.office === undefined || typeof v.office === 'string') && (v.reason === undefined || typeof v.reason === 'string');
+}
+
+function isOffices(v: unknown): v is HostOffices {
+  return (
+    isObject(v) &&
+    Array.isArray(v.offices) &&
+    v.offices.every((o) => isObject(o) && isText(o.id) && typeof o.name === 'string' && (o.where === undefined || typeof o.where === 'string')) &&
+    (v.active === undefined || typeof v.active === 'string') &&
+    (v.seq === undefined || isSeq(v.seq))
+  );
+}
+
+function isIncoming(v: unknown): v is HostIncoming {
+  if (!isObject(v) || !isText(v.office)) return false;
+  if (v.kind === 'worker') return isText(v.worker) && (v.floor === undefined || isText(v.floor));
+  return v.kind === 'floor' && isText(v.floor);
+}
+
+/** A ManagementEvent the page may ask for, or undefined. */
+export function parseManagementEvent(text: string | null | undefined): ManagementEvent | undefined {
+  const e = parse<unknown>(text);
+  if (!isObject(e)) return undefined;
+  switch (e.kind) {
+    case 'open-worker':
+      return isText(e.workerId) && (e.view === 'thread' || e.view === 'tty') ? { kind: 'open-worker', workerId: e.workerId, view: e.view } : undefined;
+    case 'switch-floor':
+      return isText(e.floor) ? { kind: 'switch-floor', floor: e.floor } : undefined;
+    case 'close':
+      return { kind: 'close' };
+    default:
+      return undefined;
+  }
+}
+
+/** A bootstrap with every field the app relies on, or undefined. */
+function parseBootstrap(text: string | null | undefined): HostBootstrap | undefined {
+  const b = parse<unknown>(text);
+  if (!isOffices(b)) return undefined;
+  const { link, seq, replay, incoming } = b as unknown as Record<string, unknown>;
+  if (!isLink(link) || !isSeq(seq) || !Array.isArray(replay)) return undefined;
+  return {
+    offices: b.offices,
+    ...(b.active !== undefined ? { active: b.active } : {}),
+    link,
+    seq,
+    replay: replay.filter((m): m is ServerMsg => isObject(m) && typeof m.t === 'string'),
+    ...(isIncoming(incoming) ? { incoming } : {}),
+  };
+}
+
 /** Builds the {@link MobileHost} the RN app gets, over the native module. */
 export function createHost(deps: NativeDeps): MobileHost {
   const { module } = deps;
@@ -88,23 +146,35 @@ export function createHost(deps: NativeDeps): MobileHost {
     if (subscribed) return;
     subscribed = true;
     deps.events.addListener(NATIVE_EVENT, (payload) => {
-      const e = parse<NativeEvent>(payload);
-      if (!e || typeof e !== 'object') return;
+      const e = parse<Record<string, unknown>>(payload);
+      if (!isObject(e)) return;
+      // Each handler on its own: one that throws must not keep the rest from hearing the event.
+      const each = <A extends unknown[]>(set: Set<(...args: A) => void>, ...args: A) => {
+        for (const h of [...set]) {
+          try {
+            h(...args);
+          } catch (err) {
+            console.error(err);
+          }
+        }
+      };
       switch (e.k) {
-        case 'message':
-          if (e.msg && typeof e.msg === 'object') for (const h of [...handlers.message]) h(e.msg, { seq: e.seq, epoch: e.epoch });
+        case 'message': {
+          const msg = e.msg;
+          if (isSeq(e.seq) && isSeq(e.epoch) && isObject(msg) && typeof msg.t === 'string') each(handlers.message, msg as unknown as ServerMsg, { seq: e.seq, epoch: e.epoch });
           return;
+        }
         case 'link':
-          for (const h of [...handlers.link]) h(e.link);
+          if (isLink(e.link)) each(handlers.link, e.link);
           return;
         case 'offices':
-          for (const h of [...handlers.offices]) h(e.offices);
+          if (isOffices(e.offices)) each(handlers.offices, e.offices);
           return;
         case 'incoming':
-          for (const h of [...handlers.incoming]) h(e.incoming);
+          if (isIncoming(e.incoming)) each(handlers.incoming, e.incoming);
           return;
         case 'screen':
-          for (const h of [...handlers.screen]) h(e.workerId);
+          if (isText(e.workerId)) each(handlers.screen, e.workerId);
           return;
       }
     });
@@ -125,15 +195,15 @@ export function createHost(deps: NativeDeps): MobileHost {
       params: JSON.stringify(props.params ?? {}),
       style: props.style,
       onToolEvent: (e: { nativeEvent: { data: string } }) => {
-        const event = parse<ManagementEvent>(e?.nativeEvent?.data);
-        if (event && typeof event === 'object' && typeof event.kind === 'string') props.onEvent?.(event);
+        const event = parseManagementEvent(e?.nativeEvent?.data);
+        if (event) props.onEvent?.(event);
       },
     });
 
   return {
     async bootstrap() {
       listening();
-      const b = parse<HostBootstrap>(await module.bootstrap());
+      const b = parseBootstrap(await module.bootstrap());
       if (!b) throw new Error('The app could not read the office state.');
       return b;
     },
@@ -169,7 +239,7 @@ export function createHost(deps: NativeDeps): MobileHost {
     async pickImages(floor: string, max: number): Promise<HostImage[]> {
       return parse<HostImage[]>(await module.pickImages(floor, max)) ?? [];
     },
-    forgetImage: (floor, id) => module.forgetImage(floor, id),
+    forgetImage: (floor, id, office) => module.forgetImage(floor, id, office ?? null),
     layout: {
       async load(office: string) {
         return parse<unknown>(await module.layoutLoad(office));

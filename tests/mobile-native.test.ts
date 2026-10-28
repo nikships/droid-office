@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { createHost, NATIVE_EVENT, type NativeOfficeHost } from '../src/mobile/native.js';
+import { createHost, NATIVE_EVENT, type NativeOfficeHost, parseManagementEvent } from '../src/mobile/native.js';
 
 function rig(over: Partial<NativeOfficeHost> = {}) {
   const calls: unknown[][] = [];
@@ -14,7 +14,7 @@ function rig(over: Partial<NativeOfficeHost> = {}) {
     release: (token) => void calls.push(['release', token]),
     http: async (json) => (calls.push(['http', json]), JSON.stringify({ status: 200, body: { ok: true } })),
     pickImages: async () => JSON.stringify([{ id: 'i1', name: 'a.jpg' }]),
-    forgetImage: (floor, id) => void calls.push(['forget', floor, id]),
+    forgetImage: (floor, id, office) => void calls.push(['forget', floor, id, office]),
     layoutLoad: async () => '{"panes":1}',
     layoutSave: (office, json) => void calls.push(['layoutSave', office, json]),
     openPairing: () => void calls.push(['openPairing']),
@@ -116,6 +116,7 @@ test('pictures, layout, screens and native screens pass through', async () => {
   const r = rig();
   assert.deepEqual(await r.host.pickImages('f1', 4), [{ id: 'i1', name: 'a.jpg' }]);
   r.host.forgetImage('f1', 'i1');
+  r.host.forgetImage('f1', 'i2', 'o-old');
   assert.deepEqual(await r.host.layout.load('o1'), { panes: 1 });
   r.host.layout.save('o1', { panes: 2 });
   r.host.openPairing();
@@ -125,7 +126,7 @@ test('pictures, layout, screens and native screens pass through', async () => {
   r.host.haptic('tick');
   assert.deepEqual(r.host.screen('w1'), ['row 1', 'row 2']);
   assert.equal(r.host.screen('w2'), undefined);
-  assert.deepEqual(r.calls, [['forget', 'f1', 'i1'], ['layoutSave', 'o1', '{"panes":2}'], ['openPairing'], ['openOffices'], ['openSettings'], ['selectOffice', 'o2'], ['haptic', 'tick']]);
+  assert.deepEqual(r.calls, [['forget', 'f1', 'i1', null], ['forget', 'f1', 'i2', 'o-old'], ['layoutSave', 'o1', '{"panes":2}'], ['openPairing'], ['openOffices'], ['openSettings'], ['selectOffice', 'o2'], ['haptic', 'tick']]);
   assert.deepEqual(await rig({ pickImages: async () => 'x' }).host.pickImages('f1', 1), []);
 });
 
@@ -144,4 +145,80 @@ test('views hand native JSON props and only well-formed tool events back', () =>
   fire({ nativeEvent: { data: '{"floor":"f2"}' } });
   fire({ nativeEvent: { data: 'nope' } });
   assert.deepEqual(events, [{ kind: 'switch-floor', floor: 'f2' }]);
+});
+
+test('malformed events are dropped at the boundary, and a throwing handler does not starve the others', async () => {
+  const r = rig();
+  const got: unknown[] = [];
+  r.host.onMessage(() => {
+    throw new Error('boom');
+  });
+  r.host.onMessage((msg, meta) => got.push(['message', msg.t, meta.seq]));
+  r.host.onLink((l) => got.push(['link', l.epoch]));
+  r.host.onOffices((o) => got.push(['offices', o.offices.length, o.seq]));
+  r.host.onIncoming((i) => got.push(['incoming', i.kind]));
+  r.host.onScreen((id) => got.push(['screen', id]));
+  const quiet = console.error;
+  console.error = () => {};
+  try {
+    for (const bad of [
+      { k: 'message', epoch: 1, msg: { t: 'pong' } },
+      { k: 'message', seq: Number.NaN, epoch: 1, msg: { t: 'pong' } },
+      { k: 'message', seq: 3, epoch: 1, msg: { nope: 1 } },
+      { k: 'link' },
+      { k: 'link', link: { phase: 'flying', epoch: 1, seq: 1 } },
+      { k: 'link', link: { phase: 'connected', epoch: 1 } },
+      { k: 'offices', offices: { active: 'o1' } },
+      { k: 'offices', offices: { offices: [{ name: 'x' }] } },
+      { k: 'incoming', incoming: { kind: 'worker', office: 'o1' } },
+      { k: 'incoming', incoming: { kind: 'floor', office: 'o1' } },
+      { k: 'incoming', incoming: { kind: 'boom', office: 'o1', floor: 'f' } },
+      { k: 'screen' },
+      { k: 'screen', workerId: 7 },
+      [1, 2],
+    ])
+      r.emit(bad);
+    r.emit({ k: 'message', seq: 4, epoch: 1, msg: { t: 'pong' } });
+  } finally {
+    console.error = quiet;
+  }
+  r.emit({ k: 'link', link: { phase: 'offline', epoch: 1, seq: 5, reason: 'gone' } });
+  r.emit({ k: 'offices', offices: { offices: [{ id: 'o1', name: 'Office' }], seq: 6 } });
+  r.emit({ k: 'incoming', incoming: { kind: 'worker', office: 'o1', worker: 'w1' } });
+  r.emit({ k: 'screen', workerId: 'w1' });
+  assert.deepEqual(got, [
+    ['message', 'pong', 4],
+    ['link', 1],
+    ['offices', 1, 6],
+    ['incoming', 'worker'],
+    ['screen', 'w1'],
+  ]);
+});
+
+test('bootstrap keeps a well-formed incoming once and drops what does not parse', async () => {
+  const boot = (extra: Record<string, unknown>) => async () => JSON.stringify({ offices: [], link: { phase: 'idle', epoch: 0, seq: 0 }, replay: [{ t: 'welcome' }, 'junk'], seq: 1, ...extra });
+  const good = await rig({ bootstrap: boot({ incoming: { kind: 'floor', office: 'o1', floor: 'f1' } }) }).host.bootstrap();
+  assert.deepEqual(good.incoming, { kind: 'floor', office: 'o1', floor: 'f1' });
+  assert.deepEqual(good.replay, [{ t: 'welcome' }]);
+  const bad = await rig({ bootstrap: boot({ incoming: { kind: 'worker', office: 'o1' } }) }).host.bootstrap();
+  assert.equal(bad.incoming, undefined);
+  await assert.rejects(rig({ bootstrap: boot({ seq: -1 }) }).host.bootstrap(), /could not read/);
+  await assert.rejects(rig({ bootstrap: boot({ link: { phase: 'idle', epoch: 0 } }) }).host.bootstrap(), /could not read/);
+});
+
+test('a management event is one of the three the page may ask for, with its fields', () => {
+  assert.deepEqual(parseManagementEvent('{"kind":"open-worker","workerId":"w1","view":"tty"}'), { kind: 'open-worker', workerId: 'w1', view: 'tty' });
+  assert.deepEqual(parseManagementEvent('{"kind":"close","extra":1}'), { kind: 'close' });
+  for (const bad of [
+    '{"kind":"open-worker","workerId":"w1"}',
+    '{"kind":"open-worker","workerId":"w1","view":"map"}',
+    '{"kind":"open-worker","view":"tty"}',
+    '{"kind":"switch-floor"}',
+    '{"kind":"switch-floor","floor":""}',
+    '{"kind":"delete-everything"}',
+    '[]',
+    'nope',
+    null,
+  ])
+    assert.equal(parseManagementEvent(bad), undefined, String(bad));
 });
