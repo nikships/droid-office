@@ -20,6 +20,7 @@ import { confirmDialog, openPrompt, routeWorktreeMessage, sendHomeDialog } from 
 import { modelBadge, modelBadgeNode } from './ui/models';
 import { openFloorOrder } from './ui/floor-reorder';
 import { openSubscriptionsStatus } from './ui/subscriptions-status';
+import { openHostUpdate } from './ui/host-update';
 import { mountWorkerThread, type WorkerThread } from './ui/worker-thread';
 import type { MapDirection } from './office-map-view';
 import type { MapFloor, OfficeMap, OfficeMapHooks } from './office-map';
@@ -111,9 +112,10 @@ const conn = h('span.dash-conn', { 'data-state': 'loading' }, connDot, connText)
 const boardCount = h('span.dash-count.hidden');
 const board = h('button.btn.dash-top-btn', { type: 'button', title: 'The floor’s Whiteboard (B)', onclick: () => void openBoard() }, icon('board'), h('span', {}, 'Whiteboard'), boardCount);
 const subscriptions = h('button.btn.dash-top-btn', { type: 'button', title: 'Subscriptions and account usage', onclick: () => openSubscriptionsStatus() }, icon('key'), h('span', {}, 'Subscriptions'));
+const hostUpdate = h('button.btn.dash-top-btn', { type: 'button', title: 'Update the host Mac app', onclick: () => openHostUpdate() }, icon('monitor'), h('span', {}, 'Host app'));
 const accessLabel = h('span', {}, WHERE[where].label);
 const access = h('button.btn.ghost.dash-top-btn', { type: 'button', title: 'How this browser reaches the office, and its pairing', onclick: () => accessDialog() }, icon(WHERE[where].icon), accessLabel);
-const top = h('header.dash-top', {}, brand, floorPicker, h('span.grow'), conn, subscriptions, board, access);
+const top = h('header.dash-top', {}, brand, floorPicker, h('span.grow'), conn, hostUpdate, subscriptions, board, access);
 
 const bannerIcon = h('span.dash-banner-icon');
 const bannerText = h('p.dash-banner-text');
@@ -376,6 +378,7 @@ function paint() {
   agentBtn.disabled = shellBtn.disabled = dockAgent.disabled = dockShell.disabled = !up || !here || busy.has('hire');
   board.disabled = !up || !here;
   subscriptions.disabled = !up;
+  hostUpdate.disabled = !up;
   content.classList.toggle('dash-stale', !up);
   content.hidden = !authorized;
   authPanel.hidden = authorized;

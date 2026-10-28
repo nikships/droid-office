@@ -23,6 +23,7 @@ import { enforceRequirements, isStartupCheck, runStartupCheck, StartupAborted } 
 import { OfficeTray } from './tray.js';
 import { listCut, type OfficeStatus, parseStatus, type TrayAction, trayTitle, type TrayView, WaitingWatch, waitingNotice, type WorkerLink, workerHash } from './tray-model.js';
 import { Updates } from './updates.js';
+import { serveHostUpdates } from './update-ipc.js';
 
 const BACKGROUND = '#050505';
 
@@ -310,6 +311,7 @@ async function openOffice() {
         port,
         env: officeEnv,
         log: officeLog,
+        onSpawn: (child) => serveHostUpdates(child, (command) => updates.controller.remote(command)),
       });
       officeUrl = office.url;
       const mine = office;

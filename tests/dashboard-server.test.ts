@@ -96,6 +96,29 @@ test('hidden models sync to every device and new connections, with invalid chang
   for (const client of [desktop, web, phone]) await client.wait('models.hidden', (m) => m.ids.length === 0);
 });
 
+test('host update routes require office access and same-origin writes, with clear source-host fallback', async (t) => {
+  const { base, server } = await office(t);
+  const state = await fetch(`${base}/api/host/update`);
+  assert.equal(state.status, 200);
+  assert.equal((await state.json()).supported, false);
+  const post = (body: string, headers: Record<string, string> = {}) => fetch(`${base}/api/host/update`, { method: 'POST', headers: { 'content-type': 'application/json', ...headers }, body });
+  assert.equal((await post('{"action":"check"}')).status, 403, 'a write requires an own request even on loopback');
+  assert.equal((await post('{"action":"check"}', { Origin: 'https://foreign.example' })).status, 403);
+  assert.equal((await post('not json', { Origin: base })).status, 400);
+  assert.equal((await post('{"action":"install"}', { Origin: base })).status, 400);
+  assert.equal((await post('{"action":"exec"}', { Origin: base })).status, 400);
+  assert.equal((await post('{"action":"check"}', { Origin: base })).status, 409);
+  assert.equal((await fetch(`${base}/api/host/update`, { method: 'DELETE' })).status, 405);
+  const paired = server.devices.pair('Phone')!;
+  const headers = { Authorization: `Bearer ${paired.token}` };
+  assert.equal((await fetch(`${base}/api/host/update`, { headers })).status, 200);
+  assert.equal((await post('{"action":"check"}', headers)).status, 409, 'native paired phones may write without Origin');
+  server.devices.forget(paired.device.id);
+  assert.equal((await fetch(`${base}/api/host/update`, { headers })).status, 401);
+  const ip = await reachableLan(t, server.server);
+  if (ip) assert.equal((await fetch(`${base.replace('127.0.0.1', ip)}/api/host/update`)).status, 401);
+});
+
 test('floor moves from a companion update every client and the next welcome, with invalid moves refused', async (t) => {
   const { base, dir, server } = await office(t);
   const desktop = socket(t, base, '');

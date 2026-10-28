@@ -1,6 +1,9 @@
 package ai.factory.droidoffice.session
 
 import ai.factory.droidoffice.core.Backoff
+import ai.factory.droidoffice.core.OfficeEndpoint
+import ai.factory.droidoffice.core.HostUpdateAction
+import ai.factory.droidoffice.core.HostUpdateState
 import ai.factory.droidoffice.core.ClientMsg
 import ai.factory.droidoffice.core.FloorInfo
 import ai.factory.droidoffice.core.FloorView
@@ -172,7 +175,7 @@ class OfficeConnection(
     /** Each attached terminal's stream, on the main thread like [handle]. */
     private val feeds = HashMap<String, TermFeed>()
     @Volatile private var socket: WebSocket? = null
-    @Volatile private var current: Pair<String, OfficeAuth>? = null
+    @Volatile private var current: OfficeEndpoint<OfficeAuth>? = null
     @Volatile private var hireAskedAt = 0L
     private var models: Triple<String, Long, ModelCatalogue>? = null
 
@@ -296,6 +299,13 @@ class OfficeConnection(
             models = Triple(base, System.currentTimeMillis(), it)
             _catalogue.value = it
         }
+    }
+
+    suspend fun hostUpdate(officeId: String, action: HostUpdateAction? = null, version: String? = null): Result<HostUpdateState> {
+        val endpoint = current ?: return Result.failure(IllegalStateException("Not connected to the office"))
+        val target = endpoint.forOffice(officeId, store.snapshot.value.active?.id)
+            ?: return Result.failure(IllegalStateException("The active office changed. Open its host update view again."))
+        return api.hostUpdate(target.base, target.auth, action, version)
     }
 
     suspend fun stageImage(name: String, type: String, bytes: ByteArray): Result<String> {
@@ -452,7 +462,7 @@ class OfficeConnection(
                     store.update(office.id) {
                         it.copy(lastBase = race.base, lastSeenAt = System.currentTimeMillis(), name = probe.officeName ?: it.name, version = probe.version ?: it.version)
                     }
-                    current = race.base to auth
+                    current = OfficeEndpoint(race.base, auth, office.id)
                     _link.value = Link(Phase.Connecting, office.id, base = race.base, kind = race.kind, attempt = backoff.attempt)
                     val end = session(office, race.base, race.kind, auth)
                     if (end.unpaired) {

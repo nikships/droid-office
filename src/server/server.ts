@@ -20,6 +20,7 @@ import { HiddenModels } from './hidden-models.js';
 import { Upgrader } from './upgrade.js';
 import { GUEST_REFUSED, GuestScanner, guestRefusal, type AgentProcess } from './guests.js';
 import { officeStatus } from './office-status.js';
+import { HostUpdates, hostUpdateCommand } from './host-updates.js';
 import { PhoneSizes } from './phone-sizes.js';
 import { UPLOAD_MAX_BYTES } from '../shared/decor.js';
 import { ImageProxy } from './decor.js';
@@ -223,6 +224,7 @@ export async function startServer(cfg: Config) {
   const tailscale = new TailscaleWatch();
   void tailscale.get();
   const companion = new WebCompanion(cfg.dataDir);
+  const hostUpdates = new HostUpdates();
   const clients = new Map<string, Client>();
   const workerThreads = new WorkerThreadReader();
   /** The office Mac's trackpad taps for a charging shot; a silent no-op off macOS (see haptics.ts). */
@@ -964,6 +966,24 @@ export async function startServer(cfg: Config) {
       const ownRequest = () => sameOrigin(req, cfg) || (!!gate.device && !!gate.header);
 
       if (p === '/api/health') return send(res, 200, { ok: true });
+      if (p === '/api/host/update') {
+        if (req.method !== 'GET' && req.method !== 'POST') return send(res, 405, { error: 'Use GET or POST' });
+        if (req.method === 'POST' && !ownRequest()) return send(res, 403, { error: 'Forbidden' });
+        let command = hostUpdateCommand(null);
+        if (req.method === 'POST') {
+          try {
+            command = hostUpdateCommand(JSON.parse(await readBody(req, 1024)));
+          } catch {
+            return send(res, 400, { error: 'Send an update action as JSON.' });
+          }
+          if (!command) return send(res, 400, { error: 'Use check, or install with the offered version.' });
+        }
+        try {
+          return send(res, 200, await hostUpdates.request(command ?? { action: 'status' }));
+        } catch (err) {
+          return send(res, 409, { error: (err as Error).message });
+        }
+      }
       if (p === '/api/automation') return automationRequest(req, res, ownRequest());
       if (p === '/api/mobile/hello' && req.method === 'GET') return send(res, 200, { ok: true, office: officeCard(), ...(gate.device ? { deviceId: gate.device.id } : {}) });
       if (p === '/api/mobile/pair' && req.method === 'DELETE') {
@@ -2489,6 +2509,7 @@ export async function startServer(cfg: Config) {
 
   /** With `keep` (a restart), workers' terminals keep running for the next office to pick up. */
   const shutdown = (keep = false) => {
+    hostUpdates.dispose();
     finder?.stop();
     finderToken = undefined;
     clearInterval(heartbeat);

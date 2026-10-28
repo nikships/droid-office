@@ -1,6 +1,8 @@
 package ai.factory.droidoffice.net
 
 import ai.factory.droidoffice.core.Models
+import ai.factory.droidoffice.core.HostUpdateState
+import ai.factory.droidoffice.core.HostUpdateAction
 import ai.factory.droidoffice.core.OfficeJson
 import ai.factory.droidoffice.core.Probe
 import ai.factory.droidoffice.core.WbFetched
@@ -21,10 +23,12 @@ import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import okhttp3.RequestBody
 import okhttp3.RequestBody.Companion.toRequestBody
 import okhttp3.Response
 import okhttp3.WebSocket
 import okhttp3.WebSocketListener
+import okio.BufferedSink
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
 
@@ -91,6 +95,8 @@ class OfficeApi(base: OkHttpClient = OkHttpClient()) {
         .readTimeout(4, TimeUnit.SECONDS)
         .build()
 
+    private val noRetryClient = client.newBuilder().retryOnConnectionFailure(false).followRedirects(false).build()
+
     private val jsonType = "application/json".toMediaType()
 
     suspend fun pair(base: String, lanToken: String, device: String): PairResult = withContext(Dispatchers.IO) {
@@ -153,6 +159,38 @@ class OfficeApi(base: OkHttpClient = OkHttpClient()) {
             }
         } catch (_: IOException) {
             null
+        }
+    }
+
+    /** No automatic retries for commands that may restart the host. Poll status after an uncertain answer. */
+    suspend fun hostUpdate(base: String, auth: OfficeAuth, action: HostUpdateAction? = null, version: String? = null): Result<HostUpdateState> = withContext(Dispatchers.IO) {
+        val builder = request(base, "api/host/update", auth)
+        if (action == null) builder.get() else {
+            val body = buildJsonObject {
+                put("action", action.wire)
+                version?.let { put("version", it) }
+            }.toString().toRequestBody(jsonType)
+            builder.post(object : RequestBody() {
+                override fun contentType() = body.contentType()
+                override fun contentLength() = body.contentLength()
+                // Also forbid response-driven retries (for example 503 with Retry-After: 0).
+                override fun isOneShot() = true
+                override fun writeTo(sink: BufferedSink) = body.writeTo(sink)
+            })
+        }
+        try {
+            (if (action == null) client else noRetryClient).newCall(builder.build()).await().use { res ->
+                if (res.code == 404) Result.failure(IOException("This office is too old for remote host updates. Update it on the Mac first."))
+                else if (!res.isSuccessful) {
+                    val body = runCatching { OfficeJson.parseToJsonElement(res.body.string()) as? kotlinx.serialization.json.JsonObject }.getOrNull()
+                    val error = (body?.get("error") as? kotlinx.serialization.json.JsonPrimitive)?.content
+                    Result.failure(IOException(error ?: "The office answered ${res.code}"))
+                } else Result.success(OfficeJson.decodeFromString<HostUpdateState>(res.body.string()))
+            }
+        } catch (e: IOException) {
+            Result.failure(e)
+        } catch (_: kotlinx.serialization.SerializationException) {
+            Result.failure(IOException("The host sent an update status this app can't read."))
         }
     }
 

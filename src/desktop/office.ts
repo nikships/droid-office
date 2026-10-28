@@ -45,6 +45,8 @@ export interface OfficeOptions {
   log: string;
   /** How long to wait for its page. Default 90 s (the first start builds nothing, but floors can be slow). */
   timeoutMs?: number;
+  /** Installs the private app-control channel before the office starts answering requests. */
+  onSpawn?: (child: ChildProcess) => void;
 }
 
 export interface Office {
@@ -75,7 +77,7 @@ export async function startOffice(o: OfficeOptions): Promise<Office> {
   try {
     child = spawn(o.runtime, [o.cli, ...o.args], {
       env: { ...o.env, ELECTRON_RUN_AS_NODE: '1' },
-      stdio: ['ignore', out, out],
+      stdio: o.onSpawn ? ['ignore', out, out, 'ipc'] : ['ignore', out, out],
     });
   } finally {
     closeSync(out);
@@ -91,6 +93,13 @@ export async function startOffice(o: OfficeOptions): Promise<Office> {
       resolve(null);
     });
   });
+  try {
+    o.onSpawn?.(child);
+  } catch (err) {
+    child.kill('SIGKILL');
+    await exited;
+    throw err;
+  }
 
   const deadline = Date.now() + (o.timeoutMs ?? 90_000);
   while (exitCode === undefined) {

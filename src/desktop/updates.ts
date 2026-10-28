@@ -1,11 +1,11 @@
 import { appendFileSync } from 'node:fs';
 import { app, type BaseWindow, autoUpdater as squirrel } from 'electron';
 import updater from 'electron-updater';
-import { briefError, type UpdateAction, type UpdatePhase, updateBusy, updateView } from './update-view.js';
+import { UpdateController } from './update-controller.js';
+import { type UpdatePhase, updateView } from './update-view.js';
 import { UpdateWindow } from './update-window.js';
 
 const { autoUpdater, CancellationToken } = updater;
-type Token = InstanceType<typeof CancellationToken>;
 
 const CHECK_EVERY_MS = 30 * 60_000;
 
@@ -24,11 +24,10 @@ export interface UpdatesOptions {
  */
 export class Updates {
   private timer?: NodeJS.Timeout;
+  private initial?: NodeJS.Timeout;
   private window?: UpdateWindow;
-  private phase?: UpdatePhase;
-  private download?: Token;
-  /** Versions the owner chose Later for, which the background checks don't offer again this run. */
-  private dismissed = new Set<string>();
+  private checkedVersion?: string;
+  readonly controller: UpdateController;
 
   constructor(private readonly o: UpdatesOptions) {
     const write = (level: string) => (msg: unknown) => {
@@ -43,8 +42,43 @@ export class Updates {
     // On macOS this also hands the download to Squirrel.Mac as soon as it's done, which is what
     // lets the app restart into the update without a second wait.
     autoUpdater.autoInstallOnAppQuit = true;
+    this.controller = new UpdateController({
+      enabled: app.isPackaged,
+      currentVersion: app.getVersion(),
+      check: async () => {
+        const result = await autoUpdater.checkForUpdates();
+        this.checkedVersion = result?.isUpdateAvailable ? result.updateInfo.version : undefined;
+        return this.checkedVersion;
+      },
+      download: (version, preparing) => {
+        if (version !== this.checkedVersion) throw new Error('The offered update changed. Check for updates again before installing.');
+        const token = new CancellationToken();
+        const ready = squirrelReady();
+        const promise = (async () => {
+          try {
+            await autoUpdater.downloadUpdate(token);
+            if (token.cancelled) return;
+            preparing();
+            await ready.promise;
+          } finally {
+            ready.dispose();
+          }
+        })();
+        return {
+          promise,
+          cancel: () => {
+            token.cancel();
+            ready.dispose();
+          },
+        };
+      },
+      beforeInstall: o.beforeInstall,
+      quitAndInstall: () => autoUpdater.quitAndInstall(false, true),
+      render: (phase, open) => this.show(phase, open),
+      close: () => this.window?.close(),
+    });
     autoUpdater.on('download-progress', (p) => {
-      if (this.phase?.kind === 'downloading') this.show({ ...this.phase, transferred: p.transferred, total: p.total });
+      this.controller.progress(p.transferred, p.total);
     });
   }
 
@@ -55,87 +89,29 @@ export class Updates {
 
   start() {
     if (!this.enabled) return;
-    setTimeout(() => void this.check(false), 10_000);
+    this.stop();
+    this.initial = setTimeout(() => void this.check(false), 10_000);
     this.timer = setInterval(() => void this.check(false), CHECK_EVERY_MS);
   }
 
   stop() {
     clearInterval(this.timer);
+    clearTimeout(this.initial);
   }
 
   /** `manual` is the menu's Check for Updates…: it always opens the window and says what it found. */
-  async check(manual: boolean) {
-    if (this.phase && updateBusy(this.phase)) {
-      if (manual) {
-        this.show(this.phase);
-        this.window?.focus();
-      }
-      return;
-    }
-    if (!manual && this.window?.open) return;
-    if (!this.enabled) {
-      if (manual) this.show({ kind: 'unpackaged' });
-      return;
-    }
-    if (manual) this.show({ kind: 'checking' });
-    try {
-      const result = await autoUpdater.checkForUpdates();
-      // The owner closed the window while it checked, or a manual check took over a background one.
-      if (manual ? !this.window?.open : this.window?.open) return;
-      const version = result?.isUpdateAvailable ? result.updateInfo.version : undefined;
-      if (!version) {
-        if (manual) this.show({ kind: 'latest' });
-        return;
-      }
-      if (!manual && this.dismissed.has(version)) return;
-      this.show({ kind: 'available', version });
-    } catch (err) {
-      if (manual && this.window?.open) this.show({ kind: 'error', during: 'check', message: briefError(String((err as Error)?.message ?? err)) });
-    }
+  check(manual: boolean) {
+    const checking = this.controller.check(manual);
+    if (manual) this.window?.focus();
+    return checking;
   }
 
-  private async install(version: string) {
-    const token = new CancellationToken();
-    this.download = token;
-    this.show({ kind: 'downloading', version, transferred: 0, total: 0 });
-    const ready = squirrelReady();
-    try {
-      await autoUpdater.downloadUpdate(token);
-      if (token.cancelled) return ready.dispose();
-      this.show({ kind: 'preparing', version });
-      await ready.promise;
-    } catch (err) {
-      ready.dispose();
-      if (!token.cancelled) this.show({ kind: 'error', during: 'download', version, message: briefError(String((err as Error)?.message ?? err)) });
-      return;
-    } finally {
-      if (this.download === token) this.download = undefined;
-    }
-    this.show({ kind: 'restarting', version });
-    // Stopping the office keeps its workers; if it fails, quitting stops it again anyway.
-    await this.o.beforeInstall().catch(() => {});
-    autoUpdater.quitAndInstall(false, true);
-  }
-
-  private act(action: UpdateAction) {
-    const phase = this.phase;
-    if (!phase) return;
-    if (action === 'install' && phase.kind === 'available') void this.install(phase.version);
-    else if (action === 'later' && phase.kind === 'available') {
-      this.dismissed.add(phase.version);
-      this.window?.close();
-    } else if (action === 'retry' && phase.kind === 'error') {
-      if (phase.during === 'download') void this.install(phase.version);
-      else void this.check(true);
-    } else if (action === 'cancel' || action === 'close') this.window?.close();
-  }
-
-  private show(phase: UpdatePhase) {
-    this.phase = phase;
+  private show(phase: UpdatePhase, open: boolean) {
+    if (!open && !this.window?.open) return;
     if (!this.window?.open) {
       const opened: UpdateWindow = new UpdateWindow({
         parent: this.o.parent(),
-        onAction: (action) => this.act(action),
+        onAction: (action) => this.controller.act(action),
         onClosed: () => this.closed(opened),
       });
       this.window = opened;
@@ -147,8 +123,7 @@ export class Updates {
     // A window closing just as the next phase opened a new one.
     if (this.window !== closed) return;
     this.window = undefined;
-    this.download?.cancel();
-    if (this.phase?.kind !== 'preparing' && this.phase?.kind !== 'restarting') this.phase = undefined;
+    this.controller.closed();
   }
 }
 

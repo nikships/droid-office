@@ -232,6 +232,19 @@ object Tags {
         fun modelWhy(id: String) = "hire.model_why/$id"
     }
 
+    object HostUpdate {
+        const val OPEN = "host_update.open"
+        const val SHEET = "host_update.sheet"
+        const val STATUS = "host_update.status"
+        const val ERROR = "host_update.error"
+        const val CLOSE = "host_update.close"
+        const val CHECK = "host_update.check"
+        const val INSTALL = "host_update.install"
+        const val CONFIRM_DIALOG = "host_update.confirm_dialog"
+        const val CONFIRM = "host_update.confirm"
+        const val CANCEL = "host_update.cancel"
+    }
+
     object Subscriptions {
         const val OPEN = "subscriptions.open"
         const val SHEET = "subscriptions.sheet"
