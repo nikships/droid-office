@@ -15,3 +15,5 @@ pw.txt
 
 # Built native addons (npm run build:native).
 native/*/build
+__pycache__/
+*.pyc
