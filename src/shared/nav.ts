@@ -26,7 +26,6 @@ import {
   POLE,
   POLES,
   ROAD,
-  ROBOT_CELL,
   STAIRS,
   STATIONS,
   type DeskDef,
@@ -67,9 +66,6 @@ function obstacles(): { rects: Rect[]; circles: Circle[] } {
   for (const x of [LOFT.minX + 0.15, (LOFT.minX + LOFT.maxX) / 2]) circles.push([x, LOFT.minZ + 0.15, 0.14]);
   rects.push([STAIRS.fromX, STAIRS.toX, STAIRS.minZ - 0.1, STAIRS.maxZ]);
   rects.push([ELEVATOR.x - ELEVATOR.width / 2, ELEVATOR.x + ELEVATOR.width / 2, FLOOR.minZ, ELEVATOR_FRONT]);
-  // The factory props, as world/factory-props.ts puts them: the fenced robot cell and the Droid Computer rack.
-  const cell = ROBOT_CELL;
-  rects.push([cell.x - cell.width / 2, cell.x + cell.width / 2, cell.z - cell.depth / 2, cell.z + cell.depth / 2]);
   rects.push([DROID_RACK.minX, DROID_RACK.maxX, DROID_RACK.minZ, DROID_RACK.maxZ]);
   // The gong's frame, as office.ts puts it.
   rects.push([GONG.x - GONG.width / 2 - 0.12, GONG.x + GONG.width / 2 + 0.3, GONG.z - 0.3, GONG.z + 0.3]);

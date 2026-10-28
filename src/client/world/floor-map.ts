@@ -24,7 +24,6 @@ import {
   LOFT,
   POLE,
   POLES,
-  ROBOT_CELL,
   STATION_AGENT,
   STATIONS,
   TV,
@@ -255,30 +254,6 @@ function paintFloor(ctx: CanvasRenderingContext2D, p: FloorPalette, bottom: bool
   ctx.lineWidth = 2;
   ctx.strokeRect(fx(10), fz(-3.4), 6.8 * PX, 6.8 * PX);
 
-  // The robot cell's fence line, hatched.
-  {
-    const { x, z, width, depth } = ROBOT_CELL;
-    const x0 = fx(x - width / 2 - 0.25);
-    const z0 = fz(z - depth / 2 - 0.25);
-    const w = (width + 0.5) * PX;
-    const h = (depth + 0.5) * PX;
-    ctx.save();
-    ctx.beginPath();
-    ctx.rect(x0, z0, w, h);
-    ctx.clip();
-    ctx.strokeStyle = 'rgba(238, 96, 24, .22)';
-    ctx.lineWidth = 6;
-    for (let i = -h; i < w; i += 22) {
-      ctx.beginPath();
-      ctx.moveTo(x0 + i, z0 + h);
-      ctx.lineTo(x0 + i + h, z0);
-      ctx.stroke();
-    }
-    ctx.restore();
-    ctx.fillStyle = base;
-    ctx.fillRect(x0 + 10, z0 + 10, w - 20, h - 20);
-  }
-
   // Hazard stripes at the elevator doors, and the hole round the fire pole (a mat on the bottom floor).
   {
     const x0 = fx(ELEVATOR.x - ELEVATOR.width / 2);
@@ -318,7 +293,6 @@ function paintFloor(ctx: CanvasRenderingContext2D, p: FloorPalette, bottom: bool
   stencil(ctx, 'WHITEBOARD', FLOOR.maxX - 2.6, BOARDS.whiteboard.z, 0.3, 0.3);
   stencil(ctx, 'LOUNGE', 15.6, 2.7, 0.34, 0.28);
   stencil(ctx, 'COMPUTE', FLOOR.minX + 2.2, COMPUTE_WALL.z - 1.2, 0.24, 0.22);
-  stencil(ctx, 'CELL 01', ROBOT_CELL.x, ROBOT_CELL.z + ROBOT_CELL.depth / 2 + 0.75, 0.24, 0.3);
   stencil(ctx, 'ELEVATOR', ELEVATOR.x, ELEVATOR_FRONT + 1.05, 0.24, 0.3);
   stencil(ctx, '04 TEAM', STATIONS[3].x - 2.1, STATIONS[3].z, 0.26, 0.26);
   if (bottom) stencil(ctx, 'EXIT', FLOOR.minX + 1.2, EXIT_DOOR.u, 0.3, 0.42);
@@ -901,24 +875,11 @@ export function buildFloorMap(): FloorMap {
     group.add(mergeByMaterial(ladder));
   }
 
-  // The Droid Computer rack, the robot cell, the gong, the bookshelf and the jukebox.
+  // The Droid Computer rack, the gong, the bookshelf and the jukebox.
   const rack = new THREE.Group();
   rack.name = 'droid-rack-frame';
   rack.add(mesh(box(DROID_RACK.maxX - DROID_RACK.minX, 0.14, DROID_RACK.maxZ - DROID_RACK.minZ), toon('#1c1c1c'), (DROID_RACK.minX + DROID_RACK.maxX) / 2, 0.07, (DROID_RACK.minZ + DROID_RACK.maxZ) / 2));
   group.add(rack);
-  const cell = new THREE.Group();
-  cell.position.set(ROBOT_CELL.x, 0, ROBOT_CELL.z);
-  {
-    const { width, depth } = ROBOT_CELL;
-    const post = toon('#1c1c1c');
-    for (const sx of [-1, 1]) for (const sz of [-1, 1]) cell.add(mesh(box(0.08, 1.1, 0.08), post, sx * (width / 2 - 0.12), 0.55, sz * (depth / 2 - 0.12)));
-    const neon = glow(ACCENT, 1.5);
-    for (const s of [-1, 1]) {
-      cell.add(mesh(box(width - 0.2, 0.025, 0.025), neon, 0, 1.1, s * (depth / 2 - 0.12)));
-      cell.add(mesh(box(0.025, 0.025, depth - 0.2), neon, s * (width / 2 - 0.12), 1.1, 0));
-    }
-  }
-  group.add(cell);
   const gong = new THREE.Group();
   gong.position.set(GONG.x, 0, GONG.z);
   gong.add(mesh(new THREE.CylinderGeometry(0.7, 0.7, 0.06, 32).rotateX(Math.PI / 2), toon('#b8862d', { finish: 'metal' }), 0, 1.3, 0));
@@ -1017,22 +978,6 @@ export function buildFloorMap(): FloorMap {
       swapTo(gong, 'merge-gong');
       swapTo(shelf, 'bookshelf');
       swapTo(juke, 'jukebox');
-      const arm = prop('robot-arm');
-      if (arm) {
-        toonifyProp(arm);
-        cell.add(arm);
-        let t0 = 0;
-        updates.push((t) => {
-          t0 = t;
-          arm.rotation.y = Math.sin(t0 * 0.6) * 0.9;
-        });
-      }
-      for (const lane of [-1, 1]) {
-        const belt = prop('conveyor', { z: lane * 0.8, rotY: lane < 0 ? Math.PI : 0 });
-        if (!belt) continue;
-        toonifyProp(belt);
-        cell.add(belt);
-      }
       group.traverse((o) => {
         const m = o as THREE.Mesh;
         if (!m.isMesh || m === floor) return;
