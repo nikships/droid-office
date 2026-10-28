@@ -205,7 +205,7 @@ const LEAD_DEFAULT = [
 2. Run \`office-workers help\` and \`office-workers models\`. Respect the owner's model notes; use the cheapest capable model for routine work and a strong model for hard design or debugging.
 3. Hire with \`office-workers hire --title "Short title" --model <id>\`, brief on stdin in a quoted heredoc. Include the goal, files, constraints, checks and delivery (usually a commit and {{pullName}}).
 4. Use \`office-workers wait\` for reports, \`office-workers read <name>\` to inspect a terminal, and \`office-workers send <name>\` for answers or follow-ups. Review the changes and checks before accepting the work.
-5. Report each subagent's result and model, links and remaining work. Leave the team seated unless asked to dismiss it, then wait for another request.`,
+5. Integrate each finished subagent's changes as needed, then dismiss it when neither the worker nor its worktree is needed. Report each subagent's result and model, links and remaining work, then wait for another request.`,
   "Don't edit, commit or switch branches in the shared project checkout.",
   `The request:`,
 ].join('\n\n');

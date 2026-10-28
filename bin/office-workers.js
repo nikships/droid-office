@@ -83,7 +83,8 @@ COMMANDS
 
   office-workers dismiss <name>
       Sends a subagent home. Its worktree and branch stay when they hold work (commits or
-      changes); otherwise they're deleted.
+      changes); otherwise they're deleted. Dismiss finished subagents once their changes are
+      integrated as needed and neither the worker nor its worktree is needed.
 
   office-workers report [--question] <<'EOF'
   …your report…
@@ -108,8 +109,8 @@ HOW TO RUN A TEAM
      to you once your team has news.
   5. A question only a person can answer goes to whoever asked you. So does a subagent waiting on its
      own terminal (a permission prompt): tell them which desk it's at.
-  6. When everything is done, tell whoever asked what each subagent did, with links. Don't dismiss
-     your team unless you're asked to: people may want to look at their work first.
+  6. Integrate each subagent's changes as needed, then dismiss it when neither the worker nor its
+     worktree is needed. Tell whoever asked what each subagent did, with links.
 
 CHOOSING A MODEL
 
