@@ -481,7 +481,7 @@ function trayAction(action: TrayAction, link?: WorkerLink) {
   if (action === 'open') openWindow();
   else if (action === 'worker') link ? openWorker(link) : openWindow();
   else if (action === 'notify') toggleNotify();
-  else if (action === 'browser') officeUrl && void shell.openExternal(officeUrl);
+  else if (action === 'browser') officeUrl && void shell.openExternal(new URL('/dashboard', officeUrl).href);
   else if (action === 'restart') void restartOffice();
   else if (action === 'updates') {
     toFront();
@@ -547,7 +547,7 @@ function menu(): Menu {
     {
       label: 'Office',
       submenu: [
-        { label: 'Open in Browser', click: () => officeUrl && void shell.openExternal(officeUrl) },
+        { label: 'Open in Browser', click: () => trayAction('browser') },
         { label: 'Restart Office', click: () => void restartOffice() },
         { label: 'Change Office Folder…', click: () => void changeOfficeDir() },
         { type: 'separator' },
