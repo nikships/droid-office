@@ -7,7 +7,7 @@ import { downloadBrowser } from './browser.js';
 import { contextMenu, editMenu } from './edit-menu.js';
 import { gpuReport } from './gpu.js';
 import { linkAction, windowOpenAction } from './links.js';
-import { type Office, probePort, startOffice } from './office.js';
+import { fetchStatus, type Office, probePort, startOffice } from './office.js';
 import type { NativeEvent } from './input-events.js';
 import { createTrace, traceFile } from './input-trace.js';
 import { type InputNative, PresenterInput } from './presenter-input.js';
@@ -17,6 +17,8 @@ import { officeRuntime } from './runtime.js';
 import { DEFAULT_PORT, defaultOfficeDir, type DesktopSettings, isolatedPortOk, loadSettings, officeArgs, saveSettings } from './settings.js';
 import { desktopEnv } from './shell-path.js';
 import { enforceRequirements, isStartupCheck, runStartupCheck, StartupAborted } from './startup.js';
+import { OfficeTray } from './tray.js';
+import { parseStatus, type TrayAction } from './tray-model.js';
 import { Updates } from './updates.js';
 
 const BACKGROUND = '#050505';
@@ -25,6 +27,8 @@ const BACKGROUND = '#050505';
 app.commandLine.appendSwitch('disable-features', DISABLED_CHROMIUM_FEATURES.join(','));
 /** How many ports past the chosen one to try when something that isn't an office holds it. */
 const PORT_TRIES = 20;
+/** How often the menu bar icon asks the office what it's doing. */
+const TRAY_REFRESH_MS = 5000;
 
 // Not ~/Library/Application Support/Droid Office (the product name): the Unity office keeps its
 // own data under that folder. `--user-data-dir=<folder>` (Chromium's switch) moves it and the logs, so a
@@ -51,6 +55,18 @@ let stopping = false;
 let quitting = false;
 /** Set while the app itself replaces the page, which the office's "Leave the office?" guard mustn't stop. */
 let replacing = false;
+/** Set while the app looks for or starts its office. */
+let opening = false;
+/**
+ * Whether the office should have a window. Cleared when the owner closes it: the office, the menu bar
+ * icon and the phones and browsers connected to it keep running, and a restart doesn't open it again.
+ */
+let windowWanted = true;
+/** Set by Cmd+Q, which closes the window to the menu bar without the "Leave the office?" prompt. */
+let leavingToMenuBar = false;
+/** Set by the menu bar's Quit and Stop Workers: the quit ends the workers instead of keeping them for the next office. */
+let stopWorkersOnQuit = false;
+let tray: OfficeTray | undefined;
 
 const updates = new Updates({
   log: path.join(logDir, 'updates.log'),
@@ -73,7 +89,10 @@ function page(title: string, detail = ''): string {
 }
 
 function show(url: string) {
-  if (!win || win.base.isDestroyed()) createWindow(false);
+  if (!win || win.base.isDestroyed()) {
+    if (!windowWanted) return;
+    createWindow(false);
+  }
   replacing = true;
   // An aborted load (the next page replaced this one first) rejects; that's no error here.
   void win!.contents
@@ -85,6 +104,8 @@ function show(url: string) {
 }
 
 function createWindow(loadOffice = true) {
+  windowWanted = true;
+  void app.dock?.show();
   const created = new PresenterWindow({
     title: 'Droid Office',
     backgroundColor: BACKGROUND,
@@ -143,7 +164,7 @@ function createWindow(loadOffice = true) {
   // The office asks before its page closes or reloads (src/client/leave.ts). A browser shows that
   // prompt itself; Electron just cancels, which would also stop the app from ever quitting.
   contents.on('will-prevent-unload', (e) => {
-    if (quitting || replacing || created.reloading) {
+    if (quitting || replacing || leavingToMenuBar || created.reloading) {
       e.preventDefault();
       return;
     }
@@ -152,7 +173,14 @@ function createWindow(loadOffice = true) {
   });
   created.base.on('closed', () => {
     input.stop();
-    if (win === created) win = undefined;
+    if (win !== created) return;
+    win = undefined;
+    leavingToMenuBar = false;
+    if (quitting) return;
+    // The window is gone, with its page and its GPU work; the office and the menu bar icon stay.
+    windowWanted = false;
+    app.dock?.hide();
+    void refreshTray();
   });
   if (loadOffice && officeUrl) void contents.loadURL(officeUrl).catch(() => {});
 }
@@ -220,6 +248,8 @@ async function findPort(): Promise<{ port: number; running: boolean }> {
 }
 
 async function openOffice() {
+  opening = true;
+  void refreshTray();
   show(page('Opening the office…'));
   try {
     const { port, running } = await findPort();
@@ -238,10 +268,15 @@ async function openOffice() {
         if (!stopping && !quitting) void officeStopped(code);
       });
     }
+    opening = false;
     show(officeUrl);
+    void refreshTray();
   } catch (err) {
     officeUrl = undefined;
+    opening = false;
+    void refreshTray();
     show(page("The office didn't open", (err as Error).message));
+    toFront();
     const { response } = await dialog.showMessageBox({ type: 'error', message: "The office didn't open", detail: (err as Error).message, buttons: ['Try Again', 'Show Log', 'Quit'], defaultId: 0 });
     if (response === 0) return openOffice();
     if (response === 1) shell.showItemInFolder(officeLog);
@@ -251,7 +286,9 @@ async function openOffice() {
 
 async function officeStopped(code: number | null) {
   officeUrl = undefined;
+  void refreshTray();
   show(page('The office stopped', `exit ${code ?? 'signal'} — see ${officeLog}`));
+  toFront();
   const { response } = await dialog.showMessageBox({ type: 'warning', message: 'The office stopped', buttons: ['Restart', 'Show Log', 'Quit'], defaultId: 0 });
   if (response === 0) await openOffice();
   if (response === 1) shell.showItemInFolder(officeLog);
@@ -299,6 +336,87 @@ async function writeGpuReport() {
   }
 }
 
+/** Brings the app forward for a dialog or window: with only the menu bar icon left, it isn't the active app. */
+function toFront() {
+  app.focus({ steal: true });
+}
+
+/** The office window again, from the menu bar icon, the Dock or a second launch. */
+function openWindow() {
+  toFront();
+  if (win && !win.base.isDestroyed()) {
+    win.base.show();
+    win.base.focus();
+    return;
+  }
+  if (officeUrl) return createWindow();
+  createWindow(false);
+  if (opening) show(page('Opening the office…'));
+  else void openOffice();
+}
+
+/** Cmd+Q: closes the window and leaves the office running behind the menu bar icon. The first time, says so. */
+async function leaveToMenuBar() {
+  const current = win;
+  if (!current || current.base.isDestroyed()) return;
+  if (!settings.menuBarExplained) {
+    const { response } = await dialog.showMessageBox(current.base, {
+      type: 'info',
+      message: 'Cmd+Q closes the window and keeps the office running',
+      detail: 'Workers keep working, and phones and browsers stay connected. Open the office again from the Droid Office icon in the menu bar. To stop the office, choose Quit Droid Office in that menu, or press Option+Cmd+Q.',
+      buttons: ['Keep Running in Menu Bar', 'Stop the Office and Quit'],
+      defaultId: 0,
+      cancelId: 0,
+    });
+    settings = { ...settings, menuBarExplained: true };
+    saveSettings(settingsFile, settings);
+    if (response === 1) return app.quit();
+  }
+  if (current.base.isDestroyed()) return;
+  leavingToMenuBar = true;
+  current.base.close();
+}
+
+async function quitStoppingWorkers() {
+  toFront();
+  const { response } = await dialog.showMessageBox({
+    type: 'warning',
+    message: 'Stop every worker and quit?',
+    detail: "The workers' terminals end with the office, instead of waiting for the next office to take them back.",
+    buttons: ['Stop Workers and Quit', 'Cancel'],
+    defaultId: 1,
+    cancelId: 1,
+  });
+  if (response !== 0) return;
+  stopWorkersOnQuit = true;
+  app.quit();
+}
+
+function trayAction(action: TrayAction) {
+  if (action === 'open') openWindow();
+  else if (action === 'browser') officeUrl && void shell.openExternal(officeUrl);
+  else if (action === 'restart') void restartOffice();
+  else if (action === 'updates') {
+    toFront();
+    void updates.check(true);
+  } else if (action === 'log') shell.showItemInFolder(officeLog);
+  else if (action === 'quit') app.quit();
+  else void quitStoppingWorkers();
+}
+
+async function refreshTray() {
+  if (!tray) return;
+  const url = opening ? undefined : officeUrl;
+  const status = url ? parseStatus(await fetchStatus(url)) : undefined;
+  if (url !== (opening ? undefined : officeUrl)) return;
+  tray.render({
+    state: opening ? 'starting' : officeUrl ? 'running' : 'stopped',
+    ...(status ? { status } : {}),
+    ownWindow: Boolean(officeUrl && win && !win.base.isDestroyed()),
+    external: Boolean(officeUrl && !office),
+  });
+}
+
 async function restartOffice() {
   if (!office) return openOffice();
   await stopOffice(true);
@@ -319,7 +437,9 @@ function menu(): Menu {
         { role: 'hideOthers' },
         { role: 'unhide' },
         { type: 'separator' },
-        { role: 'quit' },
+        // Cmd+Q leaves the office running behind the menu bar icon; quitting it is a separate item.
+        { label: 'Close to Menu Bar', accelerator: 'CmdOrCtrl+Q', click: () => void leaveToMenuBar() },
+        { label: `Quit ${app.name}`, accelerator: 'Alt+CmdOrCtrl+Q', click: () => app.quit() },
       ],
     },
     // Not Electron's edit roles: the page is offscreen and never the focused web contents, so they would find nothing to act on.
@@ -363,23 +483,19 @@ function menu(): Menu {
 if (!isStartupCheck() && !app.requestSingleInstanceLock()) {
   app.quit();
 } else {
-  app.on('second-instance', () => {
-    if (!win || win.base.isDestroyed()) createWindow();
-    else win.base.focus();
-  });
+  app.on('second-instance', () => openWindow());
+  app.on('activate', () => openWindow());
 
-  app.on('activate', () => {
-    if (!win || win.base.isDestroyed()) createWindow();
-  });
-
-  // The Mac way: closing the window leaves the app (and the office) running until you quit.
+  // Closing the window leaves the app, the office and the menu bar icon running until you quit.
   app.on('window-all-closed', () => {});
 
+  // Every real quit comes here: the menu bar's Quit, Quit Droid Office in the app menu, the Dock, logging out,
+  // shutting down and installing an update. None of them is turned into a close to the menu bar.
   app.on('before-quit', (e) => {
     quitting = true;
     if (!office) return;
     e.preventDefault();
-    void stopOffice(true).finally(() => app.quit());
+    void stopOffice(!stopWorkersOnQuit).finally(() => app.quit());
   });
 
   void app
@@ -389,6 +505,9 @@ if (!isStartupCheck() && !app.requestSingleInstanceLock()) {
       if (isStartupCheck()) return runStartupCheck();
       Menu.setApplicationMenu(menu());
       if (!isolated && (await moveToApplications())) return;
+      tray = new OfficeTray(trayAction);
+      void refreshTray();
+      setInterval(() => void refreshTray(), TRAY_REFRESH_MS);
       show(page('Opening the office…'));
       officeEnv = await desktopEnv();
       if (!isolated && !settings.officeDir) {

@@ -8,6 +8,8 @@ export interface DesktopSettings {
   officeDir?: string;
   /** The port the app starts the office on. Default: 4600, like `droid-office`. */
   port?: number;
+  /** Whether the app has said once that Cmd+Q leaves the office running in the menu bar. */
+  menuBarExplained?: boolean;
 }
 
 export const DEFAULT_PORT = 4600;
@@ -18,6 +20,7 @@ export function loadSettings(file: string): DesktopSettings {
     const out: DesktopSettings = {};
     if (typeof raw.officeDir === 'string' && raw.officeDir) out.officeDir = raw.officeDir;
     if (Number.isInteger(raw.port) && (raw.port as number) > 0 && (raw.port as number) <= 65535) out.port = raw.port as number;
+    if (raw.menuBarExplained === true) out.menuBarExplained = true;
     return out;
   } catch {
     return {};

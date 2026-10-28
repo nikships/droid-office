@@ -23,6 +23,16 @@ export function probePort(port: number, timeoutMs = 1500): Promise<PortState> {
   });
 }
 
+/** The office's `GET /api/status`, or undefined when it doesn't answer in time (or is older than that route). */
+export async function fetchStatus(url: string, timeoutMs = 1500): Promise<unknown> {
+  try {
+    const res = await fetch(new URL('api/status', url), { signal: AbortSignal.timeout(timeoutMs) });
+    return res.ok ? await res.json() : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 export interface OfficeOptions {
   /** The executable that runs the CLI: Electron's own binary, run as Node. */
   runtime: string;
