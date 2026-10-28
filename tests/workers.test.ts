@@ -490,7 +490,8 @@ test('only a worker with no lead is told about office-visit, and only while visi
   const lead = workers.spawn('desk-2', 'test', 'look around');
   if (typeof lead === 'string') return assert.fail(lead);
   await launched(lead.id);
-  assert.match(systemOf(lead.id), /- `office-visit` lets you work with the other independent workers on this floor/);
+  assert.match(systemOf(lead.id), /- `office-visit`: coordinate with independent workers only as needed/);
+  assert.match(systemOf(lead.id), /Don't routinely check the roster, announce your task/);
   assert.match(systemOf(lead.id), /The office puts its commands on your PATH/);
 
   const sub = workers.spawn('desk-3', 'test', 'help out', false, 'agent', undefined, undefined, [], lead.id);
@@ -2143,10 +2144,10 @@ test('a subagent sits down told who hired it and where it works; every agent get
   );
   assert.equal(await startedWith(f, workers, leadLaunch, 'lead-session'), 'Ship the login fix', 'a worker nobody hired is told nothing extra');
   const brief = (await startedWith(f, workers, subLaunch, 'sub-session')) ?? '';
-  assert.match(brief, new RegExp(`^You're ${sub.name}, a subagent in Droid Office.*${lead.name} hired you`));
+  assert.match(brief, new RegExp(`^Droid Office role: ${sub.name}, subagent of ${lead.name} \\(a worker, not the owner\\)`));
   assert.match(brief, /the project's main checkout/);
   assert.match(brief, /office-workers report <<'EOF'/);
-  assert.ok(brief.endsWith('Your task:\n\nFix the redirect'));
+  assert.ok(brief.endsWith(`## Task from ${lead.name}\n\`\`\`text\nFix the redirect\n\`\`\``));
   for (const r of [leadLaunch, subLaunch]) assert.ok((r.env.path ?? '').split(path.delimiter).includes(bin), 'office-workers is on every agent’s PATH');
   assert.equal((leadLaunch.env.path ?? '').split(path.delimiter).includes(path.join(f.data, 'bin')), false, 'nothing else is put in the data directory’s bin');
 
@@ -2175,6 +2176,33 @@ test('a subagent sits down told who hired it and where it works; every agent get
   // Sending the lead home leaves its subagents at their desks, on their own.
   await after.kill(lead.id);
   assert.equal(after.get(sub.id)?.lead, undefined);
+});
+
+test('custom subagent briefs keep the lead task exactly once, with or without a text placeholder', async (t) => {
+  const f = carryOnFixture(t);
+  let custom = 'Office instructions for {{name}}. Task from {{lead}}:';
+  const source: PromptSource = { text: (id) => (id === 'subagent.brief' ? custom : PROMPTS[id].text), agent: () => undefined };
+  const workers = new WorkerManager(f.root, f.data, f.droid, [], { url: 'http://127.0.0.1:1', token: '' }, events([]), undefined, undefined, source);
+  t.after(() => workers.shutdown());
+  const lead = workers.spawn('desk-1', 'test', 'Lead task');
+  if (typeof lead === 'string') return assert.fail(lead);
+  for (const [desk, template] of [
+    ['desk-2', custom],
+    ['desk-3', 'Task from {{lead}}:\n{{ text }}\nOffice instructions: report back.'],
+  ]) {
+    custom = template;
+    const sub = workers.spawn(desk, lead.name, 'Use {{lead}} literally', false, 'agent', undefined, undefined, [], lead.id);
+    if (typeof sub === 'string') return assert.fail(sub);
+    const launch = (
+      await waitFor(
+        () => launchesOf(f),
+        (ls) => ls.some((l) => l.env.workerId === sub.id),
+      )
+    ).find((l) => l.env.workerId === sub.id)!;
+    const text = await startedWith(f, workers, launch, `custom-${desk}`);
+    assert.equal(text?.split('Use {{lead}} literally').length, 2, 'task is included once without expanding its placeholders');
+    assert.equal(text, desk === 'desk-2' ? `Office instructions for ${sub.name}. Task from ${lead.name}:\n\nUse {{lead}} literally` : `Task from ${lead.name}:\nUse {{lead}} literally\nOffice instructions: report back.`);
+  }
 });
 
 test('team markings form with the first hire, survive restarts and the lead leaving, and never restore a lead', async (t) => {

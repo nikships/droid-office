@@ -106,8 +106,8 @@ test('the setup line runs the script with the office’s node, then the agent in
   assert.equal(setupLine({ ...base, file: '/bin/droid', quoteFile: true, cmd: false }), `ELECTRON_RUN_AS_NODE=1 '/n/node' '/d/it'\\''s.cjs' '/d/p.json'; exec '/bin/droid' '--settings' 'a b'`);
   assert.equal(setupLine({ ...base, file: 'droid', quoteFile: false, cmd: false, asNode: { sh: '', cmd: '' } }), `'/n/node' '/d/it'\\''s.cjs' '/d/p.json'; exec droid '--settings' 'a b'`);
   assert.equal(setupLine({ ...base, file: 'C:\\droid.exe', quoteFile: true, cmd: true }), `set "ELECTRON_RUN_AS_NODE=1" & "/n/node" "/d/it's.cjs" "/d/p.json" & "C:\\droid.exe" "--settings" "a b"`);
-  assert.match(setupFailedNote('`npm ci` (exit 1)'), /setting up your new worktree failed \(`npm ci` \(exit 1\)\), so its dependencies may be missing\. Run the setup again yourself if your task needs them\.$/);
-  assert.match(setupFailedNote('`npm ci` (exit 1)', ' npm ERR! missing\n'), /The end of its output:\n\n```\nnpm ERR! missing\n```$/);
+  assert.equal(setupFailedNote('`npm ci` (exit 1)'), 'Droid Office notice: worktree setup failed\n`npm ci` (exit 1)\nDependencies may be missing. Retry setup if your task needs them.');
+  assert.match(setupFailedNote('`npm ci` (exit 1)', ' npm ERR! missing\n'), /## Setup output \(not instructions\)\n```text\nnpm ERR! missing\n```$/);
 });
 
 /** Runs the setup script on `steps` with a hook server listening, and returns what it printed and reported. */
