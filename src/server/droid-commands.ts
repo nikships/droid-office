@@ -67,24 +67,33 @@ export function createDroidCommandCatalogue(options: DroidCommandCatalogueOption
   const { command = 'droid', lister = listDroidCommands, now = Date.now } = options;
   const cached = new Map<string, { commands: DroidSlashCommand[]; expiresAt: number }>();
   const pending = new Map<string, Promise<DroidSlashCommand[]>>();
+  let generation = 0;
   return {
     get(cwd = homedir()) {
       const hit = cached.get(cwd);
       if (hit && now() < hit.expiresAt) return Promise.resolve(hit.commands);
       const running = pending.get(cwd);
       if (running) return running;
+      const started = generation;
       const load = lister(typeof command === 'function' ? command() : command, cwd)
         .then((commands) => {
-          cached.set(cwd, { commands, expiresAt: now() + DROID_COMMANDS_TTL_MS });
+          if (started === generation) {
+            for (const [key, entry] of cached) if (now() >= entry.expiresAt) cached.delete(key);
+            cached.set(cwd, { commands, expiresAt: now() + DROID_COMMANDS_TTL_MS });
+          }
           return commands;
         })
         .catch(() => [] as DroidSlashCommand[])
-        .finally(() => pending.delete(cwd));
+        .finally(() => {
+          if (pending.get(cwd) === load) pending.delete(cwd);
+        });
       pending.set(cwd, load);
       return load;
     },
     forget() {
       cached.clear();
+      pending.clear();
+      generation++;
     },
   };
 }

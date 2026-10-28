@@ -4,6 +4,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { createDroidCommandCatalogue, DROID_COMMANDS_TTL_MS, listDroidCommands, parseDroidCommands } from '../src/server/droid-commands.js';
+import { askDroid, DROID_LIST } from '../src/server/droid-rpc.js';
 
 function scratch(t: { after(fn: () => void): void }): string {
   const dir = mkdtempSync(path.join(tmpdir(), 'droid-office-droid-commands-'));
@@ -66,6 +67,29 @@ test('the catalogue asks droid once per folder while its answer is fresh, and is
   assert.deepEqual(await catalogue.get('/broken'), []);
   assert.deepEqual(await catalogue.get('/broken'), []);
   assert.equal(asked.length, 6);
+});
+
+test('forget discards an in-flight result without replacing its newer request', async () => {
+  const pending: Array<(value: ReturnType<typeof parseDroidCommands>) => void> = [];
+  const catalogue = createDroidCommandCatalogue({ lister: () => new Promise((resolve) => pending.push(resolve)) });
+  const old = catalogue.get('/repo');
+  catalogue.forget();
+  const current = catalogue.get('/repo');
+  pending[0]([{ name: 'old', description: '', source: 'command' }]);
+  await old;
+  assert.equal(catalogue.get('/repo'), current);
+  pending[1]([{ name: 'new', description: '', source: 'command' }]);
+  await current;
+  assert.equal((await catalogue.get('/repo'))[0].name, 'new');
+});
+
+test('SDK transport rejects excessive output and an early normal exit', { skip: process.platform === 'win32' }, async (t) => {
+  const dir = scratch(t);
+  const droid = path.join(dir, 'droid');
+  writeFileSync(droid, '#!/usr/bin/env node\nprocess.exit(0);\n', { mode: 0o700 });
+  await assert.rejects(askDroid(droid, dir, [DROID_LIST.commands], 5000), /exited without answering/);
+  writeFileSync(droid, '#!/usr/bin/env node\nprocess.stdout.write("x".repeat(5 * 1024 * 1024));\nsetInterval(() => {}, 1000);\n', { mode: 0o700 });
+  await assert.rejects(askDroid(droid, dir, [DROID_LIST.commands], 5000), /output exceeded/);
 });
 
 test('listDroidCommands asks droid in the worker’s folder over stream-jsonrpc, without a session', { skip: process.platform === 'win32' }, async (t) => {

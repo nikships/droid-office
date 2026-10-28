@@ -95,7 +95,7 @@ export function slashCommands(live: readonly DroidSlashCommand[] = []): SlashCom
 
 /** What a draft that starts with `/` asks for: the command's name as typed, and the command when the list has it. */
 export function slashOf(draft: string, commands: readonly SlashCommand[] = SLASH_COMMANDS): { name: string; command?: SlashCommand } | undefined {
-  const m = /^\/([^\s/]*)/.exec(draft.trimStart());
+  const m = /^\/([^\s/]*)(?=\s|$)/.exec(draft.trimStart());
   if (!m) return undefined;
   const name = m[1].toLowerCase();
   return { name, command: commands.find((c) => c.name.toLowerCase() === name || c.aliases?.includes(name)) };

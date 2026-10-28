@@ -96,8 +96,12 @@ export function mountWorkerThread(net: Net, opts: ThreadOptions): WorkerThread {
   // confirmations would answer a confirmed send with a refusal after typing the keys anyway.
   const typeKeys = (data: string) => net.send({ t: 'term.input', workerId: worker.id, data });
   const clearQueue = () => {
-    if (typeKeys(CLEAR_DROID_QUEUE)) queued.clear();
-    else told = 'Disconnected. Nothing was sent.';
+    const rows = opts.screen?.();
+    if (!rows || !readDroidQueue(rows)?.length) {
+      paintQueue();
+      return;
+    }
+    if (!typeKeys(CLEAR_DROID_QUEUE)) told = 'Disconnected. Nothing was sent.';
     updateControls();
   };
   // Droid's own queue, read off its screen, is what waits: messages sent from here fill in the rows it cut short.
@@ -198,7 +202,10 @@ export function mountWorkerThread(net: Net, opts: ThreadOptions): WorkerThread {
     if (worker.kind !== 'agent' || Date.now() - slashAsked < 60_000) return;
     slashAsked = Date.now();
     fetch(withToken(`/api/agents/droid/commands?worker=${encodeURIComponent(worker.id)}`), { credentials: 'same-origin', cache: 'no-store' })
-      .then((res) => (res.ok ? (res.json() as Promise<{ commands?: unknown }>) : undefined))
+      .then((res) => {
+        if (!res.ok) throw new Error('Could not load slash commands');
+        return res.json() as Promise<{ commands?: unknown }>;
+      })
       .then((body) => {
         if (disposed || !Array.isArray(body?.commands)) return;
         slashList = slashCommands(body.commands as DroidSlashCommand[]);

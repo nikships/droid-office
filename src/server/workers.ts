@@ -1474,7 +1474,7 @@ export class WorkerManager {
   /** Keystrokes from an attached browser. */
   write(id: string, data: string) {
     const w = this.workers.get(id);
-    if (!w?.pty) return;
+    if (!w?.pty) return false;
     w.pty.write(data);
     let changed = this.typed(w);
     if (w.info.status === 'needs_input' && w.info.acked === false) {
@@ -1482,6 +1482,7 @@ export class WorkerManager {
       changed = true;
     }
     if (changed) this.emitUpdate(w);
+    return true;
   }
 
   /**

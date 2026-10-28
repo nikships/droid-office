@@ -55,6 +55,20 @@
       "expected": []
     },
     {
+      "name": "an idle reply quoting both queue labels",
+      "rows": [
+        "   Queued messages:",
+        "   example message",
+        "   Ctrl+X to clear queue",
+        "",
+        " Auto (High) · allow all commands",
+        "╭──────────────────────────────────────────────────╮",
+        "│ >                                                │",
+        "╰──────────────────────────────────────────────────╯"
+      ],
+      "expected": []
+    },
+    {
       "name": "a dialog's box, not the input box",
       "rows": [
         "⛬  Ready.",

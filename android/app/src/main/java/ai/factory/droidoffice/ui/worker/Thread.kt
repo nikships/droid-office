@@ -212,21 +212,22 @@ internal fun Thread(
     // Droid's queue as its screen shows it, with the whole text of what this phone sent to it.
     val droidQueue = remember(screen) { screen?.let(DroidQueue::read) }
     var clock by remember(feed) { mutableLongStateOf(0L) }
-    val pendingQueue = remember(queued, queueRevision, queueReady, state.sessionId, state.entries, droidQueue, clock) {
+    var pendingQueue by remember(queued) { mutableStateOf(emptyList<ThreadQueue.Shown>()) }
+    var holding by remember(queued) { mutableStateOf(false) }
+    LaunchedEffect(queued, queueRevision, queueReady, state.sessionId, state.entries, droidQueue, clock) {
+        val before = queued.snapshot()
         if (queueReady) queued.sync(state.sessionId, state.entries)
-        queued.shown(droidQueue, System.currentTimeMillis())
+        pendingQueue = queued.shown(droidQueue, System.currentTimeMillis())
+        holding = queued.pending.isNotEmpty()
+        if (queueReady && before != queued.snapshot()) onQueueChanged()
     }
     // A message sent to the queue that Droid never draws goes after a few seconds: look again until then.
-    val holding = queued.pending.isNotEmpty()
     LaunchedEffect(holding) {
         while (holding) {
             delay(1_000)
             clock = System.currentTimeMillis()
         }
     }
-    // A sync can confirm a message, start a new session or move the sequence on: the owner of the
-    // queue keeps it (on disk too) after each one, whatever changed.
-    LaunchedEffect(queued, queueReady, state.sessionId, state.entries, pendingQueue) { if (queueReady) onQueueChanged() }
     val list = rememberLazyListState()
     // What the owner opened, whether they're following and where they were reading survive a font,
     // density or theme change recreating the screen, for this office, floor and worker only.
@@ -467,10 +468,10 @@ internal fun Thread(
                         pendingQueue,
                         canClear = connected && !droidQueue.isNullOrEmpty(),
                         onClear = {
-                            if (connection.send(ClientMsg.termInput(w.id, DroidQueue.CLEAR))) {
-                                queued.clear()
-                                onQueueChanged()
-                            } else scope.launch { snackbar.showSnackbar("Couldn't reach the office. The queue is unchanged.") }
+                            if (screen?.let(DroidQueue::read).isNullOrEmpty()) return@QueuedMessages
+                            if (!connection.send(ClientMsg.termInput(w.id, DroidQueue.CLEAR))) {
+                                scope.launch { snackbar.showSnackbar("Couldn't reach the office. The queue is unchanged.") }
+                            }
                         },
                     )
                 }

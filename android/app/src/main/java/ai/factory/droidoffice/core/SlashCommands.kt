@@ -84,7 +84,7 @@ object SlashCommands {
         return ALL + extra
     }
 
-    private val NAME = Regex("""^/([^\s/]*)""")
+    private val NAME = Regex("""^/([^\s/]*)(?=\s|$)""")
     private val TYPING = Regex("""^/([^\s/]*)$""")
 
     /** The name a draft starting with `/` asks for, and the command when Droid has it built in; null for a plain message. */

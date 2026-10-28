@@ -19,6 +19,8 @@ test('the Android app lists the same slash commands', () => {
 
 test('reads the command a draft asks for, by name or alias', () => {
   assert.equal(slashOf('hello'), undefined);
+  assert.equal(slashOf('/etc/hosts is wrong'), undefined);
+  assert.equal(slashRefusal('/etc/hosts is wrong', 'Byte', true), undefined);
   assert.deepEqual(slashOf('  /Model gpt'), { name: 'model', command: SLASH_COMMANDS.find((c) => c.name === 'model') });
   assert.equal(slashOf('/exit')?.command?.name, 'quit');
   assert.equal(slashOf('/my-skill do it')?.command, undefined);

@@ -35,6 +35,8 @@ object DroidQueue {
         if ((top + 1 until bottom).none { INPUT_ROW.containsMatchIn(rows[it]) }) return null
         val heading = (top - 1 downTo maxOf(0, top - REACH)).firstOrNull { HEADING.matches(rows[it]) } ?: return emptyList()
         val hint = (heading + 1 until top).firstOrNull { HINT.containsMatchIn(rows[it]) } ?: return emptyList()
+        // Replies can quote the queue labels; only treat them as a queue during a live turn.
+        if ((hint + 1 until bottom).none { rows[it].contains("Press ESC to stop") || rows[it].contains("Ctrl+Enter to queue") }) return emptyList()
         return (heading + 1 until hint).mapNotNull { i ->
             var text = rows[i].trim()
             if (text.isEmpty()) return@mapNotNull null

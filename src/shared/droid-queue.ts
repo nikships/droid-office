@@ -72,6 +72,9 @@ export function readDroidQueue(rows: readonly string[]): DroidQueued[] | undefin
     }
   }
   if (hint < 0) return [];
+  // A reply can quote both queue labels. Require a live turn indicator, not just those words.
+  const busy = rows.slice(hint + 1, bottom).some((row) => /Press ESC to stop|Ctrl\+Enter to queue/.test(row));
+  if (!busy) return [];
   const items: DroidQueued[] = [];
   for (let i = heading + 1; i < hint; i++) {
     let text = rows[i].trim();

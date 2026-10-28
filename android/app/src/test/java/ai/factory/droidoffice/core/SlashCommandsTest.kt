@@ -10,6 +10,7 @@ class SlashCommandsTest {
         assertEquals("help", SlashCommands.of("/help")?.first)
         assertEquals("model", SlashCommands.of("  /model gpt")?.first)
         assertNull(SlashCommands.of("look at /etc/hosts"))
+        assertNull(SlashCommands.of("/etc/hosts is wrong"))
         assertNull(SlashCommands.of(""))
     }
 

@@ -2059,8 +2059,8 @@ export async function startServer(cfg: Config) {
           done('Open this worker first. Nothing was typed.');
           break;
         }
-        f.workers.write(msg.workerId, str(msg.data, 64 * 1024));
-        done();
+        if (!f.workers.write(msg.workerId, str(msg.data, 64 * 1024))) done('This worker is not running. Nothing was typed.');
+        else done();
         break;
       }
       case 'term.resize': {

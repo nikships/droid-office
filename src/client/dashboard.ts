@@ -1348,7 +1348,7 @@ function prompt(w: WorkerInfo) {
       if (stageMode === 'thread' && now.status === 'needs_input') return 'Answer the current question, or open Raw TTY for this CLI dialog. Your draft is kept.';
       const refused = w.kind === 'agent' ? slashRefusal(text, w.name, isBusy(now.status)) : undefined;
       if (refused) return `${refused} Your draft is kept.`;
-      const error = await action({ t: 'worker.prompt', workerId: w.id, prompt: text, images: opts.images, queue: opts.queue }, w.id, intended, `Sent to ${w.name}.`);
+      const error = await action({ t: 'worker.prompt', workerId: w.id, prompt: text, images: opts.images, queue: opts.queue && isBusy(now.status) }, w.id, intended, `Sent to ${w.name}.`);
       if (!error) remember(key, '');
       // Droid answers most of its slash commands with a dialog, which only its terminal shows.
       if (!error && stageMode === 'thread' && w.kind === 'agent' && slashOf(text)?.command?.kind === 'tty') {

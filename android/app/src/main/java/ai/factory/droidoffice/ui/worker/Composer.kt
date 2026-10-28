@@ -65,6 +65,8 @@ import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.input.TextFieldValue
+import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.foundation.selection.toggleable
@@ -93,6 +95,8 @@ import ai.factory.droidoffice.ui.theme.OfficeIcons
 import ai.factory.droidoffice.ui.theme.Palette
 import java.io.ByteArrayOutputStream
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
@@ -126,11 +130,15 @@ fun Composer(
     val context = LocalContext.current
     val haptics = LocalHapticFeedback.current
     val scope = rememberCoroutineScope()
-    var text by rememberSaveable(w.id) { mutableStateOf(draft.orEmpty()) }
+    var value by rememberSaveable(w.id, stateSaver = TextFieldValue.Saver) { mutableStateOf(TextFieldValue(draft.orEmpty())) }
+    val text = value.text
     // The built-in commands at once; the worker's skills and custom commands once its droid lists them.
     var slashList by remember(w.id) { mutableStateOf(SlashCommands.ALL) }
-    LaunchedEffect(w.id, w.isShell) {
-        if (!w.isShell) graph.connection.slashCommands(w.id)?.let { slashList = SlashCommands.all(it) }
+    LaunchedEffect(w.id, w.isShell, connected, visible) {
+        if (!w.isShell && connected && visible) while (isActive) {
+            graph.connection.slashCommands(w.id)?.let { slashList = SlashCommands.all(it) }
+            delay(60_000)
+        }
     }
     // While Droid is on a turn, Send steers it (Enter) and Queue holds the message for after the turn
     // (Ctrl+Enter), as Droid's own input box offers both.
@@ -187,7 +195,7 @@ fun Composer(
                 queueState.sent(prompt, ids.isNotEmpty(), after)
                 onQueued()
             }
-            text = ""
+            value = TextFieldValue("")
             images.clear()
             onSent(prompt)
         } else scope.launch { snackbar.showSnackbar("Couldn't reach the office. Nothing was sent; your message is still here.") }
@@ -205,7 +213,8 @@ fun Composer(
         val suggestions = if (w.isShell) emptyList() else SlashCommands.suggestions(text, slashList)
         AnimatedVisibility(suggestions.isNotEmpty()) {
             SlashMenu(suggestions, thread, w.state.busy) { c ->
-                text = "/${c.name} "
+                val filled = "/${c.name} "
+                value = TextFieldValue(filled, selection = TextRange(filled.length))
                 focus.requestFocus()
             }
         }
@@ -254,8 +263,8 @@ fun Composer(
                     modifier = Modifier.clearAndSetSemantics {},
                 )
                 BasicTextField(
-                    value = text,
-                    onValueChange = { text = it },
+                    value = value,
+                    onValueChange = { value = it },
                     textStyle = if (w.isShell) LocalOfficeType.current.monoBody.copy(fontSize = 15.sp) else MaterialTheme.typography.bodyLarge,
                     cursorBrush = SolidColor(Palette.Accent),
                     // A shell takes one command line, sent with the keyboard's action key; a prompt can run to paragraphs.
