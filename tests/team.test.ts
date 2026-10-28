@@ -421,7 +421,7 @@ test("a subagent's reports, questions and turns reach its lead once, and finishi
   // Heard once.
   assert.deepEqual((await events()).events, []);
 
-  // A turn that ends without a report is news; so is a question, stopping and leaving.
+  // A turn that ends without a report is news; so is a question and stopping.
   r.set('sub2', 'working');
   r.set('sub2', 'done', { task: { name: 'B', summary: 'Tidying the tests' } });
   await r.call('sub1', { action: 'report', text: 'Which branch?', question: true });
@@ -440,10 +440,7 @@ test("a subagent's reports, questions and turns reach its lead once, and finishi
   got = await events();
   assert.deepEqual(
     got.events.map((e: any) => [e.kind, e.name, e.text]),
-    [
-      ['done', 'Byte', 'Tidying the tests'],
-      ['left', 'Byte', undefined],
-    ],
+    [['done', 'Byte', 'Tidying the tests']],
   );
   assert.match((await r.call('lead', { action: 'events', workers: ['Nova'] })).body.error, /No subagent called Nova: yours are Pixel/);
 
@@ -473,6 +470,17 @@ test("a lead's news outlives a restart, and goes with the lead", async (t) => {
   t.after(() => third.stop());
   r.fake.add(lead);
   assert.deepEqual((await third.handle(lead, { action: 'events' })).body.events, []);
+});
+
+test('a subagent leaving does not wake its lead or create an event', async (t) => {
+  const r = rig(t);
+  await r.call('lead', { action: 'hire', task: 'a' });
+  r.set('lead', 'done');
+  r.fake.ws.delete('sub1');
+  r.team.onWorkerGone('sub1');
+  await sleep(40);
+  assert.deepEqual(r.fake.prompts, []);
+  assert.deepEqual((await r.call('lead', { action: 'events' })).body.events, []);
 });
 
 test('a lead at rest is woken once per batch of news, and a busy one when it comes to rest', async (t) => {

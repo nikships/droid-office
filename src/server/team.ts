@@ -54,7 +54,7 @@ export interface TeamOptions {
   now?: () => number;
 }
 
-export type TeamEventKind = 'report' | 'question' | 'done' | 'needs_input' | 'stopped' | 'left';
+export type TeamEventKind = 'report' | 'question' | 'done' | 'needs_input' | 'stopped';
 
 /** Something a lead hasn't heard yet about one of its subagents. */
 export interface TeamEvent {
@@ -129,12 +129,11 @@ const LOG_MAX = 400;
 const TYPING_MS = 5000;
 
 /** The most telling news about one subagent, when there's more than one. */
-const WEIGHT: Record<TeamEventKind, number> = { question: 5, report: 4, needs_input: 3, left: 2, stopped: 2, done: 1 };
+const WEIGHT: Record<TeamEventKind, number> = { question: 5, report: 4, needs_input: 3, stopped: 2, done: 1 };
 const NEWS: Record<TeamEventKind, string> = {
   question: 'asked you a question',
   report: 'reported back',
   needs_input: 'needs someone to answer it in its own terminal',
-  left: 'left',
   stopped: 'stopped',
   done: 'finished its turn without reporting',
 };
@@ -153,7 +152,7 @@ export class Team {
   /** Per lead: the last event it has been woken for. */
   private nudged = new Map<string, number>();
   private timers = new Map<string, NodeJS.Timeout>();
-  /** The last status, name and lead seen of each worker, to tell what changed (and who left). */
+  /** The last status, name and lead seen of each worker, to tell what changed. */
   private known = new Map<string, { name: string; lead?: string; status: WorkerStatus }>();
   /** Subagents that have reported in the turn they're in, whose turn ending is no news. */
   private reported = new Set<string>();
@@ -189,9 +188,8 @@ export class Team {
     this.push({ lead: w.lead, worker: w.id, name: w.name, kind, ...(text ? { text } : {}) });
   }
 
-  /** A worker left the floor: its lead hears so, and a lead's own news goes with it. */
+  /** A worker left the floor: forget it and discard its own news. */
   onWorkerGone(id: string) {
-    const prev = this.known.get(id);
     this.known.delete(id);
     this.reported.delete(id);
     const before = this.log.length;
@@ -199,8 +197,7 @@ export class Team {
     this.nudged.delete(id);
     clearTimeout(this.timers.get(id));
     this.timers.delete(id);
-    if (prev?.lead && this.workers.get(prev.lead)) this.push({ lead: prev.lead, worker: id, name: prev.name, kind: 'left' });
-    else if (this.log.length !== before) this.persist();
+    if (this.log.length !== before) this.persist();
   }
 
   stop() {
