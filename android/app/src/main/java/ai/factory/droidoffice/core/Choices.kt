@@ -25,7 +25,8 @@ object Choices {
     private val EDGE = charArrayOf('│', '┃', '║', '|')
     private const val MAX_TRAILING = 6
     private const val MAX_GAP = 2
-    private const val QUESTION_REACH = 14
+    private const val QUESTION_REACH = 48
+    private val QUESTION_BOUNDARY = Regex("""Ask User|[→●○]|\[question]""", RegexOption.IGNORE_CASE)
 
     fun read(screen: ScreenState): Menu? = read(screen.lines.map { row -> row.joinToString("") { it.text } })
 
@@ -78,12 +79,16 @@ object Choices {
             val checkbox = CHECKBOX.matchEntire(label)
             Choice(m.groupValues[2].toInt(), checkbox?.groupValues?.get(2) ?: label, described.ifBlank { null }, checkbox?.groupValues?.get(1)?.let { it != " " })
         }
-        val pointer = found.indexOfFirst { (_, m) -> m.groupValues[1].isNotEmpty() }.takeIf { it >= 0 }
+        val pointer = found.indices.filter { found[it].second.groupValues[1].isNotEmpty() }.singleOrNull()
         val top = found.first().first
         val questionEnd = (top - 1 downTo maxOf(0, top - QUESTION_REACH)).firstOrNull { clean[it].endsWith("?") && clean[it].any(Char::isLetter) }
         val question = questionEnd?.let { end ->
             var start = end
-            while (start > 0 && clean[start - 1].isNotBlank() && clean[start - 1] != "Ask User" && !OPTION.matches(clean[start - 1])) start--
+            while (start > maxOf(0, top - QUESTION_REACH)) {
+                val previous = clean[start - 1]
+                if (previous.isBlank() || OPTION.matches(previous) || QUESTION_BOUNDARY.containsMatchIn(previous) || previous.none(Char::isLetter)) break
+                start--
+            }
             clean.subList(start, end + 1).joinToString(" ")
         }
         val multiSelect = choices.any { it.selected != null }

@@ -15,6 +15,7 @@ object QuestionAnswers {
         if (choice != null && menu.choices.none { it.number == choice }) return false
         if (choices != null && (choices.distinct().size != choices.size || choices.any { n -> menu.choices.none { it.number == n } })) return false
         if (text != null && (text.isBlank() || !Choices.takesText(menu))) return false
+        if (menu.multiSelect && choices.isNullOrEmpty() && text == null) return false
         return true
     }
 }

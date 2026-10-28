@@ -3,6 +3,7 @@ package ai.factory.droidoffice.core
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.booleanOrNull
 
 /** A worker waiting on a question, with the menu its terminal shows when one can be read. */
 data class PendingAsk(val worker: WorkerInfo, val menu: Menu?)
@@ -45,9 +46,10 @@ object Asks {
     private val ASK_TOOLS = setOf("AskUser", "AskUserQuestion", "request_user_input")
     private val QUESTION_LINE = Regex("""^\s*(?:\d+[.)]\s*)?\[question]\s*(.+)$""")
     private val OPTION_LINE = Regex("""^\s*\[option]\s*(.+)$""")
+    private val MULTI = Regex("""\s*\(multi\)\s*$""", RegexOption.IGNORE_CASE)
 
     /** A question as its ask call wrote it, with the options it offered. */
-    data class Asked(val question: String, val options: List<String>)
+    data class Asked(val question: String, val options: List<String>, val multiSelect: Boolean = false)
 
     /**
      * The questions of the newest ask call still waiting on a result: Droid's `questionnaire`
@@ -63,24 +65,35 @@ object Asks {
             var question: String? = null
             val options = ArrayList<String>()
             var lastOption = false
+            var continuingQuestion = false
+            var multiSelect = false
             fun flush() {
-                question?.let { out += Asked(it.trim(), options.map(String::trim)) }
+                question?.let { out += Asked(it.trim(), options.map(String::trim), multiSelect) }
                 question = null
                 options.clear()
+                multiSelect = false
             }
             for (line in text.lines()) {
                 QUESTION_LINE.matchEntire(line)?.let {
                     flush()
-                    question = it.groupValues[1].trim()
+                    multiSelect = MULTI.containsMatchIn(it.groupValues[1])
+                    question = it.groupValues[1].replace(MULTI, "").trim()
                     lastOption = false
+                    continuingQuestion = true
                 } ?: OPTION_LINE.matchEntire(line)?.let {
                     if (question != null) options += it.groupValues[1].trim()
                     lastOption = true
                 } ?: run {
-                    if (line.trimStart().startsWith("[topic]")) lastOption = false
+                    if (line.trimStart().startsWith("[topic]")) {
+                        lastOption = false
+                        continuingQuestion = false
+                    }
                     else if (question != null) {
                         if (lastOption && options.isNotEmpty()) options[options.lastIndex] += "\n$line"
-                        else question += "\n$line"
+                        else if (continuingQuestion) {
+                            if (MULTI.containsMatchIn(line)) multiSelect = true
+                            question += "\n${line.replace(MULTI, "")}"
+                        }
                     }
                 }
             }
@@ -97,13 +110,13 @@ object Asks {
                     else -> null
                 }?.trim()
             }
-            Asked(text, options)
+            Asked(text, options, (qo["multiSelect"] as? JsonPrimitive)?.booleanOrNull == true || (qo["multi_select"] as? JsonPrimitive)?.booleanOrNull == true)
         }
     }
 
     /**
-     * The open ask call's question for [menu]: the one whose options are the menu's choices, or the
-     * only one asked. Several questions with none matching shows none rather than the wrong one.
+     * The open ask call's question whose ordered options and mode match [menu].
+     * Ambiguous or mismatching questions never replace the screen's text.
      */
     fun asked(entries: List<ThreadEntry>, menu: Menu?): String? {
         val all = questions(entries)
@@ -117,17 +130,17 @@ object Asks {
     private fun matching(all: List<Asked>, menu: Menu?): Asked? {
         if (menu == null) return all.singleOrNull()
         val candidates = all.filter { a ->
-            a.options.size == menu.choices.size && menu.choices.all { c ->
+            a.multiSelect == menu.multiSelect && a.options.size == menu.choices.size && menu.choices.all { c ->
                 val label = norm(c.label)
                 val full = a.options.getOrNull(c.number - 1)?.let(::norm).orEmpty()
-                label.isNotEmpty() && full.isNotEmpty() && (full.startsWith(label) || label.startsWith(full))
+                label.isNotEmpty() && full.startsWith(label)
             }
         }
         if (candidates.size == 1) return candidates.single()
         // Several questions may use identical options. Only a unique matching question disambiguates.
         return candidates.filter { a ->
             val q = menu.question?.let(::norm) ?: return@filter false
-            val full = norm(a.question.removeSuffix("(multi)").trim())
+            val full = norm(a.question)
             full == q || full.endsWith(q)
         }.singleOrNull()
     }
@@ -136,7 +149,7 @@ object Asks {
     fun display(menu: Menu, entries: List<ThreadEntry>): Menu {
         val asked = matching(questions(entries), menu) ?: return menu
         return menu.copy(
-            question = asked.question.removeSuffix("(multi)").trim(),
+            question = asked.question,
             choices = menu.choices.map { c -> c.copy(label = asked.options[c.number - 1].trim(), description = null) },
         )
     }

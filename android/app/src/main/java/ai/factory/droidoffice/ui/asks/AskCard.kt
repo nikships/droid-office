@@ -311,7 +311,7 @@ private fun AnswerWorkspace(worker: WorkerInfo, shown: Menu, entries: List<Threa
                         }
                     },
                     Modifier.fillMaxWidth().tagged(Tags.Answer.SUBMIT),
-                    enabled = active && !pending && if (typed) text.isNotBlank() else shown.multiSelect || selected.size == 1,
+                    enabled = active && !pending && if (typed) text.isNotBlank() else if (shown.multiSelect) selected.isNotEmpty() else selected.size == 1,
                     color = Palette.Accent,
                 )
             }

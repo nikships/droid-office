@@ -1,5 +1,6 @@
 import type { ClientMsg, WorkerInfo } from '../shared/protocol';
-import { canAnswer, menuTakesText, readMenu, sameMenu, type Menu } from '../shared/asks';
+import { canAnswer, readMenu, sameMenu, type Menu } from '../shared/asks';
+import { questionPresentation } from '../shared/ask-question';
 import { isAsleep, isBusy } from '../shared/status';
 import { statusWord } from '../shared/guests';
 import { cardsNewestFirst, cardChanged, OWNER } from '../shared/whiteboard';
@@ -23,6 +24,7 @@ import { openFloorOrder } from './ui/floor-reorder';
 import { openSubscriptionsStatus } from './ui/subscriptions-status';
 import { openHostUpdate } from './ui/host-update';
 import { mountWorkerThread, type WorkerThread } from './ui/worker-thread';
+import { openQuestionWorkspace, type QuestionDraft, type QuestionReply } from './ui/question-workspace';
 import type { MapDirection } from './office-map-view';
 import type { MapFloor, OfficeMap, OfficeMapHooks } from './office-map';
 import { parseWorkerLink } from './worker-link';
@@ -647,6 +649,7 @@ function select(id: string) {
     return;
   }
   if (!id && selected) leaving = selected;
+  questionWorkspace?.close();
   selected = id;
   paint();
   if (id) rows.get(id)?.el.scrollIntoView({ block: 'nearest' });
@@ -1007,7 +1010,8 @@ let infoActivity: HTMLElement;
 let infoHead: HTMLElement;
 let shownMenu: Menu | undefined;
 let questionKey = '';
-let questionDraft = '';
+let questionDraft: QuestionDraft = { text: '' };
+let questionWorkspace: ReturnType<typeof openQuestionWorkspace> | undefined;
 let answered = false;
 let questionReplying = false;
 let answerSettlesAt = 0;
@@ -1016,6 +1020,7 @@ function paintWorker(w: WorkerInfo) {
   if (view !== 'worker') officeMap?.stop();
   view = 'worker';
   if (detailId !== w.id) {
+    questionWorkspace?.close();
     thread?.dispose();
     thread = undefined;
     terminal?.closeTerminal();
@@ -1023,7 +1028,7 @@ function paintWorker(w: WorkerInfo) {
     stageMode = '';
     shownMenu = undefined;
     questionKey = '';
-    questionDraft = read(draftKey(floor, `${w.id}:answer`));
+    questionDraft = { text: read(draftKey(floor, `${w.id}:answer`)) };
     answered = false;
     questionReplying = false;
     answerSettlesAt = 0;
@@ -1080,6 +1085,7 @@ function paintWorker(w: WorkerInfo) {
         queueKey: `${key}:queue-receipts`,
         draft: read(key),
         onDraft: (text) => remember(key, text),
+        onEntries: () => paintQuestion(),
         send: (msg) => action(msg, w.id, intended),
         screen: () => {
           const s = store.screens.get(w.id);
@@ -1191,17 +1197,24 @@ function paintQuestion(review = false) {
     shownMenu = undefined;
     answered = false;
   }
-  if ((!shownMenu && next) || review) {
+  if ((!shownMenu && next) || review || (answered && next && !sameMenu(shownMenu, next))) {
     shownMenu = next;
     answered = false;
+    questionDraft.choices = undefined;
   }
   const current = sameMenu(shownMenu, next);
   const settling = questionReplying || Date.now() < answerSettlesAt;
-  const key = JSON.stringify([shownMenu, current, live(), busy.has(w.id), answered, questionReplying, settling, w.status]);
+  const entries = thread?.entries() ?? [];
+  const display = shownMenu && questionPresentation(shownMenu, entries);
+  const supported = !shownMenu?.multiSelect || store.workerAnswerMultiSelect;
+  const enabled = live() && supported && current && !busy.has(w.id) && !answered && !questionReplying;
+  const state = shownMenu && { menu: shownMenu, entries, enabled, supported, sending: questionReplying, answered, current, connected: live() };
+  if (state) questionWorkspace?.update(state);
+  else if (questionWorkspace && !settling) questionWorkspace.close();
+  const key = JSON.stringify([shownMenu, display, current, supported, live(), busy.has(w.id), answered, questionReplying, settling, w.status]);
   if (key === questionKey) return;
   questionKey = key;
   question.hidden = !shownMenu && w.status !== 'needs_input';
-  const enabled = live() && current && !busy.has(w.id) && !answered && !questionReplying;
   if (!shownMenu) {
     if (settling) {
       question.replaceChildren(h('div.dash-question-card.quiet', { role: 'status' }, h('p', {}, questionReplying ? 'Sending your answer…' : 'Answer sent. Waiting for the worker’s next move.')));
@@ -1229,18 +1242,14 @@ function paintQuestion(review = false) {
     return;
   }
   const menu = shownMenu;
-  const text = h('textarea.input', { rows: 2, 'aria-label': 'Typed answer', placeholder: 'Type an answer…' });
-  text.value = questionDraft;
-  text.addEventListener('input', () => {
-    questionDraft = text.value;
-    remember(draftKey(floor, `${w.id}:answer`), questionDraft);
-  });
-  const reply = async (value: { choice?: number; text?: string }) => {
+  const intended = floor;
+  const reply = async (value: QuestionReply, answerMenu: Menu) => {
+    if (!live() || questionReplying || answered || !usable(w.id, intended)) return;
     questionReplying = true;
     questionKey = '';
     paintQuestion();
-    const error = await action({ t: 'worker.answer', workerId: w.id, menu, ...value }, w.id, floor, 'Answer sent.');
-    if (detailId !== w.id) return;
+    const error = await action({ t: 'worker.answer', workerId: w.id, menu: answerMenu, ...value }, w.id, intended, 'Answer sent.');
+    if (detailId !== w.id || floor !== intended) return;
     questionReplying = false;
     if (error) {
       answerSettlesAt = 0;
@@ -1254,7 +1263,8 @@ function paintQuestion(review = false) {
         questionKey = '';
         paintQuestion();
       }, 3000);
-      questionDraft = '';
+      questionDraft.text = '';
+      questionDraft.choices = undefined;
       remember(draftKey(floor, `${w.id}:answer`), '');
     }
     questionKey = '';
@@ -1265,20 +1275,38 @@ function paintQuestion(review = false) {
       'div.dash-question-card',
       {},
       h('div.dash-question-top', {}, h('span.eyebrow', {}, `${w.name} needs your answer`), answered ? h('span.pill.done', {}, 'Sent') : null),
-      h('h3', {}, menu.question ?? 'Choose an answer'),
+      h('h3.dash-question-preview', {}, display?.question ?? menu.question ?? 'Choose an answer'),
+      h('div.dash-question-summary', {}, `${display?.position ? `Question ${display.position} of ${display.total} · ` : ''}${menu.multiSelect ? 'Select all that apply' : 'Select one answer'} · ${menu.choices.length} options`),
       h(
-        'div.dash-choices',
-        {},
-        ...menu.choices.map((c) =>
-          h(
-            'button.dash-choice',
-            { type: 'button', disabled: !enabled, onclick: () => void reply({ choice: c.number }) },
-            h('span.key', {}, String(c.number)),
-            h('span.dash-choice-text', {}, h('span', {}, c.label), c.description ? h('small', {}, c.description) : null),
-          ),
-        ),
+        'button.btn.accent',
+        {
+          type: 'button',
+          disabled: !live() || questionReplying,
+          onclick: () => {
+            if (questionWorkspace || !state) return;
+            questionWorkspace = openQuestionWorkspace({
+              name: w.name,
+              state,
+              draft: questionDraft,
+              onDraft: () => remember(draftKey(intended, `${w.id}:answer`), questionDraft.text),
+              reply,
+              review: () => {
+                questionKey = '';
+                paintQuestion(true);
+              },
+              raw: () => {
+                workerView = 'terminal';
+                remember('droid-office.companion-view', 'terminal');
+                paint();
+              },
+              onClose: () => {
+                questionWorkspace = undefined;
+              },
+            });
+          },
+        },
+        answered ? 'View answer status' : 'Answer questions',
       ),
-      ...(menuTakesText(menu) ? [h('div.input-group.dash-answer', {}, text, h('button.btn.primary', { type: 'button', disabled: !enabled, onclick: () => void reply({ text: text.value }) }, 'Send'))] : []),
       questionReplying
         ? h('p.note.info', {}, 'Sending your answer…')
         : answered

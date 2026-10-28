@@ -145,6 +145,14 @@ class AsksTest {
         assertNull(Asks.asked(listOf(call), menu))
         assertEquals("Size?", Asks.asked(listOf(call), menu.copy(question = "Size?")))
         assertNull(Asks.asked(listOf(call), menu.copy(choices = listOf(Choice(1, "No"), Choice(2, "Yes")))))
+        assertNull(Asks.asked(listOf(call), menu.copy(choices = listOf(Choice(1, "Yes, a different option"), Choice(2, "No")))))
+        assertNull(Asks.asked(listOf(call), menu.copy(multiSelect = true)))
+    }
+
+    @Test
+    fun multilineMetadataPreservesParagraphsAndModesWithoutTopicDetails() {
+        val call = askCall("""{"questionnaire":"1. [question] Context before the question.\n\nWhich design? (multi)\n[topic] Design\nIgnored topic detail\n[option] Persistent roster\nwith live status\n[option] Several conversations\nside by side"}""")
+        assertEquals(listOf(Asks.Asked("Context before the question.\n\nWhich design?", listOf("Persistent roster\nwith live status", "Several conversations\nside by side"), true)), Asks.questions(listOf(call)))
     }
 
     @Test

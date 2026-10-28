@@ -72,7 +72,8 @@ class QuestionAnswersTest {
     @Test
     fun multiSelectionMayIncludeAnAdditionalTypedAnswerWithoutDroppingChecks() {
         assertTrue(QuestionAnswers.valid(checkbox, null, listOf(1, 2), "A third way"))
-        assertTrue(QuestionAnswers.valid(checkbox, null, emptyList(), null))
+        assertFalse(QuestionAnswers.valid(checkbox, null, emptyList(), null))
+        assertTrue(QuestionAnswers.valid(checkbox, null, emptyList(), "Only my own answer"))
         assertFalse(QuestionAnswers.valid(checkbox, 1, null, null))
         assertFalse(QuestionAnswers.valid(checkbox, null, listOf(1, 1), null))
         assertFalse(QuestionAnswers.valid(checkbox, null, listOf(3), null))
