@@ -28,3 +28,5 @@ if (run.status !== 0 || !existsSync(output)) {
   process.exit(run.status || 1);
 }
 console.log(`native: built ${path.relative(root, output)}`);
+const finder = spawnSync(process.execPath, [path.join(root, 'native', 'mac', 'build.mjs')], { cwd: root, stdio: 'inherit' });
+if (finder.status !== 0) process.exit(finder.status || 1);

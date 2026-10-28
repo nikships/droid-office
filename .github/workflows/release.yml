@@ -247,6 +247,16 @@ jobs:
           vtool -show-build "$node" | tee vtool.log
           grep -Eq 'minos 14\.0' vtool.log
 
+      - name: Check the native Finder integration
+        run: |
+          node --import tsx --test tests/finder-native.test.ts
+          extension="native/mac/build/DroidOfficeFinderSync.appex/Contents/MacOS/DroidOfficeFinderSync"
+          bridge="native/mac/build/DroidOfficeFinderBridge.app/Contents/MacOS/DroidOfficeFinderBridge"
+          test -f "$extension"
+          test -f "$bridge"
+          lipo -archs "$extension" | grep -qx arm64
+          lipo -archs "$bridge" | grep -qx arm64
+
       - name: Set the release version
         if: env.PUBLISHING == 'true'
         id: version
@@ -254,6 +264,10 @@ jobs:
           version="${{ needs.changes.outputs.version }}"
           npm version "$version" --no-git-tag-version --allow-same-version
           echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - name: Stamp the Finder bundle release versions
+        if: env.PUBLISHING == 'true'
+        run: node native/mac/build.mjs
 
       # electron-builder's own keychain for CSC_LINK fails on macos-26 (set-key-partition-list can't
       # unlock it), so the certificate goes into a keychain made here, which it then finds by name.
@@ -276,6 +290,19 @@ jobs:
           security list-keychains -d user -s "$kc" login.keychain
           security default-keychain -s "$kc"
           security find-identity -v -p codesigning "$kc" | grep -q 'Developer ID Application: Nikhil Anand (NW6B3R27LQ)'
+
+      - name: Install Finder Developer ID provisioning profiles
+        if: env.PUBLISHING == 'true'
+        env:
+          FINDER_BRIDGE_PROFILE_BASE64: ${{ secrets.FINDER_BRIDGE_PROFILE_BASE64 }}
+          FINDER_SYNC_PROFILE_BASE64: ${{ secrets.FINDER_SYNC_PROFILE_BASE64 }}
+        run: |
+          test -n "$FINDER_BRIDGE_PROFILE_BASE64" || { echo "Missing Finder bridge Developer ID provisioning profile"; exit 1; }
+          test -n "$FINDER_SYNC_PROFILE_BASE64" || { echo "Missing FinderSync Developer ID provisioning profile"; exit 1; }
+          umask 077
+          mkdir -p native/mac/build/signing
+          printf '%s' "$FINDER_BRIDGE_PROFILE_BASE64" | base64 --decode > native/mac/build/signing/FinderBridge.provisionprofile
+          printf '%s' "$FINDER_SYNC_PROFILE_BASE64" | base64 --decode > native/mac/build/signing/FinderSync.provisionprofile
 
       - name: Build, sign and notarize the app
         if: env.PUBLISHING == 'true'
@@ -352,6 +379,31 @@ jobs:
         run: |
           app="release/mac-arm64/Droid Office.app"
           codesign --verify --deep --strict --verbose=2 "$app"
+          extension="$app/Contents/PlugIns/DroidOfficeFinderSync.appex"
+          bridge="$app/Contents/Resources/app/native/mac/build/DroidOfficeFinderBridge.app"
+          test -f "$extension/Contents/embedded.provisionprofile"
+          test -f "$bridge/Contents/embedded.provisionprofile"
+          codesign --verify --strict --verbose=2 "$extension"
+          codesign --verify --strict --verbose=2 "$bridge"
+          for bundle in "$extension" "$bridge"; do
+            codesign -d --entitlements - --xml "$bundle" > finder-entitlements.plist 2>/dev/null
+            plutil -convert json -o finder-entitlements.json finder-entitlements.plist
+            node --input-type=module -e '
+              import { readFileSync } from "node:fs";
+              const e = JSON.parse(readFileSync("finder-entitlements.json", "utf8"));
+              if (e["com.apple.security.app-sandbox"] !== true ||
+                  e["com.apple.security.network.client"] !== true ||
+                  e["com.apple.developer.team-identifier"] !== "NW6B3R27LQ" ||
+                  !e["com.apple.security.application-groups"]?.includes("group.com.nikships.droid-office") ||
+                  !e["keychain-access-groups"]?.includes("NW6B3R27LQ.group.com.nikships.droid-office"))
+                throw new Error("Final Finder signature lost its required entitlements");
+            '
+            codesign -dvv "$bundle" 2> finder-signature.log
+            grep -q 'TeamIdentifier=NW6B3R27LQ' finder-signature.log
+            grep -q 'flags=0x10000(runtime)' finder-signature.log
+            executable="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "$bundle/Contents/Info.plist")"
+            lipo -archs "$bundle/Contents/MacOS/$executable" | grep -qx arm64
+          done
           # The presenter is its own signed Mach-O: Developer ID, hardened runtime, the app's team.
           node="$app/Contents/Resources/app/native/presenter/build/Release/presenter.node"
           codesign --verify --strict --verbose=2 "$node"

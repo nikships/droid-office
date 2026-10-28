@@ -4,6 +4,7 @@ import { presentThread, threadArguments, type ThreadRow } from '../../shared/thr
 import { ThreadQueue } from '../../shared/thread-queue';
 import type { Net } from '../net';
 import { ThreadHistory } from '../thread-history';
+import { TeamThread, TeamThreadPaint, teamThreadVisible } from '../team-thread';
 import { h, STATUS_LABEL } from './dom';
 import { colorDot, toggle } from './kit';
 import { markdown } from './markdown';
@@ -18,7 +19,7 @@ export interface WorkerThread {
   dispose(): void;
 }
 
-interface ThreadOptions {
+export interface ThreadOptions {
   worker: WorkerInfo;
   controls: HTMLElement;
   question: HTMLElement;
@@ -27,6 +28,10 @@ interface ThreadOptions {
   onDraft(text: string): void;
   send(msg: ClientMsg): Promise<string | undefined>;
   raw(): void;
+  /** Current floor only; return no workers once the mounted floor is no longer current. */
+  team?(): readonly WorkerInfo[];
+  /** Open this child's Thread view, without starting or resuming a worker. */
+  openWorker?(id: string): void;
 }
 
 const localQueues = new Map<string, ThreadQueue>();
@@ -57,6 +62,12 @@ export function mountWorkerThread(net: Net, opts: ThreadOptions): WorkerThread {
   const list = h('div.wt-list');
   const empty = h('div.wt-empty', { role: 'status' }, 'Reading the conversation…');
   const queuedNotice = h('details.wt-queued', { hidden: true });
+  const team = new TeamThread();
+  const teamPaint = new TeamThreadPaint();
+  const teamTitle = h('span', {}, 'Team activity');
+  const teamBody = h('div.wt-team-body');
+  const teamLimit = h('p.wt-team-note', { hidden: true });
+  const teamSection = h('details.wt-team', { hidden: true }, h('summary', {}, teamTitle, h('span.wt-chevron', { 'aria-hidden': true }, '›')), teamBody, teamLimit);
   const scroll = h('div.wt-scroll', { tabindex: 0, 'aria-label': 'Conversation history' }, earlier, list, empty, queuedNotice, opts.question);
   const latest = h(
     'button.btn.sm.wt-latest.hidden',
@@ -164,7 +175,7 @@ export function mountWorkerThread(net: Net, opts: ThreadOptions): WorkerThread {
   const stop = h('button.btn.wt-stop', { type: 'button', 'aria-label': 'Stop turn', title: 'Stop turn', onclick: () => void stopTurn() }, h('span.wt-stop-label', {}, 'Stop'), h('span.wt-stop-symbol', { 'aria-hidden': true }, '■'));
   const hint = h('span.wt-send-hint', {}, 'Enter to send · Shift+Enter for a new line');
   const form = h('form.wt-composer', {}, images.element, file, h('div.wt-compose-input', {}, input, h('div.wt-send-buttons', {}, stop, send)), h('div.wt-compose-actions', {}, attach, queue, hint));
-  const element = h('section.worker-thread', { 'aria-label': `${worker.name} thread` }, head, scroll, latestAnchor, h('div.wt-feedback', {}, notice, retry, raw, resume), form);
+  const element = h('section.worker-thread', { 'aria-label': `${worker.name} thread` }, head, teamSection, scroll, latestAnchor, h('div.wt-feedback', {}, notice, retry, raw, resume), form);
   images.dropZone(form);
   const nodes = new Map<string, { key: string; node: HTMLElement; sourceIds: string[] }>();
   const expandedMessages = new Set<string>();
@@ -191,12 +202,12 @@ export function mountWorkerThread(net: Net, opts: ThreadOptions): WorkerThread {
       content.addEventListener('scroll', () => updateCode(frame));
     }
   };
-  const updateClamps = () => {
-    for (const text of list.querySelectorAll<HTMLElement>('.wt-user-content')) {
+  const updateClamps = (within: HTMLElement = element) => {
+    for (const text of within.querySelectorAll<HTMLElement>('.wt-user-content')) {
       const button = text.parentElement?.nextElementSibling?.querySelector<HTMLButtonElement>('.wt-message-more');
       if (button instanceof HTMLButtonElement) button.hidden = text.classList.contains('clamped') && text.scrollHeight <= text.clientHeight + 1;
     }
-    for (const frame of list.querySelectorAll<HTMLElement>('.wt-code-scroll')) updateCode(frame);
+    for (const frame of within.querySelectorAll<HTMLElement>('.wt-code-scroll')) updateCode(frame);
   };
   let followingLayout = true;
   let viewportWidth = scroll.clientWidth;
@@ -261,7 +272,7 @@ export function mountWorkerThread(net: Net, opts: ThreadOptions): WorkerThread {
       h('div.wt-thinking-text', {}, text),
     );
   // While the worker waits on the owner, its run isn't working: the question card says what it's on.
-  const render = (row: ThreadRow, asking: boolean) => {
+  const render = (row: ThreadRow, asking: boolean, author = worker, expanded = expandedMessages) => {
     const node = h('article.wt-entry', { 'data-entry': row.id });
     if (row.kind === 'activity') {
       node.classList.add('activity');
@@ -352,27 +363,27 @@ export function mountWorkerThread(net: Net, opts: ThreadOptions): WorkerThread {
     const entry = row.entry;
     node.classList.add(entry.role, entry.kind);
     if (row.kind === 'message') {
-      if (entry.role === 'assistant' && row.startsTurn) node.append(h('div.wt-who', {}, worker.name));
+      if (entry.role === 'assistant' && row.startsTurn) node.append(h('div.wt-who', {}, author.name));
       const actions = h('div.wt-message-actions');
       if (entry.role === 'user') {
-        const text = h('div.wt-user-content', { id: `wt-message-${entry.id}`, class: expandedMessages.has(entry.id) ? '' : 'clamped' }, entry.text ?? '');
+        const text = h('div.wt-user-content', { id: `wt-message-${author.id}-${entry.id}`, class: expanded.has(entry.id) ? '' : 'clamped' }, entry.text ?? '');
         const more = h(
           'button.btn.sm.ghost.wt-message-more',
           {
             type: 'button',
-            'aria-expanded': String(expandedMessages.has(entry.id)),
+            'aria-expanded': String(expanded.has(entry.id)),
             'aria-controls': text.id,
             onclick: () => {
-              const expanded = !expandedMessages.has(entry.id);
-              if (expanded) expandedMessages.add(entry.id);
-              else expandedMessages.delete(entry.id);
-              text.classList.toggle('clamped', !expanded);
-              more.setAttribute('aria-expanded', String(expanded));
-              more.textContent = expanded ? 'Show less' : 'Show all';
+              const on = !expanded.has(entry.id);
+              if (on) expanded.add(entry.id);
+              else expanded.delete(entry.id);
+              text.classList.toggle('clamped', !on);
+              more.setAttribute('aria-expanded', String(on));
+              more.textContent = on ? 'Show less' : 'Show all';
               updateClamps();
             },
           },
-          expandedMessages.has(entry.id) ? 'Show less' : 'Show all',
+          expanded.has(entry.id) ? 'Show less' : 'Show all',
         );
         node.append(h('div.wt-user-text', {}, text));
         actions.append(more);
@@ -398,6 +409,167 @@ export function mountWorkerThread(net: Net, opts: ThreadOptions): WorkerThread {
     } else node.append(h('p.wt-turn', { class: row.tone }, row.text));
     return node;
   };
+  const teamNodes = new Map<
+    string,
+    {
+      sessionId?: string;
+      element: HTMLDetailsElement;
+      name: HTMLElement;
+      status: HTMLElement;
+      activity: HTMLElement;
+      body: HTMLElement;
+      note: HTMLElement;
+      open: HTMLButtonElement;
+      expanded: Set<string>;
+      rows: Map<string, { key: string; node: HTMLElement }>;
+    }
+  >();
+  const paintTeam = (force = false) => {
+    if (disposed || !teamPaint.changed(team.revision, connected, teamSection.open, active && !document.hidden && element.isConnected, force)) return;
+    // The rollup is a sibling of the conversation. Only a size change can affect its viewport.
+    const height = teamSection.offsetHeight;
+    const top = scroll.scrollTop;
+    const teamTop = teamBody.scrollTop;
+    teamSection.hidden = team.total === 0;
+    teamTitle.textContent = `Team activity · ${team.total}`;
+    teamLimit.hidden = team.total <= team.members.size;
+    teamLimit.textContent = `Showing ${team.members.size} of ${team.total} workers. Open other threads from the worker list.`;
+    for (const [id, card] of teamNodes) {
+      const member = team.members.get(id);
+      if (!member || member.worker.sessionId !== card.sessionId) {
+        const focused = card.element.contains(document.activeElement);
+        card.element.remove();
+        teamNodes.delete(id);
+        if (focused) teamSection.querySelector('summary')?.focus({ preventScroll: true });
+      }
+    }
+    for (const [id, member] of team.members) {
+      const child = member.worker;
+      let card = teamNodes.get(id);
+      if (!card) {
+        const name = h('span.wt-team-name');
+        const status = h('span.pill');
+        const activity = h('span.wt-team-latest');
+        const body = h('div.wt-team-entries');
+        const note = h('p.wt-team-note');
+        const open = h('button.btn.sm', { type: 'button', onclick: () => opts.openWorker?.(id) }, 'Open thread');
+        const element = h(
+          'details.wt-team-member',
+          {},
+          h('summary', {}, h('span.wt-team-who', {}, name, activity), status, h('span.wt-chevron', { 'aria-hidden': true }, '›')),
+          h('div.wt-team-content', {}, h('div.wt-team-actions', {}, open), body, note),
+        );
+        card = { sessionId: child.sessionId, element, name, status, activity, body, note, open, expanded: new Set(), rows: new Map() };
+        teamNodes.set(id, card);
+        teamBody.append(element);
+      }
+      card.name.textContent = child.name;
+      card.name.title = child.name;
+      card.status.className = `pill ${child.status}`;
+      card.status.hidden = !connected;
+      card.status.textContent = isAsleep(child.status) ? 'Asleep' : (STATUS_LABEL[child.status] ?? child.status);
+      card.open.disabled = !connected || !opts.openWorker;
+      const rows = presentThread(member.history.entries, isBusy(child.status)).slice(-4);
+      const last = rows.at(-1);
+      const activity = child.activity || (last?.kind === 'activity' ? last.label : last?.kind === 'message' ? last.entry.text : last?.text) || child.title || 'No recent activity';
+      card.activity.textContent = activity.split('\n')[0].slice(0, 200);
+      card.activity.title = card.activity.textContent;
+      card.note.textContent = member.error
+        ? `Conversation unavailable: ${member.error}`
+        : child.lost
+          ? 'This worker’s checkout is unavailable.'
+          : !child.sessionId
+            ? 'Waiting for a local session…'
+            : !member.received
+              ? teamSection.open
+                ? 'Reading the conversation…'
+                : 'Expand Team activity to read recent messages and tools.'
+              : rows.length
+                ? 'Recent activity only. Open the worker thread for more messages and recorded patches.'
+                : 'No conversation recorded yet.';
+      const keep = new Set(rows.map((row) => row.id));
+      const selection = document.getSelection();
+      const pinned = new Set<string>();
+      for (const [rowId, item] of card.rows) {
+        if (!keep.has(rowId)) {
+          if (item.node.contains(document.activeElement) || (selection?.isCollapsed === false && item.node.contains(selection.anchorNode))) {
+            pinned.add(rowId);
+            continue;
+          }
+          item.node.remove();
+          card.rows.delete(rowId);
+        }
+      }
+      const messageIds = new Set(member.history.entries.map((entry) => entry.id));
+      for (const entryId of card.expanded) if (!messageIds.has(entryId)) card.expanded.delete(entryId);
+      let at = card.body.firstElementChild;
+      // At most one focused and one selected old row stay above the four newest rows.
+      while (at && pinned.has(at.getAttribute('data-entry') ?? '')) at = at.nextElementSibling;
+      for (const row of rows) {
+        const key = JSON.stringify([row, child.status === 'needs_input', child.name]);
+        let had = card.rows.get(row.id);
+        // Don't discard text while the owner is selecting a command or patch to copy.
+        if (!had || (had.key !== key && (selection?.isCollapsed !== false || !had.node.contains(selection.anchorNode)))) {
+          const focused = document.activeElement;
+          const focus = focused instanceof HTMLElement && had?.node.contains(focused) ? focused : undefined;
+          const disclosure = focus?.closest<HTMLDetailsElement>('details[data-disclosure]')?.dataset.disclosure;
+          const control = focus?.matches('.wt-copy') ? '.wt-copy' : focus?.matches('.wt-message-more') ? '.wt-message-more' : undefined;
+          const node = render(row, child.status === 'needs_input', child, card.expanded);
+          const opened = new Set([...(had?.node.querySelectorAll<HTMLDetailsElement>('details[open][data-disclosure]') ?? [])].map((details) => details.dataset.disclosure));
+          for (const details of node.querySelectorAll<HTMLDetailsElement>('details[data-disclosure]')) details.open = opened.has(details.dataset.disclosure);
+          const positions = [...(had?.node.querySelectorAll<HTMLElement>('pre, .wt-horizontal-content') ?? [])].map((content) => [content.scrollTop, content.scrollLeft]);
+          had?.node.replaceWith(node);
+          if (focus && !focus.isConnected) {
+            const target = control
+              ? node.querySelector<HTMLElement>(control)
+              : [...node.querySelectorAll<HTMLDetailsElement>('details[data-disclosure]')].find((details) => details.dataset.disclosure === disclosure)?.querySelector('summary');
+            target?.focus({ preventScroll: true });
+          }
+          [...node.querySelectorAll<HTMLElement>('pre, .wt-horizontal-content')].forEach((content, index) => {
+            content.scrollTop = positions[index]?.[0] ?? 0;
+            content.scrollLeft = positions[index]?.[1] ?? 0;
+          });
+          had = { key, node };
+          card.rows.set(row.id, had);
+          if (at?.getAttribute('data-entry') === row.id) at = node;
+        }
+        if (had.node === at) at = at.nextElementSibling;
+        else card.body.insertBefore(had.node, at);
+      }
+    }
+    if (teamSection.open) updateClamps(teamSection);
+    if (teamBody.scrollTop !== teamTop) teamBody.scrollTop = teamTop;
+    if (teamSection.offsetHeight !== height && scroll.scrollTop !== top) scroll.scrollTop = top;
+  };
+  const syncTeam = () => {
+    team.sync(`${opts.queueKey}:${worker.id}:${worker.sessionId ?? ''}`, worker.id, opts.team?.() ?? []);
+    team.enable(teamThreadVisible(active && !disposed, connected, !document.hidden && element.isConnected, teamSection.open));
+  };
+  const readTeam = () => {
+    if (!opts.team || disposed) return;
+    syncTeam();
+    team.read(
+      Date.now(),
+      (msg) => net.send(msg),
+      () => `team-${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`,
+    );
+    paintTeam();
+  };
+  const teamDisclosure = (event: Event) => {
+    if (event.target === teamSection) readTeam();
+    else paintTeam(true);
+  };
+  const teamFocus = () => queueMicrotask(() => paintTeam(true));
+  let teamSelected = false;
+  const teamSelection = () => {
+    const selection = document.getSelection();
+    const selected = selection?.isCollapsed === false && teamSection.contains(selection.anchorNode);
+    if (selected || teamSelected) paintTeam(true);
+    teamSelected = selected;
+  };
+  teamSection.addEventListener('toggle', teamDisclosure, true);
+  teamSection.addEventListener('focusout', teamFocus);
+  document.addEventListener('selectionchange', teamSelection);
   // The same words as the Android app: a heading and a line under it once there is nothing to read.
   const paintEmpty = () => {
     if (error) empty.textContent = 'Conversation unavailable. Retry below, or open Raw TTY.';
@@ -501,6 +673,18 @@ export function mountWorkerThread(net: Net, opts: ThreadOptions): WorkerThread {
     updateControls();
   };
   const receive = (msg: ServerMsg) => {
+    if (disposed) return;
+    if (msg.t === 'floor.enter' || msg.t === 'welcome') {
+      team.clear();
+      team.enable(false);
+      paintTeam();
+      return;
+    }
+    if (msg.t === 'thread.snapshot' && msg.workerId !== worker.id) {
+      syncTeam();
+      if (team.receive(msg)) paintTeam();
+      return;
+    }
     if (msg.t !== 'thread.snapshot' || !active || !pending || msg.workerId !== worker.id || msg.request !== pending.request) return;
     const older = pending.before !== undefined;
     pending = undefined;
@@ -570,6 +754,7 @@ export function mountWorkerThread(net: Net, opts: ThreadOptions): WorkerThread {
   const off = net.onMessage(receive);
   const timer = setInterval(() => {
     if (!active || !connected || document.hidden) return;
+    readTeam();
     if (pending && Date.now() - pending.at > 8000) {
       pending = undefined;
       error = 'The office did not return this conversation. Retry, or use Raw TTY on an older office.';
@@ -578,6 +763,7 @@ export function mountWorkerThread(net: Net, opts: ThreadOptions): WorkerThread {
     if (!error) read();
   }, 1000);
   const visibility = () => {
+    readTeam();
     if (!document.hidden && active) read();
   };
   document.addEventListener('visibilitychange', visibility);
@@ -612,6 +798,7 @@ export function mountWorkerThread(net: Net, opts: ThreadOptions): WorkerThread {
       if (received) paintEntries(false);
       updateControls();
       read();
+      readTeam();
     },
     activate(on) {
       if (active === on) return;
@@ -623,6 +810,7 @@ export function mountWorkerThread(net: Net, opts: ThreadOptions): WorkerThread {
         read();
       } else net.send({ t: 'worker.detach', workerId: worker.id });
       updateControls();
+      readTeam();
     },
     dispose() {
       if (disposed) return;
@@ -631,10 +819,15 @@ export function mountWorkerThread(net: Net, opts: ThreadOptions): WorkerThread {
       active = false;
       clearInterval(timer);
       document.removeEventListener('visibilitychange', visibility);
+      teamSection.removeEventListener('toggle', teamDisclosure, true);
+      teamSection.removeEventListener('focusout', teamFocus);
+      document.removeEventListener('selectionchange', teamSelection);
       off();
       resize.disconnect();
       questionChanges.disconnect();
       images.discard();
+      team.dispose();
+      teamNodes.clear();
     },
   };
 }

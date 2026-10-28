@@ -5,6 +5,8 @@ import { fileURLToPath } from 'node:url';
 import { app, type BaseWindow, clipboard, dialog, Menu, type MenuItemConstructorOptions, Notification, shell } from 'electron';
 import { downloadBrowser } from './browser.js';
 import { contextMenu, editMenu } from './edit-menu.js';
+import { finderBridgeArgs, parseThreadLink, type ThreadLink } from './finder-links.js';
+import { explainFinder, FinderThreads, openFinderSettings } from './finder.js';
 import { gpuReport } from './gpu.js';
 import { linkAction, windowOpenAction } from './links.js';
 import { fetchStatus, type Office, probePort, startOffice } from './office.js';
@@ -38,6 +40,26 @@ app.setPath('userData', userDataSwitch || path.join(app.getPath('appData'), 'com
 if (userDataSwitch) app.setPath('logs', path.join(userDataSwitch, 'logs'));
 /** A run with its own userData is a test run: it only shows an office that is already up, and never moves, updates or installs anything. */
 const isolated = Boolean(userDataSwitch);
+const finderEnabled = app.isPackaged && !isolated && !isStartupCheck();
+const finderThreads = new FinderThreads(() => {
+  if (!win || win.base.isDestroyed()) app.dock?.hide();
+});
+let pendingThread: ThreadLink | undefined;
+function receiveThread(raw: string): boolean {
+  if (!finderEnabled) return false;
+  const link = parseThreadLink(raw);
+  if (!link) return false;
+  if (officeUrl) finderThreads.open(officeUrl, link);
+  else {
+    pendingThread = link;
+    windowWanted = false;
+  }
+  return true;
+}
+app.on('open-url', (event, url) => {
+  event.preventDefault();
+  receiveThread(url);
+});
 const settingsFile = path.join(app.getPath('userData'), 'settings.json');
 const logDir = app.getPath('logs');
 const officeLog = path.join(logDir, 'office.log');
@@ -271,7 +293,14 @@ async function openOffice() {
     } else {
       const dir = settings.officeDir ?? defaultOfficeDir();
       mkdirSync(logDir, { recursive: true });
-      office = await startOffice({ runtime: officeRuntime(process.execPath), cli: path.join(app.getAppPath(), 'bin', 'droid-office.js'), args: officeArgs(dir, port), port, env: officeEnv, log: officeLog });
+      office = await startOffice({
+        runtime: officeRuntime(process.execPath),
+        cli: path.join(app.getAppPath(), 'bin', 'droid-office.js'),
+        args: [...officeArgs(dir, port), ...finderBridgeArgs(app.getAppPath(), app.isPackaged, isolated)],
+        port,
+        env: officeEnv,
+        log: officeLog,
+      });
       officeUrl = office.url;
       const mine = office;
       void mine.exited.then((code) => {
@@ -282,8 +311,15 @@ async function openOffice() {
     }
     opening = false;
     show(officeUrl);
+    if (pendingThread) {
+      finderThreads.open(officeUrl, pendingThread);
+      pendingThread = undefined;
+    }
+    if (finderEnabled && office) void explainFinder(app.getPath('userData')).catch(() => {});
     void refreshTray();
   } catch (err) {
+    pendingThread = undefined;
+    windowWanted = true;
     officeUrl = undefined;
     opening = false;
     void refreshTray();
@@ -297,6 +333,7 @@ async function openOffice() {
 }
 
 async function officeStopped(code: number | null) {
+  finderThreads.close();
   officeUrl = undefined;
   void refreshTray();
   show(page('The office stopped', `exit ${code ?? 'signal'} — see ${officeLog}`));
@@ -308,6 +345,7 @@ async function officeStopped(code: number | null) {
 }
 
 async function stopOffice(keepWorkers: boolean) {
+  finderThreads.close();
   const running = office;
   if (!running) return;
   stopping = true;
@@ -442,8 +480,13 @@ function toggleNotify() {
 
 /** Cmd+Q: closes the window and leaves the office running behind the menu bar icon. The first time, says so. */
 async function leaveToMenuBar() {
+  finderThreads.close();
   const current = win;
-  if (!current || current.base.isDestroyed()) return;
+  if (!current || current.base.isDestroyed()) {
+    windowWanted = false;
+    app.dock?.hide();
+    return;
+  }
   if (!settings.menuBarExplained) {
     const { response } = await dialog.showMessageBox(current.base, {
       type: 'info',
@@ -524,6 +567,8 @@ async function restartOffice() {
 }
 
 function menu(): Menu {
+  const contents = () => finderThreads.focusedWindow()?.webContents ?? win?.contents;
+  const base = () => finderThreads.focusedWindow() ?? win?.base;
   const template: MenuItemConstructorOptions[] = [
     {
       label: app.name,
@@ -543,13 +588,14 @@ function menu(): Menu {
       ],
     },
     // Not Electron's edit roles: the page is offscreen and never the focused web contents, so they would find nothing to act on.
-    editMenu(() => win?.contents),
+    editMenu(contents),
     {
       label: 'Office',
       submenu: [
         { label: 'Open in Browser', click: () => trayAction('browser') },
         { label: 'Restart Office', click: () => void restartOffice() },
         { label: 'Change Office Folder…', click: () => void changeOfficeDir() },
+        ...(finderEnabled ? [{ label: 'Finder Extension Settings…', click: () => openFinderSettings() }] : []),
         { type: 'separator' },
         { label: 'Show Office Log', click: () => shell.showItemInFolder(officeLog) },
         { label: 'Show GPU Report', click: () => void writeGpuReport().then(() => shell.showItemInFolder(gpuLog)) },
@@ -558,20 +604,20 @@ function menu(): Menu {
     {
       label: 'View',
       submenu: [
-        { label: 'Reload', accelerator: 'CmdOrCtrl+R', click: () => win?.contents.reload() },
-        { label: 'Force Reload', accelerator: 'Shift+CmdOrCtrl+R', click: () => win?.contents.reloadIgnoringCache() },
-        { label: 'Toggle Developer Tools', accelerator: 'Alt+CmdOrCtrl+I', click: () => win?.contents.toggleDevTools() },
+        { label: 'Reload', accelerator: 'CmdOrCtrl+R', click: () => contents()?.reload() },
+        { label: 'Force Reload', accelerator: 'Shift+CmdOrCtrl+R', click: () => contents()?.reloadIgnoringCache() },
+        { label: 'Toggle Developer Tools', accelerator: 'Alt+CmdOrCtrl+I', click: () => contents()?.toggleDevTools() },
         { type: 'separator' },
-        { label: 'Toggle Full Screen', accelerator: 'Ctrl+CmdOrCtrl+F', click: () => win?.base.setFullScreen(!win.base.isFullScreen()) },
+        { label: 'Toggle Full Screen', accelerator: 'Ctrl+CmdOrCtrl+F', click: () => base()?.setFullScreen(!base()?.isFullScreen()) },
       ],
     },
     {
       label: 'Window',
       role: 'window',
       submenu: [
-        { label: 'Minimize', accelerator: 'CmdOrCtrl+M', click: () => win?.base.minimize() },
-        { label: 'Zoom', click: () => (win?.base.isMaximized() ? win.base.unmaximize() : win?.base.maximize()) },
-        { label: 'Close', accelerator: 'CmdOrCtrl+W', click: () => win?.base.close() },
+        { label: 'Minimize', accelerator: 'CmdOrCtrl+M', click: () => base()?.minimize() },
+        { label: 'Zoom', click: () => (base()?.isMaximized() ? base()?.unmaximize() : base()?.maximize()) },
+        { label: 'Close', accelerator: 'CmdOrCtrl+W', click: () => base()?.close() },
         { type: 'separator' },
         { role: 'front' },
       ],
@@ -583,8 +629,13 @@ function menu(): Menu {
 if (!isStartupCheck() && !app.requestSingleInstanceLock()) {
   app.quit();
 } else {
-  app.on('second-instance', () => openWindow());
-  app.on('activate', () => openWindow());
+  app.on('second-instance', (_event, argv) => {
+    if (!argv.some((arg) => receiveThread(arg))) openWindow();
+  });
+  app.on('activate', () => {
+    if (opening && pendingThread) return;
+    if (!finderThreads.focus()) openWindow();
+  });
 
   // Closing the window leaves the app, the office and the menu bar icon running until you quit.
   app.on('window-all-closed', () => {});
@@ -603,6 +654,10 @@ if (!isStartupCheck() && !app.requestSingleInstanceLock()) {
     .then(async () => {
       enforceRequirements();
       if (isStartupCheck()) return runStartupCheck();
+      if (finderEnabled) {
+        app.setAsDefaultProtocolClient('droid-office');
+        for (const arg of process.argv) receiveThread(arg);
+      }
       Menu.setApplicationMenu(menu());
       if (!isolated && (await moveToApplications())) return;
       tray = new OfficeTray(trayAction);

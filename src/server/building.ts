@@ -285,6 +285,38 @@ export class Building {
     return def;
   }
 
+  /** An explicit, authenticated Finder selection can register a checkout outside the workspace. */
+  finderFloor(input: string): FloorDef | string {
+    let dir: string;
+    try {
+      dir = realpathSync(input);
+    } catch {
+      return 'The selected repository is no longer available';
+    }
+    const known = this.knownCheckout(dir);
+    if (known) return known;
+    const why = plainProblem(dir);
+    if (why) return why;
+    if (!isCheckout(dir)) return 'The selected folder is no longer a git checkout';
+    if (this.list().length >= MAX_FLOORS) return `The building is full (${MAX_FLOORS} floors)`;
+    const base = path.basename(dir);
+    const names = new Set(this.list().map((d) => d.name));
+    let name = base;
+    if (names.has(name)) name = `${base} — ${path.basename(path.dirname(dir))}`;
+    const qualified = name;
+    for (let n = 2; names.has(name); n++) name = `${qualified} (${n})`;
+    const def = this.newDef(name, originRepo(dir), dir, 'Finder');
+    const next = [...this.defs, def];
+    try {
+      writeFileSync(`${this.file}.tmp`, JSON.stringify(next, null, 2), { mode: 0o600 });
+      renameSync(`${this.file}.tmp`, this.file);
+    } catch {
+      return "Couldn't save the Finder floor. Nothing was registered.";
+    }
+    this.defs = next;
+    return def;
+  }
+
   /** The floor for this checkout, following symlinks, if one is already saved. */
   private knownCheckout(dir: string): FloorDef | undefined {
     const key = checkoutKey(dir);

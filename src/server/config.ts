@@ -15,6 +15,8 @@ export interface Config {
   homeFloor?: string;
   /** Where the Droid subagents skill goes (the CLI sets ~/.factory/skills; unset in tests so they never touch it). */
   skillsDir?: string;
+  /** Signed native Keychain bridge supplied by the packaged Mac app, never enabled by default. */
+  finderBridge?: string;
   /**
    * Render Whiteboard cards with the headless Chromium, downloading it on the first render when it's
    * missing (the CLI sets it; unset in tests, so they never start a browser or a download).
@@ -91,6 +93,9 @@ Options:
       --tls-key <file>    ...and this private key (PEM)
       --self-signed       Serve HTTPS with a generated self-signed certificate
       --trust-proxy       Trust X-Forwarded-* headers (behind Caddy/nginx)
+      --finder-bridge <file>
+                          Signed macOS Keychain helper for Finder dispatch.
+                          Supplied by the Mac app; disabled when absent
       --max-workers <n>   Run at most this many workers at once, across every
                           floor (env DROID_OFFICE_MAX_WORKERS). Hiring past it
                           is refused. It can be lowered from ⚙️
@@ -187,6 +192,7 @@ export function loadConfig(argv: string[]): Config {
   let tlsKey = '';
   let selfSigned = false;
   let trustProxy = false;
+  let finderBridge: string | undefined;
   let maxWorkers = process.env.DROID_OFFICE_MAX_WORKERS || '';
   let webhook = process.env.DROID_OFFICE_WEBHOOK;
   let city = process.env.DROID_OFFICE_CITY || '';
@@ -226,6 +232,9 @@ export function loadConfig(argv: string[]): Config {
         break;
       case '--trust-proxy':
         trustProxy = true;
+        break;
+      case '--finder-bridge':
+        finderBridge = path.resolve(takeValue(argv, i++, a));
         break;
       case '--max-workers':
         maxWorkers = takeValue(argv, i++, a);
@@ -313,6 +322,7 @@ export function loadConfig(argv: string[]): Config {
     agentArgs,
     tls,
     trustProxy,
+    finderBridge,
     maxWorkers: workerLimit,
     webhook,
     city: city.trim() || undefined,

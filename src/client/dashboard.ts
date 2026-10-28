@@ -23,6 +23,8 @@ import { openSubscriptionsStatus } from './ui/subscriptions-status';
 import { mountWorkerThread, type WorkerThread } from './ui/worker-thread';
 import type { MapDirection } from './office-map-view';
 import type { MapFloor, OfficeMap, OfficeMapHooks } from './office-map';
+import { parseWorkerLink } from './worker-link';
+import { DashboardWorkerLink } from './dashboard-worker-link';
 
 const read = (key: string) => {
   try {
@@ -47,9 +49,10 @@ let credential = (() => {
   }
 })();
 let bootstrap = new URLSearchParams(location.search).get('t') ?? '';
+const workerLink = new DashboardWorkerLink(parseWorkerLink(location.hash));
 const arrivedWithLink = !!bootstrap;
 // Remove credentials before loading a card or navigating anywhere else.
-if (location.search) history.replaceState(null, '', location.pathname);
+if (location.search || workerLink.pending) history.replaceState(null, '', location.pathname);
 const auth = () => setBrowserAuth(credential?.token ?? '', credential ? '' : bootstrap);
 auth();
 
@@ -218,7 +221,11 @@ function locked(why: Gate) {
 connectWhiteboard((msg) => net.send(msg));
 net.onStatus((up) => {
   store.whiteboard.status(up);
-  if (!up) fresh = false;
+  if (!up) {
+    fresh = false;
+    switching = false;
+    workerLink.arrive();
+  }
   paint();
 });
 net.onMessage((msg) => {
@@ -226,6 +233,7 @@ net.onMessage((msg) => {
   if (entering) {
     fresh = true;
     switching = false;
+    workerLink.arrive();
     if (floor && floor !== msg.floor) {
       selected = '';
       closeAllModals();
@@ -245,11 +253,13 @@ net.onMessage((msg) => {
   if (msg.t === 'toast') {
     toast(msg.text, msg.level);
     if (switching && msg.level !== 'info') {
+      workerLink.clear();
       switching = false;
       notice = msg.text;
       paint();
     }
   }
+  if (entering || msg.t === 'floors' || msg.t === 'worker.update') followWorkerLink();
 });
 for (const topic of ['floors', 'workers', 'whiteboard', 'project'] as const) store.on(topic, paint);
 store.on('screens', () => {
@@ -271,6 +281,34 @@ floors.addEventListener('change', () => {
 function live() {
   return authorized && net.up && fresh && !switching;
 }
+function followWorkerLink() {
+  if (!live()) return;
+  const result = workerLink.follow({ floor: store.floor, hasWorker: (id) => store.workers.has(id), hasFloor: (id) => store.floors.some((f) => f.id === id) }, (floor) => net.send({ t: 'floor.go', floor }));
+  if (result.step === 'go') {
+    switching = true;
+    paint();
+    return;
+  }
+  if (result.step === 'wait') return;
+  if (result.step === 'failed') {
+    switching = false;
+    notice = 'Disconnected. The worker link was not opened. Open it again after reconnecting.';
+    toast(notice, 'warn');
+    paint();
+    return;
+  }
+  if (result.step === 'gone') return toast('That worker or floor is no longer available.', 'warn');
+  if (result.link.view === 'thread') workerView = 'thread';
+  select(result.link.worker);
+  paint();
+}
+window.addEventListener('hashchange', () => {
+  const next = parseWorkerLink(location.hash);
+  if (!next) return;
+  workerLink.set(next);
+  history.replaceState(null, '', location.pathname);
+  followWorkerLink();
+});
 function usable(id: string, intendedFloor: string) {
   return live() && floor === intendedFloor && store.workers.has(id);
 }
@@ -983,6 +1021,12 @@ function paintWorker(w: WorkerInfo) {
         draft: read(key),
         onDraft: (text) => remember(key, text),
         send: (msg) => action(msg, w.id, intended),
+        team: () => (floor === intended ? [...store.workers.values()] : []),
+        openWorker: (id) => {
+          if (!usable(id, intended)) return;
+          workerView = 'thread';
+          select(id);
+        },
         raw: () => {
           workerView = 'terminal';
           remember('droid-office.companion-view', 'terminal');

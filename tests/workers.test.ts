@@ -757,6 +757,62 @@ test('a board agent is hired with its brief on the first prompt, then prompted, 
   assert.equal(await startedWith(f, workers, second, 'issues-session'), 'Close the duplicates');
 });
 
+test('Finder dispatch keeps the Team lead session and standard brief, refuses busy turns, and applies a chosen model on resume', async (t) => {
+  const f = fixture();
+  isolateAgentEnvironment(f, t);
+  const previousLog = process.env.FAKE_AGENT_LOG;
+  process.env.FAKE_AGENT_LOG = f.log;
+  t.after(() => {
+    if (previousLog === undefined) delete process.env.FAKE_AGENT_LOG;
+    else process.env.FAKE_AGENT_LOG = previousLog;
+    f.close();
+  });
+  const workers = manager(f, []);
+  t.after(() => workers.shutdown());
+  const launches = () => f.read().filter((r) => r.kind === 'droid' && r.args.includes('--settings') && r.stdin === undefined);
+  const prompt = 'Inspect token refresh\n\n"/selected/auth.ts"';
+  const hired = workers.dispatchLead(prompt, 'gpt-6.1-sol');
+  assert.equal(typeof hired, 'object');
+  if (typeof hired === 'string') return;
+  assert.equal(hired.hired, true);
+  assert.equal(hired.info.deskId, 'station-lead');
+  const [first] = await waitFor(launches, (l) => l.length === 1);
+  const initial = (await startedWith(f, workers, first, 'finder-lead-session')) ?? '';
+  assert.match(initial, /Team lead/);
+  assert.ok(initial.endsWith(prompt));
+  assert.doesNotMatch(initial, /Finder orchestrator|finder-specific|Dispatch Flow/);
+  assert.match(workers.dispatchLead('Another request') as string, /busy/);
+  const info = workers.get(hired.info.id)!;
+  info.status = 'working';
+  info.lastInputAt = Date.now() - 3000;
+  assert.match(workers.dispatchLead('Still working') as string, /busy/);
+  info.status = 'needs_input';
+  assert.match(workers.dispatchLead('Not an answer') as string, /busy/);
+  info.status = 'done';
+  info.lastInputAt = Date.now() - 3000;
+  info.worktree = { path: '.droid-office/worktrees/missing-finder', branch: 'missing-finder', base: 'main' };
+  assert.equal(typeof workers.dispatchLead('Cannot switch a lost checkout', 'glm-5.3-flash'), 'string');
+  assert.equal(info.model, 'gpt-6.1-sol');
+  assert.equal(launches().length, 1);
+  info.worktree = undefined;
+  info.lost = undefined;
+  const again = workers.dispatchLead('Follow up', 'gpt-6.1-sol');
+  assert.deepEqual(typeof again === 'object' && [again.hired, again.info.id], [false, info.id]);
+  await waitFor(
+    () => pastedInto(f, first),
+    (p) => p.includes('Follow up'),
+  );
+  info.status = 'done';
+  info.lastInputAt = Date.now() - 3000;
+  const changed = workers.dispatchLead('Use the other model', 'glm-5.3-flash');
+  assert.deepEqual(typeof changed === 'object' && [changed.hired, changed.info.id], [false, info.id]);
+  const [, second] = await waitFor(launches, (l) => l.length === 2);
+  assert.ok(second.args.includes('--resume') && second.args.includes('finder-lead-session'));
+  assert.equal(workers.get(info.id)?.model, 'glm-5.3-flash');
+  assert.equal(await startedWith(f, workers, second, 'finder-lead-session'), 'Use the other model');
+  assert.equal(launches().length, 2);
+});
+
 test('an office-queue command an older office left behind is cleared away, and no board agent gets one', async (t) => {
   const f = fixture();
   isolateAgentEnvironment(f, t);

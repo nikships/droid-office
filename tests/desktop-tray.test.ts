@@ -191,6 +191,8 @@ test('a worker link survives the trip to the page and takes you to its floor fir
   assert.equal(hash, '#worker=w+ada%261&floor=f%2Fweb');
   assert.deepEqual(parseWorkerLink(hash), { worker: 'w ada&1', floor: 'f/web' });
   assert.deepEqual(parseWorkerLink('#worker=abc'), { worker: 'abc' });
+  assert.deepEqual(parseWorkerLink('#worker=abc&floor=home&view=thread'), { worker: 'abc', floor: 'home', view: 'thread' });
+  assert.deepEqual(parseWorkerLink('#worker=abc&view=unexpected'), { worker: 'abc' });
   for (const bad of ['', '#', '#floor=f', '#worker=', `#worker=${'x'.repeat(201)}`]) assert.equal(parseWorkerLink(bad), undefined, bad);
   const here = { floor: 'f-web', hasWorker: (id: string) => id === 'w-ada', hasFloor: (id: string) => id === 'f-web' || id === 'f-api' };
   assert.equal(linkStep({ worker: 'w-ada', floor: 'f-web' }, here), 'open');
