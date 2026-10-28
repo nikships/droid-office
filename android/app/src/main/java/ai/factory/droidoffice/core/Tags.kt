@@ -92,6 +92,22 @@ object Tags {
         fun pingWorker(id: String) = "board.ping/$id"
     }
 
+    object Answer {
+        const val OPEN = "answer.open"
+        const val WORKSPACE = "answer.workspace"
+        const val CONTENT = "answer.content"
+        const val CLOSE = "answer.close"
+        const val RAW_TTY = "answer.raw_tty"
+        const val QUESTION = "answer.question"
+        const val INSTRUCTION = "answer.instruction"
+        const val TYPE = "answer.type"
+        const val TEXT = "answer.text"
+        const val STATUS = "answer.status"
+        const val SUBMIT = "answer.submit"
+        const val CANCEL = "answer.cancel"
+        fun option(number: Int) = "answer.option/$number"
+    }
+
     object Asks {
         const val COUNT = "asks.count"
         const val CARD = "asks.card"
@@ -342,7 +358,7 @@ object Tags {
         fun threadToggle(id: String) = "worker.thread.toggle/$id"
         /** Shows all of a long message from the owner, or only its first lines again (`checked` is all of it). */
         fun threadMore(id: String) = "worker.thread.more/$id"
-        /** One run of tool calls and thoughts between messages, by the id of its first entry. */
+        /** One consecutive run of tool calls, by the id of its first entry. */
         fun threadGroup(id: String) = "worker.thread.group/$id"
         /** Opens or closes a run's list of actions (`checked` is open). */
         fun threadGroupToggle(id: String) = "worker.thread.group.toggle/$id"

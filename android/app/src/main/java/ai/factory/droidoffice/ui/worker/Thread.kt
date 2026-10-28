@@ -10,7 +10,6 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
@@ -35,8 +34,9 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateMapOf
@@ -45,7 +45,6 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.Saver
 import androidx.compose.runtime.saveable.rememberSaveable
-import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.snapshots.SnapshotStateMap
 import androidx.compose.ui.Alignment
@@ -84,7 +83,6 @@ import ai.factory.droidoffice.core.DroidQueue
 import ai.factory.droidoffice.core.PendingAsk
 import ai.factory.droidoffice.core.ScreenState
 import ai.factory.droidoffice.core.Tags
-import ai.factory.droidoffice.core.ThreadEntry
 import ai.factory.droidoffice.core.ThreadFeed
 import ai.factory.droidoffice.core.ThreadPhase
 import ai.factory.droidoffice.core.ThreadQueue
@@ -94,7 +92,6 @@ import ai.factory.droidoffice.core.ThreadView
 import ai.factory.droidoffice.core.ToolState
 import ai.factory.droidoffice.core.WorkerInfo
 import ai.factory.droidoffice.core.WorkerStatus
-import ai.factory.droidoffice.session.Answered
 import ai.factory.droidoffice.ui.LocalGraph
 import ai.factory.droidoffice.ui.LocalSnackbar
 import ai.factory.droidoffice.ui.asks.AskCard
@@ -408,6 +405,7 @@ internal fun Thread(
                         when (r) {
                             is ThreadView.Message -> Message(w, r, open[MORE + r.key] == true) { flip(MORE + r.key) }
                             is ThreadView.Notice -> Notice(r)
+                            is ThreadView.Thought -> ThoughtRow(r, open[DETAIL + r.entry.id] == true, live = r.live) { flip(DETAIL + r.entry.id) }
                             is ThreadView.Activity -> Activity(r, r.ids.any { open[it] == true }, open, asking, onToggle = { toggle(r) }, onFlip = ::flip)
                         }
                     }
@@ -435,29 +433,8 @@ internal fun Thread(
                                 enabled = canAnswer,
                                 inline = true,
                                 connected = connected,
-                                onChoose = { c ->
-                                    scope.launch {
-                                        when (graph.answers.choose(w.id, menu, c.number)) {
-                                            Answered.Sent -> Unit
-                                            Answered.Changed -> snackbar.showSnackbar("The question changed, so nothing was sent.")
-                                            else -> snackbar.showSnackbar("Couldn't reach the office. Nothing was sent.")
-                                        }
-                                    }
-                                },
-                                onType = { t ->
-                                    scope.launch {
-                                        when (graph.answers.type(w.id, menu, t)) {
-                                            Answered.Sent -> Unit
-                                            Answered.Changed -> snackbar.showSnackbar("The question changed, so nothing was sent.")
-                                            Answered.Unreachable -> snackbar.showSnackbar("Couldn't reach the office. Nothing was sent.")
-                                            Answered.NeedsThread -> {
-                                                onTty()
-                                                snackbar.showSnackbar("Type your answer in the terminal.")
-                                            }
-                                        }
-                                    }
-                                },
-                                onOpenThread = null,
+                                entries = state.entries,
+                                onOpenThread = onTty,
                             )
                         }
                     }
@@ -597,6 +574,7 @@ private fun gap(prev: ThreadView.Row?, row: ThreadView.Row): Dp {
             else -> 14.dp
         }
         is ThreadView.Activity -> if (prev is ThreadView.Message) 10.dp else 6.dp
+        is ThreadView.Thought -> if (prev is ThreadView.Message) 10.dp else 6.dp
         is ThreadView.Notice -> 16.dp
     }
 }
@@ -811,22 +789,14 @@ private fun Notice(n: ThreadView.Notice) {
 
 /**
  * One run of work between messages: a single quiet line saying what it did, with what failed under
- * it even while closed, opening to one row per action and thought, and the plan as the run left it.
- * A run that only thought is its thoughts, each its own disclosure, with no line around them.
+ * it even while closed, opening to one row per action and the plan as the run left it. Thoughts are
+ * independent rows outside every activity.
  */
 @Composable
 private fun Activity(a: ThreadView.Activity, isOpen: Boolean, open: SnapshotStateMap<String, Boolean>, asking: Boolean, onToggle: () -> Unit, onFlip: (String) -> Unit) {
     val failed = a.failed.size
     // While the worker waits on the owner, its run isn't working: the question card says what it's on.
     val working = a.live && !asking
-    if (a.actions.isEmpty() && a.plan == null) {
-        Column(Modifier.fillMaxWidth().tagged(Tags.Worker.threadGroup(a.first))) {
-            for (t in a.items.filterIsInstance<ThreadView.Thought>()) {
-                ThoughtRow(t, open[DETAIL + t.entry.id] == true, live = working && t === a.items.last()) { onFlip(DETAIL + t.entry.id) }
-            }
-        }
-        return
-    }
     val reveal = rememberReveal()
     Column(Modifier.fillMaxWidth().then(reveal.modifier).tagged(Tags.Worker.threadGroup(a.first))) {
         Row(
@@ -883,10 +853,7 @@ private fun Activity(a: ThreadView.Activity, isOpen: Boolean, open: SnapshotStat
             ) {
                 for (item in a.items) {
                     val key = DETAIL + item.entry.id
-                    when (item) {
-                        is ThreadView.Action -> ActionRow(item, open[key] == true) { onFlip(key) }
-                        is ThreadView.Thought -> ThoughtRow(item, open[key] == true, live = false) { onFlip(key) }
-                    }
+                    ActionRow(item, open[key] == true) { onFlip(key) }
                 }
                 a.plan?.let { Plan(a.first, it) }
             }

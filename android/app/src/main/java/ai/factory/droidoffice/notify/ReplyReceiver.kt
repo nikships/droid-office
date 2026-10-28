@@ -25,7 +25,9 @@ class ReplyReceiver : BroadcastReceiver() {
         val name = intent.getStringExtra(EXTRA_NAME)?.take(40) ?: "the worker"
         val choice = intent.getIntExtra(EXTRA_CHOICE, 0)
         // The question the notification showed, to check against the screen before anything is typed.
-        val shown = intent.getStringArrayListExtra(EXTRA_LABELS)?.takeIf { it.size >= 2 }?.let { labels ->
+        val shown = intent.getStringExtra(EXTRA_MENU)?.let { encoded ->
+            runCatching { ai.factory.droidoffice.core.OfficeJson.decodeFromString(Menu.serializer(), encoded) }.getOrNull()
+        } ?: intent.getStringArrayListExtra(EXTRA_LABELS)?.takeIf { it.size >= 2 }?.let { labels ->
             Menu(intent.getStringExtra(EXTRA_QUESTION), labels.mapIndexed { i, l -> Choice(i + 1, l) }, null, intent.getBooleanExtra(EXTRA_FREE_TEXT, false))
         }
         if (text.isEmpty() && choice == 0) return
@@ -77,6 +79,7 @@ class ReplyReceiver : BroadcastReceiver() {
         const val EXTRA_QUESTION = "question"
         const val EXTRA_LABELS = "labels"
         const val EXTRA_FREE_TEXT = "free_text"
+        const val EXTRA_MENU = "menu"
         private val ID = Regex("^[A-Za-z0-9_\\-:.]{1,64}$")
     }
 }

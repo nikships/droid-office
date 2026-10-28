@@ -32,8 +32,8 @@ object Asks {
      * asking the user 1 question(s)") says nothing a reader can answer, so it never stands in.
      */
     fun question(ask: PendingAsk, entries: List<ThreadEntry> = emptyList()): String =
-        ask.menu?.question
-            ?: asked(entries, ask.menu)
+        asked(entries, ask.menu)
+            ?: ask.menu?.question
             ?: Workers.detail(ask.worker)?.takeUnless(::generic)
             ?: "${ask.worker.name.ifBlank { "It" }} is waiting on an answer"
 
@@ -62,8 +62,9 @@ object Asks {
             val out = ArrayList<Asked>()
             var question: String? = null
             val options = ArrayList<String>()
+            var lastOption = false
             fun flush() {
-                question?.let { out += Asked(it, options.toList()) }
+                question?.let { out += Asked(it.trim(), options.map(String::trim)) }
                 question = null
                 options.clear()
             }
@@ -71,7 +72,17 @@ object Asks {
                 QUESTION_LINE.matchEntire(line)?.let {
                     flush()
                     question = it.groupValues[1].trim()
-                } ?: OPTION_LINE.matchEntire(line)?.let { if (question != null) options += it.groupValues[1].trim() }
+                    lastOption = false
+                } ?: OPTION_LINE.matchEntire(line)?.let {
+                    if (question != null) options += it.groupValues[1].trim()
+                    lastOption = true
+                } ?: run {
+                    if (line.trimStart().startsWith("[topic]")) lastOption = false
+                    else if (question != null) {
+                        if (lastOption && options.isNotEmpty()) options[options.lastIndex] += "\n$line"
+                        else question += "\n$line"
+                    }
+                }
             }
             flush()
             return out.filter { it.question.isNotEmpty() }
@@ -97,18 +108,38 @@ object Asks {
     fun asked(entries: List<ThreadEntry>, menu: Menu?): String? {
         val all = questions(entries)
         if (all.isEmpty()) return null
-        fun norm(s: String) = s.lowercase().replace(Regex("""\s+"""), " ").trim().trimEnd('…', '.')
-        val match = menu?.let { m ->
-            all.firstOrNull { a ->
-                a.options.size >= m.choices.size && m.choices.all { c ->
-                    val label = norm(c.label)
-                    label.isNotEmpty() && a.options.any { o -> norm(o).startsWith(label) || label.startsWith(norm(o)) }
-                }
-            }
-        }
-        return (match ?: all.singleOrNull())?.question?.take(240)
+        return matching(all, menu)?.question
     }
 
+    private fun norm(s: String) = s.lowercase().replace(Regex("""\s+"""), " ").trim().trimEnd('…', '.')
+
+    /** Match by numbered prefixes, never by an option appearing at a different number. */
+    private fun matching(all: List<Asked>, menu: Menu?): Asked? {
+        if (menu == null) return all.singleOrNull()
+        val candidates = all.filter { a ->
+            a.options.size == menu.choices.size && menu.choices.all { c ->
+                val label = norm(c.label)
+                val full = a.options.getOrNull(c.number - 1)?.let(::norm).orEmpty()
+                label.isNotEmpty() && full.isNotEmpty() && (full.startsWith(label) || label.startsWith(full))
+            }
+        }
+        if (candidates.size == 1) return candidates.single()
+        // Several questions may use identical options. Only a unique matching question disambiguates.
+        return candidates.filter { a ->
+            val q = menu.question?.let(::norm) ?: return@filter false
+            val full = norm(a.question.removeSuffix("(multi)").trim())
+            full == q || full.endsWith(q)
+        }.singleOrNull()
+    }
+
+    /** Full pending-call metadata is for display only. Send the original screen menu, never this copy. */
+    fun display(menu: Menu, entries: List<ThreadEntry>): Menu {
+        val asked = matching(questions(entries), menu) ?: return menu
+        return menu.copy(
+            question = asked.question.removeSuffix("(multi)").trim(),
+            choices = menu.choices.map { c -> c.copy(label = asked.options[c.number - 1].trim(), description = null) },
+        )
+    }
     /** The bottom line of its terminal with the box drawing taken off: the live line under a thread. */
     fun liveLine(screen: ScreenState?): String? = screen?.lines
         ?.map { row -> row.joinToString("") { it.text }.trim('│', '┃', '║', '|', '╭', '╮', '╰', '╯', '─', ' ', '\u00A0') }
@@ -123,7 +154,7 @@ object Asks {
     /** A reply typed into a notification: a bare digit picks that choice, anything else is the owner's own answer. */
     fun replyKeys(menu: Menu?, text: String): String? {
         val t = text.trim()
-        if (menu == null || t.isEmpty()) return null
+        if (menu == null || menu.multiSelect || t.isEmpty()) return null
         t.toIntOrNull()?.let { n -> menu.choices.firstOrNull { it.number == n }?.let { return Choices.keys(menu, it) } }
         return Choices.textKeys(menu, t)
     }

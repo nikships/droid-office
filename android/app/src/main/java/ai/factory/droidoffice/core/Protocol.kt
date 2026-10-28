@@ -12,6 +12,7 @@ import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.decodeFromJsonElement
 import kotlinx.serialization.json.intOrNull
+import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.longOrNull
 import kotlinx.serialization.json.put
 
@@ -188,7 +189,8 @@ data class FloorView(
 )
 
 sealed interface ServerMsg {
-    data class Welcome(val connection: String, val arrival: Arrival, val floors: List<FloorInfo>, val version: String, val view: FloorView, val availability: Map<String, ModelAvailability> = emptyMap(), val subscriptions: SubscriptionState? = null, val hiddenModels: Set<String> = emptySet()) : ServerMsg
+    data class Welcome(val connection: String, val arrival: Arrival, val floors: List<FloorInfo>, val version: String, val view: FloorView, val availability: Map<String, ModelAvailability> = emptyMap(), val subscriptions: SubscriptionState? = null, val hiddenModels: Set<String> = emptySet(), val workerAnswerMultiSelect: Boolean = false) : ServerMsg
+    data class ActionResult(val requestId: String, val ok: Boolean, val error: String?) : ServerMsg
     data class HiddenModels(val ids: Set<String>) : ServerMsg
     /** Which Claude, ChatGPT and other plan models can run now. */
     data class Subscriptions(val availability: Map<String, ModelAvailability>, val state: SubscriptionState? = null) : ServerMsg
@@ -247,6 +249,7 @@ object Protocol {
             availability = Availability.parse(o["subscriptions"]),
             subscriptions = Subscriptions.parse(o["subscriptions"]),
             hiddenModels = strings(o["hiddenModels"]),
+            workerAnswerMultiSelect = o.bool("workerAnswerMultiSelect") == true,
         )
         "floor.enter" -> ServerMsg.FloorEnter(
             arrival = o.obj("arrival")?.let { OfficeJson.decodeFromJsonElement<Arrival>(it) } ?: Arrival(),
@@ -267,6 +270,7 @@ object Protocol {
         "whiteboard", "whiteboard.rendered", "whiteboard.renderer" -> ServerMsg.Whiteboard(t, o)
         "whiteboard.pinged" -> WbPinged.of(o)?.let { ServerMsg.Pinged(it) } ?: ServerMsg.Ignored(t)
         "thread.snapshot" -> threadSnapshot(o) ?: ServerMsg.Ignored(t)
+        "action.result" -> ServerMsg.ActionResult(o.str("requestId").orEmpty(), o.bool("ok") == true, o.str("error"))
         else -> ServerMsg.Ignored(t)
     }
 
@@ -334,6 +338,21 @@ object Protocol {
 
 /** What the phone sends (ClientMsg). Optional fields are left out rather than sent as null. */
 object ClientMsg {
+    /** A guarded answer. Screen metadata, not enriched display labels, is sent back unchanged. */
+    fun workerAnswer(workerId: String, menu: Menu, requestId: String, floor: String?, choice: Int? = null, choices: List<Int>? = null, text: String? = null): String {
+        require(QuestionAnswers.valid(menu, choice, choices, text))
+        return obj("worker.answer") {
+            put("workerId", workerId)
+            put("menu", OfficeJson.encodeToJsonElement(Menu.serializer(), menu).let { value ->
+                JsonObject(value.jsonObject + ("freeText" to JsonPrimitive(menu.freeText)))
+            })
+            put("requestId", requestId)
+            floor?.let { put("requestFloor", it) }
+            choice?.let { put("choice", it) }
+            choices?.let { put("choices", JsonArray(it.map(::JsonPrimitive))) }
+            text?.let { put("text", it) }
+        }
+    }
     fun spawn(deskId: String, prompt: String?, worktree: Boolean, kind: String, model: String?, effort: String?): String = obj("worker.spawn") {
         put("deskId", deskId)
         if (!prompt.isNullOrBlank()) put("prompt", prompt)

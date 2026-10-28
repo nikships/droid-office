@@ -5,12 +5,12 @@
     "case": "{ name: string (unique), busy: boolean (the worker is in a turn), entries: ThreadEntry[] (wire shape, oldest first), expected: Row[] }",
     "message": "{ kind: 'message', id: entry id, role: 'user' | 'assistant', startsTurn: boolean (first assistant message after the owner's, or the first one: the only one that carries the worker's name) }",
     "notice": "{ kind: 'notice', id: entry id, text: string (the copy shown), tone: 'quiet' | 'danger' | 'attachment' }",
-    "activity": "{ kind: 'activity', id: 'activity:' + first raw entry id of the run (hidden ones included), summary: string (the closed line), live: boolean (newest run while busy), items: Item[] (shown actions and thoughts, in order), failed: string[] (titles of failed actions, shown even closed), noResult: number, plan: PlanStep[] | null (the run's latest plan only when it changed since the last one shown; never a row) }",
+    "activity": "{ kind: 'activity', id: 'activity:' + first raw entry id of the run (hidden ones included), summary: string (the closed line), live: boolean (newest run while busy), items: Action[] (shown actions only, in order), failed: string[] (titles of failed actions, shown even closed), noResult: number, plan: PlanStep[] | null (the run's latest plan only when it changed since the last one shown; never a row) }",
     "action": "{ type: 'action', id: entry id, title: string (human, never a raw command, JSON or absolute home path), detail: string | null (quiet secondary line: a short path, pattern, subagent type, or a command shortened only when there is no summary), state: 'done' | 'running' | 'failed' | 'no_result' | 'cancelled' }",
-    "thought": "{ type: 'thought', id: entry id, preview: string (first non-blank line, ** trimmed) }",
+    "thought": "{ kind: 'thought', id: entry id, preview: string (first non-blank line, leading/trailing asterisks stripped, clipped to 120), live: boolean (busy and the last input entry) }",
     "planStep": "{ status: 'completed' | 'in_progress' | 'pending', text: string }",
     "rules": [
-      "A run is every consecutive tool, thinking and todo entry between messages and shown notices; a run with nothing to show leaves no row.",
+      "A run is every consecutive tool and todo entry between messages, thoughts and shown notices; a run with nothing to show leaves no row. Thinking always flushes the preceding activity and becomes its own top-level thought row.",
       "Hidden when they succeed: TodoWrite, TodoRead, ToolSearch, Skill, WaitForScript, TaskOutput, and a Script followed by any tool call (bookkeeping included) before the next Script or the end of the run. A failed one of any of them is always shown, with its exact failure title (\"Couldn't read script results\", \"Couldn't read task output\", ...).",
       "A failed Script with the CLI's exact error envelope repeating an enclosed child's full failure stays available as diagnostics but is excluded from the summary and failed count. Independent, unmatched, truncated or incomplete wrapper failures remain counted.",
       "A Script with no tool call after it (before the next Script or the end of the run) stays as 'Ran a script' (its source and result in its details).",
@@ -19,10 +19,26 @@
       "Turn ended · completed is hidden; Turn cancelled is a quiet notice. Only an exact CLI tool-result marker explicitly saying execution was cancelled/canceled/interrupted/aborted by the user proves owner cancellation, even without a turn notice (a late Script result may arrive afterwards). Genuine errors stay failed. A bare 'Tool execution was interrupted' after crash/resume is deliberately Failed, not evidence of owner action.",
       "An explicitly owner-cancelled Script may pass that evidence to its lone enclosed child whose exact result is 'Tool execution was interrupted'. A causal cancelled wrapper retains its diagnostics but does not duplicate the child's cancellation count. Other failed/missing/malformed child results are not reclassified. Message and next-Script boundaries block inference. Multiple ambiguous interrupted children remain Failed conservatively.",
       "A call with no output is 'running' only in the live run; otherwise 'no_result'. Never 'done' without output.",
-      "summary: verb phrases per kind in first-seen order, Read counts match the visible calls (including repeated reads); edited and created files are unique. Then 'N more' actions past three kinds; failed bookkeeping isn't counted; 'Thought' for a run of only thoughts."
+      "summary: verb phrases per kind in first-seen order, Read counts match the visible calls (including repeated reads); edited and created files are unique. Then 'N more' actions past three kinds; failed bookkeeping isn't counted. Thoughts are never activity items."
     ]
   },
   "cases": [
+    {
+      "name": "thought_ends_activity_and_can_be_live",
+      "busy": true,
+      "entries": [
+        {"id": "tool:read-before", "seq": 0, "role": "assistant", "kind": "tool", "name": "Read", "input": "{\"file_path\":\"/tmp/a.kt\"}", "output": "ok"},
+        {"id": "thinking:first", "seq": 1, "role": "assistant", "kind": "thinking", "text": "\n***Considering next step***\nMore context"},
+        {"id": "tool:read-after", "seq": 2, "role": "assistant", "kind": "tool", "name": "Read", "input": "{\"file_path\":\"/tmp/b.kt\"}"},
+        {"id": "thinking:last", "seq": 3, "role": "assistant", "kind": "thinking", "text": "**Next thought**"}
+      ],
+      "expected": [
+        {"kind": "activity", "id": "activity:tool:read-before", "summary": "Read a file", "live": false, "items": [{"type": "action", "id": "tool:read-before", "title": "Read a.kt", "detail": "/tmp/a.kt", "state": "done"}], "failed": [], "noResult": 0, "plan": null},
+        {"kind": "thought", "id": "thinking:first", "preview": "Considering next step", "live": false},
+        {"kind": "activity", "id": "activity:tool:read-after", "summary": "Read a file", "live": false, "items": [{"type": "action", "id": "tool:read-after", "title": "Read b.kt", "detail": "/tmp/b.kt", "state": "no_result"}], "failed": [], "noResult": 1, "plan": null},
+        {"kind": "thought", "id": "thinking:last", "preview": "Next thought", "live": true}
+      ]
+    },
     {
       "name": "reported_release_turn",
       "busy": false,
@@ -1172,28 +1188,41 @@
           "startsTurn": false
         },
         {
+          "kind": "thought",
+          "id": "msg-2:1",
+          "preview": "Considering user interaction flow",
+          "live": false
+        },
+        {
           "kind": "activity",
-          "id": "activity:msg-2:1",
-          "summary": "Read a file · Searched the code",
+          "id": "activity:tool:toolu_3",
+          "summary": "Read a file",
           "live": false,
           "items": [
-            {
-              "type": "thought",
-              "id": "msg-2:1",
-              "preview": "Considering user interaction flow"
-            },
             {
               "type": "action",
               "id": "tool:toolu_3",
               "title": "Read Thread.kt",
               "detail": "…/ui/worker/Thread.kt",
               "state": "done"
-            },
-            {
-              "type": "thought",
-              "id": "msg-4:1",
-              "preview": "The tool rows are equal weight."
-            },
+            }
+          ],
+          "failed": [],
+          "noResult": 0,
+          "plan": null
+        },
+        {
+          "kind": "thought",
+          "id": "msg-4:1",
+          "preview": "The tool rows are equal weight.",
+          "live": false
+        },
+        {
+          "kind": "activity",
+          "id": "activity:tool:toolu_5",
+          "summary": "Searched the code",
+          "live": false,
+          "items": [
             {
               "type": "action",
               "id": "tool:toolu_5",

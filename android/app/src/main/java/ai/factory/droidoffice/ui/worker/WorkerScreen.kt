@@ -13,7 +13,6 @@ import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
@@ -21,7 +20,6 @@ import androidx.compose.foundation.layout.WindowInsetsSides
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.ime
 import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.only
@@ -44,9 +42,10 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.setValue
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.remember
@@ -54,7 +53,6 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.saveable.Saver
 import androidx.compose.runtime.saveable.rememberSaveable
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -97,7 +95,6 @@ import ai.factory.droidoffice.core.SlashCommands
 import ai.factory.droidoffice.core.Tags
 import ai.factory.droidoffice.core.TermSize
 import ai.factory.droidoffice.core.TermView
-import ai.factory.droidoffice.core.ThreadFeed
 import ai.factory.droidoffice.core.ThreadQueue
 import ai.factory.droidoffice.core.WorkerInfo
 import ai.factory.droidoffice.core.WorkerStatus
@@ -108,7 +105,6 @@ import ai.factory.droidoffice.session.Phase
 import ai.factory.droidoffice.ui.LocalGraph
 import ai.factory.droidoffice.ui.LocalSnackbar
 import ai.factory.droidoffice.ui.LocalSnackbarLift
-import ai.factory.droidoffice.ui.components.Eyebrow
 import ai.factory.droidoffice.ui.components.SecondaryButton
 import ai.factory.droidoffice.ui.components.Spinner
 import ai.factory.droidoffice.ui.components.StatusPill
@@ -473,58 +469,23 @@ private fun Offline(phase: Phase, thread: Boolean, composing: Boolean) {
 
 /**
  * What it's waiting on, above the terminal, so the question is readable without zooming in. When
- * the terminal shows a numbered menu (AskUser, a trust or permission prompt), its choices are
- * buttons here, and tapping one sends the keys that pick it.
+ * the terminal shows a numbered menu (AskUser, a trust or permission prompt), the shared explicit
+ * answer workspace opens here without sending a shortcut on an option tap.
  */
 @Composable
 private fun NeedsYou(w: WorkerInfo, screen: ScreenState?, canAnswer: Boolean) {
-    val graph = LocalGraph.current
-    val haptics = LocalHapticFeedback.current
     val read = remember(screen) { screen?.let(Choices::read) }
     val asking = w.state == WorkerStatus.NeedsInput
     val menu = read?.takeIf { !w.isShell && (asking || it.pointer != null) }
     val text = menu?.question ?: if (asking) Workers.detail(w)?.takeUnless(Asks::generic) ?: "Waiting on an answer" else null
     AnimatedVisibility(asking || menu != null, enter = expandVertically() + fadeIn(), exit = shrinkVertically() + fadeOut()) {
-        Column(
-            Modifier.fillMaxWidth().tagged(Tags.Worker.NEEDS_YOU).padding(horizontal = 10.dp, vertical = 4.dp)
-                .panel(RoundedCornerShape(10.dp), Palette.Danger.copy(alpha = 0.08f), Palette.Danger.copy(alpha = 0.4f))
-                .padding(horizontal = 12.dp, vertical = 9.dp),
-        ) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Box(Modifier.size(7.dp).background(Palette.Danger, RoundedCornerShape(1.dp)))
-                Spacer(Modifier.width(10.dp))
-                Column {
-                    Eyebrow("Needs you", color = Palette.Danger)
-                    if (text != null) Text(text, style = MaterialTheme.typography.bodyMedium, maxLines = 4, overflow = TextOverflow.Ellipsis, modifier = Modifier.tagged(Tags.Worker.QUESTION))
-                }
-            }
-            if (menu != null && canAnswer) {
-                Spacer(Modifier.height(8.dp))
-                FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                    menu.choices.forEachIndexed { i, choice ->
-                        val marked = menu.pointer == i
-                        Row(
-                            Modifier.widthIn(max = 320.dp).clip(RoundedCornerShape(8.dp))
-                                .background(if (marked) Palette.AccentMuted else Palette.SurfaceRaised)
-                                .border(1.dp, if (marked) Palette.Accent.copy(alpha = 0.5f) else Palette.BorderStrong, RoundedCornerShape(8.dp))
-                                .clickable(onClickLabel = "Answer ${choice.label}") {
-                                    haptics.performHapticFeedback(HapticFeedbackType.Confirm)
-                                    graph.connection.send(ClientMsg.termInput(w.id, Choices.keys(menu, choice)))
-                                }
-                                .semantics { selected = marked }
-                                .tagged(Tags.Worker.choice(choice.number))
-                                .heightIn(min = 40.dp)
-                                .padding(horizontal = 10.dp, vertical = 8.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                        ) {
-                            Text("${choice.number}", style = LocalOfficeType.current.monoBody.copy(fontSize = 12.sp, color = if (marked) Palette.Accent else Palette.TextSecondary))
-                            Spacer(Modifier.width(8.dp))
-                            Text(choice.label, style = MaterialTheme.typography.labelLarge, maxLines = 2, overflow = TextOverflow.Ellipsis)
-                        }
-                    }
-                }
-            }
-        }
+        ai.factory.droidoffice.ui.asks.AskCard(
+            worker = w, menu = menu, question = text ?: "Waiting on an answer",
+            where = null, context = null, enabled = canAnswer && asking, onOpenThread = null,
+            modifier = Modifier.fillMaxWidth().tagged(Tags.Worker.NEEDS_YOU).padding(horizontal = 10.dp, vertical = 4.dp),
+            inline = true,
+            questionTag = Tags.Worker.QUESTION,
+        )
     }
 }
 
