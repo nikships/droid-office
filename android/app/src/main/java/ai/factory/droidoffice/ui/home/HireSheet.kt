@@ -79,6 +79,8 @@ fun HireSheet(onDismiss: () -> Unit, deskId: String? = null) {
     val connection = graph.connection
     val link by connection.link.collectAsStateWithLifecycle()
     val availability by connection.availability.collectAsStateWithLifecycle()
+    val data by connection.data.collectAsStateWithLifecycle()
+    val worktreeOption = data.floor?.home != true && data.floor?.plain != true && !data.project?.branch.isNullOrBlank()
     val sheet = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     val scope = rememberCoroutineScope()
 
@@ -113,7 +115,7 @@ fun HireSheet(onDismiss: () -> Unit, deskId: String? = null) {
     fun hire() {
         val kind = if (shell) "shell" else "agent"
         val e = effort?.takeIf { w -> efforts.isEmpty() || efforts.any { it.wire == w } }
-        val ok = connection.hire(prompt.trim().takeIf { !shell && it.isNotBlank() }, kind, modelId, e, worktree, deskId)
+        val ok = connection.hire(prompt.trim().takeIf { !shell && it.isNotBlank() }, kind, modelId, e, worktreeOption && worktree, deskId)
         if (ok) {
             if (!shell && modelId != null) graph.scope.launch { graph.store.settings { it.copy(hireModel = modelId, hireEffort = e) } }
             close()
@@ -164,22 +166,24 @@ fun HireSheet(onDismiss: () -> Unit, deskId: String? = null) {
                     }
                 }
             }
-            Spacer(Modifier.height(16.dp))
-            Row(
-                Modifier.fillMaxWidth().panel(RoundedCornerShape(12.dp), Palette.SurfaceRaised).toggleable(worktree, role = Role.Switch) { worktree = it }.tagged(Tags.Hire.WORKTREE).padding(horizontal = 14.dp, vertical = 10.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Icon(OfficeIcons.Branch, null, Modifier.size(18.dp), tint = Palette.TextSecondary)
-                Spacer(Modifier.width(12.dp))
-                Column(Modifier.weight(1f)) {
-                    Text("Its own worktree", style = MaterialTheme.typography.titleSmall)
-                    Text(if (worktree) "A fresh branch, so its changes never touch yours" else "Works in the project folder itself", style = MaterialTheme.typography.bodySmall)
+            if (worktreeOption) {
+                Spacer(Modifier.height(16.dp))
+                Row(
+                    Modifier.fillMaxWidth().panel(RoundedCornerShape(12.dp), Palette.SurfaceRaised).toggleable(worktree, role = Role.Switch) { worktree = it }.tagged(Tags.Hire.WORKTREE).padding(horizontal = 14.dp, vertical = 10.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Icon(OfficeIcons.Branch, null, Modifier.size(18.dp), tint = Palette.TextSecondary)
+                    Spacer(Modifier.width(12.dp))
+                    Column(Modifier.weight(1f)) {
+                        Text("Its own worktree", style = MaterialTheme.typography.titleSmall)
+                        Text(if (worktree) "A fresh branch, so its changes never touch yours" else "Works in the project folder itself", style = MaterialTheme.typography.bodySmall)
+                    }
+                    Switch(
+                        checked = worktree,
+                        onCheckedChange = null,
+                        colors = SwitchDefaults.colors(checkedTrackColor = Palette.Accent, checkedThumbColor = Palette.Bg, uncheckedTrackColor = Palette.SurfaceHigh, uncheckedBorderColor = Palette.BorderStrong),
+                    )
                 }
-                Switch(
-                    checked = worktree,
-                    onCheckedChange = null,
-                    colors = SwitchDefaults.colors(checkedTrackColor = Palette.Accent, checkedThumbColor = Palette.Bg, uncheckedTrackColor = Palette.SurfaceHigh, uncheckedBorderColor = Palette.BorderStrong),
-                )
             }
             Spacer(Modifier.height(18.dp))
             PrimaryButton(

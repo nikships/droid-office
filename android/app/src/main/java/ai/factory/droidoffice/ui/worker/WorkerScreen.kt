@@ -1,6 +1,5 @@
 package ai.factory.droidoffice.ui.worker
 
-import android.content.ClipData
 import androidx.activity.compose.LocalActivity
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.expandVertically
@@ -40,9 +39,6 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Close
-import androidx.compose.material.icons.filled.MoreVert
-import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -67,8 +63,6 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.Layout
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
-import androidx.compose.ui.platform.ClipEntry
-import androidx.compose.ui.platform.LocalClipboard
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.LocalUriHandler
@@ -267,14 +261,13 @@ fun WorkerScreen(workerId: String, onBack: () -> Unit, embedded: Boolean = false
             directInput = false
             if (store.settings.threadView == it) scope.launch { graph.store.settings { s -> s.copy(threadView = !it) } }
         }
-        // One band in both views: the switch shares the PR and branch row, so its tabs sit in the same
-        // place either way and Send home, in the menu, is never where a tab was a moment ago.
+        // The view switch shares the PR and branch row. Send home stays in the header.
         if (threadable) Column(Modifier.fillMaxWidth().background(Palette.Bg)) {
-            Actions(worker, onSendHome = { sendingHome = true }, lead = { InlineViewToggle(tty, pickView) })
+            Actions(worker, lead = { InlineViewToggle(tty, pickView) })
             Box(Modifier.fillMaxWidth().height(4.dp))
             Box(Modifier.fillMaxWidth().height(1.dp).background(Palette.Border))
         }
-        else Actions(worker, onSendHome = { sendingHome = true })
+        else Actions(worker)
         Offline(link.phase, thread = !tty, composing = live && !(!tty && worker.state == WorkerStatus.NeedsInput))
         if (tty) NeedsYou(worker, screen, live && link.phase == Phase.Connected)
         var phoneSize by remember(workerId) { mutableStateOf<TermSize?>(null) }
@@ -376,11 +369,7 @@ fun WorkerScreen(workerId: String, onBack: () -> Unit, embedded: Boolean = false
 @Composable
 private fun Header(w: WorkerInfo, embedded: Boolean, connected: Boolean, onBack: () -> Unit, onSendHome: () -> Unit) {
     val now = rememberNow()
-    val clipboard = LocalClipboard.current
     val graph = LocalGraph.current
-    val snackbar = LocalSnackbar.current
-    val scope = rememberCoroutineScope()
-    var menu by remember { mutableStateOf(false) }
     val catalogue by graph.connection.catalogue.collectAsStateWithLifecycle()
     Row(Modifier.fillMaxWidth().padding(start = 4.dp, end = 4.dp, top = 6.dp, bottom = 4.dp), verticalAlignment = Alignment.CenterVertically) {
         IconButton(onClick = onBack, modifier = Modifier.tagged(Tags.Worker.BACK)) { Icon(if (embedded) Icons.Default.Close else Icons.AutoMirrored.Filled.ArrowBack, "Back") }
@@ -403,38 +392,14 @@ private fun Header(w: WorkerInfo, embedded: Boolean, connected: Boolean, onBack:
         }
         // Out of reach, the last status the office sent may be long gone: the offline notice says so instead.
         if (connected) StatusPill(w.state, acked = w.acked, tag = Tags.Worker.STATUS)
-        Box {
-            IconButton(onClick = { menu = true }, modifier = Modifier.tagged(Tags.Worker.MENU)) { Icon(Icons.Default.MoreVert, "More") }
-            DropdownMenu(menu, onDismissRequest = { menu = false }, containerColor = Palette.SurfaceHover) {
-                DropdownMenuItem(
-                    text = { Text("Copy what's on screen") },
-                    leadingIcon = { Icon(OfficeIcons.Copy, null, Modifier.size(18.dp)) },
-                    modifier = Modifier.tagged(Tags.Worker.MENU_COPY),
-                    onClick = {
-                        menu = false
-                        val text = graph.connection.screens.value[w.id]?.text().orEmpty()
-                        scope.launch {
-                            clipboard.setClipEntry(ClipEntry(ClipData.newPlainText("${w.name}'s terminal", text)))
-                            snackbar.showSnackbar("Copied ${w.name}'s screen")
-                        }
-                    },
-                )
-                DropdownMenuItem(
-                    text = { Text("Send home…", color = Palette.Danger) },
-                    leadingIcon = { Icon(OfficeIcons.Door, null, Modifier.size(18.dp), tint = Palette.Danger) },
-                    modifier = Modifier.tagged(Tags.Worker.MENU_SEND_HOME),
-                    onClick = {
-                        menu = false
-                        onSendHome()
-                    },
-                )
-            }
+        IconButton(onClick = onSendHome, modifier = Modifier.tagged(Tags.Worker.SEND_HOME)) {
+            Icon(OfficeIcons.Door, "Send home", tint = Palette.Danger)
         }
     }
 }
 
 @Composable
-private fun Actions(w: WorkerInfo, onSendHome: () -> Unit, lead: (@Composable () -> Unit)? = null) {
+private fun Actions(w: WorkerInfo, lead: (@Composable () -> Unit)? = null) {
     val graph = LocalGraph.current
     val data by graph.connection.data.collectAsStateWithLifecycle()
     val uri = LocalUriHandler.current
@@ -456,7 +421,6 @@ private fun Actions(w: WorkerInfo, onSendHome: () -> Unit, lead: (@Composable ()
             null -> if (branch != null && !w.isShell) ActionChip(OfficeIcons.PullRequest, "Open PR", Palette.Text, Tags.Worker.PR, square = square) { graph.connection.send(ClientMsg.pr(w.id)) }
         }
         if (branch != null) ActionChip(OfficeIcons.Branch, branch, Palette.TextSecondary, Tags.Worker.BRANCH, square = square, onClick = null)
-        if (lead == null) ActionChip(OfficeIcons.Door, "Send home", Palette.Danger, Tags.Worker.SEND_HOME, onClick = onSendHome)
     }
 }
 
