@@ -1,12 +1,8 @@
 import type { ClientMsg, ServerMsg, WorkerInfo } from '../shared/protocol';
 import { ThreadQueue } from '../shared/thread-queue';
 import { ThreadHistory } from '../client/thread-history';
-import { TEAM_THREAD_WORKERS, TeamThread } from '../client/team-thread';
+import { TeamThread, teamThreadBudget, threadReadInterval } from '../client/team-thread';
 
-/** The office's conversation reader keeps this many sessions; more readers at once evict each other. */
-export const THREAD_SESSIONS = 8;
-export const READ_FOCUSED_MS = 1000;
-export const READ_BACKGROUND_MS = 3000;
 export const READ_TIMEOUT_MS = 8000;
 export const UNRETURNED = 'The office did not return this conversation. Retry, or open Raw TTY.';
 
@@ -55,7 +51,7 @@ export class ThreadFeed {
       this.revision++;
     }
     if (!state.connected || !state.visible || this.error || this.pending || this.history.historical) return;
-    if (now - this.lastReadAt < (state.focused ? READ_FOCUSED_MS : READ_BACKGROUND_MS)) return;
+    if (now - this.lastReadAt < threadReadInterval(state.focused)) return;
     this.read(now, send, id);
   }
 
@@ -109,11 +105,6 @@ export class ThreadFeed {
   }
 }
 
-/** Team rollups only when the panes leave the reader room for them, so panes never evict each other. */
-export function teamAllowed(threadPanes: number): boolean {
-  return threadPanes + TEAM_THREAD_WORKERS <= THREAD_SESSIONS;
-}
-
 /**
  * Every open pane's feed, the focused lead's team rollup, and the queue receipts, under one clock and
  * one message listener. Feeds for workers no longer in a Thread pane are dropped, not kept polling.
@@ -123,6 +114,8 @@ export class FeedPool {
   readonly team = new TeamThread();
   teamLead = '';
   teamOn = false;
+  /** How many of the focused lead's children the rollup reads, under the office reader's room left by the panes. */
+  teamLimit = 0;
   private queues = new Map<string, ThreadQueue>();
   private listeners = new Set<() => void>();
   version = 0;
@@ -169,8 +162,9 @@ export class FeedPool {
     const lead = focused && keep.has(focused) ? focused : '';
     const focusedWorker = threadWorkers.find((w) => w.id === lead);
     this.teamLead = lead;
-    this.teamOn = !!lead && teamAllowed(threadWorkers.length);
-    this.team.sync(`${scope}:${lead}:${focusedWorker?.sessionId ?? ''}`, lead, this.teamOn ? floorWorkers : []);
+    this.teamLimit = teamThreadBudget(threadWorkers.length);
+    this.teamOn = !!lead && this.teamLimit > 0;
+    this.team.sync(`${scope}:${lead}:${focusedWorker?.sessionId ?? ''}`, lead, this.teamOn ? floorWorkers : [], this.teamLimit);
     if (touched) this.changed();
   }
 

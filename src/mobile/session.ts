@@ -7,9 +7,10 @@ import type { ClientMsg, ServerMsg, WorkerInfo } from '../shared/protocol';
 import { slashOf, slashRefusal } from '../shared/slash-commands';
 import { isBusy } from '../shared/status';
 import { linkStep } from '../client/worker-link';
-import type { HostActionResult, HostIncoming, HostLink, HostMessageMeta, HostOffices, ManagementEvent, MobileHost } from './host';
+import type { HostActionResult, HostImage, HostIncoming, HostLink, HostMessageMeta, HostOffices, ManagementEvent, MobileHost } from './host';
 import { dropToast, emptyOffice, expireToasts, type OfficeState, officeDisconnected, reduceOffice, withToast } from './office-state';
 import { FeedPool, requestId } from './thread-feed';
+import { type HireRequest, hireMsg } from './actions';
 
 /** What a delayed action was started under. Any change to it means the owner is looking at something else. */
 export interface ActionToken {
@@ -38,11 +39,22 @@ export interface SessionSnapshot {
   pendingLink?: HostIncoming & { travelling?: boolean };
   /** A worker just hired from here, opened once the office lists it. */
   pendingOpen?: { id: string; token: ActionToken };
+  /** A floor change the office hasn't answered for FLOOR_TIMEOUT_MS: still refused, with a way to ask again. */
+  floorSlow?: boolean;
+  /** Grows whenever a worker is opened, from the roster, a link, a hire or a tool: the UI shows it. */
+  navigation: number;
+  /** Why the first state couldn't be read from the phone; start() again retries. */
+  bootError?: string;
+  /** Pictures staged for the Hire sheet, on the floor and socket they were picked under. */
+  hire?: { token: ActionToken; images: HostImage[] };
 }
 
 export const STALE = 'The office changed before this was sent. Nothing was sent.';
 export const OFFLINE = 'Disconnected. Nothing was sent.';
 export const FLOOR_TIMEOUT_MS = 10_000;
+/** What the office's `floor.go` toasts when it doesn't move this connection (server.ts). */
+export const FLOOR_REFUSALS: ReadonlySet<string> = new Set(['No such floor', 'There is no building to go up on yet']);
+const HIRE_KEY = '\u0000hire';
 export const LAYOUT_SAVE_MS = 400;
 
 type FloorAction = WorkspaceAction extends infer A ? (A extends { floor: string } ? Omit<A, 'floor'> : never) : never;
@@ -69,7 +81,8 @@ export function restoreLayout(saved: unknown): CompanionWorkspace {
       const size = typeof pane.size === 'number' && Number.isFinite(pane.size) ? Math.min(4, Math.max(0.25, pane.size)) : 1;
       return [{ workerId: pane.workerId, view, size }];
     });
-    const active = typeof floor.active === 'string' && seen.has(floor.active) ? floor.active : (panes[0]?.workerId ?? '');
+    // '' is the roster, left there on purpose: a phone opens on the list, not a conversation.
+    const active = floor.active === '' ? '' : typeof floor.active === 'string' && seen.has(floor.active) ? floor.active : (panes[0]?.workerId ?? '');
     const collapsed = (Array.isArray(floor.collapsed) ? floor.collapsed : []).filter((c: unknown): c is string => typeof c === 'string' && c.length <= 200).slice(0, 500);
     Object.defineProperty(out.floors, id, { value: { panes, active, drafts: {}, collapsed }, enumerable: true, writable: true, configurable: true });
   }
@@ -99,6 +112,8 @@ export class Session {
   readonly feeds = new FeedPool();
   /** The app is in the foreground. */
   visible = true;
+  /** The Workers tab is showing (not Tools or Device): only then do panes read and hold. */
+  workspaceShown = true;
   /** The focused pane's Team activity is expanded. */
   teamOpen = false;
   /** One full-screen conversation, not pinned panes. */
@@ -118,6 +133,7 @@ export class Session {
       previews: {},
       sending: {},
       picking: {},
+      navigation: 0,
     };
   }
 
@@ -151,12 +167,21 @@ export class Session {
       this.host.onScreen(() => this.emit()),
       this.feeds.subscribe(() => this.emit()),
     );
-    const boot = await this.host.bootstrap();
+    let boot: Awaited<ReturnType<MobileHost['bootstrap']>>;
+    try {
+      boot = await this.host.bootstrap();
+    } catch (err) {
+      if (run !== this.run) return;
+      // Unsubscribed, so start() again subscribes once.
+      for (const off of this.offs.splice(0)) off();
+      this.set({ bootError: err instanceof Error && err.message ? err.message : 'The app could not read its offices.' });
+      return;
+    }
     if (run !== this.run) return;
     this.bootSeq = boot.seq;
     const workspace = boot.active ? restoreLayout(await this.host.layout.load(boot.active).catch(() => undefined)) : createCompanionWorkspace();
     if (run !== this.run) return;
-    this.set({ started: true, offices: { offices: boot.offices, active: boot.active }, link: boot.link, workspace });
+    this.set({ started: true, bootError: undefined, offices: { offices: boot.offices, active: boot.active }, link: boot.link, workspace });
     for (const msg of boot.replay) this.message(msg, { seq: boot.seq, epoch: boot.link.epoch }, true);
     booted = true;
     const seqOf = (e: (typeof early)[number]) => ('link' in e ? e.link.seq : e.meta.seq);
@@ -182,6 +207,12 @@ export class Session {
     this.holds.clear();
   }
 
+  /** Tries the bootstrap again after it failed. */
+  retryStart(): Promise<void> {
+    this.set({ bootError: undefined });
+    return this.start();
+  }
+
   private emit(): void {
     this.state = { ...this.state };
     for (const fn of this.listeners) fn();
@@ -189,7 +220,7 @@ export class Session {
 
   tick(): void {
     const s = this.state;
-    this.feeds.tick(this.now(), { connected: this.ready(), visible: this.visible, focused: this.floorWorkspace().active || undefined, teamOpen: this.teamOpen }, (msg) => this.send(msg));
+    this.feeds.tick(this.now(), { connected: this.ready(), visible: this.visible && this.workspaceShown, focused: this.floorWorkspace().active || undefined, teamOpen: this.teamOpen }, (msg) => this.send(msg));
     const office = expireToasts(s.office, this.now());
     if (office !== s.office) this.set({ office });
   }
@@ -202,18 +233,27 @@ export class Session {
     if (meta.epoch !== this.state.link.epoch) return;
     const office = reduceOffice(this.state.office, msg);
     const next: Partial<SessionSnapshot> = { office };
-    if (msg.t === 'welcome') {
-      next.welcomedEpoch = meta.epoch;
+    if (msg.t === 'welcome') next.welcomedEpoch = meta.epoch;
+    // Only the office ends a floor change: its arrival, or the exact refusal that left this connection
+    // where it was. Time passing proves neither.
+    const refused = msg.t === 'toast' && !!this.state.switching && FLOOR_REFUSALS.has(msg.text);
+    if (msg.t === 'welcome' || msg.t === 'floor.enter' || refused) {
       next.switching = undefined;
+      next.floorSlow = undefined;
+      clearTimeout(this.floorTimer);
     }
-    if (msg.t === 'floor.enter') next.switching = undefined;
-    if (msg.t === 'welcome' || msg.t === 'floor.enter') clearTimeout(this.floorTimer);
     let workspace = this.state.workspace;
     if ((msg.t === 'welcome' || msg.t === 'floor.enter' || msg.t === 'worker.remove') && office.floor) {
+      const before = own(workspace.floors, office.floor);
       workspace = reduceCompanionWorkspace(workspace, { type: 'reconcile', floor: office.floor, workerIds: Object.keys(office.workers) });
+      // The roster view (no worker active) stays the roster when someone else leaves.
+      if (before && !before.active) workspace = reduceCompanionWorkspace(workspace, { type: 'focus', floor: office.floor, workerId: '' });
       next.workspace = workspace;
     }
     this.set(next);
+    if ((msg.t === 'welcome' || msg.t === 'floor.enter') && this.state.hire && !this.valid(this.state.hire.token)) this.discardHire();
+    // Refused: still on the floor it was on, so its panes hold and read again.
+    if (refused) this.sync();
     this.feeds.receive(msg);
     const pending = this.state.pendingOpen;
     if (msg.t === 'worker.update' && pending?.id === msg.worker.id) {
@@ -231,7 +271,7 @@ export class Session {
     const prev = this.state.link;
     const lost = prev.phase === 'connected' && (link.phase !== 'connected' || link.epoch !== prev.epoch);
     if (lost) this.connectionLost();
-    this.set({ link, ...(link.epoch !== prev.epoch || link.phase !== 'connected' ? { office: officeDisconnected(this.state.office), switching: undefined } : {}) });
+    this.set({ link, ...(link.epoch !== prev.epoch || link.phase !== 'connected' ? { office: officeDisconnected(this.state.office), switching: undefined, floorSlow: undefined } : {}) });
     this.sync();
   }
 
@@ -239,7 +279,8 @@ export class Session {
   private connectionLost(): void {
     clearTimeout(this.floorTimer);
     this.feeds.disconnected();
-    this.set({ workspace: reduceCompanionWorkspace(this.state.workspace, { type: 'disconnect' }), previews: {}, sending: {}, picking: {}, switching: undefined });
+    // The office can't be asked to forget pictures now; they are dropped here and never re-sent.
+    this.set({ workspace: reduceCompanionWorkspace(this.state.workspace, { type: 'disconnect' }), previews: {}, sending: {}, picking: {}, switching: undefined, floorSlow: undefined, hire: undefined });
   }
 
   /** Another office: nothing of the last one is current, and its unsent drafts go with it. */
@@ -247,7 +288,19 @@ export class Session {
     const before = this.state.offices.active;
     if (offices.active === before) return this.set({ offices });
     this.flushLayout(before);
-    this.set({ offices, office: emptyOffice(), welcomedEpoch: -1, workspace: { floors: {}, epoch: this.state.workspace.epoch + 1 }, previews: {}, sending: {}, picking: {}, switching: undefined, pendingOpen: undefined });
+    this.set({
+      offices,
+      office: emptyOffice(),
+      welcomedEpoch: -1,
+      workspace: { floors: {}, epoch: this.state.workspace.epoch + 1 },
+      previews: {},
+      sending: {},
+      picking: {},
+      switching: undefined,
+      floorSlow: undefined,
+      pendingOpen: undefined,
+      hire: undefined,
+    });
     this.sync();
     const loaded = offices.active ? restoreLayout(await this.host.layout.load(offices.active).catch(() => undefined)) : createCompanionWorkspace();
     if (this.disposed || this.state.offices.active !== offices.active) return;
@@ -338,13 +391,25 @@ export class Session {
       this.toast(OFFLINE, 'warn');
       return false;
     }
+    this.armFloorTimer(floor);
+    return true;
+  }
+
+  private armFloorTimer(floor: string): void {
     clearTimeout(this.floorTimer);
+    this.set({ floorSlow: undefined });
     this.floorTimer = setTimeout(() => {
-      if (this.state.switching !== floor) return;
-      this.set({ switching: undefined });
-      this.sync();
-      this.toast('The office did not move you to that floor. Try again.', 'warn');
+      if (this.state.switching === floor) this.set({ floorSlow: true });
     }, FLOOR_TIMEOUT_MS);
+  }
+
+  /** The office hasn't answered a floor change: ask it again on the same socket. Nothing else is re-sent. */
+  askFloorAgain(): boolean {
+    const s = this.state;
+    const floor = s.switching;
+    if (!floor || s.link.phase !== 'connected' || s.welcomedEpoch !== s.link.epoch) return false;
+    if (!this.host.send({ t: 'floor.go', floor })) return false;
+    this.armFloorTimer(floor);
     return true;
   }
 
@@ -369,11 +434,13 @@ export class Session {
       return false;
     }
     this.dispatch({ type: 'open', workerId, pin: !this.phone && pin });
+    this.set({ navigation: this.state.navigation + 1 });
     return true;
   }
   close(workerId: string): void {
     this.dispatch({ type: 'close', workerId });
   }
+  /** `''` is the roster: on a phone that is back from the conversation; panes and drafts stay. */
   focus(workerId: string): void {
     this.dispatch({ type: 'focus', workerId });
   }
@@ -409,6 +476,14 @@ export class Session {
     if (this.visible === visible) return;
     this.visible = visible;
     if (visible) this.tick();
+    this.emit();
+  }
+  /** Tools or Device covers the workspace: its panes stop reading and holding until it shows again. */
+  setWorkspaceShown(shown: boolean): void {
+    if (this.workspaceShown === shown) return;
+    this.workspaceShown = shown;
+    this.sync();
+    if (shown) this.tick();
     this.emit();
   }
   setTeamOpen(open: boolean): void {
@@ -458,7 +533,7 @@ export class Session {
       return w && this.effectiveView(w, p.view) === 'thread' ? [w] : [];
     });
     const shown = this.phone ? workers.filter((w) => w.id === ws.active) : workers;
-    const want = new Set(this.ready() ? shown.map((w) => w.id) : []);
+    const want = new Set(this.ready() && this.workspaceShown ? shown.map((w) => w.id) : []);
     for (const [id, release] of [...this.holds]) {
       if (want.has(id)) continue;
       release();
@@ -530,6 +605,73 @@ export class Session {
     for (const image of images.slice(kept.length)) this.host.forgetImage(floor, image.id);
     this.dispatch({ type: 'draft', workerId, draft: { text: draft.text, attachments: [...draft.attachments, ...kept.map((i) => i.id)] } });
     this.set({ previews: { ...this.state.previews, ...Object.fromEntries(kept.flatMap((i) => (i.preview ? [[i.id, i.preview]] : []))) } });
+  }
+
+  isPickingHire(): boolean {
+    const floor = this.state.office.floor;
+    return !!floor && !!own(this.state.picking, sendKey(floor, HIRE_KEY));
+  }
+
+  /** Pictures for a hire's first prompt, picked under this socket and floor, at most PROMPT_IMAGES_MAX. */
+  async attachHire(): Promise<void> {
+    const floor = this.state.office.floor;
+    if (!floor || !this.ready() || this.isPickingHire()) return;
+    const token = this.token();
+    if (this.state.hire && !this.valid(this.state.hire.token)) this.discardHire();
+    const had = this.state.hire?.images ?? [];
+    if (had.length >= PROMPT_IMAGES_MAX) return this.toast(`A prompt takes at most ${PROMPT_IMAGES_MAX} pictures`, 'warn');
+    const key = sendKey(floor, HIRE_KEY);
+    this.set({ picking: { ...this.state.picking, [key]: true } });
+    let images: HostImage[] = [];
+    try {
+      images = await this.host.pickImages(floor, PROMPT_IMAGES_MAX - had.length);
+    } catch (err) {
+      this.toast(err instanceof Error ? err.message : 'Those pictures could not be attached.', 'warn');
+    }
+    const { [key]: _done, ...picking } = this.state.picking;
+    this.set({ picking });
+    if (!images.length) return;
+    if (!this.valid(token)) {
+      for (const image of images) this.host.forgetImage(floor, image.id);
+      return;
+    }
+    const now = this.state.hire?.images ?? [];
+    const kept = images.slice(0, Math.max(0, PROMPT_IMAGES_MAX - now.length));
+    for (const image of images.slice(kept.length)) this.host.forgetImage(floor, image.id);
+    this.set({ hire: { token, images: [...now, ...kept] } });
+  }
+
+  removeHireImage(id: string): void {
+    const hire = this.state.hire;
+    if (!hire) return;
+    if (this.ready() && hire.token.floor) this.host.forgetImage(hire.token.floor, id);
+    this.set({ hire: { ...hire, images: hire.images.filter((i) => i.id !== id) } });
+  }
+
+  /** The Hire sheet closed without hiring, or its floor or socket went: its pictures are forgotten. */
+  discardHire(): void {
+    const hire = this.state.hire;
+    if (!hire) return;
+    this.set({ hire: undefined });
+    if (this.state.link.phase === 'connected' && this.state.link.epoch === hire.token.epoch && hire.token.floor) for (const image of hire.images) this.host.forgetImage(hire.token.floor, image.id);
+  }
+
+  /**
+   * Hires on this floor with the sheet's pictures. The office lets go of staged pictures whatever it
+   * answers, so they are cleared here too: nothing is re-sent, a retry attaches them again.
+   */
+  async hire(request: Omit<HireRequest, 'images'>, token = this.token()): Promise<HostActionResult> {
+    const hire = this.state.hire;
+    const images = request.kind === 'agent' && hire && this.valid(hire.token) ? hire.images.map((i) => i.id) : [];
+    if (hire && request.kind !== 'agent') this.discardHire();
+    const result = await this.request(hireMsg({ ...request, images }), token);
+    // Whatever the office answered it let go of them; when unsure, asking it to forget them is harmless.
+    if (images.length && this.state.hire === hire) {
+      if (result.ok) this.set({ hire: undefined });
+      else this.discardHire();
+    }
+    if (result.ok && result.workerId) this.openSoon(result.workerId, token);
+    return result;
   }
 
   /** Why the draft can't go now, or undefined. */

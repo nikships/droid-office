@@ -9,6 +9,7 @@ import { presentThread, threadArguments, type ThreadRow } from '../../shared/thr
 import { statusLabel } from '../format';
 import type { Session, SessionSnapshot } from '../session';
 import { Button, colors, Label, Note, Row, StatusPill, s } from './kit';
+import { Markdown } from './Markdown';
 
 /** Thread first: the conversation, its question, Droid's queue and the composer, all from shared logic. */
 export function ThreadView(props: { session: Session; snap: SessionSnapshot; worker: WorkerInfo; focused: boolean; onRaw: () => void; onAction: (message: string) => void }) {
@@ -104,9 +105,13 @@ function RowView({ row, worker, asking }: { row: ThreadRow; worker: WorkerInfo; 
     return (
       <View style={{ paddingHorizontal: 12, paddingVertical: 6, alignItems: user ? 'flex-end' : 'stretch' }}>
         {row.startsTurn ? <Label>{worker.name}</Label> : null}
-        <Text selectable style={[s.text, user && { backgroundColor: colors.raised, padding: 8, borderRadius: 6, maxWidth: '90%' }]}>
-          {row.entry.text ?? ''}
-        </Text>
+        {user ? (
+          <Text selectable style={[s.text, { backgroundColor: colors.raised, padding: 8, borderRadius: 6, maxWidth: '90%' }]}>
+            {row.entry.text ?? ''}
+          </Text>
+        ) : (
+          <Markdown text={row.entry.text ?? ''} />
+        )}
       </View>
     );
   }
@@ -221,7 +226,7 @@ function Activity({ row, asking }: { row: Extract<ThreadRow, { kind: 'activity' 
 function TeamActivity({ session, snap }: { session: Session; snap: SessionSnapshot }) {
   const team = session.feeds.team;
   if (!session.feeds.teamLead || !team.total) return null;
-  if (!session.feeds.teamOn) return <Text style={s.muted}>Team activity is off while four panes are open. Open a subagent from the roster.</Text>;
+  if (!session.feeds.teamOn) return <Text style={s.muted}>Team activity is off while this many panes are open. Open a subagent from the roster.</Text>;
   const open = session.teamOpen;
   return (
     <View style={{ borderWidth: 1, borderColor: colors.border, borderRadius: 4, padding: 8 }} testID="team-activity">

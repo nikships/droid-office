@@ -17,48 +17,47 @@ type Tab = 'workers' | 'tools' | 'device';
 
 export function App({ host }: { host: MobileHost }) {
   const [session] = useState(() => new Session(host));
+  const snap = useSyncExternalStore(session.subscribe, session.snapshot);
   useEffect(() => {
-    void session.start();
+    void session.start().catch(() => undefined);
     return () => session.dispose();
   }, [session]);
-  const snap = useSyncExternalStore(session.subscribe, session.snapshot);
   const { width } = useWindowDimensions();
   const wide = width >= WIDE_DP;
   const [tab, setTab] = useState<Tab>('workers');
   const [tool, setTool] = useState<string | undefined>();
   const [hiring, setHiring] = useState(false);
   const [switcher, setSwitcher] = useState(false);
-  const [conversation, setConversation] = useState(false);
   useEffect(() => session.setPhone(!wide), [session, wide]);
+  // Tools and Device cover the workspace: its panes stop reading and holding while they do.
+  useEffect(() => session.setWorkspaceShown(tab === 'workers'), [session, tab]);
+  // Whatever opened a worker (the roster, a notification, a hire, a tool) shows it: the Workers tab.
+  const [seen, setSeen] = useState(snap.navigation);
+  if (seen !== snap.navigation) {
+    setSeen(snap.navigation);
+    setTab('workers');
+    setTool(undefined);
+    setSwitcher(false);
+  }
   useEffect(() => {
     const sub = AppState.addEventListener('change', (state) => session.setVisible(state === 'active'));
     return () => sub.remove();
   }, [session]);
   const ws = session.floorWorkspace();
+  // On a phone the active worker is the conversation; none active is the roster. A worker that went
+  // (sent home, another floor) leaves none active.
   const active = ws.active ? session.worker(ws.active) : undefined;
-  // A conversation that went (sent home, another floor) takes the phone back to the roster.
-  useEffect(() => {
-    if (conversation && !active) setConversation(false);
-  }, [conversation, active]);
   useEffect(() => {
     const sub = BackHandler.addEventListener('hardwareBackPress', () => {
       if (hiring || switcher) return setHiring(false), setSwitcher(false), true;
       if (tab === 'tools' && tool) return setTool(undefined), true;
       if (tab !== 'workers') return setTab('workers'), true;
-      if (!wide && conversation) return setConversation(false), true;
+      if (!wide && active) return session.focus(''), true;
       return false;
     });
     return () => sub.remove();
-  }, [hiring, switcher, tab, tool, wide, conversation]);
-  const open = useCallback(
-    (id: string, pin: boolean) => {
-      if (session.open(id, pin)) {
-        setTab('workers');
-        if (!wide) setConversation(true);
-      }
-    },
-    [session, wide],
-  );
+  }, [session, hiring, switcher, tab, tool, wide, active]);
+  const open = useCallback((id: string, pin: boolean) => void session.open(id, pin), [session]);
   const order = rosterOrder(snap);
   const floor = currentFloor(snap.office);
   const link = snap.link;
@@ -71,10 +70,21 @@ export function App({ host }: { host: MobileHost }) {
           : (link.reason ?? 'Offline. Unsent messages and pictures were cleared; panes come back when the office does.')
         : !session.ready()
           ? snap.switching
-            ? 'Changing floors…'
+            ? snap.floorSlow
+              ? 'The office hasn’t answered the floor change. Nothing can be sent until it does. Ask again, or check the office on your Mac.'
+              : 'Changing floors…'
             : 'Waiting for the office…'
           : undefined;
   const officeName = snap.offices.offices.find((o) => o.id === snap.offices.active)?.name;
+  if (snap.bootError) {
+    return (
+      <SafeAreaView style={[s.sheet, { justifyContent: 'center', gap: 12 }]}>
+        <Text style={s.title}>Droid Office couldn’t start</Text>
+        <Note tone="bad">{snap.bootError}</Note>
+        <Button tone="primary" label="Try again" onPress={() => void session.retryStart().catch(() => undefined)} testID="boot-retry" />
+      </SafeAreaView>
+    );
+  }
   if (snap.started && !snap.offices.offices.length) {
     return (
       <SafeAreaView style={[s.sheet, { justifyContent: 'center', gap: 12 }]}>
@@ -84,7 +94,7 @@ export function App({ host }: { host: MobileHost }) {
       </SafeAreaView>
     );
   }
-  const phoneConversation = !wide && conversation && active && tab === 'workers';
+  const phoneConversation = !wide && active && tab === 'workers';
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: colors.bg }} testID="app">
       {!phoneConversation ? (
@@ -118,6 +128,7 @@ export function App({ host }: { host: MobileHost }) {
         <View style={{ paddingHorizontal: 8 }}>
           <Note tone={link.phase === 'unauthorized' ? 'bad' : 'warn'}>{banner}</Note>
           {link.phase === 'unauthorized' ? <Button small label="Pair again" onPress={() => host.openPairing()} /> : null}
+          {snap.switching && snap.floorSlow && link.phase === 'connected' ? <Button small label="Ask again" onPress={() => session.askFloorAgain() || session.toast('Disconnected. Nothing was sent.', 'warn')} testID="floor-retry" /> : null}
         </View>
       ) : null}
       <View style={{ flex: 1 }}>
@@ -155,7 +166,7 @@ export function App({ host }: { host: MobileHost }) {
             worker={active}
             view={ws.panes.find((p) => p.workerId === active.id)?.view ?? 'thread'}
             focused
-            onBack={() => setConversation(false)}
+            onBack={() => session.focus('')}
             onStep={(d) => session.step(order, d)}
             onSwitch={() => setSwitcher(true)}
           />

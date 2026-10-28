@@ -1,8 +1,8 @@
 import { useEffect, useState } from 'react';
-import { Modal, ScrollView, Switch, Text, TextInput, View } from 'react-native';
+import { Image, Modal, ScrollView, Switch, Text, TextInput, View } from 'react-native';
+import { PROMPT_IMAGES_MAX } from '../../shared/drops';
 import { AGENT_EFFORTS, type AgentEffort } from '../../shared/protocol';
 import { availabilityOf } from '../../client/ui/model-search';
-import { hireMsg } from '../actions';
 import { canWorktree, currentFloor } from '../office-state';
 import type { Session, SessionSnapshot } from '../session';
 import { Button, Chip, colors, Label, Note, Row, s } from './kit';
@@ -27,7 +27,12 @@ export function HireSheet({ session, snap, onClose }: { session: Session; snap: 
   const [query, setQuery] = useState('');
   const [pending, setPending] = useState(false);
   const [error, setError] = useState('');
-  const token = session.token();
+  // The token this sheet opened under: a hire is refused once the floor or socket changes.
+  const [token] = useState(() => session.token());
+  // Closing the sheet any way (Cancel, back, a floor change unmounting it) forgets unsent pictures.
+  useEffect(() => () => session.discardHire(), [session]);
+  const pictures = snap.hire?.images ?? [];
+  const picking = session.isPickingHire();
   useEffect(() => {
     let live = true;
     session.host
@@ -52,13 +57,13 @@ export function HireSheet({ session, snap, onClose }: { session: Session; snap: 
   const go = async () => {
     setPending(true);
     setError('');
-    const r = await session.request(hireMsg({ kind, prompt, worktree: worktree && canWorktree(floor), model, effort, images: [] }), token);
+    const withPictures = kind === 'agent' && pictures.length > 0;
+    const r = await session.hire({ kind, prompt, worktree: worktree && canWorktree(floor), model, effort }, token);
     setPending(false);
     if (r.ok) {
       onClose();
       session.toast(kind === 'shell' ? 'Shell opened.' : 'Droid hired.');
-      if (r.workerId) session.openSoon(r.workerId, token);
-    } else setError(r.error ?? 'The office did not confirm the hire. Check the floor before trying again.');
+    } else setError(`${r.error ?? 'The office did not confirm the hire. Check the floor before trying again.'}${withPictures ? ' Attach the pictures again to retry.' : ''}`);
   };
   return (
     <Modal animationType="slide" onRequestClose={onClose}>
@@ -82,6 +87,30 @@ export function HireSheet({ session, snap, onClose }: { session: Session; snap: 
           placeholder={kind === 'shell' ? 'A first command (optional)' : 'What should it work on? (optional)'}
           placeholderTextColor={colors.muted}
         />
+        {kind === 'agent' ? (
+          <View style={{ gap: 6 }} testID="hire-pictures">
+            {pictures.length ? (
+              <ScrollView horizontal>
+                {pictures.map((p, i) => (
+                  <View key={p.id} style={{ marginRight: 6, alignItems: 'center' }}>
+                    {p.preview ? <Image source={{ uri: p.preview }} style={{ width: 48, height: 48, borderRadius: 4 }} /> : <View style={{ width: 48, height: 48, backgroundColor: colors.raised }} />}
+                    <Button small tone="ghost" label={`✕ ${i + 1}`} accessibilityLabel={`Remove image ${i + 1}`} disabled={pending} onPress={() => session.removeHireImage(p.id)} />
+                  </View>
+                ))}
+              </ScrollView>
+            ) : null}
+            <Button
+              small
+              tone="ghost"
+              label={picking ? 'Attaching…' : `Pictures${pictures.length ? ` · ${pictures.length}/${PROMPT_IMAGES_MAX}` : ''}`}
+              disabled={pending || picking || !!refusal || pictures.length >= PROMPT_IMAGES_MAX}
+              onPress={() => void session.attachHire()}
+              testID="hire-attach"
+            />
+          </View>
+        ) : pictures.length ? (
+          <Text style={s.muted}>A shell takes no pictures; they are dropped when it opens.</Text>
+        ) : null}
         {canWorktree(floor) ? (
           <Row>
             <Switch value={worktree} onValueChange={setWorktree} testID="hire-worktree" />
@@ -116,7 +145,7 @@ export function HireSheet({ session, snap, onClose }: { session: Session; snap: 
         ) : null}
         {snap.office.subagents && !snap.office.subagents.on ? <Text style={s.muted}>Subagent hiring is off for workers; you can still hire here.</Text> : null}
         {refusal || error ? <Note tone="warn">{error || refusal}</Note> : null}
-        <Button tone="primary" label={pending ? 'Hiring…' : kind === 'shell' ? 'Open shell' : 'Hire Droid'} disabled={pending || !!refusal} onPress={() => void go()} testID="hire-submit" />
+        <Button tone="primary" label={pending ? 'Hiring…' : kind === 'shell' ? 'Open shell' : 'Hire Droid'} disabled={pending || picking || !!refusal} onPress={() => void go()} testID="hire-submit" />
       </ScrollView>
     </Modal>
   );

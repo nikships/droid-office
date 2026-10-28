@@ -4,7 +4,8 @@ import type { WorkerInfo, WorktreeState } from '../src/shared/protocol.js';
 import { cleanupAllowed, describeWorktree, hireMsg, rebuildMsg, sendHomeMsg, sendHomeText, workerActions } from '../src/mobile/actions.js';
 import { ago, childSummary, duration, modelLabel, statusLabel } from '../src/mobile/format.js';
 import { emptyOffice, expireToasts, reduceOffice, withToast } from '../src/mobile/office-state.js';
-import { teamAllowed, THREAD_SESSIONS } from '../src/mobile/thread-feed.js';
+import { FeedPool } from '../src/mobile/thread-feed.js';
+import { decodeEntities, parseMarkdown, safeHref } from '../src/mobile/markdown.js';
 import { MANAGEMENT_TOOLS, toolsFor } from '../src/mobile/tools.js';
 
 function worker(id: string, over: Partial<WorkerInfo> = {}): WorkerInfo {
@@ -99,9 +100,62 @@ test('labels and durations come only from what the office sent', () => {
 });
 
 test('panes plus a team rollup stay within the office’s conversation reader', () => {
-  assert.equal(teamAllowed(2), true);
-  assert.equal(teamAllowed(3), false);
-  assert.equal(THREAD_SESSIONS, 8);
+  const pool = new FeedPool();
+  const lead = { id: 'lead', kind: 'agent', sessionId: 's-lead' } as WorkerInfo;
+  const kids = Array.from({ length: 8 }, (_, n) => ({ id: `k${n}`, kind: 'agent', lead: 'lead', sessionId: `s-k${n}` }) as WorkerInfo);
+  const others = (n: number) => Array.from({ length: n }, (_, k) => ({ id: `p${k}`, kind: 'agent', sessionId: `s-p${k}` }) as WorkerInfo);
+  pool.sync([lead], 'lead', [lead, ...kids], 'x');
+  assert.equal(pool.teamLimit, 6, 'one pane: the full team of six');
+  assert.equal(pool.team.members.size, 6);
+  pool.sync([lead, ...others(3)], 'lead', [lead, ...kids], 'x');
+  assert.equal(pool.teamLimit, 3, 'four panes keep three children, not none: 4 + 3 + 1 for paging = 8');
+  assert.equal(pool.teamOn, true);
+  assert.equal(pool.team.members.size, 3);
+});
+
+test('Markdown becomes native blocks: headings, emphasis, links, lists, code, quotes and tables', () => {
+  const blocks = parseMarkdown(
+    '# Title *it*\n\nSome **bold _both_** ~~gone~~ `x` [site](https://example.com) [bad](javascript:alert(1))\n\n- [x] done\n- plain\n  1. inner\n\n> quoted\n\n```ts\nconst a = 1;\n```\n\n| a | b |\n|:-|-:|\n| 1 | **2** |\n\n---',
+  );
+  assert.deepEqual(
+    blocks.map((b) => b.kind),
+    ['heading', 'paragraph', 'list', 'quote', 'code', 'table', 'rule'],
+  );
+  const heading = blocks[0] as Extract<(typeof blocks)[number], { kind: 'heading' }>;
+  assert.equal(heading.depth, 1);
+  assert.deepEqual(heading.spans, [{ text: 'Title ' }, { text: 'it', italic: true }]);
+  const para = blocks[1] as Extract<(typeof blocks)[number], { kind: 'paragraph' }>;
+  assert.ok(para.spans.some((x) => x.text === 'both' && x.bold && x.italic));
+  assert.ok(para.spans.some((x) => x.text === 'gone' && x.strike));
+  assert.ok(para.spans.some((x) => x.text === 'x' && x.code));
+  assert.equal(para.spans.find((x) => x.text === 'site')?.href, 'https://example.com');
+  assert.equal(para.spans.find((x) => x.text.includes('bad'))?.href, undefined, 'a javascript: link is only text');
+  const list = blocks[2] as Extract<(typeof blocks)[number], { kind: 'list' }>;
+  assert.equal(list.items[0].checked, true);
+  assert.equal(list.items[1].checked, undefined);
+  assert.equal(list.items[1].blocks.at(-1)?.kind, 'list', 'a nested list stays nested');
+  const code = blocks[4] as Extract<(typeof blocks)[number], { kind: 'code' }>;
+  assert.deepEqual(code, { kind: 'code', lang: 'ts', text: 'const a = 1;' });
+  const table = blocks[5] as Extract<(typeof blocks)[number], { kind: 'table' }>;
+  assert.deepEqual(table.align, ['left', 'right']);
+  assert.deepEqual(table.rows[0][1], [{ text: '2', bold: true }]);
+});
+
+test('Markdown never renders HTML, loads pictures or opens unsafe links', () => {
+  const [p] = parseMarkdown('<img src=x onerror=alert(1)> a &amp; b ![shot](https://x.test/a.png) ![local](file:///etc/passwd)');
+  assert.equal(p.kind, 'paragraph');
+  const spans = (p as Extract<typeof p, { kind: 'paragraph' }>).spans;
+  assert.ok(spans[0].text.startsWith('<img src=x onerror=alert(1)>'), 'raw HTML is literal text');
+  assert.ok(spans.some((x) => x.text.includes('a & b')));
+  assert.equal(spans.find((x) => x.text === '[shot]')?.href, 'https://x.test/a.png', 'a picture is a link, never loaded');
+  assert.equal(spans.find((x) => x.text === '[local]')?.href, undefined);
+  assert.equal(safeHref('mailto:a@b.c'), 'mailto:a@b.c');
+  assert.equal(safeHref(' JAVASCRIPT:alert(1)'), undefined);
+  assert.equal(safeHref('intent://x'), undefined);
+  assert.equal(decodeEntities('&#x1F600; &#55296; &bogus;'), '😀 &#55296; &bogus;');
+  assert.deepEqual(parseMarkdown('   '), []);
+  const deep = parseMarkdown(`${'> '.repeat(200)}bottom`);
+  assert.ok(JSON.stringify(deep).includes('bottom'), 'deep nesting is flattened, not dropped or overflowed');
 });
 
 test('management tools needing a checkout of their own leave a plain floor', () => {
