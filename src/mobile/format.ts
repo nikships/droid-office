@@ -50,10 +50,10 @@ export function ago(at: number | undefined, now: number): string | undefined {
 /** "2 working · 1 needs input · 3 done" for a lead's subagents. */
 export function childSummary(counts: Partial<Record<WorkerStatus, number>>): string {
   const order: WorkerStatus[] = ['needs_input', 'working', 'starting', 'idle', 'done', 'exited', 'offline'];
-  return order
-    .filter((s) => counts[s])
-    .map((s) => `${counts[s]} ${statusLabel(s)}`)
-    .join(' · ');
+  // Two statuses can share a word (exited and offline are both "asleep"): one count per word.
+  const byLabel = new Map<string, number>();
+  for (const s of order) if (counts[s]) byLabel.set(statusLabel(s), (byLabel.get(statusLabel(s)) ?? 0) + (counts[s] ?? 0));
+  return [...byLabel].map(([label, n]) => `${n} ${label}`).join(' · ');
 }
 
 export function oneLine(text: string | undefined, max = 160): string | undefined {

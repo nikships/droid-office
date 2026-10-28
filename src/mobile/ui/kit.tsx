@@ -46,11 +46,12 @@ export function Button(props: { label: string; onPress: () => void; disabled?: b
   );
 }
 
-export function Chip(props: { label: string; on?: boolean; onPress: () => void; disabled?: boolean; testID?: string }) {
+export function Chip(props: { label: string; on?: boolean; onPress: () => void; disabled?: boolean; testID?: string; hint?: string }) {
   return (
     <Pressable
       testID={props.testID}
       accessibilityRole="button"
+      accessibilityHint={props.hint}
       accessibilityState={{ selected: !!props.on, disabled: !!props.disabled }}
       disabled={props.disabled}
       onPress={props.onPress}

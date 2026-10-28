@@ -1,10 +1,10 @@
 import { useCallback, useEffect, useState, useSyncExternalStore } from 'react';
 import { AppState, BackHandler, Modal, Pressable, SafeAreaView, ScrollView, Text, useWindowDimensions, View } from 'react-native';
+import { NOT_OFFERED, TOOLS } from '../../shared/companion-tools';
 import { MAX_COMPANION_PANES } from '../../shared/companion-workspace';
 import { currentFloor } from '../office-state';
 import type { MobileHost } from '../host';
 import { Session } from '../session';
-import { toolsFor } from '../tools';
 import { HireSheet } from './Hire';
 import { Button, Chip, colors, Label, Note, Row, s } from './kit';
 import { Roster, rosterOrder } from './Roster';
@@ -25,7 +25,6 @@ export function App({ host }: { host: MobileHost }) {
   const { width } = useWindowDimensions();
   const wide = width >= WIDE_DP;
   const [tab, setTab] = useState<Tab>('workers');
-  const [tool, setTool] = useState<string | undefined>();
   const [hiring, setHiring] = useState(false);
   const [switcher, setSwitcher] = useState(false);
   useEffect(() => session.setPhone(!wide), [session, wide]);
@@ -36,9 +35,15 @@ export function App({ host }: { host: MobileHost }) {
   if (seen !== snap.navigation) {
     setSeen(snap.navigation);
     setTab('workers');
-    setTool(undefined);
     setSwitcher(false);
   }
+  const [toolSeen, setToolSeen] = useState(snap.toolNavigation);
+  if (toolSeen !== snap.toolNavigation) {
+    setToolSeen(snap.toolNavigation);
+    setTab('tools');
+    setSwitcher(false);
+  }
+  const tool = snap.tool;
   useEffect(() => {
     const sub = AppState.addEventListener('change', (state) => session.setVisible(state === 'active'));
     return () => sub.remove();
@@ -50,7 +55,7 @@ export function App({ host }: { host: MobileHost }) {
   useEffect(() => {
     const sub = BackHandler.addEventListener('hardwareBackPress', () => {
       if (hiring || switcher) return setHiring(false), setSwitcher(false), true;
-      if (tab === 'tools' && tool) return setTool(undefined), true;
+      if (tab === 'tools' && tool) return session.closeTool(), true;
       if (tab !== 'workers') return setTab('workers'), true;
       if (!wide && active) return session.focus(''), true;
       return false;
@@ -135,7 +140,7 @@ export function App({ host }: { host: MobileHost }) {
         {tab === 'device' ? (
           <Device host={host} session={session} snap={snap} />
         ) : tab === 'tools' ? (
-          <Tools session={session} floorId={snap.office.floor} plain={!!floor?.plain} tool={tool} setTool={setTool} />
+          <Tools session={session} snap={snap} onHire={() => setHiring(true)} />
         ) : wide ? (
           <View style={{ flex: 1, flexDirection: 'row' }}>
             <View style={{ width: 340, borderRightWidth: 1, borderColor: colors.border }}>
@@ -161,6 +166,7 @@ export function App({ host }: { host: MobileHost }) {
           </View>
         ) : phoneConversation && active ? (
           <WorkerPane
+            key={active.id}
             session={session}
             snap={snap}
             worker={active}
@@ -201,31 +207,54 @@ export function App({ host }: { host: MobileHost }) {
 }
 
 /** One management tool at a time in the native sealed host; the agent workspace stays as it was. */
-function Tools({ session, floorId, plain, tool, setTool }: { session: Session; floorId: string | null; plain: boolean; tool?: string; setTool: (t?: string) => void }) {
+function Tools({ session, snap, onHire }: { session: Session; snap: ReturnType<Session['snapshot']>; onHire: () => void }) {
   const Management = session.host.views.Management;
-  const list = toolsFor(plain);
+  const floorId = snap.office.floor;
+  const tool = snap.tool;
   return (
     <View style={{ flex: 1 }} testID="tools">
       <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ flexGrow: 0, padding: 8 }}>
-        {list.map((t) => (
-          <Chip key={t.id} label={t.label} on={tool === t.id} onPress={() => setTool(tool === t.id ? undefined : t.id)} testID={`tool-${t.id}`} />
-        ))}
+        {TOOLS.filter((t) => t.listed).map((t) => {
+          const why = session.toolRefusal(t.id);
+          return (
+            <Chip
+              key={t.id}
+              label={`${t.icon} ${t.label}`}
+              on={tool?.id === t.id}
+              onPress={() => {
+                if (why) session.toast(why, 'warn');
+                else if (t.id === 'hire') onHire();
+                else if (tool?.id === t.id) session.closeTool();
+                else session.openTool(t.id);
+              }}
+              hint={why}
+              testID={`tool-${t.id}`}
+            />
+          );
+        })}
       </ScrollView>
       {tool && floorId ? (
         <Management
-          key={`${floorId}:${tool}`}
-          tool={tool}
+          key={`${floorId}:${tool.id}:${JSON.stringify(tool.args)}`}
+          tool={tool.id}
           floor={floorId}
+          params={tool.args}
           onEvent={(e) => {
-            if (e.kind === 'close') setTool(undefined);
+            if (e.kind === 'close') session.closeTool();
             else session.managementEvent(e);
           }}
           style={{ flex: 1 }}
         />
       ) : (
-        <View style={{ padding: 16 }}>
+        <ScrollView style={{ padding: 16 }} contentContainerStyle={{ gap: 8 }}>
           <Text style={s.muted}>{floorId ? 'Choose a tool. Your panes and drafts stay as they are.' : 'Waiting for the office…'}</Text>
-        </View>
+          <Label>Only on the office’s own computer</Label>
+          {NOT_OFFERED.map((n) => (
+            <Text key={n.id} style={s.muted}>
+              {n.label}: {n.reason}
+            </Text>
+          ))}
+        </ScrollView>
       )}
     </View>
   );

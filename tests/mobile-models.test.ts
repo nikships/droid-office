@@ -6,7 +6,8 @@ import { ago, childSummary, duration, modelLabel, statusLabel } from '../src/mob
 import { emptyOffice, expireToasts, reduceOffice, withToast } from '../src/mobile/office-state.js';
 import { FeedPool } from '../src/mobile/thread-feed.js';
 import { decodeEntities, parseMarkdown, safeHref } from '../src/mobile/markdown.js';
-import { MANAGEMENT_TOOLS, toolsFor } from '../src/mobile/tools.js';
+import { emptyOffice as office0, toolContext } from '../src/mobile/office-state.js';
+import { TOOLS, toolAvailability } from '../src/shared/companion-tools.js';
 
 function worker(id: string, over: Partial<WorkerInfo> = {}): WorkerInfo {
   return { id, kind: 'agent', deskId: `d-${id}`, name: id, color: '#fff', status: 'idle', acked: true, createdBy: 'owner', createdAt: 1, cols: 80, rows: 24, open: false, sessionId: `s-${id}`, ...over };
@@ -15,22 +16,25 @@ const ids = (w: WorkerInfo, up = true) => workerActions(w, up).map((a) => a.id);
 const refusal = (w: WorkerInfo, id: string, up = true) => workerActions(w, up).find((a) => a.id === id)?.refusal;
 
 test('each kind of worker offers only what the office lets it do', () => {
-  assert.deepEqual(ids(worker('g', { guest: { pid: 1, tty: 't', provider: 'claude', cwd: '/x', startedAt: 0, seen: 'process', cantBringIn: 'Not a droid session' } })), ['bringIn']);
-  assert.equal(refusal(worker('g', { guest: { pid: 1, tty: 't', provider: 'droid', cwd: '/x', startedAt: 0, seen: 'transcript', cantBringIn: 'Mid-turn' } }), 'bringIn'), 'Mid-turn');
+  assert.deepEqual(ids(worker('g', { guest: { pid: 1, tty: 't', provider: 'claude', cwd: '/x', startedAt: 0, seen: 'process', cantBringIn: 'Not a droid session' } })), ['bring-in']);
+  assert.equal(refusal(worker('g', { guest: { pid: 1, tty: 't', provider: 'droid', cwd: '/x', startedAt: 0, seen: 'transcript', cantBringIn: 'Mid-turn' } }), 'bring-in'), 'Mid-turn');
   const cloud = ids(worker('c', { kind: 'cloud', cloud: { computerName: 'box' } as never }));
-  assert.ok(!cloud.includes('terminal') && !cloud.includes('thread') && !cloud.includes('fork') && cloud.includes('sendHome'));
+  assert.deepEqual(cloud, ['cloud', 'send-home'], 'a cloud worker: its cloud window and send home, no terminal, thread or fork');
   const shell = ids(worker('s', { kind: 'shell', status: 'exited' }));
   assert.ok(shell.includes('terminal') && shell.includes('resume') && !shell.includes('thread') && !shell.includes('fork'));
-  assert.equal(workerActions(worker('s', { kind: 'shell', status: 'exited' }), true).find((a) => a.id === 'resume')?.label, 'Restart');
   const agent = ids(worker('a', { status: 'working', worktree: { path: 'p', branch: 'b', base: 'x' } }));
-  assert.ok(agent.includes('thread') && agent.includes('terminal') && agent.includes('stop') && agent.includes('pr') && agent.includes('fork'));
-  assert.equal(refusal(worker('a', { status: 'working', worktree: { path: 'p', branch: 'b', base: 'x' } }), 'pr'), 'Wait until its turn ends.');
+  assert.ok(agent.includes('thread') && agent.includes('terminal') && agent.includes('stop') && agent.includes('pr') && agent.includes('fork') && agent.includes('changes'));
+  assert.equal(refusal(worker('a', { status: 'working', worktree: { path: 'p', branch: 'b', base: 'x' } }), 'pr'), 'It is mid-turn: wait until it is done');
   assert.equal(refusal(worker('a', { status: 'working' }), 'fork'), 'Wait until its turn ends before forking');
-  assert.ok(!ids(worker('a', { pr: { number: 3, url: 'https://x' }, worktree: { path: 'p', branch: 'b', base: 'x' } })).includes('pr'));
+  assert.equal(refusal(worker('a', { status: 'idle' }), 'resume'), 'It is awake');
   const lost = worker('l', { status: 'offline', lost: { branch: 'origin' }, worktree: { path: 'p', branch: 'b', base: 'x' } });
-  assert.ok(ids(lost).includes('rebuild'));
-  assert.equal(refusal(lost, 'resume'), 'Rebuild its worktree first.');
-  assert.equal(refusal(worker('a'), 'sendHome', false), 'Disconnected. Nothing can be sent.');
+  assert.equal(refusal(lost, 'rebuild'), undefined);
+  assert.equal(refusal(lost, 'pr'), 'Its worktree is missing: rebuild it first');
+  assert.equal(refusal(worker('a'), 'send-home', false), 'Disconnected. Nothing can be sent.');
+  assert.equal(refusal(worker('a'), 'changes', true), undefined);
+  assert.match(workerActions(worker('a'), true, true).find((a) => a.id === 'changes')?.refusal ?? '', /plain folder/);
+  assert.equal(workerActions(worker('a'), true).find((a) => a.id === 'send-home')?.confirm, true);
+  assert.ok(ids(worker('d', { deskId: 'station-actions' })).includes('station-ask'), 'a board agent is asked at its kiosk');
 });
 
 test('rebuild is this worker only, send home keeps cloud sessions and never cascades', () => {
@@ -39,6 +43,7 @@ test('rebuild is this worker only, send home keeps cloud sessions and never casc
   assert.deepEqual(sendHomeMsg(worker('a', { worktree: { path: 'p', branch: 'b', base: 'x' } }), 'worktree'), { t: 'worker.kill', workerId: 'a', cleanup: 'worktree', deleteSession: false });
   assert.match(sendHomeText(worker('lead'), 'floor a', 2), /2 subagents stay on the floor/);
   assert.ok(!/subagent/.test(sendHomeText(worker('solo'), 'floor a', 0)));
+  assert.match(sendHomeText(worker('k', { kind: 'cloud' }), 'floor a', 0), /Factory session/, 'a kind:cloud worker without the cloud field is still cloud');
 });
 
 test('deleting a worktree waits for the office to say what it holds', () => {
@@ -97,6 +102,7 @@ test('labels and durations come only from what the office sent', () => {
   assert.equal(modelLabel(worker('a', { model: 'claude', activeModel: 'opus', activeEffort: 'high' })), 'opus · high');
   assert.equal(modelLabel(worker('s', { kind: 'shell', model: 'x' })), undefined);
   assert.equal(childSummary({ working: 2, needs_input: 1 }), '1 needs input · 2 working');
+  assert.equal(childSummary({ exited: 1, offline: 2 }), '3 asleep', 'one count per word');
 });
 
 test('panes plus a team rollup stay within the office’s conversation reader', () => {
@@ -158,8 +164,17 @@ test('Markdown never renders HTML, loads pictures or opens unsafe links', () => 
   assert.ok(JSON.stringify(deep).includes('bottom'), 'deep nesting is flattened, not dropped or overflowed');
 });
 
-test('management tools needing a checkout of their own leave a plain floor', () => {
-  assert.ok(toolsFor(true).length < MANAGEMENT_TOOLS.length);
-  assert.ok(!toolsFor(true).some((t) => t.id === 'pulls'));
-  assert.ok(toolsFor(true).some((t) => t.id === 'docs'));
+test('management tools come from the shared catalogue, judged on what the office said', () => {
+  let s = reduceOffice(office0(), { t: 'floor.enter', floor: 'a', project: null, workers: [worker('w'), worker('c', { kind: 'cloud', cloud: {} as never })], pulls: { items: [], fetchedAt: 0, loading: false }, jira: {} } as never);
+  s = { ...s, floors: [{ id: 'a', name: 'A', plain: true } as never] };
+  assert.equal(toolAvailability('jira', toolContext(s, true)).available, false);
+  assert.match((toolAvailability('pulls', toolContext(s, true)) as { reason: string }).reason, /plain folder/);
+  assert.equal(toolAvailability('docs', toolContext(s, true)).available, true);
+  assert.equal(toolAvailability('docs', toolContext(s, false)).available, false, 'nothing opens before the office is ready');
+  s = reduceOffice(s, { t: 'factory', state: { connection: { connected: true } } } as never);
+  assert.equal(toolAvailability('wiki', toolContext(s, true)).available, true);
+  assert.equal(toolAvailability('cloud', toolContext(s, true, { workerId: 'c' }), { workerId: 'c' }).available, true);
+  assert.equal(toolAvailability('cloud', toolContext(s, true, { workerId: 'w' }), { workerId: 'w' }).available, false);
+  assert.equal(toolAvailability('cloud', toolContext(s, true, { workerId: '__proto__' }), { workerId: '__proto__' }).available, false);
+  assert.ok(TOOLS.some((t) => t.id === 'hire' && t.listed));
 });

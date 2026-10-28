@@ -1,4 +1,5 @@
 import { companionCapabilities } from '../shared/companion-roster';
+import { TOOL_BY_ID, type ToolArgs, type ToolId, toolAvailability } from '../shared/companion-tools';
 import {
   type CompanionView,
   type CompanionWorkspace,
@@ -15,15 +16,19 @@ import type { Menu } from '../shared/asks';
 import { CLEAR_DROID_QUEUE } from '../shared/droid-queue';
 import type { ClientMsg, ServerMsg, WorkerInfo } from '../shared/protocol';
 import { slashOf, slashRefusal } from '../shared/slash-commands';
+import { readDroidQueue } from '../shared/droid-queue';
+import type { QueuedView } from '../shared/thread-queue';
 import { isBusy } from '../shared/status';
 import { linkStep } from '../client/worker-link';
 import type { HostActionResult, HostImage, HostIncoming, HostLink, HostMessageMeta, HostOffices, ManagementEvent, MobileHost } from './host';
-import { dropToast, emptyOffice, expireToasts, type OfficeState, officeDisconnected, reduceOffice, withToast } from './office-state';
+import { dropToast, emptyOffice, expireToasts, type OfficeState, officeDisconnected, reduceOffice, toolContext, withToast } from './office-state';
 import { FeedPool, requestId } from './thread-feed';
-import { type HireRequest, hireMsg } from './actions';
+import { type HireRequest, hireMsg, stopMsg } from './actions';
 
 /** What a delayed action was started under. Any change to it means the owner is looking at something else. */
 export interface ActionToken {
+  /** The office it was started in: pictures it staged are forgotten there, never on another. */
+  office?: string;
   epoch: number;
   floor: string | null;
   arrival: number;
@@ -57,13 +62,19 @@ export interface SessionSnapshot {
   bootError?: string;
   /** Pictures staged for the Hire sheet, on the floor and socket they were picked under. */
   hire?: { token: ActionToken; images: HostImage[] };
+  /** The management tool open in the Tools tab, and what it opens on. */
+  tool?: { id: ToolId; args: ToolArgs };
+  /** Grows whenever a tool is opened from here (the rail, a worker's actions): the UI shows the Tools tab. */
+  toolNavigation: number;
 }
 
 export const STALE = 'The office changed before this was sent. Nothing was sent.';
 export const OFFLINE = 'Disconnected. Nothing was sent.';
+export const UNCONFIRMED = 'The office did not confirm this. Check before trying again; nothing was re-sent.';
+export const IN_FLIGHT = 'Already sent: waiting for the office to answer.';
+/** Pictures waiting for the office to be reachable again so it can forget them. */
+const ORPHANS_KEPT = 200;
 export const FLOOR_TIMEOUT_MS = 10_000;
-/** What the office's `floor.go` toasts when it doesn't move this connection (server.ts). */
-export const FLOOR_REFUSALS: ReadonlySet<string> = new Set(['No such floor', 'There is no building to go up on yet']);
 const HIRE_KEY = '\u0000hire';
 export const LAYOUT_SAVE_MS = 400;
 
@@ -92,6 +103,14 @@ export class Session {
   private bootSeq = -1;
   private disposed = false;
   private run = 0;
+  /** Confirmed actions sent and not yet answered, by message: a second tap is refused, not sent. */
+  private inflight = new Set<string>();
+  /** The `floor.go` receipts of the floor change in progress, by requestId: unanswered, ok or refused. */
+  private floorRequests = new Map<string, 'sent' | 'ok' | 'refused'>();
+  /** Staged pictures dropped while the office couldn't be told, forgotten on its next welcome. */
+  private orphans: { office: string; floor: string; id: string }[] = [];
+  /** Receipts for messages queued behind a turn, as the thread shows them; computed outside render. */
+  private queued = new Map<string, { views: QueuedView[]; droid: boolean }>();
   readonly feeds = new FeedPool();
   /** The app is in the foreground. */
   visible = true;
@@ -117,6 +136,7 @@ export class Session {
       sending: {},
       picking: {},
       navigation: 0,
+      toolNavigation: 0,
     };
   }
 
@@ -129,6 +149,7 @@ export class Session {
   private set(next: Partial<SessionSnapshot>): void {
     this.state = { ...this.state, ...next };
     this.syncAttachments();
+    this.refreshQueues();
     for (const fn of this.listeners) fn();
   }
 
@@ -141,11 +162,13 @@ export class Session {
     // Messages and link changes share one counter: whatever came before the bootstrap answered is
     // applied after it, in the order it happened.
     const early: ({ msg: ServerMsg; meta: HostMessageMeta } | { link: HostLink })[] = [];
+    // An office change before the bootstrap answered is newer than it: applied after, never under it.
+    let lateOffices: HostOffices | undefined;
     let booted = false;
     this.offs.push(
       this.host.onMessage((msg, meta) => (booted ? this.message(msg, meta) : early.push({ msg, meta }))),
       this.host.onLink((link) => (booted ? this.linked(link) : early.push({ link }))),
-      this.host.onOffices((offices) => void this.officesChanged(offices)),
+      this.host.onOffices((offices) => (booted ? void this.officesChanged(offices) : (lateOffices = offices))),
       this.host.onIncoming((incoming) => this.incoming(incoming)),
       this.host.onScreen(() => this.emit()),
       this.feeds.subscribe(() => this.emit()),
@@ -155,8 +178,9 @@ export class Session {
       boot = await this.host.bootstrap();
     } catch (err) {
       if (run !== this.run) return;
-      // Unsubscribed, so start() again subscribes once.
+      // Unsubscribed, so start() again subscribes once; what was buffered goes with this attempt.
       for (const off of this.offs.splice(0)) off();
+      early.length = 0;
       this.set({ bootError: err instanceof Error && err.message ? err.message : 'The app could not read its offices.' });
       return;
     }
@@ -175,16 +199,18 @@ export class Session {
     }
     this.timer = setInterval(() => this.tick(), 1000);
     this.sync();
+    if (lateOffices) await this.officesChanged(lateOffices);
   }
 
   dispose(): void {
     this.run++;
     this.disposed = true;
     this.bootSeq = -1;
-    this.state = { ...this.state, started: false };
     clearInterval(this.timer);
     clearTimeout(this.floorTimer);
-    clearTimeout(this.saveTimer);
+    // A pane change made just before unmount is still saved.
+    if (this.saveTimer) this.flushLayout(this.state.offices.active);
+    this.state = { ...this.state, started: false };
     for (const off of this.offs.splice(0)) off();
     for (const release of this.holds.values()) release();
     this.holds.clear();
@@ -197,6 +223,7 @@ export class Session {
   }
 
   private emit(): void {
+    this.refreshQueues();
     this.state = { ...this.state };
     for (const fn of this.listeners) fn();
   }
@@ -206,6 +233,7 @@ export class Session {
     this.feeds.tick(this.now(), { connected: this.ready(), visible: this.visible && this.workspaceShown, focused: this.floorWorkspace().active || undefined, teamOpen: this.teamOpen }, (msg) => this.send(msg));
     const office = expireToasts(s.office, this.now());
     if (office !== s.office) this.set({ office });
+    else if (this.refreshQueues()) this.emit();
   }
 
   // --- What the host says ---------------------------------------------------------------------------
@@ -217,12 +245,21 @@ export class Session {
     const office = reduceOffice(this.state.office, msg);
     const next: Partial<SessionSnapshot> = { office };
     if (msg.t === 'welcome') next.welcomedEpoch = meta.epoch;
-    // Only the office ends a floor change: its arrival, or the exact refusal that left this connection
-    // where it was. Time passing proves neither.
-    const refused = msg.t === 'toast' && !!this.state.switching && FLOOR_REFUSALS.has(msg.text);
+    // Only the office ends a floor change: its arrival, or its receipt refusing every floor.go sent for
+    // it, which leaves this connection where it was. A successful receipt waits for floor.enter; time
+    // passing, a toast or a request the host couldn't confirm prove nothing.
+    let refused = false;
+    if (msg.t === 'action.result' && this.floorRequests.has(msg.requestId)) {
+      this.floorRequests.set(msg.requestId, msg.ok ? 'ok' : 'refused');
+      if (!msg.ok && [...this.floorRequests.values()].every((v) => v === 'refused')) {
+        refused = true;
+        next.office = withToast(office, msg.error ?? 'The office did not move you to that floor.', 'warn', this.now());
+      }
+    }
     if (msg.t === 'welcome' || msg.t === 'floor.enter' || refused) {
       next.switching = undefined;
       next.floorSlow = undefined;
+      this.floorRequests.clear();
       clearTimeout(this.floorTimer);
     }
     let workspace = this.state.workspace;
@@ -230,8 +267,16 @@ export class Session {
       workspace = reduceCompanionWorkspace(workspace, { type: 'reconcile', floor: office.floor, workerIds: Object.keys(office.workers) });
       next.workspace = workspace;
     }
+    const tool = this.state.tool;
+    if (tool) {
+      const scope = TOOL_BY_ID.get(tool.id)?.scope;
+      const floorGone = (msg.t === 'welcome' || msg.t === 'floor.enter') && scope !== 'office' && office.floor !== this.state.office.floor;
+      const workerGone = scope === 'worker' && !!tool.args.workerId && !own(office.workers, tool.args.workerId);
+      if (floorGone || workerGone) next.tool = undefined;
+    }
     this.set(next);
     if ((msg.t === 'welcome' || msg.t === 'floor.enter') && this.state.hire && !this.valid(this.state.hire.token)) this.discardHire();
+    if (msg.t === 'welcome') this.flushOrphans();
     // Refused: still on the floor it was on, so its panes hold and read again.
     if (refused) this.sync();
     this.feeds.receive(msg);
@@ -251,6 +296,7 @@ export class Session {
     const prev = this.state.link;
     const lost = prev.phase === 'connected' && (link.phase !== 'connected' || link.epoch !== prev.epoch);
     if (lost) this.connectionLost();
+    if (link.epoch !== prev.epoch || link.phase !== 'connected') this.floorRequests.clear();
     this.set({ link, ...(link.epoch !== prev.epoch || link.phase !== 'connected' ? { office: officeDisconnected(this.state.office), switching: undefined, floorSlow: undefined } : {}) });
     this.sync();
   }
@@ -259,6 +305,8 @@ export class Session {
   private connectionLost(): void {
     clearTimeout(this.floorTimer);
     this.feeds.disconnected();
+    this.orphanDropped(this.state.offices.active);
+    this.inflight.clear();
     // The office can't be asked to forget pictures now; they are dropped here and never re-sent.
     this.set({ workspace: reduceCompanionWorkspace(this.state.workspace, { type: 'disconnect' }), previews: {}, sending: {}, picking: {}, switching: undefined, floorSlow: undefined, hire: undefined });
   }
@@ -268,6 +316,10 @@ export class Session {
     const before = this.state.offices.active;
     if (offices.active === before) return this.set({ offices });
     this.flushLayout(before);
+    // The last office's unsent pictures are forgotten there, not on the new one.
+    this.orphanDropped(before);
+    this.flushOrphans(before);
+    this.inflight.clear();
     this.set({
       offices,
       office: emptyOffice(),
@@ -280,6 +332,7 @@ export class Session {
       floorSlow: undefined,
       pendingOpen: undefined,
       hire: undefined,
+      tool: undefined,
     });
     this.sync();
     const loaded = offices.active ? restoreCompanionWorkspace(await this.host.layout.load(offices.active).catch(() => undefined)) : createCompanionWorkspace();
@@ -332,12 +385,12 @@ export class Session {
   }
 
   token(): ActionToken {
-    return { epoch: this.state.link.epoch, floor: this.state.office.floor, arrival: this.state.office.arrival };
+    return { office: this.state.offices.active, epoch: this.state.link.epoch, floor: this.state.office.floor, arrival: this.state.office.arrival };
   }
 
   valid(t: ActionToken): boolean {
     const now = this.token();
-    return this.ready() && t.epoch === now.epoch && t.floor === now.floor && t.arrival === now.arrival;
+    return this.ready() && t.office === now.office && t.epoch === now.epoch && t.floor === now.floor && t.arrival === now.arrival;
   }
 
   send(msg: ClientMsg): boolean {
@@ -348,7 +401,19 @@ export class Session {
   async request(msg: ClientMsg, token = this.token()): Promise<HostActionResult> {
     if (!this.ready()) return { ok: false, error: OFFLINE };
     if (!this.valid(token)) return { ok: false, error: STALE };
-    return this.host.request({ ...msg, ...(token.floor ? { requestFloor: token.floor } : {}) });
+    // The same action twice before the first is answered (a double tap) is one action.
+    const key = JSON.stringify(msg);
+    if (this.inflight.has(key)) return { ok: false, error: IN_FLIGHT };
+    this.inflight.add(key);
+    try {
+      const r = await this.host.request({ ...msg, ...(token.floor ? { requestFloor: token.floor } : {}) });
+      return r && typeof r.ok === 'boolean' ? r : { ok: false, error: UNCONFIRMED };
+    } catch {
+      // A native bridge failure is an unconfirmed action: the UI never waits on it for ever.
+      return { ok: false, error: UNCONFIRMED };
+    } finally {
+      this.inflight.delete(key);
+    }
   }
 
   toast(text: string, level: 'info' | 'warn' | 'error' = 'info'): void {
@@ -360,18 +425,30 @@ export class Session {
 
   // --- Floors and panes -----------------------------------------------------------------------------
 
-  /** Holds and feeds of the old floor go before `floor.go`; the new floor's panes come back on `floor.enter`. */
+  /**
+   * Holds and feeds of the old floor go before `floor.go`; the new floor's panes come back on
+   * `floor.enter`. One change at a time: another is refused until the office answers this one.
+   */
   goFloor(floor: string): boolean {
     if (!this.ready() || floor === this.state.office.floor) return false;
+    const from = this.state.office.floor;
     this.set({ switching: floor });
     this.sync();
-    if (!this.host.send({ t: 'floor.go', floor })) {
+    if (!this.sendFloorGo(floor, from)) {
       this.set({ switching: undefined });
       this.sync();
       this.toast(OFFLINE, 'warn');
       return false;
     }
     this.armFloorTimer(floor);
+    return true;
+  }
+
+  /** `floor.go` with a receipt: sent directly, so its `action.result` comes back as a message, not a guess. */
+  private sendFloorGo(floor: string, from: string | null): boolean {
+    const id = requestId('floor');
+    if (!this.host.send({ t: 'floor.go', floor, requestId: id, ...(from ? { requestFloor: from } : {}) })) return false;
+    this.floorRequests.set(id, 'sent');
     return true;
   }
 
@@ -388,7 +465,7 @@ export class Session {
     const s = this.state;
     const floor = s.switching;
     if (!floor || s.link.phase !== 'connected' || s.welcomedEpoch !== s.link.epoch) return false;
-    if (!this.host.send({ t: 'floor.go', floor })) return false;
+    if (!this.sendFloorGo(floor, s.office.floor)) return false;
     this.armFloorTimer(floor);
     return true;
   }
@@ -409,13 +486,34 @@ export class Session {
   open(workerId: string, pin = false): boolean {
     if (!own(this.state.office.workers, workerId)) return false;
     const ws = this.floorWorkspace();
-    if (pin && !ws.panes.some((p) => p.workerId === workerId) && ws.panes.length >= MAX_COMPANION_PANES) {
+    const pinned = !this.phone && pin;
+    if (pinned && !ws.panes.some((p) => p.workerId === workerId) && ws.panes.length >= MAX_COMPANION_PANES) {
       this.toast(`At most ${MAX_COMPANION_PANES} panes. Close one first.`, 'warn');
       return false;
     }
-    this.dispatch({ type: 'open', workerId, pin: !this.phone && pin });
-    this.set({ navigation: this.state.navigation + 1 });
+    this.dispatch({ type: 'open', workerId, pin: pinned });
+    this.set({ navigation: this.state.navigation + 1, tool: undefined });
     return true;
+  }
+
+  /** Why a management tool can't open now (the shared catalogue's words), or undefined. */
+  toolRefusal(id: ToolId, args: ToolArgs = {}): string | undefined {
+    const a = toolAvailability(id, toolContext(this.state.office, this.ready(), args), args);
+    return a.available ? undefined : a.reason;
+  }
+
+  /** Opens a management tool in the Tools tab; the workspace's panes and drafts stay as they are. */
+  openTool(id: ToolId, args: ToolArgs = {}): boolean {
+    const refused = this.toolRefusal(id, args);
+    if (refused) {
+      this.toast(refused, 'warn');
+      return false;
+    }
+    this.set({ tool: { id, args }, toolNavigation: this.state.toolNavigation + 1 });
+    return true;
+  }
+  closeTool(): void {
+    if (this.state.tool) this.set({ tool: undefined });
   }
   close(workerId: string): void {
     this.dispatch({ type: 'close', workerId });
@@ -424,8 +522,8 @@ export class Session {
   focus(workerId: string): void {
     this.dispatch({ type: 'focus', workerId });
   }
-  view(workerId: string, view: CompanionView): void {
-    this.dispatch({ type: 'view', workerId, view });
+  view(workerId: string, view: CompanionView, floor = this.state.office.floor): void {
+    this.dispatch({ type: 'view', workerId, view }, floor);
   }
   resize(workerId: string, size: number): void {
     this.dispatch({ type: 'resize', workerId, size });
@@ -441,7 +539,7 @@ export class Session {
     const floor = this.state.office.floor;
     const had = own(this.floorWorkspace().drafts, workerId);
     if (!floor || !had) return;
-    if (this.ready()) this.host.forgetImage(floor, id);
+    this.forget(this.token(), [id]);
     this.dispatch({ type: 'draft', workerId, draft: { text: had.text, attachments: had.attachments.filter((a) => a !== id) } });
   }
 
@@ -575,14 +673,18 @@ export class Session {
     const { [key]: _done, ...picking } = this.state.picking;
     this.set({ picking });
     if (!images.length) return;
-    if (!this.valid(token)) {
-      for (const image of images) this.host.forgetImage(floor, image.id);
-      return;
-    }
+    if (!this.valid(token))
+      return this.forget(
+        token,
+        images.map((i) => i.id),
+      );
     const draft = own(this.floorWorkspace().drafts, workerId) ?? { text: '', attachments: [] };
     const room = PROMPT_IMAGES_MAX - draft.attachments.length;
     const kept = images.slice(0, Math.max(0, room));
-    for (const image of images.slice(kept.length)) this.host.forgetImage(floor, image.id);
+    this.forget(
+      token,
+      images.slice(kept.length).map((i) => i.id),
+    );
     this.dispatch({ type: 'draft', workerId, draft: { text: draft.text, attachments: [...draft.attachments, ...kept.map((i) => i.id)] } });
     this.set({ previews: { ...this.state.previews, ...Object.fromEntries(kept.flatMap((i) => (i.preview ? [[i.id, i.preview]] : []))) } });
   }
@@ -611,20 +713,24 @@ export class Session {
     const { [key]: _done, ...picking } = this.state.picking;
     this.set({ picking });
     if (!images.length) return;
-    if (!this.valid(token)) {
-      for (const image of images) this.host.forgetImage(floor, image.id);
-      return;
-    }
+    if (!this.valid(token))
+      return this.forget(
+        token,
+        images.map((i) => i.id),
+      );
     const now = this.state.hire?.images ?? [];
     const kept = images.slice(0, Math.max(0, PROMPT_IMAGES_MAX - now.length));
-    for (const image of images.slice(kept.length)) this.host.forgetImage(floor, image.id);
+    this.forget(
+      token,
+      images.slice(kept.length).map((i) => i.id),
+    );
     this.set({ hire: { token, images: [...now, ...kept] } });
   }
 
   removeHireImage(id: string): void {
     const hire = this.state.hire;
     if (!hire) return;
-    if (this.ready() && hire.token.floor) this.host.forgetImage(hire.token.floor, id);
+    this.forget(hire.token, [id]);
     this.set({ hire: { ...hire, images: hire.images.filter((i) => i.id !== id) } });
   }
 
@@ -633,7 +739,45 @@ export class Session {
     const hire = this.state.hire;
     if (!hire) return;
     this.set({ hire: undefined });
-    if (this.state.link.phase === 'connected' && this.state.link.epoch === hire.token.epoch && hire.token.floor) for (const image of hire.images) this.host.forgetImage(hire.token.floor, image.id);
+    this.forget(
+      hire.token,
+      hire.images.map((i) => i.id),
+    );
+  }
+
+  /**
+   * Asks the office the pictures were staged on to forget them: now when it can be told, else on its
+   * next welcome. Never another office's upload, and never the prompt they were for.
+   */
+  private forget(token: ActionToken, ids: readonly string[]): void {
+    const { office, floor } = token;
+    if (!office || !floor || !ids.length) return;
+    const reachable = office !== this.state.offices.active || (this.state.link.phase === 'connected' && this.state.welcomedEpoch === this.state.link.epoch);
+    for (const id of ids) {
+      if (reachable) this.host.forgetImage(floor, id, office);
+      else this.orphans.push({ office, floor, id });
+    }
+    this.orphans = this.orphans.slice(-ORPHANS_KEPT);
+  }
+
+  /** Every picture in a draft or the Hire sheet of `office`, now dropped unsent. */
+  private orphanDropped(office: string | undefined): void {
+    if (!office) return;
+    for (const [floor, ws] of Object.entries(this.state.workspace.floors)) for (const d of Object.values(ws.drafts)) for (const id of d.attachments) this.orphans.push({ office, floor, id });
+    const hire = this.state.hire;
+    if (hire?.token.floor && hire.token.office === office) for (const i of hire.images) this.orphans.push({ office, floor: hire.token.floor, id: i.id });
+    this.orphans = this.orphans.slice(-ORPHANS_KEPT);
+  }
+
+  /** Forgets what waited for `office` (by default the active one, once welcomed again). */
+  private flushOrphans(office = this.state.offices.active): void {
+    if (!office) return;
+    const keep: typeof this.orphans = [];
+    for (const o of this.orphans) {
+      if (o.office === office) this.host.forgetImage(o.floor, o.id, o.office);
+      else keep.push(o);
+    }
+    this.orphans = keep;
   }
 
   /**
@@ -641,6 +785,16 @@ export class Session {
    * answers, so they are cleared here too: nothing is re-sent, a retry attaches them again.
    */
   async hire(request: Omit<HireRequest, 'images'>, token = this.token()): Promise<HostActionResult> {
+    if (this.hiring) return { ok: false, error: IN_FLIGHT };
+    this.hiring = true;
+    try {
+      return await this.hireNow(request, token);
+    } finally {
+      this.hiring = false;
+    }
+  }
+  private hiring = false;
+  private async hireNow(request: Omit<HireRequest, 'images'>, token: ActionToken): Promise<HostActionResult> {
     const hire = this.state.hire;
     const images = request.kind === 'agent' && hire && this.valid(hire.token) ? hire.images.map((i) => i.id) : [];
     if (hire && request.kind !== 'agent') this.discardHire();
@@ -681,9 +835,11 @@ export class Session {
     const queueSend = queue && w.kind === 'agent' && isBusy(w.status);
     const refused = this.composeRefusal(w, text, queueSend);
     if (refused) return refused;
+    const key = sendKey(floor, workerId);
+    // Checked before anything awaits: a double tap or Enter plus the button sends once.
+    if (own(this.state.sending, key)) return IN_FLIGHT;
     if (!text && !draft.attachments.length) return undefined;
     const token = this.token();
-    const key = sendKey(floor, workerId);
     const receipts = this.feeds.queue(floor, workerId);
     const after = receipts.sequence;
     this.set({ sending: { ...this.state.sending, [key]: true } });
@@ -697,18 +853,45 @@ export class Session {
     const now = own(companionFloorWorkspace(this.state.workspace, floor).drafts, workerId);
     if (this.state.link.epoch === token.epoch && now && now.text.trim() === text && now.attachments.join() === draft.attachments.join()) this.dispatch({ type: 'draft', workerId, draft: { text: '', attachments: [] } }, floor);
     this.feeds.feed(workerId)?.latest();
-    if (w.kind === 'agent' && slashOf(text)?.command?.kind === 'tty') this.view(workerId, 'terminal');
+    if (w.kind === 'agent' && slashOf(text)?.command?.kind === 'tty') this.view(workerId, 'terminal', floor);
     return undefined;
   }
 
   /** Esc, the CLI's own cancel; Thread panes hold the worker so it reaches its terminal. */
   stop(workerId: string): boolean {
-    return this.send({ t: 'term.input', workerId, data: '\u001b' });
+    const w = this.worker(workerId);
+    return !!w && this.send(stopMsg(w));
   }
 
   async answer(workerId: string, menu: Menu, value: { choice: number } | { text: string }): Promise<string | undefined> {
     const result = await this.request({ t: 'worker.answer', workerId, menu, ...value });
     return result.ok ? undefined : (result.error ?? 'The office did not confirm the answer. Look at the question before answering again.');
+  }
+
+  /** What waits in a worker's queue on this floor, as last computed outside render. */
+  queuedFor(workerId: string): { views: readonly QueuedView[]; droid: boolean } {
+    return this.queued.get(workerId) ?? { views: [], droid: false };
+  }
+
+  /** Matches queue receipts against each Thread pane's conversation and Droid's screen. True when it changed. */
+  private refreshQueues(): boolean {
+    const floor = this.state.office.floor;
+    const next = new Map<string, { views: QueuedView[]; droid: boolean }>();
+    if (floor) {
+      for (const p of companionFloorWorkspace(this.state.workspace, floor).panes) {
+        const w = own(this.state.office.workers, p.workerId);
+        if (w?.kind !== 'agent') continue;
+        const queue = this.feeds.queue(floor, w.id);
+        const feed = this.feeds.feed(w.id);
+        queue.sync(w.sessionId, feed?.history.entries ?? []);
+        const screen = this.host.screen(w.id);
+        const droid = screen ? readDroidQueue(screen) : undefined;
+        next.set(w.id, { views: queue.shown(droid, this.now()), droid: !!droid?.length });
+      }
+    }
+    const same = next.size === this.queued.size && [...next].every(([id, v]) => JSON.stringify(v) === JSON.stringify(this.queued.get(id)));
+    if (!same) this.queued = next;
+    return !same;
   }
 
   /** Asks what a worker's worktree holds; the answer arrives as `office.worktrees[id]`, never an older one. */

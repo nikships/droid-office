@@ -1,43 +1,62 @@
 import { companionCapabilities } from '../shared/companion-roster';
+import { workerActions as sharedWorkerActions, type WorkerActionFacts, type WorkerActionId } from '../shared/companion-tools';
+import { DESK_BY_ID } from '../shared/layout';
 import type { AgentEffort, ClientMsg, WorkerInfo, WorktreeCleanup, WorktreeState } from '../shared/protocol';
 import { AUTO_DESK } from '../shared/protocol';
 import { isAsleep, isBusy } from '../shared/status';
 import { forkRefusal } from '../shared/worker-fork';
 
+export const ACTION_OFFLINE = 'Disconnected. Nothing can be sent.';
+
 /** One thing the owner can do to a worker from the companion, and why it's off when it is. */
 export interface WorkerAction {
-  id: 'resume' | 'pr' | 'fork' | 'rebuild' | 'bringIn' | 'sendHome' | 'stop' | 'thread' | 'terminal';
+  /** The shared worker actions, and the views and Esc this app has besides. */
+  id: WorkerActionId | 'stop' | 'thread' | 'terminal';
   label: string;
   /** Unset when it can run now. */
   refusal?: string;
-  /** Asks the owner first (send home, rebuild everything). */
+  /** Asks the owner first (send home, rebuild). */
   confirm?: boolean;
   danger?: boolean;
 }
 
 const local = (w: WorkerInfo) => !w.guest && !w.cloud && w.kind !== 'cloud';
 
+/** What the shared catalogue judges a worker's actions on. */
+export function actionFacts(w: WorkerInfo, plainFloor: boolean): WorkerActionFacts {
+  return {
+    kind: w.kind,
+    asleep: isAsleep(w.status),
+    busy: isBusy(w.status),
+    cloud: !!w.cloud || w.kind === 'cloud',
+    guest: !!w.guest,
+    ...(w.guest?.cantBringIn ? { cantBringIn: w.guest.cantBringIn } : {}),
+    lost: !!w.lost,
+    worktree: !!w.worktree,
+    prOpen: !!w.pr || !!w.repos?.some((r) => r.pr),
+    prOpening: !!w.prOpening,
+    repos: !!w.repos?.length,
+    station: !!DESK_BY_ID.get(w.deskId)?.station,
+    ...(forkRefusal(w) ? { forkRefusal: forkRefusal(w) } : {}),
+    plainFloor,
+  };
+}
+
 /**
- * The actions a worker offers, with the same rules as the web companion and the office: a guest is
- * only watched, a cloud worker has no terminal or worktree here, a lost worker must be rebuilt or sent
- * home first. No bulk, broadcast or reparent action exists here.
+ * The actions a worker offers: Thread, Raw TTY and Esc where it has them, then the shared catalogue's
+ * (src/shared/companion-tools.ts), the same as the web companion. No bulk, broadcast or reparent.
  */
-export function workerActions(w: WorkerInfo, connected: boolean): WorkerAction[] {
+export function workerActions(w: WorkerInfo, connected: boolean, plainFloor = false): WorkerAction[] {
   const caps = companionCapabilities(w);
-  const off = (why?: string) => (!connected ? 'Disconnected. Nothing can be sent.' : why);
+  const off = (why?: string) => (!connected ? ACTION_OFFLINE : why);
   const out: WorkerAction[] = [];
   if (caps.thread) out.push({ id: 'thread', label: 'Thread' });
   if (local(w)) out.push({ id: 'terminal', label: 'Raw TTY', refusal: caps.terminal ? undefined : w.lost ? 'Its worktree is missing.' : 'Resume it to open its terminal.' });
-  if (w.guest) {
-    out.push({ id: 'bringIn', label: 'Bring in', refusal: off(w.guest.cantBringIn) });
-    return out;
-  }
-  if (isAsleep(w.status)) out.push({ id: 'resume', label: w.kind === 'shell' ? 'Restart' : 'Resume', refusal: off(w.lost ? 'Rebuild its worktree first.' : undefined) });
   if (w.kind === 'agent' && local(w) && (isBusy(w.status) || w.status === 'needs_input')) out.push({ id: 'stop', label: 'Stop turn', refusal: off() });
-  if (local(w) && w.worktree && !w.pr) out.push({ id: 'pr', label: 'Open PR', refusal: off(w.lost ? 'Its worktree is missing.' : w.prOpening ? 'Opening its pull request…' : isBusy(w.status) ? 'Wait until its turn ends.' : undefined) });
-  if (w.kind === 'agent' && local(w)) out.push({ id: 'fork', label: 'Fork', refusal: off(forkRefusal(w)) });
-  if (w.lost && local(w)) out.push({ id: 'rebuild', label: 'Rebuild worktree', refusal: off(), confirm: true });
-  out.push({ id: 'sendHome', label: 'Send home', refusal: off(), confirm: true, danger: true });
+  for (const a of sharedWorkerActions(actionFacts(w, plainFloor))) {
+    const confirm = a.id === 'send-home' || a.id === 'rebuild';
+    out.push({ id: a.id, label: a.label, ...(off(a.reason) ? { refusal: off(a.reason) } : {}), ...(confirm ? { confirm } : {}), ...(a.danger ? { danger: true } : {}) });
+  }
   return out;
 }
 
@@ -73,11 +92,12 @@ export function sendHomeNeedsWorktreeCheck(w: WorkerInfo): boolean {
 }
 
 export function sendHomeText(w: WorkerInfo, where: string, subagents: number): string {
-  const base = w.cloud
-    ? 'This frees its desk. Its Factory session stays archived; a computer this worker made is deleted, as in the office.'
-    : w.worktree
-      ? `This stops the session at ${where} for everyone and frees the desk. ${w.name} worked in its own worktree on ${w.worktree.branch}.`
-      : 'This stops its terminal for every window and frees its desk. Work in the checkout is kept.';
+  const base =
+    !local(w) && !w.guest
+      ? 'This frees its desk. Its Factory session stays archived; a computer this worker made is deleted, as in the office.'
+      : w.worktree
+        ? `This stops the session at ${where} for everyone and frees the desk. ${w.name} worked in its own worktree on ${w.worktree.branch}.`
+        : 'This stops its terminal for every window and frees its desk. Work in the checkout is kept.';
   return subagents ? `${base} Its ${subagents === 1 ? 'subagent stays' : `${subagents} subagents stay`} on the floor.` : base;
 }
 

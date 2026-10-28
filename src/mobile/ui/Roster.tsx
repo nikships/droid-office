@@ -26,7 +26,8 @@ export function Roster(props: { session: Session; snap: SessionSnapshot; wide: b
   const now = useNow();
   const ws = session.floorWorkspace();
   const workers = snap.office.workers;
-  const rows = useMemo(() => companionRoster(Object.values(workers), { query, status, kind }, new Set(ws.collapsed)), [workers, query, status, kind, ws.collapsed]);
+  const collapsedKey = ws.collapsed.join('\u0000');
+  const rows = useMemo(() => companionRoster(Object.values(workers), { query, status, kind }, new Set(collapsedKey ? collapsedKey.split('\u0000') : [])), [workers, query, status, kind, collapsedKey]);
   const ready = session.ready();
   const total = Object.keys(workers).length;
   const pinned = new Set(ws.panes.map((p) => p.workerId));

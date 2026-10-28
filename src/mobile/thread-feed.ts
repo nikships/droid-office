@@ -33,8 +33,8 @@ export class ThreadFeed {
   }
 
   /** A new session (a fork, /new, a resume onto another) starts the history over. */
-  worker(w: WorkerInfo): void {
-    if (w.sessionId === this.sessionId) return;
+  worker(w: WorkerInfo): boolean {
+    if (w.sessionId === this.sessionId) return false;
     this.sessionId = w.sessionId;
     this.history.clear(w.sessionId);
     this.received = false;
@@ -42,6 +42,7 @@ export class ThreadFeed {
     this.error = '';
     this.lastReadAt = 0;
     this.revision++;
+    return true;
   }
 
   tick(now: number, state: { connected: boolean; visible: boolean; focused: boolean }, send: Send, id: RequestId): void {
@@ -153,8 +154,9 @@ export class FeedPool {
       }
     for (const w of threadWorkers) {
       const had = this.feeds.get(w.id);
-      if (had) had.worker(w);
-      else {
+      if (had) {
+        if (had.worker(w)) touched = true;
+      } else {
         this.feeds.set(w.id, new ThreadFeed(w.id, w.sessionId));
         touched = true;
       }

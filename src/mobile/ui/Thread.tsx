@@ -1,7 +1,6 @@
 import { useMemo, useRef, useState } from 'react';
 import { FlatList, Image, Pressable, ScrollView, Text, TextInput, View } from 'react-native';
 import { canAnswer, menuTakesText, readMenu, sameMenu, type Menu } from '../../shared/asks';
-import { readDroidQueue } from '../../shared/droid-queue';
 import type { WorkerInfo } from '../../shared/protocol';
 import { slashCommands, slashOf, slashSuggestions, type DroidSlashCommand, type SlashCommand } from '../../shared/slash-commands';
 import { isAsleep, isBusy } from '../../shared/status';
@@ -20,11 +19,8 @@ export function ThreadView(props: { session: Session; snap: SessionSnapshot; wor
   const entries = feed?.history.entries ?? [];
   const rows = useMemo(() => presentThread(entries, busy), [entries, busy, feed?.revision]);
   const screen = session.host.screen(worker.id);
-  const floor = props.snap.office.floor ?? '';
-  const queue = session.feeds.queue(floor, worker.id);
-  queue.sync(worker.sessionId, entries);
-  const droidQueue = screen ? readDroidQueue(screen) : undefined;
-  const queued = queue.shown(droidQueue);
+  // Receipts are matched in the session, outside render; render only reads them.
+  const { views: queued, droid: droidQueued } = session.queuedFor(worker.id);
   const list = useRef<FlatList<ThreadRow>>(null);
   const [follow, setFollow] = useState(true);
   return (
@@ -66,7 +62,7 @@ export function ThreadView(props: { session: Session; snap: SessionSnapshot; wor
                 ))}
                 <Row>
                   <Text style={[s.muted, { flex: 1 }]}>{queued.length === 1 ? 'Sent once this turn is over.' : 'Sent in order once this turn is over.'}</Text>
-                  {droidQueue?.length ? <Button small tone="ghost" label="Clear queue" disabled={!ready} onPress={() => session.clearQueue(worker.id) || props.onAction('Disconnected. Nothing was sent.')} /> : null}
+                  {droidQueued ? <Button small tone="ghost" label="Clear queue" disabled={!ready} onPress={() => session.clearQueue(worker.id) || props.onAction('Disconnected. Nothing was sent.')} /> : null}
                 </Row>
               </View>
             ) : null}
@@ -272,6 +268,8 @@ function Question(props: { session: Session; worker: WorkerInfo; screen: readonl
   const [shown, setShown] = useState<Menu | undefined>();
   const [text, setText] = useState('');
   const [state, setState] = useState<'idle' | 'sending' | 'sent'>('idle');
+  // The question this view was answering: a new wait, or another question after an answer, starts over.
+  const [askedAt, setAskedAt] = useState(worker.waitingSince);
   if (worker.status !== 'needs_input') {
     if (shown || state !== 'idle') {
       setShown(undefined);
@@ -280,14 +278,26 @@ function Question(props: { session: Session; worker: WorkerInfo; screen: readonl
     return null;
   }
   const next = screen && canAnswer(worker, screen) ? readMenu(screen) : undefined;
-  if (!shown && next) setShown(next);
+  if (askedAt !== worker.waitingSince) {
+    setAskedAt(worker.waitingSince);
+    setShown(next);
+    setState('idle');
+  } else if (state === 'sent' && next && !sameMenu(shown, next)) {
+    setShown(next);
+    setState('idle');
+  } else if (!shown && next) setShown(next);
   const menu = shown ?? next;
   const current = sameMenu(menu, next);
   const enabled = session.ready() && current && state === 'idle';
   const reply = async (value: { choice: number } | { text: string }) => {
     if (!menu) return;
     setState('sending');
-    const error = await session.answer(worker.id, menu, value);
+    let error: string | undefined;
+    try {
+      error = await session.answer(worker.id, menu, value);
+    } catch {
+      error = 'The office did not confirm the answer. Look at the question before answering again.';
+    }
     if (error) {
       setState('idle');
       props.onAction(error);
@@ -367,7 +377,12 @@ export function Composer({ session, snap, worker, onRaw }: { session: Session; s
   };
   const pick = (c: SlashCommand) => change(`/${c.name} `);
   const send = async (queue: boolean) => {
-    const error = await session.submit(worker.id, queue);
+    let error: string | undefined;
+    try {
+      error = await session.submit(worker.id, queue);
+    } catch {
+      error = 'The office did not confirm this message. Check the thread before sending it again.';
+    }
     setTold(error ?? '');
   };
   return (

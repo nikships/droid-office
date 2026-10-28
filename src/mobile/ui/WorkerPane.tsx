@@ -1,11 +1,11 @@
 import { useEffect, useState } from 'react';
-import { Linking, Modal, ScrollView, Text, TextInput, View } from 'react-native';
+import { Alert, Linking, Modal, ScrollView, Text, TextInput, View } from 'react-native';
 import { companionCapabilities, companionWorkedMs } from '../../shared/companion-roster';
 import type { CompanionView } from '../../shared/companion-workspace';
 import { sessionWebUrl } from '../../shared/factory-sessions';
 import type { WorkerInfo, WorktreeCleanup } from '../../shared/protocol';
 import { teamOf } from '../../shared/team';
-import { bringInMsg, CLEANUP_LABEL, cleanupAllowed, describeWorktree, forkMsg, prMsg, rebuildMsg, resumeMsg, sendHomeMsg, sendHomeNeedsWorktreeCheck, sendHomeText, type WorkerAction, workerActions } from '../actions';
+import { ACTION_OFFLINE, bringInMsg, CLEANUP_LABEL, cleanupAllowed, describeWorktree, forkMsg, prMsg, rebuildMsg, resumeMsg, sendHomeMsg, sendHomeNeedsWorktreeCheck, sendHomeText, type WorkerAction, workerActions } from '../actions';
 import { duration, kindLabel, modelLabel, statusLabel } from '../format';
 import type { Session, SessionSnapshot } from '../session';
 import { Button, Chip, colors, Dot, Label, Note, Row, StatusPill, s, useNow } from './kit';
@@ -33,14 +33,19 @@ export function WorkerPane(props: {
   const [busy, setBusy] = useState(false);
   const shown = session.effectiveView(worker, props.view);
   const ready = session.ready();
-  const actions = workerActions(worker, ready);
+  const plain = !!snap.office.floors.find((f) => f.id === snap.office.floor)?.plain;
+  const actions = workerActions(worker, ready, plain);
   const now = useNow(5000);
   const worked = companionWorkedMs(worker, now);
   const lead = worker.lead ? session.worker(worker.lead) : undefined;
   const run = async (msg: Parameters<Session['request']>[0], done: string) => {
     setBusy(true);
-    const r = await session.request(msg);
-    setBusy(false);
+    let r: Awaited<ReturnType<Session['request']>>;
+    try {
+      r = await session.request(msg);
+    } finally {
+      setBusy(false);
+    }
     session.toast(r.ok ? done : (r.error ?? 'The office did not confirm this. Check its state before trying again.'), r.ok ? 'info' : 'warn');
     return r.ok;
   };
@@ -52,18 +57,29 @@ export function WorkerPane(props: {
         session.view(worker.id, a.id);
         return;
       case 'resume':
+        // A lost worker resumes by rebuilding its worktree first, as in the office.
+        if (worker.lost) return setDialog('rebuild');
         return void run(resumeMsg(worker), `${worker.name} is waking up.`);
       case 'pr':
+        if (worker.pr) return openLink(worker.pr.url, 'Could not open the pull request.');
+        if (worker.repos?.some((r) => r.pr)) return void session.openTool('changes', { workerId: worker.id });
         return void run(prMsg(worker), 'Opening a pull request…');
-      case 'bringIn':
+      case 'bring-in':
         return void run(bringInMsg(worker), `Bringing ${worker.name} in…`);
+      case 'changes':
+      case 'cloud':
+        return void session.openTool(a.id, { workerId: worker.id });
+      case 'station-ask':
+        return void session.openTool('hire', { kind: 'station', deskId: worker.deskId });
       case 'stop':
         if (!session.stop(worker.id)) session.toast('Disconnected. Nothing was sent.', 'warn');
         return;
       case 'fork':
       case 'rebuild':
-      case 'sendHome':
         setDialog(a.id);
+        return;
+      case 'send-home':
+        setDialog('sendHome');
         return;
     }
   };
@@ -98,15 +114,14 @@ export function WorkerPane(props: {
               a.id === 'thread' || a.id === 'terminal' ? (
                 <Chip key={a.id} label={a.label} on={shown === a.id} disabled={!!a.refusal} onPress={() => act(a)} testID={`pane-view-${a.id}`} />
               ) : (
-                <Button key={a.id} small label={a.label} tone={a.danger ? 'danger' : undefined} disabled={!!a.refusal || busy} onPress={() => act(a)} testID={`action-${a.id}`} />
+                <Button key={a.id} small label={a.id === 'pr' && worker.pr ? `PR #${worker.pr.number}` : a.label} tone={a.danger ? 'danger' : undefined} disabled={!!a.refusal || busy} onPress={() => act(a)} testID={`action-${a.id}`} />
               ),
             )}
-            {worker.pr ? <Button small label={`PR #${worker.pr.number}`} onPress={() => void Linking.openURL(safeLink(worker.pr!.url))} /> : null}
-            {worker.cloud && worker.sessionId ? <Button small label="Factory session" onPress={() => void Linking.openURL(sessionWebUrl(worker.sessionId!))} /> : null}
+            {worker.cloud && worker.sessionId ? <Button small label="Factory session" onPress={() => openLink(sessionWebUrl(worker.sessionId!), 'Could not open the Factory session.')} /> : null}
           </Row>
         </ScrollView>
         {actions
-          .filter((a) => a.refusal && a.id !== 'thread' && a.id !== 'terminal' && a.refusal !== 'Disconnected. Nothing can be sent.')
+          .filter((a) => a.refusal && a.id !== 'thread' && a.id !== 'terminal' && a.refusal !== ACTION_OFFLINE)
           .slice(0, 1)
           .map((a) => (
             <Text key={a.id} style={s.muted}>
@@ -126,7 +141,7 @@ export function WorkerPane(props: {
         </View>
       )}
       {dialog === 'sendHome' ? <SendHome session={session} snap={snap} worker={worker} onClose={() => setDialog(undefined)} /> : null}
-      {dialog === 'fork' ? <Fork session={session} worker={worker} onClose={() => setDialog(undefined)} /> : null}
+      {dialog === 'fork' ? <Fork session={session} snap={snap} worker={worker} onClose={() => setDialog(undefined)} /> : null}
       {dialog === 'rebuild' ? (
         <Confirm
           title={`Rebuild ${worker.name}'s worktree?`}
@@ -144,8 +159,10 @@ export function WorkerPane(props: {
   );
 }
 
-function safeLink(url: string): string {
-  return /^https?:\/\//i.test(url) ? url : 'about:blank';
+/** Only https links leave the app; one that can't be opened says so instead of failing silently. */
+function openLink(url: string, failed: string): void {
+  if (!/^https:\/\//i.test(url)) return void Alert.alert(failed);
+  Linking.openURL(url).catch(() => Alert.alert(failed));
 }
 
 function WorkerInfoView({ worker }: { worker: WorkerInfo }) {
@@ -251,11 +268,11 @@ function SendHome({ session, snap, worker, onClose }: { session: Session; snap: 
   );
 }
 
-function Fork({ session, worker, onClose }: { session: Session; worker: WorkerInfo; onClose: () => void }) {
+function Fork({ session, snap, worker, onClose }: { session: Session; snap: SessionSnapshot; worker: WorkerInfo; onClose: () => void }) {
   const [prompt, setPrompt] = useState('');
   const [pending, setPending] = useState(false);
   const [error, setError] = useState('');
-  const why = workerActions(worker, session.ready()).find((a) => a.id === 'fork')?.refusal;
+  const why = workerActions(worker, session.ready(), !!snap.office.floors.find((f) => f.id === snap.office.floor)?.plain).find((a) => a.id === 'fork')?.refusal;
   const go = async () => {
     setPending(true);
     const r = await session.request(forkMsg(worker, prompt));

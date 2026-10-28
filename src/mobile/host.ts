@@ -1,4 +1,5 @@
 import type { ComponentType } from 'react';
+import type { ToolArgs, ToolId } from '../shared/companion-tools';
 import type { ClientMsg, ServerMsg } from '../shared/protocol';
 
 /**
@@ -48,8 +49,11 @@ export interface MobileHost {
    * Resolves with the uploaded ids (and a local preview URI the RN Image can show), or [] when cancelled.
    */
   pickImages(floor: string, max: number): Promise<HostImage[]>;
-  /** Forgets an uploaded but unsent picture (`DELETE /api/prompt/image`). */
-  forgetImage(floor: string, id: string): void;
+  /**
+   * Forgets an uploaded but unsent picture (`DELETE /api/prompt/image`) on `office`, the paired office
+   * it was uploaded to (the active one when omitted), even after the app switched to another office.
+   */
+  forgetImage(floor: string, id: string, office?: string): void;
   /**
    * Per-office storage for the workspace layout only (panes, views, sizes, collapsed leads): never
    * drafts or picture ids. Small JSON; native may drop it at any time.
@@ -76,7 +80,7 @@ export interface MobileHost {
      * The shared DOM management tools in the sealed local host, one tool at a time. Asks to open a
      * worker or change floor come back through `onEvent`, so the RN workspace stays the one that does it.
      */
-    Management: ComponentType<{ tool: string; floor: string; params?: ManagementParams; onEvent?: (event: ManagementEvent) => void; style?: unknown }>;
+    Management: ComponentType<{ tool: ToolId; floor: string; params?: ManagementParams; onEvent?: (event: ManagementEvent) => void; style?: unknown }>;
   };
   /** Screen rows as plain text, for asks and Droid's queue; undefined until the native mirror has a screen. */
   screen(workerId: string): readonly string[] | undefined;
@@ -150,17 +154,8 @@ export interface HostHttpResponse {
   body: unknown;
 }
 
-/** What a management tool opens on, as Byte's companion tools take it. */
-export interface ManagementParams {
-  workerId?: string;
-  repo?: string;
-  card?: string;
-  pane?: string;
-  number?: number;
-  runId?: number;
-  deskId?: string;
-  kind?: 'agent' | 'shell' | 'station';
-}
+/** What a management tool opens on: the shared ToolArgs. */
+export type ManagementParams = ToolArgs;
 
 export type ManagementEvent = { kind: 'open-worker'; workerId: string; view: 'thread' | 'tty' } | { kind: 'switch-floor'; floor: string } | { kind: 'close' };
 

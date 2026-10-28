@@ -3,7 +3,7 @@ import { test } from 'node:test';
 import type { ClientMsg, FloorInfo, ServerMsg, WorkerInfo } from '../src/shared/protocol.js';
 import type { HostBootstrap, HostImage, HostLink, HostMessageMeta, HostOffices, MobileHost } from '../src/mobile/host.js';
 import { restoreCompanionWorkspace } from '../src/shared/companion-workspace.js';
-import { FLOOR_TIMEOUT_MS, OFFLINE, STALE, Session } from '../src/mobile/session.js';
+import { FLOOR_TIMEOUT_MS, IN_FLIGHT, OFFLINE, STALE, Session, UNCONFIRMED } from '../src/mobile/session.js';
 
 function worker(id: string, over: Partial<WorkerInfo> = {}): WorkerInfo {
   return { id, kind: 'agent', deskId: `d-${id}`, name: id, color: '#fff', status: 'idle', acked: true, createdBy: 'owner', createdAt: 1, cols: 80, rows: 24, open: false, sessionId: `s-${id}`, ...over };
@@ -74,7 +74,11 @@ class FakeHost implements MobileHost {
   };
   http = async () => ({ status: 404, body: {} });
   pickImages = () => new Promise<HostImage[]>((resolve) => this.picks.push(resolve));
-  forgetImage = (_floor: string, id: string) => void this.forgotten.push(id);
+  forgottenOn: [string | undefined, string, string][] = [];
+  forgetImage = (floor: string, id: string, office?: string) => {
+    this.forgotten.push(id);
+    this.forgottenOn.push([office, floor, id]);
+  };
   layout = { load: async (office: string) => this.stored.get(office), save: (office: string, value: unknown) => void this.saved.set(office, value) };
   openPairing() {}
   openOffices() {}
@@ -399,33 +403,18 @@ test('a floor change stays refused after the timeout and ends only when the offi
   assert.equal(session.snapshot().switching, 'b');
   assert.equal((await session.request({ t: 'worker.resume', workerId: 'w1' })).error, OFFLINE);
   assert.deepEqual(session.held(), [], 'the old floor stays let go');
-  host.say({ t: 'toast', text: 'Someone hired a worker', level: 'info' });
-  assert.equal(session.snapshot().switching, 'b', 'an unrelated toast is not a refusal');
+  host.say({ t: 'toast', text: 'No such floor', level: 'warn' });
+  assert.equal(session.snapshot().switching, 'b', 'a toast is not a refusal');
   assert.equal(session.askFloorAgain(), true);
   assert.deepEqual(
-    host.sent.filter((m) => m.t === 'floor.go'),
-    [
-      { t: 'floor.go', floor: 'b' },
-      { t: 'floor.go', floor: 'b' },
-    ],
+    host.sent.filter((m) => m.t === 'floor.go').map((m) => (m as { floor: string }).floor),
+    ['b', 'b'],
   );
   assert.equal(session.snapshot().floorSlow, undefined);
   host.say(enter('b', [worker('w3')]));
   assert.equal(session.ready(), true, 'a late arrival is still the answer');
   assert.equal(session.snapshot().office.floor, 'b');
   assert.equal(session.snapshot().floorSlow, undefined);
-});
-
-test('the office’s exact floor.go refusal leaves the old floor ready again', async (t) => {
-  const { host, session } = await started();
-  t.after(() => session.dispose());
-  session.open('w1');
-  session.goFloor('gone');
-  assert.deepEqual(session.held(), []);
-  host.say({ t: 'toast', text: 'No such floor', level: 'warn' });
-  assert.equal(session.ready(), true);
-  assert.equal(session.snapshot().office.floor, 'a');
-  assert.deepEqual(session.held(), ['w1'], 'its pane holds again');
 });
 
 test('every way of opening a worker is one navigation the app shows, including the same worker again', async (t) => {
@@ -552,4 +541,169 @@ test('Hire pictures: bounded, tied to their floor and socket, sent once and forg
   assert.equal(session.snapshot().hire, undefined, 'a disconnect drops them');
   assert.deepEqual(host.forgotten, [], 'nothing is sent while down');
   assert.equal(host.requests.length, 2, 'nothing was replayed');
+});
+
+test('a floor change ends only on floor.enter or a refused receipt for its own request', async (t) => {
+  const { host, session } = await started();
+  t.after(() => session.dispose());
+  session.open('w1');
+  assert.equal(session.goFloor('b'), true);
+  const go = host.sent.at(-1) as Extract<ClientMsg, { t: 'floor.go' }>;
+  assert.equal(go.t, 'floor.go');
+  assert.ok(go.requestId, 'floor.go carries a receipt id');
+  assert.equal(go.requestFloor, 'a');
+  assert.equal(session.goFloor('c'), false, 'one floor change at a time');
+  host.say({ t: 'toast', text: 'No such floor', level: 'warn' });
+  assert.equal(session.ready(), false, 'a toast is not a receipt');
+  host.say({ t: 'action.result', requestId: 'someone-else', ok: false, error: 'No such floor' });
+  assert.equal(session.ready(), false, 'another request’s receipt is not this one');
+  host.say({ t: 'action.result', requestId: go.requestId!, ok: true });
+  assert.equal(session.ready(), false, 'a successful receipt waits for floor.enter');
+  host.say(enter('b', [worker('w3')]));
+  assert.equal(session.ready(), true);
+  session.goFloor('gone');
+  const refused = host.sent.at(-1) as Extract<ClientMsg, { t: 'floor.go' }>;
+  host.say({ t: 'action.result', requestId: refused.requestId!, ok: false, error: 'No such floor' });
+  assert.equal(session.ready(), true, 'refused: still on b and ready');
+  assert.equal(session.snapshot().office.floor, 'b');
+  assert.match(session.snapshot().office.toasts.at(-1)?.text ?? '', /No such floor/);
+});
+
+test('asking again after a slow floor change waits for every receipt it sent', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const { host, session } = await started();
+  t.after(() => session.dispose());
+  session.goFloor('b');
+  const first = host.sent.at(-1) as Extract<ClientMsg, { t: 'floor.go' }>;
+  t.mock.timers.tick(FLOOR_TIMEOUT_MS + 1);
+  session.askFloorAgain();
+  const second = host.sent.at(-1) as Extract<ClientMsg, { t: 'floor.go' }>;
+  assert.notEqual(first.requestId, second.requestId);
+  host.say({ t: 'action.result', requestId: first.requestId!, ok: false, error: 'No such floor' });
+  assert.equal(session.ready(), false, 'the second ask is still unanswered');
+  host.say({ t: 'action.result', requestId: second.requestId!, ok: false, error: 'No such floor' });
+  assert.equal(session.ready(), true);
+});
+
+test('a second tap never sends an action twice, and a failed native request never leaves it busy', async (t) => {
+  const { host, session } = await started();
+  t.after(() => session.dispose());
+  session.open('w1');
+  session.draft('w1', 'once');
+  const first = session.submit('w1');
+  assert.equal(await session.submit('w1'), IN_FLIGHT);
+  assert.equal(host.requests.length, 1, 'one worker.prompt');
+  host.requests[0].resolve({ ok: true });
+  await first;
+  const resume = session.request({ t: 'worker.resume', workerId: 'w1' });
+  assert.equal((await session.request({ t: 'worker.resume', workerId: 'w1' })).error, IN_FLIGHT);
+  host.requests[1].resolve({ ok: true });
+  assert.equal((await resume).ok, true);
+  host.request = () => Promise.reject(new Error('bridge gone'));
+  session.draft('w1', 'again');
+  assert.equal(await session.submit('w1'), UNCONFIRMED);
+  assert.equal(session.isSending('w1'), false, 'not stuck sending');
+  assert.equal(session.floorWorkspace().drafts.w1.text, 'again', 'the draft stays');
+  const hired = await session.hire({ kind: 'agent', prompt: '', worktree: false });
+  assert.deepEqual(hired, { ok: false, error: UNCONFIRMED });
+});
+
+test('an office change during the bootstrap is applied after it, not overwritten by it', async (t) => {
+  const host = new FakeHost();
+  let open!: () => void;
+  host.bootGate = new Promise((r) => (open = r));
+  host.boot = { offices: [{ id: 'o1', name: 'One' }], active: 'o1', link: host.link, replay: [], seq: 0 };
+  const session = new Session(host);
+  t.after(() => session.dispose());
+  const starting = session.start();
+  const listeners = (host as unknown as { offices: Set<(o: HostOffices) => void> }).offices;
+  for (const h of listeners)
+    h({
+      offices: [
+        { id: 'o1', name: 'One' },
+        { id: 'o2', name: 'Two' },
+      ],
+      active: 'o2',
+    });
+  open();
+  await starting;
+  assert.equal(session.snapshot().offices.active, 'o2');
+  assert.equal(session.snapshot().offices.offices.length, 2);
+});
+
+test('pictures are forgotten on the office they were staged on, including after a disconnect', async (t) => {
+  const { host, session } = await started();
+  t.after(() => session.dispose());
+  session.open('w1');
+  const picking = session.attach('w1');
+  const listeners = (host as unknown as { offices: Set<(o: HostOffices) => void> }).offices;
+  for (const h of listeners)
+    h({
+      offices: [
+        { id: 'o1', name: 'One' },
+        { id: 'o2', name: 'Two' },
+      ],
+      active: 'o2',
+    });
+  host.picks[0]([{ id: 'aaaaaaaaaaaaaaaa', name: 'x.png' }]);
+  await picking;
+  assert.deepEqual(host.forgottenOn, [['o1', 'a', 'aaaaaaaaaaaaaaaa']], 'forgotten on o1, where it went up, not on o2');
+});
+
+test('pictures in drafts dropped by a disconnect are forgotten once the office is back', async (t) => {
+  const { host, session } = await started();
+  t.after(() => session.dispose());
+  session.open('w1');
+  const picking = session.attach('w1');
+  host.picks[0]([{ id: 'bbbbbbbbbbbbbbbb', name: 'x.png' }]);
+  await picking;
+  host.setLink({ phase: 'offline', epoch: 1 });
+  assert.deepEqual(host.forgottenOn, [], 'nothing can be sent while down');
+  host.setLink({ phase: 'connected', epoch: 2 });
+  host.say(welcome('a', [worker('w1')]));
+  assert.deepEqual(host.forgottenOn, [['o1', 'a', 'bbbbbbbbbbbbbbbb']]);
+});
+
+test('a phone opens over its active pane even with four restored panes', async (t) => {
+  const workers = ['w1', 'w2', 'w3', 'w4', 'w5'].map((id) => worker(id));
+  const { session } = await started(new FakeHost(), workers);
+  t.after(() => session.dispose());
+  session.setPhone(false);
+  for (const w of workers.slice(0, 4)) session.open(w.id, true);
+  session.setPhone(true);
+  assert.equal(session.open('w5', true), true);
+  assert.equal(session.floorWorkspace().active, 'w5');
+  assert.equal(session.floorWorkspace().panes.length, 4);
+});
+
+test('queue receipts are matched in the session, not while rendering', async (t) => {
+  const { host, session } = await started(new FakeHost(), [worker('w1', { status: 'working' })]);
+  t.after(() => session.dispose());
+  session.open('w1');
+  session.draft('w1', 'later');
+  const queued = session.submit('w1', true);
+  host.requests[0].resolve({ ok: true });
+  await queued;
+  assert.deepEqual(
+    session.queuedFor('w1').views.map((v) => v.text),
+    ['later'],
+  );
+  const before = session.queuedFor('w1');
+  assert.equal(session.queuedFor('w1'), before, 'reading twice changes nothing');
+});
+
+test('opening a tool from a worker uses the shared catalogue and closes when the worker leaves', async (t) => {
+  const { host, session } = await started();
+  t.after(() => session.dispose());
+  const n = session.snapshot().toolNavigation;
+  assert.equal(session.openTool('changes', { workerId: 'w1' }), true);
+  assert.equal(session.snapshot().toolNavigation, n + 1);
+  assert.deepEqual(session.snapshot().tool, { id: 'changes', args: { workerId: 'w1' } });
+  assert.equal(session.openTool('jira'), false, 'no epic on this floor');
+  assert.match(session.snapshot().office.toasts.at(-1)?.text ?? '', /Jira epic/);
+  host.say({ t: 'worker.remove', workerId: 'w1' } as ServerMsg);
+  assert.equal(session.snapshot().tool, undefined);
+  session.openTool('docs');
+  host.say(enter('b', []));
+  assert.equal(session.snapshot().tool, undefined, 'a floor tool closes with its floor');
 });

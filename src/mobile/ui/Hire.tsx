@@ -53,13 +53,22 @@ export function HireSheet({ session, snap, onClose }: { session: Session; snap: 
   const chosen = models?.find((m) => m.id === model);
   const efforts = chosen?.supportedReasoningEfforts ?? AGENT_EFFORTS;
   const why = (id: string) => (snap.office.subscriptions ? availabilityOf(id, snap.office.subscriptions, Date.now()).reason : undefined);
-  const refusal = !session.ready() ? 'Disconnected. Nothing can be sent.' : !session.valid(token) ? 'The office changed since this opened. Close and open Hire again.' : model && why(model) ? why(model) : undefined;
+  // A shell sends no model, so a model that can't run doesn't stop it.
+  const modelRefusal = kind === 'agent' && model ? why(model) : undefined;
+  let refusal: string | undefined;
+  if (!session.ready()) refusal = 'Disconnected. Nothing can be sent.';
+  else if (!session.valid(token)) refusal = 'The office changed since this opened. Close and open Hire again.';
+  else refusal = modelRefusal;
   const go = async () => {
     setPending(true);
     setError('');
     const withPictures = kind === 'agent' && pictures.length > 0;
-    const r = await session.hire({ kind, prompt, worktree: worktree && canWorktree(floor), model, effort }, token);
-    setPending(false);
+    let r: Awaited<ReturnType<Session['hire']>>;
+    try {
+      r = await session.hire({ kind, prompt, worktree: worktree && canWorktree(floor), model, effort }, token);
+    } finally {
+      setPending(false);
+    }
     if (r.ok) {
       onClose();
       session.toast(kind === 'shell' ? 'Shell opened.' : 'Droid hired.');
