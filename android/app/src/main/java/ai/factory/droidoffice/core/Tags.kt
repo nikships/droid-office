@@ -173,8 +173,6 @@ object Tags {
         const val REPAIR_FORGET = "home.repair.forget"
         const val PICK_WORKER = "home.pick_worker"
         const val FLOOR_ORDER_HINT = "home.floor_order_hint"
-        /** Back to the 3D map, on a screen big enough for it. */
-        const val MAP = "home.map"
 
         // Inside each worker card; the card itself is [worker].
         const val CARD_NAME = "home.worker.name"

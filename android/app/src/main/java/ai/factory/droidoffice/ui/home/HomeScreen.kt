@@ -38,7 +38,6 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExtendedFloatingActionButton
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.SnackbarResult
 import androidx.compose.material3.Text
@@ -123,10 +122,10 @@ fun rememberNow(periodMs: Long = 1_000): Long {
     return now
 }
 
-/** The worker list. [onMap] goes back to the 3D map, on a screen that has one. */
+/** The legacy native worker list. */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun HomeScreen(onOpenWorker: (String) -> Unit, onOffices: () -> Unit, onScan: () -> Unit, onMap: (() -> Unit)? = null) {
+fun HomeScreen(onOpenWorker: (String) -> Unit, onOffices: () -> Unit, onScan: () -> Unit) {
     val graph = LocalGraph.current
     val snackbar = LocalSnackbar.current
     val connection = graph.connection
@@ -165,7 +164,6 @@ fun HomeScreen(onOpenWorker: (String) -> Unit, onOffices: () -> Unit, onScan: ()
                     onHire = { hiring = true },
                     onRetry = connection::retryNow,
                     onFloor = connection::goFloor,
-                    onMap = onMap,
                 )
                 if (!(data.synced && data.workers.isEmpty()) && link.phase != Phase.Unauthorized) ExtendedFloatingActionButton(
                     onClick = { hiring = true },
@@ -210,7 +208,6 @@ private fun WorkerList(
     onHire: () -> Unit,
     onRetry: () -> Unit,
     onFloor: (String) -> Unit,
-    onMap: (() -> Unit)?,
 ) {
     val now = rememberNow()
     val (rows, stations) = remember(data.workers) { Workers.arrange(data.workers.values) }
@@ -226,7 +223,7 @@ private fun WorkerList(
     }
 
     Column(Modifier.fillMaxSize()) {
-        TopBar(officeName, data, link, onOffices, onMap)
+        TopBar(officeName, data, link, onOffices)
         ConnectionBanner(link, legacy, data.synced, onRetry, onScan)
         if (link.phase == Phase.Unauthorized) {
             Repair(officeName, legacy, onScan)
@@ -269,7 +266,7 @@ private fun WorkerList(
 }
 
 @Composable
-private fun TopBar(officeName: String, data: OfficeData, link: Link, onOffices: () -> Unit, onMap: (() -> Unit)?) {
+private fun TopBar(officeName: String, data: OfficeData, link: Link, onOffices: () -> Unit) {
     Row(
         Modifier.fillMaxWidth().windowInsetsPadding(WindowInsets.statusBars).padding(start = 16.dp, end = 8.dp, top = 10.dp, bottom = 8.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -290,7 +287,6 @@ private fun TopBar(officeName: String, data: OfficeData, link: Link, onOffices: 
                 }
             }
         }
-        if (onMap != null) IconButton(onClick = onMap, modifier = Modifier.tagged(Tags.Home.MAP)) { Icon(OfficeIcons.Map, "Show the map", tint = Palette.TextSecondary) }
         RouteBadge(link.kind, link.phase == Phase.Connected, unpaired = link.phase == Phase.Unauthorized, tag = Tags.Home.ROUTE)
     }
 }

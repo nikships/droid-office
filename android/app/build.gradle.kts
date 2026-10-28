@@ -114,7 +114,6 @@ dependencies {
     implementation(libs.androidx.navigation3.ui)
     implementation(libs.androidx.datastore.preferences)
     implementation(libs.androidx.webkit)
-    implementation(libs.androidx.window)
 
     // Versions come from the react-native package the React Native Gradle plugin reads.
     implementation("com.facebook.react:react-android")
