@@ -1,6 +1,8 @@
 /** Origin-scoped browser authorization. No globals at import time; no credential in a page URL. */
 export const BROWSER_KEY = 'droid-office.browser';
 export const DASHBOARD_FLOOR_KEY = 'droid-office.dashboard-floor';
+export const DASHBOARD_WORKSPACE_KEY = 'droid-office.dashboard-workspace';
+const DRAFT_PREFIX = 'droid-office.dashboard-draft.';
 
 export interface BrowserCredential {
   token: string;
@@ -45,5 +47,15 @@ export function forgetBrowserCredential(storage: StorageLike): boolean {
 
 /** Drafts are namespaced by this origin's storage, floor and exact worker, never the selected row. */
 export function draftKey(floor: string, worker: string): string {
-  return `droid-office.dashboard-draft.${JSON.stringify([floor, worker])}`;
+  return `${DRAFT_PREFIX}${JSON.stringify([floor, worker])}`;
+}
+
+/** Remove legacy persisted unsent drafts on connection loss, never submitted queue receipts. */
+export function clearBrowserDrafts(storage: Pick<Storage, 'length' | 'key' | 'removeItem'>): void {
+  const keys: string[] = [];
+  for (let i = 0; i < storage.length; i++) {
+    const key = storage.key(i);
+    if (key?.startsWith(DRAFT_PREFIX) && !key.endsWith(':queue-receipts')) keys.push(key);
+  }
+  for (const key of keys) storage.removeItem(key);
 }

@@ -189,7 +189,7 @@ test('floor moves from a companion update every client and the next welcome, wit
   assert.equal(JSON.parse(readFileSync(path.join(dir, '.droid-office/floors.json'), 'utf8'))[0].id, added.floor);
 });
 
-test('production dashboard has a public data-free bootstrap, gated APIs and a bundle that loads 3D only for the overview floor', async (t) => {
+test('production dashboard has a public data-free bootstrap, gated APIs and no map or renderer in any reachable chunk', async (t) => {
   const { base, server } = await office(t);
   const ip = await reachableLan(t, server.server);
   const remote = ip ? base.replace('127.0.0.1', ip) : base;
@@ -228,10 +228,9 @@ test('production dashboard has a public data-free bootstrap, gated APIs and a bu
   assert.ok(modules.some((id) => id.endsWith('/dashboard.ts')));
   assert.ok(modules.some((id) => id.endsWith('/ui/whiteboard.ts')));
   assert.ok(modules.some((id) => id.endsWith('/ui/terminal.ts')));
-  // The overview's 3D floor is the dashboard's only 3D: never the walkable office, its warm-up or its automation.
-  assert.ok(modules.some((id) => id.endsWith('/client/office-map.ts')));
+  // Lazy management and terminal chunks must be renderer-free too, not just the cold entry.
   assert.deepEqual(
-    modules.filter((id) => /\/client\/(?:main|automation|shader-warmup)\.ts|\/client\/world\/office\.ts/.test(id)),
+    modules.filter((id) => /\/node_modules\/three\/|\/client\/(?:office-map(?:-view)?|main|automation|shader-warmup)\.ts|\/client\/world\/(?!(?:glyph|machine)\.ts)/.test(id)),
     [],
   );
   const cold = new Set<string>();
@@ -242,10 +241,10 @@ test('production dashboard has a public data-free bootstrap, gated APIs and a bu
   };
   initial(entry.fileName);
   const coldModules = [...cold].flatMap((name) => Object.keys(chunks.get(name)?.modules ?? {}));
-  assert.ok(!coldModules.some((id) => id.includes('/node_modules/@xterm/xterm/')));
-  // three.js and the floor's meshes load only when the overview first shows the floor.
+  // Shared management log viewers use xterm; only 3D rendering is excluded from this entry.
+  // No renderer is required to open the workspace.
   assert.deepEqual(
-    coldModules.filter((id) => /\/node_modules\/three\/|\/client\/office-map\.ts|\/client\/world\/(?!glyph\.ts)/.test(id)),
+    coldModules.filter((id) => /\/node_modules\/three\/|\/client\/office-map\.ts|\/client\/world\/(?!(?:glyph|machine)\.ts)/.test(id)),
     [],
   );
 });

@@ -1,5 +1,5 @@
 import type { ClientMsg, WorkerInfo } from '../shared/protocol';
-import { canAnswer, menuTakesText, readMenu, sameMenu, type Menu } from '../shared/asks';
+import { canAnswer, menuTakesText, readMenu, sameMenu } from '../shared/asks';
 import { isAsleep, isBusy } from '../shared/status';
 import { statusWord } from '../shared/guests';
 import { cardsNewestFirst, cardChanged, OWNER } from '../shared/whiteboard';
@@ -8,27 +8,46 @@ import { DESK_BY_ID } from '../shared/layout';
 import { sessionWebUrl } from '../shared/factory-sessions';
 import { slashOf, slashRefusal } from '../shared/slash-commands';
 import { originKind, type OriginKind } from '../shared/devices';
-import { BROWSER_KEY, DASHBOARD_FLOOR_KEY, browserCredential, draftKey, forgetBrowserCredential, isBrowserCredential, saveBrowserCredential, type BrowserCredential } from './browser-session';
+import { BROWSER_KEY, DASHBOARD_FLOOR_KEY, DASHBOARD_WORKSPACE_KEY, clearBrowserDrafts, browserCredential, draftKey, forgetBrowserCredential, isBrowserCredential, saveBrowserCredential, type BrowserCredential } from './browser-session';
 import { Net } from './net';
-import { previewRows } from './screen-preview';
 import { doingLine, workerKind as kind } from './worker-words';
-import { connectWhiteboard, store } from './state';
+import { store } from './state';
 import { setBrowserAuth, withToken } from './token';
 import { $, closeAllModals, h, modalOpen, openModal, STATUS_LABEL, toast } from './ui/dom';
 import { emptyState, windowHeader } from './ui/kit';
 import { icon, type IconName } from './ui/icons';
-import { confirmDialog, openPrompt, routeWorktreeMessage, sendHomeDialog } from './ui/prompt';
-import { modelBadge, modelBadgeNode } from './ui/models';
+import { confirmDialog, openPrompt, sendHomeDialog } from './ui/prompt';
+import { modelBadge } from './ui/models';
 import { openFloorOrder } from './ui/floor-reorder';
-import { openSubscriptionsStatus } from './ui/subscriptions-status';
-import { openHostUpdate } from './ui/host-update';
+import { createCompanionTools } from './companion-tools';
+import './companion-tools.css';
 import { mountWorkerThread, type WorkerThread } from './ui/worker-thread';
-import type { MapDirection } from './office-map-view';
-import type { MapFloor, OfficeMap, OfficeMapHooks } from './office-map';
+import { forgetAllStagedImages, forgetStagedImages } from './ui/images';
+import type { WorkerStatus } from '../shared/protocol';
+import { companionCapabilities, companionRoster, companionWorkedMs, type RosterFilter } from '../shared/companion-roster';
+import {
+  companionFloorWorkspace,
+  companionWorkspaceLayout,
+  createCompanionWorkspace,
+  restoreCompanionWorkspace,
+  reduceCompanionWorkspace,
+  type CompanionPane,
+  type CompanionWorkspace,
+  type WorkspaceAction,
+} from '../shared/companion-workspace';
+import type { TerminalPane } from './ui/terminal';
 import { parseWorkerLink } from './worker-link';
 import { DashboardWorkerLink } from './dashboard-worker-link';
+import { acknowledgeDraft } from './draft-ack';
 
+const drafts = new Map<string, string>();
+try {
+  clearBrowserDrafts(localStorage);
+} catch {
+  /* Storage may be blocked. */
+}
 const read = (key: string) => {
+  if (key.startsWith('droid-office.dashboard-draft.')) return drafts.get(key) ?? '';
   try {
     return localStorage.getItem(key) ?? '';
   } catch {
@@ -36,6 +55,11 @@ const read = (key: string) => {
   }
 };
 const remember = (key: string, value: string) => {
+  if (key.startsWith('droid-office.dashboard-draft.')) {
+    if (value) drafts.set(key, value);
+    else drafts.delete(key);
+    return;
+  }
   try {
     if (value) localStorage.setItem(key, value);
     else localStorage.removeItem(key);
@@ -72,6 +96,7 @@ let gate: Gate = 'connecting';
 let authorized = false;
 let fresh = false;
 let switching = false;
+let targetFloor: string | undefined;
 let selected = '';
 let floor = '';
 let officeName = 'Droid Office';
@@ -82,7 +107,6 @@ let pairing = false;
 let persisted = true;
 let retryTimer: ReturnType<typeof setTimeout> | undefined;
 let terminal: typeof import('./ui/terminal') | undefined;
-let whiteboard: typeof import('./ui/whiteboard') | undefined;
 const busy = new Set<string>();
 
 function defaultBrowserName() {
@@ -112,11 +136,25 @@ const connText = h('span', {}, 'Connecting');
 const conn = h('span.dash-conn', { 'data-state': 'loading' }, connDot, connText);
 const boardCount = h('span.dash-count.hidden');
 const board = h('button.btn.dash-top-btn', { type: 'button', title: 'The floor’s Whiteboard (B)', onclick: () => void openBoard() }, icon('board'), h('span', {}, 'Whiteboard'), boardCount);
-const subscriptions = h('button.btn.dash-top-btn', { type: 'button', title: 'Subscriptions and account usage', onclick: () => openSubscriptionsStatus() }, icon('key'), h('span', {}, 'Subscriptions'));
-const hostUpdate = h('button.btn.dash-top-btn', { type: 'button', title: 'Update the host Mac app', onclick: () => openHostUpdate() }, icon('monitor'), h('span', {}, 'Host app'));
+const subscriptions = h('button.btn.dash-top-btn', { type: 'button', title: 'Subscriptions and account usage', onclick: () => openTool('subscriptions') }, icon('key'), h('span', {}, 'Subscriptions'));
+const hostUpdate = h('button.btn.dash-top-btn', { type: 'button', title: 'Update the host Mac app', onclick: () => openTool('host-update') }, icon('monitor'), h('span', {}, 'Host app'));
 const accessLabel = h('span', {}, WHERE[where].label);
 const access = h('button.btn.ghost.dash-top-btn', { type: 'button', title: 'How this browser reaches the office, and its pairing', onclick: () => accessDialog() }, icon(WHERE[where].icon), accessLabel);
-const top = h('header.dash-top', {}, brand, conn, hostUpdate, subscriptions, board, access, floorPicker);
+let showTools = false;
+const toolsButton = h(
+  'button.btn.dash-top-btn',
+  {
+    type: 'button',
+    'aria-controls': 'companion-tools-nav',
+    onclick: () => {
+      if (!narrow.matches) return toolRail.querySelector<HTMLButtonElement>('button:not(:disabled)')?.focus();
+      showTools = !showTools;
+      paint();
+    },
+  },
+  'Tools',
+);
+const top = h('header.dash-top', {}, brand, conn, toolsButton, hostUpdate, subscriptions, board, access, floorPicker);
 
 const bannerIcon = h('span.dash-banner-icon');
 const bannerText = h('p.dash-banner-text');
@@ -127,13 +165,27 @@ const authPanel = h('section.dash-gate', { hidden: true });
 
 const agentBtn = h('button.btn.accent.dash-hire', { type: 'button', title: 'Hire a Droid on this floor (N)', onclick: () => hire('agent') }, icon('plus'), h('span', {}, 'Hire Droid'));
 const shellBtn = h('button.btn.dash-hire', { type: 'button', title: 'Open a plain shell at a desk', onclick: () => hire('shell') }, icon('terminal'), h('span', {}, 'Shell'));
-const overviewRow = h('button.dash-nav', { type: 'button', title: 'Back to the floor (Esc)', onclick: () => select('') }, icon('cube'), h('span.grow', {}, 'Overview'), h('span.dash-nav-count'));
+const overviewRow = h('button.dash-nav', { type: 'button', title: 'Back to the floor (Esc)', onclick: () => select('') }, icon('grid'), h('span.grow', {}, 'Workers'), h('span.dash-nav-count'));
+const search = h('input.input', { type: 'search', placeholder: 'Filter workers', 'aria-label': 'Filter workers', oninput: () => paintSide() });
+const statusFilter = h('select.select', { 'aria-label': 'Filter status', onchange: () => paintSide() }, h('option', { value: '' }, 'All statuses'), ...Object.entries(STATUS_LABEL).map(([value, label]) => h('option', { value }, label)));
+const kindFilter = h(
+  'select.select',
+  { 'aria-label': 'Filter worker type', onchange: () => paintSide() },
+  ...[
+    ['', 'All types'],
+    ['agent', 'Droid'],
+    ['shell', 'Shell'],
+    ['cloud', 'Cloud'],
+    ['guest', 'Guest'],
+  ].map(([value, label]) => h('option', { value }, label)),
+);
 const workerList = h('nav.dash-workers', { 'aria-label': 'Workers' });
 const side = h(
   'aside.dash-side',
   {},
   h('div.dash-side-hire', {}, agentBtn, shellBtn),
   overviewRow,
+  h('div.cw-filters', {}, search, statusFilter, kindFilter),
   workerList,
   h(
     'div.dash-keys',
@@ -148,7 +200,10 @@ const side = h(
   ),
 );
 const mainEl = h('main.dash-main', { id: 'worker-detail', tabindex: '-1', 'aria-label': 'Office' });
-const content = h('div.dash-body', { hidden: true }, side, mainEl);
+const toolRail = h('nav.cw-tool-rail', { id: 'companion-tools-nav', 'aria-label': 'Office tools' });
+const toolMount = h('section.cw-tool-mount', { 'aria-label': 'Management tool' });
+const toolStage = h('section.cw-tool-stage', { hidden: true }, h('button.btn.cw-tool-back', { type: 'button', onclick: () => tools.close() }, 'Back to workers'), toolMount);
+const content = h('div.dash-body', { hidden: true }, toolRail, side, mainEl);
 
 $('dashboard').replaceChildren(h('a.dash-skip', { href: '#worker-detail' }, 'Skip to the work'), top, banner, authPanel, content, live$);
 
@@ -221,7 +276,18 @@ function locked(why: Gate) {
   if (gate === 'off' || gate === 'unreachable') retryTimer = setTimeout(() => void net.connect(), gate === 'off' ? 3_000 : 10_000);
   paint();
 }
-connectWhiteboard((msg) => net.send(msg));
+const tools = createCompanionTools({
+  net,
+  mount: toolMount,
+  switchFloor: goFloor,
+  openWorker: (worker, view) => {
+    tools.close();
+    select(worker);
+    dispatch({ type: 'view', floor, workerId: worker, view: view === 'tty' ? 'terminal' : 'thread' });
+    paint();
+  },
+  onChange: () => queueMicrotask(() => paint()),
+});
 net.onStatus((up) => {
   store.whiteboard.status(up);
   if (!up) {
@@ -231,13 +297,44 @@ net.onStatus((up) => {
   }
   paint();
 });
+net.onConnectionLost(() => {
+  forgetAllStagedImages();
+  dispatch({ type: 'disconnect' });
+  disposePanes();
+  closeAllModals();
+  drafts.clear();
+  try {
+    clearBrowserDrafts(localStorage);
+  } catch {
+    /* Storage may be blocked. */
+  }
+});
+net.onReady((ready) => {
+  if (!ready) {
+    switching = net.up;
+    targetFloor = net.switchingTo;
+    disposePanes();
+    closeAllModals();
+  } else {
+    if (targetFloor && floor !== targetFloor) workerLink.clear();
+    targetFloor = undefined;
+    switching = false;
+    fresh = true;
+    dispatch({ type: 'reconcile', floor, workerIds: [...store.workers.keys()] });
+    selected = currentWorkspace().active;
+  }
+  paint();
+  if (ready) followWorkerLink();
+});
 net.onMessage((msg) => {
   const entering = msg.t === 'welcome' || msg.t === 'floor.enter';
   if (entering) {
-    fresh = true;
+    // Store listeners may paint before the arrival has replaced its worker list.
+    fresh = false;
     switching = false;
     workerLink.arrive();
     if (floor && floor !== msg.floor) {
+      disposePanes();
       selected = '';
       closeAllModals();
     }
@@ -246,31 +343,26 @@ net.onMessage((msg) => {
     if (msg.arrival?.removed) notice = 'The floor you were on was removed. This is the office’s current floor.';
   }
   store.apply(msg);
+  tools.route(msg);
   terminal?.routeTerminalMessage(msg);
-  whiteboard?.routeWhiteboardMessage(msg);
-  routeWorktreeMessage(msg);
   if (entering) {
-    const open = terminal?.openTerminalFor();
-    if (open && store.workers.has(open)) net.send({ t: 'worker.attach', workerId: open });
+    fresh = true;
+    dispatch({ type: 'reconcile', floor, workerIds: [...store.workers.keys()] });
+    selected = currentWorkspace().active;
+    paint();
   }
   if (msg.t === 'toast') {
     toast(msg.text, msg.level);
-    if (switching && msg.level !== 'info') {
-      workerLink.clear();
-      switching = false;
-      notice = msg.text;
-      paint();
-    }
   }
   if (entering || msg.t === 'floors' || msg.t === 'worker.update') followWorkerLink();
 });
 for (const topic of ['floors', 'workers', 'whiteboard', 'project'] as const) store.on(topic, paint);
 store.on('screens', () => {
-  paintQuestion();
-  schedulePreviews();
+  for (const pane of panes.values()) pane.paintQuestion();
 });
 function goFloor(id: string) {
   if (!live() || id === store.floor) return;
+  disposePanes();
   closeAllModals();
   switching = true;
   selected = '';
@@ -305,11 +397,15 @@ floors.addEventListener(
 if (typeof ResizeObserver === 'function') new ResizeObserver(() => floors.querySelector('.on')?.scrollIntoView({ block: 'nearest', inline: 'nearest' })).observe(floors);
 
 function live() {
-  return authorized && net.up && fresh && !switching;
+  return authorized && net.ready && fresh && !switching;
 }
 function followWorkerLink() {
   if (!live()) return;
-  const result = workerLink.follow({ floor: store.floor, hasWorker: (id) => store.workers.has(id), hasFloor: (id) => store.floors.some((f) => f.id === id) }, (floor) => net.send({ t: 'floor.go', floor }));
+  const result = workerLink.follow({ floor: store.floor, hasWorker: (id) => store.workers.has(id), hasFloor: (id) => store.floors.some((f) => f.id === id) }, (floor) => {
+    disposePanes();
+    closeAllModals();
+    return net.send({ t: 'floor.go', floor });
+  });
   if (result.step === 'go') {
     switching = true;
     paint();
@@ -324,8 +420,8 @@ function followWorkerLink() {
     return;
   }
   if (result.step === 'gone') return toast('That worker or floor is no longer available.', 'warn');
-  if (result.link.view === 'thread') workerView = 'thread';
   select(result.link.worker);
+  if (result.link.view === 'thread') dispatch({ type: 'view', floor, workerId: result.link.worker, view: 'thread' });
   paint();
 }
 window.addEventListener('hashchange', () => {
@@ -343,13 +439,14 @@ async function action(msg: ClientMsg, id = '', intendedFloor = floor, done?: str
   const key = id || 'hire';
   if (busy.has(key)) return 'An action for this worker is still waiting for confirmation.';
   busy.add(key);
+  const epoch = navigationEpoch;
   paint();
   let hired = '';
   try {
     const result = await net.request(msg);
     if (!result.ok) return result.error ?? 'The office refused this action.';
     if (done) say(done);
-    if (msg.t === 'worker.spawn' && result.workerId && floor === intendedFloor) hired = result.workerId;
+    if (msg.t === 'worker.spawn' && result.workerId && floor === intendedFloor && epoch === navigationEpoch) hired = result.workerId;
   } finally {
     busy.delete(key);
     paint();
@@ -361,25 +458,6 @@ function say(text: string) {
 }
 
 // --- Painting ----------------------------------------------------------------------------------------
-
-/** The order of the sidebar's groups, and which workers fall in each. */
-const GROUPS: { title: string; has: (w: WorkerInfo) => boolean }[] = [
-  { title: 'Needs you', has: (w) => w.status === 'needs_input' },
-  { title: 'Working', has: (w) => isBusy(w.status) },
-  { title: 'Ready', has: (w) => !isBusy(w.status) && !isAsleep(w.status) },
-  { title: 'Asleep', has: (w) => isAsleep(w.status) },
-];
-function grouped(): { title: string; workers: WorkerInfo[] }[] {
-  const all = [...store.workers.values()].sort((a, b) => a.createdAt - b.createdAt);
-  const left = new Set(all);
-  return GROUPS.map((g) => {
-    const workers = [...left].filter(g.has);
-    for (const w of workers) left.delete(w);
-    return { title: g.title, workers };
-  }).filter((g) => g.workers.length);
-}
-/** Workers in the order the sidebar lists them, for the arrow keys. */
-const ordered = () => grouped().flatMap((g) => g.workers);
 
 function avatar(w: WorkerInfo, size = '') {
   const el = h('span.dash-avatar', { class: size, 'aria-hidden': 'true' }, w.kind === 'shell' ? '$' : (Array.from(w.name.trim())[0] ?? '?').toUpperCase());
@@ -433,8 +511,10 @@ function paint() {
   connText.textContent = { live: 'Live', loading: 'Syncing', down: 'Offline', locked: 'Locked' }[state];
   const here = store.currentFloor();
   reorderFloors.disabled = !up || store.floors.length < 2;
-  agentBtn.disabled = shellBtn.disabled = dockAgent.disabled = dockShell.disabled = !up || !here || busy.has('hire');
+  agentBtn.disabled = shellBtn.disabled = !up || !here || busy.has('hire');
   board.disabled = !up || !here;
+  toolsButton.disabled = !up;
+  toolsButton.setAttribute('aria-expanded', String(showTools || !narrow.matches));
   subscriptions.disabled = !up;
   hostUpdate.disabled = !up;
   content.classList.toggle('dash-stale', !up);
@@ -445,8 +525,7 @@ function paint() {
   accessLabel.textContent = credential && where !== 'local' ? `${WHERE[where].label} · paired` : WHERE[where].label;
   paintBanner();
   if (!authorized) {
-    officeMap?.stop();
-    thread?.activate(false);
+    for (const pane of panes.values()) pane.thread?.activate(false);
     return paintGate();
   }
   paintFloors(up);
@@ -457,17 +536,13 @@ function paint() {
   board.setAttribute('aria-label', changed ? `Whiteboard, ${changed} unread` : 'Whiteboard');
   const needs = [...store.workers.values()].filter((w) => w.status === 'needs_input').length;
   document.title = `${needs ? `(${needs}) ` : ''}${officeName} · Web companion`;
-  paintSide();
-  if (selected && !store.workers.has(selected) && detailId === selected) {
-    toast('That worker has left the floor.', 'info');
-    selected = '';
+  if (fresh && !switching) {
+    dispatch({ type: 'reconcile', floor, workerIds: [...store.workers.keys()] });
+    selected = currentWorkspace().active;
   }
-  const overviewing = !selected || !store.workers.get(selected);
-  content.classList.toggle('dash-overviewing', overviewing);
-  if (overviewing) {
-    thread?.activate(false);
-    paintOverview();
-  } else paintWorker(store.workers.get(selected) as WorkerInfo);
+  paintSide();
+  paintTools();
+  paintWorkspace();
 }
 
 function paintBanner() {
@@ -588,719 +663,547 @@ function paintGate() {
   authPanel.replaceChildren(h('div.dash-gate-card', {}, ...views[gate](), whereChip));
 }
 
-type Rows = Map<string, { el: HTMLButtonElement; key: string }>;
-/** Sidebar rows are kept per worker, so hover, focus and the selection survive repaints. */
+type Rows = Map<string, { el: HTMLButtonElement }>;
 const rows: Rows = new Map();
+const panes = new Map<string, WorkspacePane>();
+let workspace = restoreWorkspace();
+let navigationEpoch = 0;
+const narrow = matchMedia('(max-width: 760px)');
+const paneHost = h('div.cw-panes');
+const emptyWorkspace = h('div.cw-empty', {}, emptyState('', 'Choose a worker', 'Open a worker from the roster. Pin up to four distinct workers side by side.'));
+const quickSwitch = h('select.select.cw-switch', { 'aria-label': 'Switch worker', onchange: () => select(quickSwitch.value) });
+const mobileNav = h(
+  'nav.cw-mobile-nav',
+  { 'aria-label': 'Conversation navigation' },
+  h('button.btn', { type: 'button', onclick: () => select('') }, 'Workers'),
+  h('button.btn', { type: 'button', 'aria-label': 'Previous worker', onclick: () => moveWorker(-1) }, 'Previous'),
+  quickSwitch,
+  h('button.btn', { type: 'button', 'aria-label': 'Next worker', onclick: () => moveWorker(1) }, 'Next'),
+);
+mainEl.replaceChildren(mobileNav, paneHost, emptyWorkspace, toolStage);
+narrow.addEventListener('change', () => paintWorkspace());
 
-/** Fills `into` with the floor's workers in their groups, one row each from `cache`, lighting `lit`. */
-function paintRows(into: HTMLElement, cache: Rows, lit: string, open: (id: string) => void, empty: HTMLElement[], made?: (el: HTMLButtonElement, id: string) => void) {
-  const seen = new Set<string>();
-  const children: HTMLElement[] = [];
-  for (const g of grouped()) {
-    children.push(h('div.dash-group', { class: g.title === 'Needs you' ? 'attn' : undefined }, h('span', {}, g.title), h('span.dash-group-count', {}, String(g.workers.length))));
-    for (const w of g.workers) {
-      seen.add(w.id);
-      const key = JSON.stringify([w.name, w.color, w.status, doingLine(w), statusWord(w, STATUS_LABEL)]);
-      let row = cache.get(w.id);
-      if (!row || row.key !== key) {
-        let el = row?.el;
-        if (!el) {
-          el = h('button.dash-row', { type: 'button', 'data-worker': w.id, onclick: () => open(w.id) }) as HTMLButtonElement;
-          made?.(el, w.id);
-        }
-        el.classList.toggle('attn', w.status === 'needs_input');
-        el.classList.toggle('asleep', isAsleep(w.status));
-        el.title = `${w.name} · ${kind(w)}`;
-        el.replaceChildren(avatar(w), h('span.dash-row-main', {}, h('span.dash-row-name', {}, w.name), h('span.dash-row-meta', {}, doingLine(w))), pill(w));
-        row = { el, key };
-        cache.set(w.id, row);
-      }
-      children.push(row.el);
+function restoreWorkspace(): CompanionWorkspace {
+  try {
+    return restoreCompanionWorkspace(JSON.parse(read(DASHBOARD_WORKSPACE_KEY)));
+  } catch {
+    return createCompanionWorkspace();
+  }
+}
+function dispatch(action: WorkspaceAction) {
+  if (action.type === 'reconcile') {
+    const valid = new Set(action.workerIds);
+    for (const [workerId, draft] of Object.entries(companionFloorWorkspace(workspace, action.floor).drafts)) {
+      if (!valid.has(workerId)) forgetStagedImages(draft.attachments);
     }
   }
-  for (const id of [...cache.keys()]) if (!seen.has(id)) cache.delete(id);
-  if (!seen.size) children.push(...empty);
-  const focused = document.activeElement;
-  const had = focused instanceof HTMLElement && into.contains(focused) ? focused.dataset.worker : undefined;
-  into.replaceChildren(...children);
-  if (had && document.activeElement !== cache.get(had)?.el) cache.get(had)?.el.focus({ preventScroll: true });
-  lightRows(cache, lit);
+  workspace = reduceCompanionWorkspace(workspace, action);
+  remember(DASHBOARD_WORKSPACE_KEY, JSON.stringify(companionWorkspaceLayout(workspace)));
 }
-function lightRows(cache: Rows, lit: string) {
-  for (const [id, { el }] of cache) {
-    el.classList.toggle('on', id === lit);
-    if (cache === rows) el.setAttribute('aria-current', id === lit ? 'true' : 'false');
-  }
+function currentWorkspace() {
+  return companionFloorWorkspace(workspace, floor);
 }
+function roster() {
+  return companionRoster(
+    [...store.workers.values()],
+    { query: search.value, status: (statusFilter.value as WorkerStatus | undefined) || undefined, kind: (kindFilter.value as RosterFilter['kind']) || undefined },
+    new Set(currentWorkspace().collapsed),
+  );
+}
+const ordered = () =>
+  roster()
+    .filter((row) => row.matches)
+    .map((row) => row.worker);
 
 function paintSide() {
-  const total = store.workers.size;
   overviewRow.classList.toggle('on', !selected);
-  overviewRow.setAttribute('aria-current', !selected ? 'page' : 'false');
-  (overviewRow.lastElementChild as HTMLElement).textContent = total ? String(total) : '';
-  paintRows(workerList, rows, selected, select, [h('p.dash-side-empty', {}, live() ? 'Nobody on this floor yet.' : 'Waiting for the office…')]);
-}
-
-function select(id: string) {
-  if (selected === id) {
-    if (id) rows.get(id)?.el.focus({ preventScroll: true });
-    return;
-  }
-  if (!id && selected) leaving = selected;
-  selected = id;
-  paint();
-  if (id) rows.get(id)?.el.scrollIntoView({ block: 'nearest' });
-}
-
-/** Opens worker `id`: on the map, the camera flies in to its desk first. */
-async function enter(id: string) {
-  if (flying) return;
-  if (view === 'overview' && officeMap && mapShown && store.workers.has(id)) {
-    flying = true;
-    try {
-      await officeMap.flyTo(id);
-    } finally {
-      flying = false;
-    }
-    if (view !== 'overview' || !store.workers.has(id)) return;
-  }
-  select(id);
-}
-
-// --- The overview: the floor in 3D (or every worker's screen in a grid) -----------------------------
-
-const LAYOUT_KEY = 'droid-office.dashboard-layout';
-let view: 'overview' | 'worker' | '' = '';
-/** How the overview shows the floor: the 3D map, or the grid of screens. */
-let layout: 'map' | 'grid' = read(LAYOUT_KEY) === 'grid' ? 'grid' : 'map';
-let officeMap: OfficeMap | undefined;
-let mapLoading = false;
-/** The map can't be drawn here (no WebGL, its code failed to load, or the GPU gave up). */
-let mapBroken = false;
-let mapShown = false;
-/** The worker whose terminal was just closed, for the map to pull back out of. */
-let leaving = '';
-let flying = false;
-/** Who the map has lit up, mirrored in the roster. */
-let mapLit = '';
-let webgl: boolean | undefined;
-const mapUsable = () => {
-  webgl ??= (() => {
-    try {
-      return !!document.createElement('canvas').getContext('webgl2');
-    } catch {
-      return false;
-    }
-  })();
-  return webgl && !mapBroken;
-};
-
-const cards = new Map<string, { el: HTMLElement; preview: HTMLElement; key: string }>();
-const stats = h('div.dash-stats');
-const grid = h('div.dash-grid');
-const overviewTitle = h('h2', {});
-const overviewSub = h('p.dash-overview-sub');
-const overviewHead = h('header.dash-overview-head', {}, h('div.dash-overview-titles', {}, h('span.eyebrow', {}, 'Floor'), overviewTitle, overviewSub), stats);
-const gridWrap = h('div.dash-grid-wrap', {}, grid);
-
-const mapStage = h('div.dash-map', {}, h('div.dash-map-wait', {}, h('div.spinner'), h('span', {}, 'Building the floor…')));
-const crew: Rows = new Map();
-const rosterList = h('nav.dash-roster-list', { 'aria-label': 'Workers on this floor' });
-const roster = h('aside.dash-roster', {}, rosterList);
-
-const dockAgent = h('button.btn.accent.dash-hire', { type: 'button', title: 'Hire a Droid (N), or click a free desk to seat it there', onclick: () => hire('agent') }, icon('plus', 14), h('span', {}, 'Hire Droid'));
-const dockShell = h('button.btn.dash-hire', { type: 'button', title: 'Open a plain shell at a desk', onclick: () => hire('shell') }, icon('terminal', 14), h('span', {}, 'Shell'));
-const homeBtn = h('button.btn.icon.ghost', { type: 'button', 'aria-label': 'Whole floor', title: 'Whole floor (0)', onclick: () => void officeMap?.home() }, icon('frame', 15));
-const zoomOut = h('button.btn.icon.ghost', { type: 'button', 'aria-label': 'Zoom out', title: 'Zoom out (−)', onclick: () => void officeMap?.zoom(1.3) }, icon('minus', 15));
-const zoomIn = h('button.btn.icon.ghost', { type: 'button', 'aria-label': 'Zoom in', title: 'Zoom in (+)', onclick: () => void officeMap?.zoom(0.75) }, icon('plus', 15));
-const mapTools = h('div.dash-dock-group', { role: 'group', 'aria-label': 'Camera' }, homeBtn, zoomOut, zoomIn);
-const mapBtn = h('button.btn.sm', { type: 'button', title: 'The floor in 3D (G)', onclick: () => setLayout('map') }, icon('cube', 14), h('span', {}, 'Floor'));
-const gridBtn = h('button.btn.sm', { type: 'button', title: 'Every screen in a grid (G)', onclick: () => setLayout('grid') }, icon('grid', 14), h('span', {}, 'Grid'));
-const layoutSeg = h('div.seg.dash-layout', { role: 'group', 'aria-label': 'Layout' }, mapBtn, gridBtn);
-const dockKeys = h('div.dash-dock-keys', { 'aria-hidden': 'true' });
-const dock = h('div.dash-dock', { role: 'toolbar', 'aria-label': 'Overview' }, h('div.dash-dock-group', {}, dockAgent, dockShell), mapTools, h('div.dash-dock-group', {}, layoutSeg), dockKeys);
-const overview = h('section.dash-overview', {}, mapStage, roster, gridWrap, dock);
-
-/** Tells the map how much of it the roster and the dock cover, so it frames the floor beside them. */
-function mapInsets() {
-  if (!officeMap || !mapShown) return;
-  const box = mapStage.getBoundingClientRect();
-  const r = roster.getBoundingClientRect();
-  const d = dock.getBoundingClientRect();
-  // A roster down the left side insets the left; one docked along the bottom (narrow screens) insets the bottom.
-  const beside = r.height > box.height * 0.45 || r.top < box.top + box.height * 0.4;
-  const top = Math.min(d.top, beside ? Infinity : r.top);
-  officeMap.setInsets(beside ? r.right - box.left : 0, box.bottom - top);
-}
-const insetWatch = typeof ResizeObserver === 'function' ? new ResizeObserver(() => mapInsets()) : undefined;
-for (const el of [overview, roster, dock]) insetWatch?.observe(el);
-
-function setLayout(next: 'map' | 'grid') {
-  if (next === 'map' && !mapUsable()) return toast('This browser can’t draw the 3D floor (WebGL 2 is off or unavailable).', 'warn');
-  if (layout === next) return;
-  layout = next;
-  remember(LAYOUT_KEY, next === 'grid' ? 'grid' : '');
-  say(next === 'map' ? 'Showing the floor in 3D.' : 'Showing every screen in a grid.');
-  paint();
-}
-
-function stat(label: string, value: number, tone = '') {
-  return h('div.dash-stat', { class: tone }, h('b', {}, String(value)), h('span', {}, label));
-}
-
-function chip(w: WorkerInfo) {
-  if (w.pr) return `#${w.pr.number}`;
-  if (w.kind === 'agent') return modelBadge(w.activeModel ?? w.model, w.activeEffort ?? w.effort) || undefined;
-  return w.worktree?.branch;
-}
-
-function mapFloor(): MapFloor | undefined {
-  const here = store.currentFloor();
-  if (!here) return undefined;
-  return { id: here.id, name: here.name, palette: here.palette, plain: !!here.plain, bottom: store.floors[0]?.id === here.id };
-}
-
-const mapHooks: OfficeMapHooks = {
-  open: (id) => void enter(id),
-  hire: (deskId) => hire('agent', deskId),
-  canHire: () => live() && !!store.currentFloor() && !busy.has('hire'),
-  screen: (id) => store.screens.get(id),
-  preview: (into, id) => renderPreview(into, id, 14),
-  words: (w) => ({ status: statusWord(w, STATUS_LABEL), doing: doingLine(w), kind: kind(w), chip: chip(w) }),
-  focused: (id) => {
-    if (id === mapLit) return;
-    mapLit = id;
-    lightRows(crew, id);
-  },
-  lost: () => {
-    mapBroken = true;
-    toast('The 3D floor stopped: the browser’s graphics gave up. Showing the grid instead.', 'warn');
-    paint();
-  },
-};
-
-function paintOverview() {
-  if (view !== 'overview') {
-    terminal?.closeTerminal();
-    detailId = '';
-    stageMode = '';
-    view = 'overview';
-    mainEl.replaceChildren(overview);
-  }
-  const here = store.currentFloor();
-  overviewTitle.textContent = store.floor === ROOF ? 'Rooftop' : (here?.name ?? 'No floor');
-  overviewSub.textContent = here
-    ? [here.repo ?? 'Not a git repository', here.branch && `on ${here.branch}`].filter(Boolean).join(' · ')
-    : store.floors.length
-      ? 'Choose a floor above.'
-      : 'No floors yet. Add a project from the office itself.';
-  const workers = ordered();
-  const n = (f: (w: WorkerInfo) => boolean) => workers.filter(f).length;
-  const needs = n((w) => w.status === 'needs_input');
-  stats.replaceChildren(
-    stat('Workers', workers.length),
-    stat('Need you', needs, needs ? 'attn' : ''),
-    stat(
-      'Working',
-      n((w) => w.status === 'working' || w.status === 'starting'),
-    ),
-    stat(
-      'Asleep',
-      n((w) => isAsleep(w.status)),
-    ),
-  );
-  mapShown = layout === 'map' && mapUsable() && !!here;
-  overview.dataset.layout = mapShown ? 'map' : 'grid';
-  mapStage.hidden = roster.hidden = mapTools.hidden = !mapShown;
-  gridWrap.hidden = mapShown;
-  mapBtn.disabled = !mapUsable() || !here;
-  for (const [b, on] of [
-    [mapBtn, mapShown],
-    [gridBtn, !mapShown],
-  ] as const) {
-    b.classList.toggle('on', on);
-    b.setAttribute('aria-pressed', String(on));
-  }
-  dockKeys.replaceChildren(
-    ...keyHints(
-      mapShown
-        ? [
-            ['←↑↓→', 'move'],
-            ['↵', 'open'],
-            ['N', 'hire'],
-            ['G', 'grid'],
-          ]
-        : [
-            ['↑↓', 'open'],
-            ['N', 'hire'],
-            ['G', 'floor'],
-          ],
-    ),
-  );
-  const home = mapShown ? roster : gridWrap;
-  if (overviewHead.parentElement !== home) home.prepend(overviewHead);
-  if (mapShown) {
-    paintRoster();
-    void paintMap();
-  } else {
-    officeMap?.stop();
-    leaving = '';
-    paintGrid(workers);
-  }
-}
-
-function paintRoster() {
-  const hint = live() && store.currentFloor() ? 'Click any free desk on the floor to hire a Droid there, or press N.' : 'Waiting for the office…';
-  paintRows(
-    rosterList,
-    crew,
-    mapLit,
-    (id) => void enter(id),
-    [h('div.dash-roster-empty', {}, h('b', {}, 'Nobody on this floor yet'), h('p', {}, hint))],
-    (el, id) => {
-      el.addEventListener('pointerenter', () => officeMap?.setCursor(id, false));
-      el.addEventListener('pointerleave', () => {
-        if (document.activeElement !== el) officeMap?.setCursor('', false);
-      });
-      el.addEventListener('focus', () => {
-        if (officeMap?.focusedId !== id) officeMap?.setCursor(id);
-      });
-    },
-  );
-}
-
-async function paintMap() {
-  if (!officeMap) {
-    if (mapLoading) return;
-    mapLoading = true;
-    try {
-      const { OfficeMap } = await import('./office-map');
-      officeMap = new OfficeMap(mapHooks);
-      mapStage.replaceChildren(officeMap.el);
-    } catch (error) {
-      console.warn('office map unavailable', error);
-      mapBroken = true;
-      toast('The 3D floor couldn’t load. Showing the grid instead.', 'warn');
-    } finally {
-      mapLoading = false;
-    }
-    // The page may have moved on while the map's code was loading.
-    paint();
-    return;
-  }
-  if (view !== 'overview' || !mapShown) return;
-  // Drawing first, so the first look at a floor plays as a flight rather than a jump.
-  mapInsets();
-  officeMap.start();
-  officeMap.sync(store.workers.values(), mapFloor());
-  if (leaving) {
-    const id = leaving;
-    leaving = '';
-    void officeMap.returnFrom(id);
-  }
-}
-
-function paintGrid(workers: WorkerInfo[]) {
-  const here = store.currentFloor();
+  (overviewRow.lastElementChild as HTMLElement).textContent = String(store.workers.size);
+  const active = document.activeElement instanceof HTMLElement ? document.activeElement.dataset.worker : undefined;
+  const visible = roster();
   const seen = new Set<string>();
   const children: HTMLElement[] = [];
-  for (const w of workers) {
+  for (const row of visible) {
+    const w = row.worker;
     seen.add(w.id);
-    const key = JSON.stringify([w.name, w.color, w.status, doingLine(w), kind(w), w.worktree?.branch, w.pr?.number, w.activeModel ?? w.model, statusWord(w, STATUS_LABEL)]);
-    let card = cards.get(w.id);
-    if (!card) {
-      const preview = h('pre.dash-preview', { 'aria-hidden': 'true' });
-      const el = h('button.dash-card', { type: 'button', 'data-worker': w.id, onclick: () => select(w.id) });
-      card = { el, preview, key: '' };
-      cards.set(w.id, card);
+    let cached = rows.get(w.id);
+    if (!cached) {
+      cached = { el: h('button.dash-row', { type: 'button', 'data-worker': w.id, onclick: () => select(w.id) }) };
+      rows.set(w.id, cached);
     }
-    if (card.key !== key) {
-      card.key = key;
-      const model = w.kind === 'agent' ? modelBadge(w.activeModel ?? w.model, w.activeEffort ?? w.effort) : '';
-      card.el.classList.toggle('attn', w.status === 'needs_input');
-      card.el.classList.toggle('asleep', isAsleep(w.status));
-      card.el.setAttribute('aria-label', `${w.name}, ${statusWord(w, STATUS_LABEL)}: ${doingLine(w)}`);
-      card.el.replaceChildren(
+    const el = cached.el;
+    const parent = w.lead ? (store.workers.get(w.lead)?.name ?? 'Lead no longer on this floor') : 'Independent worker';
+    el.title = `${w.name} · ${kind(w)} · ${parent}`;
+    el.classList.toggle('on', selected === w.id);
+    el.setAttribute('aria-current', String(selected === w.id));
+    el.replaceChildren(
+      avatar(w),
+      h(
+        'span.dash-row-main',
+        {},
+        h('span.dash-row-name', {}, w.name),
+        h('span.dash-row-meta', {}, w.task?.name ?? w.title ?? kind(w)),
+        h('span.dash-row-meta', {}, parent),
+        h('span.dash-row-meta', {}, doingLine(w)),
+        h('span.dash-row-meta', {}, modelBadge(w.activeModel ?? w.model, w.activeEffort ?? w.effort)),
+        h('span.dash-row-meta', {}, `${Math.floor(companionWorkedMs(w, Date.now()) / 60_000)}m worked`),
+      ),
+      pill(w),
+    );
+    const collapse = h(
+      'button.btn.sm.ghost',
+      {
+        type: 'button',
+        disabled: !row.childCount,
+        'aria-label': `${row.collapsed ? 'Expand' : 'Collapse'} ${w.name}'s children`,
+        'aria-expanded': String(!row.collapsed),
+        onclick: () => {
+          dispatch({ type: 'collapse', floor, workerId: w.id });
+          paintSide();
+        },
+      },
+      row.childCount ? (row.collapsed ? '▸' : '▾') : '·',
+    );
+    const pin = h(
+      'button.btn.sm',
+      { type: 'button', disabled: !live() || (currentWorkspace().panes.length >= 4 && !currentWorkspace().panes.some((p) => p.workerId === w.id)), 'aria-label': `Pin ${w.name}`, onclick: () => select(w.id, true) },
+      'Pin',
+    );
+    const item = h('div.cw-roster-item', {}, collapse, el, pin);
+    item.style.setProperty('--depth', String(row.depth));
+    children.push(item);
+    if (row.childCount)
+      children.push(
         h(
-          'span.dash-card-head',
+          'p.cw-child-counts',
           {},
-          avatar(w),
-          h('span.dash-card-titles', {}, h('span.dash-card-name', {}, w.name), h('span.dash-card-kind', {}, kind(w), model ? ' · ' : null, model ? modelBadgeNode(w.activeModel ?? w.model, w.activeEffort ?? w.effort) : null)),
-          pill(w),
-        ),
-        card.preview,
-        h(
-          'span.dash-card-foot',
-          {},
-          h('span.dash-card-doing', { title: doingLine(w) }, doingLine(w)),
-          w.pr ? h('span.dash-chip', {}, icon('pr', 12), `#${w.pr.number}`) : w.worktree ? h('span.dash-chip', { title: w.worktree.branch }, icon('pr', 12), w.worktree.branch) : null,
+          `${row.descendantCount} children · ${Object.entries(row.childStatuses)
+            .map(([status, count]) => `${count} ${STATUS_LABEL[status as WorkerStatus]}`)
+            .join(' · ')}`,
         ),
       );
+  }
+  for (const id of rows.keys()) if (!seen.has(id)) rows.delete(id);
+  if (!children.length) children.push(h('p.dash-side-empty', {}, store.workers.size ? 'No workers match these filters.' : 'Nobody on this floor yet.'));
+  workerList.replaceChildren(...children);
+  if (active) rows.get(active)?.el.focus({ preventScroll: true });
+  const value = selected;
+  quickSwitch.replaceChildren(h('option', { value: '' }, 'Choose worker'), ...ordered().map((w) => h('option', { value: w.id }, w.name)));
+  quickSwitch.value = value;
+}
+function select(id: string, pin = false) {
+  if (id && !store.workers.has(id)) return;
+  tools.close();
+  showTools = false;
+  if (id) dispatch({ type: 'open', floor, workerId: id, pin });
+  else dispatch({ type: 'focus', floor, workerId: '' });
+  selected = currentWorkspace().active;
+  paint();
+}
+async function enter(id: string) {
+  select(id);
+}
+function moveWorker(step: number) {
+  const all = ordered();
+  if (!all.length) return;
+  const index = all.findIndex((w) => w.id === selected);
+  select(all[(index + step + all.length) % all.length]!.id);
+}
+function disposePanes() {
+  navigationEpoch++;
+  for (const pane of panes.values()) pane.dispose();
+  panes.clear();
+}
+function paintWorkspace() {
+  if (switching || !fresh || !net.ready) return;
+  const state = currentWorkspace();
+  for (const [id, pane] of panes) {
+    if (pane.floor !== floor || !state.panes.some((p) => p.workerId === id) || !store.workers.has(id)) {
+      pane.dispose();
+      panes.delete(id);
     }
-    children.push(card.el);
   }
-  for (const id of [...cards.keys()]) if (!seen.has(id)) cards.delete(id);
-  if (!workers.length) {
-    const hireHere = h('button.btn.accent', { type: 'button', disabled: !live() || !here, onclick: () => hire('agent') }, icon('plus', 14), 'Hire Droid');
-    children.push(
-      h('div.dash-grid-empty', {}, emptyState('', here ? 'Nobody on this floor yet' : 'No floor to show', here ? 'Hire a Droid and its live terminal shows up here.' : 'Add a project in the office first.', here ? hireHere : undefined)),
-    );
+  for (const spec of state.panes) {
+    const worker = store.workers.get(spec.workerId);
+    if (!worker) continue;
+    let pane = panes.get(worker.id);
+    if (!pane) {
+      pane = new WorkspacePane(worker, floor);
+      panes.set(worker.id, pane);
+      paneHost.append(pane.element);
+    }
+    pane.update(worker, spec);
   }
-  grid.replaceChildren(...children);
-  paintPreviews();
+  const managing = !!tools.current();
+  content.classList.toggle('cw-conversation', !!selected || managing);
+  content.classList.toggle('cw-show-tools', showTools);
+  emptyWorkspace.hidden = state.panes.length > 0 || managing;
+  paneHost.hidden = state.panes.length === 0 || managing;
+  mobileNav.hidden = !selected || managing;
+  toolStage.hidden = !managing;
 }
-let previewFrame = 0;
-let previewAt = 0;
-function schedulePreviews() {
-  if ((view === 'worker' && stageMode === 'terminal') || (view === 'overview' && mapShown)) return;
-  if (previewFrame) return;
-  // Screens stream a few times a second per worker; a quarter second is plenty for a glance.
-  const wait = Math.max(0, 250 - (performance.now() - previewAt));
-  previewFrame = window.setTimeout(() => {
-    previewFrame = 0;
-    previewAt = performance.now();
-    paintPreviews();
-  }, wait);
-}
-function renderPreview(into: HTMLElement, id: string, max: number) {
-  const s = store.screens.get(id);
-  if (!s) {
-    into.replaceChildren(h('span.dash-preview-none', {}, 'No screen yet'));
-    return;
-  }
-  into.style.setProperty('--cols', String(Math.max(20, s.cols)));
-  into.replaceChildren(
-    ...previewRows(s.lines, s.rows, max).map((row) =>
-      h(
-        'span.dash-preview-row',
-        {},
-        ...row.map((r) => {
-          if (!r.color && !r.background && !r.bold && !r.dim) return r.text;
-          const span = h('span', { class: [r.bold ? 'b' : '', r.dim ? 'd' : ''].join(' ').trim() || undefined }, r.text);
-          if (r.color) span.style.color = r.color;
-          if (r.background) span.style.background = r.background;
-          return span;
-        }),
-      ),
-    ),
-  );
-}
-function paintPreviews() {
-  if (view === 'overview' && !mapShown) for (const [id, card] of cards) renderPreview(card.preview, id, 30);
-  else if (view === 'worker' && stageMode === 'info' && infoPreview && detailId) renderPreview(infoPreview, detailId, 40);
-}
-
-// --- One worker: its terminal, with its controls on top --------------------------------------------
-
-let detailId = '';
-let stageMode = '';
-let thread: WorkerThread | undefined;
-let workerView = read('droid-office.companion-view') === 'thread' ? 'thread' : 'terminal';
-let viewToggle: HTMLElement;
-let stage: HTMLElement;
-let controls: HTMLElement;
-let question: HTMLElement;
-let infoPreview: HTMLElement | undefined;
-let infoName: HTMLElement;
-let infoMeta: HTMLElement;
-let infoActivity: HTMLElement;
-let infoHead: HTMLElement;
-let shownMenu: Menu | undefined;
-let questionKey = '';
-let questionDraft = '';
-let answered = false;
-let questionReplying = false;
-let answerSettlesAt = 0;
-
-function paintWorker(w: WorkerInfo) {
-  if (view !== 'worker') officeMap?.stop();
-  view = 'worker';
-  if (detailId !== w.id) {
-    thread?.dispose();
-    thread = undefined;
-    terminal?.closeTerminal();
-    detailId = w.id;
-    stageMode = '';
-    shownMenu = undefined;
-    questionKey = '';
-    questionDraft = read(draftKey(floor, `${w.id}:answer`));
-    answered = false;
-    questionReplying = false;
-    answerSettlesAt = 0;
-    controls = h('div.dash-controls', { role: 'group', 'aria-label': 'Worker actions' });
-    question = h('section.dash-question', { 'aria-label': 'Question requiring input', hidden: true });
-    stage = h('div.dash-stage');
-    viewToggle = h('div.seg.dash-view-toggle', { role: 'group', 'aria-label': 'Worker view' });
-    mainEl.replaceChildren(h('div.dash-worker', {}, viewToggle, question, stage));
-  }
-  const local = !w.guest && !w.cloud;
-  const threaded = local && w.kind === 'agent' && workerView === 'thread';
-  viewToggle.hidden = !local || w.kind !== 'agent';
-  viewToggle.replaceChildren(
-    ...(threaded ? [h('button.btn.dash-thread-back', { type: 'button', onclick: () => select('') }, 'All workers')] : []),
-    ...(['thread', 'terminal'] as const).map((value) =>
-      h(
-        'button',
-        {
-          type: 'button',
-          class: `btn ${(threaded ? 'thread' : 'terminal') === value ? 'on' : ''}`,
-          'aria-pressed': String((threaded ? 'thread' : 'terminal') === value),
-          onclick: () => {
-            workerView = value;
-            remember('droid-office.companion-view', value);
-            paint();
-          },
-        },
-        value === 'thread' ? 'Thread' : 'Raw TTY',
-      ),
-    ),
-  );
-  // Anything without a local terminal to show (outside the office, in Factory, asleep) gets what the office knows of it.
-  const mode = threaded ? 'thread' : local && !isAsleep(w.status) ? 'terminal' : 'info';
-  if (mode !== stageMode) {
-    stageMode = mode;
-    thread?.activate(false);
-    terminal?.closeTerminal();
-    infoPreview = undefined;
-    if (mode === 'info') {
-      infoName = h('h2');
-      infoActivity = h('p.dash-info-activity');
-      infoMeta = h('dl.dash-meta');
-      infoHead = h('div.dash-info-who');
-      const s = store.screens.get(w.id);
-      infoPreview = s ? h('pre.dash-preview.big', { 'aria-label': `${w.name}’s screen` }) : undefined;
-      stage.replaceChildren(h('div.dash-info', {}, h('header.dash-info-head', {}, infoHead, controls), infoActivity, infoPreview ?? null, infoMeta));
-    } else if (mode === 'thread') {
-      const intended = floor;
-      const key = draftKey(intended, w.id);
-      thread ??= mountWorkerThread(net, {
-        worker: w,
-        controls,
-        question,
-        queueKey: `${key}:queue-receipts`,
-        draft: read(key),
-        onDraft: (text) => remember(key, text),
-        send: (msg) => action(msg, w.id, intended),
-        screen: () => {
-          const s = store.screens.get(w.id);
-          return s && Array.from({ length: s.rows }, (_, i) => (s.lines[i] ?? []).map((run) => run[0]).join(''));
-        },
-        team: () => (floor === intended ? [...store.workers.values()] : []),
-        openWorker: (id) => {
-          if (!usable(id, intended)) return;
-          workerView = 'thread';
-          select(id);
-        },
-        raw: () => {
-          workerView = 'terminal';
-          remember('droid-office.companion-view', 'terminal');
+class WorkspacePane {
+  readonly element = h('section.cw-pane', { tabindex: -1 });
+  readonly stage = h('div.cw-stage');
+  readonly controls = h('div.dash-controls', { role: 'group', 'aria-label': 'Worker actions' });
+  readonly question = h('section.dash-question', { 'aria-label': 'Question requiring input', hidden: true });
+  readonly tabs = h('div.seg');
+  readonly heading = h('h2');
+  readonly meta = h('p.cw-pane-meta');
+  thread?: WorkerThread;
+  raw?: TerminalPane;
+  mode = '';
+  private loading = false;
+  private disposed = false;
+  private threadRevision = 0;
+  private menuKey = '';
+  private answering = false;
+  private answered = false;
+  private shownMenu: ReturnType<typeof readMenu>;
+  private questionDraft = '';
+  private epoch: number;
+  constructor(
+    public worker: WorkerInfo,
+    readonly floor: string,
+  ) {
+    this.epoch = workspace.epoch;
+    this.questionDraft = read(draftKey(floor, `${worker.id}:answer`));
+    const close = h(
+      'button.btn.sm',
+      {
+        type: 'button',
+        'aria-label': `Unpin ${worker.name}`,
+        onclick: () => {
+          dispatch({ type: 'close', floor, workerId: worker.id });
+          selected = currentWorkspace().active;
           paint();
         },
+      },
+      'Close',
+    );
+    const resize = h('input.cw-resize', {
+      type: 'range',
+      min: 0.25,
+      max: 4,
+      step: 0.05,
+      value: 1,
+      'aria-label': `Resize ${worker.name} pane`,
+      oninput: () => {
+        dispatch({ type: 'resize', floor, workerId: worker.id, size: Number(resize.value) });
+        paintWorkspace();
+      },
+    });
+    this.element.append(h('header.cw-pane-head', {}, this.heading, this.tabs, close), this.meta, resize, this.controls, this.question, this.stage);
+    this.element.addEventListener('pointerdown', () => this.focusPane());
+    this.element.addEventListener('focusin', () => this.focusPane());
+  }
+  private focusPane() {
+    if (selected === this.worker.id) return;
+    dispatch({ type: 'focus', floor: this.floor, workerId: this.worker.id });
+    selected = this.worker.id;
+    paintSide();
+    for (const pane of panes.values()) {
+      const active = pane.worker.id === selected;
+      pane.element.classList.toggle('active', active);
+      pane.raw?.setActive(active && live());
+      pane.thread?.focus(active);
+    }
+  }
+  update(worker: WorkerInfo, spec: CompanionPane) {
+    this.worker = worker;
+    const active = selected === worker.id;
+    const visible = (!narrow.matches || active) && !tools.current();
+    this.element.hidden = !visible;
+    this.element.classList.toggle('active', active);
+    this.element.style.setProperty('--pane-size', String(spec.size));
+    const resize = this.element.querySelector<HTMLInputElement>('.cw-resize');
+    if (resize && document.activeElement !== resize) resize.value = String(spec.size);
+    this.heading.textContent = worker.name;
+    const parent = worker.lead ? (store.workers.get(worker.lead)?.name ?? 'departed lead') : 'Independent';
+    this.meta.textContent = [
+      worker.task?.name ?? worker.title,
+      kind(worker),
+      statusWord(worker, STATUS_LABEL),
+      parent,
+      modelBadge(worker.activeModel ?? worker.model, worker.activeEffort ?? worker.effort),
+      `${Math.floor(companionWorkedMs(worker, Date.now()) / 60_000)}m worked`,
+      worker.activity ?? worker.task?.summary ?? worker.prompt,
+    ]
+      .filter(Boolean)
+      .join(' · ');
+    const capability = companionCapabilities(worker);
+    const mode = spec.view === 'thread' && capability.thread ? 'thread' : spec.view === 'terminal' && capability.terminal ? 'terminal' : 'info';
+    this.tabs.replaceChildren(
+      ...(['thread', 'terminal'] as const).map((view) =>
+        h(
+          'button.btn.sm',
+          {
+            type: 'button',
+            class: spec.view === view ? 'on' : '',
+            'aria-pressed': String(spec.view === view),
+            disabled: view === 'terminal' && !capability.terminal,
+            onclick: () => {
+              dispatch({ type: 'view', floor: this.floor, workerId: worker.id, view });
+              paintWorkspace();
+            },
+          },
+          view === 'thread' ? 'Thread' : 'Raw TTY',
+        ),
+      ),
+    );
+    if (mode !== this.mode) {
+      const revision = ++this.threadRevision;
+      this.thread?.dispose();
+      this.thread = undefined;
+      this.raw?.dispose();
+      this.raw = undefined;
+      this.mode = mode;
+      if (mode === 'thread') {
+        const key = draftKey(this.floor, worker.id);
+        this.thread ??= mountWorkerThread(net, {
+          worker,
+          controls: this.controls,
+          question: this.question,
+          queueKey: `${key}:queue-receipts`,
+          draft: read(key),
+          floor: this.floor,
+          attachments: companionFloorWorkspace(workspace, this.floor).drafts[worker.id]?.attachments ?? [],
+          onDraft: (value) => {
+            if (this.epoch !== workspace.epoch || this.disposed || revision !== this.threadRevision) return;
+            remember(key, value);
+            const attachments = companionFloorWorkspace(workspace, this.floor).drafts[worker.id]?.attachments ?? [];
+            dispatch({ type: 'draft', floor: this.floor, workerId: worker.id, draft: { text: value, attachments } });
+          },
+          onAttachments: (attachments) => {
+            if (this.epoch !== workspace.epoch || this.disposed || revision !== this.threadRevision) return;
+            dispatch({ type: 'draft', floor: this.floor, workerId: worker.id, draft: { text: read(key), attachments } });
+          },
+          onSubmitted: (sent) => {
+            if (this.epoch !== workspace.epoch) return;
+            const kept = companionFloorWorkspace(workspace, this.floor).drafts[worker.id];
+            const next = acknowledgeDraft({ text: read(key), attachments: kept?.attachments ?? [] }, sent);
+            remember(key, next.text);
+            // A successful old view removes only what it sent, never a newer view's edits or pictures.
+            if (kept) dispatch({ type: 'draft', floor: this.floor, workerId: worker.id, draft: next });
+          },
+          onDraftReset: () => {
+            if (this.epoch !== workspace.epoch || this.disposed || revision !== this.threadRevision) return;
+            remember(key, '');
+            dispatch({ type: 'draft', floor: this.floor, workerId: worker.id, draft: { text: '', attachments: [] } });
+          },
+          send: (msg) => (this.valid() ? action(msg, worker.id, this.floor) : Promise.resolve('The connection or floor changed. Nothing was sent.')),
+          screen: () => lines(worker.id),
+          team: () => (this.valid() ? [...store.workers.values()] : []),
+          openWorker: (id) => {
+            if (this.valid()) select(id);
+          },
+          raw: () => {
+            dispatch({ type: 'view', floor: this.floor, workerId: worker.id, view: 'terminal' });
+            paintWorkspace();
+          },
+        });
+        this.stage.replaceChildren(this.thread.element);
+      } else {
+        this.element.insertBefore(this.controls, this.stage);
+        this.element.insertBefore(this.question, this.stage);
+        this.stage.replaceChildren(
+          mode === 'terminal'
+            ? h('p', {}, 'Opening terminal…')
+            : h(
+                'p.note',
+                {},
+                worker.guest
+                  ? 'This worker runs outside the office. Use its own terminal.'
+                  : worker.cloud || worker.kind === 'cloud'
+                    ? 'This worker runs in Factory. Open its session to read the conversation.'
+                    : worker.kind === 'shell'
+                      ? 'Shells have no conversation transcript. Select Raw TTY.'
+                      : 'Resume this worker to open its terminal.',
+              ),
+        );
+      }
+    }
+    this.thread?.update(worker, live());
+    this.thread?.focus(active);
+    this.thread?.activate(visible && mode === 'thread' && live());
+    if (mode === 'terminal' && visible && live()) void this.showRaw();
+    this.raw?.setActive(visible && active && live());
+    this.raw?.update();
+    this.paintControls();
+    this.paintQuestion();
+  }
+  private valid() {
+    return !this.disposed && this.epoch === workspace.epoch && usable(this.worker.id, this.floor);
+  }
+  private async showRaw() {
+    if (this.raw || this.loading) return;
+    this.loading = true;
+    const epoch = navigationEpoch;
+    try {
+      terminal ??= await import('./ui/terminal');
+      if (!this.valid() || epoch !== navigationEpoch || this.mode !== 'terminal') return;
+      this.stage.replaceChildren();
+      this.raw = terminal.mountTerminal(net, this.worker.id, this.stage, {
+        onLeave: () => rows.get(this.worker.id)?.el.focus(),
+        onFocus: () => this.focusPane(),
+        active: selected === this.worker.id && live(),
       });
-      stage.replaceChildren(thread.element);
-      thread.activate(true);
-    } else stage.replaceChildren(h('div.dash-stage-wait', {}, h('div.spinner'), h('span', {}, 'Opening the terminal…')));
+    } catch (error) {
+      if (this.valid()) this.stage.replaceChildren(h('p.note.bad', {}, `Could not open terminal: ${String(error)}`));
+    } finally {
+      this.loading = false;
+    }
   }
-  if (mode !== 'thread') {
-    if (question.nextElementSibling !== stage) stage.before(question);
-  } else {
-    const reading = thread?.element.querySelector('.wt-scroll');
-    if (reading && question.parentElement !== reading) reading.append(question);
+  private paintControls() {
+    const w = this.worker;
+    const enabled = this.valid() && !busy.has(w.id);
+    const btn = (label: string, ok: boolean, run: () => void) => h('button.btn.sm', { type: 'button', disabled: !enabled || !ok, onclick: run }, label);
+    this.controls.replaceChildren(
+      isAsleep(w.status) && !w.guest
+        ? btn(w.kind === 'shell' ? 'Restart' : 'Resume', !w.lost, () => void action({ t: 'worker.resume', workerId: w.id }, w.id, this.floor).then(warn))
+        : btn(w.kind === 'shell' ? 'Command' : 'Prompt', !w.guest && !w.lost, () => prompt(w)),
+      ...(w.cloud && w.sessionId ? [h('a.btn.sm', { href: sessionWebUrl(w.sessionId), target: '_blank', rel: 'noopener noreferrer' }, 'Factory session')] : []),
+      ...(w.pr
+        ? [h('a.btn.sm', { href: safeLink(w.pr.url), target: '_blank', rel: 'noopener noreferrer' }, `PR #${w.pr.number}`)]
+        : w.worktree && !w.guest && !w.cloud
+          ? [btn('Open PR', !w.lost && !w.prOpening && !isBusy(w.status), () => void action({ t: 'worker.pr', workerId: w.id }, w.id, this.floor).then(warn))]
+          : []),
+      btn('Manage', true, () => openWorkerActions(w.id)),
+      btn('Send home', !w.guest, () => sendHome(w)),
+    );
   }
-  if (mode === 'terminal') void showTerminal(w.id, stage);
-  else if (mode === 'thread') {
-    thread?.activate(true);
-    thread?.update(w, live());
-  } else paintInfo(w);
-  paintControls(w);
-  paintQuestion();
+  paintQuestion() {
+    const w = this.worker;
+    const screen = lines(w.id);
+    const menu = screen && canAnswer(w, screen) ? readMenu(screen) : undefined;
+    const key = JSON.stringify([menu, w.status, live(), this.answering, this.answered]);
+    if (key === this.menuKey) return;
+    if (!sameMenu(menu, this.shownMenu)) this.answered = false;
+    this.shownMenu = menu;
+    this.menuKey = key;
+    this.question.hidden = w.status !== 'needs_input';
+    if (this.question.hidden) return;
+    if (!menu) {
+      this.question.replaceChildren(h('p.note', {}, 'This question cannot be answered safely here. Use Raw TTY, or the worker’s own terminal.'));
+      return;
+    }
+    const text = h('textarea.input', {
+      rows: 2,
+      'aria-label': 'Typed answer',
+      oninput: () => {
+        this.questionDraft = text.value;
+        remember(draftKey(this.floor, `${w.id}:answer`), text.value);
+      },
+    });
+    text.value = this.questionDraft;
+    const enabled = this.valid() && !this.answering && !this.answered;
+    text.disabled = !enabled;
+    const reply = async (value: { choice?: number; text?: string }) => {
+      if (this.answering || this.answered) return;
+      const current = lines(w.id);
+      if (!this.valid() || !current || !sameMenu(menu, readMenu(current))) return toast('The question changed. Review it before answering.', 'warn');
+      this.answering = true;
+      this.paintQuestion();
+      const error = await action({ t: 'worker.answer', workerId: w.id, menu, ...value }, w.id, this.floor);
+      if (!this.valid()) return;
+      this.answering = false;
+      this.answered = !error;
+      if (error) warn(error);
+      else {
+        this.questionDraft = '';
+        remember(draftKey(this.floor, `${w.id}:answer`), '');
+      }
+      this.paintQuestion();
+    };
+    this.question.replaceChildren(
+      h('h3', {}, menu.question ?? 'Choose an answer'),
+      ...menu.choices.map((c) => h('button.btn', { type: 'button', disabled: !enabled, onclick: () => void reply({ choice: c.number }) }, `${c.number}. ${c.label}`)),
+      ...(menuTakesText(menu) ? [text, h('button.btn', { type: 'button', disabled: !enabled, onclick: () => void reply({ text: text.value }) }, 'Send answer')] : []),
+      ...(this.answering || this.answered ? [h('p.note', {}, this.answering ? 'Sending answer…' : 'Answer sent. Waiting for worker.')] : []),
+    );
+  }
+  dispose() {
+    this.disposed = true;
+    this.thread?.dispose();
+    this.raw?.dispose();
+    this.element.remove();
+  }
 }
-
-function paintControls(w: WorkerInfo) {
-  const enabled = live() && !busy.has(w.id);
-  const btn = (label: string, glyph: IconName, ok: boolean, run: () => void, cls = '', tip = '') =>
-    h('button.btn', { type: 'button', class: cls, title: tip || label, 'aria-label': label, disabled: !enabled || !ok, onclick: run }, icon(glyph, 14), h('span', {}, label));
-  const asleep = isAsleep(w.status);
-  const local = !w.guest && !w.cloud;
-  controls.replaceChildren(
-    ...(w.cloud && w.sessionId ? [h('a.btn', { href: sessionWebUrl(w.sessionId), target: '_blank', rel: 'noopener noreferrer' }, icon('external', 14), h('span', {}, 'Factory session'))] : []),
-    asleep && !w.guest
-      ? btn(w.kind === 'shell' ? 'Restart' : 'Resume', 'play', !w.lost, () => void action({ t: 'worker.resume', workerId: w.id }, w.id, floor, `${w.name} is waking up.`).then(warn), stageMode === 'thread' ? 'ghost dash-resume' : 'primary')
-      : btn(w.kind === 'shell' ? 'Command' : 'Prompt', 'message', !w.guest && !w.lost, () => prompt(w), stageMode === 'thread' ? 'ghost' : 'primary', w.kind === 'shell' ? 'Send a command (P)' : 'Send a prompt (P)'),
-    ...(w.pr
-      ? [h('a.btn', { href: safeLink(w.pr.url), target: '_blank', rel: 'noopener noreferrer', title: `Pull request #${w.pr.number}` }, icon('pr', 14), h('span', {}, `#${w.pr.number}`))]
-      : local && w.worktree
-        ? [btn('Open PR', 'pr', !w.lost && !w.prOpening && !isBusy(w.status), () => void action({ t: 'worker.pr', workerId: w.id }, w.id, floor, 'Opening a pull request…').then(warn), '', 'Push its branch and open a pull request')]
-        : []),
-    btn('Send home', 'home', !w.guest, () => sendHome(w), 'ghost dash-home', 'Send it home'),
-  );
-}
-const warn = (error: string | undefined) => {
-  if (error) toast(error, 'warn');
-};
-
-function paintInfo(w: WorkerInfo) {
-  infoHead.replaceChildren(avatar(w, 'lg'), h('div', {}, h('div.dash-info-name', {}, infoName, pill(w)), h('div.dash-info-kind', {}, kind(w))));
-  infoName.textContent = w.name;
-  infoActivity.textContent = w.activity ?? w.task?.summary ?? w.prompt ?? 'Waiting for a task.';
-  const lead = w.lead && store.workers.get(w.lead);
-  const team = store.teamOf(w.id);
-  const info: [string, string | undefined][] = [
-    ['Model', w.kind === 'agent' ? modelBadge(w.activeModel ?? w.model, w.activeEffort ?? w.effort) : undefined],
-    ['Task', w.task?.name ?? w.title],
-    ['Branch', w.worktree?.branch ?? store.currentFloor()?.branch],
-    ['Worktree', w.worktree?.path],
-    [
-      'Where',
-      w.lost
-        ? 'Its worktree is missing, so it can’t resume or take prompts.'
-        : w.guest
-          ? 'Running outside the office. Use its own terminal.'
-          : w.cloud
-            ? `On Factory · ${w.cloud.computerName}. No local terminal.`
-            : isAsleep(w.status)
-              ? 'Asleep. Resume it to see its terminal and prompt it.'
-              : 'A local terminal',
-    ],
-    ['Lead', lead ? lead.name : w.lead ? 'No longer on this floor' : undefined],
-    ['Subagents', team.length ? team.map((s) => s.name).join(', ') : undefined],
-    ['Other projects', w.repos?.map((r) => `${r.name} · ${r.branch}`).join(', ')],
-  ];
-  infoMeta.replaceChildren(...info.filter(([, v]) => !!v).flatMap(([label, value]) => [h('dt', {}, label), h('dd', { title: value }, label === 'Model' ? modelBadgeNode(w.activeModel ?? w.model, w.activeEffort ?? w.effort) : value)]));
-  if (infoPreview) renderPreview(infoPreview, w.id, 40);
-}
-
 function safeLink(url: string) {
   try {
-    const u = new URL(url);
-    return u.protocol === 'https:' || u.protocol === 'http:' ? u.href : '#';
+    const value = new URL(url);
+    return value.protocol === 'https:' || value.protocol === 'http:' ? value.href : '#';
   } catch {
     return '#';
   }
 }
 function lines(id: string) {
-  const s = store.screens.get(id);
-  return s && Array.from({ length: s.rows }, (_, i) => (s.lines[i] ?? []).map((r) => r[0]).join(''));
+  const screen = store.screens.get(id);
+  return screen && Array.from({ length: screen.rows }, (_, i) => (screen.lines[i] ?? []).map((run) => run[0]).join(''));
 }
-function paintQuestion(review = false) {
-  const w = store.workers.get(detailId);
-  if (!w || !question || view !== 'worker') return;
-  const screen = lines(w.id);
-  const next = screen && canAnswer(w, screen) ? readMenu(screen) : undefined;
-  if (w.status !== 'needs_input') {
-    shownMenu = undefined;
-    answered = false;
-  }
-  if ((!shownMenu && next) || review) {
-    shownMenu = next;
-    answered = false;
-  }
-  const current = sameMenu(shownMenu, next);
-  const settling = questionReplying || Date.now() < answerSettlesAt;
-  const key = JSON.stringify([shownMenu, current, live(), busy.has(w.id), answered, questionReplying, settling, w.status]);
-  if (key === questionKey) return;
-  questionKey = key;
-  question.hidden = !shownMenu && w.status !== 'needs_input';
-  const enabled = live() && current && !busy.has(w.id) && !answered && !questionReplying;
-  if (!shownMenu) {
-    if (settling) {
-      question.replaceChildren(h('div.dash-question-card.quiet', { role: 'status' }, h('p', {}, questionReplying ? 'Sending your answer…' : 'Answer sent. Waiting for the worker’s next move.')));
-      return;
+const warn = (error: string | undefined) => {
+  if (error) toast(error, 'warn');
+};
+function selectedMode() {
+  return panes.get(selected)?.mode;
+}
+type ToolId = Parameters<ReturnType<typeof createCompanionTools>['open']>[0];
+function openTool(id: ToolId) {
+  if (!live()) return;
+  showTools = false;
+  void tools.open(id, selected ? { workerId: selected } : undefined);
+  paint();
+}
+function paintTools() {
+  const nodes: HTMLElement[] = [];
+  let group = '';
+  for (const tool of tools.list()) {
+    if (tool.group !== group) {
+      group = tool.group;
+      nodes.push(h('h3.eyebrow', {}, group));
     }
-    question.replaceChildren(
+    nodes.push(
       h(
-        'div.dash-question-card.quiet',
-        {},
-        h('span.dash-question-icon', {}, icon('alert', 16)),
-        h(
-          'p',
-          {},
-          h('b', {}, `${w.name} needs you. `),
-          w.cloud
-            ? 'There is no local menu to answer: open its Factory session.'
-            : w.guest
-              ? 'Answer it in its own terminal; the office won’t type for it.'
-              : stageMode === 'thread'
-                ? 'This CLI dialog cannot be answered safely here. Open Raw TTY to continue.'
-                : 'Its screen has no menu the companion can answer safely. Answer it in the terminal below.',
-        ),
+        'button.btn.ghost.cw-tool-entry',
+        {
+          type: 'button',
+          disabled: !live() || !tool.available,
+          title: tool.reason || tool.label,
+          onclick: () => openTool(tool.id),
+        },
+        tool.label,
+        tool.count ? h('span.pill', {}, String(tool.count)) : null,
       ),
     );
-    return;
+    if (!tool.available && tool.reason) nodes.push(h('p.cw-tool-reason', {}, tool.reason));
   }
-  const menu = shownMenu;
-  const text = h('textarea.input', { rows: 2, 'aria-label': 'Typed answer', placeholder: 'Type an answer…' });
-  text.value = questionDraft;
-  text.addEventListener('input', () => {
-    questionDraft = text.value;
-    remember(draftKey(floor, `${w.id}:answer`), questionDraft);
-  });
-  const reply = async (value: { choice?: number; text?: string }) => {
-    questionReplying = true;
-    questionKey = '';
-    paintQuestion();
-    const error = await action({ t: 'worker.answer', workerId: w.id, menu, ...value }, w.id, floor, 'Answer sent.');
-    if (detailId !== w.id) return;
-    questionReplying = false;
-    if (error) {
-      answerSettlesAt = 0;
-      toast(error, 'warn');
-    } else {
-      answered = true;
-      const until = Date.now() + 3000;
-      answerSettlesAt = until;
-      setTimeout(() => {
-        if (detailId !== w.id || answerSettlesAt !== until) return;
-        questionKey = '';
-        paintQuestion();
-      }, 3000);
-      questionDraft = '';
-      remember(draftKey(floor, `${w.id}:answer`), '');
-    }
-    questionKey = '';
-    paintQuestion();
-  };
-  question.replaceChildren(
-    h(
-      'div.dash-question-card',
-      {},
-      h('div.dash-question-top', {}, h('span.eyebrow', {}, `${w.name} needs your answer`), answered ? h('span.pill.done', {}, 'Sent') : null),
-      h('h3', {}, menu.question ?? 'Choose an answer'),
+  toolRail.replaceChildren(...nodes);
+  content.classList.toggle('cw-show-tools', showTools);
+}
+function openWorkerActions(workerId: string) {
+  if (!live()) return;
+  const intended = floor;
+  const epoch = navigationEpoch;
+  const body = h('div.body.stack');
+  const modal = openModal(h('div.modal', { role: 'dialog', 'aria-label': 'Worker management' }, windowHeader('Worker management', store.workers.get(workerId)?.name), body));
+  for (const item of tools.workerActions(workerId)) {
+    body.append(
       h(
-        'div.dash-choices',
-        {},
-        ...menu.choices.map((c) =>
-          h(
-            'button.dash-choice',
-            { type: 'button', disabled: !enabled, onclick: () => void reply({ choice: c.number }) },
-            h('span.key', {}, String(c.number)),
-            h('span.dash-choice-text', {}, h('span', {}, c.label), c.description ? h('small', {}, c.description) : null),
-          ),
-        ),
+        'button.btn',
+        {
+          type: 'button',
+          disabled: !item.available,
+          title: item.reason || item.label,
+          onclick: () => {
+            if (floor !== intended || epoch !== navigationEpoch || !live()) return;
+            modal.close();
+            void tools.runWorkerAction(workerId, item.id);
+          },
+        },
+        item.label,
       ),
-      ...(menuTakesText(menu) ? [h('div.input-group.dash-answer', {}, text, h('button.btn.primary', { type: 'button', disabled: !enabled, onclick: () => void reply({ text: text.value }) }, 'Send'))] : []),
-      questionReplying
-        ? h('p.note.info', {}, 'Sending your answer…')
-        : answered
-          ? h('p.note.info', {}, 'Answer sent. Waiting for the worker’s next move.')
-          : !current
-            ? h('p.note.warn', {}, 'The question changed or was answered elsewhere. Your text is kept; look at the current question before sending anything.')
-            : null,
-      !current && next
-        ? h(
-            'button.btn',
-            {
-              type: 'button',
-              onclick: () => {
-                questionKey = '';
-                paintQuestion(true);
-              },
-            },
-            'Show the current question',
-          )
-        : null,
-    ),
-  );
+    );
+    if (!item.available && item.reason) body.append(h('p.field-hint', {}, item.reason));
+  }
 }
 
 // --- Actions ------------------------------------------------------------------------------------------
@@ -1308,6 +1211,7 @@ function paintQuestion(review = false) {
 function hire(kind: 'agent' | 'shell', deskId = 'auto') {
   if (!live() || !store.currentFloor()) return;
   const intended = floor;
+  const epoch = navigationEpoch;
   const key = draftKey(intended, `hire:${kind}`);
   const desk = deskId === 'auto' ? undefined : DESK_BY_ID.get(deskId)?.label;
   openPrompt({
@@ -1316,13 +1220,16 @@ function hire(kind: 'agent' | 'shell', deskId = 'auto') {
     submitLabel: kind === 'shell' ? 'Open shell' : 'Hire Droid',
     allowEmpty: true,
     initial: read(key),
-    onDraft: (v) => remember(key, v),
+    onDraft: (v) => {
+      if (epoch === navigationEpoch) remember(key, v);
+    },
     modelOption: kind === 'agent',
     deskId: deskId === 'auto' ? undefined : deskId,
     imagesOption: kind === 'agent',
     recall: kind === 'agent',
     worktreeOption: !store.currentFloor()?.home && !store.currentFloor()?.plain && !!store.currentFloor()?.branch,
     onSubmit: async (text, opts) => {
+      if (epoch !== navigationEpoch) return 'The connection or floor changed. Nothing was sent.';
       const error = await action({ t: 'worker.spawn', deskId, kind, prompt: text, ...opts }, '', intended, kind === 'shell' ? 'Shell opened.' : 'Droid hired.');
       if (!error) remember(key, '');
       return error;
@@ -1330,30 +1237,38 @@ function hire(kind: 'agent' | 'shell', deskId = 'auto') {
   });
 }
 function prompt(w: WorkerInfo) {
-  if (stageMode === 'thread' && w.status === 'needs_input') {
+  if (selectedMode() === 'thread' && w.status === 'needs_input') {
     toast('Answer the current question, or open Raw TTY for this CLI dialog.', 'warn');
     return;
   }
+  const thread = panes.get(w.id);
+  if (thread?.mode === 'thread') {
+    thread.element.querySelector<HTMLTextAreaElement>('.wt-input')?.focus();
+    return;
+  }
   const intended = floor;
+  const epoch = navigationEpoch;
   const key = draftKey(intended, w.id);
   openPrompt({
     title: w.kind === 'shell' ? `Command · ${w.name}` : `Prompt · ${w.name}`,
     initial: read(key),
-    onDraft: (v) => remember(key, v),
+    onDraft: (v) => {
+      if (epoch === navigationEpoch) remember(key, v);
+    },
     imagesOption: w.kind !== 'shell',
     recall: w.kind !== 'shell',
     queueOption: w.kind === 'agent' && isBusy(w.status),
     onSubmit: async (text, opts) => {
+      if (epoch !== navigationEpoch) return 'The connection or floor changed. Nothing was sent.';
       const now = store.workers.get(w.id) ?? w;
-      if (stageMode === 'thread' && now.status === 'needs_input') return 'Answer the current question, or open Raw TTY for this CLI dialog. Your draft is kept.';
+      if (selectedMode() === 'thread' && now.status === 'needs_input') return 'Answer the current question, or open Raw TTY for this CLI dialog. Your draft is kept.';
       const refused = w.kind === 'agent' ? slashRefusal(text, w.name, isBusy(now.status)) : undefined;
       if (refused) return `${refused} Your draft is kept.`;
       const error = await action({ t: 'worker.prompt', workerId: w.id, prompt: text, images: opts.images, queue: opts.queue && isBusy(now.status) }, w.id, intended, `Sent to ${w.name}.`);
       if (!error) remember(key, '');
       // Droid answers most of its slash commands with a dialog, which only its terminal shows.
-      if (!error && stageMode === 'thread' && w.kind === 'agent' && slashOf(text)?.command?.kind === 'tty') {
-        workerView = 'terminal';
-        remember('droid-office.companion-view', 'terminal');
+      if (!error && selectedMode() === 'thread' && w.kind === 'agent' && slashOf(text)?.command?.kind === 'tty') {
+        dispatch({ type: 'view', floor: intended, workerId: w.id, view: 'terminal' });
         paint();
       }
       return error;
@@ -1362,7 +1277,11 @@ function prompt(w: WorkerInfo) {
 }
 function sendHome(w: WorkerInfo) {
   const intended = floor;
-  const confirm = (cleanup: 'keep' | 'worktree' | 'all' = 'keep') => void action({ t: 'worker.kill', workerId: w.id, cleanup, deleteSession: false }, w.id, intended, `${w.name} went home.`).then(warn);
+  const epoch = navigationEpoch;
+  const confirm = (cleanup: 'keep' | 'worktree' | 'all' = 'keep') => {
+    if (epoch !== navigationEpoch) return warn('The connection or floor changed. Nothing was sent.');
+    void action({ t: 'worker.kill', workerId: w.id, cleanup, deleteSession: false }, w.id, intended, `${w.name} went home.`).then(warn);
+  };
   if (w.worktree && !w.cloud)
     sendHomeDialog({
       workerId: w.id,
@@ -1382,19 +1301,8 @@ function sendHome(w: WorkerInfo) {
       () => confirm(),
     );
 }
-async function showTerminal(id: string, mount: HTMLElement) {
-  const intended = floor;
-  if (!terminal) {
-    terminal = await import('./ui/terminal');
-    terminal.onOpenTeammate((mate) => select(mate));
-  }
-  if (stageMode !== 'terminal' || terminal.openTerminalFor() === id || selected !== id || !mount.isConnected || !usable(id, intended)) return;
-  terminal.openTerminal(net, id, undefined, undefined, { mount, actions: controls, onLeave: () => rows.get(id)?.el.focus() });
-}
 async function openBoard() {
-  const intended = floor;
-  whiteboard ??= await import('./ui/whiteboard');
-  if (live() && intended === floor && store.currentFloor()) whiteboard.openWhiteboard(net, { queueOffline: false });
+  openTool('whiteboard');
 }
 
 // --- This browser's access ------------------------------------------------------------------------------
@@ -1546,12 +1454,7 @@ window.addEventListener('keydown', (e) => {
     rows.get(w.id)?.el.focus({ preventScroll: true });
   };
   const k = e.key.length === 1 ? e.key.toLowerCase() : e.key;
-  if (view === 'overview' && officeMap && mapShown && mapKey(officeMap, k, t)) {
-    e.preventDefault();
-    return;
-  }
-  if (k === 'g' && view === 'overview') setLayout(layout === 'map' ? 'grid' : 'map');
-  else if (k === 'ArrowDown' || k === 'j') go(at + 1);
+  if (k === 'ArrowDown' || k === 'j') go(at + 1);
   else if (k === 'ArrowUp' || k === 'k') go(at < 0 ? list.length - 1 : at - 1);
   else if (k === 'Escape' && selected) select('');
   else if (k === 'n') hire('agent');
@@ -1563,25 +1466,6 @@ window.addEventListener('keydown', (e) => {
   } else return;
   e.preventDefault();
 });
-
-const MAP_MOVES: Record<string, MapDirection> = { ArrowLeft: 'left', ArrowRight: 'right', ArrowUp: 'up', ArrowDown: 'down', h: 'left', l: 'right', k: 'up', j: 'down' };
-/** The overview's keys while the 3D floor is up; false for a key it doesn't use. */
-function mapKey(map: OfficeMap, k: string, target: HTMLElement | null): boolean {
-  const dir = MAP_MOVES[k];
-  if (dir) {
-    const id = map.move(dir);
-    const w = id && store.workers.get(id);
-    if (w) say(`${w.name}, ${statusWord(w, STATUS_LABEL)}: ${doingLine(w)}. Enter opens it.`);
-  } else if (k === 'Enter' && !target?.closest('button, a')) {
-    if (!map.focusedId) return false;
-    void enter(map.focusedId);
-  } else if (k === 'Escape' && map.focusedId) map.setCursor('', false);
-  else if (k === '0' || k === 'Home') void map.home();
-  else if (k === '+' || k === '=') void map.zoom(0.75);
-  else if (k === '-' || k === '_') void map.zoom(1.3);
-  else return false;
-  return true;
-}
 
 window.addEventListener('storage', (event) => {
   if (event.key !== BROWSER_KEY) return;
