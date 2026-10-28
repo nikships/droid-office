@@ -118,7 +118,7 @@ test('welcome and floor.enter carry the connection and the arrival', { timeout: 
   const orphan = await open('name=Orphan&floor=gone-floor');
   assert.deepEqual({ ...(orphan.welcome.arrival as Arrival), at: typeof (orphan.welcome.arrival as Arrival).at === 'object' ? 'spot' : undefined }, { floor: ROOF, at: 'spot', via: 'roof', removed: true });
 
-  // By elevator to the roof, then back down to a requested spot (the ladder, pole and floor-list path).
+  // By elevator to the roof, then back down to a requested spot (the ladder and floor-list path).
   back.ws.send(JSON.stringify({ t: 'floor.go', floor: ROOF }));
   const roofed = await back.next('floor.enter');
   assert.equal((roofed.arrival as Arrival).floor, ROOF);

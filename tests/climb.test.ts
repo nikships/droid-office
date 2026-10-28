@@ -4,7 +4,7 @@ import * as THREE from 'three';
 import { Climber, type Arrival, type Grip, type Way } from '../src/client/climb.js';
 import { PlayerController } from '../src/client/player.js';
 import type { Collider } from '../src/client/world/office.js';
-import { FLOOR, LADDER, POLES, SLAB } from '../src/shared/layout.js';
+import { FLOOR, LADDER, SLAB } from '../src/shared/layout.js';
 
 /** The office floor: upstairs, over the garage, so off it you'd drop to the street. */
 const officeFloor: Collider = { ...FLOOR, bottom: -SLAB, top: 0 };
@@ -106,8 +106,6 @@ test('E right after grabbing the ladder at the floor steps off it, and says why 
   assert.equal(player.pos.y, 0);
   assert.ok(player.pos.x > LADDER.x + 0.3, `back in the room at x=${player.pos.x}`);
   assert.deepEqual(dones, [{ how: 'ladder', landed: true }]);
-  climber.twirl(POLES[0]);
-  assert.match(climber.letGo() ?? '', /fire pole/);
 });
 
 test('the ladder carries you through the hatch to the floor above', (t) => {
@@ -128,42 +126,4 @@ test('the ladder carries you through the hatch to the floor above', (t) => {
   frames(300);
   assert.equal(climber.active, false);
   assert.equal(player.pos.y, 0);
-});
-
-test('a twirl round a pole that goes nowhere ends by itself', (t) => {
-  const { player, climber, dones, frames } = rig(t, {});
-  const spot = POLES[0];
-  player.pos.set(spot.x + 1, 0, spot.z);
-  climber.twirl(spot);
-  assert.equal(climber.grip, 'pole');
-  assert.equal(climber.sliding, 'twirl');
-  frames(35);
-  assert.ok(player.pos.y > 0.3, `mid-twirl lift y=${player.pos.y}`);
-  frames(120);
-  assert.equal(climber.active, false);
-  assert.equal(player.rig, null);
-  assert.equal(player.pos.y, 0);
-  assert.deepEqual(dones, [{ how: 'pole', landed: false }]);
-});
-
-test('down a pole, through the ceiling, onto the mat below', (t) => {
-  const { player, climber, travels, sounds, frames } = rig(t, {});
-  const spot = POLES[0];
-  player.pos.set(spot.x + 1, 0, spot.z);
-  climber.slide(spot);
-  assert.equal(climber.sliding, 'slide');
-  // E mid-slide does nothing (poles only let go at the bottom).
-  frames(20);
-  climber.letGo();
-  assert.equal(climber.active, true);
-  for (let i = 0; i < 200 && travels.length === 0; i++) player.update(1 / 60);
-  assert.equal(travels.length, 1);
-  assert.equal(travels[0].way, -1);
-  assert.equal(travels[0].how, 'pole');
-  // Through the ceiling onto the floor below, and down onto the mat.
-  climber.arrived();
-  frames(400);
-  assert.equal(climber.active, false);
-  assert.equal(player.pos.y, 0);
-  assert.ok(sounds.includes('land'), `sounds: ${sounds.join(',')}`);
 });

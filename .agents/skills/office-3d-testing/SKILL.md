@@ -78,14 +78,14 @@ curl -s -X POST http://127.0.0.1:4677/api/automation -H 'content-type: applicati
 
 ### Input the API doesn't cover
 
-Some behaviour lives between `goTo` targets: walking into furniture, turning, jumping, the fire pole, the sidearm and its spells. To test those, call `rig()` in the steps file to load the movement rig from [`office-choreography`](../office-choreography/SKILL.md). Then script the input with `__walkTo`, `__look`, `__hold` and `__tap`, and assert on `state()` afterwards:
+Some behaviour lives between `goTo` targets: walking into furniture, turning, jumping, climbing, the sidearm and its spells. To test those, call `rig()` in the steps file to load the movement rig from [`office-choreography`](../office-choreography/SKILL.md). Then script the input with `__walkTo`, `__look`, `__hold` and `__tap`, and assert on `state()` afterwards:
 
 ```js
 export default async ({ rig, js, sleep, log }) => {
   await rig();
-  await js(async () => { await window.office.goTo('elevator'); await window.__walkTo(8.3, -3); await window.__walkTo(6.8, -0.7); window.__tap('KeyE', 'e'); });
-  await sleep(6000);
-  log(JSON.stringify(await js(() => window.office.state().floor)));
+  await js(async () => { await window.office.goTo('ladder'); window.__tap('KeyE', 'e'); await window.__hold(['KeyW'], 1000); });
+  await sleep(500);
+  log(JSON.stringify(await js(() => window.office.state())));
 };
 ```
 

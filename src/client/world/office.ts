@@ -70,7 +70,7 @@ export interface Collider {
   fence?: boolean;
 }
 
-export type InteractKind = 'desk' | 'station' | 'issues' | 'pulls' | 'actions' | 'ci' | 'whiteboard' | 'decor' | 'elevator' | 'gong' | 'jukebox' | 'seat' | 'ladder' | 'pole' | 'bookshelf' | 'computers';
+export type InteractKind = 'desk' | 'station' | 'issues' | 'pulls' | 'actions' | 'ci' | 'whiteboard' | 'decor' | 'elevator' | 'gong' | 'jukebox' | 'seat' | 'ladder' | 'bookshelf' | 'computers';
 
 /** Something you can use. Its scene object carries it as `userData.interact`, for clicking. */
 export interface Interactable {
@@ -83,8 +83,6 @@ export interface Interactable {
   deskId?: string;
   decorId?: string;
   seatId?: string;
-  /** Which of POLES, for a fire pole. */
-  pole?: number;
   /** Put away for now (a bean bag nobody needs yet): can't be used. */
   off?: boolean;
 }
@@ -140,7 +138,7 @@ export interface Office {
   /** The bookshelf's AutoWiki volumes (world/bookshelf.ts). */
   setShelfWiki(state: ShelfWiki): void;
   setShelfModel(source: THREE.Object3D): boolean;
-  /** The ceiling, the floor, and the ladder and fire poles between the floors of the building. */
+  /** The ceiling, the floor, and the ladder between the floors of the building. */
   stack: Stack;
   /** The sign over the elevator doors: which floor you're on. */
   setProjectName(name: string): void;
@@ -792,7 +790,7 @@ const PURLIN_DEPTH = 0.18;
  * The structure under the ceiling, merged: I-beams across the room, purlins between them, cable trays
  * over the work cells, linear LED bars over the desks and caged high-bay lamps over the lounge and the
  * kitchen. All of it is above head height, so none of it has a collider; it keeps clear of the
- * ceiling hatch over the ladder and of the pole's hole.
+ * ceiling hatch over the ladder.
  */
 function buildCeiling(night: NightParts): THREE.Group {
   const H = WALL_HEIGHT;

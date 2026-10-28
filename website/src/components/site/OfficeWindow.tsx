@@ -67,7 +67,7 @@ export function OfficeWindow() {
 
       <div className="flex flex-wrap items-center justify-between gap-2 border-t border-line px-4 py-2.5 font-heading text-[10px] uppercase tracking-[0.1em] text-text-dim">
         <span>Five floors, one per project</span>
-        <span className="hidden sm:inline">Elevator · fire pole · rooftop</span>
+        <span className="hidden sm:inline">Elevator · ladder · rooftop</span>
       </div>
     </div>
   );

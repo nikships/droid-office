@@ -107,7 +107,7 @@ export class PlayerController {
   /** A walk along a path ended: at its end, by a key of yours, or up against something. */
   onPathEnd: ((why: 'arrived' | 'cancelled' | 'stuck') => void) | null = null;
   /**
-   * Something that has hold of you instead of your legs (the ladder, a fire pole): it moves you each
+   * Something that has hold of you instead of your legs (the ladder): it moves you each
    * frame, with no walking, falling or bumping into things, and the camera follows.
    */
   rig: ((dt: number) => void) | null = null;

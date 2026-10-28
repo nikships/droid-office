@@ -11,8 +11,6 @@ import {
   FLOOR,
   LADDER,
   LOFT,
-  POLE,
-  POLES,
   SEATING_BY_ID,
   SLAB,
   STATIONS,
@@ -541,7 +539,7 @@ placeInCar();
 const hands = new Hands(store.profile.color, me.skinColor);
 /** No shaking the view when the system asks for less motion. */
 const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)');
-// Muzzle smoke, and the dust kicked up landing off a fire pole.
+// Muzzle smoke.
 const smoke = new Smoke();
 scene.add(smoke.group);
 const sound = new OfficeSound();
@@ -568,7 +566,7 @@ hanger.onChange = () => {
   hintKey = 'stale';
 };
 
-// ---- The ladder and the fire poles ----------------------------------------------------------------
+// ---- The ladder ----------------------------------------------------------------
 /** The floors of the building from the bottom up. */
 function builtFloors(): FloorInfo[] {
   return store.floors;
@@ -586,17 +584,12 @@ const climber = new Climber(player, {
     if (f) travel(f.id, how, at);
     else climber.abort();
   },
-  sound: (kind, speed = 0) => {
+  sound: (kind) => {
     if (kind === 'grab') sound.rung(true);
     else if (kind === 'rung') sound.rung();
-    else if (kind === 'slide') sound.slide();
-    else if (kind === 'twirl') sound.twirl();
     else if (kind === 'bonk') {
       sound.bonk();
       toast(`🔝 ${store.currentFloor()?.name ?? 'This'} is the top floor — the hatch won't budge`);
-    } else if (kind === 'land') {
-      sound.poleLanding(speed);
-      landed(speed);
     }
   },
   done: () => {
@@ -604,26 +597,9 @@ const climber = new Climber(player, {
     hintKey = 'stale';
   },
 });
-/** How hard the view shakes from landing off a pole, easing off to 0. */
+/** How hard the view shakes after a shot, easing off to 0. */
 let thud = 0;
-/** Down the pole onto the mat: the view shakes, dust flies, and there's the floor you're on now. */
-function landed(speed: number) {
-  if (!reduceMotion.matches) thud = Math.min(1, speed / 7);
-  const at = new THREE.Vector3();
-  const dir = new THREE.Vector3();
-  for (let i = 0; i < 10; i++) {
-    const a = (i / 10) * Math.PI * 2;
-    at.set(player.pos.x + Math.sin(a) * 0.3, player.pos.y + 0.08, player.pos.z + Math.cos(a) * 0.3);
-    smoke.exhale(at, dir.set(Math.sin(a), 0.15, Math.cos(a)).normalize());
-  }
-  const f = store.currentFloor();
-  toast(`🚒 Wheee! Down to ${f?.name ?? 'the floor below'}`);
-}
 office.stack.onHatch = (where, open) => sound.hatch({ x: LADDER.x + 0.3, y: where === 'floor' ? 0 : WALL_HEIGHT, z: LADDER.z }, open);
-// Speed lines round the edge of the screen, sliding down a pole.
-const whoosh = h('div', { id: 'whoosh' });
-$('app').append(whoosh);
-
 /** E at the ladder: onto it, facing the wall. */
 function grabLadder() {
   if (trip || climber.active) return;
@@ -634,25 +610,14 @@ function grabLadder() {
   climber.grabLadder();
 }
 
-/** E at a fire pole: down it, if there's a floor below; else (on the bottom floor) a spin round it. */
-function usePole(i: number) {
-  const spot = POLES[i];
-  if (trip || climber.active || !spot) return;
-  if (player.seat) standUp();
-  if (hanger.active) hanger.cancel();
-  if (errand) stopWalking();
-  if (office.stack.polesGoDown()) climber.slide(spot);
-  else climber.twirl(spot);
-}
-
 /**
- * The ladder and the poles go where there are floors to go to from this one, and the building is as
+ * The ladder goes where there are floors to go to from this one, and the building is as
  * tall as there are floors, with the street as far down as this one is up.
  */
 function syncStack() {
   const floors = builtFloors();
   const index = floors.findIndex((f) => f.id === store.floor);
-  // Up on the roof there's no ladder or pole to take: nothing above, nothing below.
+  // Up on the roof there's no ladder to take: nothing above, nothing below.
   const up = store.floor === ROOF ? undefined : floors[index + 1]?.name;
   const down = index > 0 ? floors[index - 1]?.name : undefined;
   const count = index < 0 ? 1 : floors.length;
@@ -1341,7 +1306,7 @@ function fade(on: boolean, quick = false) {
   $('fade').classList.toggle('on', on);
 }
 
-/** How you're going to another floor: by elevator, straight there from the floor list, or by the ladder or a pole. */
+/** How you're going to another floor: by elevator, straight there from the floor list, or by the ladder. */
 type TripKind = 'elevator' | 'switch' | Grip;
 /** A trip under way: the lights are down (and by elevator the doors are shut) until the next floor arrives. */
 let trip: { floor: string; how: TripKind; timer: number } | null = null;
@@ -1431,18 +1396,8 @@ function tripFailed() {
   linkedWorker = undefined;
   fade(false);
   if (t.how === 'elevator') lift().setOpen(!!store.floor);
-  if (t.how === 'ladder' || t.how === 'pole') climber.abort();
+  if (t.how === 'ladder') climber.abort();
   player.enabled = !modalOpen();
-}
-
-/** Arrived in a spot that's a pole's hole on this floor: step out of it, the way in. */
-function unstick() {
-  if (!office.stack.polesGoDown()) return;
-  const p = player.pos;
-  const spot = office.stack.poles().find((s) => Math.max(Math.abs(p.x - s.x), Math.abs(p.z - s.z)) <= POLE.rail + 0.35);
-  if (!spot) return;
-  const out = POLE.rail + 0.7;
-  p.set(spot.x + Math.sin(spot.open) * out, Math.max(0, p.y), spot.z + Math.cos(spot.open) * out);
 }
 
 /** The floor you're on is a plain folder, not a git checkout: no boards, board agents, pipelines or CI. */
@@ -1489,7 +1444,7 @@ function usable(): Interactable[][] {
 
 /**
  * You're on a floor (or in the building without one): paint it, and open the doors (or carry on down
- * the pole…). `back` is standing in the spot you left from last time, the doors open already.
+ * climbing…). `back` is standing in the spot you left from last time, the doors open already.
  */
 function arrive(how: TripKind | 'back' = trip?.how ?? 'elevator') {
   // A menu left open and the laptop you typed into were the last floor's.
@@ -1515,13 +1470,11 @@ function arrive(how: TripKind | 'back' = trip?.how ?? 'elevator') {
     // The doors stand open, the way the last one out left them.
     lift().setOpen(true);
     player.enabled = !modalOpen();
-    if (!upTop) unstick();
     return;
   }
   if (how !== 'elevator') {
     player.enabled = !modalOpen();
-    if (how === 'switch') unstick();
-    else climber.arrived();
+    if (how === 'ladder') climber.arrived();
     return;
   }
   setTimeout(() => {
@@ -2516,7 +2469,6 @@ function interact(target: Interactable | null, key: DeskKey, note = aimedNote, s
   if (target.kind === 'seat' && target.seatId) useSeat(target.seatId);
   else if (target.kind === 'gong') hitGong();
   else if (target.kind === 'ladder') grabLadder();
-  else if (target.kind === 'pole' && target.pole !== undefined) usePole(target.pole);
 }
 
 /** Opening a pane is safe from across the room; physical controls still need a nearby E. */
@@ -2881,14 +2833,6 @@ function hintFor(it: Interactable): Hint {
       const where = [up && `⬆ ${up}`, down && `⬇ ${down}`].filter(Boolean).join(' · ');
       return { k: where, parts: [title('🪜 Ladder'), aside(where || 'no other floors yet'), key('E', 'Climb on')] };
     }
-    case 'pole': {
-      if (office.stack.polesGoDown()) {
-        const down = floorThere(-1)?.name ?? 'the floor below';
-        return { k: `down|${down}`, parts: [title('🚒 Fire pole'), aside(`down to ${down}`), key('E', 'Slide down!')] };
-      }
-      const up = floorThere(1)?.name ?? 'upstairs';
-      return { k: `landing|${up}`, parts: [title('🚒 Fire pole'), aside(`comes down from ${up}`), key('E', 'Twirl')] };
-    }
   }
 }
 
@@ -3049,24 +2993,17 @@ function renderGunHint(el: HTMLElement) {
   el.replaceChildren(h('span.title', {}, title), key('Click', a.fire), key('Hold', 'Charge'), key(wand ? '1–5' : '1–6', wand ? 'Spells' : 'Tricks'), key('7', a.away));
   el.classList.remove('hidden');
 }
-/** On the ladder: which way it goes from here, and how to get off. Down a pole: just hold on. */
+/** On the ladder: which way it goes from here, and how to get off. */
 function renderClimbHint(el: HTMLElement) {
   const title = (text: string) => h('span.title', {}, text);
   const l = climber.ladder;
-  let k: string;
-  let parts: (HTMLElement | string)[];
-  if (l) {
-    const up = floorThere(1)?.name;
-    const down = floorThere(-1)?.name;
-    const atFloor = l.y < 0.4 && l.y > -0.05;
-    const busy = l.waiting || l.auto;
-    k = `ladder|${up}|${down}|${atFloor}|${busy}`;
-    parts = busy ? [title('🪜 Climbing…')] : [title('🪜 On the ladder'), up ? key('W', `Up to ${up}`) : aside('top floor'), key('S', down ? `Down to ${down}` : atFloor ? 'Step off' : 'Down'), key('E', atFloor ? 'Step off' : 'Let go')];
-  } else {
-    const how = climber.sliding;
-    k = `pole|${how}`;
-    parts = [title(how === 'twirl' ? '🚒 Wheee!' : '🚒 Wheeeeeee!')];
-  }
+  if (!l) return;
+  const up = floorThere(1)?.name;
+  const down = floorThere(-1)?.name;
+  const atFloor = l.y < 0.4 && l.y > -0.05;
+  const busy = l.waiting || l.auto;
+  const k = `ladder|${up}|${down}|${atFloor}|${busy}`;
+  const parts = busy ? [title('🪜 Climbing…')] : [title('🪜 On the ladder'), up ? key('W', `Up to ${up}`) : aside('top floor'), key('S', down ? `Down to ${down}` : atFloor ? 'Step off' : 'Down'), key('E', atFloor ? 'Step off' : 'Let go')];
   if (k === hintKey) return;
   hintKey = k;
   el.replaceChildren(...parts);
@@ -3348,7 +3285,6 @@ const REACH: Record<InteractKind, number> = {
   jukebox: 4,
   seat: 3,
   ladder: 3,
-  pole: 4,
   bookshelf: 4,
 };
 /** What the ray through `ndc` lands on first, whether it is within reach (plus `slack` meters), and where it hit. */
@@ -3907,10 +3843,7 @@ function drawFrame(dt: number, t: number, frame: { at: number; paced: boolean })
   player.jitter = reduceMotion.matches ? 0 : thud;
   player.update(dt);
   bossLaptop.update(dt, store.screens.get(OFFICE_SHELL_ID));
-  // Walked into a pole's hole: you grab the pole on your way down it.
-  const hole = office.stack.polesGoDown() ? office.stack.poles().find((s) => Math.hypot(player.pos.x - s.x, player.pos.z - s.z) < POLE.hole - 0.15) : undefined;
-  if (hole && !climber.active && !trip && !player.seat && player.enabled && player.pos.y > -1.35 && player.pos.y < 0.6) climber.slide(hole);
-  // Under an upstairs floor, inside the building, with no ladder, pole or elevator carrying you:
+  // Under an upstairs floor, inside the building, with no ladder or elevator carrying you:
   // there is nowhere down there to be. However you got under the slab (a rebuild that dropped the
   // floor, a spot saved mid-fall), you are put back on top of it rather than left on the street
   // under the building with the floor gone for good. The ground floor keeps its street and garage.
@@ -3967,14 +3900,6 @@ function drawFrame(dt: number, t: number, frame: { at: number; paced: boolean })
     hands.wandDir(tipDir);
     wandLight.position.copy(tipNow).add(tipDir.transformDirection(camera.matrixWorld).multiplyScalar(0.12));
   }
-  // Down a pole: the view widens and the edges streak past.
-  const rush = reduceMotion.matches ? 0 : climber.rush;
-  const fov = 55 + rush * 16;
-  if (Math.abs(camera.fov - fov) > 0.05) {
-    camera.fov += (fov - camera.fov) * Math.min(1, dt * 8);
-    camera.updateProjectionMatrix();
-  }
-  whoosh.style.opacity = rush > 0.02 ? String(rush * 0.85) : '0';
   camera.getWorldDirection(lookDir);
   sound.update({ x: camera.position.x, y: camera.position.y, z: camera.position.z, fx: lookDir.x, fz: lookDir.z });
 
@@ -4268,7 +4193,7 @@ const automation = createAutomation({
     gunMove: drawnArm === 'wand' ? wandMotion.doing : gunMotion.doing,
     sidearm: settings.sidearm,
   }),
-  busy: () => (trip ? 'riding to another floor' : climber.grip === 'ladder' ? 'on the ladder: interact("E") gets off it' : climber.active ? 'on a fire pole' : !store.floor ? 'not on a floor yet: ride the elevator first' : null),
+  busy: () => (trip ? 'riding to another floor' : climber.active ? 'on the ladder: interact("E") gets off it' : !store.floor ? 'not on a floor yet: ride the elevator first' : null),
   blocked: (x, z, y) => player.blockedAt(x, z, y),
   centerOf,
   place: (pose) => {
