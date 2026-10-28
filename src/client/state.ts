@@ -9,7 +9,6 @@ import type {
   AutoHealState,
   FreshMainState,
   MachineState,
-  NotifyState,
   ProjectInfo,
   ProjectsDirState,
   PromptsState,
@@ -50,7 +49,6 @@ export type Topic =
   | 'upgrade'
   | 'decor'
   | 'pipelines'
-  | 'notify'
   | 'machine'
   | 'floors'
   | 'floor'
@@ -270,8 +268,6 @@ class Store {
   jira: JiraFloorState = {};
   /** The Jira tab of the issue board; null on a floor without an epic. */
   jiraBoard: JiraBoardState | null = null;
-  /** The office's Slack / Discord webhook. */
-  notify: NotifyState = {};
   /** How busy the office's machine is, and its worker limit. */
   machine: MachineState = { cpu: 0, cores: 0, memUsed: 0, memTotal: 0, history: [], workers: 0 };
   /** Outside the windows; null until the server says. */
@@ -376,7 +372,6 @@ class Store {
         this.floors = msg.floors;
         this.projectsDir = msg.projectsDir;
         this.upgrade = msg.upgrade;
-        this.notify = msg.notify;
         this.machine = msg.machine;
         this.clock = undefined; // compared again, in case it's another office (or the same one, restarted)
         this.sky = msg.sky;
@@ -392,7 +387,7 @@ class Store {
         this.setup = msg.setup ?? emptySetupState();
         this.subscriptions = msg.subscriptions ?? emptySubscriptionsState();
         this.enter(msg);
-        for (const t of ['upgrade', 'notify', 'machine', 'floors', 'projectsDir', 'sky', 'jukebox', 'leaveOnMerge', 'freshMain', 'subagents', 'whiteboardSkill', 'prompts', 'factory', 'setup', 'subscriptions'] as Topic[]) this.emit(t);
+        for (const t of ['upgrade', 'machine', 'floors', 'projectsDir', 'sky', 'jukebox', 'leaveOnMerge', 'freshMain', 'subagents', 'whiteboardSkill', 'prompts', 'factory', 'setup', 'subscriptions'] as Topic[]) this.emit(t);
         break;
       case 'floor.enter':
         this.arrival = msg.arrival;
@@ -469,10 +464,6 @@ class Store {
       case 'pipelines':
         this.pipelines = msg.state;
         this.emit('pipelines');
-        break;
-      case 'notify':
-        this.notify = msg.state;
-        this.emit('notify');
         break;
       case 'jira':
         this.jira = msg.state;

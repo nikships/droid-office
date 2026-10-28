@@ -331,18 +331,6 @@ export interface GhPull {
   closes: number[];
 }
 
-/** Where a team webhook posts: Slack and Discord get their own message format, anything else plain JSON. */
-export type WebhookKind = 'slack' | 'discord' | 'other';
-
-/** The office's Slack / Discord webhook, pinged when a worker needs input or finishes (see server/webhook.ts). */
-export interface NotifyState {
-  /** Never the URL itself (it lets anyone post to the channel): just where it goes. */
-  webhook?: { kind: WebhookKind; hint: string; by: string; at: number };
-  /** Why the last post failed, until one gets through. */
-  error?: string;
-  lastSentAt?: number;
-}
-
 /**
  * The office's machine (see server/machine.ts): how busy it is, for the wall monitor and a warning
  * before hiring, and the most workers the office runs at once, across every floor.
@@ -902,10 +890,6 @@ type ClientMessage =
    * pipeline (`workflow` "pipeline", the inputs as its variables). Answered with `pipelines.done`.
    */
   | { t: 'pipelines.run'; workflow: string; ref: string; inputs?: Record<string, string> }
-  /** Set the office's Slack / Discord webhook; '' removes it. */
-  | { t: 'notify.webhook'; url: string }
-  /** Post a test message through the webhook; the outcome comes back as a toast. */
-  | { t: 'notify.test' }
   /** The most workers the office runs at once, across every floor; null takes the limit off. */
   | { t: 'machine.limit'; limit: number | null }
   /** Connect the office to Jira Cloud with one account's email and API token (read-only is enough); answered with `jira.setup`. */
@@ -1055,7 +1039,6 @@ export type ServerMsg =
       /** The running server's version; a change after a reconnect means the office was upgraded. */
       version: string;
       upgrade: UpgradeState;
-      notify: NotifyState;
       machine: MachineState;
       /** Outside the windows: the same on every floor. */
       sky: SkyState;
@@ -1126,7 +1109,6 @@ export type ServerMsg =
   | { t: 'pipelines.detail'; id: number; detail?: PipelineDetail; error?: string }
   /** To whoever asked to start, re-run or cancel a run: done, or why not. */
   | { t: 'pipelines.done'; action: 'run' | 'rerun' | 'cancel'; id?: number; error?: string }
-  | { t: 'notify'; state: NotifyState }
   /** The office's Jira connection or this floor's epic changed. */
   | { t: 'jira'; state: JiraFloorState }
   | { t: 'jira.board'; state: JiraBoardState | null }

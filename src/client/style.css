@@ -723,8 +723,6 @@ label.choice:has(> input:disabled) { opacity: .5; cursor: default; }
   .mp-row { min-height: var(--control-h-lg); }
   .mp-chip { min-height: var(--control-h); }
 }
-.webhook { display: flex; gap: 8px; }
-.webhook input[type=text] { flex: 1; min-width: 0; }
 .outside-now { margin: 0; font-size: 14px; font-weight: 600; }
 
 .swatches { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 12px; }
