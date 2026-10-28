@@ -172,6 +172,40 @@ class HostLogTest {
     }
 
     @Test
+    fun aClosedSocketsConnectedLinkNeverOutlivesItsReplay() {
+        val log = HostLog()
+        val e = log.opened()
+        log.frame(e, welcome, "o1")
+        assertNull(log.event())
+        val down = log.closed(e)!!
+        // A bootstrap read now pairs a non-connected link with the empty replay.
+        assertEquals(HostLinkState(HostLinkState.CONNECTING, 1, "o1", null), down.link)
+        assertEquals(down.seq, log.linkSeq)
+        assertTrue(log.replay.snapshot().isEmpty())
+        // The reconnect's own connecting link for the same office is not news, and a second close says nothing.
+        assertNull(log.link(HostLinkState.CONNECTING, "o1", null))
+        assertNull(log.closed(e))
+        log.opened()
+        assertNull(log.event())
+    }
+
+    @Test
+    fun aSocketOpenedOverAStillConnectedLinkTakesItDownFirst() {
+        val log = HostLog()
+        val first = log.opened()
+        log.frame(first, welcome, "o1")
+        // The next socket opens before the first's close lands.
+        val second = log.opened()
+        val down = log.event()!!
+        assertEquals(HostLinkState.CONNECTING, down.link.phase)
+        assertEquals(second, log.link.epoch)
+        assertNull(log.closed(first))
+        val up = log.frame(second, welcome, "o1")[0] as HostLog.Event.Link
+        assertTrue(down.seq < up.seq)
+        assertEquals(HostLinkState(HostLinkState.CONNECTED, second, "o1", null), up.link)
+    }
+
+    @Test
     fun aReconnectAnnouncesTheNewEpochBeforeItsWelcome() {
         val log = HostLog()
         val first = log.opened()
@@ -218,9 +252,10 @@ class ImageOriginsTest {
     @Test
     fun sentDroppedAndOldestPicturesAreGone() {
         val o = ImageOrigins<Int>(max = 2)
-        o.record("a", "o1", "f", 1)
+        assertTrue(o.record("a", "o1", "f", 1).isEmpty())
         o.record("b", "o2", "f", 2)
-        o.record("c", "o1", "f", 3)
+        // The oldest is handed back with where it went, so it can be deleted there.
+        assertEquals(listOf("a" to ImageOrigins.Origin("o1", "f", 1)), o.record("c", "o1", "f", 3))
         assertEquals(2, o.size)
         assertNull(o.forget("a", "f", null))
         o.sent(listOf("b"))

@@ -1,61 +1,57 @@
 package ai.factory.droidoffice
 
+import ai.factory.droidoffice.core.Pairing
+import ai.factory.droidoffice.rn.HostIncoming
 import android.content.Intent
 import android.os.Bundle
-import androidx.activity.ComponentActivity
-import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
-import ai.factory.droidoffice.core.Pairing
-import ai.factory.droidoffice.ui.AppRoot
-import ai.factory.droidoffice.ui.Incoming
-import ai.factory.droidoffice.ui.theme.DroidOfficeTheme
-import kotlinx.coroutines.flow.MutableStateFlow
+import com.facebook.react.ReactActivity
+import com.facebook.react.ReactActivityDelegate
+import com.facebook.react.defaults.DefaultReactActivityDelegate
 
-class MainActivity : ComponentActivity() {
-    /** What the latest intent asked for: a pairing link, or a worker to open from a notification. */
-    private val incoming = MutableStateFlow<Incoming?>(null)
+/** The React Native workspace (index.mobile.js), and where links and notification taps arrive. */
+class MainActivity : ReactActivity() {
+    override fun getMainComponentName() = "DroidOffice"
+
+    override fun createReactActivityDelegate(): ReactActivityDelegate = DefaultReactActivityDelegate(this, mainComponentName)
 
     override fun onCreate(savedInstanceState: Bundle?) {
         val splash = installSplashScreen()
-        super.onCreate(savedInstanceState)
+        // React Native keeps no fragments to restore; the workspace restores its own layout.
+        super.onCreate(null)
         enableEdgeToEdge()
         val graph = graph
         splash.setKeepOnScreenCondition { !graph.store.snapshot.value.loaded }
-        if (savedInstanceState == null) incoming.value = read(intent)
-        setContent {
-            DroidOfficeTheme {
-                AppRoot(graph, incoming)
-            }
-        }
+        if (savedInstanceState == null) read(intent)
     }
 
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
-        read(intent)?.let { incoming.value = it }
+        read(intent)
     }
 
     /**
      * The activity is exported (launcher, pairing links, shares), so nothing an intent carries is
      * trusted: links go through the same parser as a scan, and ids must look like ids.
      */
-    private fun read(intent: Intent?): Incoming? {
-        intent ?: return null
-        return when (intent.action) {
-            Intent.ACTION_VIEW -> intent.dataString?.let { Incoming.Link(it.take(4096)) }
-            Intent.ACTION_SEND -> intent.getStringExtra(Intent.EXTRA_TEXT)?.take(4096)?.takeIf { Pairing.parseOrNull(it) != null }?.let { Incoming.Link(it) }
+    private fun read(intent: Intent?) {
+        intent ?: return
+        when (intent.action) {
+            Intent.ACTION_VIEW -> intent.dataString?.take(4096)?.let { startActivity(SetupActivity.pair(this, it)) }
+            Intent.ACTION_SEND -> intent.getStringExtra(Intent.EXTRA_TEXT)?.take(4096)?.takeIf { Pairing.parseOrNull(it) != null }?.let { startActivity(SetupActivity.pair(this, it)) }
             ACTION_OPEN_WORKER -> {
-                val office = intent.getStringExtra(EXTRA_OFFICE)?.takeIf { ID.matches(it) } ?: return null
-                val worker = intent.getStringExtra(EXTRA_WORKER)?.takeIf { ID.matches(it) } ?: return null
-                Incoming.Worker(office, worker)
+                val office = intent.getStringExtra(EXTRA_OFFICE)?.takeIf { ID.matches(it) } ?: return
+                val worker = intent.getStringExtra(EXTRA_WORKER)?.takeIf { ID.matches(it) } ?: return
+                val floor = intent.getStringExtra(EXTRA_FLOOR)?.takeIf { ID.matches(it) }
+                graph.host.incoming(HostIncoming.Worker(office, worker, floor))
             }
             ACTION_OPEN_FLOOR -> {
-                val office = intent.getStringExtra(EXTRA_OFFICE)?.takeIf { ID.matches(it) } ?: return null
-                val floor = intent.getStringExtra(EXTRA_FLOOR)?.takeIf { ID.matches(it) } ?: return null
-                Incoming.Floor(office, floor)
+                val office = intent.getStringExtra(EXTRA_OFFICE)?.takeIf { ID.matches(it) } ?: return
+                val floor = intent.getStringExtra(EXTRA_FLOOR)?.takeIf { ID.matches(it) } ?: return
+                graph.host.incoming(HostIncoming.Floor(office, floor))
             }
-            else -> null
         }
     }
 

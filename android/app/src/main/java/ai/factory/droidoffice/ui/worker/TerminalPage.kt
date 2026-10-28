@@ -71,7 +71,9 @@ class TerminalPage(context: Context, private val onMessage: (PageMsg) -> Unit, p
         if (ready) view.evaluateJavascript(script, null)
     }
 
-    fun typeDirectly(enabled: Boolean) = keyboard.typeDirectly(enabled)
+    fun typeDirectly(enabled: Boolean, show: Boolean = true) = keyboard.typeDirectly(enabled, show)
+
+    fun showKeyboard() = keyboard.openKeyboard()
 
     fun destroy() {
         typeDirectly(false)

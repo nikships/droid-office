@@ -13,6 +13,14 @@ import ai.factory.droidoffice.net.NetworkMonitor
 import ai.factory.droidoffice.net.OfficeApi
 import ai.factory.droidoffice.notify.Alerts
 import ai.factory.droidoffice.notify.StayConnectedService
+import ai.factory.droidoffice.rn.HostPackage
+import ai.factory.droidoffice.rn.NativeHost
+import ai.factory.droidoffice.rn.OfficeBridge
+import com.facebook.react.PackageList
+import com.facebook.react.ReactApplication
+import com.facebook.react.ReactHost
+import com.facebook.react.ReactNativeApplicationEntryPoint
+import com.facebook.react.defaults.DefaultReactHost.getDefaultReactHost
 import ai.factory.droidoffice.session.Answers
 import ai.factory.droidoffice.session.OfficeConnection
 import ai.factory.droidoffice.session.Pairer
@@ -24,13 +32,22 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 
-class DroidOfficeApp : Application() {
+class DroidOfficeApp : Application(), ReactApplication {
     lateinit var graph: AppGraph
         private set
+
+    override val reactHost: ReactHost by lazy {
+        getDefaultReactHost(
+            context = applicationContext,
+            packageList = PackageList(this).packages + HostPackage(),
+            jsMainModulePath = "index.mobile",
+        )
+    }
 
     override fun onCreate() {
         super.onCreate()
         graph = AppGraph(this)
+        ReactNativeApplicationEntryPoint.loadReactNative(this)
     }
 }
 
@@ -60,6 +77,12 @@ class AppGraph(val app: Application) {
     val answers = Answers(connection)
     val alerts = Alerts(app, scope, connection, store, visibility)
     val updates = UpdateController(scope, GitHubUpdates(app))
+
+    /** The React Native side's view of [connection], kept across JavaScript reloads. */
+    val host = NativeHost(scope, connection, store, api)
+
+    /** The management views' view of [connection]. */
+    val bridge = OfficeBridge(app, connection, api)
 
     init {
         ProcessLifecycleOwner.get().lifecycle.addObserver(object : DefaultLifecycleObserver {

@@ -28,8 +28,8 @@
         android:theme="@style/Theme.DroidOffice.Splash"
         tools:targetApi="36">
 
-        <!-- Compose lays itself out again on a rotation or resize. Recreating the activity would also
-             destroy the live WebViews (a card's video, a worker's terminal) and lose their place. -->
+        <!-- The workspace lays itself out again on a rotation or resize. Recreating the activity would
+             also destroy the live WebViews (a worker's terminal, a management tool) and lose their place. -->
         <activity
             android:name=".MainActivity"
             android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|keyboard|keyboardHidden|navigation"
@@ -56,6 +56,14 @@
                 <data android:mimeType="text/plain" />
             </intent-filter>
         </activity>
+
+        <!-- Pairing, the QR scanner, and this phone's offices and settings, over the workspace. -->
+        <activity
+            android:name=".SetupActivity"
+            android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|keyboard|keyboardHidden|navigation"
+            android:exported="false"
+            android:theme="@style/Theme.DroidOffice"
+            android:windowSoftInputMode="adjustResize" />
 
         <service
             android:name=".notify.StayConnectedService"

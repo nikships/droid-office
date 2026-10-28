@@ -153,7 +153,7 @@ class HostLog {
     /** A number from the shared counter, for an event this log doesn't keep (an office list). */
     fun next(): Long = ++seq
 
-    /** A new socket opened: its number. */
+    /** A new socket opened: its number. A link still saying connected stops saying so ([event]). */
     fun opened(): Long {
         epoch++
         open = epoch
@@ -162,13 +162,24 @@ class HostLog {
         return epoch
     }
 
-    /** Socket [e] closed. */
-    fun closed(e: Long) {
-        if (e != epoch) return
+    /**
+     * Socket [e] closed: the link event that says so when it was this socket's connected link, so a
+     * bootstrap never pairs a connected link with the empty replay. A connecting link that follows
+     * for the same office is then not news.
+     */
+    fun closed(e: Long): Event.Link? {
+        if (e != epoch) return null
         open = null
         welcomed = null
         replay.reset()
+        return unwelcomed()
     }
+
+    /** The link event a newly opened socket needs: none unless an older socket's connected link is still up. */
+    fun event(): Event.Link? = unwelcomed()
+
+    private fun unwelcomed(): Event.Link? =
+        if (link.phase == HostLinkState.CONNECTED && welcomed == null) link(HostLinkState.CONNECTING, link.office, null) else null
 
     /** The link now; an event when that is news. */
     fun link(phase: String, office: String?, reason: String?): Event.Link? {
@@ -200,17 +211,23 @@ class HostLog {
 /**
  * Pictures uploaded for prompts not sent yet, by id, with the office, floor and route each went to.
  * Forgetting one goes to that office only, never whichever is active now; one sent with a prompt, or
- * already forgotten, is gone from here. At most [max], the oldest dropped first.
+ * already forgotten, is gone from here. At most [max]: [record] hands back the oldest it drops.
  */
 class ImageOrigins<Route>(private val max: Int = 200) {
     data class Origin<Route>(val office: String, val floor: String, val route: Route)
 
     private val origins = LinkedHashMap<String, Origin<Route>>()
 
-    fun record(id: String, office: String, floor: String, route: Route) {
+    /** Records [id]; the oldest uploads past [max], by id, which the caller deletes where they went. */
+    fun record(id: String, office: String, floor: String, route: Route): List<Pair<String, Origin<Route>>> {
         origins.remove(id)
         origins[id] = Origin(office, floor, route)
-        while (origins.size > max) origins.remove(origins.keys.first())
+        val evicted = ArrayList<Pair<String, Origin<Route>>>()
+        while (origins.size > max) {
+            val oldest = origins.keys.first()
+            evicted += oldest to origins.remove(oldest)!!
+        }
+        return evicted
     }
 
     /**

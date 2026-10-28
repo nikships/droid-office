@@ -160,7 +160,7 @@ class Alerts(
             .setGroup("office-$officeId")
             // The system's guesses ("Open link" for a file name in a prompt) only get in the way of a reply.
             .setAllowSystemGeneratedContextualActions(false)
-            .setContentIntent(openWorker(officeId, w.id))
+            .setContentIntent(openWorker(officeId, w.id, d.floorId))
         if (!w.isGuest) {
             // Up to three buttons: its first two choices, then Reply, which takes a digit or your own answer.
             menu?.choices?.take(2)?.forEach { c -> builder.addAction(choiceAction(officeId, w, menu, c)) }
@@ -224,11 +224,12 @@ class Alerts(
             .build()
     }
 
-    private fun openWorker(officeId: String, workerId: String): PendingIntent {
+    private fun openWorker(officeId: String, workerId: String, floorId: String?): PendingIntent {
         val intent = Intent(context, MainActivity::class.java).apply {
             action = MainActivity.ACTION_OPEN_WORKER
             putExtra(MainActivity.EXTRA_OFFICE, officeId)
             putExtra(MainActivity.EXTRA_WORKER, workerId)
+            floorId?.let { putExtra(MainActivity.EXTRA_FLOOR, it) }
             flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP
         }
         return PendingIntent.getActivity(context, notificationId(workerId), intent, PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
@@ -245,7 +246,7 @@ class Alerts(
             .setContentText(if (ok) text else "Your reply to $name wasn't sent. Open the app to try again.")
             .setSilent(true)
             .setTimeoutAfter(if (ok) 4_000 else 30_000)
-            .setContentIntent(openWorker(connection.data.value.officeId.orEmpty(), workerId))
+            .setContentIntent(openWorker(connection.data.value.officeId.orEmpty(), workerId, connection.data.value.floorId))
             .build()
         post(notificationId(workerId), n)
     }
@@ -267,7 +268,7 @@ class Alerts(
             .setContentText(text)
             .setSilent(true)
             .setTimeoutAfter(if (result == Answered.Sent) 4_000 else 30_000)
-            .setContentIntent(openWorker(connection.data.value.officeId.orEmpty(), workerId))
+            .setContentIntent(openWorker(connection.data.value.officeId.orEmpty(), workerId, connection.data.value.floorId))
             .build()
         post(notificationId(workerId), n)
     }

@@ -298,10 +298,50 @@ class OfficeApi(base: OkHttpClient = OkHttpClient()) {
         return fetch(Request.Builder().url(url).header("Origin", base).get().build())
     }
 
-    private fun fetch(req: Request): WbFetched? = try {
+    /**
+     * A management tool's request, already checked against ToolPolicy: [path] and [query] as the page
+     * encoded them, with this office's auth added here and never shown to the page. Anything but a
+     * GET goes once: no retry on a dropped connection, no redirect.
+     */
+    suspend fun tool(base: String, auth: OfficeAuth, method: String, path: String, query: String?, contentType: String?, body: ByteArray?): Result<WbFetched> = withContext(Dispatchers.IO) {
+        val url = authed(base, path, query, auth)
+        val payload = body?.toRequestBody(contentType?.toMediaType()) ?: if (method == "GET" || method == "DELETE") null else ByteArray(0).toRequestBody(contentType?.toMediaType())
+        val req = Request.Builder().url(url).header("Origin", base).apply {
+            if (auth is OfficeAuth.Device) header("Authorization", "Bearer ${auth.token}")
+        }.method(method, payload).build()
+        try {
+            (if (method == "GET") client else noRetryClient).newCall(req).await().use { res ->
+                val bytes = Capped.read(res.body.source(), res.body.contentLength(), RESPONSE_MAX)
+                    ?: return@withContext Result.failure(IOException(TOO_LARGE))
+                val headers = res.headers.names().associate { it.lowercase() to res.headers[it].orEmpty() }
+                Result.success(WbFetched(res.code, res.header("Content-Type"), headers, bytes))
+            }
+        } catch (_: IOException) {
+            Result.failure(IOException("Couldn't reach the office."))
+        }
+    }
+
+    /**
+     * A passthrough file for a management page ([path] still percent-encoded), with the office's auth;
+     * null when unreachable or larger than [RESPONSE_MAX]. Blocking.
+     */
+    fun toolFile(base: String, auth: OfficeAuth, path: String, query: String?): WbFetched? {
+        val req = Request.Builder().url(authed(base, path, query, auth)).header("Origin", base).apply {
+            if (auth is OfficeAuth.Device) header("Authorization", "Bearer ${auth.token}")
+        }.get().build()
+        return fetch(req, RESPONSE_MAX)
+    }
+
+    private fun authed(base: String, path: String, query: String?, auth: OfficeAuth): HttpUrl =
+        base.toHttpUrl().newBuilder().encodedPath(path).encodedQuery(query?.takeIf { it.isNotEmpty() }).apply {
+            if (auth is OfficeAuth.Lan) addQueryParameter("t", auth.token)
+        }.build()
+
+    private fun fetch(req: Request, max: Long? = null): WbFetched? = try {
         client.newCall(req).execute().use { res ->
+            val bytes = if (max == null) res.body.bytes() else Capped.read(res.body.source(), res.body.contentLength(), max) ?: return null
             val headers = res.headers.names().associate { it.lowercase() to res.headers[it].orEmpty() }
-            WbFetched(res.code, res.header("Content-Type"), headers, res.body.bytes())
+            WbFetched(res.code, res.header("Content-Type"), headers, bytes)
         }
     } catch (_: IOException) {
         null
@@ -316,6 +356,12 @@ class OfficeApi(base: OkHttpClient = OkHttpClient()) {
         val builder = Request.Builder().url(http).header("Origin", base)
         if (auth is OfficeAuth.Device) builder.header("Authorization", "Bearer ${auth.token}")
         return client.newWebSocket(builder.build(), listener)
+    }
+
+    companion object {
+        /** The most a management tool's request or file may answer with; the same as ToolPolicy's. */
+        const val RESPONSE_MAX = 25L * 1024 * 1024
+        private const val TOO_LARGE = "The office's answer is too large for the phone."
     }
 
     private fun request(base: String, path: String, auth: OfficeAuth, vararg query: Pair<String, String>): Request.Builder {

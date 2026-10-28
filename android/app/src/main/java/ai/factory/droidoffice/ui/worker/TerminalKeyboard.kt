@@ -27,21 +27,23 @@ internal class TerminalKeyboard(context: Context, private val onInput: (String) 
     private var dragged = false
     private val slop = ViewConfiguration.get(context).scaledTouchSlop
 
-    fun typeDirectly(enabled: Boolean) {
+    /** [show] opens the keyboard now; without it, it opens on the next tap. */
+    fun typeDirectly(enabled: Boolean, show: Boolean = true) {
         if (typing == enabled) return
         typing = enabled
         connection = null
         isFocusable = enabled
         isFocusableInTouchMode = enabled
         if (enabled) {
-            openKeyboard()
+            if (show) openKeyboard()
         } else {
             ime.hideSoftInputFromWindow(windowToken, 0)
             clearFocus()
         }
     }
 
-    private fun openKeyboard() {
+    /** Opens the keyboard if this terminal is typing directly. */
+    fun openKeyboard() {
         if (!typing) return
         requestFocus()
         post { if (typing && hasFocus()) ime.showSoftInput(this, InputMethodManager.SHOW_IMPLICIT) }

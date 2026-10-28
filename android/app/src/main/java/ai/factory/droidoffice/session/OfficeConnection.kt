@@ -8,6 +8,9 @@ import ai.factory.droidoffice.core.ClientMsg
 import ai.factory.droidoffice.core.DroidCommand
 import ai.factory.droidoffice.core.FloorInfo
 import ai.factory.droidoffice.core.FloorView
+import ai.factory.droidoffice.core.Frame
+import ai.factory.droidoffice.core.HostLinkState
+import ai.factory.droidoffice.core.HostLog
 import ai.factory.droidoffice.core.GhPull
 import ai.factory.droidoffice.core.ModelAvailability
 import ai.factory.droidoffice.core.Probe
@@ -126,6 +129,64 @@ class OfficeConnection(
     private val _link = MutableStateFlow(Link())
     val link: StateFlow<Link> = _link.asStateFlow()
 
+    /**
+     * The order the React Native side and management views see this connection in: link changes and
+     * every frame of every socket, numbered from one counter. Main thread only.
+     */
+    val log = HostLog()
+    private val logListeners = LinkedHashSet<(HostLog.Event) -> Unit>()
+
+    /** The socket whose welcome has arrived and is still open, readable from any thread; null while down. */
+    @Volatile var liveEpoch: Long? = null
+        private set
+
+    /** Bumped whenever the active office changes and every attachment is dropped with it. */
+    @Volatile var holdGeneration = 0L
+        private set
+
+    /** [attach]/[detach] for owners that keep their own books (OwnedHolds, HoldTokens). Any thread. */
+    val sharedHolds = object : ai.factory.droidoffice.core.SharedHolds {
+        override fun generation() = holdGeneration
+        override fun attach(workerId: String) = this@OfficeConnection.attach(workerId)
+        override fun detach(workerId: String) = this@OfficeConnection.detach(workerId)
+        override fun resnapshot(workerId: String) = this@OfficeConnection.resnapshot(workerId)
+    }
+
+    /** Hears every [HostLog] event, in order, on the main thread. Returns the unsubscribe. */
+    fun listenLog(listener: (HostLog.Event) -> Unit): () -> Unit {
+        logListeners += listener
+        return { logListeners -= listener }
+    }
+
+    private fun dispatch(e: HostLog.Event) {
+        for (l in logListeners.toList()) runCatching { l(e) }
+    }
+
+    private var linkValue: Link
+        get() = _link.value
+        set(value) {
+            _link.value = value
+            hostLink(value)
+        }
+
+    /** What the link says to the React Native side: never an address, only the office's own sentences. */
+    private fun hostLink(l: Link) {
+        val phase = when (l.phase) {
+            Phase.Idle -> HostLinkState.IDLE
+            Phase.Connecting, Phase.Reconnecting -> HostLinkState.CONNECTING
+            // Connected is announced by the welcome itself (HostLog.frame), before its first message.
+            Phase.Connected -> return
+            Phase.Offline -> HostLinkState.OFFLINE
+            Phase.Unauthorized -> HostLinkState.UNAUTHORIZED
+        }
+        val reason = if (l.phase == Phase.Offline || l.phase == Phase.Unauthorized) l.detail else null
+        log.link(phase, l.officeId, reason)?.let(::dispatch)
+    }
+
+    /** The endpoint for [officeId] while socket [epoch] is its live, welcomed one; null otherwise. Any thread. */
+    fun bound(officeId: String, epoch: Long): OfficeEndpoint<OfficeAuth>? =
+        current?.takeIf { it.officeId == officeId && liveEpoch == epoch && store.snapshot.value.active?.id == officeId }
+
     private val _data = MutableStateFlow(OfficeData())
     val data: StateFlow<OfficeData> = _data.asStateFlow()
 
@@ -173,8 +234,8 @@ class OfficeConnection(
     private val nonce = MutableStateFlow(0)
     private val attached = ConcurrentHashMap.newKeySet<String>()
     private val holds = HashMap<String, Int>()
-    /** Each attached terminal's stream, on the main thread like [handle]. */
-    private val feeds = HashMap<String, TermFeed>()
+    /** Each attached terminal's stream: created on any thread by [attach], pushed on the main thread by [handle]. */
+    private val feeds = ConcurrentHashMap<String, TermFeed>()
     @Volatile private var socket: WebSocket? = null
     @Volatile private var current: OfficeEndpoint<OfficeAuth>? = null
     @Volatile private var hireAskedAt = 0L
@@ -419,7 +480,7 @@ class OfficeConnection(
             _hiddenModels.value = emptySet()
             _subscriptions.value = null
             _availability.value = emptyMap()
-            _link.value = Link()
+            linkValue = Link()
             _data.value = OfficeData()
             _screens.value = emptyMap()
             return
@@ -432,6 +493,7 @@ class OfficeConnection(
             _screens.value = emptyMap()
             attached.clear()
             synchronized(holds) { holds.clear() }
+            holdGeneration++
             feeds.clear()
             models = null
             whiteboard.close()
@@ -439,30 +501,30 @@ class OfficeConnection(
             _boards.value = emptyMap()
         }
         if (!d.wanted) {
-            _link.value = Link(Phase.Idle, office.id)
+            linkValue = Link(Phase.Idle, office.id)
             return
         }
         if (!d.online) {
-            _link.value = Link(Phase.Offline, office.id, detail = "The phone is offline. Workers keep going at the office.")
+            linkValue = Link(Phase.Offline, office.id, detail = "The phone is offline. Workers keep going at the office.")
             return
         }
         val token = store.token(office.id)
         if (token == null) {
-            _link.value = Link(Phase.Unauthorized, office.id, detail = "This phone lost its key for the office")
+            linkValue = Link(Phase.Unauthorized, office.id, detail = "This phone lost its key for the office")
             awaitCancellation()
         }
         val auth = if (office.auth == AuthMode.Lan) OfficeAuth.Lan(token) else OfficeAuth.Device(token)
         val backoff = Backoff()
         while (currentCoroutineContext().isActive) {
-            _link.value = _link.value.copy(phase = if (backoff.attempt == 0) Phase.Connecting else Phase.Reconnecting, officeId = office.id, attempt = backoff.attempt, retryAt = null)
+            linkValue = _link.value.copy(phase = if (backoff.attempt == 0) Phase.Connecting else Phase.Reconnecting, officeId = office.id, attempt = backoff.attempt, retryAt = null)
             when (val race = racer.race(office.bases) { api.hello(it, auth) }) {
                 is RaceResult.Unauthorized -> {
-                    _link.value = Link(Phase.Unauthorized, office.id, base = race.base, detail = if (office.auth == AuthMode.Lan) "The office restarted, so its old QR code no longer works" else "This phone was unpaired from the office")
+                    linkValue = Link(Phase.Unauthorized, office.id, base = race.base, detail = if (office.auth == AuthMode.Lan) "The office restarted, so its old QR code no longer works" else "This phone was unpaired from the office")
                     awaitCancellation()
                 }
                 is RaceResult.AllFailed -> {
                     val wait = backoff.next()
-                    _link.value = Link(Phase.Reconnecting, office.id, attempt = backoff.attempt, retryAt = System.currentTimeMillis() + wait, detail = "Can't reach the office on ${office.bases.size} address${if (office.bases.size == 1) "" else "es"}")
+                    linkValue = Link(Phase.Reconnecting, office.id, attempt = backoff.attempt, retryAt = System.currentTimeMillis() + wait, detail = "Can't reach the office on ${office.bases.size} address${if (office.bases.size == 1) "" else "es"}")
                     delay(wait)
                 }
                 is RaceResult.Winner -> {
@@ -472,11 +534,11 @@ class OfficeConnection(
                         it.copy(lastBase = race.base, lastSeenAt = System.currentTimeMillis(), name = probe.officeName ?: it.name, version = probe.version ?: it.version)
                     }
                     current = OfficeEndpoint(race.base, auth, office.id)
-                    _link.value = Link(Phase.Connecting, office.id, base = race.base, kind = race.kind, attempt = backoff.attempt)
+                    linkValue = Link(Phase.Connecting, office.id, base = race.base, kind = race.kind, attempt = backoff.attempt)
                     val end = session(office, race.base, race.kind, auth)
                     if (end.unpaired) {
                         // Unpaired from the office (its Settings → Phone & web, or here): no point retrying the same token.
-                        _link.value = Link(Phase.Unauthorized, office.id, base = race.base, detail = "This phone was unpaired from the office")
+                        linkValue = Link(Phase.Unauthorized, office.id, base = race.base, detail = "This phone was unpaired from the office")
                         _data.update { it.copy(synced = false) }
                         awaitCancellation()
                     }
@@ -486,7 +548,7 @@ class OfficeConnection(
                     }
                     if (end.welcomed) backoff.reset()
                     val wait = backoff.next()
-                    _link.value = Link(Phase.Reconnecting, office.id, base = race.base, kind = race.kind, attempt = backoff.attempt, retryAt = System.currentTimeMillis() + wait, detail = end.reason)
+                    linkValue = Link(Phase.Reconnecting, office.id, base = race.base, kind = race.kind, attempt = backoff.attempt, retryAt = System.currentTimeMillis() + wait, detail = end.reason)
                     delay(wait)
                 }
             }
@@ -515,6 +577,8 @@ class OfficeConnection(
             }
         })
         socket = ws
+        val epoch = log.opened()
+        log.event()?.let(::dispatch)
         var welcomed = false
         // On Tailscale after a Wi-Fi blip, nothing about the phone's network changes when Wi-Fi to the
         // office comes back, so check the better routes now and then and move over when one answers.
@@ -535,7 +599,13 @@ class OfficeConnection(
                         val msg = Protocol.decode(e.text) ?: continue
                         if (msg is ServerMsg.Welcome) {
                             welcomed = true
-                            _link.value = Link(Phase.Connected, office.id, base = base, kind = kind)
+                            liveEpoch = epoch
+                        }
+                        // The React Native side hears the welcome (after its connected link) before
+                        // the native state changes, so a link it sees is never newer than its messages.
+                        Frame.parse(e.text)?.let { f -> log.frame(epoch, f, office.id).forEach(::dispatch) }
+                        if (msg is ServerMsg.Welcome) {
+                            linkValue = Link(Phase.Connected, office.id, base = base, kind = kind)
                             for (id in attached) ws.send(ClientMsg.attach(id))
                         }
                         handle(office.id, msg)
@@ -549,6 +619,8 @@ class OfficeConnection(
         } finally {
             upgrade?.cancel()
             socket = null
+            if (liveEpoch == epoch) liveEpoch = null
+            log.closed(epoch)?.let(::dispatch)
             ws.cancel()
             whiteboard.status(false)
         }
