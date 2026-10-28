@@ -10,10 +10,10 @@
 import type { ServerMsg } from './protocol.js';
 
 /** State broadcasts about the whole office: a new welcome replaces them, a floor change doesn't. */
-const OFFICE_TOPICS = ['floors', 'projectsDir', 'upgrade', 'machine', 'sky', 'jukebox', 'leaveOnMerge', 'freshMain', 'subagents', 'models.hidden', 'whiteboardSkill', 'prompts', 'factory', 'setup', 'subscriptions', 'visits'] as const;
+const OFFICE_TOPICS = ['floors', 'projectsDir', 'upgrade', 'machine', 'sky', 'jukebox', 'leaveOnMerge', 'freshMain', 'subagents', 'models.hidden', 'whiteboardSkill', 'prompts', 'factory', 'setup', 'subscriptions'] as const;
 
 /** State broadcasts about the floor this connection is on: a floor change replaces them. */
-const FLOOR_TOPICS = ['gh.issues', 'gh.pulls', 'pipelines', 'jira', 'jira.board', 'autoHeal', 'decor', 'worktreeSetup'] as const;
+const FLOOR_TOPICS = ['gh.issues', 'gh.pulls', 'pipelines', 'jira', 'jira.board', 'autoHeal', 'decor', 'worktreeSetup', 'visits'] as const;
 
 type Topic = (typeof OFFICE_TOPICS)[number] | (typeof FLOOR_TOPICS)[number];
 type WorkerMsg = Extract<ServerMsg, { t: 'worker.update' | 'worker.remove' }>;

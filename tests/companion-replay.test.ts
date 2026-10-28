@@ -41,6 +41,8 @@ test('a floor change drops the old floor and keeps the office', () => {
   r.record(welcome('f1'));
   r.record({ t: 'subagents', state: {} } as unknown as ServerMsg);
   r.record({ t: 'gh.pulls', state: {} } as unknown as ServerMsg);
+  r.record({ t: 'visits', visits: [] });
+  assert.ok(kinds(r.snapshot()).includes('visits'));
   r.record(update('w1', 'idle'));
   r.record(enter('f2'));
   r.record(update('w9', 'idle'));
