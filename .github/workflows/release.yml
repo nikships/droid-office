@@ -386,7 +386,7 @@ jobs:
           codesign --verify --strict --verbose=2 "$extension"
           codesign --verify --strict --verbose=2 "$bridge"
           for bundle in "$extension" "$bridge"; do
-            codesign -d --entitlements - "$bundle" > finder-entitlements.plist 2>/dev/null
+            codesign -d --entitlements - --xml "$bundle" > finder-entitlements.plist 2>/dev/null
             plutil -convert json -o finder-entitlements.json finder-entitlements.plist
             node --input-type=module -e '
               import { readFileSync } from "node:fs";

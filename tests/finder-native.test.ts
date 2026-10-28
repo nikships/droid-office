@@ -147,5 +147,8 @@ test('Swift policy checks compile and execute without Keychain or extension acti
   copyFileSync(output, signed);
   writeFileSync(entitlements, '<?xml version="1.0"?><plist version="1.0"><dict><key>office.test-marker</key><true/></dict></plist>');
   execFileSync('/usr/bin/codesign', ['--force', '--sign', '-', '--entitlements', entitlements, signed], { timeout: 10_000 });
+  const xml = execFileSync('/usr/bin/codesign', ['-d', '--entitlements', '-', '--xml', signed], { stdio: ['ignore', 'pipe', 'pipe'], timeout: 10_000 });
+  const decoded = execFileSync('/usr/bin/plutil', ['-convert', 'json', '-o', '-', '-'], { input: xml, encoding: 'utf8' });
+  assert.equal(JSON.parse(decoded)['office.test-marker'], true);
   assert.match(execFileSync(output, ['--signing-info', signed], { encoding: 'utf8', timeout: 10_000 }), /exposes entitlements without requirement flags/);
 });

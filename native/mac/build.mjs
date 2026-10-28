@@ -7,6 +7,7 @@ const root = path.dirname(fileURLToPath(import.meta.url));
 const version = JSON.parse(readFileSync(path.join(root, '../../package.json'), 'utf8')).version;
 function run(command, args) {
   const result = spawnSync(command, args, { stdio: 'inherit' });
+  if (result.error) throw new Error(`${command} could not start: ${result.error.message}`);
   if (result.status !== 0) throw new Error(`${command} failed (${result.status ?? result.signal})`);
 }
 function bundle(name, suffix, id, extension) {

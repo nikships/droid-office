@@ -22,7 +22,8 @@ final class DispatchPrompt: ObservableObject {
 
     func resolve() async {
         do {
-            paths = try FinderPolicy.paths(urls)
+            let selection = urls
+            paths = try await Task.detached { try FinderPolicy.paths(selection) }.value
             let client = try FinderAPI()
             api = client
             let value: ResolveResult = try await client.request("resolve", body: JSONEncoder().encode(ResolveRequest(paths: paths)))
@@ -90,6 +91,10 @@ func threadLink(_ raw: String) -> URL? {
 
 final class FinderNotifications: NSObject, UNUserNotificationCenterDelegate, @unchecked Sendable {
     static let shared = FinderNotifications()
+    func userNotificationCenter(_ center: UNUserNotificationCenter, willPresent notification: UNNotification,
+                                withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void) {
+        completionHandler([.banner, .list, .sound])
+    }
     func userNotificationCenter(_ center: UNUserNotificationCenter, didReceive response: UNNotificationResponse,
                                 withCompletionHandler completionHandler: @escaping () -> Void) {
         defer { completionHandler() }
