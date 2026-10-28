@@ -437,7 +437,12 @@ function createTerminalView(net: Net, workerId: string, o: ViewOptions): Termina
   // where they are, as a terminal does with a file dragged into it: Droid attaches a picture.
   let uploading = 0;
   const insertFiles = async (files: File[]) => {
-    if (!files.length) return;
+    if (!files.length || disposed) return;
+    // A drop or paste on a pane beside the active one makes it the active one, as clicking it would.
+    if (!active && !guest) {
+      setActive(true);
+      o.onFocus?.();
+    }
     if (!canType() && !guest) return toast('Disconnected. No files were sent.', 'warn');
     if (guest) return toast(`${info.name} runs outside the office: drop files into its own terminal`, 'warn');
     const stamp = net.stamp();
@@ -445,6 +450,7 @@ function createTerminalView(net: Net, workerId: string, o: ViewOptions): Termina
     el.classList.toggle('uploading', ++uploading > 0);
     try {
       const paths = await Promise.all(files.map((f) => uploadDrop(workerId, f, floor)));
+      if (disposed) return;
       // Uploaded for a connection or floor that has since gone: typing the paths now would land elsewhere.
       if (!net.current(stamp) || !canType()) return toast('The connection changed while uploading. Nothing was typed.', 'warn');
       sendSize(true);

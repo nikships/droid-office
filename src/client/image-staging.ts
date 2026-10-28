@@ -30,6 +30,7 @@ export interface StagingApi<F> {
 export class ImageStaging<F> {
   private entries = new Map<string, Entry<F>>();
   private next = 0;
+  private goneListeners = new Set<(handle: string) => void>();
 
   constructor(private api: StagingApi<F>) {}
 
@@ -69,6 +70,15 @@ export class ImageStaging<F> {
     return entry;
   }
 
+  /**
+   * A picture left the staging (sent or thrown away). A box showing it drops it: one sent by a view
+   * that has since been disposed must not be shown, or sent, again by its remount.
+   */
+  onGone(fn: (handle: string) => void): () => void {
+    this.goneListeners.add(fn);
+    return () => this.goneListeners.delete(fn);
+  }
+
   /** Thrown away: never sent. */
   remove(handle: string) {
     const entry = this.entries.get(handle);
@@ -76,13 +86,24 @@ export class ImageStaging<F> {
     entry.removed = true;
     this.entries.delete(handle);
     if (entry.id) this.api.forget(entry.floor, entry.id);
+    this.gone(handle);
   }
 
-  /** Sent with a prompt: the office owns it now. */
+  /** Sent with a prompt: the office owns it now. One still going up was not sent, so it is let go. */
   take(handle: string): string | undefined {
     const entry = this.entries.get(handle);
+    if (!entry) return undefined;
+    if (!entry.id) {
+      this.remove(handle);
+      return undefined;
+    }
     this.entries.delete(handle);
-    return entry?.id;
+    this.gone(handle);
+    return entry.id;
+  }
+
+  private gone(handle: string) {
+    for (const fn of [...this.goneListeners]) fn(handle);
   }
 
   /** The connection was lost: every picture a draft kept goes. */

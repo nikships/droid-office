@@ -44,8 +44,14 @@ export interface PromptImages {
   busy(): boolean;
   /** Resolves once no picture is going up. */
   settled(): Promise<void>;
-  /** The ids to send with the prompt. The prompt owns them from here: closing the box no longer throws them away. */
-  take(): string[];
+  /** The pictures that are up, as handles and the ids to send, captured together before a send. */
+  sendable(): { handles: string[]; ids: string[] };
+  /**
+   * The prompt carrying these handles was sent: the office owns them from here. Works after the box
+   * was detached too. Anything else (a picture added while the send was out) stays for the next one.
+   * Without handles: every picture that is up.
+   */
+  take(handles?: readonly string[]): string[];
   /** Throws away what was never sent: the box was closed. */
   discard(): void;
   /** Lets go of the thumbnails but keeps the pictures, uploads still going included: a draft holds their handles. */
@@ -70,6 +76,7 @@ export function promptImages(textarea: HTMLTextAreaElement, opts: { floor?: stri
   const waiting: (() => void)[] = [];
   let changed: () => void = () => {};
   const element = h('div.pimgs', { role: 'list', 'aria-label': 'Attached pictures' });
+  let offGone: (() => void) | undefined;
 
   const idOf = (item: Item) => staging.get(item.handle)?.id;
   const ids = () => items.flatMap((i) => idOf(i) ?? []);
@@ -116,7 +123,25 @@ export function promptImages(textarea: HTMLTextAreaElement, opts: { floor?: stri
     });
   };
 
+  // Sent or thrown away elsewhere (by a disposed view whose send finished late): not here any more.
+  const listen = () => {
+    offGone ??= staging.onGone((handle) => {
+      const item = items.find((i) => i.handle === handle);
+      if (!item) return;
+      drop(item);
+      render();
+      settle();
+      changed();
+    });
+  };
+  const unlisten = () => {
+    offGone?.();
+    offGone = undefined;
+  };
+  listen();
+
   const add = (files: File[]) => {
+    listen();
     for (const file of files) {
       if (!PROMPT_IMAGE_TYPES.includes(file.type)) {
         toast(`${file.name || 'That file'} isn't a PNG, JPEG, GIF or WebP picture`, 'warn');
@@ -160,24 +185,40 @@ export function promptImages(textarea: HTMLTextAreaElement, opts: { floor?: stri
     handles: () => items.map((i) => i.handle),
     busy,
     settled: () => (busy() ? new Promise<void>((resolve) => waiting.push(resolve)) : Promise.resolve()),
-    take() {
-      const taken = items.flatMap((i) => staging.take(i.handle) ?? []);
-      release();
+    sendable() {
+      const up = items.filter((i) => idOf(i));
+      return { handles: up.map((i) => i.handle), ids: up.map((i) => idOf(i)!) };
+    },
+    take(handles = items.filter((i) => idOf(i)).map((i) => i.handle)) {
+      // Dropped from this box first, so the gone notices don't report each one as a change.
+      const sent = new Set(handles);
+      for (const item of items.filter((i) => sent.has(i.handle))) drop(item);
+      const taken = handles.flatMap((handle) => staging.take(handle) ?? []);
+      render();
+      settle();
       changed();
       return taken;
     },
     discard() {
+      unlisten();
       for (const item of items) staging.remove(item.handle);
       release();
       changed();
     },
     detach() {
+      unlisten();
       for (const item of items) staging.keep(item.handle);
       release();
     },
     restore(kept) {
+      listen();
       for (const handle of kept) {
-        if (items.length >= PROMPT_IMAGES_MAX || items.some((i) => i.handle === handle)) continue;
+        if (items.some((i) => i.handle === handle)) continue;
+        // A draft holding more than a box takes: the extra ones would stay staged with nothing pointing at them.
+        if (items.length >= PROMPT_IMAGES_MAX) {
+          staging.remove(handle);
+          continue;
+        }
         const entry = staging.adopt(handle);
         if (!entry) continue;
         const item: Item = { handle, file: entry.file, url: URL.createObjectURL(entry.file) };

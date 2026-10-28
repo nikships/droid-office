@@ -92,3 +92,47 @@ test('handles are opaque and unique per page', () => {
   const handles = new Set(Array.from({ length: 5 }, () => staging.stage('f', 'x').handle));
   assert.equal(handles.size, 5);
 });
+
+test('a send finishing after its box went away takes only the sent pictures; one added during the send stays for the next', async () => {
+  const { staging, uploads, forgotten } = rig();
+  const gone: string[] = [];
+  staging.onGone((handle) => gone.push(handle));
+  const sent = staging.stage('f', 'sent.png');
+  uploads[0].resolve('server-sent');
+  await sent.settled;
+  // The send goes out with exactly this handle; a paste lands while it waits for the receipt.
+  const late = staging.stage('f', 'late.png');
+  // Pane closed mid-send: the draft keeps both handles.
+  staging.keep(sent.handle);
+  staging.keep(late.handle);
+  assert.equal(staging.take(sent.handle), 'server-sent');
+  assert.deepEqual(gone, [sent.handle], 'a remounted box hearing this drops the sent picture');
+  assert.equal(staging.adopt(sent.handle), undefined, 'the remount cannot send it again');
+  uploads[1].resolve('server-late');
+  await late.settled;
+  assert.equal(staging.adopt(late.handle)?.id, 'server-late', 'the late picture stays unsent, for the next message');
+  assert.deepEqual(forgotten, []);
+});
+
+test('taking a picture still going up does not orphan it: it was not sent, so it is taken out once it lands', async () => {
+  const { staging, uploads, forgotten } = rig();
+  const gone: string[] = [];
+  staging.onGone((handle) => gone.push(handle));
+  const pending = staging.stage('f', 'p.png');
+  assert.equal(staging.take(pending.handle), undefined);
+  assert.deepEqual(gone, [pending.handle]);
+  uploads[0].resolve('server-p');
+  await pending.settled;
+  assert.deepEqual(forgotten, ['f:server-p']);
+  assert.equal(staging.size, 0);
+});
+
+test('gone listeners stop when unsubscribed', () => {
+  const { staging } = rig();
+  const gone: string[] = [];
+  const off = staging.onGone((handle) => gone.push(handle));
+  const a = staging.stage('f', 'a');
+  off();
+  staging.remove(a.handle);
+  assert.deepEqual(gone, []);
+});

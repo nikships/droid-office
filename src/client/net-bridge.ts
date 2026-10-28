@@ -50,10 +50,22 @@ export function bridgeTransport(port: BridgePort): NetTransport {
       for (const fn of statuses) fn(up);
     } else if (up) for (const fn of messages) fn(msg.msg);
   });
-  port.start?.();
+  // A MessagePort queues what native sends until it starts: start once both a status and a message
+  // listener are in, so a transport handed to Net a tick later still gets the up status and the
+  // welcome a warm native side already sent.
+  let started = false;
+  const start = () => {
+    if (started || !messages.size || !statuses.size) return;
+    started = true;
+    port.start?.();
+  };
   return {
     connect: () => post({ kind: 'connect' }),
-    close: () => post({ kind: 'close' }),
+    close() {
+      // The page closed it: native may not echo a down status, and the next up must not look like a repeat.
+      up = false;
+      post({ kind: 'close' });
+    },
     send(msg) {
       if (!up) return false;
       post({ kind: 'send', msg });
@@ -61,10 +73,13 @@ export function bridgeTransport(port: BridgePort): NetTransport {
     },
     onMessage(fn) {
       messages.add(fn);
+      start();
       return () => messages.delete(fn);
     },
     onStatus(fn) {
       statuses.add(fn);
+      if (up) fn(true);
+      start();
       return () => statuses.delete(fn);
     },
   };

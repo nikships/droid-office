@@ -3,8 +3,7 @@ import { lastFloor, spotParams, store, type Profile, type Spot } from './state';
 import { lanToken } from './token';
 
 type Handler = (msg: ServerMsg) => void;
-/** What server.ts's `floor.go` says when it doesn't move the connection. */
-const FLOOR_REFUSALS = new Set(['No such floor', 'There is no building to go up on yet']);
+
 type ActionResult = Extract<ServerMsg, { t: 'action.result' }>;
 
 /**
@@ -59,7 +58,10 @@ export class Net {
   private requests = new Map<string, (result: ActionResult) => void>();
   /** Bumped on every connection loss, arrival and departure: async work started before it is stale. */
   private epoch = 0;
-  private switching = false;
+  /** The floor.go in flight: where to, and the receipt that would refuse it. */
+  private switching: { floor: string; requestId: string } | undefined;
+  /** Message handlers are seeing a welcome or floor.enter: the server already put this connection there. */
+  private arriving = false;
   private holds = new Map<string, number>();
   /** Worker id → the epoch its attach was sent in. The server forgets attachments on leave and on a new socket. */
   private attachedIn = new Map<string, number>();
@@ -83,8 +85,10 @@ export class Net {
       this.transport = transport;
       transport.onMessage((msg) => this.receive(msg));
       transport.onStatus((up) => {
-        if (up) this.opened();
-        else if (this.up) this.lost();
+        // Closed on purpose: a reconnect native had in flight, or a resume, doesn't bring the page back up.
+        if (up) {
+          if (!this.closedByUs) this.opened();
+        } else if (this.up) this.lost();
       });
     }
   }
@@ -210,7 +214,7 @@ export class Net {
   private lost() {
     const wasUp = this.up;
     this.up = false;
-    this.switching = false;
+    this.switching = undefined;
     this.epoch++;
     this.attachedIn.clear();
     this.rawAttached.clear();
@@ -229,23 +233,33 @@ export class Net {
   private receive(msg: ServerMsg) {
     if (msg.t === 'action.result') this.requests.get(msg.requestId)?.(msg);
     const entering = msg.t === 'welcome' || msg.t === 'floor.enter';
-    // A refused floor switch answers with one of these warnings and leaves the connection where it was.
-    // Any other toast may predate the switch, and an attach sent then would stream another floor.
-    const refused = this.switching && msg.t === 'toast' && FLOOR_REFUSALS.has(msg.text);
+    // Only the office's receipt for this very switch says it was refused and the connection stayed put.
+    // A success receipt changes nothing: the arrival is what moves the connection.
+    const refused = !!this.switching && msg.t === 'action.result' && !msg.ok && msg.requestId === this.switching.requestId;
     if (entering) {
       this.unready();
-      this.switching = false;
+      this.switching = undefined;
       this.epoch++;
       this.floor = msg.floor;
       this.attachedIn.clear();
       this.rawAttached.clear();
     }
-    for (const h of this.handlers) h(msg);
+    this.arriving = entering;
+    try {
+      for (const h of this.handlers) h(msg);
+    } finally {
+      this.arriving = false;
+    }
     if (entering) this.arrive(new Set(msg.workers.map((w) => w.id)));
     else if (refused) {
-      this.switching = false;
+      // Still on the old floor, where the server kept every attachment made before the switch.
+      const before = this.epoch - 1;
+      this.switching = undefined;
       this.epoch++;
-      this.attachedIn.clear();
+      for (const [id, epoch] of this.attachedIn) {
+        if (epoch === before) this.attachedIn.set(id, this.epoch);
+        else this.attachedIn.delete(id);
+      }
       this.arrive();
     }
   }
@@ -373,13 +387,24 @@ export class Net {
       if (this.holds.has(msg.workerId)) return true;
       this.attachedIn.delete(msg.workerId);
     } else if (msg.t === 'worker.attach') {
+      // Before the office says where this connection is, or while it leaves a floor, the attach would
+      // land on whichever floor comes next. Views attach again on the welcome or arrival.
+      if (!this.ready && !this.arriving) return false;
       // A view that attaches without a hold detaches itself, so holds releasing around it leave it attached.
       this.rawAttached.add(msg.workerId);
       this.attachedIn.set(msg.workerId, this.epoch);
-    } else if (msg.t === 'floor.go' && msg.floor !== this.floor) {
-      return this.leaveFloor(msg);
+    } else if (msg.t === 'floor.go') {
+      // One switch at a time: a second would let the first arrival look final while another is on its way.
+      if (this.switching) return false;
+      // The office answers a trip to the floor this connection is on with no arrival: nothing to leave.
+      if (msg.floor !== this.floor) return this.leaveFloor(msg);
     }
     return this.write(msg);
+  }
+
+  /** The floor a switch in flight is going to, if one is. */
+  get switchingTo(): string | undefined {
+    return this.switching?.floor;
   }
 
   /**
@@ -388,13 +413,17 @@ export class Net {
    */
   private leaveFloor(msg: Extract<ClientMsg, { t: 'floor.go' }>): boolean {
     const before = this.epoch;
-    this.switching = true;
+    // Carries a receipt, so a refusal is told apart from every other warning. A caller's own id is
+    // kept, so Net.request still resolves on the same receipt.
+    const requestId = msg.requestId ?? `floor-${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
+    const switching = { floor: msg.floor, requestId };
+    this.switching = switching;
     this.epoch++;
     this.unready();
-    if (this.write(msg)) return true;
+    if (this.write({ ...msg, requestId, requestFloor: msg.requestFloor ?? this.floor ?? undefined })) return true;
     // Never sent, so the connection is still on its floor; a lost socket says so itself.
-    if (!this.switching || !this.up) return false;
-    this.switching = false;
+    if (this.switching !== switching || !this.up) return false;
+    this.switching = undefined;
     for (const [id, epoch] of this.attachedIn) if (epoch === before) this.attachedIn.set(id, this.epoch);
     this.arrive();
     return false;

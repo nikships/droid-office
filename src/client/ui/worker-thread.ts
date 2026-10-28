@@ -74,6 +74,8 @@ export function mountWorkerThread(net: Net, opts: ThreadOptions): WorkerThread {
   let active = false;
   let focused = true;
   let hold: TerminalHold | undefined;
+  /** The pictures the caller's draft kept when this view was disposed. */
+  let keptHandles: string[] = [];
   const self = {};
   let disposed = false;
   let sending = false;
@@ -123,7 +125,10 @@ export function mountWorkerThread(net: Net, opts: ThreadOptions): WorkerThread {
   let queueKey = '';
   // Keys go straight to the attached terminal, as Raw TTY types them: an office before term.input
   // confirmations would answer a confirmed send with a refusal after typing the keys anyway.
-  const typeKeys = (data: string) => net.send({ t: 'term.input', workerId: worker.id, data });
+  // Only once the office confirmed this floor and attached the worker on it: a key sent while leaving
+  // the floor, or before the welcome, would reach a terminal this view no longer shows.
+  const canTypeKeys = () => !!hold?.attached;
+  const typeKeys = (data: string) => canTypeKeys() && net.send({ t: 'term.input', workerId: worker.id, data });
   const clearQueue = () => {
     const rows = opts.screen?.();
     if (!rows || !readDroidQueue(rows)?.length) {
@@ -145,7 +150,7 @@ export function mountWorkerThread(net: Net, opts: ThreadOptions): WorkerThread {
       if (queued.pending.length) sessionStorage.setItem(opts.queueKey, JSON.stringify(queued));
       else sessionStorage.removeItem(opts.queueKey);
     } catch {}
-    const canClear = connected && !!droid?.length;
+    const canClear = connected && canTypeKeys() && !!droid?.length;
     const key = JSON.stringify([shown, canClear]);
     if (key === queueKey) return;
     queueKey = key;
@@ -756,7 +761,7 @@ export function mountWorkerThread(net: Net, opts: ThreadOptions): WorkerThread {
     queue.hidden = !busy;
     queue.disabled = input.disabled || !received || !!slashOf(input.value);
     stop.hidden = !busy && !waiting;
-    stop.disabled = !allowed || sending;
+    stop.disabled = !allowed || sending || !canTypeKeys();
     send.textContent = sending ? 'Sending…' : busy ? 'Send now' : 'Send';
     send.title = busy ? `Steer ${worker.name}: it reads this now, during the turn` : '';
     input.placeholder = busy ? `Steer ${worker.name}, or queue for after this turn…` : `Reply to ${worker.name}…`;
@@ -837,12 +842,20 @@ export function mountWorkerThread(net: Net, opts: ThreadOptions): WorkerThread {
     }
     const queueReceipt = queueSend && isBusy(worker.status);
     const after = queued.sequence;
-    const hasImage = images.ids().length > 0;
-    const result = await opts.send({ t: 'worker.prompt', workerId: worker.id, prompt: text, images: images.ids(), queue: queueSend });
+    // Exactly what goes out: a picture added while the send is out stays for the next message.
+    const outgoing = images.sendable();
+    const hasImage = outgoing.ids.length > 0;
+    const result = await opts.send({ t: 'worker.prompt', workerId: worker.id, prompt: text, images: outgoing.ids, queue: queueSend });
     sending = false;
     if (!result) {
       if (queueReceipt) queued.sent(text, hasImage, after);
-      images.take();
+      images.take(outgoing.handles);
+      // Disposed while the send was out: the caller's kept draft still lists the sent pictures.
+      if (disposed) {
+        const sent = new Set(outgoing.handles);
+        keptHandles = keptHandles.filter((handle) => !sent.has(handle));
+        opts.onAttachments?.(keptHandles);
+      }
       input.value = '';
       opts.onDraft('');
       told = '';
@@ -897,7 +910,9 @@ export function mountWorkerThread(net: Net, opts: ThreadOptions): WorkerThread {
   });
   const off = net.onMessage(receive);
   const offReady = net.onReady((ready) => {
-    if (ready || disposed) return;
+    if (disposed) return;
+    updateControls();
+    if (ready) return;
     pending = undefined;
     team.clear();
     team.enable(false);
@@ -1017,8 +1032,10 @@ export function mountWorkerThread(net: Net, opts: ThreadOptions): WorkerThread {
       off();
       resize.disconnect();
       questionChanges.disconnect();
-      if (opts.onAttachments) images.detach();
-      else images.discard();
+      if (opts.onAttachments) {
+        keptHandles = images.handles();
+        images.detach();
+      } else images.discard();
       team.dispose();
       teamNodes.clear();
     },

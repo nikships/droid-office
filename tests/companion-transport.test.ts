@@ -254,19 +254,47 @@ test('a floor.go to a socket that is already down sends nothing and changes noth
   assert.equal(net.ready, false);
 });
 
-test('floor.go to the current floor is sent without leaving ready, and a refused switch comes back ready', () => {
+/** The receipt id the last floor.go went out with. */
+const lastSwitch = (transport: FakeTransport) => {
+  const go = transport.sent.findLast((m) => m.t === 'floor.go') as (ClientMsg & { requestId?: string; requestFloor?: string }) | undefined;
+  assert.ok(go?.requestId, 'every switch carries a receipt id');
+  return go;
+};
+const refusal = (requestId: string) => ({ t: 'action.result', requestId, ok: false, error: 'No such floor' }) as ServerMsg;
+
+test('floor.go to the current floor is a no-op for readiness, and only its own failed receipt brings a refused switch back', () => {
   const { net, transport } = online();
   const stamp = net.stamp();
   net.send({ t: 'floor.go', floor: 'a' });
-  assert.equal(net.current(stamp), true);
+  assert.equal(net.current(stamp), true, 'the office sends no arrival for the floor you are on');
+  assert.equal(net.switchingTo, undefined);
   net.send({ t: 'floor.go', floor: 'missing' });
+  const go = lastSwitch(transport);
+  assert.equal(go.requestFloor, 'a');
+  assert.equal(net.switchingTo, 'missing');
   assert.equal(net.ready, false);
-  transport.deliver({ t: 'toast', text: 'Something unrelated went wrong', level: 'warn' } as ServerMsg);
-  assert.equal(net.ready, false, 'an unrelated warning is not the refusal');
   transport.deliver({ t: 'toast', text: 'No such floor', level: 'warn' } as ServerMsg);
+  assert.equal(net.ready, false, 'toast text never decides a refusal');
+  transport.deliver(refusal('someone-else'));
+  assert.equal(net.ready, false, 'another action’s receipt is not this switch’s');
+  transport.deliver({ t: 'action.result', requestId: go.requestId!, ok: true } as ServerMsg);
+  assert.equal(net.ready, false, 'a success receipt waits for the authoritative arrival');
+  transport.deliver(refusal(go.requestId!));
   assert.equal(net.ready, true);
   assert.equal(net.floor, 'a');
+  assert.equal(net.switchingTo, undefined);
   assert.equal(net.current(stamp), false, 'work begun before the attempted switch is still stale');
+});
+
+test('a caller’s own receipt id rides on floor.go, and Net.request resolves on the same receipt', async () => {
+  const { net, transport } = online();
+  const pending = net.request({ t: 'floor.go', floor: 'missing' });
+  const go = lastSwitch(transport);
+  transport.deliver(refusal(go.requestId!));
+  const result = await pending;
+  assert.equal(result.ok, false);
+  assert.equal(net.ready, true);
+  assert.equal(net.floor, 'a');
 });
 
 test('connection lost fires on an actual loss and close, never on a floor switch', () => {
@@ -354,4 +382,112 @@ test('the native bridge transport parses only well-formed envelopes and never se
   assert.equal(hold.attached, false);
   net.close();
   assert.deepEqual(posted.at(-1), { kind: 'close' });
+});
+
+test('an intentionally closed external transport stays down until connect is asked for again', () => {
+  const { net, transport } = online();
+  net.close();
+  transport.status(true);
+  assert.equal(net.up, false, 'a reconnect native had in flight does not bring a closed page back up');
+  void net.connect();
+  assert.equal(transport.connects, 1);
+  transport.status(true);
+  assert.equal(net.up, true);
+  transport.deliver(welcome('a', []));
+  assert.equal(net.ready, true);
+});
+
+test('a bridge closed by the page reopens even when native never echoed the down status', () => {
+  const posted: { kind: string }[] = [];
+  let deliver: (event: { data: unknown }) => void = () => {};
+  const transport = bridgeTransport({ postMessage: (data) => posted.push(JSON.parse(data)), addEventListener: (_type, fn) => (deliver = fn) });
+  const net = new Net(
+    () => ({ name: 'Owner', color: '#fff' }) as never,
+    () => null,
+    { transport },
+  );
+  const up = () => deliver({ data: JSON.stringify({ kind: 'status', up: true }) });
+  up();
+  assert.equal(net.up, true);
+  net.close();
+  void net.connect();
+  up();
+  assert.equal(net.up, true, 'the second up is not dropped as a repeat');
+  assert.deepEqual(
+    posted.map((p) => p.kind),
+    ['close', 'connect'],
+  );
+});
+
+test('a bridge handed to Net late still reports a warm native side and its welcome', () => {
+  let started = 0;
+  const queued: unknown[] = [];
+  let deliver: ((event: { data: unknown }) => void) | undefined;
+  const port = {
+    postMessage: () => {},
+    addEventListener: (_type: 'message', fn: (event: { data: unknown }) => void) => (deliver = fn),
+    start() {
+      started++;
+      for (const data of queued.splice(0)) deliver?.({ data });
+    },
+  };
+  const transport = bridgeTransport(port);
+  assert.equal(started, 0, 'the port waits for a listener, as a MessagePort queues until start');
+  queued.push(JSON.stringify({ kind: 'status', up: true }), JSON.stringify({ kind: 'message', msg: welcome('a', ['w1']) }));
+  const net = new Net(
+    () => ({ name: 'Owner', color: '#fff' }) as never,
+    () => null,
+    { transport },
+  );
+  assert.equal(started, 1);
+  assert.equal(net.up, true);
+  assert.equal(net.ready, true);
+  assert.equal(net.floor, 'a');
+  const late: boolean[] = [];
+  transport.onStatus((isUp) => late.push(isUp));
+  assert.deepEqual(late, [true], 'a later status listener hears the current state');
+});
+
+test('raw attaches wait for the office to say where the connection is, but views attaching in an arrival handler go through', () => {
+  const { net, transport } = rig();
+  transport.status(true);
+  assert.equal(net.send({ t: 'worker.attach', workerId: 'w1' }), false, 'before the welcome');
+  net.onMessage((msg) => {
+    if (msg.t === 'welcome' || msg.t === 'floor.enter') net.send({ t: 'worker.attach', workerId: 'w1' });
+  });
+  transport.deliver(welcome('a', ['w1']));
+  assert.deepEqual(transport.take(), ['worker.attach:w1']);
+  net.send({ t: 'floor.go', floor: 'b' });
+  transport.take();
+  assert.equal(net.send({ t: 'worker.attach', workerId: 'w2' }), false, 'mid-switch it would land on the next floor');
+  assert.deepEqual(transport.take(), []);
+});
+
+test('a second floor.go while one is in flight is refused, so the first arrival is final', () => {
+  const { net, transport } = online();
+  assert.equal(net.send({ t: 'floor.go', floor: 'b' }), true);
+  assert.equal(net.send({ t: 'floor.go', floor: 'a' }), false, 'back to the floor still current is refused too');
+  assert.equal(net.send({ t: 'floor.go', floor: 'c' }), false);
+  assert.deepEqual(transport.take(), ['floor.go']);
+  transport.deliver(enter('b', []));
+  assert.equal(net.ready, true);
+  assert.equal(net.send({ t: 'floor.go', floor: 'c' }), true, 'after the arrival the next switch may go');
+});
+
+test('a refused switch keeps attachments the server still holds, without asking for snapshots again', () => {
+  const { net, transport } = online();
+  const hold = net.acquireTerminal('w1');
+  net.send({ t: 'worker.attach', workerId: 'w2' });
+  transport.take();
+  net.send({ t: 'floor.go', floor: 'missing' });
+  const go = lastSwitch(transport);
+  transport.take();
+  transport.deliver(refusal(go.requestId!));
+  assert.equal(net.ready, true);
+  assert.equal(hold.attached, true);
+  assert.deepEqual(transport.take(), [], 'no redundant worker.attach');
+  hold.release();
+  assert.deepEqual(transport.take(), ['worker.detach:w1']);
+  net.send({ t: 'worker.detach', workerId: 'w2' });
+  assert.deepEqual(transport.take(), ['worker.detach:w2']);
 });
