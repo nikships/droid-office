@@ -1,16 +1,29 @@
 package ai.factory.droidoffice.core
 
+import kotlinx.serialization.Serializable
+
 /**
- * Droid's built-in slash commands and what the Thread view does with each, the same list as the web
- * (src/shared/slash-commands.ts; tests/slash-commands.test.ts keeps them equal). A slash command goes
- * to Droid's input box like any message, so Droid runs it. One that opens Droid's own dialog sends
- * and then switches to Raw TTY; the rest run without one. Ending the CLI is refused: Send home is
- * how a worker leaves. A command not listed (a skill, a custom command) is sent like a message.
+ * Droid's slash commands and what the Thread view does with each, as on the web
+ * (src/shared/slash-commands.ts; tests/slash-commands.test.ts keeps the built-in lists equal). A
+ * slash command goes to Droid's input box like any message, so Droid runs it. A built-in one that
+ * opens Droid's own dialog sends and then switches to Raw TTY; the rest run without one. Ending the
+ * CLI is refused: Send home is how a worker leaves. The worker's skills and custom commands come
+ * from its droid (GET /api/agents/droid/commands?worker=) and run as prompts.
  */
 object SlashCommands {
     enum class Kind { Thread, Tty, Blocked }
 
-    data class Command(val name: String, val description: String, val kind: Kind, val aliases: List<String> = emptyList())
+    /** Where a command that isn't built in comes from. */
+    enum class Source { Skill, Command }
+
+    data class Command(
+        val name: String,
+        val description: String,
+        val kind: Kind,
+        val aliases: List<String> = emptyList(),
+        val source: Source? = null,
+        val argumentHint: String? = null,
+    )
 
     val ALL = listOf(
         Command("compress", "Compress the session in place. Add instructions to shape the summary", Kind.Thread, listOf("compact")),
@@ -53,31 +66,58 @@ object SlashCommands {
         Command("quit", "Ends this worker’s Droid. Use Send home instead", Kind.Blocked, listOf("exit")),
     )
 
+    /**
+     * Every slash command a worker offers: the built-in ones, then its droid's custom commands and
+     * skills. One named like a built-in command (or its alias) is left out, since Droid runs the built-in.
+     */
+    fun all(live: List<DroidCommand>): List<Command> {
+        val taken = ALL.flatMap { listOf(it.name) + it.aliases }.toMutableSet()
+        val extra = live.mapNotNull { c ->
+            val source = when (c.source) {
+                "skill" -> Source.Skill
+                "command" -> Source.Command
+                else -> return@mapNotNull null
+            }
+            if (c.name.isBlank() || !taken.add(c.name.lowercase())) return@mapNotNull null
+            Command(c.name, c.description, Kind.Thread, source = source, argumentHint = c.argumentHint?.takeIf { it.isNotBlank() })
+        }
+        return ALL + extra
+    }
+
     private val NAME = Regex("""^/([^\s/]*)""")
     private val TYPING = Regex("""^/([^\s/]*)$""")
 
     /** The name a draft starting with `/` asks for, and the command when Droid has it built in; null for a plain message. */
-    fun of(draft: String): Pair<String, Command?>? {
+    fun of(draft: String, commands: List<Command> = ALL): Pair<String, Command?>? {
         val name = NAME.find(draft.trimStart())?.groupValues?.get(1)?.lowercase() ?: return null
-        return name to ALL.firstOrNull { it.name == name || name in it.aliases }
+        return name to commands.firstOrNull { it.name.lowercase() == name || name in it.aliases }
     }
 
     /** What sending [draft] does: run in the thread, run and open Raw TTY, or nothing. A plain message is [Kind.Thread]. */
     fun kind(draft: String): Kind = of(draft)?.second?.kind ?: Kind.Thread
 
     /** The commands to offer while a `/` and the start of a name are typed: prefix matches, then aliases, then names containing it. */
-    fun suggestions(draft: String, limit: Int = 8): List<Command> {
+    fun suggestions(draft: String, commands: List<Command> = ALL, limit: Int = 8): List<Command> {
         val typed = TYPING.find(draft.trimStart())?.groupValues?.get(1)?.lowercase() ?: return emptyList()
-        fun rank(c: Command) = when {
-            c.name.startsWith(typed) -> 0
-            c.aliases.any { it.startsWith(typed) } -> 1
-            typed in c.name -> 2
-            else -> -1
+        fun rank(c: Command) = c.name.lowercase().let { name ->
+            when {
+                name.startsWith(typed) -> 0
+                c.aliases.any { it.startsWith(typed) } -> 1
+                typed in name -> 2
+                else -> -1
+            }
         }
-        return ALL.withIndex().map { Triple(it.value, rank(it.value), it.index) }
+        return commands.withIndex().map { Triple(it.value, rank(it.value), it.index) }
             .filter { it.second >= 0 }
             .sortedWith(compareBy({ it.second }, { it.third }))
             .take(limit)
             .map { it.first }
     }
 }
+
+/** A skill or custom command a worker's droid offers, as GET /api/agents/droid/commands lists it. */
+@Serializable
+data class DroidCommand(val name: String, val description: String = "", val source: String = "", val argumentHint: String? = null)
+
+@Serializable
+data class DroidCommands(val commands: List<DroidCommand> = emptyList())

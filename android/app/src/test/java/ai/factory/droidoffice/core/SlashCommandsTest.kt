@@ -23,6 +23,39 @@ class SlashCommandsTest {
     }
 
     @Test
+    fun theWorkersSkillsAndCommandsFollowTheBuiltInOnes() {
+        val all = SlashCommands.all(
+            listOf(
+                DroidCommand("review", "Custom command: review", "command"),
+                DroidCommand("Compact", "A skill named like an alias", "skill"),
+                DroidCommand("model", "A skill named like a built-in", "skill"),
+                DroidCommand("security-review", "Security-focused code review", "skill", "[path]"),
+                DroidCommand("review", "The built-in review skill", "skill"),
+                DroidCommand("odd", "From an unknown place", "plugin"),
+            ),
+        )
+        assertEquals(SlashCommands.ALL, all.take(SlashCommands.ALL.size))
+        assertEquals(
+            listOf(
+                SlashCommands.Command("review", "Custom command: review", SlashCommands.Kind.Thread, source = SlashCommands.Source.Command),
+                SlashCommands.Command("security-review", "Security-focused code review", SlashCommands.Kind.Thread, source = SlashCommands.Source.Skill, argumentHint = "[path]"),
+            ),
+            all.drop(SlashCommands.ALL.size),
+        )
+        assertEquals(SlashCommands.Source.Skill, SlashCommands.of("/Security-Review the diff", all)?.second?.source)
+        assertNull(SlashCommands.of("/security-review")?.second)
+        assertEquals(listOf("review", "security-review"), SlashCommands.suggestions("/rev", all).map { it.name })
+        assertEquals(SlashCommands.Kind.Thread, SlashCommands.kind("/security-review"))
+    }
+
+    @Test
+    fun theOfficeListDecodes() {
+        val json = """{"commands":[{"name":"review","description":"Custom command: review","source":"command"},{"name":"security-review","description":"Review","source":"skill","argumentHint":"[path]","extra":1}]}"""
+        val parsed = OfficeJson.decodeFromString<DroidCommands>(json).commands
+        assertEquals(listOf(DroidCommand("review", "Custom command: review", "command"), DroidCommand("security-review", "Review", "skill", "[path]")), parsed)
+    }
+
+    @Test
     fun suggestionsOnlyWhileTypingAName() {
         assertEquals(listOf("compress", "context", "copy", "connectors", "commands", "rewind-conversation", "account"), SlashCommands.suggestions("/co").map { it.name })
         assertEquals(listOf("sessions", "compress"), SlashCommands.suggestions("/res").map { it.name })

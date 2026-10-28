@@ -127,6 +127,11 @@ fun Composer(
     val haptics = LocalHapticFeedback.current
     val scope = rememberCoroutineScope()
     var text by rememberSaveable(w.id) { mutableStateOf(draft.orEmpty()) }
+    // The built-in commands at once; the worker's skills and custom commands once its droid lists them.
+    var slashList by remember(w.id) { mutableStateOf(SlashCommands.ALL) }
+    LaunchedEffect(w.id, w.isShell) {
+        if (!w.isShell) graph.connection.slashCommands(w.id)?.let { slashList = SlashCommands.all(it) }
+    }
     // While Droid is on a turn, Send steers it (Enter) and Queue holds the message for after the turn
     // (Ctrl+Enter), as Droid's own input box offers both.
     val queueable = !w.isShell && !w.isCloud && w.state.busy
@@ -197,7 +202,7 @@ fun Composer(
     // On a wide screen the Thread's composer keeps to the conversation's reading width.
     Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.TopCenter) {
     Column(Modifier.then(if (thread) Modifier.widthIn(max = READING_WIDTH + 20.dp) else Modifier).fillMaxWidth().padding(start = 10.dp, end = 10.dp, bottom = 10.dp)) {
-        val suggestions = if (w.isShell) emptyList() else SlashCommands.suggestions(text)
+        val suggestions = if (w.isShell) emptyList() else SlashCommands.suggestions(text, slashList)
         AnimatedVisibility(suggestions.isNotEmpty()) {
             SlashMenu(suggestions, thread, w.state.busy) { c ->
                 text = "/${c.name} "
@@ -314,7 +319,8 @@ fun Composer(
 
 /**
  * Droid's slash commands that start with what's typed, over the composer: tapping one fills it in.
- * Each says what it does, and in the Thread whether it opens in Raw TTY, where Droid shows its dialogs.
+ * Each says what it does, whether it is one of the worker's skills or custom commands, and in the
+ * Thread whether it opens in Raw TTY, where Droid shows its dialogs.
  */
 @Composable
 private fun SlashMenu(commands: List<SlashCommands.Command>, thread: Boolean, busy: Boolean, onPick: (SlashCommands.Command) -> Unit) {
@@ -346,6 +352,12 @@ private fun SlashMenu(commands: List<SlashCommands.Command>, thread: Boolean, bu
                 if (thread && c.kind == SlashCommands.Kind.Tty) Text(
                     "RAW TTY", style = LocalOfficeType.current.eyebrow.copy(fontSize = 9.sp, color = Palette.TextTertiary), modifier = Modifier.padding(start = 8.dp),
                 )
+                c.source?.let { source ->
+                    Text(
+                        if (source == SlashCommands.Source.Skill) "SKILL" else "COMMAND",
+                        style = LocalOfficeType.current.eyebrow.copy(fontSize = 9.sp, color = Palette.TextTertiary), modifier = Modifier.padding(start = 8.dp),
+                    )
+                }
             }
         }
     }

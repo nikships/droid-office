@@ -178,8 +178,9 @@ process.stdin.on('data', (chunk) => {
   const req = JSON.parse(input.split('\\n')[0]);
   if (req.method !== 'droid.list_models') process.exit(3);
   process.stdout.write('not json\\n');
-  process.stdout.write(JSON.stringify({ type: 'notification', method: 'hello' }) + '\\n');
-  process.stdout.write(JSON.stringify({ type: 'response', id: req.id, result: { models: [{ id: 'glm-5.3', displayName: 'GLM-5.3' }] } }) + '\\n');
+  const envelope = { jsonrpc: '2.0', factoryApiVersion: '1.0.0', factoryProtocolVersion: '1.279.0' };
+  process.stdout.write(JSON.stringify({ ...envelope, type: 'notification', method: 'droid.session_notification', params: { notification: { type: 'droid_working_state_changed', newState: 'idle' } } }) + '\\n');
+  process.stdout.write(JSON.stringify({ ...envelope, type: 'response', id: req.id, result: { models: [{ id: 'glm-5.3', displayName: 'GLM-5.3' }] } }) + '\\n');
   setInterval(() => {}, 1000);
 });
 `,
@@ -189,6 +190,6 @@ process.stdin.on('data', (chunk) => {
 
   const quitter = path.join(dir, 'quitter');
   writeFileSync(quitter, '#!/bin/sh\nexit 0\n', { mode: 0o700 });
-  await assert.rejects(listDroidModels(quitter, dir), /exited without listing/);
+  await assert.rejects(listDroidModels(quitter, dir), /exited without answering/);
   await assert.rejects(listDroidModels(path.join(dir, 'missing'), dir));
 });

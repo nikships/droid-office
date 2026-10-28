@@ -1,12 +1,17 @@
 /**
- * Droid's built-in slash commands, and what the Thread view does with each. A slash command typed
- * into the composer goes to Droid's input box like any message, so Droid runs it. Most of them open
- * one of Droid's own dialogs (a model picker, settings, a session list), which only the terminal
- * can show: those send and then switch to Raw TTY. The rest run without one and the view stays.
- * Ending the CLI is refused: Send home is how a worker leaves. A command Droid doesn't list here
- * (a skill, a custom command) is sent and the view stays: Droid runs it as a prompt.
+ * Droid's slash commands, and what the Thread view does with each. A slash command typed into the
+ * composer goes to Droid's input box like any message, so Droid runs it.
  *
- * The Android app has the same list (core/SlashCommands.kt), checked by tests/slash-commands.test.ts.
+ * The built-in ones are listed here: droid lists no built-ins over JSON-RPC, and each needs its own
+ * handling. Most open one of Droid's own dialogs (a model picker, settings, a session list), which
+ * only the terminal can show: those send and then switch to Raw TTY. The rest run without one and
+ * the view stays. Ending the CLI is refused: Send home is how a worker leaves.
+ *
+ * The worker's skills and custom commands come from its own droid (`droid.list_skills` and
+ * `droid.list_commands`, asked in its folder by src/server/droid-commands.ts and served at
+ * GET /api/agents/droid/commands?worker=). They run as prompts, so the view stays.
+ *
+ * The Android app has the same built-in list (core/SlashCommands.kt), checked by tests/slash-commands.test.ts.
  */
 
 export type SlashKind = 'thread' | 'tty' | 'blocked';
@@ -16,6 +21,18 @@ export interface SlashCommand {
   description: string;
   kind: SlashKind;
   aliases?: readonly string[];
+  /** Where a command that isn't built in comes from: one of the worker's skills, or a custom command. */
+  source?: DroidSlashCommand['source'];
+  /** What to type after the name, as the command describes it. */
+  argumentHint?: string;
+}
+
+/** A skill or custom command a worker's droid offers, as GET /api/agents/droid/commands lists it. */
+export interface DroidSlashCommand {
+  name: string;
+  description: string;
+  source: 'skill' | 'command';
+  argumentHint?: string;
 }
 
 export const SLASH_COMMANDS: readonly SlashCommand[] = [
@@ -59,12 +76,29 @@ export const SLASH_COMMANDS: readonly SlashCommand[] = [
   { name: 'quit', aliases: ['exit'], description: 'Ends this worker’s Droid. Use Send home instead', kind: 'blocked' },
 ];
 
-/** What a draft that starts with `/` asks for: the command's name as typed, and the command when Droid has it built in. */
-export function slashOf(draft: string): { name: string; command?: SlashCommand } | undefined {
+/**
+ * Every slash command a worker offers: the built-in ones, then its droid's custom commands and
+ * skills. One named like a built-in command (or its alias) is left out, since Droid runs the built-in.
+ */
+export function slashCommands(live: readonly DroidSlashCommand[] = []): SlashCommand[] {
+  const taken = new Set(SLASH_COMMANDS.flatMap((c) => [c.name, ...(c.aliases ?? [])]));
+  const extra: SlashCommand[] = [];
+  for (const c of live) {
+    if (typeof c?.name !== 'string' || typeof c.description !== 'string' || (c.source !== 'skill' && c.source !== 'command')) continue;
+    const name = c.name.toLowerCase();
+    if (taken.has(name)) continue;
+    taken.add(name);
+    extra.push({ name: c.name, description: c.description, kind: 'thread', source: c.source, ...(c.argumentHint ? { argumentHint: c.argumentHint } : {}) });
+  }
+  return [...SLASH_COMMANDS, ...extra];
+}
+
+/** What a draft that starts with `/` asks for: the command's name as typed, and the command when the list has it. */
+export function slashOf(draft: string, commands: readonly SlashCommand[] = SLASH_COMMANDS): { name: string; command?: SlashCommand } | undefined {
   const m = /^\/([^\s/]*)/.exec(draft.trimStart());
   if (!m) return undefined;
   const name = m[1].toLowerCase();
-  return { name, command: SLASH_COMMANDS.find((c) => c.name === name || c.aliases?.includes(name)) };
+  return { name, command: commands.find((c) => c.name.toLowerCase() === name || c.aliases?.includes(name)) };
 }
 
 /** What a slash draft does when sent: run in the thread, run and open Raw TTY, or nothing. A plain message is 'thread'. */
@@ -89,12 +123,16 @@ export function slashRefusal(draft: string, name: string, busy: boolean): string
  * name, with no space yet. Names that start with what's typed come first, then aliases, then names
  * that contain it.
  */
-export function slashSuggestions(draft: string, limit = 8): SlashCommand[] {
+export function slashSuggestions(draft: string, commands: readonly SlashCommand[] = SLASH_COMMANDS, limit = 8): SlashCommand[] {
   const m = /^\/([^\s/]*)$/.exec(draft.trimStart());
   if (!m) return [];
   const typed = m[1].toLowerCase();
-  const rank = (c: SlashCommand) => (c.name.startsWith(typed) ? 0 : c.aliases?.some((a) => a.startsWith(typed)) ? 1 : c.name.includes(typed) ? 2 : -1);
-  return SLASH_COMMANDS.map((c, i) => ({ c, r: rank(c), i }))
+  const rank = (c: SlashCommand) => {
+    const name = c.name.toLowerCase();
+    return name.startsWith(typed) ? 0 : c.aliases?.some((a) => a.startsWith(typed)) ? 1 : name.includes(typed) ? 2 : -1;
+  };
+  return commands
+    .map((c, i) => ({ c, r: rank(c), i }))
     .filter((x) => x.r >= 0)
     .sort((a, b) => a.r - b.r || a.i - b.i)
     .slice(0, limit)

@@ -15,6 +15,7 @@ import { WebCompanion } from './web-companion.js';
 import { COMPANION_OFF, pairingLink, type PairedDevice, type PairingState } from '../shared/devices.js';
 import { MAX_REPOS, childEnv, resolveAgent, type RepoSource } from './workers.js';
 import { DROID_MODEL_MAX } from './agents.js';
+import { createDroidCommandCatalogue } from './droid-commands.js';
 import { createDroidModelCatalogue } from './droid-models.js';
 import { HiddenModels } from './hidden-models.js';
 import { Upgrader } from './upgrade.js';
@@ -233,6 +234,8 @@ export async function startServer(cfg: Config) {
   let agentPath = resolveAgent(cfg.agentCmd);
   // Droid lists its own models (built-in and custom); its settings file is the fallback.
   const droidModels = createDroidModelCatalogue({ command: () => agentPath ?? cfg.agentCmd, cwd: cfg.dir });
+  // And the skills and custom commands it offers as slash commands, in each worker's own folder.
+  const droidCommands = createDroidCommandCatalogue({ command: () => agentPath ?? cfg.agentCmd });
   const hiddenModels = new HiddenModels(cfg.dataDir);
 
   const sendTo = (c: Client, msg: ServerMsg) => {
@@ -491,6 +494,7 @@ export async function startServer(cfg: Config) {
     agentChanged: (file) => {
       agentPath = file;
       droidModels.forget();
+      droidCommands.forget();
       for (const f of floors.values()) f.workers.setAgentPath(file);
     },
   });
@@ -1071,6 +1075,13 @@ export async function startServer(cfg: Config) {
         } catch {
           return send(res, 502, { error: 'Could not load Droid models' });
         }
+      }
+      if (p === '/api/agents/droid/commands' && req.method === 'GET') {
+        // The skills and custom commands a worker's droid offers as slash commands (droid-commands.ts).
+        const workerId = str(url.searchParams.get('worker'), 32);
+        const folder = workerId ? workerFloor(workerId)?.workers.agentFolder(workerId) : undefined;
+        if (!folder) return send(res, 404, { error: 'No such worker' });
+        return send(res, 200, { commands: await droidCommands.get(folder) });
       }
       if (p === '/api/jukebox/soundcloud' && req.method === 'GET') {
         const r = await resolveSoundCloudStation(url.searchParams.get('url') ?? '');

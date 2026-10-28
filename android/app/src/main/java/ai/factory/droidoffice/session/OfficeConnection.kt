@@ -5,6 +5,7 @@ import ai.factory.droidoffice.core.OfficeEndpoint
 import ai.factory.droidoffice.core.HostUpdateAction
 import ai.factory.droidoffice.core.HostUpdateState
 import ai.factory.droidoffice.core.ClientMsg
+import ai.factory.droidoffice.core.DroidCommand
 import ai.factory.droidoffice.core.FloorInfo
 import ai.factory.droidoffice.core.FloorView
 import ai.factory.droidoffice.core.GhPull
@@ -178,6 +179,7 @@ class OfficeConnection(
     @Volatile private var current: OfficeEndpoint<OfficeAuth>? = null
     @Volatile private var hireAskedAt = 0L
     private var models: Triple<String, Long, ModelCatalogue>? = null
+    private val slash = ConcurrentHashMap<String, Triple<String, Long, List<DroidCommand>>>()
 
     /**
      * The name the office knows this phone by (`?name=`, at most 24 characters), and so `createdBy`
@@ -299,6 +301,13 @@ class OfficeConnection(
             models = Triple(base, System.currentTimeMillis(), it)
             _catalogue.value = it
         }
+    }
+
+    /** The skills and custom commands [workerId]'s droid offers as slash commands, cached for a minute; null until the office answers. */
+    suspend fun slashCommands(workerId: String): List<DroidCommand>? {
+        val (base, auth) = current ?: return null
+        slash[workerId]?.let { (b, at, c) -> if (b == base && System.currentTimeMillis() - at < 60_000) return c }
+        return api.slashCommands(base, auth, workerId)?.also { slash[workerId] = Triple(base, System.currentTimeMillis(), it) }
     }
 
     suspend fun hostUpdate(officeId: String, action: HostUpdateAction? = null, version: String? = null): Result<HostUpdateState> {

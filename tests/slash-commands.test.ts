@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { test } from 'node:test';
-import { SLASH_COMMANDS, slashKind, slashOf, slashRefusal, slashSuggestions } from '../src/shared/slash-commands.js';
+import { SLASH_COMMANDS, slashCommands, slashKind, slashOf, slashRefusal, slashSuggestions } from '../src/shared/slash-commands.js';
 
 test('the Android app lists the same slash commands', () => {
   const kotlin = readFileSync(new URL('../android/app/src/main/java/ai/factory/droidoffice/core/SlashCommands.kt', import.meta.url), 'utf8');
@@ -40,10 +40,33 @@ test('suggests names that start with what is typed, then aliases, then names con
     ['sessions', 'compress'],
   );
   assert.equal(slashSuggestions('/').length, 8);
-  assert.equal(slashSuggestions('/', 100).length, SLASH_COMMANDS.length);
+  assert.equal(slashSuggestions('/', SLASH_COMMANDS, 100).length, SLASH_COMMANDS.length);
   assert.deepEqual(slashSuggestions('/model '), []);
   assert.deepEqual(slashSuggestions('model'), []);
   assert.equal(slashSuggestions('/tus')[0].name, 'status');
+});
+
+test('adds the worker’s skills and custom commands after the built-in ones, never shadowing one', () => {
+  const all = slashCommands([
+    { name: 'review', description: 'Custom command: review', source: 'command' },
+    { name: 'Compact', description: 'A skill named like an alias', source: 'skill' },
+    { name: 'model', description: 'A skill named like a built-in', source: 'skill' },
+    { name: 'security-review', description: 'Security-focused code review', source: 'skill', argumentHint: '[path]' },
+    { name: 'review', description: 'The built-in review skill', source: 'skill' },
+    { name: 'odd', description: 'From an unknown place', source: 'plugin' as 'skill' },
+  ]);
+  assert.deepEqual(all.slice(0, SLASH_COMMANDS.length), [...SLASH_COMMANDS]);
+  assert.deepEqual(all.slice(SLASH_COMMANDS.length), [
+    { name: 'review', description: 'Custom command: review', kind: 'thread', source: 'command' },
+    { name: 'security-review', description: 'Security-focused code review', kind: 'thread', source: 'skill', argumentHint: '[path]' },
+  ]);
+  assert.deepEqual(slashCommands(), [...SLASH_COMMANDS]);
+  assert.equal(slashOf('/Security-Review the diff', all)?.command?.source, 'skill');
+  assert.equal(slashOf('/security-review', SLASH_COMMANDS)?.command, undefined);
+  assert.deepEqual(
+    slashSuggestions('/rev', all).map((c) => c.name),
+    ['review', 'security-review'],
+  );
 });
 
 test('refuses ending the CLI, and any command while a turn runs', () => {

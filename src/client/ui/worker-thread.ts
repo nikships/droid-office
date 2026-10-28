@@ -2,7 +2,7 @@ import type { ClientMsg, ServerMsg, WorkerInfo } from '../../shared/protocol';
 import { isAsleep, isBusy } from '../../shared/status';
 import { presentThread, threadArguments, type ThreadRow } from '../../shared/thread-presentation';
 import { CLEAR_DROID_QUEUE, readDroidQueue } from '../../shared/droid-queue';
-import { slashOf, slashRefusal, slashSuggestions, type SlashCommand } from '../../shared/slash-commands';
+import { slashCommands, slashOf, slashRefusal, slashSuggestions, type DroidSlashCommand, type SlashCommand } from '../../shared/slash-commands';
 import { ThreadQueue } from '../../shared/thread-queue';
 import type { Net } from '../net';
 import { ThreadHistory } from '../thread-history';
@@ -13,6 +13,7 @@ import { markdown } from './markdown';
 import { promptImages } from './images';
 import { modelBadgeNode } from './models';
 import { copy as copyText } from './clipboard';
+import { withToken } from '../token';
 
 export interface WorkerThread {
   element: HTMLElement;
@@ -171,6 +172,7 @@ export function mountWorkerThread(net: Net, opts: ThreadOptions): WorkerThread {
     told = '';
     slashClosed = false;
     slashCursor = 0;
+    if (input.value.trimStart().startsWith('/')) loadSlash();
     paintSlash();
     updateControls();
   });
@@ -189,6 +191,23 @@ export function mountWorkerThread(net: Net, opts: ThreadOptions): WorkerThread {
   let slashShown: SlashCommand[] = [];
   let slashCursor = 0;
   let slashClosed = false;
+  // The built-in commands at once; the worker's skills and custom commands once its droid lists them.
+  let slashList = slashCommands();
+  let slashAsked = 0;
+  const loadSlash = () => {
+    if (worker.kind !== 'agent' || Date.now() - slashAsked < 60_000) return;
+    slashAsked = Date.now();
+    fetch(withToken(`/api/agents/droid/commands?worker=${encodeURIComponent(worker.id)}`), { credentials: 'same-origin', cache: 'no-store' })
+      .then((res) => (res.ok ? (res.json() as Promise<{ commands?: unknown }>) : undefined))
+      .then((body) => {
+        if (disposed || !Array.isArray(body?.commands)) return;
+        slashList = slashCommands(body.commands as DroidSlashCommand[]);
+        paintSlash();
+      })
+      .catch(() => {
+        slashAsked = 0;
+      });
+  };
   const pickSlash = (command: SlashCommand) => {
     input.value = `/${command.name} `;
     opts.onDraft(input.value);
@@ -199,7 +218,7 @@ export function mountWorkerThread(net: Net, opts: ThreadOptions): WorkerThread {
     updateControls();
   };
   const paintSlash = () => {
-    slashShown = slashClosed || input.disabled ? [] : slashSuggestions(input.value);
+    slashShown = slashClosed || input.disabled ? [] : slashSuggestions(input.value, slashList);
     slashCursor = Math.min(slashCursor, Math.max(0, slashShown.length - 1));
     slashMenu.hidden = !slashShown.length;
     input.setAttribute('aria-expanded', String(!!slashShown.length));
@@ -216,8 +235,9 @@ export function mountWorkerThread(net: Net, opts: ThreadOptions): WorkerThread {
             onclick: () => pickSlash(command),
           },
           h('span.wt-slash-name', {}, `/${command.name}`),
-          h('span.wt-slash-desc', { title: command.description }, command.description),
+          h('span.wt-slash-desc', { title: command.argumentHint ? `${command.description}\n/${command.name} ${command.argumentHint}` : command.description }, command.description),
           command.kind === 'tty' ? h('span.wt-slash-tag', { title: 'Opens one of Droid’s dialogs, in Raw TTY' }, 'Raw TTY') : null,
+          command.source ? h('span.wt-slash-tag', { title: command.source === 'skill' ? 'One of this worker’s skills' : 'A custom command' }, command.source === 'skill' ? 'Skill' : 'Command') : null,
         ),
       ),
     );
@@ -892,6 +912,7 @@ export function mountWorkerThread(net: Net, opts: ThreadOptions): WorkerThread {
         net.send({ t: 'worker.attach', workerId: worker.id });
         head.append(opts.controls);
         read();
+        loadSlash();
       } else net.send({ t: 'worker.detach', workerId: worker.id });
       updateControls();
       readTeam();

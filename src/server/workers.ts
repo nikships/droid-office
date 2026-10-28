@@ -490,6 +490,12 @@ export class WorkerManager {
     return this.workers.get(id)?.info;
   }
 
+  /** The folder an agent's droid runs in, where its project skills and commands come from. */
+  agentFolder(id: string): string | undefined {
+    const info = this.workers.get(id)?.info;
+    return info?.kind === 'agent' && !info.cloud && !info.guest ? this.cwd(info) : undefined;
+  }
+
   /** Read-only conversation identity. Never accepts a caller-supplied path or session. */
   threadSession(id: string): { sessionId: string; cwd: string } | undefined {
     const info = this.workers.get(id)?.info;

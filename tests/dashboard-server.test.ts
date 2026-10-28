@@ -169,9 +169,11 @@ test('production dashboard has a public data-free bootstrap, gated APIs and a bu
   if (ip) {
     assert.equal((await fetch(`${remote}/api/mobile/hello`)).status, 401);
     assert.equal((await fetch(`${remote}/api/agents/droid/models`)).status, 401);
+    assert.equal((await fetch(`${remote}/api/agents/droid/commands?worker=missing`)).status, 401);
     assert.equal((await fetch(`${remote}/api/whiteboard/render?floor=missing&card=missing`)).status, 401);
     assert.equal((await fetch(`${remote}/`)).status, 401);
   }
+  assert.equal((await fetch(`${base}/api/agents/droid/commands?worker=missing`)).status, 404);
   assert.match(await (await fetch(`${base}/`)).text(), /id="loading"/);
   const result = await build({ configFile: path.resolve('vite.config.ts'), logLevel: 'silent', build: { write: false, reportCompressedSize: false } });
   assert.ok(!Array.isArray(result) && 'output' in result);
