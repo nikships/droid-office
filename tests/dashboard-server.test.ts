@@ -285,6 +285,19 @@ test('confirmed worker actions deduplicate on a socket, respect the active floor
   await observer.wait('worker.remove', (m) => m.workerId === workerId);
 });
 
+test('the status route counts connected phones and browsers for this Mac only', async (t) => {
+  const { base } = await office(t);
+  const scene = socket(t, base, '');
+  const web = socket(t, base, 'client=dashboard');
+  const pair = (await (await fetch(`${base}/api/mobile/pair`, { method: 'POST', body: '{"device":"Phone"}' })).json()) as { token: string };
+  const phone = socket(t, base, `d=${pair.token}`);
+  const again = socket(t, base, `d=${pair.token}`);
+  await Promise.all([scene, web, phone, again].map((c) => c.wait('welcome')));
+  assert.deepEqual(await (await fetch(`${base}/api/status`)).json(), { workers: 0, working: 0, needsInput: 0, phones: 1, browsers: 2 });
+  assert.equal((await fetch(`${base}/api/status`, { headers: { authorization: `Bearer ${pair.token}` } })).status, 403);
+  assert.equal((await fetch(`${base}/api/status`, { headers: { origin: 'https://foreign.test' } })).status, 403);
+});
+
 test('the web companion switch refuses browsers while off, keeps their pairing, leaves phones alone and survives a restart', async (t) => {
   const first = await office(t);
   const { base, dir } = first;

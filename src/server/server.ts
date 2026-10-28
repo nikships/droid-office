@@ -19,6 +19,7 @@ import { createDroidModelCatalogue } from './droid-models.js';
 import { HiddenModels } from './hidden-models.js';
 import { Upgrader } from './upgrade.js';
 import { GUEST_REFUSED, GuestScanner, guestRefusal, type AgentProcess } from './guests.js';
+import { officeStatus } from './office-status.js';
 import { PhoneSizes } from './phone-sizes.js';
 import { UPLOAD_MAX_BYTES } from '../shared/decor.js';
 import { ImageProxy } from './decor.js';
@@ -994,6 +995,18 @@ export async function startServer(cfg: Config) {
           return forgetDevice(p.slice('/api/mobile/devices/'.length)) ? send(res, 200, await pairingState()) : send(res, 404, { error: 'No such phone' });
         }
         return send(res, 405, { error: 'Method not allowed' });
+      }
+      // The Mac app's menu bar icon: busy workers and connected devices. Only a request from this Mac without a device token gets them.
+      if (p === '/api/status' && req.method === 'GET') {
+        if (gate.device || !isLoopback(req.socket.remoteAddress)) return send(res, 403, { error: 'Forbidden' });
+        return send(
+          res,
+          200,
+          officeStatus(
+            [...floors.values()].flatMap((f) => f.workers.list()),
+            [...clients.values()].map((c) => ({ device: c.device, phone: !!c.phoneSizes })),
+          ),
+        );
       }
       // The Mac's GPU load for the performance overlay. Only a page on this machine draws on this GPU.
       if (p === '/api/gpu' && req.method === 'GET') {
