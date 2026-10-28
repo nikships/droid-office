@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url';
 const workflow = /^(?:\.github\/workflows\/release\.yml|\.github\/scripts\/release-[^/]+\.mjs)$/;
 const packages = /^package(?:-lock)?\.json$/;
 const config = /^(?:tsconfig[^/]*\.json|vite\.config\.ts)$/;
+const mobileConfig = /^(?:(?:metro|babel|react-native)\.config\.cjs|index\.mobile\.js)$/;
 
 export function checksFor(files, { manual = false, androidVersionChanged = false } = {}) {
   const changed = files.filter((file) => !file.endsWith('/AGENTS.md'));
@@ -15,14 +16,15 @@ export function checksFor(files, { manual = false, androidVersionChanged = false
       all ||
       touches(packages) ||
       touches(config) ||
+      touches(mobileConfig) ||
       touches(
-        /^(?:src\/|bin\/|tests\/|native\/|\.husky\/|android\/app\/src\/main\/assets\/|tools\/(?:props|frame-bench)\/|tools\/android-(?:terminal|model-icons)\.mjs$|README\.md$|docs\/guide\/|biome\.jsonc$|\.env\.example$|\.gitignore$|\.agents\/skills\/(?:office-clone|office-3d-testing|office-thermals|performance-proof)\/|\.agents\/skills\/office-video-capture\/references\/example-launch\/example-composition\.html$)/,
+        /^(?:src\/|bin\/|tests\/|native\/|\.husky\/|android\/app\/src\/main\/assets\/|tools\/(?:props|frame-bench)\/|tools\/android-[^/]+\.mjs$|README\.md$|docs\/guide\/|biome\.jsonc$|\.env\.example$|\.gitignore$|\.agents\/skills\/(?:office-clone|office-3d-testing|office-thermals|performance-proof)\/|\.agents\/skills\/office-video-capture\/references\/example-launch\/example-composition\.html$)/,
       ),
     website: all || touches(packages) || touches(/^(?:website\/|firebase\.json$|\.firebaserc$|biome\.jsonc$)/),
     // The client is shipped inside the Mac app, even though Linux can build its static files.
-    mac: all || touches(packages) || touches(config) || touches(/^(?:src\/|bin\/|build\/|native\/|android\/app\/src\/main\/assets\/model-icons\/|electron-builder\.yml$)/),
-    // Root npm dependency/script edits don't rebuild Android; its terminal dependencies are vendored.
-    android: all || androidVersionChanged || touches(/^(?:android\/(?!docs\/|.*\.md$)|tools\/android-model-icons\.mjs$)/),
+    mac: all || touches(packages) || touches(config) || touches(/^(?:src\/(?!mobile\/)|bin\/|build\/|native\/|android\/app\/src\/main\/assets\/model-icons\/|electron-builder\.yml$)/),
+    // React Native and the bundled management panels consume root npm, shared and web sources.
+    android: all || androidVersionChanged || touches(packages) || touches(mobileConfig) || touches(/^(?:android\/(?!docs\/|.*\.md$)|src\/(?:mobile|shared|client)\/|tsconfig\.mobile\.json$|tools\/android-[^/]+\.mjs$)/),
   };
 }
 

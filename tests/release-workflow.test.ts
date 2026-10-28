@@ -12,8 +12,15 @@ const all = { node: true, website: true, mac: true, android: true };
 const workflow = readFileSync(new URL('../.github/workflows/release.yml', import.meta.url), 'utf8');
 
 test('CI checks only the affected platforms and builds every client change into the Mac app', () => {
-  for (const file of ['src/client/main.ts', 'src/server/cli.ts', 'src/shared/protocol.ts', 'src/desktop/main.ts', 'bin/office-workers.js', 'native/presenter/presenter.mm']) {
+  for (const file of ['src/server/cli.ts', 'src/desktop/main.ts', 'bin/office-workers.js', 'native/presenter/presenter.mm']) {
     assert.deepEqual(checksFor([file]), { ...none, node: true, mac: true }, file);
+  }
+  for (const file of ['src/client/dashboard.ts', 'src/client/ui/pipelines.ts', 'src/shared/protocol.ts']) {
+    assert.deepEqual(checksFor([file]), { ...none, node: true, mac: true, android: true }, file);
+  }
+  assert.deepEqual(checksFor(['src/mobile/App.tsx']), { ...none, node: true, android: true });
+  for (const file of ['metro.config.cjs', 'babel.config.cjs', 'react-native.config.cjs', 'index.mobile.js']) {
+    assert.deepEqual(checksFor([file]), { ...none, node: true, android: true }, file);
   }
   assert.deepEqual(checksFor(['build/icon.png']), { ...none, mac: true });
   assert.deepEqual(checksFor(['electron-builder.yml']), { ...none, mac: true });
@@ -26,8 +33,9 @@ test('CI checks only the affected platforms and builds every client change into 
   assert.deepEqual(checksFor(['firebase.json', '.firebaserc']), { ...none, website: true });
   assert.deepEqual(checksFor(['tests/desktop.test.ts']), { ...none, node: true });
   assert.deepEqual(checksFor(['README.md', 'docs/guide/getting-started.md']), { ...none, node: true });
-  assert.deepEqual(checksFor(['tools/android-terminal.mjs']), { ...none, node: true });
+  assert.deepEqual(checksFor(['tools/android-terminal.mjs']), { ...none, node: true, android: true });
   assert.deepEqual(checksFor(['tools/android-model-icons.mjs']), { ...none, node: true, android: true });
+  assert.deepEqual(checksFor(['tools/android-management.mjs']), { ...none, node: true, android: true });
   assert.deepEqual(checksFor(['tools/props/generate.py']), { ...none, node: true });
   assert.deepEqual(checksFor(['tools/props/verify.mjs']), { ...none, node: true });
   for (const file of [
@@ -45,8 +53,8 @@ test('CI checks only the affected platforms and builds every client change into 
 });
 
 test('shared build inputs and manual runs trigger the relevant jobs', () => {
-  assert.deepEqual(checksFor(['package-lock.json']), { ...all, android: false });
-  assert.deepEqual(checksFor(['package.json']), { ...all, android: false });
+  assert.deepEqual(checksFor(['package-lock.json']), all);
+  assert.deepEqual(checksFor(['package.json']), all);
   assert.deepEqual(checksFor(['package.json'], { androidVersionChanged: true }), all);
   assert.deepEqual(checksFor(['vite.config.ts', 'tsconfig.base.json']), { ...none, node: true, mac: true });
   assert.deepEqual(checksFor(['biome.jsonc']), { ...none, node: true, website: true });
@@ -82,7 +90,7 @@ test('PRs use their merge-base diff and initial pushes use the full tree; manual
   assert.throws(() => changedFiles('unknown', {}, git), /Unsupported release event/);
 });
 
-test('only a major.minor version change in root package.json rebuilds Android', () => {
+test('major.minor version detection compares the correct package base', () => {
   const calls: string[][] = [];
   const git = (args: string[]) => {
     calls.push(args);
@@ -156,7 +164,11 @@ test('each job is path-gated and the filter script and its tests trigger the wor
   }
   for (const filter of [
     '.github/scripts/release-*.mjs',
-    'tools/android-terminal.mjs',
+    'tools/android-*.mjs',
+    'metro.config.cjs',
+    'babel.config.cjs',
+    'react-native.config.cjs',
+    'index.mobile.js',
     'tests/**',
     'tools/frame-bench/**',
     '.agents/skills/office-clone/**',
@@ -214,7 +226,7 @@ test('PRs retain builds, native compilation, coverage, Android tests and checkou
   for (const [job, fragments] of [
     ['release', ['name: Install and build', 'run: npm run lint', 'run: npm run typecheck', 'name: Test with coverage', 'name: Start the office from the checkout']],
     ['mac', ['name: Install and build', 'name: Check the native Metal presenter', 'name: Check the native Finder integration']],
-    ['android', ['name: Unit tests and lint']],
+    ['android', ['name: Install React Native build dependencies', 'name: Unit tests and lint', 'name: Compile the Android release on pull requests']],
     ['website', ['run: npm run build:website']],
   ] as const) {
     for (const fragment of fragments) {

@@ -29,6 +29,10 @@ on:
       - 'package-lock.json'
       - 'tsconfig*.json'
       - 'vite.config.ts'
+      - 'metro.config.cjs'
+      - 'babel.config.cjs'
+      - 'react-native.config.cjs'
+      - 'index.mobile.js'
       - 'biome.jsonc'
       - '.env.example'
       - '.gitignore'
@@ -38,9 +42,7 @@ on:
       - 'android/**'
       - '.github/workflows/release.yml'
       - '.github/scripts/release-*.mjs'
-      - 'tools/android-terminal.mjs'
-      - 'tools/android-model-icons.mjs'
-      - 'tools/android-overview.mjs'
+      - 'tools/android-*.mjs'
       - 'tools/props/**'
       - 'tools/frame-bench/**'
       - '.agents/skills/office-clone/**'
@@ -63,6 +65,10 @@ on:
       - 'package-lock.json'
       - 'tsconfig*.json'
       - 'vite.config.ts'
+      - 'metro.config.cjs'
+      - 'babel.config.cjs'
+      - 'react-native.config.cjs'
+      - 'index.mobile.js'
       - 'biome.jsonc'
       - '.env.example'
       - '.gitignore'
@@ -72,9 +78,7 @@ on:
       - 'android/**'
       - '.github/workflows/release.yml'
       - '.github/scripts/release-*.mjs'
-      - 'tools/android-terminal.mjs'
-      - 'tools/android-model-icons.mjs'
-      - 'tools/android-overview.mjs'
+      - 'tools/android-*.mjs'
       - 'tools/props/**'
       - 'tools/frame-bench/**'
       - '.agents/skills/office-clone/**'
@@ -443,6 +447,15 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install React Native build dependencies
+        working-directory: .
+        run: npm ci --ignore-scripts
+
       - uses: actions/setup-java@v6
         with:
           distribution: temurin
@@ -463,8 +476,12 @@ jobs:
       - name: Unit tests and lint
         run: ./gradlew --no-daemon testDebugUnitTest lintDebug
 
+      - name: Compile the Android release on pull requests
+        if: env.PUBLISHING != 'true'
+        run: ./gradlew --no-daemon assembleRelease
+
       # Signed with the repository's release keystore (the ANDROID_KEYSTORE_* and ANDROID_KEY_*
-      # secrets), so each release installs over the last. PRs only run debug unit tests and lint.
+      # secrets), so each release installs over the last. PRs compile without release credentials.
       - name: Build the release APK
         if: env.PUBLISHING == 'true'
         env:

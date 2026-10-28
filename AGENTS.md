@@ -12,6 +12,7 @@ Planned work has written plans; follow them and keep them current when doing tha
 | Factory: the API key connection, and the computers, sessions and credits, CI, AutoWiki and cloud workers built on it | [docs/factory.md](docs/factory.md) (implemented) |
 | The Whiteboard: the agent and owner board that replaces the Services board, and removing Services | [docs/whiteboard.md](docs/whiteboard.md) (implemented) |
 | Setup and Subscriptions: installing and signing in Droid, the welcome, DroidProxy and the subscriptions workers run on, and refusing models that can't run | [docs/subscriptions.md](docs/subscriptions.md) (implemented) |
+| Companion agent management, multi-pane workspaces, React Native Android and removing the overhead map | [docs/companion-console.md](docs/companion-console.md) |
 
 ## Repository map
 
