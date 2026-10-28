@@ -36,7 +36,9 @@ The Mac app supplies `--finder-bridge <signed helper executable>` only when it o
 
 Once the daemon is ready, it calls the bridge with `--publish http://127.0.0.1:<hook-port>/`. The bridge owns the shared Keychain item, preserving its random token while updating the endpoint. Its JSON response is consumed privately by the daemon, never written to a state file, environment variable or log. Missing Keychain/signing access fails closed.
 
-The sandboxed extension cannot read the selected items, so macOS refuses to open them as documents with the prompt. It starts one prompt process per dispatch with `--dispatch <absolute paths>` instead. The prompt only needs the path text; the daemon does the file checks. A prompt process exits when its last window closes.
+The sandboxed extension cannot read the selected items, so macOS refuses to open them as documents with the prompt. macOS also ignores launch arguments from sandboxed callers. Instead, Finder sends a `droid-office-finder://dispatch?path=…` URL event directly to the embedded prompt app, not the default handler for the scheme. Repeated `path` query items carry up to 100 absolute paths, with no task, model or credentials. The prompt rejects malformed events and validates canonical paths and volume eligibility before contacting the daemon, which checks canonical paths again. It never dispatches until the owner submits a task.
+
+Only the FinderSync extension is sandboxed. The signed, provisioned prompt needs ordinary app file access to check the selected paths: a URL containing path text does not grant a sandbox file-read extension. Its shared Keychain and hardened-runtime requirements remain unchanged. Each dispatch opens its own prompt process, which exits when its last window closes. URL events are excluded from Recent Items.
 
 Keychain items normally survive application deletion and reinstall. Reinstall is not treated as a reliable token-rotation event; the integration never silently destroys a stored credential.
 

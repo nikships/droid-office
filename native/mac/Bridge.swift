@@ -65,7 +65,18 @@ final class PromptApplication: NSObject, NSApplicationDelegate {
         if !initial.isEmpty { show(initial, in: NSApplication.shared) }
     }
     func application(_ application: NSApplication, open urls: [URL]) {
-        show(urls, in: application)
+        do {
+            guard urls.count == 1, let url = urls.first else {
+                throw FinderFailure.message("Invalid Finder selection. Select the items again in Finder.")
+            }
+            show(try FinderPolicy.dispatchSelection(url), in: application)
+        } catch {
+            let alert = NSAlert()
+            alert.messageText = "The Finder selection could not open."
+            alert.informativeText = error.localizedDescription + " Nothing was queued."
+            alert.runModal()
+            if windows.isEmpty { application.terminate(nil) }
+        }
     }
     private func show(_ urls: [URL], in application: NSApplication) {
         let model = DispatchPrompt(urls: urls)

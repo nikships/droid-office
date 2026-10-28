@@ -50,7 +50,7 @@ mac:
   gatekeeperAssess: false
   entitlements: build/entitlements.mac.plist
   entitlementsInherit: build/entitlements.mac.plist
-  # These bundles have their own sandbox, team and Keychain entitlements, never Electron's.
+  # These bundles have their own native team and Keychain entitlements, never Electron's.
   signIgnore:
     - 'DroidOfficeFinderBridge\.app(/|$)'
     - 'DroidOfficeFinderSync\.appex(/|$)'

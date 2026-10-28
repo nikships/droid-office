@@ -391,13 +391,15 @@ jobs:
             node --input-type=module -e '
               import { readFileSync } from "node:fs";
               const e = JSON.parse(readFileSync("finder-entitlements.json", "utf8"));
-              if (e["com.apple.security.app-sandbox"] !== true ||
-                  e["com.apple.security.network.client"] !== true ||
+              const extension = process.argv[1].endsWith(".appex");
+              if ((extension && (e["com.apple.security.app-sandbox"] !== true ||
+                                 e["com.apple.security.network.client"] !== true)) ||
+                  (!extension && e["com.apple.security.app-sandbox"] === true) ||
                   e["com.apple.developer.team-identifier"] !== "NW6B3R27LQ" ||
                   !e["com.apple.security.application-groups"]?.includes("group.com.nikships.droid-office") ||
                   !e["keychain-access-groups"]?.includes("NW6B3R27LQ.group.com.nikships.droid-office"))
                 throw new Error("Final Finder signature lost its required entitlements");
-            '
+            ' "$bundle"
             codesign -dvv "$bundle" 2> finder-signature.log
             grep -q 'TeamIdentifier=NW6B3R27LQ' finder-signature.log
             grep -q 'flags=0x10000(runtime)' finder-signature.log

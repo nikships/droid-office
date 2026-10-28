@@ -64,16 +64,15 @@ final class FinderSync: FIFinderSync {
         let selected = controller.selectedItemURLs().flatMap { $0.isEmpty ? nil : $0 }
         let urls = (sender.tag == 1 ? nil : selected) ?? controller.targetedURL().map { [$0] } ?? []
         guard !urls.isEmpty, urls.count <= 100 else { return }
-        // The prompt does canonical/volume eligibility checks off Finder's menu callback.
-        // Launch the embedded native prompt with the paths as arguments, never a shell, a temporary file or credentials.
-        // The sandboxed extension cannot read the selection, so macOS refuses to open it as documents.
+        // LaunchServices drops arguments from sandboxed callers, and file opens require access
+        // FinderSync does not have. Send path text in a URL event to this exact embedded prompt.
+        guard let selection = try? FinderPolicy.dispatchURL(urls) else { return }
         let app = Bundle.main.bundleURL.deletingLastPathComponent().deletingLastPathComponent()
         let helper = app.appendingPathComponent("Resources/app/native/mac/build/DroidOfficeFinderBridge.app")
         let configuration = NSWorkspace.OpenConfiguration()
-        configuration.arguments = ["--dispatch"] + urls.map(\.path)
-        // A running helper would ignore new arguments and swallow the dispatch.
         configuration.createsNewApplicationInstance = true
-        NSWorkspace.shared.openApplication(at: helper, configuration: configuration) { _, error in
+        configuration.addsToRecentItems = false
+        NSWorkspace.shared.open([selection], withApplicationAt: helper, configuration: configuration) { _, error in
             if error != nil {
                 DispatchQueue.main.async {
                     let alert = NSAlert()

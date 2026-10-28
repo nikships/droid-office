@@ -21,6 +21,40 @@ enum PolicyTests {
             return
         }
         let home = "/Users/test-owner"
+        let selection = [
+            URL(fileURLWithPath: FinderPolicy.home + "/Code/a file #1? & + 100%.swift"),
+            URL(fileURLWithPath: FinderPolicy.home + "/Code/日本語/🙂"),
+        ]
+        let selectionURL = try FinderPolicy.dispatchURL(selection)
+        let decodedSelection = try FinderPolicy.dispatchSelection(selectionURL)
+        precondition(decodedSelection == selection)
+        for raw in [
+            "https://dispatch?path=/Users/owner/Code",
+            "droid-office-finder://other?path=/Users/owner/Code",
+            "droid-office-finder://dispatch/",
+            "droid-office-finder://dispatch?path=relative",
+            "droid-office-finder://dispatch?path=/System/file",
+            "droid-office-finder://dispatch?path=/Users/owner/%00file",
+            "droid-office-finder://dispatch?path=/Users/owner/%0Afile",
+            "droid-office-finder://dispatch?path=/Users/owner/Code&prompt=run",
+            "droid-office-finder://dispatch?path",
+            "droid-office-finder://dispatch?path=/Users/owner/Code#fragment",
+            "droid-office-finder://user@dispatch?path=/Users/owner/Code",
+            "droid-office-finder://dispatch:123?path=/Users/owner/Code",
+            "droid-office-finder://dispatch?path=/" + String(repeating: "a", count: 4096),
+            "droid-office-finder://dispatch?" + Array(repeating: "path=/Users/owner/Code", count: 101).joined(separator: "&"),
+        ] {
+            do {
+                _ = try FinderPolicy.dispatchSelection(URL(string: raw)!)
+                preconditionFailure("accepted invalid dispatch URL")
+            } catch {}
+        }
+        for urls in [[], Array(repeating: selection[0], count: 101), [URL(string: "https://example.com")!]] {
+            do {
+                _ = try FinderPolicy.dispatchURL(urls)
+                preconditionFailure("accepted invalid dispatch selection")
+            } catch {}
+        }
         for path in ["/", "/System", "/System/Volumes/Data/file", "/Library/a", home + "/Library/a",
                      home + "/.Trash/a", "/Volumes/Disk/.Trashes/501/file",
                      home + "/.droid-office/worktrees/a", "/Volumes/Disk/.MobileBackups/a",

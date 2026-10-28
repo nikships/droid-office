@@ -24,6 +24,7 @@ struct BridgeRecord: Codable {
 
 enum FinderPolicy {
     static let appID = "com.nikships.droid-office"
+    static let dispatchScheme = "droid-office-finder"
     static let group = "group.com.nikships.droid-office"
     static let accessGroup = "NW6B3R27LQ." + group
     static var home: String {
@@ -37,6 +38,38 @@ enum FinderPolicy {
               c.user == nil, c.password == nil, c.query == nil, c.fragment == nil, c.path == "/",
               value == "http://127.0.0.1:\(port)/" else { return nil }
         return url
+    }
+
+    // URL events survive a sandboxed FinderSync launch; OpenConfiguration.arguments does not.
+    static func dispatchURL(_ urls: [URL]) throws -> URL {
+        guard !urls.isEmpty, urls.count <= 100, urls.allSatisfy(\.isFileURL) else {
+            throw FinderFailure.message("Select between 1 and 100 local items.")
+        }
+        var components = URLComponents()
+        components.scheme = dispatchScheme
+        components.host = "dispatch"
+        components.queryItems = urls.map { URLQueryItem(name: "path", value: $0.path) }
+        guard let url = components.url else { throw FinderFailure.message("This selection cannot be opened.") }
+        _ = try dispatchSelection(url)
+        return url
+    }
+
+    static func dispatchSelection(_ url: URL) throws -> [URL] {
+        guard url.absoluteString.utf8.count <= 512 * 1024,
+              let c = URLComponents(url: url, resolvingAgainstBaseURL: false),
+              c.scheme == dispatchScheme, c.host == "dispatch", c.path.isEmpty,
+              c.user == nil, c.password == nil, c.port == nil, c.fragment == nil,
+              let items = c.queryItems, !items.isEmpty, items.count <= 100 else {
+            throw FinderFailure.message("Invalid Finder selection. Select the items again in Finder.")
+        }
+        return try items.map { item in
+            guard item.name == "path", let path = item.value, path.utf8.count <= 4096,
+                  !path.unicodeScalars.contains(where: { CharacterSet.controlCharacters.contains($0) }),
+                  allowedPath(path, home: home) else {
+                throw FinderFailure.message("This location cannot be dispatched.")
+            }
+            return URL(fileURLWithPath: path)
+        }
     }
 
     static func allowedPath(_ path: String, home: String) -> Bool {

@@ -123,7 +123,8 @@ test('packaging embeds FinderSync outside Resources and preserves native entitle
   for (const name of ['FinderBridge', 'FinderSync']) {
     const entitlements = readFileSync(path.join(root, `build/${name}.entitlements.plist`), 'utf8');
     assert.match(entitlements, /NW6B3R27LQ\.group\.com\.nikships\.droid-office/);
-    assert.match(entitlements, /com\.apple\.security\.app-sandbox/);
+    if (name === 'FinderSync') assert.match(entitlements, /com\.apple\.security\.app-sandbox/);
+    else assert.doesNotMatch(entitlements, /com\.apple\.security\.app-sandbox/);
     assert.doesNotMatch(entitlements, /allow-jit|disable-library-validation/);
   }
   const source = readFileSync(path.join(root, 'native/mac/FinderCore.swift'), 'utf8');
@@ -135,16 +136,21 @@ test('packaging embeds FinderSync outside Resources and preserves native entitle
   const bridge = readFileSync(path.join(root, 'native/mac/Bridge.swift'), 'utf8');
   assert.match(bridge, /showExtensionManagementInterface\(\)\s*\n[^\n]*\n\s*RunLoop\.main\.run\(until:/);
   const build = readFileSync(path.join(root, 'native/mac/build.mjs'), 'utf8');
-  assert.match(build, /CFBundleDocumentTypes[\s\S]*LSHandlerRank<\/key><string>None[\s\S]*public\.item<\/string><string>public\.folder/);
+  assert.match(build, /CFBundleURLTypes[\s\S]*CFBundleURLSchemes[\s\S]*droid-office-finder/);
+  assert.doesNotMatch(build, /CFBundleDocumentTypes/);
   const menu = readFileSync(path.join(root, 'native/mac/FinderSync.swift'), 'utf8');
   assert.doesNotMatch(menu, /representedObject|currentItem|isEnabled = false/);
   assert.match(menu, /sender\.tag == 1/);
-  // The sandboxed extension cannot read the selection, so handing it over as documents fails with a permission error.
-  assert.match(menu, /configuration\.arguments = \["--dispatch"\] \+ urls\.map\(\\\.path\)/);
+  // Sandboxed callers cannot pass launch arguments or open inaccessible selections as documents.
+  assert.match(menu, /FinderPolicy\.dispatchURL\(urls\)/);
+  assert.match(menu, /\.open\(\[selection\], withApplicationAt: helper/);
+  assert.doesNotMatch(menu, /configuration\.arguments/);
+  assert.match(menu, /addsToRecentItems = false/);
   assert.match(menu, /createsNewApplicationInstance = true/);
   assert.doesNotMatch(menu, /\.open\(urls/);
   assert.match(bridge, /args\[1\] == "--dispatch"/);
   assert.match(bridge, /applicationShouldTerminateAfterLastWindowClosed/);
+  assert.match(bridge, /show\(try FinderPolicy\.dispatchSelection\(url\), in: application\)/);
   const workflow = readFileSync(path.join(root, '.github/workflows/release.yml'), 'utf8');
   assert.match(workflow, /Final Finder signature lost its required entitlements/);
   assert.match(workflow, /codesign -d --entitlements/);
