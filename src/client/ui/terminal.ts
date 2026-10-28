@@ -268,7 +268,7 @@ function createTerminalView(net: Net, workerId: string, o: ViewOptions): Termina
       net.send({ t: 'term.resize', workerId, cols: term.cols, rows: term.rows });
     }
   };
-  const canType = () => !disposed && !guest && active && mirror.ready && net.ready && !!hold?.attached;
+  const canType = () => !disposed && !guest && active && laidOut() && mirror.ready && net.ready && !!hold?.attached;
 
   const refresh = () => {
     if (disposed) return;
