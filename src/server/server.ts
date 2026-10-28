@@ -1659,13 +1659,18 @@ export async function startServer(cfg: Config) {
       }
       case 'floor.go': {
         if (msg.floor === ROOF) {
-          if (floors.size) goToRoof(c);
-          else warn(c, 'There is no building to go up on yet');
+          if (floors.size) {
+            goToRoof(c);
+            done();
+          } else refuse('There is no building to go up on yet');
           break;
         }
         const floor = floors.get(str(msg.floor, 64));
-        if (!floor) warn(c, 'No such floor');
-        else goToFloor(c, floor, arrivalSpot(msg.at));
+        if (!floor) refuse('No such floor');
+        else {
+          goToFloor(c, floor, arrivalSpot(msg.at));
+          done();
+        }
         break;
       }
       case 'floor.reorder': {

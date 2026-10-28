@@ -119,6 +119,42 @@ test('host update routes require office access and same-origin writes, with clea
   if (ip) assert.equal((await fetch(`${base.replace('127.0.0.1', ip)}/api/host/update`)).status, 401);
 });
 
+test('floor navigation receipts identify refusals and follow authoritative arrivals', async (t) => {
+  const { base, dir } = await office(t);
+  const client = socket(t, base, 'client=dashboard');
+  const initial = await client.wait('welcome');
+  assert.ok(initial.floor);
+  client.send({ t: 'floor.go', floor: 'missing-floor', requestId: 'missing', requestFloor: initial.floor });
+  const refusal = await client.wait('action.result', (m) => m.requestId === 'missing');
+  assert.equal(refusal.ok, false);
+  assert.equal(refusal.error, 'No such floor');
+  assert.equal(
+    client.messages.some((m) => m.t === 'floor.enter'),
+    false,
+  );
+  client.send({ t: 'floor.go', floor: initial.floor, requestId: 'same' });
+  assert.equal((await client.wait('action.result', (m) => m.requestId === 'same')).ok, true);
+  assert.equal(
+    client.messages.some((m) => m.t === 'floor.enter'),
+    false,
+    'a same-floor no-op needs no arrival',
+  );
+  const addedDir = path.join(dir, 'navigation');
+  mkdirSync(addedDir);
+  client.send({ t: 'floor.add', dir: addedDir });
+  const added = await client.wait('floor.added');
+  assert.ok(added.floor, added.error);
+  client.send({ t: 'floor.go', floor: added.floor, requestId: 'navigate', requestFloor: initial.floor });
+  const arrived = await client.wait('floor.enter', (m) => m.floor === added.floor);
+  const receipt = await client.wait('action.result', (m) => m.requestId === 'navigate');
+  assert.equal(receipt.ok, true);
+  assert.ok(client.messages.indexOf(arrived) < client.messages.indexOf(receipt));
+  client.send({ t: 'floor.go', floor: initial.floor, requestId: 'stale', requestFloor: initial.floor });
+  const stale = await client.wait('action.result', (m) => m.requestId === 'stale');
+  assert.equal(stale.ok, false);
+  assert.match(stale.error ?? '', /active floor changed/);
+});
+
 test('floor moves from a companion update every client and the next welcome, with invalid moves refused', async (t) => {
   const { base, dir, server } = await office(t);
   const desktop = socket(t, base, '');
