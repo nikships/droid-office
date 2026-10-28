@@ -1,5 +1,15 @@
 import { companionCapabilities } from '../shared/companion-roster';
-import { type CompanionView, type CompanionWorkspace, createCompanionWorkspace, emptyFloorWorkspace, type FloorWorkspace, MAX_COMPANION_PANES, reduceCompanionWorkspace, type WorkspaceAction } from '../shared/companion-workspace';
+import {
+  type CompanionView,
+  type CompanionWorkspace,
+  companionFloorWorkspace,
+  createCompanionWorkspace,
+  type FloorWorkspace,
+  MAX_COMPANION_PANES,
+  reduceCompanionWorkspace,
+  restoreCompanionWorkspace,
+  type WorkspaceAction,
+} from '../shared/companion-workspace';
 import { PROMPT_IMAGES_MAX } from '../shared/drops';
 import type { Menu } from '../shared/asks';
 import { CLEAR_DROID_QUEUE } from '../shared/droid-queue';
@@ -61,33 +71,6 @@ type FloorAction = WorkspaceAction extends infer A ? (A extends { floor: string 
 
 const own = <T>(record: Record<string, T>, key: string): T | undefined => (Object.hasOwn(record, key) ? record[key] : undefined);
 const sendKey = (floor: string, worker: string) => `${floor}\u0000${worker}`;
-
-/** A persisted layout from native storage, checked field by field: never drafts, at most four distinct panes. */
-export function restoreLayout(saved: unknown): CompanionWorkspace {
-  const out = createCompanionWorkspace();
-  if (!saved || typeof saved !== 'object' || Array.isArray(saved)) return out;
-  const floors = (saved as { floors?: unknown }).floors;
-  if (!floors || typeof floors !== 'object' || Array.isArray(floors)) return out;
-  for (const [id, value] of Object.entries(floors as Record<string, unknown>).slice(0, 200)) {
-    if (!id || id.length > 200 || !value || typeof value !== 'object') continue;
-    const floor = value as Partial<Record<keyof FloorWorkspace, unknown>>;
-    const seen = new Set<string>();
-    const panes = (Array.isArray(floor.panes) ? floor.panes : []).flatMap((p: unknown) => {
-      if (!p || typeof p !== 'object') return [];
-      const pane = p as { workerId?: unknown; view?: unknown; size?: unknown };
-      if (typeof pane.workerId !== 'string' || !pane.workerId || pane.workerId.length > 200 || seen.has(pane.workerId) || seen.size >= MAX_COMPANION_PANES) return [];
-      seen.add(pane.workerId);
-      const view: CompanionView = pane.view === 'terminal' ? 'terminal' : 'thread';
-      const size = typeof pane.size === 'number' && Number.isFinite(pane.size) ? Math.min(4, Math.max(0.25, pane.size)) : 1;
-      return [{ workerId: pane.workerId, view, size }];
-    });
-    // '' is the roster, left there on purpose: a phone opens on the list, not a conversation.
-    const active = floor.active === '' ? '' : typeof floor.active === 'string' && seen.has(floor.active) ? floor.active : (panes[0]?.workerId ?? '');
-    const collapsed = (Array.isArray(floor.collapsed) ? floor.collapsed : []).filter((c: unknown): c is string => typeof c === 'string' && c.length <= 200).slice(0, 500);
-    Object.defineProperty(out.floors, id, { value: { panes, active, drafts: {}, collapsed }, enumerable: true, writable: true, configurable: true });
-  }
-  return out;
-}
 
 function layoutOf(ws: CompanionWorkspace): unknown {
   return { floors: Object.fromEntries(Object.entries(ws.floors).map(([id, f]) => [id, { panes: f.panes, active: f.active, collapsed: f.collapsed }])) };
@@ -179,7 +162,7 @@ export class Session {
     }
     if (run !== this.run) return;
     this.bootSeq = boot.seq;
-    const workspace = boot.active ? restoreLayout(await this.host.layout.load(boot.active).catch(() => undefined)) : createCompanionWorkspace();
+    const workspace = boot.active ? restoreCompanionWorkspace(await this.host.layout.load(boot.active).catch(() => undefined)) : createCompanionWorkspace();
     if (run !== this.run) return;
     this.set({ started: true, bootError: undefined, offices: { offices: boot.offices, active: boot.active }, link: boot.link, workspace });
     for (const msg of boot.replay) this.message(msg, { seq: boot.seq, epoch: boot.link.epoch }, true);
@@ -244,10 +227,7 @@ export class Session {
     }
     let workspace = this.state.workspace;
     if ((msg.t === 'welcome' || msg.t === 'floor.enter' || msg.t === 'worker.remove') && office.floor) {
-      const before = own(workspace.floors, office.floor);
       workspace = reduceCompanionWorkspace(workspace, { type: 'reconcile', floor: office.floor, workerIds: Object.keys(office.workers) });
-      // The roster view (no worker active) stays the roster when someone else leaves.
-      if (before && !before.active) workspace = reduceCompanionWorkspace(workspace, { type: 'focus', floor: office.floor, workerId: '' });
       next.workspace = workspace;
     }
     this.set(next);
@@ -302,7 +282,7 @@ export class Session {
       hire: undefined,
     });
     this.sync();
-    const loaded = offices.active ? restoreLayout(await this.host.layout.load(offices.active).catch(() => undefined)) : createCompanionWorkspace();
+    const loaded = offices.active ? restoreCompanionWorkspace(await this.host.layout.load(offices.active).catch(() => undefined)) : createCompanionWorkspace();
     if (this.disposed || this.state.offices.active !== offices.active) return;
     // Panes opened while the layout loaded win over the saved ones.
     let workspace: CompanionWorkspace = { floors: { ...loaded.floors, ...this.state.workspace.floors }, epoch: this.state.workspace.epoch };
@@ -415,7 +395,7 @@ export class Session {
 
   floorWorkspace(): FloorWorkspace {
     const floor = this.state.office.floor;
-    return (floor && own(this.state.workspace.floors, floor)) || emptyFloorWorkspace();
+    return companionFloorWorkspace(this.state.workspace, floor ?? '');
   }
 
   private dispatch(action: FloorAction, floor = this.state.office.floor): void {
@@ -714,8 +694,7 @@ export class Session {
     if (queueSend) receipts.sent(text, draft.attachments.length > 0, after, this.now());
     // Cleared on the floor it was written on, even after a floor change; a reconnect while it went
     // cleared every draft already, and one typed since is kept.
-    const left = own(this.state.workspace.floors, floor);
-    const now = left && own(left.drafts, workerId);
+    const now = own(companionFloorWorkspace(this.state.workspace, floor).drafts, workerId);
     if (this.state.link.epoch === token.epoch && now && now.text.trim() === text && now.attachments.join() === draft.attachments.join()) this.dispatch({ type: 'draft', workerId, draft: { text: '', attachments: [] } }, floor);
     this.feeds.feed(workerId)?.latest();
     if (w.kind === 'agent' && slashOf(text)?.command?.kind === 'tty') this.view(workerId, 'terminal');

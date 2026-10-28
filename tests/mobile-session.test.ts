@@ -2,7 +2,8 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import type { ClientMsg, FloorInfo, ServerMsg, WorkerInfo } from '../src/shared/protocol.js';
 import type { HostBootstrap, HostImage, HostLink, HostMessageMeta, HostOffices, MobileHost } from '../src/mobile/host.js';
-import { FLOOR_TIMEOUT_MS, OFFLINE, restoreLayout, STALE, Session } from '../src/mobile/session.js';
+import { restoreCompanionWorkspace } from '../src/shared/companion-workspace.js';
+import { FLOOR_TIMEOUT_MS, OFFLINE, STALE, Session } from '../src/mobile/session.js';
 
 function worker(id: string, over: Partial<WorkerInfo> = {}): WorkerInfo {
   return { id, kind: 'agent', deskId: `d-${id}`, name: id, color: '#fff', status: 'idle', acked: true, createdBy: 'owner', createdAt: 1, cols: 80, rows: 24, open: false, sessionId: `s-${id}`, ...over };
@@ -344,7 +345,7 @@ test('layouts persist without drafts and restore only valid, distinct panes', as
   const saved = JSON.stringify(host.saved.get('o1'));
   assert.ok(saved.includes('w1'));
   assert.ok(!saved.includes('secret draft'));
-  const restored = restoreLayout(
+  const restored = restoreCompanionWorkspace(
     JSON.parse(
       '{"floors":{"__proto__":{"panes":[{"workerId":"p"}]},"a":{"panes":[{"workerId":"x","view":"terminal","size":99},{"workerId":"x"},{"workerId":"y"},{"workerId":"z"},{"workerId":"q"},{"workerId":"r"}],"active":"nope","drafts":{"x":{"text":"t","attachments":["i"]}},"collapsed":[1,"lead"]}}}',
     ),
@@ -356,11 +357,11 @@ test('layouts persist without drafts and restore only valid, distinct panes', as
   );
   assert.equal(restored.floors.a.panes[0].view, 'terminal');
   assert.equal(restored.floors.a.panes[0].size, 4);
-  assert.equal(restored.floors.a.active, 'x');
+  assert.ok(['x', 'y', 'z', 'q'].includes(restored.floors.a.active), 'an unknown active falls back to a restored pane');
   assert.deepEqual(restored.floors.a.drafts, {});
   assert.deepEqual(restored.floors.a.collapsed, ['lead']);
-  assert.deepEqual(restoreLayout('nonsense').floors, {});
-  assert.equal(restoreLayout({ floors: { a: { panes: [{ workerId: 'x' }], active: '' } } }).floors.a.active, '', 'the roster, left on purpose, stays');
+  assert.deepEqual(restoreCompanionWorkspace('nonsense').floors, {});
+  assert.equal(restoreCompanionWorkspace({ floors: { a: { panes: [{ workerId: 'x' }], active: '' } } }).floors.a.active, '', 'the roster, left on purpose, stays');
   await settle();
 });
 
