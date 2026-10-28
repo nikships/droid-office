@@ -8,6 +8,17 @@ import { h, toast } from './dom';
 // comes out again with the ✕ that appears when you hover it. What's sent with the prompt is just
 // their ids, in order; the office lists where it keeps them after your text.
 
+/** Staged pictures by id, so a draft restored in another view still shows its thumbnails. Bounded by what drafts hold. */
+const stagedFiles = new Map<string, File>();
+
+/** Takes staged pictures out on the office (a draft dropped while its box wasn't mounted). Best effort. */
+export function forgetStagedImages(floor: string, ids: readonly string[]) {
+  for (const id of ids) {
+    stagedFiles.delete(id);
+    void fetch(withToken(`/api/prompt/image?${new URLSearchParams({ floor, id })}`), { method: 'DELETE' }).catch(() => {});
+  }
+}
+
 export interface PromptImages {
   /** The thumbnails, empty (and hidden) until a picture is added: put it under the prompt box. */
   element: HTMLElement;
@@ -22,12 +33,18 @@ export interface PromptImages {
   take(): string[];
   /** Throws away what was never sent: the box was closed. */
   discard(): void;
+  /** Lets go of the thumbnails but leaves the pictures staged on the office: a draft keeps them. */
+  detach(): void;
+  /** Puts back pictures staged earlier (a kept draft), in order, after what is already here. */
+  restore(ids: readonly string[]): void;
+  /** Called whenever the staged ids change (added, uploaded, removed, taken, discarded). */
+  onChange(fn: () => void): void;
   /** Takes pictures dropped on `zone`, which gets the `dropping` class while one is held over it. */
   dropZone(zone: HTMLElement, mark?: HTMLElement): void;
 }
 
 interface Item {
-  file: File;
+  file?: File;
   url: string;
   /** Set once it's up. */
   id?: string;
@@ -35,10 +52,11 @@ interface Item {
   removed?: boolean;
 }
 
-export function promptImages(textarea: HTMLTextAreaElement): PromptImages {
-  const floor = store.floor ?? '';
+export function promptImages(textarea: HTMLTextAreaElement, opts: { floor?: string } = {}): PromptImages {
+  const floor = opts.floor ?? store.floor ?? '';
   const items: Item[] = [];
   const waiting: (() => void)[] = [];
+  let changed: () => void = () => {};
   const element = h('div.pimgs', { role: 'list', 'aria-label': 'Attached pictures' });
 
   const query = (extra: Record<string, string>) => new URLSearchParams({ floor, ...extra });
@@ -50,6 +68,7 @@ export function promptImages(textarea: HTMLTextAreaElement): PromptImages {
     return r.id;
   };
   const forget = (id: string) => {
+    stagedFiles.delete(id);
     void fetch(withToken(`/api/prompt/image?${query({ id })}`), { method: 'DELETE' }).catch(() => {});
   };
 
@@ -63,8 +82,8 @@ export function promptImages(textarea: HTMLTextAreaElement): PromptImages {
       ...items.map((item, i) =>
         h(
           'div.pimg',
-          { role: 'listitem', class: item.id ? '' : 'uploading', title: `Image ${i + 1}: ${item.file.name || 'pasted picture'}` },
-          h('img', { src: item.url, alt: `Image ${i + 1}` }),
+          { role: 'listitem', class: item.id ? '' : 'uploading', title: `Image ${i + 1}: ${item.file?.name || 'pasted picture'}` },
+          item.url ? h('img', { src: item.url, alt: `Image ${i + 1}` }) : null,
           h('span.pimg-n', {}, String(i + 1)),
           h('button.pimg-x', { type: 'button', 'aria-label': `Remove image ${i + 1}`, title: 'Remove', onclick: () => remove(item) }, '✕'),
         ),
@@ -74,10 +93,11 @@ export function promptImages(textarea: HTMLTextAreaElement): PromptImages {
   const remove = (item: Item) => {
     items.splice(items.indexOf(item), 1);
     item.removed = true;
-    URL.revokeObjectURL(item.url);
+    if (item.url) URL.revokeObjectURL(item.url);
     if (item.id) forget(item.id);
     render();
     settle();
+    changed();
     textarea.focus();
   };
 
@@ -102,14 +122,16 @@ export function promptImages(textarea: HTMLTextAreaElement): PromptImages {
           // Taken out while it was going up: it was kept after all, so let it go.
           if (item.removed) return forget(id);
           item.id = id;
+          stagedFiles.set(id, file);
           render();
           settle();
+          changed();
         },
         (err: Error) => {
           if (item.removed) return;
           const at = items.indexOf(item);
           if (at >= 0) items.splice(at, 1);
-          URL.revokeObjectURL(item.url);
+          if (item.url) URL.revokeObjectURL(item.url);
           toast(err.message, 'warn');
           render();
           settle();
@@ -128,8 +150,9 @@ export function promptImages(textarea: HTMLTextAreaElement): PromptImages {
   });
 
   const release = () => {
-    for (const item of items.splice(0)) URL.revokeObjectURL(item.url);
+    for (const item of items.splice(0)) if (item.url) URL.revokeObjectURL(item.url);
     render();
+    settle();
   };
 
   return {
@@ -140,7 +163,9 @@ export function promptImages(textarea: HTMLTextAreaElement): PromptImages {
     settled: () => (busy() ? new Promise<void>((resolve) => waiting.push(resolve)) : Promise.resolve()),
     take() {
       const taken = ids();
+      for (const id of taken) stagedFiles.delete(id);
       release();
+      changed();
       return taken;
     },
     discard() {
@@ -149,6 +174,24 @@ export function promptImages(textarea: HTMLTextAreaElement): PromptImages {
         if (item.id) forget(item.id);
       }
       release();
+      changed();
+    },
+    detach() {
+      // Still going up: nobody will hold its id, so it is forgotten once it arrives.
+      for (const item of items) if (!item.id) item.removed = true;
+      release();
+    },
+    restore(staged) {
+      for (const id of staged) {
+        if (items.length >= PROMPT_IMAGES_MAX || items.some((i) => i.id === id)) continue;
+        const file = stagedFiles.get(id);
+        items.push({ id, file, url: file ? URL.createObjectURL(file) : '' });
+      }
+      render();
+      changed();
+    },
+    onChange(fn) {
+      changed = fn;
     },
     dropZone(zone, mark = zone) {
       const hasFiles = (e: DragEvent) => !!e.dataTransfer?.types.includes('Files');

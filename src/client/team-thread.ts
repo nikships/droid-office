@@ -19,6 +19,19 @@ export interface TeamThreadMember {
   nextReadAt: number;
 }
 
+/** The server's conversation reader caches 8 sessions; one stays free for history paging. */
+export const THREAD_READER_SESSIONS = 8;
+
+/** How many team children the focused view may read while `polling` thread views read their own session. */
+export function teamThreadBudget(polling: number): number {
+  return Math.max(0, Math.min(TEAM_THREAD_WORKERS, THREAD_READER_SESSIONS - 1 - polling));
+}
+
+/** How often a mounted thread view reads its own conversation: the focused one every second, others less. */
+export function threadReadInterval(focused: boolean): number {
+  return focused ? READ_INTERVAL : 3 * READ_INTERVAL;
+}
+
 export function teamThreadVisible(active: boolean, connected: boolean, visible: boolean, expanded: boolean): boolean {
   return active && connected && visible && expanded;
 }
@@ -70,7 +83,8 @@ export class TeamThread {
   private nextWorker = 0;
   private nextReadAt = 0;
 
-  sync(scope: string, lead: string, workers: readonly WorkerInfo[]) {
+  /** `limit`: at most this many children are read, under the server reader's cache budget. */
+  sync(scope: string, lead: string, workers: readonly WorkerInfo[], limit = TEAM_THREAD_WORKERS) {
     if (this.disposed) return;
     if (scope !== this.scope || lead !== this.lead) {
       this.clear();
@@ -81,7 +95,7 @@ export class TeamThread {
     if (this.total !== children.length) this.revision++;
     this.total = children.length;
     const keep = new Set<string>();
-    for (const worker of children.slice(0, TEAM_THREAD_WORKERS)) {
+    for (const worker of children.slice(0, Math.max(0, Math.min(TEAM_THREAD_WORKERS, limit)))) {
       keep.add(worker.id);
       let member = this.members.get(worker.id);
       if (!member || member.worker.sessionId !== worker.sessionId) {

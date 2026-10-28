@@ -4,9 +4,9 @@ import { presentThread, threadArguments, type ThreadRow } from '../../shared/thr
 import { CLEAR_DROID_QUEUE, readDroidQueue } from '../../shared/droid-queue';
 import { slashCommands, slashOf, slashRefusal, slashSuggestions, type DroidSlashCommand, type SlashCommand } from '../../shared/slash-commands';
 import { ThreadQueue } from '../../shared/thread-queue';
-import type { Net } from '../net';
+import type { Net, TerminalHold } from '../net';
 import { ThreadHistory } from '../thread-history';
-import { TeamThread, TeamThreadPaint, teamThreadVisible } from '../team-thread';
+import { TeamThread, TeamThreadPaint, teamThreadBudget, teamThreadVisible, threadReadInterval } from '../team-thread';
 import { h, STATUS_LABEL } from './dom';
 import { colorDot } from './kit';
 import { markdown } from './markdown';
@@ -15,10 +15,21 @@ import { modelBadgeNode } from './models';
 import { copy as copyText } from './clipboard';
 import { withToken } from '../token';
 
+/** What the owner typed and the pictures staged for it, not sent yet. Same shape as CompanionDraft. */
+export interface ThreadDraft {
+  text: string;
+  attachments: string[];
+}
+
 export interface WorkerThread {
   element: HTMLElement;
   update(worker: WorkerInfo, connected: boolean): void;
   activate(active: boolean): void;
+  /** The pane the owner is in reads every second and reads Team activity; others read less often. Default true. */
+  focus(focused: boolean): void;
+  getDraft(): ThreadDraft;
+  /** Empties the composer and takes its pictures out on the office. Nothing is sent. */
+  resetDraft(): void;
   dispose(): void;
 }
 
@@ -29,6 +40,17 @@ export interface ThreadOptions {
   queueKey: string;
   draft: string;
   onDraft(text: string): void;
+  /** Pictures staged for the kept draft, put back under the box. */
+  attachments?: readonly string[];
+  /**
+   * The staged pictures changed. With this, the caller keeps the draft's pictures: disposing the view
+   * leaves them staged, and the caller takes them out (forgetStagedImages) when it drops the draft.
+   */
+  onAttachments?(ids: string[]): void;
+  /** The connection was lost and the composer cleared itself (text and pictures). */
+  onDraftReset?(): void;
+  /** The floor the view was opened on, where its pictures are staged. */
+  floor?: string;
   send(msg: ClientMsg): Promise<string | undefined>;
   raw(): void;
   /** The worker's terminal as text, one string per row, or undefined before it has drawn one. */
@@ -40,12 +62,17 @@ export interface ThreadOptions {
 }
 
 const localQueues = new Map<string, ThreadQueue>();
+/** Mounted views reading their own conversation now, which share the server reader's cache with team reads. */
+const pollingViews = new Set<object>();
 
 /** Local sessions only. This view reads JSONL and uses the existing worker actions, never a second Droid. */
 export function mountWorkerThread(net: Net, opts: ThreadOptions): WorkerThread {
   let worker = opts.worker;
   let connected = false;
   let active = false;
+  let focused = true;
+  let hold: TerminalHold | undefined;
+  const self = {};
   let disposed = false;
   let sending = false;
   let resuming = false;
@@ -180,7 +207,9 @@ export function mountWorkerThread(net: Net, opts: ThreadOptions): WorkerThread {
     paintSlash();
     updateControls();
   });
-  const images = promptImages(input);
+  const images = promptImages(input, { floor: opts.floor });
+  if (opts.attachments?.length) images.restore(opts.attachments);
+  images.onChange(() => opts.onAttachments?.(images.ids()));
   const file = h('input.hidden', { type: 'file', accept: 'image/png,image/jpeg,image/gif,image/webp', multiple: true, 'aria-label': 'Choose pictures' });
   file.addEventListener('change', () => {
     images.add([...(file.files ?? [])]);
@@ -619,8 +648,8 @@ export function mountWorkerThread(net: Net, opts: ThreadOptions): WorkerThread {
     if (teamSection.offsetHeight !== height && scroll.scrollTop !== top) scroll.scrollTop = top;
   };
   const syncTeam = () => {
-    team.sync(`${opts.queueKey}:${worker.id}:${worker.sessionId ?? ''}`, worker.id, opts.team?.() ?? []);
-    team.enable(teamThreadVisible(active && !disposed, connected, !document.hidden && element.isConnected, teamSection.open));
+    team.sync(`${opts.queueKey}:${worker.id}:${worker.sessionId ?? ''}`, worker.id, opts.team?.() ?? [], teamThreadBudget(pollingViews.size));
+    team.enable(teamThreadVisible(active && focused && !disposed, connected, !document.hidden && element.isConnected, teamSection.open));
   };
   const readTeam = () => {
     if (!opts.team || disposed) return;
@@ -750,7 +779,7 @@ export function mountWorkerThread(net: Net, opts: ThreadOptions): WorkerThread {
   const read = (before?: number) => {
     if (!active || !connected || disposed || document.hidden || pending) return;
     if (before === undefined && history.historical) return;
-    if (before === undefined && Date.now() - lastReadAt < 1000) return;
+    if (before === undefined && Date.now() - lastReadAt < threadReadInterval(focused)) return;
     const request = `thread-${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
     if (net.send({ t: 'thread.read', workerId: worker.id, request, ...(before !== undefined ? { before } : {}) })) {
       lastReadAt = Date.now();
@@ -794,9 +823,12 @@ export function mountWorkerThread(net: Net, opts: ThreadOptions): WorkerThread {
     }
     if (!text && !images.ids().length && !images.busy()) return input.focus();
     sending = true;
+    const stamp = net.stamp();
     updateControls();
     await images.settled();
-    if (disposed || !active || !connected || worker.status === 'needs_input') {
+    if (disposed || !active || !connected || !net.current(stamp) || worker.status === 'needs_input') {
+      // Pictures finished going up after the connection or floor changed: that send is not made later.
+      if (!disposed && !net.current(stamp)) told = 'The connection changed while pictures were uploading. Nothing was sent.';
       sending = false;
       updateControls();
       return;
@@ -862,9 +894,31 @@ export function mountWorkerThread(net: Net, opts: ThreadOptions): WorkerThread {
     }
   });
   const off = net.onMessage(receive);
+  const offReady = net.onReady((ready) => {
+    if (ready || disposed) return;
+    pending = undefined;
+    team.clear();
+    team.enable(false);
+    paintTeam();
+  });
+  const clearDraft = () => {
+    input.value = '';
+    images.discard();
+    opts.onDraft('');
+    told = '';
+    slashClosed = false;
+    paintSlash();
+    updateControls();
+  };
+  // Losing the connection drops unsent drafts everywhere; a floor switch keeps them.
+  const offLost = net.onConnectionLost(() => {
+    if (disposed) return;
+    clearDraft();
+    opts.onDraftReset?.();
+  });
   const timer = setInterval(() => {
     if (!active || !connected || document.hidden) return;
-    readTeam();
+    if (focused) readTeam();
     paintQueue();
     if (pending && Date.now() - pending.at > 8000) {
       pending = undefined;
@@ -881,7 +935,6 @@ export function mountWorkerThread(net: Net, opts: ThreadOptions): WorkerThread {
   return {
     element,
     update(next, online) {
-      if (online && !connected && active) net.send({ t: 'worker.attach', workerId: next.id });
       if (next.sessionId !== worker.sessionId) {
         history.clear(next.sessionId);
         received = false;
@@ -916,19 +969,42 @@ export function mountWorkerThread(net: Net, opts: ThreadOptions): WorkerThread {
       active = on;
       pending = undefined;
       if (on) {
-        net.send({ t: 'worker.attach', workerId: worker.id });
+        // Typing keys (Stop, Clear queue) needs the attachment; the hold survives reconnects.
+        hold ??= net.acquireTerminal(worker.id);
+        pollingViews.add(self);
         head.append(opts.controls);
         read();
         loadSlash();
-      } else net.send({ t: 'worker.detach', workerId: worker.id });
+      } else {
+        hold?.release();
+        hold = undefined;
+        pollingViews.delete(self);
+      }
       updateControls();
       readTeam();
     },
+    focus(on) {
+      if (focused === on || disposed) return;
+      focused = on;
+      syncTeam();
+      if (on) {
+        readTeam();
+        read();
+      }
+    },
+    getDraft: () => ({ text: input.value, attachments: images.ids() }),
+    resetDraft() {
+      if (!disposed) clearDraft();
+    },
     dispose() {
       if (disposed) return;
-      if (active) net.send({ t: 'worker.detach', workerId: worker.id });
+      hold?.release();
+      hold = undefined;
+      pollingViews.delete(self);
       disposed = true;
       active = false;
+      offReady();
+      offLost();
       clearInterval(timer);
       document.removeEventListener('visibilitychange', visibility);
       teamSection.removeEventListener('toggle', teamDisclosure, true);
@@ -937,7 +1013,8 @@ export function mountWorkerThread(net: Net, opts: ThreadOptions): WorkerThread {
       off();
       resize.disconnect();
       questionChanges.disconnect();
-      images.discard();
+      if (opts.onAttachments) images.detach();
+      else images.discard();
       team.dispose();
       teamNodes.clear();
     },
