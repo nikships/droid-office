@@ -13,6 +13,8 @@ enum Bridge {
                 FileHandle.standardOutput.write(try JSONEncoder().encode(record))
             } else if args.count == 2, args[1] == "--settings" {
                 FIFinderSyncController.showExtensionManagementInterface()
+                // The request is delivered over XPC on the main run loop. Exiting at once drops it and System Settings never opens.
+                RunLoop.main.run(until: Date().addingTimeInterval(2))
             } else if args.count == 1 || args.dropFirst().allSatisfy({ $0.hasPrefix("-psn_") }) {
                 let application = NSApplication.shared
                 let delegate = PromptApplication()
