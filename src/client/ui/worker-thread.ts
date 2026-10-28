@@ -4,7 +4,7 @@ import { presentThread, threadArguments, type ThreadRow } from '../../shared/thr
 import { ThreadQueue } from '../../shared/thread-queue';
 import type { Net } from '../net';
 import { ThreadHistory } from '../thread-history';
-import { TeamThread, teamThreadVisible } from '../team-thread';
+import { TeamThread, TeamThreadPaint, teamThreadVisible } from '../team-thread';
 import { h, STATUS_LABEL } from './dom';
 import { colorDot, toggle } from './kit';
 import { markdown } from './markdown';
@@ -63,6 +63,7 @@ export function mountWorkerThread(net: Net, opts: ThreadOptions): WorkerThread {
   const empty = h('div.wt-empty', { role: 'status' }, 'Reading the conversation…');
   const queuedNotice = h('details.wt-queued', { hidden: true });
   const team = new TeamThread();
+  const teamPaint = new TeamThreadPaint();
   const teamTitle = h('span', {}, 'Team activity');
   const teamBody = h('div.wt-team-body');
   const teamLimit = h('p.wt-team-note', { hidden: true });
@@ -201,12 +202,12 @@ export function mountWorkerThread(net: Net, opts: ThreadOptions): WorkerThread {
       content.addEventListener('scroll', () => updateCode(frame));
     }
   };
-  const updateClamps = () => {
-    for (const text of element.querySelectorAll<HTMLElement>('.wt-user-content')) {
+  const updateClamps = (within: HTMLElement = element) => {
+    for (const text of within.querySelectorAll<HTMLElement>('.wt-user-content')) {
       const button = text.parentElement?.nextElementSibling?.querySelector<HTMLButtonElement>('.wt-message-more');
       if (button instanceof HTMLButtonElement) button.hidden = text.classList.contains('clamped') && text.scrollHeight <= text.clientHeight + 1;
     }
-    for (const frame of element.querySelectorAll<HTMLElement>('.wt-code-scroll')) updateCode(frame);
+    for (const frame of within.querySelectorAll<HTMLElement>('.wt-code-scroll')) updateCode(frame);
   };
   let followingLayout = true;
   let viewportWidth = scroll.clientWidth;
@@ -423,11 +424,10 @@ export function mountWorkerThread(net: Net, opts: ThreadOptions): WorkerThread {
       rows: Map<string, { key: string; node: HTMLElement }>;
     }
   >();
-  const paintTeam = () => {
-    // Resizing the rollup must not move the conversation the owner is reading.
-    const edge = scroll.getBoundingClientRect().top;
-    const anchor = [...scroll.querySelectorAll<HTMLElement>('.wt-entry')].find((node) => node.getBoundingClientRect().bottom > edge);
-    const anchorTop = anchor?.getBoundingClientRect().top;
+  const paintTeam = (force = false) => {
+    if (disposed || !teamPaint.changed(team.revision, connected, teamSection.open, active && !document.hidden && element.isConnected, force)) return;
+    // The rollup is a sibling of the conversation. Only a size change can affect its viewport.
+    const height = teamSection.offsetHeight;
     const top = scroll.scrollTop;
     const teamTop = teamBody.scrollTop;
     teamSection.hidden = team.total === 0;
@@ -537,10 +537,9 @@ export function mountWorkerThread(net: Net, opts: ThreadOptions): WorkerThread {
         else card.body.insertBefore(had.node, at);
       }
     }
-    updateClamps();
-    teamBody.scrollTop = teamTop;
-    if (anchor?.isConnected && anchorTop !== undefined) scroll.scrollTop = top + anchor.getBoundingClientRect().top - anchorTop;
-    else scroll.scrollTop = top;
+    if (teamSection.open) updateClamps(teamSection);
+    if (teamBody.scrollTop !== teamTop) teamBody.scrollTop = teamTop;
+    if (teamSection.offsetHeight !== height && scroll.scrollTop !== top) scroll.scrollTop = top;
   };
   const syncTeam = () => {
     team.sync(`${opts.queueKey}:${worker.id}:${worker.sessionId ?? ''}`, worker.id, opts.team?.() ?? []);
@@ -556,7 +555,21 @@ export function mountWorkerThread(net: Net, opts: ThreadOptions): WorkerThread {
     );
     paintTeam();
   };
-  teamSection.addEventListener('toggle', readTeam);
+  const teamDisclosure = (event: Event) => {
+    if (event.target === teamSection) readTeam();
+    else paintTeam(true);
+  };
+  const teamFocus = () => queueMicrotask(() => paintTeam(true));
+  let teamSelected = false;
+  const teamSelection = () => {
+    const selection = document.getSelection();
+    const selected = selection?.isCollapsed === false && teamSection.contains(selection.anchorNode);
+    if (selected || teamSelected) paintTeam(true);
+    teamSelected = selected;
+  };
+  teamSection.addEventListener('toggle', teamDisclosure, true);
+  teamSection.addEventListener('focusout', teamFocus);
+  document.addEventListener('selectionchange', teamSelection);
   // The same words as the Android app: a heading and a line under it once there is nothing to read.
   const paintEmpty = () => {
     if (error) empty.textContent = 'Conversation unavailable. Retry below, or open Raw TTY.';
@@ -806,7 +819,9 @@ export function mountWorkerThread(net: Net, opts: ThreadOptions): WorkerThread {
       active = false;
       clearInterval(timer);
       document.removeEventListener('visibilitychange', visibility);
-      teamSection.removeEventListener('toggle', readTeam);
+      teamSection.removeEventListener('toggle', teamDisclosure, true);
+      teamSection.removeEventListener('focusout', teamFocus);
+      document.removeEventListener('selectionchange', teamSelection);
       off();
       resize.disconnect();
       questionChanges.disconnect();

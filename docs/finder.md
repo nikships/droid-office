@@ -10,7 +10,7 @@ The Mac app bundles a FinderSync extension and a native Keychain bridge. Finder 
 - Group non-git targets on Home. Limit selections to 100 targets and five groups.
 - Keep normal Team lead, worker and worktree ownership. Finder does not create its own lead, brief, branch convention or worktree lifecycle. The standard lead chooses and hires its team using `office-workers`.
 - Submit the user's task followed by quoted canonical paths to `station-lead`. An absent lead starts with its standard brief; an existing lead keeps its conversation. Busy leads and unanswered CLI dialogs reject dispatch visibly.
-- Apply a chosen model when a ready lead resumes, preserving the conversation. Remember successful Finder model choices per floor in the office's `finder.json`.
+- Apply a chosen model when a ready lead resumes, preserving the conversation. Remember only successful explicit Finder model choices per floor in the office's `finder.json`.
 
 Opening the resolve preview can register a floor. Cancelling the task does not remove that persistent floor.
 
@@ -26,7 +26,7 @@ All routes require `X-Droid-Office-Token`, a literal `127.0.0.1` Host and a loop
 | `POST /api/finder/resolve` with `paths` | `groups`, visible `models` and `defaultModel` |
 | `POST /api/finder/dispatch` with `paths`, `prompt`, optional `model` and unique `requestId` | `dispatches` and per-floor `errors` |
 
-Use `model: "floor-default"` to retain the floor's remembered Finder model, or the office/Droid default when none exists. Explicit model IDs must appear in the visible model catalogue; normal subscription and worker-capacity gates still apply.
+Use `model: "floor-default"` to use the floor's remembered explicit Finder model choice. Without a remembered choice, an existing lead keeps its current model; only a new lead uses the normal office/Droid default. Explicit model IDs must appear in the visible model catalogue; normal subscription and worker-capacity gates still apply.
 
 Dispatch receipts are retained for that daemon run. Reusing a request ID with the same payload returns the original result; changing its payload is rejected. Partial success is explicit and must not be retried as a new whole-batch request. A transport failure is ambiguous: inspect the Team lead before sending another task. No task is stored for delivery after an offline period.
 
@@ -48,7 +48,7 @@ A successful dispatch closes the prompt after macOS accepts its notifications. I
 
 Each accepted floor dispatch returns a companion URL and a `droid-office://thread/<worker>?floor=<floor>` link. The app validates protocol links and opens a sandboxed companion window. The companion follows the floor before selecting the worker and uses Thread for that visit without changing the owner's saved default view.
 
-The lead's collapsible **Team activity** section includes local child workers' status, recent conversation and tool activity, including patch arguments and results. Each child has **Open thread** drill-down. Reads run only while the section is expanded, connected and visible, at most once per second per child; histories, fields and the number of cached children are bounded. It uses the existing read-only thread protocol and never resizes a child's terminal.
+The lead's collapsible **Team activity** section includes local child workers' status, recent conversation and tool activity, including patch arguments and results. Each child has **Open thread** drill-down. Reads run only while the section is expanded, connected and visible, rotating through at most six cached children with one child read per second in total. This leaves two of the server reader's eight cache slots for the lead and history or drill-down. Each child retains at most forty entries and 96,000 serialized characters, with large fields visibly truncated. Unchanged snapshots and timer ticks do not repaint the rollup. It uses the existing read-only thread protocol and never resizes a child's terminal.
 
 ## Validation
 

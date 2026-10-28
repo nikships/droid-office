@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { TEAM_THREAD_CHARACTERS, TEAM_THREAD_ENTRIES, TEAM_THREAD_WORKERS, TeamThread, teamThreadChildren, teamThreadVisible } from '../src/client/team-thread.js';
+import { TEAM_THREAD_CHARACTERS, TEAM_THREAD_ENTRIES, TEAM_THREAD_WORKERS, TeamThread, TeamThreadPaint, teamThreadChildren, teamThreadVisible } from '../src/client/team-thread.js';
 import type { ClientMsg, ServerMsg, WorkerInfo } from '../src/shared/protocol.js';
 import type { ThreadEntry } from '../src/shared/worker-thread.js';
 
@@ -82,21 +82,69 @@ test('reads require active, connected, visible and expanded, and disabling inval
   assert.equal(team.receive(snapshot(reads[1])), true);
 });
 
-test('each child has one request at a time and no more than one read a second', () => {
+test('at most one child is read per second in total, without overlapping a pending child', () => {
   const { team, reads, read } = rig([worker('one'), worker('two')]);
   read(1000);
   read(1001);
-  assert.equal(reads.length, 2);
+  assert.equal(reads.length, 1);
   team.receive(snapshot(reads[0]));
-  team.receive(snapshot(reads[1]));
   read(1999);
+  assert.equal(reads.length, 1);
+  read(2000);
   assert.equal(reads.length, 2);
   read(2000);
+  read(2999);
+  assert.equal(reads.length, 2);
+  read(3000);
+  assert.equal(reads.length, 3);
+  // two is still pending, so one gets the next turn rather than overlapping it.
+  team.receive(snapshot(reads[2]));
+  read(4000);
   assert.equal(reads.length, 4);
   assert.deepEqual(
     reads.map((r) => r.workerId),
-    ['one', 'two', 'one', 'two'],
+    ['one', 'two', 'one', 'one'],
   );
+});
+
+test('six cached children share one read per second fairly, even when sends fail', () => {
+  assert.equal(TEAM_THREAD_WORKERS, 6);
+  const workers = Array.from({ length: 9 }, (_, i) => worker(`child-${i}`));
+  const { team, reads, read } = rig(workers);
+  for (let second = 1; second <= 18; second++) {
+    read(second * 1000, second % 3 !== 0);
+    assert.equal(reads.length, second);
+    if (second % 3 !== 0) team.receive(snapshot(reads.at(-1) as Read));
+    read(second * 1000);
+    read(second * 1000 + 999);
+    assert.equal(reads.length, second);
+  }
+  assert.equal(team.members.size, 6);
+  assert.equal(team.total, 9);
+  assert.deepEqual(
+    reads.map((r) => r.workerId),
+    Array.from({ length: 18 }, (_, i) => `child-${i % 6}`),
+  );
+});
+
+test('pending, lost and starting children do not block round-robin progress or steal other slots', () => {
+  const { team, reads, read } = rig([worker('a'), worker('b', { lost: { branch: 'here' } }), worker('c', { sessionId: undefined }), worker('d')]);
+  read(1000);
+  read(2000);
+  assert.deepEqual(
+    reads.map((r) => r.workerId),
+    ['a', 'd'],
+  );
+  team.receive(snapshot(reads[1]));
+  read(3000);
+  assert.equal(reads[2].workerId, 'd');
+  team.receive(snapshot(reads[2]));
+  read(9000);
+  assert.match(team.members.get('a')?.error ?? '', /did not return/);
+  assert.equal(reads.at(-1)?.workerId, 'd');
+  team.receive(snapshot(reads.at(-1) as Read));
+  read(10000);
+  assert.equal(reads.at(-1)?.workerId, 'a');
 });
 
 test('snapshot routing checks request, worker, latest page and session', () => {
@@ -157,6 +205,22 @@ test('a replacement session still respects the worker read interval', () => {
   assert.equal(team.members.get('one')?.received, false);
 });
 
+test('collapse/reactivation and scope replacement do not reset the total read budget', () => {
+  const { team, reads, read } = rig();
+  read(1000);
+  team.enable(false);
+  team.sync('new-floor:new-lead', 'new-lead', [worker('two', { lead: 'new-lead' })]);
+  team.enable(true);
+  read(1001);
+  read(1999);
+  assert.equal(reads.length, 1);
+  assert.equal(team.receive(snapshot(reads[0])), false);
+  read(2000);
+  assert.equal(reads.length, 2);
+  assert.equal(reads[1].workerId, 'two');
+  assert.equal(team.receive(snapshot(reads[1])), true);
+});
+
 test('worker removal, session replacement, floor/lead scope and disposal discard histories and pending IDs', () => {
   const { team, reads, read } = rig();
   read(1000);
@@ -187,7 +251,7 @@ test('cache bounds cap workers, entries and content without mutating snapshots',
   assert.equal(team.total, workers.length);
   assert.equal(team.members.size, TEAM_THREAD_WORKERS);
   read(1000);
-  assert.equal(reads.length, TEAM_THREAD_WORKERS);
+  assert.equal(reads.length, 1);
   const entries = Array.from({ length: 100 }, (_, i) => entry(i + 1));
   team.receive(snapshot(reads[0], entries));
   const history = team.members.get(reads[0].workerId)?.history;
@@ -205,17 +269,59 @@ test('cache bounds cap workers, entries and content without mutating snapshots',
 
 test('a long-running stream retains only the bounded recent tail and all selected children stay bounded', () => {
   const { team, reads, read } = rig([worker('one'), worker('two')]);
+  const latest = new Map<string, number>();
   for (let page = 1; page <= 10; page++) {
     read(page * 1000);
     const entries = Array.from({ length: 100 }, (_, i) => entry(page * 100 + i, { text: 'x'.repeat(8000) }));
-    for (const request of reads.slice(-2)) team.receive(snapshot(request, entries, { hasMore: true }));
+    const request = reads.at(-1) as Read;
+    team.receive(snapshot(request, entries, { hasMore: true }));
+    latest.set(request.workerId, page * 100 + 99);
     for (const member of team.members.values()) {
       assert.ok(member.history.entries.length <= TEAM_THREAD_ENTRIES);
       assert.ok(JSON.stringify(member.history.entries).length <= TEAM_THREAD_CHARACTERS);
-      assert.equal(member.history.entries.at(-1)?.seq, page * 100 + 99);
-      assert.equal(member.history.hasMore, true);
+      assert.equal(member.history.entries.at(-1)?.seq, latest.get(member.worker.id));
+      assert.equal(member.history.hasMore, latest.has(member.worker.id));
     }
   }
+});
+
+test('revision changes only for displayed state, not ticks, pending IDs or identical snapshots', () => {
+  const { team, reads, read } = rig();
+  const initial = team.revision;
+  team.sync('floor:lead', 'lead', [worker('one', { open: true, cols: 120 })]);
+  assert.equal(team.revision, initial);
+  read(1000);
+  read(1001);
+  assert.equal(team.revision, initial);
+  team.receive(snapshot(reads[0]));
+  const received = team.revision;
+  assert.ok(received > initial);
+  read(2000);
+  team.receive(snapshot(reads[1]));
+  assert.equal(team.revision, received);
+  team.sync('floor:lead', 'lead', [worker('one', { activity: 'New activity' })]);
+  assert.ok(team.revision > received);
+  const changed = team.revision;
+  team.enable(false);
+  team.enable(true);
+  assert.equal(team.revision, changed);
+  read(3000);
+  team.receive(snapshot(reads[2], [entry(1, { text: 'Updated' })]));
+  assert.ok(team.revision > changed);
+});
+
+test('paint policy skips unchanged collapsed/expanded ticks and hidden updates, then catches up once', () => {
+  const paint = new TeamThreadPaint();
+  assert.equal(paint.changed(1, true, false, true), true);
+  for (let tick = 0; tick < 20; tick++) assert.equal(paint.changed(1, true, false, true), false);
+  assert.equal(paint.changed(1, true, true, true), true);
+  assert.equal(paint.changed(1, true, true, true), false);
+  assert.equal(paint.changed(2, true, true, false), false);
+  assert.equal(paint.changed(3, false, false, false), false);
+  assert.equal(paint.changed(3, false, false, true), true);
+  assert.equal(paint.changed(3, false, false, true), false);
+  assert.equal(paint.changed(3, false, false, true, true), true);
+  assert.equal(paint.changed(3, false, false, false, true), false);
 });
 
 test('latest tool results update in place and rewritten sessions do not retain abandoned entries', () => {
