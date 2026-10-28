@@ -6,8 +6,8 @@ import kotlinx.serialization.json.JsonPrimitive
 
 /**
  * How a thread reads, projected from the entries [ThreadFeed] holds without changing them: the
- * messages are the conversation, and every run of tool calls, thoughts and plan updates between two
- * of them is one [ThreadRow.Activity] with a human summary ("Read 3 files · Ran 2 commands").
+ * messages are the conversation, thoughts are standalone disclosures, and each consecutive run of
+ * tool calls and plan updates is one [Activity] with a human summary ("Read 3 files · Ran 2 commands").
  *
  * Bookkeeping a reader gets nothing from is left out of the rows and the counts: a successful
  * TodoWrite, TodoRead, ToolSearch, Skill, WaitForScript or TaskOutput, the plan snapshots the office
@@ -42,13 +42,9 @@ object ThreadView {
 
     enum class Kind { Read, List, Search, Command, Edit, Create, Web, WebSearch, Delegate, Skill, Ask, Memory, Script, Plan, Wait, TaskStop, LoopCreate, LoopList, LoopPause, LoopResume, LoopCancel, Other }
 
-    sealed interface Item {
-        val entry: ThreadEntry
-    }
-
     /** A tool call as a person would say it: [title] in words, [detail] a short path or pattern, never the raw arguments. */
     data class Action(
-        override val entry: ThreadEntry,
+        val entry: ThreadEntry,
         val kind: Kind,
         val title: String,
         val detail: String?,
@@ -57,9 +53,12 @@ object ThreadView {
         val paths: List<String> = emptyList(),
         /** Keep wrapper diagnostics accessible without counting its child's failure twice. */
         val causedBy: String? = null,
-    ) : Item
+    )
 
-    data class Thought(override val entry: ThreadEntry, val preview: String) : Item
+    data class Thought(val entry: ThreadEntry, val preview: String, val live: Boolean) : Row {
+        override val key get() = entry.id
+        override val ids get() = setOf(entry.id)
+    }
 
     data class PlanStep(val done: Boolean, val active: Boolean, val text: String)
 
@@ -71,7 +70,7 @@ object ThreadView {
         override val ids: Set<String>,
         /** The newest entry in the run: what a scroll anchor holds on to, since older pages only add before it. */
         val lastId: String,
-        val items: List<Item>,
+        val items: List<Action>,
         /** The run's plan, when it changed since the last one shown. */
         val plan: List<PlanStep>?,
         val summary: String,
@@ -81,7 +80,7 @@ object ThreadView {
         val failed: List<Action>,
         val noResult: Int,
     ) : Row {
-        val actions get() = items.filterIsInstance<Action>()
+        val actions get() = items
         val cancelled get() = actions.count { it.state == ToolState.Cancelled && it.causedBy == null }
     }
 
@@ -114,6 +113,10 @@ object ThreadView {
 
         for ((i, e) in entries.withIndex()) {
             when {
+                e.kind == ThreadKind.Thinking -> {
+                    flush(i)
+                    rows += Thought(e, e.text?.lineSequence()?.firstOrNull { it.isNotBlank() }?.trim()?.trim('*')?.trim()?.take(120).orEmpty(), busy && i == entries.lastIndex)
+                }
                 e.kind == ThreadKind.Text && e.role != ThreadRole.System -> {
                     flush(i)
                     rows += Message(e, startsTurn = e.role == ThreadRole.Assistant && prevMessage?.role != ThreadRole.Assistant)
@@ -151,11 +154,10 @@ object ThreadView {
     private fun planKey(plan: List<PlanStep>) = plan.joinToString("\n") { "${it.done}${it.active}${it.text}" }
 
     private fun activity(run: List<ThreadEntry>, live: Boolean, plan: List<PlanStep>?, lastPlan: String?, late: Set<String>): Activity? {
-        val items = ArrayList<Item>()
+        val items = ArrayList<Action>()
         val cancellations = ownerCancellations(run, late)
         for ((i, e) in run.withIndex()) {
             when (e.kind) {
-                ThreadKind.Thinking -> e.text?.lineSequence()?.firstOrNull { it.isNotBlank() }?.let { items += Thought(e, it.trim().trim('*').trim()) }
                 ThreadKind.Tool -> {
                     val recorded = ThreadFeed.toolState(e, live)
                     val state = if (e.id in cancellations.ids) ToolState.Cancelled else recorded
@@ -171,7 +173,7 @@ object ThreadView {
             }
         }
         if (items.isEmpty()) return null
-        val actions = items.filterIsInstance<Action>()
+        val actions = items
         val planKey = plan?.let(::planKey)
         return Activity(
             key = "activity:" + run.first().id,

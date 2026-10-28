@@ -92,6 +92,8 @@ data class OfficeData(
     val version: String? = null,
     /** A welcome has arrived since this office became the active one. */
     val synced: Boolean = false,
+    /** Only a welcome that explicitly advertises the checkbox-answer contract enables it. */
+    val workerAnswerMultiSelect: Boolean = false,
 ) {
     val floor: FloorInfo? get() = floors.firstOrNull { it.id == floorId }
 }
@@ -180,6 +182,10 @@ class OfficeConnection(
     @Volatile private var hireAskedAt = 0L
     private var models: Triple<String, Long, ModelCatalogue>? = null
     private val slash = ConcurrentHashMap<String, Triple<String, Long, List<DroidCommand>>>()
+    private val answerRequests = ConcurrentHashMap<String, CompletableDeferred<ServerMsg.ActionResult?>>()
+    /** Changes when a socket ends, so a delayed answer cannot cross a reconnection. */
+    var answerEpoch: Long = 0
+        private set
 
     /**
      * The name the office knows this phone by (`?name=`, at most 24 characters), and so `createdBy`
@@ -215,6 +221,18 @@ class OfficeConnection(
 
     fun send(json: String): Boolean = socket?.takeIf { _link.value.phase == Phase.Connected }?.send(json) ?: false
 
+    /** A successful socket write is not an answer receipt. Never queue or replay an answer. */
+    suspend fun answerConfirmed(requestId: String, json: String): ServerMsg.ActionResult? {
+        val receipt = CompletableDeferred<ServerMsg.ActionResult?>()
+        answerRequests[requestId] = receipt
+        return try {
+            if (!send(json)) return null
+            withTimeoutOrNull(60_000) { receipt.await() }
+        } finally {
+            answerRequests.remove(requestId)
+        }
+    }
+
     /** Holds the connection until it's up (or [timeoutMs] passes), sends, then lets go. */
     suspend fun sendWhenConnected(json: String, timeoutMs: Long = 12_000): Boolean {
         val tag = "send-${System.nanoTime()}"
@@ -249,19 +267,6 @@ class OfficeConnection(
         attached -= workerId
         feeds.remove(workerId)
         send(ClientMsg.detach(workerId))
-    }
-
-    /**
-     * Types [keys] into a worker's terminal as an answer, attaching for the moment it takes when
-     * nothing on this phone has it open. False when the office can't be reached.
-     */
-    fun answer(workerId: String, keys: String): Boolean {
-        attach(workerId)
-        return try {
-            send(ClientMsg.termInput(workerId, keys))
-        } finally {
-            detach(workerId)
-        }
     }
 
     /** The stream of a terminal this phone attached to; null once it detached. */
@@ -549,6 +554,9 @@ class OfficeConnection(
         } finally {
             upgrade?.cancel()
             socket = null
+            answerEpoch++
+            answerRequests.values.forEach { it.complete(null) }
+            answerRequests.clear()
             ws.cancel()
             whiteboard.status(false)
         }
@@ -557,6 +565,7 @@ class OfficeConnection(
     private fun handle(officeId: String, msg: ServerMsg) {
         when (msg) {
             is ServerMsg.Welcome -> {
+                _data.update { it.copy(workerAnswerMultiSelect = msg.workerAnswerMultiSelect) }
                 whiteboard.status(true)
                 whiteboard.welcome(msg.view.floor)
                 _availability.value = msg.availability
@@ -603,6 +612,7 @@ class OfficeConnection(
             is ServerMsg.Whiteboard -> whiteboard.handle(msg.t, msg.obj)
             is ServerMsg.Pinged -> _pinged.tryEmit(msg.result)
             is ServerMsg.ThreadSnapshot -> _threads.tryEmit(msg)
+            is ServerMsg.ActionResult -> answerRequests.remove(msg.requestId)?.complete(msg)
             is ServerMsg.Pong, is ServerMsg.Ignored -> Unit
         }
     }

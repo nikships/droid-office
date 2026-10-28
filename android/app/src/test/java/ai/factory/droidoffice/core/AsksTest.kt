@@ -124,6 +124,38 @@ class AsksTest {
     }
 
     @Test
+    fun fullPendingMetadataWinsOverTruncatedScreenTextButOnlyForDisplay() {
+        val question = "Before choosing, consider the whole workflow.\n\n" + "Important context. ".repeat(30) + "Which design should we use?"
+        val full = listOf("Persistent roster: " + "complete option text ".repeat(30), "Several conversations: " + "all of the details ".repeat(30))
+        val call = askCall(OfficeJson.encodeToString(kotlinx.serialization.json.JsonObject.serializer(), kotlinx.serialization.json.buildJsonObject {
+            put("questionnaire", kotlinx.serialization.json.JsonPrimitive("1. [question] $question (multi)\n[topic] Workflow\n[option] ${full[0]}\n[option] ${full[1]}"))
+        }))
+        val menu = Menu("Which design should we use?", listOf(Choice(1, "Persistent roster", selected = false), Choice(2, "Several conversations", selected = true)), null, true, true)
+        val display = Asks.display(menu, listOf(call))
+        assertEquals(question, display.question)
+        assertEquals(full.map(String::trim), display.choices.map { it.label })
+        assertEquals("Persistent roster", menu.choices[0].label)
+        assertEquals(listOf(false, true), display.choices.map { it.selected })
+    }
+
+    @Test
+    fun identicalOptionsAcrossQuestionsAreAmbiguousAndSwappedNumbersNeverMatch() {
+        val call = askCall("""{"questionnaire":"1. [question] Colour?\n[option] Yes\n[option] No\n2. [question] Size?\n[option] Yes\n[option] No"}""")
+        val menu = Menu(null, listOf(Choice(1, "Yes"), Choice(2, "No")), null)
+        assertNull(Asks.asked(listOf(call), menu))
+        assertEquals("Size?", Asks.asked(listOf(call), menu.copy(question = "Size?")))
+        assertNull(Asks.asked(listOf(call), menu.copy(choices = listOf(Choice(1, "No"), Choice(2, "Yes")))))
+        assertNull(Asks.asked(listOf(call), menu.copy(choices = listOf(Choice(1, "Yes, a different option"), Choice(2, "No")))))
+        assertNull(Asks.asked(listOf(call), menu.copy(multiSelect = true)))
+    }
+
+    @Test
+    fun multilineMetadataPreservesParagraphsAndModesWithoutTopicDetails() {
+        val call = askCall("""{"questionnaire":"1. [question] Context before the question.\n\nWhich design? (multi)\n[topic] Design\nIgnored topic detail\n[option] Persistent roster\nwith live status\n[option] Several conversations\nside by side"}""")
+        assertEquals(listOf(Asks.Asked("Context before the question.\n\nWhich design?", listOf("Persistent roster\nwith live status", "Several conversations\nside by side"), true)), Asks.questions(listOf(call)))
+    }
+
+    @Test
     fun theLiveLineIsTheLastLineWithWords() {
         assertEquals("↑/↓ Navigate · Space/Enter/1-9 Select · ESC stop agent", Asks.liveLine(box))
         assertEquals("ok", Asks.liveLine(screen("│ ok │", "╰────╯", "  ")))

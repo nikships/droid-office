@@ -1,13 +1,5 @@
 package ai.factory.droidoffice.ui.asks
 
-import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.core.Animatable
-import androidx.compose.animation.core.LinearEasing
-import androidx.compose.animation.core.tween
-import androidx.compose.animation.expandVertically
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
-import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -32,30 +24,20 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
-import androidx.compose.material.icons.filled.Check
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.setValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.drawBehind
-import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.geometry.Size
-import androidx.compose.ui.hapticfeedback.HapticFeedbackType
-import androidx.compose.ui.platform.LocalHapticFeedback
-import androidx.compose.ui.semantics.LiveRegionMode
-import androidx.compose.ui.semantics.liveRegion
-import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -67,10 +49,8 @@ import ai.factory.droidoffice.core.Tags
 import ai.factory.droidoffice.core.WorkerInfo
 import ai.factory.droidoffice.core.WorkerStatus
 import ai.factory.droidoffice.core.Workers
-import ai.factory.droidoffice.session.Answered
 import ai.factory.droidoffice.session.Phase
 import ai.factory.droidoffice.ui.LocalGraph
-import ai.factory.droidoffice.ui.LocalSnackbar
 import ai.factory.droidoffice.ui.components.Eyebrow
 import ai.factory.droidoffice.ui.components.GlyphMark
 import ai.factory.droidoffice.ui.components.SecondaryButton
@@ -80,80 +60,38 @@ import ai.factory.droidoffice.ui.components.WorkingBars
 import ai.factory.droidoffice.ui.components.parseColor
 import ai.factory.droidoffice.ui.components.tagged
 import ai.factory.droidoffice.ui.home.rememberNow
-import ai.factory.droidoffice.ui.theme.LocalOfficeType
 import ai.factory.droidoffice.ui.theme.OfficeIcons
 import ai.factory.droidoffice.ui.theme.Palette
-import kotlinx.coroutines.delay
-import kotlinx.coroutines.launch
-
-/** An answer on its way: shown with Cancel for a few seconds before any key goes to the worker. */
-private data class Outgoing(val workerId: String, val name: String, val menu: Menu, val number: Int?, val text: String?, val label: String)
-
-/** An answer that went out, shown under the queue for a little while. */
-private data class Sent(val workerId: String, val name: String, val label: String, val at: Long, val menu: Menu)
 
 const val ANSWER_DELAY_MS = 3_000L
 
+private data class Sent(val workerId: String, val name: String, val label: String, val at: Long, val menu: Menu)
+
 /**
  * The Asks tab: every worker waiting on an answer, the longest-waiting one as a card to answer here,
- * the rest queued under it. A tapped choice waits [ANSWER_DELAY_MS] with Cancel (unless turned off
- * under Me), then the screen is read again and the keys go only if it still asks the same question.
+ * the rest queued under it. Each card opens the shared answer workspace; explicit Submit waits
+ * [ANSWER_DELAY_MS] with Cancel unless turned off under Me.
  */
 @Composable
 fun AsksScreen(onOpenWorker: (id: String, draft: String?) -> Unit, onHire: () -> Unit) {
     val graph = LocalGraph.current
-    val snackbar = LocalSnackbar.current
-    val haptics = LocalHapticFeedback.current
     val connection = graph.connection
     val data by connection.data.collectAsStateWithLifecycle()
     val screens by connection.screens.collectAsStateWithLifecycle()
     val link by connection.link.collectAsStateWithLifecycle()
-    val store by graph.store.snapshot.collectAsStateWithLifecycle()
-    val scope = rememberCoroutineScope()
     val now = rememberNow()
-    var outgoing by remember { mutableStateOf<Outgoing?>(null) }
     val sent = remember { mutableStateListOf<Sent>() }
     var focus by rememberSaveable { mutableStateOf<String?>(null) }
 
     val queue = remember(data.workers, screens) { Asks.queue(data.workers.values, screens) }
-    // Just answered: its screen can still show the question for a moment before the worker moves on.
-    val waiting = queue.filter { a ->
-        a.worker.id != outgoing?.workerId && sent.none { it.workerId == a.worker.id && now - it.at < 15_000 && Choices.same(it.menu, a.menu) }
+    val waiting = queue.filter { ask ->
+        sent.none { it.workerId == ask.worker.id && now - it.at < 15_000 && Choices.same(it.menu, ask.menu) }
     }
     val current = waiting.firstOrNull { it.worker.id == focus } ?: waiting.firstOrNull()
     val rest = waiting.filter { it !== current }
     val connected = link.phase == Phase.Connected
 
     fun where(w: WorkerInfo): String? = listOfNotNull(data.floor?.name?.takeIf { it.isNotBlank() }, w.worktree?.branch).joinToString(" · ").ifBlank { null }
-
-    fun deliver(o: Outgoing) = scope.launch {
-        val result = if (o.number != null) graph.answers.choose(o.workerId, o.menu, o.number) else graph.answers.type(o.workerId, o.menu, o.text.orEmpty())
-        if (outgoing == o) outgoing = null
-        when (result) {
-            Answered.Sent -> {
-                haptics.performHapticFeedback(HapticFeedbackType.Confirm)
-                sent.add(0, Sent(o.workerId, o.name, o.label, System.currentTimeMillis(), o.menu))
-                while (sent.size > 3) sent.removeAt(sent.lastIndex)
-                graph.alerts.cancel(o.workerId)
-            }
-            Answered.Changed -> {
-                onOpenWorker(o.workerId, o.text)
-                snackbar.showSnackbar("${o.name}'s question changed, so nothing was sent.")
-            }
-            Answered.Unreachable -> snackbar.showSnackbar("Couldn't reach the office. Nothing was sent to ${o.name}.")
-            Answered.NeedsThread -> {
-                onOpenWorker(o.workerId, o.text)
-                snackbar.showSnackbar("Answer ${o.name} in its terminal: your text is in the box.")
-            }
-        }
-    }
-
-    fun start(o: Outgoing) {
-        if (!store.settings.answerDelay) {
-            outgoing = o
-            deliver(o)
-        } else outgoing = o
-    }
 
     Column(Modifier.fillMaxSize().tagged(Tags.Screen.ASKS).background(Palette.Bg).windowInsetsPadding(WindowInsets.statusBars)) {
         Header(waiting.size, data.workers.values)
@@ -163,14 +101,6 @@ fun AsksScreen(onOpenWorker: (id: String, draft: String?) -> Unit, onHire: () ->
                 contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 4.dp, bottom = 24.dp),
                 verticalArrangement = Arrangement.spacedBy(10.dp),
             ) {
-                outgoing?.let { o ->
-                    item(key = "sending") {
-                        Sending(o, store.settings.answerDelay, onDone = { deliver(o) }, onCancel = {
-                            outgoing = null
-                            haptics.performHapticFeedback(HapticFeedbackType.Reject)
-                        }, modifier = Modifier.animateItem())
-                    }
-                }
                 if (current != null) {
                     item(key = "ask/" + current.worker.id) {
                         val w = current.worker
@@ -181,11 +111,15 @@ fun AsksScreen(onOpenWorker: (id: String, draft: String?) -> Unit, onHire: () ->
                             question = Asks.question(current),
                             where = where(w),
                             context = Asks.context(w),
-                            enabled = connected && outgoing == null,
+                            enabled = connected,
                             connected = connected,
-                            onChoose = { c -> if (menu != null) start(Outgoing(w.id, w.name, menu, c.number, null, "${c.number} · ${c.label}")) },
-                            onType = { t -> if (menu != null) start(Outgoing(w.id, w.name, menu, null, t, "“$t”")) },
-                            onOpenThread = { onOpenWorker(w.id, null) },
+                            onOpenThread = { onOpenWorker(w.id, "") },
+                            onAnswered = { label ->
+                                if (menu != null) {
+                                    sent.add(0, Sent(w.id, w.name, label, System.currentTimeMillis(), menu))
+                                    while (sent.size > 3) sent.removeAt(sent.lastIndex)
+                                }
+                            },
                             modifier = Modifier.animateItem(),
                         )
                     }
@@ -196,7 +130,7 @@ fun AsksScreen(onOpenWorker: (id: String, draft: String?) -> Unit, onHire: () ->
                         NextUp(ask, now, onClick = { focus = ask.worker.id }, Modifier.animateItem())
                     }
                 }
-                if (waiting.isEmpty() && outgoing == null && data.synced) {
+                if (waiting.isEmpty() && data.synced) {
                     item(key = "empty") { Empty(data.workers.values, onHire, onOpenWorker = { onOpenWorker(it, null) }) }
                 } else if (!data.synced) {
                     item(key = "loading") {
@@ -208,14 +142,23 @@ fun AsksScreen(onOpenWorker: (id: String, draft: String?) -> Unit, onHire: () ->
                 }
                 if (sent.isNotEmpty()) {
                     item(key = "sent") { Eyebrow("Answered", Modifier.padding(start = 4.dp, top = 8.dp)) }
-                    items(sent, key = { "sent/" + it.workerId + it.at }) { s -> AnsweredRow(s, now, onClick = { onOpenWorker(s.workerId, null) }, Modifier.animateItem()) }
+                    items(sent, key = { "sent/${it.workerId}/${it.at}" }) { answer ->
+                        Row(
+                            Modifier.fillMaxWidth().clickable { onOpenWorker(answer.workerId, null) }
+                                .tagged(Tags.Asks.ANSWERED).padding(12.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Text(answer.name, style = MaterialTheme.typography.labelLarge, color = Palette.Success)
+                            Text(" · ${answer.label}", style = MaterialTheme.typography.bodySmall, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
+                            Text(Workers.ago(answer.at, now), style = MaterialTheme.typography.labelSmall)
+                        }
+                    }
                 }
             }
         }
     }
-
-    // Answered rows fade out after a minute.
     LaunchedEffect(sent.size, now / 10_000) { sent.removeAll { now - it.at > 60_000 } }
+
 }
 
 @Composable
@@ -248,47 +191,6 @@ private fun Header(waiting: Int, workers: Collection<WorkerInfo>) {
     }
 }
 
-/** "Sending to Atlas… 2 · Poll for the button" with Cancel, and a bar draining over the wait. */
-@Composable
-private fun Sending(o: Outgoing, delayed: Boolean, onDone: () -> Unit, onCancel: () -> Unit, modifier: Modifier = Modifier) {
-    val drain = remember(o) { Animatable(1f) }
-    LaunchedEffect(o) {
-        if (!delayed) return@LaunchedEffect
-        drain.animateTo(0f, tween(ANSWER_DELAY_MS.toInt(), easing = LinearEasing))
-        onDone()
-    }
-    Column(
-        modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).background(Palette.SurfaceRaised)
-            .border(1.dp, Palette.BorderStrong, RoundedCornerShape(12.dp))
-            .tagged(Tags.Asks.SENDING)
-            .semantics { liveRegion = LiveRegionMode.Polite },
-    ) {
-        Row(Modifier.fillMaxWidth().padding(start = 16.dp, end = 12.dp, top = 14.dp, bottom = 14.dp), verticalAlignment = Alignment.CenterVertically) {
-            Spinner(Modifier.size(18.dp))
-            Spacer(Modifier.width(12.dp))
-            Column(Modifier.weight(1f)) {
-                Text("Sending to ${o.name}…", style = MaterialTheme.typography.titleSmall)
-                Text(o.label, style = MaterialTheme.typography.bodySmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
-            }
-            if (delayed) {
-                Box(
-                    Modifier.height(36.dp).clip(RoundedCornerShape(8.dp)).background(Palette.Surface)
-                        .border(1.dp, Palette.BorderStrong, RoundedCornerShape(8.dp))
-                        .clickable(onClick = onCancel).tagged(Tags.Asks.SENDING_CANCEL).padding(horizontal = 14.dp),
-                    contentAlignment = Alignment.Center,
-                ) { Text("Cancel", style = MaterialTheme.typography.titleSmall) }
-            }
-        }
-        // Drawn, not laid out: the bar shrinks in the draw phase.
-        Box(
-            Modifier.fillMaxWidth().height(3.dp).drawBehind {
-                drawRect(Palette.Accent.copy(alpha = 0.14f))
-                drawRect(Palette.Accent, topLeft = Offset.Zero, size = Size(size.width * drain.value, size.height))
-            },
-        )
-    }
-}
-
 @Composable
 private fun NextUp(ask: PendingAsk, now: Long, onClick: () -> Unit, modifier: Modifier = Modifier) {
     val w = ask.worker
@@ -309,21 +211,6 @@ private fun NextUp(ask: PendingAsk, now: Long, onClick: () -> Unit, modifier: Mo
             Text(Asks.question(ask), style = MaterialTheme.typography.bodySmall, color = Palette.TextSecondary, maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
         Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, null, Modifier.size(18.dp), tint = Palette.TextTertiary)
-    }
-}
-
-@Composable
-private fun AnsweredRow(s: Sent, now: Long, onClick: () -> Unit, modifier: Modifier = Modifier) {
-    Row(
-        modifier.fillMaxWidth().clip(RoundedCornerShape(10.dp)).clickable(onClickLabel = "Open ${s.name}", onClick = onClick)
-            .tagged(Tags.Asks.ANSWERED).padding(horizontal = 12.dp, vertical = 10.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Icon(Icons.Default.Check, null, Modifier.size(16.dp), tint = Palette.Success)
-        Spacer(Modifier.width(10.dp))
-        Text(s.name, style = MaterialTheme.typography.labelLarge)
-        Text(" · ${s.label}", style = MaterialTheme.typography.bodySmall, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
-        Text(Workers.ago(s.at, now), style = LocalOfficeType.current.eyebrow)
     }
 }
 

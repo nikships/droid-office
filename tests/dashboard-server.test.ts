@@ -73,7 +73,9 @@ test('hidden models sync to every device and new connections, with invalid chang
   const desktop = socket(t, base, '');
   const web = socket(t, base, 'client=dashboard');
   const phone = socket(t, base, 'client=mobile');
-  assert.deepEqual((await desktop.wait('welcome')).hiddenModels, []);
+  const welcome = await desktop.wait('welcome');
+  assert.deepEqual(welcome.hiddenModels, []);
+  assert.equal(welcome.workerAnswerMultiSelect, true);
   await web.wait('welcome');
   await phone.wait('welcome');
   desktop.send({ t: 'models.hide', id: 'gpt-6.1-sol', hidden: true, requestId: 'hide-model' });

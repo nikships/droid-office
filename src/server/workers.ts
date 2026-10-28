@@ -34,6 +34,7 @@ import { ScrollbackStore, searchTerminal, terminalTail } from './history.js';
 import { DropStore } from './drops.js';
 import { screenSnapshot } from './screen.js';
 import { snapshotScreen, type ScreenFrame } from './screen-frame.js';
+import { readScreenMenu } from '../shared/asks.js';
 import { SCREEN_SETTLE_MS, readDroidScreen, screenStatus, type DroidScreen } from './droid-screen.js';
 import type { Capacity } from './machine.js';
 import { setupStep, writePlan, writeSetupScript, type SetupStep } from './worktree-setup.js';
@@ -2229,6 +2230,13 @@ export class WorkerManager {
     const term = this.workers.get(id)?.term;
     const frame = term && snapshotScreen(term, []);
     return frame ? Array.from({ length: frame.rows }, (_, row) => (frame.lines[row] ?? []).map((r) => r[0]).join('')) : undefined;
+  }
+
+  /** Answering needs Droid's bold keyboard focus, not just which checkboxes are checked. */
+  screenMenu(id: string) {
+    const term = this.workers.get(id)?.term;
+    const frame = term && snapshotScreen(term, []);
+    return frame ? readScreenMenu(Array.from({ length: frame.rows }, (_, row) => frame.lines[row] ?? [])) : undefined;
   }
 
   /** Full screens for every running worker — sent to people as they walk in. */

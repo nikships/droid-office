@@ -34,11 +34,6 @@ export interface ThreadAction {
   /** A wrapper's diagnostics remain available, but its child's failure is counted only once. */
   causedBy?: string;
 }
-interface ThreadThought {
-  type: 'thought';
-  entry: ThreadEntry;
-  preview: string;
-}
 export interface PlanStep {
   done: boolean;
   active: boolean;
@@ -46,12 +41,13 @@ export interface PlanStep {
 }
 export type ThreadRow =
   | { id: string; kind: 'message'; entry: ThreadEntry; startsTurn: boolean }
+  | { id: string; kind: 'thought'; entry: ThreadEntry; preview: string; live: boolean }
   | { id: string; kind: 'notice'; entry: ThreadEntry; text: string; tone: 'quiet' | 'danger' | 'attachment' }
   | {
       id: string;
       kind: 'activity';
       sourceIds: string[];
-      items: (ThreadAction | ThreadThought)[];
+      items: ThreadAction[];
       actions: ThreadAction[];
       plan?: PlanStep[];
       label: string;
@@ -378,18 +374,10 @@ export function presentThread(entries: readonly ThreadEntry[], busy: boolean): T
     run = [];
     const todo = source.filter((entry) => entry.kind === 'todo').at(-1);
     if (todo) plan = threadPlan(todo.text ?? '');
-    const items: (ThreadAction | ThreadThought)[] = [];
+    const items: ThreadAction[] = [];
     const cancellations = ownerCancellations(source, late);
     for (const [index, entry] of source.entries()) {
-      if (entry.kind === 'thinking') {
-        const preview = entry.text
-          ?.split('\n')
-          .find((line) => line.trim())
-          ?.trim()
-          .replace(/^\*+|\*+$/g, '')
-          .trim();
-        if (preview) items.push({ type: 'thought', entry, preview: clip(preview, 120) });
-      } else if (entry.kind === 'tool') {
+      if (entry.kind === 'tool') {
         const name = leaf(entry.name);
         if (!entry.error && bookkeeping.has(name)) continue;
         let causedBy = cancellations.causes.get(entry.id);
@@ -407,7 +395,7 @@ export function presentThread(entries: readonly ThreadEntry[], busy: boolean): T
       }
     }
     if (!items.length) return;
-    const actions = items.filter((item): item is ThreadAction => item.type === 'action');
+    const actions = items;
     const failed = actions.filter((a) => a.state === 'failed' && !a.causedBy);
     const cancelled = actions.filter((a) => a.state === 'cancelled' && !a.causedBy).length;
     const noResult = actions.filter((a) => a.state === 'incomplete').length;
@@ -440,6 +428,15 @@ export function presentThread(entries: readonly ThreadEntry[], busy: boolean): T
         flush(false);
         rows.push(important);
       }
+    } else if (entry.kind === 'thinking') {
+      flush(false);
+      const preview = entry.text
+        ?.split('\n')
+        .find((line) => line.trim())
+        ?.trim()
+        .replace(/^\*+|\*+$/g, '')
+        .trim();
+      if (preview) rows.push({ id: entry.id, kind: 'thought', entry, preview: clip(preview, 120), live: busy && entry === entries.at(-1) });
     } else run.push(entry);
   }
   flush(busy);

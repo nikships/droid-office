@@ -77,28 +77,25 @@ class ThreadGoldenTest {
                         put("text", r.text)
                         put("tone", r.tone.name.lowercase())
                     }
+                    is ThreadView.Thought -> buildJsonObject {
+                        put("kind", "thought")
+                        put("id", r.entry.id)
+                        put("preview", r.preview)
+                        put("live", r.live)
+                    }
                     is ThreadView.Activity -> buildJsonObject {
                         put("kind", "activity")
                         put("id", r.key)
                         put("summary", r.summary)
                         put("live", r.live)
                         put("items", buildJsonArray {
-                            for (i in r.items) add(
-                                when (i) {
-                                    is ThreadView.Action -> buildJsonObject {
-                                        put("type", "action")
-                                        put("id", i.entry.id)
-                                        put("title", i.title)
-                                        put("detail", i.detail?.let(::JsonPrimitive) ?: JsonNull)
-                                        put("state", state(i.state))
-                                    }
-                                    is ThreadView.Thought -> buildJsonObject {
-                                        put("type", "thought")
-                                        put("id", i.entry.id)
-                                        put("preview", i.preview)
-                                    }
-                                },
-                            )
+                            for (i in r.items) add(buildJsonObject {
+                                put("type", "action")
+                                put("id", i.entry.id)
+                                put("title", i.title)
+                                put("detail", i.detail?.let(::JsonPrimitive) ?: JsonNull)
+                                put("state", state(i.state))
+                            })
                         })
                         put("failed", buildJsonArray { r.failed.forEach { add(JsonPrimitive(it.title)) } })
                         if (r.cancelled > 0) put("cancelled", r.cancelled)

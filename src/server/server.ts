@@ -1372,6 +1372,7 @@ export async function startServer(cfg: Config) {
       freshMain: freshMain.state(),
       subagents: subagents.state(),
       hiddenModels: hiddenModels.state(),
+      workerAnswerMultiSelect: true,
       whiteboardSkill: whiteboardSkill.state(),
       prompts: prompts.state(),
       factory: factory.state(),
@@ -1957,14 +1958,17 @@ export async function startServer(cfg: Config) {
         const w = worker(msg.workerId);
         if (!w || c.floor !== w.floor.id) return done('That worker is no longer on this floor.');
         const hasChoice = typeof msg.choice === 'number';
+        const hasChoices = Array.isArray(msg.choices);
         const hasText = typeof msg.text === 'string';
-        if (hasChoice === hasText) return done(hasChoice ? 'Send either a menu choice or a typed answer, not both.' : 'Send a menu choice or a typed answer.');
+        if (msg.choices !== undefined && !hasChoices) return done('Send checkbox selections as numbered choices.');
+        if (hasChoice ? hasChoices || hasText : !hasChoices && !hasText) return done('Send one choice, a checkbox selection, or a typed answer.');
         defer();
         const lines = () => w.floor.workers.screenLines(w.wid);
         void answers
-          .answer(w.wid, msg.menu, hasChoice ? { choice: msg.choice } : { text: str(msg.text, 20000) }, {
+          .answer(w.wid, msg.menu, hasChoice ? { choice: msg.choice } : { ...(hasChoices ? { choices: msg.choices } : {}), ...(hasText ? { text: str(msg.text, 20000) } : {}) }, {
             worker: () => w.floor.workers.get(w.wid),
             lines,
+            menu: () => w.floor.workers.screenMenu(w.wid),
             write: (data) => w.floor.workers.write(w.wid, data),
             live: () => c.ws.readyState === WebSocket.OPEN && c.floor === w.floor.id,
           })

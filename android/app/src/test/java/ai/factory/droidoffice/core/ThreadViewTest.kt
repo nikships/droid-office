@@ -335,18 +335,32 @@ class ThreadViewTest {
     }
 
     @Test
-    fun aRunOfOnlyBookkeepingLeavesNoRowAndThoughtsJoinTheActivity() {
+    fun aRunOfOnlyBookkeepingLeavesNoRowAndThoughtsStandAlone() {
         val entries = listOf(say("a"), todoWrite(), tool("ToolSearch", "{}"), tool("Skill", "{\n  \"skill\": \"factory-design\"\n}"), todo("1. [pending] x"), say("b"))
         assertEquals(2, ThreadView.project(entries, busy = false).size)
         // A script followed by any call of its own is a wrapper, even when that call only kept the books.
         assertEquals(2, ThreadView.project(listOf(say("a"), script(), todoWrite(), say("b")), busy = false).size)
         val thinking = listOf(say("q", ThreadRole.User), think("**Considering the flow**\nmore"), read("$home/x.kt"), think("next"))
         val rows = ThreadView.project(thinking, busy = false)
-        assertEquals(2, rows.size)
-        val a = rows[1] as ThreadView.Activity
-        assertEquals("Considering the flow", (a.items.first() as ThreadView.Thought).preview)
+        assertEquals(4, rows.size)
+        assertEquals("Considering the flow", (rows[1] as ThreadView.Thought).preview)
+        val a = rows[2] as ThreadView.Activity
         assertEquals("Read a file", a.summary)
-        assertEquals("Thought", (ThreadView.project(listOf(think("hm")), busy = false).single() as ThreadView.Activity).summary)
+        assertEquals("hm", (ThreadView.project(listOf(think("hm")), busy = false).single() as ThreadView.Thought).preview)
+    }
+
+    @Test
+    fun thoughtsAlwaysSplitActivityAndOnlyTheLastInputThoughtCanBeLive() {
+        val entries = listOf(read("/tmp/a"), think("\n**" + "x".repeat(150) + "**\nrest"), read("/tmp/b"), think("last"))
+        val rows = ThreadView.project(entries, busy = true)
+        assertEquals(listOf("Activity", "Thought", "Activity", "Thought"), rows.map { it::class.simpleName })
+        val thoughts = rows.filterIsInstance<ThreadView.Thought>()
+        assertEquals("x".repeat(120), thoughts[0].preview)
+        assertEquals(listOf(false, true), thoughts.map { it.live })
+        assertEquals(listOf(entries[0].id, entries[2].id), rows.filterIsInstance<ThreadView.Activity>().flatMap { it.items }.map { it.entry.id })
+        assertEquals("activity:" + entries[2].id, rows[2].key)
+        assertEquals(3, ThreadView.rowOf(rows, entries[3].id))
+        assertFalse((ThreadView.project(entries + todo("1. [pending] Next"), busy = true).last() as ThreadView.Thought).live)
     }
 
     @Test
