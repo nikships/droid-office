@@ -615,7 +615,7 @@ private fun Jump(fresh: Int, followHere: Boolean, modifier: Modifier, onClick: (
             Spacer(Modifier.width(8.dp))
         }
         Text(
-            (if (fresh > 0) "$fresh new message${if (fresh == 1) "" else "s"}" else if (followHere) "Follow latest" else "Latest").uppercase(),
+            (if (fresh > 0) "$fresh new message${if (fresh == 1) "" else "s"}" else if (followHere) "Follow latest" else "Jump to latest").uppercase(),
             style = LocalOfficeType.current.eyebrow.copy(color = Palette.Text),
             modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite }.tagged(Tags.Worker.THREAD_JUMP_LABEL),
         )

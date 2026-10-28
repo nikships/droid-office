@@ -19,7 +19,12 @@ const text = (id: string, role: 'user' | 'assistant' = 'assistant'): ThreadEntry
 const capturedEntries = (name: string): ThreadEntry[] =>
   JSON.parse(readFileSync(new URL('../android/app/src/test/resources/thread-presentation-golden.json', import.meta.url), 'utf8')).cases.find((example: { name: string }) => example.name === name).entries;
 const capturedFailure = () => capturedEntries('unit_real_missing_read_causal_wrapper');
-const capturedCancellation = () => capturedEntries('unit_real_late_script_owner_cancelled_interrupted_child').filter((entry) => entry.kind === 'tool');
+const capturedCrash = () => capturedEntries('unit_real_crash_wrapper_flushed_by_a_later_stop');
+// The crash's Script and its interrupted child, with the wrapper's by-user result as if it had come in time.
+const capturedCancellation = () => {
+  const [wrapper, child] = capturedCrash();
+  return [{ ...wrapper, resultSeq: undefined }, child];
+};
 
 test('the reported release-check turn becomes one activity disclosure without bookkeeping', () => {
   const rows = presentThread(
@@ -209,26 +214,59 @@ test('a real cancellation stays quiet without concealing an earlier genuine fail
   }
 });
 
-test('unit: late captured Script owner evidence cancels its lone interrupted child once without rewriting errors', () => {
-  const entries = capturedCancellation();
+test('unit: a crash wrapper flushed by a later Stop stays one failure, counted on its interrupted child', () => {
+  const entries = capturedCrash();
   const original = JSON.stringify(entries);
-  const row = presentThread(entries, false)[0];
+  const [wrapper, child] = entries;
+  const rows = presentThread(entries, false);
+  const row = rows[0];
   assert.equal(row.kind, 'activity');
   if (row.kind !== 'activity') return;
-  assert.equal(row.state, 'cancelled');
-  assert.equal(row.failed.length, 0);
-  assert.equal(row.cancelled, 1);
-  assert.equal(row.label, 'Ran a command');
+  assert.equal(row.state, 'failed');
+  assert.equal(row.cancelled, 0);
+  assert.deepEqual(
+    row.failed.map((action) => action.entry.id),
+    [child.id],
+  );
   assert.deepEqual(
     row.actions.map((action) => action.state),
-    ['cancelled', 'cancelled'],
+    ['failed', 'failed'],
   );
-  assert.equal(row.actions[0].causedBy, entries[1].id);
-  assert.equal(row.actions[1].entry.output, 'Tool execution was interrupted');
-  assert.ok(row.actions.every((action) => action.entry.error));
+  assert.equal(row.actions[0].causedBy, child.id);
+  assert.equal(row.actions[0].title, 'Script stopped after a tool failed');
+  assert.equal(row.label, 'Ran a command');
   assert.equal(JSON.stringify(entries), original);
-  const earlier = presentThread([{ ...entries[0], output: undefined, error: undefined }, entries[1]], false)[0];
+  const stop = rows.find((item) => item.kind === 'activity' && item.id !== row.id);
+  assert.ok(stop?.kind === 'activity' && stop.cancelled === 1 && !stop.failed.length, 'the later genuine Stop stays cancelled');
+  // An office from before resultSeq, or a by-user wrapper that came in time: the interrupted child still marks a crash.
+  for (const late of [
+    { ...wrapper, resultSeq: undefined },
+    { ...wrapper, resultSeq: child.seq + 1 },
+  ]) {
+    const again = presentThread([late, child], false)[0];
+    assert.ok(again.kind === 'activity' && again.failed.length === 1 && again.cancelled === 0 && again.actions[0].causedBy === child.id);
+  }
+  const earlier = presentThread([{ ...wrapper, output: undefined, error: undefined, resultSeq: undefined }, child], false)[0];
   assert.equal(earlier.id, row.id, 'late results preserve the activity key');
+});
+
+test('unit: a by-user result is owner evidence only when it came before a later message, notice or Script', () => {
+  const stopped = (resultSeq: number | undefined, between: ThreadEntry[] = [], last = 3) => {
+    const entries = [
+      tool('e1', 'Execute', {}, { error: true, output: 'Tool execution cancelled by user', resultSeq }),
+      ...between,
+      { id: 'turn:t:cancelled', seq: last, role: 'system', kind: 'notice', text: 'Turn cancelled' } as ThreadEntry,
+    ];
+    const row = presentThread(entries, false)[0];
+    return row.kind === 'activity' ? row.state : row.kind;
+  };
+  assert.equal(stopped(2), 'cancelled');
+  assert.equal(stopped(undefined), 'cancelled');
+  assert.equal(stopped(3, [tool('r2', 'Read')]), 'cancelled', 'calls of the same run are not a boundary');
+  assert.equal(stopped(4, [{ ...text('m2'), seq: 2 }]), 'failed');
+  assert.equal(stopped(4, [{ id: 'turn:x:completed', seq: 2, role: 'system', kind: 'notice', text: 'Turn ended · completed' }]), 'failed');
+  assert.equal(stopped(4, [tool('s2', 'Script', {}, { error: true, output: 'SyntaxError' })]), 'failed');
+  assert.equal(stopped(9), 'failed', 'a result past the loaded entries cannot be placed');
 });
 
 test('unit capture variants: malformed, truncated or unknown wrapper outcomes never prove owner cancellation', () => {
@@ -287,7 +325,6 @@ test('unit capture variants: owner evidence stays inside its Script and message 
   for (const entries of [
     [wrapper, independent, child],
     [child, wrapper, independent],
-    [wrapper, child, { ...child, id: 'another-interrupted-call' }],
   ]) {
     const row = presentThread(entries, false)[0];
     assert.equal(row.kind, 'activity');
@@ -296,6 +333,11 @@ test('unit capture variants: owner evidence stays inside its Script and message 
       assert.equal(row.cancelled, 1);
       assert.equal(row.actions.find((action) => action.entry.id === wrapper.id)?.causedBy, undefined);
     }
+  }
+  const twice = presentThread([wrapper, child, { ...child, id: 'another-interrupted-call' }], false)[0];
+  if (twice.kind === 'activity') {
+    assert.equal(twice.failed.length, 2);
+    assert.equal(twice.cancelled, 0, 'interrupted children mark a crash, not a Stop');
   }
   const separated = presentThread([wrapper, text('boundary'), child], false);
   assert.equal(separated[0].kind, 'activity');
@@ -312,7 +354,7 @@ test('unit capture variants: owner evidence stays inside its Script and message 
 });
 
 test('unit: crash/resume interruption stays Failed without explicit owner evidence, even next to a cancellation notice', () => {
-  const child = capturedCancellation()[1];
+  const child = capturedCrash()[1];
   for (const entries of [[child], [child, { id: 'turn:unknown:cancelled', seq: 2, role: 'system', kind: 'notice', text: 'Turn cancelled' } as ThreadEntry]]) {
     const row = presentThread(entries, false)[0];
     assert.equal(row.kind, 'activity');

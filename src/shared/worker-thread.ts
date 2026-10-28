@@ -10,4 +10,6 @@ export interface ThreadEntry {
   input?: string;
   output?: string;
   error?: boolean;
+  /** For a tool result, the seq the next entry took when the result was read: later than seq + 1 when other entries came first. */
+  resultSeq?: number;
 }

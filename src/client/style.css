@@ -2416,6 +2416,9 @@ html:has(body.dashboard), body.dashboard { overflow: auto; }
 .wt-earlier { display: block; margin: 0 auto var(--space-5); }
 .wt-empty { max-width: 420px; margin: var(--space-8) auto; padding: var(--space-7); text-align: center; color: var(--text-secondary); line-height: 1.7; }
 .wt-empty.error { color: var(--danger); }
+.wt-empty b { display: block; font-weight: 500; color: var(--text); }
+.wt-empty p { margin: var(--space-1) 0 0; }
+.wt-empty-mark { display: block; width: 7px; height: 7px; margin: 0 auto var(--space-3); border-radius: 1px; background: var(--text-tertiary); }
 .wt-latest-anchor { flex-shrink: 0; display: flex; justify-content: center; padding: var(--space-1); border-top: 1px solid var(--border); background: var(--bg); }
 .wt-latest-anchor:has(.wt-latest.hidden) { display: none; }
 .wt-latest { background: var(--surface); border-color: var(--border-strong); }
@@ -2480,6 +2483,10 @@ html:has(body.dashboard), body.dashboard { overflow: auto; }
   .wt-composer .wt-input { field-sizing: content; min-height: 44px; max-height: 160px; resize: none; }
 }
 @media (max-width: 360px) {
+  .dashboard:has(.worker-thread) .dash-top { gap: var(--space-1); }
+  .dashboard:has(.worker-thread) .dash-conn { gap: var(--space-1); padding: 0 var(--space-2); }
+  .wt-head .dash-controls .dash-resume { width: 44px; padding: 0; }
+  .wt-head .dash-controls .dash-resume span { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
   .wt-stop { width: 36px; min-width: 36px; padding: 0; }
   .wt-stop-label { display: none; }
   .wt-stop-symbol { display: inline; }

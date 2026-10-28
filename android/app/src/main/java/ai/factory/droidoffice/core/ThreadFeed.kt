@@ -34,7 +34,8 @@ enum class ThreadKind(val wire: String) {
 /**
  * One entry of a worker's conversation as the office reads it from the Droid session (`ThreadEntry`
  * in src/shared/protocol.ts). A tool call carries its arguments as pretty JSON in [input] and its
- * result in [output] once there is one.
+ * result in [output] once there is one; [resultSeq] is the seq the next entry took when that result
+ * was read, so a result that only came after later entries can be told apart.
  */
 data class ThreadEntry(
     val id: String,
@@ -46,13 +47,14 @@ data class ThreadEntry(
     val input: String? = null,
     val output: String? = null,
     val error: Boolean = false,
+    val resultSeq: Long? = null,
 ) {
     companion object {
         /** An entry with no id, no seq, or a role or kind this app doesn't know is skipped rather than guessed at. */
         fun of(e: JsonElement): ThreadEntry? {
             val o = e as? JsonObject ?: return null
             val id = o.str("id")?.takeIf { it.isNotEmpty() } ?: return null
-            val seq = (o["seq"] as? JsonPrimitive)?.let { it.longOrNull ?: it.contentOrNull?.toDoubleOrNull()?.toLong() } ?: return null
+            val seq = o.long("seq") ?: return null
             val role = ThreadRole.of(o.str("role")) ?: return null
             val kind = ThreadKind.of(o.str("kind")) ?: return null
             return ThreadEntry(
@@ -65,8 +67,11 @@ data class ThreadEntry(
                 input = o.str("input"),
                 output = o.str("output"),
                 error = (o["error"] as? JsonPrimitive)?.booleanOrNull ?: false,
+                resultSeq = o.long("resultSeq"),
             )
         }
+
+        private fun JsonObject.long(k: String) = (this[k] as? JsonPrimitive)?.let { it.longOrNull ?: it.contentOrNull?.toDoubleOrNull()?.toLong() }
 
         private fun JsonObject.str(k: String) = (this[k] as? JsonPrimitive)?.takeIf { it !is JsonNull && it.isString }?.content
     }

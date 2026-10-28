@@ -64,6 +64,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.layout.Layout
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.ClipEntry
@@ -78,12 +79,15 @@ import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.selected
+import androidx.compose.ui.semantics.text
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.testTag
 import androidx.compose.ui.semantics.testTagsAsResourceId
 import androidx.compose.ui.semantics.toggleableState
 import androidx.compose.ui.state.ToggleableState
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -394,11 +398,7 @@ private fun Header(w: WorkerInfo, embedded: Boolean, connected: Boolean, onBack:
             // screen or a large font wraps between the parts rather than cutting the desk off.
             Row(verticalAlignment = Alignment.Top, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 WorkerModelLogo(w, catalogue, modifier = Modifier.padding(top = 1.dp).size(14.dp))
-                Text(
-                    parts.joinToString(" · ") { it.replace(' ', '\u00A0') },
-                    style = LocalOfficeType.current.monoBody.copy(fontSize = 11.sp, lineHeight = 15.sp, color = Palette.TextSecondary),
-                    modifier = Modifier.weight(1f).tagged(Tags.Worker.META),
-                )
+                MetaLine(parts, Modifier.weight(1f).tagged(Tags.Worker.META))
             }
         }
         // Out of reach, the last status the office sent may be long gone: the offline notice says so instead.
@@ -692,6 +692,51 @@ private fun QuickKey(label: String, spoken: String, tag: String, accent: Boolean
             Icon(icon, null, tint = Palette.TextSecondary, modifier = Modifier.size(16.dp))
         } else {
             Text(label, style = LocalOfficeType.current.monoBody.copy(fontSize = 13.sp, color = if (accent) Palette.Accent else Palette.Text))
+        }
+    }
+}
+
+/**
+ * The parts under a worker's name with a dot between two parts on the same line: a narrow screen or
+ * a large font wraps between parts, and no line starts or ends with a dot. It reads as one line.
+ */
+@Composable
+private fun MetaLine(parts: List<String>, modifier: Modifier) {
+    val style = LocalOfficeType.current.monoBody.copy(fontSize = 11.sp, lineHeight = 15.sp, color = Palette.TextSecondary)
+    Layout(
+        content = {
+            parts.forEachIndexed { i, part ->
+                if (i > 0) Text(" · ", style = style, maxLines = 1)
+                Text(part, style = style)
+            }
+        },
+        modifier = modifier.clearAndSetSemantics { text = AnnotatedString(parts.joinToString(" · ")) },
+    ) { measurables, constraints ->
+        val loose = constraints.copy(minWidth = 0, minHeight = 0)
+        val placeables = measurables.map { it.measure(loose) }
+        val positions = arrayOfNulls<IntOffset>(placeables.size)
+        var x = 0
+        var y = 0
+        var lineHeight = 0
+        var width = 0
+        for (i in placeables.indices step 2) {
+            val part = placeables[i]
+            val separator = placeables.getOrNull(i - 1)
+            if (separator != null && x + separator.width + part.width > constraints.maxWidth) {
+                y += lineHeight
+                x = 0
+                lineHeight = 0
+            } else if (separator != null) {
+                positions[i - 1] = IntOffset(x, y)
+                x += separator.width
+            }
+            positions[i] = IntOffset(x, y)
+            x += part.width
+            lineHeight = maxOf(lineHeight, part.height)
+            width = maxOf(width, x)
+        }
+        layout(width.coerceIn(constraints.minWidth, constraints.maxWidth), (y + lineHeight).coerceAtLeast(constraints.minHeight)) {
+            placeables.forEachIndexed { i, p -> positions[i]?.let { p.place(it) } }
         }
     }
 }

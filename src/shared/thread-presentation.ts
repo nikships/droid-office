@@ -290,21 +290,44 @@ function scriptChildren(source: ThreadEntry[], at: number): ThreadEntry[] {
   return (nextScript < 0 ? following : following.slice(0, nextScript)).filter((entry) => entry.kind === 'tool');
 }
 
+const byUser = /^(?:Error: )?tool execution (?:was )?(?:cancelled|canceled|interrupted|aborted) by (?:the )?user$/i;
+
 /**
- * An exact CLI by-user result is owner evidence even when it arrives late, without a turn notice.
- * Bare "was interrupted" (including crash/resume) remains failed, except for a lone child enclosed
- * by an explicitly owner-cancelled Script. Never infer across another Script or message boundary.
+ * Results that came only after a later message, notice or Script, or past the loaded entries. The CLI
+ * flushes the calls a crash orphaned as "cancelled by user" when the owner later stops another
+ * Script, so such a result says nothing about why its call stopped.
  */
-function ownerCancellations(source: ThreadEntry[]): { ids: Set<string>; causes: Map<string, string> } {
-  const ids = new Set(
-    source.filter((entry) => entry.kind === 'tool' && entry.error && /^(?:Error: )?tool execution (?:was )?(?:cancelled|canceled|interrupted|aborted) by (?:the )?user$/i.test(entry.output?.trim() ?? '')).map((entry) => entry.id),
-  );
+function lateResults(entries: readonly ThreadEntry[]): Set<string> {
+  const late = new Set<string>();
+  const end = (entries.at(-1)?.seq ?? 0) + 1;
+  for (const [at, entry] of entries.entries()) {
+    const result = entry.resultSeq;
+    if (entry.kind !== 'tool' || !entry.error || result === undefined || !byUser.test(entry.output?.trim() ?? '')) continue;
+    if (result > end) late.add(entry.id);
+    for (let next = at + 1; next < entries.length && entries[next].seq < result && !late.has(entry.id); next++) {
+      const other = entries[next];
+      if (other.kind === 'text' || other.kind === 'notice' || (other.kind === 'tool' && leaf(other.name) === 'script')) late.add(entry.id);
+    }
+  }
+  return late;
+}
+
+/**
+ * An exact CLI by-user result that came in time is owner evidence, without a turn notice. A bare
+ * "was interrupted" (a crash or restart) stays failed, and so does a Script whose by-user result came
+ * late or whose child was interrupted that way: the owner's Stop cancels the running child by user
+ * too. Such a Script is counted on its failed child. Never infer across another Script or message.
+ */
+function ownerCancellations(source: ThreadEntry[], late: Set<string>): { ids: Set<string>; causes: Map<string, string> } {
+  const marked = source.filter((entry) => entry.kind === 'tool' && entry.error && byUser.test(entry.output?.trim() ?? ''));
+  const ids = new Set(marked.filter((entry) => !late.has(entry.id)).map((entry) => entry.id));
   const causes = new Map<string, string>();
   for (const [at, entry] of source.entries()) {
-    if (leaf(entry.name) !== 'script' || !ids.has(entry.id)) continue;
+    if (leaf(entry.name) !== 'script' || !marked.includes(entry)) continue;
     const children = scriptChildren(source, at);
-    if (children.length === 1 && children[0].error && children[0].output?.trim() === 'Tool execution was interrupted') ids.add(children[0].id);
-    const cause = children.find((child) => ids.has(child.id));
+    const failed = children.find((child) => child.error && !ids.has(child.id));
+    if (failed?.output?.trim() === 'Tool execution was interrupted') ids.delete(entry.id);
+    const cause = ids.has(entry.id) ? children.find((child) => ids.has(child.id)) : failed;
     if (cause) causes.set(entry.id, cause.id);
   }
   return { ids, causes };
@@ -348,6 +371,7 @@ export function presentThread(entries: readonly ThreadEntry[], busy: boolean): T
   let lastPlan = '';
   let plan: PlanStep[] = [];
   let previousRole: ThreadEntry['role'] | undefined;
+  const late = lateResults(entries);
   const flush = (live: boolean) => {
     if (!run.length) return;
     const source = run;
@@ -355,7 +379,7 @@ export function presentThread(entries: readonly ThreadEntry[], busy: boolean): T
     const todo = source.filter((entry) => entry.kind === 'todo').at(-1);
     if (todo) plan = threadPlan(todo.text ?? '');
     const items: (ThreadAction | ThreadThought)[] = [];
-    const cancellations = ownerCancellations(source);
+    const cancellations = ownerCancellations(source, late);
     for (const [index, entry] of source.entries()) {
       if (entry.kind === 'thinking') {
         const preview = entry.text

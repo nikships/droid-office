@@ -260,7 +260,8 @@ export function mountWorkerThread(net: Net, opts: ThreadOptions): WorkerThread {
       h('summary', {}, h('span.wt-thought-label', {}, 'Thought'), h('span.wt-thought-preview', {}, preview), h('span.wt-chevron', { 'aria-hidden': true }, '›')),
       h('div.wt-thinking-text', {}, text),
     );
-  const render = (row: ThreadRow) => {
+  // While the worker waits on the owner, its run isn't working: the question card says what it's on.
+  const render = (row: ThreadRow, asking: boolean) => {
     const node = h('article.wt-entry', { 'data-entry': row.id });
     if (row.kind === 'activity') {
       node.classList.add('activity');
@@ -275,7 +276,7 @@ export function mountWorkerThread(net: Net, opts: ThreadOptions): WorkerThread {
           'summary',
           {},
           h('span.wt-activity-mark', { 'aria-hidden': true }),
-          h('span.wt-activity-label', {}, `${row.live ? 'Working · ' : ''}${row.label}`),
+          h('span.wt-activity-label', {}, `${row.live && !asking ? 'Working · ' : ''}${row.label}`),
           row.failed.length || row.cancelled || row.noResult
             ? h('span.wt-activity-status', {}, [row.failed.length ? `${row.failed.length} failed` : '', row.cancelled ? `${row.cancelled} cancelled` : '', row.noResult ? `${row.noResult} no result` : ''].filter(Boolean).join(' · '))
             : null,
@@ -397,6 +398,12 @@ export function mountWorkerThread(net: Net, opts: ThreadOptions): WorkerThread {
     } else node.append(h('p.wt-turn', { class: row.tone }, row.text));
     return node;
   };
+  // The same words as the Android app: a heading and a line under it once there is nothing to read.
+  const paintEmpty = () => {
+    if (error) empty.textContent = 'Conversation unavailable. Retry below, or open Raw TTY.';
+    else if (!received) empty.textContent = 'Reading the conversation…';
+    else empty.replaceChildren(h('span.wt-empty-mark', { 'aria-hidden': true }), h('b', {}, 'Start a conversation'), h('p', {}, 'Your messages and the worker’s replies will appear here.'));
+  };
   const paintEntries = (older: boolean) => {
     const stick = !received || (!older && !inspecting && atBottom());
     const top = scroll.scrollTop;
@@ -408,11 +415,12 @@ export function mountWorkerThread(net: Net, opts: ThreadOptions): WorkerThread {
     const focused = document.activeElement;
     const focusedDisclosure = focused instanceof HTMLElement && focused.matches('summary') && list.contains(focused) ? focused.parentElement?.dataset.disclosure : undefined;
     const rows = presentThread(history.entries, isBusy(worker.status));
+    const asking = worker.status === 'needs_input';
     for (const row of rows) {
-      const key = JSON.stringify(row);
+      const key = JSON.stringify([row, asking]);
       let had = nodes.get(row.id);
       if (!had || had.key !== key) {
-        const node = render(row);
+        const node = render(row, asking);
         for (const disclosure of node.querySelectorAll<HTMLDetailsElement>('details[data-disclosure]')) {
           if (opened.has(disclosure.dataset.disclosure)) disclosure.open = true;
         }
@@ -448,7 +456,7 @@ export function mountWorkerThread(net: Net, opts: ThreadOptions): WorkerThread {
     earlier.classList.toggle('hidden', !history.hasMore);
     latest.textContent = history.historical ? 'Back to the latest' : 'Jump to latest';
     empty.hidden = rows.length > 0;
-    empty.textContent = received ? 'No conversation messages yet. Send a prompt to get started.' : 'Reading the conversation…';
+    paintEmpty();
     if (stick) follow();
     else if (older) scroll.scrollTop = top + scroll.scrollHeight - height;
     else updateLatest();
@@ -472,8 +480,7 @@ export function mountWorkerThread(net: Net, opts: ThreadOptions): WorkerThread {
     retry.classList.toggle('hidden', !error || error.startsWith('Slash commands'));
     retry.disabled = !connected || !!pending;
     empty.classList.toggle('error', !!error && !history.entries.length);
-    if (!history.entries.length)
-      empty.textContent = error ? 'Conversation unavailable. Retry below, or open Raw TTY.' : received ? 'Start a conversation. Your messages and the worker’s replies will appear here.' : 'Reading the conversation…';
+    if (!history.entries.length) paintEmpty();
     notice.textContent = connected ? error || (isAsleep(worker.status) ? 'Resume this worker to send another message.' : '') : '';
     raw.classList.toggle('hidden', !connected || !error);
     resume.hidden = !isAsleep(worker.status);
@@ -595,6 +602,8 @@ export function mountWorkerThread(net: Net, opts: ThreadOptions): WorkerThread {
         error = '';
       }
       title.textContent = worker.name;
+      // Out of reach, the last status the office sent may be long gone: the offline banner says so instead.
+      status.hidden = !online;
       status.className = `pill ${worker.status}`;
       status.textContent = isAsleep(worker.status) ? 'Asleep' : (STATUS_LABEL[worker.status] ?? worker.status);
       const badge = modelBadgeNode(worker.activeModel ?? worker.model, worker.activeEffort ?? worker.effort);
