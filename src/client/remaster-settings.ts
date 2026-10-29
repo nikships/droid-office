@@ -127,7 +127,7 @@ export const BAKE_FORMAT = 2;
  * Everything the baked bounce light depends on: the grid, the lights the probes see and the shading they see it with,
  * the ceiling lights' brightness (Settings → Display) and `build`: the hash of the scene's code and models
  * (`tools/scene-hash.mjs`), so an update that leaves the scene alone keeps its bake. A saved bake is used only under the
- * same key. '' (no GI, or a build without a scene hash) means nothing to bake.
+ * same key. '' (no GI, a build without a scene hash, or no welcome from the office yet) means nothing to bake.
  */
 export function bakeKey(p: RenderParams, overhead: number, build: string): string {
   if (!p.enabled || !p.gi || !build) return '';
