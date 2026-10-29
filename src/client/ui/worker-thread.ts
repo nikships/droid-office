@@ -180,6 +180,7 @@ export function mountWorkerThread(net: Net, opts: ThreadOptions): WorkerThread {
     slashCursor = 0;
     if (input.value.trimStart().startsWith('/')) loadSlash();
     paintSlash();
+    slashMenu.scrollTop = 0;
     updateControls();
   });
   const images = promptImages(input);
@@ -840,6 +841,7 @@ export function mountWorkerThread(net: Net, opts: ThreadOptions): WorkerThread {
         event.preventDefault();
         slashCursor = (slashCursor + (event.key === 'ArrowDown' ? 1 : slashShown.length - 1)) % slashShown.length;
         paintSlash();
+        slashMenu.children[slashCursor]?.scrollIntoView({ block: 'nearest' });
         return;
       }
       if (event.key === 'Escape') {

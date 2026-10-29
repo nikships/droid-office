@@ -41,8 +41,7 @@ test('suggests names that start with what is typed, then aliases, then names con
     slashSuggestions('/res').map((c) => c.name),
     ['sessions', 'compress'],
   );
-  assert.equal(slashSuggestions('/').length, 8);
-  assert.equal(slashSuggestions('/', SLASH_COMMANDS, 100).length, SLASH_COMMANDS.length);
+  assert.deepEqual(slashSuggestions('/'), SLASH_COMMANDS);
   assert.deepEqual(slashSuggestions('/model '), []);
   assert.deepEqual(slashSuggestions('model'), []);
   assert.equal(slashSuggestions('/tus')[0].name, 'status');
@@ -63,6 +62,7 @@ test('adds the worker’s skills and custom commands after the built-in ones, ne
     { name: 'security-review', description: 'Security-focused code review', kind: 'thread', source: 'skill', argumentHint: '[path]' },
   ]);
   assert.deepEqual(slashCommands(), [...SLASH_COMMANDS]);
+  assert.deepEqual(slashSuggestions('/', all), all, 'skills and custom commands remain reachable beyond the first eight rows');
   assert.equal(slashOf('/Security-Review the diff', all)?.command?.source, 'skill');
   assert.equal(slashOf('/security-review', SLASH_COMMANDS)?.command, undefined);
   assert.deepEqual(

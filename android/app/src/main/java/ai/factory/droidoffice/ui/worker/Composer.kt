@@ -27,6 +27,9 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -334,6 +337,8 @@ fun Composer(
 @Composable
 private fun SlashMenu(commands: List<SlashCommands.Command>, thread: Boolean, busy: Boolean, onPick: (SlashCommands.Command) -> Unit) {
     val shape = RoundedCornerShape(4.dp)
+    val listState = rememberLazyListState()
+    LaunchedEffect(commands) { listState.scrollToItem(0) }
     Column(
         Modifier.fillMaxWidth().padding(bottom = 8.dp).clip(shape).background(Palette.Surface).border(1.dp, Palette.BorderStrong, shape)
             .tagged(Tags.Worker.SLASH_MENU).padding(vertical = 4.dp),
@@ -343,29 +348,31 @@ private fun SlashMenu(commands: List<SlashCommands.Command>, thread: Boolean, bu
             style = MaterialTheme.typography.bodySmall.copy(fontSize = 12.sp, color = Palette.TextSecondary),
             modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
         )
-        for (c in commands) {
-            Row(
-                Modifier.fillMaxWidth().clickable(role = Role.Button, onClickLabel = "Use /${c.name}") { onPick(c) }
-                    .tagged(Tags.Worker.slash(c.name)).heightIn(min = 44.dp).padding(horizontal = 12.dp, vertical = 6.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Text(
-                    "/${c.name}",
-                    style = LocalOfficeType.current.monoBody.copy(fontSize = 13.sp, color = if (c.kind == SlashCommands.Kind.Blocked) Palette.TextTertiary else Palette.Text),
-                    modifier = Modifier.widthIn(min = 120.dp),
-                )
-                Text(
-                    c.description, style = MaterialTheme.typography.bodySmall.copy(fontSize = 12.5.sp, color = Palette.TextSecondary),
-                    maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f).padding(start = 10.dp),
-                )
-                if (thread && c.kind == SlashCommands.Kind.Tty) Text(
-                    "RAW TTY", style = LocalOfficeType.current.eyebrow.copy(fontSize = 9.sp, color = Palette.TextTertiary), modifier = Modifier.padding(start = 8.dp),
-                )
-                c.source?.let { source ->
+        LazyColumn(Modifier.heightIn(max = 220.dp), state = listState) {
+            items(commands, key = { it.name }) { c ->
+                Row(
+                    Modifier.fillMaxWidth().clickable(role = Role.Button, onClickLabel = "Use /${c.name}") { onPick(c) }
+                        .tagged(Tags.Worker.slash(c.name)).heightIn(min = 44.dp).padding(horizontal = 12.dp, vertical = 6.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
                     Text(
-                        if (source == SlashCommands.Source.Skill) "SKILL" else "COMMAND",
-                        style = LocalOfficeType.current.eyebrow.copy(fontSize = 9.sp, color = Palette.TextTertiary), modifier = Modifier.padding(start = 8.dp),
+                        "/${c.name}",
+                        style = LocalOfficeType.current.monoBody.copy(fontSize = 13.sp, color = if (c.kind == SlashCommands.Kind.Blocked) Palette.TextTertiary else Palette.Text),
+                        modifier = Modifier.widthIn(min = 120.dp),
                     )
+                    Text(
+                        c.description, style = MaterialTheme.typography.bodySmall.copy(fontSize = 12.5.sp, color = Palette.TextSecondary),
+                        maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f).padding(start = 10.dp),
+                    )
+                    if (thread && c.kind == SlashCommands.Kind.Tty) Text(
+                        "RAW TTY", style = LocalOfficeType.current.eyebrow.copy(fontSize = 9.sp, color = Palette.TextTertiary), modifier = Modifier.padding(start = 8.dp),
+                    )
+                    c.source?.let { source ->
+                        Text(
+                            if (source == SlashCommands.Source.Skill) "SKILL" else "COMMAND",
+                            style = LocalOfficeType.current.eyebrow.copy(fontSize = 9.sp, color = Palette.TextTertiary), modifier = Modifier.padding(start = 8.dp),
+                        )
+                    }
                 }
             }
         }
