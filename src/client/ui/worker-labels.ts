@@ -15,6 +15,21 @@ export function workerLabelSettings(net: Net): { element: HTMLElement; dispose: 
   const error = h('p.field-error', { role: 'alert', hidden: true });
   const status = h('p.field-hint', { role: 'status' });
   const on = toggle({ label: 'Generate worker labels', checked: store.workerLabels.settings.on, onChange: () => changed() });
+  const implementation = h(
+    'select.select',
+    {
+      'aria-label': 'Worker label implementation',
+      onchange: () => {
+        mode();
+        efforts();
+        changed();
+      },
+    },
+    h('option', { value: 'droid' }, 'Droid (Factory API key)'),
+    h('option', { value: 'custom' }, 'Custom script (bring your own)'),
+  );
+  const command = h('input.input', { 'aria-label': 'Worker label executable path', placeholder: '/absolute/path/to/executable', oninput: () => changed() });
+  const args = h('input.input', { 'aria-label': 'Worker label arguments', placeholder: '["/absolute/path/to/script.mjs"]', oninput: () => changed() });
   const effort = h('select.select', { 'aria-label': 'Worker label reasoning effort', onchange: () => changed() });
   const interval = h('input.input', { type: 'number', min: 15, max: 3600, step: 1, 'aria-label': 'Worker label refresh seconds', oninput: () => changed() });
   const picker = modelPicker({
@@ -27,6 +42,28 @@ export function workerLabelSettings(net: Net): { element: HTMLElement; dispose: 
       changed();
     },
   });
+  const customPicker = modelPicker({
+    label: 'Custom worker label model',
+    models: [],
+    value: store.workerLabels.settings.model,
+    allowCustom: true,
+    placeholder: 'Type the model ID your script accepts',
+    onChange: () => changed(),
+  });
+  const droidField = field('Label model', picker.element);
+  const customFields = h(
+    'div.stack.tight',
+    {},
+    field('Executable path', command, 'Absolute path on the Office host. Use an executable script or an interpreter such as Node. No shell expansion.'),
+    field('Arguments (JSON array)', args, 'Literal arguments, for example ["/absolute/path/to/script.mjs"]. Keep API keys in your script’s environment or a private file, not here.'),
+    field('Model ID passed to your script', customPicker.element),
+    h(
+      'p.field-hint',
+      {},
+      'Contract v1: one JSON request on stdin (version, system, conversation, previousSubject, model, effort), then EOF. Write only {"name":"Task subject","summary":"Current work"} to stdout and exit 0 within 45 seconds. Combined stdout/stderr limit: 64 KiB.',
+    ),
+    h('p.field-hint', {}, 'Only run scripts you trust. They run as you, inherit the Office process environment and use their own credentials. This is not a sandbox. No Droid install or Factory key is required.'),
+  );
   const save = h('button.btn.primary', { type: 'button', disabled: true, onclick: () => void submit() }, 'Save');
   const retry = h('button.btn.sm.hidden', { type: 'button', onclick: () => void load() }, 'Reload models');
   const reset = h(
@@ -47,9 +84,15 @@ export function workerLabelSettings(net: Net): { element: HTMLElement; dispose: 
     save.disabled = saving;
     error.hidden = true;
   }
+  function mode() {
+    const custom = implementation.value === 'custom';
+    droidField.classList.toggle('hidden', custom);
+    customFields.classList.toggle('hidden', !custom);
+    retry.classList.toggle('hidden', custom || models.length > 0);
+  }
   function efforts(want?: string) {
     const selected = models.find((m) => m.id === picker.value());
-    const supported: readonly string[] = selected?.labelReasoningEfforts ?? selected?.supportedReasoningEfforts ?? [];
+    const supported: readonly string[] = implementation.value === 'custom' ? LABEL_EFFORTS : (selected?.labelReasoningEfforts ?? selected?.supportedReasoningEfforts ?? []);
     const values = LABEL_EFFORTS.filter((value) => supported.includes(value));
     effort.replaceChildren(...values.map((value) => h('option', { value }, value === 'xhigh' ? 'Extra high' : value[0].toUpperCase() + value.slice(1))));
     effort.value = want && values.includes(want as LabelEffort) ? want : (values[0] ?? '');
@@ -58,8 +101,13 @@ export function workerLabelSettings(net: Net): { element: HTMLElement; dispose: 
   function sync() {
     const settings = store.workerLabels.settings;
     on.input.checked = settings.on;
+    implementation.value = settings.implementation ?? 'droid';
+    command.value = settings.command ?? '';
+    args.value = JSON.stringify(settings.args ?? []);
     picker.set(settings.model);
+    customPicker.set(settings.model);
     interval.value = String(settings.intervalSeconds);
+    mode();
     efforts(settings.effort);
   }
   function paint() {
@@ -77,18 +125,39 @@ export function workerLabelSettings(net: Net): { element: HTMLElement; dispose: 
           ? `${state.running} generating · ${state.queued} waiting across all floors`
           : state.updatedAt
             ? `Last label updated ${new Date(state.updatedAt).toLocaleTimeString()}. Only changed conversations are refreshed.`
-            : 'Waiting for a local Droid conversation. Requires the Office Factory API key.'));
+            : state.settings.implementation === 'custom'
+              ? 'Waiting for a local Droid conversation. Your script uses its own credentials.'
+              : 'Waiting for a local Droid conversation. Requires the Office Factory API key.'));
   }
   async function submit() {
+    let argumentsValue: unknown;
+    if (implementation.value === 'custom') {
+      try {
+        argumentsValue = JSON.parse(args.value || '[]');
+        if (!Array.isArray(argumentsValue) || argumentsValue.some((v) => typeof v !== 'string')) throw new Error();
+      } catch {
+        error.textContent = 'Arguments must be a JSON array of strings.';
+        error.hidden = false;
+        return;
+      }
+    }
+    const settings: WorkerLabelSettings = {
+      on: on.input.checked,
+      model: implementation.value === 'custom' ? customPicker.value() : picker.value(),
+      effort: (effort.value || store.workerLabels.settings.effort) as LabelEffort,
+      intervalSeconds: Number(interval.value),
+      ...(implementation.value === 'custom' ? { implementation: 'custom' as const, command: command.value, args: argumentsValue as string[] } : {}),
+    };
     saving = true;
     save.disabled = true;
     save.textContent = 'Saving…';
     reset.disabled = true;
     on.input.disabled = true;
     picker.setDisabled(true);
+    customPicker.setDisabled(true);
+    implementation.disabled = command.disabled = args.disabled = true;
     effort.disabled = true;
     interval.disabled = true;
-    const settings: WorkerLabelSettings = { on: on.input.checked, model: picker.value(), effort: (effort.value || store.workerLabels.settings.effort) as LabelEffort, intervalSeconds: Number(interval.value) };
     const result = await net.request({ t: 'workerLabels.set', settings });
     if (disposed) return;
     saving = false;
@@ -96,6 +165,8 @@ export function workerLabelSettings(net: Net): { element: HTMLElement; dispose: 
     reset.disabled = false;
     on.input.disabled = false;
     picker.setDisabled(false);
+    customPicker.setDisabled(false);
+    implementation.disabled = command.disabled = args.disabled = false;
     effort.disabled = !effort.options.length;
     interval.disabled = false;
     dirty = !result.ok;
@@ -113,11 +184,14 @@ export function workerLabelSettings(net: Net): { element: HTMLElement; dispose: 
       picker.setModels(models.filter((m) => (m.labelReasoningEfforts ?? m.supportedReasoningEfforts)?.length).map(pickerModel));
       if (!dirty) sync();
       else efforts(effort.value);
+      mode();
     } catch {
       if (disposed) return;
-      error.textContent = 'Could not load Droid models. Reload to try again.';
-      error.hidden = false;
-      retry.classList.remove('hidden');
+      if (implementation.value !== 'custom') {
+        error.textContent = 'Could not load Droid models. Reload to try again.';
+        error.hidden = false;
+        retry.classList.remove('hidden');
+      }
     }
   }
   sync();
@@ -128,12 +202,18 @@ export function workerLabelSettings(net: Net): { element: HTMLElement; dispose: 
     element: h(
       'div.stack.tight',
       {},
-      h('p.field-hint', {}, 'A stable task subject and a one-line current-work summary for every Office-managed local Droid, including leads and subagents. Uses Factory credits. No cloud workers, guests or shells.'),
+      h('p.field-hint', {}, 'A stable task subject and a one-line current-work summary for every Office-managed local Droid, including leads and subagents. No cloud workers, guests or shells.'),
       on,
-      field('Label model', picker.element),
-      field('Reasoning effort', effort, 'Starts at the lowest supported effort when you change models.'),
+      field('Implementation', implementation),
+      droidField,
+      customFields,
+      field('Reasoning effort', effort, 'Droid offers supported efforts only. Custom scripts receive this value literally and must validate it for their provider.'),
       field('Refresh interval (seconds)', interval, 'Default: 60. Only visible user and assistant text that changed is sent, with a final update after a turn. Up to 24,000 recent characters plus the previous subject.'),
-      h('p.field-hint', {}, 'No tool calls, tool results, thinking, hooks or attachments are used. The sign writer has an isolated, temporary Droid profile, not your project or personal configuration.'),
+      h(
+        'p.field-hint',
+        {},
+        'No tool calls, tool results, thinking, hooks or attachments are input. The Droid implementation uses Factory credits and an isolated temporary profile. Custom scripts control their own implementation and billing.',
+      ),
       status,
       error,
       h('div.row', {}, save, reset, retry),
@@ -141,6 +221,7 @@ export function workerLabelSettings(net: Net): { element: HTMLElement; dispose: 
     dispose: () => {
       disposed = true;
       picker.close();
+      customPicker.close();
       off();
     },
   };

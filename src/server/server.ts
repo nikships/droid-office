@@ -2277,7 +2277,7 @@ export async function startServer(cfg: Config) {
           workerLabels.settingsChanged();
           done();
         };
-        if (!next.on) {
+        if (!next.on || next.implementation === 'custom') {
           save();
           break;
         }

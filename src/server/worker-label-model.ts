@@ -13,11 +13,11 @@ import {
   type ReasoningEffort,
 } from '@factory/droid-sdk/node';
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
-import type { ChildProcess } from 'node:child_process';
+import { spawn, type ChildProcess } from 'node:child_process';
 import os from 'node:os';
 import path from 'node:path';
 import type { WorkerTask } from '../shared/protocol.js';
-import { LABEL_TEXT_CHARS, type WorkerLabelSettings } from '../shared/worker-labels.js';
+import { LABEL_TEXT_CHARS, type WorkerLabelRequest, type WorkerLabelSettings } from '../shared/worker-labels.js';
 import { DROID_SETTINGS_PATH } from './droid-models.js';
 
 export interface LabelInput {
@@ -121,11 +121,72 @@ export interface LabelModelOptions {
   settingsPath?: string;
 }
 
+/** Custom implementations are trusted local programs, not isolated Droid profiles or sandboxes. */
+export async function scriptLabel(input: LabelInput, settings: WorkerLabelSettings, system: string, cancelled: AbortSignal, timeoutMs = 45_000): Promise<WorkerTask> {
+  if (!settings.command || !path.isAbsolute(settings.command)) throw new LabelModelError('Choose an absolute executable path for the custom label script.');
+  const signal = AbortSignal.any([cancelled, AbortSignal.timeout(timeoutMs)]);
+  if (signal.aborted) throw new LabelModelError('Custom label generation was cancelled or timed out.');
+  const cwd = await mkdtemp(path.join(os.tmpdir(), 'office-label-script-'));
+  try {
+    const request: WorkerLabelRequest = { version: 1, system, conversation: input.text.slice(-LABEL_TEXT_CHARS), previousSubject: input.previousSubject?.slice(0, 60), model: settings.model, effort: settings.effort };
+    const output = await new Promise<string>((resolve, reject) => {
+      const env = Object.fromEntries(Object.entries(process.env).filter(([name]) => !/^(NEBULA_|DROID_OFFICE_)/.test(name)));
+      const child = spawn(settings.command!, settings.args ?? [], { cwd, env, shell: false, detached: process.platform !== 'win32', windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'] });
+      const chunks: Buffer[] = [];
+      let bytes = 0;
+      let failure: string | undefined;
+      const kill = () => {
+        try {
+          if (process.platform !== 'win32' && child.pid) process.kill(-child.pid, 'SIGKILL');
+          else child.kill('SIGKILL');
+        } catch {
+          // The process may already have exited.
+        }
+      };
+      const abort = () => {
+        failure = 'Custom label generation was cancelled or timed out.';
+        kill();
+      };
+      signal.addEventListener('abort', abort, { once: true });
+      child.on('spawn', () => {
+        if (signal.aborted) abort();
+      });
+      const collect = (data: Buffer, stdout: boolean) => {
+        bytes += data.length;
+        if (bytes > 64 * 1024) {
+          failure = 'The custom label script exceeded its 64 KiB output limit.';
+          kill();
+        } else if (stdout) chunks.push(data);
+      };
+      child.stdout.on('data', (data: Buffer) => collect(data, true));
+      child.stderr.on('data', (data: Buffer) => collect(data, false));
+      child.stdin.on('error', () => {});
+      child.on('error', () => {
+        failure = 'Could not start the custom label script. Check its executable path and permissions.';
+      });
+      child.on('close', (code) => {
+        signal.removeEventListener('abort', abort);
+        kill();
+        if (failure || code !== 0) reject(new LabelModelError(failure ?? 'The custom label script exited unsuccessfully. Check its credentials and configuration.'));
+        else resolve(Buffer.concat(chunks).toString('utf8'));
+      });
+      child.stdin.end(`${JSON.stringify(request)}\n`);
+    });
+    return parseLabel(output);
+  } catch (error) {
+    if (error instanceof LabelModelError) throw error;
+    throw new LabelModelError('Custom label generation failed. Check the script and its configuration.');
+  } finally {
+    await rm(cwd, { recursive: true, force: true });
+  }
+}
+
 /** A fresh, credentialed, disposable profile. Never falls back to the owner's Droid profile. */
 export class WorkerLabelModel {
   constructor(private options: LabelModelOptions) {}
 
   async generate(input: LabelInput, settings: WorkerLabelSettings, cancelled: AbortSignal): Promise<WorkerTask> {
+    if (settings.implementation === 'custom') return scriptLabel(input, settings, this.options.system(), cancelled);
     const droid = this.options.droid();
     const key = this.options.key();
     if (!droid || !path.isAbsolute(droid)) throw new LabelModelError('Install Droid to generate worker labels.');

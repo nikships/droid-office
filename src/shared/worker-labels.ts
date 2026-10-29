@@ -4,9 +4,24 @@ export type LabelEffort = (typeof LABEL_EFFORTS)[number];
 
 export interface WorkerLabelSettings {
   on: boolean;
+  /** Omitted in older preferences: the isolated Droid implementation. */
+  implementation?: 'droid' | 'custom';
+  /** Absolute executable and literal arguments, never a shell command. */
+  command?: string;
+  args?: string[];
   model: string;
   effort: LabelEffort;
   intervalSeconds: number;
+}
+
+/** One request on stdin, followed by EOF. Respond with {"name":string,"summary":string}. */
+export interface WorkerLabelRequest {
+  version: 1;
+  system: string;
+  conversation: string;
+  previousSubject?: string;
+  model: string;
+  effort: LabelEffort;
 }
 
 export interface WorkerLabelState {

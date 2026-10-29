@@ -7,7 +7,13 @@ export function labelSettings(value: unknown): WorkerLabelSettings | undefined {
   if (!value || typeof value !== 'object') return;
   const v = value as WorkerLabelSettings;
   if (typeof v.on !== 'boolean' || !isValidDroidModel(v.model) || !isLabelEffort(v.effort) || !Number.isInteger(v.intervalSeconds) || v.intervalSeconds < 15 || v.intervalSeconds > 3600) return;
-  return { on: v.on, model: v.model, effort: v.effort, intervalSeconds: v.intervalSeconds };
+  if (v.implementation !== undefined && v.implementation !== 'droid' && v.implementation !== 'custom') return;
+  const base = { on: v.on, model: v.model, effort: v.effort, intervalSeconds: v.intervalSeconds };
+  if (v.implementation !== 'custom') return base;
+  if (typeof v.command !== 'string' || !path.isAbsolute(v.command) || v.command.length > 4096 || /[\p{Cc}\p{Cf}]/u.test(v.command)) return;
+  const args = v.args ?? [];
+  if (!Array.isArray(args) || args.length > 32 || args.some((arg) => typeof arg !== 'string' || arg.length > 4096 || /[\p{Cc}\p{Cf}]/u.test(arg))) return;
+  return { ...base, implementation: 'custom', command: v.command, args: [...args] };
 }
 
 /** Office-wide, never written into Droid's own profile. */
@@ -25,12 +31,12 @@ export class WorkerLabelPreferences {
   }
 
   get(): WorkerLabelSettings {
-    return { ...this.value };
+    return { ...this.value, ...(this.value.args ? { args: [...this.value.args] } : {}) };
   }
 
   set(value: unknown): string | undefined {
     const next = labelSettings(value);
-    if (!next) return 'Choose a model, a supported effort, and a refresh interval from 15 to 3600 seconds.';
+    if (!next) return 'Choose a model, effort, and refresh interval from 15 to 3600 seconds. Custom scripts need an absolute executable path and an array of arguments.';
     try {
       writeFileSync(`${this.file}.tmp`, JSON.stringify(next, null, 2), { mode: 0o600 });
       renameSync(`${this.file}.tmp`, this.file);
