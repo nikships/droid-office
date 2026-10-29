@@ -39,7 +39,7 @@ export interface TrayView {
   url?: string;
 }
 
-export type TrayAction = 'open' | 'companion' | 'worker' | 'restart' | 'updates' | 'log' | 'notify' | 'quit' | 'quitStoppingWorkers';
+export type TrayAction = 'open' | 'companion' | 'restart' | 'updates' | 'notify' | 'quit' | 'quitStoppingWorkers';
 
 /** Which worker a click opens: the office goes to its floor and opens its terminal (see src/client/worker-link.ts). */
 export interface WorkerLink {
@@ -47,13 +47,7 @@ export interface WorkerLink {
   floor: string;
 }
 
-/** The pictures beside a waiting worker: a question to answer, or a finished turn to look at. */
-export type TrayIcon = 'needsInput' | 'done';
-
-export type TrayItem = { type: 'separator' } | { type: 'header'; label: string } | { label: string; enabled: boolean; sublabel?: string; action?: TrayAction; link?: WorkerLink; icon?: TrayIcon; checked?: boolean };
-
-/** How many waiting workers the menu names; the rest are one "more" line that opens the office. */
-export const TRAY_WAITING_MAX = 6;
+export type TrayItem = { type: 'separator' } | { label: string; enabled: boolean; sublabel?: string; action?: TrayAction; checked?: boolean };
 const NAME_MAX = 60;
 
 const clip = (s: string, max: number) => (s.length > max ? `${s.slice(0, max - 1)}…` : s);
@@ -131,35 +125,6 @@ function waitingLabel(w: StatusWaiting): string {
   return `${w.name} ${w.status === 'needs_input' ? 'needs input' : 'is done'}`;
 }
 
-/** "Ada needs input", and under it the task and, in a building of several floors, the floor. */
-export function waitingItem(w: StatusWaiting, floors: number): TrayItem {
-  const sublabel = [w.task, floors > 1 ? w.floorName : undefined].filter(Boolean).join(' · ');
-  return {
-    label: waitingLabel(w),
-    enabled: true,
-    ...(sublabel ? { sublabel } : {}),
-    action: 'worker',
-    link: { worker: w.id, floor: w.floor },
-    icon: w.status === 'needs_input' ? 'needsInput' : 'done',
-  };
-}
-
-/** Who waits on the owner: each opens that worker's terminal. Empty while nobody does. */
-function waitingSection(v: TrayView): TrayItem[] {
-  const s = v.status;
-  const total = waitingCount(v);
-  if (!s || !total) return [];
-  const shown = s.waiting.slice(0, TRAY_WAITING_MAX);
-  const more = total - shown.length;
-  return [
-    { type: 'separator' },
-    { type: 'header', label: 'Waiting on You' },
-    ...shown.map((w) => waitingItem(w, s.floors)),
-    // An office older than the waiting list sends only the counts: the line then stands for all of them.
-    ...(more > 0 ? [{ label: `${count(more, shown.length ? 'more worker' : 'worker')} waiting…`, enabled: true, action: 'open' as const }] : []),
-  ];
-}
-
 /** "localhost:4600" for Open Office Companion. */
 function address(url: string | undefined): string | undefined {
   if (!url) return undefined;
@@ -175,13 +140,11 @@ export function trayMenu(v: TrayView): TrayItem[] {
   const where = running ? address(v.url) : undefined;
   return [
     ...statusLines(v).map((label): TrayItem => ({ label, enabled: false })),
-    ...waitingSection(v),
     { type: 'separator' },
     { label: 'Open Office', enabled: v.state !== 'starting', action: 'open' },
     { label: 'Open Office Companion', enabled: running, ...(where ? { sublabel: where } : {}), action: 'companion' },
     { type: 'separator' },
     { label: v.state === 'stopped' ? 'Start Office' : 'Restart Office', enabled: v.state !== 'starting' && !v.external, action: 'restart' },
-    { label: 'Show Office Log', enabled: true, action: 'log' },
     { type: 'separator' },
     { label: 'Notify When Workers Wait on You', enabled: true, sublabel: 'While the office window is closed', checked: v.notify, action: 'notify' },
     { label: 'Check for Updates…', enabled: true, sublabel: `Version ${v.version}`, action: 'updates' },

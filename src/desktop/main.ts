@@ -540,9 +540,8 @@ async function quitStoppingWorkers() {
   app.quit();
 }
 
-function trayAction(action: TrayAction, link?: WorkerLink) {
+function trayAction(action: TrayAction) {
   if (action === 'open') openWindow();
-  else if (action === 'worker') link ? openWorker(link) : openWindow();
   else if (action === 'notify') toggleNotify();
   else if (action === 'companion') {
     if (officeUrl) {
@@ -554,8 +553,7 @@ function trayAction(action: TrayAction, link?: WorkerLink) {
   else if (action === 'updates') {
     toFront();
     void updates.check(true);
-  } else if (action === 'log') shell.showItemInFolder(officeLog);
-  else if (action === 'quit') app.quit();
+  } else if (action === 'quit') app.quit();
   else void quitStoppingWorkers();
 }
 
