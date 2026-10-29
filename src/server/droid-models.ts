@@ -4,6 +4,7 @@ import path from 'node:path';
 import { isAgentEffort, type AgentEffort } from '../shared/protocol.js';
 import { DROID_MODEL_MAX, isValidDroidModel } from './agents.js';
 import { askDroid, DROID_LIST } from './droid-rpc.js';
+import { isLabelEffort, type LabelEffort } from '../shared/worker-labels.js';
 
 export const DROID_SETTINGS_PATH = path.join(homedir(), '.factory', 'settings.json');
 export const DROID_CATALOGUE_TTL_MS = 60_000;
@@ -19,6 +20,8 @@ export interface DroidModelOption {
   legacy?: true;
   defaultReasoningEffort?: AgentEffort;
   supportedReasoningEfforts?: AgentEffort[];
+  /** Full catalogue efforts for the sign writer, without broadening worker pins. */
+  labelReasoningEfforts?: LabelEffort[];
   /** Who serves it, as droid says: anthropic, openai, google, factory… */
   provider?: string;
   /** Droid's credit multiplier: what a token costs against the base rate (0.5 is half). */
@@ -135,6 +138,7 @@ export function parseDroidModelList(list: unknown[]): DroidModelOption[] {
       ...(legacy ? { legacy: true as const } : {}),
       ...(fallback ? { defaultReasoningEffort: fallback } : {}),
       ...(supported ? { supportedReasoningEfforts: supported } : {}),
+      ...(Array.isArray(e.supportedReasoningEfforts) ? { labelReasoningEfforts: [...new Set(e.supportedReasoningEfforts.filter(isLabelEffort))] } : {}),
       ...(provider ? { provider } : {}),
       ...(tokenMultiplier !== undefined ? { tokenMultiplier } : {}),
       ...(e.noImageSupport === true ? { noImages: true as const } : {}),

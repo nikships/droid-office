@@ -88,13 +88,6 @@ const record = (extra = {}) => fs.appendFileSync(log, JSON.stringify({
 }) + '\\n');
 record();
 
-// The task namer invokes droid as a non-interactive JSON command (droid exec). Keep that
-// invocation deterministic and separate from the worker's real PTY process.
-if (args.includes('--output-format')) {
-  process.stdout.write(JSON.stringify({ structured_output: { name: 'Fake Task', summary: 'Recording a deterministic test task' } }));
-  process.exit(0);
-}
-
 process.stdout.write('fake-agent-ready\\r\\n');
 process.stdin.setEncoding('utf8');
 process.stdin.on('data', (chunk) => record({ stdin: chunk }));
@@ -276,16 +269,15 @@ test('Droid workers launch with their own hook overlay and resume the correct se
   assert.equal(hook('Stop', {}), false, 'hooks from the old process must not control a resumed worker');
   assert.equal(hook('SessionStart', { source: 'resume' }, second.env.hookToken!), true);
 
-  await waitFor(
-    () => workers.get(worker.id)?.task?.name,
-    (name) => name === 'Fake Task',
-    8000,
-  );
+  assert.equal(workers.get(worker.id)?.task, undefined, 'hooks do not synthesize labels from prompts or tools');
+  workers.setTask(worker.id, { name: 'Worker Hooks', summary: 'Verified resume handling', generated: true, textHash: 'a'.repeat(64) });
   workers.shutdown();
   const restored = manager(f, []);
   t.after(() => restored.shutdown());
   await restored.start();
   assert.equal(restored.get(worker.id)?.sessionId, 'droid-1');
+  assert.equal(restored.get(worker.id)?.task?.generated, true);
+  assert.equal(restored.get(worker.id)?.task?.textHash, 'a'.repeat(64));
   const third = (
     await waitFor(
       () => launchesOf(f),

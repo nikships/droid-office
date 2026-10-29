@@ -15,6 +15,7 @@ import { factoryKeySettings } from './factory-settings';
 import { subscriptionsSettings } from './subscriptions-settings';
 import { droidSettings } from './droid-settings';
 import { hiddenModelSettings } from './hidden-models';
+import { workerLabelSettings } from './worker-labels';
 import { openHostUpdate } from './host-update';
 import { openPhone, pairedPhones } from './phone';
 import { companionState, openCompanion } from './companion';
@@ -931,6 +932,7 @@ export function openSettings(
   subscriptions.hideWhenUnsupported(...subscriptionGroups);
   const droid = droidSettings(net);
   const modelVisibility = hiddenModelSettings(net);
+  const workerLabels = workerLabelSettings(net);
   const panes: Record<SettingsPane, Node[]> = {
     you: [
       group('Profile', card('Your character', { desc: desc('How you look and the name above your head.'), control: character })),
@@ -1003,6 +1005,7 @@ export function openSettings(
     notify: [group('Just you', card('Desktop notifications', { desc: notifyNote, control: notifyRow }))],
     workers: [
       group('Agent', card('Droid', droid.parts), card('Default worker', { desc: agentNote, below: [agent.element, agentActions] }), card('Models shown in pickers', { below: [modelVisibility.element] })),
+      group('Activity', card('Worker labels', { below: [workerLabels.element] })),
       group(
         'Hiring',
         card('Where fresh workers start', { desc: freshNote, control: freshRow }),
@@ -1224,6 +1227,7 @@ export function openSettings(
       subscriptions.dispose();
       droid.dispose();
       modelVisibility.dispose();
+      workerLabels.dispose();
       window.removeEventListener('office:hdr', onHdrStatus);
     },
   });

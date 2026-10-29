@@ -20,6 +20,13 @@ export function alertDetail(w: WorkerInfo): string | undefined {
   return w.status === 'needs_input' ? (w.activity ?? w.task?.summary) : (w.task?.summary ?? w.prompt);
 }
 
+/** Generated current work wins over ordinary tool activity, but never over a live blocker. */
+export function workerActivity(w: WorkerInfo): string | undefined {
+  if (w.lost) return 'Worktree missing';
+  if (w.cloud?.error) return w.cloud.error;
+  return w.status === 'needs_input' ? (w.activity ?? w.task?.summary) : (w.task?.summary ?? w.activity);
+}
+
 /** A worker's pull request: still open, or merged (time to send it home). */
 export interface WorkerPr {
   state: 'open' | 'merged';

@@ -1,6 +1,7 @@
 import { open, readdir, realpath, stat, type FileHandle } from 'node:fs/promises';
 import path from 'node:path';
 import type { ThreadEntry } from '../shared/worker-thread.js';
+import { LABEL_TEXT_CHARS } from '../shared/worker-labels.js';
 import { DROID_SESSIONS_DIR } from './droid-session.js';
 
 const PAGE_SIZE = 100;
@@ -14,6 +15,8 @@ const SESSION_ID = /^[a-zA-Z0-9-]{1,160}$/;
 export interface ThreadSession {
   sessionId: string;
   cwd: string;
+  /** Ignore text preceding an Office /clear, even if Droid keeps the same session file. */
+  since?: number;
 }
 
 export interface ThreadPage {
@@ -24,6 +27,8 @@ export interface ThreadPage {
 }
 
 interface Projection {
+  text: string;
+  since: number;
   entries: ThreadEntry[];
   tools: Map<string, ThreadEntry>;
   bytes: number;
@@ -89,7 +94,7 @@ function contentText(content: unknown): string {
   );
 }
 
-const projection = (before = Infinity): Projection => ({ entries: [], tools: new Map(), bytes: 0, seq: 0, dropped: false, before });
+const projection = (before = Infinity, since = 0): Projection => ({ text: '', since, entries: [], tools: new Map(), bytes: 0, seq: 0, dropped: false, before });
 const entryBytes = (entry: ThreadEntry) => Buffer.byteLength(JSON.stringify(entry));
 
 /** A bounded recent window, with disk scans only for explicit older-page requests. */
@@ -99,13 +104,21 @@ export class WorkerThreadReader {
   constructor(
     private root = DROID_SESSIONS_DIR,
     private limits = { sessions: 8, entries: 1000, bytes: 2 * 1024 * 1024 },
+    private textOnly = false,
   ) {}
+
+  /** Independent text window: a long stretch of tools cannot evict the conversation. */
+  async readText(source: ThreadSession): Promise<string | undefined> {
+    const page = await this.read(source);
+    if (page.error) return;
+    return this.sessions.get(JSON.stringify([source.cwd, source.sessionId, source.since ?? 0]))?.projection.text;
+  }
 
   async read(source: ThreadSession, before?: number): Promise<ThreadPage> {
     const { sessionId, cwd } = source;
     if (!SESSION_ID.test(sessionId) || !path.isAbsolute(cwd)) return this.unavailable();
     if (before !== undefined && (!Number.isSafeInteger(before) || before < 0)) return this.unavailable('Invalid conversation page.');
-    const key = JSON.stringify([cwd, sessionId]);
+    const key = JSON.stringify([cwd, sessionId, source.since ?? 0]);
     let cached = this.sessions.get(key);
     if (!cached) {
       while (this.sessions.size >= this.limits.sessions) {
@@ -113,7 +126,7 @@ export class WorkerThreadReader {
         if (!idle) return this.unavailable('Conversation reader is busy. Try again shortly.');
         this.sessions.delete(idle[0]);
       }
-      cached = this.empty();
+      cached = this.empty(source.since);
       this.sessions.set(key, cached);
     }
     // Map order is the bounded LRU, including a worker changing session or cwd.
@@ -135,7 +148,7 @@ export class WorkerThreadReader {
       return await page;
     } catch {
       // A disappearing/replaced file must never keep serving another session's stale cache.
-      Object.assign(state, this.empty());
+      Object.assign(state, this.empty(source.since));
       return this.unavailable('The local conversation could not be read. Try again shortly.');
     }
   }
@@ -144,8 +157,8 @@ export class WorkerThreadReader {
     return { entries: [], hasMore: false, error };
   }
 
-  private empty(): CachedSession {
-    return { size: 0, position: 0, pending: Buffer.alloc(0), oversized: false, head: Buffer.alloc(0), tail: Buffer.alloc(0), projection: projection(), pages: new Map() };
+  private empty(since = 0): CachedSession {
+    return { size: 0, position: 0, pending: Buffer.alloc(0), oversized: false, head: Buffer.alloc(0), tail: Buffer.alloc(0), projection: projection(Infinity, since), pages: new Map() };
   }
 
   private async find({ sessionId, cwd }: ThreadSession): Promise<string | undefined> {
@@ -201,7 +214,7 @@ export class WorkerThreadReader {
         state.position = 0;
         state.pending = Buffer.alloc(0);
         state.oversized = false;
-        state.projection = projection();
+        state.projection = projection(Infinity, state.projection.since);
       }
       await this.consume(handle, state, info.size);
       state.head = await this.bytes(handle, 0, Math.min(256, state.position));
@@ -275,6 +288,7 @@ export class WorkerThreadReader {
     } catch {
       return;
     }
+    if (this.textOnly && row.type !== 'message') return;
     const id = clean(row.id, 160) || `record:${state.seq}`;
     if (row.type === 'agent_turn_outcome') {
       const reason = clean(row.reason, 80);
@@ -305,6 +319,23 @@ export class WorkerThreadReader {
     if ([message.visibility, row.visibility].some((visibility) => visibility !== undefined && visibility !== 'both' && visibility !== 'user_only')) return;
     if (message.userMessageSource && message.userMessageSource !== 'cli_tui') return;
     const role = message.role;
+    const timestamp = typeof row.timestamp === 'string' ? Date.parse(row.timestamp) : NaN;
+    if (!state.since || (Number.isFinite(timestamp) && timestamp >= state.since)) {
+      const parts =
+        typeof message.content === 'string'
+          ? [message.content]
+          : Array.isArray(message.content)
+            ? message.content
+                .slice(0, 1024)
+                .filter((part) => object(part).type === 'text')
+                .map((part) => object(part).text)
+            : [];
+      for (const part of parts) {
+        const text = clean(part, Infinity).slice(-LABEL_TEXT_CHARS);
+        if (text) state.text = `${state.text}\n\n${role}: ${text}`.slice(-LABEL_TEXT_CHARS);
+      }
+    }
+    if (this.textOnly) return;
     if (typeof message.content === 'string') {
       const text = clean(message.content);
       if (text) this.add(state, { id: `${id}:text`, role, kind: 'text', text });

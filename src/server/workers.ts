@@ -26,7 +26,6 @@ import { forkRefusal, nearestForkSeat } from '../shared/worker-fork.js';
 import { githubPulls } from './github.js';
 import type { PullHost } from './forge.js';
 import { forgeWords, type Forge } from '../shared/floors.js';
-import { TaskNamer, fallbackTask } from './tasks.js';
 import { PtyHost, SCROLLBACK, type Adopted, type Pty } from './ptys.js';
 import { DroidSessionReader } from './droid-session.js';
 import { isValidDroidModel, validateWorkerEffort, validateWorkerModel } from './agents.js';
@@ -91,12 +90,6 @@ const RUNNING = new Set<unknown>(['starting', 'idle', 'working', 'done', 'needs_
 const KEYFRAME_MS = 8000;
 /** How often a steady typist's "last typed" time is refreshed for everyone. */
 const TYPED_REFRESH_MS = 15_000;
-/** How many of a worker's latest prompts and tool calls the task namer sees. */
-const TASK_PROMPTS = 5;
-const TASK_TOOLS = 10;
-/** While a worker works, refresh its task summary after this many tool calls, at most this often. */
-const TASK_REFRESH_TOOLS = 8;
-const TASK_REFRESH_MS = 90_000;
 const PR_TITLE_MAX = 72;
 const PR_TASK_MAX = 2500;
 /** The most other repositories one worker can take on (see WorkerInfo.repos). */
@@ -202,11 +195,6 @@ interface Worker {
   screenSeen?: { state: DroidScreen; since: number };
   /** Test runs and builds that have failed in a row (see FAILS_TO_DESPAIR). */
   failStreak: number;
-  /** Its latest prompts and tool calls, for naming its task. */
-  prompts: string[];
-  tools: string[];
-  toolsSinceNamed: number;
-  namedAt: number;
   /** Bumped by /clear: a new conversation, so a new task. */
   taskEpoch: number;
   /** Its terminal in the host as of the last save, and how it was doing, to pick back up after a restart. */
@@ -285,7 +273,6 @@ export class WorkerManager {
   private closing = false;
   /** Closing for good (Ctrl+C), not restarting: whatever the workers were doing is stopped on purpose. */
   private stopping = false;
-  private namer: TaskNamer;
   private watchTimer: NodeJS.Timeout;
   private statusTimer: NodeJS.Timeout;
   /** Runs the workers' terminals outside the office, so they outlive a restart of it (see ptys.ts). */
@@ -342,18 +329,6 @@ export class WorkerManager {
       // without it, new worktrees just aren't set up
     }
     this.agentPath = resolveAgent(agentCmd);
-    this.namer = new TaskNamer(
-      this.agentPath,
-      childEnv(),
-      () => officePrompt(this.prompts, 'office.namer'),
-      (id, task, ctx) => {
-        const w = this.workers.get(id);
-        if (!w || w.taskEpoch !== ctx.epoch) return;
-        w.info.task = task;
-        this.emitUpdate(w);
-        this.persist();
-      },
-    );
     this.host = new PtyHost(dataDir, () => this.events.toast("The workers' terminal host stopped — resuming them", 'warn'));
     this.scrollback = new ScrollbackStore(dataDir);
     this.drops = new DropStore(dataDir);
@@ -472,10 +447,9 @@ export class WorkerManager {
     return this.agentPath;
   }
 
-  /** Droid was installed after the floor opened (Setup): new workers and the task namer run it from `file`. */
+  /** Droid was installed after the floor opened (Setup): new workers run it from `file`. */
   setAgentPath(file: string) {
     this.agentPath = file;
-    this.namer.setDroid(file);
   }
 
   /** What an agent starts on when whoever starts it doesn't pick, when one was set in Settings (else Droid's own default). */
@@ -502,6 +476,14 @@ export class WorkerManager {
     const info = this.workers.get(id)?.info;
     if (info?.kind !== 'agent' || info.cloud || info.guest || !info.sessionId) return undefined;
     return { sessionId: info.sessionId, cwd: this.cwd(info) };
+  }
+
+  /** The global sign writer never accepts an external path, nor writes after this manager closes. */
+  labelSession(id: string): { sessionId: string; cwd: string; epoch: number; since?: number } | undefined {
+    if (this.closing) return;
+    const w = this.workers.get(id);
+    const session = this.threadSession(id);
+    if (w && session) return { ...session, epoch: w.taskEpoch, since: w.info.taskSince };
   }
 
   /** The workers' terminal process IDs, so the guest scan leaves them out. */
@@ -646,7 +628,6 @@ export class WorkerManager {
     if (info.worktree) w.worktreeOwnership = Object.fromEntries(this.treesOf(info).map((t) => [t.dir, t.trees.ownership(t.ref.branch)]));
     if (wt) w.setupPlan = this.planSetup(id, wt, others);
     this.workers.set(id, w);
-    if (info.prompt) this.notePrompt(w, info.prompt);
     this.launch(w, this.briefed(w, kind === 'shell' ? undefined : text || undefined), undefined);
     this.persist();
     return info;
@@ -873,7 +854,6 @@ export class WorkerManager {
       task: guest.task?.name ? { name: guest.task.name, summary: prompt ? truncate(prompt, 140) : 'Brought in from outside the office' } : undefined,
     };
     const w = newWorker(info);
-    if (prompt) w.prompts = [prompt.replace(/\s+/g, ' ')];
     this.workers.set(id, w);
     this.launch(w, undefined, sessionId);
     this.persist();
@@ -919,8 +899,8 @@ export class WorkerManager {
   /** The card over a worker's head, until its own sign writer has something better (a subagent's title from its lead). */
   setTask(id: string, task: WorkerTask) {
     const w = this.workers.get(id);
-    if (!w) return;
-    w.info.task = { name: task.name.trim().slice(0, 60), summary: task.summary.trim().slice(0, 140) };
+    if (!w || this.closing) return;
+    w.info.task = { name: task.name.trim().slice(0, 60), summary: task.summary.trim().slice(0, 140), ...(task.generated ? { generated: true, textHash: task.textHash } : {}) };
     this.emitUpdate(w);
     this.persist();
   }
@@ -1009,7 +989,6 @@ export class WorkerManager {
     const first = w.info.sessionId ? prompt : this.briefed(w, prompt);
     if (prompt) {
       w.info.activity = truncate(prompt, 80);
-      this.notePrompt(w, prompt);
     }
     // Cut off mid-turn by a restart: it gets on with it, as whoever was watching would have told it to.
     const carryOn = !prompt && w.interrupted && w.info.kind === 'agent' && !!w.info.sessionId;
@@ -1133,7 +1112,6 @@ export class WorkerManager {
     if (!w) return {};
     this.workers.delete(id);
     this.subscribers.delete(id);
-    this.namer.forget(id);
     const proc = w.pty;
     w.pty = undefined; // so the exit handler knows this worker is gone and stays quiet
     try {
@@ -1513,7 +1491,6 @@ export class WorkerManager {
     this.typeIn(w, clean, queue && wantsCsiEnter(w.info.kind) ? CTRL_ENTER : '\r');
     const shown = typed || 'See the attached images';
     w.info.activity = truncate(shown, 80);
-    this.notePrompt(w, shown);
     w.info.lastInputAt = Date.now();
     this.emitUpdate(w);
     return undefined;
@@ -1765,7 +1742,6 @@ export class WorkerManager {
       w.info.action = undefined;
       if (typeof report.prompt === 'string') {
         w.info.activity = truncate(report.prompt, 80);
-        this.notePrompt(w, report.prompt);
       }
       this.setStatus(w, 'working');
     } else if (event === 'PreToolUse') this.toolStarted(w, session, report);
@@ -1809,7 +1785,6 @@ export class WorkerManager {
     }
     w.info.activity = describeTool(report);
     w.info.action = toolAction(tool, report.tool_input);
-    this.noteTool(w, w.info.activity);
     // Moving on means its question was answered, unless another session is the one asking.
     if (w.info.status !== 'needs_input' || !w.asking || w.asking.session === session) this.setStatus(w, 'working');
   }
@@ -1872,26 +1847,6 @@ export class WorkerManager {
     });
   }
 
-  /** A new message for the worker: show it right away, and have its task (re)named. */
-  private notePrompt(w: Worker, prompt: string) {
-    if (w.info.kind !== 'agent') return;
-    const clean = prompt.replace(/\s+/g, ' ').trim();
-    // Bare slash commands (/model, /compact), repeats and the office's own carry-on aren't new work.
-    if (!clean || /^\/\S+$/.test(clean) || w.prompts.at(-1) === clean || clean === CARRY_ON_PROMPT.replace(/\s+/g, ' ')) return;
-    w.prompts = [...w.prompts, clean].slice(-TASK_PROMPTS);
-    const hadTask = !!w.info.task;
-    if (!hadTask) w.info.task = fallbackTask(clean);
-    // "yes", "go ahead", "2": a reply within the same task, not worth a new name.
-    if (hadTask && clean.length < 16) return;
-    this.nameTask(w);
-  }
-
-  private noteTool(w: Worker, tool: string) {
-    w.tools = [...w.tools, tool].slice(-TASK_TOOLS);
-    w.toolsSinceNamed++;
-    if (w.info.task && w.toolsSinceNamed >= TASK_REFRESH_TOOLS && Date.now() - w.namedAt > TASK_REFRESH_MS) this.nameTask(w);
-  }
-
   /**
    * A tool call finished. Tests or a build that failed again (by exit code, or by the summary it
    * printed when the exit code was piped away) and the worker puts its head in its hands, until its
@@ -1910,20 +1865,9 @@ export class WorkerManager {
     this.emitUpdate(w);
   }
 
-  private nameTask(w: Worker) {
-    w.toolsSinceNamed = 0;
-    w.namedAt = Date.now();
-    const previous = w.info.task && w.prompts.length > 1 ? w.info.task : undefined;
-    this.namer.request(w.info.id, { prompts: w.prompts, tools: w.tools, previous, epoch: w.taskEpoch });
-  }
-
   private clearTask(w: Worker) {
     w.taskEpoch++;
-    w.prompts = [];
-    w.tools = [];
-    w.toolsSinceNamed = 0;
-    this.namer.forget(w.info.id);
-    if (!w.info.task) return;
+    w.info.taskSince = Date.now();
     w.info.task = undefined;
     this.emitUpdate(w);
     this.persist();
@@ -2385,7 +2329,7 @@ process.stdin.on('end', () => {
   }
 
   private persist(onShutdown = false) {
-    // A stopped manager's pending namer/terminal callbacks must not overwrite its successor's state.
+    // A stopped manager's pending callbacks must not overwrite its successor's state.
     if (this.closing && !onShutdown) return;
     const saved = [...this.workers.values()].map(({ info, hookToken, pty, bootBlocked, stopAt, interrupted, worktreeOwnership, launchPrompt, pendingFork }) => ({
       id: info.id,
@@ -2407,6 +2351,7 @@ process.stdin.on('end', () => {
       pendingFork,
       activity: info.activity,
       task: info.task,
+      taskSince: info.taskSince,
       pr: info.pr,
       lead: info.lead,
       team: info.team,
@@ -2460,6 +2405,7 @@ process.stdin.on('end', () => {
           forkedFrom: s.forkedFrom && typeof s.forkedFrom.workerId === 'string' && typeof s.forkedFrom.name === 'string' && typeof s.forkedFrom.sessionId === 'string' ? s.forkedFrom : undefined,
           activity: s.activity,
           task: validTask(s.task),
+          taskSince: typeof s.taskSince === 'number' && Number.isFinite(s.taskSince) && s.taskSince > 0 ? s.taskSince : undefined,
           pr: s.pr && typeof s.pr.number === 'number' && typeof s.pr.url === 'string' ? { number: s.pr.number, url: s.pr.url } : undefined,
           cols: 100,
           rows: 30,
@@ -2486,7 +2432,6 @@ process.stdin.on('end', () => {
         // Mid-turn as the office went down: cut off, unless its terminal is picked back up still
         // running (adopt). An office from before midTurn only said so for a terminal in the host.
         w.interrupted = typeof s.midTurn === 'boolean' ? s.midTurn : s.pty?.status === 'working' || s.pty?.status === 'needs_input';
-        if (info.prompt) w.prompts = [info.prompt.replace(/\s+/g, ' ').trim()];
         this.workers.set(info.id, w);
       }
       // A lead that didn't come back, or is a subagent itself, leads nobody.
@@ -2537,10 +2482,6 @@ function newWorker(info: WorkerInfo, hookToken = randomBytes(16).toString('hex')
     keyframeAt: 0,
     hookToken,
     failStreak: 0,
-    prompts: [],
-    tools: [],
-    toolsSinceNamed: 0,
-    namedAt: 0,
     taskEpoch: 0,
     subSessions: new Set(),
     lastTool: new Map(),
@@ -2575,7 +2516,9 @@ function validTeam(t: unknown): TeamBadge | undefined {
 
 function validTask(t: unknown): WorkerTask | undefined {
   const v = t as Partial<WorkerTask> | undefined;
-  return typeof v?.name === 'string' && typeof v.summary === 'string' ? { name: v.name, summary: v.summary } : undefined;
+  return typeof v?.name === 'string' && typeof v.summary === 'string'
+    ? { name: v.name, summary: v.summary, ...(v.generated === true ? { generated: true, ...(typeof v.textHash === 'string' && /^[a-f0-9]{64}$/.test(v.textHash) ? { textHash: v.textHash } : {}) } : {}) }
+    : undefined;
 }
 
 /** bin/<name>.js in the install this office runs from (src/server under tsx, dist/server/server built). */

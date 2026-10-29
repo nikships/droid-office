@@ -62,6 +62,9 @@ import { WhiteboardSkill } from './whiteboard-skill.js';
 import { officePrompt } from './prompts.js';
 import { Answers } from './answers.js';
 import { WorkerThreadReader } from './worker-thread.js';
+import { WorkerLabels } from './worker-labels.js';
+import { WorkerLabelModel } from './worker-label-model.js';
+import { labelSettings, WorkerLabelPreferences } from './worker-label-settings.js';
 import { FinderDispatch, finderCatalogue, handleFinder, publishFinder } from './finder.js';
 
 const MIME: Record<string, string> = {
@@ -484,6 +487,35 @@ export async function startServer(cfg: Config) {
     },
   });
   const cloud = factory.cloud!;
+  const labelPreferences = new WorkerLabelPreferences(cfg.dataDir);
+  let labelSettingsRevision = 0;
+  const labelThreads = new WorkerThreadReader(undefined, { sessions: 500, entries: 0, bytes: 0 }, true);
+  const labelModel = new WorkerLabelModel({ droid: () => agentPath, key: () => factory.office.key(), system: () => officePrompt(prompts, 'office.namer') });
+  const workerLabels = new WorkerLabels({
+    settings: () => labelPreferences.get(),
+    workers: () =>
+      [...floors.values()].flatMap((floor) =>
+        floor.workers.list().flatMap((worker) => {
+          const source = floor.workers.labelSession(worker.id);
+          if (!source) return [];
+          return [
+            {
+              ...source,
+              id: `${floor.id}:${worker.id}`,
+              status: worker.status,
+              task: worker.task,
+              apply: (task) => {
+                const current = floor.workers.labelSession(worker.id);
+                if (current && current.sessionId === source.sessionId && current.cwd === source.cwd && current.epoch === source.epoch && current.since === source.since) floor.workers.setTask(worker.id, task);
+              },
+            },
+          ];
+        }),
+      ),
+    read: (source) => labelThreads.readText(source),
+    generate: (input, settings, signal) => labelModel.generate(input, settings, signal),
+    changed: (state) => broadcast({ t: 'workerLabels', state }),
+  });
 
   // Droid installed and signed in, and the welcome a fresh office opens with (docs/subscriptions.md).
   const setup = mountSetup({
@@ -1372,6 +1404,7 @@ export async function startServer(cfg: Config) {
       freshMain: freshMain.state(),
       subagents: subagents.state(),
       hiddenModels: hiddenModels.state(),
+      workerLabels: workerLabels.state(),
       workerAnswerMultiSelect: true,
       whiteboardSkill: whiteboardSkill.state(),
       prompts: prompts.state(),
@@ -2233,6 +2266,33 @@ export async function startServer(cfg: Config) {
         done();
         break;
       }
+      case 'workerLabels.set': {
+        const next = labelSettings(msg.settings);
+        if (!next) return stop('Choose valid worker label settings.');
+        const revision = ++labelSettingsRevision;
+        const save = () => {
+          if (revision !== labelSettingsRevision) return stop('Worker label settings changed while verifying this selection. Try again.');
+          const error = labelPreferences.set(next);
+          if (error) return stop(error);
+          workerLabels.settingsChanged();
+          done();
+        };
+        if (!next.on) {
+          save();
+          break;
+        }
+        defer();
+        void droidModels.get().then(
+          (catalogue) => {
+            const model = catalogue.models.find((m) => m.id === next.model);
+            const efforts: readonly string[] = model?.labelReasoningEfforts ?? model?.supportedReasoningEfforts ?? [];
+            if (!model || !efforts.includes(next.effort)) return stop('Choose an available label model and one of its supported reasoning efforts.');
+            save();
+          },
+          () => stop('Could not verify the selected label model. Settings are unchanged.'),
+        );
+        break;
+      }
       case 'subagents.set': {
         const before = subagents.settings;
         const err = subagents.set(msg.settings, who);
@@ -2267,6 +2327,7 @@ export async function startServer(cfg: Config) {
         const was = !!prompts.state().custom[msg.id];
         const err = prompts.setPrompt(msg.id, msg.text === null ? null : str(msg.text, PROMPT_MAX + 1), who);
         if (err) return stop(err);
+        if (msg.id === 'office.namer') workerLabels.settingsChanged();
         const now = !!prompts.state().custom[msg.id];
         const { label } = PROMPTS[msg.id];
         if (now) toastAll(`📝 ${who} rewrote the “${label}” prompt`);
@@ -2528,9 +2589,11 @@ export async function startServer(cfg: Config) {
   );
   guestScanner.start();
   await hotReload.start();
+  workerLabels.start();
 
   /** With `keep` (a restart), workers' terminals keep running for the next office to pick up. */
   const shutdown = (keep = false) => {
+    const labelsStopped = workerLabels.stop();
     hostUpdates.dispose();
     finder?.stop();
     finderToken = undefined;
@@ -2550,6 +2613,7 @@ export async function startServer(cfg: Config) {
     for (const c of clients.values()) c.ws.close();
     server.close();
     hookServer.close();
+    return labelsStopped;
   };
 
   if (cfg.finderBridge) {

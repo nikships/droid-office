@@ -233,7 +233,7 @@ export function openTerminal(net: Net, workerId: string, onChanges?: () => void,
     sub.textContent = [
       w.guest && `outside the office · pid ${w.guest.pid}`,
       outsideNote(w),
-      w.title,
+      w.task?.name ?? w.title,
       w.forkedFrom && `Fork of ${w.forkedFrom.name}`,
       w.worktree && `🌿 ${w.worktree.branch}`,
       creditsNote(store.factory.sessions, w.sessionId),
