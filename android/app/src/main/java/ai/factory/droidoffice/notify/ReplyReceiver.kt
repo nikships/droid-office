@@ -2,11 +2,9 @@ package ai.factory.droidoffice.notify
 
 import ai.factory.droidoffice.core.Choice
 import ai.factory.droidoffice.core.Menu
+import ai.factory.droidoffice.core.NotificationTarget
+import ai.factory.droidoffice.core.QuestionAnswers
 import ai.factory.droidoffice.session.Answered
-import ai.factory.droidoffice.session.OfficeConnection
-import ai.factory.droidoffice.session.Phase
-import kotlinx.coroutines.flow.first
-import kotlinx.coroutines.withTimeoutOrNull
 
 import android.content.BroadcastReceiver
 import android.content.Context
@@ -20,59 +18,63 @@ import kotlinx.coroutines.launch
 class ReplyReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
         val text = RemoteInput.getResultsFromIntent(intent)?.getCharSequence(KEY_TEXT)?.toString()?.trim().orEmpty()
-        val workerId = intent.getStringExtra(EXTRA_WORKER)?.takeIf { ID.matches(it) } ?: return
-        val officeId = intent.getStringExtra(EXTRA_OFFICE).orEmpty()
+        val target = NotificationTarget.parse(
+            intent.getStringExtra(EXTRA_OFFICE), intent.getStringExtra(EXTRA_FLOOR), intent.getStringExtra(EXTRA_WORKER),
+        ) ?: return
+        val workerId = target.worker
         val name = intent.getStringExtra(EXTRA_NAME)?.take(40) ?: "the worker"
         val choice = intent.getIntExtra(EXTRA_CHOICE, 0)
         // The question the notification showed, to check against the screen before anything is typed.
-        val shown = intent.getStringExtra(EXTRA_MENU)?.let { encoded ->
+        val shown = if (intent.hasExtra(EXTRA_MENU)) intent.getStringExtra(EXTRA_MENU)?.takeIf { it.length <= 64 * 1024 }?.let { encoded ->
             runCatching { ai.factory.droidoffice.core.OfficeJson.decodeFromString(Menu.serializer(), encoded) }.getOrNull()
-        } ?: intent.getStringArrayListExtra(EXTRA_LABELS)?.takeIf { it.size >= 2 }?.let { labels ->
+        } else intent.getStringArrayListExtra(EXTRA_LABELS)?.takeIf { it.size >= 2 }?.let { labels ->
             Menu(intent.getStringExtra(EXTRA_QUESTION), labels.mapIndexed { i, l -> Choice(i + 1, l) }, null, intent.getBooleanExtra(EXTRA_FREE_TEXT, false))
         }
-        if (text.isEmpty() && choice == 0) return
+        val hadMenu = intent.hasExtra(EXTRA_MENU) || intent.hasExtra(EXTRA_LABELS)
+        if (choice < 0 || (text.isEmpty() && choice == 0)) return
         val graph = context.graph
         val pending = goAsync()
         graph.scope.launch {
+            val hold = "notification-${System.nanoTime()}"
+            var held = false
             try {
-                // A reply only goes to the office it came from, never to one switched to since.
-                val here = graph.store.snapshot.value.active?.id == officeId
+                // Never wait for a reconnect or floor change and then send an old notification action.
+                val connection = graph.connection
+                val d = connection.data.value
+                val here = target.current(
+                    graph.store.snapshot.value.active?.id, d.officeId, d.floorId,
+                    d.synced && connection.connected && connection.liveEpoch != null,
+                    d.workers[workerId]?.isGuest == false,
+                )
+                if (here) {
+                    connection.hold(hold)
+                    held = true
+                }
                 if (shown == null) {
-                    val ok = here && graph.connection.sendWhenConnected(ClientMsg.prompt(workerId, text), timeoutMs = 8_000)
-                    graph.alerts.replied(workerId, name, text, ok)
+                    val ok = here && !hadMenu && choice == 0 && connection.send(ClientMsg.prompt(workerId, text))
+                    graph.alerts.replied(target, name, text, ok)
                     return@launch
                 }
                 val digit = if (choice > 0) choice else text.toIntOrNull()?.takeIf { n -> shown.choices.any { it.number == n } }
-                val label = digit?.let { d -> "$d · ${shown.choices.first { it.number == d }.label}" } ?: "“$text”"
-                val result = if (!here) Answered.Unreachable else withOffice(graph.connection, workerId) {
-                    if (digit != null) graph.answers.choose(workerId, shown, digit) else graph.answers.type(workerId, shown, text)
+                val label = digit?.let { n -> shown.choices.firstOrNull { it.number == n }?.let { "$n · ${it.label}" } } ?: "“$text”"
+                val result = when {
+                    !here -> Answered.Unreachable
+                    !QuestionAnswers.valid(shown, digit, null, text.takeIf { digit == null }) -> Answered.NeedsThread
+                    digit != null -> graph.answers.choose(workerId, shown, digit)
+                    else -> graph.answers.type(workerId, shown, text)
                 }
-                graph.alerts.answered(workerId, name, label, result)
+                graph.alerts.answered(target, name, label, result)
             } finally {
+                if (held) graph.connection.release(hold)
                 pending.finish()
             }
-        }
-    }
-
-    /** Holds the connection open until the office is in and the worker's screen has come, then runs [block]. */
-    private suspend fun withOffice(connection: OfficeConnection, workerId: String, block: suspend () -> Answered): Answered {
-        val tag = "answer-$workerId"
-        connection.hold(tag)
-        try {
-            withTimeoutOrNull(10_000) {
-                connection.link.first { it.phase == Phase.Connected }
-                connection.data.first { it.synced }
-                connection.screens.first { it.containsKey(workerId) }
-            } ?: return Answered.Unreachable
-            return block()
-        } finally {
-            connection.release(tag)
         }
     }
 
     companion object {
         const val KEY_TEXT = "reply"
         const val EXTRA_OFFICE = "office"
+        const val EXTRA_FLOOR = "floor"
         const val EXTRA_WORKER = "worker"
         const val EXTRA_NAME = "name"
         const val EXTRA_CHOICE = "choice"
@@ -80,6 +82,5 @@ class ReplyReceiver : BroadcastReceiver() {
         const val EXTRA_LABELS = "labels"
         const val EXTRA_FREE_TEXT = "free_text"
         const val EXTRA_MENU = "menu"
-        private val ID = Regex("^[A-Za-z0-9_\\-:.]{1,64}$")
     }
 }

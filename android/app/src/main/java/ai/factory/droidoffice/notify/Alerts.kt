@@ -3,6 +3,7 @@ package ai.factory.droidoffice.notify
 import ai.factory.droidoffice.core.Asks
 import ai.factory.droidoffice.core.Choice
 import ai.factory.droidoffice.core.Menu
+import ai.factory.droidoffice.core.NotificationTarget
 import ai.factory.droidoffice.session.Answered
 
 import android.Manifest
@@ -13,6 +14,7 @@ import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.net.Uri
 import android.os.Build
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
@@ -58,7 +60,7 @@ class Alerts(
     private val acked = HashMap<String, Boolean>()
     private val floorWaiting = HashMap<String, Int>()
     /** What each worker's notification says, so it can be brought up to date without buzzing again. */
-    private val shown = HashMap<String, String>()
+    private val shown = HashMap<NotificationTarget, String>()
 
     init {
         createChannels()
@@ -67,9 +69,10 @@ class Alerts(
         scope.launch {
             connection.screens.collect {
                 val d = connection.data.value
-                for (id in shown.keys.toList()) {
-                    val w = d.workers[id] ?: continue
-                    if (w.state == WorkerStatus.NeedsInput && shown[id] != signature(w)) alert(w, d, update = true)
+                for (target in shown.keys.toList()) {
+                    if (target.office != d.officeId || target.floor != d.floorId) continue
+                    val w = d.workers[target.worker] ?: continue
+                    if (w.state == WorkerStatus.NeedsInput && shown[target] != signature(w)) alert(w, d, update = true)
                 }
             }
         }
@@ -89,6 +92,7 @@ class Alerts(
         }
         val settings = store.snapshot.value.settings
         for (w in d.workers.values) {
+            val target = NotificationTarget.parse(d.officeId, d.floorId, w.id)
             val prev = last.put(w.id, w.state)
             val wasAcked = acked.put(w.id, w.acked)
             if (prev == null) continue
@@ -102,7 +106,7 @@ class Alerts(
             } else if (w.acked && wasAcked == false) {
                 // Someone opened its terminal (here or at the laptop): the alert is answered.
                 cancel(w.id)
-            } else if (w.id in shown && shown[w.id] != signature(w)) {
+            } else if (target != null && target in shown && shown[target] != signature(w)) {
                 // The office fills in what it's asking after the state flips: say it, quietly.
                 alert(w, d, update = true)
             }
@@ -130,9 +134,10 @@ class Alerts(
     }
 
     private fun alert(w: WorkerInfo, d: OfficeData, update: Boolean = false) {
+        val target = NotificationTarget.parse(d.officeId, d.floorId, w.id) ?: return
         val needs = w.state == WorkerStatus.NeedsInput
-        if (update && !showing(notificationId(w.id))) {
-            shown.remove(w.id)
+        if (update && !showing(notificationId(w.id), target.key)) {
+            shown.remove(target)
             return
         }
         if (visibility.foreground.value && !update) {
@@ -160,14 +165,14 @@ class Alerts(
             .setGroup("office-$officeId")
             // The system's guesses ("Open link" for a file name in a prompt) only get in the way of a reply.
             .setAllowSystemGeneratedContextualActions(false)
-            .setContentIntent(openWorker(officeId, w.id, d.floorId))
+            .setContentIntent(openWorker(target))
         if (!w.isGuest && menu?.multiSelect != true) {
             // Up to three buttons: its first two choices, then Reply, which takes a digit or your own answer.
-            menu?.choices?.take(2)?.forEach { c -> builder.addAction(choiceAction(officeId, w, menu, c)) }
-            builder.addAction(replyAction(officeId, w, menu))
+            menu?.choices?.take(2)?.forEach { c -> builder.addAction(choiceAction(target, w, menu, c)) }
+            builder.addAction(replyAction(target, w, menu))
         }
-        post(notificationId(w.id), builder.build())
-        shown[w.id] = signature(w)
+        post(notificationId(w.id), builder.build(), target.key)
+        shown[target] = signature(w)
     }
 
     private fun floorAlert(floorId: String, floorName: String, waiting: Int) {
@@ -191,9 +196,11 @@ class Alerts(
         post(notificationId("floor:$floorId"), n)
     }
 
-    private fun replyIntent(officeId: String, w: WorkerInfo, menu: Menu?) = Intent(context, ReplyReceiver::class.java).apply {
-        putExtra(ReplyReceiver.EXTRA_OFFICE, officeId)
-        putExtra(ReplyReceiver.EXTRA_WORKER, w.id)
+    private fun replyIntent(target: NotificationTarget, w: WorkerInfo, menu: Menu?) = Intent(context, ReplyReceiver::class.java).apply {
+        data = Uri.parse("droidoffice://notification/${target.key}/reply")
+        putExtra(ReplyReceiver.EXTRA_OFFICE, target.office)
+        putExtra(ReplyReceiver.EXTRA_FLOOR, target.floor)
+        putExtra(ReplyReceiver.EXTRA_WORKER, target.worker)
         putExtra(ReplyReceiver.EXTRA_NAME, w.name)
         if (menu != null) {
             putExtra(ReplyReceiver.EXTRA_MENU, ai.factory.droidoffice.core.OfficeJson.encodeToString(Menu.serializer(), menu))
@@ -204,8 +211,10 @@ class Alerts(
     }
 
     /** "1 · Wait for the drawer": answers with that choice, once the screen still shows the question. */
-    private fun choiceAction(officeId: String, w: WorkerInfo, menu: Menu, c: Choice): NotificationCompat.Action {
-        val intent = replyIntent(officeId, w, menu).putExtra(ReplyReceiver.EXTRA_CHOICE, c.number)
+    private fun choiceAction(target: NotificationTarget, w: WorkerInfo, menu: Menu, c: Choice): NotificationCompat.Action {
+        val intent = replyIntent(target, w, menu).putExtra(ReplyReceiver.EXTRA_CHOICE, c.number).apply {
+            data = Uri.parse("droidoffice://notification/${target.key}/choice/${c.number}")
+        }
         val pending = PendingIntent.getBroadcast(context, notificationId(w.id) + c.number, intent, PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
         return NotificationCompat.Action.Builder(R.drawable.ic_bolt, Asks.buttonLabel(c), pending)
             .setSemanticAction(NotificationCompat.Action.SEMANTIC_ACTION_NONE)
@@ -213,9 +222,9 @@ class Alerts(
             .build()
     }
 
-    private fun replyAction(officeId: String, w: WorkerInfo, menu: Menu?): NotificationCompat.Action {
+    private fun replyAction(target: NotificationTarget, w: WorkerInfo, menu: Menu?): NotificationCompat.Action {
         val remote = RemoteInput.Builder(ReplyReceiver.KEY_TEXT).setLabel(if (menu != null) "A number, or your own answer" else "Reply to ${w.name}").build()
-        val intent = replyIntent(officeId, w, menu)
+        val intent = replyIntent(target, w, menu)
         // Mutable so the system can attach the typed reply; the explicit component keeps it ours.
         val pending = PendingIntent.getBroadcast(context, notificationId(w.id), intent, PendingIntent.FLAG_MUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
         return NotificationCompat.Action.Builder(R.drawable.ic_bolt, "Reply", pending)
@@ -225,20 +234,21 @@ class Alerts(
             .build()
     }
 
-    private fun openWorker(officeId: String, workerId: String, floorId: String?): PendingIntent {
+    private fun openWorker(target: NotificationTarget): PendingIntent {
         val intent = Intent(context, MainActivity::class.java).apply {
             action = MainActivity.ACTION_OPEN_WORKER
-            putExtra(MainActivity.EXTRA_OFFICE, officeId)
-            putExtra(MainActivity.EXTRA_WORKER, workerId)
-            floorId?.let { putExtra(MainActivity.EXTRA_FLOOR, it) }
+            data = Uri.parse("droidoffice://notification/${target.key}/open")
+            putExtra(MainActivity.EXTRA_OFFICE, target.office)
+            putExtra(MainActivity.EXTRA_WORKER, target.worker)
+            putExtra(MainActivity.EXTRA_FLOOR, target.floor)
             flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP
         }
-        return PendingIntent.getActivity(context, notificationId(workerId), intent, PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
+        return PendingIntent.getActivity(context, notificationId(target.worker), intent, PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
     }
 
     /** Shown after a direct reply went out, then cleared. */
-    fun replied(workerId: String, name: String, text: String, ok: Boolean) {
-        shown.remove(workerId)
+    fun replied(target: NotificationTarget, name: String, text: String, ok: Boolean) {
+        shown.remove(target)
         if (!canNotify()) return
         val n = NotificationCompat.Builder(context, CHANNEL_INPUT)
             .setSmallIcon(R.drawable.ic_bolt)
@@ -247,14 +257,14 @@ class Alerts(
             .setContentText(if (ok) text else "Your reply to $name wasn't sent. Open the app to try again.")
             .setSilent(true)
             .setTimeoutAfter(if (ok) 4_000 else 30_000)
-            .setContentIntent(openWorker(connection.data.value.officeId.orEmpty(), workerId, connection.data.value.floorId))
+            .setContentIntent(openWorker(target))
             .build()
-        post(notificationId(workerId), n)
+        post(notificationId(target.worker), n, target.key)
     }
 
     /** Shown after a choice from the notification: sent, or why it wasn't. */
-    fun answered(workerId: String, name: String, label: String, result: Answered) {
-        shown.remove(workerId)
+    fun answered(target: NotificationTarget, name: String, label: String, result: Answered) {
+        shown.remove(target)
         if (!canNotify()) return
         val (title, text) = when (result) {
             Answered.Sent -> "Sent to $name" to label
@@ -271,23 +281,25 @@ class Alerts(
             .setContentText(text)
             .setSilent(true)
             .setTimeoutAfter(if (result == Answered.Sent) 4_000 else 30_000)
-            .setContentIntent(openWorker(connection.data.value.officeId.orEmpty(), workerId, connection.data.value.floorId))
+            .setContentIntent(openWorker(target))
             .build()
-        post(notificationId(workerId), n)
+        post(notificationId(target.worker), n, target.key)
     }
 
     fun cancel(workerId: String) {
-        shown.remove(workerId)
-        manager.cancel(notificationId(workerId))
+        val d = connection.data.value
+        val target = NotificationTarget.parse(d.officeId, d.floorId, workerId) ?: return
+        shown.remove(target)
+        manager.cancel(target.key, notificationId(workerId))
     }
 
-    private fun showing(id: Int) = runCatching { context.getSystemService(NotificationManager::class.java).activeNotifications.any { it.id == id } }.getOrDefault(false)
+    private fun showing(id: Int, tag: String) = runCatching { context.getSystemService(NotificationManager::class.java).activeNotifications.any { it.id == id && it.tag == tag } }.getOrDefault(false)
 
     /** The owner can turn notifications off (or take the permission back) at any moment, so a post may still be refused. */
-    private fun post(id: Int, n: Notification) {
+    private fun post(id: Int, n: Notification, tag: String? = null) {
         if (!canNotify()) return
         try {
-            manager.notify(id, n)
+            manager.notify(tag, id, n)
         } catch (_: SecurityException) {
         }
     }
