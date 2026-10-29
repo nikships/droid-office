@@ -8,6 +8,7 @@ import androidx.lifecycle.DefaultLifecycleObserver
 import androidx.lifecycle.LifecycleOwner
 import androidx.lifecycle.ProcessLifecycleOwner
 import ai.factory.droidoffice.data.OfficeStore
+import ai.factory.droidoffice.core.StayConnectedPolicy
 import ai.factory.droidoffice.core.UpdateController
 import ai.factory.droidoffice.net.NetworkMonitor
 import ai.factory.droidoffice.net.OfficeApi
@@ -31,6 +32,9 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.launch
 
 class DroidOfficeApp : Application(), ReactApplication {
     lateinit var graph: AppGraph
@@ -90,7 +94,7 @@ class AppGraph(val app: Application) {
                 visibility.set(true)
                 connection.hold(UI_HOLD)
                 updates.check()
-                if (store.snapshot.value.settings.stayConnected) StayConnectedService.start(app)
+                syncStayConnected()
             }
 
             override fun onStop(owner: LifecycleOwner) {
@@ -98,6 +102,22 @@ class AppGraph(val app: Application) {
                 connection.release(UI_HOLD)
             }
         })
+        scope.launch {
+            // onStart may run before DataStore loads, and settings can change without another onStart.
+            store.snapshot.map { it.loaded to it.settings.stayConnected }.distinctUntilChanged().collect {
+                syncStayConnected()
+            }
+        }
+    }
+
+    private fun syncStayConnected() {
+        // Read current values at dispatch, rather than act on a queued foreground/settings snapshot.
+        val snapshot = store.snapshot.value
+        when (StayConnectedPolicy.action(snapshot.loaded, snapshot.settings.stayConnected, visibility.foreground.value)) {
+            StayConnectedPolicy.Action.Start -> StayConnectedService.start(app)
+            StayConnectedPolicy.Action.Stop -> StayConnectedService.stop(app)
+            StayConnectedPolicy.Action.Keep -> Unit
+        }
     }
 
     private companion object {

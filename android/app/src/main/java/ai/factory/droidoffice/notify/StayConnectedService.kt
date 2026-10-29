@@ -37,6 +37,12 @@ class StayConnectedService : LifecycleService() {
             }
             return START_NOT_STICKY
         }
+        val snapshot = graph.store.snapshot.value
+        // A foreground start can reach the service after the owner has already switched it off.
+        if (snapshot.loaded && !snapshot.settings.stayConnected) {
+            stopSelf()
+            return START_NOT_STICKY
+        }
         ServiceCompat.startForeground(
             this,
             NOTIFICATION_ID,
