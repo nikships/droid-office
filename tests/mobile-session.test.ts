@@ -1061,6 +1061,89 @@ test('answer selection and text only edit a draft; explicit Submit sends once an
   assert.equal(host.requests.length, 1);
 });
 
+test('rapid native text and radio callbacks from one render edit the current draft without losing characters', async (t) => {
+  const { session, host, draft } = await questionRig(t);
+  const captured = draft();
+  const text = 'ANDROID_UNSENT_ANSWER';
+  for (let length = 1; length <= text.length; length++) {
+    session.writeAnswer(captured, text.slice(0, length));
+    assert.equal(draft().text, text.slice(0, length));
+    assert.equal(draft().token, captured.token, 'edits retain this open workspace’s token');
+  }
+  session.selectAnswer(captured, 1);
+  session.selectAnswer(captured, 2);
+  assert.deepEqual(draft().choices, [2]);
+  assert.equal(draft().text, '');
+  session.writeAnswer(captured, text);
+  assert.deepEqual(draft().choices, []);
+  assert.equal(draft().text, text);
+  assert.equal(host.requests.length, 0, 'native changes are still edits, never submissions');
+});
+
+test('rapid checkbox callbacks toggle the latest selection and retain the latest custom text', async (t) => {
+  const { session, host, draft } = await questionRig(t, true);
+  const captured = draft();
+  session.selectAnswer(captured, 1);
+  session.selectAnswer(captured, 2);
+  assert.deepEqual(draft().choices, [1]);
+  session.writeAnswer(captured, 'A');
+  session.writeAnswer(captured, 'ANDROID_UNSENT_ANSWER');
+  session.selectAnswer(captured, 1);
+  assert.deepEqual(draft().choices, []);
+  session.selectAnswer(captured, 2);
+  session.selectAnswer(captured, 1);
+  assert.deepEqual(draft().choices, [2, 1]);
+  assert.equal(draft().text, 'ANDROID_UNSENT_ANSWER');
+  assert.equal(host.requests.length, 0);
+});
+
+test('closed, reopened and explicitly reviewed workspaces reject old edit callbacks even with identical token values', async (t) => {
+  const { session, host, draft } = await questionRig(t);
+  const first = draft();
+  session.writeAnswer(first, 'Keep this answer');
+  session.closeQuestion();
+  session.writeAnswer(first, 'Closed callback');
+  session.selectAnswer(first, 1);
+  assert.equal(session.snapshot().question, undefined);
+  assert.equal(session.openQuestion('w1'), true);
+  const reopened = draft();
+  assert.equal(reopened.text, 'Keep this answer');
+  assert.deepEqual(reopened.token, first.token, 'the office, floor and arrival did not change');
+  assert.notEqual(reopened.token, first.token, 'the open workspace occurrence did change');
+  session.writeAnswer(first, 'Old workspace callback');
+  session.selectAnswer(first, 2);
+  assert.equal(draft(), reopened);
+  session.writeAnswer(reopened, 'Current workspace answer');
+  session.writeAnswer(reopened, 'Latest workspace answer');
+  assert.equal(draft().text, 'Latest workspace answer');
+  assert.equal(session.openQuestion('w1', true), true);
+  const reviewed = draft();
+  assert.notEqual(reviewed.token, reopened.token);
+  session.writeAnswer(reopened, 'Before review callback');
+  session.selectAnswer(reopened, 3);
+  assert.equal(draft(), reviewed);
+  assert.equal(draft().text, 'Latest workspace answer');
+  assert.equal(host.requests.length, 0);
+});
+
+test('same-occurrence edit callbacks cannot change an answer after Submit or an unconfirmed receipt', async (t) => {
+  const { session, host, draft } = await questionRig(t);
+  const captured = draft();
+  session.writeAnswer(captured, 'Submitted answer');
+  const sending = session.answer(draft());
+  const pending = draft();
+  session.writeAnswer(captured, 'While sending');
+  session.selectAnswer(captured, 1);
+  assert.equal(draft(), pending);
+  host.requests[0].resolve({ ok: false });
+  await sending;
+  const uncertain = draft();
+  session.writeAnswer(captured, 'After unconfirmed receipt');
+  session.selectAnswer(captured, 2);
+  assert.equal(draft(), uncertain);
+  assert.equal(draft().text, 'Submitted answer');
+});
+
 test('checkbox Submit sends the complete selection plus optional text, without terminal keystrokes', async (t) => {
   const { session, host, draft } = await questionRig(t, true);
   assert.deepEqual(draft().choices, [2], 'initial checked state is the CLI’s');
@@ -1119,6 +1202,10 @@ test('floor switches preserve answer drafts without accepting old arrival tokens
   session.openQuestion('w1');
   assert.equal(draft().text, 'Unsent on floor a');
   assert.notEqual(draft().token.arrival, old.token.arrival);
+  const returned = draft();
+  session.writeAnswer(old, 'Old floor callback');
+  session.selectAnswer(old, 1);
+  assert.equal(draft(), returned);
   assert.equal(await session.answer(old), STALE);
   session.dispose();
   assert.ok(!JSON.stringify(host.saved.get('o1')).includes('Unsent on floor'));
@@ -1142,6 +1229,10 @@ test('actual connection loss clears every floor’s answers and a late receipt c
   session.openQuestion('w1');
   assert.equal(draft().text, '');
   session.writeAnswer(draft(), 'New b');
+  const reconnected = draft();
+  session.writeAnswer(old, 'Old socket callback');
+  session.selectAnswer(old, 1);
+  assert.equal(draft(), reconnected);
   host.requests[0].resolve({ ok: true });
   await sending;
   assert.equal(draft().text, 'New b');
@@ -1177,6 +1268,9 @@ test('question, waitingSince, worker session and status changes each block stale
     const old = draft();
     change();
     assert.equal(session.questionCurrent(old), false);
+    session.writeAnswer(old, 'Old question callback');
+    session.selectAnswer(old, 2);
+    assert.equal(draft(), old, 'edits still require the current question, wait, session and status');
     assert.equal(await session.answer(old), STALE);
   }
   assert.equal(host.requests.length, 0);
@@ -1197,6 +1291,10 @@ test('office replacement clears answers and rejects even an identical worker/flo
   session.open('w1');
   session.openQuestion('w1');
   assert.equal(draft().text, '');
+  const replacement = draft();
+  session.writeAnswer(old, 'Old office callback');
+  session.selectAnswer(old, 1);
+  assert.equal(draft(), replacement);
   assert.equal(await session.answer(old), STALE);
   assert.equal(host.requests.length, 0);
 });

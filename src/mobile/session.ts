@@ -1014,12 +1014,20 @@ export class Session {
     if (this.state.question?.workerId === draft.workerId && this.state.question.token.floor === draft.token.floor) this.set({ question: draft });
   }
 
+  /** Native input may emit several changes before React commits. Only this open occurrence may edit its latest draft. */
+  private editableQuestion(draft: QuestionDraft): QuestionDraft | undefined {
+    const current = this.state.question;
+    if (current?.token === draft.token && current.state === 'idle' && this.questionCurrent(current) && this.questionSupported(current)) return current;
+  }
+
   selectAnswer(draft: QuestionDraft, choice: number): void {
-    if (draft.state === 'idle' && this.questionCurrent(draft) && this.questionSupported(draft)) this.saveQuestion(selectQuestionChoice(draft, choice));
+    const current = this.editableQuestion(draft);
+    if (current) this.saveQuestion(selectQuestionChoice(current, choice));
   }
 
   writeAnswer(draft: QuestionDraft, text: string): void {
-    if (draft.state === 'idle' && this.questionCurrent(draft) && this.questionSupported(draft)) this.saveQuestion(writeQuestionText(draft, text));
+    const current = this.editableQuestion(draft);
+    if (current) this.saveQuestion(writeQuestionText(current, text));
   }
 
   /** Only Submit calls this. Nothing is queued, replayed or typed into an unsupported dialog. */
