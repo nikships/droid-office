@@ -1,5 +1,6 @@
 import type { ClientMsg, WorkerInfo } from '../shared/protocol';
-import { canAnswer, menuTakesText, readMenu, sameMenu } from '../shared/asks';
+import { canAnswer, readMenu, sameMenu, type Menu } from '../shared/asks';
+import { questionPresentation } from '../shared/ask-question';
 import { isAsleep, isBusy } from '../shared/status';
 import { statusWord } from '../shared/guests';
 import { cardsNewestFirst, cardChanged, OWNER } from '../shared/whiteboard';
@@ -39,10 +40,12 @@ import type { TerminalPane } from './ui/terminal';
 import { parseWorkerLink } from './worker-link';
 import { DashboardWorkerLink } from './dashboard-worker-link';
 import { acknowledgeDraft } from './draft-ack';
-import { DashboardQuestion } from './dashboard-question';
+import { DashboardQuestion, DashboardQuestionDrafts } from './dashboard-question';
+import { openQuestionWorkspace, type QuestionReply, type QuestionState } from './ui/question-workspace';
 import { retainFocus } from './dashboard-focus';
 
 const drafts = new Map<string, string>();
+const questionDrafts = new DashboardQuestionDrafts();
 try {
   clearBrowserDrafts(localStorage);
 } catch {
@@ -305,6 +308,7 @@ net.onConnectionLost(() => {
   disposePanes();
   closeAllModals();
   drafts.clear();
+  questionDrafts.clear();
   try {
     clearBrowserDrafts(localStorage);
   } catch {
@@ -875,14 +879,13 @@ class WorkspacePane {
   private threadRevision = 0;
   private menuKey = '';
   private answerState = new DashboardQuestion();
-  private questionDraft = '';
+  private answerWorkspace?: ReturnType<typeof openQuestionWorkspace>;
   private epoch: number;
   constructor(
     public worker: WorkerInfo,
     readonly floor: string,
   ) {
     this.epoch = workspace.epoch;
-    this.questionDraft = read(draftKey(floor, `${worker.id}:answer`));
     const close = h(
       'button.btn.sm',
       {
@@ -1011,6 +1014,9 @@ class WorkspacePane {
           },
           send: (msg) => (this.valid() ? action(msg, worker.id, this.floor) : Promise.resolve('The connection or floor changed. Nothing was sent.')),
           screen: () => lines(worker.id),
+          onEntries: () => {
+            if (this.valid() && revision === this.threadRevision) this.paintQuestion();
+          },
           team: () => (this.valid() ? [...store.workers.values()] : []),
           openWorker: (id) => {
             if (this.valid()) select(id);
@@ -1098,58 +1104,105 @@ class WorkspacePane {
     const screen = lines(w.id);
     const menu = screen && canAnswer(w, screen) ? readMenu(screen) : undefined;
     const state = this.answerState;
-    state.sync(menu, w.waitingSince);
+    const previousRevision = state.revision;
+    state.sync(menu, w.waitingSince, w.sessionId);
+    if (previousRevision !== state.revision) this.answerWorkspace?.close();
     const revision = state.revision;
-    const key = JSON.stringify([menu, w.status, w.waitingSince, this.valid(), busy.has(w.id), state.answering, state.answered]);
+    const entries = this.thread?.entries() ?? [];
+    const display = menu && questionPresentation(menu, entries);
+    const supported = !menu?.multiSelect || store.workerAnswerMultiSelect;
+    const enabled = this.valid() && supported && !busy.has(w.id) && !state.answering && !state.answered;
+    const questionState: QuestionState | undefined = menu && { menu, entries, enabled, supported, current: true, sending: state.answering, answered: state.answered, connected: this.valid() };
+    if (questionState) this.answerWorkspace?.update(questionState);
+    const key = JSON.stringify([menu, display, supported, w.status, w.waitingSince, this.valid(), busy.has(w.id), state.answering, state.answered]);
     if (key === this.menuKey) return;
     this.menuKey = key;
     const restoreFocus = retainFocus(this.question);
     this.question.hidden = w.status !== 'needs_input';
-    if (this.question.hidden) return;
+    const draftId = draftKey(this.floor, `${w.id}:answer`);
+    if (this.question.hidden) {
+      questionDrafts.forget(draftId);
+      this.answerWorkspace?.close();
+      return;
+    }
     if (!menu) {
       this.question.replaceChildren(h('p.note', {}, 'This question cannot be answered safely here. Use Raw TTY, or the worker’s own terminal.'));
       return;
     }
-    const text = h('textarea.input', {
-      rows: 2,
-      'data-focus-key': 'answer-text',
-      'aria-label': 'Typed answer',
-      oninput: () => {
-        this.questionDraft = text.value;
-        remember(draftKey(this.floor, `${w.id}:answer`), text.value);
-      },
-    });
-    text.value = this.questionDraft;
-    const enabled = this.valid() && !busy.has(w.id) && !state.answering && !state.answered;
-    text.disabled = !enabled;
-    const reply = async (value: { choice?: number; text?: string }) => {
+    const draft = questionDrafts.get(draftId, menu, w.waitingSince, w.sessionId);
+    const reply = async (value: QuestionReply, answerMenu: Menu) => {
       if (state.answering || state.answered || busy.has(w.id)) return;
       const current = lines(w.id);
-      if (!this.valid() || revision !== state.revision || w.waitingSince !== this.worker.waitingSince || !current || !canAnswer(this.worker, current) || !sameMenu(menu, readMenu(current)))
-        return toast('The question changed. Review it before answering.', 'warn');
+      if (
+        !this.valid() ||
+        (answerMenu.multiSelect && !store.workerAnswerMultiSelect) ||
+        revision !== state.revision ||
+        w.sessionId !== this.worker.sessionId ||
+        w.waitingSince !== this.worker.waitingSince ||
+        !current ||
+        !canAnswer(this.worker, current) ||
+        !sameMenu(answerMenu, menu) ||
+        !sameMenu(answerMenu, readMenu(current))
+      ) {
+        toast('The question changed. Review it before answering.', 'warn');
+        return;
+      }
       state.answering = true;
       this.paintQuestion();
-      const error = await action({ t: 'worker.answer', workerId: w.id, menu, ...value }, w.id, this.floor);
+      const error = await action({ t: 'worker.answer', workerId: w.id, menu: answerMenu, ...value }, w.id, this.floor);
       if (!this.valid() || revision !== state.revision) return;
       state.answering = false;
       state.answered = !error;
       if (error) warn(error);
       else {
-        this.questionDraft = '';
-        remember(draftKey(this.floor, `${w.id}:answer`), '');
+        draft.text = '';
+        draft.choices = undefined;
       }
       this.paintQuestion();
     };
     this.question.replaceChildren(
-      h('h3', {}, menu.question ?? 'Choose an answer'),
-      ...menu.choices.map((c) => h('button.btn', { type: 'button', 'data-focus-key': `choice:${c.number}`, disabled: !enabled, onclick: () => void reply({ choice: c.number }) }, `${c.number}. ${c.label}`)),
-      ...(menuTakesText(menu) ? [text, h('button.btn', { type: 'button', 'data-focus-key': 'send-answer', disabled: !enabled, onclick: () => void reply({ text: text.value }) }, 'Send answer')] : []),
+      h('h3.dash-question-preview', {}, display?.question ?? menu.question ?? 'Choose an answer'),
+      h('p.dash-question-summary', {}, `${display?.position ? `Question ${display.position} of ${display.total} · ` : ''}${menu.multiSelect ? 'Select all that apply' : 'Select one answer'} · ${menu.choices.length} options`),
+      h(
+        'button.btn.accent',
+        {
+          type: 'button',
+          'data-focus-key': 'answer-workspace',
+          disabled: !this.valid() || state.answering,
+          onclick: () => {
+            if (this.answerWorkspace || !questionState || !this.valid()) return;
+            this.focusPane();
+            this.answerWorkspace = openQuestionWorkspace({
+              name: w.name,
+              state: questionState,
+              draft,
+              onDraft: () => undefined,
+              reply,
+              review: () => {
+                this.menuKey = '';
+                this.paintQuestion();
+              },
+              raw: () => {
+                if (!this.valid()) return;
+                dispatch({ type: 'view', floor: this.floor, workerId: w.id, view: 'terminal' });
+                paintWorkspace();
+              },
+              onClose: () => {
+                this.answerWorkspace = undefined;
+              },
+            });
+          },
+        },
+        state.answered ? 'View answer status' : 'Answer questions',
+      ),
+      ...(!supported ? [h('p.note.warn', {}, 'This office cannot safely submit checkbox answers. Use Raw TTY or update the host.')] : []),
       ...(state.answering || state.answered ? [h('p.note', {}, state.answering ? 'Sending answer…' : 'Answer sent. Waiting for worker.')] : []),
     );
     restoreFocus();
   }
   dispose() {
     this.disposed = true;
+    this.answerWorkspace?.close();
     this.thread?.dispose();
     this.raw?.dispose();
     this.element.remove();
