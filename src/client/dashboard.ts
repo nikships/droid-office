@@ -1261,104 +1261,69 @@ function accessDialog() {
   const el = h('div.modal', { role: 'dialog', 'aria-label': 'Browser access' }, windowHeader('Browser access', officeName), body, footer);
   const modal = openModal(el);
 
-  if (where === 'local') {
-    body.append(h('p.note.good', {}, 'Nothing to pair here. To open the office in a browser on another computer, use the links in ', h('b', {}, '⚙️ Settings → Phone & web → Web companion'), ' on this computer.'));
-    footer.append(h('span.grow'), h('button.btn.primary', { type: 'button', onclick: () => modal.close() }, 'Done'));
-  } else if (credential) {
-    const saved = credential;
-    body.append(
-      h(
-        'dl.dash-meta',
-        {},
-        h('dt', {}, 'Paired as'),
-        h('dd', {}, saved.device.name),
-        h('dt', {}, 'At'),
-        h('dd', {}, location.origin),
-        h('dt', {}, 'Kept'),
-        h('dd', {}, persisted ? 'In this browser, across restarts' : 'For this page only: this browser blocks storage'),
-      ),
-      h('p.field-hint', {}, 'Forget only removes the saved access from this browser; the office still lists it until you unpair it. Unpair removes it on the office too and closes every tab using it.'),
-      note,
-    );
-    const revoke = h('button.btn.danger', { type: 'button' }, 'Unpair…');
-    revoke.addEventListener('click', () =>
-      confirmDialog('Unpair this browser?', 'Its saved access stops working on the office, and every tab using it disconnects. Pairing again needs a fresh link from the office.', 'Unpair', () => {
-        revoke.disabled = true;
-        void fetch(withToken('/api/mobile/pair'), { method: 'DELETE' })
-          .then((res) => {
-            if (!res.ok) throw new Error('The office didn’t confirm. This browser is still paired.');
-            forgetHere('This browser is unpaired, on the office and here.');
-          })
-          .catch((error: Error) => {
-            fail(error.message);
-            revoke.disabled = false;
-          });
-      }),
-    );
-    footer.append(
-      h('span.grow', {}, revoke),
-      h('button.btn', { type: 'button', onclick: () => forgetHere('Saved access forgotten in this browser. The office still lists it until you unpair it there.') }, 'Forget here'),
-      h('button.btn.primary', { type: 'button', onclick: () => modal.close() }, 'Done'),
-    );
-  } else if (authorized) {
-    const deviceName = h('input.input', { value: defaultBrowserName(), maxlength: 64, 'aria-label': 'Name this browser' });
-    const pair = h('button.btn.accent', { type: 'button', disabled: pairing }, icon('key', 14), 'Pair this browser');
-    body.append(
-      h('p', {}, 'Pairing keeps this browser’s own access at ', h('code', {}, location.origin), ', so a bookmark opens the office after it restarts. It’s you, not a new account, and you can unpair it any time.'),
-      h('div.field', {}, h('label', {}, 'Name'), deviceName, h('p.field-hint', {}, 'How the office lists it under Paired devices.')),
-      h(
-        'p.field-hint',
-        {},
-        `Each address pairs on its own: pairing ${location.host} doesn’t pair the office’s other addresses.${where === 'lan' ? ' Tailscale’s name works at home and away, so it’s the best one to bookmark on a laptop.' : ''}`,
-      ),
-      note,
-    );
-    footer.append(h('span.grow'), h('button.btn.ghost', { type: 'button', onclick: () => modal.close() }, 'Not now'), pair);
-    const submit = () => {
-      if (pairing || credential) return;
-      pairing = true;
-      pair.disabled = true;
-      void (async () => {
+  const deviceName = h('input.input', { value: defaultBrowserName(), maxlength: 64, 'aria-label': 'Name this browser' });
+  const pair = h('button.btn.accent', { type: 'button', disabled: pairing }, icon('key', 14), 'Pair this browser');
+  body.append(
+    h(
+      'p',
+      {},
+      'Pairing keeps this browser’s own access at ',
+      h('code', {}, location.origin),
+      ', so a bookmark opens the office after it restarts. It’s you, not a new account, and you can unpair it any time from the office’s Phone & web window.',
+    ),
+    h('div.field', {}, h('label', {}, 'Name'), deviceName, h('p.field-hint', {}, 'How the office lists it under Paired devices.')),
+    h(
+      'p.field-hint',
+      {},
+      `Each address pairs on its own: pairing ${location.host} doesn’t pair the office’s other addresses.${where === 'lan' ? ' Tailscale’s name works at home and away, so it’s the best one to bookmark on a laptop.' : ''}`,
+    ),
+    note,
+  );
+  footer.append(h('span.grow'), h('button.btn.ghost', { type: 'button', onclick: () => modal.close() }, 'Not now'), pair);
+  const submit = () => {
+    if (pairing || credential) return;
+    pairing = true;
+    pair.disabled = true;
+    void (async () => {
+      try {
+        const res = await fetch(withToken('/api/mobile/pair'), { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ device: deviceName.value, kind: 'browser' }), signal: AbortSignal.timeout(8000) });
+        let body: BrowserCredential & { error?: string };
         try {
-          const res = await fetch(withToken('/api/mobile/pair'), { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ device: deviceName.value, kind: 'browser' }), signal: AbortSignal.timeout(8000) });
-          let body: BrowserCredential & { error?: string };
-          try {
-            body = (await res.json()) as BrowserCredential & { error?: string };
-          } catch {
-            throw new Error('The browser could not be paired.');
-          }
-          if (!res.ok) throw new Error(body.error ?? 'The browser could not be paired.');
-          if (!isBrowserCredential(body)) throw new Error('The browser could not be paired.');
-          credential = body;
-          try {
-            persisted = saveBrowserCredential(localStorage, body);
-          } catch {
-            persisted = false;
-          }
-          bootstrap = '';
-          auth();
-          net.close();
-          modal.close();
-          toast(persisted ? 'Paired. Bookmark this page: it opens the office from now on.' : 'Paired for this page only: this browser blocks storage. Unpair it before closing so no unused pairing is left.', persisted ? 'info' : 'warn');
-          void net.connect();
-          paint();
-        } catch (error) {
-          fail((error as Error).message);
-        } finally {
-          pairing = false;
-          pair.disabled = !!credential;
+          body = (await res.json()) as BrowserCredential & { error?: string };
+        } catch {
+          throw new Error('The browser could not be paired.');
         }
-      })();
-    };
-    pair.addEventListener('click', submit);
-    deviceName.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter') submit();
-    });
-    deviceName.select();
-  } else {
-    body.append(h('p.note.info', {}, 'Open a fresh link from ', h('b', {}, '⚙️ Settings → Phone & web → Web companion'), ' on the office’s computer, then pair from there.'));
-    footer.append(h('span.grow'), h('button.btn.primary', { type: 'button', onclick: () => modal.close() }, 'Done'));
-  }
+        if (!res.ok) throw new Error(body.error ?? 'The browser could not be paired.');
+        if (!isBrowserCredential(body)) throw new Error('The browser could not be paired.');
+        credential = body;
+        try {
+          persisted = saveBrowserCredential(localStorage, body);
+        } catch {
+          persisted = false;
+        }
+        bootstrap = '';
+        auth();
+        net.close();
+        modal.close();
+        toast(
+          persisted ? 'Paired. Bookmark this page: it opens the office from now on.' : 'Paired for this page only: this browser blocks storage. Unpair it from the office’s Phone & web window so no unused pairing is left.',
+          persisted ? 'info' : 'warn',
+        );
+        void net.connect();
+        paint();
+      } catch (error) {
+        fail((error as Error).message);
+      } finally {
+        pairing = false;
+        pair.disabled = !!credential;
+      }
+    })();
+  };
+  pair.addEventListener('click', submit);
+  deviceName.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') submit();
+  });
+  deviceName.select();
 }
 
 // --- Keys ------------------------------------------------------------------------------------------------

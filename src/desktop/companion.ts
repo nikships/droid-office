@@ -15,7 +15,6 @@ const CHROME = `
   .dashboard .dash-top :is(button, select, a) { -webkit-app-region: no-drag; }
   .dashboard .dash-floor-strip { -webkit-app-region: no-drag; }
   .dashboard .dash-top .dash-office { max-width: 180px; }
-  .dashboard .dash-top .dash-conn { background-color: rgba(18,18,20,.35); }
 `;
 
 /** The dashboard in an ordinary Electron window, without the walkable office's Metal presenter. */
