@@ -7,7 +7,6 @@ import { store } from '../state';
 import { withToken } from '../token';
 import { TERM_THEME } from '../term-theme';
 import { suppressMirrorQueries, TerminalMirror } from '../term-mirror';
-import { copy } from './clipboard';
 import { h, hintToast, openModal, STATUS_LABEL, toast, type Modal } from './dom';
 import { colorDot } from './kit';
 import { OFFICE_SHELL_ID } from '../../shared/office-shell';
@@ -112,7 +111,6 @@ export function openTerminal(net: Net, workerId: string, onChanges?: () => void,
   const bigger = h('button.btn.icon', { type: 'button', title: 'Bigger text', 'aria-label': 'Bigger terminal text' }, 'A+');
   const zoom = h('span.seg.term-zoom', { role: 'group', 'aria-label': 'Terminal text size' }, smaller, bigger);
   const changesBtn = h('button.btn', { type: 'button', title: 'What this worker changed: files, diff, commit, open a PR (C at the desk)' }, '🌿 Changes');
-  const copyBtn = h('button.btn', { type: 'button', title: 'Copy selected text, or the loaded scrollback when nothing is selected' }, 'Copy text');
   const forkBtn = h('button.btn', { type: 'button', onclick: () => openForkWorker(net, workerId) }, 'Fork');
   const disconnected = h('p.note.warn.hidden', { role: 'status' }, 'Disconnected. Terminal input is disabled until a fresh snapshot arrives.');
   const bringInBtn = h('button.btn', { type: 'button' }, '🚪 Bring it in');
@@ -129,7 +127,7 @@ export function openTerminal(net: Net, workerId: string, onChanges?: () => void,
       {},
       colorDot(info.color),
       h('div.titles', {}, h('div.term-title', {}, title, pill), sub),
-      h('div.actions', {}, inline?.actions ?? null, copyBtn, zoom, onChanges ? changesBtn : null, info.kind === 'agent' && !guest ? forkBtn : null, guest ? bringInBtn : null),
+      h('div.actions', {}, inline?.actions ?? null, zoom, onChanges ? changesBtn : null, info.kind === 'agent' && !guest ? forkBtn : null, guest ? bringInBtn : null),
       inline ? null : closeBtn,
     ),
     team,
@@ -398,11 +396,6 @@ export function openTerminal(net: Net, workerId: string, onChanges?: () => void,
   smaller.addEventListener('click', () => zoomBy(-1));
   bigger.addEventListener('click', () => zoomBy(1));
   closeBtn.addEventListener('click', () => modal.close());
-  copyBtn.addEventListener('click', () => {
-    const buffer = term.buffer.active;
-    const text = term.getSelection() || Array.from({ length: buffer.length }, (_, i) => buffer.getLine(i)?.translateToString(true) ?? '').join('\n');
-    void copy(text).then((ok) => toast(ok ? 'Terminal text copied' : 'Copy failed. Select text and use your browser’s Copy command.', ok ? 'info' : 'warn'));
-  });
   bringInBtn.addEventListener('click', () => bringIn(workerId));
   changesBtn.addEventListener('click', () => {
     onChanges?.();
