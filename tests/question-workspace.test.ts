@@ -83,6 +83,7 @@ test('answer workspace: full text, explicit selection, responsive scrolling and 
       },
       { menu, full },
     );
+    await page.evaluate(() => Promise.all(document.getAnimations().map((animation) => animation.finished)));
     return page;
   }
   for (const [width, height] of [
@@ -95,6 +96,11 @@ test('answer workspace: full text, explicit selection, responsive scrolling and 
     assert.equal(await page.locator('.qw-question').textContent(), question);
     assert.deepEqual(await page.locator('.qw-choice-copy').allTextContents(), options);
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), true);
+    if (width <= 600) {
+      const dialog = await page.locator('.question-workspace').boundingBox();
+      assert.ok(dialog && dialog.x >= 8 && dialog.x + dialog.width <= width - 8, 'rounded mobile dialog keeps a backdrop gutter');
+      assert.ok(dialog && dialog.y >= 8 && dialog.y + dialog.height <= height - 8, 'mobile dialog fits inside the viewport gutters');
+    }
     assert.equal(await page.getByRole('button', { name: 'Show current question' }).isVisible(), false);
     assert.equal(
       await page
