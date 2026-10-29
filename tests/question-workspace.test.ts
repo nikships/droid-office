@@ -115,6 +115,32 @@ test('answer workspace: full text, explicit selection, responsive scrolling and 
     await page.getByRole('button', { name: 'Submit answer', exact: true }).click();
     assert.deepEqual(await page.evaluate(() => (window as any).replies.map((reply: any) => reply.value)), [{ choice: 1 }]);
   }
+  const capturedQuestion = "Install the Agent Insights plugin on entire.com for droid-office? It's free token-usage analytics across your agent sessions.";
+  const capturedMenu = readMenu([
+    '  Ask User',
+    '',
+    "  Install the Agent Insights plugin on entire.com for droid-office? It's free token-usage analytics",
+    '  across your agent sessions.',
+    '',
+    '  1. Yes, install it',
+    '  2. No, skip',
+    '  Or type your own answer...',
+    '',
+    '  Space/Enter/1-9 Select',
+  ])!;
+  for (const [width, height] of [
+    [1440, 900],
+    [1024, 700],
+  ]) {
+    const captured = await pageFor(capturedMenu, width, height);
+    assert.equal(await captured.locator('.qw-question').textContent(), capturedQuestion);
+    assert.deepEqual(await captured.locator('.qw-choice-copy').allTextContents(), ['Yes, install it', 'No, skip']);
+    await captured.locator('input[value="2"]').check();
+    await captured.getByRole('button', { name: 'Submit answer', exact: true }).click();
+    assert.deepEqual(await captured.evaluate(() => (window as any).replies[0].value), { choice: 2 });
+    await captured.keyboard.press('Escape');
+    assert.equal(await captured.locator('.question-workspace').count(), 0);
+  }
   const page = await pageFor(multiple, 390, 844);
   assert.equal(await page.locator('input[value="2"]').isChecked(), true);
   await page.locator('input[value="1"]').check();

@@ -108,8 +108,13 @@ export function readMenu(lines: readonly string[]): Menu | undefined {
   let question: string | undefined;
   for (let r = top - 1; r >= Math.max(0, top - QUESTION_REACH); r--) {
     const line = clean[r]!;
-    if (line.endsWith('?') && /\p{L}/u.test(line)) {
+    if (line.includes('?') && /\p{L}/u.test(line)) {
       const parts = [line];
+      for (let end = r + 1; end < top; end++) {
+        const next = clean[end]!;
+        if (!next || OPTION.test(next) || /Ask User|[→●○]|\[question\]/i.test(next) || !/\p{L}/u.test(next)) break;
+        parts.push(next);
+      }
       for (let start = r - 1; start >= Math.max(0, top - QUESTION_REACH); start--) {
         const previous = clean[start]!;
         if (!previous || OPTION.test(previous) || /Ask User|[→●○]|\[question\]/i.test(previous) || !/\p{L}/u.test(previous)) break;
