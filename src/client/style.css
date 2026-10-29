@@ -2241,7 +2241,7 @@ html:has(body.dashboard), body.dashboard { overflow: auto; }
 .dash-top .grow { flex: 1; }
 .dash-brand { display: flex; align-items: center; gap: var(--space-3); min-width: 0; padding: var(--space-1) var(--space-2) var(--space-1) 0; border: 0; border-radius: var(--radius); background: none; color: inherit; text-align: left; cursor: pointer; }
 .dashboard #toasts { position: static; transform: none; flex: 1 1 0; min-width: 0; width: auto; max-width: none; height: 48px; justify-content: center; overflow: hidden; }
-.dashboard #toasts .toast { display: -webkit-box; max-width: 100%; padding: var(--space-1) var(--space-3); overflow: hidden; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2; }
+.dashboard #toasts .toast { display: -webkit-box; max-width: 100%; padding: var(--space-1) var(--space-3); overflow: hidden; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2; pointer-events: auto; }
 .dashboard #toasts .toast::before { display: inline-block; vertical-align: middle; margin-right: var(--space-2); }
 @media (max-width: 720px) {
   .dashboard .dash-brand-text { display: none; }
