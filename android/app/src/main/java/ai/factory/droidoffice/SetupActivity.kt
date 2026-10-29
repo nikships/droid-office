@@ -3,6 +3,7 @@ package ai.factory.droidoffice
 import ai.factory.droidoffice.core.InviteParse
 import ai.factory.droidoffice.core.Pairing
 import ai.factory.droidoffice.core.PairingInvite
+import ai.factory.droidoffice.core.SetupNavigation
 import ai.factory.droidoffice.ui.LocalGraph
 import ai.factory.droidoffice.ui.components.LocalOpenUpdates
 import ai.factory.droidoffice.ui.components.UpdateDialog
@@ -94,10 +95,7 @@ class SetupActivity : ComponentActivity() {
                                     PairScreen(
                                         invite = key.invite,
                                         onDone = { finish() },
-                                        onRescan = {
-                                            pop()
-                                            if (stack.lastOrNull() != ScanKey) push(ScanKey)
-                                        },
+                                        onRescan = { SetupNavigation.rescan(stack, ScanKey) },
                                         onCancel = { pop() },
                                     )
                                 }
