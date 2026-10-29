@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { test } from 'node:test';
 import { readMenu } from '../src/shared/asks.js';
-import { questionReply, type QuestionDraft, selectQuestionChoice, writeQuestionText } from '../src/mobile/model.js';
+import { questionFeedback, questionReply, type QuestionDraft, selectQuestionChoice, writeQuestionText } from '../src/mobile/model.js';
 
 // Same owner-captured checkbox labels and CLI hints as ask-question.test.ts.
 const menu = readMenu(['  What does managing agents simultaneously mean to you?', '  1. [ ] Persistent roster', '  2. [x] Several conversations', '  [ ] Or type your own answer...', '  Submit', '  Space/Enter/1–9 Toggle'])!;
@@ -34,6 +34,17 @@ test('radio drafts and custom answers exclude each other and reject invalid mult
   d = selectQuestionChoice(d, 1);
   assert.equal(d.text, '');
   assert.equal(questionReply({ ...d, choices: [1, 2] }), undefined);
+});
+
+test('a confirmed native answer stays confirmed after the worker advances, without disguising uncertain replies', () => {
+  const d = draft();
+  assert.match(questionFeedback({ ...d, state: 'sending' }, false, true), /^Sending/);
+  assert.match(questionFeedback({ ...d, state: 'sent' }, false, true), /^Answer sent\./);
+  assert.match(questionFeedback({ ...d, state: 'sent' }, true, true), /^Answer sent\./);
+  assert.match(questionFeedback(d, false, true), /changed or was answered elsewhere/);
+  assert.match(questionFeedback(d, true, false), /cannot safely submit/);
+  assert.match(questionFeedback(d, true, true), /Nothing is sent until you submit/);
+  assert.equal(questionFeedback({ ...d, state: 'uncertain', error: 'Not confirmed' }, true, true), 'Not confirmed');
 });
 
 test('native question controls use the shared presentation, full text, a pinned Submit, and no bypassing modal', () => {

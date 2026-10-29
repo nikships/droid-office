@@ -44,6 +44,15 @@ export function writeQuestionText(draft: QuestionDraft, text: string): QuestionD
   return { ...draft, text: text.slice(0, 20000), choices: !draft.menu.multiSelect && text.trim() ? [] : draft.choices, error: undefined };
 }
 
+/** A confirmed receipt remains a success when the worker advances to its next state. */
+export function questionFeedback(draft: QuestionDraft, current: boolean, supported: boolean): string {
+  if (draft.state === 'sending') return 'Sending your answer…';
+  if (draft.state === 'sent') return 'Answer sent. Return to the thread, or review the next question.';
+  if (!current) return 'This question changed or was answered elsewhere. Review the current question before sending.';
+  if (!supported) return 'This office version cannot safely submit checkbox answers. Update the host, or use Raw TTY.';
+  return draft.error || 'Your draft stays here if you go back to the thread. Nothing is sent until you submit.';
+}
+
 /** Full checkbox state, not simulated keystrokes; absence means there is nothing valid to submit. */
 export function questionReply(draft: QuestionDraft): { choice?: number; choices?: number[]; text?: string } | undefined {
   const text = draft.text.trim();

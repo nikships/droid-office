@@ -1,7 +1,7 @@
 import { Pressable, ScrollView, Text, TextInput, View } from 'react-native';
 import { questionPresentation } from '../../shared/ask-question';
 import { menuTakesText } from '../../shared/asks';
-import { questionReply, type QuestionDraft } from '../model';
+import { questionFeedback, questionReply, type QuestionDraft } from '../model';
 import type { Session } from '../session';
 import { Button, colors, Label, Row, s } from './kit';
 
@@ -12,16 +12,7 @@ export function QuestionWorkspace({ session, draft, wide }: { session: Session; 
   const supported = session.questionSupported(draft);
   const enabled = current && supported && draft.state === 'idle';
   const next = session.questionMenu(draft.workerId);
-  const feedback =
-    draft.state === 'sending'
-      ? 'Sending your answer…'
-      : !current
-        ? 'This question changed or was answered elsewhere. Review the current question before sending.'
-        : draft.state === 'sent'
-          ? 'Answer sent. Waiting for the next question or the worker’s reply.'
-          : !supported
-            ? 'This office version cannot safely submit checkbox answers. Update the host, or use Raw TTY.'
-            : draft.error || 'Your draft stays here if you go back to the thread. Nothing is sent until you submit.';
+  const feedback = questionFeedback(draft, current, supported);
   return (
     <View style={{ flex: 1, backgroundColor: colors.bg, paddingHorizontal: wide ? 32 : 12, paddingVertical: wide ? 24 : 8 }} testID="question-workspace">
       <View style={{ flex: 1, width: '100%', maxWidth: 1120, alignSelf: 'center', gap: 12 }}>
@@ -30,7 +21,9 @@ export function QuestionWorkspace({ session, draft, wide }: { session: Session; 
             <Text style={s.title} accessibilityRole="header">
               Answer questions
             </Text>
-            <Text style={s.muted}>{session.worker(draft.workerId)?.name ?? 'Worker'} is waiting for your answer</Text>
+            <Text style={s.muted}>
+              {session.worker(draft.workerId)?.name ?? 'Worker'} · {draft.state === 'sent' ? 'Answer sent' : current ? 'Waiting for your answer' : 'Previous question'}
+            </Text>
           </View>
           <Button label="Back to thread" onPress={() => session.closeQuestion()} testID="question-close" />
         </Row>
