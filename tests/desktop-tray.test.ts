@@ -1,21 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {
-  type OfficeStatus,
-  parseStatus,
-  type StatusWaiting,
-  statusLines,
-  listCut,
-  TRAY_WAITING_MAX,
-  type TrayItem,
-  trayMenu,
-  trayTitle,
-  trayTooltip,
-  type TrayView,
-  WaitingWatch,
-  waitingNotice,
-  workerHash,
-} from '../src/desktop/tray-model.ts';
+import { type OfficeStatus, parseStatus, type StatusWaiting, statusLines, listCut, type TrayItem, trayMenu, trayTitle, trayTooltip, type TrayView, WaitingWatch, waitingNotice, workerHash } from '../src/desktop/tray-model.ts';
 import { officeStatus, STATUS_WAITING_MAX } from '../src/server/office-status.ts';
 import { linkStep, parseWorkerLink } from '../src/client/worker-link.ts';
 
@@ -100,50 +85,23 @@ test('beside the icon, the number of workers waiting on you, only while the offi
   assert.equal(trayTitle({ ...running, state: 'stopped' }), '');
 });
 
-test('each waiting worker is a line that opens its terminal, with its task and, across floors, its floor', () => {
-  const menu = trayMenu(running);
-  const header = menu.findIndex((i) => 'type' in i && i.type === 'header');
-  assert.deepEqual(menu.slice(header - 1, header + 3), [
-    { type: 'separator' },
-    { type: 'header', label: 'Waiting on You' },
-    { label: 'Ada needs input', enabled: true, sublabel: 'Fix Login Redirect · web-app', action: 'worker', link: { worker: 'w-ada', floor: 'f-web' }, icon: 'needsInput' },
-    { label: 'Bob is done', enabled: true, sublabel: 'api', action: 'worker', link: { worker: 'w-bob', floor: 'f-api' }, icon: 'done' },
-  ]);
-  const oneFloor = trayMenu({ ...running, status: { ...status, floors: 1, waiting: [ada, { ...bob, floor: 'f-web' }] } });
-  assert.deepEqual(
-    oneFloor.flatMap((i) => ('link' in i ? [i.sublabel] : [])),
-    ['Fix Login Redirect', undefined],
-  );
-  assert.ok(!labels({ ...running, status: { ...status, needsInput: 0, done: 0, waiting: [] } }).includes('Waiting on You'));
-  assert.ok(!labels({ ...running, state: 'stopped' }).includes('Ada needs input'));
-});
-
-test('past the first few, the rest are one line that opens the office', () => {
-  const crowd = Array.from({ length: 9 }, (_, i) => ({ ...ada, id: `w${i}`, name: `W${i}` }));
-  const v: TrayView = { ...running, status: { ...status, needsInput: 11, done: 0, waiting: crowd } };
-  const menu = trayMenu(v);
-  assert.equal(menu.filter((i) => 'link' in i).length, TRAY_WAITING_MAX);
-  assert.deepEqual(item(v, `${11 - TRAY_WAITING_MAX} more workers waiting…`), { label: `${11 - TRAY_WAITING_MAX} more workers waiting…`, enabled: true, action: 'open' });
-  // An office from before the waiting list: only the counts.
-  const old: TrayView = { ...running, status: { ...status, needsInput: 1, done: 0, waiting: [] } };
-  assert.deepEqual(item(old, '1 worker waiting…')?.action, 'open');
+test('the menu does not list waiting workers or offer the office log', () => {
+  for (const view of [running, { ...running, status: { ...status, needsInput: 20, waiting: [] } }, { ...running, state: 'stopped' as const }]) {
+    const menu = labels(view);
+    assert.ok(!menu.includes('Waiting on You'));
+    assert.ok(!menu.includes('Ada needs input'));
+    assert.ok(!menu.includes('Bob is done'));
+    assert.ok(!menu.some((label) => /workers? waiting…/.test(label)));
+    assert.ok(!menu.includes('Show Office Log'));
+  }
 });
 
 test('the menu offers only what the office can do in its state', () => {
-  const enabled = (v: TrayView) => Object.fromEntries(trayMenu(v).flatMap((i) => ('action' in i && i.action && i.action !== 'worker' ? [[i.action, i.enabled]] : [])));
-  const all = { open: true, companion: true, restart: true, log: true, notify: true, updates: true, quit: true, quitStoppingWorkers: true };
+  const enabled = (v: TrayView) => Object.fromEntries(trayMenu(v).flatMap((i) => ('action' in i && i.action ? [[i.action, i.enabled]] : [])));
+  const all = { open: true, companion: true, restart: true, notify: true, updates: true, quit: true, quitStoppingWorkers: true };
   assert.deepEqual(enabled({ ...running, status: { ...status, needsInput: 0, done: 0, waiting: [] } }), all);
   const actions = labels(running);
-  assert.deepEqual(actions.slice(actions.indexOf('Open Office')), [
-    'Open Office',
-    'Open Office Companion',
-    'Restart Office',
-    'Show Office Log',
-    'Notify When Workers Wait on You',
-    'Check for Updates…',
-    'Quit Droid Office',
-    'Quit and Stop Workers…',
-  ]);
+  assert.deepEqual(actions.slice(actions.indexOf('Open Office')), ['Open Office', 'Open Office Companion', 'Restart Office', 'Notify When Workers Wait on You', 'Check for Updates…', 'Quit Droid Office', 'Quit and Stop Workers…']);
   assert.deepEqual(trayMenu(running).slice(0, 2), [
     { label: '4 workers · 2 working · 1 needs input · 1 done', enabled: false },
     { label: '1 phone · 2 browsers connected', enabled: false },
