@@ -82,7 +82,7 @@ export function closeTerminal() {
 /** Where an inline terminal goes, the caller's controls for its header, and what Ctrl+] does there. */
 export interface InlineTerminal {
   mount: HTMLElement;
-  /** Put first in the header's actions, before Copy and the text size. */
+  /** Put first in the header's actions, before the text size. */
   actions?: HTMLElement;
   /** Ctrl+] in the terminal: leave it. Without one, Ctrl+] goes to the program. */
   onLeave?: () => void;

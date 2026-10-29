@@ -12,7 +12,6 @@ import { colorDot } from './kit';
 import { markdown } from './markdown';
 import { promptImages } from './images';
 import { modelBadgeNode } from './models';
-import { copy as copyText } from './clipboard';
 import { withToken } from '../token';
 
 export interface WorkerThread {
@@ -441,7 +440,6 @@ export function mountWorkerThread(net: Net, opts: ThreadOptions): WorkerThread {
     node.classList.add(entry.role, entry.kind);
     if (row.kind === 'message') {
       if (entry.role === 'assistant' && row.startsTurn) node.append(h('div.wt-who', {}, author.name));
-      const actions = h('div.wt-message-actions');
       if (entry.role === 'user') {
         const text = h('div.wt-user-content', { id: `wt-message-${author.id}-${entry.id}`, class: expanded.has(entry.id) ? '' : 'clamped' }, entry.text ?? '');
         const more = h(
@@ -463,26 +461,12 @@ export function mountWorkerThread(net: Net, opts: ThreadOptions): WorkerThread {
           expanded.has(entry.id) ? 'Show less' : 'Show all',
         );
         node.append(h('div.wt-user-text', {}, text));
-        actions.append(more);
+        node.append(h('div.wt-message-actions', {}, more));
       } else {
         const body = markdown(entry.text ?? '');
         prepareCode(body);
         node.append(body);
       }
-      const copy = h(
-        'button.btn.sm.ghost.wt-copy',
-        {
-          type: 'button',
-          'aria-label': 'Copy message',
-          onclick: () =>
-            void copyText(entry.text ?? '').then((ok) => {
-              if (!ok) notice.textContent = 'Could not copy this message.';
-            }),
-        },
-        'Copy',
-      );
-      actions.append(copy);
-      node.append(actions);
     } else node.append(h('p.wt-turn', { class: row.tone }, row.text));
     return node;
   };
@@ -590,7 +574,7 @@ export function mountWorkerThread(net: Net, opts: ThreadOptions): WorkerThread {
           const focused = document.activeElement;
           const focus = focused instanceof HTMLElement && had?.node.contains(focused) ? focused : undefined;
           const disclosure = focus?.closest<HTMLDetailsElement>('details[data-disclosure]')?.dataset.disclosure;
-          const control = focus?.matches('.wt-copy') ? '.wt-copy' : focus?.matches('.wt-message-more') ? '.wt-message-more' : undefined;
+          const control = focus?.matches('.wt-message-more') ? '.wt-message-more' : undefined;
           const node = render(row, child.status === 'needs_input', child, card.expanded);
           const opened = new Set([...(had?.node.querySelectorAll<HTMLDetailsElement>('details[open][data-disclosure]') ?? [])].map((details) => details.dataset.disclosure));
           for (const details of node.querySelectorAll<HTMLDetailsElement>('details[data-disclosure]')) details.open = opened.has(details.dataset.disclosure);
