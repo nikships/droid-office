@@ -212,6 +212,7 @@ class HostLog {
  * Pictures uploaded for prompts not sent yet, by id, with the office, floor and route each went to.
  * Forgetting one goes to that office only, never whichever is active now; one sent with a prompt, or
  * already forgotten, is gone from here. At most [max]: [record] hands back the oldest it drops.
+ * Thread-safe: synchronous React Native sends mark pictures sent on the JavaScript thread.
  */
 class ImageOrigins<Route>(private val max: Int = 200) {
     data class Origin<Route>(val office: String, val floor: String, val route: Route)
@@ -219,7 +220,7 @@ class ImageOrigins<Route>(private val max: Int = 200) {
     private val origins = LinkedHashMap<String, Origin<Route>>()
 
     /** Records [id]; the oldest uploads past [max], by id, which the caller deletes where they went. */
-    fun record(id: String, office: String, floor: String, route: Route): List<Pair<String, Origin<Route>>> {
+    @Synchronized fun record(id: String, office: String, floor: String, route: Route): List<Pair<String, Origin<Route>>> {
         origins.remove(id)
         origins[id] = Origin(office, floor, route)
         val evicted = ArrayList<Pair<String, Origin<Route>>>()
@@ -234,7 +235,7 @@ class ImageOrigins<Route>(private val max: Int = 200) {
      * The upload [id] to forget, removed from here; null when it is unknown, on another floor, or
      * [office] is given and isn't where it went.
      */
-    fun forget(id: String, floor: String, office: String?): Origin<Route>? {
+    @Synchronized fun forget(id: String, floor: String, office: String?): Origin<Route>? {
         val o = origins[id] ?: return null
         if (o.floor != floor || (office != null && office != o.office)) return null
         origins.remove(id)
@@ -242,17 +243,17 @@ class ImageOrigins<Route>(private val max: Int = 200) {
     }
 
     /** These went out with a prompt: the office has them now. */
-    fun sent(ids: Collection<String>) = ids.forEach { origins.remove(it) }
+    @Synchronized fun sent(ids: Collection<String>) = ids.forEach { origins.remove(it) }
 
     /** An office was forgotten on this phone: its uploads can't be reached any more. */
-    fun dropOffice(office: String) {
+    @Synchronized fun dropOffice(office: String) {
         origins.values.removeAll { it.office == office }
     }
 
     /** Only the offices still paired keep their uploads. */
-    fun keep(offices: Set<String>) {
+    @Synchronized fun keep(offices: Set<String>) {
         origins.values.removeAll { it.office !in offices }
     }
 
-    val size: Int get() = origins.size
+    @get:Synchronized val size: Int get() = origins.size
 }

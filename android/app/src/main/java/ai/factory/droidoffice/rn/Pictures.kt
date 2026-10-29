@@ -1,5 +1,6 @@
 package ai.factory.droidoffice.rn
 
+import ai.factory.droidoffice.core.PictureLimits
 import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.ImageDecoder
@@ -14,7 +15,6 @@ class Picture(val name: String, val type: String, val bytes: ByteArray, val prev
 object Pictures {
     /** The kinds of picture the office takes with a prompt (src/shared/drops.ts PROMPT_IMAGE_TYPES). */
     private val TYPES = setOf("image/png", "image/jpeg", "image/gif", "image/webp")
-    private const val MAX_BYTES = 25 * 1024 * 1024
 
     /**
      * Reads a picked picture. One the office won't take as it is (HEIC, say, or over 25 MB) is
@@ -28,24 +28,31 @@ object Pictures {
         }?.take(120) ?: "photo.jpg"
         val source = ImageDecoder.createSource(resolver, uri)
         val preview = runCatching {
-            val thumb = ImageDecoder.decodeBitmap(source) { d, info, _ ->
-                d.allocator = ImageDecoder.ALLOCATOR_SOFTWARE
-                val s = 160f / maxOf(info.size.width, info.size.height)
-                if (s < 1f) d.setTargetSize((info.size.width * s).toInt().coerceAtLeast(1), (info.size.height * s).toInt().coerceAtLeast(1))
-            }
-            val out = ByteArrayOutputStream()
-            thumb.compress(Bitmap.CompressFormat.JPEG, 80, out)
-            "data:image/jpeg;base64," + Base64.encodeToString(out.toByteArray(), Base64.NO_WRAP)
+            "data:image/jpeg;base64," + Base64.encodeToString(jpeg(source, 160, 80), Base64.NO_WRAP)
         }.getOrNull()
-        val raw = resolver.openInputStream(uri)?.use { it.readBytes() } ?: error("unreadable")
-        if (type in TYPES && raw.size <= MAX_BYTES) return Picture(name, type, raw, preview)
+        if (type in TYPES) {
+            val raw = resolver.openInputStream(uri)?.use { PictureLimits.read(it) }
+            if (raw != null) return Picture(name, type, raw, preview)
+        }
+        // Decode directly from the provider at the target size, not from a full-size byte array.
+        val bytes = jpeg(source, 2560, 88)
+        check(bytes.size <= PictureLimits.MAX_BYTES) { "The picture is too large." }
+        return Picture(name.substringBeforeLast('.') + ".jpg", "image/jpeg", bytes, preview)
+    }
+
+    private fun jpeg(source: ImageDecoder.Source, edge: Int, quality: Int): ByteArray {
         val bitmap = ImageDecoder.decodeBitmap(source) { d, info, _ ->
             d.allocator = ImageDecoder.ALLOCATOR_SOFTWARE
-            val s = 2560f / maxOf(info.size.width, info.size.height)
-            if (s < 1f) d.setTargetSize((info.size.width * s).toInt(), (info.size.height * s).toInt())
+            val (width, height) = PictureLimits.size(info.size.width, info.size.height, edge)
+            d.setTargetSize(width, height)
         }
-        val out = ByteArrayOutputStream()
-        bitmap.compress(Bitmap.CompressFormat.JPEG, 88, out)
-        return Picture(name.substringBeforeLast('.') + ".jpg", "image/jpeg", out.toByteArray(), preview)
+        try {
+            return ByteArrayOutputStream().use { out ->
+                check(bitmap.compress(Bitmap.CompressFormat.JPEG, quality, out)) { "Couldn't encode the picture." }
+                out.toByteArray()
+            }
+        } finally {
+            bitmap.recycle()
+        }
     }
 }

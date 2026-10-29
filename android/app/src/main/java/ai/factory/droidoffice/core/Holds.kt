@@ -6,6 +6,8 @@ package ai.factory.droidoffice.core
  * taken before that is already gone and must not be released again.
  */
 interface SharedHolds {
+    /** Owners lock their books first, then this lock; the connection never calls owners under it. */
+    fun <T> locked(action: () -> T): T
     fun generation(): Long
     fun attach(workerId: String)
     fun detach(workerId: String)
@@ -23,24 +25,24 @@ interface SharedHolds {
 class OwnedHolds(private val shared: SharedHolds) {
     private val held = HashMap<String, Long>()
 
-    @Synchronized fun attach(workerId: String) {
+    @Synchronized fun attach(workerId: String) = shared.locked {
         val now = shared.generation()
         if (held[workerId] == now) {
             shared.resnapshot(workerId)
-            return
+            return@locked
         }
         held[workerId] = now
         shared.attach(workerId)
     }
 
     /** False when this owner didn't hold [workerId]: nothing was let go. */
-    @Synchronized fun detach(workerId: String): Boolean {
-        val at = held.remove(workerId) ?: return false
+    @Synchronized fun detach(workerId: String): Boolean = shared.locked {
+        val at = held.remove(workerId) ?: return@locked false
         if (at == shared.generation()) shared.detach(workerId)
-        return true
+        true
     }
 
-    @Synchronized fun release() {
+    @Synchronized fun release() = shared.locked {
         val now = shared.generation()
         for ((id, at) in held) if (at == now) shared.detach(id)
         held.clear()
@@ -54,15 +56,15 @@ class HoldTokens(private val shared: SharedHolds) {
     private var next = 0L
     private val tokens = HashMap<Long, Pair<String, Long>>()
 
-    @Synchronized fun hold(workerId: String): Long {
+    @Synchronized fun hold(workerId: String): Long = shared.locked {
         val token = ++next
         tokens[token] = workerId to shared.generation()
         shared.attach(workerId)
-        return token
+        token
     }
 
-    @Synchronized fun release(token: Long) {
-        val (id, at) = tokens.remove(token) ?: return
+    @Synchronized fun release(token: Long) = shared.locked {
+        val (id, at) = tokens.remove(token) ?: return@locked
         if (at == shared.generation()) shared.detach(id)
     }
 

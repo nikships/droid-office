@@ -9,6 +9,21 @@ class TermFeedTest {
     private val snap = TermEvent.Snapshot("history", 120, 40)
 
     @Test
+    fun lossDropsCachedSnapshotsBeforeTheNextPageListens() {
+        val feed = TermFeed()
+        feed.push(snap.copy(epoch = 1))
+        feed.push(TermEvent.Data("old output"))
+        feed.invalidate()
+        feed.push(TermEvent.Data("not a snapshot"))
+        val got = mutableListOf<TermEvent>()
+        assertFalse(feed.listen { got += it })
+        assertTrue(got.isEmpty())
+        val fresh = snap.copy(data = "new", epoch = 2)
+        feed.push(fresh)
+        assertEquals(listOf<TermEvent>(fresh), got)
+    }
+
+    @Test
     fun whatArrivesBeforeThePageIsReadyIsReplayedInOrder() {
         val feed = TermFeed()
         feed.push(TermEvent.Data("before any snapshot"))

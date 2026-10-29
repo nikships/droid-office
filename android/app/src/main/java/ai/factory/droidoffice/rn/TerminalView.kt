@@ -6,9 +6,12 @@ import ai.factory.droidoffice.core.PageMsg
 import ai.factory.droidoffice.core.PhoneSizing
 import ai.factory.droidoffice.core.QuickKey
 import ai.factory.droidoffice.core.QuickKeys
+import ai.factory.droidoffice.core.TermEvent
+import ai.factory.droidoffice.core.TermFeed
 import ai.factory.droidoffice.core.TermPage
 import ai.factory.droidoffice.core.TermSize
 import ai.factory.droidoffice.core.TermView
+import ai.factory.droidoffice.core.TerminalFreshness
 import ai.factory.droidoffice.graph
 import ai.factory.droidoffice.ui.worker.TerminalPage
 import android.content.Context
@@ -34,10 +37,11 @@ class TerminalView(context: Context) : FrameLayout(context) {
     private var token = 0L
     private var tokenGeneration = -1L
     private var page: TerminalPage? = null
-    private var listening: ((ai.factory.droidoffice.core.TermEvent) -> Unit)? = null
+    private var listening: ((TermEvent) -> Unit)? = null
 
     /** The socket whose snapshot the page shows; input is refused until it is the live one. */
-    private var drawnEpoch: Long? = null
+    private var freshness = TerminalFreshness(null)
+    private var listeningFeed: TermFeed? = null
     private var fit: TermSize? = null
     private val sizing = PhoneSizing()
     private var unlisten: (() -> Unit)? = null
@@ -108,13 +112,14 @@ class TerminalView(context: Context) : FrameLayout(context) {
     }
 
     private fun newPage(id: String) {
+        freshness = TerminalFreshness(connection.liveEpoch)
+        fit = null
         lateinit var p: TerminalPage
         p = TerminalPage(context, onMessage = { msg -> onPage(id, p, msg) }, onGone = {
             if (page === p) {
                 unfeed()
                 p.destroy()
                 page = null
-                drawnEpoch = null
                 newPage(id)
             }
         })
@@ -122,6 +127,7 @@ class TerminalView(context: Context) : FrameLayout(context) {
         removePage()
         addView(p.view, 0, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT).apply { bottomMargin = dp(QuickKeyBar.HEIGHT_DP) })
         showKeys(id)
+        typing()
     }
 
     private fun removePage() {
@@ -149,7 +155,7 @@ class TerminalView(context: Context) : FrameLayout(context) {
                 feed(id, p)
             }
             PageMsg.Drawn -> {
-                drawnEpoch = connection.liveEpoch
+                freshness.drawn()
                 typing()
                 resizeSoon()
             }
@@ -165,21 +171,35 @@ class TerminalView(context: Context) : FrameLayout(context) {
     private fun feed(id: String, p: TerminalPage) {
         unfeed()
         val f = connection.feed(id)
-        listening = p.listener
-        if (f == null || !f.listen(p.listener)) connection.resnapshot(id)
+        val at = freshness
+        var stale = false
+        val listener: (TermEvent) -> Unit = { event ->
+            if (page === p && at === freshness) {
+                if (event is TermEvent.Snapshot && !at.snapshot(event.epoch)) stale = true
+                else p.listener(event)
+            }
+        }
+        listening = listener
+        listeningFeed = f
+        if (f == null || !f.listen(listener) || stale) connection.resnapshot(id)
     }
 
     private fun unfeed() {
-        val id = workerId ?: return
-        listening?.let { connection.feed(id)?.unlisten(it) }
+        listening?.let { listeningFeed?.unlisten(it) }
         listening = null
+        listeningFeed = null
     }
 
     private fun onLog(e: HostLog.Event) {
         val id = workerId ?: return
         when (e) {
             is HostLog.Event.Link -> {
-                drawnEpoch = null
+                // Old WebView callbacks keep their old page identity, even if delivered after welcome.
+                unfeed()
+                page?.destroy()
+                page = null
+                freshness = TerminalFreshness(null)
+                fit = null
                 sizing.disconnected()
                 typing()
             }
@@ -188,6 +208,7 @@ class TerminalView(context: Context) : FrameLayout(context) {
             } else if (e.frame.t == "welcome") {
                 // Another office's welcome dropped every attachment: hold again, then hear the fresh snapshot.
                 hold(id)
+                if (page == null) newPage(id)
                 val p = page ?: return
                 if (p.ready) feed(id, p)
             }
@@ -196,7 +217,7 @@ class TerminalView(context: Context) : FrameLayout(context) {
 
     private fun laidOut() = width > 0 && height > 0 && isShown
 
-    private fun canType(): Boolean = active && laidOut() && drawnEpoch != null && drawnEpoch == connection.liveEpoch
+    private fun canType(): Boolean = active && laidOut() && freshness.ready(connection.liveEpoch)
 
     private fun typing() {
         val can = canType()
@@ -241,7 +262,7 @@ class TerminalView(context: Context) : FrameLayout(context) {
         unfeed()
         page?.destroy()
         page = null
-        drawnEpoch = null
+        freshness = TerminalFreshness(null)
         fit = null
         removePage()
         keys.enable(false)

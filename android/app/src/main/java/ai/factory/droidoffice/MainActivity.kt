@@ -1,11 +1,15 @@
 package ai.factory.droidoffice
 
 import ai.factory.droidoffice.core.Pairing
+import ai.factory.droidoffice.core.WorkspaceInsets
 import ai.factory.droidoffice.rn.HostIncoming
 import android.content.Intent
 import android.os.Bundle
+import android.view.View
 import androidx.activity.enableEdgeToEdge
 import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
+import androidx.core.view.ViewCompat
+import androidx.core.view.WindowInsetsCompat
 import com.facebook.react.ReactActivity
 import com.facebook.react.ReactActivityDelegate
 import com.facebook.react.defaults.DefaultReactActivityDelegate
@@ -21,6 +25,16 @@ class MainActivity : ReactActivity() {
         // React Native keeps no fragments to restore; the workspace restores its own layout.
         super.onCreate(null)
         enableEdgeToEdge()
+        val content = findViewById<View>(android.R.id.content)
+        ViewCompat.setOnApplyWindowInsetsListener(content) { view, insets ->
+            val bars = insets.getInsets(WindowInsetsCompat.Type.systemBars() or WindowInsetsCompat.Type.displayCutout())
+            val safe = WorkspaceInsets(bars.left, bars.top, bars.right, bars.bottom)
+                .withKeyboard(insets.getInsets(WindowInsetsCompat.Type.ime()).bottom)
+            // Inset the container that measures ReactRootView, not the React-managed pane itself.
+            view.setPadding(safe.left, safe.top, safe.right, safe.bottom)
+            insets
+        }
+        ViewCompat.requestApplyInsets(content)
         val graph = graph
         splash.setKeepOnScreenCondition { !graph.store.snapshot.value.loaded }
         if (savedInstanceState == null) read(intent)

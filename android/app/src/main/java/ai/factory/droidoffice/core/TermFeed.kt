@@ -2,7 +2,7 @@ package ai.factory.droidoffice.core
 
 /** What an attached terminal's stream carries: a snapshot to start from, then output and resizes. */
 sealed interface TermEvent {
-    data class Snapshot(val data: String, val cols: Int, val rows: Int) : TermEvent
+    data class Snapshot(val data: String, val cols: Int, val rows: Int, val epoch: Long? = null) : TermEvent
     data class Data(val data: String) : TermEvent
     /** The PTY changed size. It travels with the output, so a program's redraw lands on the new grid. */
     data class Resize(val size: TermSize) : TermEvent
@@ -20,6 +20,13 @@ class TermFeed(private val maxPendingChars: Int = MAX_PENDING_CHARS) {
     private val pending = ArrayList<TermEvent>()
     private var pendingChars = 0
     private var listener: ((TermEvent) -> Unit)? = null
+
+    /** Socket loss discards cached rows and output, but mounted listeners can await the new snapshot. */
+    fun invalidate() {
+        snapshot = null
+        pending.clear()
+        pendingChars = 0
+    }
 
     fun push(e: TermEvent) {
         listener?.let { return it(e) }

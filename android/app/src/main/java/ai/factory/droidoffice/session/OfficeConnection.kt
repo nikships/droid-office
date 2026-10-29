@@ -148,6 +148,7 @@ class OfficeConnection(
 
     /** [attach]/[detach] for owners that keep their own books (OwnedHolds, HoldTokens). Any thread. */
     val sharedHolds = object : ai.factory.droidoffice.core.SharedHolds {
+        override fun <T> locked(action: () -> T): T = synchronized(holds, action)
         override fun generation() = holdGeneration
         override fun attach(workerId: String) = this@OfficeConnection.attach(workerId)
         override fun detach(workerId: String) = this@OfficeConnection.detach(workerId)
@@ -312,22 +313,23 @@ class OfficeConnection(
      * notification can each hold it; it detaches when the last one lets go.
      */
     fun attach(workerId: String) {
-        synchronized(holds) { holds[workerId] = (holds[workerId] ?: 0) + 1 }
-        attached += workerId
-        feeds.getOrPut(workerId) { TermFeed() }
-        send(ClientMsg.attach(workerId))
+        synchronized(holds) {
+            holds[workerId] = (holds[workerId] ?: 0) + 1
+            attached += workerId
+            feeds.getOrPut(workerId) { TermFeed() }
+            send(ClientMsg.attach(workerId))
+        }
     }
 
     fun detach(workerId: String) {
-        val left = synchronized(holds) {
+        synchronized(holds) {
             val n = (holds[workerId] ?: 1) - 1
             if (n <= 0) holds.remove(workerId) else holds[workerId] = n
-            n
+            if (n > 0) return
+            attached -= workerId
+            feeds.remove(workerId)
+            send(ClientMsg.detach(workerId))
         }
-        if (left > 0) return
-        attached -= workerId
-        feeds.remove(workerId)
-        send(ClientMsg.detach(workerId))
     }
 
     /** The stream of a terminal this phone attached to; null once it detached. */
@@ -335,7 +337,9 @@ class OfficeConnection(
 
     /** Asks the office for a fresh snapshot of an attached terminal (attaching again sends one). */
     fun resnapshot(workerId: String) {
-        if (workerId in attached) send(ClientMsg.attach(workerId))
+        synchronized(holds) {
+            if (workerId in attached) send(ClientMsg.attach(workerId))
+        }
     }
 
     fun goFloor(floorId: String) {
@@ -496,10 +500,12 @@ class OfficeConnection(
             _availability.value = emptyMap()
             _data.value = OfficeData(officeId = office.id)
             _screens.value = emptyMap()
-            attached.clear()
-            synchronized(holds) { holds.clear() }
-            holdGeneration++
-            feeds.clear()
+            synchronized(holds) {
+                attached.clear()
+                holds.clear()
+                holdGeneration++
+                feeds.clear()
+            }
             models = null
             whiteboard.close()
             whiteboard = newWhiteboard()
@@ -611,7 +617,9 @@ class OfficeConnection(
                         Frame.parse(e.text)?.let { f -> log.frame(epoch, f, office.id).forEach(::dispatch) }
                         if (msg is ServerMsg.Welcome) {
                             linkValue = Link(Phase.Connected, office.id, base = base, kind = kind)
-                            for (id in attached) ws.send(ClientMsg.attach(id))
+                            synchronized(holds) {
+                                for (id in attached) ws.send(ClientMsg.attach(id))
+                            }
                         }
                         handle(office.id, msg)
                     }
@@ -625,6 +633,9 @@ class OfficeConnection(
             upgrade?.cancel()
             socket = null
             if (liveEpoch == epoch) liveEpoch = null
+            // Invalidate before publishing loss: synchronous RN screen reads must not see old rows.
+            _screens.value = emptyMap()
+            feeds.values.forEach { it.invalidate() }
             log.closed(epoch)?.let(::dispatch)
             answerEpoch++
             answerRequests.values.forEach { it.complete(null) }
@@ -671,12 +682,14 @@ class OfficeConnection(
             is ServerMsg.WorkerRemove -> {
                 _data.update { it.copy(workers = it.workers - msg.workerId) }
                 _screens.update { it - msg.workerId }
-                attached -= msg.workerId
-                synchronized(holds) { holds.remove(msg.workerId) }
-                feeds.remove(msg.workerId)
+                synchronized(holds) {
+                    attached -= msg.workerId
+                    holds.remove(msg.workerId)
+                    feeds.remove(msg.workerId)
+                }
             }
             is ServerMsg.Screen -> _screens.update { it + (msg.workerId to ScreenState.apply(it[msg.workerId], msg)) }
-            is ServerMsg.TermSnapshot -> feeds[msg.workerId]?.push(msg.event)
+            is ServerMsg.TermSnapshot -> feeds[msg.workerId]?.push(msg.event.copy(epoch = liveEpoch))
             is ServerMsg.TermData -> feeds[msg.workerId]?.push(msg.event)
             is ServerMsg.Toast -> _toasts.tryEmit(msg)
             is ServerMsg.Pulls -> _data.update { it.copy(pulls = msg.state.items) }

@@ -8,6 +8,7 @@ import ai.factory.droidoffice.core.OfficeEndpoint
 import ai.factory.droidoffice.core.OfficeJson
 import ai.factory.droidoffice.core.OwnedHolds
 import ai.factory.droidoffice.core.Routes
+import ai.factory.droidoffice.core.UploadTarget
 import ai.factory.droidoffice.data.OfficeStore
 import ai.factory.droidoffice.data.StoreSnapshot
 import ai.factory.droidoffice.data.displayName
@@ -58,7 +59,9 @@ sealed interface HostIncoming {
  * The React Native side's view of the app's connection, for the life of the process: the order of
  * events ([HostLog]), its own worker holds, requests waiting on a receipt, pictures uploaded for
  * prompts not sent yet, and a link that arrived before the page could hear it. [HostModule] is its
- * face to JavaScript and can come and go (a reload) while this stays. Main thread only.
+ * face to JavaScript and can come and go (a reload) while this stays. Main thread only, except
+ * [send], [screen], [tokens] and [images]: synchronous JavaScript calls touch only synchronized
+ * hold/image ownership, the connection's volatile socket state and StateFlows.
  */
 class NativeHost(val scope: CoroutineScope, val connection: OfficeConnection, val store: OfficeStore, val api: OfficeApi) {
     private val main = Handler(Looper.getMainLooper())
@@ -198,7 +201,9 @@ class NativeHost(val scope: CoroutineScope, val connection: OfficeConnection, va
     }
 
     fun screen(workerId: String): String? {
+        val epoch = connection.liveEpoch ?: return null
         val s = connection.screens.value[workerId] ?: return null
+        if (connection.liveEpoch != epoch) return null
         return JsonArray(s.lines.map { row -> JsonPrimitive(row.joinToString("") { it.text }.trimEnd()) }).toString()
     }
 
@@ -256,11 +261,19 @@ class NativeHost(val scope: CoroutineScope, val connection: OfficeConnection, va
     }
 
     /** The active office and its live socket's route, for an upload; null while down. */
-    fun liveEndpoint(): Pair<String, OfficeEndpoint<OfficeAuth>>? {
+    fun uploadTarget(floor: String): UploadTarget<OfficeEndpoint<OfficeAuth>>? {
         val epoch = connection.liveEpoch ?: return null
         val office = connection.log.link.office ?: return null
-        return connection.bound(office, epoch)?.let { office to it }
+        if (connection.log.replay.floorId() != floor) return null
+        return connection.bound(office, epoch)?.let { UploadTarget(office, floor, epoch, it) }
     }
+
+    fun current(target: UploadTarget<OfficeEndpoint<OfficeAuth>>): Boolean = target.matches(
+        store.snapshot.value.active?.id,
+        connection.log.replay.floorId(),
+        connection.liveEpoch,
+        connection.bound(target.office, target.epoch),
+    )
 
     /** Remembers where an upload went; the oldest past the limit are deleted where they went. */
     fun recordImage(id: String, office: String, floor: String, route: OfficeEndpoint<OfficeAuth>) {

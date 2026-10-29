@@ -1,5 +1,7 @@
 package ai.factory.droidoffice.core
 
+import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -8,15 +10,22 @@ import org.junit.Test
 class HoldsTest {
     /** OfficeConnection's counting, as the tests need it. */
     private class Counter : SharedHolds {
+        override fun <T> locked(action: () -> T): T = synchronized(this, action)
         var gen = 0L
         val counts = HashMap<String, Int>()
         val sent = ArrayList<String>()
-        override fun generation() = gen
+        override fun generation(): Long {
+            check(Thread.holdsLock(this))
+            return gen
+        }
         override fun attach(workerId: String) {
+            check(Thread.holdsLock(this))
             counts[workerId] = (counts[workerId] ?: 0) + 1
             if (counts[workerId] == 1) sent += "attach:$workerId"
         }
         override fun detach(workerId: String) {
+            check(Thread.holdsLock(this))
+            check((counts[workerId] ?: 0) > 0)
             val n = (counts[workerId] ?: 1) - 1
             if (n <= 0) {
                 counts.remove(workerId)
@@ -24,11 +33,37 @@ class HoldsTest {
             } else counts[workerId] = n
         }
         override fun resnapshot(workerId: String) {
+            check(Thread.holdsLock(this))
             sent += "snapshot:$workerId"
         }
-        fun reset() {
+        fun reset() = locked {
             counts.clear()
             gen++
+        }
+    }
+
+    @Test
+    fun concurrentOwnersAndOfficeResetsKeepGenerationAndCountsAtomic() {
+        val c = Counter()
+        val executor = Executors.newFixedThreadPool(5)
+        try {
+            val tasks = (1..4).map {
+                executor.submit {
+                    val tokens = HoldTokens(c)
+                    val raw = OwnedHolds(c)
+                    repeat(1_000) {
+                        val token = tokens.hold("w1")
+                        raw.attach("w1")
+                        raw.attach("w1")
+                        tokens.release(token)
+                        raw.release()
+                    }
+                }
+            } + executor.submit { repeat(1_000) { c.reset() } }
+            tasks.forEach { it.get(10, TimeUnit.SECONDS) }
+            assertTrue(c.counts.isEmpty())
+        } finally {
+            executor.shutdownNow()
         }
     }
 

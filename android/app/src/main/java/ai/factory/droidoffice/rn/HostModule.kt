@@ -1,9 +1,12 @@
 package ai.factory.droidoffice.rn
 
 import ai.factory.droidoffice.SetupActivity
+import ai.factory.droidoffice.core.OfficeEndpoint
 import ai.factory.droidoffice.core.OfficeJson
 import ai.factory.droidoffice.core.ToolPolicy
+import ai.factory.droidoffice.core.UploadTarget
 import ai.factory.droidoffice.graph
+import ai.factory.droidoffice.net.OfficeAuth
 import android.content.Intent
 import android.os.Build
 import android.os.Handler
@@ -16,7 +19,9 @@ import androidx.core.content.edit
 import com.facebook.react.bridge.Promise
 import com.facebook.react.bridge.ReactApplicationContext
 import java.net.URLEncoder
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.JsonNull
@@ -114,9 +119,13 @@ class HostModule(context: ReactApplicationContext) : NativeDroidOfficeHostSpec(c
             promise.resolve("[]")
             return@onMain
         }
+        val target = host.uploadTarget(floor) ?: run {
+            promise.reject("offline", "Disconnected or changing floors. Nothing was uploaded.")
+            return@onMain
+        }
         val key = "pick-${System.nanoTime()}"
         val request = PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
-        val done: (List<android.net.Uri>) -> Unit = { uris -> upload(floor, uris.take(n), promise) }
+        val done: (List<android.net.Uri>) -> Unit = { uris -> upload(target, uris.take(n), promise) }
         if (n == 1) {
             lateinit var launcher: androidx.activity.result.ActivityResultLauncher<PickVisualMediaRequest>
             launcher = activity.activityResultRegistry.register(key, ActivityResultContracts.PickVisualMedia()) { uri ->
@@ -134,25 +143,44 @@ class HostModule(context: ReactApplicationContext) : NativeDroidOfficeHostSpec(c
         }
     }
 
-    /** Uploads each picture to the office and floor live now, remembering where each went. */
-    private fun upload(floor: String, uris: List<android.net.Uri>, promise: Promise) {
+    /** A picker and every suspended upload stay bound to their original route and socket. */
+    private fun upload(target: UploadTarget<OfficeEndpoint<OfficeAuth>>, uris: List<android.net.Uri>, promise: Promise) {
         if (uris.isEmpty()) return promise.resolve("[]")
-        val live = host.liveEndpoint() ?: return promise.reject("offline", "Disconnected. Nothing was uploaded.")
-        val (office, endpoint) = live
+        if (!host.current(target)) return promise.reject("changed", "The connection or floor changed while choosing. Choose the pictures again.")
+        val endpoint = target.route
         host.scope.launch {
-            val out = buildJsonArray {
+            val uploaded = ArrayList<Pair<String, JsonObject>>()
+            var delivered = false
+            try {
                 for (uri in uris) {
+                    check(host.current(target)) { "The connection or floor changed. Choose the pictures again." }
                     val picture = withContext(Dispatchers.IO) { runCatching { Pictures.load(reactApplicationContext, uri) }.getOrNull() } ?: continue
-                    val id = graph.api.stageImage(endpoint.base, endpoint.auth, floor, picture.name, picture.type, picture.bytes).getOrNull() ?: continue
-                    host.recordImage(id, office, floor, endpoint)
-                    add(buildJsonObject {
+                    check(host.current(target)) { "The connection or floor changed. Choose the pictures again." }
+                    val id = graph.api.stageImage(endpoint.base, endpoint.auth, target.floor, picture.name, picture.type, picture.bytes).getOrNull() ?: continue
+                    uploaded += id to buildJsonObject {
                         put("id", id)
                         put("name", picture.name)
                         picture.preview?.let { put("preview", it) }
-                    })
+                    }
+                }
+                check(host.current(target)) { "The connection or floor changed. Choose the pictures again." }
+                val out = buildJsonArray {
+                    for ((id, picture) in uploaded) {
+                        host.recordImage(id, target.office, target.floor, endpoint)
+                        add(picture)
+                    }
+                }
+                promise.resolve(out.toString())
+                delivered = true
+            } catch (e: Exception) {
+                promise.reject("changed", "The upload could not finish on its original connection. Choose the pictures again.")
+                if (e is CancellationException) throw e
+            } finally {
+                if (!delivered) withContext(NonCancellable) {
+                    // Never ask JavaScript to clean a stale batch using whichever office is active.
+                    for ((id, _) in uploaded) graph.api.unstageImage(endpoint.base, endpoint.auth, target.floor, id)
                 }
             }
-            promise.resolve(out.toString())
         }
     }
 
