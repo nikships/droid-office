@@ -1,21 +1,6 @@
 import { app, BrowserWindow, dialog, shell } from 'electron';
+import { COMPANION_CHROME } from './companion-chrome.js';
 import { companionNavigation } from './finder-links.js';
-
-// Keep the native controls over the companion's own navigation, with a clear area to drag.
-const CHROME = `
-  .dashboard .dash-top {
-    height: auto;
-    min-height: 68px;
-    padding-left: 96px;
-    -webkit-app-region: drag;
-    background: linear-gradient(115deg, rgba(238,96,24,.14), rgba(18,18,20,.88) 42%, rgba(18,18,20,.72));
-    backdrop-filter: blur(24px) saturate(140%);
-    border-bottom-color: rgba(238,96,24,.2);
-  }
-  .dashboard .dash-top :is(button, select, a) { -webkit-app-region: no-drag; }
-  .dashboard .dash-floor-strip { -webkit-app-region: no-drag; }
-  .dashboard .dash-top .dash-office { max-width: 180px; }
-`;
 
 /** The dashboard in an ordinary Electron window, without the walkable office's Metal presenter. */
 export class OfficeCompanion {
@@ -78,7 +63,7 @@ export class OfficeCompanion {
     });
     win.webContents.on('will-attach-webview', (event) => event.preventDefault());
     win.webContents.on('dom-ready', () => {
-      void win.webContents.insertCSS(CHROME).catch(() => {});
+      void win.webContents.insertCSS(COMPANION_CHROME).catch(() => {});
     });
     win.once('ready-to-show', () => this.focus());
     win.once('closed', () => {
