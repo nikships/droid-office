@@ -24,6 +24,36 @@ const screen = readMenu([
   '  Space/Enter/1-9 Select',
 ])!;
 
+test('trail 1: terminal questions retain the explanation after a question mark without thread history', () => {
+  const lines = [
+    '  Ask User',
+    '  ● Memories → ● Trails-agents → ○ Agent-Insights → ○ CI-and-Appwrite',
+    '',
+    "  Install the Agent Insights plugin on entire.com for droid-office? It's free token-usage analytics",
+    '  across your agent sessions.',
+    '',
+    '  1. Yes, install it',
+    '  2. No, skip',
+    '  Or type your own answer...',
+    '',
+    '  Tab/ShiftTab or ←/→ Questions · ↑/↓ Navigate · Space/Enter/1-9 Select · ESC stop agent',
+  ];
+  const expected = "Install the Agent Insights plugin on entire.com for droid-office? It's free token-usage analytics across your agent sessions.";
+  const menu = readMenu(lines)!;
+  assert.equal(menu.question, expected);
+  assert.equal(questionPresentation(menu, []).question, expected);
+  assert.deepEqual(
+    menu.choices.map((choice) => choice.label),
+    ['Yes, install it', 'No, skip'],
+  );
+  assert.equal(questionPresentation(menu, []).complete, false);
+
+  // A different terminal width can wrap immediately after the question mark.
+  assert.equal(readMenu([...lines.slice(0, 3), '  Install the Agent Insights plugin on entire.com for droid-office?', "  It's free token-usage analytics across your agent sessions.", ...lines.slice(5)])?.question, expected);
+  assert.equal(readMenu([...lines.slice(0, 6), '  https://entire.com/gh/nikships/-/trails/1?tab=changes', '', ...lines.slice(6)])?.question, expected);
+  assert.equal(readMenu(['Do you trust the files in this folder?', '/tmp/do-qa-test', '', '> 1. Yes, proceed', '  2. No, exit'])?.question, 'Do you trust the files in this folder?');
+});
+
 test('pending questionnaire restores the complete question and every numbered answer from the owner’s capture', () => {
   const call = entry({ questionnaire: `1. [question] ${question}\n[topic] Design direction\n${options.map((option) => `[option] ${option}`).join('\n')}` });
   const shown = questionPresentation(screen, [call]);
