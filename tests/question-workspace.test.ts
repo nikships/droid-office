@@ -83,6 +83,7 @@ test('answer workspace: full text, explicit selection, responsive scrolling and 
       },
       { menu, full },
     );
+    await page.evaluate(() => Promise.all(document.getAnimations().map((animation) => animation.finished)));
     return page;
   }
   for (const [width, height] of [
@@ -95,6 +96,11 @@ test('answer workspace: full text, explicit selection, responsive scrolling and 
     assert.equal(await page.locator('.qw-question').textContent(), question);
     assert.deepEqual(await page.locator('.qw-choice-copy').allTextContents(), options);
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), true);
+    if (width <= 600) {
+      const dialog = await page.locator('.question-workspace').boundingBox();
+      assert.ok(dialog && dialog.x >= 8 && dialog.x + dialog.width <= width - 8, 'rounded mobile dialog keeps a backdrop gutter');
+      assert.ok(dialog && dialog.y >= 8 && dialog.y + dialog.height <= height - 8, 'mobile dialog fits inside the viewport gutters');
+    }
     assert.equal(await page.getByRole('button', { name: 'Show current question' }).isVisible(), false);
     assert.equal(
       await page
@@ -133,6 +139,13 @@ test('answer workspace: full text, explicit selection, responsive scrolling and 
     [1024, 700],
   ]) {
     const captured = await pageFor(capturedMenu, width, height);
+    const dialog = await captured.locator('.question-workspace').boundingBox();
+    const footer = await captured.locator('.question-workspace footer').boundingBox();
+    const content = await captured.locator('.qw-content').boundingBox();
+    assert.ok(dialog && dialog.width <= 760, 'short questions use a reading-width dialog');
+    assert.ok(dialog && dialog.height < height - 48, 'short questions size to their content instead of filling the viewport');
+    assert.ok(dialog && footer && Math.abs(dialog.y + dialog.height - footer.y - footer.height) <= 2, 'no empty space remains below the footer');
+    assert.ok(dialog && content && content.x - dialog.x <= 24, 'answers use the dialog width without oversized side gutters');
     assert.equal(await captured.locator('.qw-question').textContent(), capturedQuestion);
     assert.deepEqual(await captured.locator('.qw-choice-copy').allTextContents(), ['Yes, install it', 'No, skip']);
     await captured.locator('input[value="2"]').check();
