@@ -121,3 +121,8 @@ CI runs on a pull request only when it touches a path in the workflow's `pull_re
 - Checks of the running office go through `.agents/skills/office-clone/scripts/office-run.mjs` (Playwright's headless shell from `node bin/droid-office.js browser install`; SwiftShader WebGL on Linux). `agent-browser` is on `PATH` for video capture, which needs a headed session.
 - Boot runs `npm run dev`: Vite at http://127.0.0.1:5173 and the office on port 4600. A check that must not share that office runs on a clone of the owner's office on another port, as the `office-clone` skill describes.
 - Git rewrites `github.com` remotes to credentialed https URLs. `normalizeRepo` drops that userinfo. A test stub that reads `git remote get-url` has to allow an optional `user:token@` as well.
+
+<!-- entire-agent:begin -->
+Read .entire/agent-guide.md for this repository's workflow, source inspection, and verification guidance.
+@.entire/agent-guide.md
+<!-- entire-agent:end -->
