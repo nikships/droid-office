@@ -5,10 +5,11 @@ import { slashCommands, slashOf, slashSuggestions, type DroidSlashCommand, type 
 import { isAsleep, isBusy } from '../../shared/status';
 import type { ThreadEntry } from '../../shared/worker-thread';
 import { presentThread, threadArguments, type ThreadRow } from '../../shared/thread-presentation';
+import { composerInputHeight } from '../conversation-layout';
 import { statusLabel } from '../format';
 import { keyed } from '../markdown';
 import type { Session, SessionSnapshot } from '../session';
-import { Button, colors, Eyebrow, Label, Note, Row, StatusPill, s, useCompactHeight } from './kit';
+import { Button, colors, IconButton, Label, Row, StatusPill, s, useCompactHeight } from './kit';
 import { Markdown } from './Markdown';
 
 const NO_ENTRIES: readonly ThreadEntry[] = [];
@@ -28,64 +29,66 @@ export function ThreadView(props: { session: Session; snap: SessionSnapshot; wor
   const [follow, setFollow] = useState(true);
   return (
     <View style={{ flex: 1 }} testID={`thread-${worker.id}`}>
-      <FlatList
-        ref={list}
-        data={rows}
-        keyExtractor={(r) => r.id}
-        onContentSizeChange={() => follow && list.current?.scrollToEnd({ animated: false })}
-        onScroll={(e) => {
-          const { contentOffset, contentSize, layoutMeasurement } = e.nativeEvent;
-          setFollow(contentSize.height - contentOffset.y - layoutMeasurement.height < 80);
-        }}
-        scrollEventThrottle={200}
-        ListHeaderComponent={
-          <View style={{ paddingHorizontal: 16, paddingTop: 16, gap: 8 }}>
-            {feed?.history.hasMore ? <Button small label="Load earlier messages" disabled={!ready || !!feed.pending} onPress={() => session.readEarlier(worker.id)} testID="thread-earlier" /> : null}
-            {props.focused ? <TeamActivity session={session} snap={props.snap} /> : null}
+      <View style={{ flex: 1 }}>
+        <FlatList
+          ref={list}
+          data={rows}
+          keyExtractor={(r) => r.id}
+          onContentSizeChange={() => follow && list.current?.scrollToEnd({ animated: false })}
+          onScroll={(e) => {
+            const { contentOffset, contentSize, layoutMeasurement } = e.nativeEvent;
+            setFollow(contentSize.height - contentOffset.y - layoutMeasurement.height < 80);
+          }}
+          scrollEventThrottle={200}
+          ListHeaderComponent={
+            <View style={{ paddingHorizontal: 16, paddingTop: 8, gap: 8 }}>
+              {feed?.history.hasMore ? <Button small label="Load earlier messages" disabled={!ready || !!feed.pending} onPress={() => session.readEarlier(worker.id)} testID="thread-earlier" /> : null}
+              {props.focused ? <TeamActivity session={session} snap={props.snap} /> : null}
+            </View>
+          }
+          renderItem={({ item }) => <RowView row={item} asking={worker.status === 'needs_input'} />}
+          ListEmptyComponent={
+            <View style={{ padding: 16 }}>
+              <Text style={s.muted}>
+                {feed?.error ? 'Conversation unavailable. Retry below, or open Raw TTY.' : !feed?.received ? 'Reading the conversation…' : 'Start a conversation. Your messages and the worker’s replies will appear here.'}
+              </Text>
+            </View>
+          }
+          ListFooterComponent={
+            <View style={{ padding: 8, gap: 6 }}>
+              {queued.length ? (
+                <View testID="thread-queued" style={{ borderWidth: 1, borderColor: colors.border, padding: 8, borderRadius: 4, gap: 4 }}>
+                  <Label>Queued · {queued.length}</Label>
+                  {queued.map((q) => (
+                    <Text key={q.key} style={s.text} numberOfLines={3}>
+                      {q.text || 'Image attached'}
+                      {q.more ? ` (${q.more} more line${q.more === 1 ? '' : 's'})` : q.preview ? ' (shortened)' : ''}
+                    </Text>
+                  ))}
+                  <Row>
+                    <Text style={[s.muted, { flex: 1 }]}>{queued.length === 1 ? 'Sent once this turn is over.' : 'Sent in order once this turn is over.'}</Text>
+                    {droidQueued ? <Button small tone="ghost" label="Clear queue" disabled={!ready} onPress={() => session.clearQueue(worker.id) || props.onAction('Disconnected. Nothing was sent.')} /> : null}
+                  </Row>
+                </View>
+              ) : null}
+            </View>
+          }
+        />
+        {feed?.history.historical || !follow ? (
+          <View style={{ position: 'absolute', right: 12, bottom: 12 }}>
+            <Button
+              small
+              label={feed?.history.historical ? 'Back to the latest' : 'Jump to latest'}
+              onPress={() => {
+                if (feed?.history.historical) session.readLatest(worker.id);
+                setFollow(true);
+                list.current?.scrollToEnd({ animated: true });
+              }}
+              testID="thread-latest"
+            />
           </View>
-        }
-        renderItem={({ item }) => <RowView row={item} worker={worker} asking={worker.status === 'needs_input'} />}
-        ListEmptyComponent={
-          <View style={{ padding: 16 }}>
-            <Text style={s.muted}>
-              {feed?.error ? 'Conversation unavailable. Retry below, or open Raw TTY.' : !feed?.received ? 'Reading the conversation…' : 'Start a conversation. Your messages and the worker’s replies will appear here.'}
-            </Text>
-          </View>
-        }
-        ListFooterComponent={
-          <View style={{ padding: 8, gap: 6 }}>
-            {queued.length ? (
-              <View testID="thread-queued" style={{ borderWidth: 1, borderColor: colors.border, padding: 8, borderRadius: 4, gap: 4 }}>
-                <Label>Queued · {queued.length}</Label>
-                {queued.map((q) => (
-                  <Text key={q.key} style={s.text} numberOfLines={3}>
-                    {q.text || 'Image attached'}
-                    {q.more ? ` (${q.more} more line${q.more === 1 ? '' : 's'})` : q.preview ? ' (shortened)' : ''}
-                  </Text>
-                ))}
-                <Row>
-                  <Text style={[s.muted, { flex: 1 }]}>{queued.length === 1 ? 'Sent once this turn is over.' : 'Sent in order once this turn is over.'}</Text>
-                  {droidQueued ? <Button small tone="ghost" label="Clear queue" disabled={!ready} onPress={() => session.clearQueue(worker.id) || props.onAction('Disconnected. Nothing was sent.')} /> : null}
-                </Row>
-              </View>
-            ) : null}
-          </View>
-        }
-      />
-      {feed?.history.historical || !follow ? (
-        <View style={{ position: 'absolute', right: 12, bottom: 140 }}>
-          <Button
-            small
-            label={feed?.history.historical ? 'Back to the latest' : 'Jump to latest'}
-            onPress={() => {
-              if (feed?.history.historical) session.readLatest(worker.id);
-              setFollow(true);
-              list.current?.scrollToEnd({ animated: true });
-            }}
-            testID="thread-latest"
-          />
-        </View>
-      ) : null}
+        ) : null}
+      </View>
       <Row style={{ paddingHorizontal: 8 }} wrap>
         {feed?.error ? <Text style={[s.muted, { color: colors.danger, flex: 1 }]}>{feed.error}</Text> : null}
         {feed?.error ? <Button small label="Retry" disabled={!ready} onPress={() => session.retryThread(worker.id)} testID="thread-retry" /> : null}
@@ -93,17 +96,16 @@ export function ThreadView(props: { session: Session; snap: SessionSnapshot; wor
         {isAsleep(worker.status) ? <Text style={[s.muted, { flex: 1 }]}>Resume this worker to send another message.</Text> : null}
       </Row>
       <Question session={session} worker={worker} focused={props.focused} onRaw={props.onRaw} />
-      <Composer session={session} snap={props.snap} worker={worker} onRaw={props.onRaw} />
+      <Composer session={session} snap={props.snap} worker={worker} />
     </View>
   );
 }
 
-function RowView({ row, worker, asking }: { row: ThreadRow; worker: WorkerInfo; asking: boolean }) {
+function RowView({ row, asking }: { row: ThreadRow; asking: boolean }) {
   if (row.kind === 'message') {
     const user = row.entry.role === 'user';
     return (
-      <View style={{ paddingHorizontal: 20, paddingVertical: 12, alignItems: user ? 'flex-end' : 'stretch', gap: 8 }}>
-        {user ? <Label>You</Label> : row.startsTurn ? <Label>{worker.name}</Label> : null}
+      <View style={{ paddingHorizontal: 16, paddingVertical: 8, alignItems: user ? 'flex-end' : 'stretch' }}>
         {user ? (
           <Text selectable style={[s.text, { backgroundColor: colors.raised, borderWidth: 1, borderColor: colors.border, padding: 12, borderRadius: 3, maxWidth: '94%' }]}>
             {row.entry.text ?? ''}
@@ -273,24 +275,24 @@ function Question({ session, worker, focused, onRaw }: { session: Session; worke
   if (worker.status !== 'needs_input') return null;
   const menu = session.questionMenu(worker.id);
   return (
-    <View testID="thread-question" style={{ borderTopWidth: 1, borderColor: colors.warn, padding: 8, gap: 6 }}>
+    <View testID="thread-question" style={{ borderTopWidth: 1, borderColor: colors.warn, padding: 12, gap: 8 }}>
       {menu ? (
         <Row wrap>
           <Text style={[s.muted, { flex: 1 }]}>{worker.name} needs your answer.</Text>
           <Button label="Answer questions" tone="primary" disabled={!focused || !session.ready()} onPress={() => session.openQuestion(worker.id)} testID="question-open" />
         </Row>
       ) : (
-        <>
-          <Note tone="warn">This CLI dialog cannot be answered safely here. Open Raw TTY to continue.</Note>
-          <Button small label="Open Raw TTY" disabled={!focused} onPress={onRaw} testID="question-fallback" />
-        </>
+        <Row>
+          <Text style={[s.muted, { flex: 1 }]}>Continue this CLI dialog in Raw TTY.</Text>
+          <Button label="Open Raw TTY" disabled={!focused} onPress={onRaw} testID="question-fallback" />
+        </Row>
       )}
     </View>
   );
 }
 
 /** The draft box for one worker; a cloud worker, which has no Thread here, gets it under its details. */
-export function Composer({ session, snap, worker, onRaw }: { session: Session; snap: SessionSnapshot; worker: WorkerInfo; onRaw: () => void }) {
+export function Composer({ session, snap, worker }: { session: Session; snap: SessionSnapshot; worker: WorkerInfo }) {
   const compact = useCompactHeight();
   const ws = session.floorWorkspace();
   const draft = Object.hasOwn(ws.drafts, worker.id) ? ws.drafts[worker.id] : { text: '', attachments: [] };
@@ -298,11 +300,13 @@ export function Composer({ session, snap, worker, onRaw }: { session: Session; s
   const [live, setLive] = useState<DroidSlashCommand[]>([]);
   const [asked, setAsked] = useState(0);
   const [slashClosed, setSlashClosed] = useState(false);
+  const [inputHeight, setInputHeight] = useState(44);
   const busy = isBusy(worker.status);
   const sending = session.isSending(worker.id);
   const picking = session.isPicking(worker.id);
   const asleep = isAsleep(worker.status) || !!worker.lost;
   const disabled = !session.ready() || asleep || worker.status === 'needs_input' || !!worker.guest || sending;
+  const hasDraft = !!draft.text.trim() || !!draft.attachments.length;
   const commands = useMemo(() => slashCommands(live), [live]);
   const suggestions = worker.kind === 'agent' && !slashClosed && !disabled ? slashSuggestions(draft.text, commands) : [];
   const loadSlash = () => {
@@ -333,13 +337,13 @@ export function Composer({ session, snap, worker, onRaw }: { session: Session; s
     }
     setTold(error ?? '');
   };
+  if (asleep || worker.status === 'needs_input' || worker.guest) return null;
   return (
-    <View style={{ padding: compact ? 8 : 16, borderTopWidth: 1, borderColor: colors.border, gap: compact ? 8 : 12, backgroundColor: colors.surface }} testID="composer">
-      {!compact ? <Eyebrow index="03">Message</Eyebrow> : null}
+    <View style={{ padding: 8, borderTopWidth: 1, borderColor: colors.border, gap: 8, backgroundColor: colors.surface }} testID="composer">
       {suggestions.length ? (
-        <View style={{ borderWidth: 1, borderColor: colors.border, borderRadius: 4 }} testID="slash-menu">
+        <ScrollView keyboardShouldPersistTaps="handled" style={{ maxHeight: compact ? 120 : 220, borderWidth: 1, borderColor: colors.border, borderRadius: 3 }} testID="slash-menu">
           {suggestions.map((c) => (
-            <Pressable key={c.name} onPress={() => pick(c)} style={{ padding: 6 }} accessibilityRole="button" testID={`slash-${c.name}`}>
+            <Pressable key={c.name} onPress={() => pick(c)} style={{ padding: 10, minHeight: 44 }} accessibilityRole="button" testID={`slash-${c.name}`}>
               <Text style={s.text}>
                 /{c.name} <Text style={s.muted}>{c.description}</Text>
                 {c.kind === 'tty' ? <Text style={s.muted}> · Raw TTY</Text> : c.source ? <Text style={s.muted}> · {c.source === 'skill' ? 'Skill' : 'Command'}</Text> : null}
@@ -347,42 +351,52 @@ export function Composer({ session, snap, worker, onRaw }: { session: Session; s
             </Pressable>
           ))}
           <Button small tone="ghost" label="Close" onPress={() => setSlashClosed(true)} />
-        </View>
+        </ScrollView>
       ) : null}
       {draft.attachments.length ? (
         <ScrollView horizontal nestedScrollEnabled testID="composer-images">
           {draft.attachments.map((id, i) => (
             <View key={id} style={{ marginRight: 6, alignItems: 'center' }}>
-              {snap.previews[id] ? <Image source={{ uri: snap.previews[id] }} style={{ width: 48, height: 48, borderRadius: 4 }} /> : <View style={{ width: 48, height: 48, backgroundColor: colors.raised }} />}
+              {snap.previews[id] ? <Image source={{ uri: snap.previews[id] }} style={{ width: 48, height: 48, borderRadius: 3 }} /> : <View style={{ width: 48, height: 48, backgroundColor: colors.raised }} />}
               <Button small tone="ghost" label={`✕ ${i + 1}`} accessibilityLabel={`Remove image ${i + 1}`} onPress={() => session.removeAttachment(worker.id, id)} />
             </View>
           ))}
         </ScrollView>
       ) : null}
-      <TextInput
-        testID="composer-input"
-        style={[s.input, { minHeight: compact ? 40 : 72, maxHeight: compact ? 72 : 140, backgroundColor: colors.bg, textAlignVertical: 'top' }]}
-        multiline
-        maxLength={20000}
-        editable={!disabled}
-        value={draft.text}
-        onChangeText={change}
-        placeholder={busy ? `Steer ${worker.name}, or queue for after this turn…` : worker.kind === 'shell' ? `Command for ${worker.name}…` : `Reply to ${worker.name}…`}
-        placeholderTextColor={colors.muted}
-        accessibilityLabel="Message to worker"
-      />
-      <Row wrap>
-        {worker.kind === 'agent' ? <Button small tone="ghost" label={picking ? 'Attaching…' : 'Pictures'} disabled={disabled || picking} onPress={() => void session.attach(worker.id)} testID="composer-attach" /> : null}
-        {worker.kind === 'agent' && (busy || worker.status === 'needs_input') ? (
-          <Button small label="Stop" tone="danger" disabled={!session.ready()} onPress={() => (session.stop(worker.id) ? setTold('') : setTold('Disconnected. Nothing was sent.'))} testID="composer-stop" />
-        ) : null}
-        <View style={{ flex: 1 }} />
-        {busy && worker.kind === 'agent' ? <Button small label="Queue" disabled={disabled || !!slashOf(draft.text) || picking} onPress={() => void send(true)} testID="composer-queue" /> : null}
-        <Button small tone="primary" label={sending ? 'Sending…' : busy ? 'Send now' : 'Send'} disabled={disabled || picking || (!draft.text.trim() && !draft.attachments.length)} onPress={() => void send(false)} testID="composer-send" />
+      <Row style={{ alignItems: 'flex-end', gap: 0, borderWidth: 1, borderColor: colors.borderStrong, borderRadius: 3, backgroundColor: colors.bg }}>
+        {worker.kind === 'agent' ? <IconButton icon="+" label={picking ? 'Attaching pictures' : 'Attach pictures'} disabled={disabled || picking} onPress={() => void session.attach(worker.id)} testID="composer-attach" /> : null}
+        <TextInput
+          testID="composer-input"
+          style={{
+            flex: 1,
+            minWidth: 0,
+            height: composerInputHeight(draft.text, inputHeight, compact),
+            color: colors.text,
+            fontSize: 16,
+            lineHeight: 22,
+            paddingHorizontal: 8,
+            paddingVertical: 10,
+            textAlignVertical: 'top',
+          }}
+          multiline
+          maxLength={20000}
+          editable={!disabled}
+          value={draft.text}
+          onChangeText={change}
+          onContentSizeChange={(e) => setInputHeight(Math.ceil(e.nativeEvent.contentSize.height))}
+          placeholder={busy ? 'Steer or queue…' : worker.kind === 'shell' ? 'Command…' : 'Message…'}
+          placeholderTextColor={colors.muted}
+          accessibilityLabel="Message to worker"
+        />
+        {busy && hasDraft && worker.kind === 'agent' ? <Button label="Queue" disabled={disabled || !!slashOf(draft.text) || picking} onPress={() => void send(true)} testID="composer-queue" /> : null}
+        {busy && !hasDraft && worker.kind === 'agent' ? (
+          <IconButton icon="■" label="Stop turn" danger disabled={!session.ready()} onPress={() => (session.stop(worker.id) ? setTold('') : setTold('Disconnected. Nothing was sent.'))} testID="composer-stop" />
+        ) : (
+          <IconButton icon="↑" label={sending ? 'Sending message' : busy ? 'Send message now' : 'Send message'} primary disabled={disabled || picking || !hasDraft} onPress={() => void send(false)} testID="composer-send" />
+        )}
       </Row>
       {told ? <Text style={[s.muted, { color: colors.warn }]}>{told}</Text> : null}
       {slashOf(draft.text)?.command?.kind === 'tty' ? <Text style={s.muted}>This command opens one of Droid’s dialogs: Raw TTY opens after it is sent.</Text> : null}
-      {worker.status === 'needs_input' ? <Button small tone="ghost" label="Open Raw TTY" onPress={onRaw} /> : null}
     </View>
   );
 }

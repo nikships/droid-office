@@ -8,11 +8,11 @@ The selected floor is the working scope. The roster includes local workers, suba
 
 Agent rows show name, task, status, parent, model, reasoning effort, current activity and work duration. Groups begin expanded, can collapse and summarize their children's status. Search and filters preserve enough parent context to identify matching children.
 
-On wide screens the roster stays available beside one to four distinct pinned worker panes. Dividers resize the workspace; one pane can take focus without discarding the others. A phone shows one conversation with a quick worker switcher and previous/next controls. New local Droid panes open in Thread; Raw TTY remains available.
+The web companion targets high-resolution 16:10 displays. On wide screens the roster stays available beside one to four distinct pinned worker panes. Dividers resize the workspace; one pane can take focus without discarding the others. Android is the mobile surface. A phone shows one conversation; tapping the worker name opens its switcher. New local Droid panes open in Thread; Raw TTY remains available.
 
 The web and native workspaces share the Factory dark product treatment: flat near-black surfaces, hairline borders, 3px corners, uppercase monospace controls and orange numbered section labels. Primary actions invert to off-white rather than orange fills. Live counts summarize the current floor; worker colors remain small identity markers.
 
-The roster separates task, activity, model and supervision metadata. Wide screens keep the tool rail and roster beside the pane workspace. Phones separate worker navigation from conversation actions, and show a grouped tool directory instead of a strip of decorative icons. Thread messages, explicit-submit questions, hire and confirmation surfaces follow the same tokens. The desktop first-person office is unchanged.
+The roster separates task, activity, model and supervision metadata. Wide screens keep the tool rail and roster beside the pane workspace. Android conversations use one compact header with back, worker name/status and a menu for details, Thread/Raw TTY, previous/next and worker actions. Refusal explanations stay with their actions in that menu. The message box occupies one row until text wraps; attach and send sit alongside the text. During a turn, an empty draft shows Stop; a written draft offers explicit Queue and Send now, while Stop remains in the worker menu. Questions replace the disabled message box with their explicit answer entry point. Android shows a grouped tool directory instead of a strip of decorative icons. Thread messages, explicit-submit questions, hire and confirmation surfaces follow the same tokens. The desktop first-person office is unchanged.
 
 ## State and lifecycle
 

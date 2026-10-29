@@ -52,7 +52,19 @@ function Block({ block }: { block: MdBlock }) {
         <View style={{ gap: 2 }}>
           {keyed(block.items, (item) => blockName(item.blocks[0])).map(([key, item], i) => (
             <View key={key} style={{ flexDirection: 'row', gap: 6 }}>
-              <Text style={[s.text, { minWidth: 18, textAlign: 'right' }]}>{item.checked !== undefined ? (item.checked ? '☑' : '☐') : block.ordered ? `${block.start + i}.` : '•'}</Text>
+              {item.checked !== undefined ? (
+                <View style={{ width: 18, paddingTop: 5, alignItems: 'center' }}>
+                  <View
+                    accessible
+                    accessibilityLabel={item.checked ? 'Completed task' : 'Incomplete task'}
+                    style={{ width: 14, height: 14, borderWidth: 1, borderColor: colors.muted, borderRadius: 2, alignItems: 'center', justifyContent: 'center' }}
+                  >
+                    {item.checked ? <Text style={{ color: colors.muted, fontSize: 11, lineHeight: 13 }}>✓</Text> : null}
+                  </View>
+                </View>
+              ) : (
+                <Text style={[s.text, { minWidth: 18, textAlign: 'right' }]}>{block.ordered ? `${block.start + i}.` : '•'}</Text>
+              )}
               <View style={{ flex: 1, gap: 4 }}>
                 <Blocks blocks={item.blocks} />
               </View>

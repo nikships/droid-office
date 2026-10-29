@@ -15,10 +15,10 @@ Installing a release signed with the same key preserves your paired offices. The
 ## Workspace
 
 - **Workers** shows the selected floor, with quick floor switching. Leads begin expanded; their real subagents nest underneath with status counts. Search and filters keep matching children's parent context. Fork ancestry and team badges do not create supervision.
-- A phone shows one conversation with a quick worker switcher and previous/next controls. Wide screens keep the roster beside up to four distinct pinned, resizable panes.
-- New supported local Droid panes open in **Thread**. **Raw TTY** handles shells and CLI dialogs. Existing panes remember their chosen view.
+- A phone shows one conversation with a compact header. Tap the worker name to switch workers; the **⋯** menu holds details, previous/next and worker actions. Wide screens keep the roster beside up to four distinct pinned, resizable panes.
+- New supported local Droid panes open in **Thread**. Choose **Raw TTY** in the worker menu for shells and CLI dialogs. Existing panes remember their chosen view.
 - Rows show task, status, parent, model, effort, activity and elapsed work. Local workers, board agents, shells, guests and cloud workers stay visible, with appropriate actions and explanations.
-- Thread shows selectable Markdown, grouped tool activity, separate collapsible thoughts, plans, errors, earlier history and Droid's queue. **Send now** steers a running turn; **Queue** submits for a later turn. **Stop** and **Clear queue** are explicit actions.
+- Thread shows selectable Markdown, grouped tool activity, separate collapsible thoughts, plans, errors, earlier history and Droid's queue. The one-row composer grows with written text. **+** attaches pictures and **↑** sends; during a turn, **Queue** submits for later. With no draft, **■** stops the turn. Stop also stays in the worker menu; **Clear queue** remains explicit.
 - **Answer questions** opens a full-size workspace with complete question and option text when the transcript provides it. Radio buttons, checkboxes and custom text only edit the draft; **Submit answer** sends it. Changed questions and unsupported host versions cannot submit stale answers. Raw TTY remains available for other CLI dialogs.
 - Prompts and hires support pictures. Slash commands come from Droid's built-ins and the worker's available skills and commands. Commands opening CLI dialogs reveal Raw TTY; `/quit`, `/exit` and mid-turn slash commands are refused.
 - Only the active, ready terminal pane types or resizes the shared PTY. Thread reads never resize it. Other terminal consumers share the same subscription.

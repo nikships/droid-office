@@ -1,15 +1,15 @@
 import { useEffect, useState } from 'react';
-import { Alert, Linking, Modal, ScrollView, Text, TextInput, View } from 'react-native';
+import { Alert, Linking, Modal, Pressable, ScrollView, Text, TextInput, View } from 'react-native';
 import { companionCapabilities, companionWorkedMs } from '../../shared/companion-roster';
 import { isExternalUrl } from '../../shared/companion-tools';
 import type { CompanionView } from '../../shared/companion-workspace';
 import { sessionWebUrl } from '../../shared/factory-sessions';
 import type { WorkerInfo, WorktreeCleanup } from '../../shared/protocol';
 import { teamOf } from '../../shared/team';
-import { ACTION_OFFLINE, bringInMsg, CLEANUP_LABEL, cleanupAllowed, describeWorktree, forkMsg, prMsg, rebuildMsg, resumeMsg, sendHomeMsg, sendHomeNeedsWorktreeCheck, sendHomeText, type WorkerAction, workerActions } from '../actions';
+import { bringInMsg, CLEANUP_LABEL, cleanupAllowed, describeWorktree, forkMsg, prMsg, rebuildMsg, resumeMsg, sendHomeMsg, sendHomeNeedsWorktreeCheck, sendHomeText, type WorkerAction, workerActions } from '../actions';
 import { duration, kindLabel, modelLabel, statusLabel } from '../format';
 import type { Session, SessionSnapshot } from '../session';
-import { Button, Chip, colors, Dot, Eyebrow, Label, Note, Row, StatusPill, s, useCompactHeight, useNow } from './kit';
+import { Button, Chip, colors, Dot, IconButton, Label, Note, Row, s, useNow } from './kit';
 import { Composer, ThreadView } from './Thread';
 
 type Dialog = 'sendHome' | 'fork' | 'rebuild' | undefined;
@@ -33,7 +33,6 @@ export function WorkerPane(props: {
   const [dialog, setDialog] = useState<Dialog>();
   const [busy, setBusy] = useState(false);
   const [details, setDetails] = useState(false);
-  const compact = useCompactHeight();
   const shown = session.effectiveView(worker, props.view);
   const ready = session.ready();
   const plain = !!snap.office.floors.find((f) => f.id === snap.office.floor)?.plain;
@@ -91,62 +90,30 @@ export function WorkerPane(props: {
       style={{ flex: 1, backgroundColor: colors.bg, borderRightWidth: props.onClose ? 1 : 0, borderTopWidth: props.onClose ? 2 : 0, borderRightColor: colors.border, borderTopColor: props.focused ? colors.accent : colors.border }}
       testID={`pane-${worker.id}`}
     >
-      {props.onBack ? (
-        <Row style={{ paddingHorizontal: 12, paddingVertical: 8, borderBottomWidth: 1, borderColor: colors.border }}>
-          <Button small tone="ghost" label="‹ Workers" onPress={props.onBack} testID="pane-back" />
-          <View style={{ flex: 1 }} />
-          {props.onStep ? <Button small tone="ghost" label="‹" accessibilityLabel="Previous worker" onPress={() => props.onStep?.(-1)} testID="pane-prev" /> : null}
-          {props.onSwitch ? <Button small label="Switch" onPress={props.onSwitch} testID="pane-switch" /> : null}
-          {props.onStep ? <Button small tone="ghost" label="›" accessibilityLabel="Next worker" onPress={() => props.onStep?.(1)} testID="pane-next" /> : null}
-        </Row>
-      ) : null}
-      <View style={{ padding: compact ? 8 : 16, borderBottomWidth: 1, borderColor: colors.border, backgroundColor: colors.surface, gap: compact ? 4 : 8 }}>
-        {!compact ? <Eyebrow index="02">{shown === 'terminal' ? 'Raw terminal' : 'Conversation'}</Eyebrow> : null}
-        <Row>
-          <Dot color={worker.color} />
-          <Text style={[s.title, { flex: 1 }]} numberOfLines={1}>
-            {worker.name}
-          </Text>
-          {ready ? <StatusPill status={worker.status} label={statusLabel(worker.status)} /> : null}
-          {props.onResize ? <Button small tone="ghost" label="−" accessibilityLabel="Narrower" onPress={() => props.onResize?.(-0.25)} /> : null}
-          {props.onResize ? <Button small tone="ghost" label="+" accessibilityLabel="Wider" onPress={() => props.onResize?.(0.25)} /> : null}
-          {props.onClose ? <Button small tone="ghost" label="✕" accessibilityLabel={`Close ${worker.name}`} onPress={props.onClose} testID="pane-close" /> : null}
-        </Row>
-        {!compact ? (
-          <Text style={s.muted} numberOfLines={1}>
-            {[kindLabel(worker), modelLabel(worker), worked ? `worked ${duration(worked)}` : undefined, lead ? `lead ${lead.name}` : worker.lead ? 'lead has left' : undefined].filter(Boolean).join(' · ')}
-          </Text>
-        ) : null}
-        {!compact && (worker.task?.name || worker.title) ? (
-          <Text style={s.text} numberOfLines={1}>
-            {worker.task?.name ?? worker.title}
-          </Text>
-        ) : null}
-        <ScrollView horizontal nestedScrollEnabled showsHorizontalScrollIndicator={false} style={{ flexGrow: 0 }} contentContainerStyle={{ paddingTop: 4 }}>
-          <Row>
-            {actions.map((a) =>
-              a.id === 'thread' || a.id === 'terminal' ? (
-                <Chip key={a.id} label={a.label} on={shown === a.id} disabled={!!a.refusal} onPress={() => act(a)} testID={`pane-view-${a.id}`} />
-              ) : (
-                <Button key={a.id} small label={a.label} tone={a.danger ? 'danger' : undefined} disabled={!!a.refusal || busy} onPress={() => act(a)} testID={`action-${a.id}`} />
-              ),
-            )}
-            {compact ? <Button small label="Details" onPress={() => setDetails(true)} testID="pane-details" /> : null}
-            {worker.cloud && worker.sessionId ? <Button small label="Factory session" onPress={() => openLink(sessionWebUrl(worker.sessionId!), 'Could not open the Factory session.')} /> : null}
+      <Row style={{ paddingHorizontal: 8, paddingVertical: 6, borderBottomWidth: 1, borderColor: colors.border, backgroundColor: colors.surface, gap: 4 }}>
+        {props.onBack ? <IconButton icon="‹" label="Back to workers" onPress={props.onBack} testID="pane-back" /> : null}
+        <Pressable
+          style={{ flex: 1, minHeight: 44, justifyContent: 'center', gap: 1, paddingHorizontal: 4 }}
+          onPress={props.onSwitch ?? (() => setDetails(true))}
+          accessibilityRole="button"
+          accessibilityLabel={props.onSwitch ? `${worker.name}. Switch worker` : `${worker.name}. Worker details`}
+          testID={props.onSwitch ? 'pane-switch' : 'pane-worker'}
+        >
+          <Row style={{ gap: 6 }}>
+            <Dot color={worker.color} />
+            <Text style={[s.text, { flexShrink: 1, fontSize: 16, fontWeight: '500' }]} numberOfLines={1}>
+              {worker.name}
+            </Text>
           </Row>
-        </ScrollView>
-        {!compact
-          ? actions
-              .filter((a) => a.refusal && a.id !== 'thread' && a.id !== 'terminal' && a.refusal !== ACTION_OFFLINE)
-              .slice(0, 1)
-              .map((a) => (
-                <Text key={a.id} style={s.muted}>
-                  {a.label}: {a.refusal}
-                </Text>
-              ))
-          : null}
-        {worker.lost ? <Note tone="warn">Its worktree was deleted outside the office. Rebuild it, or send it home.</Note> : null}
-      </View>
+          <Text style={[s.muted, { fontSize: 11, lineHeight: 15 }]} numberOfLines={1}>
+            {ready ? statusLabel(worker.status) : 'Connecting…'}
+            {shown === 'terminal' ? ' · Raw TTY' : ''}
+          </Text>
+        </Pressable>
+        <IconButton icon="⋯" label="Worker actions and details" onPress={() => setDetails(true)} testID="pane-details" />
+        {props.onClose ? <IconButton icon="×" label={`Close ${worker.name}`} onPress={props.onClose} testID="pane-close" /> : null}
+      </Row>
+      {worker.lost ? <Note tone="warn">Its worktree was deleted outside the office. Open the worker menu to rebuild it, or send it home.</Note> : null}
       {shown === 'thread' ? (
         <ThreadView session={session} snap={snap} worker={worker} focused={props.focused} onRaw={() => session.view(worker.id, 'terminal')} onAction={(m) => session.toast(m, 'warn')} />
       ) : shown === 'terminal' ? (
@@ -154,29 +121,91 @@ export function WorkerPane(props: {
       ) : (
         <View style={{ flex: 1 }}>
           <WorkerInfoView worker={worker} />
-          {worker.cloud && companionCapabilities(worker).prompt ? <Composer session={session} snap={snap} worker={worker} onRaw={() => undefined} /> : null}
+          {worker.cloud && companionCapabilities(worker).prompt ? <Composer session={session} snap={snap} worker={worker} /> : null}
         </View>
       )}
       {dialog === 'sendHome' ? <SendHome session={session} snap={snap} worker={worker} onClose={() => setDialog(undefined)} /> : null}
       {dialog === 'fork' ? <Fork session={session} snap={snap} worker={worker} onClose={() => setDialog(undefined)} /> : null}
       {details ? (
         <Modal transparent animationType="fade" onRequestClose={() => setDetails(false)}>
-          <View style={{ flex: 1, backgroundColor: '#000a', justifyContent: 'center', padding: 24 }}>
+          <View style={{ flex: 1, backgroundColor: '#000a', justifyContent: 'flex-end', padding: 16 }}>
             <View style={{ maxHeight: '90%', borderWidth: 1, borderColor: colors.borderStrong, borderRadius: 3, backgroundColor: colors.surface }}>
-              <ScrollView contentContainerStyle={{ padding: 20, gap: 12 }}>
+              <ScrollView contentContainerStyle={{ padding: 16, gap: 12 }}>
                 <Row>
                   <Text style={[s.title, { flex: 1 }]}>{worker.name}</Text>
-                  <Button small label="Close" onPress={() => setDetails(false)} testID="pane-details-close" />
+                  <IconButton icon="×" label="Close worker menu" onPress={() => setDetails(false)} testID="pane-details-close" />
                 </Row>
                 <Text style={s.muted}>{[kindLabel(worker), modelLabel(worker), worked ? `worked ${duration(worked)}` : undefined, lead ? `lead ${lead.name}` : worker.lead ? 'lead has left' : undefined].filter(Boolean).join(' · ')}</Text>
                 <Text style={s.text}>{worker.task?.name ?? worker.title ?? worker.activity ?? worker.prompt}</Text>
+                <Row wrap>
+                  {actions
+                    .filter((a) => a.id === 'thread' || a.id === 'terminal')
+                    .map((a) => (
+                      <Chip
+                        key={a.id}
+                        label={a.label}
+                        on={shown === a.id}
+                        disabled={!!a.refusal}
+                        style={{ minHeight: 44 }}
+                        onPress={() => {
+                          setDetails(false);
+                          act(a);
+                        }}
+                        testID={`pane-view-${a.id}`}
+                      />
+                    ))}
+                </Row>
+                {props.onStep ? (
+                  <Row>
+                    <Button
+                      label="‹ Previous"
+                      onPress={() => {
+                        setDetails(false);
+                        props.onStep?.(-1);
+                      }}
+                      testID="pane-prev"
+                    />
+                    <Button
+                      label="Next ›"
+                      onPress={() => {
+                        setDetails(false);
+                        props.onStep?.(1);
+                      }}
+                      testID="pane-next"
+                    />
+                  </Row>
+                ) : null}
+                {props.onResize ? (
+                  <Row>
+                    <Button label="− Narrower" onPress={() => props.onResize?.(-0.25)} testID="pane-narrower" />
+                    <Button label="+ Wider" onPress={() => props.onResize?.(0.25)} testID="pane-wider" />
+                  </Row>
+                ) : null}
                 {actions
-                  .filter((a) => a.refusal)
+                  .filter((a) => a.id !== 'thread' && a.id !== 'terminal')
+                  .map((a) => (
+                    <View key={a.id} style={{ gap: 4 }}>
+                      <Button
+                        label={a.label}
+                        tone={a.danger ? 'danger' : undefined}
+                        disabled={!!a.refusal || busy}
+                        onPress={() => {
+                          setDetails(false);
+                          act(a);
+                        }}
+                        testID={`action-${a.id}`}
+                      />
+                      {a.refusal ? <Text style={s.muted}>{a.refusal}</Text> : null}
+                    </View>
+                  ))}
+                {actions
+                  .filter((a) => (a.id === 'thread' || a.id === 'terminal') && a.refusal)
                   .map((a) => (
                     <Text key={a.id} style={s.muted}>
                       {a.label}: {a.refusal}
                     </Text>
                   ))}
+                {worker.cloud && worker.sessionId ? <Button label="Factory session" onPress={() => openLink(sessionWebUrl(worker.sessionId!), 'Could not open the Factory session.')} testID="pane-factory-session" /> : null}
               </ScrollView>
             </View>
           </View>

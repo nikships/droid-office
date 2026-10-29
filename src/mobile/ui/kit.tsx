@@ -39,6 +39,23 @@ export function Button(props: { label: string; onPress: () => void; disabled?: b
   );
 }
 
+/** A quiet, full-size touch target for the conversation's few persistent controls. */
+export function IconButton(props: { icon: string; label: string; onPress: () => void; disabled?: boolean; primary?: boolean; danger?: boolean; testID: string }) {
+  return (
+    <Pressable
+      testID={props.testID}
+      accessibilityRole="button"
+      accessibilityLabel={props.label}
+      accessibilityState={{ disabled: !!props.disabled }}
+      disabled={props.disabled}
+      onPress={props.onPress}
+      style={({ pressed }) => [s.iconButton, props.primary && s.primary, props.disabled && s.disabled, pressed && s.pressed]}
+    >
+      <Text style={[s.iconText, props.primary && s.primaryText, props.danger && s.dangerText]}>{props.icon}</Text>
+    </Pressable>
+  );
+}
+
 export function Chip(props: { label: string; index?: string; on?: boolean; onPress: () => void; disabled?: boolean; testID?: string; hint?: string; style?: StyleProp<ViewStyle> }) {
   return (
     <Pressable
@@ -129,6 +146,8 @@ export const s = StyleSheet.create({
   buttonText: { color: colors.text, fontFamily: mono, fontSize: 11, textTransform: 'uppercase', letterSpacing: 0.7, fontWeight: '500' },
   smallText: { fontSize: 10 },
   primaryText: { color: colors.bg },
+  iconButton: { width: 44, height: 44, borderRadius: radius, alignItems: 'center', justifyContent: 'center' },
+  iconText: { color: colors.text, fontSize: 24, lineHeight: 30 },
   chip: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, minHeight: 40, paddingHorizontal: 12, paddingVertical: 8, borderRadius: radius, borderWidth: 1, borderColor: colors.border, maxWidth: 240 },
   chipOn: { backgroundColor: colors.raised, borderColor: colors.borderStrong },
   chipText: { flexShrink: 1, color: colors.muted, fontFamily: mono, fontSize: 10, textTransform: 'uppercase', letterSpacing: 0.6 },
