@@ -24,6 +24,7 @@ import { OfficeTray } from './tray.js';
 import { listCut, type OfficeStatus, parseStatus, type TrayAction, trayTitle, type TrayView, WaitingWatch, waitingNotice, type WorkerLink, workerHash } from './tray-model.js';
 import { Updates } from './updates.js';
 import { serveHostUpdates } from './update-ipc.js';
+import { saveUpdateWindows, takeUpdateWindows } from './update-windows.js';
 
 const BACKGROUND = '#050505';
 
@@ -72,6 +73,7 @@ app.on('open-url', (event, url) => {
   receiveThread(url);
 });
 const settingsFile = path.join(app.getPath('userData'), 'settings.json');
+const updateWindowsFile = path.join(app.getPath('userData'), 'update-windows.json');
 const logDir = app.getPath('logs');
 const officeLog = path.join(logDir, 'office.log');
 const gpuLog = path.join(logDir, 'gpu.log');
@@ -90,6 +92,8 @@ let quitting = false;
 let replacing = false;
 /** Set while the app looks for or starts its office. */
 let opening = false;
+/** Launch activation must not open the office before an update's saved windows are restored. */
+let starting = true;
 /**
  * Whether the office should have a window. Cleared when the owner closes it: the office, the menu bar
  * icon and the phones and browsers connected to it keep running, and a restart doesn't open it again.
@@ -116,6 +120,7 @@ const updates = new Updates({
   // Squirrel closes the windows before app.quit's before-quit, so the "Leave the office?" guard
   // has to know now that the app is quitting.
   beforeInstall: () => {
+    saveUpdateWindows(updateWindowsFile, { office: Boolean(win && !win.base.isDestroyed()), companion: Boolean(companion.currentWindow()) });
     quitting = true;
     return stopOffice(true);
   },
@@ -653,7 +658,7 @@ if (!isStartupCheck() && !app.requestSingleInstanceLock()) {
     if (!argv.some((arg) => receiveThread(arg))) openWindow();
   });
   app.on('activate', () => {
-    if (opening && pendingThread) return;
+    if (starting || (opening && pendingThread)) return;
     if (!companion.focus() && !finderThreads.focus()) openWindow();
   });
 
@@ -678,6 +683,8 @@ if (!isStartupCheck() && !app.requestSingleInstanceLock()) {
         app.setAsDefaultProtocolClient('droid-office');
         for (const arg of process.argv) receiveThread(arg);
       }
+      const updateWindows = takeUpdateWindows(updateWindowsFile);
+      if (updateWindows && !pendingThread) windowWanted = updateWindows.office;
       Menu.setApplicationMenu(menu());
       if (!isolated && (await moveToApplications())) return;
       tray = new OfficeTray(trayAction);
@@ -690,6 +697,9 @@ if (!isStartupCheck() && !app.requestSingleInstanceLock()) {
         saveSettings(settingsFile, settings);
       }
       await openOffice();
+      if (updateWindows?.companion && officeUrl) companion.open(officeUrl);
+      starting = false;
+      hideDockIfNoWindows();
       void writeGpuReport();
       mkdirSync(logDir, { recursive: true });
       if (!isolated) downloadBrowser({ runtime: officeRuntime(process.execPath), cli: path.join(app.getAppPath(), 'bin', 'droid-office.js'), env: officeEnv, log: path.join(logDir, 'browser.log') });
