@@ -22,7 +22,6 @@ import { confirmDialog, openPrompt, routeWorktreeMessage, sendHomeDialog } from 
 import { modelBadge, modelBadgeNode } from './ui/models';
 import { openFloorOrder } from './ui/floor-reorder';
 import { openSubscriptionsStatus } from './ui/subscriptions-status';
-import { openHostUpdate } from './ui/host-update';
 import { mountWorkerThread, type WorkerThread } from './ui/worker-thread';
 import { openQuestionWorkspace, type QuestionDraft, type QuestionReply } from './ui/question-workspace';
 import { parseWorkerLink } from './worker-link';
@@ -107,16 +106,10 @@ const brand = h(
 const floors = h('nav.dash-floor-strip', { 'aria-label': 'Floors' });
 const reorderFloors = h('button.btn.icon.ghost', { type: 'button', 'aria-label': 'Reorder floors', title: 'Reorder floors', onclick: () => openFloorOrder(net) }, '⠿');
 const floorPicker = h('div.dash-floor', {}, floors, reorderFloors);
-const connDot = h('i.dash-conn-dot', { 'aria-hidden': 'true' });
-const connText = h('span', {}, 'Connecting');
-const conn = h('span.dash-conn', { 'data-state': 'loading' }, connDot, connText);
 const boardCount = h('span.dash-count.hidden');
 const board = h('button.btn.dash-top-btn', { type: 'button', title: 'The floor’s Whiteboard (B)', onclick: () => void openBoard() }, icon('board'), h('span', {}, 'Whiteboard'), boardCount);
 const subscriptions = h('button.btn.dash-top-btn', { type: 'button', title: 'Subscriptions and account usage', onclick: () => openSubscriptionsStatus() }, icon('key'), h('span', {}, 'Subscriptions'));
-const hostUpdate = h('button.btn.dash-top-btn', { type: 'button', title: 'Update the host Mac app', onclick: () => openHostUpdate() }, icon('monitor'), h('span', {}, 'Host app'));
-const accessLabel = h('span', {}, WHERE[where].label);
-const access = h('button.btn.ghost.dash-top-btn', { type: 'button', title: 'How this browser reaches the office, and its pairing', onclick: () => accessDialog() }, icon(WHERE[where].icon), accessLabel);
-const top = h('header.dash-top', {}, brand, conn, hostUpdate, subscriptions, board, access, floorPicker);
+const top = h('header.dash-top', {}, brand, $('toasts'), subscriptions, board, floorPicker);
 
 const bannerIcon = h('span.dash-banner-icon');
 const bannerText = h('p.dash-banner-text');
@@ -428,21 +421,16 @@ function paintFloors(up: boolean) {
 function paint() {
   title.textContent = officeName;
   const up = live();
-  const state = up ? 'live' : switching || (authorized && net.up) ? 'loading' : authorized ? 'down' : 'locked';
-  conn.dataset.state = state;
-  connText.textContent = { live: 'Live', loading: 'Syncing', down: 'Offline', locked: 'Locked' }[state];
   const here = store.currentFloor();
   reorderFloors.disabled = !up || store.floors.length < 2;
   agentBtn.disabled = shellBtn.disabled = dockAgent.disabled = dockShell.disabled = !up || !here || busy.has('hire');
   board.disabled = !up || !here;
   subscriptions.disabled = !up;
-  hostUpdate.disabled = !up;
   content.classList.toggle('dash-stale', !up);
   content.hidden = !authorized;
   authPanel.hidden = authorized;
   floorPicker.hidden = !authorized;
   board.hidden = !authorized;
-  accessLabel.textContent = credential && where !== 'local' ? `${WHERE[where].label} · paired` : WHERE[where].label;
   paintBanner();
   if (!authorized) {
     thread?.activate(false);

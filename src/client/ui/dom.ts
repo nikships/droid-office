@@ -189,7 +189,11 @@ export function closeTopModal(): boolean {
 
 export function toast(text: string, level: 'info' | 'warn' | 'error' = 'info'): HTMLElement {
   const el = h('div.toast', { class: level }, text);
-  document.getElementById('toasts')!.append(el);
+  const root = document.getElementById('toasts')!;
+  if (root.hasAttribute('data-single')) {
+    el.title = text;
+    root.replaceChildren(el);
+  } else root.append(el);
   setTimeout(() => {
     el.style.transition = 'opacity .3s';
     el.style.opacity = '0';
