@@ -1872,7 +1872,7 @@ export class WorkerManager {
 
   /** A local preview needs no inference or API key and never replaces an assigned/generated label. */
   private notePrompt(w: Worker, prompt: string) {
-    if (w.info.kind !== 'agent' || w.info.task || !prompt.trim() || prompt.trim().startsWith('/')) return;
+    if (w.info.kind !== 'agent' || w.info.task || prompt === CARRY_ON_PROMPT || !prompt.trim() || prompt.trim().startsWith('/')) return;
     w.info.task = fallbackTask(prompt);
   }
 
@@ -2415,7 +2415,7 @@ process.stdin.on('end', () => {
           sessionId: s.sessionId,
           forkedFrom: s.forkedFrom && typeof s.forkedFrom.workerId === 'string' && typeof s.forkedFrom.name === 'string' && typeof s.forkedFrom.sessionId === 'string' ? s.forkedFrom : undefined,
           activity: s.activity,
-          task: validTask(s.task) ?? (!shell && !s.taskSince && typeof s.prompt === 'string' && s.prompt.trim() ? fallbackTask(s.prompt) : undefined),
+          task: validTask(s.task),
           taskSince: typeof s.taskSince === 'number' && Number.isFinite(s.taskSince) && s.taskSince > 0 ? s.taskSince : undefined,
           pr: s.pr && typeof s.pr.number === 'number' && typeof s.pr.url === 'string' ? { number: s.pr.number, url: s.pr.url } : undefined,
           cols: 100,
