@@ -25,8 +25,6 @@ import { openSubscriptionsStatus } from './ui/subscriptions-status';
 import { openHostUpdate } from './ui/host-update';
 import { mountWorkerThread, type WorkerThread } from './ui/worker-thread';
 import { openQuestionWorkspace, type QuestionDraft, type QuestionReply } from './ui/question-workspace';
-import type { MapDirection } from './office-map-view';
-import type { MapFloor, OfficeMap, OfficeMapHooks } from './office-map';
 import { parseWorkerLink } from './worker-link';
 import { DashboardWorkerLink } from './dashboard-worker-link';
 
@@ -447,7 +445,6 @@ function paint() {
   accessLabel.textContent = credential && where !== 'local' ? `${WHERE[where].label} · paired` : WHERE[where].label;
   paintBanner();
   if (!authorized) {
-    officeMap?.stop();
     thread?.activate(false);
     return paintGate();
   }
@@ -648,55 +645,20 @@ function select(id: string) {
     if (id) rows.get(id)?.el.focus({ preventScroll: true });
     return;
   }
-  if (!id && selected) leaving = selected;
   questionWorkspace?.close();
   selected = id;
   paint();
   if (id) rows.get(id)?.el.scrollIntoView({ block: 'nearest' });
 }
 
-/** Opens worker `id`: on the map, the camera flies in to its desk first. */
-async function enter(id: string) {
-  if (flying) return;
-  if (view === 'overview' && officeMap && mapShown && store.workers.has(id)) {
-    flying = true;
-    try {
-      await officeMap.flyTo(id);
-    } finally {
-      flying = false;
-    }
-    if (view !== 'overview' || !store.workers.has(id)) return;
-  }
+/** Opens a worker from the overview. */
+function enter(id: string) {
   select(id);
 }
 
-// --- The overview: the floor in 3D (or every worker's screen in a grid) -----------------------------
+// --- The overview: every worker's screen in a grid ---------------------------------------------
 
-const LAYOUT_KEY = 'droid-office.dashboard-layout';
 let view: 'overview' | 'worker' | '' = '';
-/** How the overview shows the floor: the 3D map, or the grid of screens. */
-let layout: 'map' | 'grid' = read(LAYOUT_KEY) === 'grid' ? 'grid' : 'map';
-let officeMap: OfficeMap | undefined;
-let mapLoading = false;
-/** The map can't be drawn here (no WebGL, its code failed to load, or the GPU gave up). */
-let mapBroken = false;
-let mapShown = false;
-/** The worker whose terminal was just closed, for the map to pull back out of. */
-let leaving = '';
-let flying = false;
-/** Who the map has lit up, mirrored in the roster. */
-let mapLit = '';
-let webgl: boolean | undefined;
-const mapUsable = () => {
-  webgl ??= (() => {
-    try {
-      return !!document.createElement('canvas').getContext('webgl2');
-    } catch {
-      return false;
-    }
-  })();
-  return webgl && !mapBroken;
-};
 
 const cards = new Map<string, { el: HTMLElement; preview: HTMLElement; key: string }>();
 const stats = h('div.dash-stats');
@@ -706,81 +668,15 @@ const overviewSub = h('p.dash-overview-sub');
 const overviewHead = h('header.dash-overview-head', {}, h('div.dash-overview-titles', {}, h('span.eyebrow', {}, 'Floor'), overviewTitle, overviewSub), stats);
 const gridWrap = h('div.dash-grid-wrap', {}, grid);
 
-const mapStage = h('div.dash-map', {}, h('div.dash-map-wait', {}, h('div.spinner'), h('span', {}, 'Building the floor…')));
-const crew: Rows = new Map();
-const rosterList = h('nav.dash-roster-list', { 'aria-label': 'Workers on this floor' });
-const roster = h('aside.dash-roster', {}, rosterList);
-
-const dockAgent = h('button.btn.accent.dash-hire', { type: 'button', title: 'Hire a Droid (N), or click a free desk to seat it there', onclick: () => hire('agent') }, icon('plus', 14), h('span', {}, 'Hire Droid'));
+const dockAgent = h('button.btn.accent.dash-hire', { type: 'button', title: 'Hire a Droid (N)', onclick: () => hire('agent') }, icon('plus', 14), h('span', {}, 'Hire Droid'));
 const dockShell = h('button.btn.dash-hire', { type: 'button', title: 'Open a plain shell at a desk', onclick: () => hire('shell') }, icon('terminal', 14), h('span', {}, 'Shell'));
-const homeBtn = h('button.btn.icon.ghost', { type: 'button', 'aria-label': 'Whole floor', title: 'Whole floor (0)', onclick: () => void officeMap?.home() }, icon('frame', 15));
-const zoomOut = h('button.btn.icon.ghost', { type: 'button', 'aria-label': 'Zoom out', title: 'Zoom out (−)', onclick: () => void officeMap?.zoom(1.3) }, icon('minus', 15));
-const zoomIn = h('button.btn.icon.ghost', { type: 'button', 'aria-label': 'Zoom in', title: 'Zoom in (+)', onclick: () => void officeMap?.zoom(0.75) }, icon('plus', 15));
-const mapTools = h('div.dash-dock-group', { role: 'group', 'aria-label': 'Camera' }, homeBtn, zoomOut, zoomIn);
-const mapBtn = h('button.btn.sm', { type: 'button', title: 'The floor in 3D (G)', onclick: () => setLayout('map') }, icon('cube', 14), h('span', {}, 'Floor'));
-const gridBtn = h('button.btn.sm', { type: 'button', title: 'Every screen in a grid (G)', onclick: () => setLayout('grid') }, icon('grid', 14), h('span', {}, 'Grid'));
-const layoutSeg = h('div.seg.dash-layout', { role: 'group', 'aria-label': 'Layout' }, mapBtn, gridBtn);
 const dockKeys = h('div.dash-dock-keys', { 'aria-hidden': 'true' });
-const dock = h('div.dash-dock', { role: 'toolbar', 'aria-label': 'Overview' }, h('div.dash-dock-group', {}, dockAgent, dockShell), mapTools, h('div.dash-dock-group', {}, layoutSeg), dockKeys);
-const overview = h('section.dash-overview', {}, mapStage, roster, gridWrap, dock);
-
-/** Tells the map how much of it the roster and the dock cover, so it frames the floor beside them. */
-function mapInsets() {
-  if (!officeMap || !mapShown) return;
-  const box = mapStage.getBoundingClientRect();
-  const r = roster.getBoundingClientRect();
-  const d = dock.getBoundingClientRect();
-  // A roster down the left side insets the left; one docked along the bottom (narrow screens) insets the bottom.
-  const beside = r.height > box.height * 0.45 || r.top < box.top + box.height * 0.4;
-  const top = Math.min(d.top, beside ? Infinity : r.top);
-  officeMap.setInsets(beside ? r.right - box.left : 0, box.bottom - top);
-}
-const insetWatch = typeof ResizeObserver === 'function' ? new ResizeObserver(() => mapInsets()) : undefined;
-for (const el of [overview, roster, dock]) insetWatch?.observe(el);
-
-function setLayout(next: 'map' | 'grid') {
-  if (next === 'map' && !mapUsable()) return toast('This browser can’t draw the 3D floor (WebGL 2 is off or unavailable).', 'warn');
-  if (layout === next) return;
-  layout = next;
-  remember(LAYOUT_KEY, next === 'grid' ? 'grid' : '');
-  say(next === 'map' ? 'Showing the floor in 3D.' : 'Showing every screen in a grid.');
-  paint();
-}
+const dock = h('div.dash-dock', { role: 'toolbar', 'aria-label': 'Overview' }, h('div.dash-dock-group', {}, dockAgent, dockShell), dockKeys);
+const overview = h('section.dash-overview', { 'data-layout': 'grid' }, gridWrap, dock);
 
 function stat(label: string, value: number, tone = '') {
   return h('div.dash-stat', { class: tone }, h('b', {}, String(value)), h('span', {}, label));
 }
-
-function chip(w: WorkerInfo) {
-  if (w.pr) return `#${w.pr.number}`;
-  if (w.kind === 'agent') return modelBadge(w.activeModel ?? w.model, w.activeEffort ?? w.effort) || undefined;
-  return w.worktree?.branch;
-}
-
-function mapFloor(): MapFloor | undefined {
-  const here = store.currentFloor();
-  if (!here) return undefined;
-  return { id: here.id, name: here.name, palette: here.palette, plain: !!here.plain, bottom: store.floors[0]?.id === here.id };
-}
-
-const mapHooks: OfficeMapHooks = {
-  open: (id) => void enter(id),
-  hire: (deskId) => hire('agent', deskId),
-  canHire: () => live() && !!store.currentFloor() && !busy.has('hire'),
-  screen: (id) => store.screens.get(id),
-  preview: (into, id) => renderPreview(into, id, 14),
-  words: (w) => ({ status: statusWord(w, STATUS_LABEL), doing: doingLine(w), kind: kind(w), chip: chip(w) }),
-  focused: (id) => {
-    if (id === mapLit) return;
-    mapLit = id;
-    lightRows(crew, id);
-  },
-  lost: () => {
-    mapBroken = true;
-    toast('The 3D floor stopped: the browser’s graphics gave up. Showing the grid instead.', 'warn');
-    paint();
-  },
-};
 
 function paintOverview() {
   if (view !== 'overview') {
@@ -812,95 +708,14 @@ function paintOverview() {
       n((w) => isAsleep(w.status)),
     ),
   );
-  mapShown = layout === 'map' && mapUsable() && !!here;
-  overview.dataset.layout = mapShown ? 'map' : 'grid';
-  mapStage.hidden = roster.hidden = mapTools.hidden = !mapShown;
-  gridWrap.hidden = mapShown;
-  mapBtn.disabled = !mapUsable() || !here;
-  for (const [b, on] of [
-    [mapBtn, mapShown],
-    [gridBtn, !mapShown],
-  ] as const) {
-    b.classList.toggle('on', on);
-    b.setAttribute('aria-pressed', String(on));
-  }
   dockKeys.replaceChildren(
-    ...keyHints(
-      mapShown
-        ? [
-            ['←↑↓→', 'move'],
-            ['↵', 'open'],
-            ['N', 'hire'],
-            ['G', 'grid'],
-          ]
-        : [
-            ['↑↓', 'open'],
-            ['N', 'hire'],
-            ['G', 'floor'],
-          ],
-    ),
+    ...keyHints([
+      ['↑↓', 'open'],
+      ['N', 'hire'],
+    ]),
   );
-  const home = mapShown ? roster : gridWrap;
-  if (overviewHead.parentElement !== home) home.prepend(overviewHead);
-  if (mapShown) {
-    paintRoster();
-    void paintMap();
-  } else {
-    officeMap?.stop();
-    leaving = '';
-    paintGrid(workers);
-  }
-}
-
-function paintRoster() {
-  const hint = live() && store.currentFloor() ? 'Click any free desk on the floor to hire a Droid there, or press N.' : 'Waiting for the office…';
-  paintRows(
-    rosterList,
-    crew,
-    mapLit,
-    (id) => void enter(id),
-    [h('div.dash-roster-empty', {}, h('b', {}, 'Nobody on this floor yet'), h('p', {}, hint))],
-    (el, id) => {
-      el.addEventListener('pointerenter', () => officeMap?.setCursor(id, false));
-      el.addEventListener('pointerleave', () => {
-        if (document.activeElement !== el) officeMap?.setCursor('', false);
-      });
-      el.addEventListener('focus', () => {
-        if (officeMap?.focusedId !== id) officeMap?.setCursor(id);
-      });
-    },
-  );
-}
-
-async function paintMap() {
-  if (!officeMap) {
-    if (mapLoading) return;
-    mapLoading = true;
-    try {
-      const { OfficeMap } = await import('./office-map');
-      officeMap = new OfficeMap(mapHooks);
-      mapStage.replaceChildren(officeMap.el);
-    } catch (error) {
-      console.warn('office map unavailable', error);
-      mapBroken = true;
-      toast('The 3D floor couldn’t load. Showing the grid instead.', 'warn');
-    } finally {
-      mapLoading = false;
-    }
-    // The page may have moved on while the map's code was loading.
-    paint();
-    return;
-  }
-  if (view !== 'overview' || !mapShown) return;
-  // Drawing first, so the first look at a floor plays as a flight rather than a jump.
-  mapInsets();
-  officeMap.start();
-  officeMap.sync(store.workers.values(), mapFloor());
-  if (leaving) {
-    const id = leaving;
-    leaving = '';
-    void officeMap.returnFrom(id);
-  }
+  if (overviewHead.parentElement !== gridWrap) gridWrap.prepend(overviewHead);
+  paintGrid(workers);
 }
 
 function paintGrid(workers: WorkerInfo[]) {
@@ -955,7 +770,7 @@ function paintGrid(workers: WorkerInfo[]) {
 let previewFrame = 0;
 let previewAt = 0;
 function schedulePreviews() {
-  if ((view === 'worker' && stageMode === 'terminal') || (view === 'overview' && mapShown)) return;
+  if (view === 'worker' && stageMode === 'terminal') return;
   if (previewFrame) return;
   // Screens stream a few times a second per worker; a quarter second is plenty for a glance.
   const wait = Math.max(0, 250 - (performance.now() - previewAt));
@@ -989,7 +804,7 @@ function renderPreview(into: HTMLElement, id: string, max: number) {
   );
 }
 function paintPreviews() {
-  if (view === 'overview' && !mapShown) for (const [id, card] of cards) renderPreview(card.preview, id, 30);
+  if (view === 'overview') for (const [id, card] of cards) renderPreview(card.preview, id, 30);
   else if (view === 'worker' && stageMode === 'info' && infoPreview && detailId) renderPreview(infoPreview, detailId, 40);
 }
 
@@ -1017,7 +832,6 @@ let questionReplying = false;
 let answerSettlesAt = 0;
 
 function paintWorker(w: WorkerInfo) {
-  if (view !== 'worker') officeMap?.stop();
   view = 'worker';
   if (detailId !== w.id) {
     questionWorkspace?.close();
@@ -1574,12 +1388,7 @@ window.addEventListener('keydown', (e) => {
     rows.get(w.id)?.el.focus({ preventScroll: true });
   };
   const k = e.key.length === 1 ? e.key.toLowerCase() : e.key;
-  if (view === 'overview' && officeMap && mapShown && mapKey(officeMap, k, t)) {
-    e.preventDefault();
-    return;
-  }
-  if (k === 'g' && view === 'overview') setLayout(layout === 'map' ? 'grid' : 'map');
-  else if (k === 'ArrowDown' || k === 'j') go(at + 1);
+  if (k === 'ArrowDown' || k === 'j') go(at + 1);
   else if (k === 'ArrowUp' || k === 'k') go(at < 0 ? list.length - 1 : at - 1);
   else if (k === 'Escape' && selected) select('');
   else if (k === 'n') hire('agent');
@@ -1591,25 +1400,6 @@ window.addEventListener('keydown', (e) => {
   } else return;
   e.preventDefault();
 });
-
-const MAP_MOVES: Record<string, MapDirection> = { ArrowLeft: 'left', ArrowRight: 'right', ArrowUp: 'up', ArrowDown: 'down', h: 'left', l: 'right', k: 'up', j: 'down' };
-/** The overview's keys while the 3D floor is up; false for a key it doesn't use. */
-function mapKey(map: OfficeMap, k: string, target: HTMLElement | null): boolean {
-  const dir = MAP_MOVES[k];
-  if (dir) {
-    const id = map.move(dir);
-    const w = id && store.workers.get(id);
-    if (w) say(`${w.name}, ${statusWord(w, STATUS_LABEL)}: ${doingLine(w)}. Enter opens it.`);
-  } else if (k === 'Enter' && !target?.closest('button, a')) {
-    if (!map.focusedId) return false;
-    void enter(map.focusedId);
-  } else if (k === 'Escape' && map.focusedId) map.setCursor('', false);
-  else if (k === '0' || k === 'Home') void map.home();
-  else if (k === '+' || k === '=') void map.zoom(0.75);
-  else if (k === '-' || k === '_') void map.zoom(1.3);
-  else return false;
-  return true;
-}
 
 window.addEventListener('storage', (event) => {
   if (event.key !== BROWSER_KEY) return;
