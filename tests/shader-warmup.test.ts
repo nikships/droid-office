@@ -6,20 +6,21 @@ import { casualtyMarkers } from '../src/client/world/casualties.js';
 
 test('office combinations cover zero through four lights and end on the current count, pipeline and grid', () => {
   const combos = officeCombos({ pipelines: ['canvas', 'float', 'srgb'], grid: true, active: { pipeline: 'srgb', grid: false, lights: 0 } });
-  assert.equal(combos.length, 3 * 2 * (WORLD_POINT_LIGHTS + 1));
+  assert.equal(combos.length, 3 * (WORLD_POINT_LIGHTS + 1));
   assert.deepEqual(combos.at(-1), { lights: 0, pipeline: 'srgb', grid: false });
   for (const pipeline of ['canvas', 'float', 'srgb']) {
-    for (const grid of [false, true]) {
-      assert.deepEqual(
-        combos
-          .filter((combo) => combo.pipeline === pipeline && combo.grid === grid)
-          .map((combo) => combo.lights)
-          .sort(),
-        [0, 1, 2, 3, 4],
-      );
-    }
+    assert.deepEqual(
+      combos
+        .filter((combo) => combo.pipeline === pipeline)
+        .map((combo) => combo.lights)
+        .sort(),
+      [0, 1, 2, 3, 4],
+    );
   }
-  assert.ok(combos.some((combo) => combo.lights === WORLD_POINT_LIGHTS && combo.grid && combo.pipeline === 'float'));
+  // Only Remastered has the grid, and it draws only to the float target.
+  assert.ok(combos.every((combo) => combo.grid === (combo.pipeline === 'float')));
+  const remastered = officeCombos({ pipelines: ['canvas', 'float'], grid: true, active: { pipeline: 'float', grid: true, lights: 0 } });
+  assert.deepEqual(remastered.at(-1), { lights: 0, pipeline: 'float', grid: true });
   const classic = officeCombos({ pipelines: ['canvas'], grid: false, active: { pipeline: 'canvas', grid: true, lights: 1 } });
   assert.ok(classic.every((combo) => !combo.grid));
   assert.equal(classic.at(-1)?.lights, 1);
@@ -181,7 +182,7 @@ function officeScene() {
   return { scene, hidden, shown };
 }
 
-test('warmup compiles the hidden office, the props and both grids, then puts the scene back', async (t) => {
+test('warmup compiles the hidden office, the props and the grid, then puts the scene back', async (t) => {
   const held = retainedStandIns();
   const { scene, hidden, shown } = officeScene();
   const hands = new THREE.Scene();
@@ -193,7 +194,8 @@ test('warmup compiles the hidden office, the props and both grids, then puts the
   const grid = new THREE.Object3D();
   (grid as { isLightProbeGrid: boolean }).isLightProbeGrid = true;
   grid.name = 'probe';
-  grid.visible = false;
+  // Remastered's grid is in the scene and shown while it draws.
+  grid.visible = true;
   scene.add(grid);
   const extra = new THREE.Mesh(new THREE.BoxGeometry(), new THREE.MeshStandardMaterial({ color: '#888' }));
   extra.name = 'standard-prop';
@@ -218,7 +220,7 @@ test('warmup compiles the hidden office, the props and both grids, then puts the
   assert.equal(hidden.visible, false);
   assert.equal(hidden.frustumCulled, true);
   assert.equal(shown.frustumCulled, true);
-  assert.equal(grid.visible, false);
+  assert.equal(grid.visible, true);
   assert.equal(grid.parent, scene);
   assert.equal(extra.parent, null);
   assert.equal(env.target(), null);
@@ -233,7 +235,7 @@ test('warmup compiles the hidden office, the props and both grids, then puts the
   assert.equal(env.office.at(-1)?.spares, 0);
   assert.equal(env.office.at(-1)?.lights, 0);
   assert.deepEqual([...new Set(env.office.map((snap) => snap.lights))].sort(), [0, 1, 2, 3, 4]);
-  assert.equal(env.office.at(-1)?.grid, false);
+  assert.equal(env.office.at(-1)?.grid, true);
   assert.equal(env.office.at(-1)?.tone, THREE.ACESFilmicToneMapping);
   assert.ok(env.office.some((snap) => snap.tone === THREE.NoToneMapping));
   assert.ok(env.office.some((snap) => snap.grid && snap.spares > 0));
