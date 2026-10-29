@@ -6,10 +6,14 @@ export interface UpdateWindows {
   companion: boolean;
 }
 
-/** Captured before Squirrel closes the windows, not from the resulting closed events. */
+/** Captured before Squirrel closes the windows. A failed snapshot must not block installation. */
 export function saveUpdateWindows(file: string, windows: UpdateWindows) {
-  mkdirSync(path.dirname(file), { recursive: true });
-  writeFileSync(file, `${JSON.stringify(windows)}\n`, { mode: 0o600 });
+  try {
+    mkdirSync(path.dirname(file), { recursive: true });
+    writeFileSync(file, `${JSON.stringify(windows)}\n`, { mode: 0o600 });
+  } catch {
+    // The update can proceed without restoring windows.
+  }
 }
 
 /** An update restores its windows once; a later ordinary launch keeps the usual startup behavior. */

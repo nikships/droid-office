@@ -31,6 +31,12 @@ test('the snapshot reflects the windows open at install time, not an earlier off
   assert.deepEqual(takeUpdateWindows(file), { office: false, companion: true });
 });
 
+test('a snapshot write failure does not prevent installation', (t) => {
+  const file = fileFor(t);
+  saveUpdateWindows(file, { office: true, companion: true });
+  assert.doesNotThrow(() => saveUpdateWindows(path.join(file, 'snapshot.json'), { office: false, companion: false }));
+});
+
 test('invalid update window state is discarded and consumed without affecting future launches', (t) => {
   const file = fileFor(t);
   saveUpdateWindows(file, { office: false, companion: true });
