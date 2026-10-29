@@ -1,6 +1,9 @@
 package ai.factory.droidoffice.core
 
+import java.io.ByteArrayInputStream
+import java.io.InputStream
 import java.util.Base64
+import java.util.concurrent.CancellationException
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
@@ -123,6 +126,8 @@ class ToolPolicyTest {
         }
         for (url in listOf(
             "${ToolPolicy.ORIGIN}/api/mobile/pair", "${ToolPolicy.ORIGIN}:443/fonts/a",
+            "${ToolPolicy.ORIGIN}./fonts/a", "https://APPASSETS.ANDROIDPLATFORM.NET.:443/fonts/a",
+            "${ToolPolicy.ORIGIN}../fonts/a",
             "https://user:pass@example.com", "https://appassets.androidplatform.net@evil.test",
             "file:///data/local/a", "content://provider/file", "javascript:alert(1)", "intent://example.com", "//example.com/a",
         )) assertFalse(url, ToolPolicy.artifactNetwork(url, false))
@@ -136,6 +141,29 @@ class ToolPolicyTest {
         assertTrue(ToolPolicy.PASSTHROUGH_SANDBOX.contains("allow-downloads"))
         assertEquals("camera=()", ceiling["permissions-policy"])
         assertEquals("no-store", ceiling["cache-control"])
+    }
+
+    @Test
+    fun capabilityCardFragmentsSurviveOnlySubframeNavigation() {
+        val card = "${ToolPolicy.ORIGIN}/whiteboard/c/cap/index.html?view=1#wb=nonce"
+        assertTrue(ToolPolicy.cardNavigation(card, false))
+        assertFalse(ToolPolicy.cardNavigation(card, true))
+        assertNull(ToolPolicy.download(card))
+        assertFalse(ToolPolicy.trustedMessage(ToolPolicy.ORIGIN, false))
+        for (url in listOf(
+            "${ToolPolicy.ORIGIN}/assets/companion-tools/index.html#wb=nonce",
+            "${ToolPolicy.ORIGIN}/api/docs/picture#wb=nonce",
+            "${ToolPolicy.ORIGIN}/api/mobile/pair#wb=nonce",
+            "${ToolPolicy.ORIGIN}/whiteboard/c/cap/../index.html#wb=nonce",
+            "${ToolPolicy.ORIGIN}/whiteboard/c/cap/%2e%2e/index.html#wb=nonce",
+            "${ToolPolicy.ORIGIN}/whiteboard/c/cap/./index.html#wb=nonce",
+            "${ToolPolicy.ORIGIN}/whiteboard/c/cap/index.html?bad=\\value#wb=nonce",
+            "${ToolPolicy.ORIGIN}/whiteboard/c/cap/index.html?${"a".repeat(16385)}#wb=nonce",
+            "${ToolPolicy.ORIGIN}./whiteboard/c/cap/index.html#wb=nonce",
+            "${ToolPolicy.ORIGIN}:443/whiteboard/c/cap/index.html#wb=nonce",
+            "https://appassets.androidplatform.net@evil.test/whiteboard/c/cap/index.html#wb=nonce",
+            "https://example.com/whiteboard/c/cap/index.html#wb=nonce",
+        )) assertFalse(url, ToolPolicy.cardNavigation(url, false))
     }
 
     @Test
@@ -163,11 +191,24 @@ class ToolPolicyTest {
         assertEquals(listOf("text/html", "image/png"), ToolPolicy.pickerTypes(listOf(".html,.htm,text/html", "image/png")))
         assertEquals(listOf("image/*"), ToolPolicy.pickerTypes(listOf("image/*")))
         assertEquals(listOf("*/*"), ToolPolicy.pickerTypes(listOf("file:///secret", "image/png\nX:1")))
+        assertEquals(listOf("*/*"), ToolPolicy.pickerTypes(listOf(".pdf,.png")))
+        assertEquals(listOf("*/*"), ToolPolicy.pickerTypes(listOf("image/png,.unknown")))
+        assertEquals(listOf("*/*"), ToolPolicy.pickerTypes(listOf("*/png")))
+        assertEquals(listOf("*/*"), ToolPolicy.pickerTypes(listOf("*/*", "image/png")))
+        assertEquals(listOf("*/*"), ToolPolicy.pickerTypes(listOf((1..17).joinToString(",") { "application/x-type$it" })))
+        assertEquals(listOf("*/*"), ToolPolicy.pickerTypes(listOf("a".repeat(4097))))
+        assertEquals(listOf("image/png"), ToolPolicy.pickerTypes(listOf("image/png,.png")))
+        assertEquals(listOf("image/*", "text/plain"), ToolPolicy.pickerTypes(listOf("image/*,text/plain")))
         assertEquals("report.zip", ToolPolicy.safeFilename("../../report.zip"))
         assertEquals("report.zip", ToolPolicy.safeFilename("C:\\secret\\report.zip"))
         assertEquals("office-file", ToolPolicy.safeFilename("..."))
         assertEquals("file.zip", ToolPolicy.safeFilename("file\u0000.zip"))
         assertEquals(120, ToolPolicy.safeFilename("a".repeat(300)).length)
+        assertEquals("reportfdp.html", ToolPolicy.safeFilename("report\u202efdp.html"))
+        assertEquals("report.zip", ToolPolicy.safeFilename("\u2066report\u2069\u0085\u009f.zip\u200f"))
+        assertEquals("a".repeat(119), ToolPolicy.safeFilename("a".repeat(119) + "\ud83d\ude00"))
+        assertEquals("a".repeat(118) + "\ud83d\ude00", ToolPolicy.safeFilename("a".repeat(118) + "\ud83d\ude00" + "b"))
+        assertEquals("file.zip", ToolPolicy.safeFilename("file\ud83d.zip"))
         val picked = "content://documents/document/user-selected"
         assertTrue(ToolPolicy.selectedContentUri(picked, true, true, 200, 100))
         assertFalse(ToolPolicy.selectedContentUri(picked, false, true, 200, 100))
@@ -176,6 +217,51 @@ class ToolPolicyTest {
         for (url in listOf("file:///data/private", "https://example.com/file", "content://user@documents/file", "$picked#fragment", "content:///file")) {
             assertFalse(url, ToolPolicy.selectedContentUri(url, true, true, 200, 100))
         }
+    }
+
+    @Test
+    fun clipDataIsBoundedBeforeReadingAndKeepsAllSelectedUris() {
+        assertEquals(listOf("one"), ToolPolicy.pickerItems("one", null, false) { null })
+        assertEquals(listOf("one", "two"), ToolPolicy.pickerItems("ignored", 2, true) { listOf("one", "two")[it] })
+        assertEquals(listOf("one"), ToolPolicy.pickerItems(null, 2, true) { "one" })
+        assertNull(ToolPolicy.pickerItems<String>(null, null, true) { error("No ClipData") })
+        assertNull(ToolPolicy.pickerItems<String>(null, 2, false) { error("Must reject before reading") })
+        for (count in listOf(-1, 0, ToolPolicy.PICK_MAX + 1, Int.MAX_VALUE)) {
+            assertNull(ToolPolicy.pickerItems<String>(null, count, true) { error("Must reject before allocating") })
+        }
+        assertNull(ToolPolicy.pickerItems(null, 2, true) { if (it == 0) "one" else null })
+        assertEquals(ToolPolicy.PICK_MAX, ToolPolicy.pickerItems(null, ToolPolicy.PICK_MAX, true) { "file-$it" }!!.size)
+    }
+
+    @Test
+    fun unknownLengthStreamsAreScannedWithinAFixedByteBudget() {
+        assertTrue(ToolPolicy.streamFits(ByteArrayInputStream(byteArrayOf()), 0))
+        assertFalse(ToolPolicy.streamFits(ByteArrayInputStream(byteArrayOf(1)), 0))
+        assertTrue(ToolPolicy.streamFits(ByteArrayInputStream(ByteArray(16)), 16))
+        assertFalse(ToolPolicy.streamFits(ByteArrayInputStream(ByteArray(17)), 16))
+        var read = 0
+        val unending = object : InputStream() {
+            override fun read(): Int { read++; return 0 }
+            override fun read(b: ByteArray, off: Int, len: Int): Int {
+                assertTrue(len <= 8192)
+                read += len
+                return len
+            }
+        }
+        assertFalse(ToolPolicy.streamFits(unending, 32768))
+        assertEquals(32769, read)
+        var checks = 0
+        assertThrows(CancellationException::class.java) {
+            ToolPolicy.streamFits(unending) {
+                if (++checks == 2) throw CancellationException()
+            }
+        }
+        assertEquals(2, checks)
+        val zeroReads = object : InputStream() {
+            override fun read() = -1
+            override fun read(b: ByteArray, off: Int, len: Int) = 0
+        }
+        assertTrue(ToolPolicy.streamFits(zeroReads))
     }
 
     @Test

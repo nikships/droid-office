@@ -90,20 +90,38 @@ class ManagementView(
                     finishPicker(got, null)
                     return
                 }
-                val uris = runCatching { WebChromeClient.FileChooserParams.parseResult(resultCode, data) }.getOrNull()
-                if (uris == null || uris.isEmpty() || uris.size > ToolPolicy.PICK_MAX || (!got.multiple && uris.size != 1)) {
+                // We build GET_CONTENT ourselves, so parse its bounded ClipData directly instead
+                // of delegating to a WebView-provider-specific FileChooserParams implementation.
+                val uris = runCatching {
+                    val clip = data?.clipData
+                    ToolPolicy.pickerItems(data?.data, clip?.itemCount, got.multiple) { i -> clip?.getItemAt(i)?.uri }?.toTypedArray()
+                }.getOrNull()
+                if (uris == null) {
                     finishPicker(got, null)
                     return
                 }
                 scope.launch {
                     val valid = withContext(Dispatchers.IO) {
+                        val context = coroutineContext
                         uris.all {
+                            context.ensureActive()
+                            if (!live(got.binding)) throw CancellationException()
                             selectedUri(it, data, Intent.FLAG_GRANT_READ_URI_PERMISSION) &&
-                                (got.directory || runCatching {
+                                (got.directory || try {
                                     reactContext.contentResolver.openAssetFileDescriptor(it, "r")?.use { descriptor ->
-                                        descriptor.length < 0 || ToolPolicy.responseFits(descriptor.length)
+                                        if (descriptor.length >= 0) ToolPolicy.responseFits(descriptor.length)
+                                        else descriptor.createInputStream().use { stream ->
+                                            ToolPolicy.streamFits(stream) {
+                                                context.ensureActive()
+                                                if (!live(got.binding)) throw CancellationException()
+                                            }
+                                        }
                                     } == true
-                                }.getOrDefault(false))
+                                } catch (e: CancellationException) {
+                                    throw e
+                                } catch (_: Exception) {
+                                    false
+                                })
                         }
                     }
                     if (picker !== got) return@launch
@@ -327,7 +345,7 @@ class ManagementView(
             .build()
         page.webViewClient = Client(binding, loader)
         page.webChromeClient = Chrome(binding)
-        page.setDownloadListener { url, _, disposition, mime, _ -> download(binding, url, disposition, mime) }
+        page.setDownloadListener { url, _, disposition, mime, _ -> requestDownload(binding, url, disposition, mime) }
         if (WebViewFeature.isFeatureSupported(WebViewFeature.WEB_MESSAGE_LISTENER)) WebViewCompat.addWebMessageListener(page, CHANNEL, setOf(ORIGIN)) { view, message, origin, isMainFrame, proxy ->
             if (view !== web || !lifetime.matches(binding) || !ToolPolicy.trustedMessage(origin.toString(), isMainFrame)) return@addWebMessageListener
             val raw = message.data ?: return@addWebMessageListener
@@ -482,14 +500,14 @@ class ManagementView(
         val epoch = binding.epoch ?: return
         exportJob = scope.launch {
             try {
-                val fetched = withTimeout(60_000) {
-                    withContext(Dispatchers.IO) {
+                // fetch is blocking and owns its OfficeApi network timeout/stream cap. A coroutine
+                // timeout cannot interrupt it; cancellation still prevents delivery after it returns.
+                val fetched = withContext(Dispatchers.IO) {
+                    ensureActive()
+                    if (!live(binding)) return@withContext null
+                    host.fetch(office, epoch, request.path, request.query).also {
                         ensureActive()
-                        if (!live(binding)) return@withContext null
-                        host.fetch(office, epoch, request.path, request.query).also {
-                            ensureActive()
-                            check(live(binding))
-                        }
+                        check(live(binding))
                     }
                 }
                 if (!live(binding)) return@launch
@@ -526,13 +544,25 @@ class ManagementView(
                     tell("No system save dialog is available.")
                 }
             } catch (e: CancellationException) {
-                if (live(binding)) tell("The office did not provide the download in time.")
                 throw e
             } catch (_: Exception) {
                 if (live(binding)) tell("The office could not provide that download.")
             } finally {
                 if (lifetime.matches(binding)) exportJob = null
             }
+        }
+    }
+
+    /** DownloadListener has no gesture bit. Accept it only for the main document's trusted click.
+     * Android's explicit hasGesture callbacks also use this path, consuming any matching intent.
+     * No new native bridge is exposed, and an opaque card cannot set the parent's private intent.
+     */
+    private fun requestDownload(binding: ToolBinding, url: String, disposition: String?, mime: String?, hasGesture: Boolean = false) {
+        val page = web ?: return
+        if (!live(binding) || ToolPolicy.download(url) == null) return
+        val take = "Boolean(window.droidOfficeDownloadIntent && window.droidOfficeDownloadIntent(${JsonPrimitive(url)}))"
+        page.evaluateJavascript(take) { trustedClick ->
+            if (web === page && live(binding) && (hasGesture || trustedClick == "true")) download(binding, url, disposition, mime)
         }
     }
 
@@ -642,11 +672,13 @@ class ManagementView(
         override fun shouldInterceptRequest(view: WebView, request: WebResourceRequest): WebResourceResponse? {
             val uri = request.url
             if (!lifetime.matches(binding)) return refused()
-            if (!local(uri)) return if (ToolPolicy.artifactNetwork(uri.toString(), request.isForMainFrame)) null else refused()
+            val sealed = local(uri) || ToolPolicy.cardNavigation(uri.toString(), request.isForMainFrame)
+            if (!sealed) return if (ToolPolicy.artifactNetwork(uri.toString(), request.isForMainFrame)) null else refused()
             if (request.method != "GET") return refused()
             val path = uri.encodedPath ?: return refused()
             if (request.isForMainFrame && uri.toString() != PAGE) {
-                if (ToolPolicy.download(uri.toString()) != null) post { download(binding, uri.toString(), null, null) }
+                val gesture = request.hasGesture()
+                if (ToolPolicy.download(uri.toString()) != null) post { requestDownload(binding, uri.toString(), null, null, gesture) }
                 return refused()
             }
             if (ToolPolicy.bundledAsset(path)) {
@@ -677,12 +709,12 @@ class ManagementView(
             // The top document never navigates, even to an otherwise permitted card or file.
             if (request.isForMainFrame) {
                 if (request.hasGesture() && request.method == "GET" && ToolPolicy.download(request.url.toString()) != null) {
-                    download(binding, request.url.toString(), null, null)
+                    requestDownload(binding, request.url.toString(), null, null, true)
                 }
                 return true
             }
             val uri = request.url
-            if (ToolPolicy.artifactNetwork(uri.toString(), false)) return false
+            if (ToolPolicy.artifactNetwork(uri.toString(), false) || ToolPolicy.cardNavigation(uri.toString(), false)) return false
             return !local(uri) || !ToolPolicy.passthrough(uri.encodedPath.orEmpty()) || !ToolPolicy.validQuery(uri.encodedQuery)
         }
 
@@ -692,6 +724,10 @@ class ManagementView(
                 notice("The tools page stopped. Close and reopen this tool.")
             }
             return true
+        }
+
+        override fun onPageFinished(view: WebView, url: String) {
+            if (view === web && lifetime.matches(binding) && url == PAGE) view.evaluateJavascript(INSTALL_DOWNLOAD_INTENT, null)
         }
     }
 
@@ -703,7 +739,27 @@ class ManagementView(
         private val requestCodes = AtomicInteger(0x6000)
         private const val MESSAGE_MAX = ((ToolPolicy.UPLOAD_MAX + 2) / 3) * 4 + 65536
         private const val REPLAY_MAX = 32L * 1024 * 1024
-        private const val HOST_CSP = "default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self'; media-src 'self' blob:; frame-src https: http: blob:; connect-src 'none'; worker-src 'none'; base-uri 'none'; form-action 'none'; object-src 'none'"
+        private const val HOST_CSP = "default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' https: data: blob:; font-src 'self'; media-src 'self' blob:; frame-src 'self' blob:; connect-src 'none'; worker-src 'none'; base-uri 'none'; form-action 'none'; object-src 'none'"
+        // Main-frame only. Keyboard/accessibility clicks are trusted too; script-created click()
+        // events cannot authorize a save. The URL-bound intent expires and is consumed exactly once.
+        private val INSTALL_DOWNLOAD_INTENT = """
+            (() => {
+              if (window.droidOfficeDownloadIntent) return;
+              let intent = null;
+              Object.defineProperty(window, 'droidOfficeDownloadIntent', { value: (url) => {
+                const pending = intent;
+                intent = null;
+                return !!pending && pending.url === url && performance.now() - pending.at <= 2000;
+              } });
+              document.addEventListener('click', (event) => {
+                if (!event.isTrusted || event.defaultPrevented) return;
+                const anchor = event.target instanceof Element ? event.target.closest('a[href][download]') : null;
+                if (!anchor) return;
+                const url = new URL(anchor.href, location.href);
+                if (url.origin === location.origin) intent = { url: url.href, at: performance.now() };
+              }, true);
+            })();
+        """.trimIndent()
 
         private fun local(uri: Uri): Boolean = uri.scheme == "https" && uri.encodedAuthority == "appassets.androidplatform.net" && uri.fragment == null
         private fun JsonObject.string(key: String): String? = (this[key] as? JsonPrimitive)?.takeIf { it.isString }?.content

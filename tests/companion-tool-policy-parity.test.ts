@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import test from 'node:test';
+import { runInNewContext } from 'node:vm';
 import { cleanToolArgs, isAllowedToolRequest, isExternalUrl, TOOL_JSON_MAX, TOOL_PASSTHROUGH_PREFIXES, TOOL_UPLOAD_MAX } from '../src/shared/companion-tools.js';
 import { CARD_SANDBOX } from '../src/shared/whiteboard-bridge.js';
 
@@ -24,6 +25,94 @@ test('TypeScript and Kotlin share every allowed management route and rejection f
     assert.equal(isAllowedToolRequest(method, `/api/factory/${'a'.repeat(499)}`), true);
     assert.equal(isAllowedToolRequest(method, `/api/factory/${'a'.repeat(500)}`), false);
   }
+});
+
+const nativeView = readFileSync(new URL('../android/app/src/main/java/ai/factory/droidoffice/rn/ManagementView.kt', import.meta.url), 'utf8');
+
+test('native host permits HTTPS document images without widening active-content policy', () => {
+  const policy = nativeView.match(/private const val HOST_CSP = "([^"]+)"/)?.[1];
+  assert.ok(policy);
+  const directives = new Map(
+    policy.split(';').map((directive) => {
+      const [name, ...sources] = directive.trim().split(/\s+/);
+      return [name, sources.join(' ')];
+    }),
+  );
+  assert.equal(directives.get('img-src'), "'self' https: data: blob:");
+  assert.equal(directives.get('frame-src'), "'self' blob:");
+  assert.equal(directives.get('script-src'), "'self'");
+  for (const directive of ['default-src', 'connect-src', 'worker-src', 'object-src']) assert.equal(directives.get(directive), "'none'");
+});
+
+test('native download fallback consumes only a fresh trusted same-origin anchor click', () => {
+  // Exercise the exact native-injected helper, not a second implementation. This is a DOM-event
+  // unit test, not a claim of WebView/provider runtime acceptance (owned by emulator checks).
+  const script = nativeView.match(/private val INSTALL_DOWNLOAD_INTENT = """([\s\S]*?)"""\.trimIndent\(\)/)?.[1];
+  assert.ok(script);
+  const origin = 'https://appassets.androidplatform.net';
+  const target = `${origin}/api/factory/wiki/runs/run/export`;
+  let now = 0;
+  let listeners = 0;
+  class LinkElement {
+    constructor(
+      readonly href: string,
+      readonly download = true,
+    ) {}
+    closest(selector: string) {
+      assert.equal(selector, 'a[href][download]');
+      return this.download ? this : null;
+    }
+  }
+  type Click = { isTrusted: boolean; defaultPrevented: boolean; target: unknown };
+  let click: (event: Click) => void = () => {
+    throw new Error('Click listener was not installed');
+  };
+  const window: { droidOfficeDownloadIntent?: (url: string) => boolean } = {};
+  const context = {
+    window,
+    Element: LinkElement,
+    URL,
+    location: { origin, href: `${origin}/assets/companion-tools/index.html` },
+    performance: { now: () => now },
+    document: {
+      addEventListener(name: string, listener: (event: Click) => void, capture: boolean) {
+        assert.equal(name, 'click');
+        assert.equal(capture, true);
+        listeners++;
+        click = listener;
+      },
+    },
+  };
+  runInNewContext(script, context);
+  runInNewContext(script, context);
+  assert.equal(listeners, 1);
+  const take = (url = target) => {
+    assert.ok(window.droidOfficeDownloadIntent);
+    return window.droidOfficeDownloadIntent(url);
+  };
+  const fire = (options: Partial<Click> = {}) => click({ isTrusted: true, defaultPrevented: false, target: new LinkElement(target), ...options });
+  assert.equal(take(), false);
+  fire({ isTrusted: false });
+  assert.equal(take(), false);
+  fire({ defaultPrevented: true });
+  assert.equal(take(), false);
+  fire({ target: new LinkElement(target, false) });
+  assert.equal(take(), false);
+  fire({ target: new LinkElement('https://example.com/export') });
+  assert.equal(take('https://example.com/export'), false);
+  fire({ target: {} });
+  assert.equal(take(), false);
+  fire();
+  assert.equal(take(), true);
+  assert.equal(take(), false);
+  fire();
+  assert.equal(take(`${target}?other=1`), false);
+  assert.equal(take(), false);
+  fire();
+  now = 2001;
+  assert.equal(take(), false);
+  fire();
+  assert.equal(take(), true);
 });
 
 test('external links, passthrough prefixes and tool arguments stay in parity', () => {
