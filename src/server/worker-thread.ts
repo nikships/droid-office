@@ -320,7 +320,7 @@ export class WorkerThreadReader {
     if (message.userMessageSource && message.userMessageSource !== 'cli_tui') return;
     const role = message.role;
     const timestamp = typeof row.timestamp === 'string' ? Date.parse(row.timestamp) : NaN;
-    if (!state.since || (Number.isFinite(timestamp) && timestamp >= state.since)) {
+    if (this.textOnly && (!state.since || (Number.isFinite(timestamp) && timestamp >= state.since))) {
       const parts =
         typeof message.content === 'string'
           ? [message.content]

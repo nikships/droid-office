@@ -20,3 +20,10 @@ test('live questions, missing worktrees and cloud errors win over generated text
   assert.equal(doingLine({ ...worker, lost: { branch: 'here' } }), 'Worktree missing');
   assert.equal(workerActivity({ ...worker, cloud: { error: 'Computer stopped' } as WorkerInfo['cloud'] }), 'Computer stopped');
 });
+
+test('cloud and preview labels keep live activity ahead of an earlier task summary', () => {
+  const legacy = { ...worker, task: { name: 'Earlier turn', summary: 'Finished the earlier task' }, activity: 'Checking the new cloud turn' };
+  assert.equal(workerActivity({ ...legacy, cloud: {} as WorkerInfo['cloud'] }), 'Checking the new cloud turn');
+  assert.equal(workerActivity(legacy), 'Checking the new cloud turn');
+  assert.equal(workerActivity({ ...legacy, activity: undefined }), 'Finished the earlier task');
+});

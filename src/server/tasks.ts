@@ -1,6 +1,6 @@
 import type { WorkerTask } from '../shared/protocol.js';
 
-/** Cloud workers still use a prompt preview; local workers use the Office-wide sign writer. */
+/** An immediate prompt preview until the Office-wide sign writer has a generated label. */
 export function fallbackTask(prompt: string): WorkerTask {
   const one = prompt.replace(/\s+/g, ' ').trim();
   const words = one.replace(/^(please|can you|could you|hey|ok|so)\b[\s,]*/i, '').split(' ');

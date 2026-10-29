@@ -22,6 +22,7 @@ import { stationBrief } from './stations.js';
 import { officePrompt, type PromptSource } from './prompts.js';
 import { forgeVars, placeholders, PROMPTS, WORKER_VISITS, workerBranchPolicy, workerMessageVars } from '../shared/prompts.js';
 import { isBusy } from '../shared/status.js';
+import { fallbackTask } from './tasks.js';
 import { forkRefusal, nearestForkSeat } from '../shared/worker-fork.js';
 import { githubPulls } from './github.js';
 import type { PullHost } from './forge.js';
@@ -625,6 +626,7 @@ export class WorkerManager {
       ...(team ? { team: memberBadge(team) } : {}),
     };
     const w = newWorker(info);
+    this.notePrompt(w, shown ?? '');
     if (info.worktree) w.worktreeOwnership = Object.fromEntries(this.treesOf(info).map((t) => [t.dir, t.trees.ownership(t.ref.branch)]));
     if (wt) w.setupPlan = this.planSetup(id, wt, others);
     this.workers.set(id, w);
@@ -989,6 +991,7 @@ export class WorkerManager {
     const first = w.info.sessionId ? prompt : this.briefed(w, prompt);
     if (prompt) {
       w.info.activity = truncate(prompt, 80);
+      this.notePrompt(w, prompt);
     }
     // Cut off mid-turn by a restart: it gets on with it, as whoever was watching would have told it to.
     const carryOn = !prompt && w.interrupted && w.info.kind === 'agent' && !!w.info.sessionId;
@@ -1491,6 +1494,7 @@ export class WorkerManager {
     this.typeIn(w, clean, queue && wantsCsiEnter(w.info.kind) ? CTRL_ENTER : '\r');
     const shown = typed || 'See the attached images';
     w.info.activity = truncate(shown, 80);
+    this.notePrompt(w, shown);
     w.info.lastInputAt = Date.now();
     this.emitUpdate(w);
     return undefined;
@@ -1727,7 +1731,7 @@ export class WorkerManager {
   private sessionHook(w: Worker, event: string, report: Record<string, unknown>) {
     const session = report.session_id as string;
     if (event === 'SessionStart') {
-      if ((w.info.sessionId && w.info.sessionId !== session) || report.source === 'clear') this.clearTask(w);
+      if ((w.info.sessionId && w.info.sessionId !== session) || report.source === 'clear') this.clearTask(w, report.source === 'clear');
       w.info.sessionId = session;
       w.pendingFork = undefined;
       w.subSessions.clear();
@@ -1742,6 +1746,7 @@ export class WorkerManager {
       w.info.action = undefined;
       if (typeof report.prompt === 'string') {
         w.info.activity = truncate(report.prompt, 80);
+        this.notePrompt(w, report.prompt);
       }
       this.setStatus(w, 'working');
     } else if (event === 'PreToolUse') this.toolStarted(w, session, report);
@@ -1865,9 +1870,15 @@ export class WorkerManager {
     this.emitUpdate(w);
   }
 
-  private clearTask(w: Worker) {
+  /** A local preview needs no inference or API key and never replaces an assigned/generated label. */
+  private notePrompt(w: Worker, prompt: string) {
+    if (w.info.kind !== 'agent' || w.info.task || !prompt.trim() || prompt.trim().startsWith('/')) return;
+    w.info.task = fallbackTask(prompt);
+  }
+
+  private clearTask(w: Worker, cleared: boolean) {
     w.taskEpoch++;
-    w.info.taskSince = Date.now();
+    w.info.taskSince = cleared ? Date.now() : undefined;
     w.info.task = undefined;
     this.emitUpdate(w);
     this.persist();
@@ -2404,7 +2415,7 @@ process.stdin.on('end', () => {
           sessionId: s.sessionId,
           forkedFrom: s.forkedFrom && typeof s.forkedFrom.workerId === 'string' && typeof s.forkedFrom.name === 'string' && typeof s.forkedFrom.sessionId === 'string' ? s.forkedFrom : undefined,
           activity: s.activity,
-          task: validTask(s.task),
+          task: validTask(s.task) ?? (!shell && !s.taskSince && typeof s.prompt === 'string' && s.prompt.trim() ? fallbackTask(s.prompt) : undefined),
           taskSince: typeof s.taskSince === 'number' && Number.isFinite(s.taskSince) && s.taskSince > 0 ? s.taskSince : undefined,
           pr: s.pr && typeof s.pr.number === 'number' && typeof s.pr.url === 'string' ? { number: s.pr.number, url: s.pr.url } : undefined,
           cols: 100,

@@ -3,6 +3,7 @@ import {
   createSession,
   DroidInteractionMode,
   DroidMessageType,
+  DroidServerMethod,
   FACTORY_PROTOCOL_VERSION,
   JSONRPC_VERSION,
   LEGACY_FACTORY_API_VERSION,
@@ -92,15 +93,16 @@ async function catalogue(transport: ProcessTransport, model: string, signal: Abo
       if (replies.size === 2) resolve();
     });
     void Promise.all(
-      ['tools', 'models'].map((kind) =>
+      [
+        { id: 'label-tools', method: DroidServerMethod.LIST_TOOLS, params: { modelId: model } },
+        { id: 'label-models', method: DroidServerMethod.LIST_MODELS, params: {} },
+      ].map((request) =>
         transport.send({
           factoryApiVersion: LEGACY_FACTORY_API_VERSION,
           factoryProtocolVersion: FACTORY_PROTOCOL_VERSION,
           type: 'request',
           jsonrpc: JSONRPC_VERSION,
-          id: `label-${kind}`,
-          method: `droid.list_${kind}`,
-          params: kind === 'tools' ? { modelId: model } : {},
+          ...request,
         } as JsonRpcMessage),
       ),
     ).catch(reject);

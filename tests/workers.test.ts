@@ -194,6 +194,8 @@ test('Droid workers launch with their own hook overlay and resume the correct se
   const worker = workers.spawn('desk-2', 'test', '- inspect this code');
   assert.equal(typeof worker, 'object');
   if (typeof worker === 'string') return;
+  assert.equal(worker.task?.summary, '- inspect this code', 'local workers have a prompt card without a model or API key');
+  assert.equal(worker.task?.generated, undefined);
   const first = (
     await waitFor(
       () => f.read(),
@@ -269,8 +271,10 @@ test('Droid workers launch with their own hook overlay and resume the correct se
   assert.equal(hook('Stop', {}), false, 'hooks from the old process must not control a resumed worker');
   assert.equal(hook('SessionStart', { source: 'resume' }, second.env.hookToken!), true);
 
-  assert.equal(workers.get(worker.id)?.task, undefined, 'hooks do not synthesize labels from prompts or tools');
+  assert.equal(workers.get(worker.id)?.task?.summary, '- inspect this code', 'tools and follow-up prompts do not replace the initial preview');
   workers.setTask(worker.id, { name: 'Worker Hooks', summary: 'Verified resume handling', generated: true, textHash: 'a'.repeat(64) });
+  hook('UserPromptSubmit', { prompt: 'continue with another check' }, second.env.hookToken!);
+  assert.equal(workers.get(worker.id)?.task?.summary, 'Verified resume handling', 'a prompt preview cannot overwrite generated labels');
   workers.shutdown();
   const restored = manager(f, []);
   t.after(() => restored.shutdown());
@@ -1041,7 +1045,16 @@ test("a subagent's hooks don't take over its worker's session (droid's own hook 
 
   // A new conversation (/clear) forgets the old one's subagents.
   hook('SessionStart', { source: 'clear' }, 'new-session');
+  assert.equal(workers.get(worker.id)?.task, undefined, 'clear removes both generated labels and prompt previews');
+  assert.ok(workers.get(worker.id)?.taskSince, 'clear excludes old text even if Droid reuses the session file');
+  hook('UserPromptSubmit', { prompt: '/clear' }, 'new-session');
+  assert.equal(workers.get(worker.id)?.task, undefined, 'slash commands are not task previews');
+  hook('UserPromptSubmit', { prompt: 'Check the new task' }, 'new-session');
+  assert.equal(workers.get(worker.id)?.task?.summary, 'Check the new task', 'the first prompt after clear restores a local preview');
   assert.equal(sub('PreToolUse', execute), false);
+  hook('SessionStart', { source: 'resume' }, 'earlier-session');
+  assert.equal(workers.get(worker.id)?.taskSince, undefined, 'switching sessions includes that session’s existing visible conversation');
+  assert.equal(workers.get(worker.id)?.task, undefined, 'a different session cannot keep the previous session’s preview');
 });
 
 /** Types `text` into a worker's terminal, which echoes it back (the fake agent's tty is in cooked mode), and waits to see it. */

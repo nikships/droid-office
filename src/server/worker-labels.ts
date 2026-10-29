@@ -115,7 +115,7 @@ export class WorkerLabels {
         tracked.status = worker.status;
         if (this.running.has(worker.id) || now < tracked.retryAt) continue;
         const text = await this.options.read(worker);
-        if (!text || this.stopped || revision !== this.revision) continue;
+        if (!text || this.stopped || revision !== this.revision || this.running.has(worker.id)) continue;
         const digest = hash(text);
         if (digest === tracked.hash) {
           this.queue.delete(worker.id);
@@ -161,12 +161,7 @@ export class WorkerLabels {
       if (this.stopped || controller.signal.aborted || revision !== this.revision) return;
       const current = this.options.workers().find((w) => w.id === job.worker.id);
       if (!current || identity(current) !== job.tracked.identity) return;
-      const latest = await this.options.read(current);
-      if (this.stopped || controller.signal.aborted || revision !== this.revision || latest === undefined) return;
-      // Resolve again after the async read: a worker may have been removed, cleared or replaced.
-      const target = this.options.workers().find((w) => w.id === job.worker.id);
-      if (!target || identity(target) !== job.tracked.identity) return;
-      target.apply({ ...task, generated: true, textHash: job.hash });
+      current.apply({ ...task, generated: true, textHash: job.hash });
       // New text during inference waits for the next refresh. Discarding every such result
       // would starve a chatty worker of labels while still charging for every call.
       job.tracked.hash = job.hash;

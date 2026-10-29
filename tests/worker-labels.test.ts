@@ -11,18 +11,21 @@ import type { WorkerTask } from '../src/shared/protocol.js';
 
 const task: WorkerTask = { name: 'Worker Conversation Labels', summary: 'Checking final updates', generated: true };
 
-function rig(t: TestContext, manual = false) {
+function rig(t: TestContext, manual = false, reading?: (source: { sessionId: string }) => Promise<void>) {
   let now = 1_000_000;
   let settings = { ...WORKER_LABEL_DEFAULTS };
   let workers: LabelWorker[] = [];
   const text = new Map<string, string>();
   const calls: { input: LabelInput; signal: AbortSignal; resolve: (task: WorkerTask) => void; reject: (error: Error) => void }[] = [];
   const applied: WorkerTask[] = [];
+  let reads = 0;
   const idle: (() => void)[] = [];
   const service = new WorkerLabels({
     settings: () => settings,
     workers: () => workers,
     read: async (source) => {
+      reads++;
+      await reading?.(source);
       await new Promise<void>((resolve) => setTimeout(resolve, Math.floor(Math.random() * 4)));
       return text.get(source.sessionId);
     },
@@ -42,6 +45,7 @@ function rig(t: TestContext, manual = false) {
     calls,
     text,
     applied,
+    reads: () => reads,
     advance: (ms: number) => {
       now += ms;
     },
@@ -123,6 +127,47 @@ test('refreshes only changed visible text, respects 60 seconds, and sends only t
   assert.equal(r.calls.length, 3);
 });
 
+test('a queue slot opening during an async scan cannot requeue the now-running worker', async (t) => {
+  let pause = false;
+  let started!: () => void;
+  let release!: () => void;
+  const reading = new Promise<void>((resolve) => {
+    started = resolve;
+  });
+  const blocked = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const r = rig(t, true, async (source) => {
+    if (source.sessionId === 'c' && pause) {
+      started();
+      await blocked;
+    }
+  });
+  r.worker('first:a', 'a');
+  r.worker('second:b', 'b');
+  const third = r.worker('third:c', 'c');
+  await r.service.tick();
+  third.status = 'done';
+  pause = true;
+  const scan = r.service.tick();
+  await reading;
+  r.calls[0].resolve(task);
+  await new Promise<void>((resolve) => {
+    const check = () => (r.calls.length === 3 ? resolve() : setImmediate(check));
+    check();
+  });
+  release();
+  await scan;
+  const queued = r.service.state().queued;
+  if (queued) r.settings({ on: false });
+  const done = r.idle();
+  r.calls[1].resolve(task);
+  r.calls[2].resolve(task);
+  await done;
+  assert.equal(queued, 0, 'the running worker must not leave a duplicate paid call queued');
+  assert.equal(r.calls.length, 3);
+});
+
 test('a final update bypasses the interval and catches text flushed after the done hook', async (t) => {
   const r = rig(t);
   const worker = r.worker();
@@ -153,10 +198,10 @@ for (const change of ['clear', 'session', 'cwd', 'remove', 'settings', 'stop'] a
     if (change === 'cwd') worker.cwd = '/replacement';
     if (change === 'remove') r.workers([]);
     if (change === 'settings') r.settings({ on: false });
-    if (change === 'stop') r.service.stop();
+    const stopped = change === 'stop' ? r.service.stop() : undefined;
     r.calls[0].resolve(task);
-    if (change !== 'stop') await done;
-    else await new Promise<void>((resolve) => setImmediate(resolve));
+    if (stopped) await stopped;
+    else await done;
     assert.equal(r.applied.length, 0);
   });
 }
@@ -170,6 +215,7 @@ test('a chatty worker still gets its snapshot label, with newer text eligible at
   r.calls[0].resolve(task);
   await done;
   assert.equal(r.applied.length, 1);
+  assert.equal(r.reads(), 1, 'publishing a valid snapshot does not reread the conversation');
   r.advance(60_000);
   await r.service.tick();
   assert.equal(r.calls.length, 2);
