@@ -26,6 +26,25 @@ const capturedCancellation = () => {
   return [{ ...wrapper, resultSeq: undefined }, child];
 };
 
+test('thoughts are top-level disclosures separating the activity before and after them', () => {
+  const thought: ThreadEntry = { id: 'thought', seq: 2, kind: 'thinking', role: 'assistant', text: '**Deciding the next step**\nThe thought remains available without opening tool activity.' };
+  const rows = presentThread([tool('r1', 'Read'), thought, tool('e3', 'Execute')], true);
+  assert.deepEqual(
+    rows.map((row) => row.kind),
+    ['activity', 'thought', 'activity'],
+  );
+  assert.equal(rows[1].kind === 'thought' && rows[1].preview, 'Deciding the next step');
+  assert.equal(rows[1].kind === 'thought' && rows[1].live, false);
+  assert.equal(rows[2].kind === 'activity' && rows[2].live, true);
+  assert.equal(rows[0].kind === 'activity' && rows[0].live, false);
+  assert.deepEqual(
+    presentThread([thought], true).map((row) => row.kind === 'thought' && row.live),
+    [true],
+  );
+  assert.ok(rows.filter((row) => row.kind === 'activity').every((row) => row.items.every((item) => item.type === 'action')));
+  assert.deepEqual(presentThread([{ ...thought, text: '  \n' }], false), []);
+});
+
 test('the reported release-check turn becomes one activity disclosure without bookkeeping', () => {
   const rows = presentThread(
     [

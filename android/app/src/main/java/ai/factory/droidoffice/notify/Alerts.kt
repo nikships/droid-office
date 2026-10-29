@@ -161,7 +161,7 @@ class Alerts(
             // The system's guesses ("Open link" for a file name in a prompt) only get in the way of a reply.
             .setAllowSystemGeneratedContextualActions(false)
             .setContentIntent(openWorker(officeId, w.id, d.floorId))
-        if (!w.isGuest) {
+        if (!w.isGuest && menu?.multiSelect != true) {
             // Up to three buttons: its first two choices, then Reply, which takes a digit or your own answer.
             menu?.choices?.take(2)?.forEach { c -> builder.addAction(choiceAction(officeId, w, menu, c)) }
             builder.addAction(replyAction(officeId, w, menu))
@@ -196,6 +196,7 @@ class Alerts(
         putExtra(ReplyReceiver.EXTRA_WORKER, w.id)
         putExtra(ReplyReceiver.EXTRA_NAME, w.name)
         if (menu != null) {
+            putExtra(ReplyReceiver.EXTRA_MENU, ai.factory.droidoffice.core.OfficeJson.encodeToString(Menu.serializer(), menu))
             putExtra(ReplyReceiver.EXTRA_QUESTION, menu.question)
             putStringArrayListExtra(ReplyReceiver.EXTRA_LABELS, ArrayList(menu.choices.map { it.label }))
             putExtra(ReplyReceiver.EXTRA_FREE_TEXT, menu.freeText)
@@ -260,6 +261,8 @@ class Alerts(
             Answered.Changed -> "$name's question changed" to "Nothing was sent. Open it to see the new question."
             Answered.NeedsThread -> "Answer $name in the app" to "The phone couldn't type that into its question. Nothing was sent."
             Answered.Unreachable -> "Couldn't reach the office" to "Your answer to $name wasn't sent. Open the app to try again."
+            Answered.Unconfirmed -> "Answer not confirmed" to "Check $name's terminal before trying again. Your answer was not replayed."
+            Answered.Refused -> "Answer refused" to "Open $name in the app and check Raw TTY."
         }
         val n = NotificationCompat.Builder(context, CHANNEL_INPUT)
             .setSmallIcon(R.drawable.ic_bolt)

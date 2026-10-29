@@ -116,6 +116,7 @@ function RowView({ row, worker, asking }: { row: ThreadRow; worker: WorkerInfo; 
       </View>
     );
   }
+  if (row.kind === 'thought') return <Thought row={row} />;
   if (row.kind === 'notice') {
     return (
       <View style={{ paddingHorizontal: 12, paddingVertical: 4 }}>
@@ -124,6 +125,24 @@ function RowView({ row, worker, asking }: { row: ThreadRow; worker: WorkerInfo; 
     );
   }
   return <Activity row={row} asking={asking} />;
+}
+
+function Thought({ row }: { row: Extract<ThreadRow, { kind: 'thought' }> }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <View style={{ paddingHorizontal: 12, paddingVertical: 4 }}>
+      <Pressable onPress={() => setOpen(!open)} accessibilityRole="button" accessibilityState={{ expanded: open }} testID={`thought-${row.id}`}>
+        <Text style={s.muted} numberOfLines={open ? undefined : 1}>
+          {open ? '▾' : '▸'} Thought · {row.preview}
+        </Text>
+      </Pressable>
+      {open ? (
+        <Text selectable style={[s.muted, { paddingLeft: 12 }]}>
+          {row.entry.text}
+        </Text>
+      ) : null}
+    </View>
+  );
 }
 
 function Activity({ row, asking }: { row: Extract<ThreadRow, { kind: 'activity' }>; asking: boolean }) {
@@ -158,22 +177,6 @@ function Activity({ row, asking }: { row: Extract<ThreadRow, { kind: 'activity' 
         <View style={{ paddingLeft: 16, gap: 4, marginTop: 4 }}>
           {row.items.map((item) => {
             const id = item.entry.id;
-            if (item.type === 'thought') {
-              return (
-                <View key={id}>
-                  <Pressable onPress={() => toggle(id)} accessibilityRole="button" accessibilityState={{ expanded: !!opened[id] }}>
-                    <Text style={s.muted} numberOfLines={opened[id] ? undefined : 1}>
-                      {opened[id] ? '▾' : '▸'} Thought · {item.preview}
-                    </Text>
-                  </Pressable>
-                  {opened[id] ? (
-                    <Text selectable style={[s.muted, { paddingLeft: 12 }]}>
-                      {item.entry.text}
-                    </Text>
-                  ) : null}
-                </View>
-              );
-            }
             const args = threadArguments(item.entry);
             const state = item.state === 'cancelled' ? 'Cancelled' : item.state === 'failed' ? 'Failed' : item.state === 'working' ? 'Running' : item.state === 'incomplete' ? 'No result' : '';
             return (
@@ -240,7 +243,7 @@ function TeamActivity({ session, snap }: { session: Session; snap: SessionSnapsh
         ? [...team.members.values()].map((m) => {
             const rows = presentThread(m.history.entries, isBusy(m.worker.status)).slice(-4);
             const last = rows.at(-1);
-            const activity = m.worker.activity || (last?.kind === 'activity' ? last.label : last?.kind === 'message' ? last.entry.text : last?.text) || m.worker.title || 'No recent activity';
+            const activity = m.worker.activity || (last?.kind === 'activity' ? last.label : last?.kind === 'message' ? last.entry.text : last?.kind === 'thought' ? last.preview : last?.text) || m.worker.title || 'No recent activity';
             return (
               <View key={m.worker.id} style={{ marginTop: 6 }}>
                 <Row>

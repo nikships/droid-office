@@ -13,6 +13,15 @@ import org.junit.Test
 
 class ProtocolTest {
     @Test
+    fun checkboxAnswersRequireAnExplicitWelcomeCapabilityNotAVersionGuess() {
+        assertFalse((Protocol.decode(welcome) as ServerMsg.Welcome).workerAnswerMultiSelect)
+        val supported = welcome.replace(""""pulls":""", """"workerAnswerMultiSelect":true,"pulls":""")
+        assertTrue((Protocol.decode(supported) as ServerMsg.Welcome).workerAnswerMultiSelect)
+        val unsupported = welcome.replace(""""pulls":""", """"workerAnswerMultiSelect":false,"pulls":""")
+        assertFalse((Protocol.decode(unsupported) as ServerMsg.Welcome).workerAnswerMultiSelect)
+    }
+
+    @Test
     fun hiddenModelsArriveOnWelcomeAndLiveUpdatesWithOldOfficesShowingAll() {
         assertTrue((Protocol.decode(welcome) as ServerMsg.Welcome).hiddenModels.isEmpty())
         val updated = welcome.replace(""""pulls":""", """"hiddenModels":["gpt-6.1-sol","gpt-6.1-sol"],"pulls":""")

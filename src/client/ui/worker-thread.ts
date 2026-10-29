@@ -25,6 +25,7 @@ export interface ThreadDraft {
 
 export interface WorkerThread {
   element: HTMLElement;
+  entries(): readonly import('../../shared/worker-thread').ThreadEntry[];
   update(worker: WorkerInfo, connected: boolean): void;
   activate(active: boolean): void;
   /** The pane the owner is in reads every second and reads Team activity; others read less often. Default true. */
@@ -64,6 +65,7 @@ export interface ThreadOptions {
   raw(): void;
   /** The worker's terminal as text, one string per row, or undefined before it has drawn one. */
   screen?(): readonly string[] | undefined;
+  onEntries?(): void;
   /** Current floor only; return no workers once the mounted floor is no longer current. */
   team?(): readonly WorkerInfo[];
   /** Open this child's Thread view, without starting or resuming a worker. */
@@ -384,22 +386,23 @@ export function mountWorkerThread(net: Net, opts: ThreadOptions): WorkerThread {
     },
     true,
   );
-  const thought = (id: string, text: string, preview: string, standalone = false) =>
+  const thought = (id: string, text: string, preview: string) =>
     h(
       'details.wt-thinking',
-      { class: standalone ? 'wt-activity' : '', 'data-disclosure': id },
+      { 'data-disclosure': id },
       h('summary', {}, h('span.wt-thought-label', {}, 'Thought'), h('span.wt-thought-preview', {}, preview), h('span.wt-chevron', { 'aria-hidden': true }, '›')),
       h('div.wt-thinking-text', {}, text),
     );
   // While the worker waits on the owner, its run isn't working: the question card says what it's on.
   const render = (row: ThreadRow, asking: boolean, author = worker, expanded = expandedMessages) => {
     const node = h('article.wt-entry', { 'data-entry': row.id });
+    if (row.kind === 'thought') {
+      node.classList.add('thought');
+      node.append(thought(row.id, row.entry.text ?? '', row.preview));
+      return node;
+    }
     if (row.kind === 'activity') {
       node.classList.add('activity');
-      if (!row.actions.length && !row.plan) {
-        for (const item of row.items) if (item.type === 'thought') node.append(thought(item.entry.id, item.entry.text ?? '', item.preview, true));
-        return node;
-      }
       const details = h(
         'details.wt-activity',
         { class: row.state, 'data-disclosure': row.id },
@@ -416,10 +419,6 @@ export function mountWorkerThread(net: Net, opts: ThreadOptions): WorkerThread {
       );
       const body = h('div.wt-activity-body');
       for (const item of row.items) {
-        if (item.type === 'thought') {
-          body.append(thought(item.entry.id, item.entry.text ?? '', item.preview));
-          continue;
-        }
         const action = item;
         const entry = action.entry;
         const state = action.state === 'cancelled' ? 'Cancelled' : action.state === 'failed' ? 'Failed' : action.state === 'working' ? 'Running' : action.state === 'incomplete' ? 'No result' : '';
@@ -591,7 +590,7 @@ export function mountWorkerThread(net: Net, opts: ThreadOptions): WorkerThread {
       card.open.disabled = !connected || !opts.openWorker;
       const rows = presentThread(member.history.entries, isBusy(child.status)).slice(-4);
       const last = rows.at(-1);
-      const activity = child.activity || (last?.kind === 'activity' ? last.label : last?.kind === 'message' ? last.entry.text : last?.text) || child.title || 'No recent activity';
+      const activity = child.activity || (last?.kind === 'activity' ? last.label : last?.kind === 'thought' ? last.preview : last?.kind === 'message' ? last.entry.text : last?.text) || child.title || 'No recent activity';
       card.activity.textContent = activity.split('\n')[0].slice(0, 200);
       card.activity.title = card.activity.textContent;
       card.note.textContent = member.error
@@ -821,6 +820,7 @@ export function mountWorkerThread(net: Net, opts: ThreadOptions): WorkerThread {
     if (!error) {
       if (worker.sessionId && msg.sessionId !== worker.sessionId) return;
       history.apply(msg);
+      opts.onEntries?.();
       paintEntries(older);
       received = true;
     }
@@ -969,6 +969,7 @@ export function mountWorkerThread(net: Net, opts: ThreadOptions): WorkerThread {
   document.addEventListener('visibilitychange', visibility);
   return {
     element,
+    entries: () => history.entries,
     update(next, online) {
       if (next.sessionId !== worker.sessionId) {
         history.clear(next.sessionId);

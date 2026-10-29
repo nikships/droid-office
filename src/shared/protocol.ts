@@ -847,7 +847,7 @@ type ClientMessage =
   | { t: 'worker.prompt'; workerId: string; prompt: string; issue?: number; images?: string[]; queue?: boolean }
   /** Rechecks the current worker and screen on the server before answering the menu shown to the owner.
    * Send exactly one of `choice` or `text`. The server rejects neither and both. */
-  | { t: 'worker.answer'; workerId: string; menu: Menu; choice?: number; text?: string }
+  | { t: 'worker.answer'; workerId: string; menu: Menu; choice?: number; choices?: number[]; text?: string }
   /** Opens a board agent's terminal, starting its session if nobody has asked it anything yet. */
   | { t: 'station.open'; deskId: string }
   /**
@@ -1048,6 +1048,8 @@ export type ServerMsg =
       freshMain: FreshMainState;
       subagents: SubagentsState;
       hiddenModels?: string[];
+      /** Confirmed worker.answer supports a complete checkbox selection and optional custom text. */
+      workerAnswerMultiSelect?: boolean;
       whiteboardSkill: WhiteboardSkillState;
       /** The office's prompts, and the worker a new one starts on when nobody picks. */
       prompts: PromptsState;

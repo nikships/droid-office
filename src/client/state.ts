@@ -281,6 +281,7 @@ class Store {
   /** How workers hire subagents (⚙️ Settings → Subagents & visits), and where the Droid skill is. */
   subagents: SubagentsState = { ...SUBAGENT_DEFAULTS };
   hiddenModels: string[] = [];
+  workerAnswerMultiSelect = false;
   /** Whether the droid-office-whiteboard skill is installed (⚙️ Settings), and where. */
   whiteboardSkill: WhiteboardSkillState = { on: true };
   /** Each floor's Whiteboard as this window has it, with the owner's batches until they're committed (see whiteboard-sync.ts). */
@@ -380,6 +381,7 @@ class Store {
         this.freshMain = msg.freshMain ?? { on: true };
         this.subagents = msg.subagents ?? { ...SUBAGENT_DEFAULTS };
         this.hiddenModels = msg.hiddenModels ?? [];
+        this.workerAnswerMultiSelect = msg.workerAnswerMultiSelect === true;
         this.emit('hiddenModels');
         this.whiteboardSkill = msg.whiteboardSkill ?? { on: true };
         this.prompts = msg.prompts ?? { custom: {} };
