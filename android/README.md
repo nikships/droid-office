@@ -18,12 +18,13 @@ Installing a release signed with the same key preserves your paired offices. The
 - A phone shows one conversation with a quick worker switcher and previous/next controls. Wide screens keep the roster beside up to four distinct pinned, resizable panes.
 - New supported local Droid panes open in **Thread**. **Raw TTY** handles shells and CLI dialogs. Existing panes remember their chosen view.
 - Rows show task, status, parent, model, effort, activity and elapsed work. Local workers, board agents, shells, guests and cloud workers stay visible, with appropriate actions and explanations.
-- Thread shows selectable Markdown, grouped tool activity, thoughts, plans, errors, earlier history, questions and Droid's queue. **Send now** steers a running turn; **Queue** submits for a later turn. **Stop** and **Clear queue** are explicit actions.
+- Thread shows selectable Markdown, grouped tool activity, separate collapsible thoughts, plans, errors, earlier history and Droid's queue. **Send now** steers a running turn; **Queue** submits for a later turn. **Stop** and **Clear queue** are explicit actions.
+- **Answer questions** opens a full-size workspace with complete question and option text when the transcript provides it. Radio buttons, checkboxes and custom text only edit the draft; **Submit answer** sends it. Changed questions and unsupported host versions cannot submit stale answers. Raw TTY remains available for other CLI dialogs.
 - Prompts and hires support pictures. Slash commands come from Droid's built-ins and the worker's available skills and commands. Commands opening CLI dialogs reveal Raw TTY; `/quit`, `/exit` and mid-turn slash commands are refused.
 - Only the active, ready terminal pane types or resizes the shared PTY. Thread reads never resize it. Other terminal consumers share the same subscription.
 - Resume, fork, rebuild a lost worktree, inspect changes, open a pull request, bring in an eligible outside worker or send a worker home. Deleting a worktree requires its normal checks and confirmation. Sending a lead home never dismisses its children. Leads, not the companion UI, hire subagents.
 
-**Floor changes preserve each floor's panes, drafts and attachments. Actual connection loss clears unsent text and attachments across every floor.** Reconnecting restores panes only, never actions. Messages already submitted to Droid's queue stay there. Layout persistence contains no drafts or pictures.
+**Floor changes preserve each floor's panes, drafts and attachments. Actual connection loss clears unsent text, question selections and attachments across every floor.** Closing a question workspace keeps its draft while that question is current. Reconnecting restores panes only, never actions. Messages already submitted to Droid's queue stay there. Layout persistence contains no drafts or pictures.
 
 ## Tools and device controls
 
