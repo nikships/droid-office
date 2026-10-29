@@ -49,6 +49,7 @@ test('shared build inputs and manual runs trigger the relevant jobs', () => {
   assert.deepEqual(checksFor(['package.json']), { ...all, android: false });
   assert.deepEqual(checksFor(['package.json'], { androidVersionChanged: true }), all);
   assert.deepEqual(checksFor(['vite.config.ts', 'tsconfig.base.json']), { ...none, node: true, mac: true });
+  assert.deepEqual(checksFor(['tools/scene-hash.mjs']), { ...none, node: true, mac: true });
   assert.deepEqual(checksFor(['biome.jsonc']), { ...none, node: true, website: true });
   for (const file of ['.github/workflows/release.yml', '.github/scripts/release-changes.mjs']) assert.deepEqual(checksFor([file]), all);
   assert.deepEqual(checksFor([], { manual: true }), all);

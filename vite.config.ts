@@ -1,6 +1,8 @@
 import { defineConfig } from 'vite';
 import { resolve } from 'node:path';
+import { sceneHash } from './tools/scene-hash.mjs';
 export default defineConfig({
+  define: { __SCENE_HASH__: JSON.stringify(sceneHash(import.meta.dirname)) },
   plugins: [
     {
       name: 'dashboard-entry',

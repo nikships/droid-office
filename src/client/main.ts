@@ -169,6 +169,7 @@ import { Remaster } from './world/remaster';
 import { firstVisibleIntersection, preparePicking } from './world/picking';
 import { bakeBudget, bakeKey, loadRemaster, type RemasterSettings, resolveRemaster, saveRemaster } from './remaster-settings';
 import { bakeCache } from './gi-cache';
+import { SCENE_HASH } from './scene-hash';
 import { FrameStats, pacingText } from './frame-stats';
 import { presenterStats, reportHdr } from './native-bridge';
 import { GpuTimer } from './gpu-timer';
@@ -3978,7 +3979,8 @@ function drawFrame(dt: number, t: number, frame: { at: number; paced: boolean })
   if (remaster.active) {
     remaster.gi.paused = upTop;
     remaster.gi.budgetMs = bakeBudget(settings.graphics.fpsCap, renderLoop.refreshMs);
-    remaster.gi.setKey(bakeKey(remasterParams, settings.graphics.overhead, bootVersion));
+    // The welcome paints the floor's palette (`paintFloor`): a bake started before it would save the default room's colours.
+    remaster.gi.setKey(bakeKey(remasterParams, settings.graphics.overhead, bootVersion ? SCENE_HASH : ''));
     remaster.draw(() => effect.render(scene, camera));
   } else upscaler.draw(camera, () => effect.render(scene, camera));
   const sceneEnd = performance.now();

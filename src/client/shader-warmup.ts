@@ -41,15 +41,20 @@ export interface HandsCombo {
 export const HAND_TONE_MAPS: readonly THREE.ToneMapping[] = [THREE.NoToneMapping, THREE.LinearToneMapping, THREE.ReinhardToneMapping, THREE.CineonToneMapping, THREE.ACESFilmicToneMapping, THREE.AgXToneMapping, THREE.NeutralToneMapping];
 
 /**
- * Every world lighting and target combination, with the one the first frame will use last, so each
- * material's current program is that one.
+ * Every world lighting and target combination a session reaches, with the one the first frame will use last, so
+ * each material's current program is that one. The bounce-light grid is in the scene only while Remastered draws,
+ * and Remastered draws only to the float target; Classic has no grid. So the float target is compiled with the grid
+ * and the others without it. The other pairings are never drawn, and the grid ones each cost a blocking link of
+ * every program.
  */
 export function officeCombos(input: { pipelines: readonly DrawPipeline[]; grid: boolean; active: { pipeline: DrawPipeline; grid: boolean; lights: 0 | 1 } }): OfficeCombo[] {
   const pipelines = input.pipelines.includes(input.active.pipeline) ? input.pipelines : [...input.pipelines, input.active.pipeline];
-  const grids = input.grid ? [false, true] : [false];
-  const activeGrid = input.grid && input.active.grid;
+  const activeGrid = input.active.pipeline === 'float' && input.grid && input.active.grid;
   const combos: OfficeCombo[] = [];
-  for (const pipeline of pipelines) for (const grid of grids) for (let lights = 0; lights <= WORLD_POINT_LIGHTS; lights++) combos.push({ lights, pipeline, grid });
+  for (const pipeline of pipelines) {
+    const grid = pipeline === 'float' && input.grid;
+    for (let lights = 0; lights <= WORLD_POINT_LIGHTS; lights++) combos.push({ lights, pipeline, grid });
+  }
   const index = combos.findIndex((combo) => combo.lights === input.active.lights && combo.pipeline === input.active.pipeline && combo.grid === activeGrid);
   if (index >= 0) combos.push(combos.splice(index, 1)[0]);
   return combos;
