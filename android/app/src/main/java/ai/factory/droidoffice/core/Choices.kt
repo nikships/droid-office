@@ -26,7 +26,11 @@ object Choices {
     private const val MAX_TRAILING = 6
     private const val MAX_GAP = 2
     private const val QUESTION_REACH = 48
-    private val QUESTION_BOUNDARY = Regex("""Ask User|[→●○]|\[question]""", RegexOption.IGNORE_CASE)
+    private val QUESTION_BOUNDARY = Regex("""Ask User|[→●○]|\[question]|^(?:[~/]|https?://)""", RegexOption.IGNORE_CASE)
+    private val QUESTION_MARK = Regex("""\?(\s|$)""")
+
+    private fun questionBoundary(line: String): Boolean =
+        line.isBlank() || OPTION.matches(line) || QUESTION_BOUNDARY.containsMatchIn(line) || line.none(Char::isLetter)
 
     fun read(screen: ScreenState): Menu? = read(screen.lines.map { row -> row.joinToString("") { it.text } })
 
@@ -81,12 +85,14 @@ object Choices {
         }
         val pointer = found.indices.filter { found[it].second.groupValues[1].isNotEmpty() }.singleOrNull()
         val top = found.first().first
-        val questionEnd = (top - 1 downTo maxOf(0, top - QUESTION_REACH)).firstOrNull { clean[it].endsWith("?") && clean[it].any(Char::isLetter) }
-        val question = questionEnd?.let { end ->
-            var start = end
+        val questionAnchor = (top - 1 downTo maxOf(0, top - QUESTION_REACH)).firstOrNull { QUESTION_MARK.containsMatchIn(clean[it]) && clean[it].any(Char::isLetter) }
+        val question = questionAnchor?.let { anchor ->
+            var end = anchor
+            while (end + 1 < top && !questionBoundary(clean[end + 1])) end++
+            var start = anchor
             while (start > maxOf(0, top - QUESTION_REACH)) {
                 val previous = clean[start - 1]
-                if (previous.isBlank() || OPTION.matches(previous) || QUESTION_BOUNDARY.containsMatchIn(previous) || previous.none(Char::isLetter)) break
+                if (questionBoundary(previous)) break
                 start--
             }
             clean.subList(start, end + 1).joinToString(" ")

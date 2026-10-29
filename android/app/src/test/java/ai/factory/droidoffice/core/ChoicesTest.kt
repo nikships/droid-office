@@ -8,6 +8,20 @@ import org.junit.Test
 
 class ChoicesTest {
     @Test
+    fun preservesTheTrailQuestionAndExplanationWithoutThreadHistory() {
+        val header = listOf("  Ask User", "  ● Memories → ● Trails-agents → ○ Agent-Insights → ○ CI-and-Appwrite", "")
+        val answers = listOf("", "  1. Yes, install it", "  2. No, skip", "  Or type your own answer...", "", "  Space/Enter/1-9 Select")
+        val expected = "Install the Agent Insights plugin on entire.com for droid-office? It's free token-usage analytics across your agent sessions."
+        val question = listOf("  Install the Agent Insights plugin on entire.com for droid-office? It's free token-usage analytics", "  across your agent sessions.")
+        val menu = Choices.read(header + question + answers)!!
+        assertEquals(expected, menu.question)
+        assertEquals(listOf("Yes, install it", "No, skip"), menu.choices.map { it.label })
+        assertTrue(menu.freeText)
+        assertEquals(expected, Choices.read(header + listOf("  Install the Agent Insights plugin on entire.com for droid-office?", "  It's free token-usage analytics across your agent sessions.") + answers)?.question)
+        assertEquals(expected, Choices.read(header + question + listOf("", "  https://entire.com/gh/nikships/-/trails/1?tab=changes", "") + answers)?.question)
+    }
+
+    @Test
     fun readsAnAskUserMenuAndItsQuestion() {
         val menu = Choices.read(
             listOf(

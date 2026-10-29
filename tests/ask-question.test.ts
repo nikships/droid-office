@@ -50,6 +50,8 @@ test('trail 1: terminal questions retain the explanation after a question mark w
 
   // A different terminal width can wrap immediately after the question mark.
   assert.equal(readMenu([...lines.slice(0, 3), '  Install the Agent Insights plugin on entire.com for droid-office?', "  It's free token-usage analytics across your agent sessions.", ...lines.slice(5)])?.question, expected);
+  assert.equal(readMenu([...lines.slice(0, 6), '  https://entire.com/gh/nikships/-/trails/1?tab=changes', '', ...lines.slice(6)])?.question, expected);
+  assert.equal(readMenu(['Do you trust the files in this folder?', '/tmp/do-qa-test', '', '> 1. Yes, proceed', '  2. No, exit'])?.question, 'Do you trust the files in this folder?');
 });
 
 test('pending questionnaire restores the complete question and every numbered answer from the owner’s capture', () => {

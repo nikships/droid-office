@@ -31,6 +31,11 @@ const EDGE = ['│', '┃', '║', '|'];
 const MAX_TRAILING = 6;
 const MAX_GAP = 24;
 const QUESTION_REACH = 48;
+const QUESTION_BOUNDARY = /Ask User|[→●○]|\[question\]|^(?:[~/]|https?:\/\/)/i;
+
+function questionBoundary(line: string): boolean {
+  return !line || OPTION.test(line) || QUESTION_BOUNDARY.test(line) || !/\p{L}/u.test(line);
+}
 
 const trimChars = (s: string, chars: string[]) => {
   let a = 0;
@@ -108,16 +113,16 @@ export function readMenu(lines: readonly string[]): Menu | undefined {
   let question: string | undefined;
   for (let r = top - 1; r >= Math.max(0, top - QUESTION_REACH); r--) {
     const line = clean[r]!;
-    if (line.includes('?') && /\p{L}/u.test(line)) {
+    if (/\?(\s|$)/.test(line) && /\p{L}/u.test(line)) {
       const parts = [line];
       for (let end = r + 1; end < top; end++) {
         const next = clean[end]!;
-        if (!next || OPTION.test(next) || /Ask User|[→●○]|\[question\]/i.test(next) || !/\p{L}/u.test(next)) break;
+        if (questionBoundary(next)) break;
         parts.push(next);
       }
       for (let start = r - 1; start >= Math.max(0, top - QUESTION_REACH); start--) {
         const previous = clean[start]!;
-        if (!previous || OPTION.test(previous) || /Ask User|[→●○]|\[question\]/i.test(previous) || !/\p{L}/u.test(previous)) break;
+        if (questionBoundary(previous)) break;
         parts.unshift(previous);
       }
       question = parts.join(' ');
