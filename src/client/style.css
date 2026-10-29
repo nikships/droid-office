@@ -2467,9 +2467,9 @@ html:has(body.dashboard), body.dashboard { overflow: auto; }
 .wt-composer .wt-input { width: 100%; field-sizing: content; resize: none; min-height: 44px; max-height: 160px; }
 .wt-composer[hidden] { display: none; }
 .wt-composer > * { width: 100%; max-width: 760px; margin: 0 auto; }
-.wt-slash { display: flex; flex-direction: column; max-height: 264px; overflow: auto; padding: var(--space-1); border: 1px solid var(--border-strong); border-radius: var(--radius); background: var(--surface); }
+.wt-slash { display: flex; flex-direction: column; max-height: min(264px, 30dvh); overflow: auto; overscroll-behavior: contain; padding: var(--space-1); border: 1px solid var(--border-strong); border-radius: var(--radius); background: var(--surface); }
 .wt-slash[hidden] { display: none; }
-.wt-slash-item { display: flex; align-items: baseline; gap: var(--space-3); min-height: var(--control-h); padding: var(--space-1) var(--space-2); border: 0; border-radius: var(--radius); background: transparent; color: var(--text); text-align: left; cursor: pointer; font: inherit; }
+.wt-slash-item { display: flex; flex-shrink: 0; align-items: baseline; gap: var(--space-3); min-height: var(--control-h); padding: var(--space-1) var(--space-2); border: 0; border-radius: var(--radius); background: transparent; color: var(--text); text-align: left; cursor: pointer; font: inherit; }
 .wt-slash-item:hover, .wt-slash-item[aria-selected="true"] { background: var(--surface-hover); }
 .wt-slash-name { flex-shrink: 0; font-family: var(--font-mono); font-size: var(--text-small); }
 .wt-slash-desc { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-secondary); font-size: var(--text-small); }

@@ -26,6 +26,8 @@ A companion app for your phone. Pair it with your office once, and from anywhere
 - **Update the host Mac.** **Me → About → Host desktop app** checks the Mac app that runs the active office. Confirm **Install and restart** to download its signed update, follow progress, and restart the host while workers keep running. The phone reconnects automatically. Closing the sheet does not cancel the host update. Checkout hosts and older offices explain why remote updates are unavailable; update an older office on its Mac first.
 - **Tablets and foldables.** Office shows the worker list on every screen. On wide screens the list and selected worker sit side by side, with the tabs in a rail.
 
+Typing just `/` offers the complete slash-command list. Swipe through the bounded menu to reach every built-in command, skill and custom command without typing more characters.
+
 <p>
   <img src="docs/welcome.jpg" alt="The welcome screen with Scan the office's QR code and Paste a join link" width="24%">
   <img src="docs/scan.jpg" alt="The QR scanner with a frame and a torch button" width="24%">

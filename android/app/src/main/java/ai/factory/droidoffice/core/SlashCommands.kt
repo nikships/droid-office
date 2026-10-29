@@ -97,7 +97,7 @@ object SlashCommands {
     fun kind(draft: String): Kind = of(draft)?.second?.kind ?: Kind.Thread
 
     /** The commands to offer while a `/` and the start of a name are typed: prefix matches, then aliases, then names containing it. */
-    fun suggestions(draft: String, commands: List<Command> = ALL, limit: Int = 8): List<Command> {
+    fun suggestions(draft: String, commands: List<Command> = ALL, limit: Int = commands.size): List<Command> {
         val typed = TYPING.find(draft.trimStart())?.groupValues?.get(1)?.lowercase() ?: return emptyList()
         fun rank(c: Command) = c.name.lowercase().let { name ->
             when {

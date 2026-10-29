@@ -840,6 +840,7 @@ export function mountWorkerThread(net: Net, opts: ThreadOptions): WorkerThread {
         event.preventDefault();
         slashCursor = (slashCursor + (event.key === 'ArrowDown' ? 1 : slashShown.length - 1)) % slashShown.length;
         paintSlash();
+        slashMenu.children[slashCursor]?.scrollIntoView({ block: 'nearest' });
         return;
       }
       if (event.key === 'Escape') {

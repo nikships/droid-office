@@ -123,7 +123,7 @@ export function slashRefusal(draft: string, name: string, busy: boolean): string
  * name, with no space yet. Names that start with what's typed come first, then aliases, then names
  * that contain it.
  */
-export function slashSuggestions(draft: string, commands: readonly SlashCommand[] = SLASH_COMMANDS, limit = 8): SlashCommand[] {
+export function slashSuggestions(draft: string, commands: readonly SlashCommand[] = SLASH_COMMANDS, limit = commands.length): SlashCommand[] {
   const m = /^\/([^\s/]*)$/.exec(draft.trimStart());
   if (!m) return [];
   const typed = m[1].toLowerCase();
