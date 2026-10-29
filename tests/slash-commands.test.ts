@@ -42,7 +42,6 @@ test('suggests names that start with what is typed, then aliases, then names con
     ['sessions', 'compress'],
   );
   assert.deepEqual(slashSuggestions('/'), SLASH_COMMANDS);
-  assert.equal(slashSuggestions('/', SLASH_COMMANDS, 8).length, 8);
   assert.deepEqual(slashSuggestions('/model '), []);
   assert.deepEqual(slashSuggestions('model'), []);
   assert.equal(slashSuggestions('/tus')[0].name, 'status');

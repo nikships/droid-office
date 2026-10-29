@@ -180,6 +180,7 @@ export function mountWorkerThread(net: Net, opts: ThreadOptions): WorkerThread {
     slashCursor = 0;
     if (input.value.trimStart().startsWith('/')) loadSlash();
     paintSlash();
+    slashMenu.scrollTop = 0;
     updateControls();
   });
   const images = promptImages(input);

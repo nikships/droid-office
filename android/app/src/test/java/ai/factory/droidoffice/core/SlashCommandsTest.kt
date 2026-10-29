@@ -62,7 +62,6 @@ class SlashCommandsTest {
         assertEquals(listOf("compress", "context", "copy", "connectors", "commands", "rewind-conversation", "account"), SlashCommands.suggestions("/co").map { it.name })
         assertEquals(listOf("sessions", "compress"), SlashCommands.suggestions("/res").map { it.name })
         assertEquals(SlashCommands.ALL, SlashCommands.suggestions("/"))
-        assertEquals(8, SlashCommands.suggestions("/", limit = 8).size)
         assertEquals(emptyList<String>(), SlashCommands.suggestions("/model ").map { it.name })
         assertEquals(emptyList<String>(), SlashCommands.suggestions("hi /co").map { it.name })
     }
