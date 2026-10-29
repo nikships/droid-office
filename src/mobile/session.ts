@@ -12,7 +12,7 @@ import {
   type WorkspaceAction,
 } from '../shared/companion-workspace';
 import { PROMPT_IMAGES_MAX } from '../shared/drops';
-import type { Menu } from '../shared/asks';
+import { canAnswer, readMenu, type Menu } from '../shared/asks';
 import { CLEAR_DROID_QUEUE, type DroidQueued, readDroidQueue } from '../shared/droid-queue';
 import type { ClientMsg, ServerMsg, WorkerInfo } from '../shared/protocol';
 import { slashOf, slashRefusal } from '../shared/slash-commands';
@@ -24,6 +24,7 @@ import { dropToast, emptyOffice, expireToasts, type OfficeState, officeDisconnec
 import type { ThreadEntry } from '../shared/worker-thread';
 import { FeedPool, requestId } from './thread-feed';
 import { type HireRequest, hireMsg, stopMsg } from './actions';
+import { type QuestionDraft, questionReply, sameQuestion, selectQuestionChoice, writeQuestionText } from './model';
 
 type Early = { msg: ServerMsg; meta: HostMessageMeta } | { link: HostLink } | { offices: HostOffices } | { incoming: HostIncoming };
 
@@ -68,6 +69,9 @@ export interface SessionSnapshot {
   tool?: { id: ToolId; args: ToolArgs };
   /** Grows whenever a tool is opened from here (the rail, a worker's actions): the UI shows the Tools tab. */
   toolNavigation: number;
+  workerAnswerMultiSelect: boolean;
+  /** The full-size answer workspace, within the inset-safe React root. */
+  question?: QuestionDraft;
 }
 
 export const STALE = 'The office changed before this was sent. Nothing was sent.';
@@ -127,6 +131,8 @@ export class Session {
   private returnedFrom = new Map<string, string>();
   /** The Hire in flight, owned by the call that started it. */
   private hiring?: object;
+  private questionDrafts = new Map<string, QuestionDraft>();
+  private answerers = new Map<string, object>();
   readonly feeds = new FeedPool();
   /** The app is in the foreground. */
   visible = true;
@@ -153,6 +159,7 @@ export class Session {
       picking: {},
       navigation: 0,
       toolNavigation: 0,
+      workerAnswerMultiSelect: false,
     };
   }
 
@@ -261,7 +268,7 @@ export class Session {
 
   tick(): void {
     const s = this.state;
-    this.feeds.tick(this.now(), { connected: this.ready(), visible: this.visible && this.workspaceShown, focused: this.floorWorkspace().active || undefined, teamOpen: this.teamOpen }, (msg) => this.send(msg));
+    this.feeds.tick(this.now(), { connected: this.ready(), visible: this.visible && this.workspaceShown, focused: this.floorWorkspace().active || undefined, teamOpen: this.teamOpen && !s.question }, (msg) => this.send(msg));
     const office = expireToasts(s.office, this.now());
     // The clock is an input only for receipts Droid hasn't shown yet, which expire after a grace.
     if (office !== s.office) this.set({ office }, true);
@@ -276,7 +283,15 @@ export class Session {
     if (meta.epoch !== this.state.link.epoch) return;
     const office = reduceOffice(this.state.office, msg);
     const next: Partial<SessionSnapshot> = { office };
-    if (msg.t === 'welcome') next.welcomedEpoch = meta.epoch;
+    if (msg.t === 'welcome') {
+      next.welcomedEpoch = meta.epoch;
+      next.workerAnswerMultiSelect = msg.workerAnswerMultiSelect === true;
+    }
+    if (msg.t === 'welcome' || msg.t === 'floor.enter') next.question = undefined;
+    if (msg.t === 'worker.remove' && office.floor) {
+      this.questionDrafts.delete(sendKey(office.floor, msg.workerId));
+      if (this.state.question?.workerId === msg.workerId) next.question = undefined;
+    }
     // Only the office ends a floor change: its arrival, or its receipt refusing every floor.go sent for
     // it, which leaves this connection where it was. A successful receipt waits for floor.enter; time
     // passing, a toast or a request the host couldn't confirm prove nothing.
@@ -341,9 +356,21 @@ export class Session {
     this.inflight.clear();
     this.senders.clear();
     this.hiring = undefined;
+    this.questionDrafts.clear();
+    this.answerers.clear();
     this.screens.clear();
     // The office can't be asked to forget pictures now; they are dropped here and never re-sent.
-    this.set({ workspace: reduceCompanionWorkspace(this.state.workspace, { type: 'disconnect' }), previews: {}, sending: {}, picking: {}, switching: undefined, floorSlow: undefined, hire: undefined });
+    this.set({
+      workspace: reduceCompanionWorkspace(this.state.workspace, { type: 'disconnect' }),
+      previews: {},
+      sending: {},
+      picking: {},
+      switching: undefined,
+      floorSlow: undefined,
+      hire: undefined,
+      question: undefined,
+      workerAnswerMultiSelect: false,
+    });
   }
 
   /** Another office: nothing of the last one is current, and its unsent drafts go with it. */
@@ -359,6 +386,8 @@ export class Session {
     this.inflight.clear();
     this.senders.clear();
     this.hiring = undefined;
+    this.questionDrafts.clear();
+    this.answerers.clear();
     this.set({
       offices,
       office: emptyOffice(),
@@ -372,6 +401,8 @@ export class Session {
       pendingOpen: undefined,
       hire: undefined,
       tool: undefined,
+      question: undefined,
+      workerAnswerMultiSelect: false,
     });
     this.sync();
     const loaded = offices.active ? restoreCompanionWorkspace(await this.host.layout.load(offices.active).catch(() => undefined)) : createCompanionWorkspace();
@@ -473,7 +504,7 @@ export class Session {
   goFloor(floor: string): boolean {
     if (!this.ready() || floor === this.state.office.floor) return false;
     const from = this.state.office.floor;
-    this.set({ switching: floor });
+    this.set({ switching: floor, question: undefined });
     this.sync();
     if (!this.sendFloorGo(floor, from)) {
       this.set({ switching: undefined });
@@ -548,7 +579,8 @@ export class Session {
       this.dispatch({ type: 'focus', workerId: replace });
     }
     this.dispatch({ type: 'open', workerId, pin: pinned });
-    this.set({ navigation: this.state.navigation + 1, tool: undefined });
+    this.set({ navigation: this.state.navigation + 1, tool: undefined, question: undefined });
+    this.sync();
     return true;
   }
 
@@ -565,7 +597,8 @@ export class Session {
       this.toast(refused, 'warn');
       return false;
     }
-    this.set({ tool: { id, args }, toolNavigation: this.state.toolNavigation + 1 });
+    this.set({ tool: { id, args }, toolNavigation: this.state.toolNavigation + 1, question: undefined });
+    this.sync();
     return true;
   }
   closeTool(): void {
@@ -663,13 +696,15 @@ export class Session {
 
   /** Thread panes hold their worker (screen rows, Esc); the native terminal view holds its own. */
   private sync(): void {
+    const question = this.state.question;
+    if (question && (!this.valid(question.token) || !this.questionPane(question.workerId))) this.set({ question: undefined });
     const s = this.state;
     const ws = this.floorWorkspace();
     const workers = ws.panes.flatMap((p) => {
       const w = this.worker(p.workerId);
       return w && this.effectiveView(w, p.view) === 'thread' ? [w] : [];
     });
-    const shown = this.phone ? workers.filter((w) => w.id === ws.active) : workers;
+    const shown = s.question ? workers.filter((w) => w.id === s.question?.workerId) : this.phone ? workers.filter((w) => w.id === ws.active) : workers;
     const want = new Set(this.ready() && this.workspaceShown ? shown.map((w) => w.id) : []);
     for (const [id, release] of [...this.holds]) {
       if (want.has(id)) continue;
@@ -927,9 +962,87 @@ export class Session {
     return !!w && this.send(stopMsg(w));
   }
 
-  async answer(workerId: string, menu: Menu, value: { choice: number } | { text: string }): Promise<string | undefined> {
-    const result = await this.request({ t: 'worker.answer', workerId, menu, ...value });
-    return result.ok ? undefined : (result.error ?? 'The office did not confirm the answer. Look at the question before answering again.');
+  questionMenu(workerId: string): Menu | undefined {
+    const w = this.worker(workerId);
+    const screen = this.host.screen(workerId);
+    return w && screen && canAnswer(w, screen) ? readMenu(screen) : undefined;
+  }
+
+  private questionPane(workerId: string): boolean {
+    const ws = this.floorWorkspace();
+    return this.visible && this.workspaceShown && ws.active === workerId && ws.panes.some((p) => p.workerId === workerId && p.view === 'thread');
+  }
+
+  /** Opening (or explicitly reviewing) captures a fresh action token; old callbacks keep the old one. */
+  openQuestion(workerId: string, review = false): boolean {
+    const w = this.worker(workerId);
+    const menu = this.questionMenu(workerId);
+    if (!this.ready() || !this.questionPane(workerId) || !w || !menu) return false;
+    const token = this.token();
+    if (!token.floor) return false;
+    const key = sendKey(token.floor, workerId);
+    const previous = this.questionDrafts.get(key);
+    if (previous?.state === 'sending' && review) return false;
+    const draft: QuestionDraft =
+      previous && (previous.state === 'sending' || sameQuestion(previous, token, w, menu))
+        ? { ...previous, token, ...(review && previous.state === 'uncertain' ? { state: 'idle', error: undefined } : {}) }
+        : { workerId, token, sessionId: w.sessionId, waitingSince: w.waitingSince, menu, choices: menu.choices.filter((c) => c.selected).map((c) => c.number), text: '', state: 'idle' };
+    this.questionDrafts.set(key, draft);
+    this.set({ question: draft });
+    this.sync();
+    this.tick();
+    return true;
+  }
+
+  closeQuestion(): void {
+    this.set({ question: undefined });
+    this.sync();
+  }
+
+  questionCurrent(draft: QuestionDraft): boolean {
+    const w = this.worker(draft.workerId);
+    return this.state.question === draft && this.valid(draft.token) && this.questionPane(draft.workerId) && !!w && sameQuestion(draft, this.token(), w, this.questionMenu(draft.workerId));
+  }
+
+  questionSupported(draft: QuestionDraft): boolean {
+    return !draft.menu.multiSelect || this.state.workerAnswerMultiSelect;
+  }
+
+  private saveQuestion(draft: QuestionDraft): void {
+    if (!draft.token.floor) return;
+    this.questionDrafts.set(sendKey(draft.token.floor, draft.workerId), draft);
+    if (this.state.question?.workerId === draft.workerId && this.state.question.token.floor === draft.token.floor) this.set({ question: draft });
+  }
+
+  selectAnswer(draft: QuestionDraft, choice: number): void {
+    if (draft.state === 'idle' && this.questionCurrent(draft) && this.questionSupported(draft)) this.saveQuestion(selectQuestionChoice(draft, choice));
+  }
+
+  writeAnswer(draft: QuestionDraft, text: string): void {
+    if (draft.state === 'idle' && this.questionCurrent(draft) && this.questionSupported(draft)) this.saveQuestion(writeQuestionText(draft, text));
+  }
+
+  /** Only Submit calls this. Nothing is queued, replayed or typed into an unsupported dialog. */
+  async answer(draft: QuestionDraft): Promise<string | undefined> {
+    const key = sendKey(draft.token.floor ?? '', draft.workerId);
+    if (this.answerers.has(key) || draft.state === 'sending') return IN_FLIGHT;
+    if (!this.questionCurrent(draft) || draft.state !== 'idle') return STALE;
+    if (!this.questionSupported(draft)) return 'This office version cannot safely submit checkbox answers. Update the host, or use Raw TTY.';
+    const value = questionReply(draft);
+    if (!value) return 'Choose an answer or write your own before submitting.';
+    const mine = {};
+    this.answerers.set(key, mine);
+    this.saveQuestion({ ...draft, state: 'sending', error: undefined });
+    const result = await this.request({ t: 'worker.answer', workerId: draft.workerId, menu: draft.menu, ...value }, draft.token);
+    const error = result.ok ? undefined : (result.error ?? UNCONFIRMED);
+    // A late receipt cannot restore a cleared draft, modify a new question, or cross offices/epochs.
+    if (this.answerers.get(key) === mine) {
+      this.answerers.delete(key);
+      const now = this.questionDrafts.get(key);
+      if (now && sameQuestion(now, draft.token, { id: draft.workerId, sessionId: draft.sessionId, waitingSince: draft.waitingSince, status: 'needs_input' }, draft.menu))
+        this.saveQuestion({ ...now, state: result.ok ? 'sent' : 'uncertain', error, ...(result.ok ? { text: '', choices: [] } : {}) });
+    }
+    return error;
   }
 
   /** What waits in a worker's queue on this floor, as last computed outside render. */

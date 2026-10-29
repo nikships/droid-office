@@ -1,6 +1,5 @@
 import { useMemo, useRef, useState } from 'react';
 import { FlatList, Image, Pressable, ScrollView, Text, TextInput, View } from 'react-native';
-import { canAnswer, menuTakesText, readMenu, sameMenu, type Menu } from '../../shared/asks';
 import type { WorkerInfo } from '../../shared/protocol';
 import { slashCommands, slashOf, slashSuggestions, type DroidSlashCommand, type SlashCommand } from '../../shared/slash-commands';
 import { isAsleep, isBusy } from '../../shared/status';
@@ -23,7 +22,6 @@ export function ThreadView(props: { session: Session; snap: SessionSnapshot; wor
   // The history replaces its entries array whenever they change, so the array is the memo key.
   const entries = feed?.history.entries ?? NO_ENTRIES;
   const rows = useMemo(() => presentThread(entries, busy), [entries, busy]);
-  const screen = session.host.screen(worker.id);
   // Receipts are matched in the session, outside render; render only reads them.
   const { views: queued, droid: droidQueued } = session.queuedFor(worker.id);
   const list = useRef<FlatList<ThreadRow>>(null);
@@ -71,7 +69,6 @@ export function ThreadView(props: { session: Session; snap: SessionSnapshot; wor
                 </Row>
               </View>
             ) : null}
-            <Question session={session} worker={worker} screen={screen} onRaw={props.onRaw} onAction={props.onAction} />
           </View>
         }
       />
@@ -95,6 +92,7 @@ export function ThreadView(props: { session: Session; snap: SessionSnapshot; wor
         {feed?.error ? <Button small label="Open Raw TTY" onPress={props.onRaw} /> : null}
         {isAsleep(worker.status) ? <Text style={[s.muted, { flex: 1 }]}>Resume this worker to send another message.</Text> : null}
       </Row>
+      <Question session={session} worker={worker} focused={props.focused} onRaw={props.onRaw} />
       <Composer session={session} snap={props.snap} worker={worker} onRaw={props.onRaw} />
     </View>
   );
@@ -270,82 +268,23 @@ function TeamActivity({ session, snap }: { session: Session; snap: SessionSnapsh
   );
 }
 
-/** A live local agent's numbered question, re-checked against its screen before the answer goes. */
-function Question(props: { session: Session; worker: WorkerInfo; screen: readonly string[] | undefined; onRaw: () => void; onAction: (message: string) => void }) {
-  const { session, worker, screen } = props;
-  const [shown, setShown] = useState<Menu | undefined>();
-  const [text, setText] = useState('');
-  const [state, setState] = useState<'idle' | 'sending' | 'sent'>('idle');
-  // The question this view was answering: a new wait, or another question after an answer, starts over.
-  const [askedAt, setAskedAt] = useState(worker.waitingSince);
-  if (worker.status !== 'needs_input') {
-    if (shown || state !== 'idle') {
-      setShown(undefined);
-      setState('idle');
-    }
-    return null;
-  }
-  const next = screen && canAnswer(worker, screen) ? readMenu(screen) : undefined;
-  if (askedAt !== worker.waitingSince) {
-    setAskedAt(worker.waitingSince);
-    setShown(next);
-    setState('idle');
-  } else if (state === 'sent' && next && !sameMenu(shown, next)) {
-    setShown(next);
-    setState('idle');
-  } else if (!shown && next) setShown(next);
-  const menu = shown ?? next;
-  const current = sameMenu(menu, next);
-  const enabled = session.ready() && current && state === 'idle';
-  const reply = async (value: { choice: number } | { text: string }) => {
-    if (!menu) return;
-    setState('sending');
-    let error: string | undefined;
-    try {
-      error = await session.answer(worker.id, menu, value);
-    } catch {
-      error = 'The office did not confirm the answer. Look at the question before answering again.';
-    }
-    if (error) {
-      setState('idle');
-      props.onAction(error);
-    } else {
-      setState('sent');
-      setText('');
-    }
-  };
-  if (!menu)
-    return (
-      <Note tone="warn">
-        {worker.name} needs you.{' '}
-        {worker.cloud
-          ? 'There is no local menu to answer: open its Factory session.'
-          : worker.guest
-            ? 'Answer it in its own terminal; the office won’t type for it.'
-            : 'This CLI dialog cannot be answered safely here. Open Raw TTY to continue.'}
-      </Note>
-    );
+/** Compact entry only. Choosing and submitting happen in the full-size workspace. */
+function Question({ session, worker, focused, onRaw }: { session: Session; worker: WorkerInfo; focused: boolean; onRaw: () => void }) {
+  if (worker.status !== 'needs_input') return null;
+  const menu = session.questionMenu(worker.id);
   return (
-    <View testID="thread-question" style={{ borderWidth: 1, borderColor: colors.warn, borderRadius: 6, padding: 10, gap: 6 }}>
-      <Label>{worker.name} needs your answer</Label>
-      <Text style={s.title}>{menu.question ?? 'Choose an answer'}</Text>
-      {menu.choices.map((c) => (
-        <Button key={c.number} label={`${c.number}. ${c.label}${c.description ? ` · ${c.description}` : ''}`} disabled={!enabled} onPress={() => void reply({ choice: c.number })} testID={`answer-${c.number}`} />
-      ))}
-      {menuTakesText(menu) ? (
-        <Row>
-          <TextInput style={[s.input, { flex: 1 }]} value={text} onChangeText={setText} placeholder="Type an answer…" placeholderTextColor={colors.muted} testID="answer-text" />
-          <Button label="Send" tone="primary" disabled={!enabled || !text.trim()} onPress={() => void reply({ text })} />
+    <View testID="thread-question" style={{ borderTopWidth: 1, borderColor: colors.warn, padding: 8, gap: 6 }}>
+      {menu ? (
+        <Row wrap>
+          <Text style={[s.muted, { flex: 1 }]}>{worker.name} needs your answer.</Text>
+          <Button label="Answer questions" tone="primary" disabled={!focused || !session.ready()} onPress={() => session.openQuestion(worker.id)} testID="question-open" />
         </Row>
-      ) : null}
-      {state === 'sending' ? <Note>Sending your answer…</Note> : state === 'sent' ? <Note>Answer sent. Waiting for the worker’s next move.</Note> : null}
-      {!current ? (
+      ) : (
         <>
-          <Note tone="warn">The question changed or was answered elsewhere. Look at the current question before sending anything.</Note>
-          {next ? <Button small label="Show the current question" onPress={() => (setShown(next), setState('idle'))} /> : null}
+          <Note tone="warn">This CLI dialog cannot be answered safely here. Open Raw TTY to continue.</Note>
+          <Button small label="Open Raw TTY" disabled={!focused} onPress={onRaw} testID="question-fallback" />
         </>
-      ) : null}
-      <Button small tone="ghost" label="Open Raw TTY" onPress={props.onRaw} />
+      )}
     </View>
   );
 }

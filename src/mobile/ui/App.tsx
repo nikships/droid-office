@@ -9,6 +9,7 @@ import { HireSheet } from './Hire';
 import { Button, Chip, colors, Label, Note, Row, s } from './kit';
 import { Roster, rosterOrder } from './Roster';
 import { WorkerPane } from './WorkerPane';
+import { QuestionWorkspace } from './QuestionWorkspace';
 
 /** Wide enough for the roster beside pinned panes: a tablet, an open foldable, a phone in landscape. */
 export const WIDE_DP = 840;
@@ -58,6 +59,7 @@ export function App({ host }: { host: MobileHost }) {
   const active = ws.active ? session.worker(ws.active) : undefined;
   useEffect(() => {
     const sub = BackHandler.addEventListener('hardwareBackPress', () => {
+      if (snap.question) return session.closeQuestion(), true;
       if (hiring || switcher) return setHiring(false), setSwitcher(false), true;
       if (tab === 'tools' && tool) return session.closeTool(), true;
       if (tab !== 'workers') return setTab('workers'), true;
@@ -65,7 +67,7 @@ export function App({ host }: { host: MobileHost }) {
       return false;
     });
     return () => sub.remove();
-  }, [session, hiring, switcher, tab, tool, wide, active]);
+  }, [session, hiring, switcher, tab, tool, wide, active, snap.question]);
   const open = useCallback((id: string, pin: boolean) => void session.open(id, pin), [session]);
   const order = rosterOrder(snap);
   const floor = currentFloor(snap.office);
@@ -100,6 +102,13 @@ export function App({ host }: { host: MobileHost }) {
         <Text style={s.title}>Pair this phone with your office</Text>
         <Text style={s.text}>Open Droid Office on your Mac, then scan its pairing code.</Text>
         <Button tone="primary" label="Pair an office" onPress={() => host.openPairing()} testID="pair" />
+      </SafeAreaView>
+    );
+  }
+  if (snap.question) {
+    return (
+      <SafeAreaView style={{ flex: 1, backgroundColor: colors.bg }} testID="app">
+        <QuestionWorkspace session={session} draft={snap.question} wide={wide} />
       </SafeAreaView>
     );
   }

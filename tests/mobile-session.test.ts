@@ -997,3 +997,276 @@ test('a phone back on the roster opens a fifth worker over the conversation it c
     'only the pane it came back from is replaced',
   );
 });
+
+// Owner-captured questions from ask-question.test.ts; this host is a unit-test transport, not runtime acceptance.
+const QUESTION_ROWS = [
+  '  companions follow?',
+  '',
+  '  1. Dense operations console: compact rows,',
+  '  2. Conversation-first: agent sidebar and clean chat',
+  '  3. Attention-first dashboard: summaries and',
+  '  4. Propose a balanced design and show me',
+  '  Or type your own answer...',
+  '',
+  '  Space/Enter/1-9 Select',
+];
+const CHECKBOX_ROWS = ['  What does managing agents simultaneously mean to you?', '  1. [ ] Persistent roster', '  2. [x] Several conversations', '  [ ] Or type your own answer...', '  Submit', '  Space/Enter/1–9 Toggle'];
+const asking = (id = 'w1', over: Partial<WorkerInfo> = {}) => worker(id, { status: 'needs_input', waitingSince: 10, ...over });
+async function questionRig(t: { after: (fn: () => void) => void }, multi = false, capable = true) {
+  const r = await screenRig(t, [asking(), asking('w2')]);
+  r.rig.screen = multi ? CHECKBOX_ROWS : QUESTION_ROWS;
+  const msg = welcome('a', [asking(), asking('w2')]);
+  assert.equal(msg.t, 'welcome');
+  if (msg.t === 'welcome' && capable) msg.workerAnswerMultiSelect = true;
+  r.host.say(msg);
+  r.event();
+  assert.equal(r.session.openQuestion('w1'), true);
+  return {
+    ...r,
+    draft: () => {
+      const draft = r.session.snapshot().question;
+      assert.ok(draft);
+      return draft;
+    },
+  };
+}
+
+test('answer selection and text only edit a draft; explicit Submit sends once and keeps sent state on reopen', async (t) => {
+  const { session, host, draft } = await questionRig(t);
+  session.selectAnswer(draft(), 2);
+  assert.deepEqual(draft().choices, [2]);
+  session.writeAnswer(draft(), 'My full custom answer');
+  assert.deepEqual(draft().choices, [], 'custom text clears a single radio');
+  session.closeQuestion();
+  assert.equal(session.openQuestion('w1'), true);
+  assert.equal(draft().text, 'My full custom answer');
+  session.selectAnswer(draft(), 4);
+  assert.equal(draft().text, '', 'a radio clears custom text');
+  assert.equal(host.requests.length, 0, 'opening, editing and reopening never send');
+  const shown = draft();
+  const sending = session.answer(shown);
+  assert.equal(await session.answer(shown), IN_FLIGHT);
+  assert.equal(host.requests.length, 1);
+  assert.deepEqual(host.requests[0].msg, { t: 'worker.answer', workerId: 'w1', menu: shown.menu, choice: 4, requestFloor: 'a' });
+  session.closeQuestion();
+  session.openQuestion('w1');
+  assert.equal(draft().state, 'sending');
+  host.requests[0].resolve({ ok: true });
+  assert.equal(await sending, undefined);
+  assert.equal(draft().state, 'sent', 'receipt updates the reopened workspace');
+  session.closeQuestion();
+  session.openQuestion('w1');
+  assert.equal(draft().state, 'sent');
+  assert.equal(await session.answer(draft()), STALE);
+  assert.equal(host.requests.length, 1);
+});
+
+test('checkbox Submit sends the complete selection plus optional text, without terminal keystrokes', async (t) => {
+  const { session, host, draft } = await questionRig(t, true);
+  assert.deepEqual(draft().choices, [2], 'initial checked state is the CLI’s');
+  session.selectAnswer(draft(), 1);
+  session.writeAnswer(draft(), 'Also keep the roster visible');
+  assert.deepEqual(draft().choices, [2, 1]);
+  assert.equal(host.requests.length, 0);
+  const sending = session.answer(draft());
+  const msg = host.requests[0].msg;
+  assert.equal(msg.t, 'worker.answer');
+  if (msg.t === 'worker.answer') {
+    assert.deepEqual(msg.choices, [1, 2]);
+    assert.equal(msg.text, 'Also keep the roster visible');
+    assert.equal(msg.choice, undefined);
+  }
+  assert.equal(
+    host.sent.some((m) => m.t === 'term.input'),
+    false,
+  );
+  host.requests[0].resolve({ ok: true });
+  await sending;
+});
+
+test('old hosts refuse checkbox submission, and absent capability on a new welcome replaces previous support', async (t) => {
+  const { session, host, draft } = await questionRig(t, true, false);
+  const old = draft();
+  assert.equal(session.questionSupported(old), false);
+  session.selectAnswer(old, 1);
+  assert.deepEqual(draft().choices, [2]);
+  assert.match((await session.answer(old))!, /Raw TTY/);
+  assert.equal(host.requests.length, 0);
+  const supported = welcome('a', [asking()]);
+  if (supported.t === 'welcome') supported.workerAnswerMultiSelect = true;
+  host.say(supported);
+  session.openQuestion('w1');
+  assert.equal(session.questionSupported(draft()), true);
+  host.say(welcome('a', [asking()]));
+  session.openQuestion('w1');
+  assert.equal(session.questionSupported(draft()), false);
+});
+
+test('floor switches preserve answer drafts without accepting old arrival tokens or persisting answers in layout', async (t) => {
+  const { session, host, draft } = await questionRig(t);
+  session.writeAnswer(draft(), 'Unsent on floor a');
+  const old = draft();
+  assert.equal(session.goFloor('b'), true);
+  assert.equal(session.snapshot().question, undefined);
+  assert.equal(await session.answer(old), STALE);
+  host.say(enter('b', [asking()]));
+  session.open('w1');
+  session.openQuestion('w1');
+  assert.equal(draft().text, '');
+  session.writeAnswer(draft(), 'Unsent on floor b');
+  session.goFloor('a');
+  host.say(enter('a', [asking()]));
+  session.openQuestion('w1');
+  assert.equal(draft().text, 'Unsent on floor a');
+  assert.notEqual(draft().token.arrival, old.token.arrival);
+  assert.equal(await session.answer(old), STALE);
+  session.dispose();
+  assert.ok(!JSON.stringify(host.saved.get('o1')).includes('Unsent on floor'));
+  assert.equal(host.requests.length, 0);
+});
+
+test('actual connection loss clears every floor’s answers and a late receipt cannot modify a new answer', async (t) => {
+  const { session, host, draft } = await questionRig(t);
+  session.writeAnswer(draft(), 'Old a');
+  session.goFloor('b');
+  host.say(enter('b', [asking()]));
+  session.open('w1');
+  session.openQuestion('w1');
+  session.writeAnswer(draft(), 'Old b');
+  const old = draft();
+  const sending = session.answer(old);
+  host.setLink({ phase: 'offline', epoch: 1, office: 'o1' });
+  assert.equal(session.snapshot().question, undefined);
+  host.setLink({ phase: 'connected', epoch: 2, office: 'o1' });
+  host.say(welcome('b', [asking()]));
+  session.openQuestion('w1');
+  assert.equal(draft().text, '');
+  session.writeAnswer(draft(), 'New b');
+  host.requests[0].resolve({ ok: true });
+  await sending;
+  assert.equal(draft().text, 'New b');
+  assert.equal(draft().state, 'idle');
+  assert.equal(await session.answer(old), STALE);
+  session.goFloor('a');
+  host.say(enter('a', [asking()]));
+  session.openQuestion('w1');
+  assert.equal(draft().text, '');
+  assert.equal(host.requests.length, 1, 'no replay on reconnect');
+});
+
+test('question, waitingSince, worker session and status changes each block stale submission until review', async (t) => {
+  const { session, host, rig, draft } = await questionRig(t);
+  for (const change of [
+    () => {
+      rig.screen = CHECKBOX_ROWS;
+    },
+    () => {
+      host.say({ t: 'worker.update', worker: asking('w1', { waitingSince: 11 }) });
+    },
+    () => {
+      host.say({ t: 'worker.update', worker: asking('w1', { sessionId: 'another-session' }) });
+    },
+    () => {
+      host.say({ t: 'worker.update', worker: asking('w1', { status: 'working' }) });
+    },
+  ]) {
+    rig.screen = QUESTION_ROWS;
+    host.say({ t: 'worker.update', worker: asking() });
+    session.openQuestion('w1', true);
+    session.selectAnswer(draft(), 1);
+    const old = draft();
+    change();
+    assert.equal(session.questionCurrent(old), false);
+    assert.equal(await session.answer(old), STALE);
+  }
+  assert.equal(host.requests.length, 0);
+  host.say({ t: 'worker.update', worker: asking('w1', { waitingSince: 12 }) });
+  assert.equal(session.openQuestion('w1', true), true);
+  assert.equal(draft().text, '');
+  assert.deepEqual(draft().choices, []);
+});
+
+test('office replacement clears answers and rejects even an identical worker/floor/menu from the old office', async (t) => {
+  const { session, host, draft } = await questionRig(t);
+  session.writeAnswer(draft(), 'Old office answer');
+  const old = draft();
+  const listeners = (host as unknown as { offices: Set<(o: HostOffices) => void> }).offices;
+  for (const h of listeners) h({ offices: [{ id: 'o2', name: 'Other office' }], active: 'o2', seq: ++host.seq });
+  await settle();
+  host.say(welcome('a', [asking()]));
+  session.open('w1');
+  session.openQuestion('w1');
+  assert.equal(draft().text, '');
+  assert.equal(await session.answer(old), STALE);
+  assert.equal(host.requests.length, 0);
+});
+
+test('hidden, inactive and non-Thread panes cannot open or submit questions; workspace holds only its active worker', async (t) => {
+  const { session, host, draft } = await questionRig(t);
+  session.selectAnswer(draft(), 1);
+  const old = draft();
+  session.closeQuestion();
+  session.setPhone(false);
+  session.open('w2', true);
+  assert.equal(session.openQuestion('w1'), false, 'inactive panes cannot open an answer workspace');
+  assert.equal(await session.answer(old), STALE);
+  session.focus('w1');
+  assert.deepEqual(session.held().sort(), ['w1', 'w2']);
+  session.openQuestion('w1');
+  assert.deepEqual(session.held(), ['w1']);
+  assert.deepEqual([...session.feeds.feeds.keys()], ['w1']);
+  const shown = draft();
+  session.setVisible(false);
+  assert.equal(await session.answer(shown), STALE);
+  assert.equal(session.openQuestion('w1'), false);
+  session.setVisible(true);
+  session.setWorkspaceShown(false);
+  assert.equal(session.snapshot().question, undefined);
+  assert.equal(session.openQuestion('w1'), false);
+  assert.deepEqual(session.held(), []);
+  session.setWorkspaceShown(true);
+  session.view('w1', 'terminal');
+  assert.equal(session.openQuestion('w1'), false);
+  assert.equal(host.requests.length, 0);
+});
+
+test('unconfirmed answers remain blocked through reopen and require explicit review, never an automatic retry', async (t) => {
+  const { session, host, draft } = await questionRig(t);
+  session.writeAnswer(draft(), 'Keep this draft');
+  const sending = session.answer(draft());
+  host.requests[0].resolve({ ok: false, error: 'The office timed out. Check before trying again.' });
+  await sending;
+  assert.equal(draft().state, 'uncertain');
+  session.closeQuestion();
+  session.openQuestion('w1');
+  assert.equal(await session.answer(draft()), STALE);
+  assert.equal(draft().text, 'Keep this draft');
+  assert.equal(host.requests.length, 1);
+  session.openQuestion('w1', true);
+  assert.equal(draft().state, 'idle');
+  assert.equal(host.requests.length, 1, 'review is not submission');
+});
+
+test('a next question arriving before its predecessor’s receipt stays busy until that exact request completes', async (t) => {
+  const { session, host, rig, draft } = await questionRig(t);
+  session.selectAnswer(draft(), 1);
+  const first = draft();
+  const sending = session.answer(first);
+  rig.screen = CHECKBOX_ROWS;
+  host.say({ t: 'worker.update', worker: asking('w1', { waitingSince: 11 }) });
+  session.closeQuestion();
+  session.openQuestion('w1');
+  assert.equal(draft().state, 'sending');
+  assert.equal(draft().waitingSince, 10);
+  assert.equal(session.openQuestion('w1', true), false);
+  assert.equal(await session.answer(draft()), IN_FLIGHT);
+  host.requests[0].resolve({ ok: true });
+  await sending;
+  assert.equal(session.questionCurrent(draft()), false);
+  assert.equal(session.openQuestion('w1', true), true);
+  assert.equal(draft().waitingSince, 11);
+  assert.deepEqual(draft().choices, [2]);
+  assert.equal(draft().state, 'idle');
+  assert.equal(host.requests.length, 1, 'the next question needs its own explicit Submit');
+  assert.equal(await session.answer(first), STALE);
+});
