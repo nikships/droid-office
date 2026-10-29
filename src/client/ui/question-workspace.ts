@@ -53,7 +53,7 @@ export function openQuestionWorkspace(opts: { name: string; state: QuestionState
     h('footer', {}, h('div.grow.qw-footer-meta', {}, count, raw), back, submit),
   );
   const modal = openModal(form, {
-    size: 'full',
+    size: 'lg',
     onClose: () => {
       if (previousFocus instanceof HTMLElement && previousFocus.isConnected) previousFocus.focus({ preventScroll: true });
       opts.onClose();

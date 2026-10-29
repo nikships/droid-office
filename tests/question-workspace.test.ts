@@ -133,6 +133,13 @@ test('answer workspace: full text, explicit selection, responsive scrolling and 
     [1024, 700],
   ]) {
     const captured = await pageFor(capturedMenu, width, height);
+    const dialog = await captured.locator('.question-workspace').boundingBox();
+    const footer = await captured.locator('.question-workspace footer').boundingBox();
+    const content = await captured.locator('.qw-content').boundingBox();
+    assert.ok(dialog && dialog.width <= 760, 'short questions use a reading-width dialog');
+    assert.ok(dialog && dialog.height < height - 48, 'short questions size to their content instead of filling the viewport');
+    assert.ok(dialog && footer && Math.abs(dialog.y + dialog.height - footer.y - footer.height) <= 2, 'no empty space remains below the footer');
+    assert.ok(dialog && content && content.x - dialog.x <= 24, 'answers use the dialog width without oversized side gutters');
     assert.equal(await captured.locator('.qw-question').textContent(), capturedQuestion);
     assert.deepEqual(await captured.locator('.qw-choice-copy').allTextContents(), ['Yes, install it', 'No, skip']);
     await captured.locator('input[value="2"]').check();
