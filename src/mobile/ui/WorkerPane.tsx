@@ -9,7 +9,7 @@ import { teamOf } from '../../shared/team';
 import { ACTION_OFFLINE, bringInMsg, CLEANUP_LABEL, cleanupAllowed, describeWorktree, forkMsg, prMsg, rebuildMsg, resumeMsg, sendHomeMsg, sendHomeNeedsWorktreeCheck, sendHomeText, type WorkerAction, workerActions } from '../actions';
 import { duration, kindLabel, modelLabel, statusLabel } from '../format';
 import type { Session, SessionSnapshot } from '../session';
-import { Button, Chip, colors, Dot, Label, Note, Row, StatusPill, s, useNow } from './kit';
+import { Button, Chip, colors, Dot, Eyebrow, Label, Note, Row, StatusPill, s, useCompactHeight, useNow } from './kit';
 import { Composer, ThreadView } from './Thread';
 
 type Dialog = 'sendHome' | 'fork' | 'rebuild' | undefined;
@@ -32,6 +32,8 @@ export function WorkerPane(props: {
   const { session, snap, worker } = props;
   const [dialog, setDialog] = useState<Dialog>();
   const [busy, setBusy] = useState(false);
+  const [details, setDetails] = useState(false);
+  const compact = useCompactHeight();
   const shown = session.effectiveView(worker, props.view);
   const ready = session.ready();
   const plain = !!snap.office.floors.find((f) => f.id === snap.office.floor)?.plain;
@@ -85,31 +87,42 @@ export function WorkerPane(props: {
     }
   };
   return (
-    <View style={{ flex: 1, backgroundColor: colors.bg, borderWidth: props.onClose ? 1 : 0, borderColor: props.focused ? colors.accent : colors.border }} testID={`pane-${worker.id}`}>
-      <View style={{ padding: 8, borderBottomWidth: 1, borderColor: colors.border, gap: 4 }}>
+    <View
+      style={{ flex: 1, backgroundColor: colors.bg, borderRightWidth: props.onClose ? 1 : 0, borderTopWidth: props.onClose ? 2 : 0, borderRightColor: colors.border, borderTopColor: props.focused ? colors.accent : colors.border }}
+      testID={`pane-${worker.id}`}
+    >
+      {props.onBack ? (
+        <Row style={{ paddingHorizontal: 12, paddingVertical: 8, borderBottomWidth: 1, borderColor: colors.border }}>
+          <Button small tone="ghost" label="‹ Workers" onPress={props.onBack} testID="pane-back" />
+          <View style={{ flex: 1 }} />
+          {props.onStep ? <Button small tone="ghost" label="‹" accessibilityLabel="Previous worker" onPress={() => props.onStep?.(-1)} testID="pane-prev" /> : null}
+          {props.onSwitch ? <Button small label="Switch" onPress={props.onSwitch} testID="pane-switch" /> : null}
+          {props.onStep ? <Button small tone="ghost" label="›" accessibilityLabel="Next worker" onPress={() => props.onStep?.(1)} testID="pane-next" /> : null}
+        </Row>
+      ) : null}
+      <View style={{ padding: compact ? 8 : 16, borderBottomWidth: 1, borderColor: colors.border, backgroundColor: colors.surface, gap: compact ? 4 : 8 }}>
+        {!compact ? <Eyebrow index="02">{shown === 'terminal' ? 'Raw terminal' : 'Conversation'}</Eyebrow> : null}
         <Row>
-          {props.onBack ? <Button small tone="ghost" label="‹ Workers" onPress={props.onBack} testID="pane-back" /> : null}
           <Dot color={worker.color} />
           <Text style={[s.title, { flex: 1 }]} numberOfLines={1}>
             {worker.name}
           </Text>
           {ready ? <StatusPill status={worker.status} label={statusLabel(worker.status)} /> : null}
-          {props.onStep ? <Button small tone="ghost" label="‹" accessibilityLabel="Previous worker" onPress={() => props.onStep?.(-1)} testID="pane-prev" /> : null}
-          {props.onSwitch ? <Button small tone="ghost" label="Switch" onPress={props.onSwitch} testID="pane-switch" /> : null}
-          {props.onStep ? <Button small tone="ghost" label="›" accessibilityLabel="Next worker" onPress={() => props.onStep?.(1)} testID="pane-next" /> : null}
           {props.onResize ? <Button small tone="ghost" label="−" accessibilityLabel="Narrower" onPress={() => props.onResize?.(-0.25)} /> : null}
           {props.onResize ? <Button small tone="ghost" label="+" accessibilityLabel="Wider" onPress={() => props.onResize?.(0.25)} /> : null}
           {props.onClose ? <Button small tone="ghost" label="✕" accessibilityLabel={`Close ${worker.name}`} onPress={props.onClose} testID="pane-close" /> : null}
         </Row>
-        <Text style={s.muted} numberOfLines={1}>
-          {[kindLabel(worker), modelLabel(worker), worked ? `worked ${duration(worked)}` : undefined, lead ? `lead ${lead.name}` : worker.lead ? 'lead has left' : undefined].filter(Boolean).join(' · ')}
-        </Text>
-        {worker.task?.name || worker.title ? (
+        {!compact ? (
+          <Text style={s.muted} numberOfLines={1}>
+            {[kindLabel(worker), modelLabel(worker), worked ? `worked ${duration(worked)}` : undefined, lead ? `lead ${lead.name}` : worker.lead ? 'lead has left' : undefined].filter(Boolean).join(' · ')}
+          </Text>
+        ) : null}
+        {!compact && (worker.task?.name || worker.title) ? (
           <Text style={s.text} numberOfLines={1}>
             {worker.task?.name ?? worker.title}
           </Text>
         ) : null}
-        <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+        <ScrollView horizontal nestedScrollEnabled showsHorizontalScrollIndicator={false} style={{ flexGrow: 0 }} contentContainerStyle={{ paddingTop: 4 }}>
           <Row>
             {actions.map((a) =>
               a.id === 'thread' || a.id === 'terminal' ? (
@@ -118,17 +131,20 @@ export function WorkerPane(props: {
                 <Button key={a.id} small label={a.label} tone={a.danger ? 'danger' : undefined} disabled={!!a.refusal || busy} onPress={() => act(a)} testID={`action-${a.id}`} />
               ),
             )}
+            {compact ? <Button small label="Details" onPress={() => setDetails(true)} testID="pane-details" /> : null}
             {worker.cloud && worker.sessionId ? <Button small label="Factory session" onPress={() => openLink(sessionWebUrl(worker.sessionId!), 'Could not open the Factory session.')} /> : null}
           </Row>
         </ScrollView>
-        {actions
-          .filter((a) => a.refusal && a.id !== 'thread' && a.id !== 'terminal' && a.refusal !== ACTION_OFFLINE)
-          .slice(0, 1)
-          .map((a) => (
-            <Text key={a.id} style={s.muted}>
-              {a.label}: {a.refusal}
-            </Text>
-          ))}
+        {!compact
+          ? actions
+              .filter((a) => a.refusal && a.id !== 'thread' && a.id !== 'terminal' && a.refusal !== ACTION_OFFLINE)
+              .slice(0, 1)
+              .map((a) => (
+                <Text key={a.id} style={s.muted}>
+                  {a.label}: {a.refusal}
+                </Text>
+              ))
+          : null}
         {worker.lost ? <Note tone="warn">Its worktree was deleted outside the office. Rebuild it, or send it home.</Note> : null}
       </View>
       {shown === 'thread' ? (
@@ -143,6 +159,29 @@ export function WorkerPane(props: {
       )}
       {dialog === 'sendHome' ? <SendHome session={session} snap={snap} worker={worker} onClose={() => setDialog(undefined)} /> : null}
       {dialog === 'fork' ? <Fork session={session} snap={snap} worker={worker} onClose={() => setDialog(undefined)} /> : null}
+      {details ? (
+        <Modal transparent animationType="fade" onRequestClose={() => setDetails(false)}>
+          <View style={{ flex: 1, backgroundColor: '#000a', justifyContent: 'center', padding: 24 }}>
+            <View style={{ maxHeight: '90%', borderWidth: 1, borderColor: colors.borderStrong, borderRadius: 3, backgroundColor: colors.surface }}>
+              <ScrollView contentContainerStyle={{ padding: 20, gap: 12 }}>
+                <Row>
+                  <Text style={[s.title, { flex: 1 }]}>{worker.name}</Text>
+                  <Button small label="Close" onPress={() => setDetails(false)} testID="pane-details-close" />
+                </Row>
+                <Text style={s.muted}>{[kindLabel(worker), modelLabel(worker), worked ? `worked ${duration(worked)}` : undefined, lead ? `lead ${lead.name}` : worker.lead ? 'lead has left' : undefined].filter(Boolean).join(' · ')}</Text>
+                <Text style={s.text}>{worker.task?.name ?? worker.title ?? worker.activity ?? worker.prompt}</Text>
+                {actions
+                  .filter((a) => a.refusal)
+                  .map((a) => (
+                    <Text key={a.id} style={s.muted}>
+                      {a.label}: {a.refusal}
+                    </Text>
+                  ))}
+              </ScrollView>
+            </View>
+          </View>
+        </Modal>
+      ) : null}
       {dialog === 'rebuild' ? (
         <Confirm
           title={`Rebuild ${worker.name}'s worktree?`}
@@ -186,7 +225,7 @@ export function Confirm(props: { title: string; text: string; yes: string; dange
   return (
     <Modal transparent animationType="fade" onRequestClose={props.onClose}>
       <View style={{ flex: 1, backgroundColor: '#000a', justifyContent: 'center', padding: 24 }}>
-        <View style={{ backgroundColor: colors.surface, borderRadius: 8, padding: 16, gap: 10 }}>
+        <View style={{ backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.borderStrong, borderRadius: 3, padding: 20, gap: 16 }}>
           <Text style={s.title}>{props.title}</Text>
           <Text style={s.text}>{props.text}</Text>
           <Row style={{ justifyContent: 'flex-end' }}>
@@ -237,7 +276,7 @@ function SendHome({ session, snap, worker, onClose }: { session: Session; snap: 
   return (
     <Modal transparent animationType="fade" onRequestClose={onClose}>
       <View style={{ flex: 1, backgroundColor: '#000a', justifyContent: 'center', padding: 24 }}>
-        <View style={{ backgroundColor: colors.surface, borderRadius: 8, padding: 16, gap: 10 }} testID="send-home">
+        <View style={{ backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.borderStrong, borderRadius: 3, padding: 20, gap: 16 }} testID="send-home">
           <Text style={s.title}>Send {worker.name} home?</Text>
           <Text style={s.text}>{sendHomeText(worker, where, subagents)}</Text>
           {check ? (
@@ -287,7 +326,7 @@ function Fork({ session, snap, worker, onClose }: { session: Session; snap: Sess
   return (
     <Modal transparent animationType="fade" onRequestClose={onClose}>
       <View style={{ flex: 1, backgroundColor: '#000a', justifyContent: 'center', padding: 24 }}>
-        <View style={{ backgroundColor: colors.surface, borderRadius: 8, padding: 16, gap: 10 }} testID="fork">
+        <View style={{ backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.borderStrong, borderRadius: 3, padding: 20, gap: 16 }} testID="fork">
           <Text style={s.title}>Fork {worker.name}</Text>
           <Text style={s.text}>Same conversation, a separate worktree. The twin gets this worker’s current commit, staged and unstaged edits, and untracked files. The original stays untouched.</Text>
           <Label>New direction (optional)</Label>

@@ -40,7 +40,7 @@ function Block({ block }: { block: MdBlock }) {
       return (
         <View style={{ backgroundColor: colors.raised, borderRadius: 4, padding: 8 }}>
           {block.lang ? <Text style={[s.muted, { fontSize: 11 }]}>{block.lang}</Text> : null}
-          <ScrollView horizontal>
+          <ScrollView horizontal nestedScrollEnabled>
             <Text selectable style={s.code}>
               {block.text}
             </Text>
@@ -68,7 +68,7 @@ function Block({ block }: { block: MdBlock }) {
       );
     case 'table':
       return (
-        <ScrollView horizontal>
+        <ScrollView horizontal nestedScrollEnabled>
           <View style={{ borderWidth: 1, borderColor: colors.border, borderRadius: 4 }}>
             {keyed([block.header, ...block.rows], (row) => row.map(plainText).join('|')).map(([rowKey, row], r) => (
               <View key={rowKey} style={{ flexDirection: 'row', borderTopWidth: r ? 1 : 0, borderColor: colors.border, backgroundColor: r ? undefined : colors.raised }}>

@@ -4,3 +4,8 @@
 .inline-window { display: flex; flex-direction: column; flex: 1; min-height: 0; height: 100%; }
 .inline-window > .modal { width: 100%; height: 100%; max-height: none; flex: 1; min-height: 0; border-radius: 0; box-shadow: none; animation: none; }
 .host-only { margin: 0; }
+
+/* The sealed mobile host shares the companion's near-square, flat product treatment. */
+.companion-tools-host { --radius: 3px; --radius-lg: 3px; --shadow-window: none; --shadow-pop: none; }
+.dashboard .btn.accent, .companion-tools-host .btn.accent { background: var(--text); border-color: var(--text); color: var(--text-inverse); }
+.dashboard .btn.accent:hover:where(:not(:disabled)), .companion-tools-host .btn.accent:hover:where(:not(:disabled)) { background: #fff; border-color: #fff; color: var(--text-inverse); }

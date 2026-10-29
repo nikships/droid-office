@@ -3,7 +3,7 @@ import { questionPresentation } from '../../shared/ask-question';
 import { menuTakesText } from '../../shared/asks';
 import { questionFeedback, questionReply, type QuestionDraft } from '../model';
 import type { Session } from '../session';
-import { Button, colors, Label, Row, s } from './kit';
+import { Button, colors, Eyebrow, Label, Row, s } from './kit';
 
 /** Lives inside App's safe root, not a native Modal that bypasses the host's system/IME insets. */
 export function QuestionWorkspace({ session, draft, wide }: { session: Session; draft: QuestionDraft; wide: boolean }) {
@@ -15,9 +15,10 @@ export function QuestionWorkspace({ session, draft, wide }: { session: Session; 
   const feedback = questionFeedback(draft, current, supported);
   return (
     <View style={{ flex: 1, backgroundColor: colors.bg, paddingHorizontal: wide ? 32 : 12, paddingVertical: wide ? 24 : 8 }} testID="question-workspace">
-      <View style={{ flex: 1, width: '100%', maxWidth: 1120, alignSelf: 'center', gap: 12 }}>
+      <View style={{ flex: 1, width: '100%', maxWidth: 1120, alignSelf: 'center', gap: 20 }}>
         <Row wrap>
           <View style={{ flex: 1 }}>
+            <Eyebrow index="02">Input required</Eyebrow>
             <Text style={s.title} accessibilityRole="header">
               Answer questions
             </Text>
@@ -47,7 +48,7 @@ export function QuestionWorkspace({ session, draft, wide }: { session: Session; 
                   accessibilityState={{ checked, disabled: !enabled }}
                   disabled={!enabled}
                   onPress={() => session.selectAnswer(draft, choice.number)}
-                  style={{ padding: wide ? 20 : 14, borderWidth: 1, borderRadius: 6, borderColor: checked ? colors.accent : colors.border, backgroundColor: checked ? colors.raised : colors.surface, flexDirection: 'row', gap: 12 }}
+                  style={{ padding: wide ? 20 : 16, borderWidth: 1, borderRadius: 3, borderColor: checked ? colors.accent : colors.borderStrong, backgroundColor: checked ? colors.raised : colors.surface, flexDirection: 'row', gap: 12 }}
                 >
                   <Text style={[s.text, { color: checked ? colors.accent : colors.muted }]} importantForAccessibility="no">
                     {draft.menu.multiSelect ? (checked ? '☑' : '☐') : checked ? '◉' : '○'}

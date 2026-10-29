@@ -5,7 +5,7 @@ import { AGENT_EFFORTS, type AgentEffort } from '../../shared/protocol';
 import { availabilityOf } from '../../client/ui/model-search';
 import { canWorktree, currentFloor } from '../office-state';
 import type { Session, SessionSnapshot } from '../session';
-import { Button, Chip, colors, Label, Note, Row, s } from './kit';
+import { Button, Chip, colors, Eyebrow, Label, Note, Row, s } from './kit';
 
 interface CatalogueModel {
   id: string;
@@ -77,6 +77,7 @@ export function HireSheet({ session, snap, onClose }: { session: Session; snap: 
   return (
     <Modal animationType="slide" onRequestClose={onClose}>
       <ScrollView style={s.sheet} contentContainerStyle={{ gap: 10 }} testID="hire-sheet" keyboardShouldPersistTaps="handled">
+        <Eyebrow index="01">Add to your floor</Eyebrow>
         <Row>
           <Text style={[s.title, { flex: 1 }]}>{kind === 'shell' ? 'Open a shell' : 'Hire Droid'}</Text>
           <Button small tone="ghost" label="Cancel" onPress={onClose} />

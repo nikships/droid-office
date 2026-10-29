@@ -131,7 +131,7 @@ const brand = h(
   'button.dash-brand',
   { type: 'button', title: 'All workers (Esc)', onclick: () => select('') },
   h('img', { src: '/factory-glyph.svg', alt: '', width: 26, height: 26 }),
-  h('span.dash-brand-text', {}, h('span.eyebrow', {}, 'Web companion'), title),
+  h('span.dash-brand-text', {}, h('span.eyebrow', {}, 'Droid Office / Companion'), title),
 );
 const floors = h('nav.dash-floor-strip', { 'aria-label': 'Floors' });
 const reorderFloors = h('button.btn.icon.ghost', { type: 'button', 'aria-label': 'Reorder floors', title: 'Reorder floors', onclick: () => openFloorOrder(net) }, '⠿');
@@ -144,7 +144,7 @@ const board = h('button.btn.dash-top-btn', { type: 'button', title: 'The floor�
 const subscriptions = h('button.btn.dash-top-btn', { type: 'button', title: 'Subscriptions and account usage', onclick: () => openTool('subscriptions') }, icon('key'), h('span', {}, 'Subscriptions'));
 const hostUpdate = h('button.btn.dash-top-btn', { type: 'button', title: 'Update the host Mac app', onclick: () => openTool('host-update') }, icon('monitor'), h('span', {}, 'Host app'));
 const accessLabel = h('span', {}, WHERE[where].label);
-const access = h('button.btn.ghost.dash-top-btn', { type: 'button', title: 'How this browser reaches the office, and its pairing', onclick: () => accessDialog() }, icon(WHERE[where].icon), accessLabel);
+const access = h('button.btn.ghost.dash-top-btn.cw-access', { type: 'button', title: 'How this browser reaches the office, and its pairing', onclick: () => accessDialog() }, icon(WHERE[where].icon), accessLabel);
 let showTools = false;
 const toolsButton = h(
   'button.btn.dash-top-btn',
@@ -168,10 +168,21 @@ const banner = h('div.dash-banner', { hidden: true }, bannerIcon, bannerText, ba
 
 const authPanel = h('section.dash-gate', { hidden: true });
 
-const agentBtn = h('button.btn.accent.dash-hire', { type: 'button', title: 'Hire a Droid on this floor (N)', onclick: () => hire('agent') }, icon('plus'), h('span', {}, 'Hire Droid'));
+const agentBtn = h('button.btn.primary.dash-hire', { type: 'button', title: 'Hire a Droid on this floor (N)', onclick: () => hire('agent') }, h('span', {}, 'Hire Droid'), '→');
 const shellBtn = h('button.btn.dash-hire', { type: 'button', title: 'Open a plain shell at a desk', onclick: () => hire('shell') }, icon('terminal'), h('span', {}, 'Shell'));
-const overviewRow = h('button.dash-nav', { type: 'button', title: 'Back to the floor (Esc)', onclick: () => select('') }, icon('grid'), h('span.grow', {}, 'Workers'), h('span.dash-nav-count'));
-const search = h('input.input', { type: 'search', placeholder: 'Filter workers', 'aria-label': 'Filter workers', oninput: () => paintSide() });
+const overviewRow = h('button.dash-nav', { type: 'button', title: 'Back to the floor (Esc)', onclick: () => select('') }, h('span.no', {}, '01'), h('span.grow', {}, 'Workers'), h('span.dash-nav-count'));
+const rosterScope = h('p.cw-roster-scope');
+const rosterWorking = h('b', {}, '00');
+const rosterWaiting = h('b', {}, '00');
+const rosterTotal = h('b', {}, '00');
+const rosterSummary = h(
+  'div.cw-roster-summary',
+  { 'aria-label': 'Floor worker counts' },
+  h('div', {}, rosterTotal, h('span', {}, 'On floor')),
+  h('div', {}, rosterWorking, h('span', {}, 'Working')),
+  h('div.cw-metric-attention', {}, rosterWaiting, h('span', {}, 'Need input')),
+);
+const search = h('input.input', { type: 'search', placeholder: 'Search this floor…', 'aria-label': 'Filter workers', oninput: () => paintSide() });
 const statusFilter = h('select.select', { 'aria-label': 'Filter status', onchange: () => paintSide() }, h('option', { value: '' }, 'All statuses'), ...Object.entries(STATUS_LABEL).map(([value, label]) => h('option', { value }, label)));
 const kindFilter = h(
   'select.select',
@@ -188,8 +199,10 @@ const workerList = h('nav.dash-workers', { 'aria-label': 'Workers' });
 const side = h(
   'aside.dash-side',
   {},
-  h('div.dash-side-hire', {}, agentBtn, shellBtn),
   overviewRow,
+  rosterScope,
+  rosterSummary,
+  h('div.dash-side-hire', {}, agentBtn, shellBtn),
   h('div.cw-filters', {}, search, statusFilter, kindFilter),
   workerList,
   h(
@@ -677,7 +690,16 @@ let savedLayout = JSON.stringify(companionWorkspaceLayout(workspace));
 let navigationEpoch = 0;
 const narrow = matchMedia('(max-width: 760px)');
 const paneHost = h('div.cw-panes');
-const emptyWorkspace = h('div.cw-empty', {}, emptyState('', 'Choose a worker', 'Open a worker from the roster. Pin up to four distinct workers side by side.'));
+const emptyWorkspace = h(
+  'div.cw-empty',
+  {},
+  h('img.cw-empty-mark', { src: '/factory-glyph.svg', width: 40, height: 40, alt: '' }),
+  h('p.eyebrow', {}, h('span.no', {}, '02'), ' / Your workspace'),
+  emptyState('', 'Your floor, in focus.', 'Choose a worker to open its conversation. Pin up to four workers to follow their work side by side.'),
+  h('div.cw-empty-hints', {}, h('span', {}, h('span.key', {}, '↑↓'), ' Browse workers'), h('span', {}, h('span.key', {}, 'N'), ' Hire a Droid')),
+);
+const paneCount = h('span.cw-pane-count', {}, '00 / 04 panes');
+const workspaceBar = h('header.cw-workspace-bar', {}, h('span.eyebrow', {}, h('span.no', {}, '02'), ' / Workspace'), h('span.cw-workspace-hint', {}, 'Pin workers to follow their threads side by side.'), paneCount);
 const quickSwitch = h('select.select.cw-switch', { 'aria-label': 'Switch worker', onchange: () => select(quickSwitch.value) });
 const mobileNav = h(
   'nav.cw-mobile-nav',
@@ -687,7 +709,7 @@ const mobileNav = h(
   quickSwitch,
   h('button.btn', { type: 'button', 'aria-label': 'Next worker', onclick: () => moveWorker(1) }, 'Next'),
 );
-mainEl.replaceChildren(mobileNav, paneHost, emptyWorkspace, toolStage);
+mainEl.replaceChildren(workspaceBar, mobileNav, paneHost, emptyWorkspace, toolStage);
 narrow.addEventListener('change', () => paintWorkspace());
 
 function restoreWorkspace(): CompanionWorkspace {
@@ -731,6 +753,11 @@ function paintSide() {
   overviewRow.classList.toggle('on', !selected);
   overviewRow.setAttribute('aria-current', !selected ? 'page' : 'false');
   (overviewRow.lastElementChild as HTMLElement).textContent = String(store.workers.size);
+  rosterScope.textContent = store.currentFloor()?.name ?? 'Selected floor';
+  const allWorkers = [...store.workers.values()];
+  rosterTotal.textContent = String(allWorkers.length).padStart(2, '0');
+  rosterWorking.textContent = String(allWorkers.filter((w) => w.status === 'working').length).padStart(2, '0');
+  rosterWaiting.textContent = String(allWorkers.filter((w) => w.status === 'needs_input').length).padStart(2, '0');
   const visible = roster();
   const seen = new Set<string>();
   const children: HTMLElement[] = [];
@@ -752,14 +779,12 @@ function paintSide() {
       h(
         'span.dash-row-main',
         {},
-        h('span.dash-row-name', {}, w.name),
-        h('span.dash-row-meta', {}, w.task?.name ?? w.title ?? kind(w)),
-        h('span.dash-row-meta', {}, parent),
-        h('span.dash-row-meta', {}, doingLine(w)),
+        h('span.cw-row-heading', {}, h('span.dash-row-name', {}, w.name), pill(w)),
+        h('span.cw-row-task', {}, w.task?.name ?? w.title ?? doingLine(w)),
+        h('span.dash-row-meta.cw-row-activity', {}, doingLine(w)),
         h('span.dash-row-meta', {}, modelBadge(w.activeModel ?? w.model, w.activeEffort ?? w.effort)),
-        h('span.dash-row-meta', {}, `${Math.floor(companionWorkedMs(w, Date.now()) / 60_000)}m worked`),
+        h('span.cw-row-foot', {}, h('span', {}, w.lead ? `↳ ${parent}` : kind(w)), h('span', {}, `${Math.floor(companionWorkedMs(w, Date.now()) / 60_000)}m worked`)),
       ),
-      pill(w),
     );
     const collapse = h(
       'button.btn.sm.ghost',
@@ -785,8 +810,11 @@ function paintSide() {
         'aria-label': `Pin ${w.name}`,
         onclick: () => select(w.id, true),
       },
-      'Pin',
+      currentWorkspace().panes.some((p) => p.workerId === w.id) ? '↗' : '+',
     );
+    pin.title = `Pin ${w.name} in a pane`;
+    pin.classList.add('cw-pin');
+    collapse.classList.add('cw-collapse');
     const item = h('div.cw-roster-item', {}, collapse, el, pin);
     item.style.setProperty('--depth', String(row.depth));
     children.push(item);
@@ -838,6 +866,8 @@ function paintWorkspace() {
   const state = currentWorkspace();
   const ready = !switching && fresh && net.ready;
   const managing = !!tools.current();
+  workspaceBar.hidden = managing;
+  paneCount.textContent = `${String(state.panes.length).padStart(2, '0')} / 04 panes`;
   content.classList.toggle('cw-conversation', (ready && !!selected) || managing);
   content.classList.toggle('cw-show-tools', showTools);
   emptyWorkspace.hidden = !ready || state.panes.length > 0 || managing;
@@ -870,7 +900,7 @@ class WorkspacePane {
   readonly question = h('section.dash-question', { 'aria-label': 'Question requiring input', hidden: true });
   readonly tabs = h('div.seg');
   readonly heading = h('h2');
-  readonly meta = h('p.cw-pane-meta');
+  readonly meta = h('div.cw-pane-meta');
   thread?: WorkerThread;
   raw?: TerminalPane;
   mode = '';
@@ -938,17 +968,13 @@ class WorkspacePane {
     if (resize && document.activeElement !== resize) resize.value = String(spec.size);
     this.heading.textContent = worker.name;
     const parent = worker.lead ? (store.workers.get(worker.lead)?.name ?? 'departed lead') : 'Independent';
-    this.meta.textContent = [
-      worker.task?.name ?? worker.title,
-      kind(worker),
-      statusWord(worker, STATUS_LABEL),
-      parent,
-      modelBadge(worker.activeModel ?? worker.model, worker.activeEffort ?? worker.effort),
-      `${Math.floor(companionWorkedMs(worker, Date.now()) / 60_000)}m worked`,
-      worker.activity ?? worker.task?.summary ?? worker.prompt,
-    ]
+    const task = worker.task?.name ?? worker.title;
+    const activity = worker.activity ?? worker.task?.summary ?? worker.prompt;
+    const facts = [kind(worker), statusWord(worker, STATUS_LABEL), parent, `${Math.floor(companionWorkedMs(worker, Date.now()) / 60_000)}m worked`, modelBadge(worker.activeModel ?? worker.model, worker.activeEffort ?? worker.effort)]
       .filter(Boolean)
       .join(' · ');
+    this.meta.replaceChildren(h('p.cw-pane-facts', {}, facts), h('p.cw-pane-task', { hidden: !task }, task), h('p.cw-pane-activity', { hidden: !activity }, activity));
+    this.meta.title = [facts, task, activity].filter(Boolean).join('\n');
     const capability = companionCapabilities(worker);
     const mode = companionView(worker, spec.view);
     const restoreTabsFocus = retainFocus(this.tabs);
@@ -1234,10 +1260,13 @@ function paintTools() {
   const restoreFocus = retainFocus(toolRail);
   const nodes: HTMLElement[] = [];
   let group = '';
-  for (const tool of tools.list()) {
+  let groupIndex = 0;
+  const entries = tools.list();
+  const grouped = [...new Set(entries.map((tool) => tool.group))].flatMap((group) => entries.filter((tool) => tool.group === group));
+  for (const tool of grouped) {
     if (tool.group !== group) {
       group = tool.group;
-      nodes.push(h('h3.eyebrow', {}, group));
+      nodes.push(h('h3.eyebrow', {}, h('span.no', {}, String(++groupIndex).padStart(2, '0')), ` / ${group}`));
     }
     nodes.push(
       h(
@@ -1247,9 +1276,11 @@ function paintTools() {
           'data-focus-key': tool.id,
           disabled: !live() || !tool.available,
           title: tool.reason || tool.label,
+          'aria-description': tool.reason,
+          'aria-pressed': String(tools.current()?.id === tool.id),
           onclick: () => openTool(tool.id),
         },
-        tool.label,
+        h('span.cw-tool-label', {}, tool.label),
         tool.count ? h('span.pill', {}, String(tool.count)) : null,
       ),
     );

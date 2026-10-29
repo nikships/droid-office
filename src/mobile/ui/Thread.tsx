@@ -8,7 +8,7 @@ import { presentThread, threadArguments, type ThreadRow } from '../../shared/thr
 import { statusLabel } from '../format';
 import { keyed } from '../markdown';
 import type { Session, SessionSnapshot } from '../session';
-import { Button, colors, Label, Note, Row, StatusPill, s } from './kit';
+import { Button, colors, Eyebrow, Label, Note, Row, StatusPill, s, useCompactHeight } from './kit';
 import { Markdown } from './Markdown';
 
 const NO_ENTRIES: readonly ThreadEntry[] = [];
@@ -39,7 +39,7 @@ export function ThreadView(props: { session: Session; snap: SessionSnapshot; wor
         }}
         scrollEventThrottle={200}
         ListHeaderComponent={
-          <View style={{ padding: 8, gap: 6 }}>
+          <View style={{ paddingHorizontal: 16, paddingTop: 16, gap: 8 }}>
             {feed?.history.hasMore ? <Button small label="Load earlier messages" disabled={!ready || !!feed.pending} onPress={() => session.readEarlier(worker.id)} testID="thread-earlier" /> : null}
             {props.focused ? <TeamActivity session={session} snap={props.snap} /> : null}
           </View>
@@ -102,10 +102,10 @@ function RowView({ row, worker, asking }: { row: ThreadRow; worker: WorkerInfo; 
   if (row.kind === 'message') {
     const user = row.entry.role === 'user';
     return (
-      <View style={{ paddingHorizontal: 12, paddingVertical: 6, alignItems: user ? 'flex-end' : 'stretch' }}>
-        {row.startsTurn ? <Label>{worker.name}</Label> : null}
+      <View style={{ paddingHorizontal: 20, paddingVertical: 12, alignItems: user ? 'flex-end' : 'stretch', gap: 8 }}>
+        {user ? <Label>You</Label> : row.startsTurn ? <Label>{worker.name}</Label> : null}
         {user ? (
-          <Text selectable style={[s.text, { backgroundColor: colors.raised, padding: 8, borderRadius: 6, maxWidth: '90%' }]}>
+          <Text selectable style={[s.text, { backgroundColor: colors.raised, borderWidth: 1, borderColor: colors.border, padding: 12, borderRadius: 3, maxWidth: '94%' }]}>
             {row.entry.text ?? ''}
           </Text>
         ) : (
@@ -128,7 +128,7 @@ function RowView({ row, worker, asking }: { row: ThreadRow; worker: WorkerInfo; 
 function Thought({ row }: { row: Extract<ThreadRow, { kind: 'thought' }> }) {
   const [open, setOpen] = useState(false);
   return (
-    <View style={{ paddingHorizontal: 12, paddingVertical: 4 }}>
+    <View style={{ paddingHorizontal: 20, paddingVertical: 8 }}>
       <Pressable onPress={() => setOpen(!open)} accessibilityRole="button" accessibilityState={{ expanded: open }} testID={`thought-${row.id}`}>
         <Text style={s.muted} numberOfLines={open ? undefined : 1}>
           {open ? '▾' : '▸'} Thought · {row.preview}
@@ -151,7 +151,7 @@ function Activity({ row, asking }: { row: Extract<ThreadRow, { kind: 'activity' 
   const label = !row.actions.length && !row.plan ? 'Thought' : `${row.live && !asking ? 'Working · ' : ''}${row.label}`;
   const current = row.actions.filter((a) => a.state === 'working').at(-1);
   return (
-    <View style={{ paddingHorizontal: 12, paddingVertical: 4 }}>
+    <View style={{ paddingHorizontal: 20, paddingVertical: 8 }}>
       <Pressable accessibilityRole="button" accessibilityState={{ expanded: open }} onPress={() => setOpen(!open)} testID={`activity-${row.id}`}>
         <Row>
           <Text style={[s.muted, row.state === 'failed' && { color: colors.danger }, row.state === 'working' && { color: colors.accent }]}>{open ? '▾' : '▸'}</Text>
@@ -192,14 +192,14 @@ function Activity({ row, asking }: { row: Extract<ThreadRow, { kind: 'activity' 
                   <View style={{ gap: 4, marginTop: 4 }}>
                     {args ? <Label>{args.label}</Label> : null}
                     {args ? (
-                      <ScrollView horizontal>
+                      <ScrollView horizontal nestedScrollEnabled>
                         <Text selectable style={s.code}>
                           {args.text}
                         </Text>
                       </ScrollView>
                     ) : null}
                     <Label>{item.state === 'cancelled' ? 'Cancelled' : item.entry.error ? 'Error' : 'Result'}</Label>
-                    <ScrollView horizontal>
+                    <ScrollView horizontal nestedScrollEnabled>
                       <Text selectable style={s.code}>
                         {item.entry.output ?? 'No result recorded in this session.'}
                       </Text>
@@ -231,7 +231,7 @@ function TeamActivity({ session, snap }: { session: Session; snap: SessionSnapsh
   if (!session.feeds.teamOn) return <Text style={s.muted}>Team activity is off while this many panes are open. Open a subagent from the roster.</Text>;
   const open = session.teamOpen;
   return (
-    <View style={{ borderWidth: 1, borderColor: colors.border, borderRadius: 4, padding: 8 }} testID="team-activity">
+    <View style={{ borderWidth: 1, borderColor: colors.border, borderRadius: 3, padding: 12 }} testID="team-activity">
       <Pressable onPress={() => session.setTeamOpen(!open)} accessibilityRole="button" accessibilityState={{ expanded: open }}>
         <Text style={s.text}>
           {open ? '▾' : '▸'} Team activity · {team.total}
@@ -291,6 +291,7 @@ function Question({ session, worker, focused, onRaw }: { session: Session; worke
 
 /** The draft box for one worker; a cloud worker, which has no Thread here, gets it under its details. */
 export function Composer({ session, snap, worker, onRaw }: { session: Session; snap: SessionSnapshot; worker: WorkerInfo; onRaw: () => void }) {
+  const compact = useCompactHeight();
   const ws = session.floorWorkspace();
   const draft = Object.hasOwn(ws.drafts, worker.id) ? ws.drafts[worker.id] : { text: '', attachments: [] };
   const [told, setTold] = useState('');
@@ -333,7 +334,8 @@ export function Composer({ session, snap, worker, onRaw }: { session: Session; s
     setTold(error ?? '');
   };
   return (
-    <View style={{ padding: 8, borderTopWidth: 1, borderColor: colors.border, gap: 6 }} testID="composer">
+    <View style={{ padding: compact ? 8 : 16, borderTopWidth: 1, borderColor: colors.border, gap: compact ? 8 : 12, backgroundColor: colors.surface }} testID="composer">
+      {!compact ? <Eyebrow index="03">Message</Eyebrow> : null}
       {suggestions.length ? (
         <View style={{ borderWidth: 1, borderColor: colors.border, borderRadius: 4 }} testID="slash-menu">
           {suggestions.map((c) => (
@@ -348,7 +350,7 @@ export function Composer({ session, snap, worker, onRaw }: { session: Session; s
         </View>
       ) : null}
       {draft.attachments.length ? (
-        <ScrollView horizontal testID="composer-images">
+        <ScrollView horizontal nestedScrollEnabled testID="composer-images">
           {draft.attachments.map((id, i) => (
             <View key={id} style={{ marginRight: 6, alignItems: 'center' }}>
               {snap.previews[id] ? <Image source={{ uri: snap.previews[id] }} style={{ width: 48, height: 48, borderRadius: 4 }} /> : <View style={{ width: 48, height: 48, backgroundColor: colors.raised }} />}
@@ -359,7 +361,7 @@ export function Composer({ session, snap, worker, onRaw }: { session: Session; s
       ) : null}
       <TextInput
         testID="composer-input"
-        style={[s.input, { maxHeight: 140 }]}
+        style={[s.input, { minHeight: compact ? 40 : 72, maxHeight: compact ? 72 : 140, backgroundColor: colors.bg, textAlignVertical: 'top' }]}
         multiline
         maxLength={20000}
         editable={!disabled}

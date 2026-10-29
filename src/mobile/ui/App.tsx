@@ -2,11 +2,10 @@ import { useCallback, useEffect, useState, useSyncExternalStore } from 'react';
 import { AppState, BackHandler, Modal, Pressable, SafeAreaView, ScrollView, Text, useWindowDimensions, View } from 'react-native';
 import { NOT_OFFERED, TOOLS } from '../../shared/companion-tools';
 import { MAX_COMPANION_PANES } from '../../shared/companion-workspace';
-import { currentFloor } from '../office-state';
 import type { MobileHost } from '../host';
 import { Session } from '../session';
 import { HireSheet } from './Hire';
-import { Button, Chip, colors, Label, Note, Row, s } from './kit';
+import { Button, Chip, colors, Dot, Eyebrow, Label, Note, Row, s } from './kit';
 import { Roster, rosterOrder } from './Roster';
 import { WorkerPane } from './WorkerPane';
 import { QuestionWorkspace } from './QuestionWorkspace';
@@ -25,6 +24,7 @@ export function App({ host }: { host: MobileHost }) {
   }, [session]);
   const { width } = useWindowDimensions();
   const wide = width >= WIDE_DP;
+  const [workspaceWidth, setWorkspaceWidth] = useState(width);
   const [tab, setTab] = useState<Tab>('workers');
   const [hiring, setHiring] = useState(false);
   const [switcher, setSwitcher] = useState(false);
@@ -70,7 +70,6 @@ export function App({ host }: { host: MobileHost }) {
   }, [session, hiring, switcher, tab, tool, wide, active, snap.question]);
   const open = useCallback((id: string, pin: boolean) => void session.open(id, pin), [session]);
   const order = rosterOrder(snap);
-  const floor = currentFloor(snap.office);
   const link = snap.link;
   const banner =
     link.phase === 'unauthorized'
@@ -117,21 +116,28 @@ export function App({ host }: { host: MobileHost }) {
     <SafeAreaView style={{ flex: 1, backgroundColor: colors.bg }} testID="app">
       {!phoneConversation ? (
         <View style={{ borderBottomWidth: 1, borderColor: colors.border }}>
-          <Row style={{ paddingHorizontal: 8, paddingTop: 8 }}>
-            <Pressable onPress={() => setTab('device')} style={{ flex: 1 }} accessibilityRole="button" testID="office-name">
-              <Text style={s.title} numberOfLines={1}>
-                {officeName ?? 'Droid Office'}
-                {floor ? <Text style={s.muted}> · {floor.name}</Text> : null}
-              </Text>
-            </Pressable>
-            <Chip label="Workers" on={tab === 'workers'} onPress={() => setTab('workers')} testID="tab-workers" />
-            <Chip label="Tools" on={tab === 'tools'} onPress={() => setTab('tools')} testID="tab-tools" />
-            <Chip label="Device" on={tab === 'device'} onPress={() => setTab('device')} testID="tab-device" />
-          </Row>
-          <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ paddingHorizontal: 8, paddingVertical: 6 }} testID="floors">
-            {snap.office.floors.map((f) => (
+          <View style={{ flexDirection: wide ? 'row' : 'column', alignItems: wide ? 'center' : undefined }}>
+            <Row style={{ flex: wide ? 1 : undefined, paddingHorizontal: 16, paddingVertical: wide ? 8 : 16 }}>
+              <Pressable onPress={() => setTab('device')} style={{ flex: 1 }} accessibilityRole="button" testID="office-name">
+                <Label>Droid Office / Companion</Label>
+                <Text style={s.title} numberOfLines={1}>
+                  {officeName ?? 'Droid Office'}
+                </Text>
+              </Pressable>
+              <Dot color={session.ready() ? colors.accent : colors.muted} />
+              <Label>{session.ready() ? 'Live' : 'Syncing'}</Label>
+            </Row>
+            <Row style={{ paddingHorizontal: 16, paddingBottom: wide ? 0 : 12 }}>
+              <Chip label="Workers" on={tab === 'workers'} onPress={() => setTab('workers')} testID="tab-workers" style={!wide && { flex: 1 }} />
+              <Chip label="Tools" on={tab === 'tools'} onPress={() => setTab('tools')} testID="tab-tools" style={!wide && { flex: 1 }} />
+              <Chip label="Device" on={tab === 'device'} onPress={() => setTab('device')} testID="tab-device" style={!wide && { flex: 1 }} />
+            </Row>
+          </View>
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ flexGrow: 0, borderTopWidth: 1, borderColor: colors.border }} contentContainerStyle={{ paddingHorizontal: 16, paddingVertical: 8, gap: 8 }} testID="floors">
+            {snap.office.floors.map((f, index) => (
               <Chip
                 key={f.id}
+                index={String(index + 1).padStart(2, '0')}
                 label={`${f.name}${f.waiting ? ` · ${f.waiting} waiting` : f.busy ? ` · ${f.busy} busy` : ''}`}
                 on={f.id === (snap.switching ?? snap.office.floor)}
                 disabled={!session.ready() && f.id !== snap.office.floor}
@@ -155,27 +161,29 @@ export function App({ host }: { host: MobileHost }) {
         ) : tab === 'tools' ? (
           <Tools session={session} snap={snap} onHire={() => setHiring(true)} />
         ) : wide ? (
-          <View style={{ flex: 1, flexDirection: 'row' }}>
+          <View style={{ flex: 1, flexDirection: 'row' }} onLayout={(e) => setWorkspaceWidth(e.nativeEvent.layout.width)}>
             <View style={{ width: 340, borderRightWidth: 1, borderColor: colors.border }}>
               <Roster session={session} snap={snap} wide onOpen={open} onHire={() => setHiring(true)} />
             </View>
-            <View style={{ flex: 1, flexDirection: 'row' }} testID="panes">
+            <ScrollView horizontal style={{ flex: 1 }} contentContainerStyle={{ flexGrow: 1 }} testID="panes">
               {ws.panes.length ? (
                 ws.panes.map((p) => {
                   const w = session.worker(p.workerId);
                   if (!w) return null;
                   return (
-                    <View key={p.workerId} style={{ flex: p.size }} onTouchStart={() => ws.active !== p.workerId && session.focus(p.workerId)}>
+                    <View key={p.workerId} style={{ width: Math.max(280, ((workspaceWidth - 340) / ws.panes.length) * p.size), flexGrow: 1 }} onTouchStart={() => ws.active !== p.workerId && session.focus(p.workerId)}>
                       <WorkerPane session={session} snap={snap} worker={w} view={p.view} focused={ws.active === p.workerId} onClose={() => session.close(p.workerId)} onResize={(d) => session.resize(p.workerId, p.size + d)} />
                     </View>
                   );
                 })
               ) : (
-                <View style={{ padding: 24 }}>
+                <View style={{ flex: 1, padding: 32, justifyContent: 'center', gap: 16 }}>
+                  <Eyebrow index="02">Your workspace</Eyebrow>
+                  <Text style={[s.title, { fontSize: 30, lineHeight: 38 }]}>Your floor, in focus.</Text>
                   <Text style={s.muted}>Open a worker from the list. Pin up to {MAX_COMPANION_PANES} to see them side by side.</Text>
                 </View>
               )}
-            </View>
+            </ScrollView>
           </View>
         ) : phoneConversation && active ? (
           <WorkerPane
@@ -199,7 +207,10 @@ export function App({ host }: { host: MobileHost }) {
         <Modal animationType="slide" onRequestClose={() => setSwitcher(false)}>
           <SafeAreaView style={{ flex: 1, backgroundColor: colors.bg }}>
             <Row style={{ padding: 8 }}>
-              <Text style={[s.title, { flex: 1 }]}>Switch worker</Text>
+              <View style={{ flex: 1, gap: 4 }}>
+                <Eyebrow index="01">Workers</Eyebrow>
+                <Text style={s.title}>Switch worker</Text>
+              </View>
               <Button small tone="ghost" label="Close" onPress={() => setSwitcher(false)} />
             </Row>
             <Roster
@@ -224,28 +235,24 @@ function Tools({ session, snap, onHire }: { session: Session; snap: ReturnType<S
   const Management = session.host.views.Management;
   const floorId = snap.office.floor;
   const tool = snap.tool;
+  const entries = TOOLS.filter((t) => t.listed);
+  const choose = (id: (typeof TOOLS)[number]['id']) => {
+    const why = session.toolRefusal(id);
+    if (why) session.toast(why, 'warn');
+    else if (id === 'hire') onHire();
+    else if (tool?.id === id) session.closeTool();
+    else session.openTool(id);
+  };
   return (
     <View style={{ flex: 1 }} testID="tools">
-      <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ flexGrow: 0, padding: 8 }}>
-        {TOOLS.filter((t) => t.listed).map((t) => {
-          const why = session.toolRefusal(t.id);
-          return (
-            <Chip
-              key={t.id}
-              label={`${t.icon} ${t.label}`}
-              on={tool?.id === t.id}
-              onPress={() => {
-                if (why) session.toast(why, 'warn');
-                else if (t.id === 'hire') onHire();
-                else if (tool?.id === t.id) session.closeTool();
-                else session.openTool(t.id);
-              }}
-              hint={why}
-              testID={`tool-${t.id}`}
-            />
-          );
-        })}
-      </ScrollView>
+      {tool ? (
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ flexGrow: 0 }} contentContainerStyle={{ padding: 12, gap: 8 }}>
+          <Button label="‹ Tools" onPress={() => session.closeTool()} testID="tools-back" />
+          {entries.map((t) => (
+            <Chip key={t.id} label={t.label} on={tool.id === t.id} onPress={() => choose(t.id)} hint={session.toolRefusal(t.id)} testID={`tool-${t.id}`} />
+          ))}
+        </ScrollView>
+      ) : null}
       {tool && floorId ? (
         <Management
           key={`${floorId}:${tool.id}:${JSON.stringify(tool.args)}`}
@@ -259,8 +266,39 @@ function Tools({ session, snap, onHire }: { session: Session; snap: ReturnType<S
           style={{ flex: 1 }}
         />
       ) : (
-        <ScrollView style={{ padding: 16 }} contentContainerStyle={{ gap: 8 }}>
-          <Text style={s.muted}>{floorId ? 'Choose a tool. Your panes and drafts stay as they are.' : 'Waiting for the office…'}</Text>
+        <ScrollView contentContainerStyle={{ padding: 20, gap: 16 }}>
+          <Eyebrow index="03">Office tools</Eyebrow>
+          <Text style={[s.title, { fontSize: 28, lineHeight: 36 }]}>Behind the work.</Text>
+          <Text style={s.muted}>{floorId ? 'Your boards, repositories and office. Panes and drafts stay right where you left them.' : 'Waiting for the office…'}</Text>
+          {[...new Set(entries.map((t) => t.group))].map((group, index) => (
+            <View key={group} style={{ gap: 8 }}>
+              <Eyebrow index={String(index + 1).padStart(2, '0')}>{group}</Eyebrow>
+              <View style={{ borderWidth: 1, borderColor: colors.border, borderRadius: 3 }}>
+                {entries
+                  .filter((t) => t.group === group)
+                  .map((t) => {
+                    const why = session.toolRefusal(t.id);
+                    return (
+                      <Pressable
+                        key={t.id}
+                        onPress={() => choose(t.id)}
+                        accessibilityRole="button"
+                        accessibilityLabel={t.label}
+                        accessibilityHint={why}
+                        testID={`tool-${t.id}`}
+                        style={({ pressed }) => ({ padding: 16, borderBottomWidth: 1, borderColor: colors.border, backgroundColor: pressed ? colors.raised : colors.surface, gap: 4 })}
+                      >
+                        <Row>
+                          <Text style={[s.text, { flex: 1, color: why ? colors.muted : colors.text }]}>{t.label}</Text>
+                          <Text style={[s.label, { color: why ? colors.tertiary : colors.muted }]}>↗</Text>
+                        </Row>
+                        {why ? <Text style={s.muted}>{why}</Text> : null}
+                      </Pressable>
+                    );
+                  })}
+              </View>
+            </View>
+          ))}
           <Label>Only on the office’s own computer</Label>
           {NOT_OFFERED.map((n) => (
             <Text key={n.id} style={s.muted}>
@@ -275,10 +313,12 @@ function Tools({ session, snap, onHire }: { session: Session; snap: ReturnType<S
 
 function Device({ host, session, snap }: { host: MobileHost; session: Session; snap: ReturnType<Session['snapshot']> }) {
   return (
-    <ScrollView style={{ padding: 12 }} contentContainerStyle={{ gap: 10 }} testID="device">
-      <Label>Offices</Label>
+    <ScrollView contentContainerStyle={{ padding: 20, gap: 16 }} testID="device">
+      <Eyebrow index="04">Connection</Eyebrow>
+      <Text style={[s.title, { fontSize: 28, lineHeight: 36 }]}>Your offices.</Text>
+      <Label>Paired offices</Label>
       {snap.offices.offices.map((o) => (
-        <Row key={o.id}>
+        <Row key={o.id} style={{ paddingVertical: 16, borderBottomWidth: 1, borderColor: colors.border }}>
           <Text style={[s.text, { flex: 1 }]}>
             {o.name}
             {o.where ? <Text style={s.muted}> · {o.where}</Text> : null}

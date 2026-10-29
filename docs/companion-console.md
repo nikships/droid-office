@@ -10,7 +10,9 @@ Agent rows show name, task, status, parent, model, reasoning effort, current act
 
 On wide screens the roster stays available beside one to four distinct pinned worker panes. Dividers resize the workspace; one pane can take focus without discarding the others. A phone shows one conversation with a quick worker switcher and previous/next controls. New local Droid panes open in Thread; Raw TTY remains available.
 
-Visual styling is a separate pass. This work covers usable controls, state, routing, capability checks and lifecycle behavior, not a new visual design.
+The web and native workspaces share the Factory dark product treatment: flat near-black surfaces, hairline borders, 3px corners, uppercase monospace controls and orange numbered section labels. Primary actions invert to off-white rather than orange fills. Live counts summarize the current floor; worker colors remain small identity markers.
+
+The roster separates task, activity, model and supervision metadata. Wide screens keep the tool rail and roster beside the pane workspace. Phones separate worker navigation from conversation actions, and show a grouped tool directory instead of a strip of decorative icons. Thread messages, explicit-submit questions, hire and confirmation surfaces follow the same tokens. The desktop first-person office is unchanged.
 
 ## State and lifecycle
 
