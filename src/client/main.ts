@@ -3979,7 +3979,7 @@ function drawFrame(dt: number, t: number, frame: { at: number; paced: boolean })
   if (remaster.active) {
     remaster.gi.paused = upTop;
     remaster.gi.budgetMs = bakeBudget(settings.graphics.fpsCap, renderLoop.refreshMs);
-    remaster.gi.setKey(bakeKey(remasterParams, settings.graphics.overhead, SCENE_HASH || bootVersion));
+    remaster.gi.setKey(bakeKey(remasterParams, settings.graphics.overhead, SCENE_HASH));
     remaster.draw(() => effect.render(scene, camera));
   } else upscaler.draw(camera, () => effect.render(scene, camera));
   const sceneEnd = performance.now();

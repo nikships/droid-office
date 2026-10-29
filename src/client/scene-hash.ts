@@ -3,6 +3,6 @@ declare const __SCENE_HASH__: string | undefined;
 
 /**
  * A hash of what the baked bounce light is a picture of: the scene's code and models, its layout and three.js.
- * '' when the build has none, and then the saved bake is keyed by the office's version instead.
+ * '' only where the client runs without Vite (a test), and then nothing is baked or saved.
  */
 export const SCENE_HASH: string = typeof __SCENE_HASH__ === 'string' ? __SCENE_HASH__ : '';

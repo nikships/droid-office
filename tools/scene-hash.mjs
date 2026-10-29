@@ -7,7 +7,7 @@ import path from 'node:path';
  * models, the layout and sun it is built from, the bake's own settings, and three.js, which writes the shaders the
  * probes see the room through. Each is a path under the repository, a folder meaning every file in it.
  */
-export const SCENE_INPUTS = ['src/client/world', 'src/client/public/props', 'src/client/remaster-settings.ts', 'src/shared/layout.ts', 'src/shared/sun.ts', 'src/shared/decor.ts', 'node_modules/three/package.json'];
+export const SCENE_INPUTS = ['src/client/world', 'src/client/public/props', 'src/client/remaster-settings.ts', 'src/shared/layout.ts', 'src/shared/sun.ts', 'src/shared/decor.ts', 'src/shared/floors.ts', 'node_modules/three/package.json'];
 
 function files(entry) {
   if (!statSync(entry).isDirectory()) return [entry];
