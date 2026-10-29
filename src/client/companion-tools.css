@@ -1,5 +1,6 @@
 /* A management tool inside a companion's workspace (companion-tools.ts): the same window the 3D office
    opens, filling its mount instead of floating over the page. Only layout; the window keeps its kit. */
+.cth-mount { display: flex; height: 100%; min-height: 0; }
 .inline-window { display: flex; flex-direction: column; flex: 1; min-height: 0; height: 100%; }
 .inline-window > .modal { width: 100%; height: 100%; max-height: none; flex: 1; min-height: 0; border-radius: 0; box-shadow: none; animation: none; }
 .host-only { margin: 0; }

@@ -32,6 +32,16 @@ test('the Android management page loads nothing from the network but through the
   assert.doesNotMatch(css, /url\(\s*['"]?https?:/);
 });
 
+test('the native management mount gives full-height windows a definite height', () => {
+  const html = readFileSync(path.join(COMPANION_TOOLS_DIR, 'index.html'), 'utf8');
+  assert.match(html, /class="cth-mount"/);
+  const css = readFileSync(path.join(COMPANION_TOOLS_DIR, 'tools.css'), 'utf8');
+  const mount = css.match(/\.cth-mount\s*\{([^}]+)\}/)?.[1];
+  assert.ok(mount);
+  assert.match(mount, /(?:^|;)\s*height:\s*100%(?:;|$)/);
+  assert.match(mount, /(?:^|;)\s*display:\s*flex(?:;|$)/);
+});
+
 /** `import type …`, or braces of nothing but `type` names: erased by the build, so nothing is loaded. */
 function typeOnly(statement: string): boolean {
   if (/^(?:import|export)\s+type\s/.test(statement)) return true;
