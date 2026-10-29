@@ -14,6 +14,8 @@ const CHROME = `
   }
   .dashboard .dash-top :is(button, select, a) { -webkit-app-region: no-drag; }
   .dashboard .dash-floor-strip { -webkit-app-region: no-drag; }
+  /* A modal covers the title bar too: its controls must receive native clicks, not window drags. */
+  .dashboard .backdrop { -webkit-app-region: no-drag; }
   .dashboard .dash-top .dash-office { max-width: 180px; }
 `;
 
