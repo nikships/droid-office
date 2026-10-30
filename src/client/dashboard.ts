@@ -1,20 +1,16 @@
 import type { ClientMsg, WorkerInfo } from '../shared/protocol';
-import { isAsleep, isBusy } from '../shared/status';
-import { statusWord } from '../shared/guests';
 import { cardsNewestFirst, cardChanged, OWNER } from '../shared/whiteboard';
 import { ROOF } from '../shared/rooftop';
 import { DESK_BY_ID } from '../shared/layout';
 import { originKind, type OriginKind } from '../shared/devices';
 import { BROWSER_KEY, DASHBOARD_FLOOR_KEY, browserCredential, draftKey, forgetBrowserCredential, isBrowserCredential, saveBrowserCredential, type BrowserCredential } from './browser-session';
 import { Net } from './net';
-import { doingLine, workerKind as kind } from './worker-words';
 import { connectWhiteboard, store } from './state';
 import { setBrowserAuth, withToken } from './token';
-import { $, closeAllModals, h, modalOpen, openModal, STATUS_LABEL, toast } from './ui/dom';
+import { $, closeAllModals, h, modalOpen, openModal, toast } from './ui/dom';
 import { windowHeader } from './ui/kit';
 import { icon, type IconName } from './ui/icons';
 import { confirmDialog, openPrompt, routeWorktreeMessage, sendHomeDialog } from './ui/prompt';
-import { modelBadge } from './ui/models';
 import { openFloorOrder } from './ui/floor-reorder';
 import { openSubscriptionsStatus } from './ui/subscriptions-status';
 import { onTermFontSize, setTermFontSize, stepTermFont, termFontSize, TERM_FONT_MAX, TERM_FONT_MIN } from './ui/term-font';
@@ -26,8 +22,10 @@ import {
   clampRatio,
   closeSlot,
   emptyWorkspace,
+  fillPanes,
   FULL_RECT,
   focusedWorker,
+  LAYOUT_DIVIDERS,
   LAYOUT_LABEL,
   LAYOUT_ORDER,
   type LayoutMode,
@@ -42,16 +40,16 @@ import {
   seedWorkspace,
   serializeWorkspace,
   setLayout,
-  shortDuration,
   SLOT_COUNT,
   swap,
   toggleMax,
   visibleSlots,
-  workedFor,
   workerView,
   type Workspace,
 } from './dashboard-workspace';
-import { createPane, type Pane, type PaneHost, VIEW_KEY, WORKER_MIME, workerDot, workingBars } from './dashboard-pane';
+import { createPane, type Pane, type PaneHost, VIEW_KEY } from './dashboard-pane';
+import { createWorkerRoster } from './dashboard-roster';
+import { workerTeams } from './dashboard-teams';
 const read = (key: string) => {
   try {
     return localStorage.getItem(key) ?? '';
@@ -143,6 +141,7 @@ const sideSub = h('p.dash-side-sub');
 const agentBtn = h('button.btn.accent.dash-hire', { type: 'button', title: 'Hire a Droid on this floor (⌘ N)', onclick: () => hire('agent') }, icon('plus', 14), h('span', {}, 'Hire Droid'));
 const shellBtn = h('button.btn.dash-hire', { type: 'button', title: 'Open a plain shell at a desk', onclick: () => hire('shell') }, icon('terminal', 14), h('span', {}, 'Shell'));
 const workerList = h('nav.dash-workers', { 'aria-label': 'Workers' });
+const roster = createWorkerRoster(workerList, (id) => openHere(id, true), openBesideHere);
 const side = h(
   'aside.dash-side',
   { 'aria-label': 'Floor' },
@@ -151,32 +150,24 @@ const side = h(
   h('footer.dash-side-foot', {}, h('div.dash-side-hire', {}, agentBtn, shellBtn), h('div.dash-keys', { 'aria-hidden': 'true' }, ...keyHints(WORKSPACE_KEY_HINTS))),
 );
 
-/** The layout switcher's little pictures: the boxes each layout splits the workspace into. */
-const SHAPES: Record<LayoutMode, [number, number, number, number][]> = {
-  single: [[1, 1, 16, 12]],
-  split: [
-    [1, 1, 7.25, 12],
-    [9.75, 1, 7.25, 12],
-  ],
-  triple: [
-    [1, 1, 7.25, 12],
-    [9.75, 1, 7.25, 5.25],
-    [9.75, 7.75, 7.25, 5.25],
-  ],
-  grid: [
-    [1, 1, 7.25, 5.25],
-    [9.75, 1, 7.25, 5.25],
-    [1, 7.75, 7.25, 5.25],
-    [9.75, 7.75, 7.25, 5.25],
-  ],
-};
+/** The layout switcher's little pictures: the same boxes the layout puts its panes in. */
 function layoutGlyph(mode: LayoutMode) {
   const ns = 'http://www.w3.org/2000/svg';
   const svg = document.createElementNS(ns, 'svg');
   for (const [k, v] of Object.entries({ width: '18', height: '14', viewBox: '0 0 18 14', 'aria-hidden': 'true' })) svg.setAttribute(k, v);
-  SHAPES[mode].forEach(([x, y, width, height], i) => {
+  const rects = rectsFor(mode, 0.5, 0.5);
+  const half = rects.length > 4 ? 0.5 : 0.75;
+  rects.forEach(([x, y, w, hgt], i) => {
+    const inset = (inner: boolean) => (inner ? half : 0);
     const rect = document.createElementNS(ns, 'rect');
-    for (const [k, v] of Object.entries({ x, y, width, height, rx: 1.6 })) rect.setAttribute(k, String(v));
+    const box = {
+      x: 1 + x * 16 + inset(x > 0.001),
+      y: 1 + y * 12 + inset(y > 0.001),
+      width: Math.max(1.5, w * 16 - inset(x > 0.001) - inset(x + w < 0.999)),
+      height: Math.max(1.5, hgt * 12 - inset(y > 0.001) - inset(y + hgt < 0.999)),
+      rx: 1.2,
+    };
+    for (const [k, v] of Object.entries(box)) rect.setAttribute(k, String(v));
     if (i === 0) rect.classList.add('lead');
     svg.append(rect);
   });
@@ -242,12 +233,17 @@ const panes: (Pane | undefined)[] = [];
 let takeFocus = true;
 /** Names of the workers seen, to say who left after they're gone from the store. */
 const names = new Map<string, string>();
+/** Who was on the floor at the last paint, so a worker arriving from anywhere fills an empty pane. */
+const onFloor = new Set<string>();
+/** The floor's workers in sidebar order: the order empty panes fill in. */
+const staff = () => ordered().map((w) => w.id);
 
 function loadWorkspace(f: string) {
   disposePanes();
   wsFloor = f;
-  ws = parseWorkspace(read(`${WS_KEY}:${f}`)) ?? seedWorkspace(ordered().map((w) => w.id));
+  ws = parseWorkspace(read(`${WS_KEY}:${f}`)) ?? seedWorkspace(staff());
   prune(ws, (id) => store.workers.has(id));
+  fillPanes(ws, staff());
 }
 function saveWorkspace() {
   if (wsFloor) remember(`${WS_KEY}:${wsFloor}`, serializeWorkspace(ws));
@@ -265,6 +261,7 @@ function viewOf(id: string) {
 }
 function changeLayout(mode: LayoutMode) {
   setLayout(ws, mode);
+  fillPanes(ws, staff());
   changed();
 }
 function toggleMaxPane(i: number) {
@@ -274,16 +271,18 @@ function toggleMaxPane(i: number) {
 /** Opens a worker in the workspace; `focusIt` puts the keyboard in it as well. */
 function openHere(id: string, focusIt = false, targetPane?: number) {
   if (!store.workers.has(id)) return;
+  roster.reveal(id);
   openWorker(ws, id, targetPane);
   takeFocus = focusIt;
   changed();
   takeFocus = true;
   if (focusIt) panes[ws.focused]?.focusContent();
-  rows.get(id)?.wrap.scrollIntoView({ block: 'nearest' });
+  roster.scrollTo(id);
 }
 function openBesideHere(id: string) {
   if (!store.workers.has(id)) return;
   openInSplit(ws, id);
+  fillPanes(ws, staff());
   changed();
 }
 async function loadTerminal() {
@@ -592,28 +591,8 @@ function say(text: string) {
 
 // --- Painting ----------------------------------------------------------------------------------------
 
-/** The order of the sidebar's groups, and which workers fall in each. */
-const GROUPS: { title: string; tone: string; has: (w: WorkerInfo) => boolean }[] = [
-  { title: 'Needs you', tone: 'danger', has: (w) => w.status === 'needs_input' },
-  { title: 'Working', tone: 'warning', has: (w) => isBusy(w.status) },
-  { title: 'Ready', tone: 'quiet', has: (w) => !isBusy(w.status) && !isAsleep(w.status) },
-  { title: 'Asleep', tone: 'faint', has: (w) => isAsleep(w.status) },
-];
-function grouped(): { title: string; tone: string; workers: WorkerInfo[] }[] {
-  const all = [...store.workers.values()].sort((a, b) => a.createdAt - b.createdAt);
-  const left = new Set(all);
-  return GROUPS.map((g) => {
-    const workers = [...left].filter(g.has);
-    for (const w of workers) left.delete(w);
-    return { title: g.title, tone: g.tone, workers };
-  }).filter((g) => g.workers.length);
-}
 /** Workers in the order the sidebar lists them, for the arrow keys. */
-const ordered = () => grouped().flatMap((g) => g.workers);
-
-function pill(w: WorkerInfo) {
-  return h('span.pill', { class: w.status }, statusWord(w, STATUS_LABEL));
-}
+const ordered = () => workerTeams([...store.workers.values()]).flatMap((team) => [team.lead, ...team.children]);
 
 let floorListKey = '';
 let shownFloor: string | null | undefined;
@@ -686,7 +665,14 @@ function paint() {
   if (fresh && wsFloor === floor) {
     const gone = prune(ws, (id) => store.workers.has(id));
     for (const id of gone) toast(`${names.get(id) ?? 'A worker'} has left the floor.`, 'info');
-    if (gone.length) saveWorkspace();
+    // A pane never sits empty beside someone who could be in it: a worker arriving from anywhere (a
+    // hire made by a lead or the CLI, a resume, or one who was out of sight) takes the first free pane.
+    const ids = staff();
+    const arrived = ids.some((id) => !onFloor.has(id));
+    onFloor.clear();
+    for (const id of ids) onFloor.add(id);
+    const filled = gone.length || arrived ? fillPanes(ws, ids) : false;
+    if (gone.length || filled) saveWorkspace();
   }
   for (const w of store.workers.values()) names.set(w.id, w.name);
   paintSide();
@@ -811,83 +797,13 @@ function paintGate() {
   authPanel.replaceChildren(h('div.dash-gate-card', {}, ...views[gate](), whereChip));
 }
 
-type Row = { wrap: HTMLElement; el: HTMLButtonElement; split: HTMLButtonElement; key: string };
-/** Sidebar rows are kept per worker, so hover, focus and drags survive repaints. */
-const rows = new Map<string, Row>();
-
-/** What sits at the end of a worker's row: why it wants you, or that it's working. */
-function rowState(w: WorkerInfo) {
-  if (w.status === 'needs_input' || (w.status === 'done' && !w.acked)) return pill(w);
-  if (isBusy(w.status)) return workingBars(statusWord(w, STATUS_LABEL));
-  return null;
-}
-
 function paintSide() {
   const here = store.currentFloor();
   sideTitle.textContent = store.floor === ROOF ? 'Rooftop' : (here?.name ?? 'No floor');
   sideTitle.title = sideTitle.textContent;
   const where = here ? [here.repo ?? 'Not a git repository', here.branch].filter(Boolean).join(' · ') : store.floors.length ? 'Choose a floor above.' : 'No floors yet. Add a project from the office itself.';
   sideSub.replaceChildren(icon('branch', 12), h('span', { title: where }, where));
-  const up = live();
-  const now = Date.now();
-  const seen = new Set<string>();
-  const children: HTMLElement[] = [];
-  for (const g of grouped()) {
-    children.push(h('div.dash-group', { 'data-tone': g.tone }, h('span', {}, g.title), h('span.dash-group-count', {}, String(g.workers.length))));
-    for (const w of g.workers) {
-      seen.add(w.id);
-      const pane = paneOf(ws, w.id);
-      const worked = workedFor(w.workedMs, w.workingSince, now);
-      const meta = [w.kind === 'agent' && !w.guest ? modelBadge(w.activeModel ?? w.model, w.activeEffort ?? w.effort) : kind(w), worked >= 1000 ? shortDuration(worked) : ''].filter(Boolean).join(' · ');
-      const key = JSON.stringify([w.name, w.color, w.status, w.acked, doingLine(w), statusWord(w, STATUS_LABEL), meta, pane, up]);
-      let row = rows.get(w.id);
-      if (!row) {
-        const el = h('button.dash-row-open', { type: 'button', 'data-worker': w.id, draggable: 'true', onclick: () => openHere(w.id, true) }) as HTMLButtonElement;
-        el.addEventListener('dragstart', (e) => {
-          e.dataTransfer?.setData(WORKER_MIME, w.id);
-          if (e.dataTransfer) e.dataTransfer.effectAllowed = 'copyMove';
-        });
-        const split = h('button.btn.icon.sm.ghost.dash-row-split', { type: 'button', onclick: () => openBesideHere(w.id) }, icon('columns', 13)) as HTMLButtonElement;
-        row = { wrap: h('div.dash-row', {}, el, split), el, split, key: '' };
-        rows.set(w.id, row);
-      }
-      if (row.key !== key) {
-        row.key = key;
-        row.wrap.classList.toggle('attn', w.status === 'needs_input');
-        row.wrap.classList.toggle('asleep', isAsleep(w.status));
-        row.el.title = `${w.name} · ${kind(w)}`;
-        row.el.setAttribute('aria-label', `Open ${w.name}, ${statusWord(w, STATUS_LABEL)}: ${doingLine(w)}`);
-        row.split.setAttribute('aria-label', `Open ${w.name} in a new pane`);
-        row.split.title = 'Open in a new pane';
-        row.split.disabled = !up;
-        row.el.replaceChildren(
-          workerDot(w),
-          h(
-            'span.dash-row-main',
-            {},
-            h('span.dash-row-top', {}, h('span.dash-row-name', {}, w.name), pane >= 0 ? h('span.dash-row-pane', { title: `In pane ${pane + 1}` }, `P${pane + 1}`) : null, h('span.dash-row-state', {}, rowState(w))),
-            h('span.dash-row-doing', {}, doingLine(w)),
-            h('span.dash-row-meta', {}, meta),
-          ),
-        );
-      }
-      children.push(row.wrap);
-    }
-  }
-  for (const id of [...rows.keys()]) if (!seen.has(id)) rows.delete(id);
-  if (!seen.size) children.push(h('p.dash-side-empty', {}, up ? 'Nobody on this floor yet.' : 'Waiting for the office…'));
-  const focused = document.activeElement;
-  const had = focused instanceof HTMLElement && workerList.contains(focused) ? (focused.closest<HTMLElement>('.dash-row')?.querySelector<HTMLElement>('[data-worker]')?.dataset.worker ?? '') : '';
-  const split = focused instanceof HTMLElement && focused.classList.contains('dash-row-split');
-  workerList.replaceChildren(...children);
-  const back = had ? rows.get(had) : undefined;
-  const target = split ? back?.split : back?.el;
-  if (target && document.activeElement !== target) target.focus({ preventScroll: true });
-  const lit = focusedWorker(ws) ?? '';
-  for (const [id, r] of rows) {
-    r.wrap.classList.toggle('on', id === lit);
-    r.el.setAttribute('aria-current', id === lit ? 'true' : 'false');
-  }
+  roster.update({ floor, workers: [...store.workers.values()], focused: focusedWorker(ws) ?? '', live: live(), pane: (id) => paneOf(ws, id) });
 }
 
 function paintWorkspace() {
@@ -921,8 +837,9 @@ function paintWorkspace() {
   }
   workspaceEl.dataset.layout = ws.layout;
   const handles = ws.maximized === null;
-  colHandle.hidden = !handles || ws.layout === 'single';
-  rowHandle.hidden = !handles || (ws.layout !== 'triple' && ws.layout !== 'grid');
+  const dividers = LAYOUT_DIVIDERS[ws.layout];
+  colHandle.hidden = !handles || !dividers.col;
+  rowHandle.hidden = !handles || !dividers.row;
   colHandle.style.setProperty('--at', String(ws.col));
   rowHandle.style.setProperty('--at', String(ws.row));
   rowHandle.style.setProperty('--from', ws.layout === 'triple' ? String(ws.col) : '0');
@@ -1147,8 +1064,10 @@ window.addEventListener(
           break;
         case 'sidebar':
           toggleSide();
-          if (sideOpen) (rows.get(focusedWorker(ws) ?? '')?.el ?? agentBtn).focus({ preventScroll: true });
-          else panes[ws.focused]?.focusContent();
+          if (sideOpen) {
+            roster.reveal(focusedWorker(ws) ?? '');
+            (roster.button(focusedWorker(ws) ?? '') ?? agentBtn).focus({ preventScroll: true });
+          } else panes[ws.focused]?.focusContent();
           break;
       }
     });
@@ -1160,13 +1079,13 @@ workerList.addEventListener('keydown', (e) => {
   if (!authorized || modalOpen() || e.metaKey || e.ctrlKey || e.altKey || e.isComposing) return;
   const t = e.target as HTMLElement | null;
   if (t?.closest('input, textarea, select, [contenteditable], .xterm, [role=separator], [role=radiogroup]')) return;
-  const list = ordered();
+  const list = roster.visible();
   const at = list.findIndex((w) => w.id === focusedWorker(ws));
   const go = (i: number) => {
     const w = list[(i + list.length) % list.length];
     if (!w) return;
     openHere(w.id);
-    rows.get(w.id)?.el.focus({ preventScroll: true });
+    roster.button(w.id)?.focus({ preventScroll: true });
   };
   const k = e.key.length === 1 ? e.key.toLowerCase() : e.key;
   if (k === 'ArrowDown' || k === 'j') go(at + 1);

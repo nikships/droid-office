@@ -5,7 +5,7 @@ export type WorkspaceCommand = { action: 'layout'; mode: LayoutMode } | { action
 type ShortcutEvent = Pick<KeyboardEvent, 'key' | 'metaKey' | 'ctrlKey' | 'altKey' | 'shiftKey' | 'isComposing' | 'defaultPrevented' | 'repeat' | 'preventDefault' | 'stopImmediatePropagation'>;
 
 export const WORKSPACE_KEY_HINTS: [string, string][] = [
-  ['⌘ 1–4', 'layout'],
+  ['⌘ 1–8', 'layout'],
   ['⌘ ↵', 'maximize / restore'],
   ['⌘ ← →', 'panes'],
   ['⌘ ↑ ↓', 'workers'],
@@ -18,7 +18,7 @@ export const WORKSPACE_KEY_HINTS: [string, string][] = [
 export function workspaceCommand(e: ShortcutEvent): WorkspaceCommand | undefined {
   if (e.defaultPrevented || !e.metaKey || e.ctrlKey || e.altKey || e.shiftKey || e.isComposing) return;
   const mode = LAYOUT_ORDER[Number(e.key) - 1];
-  if (/^[1-4]$/.test(e.key) && mode) return { action: 'layout', mode };
+  if (/^[1-8]$/.test(e.key) && mode) return { action: 'layout', mode };
   switch (e.key.toLowerCase()) {
     case 'enter':
       return { action: 'maximize' };

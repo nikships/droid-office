@@ -86,6 +86,8 @@ export interface InlineTerminal {
   onLeave?: () => void;
   /** Take the keyboard once it has loaded. Defaults to true; a pane opened beside others leaves focus where it is. */
   focus?: boolean;
+  /** The containing pane already provides navigation between team members. */
+  hideTeam?: boolean;
 }
 
 /**
@@ -204,6 +206,7 @@ export function openTerminal(net: Net, workerId: string, onChanges?: () => void,
     host,
   );
   const paintTeam = (w: WorkerInfo) => {
+    if (inline?.hideTeam) return;
     const lead = w.lead ? store.workers.get(w.lead) : undefined;
     const mates = lead ? store.teamOf(lead.id).filter((s) => s.id !== w.id) : store.teamOf(w.id);
     const key = [lead, ...mates].map((x) => x && `${x.id}:${x.name}:${x.status}:${x.title ?? ''}`).join('|');
