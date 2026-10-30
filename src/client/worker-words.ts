@@ -1,5 +1,4 @@
-// How the companion words a worker on its tags, cards and rows. No DOM, so the web companion and the
-// Android tablet overview (android-overview.ts) say the same thing.
+// How the companion words a worker on its cards and rows.
 
 import { PROVIDER_LABEL } from '../shared/guests';
 import type { WorkerInfo } from '../shared/protocol';

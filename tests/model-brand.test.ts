@@ -69,7 +69,7 @@ test('Android worker logos share active-model and catalogue-provider wiring on e
   assert.match(component, /val id = Workers\.modelId\(worker\) \?: return/);
   assert.match(component, /catalogue\?\.models\?\.firstOrNull \{ it\.id == id \}/);
   assert.match(component, /ModelLogo\(id, model\?\.displayName, model\?\.provider, modifier\)/);
-  for (const file of ['home/HomeScreen.kt', 'worker/WorkerScreen.kt', 'overview/OverviewScreen.kt']) {
+  for (const file of ['home/HomeScreen.kt', 'worker/WorkerScreen.kt']) {
     const screen = readFileSync(new URL(file, root), 'utf8');
     assert.match(screen, /WorkerModelLogo\(w, catalogue,/, file);
     assert.doesNotMatch(screen, /\bModelLogo\(/, file);

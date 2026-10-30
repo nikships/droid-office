@@ -112,8 +112,5 @@ object OfficeIcons {
     val Shell = icon("Shell", "M4 17.5l5-5.5-5-5.5", "M11.5 18h8.5")
     val Plus = icon("Plus", "M12 5v14", "M5 12h14")
     val Minus = icon("Minus", "M5 12h14")
-    val Map = icon("Map", "M9 4.5L3.5 6.5v13l5.5-2 6 2 5.5-2v-13l-5.5 2z", "M9 4.5v13", "M15 6.5v13")
-    val Rows = icon("Rows", "M4 6h16", "M4 12h16", "M4 18h16")
-    val Recenter = icon("Recenter", "M12 3v3", "M12 18v3", "M3 12h3", "M18 12h3", "M12 7a5 5 0 1 0 0 10a5 5 0 1 0 0-10z")
     val Agent = icon("Agent", "M7 7.5a5 5 0 0 1 10 0V12a5 5 0 0 1-10 0z", "M9.8 9.6h.01", "M14.2 9.6h.01", "M9.8 13a3 3 0 0 0 4.4 0", "M4.5 20.5a8.5 8.5 0 0 1 15 0", "M12 2.5v0")
 }
