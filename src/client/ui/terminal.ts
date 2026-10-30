@@ -86,18 +86,37 @@ export interface InlineTerminal {
   actions?: HTMLElement;
   /** Ctrl+] in the terminal: leave it. Without one, Ctrl+] goes to the program. */
   onLeave?: () => void;
+  /** Take the keyboard once it has loaded. Defaults to true; a pane opened beside others leaves focus where it is. */
+  focus?: boolean;
+}
+
+/**
+ * An inline terminal. Any number can be open at once, one per worker, and none of them is the
+ * terminal window that `openTerminalFor` and `closeTerminal` speak of.
+ */
+export interface InlineTerminalHandle {
+  workerId: string;
+  close(): void;
+  focus(): void;
+  /** Asks the office for a fresh snapshot, after a reconnect. */
+  attach(): void;
 }
 
 /**
  * Opens a worker's terminal in a window. With `inline`, it fills `inline.mount` instead: no window,
- * backdrop or ✕, and Esc goes to the program. The caller closes it with `closeTerminal`.
+ * backdrop or ✕, and Esc goes to the program. It doesn't replace the terminal window or other inline
+ * terminals; the caller closes it with the handle this returns.
  */
-export function openTerminal(net: Net, workerId: string, onChanges?: () => void, find?: TerminalFind, inline?: InlineTerminal) {
-  if (current?.workerId === workerId) {
-    if (find) current.find(find);
-    return;
+export function openTerminal(net: Net, workerId: string, onChanges?: () => void, find?: TerminalFind): void;
+export function openTerminal(net: Net, workerId: string, onChanges: (() => void) | undefined, find: TerminalFind | undefined, inline: InlineTerminal): InlineTerminalHandle | undefined;
+export function openTerminal(net: Net, workerId: string, onChanges?: () => void, find?: TerminalFind, inline?: InlineTerminal): InlineTerminalHandle | undefined {
+  if (!inline) {
+    if (current?.workerId === workerId) {
+      if (find) current.find(find);
+      return;
+    }
+    current?.modal.close();
   }
-  current?.modal.close();
   const info = store.workers.get(workerId);
   if (!info) return;
 
@@ -183,6 +202,7 @@ export function openTerminal(net: Net, workerId: string, onChanges?: () => void,
 
   const offQueries = suppressMirrorQueries(term);
   let opened = false;
+  let alive = true;
   let lastSentSize = '';
   /**
    * Whether another window already had this terminal open when this one attached. Merely
@@ -337,6 +357,7 @@ export function openTerminal(net: Net, workerId: string, onChanges?: () => void,
     ro.disconnect();
     net.send({ t: 'worker.detach', workerId });
     term.dispose();
+    alive = false;
     if (current?.modal === modal) current = null;
   };
   let modal: Modal;
@@ -370,14 +391,15 @@ export function openTerminal(net: Net, workerId: string, onChanges?: () => void,
       onClose,
     });
   const csiEnter = () => wantsCsiEnter(store.workers.get(workerId)?.kind);
-  current = {
-    workerId,
-    modal,
-    find: (f) => {
-      if (mirror.ready) jumpTo(f);
-      else pendingFind = f;
-    },
-  };
+  if (!inline)
+    current = {
+      workerId,
+      modal,
+      find: (f) => {
+        if (mirror.ready) jumpTo(f);
+        else pendingFind = f;
+      },
+    };
   const paintZoom = (px: number) => {
     smaller.toggleAttribute('disabled', px <= TERM_FONT_MIN);
     bigger.toggleAttribute('disabled', px >= TERM_FONT_MAX);
@@ -432,7 +454,7 @@ export function openTerminal(net: Net, workerId: string, onChanges?: () => void,
     el.classList.toggle('uploading', ++uploading > 0);
     try {
       const paths = await Promise.all(files.map((f) => uploadDrop(workerId, f)));
-      if (current?.modal !== modal || !mirror.ready || !net.up) return;
+      if (!alive || !mirror.ready || !net.up) return;
       sendSize(true);
       term.paste(droppedPaths(paths));
       term.focus();
@@ -487,16 +509,25 @@ export function openTerminal(net: Net, workerId: string, onChanges?: () => void,
   // xterm caches glyph widths when it opens. Opening after the shared font load prevents a
   // slow first visit from retaining fallback measurements even after the icons arrive.
   void loadFonts().then(() => {
-    if (current?.modal !== modal) return;
+    if (!alive) return;
     term.open(host);
     opened = true;
     ro.observe(host);
     adoptSharedSize = store.workers.get(workerId)?.open === true;
     net.send({ t: 'worker.attach', workerId });
     setTimeout(() => {
-      if (current?.modal === modal) term.focus();
+      if (alive && inline?.focus !== false) term.focus();
     }, 50);
   });
+  if (!inline) return;
+  return {
+    workerId,
+    close: () => modal.close(),
+    focus: () => term.focus(),
+    attach: () => {
+      if (alive && opened) net.send({ t: 'worker.attach', workerId });
+    },
+  };
 }
 
 /**
