@@ -52,8 +52,6 @@ export interface PaneHost {
   openBeside(id: string): void;
   sendHome(w: WorkerInfo): void;
   hire(index: number): void;
-  /** Ctrl+] in a terminal: back to the worker's row in the sidebar. */
-  leave(id: string): void;
 }
 
 export interface PaneState {
@@ -286,7 +284,7 @@ export function createPane(host: PaneHost, index: number): Pane {
     const terminal = await host.terminal();
     opening = false;
     if (disposed || mode !== 'terminal' || id !== wid || term || !stage.isConnected || !host.usable(wid, intended)) return;
-    term = terminal.openTerminal(host.net, wid, undefined, undefined, { mount: stage, onLeave: () => host.leave(wid), focus: takeFocus });
+    term = terminal.openTerminal(host.net, wid, undefined, undefined, { mount: stage, focus: takeFocus });
   }
 
   // --- The header -------------------------------------------------------------------------------
@@ -303,7 +301,7 @@ export function createPane(host: PaneHost, index: number): Pane {
     maxBtn.hidden = !s.canMaximize;
     maxBtn.replaceChildren(icon(s.maximized ? 'minimize' : 'maximize', 13));
     maxBtn.setAttribute('aria-label', s.maximized ? 'Restore layout' : 'Maximize pane');
-    maxBtn.title = `${s.maximized ? 'Restore layout' : 'Maximize pane'} (⌥↵)`;
+    maxBtn.title = `${s.maximized ? 'Restore layout' : 'Maximize pane'} (⌘ ↵)`;
     if (!w) {
       who.replaceChildren();
       name.textContent = 'Empty pane';

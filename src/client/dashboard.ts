@@ -20,6 +20,7 @@ import { openSubscriptionsStatus } from './ui/subscriptions-status';
 import { onTermFontSize, setTermFontSize, stepTermFont, termFontSize, TERM_FONT_MAX, TERM_FONT_MIN } from './ui/term-font';
 import { parseWorkerLink } from './worker-link';
 import { DashboardWorkerLink } from './dashboard-worker-link';
+import { WORKSPACE_KEY_HINTS, workspaceShortcut } from './dashboard-shortcuts';
 import {
   assign,
   clampRatio,
@@ -126,7 +127,7 @@ const floors = h('nav.dash-floor-strip', { 'aria-label': 'Floors' });
 const reorderFloors = h('button.btn.icon.sm.ghost', { type: 'button', 'aria-label': 'Reorder floors', title: 'Reorder floors', onclick: () => openFloorOrder(net) }, '⠿');
 const floorPicker = h('div.dash-floor', {}, floors, reorderFloors);
 const boardCount = h('span.dash-count.hidden');
-const board = h('button.btn.dash-top-btn.dash-board', { type: 'button', title: 'The floor’s Whiteboard (B)', onclick: () => void openBoard() }, icon('board', 14), h('span.dash-top-label', {}, 'Whiteboard'), boardCount);
+const board = h('button.btn.dash-top-btn.dash-board', { type: 'button', title: 'The floor’s Whiteboard (⌘ B)', onclick: () => void openBoard() }, icon('board', 14), h('span.dash-top-label', {}, 'Whiteboard'), boardCount);
 const subscriptions = h('button.btn.ghost.dash-top-btn', { type: 'button', title: 'Subscriptions and account usage', onclick: () => openSubscriptionsStatus() }, icon('key', 14), h('span.dash-top-label', {}, 'Subscriptions'));
 const top = h('header.dash-top', {}, brand, floorPicker, h('div.dash-top-end', {}, subscriptions, board));
 
@@ -139,7 +140,7 @@ const authPanel = h('section.dash-gate', { hidden: true });
 
 const sideTitle = h('h2.dash-side-title');
 const sideSub = h('p.dash-side-sub');
-const agentBtn = h('button.btn.accent.dash-hire', { type: 'button', title: 'Hire a Droid on this floor (N)', onclick: () => hire('agent') }, icon('plus', 14), h('span', {}, 'Hire Droid'));
+const agentBtn = h('button.btn.accent.dash-hire', { type: 'button', title: 'Hire a Droid on this floor (⌘ N)', onclick: () => hire('agent') }, icon('plus', 14), h('span', {}, 'Hire Droid'));
 const shellBtn = h('button.btn.dash-hire', { type: 'button', title: 'Open a plain shell at a desk', onclick: () => hire('shell') }, icon('terminal', 14), h('span', {}, 'Shell'));
 const workerList = h('nav.dash-workers', { 'aria-label': 'Workers' });
 const side = h(
@@ -147,23 +148,7 @@ const side = h(
   { 'aria-label': 'Floor' },
   h('div.dash-side-head', {}, sideTitle, sideSub),
   workerList,
-  h(
-    'footer.dash-side-foot',
-    {},
-    h('div.dash-side-hire', {}, agentBtn, shellBtn),
-    h(
-      'div.dash-keys',
-      { 'aria-hidden': 'true' },
-      ...keyHints([
-        ['⌥1–4', 'layout'],
-        ['⌥↵', 'focus'],
-        ['Esc', 'restore'],
-        ['↑↓', 'workers'],
-        ['N', 'hire'],
-        ['B', 'board'],
-      ]),
-    ),
-  ),
+  h('footer.dash-side-foot', {}, h('div.dash-side-hire', {}, agentBtn, shellBtn), h('div.dash-keys', { 'aria-hidden': 'true' }, ...keyHints(WORKSPACE_KEY_HINTS))),
 );
 
 /** The layout switcher's little pictures: the boxes each layout splits the workspace into. */
@@ -201,7 +186,7 @@ function layoutGlyph(mode: LayoutMode) {
 const sideToggle = h('button.btn.icon.sm.ghost', { type: 'button', onclick: () => toggleSide() }, icon('panel', 15));
 const wsSummary = h('span.dash-crumb-text');
 const layoutButtons = LAYOUT_ORDER.map((mode, i) =>
-  h('button.dash-layout', { type: 'button', role: 'radio', 'aria-label': LAYOUT_LABEL[mode], title: `${LAYOUT_LABEL[mode]} (⌥${i + 1})`, onclick: () => changeLayout(mode) }, layoutGlyph(mode)),
+  h('button.dash-layout', { type: 'button', role: 'radio', 'aria-label': LAYOUT_LABEL[mode], title: `${LAYOUT_LABEL[mode]} (⌘ ${i + 1})`, onclick: () => changeLayout(mode) }, layoutGlyph(mode)),
 );
 const layouts = h('div.dash-layouts', { role: 'radiogroup', 'aria-label': 'Pane layout' }, ...layoutButtons);
 const smaller = h('button.btn.sm', { type: 'button', 'aria-label': 'Smaller terminal text', title: 'Smaller terminal text', onclick: () => zoom(-1) }, 'A−');
@@ -349,10 +334,6 @@ const paneHost: PaneHost = {
   openBeside: (id) => openBesideHere(id),
   sendHome: (w) => sendHome(w),
   hire: (index) => hire('agent', 'auto', index),
-  leave(id) {
-    if (!sideOpen) toggleSide();
-    (rows.get(id)?.el ?? sideToggle).focus();
-  },
 };
 
 /** Where a pane sits: its box, less half the 8px gap on every side that touches another pane. */
@@ -960,10 +941,10 @@ function paintWorkspace() {
   maxBtn.replaceChildren(icon(maxed ? 'minimize' : 'maximize', 14));
   maxBtn.setAttribute('aria-label', maxed ? 'Restore layout' : 'Maximize focused pane');
   maxBtn.setAttribute('aria-pressed', String(maxed));
-  maxBtn.title = `${maxed ? 'Restore layout' : 'Maximize focused pane'} (⌥↵)`;
+  maxBtn.title = `${maxed ? 'Restore layout' : 'Maximize focused pane'} (⌘ ↵)`;
   sideToggle.setAttribute('aria-label', sideOpen ? 'Hide floor' : 'Show floor');
   sideToggle.setAttribute('aria-pressed', String(!sideOpen));
-  sideToggle.title = sideOpen ? 'Hide floor' : 'Show floor';
+  sideToggle.title = `${sideOpen ? 'Hide floor' : 'Show floor'} (⌘ \\)`;
 }
 
 let previewFrame = 0;
@@ -1136,25 +1117,53 @@ function accessDialog() {
 
 // --- Keys ------------------------------------------------------------------------------------------------
 
-// Workspace shortcuts leave editors and terminals alone. Ctrl+] returns from TTY to the sidebar.
+// Capture Command chords even inside terminals and composers. Other keys belong to their editor.
 window.addEventListener(
   'keydown',
   (e) => {
-    if (!authorized || modalOpen() || e.isComposing || !e.altKey || e.metaKey || e.ctrlKey || e.shiftKey) return;
-    const t = e.target as HTMLElement | null;
-    if (t?.closest('input, textarea, select, [contenteditable], .xterm')) return;
-    const digit = /^Digit([1-4])$/.exec(e.code);
-    const mode = digit ? LAYOUT_ORDER[Number(digit[1]) - 1] : undefined;
-    if (mode) changeLayout(mode);
-    else if (e.key === 'Enter') toggleMaxPane(ws.focused);
-    else return;
-    e.preventDefault();
-    e.stopPropagation();
+    if (!live() || modalOpen()) return;
+    workspaceShortcut(e, (command) => {
+      switch (command.action) {
+        case 'layout':
+          changeLayout(command.mode);
+          panes[ws.focused]?.focusContent();
+          break;
+        case 'maximize':
+          toggleMaxPane(ws.focused);
+          panes[ws.focused]?.focusContent();
+          break;
+        case 'pane':
+          ws.focused = (ws.focused + command.direction + SLOT_COUNT[ws.layout]) % SLOT_COUNT[ws.layout];
+          if (ws.maximized !== null) ws.maximized = ws.focused;
+          changed();
+          panes[ws.focused]?.focusContent();
+          break;
+        case 'worker': {
+          const list = ordered();
+          const at = list.findIndex((w) => w.id === focusedWorker(ws));
+          const next = at < 0 ? (command.direction > 0 ? 0 : list.length - 1) : (at + command.direction + list.length) % list.length;
+          const w = list[next];
+          if (w) openHere(w.id, true);
+          break;
+        }
+        case 'hire':
+          hire('agent', 'auto', ws.focused);
+          break;
+        case 'board':
+          void openBoard();
+          break;
+        case 'sidebar':
+          toggleSide();
+          if (sideOpen) (rows.get(focusedWorker(ws) ?? '')?.el ?? agentBtn).focus({ preventScroll: true });
+          else panes[ws.focused]?.focusContent();
+          break;
+      }
+    });
   },
   true,
 );
 
-window.addEventListener('keydown', (e) => {
+workerList.addEventListener('keydown', (e) => {
   if (!authorized || modalOpen() || e.metaKey || e.ctrlKey || e.altKey || e.isComposing) return;
   const t = e.target as HTMLElement | null;
   if (t?.closest('input, textarea, select, [contenteditable], .xterm, [role=separator], [role=radiogroup]')) return;
@@ -1167,15 +1176,8 @@ window.addEventListener('keydown', (e) => {
     rows.get(w.id)?.el.focus({ preventScroll: true });
   };
   const k = e.key.length === 1 ? e.key.toLowerCase() : e.key;
-  // In a pane, the arrows scroll what's there.
-  const walking = !t?.closest('.dash-pane-body');
-  if (walking && (k === 'ArrowDown' || k === 'j')) go(at + 1);
-  else if (walking && (k === 'ArrowUp' || k === 'k')) go(at < 0 ? list.length - 1 : at - 1);
-  else if (k === 'Escape' && ws.maximized !== null) {
-    ws.maximized = null;
-    changed();
-  } else if (k === 'n') hire('agent');
-  else if (k === 'b') void openBoard();
+  if (k === 'ArrowDown' || k === 'j') go(at + 1);
+  else if (k === 'ArrowUp' || k === 'k') go(at < 0 ? list.length - 1 : at - 1);
   else return;
   e.preventDefault();
 });
