@@ -192,13 +192,12 @@ const layouts = h('div.dash-layouts', { role: 'radiogroup', 'aria-label': 'Pane 
 const smaller = h('button.btn.sm', { type: 'button', 'aria-label': 'Smaller terminal text', title: 'Smaller terminal text', onclick: () => zoom(-1) }, 'A−');
 const bigger = h('button.btn.sm', { type: 'button', 'aria-label': 'Bigger terminal text', title: 'Bigger terminal text', onclick: () => zoom(1) }, 'A+');
 const zoomSeg = h('div.seg.dash-zoom', { role: 'group', 'aria-label': 'Terminal text size' }, smaller, bigger);
-const maxBtn = h('button.btn.icon.sm.ghost', { type: 'button', onclick: () => toggleMaxPane(ws.focused) });
 const toolbar = h(
   'div.dash-toolbar',
   {},
   sideToggle,
   h('div.dash-crumb', {}, h('span.eyebrow', {}, 'Workspace'), h('span.dash-crumb-sep', { 'aria-hidden': 'true' }, '/'), wsSummary),
-  h('div.dash-toolbar-end', {}, zoomSeg, h('span.dash-toolbar-sep'), layouts, h('span.dash-toolbar-sep'), maxBtn),
+  h('div.dash-toolbar-end', {}, zoomSeg, h('span.dash-toolbar-sep'), layouts),
 );
 const colHandle = h('div.dash-handle.col', { role: 'separator', 'aria-orientation': 'vertical', 'aria-label': 'Resize columns', tabindex: 0, title: 'Drag to resize · double-click to even out' });
 const rowHandle = h('div.dash-handle.row', { role: 'separator', 'aria-orientation': 'horizontal', 'aria-label': 'Resize rows', tabindex: 0, title: 'Drag to resize · double-click to even out' });
@@ -936,12 +935,6 @@ function paintWorkspace() {
   layoutButtons.forEach((b, i) => {
     b.setAttribute('aria-checked', String(LAYOUT_ORDER[i] === ws.layout));
   });
-  const maxed = ws.maximized !== null;
-  maxBtn.disabled = count < 2;
-  maxBtn.replaceChildren(icon(maxed ? 'minimize' : 'maximize', 14));
-  maxBtn.setAttribute('aria-label', maxed ? 'Restore layout' : 'Maximize focused pane');
-  maxBtn.setAttribute('aria-pressed', String(maxed));
-  maxBtn.title = `${maxed ? 'Restore layout' : 'Maximize focused pane'} (⌘ ↵)`;
   sideToggle.setAttribute('aria-label', sideOpen ? 'Hide floor' : 'Show floor');
   sideToggle.setAttribute('aria-pressed', String(!sideOpen));
   sideToggle.title = `${sideOpen ? 'Hide floor' : 'Show floor'} (⌘ \\)`;
