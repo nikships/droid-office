@@ -1,3 +1,5 @@
+import type { WindowMode } from './settings.js';
+
 /** A worker waiting on the owner, as `GET /api/status` names it (src/server/office-status.ts). */
 export interface StatusWaiting {
   id: string;
@@ -27,19 +29,26 @@ export interface TrayView {
   state: TrayOfficeState;
   /** Unset when the office didn't answer, or is older than the status route. */
   status?: OfficeStatus;
-  /** The app's open office and companion pages, included in the server's browser count. */
+  /** The app's own window (3D office or companion page), included in the server's browser count. */
   ownWindows: number;
+  /** What the app's window shows, or opens as. */
+  mode: WindowMode;
   /** The app is showing an office it didn't start (a terminal's `npm start`), which quitting leaves running. */
   external: boolean;
   /** Whether the app notifies while its window is closed and a worker starts to wait on the owner. */
   notify: boolean;
   /** The app's version, for Check for Updates. */
   version: string;
-  /** The office's address, for Open Office Companion. */
-  url?: string;
 }
 
-export type TrayAction = 'open' | 'companion' | 'restart' | 'updates' | 'notify' | 'quit' | 'quitStoppingWorkers';
+export type TrayAction = 'open' | 'switch' | 'restart' | 'updates' | 'notify' | 'quit' | 'quitStoppingWorkers';
+
+const MODE_NAME: Record<WindowMode, string> = { office: '3D Office', companion: 'Office Companion' };
+
+/** The menu item that changes the window to the other mode, named for where it goes. */
+export function switchLabel(mode: WindowMode): string {
+  return `Switch to ${MODE_NAME[mode === 'office' ? 'companion' : 'office']}`;
+}
 
 /** Which worker a click opens: the office goes to its floor and opens its terminal (see src/client/worker-link.ts). */
 export interface WorkerLink {
@@ -125,28 +134,17 @@ function waitingLabel(w: StatusWaiting): string {
   return `${w.name} ${w.status === 'needs_input' ? 'needs input' : 'is done'}`;
 }
 
-/** "localhost:4600" for Open Office Companion. */
-function address(url: string | undefined): string | undefined {
-  if (!url) return undefined;
-  try {
-    return new URL(url).host;
-  } catch {
-    return undefined;
-  }
-}
-
 export function trayMenu(v: TrayView): TrayItem[] {
   const running = v.state === 'running';
-  const where = running ? address(v.url) : undefined;
   return [
     ...statusLines(v).map((label): TrayItem => ({ label, enabled: false })),
     { type: 'separator' },
-    { label: 'Open Office', enabled: v.state !== 'starting', action: 'open' },
-    { label: 'Open Office Companion', enabled: running, ...(where ? { sublabel: where } : {}), action: 'companion' },
+    { label: `Open ${MODE_NAME[v.mode]}`, enabled: v.state !== 'starting', action: 'open' },
+    { label: switchLabel(v.mode), enabled: true, action: 'switch' },
     { type: 'separator' },
     { label: v.state === 'stopped' ? 'Start Office' : 'Restart Office', enabled: v.state !== 'starting' && !v.external, action: 'restart' },
     { type: 'separator' },
-    { label: 'Notify When Workers Wait on You', enabled: true, sublabel: 'While the office window is closed', checked: v.notify, action: 'notify' },
+    { label: 'Notify When Workers Wait on You', enabled: true, sublabel: 'Unless the 3D office is open', checked: v.notify, action: 'notify' },
     { label: 'Check for Updates…', enabled: true, sublabel: `Version ${v.version}`, action: 'updates' },
     { type: 'separator' },
     { label: 'Quit Droid Office', enabled: true, action: 'quit' },
