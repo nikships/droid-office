@@ -1,7 +1,8 @@
 import type { TeamBadge, TeamEmblem, WorkerInfo } from './protocol.js';
+import { needsOwnerAttention } from './status.js';
 
 type Member = Pick<WorkerInfo, 'id' | 'lead' | 'createdAt'>;
-type Activity = Pick<WorkerInfo, 'status' | 'acked'>;
+type Activity = Pick<WorkerInfo, 'status' | 'acked' | 'lead'>;
 export interface WorkerTeam<T> {
   lead: T;
   children: T[];
@@ -37,11 +38,11 @@ export function workersByTeam<T extends Member>(workers: Iterable<T>): T[] {
   return workerTeams(workers).flatMap((team) => [team.lead, ...team.children]);
 }
 
-/** Startup counts as work; unacknowledged completion and input requests need attention. */
+/** Startup counts as work; all input requests and main workers' unread completions need the owner. */
 export function teamCounts(workers: readonly Activity[]) {
   return {
     working: workers.filter((w) => w.status === 'working' || w.status === 'starting').length,
-    attention: workers.filter((w) => w.status === 'needs_input' || (w.status === 'done' && !w.acked)).length,
+    attention: workers.filter(needsOwnerAttention).length,
   };
 }
 

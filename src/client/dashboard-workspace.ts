@@ -1,6 +1,9 @@
 // The web companion's workspace: which workers are open in which of up to eight panes, the layout
 // they sit in and where its dividers are. No DOM, so it is tested on its own (tests/dashboard-workspace.test.ts).
 
+import type { WorkerInfo } from '../shared/protocol';
+import { isBusy } from '../shared/status';
+
 export type LayoutMode = 'single' | 'split' | 'triple' | 'grid' | 'five' | 'six' | 'seven' | 'eight';
 export type PaneView = 'thread' | 'terminal';
 /** A pane's box as fractions of the workspace: left, top, width, height. */
@@ -37,6 +40,8 @@ export const RATIO_MAX = 0.78;
 
 export interface Workspace {
   layout: LayoutMode;
+  /** Explicit layout choices stay fixed until Auto is selected again. */
+  auto: boolean;
   /** Always MAX_SLOTS long. Slots past the layout's count keep their worker for when the layout grows again. */
   slots: (string | null)[];
   focused: number;
@@ -54,7 +59,7 @@ export function clampRatio(v: number): number {
 }
 
 export function emptyWorkspace(layout: LayoutMode = 'triple'): Workspace {
-  return { layout, slots: Array(MAX_SLOTS).fill(null), focused: 0, maximized: null, col: 0.56, row: 0.5, views: {} };
+  return { layout, auto: true, slots: Array(MAX_SLOTS).fill(null), focused: 0, maximized: null, col: 0.56, row: 0.5, views: {} };
 }
 
 /** The panes the layout shows now, in order. */
@@ -62,14 +67,20 @@ export function visibleSlots(ws: Workspace): (string | null)[] {
   return ws.slots.slice(0, SLOT_COUNT[ws.layout]);
 }
 
-/** Release moved/hidden workers as a batch before rendering any replacement pane. */
-export function releaseChangedPanes<T extends { workerId(): string; dispose(): void }>(panes: (T | undefined)[], shown: readonly (string | null)[]) {
-  for (let i = 0; i < panes.length; i++) {
-    if (i >= shown.length || panes[i]?.workerId() !== (shown[i] ?? '')) {
-      panes[i]?.dispose();
-      panes[i] = undefined;
+/** Keep each visible worker's live pane and drafts when it moves; release only removed panes. */
+export function reconcilePanes<T extends { workerId(): string; move(index: number): void; dispose(): void }>(panes: (T | undefined)[], shown: readonly (string | null)[]) {
+  const next: (T | undefined)[] = Array(shown.length);
+  for (const [i, pane] of panes.entries()) {
+    if (!pane) continue;
+    const id = pane.workerId();
+    const at = id ? shown.indexOf(id) : i < shown.length && !shown[i] ? i : -1;
+    if (at < 0) pane.dispose();
+    else {
+      pane.move(at);
+      next[at] = pane;
     }
   }
+  panes.splice(0, panes.length, ...next);
 }
 
 /** The pane a worker is open in, or -1. */
@@ -137,6 +148,7 @@ export function rectsFor(layout: LayoutMode, c: number, r: number): Rect[] {
 
 export function setLayout(ws: Workspace, layout: LayoutMode) {
   ws.layout = layout;
+  ws.auto = false;
   ws.maximized = null;
   ws.focused = Math.min(ws.focused, SLOT_COUNT[layout] - 1);
 }
@@ -163,18 +175,55 @@ export function fillPanes(ws: Workspace, ids: readonly string[]): boolean {
   return filled;
 }
 
-/** Remove departed workers and place only new arrivals, leaving unrelated closed panes alone. */
-export function syncWorkspace(ws: Workspace, ids: readonly string[], previous: Set<string>) {
-  const present = new Set(ids);
-  const arrivals = ids.filter((id) => !previous.has(id));
+type LayoutWorker = Pick<WorkerInfo, 'id' | 'lead' | 'status' | 'createdAt'>;
+
+/** Active mains, mains needing input, active subagents, resting mains, then resting subagents. */
+export function panePriority(w: LayoutWorker): number {
+  if (w.lead) return isBusy(w.status) ? 2 : 4;
+  if (w.status === 'working' || w.status === 'starting') return 0;
+  return w.status === 'needs_input' ? 1 : 3;
+}
+
+/** Rebalance without moving surviving panes unnecessarily or losing their focus, views or ratios. */
+export function autoLayout(ws: Workspace, workers: readonly LayoutWorker[]): boolean {
+  const before = serializeWorkspace(ws);
+  const focused = focusedWorker(ws);
+  const maximized = ws.maximized === null ? null : ws.slots[ws.maximized];
+  const visible = new Set(visibleSlots(ws));
+  const mains = workers.filter((w) => !w.lead).length;
+  // A busy floor must not become denser just because an orchestrator hires a team.
+  const count = Math.max(1, Math.min(MAX_SLOTS, mains >= 5 ? mains : workers.length));
+  const ranked = [...workers].sort((a, b) => panePriority(a) - panePriority(b) || Number(visible.has(b.id)) - Number(visible.has(a.id)) || a.createdAt - b.createdAt || a.id.localeCompare(b.id));
+  const selected = new Set(ranked.slice(0, count).map((w) => w.id));
+  const slots = ws.slots.slice(0, count).map((id) => (id && selected.has(id) ? id : null));
+  const queue = ranked.filter((w) => selected.has(w.id) && !slots.includes(w.id)).map((w) => w.id);
+  for (let i = 0; i < count; i++) if (!slots[i]) slots[i] = queue.shift() ?? null;
+  const present = new Set(workers.map((w) => w.id));
+  const parked = ws.slots.filter((id): id is string => !!id && present.has(id) && !selected.has(id));
+  ws.slots = [...slots, ...parked, ...Array(MAX_SLOTS).fill(null)].slice(0, MAX_SLOTS);
+  ws.layout = LAYOUT_ORDER[count - 1];
+  ws.auto = true;
+  const focusAt = focused ? slots.indexOf(focused) : -1;
+  ws.focused = focusAt >= 0 ? focusAt : Math.min(ws.focused, count - 1);
+  const maxAt = maximized ? slots.indexOf(maximized) : -1;
+  ws.maximized = count > 1 && maxAt >= 0 ? maxAt : null;
+  return before !== serializeWorkspace(ws);
+}
+
+/** Rebalance Auto only on membership/priority changes, not on typing, focus or ordinary status ticks. */
+export function syncWorkspace(ws: Workspace, workers: readonly LayoutWorker[], previous: Map<string, number>) {
+  const present = new Map(workers.map((w) => [w.id, panePriority(w)]));
+  const arrivals = workers.filter((w) => !previous.has(w.id)).map((w) => w.id);
+  const changed = present.size !== previous.size || workers.some((w) => previous.get(w.id) !== panePriority(w));
   const gone = prune(ws, (id) => present.has(id));
   previous.clear();
-  for (const id of ids) previous.add(id);
-  return { gone, filled: fillPanes(ws, arrivals) };
+  for (const [id, priority] of present) previous.set(id, priority);
+  return { gone, filled: ws.auto ? changed && autoLayout(ws, workers) : fillPanes(ws, arrivals) };
 }
 
 /** Puts a worker in a pane. If it was open in another one, the two panes trade places. */
 export function assign(ws: Workspace, slot: number, id: string) {
+  ws.auto = false;
   const old = ws.slots.indexOf(id);
   if (old !== slot) {
     if (old >= 0) ws.slots[old] = ws.slots[slot] ?? null;
@@ -185,6 +234,7 @@ export function assign(ws: Workspace, slot: number, id: string) {
 
 export function swap(ws: Workspace, a: number, b: number) {
   if (a === b) return;
+  ws.auto = false;
   [ws.slots[a], ws.slots[b]] = [ws.slots[b] ?? null, ws.slots[a] ?? null];
   ws.focused = b;
 }
@@ -222,6 +272,7 @@ export function openInSplit(ws: Workspace, id: string) {
 }
 
 export function closeSlot(ws: Workspace, slot: number) {
+  ws.auto = false;
   ws.slots[slot] = null;
   if (ws.maximized === slot) ws.maximized = null;
 }
@@ -273,6 +324,7 @@ export function parseWorkspace(raw: string | null | undefined): Workspace | unde
   const layout = LAYOUT_ORDER.includes(o.layout as LayoutMode) ? (o.layout as LayoutMode) : undefined;
   if (!layout || !Array.isArray(o.slots)) return undefined;
   const ws = emptyWorkspace(layout);
+  ws.auto = o.auto !== false;
   const seen = new Set<string>();
   ws.slots = ws.slots.map((_, i) => {
     const id = (o.slots as unknown[])[i];

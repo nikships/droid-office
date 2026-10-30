@@ -1,4 +1,5 @@
 import type { ClientMsg, WorkerInfo } from '../shared/protocol';
+import { needsOwnerInput } from '../shared/status';
 import { cardsNewestFirst, cardChanged, OWNER } from '../shared/whiteboard';
 import { ROOF } from '../shared/rooftop';
 import { DESK_BY_ID } from '../shared/layout';
@@ -19,6 +20,7 @@ import { DashboardWorkerLink } from './dashboard-worker-link';
 import { adjacentFloor, WORKSPACE_KEY_HINTS, workspaceShortcut } from './dashboard-shortcuts';
 import {
   assign,
+  autoLayout,
   clampRatio,
   closeSlot,
   emptyWorkspace,
@@ -33,10 +35,9 @@ import {
   openWorker,
   paneOf,
   parseWorkspace,
-  prune,
   type Rect,
   rectsFor,
-  releaseChangedPanes,
+  reconcilePanes,
   seedWorkspace,
   serializeWorkspace,
   setLayout,
@@ -178,10 +179,23 @@ function layoutGlyph(mode: LayoutMode) {
 
 const sideToggle = h('button.btn.icon.sm.ghost', { type: 'button', onclick: () => toggleSide() }, icon('panel', 15));
 const wsSummary = h('span.dash-crumb-text');
+const autoButton = h(
+  'button.dash-layout.dash-layout-auto',
+  {
+    type: 'button',
+    role: 'radio',
+    'aria-label': 'Automatic layout',
+    onclick: () => {
+      autoLayout(ws, ordered());
+      changed();
+    },
+  },
+  'Auto',
+);
 const layoutButtons = LAYOUT_ORDER.map((mode, i) =>
   h('button.dash-layout', { type: 'button', role: 'radio', 'aria-label': LAYOUT_LABEL[mode], title: `${LAYOUT_LABEL[mode]} (⌘ ${i + 1})`, onclick: () => changeLayout(mode) }, layoutGlyph(mode)),
 );
-const layouts = h('div.dash-layouts', { role: 'radiogroup', 'aria-label': 'Pane layout' }, ...layoutButtons);
+const layouts = h('div.dash-layouts', { role: 'radiogroup', 'aria-label': 'Pane layout' }, autoButton, ...layoutButtons);
 const smaller = h('button.btn.sm', { type: 'button', 'aria-label': 'Smaller terminal text', title: 'Smaller terminal text', onclick: () => zoom(-1) }, 'A−');
 const bigger = h('button.btn.sm', { type: 'button', 'aria-label': 'Bigger terminal text', title: 'Bigger terminal text', onclick: () => zoom(1) }, 'A+');
 const zoomSeg = h('div.seg.dash-zoom', { role: 'group', 'aria-label': 'Terminal text size' }, smaller, bigger);
@@ -235,8 +249,8 @@ const panes: (Pane | undefined)[] = [];
 let takeFocus = true;
 /** Names of the workers seen, to say who left after they're gone from the store. */
 const names = new Map<string, string>();
-/** Who was on the floor at the last paint, so a worker arriving from anywhere fills an empty pane. */
-const onFloor = new Set<string>();
+/** Membership and layout priorities at the last paint; ordinary activity updates never rearrange panes. */
+const onFloor = new Map<string, number>();
 /** Sidebar order, used when loading or explicitly changing the layout. */
 const staff = () => ordered().map((w) => w.id);
 
@@ -244,10 +258,10 @@ function loadWorkspace(f: string) {
   disposePanes();
   wsFloor = f;
   ws = parseWorkspace(read(`${WS_KEY}:${f}`)) ?? seedWorkspace(staff());
-  prune(ws, (id) => store.workers.has(id));
-  fillPanes(ws, staff());
   onFloor.clear();
-  for (const id of staff()) onFloor.add(id);
+  syncWorkspace(ws, ordered(), onFloor);
+  if (ws.auto && !onFloor.size) autoLayout(ws, []);
+  saveWorkspace();
 }
 function saveWorkspace() {
   if (wsFloor) remember(`${WS_KEY}:${wsFloor}`, serializeWorkspace(ws));
@@ -664,10 +678,10 @@ function paint() {
   boardCount.textContent = String(unread);
   boardCount.classList.toggle('hidden', !unread);
   board.setAttribute('aria-label', unread ? `Whiteboard, ${unread} unread` : 'Whiteboard');
-  const needs = [...store.workers.values()].filter((w) => w.status === 'needs_input').length;
+  const needs = [...store.workers.values()].filter(needsOwnerInput).length;
   document.title = `${needs ? `(${needs}) ` : ''}${officeName} · Web companion`;
   if (fresh && wsFloor === floor) {
-    const { gone, filled } = syncWorkspace(ws, staff(), onFloor);
+    const { gone, filled } = syncWorkspace(ws, ordered(), onFloor);
     for (const id of gone) toast(`${names.get(id) ?? 'A worker'} has left the floor.`, 'info');
     if (gone.length || filled) saveWorkspace();
   }
@@ -809,9 +823,8 @@ function paintWorkspace() {
   const rects = rectsFor(ws.layout, ws.col, ws.row);
   const shown = visibleSlots(ws);
   const candidates = ordered().filter((w) => !shown.includes(w.id));
-  // Attachments belong to the connection, not to a pane. Release every moved worker before any
-  // replacement attaches it, or disposing its old Thread can detach the new one during a swap.
-  releaseChangedPanes(panes, shown);
+  // Move live panes with their workers, retaining thread drafts, images and terminal attachments.
+  reconcilePanes(panes, shown);
   for (let i = 0; i < count; i++) {
     const p = panes[i] ?? createPane(paneHost, i);
     panes[i] = p;
@@ -847,8 +860,10 @@ function paintWorkspace() {
   const fw = store.workers.get(focusedWorker(ws) ?? '');
   wsSummary.replaceChildren(`${open} of ${count} open`, ...(fw ? [h('span.dash-crumb-sep', {}, ' · '), 'focused on ', h('b', {}, fw.name)] : []));
   layoutButtons.forEach((b, i) => {
-    b.setAttribute('aria-checked', String(LAYOUT_ORDER[i] === ws.layout));
+    b.setAttribute('aria-checked', String(!ws.auto && LAYOUT_ORDER[i] === ws.layout));
   });
+  autoButton.setAttribute('aria-checked', String(ws.auto));
+  autoButton.title = `Auto: ${LAYOUT_LABEL[ws.layout].toLowerCase()}. Subagents expand the layout only below five main workers.`;
   sideToggle.setAttribute('aria-label', sideOpen ? 'Hide floor' : 'Show floor');
   sideToggle.setAttribute('aria-pressed', String(!sideOpen));
   sideToggle.title = `${sideOpen ? 'Hide floor' : 'Show floor'} (⌘ \\)`;

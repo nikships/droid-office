@@ -93,7 +93,7 @@ test('only the focused thread pane shows its composer, reclaiming space without 
   page.on('pageerror', (error) => errors.push(error.message));
   const bundle = buildSync({
     stdin: {
-      contents: "export { createPane } from './dashboard-pane'; export { store } from './state';",
+      contents: "export { createPane } from './dashboard-pane'; export { store } from './state'; export { reconcilePanes } from './dashboard-workspace';",
       resolveDir: fileURLToPath(new URL('../src/client', import.meta.url)),
     },
     bundle: true,
@@ -219,6 +219,24 @@ test('only the focused thread pane shows its composer, reclaiming space without 
   await first.locator('.wt-scroll').focus();
   assert.equal(await first.locator('.wt-composer').isVisible(), false);
   assert.deepEqual(await page.evaluate(() => (window as any).actions), [], 'selecting a pane never sends a prompt');
+  await page.evaluate(() => {
+    const w = window as any;
+    w.workers[0].status = 'idle';
+    w.workers.reverse();
+    w.PaneUI.reconcilePanes(
+      w.panes,
+      w.workers.map((worker: any) => worker.id),
+    );
+    w.focused = 0;
+    w.paint();
+  });
+  assert.equal(await first.getAttribute('aria-label'), 'Pane 2: Pixel');
+  assert.equal(await first.locator('.dash-pane-no').textContent(), '2');
+  assert.equal(await first.locator('.wt-input').evaluate((el) => (window as any).originalInput === el), true, 'moving retains the mounted Thread and its draft resources');
+  await first.locator('.dash-pane-head').click();
+  assert.equal(await page.evaluate(() => (window as any).focused), 1, 'moved pane actions use their new slot');
+  assert.equal(await first.locator('.wt-input').inputValue(), 'Keep this unsent draft');
+  assert.equal(await first.locator('.wt-composer').isVisible(), true);
   await page.evaluate(() => (window as any).panes.forEach((pane: any) => pane.dispose()));
   assert.deepEqual(errors, []);
 });

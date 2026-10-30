@@ -74,6 +74,18 @@ test('worker roster preserves hierarchy, focus and entry motion across updates',
     w.paint();
   });
   assert.match(await toggle.innerText(), /1 need you/);
+  assert.match(await page.locator('#roster').innerText(), /needs? you/);
+  assert.ok((await page.locator('.dash-subworker.attn, .dash-subworker .needs_input, .dash-subworker [data-status=needs_input]').count()) > 0);
+  assert.match((await page.locator('[data-worker=dot]').getAttribute('aria-label')) ?? '', /needs input/);
+  await page.evaluate(() => {
+    const w = window as any;
+    w.workers[0].status = 'needs_input';
+    w.workers[3].status = 'done';
+    w.paint();
+  });
+  assert.match(await page.locator('.dash-roster-caption').innerText(), /2 need you/);
+  assert.equal(await page.locator('.dash-row.attn').count(), 2);
+  assert.equal(await page.locator('.dash-subworker .pill').count(), 1, 'only the subagent question, not its unread completion, alerts the owner');
   await page.evaluate(() => (window as any).roster.reveal('dot'));
   await page.getByRole('button', { name: /Open Dot, Subworker of Pixel/ }).click();
   assert.deepEqual(await page.evaluate(() => (window as any).opened), ['dot']);
@@ -136,6 +148,7 @@ test('worker roster preserves hierarchy, focus and entry motion across updates',
         read: () => '',
         focus() {},
         busy: () => false,
+        terminal: async () => ({ openTerminal: () => ({ close() {}, attach() {}, focus() {} }) }),
         usable: (id: string) => w.state.live && w.TeamUI.store.workers.has(id),
         assign: (index: number, id: string) => w.assignments.push([index, id]),
       },
@@ -168,6 +181,30 @@ test('worker roster preserves hierarchy, focus and entry motion across updates',
     w.paintPane('dot');
   });
   assert.equal(await page.evaluate(() => (document.activeElement as HTMLElement)?.dataset.member), 'pixel');
+  await page.evaluate(() => {
+    const w = window as any;
+    w.workers[2].status = 'needs_input';
+    w.paintPane('dot');
+  });
+  assert.equal(await page.locator('.dash-pane.attn').count(), 1);
+  assert.equal(await page.locator('.dash-pane-head .pill').innerText(), 'needs input');
+  assert.equal(await page.locator('.dash-question').isHidden(), false);
+  assert.match(await page.locator('.dash-question').innerText(), /Dot needs you/);
+  assert.equal(await page.locator('[data-member=dot]').getAttribute('data-status'), 'needs_input');
+  assert.ok((await page.locator('.dash-pane [data-status=needs_input], .dash-pane .pill.needs_input').count()) > 0);
+  await page.evaluate(() => {
+    const w = window as any;
+    w.workers[0].status = 'needs_input';
+    w.paintPane('pixel');
+  });
+  assert.equal(await page.locator('.dash-pane.attn').count(), 1);
+  assert.match(await page.locator('.dash-question').innerText(), /Pixel needs you/);
+  await page.evaluate(() => {
+    const w = window as any;
+    w.workers[0].status = 'offline';
+    w.workers[2].status = 'offline';
+    w.paintPane('dot');
+  });
   await page.evaluate(() => {
     const w = window as any;
     w.state.live = false;

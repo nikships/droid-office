@@ -12,6 +12,15 @@ export function isBusy(status: WorkerStatus): boolean {
   return status === 'starting' || status === 'working' || status === 'needs_input';
 }
 
+/** Terminal prompts require the owner, including prompts from subagents. */
+export function needsOwnerInput(w: Pick<WorkerInfo, 'status' | 'lead'>): boolean {
+  return w.status === 'needs_input';
+}
+
+export function needsOwnerAttention(w: Pick<WorkerInfo, 'status' | 'lead' | 'acked'>): boolean {
+  return needsOwnerInput(w) || (!w.lead && w.status === 'done' && !w.acked);
+}
+
 /**
  * One line for a notification about a worker: what it's asking for when it needs input, or what it
  * was on when it's done (its last activity may be a permission prompt it has long got past).

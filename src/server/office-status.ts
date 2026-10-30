@@ -1,4 +1,5 @@
 import type { WorkerInfo } from '../shared/protocol.js';
+import { needsOwnerAttention } from '../shared/status.js';
 
 /** How many waiting workers the status names: the menu bar shows fewer, and says how many more there are. */
 export const STATUS_WAITING_MAX = 20;
@@ -42,12 +43,12 @@ export interface StatusConnection {
 export interface StatusFloor {
   id: string;
   name: string;
-  workers: Iterable<Pick<WorkerInfo, 'id' | 'name' | 'kind' | 'status' | 'acked' | 'waitingSince' | 'createdAt'> & { task?: { name: string } }>;
+  workers: Iterable<Pick<WorkerInfo, 'id' | 'name' | 'kind' | 'status' | 'acked' | 'lead' | 'waitingSince' | 'createdAt'> & { task?: { name: string } }>;
 }
 
 /** Waiting on someone, as the elevator counts it (src/server/floor.ts): a shell never is. */
-export function waitingStatus(w: Pick<WorkerInfo, 'kind' | 'status' | 'acked'>): 'needs_input' | 'done' | undefined {
-  if (w.kind === 'shell') return undefined;
+export function waitingStatus(w: Pick<WorkerInfo, 'kind' | 'status' | 'acked' | 'lead'>): 'needs_input' | 'done' | undefined {
+  if (w.kind === 'shell' || !needsOwnerAttention(w)) return undefined;
   if (w.status === 'needs_input') return 'needs_input';
   if (w.status === 'done' && !w.acked) return 'done';
   return undefined;

@@ -1,7 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import type { WorkerInfo } from '../src/shared/protocol.js';
 import {
   assign,
+  autoLayout,
   clampRatio,
   closeSlot,
   emptyWorkspace,
@@ -16,7 +18,7 @@ import {
   parseWorkspace,
   prune,
   rectsFor,
-  releaseChangedPanes,
+  reconcilePanes,
   seedWorkspace,
   serializeWorkspace,
   setLayout,
@@ -29,6 +31,9 @@ import {
   workedFor,
   workerView,
 } from '../src/client/dashboard-workspace.js';
+
+const workers = (ids: readonly string[]) => ids.map((id, createdAt) => ({ id, createdAt, status: 'working' as WorkerInfo['status'], lead: undefined as string | undefined }));
+const known = (ids: readonly string[]) => new Map(ids.map((id) => [id, 0]));
 
 test('a fresh floor gets a layout sized to its workers', () => {
   assert.equal(seedWorkspace([]).layout, 'single');
@@ -72,24 +77,26 @@ test('hiring into a specific empty pane keeps its target despite focus changes',
 
 test('hire confirmation moves an auto-placed arrival to the requested empty pane', () => {
   const ws = emptyWorkspace('grid');
+  ws.auto = false;
   ws.slots[0] = 'a';
-  const previous = new Set(['a']);
-  assert.deepEqual(syncWorkspace(ws, ['a', 'new'], previous), { gone: [], filled: true });
+  const previous = known(['a']);
+  assert.deepEqual(syncWorkspace(ws, workers(['a', 'new']), previous), { gone: [], filled: true });
   assert.deepEqual(visibleSlots(ws), ['a', 'new', null, null]);
   toggleMax(ws, 0);
   openWorker(ws, 'new', 3);
   assert.deepEqual(visibleSlots(ws), ['a', null, null, 'new']);
   assert.equal(ws.focused, 3);
   assert.equal(ws.maximized, 3);
-  assert.deepEqual(syncWorkspace(ws, ['a', 'new'], previous), { gone: [], filled: false });
+  assert.deepEqual(syncWorkspace(ws, workers(['a', 'new']), previous), { gone: [], filled: false });
   assert.deepEqual(visibleSlots(ws), ['a', null, null, 'new']);
 });
 
 test('hire confirmation keeps automatic placement when its target is occupied or hidden', () => {
   for (const target of [0, 4, -1]) {
     const ws = emptyWorkspace('grid');
+    ws.auto = false;
     ws.slots[0] = 'a';
-    syncWorkspace(ws, ['a', 'new'], new Set(['a']));
+    syncWorkspace(ws, workers(['a', 'new']), known(['a']));
     openWorker(ws, 'new', target);
     assert.deepEqual(visibleSlots(ws), ['a', 'new', null, null]);
     assert.equal(ws.focused, 1);
@@ -98,27 +105,28 @@ test('hire confirmation keeps automatic placement when its target is occupied or
 
 test('arrivals on a crowded floor take free panes without reopening unrelated closed or parked workers', () => {
   const ids = ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'older-hidden'];
-  const previous = new Set(ids);
+  const previous = known(ids);
   const ws = seedWorkspace(ids);
   setLayout(ws, 'grid');
   closeSlot(ws, 1);
   closeSlot(ws, 3);
-  assert.deepEqual(syncWorkspace(ws, [...ids, 'new'], previous), { gone: [], filled: true });
+  assert.deepEqual(syncWorkspace(ws, workers([...ids, 'new']), previous), { gone: [], filled: true });
   assert.deepEqual(ws.slots, ['a', 'new', 'c', null, 'e', 'f', 'g', 'h']);
-  assert.deepEqual(syncWorkspace(ws, [...ids, 'new'], previous), { gone: [], filled: false });
+  assert.deepEqual(syncWorkspace(ws, workers([...ids, 'new']), previous), { gone: [], filled: false });
   closeSlot(ws, 1);
-  syncWorkspace(ws, [...ids, 'new', 'later'], previous);
+  syncWorkspace(ws, workers([...ids, 'new', 'later']), previous);
   assert.deepEqual(ws.slots, ['a', 'later', 'c', null, 'e', 'f', 'g', 'h']);
-  assert.deepEqual(syncWorkspace(ws, [...ids.filter((id) => id !== 'c'), 'new', 'later'], previous), { gone: ['c'], filled: false });
+  assert.deepEqual(syncWorkspace(ws, workers([...ids.filter((id) => id !== 'c'), 'new', 'later']), previous), { gone: ['c'], filled: false });
   assert.deepEqual(visibleSlots(ws), ['a', 'later', null, null]);
 });
 
 test('arrivals that find a full workspace do not later refill a deliberately closed pane', () => {
   const ws = seedWorkspace(['a', 'b']);
-  const previous = new Set(['a', 'b']);
-  assert.deepEqual(syncWorkspace(ws, ['a', 'b', 'new'], previous), { gone: [], filled: false });
+  ws.auto = false;
+  const previous = known(['a', 'b']);
+  assert.deepEqual(syncWorkspace(ws, workers(['a', 'b', 'new']), previous), { gone: [], filled: false });
   closeSlot(ws, 1);
-  assert.deepEqual(syncWorkspace(ws, ['a', 'b', 'new'], previous), { gone: [], filled: false });
+  assert.deepEqual(syncWorkspace(ws, workers(['a', 'b', 'new']), previous), { gone: [], filled: false });
   assert.deepEqual(visibleSlots(ws), ['a', null]);
 });
 
@@ -216,24 +224,24 @@ test('pane views keep their initial default when another worker changes the defa
   assert.equal(workerView(restored, 'b', 'thread'), 'terminal');
 });
 
-test('swapping releases both old panes before either replacement attaches', () => {
+test('swapping retains live panes without detaching their workers', () => {
   const ws = seedWorkspace(['a', 'b', 'c']);
   const events: string[] = [];
-  const pane = (id: string) => ({ workerId: () => id, dispose: () => events.push(`detach ${id}`) });
+  const pane = (id: string) => ({ workerId: () => id, move() {}, dispose: () => events.push(`detach ${id}`) });
   const panes: (ReturnType<typeof pane> | undefined)[] = ['a', 'b', 'c'].map(pane);
   const unchanged = panes[2];
   swap(ws, 0, 1);
-  releaseChangedPanes(panes, visibleSlots(ws));
+  reconcilePanes(panes, visibleSlots(ws));
   for (const [i, id] of visibleSlots(ws).entries()) {
     if (!panes[i] && id) {
       panes[i] = pane(id);
       events.push(`attach ${id}`);
     }
   }
-  assert.deepEqual(events, ['detach a', 'detach b', 'attach b', 'attach a']);
+  assert.deepEqual(events, []);
   assert.equal(panes[2], unchanged, 'unmoved terminals stay mounted');
-  releaseChangedPanes(panes, ['b', null]);
-  assert.deepEqual(events.slice(4), ['detach a', 'detach c'], 'closed and hidden panes detach too');
+  reconcilePanes(panes, ['b', null]);
+  assert.deepEqual(events, ['detach a', 'detach c'], 'closed and hidden panes detach too');
 });
 
 test('a smaller layout hides panes without forgetting them', () => {
@@ -245,6 +253,37 @@ test('a smaller layout hides panes without forgetting them', () => {
   assert.equal(paneOf(ws, 'c'), -1);
   setLayout(ws, 'triple');
   assert.deepEqual(visibleSlots(ws), ['a', 'b', 'c']);
+});
+
+test('automatic contraction moves the same live pane and only disposes the departed worker', () => {
+  const all = workers(['a', 'b', 'c', 'd']);
+  const ws = emptyWorkspace();
+  const previous = new Map<string, number>();
+  syncWorkspace(ws, all, previous);
+  const disposed: string[] = [];
+  const panes = all.map((w, index) => ({
+    workerId: () => w.id,
+    index,
+    draft: { text: 'Unsent', images: ['attachment'] },
+    move(next: number) {
+      this.index = next;
+    },
+    dispose() {
+      disposed.push(w.id);
+      this.draft.images = [];
+    },
+  }));
+  const moved = panes[3];
+  syncWorkspace(
+    ws,
+    all.filter((w) => w.id !== 'b'),
+    previous,
+  );
+  reconcilePanes(panes, visibleSlots(ws));
+  assert.equal(panes[1], moved);
+  assert.equal(moved.index, 1);
+  assert.deepEqual(moved.draft, { text: 'Unsent', images: ['attachment'] });
+  assert.deepEqual(disposed, ['b']);
 });
 
 test('switching to a bigger layout fills its new panes with the workers on the floor', () => {
@@ -389,7 +428,7 @@ test('a saved workspace round-trips, and a damaged one is cleaned or refused', (
   assert.equal(parseWorkspace('"triple"'), undefined);
   assert.equal(parseWorkspace(JSON.stringify({ layout: 'mosaic', slots: [] })), undefined);
   const cleaned = parseWorkspace(JSON.stringify({ layout: 'split', slots: ['a', 'a', 7, 'b', 'c'], focused: 3, maximized: 1, col: 4, row: 'x', views: { a: 'thread', b: 'grid' } }));
-  assert.deepEqual(cleaned, { layout: 'split', slots: ['a', null, null, 'b', 'c', null, null, null], focused: 0, maximized: 1, col: 0.78, row: 0.5, views: { a: 'thread' } });
+  assert.deepEqual(cleaned, { layout: 'split', auto: true, slots: ['a', null, null, 'b', 'c', null, null, null], focused: 0, maximized: 1, col: 0.78, row: 0.5, views: { a: 'thread' } });
   assert.equal(parseWorkspace(JSON.stringify({ layout: 'single', slots: ['a'], maximized: 0 }))?.maximized, null);
 });
 
@@ -414,4 +453,164 @@ test('worked time adds the current stretch and reads short', () => {
   assert.equal(shortDuration(12 * 60_000 + 3_000), '12m');
   assert.equal(shortDuration(2 * 3_600_000 + 14 * 60_000), '2h 14m');
   assert.equal(shortDuration(3_600_000), '1h');
+});
+
+test('Auto grows and contracts on main-worker arrivals and departures, including an empty floor', () => {
+  const ws = emptyWorkspace('single');
+  const previous = new Map<string, number>();
+  const all = workers(['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i']);
+  for (let count = 1; count <= all.length; count++) {
+    syncWorkspace(ws, all.slice(0, count), previous);
+    assert.equal(SLOT_COUNT[ws.layout], Math.min(count, 8));
+    assert.equal(visibleSlots(ws).filter(Boolean).length, Math.min(count, 8));
+  }
+  for (let count = all.length - 1; count >= 0; count--) {
+    syncWorkspace(ws, all.slice(0, count), previous);
+    assert.equal(SLOT_COUNT[ws.layout], Math.max(1, Math.min(count, 8)));
+    assert.equal(visibleSlots(ws).filter(Boolean).length, Math.min(count, 8));
+  }
+  assert.deepEqual(visibleSlots(ws), [null]);
+});
+
+test('five mains do not expand for subagents; two mains can expand all the way to eight', () => {
+  const mains = workers(['a', 'b', 'c', 'd', 'e']);
+  const children = workers(['s1', 's2', 's3', 's4', 's5', 's6', 's7']).map((w) => ({ ...w, lead: 'a' }));
+  const ws = emptyWorkspace('single');
+  const previous = new Map<string, number>();
+  syncWorkspace(ws, mains, previous);
+  syncWorkspace(ws, [...mains, ...children], previous);
+  assert.equal(ws.layout, 'five');
+  assert.deepEqual(
+    visibleSlots(ws),
+    mains.map((w) => w.id),
+  );
+  syncWorkspace(ws, [...mains.slice(0, 2), ...children.slice(0, 5)], previous);
+  assert.equal(ws.layout, 'seven');
+  assert.deepEqual(visibleSlots(ws), ['a', 'b', 's1', 's2', 's3', 's4', 's5']);
+  syncWorkspace(ws, [...mains.slice(0, 2), ...children], previous);
+  assert.equal(ws.layout, 'eight');
+  assert.ok(visibleSlots(ws).includes('a') && visibleSlots(ws).includes('b'));
+  syncWorkspace(ws, mains.slice(0, 2), previous);
+  assert.equal(ws.layout, 'split');
+});
+
+test('the fifth main stops subagent-driven expansion, and its departure makes room again', () => {
+  const mains = workers(['a', 'b', 'c', 'd', 'e']);
+  const children = workers(['s1', 's2', 's3', 's4']).map((w) => ({ ...w, lead: 'a' }));
+  const ws = emptyWorkspace();
+  const previous = new Map<string, number>();
+  syncWorkspace(ws, [...mains.slice(0, 4), ...children], previous);
+  assert.equal(ws.layout, 'eight');
+  syncWorkspace(ws, [...mains, ...children], previous);
+  assert.equal(ws.layout, 'five');
+  assert.deepEqual(
+    visibleSlots(ws),
+    mains.map((w) => w.id),
+  );
+  syncWorkspace(ws, [...mains.slice(0, 4), ...children], previous);
+  assert.equal(ws.layout, 'eight');
+  assert.equal(new Set(visibleSlots(ws)).size, 8);
+});
+
+test('Auto selects active mains, main questions, active subagents, done mains, then done subagents', () => {
+  const all = workers(['done-sub', 'done-main', 'active-sub', 'question', 'working', 'starting', 'sub-question']).map((w) => ({
+    ...w,
+    status: (w.id.startsWith('done') ? 'done' : w.id.includes('question') ? 'needs_input' : w.id === 'starting' ? 'starting' : 'working') as WorkerInfo['status'],
+    lead: w.id.includes('sub') ? 'working' : undefined,
+  }));
+  const ws = emptyWorkspace();
+  autoLayout(ws, all);
+  assert.deepEqual(visibleSlots(ws), ['working', 'starting', 'question', 'active-sub', 'sub-question', 'done-main', 'done-sub']);
+  // Five main workers set a five-pane budget, but active children outrank resting mains.
+  autoLayout(ws, [...all, ...workers(['resting']).map((w) => ({ ...w, status: 'idle' as const }))]);
+  assert.equal(ws.layout, 'five');
+  assert.deepEqual(new Set(visibleSlots(ws)), new Set(['working', 'starting', 'question', 'active-sub', 'sub-question']));
+});
+
+test('priority changes replace lower-priority workers without shuffling equal-priority incumbents', () => {
+  const all = workers(['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i']);
+  const ws = emptyWorkspace();
+  const previous = new Map<string, number>();
+  syncWorkspace(ws, all, previous);
+  all[0].status = 'done';
+  syncWorkspace(ws, all, previous);
+  assert.deepEqual(visibleSlots(ws), ['i', 'b', 'c', 'd', 'e', 'f', 'g', 'h']);
+  all[0].status = 'working';
+  syncWorkspace(ws, all, previous);
+  assert.deepEqual(visibleSlots(ws), ['i', 'b', 'c', 'd', 'e', 'f', 'g', 'h'], 'equal priorities do not churn the visible set');
+  all[8].status = 'done';
+  syncWorkspace(ws, all, previous);
+  assert.deepEqual(visibleSlots(ws), ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h']);
+});
+
+test('Auto keeps focus, maximization, views and ratios when compacting after a dismissal', () => {
+  const all = workers(['a', 'b', 'c', 'd']);
+  const ws = emptyWorkspace();
+  const previous = new Map<string, number>();
+  syncWorkspace(ws, all, previous);
+  ws.col = 0.35;
+  ws.row = 0.65;
+  ws.views = { b: 'thread', d: 'terminal' };
+  toggleMax(ws, 3);
+  syncWorkspace(
+    ws,
+    all.filter((w) => w.id !== 'b'),
+    previous,
+  );
+  assert.deepEqual(visibleSlots(ws), ['a', 'd', 'c']);
+  assert.equal(ws.focused, 1);
+  assert.equal(ws.maximized, 1);
+  assert.deepEqual(ws.views, { d: 'terminal' });
+  assert.equal(ws.col, 0.35);
+  assert.equal(ws.row, 0.65);
+  syncWorkspace(ws, all.slice(0, 1), previous);
+  assert.equal(ws.focused, 0);
+  assert.equal(ws.maximized, null);
+});
+
+test('manual layout and close choices persist until Auto is explicitly restored', () => {
+  const all = workers(['a', 'b', 'c', 'd']);
+  const ws = emptyWorkspace();
+  const previous = new Map<string, number>();
+  syncWorkspace(ws, all.slice(0, 2), previous);
+  setLayout(ws, 'single');
+  syncWorkspace(ws, all, previous);
+  assert.equal(ws.auto, false);
+  assert.equal(ws.layout, 'single');
+  assert.equal(parseWorkspace(serializeWorkspace(ws))?.auto, false);
+  autoLayout(ws, all);
+  assert.equal(ws.auto, true);
+  assert.equal(ws.layout, 'grid');
+  closeSlot(ws, 2);
+  syncWorkspace(ws, all, previous);
+  assert.equal(ws.auto, false);
+  assert.equal(ws.slots[2], null);
+  autoLayout(ws, all);
+  assert.ok(visibleSlots(ws).includes('c'));
+  assert.equal(parseWorkspace(serializeWorkspace(ws))?.auto, true);
+  assert.equal(parseWorkspace(JSON.stringify({ layout: 'split', slots: ['a', 'b'] }))?.auto, true, 'legacy workspaces gain Auto');
+});
+
+test('explicit worker selections and swaps pause Auto across actual priority changes', () => {
+  const all = workers(['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i']);
+  const ws = emptyWorkspace();
+  const previous = new Map<string, number>();
+  syncWorkspace(ws, all, previous);
+  openWorker(ws, 'i');
+  swap(ws, 1, 4);
+  assert.equal(ws.auto, false);
+  const before = serializeWorkspace(ws);
+  assert.deepEqual(syncWorkspace(ws, [...all].reverse(), previous), { gone: [], filled: false });
+  assert.equal(serializeWorkspace(ws), before);
+  all[8].status = 'done';
+  assert.deepEqual(syncWorkspace(ws, all, previous), { gone: [], filled: false });
+  assert.equal(serializeWorkspace(ws), before);
+});
+
+test('subagent classification follows lead links, including when the lead has left', () => {
+  const all = workers(['a', 'b', 'c', 'd', 'orphan', 's1', 's2', 's3']).map((w, i) => ({ ...w, lead: i >= 4 ? 'gone-lead' : undefined }));
+  const ws = emptyWorkspace();
+  autoLayout(ws, all);
+  assert.equal(ws.layout, 'eight', 'orphaned subagents do not count toward the five-main limit');
+  assert.equal(autoLayout(ws, all), false, 'applying the same policy is idempotent');
 });

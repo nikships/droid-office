@@ -1,6 +1,6 @@
 import type { WorkerInfo } from '../shared/protocol';
 import { statusWord } from '../shared/guests';
-import { isAsleep, isBusy } from '../shared/status';
+import { isAsleep, isBusy, needsOwnerAttention, needsOwnerInput } from '../shared/status';
 import { shortDuration, workedFor } from './dashboard-workspace';
 import { workerDot, workingBars, WORKER_MIME } from './dashboard-pane';
 import { teamCounts, workerTeams } from '../shared/team';
@@ -95,7 +95,7 @@ export function createWorkerRoster(el: HTMLElement, open: (id: string) => void, 
       }
       r.wrap.classList.toggle('dash-subworker', !!parent);
       r.wrap.classList.toggle('on', w.id === next.focused);
-      r.wrap.classList.toggle('attn', w.status === 'needs_input');
+      r.wrap.classList.toggle('attn', needsOwnerInput(w));
       r.wrap.classList.toggle('asleep', isAsleep(w.status));
       r.open.setAttribute('aria-current', String(w.id === next.focused));
       r.open.disabled = !next.live;
@@ -103,7 +103,7 @@ export function createWorkerRoster(el: HTMLElement, open: (id: string) => void, 
       const worked = workedFor(w.workedMs, w.workingSince, Date.now());
       const meta = [w.kind === 'agent' && !w.guest ? modelBadge(w.activeModel ?? w.model, w.activeEffort ?? w.effort) : workerKind(w), worked >= 1000 ? shortDuration(worked) : ''].filter(Boolean).join(' · ');
       const relationship = parent ? `Subworker of ${parent.name}` : w.lead ? 'Lead unavailable' : hasChildren ? 'Main worker' : '';
-      const key = JSON.stringify([w.name, w.color, w.status, w.acked, doingLine(w), meta, relationship, next.pane(w.id)]);
+      const key = JSON.stringify([w.name, w.color, w.status, w.acked, w.lead, doingLine(w), meta, relationship, next.pane(w.id)]);
       if (key !== r.key) {
         r.key = key;
         const status = statusWord(w, STATUS_LABEL);
@@ -121,7 +121,7 @@ export function createWorkerRoster(el: HTMLElement, open: (id: string) => void, 
               h('span.dash-row-name', {}, w.name),
               hasChildren ? h('span.dash-row-role', {}, 'Lead') : null,
               next.pane(w.id) >= 0 ? h('span.dash-row-pane', { title: `In pane ${next.pane(w.id) + 1}` }, `P${next.pane(w.id) + 1}`) : null,
-              h('span.dash-row-state', {}, w.status === 'needs_input' || (w.status === 'done' && !w.acked) ? h('span.pill', { class: w.status }, status) : isBusy(w.status) ? workingBars(status) : null),
+              h('span.dash-row-state', {}, needsOwnerAttention(w) ? h('span.pill', { class: w.status }, status) : isBusy(w.status) && w.status !== 'needs_input' ? workingBars(status) : null),
             ),
             h('span.dash-row-doing', {}, doingLine(w)),
             h('span.dash-row-meta', {}, w.lead && !parent ? 'Lead unavailable' : meta),
