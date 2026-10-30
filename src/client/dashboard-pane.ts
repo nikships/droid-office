@@ -50,7 +50,6 @@ export interface PaneHost {
   swap(from: number, to: number): void;
   /** Opens a teammate beside this pane. */
   openBeside(id: string): void;
-  prompt(w: WorkerInfo, pane: Pane): void;
   sendHome(w: WorkerInfo): void;
   hire(): void;
   /** Ctrl+] in a terminal: back to the worker's row in the sidebar. */
@@ -361,18 +360,20 @@ export function createPane(host: PaneHost, index: number): Pane {
     const fork = local && w.kind === 'agent' ? forkRefusal(w) : 'none';
     actions.replaceChildren(
       ...(w.cloud && w.sessionId ? [h('a.btn.icon.sm.ghost', { href: sessionWebUrl(w.sessionId), target: '_blank', rel: 'noopener noreferrer', title: 'Factory session', 'aria-label': 'Factory session' }, icon('external', 14))] : []),
-      asleep && !w.guest
-        ? btn(
-            w.kind === 'shell' ? 'Restart' : 'Resume',
-            'play',
-            !w.lost,
-            () =>
-              void host.action({ t: 'worker.resume', workerId: w.id }, w.id, intended, `${w.name} is waking up.`).then((error) => {
-                if (error) toast(error, 'warn');
-              }),
-            'dash-resume',
-          )
-        : btn(w.kind === 'shell' ? 'Command' : 'Prompt', 'message', !w.guest && !w.lost, () => host.prompt(w, pane), '', w.kind === 'shell' ? 'Send a command (P)' : 'Send a prompt (P)'),
+      ...(asleep && !w.guest
+        ? [
+            btn(
+              w.kind === 'shell' ? 'Restart' : 'Resume',
+              'play',
+              !w.lost,
+              () =>
+                void host.action({ t: 'worker.resume', workerId: w.id }, w.id, intended, `${w.name} is waking up.`).then((error) => {
+                  if (error) toast(error, 'warn');
+                }),
+              'dash-resume',
+            ),
+          ]
+        : []),
       ...(w.pr
         ? [h('a.btn.sm.ghost.dash-pane-pr', { href: safeLink(w.pr.url), target: '_blank', rel: 'noopener noreferrer', title: `Pull request #${w.pr.number}` }, icon('pr', 13), h('span', {}, `#${w.pr.number}`))]
         : local && w.worktree

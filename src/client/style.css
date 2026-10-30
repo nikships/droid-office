@@ -2353,13 +2353,10 @@ html:has(body.dashboard), body.dashboard { overflow: auto; }
 .dash-workspace.resizing { user-select: none; }
 .dash-pane { position: absolute; left: calc(var(--x) * 100% + var(--gl)); top: calc(var(--y) * 100% + var(--gt)); width: calc(var(--w) * 100% - var(--gl) - var(--gr)); height: calc(var(--h) * 100% - var(--gt) - var(--gb)); container: pane / inline-size; display: flex; flex-direction: column; overflow: hidden; border: 1px solid var(--border); border-radius: var(--radius-lg); background: var(--surface); transition: left .32s var(--spring), top .32s var(--spring), width .32s var(--spring), height .32s var(--spring), opacity .2s var(--ease), transform .2s var(--ease), border-color .2s var(--ease); animation: dash-pane-in .24s var(--ease) both; }
 .dash-workspace.resizing .dash-pane { transition: border-color .2s var(--ease); }
-.dash-pane.focused { border-color: rgba(238, 96, 24, .38); }
 .dash-pane.maximized { z-index: 5; }
 .dash-pane.covered { opacity: 0; transform: scale(.97); pointer-events: none; }
 @keyframes dash-pane-in { from { opacity: 0; transform: scale(.97); } }
 .dash-pane-head { position: relative; flex: none; display: flex; align-items: center; gap: var(--space-2); height: 44px; padding: 0 var(--space-1); border-bottom: 1px solid var(--border); }
-.dash-pane-head::before { content: ''; position: absolute; left: 0; right: 0; top: 0; height: 1px; background: var(--accent); opacity: 0; transform: scaleX(0); transform-origin: left; transition: transform .3s var(--spring), opacity .3s var(--ease); pointer-events: none; }
-.dash-pane.focused .dash-pane-head::before { opacity: 1; transform: none; }
 .dash-pane-grip { flex: none; display: grid; place-items: center; width: 16px; height: 28px; color: var(--text-tertiary); cursor: grab; }
 .dash-pane-grip:hover { color: var(--text-secondary); }
 .dash-pane-grip:active { cursor: grabbing; }

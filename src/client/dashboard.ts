@@ -4,7 +4,6 @@ import { statusWord } from '../shared/guests';
 import { cardsNewestFirst, cardChanged, OWNER } from '../shared/whiteboard';
 import { ROOF } from '../shared/rooftop';
 import { DESK_BY_ID } from '../shared/layout';
-import { slashOf, slashRefusal } from '../shared/slash-commands';
 import { originKind, type OriginKind } from '../shared/devices';
 import { BROWSER_KEY, DASHBOARD_FLOOR_KEY, browserCredential, draftKey, forgetBrowserCredential, isBrowserCredential, saveBrowserCredential, type BrowserCredential } from './browser-session';
 import { Net } from './net';
@@ -161,7 +160,6 @@ const side = h(
         ['Esc', 'restore'],
         ['↑↓', 'workers'],
         ['N', 'hire'],
-        ['P', 'prompt'],
         ['B', 'board'],
       ]),
     ),
@@ -349,7 +347,6 @@ const paneHost: PaneHost = {
     changed();
   },
   openBeside: (id) => openBesideHere(id),
-  prompt: (w, pane) => prompt(w, pane),
   sendHome: (w) => sendHome(w),
   hire: () => hire('agent'),
   leave(id) {
@@ -1007,34 +1004,6 @@ function hire(kind: 'agent' | 'shell', deskId = 'auto') {
     },
   });
 }
-function prompt(w: WorkerInfo, pane?: Pane) {
-  const threaded = () => pane?.mode() === 'thread' && pane.workerId() === w.id;
-  if (threaded() && w.status === 'needs_input') {
-    toast('Answer the current question, or open TTY for this CLI dialog.', 'warn');
-    return;
-  }
-  const intended = floor;
-  const key = draftKey(intended, w.id);
-  openPrompt({
-    title: w.kind === 'shell' ? `Command · ${w.name}` : `Prompt · ${w.name}`,
-    initial: read(key),
-    onDraft: (v) => remember(key, v),
-    imagesOption: w.kind !== 'shell',
-    recall: w.kind !== 'shell',
-    queueOption: w.kind === 'agent' && isBusy(w.status),
-    onSubmit: async (text, opts) => {
-      const now = store.workers.get(w.id) ?? w;
-      if (threaded() && now.status === 'needs_input') return 'Answer the current question, or open TTY for this CLI dialog. Your draft is kept.';
-      const refused = w.kind === 'agent' ? slashRefusal(text, w.name, isBusy(now.status)) : undefined;
-      if (refused) return `${refused} Your draft is kept.`;
-      const error = await action({ t: 'worker.prompt', workerId: w.id, prompt: text, images: opts.images, queue: opts.queue && isBusy(now.status) }, w.id, intended, `Sent to ${w.name}.`);
-      if (!error) remember(key, '');
-      // Droid answers most of its slash commands with a dialog, which only its terminal shows.
-      if (!error && threaded() && w.kind === 'agent' && slashOf(text)?.command?.kind === 'tty') paneHost.setView(w.id, 'terminal');
-      return error;
-    },
-  });
-}
 const warn = (error: string | undefined) => {
   if (error) toast(error, 'warn');
 };
@@ -1207,11 +1176,7 @@ window.addEventListener('keydown', (e) => {
     changed();
   } else if (k === 'n') hire('agent');
   else if (k === 'b') void openBoard();
-  else if (k === 'p') {
-    const w = store.workers.get(focusedWorker(ws) ?? '');
-    if (w && live() && !w.guest && !w.lost && !isAsleep(w.status)) prompt(w, panes[ws.focused]);
-    else return;
-  } else return;
+  else return;
   e.preventDefault();
 });
 window.addEventListener('storage', (event) => {
