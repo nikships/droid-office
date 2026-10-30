@@ -139,25 +139,17 @@ export function setLayout(ws: Workspace, layout: LayoutMode) {
   ws.layout = layout;
   ws.maximized = null;
   ws.focused = Math.min(ws.focused, SLOT_COUNT[layout] - 1);
-  fillPanes(ws, idsOf(ws));
-}
-
-/** Every worker in any slot, shown or parked past the layout's count. */
-function idsOf(ws: Workspace): string[] {
-  return ws.slots.filter((id): id is string => !!id);
 }
 
 /**
  * Fills the layout's empty panes with the given workers, in order, skipping the ones already shown.
- * Workers parked past the layout's count come next, in their own order, so growing a layout puts them
- * back where they were instead of leaving a pane empty beside them.
+ * Only the supplied workers are eligible, including any parked beyond the visible layout.
  * Returns whether a pane changed.
  */
 export function fillPanes(ws: Workspace, ids: readonly string[]): boolean {
   const count = SLOT_COUNT[ws.layout];
   const shown = new Set(ws.slots.slice(0, count).filter((id): id is string => !!id));
-  const parked = ws.slots.slice(count).filter((id): id is string => !!id);
-  const queue = [...new Set([...ids.filter((id) => id && !shown.has(id) && !parked.includes(id)), ...parked])];
+  const queue = [...new Set(ids.filter((id) => id && !shown.has(id)))];
   let filled = false;
   for (let slot = 0; slot < count && queue.length; slot++) {
     if (ws.slots[slot]) continue;
@@ -169,6 +161,16 @@ export function fillPanes(ws: Workspace, ids: readonly string[]): boolean {
     filled = true;
   }
   return filled;
+}
+
+/** Remove departed workers and place only new arrivals, leaving unrelated closed panes alone. */
+export function syncWorkspace(ws: Workspace, ids: readonly string[], previous: Set<string>) {
+  const present = new Set(ids);
+  const arrivals = ids.filter((id) => !previous.has(id));
+  const gone = prune(ws, (id) => present.has(id));
+  previous.clear();
+  for (const id of ids) previous.add(id);
+  return { gone, filled: fillPanes(ws, arrivals) };
 }
 
 /** Puts a worker in a pane. If it was open in another one, the two panes trade places. */
@@ -187,16 +189,22 @@ export function swap(ws: Workspace, a: number, b: number) {
   ws.focused = b;
 }
 
-/** Shows a worker: focuses its pane if it's open, else fills an empty pane, else takes the focused one. */
+/** An explicit empty target wins; otherwise focus the worker, fill an empty pane, or take focus. */
 export function openWorker(ws: Workspace, id: string, targetPane?: number) {
   const shown = visibleSlots(ws);
+  // A hire can reach the floor and be auto-placed before its confirmation arrives.
+  if (targetPane !== undefined && shown[targetPane] === null) {
+    assign(ws, targetPane, id);
+    if (ws.maximized !== null) ws.maximized = targetPane;
+    return;
+  }
   const at = shown.indexOf(id);
   if (at >= 0) {
     ws.focused = at;
     if (ws.maximized !== null) ws.maximized = at;
     return;
   }
-  const empty = targetPane !== undefined && shown[targetPane] === null ? targetPane : shown.indexOf(null);
+  const empty = shown.indexOf(null);
   const slot = empty >= 0 ? empty : ws.focused;
   assign(ws, slot, id);
   if (ws.maximized !== null) ws.maximized = slot;

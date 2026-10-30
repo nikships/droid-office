@@ -1,26 +1,55 @@
 import type { TeamBadge, TeamEmblem, WorkerInfo } from './protocol.js';
 
+type Member = Pick<WorkerInfo, 'id' | 'lead' | 'createdAt'>;
+type Activity = Pick<WorkerInfo, 'status' | 'acked'>;
+export interface WorkerTeam<T> {
+  lead: T;
+  children: T[];
+}
+
+/** Hiring is one level deep. Stale, self-referencing or cyclic links never hide a worker. */
+export function workerTeams<T extends Member>(workers: Iterable<T>): WorkerTeam<T>[] {
+  const sorted = [...workers].sort((a, b) => a.createdAt - b.createdAt || a.id.localeCompare(b.id));
+  const byId = new Map(sorted.map((w) => [w.id, w]));
+  const children = new Map<string, T[]>();
+  const roots: T[] = [];
+  for (const w of sorted) {
+    const parent = w.lead ? byId.get(w.lead) : undefined;
+    if (parent && parent !== w && !parent.lead) {
+      const siblings = children.get(parent.id) ?? [];
+      siblings.push(w);
+      children.set(parent.id, siblings);
+    } else roots.push(w);
+  }
+  return roots.map((lead) => ({ lead, children: children.get(lead.id) ?? [] }));
+}
+
 /** A lead's subagents (see WorkerInfo.lead), oldest first. */
-export function teamOf(workers: Iterable<WorkerInfo>, leadId: string): WorkerInfo[] {
-  return [...workers].filter((w) => w.lead === leadId).sort((a, b) => a.createdAt - b.createdAt);
+export function teamOf<T extends Member>(workers: Iterable<T>, leadId: string): T[] {
+  return workerTeams(workers).find((team) => team.lead.id === leadId)?.children ?? [];
 }
 
 /**
  * Every worker by when it was hired, each lead's subagents right under it, so a team reads as one
  * block. A subagent whose lead has gone stands on its own.
  */
-export function workersByTeam(workers: Iterable<WorkerInfo>): WorkerInfo[] {
-  const all = [...workers].sort((a, b) => a.createdAt - b.createdAt);
-  const ids = new Set(all.map((w) => w.id));
-  return all.filter((w) => !w.lead || !ids.has(w.lead)).flatMap((w) => [w, ...all.filter((s) => s.lead === w.id)]);
+export function workersByTeam<T extends Member>(workers: Iterable<T>): T[] {
+  return workerTeams(workers).flatMap((team) => [team.lead, ...team.children]);
 }
 
-/** "🧭 3 subagents · 2 working · 1 needs input" for a lead's team; nothing for an empty one. */
-export function teamSummary(team: readonly WorkerInfo[]): string | undefined {
+/** Startup counts as work; unacknowledged completion and input requests need attention. */
+export function teamCounts(workers: readonly Activity[]) {
+  return {
+    working: workers.filter((w) => w.status === 'working' || w.status === 'starting').length,
+    attention: workers.filter((w) => w.status === 'needs_input' || (w.status === 'done' && !w.acked)).length,
+  };
+}
+
+/** "🧭 3 subagents · 2 working · 1 needs you" for a lead's team; nothing for an empty one. */
+export function teamSummary(team: readonly Activity[]): string | undefined {
   if (!team.length) return undefined;
-  const busy = team.filter((s) => s.status === 'working').length;
-  const waiting = team.filter((s) => s.status === 'needs_input').length;
-  return [`🧭 ${team.length} subagent${team.length === 1 ? '' : 's'}`, busy && `${busy} working`, waiting && `${waiting} need${waiting === 1 ? 's' : ''} input`].filter(Boolean).join(' · ');
+  const { working, attention } = teamCounts(team);
+  return [`🧭 ${team.length} subagent${team.length === 1 ? '' : 's'}`, working && `${working} working`, attention && `${attention} need${attention === 1 ? 's' : ''} you`].filter(Boolean).join(' · ');
 }
 
 /**
@@ -118,13 +147,5 @@ export function teamStanding(w: WorkerInfo, get: (id: string) => WorkerInfo | un
  * is doing. `moving` is that subagent working, so one busy subagent doesn't animate anyone else's.
  */
 export function teamLinks(workers: Iterable<WorkerInfo>): { lead: WorkerInfo; member: WorkerInfo; team: string; accent: string; moving: boolean }[] {
-  const all = [...workers];
-  const byId = new Map(all.map((w) => [w.id, w]));
-  const links: { lead: WorkerInfo; member: WorkerInfo; team: string; accent: string; moving: boolean }[] = [];
-  for (const member of all) {
-    const lead = member.lead ? byId.get(member.lead) : undefined;
-    if (!lead) continue;
-    links.push({ lead, member, team: lead.team?.id ?? lead.id, accent: lead.team?.accent ?? lead.color, moving: member.status === 'working' });
-  }
-  return links;
+  return workerTeams(workers).flatMap(({ lead, children }) => children.map((member) => ({ lead, member, team: lead.team?.id ?? lead.id, accent: lead.team?.accent ?? lead.color, moving: member.status === 'working' })));
 }

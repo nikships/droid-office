@@ -35,7 +35,6 @@ test('worker roster preserves hierarchy, focus and entry motion across updates',
       w.arrivals.push(this.querySelector<HTMLElement>('[data-worker]')?.dataset.worker);
       return animate.apply(this, args);
     };
-    // The owner's screenshot supplies these workers, relationships and task descriptions.
     w.workers = [
       ['Pixel', '#a8d354', 'Document AWS Infrastructure'],
       ['Nibble', '#4dbed4', 'Verifying DNS & networking'],

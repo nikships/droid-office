@@ -23,6 +23,7 @@ import {
   shortDuration,
   SLOT_COUNT,
   swap,
+  syncWorkspace,
   toggleMax,
   visibleSlots,
   workedFor,
@@ -67,6 +68,58 @@ test('hiring into a specific empty pane keeps its target despite focus changes',
   openWorker(ws, 'new', 3);
   assert.deepEqual(visibleSlots(ws), ['a', null, null, 'new']);
   assert.equal(ws.focused, 3);
+});
+
+test('hire confirmation moves an auto-placed arrival to the requested empty pane', () => {
+  const ws = emptyWorkspace('grid');
+  ws.slots[0] = 'a';
+  const previous = new Set(['a']);
+  assert.deepEqual(syncWorkspace(ws, ['a', 'new'], previous), { gone: [], filled: true });
+  assert.deepEqual(visibleSlots(ws), ['a', 'new', null, null]);
+  toggleMax(ws, 0);
+  openWorker(ws, 'new', 3);
+  assert.deepEqual(visibleSlots(ws), ['a', null, null, 'new']);
+  assert.equal(ws.focused, 3);
+  assert.equal(ws.maximized, 3);
+  assert.deepEqual(syncWorkspace(ws, ['a', 'new'], previous), { gone: [], filled: false });
+  assert.deepEqual(visibleSlots(ws), ['a', null, null, 'new']);
+});
+
+test('hire confirmation keeps automatic placement when its target is occupied or hidden', () => {
+  for (const target of [0, 4, -1]) {
+    const ws = emptyWorkspace('grid');
+    ws.slots[0] = 'a';
+    syncWorkspace(ws, ['a', 'new'], new Set(['a']));
+    openWorker(ws, 'new', target);
+    assert.deepEqual(visibleSlots(ws), ['a', 'new', null, null]);
+    assert.equal(ws.focused, 1);
+  }
+});
+
+test('arrivals on a crowded floor take free panes without reopening unrelated closed or parked workers', () => {
+  const ids = ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'older-hidden'];
+  const previous = new Set(ids);
+  const ws = seedWorkspace(ids);
+  setLayout(ws, 'grid');
+  closeSlot(ws, 1);
+  closeSlot(ws, 3);
+  assert.deepEqual(syncWorkspace(ws, [...ids, 'new'], previous), { gone: [], filled: true });
+  assert.deepEqual(ws.slots, ['a', 'new', 'c', null, 'e', 'f', 'g', 'h']);
+  assert.deepEqual(syncWorkspace(ws, [...ids, 'new'], previous), { gone: [], filled: false });
+  closeSlot(ws, 1);
+  syncWorkspace(ws, [...ids, 'new', 'later'], previous);
+  assert.deepEqual(ws.slots, ['a', 'later', 'c', null, 'e', 'f', 'g', 'h']);
+  assert.deepEqual(syncWorkspace(ws, [...ids.filter((id) => id !== 'c'), 'new', 'later'], previous), { gone: ['c'], filled: false });
+  assert.deepEqual(visibleSlots(ws), ['a', 'later', null, null]);
+});
+
+test('arrivals that find a full workspace do not later refill a deliberately closed pane', () => {
+  const ws = seedWorkspace(['a', 'b']);
+  const previous = new Set(['a', 'b']);
+  assert.deepEqual(syncWorkspace(ws, ['a', 'b', 'new'], previous), { gone: [], filled: false });
+  closeSlot(ws, 1);
+  assert.deepEqual(syncWorkspace(ws, ['a', 'b', 'new'], previous), { gone: [], filled: false });
+  assert.deepEqual(visibleSlots(ws), ['a', null]);
 });
 
 test('a filled or hidden hire target falls back to an available visible pane', () => {
@@ -206,16 +259,16 @@ test('switching to a bigger layout fills its new panes with the workers on the f
   assert.deepEqual(visibleSlots(ws), ['a', 'b', 'c', 'd', 'e', 'f', null, null]);
 });
 
-test('empty panes take the floor in order, then the workers hidden by a smaller layout', () => {
+test('empty panes take only the supplied workers in order, including parked workers', () => {
   const ws = seedWorkspace(['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h']);
   setLayout(ws, 'split');
   assert.deepEqual(visibleSlots(ws), ['a', 'b']);
   closeSlot(ws, 0);
   fillPanes(ws, ['x', 'y']);
-  assert.deepEqual(visibleSlots(ws), ['x', 'b'], 'a worker in no pane at all comes before the parked ones');
+  assert.deepEqual(visibleSlots(ws), ['x', 'b']);
   closeSlot(ws, 0);
-  fillPanes(ws, []);
-  assert.deepEqual(visibleSlots(ws), ['c', 'b'], 'then the parked workers, in their own order');
+  assert.equal(fillPanes(ws, []), false);
+  assert.deepEqual(visibleSlots(ws), [null, 'b'], 'parked workers are not implicitly eligible');
   const parked = seedWorkspace(['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h']);
   setLayout(parked, 'split');
   closeSlot(parked, 1);
@@ -225,7 +278,7 @@ test('empty panes take the floor in order, then the workers hidden by a smaller 
   assert.equal(fillPanes(emptyWorkspace('single'), []), false);
 });
 
-test('filling never duplicates workers and prefers available floor workers to parked ones', () => {
+test('filling never duplicates workers or moves already-visible workers', () => {
   const ws = seedWorkspace(['a', 'b', 'c']);
   setLayout(ws, 'split');
   closeSlot(ws, 1);
@@ -234,6 +287,17 @@ test('filling never duplicates workers and prefers available floor workers to pa
   setLayout(ws, 'eight');
   fillPanes(ws, ['a', 'b', 'd', 'd', 'e']);
   assert.deepEqual(visibleSlots(ws), ['a', 'b', 'c', 'd', 'e', null, null, null]);
+});
+
+test('layout changes leave slot assignment to one explicit fill in caller order', () => {
+  const ws = seedWorkspace(['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h']);
+  setLayout(ws, 'split');
+  closeSlot(ws, 0);
+  const before = [...ws.slots];
+  setLayout(ws, 'grid');
+  assert.deepEqual(ws.slots, before, 'the layout setter never fills or moves slots');
+  fillPanes(ws, ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h']);
+  assert.deepEqual(ws.slots, ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h'], 'floor order wins over an implicit parked-worker fill');
 });
 
 test('maximize toggles, needs two panes, and closing the maximized pane restores the layout', () => {

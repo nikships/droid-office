@@ -22,7 +22,7 @@ import { mountWorkerThread, type WorkerThread } from './ui/worker-thread';
 import { openQuestionWorkspace, type QuestionDraft, type QuestionReply } from './ui/question-workspace';
 import type { InlineTerminalHandle } from './ui/terminal';
 import type { PaneView } from './dashboard-workspace';
-import { workerTeams } from './dashboard-teams';
+import { workerTeams } from '../shared/team';
 
 /** What a sidebar row carries when it's dragged onto a pane. */
 export const WORKER_MIME = 'application/x-droid-worker';

@@ -42,6 +42,7 @@ import {
   setLayout,
   SLOT_COUNT,
   swap,
+  syncWorkspace,
   toggleMax,
   visibleSlots,
   workerView,
@@ -49,7 +50,7 @@ import {
 } from './dashboard-workspace';
 import { createPane, type Pane, type PaneHost, VIEW_KEY } from './dashboard-pane';
 import { createWorkerRoster } from './dashboard-roster';
-import { workerTeams } from './dashboard-teams';
+import { workersByTeam } from '../shared/team';
 const read = (key: string) => {
   try {
     return localStorage.getItem(key) ?? '';
@@ -235,7 +236,7 @@ let takeFocus = true;
 const names = new Map<string, string>();
 /** Who was on the floor at the last paint, so a worker arriving from anywhere fills an empty pane. */
 const onFloor = new Set<string>();
-/** The floor's workers in sidebar order: the order empty panes fill in. */
+/** Sidebar order, used when loading or explicitly changing the layout. */
 const staff = () => ordered().map((w) => w.id);
 
 function loadWorkspace(f: string) {
@@ -244,6 +245,8 @@ function loadWorkspace(f: string) {
   ws = parseWorkspace(read(`${WS_KEY}:${f}`)) ?? seedWorkspace(staff());
   prune(ws, (id) => store.workers.has(id));
   fillPanes(ws, staff());
+  onFloor.clear();
+  for (const id of staff()) onFloor.add(id);
 }
 function saveWorkspace() {
   if (wsFloor) remember(`${WS_KEY}:${wsFloor}`, serializeWorkspace(ws));
@@ -592,7 +595,7 @@ function say(text: string) {
 // --- Painting ----------------------------------------------------------------------------------------
 
 /** Workers in the order the sidebar lists them, for the arrow keys. */
-const ordered = () => workerTeams([...store.workers.values()]).flatMap((team) => [team.lead, ...team.children]);
+const ordered = () => workersByTeam(store.workers.values());
 
 let floorListKey = '';
 let shownFloor: string | null | undefined;
@@ -663,15 +666,8 @@ function paint() {
   const needs = [...store.workers.values()].filter((w) => w.status === 'needs_input').length;
   document.title = `${needs ? `(${needs}) ` : ''}${officeName} · Web companion`;
   if (fresh && wsFloor === floor) {
-    const gone = prune(ws, (id) => store.workers.has(id));
+    const { gone, filled } = syncWorkspace(ws, staff(), onFloor);
     for (const id of gone) toast(`${names.get(id) ?? 'A worker'} has left the floor.`, 'info');
-    // A pane never sits empty beside someone who could be in it: a worker arriving from anywhere (a
-    // hire made by a lead or the CLI, a resume, or one who was out of sight) takes the first free pane.
-    const ids = staff();
-    const arrived = ids.some((id) => !onFloor.has(id));
-    onFloor.clear();
-    for (const id of ids) onFloor.add(id);
-    const filled = gone.length || arrived ? fillPanes(ws, ids) : false;
     if (gone.length || filled) saveWorkspace();
   }
   for (const w of store.workers.values()) names.set(w.id, w.name);

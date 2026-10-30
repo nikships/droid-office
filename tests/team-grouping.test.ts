@@ -1,9 +1,8 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import type { WorkerInfo } from '../src/shared/protocol.js';
-import { teamCounts, workerTeams } from '../src/client/dashboard-teams.js';
+import { teamCounts, teamOf, teamSummary, workersByTeam, workerTeams, teamLinks } from '../src/shared/team.js';
 
-// Names and relationships from the owner's companion screenshot.
 const workers = ['Pixel', 'Nibble', 'Dot', 'Widget', 'Cosmo', 'Sprocket', 'Gizmo', 'Bolt'].map((name, index) => ({
   id: name.toLowerCase(),
   name,
@@ -11,6 +10,13 @@ const workers = ['Pixel', 'Nibble', 'Dot', 'Widget', 'Cosmo', 'Sprocket', 'Gizmo
   lead: index ? 'pixel' : undefined,
   status: 'working' as WorkerInfo['status'],
   acked: false,
+  kind: 'agent' as const,
+  color: '#fff',
+  deskId: `desk-${index}`,
+  createdBy: 'test',
+  cols: 80,
+  rows: 24,
+  open: false,
 }));
 
 test('teams use hiring relationships and remain stable across statuses and input order', () => {
@@ -32,6 +38,12 @@ test('missing leads, self-links, cycles and unsupported nested links never hide 
     const input = workers.map((w) => ({ ...w, lead: (links as Record<string, string>)[w.id] ?? w.lead }));
     const shown = workerTeams(input).flatMap((t) => [t.lead, ...t.children]);
     assert.deepEqual(shown.map((w) => w.id).sort(), workers.map((w) => w.id).sort());
+    assert.deepEqual(workersByTeam(input), shown);
+    for (const w of input) assert.deepEqual(teamOf(input, w.id), workerTeams(input).find((t) => t.lead.id === w.id)?.children ?? []);
+    assert.deepEqual(
+      teamLinks(input).map(({ lead, member }) => [lead.id, member.id]),
+      workerTeams(input).flatMap(({ lead, children }) => children.map((member) => [lead.id, member.id])),
+    );
   }
   assert.equal(workerTeams(workers.slice(1)).length, 7);
   assert.deepEqual(workerTeams([]), []);
@@ -49,5 +61,9 @@ test('equal creation times have deterministic ordering; badges and fork ancestry
 test('team counts include startup and unacknowledged completion, not acknowledged or sleeping workers', () => {
   const input = ['working', 'starting', 'needs_input', 'done', 'done', 'offline', 'exited', 'idle'].map((status, i) => ({ ...workers[i], status: status as WorkerInfo['status'], acked: i === 4 }));
   assert.deepEqual(teamCounts(input), { working: 2, attention: 2 });
+  assert.equal(teamSummary(input), '🧭 8 subagents · 2 working · 2 need you');
+  assert.equal(teamSummary(input.filter((w) => w.status === 'done')), '🧭 2 subagents · 1 needs you');
+  assert.equal(teamSummary(input.filter((w) => w.status === 'starting')), '🧭 1 subagent · 1 working');
   assert.deepEqual(teamCounts([]), { working: 0, attention: 0 });
+  assert.equal(teamSummary([]), undefined);
 });

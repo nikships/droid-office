@@ -3,7 +3,7 @@ import { statusWord } from '../shared/guests';
 import { isAsleep, isBusy } from '../shared/status';
 import { shortDuration, workedFor } from './dashboard-workspace';
 import { workerDot, workingBars, WORKER_MIME } from './dashboard-pane';
-import { teamCounts, workerTeams } from './dashboard-teams';
+import { teamCounts, workerTeams } from '../shared/team';
 import { doingLine, workerKind } from './worker-words';
 import { h, STATUS_LABEL } from './ui/dom';
 import { icon } from './ui/icons';

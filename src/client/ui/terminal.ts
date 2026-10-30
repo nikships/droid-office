@@ -12,7 +12,7 @@ import { colorDot } from './kit';
 import { OFFICE_SHELL_ID } from '../../shared/office-shell';
 import type { ServerMsg, WorkerInfo } from '../../shared/protocol';
 import { PROVIDER_LABEL, outsideNote, statusWord } from '../../shared/guests';
-import { teamSummary } from '../../shared/team';
+import { teamSummary, workerTeams } from '../../shared/team';
 import { forkRefusal } from '../../shared/worker-fork';
 import { openForkWorker } from './fork-worker';
 import { creditsNote } from '../../shared/factory-sessions';
@@ -207,9 +207,10 @@ export function openTerminal(net: Net, workerId: string, onChanges?: () => void,
   );
   const paintTeam = (w: WorkerInfo) => {
     if (inline?.hideTeam) return;
-    const lead = w.lead ? store.workers.get(w.lead) : undefined;
-    const mates = lead ? store.teamOf(lead.id).filter((s) => s.id !== w.id) : store.teamOf(w.id);
-    const key = [lead, ...mates].map((x) => x && `${x.id}:${x.name}:${x.status}:${x.title ?? ''}`).join('|');
+    const group = workerTeams(store.workers.values()).find((t) => t.lead.id === w.id || t.children.some((s) => s.id === w.id));
+    const lead = group && group.lead.id !== w.id ? group.lead : undefined;
+    const mates = group?.children.filter((s) => s.id !== w.id) ?? [];
+    const key = [lead, ...mates].map((x) => x && `${x.id}:${x.name}:${x.status}:${x.acked}:${x.title ?? ''}`).join('|');
     if (key === teamKey) return;
     teamKey = key;
     const chip = (x: WorkerInfo) =>
