@@ -316,6 +316,15 @@ class ThreadFeed(val workerId: String, private val prefix: String = UUID.randomU
     private fun rowsBefore(held: List<ThreadRow>, cut: Long, entries: List<ThreadEntry>): List<ThreadRow> {
         val seq = entries.associate { it.id to it.seq }
         fun held(id: String) = (seq[id] ?: Long.MAX_VALUE) <= cut - 1
+        fun state(actions: List<ThreadModelAction>): ActivityState {
+            fun count(state: ActivityState) = actions.count { it.state == state && it.causedBy == null }
+            return when {
+                count(ActivityState.Failed) > 0 -> ActivityState.Failed
+                count(ActivityState.Incomplete) > 0 -> ActivityState.Incomplete
+                count(ActivityState.Cancelled) > 0 -> ActivityState.Cancelled
+                else -> ActivityState.Complete
+            }
+        }
         val rows = mutableListOf<ThreadRow>()
         for (row in held) {
             if (row.to < cut) {
@@ -327,23 +336,19 @@ class ThreadFeed(val workerId: String, private val prefix: String = UUID.randomU
             val blocks = row.blocks.mapNotNull { block ->
                 when (block) {
                     is ThreadBlock.Thought -> block.takeIf { held(block.id) }
-                    is ThreadBlock.Tools -> block.actions.filter { held(it.id) }.takeIf { it.isNotEmpty() }?.let { block.copy(actions = it) }
+                    is ThreadBlock.Tools -> block.actions.filter { held(it.id) }.takeIf { it.isNotEmpty() }?.let { actions ->
+                        if (actions.size == block.actions.size) block
+                        else block.copy(label = "Earlier tools", state = state(actions), live = false, actions = actions)
+                    }
                 }
             }
             if (sourceIds.isEmpty() || blocks.isEmpty()) continue
             val actions = blocks.flatMap { if (it is ThreadBlock.Tools) it.actions else emptyList() }
-            fun count(state: ActivityState) = actions.count { it.state == state && it.causedBy == null }
-            val state = when {
-                count(ActivityState.Failed) > 0 -> ActivityState.Failed
-                count(ActivityState.Incomplete) > 0 -> ActivityState.Incomplete
-                count(ActivityState.Cancelled) > 0 -> ActivityState.Cancelled
-                else -> ActivityState.Complete
-            }
             rows += row.copy(
                 to = cut - 1,
                 sourceIds = sourceIds,
                 label = "Earlier activity",
-                state = state,
+                state = state(actions),
                 live = false,
                 status = null,
                 running = null,

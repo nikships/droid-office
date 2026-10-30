@@ -170,6 +170,11 @@ test('an earlier disk page keeps its activity prefix before the first held row',
     assert.equal(prefix.live, false);
     assert.equal(prefix.status, undefined);
     assert.equal(prefix.running, undefined);
+    const block = prefix.blocks[0];
+    assert.ok(block.kind === 'tools');
+    assert.equal(block.label, 'Earlier tools');
+    assert.equal(block.state, failed === 975 ? 'failed' : 'complete');
+    assert.equal(block.live, false);
     assert.deepEqual(
       h.rows.flatMap((row) => actionsOf(row).map((action) => action.id)),
       all.map((entry) => entry.id),
@@ -216,6 +221,28 @@ test('a window that slid past an activity keeps the prefix this client still hol
   assert.equal(prefix.running, undefined);
 });
 
+test('a clipped tool block drops suffix work without changing earlier whole blocks', () => {
+  const all = [tool(1), entry(2, { kind: 'thinking', text: 'Consider the files' }), ...Array.from({ length: 7 }, (_, i) => tool(i + 3))];
+  all[8] = { ...all[8], output: undefined };
+  const rows = presentThread(all, true);
+  const original = rows[0];
+  assert.ok(original.kind === 'activity');
+  const run = original.blocks[2];
+  assert.ok(run.kind === 'tools' && run.live && run.state === 'working');
+  const h = new ThreadHistory();
+  h.apply({ ...windowPage(all), presentation: { version: 1, rows } });
+  const next = { ...windowPage(all.slice(4)), presentation: { version: 1, rows: presentThread(all.slice(4), true) } };
+  h.apply(next);
+  const prefix = h.rows[0];
+  assert.ok(prefix.kind === 'activity');
+  assert.equal(prefix.blocks[0], original.blocks[0], 'a whole tool block keeps its metadata');
+  assert.equal(prefix.blocks[1], original.blocks[1], 'the thought stays in order');
+  const clipped = prefix.blocks[2];
+  assert.ok(clipped.kind === 'tools');
+  assert.deepEqual(clipped, { ...run, label: 'Earlier tools', state: 'complete', live: false, actions: run.actions.slice(0, 2) });
+  assert.equal(h.rows[1], next.presentation.rows[0], 'the live suffix stays unchanged');
+});
+
 test('a clipped prefix keeps the failures the office reported for it', () => {
   const all = [entry(0, { role: 'user' }), tool(1), { ...tool(2), error: true, output: 'ENOENT: no such file' }, ...Array.from({ length: 6 }, (_, i) => tool(i + 3))];
   const h = new ThreadHistory();
@@ -230,6 +257,7 @@ test('a clipped prefix keeps the failures the office reported for it', () => {
     ['t-2'],
   );
   assert.equal(prefix.state, 'failed');
+  assert.equal(prefix.blocks[0].kind === 'tools' && prefix.blocks[0].state, 'failed');
   assert.equal(prefix.status, undefined, 'the status line would count the whole run again');
   const rest = h.rows[2];
   assert.ok(rest.kind === 'activity');
@@ -245,6 +273,11 @@ test('a failure past the cut stays with the row that reports it', () => {
   assert.ok(prefix.kind === 'activity');
   assert.deepEqual(prefix.failed, [], 'the prefix holds no failure of its own');
   assert.equal(prefix.state, 'complete', 'and never claims the run failed');
+  const block = prefix.blocks[0];
+  assert.ok(block.kind === 'tools');
+  assert.equal(block.label, 'Earlier tools');
+  assert.equal(block.state, 'complete', 'the nested block never claims a removed suffix failed');
+  assert.equal(block.live, false);
   const rest = h.rows[2];
   assert.ok(rest.kind === 'activity');
   assert.deepEqual(

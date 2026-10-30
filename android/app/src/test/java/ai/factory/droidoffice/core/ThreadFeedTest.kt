@@ -320,6 +320,10 @@ class ThreadFeedTest {
             assertFalse(prefix.live)
             assertNull(prefix.status)
             assertNull(prefix.running)
+            val block = prefix.blocks.single() as ThreadBlock.Tools
+            assertEquals("Earlier tools", block.label)
+            assertEquals(if (failed == 975L) ActivityState.Failed else ActivityState.Complete, block.state)
+            assertFalse(block.live)
             assertEquals(all.map { it.id }, feed.state.rows.flatMap { (it as ThreadRow.Activity).sourceIds })
             assertEquals(all, feed.state.entries)
         }
@@ -351,6 +355,37 @@ class ThreadFeedTest {
     }
 
     @Test
+    fun aClippedToolBlockDropsSuffixWorkWithoutChangingEarlierWholeBlocks() {
+        val feed = ThreadFeed("w1")
+        val all = (1L..9L).map {
+            when (it) {
+                2L -> ThreadEntry("t2", 2, ThreadRole.Assistant, ThreadKind.Thinking, text = "Consider the files")
+                9L -> tool("t9", 9).copy(output = null)
+                else -> tool("t$it", it)
+            }
+        }
+        val first = activityRow("activity:t1", 1, 1, listOf("t1")).blocks.single()
+        val thought = ThreadBlock.Thought("t2", "Consider the files", live = false)
+        val run = (activityRow("activity:t3", 3, 9, all.drop(2).map { it.id }).blocks.single() as ThreadBlock.Tools).let {
+            it.copy(label = "Read 7 files", state = ActivityState.Working, live = true, actions = it.actions.map { action ->
+                if (action.id == "t9") action.copy(state = ActivityState.Working, status = "Running") else action
+            })
+        }
+        val original = ThreadRow.Activity("activity:t1", 1, 9, all.map { it.id }, "Read 8 files", ActivityState.Working, live = true, blocks = listOf(first, thought, run))
+        feed.receive(page(feed, feed.latest(0)!!, all, hasMore = true, presentation = ThreadPresentation(1, listOf(original))))
+        val suffix = original.copy(
+            id = "activity:t5", from = 5, sourceIds = all.drop(4).map { it.id }, label = "Read 5 files",
+            blocks = listOf(run.copy(id = "tools:t5", label = "Read 5 files", actions = run.actions.drop(2))),
+        )
+        feed.receive(page(feed, feed.latest(1)!!, all.drop(4), hasMore = true, presentation = ThreadPresentation(1, listOf(suffix))))
+        val prefix = feed.state.rows.first() as ThreadRow.Activity
+        assertEquals(first, prefix.blocks[0])
+        assertEquals(thought, prefix.blocks[1])
+        assertEquals(run.copy(label = "Earlier tools", state = ActivityState.Complete, live = false, actions = run.actions.take(2)), prefix.blocks[2])
+        assertEquals(suffix, feed.state.rows.last())
+    }
+
+    @Test
     fun aFailurePastTheCutStaysWithTheRowThatReportsIt() {
         val feed = ThreadFeed("w1")
         val window = (1L..4L).map { tool("t$it", it) } + (5L..9L).map { if (it == 9L) tool("t$it", it).copy(error = true, output = "ENOENT") else tool("t$it", it) }
@@ -366,6 +401,10 @@ class ThreadFeedTest {
         assertEquals(4L, clipped.to)
         assertEquals("a failure the prefix does not hold is not reported by it", emptyList<String>(), clipped.failed.map { it.id })
         assertEquals(ActivityState.Complete, clipped.state)
+        val block = clipped.blocks.single() as ThreadBlock.Tools
+        assertEquals("Earlier tools", block.label)
+        assertEquals(ActivityState.Complete, block.state)
+        assertFalse(block.live)
         val rest = feed.state.rows.last() as ThreadRow.Activity
         assertEquals(listOf("t9"), rest.failed.map { it.id })
         assertEquals(ActivityState.Failed, rest.state)
