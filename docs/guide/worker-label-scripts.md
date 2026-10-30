@@ -25,8 +25,8 @@ plus a newline to stdin, then closes stdin:
   "system": "The current Sign writer instructions from Settings",
   "conversation": "user: Add custom label scripts\n\nassistant: Checking the contract tests",
   "previousSubject": "Custom Label Scripts",
-  "model": "meta/muse-spark-1.3-contributor",
-  "effort": "minimal"
+  "model": "your-model-id",
+  "effort": "low"
 }
 ```
 
@@ -61,31 +61,6 @@ Do not daemonize or detach subprocesses. Temporary working directories are remov
 The same changed-text detection, two-call queue and stale-result checks apply to
 both implementations.
 
-## OpenRouter example
-
-[`bin/worker-label-openrouter.mjs`](../../bin/worker-label-openrouter.mjs) is a
-dependency-free adapter using OpenRouter Chat Completions, structured JSON output,
-no tools and an explicit reasoning effort. It never falls back to another model.
-
-Use these settings:
-
-| Field | Value |
-| --- | --- |
-| Implementation | Custom script |
-| Executable path | The absolute path printed by `command -v node` |
-| Arguments | `["/absolute/path/to/worker-label-openrouter.mjs","--key-file","/absolute/path/to/openrouter-key"]` |
-| Model | `meta/muse-spark-1.3-contributor` |
-| Reasoning effort | `minimal` |
-| Refresh interval | `60` |
-
-The key file contains only your OpenRouter API key; make it readable only by you
-(`chmod 600 /absolute/path/to/openrouter-key`). Alternatively export
-`OPENROUTER_API_KEY` in the environment that launches the Office and omit the
-`--key-file` arguments. Apps opened from Finder generally do not inherit shell
-exports. Keep your script and key outside the app bundle so app updates do not
-replace them.
-
-OpenRouter's [model catalogue](https://openrouter.ai/api/v1/models) currently lists
-reasoning as mandatory for Muse Spark 1.3 Contributor, with `minimal` as the lowest
-supported effort. `none` and `off` are not supported for this model.
-[Contributor prompts and outputs may be used to improve Meta's products](https://openrouter.ai/meta/muse-spark-1.3-contributor).
+Keep your implementation and credentials outside the app bundle so Office updates
+do not replace them. The Office ships the runner and contract, not an implementation
+for any particular service. Install and configure your own script locally.

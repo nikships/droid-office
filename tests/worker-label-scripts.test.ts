@@ -3,13 +3,12 @@ import { mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { test, type TestContext } from 'node:test';
-import { openRouterLabel } from '../bin/worker-label-openrouter.mjs';
 import { LabelModelError, scriptLabel, WorkerLabelModel } from '../src/server/worker-label-model.js';
 import { labelSettings, WorkerLabelPreferences } from '../src/server/worker-label-settings.js';
 import { LABEL_TEXT_CHARS, WORKER_LABEL_DEFAULTS, type WorkerLabelSettings } from '../src/shared/worker-labels.js';
 
-const label = { name: 'Custom Label Scripts', summary: 'Checking the custom script contract and OpenRouter adapter' };
-const settings: WorkerLabelSettings = { ...WORKER_LABEL_DEFAULTS, implementation: 'custom', command: process.execPath, args: [], model: 'meta/muse-spark-1.3-contributor', effort: 'minimal' };
+const label = { name: 'Custom Label Scripts', summary: 'Checking the custom script contract' };
+const settings: WorkerLabelSettings = { ...WORKER_LABEL_DEFAULTS, implementation: 'custom', command: process.execPath, args: [], model: 'example-model', effort: 'low' };
 
 async function program(t: TestContext, code: string) {
   const root = await mkdtemp(path.join(os.tmpdir(), 'office-label-contract-'));
@@ -80,7 +79,7 @@ process.stdin.on('end', () => {
   const output = await model.generate({ text: 'x'.repeat(LABEL_TEXT_CHARS + 100), previousSubject: 's'.repeat(100) }, p.settings, new AbortController().signal);
   assert.deepEqual(output, { ...label, generated: true });
   const observed = JSON.parse(await readFile(p.observed, 'utf8'));
-  assert.deepEqual(observed.request, { version: 1, system: 'Owner sign prompt', conversation: 'x'.repeat(LABEL_TEXT_CHARS), previousSubject: 's'.repeat(60), model: settings.model, effort: 'minimal' });
+  assert.deepEqual(observed.request, { version: 1, system: 'Owner sign prompt', conversation: 'x'.repeat(LABEL_TEXT_CHARS), previousSubject: 's'.repeat(60), model: settings.model, effort: 'low' });
   assert.deepEqual(observed.args, ['literal space;$(not expanded)']);
   assert.deepEqual(observed.office, []);
   assert.notEqual(observed.cwd, p.root);
@@ -140,47 +139,4 @@ setImmediate(() => process.stdout.write(output.subarray(split)));
 `,
   );
   assert.equal((await scriptLabel({ text: 'text' }, p.settings, '', new AbortController().signal)).name, 'Café Labels');
-});
-
-// Trimmed from an actual Muse Spark 1.3 Contributor/minimal response, 2026-10-29.
-const completion = {
-  choices: [
-    { index: 0, finish_reason: 'stop', native_finish_reason: 'completed', message: { role: 'assistant', content: '{"name": "Custom Label Scripts", "summary": "Checking the custom script contract and OpenRouter adapter"}', refusal: null } },
-  ],
-};
-const request = { version: 1, system: 'Sign prompt', conversation: 'assistant: Checking the contract', previousSubject: label.name, model: settings.model, effort: 'minimal' };
-
-test('OpenRouter example sends the exact model and minimal effort with JSON output and no tools', async () => {
-  let sent: Record<string, unknown> = {};
-  const result = await openRouterLabel(request, {
-    key: 'test-only',
-    fetchImpl: async (url: string, options: RequestInit) => {
-      assert.equal(url, 'https://openrouter.ai/api/v1/chat/completions');
-      assert.equal(options.method, 'POST');
-      sent = JSON.parse(options.body as string);
-      return Response.json(completion);
-    },
-  });
-  assert.deepEqual(result, label);
-  assert.equal(sent.model, settings.model);
-  assert.deepEqual(sent.reasoning, { effort: 'minimal', exclude: true });
-  assert.equal(sent.tools, undefined);
-  assert.ok(sent.response_format);
-  assert.deepEqual(sent.messages, [
-    { role: 'system', content: request.system },
-    { role: 'user', content: JSON.stringify({ conversation: request.conversation, previousSubject: request.previousSubject }) },
-  ]);
-});
-
-test('OpenRouter example rejects missing keys, unsupported efforts and failed/incomplete responses', async () => {
-  await assert.rejects(openRouterLabel(request, { key: '' }), /OPENROUTER_API_KEY/);
-  for (const change of [{ version: 2 }, { effort: 'off' }, { conversation: null }, { previousSubject: {} }]) await assert.rejects(openRouterLabel({ ...request, ...change }, { key: 'test-only' }), /Invalid contract/);
-  await assert.rejects(openRouterLabel(request, { key: 'test-only', fetchImpl: async () => new Response('PRIVATE_PROVIDER_ERROR', { status: 401 }) }), /^Error: OpenRouter returned HTTP 401\.$/);
-  for (const choices of [
-    [],
-    [{ finish_reason: 'length', message: { content: '{}' } }],
-    [{ finish_reason: 'stop', message: { content: '{}', tool_calls: [{}] } }],
-    [{ finish_reason: 'stop', message: { content: '{"name":"","summary":"x"}' } }],
-  ])
-    await assert.rejects(openRouterLabel(request, { key: 'test-only', fetchImpl: async () => Response.json({ choices }) }));
 });
