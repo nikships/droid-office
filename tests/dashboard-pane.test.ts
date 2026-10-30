@@ -175,6 +175,10 @@ test('only the focused thread pane shows its composer, reclaiming space without 
   await first.locator('.wt-input').fill('Keep this unsent draft');
   await first.locator('.wt-input').evaluate((el) => ((window as any).originalInput = el));
   await second.locator('.dash-pane-head').click();
+  assert.equal(await second.locator('.wt-input').evaluate((el) => document.activeElement === el), true, 'clicking another pane focuses its composer');
+  await page.keyboard.type('Ready to type');
+  assert.equal(await second.locator('.wt-input').inputValue(), 'Ready to type', 'typing after one click goes into the selected pane');
+  assert.equal(await first.locator('.wt-input').inputValue(), 'Keep this unsent draft');
   await page.waitForFunction(() => {
     const el = document.querySelector('.wt-scroll')!;
     return el.scrollHeight - el.scrollTop - el.clientHeight < 2;
@@ -194,6 +198,7 @@ test('only the focused thread pane shows its composer, reclaiming space without 
     return el.scrollHeight - el.scrollTop - el.clientHeight < 2;
   });
   // Reading older messages must not be mistaken for following the tail after either resize.
+  await page.evaluate(() => new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
   await first.locator('.wt-scroll').evaluate((el) => {
     el.scrollTop = 40;
     el.dispatchEvent(new Event('scroll'));
@@ -237,6 +242,28 @@ test('only the focused thread pane shows its composer, reclaiming space without 
   assert.equal(await page.evaluate(() => (window as any).focused), 1, 'moved pane actions use their new slot');
   assert.equal(await first.locator('.wt-input').inputValue(), 'Keep this unsent draft');
   assert.equal(await first.locator('.wt-composer').isVisible(), true);
+  assert.equal(await first.locator('.wt-input').evaluate((el) => document.activeElement === el), true, 'moved panes still focus their own composer');
+  await second.locator('.dash-pane-head').click();
+  const summary = first.locator('.wt-list summary').first();
+  await summary.click();
+  assert.equal(await summary.evaluate((el) => document.activeElement === el), true, 'clicking a disclosure keeps keyboard focus on that control');
+  await second.locator('.dash-pane-head').click();
+  await first
+    .locator('.wt-entry')
+    .first()
+    .evaluate((el) => {
+      el.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, button: 0 }));
+      const selection = window.getSelection()!;
+      selection.selectAllChildren(el);
+      el.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+  assert.equal(await first.locator('.wt-input').evaluate((el) => document.activeElement === el), false, 'selecting conversation text does not jump into the composer');
+  assert.ok(await page.evaluate(() => window.getSelection()!.toString().length > 0));
+  await page.evaluate(() => {
+    window.getSelection()!.removeAllRanges();
+    (window as any).panes[1].focusContent();
+  });
+  assert.equal(await first.locator('.wt-input').evaluate((el) => document.activeElement === el), true, 'explicit keyboard pane focus prefers the composer over earlier history');
   await page.evaluate(() => (window as any).panes.forEach((pane: any) => pane.dispose()));
   assert.deepEqual(errors, []);
 });

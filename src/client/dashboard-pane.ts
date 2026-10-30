@@ -179,7 +179,24 @@ export function createPane(host: PaneHost, index: number): Pane {
   let answerSettlesAt = 0;
 
   // --- Focus and drag-and-drop ------------------------------------------------------------------
-  el.addEventListener('pointerdown', () => host.focus(index), true);
+  let focusComposerOnClick = false;
+  el.addEventListener(
+    'pointerdown',
+    (e) => {
+      focusComposerOnClick = e.button === 0 && mode === 'thread' && !el.classList.contains('focused');
+      host.focus(index);
+    },
+    true,
+  );
+  el.addEventListener('click', (e) => {
+    const focusComposer = focusComposerOnClick;
+    focusComposerOnClick = false;
+    if (!focusComposer || !el.classList.contains('focused') || !(e.target instanceof Element)) return;
+    if (e.target.closest('button, a, input, textarea, select, summary, [contenteditable], [role="button"], [draggable="true"]')) return;
+    const selection = window.getSelection();
+    if (selection && !selection.isCollapsed && el.contains(selection.anchorNode)) return;
+    pane.focusContent();
+  });
   el.addEventListener('focusin', () => host.focus(index));
   grip.addEventListener('dragstart', (e) => {
     e.dataTransfer?.setData(SLOT_MIME, String(index));
@@ -687,7 +704,10 @@ export function createPane(host: PaneHost, index: number): Pane {
     },
     focusContent() {
       if (term) term.focus();
-      else (mode === 'thread' ? thread?.element.querySelector<HTMLElement>('textarea, .wt-scroll') : stage.querySelector<HTMLElement>('button, [tabindex]'))?.focus({ preventScroll: true });
+      else
+        (mode === 'thread' ? (thread?.element.querySelector<HTMLElement>('textarea:not(:disabled)') ?? thread?.element.querySelector<HTMLElement>('.wt-scroll')) : stage.querySelector<HTMLElement>('button, [tabindex]'))?.focus({
+          preventScroll: true,
+        });
     },
     dispose() {
       if (disposed) return;
