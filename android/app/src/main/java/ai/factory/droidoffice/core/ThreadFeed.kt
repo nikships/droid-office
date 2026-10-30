@@ -310,8 +310,8 @@ class ThreadFeed(val workerId: String, private val prefix: String = UUID.randomU
     /**
      * The held rows that end before [cut], and the prefix of the one the office's read window has slid
      * past: the entries it stands for are still loaded here, so clipping keeps that part of the run,
-     * with its failures, instead of dropping it. The office's label, state and status stay as it sent
-     * them: only the office can rebuild those.
+     * with its failures, instead of dropping it. Its summary is rebuilt from the actions it holds: the
+     * office's label, status and state describe the whole run, which the office's own row carries now.
      */
     private fun heldRows(held: List<ThreadRow>, cut: Long, entries: List<ThreadEntry>): List<ThreadRow> {
         val seq = entries.associate { it.id to it.seq }
@@ -330,9 +330,26 @@ class ThreadFeed(val workerId: String, private val prefix: String = UUID.randomU
                     is ThreadBlock.Tools -> block.actions.filter { held(it.id) }.takeIf { it.isNotEmpty() }?.let { block.copy(actions = it) }
                 }
             }
-            if (sourceIds.isNotEmpty() && blocks.isNotEmpty()) {
-                rows += row.copy(to = cut - 1, sourceIds = sourceIds, live = false, failed = row.failed.filter { held(it.id) }, blocks = blocks)
+            if (sourceIds.isEmpty() || blocks.isEmpty()) continue
+            val actions = blocks.flatMap { if (it is ThreadBlock.Tools) it.actions else emptyList() }
+            fun count(state: ActivityState) = actions.count { it.state == state && it.causedBy == null }
+            val state = when {
+                count(ActivityState.Failed) > 0 -> ActivityState.Failed
+                count(ActivityState.Incomplete) > 0 -> ActivityState.Incomplete
+                count(ActivityState.Cancelled) > 0 -> ActivityState.Cancelled
+                else -> ActivityState.Complete
             }
+            rows += row.copy(
+                to = cut - 1,
+                sourceIds = sourceIds,
+                label = "Earlier activity",
+                state = state,
+                live = false,
+                status = null,
+                running = null,
+                failed = row.failed.filter { held(it.id) },
+                blocks = blocks,
+            )
         }
         return rows
     }

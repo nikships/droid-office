@@ -1,10 +1,12 @@
-import { THREAD_MODEL_VERSION, type ThreadBlock, type ThreadPresentation, type ThreadRow } from '../shared/thread-presentation';
+import { activityState, THREAD_MODEL_VERSION, type ThreadBlock, type ThreadPresentation, type ThreadRow } from '../shared/thread-presentation';
 import type { ThreadEntry } from '../shared/worker-thread';
 
 /**
  * The rows that still stand for one of these entries. Judged by id, not by seq range: a cache that
  * drops entries for size leaves gaps, and a message row without its text would render empty.
  */
+const EARLIER_ACTIVITY = 'Earlier activity';
+
 export function rowsWithin(rows: readonly ThreadRow[], entries: readonly ThreadEntry[]): ThreadRow[] {
   const kept = new Set(entries.map((entry) => entry.id));
   return rows.filter((row) => (row.kind === 'activity' ? row.sourceIds.some((id) => kept.has(id)) : kept.has(row.id)));
@@ -14,7 +16,8 @@ export function rowsWithin(rows: readonly ThreadRow[], entries: readonly ThreadE
  * The part of a held Activity row that stands for the entries still loaded, up to [to]. The office's
  * read window can slide past a row's start while this client still holds those entries; clipping
  * keeps that prefix, with its failures, instead of dropping it. Null when nothing of it is left.
- * The label, state and status stay as the office sent them: only the office can rebuild those.
+ * Its summary is rebuilt from the actions it holds: the office's label, status and state describe the
+ * whole run, which the office's own row now carries for the part this one no longer covers.
  */
 export function rowPrefix(row: ThreadRow, to: number, loaded: ReadonlyMap<string, ThreadEntry>): ThreadRow | undefined {
   if (row.kind !== 'activity' || row.from > to || row.to <= to) return undefined;
@@ -30,9 +33,21 @@ export function rowPrefix(row: ThreadRow, to: number, loaded: ReadonlyMap<string
     if (actions.length) blocks.push({ ...block, actions });
   }
   if (!sourceIds.length || !blocks.length) return undefined;
-  return { ...row, to, sourceIds, live: false, failed: row.failed.filter((failure) => held(failure.id)), blocks };
+  const actions = blocks.flatMap((block) => (block.kind === 'tools' ? block.actions : []));
+  return {
+    kind: 'activity',
+    id: row.id,
+    from: row.from,
+    to,
+    sourceIds,
+    label: EARLIER_ACTIVITY,
+    state: activityState(actions),
+    live: false,
+    open: row.open,
+    failed: row.failed.filter((failure) => held(failure.id)),
+    blocks,
+  };
 }
-
 /**
  * Loaded history belongs to one session. A latest page updates tools without dropping older pages.
  * The office builds the rows (src/shared/thread-presentation.ts); this only joins its pages: a latest

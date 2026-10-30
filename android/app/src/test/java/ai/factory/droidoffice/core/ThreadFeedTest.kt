@@ -272,22 +272,23 @@ class ThreadFeedTest {
     private fun tool(id: String, seq: Long) = ThreadEntry(id, seq, ThreadRole.Assistant, ThreadKind.Tool, name = "Read", input = "{}", output = "Done")
 
     /** The office's row for one run of [ids] as a single Activity over [from]..[to]. */
-    private fun activityRow(id: String, from: Long, to: Long, ids: List<String>) =
+    private fun activityRow(id: String, from: Long, to: Long, ids: List<String>, failed: List<String> = emptyList()) =
         ThreadRow.Activity(
             id,
             from,
             to,
             ids,
             "Read files",
-            ActivityState.Complete,
+            if (failed.isEmpty()) ActivityState.Complete else ActivityState.Failed,
             live = false,
+            failed = failed.map { ThreadFailure(it, "Read failed", "ENOENT") },
             blocks = listOf(
                 ThreadBlock.Tools(
                     "tools:${ids.first()}",
                     "Read files",
-                    ActivityState.Complete,
+                    if (failed.isEmpty()) ActivityState.Complete else ActivityState.Failed,
                     live = false,
-                    actions = ids.map { ThreadModelAction(id = it, title = "Read a file", category = "read", state = ActivityState.Complete, status = "", result = "Result") },
+                    actions = ids.map { ThreadModelAction(id = it, title = "Read a file", category = "read", state = if (it in failed) ActivityState.Failed else ActivityState.Complete, status = "", result = "Result") },
                 ),
             ),
         )
@@ -309,7 +310,33 @@ class ThreadFeedTest {
         assertEquals(listOf("t1", "t2", "t3", "t4"), prefix.sourceIds)
         assertEquals(listOf("t1", "t2", "t3", "t4"), (prefix.blocks.single() as ThreadBlock.Tools).actions.map { it.id })
         assertFalse("the live part of the run is the newest row", prefix.live)
+        // Its summary describes what it holds, not the whole run the office's own row now covers.
+        assertEquals("Earlier activity", prefix.label)
+        assertEquals(ActivityState.Complete, prefix.state)
+        assertNull(prefix.status)
+        assertNull(prefix.running)
         assertEquals(listOf("t1", "t2", "t3", "t4", "t5", "t6", "t7", "t8", "t9"), feed.state.entries.map { it.id })
+    }
+
+    @Test
+    fun aFailurePastTheCutStaysWithTheRowThatReportsIt() {
+        val feed = ThreadFeed("w1")
+        val window = (1L..4L).map { tool("t$it", it) } + (5L..9L).map { if (it == 9L) tool("t$it", it).copy(error = true, output = "ENOENT") else tool("t$it", it) }
+        feed.receive(page(feed, feed.latest(0)!!, window, hasMore = true, presentation = ThreadPresentation(1, listOf(activityRow("activity:t1", 1, 9, window.map { it.id }, failed = listOf("t9"))))))
+        val prefix = (feed.state.rows.first() as ThreadRow.Activity)
+        assertEquals(1L, prefix.from)
+        assertEquals(9L, prefix.to)
+
+        val slid = window.filter { it.seq >= 5 }
+        feed.receive(page(feed, feed.latest(1)!!, slid, hasMore = true, presentation = ThreadPresentation(1, listOf(activityRow("activity:t5", 5, 9, slid.map { it.id }, failed = listOf("t9"))))))
+        val clipped = feed.state.rows.first() as ThreadRow.Activity
+        assertEquals(1L, clipped.from)
+        assertEquals(4L, clipped.to)
+        assertEquals("a failure the prefix does not hold is not reported by it", emptyList<String>(), clipped.failed.map { it.id })
+        assertEquals(ActivityState.Complete, clipped.state)
+        val rest = feed.state.rows.last() as ThreadRow.Activity
+        assertEquals(listOf("t9"), rest.failed.map { it.id })
+        assertEquals(ActivityState.Failed, rest.state)
     }
     @Test
     fun anOfficeWithoutAPresentationSaysToUpdateItAndKeepsTheEntries() {

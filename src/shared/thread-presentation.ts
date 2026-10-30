@@ -435,7 +435,11 @@ function modelAction(action: ThreadAction): ThreadModelAction {
   };
 }
 
-const rollup = (failed: number, live: boolean, noResult: number, cancelled: number): ActivityState => (failed ? 'failed' : live ? 'working' : noResult ? 'incomplete' : cancelled ? 'cancelled' : 'complete');
+/** The state a run's actions add up to. `live` only matters while the run can still be working. */
+export function activityState(actions: readonly ThreadModelAction[], live = false): ActivityState {
+  const count = (state: ActivityState) => actions.filter((action) => action.state === state && !action.causedBy).length;
+  return count('failed') ? 'failed' : live ? 'working' : count('incomplete') ? 'incomplete' : count('cancelled') ? 'cancelled' : 'complete';
+}
 
 /**
  * The model the clients render; session entries, positions, paging and the wire entries stay intact.
@@ -478,9 +482,7 @@ export function presentThread(entries: readonly ThreadEntry[], busy: boolean): T
       items.push(action);
     }
     if (!items.length) return;
-    const failed = items.filter((a) => a.state === 'failed' && !a.causedBy).length;
-    const cancelled = items.filter((a) => a.state === 'cancelled' && !a.causedBy).length;
-    const noResult = items.filter((a) => a.state === 'incomplete').length;
+    const wired = items.map(modelAction);
     const planKey = JSON.stringify(plan);
     const changedPlan = plan.length && planKey !== lastPlan ? plan : undefined;
     if (changedPlan) lastPlan = planKey;
@@ -489,10 +491,10 @@ export function presentThread(entries: readonly ThreadEntry[], busy: boolean): T
       kind: 'tools',
       id: `tools:${source[0].id}`,
       label: activityLabel(items),
-      state: rollup(failed, live, noResult, cancelled),
+      state: activityState(wired, live),
       live,
       open: false,
-      actions: items.map(modelAction),
+      actions: wired,
       ...(changedPlan ? { plan: changedPlan } : {}),
     });
   };
@@ -517,7 +519,7 @@ export function presentThread(entries: readonly ThreadEntry[], busy: boolean): T
       to: Math.max(...source.map((e) => e.seq)),
       sourceIds: source.map((e) => e.id),
       label: activityLabel(all),
-      state: rollup(failed.length, live, noResult, cancelled),
+      state: activityState(all.map(modelAction), live),
       live,
       open: false,
       ...(status ? { status } : {}),

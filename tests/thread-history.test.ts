@@ -164,6 +164,11 @@ test('a window that slid past an activity keeps the prefix this client still hol
     ['t-1', 't-2', 't-3', 't-4'],
   );
   assert.equal(prefix.live, false, 'the live part of the run is the newest row');
+  // Its summary describes what it holds, not the whole run the office's own row now covers.
+  assert.equal(prefix.label, 'Earlier activity');
+  assert.equal(prefix.state, 'complete');
+  assert.equal(prefix.status, undefined);
+  assert.equal(prefix.running, undefined);
 });
 
 test('a clipped prefix keeps the failures the office reported for it', () => {
@@ -179,7 +184,27 @@ test('a clipped prefix keeps the failures the office reported for it', () => {
     prefix.failed.map((failure) => failure.id),
     ['t-2'],
   );
+  assert.equal(prefix.state, 'failed');
+  assert.equal(prefix.status, undefined, 'the status line would count the whole run again');
   const rest = h.rows[2];
   assert.ok(rest.kind === 'activity');
   assert.deepEqual(rest.failed, [], 'a failure the window still holds is never counted twice');
+});
+
+test('a failure past the cut stays with the row that reports it', () => {
+  const all = [entry(0, { role: 'user' }), ...Array.from({ length: 8 }, (_, i) => tool(i + 1)), { ...tool(9), error: true, output: 'ENOENT: no such file' }];
+  const h = new ThreadHistory();
+  h.apply(windowPage(all));
+  h.apply(windowPage(all.slice(5)));
+  const prefix = h.rows[1];
+  assert.ok(prefix.kind === 'activity');
+  assert.deepEqual(prefix.failed, [], 'the prefix holds no failure of its own');
+  assert.equal(prefix.state, 'complete', 'and never claims the run failed');
+  const rest = h.rows[2];
+  assert.ok(rest.kind === 'activity');
+  assert.deepEqual(
+    rest.failed.map((failure) => failure.id),
+    ['t-9'],
+  );
+  assert.equal(rest.state, 'failed');
 });

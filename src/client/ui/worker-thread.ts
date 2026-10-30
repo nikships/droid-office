@@ -40,14 +40,32 @@ export interface ThreadOptions {
   openWorker?(id: string): void;
 }
 
-const localQueues = new Map<string, ThreadQueue>();
-
 /**
- * What a row renders from, for its paint key: an entry rewritten in place keeps its id, so its
- * contents, not just its presence, have to repaint the row.
+ * A digest of the fields a row renders from, cached per entry. The office re-sends a page's entries as
+ * new objects every poll, and an entry a session rewrote in place keeps its id, so the paint key needs
+ * the contents; digesting each new entry once keeps a long run's outputs off every paint.
  */
+const digests = new WeakMap<ThreadEntry, string>();
+function entryDigest(entry: ThreadEntry | undefined): string {
+  if (!entry) return '';
+  let digest = digests.get(entry);
+  if (digest === undefined) {
+    let hash = 2166136261;
+    for (const field of [entry.text, entry.input, entry.output]) {
+      if (field === undefined) continue;
+      for (let at = 0; at < field.length; at++) hash = Math.imul(hash ^ field.charCodeAt(at), 16777619);
+    }
+    digest = `${hash}:${entry.error ? 1 : 0}`;
+    digests.set(entry, digest);
+  }
+  return digest;
+}
+
+/** What a row renders from, for its paint key. */
 const rowContent = (row: ThreadRow, loaded: ReadonlyMap<string, ThreadEntry>) =>
-  (row.kind === 'activity' ? row.blocks.flatMap((block) => (block.kind === 'thought' ? [block.id] : block.actions.map((item) => item.id))) : [row.id]).map((id) => loaded.get(id) ?? null);
+  (row.kind === 'activity' ? row.blocks.flatMap((block) => (block.kind === 'thought' ? [block.id] : block.actions.map((item) => item.id))) : [row.id]).map((id) => entryDigest(loaded.get(id)));
+
+const localQueues = new Map<string, ThreadQueue>();
 
 const shortcut = (key: string, label: string) => h('span.wt-shortcut', {}, h('span.key', {}, key), label);
 
