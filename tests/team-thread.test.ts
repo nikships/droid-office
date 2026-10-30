@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { TEAM_THREAD_CHARACTERS, TEAM_THREAD_ENTRIES, TEAM_THREAD_WORKERS, TeamThread, TeamThreadPaint, teamThreadChildren, teamThreadVisible } from '../src/client/team-thread.js';
 import type { ClientMsg, ServerMsg, WorkerInfo } from '../src/shared/protocol.js';
+import { THREAD_MODEL_VERSION, type ThreadRow } from '../src/shared/thread-presentation.js';
 import type { ThreadEntry } from '../src/shared/worker-thread.js';
 
 // Local display-model values, not third-party API or terminal fixtures.
@@ -273,11 +274,16 @@ test('a long-running stream retains only the bounded recent tail and all selecte
   for (let page = 1; page <= 10; page++) {
     read(page * 1000);
     const entries = Array.from({ length: 100 }, (_, i) => entry(page * 100 + i, { text: 'x'.repeat(8000) }));
+    const rows: ThreadRow[] = entries.map((e) => ({ kind: 'message', id: e.id, from: e.seq, to: e.seq, role: 'assistant', startsTurn: false }));
     const request = reads.at(-1) as Read;
-    team.receive(snapshot(request, entries, { hasMore: true }));
+    team.receive(snapshot(request, entries, { hasMore: true, presentation: { version: THREAD_MODEL_VERSION, rows } }));
     latest.set(request.workerId, page * 100 + 99);
     for (const member of team.members.values()) {
       assert.ok(member.history.entries.length <= TEAM_THREAD_ENTRIES);
+      assert.deepEqual(
+        member.history.rows.map((row) => row.id),
+        member.history.entries.map((e) => e.id),
+      );
       assert.ok(JSON.stringify(member.history.entries).length <= TEAM_THREAD_CHARACTERS);
       assert.equal(member.history.entries.at(-1)?.seq, latest.get(member.worker.id));
       assert.equal(member.history.hasMore, latest.has(member.worker.id));

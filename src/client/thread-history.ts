@@ -1,6 +1,14 @@
 import { THREAD_MODEL_VERSION, type ThreadPresentation, type ThreadRow } from '../shared/thread-presentation';
 import type { ThreadEntry } from '../shared/worker-thread';
 
+/** The rows that stand for at least one of these entries, which are in seq order. */
+export function rowsWithin(rows: readonly ThreadRow[], entries: readonly ThreadEntry[]): ThreadRow[] {
+  const from = entries[0]?.seq;
+  const to = entries.at(-1)?.seq;
+  if (from === undefined || to === undefined) return [];
+  return rows.filter((row) => row.to >= from && row.from <= to);
+}
+
 /**
  * Loaded history belongs to one session. A latest page updates tools without dropping older pages.
  * The office builds the rows (src/shared/thread-presentation.ts); this only joins its pages: a latest
@@ -62,9 +70,7 @@ export class ThreadHistory {
         this.entries = this.entries.slice(0, 2000);
         this.historical = true;
       }
-      const from = this.entries[0].seq;
-      const to = this.entries.at(-1)?.seq ?? from;
-      this.rows = this.rows.filter((row) => row.to >= from && row.from <= to);
+      this.rows = rowsWithin(this.rows, this.entries);
     }
   }
 }

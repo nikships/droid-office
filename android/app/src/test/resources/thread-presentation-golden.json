@@ -6,7 +6,7 @@
     "presentation": "{ version: 1, rows: ThreadRow[] } on thread.snapshot. A client that gets a version it doesn't know, or none, says so and offers Raw TTY instead of guessing.",
     "message": "{ kind: 'message', id: entry id, from, to: its seq, role: 'user' | 'assistant', startsTurn: boolean (first assistant message after the owner's, or the first one: the only one that carries the worker's name) }",
     "notice": "{ kind: 'notice', id: entry id, from, to: its seq, role, text: string (the copy shown), tone: 'quiet' | 'danger' | 'attachment' }",
-    "activity": "{ kind: 'activity', id: 'activity:' + first entry id, from, to: seqs of its first and last entry (hidden ones included), sourceIds: every entry it stands for, label: the closed line, state, live: newest while busy, open: false (the default disclosure), status?: '2 failed · 1 no result', running?: newest working action's title while live, failed: { id, title, preview }[] (shown even closed), cancelled, noResult, blocks: Block[] }",
+    "activity": "{ kind: 'activity', id: 'activity:' + first entry id, from, to: seqs of its first and last entry (hidden ones included), sourceIds: every entry it stands for, label: the closed line, state, live: newest while busy, open: false (the default disclosure), status?: '2 failed · 1 no result', running?: newest working action's title while live, failed: { id, title, preview }[] (shown even closed), blocks: Block[] }",
     "thought": "{ kind: 'thought', id: entry id, preview: first non-blank line, asterisks stripped, clipped to 120, live: busy and the last entry, open: false }",
     "tools": "{ kind: 'tools', id: 'tools:' + first entry id of the run, label, state, live, open: false, actions: Action[], plan?: { done, active, text }[] (the run's plan, only when it changed since the last one shown) }",
     "action": "{ id: tool entry id, title: human, never a raw command, JSON or home path, detail?: short path, pattern or subagent type, category, state: 'complete' | 'working' | 'failed' | 'incomplete' | 'cancelled', status: the state in words or '', causedBy?: the child entry whose failure this wrapper repeats, arguments?: { label, field? } (field: key of the input JSON, '.' for a JSON string, absent for the whole input), result: 'Result' | 'Error' | 'Cancelled', open: false }",
@@ -76,8 +76,6 @@
           "open": false,
           "status": "1 no result",
           "failed": [],
-          "cancelled": 0,
-          "noResult": 1,
           "blocks": [
             {
               "kind": "tools",
@@ -279,8 +277,6 @@
           "live": false,
           "open": false,
           "failed": [],
-          "cancelled": 0,
-          "noResult": 0,
           "blocks": [
             {
               "kind": "tools",
@@ -469,8 +465,6 @@
               "preview": "SyntaxError: Unexpected token"
             }
           ],
-          "cancelled": 0,
-          "noResult": 0,
           "blocks": [
             {
               "kind": "tools",
@@ -597,8 +591,6 @@
           "open": false,
           "running": "Run the tests",
           "failed": [],
-          "cancelled": 0,
-          "noResult": 0,
           "blocks": [
             {
               "kind": "tools",
@@ -693,8 +685,6 @@
           "open": false,
           "status": "1 no result",
           "failed": [],
-          "cancelled": 0,
-          "noResult": 1,
           "blocks": [
             {
               "kind": "tools",
@@ -795,8 +785,6 @@
           "open": false,
           "status": "1 no result",
           "failed": [],
-          "cancelled": 0,
-          "noResult": 1,
           "blocks": [
             {
               "kind": "tools",
@@ -844,8 +832,6 @@
           "live": true,
           "open": false,
           "failed": [],
-          "cancelled": 0,
-          "noResult": 0,
           "blocks": [
             {
               "kind": "tools",
@@ -944,8 +930,6 @@
           "live": false,
           "open": false,
           "failed": [],
-          "cancelled": 0,
-          "noResult": 0,
           "blocks": [
             {
               "kind": "tools",
@@ -1055,8 +1039,6 @@
           "live": false,
           "open": false,
           "failed": [],
-          "cancelled": 0,
-          "noResult": 0,
           "blocks": [
             {
               "kind": "tools",
@@ -1331,8 +1313,6 @@
           "live": false,
           "open": false,
           "failed": [],
-          "cancelled": 0,
-          "noResult": 0,
           "blocks": [
             {
               "kind": "tools",
@@ -1393,8 +1373,6 @@
           "live": false,
           "open": false,
           "failed": [],
-          "cancelled": 0,
-          "noResult": 0,
           "blocks": [
             {
               "kind": "tools",
@@ -1443,8 +1421,6 @@
           "live": false,
           "open": false,
           "failed": [],
-          "cancelled": 0,
-          "noResult": 0,
           "blocks": [
             {
               "kind": "tools",
@@ -1589,8 +1565,6 @@
           "live": false,
           "open": false,
           "failed": [],
-          "cancelled": 0,
-          "noResult": 0,
           "blocks": [
             {
               "kind": "tools",
@@ -1750,8 +1724,6 @@
           "live": false,
           "open": false,
           "failed": [],
-          "cancelled": 0,
-          "noResult": 0,
           "blocks": [
             {
               "kind": "thought",
@@ -1961,8 +1933,6 @@
           "live": false,
           "open": false,
           "failed": [],
-          "cancelled": 0,
-          "noResult": 0,
           "blocks": [
             {
               "kind": "tools",
@@ -2206,8 +2176,6 @@
           "live": false,
           "open": false,
           "failed": [],
-          "cancelled": 0,
-          "noResult": 0,
           "blocks": [
             {
               "kind": "tools",
@@ -2412,8 +2380,6 @@
               "preview": "Invalid interval"
             }
           ],
-          "cancelled": 0,
-          "noResult": 0,
           "blocks": [
             {
               "kind": "tools",
@@ -2546,8 +2512,6 @@
           "open": false,
           "status": "1 cancelled",
           "failed": [],
-          "cancelled": 1,
-          "noResult": 0,
           "blocks": [
             {
               "kind": "tools",
@@ -2638,8 +2602,6 @@
               "preview": "File not found"
             }
           ],
-          "cancelled": 1,
-          "noResult": 0,
           "blocks": [
             {
               "kind": "tools",
@@ -2736,8 +2698,6 @@
               "preview": "Error reading file: ENOENT: no such file or directory, access '/tmp/office-clone-qeTy/floors/droid-office/.droid-office/thread-cancelled-check-missing.txt'"
             }
           ],
-          "cancelled": 0,
-          "noResult": 0,
           "blocks": [
             {
               "kind": "tools",
@@ -2816,8 +2776,6 @@
               "preview": "Error: No task found with ID: 49137. No session-backed tasks found."
             }
           ],
-          "cancelled": 0,
-          "noResult": 0,
           "blocks": [
             {
               "kind": "tools",
@@ -2893,8 +2851,6 @@
           "live": false,
           "open": false,
           "failed": [],
-          "cancelled": 0,
-          "noResult": 0,
           "blocks": [
             {
               "kind": "tools",
@@ -3045,8 +3001,6 @@
               "preview": "Tool execution was interrupted"
             }
           ],
-          "cancelled": 0,
-          "noResult": 0,
           "blocks": [
             {
               "kind": "tools",
@@ -3118,8 +3072,6 @@
           "open": false,
           "status": "1 cancelled",
           "failed": [],
-          "cancelled": 1,
-          "noResult": 0,
           "blocks": [
             {
               "kind": "tools",
@@ -3209,8 +3161,6 @@
               "preview": "Tool execution was interrupted"
             }
           ],
-          "cancelled": 0,
-          "noResult": 0,
           "blocks": [
             {
               "kind": "tools",
@@ -3316,8 +3266,6 @@
                   "live": false,
                   "open": false,
                   "failed": [],
-                  "cancelled": 0,
-                  "noResult": 0,
                   "blocks": [
                     {
                       "kind": "tools",
@@ -3437,8 +3385,6 @@
                 "live": false,
                 "open": false,
                 "failed": [],
-                "cancelled": 0,
-                "noResult": 0,
                 "blocks": [
                   {
                     "kind": "tools",
@@ -3594,8 +3540,6 @@
                   "live": false,
                   "open": false,
                   "failed": [],
-                  "cancelled": 0,
-                  "noResult": 0,
                   "blocks": [
                     {
                       "kind": "tools",
@@ -3711,8 +3655,6 @@
                 "live": false,
                 "open": false,
                 "failed": [],
-                "cancelled": 0,
-                "noResult": 0,
                 "blocks": [
                   {
                     "kind": "tools",
@@ -3876,8 +3818,6 @@
                   "live": false,
                   "open": false,
                   "failed": [],
-                  "cancelled": 0,
-                  "noResult": 0,
                   "blocks": [
                     {
                       "kind": "tools",
@@ -4005,8 +3945,6 @@
                 "live": false,
                 "open": false,
                 "failed": [],
-                "cancelled": 0,
-                "noResult": 0,
                 "blocks": [
                   {
                     "kind": "tools",
@@ -4211,8 +4149,6 @@
                   "live": false,
                   "open": false,
                   "failed": [],
-                  "cancelled": 0,
-                  "noResult": 0,
                   "blocks": [
                     {
                       "kind": "thought",
@@ -4303,8 +4239,6 @@
                 "live": false,
                 "open": false,
                 "failed": [],
-                "cancelled": 0,
-                "noResult": 0,
                 "blocks": [
                   {
                     "kind": "thought",
@@ -4429,8 +4363,6 @@
                   "live": false,
                   "open": false,
                   "failed": [],
-                  "cancelled": 0,
-                  "noResult": 0,
                   "blocks": [
                     {
                       "kind": "thought",
@@ -4523,8 +4455,6 @@
                 "live": false,
                 "open": false,
                 "failed": [],
-                "cancelled": 0,
-                "noResult": 0,
                 "blocks": [
                   {
                     "kind": "thought",
@@ -4670,8 +4600,6 @@
                 "live": false,
                 "open": false,
                 "failed": [],
-                "cancelled": 0,
-                "noResult": 0,
                 "blocks": [
                   {
                     "kind": "thought",
@@ -4813,8 +4741,6 @@
                   "open": false,
                   "status": "1 cancelled",
                   "failed": [],
-                  "cancelled": 1,
-                  "noResult": 0,
                   "blocks": [
                     {
                       "kind": "tools",
@@ -4875,8 +4801,6 @@
                 "open": false,
                 "status": "1 cancelled",
                 "failed": [],
-                "cancelled": 1,
-                "noResult": 0,
                 "blocks": [
                   {
                     "kind": "tools",
@@ -5006,8 +4930,6 @@
                 "open": false,
                 "status": "1 cancelled",
                 "failed": [],
-                "cancelled": 1,
-                "noResult": 0,
                 "blocks": [
                   {
                     "kind": "tools",
@@ -5099,8 +5021,6 @@
                       "preview": "Tool execution was interrupted"
                     }
                   ],
-                  "cancelled": 0,
-                  "noResult": 0,
                   "blocks": [
                     {
                       "kind": "tools",
@@ -5177,8 +5097,6 @@
                     "preview": "Tool execution was interrupted"
                   }
                 ],
-                "cancelled": 0,
-                "noResult": 0,
                 "blocks": [
                   {
                     "kind": "tools",
@@ -5250,8 +5168,6 @@
                 "open": false,
                 "status": "1 cancelled",
                 "failed": [],
-                "cancelled": 1,
-                "noResult": 0,
                 "blocks": [
                   {
                     "kind": "tools",

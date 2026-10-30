@@ -125,8 +125,6 @@ sealed interface ThreadRow {
         /** The newest working action's title while live. */
         val running: String? = null,
         val failed: List<ThreadFailure> = emptyList(),
-        val cancelled: Int = 0,
-        val noResult: Int = 0,
         val blocks: List<ThreadBlock> = emptyList(),
     ) : ThreadRow
 }
@@ -166,8 +164,6 @@ data class ThreadPresentation(val version: Int, val rows: List<ThreadRow>) {
                     status = o.str("status"),
                     running = o.str("running"),
                     failed = (o["failed"] as? JsonArray)?.mapNotNull(::failure).orEmpty(),
-                    cancelled = o.int("cancelled") ?: 0,
-                    noResult = o.int("noResult") ?: 0,
                     blocks = (o["blocks"] as? JsonArray)?.mapNotNull(::block).orEmpty(),
                 )
                 else -> null

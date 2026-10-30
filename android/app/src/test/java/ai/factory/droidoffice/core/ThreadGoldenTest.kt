@@ -160,8 +160,6 @@ class ThreadGoldenTest {
                             put("preview", f.preview)
                         })
                     })
-                    put("cancelled", r.cancelled)
-                    put("noResult", r.noResult)
                     put("blocks", buildJsonArray { r.blocks.forEach { add(encode(it)) } })
                 }
             }

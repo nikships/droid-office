@@ -99,8 +99,6 @@ export type ThreadRow =
       /** The newest working action's title while live. */
       running?: string;
       failed: ThreadFailure[];
-      cancelled: number;
-      noResult: number;
       blocks: ThreadBlock[];
     };
 
@@ -535,8 +533,6 @@ export function presentThread(entries: readonly ThreadEntry[], busy: boolean): T
           240,
         ),
       })),
-      cancelled,
-      noResult,
       blocks: shown,
     });
   };

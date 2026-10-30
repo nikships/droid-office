@@ -21,7 +21,7 @@ const SCHEMA = {
   message: "{ kind: 'message', id: entry id, from, to: its seq, role: 'user' | 'assistant', startsTurn: boolean (first assistant message after the owner's, or the first one: the only one that carries the worker's name) }",
   notice: "{ kind: 'notice', id: entry id, from, to: its seq, role, text: string (the copy shown), tone: 'quiet' | 'danger' | 'attachment' }",
   activity:
-    "{ kind: 'activity', id: 'activity:' + first entry id, from, to: seqs of its first and last entry (hidden ones included), sourceIds: every entry it stands for, label: the closed line, state, live: newest while busy, open: false (the default disclosure), status?: '2 failed · 1 no result', running?: newest working action's title while live, failed: { id, title, preview }[] (shown even closed), cancelled, noResult, blocks: Block[] }",
+    "{ kind: 'activity', id: 'activity:' + first entry id, from, to: seqs of its first and last entry (hidden ones included), sourceIds: every entry it stands for, label: the closed line, state, live: newest while busy, open: false (the default disclosure), status?: '2 failed · 1 no result', running?: newest working action's title while live, failed: { id, title, preview }[] (shown even closed), blocks: Block[] }",
   thought: "{ kind: 'thought', id: entry id, preview: first non-blank line, asterisks stripped, clipped to 120, live: busy and the last entry, open: false }",
   tools: "{ kind: 'tools', id: 'tools:' + first entry id of the run, label, state, live, open: false, actions: Action[], plan?: { done, active, text }[] (the run's plan, only when it changed since the last one shown) }",
   action:

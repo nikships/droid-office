@@ -16,6 +16,9 @@ const tool = (id: string, name: string, input: Record<string, unknown> = {}, ext
   ...extra,
 });
 const actionsOf = (row: ThreadRow | undefined) => (row?.kind === 'activity' ? row.blocks.flatMap((block) => (block.kind === 'tools' ? block.actions : [])) : []);
+/** The cancellations an activity's status line counts, which both clients show. */
+const cancelledOf = (row: ThreadRow | undefined) => Number((row?.kind === 'activity' && /(\d+) cancelled/.exec(row.status ?? '')?.[1]) || 0);
+const noResultOf = (row: ThreadRow | undefined) => Number((row?.kind === 'activity' && /(\d+) no result/.exec(row.status ?? '')?.[1]) || 0);
 const text = (id: string, role: 'user' | 'assistant' = 'assistant'): ThreadEntry => ({ id, seq: 0, role, kind: 'text', text: 'The release is published.' });
 const capturedEntries = (name: string): ThreadEntry[] =>
   JSON.parse(readFileSync(new URL('../android/app/src/test/resources/thread-presentation-golden.json', import.meta.url), 'utf8')).cases.find((example: { name: string }) => example.name === name).entries;
@@ -231,7 +234,8 @@ test('a real cancellation stays quiet without concealing an earlier genuine fail
   );
   assert.equal(rows[0].kind, 'activity');
   if (rows[0].kind !== 'activity') return;
-  assert.equal(rows[0].cancelled, 1);
+  assert.equal(cancelledOf(rows[0]), 1);
+  assert.equal(rows[0].status, '1 failed · 1 cancelled');
   assert.equal(rows[0].failed.length, 1);
   assert.equal(actionsOf(rows[0])[1].state, 'cancelled');
   assert.equal(actionsOf(rows[0])[1].result, 'Cancelled');
@@ -241,7 +245,7 @@ test('a real cancellation stays quiet without concealing an earlier genuine fail
   if (explicit.kind === 'activity') {
     assert.equal(explicit.state, 'cancelled');
     assert.equal(actionsOf(explicit)[0].state, 'cancelled');
-    assert.equal(explicit.cancelled, 1);
+    assert.equal(cancelledOf(explicit), 1);
   }
 });
 
@@ -254,7 +258,7 @@ test('unit: a crash wrapper flushed by a later Stop stays one failure, counted o
   assert.equal(row.kind, 'activity');
   if (row.kind !== 'activity') return;
   assert.equal(row.state, 'failed');
-  assert.equal(row.cancelled, 0);
+  assert.equal(cancelledOf(row), 0);
   assert.deepEqual(
     row.failed.map((action) => action.id),
     [child.id],
@@ -268,14 +272,14 @@ test('unit: a crash wrapper flushed by a later Stop stays one failure, counted o
   assert.equal(row.label, 'Ran a command');
   assert.equal(JSON.stringify(entries), original);
   const stop = rows.find((item) => item.kind === 'activity' && item.id !== row.id);
-  assert.ok(stop?.kind === 'activity' && stop.cancelled === 1 && !stop.failed.length, 'the later genuine Stop stays cancelled');
+  assert.ok(stop?.kind === 'activity' && cancelledOf(stop) === 1 && !stop.failed.length, 'the later genuine Stop stays cancelled');
   // An office from before resultSeq, or a by-user wrapper that came in time: the interrupted child still marks a crash.
   for (const late of [
     { ...wrapper, resultSeq: undefined },
     { ...wrapper, resultSeq: child.seq + 1 },
   ]) {
     const again = presentThread([late, child], false)[0];
-    assert.ok(again.kind === 'activity' && again.failed.length === 1 && again.cancelled === 0 && actionsOf(again)[0].causedBy === child.id);
+    assert.ok(again.kind === 'activity' && again.failed.length === 1 && cancelledOf(again) === 0 && actionsOf(again)[0].causedBy === child.id);
   }
   const earlier = presentThread([{ ...wrapper, output: undefined, error: undefined, resultSeq: undefined }, child], false)[0];
   assert.equal(earlier.id, row.id, 'late results preserve the activity key');
@@ -314,13 +318,13 @@ test('unit capture variants: malformed, truncated or unknown wrapper outcomes ne
     assert.equal(row.kind, 'activity');
     if (row.kind === 'activity') {
       assert.equal(row.failed.length, 2, output);
-      assert.equal(row.cancelled, 0, output);
+      assert.equal(cancelledOf(row), 0, output);
     }
   }
   const row = presentThread([{ ...wrapper, error: false }, child], false)[0];
   if (row.kind === 'activity') {
     assert.equal(row.failed.length, 1, 'a non-error wrapper is not cancellation evidence');
-    assert.equal(row.cancelled, 0);
+    assert.equal(cancelledOf(row), 0);
   }
 });
 
@@ -333,7 +337,7 @@ test('unit capture variants: owner-cancelled wrappers never conceal independent 
     if (row.kind === 'activity') {
       assert.equal(row.failed.length, 1);
       assert.equal(row.failed[0].id, failedChild.id);
-      assert.equal(row.cancelled, 1);
+      assert.equal(cancelledOf(row), 1);
       assert.equal(actionsOf(row)[0].causedBy, undefined);
     }
   }
@@ -346,7 +350,7 @@ test('unit capture variants: owner-cancelled wrappers never conceal independent 
   )[0];
   if (row.kind === 'activity') {
     assert.equal(row.failed[0].id, wrapper.id);
-    assert.equal(row.cancelled, 1);
+    assert.equal(cancelledOf(row), 1);
   }
 });
 
@@ -361,26 +365,26 @@ test('unit capture variants: owner evidence stays inside its Script and message 
     assert.equal(row.kind, 'activity');
     if (row.kind === 'activity') {
       assert.equal(row.failed.length, 2);
-      assert.equal(row.cancelled, 1);
+      assert.equal(cancelledOf(row), 1);
       assert.equal(actionsOf(row).find((action) => action.id === wrapper.id)?.causedBy, undefined);
     }
   }
   const twice = presentThread([wrapper, child, { ...child, id: 'another-interrupted-call' }], false)[0];
   if (twice.kind === 'activity') {
     assert.equal(twice.failed.length, 2);
-    assert.equal(twice.cancelled, 0, 'interrupted children mark a crash, not a Stop');
+    assert.equal(cancelledOf(twice), 0, 'interrupted children mark a crash, not a Stop');
   }
   const separated = presentThread([wrapper, text('boundary'), child], false);
   assert.equal(separated[0].kind, 'activity');
   assert.equal(separated[2].kind, 'activity');
   if (separated[0].kind === 'activity' && separated[2].kind === 'activity') {
-    assert.equal(separated[0].cancelled, 1);
+    assert.equal(cancelledOf(separated[0]), 1);
     assert.equal(separated[2].failed.length, 1);
   }
   const missing = presentThread([wrapper, { ...child, output: undefined, error: false }], false)[0];
   if (missing.kind === 'activity') {
-    assert.equal(missing.cancelled, 1);
-    assert.equal(missing.noResult, 1);
+    assert.equal(cancelledOf(missing), 1);
+    assert.equal(noResultOf(missing), 1);
   }
 });
 
@@ -391,7 +395,7 @@ test('unit: crash/resume interruption stays Failed without explicit owner eviden
     assert.equal(row.kind, 'activity');
     if (row.kind === 'activity') {
       assert.equal(row.failed.length, 1);
-      assert.equal(row.cancelled, 0);
+      assert.equal(cancelledOf(row), 0);
       assert.equal(row.state, 'failed');
     }
   }
@@ -414,7 +418,7 @@ test('a filename mentioning cancelled cannot turn a genuine read failure into a 
   if (rows[0].kind === 'activity') {
     assert.equal(rows[0].state, 'failed');
     assert.equal(actionsOf(rows[0])[0].state, 'failed');
-    assert.equal(rows[0].cancelled, 0);
+    assert.equal(cancelledOf(rows[0]), 0);
   }
 });
 
