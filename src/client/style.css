@@ -2391,7 +2391,6 @@ html:has(body.dashboard), body.dashboard { overflow: auto; }
 }
 .dash-pane-body { position: relative; flex: 1; min-height: 0; display: flex; flex-direction: column; background: var(--bg); }
 .dash-pane[data-mode=terminal] .dash-pane-body { background: #000; }
-.dash-pane .modal.term.inline > header, .dash-pane .wt-head { display: none; }
 .dash-pane-drop { position: absolute; z-index: 10; inset: calc(44px + var(--space-2)) var(--space-2) var(--space-2); display: grid; place-items: center; border: 1px dashed var(--accent); border-radius: var(--radius-lg); background: rgba(10, 10, 10, .82); opacity: 0; transform: scale(.985); pointer-events: none; transition: opacity .14s var(--ease), transform .14s var(--ease); }
 .dash-pane-drop span { font: 500 var(--text-label)/1 var(--font-mono); text-transform: uppercase; letter-spacing: .08em; color: var(--accent); }
 .dash-pane.drop-over .dash-pane-drop { opacity: 1; transform: none; }
@@ -2431,10 +2430,6 @@ html:has(body.dashboard), body.dashboard { overflow: auto; }
 .dash-stage { flex: 1; min-height: 0; display: flex; flex-direction: column; }
 .dash-stage-wait { display: flex; align-items: center; gap: var(--space-3); margin: auto; color: var(--text-secondary); }
 .worker-thread { flex: 1; min-height: 0; display: flex; flex-direction: column; position: relative; background: var(--bg); }
-.wt-head { display: flex; align-items: center; flex-wrap: wrap; gap: var(--space-3); padding: var(--space-3) var(--space-5); border-bottom: 1px solid var(--border); }
-.wt-head .titles { flex: 1; min-width: 0; }
-.wt-head h2 { font: 500 17px/1.4 var(--font-sans); margin: 0; overflow: hidden; text-overflow: ellipsis; }
-.wt-model { color: var(--text-secondary); font-size: var(--text-small); margin-top: var(--space-1); }
 .wt-scroll { flex: 1; min-height: 0; overflow: auto; overscroll-behavior: contain; padding: var(--space-7) var(--space-5); scrollbar-gutter: stable; }
 .wt-list { max-width: 760px; margin: 0 auto; display: flex; flex-direction: column; gap: var(--space-5); }
 .wt-team { flex-shrink: 0; width: calc(100% - var(--space-5) * 2); max-width: 760px; margin: var(--space-3) auto 0; border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface); }
@@ -2573,17 +2568,7 @@ html:has(body.dashboard), body.dashboard { overflow: auto; }
 .wt-send-hint { margin-left: auto; color: var(--text-tertiary); font-size: var(--text-small); }
 .wt-send-hint .key { margin: 0 var(--space-1); }
 @media (max-width: 720px) {
-  .wt-head, .wt-scroll, .wt-feedback, .wt-composer { padding: var(--space-3); }
-  .wt-head { flex-wrap: nowrap; }
-  .wt-head .dash-controls { flex-wrap: nowrap; }
-  .wt-head .titles { min-width: 0; }
-  .wt-head .titles .row { gap: var(--space-2); }
-  .wt-head h2 { min-width: 0; }
-  .wt-head .dash-controls { margin-left: auto; }
-  .wt-head .dash-controls .btn { width: 44px; height: 44px; padding: 0; }
-  .wt-head .dash-controls .btn span { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
-  .wt-head .dash-controls .dash-resume { width: auto; padding: 0 var(--space-3); }
-  .wt-head .dash-controls .dash-resume span { position: static; width: auto; height: auto; overflow: visible; clip-path: none; }
+  .wt-scroll, .wt-feedback, .wt-composer { padding: var(--space-3); }
   .wt-list { gap: var(--space-5); }
   .wt-entry.user { max-width: 94%; }
   .wt-entry .md, .wt-user-text { font-size: 14px; }
@@ -2594,8 +2579,6 @@ html:has(body.dashboard), body.dashboard { overflow: auto; }
   .wt-composer .wt-input { field-sizing: content; min-height: 44px; max-height: 160px; resize: none; }
 }
 @media (max-width: 360px) {
-  .wt-head .dash-controls .dash-resume { width: 44px; padding: 0; }
-  .wt-head .dash-controls .dash-resume span { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
   .wt-stop { width: 36px; min-width: 36px; padding: 0; }
   .wt-stop-label { display: none; }
   .wt-stop-symbol { display: inline; }
@@ -2603,7 +2586,6 @@ html:has(body.dashboard), body.dashboard { overflow: auto; }
 @media (prefers-reduced-motion: reduce) {
   .wt-chevron, .wt-activity summary { transition: none; }
 }
-.dash-controls { display: flex; align-items: center; gap: var(--space-2); }
 .dash-info { flex: 1; min-height: 0; display: flex; flex-direction: column; gap: var(--space-5); max-width: 1100px; padding: var(--space-7); overflow: auto; }
 .dash-info-who { display: flex; align-items: center; gap: var(--space-4); min-width: 0; }
 .dash-info-name { display: flex; align-items: center; gap: var(--space-3); }

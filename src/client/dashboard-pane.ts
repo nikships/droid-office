@@ -256,8 +256,6 @@ export function createPane(host: PaneHost, index: number): Pane {
       const key = draftKey(intended, w.id);
       thread = mountWorkerThread(host.net, {
         worker: w,
-        // The pane's header carries the worker's controls; the thread's own header is hidden in a pane.
-        controls: h('div.dash-controls'),
         question,
         queueKey: `${key}:queue-receipts`,
         draft: host.read(key),

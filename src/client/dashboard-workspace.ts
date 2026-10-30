@@ -25,7 +25,7 @@ export interface Workspace {
   col: number;
   /** Where the horizontal divider is, as a fraction of the height. */
   row: number;
-  /** Thread or Raw TTY, per worker the owner switched. */
+  /** Thread or Raw TTY, per worker, including the default chosen when it first opened. */
   views: Record<string, PaneView>;
 }
 
@@ -42,6 +42,16 @@ export function visibleSlots(ws: Workspace): (string | null)[] {
   return ws.slots.slice(0, SLOT_COUNT[ws.layout]);
 }
 
+/** Release moved/hidden workers as a batch before rendering any replacement pane. */
+export function releaseChangedPanes<T extends { workerId(): string; dispose(): void }>(panes: (T | undefined)[], shown: readonly (string | null)[]) {
+  for (let i = 0; i < panes.length; i++) {
+    if (i >= shown.length || panes[i]?.workerId() !== (shown[i] ?? '')) {
+      panes[i]?.dispose();
+      panes[i] = undefined;
+    }
+  }
+}
+
 /** The pane a worker is open in, or -1. */
 export function paneOf(ws: Workspace, id: string): number {
   return visibleSlots(ws).indexOf(id);
@@ -49,6 +59,11 @@ export function paneOf(ws: Workspace, id: string): number {
 
 export function focusedWorker(ws: Workspace): string | null {
   return ws.slots[ws.focused] ?? null;
+}
+
+/** Changing the default for future workers must not change a worker that's already open. */
+export function workerView(ws: Workspace, id: string, fallback: PaneView): PaneView {
+  return (ws.views[id] ??= fallback);
 }
 
 export function rectsFor(layout: LayoutMode, c: number, r: number): Rect[] {
@@ -116,15 +131,9 @@ export function openWorker(ws: Workspace, id: string) {
 /** Opens a worker beside the others: an empty pane, else the next bigger layout, else the focused pane. */
 export function openInSplit(ws: Workspace, id: string) {
   const shown = visibleSlots(ws);
-  const at = shown.indexOf(id);
-  if (at >= 0) {
-    ws.focused = at;
-    return;
-  }
-  const empty = shown.indexOf(null);
-  if (empty >= 0) return assign(ws, empty, id);
+  if (shown.includes(id) || shown.includes(null)) return openWorker(ws, id);
   const next = LAYOUT_ORDER[LAYOUT_ORDER.indexOf(ws.layout) + 1];
-  if (!next) return assign(ws, ws.focused, id);
+  if (!next) return openWorker(ws, id);
   setLayout(ws, next);
   // The slot the bigger layout adds may still hold a worker from before; it moves out of sight.
   assign(ws, SLOT_COUNT[next] - 1, id);

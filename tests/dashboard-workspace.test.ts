@@ -12,6 +12,7 @@ import {
   parseWorkspace,
   prune,
   rectsFor,
+  releaseChangedPanes,
   seedWorkspace,
   serializeWorkspace,
   setLayout,
@@ -20,6 +21,7 @@ import {
   toggleMax,
   visibleSlots,
   workedFor,
+  workerView,
 } from '../src/client/dashboard-workspace.js';
 
 test('a fresh floor gets a layout sized to its workers', () => {
@@ -85,6 +87,55 @@ test('open in a new pane grows the layout, and stops growing at four', () => {
   closeSlot(ws, 1);
   openInSplit(ws, 'f');
   assert.deepEqual(visibleSlots(ws), ['a', 'f', 'e', 'd']);
+});
+
+test('open in a new pane reveals its target while another pane is maximized', () => {
+  const ws = seedWorkspace(['a', 'b']);
+  toggleMax(ws, 0);
+  openInSplit(ws, 'b');
+  assert.equal(ws.focused, 1);
+  assert.equal(ws.maximized, 1);
+  closeSlot(ws, 0);
+  openInSplit(ws, 'c');
+  assert.equal(ws.focused, 0);
+  assert.equal(ws.maximized, 0);
+  openInSplit(ws, 'd');
+  assert.equal(ws.layout, 'triple');
+  assert.equal(ws.focused, 2);
+  assert.equal(ws.maximized, null);
+});
+
+test('pane views keep their initial default when another worker changes the default', () => {
+  const ws = seedWorkspace(['a', 'b']);
+  assert.equal(workerView(ws, 'a', 'terminal'), 'terminal');
+  assert.equal(workerView(ws, 'b', 'terminal'), 'terminal');
+  ws.views.a = 'thread';
+  assert.equal(workerView(ws, 'a', 'thread'), 'thread');
+  assert.equal(workerView(ws, 'b', 'thread'), 'terminal');
+  assert.equal(workerView(ws, 'c', 'thread'), 'thread');
+  const restored = parseWorkspace(serializeWorkspace(ws))!;
+  assert.equal(workerView(restored, 'a', 'terminal'), 'thread');
+  assert.equal(workerView(restored, 'b', 'thread'), 'terminal');
+});
+
+test('swapping releases both old panes before either replacement attaches', () => {
+  const ws = seedWorkspace(['a', 'b', 'c']);
+  const events: string[] = [];
+  const pane = (id: string) => ({ workerId: () => id, dispose: () => events.push(`detach ${id}`) });
+  const panes: (ReturnType<typeof pane> | undefined)[] = ['a', 'b', 'c'].map(pane);
+  const unchanged = panes[2];
+  swap(ws, 0, 1);
+  releaseChangedPanes(panes, visibleSlots(ws));
+  for (const [i, id] of visibleSlots(ws).entries()) {
+    if (!panes[i] && id) {
+      panes[i] = pane(id);
+      events.push(`attach ${id}`);
+    }
+  }
+  assert.deepEqual(events, ['detach a', 'detach b', 'attach b', 'attach a']);
+  assert.equal(panes[2], unchanged, 'unmoved terminals stay mounted');
+  releaseChangedPanes(panes, ['b', null]);
+  assert.deepEqual(events.slice(4), ['detach a', 'detach c'], 'closed and hidden panes detach too');
 });
 
 test('a smaller layout hides panes without forgetting them', () => {

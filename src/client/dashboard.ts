@@ -31,7 +31,6 @@ import {
   LAYOUT_LABEL,
   LAYOUT_ORDER,
   type LayoutMode,
-  MAX_SLOTS,
   openInSplit,
   openWorker,
   paneOf,
@@ -39,6 +38,7 @@ import {
   prune,
   type Rect,
   rectsFor,
+  releaseChangedPanes,
   seedWorkspace,
   serializeWorkspace,
   setLayout,
@@ -48,6 +48,7 @@ import {
   toggleMax,
   visibleSlots,
   workedFor,
+  workerView,
   type Workspace,
 } from './dashboard-workspace';
 import { createPane, type Pane, type PaneHost, VIEW_KEY, WORKER_MIME, workerDot, workingBars } from './dashboard-pane';
@@ -278,7 +279,7 @@ function disposePanes() {
   panes.length = 0;
 }
 function viewOf(id: string) {
-  return ws.views[id] ?? (read(VIEW_KEY) === 'thread' ? 'thread' : 'terminal');
+  return workerView(ws, id, read(VIEW_KEY) === 'thread' ? 'thread' : 'terminal');
 }
 function changeLayout(mode: LayoutMode) {
   setLayout(ws, mode);
@@ -311,7 +312,9 @@ async function loadTerminal() {
   return terminal;
 }
 const paneHost: PaneHost = {
-  net: undefined as unknown as Net,
+  get net() {
+    return net;
+  },
   live: () => live(),
   floor: () => floor,
   busy: (id) => busy.has(id),
@@ -472,7 +475,6 @@ function locked(why: Gate) {
   if (gate === 'off' || gate === 'unreachable') retryTimer = setTimeout(() => void net.connect(), gate === 'off' ? 3_000 : 10_000);
   paint();
 }
-paneHost.net = net;
 connectWhiteboard((msg) => net.send(msg));
 net.onStatus((up) => {
   store.whiteboard.status(up);
@@ -914,12 +916,10 @@ function paintWorkspace() {
   const rects = rectsFor(ws.layout, ws.col, ws.row);
   const shown = visibleSlots(ws);
   const candidates = ordered().filter((w) => !shown.includes(w.id));
-  for (let i = 0; i < MAX_SLOTS; i++) {
-    if (i >= count) {
-      panes[i]?.dispose();
-      panes[i] = undefined;
-      continue;
-    }
+  // Attachments belong to the connection, not to a pane. Release every moved worker before any
+  // replacement attaches it, or disposing its old Thread can detach the new one during a swap.
+  releaseChangedPanes(panes, shown);
+  for (let i = 0; i < count; i++) {
     const p = panes[i] ?? createPane(paneHost, i);
     panes[i] = p;
     if (p.el.parentElement !== workspaceEl) workspaceEl.insertBefore(p.el, colHandle);
@@ -1164,14 +1164,13 @@ function accessDialog() {
 
 // --- Keys ------------------------------------------------------------------------------------------------
 
-// Layouts and maximize work from anywhere outside a text field, terminals included: caught on the way
-// down, before xterm would type them.
+// Workspace shortcuts leave editors and terminals alone. Ctrl+] returns from TTY to the sidebar.
 window.addEventListener(
   'keydown',
   (e) => {
     if (!authorized || modalOpen() || e.isComposing || !e.altKey || e.metaKey || e.ctrlKey || e.shiftKey) return;
     const t = e.target as HTMLElement | null;
-    if (t?.closest('input, textarea, select, [contenteditable]') && !t.closest('.xterm')) return;
+    if (t?.closest('input, textarea, select, [contenteditable], .xterm')) return;
     const digit = /^Digit([1-4])$/.exec(e.code);
     const mode = digit ? LAYOUT_ORDER[Number(digit[1]) - 1] : undefined;
     if (mode) changeLayout(mode);

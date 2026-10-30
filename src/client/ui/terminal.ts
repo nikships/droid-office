@@ -74,16 +74,14 @@ export function terminalOnTop(): boolean {
   return !!backdrop && backdrop.parentElement?.lastElementChild === backdrop;
 }
 
-/** Closes the open terminal, in a window or inline, if there is one. */
+/** Closes the open terminal window, if there is one. Inline terminals have their own handles. */
 export function closeTerminal() {
   current?.modal.close();
 }
 
-/** Where an inline terminal goes, the caller's controls for its header, and what Ctrl+] does there. */
+/** Where a headerless inline terminal goes, and what Ctrl+] does there. */
 export interface InlineTerminal {
   mount: HTMLElement;
-  /** Put first in the header's actions, before the text size. */
-  actions?: HTMLElement;
   /** Ctrl+] in the terminal: leave it. Without one, Ctrl+] goes to the program. */
   onLeave?: () => void;
   /** Take the keyboard once it has loaded. Defaults to true; a pane opened beside others leaves focus where it is. */
@@ -120,20 +118,79 @@ export function openTerminal(net: Net, workerId: string, onChanges?: () => void,
   const info = store.workers.get(workerId);
   if (!info) return;
 
-  const engine = (w: WorkerInfo) => (w.kind !== 'agent' ? null : w.guest ? PROVIDER_LABEL[w.guest.provider] : 'Droid');
   // A guest has no terminal here: its window shows what the office knows of it, and takes no input.
   const guest = !!info.guest;
-  const title = h('h2', {}, [engine(info), info.name].filter(Boolean).join(' · '));
-  const sub = h('p.sub.hidden');
-  const pill = h('span.pill', {}, '');
-  const smaller = h('button.btn.icon', { type: 'button', title: 'Smaller text', 'aria-label': 'Smaller terminal text' }, 'A−');
-  const bigger = h('button.btn.icon', { type: 'button', title: 'Bigger text', 'aria-label': 'Bigger terminal text' }, 'A+');
-  const zoom = h('span.seg.term-zoom', { role: 'group', 'aria-label': 'Terminal text size' }, smaller, bigger);
-  const changesBtn = h('button.btn', { type: 'button', title: 'What this worker changed: files, diff, commit, open a PR (C at the desk)' }, '🌿 Changes');
-  const forkBtn = h('button.btn', { type: 'button', onclick: () => openForkWorker(net, workerId) }, 'Fork');
+  const header = inline
+    ? undefined
+    : (() => {
+        const title = h('h2');
+        const sub = h('p.sub.hidden');
+        const pill = h('span.pill');
+        const smaller = h('button.btn.icon', { type: 'button', title: 'Smaller text', 'aria-label': 'Smaller terminal text', onclick: () => zoomBy(-1) }, 'A−');
+        const bigger = h('button.btn.icon', { type: 'button', title: 'Bigger text', 'aria-label': 'Bigger terminal text', onclick: () => zoomBy(1) }, 'A+');
+        const zoom = h('span.seg.term-zoom', { role: 'group', 'aria-label': 'Terminal text size' }, smaller, bigger);
+        const changes = onChanges
+          ? h(
+              'button.btn',
+              {
+                type: 'button',
+                title: 'What this worker changed: files, diff, commit, open a PR (C at the desk)',
+                onclick: () => {
+                  onChanges();
+                  modal.close();
+                },
+              },
+              '🌿 Changes',
+            )
+          : null;
+        const fork = info.kind === 'agent' && !guest ? h('button.btn', { type: 'button', onclick: () => openForkWorker(net, workerId) }, 'Fork') : null;
+        const bring = guest ? h('button.btn', { type: 'button', onclick: () => bringIn(workerId) }, '🚪 Bring it in') : null;
+        const close = h('button.btn.icon.close', { title: 'Leave terminal (Shift+Esc or Ctrl+]) · Esc goes to the terminal', 'aria-label': 'Close', onclick: () => modal.close() }, '✕');
+        const element = h('header', {}, colorDot(info.color), h('div.titles', {}, h('div.term-title', {}, title, pill), sub), h('div.actions', {}, zoom, changes, fork, bring), close);
+        const zoomBy = (dir: 1 | -1) => {
+          setTermFontSize(stepTermFont(term.options.fontSize ?? termFontSize(), dir));
+          term.focus();
+        };
+        return {
+          element,
+          refresh(w: WorkerInfo) {
+            const engine = w.kind !== 'agent' ? null : w.guest ? PROVIDER_LABEL[w.guest.provider] : 'Droid';
+            title.textContent = [engine, w.name].filter(Boolean).join(' · ');
+            title.title = title.textContent;
+            sub.textContent = [
+              w.guest && `outside the office · pid ${w.guest.pid}`,
+              outsideNote(w),
+              w.task?.name ?? w.title,
+              w.forkedFrom && `Fork of ${w.forkedFrom.name}`,
+              w.worktree && `🌿 ${w.worktree.branch}`,
+              creditsNote(store.factory.sessions, w.sessionId),
+              w.repos?.length && `🗂️ ${[w.worktree?.path.split(/[\\/]/).pop(), ...w.repos.map((r) => r.name)].join(' + ')}`,
+            ]
+              .filter(Boolean)
+              .join(' · ');
+            sub.title = sub.textContent;
+            sub.classList.toggle('hidden', !sub.textContent);
+            pill.className = `pill ${w.status}`;
+            pill.textContent = statusWord(w, STATUS_LABEL);
+            if (fork) {
+              const why = forkRefusal(w);
+              fork.disabled = !net.up || !!why;
+              fork.title = why ?? 'Fork this conversation and its files into an independent worker';
+            }
+            if (bring && w.guest) {
+              const why = w.guest.cantBringIn;
+              bring.toggleAttribute('disabled', !!why);
+              bring.title = why ? `Can't be brought in right now: ${why}` : "Quit its droid outside and carry on the same session here, as one of the office's workers (R at its desk)";
+            }
+          },
+          zoom(px: number) {
+            smaller.toggleAttribute('disabled', px <= TERM_FONT_MIN);
+            bigger.toggleAttribute('disabled', px >= TERM_FONT_MAX);
+            zoom.title = `Text size ${px} px`;
+          },
+        };
+      })();
   const disconnected = h('p.note.warn.hidden', { role: 'status' }, 'Disconnected. Terminal input is disabled until a fresh snapshot arrives.');
-  const bringInBtn = h('button.btn', { type: 'button' }, '🚪 Bring it in');
-  const closeBtn = h('button.btn.icon.close', { title: 'Leave terminal (Shift+Esc or Ctrl+]) · Esc goes to the terminal', 'aria-label': 'Close' }, '✕');
   const host = h('div.term-host', guest ? {} : { 'data-drop': 'Drop screenshots or files to put them in the terminal' });
   // A lead's subagents, or a subagent's lead and teammates: one click to the next terminal.
   const team = h('div.term-team.chips.hidden', { role: 'group', 'aria-label': 'Team' });
@@ -141,14 +198,7 @@ export function openTerminal(net: Net, workerId: string, onChanges?: () => void,
   const el = h(
     inline ? 'div.modal.term.inline' : 'div.modal.full.term',
     inline ? { role: 'region', 'aria-label': `${info.name} terminal` } : { role: 'dialog', 'aria-label': `${info.name} terminal` },
-    h(
-      'header',
-      {},
-      colorDot(info.color),
-      h('div.titles', {}, h('div.term-title', {}, title, pill), sub),
-      h('div.actions', {}, inline?.actions ?? null, zoom, onChanges ? changesBtn : null, info.kind === 'agent' && !guest ? forkBtn : null, guest ? bringInBtn : null),
-      inline ? null : closeBtn,
-    ),
+    header?.element ?? null,
     team,
     disconnected,
     host,
@@ -248,31 +298,7 @@ export function openTerminal(net: Net, workerId: string, onChanges?: () => void,
       modal.close();
       return;
     }
-    title.textContent = [engine(w), w.name].filter(Boolean).join(' · ');
-    title.title = title.textContent;
-    sub.textContent = [
-      w.guest && `outside the office · pid ${w.guest.pid}`,
-      outsideNote(w),
-      w.task?.name ?? w.title,
-      w.forkedFrom && `Fork of ${w.forkedFrom.name}`,
-      w.worktree && `🌿 ${w.worktree.branch}`,
-      creditsNote(store.factory.sessions, w.sessionId),
-      w.repos?.length && `🗂️ ${[w.worktree?.path.split(/[\\/]/).pop(), ...w.repos.map((r) => r.name)].join(' + ')}`,
-    ]
-      .filter(Boolean)
-      .join(' · ');
-    sub.title = sub.textContent;
-    sub.classList.toggle('hidden', !sub.textContent);
-    pill.className = `pill ${w.status}`;
-    pill.textContent = statusWord(w, STATUS_LABEL);
-    const forkWhy = forkRefusal(w);
-    forkBtn.disabled = !net.up || !!forkWhy;
-    forkBtn.title = forkWhy ?? 'Fork this conversation and its files into an independent worker';
-    if (w.guest) {
-      const why = w.guest.cantBringIn;
-      bringInBtn.toggleAttribute('disabled', !!why);
-      bringInBtn.title = why ? `Can't be brought in right now: ${why}` : "Quit its droid outside and carry on the same session here, as one of the office's workers (R at its desk)";
-    }
+    header?.refresh(w);
     paintTeam(w);
     // Another window claimed the shared PTY (the latest typist wins): follow it so this view
     // renders correctly. Typing here fits the terminal back to this window and reclaims the size.
@@ -339,7 +365,7 @@ export function openTerminal(net: Net, workerId: string, onChanges?: () => void,
   const unsubCredits = store.on('factory', refresh);
   const ro = new ResizeObserver(() => sendSize());
   const offStatus = net.onStatus((up) => {
-    forkBtn.disabled = !up || !!forkRefusal(store.workers.get(workerId) ?? info);
+    header?.refresh(store.workers.get(workerId) ?? info);
     if (up) return; // The welcome handler reattaches only after the authoritative worker snapshot.
     mirror.disconnect();
     term.options.disableStdin = true;
@@ -400,28 +426,11 @@ export function openTerminal(net: Net, workerId: string, onChanges?: () => void,
         else pendingFind = f;
       },
     };
-  const paintZoom = (px: number) => {
-    smaller.toggleAttribute('disabled', px <= TERM_FONT_MIN);
-    bigger.toggleAttribute('disabled', px >= TERM_FONT_MAX);
-    zoom.title = `Text size ${px} px`;
-  };
-  paintZoom(termFontSize());
+  header?.zoom(termFontSize());
   const offFont = onTermFontSize((px) => {
     term.options.fontSize = px;
-    paintZoom(px);
+    header?.zoom(px);
     sendSize();
-  });
-  const zoomBy = (dir: 1 | -1) => {
-    setTermFontSize(stepTermFont(term.options.fontSize ?? termFontSize(), dir));
-    term.focus();
-  };
-  smaller.addEventListener('click', () => zoomBy(-1));
-  bigger.addEventListener('click', () => zoomBy(1));
-  closeBtn.addEventListener('click', () => modal.close());
-  bringInBtn.addEventListener('click', () => bringIn(workerId));
-  changesBtn.addEventListener('click', () => {
-    onChanges?.();
-    modal.close();
   });
 
   term.attachCustomKeyEventHandler((e) => {
