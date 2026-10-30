@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "skills": {
+    "address-findings": {
+      "source": "entireio/skills",
+      "sourceType": "github",
+      "skillPath": "skills/address-findings/SKILL.md",
+      "computedHash": "435f2cf43375653e7b2d167ec95394bbd1d7fedd7e4fab1cd28621f411187871"
+    }
+  }
+}
