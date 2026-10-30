@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { test } from 'node:test';
+import { test, type TestContext } from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { buildSync } from 'esbuild';
 import { threadSnapshotError, threadStarting } from '../src/client/thread-startup.js';
@@ -45,7 +45,10 @@ test('only the expected missing-file response during startup is retried without 
 });
 
 const status = browserStatus();
-test('thread startup animates without premature reads, retries missing files and preserves real errors', { skip: status.installed ? false : `Chromium is not installed in ${status.path}` }, async (t) => {
+const chromium = status.installed ? false : `Chromium is not installed in ${status.path}`;
+
+/** A page with the Thread UI mounted on a stub connection: its replies, clock and reads under test control. */
+async function mountThread(t: TestContext) {
   const browser = await launchBrowser();
   t.after(closeBrowser);
   const context = await newIsolatedContext(browser);
@@ -85,6 +88,10 @@ test('thread startup animates without premature reads, retries missing files and
       w.receive({ t: 'thread.snapshot', workerId: worker.id, request, sessionId: 'session', entries: [], hasMore: false, ...(error ? { error } : { presentation: { version: 1, rows: [] } }) });
     };
   }, worker);
+  return { page, errors };
+}
+test('thread startup animates without premature reads, retries missing files and preserves real errors', { skip: chromium }, async (t) => {
+  const { page, errors } = await mountThread(t);
   assert.match(await page.locator('.wt-empty').innerText(), /Starting worker/);
   assert.equal(await page.evaluate(() => (window as any).sent.some((msg: any) => msg.t === 'thread.read')), false);
   assert.equal(await page.locator('.wt-empty').getAttribute('aria-busy'), 'true');
@@ -141,6 +148,35 @@ test('thread startup animates without premature reads, retries missing files and
     w.reply(missing);
   }, missing);
   assert.equal(await page.locator('.wt-empty.error').count(), 1);
+  await page.evaluate(() => (window as any).thread.dispose());
+  assert.deepEqual(errors, []);
+});
+test('a message the session rewrote in place repaints with its new text', { skip: chromium }, async (t) => {
+  const { page, errors } = await mountThread(t);
+  await page.evaluate(() => {
+    const w = window as any;
+    w.message = (text: string) => {
+      const entries = [{ id: 'm1', seq: 1, role: 'assistant', kind: 'text', text }];
+      w.worker = { ...w.worker, sessionId: 'session', status: 'idle' };
+      w.tick();
+      w.thread.update(w.worker, true);
+      const request = w.sent.filter((msg: any) => msg.t === 'thread.read').at(-1).request;
+      w.receive({
+        t: 'thread.snapshot',
+        workerId: w.worker.id,
+        request,
+        sessionId: 'session',
+        entries,
+        hasMore: false,
+        presentation: { version: 1, rows: [{ kind: 'message', id: 'm1', from: 1, to: 1, role: 'assistant', startsTurn: true }] },
+      });
+    };
+    w.message('First draft');
+  });
+  assert.match(await page.locator('.wt-entry').innerText(), /First draft/);
+  // The session rewrote the same entry: same id and seq, new text, so the row must repaint.
+  await page.evaluate(() => (window as any).message('Second draft'));
+  assert.match(await page.locator('.wt-entry').innerText(), /Second draft/);
   await page.evaluate(() => (window as any).thread.dispose());
   assert.deepEqual(errors, []);
 });

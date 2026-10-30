@@ -1,12 +1,36 @@
-import { THREAD_MODEL_VERSION, type ThreadPresentation, type ThreadRow } from '../shared/thread-presentation';
+import { THREAD_MODEL_VERSION, type ThreadBlock, type ThreadPresentation, type ThreadRow } from '../shared/thread-presentation';
 import type { ThreadEntry } from '../shared/worker-thread';
 
-/** The rows that stand for at least one of these entries, which are in seq order. */
+/**
+ * The rows that still stand for one of these entries. Judged by id, not by seq range: a cache that
+ * drops entries for size leaves gaps, and a message row without its text would render empty.
+ */
 export function rowsWithin(rows: readonly ThreadRow[], entries: readonly ThreadEntry[]): ThreadRow[] {
-  const from = entries[0]?.seq;
-  const to = entries.at(-1)?.seq;
-  if (from === undefined || to === undefined) return [];
-  return rows.filter((row) => row.to >= from && row.from <= to);
+  const kept = new Set(entries.map((entry) => entry.id));
+  return rows.filter((row) => (row.kind === 'activity' ? row.sourceIds.some((id) => kept.has(id)) : kept.has(row.id)));
+}
+
+/**
+ * The part of a held Activity row that stands for the entries still loaded, up to [to]. The office's
+ * read window can slide past a row's start while this client still holds those entries; clipping
+ * keeps that prefix, with its failures, instead of dropping it. Null when nothing of it is left.
+ * The label, state and status stay as the office sent them: only the office can rebuild those.
+ */
+export function rowPrefix(row: ThreadRow, to: number, loaded: ReadonlyMap<string, ThreadEntry>): ThreadRow | undefined {
+  if (row.kind !== 'activity' || row.from > to || row.to <= to) return undefined;
+  const held = (id: string) => (loaded.get(id)?.seq ?? Number.POSITIVE_INFINITY) <= to;
+  const sourceIds = row.sourceIds.filter(held);
+  const blocks: ThreadBlock[] = [];
+  for (const block of row.blocks) {
+    if (block.kind === 'thought') {
+      if (held(block.id)) blocks.push(block);
+      continue;
+    }
+    const actions = block.actions.filter((item) => held(item.id));
+    if (actions.length) blocks.push({ ...block, actions });
+  }
+  if (!sourceIds.length || !blocks.length) return undefined;
+  return { ...row, to, sourceIds, live: false, failed: row.failed.filter((failure) => held(failure.id)), blocks };
 }
 
 /**
@@ -51,7 +75,16 @@ export class ThreadHistory {
     this.entries = [...merged.values()].sort((a, b) => a.seq - b.seq || a.id.localeCompare(b.id));
     if (latest) {
       const cut = Math.min(incoming[0]?.from ?? Infinity, first ?? Infinity);
-      this.rows = [...this.rows.filter((row) => row.to < cut), ...incoming];
+      const loaded = new Map(this.entries.map((entry) => [entry.id, entry]));
+      const held: ThreadRow[] = [];
+      for (const row of this.rows) {
+        if (row.to < cut) held.push(row);
+        else if (row.from < cut) {
+          const prefix = rowPrefix(row, cut - 1, loaded);
+          if (prefix) held.push(prefix);
+        }
+      }
+      this.rows = [...held, ...incoming];
     } else {
       const held = this.rows[0]?.from ?? Infinity;
       this.rows = [...incoming.filter((row) => row.to < held), ...this.rows];

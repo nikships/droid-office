@@ -269,6 +269,48 @@ class ThreadFeedTest {
     private fun shown(feed: ThreadFeed, request: String, entries: List<ThreadEntry>, hasMore: Boolean = false, session: String? = "s1", before: Long? = null) =
         page(feed, request, entries, hasMore, session, before, presentation = rows(entries))
 
+    private fun tool(id: String, seq: Long) = ThreadEntry(id, seq, ThreadRole.Assistant, ThreadKind.Tool, name = "Read", input = "{}", output = "Done")
+
+    /** The office's row for one run of [ids] as a single Activity over [from]..[to]. */
+    private fun activityRow(id: String, from: Long, to: Long, ids: List<String>) =
+        ThreadRow.Activity(
+            id,
+            from,
+            to,
+            ids,
+            "Read files",
+            ActivityState.Complete,
+            live = false,
+            blocks = listOf(
+                ThreadBlock.Tools(
+                    "tools:${ids.first()}",
+                    "Read files",
+                    ActivityState.Complete,
+                    live = false,
+                    actions = ids.map { ThreadModelAction(id = it, title = "Read a file", category = "read", state = ActivityState.Complete, status = "", result = "Result") },
+                ),
+            ),
+        )
+
+    @Test
+    fun aWindowThatSlidPastAnActivityKeepsThePrefixStillLoaded() {
+        val feed = ThreadFeed("w1")
+        val window = (1L..9L).map { tool("t$it", it) }
+        feed.receive(page(feed, feed.latest(0)!!, window, hasMore = true, presentation = ThreadPresentation(1, listOf(activityRow("activity:t1", 1, 9, window.map { it.id })))))
+        assertEquals(listOf("activity:t1"), feed.state.rows.map { it.id })
+
+        // The reader's window slid to seq 5, so its row starts there while 1..4 are still loaded here.
+        val slid = (5L..9L).map { tool("t$it", it) }
+        feed.receive(page(feed, feed.latest(1)!!, slid, hasMore = true, presentation = ThreadPresentation(1, listOf(activityRow("activity:t5", 5, 9, slid.map { it.id })))))
+        assertEquals(listOf("activity:t1", "activity:t5"), feed.state.rows.map { it.id })
+        val prefix = feed.state.rows.first() as ThreadRow.Activity
+        assertEquals(1L, prefix.from)
+        assertEquals(4L, prefix.to)
+        assertEquals(listOf("t1", "t2", "t3", "t4"), prefix.sourceIds)
+        assertEquals(listOf("t1", "t2", "t3", "t4"), (prefix.blocks.single() as ThreadBlock.Tools).actions.map { it.id })
+        assertFalse("the live part of the run is the newest row", prefix.live)
+        assertEquals(listOf("t1", "t2", "t3", "t4", "t5", "t6", "t7", "t8", "t9"), feed.state.entries.map { it.id })
+    }
     @Test
     fun anOfficeWithoutAPresentationSaysToUpdateItAndKeepsTheEntries() {
         val feed = ThreadFeed("w1")

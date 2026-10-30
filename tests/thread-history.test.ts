@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { ThreadHistory } from '../src/client/thread-history.js';
-import { pageRows, presentThread, type ThreadPresentation } from '../src/shared/thread-presentation.js';
+import { pageRows, presentThread, type ThreadPresentation, type ThreadRow } from '../src/shared/thread-presentation.js';
 import type { ThreadEntry } from '../src/shared/worker-thread.js';
 
 const entry = (seq: number, extra: Partial<ThreadEntry> = {}): ThreadEntry => ({ id: `e-${seq}`, seq, role: 'assistant', kind: 'text', text: `Message ${seq}`, ...extra });
@@ -129,4 +129,57 @@ test('bounding loaded history drops the rows outside it', () => {
   h.apply(page(all, 0, 2100));
   assert.equal(h.rows.length, 2000);
   assert.equal(h.rows[0].from, 100);
+});
+
+/** What the office sends when its read window starts at an entry: rows built over that window only. */
+const windowPage = (entries: ThreadEntry[]) => ({ sessionId: 'one', entries, hasMore: true, presentation: { version: 1, rows: presentThread(entries, false) } });
+const actionsOf = (row: ThreadRow) => (row.kind === 'activity' ? row.blocks.flatMap((block) => (block.kind === 'tools' ? block.actions : [])) : []);
+
+test('a window that slid past an activity keeps the prefix this client still holds', () => {
+  const all = [entry(0, { role: 'user' }), ...Array.from({ length: 9 }, (_, i) => tool(i + 1))];
+  const h = new ThreadHistory();
+  h.apply(windowPage(all));
+  assert.deepEqual(
+    h.rows.map((row) => [row.id, row.from, row.to]),
+    [
+      ['e-0', 0, 0],
+      ['activity:t-1', 1, 9],
+    ],
+  );
+  // The reader's window slid to seq 5, so its rows start there while 1..4 are still loaded here.
+  h.apply(windowPage(all.slice(5)));
+  assert.deepEqual(
+    h.rows.map((row) => [row.id, row.from, row.to]),
+    [
+      ['e-0', 0, 0],
+      ['activity:t-1', 1, 4],
+      ['activity:t-5', 5, 9],
+    ],
+  );
+  const prefix = h.rows[1];
+  assert.ok(prefix.kind === 'activity');
+  assert.deepEqual(prefix.sourceIds, ['t-1', 't-2', 't-3', 't-4']);
+  assert.deepEqual(
+    actionsOf(prefix).map((item) => item.id),
+    ['t-1', 't-2', 't-3', 't-4'],
+  );
+  assert.equal(prefix.live, false, 'the live part of the run is the newest row');
+});
+
+test('a clipped prefix keeps the failures the office reported for it', () => {
+  const all = [entry(0, { role: 'user' }), tool(1), { ...tool(2), error: true, output: 'ENOENT: no such file' }, ...Array.from({ length: 6 }, (_, i) => tool(i + 3))];
+  const h = new ThreadHistory();
+  h.apply(windowPage(all));
+  const before = h.rows[1];
+  assert.ok(before.kind === 'activity' && before.failed.length === 1);
+  h.apply(windowPage(all.slice(5)));
+  const prefix = h.rows[1];
+  assert.ok(prefix.kind === 'activity');
+  assert.deepEqual(
+    prefix.failed.map((failure) => failure.id),
+    ['t-2'],
+  );
+  const rest = h.rows[2];
+  assert.ok(rest.kind === 'activity');
+  assert.deepEqual(rest.failed, [], 'a failure the window still holds is never counted twice');
 });

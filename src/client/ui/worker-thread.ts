@@ -42,8 +42,12 @@ export interface ThreadOptions {
 
 const localQueues = new Map<string, ThreadQueue>();
 
-/** How many of a row's entries are loaded: its details can fill in once an earlier page brings the rest. */
-const loadedCount = (row: ThreadRow, loaded: ReadonlyMap<string, ThreadEntry>) => (row.kind === 'activity' ? row.sourceIds.filter((id) => loaded.has(id)).length : +loaded.has(row.id));
+/**
+ * What a row renders from, for its paint key: an entry rewritten in place keeps its id, so its
+ * contents, not just its presence, have to repaint the row.
+ */
+const rowContent = (row: ThreadRow, loaded: ReadonlyMap<string, ThreadEntry>) =>
+  (row.kind === 'activity' ? row.blocks.flatMap((block) => (block.kind === 'thought' ? [block.id] : block.actions.map((item) => item.id))) : [row.id]).map((id) => loaded.get(id) ?? null);
 
 const shortcut = (key: string, label: string) => h('span.wt-shortcut', {}, h('span.key', {}, key), label);
 
@@ -557,7 +561,7 @@ export function mountWorkerThread(net: Net, opts: ThreadOptions): WorkerThread {
       // At most one focused and one selected old row stay above the four newest rows.
       while (at && pinned.has(at.getAttribute('data-entry') ?? '')) at = at.nextElementSibling;
       for (const row of rows) {
-        const key = JSON.stringify([row, child.status === 'needs_input', child.name, loadedCount(row, loaded)]);
+        const key = JSON.stringify([row, child.status === 'needs_input', child.name, rowContent(row, loaded)]);
         let had = card.rows.get(row.id);
         // Don't discard text while the owner is selecting a command or patch to copy.
         if (!had || (had.key !== key && (selection?.isCollapsed !== false || !had.node.contains(selection.anchorNode)))) {
@@ -652,7 +656,7 @@ export function mountWorkerThread(net: Net, opts: ThreadOptions): WorkerThread {
     const loaded = new Map(history.entries.map((entry) => [entry.id, entry]));
     const asking = worker.status === 'needs_input';
     for (const row of rows) {
-      const key = JSON.stringify([row, asking, loadedCount(row, loaded)]);
+      const key = JSON.stringify([row, asking, rowContent(row, loaded)]);
       let had = nodes.get(row.id);
       if (!had || had.key !== key) {
         const node = render(row, loaded, asking);

@@ -124,7 +124,8 @@ data class ThreadState(
  *
  * The rows come from the office and are joined the way the web companion joins them
  * (src/client/thread-history.ts): a latest page's rows replace every held row that ends at or after
- * its first row or entry, and an earlier page adds only its rows that end before the first one held.
+ * its first row or entry, keeping the part of an Activity whose entries are still loaded as a clipped
+ * prefix, and an earlier page adds only its rows that end before the first one held.
  * Whatever clears the entries clears the rows, and trimming the entries drops the rows wholly outside
  * them. A page from an office with no presentation, or one of a version this app doesn't know, adds no
  * rows and sets [ThreadState.support].
@@ -266,7 +267,7 @@ class ThreadFeed(val workerId: String, private val prefix: String = UUID.randomU
         val kept = if (entries.size > MAX_ENTRIES) entries.takeLast(MAX_ENTRIES) else entries
         val held = if (reset || base.isEmpty()) emptyList() else state.rows
         val cut = minOf(incoming.firstOrNull()?.from ?: Long.MAX_VALUE, page.firstOrNull()?.seq ?: Long.MAX_VALUE)
-        val rows = if (page.isEmpty()) emptyList() else held.filter { it.to < cut } + incoming
+        val rows = if (page.isEmpty()) emptyList() else heldRows(held, cut, kept) + incoming
         if (reset || kept.size < entries.size) earlier = null
         state = state.copy(
             phase = ThreadPhase.Ready,
@@ -306,6 +307,35 @@ class ThreadFeed(val workerId: String, private val prefix: String = UUID.randomU
     private fun incoming(msg: ServerMsg.ThreadSnapshot, support: ThreadSupport) =
         if (support == ThreadSupport.Supported) msg.presentation?.rows.orEmpty() else emptyList()
 
+    /**
+     * The held rows that end before [cut], and the prefix of the one the office's read window has slid
+     * past: the entries it stands for are still loaded here, so clipping keeps that part of the run,
+     * with its failures, instead of dropping it. The office's label, state and status stay as it sent
+     * them: only the office can rebuild those.
+     */
+    private fun heldRows(held: List<ThreadRow>, cut: Long, entries: List<ThreadEntry>): List<ThreadRow> {
+        val seq = entries.associate { it.id to it.seq }
+        fun held(id: String) = (seq[id] ?: Long.MAX_VALUE) <= cut - 1
+        val rows = mutableListOf<ThreadRow>()
+        for (row in held) {
+            if (row.to < cut) {
+                rows += row
+                continue
+            }
+            if (row !is ThreadRow.Activity || row.from >= cut) continue
+            val sourceIds = row.sourceIds.filter(::held)
+            val blocks = row.blocks.mapNotNull { block ->
+                when (block) {
+                    is ThreadBlock.Thought -> block.takeIf { held(block.id) }
+                    is ThreadBlock.Tools -> block.actions.filter { held(it.id) }.takeIf { it.isNotEmpty() }?.let { block.copy(actions = it) }
+                }
+            }
+            if (sourceIds.isNotEmpty() && blocks.isNotEmpty()) {
+                rows += row.copy(to = cut - 1, sourceIds = sourceIds, live = false, failed = row.failed.filter { held(it.id) }, blocks = blocks)
+            }
+        }
+        return rows
+    }
     /** The rows that stand for any of [entries]' seq range. */
     private fun within(rows: List<ThreadRow>, entries: List<ThreadEntry>): List<ThreadRow> {
         val from = entries.firstOrNull()?.seq ?: return emptyList()
