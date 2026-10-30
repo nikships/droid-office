@@ -60,7 +60,7 @@ fun SubscriptionsSheet(onDismiss: () -> Unit) {
                     s.models?.let { Text("${it.installed} models in Droid · ${it.available} available${if (it.stale) " · update the model list on the Mac" else ""}", style = MaterialTheme.typography.bodySmall) }
                 }
                 if (s.providers.isEmpty() && s.proxy.phase != "unsupported") Text("No accounts are listed yet. Connect a plan on the office's Mac.", style = MaterialTheme.typography.bodyMedium)
-                s.providers.forEach { provider ->
+                Subscriptions.ordered(s.providers).forEach { provider ->
                     Column(Modifier.fillMaxWidth().panel().padding(14.dp).tagged(Tags.Subscriptions.provider(provider.key)), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                             BrandLogo(ModelBrand.provider(provider.key), Modifier.size(28.dp))

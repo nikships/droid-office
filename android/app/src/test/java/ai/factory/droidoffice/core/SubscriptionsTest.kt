@@ -38,4 +38,20 @@ class SubscriptionsTest {
         assertEquals("ChatGPT", Subscriptions.provider("codex"))
         assertEquals("future", Subscriptions.provider("future"))
     }
+
+    @Test fun activeProvidersWithUsageComeFirstInStableOrder() {
+        val usage = SubscriptionAccount(windows = listOf(SubscriptionWindow(name = "Weekly")))
+        val providers = listOf(
+            SubscriptionProvider(key = "claude", enabled = false, accounts = listOf(usage)),
+            SubscriptionProvider(key = "antigravity", accounts = listOf(SubscriptionAccount())),
+            SubscriptionProvider(key = "kimi"),
+            SubscriptionProvider(key = "codex", accounts = listOf(usage)),
+            SubscriptionProvider(key = "junie", accounts = listOf(usage.copy(expired = true))),
+            SubscriptionProvider(key = "grok", accounts = listOf(usage)),
+            SubscriptionProvider(key = "copilot", accounts = listOf(usage.copy(disabled = true))),
+            SubscriptionProvider(key = "meta", accounts = listOf(SubscriptionAccount())),
+        )
+        assertEquals(listOf("codex", "grok", "antigravity", "meta", "kimi", "junie", "copilot", "claude"), Subscriptions.ordered(providers).map { it.key })
+        assertEquals("claude", providers.first().key)
+    }
 }

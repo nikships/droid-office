@@ -29,6 +29,17 @@ data class SubscriptionState(val proxy: SubscriptionProxy = SubscriptionProxy(),
 
 object Subscriptions {
     fun parse(value: JsonElement?): SubscriptionState? = (value as? JsonObject)?.let { runCatching { OfficeJson.decodeFromJsonElement<SubscriptionState>(it) }.getOrNull() }
+    /** Match the web companion, including when connected to an older office. */
+    fun ordered(providers: List<SubscriptionProvider>): List<SubscriptionProvider> = providers.sortedBy { provider ->
+        val active = provider.accounts.filter { !it.disabled && !it.expired }
+        when {
+            !provider.enabled -> 3
+            active.any { it.windows.isNotEmpty() } -> 0
+            active.isNotEmpty() -> 1
+            else -> 2
+        }
+    }
+
     fun provider(key: String): String = when (key) {
         "claude" -> "Claude"
         "codex" -> "ChatGPT"

@@ -115,15 +115,6 @@ CI starts the built office from the checkout (step "Start the office from the ch
 
 CI runs on a pull request only when it touches a path in the workflow's `pull_request.paths` filter. A new check goes into `release.yml` as a step in the same change, and its files go into both `paths` filters. Within a pull request, the `changes` job also skips the `mac` and `android` jobs unless the PR touches their files. A new path one of them depends on goes into that job's pattern too.
 
-## Cursor Cloud specific instructions
-
-- `npm ci` sets `ELECTRON_SKIP_BINARY_DOWNLOAD=1`. The Mac app's Electron binary is not used on Linux. Node 22 is already on the image.
-- Whiteboard tests use the Chromium from `node bin/droid-office.js browser install`, kept in `~/.cache/droid-office/browsers`, plus Playwright's system libraries.
-- Android unit tests and lint use the SDK at `/opt/android-sdk` (platform `android-37.0`, build-tools 36). JDK 21 is already installed. `android/local.properties` is gitignored and points `sdk.dir` at that SDK. From `android/`: `./gradlew testDebugUnitTest lintDebug`.
-- Checks of the running office go through `.agents/skills/office-clone/scripts/office-run.mjs` (Playwright's headless shell from `node bin/droid-office.js browser install`; SwiftShader WebGL on Linux). `agent-browser` is on `PATH` for video capture, which needs a headed session.
-- Boot runs `npm run dev`: Vite at http://127.0.0.1:5173 and the office on port 4600. A check that must not share that office runs on a clone of the owner's office on another port, as the `office-clone` skill describes.
-- Git rewrites `github.com` remotes to credentialed https URLs. `normalizeRepo` drops that userinfo. A test stub that reads `git remote get-url` has to allow an optional `user:token@` as well.
-
 <!-- entire-agent:begin -->
 Read .entire/agent-guide.md for this repository's workflow, source inspection, and verification guidance.
 @.entire/agent-guide.md
