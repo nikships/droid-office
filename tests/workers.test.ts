@@ -29,6 +29,7 @@ type Fixture = {
   data: string;
   log: string;
   droid: string;
+  managers: WorkerManager[];
   read(): Invocation[];
   close(): void;
 };
@@ -106,11 +107,13 @@ function fixture(): Fixture {
   mkdirSync(bin, { recursive: true });
   writeFileSync(droid, fakeAgent, { mode: 0o700 });
   writeFileSync(log, '');
+  const managers: WorkerManager[] = [];
   return {
     root,
     data,
     log,
     droid,
+    managers,
     read() {
       if (!existsSync(log)) return [];
       // A poll can land mid-append. A finished record always ends with a newline, so a trailing segment without one is not a record yet.
@@ -120,6 +123,9 @@ function fixture(): Fixture {
       return lines.filter(Boolean).map((line) => JSON.parse(line) as Invocation);
     },
     close() {
+      // node:test runs after hooks in registration order, before later shutdown hooks.
+      // Stop writers and timers before removing the state they own.
+      for (const workers of managers) workers.shutdown();
       rmSync(root, { recursive: true, force: true });
     },
   };
@@ -135,8 +141,14 @@ function events(updates: WorkerInfo[]): WorkerEvents {
   };
 }
 
+function managed(f: Fixture, ...args: ConstructorParameters<typeof WorkerManager>) {
+  const workers = new WorkerManager(...args);
+  f.managers.push(workers);
+  return workers;
+}
+
 function manager(f: Fixture, updates: WorkerInfo[], args = ['--from-test']) {
-  return new WorkerManager(f.root, f.data, f.droid, args, { url: 'http://127.0.0.1:1', token: '' }, events(updates));
+  return managed(f, f.root, f.data, f.droid, args, { url: 'http://127.0.0.1:1', token: '' }, events(updates));
 }
 
 async function waitFor<T>(read: () => T, predicate: (value: T) => boolean, timeout = 4000): Promise<T> {
@@ -420,7 +432,7 @@ test('the worker system prompt is the office’s as rewritten, filled in for eac
   });
   let system = 'You are {{name}}, at a desk.';
   const prompts: PromptSource = { text: (id) => (id === 'worker.system' ? system : PROMPTS[id].text), agent: () => undefined };
-  const workers = new WorkerManager(f.root, f.data, f.droid, [], { url: 'http://127.0.0.1:1', token: '' }, events([]), undefined, undefined, prompts);
+  const workers = managed(f, f.root, f.data, f.droid, [], { url: 'http://127.0.0.1:1', token: '' }, events([]), undefined, undefined, prompts);
   t.after(() => workers.shutdown());
   const launchOf = async (id: string) =>
     (
@@ -473,7 +485,7 @@ test('only a worker with no lead is told about office-visit, and only while visi
   let on = true;
   let system = PROMPTS['worker.system'].text;
   const prompts: PromptSource = { text: (id) => (id === 'worker.system' ? system : PROMPTS[id].text), agent: () => undefined };
-  const workers = new WorkerManager(f.root, f.data, f.droid, [], { url: 'http://127.0.0.1:1', token: '' }, events([]), undefined, undefined, prompts);
+  const workers = managed(f, f.root, f.data, f.droid, [], { url: 'http://127.0.0.1:1', token: '' }, events([]), undefined, undefined, prompts);
   workers.visitsOn = () => on;
   t.after(() => workers.shutdown());
   const launched = (id: string) =>
@@ -525,7 +537,7 @@ test("a plain folder's workers get no branch policy, no worktrees, no board agen
   const folder = path.join(f.root, 'notes');
   const data = path.join(folder, '.droid-office');
   mkdirSync(data, { recursive: true });
-  const workers = new WorkerManager(folder, data, f.droid, [], { url: 'http://127.0.0.1:1', token: '' }, events([]), undefined, undefined, undefined, true);
+  const workers = managed(f, folder, data, f.droid, [], { url: 'http://127.0.0.1:1', token: '' }, events([]), undefined, undefined, undefined, true);
   t.after(() => workers.shutdown());
   assert.equal(existsSync(path.join(data, 'floor-branch.json')), false, 'plain floors have no branch setting');
 
@@ -593,7 +605,7 @@ test('a worker nobody picked for starts on the office default worker, told its b
   });
   let agent: AgentChoice | undefined = { model: 'custom:droidproxy:opus-5-5', effort: 'high' };
   const prompts: PromptSource = { text: (id) => (id === 'station.pulls' ? 'You review {{pullName}}s on {{site}}. The request:' : PROMPTS[id].text), agent: () => agent };
-  const workers = new WorkerManager(f.root, f.data, f.droid, [], { url: 'http://127.0.0.1:1', token: '' }, events([]), undefined, undefined, prompts);
+  const workers = managed(f, f.root, f.data, f.droid, [], { url: 'http://127.0.0.1:1', token: '' }, events([]), undefined, undefined, prompts);
   t.after(() => workers.shutdown());
   assert.deepEqual(workers.officeDefault, agent);
 
@@ -1310,6 +1322,36 @@ function carryOnFixture(t: { after(fn: () => void): void }) {
   return f;
 }
 
+test('fixture cleanup shuts down every manager before deleting its directory', async (t) => {
+  const f = carryOnFixture(t);
+  const workers = manager(f, []);
+  const worker = workers.spawn('desk-1', 'test');
+  assert.notEqual(typeof worker, 'string');
+  await waitFor(
+    () => launchesOf(f),
+    (launches) => launches.length === 1,
+  );
+  const restored = manager(f, []);
+  const stopped: WorkerManager[] = [];
+  for (const current of [workers, restored]) {
+    const shutdown = current.shutdown.bind(current);
+    t.mock.method(current, 'shutdown', () => {
+      assert.ok(existsSync(f.root), 'shutdown may still write its final state');
+      stopped.push(current);
+      shutdown();
+    });
+  }
+  f.close();
+  assert.deepEqual(stopped, [workers, restored]);
+  assert.equal(existsSync(f.root), false);
+  t.mock.restoreAll();
+  await waitFor(
+    () => workers.owners(),
+    (owners) => owners.length === 0,
+  );
+  assert.equal(existsSync(f.root), false, 'late terminal exits must not recreate the fixture');
+});
+
 /** Hires a worker and puts its session in `state`: mid-turn ('working', 'needs_input') or finished ('done'). */
 async function hireInState(f: Fixture, workers: WorkerManager, deskId: string, session: string, state: 'working' | 'needs_input' | 'done') {
   const before = launchesOf(f).length;
@@ -1470,7 +1512,7 @@ test('forks refuse busy workers, missing sessions, missing sources, full offices
   const f = carryOnFixture(t);
   forkRepository(f);
   let limited = false;
-  const workers = new WorkerManager(f.root, f.data, f.droid, [], { url: 'http://127.0.0.1:1', token: '' }, events([]), {
+  const workers = managed(f, f.root, f.data, f.droid, [], { url: 'http://127.0.0.1:1', token: '' }, events([]), {
     full: () => (limited ? 'The office is at its limit' : undefined),
     room: () => (limited ? 0 : 1),
   });
@@ -1627,7 +1669,7 @@ test("a new worktree is set up in the worker's terminal before its agent starts,
   git(f.root, 'commit', '-qm', 'init');
   writeFileSync(path.join(f.root, '.env'), 'SECRET=1');
   const toasts: string[] = [];
-  const workers = new WorkerManager(f.root, f.data, f.droid, ['--from-test'], { url: 'http://127.0.0.1:1', token: '' }, { ...events([]), toast: (text) => toasts.push(text) });
+  const workers = managed(f, f.root, f.data, f.droid, ['--from-test'], { url: 'http://127.0.0.1:1', token: '' }, { ...events([]), toast: (text) => toasts.push(text) });
   t.after(() => workers.shutdown());
   const worker = workers.spawn('desk-1', 'test', 'build the thing', true);
   assert.notEqual(typeof worker, 'string');
@@ -1916,7 +1958,7 @@ test('a worker whose worktree was deleted outside the office waits, marked lost,
   writeFileSync(path.join(f.root, 'a.txt'), 'a');
   git(f.root, 'add', 'a.txt');
   git(f.root, 'commit', '-qm', 'init');
-  const officeWith = (updates: WorkerInfo[], toasts: string[]) => new WorkerManager(f.root, f.data, f.droid, ['--from-test'], { url: 'http://127.0.0.1:1', token: '' }, { ...events(updates), toast: (text) => toasts.push(text) });
+  const officeWith = (updates: WorkerInfo[], toasts: string[]) => managed(f, f.root, f.data, f.droid, ['--from-test'], { url: 'http://127.0.0.1:1', token: '' }, { ...events(updates), toast: (text) => toasts.push(text) });
   const before = officeWith([], []);
   const hire = async (deskId: string, session: string) => {
     const n = launchesOf(f).length;
@@ -1987,7 +2029,7 @@ test('two connections share one terminal: closing one leaves the other subscribe
   const f = carryOnFixture(t);
   const updates: WorkerInfo[] = [];
   const streamed: { workerId: string; data: string; to: string[] }[] = [];
-  const workers = new WorkerManager(f.root, f.data, f.droid, ['--from-test'], { url: 'http://127.0.0.1:1', token: '' }, { ...events(updates), data: (workerId, data, to) => streamed.push({ workerId, data, to }) });
+  const workers = managed(f, f.root, f.data, f.droid, ['--from-test'], { url: 'http://127.0.0.1:1', token: '' }, { ...events(updates), data: (workerId, data, to) => streamed.push({ workerId, data, to }) });
   t.after(() => workers.shutdown());
   const spawned = workers.spawn('desk-1', 'test', 'share this terminal');
   assert.notEqual(typeof spawned, 'string');
@@ -2201,7 +2243,7 @@ test('custom subagent briefs keep the lead task exactly once, with or without a 
   const f = carryOnFixture(t);
   let custom = 'Office instructions for {{name}}. Task from {{lead}}:';
   const source: PromptSource = { text: (id) => (id === 'subagent.brief' ? custom : PROMPTS[id].text), agent: () => undefined };
-  const workers = new WorkerManager(f.root, f.data, f.droid, [], { url: 'http://127.0.0.1:1', token: '' }, events([]), undefined, undefined, source);
+  const workers = managed(f, f.root, f.data, f.droid, [], { url: 'http://127.0.0.1:1', token: '' }, events([]), undefined, undefined, source);
   t.after(() => workers.shutdown());
   const lead = workers.spawn('desk-1', 'test', 'Lead task');
   if (typeof lead === 'string') return assert.fail(lead);
@@ -2439,7 +2481,7 @@ test('fresh workers start from the latest main, the checkout moved only when nob
   const merged = merge('fix.txt');
   const toasts: string[] = [];
   const moved: string[] = [];
-  const workers = new WorkerManager(f.root, f.data, f.droid, ['--from-test'], { url: 'http://127.0.0.1:1', token: '' }, { ...events([]), toast: (text) => toasts.push(text), checkout: (b) => moved.push(b) });
+  const workers = managed(f, f.root, f.data, f.droid, ['--from-test'], { url: 'http://127.0.0.1:1', token: '' }, { ...events([]), toast: (text) => toasts.push(text), checkout: (b) => moved.push(b) });
   t.after(() => workers.shutdown());
   // Off (or unset): the checkout's branch, as before, and nothing to fetch for a worker without a worktree.
   assert.equal(workers.fetchBase(true), undefined);
@@ -2563,7 +2605,7 @@ test('the checkout goes back to main once its branch merged, and subagents of a 
     return git(github, 'rev-parse', 'HEAD');
   };
   const toasts: string[] = [];
-  const workers = new WorkerManager(f.root, f.data, f.droid, ['--from-test'], { url: 'http://127.0.0.1:1', token: '' }, { ...events([]), toast: (text) => toasts.push(text) });
+  const workers = managed(f, f.root, f.data, f.droid, ['--from-test'], { url: 'http://127.0.0.1:1', token: '' }, { ...events([]), toast: (text) => toasts.push(text) });
   t.after(() => workers.shutdown());
   const branch = () => git(f.root, 'rev-parse', '--abbrev-ref', 'HEAD');
 
