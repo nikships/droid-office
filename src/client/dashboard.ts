@@ -352,7 +352,10 @@ const paneHost: PaneHost = {
   prompt: (w, pane) => prompt(w, pane),
   sendHome: (w) => sendHome(w),
   hire: () => hire('agent'),
-  leave: (id) => rows.get(id)?.el.focus(),
+  leave(id) {
+    if (!sideOpen) toggleSide();
+    (rows.get(id)?.el ?? sideToggle).focus();
+  },
 };
 
 /** Where a pane sits: its box, less half the 8px gap on every side that touches another pane. */
