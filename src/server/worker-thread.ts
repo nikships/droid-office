@@ -58,7 +58,7 @@ const object = (value: unknown): Record<string, unknown> => (value && typeof val
 function clean(value: unknown, limit = FIELD_CHARS): string {
   if (typeof value !== 'string') return '';
   const text = value
-    .replace(/<system-reminder\b[^>]*>[\s\S]*?(?:<\/system-reminder\s*>|$)/gi, '')
+    .replace(/<(system-(?:reminder|notification))\b[^>]*>[\s\S]*?(?:<\/\1\s*>|$)/gi, '')
     .replace(/data:[^\s"'<>]*;base64,[a-zA-Z0-9+/=\s]+/gi, '[attachment omitted]')
     .replace(/[a-zA-Z0-9+/]{256,}={0,2}/g, '[binary data omitted]')
     .trim();
@@ -318,6 +318,8 @@ export class WorkerThreadReader {
     if ([message, row].some((item) => Object.keys(item).some((key) => key.startsWith('hook')))) return;
     if ([message.visibility, row.visibility].some((visibility) => visibility !== undefined && visibility !== 'both' && visibility !== 'user_only')) return;
     if (message.userMessageSource && message.userMessageSource !== 'cli_tui') return;
+    // Slash skills append a separate CLI acknowledgement, not another owner prompt.
+    if (message.role === 'user' && message.visibility === 'user_only' && /^Skill "[^"\r\n]+" activated$/.test(contentText(message.content))) return;
     const role = message.role;
     const timestamp = typeof row.timestamp === 'string' ? Date.parse(row.timestamp) : NaN;
     if (this.textOnly && (!state.since || (Number.isFinite(timestamp) && timestamp >= state.since))) {

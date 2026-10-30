@@ -161,6 +161,45 @@ test('filters system, hooks, hidden/source bookkeeping and system-reminder block
   assert.doesNotMatch(JSON.stringify(page), /PRIVATE_|system-reminder|base64|x{100}|a{100}/);
 });
 
+test('slash skills keep only the submitted prompt in threads and worker labels', async (t) => {
+  // Trimmed from the owner's /office-thermals invocation and following CLI acknowledgement.
+  const notification =
+    '<system-notification>\nSkills provide specialized capabilities and domain knowledge.\n<skill filePath="/project/.agents/skills/office-thermals/SKILL.md">\n<name>office-thermals</name>\nPRIVATE_SKILL_INSTRUCTIONS\n</skill>\n</system-notification>';
+  const { reader, root, source, file } = await rig(t, [
+    message('slash', 'user', [{ type: 'text', text: `/office-thermals\n\n${notification}` }], { userMessageSource: 'cli_tui', interactionMode: 'auto' }),
+    message('activated', 'user', [{ type: 'text', text: 'Skill "office-thermals" activated' }], { visibility: 'user_only' }),
+  ]);
+  const labels = new WorkerThreadReader(root, { sessions: 8, entries: 0, bytes: 0 }, true);
+  assert.deepEqual(
+    (await reader.read(source)).entries.map((entry) => entry.text),
+    ['/office-thermals'],
+  );
+  assert.equal(await labels.readText(source), '\n\nuser: /office-thermals');
+  await appendFile(file, lines(text('answer', 'I will compare the temperatures.')));
+  assert.deepEqual(
+    (await reader.read(source)).entries.map((entry) => entry.text),
+    ['/office-thermals', 'I will compare the temperatures.'],
+  );
+  assert.doesNotMatch((await labels.readText(source))!, /PRIVATE_|system-notification|activated/);
+});
+
+test('notification filtering preserves surrounding text, string content and ordinary activation wording', async (t) => {
+  const { reader, source } = await rig(t, [
+    message('string', 'user', '/office-thermals compare both builds\n<system-notification>PRIVATE_SKILL</system-notification>'),
+    text('mixed', 'Before<SYSTEM-NOTIFICATION kind="skill">PRIVATE_SKILL</SYSTEM-NOTIFICATION>After', 'user'),
+    text('multiple', '<system-notification>PRIVATE_ONE</system-notification>Keep this<system-reminder>PRIVATE_TWO</system-reminder>', 'user'),
+    text('partial', '/office-thermals\n<system-notification>PRIVATE_UNCLOSED', 'user'),
+    message('status', 'user', 'Skill "office-thermals" activated', { visibility: 'user_only' }),
+    message('real-prompt', 'user', 'Skill "office-thermals" activated', { userMessageSource: 'cli_tui' }),
+    message('other-notice', 'user', 'Other CLI notice', { visibility: 'user_only' }),
+    text('assistant', 'Skill "office-thermals" activated'),
+  ]);
+  assert.deepEqual(
+    (await reader.read(source)).entries.map((entry) => entry.text),
+    ['/office-thermals compare both builds', 'BeforeAfter', 'Keep this', '/office-thermals', 'Skill "office-thermals" activated', 'Other CLI notice', 'Skill "office-thermals" activated'],
+  );
+});
+
 test('correlates appended results onto stable call IDs and supports text-only result parts', async (t) => {
   const { reader, source, file } = await rig(t, [message('call', 'assistant', [{ type: 'tool_use', id: 'tool-1', name: 'Execute', input: { command: 'npm test' } }])]);
   const first = await reader.read(source);
