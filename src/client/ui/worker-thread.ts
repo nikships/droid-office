@@ -9,6 +9,7 @@ import { ThreadHistory } from '../thread-history';
 import { threadSnapshotError, threadStarting } from '../thread-startup';
 import { TeamThread, TeamThreadPaint, teamThreadVisible } from '../team-thread';
 import { h, STATUS_LABEL } from './dom';
+import { icon } from './icons';
 import { markdown } from './markdown';
 import { promptImages } from './images';
 import { withToken } from '../token';
@@ -39,6 +40,8 @@ export interface ThreadOptions {
 }
 
 const localQueues = new Map<string, ThreadQueue>();
+
+const shortcut = (key: string, label: string) => h('span.wt-shortcut', {}, h('span.key', {}, key), label);
 
 /** Local sessions only. This view reads JSONL and uses the existing worker actions, never a second Droid. */
 export function mountWorkerThread(net: Net, opts: ThreadOptions): WorkerThread {
@@ -166,7 +169,7 @@ export function mountWorkerThread(net: Net, opts: ThreadOptions): WorkerThread {
     },
     'Resume',
   );
-  const input = h('textarea.input.wt-input', { rows: 1, maxlength: 20000, placeholder: `Reply to ${worker.name}…`, 'aria-label': 'Message to worker' });
+  const input = h('textarea.wt-input', { rows: 1, maxlength: 20000, placeholder: `Reply to ${worker.name}…`, 'aria-label': 'Message to worker' });
   input.value = opts.draft;
   input.addEventListener('input', () => {
     opts.onDraft(input.value);
@@ -184,10 +187,11 @@ export function mountWorkerThread(net: Net, opts: ThreadOptions): WorkerThread {
     images.add([...(file.files ?? [])]);
     file.value = '';
   });
-  const attach = h('button.btn.sm.ghost', { type: 'button', onclick: () => file.click() }, 'Attach pictures');
+  const attach = h('button.btn.icon.sm.ghost.wt-attach', { type: 'button', 'aria-label': 'Attach pictures', title: 'Attach pictures', onclick: () => file.click() }, icon('paperclip', 15));
   // While a turn runs, Send steers it (Droid reads the message now) and Queue holds it for after the turn.
-  const queue = h('button.btn.wt-queue', { type: 'button', title: 'Send once this turn is over', onclick: () => void submit(true) }, 'Queue');
-  const send = h('button.btn.primary', { type: 'submit' }, 'Send');
+  const queue = h('button.btn.sm.wt-queue', { type: 'button', title: 'Send once this turn is over', onclick: () => void submit(true) }, 'Queue');
+  const sendLabel = h('span', {}, 'Send');
+  const send = h('button.btn.sm.primary.wt-send', { type: 'submit' }, sendLabel, icon('arrowUp', 14));
   // Droid's slash commands, offered while a draft is a `/` and the start of a name.
   const slashMenu = h('div.wt-slash', { role: 'listbox', 'aria-label': 'Slash commands', hidden: true });
   let slashShown: SlashCommand[] = [];
@@ -247,9 +251,13 @@ export function mountWorkerThread(net: Net, opts: ThreadOptions): WorkerThread {
       ),
     );
   };
-  const stop = h('button.btn.wt-stop', { type: 'button', 'aria-label': 'Stop turn', title: 'Stop turn', onclick: () => stopTurn() }, h('span.wt-stop-label', {}, 'Stop'), h('span.wt-stop-symbol', { 'aria-hidden': true }, '■'));
+  const stop = h('button.btn.sm.wt-stop', { type: 'button', 'aria-label': 'Stop turn', title: 'Stop turn', onclick: () => stopTurn() }, h('span.wt-stop-symbol', { 'aria-hidden': true }), h('span.wt-stop-label', {}, 'Stop'));
   const hint = h('span.wt-send-hint');
-  const form = h('form.wt-composer', {}, slashMenu, images.element, file, h('div.wt-compose-input', {}, input, h('div.wt-send-buttons', {}, stop, queue, send)), h('div.wt-compose-actions', {}, attach, hint));
+  const box = h('div.wt-compose-box', {}, images.element, input, h('div.wt-compose-bar', {}, attach, hint, h('div.wt-send-buttons', {}, stop, queue, send)));
+  box.addEventListener('click', (event) => {
+    if (!input.disabled && event.target instanceof Element && !event.target.closest('button, .pimgs, textarea')) input.focus();
+  });
+  const form = h('form.wt-composer', {}, slashMenu, file, box);
   const element = h('section.worker-thread', { 'aria-label': `${worker.name} thread` }, teamSection, scroll, latestAnchor, h('div.wt-feedback', {}, notice, retry, raw, resume), form);
   images.dropZone(form);
   const nodes = new Map<string, { key: string; node: HTMLElement; sourceIds: string[] }>();
@@ -717,14 +725,10 @@ export function mountWorkerThread(net: Net, opts: ThreadOptions): WorkerThread {
     queue.disabled = input.disabled || !received || !!slashOf(input.value);
     stop.hidden = !busy && !waiting;
     stop.disabled = !allowed || sending;
-    send.textContent = sending ? 'Sending…' : busy ? 'Send now' : 'Send';
+    sendLabel.textContent = sending ? 'Sending…' : busy ? 'Send now' : 'Send';
     send.title = busy ? `Steer ${worker.name}: it reads this now, during the turn` : '';
     input.placeholder = busy ? `Steer ${worker.name}, or queue for after this turn…` : `Reply to ${worker.name}…`;
-    hint.replaceChildren(
-      ...(busy
-        ? [h('span.key', {}, 'Enter'), ' steer · ', h('span.key', {}, 'Ctrl Enter'), ' queue · ', h('span.key', {}, '⇧ Enter'), ' new line']
-        : [h('span.key', {}, 'Enter'), ' send · ', h('span.key', {}, '⇧ Enter'), ' new line · ', h('span.key', {}, '/'), ' commands']),
-    );
+    hint.replaceChildren(...(busy ? [shortcut('Enter', 'steer'), shortcut('Ctrl Enter', 'queue'), shortcut('⇧ Enter', 'new line')] : [shortcut('Enter', 'send'), shortcut('⇧ Enter', 'new line'), shortcut('/', 'commands')]));
     earlier.disabled = !!pending || !connected;
     retry.classList.toggle('hidden', !error);
     retry.disabled = !connected || !!pending;

@@ -2542,9 +2542,31 @@ html:has(body.dashboard), body.dashboard { overflow: auto; }
 .wt-queued-foot > span { flex: 1; }
 .worker-thread.has-feedback .wt-feedback { display: flex; }
 .wt-notice { flex: 1; min-width: 200px; margin: 0; color: var(--text-secondary); font-size: var(--text-small); line-height: 1.5; }
-.wt-composer { padding: var(--space-3) var(--space-5); display: flex; flex-direction: column; gap: var(--space-2); border-top: 1px solid var(--border); }
-.wt-composer .wt-input { width: 100%; field-sizing: content; resize: none; min-height: 44px; max-height: 160px; }
+.wt-composer { padding: var(--space-2) var(--space-5) var(--space-4); display: flex; flex-direction: column; gap: var(--space-2); container-type: inline-size; }
 .wt-composer[hidden] { display: none; }
+/* One box holds the pictures, the draft and its controls, so the composer reads as a single control. */
+.wt-compose-box { display: flex; flex-direction: column; border: 1px solid var(--border-strong); border-radius: var(--radius-lg); background: var(--surface-raised); cursor: text; transition: border-color var(--duration) var(--ease), box-shadow var(--duration) var(--ease); }
+.wt-compose-box:hover { border-color: rgba(255, 255, 255, .28); }
+.wt-compose-box:focus-within { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-muted); }
+.wt-compose-box:has(.wt-input:disabled) { background: var(--surface); border-color: var(--border); cursor: default; }
+.wt-composer.dropping .wt-compose-box { border-style: dashed; border-color: var(--accent); background: var(--surface-hover); }
+.wt-input { display: block; width: 100%; min-height: 48px; max-height: 200px; field-sizing: content; resize: none; margin: 0; padding: var(--space-3) var(--space-4) var(--space-1); border: 0; outline: none; background: transparent; color: var(--text); font: 400 14px/1.55 var(--font-sans); }
+.wt-input::placeholder { color: var(--text-tertiary); }
+.wt-input:disabled { cursor: default; opacity: .6; }
+.wt-compose-box .pimgs { flex: none; padding: var(--space-3) var(--space-3) 0; }
+.wt-compose-bar { display: flex; align-items: center; gap: var(--space-2); min-width: 0; padding: var(--space-1) var(--space-2) var(--space-2); cursor: default; }
+.wt-send-buttons { display: flex; align-items: center; gap: var(--space-2); margin-left: auto; flex-shrink: 0; }
+.wt-stop-symbol { width: 8px; height: 8px; flex-shrink: 0; border-radius: 1px; background: currentColor; }
+.wt-send-hint { min-width: 0; display: flex; align-items: center; gap: var(--space-3); overflow: hidden; white-space: nowrap; color: var(--text-tertiary); font-size: var(--text-small); }
+.wt-shortcut { display: inline-flex; align-items: center; gap: var(--space-1); }
+.wt-shortcut .key { margin: 0; border-color: var(--border-strong); border-bottom-width: 1px; background: transparent; color: var(--text-secondary); }
+@container (max-width: 600px) {
+  .wt-send-hint { display: none; }
+}
+@container (max-width: 360px) {
+  .wt-stop { width: var(--control-h-sm); min-width: var(--control-h-sm); padding: 0; }
+  .wt-stop-label { display: none; }
+}
 .wt-composer > * { width: 100%; max-width: 760px; margin: 0 auto; }
 .wt-slash { display: flex; flex-direction: column; max-height: min(264px, 30dvh); overflow: auto; overscroll-behavior: contain; padding: var(--space-1); border: 1px solid var(--border-strong); border-radius: var(--radius); background: var(--surface); }
 .wt-slash[hidden] { display: none; }
@@ -2556,16 +2578,6 @@ html:has(body.dashboard), body.dashboard { overflow: auto; }
 .wt-composer .pimg { width: 64px; height: 48px; padding-right: var(--space-6); }
 .wt-composer .pimg-x { top: 0; right: 0; width: 32px; height: 48px; border-radius: 0 var(--radius) var(--radius) 0; background: var(--surface-raised); color: var(--text-secondary); opacity: 1; font-weight: 400; }
 .wt-composer .pimg-x:hover { color: var(--text); background: var(--surface-hover); }
-.wt-compose-input { display: flex; align-items: flex-end; gap: var(--space-2); }
-.wt-compose-input .wt-input { flex: 1; min-width: 0; }
-.wt-send-buttons { display: flex; gap: var(--space-2); }
-.wt-stop-symbol { display: none; }
-.wt-compose-actions { display: flex; align-items: center; flex-wrap: wrap; gap: var(--space-2); }
-.wt-compose-actions > .grow { flex: 1; }
-.wt-compose-actions > button[type="submit"] { margin-left: auto; }
-.wt-compose-actions .toggle { font-size: var(--text-small); }
-.wt-send-hint { margin-left: auto; color: var(--text-tertiary); font-size: var(--text-small); }
-.wt-send-hint .key { margin: 0 var(--space-1); }
 @media (max-width: 720px) {
   .wt-scroll, .wt-feedback, .wt-composer { padding: var(--space-3); }
   .wt-list { gap: var(--space-5); }
@@ -2573,14 +2585,6 @@ html:has(body.dashboard), body.dashboard { overflow: auto; }
   .wt-entry .md, .wt-user-text { font-size: 14px; }
   .wt-send-hint { display: none; }
   .wt-composer .wt-input { font-size: 16px; }
-}
-@media (max-width: 480px) {
-  .wt-composer .wt-input { field-sizing: content; min-height: 44px; max-height: 160px; resize: none; }
-}
-@media (max-width: 360px) {
-  .wt-stop { width: 36px; min-width: 36px; padding: 0; }
-  .wt-stop-label { display: none; }
-  .wt-stop-symbol { display: inline; }
 }
 @media (prefers-reduced-motion: reduce) {
   .wt-chevron, .wt-activity summary { transition: none; }
