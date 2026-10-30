@@ -2,8 +2,13 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
+/** How the app's one window shows the office: the walkable 3D office, or the web companion (`/dashboard`) in an ordinary window. */
+export type WindowMode = 'office' | 'companion';
+
 /** What the Mac app remembers between launches, in its own settings.json (not the office's state). */
 export interface DesktopSettings {
+  /** Which of the two the window opens as, and what the menu bar's Switch changes. Unset: the 3D office. */
+  mode?: WindowMode;
   /** The folder the office keeps its data in. Unset until the first launch asks. */
   officeDir?: string;
   /** The port the app starts the office on. Default: 4600, like `droid-office`. */
@@ -24,6 +29,7 @@ export function loadSettings(file: string): DesktopSettings {
     if (Number.isInteger(raw.port) && (raw.port as number) > 0 && (raw.port as number) <= 65535) out.port = raw.port as number;
     if (raw.menuBarExplained === true) out.menuBarExplained = true;
     if (typeof raw.notify === 'boolean') out.notify = raw.notify;
+    if (raw.mode === 'office' || raw.mode === 'companion') out.mode = raw.mode;
     return out;
   } catch {
     return {};
