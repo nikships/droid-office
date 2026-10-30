@@ -1,13 +1,13 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { type OfficeStatus, parseStatus, type StatusWaiting, statusLines, listCut, type TrayItem, trayMenu, trayTitle, trayTooltip, type TrayView, WaitingWatch, waitingNotice, workerHash } from '../src/desktop/tray-model.ts';
+import { type OfficeStatus, parseStatus, type StatusWaiting, statusLines, switchLabel, listCut, type TrayItem, trayMenu, trayTitle, trayTooltip, type TrayView, WaitingWatch, waitingNotice, workerHash } from '../src/desktop/tray-model.ts';
 import { officeStatus, STATUS_WAITING_MAX } from '../src/server/office-status.ts';
 import { linkStep, parseWorkerLink } from '../src/client/worker-link.ts';
 
 const ada: StatusWaiting = { id: 'w-ada', name: 'Ada', status: 'needs_input', floor: 'f-web', floorName: 'web-app', task: 'Fix Login Redirect', since: 100 };
 const bob: StatusWaiting = { id: 'w-bob', name: 'Bob', status: 'done', floor: 'f-api', floorName: 'api', since: 50 };
 const status: OfficeStatus = { workers: 4, working: 2, needsInput: 1, done: 1, phones: 1, browsers: 2, floors: 2, waiting: [ada, bob] };
-const base = { ownWindows: 0, external: false, notify: true, version: '0.1.420', url: 'http://localhost:4600/' };
+const base = { ownWindows: 0, mode: 'office' as const, external: false, notify: true, version: '0.1.420' };
 const running: TrayView = { state: 'running', status, ...base };
 
 const labels = (v: TrayView) => trayMenu(v).flatMap((i) => ('label' in i ? [i.label] : []));
@@ -98,24 +98,33 @@ test('the menu does not list waiting workers or offer the office log', () => {
 
 test('the menu offers only what the office can do in its state', () => {
   const enabled = (v: TrayView) => Object.fromEntries(trayMenu(v).flatMap((i) => ('action' in i && i.action ? [[i.action, i.enabled]] : [])));
-  const all = { open: true, companion: true, restart: true, notify: true, updates: true, quit: true, quitStoppingWorkers: true };
+  const all = { open: true, switch: true, restart: true, notify: true, updates: true, quit: true, quitStoppingWorkers: true };
   assert.deepEqual(enabled({ ...running, status: { ...status, needsInput: 0, done: 0, waiting: [] } }), all);
   const actions = labels(running);
-  assert.deepEqual(actions.slice(actions.indexOf('Open Office')), ['Open Office', 'Open Office Companion', 'Restart Office', 'Notify When Workers Wait on You', 'Check for Updates…', 'Quit Droid Office', 'Quit and Stop Workers…']);
+  assert.deepEqual(actions.slice(actions.indexOf('Open 3D Office')), [
+    'Open 3D Office',
+    'Switch to Office Companion',
+    'Restart Office',
+    'Notify When Workers Wait on You',
+    'Check for Updates…',
+    'Quit Droid Office',
+    'Quit and Stop Workers…',
+  ]);
   assert.deepEqual(trayMenu(running).slice(0, 2), [
     { label: '4 workers · 2 working · 1 needs input · 1 done', enabled: false },
     { label: '1 phone · 2 browsers connected', enabled: false },
   ]);
-  assert.equal(item(running, 'Open Office Companion')?.sublabel, 'localhost:4600');
+  const companion: TrayView = { ...running, mode: 'companion' };
+  assert.deepEqual(labels(companion).slice(labels(companion).indexOf('Open Office Companion'), 2 + labels(companion).indexOf('Open Office Companion')), ['Open Office Companion', 'Switch to 3D Office']);
+  assert.equal(item(companion, 'Switch to 3D Office')?.action, 'switch');
   assert.equal(item(running, 'Check for Updates…')?.sublabel, 'Version 0.1.420');
   assert.equal(item(running, 'Notify When Workers Wait on You')?.checked, true);
   assert.equal(item({ ...running, notify: false }, 'Notify When Workers Wait on You')?.checked, false);
   assert.deepEqual(enabled({ ...running, status: undefined, external: true }), { ...all, restart: false, quitStoppingWorkers: false });
   const stopped: TrayView = { state: 'stopped', ...base };
-  assert.deepEqual(enabled(stopped), { ...all, companion: false, quitStoppingWorkers: false });
-  assert.equal(item(stopped, 'Open Office Companion')?.sublabel, undefined);
+  assert.deepEqual(enabled(stopped), { ...all, quitStoppingWorkers: false });
   assert.ok(labels(stopped).includes('Start Office'));
-  assert.deepEqual(enabled({ state: 'starting', ...base }), { ...all, open: false, companion: false, restart: false, quitStoppingWorkers: false });
+  assert.deepEqual(enabled({ state: 'starting', ...base }), { ...all, open: false, restart: false, quitStoppingWorkers: false });
 });
 
 test('a notification goes out only for a wait that started since the last status', () => {
@@ -159,4 +168,9 @@ test('a worker link survives the trip to the page and takes you to its floor fir
   assert.equal(linkStep({ worker: 'w-bob', floor: 'f-web' }, here), 'gone', 'sent home from this floor');
   assert.equal(linkStep({ worker: 'w-bob', floor: 'f-gone' }, here), 'gone', 'its floor left the building');
   assert.equal(linkStep({ worker: 'w-bob' }, here), 'gone');
+});
+
+test('one switch names the mode it goes to', () => {
+  assert.equal(switchLabel('office'), 'Switch to Office Companion');
+  assert.equal(switchLabel('companion'), 'Switch to 3D Office');
 });
