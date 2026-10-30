@@ -8,10 +8,8 @@ import type { Net } from '../net';
 import { ThreadHistory } from '../thread-history';
 import { TeamThread, TeamThreadPaint, teamThreadVisible } from '../team-thread';
 import { h, STATUS_LABEL } from './dom';
-import { colorDot } from './kit';
 import { markdown } from './markdown';
 import { promptImages } from './images';
-import { modelBadgeNode } from './models';
 import { withToken } from '../token';
 
 export interface WorkerThread {
@@ -24,7 +22,6 @@ export interface WorkerThread {
 
 export interface ThreadOptions {
   worker: WorkerInfo;
-  controls: HTMLElement;
   question: HTMLElement;
   queueKey: string;
   draft: string;
@@ -62,10 +59,6 @@ export function mountWorkerThread(net: Net, opts: ThreadOptions): WorkerThread {
     savedQueue = JSON.parse(sessionStorage.getItem(opts.queueKey) ?? 'null');
   } catch {}
   const queued = localQueues.get(opts.queueKey) ?? new ThreadQueue(savedQueue);
-  const title = h('h2', {}, worker.name);
-  const status = h('span.pill');
-  const model = h('div.wt-model');
-  const head = h('header.wt-head', {}, colorDot(worker.color), h('div.titles', {}, h('div.row', {}, title, status), model), opts.controls);
   const earlier = h('button.btn.sm.wt-earlier.hidden', { type: 'button', onclick: () => read(history.entries[0]?.seq) }, 'Load earlier messages');
   const list = h('div.wt-list');
   const empty = h('div.wt-empty', { role: 'status' }, 'Reading the conversation…');
@@ -254,7 +247,7 @@ export function mountWorkerThread(net: Net, opts: ThreadOptions): WorkerThread {
   const stop = h('button.btn.wt-stop', { type: 'button', 'aria-label': 'Stop turn', title: 'Stop turn', onclick: () => stopTurn() }, h('span.wt-stop-label', {}, 'Stop'), h('span.wt-stop-symbol', { 'aria-hidden': true }, '■'));
   const hint = h('span.wt-send-hint');
   const form = h('form.wt-composer', {}, slashMenu, images.element, file, h('div.wt-compose-input', {}, input, h('div.wt-send-buttons', {}, stop, queue, send)), h('div.wt-compose-actions', {}, attach, hint));
-  const element = h('section.worker-thread', { 'aria-label': `${worker.name} thread` }, head, teamSection, scroll, latestAnchor, h('div.wt-feedback', {}, notice, retry, raw, resume), form);
+  const element = h('section.worker-thread', { 'aria-label': `${worker.name} thread` }, teamSection, scroll, latestAnchor, h('div.wt-feedback', {}, notice, retry, raw, resume), form);
   images.dropZone(form);
   const nodes = new Map<string, { key: string; node: HTMLElement; sourceIds: string[] }>();
   const expandedMessages = new Set<string>();
@@ -885,14 +878,6 @@ export function mountWorkerThread(net: Net, opts: ThreadOptions): WorkerThread {
         pending = undefined;
         error = '';
       }
-      title.textContent = worker.name;
-      // Out of reach, the last status the office sent may be long gone: the offline banner says so instead.
-      status.hidden = !online;
-      status.className = `pill ${worker.status}`;
-      status.textContent = isAsleep(worker.status) ? 'Asleep' : (STATUS_LABEL[worker.status] ?? worker.status);
-      const badge = modelBadgeNode(worker.activeModel ?? worker.model, worker.activeEffort ?? worker.effort);
-      model.replaceChildren(...(badge ? [badge] : []));
-      if (active) head.append(opts.controls);
       if (received) paintEntries(false);
       updateControls();
       read();
@@ -904,7 +889,6 @@ export function mountWorkerThread(net: Net, opts: ThreadOptions): WorkerThread {
       pending = undefined;
       if (on) {
         net.send({ t: 'worker.attach', workerId: worker.id });
-        head.append(opts.controls);
         read();
         loadSlash();
       } else net.send({ t: 'worker.detach', workerId: worker.id });
