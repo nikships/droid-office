@@ -23,12 +23,6 @@ export function parseThreadLink(raw: string): ThreadLink | undefined {
   }
 }
 
-export function threadDashboardUrl(officeUrl: string, link: ThreadLink): string {
-  const url = new URL('/dashboard', officeUrl);
-  url.hash = new URLSearchParams({ worker: link.lead, floor: link.floor, view: 'thread' }).toString();
-  return url.toString();
-}
-
 export function finderBridgeArgs(appPath: string, packaged: boolean, isolated: boolean): string[] {
   return packaged && !isolated ? ['--finder-bridge', path.join(appPath, 'native/mac/build/DroidOfficeFinderBridge.app/Contents/MacOS/DroidOfficeFinderBridge')] : [];
 }

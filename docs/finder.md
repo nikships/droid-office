@@ -50,7 +50,7 @@ A successful dispatch closes the prompt after macOS accepts its notifications. I
 
 ## Thread navigation
 
-Each accepted floor dispatch returns a companion URL and a `droid-office://thread/<worker>?floor=<floor>` link. The app validates protocol links and opens a sandboxed companion window. The companion follows the floor before selecting the worker and uses Thread for that visit without changing the owner's saved default view.
+Each accepted floor dispatch returns a companion URL and a `droid-office://thread/<worker>?floor=<floor>` link. The app validates protocol links and sends them to its one window: the companion or 3D office that is already open, or, when both are closed, the mode used last. It never opens a separate window for a thread. The 3D office opens the worker's terminal. The companion follows the floor before selecting the worker and uses Thread for that visit without changing the owner's saved default view.
 
 The lead's collapsible **Team activity** section includes local child workers' status, recent conversation and tool activity, including patch arguments and results. Each child has **Open thread** drill-down. Reads run only while the section is expanded, connected and visible, rotating through at most six cached children with one child read per second in total. This leaves two of the server reader's eight cache slots for the lead and history or drill-down. Each child retains at most forty entries and 96,000 serialized characters, with large fields visibly truncated. Unchanged snapshots and timer ticks do not repaint the rollup. It uses the existing read-only thread protocol and never resizes a child's terminal.
 

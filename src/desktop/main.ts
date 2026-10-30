@@ -6,9 +6,9 @@ import { app, type BaseWindow, clipboard, dialog, Menu, type MenuItemConstructor
 import { downloadBrowser } from './browser.js';
 import { createCompanionWindow } from './companion.js';
 import { contextMenu, editMenu } from './edit-menu.js';
-import { finderBridgeArgs, parseThreadLink, type ThreadLink } from './finder-links.js';
+import { finderBridgeArgs, parseThreadLink } from './finder-links.js';
 import { leaveFullScreen } from './full-screen.js';
-import { explainFinder, FinderThreads, openFinderSettings } from './finder.js';
+import { explainFinder, openFinderSettings } from './finder.js';
 import { gpuReport } from './gpu.js';
 import { linkAction, windowOpenAction } from './links.js';
 import { fetchStatus, type Office, probePort, startOffice } from './office.js';
@@ -45,25 +45,35 @@ if (userDataSwitch) app.setPath('logs', path.join(userDataSwitch, 'logs'));
 /** A run with its own userData is a test run: it only shows an office that is already up, and never moves, updates or installs anything. */
 const isolated = Boolean(userDataSwitch);
 const finderEnabled = app.isPackaged && !isolated && !isStartupCheck();
-const finderThreads = new FinderThreads(() => {
-  hideDockIfNoWindows();
-});
-
 function hideDockIfNoWindows() {
-  if (!appWindow() && !finderThreads.currentWindow()) app.dock?.hide();
+  if (!appWindow()) app.dock?.hide();
 }
 
-let pendingThread: ThreadLink | undefined;
+/** A Finder thread link that arrived before the office could take it; the next window that opens on the office shows it. */
+let pendingThread: WorkerLink | undefined;
+/**
+ * A Finder thread goes to the app's one window: the one that is open, or else the mode the owner last used
+ * (`settings.mode`). Never a window of its own.
+ */
 function receiveThread(raw: string): boolean {
   if (!finderEnabled) return false;
   const link = parseThreadLink(raw);
   if (!link) return false;
-  if (officeUrl) finderThreads.open(officeUrl, link);
-  else {
-    pendingThread = link;
-    windowWanted = false;
+  const worker: WorkerLink = { worker: link.lead, floor: link.floor, view: 'thread' };
+  if (officeUrl && !opening && !switching) {
+    openWorker(worker);
+    return true;
   }
+  pendingThread = worker;
+  windowWanted = true;
+  if (!starting) openWindow();
   return true;
+}
+
+function takePendingThread(): string {
+  const link = pendingThread;
+  pendingThread = undefined;
+  return link ? workerHash(link) : '';
 }
 app.on('open-url', (event, url) => {
   event.preventDefault();
@@ -347,11 +357,7 @@ async function openOffice() {
       });
     }
     opening = false;
-    show(officePage());
-    if (pendingThread) {
-      finderThreads.open(officeUrl, pendingThread);
-      pendingThread = undefined;
-    }
+    show(officePage(takePendingThread()));
     if (finderEnabled && office) void explainFinder(app.getPath('userData')).catch(() => {});
     void refreshTray();
   } catch (err) {
@@ -370,7 +376,6 @@ async function openOffice() {
 }
 
 async function officeStopped(code: number | null) {
-  finderThreads.close();
   officeUrl = undefined;
   void refreshTray();
   show(page('The office stopped', `exit ${code ?? 'signal'} — see ${officeLog}`));
@@ -382,7 +387,6 @@ async function officeStopped(code: number | null) {
 }
 
 async function stopOffice(keepWorkers: boolean) {
-  finderThreads.close();
   const running = office;
   if (!running) return;
   stopping = true;
@@ -441,7 +445,7 @@ function openWindow() {
     current.base.focus();
     return;
   }
-  if (officeUrl) return createWindow();
+  if (officeUrl && !opening) return createWindow(true, takePendingThread());
   createWindow(false);
   if (opening) show(page('Opening the office…'));
   else void openOffice();
@@ -550,7 +554,6 @@ function toggleNotify() {
 
 /** Cmd+Q: closes the window and leaves the office running behind the menu bar icon. The first time, says so. */
 async function leaveToMenuBar() {
-  finderThreads.close();
   const current = appWindow();
   if (!current) {
     windowWanted = false;
@@ -637,8 +640,8 @@ async function restartOffice() {
 }
 
 function menu(): Menu {
-  const contents = () => finderThreads.focusedWindow()?.webContents ?? win?.contents;
-  const base = () => finderThreads.focusedWindow() ?? win?.base;
+  const contents = () => win?.contents;
+  const base = () => win?.base;
   const template: MenuItemConstructorOptions[] = [
     {
       label: app.name,
@@ -703,8 +706,8 @@ if (!isStartupCheck() && !app.requestSingleInstanceLock()) {
     if (!argv.some((arg) => receiveThread(arg))) openWindow();
   });
   app.on('activate', () => {
-    if (starting || (opening && pendingThread)) return;
-    if (!finderThreads.focus()) openWindow();
+    if (starting) return;
+    openWindow();
   });
 
   // Closing the window leaves the app, the office and the menu bar icon running until you quit.

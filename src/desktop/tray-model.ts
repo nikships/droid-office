@@ -54,6 +54,8 @@ export function switchLabel(mode: WindowMode): string {
 export interface WorkerLink {
   worker: string;
   floor: string;
+  /** The companion opens the worker in Thread; the 3D office opens its terminal either way. */
+  view?: 'thread';
 }
 
 export type TrayItem = { type: 'separator' } | { label: string; enabled: boolean; sublabel?: string; action?: TrayAction; checked?: boolean };
@@ -184,7 +186,7 @@ export class WaitingWatch {
   }
 }
 
-/** `#worker=<id>&floor=<id>`: what the office page reads to open a worker's terminal (src/client/worker-link.ts). */
+/** `#worker=<id>&floor=<id>[&view=thread]`: what the office page reads to open a worker's terminal (src/client/worker-link.ts). */
 export function workerHash(link: WorkerLink): string {
-  return `#${new URLSearchParams({ worker: link.worker, floor: link.floor }).toString()}`;
+  return `#${new URLSearchParams({ worker: link.worker, floor: link.floor, ...(link.view ? { view: link.view } : {}) }).toString()}`;
 }

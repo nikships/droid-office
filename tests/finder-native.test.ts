@@ -9,7 +9,7 @@ import signFinder, { validateFinderProfile } from '../build/signFinder.mjs';
 import { pickerModel } from '../src/client/ui/models.js';
 import { MODEL_BRANDS, modelBrand } from '../src/client/ui/model-brand.js';
 import { multiplierLabel, sectionsFor } from '../src/client/ui/model-search.js';
-import { companionNavigation, finderBridgeArgs, parseThreadLink, threadDashboardUrl } from '../src/desktop/finder-links.js';
+import { companionNavigation, finderBridgeArgs, parseThreadLink } from '../src/desktop/finder-links.js';
 import { finderCatalogue } from '../src/server/finder.js';
 
 const root = fileURLToPath(new URL('../', import.meta.url));
@@ -37,7 +37,17 @@ test('Finder thread links carry only a lead and a floor', () => {
     'droid-office://thread/%ZZ?floor=floor',
   ])
     assert.equal(parseThreadLink(raw), undefined, raw);
-  assert.equal(threadDashboardUrl('http://localhost:4600/', { lead: 'lead', floor: 'floor' }), 'http://localhost:4600/dashboard#worker=lead&floor=floor&view=thread');
+});
+
+test('a Finder thread goes to the app window that is open, or else the last mode used, never one of its own', () => {
+  const main = readFileSync(path.join(root, 'src/desktop/main.ts'), 'utf8');
+  assert.doesNotMatch(main, /new BrowserWindow|FinderThreads/);
+  const receive = main.slice(main.indexOf('function receiveThread'), main.indexOf('function takePendingThread'));
+  assert.match(receive, /openWorker\(worker\)/);
+  assert.match(receive, /if \(!starting\) openWindow\(\)/);
+  assert.match(main, /show\(officePage\(takePendingThread\(\)\)\)/);
+  const finder = readFileSync(path.join(root, 'src/desktop/finder.ts'), 'utf8');
+  assert.doesNotMatch(finder, /BrowserWindow/);
 });
 
 test('only packaged non-isolated app-owned launches get a Finder bridge', () => {

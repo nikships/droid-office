@@ -65,7 +65,7 @@ test('invalid update window state is discarded and consumed without affecting fu
 test('the update captures the window before shutdown and restores it before launch activation can open one', () => {
   const main = readFileSync(new URL('../src/desktop/main.ts', import.meta.url), 'utf8');
   assert.match(main, /beforeInstall: \(\) => \{\s*saveUpdateWindows\([\s\S]*?quitting = true;\s*return stopOffice\(true\);/);
-  assert.match(main, /app\.on\('activate', \(\) => \{\s*if \(starting \|\|/);
+  assert.match(main, /app\.on\('activate', \(\) => \{\s*if \(starting\) return;/);
   const restore = main.indexOf('const updateWindows = takeUpdateWindows(updateWindowsFile)');
   assert.ok(restore > main.indexOf('app.requestSingleInstanceLock()'), 'another app instance must not consume the snapshot');
   assert.ok(restore < main.indexOf("show(page('Opening the office…'))", restore), 'the initial splash must honor the saved window state');
