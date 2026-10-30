@@ -135,6 +135,51 @@ test('bounding loaded history drops the rows outside it', () => {
 const windowPage = (entries: ThreadEntry[]) => ({ sessionId: 'one', entries, hasMore: true, presentation: { version: 1, rows: presentThread(entries, false) } });
 const actionsOf = (row: ThreadRow) => (row.kind === 'activity' ? row.blocks.flatMap((block) => (block.kind === 'tools' ? block.actions : [])) : []);
 
+test('an earlier disk page keeps its activity prefix before the first held row', () => {
+  for (const failed of [undefined, 975, 1025]) {
+    const all = Array.from({ length: 200 }, (_, i) => ({ ...tool(i + 950), ...(i + 950 === failed ? { error: true, output: 'ENOENT: no such file' } : {}) }));
+    const h = new ThreadHistory();
+    // The held row begins at 1000, before the latest page's first entry at 1050.
+    h.apply(page(all.slice(50), 50, 150));
+    const held = h.rows[0];
+    // The reader has since advanced beyond 1050, so the earlier page is rebuilt from disk.
+    const earlier = page(all.slice(0, 100), 0, 100, 1050);
+    h.apply(earlier);
+    assert.deepEqual(
+      h.rows.map((row) => [row.from, row.to]),
+      [
+        [950, 999],
+        [1000, 1149],
+      ],
+    );
+    assert.equal(h.rows[1], held, 'the held row stays intact');
+    const prefix = h.rows[0];
+    assert.ok(prefix.kind === 'activity');
+    const ids = all.slice(0, 50).map((entry) => entry.id);
+    assert.deepEqual(prefix.sourceIds, ids);
+    assert.deepEqual(
+      actionsOf(prefix).map((action) => action.id),
+      ids,
+    );
+    assert.deepEqual(
+      prefix.failed.map((failure) => failure.id),
+      failed === 975 ? ['t-975'] : [],
+    );
+    assert.equal(prefix.state, failed === 975 ? 'failed' : 'complete');
+    assert.equal(prefix.label, 'Earlier activity');
+    assert.equal(prefix.live, false);
+    assert.equal(prefix.status, undefined);
+    assert.equal(prefix.running, undefined);
+    assert.deepEqual(
+      h.rows.flatMap((row) => actionsOf(row).map((action) => action.id)),
+      all.map((entry) => entry.id),
+    );
+    assert.deepEqual(h.entries, all);
+    h.apply(earlier);
+    assert.equal(h.rows.length, 2, 'loading the same earlier page never duplicates its prefix');
+  }
+});
+
 test('a window that slid past an activity keeps the prefix this client still holds', () => {
   const all = [entry(0, { role: 'user' }), ...Array.from({ length: 9 }, (_, i) => tool(i + 1))];
   const h = new ThreadHistory();

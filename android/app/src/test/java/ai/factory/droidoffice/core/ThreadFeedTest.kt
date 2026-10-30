@@ -294,6 +294,38 @@ class ThreadFeedTest {
         )
 
     @Test
+    fun anEarlierDiskPageKeepsItsActivityPrefixBeforeTheFirstHeldRow() {
+        for (failed in listOf(null, 975L, 1025L)) {
+            val feed = ThreadFeed("w1")
+            val all = (950L..1149L).map { if (it == failed) tool("t$it", it).copy(error = true, output = "ENOENT") else tool("t$it", it) }
+            val heldEntries = all.filter { it.seq >= 1000 }
+            val held = activityRow("activity:t1000", 1000, 1149, heldEntries.map { it.id }, heldEntries.filter { it.error }.map { it.id })
+            // The held row begins before the latest page's first entry at 1050.
+            feed.receive(page(feed, feed.latest(0)!!, heldEntries.takeLast(100), hasMore = true, presentation = ThreadPresentation(1, listOf(held))))
+            val (req, before) = feed.earlier(1)!!
+            assertEquals(1050L, before)
+            // The reader has since advanced beyond 1050, so this page is rebuilt from disk.
+            val earlier = all.take(100)
+            val incoming = activityRow("activity:t950", 950, 1049, earlier.map { it.id }, earlier.filter { it.error }.map { it.id })
+            assertTrue(feed.receive(page(feed, req, earlier, before = before, presentation = ThreadPresentation(1, listOf(incoming)))))
+            assertEquals(listOf(950L to 999L, 1000L to 1149L), feed.state.rows.map { it.from to it.to })
+            assertEquals(held, feed.state.rows.last())
+            val prefix = feed.state.rows.first() as ThreadRow.Activity
+            val ids = all.take(50).map { it.id }
+            assertEquals(ids, prefix.sourceIds)
+            assertEquals(ids, (prefix.blocks.single() as ThreadBlock.Tools).actions.map { it.id })
+            assertEquals(if (failed == 975L) listOf("t975") else emptyList<String>(), prefix.failed.map { it.id })
+            assertEquals(if (failed == 975L) ActivityState.Failed else ActivityState.Complete, prefix.state)
+            assertEquals("Earlier activity", prefix.label)
+            assertFalse(prefix.live)
+            assertNull(prefix.status)
+            assertNull(prefix.running)
+            assertEquals(all.map { it.id }, feed.state.rows.flatMap { (it as ThreadRow.Activity).sourceIds })
+            assertEquals(all, feed.state.entries)
+        }
+    }
+
+    @Test
     fun aWindowThatSlidPastAnActivityKeepsThePrefixStillLoaded() {
         val feed = ThreadFeed("w1")
         val window = (1L..9L).map { tool("t$it", it) }

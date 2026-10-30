@@ -1,19 +1,19 @@
 import { activityState, THREAD_MODEL_VERSION, type ThreadBlock, type ThreadPresentation, type ThreadRow } from '../shared/thread-presentation';
 import type { ThreadEntry } from '../shared/worker-thread';
 
+const EARLIER_ACTIVITY = 'Earlier activity';
+
 /**
  * The rows that still stand for one of these entries. Judged by id, not by seq range: a cache that
  * drops entries for size leaves gaps, and a message row without its text would render empty.
  */
-const EARLIER_ACTIVITY = 'Earlier activity';
-
 export function rowsWithin(rows: readonly ThreadRow[], entries: readonly ThreadEntry[]): ThreadRow[] {
   const kept = new Set(entries.map((entry) => entry.id));
   return rows.filter((row) => (row.kind === 'activity' ? row.sourceIds.some((id) => kept.has(id)) : kept.has(row.id)));
 }
 
 /**
- * The part of a held Activity row that stands for the entries still loaded, up to [to]. The office's
+ * The part of an Activity row that stands for the entries loaded, up to [to]. The office's
  * read window can slide past a row's start while this client still holds those entries; clipping
  * keeps that prefix, with its failures, instead of dropping it. Null when nothing of it is left.
  * Its summary is rebuilt from the actions it holds: the office's label, status and state describe the
@@ -48,11 +48,12 @@ export function rowPrefix(row: ThreadRow, to: number, loaded: ReadonlyMap<string
     blocks,
   };
 }
+
 /**
  * Loaded history belongs to one session. A latest page updates tools without dropping older pages.
  * The office builds the rows (src/shared/thread-presentation.ts); this only joins its pages: a latest
- * page's rows replace those from its first row on, and an earlier page's rows are added only where
- * they end before the first row already held.
+ * page's rows replace those from its first row on, and an earlier page adds the rows and Activity
+ * prefixes before the first row already held.
  */
 export class ThreadHistory {
   entries: ThreadEntry[] = [];
@@ -88,9 +89,9 @@ export class ThreadHistory {
     const merged = new Map(old.map((e) => [e.id, e]));
     for (const entry of page.entries) merged.set(entry.id, entry);
     this.entries = [...merged.values()].sort((a, b) => a.seq - b.seq || a.id.localeCompare(b.id));
+    const loaded = new Map(this.entries.map((entry) => [entry.id, entry]));
     if (latest) {
       const cut = Math.min(incoming[0]?.from ?? Infinity, first ?? Infinity);
-      const loaded = new Map(this.entries.map((entry) => [entry.id, entry]));
       const held: ThreadRow[] = [];
       for (const row of this.rows) {
         if (row.to < cut) held.push(row);
@@ -102,7 +103,12 @@ export class ThreadHistory {
       this.rows = [...held, ...incoming];
     } else {
       const held = this.rows[0]?.from ?? Infinity;
-      this.rows = [...incoming.filter((row) => row.to < held), ...this.rows];
+      const earlier = incoming.flatMap((row) => {
+        if (row.to < held) return [row];
+        const prefix = rowPrefix(row, held - 1, loaded);
+        return prefix ? [prefix] : [];
+      });
+      this.rows = [...earlier, ...this.rows];
     }
     if (latest && !page.entries.length) {
       this.entries = [];
