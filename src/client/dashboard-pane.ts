@@ -204,10 +204,13 @@ export function createPane(host: PaneHost, index: number): Pane {
   });
 
   // --- The body ---------------------------------------------------------------------------------
-  function teardown() {
+  function teardown(keepThread = false) {
     questionWorkspace?.close();
-    thread?.dispose();
-    thread = undefined;
+    if (keepThread) thread?.activate(false);
+    else {
+      thread?.dispose();
+      thread = undefined;
+    }
     term?.close();
     term = undefined;
     opening = false;
@@ -239,7 +242,7 @@ export function createPane(host: PaneHost, index: number): Pane {
   }
 
   function build(w: WorkerInfo | undefined, next: PaneMode) {
-    teardown();
+    teardown(!!w && next !== 'empty');
     mode = next;
     el.dataset.mode = next;
     if (next === 'empty' || !w) {
@@ -254,7 +257,7 @@ export function createPane(host: PaneHost, index: number): Pane {
     } else if (next === 'thread') {
       const intended = host.floor();
       const key = draftKey(intended, w.id);
-      thread = mountWorkerThread(host.net, {
+      thread ??= mountWorkerThread(host.net, {
         worker: w,
         question,
         queueKey: `${key}:queue-receipts`,
@@ -271,6 +274,7 @@ export function createPane(host: PaneHost, index: number): Pane {
         },
         raw: () => host.setView(w.id, 'terminal'),
       });
+      thread.element.querySelector('.wt-scroll')?.append(question);
       stage.replaceChildren(thread.element);
       thread.activate(true);
     } else stage.replaceChildren(h('div.dash-stage-wait', {}, h('div.spinner'), h('span', {}, 'Opening the terminal…')));
@@ -623,7 +627,7 @@ export function createPane(host: PaneHost, index: number): Pane {
     },
     focusContent() {
       if (term) term.focus();
-      else (thread?.element.querySelector<HTMLElement>('textarea, .wt-scroll') ?? stage.querySelector<HTMLElement>('button, [tabindex]'))?.focus({ preventScroll: true });
+      else (mode === 'thread' ? thread?.element.querySelector<HTMLElement>('textarea, .wt-scroll') : stage.querySelector<HTMLElement>('button, [tabindex]'))?.focus({ preventScroll: true });
     },
     dispose() {
       if (disposed) return;
