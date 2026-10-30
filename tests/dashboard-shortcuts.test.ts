@@ -19,7 +19,7 @@ function key(key: string, overrides: Partial<KeyboardEvent> = {}): KeyboardEvent
 }
 
 test('Command shortcuts cover workspace actions without Option or Control', () => {
-  for (const [i, mode] of ['single', 'split', 'triple', 'grid'].entries()) assert.deepEqual(workspaceCommand(key(String(i + 1))), { action: 'layout', mode });
+  for (const [i, mode] of ['single', 'split', 'triple', 'grid', 'five', 'six', 'seven', 'eight'].entries()) assert.deepEqual(workspaceCommand(key(String(i + 1))), { action: 'layout', mode });
   for (const [value, action] of [
     ['Enter', 'maximize'],
     ['n', 'hire'],
@@ -38,14 +38,15 @@ test('Command shortcuts cover workspace actions without Option or Control', () =
   assert.ok(WORKSPACE_KEY_HINTS.every(([chord]) => chord.startsWith('⌘ ')));
   assert.equal(WORKSPACE_KEY_HINTS.find(([, label]) => label === 'panes')?.[0], '⌘ ← →');
   assert.equal(WORKSPACE_KEY_HINTS.find(([, label]) => label === 'workers')?.[0], '⌘ ↑ ↓');
+  assert.equal(WORKSPACE_KEY_HINTS.find(([, label]) => label === 'layout')?.[0], '⌘ 1–8');
 });
 
 test('CLI keys, editing shortcuts, IME composition and extra modifiers pass through', () => {
-  for (const value of ['1', 'Enter', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'n', 'b', '\\', ']', 'Escape']) {
+  for (const value of ['1', '5', '8', 'Enter', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'n', 'b', '\\', ']', 'Escape']) {
     for (const mods of [{ metaKey: false }, { metaKey: false, ctrlKey: true }, { metaKey: false, altKey: true }, { ctrlKey: true }, { altKey: true }, { shiftKey: true }, { isComposing: true }, { defaultPrevented: true }])
       assert.equal(workspaceCommand(key(value, mods)), undefined, JSON.stringify([value, mods]));
   }
-  for (const value of ['c', 'v', 'x', 'a', 'z', 'q', 'w', 'r', '5', '0', 'Escape', 'Tab', ']']) assert.equal(workspaceCommand(key(value)), undefined);
+  for (const value of ['c', 'v', 'x', 'a', 'z', 'q', 'w', 'r', '9', '0', 'Escape', 'Tab', ']']) assert.equal(workspaceCommand(key(value)), undefined);
 });
 
 test('a recognized chord is stopped before the terminal, including held-key repeats', () => {

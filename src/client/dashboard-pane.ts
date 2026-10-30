@@ -22,6 +22,7 @@ import { mountWorkerThread, type WorkerThread } from './ui/worker-thread';
 import { openQuestionWorkspace, type QuestionDraft, type QuestionReply } from './ui/question-workspace';
 import type { InlineTerminalHandle } from './ui/terminal';
 import type { PaneView } from './dashboard-workspace';
+import { workerTeams } from '../shared/team';
 
 /** What a sidebar row carries when it's dragged onto a pane. */
 export const WORKER_MIME = 'application/x-droid-worker';
@@ -147,13 +148,14 @@ export function createPane(host: PaneHost, index: number): Pane {
   const flip = h('button.btn.icon.sm.ghost.dash-pane-flip', { type: 'button' });
   const actions = h('div.dash-pane-actions', { role: 'group', 'aria-label': 'Worker actions' });
   const maxBtn = h('button.btn.icon.sm.ghost', { type: 'button', onclick: () => host.toggleMax(index) });
-  const closeBtn = h('button.btn.icon.sm.ghost', { type: 'button', 'aria-label': 'Close pane', title: 'Close pane', onclick: () => host.close(index) }, icon('x', 14));
+  const closeBtn = h('button.btn.icon.sm.ghost.dash-pane-close', { type: 'button', 'aria-label': 'Close pane', title: 'Close pane', onclick: () => host.close(index) }, icon('x', 14));
   const head = h('header.dash-pane-head', {}, grip, badge, who, h('span.dash-pane-titles', {}, name, task, model), pill, views, flip, actions, maxBtn, closeBtn);
+  const teamNav = h('nav.dash-team-nav', { 'aria-label': 'Worker team', hidden: true });
   const question = h('section.dash-question', { 'aria-label': 'Question requiring input', hidden: true });
   const stage = h('div.dash-stage');
   const body = h('div.dash-pane-body', {}, question, stage);
   const drop = h('div.dash-pane-drop', { 'aria-hidden': 'true' }, h('span', {}, 'Drop to open here'));
-  const el = h('section.dash-pane', {}, head, body, drop);
+  const el = h('section.dash-pane', {}, head, teamNav, body, drop);
 
   let id = '';
   let mode: PaneMode | '' = '';
@@ -164,6 +166,7 @@ export function createPane(host: PaneHost, index: number): Pane {
   let headKey = '';
   let actionsKey = '';
   let emptyKey = '';
+  let teamKey = '';
   let info: { name: HTMLElement; meta: HTMLElement; activity: HTMLElement; who: HTMLElement; preview?: HTMLElement } | undefined;
 
   let shownMenu: Menu | undefined;
@@ -284,10 +287,52 @@ export function createPane(host: PaneHost, index: number): Pane {
     const terminal = await host.terminal();
     opening = false;
     if (disposed || mode !== 'terminal' || id !== wid || term || !stage.isConnected || !host.usable(wid, intended)) return;
-    term = terminal.openTerminal(host.net, wid, undefined, undefined, { mount: stage, focus: takeFocus });
+    term = terminal.openTerminal(host.net, wid, undefined, undefined, { mount: stage, focus: takeFocus, hideTeam: true });
   }
 
   // --- The header -------------------------------------------------------------------------------
+  function paintTeam(w: WorkerInfo | undefined) {
+    const team = w && workerTeams([...store.workers.values()]).find((t) => t.children.length && (t.lead.id === w.id || t.children.some((c) => c.id === w.id)));
+    const members = team ? [team.lead, ...team.children] : [];
+    const key = JSON.stringify([w?.id, host.live(), members.map((m) => [m.id, m.name, m.color, m.status, m.acked])]);
+    if (key === teamKey) return;
+    teamKey = key;
+    teamNav.hidden = !team;
+    if (!team) {
+      teamNav.replaceChildren();
+      return;
+    }
+    const focused = teamNav.contains(document.activeElement) ? (document.activeElement as HTMLElement).dataset.member : undefined;
+    const scroll = teamNav.querySelector('.dash-team-nav-members')?.scrollLeft ?? 0;
+    const intended = host.floor();
+    const chip = (m: WorkerInfo, lead: boolean) =>
+      h(
+        'button.dash-team-chip',
+        {
+          type: 'button',
+          'data-member': m.id,
+          'data-status': m.status,
+          'aria-current': String(m.id === w?.id),
+          disabled: !host.live(),
+          title: `${m.name} · ${lead ? 'Main worker' : `Subworker of ${team.lead.name}`} · ${statusWord(m, STATUS_LABEL)}`,
+          'aria-label': `Open ${m.name}, ${lead ? 'main worker' : 'subworker'}, ${statusWord(m, STATUS_LABEL)}`,
+          onclick: () => {
+            if (host.usable(m.id, intended)) host.assign(index, m.id);
+          },
+        },
+        lead ? h('span.dash-team-chip-role', {}, 'Lead') : null,
+        workerDot(m),
+        h('span.dash-team-chip-name', {}, m.name),
+      );
+    teamNav.replaceChildren(chip(team.lead, true), h('span.dash-team-nav-label', {}, icon('branch', 12), `${team.children.length}`), h('div.dash-team-nav-members', {}, ...team.children.map((m) => chip(m, false))));
+    const memberList = teamNav.querySelector('.dash-team-nav-members');
+    if (memberList) memberList.scrollLeft = scroll;
+    if (focused)
+      Array.from(teamNav.querySelectorAll<HTMLButtonElement>('button'))
+        .find((b) => b.dataset.member === focused)
+        ?.focus({ preventScroll: true });
+  }
+
   function paintHead(s: PaneState) {
     const w = s.worker;
     const local = !!w && !w.guest && !w.cloud;
@@ -614,6 +659,7 @@ export function createPane(host: PaneHost, index: number): Pane {
       const next = modeFor(w, s.view);
       if (next !== mode) build(w, next);
       paintHead(s);
+      paintTeam(w);
       paintActions(w);
       if (!w) return paintEmpty(s);
       if (mode === 'terminal') void openTerm(w.id, s.takeFocus);

@@ -1,15 +1,35 @@
-// The web companion's workspace: which workers are open in which of up to four panes, the layout
+// The web companion's workspace: which workers are open in which of up to eight panes, the layout
 // they sit in and where its dividers are. No DOM, so it is tested on its own (tests/dashboard-workspace.test.ts).
 
-export type LayoutMode = 'single' | 'split' | 'triple' | 'grid';
+export type LayoutMode = 'single' | 'split' | 'triple' | 'grid' | 'five' | 'six' | 'seven' | 'eight';
 export type PaneView = 'thread' | 'terminal';
 /** A pane's box as fractions of the workspace: left, top, width, height. */
 export type Rect = readonly [x: number, y: number, w: number, h: number];
 
-export const LAYOUT_ORDER: readonly LayoutMode[] = ['single', 'split', 'triple', 'grid'];
-export const SLOT_COUNT: Record<LayoutMode, number> = { single: 1, split: 2, triple: 3, grid: 4 };
-export const LAYOUT_LABEL: Record<LayoutMode, string> = { single: 'One pane', split: 'Side by side', triple: 'One plus two', grid: 'Grid of four' };
-export const MAX_SLOTS = 4;
+export const LAYOUT_ORDER: readonly LayoutMode[] = ['single', 'split', 'triple', 'grid', 'five', 'six', 'seven', 'eight'];
+export const SLOT_COUNT: Record<LayoutMode, number> = { single: 1, split: 2, triple: 3, grid: 4, five: 5, six: 6, seven: 7, eight: 8 };
+export const LAYOUT_LABEL: Record<LayoutMode, string> = {
+  single: 'One pane',
+  split: 'Side by side',
+  triple: 'One plus two',
+  grid: 'Grid of four',
+  five: 'One plus four',
+  six: 'Grid of six',
+  seven: 'One plus six',
+  eight: 'Grid of eight',
+};
+/** Which layouts have a divider to drag: `col` sizes a full-height first column, `row` splits it in two. */
+export const LAYOUT_DIVIDERS: Record<LayoutMode, { col: boolean; row: boolean }> = {
+  single: { col: false, row: false },
+  split: { col: true, row: false },
+  triple: { col: true, row: true },
+  grid: { col: true, row: true },
+  five: { col: true, row: false },
+  six: { col: false, row: false },
+  seven: { col: true, row: false },
+  eight: { col: false, row: false },
+};
+export const MAX_SLOTS = 8;
 export const FULL_RECT: Rect = [0, 0, 1, 1];
 /** How far a divider may go towards either edge, so no pane gets too thin to use. */
 export const RATIO_MIN = 0.22;
@@ -66,6 +86,22 @@ export function workerView(ws: Workspace, id: string, fallback: PaneView): PaneV
   return (ws.views[id] ??= fallback);
 }
 
+/** Panes of a `cols`-by-`rows` grid of even boxes, left to right, top to bottom. */
+function evenGrid(cols: number, rows: number): Rect[] {
+  const rects: Rect[] = [];
+  for (let row = 0; row < rows; row++) for (let col = 0; col < cols; col++) rects.push([col / cols, row / rows, 1 / cols, 1 / rows]);
+  return rects;
+}
+
+/** A full-height pane on the left sized by `c`, and an even `cols`-by-`rows` block to its right. */
+function mainPlusRight(c: number, cols: number, rows: number): Rect[] {
+  const w = (1 - c) / cols;
+  const h = 1 / rows;
+  const right: Rect[] = [];
+  for (let row = 0; row < rows; row++) for (let col = 0; col < cols; col++) right.push([c + col * w, row * h, w, h]);
+  return [[0, 0, c, 1], ...right];
+}
+
 export function rectsFor(layout: LayoutMode, c: number, r: number): Rect[] {
   switch (layout) {
     case 'single':
@@ -88,6 +124,14 @@ export function rectsFor(layout: LayoutMode, c: number, r: number): Rect[] {
         [0, r, c, 1 - r],
         [c, r, 1 - c, 1 - r],
       ];
+    case 'five':
+      return mainPlusRight(c, 2, 2);
+    case 'six':
+      return evenGrid(3, 2);
+    case 'seven':
+      return mainPlusRight(c, 2, 3);
+    case 'eight':
+      return evenGrid(4, 2);
   }
 }
 
@@ -95,6 +139,38 @@ export function setLayout(ws: Workspace, layout: LayoutMode) {
   ws.layout = layout;
   ws.maximized = null;
   ws.focused = Math.min(ws.focused, SLOT_COUNT[layout] - 1);
+}
+
+/**
+ * Fills the layout's empty panes with the given workers, in order, skipping the ones already shown.
+ * Only the supplied workers are eligible, including any parked beyond the visible layout.
+ * Returns whether a pane changed.
+ */
+export function fillPanes(ws: Workspace, ids: readonly string[]): boolean {
+  const count = SLOT_COUNT[ws.layout];
+  const shown = new Set(ws.slots.slice(0, count).filter((id): id is string => !!id));
+  const queue = [...new Set(ids.filter((id) => id && !shown.has(id)))];
+  let filled = false;
+  for (let slot = 0; slot < count && queue.length; slot++) {
+    if (ws.slots[slot]) continue;
+    const id = queue.shift() ?? '';
+    if (!id) break;
+    const at = ws.slots.indexOf(id, count);
+    if (at >= 0) ws.slots[at] = null;
+    ws.slots[slot] = id;
+    filled = true;
+  }
+  return filled;
+}
+
+/** Remove departed workers and place only new arrivals, leaving unrelated closed panes alone. */
+export function syncWorkspace(ws: Workspace, ids: readonly string[], previous: Set<string>) {
+  const present = new Set(ids);
+  const arrivals = ids.filter((id) => !previous.has(id));
+  const gone = prune(ws, (id) => present.has(id));
+  previous.clear();
+  for (const id of ids) previous.add(id);
+  return { gone, filled: fillPanes(ws, arrivals) };
 }
 
 /** Puts a worker in a pane. If it was open in another one, the two panes trade places. */
@@ -113,16 +189,22 @@ export function swap(ws: Workspace, a: number, b: number) {
   ws.focused = b;
 }
 
-/** Shows a worker: focuses its pane if it's open, else fills an empty pane, else takes the focused one. */
+/** An explicit empty target wins; otherwise focus the worker, fill an empty pane, or take focus. */
 export function openWorker(ws: Workspace, id: string, targetPane?: number) {
   const shown = visibleSlots(ws);
+  // A hire can reach the floor and be auto-placed before its confirmation arrives.
+  if (targetPane !== undefined && shown[targetPane] === null) {
+    assign(ws, targetPane, id);
+    if (ws.maximized !== null) ws.maximized = targetPane;
+    return;
+  }
   const at = shown.indexOf(id);
   if (at >= 0) {
     ws.focused = at;
     if (ws.maximized !== null) ws.maximized = at;
     return;
   }
-  const empty = targetPane !== undefined && shown[targetPane] === null ? targetPane : shown.indexOf(null);
+  const empty = shown.indexOf(null);
   const slot = empty >= 0 ? empty : ws.focused;
   assign(ws, slot, id);
   if (ws.maximized !== null) ws.maximized = slot;
@@ -165,13 +247,11 @@ export function prune(ws: Workspace, has: (id: string) => boolean): string[] {
   return gone;
 }
 
-/** A first workspace for a floor: a layout sized to the workers, the first ones in the panes. */
+/** A first workspace for a floor: the smallest layout that shows everyone, the workers in its panes. */
 export function seedWorkspace(ids: readonly string[]): Workspace {
-  const layout: LayoutMode = ids.length <= 1 ? 'single' : ids.length === 2 ? 'split' : 'triple';
+  const layout = LAYOUT_ORDER.find((mode) => SLOT_COUNT[mode] >= ids.length) ?? 'eight';
   const ws = emptyWorkspace(layout);
-  ids.slice(0, SLOT_COUNT[layout]).forEach((id, i) => {
-    ws.slots[i] = id;
-  });
+  fillPanes(ws, ids);
   return ws;
 }
 

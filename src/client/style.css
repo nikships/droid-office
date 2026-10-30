@@ -2280,7 +2280,7 @@ html:has(body.dashboard), body.dashboard { overflow: auto; }
 .dash-banner-text { flex: 1; min-width: 0; margin: 0; font-size: var(--text-small); }
 .dash-banner-actions { display: flex; gap: var(--space-2); }
 
-/* The floor down the side: who's here, grouped by what they need, and hiring. */
+/* The floor down the side: stable worker teams, their activity, and hiring. */
 .dash-body { flex: 1; min-height: 0; display: grid; grid-template-columns: 280px minmax(0, 1fr); grid-template-rows: minmax(0, 1fr); transition: grid-template-columns .24s var(--ease); }
 .dash-body.side-closed { grid-template-columns: 0 minmax(0, 1fr); }
 .dash-body.side-closed .dash-side { visibility: hidden; }
@@ -2290,12 +2290,31 @@ html:has(body.dashboard), body.dashboard { overflow: auto; }
 .dash-side-sub { display: flex; align-items: center; gap: var(--space-2); min-width: 0; margin: 2px 0 0; font: 400 11.5px/1.4 var(--font-mono); color: var(--text-secondary); }
 .dash-side-sub span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .dash-workers { flex: 1; min-height: 0; overflow: auto; padding: var(--space-1) var(--space-2) var(--space-3); scrollbar-width: thin; scrollbar-color: rgba(255, 255, 255, .1) transparent; }
-.dash-group { display: flex; align-items: center; justify-content: space-between; padding: var(--space-4) var(--space-2) var(--space-1); font: 500 var(--text-label)/14px var(--font-mono); text-transform: uppercase; letter-spacing: .08em; color: var(--text-secondary); }
-.dash-group:first-child { padding-top: 0; }
-.dash-group[data-tone=danger] { color: var(--danger); }
-.dash-group[data-tone=warning] { color: var(--warning); }
-.dash-group[data-tone=faint] { color: var(--text-tertiary); }
-.dash-group-count { color: var(--text-tertiary); letter-spacing: 0; }
+.dash-roster-summary { padding: var(--space-2) var(--space-2) var(--space-3); }
+.dash-roster-heading { display: flex; align-items: center; justify-content: space-between; font: 500 var(--text-label)/18px var(--font-mono); text-transform: uppercase; letter-spacing: .1em; color: var(--text-secondary); }
+.dash-roster-total { color: var(--text); font-variant-numeric: tabular-nums; }
+.dash-roster-caption { display: flex; justify-content: space-between; gap: var(--space-2); font: 400 10px/18px var(--font-mono); color: var(--text-tertiary); }
+.dash-roster-caption > span { color: var(--warning); }
+.dash-worker-team { margin-bottom: var(--space-3); border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface); overflow: hidden; }
+.dash-worker-team.has-focus { border-color: rgba(238, 96, 24, .38); }
+.dash-worker-team > .dash-row { margin-bottom: 0; }
+.dash-worker-team > .dash-row .dash-row-open { padding: var(--space-3) var(--space-2); border-radius: 0; }
+.dash-row-role { flex: none; padding: 0 var(--space-1); border: 1px solid var(--border); border-radius: var(--radius-xs); color: var(--text-secondary); font: 400 9px/14px var(--font-mono); letter-spacing: .06em; text-transform: uppercase; }
+.dash-team-toggle { display: flex; align-items: center; gap: var(--space-2); width: 100%; min-height: 30px; padding: var(--space-1) var(--space-2); border: 0; border-top: 1px solid var(--border); background: transparent; color: var(--text-secondary); font: 400 10px/16px var(--font-mono); cursor: pointer; text-align: left; }
+.dash-team-toggle:hover { background: var(--surface-raised); color: var(--text); }
+.dash-team-chevron { font: 400 20px/12px var(--font-mono); transform: rotate(90deg); }
+.dash-team-toggle[aria-expanded=false] .dash-team-chevron { transform: rotate(0); }
+.dash-team-activity { margin-left: auto; color: var(--text-tertiary); }
+.dash-team-attention, .dash-roster-caption > .dash-team-attention { color: var(--danger); }
+.dash-team-children { padding: 0 var(--space-1) var(--space-1) var(--space-6); }
+.dash-team-children[hidden] { display: none; }
+.dash-team-children > .dash-row { margin-bottom: 0; }
+.dash-subworker::after { content: ''; position: absolute; left: -12px; top: 0; bottom: 0; width: 1px; background: var(--border-strong, rgba(255, 255, 255, .18)); }
+.dash-subworker::before, .dash-subworker.on::before { content: ''; position: absolute; left: -12px; top: 20px; bottom: auto; width: 12px; height: 1px; border-radius: 0; background: var(--border-strong, rgba(255, 255, 255, .18)); }
+.dash-subworker:last-child::after { bottom: auto; height: 21px; }
+.dash-subworker.on::before { background: var(--accent); }
+.dash-subworker .dash-row-open { padding: var(--space-2); border-radius: var(--radius); }
+.dash-subworker .dash-row-meta { display: none; }
 .dash-row { position: relative; margin-bottom: 2px; }
 .dash-row-open { display: flex; align-items: flex-start; gap: var(--space-2); width: 100%; padding: var(--space-2) var(--space-3) var(--space-2) var(--space-2); border: 1px solid transparent; border-radius: var(--radius-lg); background: none; color: var(--text); font: inherit; text-align: left; cursor: pointer; user-select: none; transition: background var(--duration) var(--ease), border-color var(--duration) var(--ease); }
 .dash-row-open:active { cursor: grabbing; }
@@ -2320,6 +2339,23 @@ html:has(body.dashboard), body.dashboard { overflow: auto; }
 .dash-keys { display: flex; flex-wrap: wrap; gap: var(--space-2) var(--space-3); font-size: 11px; color: var(--text-secondary); }
 .dash-keys .key { margin-right: var(--space-1); }
 
+/* A compact lead-to-team trail stays available in both Thread and raw TTY views. */
+.dash-team-nav { display: flex; align-items: center; gap: var(--space-2); flex: none; min-width: 0; padding: var(--space-2); border-bottom: 1px solid var(--border); background: var(--surface); }
+.dash-team-nav[hidden] { display: none; }
+.dash-team-chip { display: inline-flex; align-items: center; gap: var(--space-2); flex: none; min-width: 0; max-width: 160px; height: 28px; padding: 0 var(--space-2); border: 1px solid var(--border); border-radius: var(--radius); background: transparent; color: var(--text-secondary); font: 400 11px/16px var(--font-mono); cursor: pointer; transition: background 150ms ease-out, border-color 150ms ease-out; }
+.dash-team-chip:hover { color: var(--text); border-color: var(--text-tertiary); background: var(--surface-raised); }
+.dash-team-chip[aria-current=true] { color: var(--text); background: var(--surface-raised); border-color: rgba(238, 96, 24, .5); }
+.dash-team-chip:disabled { cursor: default; opacity: .5; }
+.dash-team-chip-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dash-team-chip-role { color: var(--text-tertiary); text-transform: uppercase; letter-spacing: .06em; font-size: 9px; }
+.dash-team-nav > .dash-team-chip { flex: none; max-width: 40%; }
+.dash-team-nav-label { display: flex; align-items: center; gap: var(--space-1); flex: none; font: 400 10px/16px var(--font-mono); color: var(--text-tertiary); }
+.dash-team-nav-members { display: flex; align-items: center; gap: var(--space-1); min-width: 0; overflow-x: auto; padding: var(--space-1) 0; scrollbar-width: thin; }
+.dash-team-nav :is(button, .dash-dot)::after { animation: none; }
+.dash-team-chip[data-status=needs_input] { border-color: var(--danger); }
+.dash-team-toggle:focus-visible, .dash-team-chip:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+@media (hover: none) { .dash-row-split { opacity: 1; } }
+
 /* A worker's colour, ringed by what it's doing. */
 .dash-dot { --who: #8c8c8c; --ring: transparent; position: relative; flex: none; width: 9px; height: 9px; border-radius: 50%; background: var(--who); box-shadow: 0 0 0 2px var(--bg), 0 0 0 3px var(--ring); }
 .dash-dot:is([data-status=working], [data-status=starting]) { --ring: rgba(242, 184, 75, .7); }
@@ -2332,7 +2368,7 @@ html:has(body.dashboard), body.dashboard { overflow: auto; }
 .dash-bars i:nth-child(3) { animation-delay: .3s; }
 @keyframes dash-bar { 0%, 100% { transform: scaleY(.35); } 50% { transform: scaleY(1); } }
 
-/* The workspace: its toolbar, then up to four panes in the chosen layout, with dividers to drag. */
+/* The workspace: its toolbar, then up to eight panes in the chosen layout, with dividers to drag. */
 .dash-main { min-width: 0; min-height: 0; display: flex; flex-direction: column; overflow: hidden; background: var(--bg); outline: none; }
 .dash-stale :is(.dash-workers, .dash-pane-body) { opacity: .5; filter: saturate(.5); transition: opacity .3s, filter .3s; }
 .dash-toolbar { flex: none; display: flex; align-items: center; gap: var(--space-3); height: 44px; padding: 0 var(--space-2); }
@@ -2343,11 +2379,25 @@ html:has(body.dashboard), body.dashboard { overflow: auto; }
 .dash-toolbar-end { flex: none; display: flex; align-items: center; gap: var(--space-2); margin-left: auto; }
 .dash-toolbar-sep { width: 1px; height: 16px; background: var(--border); }
 .dash-layouts { display: flex; align-items: center; padding: 2px; border: 1px solid var(--border); border-radius: var(--radius-lg); background: var(--surface); }
-.dash-layout { display: grid; place-items: center; width: 32px; height: 24px; padding: 0; border: 0; border-radius: var(--radius); background: none; color: var(--text-tertiary); cursor: pointer; transition: color var(--duration) var(--ease), background var(--duration) var(--ease); }
+.dash-layout { display: grid; place-items: center; width: 30px; height: 24px; padding: 0; border: 0; border-radius: var(--radius); background: none; color: var(--text-tertiary); cursor: pointer; transition: color var(--duration) var(--ease), background var(--duration) var(--ease); }
 .dash-layout:hover { color: var(--text-secondary); }
 .dash-layout[aria-checked=true] { background: #1b1b1b; color: var(--text); }
 .dash-layout rect { fill: none; stroke: currentColor; stroke-width: 1.2; }
 .dash-layout[aria-checked=true] rect.lead { fill: rgba(238, 96, 24, .22); stroke: var(--accent); }
+/* Eight layouts share the toolbar with the floor's name and the text size: give them the room back. */
+@media (max-width: 1100px) {
+  .dash-layout { width: 27px; }
+}
+@media (max-width: 760px) {
+  .dash-toolbar { gap: var(--space-2); }
+  .dash-crumb > .eyebrow, .dash-crumb > .dash-crumb-sep { display: none; }
+  .dash-layout { width: 25px; }
+}
+@media (max-width: 480px) {
+  .dash-layouts { padding: 1px; border-radius: var(--radius); }
+  .dash-layout { width: 23px; }
+  .dash-toolbar-sep { display: none; }
+}
 .dash-workspace { --spring: cubic-bezier(.2, .9, .25, 1); position: relative; flex: 1; min-height: 0; margin: 0 var(--space-2) var(--space-2); }
 .dash-workspace.resizing { user-select: none; }
 .dash-pane { position: absolute; left: calc(var(--x) * 100% + var(--gl)); top: calc(var(--y) * 100% + var(--gt)); width: calc(var(--w) * 100% - var(--gl) - var(--gr)); height: calc(var(--h) * 100% - var(--gt) - var(--gb)); container: pane / inline-size; display: flex; flex-direction: column; overflow: hidden; border: 1px solid var(--border); border-radius: var(--radius-lg); background: var(--surface); transition: left .32s var(--spring), top .32s var(--spring), width .32s var(--spring), height .32s var(--spring), opacity .2s var(--ease), transform .2s var(--ease), border-color .2s var(--ease); animation: dash-pane-in .24s var(--ease) both; }
@@ -2379,11 +2429,16 @@ html:has(body.dashboard), body.dashboard { overflow: auto; }
   .dash-pane-pr > span { display: none; }
 }
 @container pane (max-width: 460px) {
-  .dash-pane-model, .dash-pane-head > .pill, .dash-pane-views { display: none; }
+  .dash-pane-model, .dash-pane-head > .pill, .dash-pane .dash-pane-head .dash-pane-views { display: none; }
   .dash-pane-flip { display: inline-flex; }
+  .dash-pane-name { max-width: 100%; }
 }
 @container pane (max-width: 340px) {
-  .dash-pane-grip, .dash-pane-actions > :not(:first-child) { display: none; }
+  .dash-pane-head { gap: var(--space-1); }
+  .dash-pane-grip, .dash-pane-actions, .dash-team-chip-role { display: none; }
+}
+@container pane (max-width: 240px) {
+  .dash-pane-who, .dash-pane-close { display: none; }
 }
 .dash-pane-body { position: relative; flex: 1; min-height: 0; display: flex; flex-direction: column; background: var(--bg); }
 .dash-pane[data-mode=terminal] .dash-pane-body { background: #000; }
