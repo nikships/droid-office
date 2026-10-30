@@ -1,9 +1,14 @@
 import { mkdirSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
+import type { WindowMode } from './settings.js';
 
-/** Whether the app's window was open. Which mode it was in is the `mode` setting, which survives the update by itself. */
+/**
+ * Whether the app's window was open. Which mode it was in is the `mode` setting, which survives the update by itself,
+ * except from the release that kept a flag for each of two windows: `mode` is then the one it had open.
+ */
 export interface UpdateWindows {
   open: boolean;
+  mode?: WindowMode;
 }
 
 /** Captured before Squirrel closes the window. A failed snapshot must not block installation. */
@@ -22,8 +27,13 @@ export function takeUpdateWindows(file: string): UpdateWindows | undefined {
     const text = readFileSync(file, 'utf8');
     unlinkSync(file);
     const raw: unknown = JSON.parse(text);
-    if (!raw || typeof raw !== 'object' || !('open' in raw) || typeof raw.open !== 'boolean') return;
-    return { open: raw.open };
+    if (!raw || typeof raw !== 'object') return;
+    if ('open' in raw && typeof raw.open === 'boolean') return { open: raw.open };
+    // The previous release saved `{ office, companion }`; a companion-only session stays a companion session.
+    if ('office' in raw && 'companion' in raw && typeof raw.office === 'boolean' && typeof raw.companion === 'boolean') {
+      return { open: raw.office || raw.companion, ...(raw.companion && !raw.office ? { mode: 'companion' as const } : raw.office ? { mode: 'office' as const } : {}) };
+    }
+    return;
   } catch {
     return;
   }

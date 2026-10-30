@@ -431,6 +431,7 @@ function openWindow() {
   clearNotices();
   const current = appWindow();
   if (current) {
+    if (officeUrl && current.contents.isCrashed()) void current.contents.loadURL(officePage()).catch(() => {});
     current.base.show();
     current.base.focus();
     return;
@@ -450,6 +451,13 @@ function switchMode() {
   // Detached first, so its closing isn't taken for the owner closing the window to the menu bar.
   win = undefined;
   old?.base.close();
+  void refreshTray();
+  // Before startup has chosen the folder and the environment, only the window changes: openOffice runs once, from startup, and loads this mode's page.
+  if (starting) {
+    createWindow(false);
+    show(page('Opening the office…'));
+    return;
+  }
   openWindow();
 }
 
@@ -707,6 +715,10 @@ if (!isStartupCheck() && !app.requestSingleInstanceLock()) {
       }
       const updateWindows = takeUpdateWindows(updateWindowsFile);
       if (updateWindows && !pendingThread) windowWanted = updateWindows.open;
+      if (updateWindows?.mode && updateWindows.mode !== settings.mode) {
+        settings = { ...settings, mode: updateWindows.mode };
+        saveSettings(settingsFile, settings);
+      }
       Menu.setApplicationMenu(menu());
       if (!isolated && (await moveToApplications())) return;
       tray = new OfficeTray(trayAction);

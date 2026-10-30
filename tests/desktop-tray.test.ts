@@ -115,7 +115,8 @@ test('the menu offers only what the office can do in its state', () => {
     { label: '1 phone · 2 browsers connected', enabled: false },
   ]);
   const companion: TrayView = { ...running, mode: 'companion' };
-  assert.deepEqual(labels(companion).slice(labels(companion).indexOf('Open Office Companion'), 2 + labels(companion).indexOf('Open Office Companion')), ['Open Office Companion', 'Switch to 3D Office']);
+  const opens = labels(companion).indexOf('Open Office Companion');
+  assert.deepEqual(labels(companion).slice(opens, opens + 2), ['Open Office Companion', 'Switch to 3D Office']);
   assert.equal(item(companion, 'Switch to 3D Office')?.action, 'switch');
   assert.equal(item(running, 'Check for Updates…')?.sublabel, 'Version 0.1.420');
   assert.equal(item(running, 'Notify When Workers Wait on You')?.checked, true);

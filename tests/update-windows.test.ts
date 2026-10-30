@@ -35,10 +35,27 @@ test('a snapshot write failure does not prevent installation', (t) => {
   assert.doesNotThrow(() => saveUpdateWindows(path.join(file, 'snapshot.json'), { open: false }));
 });
 
+test('the previous release saved a flag for each window; its session carries over', (t) => {
+  const file = fileFor(t);
+  saveUpdateWindows(file, { open: false });
+  takeUpdateWindows(file);
+  const cases: [string, unknown][] = [
+    ['{"office":true,"companion":false}', { open: true, mode: 'office' }],
+    ['{"office":false,"companion":true}', { open: true, mode: 'companion' }],
+    ['{"office":true,"companion":true}', { open: true, mode: 'office' }],
+    ['{"office":false,"companion":false}', { open: false }],
+  ];
+  for (const [raw, expected] of cases) {
+    writeFileSync(file, raw);
+    assert.deepEqual(takeUpdateWindows(file), expected, raw);
+    assert.equal(existsSync(file), false, raw);
+  }
+});
+
 test('invalid update window state is discarded and consumed without affecting future launches', (t) => {
   const file = fileFor(t);
   saveUpdateWindows(file, { open: true });
-  for (const raw of ['{broken', 'null', '[]', '{}', '{"open":"true"}', '{"office":true,"companion":false}']) {
+  for (const raw of ['{broken', 'null', '[]', '{}', '{"open":"true"}', '{"office":false}', '{"office":"false","companion":true}', '{"office":false,"companion":1}']) {
     writeFileSync(file, raw);
     assert.equal(takeUpdateWindows(file), undefined, raw);
     assert.equal(existsSync(file), false, raw);
