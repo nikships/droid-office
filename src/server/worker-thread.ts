@@ -1,5 +1,6 @@
 import { open, readdir, realpath, stat, type FileHandle } from 'node:fs/promises';
 import path from 'node:path';
+import { pageRows, presentThread, THREAD_MODEL_VERSION, type ThreadPresentation, type ThreadRow } from '../shared/thread-presentation.js';
 import type { ThreadEntry } from '../shared/worker-thread.js';
 import { LABEL_TEXT_CHARS } from '../shared/worker-labels.js';
 import { DROID_SESSIONS_DIR } from './droid-session.js';
@@ -23,6 +24,7 @@ export interface ThreadPage {
   sessionId?: string;
   entries: ThreadEntry[];
   hasMore: boolean;
+  presentation?: ThreadPresentation;
   error?: string;
 }
 
@@ -50,6 +52,8 @@ interface CachedSession {
   projection: Projection;
   refresh?: Promise<void>;
   pages: Map<number, Promise<ThreadPage>>;
+  /** The window's rows for one file state and busy flag: polls between changes reuse them. */
+  rows?: { key: string; rows: ThreadRow[] };
 }
 
 const object = (value: unknown): Record<string, unknown> => (value && typeof value === 'object' && !Array.isArray(value) ? (value as Record<string, unknown>) : {});
@@ -114,7 +118,8 @@ export class WorkerThreadReader {
     return this.sessions.get(JSON.stringify([source.cwd, source.sessionId, source.since ?? 0]))?.projection.text;
   }
 
-  async read(source: ThreadSession, before?: number): Promise<ThreadPage> {
+  /** `busy` is whether the worker is in a turn: only then can the newest activity still be working. */
+  async read(source: ThreadSession, before?: number, busy = false): Promise<ThreadPage> {
     const { sessionId, cwd } = source;
     if (!SESSION_ID.test(sessionId) || !path.isAbsolute(cwd)) return this.unavailable();
     if (before !== undefined && (!Number.isSafeInteger(before) || before < 0)) return this.unavailable('Invalid conversation page.');
@@ -138,7 +143,11 @@ export class WorkerThreadReader {
       await state.refresh;
       if (!state.file) return this.unavailable('The local conversation file is not available yet.');
       const oldest = state.projection.entries[0]?.seq ?? Infinity;
-      if (before === undefined || !state.projection.dropped || before > oldest) return { sessionId, ...this.page(state.projection, before) };
+      if (before === undefined || !state.projection.dropped || before > oldest) {
+        const key = `${state.stamp}:${busy}`;
+        if (state.rows?.key !== key) state.rows = { key, rows: presentThread(state.projection.entries, busy) };
+        return { sessionId, ...this.page(state.projection, before, state.rows.rows) };
+      }
       let page = state.pages.get(before);
       if (!page) {
         if (state.pages.size >= 4) return this.unavailable('Conversation reader is busy. Try again shortly.');
@@ -370,7 +379,7 @@ export class WorkerThreadReader {
     }
   }
 
-  private page(state: Projection, before = Infinity): Omit<ThreadPage, 'sessionId'> {
+  private page(state: Projection, before = Infinity, rows?: readonly ThreadRow[]): Omit<ThreadPage, 'sessionId'> {
     const candidates = state.entries.filter((entry) => entry.seq < before);
     const entries = candidates.slice(-PAGE_SIZE).map((entry) => ({ ...entry }));
     let bytes = Buffer.byteLength(JSON.stringify(entries));
@@ -378,7 +387,9 @@ export class WorkerThreadReader {
       const removed = entries.shift();
       if (removed) bytes -= entryBytes(removed) + 1;
     }
-    return { entries, hasMore: candidates.length > entries.length || (state.dropped && before > 0) };
+    // Rows come from the whole window, so a group that began before this page keeps its first entry and counts.
+    const presentation: ThreadPresentation = { version: THREAD_MODEL_VERSION, rows: pageRows(rows ?? presentThread(state.entries, false), entries, before) };
+    return { entries, hasMore: candidates.length > entries.length || (state.dropped && before > 0), presentation };
   }
 
   private async older(file: string, sessionId: string, before: number): Promise<ThreadPage> {

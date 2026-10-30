@@ -143,12 +143,12 @@ export class TeamThread {
     if (member.error !== (msg.error ?? '')) this.revision++;
     member.error = msg.error ?? '';
     if (!member.error) {
-      const previous = JSON.stringify([member.history.sessionId, member.history.entries, member.history.hasMore]);
+      const previous = JSON.stringify([member.history.sessionId, member.history.entries, member.history.rows, member.history.hasMore]);
       member.history.apply(msg);
       const entries = boundedEntries(member.history.entries);
       member.history.hasMore = msg.hasMore || entries.length < member.history.entries.length;
       member.history.entries = entries;
-      if (!member.received || previous !== JSON.stringify([member.history.sessionId, member.history.entries, member.history.hasMore])) this.revision++;
+      if (!member.received || previous !== JSON.stringify([member.history.sessionId, member.history.entries, member.history.rows, member.history.hasMore])) this.revision++;
       member.received = true;
     }
     return true;

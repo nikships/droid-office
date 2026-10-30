@@ -479,6 +479,12 @@ export class WorkerManager {
     return { sessionId: info.sessionId, cwd: this.cwd(info) };
   }
 
+  /** Whether the worker is in a turn, so its newest Thread activity can still be working. */
+  threadBusy(id: string): boolean {
+    const status = this.workers.get(id)?.info.status;
+    return !!status && isBusy(status);
+  }
+
   /** The global sign writer never accepts an external path, nor writes after this manager closes. */
   labelSession(id: string): { sessionId: string; cwd: string; epoch: number; since?: number } | undefined {
     if (this.closing) return;

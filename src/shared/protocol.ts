@@ -16,6 +16,7 @@ import type { Menu } from './asks.js';
 import type { Visit } from './visits.js';
 import type { SetupState } from './setup.js';
 import type { SubscriptionProviderKey, SubscriptionsState } from './subscriptions.js';
+import type { ThreadPresentation } from './thread-presentation.js';
 import type { ThreadEntry } from './worker-thread.js';
 import type { WorkerLabelSettings, WorkerLabelState } from './worker-labels.js';
 
@@ -1032,7 +1033,8 @@ export interface Arrival {
 }
 
 export type ServerMsg =
-  | { t: 'thread.snapshot'; workerId: string; request: string; before?: number; sessionId?: string; entries: ThreadEntry[]; hasMore: boolean; error?: string }
+  /** `presentation` is how the clients show `entries`: the rows for them, built over everything the office has read (src/shared/thread-presentation.ts). */
+  | { t: 'thread.snapshot'; workerId: string; request: string; before?: number; sessionId?: string; entries: ThreadEntry[]; hasMore: boolean; presentation?: ThreadPresentation; error?: string }
   | { t: 'action.result'; requestId: string; ok: boolean; error?: string; workerId?: string }
   | ({
       t: 'welcome';
