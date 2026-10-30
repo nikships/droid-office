@@ -1,7 +1,7 @@
 import type { ThreadEntry } from './worker-thread.js';
 
 export type ActivityState = 'working' | 'complete' | 'incomplete' | 'failed' | 'cancelled';
-type ActionKind =
+export type ActionKind =
   | 'read'
   | 'list'
   | 'search'
@@ -23,6 +23,7 @@ type ActionKind =
   | 'loopResume'
   | 'loopCancel'
   | 'other';
+/** A tool call as the engine reads it. The wire carries a ThreadModelAction instead. */
 export interface ThreadAction {
   type: 'action';
   entry: ThreadEntry;
@@ -39,23 +40,66 @@ export interface PlanStep {
   active: boolean;
   text: string;
 }
+
+/**
+ * The Thread presentation model, built by the office and rendered by the web and Android clients.
+ * Raise THREAD_MODEL_VERSION when a change would make an older client read the model wrongly (a
+ * renamed or retyped field, a new row or block kind); added optional fields don't need it.
+ */
+export const THREAD_MODEL_VERSION = 1;
+export interface ThreadPresentation {
+  version: typeof THREAD_MODEL_VERSION;
+  rows: ThreadRow[];
+}
+/** Where an action's arguments are in its entry's input: a key of the JSON object, '.' for a JSON string, or the whole input. */
+export interface ThreadArgumentsRef {
+  label: string;
+  field?: string;
+}
+export interface ThreadModelAction {
+  /** The tool entry's id: its arguments and result are that entry's input and output. */
+  id: string;
+  title: string;
+  detail?: string;
+  category: ActionKind;
+  state: ActivityState;
+  /** The state in words beside the title, empty when it simply finished. */
+  status: string;
+  causedBy?: string;
+  arguments?: ThreadArgumentsRef;
+  /** The heading over the output. */
+  result: 'Result' | 'Error' | 'Cancelled';
+  open: boolean;
+}
+export interface ThreadFailure {
+  id: string;
+  title: string;
+  /** The first line of the error, shown while the Activity is closed. */
+  preview: string;
+}
+export type ThreadBlock =
+  | { kind: 'thought'; id: string; preview: string; live: boolean; open: boolean }
+  | { kind: 'tools'; id: string; label: string; state: ActivityState; live: boolean; open: boolean; actions: ThreadModelAction[]; plan?: PlanStep[] };
+/** `from` and `to` are the seqs of the first and last entry a row stands for, hidden ones included. */
 export type ThreadRow =
-  | { id: string; kind: 'message'; entry: ThreadEntry; startsTurn: boolean }
-  | { id: string; kind: 'thought'; entry: ThreadEntry; preview: string; live: boolean }
-  | { id: string; kind: 'notice'; entry: ThreadEntry; text: string; tone: 'quiet' | 'danger' | 'attachment' }
+  | { kind: 'message'; id: string; from: number; to: number; role: 'user' | 'assistant'; startsTurn: boolean }
+  | { kind: 'notice'; id: string; from: number; to: number; role: ThreadEntry['role']; text: string; tone: 'quiet' | 'danger' | 'attachment' }
   | {
-      id: string;
       kind: 'activity';
+      id: string;
+      from: number;
+      to: number;
       sourceIds: string[];
-      items: ThreadAction[];
-      actions: ThreadAction[];
-      plan?: PlanStep[];
       label: string;
       state: ActivityState;
       live: boolean;
-      failed: ThreadAction[];
-      cancelled: number;
-      noResult: number;
+      open: boolean;
+      /** "2 failed · 1 no result", when anything didn't simply finish. */
+      status?: string;
+      /** The newest working action's title while live. */
+      running?: string;
+      failed: ThreadFailure[];
+      blocks: ThreadBlock[];
     };
 
 const bookkeeping = new Set(['todowrite', 'todoread', 'toolsearch', 'skill', 'todo_write', 'todo_read', 'update_plan', 'waitforscript', 'taskoutput']);
@@ -90,23 +134,36 @@ function argumentsOf(entry: ThreadEntry): Record<string, unknown> {
 }
 
 /** Source is available on demand, formatted as source rather than escaped JSON. */
-export function threadArguments(entry: ThreadEntry): { label: string; text: string } | undefined {
+export function threadArguments(entry: ThreadEntry): ThreadArgumentsRef | undefined {
   const raw = entry.input?.trim();
   if (!raw || raw === '{}') return;
   const args = argumentsOf(entry);
-  if (str(args.command)) return { label: 'Command', text: str(args.command) };
-  if (str(args.script ?? args.code)) return { label: 'Script', text: str(args.script ?? args.code) };
-  if (leaf(entry.name) === 'applypatch' && str(args.input ?? args.patch)) return { label: 'Patch', text: str(args.input ?? args.patch) };
+  if (str(args.command)) return { label: 'Command', field: 'command' };
+  if (str(args.script)) return { label: 'Script', field: 'script' };
+  if (str(args.code)) return { label: 'Script', field: 'code' };
+  if (leaf(entry.name) === 'applypatch' && str(args.input)) return { label: 'Patch', field: 'input' };
+  if (leaf(entry.name) === 'applypatch' && str(args.patch)) return { label: 'Patch', field: 'patch' };
   try {
-    const parsed: unknown = JSON.parse(raw);
-    if (typeof parsed === 'string') return { label: leaf(entry.name) === 'script' ? 'Script' : leaf(entry.name) === 'applypatch' ? 'Patch' : 'Arguments', text: parsed };
+    if (typeof JSON.parse(raw) === 'string') return { label: leaf(entry.name) === 'script' ? 'Script' : leaf(entry.name) === 'applypatch' ? 'Patch' : 'Arguments', field: '.' };
   } catch {
     /* Older tools can record plain-text arguments. */
   }
-  return { label: 'Arguments', text: raw };
+  return { label: 'Arguments' };
 }
 
-/** Matches Android's ThreadView.action; a shared golden fixture guards the words and hierarchy. */
+/** The text a ThreadArgumentsRef points at in an entry's input. */
+export function threadArgumentsText(input: string | undefined, ref: ThreadArgumentsRef): string {
+  const raw = input?.trim() ?? '';
+  if (ref.field === undefined) return raw;
+  try {
+    const value: unknown = JSON.parse(raw);
+    const picked = ref.field === '.' ? value : value && typeof value === 'object' ? (value as Record<string, unknown>)[ref.field] : undefined;
+    return typeof picked === 'string' ? picked.trim() : raw;
+  } catch {
+    return raw;
+  }
+}
+
 export function threadAction(entry: ThreadEntry, live = false, cancelled = false): ThreadAction {
   const name = leaf(entry.name);
   const args = argumentsOf(entry);
@@ -350,7 +407,7 @@ export function threadStop(reason: string): string {
 }
 function notice(entry: ThreadEntry): Extract<ThreadRow, { kind: 'notice' }> | undefined {
   const text = entry.text?.trim() || entry.name || '';
-  const row = (text: string, tone: 'quiet' | 'danger' | 'attachment'): Extract<ThreadRow, { kind: 'notice' }> => ({ id: entry.id, kind: 'notice', entry, text, tone });
+  const row = (text: string, tone: 'quiet' | 'danger' | 'attachment'): Extract<ThreadRow, { kind: 'notice' }> => ({ kind: 'notice', id: entry.id, from: entry.seq, to: entry.seq, role: entry.role, text, tone });
   if (entry.id.startsWith('turn:') || text.startsWith('Turn ended') || text === 'Turn cancelled') {
     const reason = entry.id.startsWith('turn:') ? entry.id.split(':').at(-1) : text.split('·')[1]?.trim();
     if (text === 'Turn cancelled' || reason === 'cancelled') return row('Turn cancelled', 'quiet');
@@ -360,15 +417,46 @@ function notice(entry: ThreadEntry): Extract<ThreadRow, { kind: 'notice' }> | un
   return text ? row(text, entry.error ? 'danger' : 'quiet') : undefined;
 }
 
-/** A display-only projection; session entries, positions, paging and the wire contract stay intact. */
+const STATUS: Record<ActivityState, string> = { complete: '', working: 'Running', failed: 'Failed', incomplete: 'No result', cancelled: 'Cancelled' };
+
+function modelAction(action: ThreadAction): ThreadModelAction {
+  const args = threadArguments(action.entry);
+  return {
+    id: action.entry.id,
+    title: action.title,
+    ...(action.detail ? { detail: action.detail } : {}),
+    category: action.category,
+    state: action.state,
+    status: STATUS[action.state],
+    ...(action.causedBy ? { causedBy: action.causedBy } : {}),
+    ...(args ? { arguments: args } : {}),
+    result: action.state === 'cancelled' ? 'Cancelled' : action.entry.error ? 'Error' : 'Result',
+    open: false,
+  };
+}
+
+/** The state a run's actions add up to. `live` only matters while the run can still be working. */
+export function activityState(actions: readonly ThreadModelAction[], live = false): ActivityState {
+  const count = (state: ActivityState) => actions.filter((action) => action.state === state && !action.causedBy).length;
+  return count('failed') ? 'failed' : live ? 'working' : count('incomplete') ? 'incomplete' : count('cancelled') ? 'cancelled' : 'complete';
+}
+
+/**
+ * The model the clients render; session entries, positions, paging and the wire entries stay intact.
+ * Messages and notices are rows. Everything between them is one Activity row, collapsed, holding
+ * its thoughts and tool runs in order, each with its own disclosure.
+ */
 export function presentThread(entries: readonly ThreadEntry[], busy: boolean): ThreadRow[] {
   const rows: ThreadRow[] = [];
+  let section: ThreadEntry[] = [];
+  let blocks: ThreadBlock[] = [];
+  let actions: ThreadAction[] = [];
   let run: ThreadEntry[] = [];
   let lastPlan = '';
   let plan: PlanStep[] = [];
   let previousRole: ThreadEntry['role'] | undefined;
   const late = lateResults(entries);
-  const flush = (live: boolean) => {
+  const flushRun = (live: boolean) => {
     if (!run.length) return;
     const source = run;
     run = [];
@@ -377,50 +465,84 @@ export function presentThread(entries: readonly ThreadEntry[], busy: boolean): T
     const items: ThreadAction[] = [];
     const cancellations = ownerCancellations(source, late);
     for (const [index, entry] of source.entries()) {
-      if (entry.kind === 'tool') {
-        const name = leaf(entry.name);
-        if (!entry.error && bookkeeping.has(name)) continue;
-        let causedBy = cancellations.causes.get(entry.id);
-        if (name === 'script') {
-          const children = scriptChildren(source, index);
-          if (!entry.error && children.length) continue;
-          if (entry.error) causedBy ??= scriptFailureCause(entry, children);
-        }
-        const action = threadAction(entry, live, cancellations.ids.has(entry.id));
-        if (causedBy) {
-          action.causedBy = causedBy;
-          action.title = action.state === 'cancelled' ? 'Script stopped after a tool was cancelled' : 'Script stopped after a tool failed';
-        }
-        items.push(action);
+      if (entry.kind !== 'tool') continue;
+      const name = leaf(entry.name);
+      if (!entry.error && bookkeeping.has(name)) continue;
+      let causedBy = cancellations.causes.get(entry.id);
+      if (name === 'script') {
+        const children = scriptChildren(source, index);
+        if (!entry.error && children.length) continue;
+        if (entry.error) causedBy ??= scriptFailureCause(entry, children);
       }
+      const action = threadAction(entry, live, cancellations.ids.has(entry.id));
+      if (causedBy) {
+        action.causedBy = causedBy;
+        action.title = action.state === 'cancelled' ? 'Script stopped after a tool was cancelled' : 'Script stopped after a tool failed';
+      }
+      items.push(action);
     }
     if (!items.length) return;
-    const actions = items;
-    const failed = actions.filter((a) => a.state === 'failed' && !a.causedBy);
-    const cancelled = actions.filter((a) => a.state === 'cancelled' && !a.causedBy).length;
-    const noResult = actions.filter((a) => a.state === 'incomplete').length;
+    const wired = items.map(modelAction);
     const planKey = JSON.stringify(plan);
     const changedPlan = plan.length && planKey !== lastPlan ? plan : undefined;
     if (changedPlan) lastPlan = planKey;
-    rows.push({
-      id: `activity:${source[0].id}`,
-      kind: 'activity',
-      sourceIds: source.map((e) => e.id),
-      items,
-      actions,
-      ...(changedPlan ? { plan: changedPlan } : {}),
-      label: activityLabel(actions),
+    actions.push(...items);
+    blocks.push({
+      kind: 'tools',
+      id: `tools:${source[0].id}`,
+      label: activityLabel(items),
+      state: activityState(wired, live),
       live,
-      failed,
-      cancelled,
-      noResult,
-      state: failed.length ? 'failed' : live ? 'working' : noResult ? 'incomplete' : cancelled ? 'cancelled' : 'complete',
+      open: false,
+      actions: wired,
+      ...(changedPlan ? { plan: changedPlan } : {}),
     });
   };
+  const flush = (live: boolean) => {
+    flushRun(live);
+    const source = section;
+    const shown = blocks;
+    const all = actions;
+    section = [];
+    blocks = [];
+    actions = [];
+    if (!shown.length) return;
+    const failed = all.filter((a) => a.state === 'failed' && !a.causedBy);
+    const cancelled = all.filter((a) => a.state === 'cancelled' && !a.causedBy).length;
+    const noResult = all.filter((a) => a.state === 'incomplete').length;
+    const status = [failed.length ? `${failed.length} failed` : '', cancelled ? `${cancelled} cancelled` : '', noResult ? `${noResult} no result` : ''].filter(Boolean).join(' · ');
+    const running = live ? all.filter((a) => a.state === 'working').at(-1)?.title : undefined;
+    rows.push({
+      kind: 'activity',
+      id: `activity:${source[0].id}`,
+      from: source[0].seq,
+      to: Math.max(...source.map((e) => e.seq)),
+      sourceIds: source.map((e) => e.id),
+      label: activityLabel(all),
+      state: activityState(all.map(modelAction), live),
+      live,
+      open: false,
+      ...(status ? { status } : {}),
+      ...(running ? { running } : {}),
+      failed: failed.map((a) => ({
+        id: a.entry.id,
+        title: a.title,
+        preview: clip(
+          a.entry.output
+            ?.split('\n')
+            .find((line) => line.trim())
+            ?.trim() ?? 'No error details were recorded.',
+          240,
+        ),
+      })),
+      blocks: shown,
+    });
+  };
+  const last = entries.at(-1);
   for (const entry of entries) {
     if (entry.kind === 'text' && entry.role !== 'system') {
       flush(false);
-      rows.push({ id: entry.id, kind: 'message', entry, startsTurn: entry.role === 'assistant' && previousRole !== 'assistant' });
+      rows.push({ kind: 'message', id: entry.id, from: entry.seq, to: entry.seq, role: entry.role, startsTurn: entry.role === 'assistant' && previousRole !== 'assistant' });
       previousRole = entry.role;
     } else if (entry.kind === 'notice' || (entry.kind === 'text' && entry.role === 'system')) {
       const important = notice(entry);
@@ -429,16 +551,27 @@ export function presentThread(entries: readonly ThreadEntry[], busy: boolean): T
         rows.push(important);
       }
     } else if (entry.kind === 'thinking') {
-      flush(false);
+      flushRun(false);
+      section.push(entry);
       const preview = entry.text
         ?.split('\n')
         .find((line) => line.trim())
         ?.trim()
         .replace(/^\*+|\*+$/g, '')
         .trim();
-      if (preview) rows.push({ id: entry.id, kind: 'thought', entry, preview: clip(preview, 120), live: busy && entry === entries.at(-1) });
-    } else run.push(entry);
+      if (preview) blocks.push({ kind: 'thought', id: entry.id, preview: clip(preview, 120), live: busy && entry === last, open: false });
+    } else {
+      section.push(entry);
+      run.push(entry);
+    }
   }
   flush(busy);
   return rows;
+}
+
+/** The rows a page carries: those standing for any of its entries, before `before` when it is an earlier page. */
+export function pageRows(rows: readonly ThreadRow[], entries: readonly ThreadEntry[], before = Infinity): ThreadRow[] {
+  const first = entries[0]?.seq;
+  if (first === undefined) return [];
+  return rows.filter((row) => row.to >= first && row.from < before);
 }

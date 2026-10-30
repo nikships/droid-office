@@ -1,6 +1,7 @@
 import type { ClientMsg, ServerMsg, WorkerInfo } from '../../shared/protocol';
 import { isAsleep, isBusy } from '../../shared/status';
-import { presentThread, threadArguments, type ThreadRow } from '../../shared/thread-presentation';
+import { threadArgumentsText, type ThreadBlock, type ThreadModelAction, type ThreadRow } from '../../shared/thread-presentation';
+import type { ThreadEntry } from '../../shared/worker-thread';
 import { CLEAR_DROID_QUEUE, readDroidQueue } from '../../shared/droid-queue';
 import { slashCommands, slashOf, slashRefusal, slashSuggestions, type DroidSlashCommand, type SlashCommand } from '../../shared/slash-commands';
 import { ThreadQueue } from '../../shared/thread-queue';
@@ -16,7 +17,7 @@ import { withToken } from '../token';
 
 export interface WorkerThread {
   element: HTMLElement;
-  entries(): readonly import('../../shared/worker-thread').ThreadEntry[];
+  entries(): readonly ThreadEntry[];
   update(worker: WorkerInfo, connected: boolean): void;
   activate(active: boolean): void;
   dispose(): void;
@@ -38,6 +39,31 @@ export interface ThreadOptions {
   /** Open this child's Thread view, without starting or resuming a worker. */
   openWorker?(id: string): void;
 }
+
+/**
+ * A digest of the fields a row renders from, cached per entry. The office re-sends a page's entries as
+ * new objects every poll, and an entry a session rewrote in place keeps its id, so the paint key needs
+ * the contents; digesting each new entry once keeps a long run's outputs off every paint.
+ */
+const digests = new WeakMap<ThreadEntry, string>();
+function entryDigest(entry: ThreadEntry | undefined): string {
+  if (!entry) return '';
+  let digest = digests.get(entry);
+  if (digest === undefined) {
+    let hash = 2166136261;
+    for (const field of [entry.text, entry.input, entry.output]) {
+      if (field === undefined) continue;
+      for (let at = 0; at < field.length; at++) hash = Math.imul(hash ^ field.charCodeAt(at), 16777619);
+    }
+    digest = `${hash}:${entry.error ? 1 : 0}`;
+    digests.set(entry, digest);
+  }
+  return digest;
+}
+
+/** What a row renders from, for its paint key. */
+const rowContent = (row: ThreadRow, loaded: ReadonlyMap<string, ThreadEntry>) =>
+  (row.kind === 'activity' ? row.blocks.flatMap((block) => (block.kind === 'thought' ? [block.id] : block.actions.map((item) => item.id))) : [row.id]).map((id) => entryDigest(loaded.get(id)));
 
 const localQueues = new Map<string, ThreadQueue>();
 
@@ -347,131 +373,112 @@ export function mountWorkerThread(net: Net, opts: ThreadOptions): WorkerThread {
     },
     true,
   );
-  const thought = (id: string, text: string, preview: string) =>
-    h(
-      'details.wt-thinking',
-      { 'data-disclosure': id },
-      h('summary', {}, h('span.wt-thought-label', {}, 'Thought'), h('span.wt-thought-preview', {}, preview), h('span.wt-chevron', { 'aria-hidden': true }, '›')),
-      h('div.wt-thinking-text', {}, text),
+  const chevron = () => h('span.wt-chevron', { 'aria-hidden': true }, '›');
+  const disclosure = <T extends HTMLDetailsElement>(details: T, open: boolean) => {
+    details.open = open;
+    return details;
+  };
+  const thought = (block: Extract<ThreadBlock, { kind: 'thought' }>, entry: ThreadEntry | undefined) =>
+    disclosure(
+      h(
+        'details.wt-thinking',
+        { 'data-disclosure': block.id },
+        h('summary', {}, h('span.wt-thought-label', {}, 'Thought'), h('span.wt-thought-preview', {}, block.preview), chevron()),
+        h('div.wt-thinking-text', {}, entry?.text ?? block.preview),
+      ),
+      block.open,
     );
-  // While the worker waits on the owner, its run isn't working: the question card says what it's on.
-  const render = (row: ThreadRow, asking: boolean, author = worker, expanded = expandedMessages) => {
-    const node = h('article.wt-entry', { 'data-entry': row.id });
-    if (row.kind === 'thought') {
-      node.classList.add('thought');
-      node.append(thought(row.id, row.entry.text ?? '', row.preview));
-      return node;
-    }
-    if (row.kind === 'activity') {
-      node.classList.add('activity');
-      const details = h(
-        'details.wt-activity',
-        { class: row.state, 'data-disclosure': row.id },
+  const action = (item: ThreadModelAction, entry: ThreadEntry | undefined) =>
+    disclosure(
+      h(
+        'details.wt-tool',
+        { class: item.state === 'failed' ? 'error' : item.state === 'complete' ? 'done' : 'pending', 'data-disclosure': item.id },
+        h('summary', {}, h('span.wt-tool-main', {}, h('span.wt-tool-title', {}, item.title), item.detail ? h('span.wt-tool-detail', {}, item.detail) : null), h('span.wt-tool-state', {}, item.status), chevron()),
+        ...(entry
+          ? [
+              item.arguments ? h('div.wt-detail-label', {}, item.arguments.label) : null,
+              item.arguments ? h('pre.wt-code', {}, threadArgumentsText(entry.input, item.arguments)) : null,
+              h('div.wt-detail-label', {}, item.result),
+              h('pre.wt-code.wt-output', {}, entry.output ?? 'No result recorded in this session.'),
+            ]
+          : [h('p.wt-detail-missing', {}, 'Load earlier messages to see what this call was given and returned.')]),
+      ),
+      item.open,
+    );
+  const run = (block: Extract<ThreadBlock, { kind: 'tools' }>, loaded: ReadonlyMap<string, ThreadEntry>) => {
+    const body = h('div.wt-run-body', {}, ...block.actions.map((item) => action(item, loaded.get(item.id))));
+    if (block.plan) {
+      body.append(
         h(
-          'summary',
+          'div.wt-plan',
           {},
-          h('span.wt-activity-mark', { 'aria-hidden': true }),
-          h('span.wt-activity-label', {}, `${row.live && !asking ? 'Working · ' : ''}${row.label}`),
-          row.failed.length || row.cancelled || row.noResult
-            ? h('span.wt-activity-status', {}, [row.failed.length ? `${row.failed.length} failed` : '', row.cancelled ? `${row.cancelled} cancelled` : '', row.noResult ? `${row.noResult} no result` : ''].filter(Boolean).join(' · '))
-            : null,
-          h('span.wt-chevron', { 'aria-hidden': true }, '›'),
+          h('div.wt-detail-label', {}, 'Plan'),
+          h('ol', {}, ...block.plan.map((step) => h('li', { class: step.done ? 'done' : step.active ? 'active' : '' }, h('span.wt-plan-state', {}, step.done ? 'Done' : step.active ? 'Now' : 'Next'), step.text))),
         ),
       );
-      const body = h('div.wt-activity-body');
-      for (const item of row.items) {
-        const action = item;
-        const entry = action.entry;
-        const state = action.state === 'cancelled' ? 'Cancelled' : action.state === 'failed' ? 'Failed' : action.state === 'working' ? 'Running' : action.state === 'incomplete' ? 'No result' : '';
-        const args = threadArguments(entry);
-        const detail = h(
-          'details.wt-tool',
-          { class: action.state === 'failed' ? 'error' : action.state === 'complete' ? 'done' : 'pending', 'data-disclosure': entry.id },
+    }
+    return disclosure(h('details.wt-run', { class: block.state, 'data-disclosure': block.id }, h('summary', {}, h('span.wt-run-label', {}, block.label), chevron()), body), block.open);
+  };
+  // While the worker waits on the owner, its run isn't working: the question card says what it's on.
+  const render = (row: ThreadRow, loaded: ReadonlyMap<string, ThreadEntry>, asking: boolean, author = worker, expanded = expandedMessages) => {
+    const node = h('article.wt-entry', { 'data-entry': row.id });
+    if (row.kind === 'activity') {
+      node.classList.add('activity');
+      const details = disclosure(
+        h(
+          'details.wt-activity',
+          { class: row.state, 'data-disclosure': row.id },
           h(
             'summary',
             {},
-            h('span.wt-tool-main', {}, h('span.wt-tool-title', {}, action.title), action.detail ? h('span.wt-tool-detail', {}, action.detail) : null),
-            h('span.wt-tool-state', {}, state),
-            h('span.wt-chevron', { 'aria-hidden': true }, '›'),
+            h('span.wt-activity-mark', { 'aria-hidden': true }),
+            h('span.wt-activity-label', {}, `${row.live && !asking ? 'Working · ' : ''}${row.label}`),
+            row.status ? h('span.wt-activity-status', {}, row.status) : null,
+            chevron(),
           ),
-          args ? h('div.wt-detail-label', {}, args.label) : null,
-          args ? h('pre.wt-code', {}, args.text) : null,
-          h('div.wt-detail-label', {}, action.state === 'cancelled' ? 'Cancelled' : entry.error ? 'Error' : 'Result'),
-          h('pre.wt-code.wt-output', {}, entry.output ?? 'No result recorded in this session.'),
-        );
-        body.append(detail);
-      }
-      if (row.plan) {
-        body.append(
-          h(
-            'div.wt-plan',
-            {},
-            h('div.wt-detail-label', {}, 'Plan'),
-            h('ol', {}, ...row.plan.map((step) => h('li', { class: step.done ? 'done' : step.active ? 'active' : '' }, h('span.wt-plan-state', {}, step.done ? 'Done' : step.active ? 'Now' : 'Next'), step.text))),
-          ),
-        );
-      }
-      details.append(body);
+          h('div.wt-activity-body', {}, ...row.blocks.map((block) => (block.kind === 'thought' ? thought(block, loaded.get(block.id)) : run(block, loaded)))),
+        ),
+        row.open,
+      );
       node.append(details);
-      const current = row.actions.filter((action) => action.state === 'working').at(-1);
-      if (row.live && !row.failed.length && current && current.title !== row.label) node.append(h('p.wt-running', { role: 'status' }, current.title));
-      if (row.failed.length) {
-        node.append(
-          h(
-            'div.wt-failures',
-            {},
-            ...row.failed.map((action) =>
-              h(
-                'div.wt-failure-preview',
-                {},
-                h('span', {}, action.title),
-                h(
-                  'p',
-                  {},
-                  action.entry.output
-                    ?.split('\n')
-                    .find((line) => line.trim())
-                    ?.slice(0, 240) ?? 'No error details were recorded.',
-                ),
-              ),
-            ),
-          ),
-        );
-      }
+      if (row.live && !row.failed.length && row.running && row.running !== row.label) node.append(h('p.wt-running', { role: 'status' }, row.running));
+      if (row.failed.length) node.append(h('div.wt-failures', {}, ...row.failed.map((failure) => h('div.wt-failure-preview', {}, h('span', {}, failure.title), h('p', {}, failure.preview)))));
       return node;
     }
-    const entry = row.entry;
-    node.classList.add(entry.role, entry.kind);
-    if (row.kind === 'message') {
-      if (entry.role === 'assistant' && row.startsTurn) node.append(h('div.wt-who', {}, author.name));
-      if (entry.role === 'user') {
-        const text = h('div.wt-user-content', { id: `wt-message-${author.id}-${entry.id}`, class: expanded.has(entry.id) ? '' : 'clamped' }, entry.text ?? '');
-        const more = h(
-          'button.btn.sm.ghost.wt-message-more',
-          {
-            type: 'button',
-            'aria-expanded': String(expanded.has(entry.id)),
-            'aria-controls': text.id,
-            onclick: () => {
-              const on = !expanded.has(entry.id);
-              if (on) expanded.add(entry.id);
-              else expanded.delete(entry.id);
-              text.classList.toggle('clamped', !on);
-              more.setAttribute('aria-expanded', String(on));
-              more.textContent = on ? 'Show less' : 'Show all';
-              updateClamps();
-            },
-          },
-          expanded.has(entry.id) ? 'Show less' : 'Show all',
-        );
-        node.append(h('div.wt-user-text', {}, text));
-        node.append(h('div.wt-message-actions', {}, more));
-      } else {
-        const body = markdown(entry.text ?? '');
-        prepareCode(body);
-        node.append(body);
-      }
-    } else node.append(h('p.wt-turn', { class: row.tone }, row.text));
+    node.classList.add(row.role, row.kind === 'message' ? 'text' : 'notice');
+    if (row.kind === 'notice') {
+      node.append(h('p.wt-turn', { class: row.tone }, row.text));
+      return node;
+    }
+    const text = loaded.get(row.id)?.text ?? '';
+    if (row.role === 'assistant') {
+      if (row.startsTurn) node.append(h('div.wt-who', {}, author.name));
+      const body = markdown(text);
+      prepareCode(body);
+      node.append(body);
+      return node;
+    }
+    const content = h('div.wt-user-content', { id: `wt-message-${author.id}-${row.id}`, class: expanded.has(row.id) ? '' : 'clamped' }, text);
+    const more = h(
+      'button.btn.sm.ghost.wt-message-more',
+      {
+        type: 'button',
+        'aria-expanded': String(expanded.has(row.id)),
+        'aria-controls': content.id,
+        onclick: () => {
+          const on = !expanded.has(row.id);
+          if (on) expanded.add(row.id);
+          else expanded.delete(row.id);
+          content.classList.toggle('clamped', !on);
+          more.setAttribute('aria-expanded', String(on));
+          more.textContent = on ? 'Show less' : 'Show all';
+          updateClamps();
+        },
+      },
+      expanded.has(row.id) ? 'Show less' : 'Show all',
+    );
+    node.append(h('div.wt-user-text', {}, content));
+    node.append(h('div.wt-message-actions', {}, more));
     return node;
   };
   const teamNodes = new Map<
@@ -534,9 +541,10 @@ export function mountWorkerThread(net: Net, opts: ThreadOptions): WorkerThread {
       card.status.hidden = !connected;
       card.status.textContent = isAsleep(child.status) ? 'Asleep' : (STATUS_LABEL[child.status] ?? child.status);
       card.open.disabled = !connected || !opts.openWorker;
-      const rows = presentThread(member.history.entries, isBusy(child.status)).slice(-4);
+      const rows = member.history.rows.slice(-4);
+      const loaded = new Map(member.history.entries.map((entry) => [entry.id, entry]));
       const last = rows.at(-1);
-      const activity = child.activity || (last?.kind === 'activity' ? last.label : last?.kind === 'thought' ? last.preview : last?.kind === 'message' ? last.entry.text : last?.text) || child.title || 'No recent activity';
+      const activity = child.activity || (last?.kind === 'activity' ? last.label : last?.kind === 'message' ? loaded.get(last.id)?.text : last?.text) || child.title || 'No recent activity';
       card.activity.textContent = activity.split('\n')[0].slice(0, 200);
       card.activity.title = card.activity.textContent;
       card.note.textContent = member.error
@@ -571,7 +579,7 @@ export function mountWorkerThread(net: Net, opts: ThreadOptions): WorkerThread {
       // At most one focused and one selected old row stay above the four newest rows.
       while (at && pinned.has(at.getAttribute('data-entry') ?? '')) at = at.nextElementSibling;
       for (const row of rows) {
-        const key = JSON.stringify([row, child.status === 'needs_input', child.name]);
+        const key = JSON.stringify([row, child.status === 'needs_input', child.name, rowContent(row, loaded)]);
         let had = card.rows.get(row.id);
         // Don't discard text while the owner is selecting a command or patch to copy.
         if (!had || (had.key !== key && (selection?.isCollapsed !== false || !had.node.contains(selection.anchorNode)))) {
@@ -579,7 +587,7 @@ export function mountWorkerThread(net: Net, opts: ThreadOptions): WorkerThread {
           const focus = focused instanceof HTMLElement && had?.node.contains(focused) ? focused : undefined;
           const disclosure = focus?.closest<HTMLDetailsElement>('details[data-disclosure]')?.dataset.disclosure;
           const control = focus?.matches('.wt-message-more') ? '.wt-message-more' : undefined;
-          const node = render(row, child.status === 'needs_input', child, card.expanded);
+          const node = render(row, loaded, child.status === 'needs_input', child, card.expanded);
           const opened = new Set([...(had?.node.querySelectorAll<HTMLDetailsElement>('details[open][data-disclosure]') ?? [])].map((details) => details.dataset.disclosure));
           for (const details of node.querySelectorAll<HTMLDetailsElement>('details[data-disclosure]')) details.open = opened.has(details.dataset.disclosure);
           const positions = [...(had?.node.querySelectorAll<HTMLElement>('pre, .wt-horizontal-content') ?? [])].map((content) => [content.scrollTop, content.scrollLeft]);
@@ -662,13 +670,14 @@ export function mountWorkerThread(net: Net, opts: ThreadOptions): WorkerThread {
     const openSources = new Set([...nodes.values()].filter((item) => item.node.querySelector<HTMLDetailsElement>('.wt-activity')?.open).flatMap((item) => item.sourceIds));
     const focused = document.activeElement;
     const focusedDisclosure = focused instanceof HTMLElement && focused.matches('summary') && list.contains(focused) ? focused.parentElement?.dataset.disclosure : undefined;
-    const rows = presentThread(history.entries, isBusy(worker.status));
+    const rows = history.rows;
+    const loaded = new Map(history.entries.map((entry) => [entry.id, entry]));
     const asking = worker.status === 'needs_input';
     for (const row of rows) {
-      const key = JSON.stringify([row, asking]);
+      const key = JSON.stringify([row, asking, rowContent(row, loaded)]);
       let had = nodes.get(row.id);
       if (!had || had.key !== key) {
-        const node = render(row, asking);
+        const node = render(row, loaded, asking);
         for (const disclosure of node.querySelectorAll<HTMLDetailsElement>('details[data-disclosure]')) {
           if (opened.has(disclosure.dataset.disclosure)) disclosure.open = true;
         }
@@ -775,6 +784,7 @@ export function mountWorkerThread(net: Net, opts: ThreadOptions): WorkerThread {
     if (!msg.error) {
       if (worker.sessionId && msg.sessionId !== worker.sessionId) return;
       history.apply(msg);
+      if (history.unsupported) error = 'This office sent a Thread this page can’t read. Reload the page, or open Raw TTY.';
       opts.onEntries?.();
       received = true;
       paintEntries(older);

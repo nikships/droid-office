@@ -1,25 +1,24 @@
 {
-  "version": 1,
-  "about": "The Thread's presentation contract, shared by the Android app (android/.../core/ThreadView.kt, ThreadGoldenTest) and the web companion. Each case is the wire ThreadEntry list the office sends (src/shared/worker-thread.ts) and the rows a platform shows for it. Change the fixture and both projections together.",
+  "version": 2,
+  "about": "The Thread's presentation contract. Each case is the wire ThreadEntry list the office reads from a captured session (src/shared/worker-thread.ts) and the presentation rows the office sends for it (ThreadRow in src/shared/thread-presentation.ts, `presentation.rows` of thread.snapshot). The office builds the rows; the web companion and the Android app only decode and render them. `paging` replays captured cases as the pages a client receives, with the rows it must hold after each one. Regenerate with `node --import tsx tools/thread-fixture.mjs`; never edit `expected` by hand.",
   "schema": {
-    "case": "{ name: string (unique), busy: boolean (the worker is in a turn), entries: ThreadEntry[] (wire shape, oldest first), expected: Row[] }",
-    "message": "{ kind: 'message', id: entry id, role: 'user' | 'assistant', startsTurn: boolean (first assistant message after the owner's, or the first one: the only one that carries the worker's name) }",
-    "notice": "{ kind: 'notice', id: entry id, text: string (the copy shown), tone: 'quiet' | 'danger' | 'attachment' }",
-    "activity": "{ kind: 'activity', id: 'activity:' + first raw entry id of the run (hidden ones included), summary: string (the closed line), live: boolean (newest run while busy), items: Action[] (shown actions only, in order), failed: string[] (titles of failed actions, shown even closed), noResult: number, plan: PlanStep[] | null (the run's latest plan only when it changed since the last one shown; never a row) }",
-    "action": "{ type: 'action', id: entry id, title: string (human, never a raw command, JSON or absolute home path), detail: string | null (quiet secondary line: a short path, pattern, subagent type, or a command shortened only when there is no summary), state: 'done' | 'running' | 'failed' | 'no_result' | 'cancelled' }",
-    "thought": "{ kind: 'thought', id: entry id, preview: string (first non-blank line, leading/trailing asterisks stripped, clipped to 120), live: boolean (busy and the last input entry) }",
-    "planStep": "{ status: 'completed' | 'in_progress' | 'pending', text: string }",
+    "case": "{ name: string (unique), busy: boolean (the worker is in a turn), entries: ThreadEntry[] (wire shape, oldest first), expected: ThreadRow[] }",
+    "presentation": "{ version: 1, rows: ThreadRow[] } on thread.snapshot. A client that gets a version it doesn't know, or none, says so and offers Raw TTY instead of guessing.",
+    "message": "{ kind: 'message', id: entry id, from, to: its seq, role: 'user' | 'assistant', startsTurn: boolean (first assistant message after the owner's, or the first one: the only one that carries the worker's name) }",
+    "notice": "{ kind: 'notice', id: entry id, from, to: its seq, role, text: string (the copy shown), tone: 'quiet' | 'danger' | 'attachment' }",
+    "activity": "{ kind: 'activity', id: 'activity:' + first entry id, from, to: seqs of its first and last entry (hidden ones included), sourceIds: every entry it stands for, label: the closed line, state, live: newest while busy, open: false (the default disclosure), status?: '2 failed · 1 no result', running?: newest working action's title while live, failed: { id, title, preview }[] (shown even closed), blocks: Block[] }",
+    "thought": "{ kind: 'thought', id: entry id, preview: first non-blank line, asterisks stripped, clipped to 120, live: busy and the last entry, open: false }",
+    "tools": "{ kind: 'tools', id: 'tools:' + first entry id of the run, label, state, live, open: false, actions: Action[], plan?: { done, active, text }[] (the run's plan, only when it changed since the last one shown) }",
+    "action": "{ id: tool entry id, title: human, never a raw command, JSON or home path, detail?: short path, pattern or subagent type, category, state: 'complete' | 'working' | 'failed' | 'incomplete' | 'cancelled', status: the state in words or '', causedBy?: the child entry whose failure this wrapper repeats, arguments?: { label, field? } (field: key of the input JSON, '.' for a JSON string, absent for the whole input), result: 'Result' | 'Error' | 'Cancelled', open: false }",
+    "paging": "{ name, busy, steps: { snapshot: thread.snapshot fields (before?, entries, hasMore, presentation), expected: { entries: ids loaded, rows: ThreadRow[] held } }[] }. A latest page replaces the rows from its first row on; an earlier page adds only rows that end before the first row already held.",
     "rules": [
-      "A run is every consecutive tool and todo entry between messages, thoughts and shown notices; a run with nothing to show leaves no row. Thinking always flushes the preceding activity and becomes its own top-level thought row.",
-      "Hidden when they succeed: TodoWrite, TodoRead, ToolSearch, Skill, WaitForScript, TaskOutput, and a Script followed by any tool call (bookkeeping included) before the next Script or the end of the run. A failed one of any of them is always shown, with its exact failure title (\"Couldn't read script results\", \"Couldn't read task output\", ...).",
-      "A failed Script with the CLI's exact error envelope repeating an enclosed child's full failure stays available as diagnostics but is excluded from the summary and failed count. Independent, unmatched, truncated or incomplete wrapper failures remain counted.",
-      "A Script with no tool call after it (before the next Script or the end of the run) stays as 'Ran a script' (its source and result in its details).",
-      "TaskStop and Loop are shown: 'Stopped a background task' / 'Couldn't stop the background task', 'Scheduled a loop' / 'Couldn't schedule the loop'.",
-      "Todo snapshots are never rows. A run's latest plan goes on its own activity; a run with no row passes its plan on to the next activity shown (even past a message), and a plan counts as shown only once an activity carries it.",
-      "Turn ended · completed is hidden; Turn cancelled is a quiet notice. Only an exact CLI tool-result marker explicitly saying execution was cancelled/canceled/interrupted/aborted by the user proves owner cancellation, even without a turn notice (a late Script result may arrive afterwards). Genuine errors stay failed. A bare 'Tool execution was interrupted' after crash/resume is deliberately Failed, not evidence of owner action.",
-      "An explicitly owner-cancelled Script may pass that evidence to its lone enclosed child whose exact result is 'Tool execution was interrupted'. A causal cancelled wrapper retains its diagnostics but does not duplicate the child's cancellation count. Other failed/missing/malformed child results are not reclassified. Message and next-Script boundaries block inference. Multiple ambiguous interrupted children remain Failed conservatively.",
-      "A call with no output is 'running' only in the live run; otherwise 'no_result'. Never 'done' without output.",
-      "summary: verb phrases per kind in first-seen order, Read counts match the visible calls (including repeated reads); edited and created files are unique. Then 'N more' actions past three kinds; failed bookkeeping isn't counted. Thoughts are never activity items."
+      "Messages and shown notices are top-level rows. Everything between them is one Activity row holding, in order, its thoughts and its tool runs; a thought splits tool runs but not the Activity. An Activity with nothing to show leaves no row.",
+      "Hidden when they succeed: TodoWrite, TodoRead, ToolSearch, Skill, WaitForScript, TaskOutput, and a Script followed by any tool call before the next Script or the end of the run. A failed one is always shown, with its exact failure title.",
+      "A failed Script with the CLI's exact error envelope repeating an enclosed child's full failure stays available (causedBy) but is excluded from labels and failed counts. Independent, unmatched, truncated or incomplete wrapper failures remain counted.",
+      "Turn ended · completed is hidden; Turn cancelled is a quiet notice. Only an exact CLI by-user result proves owner cancellation; a bare 'Tool execution was interrupted' stays failed.",
+      "A call with no output is 'working' only in the live run; otherwise 'incomplete'. Never 'complete' without output.",
+      "Labels: verb phrases per kind in first-seen order, then 'N more' past three kinds; edited and created files are unique; failed bookkeeping isn't counted. An Activity with only thoughts is 'Thought'.",
+      "Every disclosure starts closed. Clients keep the owner's choices by id across polls, result updates and earlier pages, and drop them for a new session."
     ]
   },
   "cases": [
@@ -27,16 +26,119 @@
       "name": "thought_ends_activity_and_can_be_live",
       "busy": true,
       "entries": [
-        {"id": "tool:read-before", "seq": 0, "role": "assistant", "kind": "tool", "name": "Read", "input": "{\"file_path\":\"/tmp/a.kt\"}", "output": "ok"},
-        {"id": "thinking:first", "seq": 1, "role": "assistant", "kind": "thinking", "text": "\n***Considering next step***\nMore context"},
-        {"id": "tool:read-after", "seq": 2, "role": "assistant", "kind": "tool", "name": "Read", "input": "{\"file_path\":\"/tmp/b.kt\"}"},
-        {"id": "thinking:last", "seq": 3, "role": "assistant", "kind": "thinking", "text": "**Next thought**"}
+        {
+          "id": "tool:read-before",
+          "seq": 0,
+          "role": "assistant",
+          "kind": "tool",
+          "name": "Read",
+          "input": "{\"file_path\":\"/tmp/a.kt\"}",
+          "output": "ok"
+        },
+        {
+          "id": "thinking:first",
+          "seq": 1,
+          "role": "assistant",
+          "kind": "thinking",
+          "text": "\n***Considering next step***\nMore context"
+        },
+        {
+          "id": "tool:read-after",
+          "seq": 2,
+          "role": "assistant",
+          "kind": "tool",
+          "name": "Read",
+          "input": "{\"file_path\":\"/tmp/b.kt\"}"
+        },
+        {
+          "id": "thinking:last",
+          "seq": 3,
+          "role": "assistant",
+          "kind": "thinking",
+          "text": "**Next thought**"
+        }
       ],
       "expected": [
-        {"kind": "activity", "id": "activity:tool:read-before", "summary": "Read a file", "live": false, "items": [{"type": "action", "id": "tool:read-before", "title": "Read a.kt", "detail": "/tmp/a.kt", "state": "done"}], "failed": [], "noResult": 0, "plan": null},
-        {"kind": "thought", "id": "thinking:first", "preview": "Considering next step", "live": false},
-        {"kind": "activity", "id": "activity:tool:read-after", "summary": "Read a file", "live": false, "items": [{"type": "action", "id": "tool:read-after", "title": "Read b.kt", "detail": "/tmp/b.kt", "state": "no_result"}], "failed": [], "noResult": 1, "plan": null},
-        {"kind": "thought", "id": "thinking:last", "preview": "Next thought", "live": true}
+        {
+          "kind": "activity",
+          "id": "activity:tool:read-before",
+          "from": 0,
+          "to": 3,
+          "sourceIds": [
+            "tool:read-before",
+            "thinking:first",
+            "tool:read-after",
+            "thinking:last"
+          ],
+          "label": "Read 2 files",
+          "state": "working",
+          "live": true,
+          "open": false,
+          "status": "1 no result",
+          "failed": [],
+          "blocks": [
+            {
+              "kind": "tools",
+              "id": "tools:tool:read-before",
+              "label": "Read a file",
+              "state": "complete",
+              "live": false,
+              "open": false,
+              "actions": [
+                {
+                  "id": "tool:read-before",
+                  "title": "Read a.kt",
+                  "detail": "/tmp/a.kt",
+                  "category": "read",
+                  "state": "complete",
+                  "status": "",
+                  "arguments": {
+                    "label": "Arguments"
+                  },
+                  "result": "Result",
+                  "open": false
+                }
+              ]
+            },
+            {
+              "kind": "thought",
+              "id": "thinking:first",
+              "preview": "Considering next step",
+              "live": false,
+              "open": false
+            },
+            {
+              "kind": "tools",
+              "id": "tools:tool:read-after",
+              "label": "Read a file",
+              "state": "incomplete",
+              "live": false,
+              "open": false,
+              "actions": [
+                {
+                  "id": "tool:read-after",
+                  "title": "Read b.kt",
+                  "detail": "/tmp/b.kt",
+                  "category": "read",
+                  "state": "incomplete",
+                  "status": "No result",
+                  "arguments": {
+                    "label": "Arguments"
+                  },
+                  "result": "Result",
+                  "open": false
+                }
+              ]
+            },
+            {
+              "kind": "thought",
+              "id": "thinking:last",
+              "preview": "Next thought",
+              "live": true,
+              "open": false
+            }
+          ]
+        }
       ]
     },
     {
@@ -148,60 +250,116 @@
         {
           "kind": "message",
           "id": "msg-1:0",
+          "from": 0,
+          "to": 0,
           "role": "assistant",
           "startsTurn": true
         },
         {
           "kind": "activity",
           "id": "activity:tool:toolu_2",
-          "summary": "Read a file · Ran 3 commands",
-          "live": false,
-          "items": [
-            {
-              "type": "action",
-              "id": "tool:toolu_4",
-              "title": "Read release.yml",
-              "detail": ".github/workflows/release.yml",
-              "state": "done"
-            },
-            {
-              "type": "action",
-              "id": "tool:toolu_5",
-              "title": "Check PR 307 merge state",
-              "detail": null,
-              "state": "done"
-            },
-            {
-              "type": "action",
-              "id": "tool:toolu_8",
-              "title": "View the published release",
-              "detail": null,
-              "state": "done"
-            },
-            {
-              "type": "action",
-              "id": "tool:toolu_9",
-              "title": "Ran a command",
-              "detail": "gh run view 40426951831 --repo nikships/droid-office --log > run.log",
-              "state": "done"
-            }
+          "from": 1,
+          "to": 10,
+          "sourceIds": [
+            "tool:toolu_2",
+            "tool:toolu_3",
+            "tool:toolu_4",
+            "tool:toolu_5",
+            "rec-6:todo",
+            "tool:toolu_7",
+            "tool:toolu_8",
+            "tool:toolu_9",
+            "tool:toolu_10",
+            "rec-11:todo"
           ],
+          "label": "Read a file · Ran 3 commands",
+          "state": "complete",
+          "live": false,
+          "open": false,
           "failed": [],
-          "noResult": 0,
-          "plan": [
+          "blocks": [
             {
-              "status": "completed",
-              "text": "Check the merged commit and main release workflow"
-            },
-            {
-              "status": "in_progress",
-              "text": "Identify any release blocker and report the published status"
+              "kind": "tools",
+              "id": "tools:tool:toolu_2",
+              "label": "Read a file · Ran 3 commands",
+              "state": "complete",
+              "live": false,
+              "open": false,
+              "actions": [
+                {
+                  "id": "tool:toolu_4",
+                  "title": "Read release.yml",
+                  "detail": ".github/workflows/release.yml",
+                  "category": "read",
+                  "state": "complete",
+                  "status": "",
+                  "arguments": {
+                    "label": "Arguments"
+                  },
+                  "result": "Result",
+                  "open": false
+                },
+                {
+                  "id": "tool:toolu_5",
+                  "title": "Check PR 307 merge state",
+                  "category": "command",
+                  "state": "complete",
+                  "status": "",
+                  "arguments": {
+                    "label": "Command",
+                    "field": "command"
+                  },
+                  "result": "Result",
+                  "open": false
+                },
+                {
+                  "id": "tool:toolu_8",
+                  "title": "View the published release",
+                  "category": "command",
+                  "state": "complete",
+                  "status": "",
+                  "arguments": {
+                    "label": "Command",
+                    "field": "command"
+                  },
+                  "result": "Result",
+                  "open": false
+                },
+                {
+                  "id": "tool:toolu_9",
+                  "title": "Ran a command",
+                  "detail": "gh run view 40426951831 --repo nikships/droid-office --log > run.log",
+                  "category": "command",
+                  "state": "complete",
+                  "status": "",
+                  "arguments": {
+                    "label": "Command",
+                    "field": "command"
+                  },
+                  "result": "Result",
+                  "open": false
+                }
+              ],
+              "plan": [
+                {
+                  "done": true,
+                  "active": false,
+                  "text": "Check the merged commit and main release workflow"
+                },
+                {
+                  "done": false,
+                  "active": true,
+                  "text": "Identify any release blocker and report the published status"
+                }
+              ]
             }
           ]
         },
         {
           "kind": "message",
           "id": "msg-12:0",
+          "from": 11,
+          "to": 11,
           "role": "assistant",
           "startsTurn": false
         }
@@ -269,55 +427,112 @@
         {
           "kind": "message",
           "id": "msg-1:0",
+          "from": 0,
+          "to": 0,
           "role": "assistant",
           "startsTurn": true
         },
         {
           "kind": "activity",
           "id": "activity:tool:toolu_2",
-          "summary": "Ran a script · Read a file",
+          "from": 1,
+          "to": 4,
+          "sourceIds": [
+            "tool:toolu_2",
+            "tool:toolu_3",
+            "tool:toolu_4",
+            "tool:toolu_5"
+          ],
+          "label": "Ran a script · Read a file",
+          "state": "failed",
           "live": false,
-          "items": [
+          "open": false,
+          "status": "3 failed",
+          "failed": [
             {
-              "type": "action",
               "id": "tool:toolu_2",
               "title": "Couldn't update the plan",
-              "detail": null,
-              "state": "failed"
+              "preview": "Invalid todos: expected a string"
             },
             {
-              "type": "action",
               "id": "tool:toolu_3",
               "title": "Couldn't load the factory-design skill",
-              "detail": null,
-              "state": "failed"
+              "preview": "Skill \"factory-design\" not found"
             },
             {
-              "type": "action",
               "id": "tool:toolu_4",
               "title": "A script failed",
-              "detail": null,
-              "state": "failed"
-            },
-            {
-              "type": "action",
-              "id": "tool:toolu_5",
-              "title": "Read b.ts",
-              "detail": "src/b.ts",
-              "state": "done"
+              "preview": "SyntaxError: Unexpected token"
             }
           ],
-          "failed": [
-            "Couldn't update the plan",
-            "Couldn't load the factory-design skill",
-            "A script failed"
-          ],
-          "noResult": 0,
-          "plan": null
+          "blocks": [
+            {
+              "kind": "tools",
+              "id": "tools:tool:toolu_2",
+              "label": "Ran a script · Read a file",
+              "state": "failed",
+              "live": false,
+              "open": false,
+              "actions": [
+                {
+                  "id": "tool:toolu_2",
+                  "title": "Couldn't update the plan",
+                  "category": "plan",
+                  "state": "failed",
+                  "status": "Failed",
+                  "arguments": {
+                    "label": "Arguments"
+                  },
+                  "result": "Error",
+                  "open": false
+                },
+                {
+                  "id": "tool:toolu_3",
+                  "title": "Couldn't load the factory-design skill",
+                  "category": "skill",
+                  "state": "failed",
+                  "status": "Failed",
+                  "arguments": {
+                    "label": "Arguments"
+                  },
+                  "result": "Error",
+                  "open": false
+                },
+                {
+                  "id": "tool:toolu_4",
+                  "title": "A script failed",
+                  "category": "script",
+                  "state": "failed",
+                  "status": "Failed",
+                  "arguments": {
+                    "label": "Script",
+                    "field": "script"
+                  },
+                  "result": "Error",
+                  "open": false
+                },
+                {
+                  "id": "tool:toolu_5",
+                  "title": "Read b.ts",
+                  "detail": "src/b.ts",
+                  "category": "read",
+                  "state": "complete",
+                  "status": "",
+                  "arguments": {
+                    "label": "Arguments"
+                  },
+                  "result": "Result",
+                  "open": false
+                }
+              ]
+            }
+          ]
         },
         {
           "kind": "message",
           "id": "msg-6:0",
+          "from": 5,
+          "to": 5,
           "role": "assistant",
           "startsTurn": false
         }
@@ -356,33 +571,64 @@
         {
           "kind": "message",
           "id": "msg-1:0",
+          "from": 0,
+          "to": 0,
           "role": "user",
           "startsTurn": false
         },
         {
           "kind": "activity",
           "id": "activity:tool:toolu_2",
-          "summary": "Read a file · Ran a command",
-          "live": true,
-          "items": [
-            {
-              "type": "action",
-              "id": "tool:toolu_2",
-              "title": "Read package.json",
-              "detail": "package.json",
-              "state": "done"
-            },
-            {
-              "type": "action",
-              "id": "tool:toolu_3",
-              "title": "Run the tests",
-              "detail": null,
-              "state": "running"
-            }
+          "from": 1,
+          "to": 2,
+          "sourceIds": [
+            "tool:toolu_2",
+            "tool:toolu_3"
           ],
+          "label": "Read a file · Ran a command",
+          "state": "working",
+          "live": true,
+          "open": false,
+          "running": "Run the tests",
           "failed": [],
-          "noResult": 0,
-          "plan": null
+          "blocks": [
+            {
+              "kind": "tools",
+              "id": "tools:tool:toolu_2",
+              "label": "Read a file · Ran a command",
+              "state": "working",
+              "live": true,
+              "open": false,
+              "actions": [
+                {
+                  "id": "tool:toolu_2",
+                  "title": "Read package.json",
+                  "detail": "package.json",
+                  "category": "read",
+                  "state": "complete",
+                  "status": "",
+                  "arguments": {
+                    "label": "Arguments"
+                  },
+                  "result": "Result",
+                  "open": false
+                },
+                {
+                  "id": "tool:toolu_3",
+                  "title": "Run the tests",
+                  "category": "command",
+                  "state": "working",
+                  "status": "Running",
+                  "arguments": {
+                    "label": "Command",
+                    "field": "command"
+                  },
+                  "result": "Result",
+                  "open": false
+                }
+              ]
+            }
+          ]
         }
       ]
     },
@@ -419,33 +665,64 @@
         {
           "kind": "message",
           "id": "msg-1:0",
+          "from": 0,
+          "to": 0,
           "role": "user",
           "startsTurn": false
         },
         {
           "kind": "activity",
           "id": "activity:tool:toolu_2",
-          "summary": "Read a file · Ran a command",
-          "live": false,
-          "items": [
-            {
-              "type": "action",
-              "id": "tool:toolu_2",
-              "title": "Read package.json",
-              "detail": "package.json",
-              "state": "done"
-            },
-            {
-              "type": "action",
-              "id": "tool:toolu_3",
-              "title": "Run the tests",
-              "detail": null,
-              "state": "no_result"
-            }
+          "from": 1,
+          "to": 2,
+          "sourceIds": [
+            "tool:toolu_2",
+            "tool:toolu_3"
           ],
+          "label": "Read a file · Ran a command",
+          "state": "incomplete",
+          "live": false,
+          "open": false,
+          "status": "1 no result",
           "failed": [],
-          "noResult": 1,
-          "plan": null
+          "blocks": [
+            {
+              "kind": "tools",
+              "id": "tools:tool:toolu_2",
+              "label": "Read a file · Ran a command",
+              "state": "incomplete",
+              "live": false,
+              "open": false,
+              "actions": [
+                {
+                  "id": "tool:toolu_2",
+                  "title": "Read package.json",
+                  "detail": "package.json",
+                  "category": "read",
+                  "state": "complete",
+                  "status": "",
+                  "arguments": {
+                    "label": "Arguments"
+                  },
+                  "result": "Result",
+                  "open": false
+                },
+                {
+                  "id": "tool:toolu_3",
+                  "title": "Run the tests",
+                  "category": "command",
+                  "state": "incomplete",
+                  "status": "No result",
+                  "arguments": {
+                    "label": "Command",
+                    "field": "command"
+                  },
+                  "result": "Result",
+                  "open": false
+                }
+              ]
+            }
+          ]
         }
       ]
     },
@@ -489,50 +766,97 @@
         {
           "kind": "message",
           "id": "msg-1:0",
+          "from": 0,
+          "to": 0,
           "role": "user",
           "startsTurn": false
         },
         {
           "kind": "activity",
           "id": "activity:tool:toolu_2",
-          "summary": "Ran a command",
-          "live": false,
-          "items": [
-            {
-              "type": "action",
-              "id": "tool:toolu_2",
-              "title": "Wait for the build",
-              "detail": null,
-              "state": "no_result"
-            }
+          "from": 1,
+          "to": 1,
+          "sourceIds": [
+            "tool:toolu_2"
           ],
+          "label": "Ran a command",
+          "state": "incomplete",
+          "live": false,
+          "open": false,
+          "status": "1 no result",
           "failed": [],
-          "noResult": 1,
-          "plan": null
+          "blocks": [
+            {
+              "kind": "tools",
+              "id": "tools:tool:toolu_2",
+              "label": "Ran a command",
+              "state": "incomplete",
+              "live": false,
+              "open": false,
+              "actions": [
+                {
+                  "id": "tool:toolu_2",
+                  "title": "Wait for the build",
+                  "category": "command",
+                  "state": "incomplete",
+                  "status": "No result",
+                  "arguments": {
+                    "label": "Command",
+                    "field": "command"
+                  },
+                  "result": "Result",
+                  "open": false
+                }
+              ]
+            }
+          ]
         },
         {
           "kind": "message",
           "id": "msg-3:0",
+          "from": 2,
+          "to": 2,
           "role": "assistant",
           "startsTurn": true
         },
         {
           "kind": "activity",
           "id": "activity:tool:toolu_4",
-          "summary": "Read a file",
-          "live": true,
-          "items": [
-            {
-              "type": "action",
-              "id": "tool:toolu_4",
-              "title": "Read build.log",
-              "detail": "build.log",
-              "state": "done"
-            }
+          "from": 3,
+          "to": 3,
+          "sourceIds": [
+            "tool:toolu_4"
           ],
+          "label": "Read a file",
+          "state": "working",
+          "live": true,
+          "open": false,
           "failed": [],
-          "noResult": 0,
-          "plan": null
+          "blocks": [
+            {
+              "kind": "tools",
+              "id": "tools:tool:toolu_4",
+              "label": "Read a file",
+              "state": "working",
+              "live": true,
+              "open": false,
+              "actions": [
+                {
+                  "id": "tool:toolu_4",
+                  "title": "Read build.log",
+                  "detail": "build.log",
+                  "category": "read",
+                  "state": "complete",
+                  "status": "",
+                  "arguments": {
+                    "label": "Arguments"
+                  },
+                  "result": "Result",
+                  "open": false
+                }
+              ]
+            }
+          ]
         }
       ]
     },
@@ -586,37 +910,70 @@
         {
           "kind": "message",
           "id": "msg-1:0",
+          "from": 0,
+          "to": 0,
           "role": "assistant",
           "startsTurn": true
         },
         {
           "kind": "activity",
           "id": "activity:tool:toolu_2",
-          "summary": "Read a file · Ran a command",
-          "live": false,
-          "items": [
-            {
-              "type": "action",
-              "id": "tool:toolu_3",
-              "title": "Read a.ts",
-              "detail": "src/a.ts",
-              "state": "done"
-            },
-            {
-              "type": "action",
-              "id": "tool:toolu_4",
-              "title": "Show working tree status",
-              "detail": null,
-              "state": "done"
-            }
+          "from": 1,
+          "to": 3,
+          "sourceIds": [
+            "tool:toolu_2",
+            "tool:toolu_3",
+            "tool:toolu_4"
           ],
+          "label": "Read a file · Ran a command",
+          "state": "complete",
+          "live": false,
+          "open": false,
           "failed": [],
-          "noResult": 0,
-          "plan": null
+          "blocks": [
+            {
+              "kind": "tools",
+              "id": "tools:tool:toolu_2",
+              "label": "Read a file · Ran a command",
+              "state": "complete",
+              "live": false,
+              "open": false,
+              "actions": [
+                {
+                  "id": "tool:toolu_3",
+                  "title": "Read a.ts",
+                  "detail": "src/a.ts",
+                  "category": "read",
+                  "state": "complete",
+                  "status": "",
+                  "arguments": {
+                    "label": "Arguments"
+                  },
+                  "result": "Result",
+                  "open": false
+                },
+                {
+                  "id": "tool:toolu_4",
+                  "title": "Show working tree status",
+                  "category": "command",
+                  "state": "complete",
+                  "status": "",
+                  "arguments": {
+                    "label": "Command",
+                    "field": "command"
+                  },
+                  "result": "Result",
+                  "open": false
+                }
+              ]
+            }
+          ]
         },
         {
           "kind": "message",
           "id": "msg-5:0",
+          "from": 4,
+          "to": 4,
           "role": "assistant",
           "startsTurn": false
         }
@@ -663,37 +1020,69 @@
         {
           "kind": "message",
           "id": "msg-1:0",
+          "from": 0,
+          "to": 0,
           "role": "assistant",
           "startsTurn": true
         },
         {
           "kind": "activity",
           "id": "activity:tool:toolu_2",
-          "summary": "Read a file · Ran a script",
-          "live": false,
-          "items": [
-            {
-              "type": "action",
-              "id": "tool:toolu_2",
-              "title": "Read a.ts",
-              "detail": "src/a.ts",
-              "state": "done"
-            },
-            {
-              "type": "action",
-              "id": "tool:toolu_3",
-              "title": "Ran a script",
-              "detail": null,
-              "state": "done"
-            }
+          "from": 1,
+          "to": 2,
+          "sourceIds": [
+            "tool:toolu_2",
+            "tool:toolu_3"
           ],
+          "label": "Read a file · Ran a script",
+          "state": "complete",
+          "live": false,
+          "open": false,
           "failed": [],
-          "noResult": 0,
-          "plan": null
+          "blocks": [
+            {
+              "kind": "tools",
+              "id": "tools:tool:toolu_2",
+              "label": "Read a file · Ran a script",
+              "state": "complete",
+              "live": false,
+              "open": false,
+              "actions": [
+                {
+                  "id": "tool:toolu_2",
+                  "title": "Read a.ts",
+                  "detail": "src/a.ts",
+                  "category": "read",
+                  "state": "complete",
+                  "status": "",
+                  "arguments": {
+                    "label": "Arguments"
+                  },
+                  "result": "Result",
+                  "open": false
+                },
+                {
+                  "id": "tool:toolu_3",
+                  "title": "Ran a script",
+                  "category": "script",
+                  "state": "complete",
+                  "status": "",
+                  "arguments": {
+                    "label": "Script",
+                    "field": "script"
+                  },
+                  "result": "Result",
+                  "open": false
+                }
+              ]
+            }
+          ]
         },
         {
           "kind": "message",
           "id": "msg-4:0",
+          "from": 3,
+          "to": 3,
           "role": "assistant",
           "startsTurn": false
         }
@@ -740,12 +1129,16 @@
         {
           "kind": "message",
           "id": "msg-1:0",
+          "from": 0,
+          "to": 0,
           "role": "assistant",
           "startsTurn": true
         },
         {
           "kind": "message",
           "id": "msg-4:0",
+          "from": 3,
+          "to": 3,
           "role": "assistant",
           "startsTurn": false
         }
@@ -808,12 +1201,16 @@
         {
           "kind": "message",
           "id": "msg-1:0",
+          "from": 0,
+          "to": 0,
           "role": "assistant",
           "startsTurn": true
         },
         {
           "kind": "message",
           "id": "msg-6:0",
+          "from": 5,
+          "to": 5,
           "role": "assistant",
           "startsTurn": false
         }
@@ -897,90 +1294,168 @@
         {
           "kind": "message",
           "id": "msg-1:0",
+          "from": 0,
+          "to": 0,
           "role": "assistant",
           "startsTurn": true
         },
         {
           "kind": "activity",
           "id": "activity:tool:toolu_2",
-          "summary": "Read a file",
-          "live": false,
-          "items": [
-            {
-              "type": "action",
-              "id": "tool:toolu_2",
-              "title": "Read a.txt",
-              "detail": "/tmp/a.txt",
-              "state": "done"
-            }
+          "from": 1,
+          "to": 2,
+          "sourceIds": [
+            "tool:toolu_2",
+            "rec-3:todo"
           ],
+          "label": "Read a file",
+          "state": "complete",
+          "live": false,
+          "open": false,
           "failed": [],
-          "noResult": 0,
-          "plan": [
+          "blocks": [
             {
-              "status": "in_progress",
-              "text": "Read the files"
-            },
-            {
-              "status": "pending",
-              "text": "Write the report"
+              "kind": "tools",
+              "id": "tools:tool:toolu_2",
+              "label": "Read a file",
+              "state": "complete",
+              "live": false,
+              "open": false,
+              "actions": [
+                {
+                  "id": "tool:toolu_2",
+                  "title": "Read a.txt",
+                  "detail": "/tmp/a.txt",
+                  "category": "read",
+                  "state": "complete",
+                  "status": "",
+                  "arguments": {
+                    "label": "Arguments"
+                  },
+                  "result": "Result",
+                  "open": false
+                }
+              ],
+              "plan": [
+                {
+                  "done": false,
+                  "active": true,
+                  "text": "Read the files"
+                },
+                {
+                  "done": false,
+                  "active": false,
+                  "text": "Write the report"
+                }
+              ]
             }
           ]
         },
         {
           "kind": "message",
           "id": "msg-4:0",
+          "from": 3,
+          "to": 3,
           "role": "assistant",
           "startsTurn": false
         },
         {
           "kind": "activity",
           "id": "activity:tool:toolu_5",
-          "summary": "Read a file",
-          "live": false,
-          "items": [
-            {
-              "type": "action",
-              "id": "tool:toolu_5",
-              "title": "Read b.txt",
-              "detail": "/tmp/b.txt",
-              "state": "done"
-            }
+          "from": 4,
+          "to": 5,
+          "sourceIds": [
+            "tool:toolu_5",
+            "rec-6:todo"
           ],
+          "label": "Read a file",
+          "state": "complete",
+          "live": false,
+          "open": false,
           "failed": [],
-          "noResult": 0,
-          "plan": null
+          "blocks": [
+            {
+              "kind": "tools",
+              "id": "tools:tool:toolu_5",
+              "label": "Read a file",
+              "state": "complete",
+              "live": false,
+              "open": false,
+              "actions": [
+                {
+                  "id": "tool:toolu_5",
+                  "title": "Read b.txt",
+                  "detail": "/tmp/b.txt",
+                  "category": "read",
+                  "state": "complete",
+                  "status": "",
+                  "arguments": {
+                    "label": "Arguments"
+                  },
+                  "result": "Result",
+                  "open": false
+                }
+              ]
+            }
+          ]
         },
         {
           "kind": "message",
           "id": "msg-7:0",
+          "from": 6,
+          "to": 6,
           "role": "assistant",
           "startsTurn": false
         },
         {
           "kind": "activity",
           "id": "activity:tool:toolu_8",
-          "summary": "Read a file",
-          "live": false,
-          "items": [
-            {
-              "type": "action",
-              "id": "tool:toolu_8",
-              "title": "Read c.txt",
-              "detail": "/tmp/c.txt",
-              "state": "done"
-            }
+          "from": 7,
+          "to": 8,
+          "sourceIds": [
+            "tool:toolu_8",
+            "rec-9:todo"
           ],
+          "label": "Read a file",
+          "state": "complete",
+          "live": false,
+          "open": false,
           "failed": [],
-          "noResult": 0,
-          "plan": [
+          "blocks": [
             {
-              "status": "completed",
-              "text": "Read the files"
-            },
-            {
-              "status": "in_progress",
-              "text": "Write the report"
+              "kind": "tools",
+              "id": "tools:tool:toolu_8",
+              "label": "Read a file",
+              "state": "complete",
+              "live": false,
+              "open": false,
+              "actions": [
+                {
+                  "id": "tool:toolu_8",
+                  "title": "Read c.txt",
+                  "detail": "/tmp/c.txt",
+                  "category": "read",
+                  "state": "complete",
+                  "status": "",
+                  "arguments": {
+                    "label": "Arguments"
+                  },
+                  "result": "Result",
+                  "open": false
+                }
+              ],
+              "plan": [
+                {
+                  "done": true,
+                  "active": false,
+                  "text": "Read the files"
+                },
+                {
+                  "done": false,
+                  "active": true,
+                  "text": "Write the report"
+                }
+              ]
             }
           ]
         }
@@ -1062,61 +1537,105 @@
         {
           "kind": "message",
           "id": "msg-1:0",
+          "from": 0,
+          "to": 0,
           "role": "user",
           "startsTurn": false
         },
         {
           "kind": "notice",
           "id": "msg-u:1",
+          "from": 1,
+          "to": 1,
+          "role": "user",
           "text": "Image attached",
           "tone": "attachment"
         },
         {
           "kind": "activity",
           "id": "activity:tool:toolu_2",
-          "summary": "Read 2 files",
-          "live": false,
-          "items": [
-            {
-              "type": "action",
-              "id": "tool:toolu_2",
-              "title": "Read a.txt",
-              "detail": "/tmp/a.txt",
-              "state": "done"
-            },
-            {
-              "type": "action",
-              "id": "tool:toolu_3",
-              "title": "Read b.txt",
-              "detail": "/tmp/b.txt",
-              "state": "done"
-            }
+          "from": 2,
+          "to": 4,
+          "sourceIds": [
+            "tool:toolu_2",
+            "tool:toolu_3"
           ],
+          "label": "Read 2 files",
+          "state": "complete",
+          "live": false,
+          "open": false,
           "failed": [],
-          "noResult": 0,
-          "plan": null
+          "blocks": [
+            {
+              "kind": "tools",
+              "id": "tools:tool:toolu_2",
+              "label": "Read 2 files",
+              "state": "complete",
+              "live": false,
+              "open": false,
+              "actions": [
+                {
+                  "id": "tool:toolu_2",
+                  "title": "Read a.txt",
+                  "detail": "/tmp/a.txt",
+                  "category": "read",
+                  "state": "complete",
+                  "status": "",
+                  "arguments": {
+                    "label": "Arguments"
+                  },
+                  "result": "Result",
+                  "open": false
+                },
+                {
+                  "id": "tool:toolu_3",
+                  "title": "Read b.txt",
+                  "detail": "/tmp/b.txt",
+                  "category": "read",
+                  "state": "complete",
+                  "status": "",
+                  "arguments": {
+                    "label": "Arguments"
+                  },
+                  "result": "Result",
+                  "open": false
+                }
+              ]
+            }
+          ]
         },
         {
           "kind": "notice",
           "id": "turn:t2:cancelled",
+          "from": 5,
+          "to": 5,
+          "role": "system",
           "text": "Turn cancelled",
           "tone": "quiet"
         },
         {
           "kind": "message",
           "id": "msg-4:0",
+          "from": 6,
+          "to": 6,
           "role": "user",
           "startsTurn": false
         },
         {
           "kind": "notice",
           "id": "turn:t3:model_rate_limited",
+          "from": 7,
+          "to": 7,
+          "role": "system",
           "text": "The turn stopped: the model was rate limited",
           "tone": "danger"
         },
         {
           "kind": "notice",
           "id": "oversized:42",
+          "from": 8,
+          "to": 8,
+          "role": "system",
           "text": "A conversation record was too large to display.",
           "tone": "quiet"
         }
@@ -1184,66 +1703,103 @@
         {
           "kind": "message",
           "id": "msg-1:0",
+          "from": 0,
+          "to": 0,
           "role": "user",
           "startsTurn": false
         },
         {
-          "kind": "thought",
-          "id": "msg-2:1",
-          "preview": "Considering user interaction flow",
-          "live": false
-        },
-        {
           "kind": "activity",
-          "id": "activity:tool:toolu_3",
-          "summary": "Read a file",
-          "live": false,
-          "items": [
-            {
-              "type": "action",
-              "id": "tool:toolu_3",
-              "title": "Read Thread.kt",
-              "detail": "…/ui/worker/Thread.kt",
-              "state": "done"
-            }
+          "id": "activity:msg-2:1",
+          "from": 1,
+          "to": 4,
+          "sourceIds": [
+            "msg-2:1",
+            "tool:toolu_3",
+            "msg-4:1",
+            "tool:toolu_5"
           ],
-          "failed": [],
-          "noResult": 0,
-          "plan": null
-        },
-        {
-          "kind": "thought",
-          "id": "msg-4:1",
-          "preview": "The tool rows are equal weight.",
-          "live": false
-        },
-        {
-          "kind": "activity",
-          "id": "activity:tool:toolu_5",
-          "summary": "Searched the code",
+          "label": "Read a file · Searched the code",
+          "state": "complete",
           "live": false,
-          "items": [
-            {
-              "type": "action",
-              "id": "tool:toolu_5",
-              "title": "Searched for “Promise.allSettled”",
-              "detail": "src",
-              "state": "done"
-            }
-          ],
+          "open": false,
           "failed": [],
-          "noResult": 0,
-          "plan": null
+          "blocks": [
+            {
+              "kind": "thought",
+              "id": "msg-2:1",
+              "preview": "Considering user interaction flow",
+              "live": false,
+              "open": false
+            },
+            {
+              "kind": "tools",
+              "id": "tools:tool:toolu_3",
+              "label": "Read a file",
+              "state": "complete",
+              "live": false,
+              "open": false,
+              "actions": [
+                {
+                  "id": "tool:toolu_3",
+                  "title": "Read Thread.kt",
+                  "detail": "…/ui/worker/Thread.kt",
+                  "category": "read",
+                  "state": "complete",
+                  "status": "",
+                  "arguments": {
+                    "label": "Arguments"
+                  },
+                  "result": "Result",
+                  "open": false
+                }
+              ]
+            },
+            {
+              "kind": "thought",
+              "id": "msg-4:1",
+              "preview": "The tool rows are equal weight.",
+              "live": false,
+              "open": false
+            },
+            {
+              "kind": "tools",
+              "id": "tools:tool:toolu_5",
+              "label": "Searched the code",
+              "state": "complete",
+              "live": false,
+              "open": false,
+              "actions": [
+                {
+                  "id": "tool:toolu_5",
+                  "title": "Searched for “Promise.allSettled”",
+                  "detail": "src",
+                  "category": "search",
+                  "state": "complete",
+                  "status": "",
+                  "arguments": {
+                    "label": "Arguments"
+                  },
+                  "result": "Result",
+                  "open": false
+                }
+              ]
+            }
+          ]
         },
         {
           "kind": "message",
           "id": "msg-6:0",
+          "from": 5,
+          "to": 5,
           "role": "assistant",
           "startsTurn": true
         },
         {
           "kind": "message",
           "id": "msg-7:0",
+          "from": 6,
+          "to": 6,
           "role": "assistant",
           "startsTurn": false
         }
@@ -1357,90 +1913,176 @@
         {
           "kind": "activity",
           "id": "activity:tool:toolu_1",
-          "summary": "Searched the code · Listed a folder · Edited 3 files · 7 more",
-          "live": false,
-          "items": [
-            {
-              "type": "action",
-              "id": "tool:toolu_1",
-              "title": "Found files matching **/*.kt, **/*.ts",
-              "detail": "byte-090d",
-              "state": "done"
-            },
-            {
-              "type": "action",
-              "id": "tool:toolu_2",
-              "title": "Listed android",
-              "detail": "android",
-              "state": "done"
-            },
-            {
-              "type": "action",
-              "id": "tool:toolu_3",
-              "title": "Edited README.md",
-              "detail": "android/README.md",
-              "state": "done"
-            },
-            {
-              "type": "action",
-              "id": "tool:toolu_4",
-              "title": "Created thread.md",
-              "detail": "~/notes/thread.md",
-              "state": "done"
-            },
-            {
-              "type": "action",
-              "id": "tool:toolu_5",
-              "title": "Edited worker-thread.ts, thread-presentation.ts",
-              "detail": null,
-              "state": "done"
-            },
-            {
-              "type": "action",
-              "id": "tool:toolu_6",
-              "title": "Read docs.factory.ai",
-              "detail": null,
-              "state": "done"
-            },
-            {
-              "type": "action",
-              "id": "tool:toolu_7",
-              "title": "Searched the web for “compose disclosure accessibility stateDescripti…”",
-              "detail": null,
-              "state": "done"
-            },
-            {
-              "type": "action",
-              "id": "tool:toolu_8",
-              "title": "Audit the thread",
-              "detail": "worker",
-              "state": "done"
-            },
-            {
-              "type": "action",
-              "id": "tool:toolu_9",
-              "title": "Checked memory",
-              "detail": null,
-              "state": "done"
-            },
-            {
-              "type": "action",
-              "id": "tool:toolu_10",
-              "title": "Asked you a question",
-              "detail": null,
-              "state": "done"
-            },
-            {
-              "type": "action",
-              "id": "tool:toolu_11",
-              "title": "Used gemini-aio generate image",
-              "detail": null,
-              "state": "done"
-            }
+          "from": 0,
+          "to": 10,
+          "sourceIds": [
+            "tool:toolu_1",
+            "tool:toolu_2",
+            "tool:toolu_3",
+            "tool:toolu_4",
+            "tool:toolu_5",
+            "tool:toolu_6",
+            "tool:toolu_7",
+            "tool:toolu_8",
+            "tool:toolu_9",
+            "tool:toolu_10",
+            "tool:toolu_11"
           ],
+          "label": "Searched the code · Listed a folder · Edited 3 files · 7 more",
+          "state": "complete",
+          "live": false,
+          "open": false,
           "failed": [],
-          "noResult": 0,
-          "plan": null
+          "blocks": [
+            {
+              "kind": "tools",
+              "id": "tools:tool:toolu_1",
+              "label": "Searched the code · Listed a folder · Edited 3 files · 7 more",
+              "state": "complete",
+              "live": false,
+              "open": false,
+              "actions": [
+                {
+                  "id": "tool:toolu_1",
+                  "title": "Found files matching **/*.kt, **/*.ts",
+                  "detail": "byte-090d",
+                  "category": "search",
+                  "state": "complete",
+                  "status": "",
+                  "arguments": {
+                    "label": "Arguments"
+                  },
+                  "result": "Result",
+                  "open": false
+                },
+                {
+                  "id": "tool:toolu_2",
+                  "title": "Listed android",
+                  "detail": "android",
+                  "category": "list",
+                  "state": "complete",
+                  "status": "",
+                  "arguments": {
+                    "label": "Arguments"
+                  },
+                  "result": "Result",
+                  "open": false
+                },
+                {
+                  "id": "tool:toolu_3",
+                  "title": "Edited README.md",
+                  "detail": "android/README.md",
+                  "category": "edit",
+                  "state": "complete",
+                  "status": "",
+                  "arguments": {
+                    "label": "Arguments"
+                  },
+                  "result": "Result",
+                  "open": false
+                },
+                {
+                  "id": "tool:toolu_4",
+                  "title": "Created thread.md",
+                  "detail": "~/notes/thread.md",
+                  "category": "create",
+                  "state": "complete",
+                  "status": "",
+                  "arguments": {
+                    "label": "Arguments"
+                  },
+                  "result": "Result",
+                  "open": false
+                },
+                {
+                  "id": "tool:toolu_5",
+                  "title": "Edited worker-thread.ts, thread-presentation.ts",
+                  "category": "edit",
+                  "state": "complete",
+                  "status": "",
+                  "arguments": {
+                    "label": "Patch",
+                    "field": "input"
+                  },
+                  "result": "Result",
+                  "open": false
+                },
+                {
+                  "id": "tool:toolu_6",
+                  "title": "Read docs.factory.ai",
+                  "category": "web",
+                  "state": "complete",
+                  "status": "",
+                  "arguments": {
+                    "label": "Arguments"
+                  },
+                  "result": "Result",
+                  "open": false
+                },
+                {
+                  "id": "tool:toolu_7",
+                  "title": "Searched the web for “compose disclosure accessibility stateDescripti…”",
+                  "category": "webSearch",
+                  "state": "complete",
+                  "status": "",
+                  "arguments": {
+                    "label": "Arguments"
+                  },
+                  "result": "Result",
+                  "open": false
+                },
+                {
+                  "id": "tool:toolu_8",
+                  "title": "Audit the thread",
+                  "detail": "worker",
+                  "category": "delegate",
+                  "state": "complete",
+                  "status": "",
+                  "arguments": {
+                    "label": "Arguments"
+                  },
+                  "result": "Result",
+                  "open": false
+                },
+                {
+                  "id": "tool:toolu_9",
+                  "title": "Checked memory",
+                  "category": "memory",
+                  "state": "complete",
+                  "status": "",
+                  "arguments": {
+                    "label": "Arguments"
+                  },
+                  "result": "Result",
+                  "open": false
+                },
+                {
+                  "id": "tool:toolu_10",
+                  "title": "Asked you a question",
+                  "category": "ask",
+                  "state": "complete",
+                  "status": "",
+                  "arguments": {
+                    "label": "Arguments"
+                  },
+                  "result": "Result",
+                  "open": false
+                },
+                {
+                  "id": "tool:toolu_11",
+                  "title": "Used gemini-aio generate image",
+                  "category": "other",
+                  "state": "complete",
+                  "status": "",
+                  "arguments": {
+                    "label": "Arguments"
+                  },
+                  "result": "Result",
+                  "open": false
+                }
+              ]
+            }
+          ]
         }
       ]
     },
@@ -1508,45 +2150,75 @@
         {
           "kind": "message",
           "id": "msg-1:0",
+          "from": 0,
+          "to": 0,
           "role": "assistant",
           "startsTurn": true
         },
         {
           "kind": "message",
           "id": "msg-5:0",
+          "from": 4,
+          "to": 4,
           "role": "assistant",
           "startsTurn": false
         },
         {
           "kind": "activity",
           "id": "activity:tool:toolu_6",
-          "summary": "Read a file",
-          "live": false,
-          "items": [
-            {
-              "type": "action",
-              "id": "tool:toolu_6",
-              "title": "Read worker-thread.ts",
-              "detail": "…/client/ui/worker-thread.ts",
-              "state": "done"
-            }
+          "from": 5,
+          "to": 5,
+          "sourceIds": [
+            "tool:toolu_6"
           ],
+          "label": "Read a file",
+          "state": "complete",
+          "live": false,
+          "open": false,
           "failed": [],
-          "noResult": 0,
-          "plan": [
+          "blocks": [
             {
-              "status": "in_progress",
-              "text": "Audit the thread"
-            },
-            {
-              "status": "pending",
-              "text": "Report back"
+              "kind": "tools",
+              "id": "tools:tool:toolu_6",
+              "label": "Read a file",
+              "state": "complete",
+              "live": false,
+              "open": false,
+              "actions": [
+                {
+                  "id": "tool:toolu_6",
+                  "title": "Read worker-thread.ts",
+                  "detail": "…/client/ui/worker-thread.ts",
+                  "category": "read",
+                  "state": "complete",
+                  "status": "",
+                  "arguments": {
+                    "label": "Arguments"
+                  },
+                  "result": "Result",
+                  "open": false
+                }
+              ],
+              "plan": [
+                {
+                  "done": false,
+                  "active": true,
+                  "text": "Audit the thread"
+                },
+                {
+                  "done": false,
+                  "active": false,
+                  "text": "Report back"
+                }
+              ]
             }
           ]
         },
         {
           "kind": "message",
           "id": "msg-7:0",
+          "from": 6,
+          "to": 6,
           "role": "assistant",
           "startsTurn": false
         }
@@ -1660,70 +2332,144 @@
         {
           "kind": "message",
           "id": "msg-1:0",
+          "from": 0,
+          "to": 0,
           "role": "assistant",
           "startsTurn": true
         },
         {
           "kind": "activity",
           "id": "activity:tool:toolu_2",
-          "summary": "2 attempts to stop background tasks · 2 attempts to schedule loops",
+          "from": 1,
+          "to": 9,
+          "sourceIds": [
+            "tool:toolu_2",
+            "tool:toolu_3",
+            "tool:toolu_4",
+            "tool:toolu_5",
+            "tool:toolu_6",
+            "tool:toolu_7",
+            "tool:toolu_8",
+            "tool:toolu_9",
+            "tool:toolu_10"
+          ],
+          "label": "2 attempts to stop background tasks · 2 attempts to schedule loops",
+          "state": "failed",
           "live": false,
-          "items": [
+          "open": false,
+          "status": "4 failed",
+          "failed": [
             {
-              "type": "action",
               "id": "tool:toolu_5",
               "title": "Couldn't read script results",
-              "detail": null,
-              "state": "failed"
+              "preview": "No script with that id"
             },
             {
-              "type": "action",
               "id": "tool:toolu_6",
               "title": "Couldn't read task output",
-              "detail": null,
-              "state": "failed"
+              "preview": "No task with that id"
             },
             {
-              "type": "action",
-              "id": "tool:toolu_7",
-              "title": "Stopped a background task",
-              "detail": null,
-              "state": "done"
-            },
-            {
-              "type": "action",
               "id": "tool:toolu_8",
               "title": "Couldn't stop the background task",
-              "detail": null,
-              "state": "failed"
+              "preview": "No task with that id"
             },
             {
-              "type": "action",
-              "id": "tool:toolu_9",
-              "title": "Scheduled a loop",
-              "detail": null,
-              "state": "done"
-            },
-            {
-              "type": "action",
               "id": "tool:toolu_10",
               "title": "Couldn't schedule the loop",
-              "detail": null,
-              "state": "failed"
+              "preview": "Invalid interval"
             }
           ],
-          "failed": [
-            "Couldn't read script results",
-            "Couldn't read task output",
-            "Couldn't stop the background task",
-            "Couldn't schedule the loop"
-          ],
-          "noResult": 0,
-          "plan": null
+          "blocks": [
+            {
+              "kind": "tools",
+              "id": "tools:tool:toolu_2",
+              "label": "2 attempts to stop background tasks · 2 attempts to schedule loops",
+              "state": "failed",
+              "live": false,
+              "open": false,
+              "actions": [
+                {
+                  "id": "tool:toolu_5",
+                  "title": "Couldn't read script results",
+                  "category": "plan",
+                  "state": "failed",
+                  "status": "Failed",
+                  "arguments": {
+                    "label": "Arguments"
+                  },
+                  "result": "Error",
+                  "open": false
+                },
+                {
+                  "id": "tool:toolu_6",
+                  "title": "Couldn't read task output",
+                  "category": "plan",
+                  "state": "failed",
+                  "status": "Failed",
+                  "arguments": {
+                    "label": "Arguments"
+                  },
+                  "result": "Error",
+                  "open": false
+                },
+                {
+                  "id": "tool:toolu_7",
+                  "title": "Stopped a background task",
+                  "category": "taskStop",
+                  "state": "complete",
+                  "status": "",
+                  "arguments": {
+                    "label": "Arguments"
+                  },
+                  "result": "Result",
+                  "open": false
+                },
+                {
+                  "id": "tool:toolu_8",
+                  "title": "Couldn't stop the background task",
+                  "category": "taskStop",
+                  "state": "failed",
+                  "status": "Failed",
+                  "arguments": {
+                    "label": "Arguments"
+                  },
+                  "result": "Error",
+                  "open": false
+                },
+                {
+                  "id": "tool:toolu_9",
+                  "title": "Scheduled a loop",
+                  "category": "loopCreate",
+                  "state": "complete",
+                  "status": "",
+                  "arguments": {
+                    "label": "Arguments"
+                  },
+                  "result": "Result",
+                  "open": false
+                },
+                {
+                  "id": "tool:toolu_10",
+                  "title": "Couldn't schedule the loop",
+                  "category": "loopCreate",
+                  "state": "failed",
+                  "status": "Failed",
+                  "arguments": {
+                    "label": "Arguments"
+                  },
+                  "result": "Error",
+                  "open": false
+                }
+              ]
+            }
+          ]
         },
         {
           "kind": "message",
           "id": "msg-11:0",
+          "from": 10,
+          "to": 10,
           "role": "assistant",
           "startsTurn": false
         }
@@ -1733,97 +2479,2733 @@
       "name": "owner_cancelled_execution_is_not_failure",
       "busy": false,
       "entries": [
-        {"id":"cancel-exec","seq":1,"role":"assistant","kind":"tool","name":"Execute","input":"{\"summary\":\"Verify the live reading layout\"}","output":"Tool execution cancelled by user","error":true},
-        {"id":"turn:actual:cancelled","seq":2,"role":"system","kind":"notice","text":"Turn cancelled"}
+        {
+          "id": "cancel-exec",
+          "seq": 1,
+          "role": "assistant",
+          "kind": "tool",
+          "name": "Execute",
+          "input": "{\"summary\":\"Verify the live reading layout\"}",
+          "output": "Tool execution cancelled by user",
+          "error": true
+        },
+        {
+          "id": "turn:actual:cancelled",
+          "seq": 2,
+          "role": "system",
+          "kind": "notice",
+          "text": "Turn cancelled"
+        }
       ],
       "expected": [
-        {"kind":"activity","id":"activity:cancel-exec","summary":"Ran a command","live":false,"items":[{"type":"action","id":"cancel-exec","title":"Verify the live reading layout","detail":null,"state":"cancelled"}],"failed":[],"cancelled":1,"noResult":0,"plan":null},
-        {"kind":"notice","id":"turn:actual:cancelled","text":"Turn cancelled","tone":"quiet"}
+        {
+          "kind": "activity",
+          "id": "activity:cancel-exec",
+          "from": 1,
+          "to": 1,
+          "sourceIds": [
+            "cancel-exec"
+          ],
+          "label": "Ran a command",
+          "state": "cancelled",
+          "live": false,
+          "open": false,
+          "status": "1 cancelled",
+          "failed": [],
+          "blocks": [
+            {
+              "kind": "tools",
+              "id": "tools:cancel-exec",
+              "label": "Ran a command",
+              "state": "cancelled",
+              "live": false,
+              "open": false,
+              "actions": [
+                {
+                  "id": "cancel-exec",
+                  "title": "Verify the live reading layout",
+                  "category": "command",
+                  "state": "cancelled",
+                  "status": "Cancelled",
+                  "arguments": {
+                    "label": "Arguments"
+                  },
+                  "result": "Cancelled",
+                  "open": false
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "kind": "notice",
+          "id": "turn:actual:cancelled",
+          "from": 2,
+          "to": 2,
+          "role": "system",
+          "text": "Turn cancelled",
+          "tone": "quiet"
+        }
       ]
     },
     {
       "name": "cancellation_does_not_hide_a_real_read_error",
       "busy": false,
       "entries": [
-        {"id":"read-error","seq":1,"role":"assistant","kind":"tool","name":"Read","input":"{\"file_path\":\"README.md\"}","output":"File not found","error":true},
-        {"id":"cancel-exec","seq":2,"role":"assistant","kind":"tool","name":"Execute","input":"{\"summary\":\"Verify the live reading layout\"}","output":"Tool execution cancelled by user","error":true},
-        {"id":"turn:actual:cancelled","seq":3,"role":"system","kind":"notice","text":"Turn cancelled"}
+        {
+          "id": "read-error",
+          "seq": 1,
+          "role": "assistant",
+          "kind": "tool",
+          "name": "Read",
+          "input": "{\"file_path\":\"README.md\"}",
+          "output": "File not found",
+          "error": true
+        },
+        {
+          "id": "cancel-exec",
+          "seq": 2,
+          "role": "assistant",
+          "kind": "tool",
+          "name": "Execute",
+          "input": "{\"summary\":\"Verify the live reading layout\"}",
+          "output": "Tool execution cancelled by user",
+          "error": true
+        },
+        {
+          "id": "turn:actual:cancelled",
+          "seq": 3,
+          "role": "system",
+          "kind": "notice",
+          "text": "Turn cancelled"
+        }
       ],
       "expected": [
-        {"kind":"activity","id":"activity:read-error","summary":"Read a file · Ran a command","live":false,"items":[{"type":"action","id":"read-error","title":"Read README.md","detail":"README.md","state":"failed"},{"type":"action","id":"cancel-exec","title":"Verify the live reading layout","detail":null,"state":"cancelled"}],"failed":["Read README.md"],"cancelled":1,"noResult":0,"plan":null},
-        {"kind":"notice","id":"turn:actual:cancelled","text":"Turn cancelled","tone":"quiet"}
+        {
+          "kind": "activity",
+          "id": "activity:read-error",
+          "from": 1,
+          "to": 2,
+          "sourceIds": [
+            "read-error",
+            "cancel-exec"
+          ],
+          "label": "Read a file · Ran a command",
+          "state": "failed",
+          "live": false,
+          "open": false,
+          "status": "1 failed · 1 cancelled",
+          "failed": [
+            {
+              "id": "read-error",
+              "title": "Read README.md",
+              "preview": "File not found"
+            }
+          ],
+          "blocks": [
+            {
+              "kind": "tools",
+              "id": "tools:read-error",
+              "label": "Read a file · Ran a command",
+              "state": "failed",
+              "live": false,
+              "open": false,
+              "actions": [
+                {
+                  "id": "read-error",
+                  "title": "Read README.md",
+                  "detail": "README.md",
+                  "category": "read",
+                  "state": "failed",
+                  "status": "Failed",
+                  "arguments": {
+                    "label": "Arguments"
+                  },
+                  "result": "Error",
+                  "open": false
+                },
+                {
+                  "id": "cancel-exec",
+                  "title": "Verify the live reading layout",
+                  "category": "command",
+                  "state": "cancelled",
+                  "status": "Cancelled",
+                  "arguments": {
+                    "label": "Arguments"
+                  },
+                  "result": "Cancelled",
+                  "open": false
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "kind": "notice",
+          "id": "turn:actual:cancelled",
+          "from": 3,
+          "to": 3,
+          "role": "system",
+          "text": "Turn cancelled",
+          "tone": "quiet"
+        }
       ]
     },
     {
       "name": "unit_real_missing_read_causal_wrapper",
-      "source": "Byte hands-on d7509d5, web/05-failure and android/a03-360-p5; session 7129eccc seq 41,43,45,46, Script log call_VQcFUTlfVZhozstnKccatcj3. Unit projection of captured entries, not a runtime check.",
       "busy": false,
       "entries": [
-        {"id":"tool:call_VQcFUTlfVZhozstnKccatcj3","seq":41,"role":"assistant","kind":"tool","name":"Script","input":"{\"script\":\"text(await tools.Read({file_path:\\\"/tmp/office-clone-qeTy/floors/droid-office/.droid-office/thread-cancelled-check-missing.txt\\\"}));\\n\"}","error":true,"output":"[Script failed · 0.1 s elapsed · after call 1 (Read thread-cancelled-check-missing.txt) · log: /tmp/office-clone-qeTy/home/.factory/artifacts/scripts/7129eccc-d2a8-4d15-a5a9-cea503e25ed3/call_VQcFUTlfVZhozstnKccatcj3.log]\n{\"toolCallId\":\"call_VQcFUTlfVZhozstnKccatcj3\",\"status\":\"failed\",\"error\":\"Error: tools.Read: Error reading file: ENOENT: no such file or directory, access '/tmp/office-clone-qeTy/floors/droid-office/.droid-office/thread-cancelled-check-missing.txt'\"}"},
-        {"id":"tool:7d7fdb70-0682-46b9-8a9a-fc9e2ca18575-1","seq":43,"role":"assistant","kind":"tool","name":"Read","input":"{\"file_path\":\"/tmp/office-clone-qeTy/floors/droid-office/.droid-office/thread-cancelled-check-missing.txt\"}","error":true,"output":"Error reading file: ENOENT: no such file or directory, access '/tmp/office-clone-qeTy/floors/droid-office/.droid-office/thread-cancelled-check-missing.txt'"}
+        {
+          "id": "tool:call_VQcFUTlfVZhozstnKccatcj3",
+          "seq": 41,
+          "role": "assistant",
+          "kind": "tool",
+          "name": "Script",
+          "input": "{\"script\":\"text(await tools.Read({file_path:\\\"/tmp/office-clone-qeTy/floors/droid-office/.droid-office/thread-cancelled-check-missing.txt\\\"}));\\n\"}",
+          "error": true,
+          "output": "[Script failed · 0.1 s elapsed · after call 1 (Read thread-cancelled-check-missing.txt) · log: /tmp/office-clone-qeTy/home/.factory/artifacts/scripts/7129eccc-d2a8-4d15-a5a9-cea503e25ed3/call_VQcFUTlfVZhozstnKccatcj3.log]\n{\"toolCallId\":\"call_VQcFUTlfVZhozstnKccatcj3\",\"status\":\"failed\",\"error\":\"Error: tools.Read: Error reading file: ENOENT: no such file or directory, access '/tmp/office-clone-qeTy/floors/droid-office/.droid-office/thread-cancelled-check-missing.txt'\"}"
+        },
+        {
+          "id": "tool:7d7fdb70-0682-46b9-8a9a-fc9e2ca18575-1",
+          "seq": 43,
+          "role": "assistant",
+          "kind": "tool",
+          "name": "Read",
+          "input": "{\"file_path\":\"/tmp/office-clone-qeTy/floors/droid-office/.droid-office/thread-cancelled-check-missing.txt\"}",
+          "error": true,
+          "output": "Error reading file: ENOENT: no such file or directory, access '/tmp/office-clone-qeTy/floors/droid-office/.droid-office/thread-cancelled-check-missing.txt'"
+        }
       ],
       "expected": [
-        {"kind":"activity","id":"activity:tool:call_VQcFUTlfVZhozstnKccatcj3","summary":"Read a file","live":false,"items":[{"type":"action","id":"tool:call_VQcFUTlfVZhozstnKccatcj3","title":"Script stopped after a tool failed","detail":null,"state":"failed"},{"type":"action","id":"tool:7d7fdb70-0682-46b9-8a9a-fc9e2ca18575-1","title":"Read thread-cancelled-check-missing.txt","detail":"…/droid-office/.droid-office/thread-cancelled-check-missing.txt","state":"failed"}],"failed":["Read thread-cancelled-check-missing.txt"],"noResult":0,"plan":null}
+        {
+          "kind": "activity",
+          "id": "activity:tool:call_VQcFUTlfVZhozstnKccatcj3",
+          "from": 41,
+          "to": 43,
+          "sourceIds": [
+            "tool:call_VQcFUTlfVZhozstnKccatcj3",
+            "tool:7d7fdb70-0682-46b9-8a9a-fc9e2ca18575-1"
+          ],
+          "label": "Read a file",
+          "state": "failed",
+          "live": false,
+          "open": false,
+          "status": "1 failed",
+          "failed": [
+            {
+              "id": "tool:7d7fdb70-0682-46b9-8a9a-fc9e2ca18575-1",
+              "title": "Read thread-cancelled-check-missing.txt",
+              "preview": "Error reading file: ENOENT: no such file or directory, access '/tmp/office-clone-qeTy/floors/droid-office/.droid-office/thread-cancelled-check-missing.txt'"
+            }
+          ],
+          "blocks": [
+            {
+              "kind": "tools",
+              "id": "tools:tool:call_VQcFUTlfVZhozstnKccatcj3",
+              "label": "Read a file",
+              "state": "failed",
+              "live": false,
+              "open": false,
+              "actions": [
+                {
+                  "id": "tool:call_VQcFUTlfVZhozstnKccatcj3",
+                  "title": "Script stopped after a tool failed",
+                  "category": "script",
+                  "state": "failed",
+                  "status": "Failed",
+                  "causedBy": "tool:7d7fdb70-0682-46b9-8a9a-fc9e2ca18575-1",
+                  "arguments": {
+                    "label": "Script",
+                    "field": "script"
+                  },
+                  "result": "Error",
+                  "open": false
+                },
+                {
+                  "id": "tool:7d7fdb70-0682-46b9-8a9a-fc9e2ca18575-1",
+                  "title": "Read thread-cancelled-check-missing.txt",
+                  "detail": "…/droid-office/.droid-office/thread-cancelled-check-missing.txt",
+                  "category": "read",
+                  "state": "failed",
+                  "status": "Failed",
+                  "arguments": {
+                    "label": "Arguments"
+                  },
+                  "result": "Error",
+                  "open": false
+                }
+              ]
+            }
+          ]
+        }
       ]
     },
     {
       "name": "unit_real_taskstop_failure_summary",
-      "source": "Byte hands-on android/a03-360-p8; session 7129eccc seq 91,93. Unit projection of captured TaskStop failure.",
       "busy": false,
       "entries": [
-        {"id":"tool:call_RjMKNJ5YECZzR8v7nL8qIF8b","seq":91,"role":"assistant","kind":"tool","name":"TaskStop","input":"{\"task_id\":\"49137\"}","error":true,"output":"Error: No task found with ID: 49137. No session-backed tasks found."}
+        {
+          "id": "tool:call_RjMKNJ5YECZzR8v7nL8qIF8b",
+          "seq": 91,
+          "role": "assistant",
+          "kind": "tool",
+          "name": "TaskStop",
+          "input": "{\"task_id\":\"49137\"}",
+          "error": true,
+          "output": "Error: No task found with ID: 49137. No session-backed tasks found."
+        }
       ],
       "expected": [
-        {"kind":"activity","id":"activity:tool:call_RjMKNJ5YECZzR8v7nL8qIF8b","summary":"Couldn't stop the background task","live":false,"items":[{"type":"action","id":"tool:call_RjMKNJ5YECZzR8v7nL8qIF8b","title":"Couldn't stop the background task","detail":null,"state":"failed"}],"failed":["Couldn't stop the background task"],"noResult":0,"plan":null}
+        {
+          "kind": "activity",
+          "id": "activity:tool:call_RjMKNJ5YECZzR8v7nL8qIF8b",
+          "from": 91,
+          "to": 91,
+          "sourceIds": [
+            "tool:call_RjMKNJ5YECZzR8v7nL8qIF8b"
+          ],
+          "label": "Couldn't stop the background task",
+          "state": "failed",
+          "live": false,
+          "open": false,
+          "status": "1 failed",
+          "failed": [
+            {
+              "id": "tool:call_RjMKNJ5YECZzR8v7nL8qIF8b",
+              "title": "Couldn't stop the background task",
+              "preview": "Error: No task found with ID: 49137. No session-backed tasks found."
+            }
+          ],
+          "blocks": [
+            {
+              "kind": "tools",
+              "id": "tools:tool:call_RjMKNJ5YECZzR8v7nL8qIF8b",
+              "label": "Couldn't stop the background task",
+              "state": "failed",
+              "live": false,
+              "open": false,
+              "actions": [
+                {
+                  "id": "tool:call_RjMKNJ5YECZzR8v7nL8qIF8b",
+                  "title": "Couldn't stop the background task",
+                  "category": "taskStop",
+                  "state": "failed",
+                  "status": "Failed",
+                  "arguments": {
+                    "label": "Arguments"
+                  },
+                  "result": "Error",
+                  "open": false
+                }
+              ]
+            }
+          ]
+        }
       ]
     },
     {
       "name": "unit_real_loop_create_cancel_list_summary",
-      "source": "Byte hands-on android/a07; session 7129eccc seq 384,386,391,393,394,396. Unit projection of captured Loop calls, successful Script bookkeeping omitted.",
       "busy": false,
       "entries": [
-        {"id":"tool:470475c1-285b-437b-ad46-4aff10045eac-1","seq":384,"role":"assistant","kind":"tool","name":"Loop","input":"{\"action\":\"create\",\"prompt\":\"Reply only: loop check\",\"cron\":\"0 0 1 1 *\",\"runImmediately\":false}","output":"Loop created:\n5ddb7746 · active · next 12:00am · #0 · Reply only: loop check"},
-        {"id":"tool:5dab4e53-c5fb-4a7c-8572-e4a7e2adcb0d-1","seq":391,"role":"assistant","kind":"tool","name":"Loop","input":"{\"action\":\"cancel\",\"loopId\":\"5ddb7746\"}","output":"Loop 5ddb7746 cancelled."},
-        {"id":"tool:5dab4e53-c5fb-4a7c-8572-e4a7e2adcb0d-3","seq":394,"role":"assistant","kind":"tool","name":"Loop","input":"{\"action\":\"list\"}","output":"No scheduled loops."}
+        {
+          "id": "tool:470475c1-285b-437b-ad46-4aff10045eac-1",
+          "seq": 384,
+          "role": "assistant",
+          "kind": "tool",
+          "name": "Loop",
+          "input": "{\"action\":\"create\",\"prompt\":\"Reply only: loop check\",\"cron\":\"0 0 1 1 *\",\"runImmediately\":false}",
+          "output": "Loop created:\n5ddb7746 · active · next 12:00am · #0 · Reply only: loop check"
+        },
+        {
+          "id": "tool:5dab4e53-c5fb-4a7c-8572-e4a7e2adcb0d-1",
+          "seq": 391,
+          "role": "assistant",
+          "kind": "tool",
+          "name": "Loop",
+          "input": "{\"action\":\"cancel\",\"loopId\":\"5ddb7746\"}",
+          "output": "Loop 5ddb7746 cancelled."
+        },
+        {
+          "id": "tool:5dab4e53-c5fb-4a7c-8572-e4a7e2adcb0d-3",
+          "seq": 394,
+          "role": "assistant",
+          "kind": "tool",
+          "name": "Loop",
+          "input": "{\"action\":\"list\"}",
+          "output": "No scheduled loops."
+        }
       ],
       "expected": [
-        {"kind":"activity","id":"activity:tool:470475c1-285b-437b-ad46-4aff10045eac-1","summary":"Scheduled a loop · Cancelled a loop · Checked scheduled loops","live":false,"items":[{"type":"action","id":"tool:470475c1-285b-437b-ad46-4aff10045eac-1","title":"Scheduled a loop","detail":null,"state":"done"},{"type":"action","id":"tool:5dab4e53-c5fb-4a7c-8572-e4a7e2adcb0d-1","title":"Cancelled a loop","detail":null,"state":"done"},{"type":"action","id":"tool:5dab4e53-c5fb-4a7c-8572-e4a7e2adcb0d-3","title":"Checked scheduled loops","detail":null,"state":"done"}],"failed":[],"noResult":0,"plan":null}
+        {
+          "kind": "activity",
+          "id": "activity:tool:470475c1-285b-437b-ad46-4aff10045eac-1",
+          "from": 384,
+          "to": 394,
+          "sourceIds": [
+            "tool:470475c1-285b-437b-ad46-4aff10045eac-1",
+            "tool:5dab4e53-c5fb-4a7c-8572-e4a7e2adcb0d-1",
+            "tool:5dab4e53-c5fb-4a7c-8572-e4a7e2adcb0d-3"
+          ],
+          "label": "Scheduled a loop · Cancelled a loop · Checked scheduled loops",
+          "state": "complete",
+          "live": false,
+          "open": false,
+          "failed": [],
+          "blocks": [
+            {
+              "kind": "tools",
+              "id": "tools:tool:470475c1-285b-437b-ad46-4aff10045eac-1",
+              "label": "Scheduled a loop · Cancelled a loop · Checked scheduled loops",
+              "state": "complete",
+              "live": false,
+              "open": false,
+              "actions": [
+                {
+                  "id": "tool:470475c1-285b-437b-ad46-4aff10045eac-1",
+                  "title": "Scheduled a loop",
+                  "category": "loopCreate",
+                  "state": "complete",
+                  "status": "",
+                  "arguments": {
+                    "label": "Arguments"
+                  },
+                  "result": "Result",
+                  "open": false
+                },
+                {
+                  "id": "tool:5dab4e53-c5fb-4a7c-8572-e4a7e2adcb0d-1",
+                  "title": "Cancelled a loop",
+                  "category": "loopCancel",
+                  "state": "complete",
+                  "status": "",
+                  "arguments": {
+                    "label": "Arguments"
+                  },
+                  "result": "Result",
+                  "open": false
+                },
+                {
+                  "id": "tool:5dab4e53-c5fb-4a7c-8572-e4a7e2adcb0d-3",
+                  "title": "Checked scheduled loops",
+                  "category": "loopList",
+                  "state": "complete",
+                  "status": "",
+                  "arguments": {
+                    "label": "Arguments"
+                  },
+                  "result": "Result",
+                  "open": false
+                }
+              ]
+            }
+          ]
+        }
       ]
     },
     {
       "name": "unit_real_crash_wrapper_flushed_by_a_later_stop",
-      "source": "Real session 7129eccc, projected by WorkerThreadReader (seq 196-199, 222-225; the owner's prompt shortened). The CLI was killed during the Script at seq 196: its child got 'Tool execution was interrupted' at once (resultSeq 198). The wrapper's 'Error: Tool execution cancelled by user' came only at resultSeq 225, flushed when the owner stopped the later Script at seq 223. A result that came after later messages or Scripts is not owner evidence, so the crash stays one failure, counted on the child. The later Script is a genuine Stop: its child's by-user result came in time.",
       "busy": false,
       "entries": [
-        {"id":"tool:call_R5hLkXpPVQuUKNbqvGnjqA5V","role":"assistant","kind":"tool","name":"Script","input":"{\n  \"script\": \"text(await tools.Execute({command:\\\"python3 -c 'import time; time.sleep(120)'\\\",summary:\\\"Wait for crash check\\\",timeout:150,riskLevel:\\\"low\\\"}));\"\n}","seq":196,"output":"Error: Tool execution cancelled by user","error":true,"resultSeq":225},
-        {"id":"tool:17df3d74-4d35-4185-b98c-c6b1cf2d1154-1","role":"assistant","kind":"tool","name":"Execute","input":"{\n  \"command\": \"python3 -c 'import time; time.sleep(120)'\",\n  \"summary\": \"Wait for crash check\",\n  \"timeout\": 150,\n  \"riskLevel\": \"low\"\n}","seq":197,"output":"Tool execution was interrupted","error":true,"resultSeq":198},
-        {"id":"17c26893-ef32-46f5-9864-87a86bc2920c:0","role":"assistant","kind":"text","text":"The crash check was cancelled before the wait finished.","seq":198},
-        {"id":"turn:script-completion:7129eccc-d2a8-4d15-a5a9-cea503e25ed3:call_R5hLkXpPVQuUKNbqvGnjqA5V:call_R5hLkXpPVQuUKNbqvGnjqA5V:completed","role":"system","kind":"notice","text":"Turn ended · completed","seq":199},
-        {"id":"18ea64b8-d625-4e8c-b071-29e134a98d89:0","role":"user","kind":"text","text":"Read only UI check. Use Script for one Execute that waits.","seq":222},
-        {"id":"tool:call_uGbP58i5lkzER4c33Zukobxv","role":"assistant","kind":"tool","name":"Script","input":"{\n  \"script\": \"text(await tools.Execute({command:\\\"sleep 90\\\",summary:\\\"Wait for native Stop\\\",timeout:120,riskLevel:\\\"low\\\"}));\"\n}","seq":223,"output":"[Script cancelled · 33.1 s elapsed · 1 interrupted call]\n{\"toolCallId\":\"call_uGbP58i5lkzER4c33Zukobxv\",\"status\":\"cancelled\",\"interruptedCalls\":[{\"toolUseId\":\"5c8a4c65-8f54-4a4d-a67f-bba5f34bc311-1\",\"name\":\"Execute\",\"input\":{\"command\":\"sleep 90\",\"summary\":\"Wait for native Stop\",\"timeout\":120,\"riskLevel\":\"low\"}}]}","error":false,"resultSeq":225},
-        {"id":"tool:5c8a4c65-8f54-4a4d-a67f-bba5f34bc311-1","role":"assistant","kind":"tool","name":"Execute","input":"{\n  \"command\": \"sleep 90\",\n  \"summary\": \"Wait for native Stop\",\n  \"timeout\": 120,\n  \"riskLevel\": \"low\"\n}","seq":224,"output":"Tool execution cancelled by user","error":true,"resultSeq":225},
-        {"id":"turn:18ea64b8-d625-4e8c-b071-29e134a98d89:cancelled","role":"system","kind":"notice","text":"Turn cancelled","seq":225}
+        {
+          "id": "tool:call_R5hLkXpPVQuUKNbqvGnjqA5V",
+          "role": "assistant",
+          "kind": "tool",
+          "name": "Script",
+          "input": "{\n  \"script\": \"text(await tools.Execute({command:\\\"python3 -c 'import time; time.sleep(120)'\\\",summary:\\\"Wait for crash check\\\",timeout:150,riskLevel:\\\"low\\\"}));\"\n}",
+          "seq": 196,
+          "output": "Error: Tool execution cancelled by user",
+          "error": true,
+          "resultSeq": 225
+        },
+        {
+          "id": "tool:17df3d74-4d35-4185-b98c-c6b1cf2d1154-1",
+          "role": "assistant",
+          "kind": "tool",
+          "name": "Execute",
+          "input": "{\n  \"command\": \"python3 -c 'import time; time.sleep(120)'\",\n  \"summary\": \"Wait for crash check\",\n  \"timeout\": 150,\n  \"riskLevel\": \"low\"\n}",
+          "seq": 197,
+          "output": "Tool execution was interrupted",
+          "error": true,
+          "resultSeq": 198
+        },
+        {
+          "id": "17c26893-ef32-46f5-9864-87a86bc2920c:0",
+          "role": "assistant",
+          "kind": "text",
+          "text": "The crash check was cancelled before the wait finished.",
+          "seq": 198
+        },
+        {
+          "id": "turn:script-completion:7129eccc-d2a8-4d15-a5a9-cea503e25ed3:call_R5hLkXpPVQuUKNbqvGnjqA5V:call_R5hLkXpPVQuUKNbqvGnjqA5V:completed",
+          "role": "system",
+          "kind": "notice",
+          "text": "Turn ended · completed",
+          "seq": 199
+        },
+        {
+          "id": "18ea64b8-d625-4e8c-b071-29e134a98d89:0",
+          "role": "user",
+          "kind": "text",
+          "text": "Read only UI check. Use Script for one Execute that waits.",
+          "seq": 222
+        },
+        {
+          "id": "tool:call_uGbP58i5lkzER4c33Zukobxv",
+          "role": "assistant",
+          "kind": "tool",
+          "name": "Script",
+          "input": "{\n  \"script\": \"text(await tools.Execute({command:\\\"sleep 90\\\",summary:\\\"Wait for native Stop\\\",timeout:120,riskLevel:\\\"low\\\"}));\"\n}",
+          "seq": 223,
+          "output": "[Script cancelled · 33.1 s elapsed · 1 interrupted call]\n{\"toolCallId\":\"call_uGbP58i5lkzER4c33Zukobxv\",\"status\":\"cancelled\",\"interruptedCalls\":[{\"toolUseId\":\"5c8a4c65-8f54-4a4d-a67f-bba5f34bc311-1\",\"name\":\"Execute\",\"input\":{\"command\":\"sleep 90\",\"summary\":\"Wait for native Stop\",\"timeout\":120,\"riskLevel\":\"low\"}}]}",
+          "error": false,
+          "resultSeq": 225
+        },
+        {
+          "id": "tool:5c8a4c65-8f54-4a4d-a67f-bba5f34bc311-1",
+          "role": "assistant",
+          "kind": "tool",
+          "name": "Execute",
+          "input": "{\n  \"command\": \"sleep 90\",\n  \"summary\": \"Wait for native Stop\",\n  \"timeout\": 120,\n  \"riskLevel\": \"low\"\n}",
+          "seq": 224,
+          "output": "Tool execution cancelled by user",
+          "error": true,
+          "resultSeq": 225
+        },
+        {
+          "id": "turn:18ea64b8-d625-4e8c-b071-29e134a98d89:cancelled",
+          "role": "system",
+          "kind": "notice",
+          "text": "Turn cancelled",
+          "seq": 225
+        }
       ],
       "expected": [
-        {"kind":"activity","id":"activity:tool:call_R5hLkXpPVQuUKNbqvGnjqA5V","summary":"Ran a command","live":false,"items":[{"type":"action","id":"tool:call_R5hLkXpPVQuUKNbqvGnjqA5V","title":"Script stopped after a tool failed","detail":null,"state":"failed"},{"type":"action","id":"tool:17df3d74-4d35-4185-b98c-c6b1cf2d1154-1","title":"Wait for crash check","detail":null,"state":"failed"}],"failed":["Wait for crash check"],"noResult":0,"plan":null},
-        {"kind":"message","id":"17c26893-ef32-46f5-9864-87a86bc2920c:0","role":"assistant","startsTurn":true},
-        {"kind":"message","id":"18ea64b8-d625-4e8c-b071-29e134a98d89:0","role":"user","startsTurn":false},
-        {"kind":"activity","id":"activity:tool:call_uGbP58i5lkzER4c33Zukobxv","summary":"Ran a command","live":false,"items":[{"type":"action","id":"tool:5c8a4c65-8f54-4a4d-a67f-bba5f34bc311-1","title":"Wait for native Stop","detail":null,"state":"cancelled"}],"failed":[],"cancelled":1,"noResult":0,"plan":null},
-        {"kind":"notice","id":"turn:18ea64b8-d625-4e8c-b071-29e134a98d89:cancelled","text":"Turn cancelled","tone":"quiet"}
+        {
+          "kind": "activity",
+          "id": "activity:tool:call_R5hLkXpPVQuUKNbqvGnjqA5V",
+          "from": 196,
+          "to": 197,
+          "sourceIds": [
+            "tool:call_R5hLkXpPVQuUKNbqvGnjqA5V",
+            "tool:17df3d74-4d35-4185-b98c-c6b1cf2d1154-1"
+          ],
+          "label": "Ran a command",
+          "state": "failed",
+          "live": false,
+          "open": false,
+          "status": "1 failed",
+          "failed": [
+            {
+              "id": "tool:17df3d74-4d35-4185-b98c-c6b1cf2d1154-1",
+              "title": "Wait for crash check",
+              "preview": "Tool execution was interrupted"
+            }
+          ],
+          "blocks": [
+            {
+              "kind": "tools",
+              "id": "tools:tool:call_R5hLkXpPVQuUKNbqvGnjqA5V",
+              "label": "Ran a command",
+              "state": "failed",
+              "live": false,
+              "open": false,
+              "actions": [
+                {
+                  "id": "tool:call_R5hLkXpPVQuUKNbqvGnjqA5V",
+                  "title": "Script stopped after a tool failed",
+                  "category": "script",
+                  "state": "failed",
+                  "status": "Failed",
+                  "causedBy": "tool:17df3d74-4d35-4185-b98c-c6b1cf2d1154-1",
+                  "arguments": {
+                    "label": "Script",
+                    "field": "script"
+                  },
+                  "result": "Error",
+                  "open": false
+                },
+                {
+                  "id": "tool:17df3d74-4d35-4185-b98c-c6b1cf2d1154-1",
+                  "title": "Wait for crash check",
+                  "category": "command",
+                  "state": "failed",
+                  "status": "Failed",
+                  "arguments": {
+                    "label": "Command",
+                    "field": "command"
+                  },
+                  "result": "Error",
+                  "open": false
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "kind": "message",
+          "id": "17c26893-ef32-46f5-9864-87a86bc2920c:0",
+          "from": 198,
+          "to": 198,
+          "role": "assistant",
+          "startsTurn": true
+        },
+        {
+          "kind": "message",
+          "id": "18ea64b8-d625-4e8c-b071-29e134a98d89:0",
+          "from": 222,
+          "to": 222,
+          "role": "user",
+          "startsTurn": false
+        },
+        {
+          "kind": "activity",
+          "id": "activity:tool:call_uGbP58i5lkzER4c33Zukobxv",
+          "from": 223,
+          "to": 224,
+          "sourceIds": [
+            "tool:call_uGbP58i5lkzER4c33Zukobxv",
+            "tool:5c8a4c65-8f54-4a4d-a67f-bba5f34bc311-1"
+          ],
+          "label": "Ran a command",
+          "state": "cancelled",
+          "live": false,
+          "open": false,
+          "status": "1 cancelled",
+          "failed": [],
+          "blocks": [
+            {
+              "kind": "tools",
+              "id": "tools:tool:call_uGbP58i5lkzER4c33Zukobxv",
+              "label": "Ran a command",
+              "state": "cancelled",
+              "live": false,
+              "open": false,
+              "actions": [
+                {
+                  "id": "tool:5c8a4c65-8f54-4a4d-a67f-bba5f34bc311-1",
+                  "title": "Wait for native Stop",
+                  "category": "command",
+                  "state": "cancelled",
+                  "status": "Cancelled",
+                  "arguments": {
+                    "label": "Command",
+                    "field": "command"
+                  },
+                  "result": "Cancelled",
+                  "open": false
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "kind": "notice",
+          "id": "turn:18ea64b8-d625-4e8c-b071-29e134a98d89:cancelled",
+          "from": 225,
+          "to": 225,
+          "role": "system",
+          "text": "Turn cancelled",
+          "tone": "quiet"
+        }
       ]
     },
     {
       "name": "unit_real_crash_resume_interruption_without_owner_evidence",
-      "source": "Byte c965 hands-on android/b49-after-cleanup; real session 7129eccc seq 269-271. The child has only 'Tool execution was interrupted'. The wrapper is shown as it was before the CLI flushed a late by-user result into it at seq 279 (that flush is unit_real_crash_wrapper_flushed_by_a_later_stop). Deliberately Failed absent explicit by-user evidence, regardless of the assistant's prose. Unit projection, not runtime verification.",
       "busy": false,
       "entries": [
-        {"id":"tool:call_xbxG6sCnSkQ2JvkQj4FY11Cy","seq":0,"role":"assistant","kind":"tool","name":"Script","input":"{\"script\":\"text(await tools.Execute({command:\\\"python3 -c 'import time; time.sleep(120)'\\\",summary:\\\"Wait for c965 crash\\\",timeout:150,riskLevel:\\\"low\\\"}));\\n\"}"},
-        {"id":"tool:7fdacbd3-892b-458a-a5e0-940b7fcdbee3-1","seq":1,"role":"assistant","kind":"tool","name":"Execute","input":"{\"command\":\"python3 -c 'import time; time.sleep(120)'\",\"summary\":\"Wait for c965 crash\",\"timeout\":150,\"riskLevel\":\"low\"}","output":"Tool execution was interrupted","error":true},
-        {"id":"6732a9e2-7dae-4469-bd70-0ab085e20e2e:0","seq":2,"role":"assistant","kind":"text","text":"The c965 crash wait was cancelled before completion."}
+        {
+          "id": "tool:call_xbxG6sCnSkQ2JvkQj4FY11Cy",
+          "seq": 0,
+          "role": "assistant",
+          "kind": "tool",
+          "name": "Script",
+          "input": "{\"script\":\"text(await tools.Execute({command:\\\"python3 -c 'import time; time.sleep(120)'\\\",summary:\\\"Wait for c965 crash\\\",timeout:150,riskLevel:\\\"low\\\"}));\\n\"}"
+        },
+        {
+          "id": "tool:7fdacbd3-892b-458a-a5e0-940b7fcdbee3-1",
+          "seq": 1,
+          "role": "assistant",
+          "kind": "tool",
+          "name": "Execute",
+          "input": "{\"command\":\"python3 -c 'import time; time.sleep(120)'\",\"summary\":\"Wait for c965 crash\",\"timeout\":150,\"riskLevel\":\"low\"}",
+          "output": "Tool execution was interrupted",
+          "error": true
+        },
+        {
+          "id": "6732a9e2-7dae-4469-bd70-0ab085e20e2e:0",
+          "seq": 2,
+          "role": "assistant",
+          "kind": "text",
+          "text": "The c965 crash wait was cancelled before completion."
+        }
       ],
       "expected": [
-        {"kind":"activity","id":"activity:tool:call_xbxG6sCnSkQ2JvkQj4FY11Cy","summary":"Ran a command","live":false,"items":[{"type":"action","id":"tool:7fdacbd3-892b-458a-a5e0-940b7fcdbee3-1","title":"Wait for c965 crash","detail":null,"state":"failed"}],"failed":["Wait for c965 crash"],"noResult":0,"plan":null},
-        {"kind":"message","id":"6732a9e2-7dae-4469-bd70-0ab085e20e2e:0","role":"assistant","startsTurn":true}
+        {
+          "kind": "activity",
+          "id": "activity:tool:call_xbxG6sCnSkQ2JvkQj4FY11Cy",
+          "from": 0,
+          "to": 1,
+          "sourceIds": [
+            "tool:call_xbxG6sCnSkQ2JvkQj4FY11Cy",
+            "tool:7fdacbd3-892b-458a-a5e0-940b7fcdbee3-1"
+          ],
+          "label": "Ran a command",
+          "state": "failed",
+          "live": false,
+          "open": false,
+          "status": "1 failed",
+          "failed": [
+            {
+              "id": "tool:7fdacbd3-892b-458a-a5e0-940b7fcdbee3-1",
+              "title": "Wait for c965 crash",
+              "preview": "Tool execution was interrupted"
+            }
+          ],
+          "blocks": [
+            {
+              "kind": "tools",
+              "id": "tools:tool:call_xbxG6sCnSkQ2JvkQj4FY11Cy",
+              "label": "Ran a command",
+              "state": "failed",
+              "live": false,
+              "open": false,
+              "actions": [
+                {
+                  "id": "tool:7fdacbd3-892b-458a-a5e0-940b7fcdbee3-1",
+                  "title": "Wait for c965 crash",
+                  "category": "command",
+                  "state": "failed",
+                  "status": "Failed",
+                  "arguments": {
+                    "label": "Command",
+                    "field": "command"
+                  },
+                  "result": "Error",
+                  "open": false
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "kind": "message",
+          "id": "6732a9e2-7dae-4469-bd70-0ab085e20e2e:0",
+          "from": 2,
+          "to": 2,
+          "role": "assistant",
+          "startsTurn": true
+        }
+      ]
+    }
+  ],
+  "paging": [
+    {
+      "name": "release_turn_in_pages_of_four",
+      "busy": false,
+      "steps": [
+        {
+          "snapshot": {
+            "sessionId": "captured",
+            "entries": [
+              {
+                "id": "tool:toolu_9",
+                "role": "assistant",
+                "kind": "tool",
+                "name": "Execute",
+                "input": "{\n  \"command\": \"gh run view 40426951831 --repo nikships/droid-office --log > /Users/nik/repos/droid-office/.droid-office/worktrees/byte-090d/run.log\",\n  \"riskLevel\": \"low\"\n}",
+                "output": "completed success",
+                "seq": 8
+              },
+              {
+                "id": "tool:toolu_10",
+                "role": "assistant",
+                "kind": "tool",
+                "name": "TodoWrite",
+                "input": "{\n  \"todos\": \"1. [completed] Check the merged commit and main release workflow\\n2. [in_progress] Identify any release blocker and report the published status\"\n}",
+                "output": "TODO List Updated",
+                "seq": 9
+              },
+              {
+                "id": "rec-11:todo",
+                "role": "system",
+                "kind": "todo",
+                "text": "1. [completed] Check the merged commit and main release workflow\n2. [in progress] Identify any release blocker and report the published status",
+                "seq": 10
+              },
+              {
+                "id": "msg-12:0",
+                "role": "assistant",
+                "kind": "text",
+                "text": "Release **v0.1.611** is published and the workflow succeeded.",
+                "seq": 11
+              }
+            ],
+            "hasMore": true,
+            "presentation": {
+              "version": 1,
+              "rows": [
+                {
+                  "kind": "activity",
+                  "id": "activity:tool:toolu_2",
+                  "from": 1,
+                  "to": 10,
+                  "sourceIds": [
+                    "tool:toolu_2",
+                    "tool:toolu_3",
+                    "tool:toolu_4",
+                    "tool:toolu_5",
+                    "rec-6:todo",
+                    "tool:toolu_7",
+                    "tool:toolu_8",
+                    "tool:toolu_9",
+                    "tool:toolu_10",
+                    "rec-11:todo"
+                  ],
+                  "label": "Read a file · Ran 3 commands",
+                  "state": "complete",
+                  "live": false,
+                  "open": false,
+                  "failed": [],
+                  "blocks": [
+                    {
+                      "kind": "tools",
+                      "id": "tools:tool:toolu_2",
+                      "label": "Read a file · Ran 3 commands",
+                      "state": "complete",
+                      "live": false,
+                      "open": false,
+                      "actions": [
+                        {
+                          "id": "tool:toolu_4",
+                          "title": "Read release.yml",
+                          "detail": ".github/workflows/release.yml",
+                          "category": "read",
+                          "state": "complete",
+                          "status": "",
+                          "arguments": {
+                            "label": "Arguments"
+                          },
+                          "result": "Result",
+                          "open": false
+                        },
+                        {
+                          "id": "tool:toolu_5",
+                          "title": "Check PR 307 merge state",
+                          "category": "command",
+                          "state": "complete",
+                          "status": "",
+                          "arguments": {
+                            "label": "Command",
+                            "field": "command"
+                          },
+                          "result": "Result",
+                          "open": false
+                        },
+                        {
+                          "id": "tool:toolu_8",
+                          "title": "View the published release",
+                          "category": "command",
+                          "state": "complete",
+                          "status": "",
+                          "arguments": {
+                            "label": "Command",
+                            "field": "command"
+                          },
+                          "result": "Result",
+                          "open": false
+                        },
+                        {
+                          "id": "tool:toolu_9",
+                          "title": "Ran a command",
+                          "detail": "gh run view 40426951831 --repo nikships/droid-office --log > run.log",
+                          "category": "command",
+                          "state": "complete",
+                          "status": "",
+                          "arguments": {
+                            "label": "Command",
+                            "field": "command"
+                          },
+                          "result": "Result",
+                          "open": false
+                        }
+                      ],
+                      "plan": [
+                        {
+                          "done": true,
+                          "active": false,
+                          "text": "Check the merged commit and main release workflow"
+                        },
+                        {
+                          "done": false,
+                          "active": true,
+                          "text": "Identify any release blocker and report the published status"
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "kind": "message",
+                  "id": "msg-12:0",
+                  "from": 11,
+                  "to": 11,
+                  "role": "assistant",
+                  "startsTurn": false
+                }
+              ]
+            }
+          },
+          "expected": {
+            "entries": [
+              "tool:toolu_9",
+              "tool:toolu_10",
+              "rec-11:todo",
+              "msg-12:0"
+            ],
+            "rows": [
+              {
+                "kind": "activity",
+                "id": "activity:tool:toolu_2",
+                "from": 1,
+                "to": 10,
+                "sourceIds": [
+                  "tool:toolu_2",
+                  "tool:toolu_3",
+                  "tool:toolu_4",
+                  "tool:toolu_5",
+                  "rec-6:todo",
+                  "tool:toolu_7",
+                  "tool:toolu_8",
+                  "tool:toolu_9",
+                  "tool:toolu_10",
+                  "rec-11:todo"
+                ],
+                "label": "Read a file · Ran 3 commands",
+                "state": "complete",
+                "live": false,
+                "open": false,
+                "failed": [],
+                "blocks": [
+                  {
+                    "kind": "tools",
+                    "id": "tools:tool:toolu_2",
+                    "label": "Read a file · Ran 3 commands",
+                    "state": "complete",
+                    "live": false,
+                    "open": false,
+                    "actions": [
+                      {
+                        "id": "tool:toolu_4",
+                        "title": "Read release.yml",
+                        "detail": ".github/workflows/release.yml",
+                        "category": "read",
+                        "state": "complete",
+                        "status": "",
+                        "arguments": {
+                          "label": "Arguments"
+                        },
+                        "result": "Result",
+                        "open": false
+                      },
+                      {
+                        "id": "tool:toolu_5",
+                        "title": "Check PR 307 merge state",
+                        "category": "command",
+                        "state": "complete",
+                        "status": "",
+                        "arguments": {
+                          "label": "Command",
+                          "field": "command"
+                        },
+                        "result": "Result",
+                        "open": false
+                      },
+                      {
+                        "id": "tool:toolu_8",
+                        "title": "View the published release",
+                        "category": "command",
+                        "state": "complete",
+                        "status": "",
+                        "arguments": {
+                          "label": "Command",
+                          "field": "command"
+                        },
+                        "result": "Result",
+                        "open": false
+                      },
+                      {
+                        "id": "tool:toolu_9",
+                        "title": "Ran a command",
+                        "detail": "gh run view 40426951831 --repo nikships/droid-office --log > run.log",
+                        "category": "command",
+                        "state": "complete",
+                        "status": "",
+                        "arguments": {
+                          "label": "Command",
+                          "field": "command"
+                        },
+                        "result": "Result",
+                        "open": false
+                      }
+                    ],
+                    "plan": [
+                      {
+                        "done": true,
+                        "active": false,
+                        "text": "Check the merged commit and main release workflow"
+                      },
+                      {
+                        "done": false,
+                        "active": true,
+                        "text": "Identify any release blocker and report the published status"
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "kind": "message",
+                "id": "msg-12:0",
+                "from": 11,
+                "to": 11,
+                "role": "assistant",
+                "startsTurn": false
+              }
+            ]
+          }
+        },
+        {
+          "snapshot": {
+            "before": 8,
+            "sessionId": "captured",
+            "entries": [
+              {
+                "id": "tool:toolu_5",
+                "role": "assistant",
+                "kind": "tool",
+                "name": "Execute",
+                "input": "{\n  \"command\": \"gh pr view 307 --repo nikships/droid-office --json state,mergeCommit\",\n  \"summary\": \"Check PR 307 merge state\",\n  \"riskLevel\": \"low\"\n}",
+                "output": "{\"state\":\"MERGED\"}",
+                "seq": 4
+              },
+              {
+                "id": "rec-6:todo",
+                "role": "system",
+                "kind": "todo",
+                "text": "1. [in progress] Check the merged commit and main release workflow\n2. [pending] Identify any release blocker and report the published status",
+                "seq": 5
+              },
+              {
+                "id": "tool:toolu_7",
+                "role": "assistant",
+                "kind": "tool",
+                "name": "Script",
+                "input": "{\n  \"script\": \"await Promise.allSettled([\\ntools.Read({file_path:\\\"/Users/nik/repos/droid-office/.droid-office/worktrees/byte-090d/src/a.ts\\\"})\\n])\"\n}",
+                "output": "[{\"type\":\"text\",\"text\":\"exit 0\"}]",
+                "seq": 6
+              },
+              {
+                "id": "tool:toolu_8",
+                "role": "assistant",
+                "kind": "tool",
+                "name": "Execute",
+                "input": "{\n  \"command\": \"gh release view v0.1.611 --repo nikships/droid-office\",\n  \"summary\": \"View the published release\",\n  \"riskLevel\": \"low\"\n}",
+                "output": "v0.1.611",
+                "seq": 7
+              }
+            ],
+            "hasMore": true,
+            "presentation": {
+              "version": 1,
+              "rows": [
+                {
+                  "kind": "activity",
+                  "id": "activity:tool:toolu_2",
+                  "from": 1,
+                  "to": 10,
+                  "sourceIds": [
+                    "tool:toolu_2",
+                    "tool:toolu_3",
+                    "tool:toolu_4",
+                    "tool:toolu_5",
+                    "rec-6:todo",
+                    "tool:toolu_7",
+                    "tool:toolu_8",
+                    "tool:toolu_9",
+                    "tool:toolu_10",
+                    "rec-11:todo"
+                  ],
+                  "label": "Read a file · Ran 3 commands",
+                  "state": "complete",
+                  "live": false,
+                  "open": false,
+                  "failed": [],
+                  "blocks": [
+                    {
+                      "kind": "tools",
+                      "id": "tools:tool:toolu_2",
+                      "label": "Read a file · Ran 3 commands",
+                      "state": "complete",
+                      "live": false,
+                      "open": false,
+                      "actions": [
+                        {
+                          "id": "tool:toolu_4",
+                          "title": "Read release.yml",
+                          "detail": ".github/workflows/release.yml",
+                          "category": "read",
+                          "state": "complete",
+                          "status": "",
+                          "arguments": {
+                            "label": "Arguments"
+                          },
+                          "result": "Result",
+                          "open": false
+                        },
+                        {
+                          "id": "tool:toolu_5",
+                          "title": "Check PR 307 merge state",
+                          "category": "command",
+                          "state": "complete",
+                          "status": "",
+                          "arguments": {
+                            "label": "Command",
+                            "field": "command"
+                          },
+                          "result": "Result",
+                          "open": false
+                        },
+                        {
+                          "id": "tool:toolu_8",
+                          "title": "View the published release",
+                          "category": "command",
+                          "state": "complete",
+                          "status": "",
+                          "arguments": {
+                            "label": "Command",
+                            "field": "command"
+                          },
+                          "result": "Result",
+                          "open": false
+                        },
+                        {
+                          "id": "tool:toolu_9",
+                          "title": "Ran a command",
+                          "detail": "gh run view 40426951831 --repo nikships/droid-office --log > run.log",
+                          "category": "command",
+                          "state": "complete",
+                          "status": "",
+                          "arguments": {
+                            "label": "Command",
+                            "field": "command"
+                          },
+                          "result": "Result",
+                          "open": false
+                        }
+                      ],
+                      "plan": [
+                        {
+                          "done": true,
+                          "active": false,
+                          "text": "Check the merged commit and main release workflow"
+                        },
+                        {
+                          "done": false,
+                          "active": true,
+                          "text": "Identify any release blocker and report the published status"
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            }
+          },
+          "expected": {
+            "entries": [
+              "tool:toolu_5",
+              "rec-6:todo",
+              "tool:toolu_7",
+              "tool:toolu_8",
+              "tool:toolu_9",
+              "tool:toolu_10",
+              "rec-11:todo",
+              "msg-12:0"
+            ],
+            "rows": [
+              {
+                "kind": "activity",
+                "id": "activity:tool:toolu_2",
+                "from": 1,
+                "to": 10,
+                "sourceIds": [
+                  "tool:toolu_2",
+                  "tool:toolu_3",
+                  "tool:toolu_4",
+                  "tool:toolu_5",
+                  "rec-6:todo",
+                  "tool:toolu_7",
+                  "tool:toolu_8",
+                  "tool:toolu_9",
+                  "tool:toolu_10",
+                  "rec-11:todo"
+                ],
+                "label": "Read a file · Ran 3 commands",
+                "state": "complete",
+                "live": false,
+                "open": false,
+                "failed": [],
+                "blocks": [
+                  {
+                    "kind": "tools",
+                    "id": "tools:tool:toolu_2",
+                    "label": "Read a file · Ran 3 commands",
+                    "state": "complete",
+                    "live": false,
+                    "open": false,
+                    "actions": [
+                      {
+                        "id": "tool:toolu_4",
+                        "title": "Read release.yml",
+                        "detail": ".github/workflows/release.yml",
+                        "category": "read",
+                        "state": "complete",
+                        "status": "",
+                        "arguments": {
+                          "label": "Arguments"
+                        },
+                        "result": "Result",
+                        "open": false
+                      },
+                      {
+                        "id": "tool:toolu_5",
+                        "title": "Check PR 307 merge state",
+                        "category": "command",
+                        "state": "complete",
+                        "status": "",
+                        "arguments": {
+                          "label": "Command",
+                          "field": "command"
+                        },
+                        "result": "Result",
+                        "open": false
+                      },
+                      {
+                        "id": "tool:toolu_8",
+                        "title": "View the published release",
+                        "category": "command",
+                        "state": "complete",
+                        "status": "",
+                        "arguments": {
+                          "label": "Command",
+                          "field": "command"
+                        },
+                        "result": "Result",
+                        "open": false
+                      },
+                      {
+                        "id": "tool:toolu_9",
+                        "title": "Ran a command",
+                        "detail": "gh run view 40426951831 --repo nikships/droid-office --log > run.log",
+                        "category": "command",
+                        "state": "complete",
+                        "status": "",
+                        "arguments": {
+                          "label": "Command",
+                          "field": "command"
+                        },
+                        "result": "Result",
+                        "open": false
+                      }
+                    ],
+                    "plan": [
+                      {
+                        "done": true,
+                        "active": false,
+                        "text": "Check the merged commit and main release workflow"
+                      },
+                      {
+                        "done": false,
+                        "active": true,
+                        "text": "Identify any release blocker and report the published status"
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "kind": "message",
+                "id": "msg-12:0",
+                "from": 11,
+                "to": 11,
+                "role": "assistant",
+                "startsTurn": false
+              }
+            ]
+          }
+        },
+        {
+          "snapshot": {
+            "before": 4,
+            "sessionId": "captured",
+            "entries": [
+              {
+                "id": "msg-1:0",
+                "role": "assistant",
+                "kind": "text",
+                "text": "The PR was pushed and merged. I'll check the release workflow now to see whether it finished, failed, or never started.",
+                "seq": 0
+              },
+              {
+                "id": "tool:toolu_2",
+                "role": "assistant",
+                "kind": "tool",
+                "name": "Script",
+                "input": "{\n  \"script\": \"await Promise.allSettled([\\ntools.Read({file_path:\\\"/Users/nik/repos/droid-office/.droid-office/worktrees/byte-090d/src/a.ts\\\"})\\n])\"\n}",
+                "output": "[{\"type\":\"text\",\"text\":\"exit 0\"}]",
+                "seq": 1
+              },
+              {
+                "id": "tool:toolu_3",
+                "role": "assistant",
+                "kind": "tool",
+                "name": "TodoWrite",
+                "input": "{\n  \"todos\": \"1. [in_progress] Check the merged commit and main release workflow\\n2. [pending] Identify any release blocker and report the published status\"\n}",
+                "output": "TODO List Updated",
+                "seq": 2
+              },
+              {
+                "id": "tool:toolu_4",
+                "role": "assistant",
+                "kind": "tool",
+                "name": "Read",
+                "input": "{\n  \"file_path\": \"/Users/nik/repos/droid-office/.droid-office/worktrees/byte-090d/.github/workflows/release.yml\"\n}",
+                "output": "name: release\n...",
+                "seq": 3
+              }
+            ],
+            "hasMore": false,
+            "presentation": {
+              "version": 1,
+              "rows": [
+                {
+                  "kind": "message",
+                  "id": "msg-1:0",
+                  "from": 0,
+                  "to": 0,
+                  "role": "assistant",
+                  "startsTurn": true
+                },
+                {
+                  "kind": "activity",
+                  "id": "activity:tool:toolu_2",
+                  "from": 1,
+                  "to": 10,
+                  "sourceIds": [
+                    "tool:toolu_2",
+                    "tool:toolu_3",
+                    "tool:toolu_4",
+                    "tool:toolu_5",
+                    "rec-6:todo",
+                    "tool:toolu_7",
+                    "tool:toolu_8",
+                    "tool:toolu_9",
+                    "tool:toolu_10",
+                    "rec-11:todo"
+                  ],
+                  "label": "Read a file · Ran 3 commands",
+                  "state": "complete",
+                  "live": false,
+                  "open": false,
+                  "failed": [],
+                  "blocks": [
+                    {
+                      "kind": "tools",
+                      "id": "tools:tool:toolu_2",
+                      "label": "Read a file · Ran 3 commands",
+                      "state": "complete",
+                      "live": false,
+                      "open": false,
+                      "actions": [
+                        {
+                          "id": "tool:toolu_4",
+                          "title": "Read release.yml",
+                          "detail": ".github/workflows/release.yml",
+                          "category": "read",
+                          "state": "complete",
+                          "status": "",
+                          "arguments": {
+                            "label": "Arguments"
+                          },
+                          "result": "Result",
+                          "open": false
+                        },
+                        {
+                          "id": "tool:toolu_5",
+                          "title": "Check PR 307 merge state",
+                          "category": "command",
+                          "state": "complete",
+                          "status": "",
+                          "arguments": {
+                            "label": "Command",
+                            "field": "command"
+                          },
+                          "result": "Result",
+                          "open": false
+                        },
+                        {
+                          "id": "tool:toolu_8",
+                          "title": "View the published release",
+                          "category": "command",
+                          "state": "complete",
+                          "status": "",
+                          "arguments": {
+                            "label": "Command",
+                            "field": "command"
+                          },
+                          "result": "Result",
+                          "open": false
+                        },
+                        {
+                          "id": "tool:toolu_9",
+                          "title": "Ran a command",
+                          "detail": "gh run view 40426951831 --repo nikships/droid-office --log > run.log",
+                          "category": "command",
+                          "state": "complete",
+                          "status": "",
+                          "arguments": {
+                            "label": "Command",
+                            "field": "command"
+                          },
+                          "result": "Result",
+                          "open": false
+                        }
+                      ],
+                      "plan": [
+                        {
+                          "done": true,
+                          "active": false,
+                          "text": "Check the merged commit and main release workflow"
+                        },
+                        {
+                          "done": false,
+                          "active": true,
+                          "text": "Identify any release blocker and report the published status"
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            }
+          },
+          "expected": {
+            "entries": [
+              "msg-1:0",
+              "tool:toolu_2",
+              "tool:toolu_3",
+              "tool:toolu_4",
+              "tool:toolu_5",
+              "rec-6:todo",
+              "tool:toolu_7",
+              "tool:toolu_8",
+              "tool:toolu_9",
+              "tool:toolu_10",
+              "rec-11:todo",
+              "msg-12:0"
+            ],
+            "rows": [
+              {
+                "kind": "message",
+                "id": "msg-1:0",
+                "from": 0,
+                "to": 0,
+                "role": "assistant",
+                "startsTurn": true
+              },
+              {
+                "kind": "activity",
+                "id": "activity:tool:toolu_2",
+                "from": 1,
+                "to": 10,
+                "sourceIds": [
+                  "tool:toolu_2",
+                  "tool:toolu_3",
+                  "tool:toolu_4",
+                  "tool:toolu_5",
+                  "rec-6:todo",
+                  "tool:toolu_7",
+                  "tool:toolu_8",
+                  "tool:toolu_9",
+                  "tool:toolu_10",
+                  "rec-11:todo"
+                ],
+                "label": "Read a file · Ran 3 commands",
+                "state": "complete",
+                "live": false,
+                "open": false,
+                "failed": [],
+                "blocks": [
+                  {
+                    "kind": "tools",
+                    "id": "tools:tool:toolu_2",
+                    "label": "Read a file · Ran 3 commands",
+                    "state": "complete",
+                    "live": false,
+                    "open": false,
+                    "actions": [
+                      {
+                        "id": "tool:toolu_4",
+                        "title": "Read release.yml",
+                        "detail": ".github/workflows/release.yml",
+                        "category": "read",
+                        "state": "complete",
+                        "status": "",
+                        "arguments": {
+                          "label": "Arguments"
+                        },
+                        "result": "Result",
+                        "open": false
+                      },
+                      {
+                        "id": "tool:toolu_5",
+                        "title": "Check PR 307 merge state",
+                        "category": "command",
+                        "state": "complete",
+                        "status": "",
+                        "arguments": {
+                          "label": "Command",
+                          "field": "command"
+                        },
+                        "result": "Result",
+                        "open": false
+                      },
+                      {
+                        "id": "tool:toolu_8",
+                        "title": "View the published release",
+                        "category": "command",
+                        "state": "complete",
+                        "status": "",
+                        "arguments": {
+                          "label": "Command",
+                          "field": "command"
+                        },
+                        "result": "Result",
+                        "open": false
+                      },
+                      {
+                        "id": "tool:toolu_9",
+                        "title": "Ran a command",
+                        "detail": "gh run view 40426951831 --repo nikships/droid-office --log > run.log",
+                        "category": "command",
+                        "state": "complete",
+                        "status": "",
+                        "arguments": {
+                          "label": "Command",
+                          "field": "command"
+                        },
+                        "result": "Result",
+                        "open": false
+                      }
+                    ],
+                    "plan": [
+                      {
+                        "done": true,
+                        "active": false,
+                        "text": "Check the merged commit and main release workflow"
+                      },
+                      {
+                        "done": false,
+                        "active": true,
+                        "text": "Identify any release blocker and report the published status"
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "kind": "message",
+                "id": "msg-12:0",
+                "from": 11,
+                "to": 11,
+                "role": "assistant",
+                "startsTurn": false
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "thinking_turn_in_pages_of_two",
+      "busy": false,
+      "steps": [
+        {
+          "snapshot": {
+            "sessionId": "captured",
+            "entries": [
+              {
+                "id": "msg-6:0",
+                "role": "assistant",
+                "kind": "text",
+                "text": "Every tool call is a card of its own.",
+                "seq": 5
+              },
+              {
+                "id": "msg-7:0",
+                "role": "assistant",
+                "kind": "text",
+                "text": "I would group them between messages.",
+                "seq": 6
+              }
+            ],
+            "hasMore": true,
+            "presentation": {
+              "version": 1,
+              "rows": [
+                {
+                  "kind": "message",
+                  "id": "msg-6:0",
+                  "from": 5,
+                  "to": 5,
+                  "role": "assistant",
+                  "startsTurn": true
+                },
+                {
+                  "kind": "message",
+                  "id": "msg-7:0",
+                  "from": 6,
+                  "to": 6,
+                  "role": "assistant",
+                  "startsTurn": false
+                }
+              ]
+            }
+          },
+          "expected": {
+            "entries": [
+              "msg-6:0",
+              "msg-7:0"
+            ],
+            "rows": [
+              {
+                "kind": "message",
+                "id": "msg-6:0",
+                "from": 5,
+                "to": 5,
+                "role": "assistant",
+                "startsTurn": true
+              },
+              {
+                "kind": "message",
+                "id": "msg-7:0",
+                "from": 6,
+                "to": 6,
+                "role": "assistant",
+                "startsTurn": false
+              }
+            ]
+          }
+        },
+        {
+          "snapshot": {
+            "before": 5,
+            "sessionId": "captured",
+            "entries": [
+              {
+                "id": "msg-4:1",
+                "role": "assistant",
+                "kind": "thinking",
+                "text": "\n\nThe tool rows are equal weight.",
+                "seq": 3
+              },
+              {
+                "id": "tool:toolu_5",
+                "role": "assistant",
+                "kind": "tool",
+                "name": "Grep",
+                "input": "{\n  \"pattern\": \"Promise.allSettled\",\n  \"path\": \"/Users/nik/repos/droid-office/.droid-office/worktrees/byte-090d/src\",\n  \"output_mode\": \"content\"\n}",
+                "output": "[]",
+                "seq": 4
+              }
+            ],
+            "hasMore": true,
+            "presentation": {
+              "version": 1,
+              "rows": [
+                {
+                  "kind": "activity",
+                  "id": "activity:msg-2:1",
+                  "from": 1,
+                  "to": 4,
+                  "sourceIds": [
+                    "msg-2:1",
+                    "tool:toolu_3",
+                    "msg-4:1",
+                    "tool:toolu_5"
+                  ],
+                  "label": "Read a file · Searched the code",
+                  "state": "complete",
+                  "live": false,
+                  "open": false,
+                  "failed": [],
+                  "blocks": [
+                    {
+                      "kind": "thought",
+                      "id": "msg-2:1",
+                      "preview": "Considering user interaction flow",
+                      "live": false,
+                      "open": false
+                    },
+                    {
+                      "kind": "tools",
+                      "id": "tools:tool:toolu_3",
+                      "label": "Read a file",
+                      "state": "complete",
+                      "live": false,
+                      "open": false,
+                      "actions": [
+                        {
+                          "id": "tool:toolu_3",
+                          "title": "Read Thread.kt",
+                          "detail": "…/ui/worker/Thread.kt",
+                          "category": "read",
+                          "state": "complete",
+                          "status": "",
+                          "arguments": {
+                            "label": "Arguments"
+                          },
+                          "result": "Result",
+                          "open": false
+                        }
+                      ]
+                    },
+                    {
+                      "kind": "thought",
+                      "id": "msg-4:1",
+                      "preview": "The tool rows are equal weight.",
+                      "live": false,
+                      "open": false
+                    },
+                    {
+                      "kind": "tools",
+                      "id": "tools:tool:toolu_5",
+                      "label": "Searched the code",
+                      "state": "complete",
+                      "live": false,
+                      "open": false,
+                      "actions": [
+                        {
+                          "id": "tool:toolu_5",
+                          "title": "Searched for “Promise.allSettled”",
+                          "detail": "src",
+                          "category": "search",
+                          "state": "complete",
+                          "status": "",
+                          "arguments": {
+                            "label": "Arguments"
+                          },
+                          "result": "Result",
+                          "open": false
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            }
+          },
+          "expected": {
+            "entries": [
+              "msg-4:1",
+              "tool:toolu_5",
+              "msg-6:0",
+              "msg-7:0"
+            ],
+            "rows": [
+              {
+                "kind": "activity",
+                "id": "activity:msg-2:1",
+                "from": 1,
+                "to": 4,
+                "sourceIds": [
+                  "msg-2:1",
+                  "tool:toolu_3",
+                  "msg-4:1",
+                  "tool:toolu_5"
+                ],
+                "label": "Read a file · Searched the code",
+                "state": "complete",
+                "live": false,
+                "open": false,
+                "failed": [],
+                "blocks": [
+                  {
+                    "kind": "thought",
+                    "id": "msg-2:1",
+                    "preview": "Considering user interaction flow",
+                    "live": false,
+                    "open": false
+                  },
+                  {
+                    "kind": "tools",
+                    "id": "tools:tool:toolu_3",
+                    "label": "Read a file",
+                    "state": "complete",
+                    "live": false,
+                    "open": false,
+                    "actions": [
+                      {
+                        "id": "tool:toolu_3",
+                        "title": "Read Thread.kt",
+                        "detail": "…/ui/worker/Thread.kt",
+                        "category": "read",
+                        "state": "complete",
+                        "status": "",
+                        "arguments": {
+                          "label": "Arguments"
+                        },
+                        "result": "Result",
+                        "open": false
+                      }
+                    ]
+                  },
+                  {
+                    "kind": "thought",
+                    "id": "msg-4:1",
+                    "preview": "The tool rows are equal weight.",
+                    "live": false,
+                    "open": false
+                  },
+                  {
+                    "kind": "tools",
+                    "id": "tools:tool:toolu_5",
+                    "label": "Searched the code",
+                    "state": "complete",
+                    "live": false,
+                    "open": false,
+                    "actions": [
+                      {
+                        "id": "tool:toolu_5",
+                        "title": "Searched for “Promise.allSettled”",
+                        "detail": "src",
+                        "category": "search",
+                        "state": "complete",
+                        "status": "",
+                        "arguments": {
+                          "label": "Arguments"
+                        },
+                        "result": "Result",
+                        "open": false
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "kind": "message",
+                "id": "msg-6:0",
+                "from": 5,
+                "to": 5,
+                "role": "assistant",
+                "startsTurn": true
+              },
+              {
+                "kind": "message",
+                "id": "msg-7:0",
+                "from": 6,
+                "to": 6,
+                "role": "assistant",
+                "startsTurn": false
+              }
+            ]
+          }
+        },
+        {
+          "snapshot": {
+            "before": 3,
+            "sessionId": "captured",
+            "entries": [
+              {
+                "id": "msg-2:1",
+                "role": "assistant",
+                "kind": "thinking",
+                "text": "**Considering user interaction flow**\n\nI should read the Thread view first.",
+                "seq": 1
+              },
+              {
+                "id": "tool:toolu_3",
+                "role": "assistant",
+                "kind": "tool",
+                "name": "Read",
+                "input": "{\n  \"file_path\": \"/Users/nik/repos/droid-office/.droid-office/worktrees/byte-090d/android/app/src/main/java/ai/factory/droidoffice/ui/worker/Thread.kt\",\n  \"limit\": 300\n}",
+                "output": "package",
+                "seq": 2
+              }
+            ],
+            "hasMore": true,
+            "presentation": {
+              "version": 1,
+              "rows": [
+                {
+                  "kind": "activity",
+                  "id": "activity:msg-2:1",
+                  "from": 1,
+                  "to": 4,
+                  "sourceIds": [
+                    "msg-2:1",
+                    "tool:toolu_3",
+                    "msg-4:1",
+                    "tool:toolu_5"
+                  ],
+                  "label": "Read a file · Searched the code",
+                  "state": "complete",
+                  "live": false,
+                  "open": false,
+                  "failed": [],
+                  "blocks": [
+                    {
+                      "kind": "thought",
+                      "id": "msg-2:1",
+                      "preview": "Considering user interaction flow",
+                      "live": false,
+                      "open": false
+                    },
+                    {
+                      "kind": "tools",
+                      "id": "tools:tool:toolu_3",
+                      "label": "Read a file",
+                      "state": "complete",
+                      "live": false,
+                      "open": false,
+                      "actions": [
+                        {
+                          "id": "tool:toolu_3",
+                          "title": "Read Thread.kt",
+                          "detail": "…/ui/worker/Thread.kt",
+                          "category": "read",
+                          "state": "complete",
+                          "status": "",
+                          "arguments": {
+                            "label": "Arguments"
+                          },
+                          "result": "Result",
+                          "open": false
+                        }
+                      ]
+                    },
+                    {
+                      "kind": "thought",
+                      "id": "msg-4:1",
+                      "preview": "The tool rows are equal weight.",
+                      "live": false,
+                      "open": false
+                    },
+                    {
+                      "kind": "tools",
+                      "id": "tools:tool:toolu_5",
+                      "label": "Searched the code",
+                      "state": "complete",
+                      "live": false,
+                      "open": false,
+                      "actions": [
+                        {
+                          "id": "tool:toolu_5",
+                          "title": "Searched for “Promise.allSettled”",
+                          "detail": "src",
+                          "category": "search",
+                          "state": "complete",
+                          "status": "",
+                          "arguments": {
+                            "label": "Arguments"
+                          },
+                          "result": "Result",
+                          "open": false
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            }
+          },
+          "expected": {
+            "entries": [
+              "msg-2:1",
+              "tool:toolu_3",
+              "msg-4:1",
+              "tool:toolu_5",
+              "msg-6:0",
+              "msg-7:0"
+            ],
+            "rows": [
+              {
+                "kind": "activity",
+                "id": "activity:msg-2:1",
+                "from": 1,
+                "to": 4,
+                "sourceIds": [
+                  "msg-2:1",
+                  "tool:toolu_3",
+                  "msg-4:1",
+                  "tool:toolu_5"
+                ],
+                "label": "Read a file · Searched the code",
+                "state": "complete",
+                "live": false,
+                "open": false,
+                "failed": [],
+                "blocks": [
+                  {
+                    "kind": "thought",
+                    "id": "msg-2:1",
+                    "preview": "Considering user interaction flow",
+                    "live": false,
+                    "open": false
+                  },
+                  {
+                    "kind": "tools",
+                    "id": "tools:tool:toolu_3",
+                    "label": "Read a file",
+                    "state": "complete",
+                    "live": false,
+                    "open": false,
+                    "actions": [
+                      {
+                        "id": "tool:toolu_3",
+                        "title": "Read Thread.kt",
+                        "detail": "…/ui/worker/Thread.kt",
+                        "category": "read",
+                        "state": "complete",
+                        "status": "",
+                        "arguments": {
+                          "label": "Arguments"
+                        },
+                        "result": "Result",
+                        "open": false
+                      }
+                    ]
+                  },
+                  {
+                    "kind": "thought",
+                    "id": "msg-4:1",
+                    "preview": "The tool rows are equal weight.",
+                    "live": false,
+                    "open": false
+                  },
+                  {
+                    "kind": "tools",
+                    "id": "tools:tool:toolu_5",
+                    "label": "Searched the code",
+                    "state": "complete",
+                    "live": false,
+                    "open": false,
+                    "actions": [
+                      {
+                        "id": "tool:toolu_5",
+                        "title": "Searched for “Promise.allSettled”",
+                        "detail": "src",
+                        "category": "search",
+                        "state": "complete",
+                        "status": "",
+                        "arguments": {
+                          "label": "Arguments"
+                        },
+                        "result": "Result",
+                        "open": false
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "kind": "message",
+                "id": "msg-6:0",
+                "from": 5,
+                "to": 5,
+                "role": "assistant",
+                "startsTurn": true
+              },
+              {
+                "kind": "message",
+                "id": "msg-7:0",
+                "from": 6,
+                "to": 6,
+                "role": "assistant",
+                "startsTurn": false
+              }
+            ]
+          }
+        },
+        {
+          "snapshot": {
+            "before": 1,
+            "sessionId": "captured",
+            "entries": [
+              {
+                "id": "msg-1:0",
+                "role": "user",
+                "kind": "text",
+                "text": "Why is the thread ugly?",
+                "seq": 0
+              }
+            ],
+            "hasMore": false,
+            "presentation": {
+              "version": 1,
+              "rows": [
+                {
+                  "kind": "message",
+                  "id": "msg-1:0",
+                  "from": 0,
+                  "to": 0,
+                  "role": "user",
+                  "startsTurn": false
+                }
+              ]
+            }
+          },
+          "expected": {
+            "entries": [
+              "msg-1:0",
+              "msg-2:1",
+              "tool:toolu_3",
+              "msg-4:1",
+              "tool:toolu_5",
+              "msg-6:0",
+              "msg-7:0"
+            ],
+            "rows": [
+              {
+                "kind": "message",
+                "id": "msg-1:0",
+                "from": 0,
+                "to": 0,
+                "role": "user",
+                "startsTurn": false
+              },
+              {
+                "kind": "activity",
+                "id": "activity:msg-2:1",
+                "from": 1,
+                "to": 4,
+                "sourceIds": [
+                  "msg-2:1",
+                  "tool:toolu_3",
+                  "msg-4:1",
+                  "tool:toolu_5"
+                ],
+                "label": "Read a file · Searched the code",
+                "state": "complete",
+                "live": false,
+                "open": false,
+                "failed": [],
+                "blocks": [
+                  {
+                    "kind": "thought",
+                    "id": "msg-2:1",
+                    "preview": "Considering user interaction flow",
+                    "live": false,
+                    "open": false
+                  },
+                  {
+                    "kind": "tools",
+                    "id": "tools:tool:toolu_3",
+                    "label": "Read a file",
+                    "state": "complete",
+                    "live": false,
+                    "open": false,
+                    "actions": [
+                      {
+                        "id": "tool:toolu_3",
+                        "title": "Read Thread.kt",
+                        "detail": "…/ui/worker/Thread.kt",
+                        "category": "read",
+                        "state": "complete",
+                        "status": "",
+                        "arguments": {
+                          "label": "Arguments"
+                        },
+                        "result": "Result",
+                        "open": false
+                      }
+                    ]
+                  },
+                  {
+                    "kind": "thought",
+                    "id": "msg-4:1",
+                    "preview": "The tool rows are equal weight.",
+                    "live": false,
+                    "open": false
+                  },
+                  {
+                    "kind": "tools",
+                    "id": "tools:tool:toolu_5",
+                    "label": "Searched the code",
+                    "state": "complete",
+                    "live": false,
+                    "open": false,
+                    "actions": [
+                      {
+                        "id": "tool:toolu_5",
+                        "title": "Searched for “Promise.allSettled”",
+                        "detail": "src",
+                        "category": "search",
+                        "state": "complete",
+                        "status": "",
+                        "arguments": {
+                          "label": "Arguments"
+                        },
+                        "result": "Result",
+                        "open": false
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "kind": "message",
+                "id": "msg-6:0",
+                "from": 5,
+                "to": 5,
+                "role": "assistant",
+                "startsTurn": true
+              },
+              {
+                "kind": "message",
+                "id": "msg-7:0",
+                "from": 6,
+                "to": 6,
+                "role": "assistant",
+                "startsTurn": false
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "crash_and_stop_in_pages_of_three",
+      "busy": false,
+      "steps": [
+        {
+          "snapshot": {
+            "sessionId": "captured",
+            "entries": [
+              {
+                "id": "tool:call_uGbP58i5lkzER4c33Zukobxv",
+                "role": "assistant",
+                "kind": "tool",
+                "name": "Script",
+                "input": "{\n  \"script\": \"text(await tools.Execute({command:\\\"sleep 90\\\",summary:\\\"Wait for native Stop\\\",timeout:120,riskLevel:\\\"low\\\"}));\"\n}",
+                "seq": 223,
+                "output": "[Script cancelled · 33.1 s elapsed · 1 interrupted call]\n{\"toolCallId\":\"call_uGbP58i5lkzER4c33Zukobxv\",\"status\":\"cancelled\",\"interruptedCalls\":[{\"toolUseId\":\"5c8a4c65-8f54-4a4d-a67f-bba5f34bc311-1\",\"name\":\"Execute\",\"input\":{\"command\":\"sleep 90\",\"summary\":\"Wait for native Stop\",\"timeout\":120,\"riskLevel\":\"low\"}}]}",
+                "error": false,
+                "resultSeq": 225
+              },
+              {
+                "id": "tool:5c8a4c65-8f54-4a4d-a67f-bba5f34bc311-1",
+                "role": "assistant",
+                "kind": "tool",
+                "name": "Execute",
+                "input": "{\n  \"command\": \"sleep 90\",\n  \"summary\": \"Wait for native Stop\",\n  \"timeout\": 120,\n  \"riskLevel\": \"low\"\n}",
+                "seq": 224,
+                "output": "Tool execution cancelled by user",
+                "error": true,
+                "resultSeq": 225
+              },
+              {
+                "id": "turn:18ea64b8-d625-4e8c-b071-29e134a98d89:cancelled",
+                "role": "system",
+                "kind": "notice",
+                "text": "Turn cancelled",
+                "seq": 225
+              }
+            ],
+            "hasMore": true,
+            "presentation": {
+              "version": 1,
+              "rows": [
+                {
+                  "kind": "activity",
+                  "id": "activity:tool:call_uGbP58i5lkzER4c33Zukobxv",
+                  "from": 223,
+                  "to": 224,
+                  "sourceIds": [
+                    "tool:call_uGbP58i5lkzER4c33Zukobxv",
+                    "tool:5c8a4c65-8f54-4a4d-a67f-bba5f34bc311-1"
+                  ],
+                  "label": "Ran a command",
+                  "state": "cancelled",
+                  "live": false,
+                  "open": false,
+                  "status": "1 cancelled",
+                  "failed": [],
+                  "blocks": [
+                    {
+                      "kind": "tools",
+                      "id": "tools:tool:call_uGbP58i5lkzER4c33Zukobxv",
+                      "label": "Ran a command",
+                      "state": "cancelled",
+                      "live": false,
+                      "open": false,
+                      "actions": [
+                        {
+                          "id": "tool:5c8a4c65-8f54-4a4d-a67f-bba5f34bc311-1",
+                          "title": "Wait for native Stop",
+                          "category": "command",
+                          "state": "cancelled",
+                          "status": "Cancelled",
+                          "arguments": {
+                            "label": "Command",
+                            "field": "command"
+                          },
+                          "result": "Cancelled",
+                          "open": false
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "kind": "notice",
+                  "id": "turn:18ea64b8-d625-4e8c-b071-29e134a98d89:cancelled",
+                  "from": 225,
+                  "to": 225,
+                  "role": "system",
+                  "text": "Turn cancelled",
+                  "tone": "quiet"
+                }
+              ]
+            }
+          },
+          "expected": {
+            "entries": [
+              "tool:call_uGbP58i5lkzER4c33Zukobxv",
+              "tool:5c8a4c65-8f54-4a4d-a67f-bba5f34bc311-1",
+              "turn:18ea64b8-d625-4e8c-b071-29e134a98d89:cancelled"
+            ],
+            "rows": [
+              {
+                "kind": "activity",
+                "id": "activity:tool:call_uGbP58i5lkzER4c33Zukobxv",
+                "from": 223,
+                "to": 224,
+                "sourceIds": [
+                  "tool:call_uGbP58i5lkzER4c33Zukobxv",
+                  "tool:5c8a4c65-8f54-4a4d-a67f-bba5f34bc311-1"
+                ],
+                "label": "Ran a command",
+                "state": "cancelled",
+                "live": false,
+                "open": false,
+                "status": "1 cancelled",
+                "failed": [],
+                "blocks": [
+                  {
+                    "kind": "tools",
+                    "id": "tools:tool:call_uGbP58i5lkzER4c33Zukobxv",
+                    "label": "Ran a command",
+                    "state": "cancelled",
+                    "live": false,
+                    "open": false,
+                    "actions": [
+                      {
+                        "id": "tool:5c8a4c65-8f54-4a4d-a67f-bba5f34bc311-1",
+                        "title": "Wait for native Stop",
+                        "category": "command",
+                        "state": "cancelled",
+                        "status": "Cancelled",
+                        "arguments": {
+                          "label": "Command",
+                          "field": "command"
+                        },
+                        "result": "Cancelled",
+                        "open": false
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "kind": "notice",
+                "id": "turn:18ea64b8-d625-4e8c-b071-29e134a98d89:cancelled",
+                "from": 225,
+                "to": 225,
+                "role": "system",
+                "text": "Turn cancelled",
+                "tone": "quiet"
+              }
+            ]
+          }
+        },
+        {
+          "snapshot": {
+            "before": 223,
+            "sessionId": "captured",
+            "entries": [
+              {
+                "id": "17c26893-ef32-46f5-9864-87a86bc2920c:0",
+                "role": "assistant",
+                "kind": "text",
+                "text": "The crash check was cancelled before the wait finished.",
+                "seq": 198
+              },
+              {
+                "id": "turn:script-completion:7129eccc-d2a8-4d15-a5a9-cea503e25ed3:call_R5hLkXpPVQuUKNbqvGnjqA5V:call_R5hLkXpPVQuUKNbqvGnjqA5V:completed",
+                "role": "system",
+                "kind": "notice",
+                "text": "Turn ended · completed",
+                "seq": 199
+              },
+              {
+                "id": "18ea64b8-d625-4e8c-b071-29e134a98d89:0",
+                "role": "user",
+                "kind": "text",
+                "text": "Read only UI check. Use Script for one Execute that waits.",
+                "seq": 222
+              }
+            ],
+            "hasMore": true,
+            "presentation": {
+              "version": 1,
+              "rows": [
+                {
+                  "kind": "message",
+                  "id": "17c26893-ef32-46f5-9864-87a86bc2920c:0",
+                  "from": 198,
+                  "to": 198,
+                  "role": "assistant",
+                  "startsTurn": true
+                },
+                {
+                  "kind": "message",
+                  "id": "18ea64b8-d625-4e8c-b071-29e134a98d89:0",
+                  "from": 222,
+                  "to": 222,
+                  "role": "user",
+                  "startsTurn": false
+                }
+              ]
+            }
+          },
+          "expected": {
+            "entries": [
+              "17c26893-ef32-46f5-9864-87a86bc2920c:0",
+              "turn:script-completion:7129eccc-d2a8-4d15-a5a9-cea503e25ed3:call_R5hLkXpPVQuUKNbqvGnjqA5V:call_R5hLkXpPVQuUKNbqvGnjqA5V:completed",
+              "18ea64b8-d625-4e8c-b071-29e134a98d89:0",
+              "tool:call_uGbP58i5lkzER4c33Zukobxv",
+              "tool:5c8a4c65-8f54-4a4d-a67f-bba5f34bc311-1",
+              "turn:18ea64b8-d625-4e8c-b071-29e134a98d89:cancelled"
+            ],
+            "rows": [
+              {
+                "kind": "message",
+                "id": "17c26893-ef32-46f5-9864-87a86bc2920c:0",
+                "from": 198,
+                "to": 198,
+                "role": "assistant",
+                "startsTurn": true
+              },
+              {
+                "kind": "message",
+                "id": "18ea64b8-d625-4e8c-b071-29e134a98d89:0",
+                "from": 222,
+                "to": 222,
+                "role": "user",
+                "startsTurn": false
+              },
+              {
+                "kind": "activity",
+                "id": "activity:tool:call_uGbP58i5lkzER4c33Zukobxv",
+                "from": 223,
+                "to": 224,
+                "sourceIds": [
+                  "tool:call_uGbP58i5lkzER4c33Zukobxv",
+                  "tool:5c8a4c65-8f54-4a4d-a67f-bba5f34bc311-1"
+                ],
+                "label": "Ran a command",
+                "state": "cancelled",
+                "live": false,
+                "open": false,
+                "status": "1 cancelled",
+                "failed": [],
+                "blocks": [
+                  {
+                    "kind": "tools",
+                    "id": "tools:tool:call_uGbP58i5lkzER4c33Zukobxv",
+                    "label": "Ran a command",
+                    "state": "cancelled",
+                    "live": false,
+                    "open": false,
+                    "actions": [
+                      {
+                        "id": "tool:5c8a4c65-8f54-4a4d-a67f-bba5f34bc311-1",
+                        "title": "Wait for native Stop",
+                        "category": "command",
+                        "state": "cancelled",
+                        "status": "Cancelled",
+                        "arguments": {
+                          "label": "Command",
+                          "field": "command"
+                        },
+                        "result": "Cancelled",
+                        "open": false
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "kind": "notice",
+                "id": "turn:18ea64b8-d625-4e8c-b071-29e134a98d89:cancelled",
+                "from": 225,
+                "to": 225,
+                "role": "system",
+                "text": "Turn cancelled",
+                "tone": "quiet"
+              }
+            ]
+          }
+        },
+        {
+          "snapshot": {
+            "before": 198,
+            "sessionId": "captured",
+            "entries": [
+              {
+                "id": "tool:call_R5hLkXpPVQuUKNbqvGnjqA5V",
+                "role": "assistant",
+                "kind": "tool",
+                "name": "Script",
+                "input": "{\n  \"script\": \"text(await tools.Execute({command:\\\"python3 -c 'import time; time.sleep(120)'\\\",summary:\\\"Wait for crash check\\\",timeout:150,riskLevel:\\\"low\\\"}));\"\n}",
+                "seq": 196,
+                "output": "Error: Tool execution cancelled by user",
+                "error": true,
+                "resultSeq": 225
+              },
+              {
+                "id": "tool:17df3d74-4d35-4185-b98c-c6b1cf2d1154-1",
+                "role": "assistant",
+                "kind": "tool",
+                "name": "Execute",
+                "input": "{\n  \"command\": \"python3 -c 'import time; time.sleep(120)'\",\n  \"summary\": \"Wait for crash check\",\n  \"timeout\": 150,\n  \"riskLevel\": \"low\"\n}",
+                "seq": 197,
+                "output": "Tool execution was interrupted",
+                "error": true,
+                "resultSeq": 198
+              }
+            ],
+            "hasMore": false,
+            "presentation": {
+              "version": 1,
+              "rows": [
+                {
+                  "kind": "activity",
+                  "id": "activity:tool:call_R5hLkXpPVQuUKNbqvGnjqA5V",
+                  "from": 196,
+                  "to": 197,
+                  "sourceIds": [
+                    "tool:call_R5hLkXpPVQuUKNbqvGnjqA5V",
+                    "tool:17df3d74-4d35-4185-b98c-c6b1cf2d1154-1"
+                  ],
+                  "label": "Ran a command",
+                  "state": "failed",
+                  "live": false,
+                  "open": false,
+                  "status": "1 failed",
+                  "failed": [
+                    {
+                      "id": "tool:17df3d74-4d35-4185-b98c-c6b1cf2d1154-1",
+                      "title": "Wait for crash check",
+                      "preview": "Tool execution was interrupted"
+                    }
+                  ],
+                  "blocks": [
+                    {
+                      "kind": "tools",
+                      "id": "tools:tool:call_R5hLkXpPVQuUKNbqvGnjqA5V",
+                      "label": "Ran a command",
+                      "state": "failed",
+                      "live": false,
+                      "open": false,
+                      "actions": [
+                        {
+                          "id": "tool:call_R5hLkXpPVQuUKNbqvGnjqA5V",
+                          "title": "Script stopped after a tool failed",
+                          "category": "script",
+                          "state": "failed",
+                          "status": "Failed",
+                          "causedBy": "tool:17df3d74-4d35-4185-b98c-c6b1cf2d1154-1",
+                          "arguments": {
+                            "label": "Script",
+                            "field": "script"
+                          },
+                          "result": "Error",
+                          "open": false
+                        },
+                        {
+                          "id": "tool:17df3d74-4d35-4185-b98c-c6b1cf2d1154-1",
+                          "title": "Wait for crash check",
+                          "category": "command",
+                          "state": "failed",
+                          "status": "Failed",
+                          "arguments": {
+                            "label": "Command",
+                            "field": "command"
+                          },
+                          "result": "Error",
+                          "open": false
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            }
+          },
+          "expected": {
+            "entries": [
+              "tool:call_R5hLkXpPVQuUKNbqvGnjqA5V",
+              "tool:17df3d74-4d35-4185-b98c-c6b1cf2d1154-1",
+              "17c26893-ef32-46f5-9864-87a86bc2920c:0",
+              "turn:script-completion:7129eccc-d2a8-4d15-a5a9-cea503e25ed3:call_R5hLkXpPVQuUKNbqvGnjqA5V:call_R5hLkXpPVQuUKNbqvGnjqA5V:completed",
+              "18ea64b8-d625-4e8c-b071-29e134a98d89:0",
+              "tool:call_uGbP58i5lkzER4c33Zukobxv",
+              "tool:5c8a4c65-8f54-4a4d-a67f-bba5f34bc311-1",
+              "turn:18ea64b8-d625-4e8c-b071-29e134a98d89:cancelled"
+            ],
+            "rows": [
+              {
+                "kind": "activity",
+                "id": "activity:tool:call_R5hLkXpPVQuUKNbqvGnjqA5V",
+                "from": 196,
+                "to": 197,
+                "sourceIds": [
+                  "tool:call_R5hLkXpPVQuUKNbqvGnjqA5V",
+                  "tool:17df3d74-4d35-4185-b98c-c6b1cf2d1154-1"
+                ],
+                "label": "Ran a command",
+                "state": "failed",
+                "live": false,
+                "open": false,
+                "status": "1 failed",
+                "failed": [
+                  {
+                    "id": "tool:17df3d74-4d35-4185-b98c-c6b1cf2d1154-1",
+                    "title": "Wait for crash check",
+                    "preview": "Tool execution was interrupted"
+                  }
+                ],
+                "blocks": [
+                  {
+                    "kind": "tools",
+                    "id": "tools:tool:call_R5hLkXpPVQuUKNbqvGnjqA5V",
+                    "label": "Ran a command",
+                    "state": "failed",
+                    "live": false,
+                    "open": false,
+                    "actions": [
+                      {
+                        "id": "tool:call_R5hLkXpPVQuUKNbqvGnjqA5V",
+                        "title": "Script stopped after a tool failed",
+                        "category": "script",
+                        "state": "failed",
+                        "status": "Failed",
+                        "causedBy": "tool:17df3d74-4d35-4185-b98c-c6b1cf2d1154-1",
+                        "arguments": {
+                          "label": "Script",
+                          "field": "script"
+                        },
+                        "result": "Error",
+                        "open": false
+                      },
+                      {
+                        "id": "tool:17df3d74-4d35-4185-b98c-c6b1cf2d1154-1",
+                        "title": "Wait for crash check",
+                        "category": "command",
+                        "state": "failed",
+                        "status": "Failed",
+                        "arguments": {
+                          "label": "Command",
+                          "field": "command"
+                        },
+                        "result": "Error",
+                        "open": false
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "kind": "message",
+                "id": "17c26893-ef32-46f5-9864-87a86bc2920c:0",
+                "from": 198,
+                "to": 198,
+                "role": "assistant",
+                "startsTurn": true
+              },
+              {
+                "kind": "message",
+                "id": "18ea64b8-d625-4e8c-b071-29e134a98d89:0",
+                "from": 222,
+                "to": 222,
+                "role": "user",
+                "startsTurn": false
+              },
+              {
+                "kind": "activity",
+                "id": "activity:tool:call_uGbP58i5lkzER4c33Zukobxv",
+                "from": 223,
+                "to": 224,
+                "sourceIds": [
+                  "tool:call_uGbP58i5lkzER4c33Zukobxv",
+                  "tool:5c8a4c65-8f54-4a4d-a67f-bba5f34bc311-1"
+                ],
+                "label": "Ran a command",
+                "state": "cancelled",
+                "live": false,
+                "open": false,
+                "status": "1 cancelled",
+                "failed": [],
+                "blocks": [
+                  {
+                    "kind": "tools",
+                    "id": "tools:tool:call_uGbP58i5lkzER4c33Zukobxv",
+                    "label": "Ran a command",
+                    "state": "cancelled",
+                    "live": false,
+                    "open": false,
+                    "actions": [
+                      {
+                        "id": "tool:5c8a4c65-8f54-4a4d-a67f-bba5f34bc311-1",
+                        "title": "Wait for native Stop",
+                        "category": "command",
+                        "state": "cancelled",
+                        "status": "Cancelled",
+                        "arguments": {
+                          "label": "Command",
+                          "field": "command"
+                        },
+                        "result": "Cancelled",
+                        "open": false
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "kind": "notice",
+                "id": "turn:18ea64b8-d625-4e8c-b071-29e134a98d89:cancelled",
+                "from": 225,
+                "to": 225,
+                "role": "system",
+                "text": "Turn cancelled",
+                "tone": "quiet"
+              }
+            ]
+          }
+        }
       ]
     }
   ]

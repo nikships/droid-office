@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { TEAM_THREAD_CHARACTERS, TEAM_THREAD_ENTRIES, TEAM_THREAD_WORKERS, TeamThread, TeamThreadPaint, teamThreadChildren, teamThreadVisible } from '../src/client/team-thread.js';
 import type { ClientMsg, ServerMsg, WorkerInfo } from '../src/shared/protocol.js';
+import { presentThread, THREAD_MODEL_VERSION, type ThreadRow } from '../src/shared/thread-presentation.js';
 import type { ThreadEntry } from '../src/shared/worker-thread.js';
 
 // Local display-model values, not third-party API or terminal fixtures.
@@ -273,11 +274,16 @@ test('a long-running stream retains only the bounded recent tail and all selecte
   for (let page = 1; page <= 10; page++) {
     read(page * 1000);
     const entries = Array.from({ length: 100 }, (_, i) => entry(page * 100 + i, { text: 'x'.repeat(8000) }));
+    const rows: ThreadRow[] = entries.map((e) => ({ kind: 'message', id: e.id, from: e.seq, to: e.seq, role: 'assistant', startsTurn: false }));
     const request = reads.at(-1) as Read;
-    team.receive(snapshot(request, entries, { hasMore: true }));
+    team.receive(snapshot(request, entries, { hasMore: true, presentation: { version: THREAD_MODEL_VERSION, rows } }));
     latest.set(request.workerId, page * 100 + 99);
     for (const member of team.members.values()) {
       assert.ok(member.history.entries.length <= TEAM_THREAD_ENTRIES);
+      assert.deepEqual(
+        member.history.rows.map((row) => row.id),
+        member.history.entries.map((e) => e.id),
+      );
       assert.ok(JSON.stringify(member.history.entries).length <= TEAM_THREAD_CHARACTERS);
       assert.equal(member.history.entries.at(-1)?.seq, latest.get(member.worker.id));
       assert.equal(member.history.hasMore, latest.has(member.worker.id));
@@ -285,6 +291,24 @@ test('a long-running stream retains only the bounded recent tail and all selecte
   }
 });
 
+test('the team cache never holds a row whose entries it dropped', () => {
+  const { team, reads, read } = rig();
+  read(1000);
+  const entries: ThreadEntry[] = [entry(1, { role: 'user', text: 'Ship the release' }), ...Array.from({ length: 60 }, (_, i) => entry(i + 2, { kind: 'tool', name: 'Read', input: '{}', output: 'Done' }))];
+  team.receive(snapshot(reads[0], entries, { hasMore: true, presentation: { version: THREAD_MODEL_VERSION, rows: presentThread(entries, false) } }));
+  const history = team.members.get('one')?.history;
+  assert.ok(history);
+  assert.equal(history.entries.length, TEAM_THREAD_ENTRIES);
+  assert.ok(!history.entries.some((item) => item.id === 'entry-1'), 'the oldest entries are dropped');
+  const preview = history.rows.slice(-4);
+  assert.ok(preview.length, 'the card has rows to show');
+  assert.ok(
+    preview.every((row) => row.kind !== 'message'),
+    'a message row whose text the cache dropped would be an empty bubble',
+  );
+  const loaded = new Set(history.entries.map((item) => item.id));
+  for (const row of preview) if (row.kind !== 'activity') assert.ok(loaded.has(row.id), `${row.id} is loaded`);
+});
 test('revision changes only for displayed state, not ticks, pending IDs or identical snapshots', () => {
   const { team, reads, read } = rig();
   const initial = team.revision;

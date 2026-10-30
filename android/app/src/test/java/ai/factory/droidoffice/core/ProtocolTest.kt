@@ -175,6 +175,46 @@ class ProtocolTest {
     }
 
     @Test
+    fun readsThePresentationAndOnlyRowsOfAVersionItKnows() {
+        val msg = Protocol.decode(
+            """{"t":"thread.snapshot","workerId":"w1","request":"ab-5","sessionId":"s1","hasMore":false,"entries":[],
+              "presentation":{"version":1,"future":true,"rows":[
+                {"kind":"message","id":"u1","from":1,"to":1,"role":"user","startsTurn":false,"extra":1},
+                {"kind":"notice","id":"n1","from":2,"to":2,"role":"system","text":"Turn cancelled","tone":"quiet"},
+                {"kind":"activity","id":"activity:t1","from":3,"to":5,"sourceIds":["t1","th","t2"],"label":"Ran a command","state":"failed","live":false,"open":false,
+                 "status":"1 failed","failed":[{"id":"t2","title":"Read a.ts","preview":"ENOENT"}],"cancelled":0,"noResult":0,"blocks":[
+                   {"kind":"thought","id":"th","preview":"Checking","live":false,"open":false},
+                   {"kind":"tools","id":"tools:t1","label":"Ran a command","state":"failed","live":false,"open":false,"plan":[{"done":true,"active":false,"text":"Look"}],"actions":[
+                     {"id":"t1","title":"Ran the tests","category":"command","state":"complete","status":"","arguments":{"label":"Command","field":"command"},"result":"Result","open":false}
+                   ]}
+                 ]},
+                {"kind":"timeline","id":"z","from":6,"to":6}
+              ]}}""",
+        ) as ServerMsg.ThreadSnapshot
+        val p = msg.presentation!!
+        assertEquals(1, p.version)
+        assertEquals(listOf("u1", "n1", "activity:t1"), p.rows.map { it.id })
+        assertEquals(ThreadRow.Message("u1", 1, 1, ThreadRole.User, false), p.rows[0])
+        assertEquals(ThreadRow.Notice("n1", 2, 2, ThreadRole.System, "Turn cancelled", NoticeTone.Quiet), p.rows[1])
+        val a = p.rows[2] as ThreadRow.Activity
+        assertEquals(listOf("t1", "th", "t2"), a.sourceIds)
+        assertEquals("1 failed", a.status)
+        assertNull(a.running)
+        assertEquals(listOf(ThreadFailure("t2", "Read a.ts", "ENOENT")), a.failed)
+        assertEquals(ThreadBlock.Thought("th", "Checking", live = false), a.blocks[0])
+        val run = a.blocks[1] as ThreadBlock.Tools
+        assertEquals(listOf(PlanStep(done = true, active = false, text = "Look")), run.plan)
+        assertEquals(ThreadArgumentsRef("Command", "command"), run.actions.single().arguments)
+        assertNull(run.actions.single().detail)
+
+        // An office from before the presentation sends none; a newer one's rows aren't read.
+        val old = Protocol.decode("""{"t":"thread.snapshot","workerId":"w1","request":"ab-6","entries":[],"hasMore":false}""") as ServerMsg.ThreadSnapshot
+        assertNull(old.presentation)
+        val newer = Protocol.decode("""{"t":"thread.snapshot","workerId":"w1","request":"ab-7","entries":[],"hasMore":false,"presentation":{"version":2,"rows":[{"kind":"message","id":"u1","from":1,"to":1,"role":"user","startsTurn":false}]}}""") as ServerMsg.ThreadSnapshot
+        assertEquals(ThreadPresentation(2, emptyList()), newer.presentation)
+    }
+
+    @Test
     fun asksForThreadPages() {
         val latest = json(ClientMsg.threadRead("w1", "ab-1"))
         assertEquals("thread.read", latest.getValue("t").jsonPrimitive.content)

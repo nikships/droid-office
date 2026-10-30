@@ -77,19 +77,26 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.compose.currentStateAsState
+import ai.factory.droidoffice.core.ActivityState
 import ai.factory.droidoffice.core.Asks
 import ai.factory.droidoffice.core.ClientMsg
 import ai.factory.droidoffice.core.DroidQueue
+import ai.factory.droidoffice.core.NoticeTone
 import ai.factory.droidoffice.core.PendingAsk
+import ai.factory.droidoffice.core.PlanStep
 import ai.factory.droidoffice.core.ScreenState
 import ai.factory.droidoffice.core.Tags
+import ai.factory.droidoffice.core.ThreadBlock
+import ai.factory.droidoffice.core.ThreadEntry
 import ai.factory.droidoffice.core.ThreadFeed
+import ai.factory.droidoffice.core.ThreadModelAction
 import ai.factory.droidoffice.core.ThreadPhase
 import ai.factory.droidoffice.core.ThreadQueue
 import ai.factory.droidoffice.core.ThreadRole
+import ai.factory.droidoffice.core.ThreadRow
 import ai.factory.droidoffice.core.ThreadState
+import ai.factory.droidoffice.core.ThreadSupport
 import ai.factory.droidoffice.core.ThreadView
-import ai.factory.droidoffice.core.ToolState
 import ai.factory.droidoffice.core.WorkerInfo
 import ai.factory.droidoffice.core.WorkerStatus
 import ai.factory.droidoffice.ui.LocalGraph
@@ -139,20 +146,18 @@ private const val ASK = "thread.ask"
 private const val QUEUED = "thread.queued"
 /** A tool's arguments or result longer than this shows its start, so one huge log can't stall the list. */
 private const val SHOWN_CHARS = 6_000
-/** Where a call's open details are kept in the open map, apart from the runs keyed by their entry ids. */
-private const val DETAIL = "detail:"
-/** Where a long message from the owner is kept shown in full, in the same map. */
+/** Where a long message from the owner is kept shown in full, in the map of what is open. */
 private const val MORE = "more:"
 /** A message from the owner taller than this many lines shows its start, so a long brief can't fill the screen. */
 private const val USER_LINES = 8
 
 /**
- * The worker's conversation, read from its Droid session by the office: what it was asked and what
- * it said, with everything it did in between folded into one quiet line per run ("Read 3 files · Ran
- * 2 commands") that opens to the actions, their arguments and results, its thinking and its plan.
- * Then what it's on now and the question it's waiting on as a card with its choices. It polls once a
- * second while it's on screen and connected. An office that can't send threads, or a session it
- * can't read, says so and offers Raw TTY, which always has everything.
+ * The worker's conversation as the office presents it ([ThreadRow]): what it was asked and what it
+ * said, with everything it did in between folded into one quiet Activity line ("Read 3 files · Ran 2
+ * commands") that opens to its thoughts and tool runs, each run to its actions and plan, each action
+ * to its arguments and result. Then the question it's waiting on as a card with its choices. It polls
+ * once a second while it's on screen and connected. An office that can't send threads, sends none
+ * this app can read, or can't read the session says so and offers Raw TTY, which always has everything.
  */
 @Composable
 internal fun Thread(
@@ -204,8 +209,9 @@ internal fun Thread(
     val menu = remember(w.isShell, screen) { Asks.menu(w, screen) }
     val asking = w.state == WorkerStatus.NeedsInput
     val showAsk = asking || menu?.pointer != null
-    val busy = w.state.busy
-    val rows = remember(state.entries, busy) { ThreadView.project(state.entries, busy) }
+    // Nothing from a presentation this app can't read is shown: the head says why instead.
+    val rows = if (state.support == ThreadSupport.Supported) state.rows else emptyList()
+    val loaded = remember(state.entries) { state.entries.associateBy { it.id } }
     // Droid's queue as its screen shows it, with the whole text of what this phone sent to it.
     val droidQueue = remember(screen) { screen?.let(DroidQueue::read) }
     var clock by remember(feed) { mutableLongStateOf(0L) }
@@ -229,8 +235,14 @@ internal fun Thread(
     // What the owner opened, whether they're following and where they were reading survive a font,
     // density or theme change recreating the screen, for this office, floor and worker only.
     val kept = "${data.officeId}/${data.floorId}/${w.id}"
-    // Runs are open while any entry of theirs is in here, so a run stays open as it grows either way.
+    // What this device opened or closed, by the model's ids (ThreadView.Open); the rest opens as the model says.
     val open = rememberSaveable(kept, saver = OpenSaver) { mutableStateMapOf() }
+    var openSession by rememberSaveable(kept) { mutableStateOf<String?>(null) }
+    LaunchedEffect(state.sessionId) {
+        val session = state.sessionId ?: return@LaunchedEffect
+        if (openSession != null && openSession != session) open.clear()
+        openSession = session
+    }
     var follow by rememberSaveable(kept) { mutableStateOf(true) }
     // Set by opening anything to read it: reaching the bottom then doesn't follow again until the
     // owner jumps to the latest or sends a message, so what they opened isn't scrolled away by the next entry.
@@ -255,7 +267,7 @@ internal fun Thread(
     LaunchedEffect(list, rows) {
         snapshotFlow { list.firstVisibleItemIndex to list.firstVisibleItemScrollOffset }.collect { (index, offset) ->
             if (place.pending || rows.isEmpty()) return@collect
-            place.key = if (index == 0) null else rows.getOrNull(index - 1)?.key
+            place.key = if (index == 0) null else rows.getOrNull(index - 1)?.id
             place.offset = offset
             place.session = state.sessionId
         }
@@ -263,7 +275,7 @@ internal fun Thread(
     LaunchedEffect(rows) {
         if (!place.pending || rows.isEmpty()) return@LaunchedEffect
         val key = place.key
-        val at = rows.indexOfFirst { it.key == key }
+        val at = rows.indexOfFirst { it.id == key }
         place.pending = false
         if (follow || key == null || at < 0 || (place.session != null && place.session != state.sessionId)) return@LaunchedEffect
         autoScrolling = true
@@ -273,8 +285,8 @@ internal fun Thread(
             autoScrolling = false
         }
     }
-    LaunchedEffect(follow, rows.lastOrNull()?.key) {
-        if (follow) seen = rows.lastOrNull()?.key
+    LaunchedEffect(follow, rows.lastOrNull()?.id) {
+        if (follow) seen = rows.lastOrNull()?.id
     }
     /** False when the owner's touch took the list over part way: their scroll wins. */
     suspend fun toBottom(): Boolean {
@@ -327,9 +339,9 @@ internal fun Thread(
         if (!connected) return
         val first = list.layoutInfo.visibleItemsInfo.firstOrNull { it.key != HEAD }
         val (req, before) = feed.earlier(System.currentTimeMillis()) ?: return
-        // Hold on to the run's newest entry: an earlier page can only add to a run from its start.
-        val row = rows.firstOrNull { it.key == first?.key } ?: rows.firstOrNull()
-        anchor = row?.let { r -> (if (r is ThreadView.Activity) r.lastId else r.key) to (first?.takeIf { it.key == r.key }?.offset ?: 0) }
+        // Hold on to the row's newest entry: an earlier page can only add to a row from its start.
+        val row = rows.firstOrNull { it.id == first?.key } ?: rows.firstOrNull()
+        anchor = row?.let { r -> (r.sourceIds.lastOrNull() ?: r.id) to (first?.takeIf { it.key == r.id }?.offset ?: 0) }
         follow = false
         if (!connection.send(ClientMsg.threadRead(w.id, req, before))) feed.unsent(req)
         state = feed.state
@@ -371,23 +383,16 @@ internal fun Thread(
         polls++
     }
 
-    fun toggle(a: ThreadView.Activity) {
-        if (a.ids.any { open[it] == true }) {
-            a.ids.forEach { open.remove(it) }
-        } else {
-            open[a.lastId] = true
-            inspect()
-        }
+    fun toggle(a: ThreadRow.Activity) {
+        val choices = ThreadView.Open.toggle(a, open)
+        open.putAll(choices)
+        if (choices[a.id] == true) inspect()
     }
 
-    /** Opens or closes a call's details, a thought, a long message or the receipts, by their key in [open]. */
-    fun flip(key: String) {
-        if (open[key] == true) {
-            open.remove(key)
-        } else {
-            open[key] = true
-            inspect()
-        }
+    /** Opens or closes a run, a call's details, a thought or a long message, by its key in [open]. */
+    fun flip(key: String, isOpen: Boolean) {
+        open[key] = !isOpen
+        if (!isOpen) inspect()
     }
 
     Column(modifier.tagged(Tags.Worker.THREAD)) {
@@ -400,13 +405,15 @@ internal fun Thread(
                 contentPadding = PaddingValues(start = side, end = side, top = 4.dp, bottom = 16.dp),
             ) {
                 item(key = HEAD) { Head(w, state, connected, onEarlier = ::earlier, onRetry = ::retry, onTty = onTty) }
-                itemsIndexed(rows, key = { _, r -> r.key }, contentType = { _, r -> r::class }) { i, r ->
+                itemsIndexed(rows, key = { _, r -> r.id }, contentType = { _, r -> r::class }) { i, r ->
                     Box(Modifier.padding(top = gap(if (i > 0) rows[i - 1] else null, r))) {
                         when (r) {
-                            is ThreadView.Message -> Message(w, r, open[MORE + r.key] == true) { flip(MORE + r.key) }
-                            is ThreadView.Notice -> Notice(r)
-                            is ThreadView.Thought -> ThoughtRow(r, open[DETAIL + r.entry.id] == true, live = r.live) { flip(DETAIL + r.entry.id) }
-                            is ThreadView.Activity -> Activity(r, r.ids.any { open[it] == true }, open, asking, onToggle = { toggle(r) }, onFlip = ::flip)
+                            is ThreadRow.Message -> {
+                                val all = open[MORE + r.id] == true
+                                Message(w, r, loaded[r.id]?.text.orEmpty(), all) { flip(MORE + r.id, all) }
+                            }
+                            is ThreadRow.Notice -> Notice(r)
+                            is ThreadRow.Activity -> Activity(r, ThreadView.Open.activity(r, open), open, loaded, asking, onToggle = { toggle(r) }, onFlip = ::flip)
                         }
                     }
                 }
@@ -456,8 +463,8 @@ internal fun Thread(
             Box(Modifier.align(Alignment.TopCenter).fillMaxWidth().height(8.dp).background(Brush.verticalGradient(listOf(Palette.Bg, Color.Transparent))))
         }
         if (ThreadView.showJump(follow, stuck, list.canScrollForward) && rows.isNotEmpty() && !state.newerTrimmed) {
-            val from = rows.indexOfFirst { it.key == seen }
-            val fresh = if (from < 0) 0 else rows.drop(from + 1).count { it is ThreadView.Message && it.entry.role != ThreadRole.User }
+            val from = rows.indexOfFirst { it.id == seen }
+            val fresh = if (from < 0) 0 else rows.drop(from + 1).count { it is ThreadRow.Message && it.role != ThreadRole.User }
             Box(
                 Modifier.fillMaxWidth().background(Palette.Bg).drawBehind { drawLine(Palette.Border, Offset.Zero, Offset(size.width, 0f), 1.dp.toPx()) }
                     .heightIn(min = 48.dp).padding(vertical = 4.dp),
@@ -533,10 +540,10 @@ private fun rememberReveal(): Reveal {
     return remember(requester) { Reveal(Modifier.bringIntoViewRequester(requester)) { asked++ } }
 }
 
-/** What the owner opened, saved as the keys that are open. */
+/** What the owner opened or closed, saved as each key behind a 1 or a 0. */
 private val OpenSaver = Saver<SnapshotStateMap<String, Boolean>, ArrayList<String>>(
-    save = { m -> ArrayList(m.filterValues { it }.keys) },
-    restore = { keys -> mutableStateMapOf<String, Boolean>().apply { keys.forEach { put(it, true) } } },
+    save = { m -> ArrayList(m.map { (key, on) -> (if (on) "1" else "0") + key }) },
+    restore = { saved -> mutableStateMapOf<String, Boolean>().apply { saved.filter { it.isNotEmpty() }.forEach { put(it.drop(1), it[0] == '1') } } },
 )
 
 /**
@@ -564,18 +571,17 @@ private val PlaceSaver = Saver<Place, ArrayList<String?>>(
 )
 
 /** Air between rows: most between turns, least between a message and the work that follows it. */
-private fun gap(prev: ThreadView.Row?, row: ThreadView.Row): Dp {
+private fun gap(prev: ThreadRow?, row: ThreadRow): Dp {
     if (prev == null) return 8.dp
     return when (row) {
-        is ThreadView.Message -> when {
-            row.entry.role == ThreadRole.User -> if (prev is ThreadView.Message && prev.entry.role == ThreadRole.User) 8.dp else 28.dp
+        is ThreadRow.Message -> when {
+            row.role == ThreadRole.User -> if (prev is ThreadRow.Message && prev.role == ThreadRole.User) 8.dp else 28.dp
             row.startsTurn -> 20.dp
-            prev is ThreadView.Activity -> 10.dp
+            prev is ThreadRow.Activity -> 10.dp
             else -> 14.dp
         }
-        is ThreadView.Activity -> if (prev is ThreadView.Message) 10.dp else 6.dp
-        is ThreadView.Thought -> if (prev is ThreadView.Message) 10.dp else 6.dp
-        is ThreadView.Notice -> 16.dp
+        is ThreadRow.Activity -> if (prev is ThreadRow.Message) 10.dp else 6.dp
+        is ThreadRow.Notice -> 16.dp
     }
 }
 
@@ -626,7 +632,7 @@ private fun QuietButton(text: String, icon: androidx.compose.ui.graphics.vector.
 @Composable
 private fun Head(w: WorkerInfo, state: ThreadState, connected: Boolean, onEarlier: () -> Unit, onRetry: () -> Unit, onTty: () -> Unit) {
     Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
-        if (state.entries.isEmpty()) {
+        if (state.entries.isEmpty() || state.support != ThreadSupport.Supported) {
             Empty(w, state, connected, onRetry, onTty)
             return@Column
         }
@@ -661,19 +667,25 @@ private fun Head(w: WorkerInfo, state: ThreadState, connected: Boolean, onEarlie
     }
 }
 
-/** Loading, empty, unavailable, failed or disconnected: what it means, and what can be done about it. */
+/** Loading, empty, unavailable, unreadable, failed or disconnected: what it means, and what can be done about it. */
 @Composable
 private fun Empty(w: WorkerInfo, state: ThreadState, connected: Boolean, onRetry: () -> Unit, onTty: () -> Unit) {
     data class Look(val title: String, val body: String, val color: Color, val retry: Boolean, val tty: Boolean)
     val look = when {
         !connected -> Look("Not connected", "Not connected. The thread loads once the phone reaches the office.", Palette.TextSecondary, retry = false, tty = true)
+        state.phase == ThreadPhase.Ready && state.support != ThreadSupport.Supported ->
+            Look(state.support.title.orEmpty(), state.support.message.orEmpty(), Palette.Warning, retry = false, tty = true)
         state.phase == ThreadPhase.Loading -> Look("Loading the conversation", "Loading the thread…", Palette.TextSecondary, retry = false, tty = false)
         state.phase == ThreadPhase.Error -> Look("Couldn't read the thread", "The office couldn't read the thread: ${state.error ?: "no reason given"}.", Palette.Danger, retry = true, tty = true)
         state.phase == ThreadPhase.Unavailable -> Look("No thread to show", "This office doesn't send threads, or can't read this worker's session. Raw TTY shows everything.", Palette.Warning, retry = true, tty = true)
         else -> Look("Start a conversation", "Your messages and the worker’s replies will appear here.", Palette.TextTertiary, retry = false, tty = false)
     }
     val loading = connected && state.phase == ThreadPhase.Loading
-    Column(Modifier.fillMaxWidth().padding(top = 56.dp, bottom = 12.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+    val unreadable = connected && state.phase == ThreadPhase.Ready && state.support != ThreadSupport.Supported
+    Column(
+        Modifier.fillMaxWidth().then(if (unreadable) Modifier.tagged(Tags.Worker.THREAD_UPDATE) else Modifier).padding(top = 56.dp, bottom = 12.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
         Box(Modifier.size(20.dp), contentAlignment = Alignment.Center) {
             if (loading) Spinner(Modifier.size(16.dp), Palette.TextSecondary) else Box(Modifier.size(7.dp).background(look.color, RoundedCornerShape(1.dp)))
         }
@@ -726,23 +738,22 @@ private fun Modifier.userBlock() = this.background(Palette.SurfaceHover, Rounded
     .padding(horizontal = 12.dp, vertical = 9.dp)
 
 @Composable
-private fun Message(w: WorkerInfo, m: ThreadView.Message, all: Boolean, onMore: () -> Unit) {
-    val e = m.entry
-    val tag = Modifier.fillMaxWidth().tagged(Tags.Worker.threadEntry(e.id))
-    if (e.role == ThreadRole.User) {
+private fun Message(w: WorkerInfo, m: ThreadRow.Message, text: String, all: Boolean, onMore: () -> Unit) {
+    val tag = Modifier.fillMaxWidth().tagged(Tags.Worker.threadEntry(m.id))
+    if (m.role == ThreadRole.User) {
         val reveal = rememberReveal()
         Box(tag.padding(start = 48.dp).then(reveal.modifier), contentAlignment = Alignment.CenterEnd) {
             Column(Modifier.userBlock()) {
-                var clipped by remember(e.id) { mutableStateOf(false) }
+                var clipped by remember(m.id) { mutableStateOf(false) }
                 SelectionContainer {
-                    MarkdownText(e.text.orEmpty(), if (all) Modifier else Modifier.clampLines(USER_LINES) { if (clipped != it) clipped = it }, surface = Palette.SurfaceHover, breaks = true)
+                    MarkdownText(text, if (all) Modifier else Modifier.clampLines(USER_LINES) { if (clipped != it) clipped = it }, surface = Palette.SurfaceHover, breaks = true)
                 }
                 if (all || clipped) {
                     Row(
                         Modifier.clip(RoundedCornerShape(3.dp)).disclosure(all) {
                             if (!all) reveal.ask()
                             onMore()
-                        }.tagged(Tags.Worker.threadMore(e.id))
+                        }.tagged(Tags.Worker.threadMore(m.id))
                             .heightIn(min = 40.dp).padding(top = 4.dp, end = 4.dp),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
@@ -756,19 +767,19 @@ private fun Message(w: WorkerInfo, m: ThreadView.Message, all: Boolean, onMore: 
     } else {
         Column(tag) {
             if (m.startsTurn) Eyebrow(w.name.ifBlank { "Droid" }, Modifier.padding(bottom = 6.dp))
-            SelectionContainer { MarkdownText(e.text.orEmpty()) }
+            SelectionContainer { MarkdownText(text) }
         }
     }
 }
 
 @Composable
-private fun Notice(n: ThreadView.Notice) {
-    val tag = Modifier.fillMaxWidth().tagged(Tags.Worker.threadEntry(n.entry.id))
+private fun Notice(n: ThreadRow.Notice) {
+    val tag = Modifier.fillMaxWidth().tagged(Tags.Worker.threadEntry(n.id))
     when (n.tone) {
-        ThreadView.Tone.Attachment -> Box(tag, contentAlignment = if (n.entry.role == ThreadRole.User) Alignment.CenterEnd else Alignment.CenterStart) {
+        NoticeTone.Attachment -> Box(tag, contentAlignment = if (n.role == ThreadRole.User) Alignment.CenterEnd else Alignment.CenterStart) {
             Text(n.text, style = MaterialTheme.typography.bodySmall.copy(color = Palette.TextSecondary))
         }
-        ThreadView.Tone.Danger -> Row(
+        NoticeTone.Danger -> Row(
             tag.panel(RoundedCornerShape(4.dp), Palette.Danger.copy(alpha = 0.07f), Palette.Danger.copy(alpha = 0.3f)).padding(horizontal = 12.dp, vertical = 9.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
@@ -776,7 +787,7 @@ private fun Notice(n: ThreadView.Notice) {
             Spacer(Modifier.width(10.dp))
             Text(n.text, style = MaterialTheme.typography.bodySmall, color = Palette.Danger)
         }
-        ThreadView.Tone.Quiet -> Row(tag, verticalAlignment = Alignment.CenterVertically) {
+        NoticeTone.Quiet -> Row(tag, verticalAlignment = Alignment.CenterVertically) {
             Box(Modifier.weight(1f).height(1.dp).background(Palette.Border))
             Text(
                 n.text.uppercase(), style = LocalOfficeType.current.eyebrow.copy(color = Palette.TextSecondary), textAlign = TextAlign.Center,
@@ -788,22 +799,29 @@ private fun Notice(n: ThreadView.Notice) {
 }
 
 /**
- * One run of work between messages: a single quiet line saying what it did, with what failed under
- * it even while closed, opening to one row per action and the plan as the run left it. Thoughts are
- * independent rows outside every activity.
+ * Everything the worker did between two messages: one quiet line saying what it did, what didn't
+ * simply finish beside it, what failed under it while it is closed and what is running while it is
+ * live. It opens to its thoughts and tool runs in order, each with its own disclosure.
  */
 @Composable
-private fun Activity(a: ThreadView.Activity, isOpen: Boolean, open: SnapshotStateMap<String, Boolean>, asking: Boolean, onToggle: () -> Unit, onFlip: (String) -> Unit) {
-    val failed = a.failed.size
-    // While the worker waits on the owner, its run isn't working: the question card says what it's on.
+private fun Activity(
+    a: ThreadRow.Activity,
+    isOpen: Boolean,
+    open: SnapshotStateMap<String, Boolean>,
+    loaded: Map<String, ThreadEntry>,
+    asking: Boolean,
+    onToggle: () -> Unit,
+    onFlip: (String, Boolean) -> Unit,
+) {
+    val first = a.id.removePrefix("activity:")
     val working = a.live && !asking
     val reveal = rememberReveal()
-    Column(Modifier.fillMaxWidth().then(reveal.modifier).tagged(Tags.Worker.threadGroup(a.first))) {
+    Column(Modifier.fillMaxWidth().then(reveal.modifier).tagged(Tags.Worker.threadGroup(first))) {
         Row(
             Modifier.fillMaxWidth().clip(RoundedCornerShape(4.dp)).disclosure(isOpen) {
                 if (!isOpen) reveal.ask()
                 onToggle()
-            }.tagged(Tags.Worker.threadGroupToggle(a.first)).heightIn(min = 40.dp).padding(vertical = 6.dp),
+            }.tagged(Tags.Worker.threadGroupToggle(first)).heightIn(min = 40.dp).padding(vertical = 6.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             if (working) {
@@ -811,69 +829,108 @@ private fun Activity(a: ThreadView.Activity, isOpen: Boolean, open: SnapshotStat
                 Spacer(Modifier.width(8.dp))
             }
             Text(
-                if (working) "Working · ${a.summary}" else a.summary,
+                ThreadView.line(a, asking),
                 style = MaterialTheme.typography.bodyMedium.copy(fontSize = 13.5.sp, lineHeight = 19.sp, color = Palette.TextSecondary),
                 maxLines = if (isOpen) 3 else 1, overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.weight(1f).tagged(Tags.Worker.threadGroupSummary(a.first)),
+                modifier = Modifier.weight(1f).tagged(Tags.Worker.threadGroupSummary(first)),
             )
-            when {
-                failed > 0 -> Text("$failed FAILED", style = LocalOfficeType.current.eyebrow.copy(color = Palette.Danger), modifier = Modifier.padding(start = 10.dp))
-                !a.live && a.noResult > 0 -> Text(
-                    "${a.noResult} NO RESULT",
-                    style = LocalOfficeType.current.eyebrow.copy(color = Palette.TextSecondary), modifier = Modifier.padding(start = 10.dp),
+            a.status?.let {
+                Text(
+                    it.uppercase(), style = LocalOfficeType.current.eyebrow.copy(color = if (a.failed.isNotEmpty()) Palette.Danger else Palette.TextSecondary),
+                    maxLines = 1, modifier = Modifier.padding(start = 10.dp).tagged(Tags.Worker.threadGroupStatus(first)),
                 )
             }
-            if (a.cancelled > 0) Text("${a.cancelled} CANCELLED", style = LocalOfficeType.current.eyebrow.copy(color = Palette.TextSecondary), modifier = Modifier.padding(start = 10.dp))
             Icon(OfficeIcons.Chevron, null, Modifier.padding(start = 8.dp).size(14.dp).rotate(if (isOpen) 90f else 0f), tint = Palette.TextSecondary)
         }
-        if (!isOpen) {
-            a.failed.firstOrNull()?.let { f ->
-                Column(Modifier.fillMaxWidth().padding(start = 24.dp, bottom = 4.dp).tagged(Tags.Worker.threadGroupError(a.first))) {
-                    Text(
-                        if (failed > 1) "${f.title}, and ${failed - 1} more" else f.title,
-                        style = MaterialTheme.typography.bodySmall.copy(fontSize = 13.sp), color = Palette.Danger, maxLines = 2, overflow = TextOverflow.Ellipsis,
-                    )
-                    f.entry.output?.lineSequence()?.firstOrNull { it.isNotBlank() }?.trim()?.let {
-                        Text(it, style = LocalOfficeType.current.monoBody.copy(fontSize = 11.5.sp, lineHeight = 16.sp, color = Palette.TextSecondary), maxLines = 2, overflow = TextOverflow.Ellipsis)
+        if (!isOpen && a.failed.isNotEmpty()) {
+            Column(Modifier.fillMaxWidth().padding(start = 24.dp, bottom = 4.dp).tagged(Tags.Worker.threadGroupError(first)), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                for (f in a.failed) {
+                    Column {
+                        Text(f.title, style = MaterialTheme.typography.bodySmall.copy(fontSize = 13.sp), color = Palette.Danger, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                        Text(f.preview, style = LocalOfficeType.current.monoBody.copy(fontSize = 11.5.sp, lineHeight = 16.sp, color = Palette.TextSecondary), maxLines = 2, overflow = TextOverflow.Ellipsis)
                     }
                 }
             }
-            // The summary already says it when the run is that one call ("Working · Ran a command").
-            a.running?.takeIf { working && failed == 0 && it.title != a.summary }?.let {
-                Text(
-                    "${it.title}…", style = MaterialTheme.typography.bodySmall.copy(color = Palette.TextSecondary), maxLines = 1, overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.padding(start = 24.dp, bottom = 4.dp),
-                )
-            }
-        } else {
+        }
+        ThreadView.running(a)?.let {
+            Text(
+                it, style = MaterialTheme.typography.bodySmall.copy(color = Palette.TextSecondary), maxLines = 1, overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.padding(start = 24.dp, bottom = 4.dp).semantics { liveRegion = LiveRegionMode.Polite }.tagged(Tags.Worker.threadGroupRunning(first)),
+            )
+        }
+        if (isOpen) {
             Column(
                 Modifier.fillMaxWidth().padding(start = 7.dp, bottom = 4.dp).drawBehind {
                     drawLine(Palette.Border, Offset(0f, 0f), Offset(0f, size.height), 1.dp.toPx())
                 }.padding(start = 12.dp),
             ) {
-                for (item in a.items) {
-                    val key = DETAIL + item.entry.id
-                    ActionRow(item, open[key] == true) { onFlip(key) }
+                for (block in a.blocks) {
+                    val blockOpen = ThreadView.Open.block(block, open)
+                    when (block) {
+                        is ThreadBlock.Thought -> ThoughtRow(block, ThreadView.thought(block, loaded[block.id]), blockOpen) { onFlip(block.id, blockOpen) }
+                        is ThreadBlock.Tools -> RunRow(block, blockOpen, open, loaded, onToggle = { onFlip(block.id, blockOpen) }, onFlip = onFlip)
+                    }
                 }
-                a.plan?.let { Plan(a.first, it) }
+            }
+        }
+    }
+}
+
+/** One run of tool calls in an open Activity: its line, opening to its actions and its plan. */
+@Composable
+private fun RunRow(
+    b: ThreadBlock.Tools,
+    isOpen: Boolean,
+    open: SnapshotStateMap<String, Boolean>,
+    loaded: Map<String, ThreadEntry>,
+    onToggle: () -> Unit,
+    onFlip: (String, Boolean) -> Unit,
+) {
+    val first = b.id.removePrefix("tools:")
+    val reveal = rememberReveal()
+    Column(Modifier.fillMaxWidth().then(reveal.modifier).tagged(Tags.Worker.threadRun(first))) {
+        Row(
+            Modifier.fillMaxWidth().clip(RoundedCornerShape(3.dp)).disclosure(isOpen) {
+                if (!isOpen) reveal.ask()
+                onToggle()
+            }.tagged(Tags.Worker.threadRunToggle(first)).heightIn(min = 40.dp).padding(vertical = 5.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            if (b.live && b.state == ActivityState.Working) {
+                Spinner(Modifier.size(10.dp), Palette.Accent)
+                Spacer(Modifier.width(10.dp))
+            }
+            Text(
+                b.label,
+                style = MaterialTheme.typography.bodySmall.copy(fontSize = 13.sp, lineHeight = 18.sp, color = if (b.state == ActivityState.Failed) Palette.Danger else Palette.TextSecondary),
+                maxLines = 2, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f),
+            )
+            Icon(OfficeIcons.Chevron, null, Modifier.padding(start = 8.dp).size(13.dp).rotate(if (isOpen) 90f else 0f), tint = Palette.TextSecondary)
+        }
+        if (isOpen) {
+            Column(Modifier.fillMaxWidth().padding(start = 12.dp)) {
+                for (action in b.actions) {
+                    val actionOpen = ThreadView.Open.action(action, open)
+                    ActionRow(action, loaded[action.id], actionOpen) { onFlip(action.id, actionOpen) }
+                }
+                b.plan?.let { Plan(Tags.Worker.threadRunPlan(first), it) }
             }
         }
     }
 }
 
 @Composable
-private fun ActionRow(a: ThreadView.Action, open: Boolean, onToggle: () -> Unit) {
-    val e = a.entry
+private fun ActionRow(a: ThreadModelAction, entry: ThreadEntry?, open: Boolean, onToggle: () -> Unit) {
     val reveal = rememberReveal()
-    Column(Modifier.fillMaxWidth().then(reveal.modifier).tagged(Tags.Worker.threadEntry(e.id))) {
+    Column(Modifier.fillMaxWidth().then(reveal.modifier).tagged(Tags.Worker.threadEntry(a.id))) {
         Row(
             Modifier.fillMaxWidth().clip(RoundedCornerShape(3.dp)).disclosure(open) {
                 if (!open) reveal.ask()
                 onToggle()
-            }.tagged(Tags.Worker.threadToggle(e.id)).heightIn(min = 40.dp).padding(vertical = 5.dp),
+            }.tagged(Tags.Worker.threadToggle(a.id)).heightIn(min = 40.dp).padding(vertical = 5.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            if (a.state == ToolState.Running) {
+            if (a.state == ActivityState.Working) {
                 Spinner(Modifier.size(10.dp), Palette.Accent)
                 Spacer(Modifier.width(10.dp))
             }
@@ -883,8 +940,8 @@ private fun ActionRow(a: ThreadView.Action, open: Boolean, onToggle: () -> Unit)
                     style = MaterialTheme.typography.bodySmall.copy(
                         fontSize = 13.sp, lineHeight = 18.sp,
                         color = when (a.state) {
-                            ToolState.Failed -> Palette.Danger
-                            ToolState.Running -> Palette.Text
+                            ActivityState.Failed -> Palette.Danger
+                            ActivityState.Working -> Palette.Text
                             else -> Palette.TextSecondary
                         },
                     ),
@@ -894,42 +951,46 @@ private fun ActionRow(a: ThreadView.Action, open: Boolean, onToggle: () -> Unit)
                     Text(it, style = LocalOfficeType.current.monoBody.copy(fontSize = 11.sp, lineHeight = 15.sp, color = Palette.TextSecondary), maxLines = 1, overflow = TextOverflow.Ellipsis)
                 }
             }
-            when (a.state) {
-                ToolState.Failed -> Text("FAILED", style = LocalOfficeType.current.eyebrow.copy(color = Palette.Danger), modifier = Modifier.padding(start = 8.dp))
-                ToolState.NoResult -> Text("NO RESULT", style = LocalOfficeType.current.eyebrow.copy(color = Palette.TextSecondary), modifier = Modifier.padding(start = 8.dp))
-                ToolState.Cancelled -> Text("CANCELLED", style = LocalOfficeType.current.eyebrow.copy(color = Palette.TextSecondary), modifier = Modifier.padding(start = 8.dp))
-                else -> Unit
+            if (a.status.isNotEmpty()) {
+                Text(
+                    a.status.uppercase(), style = LocalOfficeType.current.eyebrow.copy(color = if (a.state == ActivityState.Failed) Palette.Danger else Palette.TextSecondary),
+                    modifier = Modifier.padding(start = 8.dp),
+                )
             }
             Icon(OfficeIcons.Chevron, null, Modifier.padding(start = 8.dp).size(13.dp).rotate(if (open) 90f else 0f), tint = Palette.TextSecondary)
         }
         if (open) {
             Column(Modifier.fillMaxWidth().padding(start = 22.dp, top = 2.dp, bottom = 10.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                remember(e.input, e.name) { ThreadView.arguments(e) }?.let { (label, body) -> Mono(label, body, Palette.Text) }
-                when {
-                    e.output != null -> Mono(if (a.state == ToolState.Cancelled) "Cancelled" else if (e.error) "Error" else "Result", e.output.ifEmpty { "(empty)" }, if (a.state == ToolState.Cancelled) Palette.TextSecondary else if (e.error) Palette.Danger else Palette.Text)
-                    a.state == ToolState.Running -> Text("Still running…", style = MaterialTheme.typography.bodySmall)
-                    a.state == ToolState.Failed -> Text("It failed without saying why.", style = MaterialTheme.typography.bodySmall, color = Palette.Danger)
-                    else -> Text("No result was recorded.", style = MaterialTheme.typography.bodySmall)
+                when (val d = remember(a, entry?.input, entry?.output) { ThreadView.detail(a, entry) }) {
+                    ThreadView.Detail.NotLoaded -> Text(ThreadView.NOT_LOADED, style = MaterialTheme.typography.bodySmall, modifier = Modifier.tagged(Tags.Worker.threadNotLoaded(a.id)))
+                    is ThreadView.Detail.Shown -> {
+                        d.arguments?.let { (label, body) -> Mono(label, body, Palette.Text) }
+                        if (d.recorded) {
+                            Mono(d.result, d.output.ifEmpty { "(empty)" }, if (a.state == ActivityState.Cancelled) Palette.TextSecondary else if (d.result == "Error") Palette.Danger else Palette.Text)
+                        } else {
+                            Eyebrow(d.result, color = Palette.TextSecondary)
+                            Text(d.output, style = MaterialTheme.typography.bodySmall)
+                        }
+                    }
                 }
             }
         }
     }
 }
 
-/** One thought: its label and first line while closed, the whole of it, once, while open. */
+/** One thought in an open Activity: its first line while closed, the whole of it while open. */
 @Composable
-private fun ThoughtRow(t: ThreadView.Thought, open: Boolean, live: Boolean, onToggle: () -> Unit) {
-    val e = t.entry
+private fun ThoughtRow(t: ThreadBlock.Thought, text: String, open: Boolean, onToggle: () -> Unit) {
     val reveal = rememberReveal()
-    Column(Modifier.fillMaxWidth().then(reveal.modifier).tagged(Tags.Worker.threadEntry(e.id))) {
+    Column(Modifier.fillMaxWidth().then(reveal.modifier).tagged(Tags.Worker.threadEntry(t.id))) {
         Row(
             Modifier.fillMaxWidth().clip(RoundedCornerShape(3.dp)).disclosure(open) {
                 if (!open) reveal.ask()
                 onToggle()
-            }.tagged(Tags.Worker.threadToggle(e.id)).heightIn(min = 40.dp).padding(vertical = 5.dp),
+            }.tagged(Tags.Worker.threadToggle(t.id)).heightIn(min = 40.dp).padding(vertical = 5.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            if (live) {
+            if (t.live) {
                 Spinner(Modifier.size(10.dp), Palette.Accent)
                 Spacer(Modifier.width(8.dp))
             }
@@ -947,7 +1008,7 @@ private fun ThoughtRow(t: ThreadView.Thought, open: Boolean, live: Boolean, onTo
         if (open) {
             SelectionContainer {
                 Text(
-                    e.text.orEmpty(), style = MaterialTheme.typography.bodySmall.copy(lineHeight = 19.sp),
+                    text, style = MaterialTheme.typography.bodySmall.copy(lineHeight = 19.sp),
                     modifier = Modifier.padding(start = 12.dp, bottom = 10.dp),
                 )
             }
@@ -956,9 +1017,8 @@ private fun ThoughtRow(t: ThreadView.Thought, open: Boolean, live: Boolean, onTo
 }
 
 @Composable
-private fun Plan(group: String, steps: List<ThreadView.PlanStep>) {
-    Column(Modifier.fillMaxWidth().padding(top = 8.dp, bottom = 6.dp).tagged(Tags.Worker.threadGroupPlan(group))) {
-        Eyebrow("Plan · ${steps.count { it.done }} of ${steps.size} done", Modifier.padding(bottom = 4.dp), color = Palette.TextSecondary)
+private fun Plan(tag: String, steps: List<PlanStep>) {
+    Column(Modifier.fillMaxWidth().padding(top = 8.dp, bottom = 6.dp).tagged(tag)) {        Eyebrow("Plan · ${steps.count { it.done }} of ${steps.size} done", Modifier.padding(bottom = 4.dp), color = Palette.TextSecondary)
         for (s in steps) {
             Row(Modifier.padding(vertical = 2.dp)) {
                 // Marks, not arrows: a › here would read as something to open. Said as the web says them.

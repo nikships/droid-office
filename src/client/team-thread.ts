@@ -1,6 +1,6 @@
 import type { ClientMsg, ServerMsg, WorkerInfo } from '../shared/protocol';
 import type { ThreadEntry } from '../shared/worker-thread';
-import { ThreadHistory } from './thread-history';
+import { rowsWithin, ThreadHistory } from './thread-history';
 
 // Leave the server reader's other two cache slots for the lead and history/drilldown.
 export const TEAM_THREAD_WORKERS = 6;
@@ -143,12 +143,13 @@ export class TeamThread {
     if (member.error !== (msg.error ?? '')) this.revision++;
     member.error = msg.error ?? '';
     if (!member.error) {
-      const previous = JSON.stringify([member.history.sessionId, member.history.entries, member.history.hasMore]);
+      const previous = JSON.stringify([member.history.sessionId, member.history.entries, member.history.rows, member.history.hasMore]);
       member.history.apply(msg);
       const entries = boundedEntries(member.history.entries);
       member.history.hasMore = msg.hasMore || entries.length < member.history.entries.length;
       member.history.entries = entries;
-      if (!member.received || previous !== JSON.stringify([member.history.sessionId, member.history.entries, member.history.hasMore])) this.revision++;
+      member.history.rows = rowsWithin(member.history.rows, entries);
+      if (!member.received || previous !== JSON.stringify([member.history.sessionId, member.history.entries, member.history.rows, member.history.hasMore])) this.revision++;
       member.received = true;
     }
     return true;

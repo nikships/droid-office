@@ -2080,7 +2080,7 @@ export async function startServer(cfg: Config) {
           sendTo(c, { ...reply, entries: [], hasMore: false, error: 'Invalid conversation page.' });
           break;
         }
-        void workerThreads.read(source, before).then((page) => {
+        void workerThreads.read(source, before, floor.workers.threadBusy(workerId)).then((page) => {
           const current = floor.workers.threadSession(workerId);
           if (floorOf(c) !== floor || current?.sessionId !== source.sessionId || current.cwd !== source.cwd) {
             sendTo(c, { ...reply, entries: [], hasMore: false, error: 'The active floor or worker session changed. Read the thread again.' });

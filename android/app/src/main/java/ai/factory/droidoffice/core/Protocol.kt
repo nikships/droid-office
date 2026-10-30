@@ -219,6 +219,8 @@ sealed interface ServerMsg {
         val entries: List<ThreadEntry>,
         val hasMore: Boolean,
         val error: String?,
+        /** How to show [entries]; null from an office that predates the presentation model. */
+        val presentation: ThreadPresentation? = null,
     ) : ServerMsg
     data class Ignored(val t: String) : ServerMsg
 }
@@ -319,6 +321,7 @@ object Protocol {
             entries = (o["entries"] as? JsonArray)?.mapNotNull(ThreadEntry::of).orEmpty(),
             hasMore = o.bool("hasMore") ?: false,
             error = o.str("error")?.takeIf { it.isNotBlank() },
+            presentation = ThreadPresentation.of(o["presentation"]),
         )
     }
 

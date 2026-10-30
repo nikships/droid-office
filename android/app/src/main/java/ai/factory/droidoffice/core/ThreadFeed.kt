@@ -77,9 +77,6 @@ data class ThreadEntry(
     }
 }
 
-/** Where a tool call stands, as far as the transcript shows. */
-enum class ToolState { Running, Done, Failed, NoResult, Cancelled }
-
 enum class ThreadPhase {
     /** Asked, and nothing has come back yet. */
     Loading,
@@ -95,6 +92,10 @@ data class ThreadState(
     val sessionId: String? = null,
     /** Oldest first, by seq. */
     val entries: List<ThreadEntry> = emptyList(),
+    /** How the office presents [entries], oldest first: never built here, only joined from its pages. */
+    val rows: List<ThreadRow> = emptyList(),
+    /** Whether the last page's presentation could be read. When it couldn't, [rows] has nothing from it. */
+    val support: ThreadSupport = ThreadSupport.Supported,
     /** There are entries before the first one here. */
     val hasMore: Boolean = false,
     /** The office's last error for the latest page, shown over what is already here. */
@@ -120,6 +121,14 @@ data class ThreadState(
  * gap of more than a page), it replaces everything, as does a new session, a page with no more before
  * it, or an empty one. At most [MAX_ENTRIES] stay loaded: the oldest go as new ones arrive (Load
  * earlier fetches them again), and the newest go when an earlier page needs the room.
+ *
+ * The rows come from the office and are joined the way the web companion joins them
+ * (src/client/thread-history.ts): a latest page's rows replace every held row that ends at or after
+ * its first row or entry, keeping the part of an Activity whose entries are still loaded as a clipped
+ * prefix, and an earlier page adds its rows and Activity prefixes before the first one held.
+ * Whatever clears the entries clears the rows, and trimming the entries drops the rows wholly outside
+ * them. A page from an office with no presentation, or one of a version this app doesn't know, adds no
+ * rows and sets [ThreadState.support].
  */
 class ThreadFeed(val workerId: String, private val prefix: String = UUID.randomUUID().toString().take(8)) {
     var state = ThreadState()
@@ -195,7 +204,7 @@ class ThreadFeed(val workerId: String, private val prefix: String = UUID.randomU
     fun backToLatest() {
         latest = null
         earlier = null
-        state = state.copy(phase = ThreadPhase.Loading, entries = emptyList(), hasMore = false, error = null, loadingEarlier = false, earlierError = null, newerTrimmed = false)
+        state = state.copy(phase = ThreadPhase.Loading, entries = emptyList(), rows = emptyList(), hasMore = false, error = null, loadingEarlier = false, earlierError = null, newerTrimmed = false)
     }
 
     /** Ask again after an error or no answer. */
@@ -234,6 +243,8 @@ class ThreadFeed(val workerId: String, private val prefix: String = UUID.randomU
             return true
         }
         val page = msg.entries.sortedBy { it.seq }.distinctBy { it.id }
+        val support = ThreadSupport.of(msg.presentation)
+        val incoming = incoming(msg, support)
         val newSession = msg.sessionId != state.sessionId && (state.sessionId != null || state.entries.isNotEmpty())
         val base = if (newSession) emptyList() else state.entries
         val first = page.firstOrNull()
@@ -242,7 +253,8 @@ class ThreadFeed(val workerId: String, private val prefix: String = UUID.randomU
         if (state.newerTrimmed && !newSession && page.isNotEmpty() && !rewritten) {
             // Reading older history: keep the window where it is and only update what's in it.
             val byId = page.associateBy { it.id }
-            state = state.copy(phase = ThreadPhase.Ready, entries = base.map { byId[it.id] ?: it }, error = null)
+            val rowsById = incoming.associateBy { it.id }
+            state = state.copy(phase = ThreadPhase.Ready, entries = base.map { byId[it.id] ?: it }, rows = state.rows.map { rowsById[it.id] ?: it }, support = support, error = null)
             return true
         }
         val (entries, hasMore, reset) = when {
@@ -253,11 +265,16 @@ class ThreadFeed(val workerId: String, private val prefix: String = UUID.randomU
             else -> Triple(page, true, true)
         }
         val kept = if (entries.size > MAX_ENTRIES) entries.takeLast(MAX_ENTRIES) else entries
+        val held = if (reset || base.isEmpty()) emptyList() else state.rows
+        val cut = minOf(incoming.firstOrNull()?.from ?: Long.MAX_VALUE, page.firstOrNull()?.seq ?: Long.MAX_VALUE)
+        val rows = if (page.isEmpty()) emptyList() else rowsBefore(held, cut, kept) + incoming
         if (reset || kept.size < entries.size) earlier = null
         state = state.copy(
             phase = ThreadPhase.Ready,
             sessionId = msg.sessionId,
             entries = kept,
+            rows = if (kept.size < entries.size) within(rows, kept) else rows,
+            support = support,
             hasMore = hasMore || kept.size < entries.size,
             error = null,
             loadingEarlier = if (reset || kept.size < entries.size) false else state.loadingEarlier,
@@ -273,13 +290,79 @@ class ThreadFeed(val workerId: String, private val prefix: String = UUID.randomU
         val page = msg.entries.filter { it.seq < before && it.id !in loaded }.sortedBy { it.seq }.distinctBy { it.id }
         val all = page + state.entries
         val kept = if (all.size > MAX_ENTRIES) all.take(MAX_ENTRIES) else all
+        val support = ThreadSupport.of(msg.presentation)
+        val heldFrom = state.rows.firstOrNull()?.from ?: Long.MAX_VALUE
+        val rows = rowsBefore(incoming(msg, support), heldFrom, kept) + state.rows
         return state.copy(
             entries = kept,
+            rows = if (kept.size < all.size) within(rows, kept) else rows,
+            support = support,
             hasMore = msg.hasMore,
             loadingEarlier = false,
             earlierError = null,
             newerTrimmed = state.newerTrimmed || kept.size < all.size,
         )
+    }
+
+    private fun incoming(msg: ServerMsg.ThreadSnapshot, support: ThreadSupport) =
+        if (support == ThreadSupport.Supported) msg.presentation?.rows.orEmpty() else emptyList()
+
+    /**
+     * The rows that end before [cut], and the loaded prefix of an Activity that crosses it. Used for
+     * held rows when the office's read window slides forward, and incoming rows when an earlier page
+     * overlaps the first row held. Its summary is rebuilt from the actions it holds: the office's
+     * label, status and state describe the whole run, which the row after the cut carries now.
+     */
+    private fun rowsBefore(held: List<ThreadRow>, cut: Long, entries: List<ThreadEntry>): List<ThreadRow> {
+        val seq = entries.associate { it.id to it.seq }
+        fun held(id: String) = (seq[id] ?: Long.MAX_VALUE) <= cut - 1
+        fun state(actions: List<ThreadModelAction>): ActivityState {
+            fun count(state: ActivityState) = actions.count { it.state == state && it.causedBy == null }
+            return when {
+                count(ActivityState.Failed) > 0 -> ActivityState.Failed
+                count(ActivityState.Incomplete) > 0 -> ActivityState.Incomplete
+                count(ActivityState.Cancelled) > 0 -> ActivityState.Cancelled
+                else -> ActivityState.Complete
+            }
+        }
+        val rows = mutableListOf<ThreadRow>()
+        for (row in held) {
+            if (row.to < cut) {
+                rows += row
+                continue
+            }
+            if (row !is ThreadRow.Activity || row.from >= cut) continue
+            val sourceIds = row.sourceIds.filter(::held)
+            val blocks = row.blocks.mapNotNull { block ->
+                when (block) {
+                    is ThreadBlock.Thought -> block.takeIf { held(block.id) }
+                    is ThreadBlock.Tools -> block.actions.filter { held(it.id) }.takeIf { it.isNotEmpty() }?.let { actions ->
+                        if (actions.size == block.actions.size) block
+                        else block.copy(label = "Earlier tools", state = state(actions), live = false, actions = actions)
+                    }
+                }
+            }
+            if (sourceIds.isEmpty() || blocks.isEmpty()) continue
+            val actions = blocks.flatMap { if (it is ThreadBlock.Tools) it.actions else emptyList() }
+            rows += row.copy(
+                to = cut - 1,
+                sourceIds = sourceIds,
+                label = "Earlier activity",
+                state = state(actions),
+                live = false,
+                status = null,
+                running = null,
+                failed = row.failed.filter { held(it.id) },
+                blocks = blocks,
+            )
+        }
+        return rows
+    }
+    /** The rows that stand for any of [entries]' seq range. */
+    private fun within(rows: List<ThreadRow>, entries: List<ThreadEntry>): List<ThreadRow> {
+        val from = entries.firstOrNull()?.seq ?: return emptyList()
+        val to = entries.last().seq
+        return rows.filter { it.to >= from && it.from <= to }
     }
 
     companion object {
@@ -289,27 +372,5 @@ class ThreadFeed(val workerId: String, private val prefix: String = UUID.randomU
         const val RESEND_MS = 5_000L
         /** No answer at all for this long means the office can't show threads. */
         const val UNAVAILABLE_MS = 6_000L
-
-        /** A tool call with no result yet is running while the worker is in a turn, and never got one otherwise. */
-        fun toolState(e: ThreadEntry, busy: Boolean): ToolState = when {
-            e.error -> ToolState.Failed
-            e.output != null -> ToolState.Done
-            busy -> ToolState.Running
-            else -> ToolState.NoResult
-        }
-
-        /** A one-line summary of a tool call's arguments: the first short string value, else nothing. */
-        fun toolSummary(input: String?, max: Int = 80): String? {
-            val raw = input?.trim()?.takeIf { it.isNotEmpty() } ?: return null
-            val obj = runCatching { OfficeJson.parseToJsonElement(raw) as? JsonObject }.getOrNull()
-            val value = obj?.let { o ->
-                PREFERRED.firstNotNullOfOrNull { k -> (o[k] as? JsonPrimitive)?.takeIf { it.isString }?.content }
-                    ?: o.values.firstNotNullOfOrNull { (it as? JsonPrimitive)?.takeIf { p -> p.isString }?.content }
-            } ?: if (obj == null) raw else null
-            val line = value?.lineSequence()?.firstOrNull { it.isNotBlank() }?.trim() ?: return null
-            return if (line.length <= max) line else line.take(max - 1).trimEnd() + "…"
-        }
-
-        private val PREFERRED = listOf("command", "file_path", "path", "pattern", "url", "query", "description", "prompt")
     }
 }

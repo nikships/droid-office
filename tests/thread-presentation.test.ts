@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { test } from 'node:test';
-import { presentThread, threadAction } from '../src/shared/thread-presentation.js';
+import { pageRows, presentThread, threadAction, threadArguments, threadArgumentsText, type ThreadRow } from '../src/shared/thread-presentation.js';
 import type { ThreadEntry } from '../src/shared/worker-thread.js';
 
 // Shapes observed in Byte's real local session, also shown in the owner's Android capture.
@@ -15,6 +15,10 @@ const tool = (id: string, name: string, input: Record<string, unknown> = {}, ext
   output: 'Done',
   ...extra,
 });
+const actionsOf = (row: ThreadRow | undefined) => (row?.kind === 'activity' ? row.blocks.flatMap((block) => (block.kind === 'tools' ? block.actions : [])) : []);
+/** The cancellations an activity's status line counts, which both clients show. */
+const cancelledOf = (row: ThreadRow | undefined) => Number((row?.kind === 'activity' && /(\d+) cancelled/.exec(row.status ?? '')?.[1]) || 0);
+const noResultOf = (row: ThreadRow | undefined) => Number((row?.kind === 'activity' && /(\d+) no result/.exec(row.status ?? '')?.[1]) || 0);
 const text = (id: string, role: 'user' | 'assistant' = 'assistant'): ThreadEntry => ({ id, seq: 0, role, kind: 'text', text: 'The release is published.' });
 const capturedEntries = (name: string): ThreadEntry[] =>
   JSON.parse(readFileSync(new URL('../android/app/src/test/resources/thread-presentation-golden.json', import.meta.url), 'utf8')).cases.find((example: { name: string }) => example.name === name).entries;
@@ -26,25 +30,36 @@ const capturedCancellation = () => {
   return [{ ...wrapper, resultSeq: undefined }, child];
 };
 
-test('thoughts are top-level disclosures separating the activity before and after them', () => {
+test('thoughts sit inside the Activity between messages, splitting its tool runs', () => {
   const thought: ThreadEntry = { id: 'thought', seq: 2, kind: 'thinking', role: 'assistant', text: '**Deciding the next step**\nThe thought remains available without opening tool activity.' };
   const rows = presentThread([tool('r1', 'Read'), thought, tool('e3', 'Execute')], true);
   assert.deepEqual(
     rows.map((row) => row.kind),
-    ['activity', 'thought', 'activity'],
+    ['activity'],
   );
-  assert.equal(rows[1].kind === 'thought' && rows[1].preview, 'Deciding the next step');
-  assert.equal(rows[1].kind === 'thought' && rows[1].live, false);
-  assert.equal(rows[2].kind === 'activity' && rows[2].live, true);
-  assert.equal(rows[0].kind === 'activity' && rows[0].live, false);
+  const row = rows[0];
+  assert.ok(row.kind === 'activity');
   assert.deepEqual(
-    presentThread([thought], true).map((row) => row.kind === 'thought' && row.live),
-    [true],
+    row.blocks.map((block) => block.kind),
+    ['tools', 'thought', 'tools'],
   );
-  assert.ok(rows.filter((row) => row.kind === 'activity').every((row) => row.items.every((item) => item.type === 'action')));
+  assert.equal(row.blocks[1].kind === 'thought' && row.blocks[1].preview, 'Deciding the next step');
+  assert.deepEqual(
+    row.blocks.map((block) => block.live),
+    [false, false, true],
+  );
+  assert.equal(row.live, true);
+  assert.equal(row.label, 'Read a file · Ran a command');
+  assert.ok(
+    [row, ...row.blocks, ...actionsOf(row)].every((node) => node.open === false),
+    'every disclosure starts closed',
+  );
+  assert.deepEqual(
+    presentThread([thought], true).map((only) => only.kind === 'activity' && [only.label, only.blocks[0].live]),
+    [['Thought', true]],
+  );
   assert.deepEqual(presentThread([{ ...thought, text: '  \n' }], false), []);
 });
-
 test('the reported release-check turn becomes one activity disclosure without bookkeeping', () => {
   const rows = presentThread(
     [
@@ -69,22 +84,22 @@ test('the reported release-check turn becomes one activity disclosure without bo
   const row = rows[2];
   assert.equal(row.kind, 'activity');
   if (row.kind !== 'activity') return;
-  assert.equal(row.actions.length, 3);
+  assert.equal(actionsOf(row).length, 3);
   assert.equal(row.label, 'Read a file · Ran 2 commands');
   assert.equal(row.state, 'complete');
   assert.deepEqual(
-    row.actions.map((a) => a.title),
+    actionsOf(row).map((a) => a.title),
     ['Read floor-branch.json', 'Check merge and release runs', 'Verify published release'],
   );
-  assert.ok(!JSON.stringify(row.actions.map((a) => a.title)).includes('/Users/nik'));
+  assert.ok(!JSON.stringify(actionsOf(row).map((a) => a.title)).includes('/Users/nik'));
 });
 
 test('standalone script results remain available without showing source as their title', () => {
   const rows = presentThread([tool('s1', 'functions.Script', { code: 'secret source' })], false);
   assert.equal(rows[0].kind, 'activity');
   if (rows[0].kind !== 'activity') return;
-  assert.equal(rows[0].actions[0].title, 'Ran a script');
-  assert.equal(rows[0].actions[0].entry.output, 'Done');
+  assert.equal(actionsOf(rows[0])[0].title, 'Ran a script');
+  assert.equal(actionsOf(rows[0])[0].result, 'Result');
 });
 
 test('failed wrappers and bookkeeping cannot be silently hidden', () => {
@@ -93,7 +108,7 @@ test('failed wrappers and bookkeeping cannot be silently hidden', () => {
   if (rows[0].kind !== 'activity') return;
   assert.equal(rows[0].state, 'failed');
   assert.equal(rows[0].failed.length, 2);
-  assert.equal(rows[0].actions.length, 3);
+  assert.equal(actionsOf(rows[0]).length, 3);
 });
 
 test('unit: the captured causal Script diagnostics stay accessible but only Read counts as failed', () => {
@@ -103,11 +118,11 @@ test('unit: the captured causal Script diagnostics stay accessible but only Read
   if (row.kind !== 'activity') return;
   assert.equal(row.label, 'Read a file');
   assert.equal(row.failed.length, 1);
-  assert.equal(row.failed[0].entry.id, entries[1].id);
-  assert.match(row.failed[0].entry.output ?? '', /^Error reading file: ENOENT/);
-  assert.equal(row.actions[0].causedBy, entries[1].id);
-  assert.equal(row.actions[0].entry, entries[0]);
-  assert.equal(row.actions[0].state, 'failed');
+  assert.equal(row.failed[0].id, entries[1].id);
+  assert.match(row.failed[0].preview, /^Error reading file: ENOENT/);
+  assert.equal(actionsOf(row)[0].causedBy, entries[1].id);
+  assert.equal(actionsOf(row)[0].id, entries[0].id);
+  assert.equal(actionsOf(row)[0].state, 'failed');
   assert.equal(row.state, 'failed');
   assert.deepEqual(
     row.sourceIds,
@@ -141,7 +156,7 @@ test('unit variants of the capture never deduplicate unrelated or unproven wrapp
   ]) {
     const row = presentThread(entries, false)[0];
     assert.equal(row.kind, 'activity');
-    if (row.kind === 'activity') assert.equal(row.actions.find((action) => action.entry.id === wrapper.id)?.causedBy, undefined);
+    if (row.kind === 'activity') assert.equal(actionsOf(row).find((action) => action.id === wrapper.id)?.causedBy, undefined);
   }
 });
 
@@ -154,13 +169,13 @@ test('a successful wrapper yields to a failed bookkeeping child, but not an unre
   assert.equal(rows[0].kind, 'activity');
   if (rows[0].kind === 'activity') {
     assert.deepEqual(
-      rows[0].actions.map((a) => a.title),
+      actionsOf(rows[0]).map((a) => a.title),
       ['Read a file', "Couldn't update the plan"],
     );
     assert.equal(rows[0].label, 'Read a file');
   }
   const standalone = presentThread([tool('r1', 'Read'), tool('s2', 'Script')], false);
-  if (standalone[0].kind === 'activity') assert.equal(standalone[0].actions.at(-1)?.title, 'Ran a script');
+  if (standalone[0].kind === 'activity') assert.equal(actionsOf(standalone[0]).at(-1)?.title, 'Ran a script');
 });
 
 test('group IDs survive appends, result updates and busy state changes', () => {
@@ -219,17 +234,18 @@ test('a real cancellation stays quiet without concealing an earlier genuine fail
   );
   assert.equal(rows[0].kind, 'activity');
   if (rows[0].kind !== 'activity') return;
-  assert.equal(rows[0].cancelled, 1);
+  assert.equal(cancelledOf(rows[0]), 1);
+  assert.equal(rows[0].status, '1 failed · 1 cancelled');
   assert.equal(rows[0].failed.length, 1);
-  assert.equal(rows[0].actions[1].state, 'cancelled');
-  assert.equal(rows[0].actions[1].entry.error, true);
+  assert.equal(actionsOf(rows[0])[1].state, 'cancelled');
+  assert.equal(actionsOf(rows[0])[1].result, 'Cancelled');
   // An exact by-user CLI result is itself owner evidence, even without a turn notice.
   const explicit = presentThread([tool('e2', 'Execute', {}, { error: true, output: 'Tool execution cancelled by user' })], false)[0];
   assert.equal(explicit.kind, 'activity');
   if (explicit.kind === 'activity') {
     assert.equal(explicit.state, 'cancelled');
-    assert.equal(explicit.actions[0].state, 'cancelled');
-    assert.equal(explicit.cancelled, 1);
+    assert.equal(actionsOf(explicit)[0].state, 'cancelled');
+    assert.equal(cancelledOf(explicit), 1);
   }
 });
 
@@ -242,28 +258,28 @@ test('unit: a crash wrapper flushed by a later Stop stays one failure, counted o
   assert.equal(row.kind, 'activity');
   if (row.kind !== 'activity') return;
   assert.equal(row.state, 'failed');
-  assert.equal(row.cancelled, 0);
+  assert.equal(cancelledOf(row), 0);
   assert.deepEqual(
-    row.failed.map((action) => action.entry.id),
+    row.failed.map((action) => action.id),
     [child.id],
   );
   assert.deepEqual(
-    row.actions.map((action) => action.state),
+    actionsOf(row).map((action) => action.state),
     ['failed', 'failed'],
   );
-  assert.equal(row.actions[0].causedBy, child.id);
-  assert.equal(row.actions[0].title, 'Script stopped after a tool failed');
+  assert.equal(actionsOf(row)[0].causedBy, child.id);
+  assert.equal(actionsOf(row)[0].title, 'Script stopped after a tool failed');
   assert.equal(row.label, 'Ran a command');
   assert.equal(JSON.stringify(entries), original);
   const stop = rows.find((item) => item.kind === 'activity' && item.id !== row.id);
-  assert.ok(stop?.kind === 'activity' && stop.cancelled === 1 && !stop.failed.length, 'the later genuine Stop stays cancelled');
+  assert.ok(stop?.kind === 'activity' && cancelledOf(stop) === 1 && !stop.failed.length, 'the later genuine Stop stays cancelled');
   // An office from before resultSeq, or a by-user wrapper that came in time: the interrupted child still marks a crash.
   for (const late of [
     { ...wrapper, resultSeq: undefined },
     { ...wrapper, resultSeq: child.seq + 1 },
   ]) {
     const again = presentThread([late, child], false)[0];
-    assert.ok(again.kind === 'activity' && again.failed.length === 1 && again.cancelled === 0 && again.actions[0].causedBy === child.id);
+    assert.ok(again.kind === 'activity' && again.failed.length === 1 && cancelledOf(again) === 0 && actionsOf(again)[0].causedBy === child.id);
   }
   const earlier = presentThread([{ ...wrapper, output: undefined, error: undefined, resultSeq: undefined }, child], false)[0];
   assert.equal(earlier.id, row.id, 'late results preserve the activity key');
@@ -302,13 +318,13 @@ test('unit capture variants: malformed, truncated or unknown wrapper outcomes ne
     assert.equal(row.kind, 'activity');
     if (row.kind === 'activity') {
       assert.equal(row.failed.length, 2, output);
-      assert.equal(row.cancelled, 0, output);
+      assert.equal(cancelledOf(row), 0, output);
     }
   }
   const row = presentThread([{ ...wrapper, error: false }, child], false)[0];
   if (row.kind === 'activity') {
     assert.equal(row.failed.length, 1, 'a non-error wrapper is not cancellation evidence');
-    assert.equal(row.cancelled, 0);
+    assert.equal(cancelledOf(row), 0);
   }
 });
 
@@ -320,9 +336,9 @@ test('unit capture variants: owner-cancelled wrappers never conceal independent 
     assert.equal(row.kind, 'activity');
     if (row.kind === 'activity') {
       assert.equal(row.failed.length, 1);
-      assert.equal(row.failed[0].entry, failedChild);
-      assert.equal(row.cancelled, 1);
-      assert.equal(row.actions[0].causedBy, undefined);
+      assert.equal(row.failed[0].id, failedChild.id);
+      assert.equal(cancelledOf(row), 1);
+      assert.equal(actionsOf(row)[0].causedBy, undefined);
     }
   }
   const row = presentThread(
@@ -333,8 +349,8 @@ test('unit capture variants: owner-cancelled wrappers never conceal independent 
     false,
   )[0];
   if (row.kind === 'activity') {
-    assert.equal(row.failed[0].entry.id, wrapper.id);
-    assert.equal(row.cancelled, 1);
+    assert.equal(row.failed[0].id, wrapper.id);
+    assert.equal(cancelledOf(row), 1);
   }
 });
 
@@ -349,26 +365,26 @@ test('unit capture variants: owner evidence stays inside its Script and message 
     assert.equal(row.kind, 'activity');
     if (row.kind === 'activity') {
       assert.equal(row.failed.length, 2);
-      assert.equal(row.cancelled, 1);
-      assert.equal(row.actions.find((action) => action.entry.id === wrapper.id)?.causedBy, undefined);
+      assert.equal(cancelledOf(row), 1);
+      assert.equal(actionsOf(row).find((action) => action.id === wrapper.id)?.causedBy, undefined);
     }
   }
   const twice = presentThread([wrapper, child, { ...child, id: 'another-interrupted-call' }], false)[0];
   if (twice.kind === 'activity') {
     assert.equal(twice.failed.length, 2);
-    assert.equal(twice.cancelled, 0, 'interrupted children mark a crash, not a Stop');
+    assert.equal(cancelledOf(twice), 0, 'interrupted children mark a crash, not a Stop');
   }
   const separated = presentThread([wrapper, text('boundary'), child], false);
   assert.equal(separated[0].kind, 'activity');
   assert.equal(separated[2].kind, 'activity');
   if (separated[0].kind === 'activity' && separated[2].kind === 'activity') {
-    assert.equal(separated[0].cancelled, 1);
+    assert.equal(cancelledOf(separated[0]), 1);
     assert.equal(separated[2].failed.length, 1);
   }
   const missing = presentThread([wrapper, { ...child, output: undefined, error: false }], false)[0];
   if (missing.kind === 'activity') {
-    assert.equal(missing.cancelled, 1);
-    assert.equal(missing.noResult, 1);
+    assert.equal(cancelledOf(missing), 1);
+    assert.equal(noResultOf(missing), 1);
   }
 });
 
@@ -379,7 +395,7 @@ test('unit: crash/resume interruption stays Failed without explicit owner eviden
     assert.equal(row.kind, 'activity');
     if (row.kind === 'activity') {
       assert.equal(row.failed.length, 1);
-      assert.equal(row.cancelled, 0);
+      assert.equal(cancelledOf(row), 0);
       assert.equal(row.state, 'failed');
     }
   }
@@ -401,8 +417,8 @@ test('a filename mentioning cancelled cannot turn a genuine read failure into a 
   assert.equal(rows[0].kind, 'activity');
   if (rows[0].kind === 'activity') {
     assert.equal(rows[0].state, 'failed');
-    assert.equal(rows[0].actions[0].state, 'failed');
-    assert.equal(rows[0].cancelled, 0);
+    assert.equal(actionsOf(rows[0])[0].state, 'failed');
+    assert.equal(cancelledOf(rows[0]), 0);
   }
 });
 
@@ -411,7 +427,7 @@ test('read counts agree with the visible rows even when the same path was read t
   assert.equal(rows[0].kind, 'activity');
   if (rows[0].kind === 'activity') {
     assert.equal(rows[0].label, 'Read 2 files');
-    assert.equal(rows[0].actions.length, 2);
+    assert.equal(actionsOf(rows[0]).length, 2);
   }
 });
 
@@ -451,4 +467,71 @@ test('task controls have meaningful summaries without claiming missing or failed
   if (row.kind === 'activity') assert.equal(row.label, '2 attempts to stop background tasks');
   const cancelled = presentThread([tool('s1', 'TaskStop', {}, { error: true, output: 'Tool execution cancelled by user' }), { id: 'turn:stop:cancelled', seq: 2, role: 'system', kind: 'notice', text: 'Turn cancelled' }], false)[0];
   if (cancelled.kind === 'activity') assert.equal(cancelled.label, 'Background task stop cancelled');
+});
+
+test('an Activity rolls up its runs: status words, the running title and failure previews', () => {
+  const thought: ThreadEntry = { id: 'th', seq: 3, kind: 'thinking', role: 'assistant', text: 'Checking the build' };
+  const rows = presentThread(
+    [
+      tool('r1', 'Read', { file_path: '/missing' }, { error: true, output: '\n  File not found\nmore' }),
+      tool('e2', 'Execute', { summary: 'Build the app' }, { output: undefined }),
+      thought,
+      tool('e4', 'Execute', { summary: 'Run the tests' }, { output: undefined }),
+    ],
+    true,
+  );
+  const row = rows[0];
+  assert.ok(row.kind === 'activity');
+  assert.equal(row.state, 'failed');
+  assert.equal(row.status, '1 failed · 1 no result');
+  assert.equal(row.running, 'Run the tests');
+  assert.deepEqual(row.failed, [{ id: 'r1', title: 'Read missing', preview: 'File not found' }]);
+  assert.deepEqual(
+    actionsOf(row).map((action) => [action.state, action.status, action.result]),
+    [
+      ['failed', 'Failed', 'Error'],
+      ['incomplete', 'No result', 'Result'],
+      ['working', 'Running', 'Result'],
+    ],
+  );
+  assert.deepEqual([row.from, row.to, row.sourceIds], [1, 4, ['r1', 'e2', 'th', 'e4']]);
+  const idle = presentThread([tool('e1', 'Execute', {}, { output: undefined })], false)[0];
+  assert.ok(idle.kind === 'activity' && idle.status === '1 no result' && idle.running === undefined);
+});
+
+test('arguments are a reference into the entry, resolved without a second copy on the wire', () => {
+  const cases: [ThreadEntry, string, string][] = [
+    [tool('e1', 'Execute', { command: '  npm test  ' }), 'Command', 'npm test'],
+    [tool('s2', 'Script', { script: 'await tools.Read()' }), 'Script', 'await tools.Read()'],
+    [tool('s3', 'Script', { code: 'text(1)' }), 'Script', 'text(1)'],
+    [tool('p4', 'ApplyPatch', { input: '*** Begin Patch' }), 'Patch', '*** Begin Patch'],
+    [tool('p5', 'ApplyPatch', { patch: '*** Update File: a' }), 'Patch', '*** Update File: a'],
+    [tool('r6', 'Read', { file_path: '/a' }), 'Arguments', JSON.stringify({ file_path: '/a' })],
+    [{ ...tool('s7', 'Script'), input: JSON.stringify('raw source') }, 'Script', 'raw source'],
+    [{ ...tool('x8', 'Custom'), input: 'old format' }, 'Arguments', 'old format'],
+  ];
+  for (const [entry, label, shown] of cases) {
+    const ref = threadArguments(entry);
+    assert.equal(ref?.label, label, entry.id);
+    assert.equal(ref && threadArgumentsText(entry.input, ref), shown, entry.id);
+  }
+  assert.equal(threadArguments(tool('n9', 'Read')), undefined);
+  assert.equal(threadArgumentsText('not json', { label: 'Command', field: 'command' }), 'not json');
+});
+
+test('a page carries the rows standing for its entries, whole, and an earlier page only those before it', () => {
+  const entries = [text('u', 'user'), tool('r1', 'Read'), tool('r2', 'Read'), tool('r3', 'Read'), text('a')].map((entry, seq) => ({ ...entry, seq }));
+  const rows = presentThread(entries, false);
+  assert.deepEqual(
+    pageRows(rows, entries.slice(3)).map((row) => [row.id, row.from, row.to]),
+    [
+      ['activity:r1', 1, 3],
+      ['a', 4, 4],
+    ],
+  );
+  assert.deepEqual(
+    pageRows(rows, entries.slice(0, 2), 2).map((row) => row.id),
+    ['u', 'activity:r1'],
+  );
+  assert.deepEqual(pageRows(rows, []), []);
 });
