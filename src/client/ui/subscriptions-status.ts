@@ -3,6 +3,7 @@ import { store } from '../state';
 import { h, openModal } from './dom';
 import { windowHeader } from './kit';
 import { providerLogo } from './model-logo';
+import { subscriptionsOrder } from './subscriptions-order';
 import { accountRow, proxyWords } from './subscriptions-settings';
 
 /** Companion clients read the office's plans; installation and sign-in happen on its Mac. */
@@ -14,7 +15,7 @@ export function openSubscriptionsStatus() {
       h('p', {}, 'The plans your workers run on. Manage sign-ins, accounts and DroidProxy in Settings → Connections on the office’s Mac.'),
       h('section.stack.tight', {}, h('h3', {}, 'DroidProxy'), h('p', {}, proxyWords(s.proxy)), s.proxy.error ? h('p.note.bad', {}, s.proxy.error) : null),
       ...(s.models ? [h('p.sub', {}, `${s.models.installed} models in Droid · ${s.models.available} available${s.models.stale ? ' · update the model list on the Mac' : ''}`)] : []),
-      ...s.providers.map((p) =>
+      ...subscriptionsOrder(s.providers).map((p) =>
         h(
           'section.subs-provider',
           {},
