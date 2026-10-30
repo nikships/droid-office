@@ -10,8 +10,16 @@ import org.junit.Test
 class ThreadFeedTest {
     private fun text(id: String, seq: Long, role: ThreadRole = ThreadRole.Assistant, text: String = id) = ThreadEntry(id, seq, role, ThreadKind.Text, text = text)
 
-    private fun page(feed: ThreadFeed, request: String, entries: List<ThreadEntry>, hasMore: Boolean = false, session: String? = "s1", before: Long? = null, error: String? = null) =
-        ServerMsg.ThreadSnapshot(feed.workerId, request, before, session, entries, hasMore, error)
+    private fun page(
+        feed: ThreadFeed,
+        request: String,
+        entries: List<ThreadEntry>,
+        hasMore: Boolean = false,
+        session: String? = "s1",
+        before: Long? = null,
+        error: String? = null,
+        presentation: ThreadPresentation? = null,
+    ) = ServerMsg.ThreadSnapshot(feed.workerId, request, before, session, entries, hasMore, error, presentation)
 
     @Test
     fun theLatestPageLoadsAndOnlyItsOwnAnswerIsTaken() {
@@ -253,17 +261,99 @@ class ThreadFeedTest {
         assertFalse(feed.receive(page(feed, req, run(before - 100, before - 1), hasMore = true, before = before)))
     }
 
+    private fun msg(id: String, seq: Long) = ThreadRow.Message(id, seq, seq, ThreadRole.Assistant, startsTurn = false)
+
+    /** The rows the office would send for messages-only [entries]. */
+    private fun rows(entries: List<ThreadEntry>) = ThreadPresentation(ThreadPresentation.VERSION, entries.map { msg(it.id, it.seq) })
+
+    private fun shown(feed: ThreadFeed, request: String, entries: List<ThreadEntry>, hasMore: Boolean = false, session: String? = "s1", before: Long? = null) =
+        page(feed, request, entries, hasMore, session, before, presentation = rows(entries))
+
     @Test
-    fun toolCallsAreRunningOnlyInATurn() {
-        val tool = ThreadEntry("t", 1, ThreadRole.Assistant, ThreadKind.Tool, name = "Execute", input = "{\n  \"command\": \"npm test\"\n}")
-        assertEquals(ToolState.Running, ThreadFeed.toolState(tool, busy = true))
-        assertEquals(ToolState.NoResult, ThreadFeed.toolState(tool, busy = false))
-        assertEquals(ToolState.Done, ThreadFeed.toolState(tool.copy(output = "ok"), busy = true))
-        assertEquals(ToolState.Failed, ThreadFeed.toolState(tool.copy(output = "boom", error = true), busy = false))
-        assertEquals("npm test", ThreadFeed.toolSummary(tool.input))
-        assertEquals("src/a.kt", ThreadFeed.toolSummary("""{"limit":5,"file_path":"src/a.kt"}"""))
-        assertNull(ThreadFeed.toolSummary("""{"limit":5}"""))
-        assertNull(ThreadFeed.toolSummary(null))
-        assertEquals(80, ThreadFeed.toolSummary("""{"command":"${"x".repeat(200)}"}""")!!.length)
+    fun anOfficeWithoutAPresentationSaysToUpdateItAndKeepsTheEntries() {
+        val feed = ThreadFeed("w1")
+        feed.receive(page(feed, feed.latest(0)!!, listOf(text("a", 1))))
+        assertEquals(ThreadSupport.OlderOffice, feed.state.support)
+        assertEquals(listOf("a"), feed.state.entries.map { it.id })
+        assertTrue(feed.state.rows.isEmpty())
+        assertEquals("Update Droid Office on your computer to read this Thread here. Raw TTY still works.", feed.state.support.message)
+        // The office updated: the next page reads.
+        feed.receive(shown(feed, feed.latest(1)!!, listOf(text("a", 1), text("b", 2))))
+        assertEquals(ThreadSupport.Supported, feed.state.support)
+        assertNull(feed.state.support.message)
+        assertEquals(listOf("a", "b"), feed.state.rows.map { it.id })
     }
-}
+
+    @Test
+    fun aPresentationVersionThisAppDoesntKnowSaysToUpdateTheApp() {
+        val feed = ThreadFeed("w1")
+        val future = Protocol.decode(
+            """{"t":"thread.snapshot","workerId":"w1","request":"${feed.latest(0)}","sessionId":"s1","hasMore":false,
+              "entries":[{"id":"a","seq":1,"role":"assistant","kind":"text","text":"a"}],
+              "presentation":{"version":${ThreadPresentation.VERSION + 1},"rows":[{"kind":"message","id":"a","from":1,"to":1,"role":"assistant","startsTurn":true}]}}""",
+        ) as ServerMsg.ThreadSnapshot
+        assertTrue(feed.receive(future))
+        assertEquals(ThreadSupport.NewerOffice, feed.state.support)
+        assertTrue("rows of an unknown version are never guessed at", feed.state.rows.isEmpty())
+        assertEquals(listOf("a"), feed.state.entries.map { it.id })
+        assertEquals("Update the app to read this Thread. Raw TTY still works.", feed.state.support.message)
+    }
+
+    @Test
+    fun aLatestPageReplacesTheRowsFromItsFirstRowOrEntryOn() {
+        val feed = ThreadFeed("w1")
+        feed.receive(shown(feed, feed.latest(0)!!, listOf(text("c", 3), text("d", 4)), hasMore = true))
+        val (req, before) = feed.earlier(1)!!
+        feed.receive(shown(feed, req, listOf(text("a", 1), text("b", 2), text("c", 3)), before = before))
+        assertEquals("an earlier page adds only rows ending before the first held", listOf("a", "b", "c", "d"), feed.state.rows.map { it.id })
+        // The newest row grew into an activity reaching back to seq 3.
+        val grown = ThreadRow.Activity("activity:c", 3, 5, listOf("c", "d", "e"), "Read a file", ActivityState.Complete, live = false)
+        feed.receive(page(feed, feed.latest(10)!!, listOf(text("d", 4), text("e", 5)), hasMore = true, presentation = ThreadPresentation(1, listOf(grown))))
+        assertEquals(listOf("a", "b", "activity:c"), feed.state.rows.map { it.id })
+        assertEquals(listOf("a", "b", "c", "d", "e"), feed.state.entries.map { it.id })
+    }
+
+    @Test
+    fun whateverClearsTheEntriesClearsTheRows() {
+        val feed = ThreadFeed("w1")
+        feed.receive(shown(feed, feed.latest(0)!!, listOf(text("a", 5), text("b", 6)), hasMore = true, session = "s1"))
+        assertEquals(listOf("a", "b"), feed.state.rows.map { it.id })
+        feed.receive(shown(feed, feed.latest(1)!!, listOf(text("n", 1)), session = "s2"))
+        assertEquals("a new session", listOf("n"), feed.state.rows.map { it.id })
+        feed.receive(shown(feed, feed.latest(2)!!, emptyList(), session = "s2"))
+        assertTrue("an empty latest page", feed.state.rows.isEmpty())
+        feed.receive(shown(feed, feed.latest(3)!!, listOf(text("x", 200), text("y", 201)), hasMore = true, session = "s2"))
+        feed.receive(shown(feed, feed.latest(4)!!, listOf(text("p", 900)), hasMore = true, session = "s2"))
+        assertEquals("a gap", listOf("p"), feed.state.rows.map { it.id })
+        feed.backToLatest()
+        assertTrue(feed.state.rows.isEmpty())
+    }
+
+    @Test
+    fun trimmingTheEntriesDropsTheRowsOutsideThem() {
+        val feed = ThreadFeed("w1")
+        var now = 0L
+        var newest = 100L
+        feed.receive(shown(feed, feed.latest(now)!!, run(1, newest)))
+        while (newest < 2_200) {
+            newest += 50
+            now += 1_000
+            feed.receive(shown(feed, feed.latest(now)!!, run(newest - 99, newest), hasMore = true))
+        }
+        val first = feed.state.entries.first().seq
+        assertEquals(ThreadFeed.MAX_ENTRIES, feed.state.entries.size)
+        assertEquals(feed.state.entries.map { it.id }, feed.state.rows.map { it.id })
+        assertEquals(first, feed.state.rows.first().from)
+
+        // An earlier page past the cap lets the newest entries and their rows go.
+        val (req, before) = feed.earlier(now + 1)!!
+        feed.receive(shown(feed, req, run(before - 100, before - 1), hasMore = true, before = before))
+        assertTrue(feed.state.newerTrimmed)
+        assertEquals(feed.state.entries.map { it.id }, feed.state.rows.map { it.id })
+        // Reading older history: a latest page updates the rows it shares with the window, nothing else.
+        val inWindow = feed.state.entries.last()
+        val edited = ThreadRow.Message(inWindow.id, inWindow.seq, inWindow.seq, ThreadRole.Assistant, startsTurn = true)
+        feed.receive(page(feed, feed.latest(now + 10_000)!!, listOf(inWindow) + run(newest + 1, newest + 2), hasMore = true, presentation = ThreadPresentation(1, listOf(edited, msg("e${newest + 1}", newest + 1)))))
+        assertEquals(feed.state.entries.map { it.id }, feed.state.rows.map { it.id })
+        assertEquals(edited, feed.state.rows.last())
+    }}

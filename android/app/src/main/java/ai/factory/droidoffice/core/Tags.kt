@@ -314,6 +314,8 @@ object Tags {
         const val THREAD_WAITING_TTY = "worker.thread.waiting.raw_tty"
         /** After Load earlier pushed the newest entries out: loads the newest page again. */
         const val THREAD_NEWER = "worker.thread.newer"
+        /** In place of the conversation when the office's Thread can't be read here: update the office or the app, or use Raw TTY. */
+        const val THREAD_UPDATE = "worker.thread.update"
 
         /** The row in the Thread view with the Thread and Raw TTY switch, the PR and the branch. */
         const val THREAD_BAR = "worker.thread.bar"
@@ -340,8 +342,20 @@ object Tags {
         fun threadGroupSummary(id: String) = "worker.thread.group.summary/$id"
         /** What failed in a run, shown even while it is closed. */
         fun threadGroupError(id: String) = "worker.thread.group.error/$id"
-        /** The plan as the run left it, inside the open run. */
+        /** The plan as the run left it, inside the open run. Reserved: plans are now under [threadRunPlan]. */
         fun threadGroupPlan(id: String) = "worker.thread.group.plan/$id"
+        /** What didn't simply finish in an Activity: "2 failed · 1 no result". */
+        fun threadGroupStatus(id: String) = "worker.thread.group.status/$id"
+        /** What a live Activity is running now. */
+        fun threadGroupRunning(id: String) = "worker.thread.group.running/$id"
+        /** One run of tool calls inside an open Activity, by the id of the run's first entry. */
+        fun threadRun(id: String) = "worker.thread.run/$id"
+        /** Opens or closes a run's actions (`checked` is open). */
+        fun threadRunToggle(id: String) = "worker.thread.run.toggle/$id"
+        /** The run's plan, when it changed since the last one shown, inside the open run. */
+        fun threadRunPlan(id: String) = "worker.thread.run.plan/$id"
+        /** In an open call whose entry isn't loaded: Load earlier brings what it was given and returned. */
+        fun threadNotLoaded(id: String) = "worker.thread.not_loaded/$id"
 
         /** A quick key, by what TalkBack calls it: "Shift Tab" is `key.shift_tab`. */
         fun key(spoken: String) = "key." + spoken.lowercase().replace(' ', '_')
