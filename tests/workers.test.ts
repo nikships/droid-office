@@ -88,13 +88,6 @@ const record = (extra = {}) => fs.appendFileSync(log, JSON.stringify({
 }) + '\\n');
 record();
 
-// The task namer invokes droid as a non-interactive JSON command (droid exec). Keep that
-// invocation deterministic and separate from the worker's real PTY process.
-if (args.includes('--output-format')) {
-  process.stdout.write(JSON.stringify({ structured_output: { name: 'Fake Task', summary: 'Recording a deterministic test task' } }));
-  process.exit(0);
-}
-
 process.stdout.write('fake-agent-ready\\r\\n');
 process.stdin.setEncoding('utf8');
 process.stdin.on('data', (chunk) => record({ stdin: chunk }));
@@ -201,6 +194,8 @@ test('Droid workers launch with their own hook overlay and resume the correct se
   const worker = workers.spawn('desk-2', 'test', '- inspect this code');
   assert.equal(typeof worker, 'object');
   if (typeof worker === 'string') return;
+  assert.equal(worker.task?.summary, '- inspect this code', 'local workers have a prompt card without a model or API key');
+  assert.equal(worker.task?.generated, undefined);
   const first = (
     await waitFor(
       () => f.read(),
@@ -276,16 +271,17 @@ test('Droid workers launch with their own hook overlay and resume the correct se
   assert.equal(hook('Stop', {}), false, 'hooks from the old process must not control a resumed worker');
   assert.equal(hook('SessionStart', { source: 'resume' }, second.env.hookToken!), true);
 
-  await waitFor(
-    () => workers.get(worker.id)?.task?.name,
-    (name) => name === 'Fake Task',
-    8000,
-  );
+  assert.equal(workers.get(worker.id)?.task?.summary, '- inspect this code', 'tools and follow-up prompts do not replace the initial preview');
+  workers.setTask(worker.id, { name: 'Worker Hooks', summary: 'Verified resume handling', generated: true, textHash: 'a'.repeat(64) });
+  hook('UserPromptSubmit', { prompt: 'continue with another check' }, second.env.hookToken!);
+  assert.equal(workers.get(worker.id)?.task?.summary, 'Verified resume handling', 'a prompt preview cannot overwrite generated labels');
   workers.shutdown();
   const restored = manager(f, []);
   t.after(() => restored.shutdown());
   await restored.start();
   assert.equal(restored.get(worker.id)?.sessionId, 'droid-1');
+  assert.equal(restored.get(worker.id)?.task?.generated, true);
+  assert.equal(restored.get(worker.id)?.task?.textHash, 'a'.repeat(64));
   const third = (
     await waitFor(
       () => launchesOf(f),
@@ -959,7 +955,7 @@ async function liveWorker(t: { after(fn: () => void): void }, session: string) {
   const token = (await waitFor(f.read, (x) => x.some((r) => r.kind === 'droid' && r.args.includes('--settings')))).find((r) => r.kind === 'droid' && r.args.includes('--settings'))!.env.hookToken!;
   const hook = (event: string, extra: Record<string, unknown> = {}, from = session) => workers.handleHook(worker.id, token, event, { session_id: from, hook_event_name: event, ...extra });
   const status = () => workers.get(worker.id)?.status;
-  return { workers, worker, hook, status, updates, data: f.data };
+  return { workers, worker, hook, status, updates, data: f.data, f };
 }
 
 test("a prompt answered in the terminal puts the worker back to work, and a cancelled one puts it at rest (droid's own hook order)", async (t) => {
@@ -1049,7 +1045,30 @@ test("a subagent's hooks don't take over its worker's session (droid's own hook 
 
   // A new conversation (/clear) forgets the old one's subagents.
   hook('SessionStart', { source: 'clear' }, 'new-session');
+  assert.equal(workers.get(worker.id)?.task, undefined, 'clear removes both generated labels and prompt previews');
+  assert.ok(workers.get(worker.id)?.taskSince, 'clear excludes old text even if Droid reuses the session file');
+  hook('UserPromptSubmit', { prompt: CARRY_ON_PROMPT }, 'new-session');
+  assert.equal(workers.get(worker.id)?.task, undefined, 'restart recovery notices are not owner task previews');
+  hook('UserPromptSubmit', { prompt: '/clear' }, 'new-session');
+  assert.equal(workers.get(worker.id)?.task, undefined, 'slash commands are not task previews');
+  hook('UserPromptSubmit', { prompt: 'Check the new task' }, 'new-session');
+  assert.equal(workers.get(worker.id)?.task?.summary, 'Check the new task', 'the first prompt after clear restores a local preview');
   assert.equal(sub('PreToolUse', execute), false);
+  hook('SessionStart', { source: 'resume' }, 'earlier-session');
+  assert.equal(workers.get(worker.id)?.taskSince, undefined, 'switching sessions includes that session’s existing visible conversation');
+  assert.equal(workers.get(worker.id)?.task, undefined, 'a different session cannot keep the previous session’s preview');
+});
+
+test('session switches cannot resurrect the original hire preview after restart', async (t) => {
+  const { workers, worker, hook, f } = await liveWorker(t, 'original-session');
+  hook('SessionStart', { source: 'startup' });
+  assert.ok(workers.get(worker.id)?.task);
+  hook('SessionStart', { source: 'resume' }, 'selected-session');
+  assert.equal(workers.get(worker.id)?.task, undefined);
+  const restored = manager(f, []);
+  t.after(() => restored.shutdown());
+  assert.equal(restored.get(worker.id)?.prompt, 'fix the login', 'the historic hire prompt is still retained');
+  assert.equal(restored.get(worker.id)?.task, undefined, 'restoring never synthesizes a preview for another session');
 });
 
 /** Types `text` into a worker's terminal, which echoes it back (the fake agent's tty is in cooked mode), and waits to see it. */

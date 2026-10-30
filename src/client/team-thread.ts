@@ -88,7 +88,10 @@ export class TeamThread {
         member = { worker, history: new ThreadHistory(), received: false, error: '', nextReadAt: member?.nextReadAt ?? 0 };
         this.members.set(worker.id, member);
         this.revision++;
-      } else if (JSON.stringify([member.worker.name, member.worker.status, member.worker.activity, member.worker.title, !!member.worker.lost]) !== JSON.stringify([worker.name, worker.status, worker.activity, worker.title, !!worker.lost])) {
+      } else if (
+        JSON.stringify([member.worker.name, member.worker.status, member.worker.activity, member.worker.title, member.worker.task, !!member.worker.lost]) !==
+        JSON.stringify([worker.name, worker.status, worker.activity, worker.title, worker.task, !!worker.lost])
+      ) {
         this.revision++;
       }
       member.worker = worker;

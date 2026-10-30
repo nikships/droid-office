@@ -174,8 +174,8 @@ export class FactoryOffice {
   }
 
   /**
-   * The key itself, while connected and not rejected, for the one child that needs it in its
-   * environment: AutoWiki's `droid exec "/wiki"` (wiki-run.ts), so the run lands in this account.
+   * The key itself, while connected and not rejected, for AutoWiki and the isolated worker sign
+   * writer, so their model calls land in this account.
    */
   key(): string | undefined {
     return this.saved && !this.saved.rejected ? this.saved.key : undefined;

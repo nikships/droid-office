@@ -44,6 +44,7 @@ test('every setting is in a category', () => {
     ['Droid', 'workers'],
     ['Default worker', 'workers'],
     ['Models shown in pickers', 'workers'],
+    ['Worker labels', 'workers'],
     ['Where fresh workers start', 'workers'],
     ['Prompts', 'workers'],
     ['Worker limit', 'workers'],

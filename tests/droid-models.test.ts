@@ -65,9 +65,9 @@ test('Droid model list puts custom models first and legacy ones last, without di
   ]);
   assert.deepEqual(models, [
     { id: 'custom:zen:bunny', displayName: 'Bunny', custom: true, defaultReasoningEffort: 'high' },
-    { id: 'glm-5.3', displayName: 'GLM-5.3', defaultReasoningEffort: 'max', supportedReasoningEfforts: ['low', 'high', 'max'] },
-    { id: 'auto', displayName: 'Auto Model', supportedReasoningEfforts: [] },
-    { id: 'claude-fable-5', displayName: 'Fable 5', legacy: true, defaultReasoningEffort: 'high', supportedReasoningEfforts: ['low', 'high'] },
+    { id: 'glm-5.3', displayName: 'GLM-5.3', defaultReasoningEffort: 'max', supportedReasoningEfforts: ['low', 'high', 'max'], labelReasoningEfforts: ['low', 'high', 'max'] },
+    { id: 'auto', displayName: 'Auto Model', supportedReasoningEfforts: [], labelReasoningEfforts: ['none'] },
+    { id: 'claude-fable-5', displayName: 'Fable 5', legacy: true, defaultReasoningEffort: 'high', supportedReasoningEfforts: ['low', 'high'], labelReasoningEfforts: ['off', 'low', 'high'] },
     { id: 'minimax-m2.7', displayName: 'MiniMax M2.7 [Deprecated]', legacy: true },
   ]);
 });

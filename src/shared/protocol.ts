@@ -17,6 +17,7 @@ import type { Visit } from './visits.js';
 import type { SetupState } from './setup.js';
 import type { SubscriptionProviderKey, SubscriptionsState } from './subscriptions.js';
 import type { ThreadEntry } from './worker-thread.js';
+import type { WorkerLabelSettings, WorkerLabelState } from './worker-labels.js';
 
 export type WorkerStatus =
   | 'starting' // PTY launched, agent booting
@@ -67,6 +68,10 @@ export interface PromptsState {
 export interface WorkerTask {
   name: string;
   summary: string;
+  /** Written from visible conversation text, rather than a lead's initial task preview. */
+  generated?: boolean;
+  /** Digest of the bounded visible text, so an Office restart does not re-label unchanged text. */
+  textHash?: string;
 }
 
 export interface WorkerInfo {
@@ -127,8 +132,10 @@ export interface WorkerInfo {
   activity?: string;
   /** What its latest tool call is, for the worker to act out while it works. */
   action?: WorkerAction;
-  /** Written by a small model from its prompts and recent tool calls (see server/tasks.ts). */
+  /** Stable subject and current work, generated from visible conversation text (server/worker-labels.ts). */
   task?: WorkerTask;
+  /** A /clear boundary for the read-only sign writer, including across Office restarts. */
+  taskSince?: number;
   /** When its terminal last took input (keystrokes or a prompt). */
   lastInputAt?: number;
   /**
@@ -984,6 +991,7 @@ type ClientMessage =
   | { t: 'subagents.set'; settings: SubagentSettings }
   /** Hide one model from every device's picker, or show all with a null id and hidden=false. */
   | { t: 'models.hide'; id: string | null; hidden: boolean }
+  | { t: 'workerLabels.set'; settings: WorkerLabelSettings }
   /** Where the office looks for checkouts from now on; '' goes back to the default. */
   | { t: 'floor.projectsDir'; dir: string }
   /** Rewrite one of the office's prompts; null puts the default back. */
@@ -1048,6 +1056,7 @@ export type ServerMsg =
       freshMain: FreshMainState;
       subagents: SubagentsState;
       hiddenModels?: string[];
+      workerLabels?: WorkerLabelState;
       /** Confirmed worker.answer supports a complete checkbox selection and optional custom text. */
       workerAnswerMultiSelect?: boolean;
       whiteboardSkill: WhiteboardSkillState;
@@ -1132,6 +1141,7 @@ export type ServerMsg =
   | { t: 'autoHeal'; state: AutoHealState }
   | { t: 'subagents'; state: SubagentsState }
   | { t: 'models.hidden'; ids: string[] }
+  | { t: 'workerLabels'; state: WorkerLabelState }
   /**
    * Every visit on the floor (see shared/visits.ts), to everyone on it: after `welcome` and
    * `floor.enter`, and whenever a visit starts, changes phase or ends.

@@ -100,8 +100,8 @@ const stop = (signal: NodeJS.Signals) => {
   closing = true;
   const keep = signal === 'SIGTERM';
   console.log(keep ? '\n  closing the office — workers keep running for the next one…' : '\n  closing the office…');
-  office.shutdown(keep);
-  setTimeout(() => process.exit(0), 300);
+  // The sign writer must remove its temporary credential profile before the forced exit.
+  void office.shutdown(keep).finally(() => setTimeout(() => process.exit(0), 300));
 };
 // Last line of defense: one bad request must never take down every running worker.
 process.on('unhandledRejection', (err) => console.error('droid-office: unhandled rejection', err));

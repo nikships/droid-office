@@ -35,7 +35,7 @@ import type { AgentEffort, CarriedIssue, FloorInfo, GhIssue, GongWhy, WorkerInfo
 import { ciForFloor } from '../shared/factory-ci';
 import { wikiShelfLine } from '../shared/factory-wiki';
 import { isPaletteKey } from '../shared/palette';
-import { isAsleep, isBusy, workerPr } from '../shared/status';
+import { isAsleep, isBusy, workerActivity, workerPr } from '../shared/status';
 import { PROVIDER_LABEL, guestKeyNote, outsideNote, processLabel, statusWord } from '../shared/guests';
 import { Net } from './net';
 import { removedFloorNotice, standSpot } from './arrival';
@@ -1617,7 +1617,7 @@ function syncWorkers() {
     const deskDef = DESK_BY_ID.get(w.deskId);
     // A cloud worker's card says where it runs even before it has a task.
     const task = w.task ?? (w.cloud ? { name: 'Ready', summary: w.cloud.error ?? 'Waiting for a prompt' } : undefined);
-    v.model.setTask(task && w.kind !== 'shell' ? { ...task, name: engineBadge ? `${engineBadge} · ${task.name}` : task.name } : task);
+    v.model.setTask(task && w.kind !== 'shell' ? { ...task, summary: workerActivity(w) ?? task.summary, name: engineBadge ? `${engineBadge} · ${task.name}` : task.name } : task);
     // Keys clack while it types, not while it reads, watches its tests or browses.
     if (deskDef) sound.setTyping(w.id, deskDef.x, deskDef.z, w.status === 'working' && (!w.action || w.action === 'edit'));
     const again = w.kind === 'shell' ? 'restart' : 'resume';

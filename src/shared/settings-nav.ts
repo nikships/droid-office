@@ -82,6 +82,7 @@ export const SETTINGS_CARDS = [
   { pane: 'workers', title: 'Droid', keywords: 'droid version update sign in install agent account factory' },
   { pane: 'workers', title: 'Default worker', keywords: 'default worker model effort agent new hire board agents' },
   { pane: 'workers', title: 'Models shown in pickers', keywords: 'models hide hidden pickers visibility list' },
+  { pane: 'workers', title: 'Worker labels', keywords: 'subject task summary activity sign writer model reasoning interval refresh conversation' },
   { pane: 'workers', title: 'Where fresh workers start', keywords: 'fresh workers branch main floor branch checkout start' },
   { pane: 'workers', title: 'Prompts', keywords: 'prompts edit wording handoffs reviews board agents sign writer' },
   { pane: 'workers', title: 'Worker limit', keywords: 'limit most workers at once max ceiling hire' },

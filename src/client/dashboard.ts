@@ -1,7 +1,7 @@
 import type { ClientMsg, WorkerInfo } from '../shared/protocol';
 import { canAnswer, readMenu, sameMenu, type Menu } from '../shared/asks';
 import { questionPresentation } from '../shared/ask-question';
-import { isAsleep, isBusy } from '../shared/status';
+import { isAsleep, isBusy, workerActivity } from '../shared/status';
 import { statusWord } from '../shared/guests';
 import { cardsNewestFirst, cardChanged, OWNER } from '../shared/whiteboard';
 import { ROOF } from '../shared/rooftop';
@@ -950,7 +950,7 @@ const warn = (error: string | undefined) => {
 function paintInfo(w: WorkerInfo) {
   infoHead.replaceChildren(avatar(w, 'lg'), h('div', {}, h('div.dash-info-name', {}, infoName, pill(w)), h('div.dash-info-kind', {}, kind(w))));
   infoName.textContent = w.name;
-  infoActivity.textContent = w.activity ?? w.task?.summary ?? w.prompt ?? 'Waiting for a task.';
+  infoActivity.textContent = workerActivity(w) ?? w.prompt ?? 'Waiting for a task.';
   const lead = w.lead && store.workers.get(w.lead);
   const team = store.teamOf(w.id);
   const info: [string, string | undefined][] = [

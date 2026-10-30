@@ -22,6 +22,7 @@ import type {
   ClientMsg,
 } from '../shared/protocol';
 import { SUBAGENT_DEFAULTS } from '../shared/protocol';
+import { WORKER_LABEL_DEFAULTS, type WorkerLabelState } from '../shared/worker-labels';
 import type { ScreenState } from './world/laptop';
 import type { Sidearm } from './world/wand';
 import { randomLook, sanitizeLook, type Look } from '../shared/avatar';
@@ -61,6 +62,7 @@ export type Topic =
   | 'autoHeal'
   | 'subagents'
   | 'hiddenModels'
+  | 'workerLabels'
   | 'prompts'
   | 'jira'
   | 'jiraBoard'
@@ -281,6 +283,7 @@ class Store {
   /** How workers hire subagents (⚙️ Settings → Subagents & visits), and where the Droid skill is. */
   subagents: SubagentsState = { ...SUBAGENT_DEFAULTS };
   hiddenModels: string[] = [];
+  workerLabels: WorkerLabelState = { settings: { ...WORKER_LABEL_DEFAULTS }, running: 0, queued: 0 };
   workerAnswerMultiSelect = false;
   /** Whether the droid-office-whiteboard skill is installed (⚙️ Settings), and where. */
   whiteboardSkill: WhiteboardSkillState = { on: true };
@@ -381,6 +384,8 @@ class Store {
         this.freshMain = msg.freshMain ?? { on: true };
         this.subagents = msg.subagents ?? { ...SUBAGENT_DEFAULTS };
         this.hiddenModels = msg.hiddenModels ?? [];
+        this.workerLabels = msg.workerLabels ?? { settings: { ...WORKER_LABEL_DEFAULTS }, running: 0, queued: 0 };
+        this.emit('workerLabels');
         this.workerAnswerMultiSelect = msg.workerAnswerMultiSelect === true;
         this.emit('hiddenModels');
         this.whiteboardSkill = msg.whiteboardSkill ?? { on: true };
@@ -498,6 +503,10 @@ class Store {
       case 'models.hidden':
         this.hiddenModels = msg.ids;
         this.emit('hiddenModels');
+        break;
+      case 'workerLabels':
+        this.workerLabels = msg.state;
+        this.emit('workerLabels');
         break;
       case 'subagents':
         this.subagents = msg.state;

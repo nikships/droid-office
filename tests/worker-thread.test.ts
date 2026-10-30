@@ -5,6 +5,7 @@ import path from 'node:path';
 import { test, type TestContext } from 'node:test';
 import { WorkerThreadReader } from '../src/server/worker-thread.js';
 import { WorkerManager } from '../src/server/workers.js';
+import { LABEL_TEXT_CHARS } from '../src/shared/worker-labels.js';
 
 // Shapes sampled from the owner's local Factory JSONL, including todo_state's nested todos,
 // cli_tui source, hook visibility, thinking signatures, image source and tool_result.is_error.
@@ -29,6 +30,59 @@ async function rig(t: TestContext, rows: unknown[] = [], limits?: { sessions: nu
   await writeFile(file, lines({ type: 'session_start', id: source.sessionId, cwd: source.cwd, title: 'Sanitized session' }, ...rows));
   return { root, source, file, reader: new WorkerThreadReader(root, limits) };
 }
+
+test('label projection keeps visible text independently of a tool-heavy thread window', async (t) => {
+  const { root, source } = await rig(t, [
+    text('prompt', 'Fix the worker labels', 'user'),
+    text('progress', 'Checking cancellation and final updates'),
+    ...Array.from({ length: 1200 }, (_, i) => message(`tool-${i}`, 'assistant', [{ type: 'tool_use', id: `call-${i}`, name: 'Read', input: { file_path: 'PRIVATE_TOOL_ARGUMENT' } }])),
+    message('result', 'user', [{ type: 'tool_result', tool_use_id: 'call-1199', content: 'PRIVATE_RESULT' }]),
+    message('thinking', 'assistant', [
+      { type: 'thinking', thinking: 'PRIVATE_THINKING' },
+      { type: 'image', source: { type: 'base64', data: 'PRIVATE_IMAGE' } },
+    ]),
+    message('hidden', 'assistant', [{ type: 'text', text: 'PRIVATE_HIDDEN' }], { visibility: 'llm_only' }),
+    message('hook', 'user', [{ type: 'text', text: 'PRIVATE_HOOK' }], { hookEventName: 'SessionStart' }),
+    text('reminder', '<system-reminder>PRIVATE_INSTRUCTIONS</system-reminder>Checking the Settings UI'),
+  ]);
+  const reader = new WorkerThreadReader(root, { sessions: 8, entries: 0, bytes: 0 }, true);
+  const value = await reader.readText(source);
+  assert.match(value!, /user: Fix the worker labels/);
+  assert.match(value!, /assistant: Checking cancellation and final updates/);
+  assert.match(value!, /Checking the Settings UI/);
+  assert.doesNotMatch(value!, /PRIVATE_|Read|tool_use|Image attachment/);
+});
+
+test('label snapshots are bounded to the newest 24,000 characters and reset on replacement', async (t) => {
+  const original = 'recent visible paragraph '.repeat(2000);
+  const { root, source, file } = await rig(t, [text('old', 'OLD_TEXT'), text('large', original)]);
+  const reader = new WorkerThreadReader(root, { sessions: 8, entries: 0, bytes: 0 }, true);
+  const first = await reader.readText(source);
+  assert.equal(first?.length, LABEL_TEXT_CHARS);
+  assert.equal(first, original.trim().slice(-LABEL_TEXT_CHARS));
+  await writeFile(file, lines(text('new', 'Replacement conversation')));
+  assert.equal(await reader.readText(source), '\n\nassistant: Replacement conversation');
+});
+
+test('tool-only appends do not change a label snapshot, while assistant final text does', async (t) => {
+  const { root, source, file } = await rig(t, [text('progress', 'Checking the labels')]);
+  const reader = new WorkerThreadReader(root, { sessions: 8, entries: 0, bytes: 0 }, true);
+  const first = await reader.readText(source);
+  await appendFile(file, lines(message('tool', 'assistant', [{ type: 'tool_use', id: 'call', name: 'Execute', input: { command: 'PRIVATE_COMMAND' } }])));
+  assert.equal(await reader.readText(source), first);
+  await appendFile(file, lines(text('final', 'The labels and tests are complete')));
+  assert.match((await reader.readText(source))!, /The labels and tests are complete$/);
+});
+
+test('a persisted clear boundary excludes old visible text even within the same session', async (t) => {
+  const { root, source, file } = await rig(t, [text('old', 'PRIVATE_OLD_CONVERSATION')]);
+  const reader = new WorkerThreadReader(root, { sessions: 8, entries: 0, bytes: 0 }, true);
+  const after = { ...source, since: Date.parse('2026-10-26T12:00:01Z') };
+  assert.equal(await reader.readText(after), '');
+  await appendFile(file, lines({ ...text('new', 'Checking the next task'), timestamp: '2026-10-26T12:00:02Z' }));
+  assert.equal(await reader.readText(after), '\n\nassistant: Checking the next task');
+  assert.doesNotMatch((await reader.readText(after))!, /PRIVATE_OLD/);
+});
 
 test('projects actual text, thinking, tool/error, attachment and nested todo record shapes', async (t) => {
   const { reader, source } = await rig(t, [

@@ -1,4 +1,5 @@
 import type { AgentChoice, AgentEffort } from '../../shared/protocol';
+import { isLabelEffort, type LabelEffort } from '../../shared/worker-labels';
 import { AGENT_EFFORTS } from '../../shared/protocol';
 import { withoutGlyph } from '../world/glyph';
 import { store } from '../state';
@@ -28,6 +29,7 @@ export interface DroidModelOption {
   defaultReasoningEffort?: AgentEffort;
   /** The efforts the model takes, when droid says (empty: none the office can pin); the fixed list otherwise. */
   supportedReasoningEfforts?: AgentEffort[];
+  labelReasoningEfforts?: LabelEffort[];
   provider?: string;
   /** Droid's credit multiplier: what a token costs against the base rate. */
   tokenMultiplier?: number;
@@ -145,7 +147,7 @@ function fetchCatalogue(): Promise<Catalogue> {
       const models = Array.isArray(body.models)
         ? body.models.flatMap((m): DroidModelOption[] => {
             if (!m || typeof m !== 'object') return [];
-            const { id, displayName, custom, legacy, defaultReasoningEffort, supportedReasoningEfforts, provider, tokenMultiplier, noImages, promo } = m as Record<string, unknown>;
+            const { id, displayName, custom, legacy, defaultReasoningEffort, supportedReasoningEfforts, labelReasoningEfforts, provider, tokenMultiplier, noImages, promo } = m as Record<string, unknown>;
             if (typeof id !== 'string' || !id || id.length > MODEL_MAX || /[\s\p{Cc}\p{Cf}]/u.test(id)) return [];
             return [
               {
@@ -155,6 +157,7 @@ function fetchCatalogue(): Promise<Catalogue> {
                 ...(legacy === true ? { legacy: true } : {}),
                 ...(defaultReasoningEffort ? { defaultReasoningEffort: asEffort(defaultReasoningEffort) } : {}),
                 ...(supportedReasoningEfforts ? { supportedReasoningEfforts: asEfforts(supportedReasoningEfforts) } : {}),
+                ...(Array.isArray(labelReasoningEfforts) ? { labelReasoningEfforts: labelReasoningEfforts.filter(isLabelEffort) } : {}),
                 ...(typeof provider === 'string' && provider ? { provider } : {}),
                 ...(typeof tokenMultiplier === 'number' && Number.isFinite(tokenMultiplier) ? { tokenMultiplier } : {}),
                 ...(noImages === true ? { noImages: true } : {}),
