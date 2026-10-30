@@ -16,7 +16,7 @@ import { openSubscriptionsStatus } from './ui/subscriptions-status';
 import { onTermFontSize, setTermFontSize, stepTermFont, termFontSize, TERM_FONT_MAX, TERM_FONT_MIN } from './ui/term-font';
 import { parseWorkerLink } from './worker-link';
 import { DashboardWorkerLink } from './dashboard-worker-link';
-import { WORKSPACE_KEY_HINTS, workspaceShortcut } from './dashboard-shortcuts';
+import { adjacentFloor, WORKSPACE_KEY_HINTS, workspaceShortcut } from './dashboard-shortcuts';
 import {
   assign,
   clampRatio,
@@ -76,6 +76,7 @@ let credential = (() => {
 let bootstrap = new URLSearchParams(location.search).get('t') ?? '';
 const workerLink = new DashboardWorkerLink(parseWorkerLink(location.hash));
 const arrivedWithLink = !!bootstrap;
+const nativeCompanion = /Macintosh/.test(navigator.userAgent) && /Electron\//.test(navigator.userAgent);
 // Remove credentials before loading a card or navigating anywhere else.
 if (location.search || workerLink.pending) history.replaceState(null, '', location.pathname);
 const auth = () => setBrowserAuth(credential?.token ?? '', credential ? '' : bootstrap);
@@ -148,7 +149,7 @@ const side = h(
   { 'aria-label': 'Floor' },
   h('div.dash-side-head', {}, sideTitle, sideSub),
   workerList,
-  h('footer.dash-side-foot', {}, h('div.dash-side-hire', {}, agentBtn, shellBtn), h('div.dash-keys', { 'aria-hidden': 'true' }, ...keyHints(WORKSPACE_KEY_HINTS))),
+  h('footer.dash-side-foot', {}, h('div.dash-side-hire', {}, agentBtn, shellBtn), h('div.dash-keys', { 'aria-hidden': 'true' }, ...keyHints(nativeCompanion ? [...WORKSPACE_KEY_HINTS, ['⌘ − +', 'floors']] : WORKSPACE_KEY_HINTS))),
 );
 
 /** The layout switcher's little pictures: the same boxes the layout puts its panes in. */
@@ -1028,45 +1029,54 @@ window.addEventListener(
   'keydown',
   (e) => {
     if (!live() || modalOpen()) return;
-    workspaceShortcut(e, (command) => {
-      switch (command.action) {
-        case 'layout':
-          changeLayout(command.mode);
-          panes[ws.focused]?.focusContent();
-          break;
-        case 'maximize':
-          toggleMaxPane(ws.focused);
-          panes[ws.focused]?.focusContent();
-          break;
-        case 'pane':
-          ws.focused = (ws.focused + command.direction + SLOT_COUNT[ws.layout]) % SLOT_COUNT[ws.layout];
-          if (ws.maximized !== null) ws.maximized = ws.focused;
-          changed();
-          panes[ws.focused]?.focusContent();
-          break;
-        case 'worker': {
-          const list = ordered();
-          const at = list.findIndex((w) => w.id === focusedWorker(ws));
-          const next = at < 0 ? (command.direction > 0 ? 0 : list.length - 1) : (at + command.direction + list.length) % list.length;
-          const w = list[next];
-          if (w) openHere(w.id, true);
-          break;
+    workspaceShortcut(
+      e,
+      (command) => {
+        switch (command.action) {
+          case 'floor': {
+            const next = adjacentFloor(store.floors, store.floor, command.direction);
+            if (next) goFloor(next);
+            break;
+          }
+          case 'layout':
+            changeLayout(command.mode);
+            panes[ws.focused]?.focusContent();
+            break;
+          case 'maximize':
+            toggleMaxPane(ws.focused);
+            panes[ws.focused]?.focusContent();
+            break;
+          case 'pane':
+            ws.focused = (ws.focused + command.direction + SLOT_COUNT[ws.layout]) % SLOT_COUNT[ws.layout];
+            if (ws.maximized !== null) ws.maximized = ws.focused;
+            changed();
+            panes[ws.focused]?.focusContent();
+            break;
+          case 'worker': {
+            const list = ordered();
+            const at = list.findIndex((w) => w.id === focusedWorker(ws));
+            const next = at < 0 ? (command.direction > 0 ? 0 : list.length - 1) : (at + command.direction + list.length) % list.length;
+            const w = list[next];
+            if (w) openHere(w.id, true);
+            break;
+          }
+          case 'hire':
+            hire('agent', 'auto', ws.focused);
+            break;
+          case 'board':
+            void openBoard();
+            break;
+          case 'sidebar':
+            toggleSide();
+            if (sideOpen) {
+              roster.reveal(focusedWorker(ws) ?? '');
+              (roster.button(focusedWorker(ws) ?? '') ?? agentBtn).focus({ preventScroll: true });
+            } else panes[ws.focused]?.focusContent();
+            break;
         }
-        case 'hire':
-          hire('agent', 'auto', ws.focused);
-          break;
-        case 'board':
-          void openBoard();
-          break;
-        case 'sidebar':
-          toggleSide();
-          if (sideOpen) {
-            roster.reveal(focusedWorker(ws) ?? '');
-            (roster.button(focusedWorker(ws) ?? '') ?? agentBtn).focus({ preventScroll: true });
-          } else panes[ws.focused]?.focusContent();
-          break;
-      }
-    });
+      },
+      nativeCompanion,
+    );
   },
   true,
 );
