@@ -51,7 +51,7 @@ export interface PaneHost {
   /** Opens a teammate beside this pane. */
   openBeside(id: string): void;
   sendHome(w: WorkerInfo): void;
-  hire(): void;
+  hire(index: number): void;
   /** Ctrl+] in a terminal: back to the worker's row in the sidebar. */
   leave(id: string): void;
 }
@@ -408,12 +408,17 @@ export function createPane(host: PaneHost, index: number): Pane {
     stage.replaceChildren(
       h(
         'div.dash-empty',
-        {},
+        {
+          'data-live': String(host.live()),
+          onclick: (e) => {
+            if (host.live() && e.target instanceof Element && !e.target.closest('button')) host.hire(index);
+          },
+        },
         h('div.dash-empty-icon', {}, icon('panes', 18)),
         h('h3', {}, s.anyone ? 'Open a worker here' : 'Nobody on this floor yet'),
         h('p', {}, s.anyone ? (chips.length ? 'Pick someone from the floor, or drag them in from the list.' : 'Everyone on the floor is open in another pane.') : 'Hire a Droid and its terminal opens here.'),
         chips.length ? h('div.dash-picks', {}, ...chips) : null,
-        s.anyone ? null : h('button.btn.accent', { type: 'button', disabled: !host.live(), onclick: () => host.hire() }, icon('plus', 14), 'Hire Droid'),
+        h('button.btn.accent', { type: 'button', disabled: !host.live(), onclick: () => host.hire(index) }, icon('plus', 14), 'Hire Droid here'),
       ),
     );
   }

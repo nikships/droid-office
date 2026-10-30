@@ -48,6 +48,29 @@ test('opening a worker focuses its pane, then fills an empty one, then takes the
   assert.equal(focusedWorker(ws), 'c');
 });
 
+test('hiring into a specific empty pane keeps its target despite focus changes', () => {
+  const ws = emptyWorkspace('grid');
+  ws.slots[0] = 'a';
+  ws.focused = 1;
+  openWorker(ws, 'new', 3);
+  assert.deepEqual(visibleSlots(ws), ['a', null, null, 'new']);
+  assert.equal(ws.focused, 3);
+});
+
+test('a filled or hidden hire target falls back to an available visible pane', () => {
+  const ws = seedWorkspace(['a', 'b']);
+  closeSlot(ws, 1);
+  openWorker(ws, 'new', 0);
+  assert.deepEqual(visibleSlots(ws), ['a', 'new']);
+  closeSlot(ws, 1);
+  openWorker(ws, 'other', 3);
+  assert.deepEqual(visibleSlots(ws), ['a', 'other']);
+  assert.equal(ws.slots[3], null);
+  openWorker(ws, 'a', 1);
+  assert.deepEqual(visibleSlots(ws), ['a', 'other']);
+  assert.equal(ws.focused, 0);
+});
+
 test('opening while a pane is maximized keeps the opened worker maximized', () => {
   const ws = seedWorkspace(['a', 'b']);
   toggleMax(ws, 0);

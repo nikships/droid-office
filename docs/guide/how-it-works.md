@@ -10,6 +10,8 @@
 
 - **Companion floor navigation.** The web and native Mac companions show every available floor as a numbered chip in a horizontally scrolling row, in the same saved order as Android. The current floor is highlighted and brought into view on arrival; trackpad, touch and mouse-wheel scrolling reveal the rest. Left/Right and Home/End move focus between chips, and Enter or Space switches floors. Repository details stay in each chip's tooltip. Floor switching is disabled while disconnected or syncing, and **Reorder floors** stays beside the row.
 
+- **Companion empty panes.** Click an empty pane or its **Hire Droid here** button to open the hiring dialog, even when everyone on the floor is already open. The confirmed hire opens in that pane, regardless of later focus changes. If the pane was filled or hidden meanwhile, it uses the normal available-pane selection instead. Existing worker picks and drag-and-drop still open those workers without hiring.
+
 - **Mac companion window dragging.** The navigation bar provides a native window drag area. Open modal backdrops opt out of that area, so controls over the navigation bar receive clicks instead of dragging the window.
 
 - **Notifications.** Desktop alerts and the background tab's waiting-worker count run in `src/client/notify.ts`; the Mac app also handles alerts while its office window is closed. **Settings → Notifications** contains only the personal desktop notification controls. There is no channel notification delivery or webhook configuration. An old `.droid-office/webhook.json` is left on disk and never read.

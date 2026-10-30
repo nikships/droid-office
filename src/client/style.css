@@ -2393,6 +2393,8 @@ html:has(body.dashboard), body.dashboard { overflow: auto; }
 .dash-pane.drop-over .dash-pane-drop { opacity: 1; transform: none; }
 .dash-empty { flex: 1; min-height: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: var(--space-1); padding: var(--space-6); overflow: auto; text-align: center; background-image: radial-gradient(rgba(255, 255, 255, .07) .8px, transparent .9px); background-size: 18px 18px; }
 .dash-empty-icon { display: grid; place-items: center; width: 40px; height: 40px; margin-bottom: var(--space-3); border: 1px solid var(--border); border-radius: var(--radius-lg); background: var(--surface-raised); color: var(--text-secondary); }
+.dash-empty[data-live=true] { cursor: pointer; }
+.dash-empty[data-live=true]:hover .dash-empty-icon { color: var(--accent); border-color: var(--accent); }
 .dash-empty h3 { margin: 0; font: 500 14px/1.4 var(--font-sans); }
 .dash-empty p { max-width: 260px; margin: 0; font-size: 12.5px; line-height: 18px; color: var(--text-secondary); }
 .dash-empty > .btn { margin-top: var(--space-4); }

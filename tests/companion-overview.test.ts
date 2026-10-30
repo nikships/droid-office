@@ -11,3 +11,13 @@ test('companions open worker panes or a list instead of the 3D floor', () => {
   assert.match(android, /MainTab\.Office -> HomeScreen\(/);
   assert.doesNotMatch(android, /MainTab\.Office -> OfficeTab\(/);
 });
+
+test('companion hiring forwards its captured pane through confirmed floor-scoped actions', () => {
+  const web = readFileSync(new URL('../src/client/dashboard.ts', import.meta.url), 'utf8');
+  assert.match(web, /hire: \(index\) => hire\('agent', 'auto', index\)/);
+  assert.match(web, /function hire\(kind: 'agent' \| 'shell', deskId = 'auto', targetPane\?: number\)/);
+  assert.match(web, /await action\(\{ t: 'worker\.spawn',[^\n]+targetPane\)/);
+  assert.match(web, /msg\.t === 'worker\.spawn' && result\.workerId && floor === intendedFloor/);
+  assert.match(web, /if \(hired\) openHere\(hired, true, targetPane\)/);
+  assert.match(web, /openWorker\(ws, id, targetPane\)/);
+});

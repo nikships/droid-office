@@ -114,7 +114,7 @@ export function swap(ws: Workspace, a: number, b: number) {
 }
 
 /** Shows a worker: focuses its pane if it's open, else fills an empty pane, else takes the focused one. */
-export function openWorker(ws: Workspace, id: string) {
+export function openWorker(ws: Workspace, id: string, targetPane?: number) {
   const shown = visibleSlots(ws);
   const at = shown.indexOf(id);
   if (at >= 0) {
@@ -122,7 +122,7 @@ export function openWorker(ws: Workspace, id: string) {
     if (ws.maximized !== null) ws.maximized = at;
     return;
   }
-  const empty = shown.indexOf(null);
+  const empty = targetPane !== undefined && shown[targetPane] === null ? targetPane : shown.indexOf(null);
   const slot = empty >= 0 ? empty : ws.focused;
   assign(ws, slot, id);
   if (ws.maximized !== null) ws.maximized = slot;

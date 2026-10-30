@@ -288,9 +288,9 @@ function toggleMaxPane(i: number) {
   changed();
 }
 /** Opens a worker in the workspace; `focusIt` puts the keyboard in it as well. */
-function openHere(id: string, focusIt = false) {
+function openHere(id: string, focusIt = false, targetPane?: number) {
   if (!store.workers.has(id)) return;
-  openWorker(ws, id);
+  openWorker(ws, id, targetPane);
   takeFocus = focusIt;
   changed();
   takeFocus = true;
@@ -348,7 +348,7 @@ const paneHost: PaneHost = {
   },
   openBeside: (id) => openBesideHere(id),
   sendHome: (w) => sendHome(w),
-  hire: () => hire('agent'),
+  hire: (index) => hire('agent', 'auto', index),
   leave(id) {
     if (!sideOpen) toggleSide();
     (rows.get(id)?.el ?? sideToggle).focus();
@@ -588,7 +588,7 @@ window.addEventListener('hashchange', () => {
 function usable(id: string, intendedFloor: string) {
   return live() && floor === intendedFloor && store.workers.has(id);
 }
-async function action(msg: ClientMsg, id = '', intendedFloor = floor, done?: string): Promise<string | undefined> {
+async function action(msg: ClientMsg, id = '', intendedFloor = floor, done?: string, targetPane?: number): Promise<string | undefined> {
   if (!live() || floor !== intendedFloor || (id && !store.workers.has(id))) return 'The connection, floor or worker changed. Nothing was sent.';
   const key = id || 'hire';
   if (busy.has(key)) return 'An action for this worker is still waiting for confirmation.';
@@ -604,7 +604,7 @@ async function action(msg: ClientMsg, id = '', intendedFloor = floor, done?: str
     busy.delete(key);
     paint();
   }
-  if (hired) openHere(hired, true);
+  if (hired) openHere(hired, true, targetPane);
 }
 function say(text: string) {
   live$.textContent = text;
@@ -980,7 +980,7 @@ function schedulePreviews() {
 }
 // --- Actions ------------------------------------------------------------------------------------------
 
-function hire(kind: 'agent' | 'shell', deskId = 'auto') {
+function hire(kind: 'agent' | 'shell', deskId = 'auto', targetPane?: number) {
   if (!live() || !store.currentFloor()) return;
   const intended = floor;
   const key = draftKey(intended, `hire:${kind}`);
@@ -998,7 +998,7 @@ function hire(kind: 'agent' | 'shell', deskId = 'auto') {
     recall: kind === 'agent',
     worktreeOption: !store.currentFloor()?.home && !store.currentFloor()?.plain && !!store.currentFloor()?.branch,
     onSubmit: async (text, opts) => {
-      const error = await action({ t: 'worker.spawn', deskId, kind, prompt: text, ...opts }, '', intended, kind === 'shell' ? 'Shell opened.' : 'Droid hired.');
+      const error = await action({ t: 'worker.spawn', deskId, kind, prompt: text, ...opts }, '', intended, kind === 'shell' ? 'Shell opened.' : 'Droid hired.', targetPane);
       if (!error) remember(key, '');
       return error;
     },
