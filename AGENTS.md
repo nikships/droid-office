@@ -30,25 +30,6 @@ Planned work has written plans; follow them and keep them current when doing tha
 | `deploy/` | `aws.sh` (EC2 lifecycle) and `provision.sh` (machine setup it runs) |
 | `docs/` | `guide/` (chapters for every feature, setup and how each subsystem works) and the README pictures |
 
-## Nested instructions
-
-This file is the layer that applies everywhere. Each directory below has its own `AGENTS.md` for rules that apply only there. Harnesses that walk the tree load this file first, then each `AGENTS.md` from here down to the file you are editing. The closer file wins when two disagree. Read the nearest one before editing that tree. Put a new rule in the closest directory it applies to, so it is not loaded for unrelated work.
-
-| Path | Read it before you |
-| --- | --- |
-| [`src/server/AGENTS.md`](src/server/AGENTS.md) | change the Node server, workers, PTYs, boards, pipelines or floors |
-| [`src/shared/AGENTS.md`](src/shared/AGENTS.md) | change a type or helper compiled into both server and client |
-| [`src/client/AGENTS.md`](src/client/AGENTS.md) | change the Vite app, or anything `ui/` and `world/` share |
-| [`src/client/ui/AGENTS.md`](src/client/ui/AGENTS.md) | change a DOM window or panel |
-| [`src/client/world/AGENTS.md`](src/client/world/AGENTS.md) | change the three.js scene, movement, camera or a mesh |
-| [`src/desktop/AGENTS.md`](src/desktop/AGENTS.md) | change the Mac app |
-| [`android/AGENTS.md`](android/AGENTS.md) | change the Android app |
-| [`tests/AGENTS.md`](tests/AGENTS.md) | add or change a test (`tests/*.test.ts` only; a file in a subdirectory never runs) |
-| [`bin/AGENTS.md`](bin/AGENTS.md) | change a checkout, packaged app or worker-facing command |
-| [`deploy/AGENTS.md`](deploy/AGENTS.md) | change AWS or VPS provisioning |
-| [`docs/AGENTS.md`](docs/AGENTS.md) | change the guide or another doc |
-| [`tools/AGENTS.md`](tools/AGENTS.md) | change a generator under `tools/` |
-
 ## Commands
 
 Run from the repository root. npm with `package-lock.json` is the only package manager; do not add another lockfile.
