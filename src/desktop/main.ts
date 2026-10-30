@@ -7,6 +7,7 @@ import { downloadBrowser } from './browser.js';
 import { createCompanionWindow } from './companion.js';
 import { contextMenu, editMenu } from './edit-menu.js';
 import { finderBridgeArgs, parseThreadLink, type ThreadLink } from './finder-links.js';
+import { leaveFullScreen } from './full-screen.js';
 import { explainFinder, FinderThreads, openFinderSettings } from './finder.js';
 import { gpuReport } from './gpu.js';
 import { linkAction, windowOpenAction } from './links.js';
@@ -105,6 +106,8 @@ let starting = true;
  * icon and the phones and browsers connected to it keep running, and a restart doesn't open it again.
  */
 let windowWanted = true;
+/** Set while switchMode waits for the window it is replacing to leave full screen. */
+let switching = false;
 /** Set by Cmd+Q, which closes the window to the menu bar without the "Leave the office?" prompt. */
 let leavingToMenuBar = false;
 /** Set by the menu bar's Quit and Stop Workers: the quit ends the workers instead of keeping them for the next office. */
@@ -427,6 +430,8 @@ function toFront() {
 
 /** The office window again, from the menu bar icon, the Dock or a second launch. */
 function openWindow() {
+  // switchMode opens the next window itself once the last one is out of full screen.
+  if (switching) return;
   toFront();
   clearNotices();
   const current = appWindow();
@@ -443,14 +448,24 @@ function openWindow() {
 }
 
 /** The one switch between the 3D office and the web companion: the window of one is replaced by the window of the other, and is opened if it was closed. */
-function switchMode() {
+async function switchMode() {
+  if (switching) return;
   settings = { ...settings, mode: companionMode() ? 'office' : 'companion' };
   saveSettings(settingsFile, settings);
   Menu.setApplicationMenu(menu());
   const old = appWindow();
   // Detached first, so its closing isn't taken for the owner closing the window to the menu bar.
   win = undefined;
-  old?.base.close();
+  if (old) {
+    switching = true;
+    try {
+      // Out of full screen before the next window opens, or its Space stays behind as an empty black one (see leaveFullScreen).
+      await leaveFullScreen(old.base);
+    } finally {
+      switching = false;
+    }
+    if (!old.base.isDestroyed()) old.base.close();
+  }
   void refreshTray();
   // Before startup has chosen the folder and the environment, only the window changes: openOffice runs once, from startup, and loads this mode's page.
   if (starting) {
@@ -580,7 +595,7 @@ function trayAction(action: TrayAction) {
   else if (action === 'notify') toggleNotify();
   else if (action === 'switch') {
     toFront();
-    switchMode();
+    void switchMode();
   } else if (action === 'restart') void restartOffice();
   else if (action === 'updates') {
     toFront();
