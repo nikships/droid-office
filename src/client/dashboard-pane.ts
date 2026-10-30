@@ -4,7 +4,7 @@
 import type { ClientMsg, WorkerInfo } from '../shared/protocol';
 import { canAnswer, readMenu, sameMenu, type Menu } from '../shared/asks';
 import { questionPresentation } from '../shared/ask-question';
-import { isAsleep, isBusy, workerActivity } from '../shared/status';
+import { isAsleep, isBusy, needsOwnerInput, statusTone, workerActivity } from '../shared/status';
 import { statusWord } from '../shared/guests';
 import { sessionWebUrl } from '../shared/factory-sessions';
 import { forkRefusal } from '../shared/worker-fork';
@@ -102,7 +102,7 @@ function lines(id: string) {
 
 /** A worker's colour, ringed and pulsing by status. */
 export function workerDot(w: WorkerInfo) {
-  const el = h('span.dash-dot', { 'data-status': w.status, 'aria-hidden': 'true' });
+  const el = h('span.dash-dot', { 'data-status': statusTone(w), 'aria-hidden': 'true' });
   el.style.setProperty('--who', w.color);
   return el;
 }
@@ -294,7 +294,7 @@ export function createPane(host: PaneHost, index: number): Pane {
   function paintTeam(w: WorkerInfo | undefined) {
     const team = w && workerTeams([...store.workers.values()]).find((t) => t.children.length && (t.lead.id === w.id || t.children.some((c) => c.id === w.id)));
     const members = team ? [team.lead, ...team.children] : [];
-    const key = JSON.stringify([w?.id, host.live(), members.map((m) => [m.id, m.name, m.color, m.status, m.acked])]);
+    const key = JSON.stringify([w?.id, host.live(), members.map((m) => [m.id, m.name, m.color, m.status, m.acked, m.lead])]);
     if (key === teamKey) return;
     teamKey = key;
     teamNav.hidden = !team;
@@ -311,7 +311,7 @@ export function createPane(host: PaneHost, index: number): Pane {
         {
           type: 'button',
           'data-member': m.id,
-          'data-status': m.status,
+          'data-status': statusTone(m),
           'aria-current': String(m.id === w?.id),
           disabled: !host.live(),
           title: `${m.name} · ${lead ? 'Main worker' : `Subworker of ${team.lead.name}`} · ${statusWord(m, STATUS_LABEL)}`,
@@ -337,7 +337,7 @@ export function createPane(host: PaneHost, index: number): Pane {
     const w = s.worker;
     const local = !!w && !w.guest && !w.cloud;
     const threaded = mode === 'thread';
-    const key = JSON.stringify([w && [w.id, w.name, w.color, w.status, w.acked, doingLine(w), w.task?.name, w.title, w.activeModel ?? w.model, w.activeEffort ?? w.effort], mode, s.maximized, s.canMaximize, host.live()]);
+    const key = JSON.stringify([w && [w.id, w.name, w.color, w.status, w.acked, w.lead, doingLine(w), w.task?.name, w.title, w.activeModel ?? w.model, w.activeEffort ?? w.effort], mode, s.maximized, s.canMaximize, host.live()]);
     if (key === headKey) return;
     headKey = key;
     el.setAttribute('aria-label', w ? `Pane ${index + 1}: ${w.name}` : `Pane ${index + 1}: empty`);
@@ -364,7 +364,7 @@ export function createPane(host: PaneHost, index: number): Pane {
     task.title = doing;
     model.textContent = (w.kind === 'agent' ? modelBadge(w.activeModel ?? w.model, w.activeEffort ?? w.effort) : kind(w)) ?? '';
     pill.hidden = false;
-    pill.className = `pill ${w.status}`;
+    pill.className = `pill ${statusTone(w)}`;
     pill.textContent = statusWord(w, STATUS_LABEL);
     const toggles = local && w.kind === 'agent';
     views.hidden = flip.hidden = !toggles;
@@ -503,6 +503,15 @@ export function createPane(host: PaneHost, index: number): Pane {
   function paintQuestion(review = false) {
     const w = id ? store.workers.get(id) : undefined;
     if (!w || mode === 'empty' || !mode) return;
+    if (w.lead) {
+      questionWorkspace?.close();
+      shownMenu = undefined;
+      questionKey = '';
+      answered = false;
+      question.hidden = true;
+      question.replaceChildren();
+      return;
+    }
     const screen = lines(w.id);
     const next = screen && canAnswer(w, screen) ? readMenu(screen) : undefined;
     if (w.status !== 'needs_input') {
@@ -652,7 +661,7 @@ export function createPane(host: PaneHost, index: number): Pane {
       el.classList.toggle('focused', s.focused);
       el.classList.toggle('maximized', s.maximized);
       el.classList.toggle('covered', s.covered);
-      el.classList.toggle('attn', w?.status === 'needs_input');
+      el.classList.toggle('attn', !!w && needsOwnerInput(w));
       el.toggleAttribute('inert', s.covered);
       badge.title = `Pane ${index + 1}`;
       if ((w?.id ?? '') !== id) reset(w?.id ?? '');

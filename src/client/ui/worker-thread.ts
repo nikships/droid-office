@@ -1,5 +1,6 @@
 import type { ClientMsg, ServerMsg, WorkerInfo } from '../../shared/protocol';
-import { isAsleep, isBusy } from '../../shared/status';
+import { isAsleep, isBusy, needsOwnerInput, statusTone } from '../../shared/status';
+import { statusWord } from '../../shared/guests';
 import { threadArgumentsText, type ThreadBlock, type ThreadModelAction, type ThreadRow } from '../../shared/thread-presentation';
 import type { ThreadEntry } from '../../shared/worker-thread';
 import { CLEAR_DROID_QUEUE, readDroidQueue } from '../../shared/droid-queue';
@@ -346,7 +347,7 @@ export function mountWorkerThread(net: Net, opts: ThreadOptions): WorkerThread {
     const content = opts.question.textContent ?? '';
     if (content === questionContent) return;
     questionContent = content;
-    if (active && worker.status === 'needs_input' && !opts.question.hidden) requestAnimationFrame(() => opts.question.scrollIntoView({ block: 'nearest' }));
+    if (active && needsOwnerInput(worker) && !opts.question.hidden) requestAnimationFrame(() => opts.question.scrollIntoView({ block: 'nearest' }));
   });
   questionChanges.observe(opts.question, { childList: true, subtree: true });
   scroll.addEventListener('scroll', () => {
@@ -537,9 +538,9 @@ export function mountWorkerThread(net: Net, opts: ThreadOptions): WorkerThread {
       }
       card.name.textContent = child.name;
       card.name.title = child.name;
-      card.status.className = `pill ${child.status}`;
+      card.status.className = `pill ${statusTone(child)}`;
       card.status.hidden = !connected;
-      card.status.textContent = isAsleep(child.status) ? 'Asleep' : (STATUS_LABEL[child.status] ?? child.status);
+      card.status.textContent = isAsleep(child.status) ? 'Asleep' : statusWord(child, STATUS_LABEL);
       card.open.disabled = !connected || !opts.openWorker;
       const rows = member.history.rows.slice(-4);
       const loaded = new Map(member.history.entries.map((entry) => [entry.id, entry]));
@@ -724,7 +725,7 @@ export function mountWorkerThread(net: Net, opts: ThreadOptions): WorkerThread {
     const allowed = active && connected && !disposed && !isAsleep(worker.status) && !worker.lost;
     const waiting = worker.status === 'needs_input';
     form.hidden = waiting;
-    if (waiting && !waitingShown) requestAnimationFrame(() => opts.question.scrollIntoView({ block: 'nearest' }));
+    if (needsOwnerInput(worker) && !waitingShown) requestAnimationFrame(() => opts.question.scrollIntoView({ block: 'nearest' }));
     waitingShown = waiting;
     input.disabled = !allowed || sending || waiting;
     attach.disabled = input.disabled;
@@ -743,7 +744,7 @@ export function mountWorkerThread(net: Net, opts: ThreadOptions): WorkerThread {
     retry.disabled = !connected || !!pending;
     empty.classList.toggle('error', !!error && !history.entries.length);
     if (!history.entries.length) paintEmpty();
-    notice.textContent = connected ? error || told || (isAsleep(worker.status) ? 'Resume this worker to send another message.' : '') : '';
+    notice.textContent = connected ? error || told || (waiting && worker.lead ? 'Waiting for its lead to respond.' : isAsleep(worker.status) ? 'Resume this worker to send another message.' : '') : '';
     raw.classList.toggle('hidden', !connected || !error);
     resume.hidden = !isAsleep(worker.status);
     resume.disabled = !active || !connected || !!worker.lost || resuming;

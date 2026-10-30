@@ -13,6 +13,7 @@ export function processLabel(p: OutsideProcess): string {
 /** A worker's status in a word, where a guest the office can't read the state of is only "running". */
 export function statusWord(w: WorkerInfo, labels: Record<string, string>): string {
   if (w.guest?.seen === 'process') return 'running';
+  if (w.lead && w.status === 'needs_input') return 'waiting for lead';
   return labels[w.status] ?? w.status;
 }
 

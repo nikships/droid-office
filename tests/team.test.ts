@@ -588,7 +588,7 @@ test('a team reads as one block: each lead with its subagents under it, and a su
     team.map((w) => w.id),
     ['sub-a', 'sub-b'],
   );
-  assert.equal(teamSummary(team), '🧭 2 subagents · 1 working · 1 needs you');
+  assert.equal(teamSummary(team), '🧭 2 subagents · 1 working');
   assert.equal(teamSummary([team[0]]), '🧭 1 subagent · 1 working');
   assert.equal(teamSummary(teamOf(ws, 'lone')), undefined);
 });

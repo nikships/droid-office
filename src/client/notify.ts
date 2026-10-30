@@ -2,7 +2,7 @@
 // for workers that need input or finish (the tab title counts them too, see main.ts).
 
 import type { WorkerInfo } from '../shared/protocol';
-import { alertDetail } from '../shared/status';
+import { alertDetail, needsOwnerAttention } from '../shared/status';
 
 export type NotifyPermission = NotificationPermission | 'unsupported';
 
@@ -25,7 +25,7 @@ export async function askNotifyPermission(): Promise<NotifyPermission> {
 
 /** Waiting on a person: needs input, or finished its turn and nobody has looked yet. */
 export function waitingOnSomeone(w: WorkerInfo): w is WorkerInfo & { status: 'needs_input' | 'done' } {
-  return w.status === 'needs_input' || (w.status === 'done' && !w.acked);
+  return needsOwnerAttention(w);
 }
 
 export class DesktopNotifier {
@@ -42,7 +42,7 @@ export class DesktopNotifier {
 
   /** A worker just started waiting on input, or finished its turn. */
   alert(w: WorkerInfo & { status: 'needs_input' | 'done' }) {
-    if (!this.enabled() || notifyPermission() !== 'granted') return;
+    if (!needsOwnerAttention(w) || !this.enabled() || notifyPermission() !== 'granted') return;
     if (!document.hidden && document.hasFocus()) return;
     const title = `${w.name} ${w.status === 'done' ? 'is done' : 'needs input'}`;
     const body = [w.task?.name, alertDetail(w)].filter(Boolean).join('\n');

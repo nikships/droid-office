@@ -12,6 +12,20 @@ export function isBusy(status: WorkerStatus): boolean {
   return status === 'starting' || status === 'working' || status === 'needs_input';
 }
 
+/** Subagents wait on their orchestrator, never on the owner. Keep the underlying CLI state intact. */
+export function needsOwnerInput(w: Pick<WorkerInfo, 'status' | 'lead'>): boolean {
+  return !w.lead && w.status === 'needs_input';
+}
+
+export function needsOwnerAttention(w: Pick<WorkerInfo, 'status' | 'lead' | 'acked'>): boolean {
+  return !w.lead && (w.status === 'needs_input' || (w.status === 'done' && !w.acked));
+}
+
+/** A neutral visual treatment for delegated input requests, not a change to the worker's status. */
+export function statusTone(w: Pick<WorkerInfo, 'status' | 'lead'>): WorkerStatus | 'waiting' {
+  return w.lead && w.status === 'needs_input' ? 'waiting' : w.status;
+}
+
 /**
  * One line for a notification about a worker: what it's asking for when it needs input, or what it
  * was on when it's done (its last activity may be a permission prompt it has long got past).

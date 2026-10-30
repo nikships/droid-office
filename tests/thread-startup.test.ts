@@ -79,7 +79,10 @@ async function mountThread(t: TestContext) {
         return () => {};
       },
     };
-    w.thread = w.ThreadUI.mountWorkerThread(net, { worker, question: document.createElement('div'), queueKey: 'startup-test', draft: '', onDraft() {}, send: async () => undefined, raw() {} });
+    w.question = document.createElement('div');
+    w.questionScrolls = 0;
+    w.question.scrollIntoView = () => w.questionScrolls++;
+    w.thread = w.ThreadUI.mountWorkerThread(net, { worker, question: w.question, queueKey: 'startup-test', draft: '', onDraft() {}, send: async () => undefined, raw() {}, team: () => w.team ?? [] });
     document.body.append(w.thread.element);
     w.thread.update(worker, true);
     w.thread.activate(true);
@@ -177,6 +180,38 @@ test('a message the session rewrote in place repaints with its new text', { skip
   // The session rewrote the same entry: same id and seq, new text, so the row must repaint.
   await page.evaluate(() => (window as any).message('Second draft'));
   assert.match(await page.locator('.wt-entry').innerText(), /Second draft/);
+  await page.evaluate(() => (window as any).thread.dispose());
+  assert.deepEqual(errors, []);
+});
+
+test('delegated input stays neutral in a child thread and its lead’s Team activity', { skip: chromium }, async (t) => {
+  const { page, errors } = await mountThread(t);
+  await page.evaluate(async () => {
+    const w = window as any;
+    w.worker = { ...w.worker, status: 'needs_input', sessionId: 'session', lead: 'pixel' };
+    w.thread.update(w.worker, true);
+    w.reply();
+    await new Promise(requestAnimationFrame);
+  });
+  assert.match(await page.locator('.wt-notice').innerText(), /Waiting for its lead/);
+  assert.equal(await page.evaluate(() => (window as any).questionScrolls), 0, 'a subagent cannot pull the owner to an answer prompt');
+  await page.evaluate(async () => {
+    const w = window as any;
+    w.team = [{ ...w.worker, id: 'dot', name: 'Dot', lead: w.worker.id }];
+    w.worker = { ...w.worker, status: 'working', lead: undefined };
+    w.thread.update(w.worker, true);
+    await new Promise(requestAnimationFrame);
+  });
+  await page.locator('.wt-team > summary').click();
+  assert.equal(await page.locator('.wt-team-member .pill').textContent(), 'waiting for lead');
+  assert.equal(await page.locator('.wt-team-member .pill.needs_input').count(), 0);
+  await page.evaluate(async () => {
+    const w = window as any;
+    w.worker = { ...w.worker, status: 'needs_input' };
+    w.thread.update(w.worker, true);
+    await new Promise(requestAnimationFrame);
+  });
+  assert.ok(await page.evaluate(() => (window as any).questionScrolls > 0), 'main-worker questions still receive attention');
   await page.evaluate(() => (window as any).thread.dispose());
   assert.deepEqual(errors, []);
 });
