@@ -37,21 +37,11 @@ Run from the repository root. npm with `package-lock.json` is the only package m
 | Task | Command |
 | --- | --- |
 | Clean install (`prepare` also installs the pre-commit hook and builds client and server) | `npm ci` |
-| Add or change a dependency (updates `package-lock.json`; commit both files) | `npm install <pkg>` |
-| Dev: Vite with hot reload on :5173, server on :4600 | `npm run dev` |
-| Build `dist/public` (client), `dist/server` (server), `dist/desktop` (Mac app) and, on macOS, `native/presenter/build` (the Metal presenter, via `build:native`) | `npm run build` |
-| Lint and format check with Biome (`biome.jsonc`); any warning fails | `npm run lint` |
-| Rewrite files in the Biome format | `npm run format` |
-| Typecheck server and client | `npm run typecheck` |
-| All tests | `npm test` |
-| All tests with the coverage thresholds in its script (Node 22.8+) | `npm run test:coverage` |
 | One test file | `node --import tsx --test tests/<name>.test.ts` |
 | Run the built office against a project | `node bin/droid-office.js <project>` |
-| Run the Mac app from the checkout | `npm run desktop` |
-| Package the Mac app into `release/` (signed when the keychain has the Developer ID) | `npm run package:mac` |
 | Android app tests, lint and release APK (JDK 17+, Android SDK) | `cd android && ./gradlew testDebugUnitTest lintDebug assembleRelease` |
 
-`node bin/droid-office.js` runs `dist/`, so run `npm run build` after changing source.
+`npm run dev` serves Vite on :5173 and the server on :4600. `node bin/droid-office.js` runs `dist/`, so run `npm run build` after changing source.
 
 `.droid-office.json` at the root is what Droid Office runs in a fresh worktree of this repository: `npm ci`, after copying an untracked `android/local.properties` from the main checkout. Update it when a fresh clone needs another step or local file.
 
