@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { WORKSPACE_KEY_HINTS, workspaceCommand, workspaceShortcut } from '../src/client/dashboard-shortcuts.js';
+import { adjacentFloor, WORKSPACE_KEY_HINTS, workspaceCommand, workspaceShortcut } from '../src/client/dashboard-shortcuts.js';
 
 function key(key: string, overrides: Partial<KeyboardEvent> = {}): KeyboardEvent {
   return {
@@ -17,6 +17,55 @@ function key(key: string, overrides: Partial<KeyboardEvent> = {}): KeyboardEvent
     ...overrides,
   } as KeyboardEvent;
 }
+
+test('native companion floor shortcuts accept plus, equal and minus without taking browser zoom', () => {
+  for (const [value, shiftKey, direction] of [
+    ['+', true, 1],
+    ['+', false, 1],
+    ['=', false, 1],
+    ['-', false, -1],
+  ] as const) {
+    const event = key(value, { shiftKey });
+    assert.deepEqual(workspaceCommand(event, true), { action: 'floor', direction });
+    assert.equal(workspaceCommand(event), undefined);
+    for (const mods of [{ metaKey: false }, { ctrlKey: true }, { altKey: true }, { isComposing: true }, { defaultPrevented: true }]) assert.equal(workspaceCommand({ ...event, ...mods }, true), undefined);
+  }
+  for (const value of ['-', '=', '_', 'n', 'ArrowUp']) assert.equal(workspaceCommand(key(value, { shiftKey: true }), true), undefined);
+});
+
+test('floor shortcuts stop before editor input, never repeat, and leave browser events untouched', () => {
+  const calls: string[] = [];
+  const event = key('+', { shiftKey: true, preventDefault: () => calls.push('prevent'), stopImmediatePropagation: () => calls.push('stop') });
+  assert.equal(
+    workspaceShortcut(event, () => calls.push('floor'), true),
+    true,
+  );
+  assert.deepEqual(calls, ['prevent', 'stop', 'floor']);
+  calls.length = 0;
+  assert.equal(
+    workspaceShortcut({ ...event, repeat: true }, () => calls.push('floor'), true),
+    true,
+  );
+  assert.deepEqual(calls, ['prevent', 'stop']);
+  calls.length = 0;
+  assert.equal(
+    workspaceShortcut(event, () => calls.push('floor')),
+    false,
+  );
+  assert.deepEqual(calls, []);
+});
+
+test('floor navigation follows saved order and wraps without switching a lone or unknown floor', () => {
+  const floors = [{ id: 'c' }, { id: 'a' }, { id: 'b' }];
+  assert.equal(adjacentFloor(floors, 'c', 1), 'a');
+  assert.equal(adjacentFloor(floors, 'a', -1), 'c');
+  assert.equal(adjacentFloor(floors, 'b', 1), 'c');
+  assert.equal(adjacentFloor(floors, 'c', -1), 'b');
+  assert.equal(adjacentFloor(floors, 'missing', 1), undefined);
+  assert.equal(adjacentFloor(floors, null, 1), undefined);
+  assert.equal(adjacentFloor([], 'c', 1), undefined);
+  assert.equal(adjacentFloor([{ id: 'c' }], 'c', -1), undefined);
+});
 
 test('Command shortcuts cover workspace actions without Option or Control', () => {
   for (const [i, mode] of ['single', 'split', 'triple', 'grid', 'five', 'six', 'seven', 'eight'].entries()) assert.deepEqual(workspaceCommand(key(String(i + 1))), { action: 'layout', mode });
