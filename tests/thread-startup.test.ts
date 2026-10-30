@@ -6,6 +6,8 @@ import { buildSync } from 'esbuild';
 import { threadSnapshotError, threadStarting } from '../src/client/thread-startup.js';
 import { browserStatus, closeBrowser, launchBrowser, newIsolatedContext } from '../src/server/whiteboard-browser.js';
 import type { WorkerInfo } from '../src/shared/protocol.js';
+import { presentThread } from '../src/shared/thread-presentation.js';
+import type { ThreadEntry } from '../src/shared/worker-thread.js';
 
 const worker: WorkerInfo = {
   id: 'worker',
@@ -177,6 +179,160 @@ test('a message the session rewrote in place repaints with its new text', { skip
   // The session rewrote the same entry: same id and seq, new text, so the row must repaint.
   await page.evaluate(() => (window as any).message('Second draft'));
   assert.match(await page.locator('.wt-entry').innerText(), /Second draft/);
+  await page.evaluate(() => (window as any).thread.dispose());
+  assert.deepEqual(errors, []);
+});
+
+test('thread work signal follows worker lifecycle without restarting or announcing on every poll', { skip: chromium }, async (t) => {
+  const { page, errors } = await mountThread(t);
+  const signal = page.locator('.wt-progress');
+  const label = page.locator('.wt-progress-label');
+  const tile = page.locator('.wt-progress-glyph > span').first();
+  const animation = () => tile.evaluate((el) => getComputedStyle(el).animationName);
+  assert.equal(await signal.isVisible(), true);
+  assert.equal(await label.textContent(), 'Starting worker…');
+  assert.equal(await animation(), 'wt-work-pulse');
+  assert.equal(await page.locator('.wt-progress-glyph').getAttribute('aria-hidden'), 'true');
+  assert.equal(await page.locator('.wt-progress-status').getAttribute('aria-live'), 'polite');
+  await page.evaluate(() => {
+    const w = window as any;
+    w.worker = { ...w.worker, sessionId: 'session', status: 'working' };
+    w.thread.update(w.worker, true);
+    w.reply();
+    w.signal = document.querySelector('.wt-progress');
+    w.animation = document.querySelector('.wt-progress-glyph > span')!.getAnimations()[0];
+    w.mutations = [];
+    w.observer = new MutationObserver((changes) => w.mutations.push(...changes));
+    w.observer.observe(document.querySelector('.wt-progress-status'), { childList: true, characterData: true, subtree: true });
+    w.tick();
+    w.thread.update(w.worker, true);
+    w.reply();
+  });
+  assert.equal(await label.textContent(), 'Working…', 'alive even before any message has been recorded');
+  assert.equal(
+    await page.evaluate(() => {
+      const w = window as any;
+      return w.signal === document.querySelector('.wt-progress') && w.animation === document.querySelector('.wt-progress-glyph > span')!.getAnimations()[0] && w.mutations.length === 0;
+    }),
+    true,
+  );
+  await page.emulateMedia({ reducedMotion: 'reduce' });
+  assert.equal(await animation(), 'none');
+  assert.equal(await signal.isVisible(), true);
+  assert.equal(await label.textContent(), 'Working…');
+  await page.emulateMedia({ reducedMotion: 'no-preference' });
+  assert.equal(await animation(), 'wt-work-pulse');
+  await page.evaluate(() => {
+    const w = window as any;
+    w.worker.status = 'needs_input';
+    w.thread.update(w.worker, true);
+  });
+  assert.equal(await label.textContent(), 'Waiting for you');
+  assert.equal(await animation(), 'none');
+  for (const status of ['idle', 'done', 'exited', 'offline']) {
+    await page.evaluate((status) => {
+      const w = window as any;
+      w.worker.status = status;
+      w.thread.update(w.worker, true);
+    }, status);
+    assert.equal(await signal.isVisible(), false, status);
+    assert.equal(await animation(), 'none');
+  }
+  await page.evaluate(() => {
+    const w = window as any;
+    w.worker.status = 'working';
+    w.thread.update(w.worker, false);
+  });
+  assert.equal(await signal.isVisible(), false, 'disconnect does not pretend work is live');
+  await page.evaluate(() => {
+    const w = window as any;
+    w.tick();
+    w.thread.update(w.worker, true);
+    w.reply('The local conversation could not be read. Try again shortly.');
+  });
+  assert.equal(await signal.isVisible(), false, 'a read failure is not hidden behind activity');
+  await page.evaluate(() => (window as any).tick());
+  await page.getByRole('button', { name: 'Retry', exact: true }).click();
+  await page.evaluate(() => (window as any).reply());
+  assert.equal(await signal.isVisible(), true);
+  await page.evaluate(() => {
+    const w = window as any;
+    w.thread.update({ ...w.worker, lost: { branch: 'missing' } }, true);
+  });
+  assert.equal(await signal.isVisible(), false, 'lost worktree');
+  await page.evaluate(() => {
+    const w = window as any;
+    w.thread.update(w.worker, true);
+    w.thread.activate(false);
+  });
+  assert.equal(await signal.isVisible(), false, 'Raw TTY/inactive pane');
+  await page.evaluate(() => (window as any).thread.activate(true));
+  assert.equal(await signal.isVisible(), true);
+  await page.evaluate(() => {
+    Object.defineProperty(document, 'hidden', { configurable: true, value: true });
+    document.dispatchEvent(new Event('visibilitychange'));
+  });
+  assert.equal(await signal.isVisible(), false, 'background page');
+  await page.evaluate(() => {
+    Object.defineProperty(document, 'hidden', { configurable: true, value: false });
+    document.dispatchEvent(new Event('visibilitychange'));
+  });
+  assert.equal(await signal.isVisible(), true);
+  await page.evaluate(() => (window as any).thread.dispose());
+  assert.equal(await signal.isVisible(), false);
+  assert.equal(await animation(), 'none');
+  assert.deepEqual(errors, []);
+});
+
+test('thread work signal stays beside the composer and uses only the latest live activity', { skip: chromium }, async (t) => {
+  const { page, errors } = await mountThread(t);
+  // Same recorded tool and message shapes as worker-thread/thread-presentation tests.
+  const entries: ThreadEntry[] = [
+    { id: 'message', seq: 0, role: 'assistant', kind: 'text', text: 'Checking the failing test.\n\n'.repeat(100) },
+    { id: 'tool:call', seq: 1, role: 'assistant', kind: 'tool', name: 'Execute', input: JSON.stringify({ command: 'npm test', summary: 'Run focused tests' }) },
+  ];
+  await page.addStyleTag({ content: 'body { display: flex; height: 100dvh; } .worker-thread { width: 100%; min-width: 0; }' });
+  await page.evaluate(
+    ({ entries, rows }) => {
+      const w = window as any;
+      w.worker = { ...w.worker, sessionId: 'session', status: 'working' };
+      w.snapshot = (entries: unknown[], rows: unknown[]) => {
+        w.tick();
+        w.thread.update(w.worker, true);
+        const request = w.sent.filter((msg: any) => msg.t === 'thread.read').at(-1).request;
+        w.receive({ t: 'thread.snapshot', workerId: w.worker.id, request, sessionId: 'session', entries, hasMore: false, presentation: { version: 1, rows } });
+      };
+      w.snapshot(entries, rows);
+    },
+    { entries, rows: presentThread(entries, true) },
+  );
+  assert.equal(await page.locator('.wt-progress-detail').textContent(), 'Run focused tests');
+  for (const [width, height] of [
+    [1440, 900],
+    [1024, 700],
+    [360, 740],
+  ]) {
+    await page.setViewportSize({ width, height });
+    await page.locator('.wt-scroll').evaluate((el) => {
+      el.scrollTop = 0;
+    });
+    const bounds = await page.locator('.wt-progress').boundingBox();
+    assert.ok(bounds && bounds.y >= 0 && bounds.y + bounds.height <= height, `visible at ${width}px while reading history`);
+    assert.equal(await page.locator('.worker-thread').evaluate((el) => el.scrollWidth <= el.clientWidth), true);
+    assert.equal(await page.locator('.wt-scroll .wt-progress').count(), 0);
+  }
+  await page.evaluate(({ entries, rows }) => (window as any).snapshot(entries, rows), { entries, rows: presentThread(entries, false) });
+  assert.equal(await page.locator('.wt-progress-detail').isVisible(), false, 'completed activity is not current work');
+  const reply: ThreadEntry = { id: 'reply', seq: 2, role: 'assistant', kind: 'text', text: 'The tests pass.' };
+  const replied = [...entries, reply];
+  await page.evaluate(({ entries, rows }) => (window as any).snapshot(entries, rows), { entries: replied, rows: presentThread(replied, true) });
+  assert.equal(await page.locator('.wt-progress-detail').isVisible(), false, 'do not reach backwards past a newer reply for tool activity');
+  assert.equal(await page.locator('.wt-progress-label').textContent(), 'Working…', 'a recorded reply is not proof the turn ended');
+  await page.evaluate(() => {
+    const w = window as any;
+    w.thread.update({ ...w.worker, sessionId: 'next-session' }, true);
+  });
+  assert.equal(await page.locator('.wt-progress-detail').isVisible(), false, 'new session has no stale action');
   await page.evaluate(() => (window as any).thread.dispose());
   assert.deepEqual(errors, []);
 });
