@@ -6,6 +6,7 @@ import { slashCommands, slashOf, slashRefusal, slashSuggestions, type DroidSlash
 import { ThreadQueue } from '../../shared/thread-queue';
 import type { Net } from '../net';
 import { ThreadHistory } from '../thread-history';
+import { threadSnapshotError, threadStarting } from '../thread-startup';
 import { TeamThread, TeamThreadPaint, teamThreadVisible } from '../team-thread';
 import { h, STATUS_LABEL } from './dom';
 import { markdown } from './markdown';
@@ -624,10 +625,21 @@ export function mountWorkerThread(net: Net, opts: ThreadOptions): WorkerThread {
   teamSection.addEventListener('toggle', teamDisclosure, true);
   teamSection.addEventListener('focusout', teamFocus);
   document.addEventListener('selectionchange', teamSelection);
-  // The same words as the Android app: a heading and a line under it once there is nothing to read.
+  let emptyKey = '';
   const paintEmpty = () => {
+    const starting = threadStarting(worker);
+    const key = JSON.stringify([error, received, starting, connected]);
+    if (key === emptyKey) return;
+    emptyKey = key;
+    empty.setAttribute('aria-busy', String(connected && !error && !received));
     if (error) empty.textContent = 'Conversation unavailable. Retry below, or open Raw TTY.';
-    else if (!received) empty.textContent = 'Reading the conversation…';
+    else if (!connected) empty.textContent = 'Waiting for the office to reconnect…';
+    else if (!received)
+      empty.replaceChildren(
+        h('span.spinner.wt-loading-spinner', { 'aria-hidden': true }),
+        h('b', {}, starting ? 'Starting worker…' : 'Reading the conversation…'),
+        h('p', {}, starting ? 'Preparing the workspace and starting Droid. This can take a moment.' : 'Messages will appear here as soon as they’re ready.'),
+      );
     else empty.replaceChildren(h('span.wt-empty-mark', { 'aria-hidden': true }), h('b', {}, 'Start a conversation'), h('p', {}, 'Your messages and the worker’s replies will appear here.'));
   };
   const paintEntries = (older: boolean) => {
@@ -726,6 +738,7 @@ export function mountWorkerThread(net: Net, opts: ThreadOptions): WorkerThread {
   };
   const read = (before?: number) => {
     if (!active || !connected || disposed || document.hidden || pending) return;
+    if (threadStarting(worker) && !worker.sessionId) return;
     if (before === undefined && history.historical) return;
     if (before === undefined && Date.now() - lastReadAt < 1000) return;
     const request = `thread-${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
@@ -751,13 +764,13 @@ export function mountWorkerThread(net: Net, opts: ThreadOptions): WorkerThread {
     if (msg.t !== 'thread.snapshot' || !active || !pending || msg.workerId !== worker.id || msg.request !== pending.request) return;
     const older = pending.before !== undefined;
     pending = undefined;
-    error = msg.error ?? '';
-    if (!error) {
+    error = threadSnapshotError(worker, msg.error);
+    if (!msg.error) {
       if (worker.sessionId && msg.sessionId !== worker.sessionId) return;
       history.apply(msg);
       opts.onEntries?.();
-      paintEntries(older);
       received = true;
+      paintEntries(older);
     }
     updateControls();
   };

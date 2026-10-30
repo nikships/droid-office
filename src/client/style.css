@@ -2526,6 +2526,7 @@ html:has(body.dashboard), body.dashboard { overflow: auto; }
 .wt-empty b { display: block; font-weight: 500; color: var(--text); }
 .wt-empty p { margin: var(--space-1) 0 0; }
 .wt-empty-mark { display: block; width: 7px; height: 7px; margin: 0 auto var(--space-3); border-radius: 1px; background: var(--text-tertiary); }
+.wt-loading-spinner { display: block; width: 24px; height: 24px; margin: 0 auto var(--space-3); border-color: var(--border); border-top-color: var(--accent); }
 .wt-latest-anchor { flex-shrink: 0; display: flex; justify-content: center; padding: var(--space-1); border-top: 1px solid var(--border); background: var(--bg); }
 .wt-latest-anchor:has(.wt-latest.hidden) { display: none; }
 .wt-latest { background: var(--surface); border-color: var(--border-strong); }
