@@ -258,17 +258,22 @@ export function openTerminal(net: Net, workerId: string, onChanges?: () => void,
   let opened = false;
   let alive = true;
   let lastSentSize = '';
+  let lastPtySize = '';
+  const pendingSizes: string[] = [];
+  let paneSizeChanged = false;
   /**
    * Whether another window already had this terminal open when this one attached. Merely
    * opening or resizing then adopts the shared size instead of reflowing the terminal under
-   * it; typing still reclaims the size (latest typist wins). Captured when attaching: the
+   * it; typing or changing an inline pane's box reclaims the size. Captured when attaching: the
    * open flag includes this window afterwards, so it can't tell them apart any more.
    */
   let adoptSharedSize = false;
   /** Sizes the shared PTY to this window, or this window to the shared PTY (see adoptSharedSize). */
   const sendSize = (typing = false) => {
     if (!mirror.ready || !opened || !net.up) return;
-    if (typing) adoptSharedSize = false;
+    if (!host.clientWidth || !host.clientHeight) return;
+    if (typing || paneSizeChanged) adoptSharedSize = false;
+    paneSizeChanged = false;
     // No terminal to size: the banner just fills the window.
     if (guest) {
       try {
@@ -284,14 +289,18 @@ export function openTerminal(net: Net, workerId: string, onChanges?: () => void,
       return;
     }
     try {
-      fit.fit();
+      const size = fit.proposeDimensions();
+      if (!size || !Number.isFinite(size.cols) || !Number.isFinite(size.rows)) return;
+      // Match WorkerManager.resize's limits so the server can acknowledge the exact request.
+      term.resize(Math.max(20, Math.min(400, size.cols)), Math.max(5, Math.min(200, size.rows)));
     } catch {
       return;
     }
     const key = `${term.cols}x${term.rows}`;
     const w = store.workers.get(workerId);
-    if (w && (w.cols !== term.cols || w.rows !== term.rows) && key !== lastSentSize) {
+    if (w && (pendingSizes.length || w.cols !== term.cols || w.rows !== term.rows) && key !== lastSentSize) {
       lastSentSize = key;
+      pendingSizes.push(key);
       net.send({ t: 'term.resize', workerId, cols: term.cols, rows: term.rows });
     }
   };
@@ -304,13 +313,18 @@ export function openTerminal(net: Net, workerId: string, onChanges?: () => void,
     }
     header?.refresh(w);
     paintTeam(w);
-    // Another window claimed the shared PTY (the latest typist wins): follow it so this view
-    // renders correctly. Typing here fits the terminal back to this window and reclaims the size.
+    // Status updates can still carry the old size while our resize is in flight. Only a new
+    // PTY size not acknowledging one of our requests means another window claimed it.
     const ptySize = `${w.cols}x${w.rows}`;
-    if (mirror.ready && !guest && ptySize !== `${term.cols}x${term.rows}` && ptySize !== lastSentSize) {
+    const changed = ptySize !== lastPtySize;
+    lastPtySize = ptySize;
+    const acknowledged = changed ? pendingSizes.indexOf(ptySize) : -1;
+    if (acknowledged >= 0) pendingSizes.splice(0, acknowledged + 1);
+    if (mirror.ready && !guest && changed && acknowledged < 0 && ptySize !== `${term.cols}x${term.rows}` && ptySize !== lastSentSize) {
       adoptSharedSize = true;
       term.resize(w.cols, w.rows);
       lastSentSize = '';
+      pendingSizes.length = 0;
     }
   };
 
@@ -347,6 +361,7 @@ export function openTerminal(net: Net, workerId: string, onChanges?: () => void,
     (snapshot) => {
       adoptSharedSize = snapshot.shared ?? adoptSharedSize;
       lastSentSize = '';
+      pendingSizes.length = 0;
       term.options.disableStdin = guest || !net.up;
       disconnected.classList.add('hidden');
       sendSize();
@@ -367,7 +382,17 @@ export function openTerminal(net: Net, workerId: string, onChanges?: () => void,
   listeners.add(onMsg);
   const unsub = store.on('workers', refresh);
   const unsubCredits = store.on('factory', refresh);
-  const ro = new ResizeObserver(() => sendSize());
+  let box: { width: number; height: number } | undefined;
+  const ro = new ResizeObserver(([entry]) => {
+    if (!entry) return;
+    const { width, height } = entry.contentRect;
+    if (width <= 0 || height <= 0) return;
+    // The initial observation is not a layout change and must not seize a shared terminal.
+    // Keep a change pending through snapshot loading/disconnection, without fitting hidden boxes.
+    if (inline && box && (width !== box.width || height !== box.height)) paneSizeChanged = true;
+    box = { width, height };
+    sendSize();
+  });
   const offStatus = net.onStatus((up) => {
     header?.refresh(store.workers.get(workerId) ?? info);
     if (up) return; // The welcome handler reattaches only after the authoritative worker snapshot.
