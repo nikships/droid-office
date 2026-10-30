@@ -28,6 +28,7 @@
 }
 
 :root {
+  color-scheme: dark;
   --bg: #020202;
   --surface: #0a0a0a;
   --surface-raised: #101010;
@@ -109,13 +110,15 @@ button { font-family: inherit; }
 input[type=checkbox], input[type=radio] { accent-color: var(--accent); cursor: pointer; }
 input[type=checkbox]:disabled, input[type=radio]:disabled { cursor: default; }
 
-/* Thin dark scrollbars with a rounded thumb (the standard properties would switch the rounded ones off in Chrome). */
-::-webkit-scrollbar { width: 10px; height: 10px; }
+/* Keep standard scrollbar properties in the fallback: non-auto values override
+   WebKit styling in Chromium and can bring back a native track. */
+::-webkit-scrollbar { width: 8px; height: 8px; }
 ::-webkit-scrollbar-track, ::-webkit-scrollbar-corner { background: transparent; }
-::-webkit-scrollbar-thumb { background: rgba(255, 255, 255, .14); border: 3px solid transparent; border-radius: 999px; background-clip: padding-box; }
-::-webkit-scrollbar-thumb:hover { background-color: rgba(255, 255, 255, .26); }
+::-webkit-scrollbar-thumb { background: var(--border-strong); border: 2px solid transparent; border-radius: 3px; background-clip: padding-box; }
+::-webkit-scrollbar-thumb:hover { background-color: var(--text-tertiary); }
+::-webkit-scrollbar-button { display: none; }
 @supports not selector(::-webkit-scrollbar) {
-  * { scrollbar-width: thin; scrollbar-color: rgba(255, 255, 255, .18) transparent; }
+  * { scrollbar-width: thin; scrollbar-color: var(--border-strong) transparent; }
 }
 
 #app { position: fixed; inset: 0; }
@@ -2289,7 +2292,7 @@ html:has(body.dashboard), body.dashboard { overflow: auto; }
 .dash-side-title { margin: 0; overflow: hidden; font: 500 20px/1.25 var(--font-mono); letter-spacing: -.02em; text-overflow: ellipsis; white-space: nowrap; }
 .dash-side-sub { display: flex; align-items: center; gap: var(--space-2); min-width: 0; margin: 2px 0 0; font: 400 11.5px/1.4 var(--font-mono); color: var(--text-secondary); }
 .dash-side-sub span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.dash-workers { flex: 1; min-height: 0; overflow: auto; padding: var(--space-1) var(--space-2) var(--space-3); scrollbar-width: thin; scrollbar-color: rgba(255, 255, 255, .1) transparent; }
+.dash-workers { flex: 1; min-height: 0; overflow: auto; padding: var(--space-1) var(--space-2) var(--space-3); }
 .dash-roster-summary { padding: var(--space-2) var(--space-2) var(--space-3); }
 .dash-roster-heading { display: flex; align-items: center; justify-content: space-between; font: 500 var(--text-label)/18px var(--font-mono); text-transform: uppercase; letter-spacing: .1em; color: var(--text-secondary); }
 .dash-roster-total { color: var(--text); font-variant-numeric: tabular-nums; }
@@ -2350,7 +2353,8 @@ html:has(body.dashboard), body.dashboard { overflow: auto; }
 .dash-team-chip-role { color: var(--text-tertiary); text-transform: uppercase; letter-spacing: .06em; font-size: 9px; }
 .dash-team-nav > .dash-team-chip { flex: none; max-width: 40%; }
 .dash-team-nav-label { display: flex; align-items: center; gap: var(--space-1); flex: none; font: 400 10px/16px var(--font-mono); color: var(--text-tertiary); }
-.dash-team-nav-members { display: flex; align-items: center; gap: var(--space-1); min-width: 0; overflow-x: auto; padding: var(--space-1) 0; scrollbar-width: thin; }
+.dash-team-nav-members { display: flex; align-items: center; gap: var(--space-1); min-width: 0; overflow-x: auto; padding: var(--space-1) 0; scrollbar-width: none; }
+.dash-team-nav-members::-webkit-scrollbar { display: none; }
 .dash-team-nav :is(button, .dash-dot)::after { animation: none; }
 .dash-team-chip[data-status=needs_input] { border-color: var(--danger); }
 .dash-team-toggle:focus-visible, .dash-team-chip:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
