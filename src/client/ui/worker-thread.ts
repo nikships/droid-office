@@ -49,6 +49,8 @@ export function mountWorkerThread(net: Net, opts: ThreadOptions): WorkerThread {
   let sending = false;
   let resuming = false;
   let received = false;
+  // Start the grace clock on the first read, not during potentially long worktree setup.
+  let startupReadUntil = threadStarting(worker) ? Infinity : 0;
   let error = '';
   /** Why the last thing the owner tried wasn't sent: shown until they change the draft. */
   let told = '';
@@ -744,6 +746,7 @@ export function mountWorkerThread(net: Net, opts: ThreadOptions): WorkerThread {
     const request = `thread-${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
     if (net.send({ t: 'thread.read', workerId: worker.id, request, ...(before !== undefined ? { before } : {}) })) {
       lastReadAt = Date.now();
+      if (startupReadUntil === Infinity) startupReadUntil = lastReadAt + 8000;
       pending = { request, before, at: lastReadAt };
     }
     updateControls();
@@ -764,7 +767,7 @@ export function mountWorkerThread(net: Net, opts: ThreadOptions): WorkerThread {
     if (msg.t !== 'thread.snapshot' || !active || !pending || msg.workerId !== worker.id || msg.request !== pending.request) return;
     const older = pending.before !== undefined;
     pending = undefined;
-    error = threadSnapshotError(worker, msg.error);
+    error = threadSnapshotError(worker, msg.error, !received && Date.now() < startupReadUntil);
     if (!msg.error) {
       if (worker.sessionId && msg.sessionId !== worker.sessionId) return;
       history.apply(msg);
@@ -876,6 +879,7 @@ export function mountWorkerThread(net: Net, opts: ThreadOptions): WorkerThread {
     update(next, online) {
       if (online && !connected && active) net.send({ t: 'worker.attach', workerId: next.id });
       if (next.sessionId !== worker.sessionId) {
+        startupReadUntil = threadStarting(worker) || threadStarting(next) ? Infinity : 0;
         history.clear(next.sessionId);
         received = false;
         pending = undefined;

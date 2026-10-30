@@ -38,6 +38,10 @@ test('only the expected missing-file response during startup is retried without 
   for (const status of ['idle', 'working', 'exited', 'offline'] as const) assert.equal(threadSnapshotError({ ...worker, status }, missing), missing);
   assert.equal(threadSnapshotError({ ...worker, lost: { branch: 'here' } }, missing), missing);
   for (const error of ['Invalid conversation page.', 'The local conversation could not be read. Try again shortly.', 'The office did not return this conversation.']) assert.equal(threadSnapshotError(worker, error), error);
+  assert.equal(threadSnapshotError({ ...worker, status: 'idle' }, missing, true), '');
+  assert.equal(threadSnapshotError({ ...worker, status: 'working' }, missing, true), '');
+  assert.equal(threadSnapshotError({ ...worker, status: 'exited' }, missing, true), missing);
+  assert.equal(threadSnapshotError({ ...worker, lost: { branch: 'here' } }, missing, true), missing);
 });
 
 const status = browserStatus();
@@ -88,7 +92,8 @@ test('thread startup animates without premature reads, retries missing files and
   assert.equal(animation, 'spin');
   await page.evaluate((missing) => {
     const w = window as any;
-    w.worker = { ...w.worker, sessionId: 'session' };
+    // SessionStart publishes the session ID and idle status together.
+    w.worker = { ...w.worker, sessionId: 'session', status: 'idle' };
     w.thread.update(w.worker, true);
     w.reply(missing);
   }, missing);
@@ -110,6 +115,32 @@ test('thread startup animates without premature reads, retries missing files and
   });
   assert.equal(await page.locator('.wt-empty.error').count(), 1);
   assert.equal(await page.getByRole('button', { name: 'Retry', exact: true }).isVisible(), true);
+  // A missing file after a successful read is a real error, even inside the grace period.
+  await page.evaluate((missing) => {
+    const w = window as any;
+    w.tick();
+    w.thread.update(w.worker, true);
+    w.reply(missing);
+  }, missing);
+  assert.equal(await page.locator('.wt-empty.error').count(), 1);
+  // A new boot gets its own grace period, which cannot hide a missing file indefinitely.
+  await page.evaluate((missing) => {
+    const w = window as any;
+    w.worker = { ...w.worker, status: 'starting', sessionId: undefined };
+    w.thread.update(w.worker, true);
+    w.worker = { ...w.worker, status: 'idle', sessionId: 'next-session' };
+    w.tick();
+    w.thread.update(w.worker, true);
+    w.reply(missing);
+  }, missing);
+  assert.equal(await page.locator('.wt-empty.error').count(), 0);
+  await page.evaluate((missing) => {
+    const w = window as any;
+    for (let i = 0; i < 8; i++) w.tick();
+    w.thread.update(w.worker, true);
+    w.reply(missing);
+  }, missing);
+  assert.equal(await page.locator('.wt-empty.error').count(), 1);
   await page.evaluate(() => (window as any).thread.dispose());
   assert.deepEqual(errors, []);
 });
