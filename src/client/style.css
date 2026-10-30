@@ -2593,6 +2593,20 @@ html:has(body.dashboard), body.dashboard { overflow: auto; }
 .wt-latest-anchor { flex-shrink: 0; display: flex; justify-content: center; padding: var(--space-1); border-top: 1px solid var(--border); background: var(--bg); }
 .wt-latest-anchor:has(.wt-latest.hidden) { display: none; }
 .wt-latest { background: var(--surface); border-color: var(--border-strong); }
+/* A small, persistent work signal; only its four tiles animate, never the transcript or text. */
+.wt-progress { flex-shrink: 0; padding: var(--space-2) var(--space-5) 0; }
+.wt-progress[hidden] { display: none; }
+.wt-progress-line { display: flex; align-items: center; gap: var(--space-2); width: 100%; max-width: 760px; min-height: 24px; margin: 0 auto; font-size: var(--text-small); }
+.wt-progress-glyph { display: grid; grid-template-columns: repeat(2, 5px); gap: var(--space-1); flex-shrink: 0; color: var(--accent); }
+.wt-progress-glyph > span { width: 5px; height: 5px; border-radius: 1px; background: currentColor; opacity: .65; }
+.wt-progress.running .wt-progress-glyph > span { animation: wt-work-pulse 1.6s cubic-bezier(.45, 0, .55, 1) infinite; }
+.wt-progress.running .wt-progress-glyph > span:nth-child(2) { animation-delay: -.4s; }
+.wt-progress.running .wt-progress-glyph > span:nth-child(3) { animation-delay: -1.2s; }
+.wt-progress.running .wt-progress-glyph > span:nth-child(4) { animation-delay: -.8s; }
+.wt-progress-status { flex-shrink: 0; color: var(--text-secondary); }
+.wt-progress-detail { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-tertiary); }
+.wt-progress-detail::before { content: '·'; margin-right: var(--space-2); }
+@keyframes wt-work-pulse { 0%, 100% { opacity: .3; } 40% { opacity: 1; } 80% { opacity: .3; } }
 .wt-feedback { display: none; align-items: center; flex-wrap: wrap; gap: var(--space-2); padding: var(--space-2) var(--space-5); border-top: 1px solid var(--border); }
 .wt-queued { width: 100%; max-width: 760px; margin: var(--space-5) auto 0; display: flex; flex-direction: column; gap: var(--space-2); }
 .wt-queued[hidden] { display: none; }
@@ -2608,6 +2622,8 @@ html:has(body.dashboard), body.dashboard { overflow: auto; }
 .wt-notice { flex: 1; min-width: 200px; margin: 0; color: var(--text-secondary); font-size: var(--text-small); line-height: 1.5; }
 .wt-composer { padding: var(--space-2) var(--space-5) var(--space-4); display: flex; flex-direction: column; gap: var(--space-2); container-type: inline-size; }
 .wt-composer[hidden] { display: none; }
+/* Inactive panes are for reading; keep the draft mounted but give its entire space to history. */
+.dash-pane:not(.focused) .wt-composer { display: none; }
 /* One box holds the pictures, the draft and its controls, so the composer reads as a single control. */
 .wt-compose-box { display: flex; flex-direction: column; border: 1px solid var(--border-strong); border-radius: var(--radius-lg); background: var(--surface-raised); cursor: text; transition: border-color var(--duration) var(--ease), box-shadow var(--duration) var(--ease); }
 .wt-compose-box:hover { border-color: rgba(255, 255, 255, .28); }
@@ -2643,6 +2659,7 @@ html:has(body.dashboard), body.dashboard { overflow: auto; }
 .wt-composer .pimg-x { top: 0; right: 0; width: 32px; height: 48px; border-radius: 0 var(--radius) var(--radius) 0; background: var(--surface-raised); color: var(--text-secondary); opacity: 1; font-weight: 400; }
 .wt-composer .pimg-x:hover { color: var(--text); background: var(--surface-hover); }
 @media (max-width: 720px) {
+  .wt-progress { padding: var(--space-2) var(--space-3) 0; }
   .wt-scroll, .wt-feedback, .wt-composer { padding: var(--space-3); }
   .wt-list { gap: var(--space-5); }
   .wt-entry.user { max-width: 94%; }
@@ -2652,6 +2669,7 @@ html:has(body.dashboard), body.dashboard { overflow: auto; }
 }
 @media (prefers-reduced-motion: reduce) {
   .wt-chevron, .wt-activity summary { transition: none; }
+  .wt-progress.running .wt-progress-glyph > span { animation: none; opacity: 1; }
 }
 .dash-info { flex: 1; min-height: 0; display: flex; flex-direction: column; gap: var(--space-5); max-width: 1100px; padding: var(--space-7); overflow: auto; }
 .dash-info-who { display: flex; align-items: center; gap: var(--space-4); min-width: 0; }

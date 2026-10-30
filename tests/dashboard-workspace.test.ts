@@ -18,7 +18,7 @@ import {
   parseWorkspace,
   prune,
   rectsFor,
-  releaseChangedPanes,
+  reconcilePanes,
   seedWorkspace,
   serializeWorkspace,
   setLayout,
@@ -224,24 +224,24 @@ test('pane views keep their initial default when another worker changes the defa
   assert.equal(workerView(restored, 'b', 'thread'), 'terminal');
 });
 
-test('swapping releases both old panes before either replacement attaches', () => {
+test('swapping retains live panes without detaching their workers', () => {
   const ws = seedWorkspace(['a', 'b', 'c']);
   const events: string[] = [];
-  const pane = (id: string) => ({ workerId: () => id, dispose: () => events.push(`detach ${id}`) });
+  const pane = (id: string) => ({ workerId: () => id, move() {}, dispose: () => events.push(`detach ${id}`) });
   const panes: (ReturnType<typeof pane> | undefined)[] = ['a', 'b', 'c'].map(pane);
   const unchanged = panes[2];
   swap(ws, 0, 1);
-  releaseChangedPanes(panes, visibleSlots(ws));
+  reconcilePanes(panes, visibleSlots(ws));
   for (const [i, id] of visibleSlots(ws).entries()) {
     if (!panes[i] && id) {
       panes[i] = pane(id);
       events.push(`attach ${id}`);
     }
   }
-  assert.deepEqual(events, ['detach a', 'detach b', 'attach b', 'attach a']);
+  assert.deepEqual(events, []);
   assert.equal(panes[2], unchanged, 'unmoved terminals stay mounted');
-  releaseChangedPanes(panes, ['b', null]);
-  assert.deepEqual(events.slice(4), ['detach a', 'detach c'], 'closed and hidden panes detach too');
+  reconcilePanes(panes, ['b', null]);
+  assert.deepEqual(events, ['detach a', 'detach c'], 'closed and hidden panes detach too');
 });
 
 test('a smaller layout hides panes without forgetting them', () => {
@@ -253,6 +253,37 @@ test('a smaller layout hides panes without forgetting them', () => {
   assert.equal(paneOf(ws, 'c'), -1);
   setLayout(ws, 'triple');
   assert.deepEqual(visibleSlots(ws), ['a', 'b', 'c']);
+});
+
+test('automatic contraction moves the same live pane and only disposes the departed worker', () => {
+  const all = workers(['a', 'b', 'c', 'd']);
+  const ws = emptyWorkspace();
+  const previous = new Map<string, number>();
+  syncWorkspace(ws, all, previous);
+  const disposed: string[] = [];
+  const panes = all.map((w, index) => ({
+    workerId: () => w.id,
+    index,
+    draft: { text: 'Unsent', images: ['attachment'] },
+    move(next: number) {
+      this.index = next;
+    },
+    dispose() {
+      disposed.push(w.id);
+      this.draft.images = [];
+    },
+  }));
+  const moved = panes[3];
+  syncWorkspace(
+    ws,
+    all.filter((w) => w.id !== 'b'),
+    previous,
+  );
+  reconcilePanes(panes, visibleSlots(ws));
+  assert.equal(panes[1], moved);
+  assert.equal(moved.index, 1);
+  assert.deepEqual(moved.draft, { text: 'Unsent', images: ['attachment'] });
+  assert.deepEqual(disposed, ['b']);
 });
 
 test('switching to a bigger layout fills its new panes with the workers on the floor', () => {
@@ -560,17 +591,18 @@ test('manual layout and close choices persist until Auto is explicitly restored'
   assert.equal(parseWorkspace(JSON.stringify({ layout: 'split', slots: ['a', 'b'] }))?.auto, true, 'legacy workspaces gain Auto');
 });
 
-test('ordinary repaints keep explicit worker selections and swaps, even in Auto', () => {
+test('explicit worker selections and swaps pause Auto across actual priority changes', () => {
   const all = workers(['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i']);
   const ws = emptyWorkspace();
   const previous = new Map<string, number>();
   syncWorkspace(ws, all, previous);
   openWorker(ws, 'i');
   swap(ws, 1, 4);
+  assert.equal(ws.auto, false);
   const before = serializeWorkspace(ws);
   assert.deepEqual(syncWorkspace(ws, [...all].reverse(), previous), { gone: [], filled: false });
   assert.equal(serializeWorkspace(ws), before);
-  all[0].status = 'starting';
+  all[8].status = 'done';
   assert.deepEqual(syncWorkspace(ws, all, previous), { gone: [], filled: false });
   assert.equal(serializeWorkspace(ws), before);
 });

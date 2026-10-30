@@ -37,7 +37,7 @@ import {
   parseWorkspace,
   type Rect,
   rectsFor,
-  releaseChangedPanes,
+  reconcilePanes,
   seedWorkspace,
   serializeWorkspace,
   setLayout,
@@ -184,7 +184,6 @@ const autoButton = h(
     type: 'button',
     role: 'radio',
     'aria-label': 'Automatic layout',
-    title: 'Auto: prioritize main workers and resize as workers arrive or leave',
     onclick: () => {
       autoLayout(ws, ordered());
       changed();
@@ -260,8 +259,7 @@ function loadWorkspace(f: string) {
   ws = parseWorkspace(read(`${WS_KEY}:${f}`)) ?? seedWorkspace(staff());
   onFloor.clear();
   syncWorkspace(ws, ordered(), onFloor);
-  if (ws.auto) autoLayout(ws, ordered());
-  else fillPanes(ws, staff());
+  if (ws.auto && !onFloor.size) autoLayout(ws, []);
   saveWorkspace();
 }
 function saveWorkspace() {
@@ -824,9 +822,8 @@ function paintWorkspace() {
   const rects = rectsFor(ws.layout, ws.col, ws.row);
   const shown = visibleSlots(ws);
   const candidates = ordered().filter((w) => !shown.includes(w.id));
-  // Attachments belong to the connection, not to a pane. Release every moved worker before any
-  // replacement attaches it, or disposing its old Thread can detach the new one during a swap.
-  releaseChangedPanes(panes, shown);
+  // Move live panes with their workers, retaining thread drafts, images and terminal attachments.
+  reconcilePanes(panes, shown);
   for (let i = 0; i < count; i++) {
     const p = panes[i] ?? createPane(paneHost, i);
     panes[i] = p;

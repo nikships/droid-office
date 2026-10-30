@@ -1,5 +1,5 @@
 import type { ClientMsg, ServerMsg, WorkerInfo } from '../../shared/protocol';
-import { isAsleep, isBusy, needsOwnerInput, statusTone } from '../../shared/status';
+import { isAsleep, isBusy, needsOwnerInput } from '../../shared/status';
 import { statusWord } from '../../shared/guests';
 import { threadArgumentsText, type ThreadBlock, type ThreadModelAction, type ThreadRow } from '../../shared/thread-presentation';
 import type { ThreadEntry } from '../../shared/worker-thread';
@@ -285,7 +285,20 @@ export function mountWorkerThread(net: Net, opts: ThreadOptions): WorkerThread {
     if (!input.disabled && event.target instanceof Element && !event.target.closest('button, .pimgs, textarea')) input.focus();
   });
   const form = h('form.wt-composer', {}, slashMenu, file, box);
-  const element = h('section.worker-thread', { 'aria-label': `${worker.name} thread` }, teamSection, scroll, latestAnchor, h('div.wt-feedback', {}, notice, retry, raw, resume), form);
+  const progressLabel = h('span.wt-progress-label');
+  const progressDetail = h('span.wt-progress-detail', { hidden: true });
+  const progress = h(
+    'div.wt-progress',
+    { hidden: true },
+    h(
+      'div.wt-progress-line',
+      {},
+      h('span.wt-progress-glyph', { 'aria-hidden': 'true' }, h('span'), h('span'), h('span'), h('span')),
+      h('span.wt-progress-status', { role: 'status', 'aria-live': 'polite', 'aria-atomic': 'true' }, progressLabel),
+      progressDetail,
+    ),
+  );
+  const element = h('section.worker-thread', { 'aria-label': `${worker.name} thread` }, teamSection, scroll, latestAnchor, progress, h('div.wt-feedback', {}, notice, retry, raw, resume), form);
   images.dropZone(form);
   const nodes = new Map<string, { key: string; node: HTMLElement; sourceIds: string[] }>();
   const expandedMessages = new Set<string>();
@@ -538,7 +551,7 @@ export function mountWorkerThread(net: Net, opts: ThreadOptions): WorkerThread {
       }
       card.name.textContent = child.name;
       card.name.title = child.name;
-      card.status.className = `pill ${statusTone(child)}`;
+      card.status.className = `pill ${child.status}`;
       card.status.hidden = !connected;
       card.status.textContent = isAsleep(child.status) ? 'Asleep' : statusWord(child, STATUS_LABEL);
       card.open.disabled = !connected || !opts.openWorker;
@@ -721,6 +734,23 @@ export function mountWorkerThread(net: Net, opts: ThreadOptions): WorkerThread {
     if (history.historical) latest.classList.remove('hidden');
   };
   let waitingShown = false;
+  // One stable signal outside the scrolling transcript, including gaps between recorded messages.
+  // The JSONL isn't a token stream: don't infer "Thinking" or "Generating" from its last entry.
+  const paintProgress = () => {
+    const show = active && connected && !disposed && !document.hidden && !worker.lost && !error && isBusy(worker.status);
+    const label = !show ? '' : worker.status === 'starting' ? 'Starting worker…' : worker.status === 'needs_input' ? 'Waiting for you' : 'Working…';
+    const last = history.rows.at(-1);
+    const detail = show && worker.status === 'working' && !history.historical && history.sessionId === worker.sessionId && last?.kind === 'activity' && last.live ? (last.running ?? '') : '';
+    progress.hidden = !show;
+    progress.classList.toggle('running', show && worker.status !== 'needs_input');
+    // Polls must neither restart the glyph nor repeatedly announce the same status.
+    if (progressLabel.textContent !== label) progressLabel.textContent = label;
+    if (progressDetail.textContent !== detail) {
+      progressDetail.textContent = detail;
+      progressDetail.title = detail ? `Latest activity: ${detail}` : '';
+    }
+    progressDetail.hidden = !detail;
+  };
   const updateControls = () => {
     const allowed = active && connected && !disposed && !isAsleep(worker.status) && !worker.lost;
     const waiting = worker.status === 'needs_input';
@@ -744,13 +774,14 @@ export function mountWorkerThread(net: Net, opts: ThreadOptions): WorkerThread {
     retry.disabled = !connected || !!pending;
     empty.classList.toggle('error', !!error && !history.entries.length);
     if (!history.entries.length) paintEmpty();
-    notice.textContent = connected ? error || told || (waiting && worker.lead ? 'Waiting for its lead to respond.' : isAsleep(worker.status) ? 'Resume this worker to send another message.' : '') : '';
+    notice.textContent = connected ? error || told || (isAsleep(worker.status) ? 'Resume this worker to send another message.' : '') : '';
     raw.classList.toggle('hidden', !connected || !error);
     resume.hidden = !isAsleep(worker.status);
     resume.disabled = !active || !connected || !!worker.lost || resuming;
     resume.textContent = resuming ? 'Resuming…' : 'Resume';
     element.classList.toggle('has-feedback', !!notice.textContent);
     paintQueue();
+    paintProgress();
   };
   const read = (before?: number) => {
     if (!active || !connected || disposed || document.hidden || pending) return;
@@ -884,6 +915,7 @@ export function mountWorkerThread(net: Net, opts: ThreadOptions): WorkerThread {
     if (!error) read();
   }, 1000);
   const visibility = () => {
+    paintProgress();
     readTeam();
     if (!document.hidden && active) read();
   };
@@ -932,6 +964,7 @@ export function mountWorkerThread(net: Net, opts: ThreadOptions): WorkerThread {
       if (active) net.send({ t: 'worker.detach', workerId: worker.id });
       disposed = true;
       active = false;
+      paintProgress();
       clearInterval(timer);
       document.removeEventListener('visibilitychange', visibility);
       teamSection.removeEventListener('toggle', teamDisclosure, true);

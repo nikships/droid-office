@@ -4,7 +4,7 @@
 import type { ClientMsg, WorkerInfo } from '../shared/protocol';
 import { canAnswer, readMenu, sameMenu, type Menu } from '../shared/asks';
 import { questionPresentation } from '../shared/ask-question';
-import { isAsleep, isBusy, needsOwnerInput, statusTone, workerActivity } from '../shared/status';
+import { isAsleep, isBusy, needsOwnerInput, workerActivity } from '../shared/status';
 import { statusWord } from '../shared/guests';
 import { sessionWebUrl } from '../shared/factory-sessions';
 import { forkRefusal } from '../shared/worker-fork';
@@ -73,6 +73,7 @@ export interface PaneState {
 
 export interface Pane {
   readonly index: number;
+  move(index: number): void;
   readonly el: HTMLElement;
   workerId(): string;
   mode(): PaneMode;
@@ -102,7 +103,7 @@ function lines(id: string) {
 
 /** A worker's colour, ringed and pulsing by status. */
 export function workerDot(w: WorkerInfo) {
-  const el = h('span.dash-dot', { 'data-status': statusTone(w), 'aria-hidden': 'true' });
+  const el = h('span.dash-dot', { 'data-status': w.status, 'aria-hidden': 'true' });
   el.style.setProperty('--who', w.color);
   return el;
 }
@@ -311,7 +312,7 @@ export function createPane(host: PaneHost, index: number): Pane {
         {
           type: 'button',
           'data-member': m.id,
-          'data-status': statusTone(m),
+          'data-status': m.status,
           'aria-current': String(m.id === w?.id),
           disabled: !host.live(),
           title: `${m.name} · ${lead ? 'Main worker' : `Subworker of ${team.lead.name}`} · ${statusWord(m, STATUS_LABEL)}`,
@@ -364,7 +365,7 @@ export function createPane(host: PaneHost, index: number): Pane {
     task.title = doing;
     model.textContent = (w.kind === 'agent' ? modelBadge(w.activeModel ?? w.model, w.activeEffort ?? w.effort) : kind(w)) ?? '';
     pill.hidden = false;
-    pill.className = `pill ${statusTone(w)}`;
+    pill.className = `pill ${w.status}`;
     pill.textContent = statusWord(w, STATUS_LABEL);
     const toggles = local && w.kind === 'agent';
     views.hidden = flip.hidden = !toggles;
@@ -503,15 +504,6 @@ export function createPane(host: PaneHost, index: number): Pane {
   function paintQuestion(review = false) {
     const w = id ? store.workers.get(id) : undefined;
     if (!w || mode === 'empty' || !mode) return;
-    if (w.lead) {
-      questionWorkspace?.close();
-      shownMenu = undefined;
-      questionKey = '';
-      answered = false;
-      question.hidden = true;
-      question.replaceChildren();
-      return;
-    }
     const screen = lines(w.id);
     const next = screen && canAnswer(w, screen) ? readMenu(screen) : undefined;
     if (w.status !== 'needs_input') {
@@ -651,7 +643,16 @@ export function createPane(host: PaneHost, index: number): Pane {
   }
 
   const pane: Pane = {
-    index,
+    get index() {
+      return index;
+    },
+    move(next) {
+      if (next === index) return;
+      index = next;
+      badge.textContent = String(index + 1);
+      headKey = '';
+      emptyKey = '';
+    },
     el,
     workerId: () => id,
     mode: () => (mode || 'empty') as PaneMode,

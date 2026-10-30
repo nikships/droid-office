@@ -58,11 +58,11 @@ test('equal creation times have deterministic ordering; badges and fork ancestry
   assert.ok(workerTeams(input).every((t) => !t.children.length));
 });
 
-test('team counts include startup but subagent questions and completions never need the owner', () => {
+test('team counts include startup and subagent questions, but not subagent completions', () => {
   const input = ['working', 'starting', 'needs_input', 'done', 'done', 'offline', 'exited', 'idle'].map((status, i) => ({ ...workers[i], status: status as WorkerInfo['status'], acked: i === 4 }));
-  assert.deepEqual(teamCounts(input), { working: 2, attention: 0 });
+  assert.deepEqual(teamCounts(input), { working: 2, attention: 1 });
   assert.deepEqual(teamCounts(input.map((w) => ({ ...w, lead: undefined }))), { working: 2, attention: 2 });
-  assert.equal(teamSummary(input), '🧭 8 subagents · 2 working');
+  assert.equal(teamSummary(input), '🧭 8 subagents · 2 working · 1 needs you');
   assert.equal(teamSummary(input.filter((w) => w.status === 'done')), '🧭 2 subagents');
   assert.equal(teamSummary(input.filter((w) => w.status === 'starting')), '🧭 1 subagent · 1 working');
   assert.deepEqual(teamCounts([]), { working: 0, attention: 0 });

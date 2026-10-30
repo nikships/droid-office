@@ -67,14 +67,20 @@ export function visibleSlots(ws: Workspace): (string | null)[] {
   return ws.slots.slice(0, SLOT_COUNT[ws.layout]);
 }
 
-/** Release moved/hidden workers as a batch before rendering any replacement pane. */
-export function releaseChangedPanes<T extends { workerId(): string; dispose(): void }>(panes: (T | undefined)[], shown: readonly (string | null)[]) {
-  for (let i = 0; i < panes.length; i++) {
-    if (i >= shown.length || panes[i]?.workerId() !== (shown[i] ?? '')) {
-      panes[i]?.dispose();
-      panes[i] = undefined;
+/** Keep each visible worker's live pane and drafts when it moves; release only removed panes. */
+export function reconcilePanes<T extends { workerId(): string; move(index: number): void; dispose(): void }>(panes: (T | undefined)[], shown: readonly (string | null)[]) {
+  const next: (T | undefined)[] = Array(shown.length);
+  for (const [i, pane] of panes.entries()) {
+    if (!pane) continue;
+    const id = pane.workerId();
+    const at = id ? shown.indexOf(id) : i < shown.length && !shown[i] ? i : -1;
+    if (at < 0) pane.dispose();
+    else {
+      pane.move(at);
+      next[at] = pane;
     }
   }
+  panes.splice(0, panes.length, ...next);
 }
 
 /** The pane a worker is open in, or -1. */
@@ -217,6 +223,7 @@ export function syncWorkspace(ws: Workspace, workers: readonly LayoutWorker[], p
 
 /** Puts a worker in a pane. If it was open in another one, the two panes trade places. */
 export function assign(ws: Workspace, slot: number, id: string) {
+  ws.auto = false;
   const old = ws.slots.indexOf(id);
   if (old !== slot) {
     if (old >= 0) ws.slots[old] = ws.slots[slot] ?? null;
@@ -227,6 +234,7 @@ export function assign(ws: Workspace, slot: number, id: string) {
 
 export function swap(ws: Workspace, a: number, b: number) {
   if (a === b) return;
+  ws.auto = false;
   [ws.slots[a], ws.slots[b]] = [ws.slots[b] ?? null, ws.slots[a] ?? null];
   ws.focused = b;
 }

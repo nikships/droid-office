@@ -38,7 +38,7 @@ export function workersByTeam<T extends Member>(workers: Iterable<T>): T[] {
   return workerTeams(workers).flatMap((team) => [team.lead, ...team.children]);
 }
 
-/** Startup counts as work; only main workers' input requests and unread completions need the owner. */
+/** Startup counts as work; all input requests and main workers' unread completions need the owner. */
 export function teamCounts(workers: readonly Activity[]) {
   return {
     working: workers.filter((w) => w.status === 'working' || w.status === 'starting').length,
