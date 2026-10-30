@@ -495,3 +495,27 @@ test('WorkerManager exposes only a server-known local agent session and cwd', ()
   assert.deepEqual(manager.threadSession('agent'), { sessionId: 'owned', cwd: '/project/.droid-office/worktrees/agent' });
   for (const id of ['shell', 'cloud', 'guest', 'starting', 'missing']) assert.equal(manager.threadSession(id), undefined);
 });
+
+test('pages carry the presentation built over the whole window, so a group keeps its first entry', async (t) => {
+  const { reader, source } = await rig(t, [
+    text('prompt', 'Read the project', 'user'),
+    ...Array.from({ length: 150 }, (_, i) => message(`tool-${i}`, 'assistant', [{ type: 'tool_use', id: `call-${i}`, name: 'Read', input: { file_path: `/project/file-${i}.ts` } }])),
+  ]);
+  const latest = await reader.read(source, undefined, true);
+  assert.equal(latest.entries.length, 100);
+  assert.equal(latest.presentation?.version, 1);
+  const [row] = latest.presentation?.rows ?? [];
+  assert.ok(row?.kind === 'activity');
+  assert.equal(row.id, 'activity:tool:call-0');
+  assert.equal(row.label, 'Read 150 files');
+  assert.equal(row.live, true);
+  assert.equal(row.running, 'Read file-149.ts');
+  assert.equal(latest.presentation?.rows.length, 1);
+  const idle = await reader.read(source, undefined, false);
+  assert.ok(idle.presentation?.rows[0].kind === 'activity' && idle.presentation.rows[0].state === 'incomplete');
+  const earlier = await reader.read(source, latest.entries[0].seq, true);
+  assert.deepEqual(
+    earlier.presentation?.rows.map((r) => r.id),
+    ['prompt:0', 'activity:tool:call-0'],
+  );
+});

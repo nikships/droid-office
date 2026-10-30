@@ -82,7 +82,7 @@ test('thread startup animates without premature reads, retries missing files and
     w.thread.activate(true);
     w.reply = (error?: string) => {
       const request = w.sent.filter((msg: any) => msg.t === 'thread.read').at(-1).request;
-      w.receive({ t: 'thread.snapshot', workerId: worker.id, request, sessionId: 'session', entries: [], hasMore: false, error });
+      w.receive({ t: 'thread.snapshot', workerId: worker.id, request, sessionId: 'session', entries: [], hasMore: false, ...(error ? { error } : { presentation: { version: 1, rows: [] } }) });
     };
   }, worker);
   assert.match(await page.locator('.wt-empty').innerText(), /Starting worker/);

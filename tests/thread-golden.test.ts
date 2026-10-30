@@ -1,31 +1,44 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { test } from 'node:test';
-import { presentThread, type ThreadRow } from '../src/shared/thread-presentation.js';
+import { ThreadHistory } from '../src/client/thread-history.js';
+import { presentThread, type ThreadPresentation, type ThreadRow } from '../src/shared/thread-presentation.js';
 import type { ThreadEntry } from '../src/shared/worker-thread.js';
+import { FIXTURE, render, threadFixture } from '../tools/thread-fixture.mjs';
 
-const fixture = JSON.parse(readFileSync(new URL('../android/app/src/test/resources/thread-presentation-golden.json', import.meta.url), 'utf8')) as {
-  cases: { name: string; busy: boolean; entries: ThreadEntry[]; expected: unknown }[];
+const file = readFileSync(FIXTURE, 'utf8');
+const fixture = JSON.parse(file) as {
+  cases: { name: string; busy: boolean; entries: ThreadEntry[]; expected: ThreadRow[] }[];
+  paging: {
+    name: string;
+    steps: {
+      snapshot: { before?: number; sessionId: string; entries: ThreadEntry[]; hasMore: boolean; presentation: ThreadPresentation };
+      expected: { entries: string[]; rows: ThreadRow[] };
+    }[];
+  }[];
 };
-const snapshot = (row: ThreadRow): unknown => {
-  if (row.kind === 'message') return { kind: row.kind, id: row.id, role: row.entry.role, startsTurn: row.startsTurn };
-  if (row.kind === 'notice') return { kind: row.kind, id: row.id, text: row.text, tone: row.tone };
-  if (row.kind === 'thought') return { kind: row.kind, id: row.id, preview: row.preview, live: row.live };
-  const states = { complete: 'done', working: 'running', failed: 'failed', incomplete: 'no_result', cancelled: 'cancelled' };
-  return {
-    kind: row.kind,
-    id: row.id,
-    summary: row.label,
-    live: row.live,
-    items: row.items.map((item) => ({ type: item.type, id: item.entry.id, title: item.title, detail: item.detail ?? null, state: states[item.state] })),
-    failed: row.failed.map((action) => action.title),
-    ...(row.cancelled ? { cancelled: row.cancelled } : {}),
-    noResult: row.noResult,
-    plan: row.plan?.map((step) => ({ status: step.done ? 'completed' : step.active ? 'in_progress' : 'pending', text: step.text })) ?? null,
-  };
-};
+
+test('the shared fixture is what the office engine says now', () => {
+  assert.equal(file, render(threadFixture(fixture)), 'run node --import tsx tools/thread-fixture.mjs and review the diff');
+});
+
 for (const example of fixture.cases) {
-  test(`Android/web presentation parity: ${example.name}`, () => {
-    assert.deepEqual(presentThread(example.entries, example.busy).map(snapshot), example.expected);
+  test(`office presentation: ${example.name}`, () => {
+    assert.deepEqual(presentThread(example.entries, example.busy), example.expected);
+  });
+}
+
+for (const scenario of fixture.paging) {
+  test(`web paging holds the office's rows: ${scenario.name}`, () => {
+    const history = new ThreadHistory();
+    for (const [index, step] of scenario.steps.entries()) {
+      history.apply(step.snapshot);
+      assert.deepEqual(
+        history.entries.map((entry) => entry.id),
+        step.expected.entries,
+        `step ${index}`,
+      );
+      assert.deepEqual(history.rows, step.expected.rows, `step ${index}`);
+    }
   });
 }
