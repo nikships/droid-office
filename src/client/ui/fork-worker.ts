@@ -8,6 +8,7 @@ import { field, windowHeader } from './kit';
 export function openForkWorker(net: Net, workerId: string) {
   const source = store.workers.get(workerId);
   if (!source) return;
+  const plain = store.currentFloor()?.plain;
   const prompt = h('textarea.input', { rows: 4, maxlength: 20000, placeholder: 'Try a different approach…', 'aria-label': 'New direction (optional)' });
   const error = h('p.field-error.hidden', { role: 'status' });
   const cancel = h('button.btn.ghost', { type: 'button' }, 'Cancel');
@@ -15,12 +16,18 @@ export function openForkWorker(net: Net, workerId: string) {
   const el = h(
     'div.modal',
     { role: 'dialog', 'aria-label': `Fork ${source.name}` },
-    windowHeader(`Fork ${source.name}`, 'Same conversation. A separate worktree.'),
+    windowHeader(`Fork ${source.name}`, plain ? 'Same conversation. Shared folder.' : 'Same conversation. A separate worktree.'),
     h(
       'div.body.stack',
       {},
-      h('p', {}, 'The twin gets this worker’s current commit, staged and unstaged edits, and untracked files. The original stays untouched.'),
-      h('p.note.info', {}, 'The twin counts toward your worker limit and takes the nearest free desk. Ignored local files follow this floor’s normal worktree setup.'),
+      h(
+        'p',
+        {},
+        plain
+          ? 'The twin gets a separate copy of this worker’s conversation in the same folder. No worktree is created. Both workers share files, so their edits affect each other.'
+          : 'The twin gets this worker’s current commit, staged and unstaged edits, and untracked files. The original stays untouched.',
+      ),
+      h('p.note.info', {}, `The twin counts toward your worker limit and takes the nearest free desk.${plain ? '' : ' Ignored local files follow this floor’s normal worktree setup.'}`),
       field('New direction (optional)', prompt, 'Leave blank to open the fork without starting a turn.'),
       error,
     ),

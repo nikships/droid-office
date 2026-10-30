@@ -14,6 +14,7 @@ import { SCREEN_SETTLE_MS } from '../src/server/droid-screen.js';
 type Invocation = {
   kind: string;
   args: string[];
+  cwd: string;
   stdin?: string;
   env: {
     workerId?: string;
@@ -78,6 +79,7 @@ const args = process.argv.slice(2);
 const record = (extra = {}) => fs.appendFileSync(log, JSON.stringify({
   kind,
   args,
+  cwd: process.cwd(),
   ...extra,
   env: {
     workerId: process.env.DROID_OFFICE_WORKER_ID,
@@ -554,7 +556,7 @@ test("a plain folder's workers get no branch policy, no worktrees, no board agen
     )
   ).find((r) => r.kind === 'droid' && r.env.workerId === w.id && r.args.includes('--settings'))!;
   assert.equal(launch.env.ceiling?.split(path.delimiter)[0], realpathSync(f.root), "git run in the folder doesn't climb into the checkout around it");
-  assert.match(String(await workers.fork(w.id, 'test')), /plain folder.*fork/);
+  assert.match(String(await workers.fork(w.id, 'test')), /session to start/);
   const system = readFileSync(path.join(data, `system-${w.id}.md`), 'utf8');
   assert.match(system, new RegExp(`^You're ${w.name}, a worker in Droid Office`));
   assert.doesNotMatch(system, /floor branch|floor-branch\.json|git fetch/);
@@ -1387,6 +1389,61 @@ function forkRepository(f: Fixture, dir = f.root) {
   git('add', '.');
   git('commit', '-qm', 'init');
   return git;
+}
+
+for (const nested of [false, true]) {
+  test(`a fork on ${nested ? 'a plain folder inside a checkout' : 'Home'} shares the folder without git or worktree setup and resumes its own session`, async (t) => {
+    const f = carryOnFixture(t);
+    if (nested) execFileSync('git', ['init', '-q', '-b', 'main', f.root]);
+    const folder = path.join(f.root, nested ? 'notes' : 'home');
+    const data = path.join(folder, '.droid-office');
+    mkdirSync(data, { recursive: true });
+    writeFileSync(path.join(folder, 'notes.txt'), 'shared notes');
+    const createManager = () => managed(f, folder, data, f.droid, [], { url: 'http://127.0.0.1:1', token: '' }, events([]), undefined, undefined, undefined, true);
+    const workers = createManager();
+    const source = await hireInState(f, workers, 'desk-1', 'source-home', 'done');
+    const fork = t.mock.method(Worktrees.prototype, 'fork', () => assert.fail('plain forks must not call git'));
+    const ownership = t.mock.method(Worktrees.prototype, 'ownership', () => assert.fail('plain forks have no branch ownership'));
+    const twin = await workers.fork(source.id, 'test', 'Try another approach');
+    assert.ok(typeof twin !== 'string', String(twin));
+    if (typeof twin === 'string') return;
+    assert.equal(twin.worktree, undefined);
+    assert.equal(twin.repos, undefined);
+    assert.equal(twin.lead, undefined);
+    assert.equal(twin.sessionId, undefined);
+    assert.equal(twin.forkedFrom?.workerId, source.id);
+    assert.equal(twin.deskId, 'desk-3');
+    const launch = (await waitFor(() => launchesOf(f).find((r) => r.env.workerId === twin.id), Boolean))!;
+    assert.deepEqual(launch.args.slice(-2), ['--fork', 'source-home']);
+    assert.ok(!launch.args.includes('--resume'));
+    assert.equal(launch.args[launch.args.indexOf('--cwd') + 1], folder);
+    assert.equal(launch.env.ceiling?.split(path.delimiter)[0], realpathSync(f.root));
+    assert.equal(existsSync(path.join(data, 'worktrees')), false);
+    const saved = JSON.parse(readFileSync(path.join(data, 'workers.json'), 'utf8')).find((w: WorkerInfo) => w.id === twin.id);
+    assert.equal(saved.setupPlan, undefined);
+    assert.equal(saved.worktreeOwnership, undefined);
+    assert.equal(saved.pendingFork.sessionId, 'source-home');
+    const system = readFileSync(path.join(data, `system-${twin.id}.md`), 'utf8');
+    assert.match(system, /share this floor’s folder/);
+    assert.doesNotMatch(system, /private snapshot|floor-branch\.json/);
+    assert.equal(await startedWith(f, workers, launch, 'twin-home'), 'Try another approach');
+    assert.equal(source.sessionId, 'source-home');
+    assert.equal(twin.sessionId, 'twin-home');
+    assert.equal(readFileSync(path.join(folder, 'notes.txt'), 'utf8'), 'shared notes');
+    workers.shutdown(true);
+    const after = createManager();
+    assert.equal(after.resume(twin.id), undefined);
+    const resumed = (
+      await waitFor(
+        () => launchesOf(f).filter((r) => r.env.workerId === twin.id),
+        (r) => r.length === 2,
+      )
+    )[1];
+    assert.deepEqual(resumed.args.slice(-2), ['--resume', 'twin-home']);
+    assert.equal(resumed.cwd, realpathSync(folder));
+    assert.equal(fork.mock.callCount(), 0);
+    assert.equal(ownership.mock.callCount(), 0);
+  });
 }
 
 test('a fork gets its own session, worktree, source-local setup and seat, then resumes only its own id', async (t) => {

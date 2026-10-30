@@ -641,10 +641,9 @@ export class WorkerManager {
     return info;
   }
 
-  /** A peer with a private snapshot of the source's repositories and conversation, between turns only. */
+  /** A peer with a separate conversation and, on git floors, a private repository snapshot, between turns only. */
   async fork(id: string, by: string, prompt?: string): Promise<WorkerInfo | string> {
     if (this.closing || this.selectingBranch) return 'Wait for the office to finish restarting or switching branches';
-    if (this.plain) return `${PLAIN_FLOOR}, so there's no worktree to fork a worker into`;
     const source = this.workers.get(id);
     if (!source) return 'No such worker';
     const why = forkRefusal(source.info);
@@ -665,7 +664,7 @@ export class WorkerManager {
     const twinId = randomBytes(6).toString('hex');
     const slug = `fork-${twinId}`;
     const many = !!source.info.repos?.length;
-    const originals = source.info.worktree ? this.treesOf(source.info) : [{ name: path.basename(this.dir), dir: this.dir, trees: this.trees, ref: undefined }];
+    const originals = this.plain ? [] : source.info.worktree ? this.treesOf(source.info) : [{ name: path.basename(this.dir), dir: this.dir, trees: this.trees, ref: undefined }];
     const made: { trees: Worktrees; ref: WorktreeRef }[] = [];
     let primary: WorkerInfo['worktree'];
     const others: WorkerRepo[] = [];
@@ -716,8 +715,10 @@ export class WorkerManager {
     };
     const w = newWorker(info);
     w.pendingFork = { sessionId: source.info.sessionId!, prompt: text };
-    w.worktreeOwnership = Object.fromEntries(this.treesOf(info).map((t) => [t.dir, t.trees.ownership(t.ref.branch)]));
-    w.setupPlan = this.planSetup(twinId, primary!, info.repos, source.info);
+    if (primary) {
+      w.worktreeOwnership = Object.fromEntries(this.treesOf(info).map((t) => [t.dir, t.trees.ownership(t.ref.branch)]));
+      w.setupPlan = this.planSetup(twinId, primary, info.repos, source.info);
+    }
     this.workers.set(twinId, w);
     // Persist the fork intent before starting a process, so a restart cannot attach to the parent's session.
     this.persist();
@@ -2306,8 +2307,10 @@ process.stdin.on('end', () => {
     // A saved system prompt may predate the floor selector. Keep it, but don't let its generic
     // default-branch instructions override an explicit owner choice.
     if (text && branchPolicy && this.trees.selectedBranch() && !template.includes('{{branchPolicy}}')) text += `\n\n${branchPolicy}`;
-    if (text && info.forkedFrom)
-      text += `\n\nYou are ${info.name}, an independent fork of ${info.forkedFrom.name}'s conversation. Your files are a private snapshot in your own worktree. The original may keep working. You are not the original worker or its subagent: use your own worker id and do not act on its terminal, worktree or team.`;
+    if (text && info.forkedFrom) {
+      const files = info.worktree ? 'Your files are a private snapshot in your own worktree.' : 'You share this floor’s folder with the original worker. Files are not copied or isolated; coordinate before editing the same files.';
+      text += `\n\nYou are ${info.name}, an independent fork of ${info.forkedFrom.name}'s conversation. ${files} The original may keep working. You are not the original worker or its subagent: use your own worker id and do not act on its terminal, worktree or team.`;
+    }
     try {
       if (!text) {
         rmSync(file, { force: true });
