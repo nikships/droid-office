@@ -15,7 +15,7 @@ function droidFacts(): string {
 }
 
 /**
- * ⚙️ Settings → Workers → "Droid": the version and Update to …, who it's signed in as or Sign in
+ * ⚙️ Settings → Connections → "Droid": the version and Update to …, who it's signed in as or Sign in
  * (with the welcome's code panel), and Check again. Without Droid it opens the welcome.
  */
 export function droidSettings(net: Net): { parts: { desc: Node; control: Node; below: Node[] }; dispose: () => void } {
@@ -47,7 +47,7 @@ export function droidSettings(net: Net): { parts: { desc: Node; control: Node; b
   paint();
   const off = store.on('setup', paint);
   return {
-    parts: { desc: h('span.stack.tight', {}, h('small', {}, 'The coding agent your workers are, on the Factory account it runs on.'), facts), control: controls, below: [signIn.element, busyLine, error] },
+    parts: { desc: h('span.stack.tight', {}, h('small', {}, 'The coding agent every worker runs, and the Factory account it signs in to.'), facts), control: controls, below: [signIn.element, busyLine, error] },
     dispose: off,
   };
 }

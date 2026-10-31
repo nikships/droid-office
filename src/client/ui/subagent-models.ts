@@ -23,7 +23,7 @@ function facts(m: DroidModelOption | undefined, id: string, why?: string): strin
 
 /**
  * ⚙️ Settings → Subagents & visits: a checkbox for every model droid lists that is not hidden in
- * Workers → Models shown in pickers, cheapest first, and a note for each one picked that the Team
+ * Models → Models shown in pickers, cheapest first, and a note for each one picked that the Team
  * lead reads in `office-workers models` when it chooses one. A pick hidden since stays listed,
  * marked, so it can be unticked. Nothing picked lets leads run any model.
  */
@@ -140,7 +140,7 @@ export function subagentModelPicker(save: (models: SubagentModel[] | undefined) 
     else if (seen) stopWatching();
     if (list.isConnected && availabilityStamp() !== drawn) paintList();
   });
-  // Hiding or showing a model under Workers → Models shown in pickers redraws this list at once.
+  // Hiding or showing a model under Models → Models shown in pickers redraws this list at once.
   const stopHidden = store.on('hiddenModels', () => {
     if (list.isConnected) seen = true;
     else if (seen) stopHidden();

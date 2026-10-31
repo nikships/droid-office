@@ -217,7 +217,7 @@ export function subscriptionsSettings(net: Net): { proxy: Parts; accounts: Parts
   const timer = setInterval(paint, 30_000);
   return {
     proxy: { desc: h('span.stack.tight', {}, proxyText, proxyMeta), control: proxyActions, below: [proxyProgress, proxyError] },
-    accounts: { desc: h('small', {}, 'Each plan’s accounts, and how much of every usage window is left. A plan switched off stops its models; nobody can hire on them.'), below: [accountsList] },
+    accounts: { desc: h('small', {}, 'Each plan’s accounts and how much of each usage window is left. Switching a plan off stops its models.'), below: [accountsList] },
     models: { desc: modelsText, control: modelsActions },
     unsupported,
     hideWhenUnsupported: (...els) => {

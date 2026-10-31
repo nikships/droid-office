@@ -160,7 +160,7 @@ export function promptExtras(ta: HTMLTextAreaElement): { element: HTMLElement; s
   };
 }
 
-/** Settings → Workers → Prompt chips. Edits stay in the rows until they're a name plus some text. */
+/** Settings → You → Prompt chips. Edits stay in the rows until they're a name plus some text. */
 export function presetEditor(initial: PromptPreset[], onChange: (presets: PromptPreset[]) => void): HTMLElement {
   const rows: { el: HTMLElement; label: HTMLInputElement; text: HTMLTextAreaElement }[] = [];
   const list = h('div.preset-list');

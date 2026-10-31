@@ -40,7 +40,7 @@ const LEDE: Record<WelcomeStepId, string> = {
   droid: 'Droid is the coding agent your workers are. The office installs it for you.',
   factory: 'Droid runs on a Factory account. Sign in, or create an account, in your browser.',
   subscriptions: 'Use the Claude or ChatGPT plan you already pay for. DroidProxy, a small menu-bar app, connects them.',
-  ready: 'Pick the model new workers start on. You can change it any time in Settings → Workers.',
+  ready: 'Pick the model new workers start on. You can change it any time in Settings → Models.',
 };
 
 const HIRE_HINT = 'Walk up to an empty desk and press E to hire your first worker.';

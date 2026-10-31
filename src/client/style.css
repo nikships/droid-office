@@ -536,18 +536,37 @@ label.choice:has(> input:disabled) { opacity: .5; cursor: default; }
 .group-title { display: flex; align-items: baseline; gap: 6px; margin: 0 0 var(--space-2); font: 500 var(--text-label)/1.4 var(--font-mono); text-transform: uppercase; letter-spacing: .1em; color: var(--text-secondary); }
 :where(.group-title) .no { color: var(--accent); }
 .group-row > :where(select.select, .seg) { width: auto; }
-/* A Classic-only row while Remastered is on: still readable, not changeable. */
+/* A row that does nothing right now (Sharpening at full resolution without TAA): still readable, not changeable. */
 .group-row.muted { opacity: .45; }
 /* .block: the label row on top, then every other child full width under it (a model + effort pair, a textarea, a
    wide list). A button, toggle, select or .seg right after the label stays at the top right as the row's control. */
 .group-row:where(.block) { align-items: flex-start; row-gap: var(--space-3); }
 .group-row:where(.block) > :where(:not(.group-label)) { flex: 1 1 100%; width: 100%; max-width: none; }
 .group-row:where(.block) > :where(.group-label + :is(.btn, .toggle, .seg, select, .pill)) { flex: none; width: auto; max-width: 60%; }
+/* .group-nest: rows that only mean something with the row above them (a switch's options, the Classic renderer's
+   own settings), indented behind a guide line and hidden with that row's choice. */
+.group-nest { display: flex; flex-direction: column; min-width: 0; border-top: 1px solid var(--border); background: linear-gradient(var(--border-strong), var(--border-strong)) no-repeat var(--space-5) var(--space-3) / 1px calc(100% - var(--space-6)); }
+.group-nest > :where(.group-row) { padding-left: var(--space-8); }
+:where(.group-nest) + .group-row { border-top: 1px solid var(--border); }
 /* Narrow windows and phones: every control goes under its label. */
 @media (max-width: 720px) {
   .group-label { flex-basis: 100%; }
   .group-row > :where(:not(.group-label)) { max-width: 100%; }
+  .group-nest > :where(.group-row) { padding-left: var(--space-7); }
 }
+
+/* ---- Disclosure: details.disclosure > summary (.disclosure-label, .disclosure-meta) + .disclosure-body, for a long list or form folded away ---- */
+.disclosure { min-width: 0; border: 1px solid var(--border); border-radius: var(--radius); background: var(--bg); }
+.disclosure > :where(summary) { display: flex; align-items: center; gap: var(--space-2); min-height: var(--control-h); padding: 0 var(--space-3); border-radius: var(--radius); cursor: pointer; list-style: none; font: 500 var(--text-small)/1.4 var(--font-sans); color: var(--text); user-select: none; }
+.disclosure > :where(summary)::-webkit-details-marker { display: none; }
+.disclosure > :where(summary)::before { content: '▸'; flex: none; width: 12px; color: var(--text-secondary); text-align: center; transition: transform var(--duration) var(--ease); }
+.disclosure:where([open]) > :where(summary)::before { transform: rotate(90deg); }
+.disclosure > :where(summary:hover) { background: var(--surface-hover); }
+.disclosure > :where(summary:focus-visible) { outline: 2px solid var(--accent); outline-offset: -2px; }
+.disclosure-label { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.disclosure-meta { flex: none; color: var(--text-secondary); font-weight: 400; font-variant-numeric: tabular-nums; }
+.disclosure-body { padding: var(--space-3); border-top: 1px solid var(--border); }
+@media (prefers-reduced-motion: reduce) { .disclosure > :where(summary)::before { transition: none; } }
 
 /* ---- Feedback: .note callouts, .empty-state, .spinner, .skeleton ---- */
 /* Not the Markdown body's GitHub alerts (blockquote.alert.note in .md). */
@@ -586,7 +605,7 @@ label.choice:has(> input:disabled) { opacity: .5; cursor: default; }
 .settings-tab:hover { background: var(--surface-hover); color: var(--text); }
 .settings-tab.on { background: var(--surface-raised); border-color: var(--border-strong); color: var(--text); }
 .settings-tab:focus-visible { outline: none; box-shadow: inset 0 0 0 1px var(--accent); }
-.settings-pane { display: flex; flex-direction: column; gap: 10px; min-width: 0; min-height: 0; padding: 16px 18px 22px; overflow: auto; }
+.settings-pane { display: flex; flex-direction: column; gap: var(--space-5); min-width: 0; min-height: 0; padding: var(--space-4) var(--space-5) var(--space-6); overflow: auto; }
 .settings-head h3 { margin: 0; font: 600 14px/1.3 var(--font-sans); }
 .model-visibility-list { max-height: 320px; overflow: auto; }
 .model-visibility-list .toggle { flex: none; }
@@ -600,9 +619,6 @@ label.choice:has(> input:disabled) { opacity: .5; cursor: default; }
 .group-row.flash { animation: settings-flash 2s var(--ease); }
 @keyframes settings-flash { 0%, 60% { background: var(--accent-muted); box-shadow: inset 0 0 0 1px var(--accent); } 100% { background: transparent; box-shadow: none; } }
 @media (prefers-reduced-motion: reduce) { .group-row.flash { animation: none; box-shadow: inset 0 0 0 1px var(--accent); } }
-.setting { flex: none; padding: 12px 14px; background: var(--surface-raised); border: 1px solid var(--border); border-radius: var(--radius); }
-.setting-head { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
-.setting-head h4 { margin: 0; font: 600 13px/1.3 var(--font-sans); }
 @media (max-width: 720px) {
   .settings-body { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr); }
   .settings-nav { flex-direction: row; overflow-x: auto; border-right: 0; border-bottom: 1px solid var(--border); }
@@ -628,9 +644,8 @@ label.choice:has(> input:disabled) { opacity: .5; cursor: default; }
 .seg:is([role=radiogroup], [role=group], :has(> .btn.on)) > .btn:hover { position: relative; z-index: 1; color: var(--text); border-color: var(--border-strong); }
 .seg:is([role=radiogroup], [role=group], :has(> .btn.on)) > .btn:focus-visible { position: relative; z-index: 3; }
 .seg:is([role=radiogroup], [role=group], :has(> .btn.on)) > .btn:is(.on, [aria-checked=true], [aria-pressed=true]) { position: relative; z-index: 2; border-color: var(--accent); background: var(--accent-muted); color: var(--text); }
-.setting .seg + .seg { margin-top: 8px; }
 .seg.disabled { opacity: .45; }
-/* ⚙️ Settings → Subagents & visits: the models leads can pick, each picked one with a note for the lead. */
+/* ⚙️ Settings → Subagents & visits → Models leads can pick: each picked one with a note for the lead. */
 .sub-models-filter { flex: 1; min-width: 0; }
 .sub-models-count { flex: none; color: var(--text-secondary); font-size: var(--text-small); }
 .sub-models { max-height: 340px; overflow: auto; }
@@ -2821,7 +2836,7 @@ html:has(body.dashboard), body.dashboard { overflow: auto; }
 .phone-web-text b { font-weight: 500; }
 .phone-web-text small { font-size: var(--text-small); color: var(--text-secondary); }
 
-/* ---------- The welcome (ui/welcome.ts) and Settings → Connections and Workers → Droid (ui/subscriptions-settings.ts, ui/droid-settings.ts) ---------- */
+/* ---------- The welcome (ui/welcome.ts) and Settings → Connections: Droid and Subscriptions (ui/droid-settings.ts, ui/subscriptions-settings.ts) ---------- */
 .modal.welcome { height: min(580px, calc(100vh - 32px)); }
 .welcome-body { --split-side: 232px; }
 .welcome-steps { padding: var(--space-3) var(--space-2); }

@@ -28,7 +28,7 @@ export function openPing(net: Net) {
   const results = new Map<string, { ok: boolean; text: string } | 'sending'>();
   const list = h('ul.list.boxed.wb-ping-list');
   const none = emptyState('🤖', 'No workers on this floor', 'Hire one at a desk first.');
-  const body = h('div.body.stack.tight', {}, h('p.wb-dialog-lead', {}, 'The office types a line into the worker’s terminal telling it to read the Whiteboard. Edit the line in ⚙️ Settings → Prompts.'), list, none);
+  const body = h('div.body.stack.tight', {}, h('p.wb-dialog-lead', {}, 'The office types a line into the worker’s terminal telling it to read the Whiteboard. Edit the line in ⚙️ Settings → Workers → Prompts.'), list, none);
   const el = h(
     'div.modal.wb-ping',
     { 'aria-label': 'Ping a worker', tabindex: '-1' },
