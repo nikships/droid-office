@@ -99,7 +99,7 @@ Only once all affected checks and builds pass does the release go up, marked Lat
 
 ### CI on the Mac Mini
 
-The runner is the repository's own, registered in **Settings → Actions → Runners** as `mac-mini-droid-office` and `mac-mini-droid-office-2`, both with the labels `self-hosted, macOS, ARM64, droid-office`, and started by launchd agents at login (`~/Library/LaunchAgents/actions.runner.nikships-droid-office.*.plist`). Their files are in `~/actions-runner-droid-office` and `~/actions-runner-droid-office-2` on the internal disk. Two instances mean two jobs at once, so the Mac build, the Node checks, Android and the website no longer queue behind each other.
+The runner is the repository's own, registered in **Settings → Actions → Runners** as `mac-mini-droid-office`, `mac-mini-droid-office-2` and `mac-mini-droid-office-3`, all with the labels `self-hosted, macOS, ARM64, droid-office`, and started by launchd agents at login (`~/Library/LaunchAgents/actions.runner.nikships-droid-office.*.plist`). Their files are in `~/actions-runner-droid-office`, `-2` and `-3` on the internal disk. Three instances mean three jobs at once, so the Mac build, the Node checks, Android and the website no longer queue behind each other. Three rather than two because GitHub decides which idle runner a queued job lands on: with two, the 6-minute Mac build often started only after the short Android and website jobs had taken both runners, and the third leaves it one to start on. All three share the machine's 10 cores and 16 GB, so they are not intended to run four heavy jobs at once.
 
 Because the jobs share one machine, the workflow is written so they can run side by side:
 

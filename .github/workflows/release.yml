@@ -22,11 +22,15 @@ name: Release
 # owner's keychain and git credentials. `changes` is skipped for them, and every other job needs
 # its outputs, so the whole run is empty.
 #
-# Two runner instances are registered to the repository and both sit on that Mac, so the jobs that
+# Three runner instances are registered to the repository and all sit on that Mac, so the jobs that
 # don't depend on each other run at the same time instead of one after another. A job that starts
 # a server picks a free port rather than a fixed one, and the built artifacts are handed from the
 # platform jobs to `publish` through `~/ci-artifacts` on the machine's disk instead of GitHub's
 # artifact service, which would upload and download the same 400 MB twice per release.
+#
+# Three rather than two: GitHub decides which idle runner a queued job lands on, and with two the
+# 6-minute Mac build kept starting only after the short Android and website jobs had taken both
+# runners. The third means it always has one free.
 
 on:
   push:
