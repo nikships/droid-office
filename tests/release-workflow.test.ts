@@ -201,7 +201,7 @@ test('release versions, packages, signing, bundle smoke checks and uploads only 
     ...jobSteps('release').filter((step) => step.includes('name: Set the release version')),
     ...jobSteps('mac').filter(
       (step) =>
-        !/actions\/checkout|name: Install and build|name: Recover a keychain left by an interrupted run|name: Check the runner's toolchain|name: Restore the runner's keychains|name: Check the native (?:Metal presenter|Finder integration)/.test(
+        !/actions\/checkout|actions\/setup-node|name: Install and build|name: Recover a keychain left by an interrupted run|name: Check the runner's toolchain|name: Restore the runner's keychains|name: Check the native (?:Metal presenter|Finder integration)/.test(
           step,
         ),
     ),
@@ -246,15 +246,26 @@ test('only change detection fetches history, and website checks are not repeated
   }
 });
 
-test('every job runs on the Mac Mini runner and checks its toolchain before building', () => {
-  for (const job of ['changes', 'release', 'website', 'mac', 'android', 'publish']) {
+test('PR checks run on GitHub runners while main builds and releases on the Mac Mini runner', () => {
+  for (const job of ['changes', 'release', 'website', 'android']) {
     const runsOn = workflow.match(new RegExp(`^ {2}${job}:\\n[\\s\\S]*?\\n {4}runs-on: (.+)$`, 'm'))?.[1];
-    assert.equal(runsOn, '[self-hosted, macOS, ARM64, droid-office]', job);
+    // biome-ignore lint/suspicious/noTemplateCurlyInString: GitHub Actions expression
+    assert.equal(runsOn, '${{ github.event_name == \'pull_request\' && \'ubuntu-latest\' || fromJSON(\'["self-hosted", "macOS", "ARM64", "droid-office"]\') }}', job);
   }
-  // The toolchain is installed on the runner, so no job sets up Node, a JDK or Gradle itself.
-  assert.doesNotMatch(workflow, /actions\/setup-node|actions\/setup-java|gradle\/actions/);
-  // Every job asks for the tools it uses, so drift in one toolchain can't fail a job that never
-  // touches it: the Android SDK is not checked by the website job, and `gh` only by publish.
+  const macRunsOn = workflow.match(/^ {2}mac:\n[\s\S]*?\n {4}runs-on: (.+)$/m)?.[1];
+  // biome-ignore lint/suspicious/noTemplateCurlyInString: GitHub Actions expression
+  assert.equal(macRunsOn, '${{ github.event_name == \'pull_request\' && \'macos-26\' || fromJSON(\'["self-hosted", "macOS", "ARM64", "droid-office"]\') }}', 'mac');
+  const publishRunsOn = workflow.match(/^ {2}publish:\n[\s\S]*?\n {4}runs-on: (.+)$/m)?.[1];
+  assert.equal(publishRunsOn, '[self-hosted, macOS, ARM64, droid-office]', 'publish');
+
+  // PRs configure Node, Java, and Gradle through GitHub Actions.
+  assert.match(workflow, /actions\/setup-node@v7/);
+  assert.match(workflow, /actions\/setup-java@v6/);
+  assert.match(workflow, /gradle\/actions\/setup-gradle@v6/);
+
+  // Builds on main use the runner's installed toolchain.
+  // Drift in one toolchain can't fail a job that never touches it: the Android SDK is not checked
+  // by the website job, and `gh` only by publish.
   const wanted = {
     changes: 'node',
     release: 'node',
@@ -267,9 +278,14 @@ test('every job runs on the Mac Mini runner and checks its toolchain before buil
     const step = jobSteps(job).find((candidate) => candidate.includes("name: Check the runner's toolchain"));
     assert.ok(step, job);
     assert.match(step, new RegExp(`runner-toolchain\\.sh ${tools}\\n`), job);
+    if (job !== 'publish') {
+      assert.match(step, /if: github\.event_name != 'pull_request'/);
+    }
   }
-  // Ubuntu-only steps have no equivalent here.
-  assert.doesNotMatch(workflow, /sudo |apt-get|apparmor/);
+
+  // PR runs on Ubuntu use the Chromium system libraries, cache, and AppArmor profile.
+  assert.match(workflow, /sudo node node_modules\/playwright-core\/cli\.js install-deps chromium/);
+  assert.match(workflow, /apparmor_parser -r \/etc\/apparmor\.d\/droid-office-chromium/);
 });
 
 test('the toolchain check reports every kind of drift instead of dying on it', () => {
@@ -348,7 +364,12 @@ test('build-tools is chosen with the sort macOS actually has', () => {
 });
 
 test('fork pull requests never run on the self-hosted runner, and signing keychains are always restored', () => {
-  assert.match(workflow, / {2}changes:\n {4}runs-on: \[self-hosted, macOS, ARM64, droid-office\]\n {4}# .*\n {4}if: github\.event_name != 'pull_request' \|\| github\.event\.pull_request\.head\.repo\.full_name == github\.repository\n/);
+  // PR checks evaluate github.event_name == 'pull_request' to use GitHub-hosted runners (ubuntu-latest / macos-26),
+  // ensuring PRs from forks never run on the self-hosted runner.
+  for (const job of ['changes', 'release', 'website', 'mac', 'android']) {
+    const runsOn = workflow.match(new RegExp(`^ {2}${job}:\\n[\\s\\S]*?\\n {4}runs-on: (.+)$`, 'm'))?.[1];
+    assert.ok(runsOn?.includes("github.event_name == 'pull_request'"), job);
+  }
   const restore = jobSteps('mac').find((step) => step.includes("name: Restore the runner's keychains"));
   assert.ok(restore);
   // It has to run on a failure or a cancellation too, or the Mac is left with the signing keychain.
