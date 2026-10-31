@@ -2,7 +2,7 @@ import { execFileSync } from 'node:child_process';
 import { appendFileSync, readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 
-const workflow = /^(?:\.github\/workflows\/release\.yml|\.github\/scripts\/release-[^/]+\.mjs)$/;
+const workflow = /^(?:\.github\/workflows\/release\.yml|\.github\/scripts\/release-[^/]+\.mjs|\.github\/scripts\/runner-toolchain\.sh|\.github\/scripts\/free-port\.mjs)$/;
 const packages = /^package(?:-lock)?\.json$/;
 const config = /^(?:tsconfig[^/]*\.json|vite\.config\.ts|tools\/scene-hash\.mjs)$/;
 

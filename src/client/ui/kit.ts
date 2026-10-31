@@ -72,6 +72,18 @@ export function groupRow(title: string, description: Child, control: Child): HTM
   return h('div.group-row', {}, h('div.group-label', {}, h('b', {}, title), description ? h('small', {}, description) : null), control);
 }
 
+export type Disclosure = HTMLDetailsElement & { summary: HTMLElement; meta: HTMLElement };
+
+/**
+ * A section that opens and closes: `details.disclosure` with a `summary` (a chevron, the label and a quiet
+ * `meta` on the right, set by the caller) over its content. For a long list or form a row only sometimes needs.
+ */
+export function disclosure(label: string, ...content: Child[]): Disclosure {
+  const meta = h('span.disclosure-meta');
+  const summary = h('summary', {}, h('span.disclosure-label', {}, label), meta);
+  return Object.assign(h('details.disclosure', {}, summary, h('div.disclosure-body', {}, ...content)), { summary, meta });
+}
+
 /** What a list or pane shows when it has nothing in it: an icon, a title, a line of text and an optional action. */
 export function emptyState(icon: string, title: string, text?: Child, action?: HTMLElement): HTMLDivElement {
   return h('div.empty-state', {}, h('div.empty-icon', { 'aria-hidden': 'true' }, icon), h('b', {}, title), text ? h('p', {}, text) : null, action ?? null);

@@ -202,7 +202,6 @@ export function workerLabelSettings(net: Net): { element: HTMLElement; dispose: 
     element: h(
       'div.stack.tight',
       {},
-      h('p.field-hint', {}, 'A stable task subject and a one-line current-work summary for every Office-managed local Droid, including leads and subagents. No cloud workers, guests or shells.'),
       on,
       field('Implementation', implementation),
       droidField,

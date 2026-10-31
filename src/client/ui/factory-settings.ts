@@ -3,6 +3,7 @@ import { onFactorySetup, refreshFactory } from '../factory';
 import type { Net } from '../net';
 import { store } from '../state';
 import { h, timeAgo } from './dom';
+import { disclosure } from './kit';
 
 const MARK: Record<FactoryCapability['status'], string> = { ok: '✓', denied: '✗', checking: '…', error: '!' };
 
@@ -21,10 +22,10 @@ function capabilityRow(c: FactoryCapability, label: string) {
 
 /**
  * ⚙️ Settings → Connections → "Factory API key": the password field and Connect while there's no key,
- * then whose key it is, its fingerprint and Check again / Replace key / Disconnect; and, in a group
- * of its own, what the key reaches.
+ * then whose key it is, its fingerprint and Check again / Replace key / Disconnect, and what the key
+ * reaches folded away under them.
  */
-export function factoryKeySettings(net: Net): { key: { desc: Node; below: Node[] }; reach: HTMLElement; dispose: () => void } {
+export function factoryKeySettings(net: Net): { key: { desc: Node; below: Node[] }; dispose: () => void } {
   const keyInput = h('input.input', { type: 'password', placeholder: 'fk-…', 'aria-label': 'Factory API key', spellcheck: 'false', autocomplete: 'new-password' }) as HTMLInputElement;
   const connect = h('button.btn.primary', { type: 'button' }, 'Connect') as HTMLButtonElement;
   const cancel = h('button.btn.ghost', { type: 'button' }, 'Cancel');
@@ -32,9 +33,9 @@ export function factoryKeySettings(net: Net): { key: { desc: Node; below: Node[]
   const intro = h(
     'small.factory-intro',
     {},
-    'Connecting shows your Factory cloud computers, sessions, credits, CI and AutoWiki in the office, and lets you act on them here. Make a key at ',
+    'Brings your Factory computers, sessions, credits, CI and AutoWiki into the office. Make a key at ',
     h('a', { href: FACTORY_KEYS_URL, target: '_blank', rel: 'noopener noreferrer' }, 'app.factory.ai/settings/api-keys'),
-    '; it stays on this machine and is never shown again.',
+    '; it stays on this machine.',
   );
   const who = h('span.factory-who');
   const facts = h('span.setting-meta');
@@ -46,7 +47,7 @@ export function factoryKeySettings(net: Net): { key: { desc: Node; below: Node[]
   const actions = h('div.row', {}, check, replace, remove);
   const error = h('p.note.bad', { role: 'alert' });
   const caps = h('ul.group.factory-caps', { 'aria-label': 'What the key can reach' });
-  const reach = h('div.settings-group', {}, h('h4.group-title', {}, 'What the key reaches'), caps);
+  const reach = disclosure('What the key reaches', caps);
 
   let busy = false;
   let replacing = false;
@@ -67,10 +68,13 @@ export function factoryKeySettings(net: Net): { key: { desc: Node; below: Node[]
     const a = c.account;
     who.textContent = a ? `${a.name}${a.email && a.email !== a.name ? ` · ${a.email}` : ''}` : 'Connected to Factory';
     const members = c.members !== undefined ? `${c.members}${c.membersMore ? '+' : ''} ${c.members === 1 && !c.membersMore ? 'member' : 'members'} in the organization` : '';
-    facts.textContent = [`Key ${c.fingerprint ?? ''}`, c.by && c.at ? `connected by ${c.by} ${timeAgo(c.at)}` : '', members, c.checking ? 'checking now…' : c.checkedAt ? `checked ${timeAgo(c.checkedAt)}` : ''].filter(Boolean).join(' · ');
+    facts.textContent = [`Key ${c.fingerprint ?? ''}`, c.at ? `connected ${timeAgo(c.at)}` : '', members, c.checking ? 'checking now…' : c.checkedAt ? `checked ${timeAgo(c.checkedAt)}` : ''].filter(Boolean).join(' · ');
     if (!c.rejected) rejected.classList.add('hidden');
     rejected.textContent = c.rejected ? `Key rejected: Factory turned it down (${c.rejected}). The office has stopped reading Factory. Check again, or replace the key.` : '';
-    caps.replaceChildren(...FACTORY_GROUPS.map((g) => capabilityRow(c.capabilities.find((x) => x.group === g.id) ?? { group: g.id, status: 'checking' }, g.label)));
+    const found = FACTORY_GROUPS.map((g) => c.capabilities.find((x) => x.group === g.id) ?? ({ group: g.id, status: 'checking' } as FactoryCapability));
+    caps.replaceChildren(...found.map((cap, i) => capabilityRow(cap, FACTORY_GROUPS[i].label)));
+    const ok = found.filter((cap) => cap.status === 'ok').length;
+    reach.meta.textContent = found.some((cap) => cap.status === 'checking') ? 'Checking…' : `${ok} of ${found.length}`;
     check.disabled = !!c.checking;
     check.textContent = c.checking ? 'Checking…' : 'Check again';
   };
@@ -118,8 +122,7 @@ export function factoryKeySettings(net: Net): { key: { desc: Node; below: Node[]
   const timer = setInterval(paint, 30_000);
   paint();
   return {
-    key: { desc: h('span.stack.tight', {}, intro, summary), below: [form, error, rejected, actions] },
-    reach,
+    key: { desc: h('span.stack.tight', {}, intro, summary), below: [form, error, rejected, actions, reach] },
     dispose: () => {
       offSetup();
       offState();

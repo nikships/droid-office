@@ -109,12 +109,12 @@ export function quotaView(s: SubscriptionsState, now: number): QuotaView {
   const page = Math.floor(now / PAGE_MS) % pages;
   const notes: Record<QuotaView['phase'], string> = {
     unsupported: 'Subscriptions need DroidProxy on an Apple silicon Mac',
-    missing: 'Connect your plans in Settings → Subscriptions',
+    missing: 'Connect your plans in Settings → Connections',
     installing: 'Installing DroidProxy…',
     stopped: 'DroidProxy stopped · last known usage',
     starting: 'Starting DroidProxy…',
-    outdated: 'Update DroidProxy in Settings → Subscriptions',
-    running: accounts ? 'Usage checked every 5 minutes · bars show quota remaining' : 'Connect an account in Settings → Subscriptions',
+    outdated: 'Update DroidProxy in Settings → Connections',
+    running: accounts ? 'Usage checked every 5 minutes · bars show quota remaining' : 'Connect an account in Settings → Connections',
   };
   return {
     phase: s.proxy.phase,

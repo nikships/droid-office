@@ -763,7 +763,7 @@ export interface SubagentsState extends SubagentSettings {
 }
 
 /**
- * The droid-office-whiteboard skill (⚙️ Settings → Droid), which tells Droid workers how to use the
+ * The droid-office-whiteboard skill (⚙️ Settings → Workers → Whiteboard skill), which tells Droid workers how to use the
  * Whiteboard with office-whiteboard: on or off for the whole office, who set it, and where it is.
  */
 export interface WhiteboardSkillState {

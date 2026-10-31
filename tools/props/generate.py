@@ -2803,7 +2803,8 @@ def build_droid_worker():
         add_part(cyl(f"WaistPistonRing{sx}", 0.029, 0.016, loc=(sx * 0.161, 0.37, 0.0), rot=(0, 0, sx * math.radians(-14)), verts=10), "orange")
         add_skin(box(f"Pauldron{sx}", (0.105, 0.185, 0.30), loc=(sx * 0.178, 0.515, 0.0), rot=(0, 0, sx * math.radians(-8)), bevel_w=0.024, bevel_seg=1))
         add_part(x_cyl(f"TorsoArmBoss{sx}", 0.068, 0.055, loc=(sx * 0.238, 0.55, 0.05), verts=14), "steel")
-        add_part(x_cyl(f"TorsoArmRing{sx}", 0.072, 0.012, loc=(sx * 0.258, 0.55, 0.05), verts=14), "orange")
+        # Its outer face sits 7.5 mm inside the boss's end: closer, the two discs shimmered against each other.
+        add_part(x_cyl(f"TorsoArmRing{sx}", 0.072, 0.012, loc=(sx * 0.252, 0.55, 0.05), verts=14), "orange")
 
     add_part(box("ChestArmor", (0.31, 0.22, 0.036), loc=(0, 0.47, 0.136), bevel_w=0.014, bevel_seg=1), "graphite")
 
@@ -2854,7 +2855,8 @@ def build_droid_worker():
         add_part(box(f"UpperArm{side}", (0.068, 0.11, 0.072), loc=(px, py - 0.065, pz), bevel_w=0.014, bevel_seg=1), "body", parts)
         add_part(box(f"UpperArmSkin{side}", (0.022, 0.088, 0.058), loc=(px + side * 0.032, py - 0.065, pz), bevel_w=0.006, bevel_seg=1), "skin", parts)
         add_part(x_cyl(f"Elbow{side}", 0.044, 0.078, loc=(px, py - 0.125, pz), verts=12), "steel", parts)
-        add_part(x_cyl(f"ElbowRing{side}", 0.046, 0.010, loc=(px + side * 0.034, py - 0.125, pz), verts=12), "orange", parts)
+        # Ends 4 mm inside the elbow's end face, not flush with it (coplanar faces shimmered orange on the arm's side).
+        add_part(x_cyl(f"ElbowRing{side}", 0.047, 0.010, loc=(px + side * 0.030, py - 0.125, pz), verts=12), "orange", parts)
         add_part(box(f"Forearm{side}", (0.066, 0.095, 0.076), loc=(px, py - 0.175, pz + 0.012), bevel_w=0.014, bevel_seg=1), "graphite", parts)
         add_part(box(f"WristCuff{side}", (0.070, 0.016, 0.080), loc=(px, py - 0.218, pz + 0.014), bevel_w=0.004, bevel_seg=1), "orange", parts)
         add_part(box(f"Palm{side}", (0.060, 0.022, 0.064), loc=(px, py - 0.232, pz + 0.016), bevel_w=0.005, bevel_seg=1), "steel", parts)

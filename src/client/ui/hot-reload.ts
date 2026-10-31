@@ -2,19 +2,19 @@ import type { HotReloadState } from '../../shared/hot-reload';
 import { withToken } from '../token';
 import { h } from './dom';
 
-/** Polls separately from the game connection, only while Settings is open. */
-export function hotReloadSettings(): { element: HTMLElement; dispose: () => void } {
-  const note = h('small.setting-desc', {}, 'For the local office started with npm run build && npm run start (normally :4600). Source changes rebuild the browser client and refresh your page; server changes still need a restart.');
+/** Polls separately from the game connection, only while Settings is open. `note` is the row's description, `element` its controls and status. */
+export function hotReloadSettings(): { note: HTMLElement; element: HTMLElement; dispose: () => void } {
+  const note = h('small', {}, 'For a local office started with npm run build && npm run start (normally :4600): source changes rebuild the client and refresh your page. Server changes still need a restart.');
   const status = h('p.note.info', { role: 'status', 'aria-live': 'polite' }, 'Checking source reload…');
   const error = h('pre.setting-error', { hidden: true });
   const toggle = h('button.btn.sm', { type: 'button', disabled: true }, 'Enable');
   const rebuild = h('button.btn.sm', { type: 'button', disabled: true }, 'Build & reload');
   const controls = h('div.row', {}, toggle, rebuild);
-  const element = h('div.stack.tight', {}, note, controls, status, error);
+  const element = h('div.stack.tight', {}, controls, status, error);
   if (!document.querySelector<HTMLMetaElement>('meta[name="office-revision"]')?.content.trim()) {
     status.textContent = 'This is Vite development (normally :5173), which already reloads source changes. Use the built local office on :4600 for these settings.';
     controls.hidden = true;
-    return { element, dispose: () => {} };
+    return { note, element, dispose: () => {} };
   }
 
   let state: HotReloadState | undefined;
@@ -87,6 +87,7 @@ export function hotReloadSettings(): { element: HTMLElement; dispose: () => void
   });
   void request();
   return {
+    note,
     element,
     dispose: () => {
       disposed = true;

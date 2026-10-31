@@ -5,15 +5,15 @@ import { SETTINGS_CARDS, SETTINGS_PANES, resolveSettingsPane, searchSettings, se
 test('settings has the nine categories, grouped Personal / Workers / Office, in order', () => {
   assert.deepEqual(
     SETTINGS_PANES.map((p) => p.label),
-    ['You', 'Sound', 'Display', 'Notifications', 'Workers', 'Subagents & visits', 'Connections', 'Office & floors', 'Phone & web'],
+    ['You', 'Sound & alerts', 'Display', 'Workers', 'Models', 'Subagents & visits', 'Connections', 'Office & floors', 'Phone & web'],
   );
   assert.deepEqual(
     SETTINGS_PANES.map((p) => p.id),
-    ['you', 'sound', 'graphics', 'notify', 'workers', 'subagents', 'connections', 'office', 'phone'],
+    ['you', 'sound', 'graphics', 'workers', 'models', 'subagents', 'connections', 'office', 'phone'],
   );
   assert.deepEqual(
     SETTINGS_PANES.map((p) => p.section),
-    ['Personal', 'Personal', 'Personal', 'Personal', 'Workers', 'Workers', 'Office', 'Office', 'Office'],
+    ['Personal', 'Personal', 'Personal', 'Workers', 'Workers', 'Workers', 'Office', 'Office', 'Office'],
   );
   for (const pane of SETTINGS_PANES) {
     assert.ok(pane.scope, `${pane.id} says who it applies to`);
@@ -31,6 +31,7 @@ test('every setting is in a category', () => {
     ['Office sounds', 'sound'],
     ['Alert sounds', 'sound'],
     ['Jukebox', 'sound'],
+    ['Desktop notifications', 'sound'],
     ['Renderer', 'graphics'],
     ['HDR', 'graphics'],
     ['Render resolution', 'graphics'],
@@ -39,25 +40,25 @@ test('every setting is in a category', () => {
     ['Frame rate limit', 'graphics'],
     ['Overhead lights', 'graphics'],
     ['Performance overlay', 'graphics'],
-    ['Desktop notifications', 'notify'],
-    ['Droid', 'workers'],
-    ['Default worker', 'workers'],
-    ['Models shown in pickers', 'workers'],
     ['Worker labels', 'workers'],
     ['Where fresh workers start', 'workers'],
     ['Prompts', 'workers'],
     ['Worker limit', 'workers'],
     ['Workers whose pull request merged', 'workers'],
     ['Worktree setup', 'workers'],
+    ['Whiteboard skill', 'workers'],
+    ['Default worker', 'models'],
+    ['Models shown in pickers', 'models'],
     ['Subagents', 'subagents'],
+    ['Who can hire', 'subagents'],
     ['Subagent worker', 'subagents'],
     ['Models leads can pick', 'subagents'],
     ['Team size', 'subagents'],
     ['Where subagents work', 'subagents'],
     ['Waking the lead', 'subagents'],
+    ['Subagents skill', 'subagents'],
     ['Visits between workers', 'subagents'],
-    ['Droid skill', 'subagents'],
-    ['Whiteboard skill', 'subagents'],
+    ['Droid', 'connections'],
     ['Factory API key', 'connections'],
     ['DroidProxy', 'connections'],
     ['Accounts', 'connections'],
@@ -82,17 +83,19 @@ test('pane ids from before the reorganization still resolve', () => {
   assert.equal(resolveSettingsPane('factory'), 'connections');
   assert.equal(resolveSettingsPane('subscriptions'), 'connections');
   assert.equal(resolveSettingsPane('building'), 'office');
+  assert.equal(resolveSettingsPane('notify'), 'sound');
+  assert.equal(resolveSettingsPane('models'), 'models');
   assert.equal(resolveSettingsPane('workers'), 'workers');
   assert.equal(resolveSettingsPane('you'), 'you');
   assert.equal(resolveSettingsPane('nope'), undefined);
   assert.equal(resolveSettingsPane(undefined), undefined);
 });
 
-test('notifications settings are personal and only offer desktop notifications', () => {
-  assert.equal(SETTINGS_PANES.find((p) => p.id === 'notify')?.scope, 'Just you');
+test('notifications sit with sound, are personal and only offer desktop notifications', () => {
+  assert.equal(SETTINGS_PANES.find((p) => p.id === 'sound')?.scope, 'Just you');
   assert.deepEqual(
-    SETTINGS_CARDS.filter((c) => c.pane === 'notify').map((c) => c.title),
-    ['Desktop notifications'],
+    SETTINGS_CARDS.filter((c) => c.pane === 'sound').map((c) => c.title),
+    ['Office sounds', 'Jukebox', 'Alert sounds', 'Desktop notifications'],
   );
   for (const query of ['slack', 'discord', 'webhook', 'channel notifications']) assert.deepEqual(searchSettings(query), []);
 });
@@ -105,12 +108,14 @@ test('search finds a setting by name, pane or keyword, every word required', () 
     { pane: 'connections', title: 'Jira' },
     { pane: 'connections', title: "This floor's Jira epic" },
   ]);
-  assert.deepEqual(searchSettings('hide models'), [{ pane: 'workers', title: 'Models shown in pickers' }]);
+  assert.deepEqual(searchSettings('hide models'), [{ pane: 'models', title: 'Models shown in pickers' }]);
+  assert.deepEqual(searchSettings('subagent prompts'), [{ pane: 'workers', title: 'Prompts' }]);
+  assert.deepEqual(searchSettings('droid sign in'), [{ pane: 'connections', title: 'Droid' }]);
   assert.deepEqual(searchSettings('host update'), [{ pane: 'office', title: 'Host desktop app' }]);
   assert.deepEqual(searchSettings('prompt chips'), []);
   assert.deepEqual(searchSettings('mouse'), [
-    { pane: 'you', title: 'Raw mouse input' },
     { pane: 'you', title: 'Look sensitivity' },
+    { pane: 'you', title: 'Raw mouse input' },
   ]);
   assert.deepEqual(searchSettings('workspace folder'), [{ pane: 'office', title: 'Workspace folder' }]);
   assert.deepEqual(searchSettings('hot reload'), [{ pane: 'office', title: 'Source hot reload' }]);
@@ -123,18 +128,18 @@ test('arrow keys move between categories and wrap, Home and End jump', () => {
   assert.equal(settingsPaneAfter('you', 'ArrowRight'), 'sound');
   assert.equal(settingsPaneAfter('you', 'ArrowUp'), 'phone');
   assert.equal(settingsPaneAfter('you', 'ArrowLeft'), 'phone');
-  assert.equal(settingsPaneAfter('workers', 'ArrowDown'), 'subagents');
+  assert.equal(settingsPaneAfter('workers', 'ArrowDown'), 'models');
+  assert.equal(settingsPaneAfter('models', 'ArrowDown'), 'subagents');
   assert.equal(settingsPaneAfter('subagents', 'ArrowDown'), 'connections');
   assert.equal(settingsPaneAfter('phone', 'ArrowDown'), 'you');
-  assert.equal(settingsPaneAfter('notify', 'ArrowDown'), 'workers');
   assert.equal(settingsPaneAfter('connections', 'ArrowDown'), 'office');
   assert.equal(settingsPaneAfter('office', 'ArrowDown'), 'phone');
-  assert.equal(settingsPaneAfter('workers', 'ArrowUp'), 'notify');
+  assert.equal(settingsPaneAfter('workers', 'ArrowUp'), 'graphics');
   assert.equal(settingsPaneAfter('sound', 'ArrowDown'), 'graphics');
-  assert.equal(settingsPaneAfter('graphics', 'ArrowDown'), 'notify');
+  assert.equal(settingsPaneAfter('graphics', 'ArrowDown'), 'workers');
   assert.equal(settingsPaneAfter('sound', 'Home'), 'you');
   assert.equal(settingsPaneAfter('sound', 'End'), 'phone');
   assert.equal(settingsPaneAfter('you', 'Enter'), null);
   assert.equal(settingsPaneAfter('you', 'Escape'), null);
-  assert.equal(settingsPaneAfter('notify', 'a'), null);
+  assert.equal(settingsPaneAfter('models', 'a'), null);
 });

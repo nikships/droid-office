@@ -301,7 +301,7 @@ test('settings poll independently and the controls enable, retry and disable', a
   t.after(card.dispose);
   await flush();
   const root = card.element as unknown as Element;
-  assert.match(root.textContent, /npm run build && npm run start/);
+  assert.match((card.note as unknown as Element).textContent, /npm run build && npm run start/);
   const [toggle, rebuild] = buttons(root);
   assert.equal(toggle.textContent, 'Enable');
   assert.equal(toggle.disabled, false);

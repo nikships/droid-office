@@ -89,8 +89,43 @@ Rules for changing the code are in [`AGENTS.md`](../../AGENTS.md). A directory w
 
 Every change to the app that lands on `main` is published as a GitHub release by [`.github/workflows/release.yml`](../../.github/workflows/release.yml). The Mac app is the only supported production installation; there is no standalone server tarball or npm publication, and `package.json` marks the package private.
 
-Pull requests run only the checks affected by their paths: the office build, lint, typecheck, coverage and checkout startup smoke test; the website build and checks; Mac source and native presenter compilation; and Android debug unit tests and lint. They never set release versions, download Electron, package an unsigned Mac app, build a release APK or upload release artifacts. Website lint and typecheck run only once when the repository-wide Node checks also run. Only the change-detection job fetches git history to compare the complete change and count commits for release versions. New pushes to a PR cancel its older run.
+All of it runs on the owner's Mac Mini, registered to this repository as a self-hosted GitHub Actions runner: nothing runs on GitHub-hosted machines. See [CI on the Mac Mini](#ci-on-the-mac-mini) for what the machine has installed and how to repair it.
 
-On `main`, the affected platforms also build release artifacts. The Mac job signs the app with the Developer ID from the repository's secrets (`MAC_CERTS`, `CERT_PASSWORD`), notarizes the app and its disk image with Apple (`APPLE_ID`, `APPLE_APP_SPECIFIC_PASSWORD`, `APPLE_TEAM_ID`), starts the office on the app's own Electron, and checks that the native presenter (`presenter.node`, built for arm64 and macOS 14) is bundled and signed under the hardened runtime with the app's Developer ID. The app's startup check loads the presenter, runs its Metal probe, and tests its macOS 14 and chip gates (`--startup-check`, with the CI-only `DROID_OFFICE_ALLOW_ANY_CHIP=1` because GitHub's runners are base-chip virtual machines). The release's `latest-mac.yml` carries `minimumSystemVersion: 23.0.0`, so Macs on macOS 13 or earlier are not offered it. The Android job builds the signed companion APK.
+Pull requests run only the checks affected by their paths: the office build, lint, typecheck, coverage and checkout startup smoke test; the website build and checks; Mac source and native presenter compilation; and Android debug unit tests and lint. They never set release versions, download Electron, package an unsigned Mac app, build a release APK or upload release artifacts. Website lint and typecheck run only once when the repository-wide Node checks also run. Only the change-detection job fetches git history to compare the complete change and count commits for release versions. New pushes to a PR cancel its older run. A pull request from a fork runs nothing: its code never executes on the Mac Mini.
+
+On `main`, the affected platforms also build release artifacts. The Mac job signs the app with the Developer ID from the repository's secrets (`MAC_CERTS`, `CERT_PASSWORD`), notarizes the app and its disk image with Apple (`APPLE_ID`, `APPLE_APP_SPECIFIC_PASSWORD`, `APPLE_TEAM_ID`), starts the office on the app's own Electron, and checks that the native presenter (`presenter.node`, built for arm64 and macOS 14) is bundled and signed under the hardened runtime with the app's Developer ID. The app's startup check loads the presenter, runs its Metal probe, and tests its macOS 14 and chip gates (`--startup-check`): the run requires a base-chip Mac to refuse without the CI-only `DROID_OFFICE_ALLOW_ANY_CHIP=1`, and a Pro-or-better one to start without it. The release's `latest-mac.yml` carries `minimumSystemVersion: 23.0.0`, so Macs on macOS 13 or earlier are not offered it. The Android job builds the signed companion APK.
 
 Only once all affected checks and builds pass does the release go up, marked Latest, with the dmg, zip, update metadata and companion APK. Unchanged platforms retain their existing signed assets and versions, so both installed apps can keep reading Latest. Test/docs-only changes publish nothing. A manual workflow run checks every platform, but builds and publishes release artifacts only when run on `main`. A release is named after `package.json`'s major.minor and the number of commits on `main` (`v0.1.68`), so every release is a new version the app updates to; bump `package.json` to start a new minor version.
+
+### CI on the Mac Mini
+
+The runner is the repository's own, registered in **Settings → Actions → Runners** as `mac-mini-droid-office`, `mac-mini-droid-office-2` and `mac-mini-droid-office-3`, all with the labels `self-hosted, macOS, ARM64, droid-office`, and started by launchd agents at login (`~/Library/LaunchAgents/actions.runner.nikships-droid-office.*.plist`). Their files are in `~/actions-runner-droid-office`, `-2` and `-3` on the internal disk. Three instances mean three jobs at a time, where one meant the Mac build, the Node checks, Android and the website ran one after another.
+
+Three rather than two because GitHub decides which idle runner a queued job lands on. `release`, `website`, `mac` and `android` all become ready together, so four jobs can want three runners, and the third makes the 6-minute Mac build wait far less often than it did with two. It doesn't guarantee it never waits: a fourth runner would. All three share the machine's 10 cores and 16 GB, and the Mac build finishing sooner is usually worth more than running a fourth heavy job.
+
+Because the jobs share one machine, the workflow is written so they can run side by side:
+
+- An office the workflow starts listens on a free port picked at run time (`.github/scripts/free-port.mjs`), not on 4700.
+- Gradle's build cache in `~/.gradle` carries over between runs. Its daemon doesn't: the runner kills what it spawned when a job ends.
+- The built app and APK go from the platform jobs to `publish` through `~/ci-artifacts/run-<run id>` on the machine's disk, instead of being uploaded to and downloaded from GitHub's artifact service. The last published set is kept in `~/ci-artifacts/latest-release`, so a release that rebuilt only one platform reuses the other's assets instead of downloading 400 MB. `publish` clears the run's folder in a final `always()` step, and the `changes` job sweeps folders older than two days.
+
+The machine, not the workflow, provides the toolchain. A job that needs another tool adds it here rather than to the workflow:
+
+| Tool | Where |
+| --- | --- |
+| Node 22 or later | `/opt/homebrew/bin/node`, on the runner's `PATH` (26 today; a newer major passes the check, an older one fails it) |
+| Xcode and the macOS SDK | `/Volumes/NVMe/Xcode.app`, through `DEVELOPER_DIR` in the launch agent (unused by the Node and website jobs) |
+| JDK 21 | `/opt/homebrew/opt/openjdk@21`, through `JAVA_HOME` |
+| Android SDK | `~/Library/Android/sdk`, through `ANDROID_HOME` and `ANDROID_SDK_ROOT` |
+| GitHub CLI | `/opt/homebrew/bin/gh`, which `publish` makes the release with |
+| Chromium for the Whiteboard tests | `~/Library/Caches/droid-office/ci-browsers`, downloaded by `droid-office browser install` |
+
+`.github/scripts/runner-toolchain.sh` checks them at the top of each job and names whatever is missing, so a machine that has drifted fails in seconds instead of halfway through a build. Each job asks only for the tools it uses (`runner-toolchain.sh node java android`, `runner-toolchain.sh gh`), so drift in one toolchain doesn't fail a job that never touches it.
+
+Because the jobs run as the owner, in their session, on their Mac:
+
+- The signing keychain is temporary. The Mac job imports the Developer ID into a keychain under the runner's temp folder, and a final step marked `always()` puts the previous default keychain and search list back and deletes it, even when the run failed or was cancelled. A run killed outright can leave that temp keychain as the default, so the next Mac job puts the login keychain back before it builds.
+- The runner's temp folder is emptied between jobs, and `actions/checkout` empties the workspace. Anything a job wants to reuse goes in a folder outside it, like the Chromium folder above.
+- Signing, notarizing and the app's startup check run against the real Mac, so they run exactly as they do for the owner.
+
+The machine is reachable only over the owner's tailnet, and the runner makes an outbound connection to GitHub, so nothing is exposed to the internet.
