@@ -99,25 +99,28 @@ Only once all affected checks and builds pass does the release go up, marked Lat
 
 ### CI on the Mac Mini
 
-The runner is the repository's own, registered in **Settings → Actions → Runners** as `mac-mini-droid-office`, `mac-mini-droid-office-2` and `mac-mini-droid-office-3`, all with the labels `self-hosted, macOS, ARM64, droid-office`, and started by launchd agents at login (`~/Library/LaunchAgents/actions.runner.nikships-droid-office.*.plist`). Their files are in `~/actions-runner-droid-office`, `-2` and `-3` on the internal disk. Three instances mean three jobs at once, so the Mac build, the Node checks, Android and the website no longer queue behind each other. Three rather than two because GitHub decides which idle runner a queued job lands on: with two, the 6-minute Mac build often started only after the short Android and website jobs had taken both runners, and the third leaves it one to start on. All three share the machine's 10 cores and 16 GB, so they are not intended to run four heavy jobs at once.
+The runner is the repository's own, registered in **Settings → Actions → Runners** as `mac-mini-droid-office`, `mac-mini-droid-office-2` and `mac-mini-droid-office-3`, all with the labels `self-hosted, macOS, ARM64, droid-office`, and started by launchd agents at login (`~/Library/LaunchAgents/actions.runner.nikships-droid-office.*.plist`). Their files are in `~/actions-runner-droid-office`, `-2` and `-3` on the internal disk. Three instances mean three jobs at a time, where one meant the Mac build, the Node checks, Android and the website ran one after another.
+
+Three rather than two because GitHub decides which idle runner a queued job lands on. `release`, `website`, `mac` and `android` all become ready together, so four jobs can want three runners, and the third makes the 6-minute Mac build wait far less often than it did with two. It doesn't guarantee it never waits: a fourth runner would. All three share the machine's 10 cores and 16 GB, and the Mac build finishing sooner is usually worth more than running a fourth heavy job.
 
 Because the jobs share one machine, the workflow is written so they can run side by side:
 
-- An office the workflow starts listens on a free port picked at run time, not on 4700.
-- Gradle's daemon is kept, unlike on a throwaway runner, so its warm JVM and in-memory caches carry over.
-- The built app and APK go from the platform jobs to `publish` through `~/ci-artifacts/run-<run id>` on the machine's disk, instead of being uploaded to and downloaded from GitHub's artifact service. The last published set is kept in `~/ci-artifacts/latest-release`, so a release that rebuilt only one platform reuses the other's assets instead of downloading 400 MB. `publish` deletes the run's folder once the release is up, and the `changes` job sweeps folders older than two days.
+- An office the workflow starts listens on a free port picked at run time (`.github/scripts/free-port.mjs`), not on 4700.
+- Gradle's build cache in `~/.gradle` carries over between runs. Its daemon doesn't: the runner kills what it spawned when a job ends.
+- The built app and APK go from the platform jobs to `publish` through `~/ci-artifacts/run-<run id>` on the machine's disk, instead of being uploaded to and downloaded from GitHub's artifact service. The last published set is kept in `~/ci-artifacts/latest-release`, so a release that rebuilt only one platform reuses the other's assets instead of downloading 400 MB. `publish` clears the run's folder in a final `always()` step, and the `changes` job sweeps folders older than two days.
 
 The machine, not the workflow, provides the toolchain. A job that needs another tool adds it here rather than to the workflow:
 
 | Tool | Where |
 | --- | --- |
-| Node 26 | `/opt/homebrew/bin/node`, on the runner's `PATH` (a different major fails the check) |
-| Xcode and the macOS SDK | `/Volumes/NVMe/Xcode.app`, through `DEVELOPER_DIR` in the launch agent |
+| Node 22 or later | `/opt/homebrew/bin/node`, on the runner's `PATH` (26 today; a newer major passes the check, an older one fails it) |
+| Xcode and the macOS SDK | `/Volumes/NVMe/Xcode.app`, through `DEVELOPER_DIR` in the launch agent (unused by the Node and website jobs) |
 | JDK 21 | `/opt/homebrew/opt/openjdk@21`, through `JAVA_HOME` |
 | Android SDK | `~/Library/Android/sdk`, through `ANDROID_HOME` and `ANDROID_SDK_ROOT` |
+| GitHub CLI | `/opt/homebrew/bin/gh`, which `publish` makes the release with |
 | Chromium for the Whiteboard tests | `~/Library/Caches/droid-office/ci-browsers`, downloaded by `droid-office browser install` |
 
-`.github/scripts/runner-toolchain.sh` checks them at the top of each job and names whatever is missing, so a machine that has drifted fails in seconds instead of halfway through a build.
+`.github/scripts/runner-toolchain.sh` checks them at the top of each job and names whatever is missing, so a machine that has drifted fails in seconds instead of halfway through a build. Each job asks only for the tools it uses (`runner-toolchain.sh node java android`, `runner-toolchain.sh gh`), so drift in one toolchain doesn't fail a job that never touches it.
 
 Because the jobs run as the owner, in their session, on their Mac:
 
