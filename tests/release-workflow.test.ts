@@ -205,7 +205,7 @@ test('release versions, packages, signing, bundle smoke checks and uploads only 
           step,
         ),
     ),
-    ...jobSteps('android').filter((step) => /name: Set the release version|name: Build the release APK|actions\/upload-artifact/.test(step)),
+    ...jobSteps('android').filter((step) => /name: Set the release version|name: Build the release APK|name: Hand the APK to the publish job/.test(step)),
   ];
   assert.equal(releaseSteps.length, 15);
   assert.doesNotMatch(workflow, /Build the app unsigned|mac\.identity=null/);
@@ -253,15 +253,98 @@ test('every job runs on the Mac Mini runner and checks its toolchain before buil
   }
   // The toolchain is installed on the runner, so no job sets up Node, a JDK or Gradle itself.
   assert.doesNotMatch(workflow, /actions\/setup-node|actions\/setup-java|gradle\/actions/);
-  for (const job of ['release', 'website', 'mac', 'android']) {
-    assert.ok(
-      jobSteps(job).some((step) => step.includes("name: Check the runner's toolchain")),
-      job,
-    );
+  // Every job asks for the tools it uses, so drift in one toolchain can't fail a job that never
+  // touches it: the Android SDK is not checked by the website job, and `gh` only by publish.
+  const wanted = {
+    changes: 'node',
+    release: 'node',
+    website: 'node',
+    mac: 'node xcode',
+    android: 'node java android',
+    publish: 'gh',
+  };
+  for (const [job, tools] of Object.entries(wanted)) {
+    const step = jobSteps(job).find((candidate) => candidate.includes("name: Check the runner's toolchain"));
+    assert.ok(step, job);
+    assert.match(step, new RegExp(`runner-toolchain\\.sh ${tools}\\n`), job);
   }
-  assert.match(workflow, /\.github\/scripts\/runner-toolchain\.sh\n/);
   // Ubuntu-only steps have no equivalent here.
-  assert.doesNotMatch(workflow, /sudo |apt-get|apparmor|sort -V/);
+  assert.doesNotMatch(workflow, /sudo |apt-get|apparmor/);
+});
+
+test('the toolchain check reports every kind of drift instead of dying on it', () => {
+  const script = readFileSync(new URL('../.github/scripts/runner-toolchain.sh', import.meta.url), 'utf8');
+  // An unset ANDROID_HOME is one of the things it exists to report, so it must not trip `set -u`.
+  assert.match(script, /\$\{ANDROID_HOME:-\}/);
+  // Node is a floor, not an exact major: the runner follows Homebrew's `node`, which moves majors
+  // on a routine `brew upgrade`, and a preflight that fails then blocks every single run.
+  assert.match(script, /-ge 22/);
+  assert.doesNotMatch(script, /Node 26, the version CI runs/);
+  // A `java` that runs but reports a version the sed can't read is a failure, not a silent pass.
+  assert.match(script, /found \$\{java_major:-unreadable version\}/);
+  // `gh` publishes the release, so it is checked like the rest.
+  assert.match(script, /need 'the GitHub CLI \(gh\)/);
+});
+
+test("a run's artifacts go between jobs on the machine's disk, not through the artifact service", () => {
+  // Uploading and downloading the app would cost about a minute of every release, so the platform
+  // jobs copy theirs into one folder named after the run, and `publish` reads it and clears it.
+  assert.doesNotMatch(workflow, /actions\/upload-artifact|actions\/download-artifact/);
+  for (const job of ['mac', 'android']) {
+    const hand = jobSteps(job).find((step) => step.includes('ci-artifacts/run-$GITHUB_RUN_ID'));
+    assert.ok(hand, job);
+    assert.equal(stepRuns(hand), false, `${job}: PR`);
+    assert.equal(stepRuns(hand, 'push', 'refs/heads/main'), true, `${job}: main`);
+  }
+  assert.match(jobSteps('mac').join('\n'), /cp release\/\*\.dmg release\/\*\.zip release\/\*\.blockmap release\/latest-mac\.yml "\$out"\/\n/);
+  const publish = jobSteps('publish').join('\n');
+  assert.match(publish, /out="\$HOME\/ci-artifacts\/run-\$GITHUB_RUN_ID"/);
+  assert.match(publish, /cp -R "\$out"\/\. assets\//);
+  // Staged in the runner's temp folder, cleared first: on a persistent runner a workspace
+  // `assets/` would carry an earlier run's APK, and the Android app needs exactly one.
+  assert.match(publish, /working-directory: \$\{\{ runner\.temp \}\}/);
+  assert.match(publish, /rm -rf assets\n\s+mkdir -p assets/);
+  // The handover folder is cleared whatever happened, including the "newer release already
+  // published" early exit, which used to leave 400 MB behind until the sweep.
+  assert.match(publish, /name: Clear this run's handover folder\n\s+if: always\(\)\n\s+run: rm -rf "\$HOME\/ci-artifacts\/run-\$GITHUB_RUN_ID"/);
+  assert.doesNotMatch(publish, /gh release edit "\$TAG" --draft=false --latest\n\s+rm -rf "\$HOME/);
+  // A rerun of an older run leaves its folder behind; the change job sweeps the stale ones.
+  assert.match(jobSteps('changes').join('\n'), /find "\$HOME\/ci-artifacts" -maxdepth 1 -type d -name 'run-\*' -mtime \+2/);
+});
+
+test('publish reuses the assets it kept locally, and falls back to the release when it cannot', () => {
+  const publish = jobSteps('publish').join('\n');
+  // The kept copy is trusted only when its tag matches the release it stands in for.
+  assert.match(publish, /\[ "\$\(cat "\$previous\/tag" 2>\/dev\/null\)" = "\$latest" \] && compgen -G "\$previous\/\$1"/);
+  assert.match(publish, /gh release download "\$latest" --dir assets \\\n\s+--pattern '\*\.dmg'/);
+  assert.match(publish, /gh release download "\$latest" --dir assets --pattern '\*\.apk'/);
+  assert.match(publish, /echo "\$TAG" > "\$previous\/tag"/);
+});
+
+test('jobs that can run at once do not fight over a port or a Gradle daemon', () => {
+  // Three runners mean three jobs on this Mac, and both office smoke tests used to want 4700.
+  assert.doesNotMatch(workflow, /--port 47\d\d/);
+  // One script, not the same inline `node -e` pasted into both smoke tests.
+  assert.equal(workflow.match(/port="\$\(node "\$GITHUB_WORKSPACE\/\.github\/scripts\/free-port\.mjs"\)"/g)?.length, 2);
+  assert.doesNotMatch(workflow, /node -e 'const s = require\("node:net"\)/);
+  // A change to that script runs the whole workflow, like the other files under .github/scripts.
+  assert.equal(workflow.split("      - '.github/scripts/free-port.mjs'").length - 1, 2);
+  for (const step of ['name: Start the office from the checkout', "name: Start the office on the app's own Electron"]) {
+    const found = ['release', 'mac'].map((job) => jobSteps(job).find((candidate) => candidate.includes(step))).find(Boolean);
+    assert.ok(found, step);
+    assert.match(found, /port="\$\(node "\$GITHUB_WORKSPACE\/\.github\/scripts\/free-port\.mjs"\)"/);
+    assert.match(found, /127\.0\.0\.1:\$port\//);
+  }
+  // The daemon doesn't outlive a job (the runner kills what it spawned), so the workflow makes no
+  // claim about it; the build cache on disk is what carries over.
+  assert.doesNotMatch(workflow, /Gradle's daemon is kept|warm JVM/);
+  assert.doesNotMatch(workflow, /gradlew --no-daemon/);
+});
+
+test('build-tools is chosen with the sort macOS actually has', () => {
+  // Apple's sort has supported -V since macOS 13, so the hand-rolled numeric key was unnecessary
+  // and mis-ordered suffixed folders such as 35.0.0-rc1.
+  assert.match(workflow, /build_tools="\$\(find "\$ANDROID_HOME\/build-tools" -maxdepth 1 -mindepth 1 -type d -exec basename \{\} \\; \| sort -V \| tail -n 1\)"/);
 });
 
 test('fork pull requests never run on the self-hosted runner, and signing keychains are always restored', () => {
@@ -275,6 +358,12 @@ test('fork pull requests never run on the self-hosted runner, and signing keycha
   assert.match(restore, /security delete-keychain "\$kc"/);
   // The remembered list comes from the machine, not from a hard-coded login keychain.
   assert.match(jobSteps('mac').join('\n'), /security list-keychains -d user \| sed .* > "\$RUNNER_TEMP\/keychain-list"/);
+  // Both directions read it line by line. An unquoted $(cat …) splits a keychain path with a space
+  // into several arguments, which silently breaks the search list on the owner's own Mac.
+  const importStep = jobSteps('mac').find((step) => step.includes('name: Import the Developer ID certificate'));
+  assert.ok(importStep);
+  assert.match(importStep, /security list-keychains -d user -s "\$kc" "\$\{keychains\[@\]\}"/);
+  assert.doesNotMatch(workflow, /security list-keychains[^\n]*\$\(cat /);
   // A run killed mid-signing leaves a default keychain the runner's temp folder takes away with it:
   // the next run puts the login keychain back before it builds anything.
   const recover = jobSteps('mac').find((step) => step.includes('name: Recover a keychain left by an interrupted run'));

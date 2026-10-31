@@ -13,14 +13,27 @@ name: Release
 #
 # Every job runs on the owner's Mac Mini, registered to this repository as the self-hosted
 # `droid-office` runner (docs/guide/development.md, "CI on the Mac Mini"). The toolchain the jobs
-# need is installed on that machine, so no job installs Node, a JDK or Gradle. The runner is a
-# single machine, so jobs queue; a `changes` job decides which ones are worth running.
-# That machine runs the suite on Node 26, the Homebrew `node`; `runner-toolchain.sh` fails the job
-# on any other major rather than running a different runtime.
+# need is installed on that machine, so no job installs Node, a JDK or Gradle. Three runner
+# instances share that one machine, so three jobs run at once; a `changes` job decides which ones
+# are worth running.
+# That machine runs the suite on the Homebrew `node` it is installed with (26 today);
+# `runner-toolchain.sh` asks for major 22 or later rather than an exact version, so a routine
+# `brew upgrade` that moves the major doesn't fail every run at the preflight.
 #
 # Fork pull requests never run here: their code would execute on a personal machine with the
 # owner's keychain and git credentials. `changes` is skipped for them, and every other job needs
 # its outputs, so the whole run is empty.
+#
+# Three runner instances are registered to the repository and all sit on that Mac, so the jobs that
+# don't depend on each other run at the same time instead of one after another. A job that starts
+# a server picks a free port rather than a fixed one, and the built artifacts are handed from the
+# platform jobs to `publish` through `~/ci-artifacts` on the machine's disk instead of GitHub's
+# artifact service, which would upload and download the same 400 MB twice per release.
+#
+# Three rather than two: GitHub decides which idle runner a queued job lands on, and with two the
+# 6-minute Mac build kept starting only after the short Android and website jobs had taken both.
+# `release`, `website`, `mac` and `android` all become ready together, so four jobs can still want
+# three runners: the third makes the Mac build wait far less often, it doesn't guarantee it never does.
 
 on:
   push:
@@ -50,6 +63,7 @@ on:
       - '.github/workflows/release.yml'
       - '.github/scripts/release-*.mjs'
       - '.github/scripts/runner-toolchain.sh'
+      - '.github/scripts/free-port.mjs'
       - 'tools/scene-hash.mjs'
       - 'tools/android-terminal.mjs'
       - 'tools/android-model-icons.mjs'
@@ -86,6 +100,7 @@ on:
       - '.github/workflows/release.yml'
       - '.github/scripts/release-*.mjs'
       - '.github/scripts/runner-toolchain.sh'
+      - '.github/scripts/free-port.mjs'
       - 'tools/scene-hash.mjs'
       - 'tools/android-terminal.mjs'
       - 'tools/android-model-icons.mjs'
@@ -124,9 +139,16 @@ jobs:
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0
+      - name: Check the runner's toolchain
+        run: .github/scripts/runner-toolchain.sh node
       - name: Find the checks and platforms this change can affect
         id: paths
         run: node .github/scripts/release-changes.mjs
+
+      # A run that failed before `publish` leaves its artifacts behind, and nothing on a PR run
+      # collects them. This is the one job every run has, so it sweeps what is clearly stale.
+      - name: Drop artifacts left by older runs
+        run: find "$HOME/ci-artifacts" -maxdepth 1 -type d -name 'run-*' -mtime +2 -exec rm -rf {} + 2>/dev/null || true
 
   release:
     needs: changes
@@ -144,10 +166,10 @@ jobs:
       - uses: actions/checkout@v7
 
       - name: Check the runner's toolchain
-        run: .github/scripts/runner-toolchain.sh
+        run: .github/scripts/runner-toolchain.sh node
 
       - name: Install and build
-        run: npm ci # its prepare script builds the client and the server
+        run: npm ci --prefer-offline --no-audit --no-fund # its prepare script builds the client and the server
 
       - run: npm run lint
 
@@ -181,17 +203,19 @@ jobs:
           DROID_OFFICE_HOME: ${{ runner.temp }}/office
         run: |
           cd "$RUNNER_TEMP"
-          node "$GITHUB_WORKSPACE/bin/droid-office.js" --host 127.0.0.1 --port 4700 > office.log 2>&1 &
+          # A free port: more than one job can be running on this Mac at once.
+          port="$(node "$GITHUB_WORKSPACE/.github/scripts/free-port.mjs")"
+          node "$GITHUB_WORKSPACE/bin/droid-office.js" --host 127.0.0.1 --port "$port" > office.log 2>&1 &
           office=$!
           trap 'kill -INT "$office" 2>/dev/null || true' EXIT
           for _ in $(seq 60); do
-            code=$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:4700/ || true)
+            code=$(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:$port/" || true)
             [ "$code" = 200 ] && break
             sleep 1
           done
           cat office.log
           [ "$code" = 200 ] || { echo "the checkout's office didn't answer (last status: $code)"; exit 1; }
-          dash=$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:4700/dashboard || true)
+          dash=$(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:$port/dashboard" || true)
           [ "$dash" = 200 ] || { echo "the checkout's desktop companion didn't answer (last status: $dash)"; exit 1; }
 
   website:
@@ -204,9 +228,9 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - name: Check the runner's toolchain
-        run: .github/scripts/runner-toolchain.sh
+        run: .github/scripts/runner-toolchain.sh node
       # No office build, Chromium or native dependencies are needed to check the website.
-      - run: npm ci --ignore-scripts
+      - run: npm ci --ignore-scripts --prefer-offline --no-audit --no-fund
       # The Node job's repository-wide checks already include the website.
       - run: npx biome check --error-on-warnings website
         if: needs.changes.outputs.node != 'true'
@@ -237,13 +261,13 @@ jobs:
           security default-keychain
 
       - name: Check the runner's toolchain
-        run: .github/scripts/runner-toolchain.sh
+        run: .github/scripts/runner-toolchain.sh node xcode
 
       - name: Install and build
         env:
           # PRs compile the Node-API presenter without downloading the unused Electron runtime.
           ELECTRON_SKIP_BINARY_DOWNLOAD: ${{ env.PUBLISHING != 'true' && '1' || '' }}
-        run: npm ci # its prepare script builds the client, the server, the app's main process and the native Metal presenter
+        run: npm ci --prefer-offline --no-audit --no-fund # its prepare script builds the client, the server, the app's main process and the native Metal presenter
 
       - name: Check the native Metal presenter was built for the Mac app
         run: |
@@ -305,7 +329,11 @@ jobs:
           rm -f "$RUNNER_TEMP/developer-id.p12"
           # Lets codesign use the key without a prompt.
           security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$kc_pass" "$kc" > /dev/null
-          security list-keychains -d user -s "$kc" $(cat "$RUNNER_TEMP/keychain-list")
+          # Read the remembered list line by line: an unquoted $(cat …) would word-split a keychain
+          # path that contains a space into several broken arguments.
+          keychains=()
+          while IFS= read -r line; do [ -n "$line" ] && keychains+=("$line"); done < "$RUNNER_TEMP/keychain-list"
+          security list-keychains -d user -s "$kc" "${keychains[@]}"
           security default-keychain -s "$kc"
           security find-identity -v -p codesigning "$kc" | grep -q 'Developer ID Application: Nikhil Anand (NW6B3R27LQ)'
 
@@ -375,18 +403,20 @@ jobs:
         if: env.PUBLISHING == 'true'
         run: |
           app="release/mac-arm64/Droid Office.app"
+          # A free port: more than one job can be running on this Mac at once.
+          port="$(node "$GITHUB_WORKSPACE/.github/scripts/free-port.mjs")"
           ELECTRON_RUN_AS_NODE=1 "$app/Contents/Frameworks/Droid Office Helper.app/Contents/MacOS/Droid Office Helper" "$app/Contents/Resources/app/bin/droid-office.js" \
-            --home "$RUNNER_TEMP/office" --host 127.0.0.1 --port 4700 > office.log 2>&1 &
+            --home "$RUNNER_TEMP/office" --host 127.0.0.1 --port "$port" > office.log 2>&1 &
           office=$!
           trap 'kill -INT "$office" 2>/dev/null || true' EXIT
           for _ in $(seq 60); do
-            code=$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:4700/ || true)
+            code=$(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:$port/" || true)
             [ "$code" = 200 ] && break
             sleep 1
           done
           cat office.log
           [ "$code" = 200 ] || { echo "the app's office didn't answer (last status: $code)"; exit 1; }
-          dash=$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:4700/dashboard || true)
+          dash=$(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:$port/dashboard" || true)
           [ "$dash" = 200 ] || { echo "the app's desktop companion didn't answer (last status: $dash)"; exit 1; }
           kill -INT "$office"
           grep -qx "version: ${{ steps.version.outputs.version }}" release/latest-mac.yml
@@ -442,16 +472,17 @@ jobs:
           spctl --assess --type open --context context:primary-signature -vv "$dmg" 2>&1 | tee spctl-dmg.log
           grep -q 'source=Notarized Developer ID' spctl-dmg.log
 
-      - uses: actions/upload-artifact@v7
+      # Straight onto the machine's disk for `publish`: uploading and then downloading the 400 MB
+      # app would cost about a minute of every release for nothing. The run's folder is named after
+      # the run, so two runs can never mix; `publish` deletes it once the release is up.
+      - name: Hand the app to the publish job
         if: env.PUBLISHING == 'true'
-        with:
-          name: mac
-          if-no-files-found: error
-          path: |
-            release/*.dmg
-            release/*.zip
-            release/*.blockmap
-            release/latest-mac.yml
+        run: |
+          out="$HOME/ci-artifacts/run-$GITHUB_RUN_ID"
+          mkdir -p "$out"
+          cp release/*.dmg release/*.zip release/*.blockmap release/latest-mac.yml "$out"/
+          for file in "$out"/*.dmg "$out"/*.zip "$out"/latest-mac.yml; do test -f "$file" || { echo "missing $file"; exit 1; }; done
+          ls -l "$out"
 
       # Runs on a failure or a cancellation too, so the owner's Mac never keeps a signing keychain as
       # its default, or one lying in the runner's temp folder with the Developer ID inside it.
@@ -492,7 +523,7 @@ jobs:
       # JDK 21 (JAVA_HOME), the Android SDK (ANDROID_HOME) and Gradle's own cache are on the runner.
       - name: Check the runner's toolchain
         working-directory: .
-        run: .github/scripts/runner-toolchain.sh
+        run: .github/scripts/runner-toolchain.sh node java android
 
       - name: Set the release version
         if: env.PUBLISHING == 'true'
@@ -504,8 +535,10 @@ jobs:
           echo "version=$version" >> "$GITHUB_OUTPUT"
           echo "code=$count" >> "$GITHUB_OUTPUT"
 
+      # The Gradle daemon doesn't outlive the job (the runner kills what it spawned), so the speed
+      # that carries over is the build cache on disk in ~/.gradle, which gradle.properties turns on.
       - name: Unit tests and lint
-        run: ./gradlew --no-daemon testDebugUnitTest lintDebug
+        run: ./gradlew testDebugUnitTest lintDebug
 
       # Signed with the repository's release keystore (the ANDROID_KEYSTORE_* and ANDROID_KEY_*
       # secrets), so each release installs over the last. PRs only run debug unit tests and lint.
@@ -522,13 +555,14 @@ jobs:
             echo "$ANDROID_KEYSTORE_BASE64" | base64 --decode > "$RUNNER_TEMP/release.jks"
             export ANDROID_KEYSTORE_FILE="$RUNNER_TEMP/release.jks"
           fi
-          ./gradlew --no-daemon assembleRelease \
+          ./gradlew assembleRelease \
             -PofficeVersion=${{ steps.version.outputs.version }} -PofficeVersionCode=${{ steps.version.outputs.code }}
           mkdir -p out
           apk="out/Droid-Office-${{ steps.version.outputs.version }}.apk"
           cp app/build/outputs/apk/release/app-release.apk "$apk"
-          # macOS's sort has no -V, so the newest build-tools folder is picked by its three numbers.
-          build_tools="$(ls -1 "$ANDROID_HOME/build-tools" | sort -t. -k1,1n -k2,2n -k3,3n | tail -n 1)"
+          # macOS's sort has -V (Apple sort 2.3 onwards), so the newest build-tools folder is the
+          # last one in version order.
+          build_tools="$(find "$ANDROID_HOME/build-tools" -maxdepth 1 -mindepth 1 -type d -exec basename {} \; | sort -V | tail -n 1)"
           apksigner="$ANDROID_HOME/build-tools/$build_tools/apksigner"
           echo "apksigner: $apksigner"
           certs="$("$apksigner" verify --print-certs "$apk")"
@@ -539,12 +573,15 @@ jobs:
             exit 1
           fi
 
-      - uses: actions/upload-artifact@v7
+      - name: Hand the APK to the publish job
         if: env.PUBLISHING == 'true'
-        with:
-          name: android
-          path: android/out/*.apk
-          if-no-files-found: error
+        working-directory: .
+        run: |
+          out="$HOME/ci-artifacts/run-$GITHUB_RUN_ID"
+          mkdir -p "$out"
+          cp android/out/*.apk "$out"/
+          compgen -G "$out/*.apk" > /dev/null || { echo "no APK to hand over"; exit 1; }
+          printf '%s\n' "$out"/*.apk
 
   publish:
     needs: [changes, release, website, mac, android]
@@ -564,12 +601,25 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/download-artifact@v8
-        with:
-          path: assets
-          merge-multiple: true
+      # `gh` is what the release is published with, so this job checks for it specifically.
+      - name: Check the runner's toolchain
+        run: .github/scripts/runner-toolchain.sh gh
+
+      # Staged in the runner's temp folder, which is emptied between jobs. A workspace `assets/`
+      # would survive from an earlier run on this persistent runner, and an old APK next to the new
+      # one is an update the Android app can't install.
+      - name: Take the artifacts the platform jobs built
+        working-directory: ${{ runner.temp }}
+        run: |
+          out="$HOME/ci-artifacts/run-$GITHUB_RUN_ID"
+          test -d "$out" || { echo "::error::No artifacts in $out; the platform jobs hand theirs over on this machine's disk"; exit 1; }
+          rm -rf assets
+          mkdir -p assets
+          cp -R "$out"/. assets/
+          printf '%s\n' assets/*
 
       - name: Publish
+        working-directory: ${{ runner.temp }}
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
@@ -584,14 +634,30 @@ jobs:
             echo "A newer release is already published; not promoting this older run."
             exit 0
           fi
+          # The assets of the release being replaced are kept on this machine after every publish,
+          # so a run that rebuilt only one platform doesn't download the other one's 400 MB again.
+          # The tag in the folder is what makes the copy trustworthy; anything else falls back to
+          # downloading it from the release, which is always correct.
+          previous="$HOME/ci-artifacts/latest-release"
+          kept() { [ "$(cat "$previous/tag" 2>/dev/null)" = "$latest" ] && compgen -G "$previous/$1" > /dev/null; }
           if [ "$MAC_CHANGED" != true ]; then
-            gh release download "$latest" --dir assets \
-              --pattern '*.dmg' --pattern '*.zip' --pattern '*.blockmap' --pattern 'latest-mac.yml'
+            if kept '*.dmg'; then
+              echo "Reusing the $latest Mac assets kept on this machine"
+              cp "$previous"/*.dmg "$previous"/*.zip "$previous"/*.blockmap "$previous"/latest-mac.yml assets/
+            else
+              gh release download "$latest" --dir assets \
+                --pattern '*.dmg' --pattern '*.zip' --pattern '*.blockmap' --pattern 'latest-mac.yml'
+            fi
           else
             grep -qx "version: ${{ needs.changes.outputs.version }}" assets/latest-mac.yml
           fi
           if [ "$ANDROID_CHANGED" != true ]; then
-            gh release download "$latest" --dir assets --pattern '*.apk'
+            if kept '*.apk'; then
+              echo "Reusing the $latest APK kept on this machine"
+              cp "$previous"/*.apk assets/
+            else
+              gh release download "$latest" --dir assets --pattern '*.apk'
+            fi
           fi
           test -f assets/latest-mac.yml
           compgen -G 'assets/*.zip' > /dev/null
@@ -607,3 +673,14 @@ jobs:
               --target "$GITHUB_SHA" --title "$TAG" --notes "$notes" --generate-notes
           fi
           gh release edit "$TAG" --draft=false --latest
+          # Keep what was just published for the next run's unchanged platform.
+          rm -rf "$previous"
+          mkdir -p "$previous"
+          cp assets/* "$previous"/
+          echo "$TAG" > "$previous/tag"
+
+      # Runs on the early exit too (an older run that found a newer release already published), so
+      # nothing is left on the machine's disk waiting for the two-day sweep.
+      - name: Clear this run's handover folder
+        if: always()
+        run: rm -rf "$HOME/ci-artifacts/run-$GITHUB_RUN_ID"
