@@ -73,7 +73,7 @@ When a running-office check is worthwhile, use a clone of the owner's real insta
 
 ## Validation before a PR
 
-Run the checks CI runs (`.github/workflows/release.yml`, Node 22), in order, and fix any failure:
+Run the checks CI runs (`.github/workflows/release.yml`, Node 26), in order, and fix any failure:
 
 ```bash
 npm ci
@@ -82,9 +82,9 @@ npm run typecheck
 npm run test:coverage
 ```
 
-CI starts the built office from the checkout (step "Start the office from the checkout"). When changing server startup, also run that smoke test locally as the workflow writes it. PRs compile the Mac app and native presenter and run Android tests/lint, but never set release versions, package apps or upload artifacts. On main, the Mac job also packages the app and starts the office on the app's own Electron; when changing app packaging or startup, run that smoke test locally before merging.
+CI starts the built office from the checkout (step "Start the office from the checkout"). When changing server startup, also run that smoke test locally as the workflow writes it. Every job runs on the owner's Mac Mini, a self-hosted runner for this repository (`docs/guide/development.md`, "CI on the Mac Mini"): the toolchain is installed on that machine, so a new tool goes there and in `.github/scripts/runner-toolchain.sh`, and a step is written for macOS rather than Ubuntu. PRs compile the Mac app and native presenter and run Android tests/lint, but never set release versions, package apps or upload artifacts. On main, the Mac job also packages the app and starts the office on the app's own Electron; when changing app packaging or startup, run that smoke test locally before merging.
 
-CI runs on a pull request only when it touches a path in the workflow's `pull_request.paths` filter. A new check goes into `release.yml` as a step in the same change, and its files go into both `paths` filters. Within a pull request, the `changes` job also skips the `mac` and `android` jobs unless the PR touches their files. A new path one of them depends on goes into that job's pattern too.
+CI runs on a pull request only when it touches a path in the workflow's `pull_request.paths` filter. A new check goes into `release.yml` as a step in the same change, and its files go into both `paths` filters. Within a pull request, the `changes` job also skips the `mac` and `android` jobs unless the PR touches their files. A new path one of them depends on goes into that job's pattern too. A pull request from a fork is skipped entirely, since its code would run on the owner's Mac.
 
 <!-- entire-agent:begin -->
 Read .entire/agent-guide.md for this repository's workflow, source inspection, and verification guidance.

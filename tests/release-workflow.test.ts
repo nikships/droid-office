@@ -199,10 +199,15 @@ function stepRuns(step: string, event = 'pull_request', ref = 'refs/pull/1/merge
 test('release versions, packages, signing, bundle smoke checks and uploads only run on main', () => {
   const releaseSteps = [
     ...jobSteps('release').filter((step) => step.includes('name: Set the release version')),
-    ...jobSteps('mac').filter((step) => !/actions\/checkout|actions\/setup-node|name: Install and build|name: Check the native (?:Metal presenter|Finder integration)/.test(step)),
+    ...jobSteps('mac').filter(
+      (step) =>
+        !/actions\/checkout|name: Install and build|name: Recover a keychain left by an interrupted run|name: Check the runner's toolchain|name: Restore the runner's keychains|name: Check the native (?:Metal presenter|Finder integration)/.test(
+          step,
+        ),
+    ),
     ...jobSteps('android').filter((step) => /name: Set the release version|name: Build the release APK|actions\/upload-artifact/.test(step)),
   ];
-  assert.equal(releaseSteps.length, 14);
+  assert.equal(releaseSteps.length, 15);
   assert.doesNotMatch(workflow, /Build the app unsigned|mac\.identity=null/);
   for (const step of releaseSteps) {
     const label = step.trim().split('\n')[0];
@@ -239,4 +244,42 @@ test('only change detection fetches history, and website checks are not repeated
     assert.equal(stepRuns(step, 'pull_request', 'refs/pull/1/merge', 'true'), false);
     assert.equal(stepRuns(step, 'pull_request', 'refs/pull/1/merge', 'false'), true);
   }
+});
+
+test('every job runs on the Mac Mini runner and checks its toolchain before building', () => {
+  for (const job of ['changes', 'release', 'website', 'mac', 'android', 'publish']) {
+    const runsOn = workflow.match(new RegExp(`^ {2}${job}:\\n[\\s\\S]*?\\n {4}runs-on: (.+)$`, 'm'))?.[1];
+    assert.equal(runsOn, '[self-hosted, macOS, ARM64, droid-office]', job);
+  }
+  // The toolchain is installed on the runner, so no job sets up Node, a JDK or Gradle itself.
+  assert.doesNotMatch(workflow, /actions\/setup-node|actions\/setup-java|gradle\/actions/);
+  for (const job of ['release', 'website', 'mac', 'android']) {
+    assert.ok(
+      jobSteps(job).some((step) => step.includes("name: Check the runner's toolchain")),
+      job,
+    );
+  }
+  assert.match(workflow, /\.github\/scripts\/runner-toolchain\.sh\n/);
+  // Ubuntu-only steps have no equivalent here.
+  assert.doesNotMatch(workflow, /sudo |apt-get|apparmor|sort -V/);
+});
+
+test('fork pull requests never run on the self-hosted runner, and signing keychains are always restored', () => {
+  assert.match(workflow, / {2}changes:\n {4}runs-on: \[self-hosted, macOS, ARM64, droid-office\]\n {4}# .*\n {4}if: github\.event_name != 'pull_request' \|\| github\.event\.pull_request\.head\.repo\.full_name == github\.repository\n/);
+  const restore = jobSteps('mac').find((step) => step.includes("name: Restore the runner's keychains"));
+  assert.ok(restore);
+  // It has to run on a failure or a cancellation too, or the Mac is left with the signing keychain.
+  assert.match(restore, /\n {8}if: always\(\) && env\.PUBLISHING == 'true'\n/);
+  assert.match(restore, /security default-keychain -s "\$\(cat "\$RUNNER_TEMP\/keychain-default"\)"/);
+  assert.match(restore, /security list-keychains -d user -s "\$\{keychains\[@\]\}"/);
+  assert.match(restore, /security delete-keychain "\$kc"/);
+  // The remembered list comes from the machine, not from a hard-coded login keychain.
+  assert.match(jobSteps('mac').join('\n'), /security list-keychains -d user \| sed .* > "\$RUNNER_TEMP\/keychain-list"/);
+  // A run killed mid-signing leaves a default keychain the runner's temp folder takes away with it:
+  // the next run puts the login keychain back before it builds anything.
+  const recover = jobSteps('mac').find((step) => step.includes('name: Recover a keychain left by an interrupted run'));
+  assert.ok(recover);
+  assert.doesNotMatch(recover, /\n {8}if: /);
+  assert.match(recover, /if \[ ! -e "\$default" \]/);
+  assert.match(recover, /security default-keychain -s "\$login"/);
 });
