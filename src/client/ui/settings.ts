@@ -10,7 +10,6 @@ import { agentFields, modelBadge, officeChoice } from './models';
 import { subagentModelPicker } from './subagent-models';
 import { openPromptEditor, rewrittenPrompts } from './prompts';
 import { hotReloadSettings } from './hot-reload';
-import { presetEditor } from './prompt-box';
 import { factoryKeySettings } from './factory-settings';
 import { subscriptionsSettings } from './subscriptions-settings';
 import { droidSettings } from './droid-settings';
@@ -914,18 +913,6 @@ export function openSettings(
         card('Raw mouse input', {
           desc: desc('Skips macOS pointer acceleration, so the same hand movement always turns the view the same amount. Applies the next time the office captures the mouse.'),
           control: rawMouse.el,
-        }),
-      ),
-      group(
-        'Shortcuts',
-        card('Prompt chips', {
-          desc: desc('One tap fills a prompt box.'),
-          below: [
-            presetEditor(settings.presets, (presets) => {
-              settings = { ...settings, presets };
-              onChange(settings);
-            }),
-          ],
         }),
       ),
     ],

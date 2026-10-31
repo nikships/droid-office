@@ -1,23 +1,18 @@
-// The chips above an agent prompt box, and the history beside it. Both read this browser's copy
-// (prompt-recall.ts). The box itself stays the caller's textarea.
+// Prompt history beside an agent prompt box reads this browser's copy (prompt-recall.ts).
+// The box itself stays the caller's textarea.
 
-import { loadSettings } from '../state';
 import { claimEscape, clip, h } from './dom';
-import { PROMPT_LABEL_MAX, PROMPT_PRESET_MAX, PROMPT_TEXT_MAX, defaultPresets, loadPromptHistory, normalizePresets, recallPrompt, rememberPrompt, savePromptHistory, type PromptPreset } from '../prompt-recall';
+import { loadPromptHistory, recallPrompt, rememberPrompt, savePromptHistory } from '../prompt-recall';
 
 let historySeq = 0;
 
-/** Chips, the History button and its list, wrapped around `ta`. `sent` records a prompt that actually went out. */
+/** The History button and its list, wrapped around `ta`. `sent` records a prompt that actually went out. */
 export function promptExtras(ta: HTMLTextAreaElement): { element: HTMLElement; sent(text: string): void; dispose(): void } {
-  const presets = loadSettings().presets;
   let history = loadPromptHistory();
   /** -1 while the textarea is yours; otherwise an index into `history`. */
   let cursor = -1;
   let draft = ta.value;
   let typing = false;
-
-  const chips = h('div.chips.prompt-presets', { role: 'group', 'aria-label': 'Preset prompts' }, ...presets.map((p) => h('button.chip', { type: 'button', title: p.text, onclick: () => fill(p.text) }, p.label)));
-  chips.classList.toggle('hidden', presets.length === 0);
 
   const listId = `prompt-history-${++historySeq}`;
   const list = h('div.list.boxed.prompt-history-list', { id: listId, role: 'listbox', 'aria-label': 'Recent prompts' });
@@ -34,13 +29,6 @@ export function promptExtras(ta: HTMLTextAreaElement): { element: HTMLElement; s
     ta.focus();
     ta.setSelectionRange(text.length, text.length);
     typing = false;
-  };
-
-  const fill = (text: string) => {
-    cursor = -1;
-    draft = text;
-    setText(text);
-    closeList();
   };
 
   const paintList = () => {
@@ -126,7 +114,7 @@ export function promptExtras(ta: HTMLTextAreaElement): { element: HTMLElement; s
     closeList();
   });
 
-  const compose = h('div.prompt-compose', {}, chips, h('div.prompt-field', {}, ta, historyBtn), historyPanel);
+  const compose = h('div.prompt-compose', {}, h('div.prompt-field', {}, ta, historyBtn), historyPanel);
 
   // The dialog's own Esc handler asks before closing, so Esc dismisses the list and leaves the box and its draft open.
   const releaseEscape = claimEscape(compose, () => {
@@ -158,57 +146,4 @@ export function promptExtras(ta: HTMLTextAreaElement): { element: HTMLElement; s
     },
     dispose,
   };
-}
-
-/** Settings → You → Prompt chips. Edits stay in the rows until they're a name plus some text. */
-export function presetEditor(initial: PromptPreset[], onChange: (presets: PromptPreset[]) => void): HTMLElement {
-  const rows: { el: HTMLElement; label: HTMLInputElement; text: HTMLTextAreaElement }[] = [];
-  const list = h('div.preset-list');
-  const add = h('button.btn.sm', { type: 'button' }, 'Add a chip') as HTMLButtonElement;
-  const reset = h('button.btn.sm.ghost', { type: 'button' }, 'Reset');
-  const hint = h('p.field-hint', {}, `Up to ${PROMPT_PRESET_MAX}. A chip needs a name and some text, then one tap fills the prompt box.`);
-
-  const paint = () => add.toggleAttribute('disabled', rows.length >= PROMPT_PRESET_MAX);
-  const emit = () => {
-    paint();
-    onChange(normalizePresets(rows.map((r) => ({ label: r.label.value, text: r.text.value }))));
-  };
-
-  const addRow = (preset: PromptPreset) => {
-    if (rows.length >= PROMPT_PRESET_MAX) return;
-    const label = h('input.input', { type: 'text', value: preset.label, maxlength: String(PROMPT_LABEL_MAX), placeholder: 'Name', 'aria-label': 'Chip name' }) as HTMLInputElement;
-    const text = h('textarea.input', { rows: 2, maxlength: String(PROMPT_TEXT_MAX), placeholder: 'What the chip types', 'aria-label': preset.label ? `Prompt for ${preset.label}` : 'Chip prompt' }) as HTMLTextAreaElement;
-    text.value = preset.text;
-    const remove = h('button.btn.sm.ghost', { type: 'button' }, 'Remove');
-    const el = h('div.preset-row', {}, label, text, remove);
-    const row = { el, label, text };
-    remove.addEventListener('click', () => {
-      const i = rows.indexOf(row);
-      if (i >= 0) rows.splice(i, 1);
-      el.remove();
-      emit();
-    });
-    label.addEventListener('input', emit);
-    text.addEventListener('input', emit);
-    rows.push(row);
-    list.append(el);
-  };
-
-  const refill = (presets: PromptPreset[]) => {
-    rows.splice(0, rows.length);
-    list.replaceChildren();
-    for (const p of presets) addRow(p);
-    emit();
-  };
-
-  add.addEventListener('click', () => {
-    addRow({ label: '', text: '' });
-    paint();
-    rows[rows.length - 1]?.label.focus();
-  });
-  reset.addEventListener('click', () => refill(defaultPresets()));
-  for (const p of initial) addRow(p);
-  paint();
-
-  return h('div.stack.tight.preset-editor', {}, list, h('div.row.wrap', {}, add, reset), hint);
 }

@@ -305,6 +305,16 @@ test('picking a prompt from History closes the list and Esc then closes the dial
   assert.equal(modalOpen(), false);
 });
 
+test('old saved presets do not add chips to the prompt box', (t) => {
+  const { storage } = fakeBrowser(t);
+  storage.set('droid-office.settings', JSON.stringify({ presets: [{ label: 'Review', text: 'Review this.' }] }));
+  const box = openPrompt('box-first');
+  assert.equal(box.form.querySelector('.prompt-presets'), null);
+  assert.equal(box.form.querySelector('.chip'), null);
+  box.history.click();
+  assert.equal(box.panelHidden(), false, 'prompt history still opens');
+});
+
 test('a popup inside a lower window does not take the Esc meant for the one on top', (t) => {
   fakeBrowser(t);
   const lower = openPrompt('box-first');

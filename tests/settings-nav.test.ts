@@ -28,7 +28,6 @@ test('every setting is in a category', () => {
     ['What 7 puts in your hand', 'you'],
     ['Raw mouse input', 'you'],
     ['Look sensitivity', 'you'],
-    ['Prompt chips', 'you'],
     ['Office sounds', 'sound'],
     ['Alert sounds', 'sound'],
     ['Jukebox', 'sound'],
@@ -113,7 +112,7 @@ test('search finds a setting by name, pane or keyword, every word required', () 
   assert.deepEqual(searchSettings('subagent prompts'), [{ pane: 'workers', title: 'Prompts' }]);
   assert.deepEqual(searchSettings('droid sign in'), [{ pane: 'connections', title: 'Droid' }]);
   assert.deepEqual(searchSettings('host update'), [{ pane: 'office', title: 'Host desktop app' }]);
-  assert.deepEqual(searchSettings('prompt chips'), [{ pane: 'you', title: 'Prompt chips' }]);
+  assert.deepEqual(searchSettings('prompt chips'), []);
   assert.deepEqual(searchSettings('mouse'), [
     { pane: 'you', title: 'Look sensitivity' },
     { pane: 'you', title: 'Raw mouse input' },

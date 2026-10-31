@@ -23,24 +23,16 @@ test('settings show the workers panel by default, and yesterday’s spend/limits
   assert.deepEqual(s.pins, ['search']);
 });
 
-test('alert tones start audible, and prompt chips start as the five defaults until you save your own', () => {
+test('alert tones start audible and saved prompt chips are ignored', () => {
   mem.clear();
   const fresh = loadSettings();
   assert.equal(fresh.alertsMuted, false);
-  assert.deepEqual(
-    fresh.presets.map((p) => p.label),
-    ['Review', 'Tests', 'Lint', 'Explain', 'Commit'],
-  );
+  assert.equal('presets' in fresh, false);
 
-  mem.set('droid-office.settings', JSON.stringify({ alertsMuted: true, presets: [] }));
-  const cleared = loadSettings();
-  assert.equal(cleared.alertsMuted, true);
-  assert.deepEqual(cleared.presets, []);
-
-  mem.set('droid-office.settings', JSON.stringify({ presets: [{ label: '  Ship  ', text: 'Push it.\r\n' }, { label: 'ship', text: 'again' }, { label: '', text: 'nope' }, 'no'] }));
-  const custom = loadSettings();
-  assert.deepEqual(custom.presets, [{ label: 'Ship', text: 'Push it.' }]);
-  assert.equal(custom.alertsMuted, false);
+  mem.set('droid-office.settings', JSON.stringify({ alertsMuted: true, presets: [{ label: 'Ship', text: 'Push it.' }] }));
+  const saved = loadSettings();
+  assert.equal(saved.alertsMuted, true);
+  assert.equal('presets' in saved, false);
 });
 
 test('7 puts the wand in your hand unless you opted into the Magnum', () => {

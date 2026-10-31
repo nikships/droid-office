@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { DEFAULT_PROMPT_PRESETS, PROMPT_HISTORY_MAX, loadPromptHistory, normalizePresets, recallPrompt, rememberPrompt, savePromptHistory } from '../src/client/prompt-recall.js';
+import { PROMPT_HISTORY_MAX, loadPromptHistory, recallPrompt, rememberPrompt, savePromptHistory } from '../src/client/prompt-recall.js';
 import { officeTitle } from '../src/client/tab-title.js';
 
 test('a sent prompt is kept newest-first, a repeat moves to the front, and the list stops at 50', () => {
@@ -27,20 +27,6 @@ test('Up and Down walk saved prompts and return to the draft, without wrapping',
   assert.deepEqual(recallPrompt(history, 0, 'down', 'draft'), { index: -1, text: 'draft' });
   assert.deepEqual(recallPrompt(history, -1, 'down', 'draft'), { index: -1, text: 'draft' });
   assert.deepEqual(recallPrompt([], -1, 'up', 'draft'), { index: -1, text: 'draft' });
-});
-
-test('chips fall back to the defaults, and a saved list is trimmed, deduped and capped', () => {
-  assert.deepEqual(
-    normalizePresets(undefined).map((p) => p.label),
-    DEFAULT_PROMPT_PRESETS.map((p) => p.label),
-  );
-  assert.notEqual(normalizePresets(null), DEFAULT_PROMPT_PRESETS);
-  assert.deepEqual(normalizePresets([]), []);
-  const custom = normalizePresets([{ label: '  Ship  ', text: 'Push it.\r\n' }, { label: 'ship', text: 'again' }, { label: '', text: 'no name' }, { label: 'Nope', text: '   ' }, null, 'no']);
-  assert.deepEqual(custom, [{ label: 'Ship', text: 'Push it.' }]);
-
-  const tooMany = Array.from({ length: 20 }, (_, i) => ({ label: `C${i}`, text: `do ${i}` }));
-  assert.equal(normalizePresets(tooMany).length, 12);
 });
 
 test('prompt history survives a reload and ignores junk', () => {
