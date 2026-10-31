@@ -10,7 +10,6 @@ import { agentFields, modelBadge, officeChoice } from './models';
 import { subagentModelPicker } from './subagent-models';
 import { openPromptEditor, rewrittenPrompts } from './prompts';
 import { hotReloadSettings } from './hot-reload';
-import { presetEditor } from './prompt-box';
 import { factoryKeySettings } from './factory-settings';
 import { subscriptionsSettings } from './subscriptions-settings';
 import { droidSettings } from './droid-settings';
@@ -948,18 +947,6 @@ export function openSettings(
         card('Look sensitivity', {
           desc: desc('How far the view turns for the same mouse movement while the office has the mouse. 1× is the office’s own speed; lower turns slower, higher faster. Raw input on or off, it applies at once.'),
           control: lookRow,
-        }),
-      ),
-      group(
-        'Shortcuts',
-        card('Prompt chips', {
-          desc: desc('One tap fills a prompt box. Kept in this browser, not on the office.'),
-          below: [
-            presetEditor(settings.presets, (presets) => {
-              settings = { ...settings, presets };
-              onChange(settings);
-            }),
-          ],
         }),
       ),
     ],

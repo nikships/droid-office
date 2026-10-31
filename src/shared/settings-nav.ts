@@ -5,7 +5,7 @@ export type SettingsPane = 'you' | 'sound' | 'graphics' | 'notify' | 'workers' |
 export type SettingsSection = 'Personal' | 'Workers' | 'Office';
 
 export const SETTINGS_PANES: { id: SettingsPane; icon: string; label: string; section: SettingsSection; scope: string; blurb: string }[] = [
-  { id: 'you', icon: '🧍', label: 'You', section: 'Personal', scope: 'Just you', blurb: 'How you look, what you hold and how you look around, and your own prompt shortcuts. Only this browser remembers these.' },
+  { id: 'you', icon: '🧍', label: 'You', section: 'Personal', scope: 'Just you', blurb: 'How you look, what you hold and how you look around. Only this browser remembers these.' },
   { id: 'sound', icon: '🔊', label: 'Sound', section: 'Personal', scope: 'Just you', blurb: 'How loud the office, its alert tones and the jukebox are for you.' },
   { id: 'graphics', icon: '🖥️', label: 'Display', section: 'Personal', scope: 'Just you', blurb: 'How the office is drawn on this screen: which renderer, how sharp, how many frames a second, the lights, and the readout that shows it.' },
   {
@@ -66,7 +66,6 @@ export const SETTINGS_CARDS = [
   { pane: 'you', title: 'What 7 puts in your hand', keywords: 'wand magnum gun weapon sidearm 7 hand' },
   { pane: 'you', title: 'Raw mouse input', keywords: 'mouse raw pointer acceleration look turn' },
   { pane: 'you', title: 'Look sensitivity', keywords: 'mouse sensitivity speed look turn view' },
-  { pane: 'you', title: 'Prompt chips', keywords: 'chips presets shortcuts quick prompts tap fill prompt box' },
   { pane: 'sound', title: 'Office sounds', keywords: 'volume mute typing thunder audio sound' },
   { pane: 'sound', title: 'Alert sounds', keywords: 'volume mute tone alert needs input finished tests fail' },
   { pane: 'sound', title: 'Jukebox', keywords: 'music volume mute songs' },

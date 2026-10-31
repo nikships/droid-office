@@ -1205,19 +1205,13 @@ a.when:hover { text-decoration: underline; }
 .gh-labeler footer .grow { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .gh-labeler .gh-quiet a { color: var(--info); font-weight: 600; }
 
-/* Send a prompt to a worker (ui/ask.ts). Chips and history (ui/prompt-box.ts) sit on every agent prompt box. */
+/* Send a prompt to a worker (ui/ask.ts). History (ui/prompt-box.ts) sits beside every agent prompt box. */
 .modal.ask { width: min(660px, 100%); }
 .prompt-compose { display: flex; flex-direction: column; gap: var(--space-2); min-width: 0; }
 .prompt-field { display: flex; align-items: flex-start; gap: var(--space-2); min-width: 0; }
 .prompt-field textarea { flex: 1 1 auto; min-width: 0; }
 .prompt-history { max-height: 220px; overflow: auto; }
 .prompt-history-empty { margin: 0; padding: var(--space-3); }
-.preset-list { display: flex; flex-direction: column; gap: var(--space-2); }
-.preset-row { display: grid; grid-template-columns: minmax(0, 9rem) minmax(0, 1fr) auto; gap: var(--space-2); align-items: start; }
-.preset-row textarea { min-height: var(--control-h-lg); resize: vertical; }
-@media (max-width: 720px) {
-  .preset-row { grid-template-columns: minmax(0, 1fr); }
-}
 .ask-to { gap: 6px; }
 .ask-to .btn { padding: 5px 10px; }
 .ask-to .btn small { font-size: 10px; opacity: .7; }
