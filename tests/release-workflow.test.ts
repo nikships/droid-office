@@ -205,7 +205,7 @@ test('release versions, packages, signing, bundle smoke checks and uploads only 
           step,
         ),
     ),
-    ...jobSteps('android').filter((step) => /name: Set the release version|name: Build the release APK|actions\/upload-artifact/.test(step)),
+    ...jobSteps('android').filter((step) => /name: Set the release version|name: Build the release APK|name: Hand the APK to the publish job/.test(step)),
   ];
   assert.equal(releaseSteps.length, 15);
   assert.doesNotMatch(workflow, /Build the app unsigned|mac\.identity=null/);
@@ -262,6 +262,49 @@ test('every job runs on the Mac Mini runner and checks its toolchain before buil
   assert.match(workflow, /\.github\/scripts\/runner-toolchain\.sh\n/);
   // Ubuntu-only steps have no equivalent here.
   assert.doesNotMatch(workflow, /sudo |apt-get|apparmor|sort -V/);
+});
+
+test("a run's artifacts go between jobs on the machine's disk, not through the artifact service", () => {
+  // Uploading and downloading the app would cost about a minute of every release, so the platform
+  // jobs copy theirs into one folder named after the run, and `publish` reads it and clears it.
+  assert.doesNotMatch(workflow, /actions\/upload-artifact|actions\/download-artifact/);
+  for (const job of ['mac', 'android']) {
+    const hand = jobSteps(job).find((step) => step.includes('ci-artifacts/run-$GITHUB_RUN_ID'));
+    assert.ok(hand, job);
+    assert.equal(stepRuns(hand), false, `${job}: PR`);
+    assert.equal(stepRuns(hand, 'push', 'refs/heads/main'), true, `${job}: main`);
+  }
+  assert.match(jobSteps('mac').join('\n'), /cp release\/\*\.dmg release\/\*\.zip release\/\*\.blockmap release\/latest-mac\.yml "\$out"\/\n/);
+  const publish = jobSteps('publish').join('\n');
+  assert.match(publish, /out="\$HOME\/ci-artifacts\/run-\$GITHUB_RUN_ID"/);
+  assert.match(publish, /cp -R "\$out"\/\. assets\//);
+  // The folder is cleared only after the release is actually up.
+  assert.ok(publish.indexOf('rm -rf "$HOME/ci-artifacts/run-$GITHUB_RUN_ID"') > publish.indexOf('gh release edit "$TAG" --draft=false --latest'));
+  // A rerun of an older run leaves its folder behind; the change job sweeps the stale ones.
+  assert.match(jobSteps('changes').join('\n'), /find "\$HOME\/ci-artifacts" -maxdepth 1 -type d -name 'run-\*' -mtime \+2/);
+});
+
+test('publish reuses the assets it kept locally, and falls back to the release when it cannot', () => {
+  const publish = jobSteps('publish').join('\n');
+  // The kept copy is trusted only when its tag matches the release it stands in for.
+  assert.match(publish, /\[ "\$\(cat "\$previous\/tag" 2>\/dev\/null\)" = "\$latest" \] && compgen -G "\$previous\/\$1"/);
+  assert.match(publish, /gh release download "\$latest" --dir assets \\\n\s+--pattern '\*\.dmg'/);
+  assert.match(publish, /gh release download "\$latest" --dir assets --pattern '\*\.apk'/);
+  assert.match(publish, /echo "\$TAG" > "\$previous\/tag"/);
+});
+
+test('jobs that can run at once do not fight over a port or a Gradle daemon', () => {
+  // Two runners mean two jobs on this Mac, and both office smoke tests used to want 4700.
+  assert.doesNotMatch(workflow, /--port 47\d\d/);
+  assert.equal(workflow.match(/s\.listen\(0, "127\.0\.0\.1"/g)?.length, 2);
+  for (const step of ['name: Start the office from the checkout', "name: Start the office on the app's own Electron"]) {
+    const found = ['release', 'mac'].map((job) => jobSteps(job).find((candidate) => candidate.includes(step))).find(Boolean);
+    assert.ok(found, step);
+    assert.match(found, /port="\$\(node -e/);
+    assert.match(found, /127\.0\.0\.1:\$port\//);
+  }
+  // The daemon lives on between runs on a machine we own; a throwaway runner needed --no-daemon.
+  assert.doesNotMatch(workflow, /gradlew --no-daemon/);
 });
 
 test('fork pull requests never run on the self-hosted runner, and signing keychains are always restored', () => {

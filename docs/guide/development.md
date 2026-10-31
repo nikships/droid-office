@@ -99,7 +99,13 @@ Only once all affected checks and builds pass does the release go up, marked Lat
 
 ### CI on the Mac Mini
 
-The runner is the repository's own, registered in **Settings → Actions → Runners** as `mac-mini-droid-office` with the labels `self-hosted, macOS, ARM64, droid-office`, and started by a launchd agent at login (`~/Library/LaunchAgents/actions.runner.nikships-droid-office.mac-mini-droid-office.plist`). Its files are in `~/actions-runner-droid-office` on the internal disk. One runner means one job at a time: the other jobs queue.
+The runner is the repository's own, registered in **Settings → Actions → Runners** as `mac-mini-droid-office` and `mac-mini-droid-office-2`, both with the labels `self-hosted, macOS, ARM64, droid-office`, and started by launchd agents at login (`~/Library/LaunchAgents/actions.runner.nikships-droid-office.*.plist`). Their files are in `~/actions-runner-droid-office` and `~/actions-runner-droid-office-2` on the internal disk. Two instances mean two jobs at once, so the Mac build, the Node checks, Android and the website no longer queue behind each other.
+
+Because the jobs share one machine, the workflow is written so they can run side by side:
+
+- An office the workflow starts listens on a free port picked at run time, not on 4700.
+- Gradle's daemon is kept, unlike on a throwaway runner, so its warm JVM and in-memory caches carry over.
+- The built app and APK go from the platform jobs to `publish` through `~/ci-artifacts/run-<run id>` on the machine's disk, instead of being uploaded to and downloaded from GitHub's artifact service. The last published set is kept in `~/ci-artifacts/latest-release`, so a release that rebuilt only one platform reuses the other's assets instead of downloading 400 MB. `publish` deletes the run's folder once the release is up, and the `changes` job sweeps folders older than two days.
 
 The machine, not the workflow, provides the toolchain. A job that needs another tool adds it here rather than to the workflow:
 
