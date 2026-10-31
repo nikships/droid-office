@@ -67,15 +67,7 @@ export function hiddenModelSettings(net: Net): { element: HTMLElement; dispose: 
   const off = store.on('hiddenModels', paint);
   void load();
   return {
-    element: h(
-      'div.stack.tight',
-      {},
-      h('p.field-hint', {}, 'Hide models from desktop, web and Android pickers. Existing workers and saved defaults stay unchanged.'),
-      h('div.row', {}, search, all),
-      h('div.row', {}, count, retry),
-      error,
-      list,
-    ),
+    element: h('div.stack.tight', {}, h('div.row', {}, search, all), h('div.row', {}, count, retry), error, list),
     dispose: () => {
       disposed = true;
       off();

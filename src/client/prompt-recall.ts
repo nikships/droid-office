@@ -7,7 +7,7 @@ export interface PromptPreset {
   text: string;
 }
 
-/** Chips a new office starts with. The owner edits these under Settings → Workers. */
+/** Chips a new office starts with. The owner edits these under Settings → You → Prompt chips. */
 export const DEFAULT_PROMPT_PRESETS: readonly PromptPreset[] = [
   { label: 'Review', text: 'Review the changes and point out bugs, risks, and missing tests.' },
   { label: 'Tests', text: 'Run the tests and fix whatever fails.' },
