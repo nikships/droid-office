@@ -89,6 +89,7 @@ import ai.factory.droidoffice.core.Tags
 import ai.factory.droidoffice.core.ThreadBlock
 import ai.factory.droidoffice.core.ThreadEntry
 import ai.factory.droidoffice.core.ThreadFeed
+import ai.factory.droidoffice.core.ThreadImage
 import ai.factory.droidoffice.core.ThreadModelAction
 import ai.factory.droidoffice.core.ThreadPhase
 import ai.factory.droidoffice.core.ThreadQueue
@@ -414,7 +415,7 @@ internal fun Thread(
                             when (r) {
                                 is ThreadRow.Message -> {
                                     val all = open[MORE + r.id] == true
-                                    Message(w, r, loaded[r.id]?.text.orEmpty(), all) { flip(MORE + r.id, all) }
+                                    Message(w, r, loaded[r.id]?.text.orEmpty(), loaded[r.id]?.images.orEmpty(), all) { flip(MORE + r.id, all) }
                                 }
                                 is ThreadRow.Notice -> Notice(w, r, loaded[r.id])
                                 is ThreadRow.Activity -> Activity(r, ThreadView.Open.activity(r, open), open, loaded, asking, onToggle = { toggle(r) }, onFlip = ::flip)
@@ -745,12 +746,15 @@ private fun Modifier.userBlock() = this.background(Palette.SurfaceHover, Rounded
     .padding(horizontal = 12.dp, vertical = 9.dp)
 
 @Composable
-private fun Message(w: WorkerInfo, m: ThreadRow.Message, text: String, all: Boolean, onMore: () -> Unit) {
+private fun Message(w: WorkerInfo, m: ThreadRow.Message, text: String, images: List<ThreadImage>, all: Boolean, onMore: () -> Unit) {
     val tag = Modifier.fillMaxWidth().tagged(Tags.Worker.threadEntry(m.id))
     if (m.role == ThreadRole.User) {
         val reveal = rememberReveal()
-        Box(tag.padding(start = 48.dp).then(reveal.modifier), contentAlignment = Alignment.CenterEnd) {
-            Column(Modifier.userBlock()) {
+        // The pictures sent with the prompt, above its text, in place of where the office kept them.
+        val pictures = images.isNotEmpty() && LocalPictureSource.current != null
+        Column(tag.padding(start = 48.dp).then(reveal.modifier), verticalArrangement = Arrangement.spacedBy(8.dp), horizontalAlignment = Alignment.End) {
+            if (pictures) ThreadPictures(images, "Picture you sent", null, end = true)
+            if (!pictures || text.isNotBlank()) Column(Modifier.userBlock()) {
                 var clipped by remember(m.id) { mutableStateOf(false) }
                 SelectionContainer {
                     MarkdownText(text, if (all) Modifier else Modifier.clampLines(USER_LINES) { if (clipped != it) clipped = it }, surface = Palette.SurfaceHover, breaks = true)

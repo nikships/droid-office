@@ -49,6 +49,7 @@ import { Jukebox } from './jukebox.js';
 import { resolveSoundCloudStation } from './soundcloud.js';
 import { SEARCH_MAX, SEARCH_MIN, searchKey } from '../shared/search.js';
 import { DROP_MAX_BYTES, PROMPT_IMAGES_MAX, PROMPT_IMAGE_ID } from '../shared/drops.js';
+import { DROP_IMAGE_ID } from './thread-images.js';
 import { MAX_FLOORS, forgeWords, returnLanding } from '../shared/floors.js';
 import { PROMPTS, PROMPT_MAX, isPromptId } from '../shared/prompts.js';
 import { ROOF } from '../shared/rooftop.js';
@@ -1148,8 +1149,12 @@ export async function startServer(cfg: Config) {
       const floor = floors.get(url.searchParams.get('floor') ?? '');
       if (p === '/api/thread/image' && req.method === 'GET') {
         // A picture a worker read or was sent, shown in its Thread (worker-thread.ts reads it from the session).
-        const source = floor?.workers.threadSession(str(url.searchParams.get('worker'), 32));
-        const image = source ? await workerThreads.image(source, str(url.searchParams.get('image'), 64)) : undefined;
+        const workerId = str(url.searchParams.get('worker'), 32);
+        const id = str(url.searchParams.get('image'), 160);
+        const source = floor?.workers.threadSession(workerId);
+        // A picture sent with a prompt is served from that worker's own drops, never from the path the message names.
+        const drop = DROP_IMAGE_ID.exec(id)?.[1];
+        const image = !source ? undefined : drop ? floor?.workers.dropPicture(workerId, drop) : await workerThreads.image(source, id);
         if (!image) return send(res, 404, { error: 'That picture is no longer in the conversation.' });
         res.writeHead(200, {
           'content-type': image.type,

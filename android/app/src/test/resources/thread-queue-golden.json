@@ -50,6 +50,14 @@
         {"session":"a","entries":[],"expected":[""]},
         {"session":"a","entries":[{"id":"u1:1","seq":1,"role":"user","kind":"notice","text":"[Image attachment]"}],"expected":[]}
       ]
+    },
+    {
+      "name": "office_prompt_pictures_match_their_text_and_pictures",
+      "steps": [
+        {"session":"a","entries":[],"sends":[{"text":"What is this?","hasImage":true},{"text":"","hasImage":true}],"expected":["What is this?",""]},
+        {"session":"a","entries":[{"id":"u1:0","seq":1,"role":"user","kind":"text","text":"What is this?","images":[{"id":"drop.0a1b2c3d-shot.png","type":"image/png"}]}],"expected":[""]},
+        {"session":"a","entries":[{"id":"u2:0","seq":2,"role":"user","kind":"text","text":"","images":[{"id":"drop.4e5f6a7b-shot.png","type":"image/png"}]}],"expected":[]}
+      ]
     }
   ]
 }

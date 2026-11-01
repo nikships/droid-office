@@ -1095,6 +1095,11 @@ export class WorkerManager {
     return this.workers.has(id) ? this.drops.save(id, name, type, body) : undefined;
   }
 
+  /** A picture the worker was sent with a prompt, for its Thread; undefined when it's gone or isn't one. */
+  dropPicture(id: string, name: string): { body: Buffer; type: string } | undefined {
+    return this.workers.has(id) ? this.drops.picture(id, name) : undefined;
+  }
+
   /** Normal hits only open terminals in the client. A fully charged shot dismisses immediately. */
   shoot(id: string, superShot = false): string | undefined {
     const w = this.workers.get(id);

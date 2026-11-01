@@ -8,6 +8,7 @@ const STAGED = 'staged';
 
 /** The name ending a picture dropped without one gets, so the agent can tell it's a picture. */
 const PICTURE_EXT: Record<string, string> = { 'image/png': '.png', 'image/jpeg': '.jpg', 'image/gif': '.gif', 'image/webp': '.webp' };
+const PICTURE_TYPE: Record<string, string> = Object.fromEntries(Object.entries(PICTURE_EXT).map(([type, ext]) => [ext, type]));
 
 /**
  * Files dropped or pasted into a worker's terminal from a browser (see shared/drops.ts), kept in
@@ -113,6 +114,19 @@ export class DropStore {
       const body = readFileSync(file);
       const ext = pictureExt(body);
       return ext ? { body, ext } : undefined;
+    } catch {
+      return undefined;
+    }
+  }
+
+  /** A picture kept for a worker's prompt, by its name in the worker's drops (as `save` named it); undefined for anything else. */
+  picture(workerId: string, name: string): { body: Buffer; type: string } | undefined {
+    const dir = this.folder(workerId);
+    if (!dir || !/^[0-9a-f]{8}-[\w.-]{1,120}$/.test(name)) return undefined;
+    try {
+      const body = readFileSync(path.join(dir, name));
+      const ext = pictureExt(body);
+      return ext ? { body, type: PICTURE_TYPE[ext] } : undefined;
     } catch {
       return undefined;
     }

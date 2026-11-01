@@ -3,7 +3,9 @@ import { appendFile, mkdir, mkdtemp, readFile, rename, rm, symlink, writeFile } 
 import os from 'node:os';
 import path from 'node:path';
 import { test, type TestContext } from 'node:test';
+import { DropStore } from '../src/server/drops.js';
 import { WorkerThreadReader } from '../src/server/worker-thread.js';
+import { withImages } from '../src/shared/drops.js';
 import { WorkerManager } from '../src/server/workers.js';
 import { LABEL_TEXT_CHARS } from '../src/shared/worker-labels.js';
 import { threadOutputText } from '../src/shared/thread-presentation.js';
@@ -187,6 +189,38 @@ test('pictures in tool results and messages are referenced by id and served from
   const before = await readFile(file, 'utf8');
   await writeFile(file, before.replace(png.toString('base64'), Buffer.concat([png, Buffer.from([0])]).toString('base64')));
   assert.equal(await reader.image(source, read.images![0].id), undefined);
+});
+test("the owner's prompt shows the pictures the office sent with it, not where it kept them", async (t) => {
+  const png = await readFile(new URL('../src/client/public/icons/icon-192.png', import.meta.url));
+  const jpeg = await readFile(new URL('../android/docs/unpaired.jpg', import.meta.url));
+  const data = await mkdtemp(path.join(os.tmpdir(), 'office-thread-drops-'));
+  t.after(() => rm(data, { recursive: true, force: true }));
+  const drops = new DropStore(path.join(data, '.droid-office'));
+  const a = drops.save('w1', 'shot.png', 'image/png', png)!;
+  const b = drops.save('w1', 'phone.jpg', 'image/jpeg', jpeg)!;
+  const gone = path.join(path.dirname(a), '0a1b2c3d-gone.png');
+  const { reader, source } = await rig(t, [
+    message('both', 'user', [{ type: 'text', text: withImages('Compare image 1 and image 2', [a, b]) }]),
+    message('alone', 'user', withImages('', [a])),
+    message('missing', 'user', [{ type: 'text', text: withImages('One is gone', [a, gone]) }]),
+    message('elsewhere', 'user', [{ type: 'text', text: withImages('Not a drop', ['/etc/hosts']) }]),
+    message('reply', 'assistant', [{ type: 'text', text: withImages('An assistant quoting it', [a]) }]),
+  ]);
+  const page = await reader.read(source);
+  const [both, alone, missing, elsewhere, reply] = page.entries;
+  assert.equal(both.text, 'Compare image 1 and image 2');
+  assert.deepEqual(both.images, [
+    { id: `drop.${path.basename(a)}`, type: 'image/png', width: 192, height: 192 },
+    { id: `drop.${path.basename(b)}`, type: 'image/jpeg', width: 540, height: 1200 },
+  ]);
+  assert.equal(alone.kind, 'text');
+  assert.equal(alone.text, '');
+  assert.equal(alone.images?.length, 1);
+  assert.equal(missing.text, withImages('One is gone', [a, gone]), 'with one gone the numbers would not match: the paths stay');
+  assert.equal(missing.images, undefined);
+  assert.equal(elsewhere.images, undefined);
+  assert.equal(reply.images, undefined);
+  assert.doesNotMatch(JSON.stringify([both, alone]), /drops\//);
 });
 test('filters system, hooks, hidden/source bookkeeping and system-reminder blocks', async (t) => {
   const { reader, source } = await rig(t, [

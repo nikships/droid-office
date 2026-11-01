@@ -1,3 +1,5 @@
+import { closeSync, openSync, readSync } from 'node:fs';
+import { splitImages } from '../shared/drops.js';
 import type { ThreadImage } from '../shared/worker-thread.js';
 
 const TYPES = new Set<ThreadImage['type']>(['image/png', 'image/jpeg', 'image/gif', 'image/webp']);
@@ -6,6 +8,12 @@ const BASE64 = /^[A-Za-z0-9+/]+={0,2}$/;
 const IMAGE_ID = /^(\d{1,15})\.(\d{1,4})\.(\d{1,4}|x)\.([0-9a-f]{8})$/;
 /** No more pictures than this are listed for one tool result or message. */
 export const IMAGES_PER_ENTRY = 16;
+/** A picture sent with a prompt, where the office kept it: .droid-office/drops/<worker>/<8 hex>-<name> (server/drops.ts). */
+const DROP_FILE = /[\\/]\.droid-office[\\/]drops[\\/][\w-]{1,64}[\\/]([0-9a-f]{8}-[\w.-]{1,120})$/;
+/** The id of a picture sent with a prompt: `drop.` and its name in the worker's drops. */
+export const DROP_IMAGE_ID = /^drop\.([0-9a-f]{8}-[\w.-]{1,120})$/;
+/** Enough of a file to find a picture's size in its header, past a large EXIF block. */
+const HEADER_BYTES = 256 * 1024;
 
 export interface ImageAddress {
   offset: number;
@@ -74,6 +82,42 @@ export function imageSize(bytes: Uint8Array, type: ThreadImage['type']): { width
     }
   }
   return size && size.width > 0 && size.height > 0 && size.width <= 65_535 && size.height <= 65_535 ? size : undefined;
+}
+
+/** The type the bytes start the way of, if any. */
+export function pictureType(bytes: Uint8Array): ThreadImage['type'] | undefined {
+  for (const type of TYPES) if (isImage(bytes, type)) return type;
+  return undefined;
+}
+
+/** The reference for a picture kept for a prompt at `file`, read from its header, or undefined when it isn't one or is gone. */
+function dropImage(file: string): ThreadImage | undefined {
+  const name = DROP_FILE.exec(file)?.[1];
+  if (!name) return undefined;
+  let fd: number | undefined;
+  try {
+    fd = openSync(file, 'r');
+    const bytes = Buffer.alloc(HEADER_BYTES);
+    const head = bytes.subarray(0, readSync(fd, bytes, 0, HEADER_BYTES, 0));
+    const type = pictureType(head);
+    return type ? { id: `drop.${name}`, type, ...imageSize(head, type) } : undefined;
+  } catch {
+    return undefined;
+  } finally {
+    if (fd !== undefined) closeSync(fd);
+  }
+}
+
+/**
+ * A prompt the office sent with pictures (withImages in shared/drops.ts): its own text, and the
+ * pictures in place of the paths listed after it. Undefined unless every one is still kept, so the
+ * numbers the owner wrote ("image 2") always match what they see.
+ */
+export function promptPictures(text: string): { text: string; images: ThreadImage[] } | undefined {
+  const split = splitImages(text);
+  if (!split || split.paths.length > IMAGES_PER_ENTRY) return undefined;
+  const images = split.paths.map(dropImage);
+  return images.every((image) => !!image) ? { text: split.text, images: images as ThreadImage[] } : undefined;
 }
 
 interface Picture {

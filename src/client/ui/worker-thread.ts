@@ -511,7 +511,8 @@ export function mountWorkerThread(net: Net, opts: ThreadOptions): WorkerThread {
       node.append(images ?? h('p.wt-turn', { class: row.tone }, row.text));
       return node;
     }
-    const text = loaded.get(row.id)?.text ?? '';
+    const entry = loaded.get(row.id);
+    const text = entry?.text ?? '';
     if (row.role === 'assistant') {
       if (row.startsTurn) node.append(h('div.wt-who', {}, author.name));
       const body = markdown(text);
@@ -519,6 +520,10 @@ export function mountWorkerThread(net: Net, opts: ThreadOptions): WorkerThread {
       node.append(body);
       return node;
     }
+    // The pictures sent with the prompt, above its text, in place of where the office kept them.
+    const sent = pictures(entry, 'Picture you sent');
+    if (sent) node.append(sent);
+    if (sent && !text.trim()) return node;
     const content = h('div.wt-user-content', { id: `wt-message-${author.id}-${row.id}`, class: expanded.has(row.id) ? '' : 'clamped' }, text);
     const more = h(
       'button.btn.sm.ghost.wt-message-more',

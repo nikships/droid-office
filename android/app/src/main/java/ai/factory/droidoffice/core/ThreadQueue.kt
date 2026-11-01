@@ -71,8 +71,10 @@ class ThreadQueue(saved: String? = null) {
                     if (entry.seq <= item.after) break
                     // Droid can drain consecutive queued text sends as one user message, without a separator.
                     joined += item.text
+                    // A prompt the office sent with pictures arrives as its own text, the pictures beside it (or alone).
                     val match = if (item.text.isNotEmpty()) entry.kind == ThreadKind.Text && entry.text?.trim() == joined
-                    else start == end && item.hasImage && entry.kind == ThreadKind.Notice && entry.text == "[Image attachment]"
+                    else start == end && item.hasImage &&
+                        ((entry.kind == ThreadKind.Notice && entry.text == "[Image attachment]") || (entry.kind == ThreadKind.Text && entry.text.isNullOrBlank() && entry.images.isNotEmpty()))
                     if (match) {
                         pending = pending.filterIndexed { index, _ -> index !in start..end }
                         consumed += entry.id

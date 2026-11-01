@@ -4,7 +4,7 @@ import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { DropStore, dropName, pictureExt } from '../src/server/drops.js';
-import { droppedPaths, withImages } from '../src/shared/drops.js';
+import { droppedPaths, splitImages, withImages } from '../src/shared/drops.js';
 
 function dataDir(t: { after(fn: () => void): void }) {
   const dir = mkdtempSync(path.join(tmpdir(), 'droid-office-drops-'));
@@ -70,6 +70,31 @@ test('a prompt lists its pictures after the text, numbered in the order they wer
   assert.equal(withImages('Fix this', ['/d/a.png', '/d/b.png']), 'Fix this\n\nImage 1: /d/a.png\nImage 2: /d/b.png');
   assert.equal(withImages('  ', ['/d/a.png']), 'Image 1: /d/a.png');
   assert.equal(withImages(' Fix this ', []), 'Fix this');
+});
+
+test('a prompt sent with pictures splits back into its text and their paths', () => {
+  for (const [text, paths] of [
+    ['Fix this', ['/d/a.png', '/d/b.png']],
+    ['', ['/d/a.png']],
+    ['Two lines\n\nand a gap', ['/d/my shot.png']],
+  ] as const) {
+    assert.deepEqual(splitImages(withImages(text, [...paths])), { text, paths });
+  }
+  assert.equal(splitImages('Fix this'), undefined);
+  assert.equal(splitImages('Fix this\nImage 1: /d/a.png'), undefined, 'the list follows a blank line');
+  assert.equal(splitImages('Fix this\n\nImage 2: /d/a.png'), undefined, 'numbered from 1');
+  assert.equal(splitImages('Fix this\n\nImage 1: /d/a.png\nImage 3: /d/b.png'), undefined);
+});
+
+test("a worker's prompt picture is served by its name there, and nothing else is", (t) => {
+  const store = new DropStore(dataDir(t));
+  const kept = store.save('w1', 'shot.png', 'image/png', PNG)!;
+  const name = path.basename(kept);
+  assert.deepEqual(store.picture('w1', name), { body: PNG, type: 'image/png' });
+  assert.equal(store.picture('w2', name), undefined);
+  const text = store.save('w1', 'notes.txt', 'text/plain', Buffer.from('not a picture'))!;
+  assert.equal(store.picture('w1', path.basename(text)), undefined);
+  for (const bad of [`../w2/${name}`, name.replace(/^[0-9a-f]{8}/, 'zzzzzzzz'), '', '..']) assert.equal(store.picture('w1', bad), undefined, bad);
 });
 
 test('staged pictures wait for a prompt, are copied to a worker when it is sent, and can be taken out', (t) => {

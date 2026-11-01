@@ -4,7 +4,7 @@ import { pageRows, presentThread, THREAD_MODEL_VERSION, type ThreadPresentation,
 import type { ThreadEntry, ThreadImage } from '../shared/worker-thread.js';
 import { LABEL_TEXT_CHARS } from '../shared/worker-labels.js';
 import { DROID_SESSIONS_DIR } from './droid-session.js';
-import { imageAddress, imageAt, imageRef, IMAGES_PER_ENTRY } from './thread-images.js';
+import { imageAddress, imageAt, imageRef, IMAGES_PER_ENTRY, promptPictures } from './thread-images.js';
 
 const PAGE_SIZE = 100;
 const FIELD_CHARS = 12_000;
@@ -351,8 +351,7 @@ export class WorkerThreadReader {
     }
     if (this.textOnly) return;
     if (typeof message.content === 'string') {
-      const text = clean(message.content);
-      if (text) this.add(state, { id: `${id}:text`, role, kind: 'text', text });
+      this.text(state, `${id}:text`, role, clean(message.content));
       return;
     }
     if (!Array.isArray(message.content)) return;
@@ -385,11 +384,20 @@ export class WorkerThreadReader {
       } else if (part.type === 'image') {
         const image = imageRef(part, `${offset}.${index}.x`);
         this.add(state, { id: partId, role, kind: 'notice', text: '[Image attachment]', ...(image ? { images: [image] } : {}) });
-      } else if (part.type === 'text' || part.type === 'thinking') {
-        const text = clean(part.type === 'text' ? part.text : part.thinking);
-        if (text) this.add(state, { id: partId, role, kind: part.type === 'thinking' ? 'thinking' : 'text', text });
+      } else if (part.type === 'text') {
+        this.text(state, partId, role, clean(part.text));
+      } else if (part.type === 'thinking') {
+        const text = clean(part.thinking);
+        if (text) this.add(state, { id: partId, role, kind: 'thinking', text });
       }
     }
+  }
+
+  /** A message's text. The owner's prompt shows the pictures it was sent with instead of where the office kept them. */
+  private text(state: Projection, id: string, role: 'user' | 'assistant', text: string): void {
+    const sent = role === 'user' ? promptPictures(text) : undefined;
+    if (sent) this.add(state, { id, role, kind: 'text', text: sent.text, images: sent.images });
+    else if (text) this.add(state, { id, role, kind: 'text', text });
   }
 
   /**

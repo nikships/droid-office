@@ -425,6 +425,9 @@ test('a thread shows the pictures a worker read and was sent, and opens them ful
       images: [{ id: '2210.0.1.deadbeef', type: 'image/png', width: 192, height: 192 }],
     },
     { id: 'answer', seq: 3, role: 'assistant', kind: 'text', text: 'It is the office icon.' },
+    // A prompt sent from a composer with pictures, and one with only a picture.
+    { id: 'prompt:0', seq: 4, role: 'user', kind: 'text', text: 'Compare these', images: [{ id: 'drop.0a1b2c3d-shot.png', type: 'image/png', width: 192, height: 192 }] },
+    { id: 'prompt-only:0', seq: 5, role: 'user', kind: 'text', text: '', images: [{ id: 'drop.4e5f6a7b-phone.jpg', type: 'image/jpeg', width: 540, height: 1200 }] },
   ];
   await page.evaluate(
     ({ entries, rows }) => {
@@ -446,6 +449,11 @@ test('a thread shows the pictures a worker read and was sent, and opens them ful
   assert.equal(await read.getAttribute('src'), `/api/thread/image?floor=floor-1&worker=${worker.id}&image=2210.0.1.deadbeef`);
   assert.equal(await read.getAttribute('loading'), 'lazy');
   assert.equal(await page.locator('.wt-tool .wt-output').textContent(), 'Read icon.png');
+  const prompt = page.locator('[data-entry="prompt:0"]');
+  assert.equal(await prompt.locator('.wt-image img').getAttribute('src'), `/api/thread/image?floor=floor-1&worker=${worker.id}&image=drop.0a1b2c3d-shot.png`);
+  assert.equal(await prompt.locator('.wt-user-content').textContent(), 'Compare these');
+  assert.equal(await page.locator('[data-entry="prompt-only:0"] .wt-image').getAttribute('aria-label'), 'Open Picture you sent');
+  assert.equal(await page.locator('[data-entry="prompt-only:0"] .wt-user-text').count(), 0, 'a prompt that was only a picture has no empty bubble');
   await page.locator('.wt-tool .wt-image').click();
   const viewer = page.locator('.modal.wt-picture-window');
   assert.equal(await viewer.locator('h2').textContent(), 'Read icon.png');
