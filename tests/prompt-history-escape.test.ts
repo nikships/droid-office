@@ -182,27 +182,10 @@ function fakeBrowser(t: TestContext) {
 }
 
 const keydownListeners = () => fakeWindow.listeners.filter((l) => l.type === 'keydown').length;
-const clickable = (root: FakeNode, label: string) => {
-  const find = (n: FakeNode): FakeNode | null => {
-    if (n.getAttribute('aria-label') === label) return n;
-    for (const c of n.children)
-      if (typeof c !== 'string') {
-        const hit = find(c);
-        if (hit) return hit;
-      }
-    return null;
-  };
-  const hit = find(root);
-  assert.ok(hit, label);
-  return hit;
-};
-
 interface Box {
   ta: FakeNode;
   extras: ReturnType<typeof promptExtras>;
   form: FakeNode;
-  history: FakeNode;
-  panelHidden(): boolean;
 }
 
 /** A prompt dialog the way prompt.ts builds it: the box first, then the window around it, or the other way round. */
@@ -234,42 +217,14 @@ function openPrompt(order: 'box-first' | 'modal-first', onClose?: () => void): B
     placeholder.remove();
     form.append(extras.element as unknown as FakeNode);
   }
-  const history = clickable(form, 'Prompt history');
-  const panel = (extras.element as unknown as FakeNode).children.find((c) => typeof c !== 'string' && c.classList.contains('prompt-history')) as FakeNode;
-  return { ta, extras, form, history, modal, panelHidden: () => panel.classList.contains('hidden') };
+  return { ta, extras, form, modal };
 }
 
 for (const order of ['box-first', 'modal-first'] as const) {
-  test(`Esc closes only the open History list and keeps the draft (${order})`, (t) => {
+  test(`Esc closes the prompt dialog (${order})`, (t) => {
     fakeBrowser(t);
     const box = openPrompt(order);
-    box.ta.value = 'UNSENT DRAFT';
-    box.history.click();
-    assert.equal(box.panelHidden(), false);
-    assert.equal(box.history.getAttribute('aria-expanded'), 'true');
-
-    const first = fakeWindow.press('Escape', box.history);
-    assert.equal(first.defaultPrevented, true);
-    assert.equal(box.panelHidden(), true);
-    assert.equal(box.history.getAttribute('aria-expanded'), 'false');
-    assert.equal(modalOpen(), true, 'the dialog stays open');
-    assert.equal(box.form.isConnected, true);
-    assert.equal(box.ta.value, 'UNSENT DRAFT');
-    assert.equal(fakeDocument.activeElement, box.ta, 'focus goes back to the box');
-
     fakeWindow.press('Escape', box.ta);
-    assert.equal(modalOpen(), false, 'the next Esc closes the dialog');
-  });
-
-  test(`Esc with the History list empty closes only the list (${order})`, (t) => {
-    fakeBrowser(t);
-    const box = openPrompt(order);
-    box.history.click();
-    assert.equal(box.panelHidden(), false);
-    fakeWindow.press('Escape');
-    assert.equal(box.panelHidden(), true);
-    assert.equal(modalOpen(), true);
-    fakeWindow.press('Escape');
     assert.equal(modalOpen(), false);
   });
 }
@@ -289,20 +244,24 @@ test('Esc with no list open closes the dialog as before, and it still lets go of
   assert.equal(fakeWindow.press('Escape').defaultPrevented, false);
 });
 
-test('picking a prompt from History closes the list and Esc then closes the dialog', (t) => {
+test('prompt history has no controls and keyboard recall preserves the draft', (t) => {
   const { storage } = fakeBrowser(t);
   storage.set('droid-office.prompt-history', JSON.stringify(['earlier prompt']));
   const box = openPrompt('box-first');
   box.ta.value = 'draft';
-  box.history.click();
-  const panel = (box.extras.element as unknown as FakeNode).children.find((c) => typeof c !== 'string' && c.classList.contains('prompt-history')) as FakeNode;
-  const row = (panel.children[0] as FakeNode).children[0] as FakeNode;
-  assert.equal(row.getAttribute('role'), 'option');
-  row.click();
+  box.ta.setSelectionRange(5, 5);
+  assert.equal(box.form.querySelector('.prompt-history-btn'), null);
+  assert.equal(box.form.querySelector('.prompt-history'), null);
+  const key = (name: string) => {
+    const event = { key: name, preventDefault() {} } as FakeEvent;
+    for (const listener of box.ta.listeners) if (listener.type === 'keydown') listener.fn(event);
+  };
+  key('ArrowUp');
   assert.equal(box.ta.value, 'earlier prompt');
-  assert.equal(box.panelHidden(), true);
-  fakeWindow.press('Escape');
-  assert.equal(modalOpen(), false);
+  key('ArrowDown');
+  assert.equal(box.ta.value, 'draft');
+  box.extras.sent('new prompt');
+  assert.deepEqual(JSON.parse(storage.get('droid-office.prompt-history') ?? '[]'), ['new prompt', 'earlier prompt']);
 });
 
 test('old saved presets do not add chips to the prompt box', (t) => {
@@ -311,22 +270,6 @@ test('old saved presets do not add chips to the prompt box', (t) => {
   const box = openPrompt('box-first');
   assert.equal(box.form.querySelector('.prompt-presets'), null);
   assert.equal(box.form.querySelector('.chip'), null);
-  box.history.click();
-  assert.equal(box.panelHidden(), false, 'prompt history still opens');
-});
-
-test('a popup inside a lower window does not take the Esc meant for the one on top', (t) => {
-  fakeBrowser(t);
-  const lower = openPrompt('box-first');
-  lower.history.click();
-  const upper = fakeDocument.createElement('div');
-  openModal(upper as unknown as HTMLElement);
-  fakeWindow.press('Escape');
-  assert.equal(lower.panelHidden(), false, 'the list under the top window is left alone');
-  assert.equal(modalOpen(), true, 'only the top window closed');
-  fakeWindow.press('Escape');
-  assert.equal(lower.panelHidden(), true);
-  assert.equal(modalOpen(), true);
 });
 
 test('the newest claim wins, a claim that declines passes Esc on, and a withdrawn claim is gone', (t) => {

@@ -25,7 +25,7 @@ export interface PromptOptions {
   /** Take pictures pasted or dropped into the prompt: for a prompt that goes to an agent. */
   imagesOption?: boolean;
   /**
-   * Chips and the prompt history. On unless this box is a shell command, a commit message, or a
+   * Prompt history. On unless this box is a shell command, a commit message, or a
    * pull-request description (`recall: false`). Not tied to pictures.
    */
   recall?: boolean;
