@@ -37,6 +37,12 @@ export interface CloudHire {
   cwd?: string;
 }
 
+/** The `cloud` of a `worker.spawn` for a hire dialog's pick: the Environment, else the computer, and the folder typed (none for its home). */
+export function cloudHire(pick: { computerId: string; environmentId?: string; cwd: string }): CloudHire {
+  const cwd = pick.cwd.trim();
+  return { ...(pick.environmentId ? { environmentId: pick.environmentId } : { computerId: pick.computerId }), ...(cwd ? { cwd } : {}) };
+}
+
 /** The cloud slice of FactoryState: when the office last read its cloud workers' sessions, and why the last read failed. */
 export interface FactoryCloudState {
   fetchedAt: number;

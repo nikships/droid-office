@@ -8,7 +8,7 @@ import { slashCommands, slashOf, slashRefusal, slashSuggestions, type DroidSlash
 import { ThreadQueue } from '../../shared/thread-queue';
 import type { Net } from '../net';
 import { ThreadHistory } from '../thread-history';
-import { threadSnapshotError, threadStarting } from '../thread-startup';
+import { cloudStarting, threadSnapshotError, threadStarting } from '../thread-startup';
 import { TeamThread, TeamThreadPaint, teamThreadVisible } from '../team-thread';
 import { h, STATUS_LABEL } from './dom';
 import { icon } from './icons';
@@ -21,6 +21,8 @@ export interface WorkerThread {
   entries(): readonly ThreadEntry[];
   update(worker: WorkerInfo, connected: boolean): void;
   activate(active: boolean): void;
+  /** Takes pictures dropped on `zone` too, marking `mark` while they're over it. */
+  dropZone(zone: HTMLElement, mark?: HTMLElement): void;
   dispose(): void;
 }
 
@@ -31,7 +33,10 @@ export interface ThreadOptions {
   draft: string;
   onDraft(text: string): void;
   send(msg: ClientMsg): Promise<string | undefined>;
-  raw(): void;
+  /** Opens the worker's terminal. A cloud worker has none. */
+  raw?(): void;
+  /** The window around the thread already shows a cloud worker's `cloud.error`. */
+  cloudErrorShown?: boolean;
   /** The worker's terminal as text, one string per row, or undefined before it has drawn one. */
   screen?(): readonly string[] | undefined;
   onEntries?(): void;
@@ -70,14 +75,23 @@ const localQueues = new Map<string, ThreadQueue>();
 
 const shortcut = (key: string, label: string) => h('span.wt-shortcut', {}, h('span.key', {}, key), label);
 
-/** Local sessions only. This view reads JSONL and uses the existing worker actions, never a second Droid. */
+/**
+ * A worker's conversation: a local session's JSONL, or a cloud worker's Factory session, which the
+ * office projects into the same entries. It uses the existing worker actions, never a second Droid.
+ * A cloud worker has no terminal here: no Raw TTY, slash commands or screen to read its queue from,
+ * Stop interrupts its session, and Factory holds a message sent during a turn until the turn is over.
+ */
 export function mountWorkerThread(net: Net, opts: ThreadOptions): WorkerThread {
   let worker = opts.worker;
+  const cloud = !!worker.cloud;
+  const screen = cloud ? undefined : opts.screen;
+  const fallback = cloud ? 'open it in Factory' : 'open Raw TTY';
   let connected = false;
   let active = false;
   let disposed = false;
   let sending = false;
   let resuming = false;
+  let stopping = false;
   let received = false;
   // Start the grace clock on the first read, not during potentially long worktree setup.
   let startupReadUntil = threadStarting(worker) ? Infinity : 0;
@@ -123,7 +137,7 @@ export function mountWorkerThread(net: Net, opts: ThreadOptions): WorkerThread {
   // confirmations would answer a confirmed send with a refusal after typing the keys anyway.
   const typeKeys = (data: string) => net.send({ t: 'term.input', workerId: worker.id, data });
   const clearQueue = () => {
-    const rows = opts.screen?.();
+    const rows = screen?.();
     if (!rows || !readDroidQueue(rows)?.length) {
       paintQueue();
       return;
@@ -134,7 +148,7 @@ export function mountWorkerThread(net: Net, opts: ThreadOptions): WorkerThread {
   // Droid's own queue, read off its screen, is what waits: messages sent from here fill in the rows it cut short.
   const paintQueue = () => {
     queued.sync(worker.sessionId, history.entries);
-    const rows = opts.screen?.();
+    const rows = screen?.();
     const droid = rows ? readDroidQueue(rows) : undefined;
     const shown = queued.shown(droid);
     if (queued.pending.length) localQueues.set(opts.queueKey, queued);
@@ -180,7 +194,7 @@ export function mountWorkerThread(net: Net, opts: ThreadOptions): WorkerThread {
     },
     'Retry',
   );
-  const raw = h('button.btn.sm', { type: 'button', onclick: opts.raw }, 'Open Raw TTY');
+  const raw = opts.raw && !cloud ? h('button.btn.sm', { type: 'button', onclick: opts.raw }, 'Open Raw TTY') : null;
   const resume = h(
     'button.btn.wt-resume',
     {
@@ -225,10 +239,10 @@ export function mountWorkerThread(net: Net, opts: ThreadOptions): WorkerThread {
   let slashCursor = 0;
   let slashClosed = false;
   // The built-in commands at once; the worker's skills and custom commands once its droid lists them.
-  let slashList = slashCommands();
+  let slashList = cloud ? [] : slashCommands();
   let slashAsked = 0;
   const loadSlash = () => {
-    if (worker.kind !== 'agent' || Date.now() - slashAsked < 60_000) return;
+    if (cloud || worker.kind !== 'agent' || Date.now() - slashAsked < 60_000) return;
     slashAsked = Date.now();
     fetch(withToken(`/api/agents/droid/commands?worker=${encodeURIComponent(worker.id)}`), { credentials: 'same-origin', cache: 'no-store' })
       .then((res) => {
@@ -660,11 +674,12 @@ export function mountWorkerThread(net: Net, opts: ThreadOptions): WorkerThread {
   let emptyKey = '';
   const paintEmpty = () => {
     const starting = threadStarting(worker);
-    const key = JSON.stringify([error, received, starting, connected]);
+    const cloudWaiting = received && cloudStarting(worker, Date.now());
+    const key = JSON.stringify([error, received, starting, cloudWaiting, connected]);
     if (key === emptyKey) return;
     emptyKey = key;
     empty.setAttribute('aria-busy', String(connected && !error && !received));
-    if (error) empty.textContent = 'Conversation unavailable. Retry below, or open Raw TTY.';
+    if (error) empty.textContent = `Conversation unavailable. Retry below, or ${fallback}.`;
     else if (!connected) empty.textContent = 'Waiting for the office to reconnect…';
     else if (!received)
       empty.replaceChildren(
@@ -672,6 +687,8 @@ export function mountWorkerThread(net: Net, opts: ThreadOptions): WorkerThread {
         h('b', {}, starting ? 'Starting worker…' : 'Reading the conversation…'),
         h('p', {}, starting ? 'Preparing the workspace and starting Droid. This can take a moment.' : 'Messages will appear here as soon as they’re ready.'),
       );
+    else if (cloudWaiting)
+      empty.replaceChildren(h('span.spinner.wt-loading-spinner', { 'aria-hidden': true }), h('b', {}, `Starting on ${worker.cloud?.computerName}…`), h('p', {}, 'Its messages appear here as Factory lists them, a few seconds behind.'));
     else empty.replaceChildren(h('span.wt-empty-mark', { 'aria-hidden': true }), h('b', {}, 'Start a conversation'), h('p', {}, 'Your messages and the worker’s replies will appear here.'));
   };
   const paintEntries = (older: boolean) => {
@@ -752,7 +769,8 @@ export function mountWorkerThread(net: Net, opts: ThreadOptions): WorkerThread {
     progressDetail.hidden = !detail;
   };
   const updateControls = () => {
-    const allowed = active && connected && !disposed && !isAsleep(worker.status) && !worker.lost;
+    const broken = worker.cloud?.error;
+    const allowed = active && connected && !disposed && !isAsleep(worker.status) && !worker.lost && !broken;
     const waiting = worker.status === 'needs_input';
     form.hidden = waiting;
     if (needsOwnerInput(worker) && !waitingShown) requestAnimationFrame(() => opts.question.scrollIntoView({ block: 'nearest' }));
@@ -761,24 +779,32 @@ export function mountWorkerThread(net: Net, opts: ThreadOptions): WorkerThread {
     attach.disabled = input.disabled;
     const busy = isBusy(worker.status);
     send.disabled = input.disabled;
-    queue.hidden = !busy;
+    // Factory holds a cloud worker's message until its turn is over: there's nothing to steer with.
+    queue.hidden = !busy || cloud;
     queue.disabled = input.disabled || !received || !!slashOf(input.value);
     stop.hidden = !busy && !waiting;
-    stop.disabled = !allowed || sending;
-    sendLabel.textContent = sending ? 'Sending…' : busy ? 'Send now' : 'Send';
-    send.title = busy ? `Steer ${worker.name}: it reads this now, during the turn` : '';
-    input.placeholder = busy ? `Steer ${worker.name}, or queue for after this turn…` : `Reply to ${worker.name}…`;
-    hint.replaceChildren(...(busy ? [shortcut('Enter', 'steer'), shortcut('Ctrl Enter', 'queue'), shortcut('⇧ Enter', 'new line')] : [shortcut('Enter', 'send'), shortcut('⇧ Enter', 'new line'), shortcut('/', 'commands')]));
+    stop.disabled = !allowed || sending || stopping;
+    sendLabel.textContent = sending ? 'Sending…' : busy ? (cloud ? 'Queue' : 'Send now') : 'Send';
+    send.title = busy ? (cloud ? `Sent to ${worker.name} once this turn is over` : `Steer ${worker.name}: it reads this now, during the turn`) : '';
+    input.placeholder = broken ? `${worker.name} can’t take messages` : busy ? (cloud ? `Queue a message for after this turn…` : `Steer ${worker.name}, or queue for after this turn…`) : `Reply to ${worker.name}…`;
+    hint.replaceChildren(
+      ...(cloud
+        ? [shortcut('Enter', busy ? 'queue' : 'send'), shortcut('⇧ Enter', 'new line')]
+        : busy
+          ? [shortcut('Enter', 'steer'), shortcut('Ctrl Enter', 'queue'), shortcut('⇧ Enter', 'new line')]
+          : [shortcut('Enter', 'send'), shortcut('⇧ Enter', 'new line'), shortcut('/', 'commands')]),
+    );
     earlier.disabled = !!pending || !connected;
     retry.classList.toggle('hidden', !error);
     retry.disabled = !connected || !!pending;
     empty.classList.toggle('error', !!error && !history.entries.length);
     if (!history.entries.length) paintEmpty();
-    notice.textContent = connected ? error || told || (isAsleep(worker.status) ? 'Resume this worker to send another message.' : '') : '';
-    raw.classList.toggle('hidden', !connected || !error);
-    resume.hidden = !isAsleep(worker.status);
+    notice.textContent = connected ? error || told || (broken && !opts.cloudErrorShown ? `${worker.name} can’t work: ${broken}` : '') || (isAsleep(worker.status) ? 'Resume this worker to send another message.' : '') : '';
+    raw?.classList.toggle('hidden', !connected || !error);
+    // A cloud worker's Resume reads its Factory session again, which is also how one that broke is checked.
+    resume.hidden = !isAsleep(worker.status) && !broken;
     resume.disabled = !active || !connected || !!worker.lost || resuming;
-    resume.textContent = resuming ? 'Resuming…' : 'Resume';
+    resume.textContent = broken ? (resuming ? 'Checking…' : 'Check again') : resuming ? 'Resuming…' : 'Resume';
     element.classList.toggle('has-feedback', !!notice.textContent);
     paintQueue();
     paintProgress();
@@ -816,7 +842,7 @@ export function mountWorkerThread(net: Net, opts: ThreadOptions): WorkerThread {
     if (!msg.error) {
       if (worker.sessionId && msg.sessionId !== worker.sessionId) return;
       history.apply(msg);
-      if (history.unsupported) error = 'This office sent a Thread this page can’t read. Reload the page, or open Raw TTY.';
+      if (history.unsupported) error = `This office sent a Thread this page can’t read. Reload the page, or ${fallback}.`;
       opts.onEntries?.();
       received = true;
       paintEntries(older);
@@ -826,7 +852,7 @@ export function mountWorkerThread(net: Net, opts: ThreadOptions): WorkerThread {
   const submit = async (queueSend = false) => {
     if ((queueSend ? queue.disabled || queue.hidden : send.disabled) || sending) return;
     const text = input.value.trim();
-    const refused = slashRefusal(text, worker.name, isBusy(worker.status));
+    const refused = cloud ? undefined : slashRefusal(text, worker.name, isBusy(worker.status));
     if (refused) {
       told = refused;
       updateControls();
@@ -841,7 +867,7 @@ export function mountWorkerThread(net: Net, opts: ThreadOptions): WorkerThread {
       updateControls();
       return;
     }
-    const queueReceipt = queueSend && isBusy(worker.status);
+    const queueReceipt = (queueSend || cloud) && isBusy(worker.status);
     const after = queued.sequence;
     const hasImage = images.ids().length > 0;
     const result = await opts.send({ t: 'worker.prompt', workerId: worker.id, prompt: text, images: images.ids(), queue: queueSend });
@@ -860,10 +886,20 @@ export function mountWorkerThread(net: Net, opts: ThreadOptions): WorkerThread {
     error = result ?? '';
     updateControls();
     // Droid answers most of its slash commands with a dialog, which only its terminal shows.
-    if (!result && slashOf(text)?.command?.kind === 'tty') opts.raw();
+    if (!result && !cloud && slashOf(text)?.command?.kind === 'tty') opts.raw?.();
   };
   const stopTurn = () => {
     if (stop.disabled) return;
+    if (cloud) {
+      stopping = true;
+      updateControls();
+      void opts.send({ t: 'worker.interrupt', workerId: worker.id }).then((why) => {
+        stopping = false;
+        told = why ?? '';
+        updateControls();
+      });
+      return;
+    }
     // Escape is the CLI's own cancel path, and requires the normal worker attachment.
     told = typeKeys('\u001b') ? '' : 'Disconnected. Nothing was sent.';
     updateControls();
@@ -899,7 +935,7 @@ export function mountWorkerThread(net: Net, opts: ThreadOptions): WorkerThread {
     }
     if (event.key === 'Enter' && !event.shiftKey) {
       event.preventDefault();
-      void submit((event.ctrlKey || event.metaKey) && isBusy(worker.status));
+      void submit(!cloud && (event.ctrlKey || event.metaKey) && isBusy(worker.status));
     }
   });
   const off = net.onMessage(receive);
@@ -907,9 +943,10 @@ export function mountWorkerThread(net: Net, opts: ThreadOptions): WorkerThread {
     if (!active || !connected || document.hidden) return;
     readTeam();
     paintQueue();
-    if (pending && Date.now() - pending.at > 8000) {
+    // A cloud worker's conversation is a read of its Factory session, which can take a while.
+    if (pending && Date.now() - pending.at > (cloud ? 20_000 : 8000)) {
       pending = undefined;
-      error = 'The office did not return this conversation. Retry, or use Raw TTY on an older office.';
+      error = cloud ? 'The office did not return this conversation. Retry, or open it in Factory.' : 'The office did not return this conversation. Retry, or use Raw TTY on an older office.';
       updateControls();
     }
     if (!error) read();
@@ -947,6 +984,7 @@ export function mountWorkerThread(net: Net, opts: ThreadOptions): WorkerThread {
       read();
       readTeam();
     },
+    dropZone: (zone, mark) => images.dropZone(zone, mark),
     activate(on) {
       if (active === on) return;
       active = on;

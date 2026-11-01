@@ -24,6 +24,7 @@ export class CloudStreamMessages {
   private messages: FactoryMessage[];
   private pending = new Map<string, Map<number, FactoryBlock>>();
   private finished = new Set<string>();
+  private retracted = new Set<string>();
 
   constructor(
     messages: readonly FactoryMessage[] = [],
@@ -39,7 +40,7 @@ export class CloudStreamMessages {
 
   /** REST pages and reconnect snapshots enrich what's held, without erasing newer live content. */
   merge(page: readonly FactoryMessage[], older = false): FactoryMessage[] {
-    for (const message of page) this.upsert(message, false, older);
+    for (const message of page) if (!this.retracted.has(message.id)) this.upsert(message, false, older);
     return this.messages;
   }
 
@@ -56,8 +57,13 @@ export class CloudStreamMessages {
         const message = messageOf(raw);
         this.finished.add(raw.id);
         this.pending.delete(raw.id);
-        if (message) this.upsert(message, true);
-        else this.messages = this.messages.filter((m) => m.id !== raw.id);
+        if (message) {
+          this.retracted.delete(raw.id);
+          this.upsert(message, true);
+        } else {
+          this.retracted.add(raw.id);
+          this.messages = this.messages.filter((m) => m.id !== raw.id);
+        }
         break;
       }
       case 'assistant_text_delta':
@@ -88,10 +94,12 @@ export class CloudStreamMessages {
         if (typeof n.messageId === 'string') {
           this.pending.delete(n.messageId);
           this.finished.add(n.messageId);
+          this.retracted.add(n.messageId);
         }
         break;
     }
     while (this.finished.size > LIMIT * 2) this.finished.delete(this.finished.values().next().value!);
+    while (this.retracted.size > LIMIT * 2) this.retracted.delete(this.retracted.values().next().value!);
     return this.messages;
   }
 

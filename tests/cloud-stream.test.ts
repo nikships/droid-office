@@ -193,6 +193,7 @@ test('live messages: text/thinking deltas, final upsert, seq adoption and late R
   assert.equal(cloudEntries(messages.values()).at(-1)!.kind, 'thinking');
   assert.equal(cloudEntries(messages.values()).at(-1)!.text, 'Considering a plan');
   messages.event({ type: 'assistant_message_retracted', messageId: 'thinking' });
+  messages.snapshot([{ ...ASSISTANT, id: 'thinking' }]);
   assert.equal(cloudEntries(messages.values()).length, 2);
   const pending = new CloudStreamMessages();
   pending.event({ ...DELTA, textDelta: 'o' });
@@ -535,6 +536,20 @@ test('cloud feature: prior completion cannot finish a newer prompt awaiting acce
   r.client.notify({ type: 'droid_working_state_changed', newState: 'thinking' });
   r.client.notify({ ...COMPLETE, turnId: 'next-user' });
   assert.equal(r.cloud.get(r.worker.id)!.status, 'done');
+});
+
+test('cloud feature: idle snapshots finish restored turns but cannot rewind notifications during load', async (t) => {
+  const restored = featureRig(t, async () => json({}));
+  restored.cloud.setStatus(restored.worker.id, 'working');
+  restored.cloud.update(restored.worker.id, (_, w) => {
+    w.turn = { seenBusy: true };
+  });
+  await restored.feature.stream!.sync();
+  assert.equal(restored.cloud.get(restored.worker.id)!.status, 'done');
+  const active = featureRig(t, async () => json({}));
+  active.client.duringLoad = () => active.client.notify({ type: 'droid_working_state_changed', newState: 'thinking' });
+  await active.feature.stream!.sync();
+  assert.equal(active.cloud.get(active.worker.id)!.status, 'working');
 });
 
 test('reader: a streamed snapshot with older history obtains a REST cursor and pages back', async () => {

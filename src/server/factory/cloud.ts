@@ -155,11 +155,13 @@ export class CloudFeature extends SliceFeature<'cloud'> {
           this.streamRevisions.clear();
           this.acceptedAt.clear();
         },
-        snapshot: (id, snapshot) => {
+        snapshot: (id, snapshot, liveChanged) => {
           const session = record(snapshot.session);
           this.threads.streamSnapshot(id, Array.isArray(session.messages) ? session.messages : [], snapshot.hasOlderMessages === true);
-          this.streamMetadata(id, record(snapshot.settings), session.title);
-          if (snapshot.workingState !== 'idle') this.streamState(id, snapshot.workingState);
+          if (!liveChanged) {
+            this.streamMetadata(id, record(snapshot.settings), session.title);
+            this.streamState(id, snapshot.workingState);
+          }
           this.streamPaint(id);
         },
         notification: (id, n) => this.streamEvent(id, n),
@@ -510,13 +512,9 @@ export class CloudFeature extends SliceFeature<'cloud'> {
     });
     floor.cloud.setStatus(id, 'working');
     try {
-      const r = await this.whileNew(info, () =>
-        api.post<{ status?: unknown }>(`/sessions/${encodeURIComponent(info.sessionId!)}/messages`, { text: lead ? `${lead}\n\n${message}` : message, ...(pictures.length ? { images: pictures } : {}) }),
-      );
-      if (r?.status === 'running' || r?.status === 'pending')
-        floor.cloud.update(id, (_, w) => {
-          w.turn = { ...w.turn, seenBusy: true };
-        });
+      // The answer's own "running" doesn't count as seeing the turn run: a read right after it can still
+      // say idle from before the message, which would end the turn before it began.
+      await this.whileNew(info, () => api.post<{ status?: unknown }>(`/sessions/${encodeURIComponent(info.sessionId!)}/messages`, { text: lead ? `${lead}\n\n${message}` : message, ...(pictures.length ? { images: pictures } : {}) }));
     } catch (err) {
       floor.cloud.update(id, (i, w) => {
         w.turn = was;

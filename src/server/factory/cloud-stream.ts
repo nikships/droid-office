@@ -34,7 +34,7 @@ export interface CloudStreamOptions {
   api(): FactoryApi | undefined;
   key(): string | undefined;
   sources(): Iterable<CloudStreamSource>;
-  snapshot(sessionId: string, snapshot: Record<string, unknown>): void;
+  snapshot(sessionId: string, snapshot: Record<string, unknown>, liveChanged: boolean): void;
   notification(sessionId: string, notification: Record<string, unknown>): void;
   reset(): void;
   now?: () => number;
@@ -48,6 +48,7 @@ interface Connection {
   loaded: Set<string>;
   client?: CloudStreamClient;
   connecting?: Promise<void>;
+  loading?: { sessionId: string; changed: boolean };
   ready: boolean;
   failures: number;
   retryAt: number;
@@ -159,6 +160,7 @@ export class CloudStream {
     const client = c.client;
     c.client = undefined;
     c.ready = false;
+    c.loading = undefined;
     c.loaded.clear();
     client?.disconnect();
   }
@@ -196,6 +198,7 @@ export class CloudStream {
           const params = record(message.params);
           if (message.type !== 'notification' || message.method !== 'daemon.session_notification' || typeof params.sessionId !== 'string' || !c.sessions.has(params.sessionId)) return;
           const n = record(params.notification);
+          if (c.loading?.sessionId === params.sessionId) c.loading.changed = true;
           if (['session_process_exited', 'session_inactivity', 'session_closed', 'session_unsubscribed'].includes(String(n.type))) c.loaded.delete(params.sessionId);
           this.opts.notification(params.sessionId, n);
         });
@@ -209,10 +212,13 @@ export class CloudStream {
       if (!client) return;
       for (const sessionId of c.sessions) {
         if (c.loaded.has(sessionId)) continue;
+        const loading = { sessionId, changed: false };
+        c.loading = loading;
         const snapshot = await client.loadSession({ sessionId, token: key, messageLimit: 100 });
         if (!this.current(c, key, client)) return;
+        c.loading = undefined;
         if (!c.sessions.has(sessionId)) continue;
-        this.opts.snapshot(sessionId, record(snapshot));
+        this.opts.snapshot(sessionId, record(snapshot), loading.changed);
         c.loaded.add(sessionId);
       }
       c.failures = 0;
