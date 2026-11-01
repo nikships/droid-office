@@ -220,6 +220,17 @@ object Tags {
 
         /** Why a model in the list can't be chosen, or the quiet note that DroidProxy will be started. */
         fun modelWhy(id: String) = "hire.model_why/$id"
+
+        /** Where a Droid runs, shown while the office is connected to Factory and has a computer or Environment to offer. */
+        const val RUNS_ON = "hire.runs_on"
+        /** The folder on that computer, and the note under it. */
+        const val FOLDER = "hire.folder"
+        const val FOLDER_NOTE = "hire.folder_note"
+        /** The model picked can't run on a Factory computer. */
+        const val CLOUD_MODEL = "hire.cloud_model"
+
+        /** A "Runs on" choice: `local` for this machine, `env:<environmentId>` or a computer's id. */
+        fun runsOn(key: String) = "hire.runs_on/${key.ifEmpty { "local" }}"
     }
 
     object HostUpdate {
@@ -260,6 +271,8 @@ object Tags {
         const val ASLEEP = "worker.asleep"
         const val ASLEEP_RESUME = "worker.asleep.resume"
         const val CLOUD = "worker.cloud"
+        /** Why a cloud worker can't work right now, above its composer; Send is off while it shows. */
+        const val CLOUD_ERROR = "worker.cloud.error"
         const val GONE = "worker.gone"
         const val GONE_BACK = "worker.gone.back"
         const val KEYS = "worker.keys"

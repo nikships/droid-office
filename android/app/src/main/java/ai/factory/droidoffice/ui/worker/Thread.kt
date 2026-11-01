@@ -174,6 +174,8 @@ internal fun Thread(
     onTty: () -> Unit,
     /** Goes up when the owner sends a message from the composer: the thread follows the latest again. */
     followRequest: Int = 0,
+    /** It has a terminal to fall back on; a cloud worker doesn't. */
+    rawTty: Boolean = true,
 ) {
     val graph = LocalGraph.current
     val connection = graph.connection
@@ -404,7 +406,7 @@ internal fun Thread(
                 modifier = Modifier.fillMaxSize().tagged(Tags.Worker.THREAD_LIST),
                 contentPadding = PaddingValues(start = side, end = side, top = 4.dp, bottom = 16.dp),
             ) {
-                item(key = HEAD) { Head(w, state, connected, onEarlier = ::earlier, onRetry = ::retry, onTty = onTty) }
+                item(key = HEAD) { Head(w, state, connected, rawTty, onEarlier = ::earlier, onRetry = ::retry, onTty = onTty) }
                 itemsIndexed(rows, key = { _, r -> r.id }, contentType = { _, r -> r::class }) { i, r ->
                     Box(Modifier.padding(top = gap(if (i > 0) rows[i - 1] else null, r))) {
                         when (r) {
@@ -630,10 +632,10 @@ private fun QuietButton(text: String, icon: androidx.compose.ui.graphics.vector.
 
 /** The top of the list: load earlier, the start of the session, or why there's nothing to show. */
 @Composable
-private fun Head(w: WorkerInfo, state: ThreadState, connected: Boolean, onEarlier: () -> Unit, onRetry: () -> Unit, onTty: () -> Unit) {
+private fun Head(w: WorkerInfo, state: ThreadState, connected: Boolean, rawTty: Boolean, onEarlier: () -> Unit, onRetry: () -> Unit, onTty: () -> Unit) {
     Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
         if (state.entries.isEmpty() || state.support != ThreadSupport.Supported) {
-            Empty(w, state, connected, onRetry, onTty)
+            Empty(w, state, connected, rawTty, onRetry, onTty)
             return@Column
         }
         when {
@@ -669,7 +671,7 @@ private fun Head(w: WorkerInfo, state: ThreadState, connected: Boolean, onEarlie
 
 /** Loading, empty, unavailable, unreadable, failed or disconnected: what it means, and what can be done about it. */
 @Composable
-private fun Empty(w: WorkerInfo, state: ThreadState, connected: Boolean, onRetry: () -> Unit, onTty: () -> Unit) {
+private fun Empty(w: WorkerInfo, state: ThreadState, connected: Boolean, rawTty: Boolean, onRetry: () -> Unit, onTty: () -> Unit) {
     data class Look(val title: String, val body: String, val color: Color, val retry: Boolean, val tty: Boolean)
     val look = when {
         !connected -> Look("Not connected", "Not connected. The thread loads once the phone reaches the office.", Palette.TextSecondary, retry = false, tty = true)
@@ -677,6 +679,7 @@ private fun Empty(w: WorkerInfo, state: ThreadState, connected: Boolean, onRetry
             Look(state.support.title.orEmpty(), state.support.message.orEmpty(), Palette.Warning, retry = false, tty = true)
         state.phase == ThreadPhase.Loading -> Look("Loading the conversation", "Loading the thread…", Palette.TextSecondary, retry = false, tty = false)
         state.phase == ThreadPhase.Error -> Look("Couldn't read the thread", "The office couldn't read the thread: ${state.error ?: "no reason given"}.", Palette.Danger, retry = true, tty = true)
+        state.phase == ThreadPhase.Unavailable && !rawTty -> Look("No thread to show", "This office can't read this worker's Factory session yet. Update Droid Office on your computer, or try again.", Palette.Warning, retry = true, tty = false)
         state.phase == ThreadPhase.Unavailable -> Look("No thread to show", "This office doesn't send threads, or can't read this worker's session. Raw TTY shows everything.", Palette.Warning, retry = true, tty = true)
         else -> Look("Start a conversation", "Your messages and the worker’s replies will appear here.", Palette.TextTertiary, retry = false, tty = false)
     }
@@ -697,10 +700,11 @@ private fun Empty(w: WorkerInfo, state: ThreadState, connected: Boolean, onRetry
             look.body, style = MaterialTheme.typography.bodySmall, color = Palette.TextSecondary, textAlign = TextAlign.Center,
             modifier = Modifier.widthIn(max = 300.dp).padding(top = 4.dp).semantics { liveRegion = LiveRegionMode.Polite }.tagged(Tags.Worker.THREAD_STATE),
         )
-        if (look.retry || look.tty) {
+        val tty = look.tty && rawTty
+        if (look.retry || tty) {
             Row(Modifier.padding(top = 18.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 if (look.retry) QuietButton("Try again", OfficeIcons.Retry, Tags.Worker.THREAD_RETRY, connected, onRetry)
-                QuietButton("Raw TTY", OfficeIcons.Terminal, Tags.Worker.THREAD_RAW_TTY, true, onTty)
+                if (tty) QuietButton("Raw TTY", OfficeIcons.Terminal, Tags.Worker.THREAD_RAW_TTY, true, onTty)
             }
         }
     }

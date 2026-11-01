@@ -216,12 +216,14 @@ fun WorkerScreen(workerId: String, onBack: () -> Unit, embedded: Boolean = false
         // after the owner picks one.
         val store by graph.store.snapshot.collectAsStateWithLifecycle()
         val scope = rememberCoroutineScope()
-        val threadable = !worker.isShell && !worker.isCloud
+        val threadable = !worker.isShell
+        // A cloud worker has no terminal here: its Thread is all there is to show.
+        val cloud = worker.isCloud
         var ttyChoice by rememberSaveable(workerId) { mutableStateOf<Boolean?>(if (draft != null) true else null) }
         var directInput by rememberSaveable(workerId) { mutableStateOf(false) }
         var composerFocus by remember(workerId) { mutableIntStateOf(0) }
         var sent by remember(workerId) { mutableIntStateOf(0) }
-        val tty = ttyChoice ?: if (threadable && store.settings.threadView) false else (link.phase != Phase.Connected || !Asks.canAnswer(worker, screen))
+        val tty = !cloud && (ttyChoice ?: if (threadable && store.settings.threadView) false else (link.phase != Phase.Connected || !Asks.canAnswer(worker, screen)))
         LaunchedEffect(workerId, screen, store.loaded) {
             if (ttyChoice == null && screen != null && store.loaded) ttyChoice = tty
         }
@@ -231,7 +233,7 @@ fun WorkerScreen(workerId: String, onBack: () -> Unit, embedded: Boolean = false
             if (store.settings.threadView == it) scope.launch { graph.store.settings { s -> s.copy(threadView = !it) } }
         }
         // The view switch shares the PR and branch row. Send home stays in the header.
-        if (threadable) Column(Modifier.fillMaxWidth().background(Palette.Bg)) {
+        if (threadable && !cloud) Column(Modifier.fillMaxWidth().background(Palette.Bg)) {
             Actions(worker, lead = { InlineViewToggle(tty, pickView) })
             Box(Modifier.fillMaxWidth().height(4.dp))
             Box(Modifier.fillMaxWidth().height(1.dp).background(Palette.Border))
@@ -274,6 +276,7 @@ fun WorkerScreen(workerId: String, onBack: () -> Unit, embedded: Boolean = false
             onQueueChanged = { queueRevision++ },
             onTty = { ttyChoice = true },
             followRequest = sent,
+            rawTty = !cloud,
         ) else Box(Modifier.weight(1f).fillMaxWidth().padding(horizontal = 10.dp)) {
             Terminal(
                 workerId, screen, if (phone) TermView.Phone else TermView.Desktop, live && link.phase == Phase.Connected,
@@ -281,7 +284,7 @@ fun WorkerScreen(workerId: String, onBack: () -> Unit, embedded: Boolean = false
                 onFit = { phoneSize = it },
                 directInput = directInput && !worker.isCloud,
             )
-            if (worker.isCloud) Cloud(worker) else if (worker.state.asleep) Asleep(worker)
+            if (worker.state.asleep) Asleep(worker)
         }
         if (live) {
             val lift = LocalSnackbarLift.current
@@ -304,6 +307,8 @@ fun WorkerScreen(workerId: String, onBack: () -> Unit, embedded: Boolean = false
                 if (waiting) ThreadWaiting(worker, onTty = { ttyChoice = true })
                 val snackbar = LocalSnackbar.current
                 val connected = link.phase == Phase.Connected
+                val cloudError = worker.cloud?.error?.ifBlank { null }
+                if (cloud && cloudError != null) CloudError(worker, cloudError)
                 Composer(
                     worker, draft, visible = !waiting && (!directInput || !tty || worker.isCloud), focusRequest = composerFocus, thread = !tty,
                     queueState = queueState, onQueued = { queueRevision++ },
@@ -312,7 +317,7 @@ fun WorkerScreen(workerId: String, onBack: () -> Unit, embedded: Boolean = false
                         // A slash command that opens one of Droid's dialogs is answered there: show it.
                         val slash = SlashCommands.of(prompt)
                         if (!tty && slash != null) {
-                            if (slash.second?.kind == SlashCommands.Kind.Tty) {
+                            if (slash.second?.kind == SlashCommands.Kind.Tty && !cloud) {
                                 ttyChoice = true
                                 scope.launch { snackbar.showSnackbar("/${slash.first} opens in Raw TTY, where Droid shows it.") }
                             } else {
@@ -321,10 +326,12 @@ fun WorkerScreen(workerId: String, onBack: () -> Unit, embedded: Boolean = false
                         }
                     },
                     connected = connected,
-                    // The same Esc Raw TTY's key sends, through the terminal this screen is attached to.
-                    onStop = if (!tty && worker.state.busy && !worker.isCloud) {
+                    blocked = cloud && cloudError != null,
+                    // The same Esc Raw TTY's key sends, through the terminal this screen is attached to;
+                    // a cloud worker's Factory session is interrupted by the office instead.
+                    onStop = if (!tty && worker.state.busy) {
                         {
-                            if (!connection.send(ClientMsg.termInput(workerId, Keys.ESC))) {
+                            if (!connection.send(if (cloud) ClientMsg.interrupt(workerId) else ClientMsg.termInput(workerId, Keys.ESC))) {
                                 scope.launch { snackbar.showSnackbar("Couldn't reach the office. Nothing was sent.") }
                             }
                         }
@@ -337,6 +344,11 @@ fun WorkerScreen(workerId: String, onBack: () -> Unit, embedded: Boolean = false
                             slash == null -> false
                             slash.second?.kind == SlashCommands.Kind.Blocked -> {
                                 scope.launch { snackbar.showSnackbar("/${slash.first} would end ${worker.name}’s Droid. Send it home instead.") }
+                                true
+                            }
+                            // Its dialogs would open on the Factory computer, where nobody can see them.
+                            cloud && slash.second?.kind == SlashCommands.Kind.Tty -> {
+                                scope.launch { snackbar.showSnackbar("/${slash.first} opens one of Droid's dialogs, which a cloud worker can't show here.") }
                                 true
                             }
                             worker.state.busy -> {
@@ -367,7 +379,7 @@ private fun Header(w: WorkerInfo, embedded: Boolean, connected: Boolean, onBack:
         Column(Modifier.weight(1f).padding(start = 2.dp)) {
             Text(w.name.ifBlank { w.id }, style = MaterialTheme.typography.titleLarge, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.tagged(Tags.Worker.NAME))
             val parts = buildList {
-                w.cloud?.computerName?.takeIf { it.isNotBlank() }?.let { add("☁ $it") }
+                w.cloud?.where?.let { add("☁ $it") }
                 if (w.isShell) add("Shell") else Workers.modelId(w)?.let { add(catalogue.nameOf(it).replace(Regex("^DroidProxy:\\s*", RegexOption.IGNORE_CASE), "")) }
                 Workers.effort(w)?.let { if (!w.isShell) add(it.label) }
                 add(deskLabel(w.deskId).replaceFirstChar { it.uppercaseChar() })
@@ -489,22 +501,15 @@ private fun NeedsYou(w: WorkerInfo, screen: ScreenState?, canAnswer: Boolean) {
     }
 }
 
-/** A cloud worker has no terminal here: what it's doing, and that its session is in the office and on Factory. */
+/** Why a cloud worker can't work right now (its session or computer is gone): nothing sent would reach it. */
 @Composable
-private fun Cloud(w: WorkerInfo) {
-    Box(Modifier.fillMaxSize().tagged(Tags.Worker.CLOUD).background(Palette.Bg, RoundedCornerShape(12.dp)), contentAlignment = Alignment.Center) {
-        Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.padding(24.dp)) {
-            Text("☁ ${w.name} works on ${w.cloud?.computerName?.ifBlank { null } ?: "a Factory computer"}", style = MaterialTheme.typography.titleMedium, textAlign = androidx.compose.ui.text.style.TextAlign.Center)
-            Spacer(Modifier.height(6.dp))
-            Text(
-                w.cloud?.error?.let { "It can't work right now: $it." } ?: (w.activity?.ifBlank { null } ?: "This worker runs on Factory: open it in the office to read its session. You can still message it below."),
-                style = MaterialTheme.typography.bodySmall,
-                color = if (w.cloud?.error != null) Palette.Danger else Palette.TextSecondary,
-                modifier = Modifier.widthIn(max = 300.dp),
-                textAlign = androidx.compose.ui.text.style.TextAlign.Center,
-            )
-        }
-    }
+private fun CloudError(w: WorkerInfo, error: String) {
+    Text(
+        "☁ ${w.name.ifBlank { "It" }} can't work right now: ${error.trimEnd('.')}. Send is off.",
+        style = MaterialTheme.typography.bodySmall,
+        color = Palette.Danger,
+        modifier = Modifier.fillMaxWidth().semantics { liveRegion = LiveRegionMode.Polite }.tagged(Tags.Worker.CLOUD_ERROR).padding(horizontal = 14.dp, vertical = 6.dp),
+    )
 }
 
 @Composable

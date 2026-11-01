@@ -22,6 +22,9 @@ sealed interface ModelAvailability {
 
     /** DroidProxy isn't answering. When it is [installed] the office starts it on a hire. */
     data class ProxyDown(val installed: Boolean) : ModelAvailability
+
+    /** One of the owner's own (BYOK) models, picked for a worker on a Factory computer, which has no way to reach it. */
+    data object NotInCloud : ModelAvailability
 }
 
 object Availability {
@@ -78,6 +81,7 @@ object Availability {
         is ModelAvailability.SignedOut -> "No ${provider(a.provider)} account is connected"
         is ModelAvailability.Disabled -> "${provider(a.provider)} is switched off in Subscriptions"
         is ModelAvailability.ProxyDown -> if (a.installed) "DroidProxy isn't running: the office starts it" else "DroidProxy isn't installed"
+        ModelAvailability.NotInCloud -> "Your own models can't run on a Factory computer"
     }
 
     private fun provider(key: String) = PROVIDERS[key] ?: key

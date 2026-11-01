@@ -139,6 +139,10 @@ class OfficeConnection(
     val hiddenModels = _hiddenModels.asStateFlow()
     private val _subscriptions = MutableStateFlow<ai.factory.droidoffice.core.SubscriptionState?>(null)
     val subscriptions = _subscriptions.asStateFlow()
+    private val _factory = MutableStateFlow<ai.factory.droidoffice.core.FactoryState?>(null)
+
+    /** The office's Factory connection, computers and Environments; null from an office that doesn't send it. */
+    val factory = _factory.asStateFlow()
 
     private val _screens = MutableStateFlow<Map<String, ScreenState>>(emptyMap())
     val screens: StateFlow<Map<String, ScreenState>> = _screens.asStateFlow()
@@ -285,13 +289,13 @@ class OfficeConnection(
 
     /**
      * Hires at [deskId], or at a desk the office picks (`deskId: "auto"`). An older office (one paired
-     * by LAN token) can't pick, so the lowest free desk is chosen here.
+     * by LAN token) can't pick, so the lowest free desk is chosen here. With [cloud], it works on a Factory computer.
      */
-    fun hire(prompt: String?, kind: String, model: String?, effort: String?, worktree: Boolean, deskId: String? = null): Boolean {
+    fun hire(prompt: String?, kind: String, model: String?, effort: String?, worktree: Boolean, deskId: String? = null, cloud: ai.factory.droidoffice.core.CloudHire? = null): Boolean {
         val office = store.snapshot.value.active
         val desk = deskId ?: if (office?.auth == AuthMode.Lan) Workers.freeDesk(_data.value.workers.values) else "auto"
         hireAskedAt = System.currentTimeMillis()
-        return send(ClientMsg.spawn(desk, prompt, worktree, kind, model, effort))
+        return send(ClientMsg.spawn(desk, prompt, worktree, kind, model, effort, cloud))
     }
 
     private val _catalogue = MutableStateFlow<ModelCatalogue?>(null)
@@ -423,6 +427,7 @@ class OfficeConnection(
         if (office == null) {
             _hiddenModels.value = emptySet()
             _subscriptions.value = null
+            _factory.value = null
             _availability.value = emptyMap()
             _link.value = Link()
             _data.value = OfficeData()
@@ -432,6 +437,7 @@ class OfficeConnection(
         if (_data.value.officeId != office.id) {
             _hiddenModels.value = emptySet()
             _subscriptions.value = null
+            _factory.value = null
             _availability.value = emptyMap()
             _data.value = OfficeData(officeId = office.id)
             _screens.value = emptyMap()
@@ -571,6 +577,7 @@ class OfficeConnection(
                 _availability.value = msg.availability
                 _hiddenModels.value = msg.hiddenModels
                 _subscriptions.value = msg.subscriptions
+                _factory.value = msg.factory
                 enter(officeId, msg.view, msg.floors, msg.version)
                 msg.view.project?.name?.ifBlank { null }?.let { p -> scope.launch { store.update(officeId) { it.copy(project = p) } } }
             }
@@ -580,6 +587,7 @@ class OfficeConnection(
                 msg.view.floor?.let { f -> scope.launch { store.update(officeId) { it.copy(lastFloor = f, project = msg.view.project?.name?.ifBlank { null } ?: it.project) } } }
             }
             is ServerMsg.HiddenModels -> _hiddenModels.value = msg.ids
+            is ServerMsg.Factory -> _factory.value = msg.state
             is ServerMsg.Floors -> _data.update { it.copy(floors = msg.floors) }
             is ServerMsg.Subscriptions -> {
                 _availability.value = msg.availability

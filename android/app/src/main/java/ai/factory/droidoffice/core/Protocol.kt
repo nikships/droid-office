@@ -75,7 +75,17 @@ data class GuestInfo(val pid: Int = 0, val provider: String = "", val cwd: Strin
 
 /** A cloud worker's Factory computer (src/shared/factory-cloud.ts): its Droid session runs there, not in a terminal of the office's. */
 @Serializable
-data class CloudRef(val computerId: String = "", val computerName: String = "", val cwd: String? = null, val error: String? = null)
+data class CloudRef(
+    val computerId: String = "",
+    val computerName: String = "",
+    val cwd: String? = null,
+    val error: String? = null,
+    val environmentId: String? = null,
+    val environmentName: String? = null,
+) {
+    /** What it wears on its card and header (cloudBadge): its Environment, else its computer. */
+    val where: String? get() = environmentName?.ifBlank { null } ?: computerName.ifBlank { null }
+}
 
 /** A worker's team markings (src/shared/protocol.ts TeamBadge): `lead` formed the team, `member` was hired into it. */
 @Serializable
@@ -189,9 +199,11 @@ data class FloorView(
 )
 
 sealed interface ServerMsg {
-    data class Welcome(val connection: String, val arrival: Arrival, val floors: List<FloorInfo>, val version: String, val view: FloorView, val availability: Map<String, ModelAvailability> = emptyMap(), val subscriptions: SubscriptionState? = null, val hiddenModels: Set<String> = emptySet(), val workerAnswerMultiSelect: Boolean = false) : ServerMsg
+    data class Welcome(val connection: String, val arrival: Arrival, val floors: List<FloorInfo>, val version: String, val view: FloorView, val availability: Map<String, ModelAvailability> = emptyMap(), val subscriptions: SubscriptionState? = null, val hiddenModels: Set<String> = emptySet(), val workerAnswerMultiSelect: Boolean = false, val factory: FactoryState? = null) : ServerMsg
     data class ActionResult(val requestId: String, val ok: Boolean, val error: String?) : ServerMsg
     data class HiddenModels(val ids: Set<String>) : ServerMsg
+    /** The office's Factory state replaced: its connection, computers and Environments. */
+    data class Factory(val state: FactoryState) : ServerMsg
     /** Which Claude, ChatGPT and other plan models can run now. */
     data class Subscriptions(val availability: Map<String, ModelAvailability>, val state: SubscriptionState? = null) : ServerMsg
     data class FloorEnter(val arrival: Arrival, val view: FloorView) : ServerMsg
@@ -252,6 +264,7 @@ object Protocol {
             subscriptions = Subscriptions.parse(o["subscriptions"]),
             hiddenModels = strings(o["hiddenModels"]),
             workerAnswerMultiSelect = o.bool("workerAnswerMultiSelect") == true,
+            factory = FactoryCloud.parse(o["factory"]),
         )
         "floor.enter" -> ServerMsg.FloorEnter(
             arrival = o.obj("arrival")?.let { OfficeJson.decodeFromJsonElement<Arrival>(it) } ?: Arrival(),
@@ -259,6 +272,7 @@ object Protocol {
         )
         "floors" -> ServerMsg.Floors(floors(o["floors"]))
         "models.hidden" -> ServerMsg.HiddenModels(strings(o["ids"]))
+        "factory" -> FactoryCloud.parse(o["state"])?.let { ServerMsg.Factory(it) } ?: ServerMsg.Ignored(t)
         "subscriptions" -> ServerMsg.Subscriptions(Availability.parse(o["state"]), Subscriptions.parse(o["state"]))
         "worker.update" -> ServerMsg.WorkerUpdate(OfficeJson.decodeFromJsonElement(o.getValue("worker")))
         "worker.remove" -> ServerMsg.WorkerRemove(o.str("workerId").orEmpty())
@@ -356,14 +370,24 @@ object ClientMsg {
             text?.let { put("text", it) }
         }
     }
-    fun spawn(deskId: String, prompt: String?, worktree: Boolean, kind: String, model: String?, effort: String?): String = obj("worker.spawn") {
+    /** With [cloud], an agent is hired on a Factory computer instead of this machine: no worktree there. */
+    fun spawn(deskId: String, prompt: String?, worktree: Boolean, kind: String, model: String?, effort: String?, cloud: CloudHire? = null): String = obj("worker.spawn") {
+        val inCloud = cloud != null && kind == "agent"
         put("deskId", deskId)
         if (!prompt.isNullOrBlank()) put("prompt", prompt)
-        put("worktree", worktree)
+        put("worktree", worktree && !inCloud)
         put("kind", kind)
         if (kind == "agent" && model != null) put("model", model)
         if (kind == "agent" && effort != null) put("effort", effort)
+        if (inCloud) put("cloud", buildJsonObject {
+            cloud.computerId?.let { put("computerId", it) }
+            cloud.environmentId?.let { put("environmentId", it) }
+            cloud.cwd?.let { put("cwd", it) }
+        })
     }
+
+    /** Stops the turn a worker is in: an interrupt of a cloud worker's Factory session, Escape in a local agent's terminal. */
+    fun interrupt(workerId: String) = obj("worker.interrupt") { put("workerId", workerId) }
 
     /** With [queue], an agent gets the prompt with Ctrl+Enter, so Droid queues it behind its current turn. */
     fun prompt(workerId: String, prompt: String, images: List<String> = emptyList(), queue: Boolean = false) = obj("worker.prompt") {
