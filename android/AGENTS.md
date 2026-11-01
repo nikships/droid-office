@@ -39,4 +39,4 @@ CI's `android` job in `.github/workflows/release.yml` runs `testDebugUnitTest li
 
 ## Pictures
 
-`docs/*.jpg` are the screenshots `README.md` shows, taken on the emulator at 540 px wide. Replacing one is its own change.
+`docs/*.jpg` are the screenshots `README.md` shows, 540 px wide, taken on a real phone paired with the owner's office. Replacing one is its own change.

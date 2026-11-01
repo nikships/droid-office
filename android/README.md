@@ -3,10 +3,11 @@
 A companion app for your phone. Pair it with your office once, and from anywhere on your Wi-Fi or your tailnet you can see every worker, hire new ones, watch their live terminals, prompt them, and read and comment on the floor's Whiteboard.
 
 <p>
-  <img src="docs/home.jpg" alt="The office's workers listed by floor, each with its status, desk and what it is doing" width="24%">
-  <img src="docs/worker.jpg" alt="A worker's live terminal with the composer and quick keys under it" width="24%">
-  <img src="docs/hire.jpg" alt="The hire screen: Droid or Shell, a first prompt, a model and the reasoning effort" width="24%">
-  <img src="docs/notification.jpg" alt="Notifications that a worker is done and another needs you, with a reply box" width="24%">
+  <img src="docs/home.jpg" alt="The office's workers listed by floor, each with its status, model, task and branch" width="19%">
+  <img src="docs/thread.jpg" alt="A worker's Thread: your message, its activity and its Markdown reply, with the composer under it" width="19%">
+  <img src="docs/worker.jpg" alt="A worker's live terminal in Raw TTY with the quick keys and composer under it" width="19%">
+  <img src="docs/hire.jpg" alt="The hire screen: Droid or Shell, a task, a model, the reasoning effort, where it runs and its worktree" width="19%">
+  <img src="docs/notification.jpg" alt="Notifications that a worker is done and another needs you, with a reply box" width="19%">
 </p>
 
 ## What it does
