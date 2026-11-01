@@ -26,6 +26,30 @@ export function withImages(text: string, paths: string[]): string {
 }
 
 /**
+ * The reverse of [withImages]: a prompt's own text and the pictures listed after it, or undefined
+ * when it doesn't end in that list (numbered from 1, after a blank line when there is text).
+ */
+export function splitImages(text: string): { text: string; paths: string[] } | undefined {
+  const lines = text.split('\n');
+  let start = lines.length;
+  while (start > 0 && /^Image \d+: \S/.test(lines[start - 1])) start--;
+  if (start === lines.length || (start > 0 && lines[start - 1] !== '')) return undefined;
+  const paths: string[] = [];
+  for (const [i, line] of lines.slice(start).entries()) {
+    const m = /^Image (\d+): (.+)$/.exec(line);
+    if (!m || Number(m[1]) !== i + 1) return undefined;
+    paths.push(m[2]);
+  }
+  return {
+    text: lines
+      .slice(0, Math.max(0, start - 1))
+      .join('\n')
+      .trim(),
+    paths,
+  };
+}
+
+/**
  * What a terminal types for files dragged into it, one path after another: a Windows path in quotes
  * when it has spaces, any other with a backslash before each character a shell would split it on.
  */

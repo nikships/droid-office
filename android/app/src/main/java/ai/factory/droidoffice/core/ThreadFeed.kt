@@ -1,6 +1,7 @@
 package ai.factory.droidoffice.core
 
 import java.util.UUID
+import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
@@ -32,6 +33,26 @@ enum class ThreadKind(val wire: String) {
 }
 
 /**
+ * A picture in a tool's result or a message (`ThreadImage` in src/shared/worker-thread.ts), fetched by
+ * [id] from the office's `/api/thread/image`. [width] and [height] are null when its header didn't say.
+ */
+data class ThreadImage(val id: String, val type: String, val width: Int? = null, val height: Int? = null) {
+    companion object {
+        private val TYPES = setOf("image/png", "image/jpeg", "image/gif", "image/webp")
+
+        fun of(e: JsonElement): ThreadImage? {
+            val o = e as? JsonObject ?: return null
+            val id = (o["id"] as? JsonPrimitive)?.takeIf { it.isString }?.content?.takeIf { it.isNotEmpty() } ?: return null
+            val type = (o["type"] as? JsonPrimitive)?.takeIf { it.isString }?.content?.takeIf { it in TYPES } ?: return null
+            fun side(k: String) = (o[k] as? JsonPrimitive)?.longOrNull?.takeIf { it in 1..65_535 }?.toInt()
+            val width = side("width")
+            val height = side("height")
+            return if (width != null && height != null) ThreadImage(id, type, width, height) else ThreadImage(id, type)
+        }
+    }
+}
+
+/**
  * One entry of a worker's conversation as the office reads it from the Droid session (`ThreadEntry`
  * in src/shared/protocol.ts). A tool call carries its arguments as pretty JSON in [input] and its
  * result in [output] once there is one; [resultSeq] is the seq the next entry took when that result
@@ -48,6 +69,8 @@ data class ThreadEntry(
     val output: String? = null,
     val error: Boolean = false,
     val resultSeq: Long? = null,
+    /** Pictures in a tool's result or a message; [output] and [text] still say `[Image attachment]` for each. */
+    val images: List<ThreadImage> = emptyList(),
 ) {
     companion object {
         /** An entry with no id, no seq, or a role or kind this app doesn't know is skipped rather than guessed at. */
@@ -68,6 +91,7 @@ data class ThreadEntry(
                 output = o.str("output"),
                 error = (o["error"] as? JsonPrimitive)?.booleanOrNull ?: false,
                 resultSeq = o.long("resultSeq"),
+                images = (o["images"] as? JsonArray)?.mapNotNull(ThreadImage::of)?.take(16).orEmpty(),
             )
         }
 

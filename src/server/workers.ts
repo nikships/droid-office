@@ -473,10 +473,10 @@ export class WorkerManager {
   }
 
   /** Read-only conversation identity. Never accepts a caller-supplied path or session. */
-  threadSession(id: string): { sessionId: string; cwd: string } | undefined {
+  threadSession(id: string): { sessionId: string; cwd: string; drops?: string } | undefined {
     const info = this.workers.get(id)?.info;
     if (info?.kind !== 'agent' || info.cloud || info.guest || !info.sessionId) return undefined;
-    return { sessionId: info.sessionId, cwd: this.cwd(info) };
+    return { sessionId: info.sessionId, cwd: this.cwd(info), drops: this.drops.folder(id) };
   }
 
   /** Whether the worker is in a turn, so its newest Thread activity can still be working. */
@@ -1093,6 +1093,11 @@ export class WorkerManager {
   /** Keeps a file dropped or pasted into a worker's terminal on this machine; where it is, for the terminal to type. */
   drop(id: string, name: string, type: string, body: Buffer): string | undefined {
     return this.workers.has(id) ? this.drops.save(id, name, type, body) : undefined;
+  }
+
+  /** A picture the worker was sent with a prompt, for its Thread; undefined when it's gone or isn't one. */
+  dropPicture(id: string, name: string): { body: Buffer; type: string } | undefined {
+    return this.workers.has(id) ? this.drops.picture(id, name) : undefined;
   }
 
   /** Normal hits only open terminals in the client. A fully charged shot dismisses immediately. */

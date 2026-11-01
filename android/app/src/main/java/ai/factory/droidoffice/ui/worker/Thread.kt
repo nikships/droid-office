@@ -89,6 +89,7 @@ import ai.factory.droidoffice.core.Tags
 import ai.factory.droidoffice.core.ThreadBlock
 import ai.factory.droidoffice.core.ThreadEntry
 import ai.factory.droidoffice.core.ThreadFeed
+import ai.factory.droidoffice.core.ThreadImage
 import ai.factory.droidoffice.core.ThreadModelAction
 import ai.factory.droidoffice.core.ThreadPhase
 import ai.factory.droidoffice.core.ThreadQueue
@@ -397,6 +398,7 @@ internal fun Thread(
         if (!isOpen) inspect()
     }
 
+    val pictures = remember(data.floorId, w.id) { data.floorId?.let { PictureSource(it, w.id) } }
     Column(modifier.tagged(Tags.Worker.THREAD)) {
         BoxWithConstraints(Modifier.weight(1f).fillMaxWidth().clipToBounds()) {
             // On a wide screen the conversation keeps a reading width, centred, rather than lines across the whole window.
@@ -409,13 +411,15 @@ internal fun Thread(
                 item(key = HEAD) { Head(w, state, connected, rawTty, onEarlier = ::earlier, onRetry = ::retry, onTty = onTty) }
                 itemsIndexed(rows, key = { _, r -> r.id }, contentType = { _, r -> r::class }) { i, r ->
                     Box(Modifier.padding(top = gap(if (i > 0) rows[i - 1] else null, r))) {
-                        when (r) {
-                            is ThreadRow.Message -> {
-                                val all = open[MORE + r.id] == true
-                                Message(w, r, loaded[r.id]?.text.orEmpty(), all) { flip(MORE + r.id, all) }
+                        ProvidePictures(pictures) {
+                            when (r) {
+                                is ThreadRow.Message -> {
+                                    val all = open[MORE + r.id] == true
+                                    Message(w, r, loaded[r.id]?.text.orEmpty(), loaded[r.id]?.images.orEmpty(), all) { flip(MORE + r.id, all) }
+                                }
+                                is ThreadRow.Notice -> Notice(w, r, loaded[r.id])
+                                is ThreadRow.Activity -> Activity(r, ThreadView.Open.activity(r, open), open, loaded, asking, onToggle = { toggle(r) }, onFlip = ::flip)
                             }
-                            is ThreadRow.Notice -> Notice(r)
-                            is ThreadRow.Activity -> Activity(r, ThreadView.Open.activity(r, open), open, loaded, asking, onToggle = { toggle(r) }, onFlip = ::flip)
                         }
                     }
                 }
@@ -742,12 +746,15 @@ private fun Modifier.userBlock() = this.background(Palette.SurfaceHover, Rounded
     .padding(horizontal = 12.dp, vertical = 9.dp)
 
 @Composable
-private fun Message(w: WorkerInfo, m: ThreadRow.Message, text: String, all: Boolean, onMore: () -> Unit) {
+private fun Message(w: WorkerInfo, m: ThreadRow.Message, text: String, images: List<ThreadImage>, all: Boolean, onMore: () -> Unit) {
     val tag = Modifier.fillMaxWidth().tagged(Tags.Worker.threadEntry(m.id))
     if (m.role == ThreadRole.User) {
         val reveal = rememberReveal()
-        Box(tag.padding(start = 48.dp).then(reveal.modifier), contentAlignment = Alignment.CenterEnd) {
-            Column(Modifier.userBlock()) {
+        // The pictures sent with the prompt, above its text, in place of where the office kept them.
+        val pictures = images.isNotEmpty() && LocalPictureSource.current != null
+        Column(tag.padding(start = 48.dp).then(reveal.modifier), verticalArrangement = Arrangement.spacedBy(8.dp), horizontalAlignment = Alignment.End) {
+            if (pictures) ThreadPictures(images, "Picture you sent", null, end = true)
+            if (!pictures || text.isNotBlank()) Column(Modifier.userBlock()) {
                 var clipped by remember(m.id) { mutableStateOf(false) }
                 SelectionContainer {
                     MarkdownText(text, if (all) Modifier else Modifier.clampLines(USER_LINES) { if (clipped != it) clipped = it }, surface = Palette.SurfaceHover, breaks = true)
@@ -777,11 +784,17 @@ private fun Message(w: WorkerInfo, m: ThreadRow.Message, text: String, all: Bool
 }
 
 @Composable
-private fun Notice(n: ThreadRow.Notice) {
+private fun Notice(w: WorkerInfo, n: ThreadRow.Notice, entry: ThreadEntry?) {
     val tag = Modifier.fillMaxWidth().tagged(Tags.Worker.threadEntry(n.id))
     when (n.tone) {
         NoticeTone.Attachment -> Box(tag, contentAlignment = if (n.role == ThreadRole.User) Alignment.CenterEnd else Alignment.CenterStart) {
-            Text(n.text, style = MaterialTheme.typography.bodySmall.copy(color = Palette.TextSecondary))
+            val images = entry?.images.orEmpty()
+            // The picture stands in for "Image attached" wherever it can be shown.
+            if (images.isNotEmpty() && LocalPictureSource.current != null) {
+                ThreadPictures(images, if (n.role == ThreadRole.User) "Picture you sent" else "Picture from ${w.name}", null, end = n.role == ThreadRole.User)
+            } else {
+                Text(n.text, style = MaterialTheme.typography.bodySmall.copy(color = Palette.TextSecondary))
+            }
         }
         NoticeTone.Danger -> Row(
             tag.panel(RoundedCornerShape(4.dp), Palette.Danger.copy(alpha = 0.07f), Palette.Danger.copy(alpha = 0.3f)).padding(horizontal = 12.dp, vertical = 9.dp),
@@ -965,12 +978,19 @@ private fun ActionRow(a: ThreadModelAction, entry: ThreadEntry?, open: Boolean, 
         }
         if (open) {
             Column(Modifier.fillMaxWidth().padding(start = 22.dp, top = 2.dp, bottom = 10.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                when (val d = remember(a, entry?.input, entry?.output) { ThreadView.detail(a, entry) }) {
+                val canShow = LocalPictureSource.current != null
+                when (val d = remember(a, entry?.input, entry?.output, entry?.images, canShow) { ThreadView.detail(a, entry, canShow) }) {
                     ThreadView.Detail.NotLoaded -> Text(ThreadView.NOT_LOADED, style = MaterialTheme.typography.bodySmall, modifier = Modifier.tagged(Tags.Worker.threadNotLoaded(a.id)))
                     is ThreadView.Detail.Shown -> {
                         d.arguments?.let { (label, body) -> Mono(label, body, Palette.Text) }
+                        val pictures = d.images.isNotEmpty()
                         if (d.recorded) {
-                            Mono(d.result, d.output.ifEmpty { "(empty)" }, if (a.state == ActivityState.Cancelled) Palette.TextSecondary else if (d.result == "Error") Palette.Danger else Palette.Text)
+                            if (d.output.isNotEmpty() || !pictures) {
+                                Mono(d.result, d.output.ifEmpty { "(empty)" }, if (a.state == ActivityState.Cancelled) Palette.TextSecondary else if (d.result == "Error") Palette.Danger else Palette.Text)
+                            } else {
+                                Eyebrow(d.result, color = Palette.TextSecondary)
+                            }
+                            if (pictures) ThreadPictures(d.images, a.title, a.detail, end = false)
                         } else {
                             Eyebrow(d.result, color = Palette.TextSecondary)
                             Text(d.output, style = MaterialTheme.typography.bodySmall)

@@ -1,4 +1,5 @@
 import type { FactoryBlock, FactoryMessage } from './factory-sessions.js';
+import { IMAGE_PLACEHOLDER } from './thread-presentation.js';
 import type { ThreadEntry } from './worker-thread.js';
 
 // A cloud worker's Thread: its Factory session's messages (GET /sessions/{id}/messages, as messageOf
@@ -84,7 +85,7 @@ export function cloudEntries(messages: readonly FactoryMessage[]): ThreadEntry[]
           return;
         }
         case 'image':
-          out.push({ id, seq, role, kind: 'notice', text: '[Image attachment]' });
+          out.push({ id, seq, role, kind: 'notice', text: IMAGE_PLACEHOLDER });
           return;
         case 'document':
           out.push({ id, seq, role, kind: 'notice', text: `Attached ${b.name}` });

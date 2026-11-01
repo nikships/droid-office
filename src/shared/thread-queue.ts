@@ -1,4 +1,5 @@
 import { type DroidQueued, showsAs } from './droid-queue.js';
+import { IMAGE_PLACEHOLDER } from './thread-presentation.js';
 import type { ThreadEntry } from './worker-thread.js';
 
 export interface QueuedPrompt {
@@ -94,7 +95,10 @@ export class ThreadQueue {
           if (entry.seq <= item.after) break;
           // Droid can drain consecutive queued text sends as one user message, without a separator.
           joined += item.text;
-          const match = item.text ? entry.kind === 'text' && entry.text?.trim() === joined : start === end && item.hasImage && entry.kind === 'notice' && entry.text === '[Image attachment]';
+          // A prompt the office sent with pictures arrives as its own text, the pictures beside it (or alone).
+          const match = item.text
+            ? entry.kind === 'text' && entry.text?.trim() === joined
+            : start === end && item.hasImage && ((entry.kind === 'notice' && entry.text === IMAGE_PLACEHOLDER) || (entry.kind === 'text' && !entry.text?.trim() && !!entry.images?.length));
           if (match) {
             this.items.splice(start, end - start + 1);
             this.consumed.add(entry.id);

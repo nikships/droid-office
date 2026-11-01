@@ -293,6 +293,7 @@ export function createPane(host: PaneHost, index: number): Pane {
           host.openBeside(mate);
         },
         raw: w.cloud ? undefined : () => host.setView(w.id, 'terminal'),
+        floor: intended,
       });
       thread.element.querySelector('.wt-scroll')?.append(question);
       stage.replaceChildren(thread.element);

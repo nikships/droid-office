@@ -10,6 +10,18 @@ object ThreadView {
     const val WORKING = "Working · "
     const val NO_RESULT = "No result recorded in this session."
     const val NOT_LOADED = "Load earlier messages to see what this call was given and returned."
+    /** What the office writes in a result or message for each picture in it (IMAGE_PLACEHOLDER in thread-presentation.ts). */
+    const val IMAGE_PLACEHOLDER = "[Image attachment]"
+
+    /**
+     * A tool's result as the Thread prints it: beside its pictures, without a placeholder line per picture
+     * (threadOutputText). Where the pictures can't be shown ([pictures] false) the placeholders stay.
+     */
+    fun outputText(entry: ThreadEntry, pictures: Boolean = true): String? {
+        val output = entry.output ?: return null
+        if (!pictures || entry.images.isEmpty()) return output
+        return output.split('\n').filter { it != IMAGE_PLACEHOLDER }.joinToString("\n").trim()
+    }
 
     /** The row index standing for [entryId], or -1. */
     fun rowOf(rows: List<ThreadRow>, entryId: String): Int = rows.indexOfFirst { it.id == entryId || entryId in it.sourceIds }
@@ -28,16 +40,19 @@ object ThreadView {
         /** The entry isn't loaded: Load earlier brings it. */
         data object NotLoaded : Detail
 
-        data class Shown(val arguments: Pair<String, String>?, val result: String, val output: String, val recorded: Boolean) : Detail
+        /** [images] are the pictures to show under [output]: none where the Thread can't show pictures. */
+        data class Shown(val arguments: Pair<String, String>?, val result: String, val output: String, val recorded: Boolean, val images: List<ThreadImage> = emptyList()) : Detail
     }
 
-    fun detail(action: ThreadModelAction, entry: ThreadEntry?): Detail {
+    /** [pictures] is whether this Thread can show pictures: it decides both what [Detail.Shown.output] says and which pictures come with it. */
+    fun detail(action: ThreadModelAction, entry: ThreadEntry?, pictures: Boolean = true): Detail {
         if (entry == null) return Detail.NotLoaded
         return Detail.Shown(
             arguments = action.arguments?.let { it.label to it.text(entry.input) },
             result = action.result,
-            output = entry.output ?: NO_RESULT,
+            output = outputText(entry, pictures) ?: NO_RESULT,
             recorded = entry.output != null,
+            images = if (pictures) entry.images else emptyList(),
         )
     }
 

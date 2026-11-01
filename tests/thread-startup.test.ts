@@ -62,7 +62,7 @@ const status = browserStatus();
 const chromium = status.installed ? false : `Chromium is not installed in ${status.path}`;
 
 /** A page with the Thread UI mounted on a stub connection: its replies, clock and reads under test control. */
-async function mountThread(t: TestContext, mounted: WorkerInfo = worker) {
+async function mountThread(t: TestContext, mounted: WorkerInfo = worker, floor?: string) {
   const browser = await launchBrowser();
   t.after(closeBrowser);
   const context = await newIsolatedContext(browser);
@@ -76,54 +76,58 @@ async function mountThread(t: TestContext, mounted: WorkerInfo = worker) {
   await page.addScriptTag({ content: bundle });
   // tsx preserves names on callbacks serialized by Playwright.
   await page.addScriptTag({ content: 'window.__name = (fn) => fn;' });
-  await page.evaluate((worker) => {
-    const w = window as any;
-    w.worker = worker;
-    w.sent = [];
-    w.actions = [];
-    w.fetches = [];
-    const realFetch = window.fetch;
-    window.fetch = (input: any, init?: any) => {
-      w.fetches.push(String(input));
-      return realFetch(input, init);
-    };
-    let clock = Date.now();
-    Date.now = () => clock;
-    w.tick = () => (clock += 1100);
-    const net = {
-      send(msg: any) {
-        w.sent.push(msg);
-        return true;
-      },
-      onMessage(fn: any) {
-        w.receive = fn;
-        return () => {};
-      },
-    };
-    w.question = document.createElement('div');
-    w.questionScrolls = 0;
-    w.question.scrollIntoView = () => w.questionScrolls++;
-    w.thread = w.ThreadUI.mountWorkerThread(net, {
-      worker,
-      question: w.question,
-      queueKey: 'startup-test',
-      draft: '',
-      onDraft() {},
-      send: async (msg: any) => {
-        w.actions.push(msg);
-        return w.refusal;
-      },
-      ...(worker.cloud ? {} : { raw() {} }),
-      team: () => w.team ?? [],
-    });
-    document.body.append(w.thread.element);
-    w.thread.update(worker, true);
-    w.thread.activate(true);
-    w.reply = (error?: string) => {
-      const request = w.sent.filter((msg: any) => msg.t === 'thread.read').at(-1).request;
-      w.receive({ t: 'thread.snapshot', workerId: worker.id, request, sessionId: 'session', entries: [], hasMore: false, ...(error ? { error } : { presentation: { version: 1, rows: [] } }) });
-    };
-  }, mounted);
+  await page.evaluate(
+    ({ worker, floor }) => {
+      const w = window as any;
+      w.worker = worker;
+      w.sent = [];
+      w.actions = [];
+      w.fetches = [];
+      const realFetch = window.fetch;
+      window.fetch = (input: any, init?: any) => {
+        w.fetches.push(String(input));
+        return realFetch(input, init);
+      };
+      let clock = Date.now();
+      Date.now = () => clock;
+      w.tick = () => (clock += 1100);
+      const net = {
+        send(msg: any) {
+          w.sent.push(msg);
+          return true;
+        },
+        onMessage(fn: any) {
+          w.receive = fn;
+          return () => {};
+        },
+      };
+      w.question = document.createElement('div');
+      w.questionScrolls = 0;
+      w.question.scrollIntoView = () => w.questionScrolls++;
+      w.thread = w.ThreadUI.mountWorkerThread(net, {
+        worker,
+        question: w.question,
+        queueKey: 'startup-test',
+        draft: '',
+        onDraft() {},
+        send: async (msg: any) => {
+          w.actions.push(msg);
+          return w.refusal;
+        },
+        ...(worker.cloud ? {} : { raw() {} }),
+        team: () => w.team ?? [],
+        ...(floor ? { floor } : {}),
+      });
+      document.body.append(w.thread.element);
+      w.thread.update(worker, true);
+      w.thread.activate(true);
+      w.reply = (error?: string) => {
+        const request = w.sent.filter((msg: any) => msg.t === 'thread.read').at(-1).request;
+        w.receive({ t: 'thread.snapshot', workerId: worker.id, request, sessionId: 'session', entries: [], hasMore: false, ...(error ? { error } : { presentation: { version: 1, rows: [] } }) });
+      };
+    },
+    { worker: mounted, floor },
+  );
   return { page, errors };
 }
 test('thread startup animates without premature reads, retries missing files and preserves real errors', { skip: chromium }, async (t) => {
@@ -403,6 +407,84 @@ test('thread work signal stays beside the composer and uses only the latest live
   assert.deepEqual(errors, []);
 });
 
+test('a thread shows the pictures a worker read and was sent, and opens them full size', { skip: chromium }, async (t) => {
+  const { page, errors } = await mountThread(t, worker, 'floor-1');
+  // The shapes worker-thread.ts projects from a real Read of a PNG and an attached JPEG.
+  const entries: ThreadEntry[] = [
+    { id: 'ask:0', seq: 0, role: 'user', kind: 'text', text: 'What is on this screen?' },
+    { id: 'ask:1', seq: 1, role: 'user', kind: 'notice', text: '[Image attachment]', images: [{ id: '410.1.x.0a1b2c3d', type: 'image/jpeg', width: 540, height: 1200 }] },
+    {
+      id: 'tool:read-1',
+      seq: 2,
+      role: 'assistant',
+      kind: 'tool',
+      name: 'Read',
+      input: JSON.stringify({ file_path: '/project/icon.png' }),
+      output: 'Read icon.png\n[Image attachment]',
+      resultSeq: 3,
+      images: [{ id: '2210.0.1.deadbeef', type: 'image/png', width: 192, height: 192 }],
+    },
+    { id: 'answer', seq: 3, role: 'assistant', kind: 'text', text: 'It is the office icon.' },
+    // A prompt sent from a composer with pictures, and one with only a picture.
+    { id: 'prompt:0', seq: 4, role: 'user', kind: 'text', text: 'Compare these', images: [{ id: 'drop.0a1b2c3d-shot.png', type: 'image/png', width: 192, height: 192 }] },
+    { id: 'prompt-only:0', seq: 5, role: 'user', kind: 'text', text: '', images: [{ id: 'drop.4e5f6a7b-phone.jpg', type: 'image/jpeg', width: 540, height: 1200 }] },
+  ];
+  await page.evaluate(
+    ({ entries, rows }) => {
+      const w = window as any;
+      w.worker = { ...w.worker, sessionId: 'session', status: 'idle' };
+      w.tick();
+      w.thread.update(w.worker, true);
+      const request = w.sent.filter((msg: any) => msg.t === 'thread.read').at(-1).request;
+      w.receive({ t: 'thread.snapshot', workerId: w.worker.id, request, sessionId: 'session', entries, hasMore: false, presentation: { version: 1, rows } });
+      for (const details of document.querySelectorAll('details')) details.open = true;
+    },
+    { entries, rows: presentThread(entries, false) },
+  );
+  const sent = page.locator('[data-entry="ask:1"] .wt-image img');
+  assert.equal(await sent.getAttribute('src'), `/api/thread/image?floor=floor-1&worker=${worker.id}&image=410.1.x.0a1b2c3d`);
+  assert.equal(await sent.getAttribute('width'), '540');
+  assert.equal(await page.locator('[data-entry="ask:1"] .wt-turn').count(), 0, 'the picture stands in for "Image attached"');
+  const read = page.locator('.wt-tool .wt-image img');
+  assert.equal(await read.getAttribute('src'), `/api/thread/image?floor=floor-1&worker=${worker.id}&image=2210.0.1.deadbeef`);
+  assert.equal(await read.getAttribute('loading'), 'lazy');
+  assert.equal(await page.locator('.wt-tool .wt-output').textContent(), 'Read icon.png');
+  const prompt = page.locator('[data-entry="prompt:0"]');
+  assert.equal(await prompt.locator('.wt-image img').getAttribute('src'), `/api/thread/image?floor=floor-1&worker=${worker.id}&image=drop.0a1b2c3d-shot.png`);
+  assert.equal(await prompt.locator('.wt-user-content').textContent(), 'Compare these');
+  assert.equal(await page.locator('[data-entry="prompt-only:0"] .wt-image').getAttribute('aria-label'), 'Open Picture you sent');
+  assert.equal(await page.locator('[data-entry="prompt-only:0"] .wt-user-text').count(), 0, 'a prompt that was only a picture has no empty bubble');
+  await page.locator('.wt-tool .wt-image').click();
+  const viewer = page.locator('.modal.wt-picture-window');
+  assert.equal(await viewer.locator('h2').textContent(), 'Read icon.png');
+  assert.equal(await viewer.locator('.sub').textContent(), '/project/icon.png · 192 × 192');
+  assert.equal(await viewer.locator('img.wt-picture-full').getAttribute('src'), await read.getAttribute('src'));
+  await page.keyboard.press('Escape');
+  assert.equal(await viewer.count(), 0);
+  await page.evaluate(() => (window as any).thread.dispose());
+  assert.deepEqual(errors, []);
+});
+
+test('without a floor to fetch from, a thread keeps its picture placeholders', { skip: chromium }, async (t) => {
+  const { page, errors } = await mountThread(t);
+  const entries: ThreadEntry[] = [{ id: 'tool:read-1', seq: 0, role: 'assistant', kind: 'tool', name: 'Read', input: '{}', output: '[Image attachment]', resultSeq: 1, images: [{ id: '2210.0.0.deadbeef', type: 'image/png' }] }];
+  await page.evaluate(
+    ({ entries, rows }) => {
+      const w = window as any;
+      w.worker = { ...w.worker, sessionId: 'session', status: 'idle' };
+      w.tick();
+      w.thread.update(w.worker, true);
+      const request = w.sent.filter((msg: any) => msg.t === 'thread.read').at(-1).request;
+      w.receive({ t: 'thread.snapshot', workerId: w.worker.id, request, sessionId: 'session', entries, hasMore: false, presentation: { version: 1, rows } });
+      for (const details of document.querySelectorAll('details')) details.open = true;
+    },
+    { entries, rows: presentThread(entries, false) },
+  );
+  assert.equal(await page.locator('.wt-image').count(), 0);
+  assert.equal(await page.locator('.wt-tool .wt-output').textContent(), '[Image attachment]');
+  await page.evaluate(() => (window as any).thread.dispose());
+  assert.deepEqual(errors, []);
+});
 test('a cloud worker’s thread interrupts its session, queues while busy and has no terminal', { skip: chromium }, async (t) => {
   const cloud: WorkerInfo = { ...worker, kind: 'cloud', status: 'working', sessionId: 'session', cloud: { computerId: 'computer', computerName: 'mac-mini', provider: 'byom', autonomy: 'high' } };
   const { page, errors } = await mountThread(t, cloud);

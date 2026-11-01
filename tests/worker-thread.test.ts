@@ -1,11 +1,14 @@
 import assert from 'node:assert/strict';
-import { appendFile, mkdir, mkdtemp, rename, rm, symlink, writeFile } from 'node:fs/promises';
+import { appendFile, mkdir, mkdtemp, readFile, rename, rm, symlink, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { test, type TestContext } from 'node:test';
+import { DropStore } from '../src/server/drops.js';
 import { WorkerThreadReader } from '../src/server/worker-thread.js';
+import { withImages } from '../src/shared/drops.js';
 import { WorkerManager } from '../src/server/workers.js';
 import { LABEL_TEXT_CHARS } from '../src/shared/worker-labels.js';
+import { threadOutputText } from '../src/shared/thread-presentation.js';
 
 // Shapes sampled from the owner's local Factory JSONL, including todo_state's nested todos,
 // cli_tui source, hook visibility, thinking signatures, image source and tool_result.is_error.
@@ -141,6 +144,95 @@ test('projects actual text, thinking, tool/error, attachment and nested todo rec
   assert.doesNotMatch(JSON.stringify(page), /PRIVATE_|base64|signature|userMessageSource|compaction/);
 });
 
+test('pictures in tool results and messages are referenced by id and served from the session file', async (t) => {
+  const png = await readFile(new URL('../src/client/public/icons/icon-192.png', import.meta.url));
+  const jpeg = await readFile(new URL('../android/docs/unpaired.jpg', import.meta.url));
+  const picture = (bytes: Buffer, type: string) => ({ type: 'image', source: { type: 'base64', data: bytes.toString('base64'), media_type: type } });
+  const { reader, source, file } = await rig(t, [
+    message('ask', 'user', [{ type: 'text', text: 'What is on this screen?' }, picture(jpeg, 'image/jpeg')], { userMessageSource: 'cli_tui' }),
+    message('call', 'assistant', [
+      { type: 'tool_use', id: 'read-1', name: 'Read', input: { file_path: '/project/icon.png' } },
+      { type: 'tool_use', id: 'read-2', name: 'Read', input: { file_path: '/project/mislabelled.jpg' } },
+    ]),
+    message('result', 'user', [
+      { type: 'tool_result', tool_use_id: 'read-1', content: [{ type: 'text', text: 'Read icon.png' }, picture(png, 'image/png')] },
+      { type: 'tool_result', tool_use_id: 'read-2', content: [picture(png, 'image/jpeg')] },
+    ]),
+  ]);
+  const page = await reader.read(source);
+  const [sent, read, mislabelled] = [page.entries[1], page.entries[2], page.entries[3]];
+  assert.equal(sent.kind, 'notice');
+  assert.equal(sent.text, '[Image attachment]');
+  assert.deepEqual(
+    sent.images?.map(({ type, width, height }) => ({ type, width, height })),
+    [{ type: 'image/jpeg', width: 540, height: 1200 }],
+  );
+  assert.deepEqual(
+    read.images?.map(({ type, width, height }) => ({ type, width, height })),
+    [{ type: 'image/png', width: 192, height: 192 }],
+  );
+  assert.equal(read.output, 'Read icon.png\n[Image attachment]');
+  assert.equal(threadOutputText(read), 'Read icon.png');
+  assert.equal(mislabelled.images, undefined, 'bytes that are not the declared type are never offered');
+  assert.equal(mislabelled.output, '[Image attachment]');
+  assert.doesNotMatch(JSON.stringify(page), /base64|iVBORw0KGgo|\/9j\//);
+
+  const served = await reader.image(source, read.images![0].id);
+  assert.equal(served?.type, 'image/png');
+  assert.deepEqual(served?.body, png);
+  assert.deepEqual((await reader.image(source, sent.images![0].id))?.body, jpeg);
+  assert.equal(await reader.image(source, 'not-an-id'), undefined);
+  assert.equal(await reader.image(source, `${read.images![0].id.split('.').slice(0, 3).join('.')}.00000000`), undefined);
+  assert.equal(await reader.image({ ...source, sessionId: 'other-session' }, read.images![0].id), undefined);
+
+  // The same offset in a rewritten session holds a different picture: the old id serves nothing.
+  const before = await readFile(file, 'utf8');
+  await writeFile(file, before.replace(png.toString('base64'), Buffer.concat([png, Buffer.from([0])]).toString('base64')));
+  assert.equal(await reader.image(source, read.images![0].id), undefined);
+});
+test("the owner's prompt shows the pictures the office sent with it, not where it kept them", async (t) => {
+  const png = await readFile(new URL('../src/client/public/icons/icon-192.png', import.meta.url));
+  const jpeg = await readFile(new URL('../android/docs/unpaired.jpg', import.meta.url));
+  const data = await mkdtemp(path.join(os.tmpdir(), 'office-thread-drops-'));
+  t.after(() => rm(data, { recursive: true, force: true }));
+  const drops = new DropStore(path.join(data, '.droid-office'));
+  const a = drops.save('w1', 'shot.png', 'image/png', png)!;
+  const b = drops.save('w1', 'phone.jpg', 'image/jpeg', jpeg)!;
+  const theirs = drops.save('w2', 'theirs.png', 'image/png', png)!;
+  const gone = path.join(path.dirname(a), '0a1b2c3d-gone.png');
+  const {
+    reader,
+    root,
+    source: session,
+  } = await rig(t, [
+    message('both', 'user', [{ type: 'text', text: withImages('Compare image 1 and image 2', [a, b]) }]),
+    message('alone', 'user', withImages('', [a])),
+    message('missing', 'user', [{ type: 'text', text: withImages('One is gone', [a, gone]) }]),
+    message('elsewhere', 'user', [{ type: 'text', text: withImages('Not a drop', ['/etc/hosts']) }]),
+    message('reply', 'assistant', [{ type: 'text', text: withImages('An assistant quoting it', [a]) }]),
+    message('theirs', 'user', [{ type: 'text', text: withImages("Another worker's", [theirs]) }]),
+  ]);
+  const source = { ...session, drops: drops.folder('w1') };
+  const page = await reader.read(source);
+  const [both, alone, missing, elsewhere, reply, other] = page.entries;
+  assert.equal(both.text, 'Compare image 1 and image 2');
+  assert.deepEqual(both.images, [
+    { id: `drop.${path.basename(a)}`, type: 'image/png', width: 192, height: 192 },
+    { id: `drop.${path.basename(b)}`, type: 'image/jpeg', width: 540, height: 1200 },
+  ]);
+  assert.equal(alone.kind, 'text');
+  assert.equal(alone.text, '');
+  assert.equal(alone.images?.length, 1);
+  assert.equal(missing.text, withImages('One is gone', [a, gone]), 'with one gone the numbers would not match: the paths stay');
+  assert.equal(missing.images, undefined);
+  assert.equal(elsewhere.images, undefined);
+  assert.equal(reply.images, undefined);
+  assert.equal(other.images, undefined, "the route serves only this worker's own drops, so another's would never load");
+  assert.equal(other.text, withImages("Another worker's", [theirs]));
+  assert.doesNotMatch(JSON.stringify([both, alone]), /drops\//);
+  const unknown = await new WorkerThreadReader(root).read(session);
+  assert.equal(unknown.entries[0].images, undefined, "without the worker's drops folder no prompt picture is offered");
+});
 test('filters system, hooks, hidden/source bookkeeping and system-reminder blocks', async (t) => {
   const { reader, source } = await rig(t, [
     text('system', 'PRIVATE_SYSTEM_PROMPT', 'system'),
@@ -481,6 +573,7 @@ test('response budget trims older entries without breaking the next cursor', asy
 test('WorkerManager exposes only a server-known local agent session and cwd', () => {
   const manager: WorkerManager = Object.create(WorkerManager.prototype);
   Reflect.set(manager, 'dir', '/project');
+  Reflect.set(manager, 'drops', new DropStore('/data'));
   Reflect.set(
     manager,
     'workers',
@@ -492,7 +585,7 @@ test('WorkerManager exposes only a server-known local agent session and cwd', ()
       ['starting', { info: { kind: 'agent' } }],
     ]),
   );
-  assert.deepEqual(manager.threadSession('agent'), { sessionId: 'owned', cwd: '/project/.droid-office/worktrees/agent' });
+  assert.deepEqual(manager.threadSession('agent'), { sessionId: 'owned', cwd: '/project/.droid-office/worktrees/agent', drops: path.join('/data', 'drops', 'agent') });
   for (const id of ['shell', 'cloud', 'guest', 'starting', 'missing']) assert.equal(manager.threadSession(id), undefined);
 });
 
