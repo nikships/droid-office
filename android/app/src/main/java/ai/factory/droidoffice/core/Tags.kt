@@ -338,6 +338,11 @@ object Tags {
         const val THREAD_JUMP_LABEL = "worker.thread.jump.label"
         /** A Markdown table in a message: its columns line up and it scrolls sideways as one. */
         const val THREAD_TABLE = "worker.thread.table"
+        /** A picture at full size over the Thread, opened from [threadImage]; tap it or [THREAD_IMAGE_CLOSE] to close. */
+        const val THREAD_IMAGE_VIEWER = "worker.thread.image_viewer"
+        const val THREAD_IMAGE_CLOSE = "worker.thread.image_viewer.close"
+        /** A picture a tool returned or a message carried, by its image id: tapping it opens [THREAD_IMAGE_VIEWER]. */
+        fun threadImage(id: String) = "worker.thread.image/$id"
 
         /** A slash command in [SLASH_MENU], by its name: `composer.slash/model`. */
         fun slash(name: String) = "composer.slash/$name"

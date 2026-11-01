@@ -1,8 +1,8 @@
 import type { ClientMsg, ServerMsg, WorkerInfo } from '../../shared/protocol';
 import { isAsleep, isBusy, needsOwnerInput } from '../../shared/status';
 import { statusWord } from '../../shared/guests';
-import { threadArgumentsText, type ThreadBlock, type ThreadModelAction, type ThreadRow } from '../../shared/thread-presentation';
-import type { ThreadEntry } from '../../shared/worker-thread';
+import { threadArgumentsText, threadOutputText, type ThreadBlock, type ThreadModelAction, type ThreadRow } from '../../shared/thread-presentation';
+import type { ThreadEntry, ThreadImage } from '../../shared/worker-thread';
 import { CLEAR_DROID_QUEUE, readDroidQueue } from '../../shared/droid-queue';
 import { slashCommands, slashOf, slashRefusal, slashSuggestions, type DroidSlashCommand, type SlashCommand } from '../../shared/slash-commands';
 import { ThreadQueue } from '../../shared/thread-queue';
@@ -10,7 +10,8 @@ import type { Net } from '../net';
 import { ThreadHistory } from '../thread-history';
 import { cloudStarting, threadSnapshotError, threadStarting } from '../thread-startup';
 import { TeamThread, TeamThreadPaint, teamThreadVisible } from '../team-thread';
-import { h, STATUS_LABEL } from './dom';
+import { h, openModal, STATUS_LABEL } from './dom';
+import { windowHeader } from './kit';
 import { icon } from './icons';
 import { markdown } from './markdown';
 import { promptImages } from './images';
@@ -44,6 +45,8 @@ export interface ThreadOptions {
   team?(): readonly WorkerInfo[];
   /** Open this child's Thread view, without starting or resuming a worker. */
   openWorker?(id: string): void;
+  /** The floor the worker is on: its pictures are fetched from there. Without it, none are shown. */
+  floor?: string;
 }
 
 /**
@@ -57,7 +60,7 @@ function entryDigest(entry: ThreadEntry | undefined): string {
   let digest = digests.get(entry);
   if (digest === undefined) {
     let hash = 2166136261;
-    for (const field of [entry.text, entry.input, entry.output]) {
+    for (const field of [entry.text, entry.input, entry.output, entry.images?.map((image) => image.id).join()]) {
       if (field === undefined) continue;
       for (let at = 0; at < field.length; at++) hash = Math.imul(hash ^ field.charCodeAt(at), 16777619);
     }
@@ -74,6 +77,13 @@ const rowContent = (row: ThreadRow, loaded: ReadonlyMap<string, ThreadEntry>) =>
 const localQueues = new Map<string, ThreadQueue>();
 
 const shortcut = (key: string, label: string) => h('span.wt-shortcut', {}, h('span.key', {}, key), label);
+
+/** A picture at full size, over everything, until Esc, a click outside it or ✕. */
+function viewPicture(src: string, title: string, image: ThreadImage, about?: string) {
+  const full = h('img.wt-picture-full', { src, alt: title, width: image.width, height: image.height, draggable: 'false' });
+  const sub = [about, image.width && image.height ? `${image.width} × ${image.height}` : ''].filter(Boolean).join(' · ') || undefined;
+  openModal(h('div.modal.wt-picture-window', { 'aria-label': title }, windowHeader(title, sub), h('div.body.flush.wt-picture-body', {}, full)), { size: 'full', backdropCloses: true });
+}
 
 /**
  * A worker's conversation: a local session's JSONL, or a cloud worker's Factory session, which the
@@ -416,8 +426,28 @@ export function mountWorkerThread(net: Net, opts: ThreadOptions): WorkerThread {
       ),
       block.open,
     );
-  const action = (item: ThreadModelAction, entry: ThreadEntry | undefined) =>
-    disclosure(
+  /** An entry's pictures, each opening at full size. A cloud worker's session has none here. */
+  const pictures = (entry: ThreadEntry | undefined, title: string, about?: string) => {
+    const images = !cloud && opts.floor ? (entry?.images ?? []) : [];
+    if (!images.length) return null;
+    return h(
+      'div.wt-images',
+      {},
+      ...images.map((image, i) => {
+        const src = withToken(`/api/thread/image?${new URLSearchParams({ floor: opts.floor ?? '', worker: worker.id, image: image.id })}`);
+        const name = images.length > 1 ? `${title} · ${i + 1} of ${images.length}` : title;
+        return h(
+          'button.wt-image',
+          { type: 'button', title: 'Open the picture', 'aria-label': `Open ${name}`, onclick: () => viewPicture(src, name, image, about) },
+          h('img', { src, alt: name, loading: 'lazy', decoding: 'async', width: image.width, height: image.height, draggable: 'false' }),
+        );
+      }),
+    );
+  };
+  const action = (item: ThreadModelAction, entry: ThreadEntry | undefined) => {
+    const images = entry ? pictures(entry, item.title, item.detail) : null;
+    const output = entry && images ? threadOutputText(entry) : entry?.output;
+    return disclosure(
       h(
         'details.wt-tool',
         { class: item.state === 'failed' ? 'error' : item.state === 'complete' ? 'done' : 'pending', 'data-disclosure': item.id },
@@ -427,12 +457,14 @@ export function mountWorkerThread(net: Net, opts: ThreadOptions): WorkerThread {
               item.arguments ? h('div.wt-detail-label', {}, item.arguments.label) : null,
               item.arguments ? h('pre.wt-code', {}, threadArgumentsText(entry.input, item.arguments)) : null,
               h('div.wt-detail-label', {}, item.result),
-              h('pre.wt-code.wt-output', {}, entry.output ?? 'No result recorded in this session.'),
+              output || !images ? h('pre.wt-code.wt-output', {}, output ?? 'No result recorded in this session.') : null,
+              images,
             ]
           : [h('p.wt-detail-missing', {}, 'Load earlier messages to see what this call was given and returned.')]),
       ),
       item.open,
     );
+  };
   const run = (block: Extract<ThreadBlock, { kind: 'tools' }>, loaded: ReadonlyMap<string, ThreadEntry>) => {
     const body = h('div.wt-run-body', {}, ...block.actions.map((item) => action(item, loaded.get(item.id))));
     if (block.plan) {
@@ -475,7 +507,8 @@ export function mountWorkerThread(net: Net, opts: ThreadOptions): WorkerThread {
     }
     node.classList.add(row.role, row.kind === 'message' ? 'text' : 'notice');
     if (row.kind === 'notice') {
-      node.append(h('p.wt-turn', { class: row.tone }, row.text));
+      const images = row.tone === 'attachment' ? pictures(loaded.get(row.id), row.role === 'user' ? 'Picture you sent' : `Picture from ${author.name}`) : null;
+      node.append(images ?? h('p.wt-turn', { class: row.tone }, row.text));
       return node;
     }
     const text = loaded.get(row.id)?.text ?? '';

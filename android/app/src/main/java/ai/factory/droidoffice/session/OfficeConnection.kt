@@ -372,6 +372,11 @@ class OfficeConnection(
         return api.boardRenderStatus(base, auth, floor, card)
     }
 
+    suspend fun threadImage(floor: String, worker: String, image: String): ByteArray? {
+        val (base, auth) = current ?: return null
+        return api.threadImage(base, auth, floor, worker, image)
+    }
+
     suspend fun boardImage(floor: String, card: String, thumb: Boolean, tile: Int, version: Long): ByteArray? {
         val (base, auth) = current ?: return null
         return api.boardImage(base, auth, floor, card, thumb, tile, version)

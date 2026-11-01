@@ -1,9 +1,10 @@
 import { open, readdir, realpath, stat, type FileHandle } from 'node:fs/promises';
 import path from 'node:path';
 import { pageRows, presentThread, THREAD_MODEL_VERSION, type ThreadPresentation, type ThreadRow } from '../shared/thread-presentation.js';
-import type { ThreadEntry } from '../shared/worker-thread.js';
+import type { ThreadEntry, ThreadImage } from '../shared/worker-thread.js';
 import { LABEL_TEXT_CHARS } from '../shared/worker-labels.js';
 import { DROID_SESSIONS_DIR } from './droid-session.js';
+import { imageAddress, imageAt, imageRef, IMAGES_PER_ENTRY } from './thread-images.js';
 
 const PAGE_SIZE = 100;
 const FIELD_CHARS = 12_000;
@@ -246,12 +247,13 @@ export class WorkerThreadReader {
     while (state.position < end) {
       const chunk = await this.bytes(handle, state.position, Math.min(CHUNK_BYTES, end - state.position));
       if (!chunk.length) break;
+      const chunkStart = state.position;
       state.position += chunk.length;
       let start = 0;
       for (let at = chunk.indexOf(10); at >= 0; at = chunk.indexOf(10, start)) {
         const part = chunk.subarray(start, at);
         if (!state.oversized && state.pending.length + part.length <= LINE_BYTES) {
-          this.record(state.projection, Buffer.concat([state.pending, part]).toString('utf8'));
+          this.record(state.projection, Buffer.concat([state.pending, part]).toString('utf8'), chunkStart + start - state.pending.length);
         } else {
           this.add(state.projection, { id: `oversized:${state.projection.seq}`, role: 'system', kind: 'notice', text: 'A conversation record was too large to display.' });
         }
@@ -290,7 +292,8 @@ export class WorkerThreadReader {
     this.trim(state);
   }
 
-  private record(state: Projection, line: string): void {
+  /** `offset` is where the line starts in the file: a picture's id points back at it. */
+  private record(state: Projection, line: string, offset: number): void {
     let row: Record<string, unknown>;
     try {
       row = object(JSON.parse(line));
@@ -363,6 +366,15 @@ export class WorkerThreadReader {
         state.bytes -= entryBytes(tool);
         tool.output = contentText(part.content);
         tool.error = part.is_error === true;
+        const images = Array.isArray(part.content)
+          ? part.content
+              .slice(0, 1024)
+              .map((item, sub) => imageRef(item, `${offset}.${index}.${sub}`))
+              .filter((image): image is ThreadImage => !!image)
+              .slice(0, IMAGES_PER_ENTRY)
+          : [];
+        if (images.length) tool.images = images;
+        else delete tool.images;
         tool.resultSeq = state.seq;
         state.bytes += entryBytes(tool);
         this.trim(state);
@@ -371,11 +383,48 @@ export class WorkerThreadReader {
         if (!toolId) continue;
         this.add(state, { id: `tool:${toolId}`, role: 'assistant', kind: 'tool', name: clean(part.name, 160), input: pretty(part.input) });
       } else if (part.type === 'image') {
-        this.add(state, { id: partId, role, kind: 'notice', text: '[Image attachment]' });
+        const image = imageRef(part, `${offset}.${index}.x`);
+        this.add(state, { id: partId, role, kind: 'notice', text: '[Image attachment]', ...(image ? { images: [image] } : {}) });
       } else if (part.type === 'text' || part.type === 'thinking') {
         const text = clean(part.type === 'text' ? part.text : part.thinking);
         if (text) this.add(state, { id: partId, role, kind: part.type === 'thinking' ? 'thinking' : 'text', text });
       }
+    }
+  }
+
+  /**
+   * A picture from the worker's session by the id its entry carries: the record is read again from
+   * its offset in the file, so the thread's window never holds image data.
+   */
+  async image(source: ThreadSession, id: string): Promise<{ type: ThreadImage['type']; body: Buffer } | undefined> {
+    const address = imageAddress(id);
+    if (!address || !SESSION_ID.test(source.sessionId) || !path.isAbsolute(source.cwd)) return undefined;
+    const key = JSON.stringify([source.cwd, source.sessionId, source.since ?? 0]);
+    const file = this.sessions.get(key)?.file ?? (await this.find(source));
+    if (!file) return undefined;
+    const handle = await open(file, 'r').catch(() => undefined);
+    if (!handle) return undefined;
+    try {
+      const parts: Buffer[] = [];
+      let length = 0;
+      for (let at = address.offset; length <= LINE_BYTES; ) {
+        const chunk = await this.bytes(handle, at, 256 * 1024);
+        if (!chunk.length) return undefined;
+        const newline = chunk.indexOf(10);
+        parts.push(newline < 0 ? chunk : chunk.subarray(0, newline));
+        length += chunk.length;
+        if (newline >= 0) {
+          try {
+            return imageAt(JSON.parse(Buffer.concat(parts).toString('utf8')), address);
+          } catch {
+            return undefined;
+          }
+        }
+        at += chunk.length;
+      }
+      return undefined;
+    } finally {
+      await handle.close();
     }
   }
 

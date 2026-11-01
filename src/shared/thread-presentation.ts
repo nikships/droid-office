@@ -164,6 +164,19 @@ export function threadArgumentsText(input: string | undefined, ref: ThreadArgume
   }
 }
 
+/** What the office writes in a result or message for each picture in it. */
+export const IMAGE_PLACEHOLDER = '[Image attachment]';
+
+/** A tool's result as a client that shows its pictures prints it: without a placeholder line per picture. */
+export function threadOutputText(entry: ThreadEntry): string | undefined {
+  if (entry.output === undefined || !entry.images?.length) return entry.output;
+  return entry.output
+    .split('\n')
+    .filter((line) => line !== IMAGE_PLACEHOLDER)
+    .join('\n')
+    .trim();
+}
+
 export function threadAction(entry: ThreadEntry, live = false, cancelled = false): ThreadAction {
   const name = leaf(entry.name);
   const args = argumentsOf(entry);
@@ -413,7 +426,7 @@ function notice(entry: ThreadEntry): Extract<ThreadRow, { kind: 'notice' }> | un
     if (text === 'Turn cancelled' || reason === 'cancelled') return row('Turn cancelled', 'quiet');
     return !reason || reason === 'completed' ? undefined : row(threadStop(reason), 'danger');
   }
-  if (text === '[Image attachment]') return row('Image attached', 'attachment');
+  if (text === IMAGE_PLACEHOLDER) return row('Image attached', 'attachment');
   return text ? row(text, entry.error ? 'danger' : 'quiet') : undefined;
 }
 

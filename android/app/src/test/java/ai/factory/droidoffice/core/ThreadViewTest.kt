@@ -105,6 +105,33 @@ class ThreadViewTest {
     }
 
     @Test
+    fun aCallsPicturesComeWithItsResultWithoutTheirPlaceholderLines() {
+        val read = tool("{}", output = "Read icon.png\n[Image attachment]").copy(images = listOf(ThreadImage("2210.0.1.deadbeef", "image/png", 192, 192)))
+        assertEquals(
+            ThreadView.Detail.Shown(null, "Result", "Read icon.png", recorded = true, images = read.images),
+            ThreadView.detail(action(), read),
+        )
+        // Only pictures: nothing is left to print, and it is still a recorded result.
+        val only = tool("{}", output = "[Image attachment]").copy(images = read.images)
+        assertEquals(ThreadView.Detail.Shown(null, "Result", "", recorded = true, images = read.images), ThreadView.detail(action(), only))
+        // An office from before pictures sends none: the placeholder stays, as the text it is.
+        assertEquals("[Image attachment]", ThreadView.outputText(tool("{}", output = "[Image attachment]")))
+    }
+
+    @Test
+    fun picturesAreReadFromTheSnapshotTheOfficeSends() {
+        val msg = Protocol.decode(
+            """{"t":"thread.snapshot","workerId":"w1","request":"r1","sessionId":"s1","hasMore":false,"entries":[
+              {"id":"ask:1","seq":1,"role":"user","kind":"notice","text":"[Image attachment]","images":[{"id":"410.1.x.0a1b2c3d","type":"image/jpeg","width":540,"height":1200}]},
+              {"id":"tool:read-1","seq":2,"role":"assistant","kind":"tool","name":"Read","input":"{}","output":"[Image attachment]","images":[
+                {"id":"2210.0.0.deadbeef","type":"image/png"},{"id":"bad","type":"image/svg+xml"},{"type":"image/png"},{"id":"huge","type":"image/png","width":0,"height":9}
+              ]}]}""",
+        ) as ServerMsg.ThreadSnapshot
+        assertEquals(listOf(ThreadImage("410.1.x.0a1b2c3d", "image/jpeg", 540, 1200)), msg.entries[0].images)
+        assertEquals(listOf(ThreadImage("2210.0.0.deadbeef", "image/png"), ThreadImage("huge", "image/png")), msg.entries[1].images)
+    }
+
+    @Test
     fun aThoughtShowsItsWholeTextOrItsPreview() {
         val t = ThreadBlock.Thought("th", "Considering", live = false)
         assertEquals("Considering", ThreadView.thought(t, null))

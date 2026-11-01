@@ -2555,6 +2555,16 @@ html:has(body.dashboard), body.dashboard { overflow: auto; }
 .wt-detail-label { padding: var(--space-3) var(--space-3) var(--space-1); color: var(--text-secondary); background: var(--surface); font: 400 var(--text-label)/1.5 var(--font-mono); text-transform: uppercase; letter-spacing: .08em; }
 .wt-code { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 320px; overflow: auto; margin: 0; padding: var(--space-2) var(--space-3) var(--space-3); background: var(--surface); font: 400 var(--text-small)/1.6 var(--font-mono); }
 .wt-output { color: var(--text-secondary); margin-bottom: var(--space-3); }
+.wt-images { display: flex; flex-wrap: wrap; gap: var(--space-2); padding: var(--space-2) var(--space-3) var(--space-3); margin-bottom: var(--space-3); background: var(--surface); }
+.wt-output + .wt-images { margin-top: calc(-1 * var(--space-3)); padding-top: 0; }
+.wt-entry.notice .wt-images { padding: 0; margin: 0; background: none; }
+.wt-entry.user .wt-images { justify-content: flex-end; }
+.wt-image { display: block; max-width: 100%; padding: 0; overflow: hidden; border: 1px solid var(--border); border-radius: var(--radius); background: var(--bg); cursor: zoom-in; transition: border-color 150ms ease-out; }
+.wt-image:hover { border-color: var(--border-strong); }
+.wt-image:focus-visible { outline: 1px solid var(--accent); outline-offset: var(--space-1); }
+.wt-image img { display: block; width: auto; height: auto; max-width: 100%; max-height: 320px; }
+.wt-picture-body { display: grid; place-items: center; min-height: 0; background: var(--bg); }
+.wt-picture-full { display: block; width: auto; height: auto; max-width: 100%; max-height: calc(100vh - 160px); object-fit: contain; }
 .wt-thinking-text { white-space: pre-wrap; max-height: 320px; overflow: auto; padding: var(--space-3); color: var(--text-secondary); line-height: 1.6; }
 .wt-turn { margin: 0; color: var(--text-tertiary); font: 400 var(--text-small)/1.5 var(--font-mono); border-top: 1px solid var(--border); padding-top: var(--space-3); }
 .wt-turn.danger { color: var(--danger); }

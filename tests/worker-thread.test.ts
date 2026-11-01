@@ -1,11 +1,12 @@
 import assert from 'node:assert/strict';
-import { appendFile, mkdir, mkdtemp, rename, rm, symlink, writeFile } from 'node:fs/promises';
+import { appendFile, mkdir, mkdtemp, readFile, rename, rm, symlink, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { test, type TestContext } from 'node:test';
 import { WorkerThreadReader } from '../src/server/worker-thread.js';
 import { WorkerManager } from '../src/server/workers.js';
 import { LABEL_TEXT_CHARS } from '../src/shared/worker-labels.js';
+import { threadOutputText } from '../src/shared/thread-presentation.js';
 
 // Shapes sampled from the owner's local Factory JSONL, including todo_state's nested todos,
 // cli_tui source, hook visibility, thinking signatures, image source and tool_result.is_error.
@@ -141,6 +142,52 @@ test('projects actual text, thinking, tool/error, attachment and nested todo rec
   assert.doesNotMatch(JSON.stringify(page), /PRIVATE_|base64|signature|userMessageSource|compaction/);
 });
 
+test('pictures in tool results and messages are referenced by id and served from the session file', async (t) => {
+  const png = await readFile(new URL('../src/client/public/icons/icon-192.png', import.meta.url));
+  const jpeg = await readFile(new URL('../android/docs/unpaired.jpg', import.meta.url));
+  const picture = (bytes: Buffer, type: string) => ({ type: 'image', source: { type: 'base64', data: bytes.toString('base64'), media_type: type } });
+  const { reader, source, file } = await rig(t, [
+    message('ask', 'user', [{ type: 'text', text: 'What is on this screen?' }, picture(jpeg, 'image/jpeg')], { userMessageSource: 'cli_tui' }),
+    message('call', 'assistant', [
+      { type: 'tool_use', id: 'read-1', name: 'Read', input: { file_path: '/project/icon.png' } },
+      { type: 'tool_use', id: 'read-2', name: 'Read', input: { file_path: '/project/mislabelled.jpg' } },
+    ]),
+    message('result', 'user', [
+      { type: 'tool_result', tool_use_id: 'read-1', content: [{ type: 'text', text: 'Read icon.png' }, picture(png, 'image/png')] },
+      { type: 'tool_result', tool_use_id: 'read-2', content: [picture(png, 'image/jpeg')] },
+    ]),
+  ]);
+  const page = await reader.read(source);
+  const [sent, read, mislabelled] = [page.entries[1], page.entries[2], page.entries[3]];
+  assert.equal(sent.kind, 'notice');
+  assert.equal(sent.text, '[Image attachment]');
+  assert.deepEqual(
+    sent.images?.map(({ type, width, height }) => ({ type, width, height })),
+    [{ type: 'image/jpeg', width: 540, height: 1200 }],
+  );
+  assert.deepEqual(
+    read.images?.map(({ type, width, height }) => ({ type, width, height })),
+    [{ type: 'image/png', width: 192, height: 192 }],
+  );
+  assert.equal(read.output, 'Read icon.png\n[Image attachment]');
+  assert.equal(threadOutputText(read), 'Read icon.png');
+  assert.equal(mislabelled.images, undefined, 'bytes that are not the declared type are never offered');
+  assert.equal(mislabelled.output, '[Image attachment]');
+  assert.doesNotMatch(JSON.stringify(page), /base64|iVBORw0KGgo|\/9j\//);
+
+  const served = await reader.image(source, read.images![0].id);
+  assert.equal(served?.type, 'image/png');
+  assert.deepEqual(served?.body, png);
+  assert.deepEqual((await reader.image(source, sent.images![0].id))?.body, jpeg);
+  assert.equal(await reader.image(source, 'not-an-id'), undefined);
+  assert.equal(await reader.image(source, `${read.images![0].id.split('.').slice(0, 3).join('.')}.00000000`), undefined);
+  assert.equal(await reader.image({ ...source, sessionId: 'other-session' }, read.images![0].id), undefined);
+
+  // The same offset in a rewritten session holds a different picture: the old id serves nothing.
+  const before = await readFile(file, 'utf8');
+  await writeFile(file, before.replace(png.toString('base64'), Buffer.concat([png, Buffer.from([0])]).toString('base64')));
+  assert.equal(await reader.image(source, read.images![0].id), undefined);
+});
 test('filters system, hooks, hidden/source bookkeeping and system-reminder blocks', async (t) => {
   const { reader, source } = await rig(t, [
     text('system', 'PRIVATE_SYSTEM_PROMPT', 'system'),

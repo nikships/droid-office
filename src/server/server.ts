@@ -1146,6 +1146,23 @@ export async function startServer(cfg: Config) {
       }
       // Which floor a request is about: its boards and its workers.
       const floor = floors.get(url.searchParams.get('floor') ?? '');
+      if (p === '/api/thread/image' && req.method === 'GET') {
+        // A picture a worker read or was sent, shown in its Thread (worker-thread.ts reads it from the session).
+        const source = floor?.workers.threadSession(str(url.searchParams.get('worker'), 32));
+        const image = source ? await workerThreads.image(source, str(url.searchParams.get('image'), 64)) : undefined;
+        if (!image) return send(res, 404, { error: 'That picture is no longer in the conversation.' });
+        res.writeHead(200, {
+          'content-type': image.type,
+          'content-length': String(image.body.length),
+          // The id names the picture's bytes, so the same id is always the same picture.
+          'cache-control': 'private, max-age=86400, immutable',
+          'x-content-type-options': 'nosniff',
+          'content-security-policy': "default-src 'none'; sandbox",
+          'cross-origin-resource-policy': 'same-origin',
+        });
+        res.end(image.body);
+        return;
+      }
       if (p === '/api/term/drop') {
         // A file dropped or pasted into a worker's terminal, kept on this machine for the terminal to type its path.
         if (req.method !== 'POST') return send(res, 405, { error: 'Method not allowed' });
