@@ -17,14 +17,14 @@ test('office and companion share slim scroll-only accent scrollbars on both axes
     assert.match(html, /<link rel="stylesheet" href="\.\/style\.css"/);
   }
   assert.match(rule(':root'), /color-scheme:\s*dark;/);
-  assert.match(rule('::-webkit-scrollbar'), /width:\s*5px;\s*height:\s*5px;/);
+  assert.match(rule('::-webkit-scrollbar'), /width:\s*2\.5px;\s*height:\s*2\.5px;/);
   assert.match(rule('::-webkit-scrollbar-track, ::-webkit-scrollbar-corner'), /background:\s*transparent;/);
   assert.match(rule('::-webkit-scrollbar-thumb'), /background:\s*transparent;/);
   assert.match(rule('::-webkit-scrollbar-thumb'), /border-radius:\s*999px;/);
   assert.match(rule('.user-scrolling::-webkit-scrollbar-thumb'), /background:\s*var\(--accent\);/);
   assert.match(rule('::-webkit-scrollbar-button'), /display:\s*none;/);
   assert.match(rule('.xterm .xterm-scrollable-element > .scrollbar > .slider'), /background:\s*var\(--accent\)/);
-  assert.match(rule('.xterm .xterm-scrollable-element > .scrollbar > .slider'), /border:\s*2\.5px solid transparent;/);
+  assert.match(rule('.xterm .xterm-scrollable-element > .scrollbar > .slider'), /border:\s*4\.75px solid transparent;/);
   assert.match(rule('.xterm .xterm-scrollable-element > .scrollbar'), /pointer-events:\s*auto;/);
   assert.match(rule('.xterm:not(.user-scrolling) .xterm-scrollable-element > .scrollbar'), /opacity:\s*0;/);
   assert.match(rule('.xterm.user-scrolling .xterm-scrollable-element > .scrollbar'), /opacity:\s*1;/);
