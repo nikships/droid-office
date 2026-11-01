@@ -1,21 +1,18 @@
-import { canHost, cloudBadge, cloudSessionUrl, computerHome, type CloudComputer } from '../../shared/factory-cloud';
+import { CLOUD_HIRE_CONFIRM_MS, canHost, cloudBadge, cloudHire, cloudSessionUrl, computerHome, type CloudComputer } from '../../shared/factory-cloud';
 import { canStartFrom, repoName, type FactoryEnvironment } from '../../shared/factory-environments';
-import { NEW_SESSION_GRACE_MS, creditsNote } from '../../shared/factory-sessions';
+import { creditsNote } from '../../shared/factory-sessions';
 import { statusWord } from '../../shared/guests';
-import type { AgentEffort, WorkerInfo } from '../../shared/protocol';
-import { factoryFetch, watchFactory } from '../factory';
+import type { AgentEffort, ClientMsg, WorkerInfo } from '../../shared/protocol';
+import { watchFactory } from '../factory';
 import type { Net } from '../net';
 import { store } from '../state';
-import { h, openModal, STATUS_LABEL, toast, type Modal } from './dom';
-import { mountTranscript } from './factory-transcript';
-import { promptImages } from './images';
+import { h, openModal, STATUS_LABEL, type Modal } from './dom';
 import { colorDot, groupRow, toggle } from './kit';
 import { modelBadge } from './models';
-import { sendHint } from './prompt';
-import { promptExtras } from './prompt-box';
+import { mountWorkerThread } from './worker-thread';
 
-// Cloud workers in the browser (src/server/factory/cloud.ts): the hire dialog's "Runs on" choice, the
-// window E opens at one's desk (its session on Factory and a prompt box), and sending one home.
+// Cloud workers in the browser (src/server/factory/cloud.ts): the hire dialog's "Runs on" choice and
+// the hire it makes, the window E opens at one's desk (its Thread), and sending one home.
 
 /** A hire's Factory computer, or the Environment to start one from for it, and the folder its session starts in there. */
 export interface CloudChoice {
@@ -139,19 +136,16 @@ export function runsOnPicker(): RunsOn | null {
   };
 }
 
-/** Makes a cloud worker's session at `deskId` and seats it; why it didn't, for the dialog to show. */
-export async function hireCloud(deskId: string, text: string, o: { model?: string; effort?: AgentEffort; images: string[]; cloud: CloudChoice }): Promise<string | undefined> {
+/** The `worker.spawn` that hires a cloud worker at `deskId` (or 'auto'), remembering the folder typed for that computer. */
+export function cloudSpawn(deskId: string, text: string, o: { model?: string; effort?: AgentEffort; images: string[]; cloud: CloudChoice }): Extract<ClientMsg, { t: 'worker.spawn' }> {
   saveCwd(o.cloud.environmentId ? `env:${o.cloud.environmentId}` : o.cloud.computerId, o.cloud.cwd);
-  const where = o.cloud.environmentId ? { environmentId: o.cloud.environmentId } : { computerId: o.cloud.computerId };
-  try {
-    await factoryFetch('cloud', '/hire', {
-      method: 'POST',
-      body: { floor: store.floor, deskId, ...where, cwd: o.cloud.cwd, prompt: text, model: o.model, effort: o.effort, images: o.images },
-    });
-    return undefined;
-  } catch (err) {
-    return (err as Error).message;
-  }
+  return { t: 'worker.spawn', deskId, prompt: text || undefined, model: o.model, effort: o.effort, images: o.images.length ? o.images : undefined, cloud: cloudHire(o.cloud) };
+}
+
+/** Hires a cloud worker at `deskId` and waits until it's seated (making its session takes a while); why it wasn't, for the dialog to show. */
+export async function hireCloud(net: Net, deskId: string, text: string, o: { model?: string; effort?: AgentEffort; images: string[]; cloud: CloudChoice }): Promise<string | undefined> {
+  const result = await net.request(cloudSpawn(deskId, text, o), CLOUD_HIRE_CONFIRM_MS);
+  return result.ok ? undefined : (result.error ?? 'The office refused the hire.');
 }
 
 /** The line under a cloud worker's name: where it runs, its model, its folder there. */
@@ -197,6 +191,8 @@ export function sendCloudHome(net: Net, w: WorkerInfo) {
 }
 
 let current: { workerId: string; modal: Modal } | null = null;
+/** What was typed in each cloud worker's window, kept while the page is open. */
+const drafts = new Map<string, string>();
 
 /** The cloud worker whose window is open, if any. */
 export function openCloudFor(): string | null {
@@ -204,10 +200,9 @@ export function openCloudFor(): string | null {
 }
 
 /**
- * A cloud worker's window: where it runs, its session's transcript (factory-transcript.ts, read live
- * while it works), its session in Factory's web app, and a prompt box (Enter sends, Shift+Enter is a
- * new line, pictures pasted or dropped) with Interrupt while it works. The office reads its session
- * quickly while this is open.
+ * A cloud worker's window: where it runs, its session in Factory's web app, and its Thread
+ * (worker-thread.ts, the same view the web companion shows), read from its Factory session while
+ * the window is open. The office reads its session quickly while this is open.
  */
 export function openCloudWindow(net: Net, workerId: string) {
   if (current?.workerId === workerId) return;
@@ -222,107 +217,55 @@ export function openCloudWindow(net: Net, workerId: string) {
   const closeBtn = h('button.btn.close', { title: 'Close (Esc)', 'aria-label': 'Close' }, '✕');
   const meta = h('div.cloud-meta');
   const error = h('p.cloud-error.note.bad.hidden', { role: 'alert' });
-  const worker = () => store.workers.get(workerId);
-  const busyNow = () => {
-    const s = worker()?.status;
-    return s === 'working' || s === 'starting';
-  };
-  const transcript = info.sessionId
-    ? mountTranscript({
-        sessionId: info.sessionId,
-        live: busyNow,
-        starting: () => {
-          const w = worker();
-          return !!w && (w.status === 'starting' || Date.now() - w.createdAt < NEW_SESSION_GRACE_MS);
-        },
-        empty: () => {
-          const s = worker()?.status;
-          return s === 'starting' ? 'Starting… sending its first prompt' : s === 'working' ? 'Working… its messages show here as Factory lists them' : 'Waiting for a prompt';
-        },
-      })
-    : null;
-  const ta = h('textarea.input', { rows: 3, placeholder: `Message ${info.name}…`, 'aria-label': `Message ${info.name}` }) as HTMLTextAreaElement;
-  const images = promptImages(ta);
-  const extras = promptExtras(ta);
-  const interrupt = h('button.btn', { type: 'button', title: 'Stop what it is doing now' }, '⏹ Interrupt');
-  const send = h('button.btn.primary', { type: 'submit' }, 'Send');
-  const form = h('form.cloud-prompt', {}, extras.element, images.element, h('div.cloud-actions', {}, sendHint(true), interrupt, send)) as HTMLFormElement;
-  const el = h(
-    'div.modal.term.cloud-win',
-    { role: 'dialog', 'aria-label': `${info.name} on ${info.cloud.computerName}` },
-    h('header', {}, dot, title, pill, link ? h('div.actions', {}, link) : null, closeBtn),
-    meta,
-    error,
-    transcript?.element ?? h('div.ft', {}, h('div.ft-status', {}, 'It has no Factory session')),
-    form,
-  );
+  const thread = mountWorkerThread(net, {
+    worker: info,
+    // A cloud worker never waits on a menu here: nothing to show in the question slot.
+    question: h('div', { hidden: true }),
+    queueKey: `droid-office.cloud-queue:${store.floor ?? ''}:${workerId}`,
+    draft: drafts.get(workerId) ?? '',
+    onDraft: (text) => (text ? drafts.set(workerId, text) : drafts.delete(workerId)),
+    send: async (msg) => {
+      const result = await net.request(msg);
+      return result.ok ? undefined : (result.error ?? 'The office refused that.');
+    },
+    cloudErrorShown: true,
+  });
+  const el = h('div.modal.term.cloud-win', { role: 'dialog', 'aria-label': `${info.name} on ${info.cloud.computerName}` }, h('header', {}, dot, title, pill, link ? h('div.actions', {}, link) : null, closeBtn), meta, error, thread.element);
 
   const refresh = () => {
     const w = store.workers.get(workerId);
     if (!w?.cloud) return modal.close();
     title.textContent = [`☁ ${w.name}`, w.title].filter(Boolean).join(' · ');
+    title.title = title.textContent;
     pill.className = `pill ${w.status}`;
     pill.textContent = statusWord(w, STATUS_LABEL);
     meta.textContent = [cloudLine(w), `autonomy ${w.cloud.autonomy}`, creditsNote(store.factory.sessions, w.sessionId)].filter(Boolean).join(' · ');
     meta.title = meta.textContent;
-    const busy = busyNow();
-    error.textContent = w.cloud.error ? `☁ ${w.name} can't work: ${w.cloud.error}. Send it home and hire another.` : '';
+    error.textContent = w.cloud.error ? `☁ ${w.name} can't work: ${w.cloud.error}. Check again, or send it home and hire another.` : '';
     error.classList.toggle('hidden', !w.cloud.error);
-    interrupt.toggleAttribute('disabled', !busy);
-    send.toggleAttribute('disabled', !!w.cloud.error);
+    thread.update(w, net.up);
   };
-
-  const submit = () => {
-    const text = ta.value.trim();
-    if (images.busy()) return void images.settled().then(submit);
-    if (!text && !images.ids().length) return ta.focus();
-    const ids = images.take();
-    if (text) extras.sent(text);
-    net.send({ t: 'worker.prompt', workerId, prompt: text, images: ids.length ? ids : undefined });
-    ta.value = '';
-    void transcript?.refresh();
-  };
-  form.addEventListener('submit', (e) => {
-    e.preventDefault();
-    submit();
-  });
-  ta.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) {
-      e.preventDefault();
-      submit();
-    }
-  });
-  interrupt.addEventListener('click', () => {
-    interrupt.toggleAttribute('disabled', true);
-    factoryFetch('cloud', `/${encodeURIComponent(workerId)}/interrupt`, { method: 'POST' })
-      .then(() => transcript?.refresh())
-      .catch((err: Error) => {
-        toast(`☁ Couldn't interrupt ${info.name}: ${err.message}`, 'warn');
-        refresh();
-      });
-  });
   closeBtn.addEventListener('click', () => modal.close());
 
   const unsub = store.on('workers', refresh);
   const unsubCredits = store.on('factory', refresh);
+  const unstatus = net.onStatus(refresh);
   const unwatch = watchFactory('cloud');
-  net.send({ t: 'worker.attach', workerId });
   const modal = openModal(el, {
     backdropCloses: true,
     doing: `☁ in ${info.name}'s window`,
     onClose: () => {
       unsub();
       unsubCredits();
+      unstatus();
       unwatch();
-      transcript?.dispose();
-      images.discard();
-      extras.dispose();
-      net.send({ t: 'worker.detach', workerId });
+      thread.dispose();
       if (current?.modal === modal) current = null;
     },
   });
-  images.dropZone(modal.backdrop, el);
+  thread.dropZone(modal.backdrop, el);
   current = { workerId, modal };
   refresh();
-  setTimeout(() => ta.focus(), 30);
+  thread.activate(true);
+  setTimeout(() => thread.element.querySelector<HTMLTextAreaElement>('textarea:not(:disabled)')?.focus(), 30);
 }

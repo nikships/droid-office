@@ -36,13 +36,16 @@ export interface MountOptions {
 export function mountFactory(opts: MountOptions) {
   const office = new FactoryOffice(opts.dataDir, { fetchImpl: opts.fetchImpl, base: opts.base });
   const registry = new FactoryRegistry({ link: office, broadcast: opts.broadcast, toast: opts.toast });
-  office.onChange = () => registry.connectionChanged();
   registry.register((host) => new ComputersFeature(host));
   registry.register((host) => new EnvironmentsFeature(host));
   registry.register((host) => new SessionsFeature(host, { dataDir: opts.dataDir, officeSessions: opts.officeSessions }));
   registry.register((host) => new CiFeature(host));
   const wiki = registry.register((host) => new WikiFeature(host, { ...opts.wiki, key: () => office.key(), fetchImpl: opts.fetchImpl, base: opts.base })) as WikiFeature;
-  const cloud = opts.cloud && mountCloud(registry, opts.cloud);
+  const cloud = opts.cloud && mountCloud(registry, { ...opts.cloud, key: () => office.key() });
+  office.onChange = () => {
+    registry.connectionChanged();
+    cloud?.feature.connectionChanged();
+  };
   registry.start();
   // A saved key is checked again at every start: it may have been deleted, or its plan changed.
   void office.check();
@@ -89,6 +92,7 @@ export function mountFactory(opts: MountOptions) {
     drop: (client: string) => registry.drop(client),
     stop: () => {
       wiki.stop();
+      cloud?.feature.stop();
       registry.stop();
     },
   };

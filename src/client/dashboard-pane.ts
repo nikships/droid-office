@@ -254,6 +254,8 @@ export function createPane(host: PaneHost, index: number): Pane {
 
   function modeFor(w: WorkerInfo | undefined, view: PaneView): PaneMode {
     if (!w) return 'empty';
+    // A cloud worker has no terminal here: its Thread is its Factory session.
+    if (w.cloud) return 'thread';
     const local = !w.guest && !w.cloud;
     if (local && w.kind === 'agent' && view === 'thread') return 'thread';
     return local && !isAsleep(w.status) ? 'terminal' : 'info';
@@ -283,14 +285,14 @@ export function createPane(host: PaneHost, index: number): Pane {
         onDraft: (text) => host.remember(key, text),
         onEntries: () => paintQuestion(),
         send: (msg) => host.action(msg, w.id, intended),
-        screen: () => lines(w.id),
+        screen: w.cloud ? undefined : () => lines(w.id),
         team: () => (host.floor() === intended ? [...store.workers.values()] : []),
         openWorker: (mate) => {
           if (!host.usable(mate, intended)) return;
           host.setView(mate, 'thread');
           host.openBeside(mate);
         },
-        raw: () => host.setView(w.id, 'terminal'),
+        raw: w.cloud ? undefined : () => host.setView(w.id, 'terminal'),
       });
       thread.element.querySelector('.wt-scroll')?.append(question);
       stage.replaceChildren(thread.element);

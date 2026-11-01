@@ -52,6 +52,9 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import ai.factory.droidoffice.core.Availability
 import ai.factory.droidoffice.core.Effort
+import ai.factory.droidoffice.core.FactoryCloud
+import ai.factory.droidoffice.core.ModelAvailability
+import ai.factory.droidoffice.core.RunsOn
 import ai.factory.droidoffice.core.ModelSearch
 import ai.factory.droidoffice.core.Tags
 import ai.factory.droidoffice.net.ModelCatalogue
@@ -80,7 +83,9 @@ fun HireSheet(onDismiss: () -> Unit, deskId: String? = null) {
     val link by connection.link.collectAsStateWithLifecycle()
     val availability by connection.availability.collectAsStateWithLifecycle()
     val data by connection.data.collectAsStateWithLifecycle()
+    val factory by connection.factory.collectAsStateWithLifecycle()
     val worktreeOption = data.floor?.home != true && data.floor?.plain != true && !data.project?.branch.isNullOrBlank()
+    val places = remember(factory) { FactoryCloud.choices(factory) }
     val sheet = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     val scope = rememberCoroutineScope()
 
@@ -89,6 +94,8 @@ fun HireSheet(onDismiss: () -> Unit, deskId: String? = null) {
     var worktree by rememberSaveable { mutableStateOf(true) }
     var modelId by rememberSaveable { mutableStateOf<String?>(null) }
     var effort by rememberSaveable { mutableStateOf<String?>(null) }
+    var placeKey by rememberSaveable { mutableStateOf("") }
+    var folder by rememberSaveable(placeKey) { mutableStateOf("") }
     var catalogue by remember { mutableStateOf<ModelCatalogue?>(null) }
     var loadingModels by remember { mutableStateOf(true) }
 
@@ -107,6 +114,11 @@ fun HireSheet(onDismiss: () -> Unit, deskId: String? = null) {
     }
     val model = catalogue?.models?.firstOrNull { it.id == modelId }
     val efforts = model?.supportedReasoningEfforts?.mapNotNull(Effort::of).orEmpty()
+    // A computer or Environment that went away falls back to this machine.
+    val place = places.firstOrNull { it.key == placeKey } ?: RunsOn.ThisMachine
+    val cloud = !shell && place != RunsOn.ThisMachine
+    val cloudBlocked = cloud && !FactoryCloud.runsInCloud(modelId)
+    val pickable = if (!cloud) availability else availability + catalogue?.models.orEmpty().filterNot { FactoryCloud.runsInCloud(it.id) }.associate { it.id to ModelAvailability.NotInCloud }
 
     fun close() {
         scope.launch { sheet.hide() }.invokeOnCompletion { onDismiss() }
@@ -115,7 +127,7 @@ fun HireSheet(onDismiss: () -> Unit, deskId: String? = null) {
     fun hire() {
         val kind = if (shell) "shell" else "agent"
         val e = effort?.takeIf { w -> efforts.isEmpty() || efforts.any { it.wire == w } }
-        val ok = connection.hire(prompt.trim().takeIf { !shell && it.isNotBlank() }, kind, modelId, e, worktreeOption && worktree, deskId)
+        val ok = connection.hire(prompt.trim().takeIf { !shell && it.isNotBlank() }, kind, modelId, e, worktreeOption && worktree && !cloud, deskId, if (cloud) FactoryCloud.hire(place, folder) else null)
         if (ok) {
             if (!shell && modelId != null) graph.scope.launch { graph.store.settings { it.copy(hireModel = modelId, hireEffort = e) } }
             close()
@@ -152,7 +164,7 @@ fun HireSheet(onDismiss: () -> Unit, deskId: String? = null) {
                     Spacer(Modifier.height(16.dp))
                     Eyebrow("Model")
                     Spacer(Modifier.height(6.dp))
-                    ModelPicker(catalogue, loadingModels && link.phase == Phase.Connected, modelId, availability) { m ->
+                    ModelPicker(catalogue, loadingModels && link.phase == Phase.Connected, modelId, pickable) { m ->
                         modelId = m.id
                         effort = m.defaultReasoningEffort ?: effort
                     }
@@ -166,7 +178,17 @@ fun HireSheet(onDismiss: () -> Unit, deskId: String? = null) {
                     }
                 }
             }
-            if (worktreeOption) {
+            if (!shell && places.size > 1) {
+                Spacer(Modifier.height(16.dp))
+                RunsOnPicker(places, place, folder, data.floor?.repo, onPick = { placeKey = it.key }, onFolder = { folder = it })
+                if (cloudBlocked) Text(
+                    "Your own models can't run on a Factory computer. Pick one of Factory's models, or run it on this machine.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = Palette.Danger,
+                    modifier = Modifier.padding(top = 8.dp).tagged(Tags.Hire.CLOUD_MODEL),
+                )
+            }
+            if (worktreeOption && !cloud) {
                 Spacer(Modifier.height(16.dp))
                 Row(
                     Modifier.fillMaxWidth().panel(RoundedCornerShape(12.dp), Palette.SurfaceRaised).toggleable(worktree, role = Role.Switch) { worktree = it }.tagged(Tags.Hire.WORKTREE).padding(horizontal = 14.dp, vertical = 10.dp),
@@ -190,11 +212,66 @@ fun HireSheet(onDismiss: () -> Unit, deskId: String? = null) {
                 if (shell) "Open a shell" else "Hire",
                 { hire() },
                 Modifier.fillMaxWidth().tagged(Tags.Hire.SUBMIT),
-                enabled = link.phase == Phase.Connected && (shell || !Availability.cannotRun(availability[modelId])),
+                enabled = link.phase == Phase.Connected && (shell || (!Availability.cannotRun(availability[modelId]) && !cloudBlocked)),
                 icon = if (shell) OfficeIcons.Shell else OfficeIcons.Sparkle,
             )
             if (link.phase != Phase.Connected) {
                 Text("Waiting for the office…", style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(top = 8.dp).align(Alignment.CenterHorizontally))
+            }
+        }
+    }
+}
+
+/**
+ * Where a Droid runs: this machine, a fresh computer from one of the account's Environments, or one
+ * of its active computers, with the folder its session starts in there (the web's runsOnPicker).
+ */
+@Composable
+private fun RunsOnPicker(places: List<RunsOn>, place: RunsOn, folder: String, floorRepo: String?, onPick: (RunsOn) -> Unit, onFolder: (String) -> Unit) {
+    Column(Modifier.fillMaxWidth().tagged(Tags.Hire.RUNS_ON)) {
+        Eyebrow("Runs on")
+        Spacer(Modifier.height(6.dp))
+        val shape = RoundedCornerShape(12.dp)
+        Column(Modifier.fillMaxWidth().clip(shape).panel(shape, Palette.SurfaceRaised)) {
+            var group: String? = null
+            places.forEach { p ->
+                val heading = when (p) {
+                    RunsOn.ThisMachine -> null
+                    is RunsOn.Environment -> "A fresh computer from an Environment"
+                    is RunsOn.Computer -> "One of your computers"
+                }
+                if (heading != null && heading != group) {
+                    group = heading
+                    Eyebrow(heading, Modifier.padding(start = 14.dp, top = 10.dp, bottom = 2.dp), color = Palette.TextTertiary)
+                }
+                val selected = p == place
+                Row(
+                    Modifier.fillMaxWidth().selectable(selected, role = Role.RadioButton) { onPick(p) }.tagged(Tags.Hire.runsOn(p.key))
+                        .heightIn(min = 44.dp).padding(horizontal = 14.dp, vertical = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(p.label, style = MaterialTheme.typography.bodyMedium, color = if (selected) Palette.Text else Palette.TextSecondary, modifier = Modifier.weight(1f))
+                    if (selected) Icon(Icons.Default.Check, null, Modifier.size(16.dp), tint = Palette.Accent)
+                }
+            }
+        }
+        if (place != RunsOn.ThisMachine) {
+            Spacer(Modifier.height(12.dp))
+            Eyebrow("Folder")
+            Spacer(Modifier.height(6.dp))
+            OutlinedTextField(
+                value = folder,
+                onValueChange = onFolder,
+                modifier = Modifier.fillMaxWidth().tagged(Tags.Hire.FOLDER),
+                placeholder = { Text(FactoryCloud.folderPlaceholder(place, floorRepo).orEmpty(), color = Palette.TextTertiary) },
+                singleLine = true,
+                textStyle = MaterialTheme.typography.bodyLarge,
+                shape = RoundedCornerShape(12.dp),
+                keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.None, autoCorrectEnabled = false),
+                colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = Palette.Accent, unfocusedBorderColor = Palette.BorderStrong, cursorColor = Palette.Accent),
+            )
+            FactoryCloud.note(place)?.let {
+                Text(it, style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(top = 6.dp).tagged(Tags.Hire.FOLDER_NOTE))
             }
         }
     }

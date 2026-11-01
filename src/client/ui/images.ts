@@ -26,6 +26,9 @@ export interface PromptImages {
   dropZone(zone: HTMLElement, mark?: HTMLElement): void;
 }
 
+/** Drops a zone already took. */
+const dropped = new WeakSet<Event>();
+
 interface Item {
   file: File;
   url: string;
@@ -175,6 +178,9 @@ export function promptImages(textarea: HTMLTextAreaElement): PromptImages {
         if (!hasFiles(e)) return;
         e.preventDefault();
         end();
+        // Zones nest (a window around a composer that takes drops too): the innermost takes the files.
+        if (dropped.has(e)) return;
+        dropped.add(e);
         add([...e.dataTransfer!.files]);
       });
     },

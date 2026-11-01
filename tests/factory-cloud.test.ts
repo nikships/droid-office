@@ -11,7 +11,7 @@ import { FactoryRegistry } from '../src/server/factory/registry.js';
 import { toolAction } from '../src/shared/actions.js';
 import { computerOf, type FactoryComputer, type FactoryComputersState } from '../src/shared/factory-computers.js';
 import { emptyEnvironments, environmentOf, type FactoryEnvironmentsState } from '../src/shared/factory-environments.js';
-import { SEND_SETTLE_MS, answeredByAssistant, canHost, cloudBadge, cloudSessionUrl, cloudStatus, computerHome, latestReply, latestTool, officeAutonomy, sessionCwd, toolActivity } from '../src/shared/factory-cloud.js';
+import { SEND_SETTLE_MS, answeredByAssistant, canHost, cloudBadge, cloudHire, cloudSessionUrl, cloudStatus, computerHome, latestReply, latestTool, officeAutonomy, sessionCwd, toolActivity } from '../src/shared/factory-cloud.js';
 import { DESKS } from '../src/shared/layout.js';
 import type { ClientMsg, WorkerInfo } from '../src/shared/protocol.js';
 
@@ -109,6 +109,17 @@ function rig(
 const hireBody = (extra: Record<string, unknown> = {}) => ({ floor: 'f1', deskId: DESK[0].id, computerId: 'orb-id', cwd: '~/proj', prompt: 'say hi', model: 'claude-opus-4', effort: 'high', ...extra });
 
 const session = (status: string, messageCount: number, updatedAt = messageCount) => json(200, { id: 's1', status, messageCount, updatedAt, title: 'Say hi', sessionSettings: { model: 'claude-opus-4', reasoningEffort: 'high' } });
+
+test('hire: a model substituted in the create response is reported without refusing the hire', async (t) => {
+  const f = factory({ 'POST /sessions': () => json(200, { sessionId: 's1', sessionSettings: { model: 'gpt-6-sol' } }) });
+  const r = rig(t, f);
+  const worker = await r.feature.hire(f.api, hireBody({ prompt: '', model: 'deepseek-v4.1-flash-1017' }), 'Owner');
+  assert.equal((f.calls[0].body as { sessionSettings: { model: string } }).sessionSettings.model, 'deepseek-v4.1-flash-1017');
+  assert.equal(worker.model, 'deepseek-v4.1-flash-1017');
+  assert.equal(worker.activeModel, 'gpt-6-sol');
+  assert.equal(worker.cloud?.modelMismatchWarned, true);
+  assert.match(r.toasts.at(-1)!, /Factory runs .* on gpt-6-sol, not deepseek-v4.1-flash-1017/);
+});
 
 test('shared: autonomy, folders, badge and the session link', () => {
   assert.equal(officeAutonomy([]), 'high');
@@ -224,12 +235,26 @@ test('hire: makes the session on the computer, seats the worker and sends its fi
   assert.equal(r.cloud.drops.stagedPicture(pic), undefined, 'sent pictures are no longer staged');
   const now = r.cloud.get(w.id)!;
   assert.equal(now.status, 'working');
-  assert.equal(r.cloud.turn(w.id)?.seenBusy, true);
+  assert.equal(r.cloud.turn(w.id)?.seenBusy, undefined, "the message's answer saying running isn't a read of the session");
   assert.ok(r.polls() > 0, 'it asks to be read right away');
   assert.ok(r.toasts.some((x) => x.includes('hired Bea on ☁ orb')));
   assert.equal(r.feature.busy(), true);
   // Its file is the owner's only.
   assert.equal(statSync(path.join(r.dir, 'cloud-workers.json')).mode & 0o777, 0o600);
+});
+
+test('hire: a read right after the first message that still says idle from before it keeps the worker working', async (t) => {
+  const f = factory({
+    'POST /sessions': () => json(201, { sessionId: 's1' }),
+    'POST /sessions/s1/messages': () => json(200, { messageId: 'm1', status: 'running' }),
+    'GET /sessions/s1': () => session('idle', 0),
+    'GET /sessions/s1/messages': () => json(200, { messages: [{ role: 'user', content: [{ type: 'text', text: 'say hi' }] }] }),
+  });
+  const r = rig(t, f);
+  const w = await r.feature.hire(f.api, hireBody(), 'Nik');
+  await tick();
+  await r.feature.poll(f.api);
+  assert.equal(r.cloud.get(w.id)?.status, 'working');
 });
 
 test('hire: a failed create hires nobody, gives the desk back and says what Factory said', async (t) => {
@@ -909,4 +934,13 @@ test('messages: a cloud worker takes prompts, opens and closes its window, and s
   mounted.message({ t: 'worker.kill', workerId: hired.worker.id, deleteSession: true } as Extract<ClientMsg, { workerId: string }>, ctx);
   await tick();
   assert.deepEqual(forgotten, [hired.worker.sessionId]);
+});
+
+test('a hire dialog’s pick becomes the cloud of a worker.spawn', () => {
+  const mac = 'd284b509-0803-4971-bca3-7a56532fb548';
+  assert.deepEqual(cloudHire({ computerId: mac, cwd: '  ~/droid-office ' }), { computerId: mac, cwd: '~/droid-office' });
+  // An empty folder is the computer's home folder, which the office picks when none is sent.
+  assert.deepEqual(cloudHire({ computerId: mac, cwd: ' ' }), { computerId: mac });
+  // On an Environment the office starts the computer: the pick has no computer id of its own.
+  assert.deepEqual(cloudHire({ computerId: '', environmentId: 'env-1', cwd: '' }), { environmentId: 'env-1' });
 });

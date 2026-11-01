@@ -234,6 +234,29 @@ class ProtocolTest {
     private fun json(s: String) = Json.parseToJsonElement(s).jsonObject
 
     @Test
+    fun readsTheFactoryStateFromTheWelcomeAndItsMessage() {
+        assertNull((Protocol.decode(welcome) as ServerMsg.Welcome).factory)
+        val withFactory = welcome.replace(""""pulls":""", """"factory":{"connection":{"connected":true,"capabilities":[]},"computers":{"items":[{"id":"c1","name":"orb","providerType":"e2b","status":"active"}]},"environments":{"items":[]}},"pulls":""")
+        assertEquals("orb", (Protocol.decode(withFactory) as ServerMsg.Welcome).factory?.computers?.items?.single()?.name)
+        val msg = Protocol.decode("""{"t":"factory","state":{"connection":{"connected":false,"capabilities":[]},"future":1}}""") as ServerMsg.Factory
+        assertFalse(msg.state.connection.connected)
+        assertTrue(Protocol.decode("""{"t":"factory"}""") is ServerMsg.Ignored)
+    }
+
+    @Test
+    fun readsWhereACloudWorkerRuns() {
+        val w = (Protocol.decode("""{"t":"worker.update","worker":{"id":"w4","kind":"cloud","cloud":{"computerId":"","computerName":"web-1a2b3c4d","environmentId":"e1","environmentName":"web","instance":true,"autonomy":"high","error":"Its session is gone"}}}""") as ServerMsg.WorkerUpdate).worker
+        assertEquals("web", w.cloud?.where)
+        assertEquals("Its session is gone", w.cloud?.error)
+        assertEquals("orb", CloudRef(computerName = "orb").where)
+    }
+
+    @Test
+    fun interruptNamesTheWorker() {
+        assertEquals(json("""{"t":"worker.interrupt","workerId":"w1"}"""), json(ClientMsg.interrupt("w1")))
+    }
+
+    @Test
     fun aShellHireLeavesOutTheModel() {
         val o = json(ClientMsg.spawn("auto", null, worktree = true, kind = "shell", model = "m", effort = "high"))
         assertEquals("worker.spawn", o["t"]!!.jsonPrimitive.content)

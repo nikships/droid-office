@@ -13,6 +13,8 @@ import { $, closeAllModals, h, modalOpen, openModal, toast } from './ui/dom';
 import { windowHeader } from './ui/kit';
 import { icon, type IconName } from './ui/icons';
 import { confirmDialog, openPrompt, routeWorktreeMessage, sendHomeDialog } from './ui/prompt';
+import { CLOUD_HIRE_CONFIRM_MS } from '../shared/factory-cloud';
+import { cloudSpawn, runsOnPicker } from './ui/factory-cloud';
 import { openFloorOrder } from './ui/floor-reorder';
 import { openSubscriptionsStatus } from './ui/subscriptions-status';
 import { onTermFontSize, setTermFontSize, stepTermFont, termFontSize, TERM_FONT_MAX, TERM_FONT_MIN } from './ui/term-font';
@@ -594,7 +596,7 @@ async function action(msg: ClientMsg, id = '', intendedFloor = floor, done?: str
   paint();
   let hired = '';
   try {
-    const result = await net.request(msg);
+    const result = await net.request(msg, msg.t === 'worker.spawn' && msg.cloud ? CLOUD_HIRE_CONFIRM_MS : undefined);
     if (!result.ok) return result.error ?? 'The office refused this action.';
     if (done) say(done);
     if (msg.t === 'worker.spawn' && result.workerId && floor === intendedFloor) hired = result.workerId;
@@ -901,6 +903,12 @@ function hire(kind: 'agent' | 'shell', deskId = 'auto', targetPane?: number) {
     imagesOption: kind === 'agent',
     recall: kind === 'agent',
     worktreeOption: !store.currentFloor()?.home && !store.currentFloor()?.plain && !!store.currentFloor()?.branch,
+    runsOn: kind === 'agent' ? runsOnPicker() : null,
+    onCloud: async (text, o) => {
+      const error = await action(cloudSpawn(deskId, text, o), '', intended, `Droid hired on ${o.cloud.computerName}.`, targetPane);
+      if (!error) remember(key, '');
+      return error;
+    },
     onSubmit: async (text, opts) => {
       const error = await action({ t: 'worker.spawn', deskId, kind, prompt: text, ...opts }, '', intended, kind === 'shell' ? 'Shell opened.' : 'Droid hired.', targetPane);
       if (!error) remember(key, '');

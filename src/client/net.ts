@@ -150,7 +150,7 @@ export class Net {
   }
 
   /** Business confirmation, not a successful socket send. No queue and no automatic replay. */
-  request(msg: ClientMsg): Promise<Extract<ServerMsg, { t: 'action.result' }>> {
+  request(msg: ClientMsg, timeoutMs = 60_000): Promise<Extract<ServerMsg, { t: 'action.result' }>> {
     const requestId = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
     return new Promise((resolve) => {
       const done = (result: Extract<ServerMsg, { t: 'action.result' }>) => {
@@ -158,7 +158,7 @@ export class Net {
         this.requests.delete(requestId);
         resolve(result);
       };
-      const timer = setTimeout(() => done({ t: 'action.result', requestId, ok: false, error: 'Confirmation timed out. Check the office before trying again; the action was not replayed.' }), 60_000);
+      const timer = setTimeout(() => done({ t: 'action.result', requestId, ok: false, error: 'Confirmation timed out. Check the office before trying again; the action was not replayed.' }), timeoutMs);
       this.requests.set(requestId, done);
       const floor = this.options.floor ? this.options.floor() : (store.floor ?? null);
       if (!this.send({ ...msg, requestId, requestFloor: floor ?? undefined })) done({ t: 'action.result', requestId, ok: false, error: 'Disconnected. Nothing was sent.' });

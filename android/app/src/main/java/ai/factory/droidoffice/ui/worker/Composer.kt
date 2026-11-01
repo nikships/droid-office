@@ -127,6 +127,8 @@ fun Composer(
     onSent: (String) -> Unit = {},
     connected: Boolean = true,
     onStop: (() -> Unit)? = null,
+    /** Nothing sent would reach the worker (a cloud worker's session is gone): Send is off, the draft stays. */
+    blocked: Boolean = false,
 ) {
     val graph = LocalGraph.current
     val snackbar = LocalSnackbar.current
@@ -188,7 +190,7 @@ fun Composer(
         if (intercept?.invoke(prompt) == true) return
         // Offline, Send is off: a message held for the reconnect would land later, unseen, maybe
         // into a different turn. The draft stays until the owner sends it again.
-        if (!connected) return
+        if (!connected || blocked) return
         haptics.performHapticFeedback(HapticFeedbackType.Confirm)
         val ids = images.mapNotNull { it.id }
         // Without a loaded history fence, no old matching message can prove delivery of this send.
@@ -258,6 +260,8 @@ fun Composer(
             val hint = when {
                 w.isShell -> "Run a command…"
                 queueable -> "Steer ${w.name}, or queue for after this turn…"
+                // Factory holds a message sent mid-turn until the turn is over.
+                w.isCloud && w.state.busy -> "Message ${w.name} for after this turn…"
                 else -> "Reply to ${w.name}…"
             }
             Box(Modifier.weight(1f).heightIn(min = 38.dp).padding(horizontal = 8.dp, vertical = 9.dp), contentAlignment = Alignment.CenterStart) {
@@ -282,7 +286,7 @@ fun Composer(
                     modifier = Modifier.fillMaxWidth().focusRequester(focus).semantics { contentDescription = hint.removeSuffix("…") }.tagged(Tags.Worker.INPUT),
                 )
             }
-            val ready = (text.isNotBlank() || images.isNotEmpty()) && !uploading && connected
+            val ready = (text.isNotBlank() || images.isNotEmpty()) && !uploading && connected && !blocked
             // Esc in Droid's terminal: stops the turn it's on.
             if (onStop != null) {
                 Box(

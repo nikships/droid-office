@@ -18,6 +18,8 @@ export interface CloudWorker {
   autonomy: CloudAutonomy;
   /** Why it can't work right now (its session is gone, its computer was deleted…), shown on its desk and card. */
   error?: string;
+  /** The floor was told once that Factory runs a different model than this worker was hired with. */
+  modelMismatchWarned?: boolean;
   /** It was hired on this Factory Environment, on a computer started from it for this worker alone. */
   environmentId?: string;
   environmentName?: string;
@@ -25,6 +27,22 @@ export interface CloudWorker {
   instance?: boolean;
   /** Its next message goes with the cloud.environment prompt first: its clone is from the Environment's build. */
   catchUp?: boolean;
+}
+
+/**
+ * Where `worker.spawn` hires a cloud worker instead of a local one: one of the account's computers, or
+ * an Environment to start a computer of its own from, and the folder its session starts in there.
+ */
+export interface CloudHire {
+  computerId?: string;
+  environmentId?: string;
+  cwd?: string;
+}
+
+/** The `cloud` of a `worker.spawn` for a hire dialog's pick: the Environment, else the computer, and the folder typed (none for its home). */
+export function cloudHire(pick: { computerId: string; environmentId?: string; cwd: string }): CloudHire {
+  const cwd = pick.cwd.trim();
+  return { ...(pick.environmentId ? { environmentId: pick.environmentId } : { computerId: pick.computerId }), ...(cwd ? { cwd } : {}) };
 }
 
 /** The cloud slice of FactoryState: when the office last read its cloud workers' sessions, and why the last read failed. */
@@ -124,6 +142,11 @@ export const CLOCK_SKEW_MS = 2000;
 
 /** How long a sent message may go unseen (still idle, no new messages) before the turn counts as over anyway. */
 export const SEND_SETTLE_MS = 90_000;
+
+/** How long a hire on an Environment waits for its computer to come up. */
+export const CLOUD_INSTANCE_MAX_MS = 4 * 60_000;
+/** How long a hire dialog waits for the office to confirm a cloud hire: the computer, then making the session (15 s or more) and its retries. */
+export const CLOUD_HIRE_CONFIRM_MS = CLOUD_INSTANCE_MAX_MS + 2 * 60_000;
 
 /**
  * A cloud worker's status from its session's `{status, messageCount}`: pending or running is
