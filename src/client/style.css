@@ -112,14 +112,22 @@ input[type=checkbox]:disabled, input[type=radio]:disabled { cursor: default; }
 
 /* Keep standard scrollbar properties in the fallback: non-auto values override
    WebKit styling in Chromium and can bring back a native track. */
-::-webkit-scrollbar { width: 8px; height: 8px; }
+::-webkit-scrollbar { width: 5px; height: 5px; }
 ::-webkit-scrollbar-track, ::-webkit-scrollbar-corner { background: transparent; }
-::-webkit-scrollbar-thumb { background: var(--border-strong); border: 2px solid transparent; border-radius: 3px; background-clip: padding-box; }
-::-webkit-scrollbar-thumb:hover { background-color: var(--text-tertiary); }
+::-webkit-scrollbar-thumb { background: transparent; border-radius: 999px; }
+.user-scrolling::-webkit-scrollbar-thumb { background: var(--accent); }
 ::-webkit-scrollbar-button { display: none; }
 @supports not selector(::-webkit-scrollbar) {
-  * { scrollbar-width: thin; scrollbar-color: var(--border-strong) transparent; }
+  * { scrollbar-width: thin; scrollbar-color: transparent transparent; }
+  .user-scrolling { scrollbar-color: var(--accent) transparent; }
 }
+
+/* xterm draws its own scrollbar, separate from the browser's. Keep its hit
+   area intact while making the visible thumb match the native scrollbars. */
+.xterm .xterm-scrollable-element > .scrollbar > .slider { background: var(--accent) !important; border: 2.5px solid transparent; border-radius: 999px; background-clip: padding-box !important; }
+.xterm .xterm-scrollable-element > .scrollbar { pointer-events: auto; }
+.xterm:not(.user-scrolling) .xterm-scrollable-element > .scrollbar { opacity: 0; }
+.xterm.user-scrolling .xterm-scrollable-element > .scrollbar { opacity: 1; }
 
 #app { position: fixed; inset: 0; }
 #scene { position: absolute; inset: 0; width: 100%; height: 100%; display: block; outline: none; }

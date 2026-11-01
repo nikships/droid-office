@@ -1,3 +1,4 @@
+import './scrollbars';
 import type { ClientMsg, WorkerInfo } from '../shared/protocol';
 import { needsOwnerInput } from '../shared/status';
 import { cardsNewestFirst, cardChanged, OWNER } from '../shared/whiteboard';

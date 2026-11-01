@@ -56,6 +56,10 @@ Run from the repository root. npm with `package-lock.json` is the only package m
 - Fix what `npm run lint` reports in code. Never add `biome-ignore` or other suppression comments, and do not turn off rules in `biome.jsonc` to pass a check.
 - Do not bypass the pre-commit hook (`.husky/pre-commit`) with `--no-verify`; fix what it reports.
 
+## Companion parity
+
+When changing the web companion, check whether Android needs the same fix or feature. If it does, implement and verify it in the same work without waiting to be asked. Centralize shared behavior when practical so the clients have one source of truth instead of duplicated complexity; when platform boundaries prevent that, keep their behavior aligned and test it.
+
 ## Testing the running office
 
 Never modify a signed Mac app bundle or a copy of one for testing, and never launch a modified or invalidly signed app bundle. Modifying a copy breaks its signature and can trigger a macOS "app is damaged" warning on the owner's desktop. Use a properly built, signed app or an isolated browser instead; if that is unavailable, report the limitation rather than attempting a workaround.

@@ -1,4 +1,5 @@
 import './style.css';
+import './scrollbars';
 import * as THREE from 'three';
 import { OutlineEffect } from 'three/examples/jsm/effects/OutlineEffect.js';
 import {
