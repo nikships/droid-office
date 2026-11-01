@@ -1789,6 +1789,18 @@ export async function startServer(cfg: Config) {
         const kind = msg.kind === 'shell' ? 'shell' : 'agent';
         const model = msg.model === undefined ? undefined : str(msg.model, MODEL_MAX + 1);
         const effort = isAgentEffort(msg.effort) ? msg.effort : undefined;
+        // On a Factory computer (factory/cloud.ts). A hire that fails leaves its pictures staged, as the hire route does.
+        const where = msg.cloud && typeof msg.cloud === 'object' ? msg.cloud : undefined;
+        if (where) {
+          if (kind === 'shell') return refuse('A shell runs on this machine: only a Droid can work on a Factory computer');
+          const wanted = str(msg.deskId, 32);
+          const deskId = wanted === AUTO_DESK ? nextFreeSeat((id) => floor.workers.deskOccupied(id))?.id : wanted;
+          if (!deskId) return refuse('Every desk and bean bag on this floor is taken');
+          defer();
+          const body = { floor: floor.id, deskId, computerId: where.computerId, environmentId: where.environmentId, cwd: where.cwd, prompt: msg.prompt, model, effort, images };
+          void cloud.hire(body, who).then((r) => (typeof r === 'string' ? refuse(r) : done(undefined, r.id)));
+          break;
+        }
         // Other floors' projects to work in too, each in a worktree of its own.
         const repos: RepoSource[] = [];
         for (const id of Array.isArray(msg.repos) ? [...new Set(msg.repos.slice(0, MAX_REPOS + 1).map((x) => str(x, 64)))] : []) {
@@ -2072,12 +2084,26 @@ export async function startServer(cfg: Config) {
         const floor = floorOf(c);
         const source = floor?.workers.threadSession(workerId);
         const reply = { t: 'thread.snapshot' as const, workerId, request, ...(before !== undefined ? { before } : {}) };
-        if (!source || !floor) {
-          sendTo(c, { ...reply, entries: [], hasMore: false, error: 'Thread is available only for local office-owned Droid workers with an active session on this floor. Shells, guests and cloud workers have no local thread.' });
-          break;
-        }
         if (msg.before !== undefined && (before === undefined || !Number.isSafeInteger(before) || before < 0)) {
           sendTo(c, { ...reply, entries: [], hasMore: false, error: 'Invalid conversation page.' });
+          break;
+        }
+        // A cloud worker's thread is its Factory session's messages (factory/cloud-thread.ts).
+        const remote = floor && cloud.find(workerId)?.floor.id === floor.id ? cloud.thread(workerId, before) : undefined;
+        if (remote) {
+          const sessionId = cloud.find(workerId)?.info.sessionId;
+          void remote.then((page) => {
+            const still = cloud.find(workerId);
+            if (floorOf(c) !== floor || still?.info.sessionId !== sessionId) {
+              sendTo(c, { ...reply, entries: [], hasMore: false, error: 'The active floor or worker session changed. Read the thread again.' });
+              return;
+            }
+            sendTo(c, { ...reply, ...page });
+          });
+          break;
+        }
+        if (!source || !floor) {
+          sendTo(c, { ...reply, entries: [], hasMore: false, error: 'Thread is available only for office-owned Droid workers with a session on this floor. Shells and guests have no thread.' });
           break;
         }
         void workerThreads.read(source, before, floor.workers.threadBusy(workerId)).then((page) => {
@@ -2088,6 +2114,15 @@ export async function startServer(cfg: Config) {
           }
           sendTo(c, { ...reply, ...page });
         });
+        break;
+      }
+      case 'worker.interrupt': {
+        // Droid's own cancel key. A cloud worker's interrupt is answered by factory/cloud.ts above.
+        const w = worker(msg.workerId);
+        if (!w) return done('No such worker');
+        if (w.info.kind !== 'agent') return done(`${w.info.name} is a shell: there is no turn to stop`);
+        if (!w.floor.workers.write(w.wid, '\u001b')) return done(`${w.info.name} is not running. Nothing was stopped.`);
+        done();
         break;
       }
       case 'term.input': {

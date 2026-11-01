@@ -15,6 +15,8 @@ import { alreadyGone, whileNew, type NewSessionOptions } from './new-session.js'
 import type { ComputersFeature } from './computers.js';
 import type { FactoryRegistry } from './registry.js';
 import type { SessionsFeature } from './sessions.js';
+import { CloudThreadReader } from './cloud-thread.js';
+import type { ThreadPage } from '../worker-thread.js';
 
 // Cloud workers (docs/factory.md): office workers whose Droid session runs on one of the account's
 // Factory computers. Hiring makes the session (POST /sessions) and sends the first prompt as its
@@ -88,6 +90,8 @@ export class CloudFeature extends SliceFeature<'cloud'> {
   /** Workers to read on the next poll whatever their clock says (just prompted, interrupted, asked to check again). */
   private due = new Set<string>();
   private now: () => number;
+  /** Each cloud worker's Thread, read from its session's messages (cloud-thread.ts). */
+  readonly threads: CloudThreadReader;
 
   readonly routes: readonly FactoryRoute[] = [
     {
@@ -115,11 +119,7 @@ export class CloudFeature extends SliceFeature<'cloud'> {
       method: 'POST',
       path: '/:id/interrupt',
       handle: async ({ api, params }) => {
-        const found = this.find(params.id);
-        if (!found?.info.sessionId) throw notFound('No such cloud worker');
-        const sid = found.info.sessionId;
-        await this.whileNew(found.info, () => api.post(`/sessions/${encodeURIComponent(sid)}/interrupt`, {}));
-        this.recheck(found.info.id);
+        await this.interrupt(api, params.id);
         return { ok: true };
       },
     },
@@ -131,6 +131,30 @@ export class CloudFeature extends SliceFeature<'cloud'> {
   ) {
     super('cloud', host, emptyCloud);
     this.now = opts.now ?? Date.now;
+    this.threads = new CloudThreadReader(() => host.api(), { now: this.now });
+  }
+
+  /** The office's Factory API now, if it's connected. */
+  api(): FactoryApi | undefined {
+    return this.host.api();
+  }
+
+  /** Stops the turn a cloud worker's session is in. */
+  async interrupt(api: FactoryApi, id: string): Promise<void> {
+    const found = this.find(id);
+    if (!found?.info.sessionId) throw notFound('No such cloud worker');
+    const sid = found.info.sessionId;
+    await this.whileNew(found.info, () => api.post(`/sessions/${encodeURIComponent(sid)}/interrupt`, {}));
+    this.recheck(found.info.id);
+  }
+
+  /** A page of a cloud worker's Thread, as `thread.read` answers it; undefined when it isn't one. */
+  thread(id: string, before?: number): Promise<ThreadPage> | undefined {
+    const found = this.find(id);
+    if (!found) return undefined;
+    const { info } = found;
+    if (!info.sessionId) return Promise.resolve({ entries: [], hasMore: false, error: `${info.name} has no Factory session` });
+    return this.threads.read({ sessionId: info.sessionId, createdAt: info.createdAt, busy: info.status === 'working' || info.status === 'starting' }, before);
   }
 
   /** The floor a cloud worker sits on, and the worker. */
@@ -369,6 +393,7 @@ export class CloudFeature extends SliceFeature<'cloud'> {
     floor.cloud.remove(id);
     this.due.delete(id);
     const sid = info.sessionId;
+    if (sid) this.threads.forget(sid);
     const instance = info.cloud?.instance === true;
     const busy = info.status === 'working' || info.status === 'starting';
     if (!sid || (!instance && !busy && !deleteSession)) return {};
@@ -506,6 +531,7 @@ export class CloudFeature extends SliceFeature<'cloud'> {
       }
     });
     if (messages) {
+      this.threads.absorb(info.sessionId!, messages);
       const parsed = messages.map(messageOf).filter((m): m is FactoryMessage => !!m);
       const frame = cloudScreen(mergeMessages([], parsed));
       if (frame) floor.cloud.setScreen(id, frame);
@@ -607,6 +633,24 @@ export function mountCloud(registry: FactoryRegistry, opts: Omit<CloudOptions, '
         );
         break;
       }
+      case 'worker.interrupt': {
+        const api = feature.api();
+        if (!api) {
+          const error = "The office isn't connected to Factory: connect it in ⚙️ Settings → Connections";
+          ctx.warn(error);
+          ctx.done?.(error, info.id);
+          break;
+        }
+        void feature.interrupt(api, info.id).then(
+          () => ctx.done?.(undefined, info.id),
+          (error: unknown) => {
+            const why = `☁ Couldn't interrupt ${info.name}: ${failed(error, 'Factory did not answer')}`;
+            ctx.warn(why);
+            ctx.done?.(why, info.id);
+          },
+        );
+        break;
+      }
       case 'worker.resume':
         ctx.warn(`☁ Checking ${info.name}'s session on Factory again`);
         feature.recheck(info.id);
@@ -626,7 +670,22 @@ export function mountCloud(registry: FactoryRegistry, opts: Omit<CloudOptions, '
     return true;
   };
 
-  return { feature, message, find: (id: string) => feature.find(id) };
+  /**
+   * Hires a cloud worker for a `worker.spawn` with `cloud`, as the hire route does; the worker, or why
+   * not. Over the WebSocket, so a companion on another device can hire one too (the route's writes
+   * only take the office's own page or a paired phone).
+   */
+  const hire = async (body: Record<string, unknown>, by: string): Promise<WorkerInfo | string> => {
+    const api = feature.api();
+    if (!api) return "The office isn't connected to Factory: connect it in ⚙️ Settings → Connections";
+    try {
+      return await feature.hire(api, body, by);
+    } catch (error) {
+      return error instanceof Error ? error.message : 'Factory did not answer';
+    }
+  };
+
+  return { feature, message, hire, find: (id: string) => feature.find(id), thread: (id: string, before?: number) => feature.thread(id, before) };
 }
 
 /** Why something the office does with a local worker isn't done to a cloud one. */
