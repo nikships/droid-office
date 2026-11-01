@@ -4,6 +4,7 @@ import { pageRows, presentThread, THREAD_MODEL_VERSION, type ThreadRow } from '.
 import type { ThreadEntry } from '../../shared/worker-thread.js';
 import type { ThreadPage } from '../worker-thread.js';
 import { FactoryError, type FactoryApi } from './api.js';
+import { CloudStreamMessages } from './cloud-stream-messages.js';
 
 // A cloud worker's Thread (docs/factory.md, "Cloud workers"): its Factory session's messages, read
 // through the Sessions API and kept here, turned into the ThreadEntry list and presentation rows a
@@ -31,6 +32,7 @@ export interface CloudThreadSource {
 }
 
 export interface CloudThreadOptions {
+  streaming?: (sessionId: string) => boolean;
   now?: () => number;
   /** How often Factory is read while the worker works, and while it rests (someone may type to it in Factory's web app). */
   busyEveryMs?: number;
@@ -47,6 +49,8 @@ interface Held {
   refresh?: Promise<void>;
   /** Built from `messages` and `busy`; cleared when either changes. */
   view?: { busy: boolean; entries: ThreadEntry[]; rows: ThreadRow[] };
+  live?: CloudStreamMessages;
+  history?: boolean;
 }
 
 type Answer = { messages?: unknown[]; pagination?: { hasMore?: boolean; nextCursor?: string | null } };
@@ -63,7 +67,7 @@ export class CloudThreadReader {
 
   constructor(
     private api: () => FactoryApi | undefined,
-    opts: CloudThreadOptions = {},
+    private opts: CloudThreadOptions = {},
   ) {
     this.now = opts.now ?? Date.now;
     this.busyEveryMs = opts.busyEveryMs ?? 2500;
@@ -79,7 +83,8 @@ export class CloudThreadReader {
     const held = this.hold(sessionId);
     try {
       if (before === undefined) {
-        const every = source.busy ? this.busyEveryMs : this.idleEveryMs;
+        if (held.history) void this.refresh(api, sessionId, held).catch(() => {});
+        const every = this.opts.streaming?.(sessionId) ? 60_000 : source.busy ? this.busyEveryMs : this.idleEveryMs;
         // A slow answer from Factory doesn't hold the page up: what's held goes now, the rest next read.
         if (!held.readAt || this.now() - held.readAt >= every) await Promise.race([this.refresh(api, sessionId, held), this.wait()]);
       } else await this.backfill(api, sessionId, held, before);
@@ -101,6 +106,31 @@ export class CloudThreadReader {
     if (!page.some((m) => known.has(m.id))) return;
     this.merge(held, page);
     held.readAt = this.now();
+  }
+
+  /** A daemon snapshot hydrates a thread even before someone opens it. Only safe messages are held. */
+  streamSnapshot(sessionId: string, raw: readonly unknown[], hasOlderMessages = false): void {
+    const held = this.hold(sessionId);
+    held.live ??= new CloudStreamMessages(held.messages, this.now);
+    held.messages = held.live.snapshot(raw);
+    held.readAt = this.now();
+    held.history = hasOlderMessages && !held.older;
+    held.view = undefined;
+  }
+
+  streamEvent(sessionId: string, notification: unknown): void {
+    const held = this.hold(sessionId);
+    held.live ??= new CloudStreamMessages(held.messages, this.now);
+    held.messages = held.live.event(notification);
+    held.view = undefined;
+  }
+
+  messages(sessionId: string): readonly FactoryMessage[] {
+    return this.sessions.get(sessionId)?.messages ?? [];
+  }
+
+  clear(): void {
+    this.sessions.clear();
   }
 
   /** Forgets a session (its worker went home). */
@@ -138,13 +168,13 @@ export class CloudThreadReader {
   /** The newest messages. Reads that overlap one another share one call to Factory. */
   private refresh(api: FactoryApi, sessionId: string, held: Held): Promise<void> {
     held.refresh ??= (async () => {
-      const first = !held.messages.length;
+      const first = !held.messages.length || held.history;
       const page = await this.get(api, sessionId, first ? FIRST_PAGE : TAIL_PAGE);
       const known = new Set(held.messages.map((m) => m.id));
       // More came than one tail page holds: start again from a full first page.
       if (!first && page.next && !page.messages.some((m) => known.has(m.id))) {
         const full = await this.get(api, sessionId, FIRST_PAGE);
-        held.messages = [];
+        if (!held.live) held.messages = [];
         held.older = full.next;
         this.merge(held, full.messages);
       } else {
@@ -152,6 +182,7 @@ export class CloudThreadReader {
         this.merge(held, page.messages);
       }
       held.readAt = this.now();
+      held.history = false;
     })().finally(() => {
       held.refresh = undefined;
     });
@@ -160,7 +191,7 @@ export class CloudThreadReader {
 
   /** Reads older pages from Factory until there are a page's worth of entries before `before`, or no more. */
   private async backfill(api: FactoryApi, sessionId: string, held: Held, before: number): Promise<void> {
-    if (!held.messages.length) await this.refresh(api, sessionId, held);
+    if (!held.messages.length || held.history) await this.refresh(api, sessionId, held);
     for (let tries = 0; tries < 3 && held.older; tries++) {
       const shown = this.view(held, false).entries.filter((e) => e.seq < before).length;
       if (shown >= PAGE_SIZE) return;
@@ -171,7 +202,7 @@ export class CloudThreadReader {
   }
 
   private merge(held: Held, page: readonly FactoryMessage[], older = false): void {
-    held.messages = mergeMessages(held.messages, page);
+    held.messages = held.live ? held.live.merge(page, older) : mergeMessages(held.messages, page);
     if (held.messages.length > MESSAGES_MAX) {
       // Dropping the oldest leaves no cursor to read them again from; the newest are what's watched.
       if (!older) {

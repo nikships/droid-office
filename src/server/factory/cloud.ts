@@ -16,6 +16,8 @@ import type { ComputersFeature } from './computers.js';
 import type { FactoryRegistry } from './registry.js';
 import type { SessionsFeature } from './sessions.js';
 import { CloudThreadReader } from './cloud-thread.js';
+import { CloudStream, type CloudStreamOptions } from './cloud-stream.js';
+import { record } from './cloud-stream-messages.js';
 import type { ThreadPage } from '../worker-thread.js';
 
 // Cloud workers (docs/factory.md): office workers whose Droid session runs on one of the account's
@@ -55,6 +57,9 @@ export interface CloudFloor {
 }
 
 export interface CloudOptions {
+  /** Server-only credential for passive remote daemon streaming. REST remains the write path. */
+  key?: () => string | undefined;
+  streamClient?: CloudStreamOptions['client'];
   floors(): Iterable<CloudFloor>;
   /** The office's `--agent-args`, for the autonomy its workers run at (see officeAutonomy). */
   agentArgs: readonly string[];
@@ -92,6 +97,11 @@ export class CloudFeature extends SliceFeature<'cloud'> {
   private now: () => number;
   /** Each cloud worker's Thread, read from its session's messages (cloud-thread.ts). */
   readonly threads: CloudThreadReader;
+  readonly stream?: CloudStream;
+  private streamRevisions = new Map<string, number>();
+  private acceptedAt = new Map<string, number>();
+  private screens = new Set<string>();
+  private screenTimer?: ReturnType<typeof setTimeout>;
 
   readonly routes: readonly FactoryRoute[] = [
     {
@@ -131,7 +141,146 @@ export class CloudFeature extends SliceFeature<'cloud'> {
   ) {
     super('cloud', host, emptyCloud);
     this.now = opts.now ?? Date.now;
-    this.threads = new CloudThreadReader(() => host.api(), { now: this.now });
+    this.threads = new CloudThreadReader(() => host.api(), { now: this.now, streaming: (id) => this.stream?.healthy(id) ?? false });
+    if (opts.key) {
+      this.stream = new CloudStream({
+        api: () => host.api(),
+        key: opts.key,
+        now: this.now,
+        client: opts.streamClient,
+        sources: () => [...this.opts.floors()].flatMap((floor) => floor.cloud.list().flatMap((w) => (w.sessionId && w.cloud && !w.cloud.error ? [{ sessionId: w.sessionId, computerId: w.cloud.computerId }] : []))),
+        reset: () => {
+          this.threads.clear();
+          this.screens.clear();
+          this.streamRevisions.clear();
+          this.acceptedAt.clear();
+        },
+        snapshot: (id, snapshot) => {
+          const session = record(snapshot.session);
+          this.threads.streamSnapshot(id, Array.isArray(session.messages) ? session.messages : [], snapshot.hasOlderMessages === true);
+          this.streamMetadata(id, record(snapshot.settings), session.title);
+          if (snapshot.workingState !== 'idle') this.streamState(id, snapshot.workingState);
+          this.streamPaint(id);
+        },
+        notification: (id, n) => this.streamEvent(id, n),
+      });
+      this.stream.start();
+    }
+  }
+
+  /** Immediate credential invalidation, including rejection while the registry stops polling. */
+  connectionChanged(): void {
+    void this.stream?.sync();
+  }
+
+  override reset(): void {
+    this.stream?.reset();
+    this.threads.clear();
+    super.reset();
+  }
+
+  stop(): void {
+    this.stream?.stop();
+    if (this.screenTimer) clearTimeout(this.screenTimer);
+    this.screenTimer = undefined;
+  }
+
+  private session(id: string): { floor: CloudFloor; info: WorkerInfo } | undefined {
+    for (const floor of this.opts.floors()) {
+      const info = floor.cloud.list().find((w) => w.sessionId === id);
+      if (info) return { floor, info };
+    }
+    return undefined;
+  }
+
+  private streamState(id: string, state: unknown): void {
+    const found = this.session(id);
+    if (!found) return;
+    const { floor, info } = found;
+    if (state === 'idle') {
+      if (floor.cloud.turn(info.id)?.seenBusy && info.status === 'working' && !this.waitingForAcceptance(id, floor.cloud.turn(info.id))) {
+        floor.cloud.update(info.id, (_, w) => {
+          w.turn = {};
+        });
+        floor.cloud.setStatus(info.id, 'done');
+      }
+    } else if (typeof state === 'string') {
+      floor.cloud.update(info.id, (i, w) => {
+        w.turn = { ...w.turn, seenBusy: true };
+        if (i.cloud?.error) i.cloud = { ...i.cloud, error: undefined };
+      });
+      floor.cloud.setStatus(info.id, state === 'waiting_for_tool_confirmation' ? 'needs_input' : 'working');
+    }
+  }
+
+  private streamEvent(id: string, n: Record<string, unknown>): void {
+    this.streamRevisions.set(id, (this.streamRevisions.get(id) ?? 0) + 1);
+    this.threads.streamEvent(id, n);
+    this.streamPaint(id);
+    const found = this.session(id);
+    if (!found) return;
+    const { floor, info } = found;
+    if (n.type === 'create_message') {
+      const message = record(n.message);
+      if (message.role === 'user' && message.visibility !== 'llm_only') this.acceptedAt.set(id, this.now());
+    }
+    if (n.type === 'settings_updated') this.streamMetadata(id, record(n.settings));
+    if (n.type === 'session_title_updated') this.streamMetadata(id, {}, n.title);
+    if (n.type === 'droid_working_state_changed') this.streamState(id, n.newState);
+    if (n.type === 'tool_call') {
+      const tool = latestTool([{ role: 'assistant', content: [n.toolUse] }]);
+      if (tool)
+        floor.cloud.update(info.id, (i) => {
+          i.activity = tool.activity;
+          i.action = tool.action;
+        });
+    }
+    if (n.type === 'agent_turn_completed') {
+      if (this.waitingForAcceptance(id, floor.cloud.turn(info.id))) return;
+      const messages = this.threads.messages(id);
+      const reply = [...messages].reverse().find((m) => m.role === 'assistant' && m.blocks.some((b) => b.type === 'text'));
+      const text = reply?.blocks.flatMap((b) => (b.type === 'text' ? [b.text] : [])).join(' ');
+      floor.cloud.update(info.id, (i, w) => {
+        w.turn = {};
+        if (text) {
+          i.activity = clip(text, 80);
+          if (i.task) i.task = { ...i.task, summary: clip(text, 140) };
+        }
+        if (n.reason !== 'completed' && n.reason !== 'cancelled') i.activity = `Factory session ended: ${String(n.reason).slice(0, 80)}`;
+      });
+      floor.cloud.setStatus(info.id, n.reason === 'completed' || n.reason === 'cancelled' ? 'done' : 'needs_input');
+    }
+  }
+
+  private waitingForAcceptance(id: string, turn: CloudTurn | undefined): boolean {
+    const accepted = this.acceptedAt.get(id);
+    return accepted !== undefined && turn?.sentAt !== undefined && turn.sentAt > accepted;
+  }
+
+  private streamMetadata(id: string, settings: Record<string, unknown>, title?: unknown): void {
+    const found = this.session(id);
+    if (!found) return;
+    found.floor.cloud.update(found.info.id, (i) => {
+      if (typeof settings.modelId === 'string' && settings.modelId) i.activeModel = settings.modelId;
+      if (isAgentEffort(settings.reasoningEffort)) i.activeEffort = settings.reasoningEffort;
+      if (typeof title === 'string' && title.trim()) i.title = clip(title, 120);
+    });
+  }
+
+  /** Token notifications update held state only; laptop frames are coalesced at four per second. */
+  private streamPaint(id: string): void {
+    this.screens.add(id);
+    if (this.screenTimer) return;
+    this.screenTimer = setTimeout(() => {
+      this.screenTimer = undefined;
+      for (const sessionId of this.screens) {
+        const found = this.session(sessionId);
+        const frame = cloudScreen(this.threads.messages(sessionId).slice(-TAIL));
+        if (found && frame) found.floor.cloud.setScreen(found.info.id, frame);
+      }
+      this.screens.clear();
+    }, 250);
+    this.screenTimer.unref?.();
   }
 
   /** The office's Factory API now, if it's connected. */
@@ -153,6 +302,7 @@ export class CloudFeature extends SliceFeature<'cloud'> {
     const found = this.find(id);
     if (!found) return undefined;
     const { info } = found;
+    void this.stream?.sync();
     if (!info.sessionId) return Promise.resolve({ entries: [], hasMore: false, error: `${info.name} has no Factory session` });
     return this.threads.read({ sessionId: info.sessionId, createdAt: info.createdAt, busy: info.status === 'working' || info.status === 'starting' }, before);
   }
@@ -391,9 +541,15 @@ export class CloudFeature extends SliceFeature<'cloud'> {
     if (!found) return {};
     const { floor, info } = found;
     floor.cloud.remove(id);
+    void this.stream?.sync();
     this.due.delete(id);
     const sid = info.sessionId;
-    if (sid) this.threads.forget(sid);
+    if (sid) {
+      this.threads.forget(sid);
+      this.streamRevisions.delete(sid);
+      this.acceptedAt.delete(sid);
+      this.screens.delete(sid);
+    }
     const instance = info.cloud?.instance === true;
     const busy = info.status === 'working' || info.status === 'starting';
     if (!sid || (!instance && !busy && !deleteSession)) return {};
@@ -433,13 +589,14 @@ export class CloudFeature extends SliceFeature<'cloud'> {
 
   /** Reads every cloud worker's session that's due: each working one at every poll, the rest on the slow clock. */
   async poll(api: FactoryApi): Promise<void> {
+    void this.stream?.sync();
     const now = this.now();
     const jobs: Promise<void>[] = [];
     for (const floor of this.opts.floors()) {
       for (const info of floor.cloud.list()) {
         if (!info.sessionId) continue;
         const busy = info.status === 'working' || info.status === 'starting' || this.awaitingReply(floor, info.id, now);
-        const wait = busy ? 0 : IDLE_EVERY_MS - this.fastInterval;
+        const wait = busy && !this.stream?.healthy(info.sessionId) ? 0 : IDLE_EVERY_MS - this.fastInterval;
         if (!this.due.delete(info.id) && now - floor.cloud.polledAt(info.id) < wait) continue;
         jobs.push(this.pollOne(api, floor, info, now));
       }
@@ -459,6 +616,7 @@ export class CloudFeature extends SliceFeature<'cloud'> {
 
   private async pollOne(api: FactoryApi, floor: CloudFloor, info: WorkerInfo, now: number): Promise<void> {
     const id = info.id;
+    const revision = this.streamRevisions.get(info.sessionId!);
     const sid = encodeURIComponent(info.sessionId!);
     const computers = this.opts.computers();
     const computer = computers && anyComputer(computers, info.cloud?.computerId);
@@ -475,6 +633,11 @@ export class CloudFeature extends SliceFeature<'cloud'> {
       throw err;
     }
     const turn: CloudTurn = floor.cloud.turn(id) ?? {};
+    if (this.stream?.healthy(info.sessionId!) || this.streamRevisions.get(info.sessionId!) !== revision) {
+      // A slow REST response cannot rewind live state, including one received during this request.
+      floor.cloud.polled(id, { count: Number(s?.messageCount) || 0, updatedAt: Number(s?.updatedAt) || 0 }, turn, now);
+      return;
+    }
     let mapped = cloudStatus({ status: String(s?.status ?? ''), messageCount: Number(s?.messageCount) || 0 }, turn, now);
     const count = Number(s?.messageCount) || 0;
     const updatedAt = Number(s?.updatedAt) || 0;
@@ -493,6 +656,11 @@ export class CloudFeature extends SliceFeature<'cloud'> {
       } catch {
         // The status is enough to go on: what it's doing shows at the next read.
       }
+    }
+    if (this.stream?.healthy(info.sessionId!) || this.streamRevisions.get(info.sessionId!) !== revision) {
+      if (messages) this.threads.absorb(info.sessionId!, messages);
+      floor.cloud.polled(id, { count, updatedAt }, floor.cloud.turn(id) ?? {}, now);
+      return;
     }
     // Factory lists a message many seconds after it was made, so the newest one listed can still be
     // the last turn's reply: only one made after the message went answers this turn.
