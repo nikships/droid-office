@@ -473,10 +473,10 @@ export class WorkerManager {
   }
 
   /** Read-only conversation identity. Never accepts a caller-supplied path or session. */
-  threadSession(id: string): { sessionId: string; cwd: string } | undefined {
+  threadSession(id: string): { sessionId: string; cwd: string; drops?: string } | undefined {
     const info = this.workers.get(id)?.info;
     if (info?.kind !== 'agent' || info.cloud || info.guest || !info.sessionId) return undefined;
-    return { sessionId: info.sessionId, cwd: this.cwd(info) };
+    return { sessionId: info.sessionId, cwd: this.cwd(info), drops: this.drops.folder(id) };
   }
 
   /** Whether the worker is in a turn, so its newest Thread activity can still be working. */

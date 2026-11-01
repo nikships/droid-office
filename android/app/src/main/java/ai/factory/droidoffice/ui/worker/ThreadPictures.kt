@@ -1,6 +1,6 @@
 package ai.factory.droidoffice.ui.worker
 
-import android.graphics.BitmapFactory
+import android.graphics.ImageDecoder
 import android.util.LruCache
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -56,6 +56,7 @@ import ai.factory.droidoffice.ui.theme.LocalOfficeType
 import ai.factory.droidoffice.ui.theme.Palette
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import java.nio.ByteBuffer
 
 /** The floor and worker a Thread is read on: its pictures are fetched from there. */
 internal data class PictureSource(val floor: String, val worker: String)
@@ -81,14 +82,17 @@ private object ThreadPictureCache {
     }
 }
 
-/** Decodes off the main thread, halving the size until its longest side fits [side]. */
+/**
+ * Decodes off the main thread, halving the size until its longest side fits [side]. ImageDecoder turns a
+ * camera photo the way its EXIF orientation says, as the composer's thumbnail does; BitmapFactory would leave it sideways.
+ */
 private suspend fun decodeScaled(bytes: ByteArray, side: Int): ImageBitmap? = withContext(Dispatchers.Default) {
     runCatching {
-        val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-        BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
-        var sample = 1
-        while (maxOf(bounds.outWidth, bounds.outHeight) / (sample * 2) >= side) sample *= 2
-        BitmapFactory.decodeByteArray(bytes, 0, bytes.size, BitmapFactory.Options().apply { inSampleSize = sample })?.asImageBitmap()
+        ImageDecoder.decodeBitmap(ImageDecoder.createSource(ByteBuffer.wrap(bytes))) { d, info, _ ->
+            var sample = 1
+            while (maxOf(info.size.width, info.size.height) / (sample * 2) >= side) sample *= 2
+            d.setTargetSampleSize(sample)
+        }.asImageBitmap()
     }.getOrNull()
 }
 

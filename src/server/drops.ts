@@ -2,13 +2,16 @@ import { randomBytes } from 'node:crypto';
 import { mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { PROMPT_IMAGE_ID } from '../shared/drops.js';
+import type { ThreadImage } from '../shared/worker-thread.js';
 
 /** The folder in drops/ for pictures waiting on a prompt: not a worker's, so pruning leaves it be. */
 const STAGED = 'staged';
 
 /** The name ending a picture dropped without one gets, so the agent can tell it's a picture. */
 const PICTURE_EXT: Record<string, string> = { 'image/png': '.png', 'image/jpeg': '.jpg', 'image/gif': '.gif', 'image/webp': '.webp' };
-const PICTURE_TYPE: Record<string, string> = Object.fromEntries(Object.entries(PICTURE_EXT).map(([type, ext]) => [ext, type]));
+/** How `save` names a kept file: 8 hex characters, a dash and the dropped file's own name (see dropName). */
+export const DROP_NAME = '[0-9a-f]{8}-[\\w.-]{1,120}';
+const DROP_NAME_ONLY = new RegExp(`^${DROP_NAME}$`);
 
 /**
  * Files dropped or pasted into a worker's terminal from a browser (see shared/drops.ts), kept in
@@ -120,13 +123,13 @@ export class DropStore {
   }
 
   /** A picture kept for a worker's prompt, by its name in the worker's drops (as `save` named it); undefined for anything else. */
-  picture(workerId: string, name: string): { body: Buffer; type: string } | undefined {
+  picture(workerId: string, name: string): { body: Buffer; type: ThreadImage['type'] } | undefined {
     const dir = this.folder(workerId);
-    if (!dir || !/^[0-9a-f]{8}-[\w.-]{1,120}$/.test(name)) return undefined;
+    if (!dir || !DROP_NAME_ONLY.test(name)) return undefined;
     try {
       const body = readFileSync(path.join(dir, name));
-      const ext = pictureExt(body);
-      return ext ? { body, type: PICTURE_TYPE[ext] } : undefined;
+      const type = pictureType(body);
+      return type ? { body, type } : undefined;
     } catch {
       return undefined;
     }
@@ -143,18 +146,33 @@ export class DropStore {
     }
   }
 
-  private folder(workerId: string): string | undefined {
+  /** Where a worker's files are kept, or undefined for an id that can't name a folder. */
+  folder(workerId: string): string | undefined {
     return /^[\w-]{1,64}$/.test(workerId) ? path.join(this.dir, workerId) : undefined;
   }
 }
 
-/** The name ending a picture should have, read from its first bytes rather than taken on the browser's word; undefined for anything else. */
-export function pictureExt(body: Buffer): string | undefined {
-  if (body.length > 8 && body.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]))) return '.png';
-  if (body.length > 3 && body[0] === 0xff && body[1] === 0xd8 && body[2] === 0xff) return '.jpg';
-  if (body.length > 6 && (body.subarray(0, 6).toString('latin1') === 'GIF87a' || body.subarray(0, 6).toString('latin1') === 'GIF89a')) return '.gif';
-  if (body.length > 12 && body.subarray(0, 4).toString('latin1') === 'RIFF' && body.subarray(8, 12).toString('latin1') === 'WEBP') return '.webp';
+/** Whether `name` is one `save` gives a kept file. */
+export function isDropName(name: string): boolean {
+  return DROP_NAME_ONLY.test(name);
+}
+
+const PNG_SIGNATURE = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];
+const startsWith = (body: Uint8Array, at: number, text: string) => [...text].every((c, i) => body[at + i] === c.charCodeAt(0));
+
+/** The picture type the bytes are, read from them rather than taken on anyone's word; undefined for anything else. */
+export function pictureType(body: Uint8Array): ThreadImage['type'] | undefined {
+  if (body.length > 8 && PNG_SIGNATURE.every((b, i) => body[i] === b)) return 'image/png';
+  if (body.length > 3 && body[0] === 0xff && body[1] === 0xd8 && body[2] === 0xff) return 'image/jpeg';
+  if (body.length > 6 && (startsWith(body, 0, 'GIF87a') || startsWith(body, 0, 'GIF89a'))) return 'image/gif';
+  if (body.length > 12 && startsWith(body, 0, 'RIFF') && startsWith(body, 8, 'WEBP')) return 'image/webp';
   return undefined;
+}
+
+/** The name ending a picture should have, from its bytes (pictureType); undefined for anything else. */
+export function pictureExt(body: Uint8Array): string | undefined {
+  const type = pictureType(body);
+  return type && PICTURE_EXT[type];
 }
 
 /**

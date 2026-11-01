@@ -426,15 +426,15 @@ export function mountWorkerThread(net: Net, opts: ThreadOptions): WorkerThread {
       ),
       block.open,
     );
-  /** An entry's pictures, each opening at full size. A cloud worker's session has none here. */
-  const pictures = (entry: ThreadEntry | undefined, title: string, about?: string) => {
-    const images = !cloud && opts.floor ? (entry?.images ?? []) : [];
+  /** An entry's pictures, each opening at full size, read from `owner`'s session. A cloud worker's session has none here. */
+  const pictures = (entry: ThreadEntry | undefined, title: string, about?: string, owner: WorkerInfo = worker) => {
+    const images = !owner.cloud && opts.floor ? (entry?.images ?? []) : [];
     if (!images.length) return null;
     return h(
       'div.wt-images',
       {},
       ...images.map((image, i) => {
-        const src = withToken(`/api/thread/image?${new URLSearchParams({ floor: opts.floor ?? '', worker: worker.id, image: image.id })}`);
+        const src = withToken(`/api/thread/image?${new URLSearchParams({ floor: opts.floor ?? '', worker: owner.id, image: image.id })}`);
         const name = images.length > 1 ? `${title} · ${i + 1} of ${images.length}` : title;
         return h(
           'button.wt-image',
@@ -444,8 +444,8 @@ export function mountWorkerThread(net: Net, opts: ThreadOptions): WorkerThread {
       }),
     );
   };
-  const action = (item: ThreadModelAction, entry: ThreadEntry | undefined) => {
-    const images = entry ? pictures(entry, item.title, item.detail) : null;
+  const action = (item: ThreadModelAction, entry: ThreadEntry | undefined, owner: WorkerInfo) => {
+    const images = entry ? pictures(entry, item.title, item.detail, owner) : null;
     const output = entry && images ? threadOutputText(entry) : entry?.output;
     return disclosure(
       h(
@@ -465,8 +465,8 @@ export function mountWorkerThread(net: Net, opts: ThreadOptions): WorkerThread {
       item.open,
     );
   };
-  const run = (block: Extract<ThreadBlock, { kind: 'tools' }>, loaded: ReadonlyMap<string, ThreadEntry>) => {
-    const body = h('div.wt-run-body', {}, ...block.actions.map((item) => action(item, loaded.get(item.id))));
+  const run = (block: Extract<ThreadBlock, { kind: 'tools' }>, loaded: ReadonlyMap<string, ThreadEntry>, owner: WorkerInfo) => {
+    const body = h('div.wt-run-body', {}, ...block.actions.map((item) => action(item, loaded.get(item.id), owner)));
     if (block.plan) {
       body.append(
         h(
@@ -496,7 +496,7 @@ export function mountWorkerThread(net: Net, opts: ThreadOptions): WorkerThread {
             row.status ? h('span.wt-activity-status', {}, row.status) : null,
             chevron(),
           ),
-          h('div.wt-activity-body', {}, ...row.blocks.map((block) => (block.kind === 'thought' ? thought(block, loaded.get(block.id)) : run(block, loaded)))),
+          h('div.wt-activity-body', {}, ...row.blocks.map((block) => (block.kind === 'thought' ? thought(block, loaded.get(block.id)) : run(block, loaded, author)))),
         ),
         row.open,
       );
@@ -507,7 +507,7 @@ export function mountWorkerThread(net: Net, opts: ThreadOptions): WorkerThread {
     }
     node.classList.add(row.role, row.kind === 'message' ? 'text' : 'notice');
     if (row.kind === 'notice') {
-      const images = row.tone === 'attachment' ? pictures(loaded.get(row.id), row.role === 'user' ? 'Picture you sent' : `Picture from ${author.name}`) : null;
+      const images = row.tone === 'attachment' ? pictures(loaded.get(row.id), row.role === 'user' ? 'Picture you sent' : `Picture from ${author.name}`, undefined, author) : null;
       node.append(images ?? h('p.wt-turn', { class: row.tone }, row.text));
       return node;
     }
@@ -521,7 +521,7 @@ export function mountWorkerThread(net: Net, opts: ThreadOptions): WorkerThread {
       return node;
     }
     // The pictures sent with the prompt, above its text, in place of where the office kept them.
-    const sent = pictures(entry, 'Picture you sent');
+    const sent = pictures(entry, 'Picture you sent', undefined, author);
     if (sent) node.append(sent);
     if (sent && !text.trim()) return node;
     const content = h('div.wt-user-content', { id: `wt-message-${author.id}-${row.id}`, class: expanded.has(row.id) ? '' : 'clamped' }, text);

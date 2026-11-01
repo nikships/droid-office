@@ -74,7 +74,7 @@ class ThreadQueue(saved: String? = null) {
                     // A prompt the office sent with pictures arrives as its own text, the pictures beside it (or alone).
                     val match = if (item.text.isNotEmpty()) entry.kind == ThreadKind.Text && entry.text?.trim() == joined
                     else start == end && item.hasImage &&
-                        ((entry.kind == ThreadKind.Notice && entry.text == "[Image attachment]") || (entry.kind == ThreadKind.Text && entry.text.isNullOrBlank() && entry.images.isNotEmpty()))
+                        ((entry.kind == ThreadKind.Notice && entry.text == ThreadView.IMAGE_PLACEHOLDER) || (entry.kind == ThreadKind.Text && entry.text.isNullOrBlank() && entry.images.isNotEmpty()))
                     if (match) {
                         pending = pending.filterIndexed { index, _ -> index !in start..end }
                         consumed += entry.id

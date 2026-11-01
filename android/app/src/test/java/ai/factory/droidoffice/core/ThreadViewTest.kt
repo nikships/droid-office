@@ -116,6 +116,11 @@ class ThreadViewTest {
         assertEquals(ThreadView.Detail.Shown(null, "Result", "", recorded = true, images = read.images), ThreadView.detail(action(), only))
         // An office from before pictures sends none: the placeholder stays, as the text it is.
         assertEquals("[Image attachment]", ThreadView.outputText(tool("{}", output = "[Image attachment]")))
+        // A Thread that can't show pictures keeps the placeholders and shows no pictures.
+        assertEquals(
+            ThreadView.Detail.Shown(null, "Result", "Read icon.png\n[Image attachment]", recorded = true),
+            ThreadView.detail(action(), read, pictures = false),
+        )
     }
 
     @Test

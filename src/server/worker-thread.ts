@@ -1,6 +1,6 @@
 import { open, readdir, realpath, stat, type FileHandle } from 'node:fs/promises';
 import path from 'node:path';
-import { pageRows, presentThread, THREAD_MODEL_VERSION, type ThreadPresentation, type ThreadRow } from '../shared/thread-presentation.js';
+import { IMAGE_PLACEHOLDER, pageRows, presentThread, THREAD_MODEL_VERSION, type ThreadPresentation, type ThreadRow } from '../shared/thread-presentation.js';
 import type { ThreadEntry, ThreadImage } from '../shared/worker-thread.js';
 import { LABEL_TEXT_CHARS } from '../shared/worker-labels.js';
 import { DROID_SESSIONS_DIR } from './droid-session.js';
@@ -19,6 +19,8 @@ export interface ThreadSession {
   cwd: string;
   /** Ignore text preceding an Office /clear, even if Droid keeps the same session file. */
   since?: number;
+  /** The worker's own drops folder: a prompt shows the pictures sent with it only from there. */
+  drops?: string;
 }
 
 export interface ThreadPage {
@@ -38,6 +40,7 @@ interface Projection {
   seq: number;
   dropped: boolean;
   before: number;
+  drops?: string;
 }
 
 interface CachedSession {
@@ -92,14 +95,14 @@ function contentText(content: unknown): string {
       .slice(0, 1024)
       .map((part) => {
         const p = object(part);
-        return p.type === 'text' ? clean(p.text) : p.type === 'image' ? '[Image attachment]' : '';
+        return p.type === 'text' ? clean(p.text) : p.type === 'image' ? IMAGE_PLACEHOLDER : '';
       })
       .filter(Boolean)
       .join('\n'),
   );
 }
 
-const projection = (before = Infinity, since = 0): Projection => ({ text: '', since, entries: [], tools: new Map(), bytes: 0, seq: 0, dropped: false, before });
+const projection = (before = Infinity, since = 0, drops?: string): Projection => ({ text: '', since, entries: [], tools: new Map(), bytes: 0, seq: 0, dropped: false, before, drops });
 const entryBytes = (entry: ThreadEntry) => Buffer.byteLength(JSON.stringify(entry));
 
 /** A bounded recent window, with disk scans only for explicit older-page requests. */
@@ -132,7 +135,7 @@ export class WorkerThreadReader {
         if (!idle) return this.unavailable('Conversation reader is busy. Try again shortly.');
         this.sessions.delete(idle[0]);
       }
-      cached = this.empty(source.since);
+      cached = this.empty(source.since, source.drops);
       this.sessions.set(key, cached);
     }
     // Map order is the bounded LRU, including a worker changing session or cwd.
@@ -152,13 +155,13 @@ export class WorkerThreadReader {
       let page = state.pages.get(before);
       if (!page) {
         if (state.pages.size >= 4) return this.unavailable('Conversation reader is busy. Try again shortly.');
-        page = this.older(state.file, sessionId, before).finally(() => state.pages.delete(before));
+        page = this.older(state.file, sessionId, before, source.drops).finally(() => state.pages.delete(before));
         state.pages.set(before, page);
       }
       return await page;
     } catch {
       // A disappearing/replaced file must never keep serving another session's stale cache.
-      Object.assign(state, this.empty(source.since));
+      Object.assign(state, this.empty(source.since, source.drops));
       return this.unavailable('The local conversation could not be read. Try again shortly.');
     }
   }
@@ -167,8 +170,8 @@ export class WorkerThreadReader {
     return { entries: [], hasMore: false, error };
   }
 
-  private empty(since = 0): CachedSession {
-    return { size: 0, position: 0, pending: Buffer.alloc(0), oversized: false, head: Buffer.alloc(0), tail: Buffer.alloc(0), projection: projection(Infinity, since), pages: new Map() };
+  private empty(since = 0, drops?: string): CachedSession {
+    return { size: 0, position: 0, pending: Buffer.alloc(0), oversized: false, head: Buffer.alloc(0), tail: Buffer.alloc(0), projection: projection(Infinity, since, drops), pages: new Map() };
   }
 
   private async find({ sessionId, cwd }: ThreadSession): Promise<string | undefined> {
@@ -224,7 +227,7 @@ export class WorkerThreadReader {
         state.position = 0;
         state.pending = Buffer.alloc(0);
         state.oversized = false;
-        state.projection = projection(Infinity, state.projection.since);
+        state.projection = projection(Infinity, state.projection.since, state.projection.drops);
       }
       await this.consume(handle, state, info.size);
       state.head = await this.bytes(handle, 0, Math.min(256, state.position));
@@ -253,7 +256,7 @@ export class WorkerThreadReader {
       for (let at = chunk.indexOf(10); at >= 0; at = chunk.indexOf(10, start)) {
         const part = chunk.subarray(start, at);
         if (!state.oversized && state.pending.length + part.length <= LINE_BYTES) {
-          this.record(state.projection, Buffer.concat([state.pending, part]).toString('utf8'), chunkStart + start - state.pending.length);
+          await this.record(state.projection, Buffer.concat([state.pending, part]).toString('utf8'), chunkStart + start - state.pending.length);
         } else {
           this.add(state.projection, { id: `oversized:${state.projection.seq}`, role: 'system', kind: 'notice', text: 'A conversation record was too large to display.' });
         }
@@ -293,7 +296,7 @@ export class WorkerThreadReader {
   }
 
   /** `offset` is where the line starts in the file: a picture's id points back at it. */
-  private record(state: Projection, line: string, offset: number): void {
+  private async record(state: Projection, line: string, offset: number): Promise<void> {
     let row: Record<string, unknown>;
     try {
       row = object(JSON.parse(line));
@@ -351,7 +354,7 @@ export class WorkerThreadReader {
     }
     if (this.textOnly) return;
     if (typeof message.content === 'string') {
-      this.text(state, `${id}:text`, role, clean(message.content));
+      await this.text(state, `${id}:text`, role, clean(message.content));
       return;
     }
     if (!Array.isArray(message.content)) return;
@@ -383,9 +386,9 @@ export class WorkerThreadReader {
         this.add(state, { id: `tool:${toolId}`, role: 'assistant', kind: 'tool', name: clean(part.name, 160), input: pretty(part.input) });
       } else if (part.type === 'image') {
         const image = imageRef(part, `${offset}.${index}.x`);
-        this.add(state, { id: partId, role, kind: 'notice', text: '[Image attachment]', ...(image ? { images: [image] } : {}) });
+        this.add(state, { id: partId, role, kind: 'notice', text: IMAGE_PLACEHOLDER, ...(image ? { images: [image] } : {}) });
       } else if (part.type === 'text') {
-        this.text(state, partId, role, clean(part.text));
+        await this.text(state, partId, role, clean(part.text));
       } else if (part.type === 'thinking') {
         const text = clean(part.thinking);
         if (text) this.add(state, { id: partId, role, kind: 'thinking', text });
@@ -394,8 +397,8 @@ export class WorkerThreadReader {
   }
 
   /** A message's text. The owner's prompt shows the pictures it was sent with instead of where the office kept them. */
-  private text(state: Projection, id: string, role: 'user' | 'assistant', text: string): void {
-    const sent = role === 'user' ? promptPictures(text) : undefined;
+  private async text(state: Projection, id: string, role: 'user' | 'assistant', text: string): Promise<void> {
+    const sent = role === 'user' ? await promptPictures(text, state.drops) : undefined;
     if (sent) this.add(state, { id, role, kind: 'text', text: sent.text, images: sent.images });
     else if (text) this.add(state, { id, role, kind: 'text', text });
   }
@@ -449,9 +452,9 @@ export class WorkerThreadReader {
     return { entries, hasMore: candidates.length > entries.length || (state.dropped && before > 0), presentation };
   }
 
-  private async older(file: string, sessionId: string, before: number): Promise<ThreadPage> {
+  private async older(file: string, sessionId: string, before: number, drops?: string): Promise<ThreadPage> {
     const state = this.empty();
-    state.projection = projection(before);
+    state.projection = projection(before, 0, drops);
     const handle = await open(file, 'r');
     try {
       await this.consume(handle, state, (await handle.stat()).size);

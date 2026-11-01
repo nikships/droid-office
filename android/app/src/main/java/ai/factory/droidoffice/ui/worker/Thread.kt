@@ -978,15 +978,15 @@ private fun ActionRow(a: ThreadModelAction, entry: ThreadEntry?, open: Boolean, 
         }
         if (open) {
             Column(Modifier.fillMaxWidth().padding(start = 22.dp, top = 2.dp, bottom = 10.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                when (val d = remember(a, entry?.input, entry?.output, entry?.images) { ThreadView.detail(a, entry) }) {
+                val canShow = LocalPictureSource.current != null
+                when (val d = remember(a, entry?.input, entry?.output, entry?.images, canShow) { ThreadView.detail(a, entry, canShow) }) {
                     ThreadView.Detail.NotLoaded -> Text(ThreadView.NOT_LOADED, style = MaterialTheme.typography.bodySmall, modifier = Modifier.tagged(Tags.Worker.threadNotLoaded(a.id)))
                     is ThreadView.Detail.Shown -> {
                         d.arguments?.let { (label, body) -> Mono(label, body, Palette.Text) }
-                        val pictures = d.images.isNotEmpty() && LocalPictureSource.current != null
+                        val pictures = d.images.isNotEmpty()
                         if (d.recorded) {
-                            val output = if (pictures) d.output else entry?.output.orEmpty()
-                            if (output.isNotEmpty() || !pictures) {
-                                Mono(d.result, output.ifEmpty { "(empty)" }, if (a.state == ActivityState.Cancelled) Palette.TextSecondary else if (d.result == "Error") Palette.Danger else Palette.Text)
+                            if (d.output.isNotEmpty() || !pictures) {
+                                Mono(d.result, d.output.ifEmpty { "(empty)" }, if (a.state == ActivityState.Cancelled) Palette.TextSecondary else if (d.result == "Error") Palette.Danger else Palette.Text)
                             } else {
                                 Eyebrow(d.result, color = Palette.TextSecondary)
                             }

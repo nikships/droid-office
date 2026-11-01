@@ -198,16 +198,23 @@ test("the owner's prompt shows the pictures the office sent with it, not where i
   const drops = new DropStore(path.join(data, '.droid-office'));
   const a = drops.save('w1', 'shot.png', 'image/png', png)!;
   const b = drops.save('w1', 'phone.jpg', 'image/jpeg', jpeg)!;
+  const theirs = drops.save('w2', 'theirs.png', 'image/png', png)!;
   const gone = path.join(path.dirname(a), '0a1b2c3d-gone.png');
-  const { reader, source } = await rig(t, [
+  const {
+    reader,
+    root,
+    source: session,
+  } = await rig(t, [
     message('both', 'user', [{ type: 'text', text: withImages('Compare image 1 and image 2', [a, b]) }]),
     message('alone', 'user', withImages('', [a])),
     message('missing', 'user', [{ type: 'text', text: withImages('One is gone', [a, gone]) }]),
     message('elsewhere', 'user', [{ type: 'text', text: withImages('Not a drop', ['/etc/hosts']) }]),
     message('reply', 'assistant', [{ type: 'text', text: withImages('An assistant quoting it', [a]) }]),
+    message('theirs', 'user', [{ type: 'text', text: withImages("Another worker's", [theirs]) }]),
   ]);
+  const source = { ...session, drops: drops.folder('w1') };
   const page = await reader.read(source);
-  const [both, alone, missing, elsewhere, reply] = page.entries;
+  const [both, alone, missing, elsewhere, reply, other] = page.entries;
   assert.equal(both.text, 'Compare image 1 and image 2');
   assert.deepEqual(both.images, [
     { id: `drop.${path.basename(a)}`, type: 'image/png', width: 192, height: 192 },
@@ -220,7 +227,11 @@ test("the owner's prompt shows the pictures the office sent with it, not where i
   assert.equal(missing.images, undefined);
   assert.equal(elsewhere.images, undefined);
   assert.equal(reply.images, undefined);
+  assert.equal(other.images, undefined, "the route serves only this worker's own drops, so another's would never load");
+  assert.equal(other.text, withImages("Another worker's", [theirs]));
   assert.doesNotMatch(JSON.stringify([both, alone]), /drops\//);
+  const unknown = await new WorkerThreadReader(root).read(session);
+  assert.equal(unknown.entries[0].images, undefined, "without the worker's drops folder no prompt picture is offered");
 });
 test('filters system, hooks, hidden/source bookkeeping and system-reminder blocks', async (t) => {
   const { reader, source } = await rig(t, [
@@ -562,6 +573,7 @@ test('response budget trims older entries without breaking the next cursor', asy
 test('WorkerManager exposes only a server-known local agent session and cwd', () => {
   const manager: WorkerManager = Object.create(WorkerManager.prototype);
   Reflect.set(manager, 'dir', '/project');
+  Reflect.set(manager, 'drops', new DropStore('/data'));
   Reflect.set(
     manager,
     'workers',
@@ -573,7 +585,7 @@ test('WorkerManager exposes only a server-known local agent session and cwd', ()
       ['starting', { info: { kind: 'agent' } }],
     ]),
   );
-  assert.deepEqual(manager.threadSession('agent'), { sessionId: 'owned', cwd: '/project/.droid-office/worktrees/agent' });
+  assert.deepEqual(manager.threadSession('agent'), { sessionId: 'owned', cwd: '/project/.droid-office/worktrees/agent', drops: path.join('/data', 'drops', 'agent') });
   for (const id of ['shell', 'cloud', 'guest', 'starting', 'missing']) assert.equal(manager.threadSession(id), undefined);
 });
 
