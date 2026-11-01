@@ -34,7 +34,8 @@ export interface CloudStreamOptions {
   api(): FactoryApi | undefined;
   key(): string | undefined;
   sources(): Iterable<CloudStreamSource>;
-  snapshot(sessionId: string, snapshot: Record<string, unknown>, liveChanged: boolean): void;
+  /** `superseded`: notifications while it loaded changed its settings or title, or anything else (its state). */
+  snapshot(sessionId: string, snapshot: Record<string, unknown>, superseded: Superseded): void;
   notification(sessionId: string, notification: Record<string, unknown>): void;
   reset(): void;
   now?: () => number;
@@ -42,13 +43,20 @@ export interface CloudStreamOptions {
   client?: (computer: CloudStreamComputer, key: string, refresh: () => Promise<Identity | null>) => CloudStreamClient;
 }
 
+export interface Superseded {
+  metadata: boolean;
+  state: boolean;
+}
+
+const METADATA = ['settings_updated', 'session_title_updated'];
+
 interface Connection {
   id: string;
   sessions: Set<string>;
   loaded: Set<string>;
   client?: CloudStreamClient;
   connecting?: Promise<void>;
-  loading?: { sessionId: string; changed: boolean };
+  loading?: { sessionId: string } & Superseded;
   ready: boolean;
   failures: number;
   retryAt: number;
@@ -198,7 +206,7 @@ export class CloudStream {
           const params = record(message.params);
           if (message.type !== 'notification' || message.method !== 'daemon.session_notification' || typeof params.sessionId !== 'string' || !c.sessions.has(params.sessionId)) return;
           const n = record(params.notification);
-          if (c.loading?.sessionId === params.sessionId) c.loading.changed = true;
+          if (c.loading?.sessionId === params.sessionId) c.loading[METADATA.includes(String(n.type)) ? 'metadata' : 'state'] = true;
           if (['session_process_exited', 'session_inactivity', 'session_closed', 'session_unsubscribed'].includes(String(n.type))) c.loaded.delete(params.sessionId);
           this.opts.notification(params.sessionId, n);
         });
@@ -212,13 +220,13 @@ export class CloudStream {
       if (!client) return;
       for (const sessionId of c.sessions) {
         if (c.loaded.has(sessionId)) continue;
-        const loading = { sessionId, changed: false };
+        const loading = { sessionId, metadata: false, state: false };
         c.loading = loading;
         const snapshot = await client.loadSession({ sessionId, token: key, messageLimit: 100 });
         if (!this.current(c, key, client)) return;
         c.loading = undefined;
         if (!c.sessions.has(sessionId)) continue;
-        this.opts.snapshot(sessionId, record(snapshot), loading.changed);
+        this.opts.snapshot(sessionId, record(snapshot), { metadata: loading.metadata, state: loading.state });
         c.loaded.add(sessionId);
       }
       c.failures = 0;

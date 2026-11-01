@@ -171,13 +171,11 @@ export class CloudFeature extends SliceFeature<'cloud'> {
           this.streamRevisions.clear();
           this.acceptedAt.clear();
         },
-        snapshot: (id, snapshot, liveChanged) => {
+        snapshot: (id, snapshot, superseded) => {
           const session = record(snapshot.session);
           this.threads.streamSnapshot(id, Array.isArray(session.messages) ? session.messages : [], snapshot.hasOlderMessages === true);
-          if (!liveChanged) {
-            this.streamMetadata(id, record(snapshot.settings), session.title);
-            this.streamState(id, snapshot.workingState);
-          }
+          if (!superseded.metadata) this.streamMetadata(id, record(snapshot.settings), session.title);
+          if (!superseded.state) this.streamState(id, snapshot.workingState);
           this.streamPaint(id);
         },
         notification: (id, n) => this.streamEvent(id, n),
@@ -620,6 +618,14 @@ export class CloudFeature extends SliceFeature<'cloud'> {
     return { note: `☁ ${info.name}'s session was stopped; it stays in Factory's sessions` };
   }
 
+  /**
+   * The stream keeps its status: it's healthy, and it has seen the turn the office sent run. A turn
+   * that ran and ended before the stream subscribed leaves only an idle snapshot, so REST finishes it.
+   */
+  private live(sessionId: string, turn: CloudTurn | undefined): boolean {
+    return (this.stream?.healthy(sessionId) ?? false) && !(turn?.sentAt !== undefined && !turn.seenBusy);
+  }
+
   /** Reads every cloud worker's session that's due: each working one at every poll, the rest on the slow clock. */
   async poll(api: FactoryApi): Promise<void> {
     void this.stream?.sync();
@@ -629,7 +635,7 @@ export class CloudFeature extends SliceFeature<'cloud'> {
       for (const info of floor.cloud.list()) {
         if (!info.sessionId) continue;
         const busy = info.status === 'working' || info.status === 'starting' || this.awaitingReply(floor, info.id, now);
-        const wait = busy && !this.stream?.healthy(info.sessionId) ? 0 : IDLE_EVERY_MS - this.fastInterval;
+        const wait = busy && !this.live(info.sessionId, floor.cloud.turn(info.id)) ? 0 : IDLE_EVERY_MS - this.fastInterval;
         if (!this.due.delete(info.id) && now - floor.cloud.polledAt(info.id) < wait) continue;
         jobs.push(this.pollOne(api, floor, info, now));
       }
@@ -666,7 +672,7 @@ export class CloudFeature extends SliceFeature<'cloud'> {
       throw err;
     }
     const turn: CloudTurn = floor.cloud.turn(id) ?? {};
-    if (this.stream?.healthy(info.sessionId!) || this.streamRevisions.get(info.sessionId!) !== revision) {
+    if (this.live(info.sessionId!, turn) || this.streamRevisions.get(info.sessionId!) !== revision) {
       // A slow REST response cannot rewind live state, including one received during this request.
       floor.cloud.polled(id, { count: Number(s?.messageCount) || 0, updatedAt: Number(s?.updatedAt) || 0 }, turn, now);
       return;
@@ -690,7 +696,7 @@ export class CloudFeature extends SliceFeature<'cloud'> {
         // The status is enough to go on: what it's doing shows at the next read.
       }
     }
-    if (this.stream?.healthy(info.sessionId!) || this.streamRevisions.get(info.sessionId!) !== revision) {
+    if (this.live(info.sessionId!, floor.cloud.turn(id)) || this.streamRevisions.get(info.sessionId!) !== revision) {
       if (messages) this.threads.absorb(info.sessionId!, messages);
       floor.cloud.polled(id, { count, updatedAt }, floor.cloud.turn(id) ?? {}, now);
       return;

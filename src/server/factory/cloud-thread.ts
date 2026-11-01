@@ -44,7 +44,7 @@ export interface CloudThreadOptions {
   /** How often Factory is read while the worker works, and while it rests (someone may type to it in Factory's web app). */
   busyEveryMs?: number;
   idleEveryMs?: number;
-  /** How long a read waits for Factory before answering with what's held (the clients give up on a read after 8 s). */
+  /** How long a read waits for Factory before answering with what's held (Android asks again after 5 s and gives up after 6 s). */
   waitMs?: number;
 }
 
@@ -84,7 +84,7 @@ export class CloudThreadReader {
     this.now = opts.now ?? Date.now;
     this.busyEveryMs = opts.busyEveryMs ?? 2500;
     this.idleEveryMs = opts.idleEveryMs ?? 15_000;
-    this.waitMs = opts.waitMs ?? 5000;
+    this.waitMs = opts.waitMs ?? 2500;
   }
 
   /** One page of the thread: the newest, or with `before` the entries before that position. */

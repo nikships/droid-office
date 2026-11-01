@@ -587,6 +587,31 @@ test('cloud feature: idle snapshots finish restored turns but cannot rewind noti
   assert.equal(active.cloud.get(active.worker.id)!.status, 'working');
 });
 
+test('cloud feature: a turn that ended before the stream subscribed is finished through REST', async (t) => {
+  const r = featureRig(t, async (url) => (url.includes('/messages') ? json({ messages: [ASSISTANT, USER] }) : json({ status: 'idle', messageCount: 2, updatedAt: 1 })), false);
+  await r.feature.send(r.worker.id, 'A harmless prompt', []);
+  r.connect();
+  await r.feature.stream!.sync();
+  assert.equal(r.feature.stream!.healthy('session'), true);
+  assert.equal(r.cloud.get(r.worker.id)!.status, 'working', 'an idle snapshot alone cannot say the turn ran');
+  await r.feature.poll(r.api);
+  assert.equal(r.cloud.get(r.worker.id)!.status, 'done');
+  assert.equal(r.cloud.get(r.worker.id)!.activity, 'ok');
+});
+
+test('cloud feature: content during a load keeps the snapshot model; a settings update during it wins', async (t) => {
+  const content = featureRig(t, async () => json({}));
+  content.client.snapshot = { ...content.client.snapshot, settings: { modelId: 'gpt-6-sol' } };
+  content.client.duringLoad = () => content.client.notify(DELTA);
+  await content.feature.stream!.sync();
+  assert.equal(content.cloud.get(content.worker.id)!.activeModel, 'gpt-6-sol');
+  const settings = featureRig(t, async () => json({}));
+  settings.client.snapshot = { ...settings.client.snapshot, settings: { modelId: 'gpt-6-sol' } };
+  settings.client.duringLoad = () => settings.client.notify({ type: 'settings_updated', settings: { modelId: 'glm-5.3-flash' } });
+  await settings.feature.stream!.sync();
+  assert.equal(settings.cloud.get(settings.worker.id)!.activeModel, 'glm-5.3-flash');
+});
+
 test('cloud feature: model substitutions warn once with catalogue names and keep the reported model', async (t) => {
   const names: Record<string, string> = { 'gpt-6-sol': 'GPT 6 Sol', 'deepseek-v4.1-flash-1017': 'DeepSeek V4.1 Flash 1017' };
   const r = featureRig(t, async () => json({}), true, { modelName: (id) => names[id] });
