@@ -472,8 +472,10 @@ test('cloud feature: stream events drive busy/tool/completion, stale REST cannot
   assert.equal(cloud.get(worker.id)!.status, 'done');
   const page = await feature.thread(worker.id);
   assert.ok(page!.entries.some((e) => e.kind === 'tool' && e.output === RESULT.content));
+  // A turn that ended badly is over too: done, so the next message can go, with why in its activity.
   client.notify({ ...COMPLETE, reason: 'error' });
-  assert.equal(cloud.get(worker.id)!.status, 'needs_input');
+  assert.equal(cloud.get(worker.id)!.status, 'done');
+  assert.equal(cloud.get(worker.id)!.activity, 'Factory session ended: error');
   connected = false;
   feature.connectionChanged();
   assert.equal(feature.stream!.healthy('session'), false);

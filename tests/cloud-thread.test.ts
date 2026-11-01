@@ -14,7 +14,7 @@ import { computerOf } from '../src/shared/factory-computers.js';
 import { mergeMessages, messageOf, type FactoryMessage } from '../src/shared/factory-sessions.js';
 import { DESKS } from '../src/shared/layout.js';
 import type { ClientMsg } from '../src/shared/protocol.js';
-import { presentThread } from '../src/shared/thread-presentation.js';
+import { presentThread, THREAD_MODEL_VERSION } from '../src/shared/thread-presentation.js';
 
 const KEY = 'fk-test-thread-1234';
 const json = (status: number, body: unknown) => new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
@@ -372,6 +372,35 @@ test('reader: pages back through older messages with Factory’s cursor', async 
   assert.equal(before.entries.at(-1)?.text, 'message 199');
 });
 
+test('reader: after the oldest held messages give way to new ones, paging back finds its cursor again', async () => {
+  const all = Array.from({ length: 1600 }, (_, i) => say(i));
+  const f = messages(() => all);
+  let now = 10_000;
+  const reader = new CloudThreadReader(() => f.api, { now: () => now, busyEveryMs: 1000 });
+  const src = { sessionId: 's1', createdAt: 0, busy: true };
+  await reader.read(src);
+  // Past 1,500 held: page back first, then the turn goes on and new messages push the oldest out.
+  let page = await reader.read(src);
+  while (page.hasMore && reader.messages('s1').length < 1500) page = await reader.read(src, reader.messages('s1')[0].seq! * SEQ_STRIDE);
+  assert.equal(reader.messages('s1').length, 1500);
+  for (let i = 1600; i < 1620; i++) all.push(say(i));
+  now += 2000;
+  const latest = await reader.read(src);
+  assert.equal(latest.entries.at(-1)?.text, 'message 1619');
+  assert.equal(reader.messages('s1').length, 1500);
+  const oldestHeld = reader.messages('s1')[0].seq!;
+  assert.equal(oldestHeld, 120);
+  assert.equal(latest.hasMore, true);
+
+  const back = await reader.read(src, oldestHeld * SEQ_STRIDE);
+  assert.equal(back.entries.at(-1)?.text, 'message 119', 'the page just before what was held');
+  assert.equal(back.entries.length, 100);
+  assert.equal(back.hasMore, true);
+  const first = await reader.read(src, back.entries[0].seq);
+  assert.equal(first.entries[0].text, 'message 0');
+  assert.equal(first.hasMore, false);
+});
+
 test('reader: a just-made session, Factory errors, a slow answer and no connection', async () => {
   let fail: (() => Response) | undefined = () => json(404, { detail: 'Session not found' });
   const all = [say(1)];
@@ -382,7 +411,8 @@ test('reader: a just-made session, Factory errors, a slow answer and no connecti
   const now = 1_000_000;
   const reader = new CloudThreadReader(() => f.api, { now: () => now, busyEveryMs: 0, waitMs: 20 });
   // Factory 404s a session it has only just made: an empty thread, not an error.
-  assert.deepEqual(await reader.read({ sessionId: 's1', createdAt: now - 1000, busy: true }), { sessionId: 's1', entries: [], hasMore: false });
+  // With a presentation, so a client reads it as an empty thread rather than an older office.
+  assert.deepEqual(await reader.read({ sessionId: 's1', createdAt: now - 1000, busy: true }), { sessionId: 's1', entries: [], hasMore: false, presentation: { version: THREAD_MODEL_VERSION, rows: [] } });
   // An older one that 404s is gone.
   const gone = await reader.read({ sessionId: 's1', createdAt: 0, busy: true });
   assert.match(gone.error ?? '', /Couldn't read its session on Factory: .*not found/i);

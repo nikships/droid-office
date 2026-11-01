@@ -13,6 +13,7 @@ import { $, closeAllModals, h, modalOpen, openModal, toast } from './ui/dom';
 import { windowHeader } from './ui/kit';
 import { icon, type IconName } from './ui/icons';
 import { confirmDialog, openPrompt, routeWorktreeMessage, sendHomeDialog } from './ui/prompt';
+import { CLOUD_HIRE_CONFIRM_MS } from '../shared/factory-cloud';
 import { cloudSpawn, runsOnPicker } from './ui/factory-cloud';
 import { openFloorOrder } from './ui/floor-reorder';
 import { openSubscriptionsStatus } from './ui/subscriptions-status';
@@ -595,7 +596,7 @@ async function action(msg: ClientMsg, id = '', intendedFloor = floor, done?: str
   paint();
   let hired = '';
   try {
-    const result = await net.request(msg);
+    const result = await net.request(msg, msg.t === 'worker.spawn' && msg.cloud ? CLOUD_HIRE_CONFIRM_MS : undefined);
     if (!result.ok) return result.error ?? 'The office refused this action.';
     if (done) say(done);
     if (msg.t === 'worker.spawn' && result.workerId && floor === intendedFloor) hired = result.workerId;

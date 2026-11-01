@@ -22,6 +22,8 @@ const TAIL_PAGE = 30;
 const SESSIONS = 8;
 /** Messages kept per session; older ones are dropped and read again if someone pages back to them. */
 const MESSAGES_MAX = 1500;
+/** Pages walked from the newest to find the cursor past the oldest held message again (MESSAGES_MAX / FIRST_PAGE, and some). */
+const WALK_PAGES = 20;
 
 export interface CloudThreadSource {
   sessionId: string;
@@ -51,11 +53,14 @@ interface Held {
   view?: { busy: boolean; entries: ThreadEntry[]; rows: ThreadRow[] };
   live?: CloudStreamMessages;
   history?: boolean;
+  /** The oldest messages were dropped for newer ones, with them the cursor past what's held. */
+  trimmed?: boolean;
 }
 
 type Answer = { messages?: unknown[]; pagination?: { hasMore?: boolean; nextCursor?: string | null } };
 
 const unavailable = (error: string): ThreadPage => ({ entries: [], hasMore: false, error });
+const empty = (sessionId: string): ThreadPage => ({ sessionId, entries: [], hasMore: false, presentation: { version: THREAD_MODEL_VERSION, rows: [] } });
 const bytes = (value: unknown) => new TextEncoder().encode(JSON.stringify(value)).length;
 
 export class CloudThreadReader {
@@ -96,7 +101,7 @@ export class CloudThreadReader {
       } else await this.backfill(api, sessionId, held, before);
     } catch (err) {
       // A session Factory has only just made 404s for a few seconds: that's an empty thread, not an error.
-      if (err instanceof FactoryError && err.status === 404 && !held.messages.length && this.now() - source.createdAt < NEW_SESSION_GRACE_MS) return { sessionId, entries: [], hasMore: false };
+      if (err instanceof FactoryError && err.status === 404 && !held.messages.length && this.now() - source.createdAt < NEW_SESSION_GRACE_MS) return empty(sessionId);
       // With messages held, the last good thread stays up and the next read tries again.
       if (!held.messages.length) return unavailable(`Couldn't read its session on Factory: ${(err as Error).message}`);
     }
@@ -200,6 +205,7 @@ export class CloudThreadReader {
   /** Reads older pages from Factory until there are a page's worth of entries before `before`, or no more. */
   private async backfill(api: FactoryApi, sessionId: string, held: Held, before: number): Promise<void> {
     if (!held.messages.length || held.history) await this.refresh(api, sessionId, held);
+    if (held.trimmed && !held.older && this.view(held, false).entries.filter((e) => e.seq < before).length < PAGE_SIZE) await this.findOlder(api, sessionId, held);
     for (let tries = 0; tries < 3 && held.older; tries++) {
       const shown = this.view(held, false).entries.filter((e) => e.seq < before).length;
       if (shown >= PAGE_SIZE) return;
@@ -209,13 +215,37 @@ export class CloudThreadReader {
     }
   }
 
+  /**
+   * Factory's cursors only run from the newest page back, so after the oldest held messages were
+   * dropped, the cursor past what's held is found again by walking back to the page that has the
+   * oldest one still held.
+   */
+  private async findOlder(api: FactoryApi, sessionId: string, held: Held): Promise<void> {
+    const oldest = held.messages[0]?.id;
+    let cursor: string | undefined;
+    for (let pages = 0; pages < WALK_PAGES; pages++) {
+      const page = await this.get(api, sessionId, FIRST_PAGE, cursor);
+      if (page.messages.some((m) => m.id === oldest)) {
+        held.trimmed = false;
+        held.older = page.next;
+        this.merge(held, page.messages, true);
+        return;
+      }
+      if (!page.next) break;
+      cursor = page.next;
+    }
+    // It's gone from Factory, or further back than the walk goes: there's nothing to page back to.
+    held.trimmed = false;
+  }
+
   private merge(held: Held, page: readonly FactoryMessage[], older = false): void {
     held.messages = held.live ? held.live.merge(page, older) : mergeMessages(held.messages, page);
     if (held.messages.length > MESSAGES_MAX) {
-      // Dropping the oldest leaves no cursor to read them again from; the newest are what's watched.
+      // Dropping the oldest drops the cursor past them too; findOlder finds it again when someone pages back.
       if (!older) {
         held.messages = held.messages.slice(-MESSAGES_MAX);
         held.older = undefined;
+        held.trimmed = true;
       } else held.messages = held.messages.slice(0, MESSAGES_MAX);
     }
     held.view = undefined;
@@ -240,7 +270,7 @@ export class CloudThreadReader {
     }
     return {
       entries,
-      hasMore: candidates.length > entries.length || !!held.older,
+      hasMore: candidates.length > entries.length || !!held.older || !!held.trimmed,
       presentation: { version: THREAD_MODEL_VERSION, rows: pageRows(view.rows, entries, before) },
     };
   }

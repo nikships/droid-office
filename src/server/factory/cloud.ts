@@ -1,5 +1,20 @@
 import { randomBytes } from 'node:crypto';
-import { CLOCK_SKEW_MS, answeredByAssistant, canHost, cloudBadge, cloudStatus, emptyCloud, latestReply, latestTool, officeAutonomy, sessionCwd, type CloudComputer, type CloudTurn, type CloudWorker } from '../../shared/factory-cloud.js';
+import {
+  CLOCK_SKEW_MS,
+  CLOUD_INSTANCE_MAX_MS,
+  answeredByAssistant,
+  canHost,
+  cloudBadge,
+  cloudStatus,
+  emptyCloud,
+  latestReply,
+  latestTool,
+  officeAutonomy,
+  sessionCwd,
+  type CloudComputer,
+  type CloudTurn,
+  type CloudWorker,
+} from '../../shared/factory-cloud.js';
 import { anyComputer, computerOf, type FactoryComputer, type FactoryComputersState } from '../../shared/factory-computers.js';
 import { ENV_PHASE_WORD, canStartFrom, environmentPhase, instanceName, repoFolder, type FactoryEnvironmentsState } from '../../shared/factory-environments.js';
 import type { ClientMsg, WorkerInfo, WorkerStatus } from '../../shared/protocol.js';
@@ -36,8 +51,7 @@ const PROMPT_MAX = 20_000;
 const MODEL_MAX = 256;
 /** How long after a turn ends the office looks for its reply, when the reply wasn't listed yet. */
 const REPLY_WAIT_MS = 90_000;
-/** How long a computer started from an Environment may take to come up (they usually take seconds). */
-const INSTANCE_MAX_MS = 4 * 60_000;
+/** How often a computer started from an Environment is read while it comes up (they usually take seconds). */
 const INSTANCE_EVERY_MS = 2000;
 
 const clip = (s: string, n: number) => {
@@ -252,7 +266,8 @@ export class CloudFeature extends SliceFeature<'cloud'> {
         }
         if (n.reason !== 'completed' && n.reason !== 'cancelled') i.activity = `Factory session ended: ${String(n.reason).slice(0, 80)}`;
       });
-      floor.cloud.setStatus(info.id, n.reason === 'completed' || n.reason === 'cancelled' ? 'done' : 'needs_input');
+      // A turn that ended badly is still over: done, with why in its activity, so the next message can go.
+      floor.cloud.setStatus(info.id, 'done');
     }
   }
 
@@ -373,7 +388,7 @@ export class CloudFeature extends SliceFeature<'cloud'> {
   private async startInstance(api: FactoryApi, environmentId: string, envName: string): Promise<FactoryComputer> {
     const made = computerOf(await api.post('/computers', { name: instanceName(envName, randomBytes(4).toString('hex')), source: { kind: 'environment', environmentId, isListed: false } }));
     if (!made) throw new HttpError(502, `Factory made no computer from ${envName} (it didn't say which)`);
-    const { everyMs, maxMs } = this.opts.instanceWait ?? { everyMs: INSTANCE_EVERY_MS, maxMs: INSTANCE_MAX_MS };
+    const { everyMs, maxMs } = this.opts.instanceWait ?? { everyMs: INSTANCE_EVERY_MS, maxMs: CLOUD_INSTANCE_MAX_MS };
     const until = this.now() + maxMs;
     let c: FactoryComputer = made;
     this.opts.computerMade?.(c);

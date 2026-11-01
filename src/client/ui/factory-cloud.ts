@@ -1,4 +1,4 @@
-import { canHost, cloudBadge, cloudHire, cloudSessionUrl, computerHome, type CloudComputer } from '../../shared/factory-cloud';
+import { CLOUD_HIRE_CONFIRM_MS, canHost, cloudBadge, cloudHire, cloudSessionUrl, computerHome, type CloudComputer } from '../../shared/factory-cloud';
 import { canStartFrom, repoName, type FactoryEnvironment } from '../../shared/factory-environments';
 import { creditsNote } from '../../shared/factory-sessions';
 import { statusWord } from '../../shared/guests';
@@ -144,7 +144,7 @@ export function cloudSpawn(deskId: string, text: string, o: { model?: string; ef
 
 /** Hires a cloud worker at `deskId` and waits until it's seated (making its session takes a while); why it wasn't, for the dialog to show. */
 export async function hireCloud(net: Net, deskId: string, text: string, o: { model?: string; effort?: AgentEffort; images: string[]; cloud: CloudChoice }): Promise<string | undefined> {
-  const result = await net.request(cloudSpawn(deskId, text, o));
+  const result = await net.request(cloudSpawn(deskId, text, o), CLOUD_HIRE_CONFIRM_MS);
   return result.ok ? undefined : (result.error ?? 'The office refused the hire.');
 }
 

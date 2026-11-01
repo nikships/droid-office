@@ -286,6 +286,9 @@ fun WorkerScreen(workerId: String, onBack: () -> Unit, embedded: Boolean = false
             )
             if (worker.state.asleep) Asleep(worker)
         }
+        val cloudError = worker.cloud?.error?.ifBlank { null }
+        // A cloud worker whose session or computer is gone has exited: its reason still shows under the thread.
+        if (cloud && cloudError != null && !live) CloudError(worker, cloudError)
         if (live) {
             val lift = LocalSnackbarLift.current
             val density = LocalDensity.current
@@ -307,7 +310,6 @@ fun WorkerScreen(workerId: String, onBack: () -> Unit, embedded: Boolean = false
                 if (waiting) ThreadWaiting(worker, onTty = { ttyChoice = true })
                 val snackbar = LocalSnackbar.current
                 val connected = link.phase == Phase.Connected
-                val cloudError = worker.cloud?.error?.ifBlank { null }
                 if (cloud && cloudError != null) CloudError(worker, cloudError)
                 Composer(
                     worker, draft, visible = !waiting && (!directInput || !tty || worker.isCloud), focusRequest = composerFocus, thread = !tty,

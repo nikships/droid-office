@@ -143,6 +143,11 @@ export const CLOCK_SKEW_MS = 2000;
 /** How long a sent message may go unseen (still idle, no new messages) before the turn counts as over anyway. */
 export const SEND_SETTLE_MS = 90_000;
 
+/** How long a hire on an Environment waits for its computer to come up. */
+export const CLOUD_INSTANCE_MAX_MS = 4 * 60_000;
+/** How long a hire dialog waits for the office to confirm a cloud hire: the computer, then making the session (15 s or more) and its retries. */
+export const CLOUD_HIRE_CONFIRM_MS = CLOUD_INSTANCE_MAX_MS + 2 * 60_000;
+
 /**
  * A cloud worker's status from its session's `{status, messageCount}`: pending or running is
  * working; idle after a turn (one the office started, or anyone did) is done; idle with nothing
