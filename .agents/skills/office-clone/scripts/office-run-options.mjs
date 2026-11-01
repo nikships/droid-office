@@ -9,10 +9,12 @@ export function runnerOptions(argv) {
       size: { type: 'string', default: '1440x900' },
       timeout: { type: 'string', default: '120' },
       source: { type: 'string' },
+      desktop: { type: 'boolean', default: false },
       help: { type: 'boolean', short: 'h' },
     },
   });
   if (positionals.length > 2) throw new Error('expected a clone directory and optional steps file');
+  if (values.desktop && !values.source) throw new Error('--desktop requires --source (an isolated native clone app)');
   const timeout = Number(values.timeout);
   if (!/^[1-9]\d*x[1-9]\d*$/.test(values.size) || !Number.isFinite(timeout) || timeout <= 0) throw new Error('--size must be WIDTHxHEIGHT and --timeout must be positive seconds');
   return { ...values, timeout, positional: positionals };

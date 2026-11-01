@@ -9,6 +9,8 @@ description: Script smooth first-person movement in the Droid Office 3D office f
 
 Related skills: [`office-video-capture`](../office-video-capture/SKILL.md) records these moves. [`office-demo-staging`](../office-demo-staging/SKILL.md) fills the office with demo work.
 
+**Choose the right input layer.** The rig's synthetic events test Office handlers and choreograph scene motion; they do not prove OS input delivery, pointer lock or native menu behavior. Use the clone runner's optional [`desktop` helper](../office-clone/references/native-desktop.md) for native accessibility checks. A real-keyboard or pointer test needs explicit permission for physical input and the installed `agent-desktop-macos` contract; never replace a rig key hold with `agent-desktop key-down`/`key-up`, which are reserved and do not deliver input.
+
 ## 1. Open a session with the rig
 
 ```bash

@@ -5,7 +5,7 @@ description: Test, verify or screenshot the Droid Office 3D UI (the three.js off
 
 # Testing the 3D office
 
-Every office tab exposes `window.office`. It walks or teleports you to desks, boards and places, presses keys at them, opens ☰ menu windows, rides the elevator, sets the camera and returns JSON state for assertions. Use it for every check in the 3D UI; never steer by hand with keys or mouse drags.
+Every office tab exposes `window.office`. It walks or teleports you to desks, boards and places, presses keys at them, opens ☰ menu windows, rides the elevator, sets the camera and returns JSON state for assertions. Use it for scene navigation and state assertions; use Playwright for HTML controls. Never steer by hand with keys or mouse drags.
 
 The full command reference lives in [docs/guide/development.md, "Automation API"](../../../docs/guide/development.md#automation-api-windowoffice) and the code in `src/client/automation.ts`.
 
@@ -32,6 +32,8 @@ node .agents/skills/office-clone/scripts/office-run.mjs $T steps.mjs --out /tmp/
 ```
 
 Add `--source /absolute/path/to/built-checkout` to run the native Electron app on a fresh isolated profile instead of the headless shell. Use this for native-presenter and 120 FPS checks, and verify actual drawn/presented rates. The steps still use `window.office`; the runner owns and closes the app. See [office-thermals](../office-thermals/SKILL.md) for before/after thermal tests.
+
+For native menu-bar items, sheets, alerts or window metadata, add `--desktop` with `--source` and use the runner's PID-scoped `desktop` helper ([native desktop checks](../office-clone/references/native-desktop.md)). This is optional macOS coverage, not a replacement for the scene API. The Metal presenter's visible window may expose no usable AX tree even when its menus work. Native-window and browser screenshots prove different things.
 
 Don't hold an `agent-browser` session open for checks. When its daemon dies, the next command quietly starts a headless Chrome for Testing, which closes the page (`about:blank`) about 30 seconds in. That, not WebGL, is why such sessions kept dropping.
 

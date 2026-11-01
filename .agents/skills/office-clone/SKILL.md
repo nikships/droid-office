@@ -51,6 +51,8 @@ It launches Playwright's headless shell (the one `node bin/droid-office.js brows
 
 For a native Electron check, including actual 120 FPS, pass `--source /absolute/path/to/built-checkout`. The runner launches that checkout's Electron app on a fresh profile inside the output folder, attaches to its actual clone page, uses the same steps/helpers, removes only that page's leave guard for controlled reloads, and kills only the app it launched when done. The clone server must already serve that checkout's build. Native output uses the real display size, not `--size`; default headless mode remains unchanged. Do not treat a requested cap as proof of drawn/presented FPS. For before/after sensor measurements use [office-thermals](../office-thermals/SKILL.md).
 
+Add `--desktop` with `--source` when the check needs **native** menus, sheets, alerts or OS window evidence. It requires `agent-desktop` on macOS with Accessibility granted, and adds a `desktop` helper scoped to the launched clone PID and its own session. It never targets the owner's app by name, steals focus or retries with physical input. The runner exports its trace and seals the session during cleanup, including after a failed step. See [Native desktop checks](references/native-desktop.md) for the helper API, observation/action verification and current Metal-presenter limitations. Keep `window.office` and Playwright for the scene and DOM; do not turn every UI test into a native run.
+
 A steps file is one async function. The helpers wrap `window.office` ([`office-3d-testing`](../office-3d-testing/SKILL.md) has the commands) and Playwright's `page`:
 
 ```js

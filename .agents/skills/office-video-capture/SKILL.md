@@ -7,6 +7,8 @@ description: Record smooth video of the Droid Office 3D office — demo clips, B
 
 Recording builds on [`office-choreography`](../office-choreography/SKILL.md): a take is a choreography move with a recorder wrapped round it. Boot that session first (`office-choreography/scripts/boot.sh`). For a busy office with real work in it, stage it with [`office-demo-staging`](../office-demo-staging/SKILL.md).
 
+**Capture scope.** This browser recorder captures the scene page, not macOS menus, sheets, the native Metal/HDR presenter or OS input delivery. Use the clone runner's optional [`desktop` helper](../office-clone/references/native-desktop.md) for native accessibility observations and window stills, and native display capture tools for display proof. `agent-desktop` is not a video recorder; its cursor overlay is presentation only. Do not replace this recorder or the movement rig with desktop key holds.
+
 ## 1. Record a take
 
 ```bash

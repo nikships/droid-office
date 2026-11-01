@@ -6,8 +6,16 @@ test('clone runner defaults stay headless with the original size and timeout', (
   const got = runnerOptions(['/tmp/office-clone-real', '/tmp/steps.mjs']);
   assert.deepEqual(got.positional, ['/tmp/office-clone-real', '/tmp/steps.mjs']);
   assert.equal(got.source, undefined);
+  assert.equal(got.desktop, false);
   assert.equal(got.timeout, 120);
   assert.equal(got.size, '1440x900');
+});
+
+test('desktop accessibility is opt-in and requires the isolated native source runner', () => {
+  assert.throws(() => runnerOptions(['/tmp/clone', '--desktop']), /--desktop requires --source/);
+  const got = runnerOptions(['/tmp/clone', '--source', '/tmp/built checkout', '--desktop']);
+  assert.equal(got.desktop, true);
+  assert.equal(got.source, '/tmp/built checkout');
 });
 
 test('native clone runner arguments preserve checkout paths containing spaces', () => {

@@ -5,7 +5,7 @@
 // file, saves its screenshots and exits. Nothing outlives the run, so nothing can go stale between
 // commands the way a long-lived browser session does.
 //
-//   node .agents/skills/office-clone/scripts/office-run.mjs <clone-dir> [steps.mjs] [--out DIR] [--size 1440x900] [--timeout 120] [--source BUILT_CHECKOUT]
+//   node .agents/skills/office-clone/scripts/office-run.mjs <clone-dir> [steps.mjs] [--out DIR] [--size 1440x900] [--timeout 120] [--source BUILT_CHECKOUT] [--desktop]
 //
 // A steps file exports a default async function that gets the helpers below:
 //
@@ -23,6 +23,7 @@ import { createServer } from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import { checkDesktop, createDesktop } from './office-desktop.mjs';
 import { nativeClonePage, runnerOptions, runnerUrl } from './office-run-options.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -58,6 +59,8 @@ if (opts.help || !cloneDir) {
   );
   process.exit(opts.help ? 0 : 1);
 }
+// Fail before opening a native window if the optional CLI or permission is missing.
+if (opts.desktop) await checkDesktop();
 const clone = path.resolve(cloneDir);
 const start = path.join(clone, 'start.sh');
 if (!existsSync(start)) {
@@ -122,6 +125,7 @@ try {
 // The default headless shell remains the lightweight GPU-backed UI test path.
 let running;
 let browser;
+let desktop;
 let closing = false;
 let launching = true;
 let requestedExit;
@@ -129,6 +133,15 @@ const launchAbort = new AbortController();
 const closeAndExit = async (code) => {
   if (closing) return;
   closing = true;
+  if (desktop) {
+    try {
+      await desktop.close();
+      console.log(`office-run: desktop trace ${path.join(desktop.stateRoot, 'trace.html')}`);
+    } catch (error) {
+      console.error(`office-run: desktop cleanup failed: ${error.message}`);
+      code = 1;
+    }
+  }
   running?.quit();
   if (browser) await browser.close().catch(() => undefined);
   process.exit(code);
@@ -269,6 +282,10 @@ try {
   if (!settled) console.warn('office-run: the warm-up line is still up after 90 s; carrying on');
   const s = await page.evaluate(() => window.office.state());
   console.log(`office-run: ready on ${url} (floor ${s?.floor?.name}, ${s?.workers?.length ?? 0} workers; WebGL ${gl})`);
+  if (opts.desktop) {
+    desktop = await createDesktop({ pid: running.pid, out });
+    helpers.desktop = desktop;
+  }
   if (steps) await steps(helpers);
   else await helpers.shot('office');
 } catch (err) {
