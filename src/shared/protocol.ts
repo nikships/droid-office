@@ -4,7 +4,7 @@ import type { Look } from './avatar.js';
 import type { Forge } from './floors.js';
 import type { DecorPlacement, Decoration } from './decor.js';
 import type { FactoryFeatureId, FactoryState } from './factory.js';
-import type { CloudWorker } from './factory-cloud.js';
+import type { CloudHire, CloudWorker } from './factory-cloud.js';
 import type { JiraBoardState, JiraFloorState } from './jira.js';
 import type { JukeboxState } from './jukebox.js';
 import type { PipelineDetail, PipelinesState } from './pipelines.js';
@@ -829,8 +829,10 @@ type ClientMessage =
    * With `issue`, the worker is there for that GitHub issue: it's assigned on GitHub (so it moves to In progress).
    * `deskId` is a seat's id, or AUTO_DESK (`"auto"`) for the first free desk on the sender's floor (then the first free bean bag).
    */
-  | { t: 'worker.spawn'; deskId: string; prompt?: string; worktree?: boolean; kind?: WorkerKind; model?: string; effort?: AgentEffort; issue?: number; repos?: string[]; images?: string[] }
+  | { t: 'worker.spawn'; deskId: string; prompt?: string; worktree?: boolean; kind?: WorkerKind; model?: string; effort?: AgentEffort; issue?: number; repos?: string[]; images?: string[]; cloud?: CloudHire }
   | { t: 'worker.resume'; workerId: string }
+  /** Stops the turn a worker is in: Escape in a local agent's terminal, an interrupt of a cloud worker's Factory session. */
+  | { t: 'worker.interrupt'; workerId: string }
   | { t: 'worker.fork'; workerId: string; prompt?: string }
   /** `deleteSession`: a cloud worker's Factory session is deleted too, not just left on the Factory account. */
   | { t: 'worker.kill'; workerId: string; cleanup?: WorktreeCleanup; deleteSession?: boolean }

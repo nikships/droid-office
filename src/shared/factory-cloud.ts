@@ -27,6 +27,16 @@ export interface CloudWorker {
   catchUp?: boolean;
 }
 
+/**
+ * Where `worker.spawn` hires a cloud worker instead of a local one: one of the account's computers, or
+ * an Environment to start a computer of its own from, and the folder its session starts in there.
+ */
+export interface CloudHire {
+  computerId?: string;
+  environmentId?: string;
+  cwd?: string;
+}
+
 /** The cloud slice of FactoryState: when the office last read its cloud workers' sessions, and why the last read failed. */
 export interface FactoryCloudState {
   fetchedAt: number;
