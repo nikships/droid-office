@@ -56,21 +56,34 @@ data class CloudHire(val computerId: String? = null, val environmentId: String? 
 sealed interface RunsOn {
     val key: String
     val label: String
+    /** The choice's name in the phone's Runs on menu, with [detail] under it. */
+    val title: String
+    val detail: String
 
     data object ThisMachine : RunsOn {
         override val key = ""
         override val label = "💻 This machine"
+        override val title = "This machine"
+        override val detail = "The office's own computer, with a terminal here"
     }
 
     /** A fresh computer of its own, started from [env] for this worker alone. */
     data class Environment(val env: FactoryEnvironment) : RunsOn {
         override val key = "env:${env.id}"
         override val label = "⧉ ${env.name}${if (env.isDefault) " (default)" else ""}"
+        override val title = env.name
+        override val detail = "${if (env.isDefault) "Default Environment · " else ""}A fresh computer of its own"
     }
 
     data class Computer(val computer: FactoryComputer) : RunsOn {
         override val key = computer.id
         override val label = "☁ ${computer.name} · ${computer.providerType}"
+        override val title = computer.name
+        override val detail = when (computer.providerType) {
+            "byom" -> "Your own machine, through Factory"
+            "e2b" -> "A Factory computer"
+            else -> computer.providerType
+        }
     }
 }
 

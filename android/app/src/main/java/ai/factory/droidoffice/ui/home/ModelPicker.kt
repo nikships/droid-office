@@ -8,13 +8,13 @@ import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.heightIn
-import androidx.compose.foundation.layout.imePadding
-import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
@@ -22,17 +22,16 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.KeyboardArrowDown
-import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
-import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -49,6 +48,8 @@ import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import ai.factory.droidoffice.core.Availability
 import ai.factory.droidoffice.core.ModelAvailability
@@ -78,8 +79,7 @@ private fun Cost(cost: Double?) {
     Text(ModelSearch.multiplier(cost), style = MaterialTheme.typography.labelSmall, color = color, modifier = Modifier.background(color.copy(alpha = .08f), RoundedCornerShape(4.dp)).padding(horizontal = 6.dp, vertical = 4.dp))
 }
 
-/** A searchable model sheet shared by the phone's hire flow. No model or gateway substitutes its own logo for the family. */
-@OptIn(ExperimentalMaterial3Api::class)
+/** A searchable model list shared by the phone's hire flow. No model or gateway substitutes its own logo for the family. */
 @Composable
 internal fun ModelPicker(catalogue: ModelCatalogue?, loading: Boolean, selected: String?, availability: Map<String, ModelAvailability>, onPick: (ModelOption) -> Unit) {
     val graph = LocalGraph.current
@@ -121,12 +121,14 @@ internal fun ModelPicker(catalogue: ModelCatalogue?, loading: Boolean, selected:
         coroutine.launch { graph.store.settings { it.copy(recentModels = ModelSearch.recent(it.recentModels, option.id)) } }
         onPick(option)
     }
-    ModalBottomSheet(onDismissRequest = { open = false }, sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true), containerColor = Palette.Surface) {
-        Column(Modifier.fillMaxWidth().heightIn(max = 640.dp).navigationBarsPadding().imePadding().tagged(Tags.Hire.MODEL_SHEET)) {
-            Row(Modifier.fillMaxWidth().padding(horizontal = 20.dp), verticalAlignment = Alignment.CenterVertically) {
-                Text("Model", style = MaterialTheme.typography.headlineSmall, modifier = Modifier.weight(1f))
+    // Full screen like the hire screen under it: a long list in a sheet drags the sheet away when scrolled past its top.
+    Dialog(onDismissRequest = { open = false }, properties = DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false)) {
+        Column(Modifier.fillMaxSize().background(Palette.Bg).windowInsetsPadding(WindowInsets.safeDrawing).tagged(Tags.Hire.MODEL_SHEET)) {
+            Row(Modifier.fillMaxWidth().padding(start = 6.dp, end = 20.dp, top = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+                IconButton(onClick = { open = false }, modifier = Modifier.tagged(Tags.Hire.MODEL_CLOSE)) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back", tint = Palette.Text) }
+                Spacer(Modifier.width(4.dp))
+                Text("Model", style = MaterialTheme.typography.titleLarge, modifier = Modifier.weight(1f))
                 Text("${models.size} models", style = MaterialTheme.typography.bodySmall)
-                TextButton(onClick = { open = false }, modifier = Modifier.tagged(Tags.Hire.MODEL_CLOSE)) { Text("Done") }
             }
             OutlinedTextField(query, { query = it }, Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 8.dp).tagged(Tags.Hire.MODEL_SEARCH),
                 placeholder = { Text("Search models, providers…") }, singleLine = true,
@@ -138,7 +140,7 @@ internal fun ModelPicker(catalogue: ModelCatalogue?, loading: Boolean, selected:
                     Chip("${group.name} · ${group.count}", scope == group.name, { scope = group.name }, Modifier.tagged(Tags.Hire.modelScope(group.name)), leading = brand?.let { { BrandLogo(it, Modifier.size(15.dp), monoTint = if (scope == group.name) Palette.Bg else Palette.TextSecondary) } })
                 }
             }
-            LazyColumn(Modifier.fillMaxWidth().weight(1f, fill = false), state = listState, contentPadding = PaddingValues(bottom = 16.dp)) {
+            LazyColumn(Modifier.fillMaxWidth().weight(1f), state = listState, contentPadding = PaddingValues(bottom = 16.dp)) {
                 sections.forEach { section ->
                     item(key = section.key) {
                         Row(Modifier.padding(start = 20.dp, end = 20.dp, top = 16.dp, bottom = 6.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -185,7 +187,6 @@ internal fun ModelPicker(catalogue: ModelCatalogue?, loading: Boolean, selected:
                     item { Text("No model matches. Clear the search or choose another group.", modifier = Modifier.padding(20.dp), style = MaterialTheme.typography.bodyMedium) }
                 }
             }
-            Spacer(Modifier.height(8.dp))
         }
     }
 }

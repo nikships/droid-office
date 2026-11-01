@@ -37,6 +37,16 @@ class FactoryCloudTest {
     }
 
     @Test
+    fun theMenuNamesEachChoiceAndSaysWhatItIs() {
+        val (local, base, _, web, orb, mac) = FactoryCloud.choices(parsed)
+        assertEquals("This machine" to "The office's own computer, with a terminal here", local.title to local.detail)
+        assertEquals("base" to "Default Environment · A fresh computer of its own", base.title to base.detail)
+        assertEquals("web" to "A fresh computer of its own", web.title to web.detail)
+        assertEquals("orb" to "A Factory computer", orb.title to orb.detail)
+        assertEquals("mac" to "Your own machine, through Factory", mac.title to mac.detail)
+    }
+
+    @Test
     fun offersOnlyThisMachineWhenFactoryIsntUsable() {
         assertEquals(listOf(RunsOn.ThisMachine), FactoryCloud.choices(null))
         assertEquals(listOf(RunsOn.ThisMachine), FactoryCloud.choices(parsed.copy(connection = FactoryConnection(connected = false))))

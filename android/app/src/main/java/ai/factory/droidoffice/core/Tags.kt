@@ -203,6 +203,8 @@ object Tags {
 
     object Hire {
         const val SHEET = "hire.sheet"
+        /** Closes the hire screen without hiring. */
+        const val CLOSE = "hire.close"
         const val DROID = "hire.droid"
         const val SHELL = "hire.shell"
         const val PROMPT = "hire.prompt"
