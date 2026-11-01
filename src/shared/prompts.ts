@@ -564,6 +564,33 @@ const DEFS = {
     text: 'Droid Office notice: the owner pinged you from the Whiteboard.\nRun `office-whiteboard read` to read the feedback.',
   },
 
+  'cloud.context': {
+    group: 'workers',
+    label: 'Cloud worker context',
+    used: 'Put before the first message to every cloud worker, so the agent on the Factory computer knows which floor and repository it works on, where its session starts and which branch to build on. On an Environment the Cloud worker on an Environment prompt follows it. Left empty, nothing goes before the message.',
+    vars: {
+      name: "The worker's name",
+      floor: "The floor's name",
+      computer: 'The Factory computer its session runs on',
+      repo: "The floor's repository: owner/name on GitHub, host/group/…/project on GitLab; empty when the floor has none",
+      url: "The repository's page; empty when the floor has none",
+      branch: "The floor branch: the owner's selected one, else the repository default; empty when unknown",
+      folder: "The folder its session starts in; empty for the computer's home folder",
+      repository: 'A sentence naming the repository, its page and the CLI for it; empty when the floor has none',
+      where: 'A sentence saying where its session starts and, when that may not be the repository, to find or clone it',
+      base: 'A sentence saying to base new work on the floor branch; empty when unknown',
+      ...PULL_WORDS,
+      ...FORGE_VARS,
+    },
+    optional: true,
+    text: [
+      'Droid Office context: you\'re {{name}}, a cloud worker on the "{{floor}}" floor, running on the Factory computer {{computer}}. The owner follows this session from Droid Office.',
+      '{{repository}}',
+      '{{where}}',
+      '{{base}}',
+      "Droid Office's own commands (office-workers, office-whiteboard, office-visit) aren't on this computer: do the work yourself, and report what changed, checks and links in this session.",
+    ].join('\n'),
+  },
   'cloud.environment': {
     group: 'workers',
     label: 'Cloud worker on an Environment',

@@ -55,7 +55,7 @@ function computersState(raw = [ORB, MAC, SLEEPY], fetchedAt = 1): FactoryCompute
 function rig(
   t: test.TestContext,
   f: ReturnType<typeof factory>,
-  opts: { dir?: string; agentArgs?: string[]; taken?: string[]; computers?: () => FactoryComputersState | undefined; environments?: () => FactoryEnvironmentsState; repo?: string } = {},
+  opts: { dir?: string; agentArgs?: string[]; taken?: string[]; computers?: () => FactoryComputersState | undefined; environments?: () => FactoryEnvironmentsState; repo?: string; branch?: string } = {},
 ) {
   const dir = opts.dir ?? mkdtempSync(path.join(os.tmpdir(), 'office-cloud-'));
   if (!opts.dir) t.after(() => rmSync(dir, { recursive: true, force: true }));
@@ -64,7 +64,7 @@ function rig(
   const toasts: string[] = [];
   const taken = new Set(opts.taken ?? []);
   const cloud = new CloudWorkers(dir, { deskTaken: (id) => taken.has(id), names: () => ['Ada'], pool: { names: ['Ada', 'Bea', 'Cy'], colors: ['#123456'] } }, { update: (w) => updates.push(w), remove: (id) => removed.push(id) });
-  const floor: CloudFloor = { id: 'f1', name: 'proj', repo: opts.repo, cloud, unstage: (ids) => cloud.drops.unstage(ids) };
+  const floor: CloudFloor = { id: 'f1', name: 'proj', repo: opts.repo, branch: () => opts.branch, cloud, unstage: (ids) => cloud.drops.unstage(ids) };
   let polls = 0;
   let now = 1_000_000;
   const host: FeatureHost = { changed: () => {}, pollSoon: () => polls++, api: () => f.api, toast: () => {} };
@@ -214,7 +214,7 @@ test('hire: makes the session on the computer, seats the worker and sends its fi
     'POST /sessions': () => json(201, { sessionId: 's1', status: 'idle', sessionSettings: { model: 'claude-opus-4' } }),
     'POST /sessions/s1/messages': () => json(200, { messageId: 'm1', status: 'running' }),
   });
-  const r = rig(t, f, { agentArgs: ['--auto', 'medium'] });
+  const r = rig(t, f, { agentArgs: ['--auto', 'medium'], repo: 'nikships/droid-office', branch: 'main' });
   const pic = r.cloud.drops.stage('shot.png', PNG)!;
   const w = await r.feature.hire(f.api, hireBody({ images: [pic, 'not-an-id'] }), 'Nik');
   assert.equal(w.kind, 'cloud');
@@ -231,7 +231,20 @@ test('hire: makes the session on the computer, seats the worker and sends its fi
   });
   await tick();
   const sent = f.calls.find((c) => c.path === '/sessions/s1/messages')!;
-  assert.deepEqual(sent.body, { text: 'say hi', images: [{ type: 'base64', data: PNG.toString('base64'), mediaType: 'image/png' }] });
+  assert.deepEqual(sent.body, {
+    text: [
+      'Droid Office context: you\'re Bea, a cloud worker on the "proj" floor, running on the Factory computer orb. The owner follows this session from Droid Office.',
+      'Repository: nikships/droid-office on GitHub (https://github.com/nikships/droid-office). Use `gh` for its issues and pull requests.',
+      "Your session starts in `/home/factory-user/proj`. If it isn't a clone of nikships/droid-office, find the repository's clone on this computer or clone https://github.com/nikships/droid-office, and work there.",
+      'Base new work and pull requests on `main`, the floor branch, unless the task names another.',
+      "Droid Office's own commands (office-workers, office-whiteboard, office-visit) aren't on this computer: do the work yourself, and report what changed, checks and links in this session.",
+      '',
+      'say hi',
+    ].join('\n'),
+    images: [{ type: 'base64', data: PNG.toString('base64'), mediaType: 'image/png' }],
+  });
+  assert.equal(r.cloud.get(w.id)?.cloud?.intro, undefined, 'only the first message carries the context');
+  assert.equal(r.cloud.get(w.id)?.prompt, 'say hi', 'what it shows is what the owner typed');
   assert.equal(r.cloud.drops.stagedPicture(pic), undefined, 'sent pictures are no longer staged');
   const now = r.cloud.get(w.id)!;
   assert.equal(now.status, 'working');
@@ -241,6 +254,39 @@ test('hire: makes the session on the computer, seats the worker and sends its fi
   assert.equal(r.feature.busy(), true);
   // Its file is the owner's only.
   assert.equal(statSync(path.join(r.dir, 'cloud-workers.json')).mode & 0o777, 0o600);
+});
+
+test('hire: the context names where to find the repository, and leaves out what the floor does not know', async (t) => {
+  let fail = true;
+  const f = factory({
+    'POST /sessions': () => json(201, { sessionId: 's1' }),
+    'POST /sessions/s1/messages': () => (fail ? json(500, { detail: 'boom' }) : json(200, { status: 'running' })),
+  });
+  const r = rig(t, f, { repo: 'gitlab.example.com/team/app', branch: 'develop' });
+  const w = await r.feature.hire(f.api, hireBody({ cwd: '', prompt: '' }), 'Nik');
+  assert.equal(w.cloud?.intro, true, 'a worker hired without a prompt keeps the context for its first message');
+  assert.match(String(await r.feature.send(w.id, 'first', [])), /boom/);
+  assert.equal(r.cloud.get(w.id)?.cloud?.intro, true, 'a message that never arrived leaves the context for the next');
+  fail = false;
+  assert.equal(await r.feature.send(w.id, 'go', []), undefined);
+  assert.equal(await r.feature.send(w.id, 'and again', []), undefined);
+  const texts = f.calls.filter((c) => c.path === '/sessions/s1/messages').map((c) => (c.body as { text: string }).text);
+  assert.match(texts[1], /^Droid Office context: you're Bea, a cloud worker on the "proj" floor/);
+  assert.match(texts[1], /\nRepository: gitlab\.example\.com\/team\/app on GitLab \(https:\/\/gitlab\.example\.com\/team\/app\)\. Use `glab` for its issues and merge requests\.\n/);
+  assert.match(texts[1], /\nYour session starts in the computer's home folder, which may not hold the repository: find its clone on this computer, or clone https:\/\/gitlab\.example\.com\/team\/app, and work there\.\n/);
+  assert.match(texts[1], /\nBase new work and merge requests on `develop`, the floor branch/);
+  assert.match(texts[1], /\n\ngo$/);
+  assert.equal(texts[2], 'and again');
+
+  // A floor with no repository or known branch says only where the session starts.
+  const g = factory({ 'POST /sessions': () => json(201, { sessionId: 's1' }), 'POST /sessions/s1/messages': () => json(200, { status: 'running' }) });
+  const plain = rig(t, g);
+  await plain.feature.hire(g.api, hireBody(), 'Nik');
+  await tick();
+  const only = (g.calls.find((c) => c.path === '/sessions/s1/messages')!.body as { text: string }).text;
+  assert.doesNotMatch(only, /Repository:|floor branch/);
+  assert.match(only, /\nYour session starts in `\/home\/factory-user\/proj`\.\n/);
+  assert.match(only, /\n\nsay hi$/);
 });
 
 test('hire: a read right after the first message that still says idle from before it keeps the worker working', async (t) => {
@@ -415,7 +461,9 @@ test('hire on an Environment: a computer of its own, waited for, the session in 
   // The clone is the Environment's build's: the first message says to bring it up to date first, the next ones don't.
   await tick();
   const texts = () => f.calls.filter((c) => c.method === 'POST' && c.path === '/sessions/s1/messages').map((c) => (c.body as { text: string }).text);
-  assert.match(texts()[0], /^Droid Office environment: droid-office-default\n`\/home\/factory-user\/repos\/droid-office` contains/);
+  assert.match(texts()[0], /^Droid Office context: you're Bea, a cloud worker on the "proj" floor, running on the Factory computer droid-office-default-probe01\./);
+  assert.match(texts()[0], /\nYour session starts in `\/home\/factory-user\/repos\/droid-office`, the repository's clone on this computer\.\n/);
+  assert.match(texts()[0], /\n\nDroid Office environment: droid-office-default\n`\/home\/factory-user\/repos\/droid-office` contains/);
   assert.match(texts()[0], /git fetch origin && git pull --ff-only[\s\S]*Task:\n\nsay hi$/);
   assert.equal(r.feature.find(w.id)?.info.cloud?.catchUp, undefined);
   assert.equal(await r.feature.send(w.id, 'and again', []), undefined);

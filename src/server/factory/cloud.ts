@@ -19,7 +19,8 @@ import { anyComputer, computerOf, type FactoryComputer, type FactoryComputersSta
 import { ENV_PHASE_WORD, canStartFrom, environmentPhase, instanceName, repoFolder, type FactoryEnvironmentsState } from '../../shared/factory-environments.js';
 import type { ClientMsg, WorkerInfo, WorkerStatus } from '../../shared/protocol.js';
 import { isAgentEffort } from '../../shared/protocol.js';
-import { PROMPTS, fillPrompt, type PromptId, type PromptVars } from '../../shared/prompts.js';
+import { forgeOf, forgeWords, repoWebUrl } from '../../shared/floors.js';
+import { PROMPTS, fillPrompt, forgeVars, type PromptId, type PromptVars } from '../../shared/prompts.js';
 import type { CloudWorkers } from '../cloud-workers.js';
 import { fallbackTask } from '../tasks.js';
 import { cloudScreen } from '../../shared/cloud-screen.js';
@@ -61,6 +62,35 @@ const clip = (s: string, n: number) => {
   return one.length > n ? `${one.slice(0, n - 1)}…` : one;
 };
 
+/**
+ * What cloud.context fills in for a cloud worker: its floor, the repository, where its session starts
+ * and the branch to build on. `clone` is a session started in the repository's clone on its Environment's computer.
+ */
+export function cloudContextVars(floor: Pick<CloudFloor, 'name' | 'repo'>, name: string, c: CloudWorker, branch: string | undefined, clone: boolean): PromptVars {
+  const repo = floor.repo;
+  const forge = forgeOf(repo);
+  const w = forgeWords(forge);
+  const url = repo ? repoWebUrl(repo) : '';
+  const folder = c.cwd ? `\`${c.cwd}\`` : "the computer's home folder";
+  let where = `Your session starts in ${folder}.`;
+  if (repo && clone) where = `Your session starts in ${folder}, the repository's clone on this computer.`;
+  else if (repo && c.cwd) where = `Your session starts in ${folder}. If it isn't a clone of ${repo}, find the repository's clone on this computer or clone ${url}, and work there.`;
+  else if (repo) where = `Your session starts in ${folder}, which may not hold the repository: find its clone on this computer, or clone ${url}, and work there.`;
+  return {
+    ...forgeVars(forge),
+    name,
+    floor: floor.name,
+    computer: c.computerName,
+    repo: repo ?? '',
+    url,
+    branch: branch ?? '',
+    folder: c.cwd ?? '',
+    repository: repo ? `Repository: ${repo} on ${w.site} (${url}). Use \`${w.cli}\` for its issues and ${w.pull}s.` : '',
+    where,
+    base: branch ? `Base new work and ${w.pull}s on \`${branch}\`, the floor branch, unless the task names another.` : '',
+  };
+}
+
 /** One floor's cloud workers, as the feature reaches them. */
 export interface CloudFloor {
   id: string;
@@ -70,6 +100,8 @@ export interface CloudFloor {
   unstage(ids: readonly string[]): void;
   /** The floor's repository (`owner/name`), to start a session from an Environment in its clone. */
   repo?: string;
+  /** The floor branch new work starts from: the owner's selected one, else the repository default. */
+  branch?(): string | undefined;
 }
 
 export interface CloudOptions {
@@ -495,6 +527,7 @@ export class CloudFeature extends SliceFeature<'cloud'> {
       provider: host.providerType,
       ...where,
       autonomy,
+      intro: true,
       ...(env ? { environmentId: env.id, environmentName: env.name, instance: true } : {}),
       ...(catchUp ? { catchUp: true } : {}),
     };
@@ -523,6 +556,12 @@ export class CloudFeature extends SliceFeature<'cloud'> {
     return floor.cloud.get(info.id) ?? info;
   }
 
+  /** What goes before the first message to every cloud worker: where it is and what it works on (cloud.context). */
+  private contextNote(floor: CloudFloor, name: string, c: CloudWorker, clone: boolean): string {
+    const vars = cloudContextVars(floor, name, c, floor.branch?.(), clone);
+    return (this.opts.prompt ? this.opts.prompt('cloud.context', vars) : fillPrompt(PROMPTS['cloud.context'].text, vars)).trim();
+  }
+
   /** What goes before the first message to a worker whose clone is from its Environment's build (cloud.environment). */
   private catchUpNote(c: CloudWorker): string {
     const vars = { environment: c.environmentName ?? 'it was started from', folder: c.cwd ?? '.' };
@@ -546,13 +585,17 @@ export class CloudFeature extends SliceFeature<'cloud'> {
     if (!api) return "The office isn't connected to Factory: connect it in ⚙️ Settings → Connections";
     if (info.cloud?.error) return `${info.name} can't take prompts right now: ${info.cloud.error}`;
     const before = info.status;
+    const intro = info.cloud?.intro === true;
     const catchUp = info.cloud?.catchUp === true;
-    const lead = catchUp ? this.catchUpNote(info.cloud!) : '';
+    const lead = [intro ? this.contextNote(floor, info.name, info.cloud!, catchUp) : '', catchUp ? this.catchUpNote(info.cloud!) : ''].filter(Boolean).join('\n\n');
     const was = floor.cloud.turn(id) ?? {};
     const count = floor.cloud.seen(id)?.count ?? 0;
     floor.cloud.update(id, (i, w) => {
-      // Cleared before the message goes, so a second one sent meanwhile doesn't carry the note too.
-      if (i.cloud) delete i.cloud.catchUp;
+      // Cleared before the message goes, so a second one sent meanwhile doesn't carry the notes too.
+      if (i.cloud) {
+        delete i.cloud.intro;
+        delete i.cloud.catchUp;
+      }
       w.turn = { sentAt: this.now(), countAtSend: count };
       i.activity = clip(message, 80);
       i.lastInputAt = this.now();
@@ -567,6 +610,7 @@ export class CloudFeature extends SliceFeature<'cloud'> {
     } catch (err) {
       floor.cloud.update(id, (i, w) => {
         w.turn = was;
+        if (intro && i.cloud) i.cloud.intro = true;
         if (catchUp && i.cloud) i.cloud.catchUp = true;
         i.activity = clip(`Couldn't send: ${(err as Error).message}`, 80);
       });

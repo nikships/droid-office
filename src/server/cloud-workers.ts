@@ -341,6 +341,7 @@ function validInfo(raw: unknown): WorkerInfo | undefined {
       ...(typeof c.environmentId === 'string' && c.environmentId ? { environmentId: c.environmentId } : {}),
       ...(typeof c.environmentName === 'string' && c.environmentName ? { environmentName: c.environmentName } : {}),
       ...(c.instance === true ? { instance: true } : {}),
+      ...(c.intro === true ? { intro: true } : {}),
       ...(c.catchUp === true ? { catchUp: true } : {}),
     },
   };

@@ -25,6 +25,8 @@ export interface CloudWorker {
   environmentName?: string;
   /** The office started its computer for it, and deletes that computer when it goes home. */
   instance?: boolean;
+  /** Its next message goes with the cloud.context prompt first: which floor, repository, folder and branch it works on. */
+  intro?: boolean;
   /** Its next message goes with the cloud.environment prompt first: its clone is from the Environment's build. */
   catchUp?: boolean;
 }
