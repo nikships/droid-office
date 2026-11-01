@@ -224,12 +224,26 @@ test('hire: makes the session on the computer, seats the worker and sends its fi
   assert.equal(r.cloud.drops.stagedPicture(pic), undefined, 'sent pictures are no longer staged');
   const now = r.cloud.get(w.id)!;
   assert.equal(now.status, 'working');
-  assert.equal(r.cloud.turn(w.id)?.seenBusy, true);
+  assert.equal(r.cloud.turn(w.id)?.seenBusy, undefined, "the message's answer saying running isn't a read of the session");
   assert.ok(r.polls() > 0, 'it asks to be read right away');
   assert.ok(r.toasts.some((x) => x.includes('hired Bea on ☁ orb')));
   assert.equal(r.feature.busy(), true);
   // Its file is the owner's only.
   assert.equal(statSync(path.join(r.dir, 'cloud-workers.json')).mode & 0o777, 0o600);
+});
+
+test('hire: a read right after the first message that still says idle from before it keeps the worker working', async (t) => {
+  const f = factory({
+    'POST /sessions': () => json(201, { sessionId: 's1' }),
+    'POST /sessions/s1/messages': () => json(200, { messageId: 'm1', status: 'running' }),
+    'GET /sessions/s1': () => session('idle', 0),
+    'GET /sessions/s1/messages': () => json(200, { messages: [{ role: 'user', content: [{ type: 'text', text: 'say hi' }] }] }),
+  });
+  const r = rig(t, f);
+  const w = await r.feature.hire(f.api, hireBody(), 'Nik');
+  await tick();
+  await r.feature.poll(f.api);
+  assert.equal(r.cloud.get(w.id)?.status, 'working');
 });
 
 test('hire: a failed create hires nobody, gives the desk back and says what Factory said', async (t) => {
