@@ -146,6 +146,15 @@ object FactoryCloud {
         }
     }
 
+    /** What sending a cloud worker home does, as the office's own dialog says it (sendCloudHome). */
+    fun sendHome(w: WorkerInfo): String {
+        val c = w.cloud ?: return ""
+        val where = c.computerName.ifBlank { "Factory" }
+        if (c.instance) return "${w.name} leaves the desk, and the computer the office started for it from ${c.environmentName?.ifBlank { null } ?: "its Environment"} ($where) is deleted. Its session stays archived in Factory unless you delete it."
+        val busy = w.state == WorkerStatus.Working || w.state == WorkerStatus.Starting
+        return "${w.name} leaves the desk${if (busy) ", and its session on $where is stopped" else ""}. The session stays in Factory unless you delete it."
+    }
+
     /** A BYOK model runs through the office's own keys, which a Factory computer doesn't have: the office refuses it there. */
     fun runsInCloud(modelId: String?) = modelId == null || !modelId.startsWith("custom:")
 }

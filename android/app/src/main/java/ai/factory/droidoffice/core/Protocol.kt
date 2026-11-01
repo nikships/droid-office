@@ -82,6 +82,8 @@ data class CloudRef(
     val error: String? = null,
     val environmentId: String? = null,
     val environmentName: String? = null,
+    /** The office started its computer for it, and deletes that computer when it goes home. */
+    val instance: Boolean = false,
 ) {
     /** What it wears on its card and header (cloudBadge): its Environment, else its computer. */
     val where: String? get() = environmentName?.ifBlank { null } ?: computerName.ifBlank { null }
@@ -421,9 +423,11 @@ object ClientMsg {
     fun pr(workerId: String) = obj("worker.pr") { put("workerId", workerId) }
     fun worktree(workerId: String) = obj("worker.worktree") { put("workerId", workerId) }
 
-    fun kill(workerId: String, cleanup: String?) = obj("worker.kill") {
+    /** [deleteSession]: a cloud worker's Factory session is deleted too, not just left on the account. */
+    fun kill(workerId: String, cleanup: String?, deleteSession: Boolean = false) = obj("worker.kill") {
         put("workerId", workerId)
         if (cleanup != null) put("cleanup", cleanup)
+        if (deleteSession) put("deleteSession", true)
     }
 
     fun floorGo(floor: String) = obj("floor.go") { put("floor", floor) }

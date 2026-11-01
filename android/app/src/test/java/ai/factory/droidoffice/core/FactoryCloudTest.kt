@@ -97,5 +97,16 @@ class FactoryCloudTest {
         assertNull(FactoryCloud.repoName(null))
     }
 
+    @Test
+    fun sendingHomeSaysWhatHappensToItsComputerAndSession() {
+        val w = WorkerInfo(id = "w", name = "Pixel", status = "working", kind = "cloud", cloud = CloudRef(computerName = "mac-mini"))
+        assertEquals("Pixel leaves the desk, and its session on mac-mini is stopped. The session stays in Factory unless you delete it.", FactoryCloud.sendHome(w))
+        assertEquals("Pixel leaves the desk. The session stays in Factory unless you delete it.", FactoryCloud.sendHome(w.copy(status = "done")))
+        val env = w.copy(cloud = CloudRef(computerName = "web-1a2b", environmentName = "web", instance = true))
+        assertEquals("Pixel leaves the desk, and the computer the office started for it from web (web-1a2b) is deleted. Its session stays archived in Factory unless you delete it.", FactoryCloud.sendHome(env))
+        assertEquals(Json.parseToJsonElement("""{"t":"worker.kill","workerId":"w","deleteSession":true}"""), Json.parseToJsonElement(ClientMsg.kill("w", null, deleteSession = true)))
+        assertFalse("deleteSession" in Json.parseToJsonElement(ClientMsg.kill("w", null)).jsonObject)
+    }
+
     private operator fun <T> List<T>.component6() = this[5]
 }

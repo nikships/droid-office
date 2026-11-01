@@ -384,6 +384,8 @@ object Tags {
     object SendHome {
         const val DIALOG = "send_home.dialog"
         const val CONFIRM = "send_home.confirm"
+        /** For a cloud worker: also delete its Factory session. */
+        const val DELETE_SESSION = "send_home.delete_session"
         const val CANCEL = "send_home.cancel"
 
         /** `all`, `worktree` or `keep`: the cleanup the office's `kill` message takes. */
