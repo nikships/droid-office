@@ -152,7 +152,7 @@ test('projection: Factory messages become the entries a local thread has', () =>
   assert.equal(JSON.parse(merge.input!).summary, 'Merge green prompt chip pull request');
   assert.equal(merge.output, 'Command completed successfully\n\n[Process exited with code 0]');
   assert.equal(merge.error, false);
-  assert.equal(merge.resultSeq, 397 * SEQ_STRIDE);
+  assert.equal(merge.resultSeq, 394 * SEQ_STRIDE + 1, 'just after the entries before it');
   // TodoWrite's list is the plan.
   const todo = entries.find((e) => e.kind === 'todo')!;
   // Its empty thinking was left out, so the call is that message's first block.
@@ -175,6 +175,20 @@ test('projection: Factory messages become the entries a local thread has', () =>
     ['Locate the prompt chips implementation and repository instructions', 'Remove the pre-saved prompt chips feature and related dead code', 'Commit, push, and open a pull request'],
   );
   assert.equal(tools.actions[0].title, 'Merge green prompt chip pull request');
+});
+
+test('projection: a call the owner stopped reads as cancelled, not failed', () => {
+  // As Factory lists an interrupted Execute on the Mac Mini: the result is the session's last message.
+  const entries = cloudEntries(
+    parsed([
+      { id: 'u', role: 'user', createdAt: 1, seq: 10, content: [{ type: 'text', text: 'Run the shell command sleep 90 then reply done.' }] },
+      { id: 'a', role: 'assistant', createdAt: 2, seq: 12, content: [{ type: 'tool_use', id: 'c1', name: 'Execute', input: { command: 'sleep 90', summary: 'Wait for ninety seconds' } }] },
+      { id: 't', role: 'tool', createdAt: 3, seq: 15, content: [{ type: 'tool_result', toolUseId: 'c1', content: 'Tool execution cancelled by user', isError: true }] },
+    ]),
+  );
+  const run = presentThread(entries, false).find((r) => r.kind === 'activity');
+  assert.ok(run?.kind === 'activity');
+  assert.equal(run.state, 'cancelled');
 });
 
 test('projection: a call still running, a failed one, pictures, errors and reminders', () => {

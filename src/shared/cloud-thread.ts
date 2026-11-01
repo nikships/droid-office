@@ -54,7 +54,9 @@ export function cloudEntries(messages: readonly FactoryMessage[]): ThreadEntry[]
         if (!call) return;
         call.output = resultText(b);
         call.error = b.isError;
-        call.resultSeq = seq;
+        // Just after everything before it rather than its own slot: a result is late when it lands past
+        // the last entry (thread-presentation's lateResults), and a stride's gap would always say so.
+        call.resultSeq = (out.at(-1)?.seq ?? seq) + 1;
         return;
       }
       switch (b.type) {
