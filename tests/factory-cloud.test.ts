@@ -11,7 +11,7 @@ import { FactoryRegistry } from '../src/server/factory/registry.js';
 import { toolAction } from '../src/shared/actions.js';
 import { computerOf, type FactoryComputer, type FactoryComputersState } from '../src/shared/factory-computers.js';
 import { emptyEnvironments, environmentOf, type FactoryEnvironmentsState } from '../src/shared/factory-environments.js';
-import { SEND_SETTLE_MS, answeredByAssistant, canHost, cloudBadge, cloudSessionUrl, cloudStatus, computerHome, latestReply, latestTool, officeAutonomy, sessionCwd, toolActivity } from '../src/shared/factory-cloud.js';
+import { SEND_SETTLE_MS, answeredByAssistant, canHost, cloudBadge, cloudHire, cloudSessionUrl, cloudStatus, computerHome, latestReply, latestTool, officeAutonomy, sessionCwd, toolActivity } from '../src/shared/factory-cloud.js';
 import { DESKS } from '../src/shared/layout.js';
 import type { ClientMsg, WorkerInfo } from '../src/shared/protocol.js';
 
@@ -909,4 +909,13 @@ test('messages: a cloud worker takes prompts, opens and closes its window, and s
   mounted.message({ t: 'worker.kill', workerId: hired.worker.id, deleteSession: true } as Extract<ClientMsg, { workerId: string }>, ctx);
   await tick();
   assert.deepEqual(forgotten, [hired.worker.sessionId]);
+});
+
+test('a hire dialog’s pick becomes the cloud of a worker.spawn', () => {
+  const mac = 'd284b509-0803-4971-bca3-7a56532fb548';
+  assert.deepEqual(cloudHire({ computerId: mac, cwd: '  ~/droid-office ' }), { computerId: mac, cwd: '~/droid-office' });
+  // An empty folder is the computer's home folder, which the office picks when none is sent.
+  assert.deepEqual(cloudHire({ computerId: mac, cwd: ' ' }), { computerId: mac });
+  // On an Environment the office starts the computer: the pick has no computer id of its own.
+  assert.deepEqual(cloudHire({ computerId: '', environmentId: 'env-1', cwd: '' }), { environmentId: 'env-1' });
 });

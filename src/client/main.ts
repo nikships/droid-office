@@ -1807,7 +1807,7 @@ function promptAtDesk(deskId: string) {
       deskId,
       repoOptions: repoChoices(),
       runsOn: runsOnPicker(),
-      onCloud: (text, o) => hireCloud(deskId, text, o),
+      onCloud: (text, o) => hireCloud(net, deskId, text, o),
       onSubmit: (text, o) => hire(deskId, text, o.worktree, o.model, o.effort, undefined, o.repos, o.images),
     });
   } else if (w.cloud) {
@@ -1850,7 +1850,7 @@ function hireAtDesk(deskId: string) {
     deskId,
     repoOptions: repoChoices(),
     runsOn: runsOnPicker(),
-    onCloud: (text, o) => hireCloud(deskId, text, o),
+    onCloud: (text, o) => hireCloud(net, deskId, text, o),
     onSubmit: (text, o) => hire(deskId, text || undefined, o.worktree, o.model, o.effort, undefined, o.repos, o.images),
   });
 }
