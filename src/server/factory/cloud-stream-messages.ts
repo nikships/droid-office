@@ -1,7 +1,7 @@
 import { mergeMessages, messageOf, RESULT_MAX, TEXT_MAX, type FactoryBlock, type FactoryMessage } from '../../shared/factory-sessions.js';
 
 const LIMIT = 1500;
-/** How many messages are kept: for an older page (dropping the newest past it), or for anything newer (dropping the oldest). */
+/** How many messages are kept, the oldest dropped past it: while an older page merges, or anything newer. */
 export type Limit = (older: boolean) => number;
 export const record = (value: unknown): Record<string, unknown> => (value && typeof value === 'object' && !Array.isArray(value) ? (value as Record<string, unknown>) : {});
 
@@ -154,8 +154,9 @@ export class CloudStreamMessages {
     }
     const max = this.limit(older);
     if (this.messages.length > max) {
-      const dropped = older ? this.messages.slice(max) : this.messages.slice(0, -max);
-      this.messages = older ? this.messages.slice(0, max) : this.messages.slice(-max);
+      // The newest are never dropped for older history: one may still be streaming into its pending buffer.
+      const dropped = this.messages.slice(0, -max);
+      this.messages = this.messages.slice(-max);
       if (!older) this.droppedOldest = true;
       for (const m of dropped) {
         this.pending.delete(m.id);

@@ -24,7 +24,7 @@ const SESSIONS = 8;
 const MESSAGES_MAX = 1500;
 /**
  * Messages kept once someone paged back, so new ones don't push out what they paged back to. Paging
- * back past it drops the newest instead, and the next read of the tail starts again from the newest.
+ * back stops there: the newest are never dropped for older ones.
  */
 const HISTORY_MAX = 3000;
 /** Pages walked from the newest to find the cursor past the oldest held message again (HISTORY_MAX / FIRST_PAGE, and some). */
@@ -268,16 +268,21 @@ export class CloudThreadReader {
       held.messages = mergeMessages(held.messages, page);
       const max = older ? HISTORY_MAX : held.cap;
       if (held.messages.length > max) {
-        if (older) held.messages = held.messages.slice(0, max);
-        else {
-          // Dropping the oldest drops the cursor past them too; findOlder finds it again when someone pages back.
-          held.messages = held.messages.slice(-max);
+        held.messages = held.messages.slice(-max);
+        // Dropping the oldest drops the cursor past them too; findOlder finds it again when someone pages back.
+        if (!older) {
           held.older = undefined;
           held.trimmed = true;
         }
       }
     }
-    if (older) held.cap = HISTORY_MAX;
+    if (older) {
+      held.cap = HISTORY_MAX;
+      if (held.messages.length >= HISTORY_MAX) {
+        held.older = undefined;
+        held.trimmed = false;
+      }
+    }
     held.view = undefined;
   }
 

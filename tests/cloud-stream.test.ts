@@ -267,9 +267,13 @@ test('live messages: snapshots without seq, hidden context, invalid deltas and b
   assert.equal((messages.values().at(-1)!.blocks[0] as { text: string }).text.length, TEXT_MAX);
   messages.merge(parsed(Array.from({ length: 1505 }, (_, i) => ({ ...ASSISTANT, id: `bounded-${i}`, seq: i + 20 }))));
   assert.equal(messages.values().length, 1500);
+  assert.equal(messages.takeTrimmed(), true);
+  assert.equal(messages.takeTrimmed(), false);
+  // Older history past the limit gives way itself: the newest stay.
   messages.merge(parsed([USER]), true);
   assert.equal(messages.values().length, 1500);
-  assert.equal(messages.values()[0].id, USER.id);
+  assert.equal(messages.values().at(-1)!.id, 'bounded-1504');
+  assert.equal(messages.takeTrimmed(), false);
 });
 
 test('relay: one pinned connection serves multiple sessions; no permission or AskUser responses', async (t) => {
@@ -610,6 +614,14 @@ test('cloud feature: content during a load keeps the snapshot model; a settings 
   settings.client.duringLoad = () => settings.client.notify({ type: 'settings_updated', settings: { modelId: 'glm-5.3-flash' } });
   await settings.feature.stream!.sync();
   assert.equal(settings.cloud.get(settings.worker.id)!.activeModel, 'glm-5.3-flash');
+  // A new title during the load stands, and the snapshot's model still does.
+  const title = featureRig(t, async () => json({}));
+  title.client.snapshot = { ...title.client.snapshot, session: { messages: [USER], title: 'Old title' }, settings: { modelId: 'gpt-6-sol', reasoningEffort: 'high' } };
+  title.client.duringLoad = () => title.client.notify({ type: 'session_title_updated', title: 'New title' });
+  await title.feature.stream!.sync();
+  assert.equal(title.cloud.get(title.worker.id)!.title, 'New title');
+  assert.equal(title.cloud.get(title.worker.id)!.activeModel, 'gpt-6-sol');
+  assert.equal(title.cloud.get(title.worker.id)!.activeEffort, 'high');
 });
 
 test('cloud feature: model substitutions warn once with catalogue names and keep the reported model', async (t) => {

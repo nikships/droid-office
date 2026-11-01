@@ -438,6 +438,23 @@ test('reader: a streamed thread whose oldest messages give way to new ones pages
   assert.equal(reader.messages('s1').length, 1521);
 });
 
+test('reader: paging a streamed thread back stops at its history limit and keeps the reply that is streaming', async () => {
+  const all = Array.from({ length: 3200 }, (_, i) => say(i));
+  const f = messages(() => all);
+  const reader = new CloudThreadReader(() => f.api, { streaming: () => true, now: () => 1 });
+  const src = { sessionId: 's1', createdAt: 0, busy: true };
+  reader.streamSnapshot('s1', all.slice(-100).reverse(), true);
+  reader.streamEvent('s1', { type: 'assistant_text_delta', messageId: 'live', blockIndex: 0, textDelta: 'Hello' });
+  let page = await reader.read(src);
+  for (let i = 0; i < 40 && page.hasMore; i++) page = await reader.read(src, reader.messages('s1')[0].seq! * SEQ_STRIDE);
+  assert.equal(page.hasMore, false);
+  assert.equal(reader.messages('s1').length, 3000);
+  reader.streamEvent('s1', { type: 'assistant_text_delta', messageId: 'live', blockIndex: 0, textDelta: ' world' });
+  const live = reader.messages('s1').at(-1)!;
+  assert.equal(live.id, 'live');
+  assert.deepEqual(live.blocks, [{ type: 'text', text: 'Hello world' }]);
+});
+
 test('reader: a just-made session, Factory errors, a slow answer and no connection', async () => {
   let fail: (() => Response) | undefined = () => json(404, { detail: 'Session not found' });
   const all = [say(1)];

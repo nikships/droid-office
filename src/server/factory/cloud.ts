@@ -174,7 +174,7 @@ export class CloudFeature extends SliceFeature<'cloud'> {
         snapshot: (id, snapshot, superseded) => {
           const session = record(snapshot.session);
           this.threads.streamSnapshot(id, Array.isArray(session.messages) ? session.messages : [], snapshot.hasOlderMessages === true);
-          if (!superseded.metadata) this.streamMetadata(id, record(snapshot.settings), session.title);
+          this.streamMetadata(id, superseded.settings ? {} : record(snapshot.settings), superseded.title ? undefined : session.title);
           if (!superseded.state) this.streamState(id, snapshot.workingState);
           this.streamPaint(id);
         },

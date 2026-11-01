@@ -34,7 +34,7 @@ export interface CloudStreamOptions {
   api(): FactoryApi | undefined;
   key(): string | undefined;
   sources(): Iterable<CloudStreamSource>;
-  /** `superseded`: notifications while it loaded changed its settings or title, or anything else (its state). */
+  /** `superseded`: notifications while it loaded changed its settings, its title, or anything else (its state). */
   snapshot(sessionId: string, snapshot: Record<string, unknown>, superseded: Superseded): void;
   notification(sessionId: string, notification: Record<string, unknown>): void;
   reset(): void;
@@ -44,11 +44,12 @@ export interface CloudStreamOptions {
 }
 
 export interface Superseded {
-  metadata: boolean;
+  settings: boolean;
+  title: boolean;
   state: boolean;
 }
 
-const METADATA = ['settings_updated', 'session_title_updated'];
+const supersedes = (type: unknown): keyof Superseded => (type === 'settings_updated' ? 'settings' : type === 'session_title_updated' ? 'title' : 'state');
 
 interface Connection {
   id: string;
@@ -206,7 +207,7 @@ export class CloudStream {
           const params = record(message.params);
           if (message.type !== 'notification' || message.method !== 'daemon.session_notification' || typeof params.sessionId !== 'string' || !c.sessions.has(params.sessionId)) return;
           const n = record(params.notification);
-          if (c.loading?.sessionId === params.sessionId) c.loading[METADATA.includes(String(n.type)) ? 'metadata' : 'state'] = true;
+          if (c.loading?.sessionId === params.sessionId) c.loading[supersedes(n.type)] = true;
           if (['session_process_exited', 'session_inactivity', 'session_closed', 'session_unsubscribed'].includes(String(n.type))) c.loaded.delete(params.sessionId);
           this.opts.notification(params.sessionId, n);
         });
@@ -220,13 +221,13 @@ export class CloudStream {
       if (!client) return;
       for (const sessionId of c.sessions) {
         if (c.loaded.has(sessionId)) continue;
-        const loading = { sessionId, metadata: false, state: false };
+        const loading = { sessionId, settings: false, title: false, state: false };
         c.loading = loading;
         const snapshot = await client.loadSession({ sessionId, token: key, messageLimit: 100 });
         if (!this.current(c, key, client)) return;
         c.loading = undefined;
         if (!c.sessions.has(sessionId)) continue;
-        this.opts.snapshot(sessionId, record(snapshot), { metadata: loading.metadata, state: loading.state });
+        this.opts.snapshot(sessionId, record(snapshot), { settings: loading.settings, title: loading.title, state: loading.state });
         c.loaded.add(sessionId);
       }
       c.failures = 0;
