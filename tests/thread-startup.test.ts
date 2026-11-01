@@ -3,7 +3,8 @@ import { readFileSync } from 'node:fs';
 import { test, type TestContext } from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { buildSync } from 'esbuild';
-import { threadSnapshotError, threadStarting } from '../src/client/thread-startup.js';
+import { cloudStarting, threadSnapshotError, threadStarting } from '../src/client/thread-startup.js';
+import { NEW_SESSION_GRACE_MS } from '../src/shared/factory-sessions.js';
 import { browserStatus, closeBrowser, launchBrowser, newIsolatedContext } from '../src/server/whiteboard-browser.js';
 import type { WorkerInfo } from '../src/shared/protocol.js';
 import { presentThread } from '../src/shared/thread-presentation.js';
@@ -46,11 +47,22 @@ test('only the expected missing-file response during startup is retried without 
   assert.equal(threadSnapshotError({ ...worker, lost: { branch: 'here' } }, missing, true), missing);
 });
 
+test('a cloud worker with nothing listed yet is starting while it works or its first prompt is new', () => {
+  const cloud: WorkerInfo = { ...worker, kind: 'cloud', status: 'done', createdAt: 1000, cloud: { computerId: 'computer', computerName: 'mac-mini', autonomy: 'high' } };
+  assert.equal(cloudStarting(worker, 1000), false, 'local workers have their own startup');
+  assert.equal(cloudStarting({ ...cloud, status: 'working' }, 1000 + NEW_SESSION_GRACE_MS * 2), true);
+  assert.equal(cloudStarting({ ...cloud, prompt: 'Look around' }, 2000), true);
+  assert.equal(cloudStarting({ ...cloud, prompt: 'Look around' }, 1000 + NEW_SESSION_GRACE_MS), false);
+  assert.equal(cloudStarting(cloud, 2000), false, 'hired with no prompt: waiting for one');
+  assert.equal(cloudStarting({ ...cloud, status: 'working', cloud: { ...cloud.cloud!, error: 'its session is gone from Factory' } }, 2000), false);
+  assert.equal(cloudStarting({ ...cloud, status: 'offline', prompt: 'Look around' }, 2000), false);
+});
+
 const status = browserStatus();
 const chromium = status.installed ? false : `Chromium is not installed in ${status.path}`;
 
 /** A page with the Thread UI mounted on a stub connection: its replies, clock and reads under test control. */
-async function mountThread(t: TestContext) {
+async function mountThread(t: TestContext, mounted: WorkerInfo = worker) {
   const browser = await launchBrowser();
   t.after(closeBrowser);
   const context = await newIsolatedContext(browser);
@@ -68,6 +80,13 @@ async function mountThread(t: TestContext) {
     const w = window as any;
     w.worker = worker;
     w.sent = [];
+    w.actions = [];
+    w.fetches = [];
+    const realFetch = window.fetch;
+    window.fetch = (input: any, init?: any) => {
+      w.fetches.push(String(input));
+      return realFetch(input, init);
+    };
     let clock = Date.now();
     Date.now = () => clock;
     w.tick = () => (clock += 1100);
@@ -84,7 +103,19 @@ async function mountThread(t: TestContext) {
     w.question = document.createElement('div');
     w.questionScrolls = 0;
     w.question.scrollIntoView = () => w.questionScrolls++;
-    w.thread = w.ThreadUI.mountWorkerThread(net, { worker, question: w.question, queueKey: 'startup-test', draft: '', onDraft() {}, send: async () => undefined, raw() {}, team: () => w.team ?? [] });
+    w.thread = w.ThreadUI.mountWorkerThread(net, {
+      worker,
+      question: w.question,
+      queueKey: 'startup-test',
+      draft: '',
+      onDraft() {},
+      send: async (msg: any) => {
+        w.actions.push(msg);
+        return w.refusal;
+      },
+      ...(worker.cloud ? {} : { raw() {} }),
+      team: () => w.team ?? [],
+    });
     document.body.append(w.thread.element);
     w.thread.update(worker, true);
     w.thread.activate(true);
@@ -92,7 +123,7 @@ async function mountThread(t: TestContext) {
       const request = w.sent.filter((msg: any) => msg.t === 'thread.read').at(-1).request;
       w.receive({ t: 'thread.snapshot', workerId: worker.id, request, sessionId: 'session', entries: [], hasMore: false, ...(error ? { error } : { presentation: { version: 1, rows: [] } }) });
     };
-  }, worker);
+  }, mounted);
   return { page, errors };
 }
 test('thread startup animates without premature reads, retries missing files and preserves real errors', { skip: chromium }, async (t) => {
@@ -368,6 +399,44 @@ test('thread work signal stays beside the composer and uses only the latest live
     w.thread.update({ ...w.worker, sessionId: 'next-session' }, true);
   });
   assert.equal(await page.locator('.wt-progress-detail').isVisible(), false, 'new session has no stale action');
+  await page.evaluate(() => (window as any).thread.dispose());
+  assert.deepEqual(errors, []);
+});
+
+test('a cloud worker’s thread interrupts its session, queues while busy and has no terminal', { skip: chromium }, async (t) => {
+  const cloud: WorkerInfo = { ...worker, kind: 'cloud', status: 'working', sessionId: 'session', cloud: { computerId: 'computer', computerName: 'mac-mini', provider: 'byom', autonomy: 'high' } };
+  const { page, errors } = await mountThread(t, cloud);
+  await page.evaluate(() => (window as any).reply());
+  // Factory lists a just-made session's messages late: it's starting, not waiting for a first message.
+  assert.match(await page.locator('.wt-empty').innerText(), /Starting on mac-mini/);
+  assert.equal(await page.getByRole('button', { name: 'Open Raw TTY' }).count(), 0);
+  // One control while it works: Factory holds the message until the turn is over.
+  assert.equal(await page.locator('.wt-queue').isVisible(), false);
+  assert.equal(await page.locator('.wt-send').textContent(), 'Queue');
+  assert.doesNotMatch((await page.locator('.wt-send-hint').textContent()) ?? '', /steer|commands/);
+  await page.locator('.wt-input').fill('/help');
+  assert.equal(await page.locator('.wt-slash').isVisible(), false);
+  assert.equal(await page.evaluate(() => (window as any).fetches.some((url: string) => url.includes('/api/agents/droid/commands'))), false);
+  await page.locator('.wt-input').fill('Also check the tests');
+  await page.locator('.wt-input').press('Enter');
+  await page.waitForFunction(() => (window as any).actions.some((msg: any) => msg.t === 'worker.prompt'));
+  const prompt = await page.evaluate(() => (window as any).actions.find((msg: any) => msg.t === 'worker.prompt'));
+  assert.equal(prompt.prompt, 'Also check the tests');
+  assert.equal(prompt.queue, false);
+  assert.match(await page.locator('.wt-queued').innerText(), /Also check the tests/);
+  await page.getByRole('button', { name: 'Stop turn' }).click();
+  await page.waitForFunction(() => (window as any).actions.some((msg: any) => msg.t === 'worker.interrupt'));
+  assert.equal(await page.evaluate(() => (window as any).sent.some((msg: any) => msg.t === 'term.input')), false);
+  // A session the office can't use: said in the thread, nothing to type into, and Check again re-reads it.
+  await page.evaluate(() => {
+    const w = window as any;
+    w.worker = { ...w.worker, status: 'idle', cloud: { ...w.worker.cloud, error: 'its session is gone from Factory' } };
+    w.thread.update(w.worker, true);
+  });
+  assert.match(await page.locator('.wt-notice').innerText(), /can’t work: its session is gone from Factory/);
+  assert.equal(await page.locator('.wt-input').isDisabled(), true);
+  await page.getByRole('button', { name: 'Check again' }).click();
+  await page.waitForFunction(() => (window as any).actions.some((msg: any) => msg.t === 'worker.resume'));
   await page.evaluate(() => (window as any).thread.dispose());
   assert.deepEqual(errors, []);
 });
