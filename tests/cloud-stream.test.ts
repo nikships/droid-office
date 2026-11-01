@@ -12,6 +12,7 @@ import { CloudThreadReader } from '../src/server/factory/cloud-thread.js';
 import { cloudEntries } from '../src/shared/cloud-thread.js';
 import { messageOf, TEXT_MAX, type FactoryMessage } from '../src/shared/factory-sessions.js';
 import { DESKS } from '../src/shared/layout.js';
+import { presentThread } from '../src/shared/thread-presentation.js';
 
 const KEY = 'fk-test-stream-1234';
 const json = (body: unknown) => new Response(JSON.stringify(body), { headers: { 'content-type': 'application/json' } });
@@ -216,11 +217,24 @@ test('live messages: tool arguments grow, canonical calls dedupe, results correl
   assert.equal(tools.length, 1);
   assert.equal(tools[0].id, provisional.id);
   assert.equal(tools[0].seq, 5 * 256);
-  assert.equal(tools[0].resultSeq, 8 * 256);
+  assert.equal(tools[0].resultSeq, tools[0].seq + 1);
   assert.equal(tools[0].output, RESULT.content);
   assert.equal(tools[0].error, false);
   messages.event({ ...RESULT, isError: true });
   assert.equal(cloudEntries(messages.values()).find((e) => e.kind === 'tool')!.error, true);
+});
+
+test('live messages: an interrupted streamed tool result presents as cancelled, not failed', () => {
+  const messages = new CloudStreamMessages(parsed([USER]));
+  messages.event({ type: 'create_message', message: CALL });
+  // The cancellation text is the real interrupted Mac Mini Execute result in cloud-thread.test.ts.
+  messages.event({ ...RESULT, content: 'Tool execution cancelled by user', isError: true });
+  const entries = cloudEntries(messages.values());
+  const tool = entries.find((e) => e.kind === 'tool')!;
+  assert.equal(tool.resultSeq, tool.seq + 1);
+  const activity = presentThread(entries, false).find((row) => row.kind === 'activity');
+  assert.ok(activity?.kind === 'activity');
+  assert.equal(activity.state, 'cancelled');
 });
 
 test('live messages: snapshots without seq, hidden context, invalid deltas and bounded output', () => {

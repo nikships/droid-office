@@ -28,6 +28,10 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.unit.dp
 import ai.factory.droidoffice.core.ClientMsg
+import ai.factory.droidoffice.core.FactoryCloud
+import androidx.compose.foundation.selection.toggleable
+import androidx.compose.material3.Switch
+import androidx.compose.material3.SwitchDefaults
 import ai.factory.droidoffice.core.Tags
 import ai.factory.droidoffice.core.WorkerInfo
 import ai.factory.droidoffice.core.WorktreeState
@@ -69,6 +73,7 @@ fun SendHomeDialog(w: WorkerInfo, onDismiss: () -> Unit, onSent: () -> Unit) {
     var cleanup by remember { mutableStateOf("keep") }
     var touched by remember { mutableStateOf(false) }
     var status by remember { mutableStateOf<Pair<List<String>, Boolean>?>(null) }
+    var deleteSession by remember { mutableStateOf(false) }
 
     if (wt != null) {
         LaunchedEffect(w.id) {
@@ -94,9 +99,27 @@ fun SendHomeDialog(w: WorkerInfo, onDismiss: () -> Unit, onSent: () -> Unit) {
             // Scrolls so the choices stay reachable at a large font size or in landscape.
             Column(Modifier.verticalScroll(rememberScrollState())) {
                 Text(
-                    "This stops the session at ${deskLabel(w.deskId)} for everyone and frees the desk." + if (wt != null) " ${w.name} worked in its own worktree on 🌿 ${wt.branch}:" else "",
+                    if (w.isCloud) FactoryCloud.sendHome(w)
+                    else "This stops the session at ${deskLabel(w.deskId)} for everyone and frees the desk." + if (wt != null) " ${w.name} worked in its own worktree on 🌿 ${wt.branch}:" else "",
                     style = MaterialTheme.typography.bodyMedium,
                 )
+                if (w.isCloud) {
+                    Spacer(Modifier.height(10.dp))
+                    Row(
+                        Modifier.fillMaxWidth().toggleable(deleteSession, role = Role.Switch) { deleteSession = it }.tagged(Tags.SendHome.DELETE_SESSION).padding(vertical = 4.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Column(Modifier.weight(1f)) {
+                            Text("Also delete its Factory session", style = MaterialTheme.typography.titleSmall)
+                            Text("Its transcript and settings go with it", style = MaterialTheme.typography.bodySmall)
+                        }
+                        Switch(
+                            checked = deleteSession,
+                            onCheckedChange = null,
+                            colors = SwitchDefaults.colors(checkedTrackColor = Palette.Danger, checkedThumbColor = Palette.Bg, uncheckedTrackColor = Palette.SurfaceHigh, uncheckedBorderColor = Palette.BorderStrong),
+                        )
+                    }
+                }
                 if (wt != null) {
                     Spacer(Modifier.height(10.dp))
                     listOf(
@@ -131,7 +154,7 @@ fun SendHomeDialog(w: WorkerInfo, onDismiss: () -> Unit, onSent: () -> Unit) {
         },
         confirmButton = {
             TextButton(onClick = {
-                graph.connection.send(ClientMsg.kill(w.id, if (wt != null) cleanup else null))
+                graph.connection.send(ClientMsg.kill(w.id, if (wt != null) cleanup else null, deleteSession = w.isCloud && deleteSession))
                 onSent()
             }, modifier = Modifier.tagged(Tags.SendHome.CONFIRM)) { Text(labels.getValue(if (wt != null) cleanup else "keep"), color = Palette.Danger) }
         },
