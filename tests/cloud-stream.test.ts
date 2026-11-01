@@ -523,8 +523,8 @@ function featureRig(t: test.TestContext, answer: (url: string) => Promise<Respon
     feature,
     client,
     api,
-    clock: () => {
-      now++;
+    clock: (ms = 1) => {
+      now += ms;
     },
     connect: () => {
       connected = true;
@@ -575,6 +575,46 @@ test('cloud feature: prior completion cannot finish a newer prompt awaiting acce
   r.client.notify({ type: 'droid_working_state_changed', newState: 'thinking' });
   r.client.notify({ ...COMPLETE, turnId: 'next-user' });
   assert.equal(r.cloud.get(r.worker.id)!.status, 'done');
+});
+
+test('cloud feature: after a reconnect, a prompt queued behind the running turn outlasts that turn’s completion', async (t) => {
+  const r = featureRig(t, async () => json({ status: 'running' }));
+  r.client.snapshot = { session: { messages: [{ ...USER, createdAt: 1 }] }, workingState: 'thinking', hasOlderMessages: false };
+  await r.feature.stream!.sync();
+  assert.equal(r.cloud.get(r.worker.id)!.status, 'working');
+  r.clock();
+  await r.feature.send(r.worker.id, 'Another harmless prompt', []);
+  r.client.notify(COMPLETE);
+  r.client.notify({ type: 'droid_working_state_changed', newState: 'idle' });
+  assert.equal(r.cloud.get(r.worker.id)!.status, 'working');
+  r.clock();
+  r.client.notify({ type: 'create_message', message: { ...USER, id: 'next-user' } });
+  r.client.notify({ type: 'droid_working_state_changed', newState: 'thinking' });
+  r.client.notify({ ...COMPLETE, turnId: 'next-user' });
+  assert.equal(r.cloud.get(r.worker.id)!.status, 'done');
+
+  // A snapshot that already holds the prompt counts as its arrival.
+  const late = featureRig(t, async () => json({ status: 'running' }), false);
+  await late.feature.send(late.worker.id, 'A harmless prompt', []);
+  late.client.snapshot = { session: { messages: [USER] }, workingState: 'thinking', hasOlderMessages: false };
+  late.connect();
+  await late.feature.stream!.sync();
+  late.client.notify(COMPLETE);
+  assert.equal(late.cloud.get(late.worker.id)!.status, 'done');
+
+  // Should the stream never show the prompt arrive, REST takes its turn over after a while.
+  const lost = featureRig(t, async (url) => (url.includes('/messages') ? json({ messages: [ASSISTANT, USER] }) : json({ status: 'idle', messageCount: 2, updatedAt: 2 })));
+  lost.client.snapshot = { session: { messages: [{ ...USER, createdAt: 1 }] }, workingState: 'thinking', hasOlderMessages: false };
+  await lost.feature.stream!.sync();
+  lost.clock();
+  await lost.feature.send(lost.worker.id, 'A harmless prompt', []);
+  lost.client.notify({ type: 'droid_working_state_changed', newState: 'executing_tool' });
+  lost.client.notify(COMPLETE);
+  await lost.feature.poll(lost.api);
+  assert.equal(lost.cloud.get(lost.worker.id)!.status, 'working');
+  lost.clock(30_000);
+  await lost.feature.poll(lost.api);
+  assert.equal(lost.cloud.get(lost.worker.id)!.status, 'done');
 });
 
 test('cloud feature: idle snapshots finish restored turns but cannot rewind notifications during load', async (t) => {

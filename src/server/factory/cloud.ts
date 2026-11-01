@@ -51,6 +51,8 @@ const PROMPT_MAX = 20_000;
 const MODEL_MAX = 256;
 /** How long after a turn ends the office looks for its reply, when the reply wasn't listed yet. */
 const REPLY_WAIT_MS = 90_000;
+/** How long a sent prompt waits for the stream to show it arrived before REST takes its turn over. */
+const ACCEPT_MS = 30_000;
 /** How often a computer started from an Environment is read while it comes up (they usually take seconds). */
 const INSTANCE_EVERY_MS = 2000;
 
@@ -174,6 +176,7 @@ export class CloudFeature extends SliceFeature<'cloud'> {
         snapshot: (id, snapshot, superseded) => {
           const session = record(snapshot.session);
           this.threads.streamSnapshot(id, Array.isArray(session.messages) ? session.messages : [], snapshot.hasOlderMessages === true);
+          this.acceptFrom(id, Array.isArray(session.messages) ? session.messages : []);
           this.streamMetadata(id, superseded.settings ? {} : record(snapshot.settings), superseded.title ? undefined : session.title);
           if (!superseded.state) this.streamState(id, snapshot.workingState);
           this.streamPaint(id);
@@ -269,9 +272,22 @@ export class CloudFeature extends SliceFeature<'cloud'> {
     }
   }
 
+  /** A prompt the office sent stays open until the stream shows it arrived: an earlier turn's completion doesn't end it. */
   private waitingForAcceptance(id: string, turn: CloudTurn | undefined): boolean {
     const accepted = this.acceptedAt.get(id);
-    return accepted !== undefined && turn?.sentAt !== undefined && turn.sentAt > accepted;
+    return turn?.sentAt !== undefined && (accepted === undefined || turn.sentAt > accepted);
+  }
+
+  /** A snapshot that holds the prompt the office sent stands for the user-message event sent before the stream subscribed. */
+  private acceptFrom(id: string, messages: readonly unknown[]): void {
+    const found = this.session(id);
+    const sentAt = found?.floor.cloud.turn(found.info.id)?.sentAt;
+    if (sentAt === undefined) return;
+    const arrived = messages.some((raw) => {
+      const m = record(raw);
+      return m.role === 'user' && m.visibility !== 'llm_only' && typeof m.createdAt === 'number' && m.createdAt >= sentAt - CLOCK_SKEW_MS;
+    });
+    if (arrived) this.acceptedAt.set(id, this.now());
   }
 
   private streamMetadata(id: string, settings: Record<string, unknown>, title?: unknown): void {
@@ -620,10 +636,13 @@ export class CloudFeature extends SliceFeature<'cloud'> {
 
   /**
    * The stream keeps its status: it's healthy, and it has seen the turn the office sent run. A turn
-   * that ran and ended before the stream subscribed leaves only an idle snapshot, so REST finishes it.
+   * that ran and ended before the stream subscribed leaves only an idle snapshot, so REST finishes it,
+   * as it does one whose prompt the stream hasn't shown arriving for a while.
    */
   private live(sessionId: string, turn: CloudTurn | undefined): boolean {
-    return (this.stream?.healthy(sessionId) ?? false) && !(turn?.sentAt !== undefined && !turn.seenBusy);
+    if (!this.stream?.healthy(sessionId)) return false;
+    if (turn?.sentAt === undefined) return true;
+    return !!turn.seenBusy && !(this.waitingForAcceptance(sessionId, turn) && this.now() - turn.sentAt >= ACCEPT_MS);
   }
 
   /** Reads every cloud worker's session that's due: each working one at every poll, the rest on the slow clock. */
