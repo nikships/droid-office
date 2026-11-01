@@ -22,8 +22,13 @@ const TAIL_PAGE = 30;
 const SESSIONS = 8;
 /** Messages kept per session; older ones are dropped and read again if someone pages back to them. */
 const MESSAGES_MAX = 1500;
-/** Pages walked from the newest to find the cursor past the oldest held message again (MESSAGES_MAX / FIRST_PAGE, and some). */
-const WALK_PAGES = 20;
+/**
+ * Messages kept once someone paged back, so new ones don't push out what they paged back to. Paging
+ * back past it drops the newest instead, and the next read of the tail starts again from the newest.
+ */
+const HISTORY_MAX = 3000;
+/** Pages walked from the newest to find the cursor past the oldest held message again (HISTORY_MAX / FIRST_PAGE, and some). */
+const WALK_PAGES = 35;
 
 export interface CloudThreadSource {
   sessionId: string;
@@ -55,6 +60,8 @@ interface Held {
   history?: boolean;
   /** The oldest messages were dropped for newer ones, with them the cursor past what's held. */
   trimmed?: boolean;
+  /** How many messages are kept before new ones push the oldest out: MESSAGES_MAX, or HISTORY_MAX once someone paged back. */
+  cap: number;
 }
 
 type Answer = { messages?: unknown[]; pagination?: { hasMore?: boolean; nextCursor?: string | null } };
@@ -122,8 +129,8 @@ export class CloudThreadReader {
   /** A daemon snapshot hydrates a thread even before someone opens it. Only safe messages are held. */
   streamSnapshot(sessionId: string, raw: readonly unknown[], hasOlderMessages = false): void {
     const held = this.hold(sessionId);
-    held.live ??= new CloudStreamMessages(held.messages, this.now);
-    held.messages = held.live.snapshot(raw);
+    held.messages = this.live(held).snapshot(raw);
+    this.trimmed(held);
     held.readAt = this.now();
     held.history = hasOlderMessages && !held.older;
     held.view = undefined;
@@ -131,9 +138,21 @@ export class CloudThreadReader {
 
   streamEvent(sessionId: string, notification: unknown): void {
     const held = this.hold(sessionId);
-    held.live ??= new CloudStreamMessages(held.messages, this.now);
-    held.messages = held.live.event(notification);
+    held.messages = this.live(held).event(notification);
+    this.trimmed(held);
     held.view = undefined;
+  }
+
+  private live(held: Held): CloudStreamMessages {
+    held.live ??= new CloudStreamMessages(held.messages, this.now, (older) => (older ? HISTORY_MAX : held.cap));
+    return held.live;
+  }
+
+  /** The live messages dropped their oldest for newer ones: the cursor past them went too. */
+  private trimmed(held: Held): void {
+    if (!held.live?.takeTrimmed()) return;
+    held.older = undefined;
+    held.trimmed = true;
   }
 
   messages(sessionId: string): readonly FactoryMessage[] {
@@ -157,7 +176,7 @@ export class CloudThreadReader {
     let held = this.sessions.get(sessionId);
     if (held) this.sessions.delete(sessionId);
     else {
-      held = { messages: [], readAt: 0 };
+      held = { messages: [], readAt: 0, cap: MESSAGES_MAX };
       while (this.sessions.size >= SESSIONS) {
         // A streamed session's held text is the base its deltas build on, and the stream sends no
         // second snapshot; it goes only when its worker does (forget) or the stream resets (clear).
@@ -187,7 +206,10 @@ export class CloudThreadReader {
       // More came than one tail page holds: start again from a full first page.
       if (!first && page.next && !page.messages.some((m) => known.has(m.id))) {
         const full = await this.get(api, sessionId, FIRST_PAGE);
-        if (!held.live) held.messages = [];
+        if (!held.live) {
+          held.messages = [];
+          held.cap = MESSAGES_MAX;
+        }
         held.older = full.next;
         this.merge(held, full.messages);
       } else {
@@ -239,15 +261,23 @@ export class CloudThreadReader {
   }
 
   private merge(held: Held, page: readonly FactoryMessage[], older = false): void {
-    held.messages = held.live ? held.live.merge(page, older) : mergeMessages(held.messages, page);
-    if (held.messages.length > MESSAGES_MAX) {
-      // Dropping the oldest drops the cursor past them too; findOlder finds it again when someone pages back.
-      if (!older) {
-        held.messages = held.messages.slice(-MESSAGES_MAX);
-        held.older = undefined;
-        held.trimmed = true;
-      } else held.messages = held.messages.slice(0, MESSAGES_MAX);
+    if (held.live) {
+      held.messages = held.live.merge(page, older);
+      this.trimmed(held);
+    } else {
+      held.messages = mergeMessages(held.messages, page);
+      const max = older ? HISTORY_MAX : held.cap;
+      if (held.messages.length > max) {
+        if (older) held.messages = held.messages.slice(0, max);
+        else {
+          // Dropping the oldest drops the cursor past them too; findOlder finds it again when someone pages back.
+          held.messages = held.messages.slice(-max);
+          held.older = undefined;
+          held.trimmed = true;
+        }
+      }
     }
+    if (older) held.cap = HISTORY_MAX;
     held.view = undefined;
   }
 

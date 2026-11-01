@@ -373,17 +373,15 @@ test('reader: pages back through older messages with Factory’s cursor', async 
 });
 
 test('reader: after the oldest held messages give way to new ones, paging back finds its cursor again', async () => {
-  const all = Array.from({ length: 1600 }, (_, i) => say(i));
+  const all = Array.from({ length: 100 }, (_, i) => say(i));
   const f = messages(() => all);
   let now = 10_000;
   const reader = new CloudThreadReader(() => f.api, { now: () => now, busyEveryMs: 1000 });
   const src = { sessionId: 's1', createdAt: 0, busy: true };
   await reader.read(src);
-  // Past 1,500 held: page back first, then the turn goes on and new messages push the oldest out.
-  let page = await reader.read(src);
-  while (page.hasMore && reader.messages('s1').length < 1500) page = await reader.read(src, reader.messages('s1')[0].seq! * SEQ_STRIDE);
-  assert.equal(reader.messages('s1').length, 1500);
-  for (let i = 1600; i < 1620; i++) all.push(say(i));
+  // A long turn: past 1,500 held, new messages push the oldest out.
+  for (let i = 100; i < 1620; i++) all.push(say(i));
+  reader.absorb('s1', [...all].reverse());
   now += 2000;
   const latest = await reader.read(src);
   assert.equal(latest.entries.at(-1)?.text, 'message 1619');
@@ -396,9 +394,48 @@ test('reader: after the oldest held messages give way to new ones, paging back f
   assert.equal(back.entries.at(-1)?.text, 'message 119', 'the page just before what was held');
   assert.equal(back.entries.length, 100);
   assert.equal(back.hasMore, true);
+
+  // What was paged back to stays while the turn goes on, and the tail still joins on to it.
+  for (let i = 1620; i < 1640; i++) all.push(say(i));
+  now += 2000;
+  const calls = f.calls.length;
+  assert.equal((await reader.read(src)).entries.at(-1)?.text, 'message 1639');
+  assert.equal(f.calls.length, calls + 1);
+  assert.equal(f.calls.at(-1)?.query.get('limit'), '30');
+  assert.equal(reader.messages('s1').length, 1620);
+  assert.equal(reader.messages('s1')[0].seq, 20);
+
   const first = await reader.read(src, back.entries[0].seq);
+  assert.equal(f.calls.length, calls + 2, 'no walk: the cursor past what was paged back to is still held');
   assert.equal(first.entries[0].text, 'message 0');
   assert.equal(first.hasMore, false);
+});
+
+test('reader: a streamed thread whose oldest messages give way to new ones pages back to them', async () => {
+  const all = Array.from({ length: 1500 }, (_, i) => say(i));
+  const f = messages(() => all);
+  const reader = new CloudThreadReader(() => f.api, { streaming: () => true, now: () => 1 });
+  const src = { sessionId: 's1', createdAt: 0, busy: true };
+  reader.streamSnapshot('s1', [...all].reverse());
+
+  for (let i = 1500; i < 1520; i++) {
+    all.push(say(i));
+    reader.streamEvent('s1', { type: 'create_message', message: say(i) });
+  }
+  assert.equal(reader.messages('s1').length, 1500);
+  assert.equal(reader.messages('s1')[0].seq, 20);
+  assert.equal((await reader.read(src)).entries.at(-1)?.text, 'message 1519');
+
+  // The dropped messages are still on Factory, past a cursor the stream never gave.
+  const back = await reader.read(src, 20 * SEQ_STRIDE);
+  assert.equal(back.entries[0].text, 'message 0');
+  assert.equal(back.entries.at(-1)?.text, 'message 19');
+  assert.equal(back.hasMore, false);
+
+  // Once paged back, new messages don't push those out again.
+  reader.streamEvent('s1', { type: 'create_message', message: say(1520) });
+  assert.equal(reader.messages('s1')[0].seq, 0);
+  assert.equal(reader.messages('s1').length, 1521);
 });
 
 test('reader: a just-made session, Factory errors, a slow answer and no connection', async () => {

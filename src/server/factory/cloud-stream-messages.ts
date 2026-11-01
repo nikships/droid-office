@@ -1,6 +1,8 @@
 import { mergeMessages, messageOf, RESULT_MAX, TEXT_MAX, type FactoryBlock, type FactoryMessage } from '../../shared/factory-sessions.js';
 
 const LIMIT = 1500;
+/** How many messages are kept: for an older page (dropping the newest past it), or for anything newer (dropping the oldest). */
+export type Limit = (older: boolean) => number;
 export const record = (value: unknown): Record<string, unknown> => (value && typeof value === 'object' && !Array.isArray(value) ? (value as Record<string, unknown>) : {});
 
 /** A delayed REST page must not replace a longer streamed block with an older, shorter copy. */
@@ -25,10 +27,12 @@ export class CloudStreamMessages {
   private pending = new Map<string, Map<number, FactoryBlock>>();
   private finished = new Set<string>();
   private retracted = new Set<string>();
+  private droppedOldest = false;
 
   constructor(
     messages: readonly FactoryMessage[] = [],
     private now = Date.now,
+    private limit: Limit = () => LIMIT,
   ) {
     this.messages = [];
     this.merge(messages);
@@ -36,6 +40,13 @@ export class CloudStreamMessages {
 
   values(): FactoryMessage[] {
     return this.messages;
+  }
+
+  /** Whether the oldest messages were dropped for newer ones since the last ask. */
+  takeTrimmed(): boolean {
+    const dropped = this.droppedOldest;
+    this.droppedOldest = false;
+    return dropped;
   }
 
   /** REST pages and reconnect snapshots enrich what's held, without erasing newer live content. */
@@ -141,9 +152,11 @@ export class CloudStreamMessages {
           if (merged.blocks[i]) pending.set(index, merged.blocks[i]);
         });
     }
-    if (this.messages.length > LIMIT) {
-      const dropped = older ? this.messages.slice(LIMIT) : this.messages.slice(0, -LIMIT);
-      this.messages = older ? this.messages.slice(0, LIMIT) : this.messages.slice(-LIMIT);
+    const max = this.limit(older);
+    if (this.messages.length > max) {
+      const dropped = older ? this.messages.slice(max) : this.messages.slice(0, -max);
+      this.messages = older ? this.messages.slice(0, max) : this.messages.slice(-max);
+      if (!older) this.droppedOldest = true;
       for (const m of dropped) {
         this.pending.delete(m.id);
         this.finished.delete(m.id);
