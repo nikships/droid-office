@@ -18,6 +18,8 @@ export interface CloudWorker {
   autonomy: CloudAutonomy;
   /** Why it can't work right now (its session is gone, its computer was deleted…), shown on its desk and card. */
   error?: string;
+  /** The floor was told once that Factory runs a different model than this worker was hired with. */
+  modelMismatchWarned?: boolean;
   /** It was hired on this Factory Environment, on a computer started from it for this worker alone. */
   environmentId?: string;
   environmentName?: string;

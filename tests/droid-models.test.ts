@@ -142,7 +142,10 @@ test('Droid catalogue caches briefly and shares one pending lookup', async (t) =
       return Promise.reject(new Error('no droid'));
     },
   });
+  assert.equal(catalogue.peek(), undefined);
+  assert.equal(asks, 0, 'peek never starts a lookup');
   const [first, second] = await Promise.all([catalogue.get(), catalogue.get()]);
+  assert.equal(catalogue.peek(), first);
   assert.equal(first, second);
   assert.equal(asks, 1);
   assert.deepEqual(
@@ -156,11 +159,15 @@ test('Droid catalogue caches briefly and shares one pending lookup', async (t) =
     ['custom:a'],
   );
   now += 2;
+  assert.equal(catalogue.peek(), first, 'expired display names remain usable without a refresh');
+  assert.equal(asks, 1);
   assert.deepEqual(
     (await catalogue.get()).models.map((m) => m.id),
     ['custom:b'],
   );
   assert.equal(asks, 2);
+  catalogue.forget();
+  assert.equal(catalogue.peek(), undefined);
 });
 
 test('listDroidModels asks droid over stream-jsonrpc and reads its response', { skip: process.platform === 'win32' }, async (t) => {

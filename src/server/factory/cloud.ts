@@ -60,6 +60,8 @@ export interface CloudOptions {
   /** Server-only credential for passive remote daemon streaming. REST remains the write path. */
   key?: () => string | undefined;
   streamClient?: CloudStreamOptions['client'];
+  /** A display name already held in the server's model catalogue; never starts a lookup. */
+  modelName?(id: string): string | undefined;
   floors(): Iterable<CloudFloor>;
   /** The office's `--agent-args`, for the autonomy its workers run at (see officeAutonomy). */
   agentArgs: readonly string[];
@@ -262,11 +264,28 @@ export class CloudFeature extends SliceFeature<'cloud'> {
   private streamMetadata(id: string, settings: Record<string, unknown>, title?: unknown): void {
     const found = this.session(id);
     if (!found) return;
+    this.reportModel(found.floor, found.info, settings.modelId);
     found.floor.cloud.update(found.info.id, (i) => {
-      if (typeof settings.modelId === 'string' && settings.modelId) i.activeModel = settings.modelId;
       if (isAgentEffort(settings.reasoningEffort)) i.activeEffort = settings.reasoningEffort;
       if (typeof title === 'string' && title.trim()) i.title = clip(title, 120);
     });
+  }
+
+  private reportModel(floor: CloudFloor, info: WorkerInfo, value: unknown): void {
+    if (typeof value !== 'string' || !value.trim()) return;
+    const model = value.trim().slice(0, MODEL_MAX);
+    let warn = false;
+    const updated = floor.cloud.update(info.id, (i) => {
+      i.activeModel = model;
+      if (i.model && i.model !== model && i.cloud && !i.cloud.modelMismatchWarned) {
+        i.cloud = { ...i.cloud, modelMismatchWarned: true };
+        warn = true;
+      }
+    });
+    if (warn && updated) {
+      const name = (id: string) => clip(this.opts.modelName?.(id) || id, 120);
+      this.opts.toast(floor.id, `☁ Factory runs ${updated.name} on ${name(model)}, not ${name(updated.model!)}`, 'warn');
+    }
   }
 
   /** Token notifications update held state only; laptop frames are coalesced at four per second. */
@@ -455,7 +474,7 @@ export class CloudFeature extends SliceFeature<'cloud'> {
       by,
       sessionId: made.sessionId as string,
       prompt: prompt || (images.length ? 'See the attached images' : undefined),
-      model: typeof made.sessionSettings?.model === 'string' ? made.sessionSettings.model : model,
+      model: model ?? (typeof made.sessionSettings?.model === 'string' ? made.sessionSettings.model : undefined),
       effort,
       cloud: place,
     });
@@ -466,6 +485,7 @@ export class CloudFeature extends SliceFeature<'cloud'> {
       });
     }
     this.opts.toast(floor.id, `${by} hired ${info.name} on ${cloudBadge(place)}${info.prompt ? ' with a task' : ''}`);
+    this.reportModel(floor, info, made.sessionSettings?.model);
     if (prompt || images.length) {
       void this.send(info.id, prompt, images).then((why) => {
         if (why) this.opts.toast(floor.id, `☁ ${info.name} didn't get its first prompt: ${why instanceof Error ? why.message : why}`, 'warn');
@@ -670,15 +690,14 @@ export class CloudFeature extends SliceFeature<'cloud'> {
     // the reply at the desk.
     if (next === 'done' && !replied) mapped = { ...mapped, turn: { replyBy: now + REPLY_WAIT_MS, ...(after !== undefined ? { replyAfter: after } : {}) } };
     else if (awaiting && replied) mapped = { ...mapped, turn: {} };
+    this.reportModel(floor, info, s?.sessionSettings?.model);
     floor.cloud.update(id, (i) => {
       if (i.cloud?.error) {
         i.cloud = { ...i.cloud, error: undefined };
         if (i.activity?.startsWith('☁ ')) i.activity = i.task?.summary ?? 'Waiting for a prompt';
       }
       if (computer && i.cloud && computer.name !== i.cloud.computerName) i.cloud = { ...i.cloud, computerName: computer.name };
-      const model = s?.sessionSettings?.model;
       const effort = s?.sessionSettings?.reasoningEffort;
-      if (typeof model === 'string' && model) i.activeModel = model;
       if (isAgentEffort(effort)) i.activeEffort = effort;
       if (typeof s?.title === 'string' && s.title.trim()) i.title = clip(s.title, 120);
       if (!messages) return;

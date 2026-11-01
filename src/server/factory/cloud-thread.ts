@@ -84,9 +84,15 @@ export class CloudThreadReader {
     try {
       if (before === undefined) {
         if (held.history) void this.refresh(api, sessionId, held).catch(() => {});
-        const every = this.opts.streaming?.(sessionId) ? 60_000 : source.busy ? this.busyEveryMs : this.idleEveryMs;
+        const streaming = this.opts.streaming?.(sessionId) === true;
+        const every = streaming ? 60_000 : source.busy ? this.busyEveryMs : this.idleEveryMs;
         // A slow answer from Factory doesn't hold the page up: what's held goes now, the rest next read.
-        if (!held.readAt || this.now() - held.readAt >= every) await Promise.race([this.refresh(api, sessionId, held), this.wait()]);
+        if (!held.readAt || this.now() - held.readAt >= every) {
+          const refresh = this.refresh(api, sessionId, held);
+          // Reconciliation must not stall a healthy live thread while more tokens arrive.
+          if (streaming) void refresh.catch(() => {});
+          else await Promise.race([refresh, this.wait()]);
+        }
       } else await this.backfill(api, sessionId, held, before);
     } catch (err) {
       // A session Factory has only just made 404s for a few seconds: that's an empty thread, not an error.

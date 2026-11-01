@@ -110,6 +110,17 @@ const hireBody = (extra: Record<string, unknown> = {}) => ({ floor: 'f1', deskId
 
 const session = (status: string, messageCount: number, updatedAt = messageCount) => json(200, { id: 's1', status, messageCount, updatedAt, title: 'Say hi', sessionSettings: { model: 'claude-opus-4', reasoningEffort: 'high' } });
 
+test('hire: a model substituted in the create response is reported without refusing the hire', async (t) => {
+  const f = factory({ 'POST /sessions': () => json(200, { sessionId: 's1', sessionSettings: { model: 'gpt-6-sol' } }) });
+  const r = rig(t, f);
+  const worker = await r.feature.hire(f.api, hireBody({ prompt: '', model: 'deepseek-v4.1-flash-1017' }), 'Owner');
+  assert.equal((f.calls[0].body as { sessionSettings: { model: string } }).sessionSettings.model, 'deepseek-v4.1-flash-1017');
+  assert.equal(worker.model, 'deepseek-v4.1-flash-1017');
+  assert.equal(worker.activeModel, 'gpt-6-sol');
+  assert.equal(worker.cloud?.modelMismatchWarned, true);
+  assert.match(r.toasts.at(-1)!, /Factory runs .* on gpt-6-sol, not deepseek-v4.1-flash-1017/);
+});
+
 test('shared: autonomy, folders, badge and the session link', () => {
   assert.equal(officeAutonomy([]), 'high');
   assert.equal(officeAutonomy(['--auto', 'low']), 'low');

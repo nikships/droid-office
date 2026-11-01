@@ -173,6 +173,8 @@ export interface DroidCatalogueOptions {
 
 export interface DroidCatalogue {
   get(): Promise<DroidModelCatalogue>;
+  /** The last catalogue already read, even after its refresh deadline; never starts a lookup. */
+  peek(): DroidModelCatalogue | undefined;
   /** Drops the cached list, so the next get() asks droid again (Droid was installed, or DroidProxy rewrote its models). */
   forget(): void;
 }
@@ -201,6 +203,7 @@ export function createDroidModelCatalogue(options: DroidCatalogueOptions = {}): 
     return { ...settings, models: [...listed.filter((m) => m.custom), ...extra, ...listed.filter((m) => !m.custom)] };
   };
   return {
+    peek: () => cached?.catalogue,
     get() {
       if (cached && now() < cached.expiresAt) return Promise.resolve(cached.catalogue);
       if (pending) return pending;

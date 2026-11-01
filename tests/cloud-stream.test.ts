@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { CloudWorkers } from '../src/server/cloud-workers.js';
 import { FactoryApi } from '../src/server/factory/api.js';
-import { CloudFeature } from '../src/server/factory/cloud.js';
+import { CloudFeature, type CloudOptions } from '../src/server/factory/cloud.js';
 import { CloudStream, type CloudStreamClient, type CloudStreamSource } from '../src/server/factory/cloud-stream.js';
 import { CloudStreamMessages } from '../src/server/factory/cloud-stream-messages.js';
 import { CloudThreadReader } from '../src/server/factory/cloud-thread.js';
@@ -59,6 +59,7 @@ class Client implements CloudStreamClient {
   failure = false;
   gate?: Promise<void>;
   duringLoad?: () => void;
+  snapshot: Record<string, unknown> = { session: { messages: [USER] }, workingState: 'idle', hasOlderMessages: false };
   async connect(url: string) {
     this.urls.push(url);
     await jitter();
@@ -73,7 +74,7 @@ class Client implements CloudStreamClient {
     this.duringLoad?.();
     await this.gate;
     await jitter();
-    return { session: { messages: [USER] }, workingState: 'idle', hasOlderMessages: false };
+    return this.snapshot;
   }
   onTransportMessage(handler: (message: unknown) => void) {
     this.message = handler;
@@ -389,6 +390,7 @@ test('reader: healthy streams slow REST reads and stale pages never clobber delt
   let healthy = true;
   const api = new FactoryApi(KEY, (async () => {
     reads++;
+    await jitter();
     return json({ messages: [USER, { ...ASSISTANT, content: [{ type: 'text', text: 'o' }] }] });
   }) as typeof fetch);
   const reader = new CloudThreadReader(() => api, { now: () => now, streaming: () => healthy, busyEveryMs: 0 });
@@ -403,6 +405,8 @@ test('reader: healthy streams slow REST reads and stale pages never clobber delt
   assert.equal((await reader.read(source)).entries.at(-1)!.text, 'ok');
   assert.equal(reads, 1);
   healthy = false;
+  await reader.read(source);
+  assert.equal(reads, 1, 'fallback shares the background reconciliation already in flight');
   await reader.read(source);
   assert.equal(reads, 2);
 });
@@ -467,13 +471,14 @@ test('cloud feature: stream events drive busy/tool/completion, stale REST cannot
   feature.reset();
 });
 
-function featureRig(t: test.TestContext, answer: (url: string) => Promise<Response>, credential = true) {
+function featureRig(t: test.TestContext, answer: (url: string) => Promise<Response>, credential = true, options: Partial<CloudOptions> = {}) {
   const dir = mkdtempSync(path.join(os.tmpdir(), 'cloud-stream-'));
   t.after(() => rmSync(dir, { recursive: true, force: true }));
   const cloud = new CloudWorkers(dir, { deskTaken: () => false, names: () => [], pool: { names: ['Ada'], colors: ['#fff'] } }, { update: () => {}, remove: () => {} });
   const worker = cloud.add({ deskId: DESKS.find((d) => !d.station && !d.beanbag)!.id, by: 'owner', sessionId: 'session', cloud: { computerId: 'computer', computerName: 'mac-mini', providerType: 'byom' } });
   let now = 1_000_000;
   let connected = credential;
+  const toasts: { floor: string; text: string; level?: string }[] = [];
   const client = new Client();
   const api = new FactoryApi(KEY, (async (url: string) => {
     await jitter();
@@ -485,15 +490,18 @@ function featureRig(t: test.TestContext, answer: (url: string) => Promise<Respon
       floors: () => [{ id: 'floor', name: 'project', cloud, unstage: () => {} }],
       computers: () => undefined,
       agentArgs: [],
-      toast: () => {},
+      toast: (floor, text, level) => toasts.push({ floor, text, level }),
       key: () => (connected ? KEY : undefined),
       streamClient: () => client,
       now: () => now,
+      ...options,
     },
   );
   t.after(() => feature.stop());
   return {
     cloud,
+    dir,
+    toasts,
     worker,
     feature,
     client,
@@ -564,6 +572,109 @@ test('cloud feature: idle snapshots finish restored turns but cannot rewind noti
   active.client.duringLoad = () => active.client.notify({ type: 'droid_working_state_changed', newState: 'thinking' });
   await active.feature.stream!.sync();
   assert.equal(active.cloud.get(active.worker.id)!.status, 'working');
+});
+
+test('cloud feature: model substitutions warn once with catalogue names and keep the reported model', async (t) => {
+  const names: Record<string, string> = { 'gpt-6-sol': 'GPT 6 Sol', 'deepseek-v4.1-flash-1017': 'DeepSeek V4.1 Flash 1017' };
+  const r = featureRig(t, async () => json({}), true, { modelName: (id) => names[id] });
+  r.cloud.update(r.worker.id, (i) => {
+    i.model = 'deepseek-v4.1-flash-1017';
+  });
+  r.client.snapshot = { ...r.client.snapshot, settings: { modelId: 'gpt-6-sol', reasoningEffort: 'high' } };
+  await r.feature.stream!.sync();
+  assert.equal(r.cloud.get(r.worker.id)!.model, 'deepseek-v4.1-flash-1017');
+  assert.equal(r.cloud.get(r.worker.id)!.activeModel, 'gpt-6-sol');
+  assert.equal(r.cloud.get(r.worker.id)!.activeEffort, 'high');
+  assert.deepEqual(r.toasts, [{ floor: 'floor', text: '☁ Factory runs Ada on GPT 6 Sol, not DeepSeek V4.1 Flash 1017', level: 'warn' }]);
+  r.client.notify({ type: 'settings_updated', settings: { modelId: 'gpt-6-sol' } });
+  r.client.notify({ type: 'settings_updated', settings: { modelId: 'glm-5.3-flash' } });
+  assert.equal(r.cloud.get(r.worker.id)!.activeModel, 'glm-5.3-flash');
+  r.feature.stream!.reset();
+  await r.feature.stream!.sync();
+  assert.equal(r.toasts.length, 1, 'reconnecting does not repeat the warning');
+  const restored = new CloudWorkers(r.dir, { deskTaken: () => false, names: () => [], pool: { names: ['Ada'], colors: ['#fff'] } }, { update: () => {}, remove: () => {} });
+  assert.equal(restored.get(r.worker.id)!.cloud?.modelMismatchWarned, true, 'the warning survives an office restart');
+});
+
+test('cloud feature: matching or missing models do not warn; REST substitutions warn with ids', async (t) => {
+  const r = featureRig(t, async () => json({ status: 'idle', messageCount: 0, sessionSettings: { model: 'gpt-6-sol', reasoningEffort: 'high' } }), false);
+  r.cloud.update(r.worker.id, (i) => {
+    i.model = 'gpt-6-sol';
+  });
+  await r.feature.poll(r.api);
+  assert.equal(r.toasts.length, 0);
+  r.cloud.update(r.worker.id, (i) => {
+    i.model = 'deepseek-v4.1-flash-1017';
+  });
+  r.feature.recheck(r.worker.id);
+  await r.feature.poll(r.api);
+  assert.equal(r.toasts[0].text, '☁ Factory runs Ada on gpt-6-sol, not deepseek-v4.1-flash-1017');
+  assert.equal(r.cloud.get(r.worker.id)!.activeModel, 'gpt-6-sol');
+  r.connect();
+  await r.feature.stream!.sync();
+  r.client.notify({ type: 'settings_updated', settings: {} });
+  r.client.notify({ type: 'settings_updated', settings: { modelId: ' ' } });
+  assert.equal(r.cloud.get(r.worker.id)!.activeModel, 'gpt-6-sol');
+  assert.equal(r.toasts.length, 1);
+});
+
+test('reader: healthy text keeps growing while the minute REST reconciliation is delayed', async (t) => {
+  let now = 1000;
+  const started = deferred();
+  const answer = deferred();
+  t.after(answer.resolve);
+  const api = new FactoryApi(KEY, (async () => {
+    await jitter();
+    started.resolve();
+    await answer.promise;
+    return json({ messages: [USER, ASSISTANT] });
+  }) as typeof fetch);
+  const reader = new CloudThreadReader(() => api, { now: () => now, streaming: () => true });
+  const source = { sessionId: 'session', createdAt: 0, busy: true };
+  reader.streamSnapshot('session', [USER]);
+  // Same block-1 delta shape as the real 2,442-delta Mac Mini reply (thinking occupied block 0).
+  reader.streamEvent('session', { ...DELTA, blockIndex: 1 });
+  now += 60_001;
+  let answered = false;
+  const first = reader.read(source).then((page) => {
+    answered = true;
+    return page;
+  });
+  await started.promise;
+  assert.equal(answered, true, 'a healthy stream must not wait for REST while live text arrives');
+  assert.equal((await first).entries.at(-1)!.text, 'ok');
+  reader.streamEvent('session', { ...DELTA, blockIndex: 1, textDelta: ' growing' });
+  assert.equal((await reader.read(source)).entries.at(-1)!.text, 'ok growing');
+});
+
+test('reader: a long block-1 reply grows with every delta and has no completion jump', async () => {
+  const api = new FactoryApi(KEY, (async () => {
+    assert.fail('a healthy hydrated stream does not need REST before its reconciliation deadline');
+  }) as typeof fetch);
+  const reader = new CloudThreadReader(() => api, { now: () => 1000, streaming: () => true });
+  const source = { sessionId: 'session', createdAt: 0, busy: true };
+  reader.streamSnapshot('session', [USER]);
+  let text = '';
+  // Reproduce the long live run's event count and text block index, using scrubbed fixture text.
+  for (let i = 0; i < 2442; i++) {
+    text += DELTA.textDelta;
+    reader.streamEvent('session', { ...DELTA, blockIndex: 1 });
+    assert.equal((await reader.read(source)).entries.at(-1)!.text, text);
+  }
+  reader.streamEvent('session', {
+    type: 'create_message',
+    message: {
+      ...ASSISTANT,
+      content: [
+        { type: 'thinking', thinking: '' },
+        { type: 'text', text },
+      ],
+    },
+  });
+  reader.streamEvent('session', COMPLETE);
+  assert.equal((await reader.read({ ...source, busy: false })).entries.at(-1)!.text, text);
+  reader.absorb('session', [USER, ASSISTANT]);
+  assert.equal((await reader.read(source)).entries.at(-1)!.text, text, 'a delayed short REST page cannot shrink the completed reply');
 });
 
 test('reader: a streamed snapshot with older history obtains a REST cursor and pages back', async () => {

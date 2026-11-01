@@ -337,6 +337,7 @@ function validInfo(raw: unknown): WorkerInfo | undefined {
       cwd: typeof c.cwd === 'string' ? c.cwd : undefined,
       autonomy: c.autonomy ?? 'high',
       ...(c.error ? { error: c.error } : {}),
+      ...(c.modelMismatchWarned === true ? { modelMismatchWarned: true } : {}),
       ...(typeof c.environmentId === 'string' && c.environmentId ? { environmentId: c.environmentId } : {}),
       ...(typeof c.environmentName === 'string' && c.environmentName ? { environmentName: c.environmentName } : {}),
       ...(c.instance === true ? { instance: true } : {}),
