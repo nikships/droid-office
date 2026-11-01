@@ -18,7 +18,7 @@ const RESPONSE_BYTES = 900_000;
 const FIRST_PAGE = 100;
 /** Messages read to catch up: what's new since the last read, with some overlap. */
 const TAIL_PAGE = 30;
-/** Sessions kept, least recently read dropped first. */
+/** Sessions kept, least recently read dropped first. Ones the live stream fills are never dropped. */
 const SESSIONS = 8;
 /** Messages kept per session; older ones are dropped and read again if someone pages back to them. */
 const MESSAGES_MAX = 1500;
@@ -154,7 +154,9 @@ export class CloudThreadReader {
     else {
       held = { messages: [], readAt: 0 };
       while (this.sessions.size >= SESSIONS) {
-        const idle = [...this.sessions].find(([, h]) => !h.refresh);
+        // A streamed session's held text is the base its deltas build on, and the stream sends no
+        // second snapshot; it goes only when its worker does (forget) or the stream resets (clear).
+        const idle = [...this.sessions].find(([, h]) => !h.refresh && !h.live);
         if (!idle) break;
         this.sessions.delete(idle[0]);
       }

@@ -204,6 +204,17 @@ test('live messages: text/thinking deltas, final upsert, seq adoption and late R
   assert.equal(cloudEntries(pending.values()).at(-1)!.text, 'ok!');
 });
 
+test('thread cache: sessions the stream fills are never evicted by others', () => {
+  const reader = new CloudThreadReader(() => undefined);
+  for (let i = 0; i < 9; i++) reader.streamSnapshot(`live-${i}`, [{ ...USER, id: `user-${i}` }]);
+  reader.streamEvent('live-0', { ...DELTA, textDelta: 'o' });
+  reader.streamEvent('live-0', { ...DELTA, textDelta: 'k' });
+  for (let i = 0; i < 9; i++) assert.equal(reader.messages(`live-${i}`).length, i === 0 ? 2 : 1, `live-${i} kept its held messages`);
+  assert.equal(cloudEntries(reader.messages('live-0')).at(-1)?.text, 'ok', 'deltas build on the snapshot, not on an empty base');
+  reader.forget('live-3');
+  assert.equal(reader.messages('live-3').length, 0);
+});
+
 test('live messages: tool arguments grow, canonical calls dedupe, results correlate and REST enriches seq', () => {
   const messages = new CloudStreamMessages(parsed([USER]));
   messages.event({ type: 'tool_call', toolUse: { ...TOOL, input: {} } });

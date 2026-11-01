@@ -1,4 +1,4 @@
-import { createWebSocketDaemonClient, MachineType } from '@factory/droid-sdk';
+import { createWebSocketDaemonClient, MachineType, SDK_VERSION } from '@factory/droid-sdk';
 import type { FactoryApi } from './api.js';
 import { record } from './cloud-stream-messages.js';
 
@@ -204,7 +204,7 @@ export class CloudStream {
         });
         await client.connect(computer.relayClientUrl);
         if (!this.current(c, key, client)) return;
-        await client.authenticate({ apiKey: key, caller: 'sdk', metadata: { sdk: { language: 'typescript', version: '0.10.0' } } });
+        await client.authenticate({ apiKey: key, caller: 'sdk', metadata: { sdk: { language: 'typescript', version: SDK_VERSION } } });
         if (!this.current(c, key, client)) return;
         c.ready = true;
       }
