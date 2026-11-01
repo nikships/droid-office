@@ -244,10 +244,6 @@ class OfficeApi(base: OkHttpClient = OkHttpClient()) {
         }
     }
 
-    /**
-     * A card's latest image as PNG bytes (GET /api/whiteboard/render): its grid thumbnail, or one tile
-     * of the full page. [version] is the render's time, so a newer render is never served from a cache.
-     */
     /** A picture from a worker's Thread by the id its entry carries; null when the office no longer has it. */
     suspend fun threadImage(base: String, auth: OfficeAuth, floor: String, worker: String, image: String): ByteArray? = withContext(Dispatchers.IO) {
         val req = request(base, "api/thread/image", auth, "floor" to floor, "worker" to worker, "image" to image).get().build()
@@ -258,6 +254,10 @@ class OfficeApi(base: OkHttpClient = OkHttpClient()) {
         }
     }
 
+    /**
+     * A card's latest image as PNG bytes (GET /api/whiteboard/render): its grid thumbnail, or one tile
+     * of the full page. [version] is the render's time, so a newer render is never served from a cache.
+     */
     suspend fun boardImage(base: String, auth: OfficeAuth, floor: String, card: String, thumb: Boolean, tile: Int, version: Long): ByteArray? = withContext(Dispatchers.IO) {
         val req = request(
             base, "api/whiteboard/render", auth,
