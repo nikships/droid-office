@@ -41,17 +41,17 @@
     "*.{js,mjs,cjs,ts,mts,cts}": "biome check --write --error-on-warnings --no-errors-on-unmatched"
   },
   "engines": {
-    "node": ">=22.22.2"
+    "node": ">=20"
   },
   "license": "MIT",
   "dependencies": {
     "@factory/droid-sdk": "^0.10.0",
     "@lydell/node-pty": "^1.2.0-beta.15",
+    "@modelcontextprotocol/server": "2.3.1",
     "@xterm/addon-serialize": "^0.14.0",
     "@xterm/addon-unicode11": "^0.9.0",
     "@xterm/headless": "^6.0.0",
     "electron-updater": "^6.8.9",
-    "mcp-use": "2.12.2",
     "mermaid": "^12.2.0",
     "playwright-core": "1.64.0",
     "selfsigned": "^5.5.0",

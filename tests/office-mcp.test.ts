@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { once } from 'node:events';
-import { createServer } from 'node:http';
+import { createServer, request } from 'node:http';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import type { AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
@@ -98,6 +98,15 @@ test('the HTTP MCP refuses missing, mismatched and non-agent identities', async 
   for (const id of ['shell', 'guest', 'cloud']) await assert.rejects(r.connect(id), /Office MCP requires/);
   const response = await fetch(r.url, { method: 'POST', headers: { [OFFICE_MCP_WORKER_HEADER]: 'lead', Authorization: 'test-token-lead' } });
   assert.equal(response.status, 401, 'a bare token is not a bearer credential');
+  const rebound = await new Promise<number | undefined>((resolve, reject) => {
+    const req = request(r.url, { method: 'POST', headers: { host: 'attacker.example', [OFFICE_MCP_WORKER_HEADER]: 'lead', Authorization: 'Bearer test-token-lead' } }, (res) => {
+      res.resume();
+      resolve(res.statusCode);
+    });
+    req.on('error', reject);
+    req.end('{}');
+  });
+  assert.equal(rebound, 403, 'a page that rebinds its own name to loopback is refused');
 });
 
 test("a worker reaching another local office's endpoint is routed to its own office", async (t) => {
@@ -191,6 +200,11 @@ test('tool failures return useful errors without internal diagnostics', async (t
   assert.equal(result.isError, true);
   assert.match(JSON.stringify(result.content), /Read the current state/);
   assert.doesNotMatch(JSON.stringify(result), /private diagnostic|Error:|at /);
+  r.office.tool({ name: 'test_count', description: 'Argument probe', inputSchema: z.object({ count: z.number() }) }, officeAccess.worker, ({ count }) => officeResult(String(count)));
+  const invalid = await client.callTool({ name: 'test_count', arguments: { count: 'three' } });
+  assert.equal(invalid.isError, true);
+  assert.match(JSON.stringify(invalid.content), /Invalid arguments for test_count/);
+  await assert.rejects(client.callTool({ name: 'no_such_tool', arguments: {} }), /No office tool called no_such_tool/);
   assert.throws(() => r.office.tool({ name: 'test_error', description: 'Duplicate', inputSchema: z.object({}) }, officeAccess.worker, () => officeResult('no')), /Duplicate/);
 });
 

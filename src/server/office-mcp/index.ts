@@ -1,15 +1,16 @@
 import { randomUUID } from 'node:crypto';
 import { mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
-import { MCPServer, type CallToolResult, type ToolAnnotations } from 'mcp-use';
-import { toNodeHandler } from 'mcp-use/node';
-import type { z } from 'zod';
+import type { IncomingMessage, ServerResponse } from 'node:http';
+import { type CallToolResult, createMcpHandler, hostHeaderValidationResponse, localhostAllowedHostnames, type McpHttpHandler, ProtocolError, ProtocolErrorCode, Server, type Tool, type ToolAnnotations } from '@modelcontextprotocol/server';
+import { z } from 'zod';
 import type { SubagentSettings, WorkerInfo } from '../../shared/protocol.js';
 import type { Team } from '../team.js';
 import type { Visits } from '../visits.js';
 import type { WhiteboardStore } from '../whiteboard.js';
 import type { WorkerManager } from '../workers.js';
 import { workspaceOf } from '../worktrees.js';
+import { sendResponse, webRequest } from './node-http.js';
 import { instructions as teamInstructions, register as registerTeam } from './team.js';
 import { instructions as whiteboardInstructions, register as registerWhiteboard } from './whiteboard.js';
 import { instructions as visitInstructions, register as registerVisits } from './visits.js';
@@ -84,60 +85,79 @@ interface OfficeTool<S extends z.ZodRawShape> {
   annotations?: ToolAnnotations;
 }
 
-/** mcp-use owns the protocol; this wrapper makes caller filtering mandatory for every office tool. */
+interface RegisteredTool {
+  listed: Tool;
+  schema: z.ZodObject;
+  access: OfficeMcpAccess;
+  run(args: unknown, caller: OfficeMcpCaller): CallToolResult | Promise<CallToolResult>;
+}
+
+const INSTRUCTIONS = [GENERAL_INSTRUCTIONS, teamInstructions, whiteboardInstructions, visitInstructions].filter(Boolean).join('\n\n');
+const UNAUTHORIZED = 'Office MCP requires an active local agent, its worker id header and its own bearer hook token, with Office MCP on in Settings.';
+
+/**
+ * The official MCP SDK serves the protocol. Each request gets its own low-level server built for
+ * that caller, so a tool the caller may not use is never listed, and a guessed call to it still
+ * gets the reason rather than "not found".
+ */
 export class OfficeMcpServer {
-  private readonly mcp: MCPServer;
-  private readonly access = new Map<string, OfficeMcpAccess>();
-  readonly handle: ReturnType<typeof toNodeHandler>;
+  private readonly tools = new Map<string, RegisteredTool>();
+  private readonly mcp: McpHttpHandler;
 
   constructor(private readonly deps: OfficeMcpDeps) {
-    // This embedded local server must not send SDK usage or write telemetry identities into a
-    // project. mcp-use checks this opt-out before recording any usage (pinned v2).
-    Object.assign(globalThis, { __MCP_USE_ANONYMIZED_TELEMETRY__: false });
-    this.mcp = new MCPServer({
-      name: 'droid-office',
-      version: '1.0.0',
-      basePath: OFFICE_MCP_PATH,
-      instructions: [GENERAL_INSTRUCTIONS, teamInstructions, whiteboardInstructions, visitInstructions].filter(Boolean).join('\n\n'),
-      logging: { enabled: false },
-      skills: false,
-    });
-    this.mcp.use('mcp:tools/list', async (ctx, next) => {
-      const caller = ctx.request ? this.caller(ctx.request.raw) : undefined;
-      if (!caller) return [];
-      return (await next()).filter((tool) => {
-        const access = this.access.get(tool.name);
-        return access !== undefined && access(caller) === undefined;
-      });
-    });
-    this.handle = toNodeHandler({
-      fetch: async (request) => {
-        if (request.method === 'OPTIONS') return new Response(null, { status: 204, headers: { Allow: 'POST, GET, DELETE, OPTIONS', [PROBE_HEADER]: '1' } });
-        const peer = this.peer(request);
-        if (peer) return relay(request, peer);
-        if (!this.caller(request)) {
-          return Response.json({ error: 'Office MCP requires an active local agent, its worker id header and its own bearer hook token, with Office MCP on in Settings.' }, { status: 401 });
-        }
-        return this.mcp.fetch(request);
-      },
+    this.mcp = createMcpHandler(({ requestInfo }) => this.serverFor(requestInfo ? this.caller(requestInfo) : undefined), {
+      legacy: 'stateless',
+      onerror: (err) => console.error('Office MCP:', err.message),
     });
   }
 
+  readonly handle = async (req: IncomingMessage, res: ServerResponse): Promise<void> => {
+    const controller = new AbortController();
+    res.once('close', () => controller.abort());
+    await sendResponse(res, await this.fetch(webRequest(req, controller.signal)));
+  };
+
+  private async fetch(request: Request): Promise<Response> {
+    // Loopback only: a page on another site can't reach this server by rebinding its own name.
+    const badHost = hostHeaderValidationResponse(request, localhostAllowedHostnames());
+    if (badHost) return badHost;
+    if (request.method === 'OPTIONS') return new Response(null, { status: 204, headers: { Allow: 'POST, GET, DELETE, OPTIONS', [PROBE_HEADER]: '1' } });
+    const peer = this.peer(request);
+    if (peer) return relay(request, peer);
+    if (!this.caller(request)) return Response.json({ error: UNAUTHORIZED }, { status: 401 });
+    return this.mcp.fetch(request);
+  }
+
   tool<S extends z.ZodRawShape>(definition: OfficeTool<S>, access: OfficeMcpAccess, handler: (args: z.infer<z.ZodObject<S>>, caller: OfficeMcpCaller) => CallToolResult | Promise<CallToolResult>): void {
-    if (this.access.has(definition.name)) throw new Error(`Duplicate office tool: ${definition.name}`);
-    this.access.set(definition.name, access);
-    this.mcp.tool(definition, async (args, ctx) => {
-      const caller = ctx.request ? this.caller(ctx.request.raw) : undefined;
+    if (this.tools.has(definition.name)) throw new Error(`Duplicate office tool: ${definition.name}`);
+    const { name, description, inputSchema, annotations } = definition;
+    this.tools.set(name, {
+      listed: { name, description, inputSchema: z.toJSONSchema(inputSchema, { io: 'input' }) as Tool['inputSchema'], ...(annotations ? { annotations } : {}) },
+      schema: inputSchema,
+      access,
+      run: (args, caller) => handler(args as z.infer<z.ZodObject<S>>, caller),
+    });
+  }
+
+  private serverFor(caller: OfficeMcpCaller | undefined): Server {
+    const server = new Server({ name: 'droid-office', version: '1.0.0' }, { capabilities: { tools: {} }, instructions: INSTRUCTIONS });
+    server.setRequestHandler('tools/list', () => ({ tools: caller ? [...this.tools.values()].filter((t) => t.access(caller) === undefined).map((t) => t.listed) : [] }));
+    server.setRequestHandler('tools/call', async ({ params }) => {
+      const tool = this.tools.get(params.name);
+      if (!tool) throw new ProtocolError(ProtocolErrorCode.InvalidParams, `No office tool called ${params.name}`);
       if (!caller) return officeError('Your office identity is no longer active or Office MCP is off. Ask the owner to check Settings.');
-      const why = access(caller);
+      const why = tool.access(caller);
       if (why) return officeError(why);
+      const args = tool.schema.safeParse(params.arguments ?? {});
+      if (!args.success) return officeError(`Invalid arguments for ${params.name}:\n${z.prettifyError(args.error)}`);
       try {
-        return await handler(args as z.infer<z.ZodObject<S>>, caller);
+        return await tool.run(args.data, caller);
       } catch (err) {
-        console.error(`Office MCP tool ${definition.name} failed for ${caller.worker.name}:`, err);
+        console.error(`Office MCP tool ${params.name} failed for ${caller.worker.name}:`, err);
         return officeError('The office could not finish this tool call. Read the current state before retrying a change.');
       }
     });
+    return server;
   }
 
   /** Another office on this machine that the caller says it belongs to, if it isn't this one. */

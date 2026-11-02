@@ -1,6 +1,6 @@
 # Development
 
-Developers can clone, run and modify the source on their own machines with Node 22.22.2 or later (required by the Office MCP framework). Source checkouts and custom deployments are not supported production installs; the production distribution is the [Mac app release](getting-started.md#the-mac-app).
+Developers can clone, run and modify the source on their own machines. Source checkouts and custom deployments are not supported production installs; the production distribution is the [Mac app release](getting-started.md#the-mac-app).
 
 ```bash
 git clone https://github.com/nikships/droid-office.git
@@ -26,7 +26,7 @@ A worktree the office cuts of this repository sets itself up from [`.droid-offic
 
 **Pre-commit hook.** `npm ci` or `npm install` in a clone points git at [`.husky/`](../../.husky) (through the `prepare` script), and every commit then runs [lint-staged](https://github.com/lint-staged/lint-staged) and `npm run typecheck`. lint-staged runs `biome check --write` on the staged files, so formatting is fixed and added to the commit, and a lint finding stops it. The hook is a convenience; CI runs the same `npm run lint` and `npm run typecheck`. `git commit --no-verify` skips it, and `HUSKY=0` skips installing it. It isn't installed in CI (`CI=true`) or where dev dependencies aren't.
 
-`npm run test:coverage` fails when line or function coverage of `src/` and `bin/` drops below the thresholds in its `package.json` script, and CI runs it in place of `npm test`. Both require Node 22.22.2 or later.
+`npm run test:coverage` fails when line or function coverage of `src/` and `bin/` drops below the thresholds in its `package.json` script, and CI runs it in place of `npm test`. `npm test` still runs on Node 20.
 
 `npm run dev` runs Vite with hot reload on :5173 and proxies to the server on :4600. Server edits restart the server, not the workers.
 
@@ -113,7 +113,7 @@ The machine, not the workflow, provides the toolchain. A job that needs another 
 
 | Tool | Where |
 | --- | --- |
-| Node 22.22.2 or later | `/opt/homebrew/bin/node`, on the runner's `PATH` (26 today; a newer major passes the check, an older one fails it) |
+| Node 22 or later | `/opt/homebrew/bin/node`, on the runner's `PATH` (26 today; a newer major passes the check, an older one fails it) |
 | Xcode and the macOS SDK | `/Volumes/NVMe/Xcode.app`, through `DEVELOPER_DIR` in the launch agent (unused by the Node and website jobs) |
 | JDK 21 | `/opt/homebrew/opt/openjdk@21`, through `JAVA_HOME` |
 | Android SDK | `~/Library/Android/sdk`, through `ANDROID_HOME` and `ANDROID_SDK_ROOT` |
