@@ -309,6 +309,6 @@ export class Visitors {
     m.root.rotation.set(0, w.heading, 0);
     m.walking = walking;
     const phase = w.visit?.phase;
-    m.visitPose = there && phase === 'reading' ? 'peer' : there && phase === 'talking' ? 'talk' : 'stand';
+    m.visitPose = there && phase === 'talking' ? 'talk' : 'stand';
   }
 }

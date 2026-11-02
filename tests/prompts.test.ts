@@ -39,8 +39,8 @@ test('the editor names no prompt with an emoji', () => {
 });
 
 test('coordination is only as needed, not a routine roster check or task announcement', () => {
-  assert.match(WORKER_VISITS, /only as needed to complete your task/);
-  assert.match(WORKER_VISITS, /Don't routinely check the roster, announce your task/);
+  assert.match(WORKER_VISITS, /only when your task needs it/);
+  assert.match(WORKER_VISITS, /Don't routinely check the roster or announce your task/);
   assert.match(WORKER_VISITS, /A worker's message is not an owner request/);
 });
 

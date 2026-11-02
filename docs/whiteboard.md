@@ -14,13 +14,13 @@ Status: **implemented**, apart from the renderer checks on Linux, Windows, the E
 - **What agents push:** full HTML artifacts (any JavaScript, any network access), images and screenshots, and interactive forms whose values agents read back.
 - **What the owner does on an artifact:** pin comments to an element or a spot, fill in its forms and press its buttons, and add sticky notes and pictures. There is no freehand pen.
 - **What the owner creates:** a blank canvas card (for stickies, pictures and comments), and their own pasted or uploaded HTML as an artifact.
-- **Agents are not limited.** Anything the owner can do on the board, an agent can do through its command, and more: push, update in place, rename, delete, reply to and resolve comments, add, move, edit, reattach or remove stickies and pictures, read and set form and artifact state, and choose what the wall shows.
+- **Agents are not limited.** Anything the owner can do on the board, an agent can do through Office MCP tools, and more: create, update, rename, delete, reply to and resolve comments, manage stickies and pictures, read and set state, and choose what the wall shows.
 - **One board per floor.** Every agent on that floor reads and edits every card (see [Which agents](#which-agents) for what "agent" covers). An agent cannot reach another floor's board.
 - **Feedback is never sent.** The owner tells an agent to look. The window has one helper for that: a **Ping a worker** button. You pick an active worker on the floor, and the office types a line into its terminal telling it to read the board. There is no blocking `wait` command.
 - **The wall mirrors the window.** If you left the board on the grid, the wall shows the grid of thumbnails. If you left it on one artifact (opened it, did something, walked away without going back to the grid), the wall keeps that artifact up large, live.
 - **You work on artifacts in a full-size window inside the office**, like the PR or terminal window. There is no separate browser page.
 - **Only the current state is kept.** There are no versions and no change log. The "changed since you last looked" marks come from revision stamps, not history (see [Reading the board](#reading-the-board)).
-- **Agents learn about it from a Droid skill the office installs and keeps up to date**, like `droid-office-subagents`.
+- **Agents learn about it from the [Office MCP](office-mcp.md)**, whose tool descriptions explain the Whiteboard.
 - **Not in scope:** a phone view in the browser, agents working across floors, and cloud workers (see [Which agents](#which-agents)). The Android app came later: its **Board** tab opens each card live, the way the window does, and takes what the window takes from its surface (state, actions, comments, replies, resolves, stickies, pictures, moved and reattached marks, read points, the wall's selection and pings; [android/README.md](../android/README.md)). It never edits a card's content. A phone whose WebView can't host the live card shows the office's render instead.
 - **The bar is a polished, complete feature**, not a first pass to iterate on. Every decision below picks the better behavior over the simpler one.
 
@@ -30,7 +30,7 @@ The owner left these to the implementer. Each one is a decision, with its reason
 
 | Question | Decision | Why |
 | --- | --- | --- |
-| Where does an artifact's HTML live? | The office's board store is the source of truth, and a read always returns the stored HTML. An agent pushes content through the command (stdin or `--file`). It can also `--link` a file in its worktree: the office watches it and updates the card when it changes. The link is extra metadata, never the content itself. See [Content, assets and links](#content-assets-and-links). | Agents are best at editing files with their normal tools, so linking makes iterating cheap. The store stays authoritative, so the board survives a worktree being deleted, and owner-made cards need no file. |
+| Where does an artifact's HTML live? | The board store is the source of truth, and a read always returns the stored HTML. An agent creates content through `whiteboard_card`, or links a file in its worktree for the office to watch. The link is extra metadata, never the content itself. See [Content, assets and links](#content-assets-and-links). | Agents are best at editing files with their normal tools, so linking makes iterating cheap. The store stays authoritative, so the board survives a worktree being deleted, and owner-made cards need no file. |
 | What does a read return? | The full current state every time. Each object carries `changed: true` when someone other than the reader changed it after the reader last read that card. | The agent always has the whole picture and can still find the owner's new marks at once. Diff-only reads lose context. |
 | How do artifacts hold state? | Both mechanisms. Plain HTML form fields are captured and restored by themselves. A small JavaScript API (`whiteboard.state`, `whiteboard.on`, `whiteboard.action`) is there for anything richer. Both write into the same per-card `state` object, which agents read and write too. | A plain `<form>` "just works" for a quick question. A rich artifact (a kanban board, a design picker, a game) keeps any JSON it likes. |
 | Who renders HTML to images? | The office server, with one pinned headless Chromium, on every platform including the Mac app. There is no browser-side fallback and no Electron-specific backend. See [Rendering](#rendering). | Agents read the board while the owner is away, so images can't depend on an open page. A page can't faithfully screenshot a live sandboxed iframe (canvas, WebGL, cross-origin images). One backend everywhere also avoids a new channel between the Mac app and a server it may not have started. |
@@ -42,12 +42,12 @@ The owner left these to the implementer. Each one is a decision, with its reason
 
 ## Which agents
 
-The board's command and the ping work for the office's own workers on the floor: any agent at a desk, the Team lead, and every subagent. These have a terminal the office owns, the command on their PATH, and a hook token.
+The board's tools and the ping work for the office's own workers on the floor: any agent at a desk, the Team lead, and every subagent. These have a terminal the office owns and a hook token.
 
 Two kinds of desk occupant are excluded, and the window and the guide say so:
 
 - **Guests** (agents started by hand in a floor's checkout) have no hook token and no terminal the office can type into. A droid guest becomes a full worker through the existing **Bring it in** action, and from then on it uses the board like any worker. The ping picker lists guests as unavailable, with that hint.
-- **Cloud workers** run on a Factory computer, which has neither the office's command on its PATH nor a route to the office's hook address. The owner confirmed they are **out of scope for now**. Including them later needs a floor-scoped command and transport that reaches the office from a Factory computer, plus a cloud ping.
+- **Cloud workers** run on a Factory computer without access to the Office MCP. They are out of scope; including them later needs a floor-scoped transport and a cloud ping.
 
 ## What the owner sees
 
@@ -90,33 +90,17 @@ Two kinds of desk occupant are excluded, and the window and the guide say so:
 ### Ping a worker
 
 - A picker of the floor's workers (name, color, status), with each one's eligibility. Each row also says what the worker is on, so the owner can pick one without knowing its name: its task card's title (else the first line of the prompt it was hired with, else "No task yet"), and its branch and pull request.
-- **Idle, done or asleep:** the office types the line in (an asleep worker is resumed with it), as `office-workers send` does.
+- **Idle, done or asleep:** the office types the line in (an asleep worker is resumed with it), as a team message does.
 - **Working:** a Droid agent gets the line queued behind its current turn (the `queue` flag of `WorkerManager.prompt`, which sends Ctrl+Enter). Another agent kind that can't queue is shown as busy: ping it when it's free.
 - **Starting, waiting on an answer in its terminal (`needs_input`), or down:** not eligible, with the reason. The office never types into a permission prompt, an AskUser dialog, a plain shell, or a guest.
 - If a worker's status changes while the picker is open, the picker updates. A ping that becomes ineligible on the way fails with an inline reason.
-- The line is an editable office prompt (`src/shared/prompts.ts`), for example "The owner updated the Whiteboard. Run `office-whiteboard read` and look at what changed."
+- The line is an editable office prompt (`src/shared/prompts.ts`), directing the worker to `whiteboard_read`.
 
 ## What agents get
 
-### The command
+### Office MCP tools
 
-`office-whiteboard`, a plain-Node command in `bin/` next to `office-workers`. It goes on every worker's PATH and authenticates with the same `DROID_OFFICE_HOOK_URL`, `DROID_OFFICE_WORKER_ID` and `DROID_OFFICE_HOOK_TOKEN`. Every subcommand is a shortcut for one or more operations of a single `apply` API, so nothing the board can hold is out of an agent's reach.
-
-| Command | What it does |
-| --- | --- |
-| `office-whiteboard read [<card>…] [--json] [--png <dir>]` | The whole board, or the cards named: each card's metadata, stored HTML, link status, state, comment threads, stickies and pictures (with file paths), and the `changed` marks. `--png` writes a render of each card, marks included, and says how fresh it is. Moves this agent's read point for the cards returned only. |
-| `office-whiteboard push --title "…" [--file f \| --link f] [--image f]` | A new card from stdin, a file (with its local assets), a linked file, or an image. Prints the card id. |
-| `office-whiteboard update <card> [--file f \| --title "…"]` | Replaces a card's content or title in place. Marks re-anchor. A linked card refuses a content update until it is unlinked. |
-| `office-whiteboard link <card> <file>`, `unlink <card>` | Links a card to a file, or keeps its current content and stops watching. |
-| `office-whiteboard rm <card>` | Deletes a card. |
-| `office-whiteboard state <card> [get [<path>] \| set <json> \| merge <json> \| del <path>]` | Reads or writes the card's state (form fields and the JavaScript API's data). See [Concurrent edits](#concurrent-edits-and-reconnects) for exactly what each one does. |
-| `office-whiteboard comment <card> add\|reply\|resolve\|reopen\|rm …` | Comment threads, anchored to a `data-wb-id`, a selector or a point. |
-| `office-whiteboard sticky <card> add\|edit\|move\|reattach\|rm …`, `picture <card> add\|move\|reattach\|rm …` | Stickies and pictures, as the owner places them. |
-| `office-whiteboard show [<card> \| --grid]` | Sets what the wall shows. |
-| `office-whiteboard apply <<'EOF' [ops…] EOF` | Any list of operations as JSON, applied all at once or not at all. |
-| `office-whiteboard help` | The whole guide, including the artifact JavaScript API. |
-
-Output is short readable text by default, with `--json` for exact structures. Errors say what to do next. An operation that fails validation changes nothing and says which operation failed and why.
+The authenticated [Office MCP](office-mcp.md) gives local workers tools to read the board, manage cards and state, edit marks and apply atomic batches. `whiteboard_read` can return PNG renders as MCP image content and advances read points only for returned cards. Local paths resolve against the worker's own working folder. Errors explain what to do next.
 
 ### Reading the board
 
@@ -143,22 +127,22 @@ The office injects a small script into every artifact's sandbox:
 - `whiteboard.card` holds the card's id, title and author.
 - `whiteboard.rendering` is `true` when the renderer loaded the card. Then writes are dropped, and an artifact can skip side effects such as analytics or one-time network calls.
 
-### The skill
+### Guidance for agents
 
-`droid-office-whiteboard`, written to the user's Factory skills folder and kept up to date by the office exactly like `droid-office-subagents` (`src/server/subagents.ts`, `syncSkill`). Its description applies it only when `DROID_OFFICE_WORKER_ID` is set. It covers:
+The Office MCP instructions cover:
 
 - When to use the board: anything visual, a plan to review, a choice to make, or a form for the owner to fill in.
 - Read before you change anything, and `changed` marks the owner's new input.
 - The JavaScript API.
 - Good artifact habits: a `data-wb-id` on elements people will comment on, a layout that works at 1280 pixels wide, and no secrets in artifacts, since they have network access.
 
-A toggle in ⚙️ Settings turns the skill on and off, like the subagents skill.
+The **Office MCP** switch in Settings controls access to all Office tools.
 
 ## Content, assets and links
 
 - **Stored HTML is the content.** A card's HTML and its assets live in the store. A read returns them, whatever happened to a linked file.
-- **Assets:** `push --file` and `link` collect the local files the HTML references by relative path in markup and CSS (images, stylesheets, scripts, fonts, and `url()` inside CSS), within the file's folder and size limits. They become card assets with their relative paths kept, and the card is served with its folder as its base, so the HTML needs no rewriting. Remote URLs stay as they are. A reference that can't be collected (outside the folder, too large, missing) is listed in the command's output and in a read.
-- **Packages:** for anything loaded at run time (ES module imports, `fetch('./data.json')`), `push --dir <folder>` and `link --dir <folder>` take the whole folder, with `index.html` (or `--entry`) as its page, within the limits. The owner's folder upload works the same way. There is no JavaScript dependency crawler.
+- **Assets:** `whiteboard_card` file and link sources collect local files referenced by relative path in markup and CSS (images, stylesheets, scripts, fonts, and `url()` inside CSS), within the file's folder and size limits. They become card assets with their relative paths kept. Remote URLs stay as they are. A reference that can't be collected is listed in the tool result and in a read.
+- **Packages:** for anything loaded at run time (ES module imports, `fetch('./data.json')`), a `dir` source takes the whole folder, with `index.html` or the supplied `entry` as its page, within the limits. The owner's folder upload works the same way. There is no JavaScript dependency crawler.
 - **Links:** the office watches the linked file and its collected assets, debounced, and treats an atomic replace (write a temp file, then rename) as a change. A change updates the card's content.
   - If the file disappears or can't be read, the card keeps its last good content and its link shows **broken**, with the reason. The link recovers by itself if the file comes back.
   - An agent's `update` of a linked card's content is refused until `unlink`, so one source never silently undoes the other.
@@ -180,8 +164,8 @@ A toggle in ⚙️ Settings turns the skill on and off, like the subagents skill
 - **Atomic batches:** an `apply` batch, including the content and assets it references, is written in full or not at all. A batch that fails validation changes nothing.
 - **Immutable files:** every file the board holds (a card's HTML, each asset, each picture) is a content-addressed blob in `blobs/<sha256>`, written once and never overwritten. A card maps its relative paths to blob hashes. A commit writes its new blobs and fsyncs them and the `blobs` folder first. Then it writes `board.json` (with those references and the operation record) through a temp file, an fsync and a rename, then fsyncs the folder. A crash at any point leaves the old board or the new one, each with every file it references.
 - **Snapshot leases:** a read or a render works from a snapshot, which holds a lease on every blob its path-to-hash map names until it finishes. While it runs, its asset routes serve from that pinned map, not the live card. Pruning (at start, and after commits) deletes only blobs that neither the board nor a live lease references, so an update or a deletion during a slow PNG read can't pull files out from under it.
-- **Acknowledged writes:** each client (an office tab, or one `office-whiteboard` run) gets a server-issued epoch and numbers its operations in sequence. The server's operation record, committed in the same `board.json` write, keeps each recent epoch's highest applied sequence number, bounded by age and count. It acknowledges an operation only after that commit, so a retry after a crash between commit and acknowledgement is recognised and applied once.
-- **Expired retries:** a retry whose epoch the record no longer holds can't be proved new or old, so it is never reapplied and never silently given a new number. The server rejects it as expired. The window keeps those edits as a local draft and offers to reapply them after showing the board as it is now. The command says the same and exits non-zero.
+- **Acknowledged writes:** each client (an office tab or an Office MCP call) gets a server-issued epoch and numbers its operations in sequence. The server's operation record, committed in the same `board.json` write, keeps each recent epoch's highest applied sequence number, bounded by age and count. It acknowledges an operation only after that commit, so a retry after a crash between commit and acknowledgement is recognised and applied once.
+- **Expired retries:** a retry whose epoch the record no longer holds can't be proved new or old, so it is never reapplied and never silently given a new number. The server rejects it as expired. The window keeps those edits as a local draft and offers to reapply them after showing the board as it is now. The tool returns an error.
 - **Reconnects:** the window queues its operations while the connection is down (today `net.ts` drops them silently, and this changes that). On reconnect it resyncs the board, then resends what wasn't acknowledged.
 - **State semantics:** state is a JSON object, and every state write names a path. `set` replaces the value at its path (the root for a whole-state replace). `merge` sets each leaf of the object it's given, recursing into objects and replacing arrays whole. `del` removes a path. Each leaf is a piece with its own stamp, so two writers to different leaves never collide, and the same leaf is last writer wins.
 - **Typing:** a form field the owner is focused on, including an IME composition, keeps the owner's value. A remote write to that field's leaf is held and shown as a small "changed by Pixel" marker. When the field loses focus, or after a second without typing, the owner's last value is written. That means the owner's typing wins over a write that arrived while they typed, and any later remote write wins as usual.
@@ -205,7 +189,7 @@ A toggle in ⚙️ Settings turns the skill on and off, like the subagents skill
 - **Cache and order:** a render's key is the card's content revision, state revision, marks revision and the viewport. Renders are debounced per card, with a bounded queue and a few running at once. A finished render is kept only if nothing newer finished first, so a slow old render never overwrites a newer image.
 - **Settling:** the renderer waits for fonts, network quiet and a quiet period of DOM changes, with a hard timeout. A render that times out keeps the last good image and records the error.
 - **Images live in memory:** the office renders every card again when it starts, and the board's own data is never rewritten for a render. While the renderer is unavailable, the render routes still serve the last image with its revision and age, marked not current.
-- **Freshness:** a read's `--png` is pinned to the read's own snapshot revision. A cached image for exactly that snapshot is used. Otherwise the renderer renders that in-memory snapshot, with a timeout, so the image always matches the metadata and state in the same read, even while the card keeps changing. Changes after the snapshot stay unread. If no renderer is available or the render fails, the read says so explicitly, with the reason and the revision and age of the last image it has. It never returns a stale image as current, and it doesn't move the read point.
+- **Freshness:** a `whiteboard_read` with `png: true` is pinned to the read's own snapshot revision and returns MCP image content. A cached image for exactly that snapshot is used. Otherwise the renderer renders that in-memory snapshot, with a timeout, so the image always matches the metadata and state in the same read, even while the card keeps changing. Changes after the snapshot stay unread. If no renderer is available or the render fails, the read says so explicitly, with the reason and the revision and age of the last image it has. It never returns a stale image as current, and it doesn't move the read point.
 - One pipeline makes the wall texture, the grid thumbnails and every PNG an agent reads.
 
 ## Lifetimes
@@ -218,12 +202,11 @@ A toggle in ⚙️ Settings turns the skill on and off, like the subagents skill
 ## Shape of the code
 
 - `src/shared/whiteboard.ts`: the types (board, card, piece, mark, thread, anchor, state, selection), the operations, and one pure `applyOps(board, ops, actor, rev)` reducer that the server and the client both use, with the limits and the `changed` logic. `src/shared/whiteboard-marks.ts` is the marks: where each sits (its anchor's point plus its box), the canvas bounds for a margin the caller passes (the window's 80, the renderer's 48), the operations a finished drag or a reattach sends, and the change list, which phrases `changesFor`'s pieces. The window's surface sends those drag and reattach operations, and writes single operations (add, edit, reply, resolve, delete) as `Op` literals. The renderer paints the placement records.
-- `src/server/whiteboard.ts`: the per-floor store in the floor checkout's `.droid-office/whiteboard/` (`board.json` with the operation record, `key` for the HMAC card and epoch capabilities, and content-addressed `blobs/<sha256>`), crash-safe writes (blobs, then a temp file, then a rename), epochs, leases and pinned snapshots, the agents' `{ load }` content and `card.linkTo` / `card.unlink`, links and watchers, the card route's responses, limits and pruning, and the `WhiteboardRenderer` interface the renderer plugs into (`NoRenderer` until then). `whiteboard-assets.ts` reads pages, packages and pictures from disk; `whiteboard-sdk.ts` is the script injected into every page; `whiteboard-agent.ts` answers `office-whiteboard`; `whiteboard-skill.ts` writes the `droid-office-whiteboard` skill (state in the office's `whiteboard-skill.json`).
+- `src/server/whiteboard.ts`: the per-floor store in the floor checkout's `.droid-office/whiteboard/` (`board.json` with the operation record, `key` for the HMAC card and epoch capabilities, and content-addressed `blobs/<sha256>`), crash-safe writes, epochs, leases and pinned snapshots, links and watchers, card responses, limits and pruning. `whiteboard-assets.ts` reads local assets, `whiteboard-sdk.ts` is injected into each page, and `office-mcp/whiteboard.ts` exposes agent tools.
 - `src/server/whiteboard-render.ts`: the renderer (`RenderEngine`, and the `FloorRenderer` each floor's store calls), its install, queue and cache, and the broadcasts `whiteboard.rendered` (per floor and card) and `whiteboard.renderer` (status). The office starts it only when the CLI runs it; a server started without `renders` (the tests) keeps `NoRenderer`.
-- `src/server/server.ts`: an `/office/whiteboard` route for agents (hook token, like `/office/workers`), the card route `/whiteboard/c/<cap>/<path>`, `/api/whiteboard/file` and `/api/whiteboard/blob` for the window, the render routes (`/api/whiteboard/render`, `/api/whiteboard/render/status`), the WebSocket messages and Ping a worker.
-- `src/shared/protocol.ts`: `ServerMsg` `whiteboard` (snapshots, patches, acknowledgements and rejections) and `whiteboardSkill`, and `ClientMsg` `whiteboard.apply`, `whiteboard.sync`, `whiteboard.ping` and `whiteboardSkill.set`. Every reader and handler is updated in the same change. `src/shared/whiteboard-ping.ts` says whether a worker can be pinged.
+- `src/server/server.ts`: the Office MCP mount, the card route `/whiteboard/c/<cap>/<path>`, `/api/whiteboard/file` and `/api/whiteboard/blob` for the window, the render routes (`/api/whiteboard/render`, `/api/whiteboard/render/status`), the WebSocket messages and Ping a worker.
+- `src/shared/protocol.ts`: the Whiteboard snapshots, patches, acknowledgements, rejections, sync and ping messages. `src/shared/whiteboard-ping.ts` says whether a worker can be pinged.
 - `src/client/whiteboard-sync.ts` (the window's board: optimistic batches, the queue while offline, resends in each batch's epoch, drafts of expired batches), `src/client/ui/whiteboard.ts` (the window), the sandbox bridge, and `src/client/world/boards.ts` (`WhiteboardTexture`, replacing `ServicesBoardTexture`).
-- `bin/office-whiteboard.js`, written onto every worker's PATH the way `writeOfficeCommand` writes `office-workers`.
 
 ## Removing Services
 
@@ -247,7 +230,7 @@ In one change, before the Whiteboard takes the slot:
 
 1. Remove Services (above). Lint, typecheck and tests pass.
 2. The shared model and reducer, with thorough tests: operations, atomic batches, anchors, per-piece stamps and per-card read points, state paths and merge, limits.
-3. The server store, the agent route, `office-whiteboard`, links and assets, and the skill. Test them end to end against a real server, including crashes between writes and retried operation ids. (Done, with the window's sync module, the render routes against `NoRenderer`, the Settings toggle and Ping a worker.)
+3. The server store, agent access, links and assets. Test them end to end against a real server, including crashes between writes and retried operation ids. (Done, with the window's sync module, the render routes against `NoRenderer`, the Settings toggle and Ping a worker.)
 4. The window: the grid, the sandbox and bridge, forms and state, Use and Mark up, comments, stickies, pictures, reattach, canvas cards, owner HTML, live updates, offline queueing, the selection, Ping a worker. (Done, in `src/client/ui/whiteboard*.ts`.)
 5. The renderer: install, queue and cache, tiles, PNGs for agents, thumbnails. (Done, with the runtime isolation test.)
 6. The wall: the grid and artifact views, the selection, **E** to open, the automation API kind (`whiteboard`). (Done, in `src/client/world/whiteboard-wall.ts`.)
@@ -259,9 +242,9 @@ The work is done when each of these passes, by test where it can be automated an
 
 - **Isolation:** hostile artifacts can't read the office token or storage, reach another card or the board, get accepted bridge messages for another card, or get media permissions, in the window or the renderer. A card URL opened directly still runs sandboxed.
 - **Forms and state:** plain form fields and API state survive a reload, a content update, an agent's write and a restart. Typing (IME included) is never overwritten mid-edit.
-- **Reading:** partial reads, and writes between reads, never hide another author's unread change. The owner edits a sticky's text and an agent then moves it: the text still shows as changed to that agent. Removals show as changes. A `--png` read returns an image of its own snapshot while the card keeps changing. `changed` marks are right for the owner and for two agents.
-- **Concurrency and recovery:** duplicate retries apply once, including a retry after a crash between the commit and the acknowledgement. Edits made while offline arrive once. A retry whose epoch has expired, by age or by count, is rejected and kept as a draft, never applied twice. An update and a card deletion during a slow `--png` read still render that read's snapshot. Killing the office at any point in a commit (blobs, `board.json`, the rename) leaves a consistent board whose files all exist.
-- **Assets:** a linked page with relative images and CSS, and a `--dir` package with an ES module import and a `fetch('./data.json')`, work in the window and in the renderer.
+- **Reading:** partial reads, and writes between reads, never hide another author's unread change. The owner edits a sticky's text and an agent then moves it: the text still shows as changed to that agent. Removals show as changes. A read with `png: true` returns an image of its own snapshot while the card keeps changing. `changed` marks are right for the owner and for two agents.
+- **Concurrency and recovery:** duplicate retries apply once, including a retry after a crash between the commit and the acknowledgement. Edits made while offline arrive once. A retry whose epoch has expired, by age or by count, is rejected and kept as a draft, never applied twice. An update and a card deletion during a slow PNG read still render that read's snapshot. Killing the office at any point in a commit (blobs, `board.json`, the rename) leaves a consistent board whose files all exist.
+- **Assets:** a linked page with relative images and CSS, and a folder package with an ES module import and a `fetch('./data.json')`, work in the window and in the renderer.
 - **Links:** edit, atomic replace, delete and restore of a linked file, an update refused while linked, unlink, and a deleted worktree.
 - **Anchoring:** marks survive typical agent rewrites. Detached marks show up and reattach. Marks are in the same place in the window, on the wall and in the PNG.
 - **Lifetimes:** a dismissed author, a floor removed and added back, and the selection after a restart and after deleting the selected card.
@@ -271,15 +254,15 @@ The work is done when each of these passes, by test where it can be automated an
 
 ### Acceptance results
 
-From the integration pass. "By test" names the suite in `tests/`; "by hand" was a scratch office on macOS (Chromium headless shell 1248, sandbox on) with two shell workers and two agent workers driving `office-whiteboard` through their hook tokens, and the window at 1440×900 and 1024×700.
+From the original integration pass. "By test" names the suite in `tests/`; "by hand" used the then-current agent interface in a scratch office on macOS, with the window at 1440×900 and 1024×700.
 
 | Check | Result |
 | --- | --- |
 | Isolation | Passed by test (`whiteboard-isolation`: the window, the renderer and a card URL in a tab of its own; `whiteboard-browser`: no permissions, storage or service workers in a fresh context). |
 | Forms and state | Passed by test (`whiteboard-sdk`: focus, caret and unsaved typing through content reloads, a held remote write, an IME composition, typing and then closing at once; `whiteboard-model`: frame writes become state operations on their own card). Passed by hand: text, textarea, checkbox, select, radio, a `data-wb-action` button and API state, through a tab reload, a content update while typing (focus and caret kept), an agent's `state merge`, an office restart, and closing with Esc or ✕ right after typing. |
-| Reading | Passed by test (`whiteboard-model`: partial reads, the sticky text-then-move case, tombstones, the owner and two agents; `whiteboard-render` and `whiteboard-agent`: a `--png` read of its own snapshot through an update and a deletion). By hand, owner marks showed as changed to an agent. |
+| Reading | Passed by test (`whiteboard-model`: partial reads, the sticky text-then-move case, tombstones, the owner and two agents; `whiteboard-render` and `whiteboard-agent`: a PNG read of its own snapshot through an update and a deletion). By hand, owner marks showed as changed to an agent. |
 | Concurrency and recovery | Passed by test (`whiteboard-store`: retries, expired epochs by age and count, a kill at each commit point, pinned snapshots; `whiteboard-sync`: offline batches, drafts). |
-| Assets | Passed by test (`whiteboard-store`, `whiteboard-render`). Passed by hand: a `--link` page with CSS and an image, and a `--dir` package with a module import and `fetch('./data.json')`, in the window and in `--png`. |
+| Assets | Passed by test (`whiteboard-store`, `whiteboard-render`). Passed by hand: a linked page with CSS and an image, and a folder package with a module import and `fetch('./data.json')`, in the window and in PNG renders. |
 | Links | Passed by test (`whiteboard-store`, a deleted worktree included). Passed by hand: edit, atomic replace, delete (**Link broken** with the reason) and restore, a refused `update`, and `unlink`. |
 | Anchoring | Passed by test (`whiteboard-sdk`, 13 rewrites; numbers under [Risks](#risks-and-open-questions); `whiteboard-model` and `whiteboard-render`: detach and reattach, and marks drawn where the SDK places them). Passed by hand: a pin and a sticky far down a 6981-pixel page sit in the same place in the window, on the wall and in the PNG, and canvas stickies at negative points line up on the wall. |
 | Lifetimes | Passed by test (`whiteboard-model`, `whiteboard-store`). Passed by hand: a dismissed author's card still says who made it, a floor removed and added back keeps its board and selection, the selection survives a restart, and deleting the selected card puts the wall on the grid. |
@@ -293,5 +276,5 @@ From the integration pass. "By test" names the suite in `tests/`; "by hand" was 
 - **Chromium on every install:** the headless shell build, about 100 MB to download and 200 MB on disk, and its system libraries on Linux developer checkouts. Check that the Mac app starts promptly and that no network doesn't stop the office (the board then says renders are unavailable).
 - **The Mac app and a downloaded browser:** check that a Chromium the signed app downloads at runtime launches cleanly under Gatekeeper, with no quarantine prompt.
 - **Anchoring quality:** agents rewrite whole artifacts often. `tests/whiteboard-sdk.test.ts` measures it on 13 typical rewrites (the same page pushed again; sections removed, renumbered, reordered, added at the top and wrapped in new divs; a renamed heading and an edited sentence; a reworded title; a rewrite from scratch; near-identical options removed or reordered; and `data-wb-id` sections reordered or given new ids), 198 pins in all. 168 stay on their element, 28 detach because their element is gone, 2 (1%) detach though their element is still there (a heading and a title reworded past a light edit), and none lands on the wrong element. The earlier matcher, on the same set, detached 24 pins whose element was still there. A mark that detaches is drawn at its last point, so a detached pin can look as if it sits on whatever moved into that spot. The window lists it under detached, with **Reattach**.
-- **Sandbox and network:** an artifact with network access can send out anything it shows. It cannot reach the office's token or other cards. Say this plainly in the skill and the guide.
+- **Sandbox and network:** an artifact with network access can send out anything it shows. It cannot reach the office's token or other cards. Say this plainly in the tool guidance and the guide.
 - **Chromium's sandbox on Linux:** recent Ubuntu releases restrict the unprivileged user namespaces it needs. The AppArmor profile in `deploy/provision.sh` covers the EC2 box. A hand-installed Linux office may need the same profile, and the error says so.

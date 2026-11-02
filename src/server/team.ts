@@ -1,10 +1,9 @@
 // A floor's leads and their subagents. Any agent at a desk, and the Team lead at its kiosk, can hire
-// subagents with the office-workers command (bin/office-workers.js), which talks to /office/workers
-// with the worker's own hook token. A subagent is a real worker: it sits at the free desk nearest
+// subagents through the authenticated Office MCP team tools. A subagent is a real worker: it sits at the free desk nearest
 // its lead, with its own laptop and terminal, and its WorkerInfo.lead says whose it is. This keeps
 // what the lead hasn't heard yet: its subagents' reports and questions, and when one finishes a
 // turn, needs input in its terminal, stops or leaves. A lead at rest is told when there's news
-// (SubagentSettings.wakeLead), so it doesn't have to sit in `office-workers wait`.
+// (SubagentSettings.wakeLead), or polls its team's status without blocking.
 
 import { readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
@@ -43,7 +42,7 @@ export interface TeamOptions {
   /** It's a git checkout, so subagents can have worktrees. */
   git: boolean;
   settings(): SubagentSettings;
-  /** Droid's model list, for `office-workers models`. None: only what the settings name. */
+  /** Droid's model list, for team_models. None: only what the settings name. */
   models?: () => Promise<DroidModelCatalogue>;
   /** Subscriptions: whether a subscription model can run now; undefined when it isn't one or nobody can tell (docs/subscriptions.md). */
   availability?: (model: string) => ModelAvailability | undefined;
@@ -54,7 +53,7 @@ export interface TeamOptions {
   now?: () => number;
 }
 
-export type TeamEventKind = 'report' | 'question' | 'done' | 'needs_input' | 'stopped';
+export type TeamEventKind = 'report' | 'question' | 'done' | 'needs_input' | 'stopped' | 'left';
 
 /** Something a lead hasn't heard yet about one of its subagents. */
 export interface TeamEvent {
@@ -66,11 +65,11 @@ export interface TeamEvent {
   kind: TeamEventKind;
   text?: string;
   at: number;
-  /** Handed to the lead by `office-workers wait`. */
+  /** Drained by this lead's status request. */
   seen?: boolean;
 }
 
-/** A subagent as `office-workers` shows it. */
+/** A subagent as the team tools show it. */
 export interface TeamMember {
   id: string;
   name: string;
@@ -94,7 +93,7 @@ export interface TeamReply {
   body: Record<string, unknown>;
 }
 
-/** A model as `office-workers models` shows it to a lead choosing one. */
+/** A model as team_models shows it to a lead choosing one. */
 export interface TeamModel {
   id: string;
   name: string;
@@ -121,7 +120,6 @@ export interface TeamModel {
 const TASK_MAX = 20_000;
 const TITLE_MAX = 80;
 const FROM_MAX = 200;
-const READ_DEFAULT = 80;
 const READ_MAX = 400;
 /** How many events the floor keeps, all leads together. */
 const LOG_MAX = 400;
@@ -129,12 +127,13 @@ const LOG_MAX = 400;
 const TYPING_MS = 5000;
 
 /** The most telling news about one subagent, when there's more than one. */
-const WEIGHT: Record<TeamEventKind, number> = { question: 5, report: 4, needs_input: 3, stopped: 2, done: 1 };
+const WEIGHT: Record<TeamEventKind, number> = { question: 5, report: 4, needs_input: 3, stopped: 2, left: 2, done: 1 };
 const NEWS: Record<TeamEventKind, string> = {
   question: 'asked you a question',
   report: 'reported back',
   needs_input: 'needs someone to answer it in its own terminal',
   stopped: 'stopped',
+  left: 'left the floor',
   done: 'finished its turn without reporting',
 };
 
@@ -190,6 +189,8 @@ export class Team {
 
   /** A worker left the floor: forget it and discard its own news. */
   onWorkerGone(id: string) {
+    const previous = this.known.get(id);
+    if (previous?.lead && this.workers.get(previous.lead)) this.push({ lead: previous.lead, worker: id, name: previous.name, kind: 'left' });
     this.known.delete(id);
     this.reported.delete(id);
     const before = this.log.length;
@@ -205,22 +206,23 @@ export class Team {
     this.timers.clear();
   }
 
-  /** An office-workers request from `caller`, a worker that proved who it is with its hook token. */
+  /** A former lead can still drain final reports and departures after hiring is disabled. */
+  hasNews(lead: string): boolean {
+    return this.log.some((event) => event.lead === lead && !event.seen);
+  }
+
+  /** A team operation from an authenticated office worker. */
   async handle(caller: WorkerInfo, raw: unknown): Promise<TeamReply> {
     const b = (raw && typeof raw === 'object' ? raw : {}) as Record<string, unknown>;
     switch (b.action) {
       case 'whoami':
         return ok(this.whoami(caller));
-      case 'list':
-        return ok({ ...this.whoami(caller), team: this.teamOf(caller.id).map((w) => this.member(w)) });
+      case 'status':
+        return this.status(caller, b);
       case 'hire':
         return this.hire(caller, b);
       case 'models':
         return this.models(caller);
-      case 'events':
-        return this.events(caller, b);
-      case 'read':
-        return this.read(caller, b);
       case 'send':
         return this.send(caller, b);
       case 'dismiss':
@@ -228,7 +230,7 @@ export class Team {
       case 'report':
         return this.report(caller, b);
       default:
-        return no(400, 'Unknown action: use whoami, list, hire, models, events, read, send, dismiss or report');
+        return no(400, 'Unknown action: use whoami, status, hire, models, send, dismiss or report');
     }
   }
 
@@ -240,7 +242,7 @@ export class Team {
     if (w.kind !== 'agent') return 'Only agents hire subagents';
     if (w.lead) {
       const boss = this.workers.get(w.lead)?.name ?? 'your lead';
-      return `You're a subagent of ${boss}, and subagents can't hire their own: do your task yourself, or ask ${boss} with office-workers report --question`;
+      return `You're a subagent of ${boss}, and subagents can't hire their own: do your task yourself, or ask ${boss} with team_report and question: true`;
     }
     const station = DESK_BY_ID.get(w.deskId)?.station;
     // The Pipeline agent hires the worker that heals a failed run.
@@ -330,7 +332,7 @@ export class Team {
     return cannotRun(a) ? a : undefined;
   }
 
-  /** Why a worker on `model` can't run now, as `office-workers models` says it; undefined when it can. */
+  /** Why a worker on `model` can't run now, as team_models says it; undefined when it can. */
   private whyNot(model: string): string | undefined {
     const a = this.blocked(model);
     return a ? availabilityWords(a, this.now()) : undefined;
@@ -353,10 +355,10 @@ export class Team {
     const pool = s.models?.length ? s.models.map((m) => m.id) : (catalogue?.models ?? []).filter((m) => !m.legacy).map((m) => m.id);
     const fine = pool.filter((x) => x !== id && !this.blocked(x));
     const head = hireRefusal(name(id), a, this.now());
-    const which = named ? '' : ' It is the default subagent model, so pass --model.';
+    const which = named ? '' : ' It is the default subagent model, so set model in team_hire.';
     if (!fine.length) return `${head}${which} No other model a subagent may run can run now either: tell whoever asked you.`;
     const shown = fine.slice(0, 8);
-    return `${head}${which} Pick one that can: ${shown.join(', ')}${fine.length > shown.length ? `, and ${fine.length - shown.length} more in office-workers models` : ''}.`;
+    return `${head}${which} Pick one that can: ${shown.join(', ')}${fine.length > shown.length ? `, and ${fine.length - shown.length} more in team_models` : ''}.`;
   }
 
   private teamOf(leadId: string): WorkerInfo[] {
@@ -389,7 +391,7 @@ export class Team {
   /** One of `lead`'s subagents, by its id or its name. */
   private resolve(lead: WorkerInfo, ref: unknown): WorkerInfo | string {
     const want = typeof ref === 'string' ? ref.trim().toLowerCase() : '';
-    if (!want) return 'Name the subagent: office-workers list shows your team';
+    if (!want) return 'Name the subagent: team with action status shows your team';
     const team = this.teamOf(lead.id);
     const found = team.find((w) => w.id === want || w.name.toLowerCase() === want || w.name.replace(/ 🐚$/, '').toLowerCase() === want);
     if (found) return found;
@@ -408,7 +410,7 @@ export class Team {
     const effort = b.effort === undefined || b.effort === '' ? undefined : b.effort;
     if (effort !== undefined && !isAgentEffort(effort)) return `Effort is one of ${AGENT_EFFORTS.join(', ')}`;
     if (model !== undefined && s.models?.length && model !== this.defaultModel(droidDefault) && !s.models.some((m) => m.id === model)) {
-      return `${clip(model, 60)} isn't one of the models this office lets subagents use (⚙️ Settings → Subagents & visits): pick one from office-workers models, or leave --model out for the default`;
+      return `${clip(model, 60)} isn't one of the models this office lets subagents use (⚙️ Settings → Subagents & visits): pick one from team_models, or leave model out for the default`;
     }
     if (model === undefined && effort === undefined) return s.agent ? { ...s.agent } : {};
     // A worker hired with no model starts on the office default, effort and all, so what the lead
@@ -423,7 +425,7 @@ export class Team {
     const why = this.cannotHire(lead);
     if (why) return no(403, why);
     const task = str(b.task, TASK_MAX).trim();
-    if (!task) return no(400, 'The subagent needs a task: give its brief on stdin (office-workers hire --title "…" <<\'EOF\' … EOF)');
+    if (!task) return no(400, 'The subagent needs a task: provide its brief in team_hire');
     const s = this.opts.settings();
     const asked = typeof b.model === 'string' ? b.model.trim() : '';
     // Only a model outside the list needs droid's own default, which subagents may always run.
@@ -434,16 +436,16 @@ export class Team {
     if (refused) return no(409, refused);
     const full = () => {
       const n = this.teamOf(lead.id).length;
-      return n >= s.maxPerLead ? `You have ${n} subagents, the most one lead has at once in this office: dismiss one you're done with first (office-workers dismiss <name>)` : undefined;
+      return n >= s.maxPerLead ? `You have ${n} subagents, the most one lead has at once in this office: use team with action dismiss and its name only when both worker and worktree are no longer needed` : undefined;
     };
     const tooMany = full();
     if (tooMany) return no(409, tooMany);
-    if (b.worktree === true && !this.opts.git) return no(400, "This floor's project isn't a git checkout, so subagents can't have worktrees: hire with --no-worktree");
+    if (b.worktree === true && !this.opts.git) return no(400, "This floor's project isn't a git checkout, so subagents can't have worktrees: set worktree: false in team_hire");
     const worktree = (typeof b.worktree === 'boolean' ? b.worktree : s.worktree) && this.opts.git;
     const from = typeof b.from === 'string' && b.from.trim() ? b.from.trim() : undefined;
     if (from !== undefined) {
-      if (!worktree) return no(400, '--from is where a subagent’s own worktree starts: hire it with a worktree, or leave --from out');
-      if (from.length > FROM_MAX || !/^[^-\s][^\s]*$/.test(from)) return no(400, `--from takes a branch, tag or commit (got ${clip(from, 40)})`);
+      if (!worktree) return no(400, 'from is where a subagent’s own worktree starts: hire it with a worktree, or leave from out');
+      if (from.length > FROM_MAX || !/^[^-\s][^\s]*$/.test(from)) return no(400, `from takes a branch, tag or commit (got ${clip(from, 40)})`);
     }
     // Fetched, so `--from origin/main` is what's on the forge now. Without --from it starts where the
     // lead is, moved up to origin's copy of that branch when the lead's is behind it.
@@ -464,43 +466,34 @@ export class Team {
     return ok({ worker: this.member(this.workers.get(info.id) ?? info) });
   }
 
-  /** What the lead hasn't heard yet, for `office-workers wait`, which then counts as heard. */
-  private events(lead: WorkerInfo, b: Record<string, unknown>): TeamReply {
-    let only: Set<string> | undefined;
-    if (Array.isArray(b.workers) && b.workers.length) {
-      only = new Set();
-      for (const ref of b.workers) {
-        const w = this.resolve(lead, ref);
-        // One that's gone may still have news waiting: its last word, or that it left.
-        const gone = typeof w === 'string' ? this.log.find((e) => e.lead === lead.id && (e.worker === ref || e.name.toLowerCase() === String(ref).toLowerCase())) : undefined;
-        if (typeof w !== 'string') only.add(w.id);
-        else if (gone) only.add(gone.worker);
-        else return no(404, w);
-      }
-    }
-    const news = this.log.filter((e) => e.lead === lead.id && !e.seen && (!only || only.has(e.worker)));
-    for (const e of news) e.seen = true;
-    if (news.length) this.persist();
-    return ok({
-      events: news.map((e) => ({ kind: e.kind, worker: e.worker, name: e.name, at: e.at, ...(e.text ? { text: e.text } : {}) })),
-      team: this.teamOf(lead.id).map((w) => this.member(w)),
+  /** Snapshot and all unread news for this caller, without waiting for new events. */
+  private status(lead: WorkerInfo, b: Record<string, unknown>): TeamReply {
+    const named = b.worker !== undefined ? this.resolve(lead, b.worker) : undefined;
+    if (typeof named === 'string') return no(404, named);
+    const selected = named ? [named] : this.teamOf(lead.id);
+    const lines = Number.isInteger(b.lines) ? Math.min(READ_MAX, Math.max(1, b.lines as number)) : undefined;
+    const team = selected.map((w) => {
+      const member = this.member(w);
+      if (lines === undefined) return member;
+      const text = this.workers.tail(w.id, lines);
+      return { ...member, ...(text === undefined ? { terminalUnavailable: `${w.name} has no terminal yet: it's ${w.status}` } : { terminal: text }) };
     });
+    return ok({ ...this.whoami(lead), team, events: this.drainNews(lead) });
   }
 
-  private read(lead: WorkerInfo, b: Record<string, unknown>): TeamReply {
-    const w = this.resolve(lead, b.worker);
-    if (typeof w === 'string') return no(404, w);
-    const lines = Number.isInteger(b.lines) ? Math.min(READ_MAX, Math.max(1, b.lines as number)) : READ_DEFAULT;
-    const text = this.workers.tail(w.id, lines);
-    if (text === undefined) return no(409, `${w.name} has no terminal yet: it's ${w.status}`);
-    return ok({ worker: this.member(w), text });
+  /** What the lead hasn't heard yet, including from subagents that already left; draining counts as heard. */
+  private drainNews(lead: WorkerInfo): Pick<TeamEvent, 'kind' | 'worker' | 'name' | 'at' | 'text'>[] {
+    const news = this.log.filter((e) => e.lead === lead.id && !e.seen);
+    for (const e of news) e.seen = true;
+    if (news.length) this.persist();
+    return news.map((e) => ({ kind: e.kind, worker: e.worker, name: e.name, at: e.at, ...(e.text ? { text: e.text } : {}) }));
   }
 
   private send(lead: WorkerInfo, b: Record<string, unknown>): TeamReply {
     const w = this.resolve(lead, b.worker);
     if (typeof w === 'string') return no(404, w);
     const text = str(b.text, TASK_MAX).trim();
-    if (!text) return no(400, "Give the message on stdin (office-workers send <name> <<'EOF' … EOF)");
+    if (!text) return no(400, 'Provide text for team with action message');
     if (w.status === 'starting') return no(409, `${w.name} is still starting up: try again in a few seconds`);
     if (w.status === 'needs_input') return no(409, `${w.name} is waiting on an answer in its own terminal (${w.activity ?? 'a prompt'}): someone has to answer it there, so tell the person`);
     const message = officePrompt(this.opts.prompts, 'subagent.message', { from: lead.name, ...workerMessageVars(text) });
@@ -521,9 +514,9 @@ export class Team {
 
   private report(w: WorkerInfo, b: Record<string, unknown>): TeamReply {
     const lead = w.lead ? this.workers.get(w.lead) : undefined;
-    if (!lead) return no(403, "Nobody hired you with office-workers, so there's no lead to report to: say it in your own terminal instead");
+    if (!lead) return no(403, 'You have no lead to report to: say it in your own terminal instead');
     const text = str(b.text, TASK_MAX).trim();
-    if (!text) return no(400, "Give the report on stdin (office-workers report <<'EOF' … EOF)");
+    if (!text) return no(400, 'Provide text for team_report');
     const question = b.question === true;
     this.push({ lead: lead.id, worker: w.id, name: w.name, kind: question ? 'question' : 'report', text });
     if (!question) this.reported.add(w.id);
@@ -565,7 +558,7 @@ export class Team {
     const lead = this.workers.get(leadId);
     const news = this.unnudged(leadId);
     if (!lead || !news.length || lead.kind !== 'agent') return;
-    // Busy: it hears when it next waits, or is woken once it comes to rest (onWorker).
+    // Busy: it hears when it next reads status, or is woken once it comes to rest (onWorker).
     if (lead.status !== 'done' && lead.status !== 'idle') return;
     if (lead.lastInputAt !== undefined && this.now() - lead.lastInputAt < TYPING_MS) {
       this.scheduleNudge(leadId);

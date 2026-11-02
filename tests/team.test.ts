@@ -173,9 +173,9 @@ test('a lead picks the branch its subagent starts from, and only for a worktree'
     assert.equal(out.status, 400, JSON.stringify(body));
     assert.match(out.body.error, why);
   };
-  await no({ from: 'main', worktree: false }, /--from is where a subagent’s own worktree starts/);
-  await no({ from: '--upload-pack=evil' }, /--from takes a branch, tag or commit/);
-  await no({ from: 'two words' }, /--from takes a branch, tag or commit/);
+  await no({ from: 'main', worktree: false }, /from is where a subagent’s own worktree starts/);
+  await no({ from: '--upload-pack=evil' }, /from takes a branch, tag or commit/);
+  await no({ from: 'two words' }, /from takes a branch, tag or commit/);
   assert.equal(r.fake.hired.length, 2);
 });
 
@@ -231,7 +231,7 @@ test('models lists what a lead may pick, with credit multipliers and notes, and 
   assert.equal((await r.call('lead', { action: 'hire', task: 'c', model: 'claude-opus-5-5' })).status, 200, "droid's default is always allowed");
   const refused = await r.call('lead', { action: 'hire', task: 'd', model: 'old' });
   assert.equal(refused.status, 400);
-  assert.match(refused.body.error, /old isn't one of the models this office lets subagents use[\s\S]*office-workers models/);
+  assert.match(refused.body.error, /old isn't one of the models this office lets subagents use[\s\S]*team_models/);
   assert.equal((await r.call('lead', { action: 'hire', task: 'e', effort: 'low' })).status, 200, 'leaving --model out is never refused');
   assert.deepEqual(
     r.fake.hired.map((h) => h.choice.model),
@@ -301,7 +301,7 @@ test("models says which subscription models can't run and why, and hire refuses 
   assert.equal(named.body.error, `Can't hire on Opus 5.5: no Claude account is connected. Pick one that can: ${GROK}, glm-5.3-flash.`);
   const byDefault = await r.call('lead', { action: 'hire', task: 'b' });
   assert.equal(byDefault.status, 409);
-  assert.match(byDefault.body.error, /^Can't hire on GPT 6.1 Sol: out of quota, back in 41 min \(5-hour\)\. It is the default subagent model, so pass --model\. Pick one that can:/);
+  assert.match(byDefault.body.error, /^Can't hire on GPT 6.1 Sol: out of quota, back in 41 min \(5-hour\)\. It is the default subagent model, so set model in team_hire\. Pick one that can:/);
   assert.equal(r.fake.hired.length, 0, 'no desk was taken');
   assert.equal(r.fake.fetched, 0);
   assert.equal((await r.call('lead', { action: 'hire', task: 'c', model: GROK })).status, 200);
@@ -312,7 +312,7 @@ test("models says which subscription models can't run and why, and hire refuses 
   availability[GROK] = { state: 'disabled', provider: 'grok' };
   const none = await r.call('lead', { action: 'hire', task: 'd' });
   assert.equal(none.status, 409);
-  assert.match(none.body.error, /^Can't hire on GLM-5.3-Flash: DroidProxy isn't installed\. It is the default subagent model, so pass --model\. No other model a subagent may run can run now either/);
+  assert.match(none.body.error, /^Can't hire on GLM-5.3-Flash: DroidProxy isn't installed\. It is the default subagent model, so set model in team_hire\. No other model a subagent may run can run now either/);
   // A stopped DroidProxy doesn't refuse: the office starts it.
   availability[GROK] = { state: 'proxy-down', installed: true };
   assert.equal((await r.call('lead', { action: 'hire', task: 'e', model: GROK })).status, 200);
@@ -383,7 +383,7 @@ test('whoami and list say who you are, what you may do, and how your team is doi
 
   r.set('sub1', 'working', { activity: 'Editing login.ts' });
   await r.call('sub1', { action: 'report', text: 'Fixed it in #12' });
-  const list = (await r.call('lead', { action: 'list' })).body;
+  const list = (await r.call('lead', { action: 'status' })).body;
   assert.equal(list.team.length, 1);
   assert.equal(list.team[0].activity, 'Editing login.ts');
   assert.equal(list.team[0].settled, false);
@@ -395,7 +395,7 @@ test("a subagent's reports, questions and turns reach its lead once, and finishi
   const r = rig(t, { nudgeDelayMs: 60_000 });
   await r.call('lead', { action: 'hire', task: 'a' });
   await r.call('lead', { action: 'hire', task: 'b' });
-  const events = async (body: Record<string, unknown> = {}) => (await r.call('lead', { action: 'events', ...body })).body;
+  const events = async (body: Record<string, unknown> = {}) => (await r.call('lead', { action: 'status', ...body })).body;
 
   r.set('sub1', 'working');
   r.set('sub2', 'working');
@@ -427,12 +427,13 @@ test("a subagent's reports, questions and turns reach its lead once, and finishi
   await r.call('sub1', { action: 'report', text: 'Which branch?', question: true });
   r.set('sub1', 'working');
   r.set('sub1', 'exited', { exitCode: 1 });
-  got = await events({ workers: ['pixel'] });
+  got = await events();
   assert.deepEqual(
-    got.events.map((e: any) => [e.kind, e.text]),
+    got.events.map((e: any) => [e.kind, e.name, e.text]),
     [
-      ['question', 'Which branch?'],
-      ['stopped', 'exit code 1'],
+      ['done', 'Byte', 'Tidying the tests'],
+      ['question', 'Pixel', 'Which branch?'],
+      ['stopped', 'Pixel', 'exit code 1'],
     ],
   );
   r.fake.ws.delete('sub2');
@@ -440,9 +441,9 @@ test("a subagent's reports, questions and turns reach its lead once, and finishi
   got = await events();
   assert.deepEqual(
     got.events.map((e: any) => [e.kind, e.name, e.text]),
-    [['done', 'Byte', 'Tidying the tests']],
+    [['left', 'Byte', undefined]],
   );
-  assert.match((await r.call('lead', { action: 'events', workers: ['Nova'] })).body.error, /No subagent called Nova: yours are Pixel/);
+  assert.match((await r.call('lead', { action: 'status', worker: 'Nova' })).body.error, /No subagent called Nova: yours are Pixel/);
 
   // Restored asleep after a restart and woken: no news in that.
   r.set('sub1', 'offline');
@@ -460,7 +461,7 @@ test("a lead's news outlives a restart, and goes with the lead", async (t) => {
   t.after(() => again.stop());
   const lead = r.fake.get('lead')!;
   assert.deepEqual(
-    ((await again.handle(lead, { action: 'events' })).body.events as any[]).map((e) => e.text),
+    ((await again.handle(lead, { action: 'status' })).body.events as any[]).map((e) => e.text),
     ['All done'],
   );
   await again.handle(r.fake.get('sub1')!, { action: 'report', text: 'One more thing' });
@@ -469,18 +470,22 @@ test("a lead's news outlives a restart, and goes with the lead", async (t) => {
   const third = new Team(r.fake, { dataDir: r.dir, dir: '/proj', git: true, settings: () => r.settings, toast() {} });
   t.after(() => third.stop());
   r.fake.add(lead);
-  assert.deepEqual((await third.handle(lead, { action: 'events' })).body.events, []);
+  assert.deepEqual((await third.handle(lead, { action: 'status' })).body.events, []);
 });
 
-test('a subagent leaving does not wake its lead or create an event', async (t) => {
+test('a subagent leaving creates news for its lead', async (t) => {
   const r = rig(t);
   await r.call('lead', { action: 'hire', task: 'a' });
   r.set('lead', 'done');
   r.fake.ws.delete('sub1');
   r.team.onWorkerGone('sub1');
   await sleep(40);
-  assert.deepEqual(r.fake.prompts, []);
-  assert.deepEqual((await r.call('lead', { action: 'events' })).body.events, []);
+  assert.equal(r.fake.prompts.length, 1);
+  assert.match(r.fake.prompts[0][1], /Pixel left the floor/);
+  assert.deepEqual(
+    (await r.call('lead', { action: 'status' })).body.events.map((e: any) => [e.kind, e.name]),
+    [['left', 'Pixel']],
+  );
 });
 
 test('a lead at rest is woken once per batch of news, and a busy one when it comes to rest', async (t) => {
@@ -497,7 +502,7 @@ test('a lead at rest is woken once per batch of news, and a busy one when it com
   assert.equal(r.fake.prompts.length, 1);
   const [to, text] = r.fake.prompts[0];
   assert.equal(to, 'lead');
-  assert.match(text, /^Droid Office notice: team update\nPixel reported back\. Byte finished its turn without reporting\.\n\nOffice guidance: Run `office-workers wait`/);
+  assert.match(text, /^Droid Office notice: team update\nPixel reported back\. Byte finished its turn without reporting\.\n\nOffice guidance: Call `team` with action "status"/);
   await sleep(20);
   assert.equal(r.fake.prompts.length, 1, 'once for the same news');
 
@@ -515,7 +520,7 @@ test('a lead at rest is woken once per batch of news, and a busy one when it com
   // News it has already heard with wait wakes nobody, and neither does someone typing to it.
   r.set('lead', 'working');
   await r.call('sub1', { action: 'report', text: 'And the tests' });
-  await r.call('lead', { action: 'events' });
+  await r.call('lead', { action: 'status' });
   r.set('lead', 'done');
   await sleep(30);
   assert.equal(r.fake.prompts.length, 2);
@@ -538,13 +543,13 @@ test("a lead reads, messages and dismisses only its own subagents, and a subagen
   r.fake.add(worker({ id: 'other', deskId: 'desk-9', name: 'Gizmo' }));
   await r.call('lead', { action: 'hire', task: 'a' });
   r.fake.tails.set('sub1', 'line 1\nline 2');
-  assert.deepEqual((await r.call('lead', { action: 'read', worker: 'PIXEL', lines: 2 })).body.text, 'line 1\nline 2');
-  assert.match((await r.call('lead', { action: 'read', worker: 'Gizmo' })).body.error, /Gizmo isn't one of your subagents: yours are Pixel/);
-  assert.match((await r.call('lead', { action: 'read', worker: '' })).body.error, /Name the subagent/);
+  assert.deepEqual((await r.call('lead', { action: 'status', worker: 'PIXEL', lines: 2 })).body.team[0].terminal, 'line 1\nline 2');
+  assert.match((await r.call('lead', { action: 'status', worker: 'Gizmo' })).body.error, /Gizmo isn't one of your subagents: yours are Pixel/);
+  assert.match((await r.call('lead', { action: 'status', worker: '' })).body.error, /Name the subagent/);
   r.set('sub1', 'working');
-  assert.match((await r.call('lead', { action: 'read', worker: 'sub2' })).body.error, /No subagent called sub2/);
+  assert.match((await r.call('lead', { action: 'status', worker: 'sub2' })).body.error, /No subagent called sub2/);
 
-  assert.match((await r.call('lead', { action: 'send', worker: 'Pixel' })).body.error, /on stdin/);
+  assert.match((await r.call('lead', { action: 'send', worker: 'Pixel' })).body.error, /Provide text/);
   assert.equal((await r.call('lead', { action: 'send', worker: 'Pixel', text: 'Use main' })).status, 200);
   assert.equal(r.fake.prompts.at(-1)?.[0], 'sub1');
   assert.match(r.fake.prompts.at(-1)![1], /^Droid Office delivery: message from your lead Nibble \(a worker, not the owner\)\n\n## Worker message\n```text\nUse main\n```\n\n## Office guidance/);

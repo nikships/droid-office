@@ -40,8 +40,7 @@
 //       The office's own page uploads a file (a picture, an uploaded folder's files) before the batch
 //       that uses it; answers with its FileRef. Held for STAGE_TTL_MS for that batch.
 //
-//   POST http://127.0.0.1:<hook port>/office/whiteboard?worker=<id>   (Authorization: Bearer <hook token>)
-//       For office-whiteboard (see whiteboard-agent.ts): hello, read, apply.
+//   The Office MCP's whiteboard_* tools on the hook server (see office-mcp/whiteboard.ts): read, apply.
 
 import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
 import { closeSync, existsSync, fsyncSync, mkdirSync, openSync, readFileSync, readdirSync, renameSync, rmSync, statSync, watch, writeFileSync, writeSync, type FSWatcher } from 'node:fs';
@@ -386,7 +385,7 @@ export type ApplyOutcome = { kind: 'ack'; rev: number; duplicate?: true } | { ki
 /** Where a commit can be cut short (tests simulate a crash there). */
 export type CrashPoint = 'blobs' | 'temp' | 'rename';
 
-/** Who sent a batch: the owner's window, an agent's office-whiteboard, or the office itself. */
+/** Who sent a batch: the owner's window, an agent's Office MCP tool call, or the office itself. */
 export type ApplySource = 'window' | 'agent' | 'office';
 
 export interface WhiteboardOptions {
@@ -510,7 +509,7 @@ export class WhiteboardStore {
 
   // ---- Epochs ----
 
-  /** A new epoch for a client (an office tab's connection, or one office-whiteboard run). Nothing is written. */
+  /** A new epoch for a client (an office tab's connection, or one Office MCP tool call). Nothing is written. */
   issueEpoch(): string {
     const body = `${this.now().toString(36)}.${randomBytes(9).toString('base64url')}`;
     return `${body}.${this.mac(`epoch:${body}`).slice(0, 16)}`;
@@ -982,7 +981,7 @@ export class WhiteboardStore {
       try {
         renameSync(file, kept);
       } catch {}
-      console.error(`[whiteboard] ${file} couldn't be read (${reason}); kept it as ${kept} and made a new key. Open card windows reload, and running office-whiteboard commands must be run again.`);
+      console.error(`[whiteboard] ${file} couldn't be read (${reason}); kept it as ${kept} and made a new key. Open card windows reload; agents' Whiteboard tool calls must be made again.`);
     }
     const k = randomBytes(32);
     const tmp = `${file}.tmp`;

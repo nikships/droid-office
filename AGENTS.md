@@ -12,6 +12,7 @@ Planned work has written plans; follow them and keep them current when doing tha
 | Factory: the API key connection, and the computers, sessions and credits, CI, AutoWiki and cloud workers built on it | [docs/factory.md](docs/factory.md) (implemented) |
 | The Whiteboard: the agent and owner board that replaces the Services board, and removing Services | [docs/whiteboard.md](docs/whiteboard.md) (implemented) |
 | Setup and Subscriptions: installing and signing in Droid, the welcome, DroidProxy and the subscriptions workers run on, and refusing models that can't run | [docs/subscriptions.md](docs/subscriptions.md) (implemented) |
+| The Office MCP: one MCP server replacing the office-workers, office-whiteboard and office-visit commands and the bundled skills | [docs/office-mcp.md](docs/office-mcp.md) (implemented) |
 
 ## Repository map
 
@@ -25,7 +26,7 @@ Planned work has written plans; follow them and keep them current when doing tha
 | `electron-builder.yml`, `build/` | How the Mac app is packaged, signed and notarized; its icon and entitlements |
 | `android/` | Droid Office for Android, the phone companion app (Kotlin, Compose; its own Gradle build) |
 | `bin/droid-office.js` | Source checkout and Mac app CLI entry; loads the built `dist/server/server/cli.js` |
-| `bin/office-workers.js` | Plain-Node `office-workers` command that agents use to hire and run subagents (`src/server/team.ts`) |
+| `src/server/office-mcp/` | Authenticated Office MCP tools for teams, visits and Whiteboards |
 | `tests/` | `node:test` suites run through `tsx` |
 | `deploy/` | `aws.sh` (EC2 lifecycle) and `provision.sh` (machine setup it runs) |
 | `docs/` | `guide/` (chapters for every feature, setup and how each subsystem works) and the README pictures |

@@ -332,7 +332,7 @@ test('ping picker: each row says what the worker is on and where', () => {
 
 test('Copy for agent: one line with the id, the title and the read command', () => {
   const line = copyForAgent({ id: 'c-1a2b', title: '  Pricing\n draft ', kind: 'html' });
-  assert.equal(line, 'Whiteboard card c-1a2b “Pricing draft” (artifact): run `office-whiteboard read c-1a2b` to see it with my marks.');
+  assert.equal(line, 'Whiteboard card c-1a2b “Pricing draft” (artifact): call `whiteboard_read` with cards: ["c-1a2b"] to see it with my marks.');
   assert.ok(!line.includes('\n'));
   assert.match(copyForAgent({ id: 'c-9', title: 'Sketch', kind: 'canvas' }), /\(canvas\)/);
 });

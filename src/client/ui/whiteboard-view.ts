@@ -187,7 +187,7 @@ export function deleteConfirmText(titles: readonly string[], shown = 5): { title
 /** One line to paste into a prompt that names the card and how to read it. */
 export function copyForAgent(card: Pick<Card, 'id' | 'title' | 'kind'>): string {
   const title = card.title.replace(/\s+/g, ' ').trim();
-  return `Whiteboard card ${card.id} “${title}” (${card.kind === 'canvas' ? 'canvas' : 'artifact'}): run \`office-whiteboard read ${card.id}\` to see it with my marks.`;
+  return `Whiteboard card ${card.id} “${title}” (${card.kind === 'canvas' ? 'canvas' : 'artifact'}): call \`whiteboard_read\` with cards: ["${card.id}"] to see it with my marks.`;
 }
 
 // ---- Ids ----

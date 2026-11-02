@@ -879,11 +879,8 @@ function cardChip(status: WorkerStatus, pr: PrBadge | undefined, lost: boolean):
  */
 type Act = 'rest' | 'up' | 'waiting' | 'type' | WorkerAction | VisitPose;
 
-/**
- * How it holds itself on a visit to another worker's desk (see visitors.ts): on its feet, leaning
- * over the other laptop to read it, or talking with a hand out.
- */
-export type VisitPose = 'stand' | 'peer' | 'talk';
+/** How it holds itself on a visit to another worker's desk (see visitors.ts): on its feet, or talking with a hand out. */
+export type VisitPose = 'stand' | 'talk';
 
 /** One way of holding itself, blended into the next over a moment (see Worker.update). */
 interface Stance {
@@ -977,16 +974,6 @@ function stanceOf(act: Act, t: number, s: Stance): Stance {
       s.armLx = s.armRx = -0.15;
       s.armLz = -0.08;
       s.armRz = 0.08;
-      break;
-    case 'peer':
-      // Bent over the other worker's laptop, one hand down on the desk, eyes on the screen.
-      s.armLx = -0.55;
-      s.armRx = -1.25;
-      s.armLz = -0.1;
-      s.armRz = 0.12;
-      s.lean = 0.42;
-      s.lift = 0;
-      s.look = -0.03 - ((t * 0.7) % 1) * 0.015;
       break;
     case 'talk':
       // Talking it over: one hand out, moving with the words.

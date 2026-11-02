@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { accessSync, constants, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -153,6 +153,29 @@ function manager(f: Fixture, updates: WorkerInfo[], args = ['--from-test']) {
   return managed(f, f.root, f.data, f.droid, args, { url: 'http://127.0.0.1:1', token: '' }, events(updates));
 }
 
+test('a plain shell gets its hook identity for worktree setup reporting; Office MCP refuses non-agents itself', async (t) => {
+  const f = fixture();
+  isolateAgentEnvironment(f, t);
+  const previous = { SHELL: process.env.SHELL, FAKE_AGENT_LOG: process.env.FAKE_AGENT_LOG };
+  process.env.SHELL = f.droid;
+  process.env.FAKE_AGENT_LOG = f.log;
+  t.after(() => {
+    f.close();
+    for (const [key, value] of Object.entries(previous)) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+  });
+  const workers = manager(f, []);
+  const shell = workers.spawn('desk-1', 'test', undefined, false, 'shell');
+  assert.notEqual(typeof shell, 'string');
+  const launch = (await waitFor(f.read, (records) => records.length > 0))[0];
+  assert.deepEqual(launch.args, ['-l']);
+  assert.equal(launch.env.workerId, (shell as WorkerInfo).id);
+  assert.match(launch.env.hookToken ?? '', /^[0-9a-f]{32}$/);
+  assert.equal(launch.env.hookUrl, 'http://127.0.0.1:1');
+});
+
 async function waitFor<T>(read: () => T, predicate: (value: T) => boolean, timeout = 4000): Promise<T> {
   const end = Date.now() + timeout;
   let value = read();
@@ -223,8 +246,8 @@ test('Droid workers launch with their own hook overlay and resume the correct se
   assert.deepEqual(first.args.slice(0, 5), ['--settings', path.join(f.data, 'droid-hooks.json'), '--append-system-prompt-file', systemFile, '--from-test']);
   const system = readFileSync(systemFile, 'utf8');
   assert.match(system, new RegExp(`^You're ${worker.name}, a worker in Droid Office`));
-  assert.match(system, /office-workers/);
-  assert.match(system, /office-whiteboard/);
+  assert.match(system, /team_hire/);
+  assert.match(system, /whiteboard_card/);
   assert.doesNotMatch(system, /\{\{/, 'every placeholder is filled in');
   // Droid started with a prompt argument never opens /rewind-conversation: the prompt is typed in instead.
   assert.equal(first.args.at(-1), '--from-test');
@@ -474,7 +497,7 @@ test('the worker system prompt is the office’s as rewritten, filled in for eac
   assert.equal(existsSync(path.join(f.data, `system-${b.id}.md`)), false);
 });
 
-test('only a worker with no lead is told about office-visit, and only while visits are on', async (t) => {
+test('only a worker with no lead is told about the visit tools, and only while visits are on', async (t) => {
   const f = fixture();
   isolateAgentEnvironment(f, t);
   const previousLog = process.env.FAKE_AGENT_LOG;
@@ -500,14 +523,14 @@ test('only a worker with no lead is told about office-visit, and only while visi
   const lead = workers.spawn('desk-2', 'test', 'look around');
   if (typeof lead === 'string') return assert.fail(lead);
   await launched(lead.id);
-  assert.match(systemOf(lead.id), /- `office-visit`: coordinate with independent workers only as needed/);
-  assert.match(systemOf(lead.id), /Don't routinely check the roster, announce your task/);
-  assert.match(systemOf(lead.id), /The office puts its commands on your PATH/);
+  assert.match(systemOf(lead.id), /`visit_roster`, `visit_look` and `visit_message`/);
+  assert.match(systemOf(lead.id), /Don't routinely check the roster or announce your task/);
+  assert.match(systemOf(lead.id), /Use the Droid Office MCP tools/);
 
   const sub = workers.spawn('desk-3', 'test', 'help out', false, 'agent', undefined, undefined, [], lead.id);
   if (typeof sub === 'string') return assert.fail(sub);
   await launched(sub.id);
-  assert.doesNotMatch(systemOf(sub.id), /office-visit/, 'a subagent is never told');
+  assert.doesNotMatch(systemOf(sub.id), /visit_roster/, 'a subagent is never told');
   assert.doesNotMatch(systemOf(sub.id), /\n{3,}/, 'no gap where it would have been');
 
   // An owner's own system prompt from before visits still tells a worker about them.
@@ -515,14 +538,14 @@ test('only a worker with no lead is told about office-visit, and only while visi
   const custom = workers.spawn('desk-4', 'test', 'read');
   if (typeof custom === 'string') return assert.fail(custom);
   await launched(custom.id);
-  assert.match(systemOf(custom.id), /^You are .*, at a desk\.\n\n- `office-visit`/);
+  assert.match(systemOf(custom.id), /^You are .*, at a desk\.\n\n- Use `visit_roster`/);
 
   on = false;
   system = PROMPTS['worker.system'].text;
   const off = workers.spawn('desk-5', 'test', 'read');
   if (typeof off === 'string') return assert.fail(off);
   await launched(off.id);
-  assert.doesNotMatch(systemOf(off.id), /office-visit/);
+  assert.doesNotMatch(systemOf(off.id), /visit_roster/);
 });
 test("a plain folder's workers get no branch policy, no worktrees, no board agents, and git that stops at the folder", async (t) => {
   const f = fixture();
@@ -842,7 +865,7 @@ test('an office-queue command an older office left behind is cleared away, and n
   t.after(() => workers.shutdown());
   assert.equal(existsSync(path.join(bin, 'office-queue')), false);
   assert.equal(existsSync(path.join(bin, 'office-queue.cmd')), false);
-  accessSync(path.join(bin, 'team', 'office-workers'), constants.X_OK);
+  assert.equal(existsSync(path.join(bin, 'team')), false);
 
   const hired = workers.station('station-actions', 'Ada', 'Kick off the release workflow');
   assert.equal(typeof hired, 'object');
@@ -2226,16 +2249,16 @@ test('a worker restored from before subscriptions keeps its names, maps its last
   );
 });
 
-test('a subagent sits down told who hired it and where it works; every agent gets office-workers, and its lead goes on record', async (t) => {
+test('a subagent sits down told who hired it and where it works; its lead goes on record with no office command on disk', async (t) => {
   const f = carryOnFixture(t);
+  const bin = path.join(f.data, 'bin', 'team');
+  mkdirSync(bin, { recursive: true });
+  writeFileSync(path.join(bin, 'office-workers'), '#!/bin/sh\n');
   const workers = manager(f, [], []);
   t.after(() => workers.shutdown());
-  const bin = path.join(f.data, 'bin', 'team');
   const launches = (id: string) => launchesOf(f).filter((r) => r.env.workerId === id);
 
-  // The command is there, and runs the shipped script with the office's own node.
-  accessSync(path.join(bin, 'office-workers'), constants.X_OK);
-  assert.match(execFileSync(path.join(bin, 'office-workers'), ['--help'], { encoding: 'utf8' }), /office-workers hire --title/);
+  assert.equal(existsSync(bin), false, 'the commands from before the Office MCP are deleted');
 
   const lead = workers.spawn('desk-1', 'Ada', 'Ship the login fix');
   assert.ok(typeof lead === 'object');
@@ -2264,9 +2287,9 @@ test('a subagent sits down told who hired it and where it works; every agent get
   const brief = (await startedWith(f, workers, subLaunch, 'sub-session')) ?? '';
   assert.match(brief, new RegExp(`^Droid Office role: ${sub.name}, subagent of ${lead.name} \\(a worker, not the owner\\)`));
   assert.match(brief, /the project's main checkout/);
-  assert.match(brief, /office-workers report <<'EOF'/);
+  assert.match(brief, /`team_report`/);
   assert.ok(brief.endsWith(`## Task from ${lead.name}\n\`\`\`text\nFix the redirect\n\`\`\``));
-  for (const r of [leadLaunch, subLaunch]) assert.ok((r.env.path ?? '').split(path.delimiter).includes(bin), 'office-workers is on every agent’s PATH');
+  for (const r of [leadLaunch, subLaunch]) assert.equal((r.env.path ?? '').split(path.delimiter).includes(bin), false, 'no office command folder is on the agent PATH');
   assert.equal((leadLaunch.env.path ?? '').split(path.delimiter).includes(path.join(f.data, 'bin')), false, 'nothing else is put in the data directory’s bin');
 
   // What its lead reads of it: the end of its terminal, as text (the brief typed into it, echoed).

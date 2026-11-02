@@ -1,34 +1,17 @@
-// The Whiteboard for agents: what `office-whiteboard` (bin/office-whiteboard.js) talks to, a POST to
-// the hook server's /office/whiteboard?worker=<id> with the worker's own hook token, and the action in
-// a JSON body:
-//
-//   { action: 'hello' }
-//       A new epoch for this run of the command, who the agent is, and the board's revision.
-//   { action: 'read', cards?: string[], png?: boolean, timeoutMs?: number }
-//       The board (or the cards named) as of one snapshot revision, as this agent sees it: each card's
-//       metadata, stored HTML, files (with where each is on disk), link, state, marks and `changed`
-//       pieces, and with `png` a render of each card at that snapshot. Moves nothing: the command
-//       sends a `read` operation for what it returned once it has all of it.
-//   { action: 'apply', envelope: { epoch, seq, ops } }
-//       A batch in the run's epoch. 200 { ok, rev, duplicate? }, 422 { reason: 'invalid', error } (which
-//       operation and why; nothing changed), 409 { reason: 'expired' }.
+// The Whiteboard as an agent reads it: the board as of one snapshot revision, as one worker sees it,
+// with each card's files, marks, changed pieces and, when asked, a render. The Office MCP's
+// whiteboard_read (office-mcp/whiteboard.ts) returns it.
 
 import type { WorkerInfo } from '../shared/protocol.js';
-import { OWNER, changesFor, findCard, parseEnvelope, readPoint, readerOf, type Author, type Board, type Card, type FileRef, type PieceRef, type Tombstone } from '../shared/whiteboard.js';
+import { OWNER, changesFor, findCard, readPoint, type Author, type Board, type Card, type FileRef, type PieceRef, type Tombstone } from '../shared/whiteboard.js';
 import { type PinnedCard, type RenderImage, type RenderStatus, type WhiteboardStore, renderKey, renderStatus, sameKey } from './whiteboard.js';
 
-/** How long a read's `--png` waits on each card's render by default. */
+/** How long a read with PNGs waits on each card's render by default. */
 export const READ_RENDER_TIMEOUT_MS = 30_000;
-/** How many of a `read --png`'s cards render at once. */
+/** How many of a read's cards render at once. */
 export const READ_RENDERS_AT_ONCE = 3;
-const MAX_RENDER_TIMEOUT_MS = 120_000;
 /** The page is sent as text in a read when it is HTML of at most this many bytes; otherwise read its file. */
 const HTML_INLINE_MAX = 2 * 1024 * 1024;
-
-export interface AgentReply {
-  status: number;
-  body: unknown;
-}
 
 export function workerAuthor(w: WorkerInfo): Author {
   return { kind: 'worker', id: w.id, name: w.name, color: w.color };
@@ -80,55 +63,11 @@ export interface ReadOut {
   returned: string[];
 }
 
-/** One request to /office/whiteboard from `worker` on the floor whose board is `store`. */
-export async function handleAgent(store: WhiteboardStore, worker: WorkerInfo, floor: { id: string; name: string }, body: unknown): Promise<AgentReply> {
-  const b = (body && typeof body === 'object' ? body : {}) as Record<string, unknown>;
-  const author = workerAuthor(worker);
-  switch (b.action) {
-    case 'hello':
-      return {
-        status: 200,
-        body: {
-          epoch: store.issueEpoch(),
-          worker: { id: worker.id, name: worker.name, color: worker.color },
-          floor,
-          rev: store.board.rev,
-          cards: store.board.cards.length,
-          renderer: store.renderer.status(),
-        },
-      };
-    case 'read': {
-      const cards = b.cards === undefined ? undefined : Array.isArray(b.cards) && b.cards.every((c) => typeof c === 'string') ? (b.cards as string[]) : null;
-      if (cards === null) return { status: 400, body: { error: 'cards must be a list of card ids' } };
-      const timeoutMs = Number.isFinite(b.timeoutMs) ? Math.min(MAX_RENDER_TIMEOUT_MS, Math.max(1000, b.timeoutMs as number)) : READ_RENDER_TIMEOUT_MS;
-      return { status: 200, body: await readBoard(store, readerOf(author), floor, { cards, png: b.png === true, timeoutMs }) };
-    }
-    case 'apply': {
-      const env = parseEnvelope(b.envelope);
-      if (typeof env === 'string') return { status: 400, body: { error: env } };
-      const out = store.apply(env, author, 'agent');
-      if (out.kind === 'ack') return { status: 200, body: { ok: true, rev: out.rev, ...(out.duplicate ? { duplicate: true } : {}) } };
-      if (out.reason === 'expired')
-        return {
-          status: 409,
-          body: {
-            ok: false,
-            reason: 'expired',
-            error: "This run's epoch isn't in the board's record any more, so the office can't tell whether this batch was applied already. Nothing was applied: read the board and send it again in a new run.",
-          },
-        };
-      return { status: 422, body: { ok: false, reason: 'invalid', error: out.error } };
-    }
-    default:
-      return { status: 400, body: { error: 'Send {"action": "hello" | "read" | "apply"}' } };
-  }
-}
-
 /**
  * The board as one reader sees it at one snapshot revision. With `png`, every card returned is
  * rendered from that same snapshot (pinned, so later changes can't reach it), or the read says why not.
  */
-export async function readBoard(store: WhiteboardStore, reader: string, floor: { id: string; name: string }, opts: { cards?: string[]; png?: boolean; timeoutMs?: number } = {}): Promise<ReadOut> {
+export async function readBoard(store: WhiteboardStore, reader: string, floor: { id: string; name: string }, opts: { cards?: string[]; png?: boolean; timeoutMs?: number; signal?: AbortSignal } = {}): Promise<ReadOut> {
   const board = store.board;
   const wanted = opts.cards ? [...new Set(opts.cards)] : undefined;
   const onBoard = wanted ? wanted.flatMap((id) => findCard(board, id) ?? []) : board.cards;
@@ -142,7 +81,7 @@ export async function readBoard(store: WhiteboardStore, reader: string, floor: {
     const cards: CardOut[] = onBoard.map((card) => cardOut(store, board, reader, card));
     let next = 0;
     const renderNext = async () => {
-      for (let i = next++; i < onBoard.length; i = next++) {
+      for (let i = next++; i < onBoard.length && !opts.signal?.aborted; i = next++) {
         const pin = pins?.get(onBoard[i].id);
         if (pin) cards[i].png = await png(store, pin, opts.timeoutMs ?? READ_RENDER_TIMEOUT_MS);
       }

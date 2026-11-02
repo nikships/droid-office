@@ -12,7 +12,7 @@ const all = { node: true, website: true, mac: true, android: true };
 const workflow = readFileSync(new URL('../.github/workflows/release.yml', import.meta.url), 'utf8');
 
 test('CI checks only the affected platforms and builds every client change into the Mac app', () => {
-  for (const file of ['src/client/main.ts', 'src/server/cli.ts', 'src/shared/protocol.ts', 'src/desktop/main.ts', 'bin/office-workers.js', 'native/presenter/presenter.mm']) {
+  for (const file of ['src/client/main.ts', 'src/server/cli.ts', 'src/server/office-mcp/team.ts', 'src/shared/protocol.ts', 'src/desktop/main.ts', 'native/presenter/presenter.mm']) {
     assert.deepEqual(checksFor([file]), { ...none, node: true, mac: true }, file);
   }
   assert.deepEqual(checksFor(['build/icon.png']), { ...none, mac: true });

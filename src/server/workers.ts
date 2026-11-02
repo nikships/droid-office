@@ -1,9 +1,8 @@
 import { randomBytes } from 'node:crypto';
-import { existsSync, readFileSync, writeFileSync, accessSync, chmodSync, mkdirSync, readdirSync, rmdirSync, rmSync, unlinkSync, constants } from 'node:fs';
+import { existsSync, readFileSync, writeFileSync, accessSync, readdirSync, rmdirSync, rmSync, unlinkSync, constants } from 'node:fs';
 import { execFile, execFileSync } from 'node:child_process';
 import { homedir } from 'node:os';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
 import headless from '@xterm/headless';
 import serialize from '@xterm/addon-serialize';
 import unicode11 from '@xterm/addon-unicode11';
@@ -254,7 +253,7 @@ export class WorkerManager {
    * from the branch the checkout is on, which is left alone.
    */
   freshMain?: () => boolean;
-  /** ⚙️ Settings → Subagents & visits → Visits: a worker with no lead is told about office-visit when it starts. */
+  /** ⚙️ Settings → Subagents & visits → Visits: a worker with no lead is told about the visit tools when it starts. */
   visitsOn?: () => boolean;
   /** The floor's pull requests as the board last listed them, to tell a checkout whose branch merged (see settleCheckout). */
   pullList?: () => GhPull[];
@@ -265,8 +264,6 @@ export class WorkerManager {
   private get forge(): Forge {
     return this.pulls.forge ?? 'github';
   }
-  /** Where the office-workers command is, for every agent's PATH: how a lead runs its subagents (see team.ts). */
-  private teamBin: string | undefined;
   /** The script a new worktree's terminal runs before its agent (see worktree-setup.ts). */
   private setupScript: string | undefined;
   private screenTimer: NodeJS.Timeout;
@@ -320,10 +317,8 @@ export class WorkerManager {
     // The task queue's command, from before the queue was taken out.
     rmSync(path.join(dataDir, 'bin', 'office-queue'), { force: true });
     rmSync(path.join(dataDir, 'bin', 'office-queue.cmd'), { force: true });
-    this.teamBin = this.writeOfficeCommand(path.join('bin', 'team'), 'office-workers', "Droid Office's subagents, for every agent");
-    // In the same folder, so it's on every agent's PATH with office-workers.
-    this.writeOfficeCommand(path.join('bin', 'team'), 'office-whiteboard', "The floor's Whiteboard, for every agent");
-    this.writeOfficeCommand(path.join('bin', 'team'), 'office-visit', 'Visits between independent workers on a floor');
+    // The office-workers, office-whiteboard and office-visit commands, from before the Office MCP.
+    rmSync(path.join(dataDir, 'bin', 'team'), { recursive: true, force: true });
     try {
       this.setupScript = writeSetupScript(dataDir);
     } catch {
@@ -1972,6 +1967,7 @@ export class WorkerManager {
     w.lastTool.clear();
     w.asking = undefined;
     const env = childEnv();
+    // Shells keep these for worktree setup reporting; the Office MCP refuses any caller that isn't an agent.
     Object.assign(env, {
       TERM: 'xterm-256color',
       COLORTERM: 'truecolor',
@@ -1979,14 +1975,6 @@ export class WorkerManager {
       DROID_OFFICE_HOOK_URL: this.hook.url,
       DROID_OFFICE_HOOK_TOKEN: w.hookToken,
     });
-    // Any agent runs its subagents with office-workers, and uses the Whiteboard with office-whiteboard.
-    const bins = [!isShell && this.teamBin].filter((d): d is string => !!d);
-    if (bins.length) {
-      // Windows spells it Path.
-      const key = Object.keys(env).find((k) => k.toUpperCase() === 'PATH') ?? 'PATH';
-      env[key] = [...bins, env[key]].filter(Boolean).join(path.delimiter);
-    }
-
     const cwd = this.cwd(info);
     // A workspace isn't a repository, but it's inside this floor's checkout: git run in it must not
     // find that checkout (and switch its branch, say) instead of saying it's no repository.
@@ -2304,7 +2292,7 @@ process.stdin.on('end', () => {
     // A plain folder has no branches to keep in sync.
     const branchPolicy = this.plain ? '' : workerBranchPolicy(this.trees.baseBranch() ?? this.trees.currentBranch(), this.trees.branchFile);
     const template = this.prompts?.text('worker.system') ?? PROMPTS['worker.system'].text;
-    // Only a worker with no lead may visit the others; a subagent isn't told office-visit exists.
+    // Only a worker with no lead may visit the others; a subagent isn't told the visit tools exist.
     const visits = info.kind === 'agent' && !info.lead && this.visitsOn?.() ? WORKER_VISITS : '';
     let text = officePrompt(this.prompts, 'worker.system', { name: info.name, visits, branchPolicy });
     // A saved system prompt from before visits existed still tells the worker about them.
@@ -2326,25 +2314,6 @@ process.stdin.on('end', () => {
     } catch {
       return undefined;
     }
-  }
-
-  /**
-   * Writes one of the office's agent commands (office-workers, office-whiteboard) into `sub` of the data
-   * dir, running bin/<name>.js with the office's own node, and returns that directory. Rewritten on
-   * every start, so after an upgrade it runs the new install's script.
-   */
-  private writeOfficeCommand(sub: string, name: string, what: string): string | undefined {
-    const script = officeScript(name);
-    if (!script) return undefined;
-    const dir = path.join(this.dataDir, sub);
-    mkdirSync(dir, { recursive: true, mode: 0o700 });
-    const file = path.join(dir, name);
-    const node = runAsNode();
-    writeFileSync(file, `#!/bin/sh\n# ${what} (see bin/${name}.js).\n${node.sh}exec ${shq(process.execPath)} ${shq(script)} "$@"\n`, { mode: 0o700 });
-    chmodSync(file, 0o700);
-    // cmd.exe and PowerShell find it by PATHEXT; Git Bash (Droid's shell there) runs the sh one.
-    if (WIN) writeFileSync(`${file}.cmd`, `@${node.cmd}"${process.execPath}" "${script}" %*\r\n`);
-    return dir;
   }
 
   private saveScrollback(w: Worker) {
@@ -2544,16 +2513,6 @@ function validTask(t: unknown): WorkerTask | undefined {
   return typeof v?.name === 'string' && typeof v.summary === 'string'
     ? { name: v.name, summary: v.summary, ...(v.generated === true ? { generated: true, ...(typeof v.textHash === 'string' && /^[a-f0-9]{64}$/.test(v.textHash) ? { textHash: v.textHash } : {}) } : {}) }
     : undefined;
-}
-
-/** bin/<name>.js in the install this office runs from (src/server under tsx, dist/server/server built). */
-function officeScript(name: string): string | undefined {
-  let dir = path.dirname(fileURLToPath(import.meta.url));
-  for (let i = 0; i < 4; i++, dir = path.dirname(dir)) {
-    const file = path.join(dir, 'bin', `${name}.js`);
-    if (existsSync(file)) return file;
-  }
-  return undefined;
 }
 
 /**

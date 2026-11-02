@@ -139,7 +139,7 @@ data class WorkerInfo(
     val isCloud: Boolean get() = kind == "cloud" || cloud != null
     /** A board agent standing at a kiosk (see STATIONS in src/shared/layout.ts), not hired at a desk. */
     val isStation: Boolean get() = deskId.startsWith("station-")
-    /** Hired by another worker with `office-workers hire`. `lead` is dropped when its lead leaves; the team badge isn't. */
+    /** Hired by another worker with the Office MCP's `team_hire`. `lead` is dropped when its lead leaves; the team badge isn't. */
     val isSubagent: Boolean get() = lead != null || team?.role == "member"
 }
 

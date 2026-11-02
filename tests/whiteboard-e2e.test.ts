@@ -1,10 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { once } from 'node:events';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { Readable } from 'node:stream';
 import { setTimeout as delay } from 'node:timers/promises';
 import type { AddressInfo } from 'node:net';
 import { WebSocket } from 'ws';
@@ -12,7 +11,8 @@ import { loadConfig } from '../src/server/config.js';
 import { startServer } from '../src/server/server.js';
 import type { ServerMsg } from '../src/shared/protocol.js';
 import { findCard, type Board } from '../src/shared/whiteboard.js';
-import { main } from '../bin/office-whiteboard.js';
+import { Client, StreamableHTTPClientTransport } from '@modelcontextprotocol/client';
+import { OFFICE_MCP_PATH, OFFICE_MCP_WORKER_HEADER } from '../src/server/office-mcp/index.js';
 
 const fakeAgent = `#!/usr/bin/env node
 const fs = require('node:fs');
@@ -39,11 +39,11 @@ async function waitFor<T>(read: () => T | undefined, what: string, ms = 15_000):
   }
 }
 
-test('an agent and the owner share a floor Whiteboard end to end: office-whiteboard, the window, card routes and pings', { timeout: 90_000 }, async (t) => {
+test('an agent and the owner share a floor Whiteboard end to end: MCP, the window, card routes and pings', { timeout: 90_000 }, async (t) => {
   const root = mkdtempSync(path.join(tmpdir(), 'droid-office-wb-e2e-'));
   const project = path.join(root, 'project');
   const home = path.join(root, 'home');
-  const work = path.join(root, 'work');
+  const work = project;
   for (const d of [project, home, work]) mkdirSync(d, { recursive: true });
   const agent = path.join(root, 'droid');
   writeFileSync(agent, fakeAgent, { mode: 0o700 });
@@ -71,7 +71,7 @@ test('an agent and the owner share a floor Whiteboard end to end: office-whitebo
   t.after(() => ws.terminate());
   ws.on('message', (raw) => msgs.push(JSON.parse(String(raw))));
   const welcome = await waitFor(() => msgs.find((m) => m.t === 'welcome') as Extract<ServerMsg, { t: 'welcome' }> | undefined, 'welcome');
-  assert.equal(welcome.whiteboardSkill.on, true);
+  assert.equal('whiteboardSkill' in welcome, false);
   const floor = welcome.floor!;
   const snap = await waitFor(() => msgs.find((m) => m.t === 'whiteboard' && m.update.kind === 'snapshot') as Extract<ServerMsg, { t: 'whiteboard' }> | undefined, 'the snapshot');
   assert.equal(snap.floor, floor);
@@ -94,34 +94,42 @@ test('an agent and the owner share a floor Whiteboard end to end: office-whitebo
       .map((l) => JSON.parse(l))
       .find((r) => r.env?.hookToken) as { env: { workerId: string; hookToken: string; hookUrl: string; path: string } } | undefined;
   }, 'the agent to start');
-  const bin = launch.env.path.split(path.delimiter)[0];
-  assert.ok(existsSync(path.join(bin, 'office-whiteboard')), 'office-whiteboard is on every agent PATH, next to office-workers');
-  assert.ok(existsSync(path.join(bin, 'office-workers')));
-  const env = { DROID_OFFICE_HOOK_URL: launch.env.hookUrl, DROID_OFFICE_WORKER_ID: launch.env.workerId, DROID_OFFICE_HOOK_TOKEN: launch.env.hookToken };
-  const cli = async (args: string[], stdin = '', extra: { env?: Record<string, string> } = {}) => {
-    const out: string[] = [];
-    const err: string[] = [];
-    const s = Readable.from(stdin ? [stdin] : []);
-    const code = await main(args, { env: extra.env ?? env, stdin: s as unknown as NodeJS.ReadStream, out: (x: string) => out.push(x), err: (x: string) => err.push(x), cwd: work });
-    return { code, out: out.join('\n'), err: err.join('\n') };
+  assert.equal(
+    launch.env.path.split(path.delimiter).some((dir) => dir.startsWith(root)),
+    false,
+    'no office command folder is on the agent PATH',
+  );
+  const client = new Client({ name: 'whiteboard-e2e', version: '1.0.0' });
+  t.after(() => client.close());
+  const connect = (target: Client, token: string) =>
+    target.connect(new StreamableHTTPClientTransport(new URL(OFFICE_MCP_PATH, launch.env.hookUrl), { requestInit: { headers: { [OFFICE_MCP_WORKER_HEADER]: launch.env.workerId, Authorization: `Bearer ${token}` } } }));
+  await connect(client, launch.env.hookToken);
+  const tool = async (name: string, args: Record<string, unknown> = {}) => {
+    const result = await client.callTool({ name, arguments: args });
+    const out = (result.content as { type: string; text?: string }[])
+      .filter((item) => item.type === 'text')
+      .map((item) => item.text)
+      .join('\n');
+    return { code: result.isError ? 1 : 0, out, err: result.isError ? out : '', data: result.structuredContent! };
   };
 
-  const who = await cli(['whoami']);
+  const who = await tool('whiteboard_read');
   assert.equal(who.code, 0, who.err);
-  assert.match(who.out, /on the .* floor\. Its Whiteboard has 0 cards/);
-  assert.match(who.out, /\(revision 0\)\. Cards are not rendered to images in this office yet: it has no renderer/);
-  const wrong = await cli(['read'], '', { env: { ...env, DROID_OFFICE_HOOK_TOKEN: 'nope' } });
-  assert.equal(wrong.code, 1);
-  assert.match(wrong.err, /didn't accept this agent's token \(401\)/);
+  assert.match(who.out, /0 cards/);
+  assert.match(who.out, /Renders: unavailable/);
+  const wrong = new Client({ name: 'wrong-token', version: '1.0.0' });
+  t.after(() => wrong.close());
+  await assert.rejects(connect(wrong, 'nope'), /Office MCP requires/);
+  assert.equal((await fetch(new URL('/office/whiteboard', launch.env.hookUrl), { method: 'POST' })).status, 404, 'the CLI-only endpoint is removed');
 
   // A card from a file with its assets, pushed by the agent: the window hears it.
   writeFileSync(path.join(work, 'style.css'), 'h1 { color: teal }');
   writeFileSync(path.join(work, 'plan.html'), '<!doctype html><link rel="stylesheet" href="style.css"><h1 data-wb-id="title">Plan</h1><img src="../gone.png"><form><input name="email"></form>');
-  const pushed = await cli(['push', '--title', 'The plan', '--file', 'plan.html']);
+  const pushed = await tool('whiteboard_card', { action: 'create', title: 'The plan', source: { file: 'plan.html' } });
   assert.equal(pushed.code, 0, pushed.err);
-  const card = pushed.out.trim();
+  const card = pushed.data.card as string;
   assert.match(card, /^c-[0-9a-f]{10}$/);
-  assert.match(pushed.err, /Not collected: \.\.\/gone\.png/);
+  assert.match(pushed.out, /Not collected: \.\.\/gone\.png/);
   const created = await waitFor(() => boardMsgs().find((m) => m.update.kind === 'patch' && m.update.patch.ops.some((o) => o.op === 'card.create')), 'the patch');
   assert.ok(created.caps?.[card], 'the new card comes with its capability');
   const cap = created.caps![card];
@@ -194,7 +202,7 @@ test('an agent and the owner share a floor Whiteboard end to end: office-whitebo
   await waitFor(() => boardMsgs().find((m) => m.update.kind === 'rejected' && m.update.reason === 'expired'), 'the expired rejection');
 
   // The agent reads: the owner's comment, picture and answer are changed; after the read they aren't.
-  const read = await cli(['read', card]);
+  const read = await tool('whiteboard_read', { cards: [card] });
   assert.equal(read.code, 0, read.err);
   assert.match(read.out, /— CHANGED/);
   assert.match(read.out, /Changed for you: state fields\.email; comment thread t1 \(open or resolved, place\); comment t1\/m1; picture p1 \(file, position or size, place\)/);
@@ -205,63 +213,60 @@ test('an agent and the owner share a floor Whiteboard end to end: office-whitebo
   assert.match(read.out, /Not collected: \.\.\/gone\.png/);
   const rev = store().board.rev;
   assert.equal(store().board.reads[launch.env.workerId][card], rev - 1, 'the read point moved to the read snapshot');
-  const again = await cli(['read', '--json']);
+  const again = await tool('whiteboard_read', { json: true });
   const json = JSON.parse(again.out);
   assert.equal(json.cards[0].changed, false);
   assert.equal(json.cards[0].pictures[0].file.file, store().blobFile(ref.hash));
 
   // The agent writes back: a reply, a state merge, a sticky; the window sees each, and the owner's read shows them changed.
-  const reply = await cli(['comment', card, 'reply', 't1', '--text', 'It matches the logo']);
+  const reply = await tool('whiteboard_marks', { kind: 'comment', card, op: 'reply', id: 't1', text: 'It matches the logo' });
   assert.equal(reply.code, 0, reply.err);
-  assert.equal((await cli(['state', card, 'merge', '{"fields":{"name":"Ada"}}'])).code, 0);
-  assert.equal((await cli(['state', card, 'get', 'fields.name'])).out, '"Ada"');
-  assert.equal((await cli(['state', card, 'get', 'fields.nope'])).code, 1);
-  const sticky = await cli(['sticky', card, 'add', '--on', 'title', '--text', 'Looks good']);
-  assert.match(sticky.out, /^s-/);
-  assert.equal((await cli(['show', card])).code, 0);
+  assert.equal((await tool('whiteboard_state', { card, op: 'merge', value: { fields: { name: 'Ada' } } })).code, 0);
+  assert.equal((await tool('whiteboard_state', { card, op: 'get', path: 'fields.name' })).out, '"Ada"');
+  assert.equal((await tool('whiteboard_state', { card, op: 'get', path: 'fields.nope' })).code, 1);
+  const sticky = await tool('whiteboard_marks', { kind: 'sticky', card, op: 'add', anchor: { on: 'title' }, text: 'Looks good' });
+  assert.match(sticky.data.id as string, /^s-/);
+  assert.equal((await tool('whiteboard_card', { action: 'show', card })).code, 0);
   assert.deepEqual(store().board.selection, { kind: 'card', id: card });
   const t1 = findCard(store().board, card)!.threads[0];
   assert.equal(t1.messages[1].author.kind, 'worker');
   assert.equal(t1.messages[1].text, 'It matches the logo');
 
   // An invalid batch from the agent changes nothing, says which operation and why, and exits 1.
-  const invalid = await cli(
-    ['apply'],
-    JSON.stringify([
+  const invalid = await tool('whiteboard_apply', {
+    ops: [
       { op: 'card.title', card, title: 'ok' },
       { op: 'sticky.rm', card, id: 'nope' },
-    ]),
-  );
+    ],
+  });
   assert.equal(invalid.code, 1);
   assert.match(invalid.err, /Operation 1 \(sticky\.rm\) failed/);
   assert.equal(findCard(store().board, card)!.title, 'The plan');
-  const usage = await cli(['push']);
-  assert.equal(usage.code, 2);
+  const usage = await tool('whiteboard_card', { action: 'create' });
+  assert.equal(usage.code, 1);
 
   // --png without a renderer: the read says so and doesn't move the read point.
   send({ t: 'whiteboard.apply', floor, envelope: { epoch, seq: 3, ops: [{ op: 'comment.reply', card, thread: 't1', message: 'm3', text: 'And the PNG?' }] } });
   await waitFor(() => boardMsgs().find((m) => m.update.kind === 'ack' && m.update.seq === 3), 'the third ack');
-  const pngDir = path.join(work, 'png');
-  const shot = await cli(['read', card, '--png', 'png']);
+  const shot = await tool('whiteboard_read', { cards: [card], png: true });
   assert.equal(shot.code, 0, shot.err);
   assert.match(shot.out, /PNG: none — .*renderer.*wasn't moved/);
-  assert.ok(!existsSync(pngDir) || readdirSync(pngDir).length === 0);
-  const still = JSON.parse((await cli(['read', card, '--json'])).out);
+  const still = JSON.parse((await tool('whiteboard_read', { cards: [card], json: true })).out);
   assert.equal(still.cards[0].changed, true, 'the read with a failed PNG left the card unread');
 
   // A linked card follows its file; an update is refused while linked.
   writeFileSync(path.join(work, 'live.html'), '<p>live v1</p>');
-  const linked = await cli(['push', '--title', 'Live', '--link', 'live.html']);
+  const linked = await tool('whiteboard_card', { action: 'create', title: 'Live', source: { link: 'live.html' } });
   assert.equal(linked.code, 0, linked.err);
-  const live = linked.out.trim();
+  const live = linked.data.card as string;
   assert.equal(findCard(store().board, live)!.link?.status, 'ok');
-  const refused = await cli(['update', live, '--file', 'live.html']);
+  const refused = await tool('whiteboard_card', { action: 'update', card: live, source: { file: 'live.html' } });
   assert.equal(refused.code, 1);
   assert.match(refused.err, /unlink the card first/);
   writeFileSync(path.join(work, 'live.html'), '<p>live v2</p>');
   await waitFor(() => store().serve(store().cardCap(live), '')?.body.toString().includes('live v2') || undefined, 'the link to update');
-  assert.equal((await cli(['unlink', live])).code, 0);
-  assert.equal((await cli(['rm', live])).code, 0);
+  assert.equal((await tool('whiteboard_card', { action: 'unlink', card: live })).code, 0);
+  assert.equal((await tool('whiteboard_card', { action: 'remove', card: live })).code, 0);
   assert.equal(findCard(store().board, live), undefined);
 
   // Ping: refused while it's starting, typed in when idle, queued behind a turn when working.
@@ -280,7 +285,7 @@ test('an agent and the owner share a floor Whiteboard end to end: office-whitebo
   send({ t: 'whiteboard.ping', worker: launch.env.workerId });
   const second = await waitFor(() => pinged()[1], 'the second ping');
   assert.deepEqual([second.ok, second.how], [true, 'type']);
-  await waitFor(() => readFileSync(log, 'utf8').includes('office-whiteboard read') || undefined, 'the line typed in');
+  await waitFor(() => /whiteboard[_ -]read/.test(readFileSync(log, 'utf8')) || undefined, 'the line typed in');
   assert.equal((await hook('UserPromptSubmit')).status, 200);
   send({ t: 'whiteboard.ping', worker: launch.env.workerId });
   const third = await waitFor(() => pinged()[2], 'the third ping');
@@ -293,12 +298,6 @@ test('an agent and the owner share a floor Whiteboard end to end: office-whitebo
   const resync = await waitFor(() => boardMsgs().filter((m) => m.update.kind === 'snapshot')[1], 'the resync');
   assert.equal(resync.update.kind === 'snapshot' && resync.update.epoch, epoch);
   assert.equal((resync.update as { board: Board }).board.rev, store().board.rev);
-
-  // The skill toggle.
-  send({ t: 'whiteboardSkill.set', on: false });
-  const skill = await waitFor(() => msgs.find((m) => m.t === 'whiteboardSkill') as Extract<ServerMsg, { t: 'whiteboardSkill' }> | undefined, 'the skill state');
-  assert.equal(skill.state.on, false);
-  assert.equal(JSON.parse(readFileSync(path.join(cfg.dataDir, 'whiteboard-skill.json'), 'utf8')).on, false);
 
   // Dismissed, its read points go.
   send({ t: 'worker.kill', workerId: launch.env.workerId, cleanup: 'keep' });

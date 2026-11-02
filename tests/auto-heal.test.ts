@@ -107,15 +107,15 @@ test('the heal prompt sends a worker to push to the failing branch, or to open a
   assert.match(onMain, /^Droid Office notice: CI failure \(auto-heal enabled\)\nCI #7 on `main`: "feat: a thing"\nCommit: abcdef1 \| Event: push\nhttps:\/\/github\.com\/o\/r\/actions\/runs\/101/);
   assert.match(onMain, /gh run view 101 --log-failed/);
   assert.match(onMain, /gh run rerun 101 --failed/);
-  assert.match(onMain, /office-workers hire --title "Fix CI on main" --from origin\/main/);
+  assert.match(onMain, /team_hire.*title "Fix CI on main" and from "origin\/main"/);
   assert.match(onMain, /open a pull request against `main` with `gh`/);
   assert.match(onMain, /gh run list --branch main --workflow ci\.yml --limit 3/);
-  assert.match(onMain, /office-workers wait/);
+  assert.match(onMain, /`team` action "status"/);
   assert.doesNotMatch(onMain, /\{\{/);
 
   const onBranch = officePrompt(undefined, 'pipeline.heal', healPromptVars('github', run({ branch: 'fix/thing', event: 'pull_request' }), 'main'));
   assert.match(onBranch, /push it to `fix\/thing` \(`git push origin HEAD:fix\/thing`\)/);
-  assert.match(onBranch, /--from origin\/fix\/thing/);
+  assert.match(onBranch, /from "origin\/fix\/thing"/);
 
   const lab = officePrompt(undefined, 'pipeline.heal', healPromptVars('gitlab', run({ path: undefined, workflow: 'Pipeline' }), 'main'));
   assert.match(lab, /glab ci trace <job id>/);

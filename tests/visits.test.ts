@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { ABANDON_MS, ASK_DEFAULT_S, LINGER_MS, READ_MS, TALK_MAX_MS, TALK_MIN_MS, URGENT_WAIT_MS, Visits, independent, waitWords, type VisitWorkers } from '../src/server/visits.js';
+import { ASK_REPLY_MS, TALK_MAX_MS, TALK_MIN_MS, URGENT_WAIT_MS, Visits, independent, waitWords, type VisitWorkers } from '../src/server/visits.js';
 import type { DroidScreen } from '../src/server/droid-screen.js';
 import { Team, type TeamWorkers } from '../src/server/team.js';
 import { SUBAGENT_DEFAULTS, type AgentChoice, type ServerMsg, type WorkerInfo, type WorkerStatus } from '../src/shared/protocol.js';
@@ -48,7 +48,9 @@ class Fake implements VisitWorkers {
     if (w) w.lastInputAt = this.clock();
     return undefined;
   }
+  refuseResume?: string;
   resume(id: string, text: string) {
+    if (this.refuseResume) return this.refuseResume;
     this.resumed.push({ id, text });
     return undefined;
   }
@@ -118,8 +120,18 @@ function rig(t: { after(fn: () => void): void }) {
     says() {
       return emitted.filter((m) => m.t === 'visit_say');
     },
-    status(caller: string, visit: string) {
-      return r.call(caller, { action: 'status', visit });
+    /** How the caller's visit is going, read from the office's own records: no tool exposes it. */
+    status(caller: string, visit: string): Reply {
+      const own = visits as unknown as { runs: Map<string, any>; ended: Map<string, any> };
+      const run = own.runs.get(visit);
+      if (run && run.visit.visitor === caller) {
+        return { status: 200, body: { visit, kind: run.visit.kind, phase: run.after === undefined ? run.visit.phase : 'pending', host: run.hostName, done: !!run.result, ...(run.result ?? {}) } };
+      }
+      const gone = own.ended.get(visit);
+      if (gone && gone.run.visit.visitor === caller) {
+        return { status: 200, body: { visit, kind: gone.run.visit.kind, phase: 'ended', host: gone.run.hostName, done: true, ...(gone.run.result ?? { ok: false, error: gone.why ?? 'The visit ended' }) } };
+      }
+      return { status: 404, body: { error: `No visit ${visit} of ${caller}'s` } };
     },
   };
   return r;
@@ -166,32 +178,33 @@ test('the roster lists only the independent workers on this floor: no subagents,
     ['Zed'],
   );
   assert.equal((upstairs.handle(other.get('zed')!, { action: 'visit', kind: 'tell', worker: 'Nibble', text: 'hi' }) as Reply).status, 404);
-  assert.equal(r.call('pixel', { action: 'visit', kind: 'look', worker: 'zed' }).status, 404);
+  assert.equal(r.call('pixel', { action: 'visit', kind: 'tell', worker: 'zed', text: 'hi' }).status, 404);
 });
 
 test('subagents, other workers’ subagents and a turned-off office get a clear refusal', (t) => {
   const r = rig(t);
-  for (const action of ['whoami', 'roster', 'visit', 'status', 'reply']) {
+  for (const action of ['whoami', 'roster', 'visit', 'look', 'reply']) {
     const res = r.call('byte', { action, kind: 'tell', worker: 'Nibble', text: 'hi', visit: 'v-1' });
     assert.equal(res.status, 403, action);
     assert.match(res.body.error, /You're a subagent of Pixel: subagents don't visit other workers or see the roster/);
   }
-  const target = r.call('nibble', { action: 'visit', kind: 'look', worker: 'Byte' });
+  const target = r.call('nibble', { action: 'visit', kind: 'tell', worker: 'Byte', text: 'x' });
   assert.equal(target.status, 403);
   assert.match(target.body.error, /Byte is a subagent: subagents can't be visited/);
   assert.equal(r.call('nibble', { action: 'visit', kind: 'tell', worker: 'byte', text: 'x' }).status, 403, 'by id too');
-  assert.match(r.call('nibble', { action: 'visit', kind: 'look', worker: 'Shell 🐚' }).body.error, /isn't an agent at a desk here/);
+  assert.match(r.call('nibble', { action: 'visit', kind: 'tell', worker: 'Shell 🐚', text: 'x' }).body.error, /isn't an agent at a desk here/);
   assert.match(r.call('sh', { action: 'roster' }).body.error, /Only agents at a desk/);
-  assert.match(r.call('pixel', { action: 'visit', kind: 'look', worker: 'pixel' }).body.error, /That's you/);
-  assert.match(r.call('pixel', { action: 'visit', kind: 'look', worker: 'Nobody' }).body.error, /No one called Nobody/);
-  assert.match(r.call('pixel', { action: 'visit', kind: 'look' }).body.error, /Name the worker/);
-  assert.match(r.call('pixel', { action: 'visit', kind: 'dance', worker: 'Nibble' }).body.error, /A visit is one of look, tell, ask, handoff/);
-  assert.match(r.call('pixel', { action: 'visit', kind: 'ask', worker: 'Nibble', text: '  ' }).body.error, /Give the question on stdin/);
-  assert.match(r.call('pixel', { action: 'visit', kind: 'look', worker: 'Dot' }).body.error, /Dot has no terminal yet/);
+  assert.match(r.call('pixel', { action: 'visit', kind: 'tell', worker: 'pixel', text: 'x' }).body.error, /That's you/);
+  assert.match(r.call('pixel', { action: 'visit', kind: 'tell', worker: 'Nobody', text: 'x' }).body.error, /No one called Nobody/);
+  assert.match(r.call('pixel', { action: 'visit', kind: 'tell', text: 'x' }).body.error, /Name the worker/);
+  assert.match(r.call('pixel', { action: 'visit', kind: 'dance', worker: 'Nibble' }).body.error, /A visit is one of tell, ask, handoff/);
+  assert.match(r.call('pixel', { action: 'visit', kind: 'ask', worker: 'Nibble', text: '  ' }).body.error, /Give the question in visit_message/);
+  assert.match(r.call('pixel', { action: 'look', worker: 'Dot' }).body.error, /Dot has no terminal yet/);
+  assert.match(r.call('pixel', { action: 'visit', kind: 'look', worker: 'Nibble' }).body.error, /A visit is one of/, 'a look reads the screen without walking over');
   assert.match(r.call('pixel', { action: 'nope' }).body.error, /Unknown action/);
 
   r.settings.on = false;
-  for (const action of ['whoami', 'roster', 'visit', 'status', 'reply']) {
+  for (const action of ['whoami', 'roster', 'visit', 'look', 'reply']) {
     const res = r.call('pixel', { action, kind: 'tell', worker: 'Nibble', text: 'hi', visit: 'v-1' });
     assert.equal(res.status, 403, action);
     assert.match(res.body.error, /Visits between workers are turned off in this office \(⚙️ Settings → Subagents & visits → Visits\)/);
@@ -199,35 +212,38 @@ test('subagents, other workers’ subagents and a turned-off office get a clear 
   assert.equal(r.emitted.length, 0, 'nothing was shown');
 });
 
-test('a look walks over, reads the screen while leaning over the laptop, and walks back', (t) => {
+test('a look reads the host screen at once, without a walk, a visit or anything typed in', (t) => {
+  const r = rig(t);
+  const res = r.call('pixel', { action: 'look', worker: 'nibble', lines: 2 });
+  assert.equal(res.status, 200);
+  assert.deepEqual(res.body, { host: 'Nibble', text: '$ npm test\nok' });
+  assert.deepEqual(r.emitted, [], 'no visit is shown');
+  assert.equal(r.fake.typed.length, 0, 'nothing is typed into the host');
+  assert.deepEqual(r.toasts, []);
+});
+
+test('a visit walks over, talks, and walks back; only the visitor follows it', (t) => {
   const r = rig(t);
   const start = r.now;
-  const res = r.call('pixel', { action: 'visit', kind: 'look', worker: 'nibble', lines: 2 });
+  const res = r.call('pixel', { action: 'visit', kind: 'tell', worker: 'nibble', text: 'hi' });
   assert.equal(res.status, 200);
   const id = res.body.visit;
   const ms = walk('desk-3', 'desk-9', 0);
   assert.equal(res.body.walkMs, ms);
   assert.deepEqual(res.body.host, { id: 'nibble', name: 'Nibble', desk: 'Desk 9' });
-  assert.deepEqual(r.lastList(), [{ id, visitor: 'pixel', host: 'nibble', kind: 'look', phase: 'walking', slot: 0, since: start }]);
+  assert.deepEqual(r.lastList(), [{ id, visitor: 'pixel', host: 'nibble', kind: 'tell', phase: 'walking', slot: 0, since: start }]);
   assert.equal(r.status('pixel', id).body.done, false);
   assert.equal(r.status('nibble', id).status, 404, "it's only the visitor's to follow");
-
   r.advance(ms - 250);
-  assert.equal(r.lastList()[0].phase, 'walking', 'the office waits out the walk before it reads');
+  assert.equal(r.lastList()[0].phase, 'walking', 'the office waits out the walk before it talks');
   r.advance(250);
-  assert.equal(r.lastList()[0].phase, 'reading');
-  const s = r.status('pixel', id).body;
-  assert.equal(s.done, true);
-  assert.equal(s.text, '$ npm test\nok');
-  assert.equal(r.fake.typed.length, 0, 'nothing is typed into the host');
-
-  r.advance(READ_MS);
+  assert.equal(r.lastList()[0].phase, 'talking');
+  r.advance(TALK_MIN_MS);
   assert.equal(r.lastList()[0].phase, 'returning');
   assert.equal(r.call('pixel', { action: 'whoami' }).body.visiting, undefined, 'walking back, it is no longer at the desk');
   r.advance(ms);
   assert.deepEqual(r.lastList(), [], 'back at its desk, the visit is over');
-  assert.equal(r.status('pixel', id).body.text, '$ npm test\nok', 'its outcome can still be collected');
-  assert.deepEqual(r.toasts, ["👀 Pixel is reading Nibble's screen"]);
+  assert.equal(r.status('pixel', id).body.delivered, true, 'its outcome is kept');
 });
 
 test('a normal tell to a busy host goes in at once as a steer, with no Escape and no queueing for the turn to end', (t) => {
@@ -243,7 +259,7 @@ test('a normal tell to a busy host goes in at once as a steer, with no Escape an
   assert.deepEqual(r.fake.escapes, [], 'a normal message never cancels a turn');
   const { text } = r.fake.typed[0];
   assert.match(text, /^Droid Office delivery: message from Pixel \(Desk 3\), a worker, not the owner\n+## Worker message\n```text\nI renamed auth\.ts to session\.ts\n```\n\n## Office guidance\n/);
-  assert.match(text, /office-visit tell Pixel/);
+  assert.match(text, /`visit_message`, name Pixel and kind "tell"/);
   assert.doesNotMatch(text, /urgent/i);
   r.advance(TALK_MIN_MS);
   assert.equal(r.lastList()[0].phase, 'returning');
@@ -376,61 +392,71 @@ test('an urgent message waits for a permission prompt, even one the status has n
   assert.deepEqual(r.fake.escapes, ['nibble'], 'answered, the turn goes on, and the Escape goes in');
 });
 
-test('an ask waits at the desk for the answer, which reaches the asker and shows over the host', (t) => {
+test('an ask walks home without an answer or polling; a later answer is delivered into its session', (t) => {
   const r = rig(t);
-  const res = r.call('pixel', { action: 'visit', kind: 'ask', worker: 'Nibble', text: 'Which port does the dev server use?', timeout: 120 });
+  const res = r.call('pixel', { action: 'visit', kind: 'ask', worker: 'Nibble', text: 'Which port does the dev server use?' });
   const id = res.body.visit;
-  assert.equal(res.body.timeout, 120);
+  assert.equal(res.body.queued, true);
   r.advance(walk('desk-3', 'desk-9', 0));
-  assert.equal(r.lastList()[0].phase, 'waiting');
+  assert.equal(r.lastList()[0].phase, 'talking');
   const text = r.fake.typed[0].text;
   assert.match(text, /^Droid Office delivery: question from Pixel \(Desk 3\), a worker, not the owner\n+## Worker message\n```text\nWhich port/);
-  assert.ok(text.includes(`office-visit reply ${id} <<'EOF'`), text);
-  assert.match(text, /The sender waits about 2 minutes more/);
+  assert.ok(text.includes(`visit_reply with visit "${id}"`), text);
+  assert.match(text, /within about 30 minutes of this delivery/);
+  assert.match(text, /not waiting at your desk/);
 
   assert.equal(r.call('dot', { action: 'reply', visit: id, text: '5173' }).status, 404, 'only the host answers');
-  assert.match(r.call('nibble', { action: 'reply', visit: id, text: '' }).body.error, /Give the answer on stdin/);
-  for (let i = 0; i < 30; i++) {
-    r.advance(1000);
-    assert.equal(r.status('pixel', id).body.done, false, 'still waiting while office-visit keeps asking');
-  }
-  const ok = r.call('nibble', { action: 'reply', visit: id, text: '5173, and the office on 4600' });
-  assert.deepEqual(ok, { status: 200, body: { to: 'Pixel' } });
-  assert.deepEqual(r.says().at(-1), { t: 'visit_say', visit: id, worker: 'nibble', text: '5173, and the office on 4600' });
-  const s = r.status('pixel', id).body;
-  assert.equal(s.done, true);
-  assert.equal(s.answer, '5173, and the office on 4600');
-  assert.equal(r.lastList()[0].phase, 'waiting', 'it stays a moment while the answer is said');
-  r.advance(LINGER_MS);
+  assert.match(r.call('nibble', { action: 'reply', visit: id, text: '' }).body.error, /Give the answer in visit_reply/);
+  r.advance(TALK_MIN_MS);
+  assert.equal(r.status('pixel', id).body.delivered, true);
   assert.equal(r.lastList()[0].phase, 'returning');
-  assert.match(r.call('nibble', { action: 'reply', visit: id, text: 'again' }).body.error, /isn't waiting any more/);
+  r.advance(walk('desk-3', 'desk-9', 0) + 10 * 60_000);
+  assert.deepEqual(r.lastList(), [], 'the asker has been home for ten minutes, without polling');
+  const ok = r.call('nibble', { action: 'reply', visit: id, text: '5173, and the office on 4600' });
+  assert.deepEqual(ok, { status: 200, body: { visit: id, to: 'Pixel', delivered: true } });
+  assert.deepEqual(r.says().at(-1), { t: 'visit_say', visit: id, worker: 'nibble', text: '5173, and the office on 4600' });
+  assert.equal(r.fake.typed.at(-1)?.id, 'pixel');
+  assert.match(r.fake.typed.at(-1)?.text ?? '', /answer from Nibble[\s\S]*## Worker message\n```text\n5173, and the office on 4600\n```\n\n## Office guidance/);
+  assert.match(r.call('nibble', { action: 'reply', visit: id, text: 'again' }).body.error, /already answered/);
+  assert.deepEqual(r.lastList(), [], 'reply delivery does not invent another walk');
 });
 
-test('an ask gives up when the asker’s timeout runs out, or when the asker stops waiting', (t) => {
+test('a queued answer that later fails to go in reopens the question for the host', (t) => {
+  const r = rig(t);
+  const id = r.call('pixel', { action: 'visit', kind: 'ask', worker: 'Nibble', text: 'Which port?' }).body.visit;
+  r.advance(walk('desk-3', 'desk-9', 0) + TALK_MIN_MS + walk('desk-3', 'desk-9', 0) + 250);
+  assert.deepEqual(r.lastList(), [], 'the asker is home');
+  r.fake.screens.set('pixel', 'asking');
+  assert.equal(r.call('nibble', { action: 'reply', visit: id, text: '5173' }).body.queued, true, 'a dialog holds the answer back');
+  r.set('pixel', 'exited');
+  r.fake.refuseResume = 'its worktree is missing';
+  r.fake.screens.set('pixel', 'idle');
+  r.advance(250);
+  assert.match(r.toasts.at(-1) ?? '', /Couldn't get Nibble's answer to Pixel: its worktree is missing\. The question is open again/);
+  r.fake.refuseResume = undefined;
+  const again = r.call('nibble', { action: 'reply', visit: id, text: '5173' });
+  assert.equal(again.status, 200, 'the host can answer again');
+  assert.equal(r.fake.resumed.at(-1)?.id, 'pixel');
+  assert.match(r.fake.resumed.at(-1)?.text ?? '', /answer from Nibble/);
+});
+
+test('asks expire 30 minutes after delivery, or before delivery if a blocked session never recovers', (t) => {
   const r = rig(t);
   r.set('nibble', 'working');
-  const id = r.call('pixel', { action: 'visit', kind: 'ask', worker: 'Nibble', text: 'Quick one?', timeout: 15 }).body.visit;
-  for (let i = 0; i < 15; i++) {
-    r.advance(1000);
-    r.status('pixel', id);
-  }
-  const s = r.status('pixel', id).body;
-  assert.equal(s.done, true);
-  assert.equal(s.ok, false);
-  assert.match(s.error, /Nibble didn't answer within 15 seconds/);
-  assert.equal(r.lastList()[0].phase, 'returning');
-  r.set('nibble', 'done');
-  r.advance(1000);
-  assert.equal(r.fake.typed.length, 1, 'the question went in as a steer when the asker arrived; nothing more goes in once it has given up');
-  assert.match(r.call('nibble', { action: 'reply', visit: id, text: 'late' }).body.error, /Pixel isn't waiting any more: Nibble didn't answer/);
-
-  // The asker's own office-visit went away (its turn was stopped): it stops waiting too.
-  r.advance(walk('desk-3', 'desk-9', 0));
-  const gone = r.call('pixel', { action: 'visit', kind: 'ask', worker: 'Dot', text: 'Still there?' }).body.visit;
-  r.set('dot', 'working');
-  r.advance(ABANDON_MS + walk('desk-3', 'desk-10', 0) + 500);
-  assert.match(r.status('pixel', gone).body.error, /You stopped waiting/);
-  assert.equal(ASK_DEFAULT_S, 300);
+  const id = r.call('pixel', { action: 'visit', kind: 'ask', worker: 'Nibble', text: 'Quick one?' }).body.visit;
+  r.advance(walk('desk-3', 'desk-9', 0) + 250);
+  r.advance(ASK_REPLY_MS);
+  assert.match(r.call('nibble', { action: 'reply', visit: id, text: 'late' }).body.error, /This ask expired/);
+  assert.deepEqual(r.lastList(), []);
+  const q = rig(t);
+  q.set('nibble', 'needs_input');
+  const queued = q.call('pixel', { action: 'visit', kind: 'ask', worker: 'Nibble', text: 'Still there?' }).body.visit;
+  q.advance(ASK_REPLY_MS + 250);
+  q.set('nibble', 'done');
+  q.advance(250);
+  assert.deepEqual(q.fake.typed, [], 'an expired queued question never enters the recovered session');
+  assert.match(q.call('nibble', { action: 'reply', visit: queued, text: 'late' }).body.error, /This ask expired/);
+  assert.equal(ASK_REPLY_MS, 30 * 60_000);
 });
 
 test('two visitors at one host stand side by side and are answered in turn, never mixed', (t) => {
@@ -442,7 +468,7 @@ test('two visitors at one host stand side by side and are answered in turn, neve
   r.advance(Math.max(walk('desk-3', 'desk-9', 0), walk('desk-10', 'desk-9', 1)));
   assert.deepEqual(
     r.lastList().map((v) => v.phase),
-    ['waiting', 'waiting'],
+    ['talking', 'talking'],
   );
   // Dot's desk is next door, so it got there first and is answered first.
   assert.equal(r.fake.typed.length, 1, 'one message at a time');
@@ -459,9 +485,10 @@ test('two visitors at one host stand side by side and are answered in turn, neve
   r.status('pixel', a);
   r.set('nibble', 'done');
   r.advance(250);
-  assert.equal(r.fake.typed.length, 2);
-  assert.match(r.fake.typed[1].text, /Pixel \(Desk 3\)[\s\S]*First\?/);
-  assert.ok(r.fake.typed[1].text.includes(a));
+  const questions = r.fake.typed.filter((note) => note.id === 'nibble');
+  assert.equal(questions.length, 2);
+  assert.match(questions[1].text, /Pixel \(Desk 3\)[\s\S]*First\?/);
+  assert.ok(questions[1].text.includes(a));
   // A host that never starts a turn for a message still gets the next one in a while.
   const c = rig(t);
   c.call('pixel', { action: 'visit', kind: 'tell', worker: 'Nibble', text: 'one' });
@@ -474,11 +501,12 @@ test('two visitors at one host stand side by side and are answered in turn, neve
 
 test('a visitor may visit again once home: a visit while walking back sets off when it gets there', (t) => {
   const r = rig(t);
-  const first = r.call('pixel', { action: 'visit', kind: 'look', worker: 'Nibble' }).body.visit;
-  assert.match(r.call('pixel', { action: 'visit', kind: 'look', worker: 'Nibble' }).body.error, /already on a visit to Nibble/);
+  const first = r.call('pixel', { action: 'visit', kind: 'tell', worker: 'Nibble', text: 'one' }).body.visit;
+  assert.match(r.call('pixel', { action: 'visit', kind: 'tell', worker: 'Nibble', text: 'two' }).body.error, /already on a visit to Nibble/);
   const ms = walk('desk-3', 'desk-9', 0);
   r.advance(ms);
-  r.advance(READ_MS);
+  assert.match(r.call('pixel', { action: 'visit', kind: 'tell', worker: 'Dot', text: 'three' }).body.error, /already on a visit/, 'still talking');
+  r.advance(TALK_MIN_MS);
   assert.equal(r.status('pixel', first).body.phase, 'returning');
   const next = r.call('pixel', { action: 'visit', kind: 'tell', worker: 'Dot', text: 'hi' });
   assert.equal(next.status, 200);
@@ -490,24 +518,6 @@ test('a visitor may visit again once home: a visit while walking back sets off w
     'not shown until it sets off',
   );
   r.advance(ms);
-  assert.deepEqual(
-    r.lastList().map((v) => [v.id, v.phase]),
-    [[next.body.visit, 'walking']],
-  );
-});
-
-test('a visit right after a look waits for that look to finish, instead of being refused', (t) => {
-  const r = rig(t);
-  const first = r.call('pixel', { action: 'visit', kind: 'look', worker: 'Nibble' }).body.visit;
-  const ms = walk('desk-3', 'desk-9', 0);
-  r.advance(ms);
-  assert.equal(r.status('pixel', first).body.done, true, 'the look has its screen');
-  assert.equal(r.status('pixel', first).body.phase, 'reading');
-  const next = r.call('pixel', { action: 'visit', kind: 'look', worker: 'Nibble' });
-  assert.equal(next.status, 200);
-  assert.ok(next.body.after > ms && next.body.after <= READ_MS + ms, 'still reading, then the walk back');
-  assert.match(r.call('pixel', { action: 'visit', kind: 'look', worker: 'Nibble' }).body.error, /already on a visit/, 'one waiting is the limit');
-  r.advance(READ_MS + ms);
   assert.deepEqual(
     r.lastList().map((v) => [v.id, v.phase]),
     [[next.body.visit, 'walking']],
@@ -575,7 +585,7 @@ test('how long an asker still waits, in words', () => {
 });
 
 test('turning visits off mid-walk cancels delivery and a pending next visit', (t) => {
-  for (const kind of ['look', 'tell', 'ask', 'handoff']) {
+  for (const kind of ['tell', 'ask', 'handoff']) {
     const r = rig(t);
     const first = r.call('pixel', { action: 'visit', kind, worker: 'Nibble', text: 'never deliver' }).body.visit;
     r.advance(1000);
@@ -590,15 +600,19 @@ test('turning visits off mid-walk cancels delivery and a pending next visit', (t
   }
 
   const r = rig(t);
-  r.call('pixel', { action: 'visit', kind: 'look', worker: 'Nibble' });
-  r.advance(walk('desk-3', 'desk-9', 0));
+  r.call('pixel', { action: 'visit', kind: 'tell', worker: 'Nibble', text: 'first' });
+  r.advance(walk('desk-3', 'desk-9', 0) + TALK_MIN_MS + 250);
   const next = r.call('pixel', { action: 'visit', kind: 'tell', worker: 'Dot', text: 'never set off' }).body.visit;
   r.settings.on = false;
   r.advance(250);
   r.settings.on = true;
   r.advance(30_000);
   assert.match(r.status('pixel', next).body.error, /Visits were turned off/);
-  assert.equal(r.fake.typed.length, 0, 'a cancelled pending visit never sets off after re-enabling visits');
+  assert.deepEqual(
+    r.fake.typed.map((n) => n.id),
+    ['nibble'],
+    'a cancelled pending visit never sets off after re-enabling visits',
+  );
 });
 
 test('a dialog on screen blocks normal and urgent delivery even while the status still says done', (t) => {
@@ -615,25 +629,21 @@ test('a dialog on screen blocks normal and urgent delivery even while the status
   }
 });
 
-test('an ask queued behind a completed look gets its timeout when it sets off', (t) => {
+test('an ask queued behind a finished tell gets a delivery window when it sets off', (t) => {
   const r = rig(t);
-  r.call('pixel', { action: 'visit', kind: 'look', worker: 'Nibble' });
-  r.advance(walk('desk-3', 'desk-9', 0));
+  r.call('pixel', { action: 'visit', kind: 'tell', worker: 'Nibble', text: 'first' });
+  r.advance(walk('desk-3', 'desk-9', 0) + TALK_MIN_MS + 250);
   r.set('dot', 'working');
-  const next = r.call('pixel', { action: 'visit', kind: 'ask', worker: 'Dot', text: 'Still time?', timeout: 10 });
-  assert.equal(next.body.timeout, 10);
-  r.advance(READ_MS + walk('desk-3', 'desk-9', 0));
-  const departed = r.now;
+  const next = r.call('pixel', { action: 'visit', kind: 'ask', worker: 'Dot', text: 'Still time?' });
+  assert.equal(next.body.queued, true);
+  r.advance(walk('desk-3', 'desk-9', 0));
   assert.equal(r.status('pixel', next.body.visit).body.phase, 'walking');
-  r.advance(walk('desk-3', 'desk-10', 0) + 250);
-  assert.equal(r.status('pixel', next.body.visit).body.done, false, 'time in the previous visit is not charged to this ask');
-  r.advance(departed + 10_000 - r.now);
-  assert.match(r.status('pixel', next.body.visit).body.error, /didn't answer within 10 seconds/);
+  r.advance(walk('desk-3', 'desk-10', 0) + TALK_MIN_MS + 250);
+  assert.equal(r.status('pixel', next.body.visit).body.delivered, true);
+  assert.equal(r.call('dot', { action: 'reply', visit: next.body.visit, text: 'Yes' }).status, 200);
 });
 
-test('an unanswered ask and an undelivered tell cannot queue a second visit or use a home estimate', (t) => {
-  // An ask to a busy host goes in as a steer at once, but its asker is still standing there
-  // waiting for the answer. A tell to a host that needs the owner can't go in at all yet.
+test('an unanswered delivered ask can queue another visit on its way home; an undelivered tell still talks', (t) => {
   for (const [kind, hostStatus] of [
     ['ask', 'working'],
     ['tell', 'needs_input'],
@@ -641,10 +651,11 @@ test('an unanswered ask and an undelivered tell cannot queue a second visit or u
     const r = rig(t);
     r.set('nibble', hostStatus);
     r.call('pixel', { action: 'visit', kind, worker: 'Nibble', text: 'still waiting' });
-    r.advance(walk('desk-3', 'desk-9', 0) + TALK_MIN_MS);
+    r.advance(walk('desk-3', 'desk-9', 0) + TALK_MIN_MS + 250);
     const next = r.call('pixel', { action: 'visit', kind: 'tell', worker: 'Dot', text: 'not yet' });
-    assert.equal(next.status, 409);
-    assert.equal(next.body.after, undefined);
+    assert.equal(next.status, kind === 'ask' ? 200 : 409);
+    if (kind === 'ask') assert.ok(next.body.after > 0);
+    else assert.equal(next.body.after, undefined);
   }
 });
 
@@ -667,7 +678,7 @@ test('a visitor turned back mid-walk reaches home on the same shortened clock as
   }
 });
 
-test('office-workers carries on as before beside visits: a lead reaches its subagent with no walk and no visit', async (t) => {
+test('team messages carry on as before beside visits: a lead reaches its subagent with no walk and no visit', async (t) => {
   const dir = mkdtempSync(path.join(tmpdir(), 'droid-office-visits-team-'));
   t.after(() => rmSync(dir, { recursive: true, force: true }));
   const r = rig(t);
