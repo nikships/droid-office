@@ -161,9 +161,6 @@ jobs:
           node-version: 22
           cache: npm
 
-      - uses: oven-sh/setup-bun@v2
-        if: github.event_name == 'pull_request'
-
       - name: Check the runner's toolchain
         if: github.event_name != 'pull_request'
         run: .github/scripts/runner-toolchain.sh node
@@ -257,15 +254,18 @@ jobs:
         with:
           node-version: 22
           cache: npm
-      - uses: oven-sh/setup-bun@v2
-        if: github.event_name == 'pull_request'
       - name: Check the runner's toolchain
         if: github.event_name != 'pull_request'
         run: .github/scripts/runner-toolchain.sh node
       # No office build, Chromium or native dependencies are needed to check the website.
       - run: npm ci --ignore-scripts --prefer-offline --no-audit --no-fund
+      # npm's locked Bun package needs its install script to replace the executable stub.
+      - run: npm rebuild bun
+        if: needs.changes.outputs.node != 'true'
       # The Node job's repository-wide checks already include the website.
       - run: npx oxlint --deny-warnings website
+        if: needs.changes.outputs.node != 'true'
+      - run: npx biome check --error-on-warnings website
         if: needs.changes.outputs.node != 'true'
       - run: npm run typecheck --workspace website
         if: needs.changes.outputs.node != 'true'

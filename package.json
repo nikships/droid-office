@@ -30,7 +30,7 @@
     "dev:website": "npm run dev --workspace website",
     "deploy:website": "firebase deploy --only hosting --project droid-office",
     "typecheck": "bun check -p tsconfig.server.json && bun check -p tsconfig.client.json && bun check -p tsconfig.desktop.json && bun check -p tsconfig.desktop-page.json && npm run typecheck --workspace website",
-    "lint": "oxlint --deny-warnings .",
+    "lint": "oxlint --deny-warnings . && biome check --error-on-warnings .",
     "format": "biome format --write .",
     "start": "node bin/droid-office.js",
     "desktop": "npm run build && electron .",
@@ -40,7 +40,7 @@
   "lint-staged": {
     "*.{js,mjs,cjs,ts,mts,cts}": [
       "oxlint --deny-warnings --no-error-on-unmatched-pattern",
-      "biome format --write --no-errors-on-unmatched"
+      "biome check --write --error-on-warnings --no-errors-on-unmatched"
     ]
   },
   "engines": {

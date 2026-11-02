@@ -54,7 +54,8 @@ Run from the repository root. npm with `package-lock.json` is the only package m
 - `.env.example` lists every environment variable the office reads. Adding, renaming or removing one updates `.env.example` in the same change; `tests/env-example.test.ts` fails otherwise. Never commit a `.env` file.
 - Do not change the `version` in `package.json` except to start a new minor. `.github/workflows/release.yml` publishes every change on `main` as `v<major>.<minor>.<commit count on main>`.
 - Commit subjects use a conventional prefix: `feat:`, `fix:`, `docs:` or `chore:`.
-- Fix what `npm run lint` reports in code. Never add `biome-ignore` or other suppression comments, and do not turn off rules in `biome.jsonc` to pass a check.
+- `npm run lint` runs Oxlint (`.oxlintrc.json`) and Biome (`biome.jsonc`). Biome retains the existing recommended rules and formatting policy until Oxlint rule parity is established. Fix findings in code; never add suppression comments or turn off rules in either config to pass a check.
+- `npm run typecheck` uses the npm-locked Bun binary, not a global installation. After `npm ci --ignore-scripts`, run `npm rebuild bun` before typechecking. `tests/typecheck-parity.test.ts` compares Bun with TypeScript on all five projects and injected type errors.
 - Do not bypass the pre-commit hook (`.husky/pre-commit`) with `--no-verify`; fix what it reports.
 
 ## Companion parity
