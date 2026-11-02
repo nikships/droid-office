@@ -265,7 +265,7 @@ export class WorkerManager {
   private get forge(): Forge {
     return this.pulls.forge ?? 'github';
   }
-  /** Where the office-workers command is, for every agent's PATH: how a lead runs its subagents (see team.ts). */
+  /** Where the remaining Whiteboard and visit commands are, for every agent's PATH. */
   private teamBin: string | undefined;
   /** The script a new worktree's terminal runs before its agent (see worktree-setup.ts). */
   private setupScript: string | undefined;
@@ -320,9 +320,7 @@ export class WorkerManager {
     // The task queue's command, from before the queue was taken out.
     rmSync(path.join(dataDir, 'bin', 'office-queue'), { force: true });
     rmSync(path.join(dataDir, 'bin', 'office-queue.cmd'), { force: true });
-    this.teamBin = this.writeOfficeCommand(path.join('bin', 'team'), 'office-workers', "Droid Office's subagents, for every agent");
-    // In the same folder, so it's on every agent's PATH with office-workers.
-    this.writeOfficeCommand(path.join('bin', 'team'), 'office-whiteboard', "The floor's Whiteboard, for every agent");
+    this.teamBin = this.writeOfficeCommand(path.join('bin', 'team'), 'office-whiteboard', "The floor's Whiteboard, for every agent");
     this.writeOfficeCommand(path.join('bin', 'team'), 'office-visit', 'Visits between independent workers on a floor');
     try {
       this.setupScript = writeSetupScript(dataDir);
@@ -1979,7 +1977,7 @@ export class WorkerManager {
     // The MCP profile expands these only for office agents. A droid started by hand in a shell
     // must not inherit an office identity (nor do outside guests or Factory cloud workers).
     if (!isShell) Object.assign(env, { DROID_OFFICE_WORKER_ID: info.id, DROID_OFFICE_HOOK_URL: this.hook.url, DROID_OFFICE_HOOK_TOKEN: w.hookToken });
-    // Any agent runs its subagents with office-workers, and uses the Whiteboard with office-whiteboard.
+    // Keep the remaining Whiteboard and visit commands on the agent's PATH during migration.
     const bins = [!isShell && this.teamBin].filter((d): d is string => !!d);
     if (bins.length) {
       // Windows spells it Path.
@@ -2329,7 +2327,7 @@ process.stdin.on('end', () => {
   }
 
   /**
-   * Writes one of the office's agent commands (office-workers, office-whiteboard) into `sub` of the data
+   * Writes one of the remaining Whiteboard or visit commands into `sub` of the data
    * dir, running bin/<name>.js with the office's own node, and returns that directory. Rewritten on
    * every start, so after an upgrade it runs the new install's script.
    */

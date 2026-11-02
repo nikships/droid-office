@@ -95,8 +95,8 @@ test('an agent and the owner share a floor Whiteboard end to end: office-whitebo
       .find((r) => r.env?.hookToken) as { env: { workerId: string; hookToken: string; hookUrl: string; path: string } } | undefined;
   }, 'the agent to start');
   const bin = launch.env.path.split(path.delimiter)[0];
-  assert.ok(existsSync(path.join(bin, 'office-whiteboard')), 'office-whiteboard is on every agent PATH, next to office-workers');
-  assert.ok(existsSync(path.join(bin, 'office-workers')));
+  assert.ok(existsSync(path.join(bin, 'office-whiteboard')), 'office-whiteboard remains on every agent PATH during migration');
+  assert.equal(existsSync(path.join(bin, 'office-workers')), false);
   const env = { DROID_OFFICE_HOOK_URL: launch.env.hookUrl, DROID_OFFICE_WORKER_ID: launch.env.workerId, DROID_OFFICE_HOOK_TOKEN: launch.env.hookToken };
   const cli = async (args: string[], stdin = '', extra: { env?: Record<string, string> } = {}) => {
     const out: string[] = [];
