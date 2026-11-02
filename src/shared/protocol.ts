@@ -79,6 +79,8 @@ export interface WorkerInfo {
   id: string;
   /** 'agent' runs Droid; 'shell' is a plain shared login shell; 'cloud' runs its Droid session on a Factory computer (see `cloud`). */
   kind: WorkerKind;
+  /** External agent with its own desk and MCP inbox, not a local Droid or PTY. */
+  remote?: boolean;
   /** Droid model requested for this worker, instead of Droid's own default. */
   model?: string;
   /** Reasoning effort requested for this worker, when one was chosen. */

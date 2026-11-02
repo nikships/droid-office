@@ -10,7 +10,7 @@ import type { Config } from './config.js';
 import type { AddressInfo } from 'node:net';
 import { bearerToken, isLoopback, lanAllowed, loopbackHost, lanIPv4s, mintLanToken, tailscaleIPv4s } from './lan.js';
 import { DevicesStore, machineName, pairingAddresses } from './devices.js';
-import { TailscaleWatch } from './tailscale.js';
+import { TailscaleWatch, tailscaleSelf } from './tailscale.js';
 import { WebCompanion } from './web-companion.js';
 import { COMPANION_OFF, pairingLink, type PairedDevice, type PairingState } from '../shared/devices.js';
 import { MAX_REPOS, childEnv, resolveAgent, type RepoSource } from './workers.js';
@@ -66,6 +66,9 @@ import { WorkerLabels } from './worker-labels.js';
 import { WorkerLabelModel } from './worker-label-model.js';
 import { labelSettings, WorkerLabelPreferences } from './worker-label-settings.js';
 import { FinderDispatch, finderCatalogue, handleFinder, publishFinder } from './finder.js';
+import { RemoteWorkers } from './remote-workers.js';
+import { RemoteOffice } from './remote-office.js';
+import { RemoteMcpAdmin, REMOTE_ADMIN_PATH, remoteMcpListener } from './remote-mcp-http.js';
 
 const MIME: Record<string, string> = {
   '.html': 'text/html; charset=utf-8',
@@ -261,6 +264,10 @@ export async function startServer(cfg: Config) {
     if (err) console.error(`droid-office: --projects: ${err}`);
   }
   const floors = new Map<string, Floor>();
+  const remoteWorkers = new RemoteWorkers(cfg.dataDir);
+  const remoteOffice = new RemoteOffice(remoteWorkers, () => [...floors.values()]);
+  let remoteAdmin: RemoteMcpAdmin | undefined;
+  let remoteServer: http.Server | undefined;
   const floorOf = (c: Client): Floor | undefined => (c.floor ? floors.get(c.floor) : undefined);
   /** The floor a worker sits on. Worker ids are unique across the building. */
   const workerFloor = (workerId: string): Floor | undefined => {
@@ -317,6 +324,10 @@ export async function startServer(cfg: Config) {
       return send(res, 400, {});
     }
     if (url.pathname.startsWith('/api/finder/')) return handleFinder(req, res, url.pathname, finderToken, finder, finderModels);
+    if (url.pathname === REMOTE_ADMIN_PATH) {
+      if (!remoteAdmin) return send(res, 503, { error: 'Remote MCP is disabled; enable --remote-mcp-port first' });
+      return remoteAdmin.handle(req, res);
+    }
     if (url.pathname === OFFICE_MCP_PATH) {
       if (!officeMcp) return send(res, 503, { error: 'Office MCP is starting' });
       return officeMcp.handle(req, res);
@@ -516,6 +527,9 @@ export async function startServer(cfg: Config) {
   machine.start();
 
   const floorContext: FloorContext = {
+    remoteWorkers,
+    remoteRevoke: (id) => remoteOffice.revoke(id),
+    remoteTeamSize: (id) => [...floors.values()].reduce((n, f) => n + f.workers.list().filter((w) => w.lead === id).length, 0),
     agentCmd: cfg.agentCmd,
     agentArgs: cfg.agentArgs,
     hook: { url: `http://127.0.0.1:${hookPort}`, token: '' },
@@ -592,6 +606,28 @@ export async function startServer(cfg: Config) {
   );
   // Workers still running from the last office are back at their desks before anyone walks in.
   await Promise.all([...floors.values()].map((f) => f.ready));
+  if (cfg.remoteMcpPort) {
+    const self = await tailscaleSelf();
+    if (!self?.dnsName) throw new Error('Remote MCP requires a running Tailscale connection with MagicDNS and Serve HTTPS');
+    remoteServer = remoteMcpListener({
+      remote: remoteOffice,
+      remoteTransport: { hostname: self.dnsName },
+      settings: () => subagents.settings,
+      floor: (id) => {
+        const f = remoteOffice.floor(id);
+        return f ? { id: f.id, name: f.def.name, dir: f.dir, workers: f.workers, team: f.team, visits: f.visits, whiteboard: f.whiteboard } : undefined;
+      },
+    });
+    const listener = remoteServer;
+    await new Promise<void>((resolve, reject) => {
+      listener.once('error', reject);
+      listener.listen(cfg.remoteMcpPort, '127.0.0.1', () => {
+        listener.off('error', reject);
+        resolve();
+      });
+    });
+    remoteAdmin = new RemoteMcpAdmin(cfg.dataDir, remoteOffice, self.dnsName, cfg.remoteMcpPort);
+  }
 
   /** Everything on a floor, for whoever just arrived there. */
   const floorView = (floor: Floor | undefined): FloorView => ({
@@ -2624,6 +2660,8 @@ export async function startServer(cfg: Config) {
     for (const c of clients.values()) c.ws.close();
     server.close();
     hookServer.close();
+    remoteServer?.closeAllConnections();
+    remoteServer?.close();
     return labelsStopped;
   };
 

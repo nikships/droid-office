@@ -9,6 +9,10 @@ import { FACTORY_SKILLS_DIR } from './subagents.js';
 import { COMPANION_PATH } from '../shared/devices.js';
 
 const argv = process.argv.slice(2);
+if (argv[0] === 'remote') {
+  const { remoteCommand } = await import('./remote-command.js');
+  process.exit(await remoteCommand(argv.slice(1)));
+}
 if (argv[0] === 'prune') {
   const { prune } = await import('./prune.js');
   process.exit(await prune(argv.slice(1)));

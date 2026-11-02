@@ -4,6 +4,8 @@ Status: implemented. One MCP server, `droid-office`, replaces the three commands
 
 ## Decisions
 
+- **External workers.** An opt-in, separate loopback listener behind Tailscale Serve provides the same worker permissions to external agents, without a dummy Droid or PTY. Per-worker credentials are revocable and separate from hook tokens. Their identities, teams, and inbox span floors: moving a desk does not strand subagents or conversations. See [External workers over Tailscale](guide/remote-workers.md) for provisioning, the network boundary, polling and persistence.
+
 - **Library.** The official TypeScript SDK's server package, [`@modelcontextprotocol/server`](https://github.com/modelcontextprotocol/typescript-sdk) **2.3.1**, pinned, with Zod **4.6.7**. `createMcpHandler` serves stateless Streamable HTTP and builds a low-level `Server` per request for the authenticated caller, so its `tools/list` handler lists only the tools that caller may use and its `tools/call` handler applies the same predicate. Requests whose `Host` is not a loopback name are refused (`hostHeaderValidationResponse`), so a web page cannot reach the server by rebinding its own name. A small adapter (`node-http.ts`) turns the hook server's Node request into a web `Request` and streams the `Response` back. The SDK has no telemetry and discovers nothing on its own.
 - **Transport and mount.** Streamable HTTP, mounted on the office's hook server (`127.0.0.1:<hookPort>`) at `/office/mcp`. The tools call the server-side code (`team.ts`, `whiteboard.ts` and `whiteboard-agent.ts`, `visits.ts`) directly, not over HTTP.
 - **Identity.** Every protocol request carries `Authorization: Bearer <DROID_OFFICE_HOOK_TOKEN>` and `x-droid-office-worker-id: <DROID_OFFICE_WORKER_ID>`. The token is resolved through `WorkerManager.authenticate`, as the status hooks are. Missing, mismatched, revoked and non-agent identities are refused before protocol initialization; there are no anonymous tools.
@@ -36,11 +38,15 @@ Each module exports `instructions` and `register(server, deps)`. Register with `
 
 ## Tools
 
-Fourteen tools. Names, inputs and who sees them are the contract between the modules; change them only by changing this table.
+Fourteen local-worker tools, plus four external-worker tools. Names, inputs and who sees them are the contract between the modules; change them only by changing this table.
 
 | Tool | Replaces | Input (all strings unless noted) | Who sees it |
 | --- | --- | --- | --- |
 | `office_whoami` | `office-workers whoami`, `office-visit whoami` | none | every office worker |
+| `office_floors` | external worker floor discovery | none | external workers only |
+| `office_move` | external worker desk/workspace selection | `floor` (id) | external workers only; preserves teams and inbox across floors |
+| `office_inbox` | external worker delivery | `ack?` (exact message ids), `limit?` (1–100) | external workers only; no implicit acknowledgment |
+| `office_status` | external worker self-reported activity | `status`: idle/working/done; `activity?` | external workers only |
 | `team_models` | `office-workers models` | none | may hire |
 | `team_hire` | `office-workers hire` | `title`, `brief`, `model?`, `effort?` (low/medium/high/xhigh/max), `from?` (ref), `worktree?` (boolean; omitted follows the owner's Subagents setting) | may hire |
 | `team` | `list`, `read`, `send`, `dismiss` | `action`: `status` \| `message` \| `dismiss`; `name?` (status: one subagent, else all); `lines?` (number, status: include that many terminal lines, max 400); `text?` (message) | has or may have subagents |
@@ -56,6 +62,13 @@ Fourteen tools. Names, inputs and who sees them are the contract between the mod
 | `whiteboard_apply` | `office-whiteboard apply` | `ops` (array of the operations `apply` takes today) | every office worker |
 
 Each tool returns a short readable `content` text and, where useful, `structuredContent`. Errors are `isError` results whose text says what to do next, never stack traces.
+
+For external workers, `team` additionally accepts `floor?`; without it, status
+includes teams across all open floors. Names must be unambiguous, or use a worker
+id. Remote status reads do not consume reports: acknowledge them through
+`office_inbox`. Hiring and Whiteboard operations use the current floor;
+`visit_reply` finds the original conversation even after the remote worker moves.
+Local workers keep their existing floor scope and terminal delivery semantics.
 
 ## Code layout
 

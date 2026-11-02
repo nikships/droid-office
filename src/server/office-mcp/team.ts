@@ -55,7 +55,7 @@ function modelText(model: TeamModel): string {
   ].join('\n');
 }
 
-export function register(server: OfficeMcpServer, _deps: OfficeMcpDeps): void {
+export function register(server: OfficeMcpServer, deps: OfficeMcpDeps): void {
   server.tool(
     {
       name: 'office_whoami',
@@ -140,6 +140,7 @@ export function register(server: OfficeMcpServer, _deps: OfficeMcpDeps): void {
         'Manage only your own subagents. Status returns one named subagent or all, with unread reports, questions, finished turns, terminal input requests, stops and departures since your last status call. News is drained per caller, even for a named snapshot; nothing waits. Message answers a question or follows up, best between turns. Dismiss only after review and integration when worker and worktree are no longer needed; worktrees with work are kept.',
       inputSchema: z.object({
         action: z.enum(['status', 'message', 'dismiss']),
+        floor: z.string().min(1).max(128).optional().describe('External workers only: restrict team operations to this floor. Omit for all your teams across the building.'),
         name: z.string().trim().min(1).optional().describe('Subagent name or id, case-insensitive. Status: omit for all. Required for message and dismiss.'),
         lines: z.number().int().min(1).max(400).optional().describe('Status only: include this many recent terminal lines per selected subagent, at most 400. Omit to leave terminals out.'),
         text: text.optional().describe('Message only: answer or follow-up to type into the subagent session. Cannot answer a permission prompt in its own terminal.'),
@@ -152,7 +153,9 @@ export function register(server: OfficeMcpServer, _deps: OfficeMcpDeps): void {
       if (args.action === 'message' && !args.text) return officeError('team action message needs text: provide the answer or follow-up.');
       if (args.action !== 'status' && args.lines !== undefined) return officeError('lines is only for team action status. Leave it out for message or dismiss.');
       if (args.action !== 'message' && args.text !== undefined) return officeError('text is only for team action message. Leave it out for status or dismiss.');
-      const result = await caller.floor.team.handle(caller.worker, { action: args.action === 'message' ? 'send' : args.action, worker: args.name, lines: args.lines, text: args.text });
+      if (args.floor && !caller.worker.remote) return officeError('Local workers manage only their own floor');
+      const command = { action: args.action === 'message' ? 'send' : args.action, worker: args.name, lines: args.lines, text: args.text, floor: args.floor };
+      const result = caller.worker.remote && deps.remote ? await deps.remote.team(caller.worker, command) : await caller.floor.team.handle(caller.worker, command);
       return reply(result, (body) => {
         if (args.action === 'message') return `Sent to ${(body.worker as TeamMember).name}.`;
         if (args.action === 'dismiss') return `Sent ${body.name} home.${body.note ? ` ${body.note}.` : ''}`;

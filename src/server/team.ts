@@ -36,6 +36,8 @@ export interface TeamWorkers {
 }
 
 export interface TeamOptions {
+  /** Remote leads own teams across floors; the normal per-lead cap still applies building-wide. */
+  remoteTeamSize?(id: string): number;
   dataDir: string;
   /** The floor's checkout, which worktree paths are relative to. */
   dir: string;
@@ -263,6 +265,14 @@ export class Team {
     return this.log.some((event) => event.lead === lead && !event.seen);
   }
 
+  /** Remote inbox acknowledgments are explicit and survive a lost HTTP response. */
+  inbox(lead: string, ack: readonly number[] = []): TeamEvent[] {
+    const ids = new Set(ack);
+    for (const e of this.log) if (e.lead === lead && ids.has(e.seq)) e.seen = true;
+    if (ids.size) this.persist();
+    return this.log.filter((e) => e.lead === lead && !e.seen).map((e) => ({ ...e }));
+  }
+
   /** A team operation from an authenticated office worker. */
   async handle(caller: WorkerInfo, raw: unknown): Promise<TeamReply> {
     const b = (raw && typeof raw === 'object' ? raw : {}) as Record<string, unknown>;
@@ -487,7 +497,7 @@ export class Team {
     const refused = await this.refuseModel(choice.model, !!asked);
     if (refused) return no(409, refused);
     const full = () => {
-      const n = this.teamOf(lead.id).length;
+      const n = lead.remote ? (this.opts.remoteTeamSize?.(lead.id) ?? this.teamOf(lead.id).length) : this.teamOf(lead.id).length;
       return n >= s.maxPerLead ? `You have ${n} subagents, the most one lead has at once in this office: use team with action dismiss and its name only when both worker and worktree are no longer needed` : undefined;
     };
     const tooMany = full();
@@ -530,7 +540,7 @@ export class Team {
       const text = this.workers.tail(w.id, lines);
       return { ...member, ...(text === undefined ? { terminalUnavailable: `${w.name} has no terminal yet: it's ${w.status}` } : { terminal: text }) };
     });
-    return ok({ ...this.whoami(lead), team, events: this.drainNews(lead) });
+    return ok({ ...this.whoami(lead), team, events: lead.remote ? this.inbox(lead.id) : this.drainNews(lead) });
   }
 
   /** What the lead hasn't heard yet, including from subagents that already left; draining counts as heard. */
@@ -611,7 +621,7 @@ export class Team {
     if (!this.opts.settings().wakeLead) return;
     const lead = this.workers.get(leadId);
     const news = this.unnudged(leadId);
-    if (!lead || !news.length || lead.kind !== 'agent') return;
+    if (!lead || !news.length || lead.kind !== 'agent' || lead.remote) return;
     // Busy: it hears when it next reads status, or is woken once it comes to rest (onWorker).
     if (lead.status !== 'done' && lead.status !== 'idle') return;
     if (lead.lastInputAt !== undefined && this.now() - lead.lastInputAt < TYPING_MS) {
@@ -648,8 +658,7 @@ export class Team {
       // nothing kept yet
     }
     // A lead that didn't come back with the office has nobody to hear its news.
-    const here = new Set(this.workers.list().map((w) => w.id));
-    this.log = this.log.filter((e) => here.has(e.lead));
+    this.log = this.log.filter((e) => !!this.workers.get(e.lead));
     this.seq = this.log.reduce((m, e) => Math.max(m, e.seq), 0);
   }
 

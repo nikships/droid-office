@@ -17,6 +17,8 @@ export interface Config {
   skillsDir?: string;
   /** Signed native Keychain bridge supplied by the packaged Mac app, never enabled by default. */
   finderBridge?: string;
+  /** Dedicated loopback MCP listener for a Tailscale Serve proxy. Disabled by default. */
+  remoteMcpPort?: number;
   /**
    * Render Whiteboard cards with the headless Chromium, downloading it on the first render when it's
    * missing (the CLI sets it; unset in tests, so they never start a browser or a download).
@@ -48,6 +50,7 @@ Usage:
   droid-office setup [--projects <dir>] [--project <repo>]...
   droid-office prune [dir] [--dry-run] [--force]
   droid-office browser <install|status|path|apparmor-profile>
+  droid-office remote <list|add|rotate|revoke> [--home <dir>]
 
 Runs the office. Every project is a floor of the building: ride the elevator and
 pick one of the git checkouts you already have in your workspace folder. The
@@ -94,6 +97,10 @@ Options:
       --finder-bridge <file>
                           Signed macOS Keychain helper for Finder dispatch.
                           Supplied by the Mac app; disabled when absent
+      --remote-mcp-port <n>
+                          Enable external worker MCP on a dedicated loopback port,
+                          behind Tailscale Serve HTTPS (env DROID_OFFICE_REMOTE_MCP_PORT).
+                          Disabled by default. Use "remote --help" to provision workers
       --max-workers <n>   Run at most this many workers at once, across every
                           floor (env DROID_OFFICE_MAX_WORKERS). Hiring past it
                           is refused. It can be lowered from ⚙️
@@ -188,6 +195,7 @@ export function loadConfig(argv: string[]): Config {
   let selfSigned = false;
   let trustProxy = false;
   let finderBridge: string | undefined;
+  let remoteMcpPort = process.env.DROID_OFFICE_REMOTE_MCP_PORT || '';
   let maxWorkers = process.env.DROID_OFFICE_MAX_WORKERS || '';
   let city = process.env.DROID_OFFICE_CITY || '';
   let weather = process.env.DROID_OFFICE_WEATHER || '';
@@ -230,6 +238,9 @@ export function loadConfig(argv: string[]): Config {
       case '--finder-bridge':
         finderBridge = path.resolve(takeValue(argv, i++, a));
         break;
+      case '--remote-mcp-port':
+        remoteMcpPort = takeValue(argv, i++, a);
+        break;
       case '--max-workers':
         maxWorkers = takeValue(argv, i++, a);
         break;
@@ -271,6 +282,10 @@ export function loadConfig(argv: string[]): Config {
     process.exit(2);
   }
   const workerLimit = maxWorkers ? parseWorkerLimit(maxWorkers) : undefined;
+  if (remoteMcpPort && (!Number.isInteger(Number(remoteMcpPort)) || Number(remoteMcpPort) < 1 || Number(remoteMcpPort) > 65535 || Number(remoteMcpPort) === port)) {
+    console.error('droid-office: --remote-mcp-port needs a distinct port from 1 to 65535');
+    process.exit(2);
+  }
   if (maxWorkers && workerLimit === undefined) {
     console.error(`droid-office: --max-workers needs a whole number from 1 to ${MAX_WORKER_LIMIT}, e.g. --max-workers 6`);
     process.exit(2);
@@ -314,6 +329,7 @@ export function loadConfig(argv: string[]): Config {
     tls,
     trustProxy,
     finderBridge,
+    remoteMcpPort: remoteMcpPort ? Number(remoteMcpPort) : undefined,
     maxWorkers: workerLimit,
     city: city.trim() || undefined,
     weather: (weather as Weather) || undefined,

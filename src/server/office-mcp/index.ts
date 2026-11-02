@@ -14,6 +14,8 @@ import { sendResponse, webRequest } from './node-http.js';
 import { instructions as teamInstructions, register as registerTeam } from './team.js';
 import { instructions as whiteboardInstructions, register as registerWhiteboard } from './whiteboard.js';
 import { instructions as visitInstructions, register as registerVisits } from './visits.js';
+import { register as registerRemote, remoteInstructions } from './remote.js';
+import type { RemoteOffice } from '../remote-office.js';
 
 export const OFFICE_MCP_PATH = '/office/mcp';
 export const OFFICE_MCP_WORKER_HEADER = 'x-droid-office-worker-id';
@@ -36,6 +38,9 @@ export interface OfficeMcpFloor {
 }
 
 export interface OfficeMcpDeps {
+  remote?: RemoteOffice;
+  /** Dedicated loopback listener behind Tailscale Serve; never enabled on the hook listener. */
+  remoteTransport?: { hostname: string };
   /** This office's own hook server origin; requests for workers of another local office go there. */
   hookUrl?: string;
   settings(): SubagentSettings;
@@ -58,6 +63,7 @@ export const officeAccess = {
   mayHire: ((c) => c.floor.team.cannotHire(c.worker)) satisfies OfficeMcpAccess,
   team: ((c) => {
     if (c.worker.lead) return 'Subagents report to their lead with team_report; they cannot manage a team.';
+    if (c.worker.remote) return undefined;
     return c.floor.workers.list().some((w) => w.lead === c.worker.id) || c.floor.team.hasNews(c.worker.id) ? undefined : c.floor.team.cannotHire(c.worker);
   }) satisfies OfficeMcpAccess,
   subagent: ((c) => (c.worker.lead ? undefined : 'Only a subagent reports to a lead. Independent workers answer the owner in their terminal.')) satisfies OfficeMcpAccess,
@@ -119,8 +125,16 @@ export class OfficeMcpServer {
 
   private async fetch(request: Request): Promise<Response> {
     // Loopback only: a page on another site can't reach this server by rebinding its own name.
-    const badHost = hostHeaderValidationResponse(request, localhostAllowedHostnames());
+    const remote = this.deps.remoteTransport;
+    const badHost = hostHeaderValidationResponse(request, remote ? [remote.hostname] : localhostAllowedHostnames());
     if (badHost) return badHost;
+    if (remote) {
+      // Serve strips spoofed identity headers and supplies them only for tailnet traffic.
+      // Tagged nodes need the explicit app capability; Funnel supplies neither.
+      if (request.headers.has('origin') || !tailnetIdentity(request.headers)) return Response.json({ error: 'Tailnet Serve identity required; browser and Funnel requests are refused' }, { status: 403 });
+      if (!this.caller(request)) return Response.json({ error: 'Active remote worker id and bearer credential required' }, { status: 401 });
+      return this.mcp.fetch(request);
+    }
     if (request.method === 'OPTIONS') return new Response(null, { status: 204, headers: { Allow: 'POST, GET, DELETE, OPTIONS', [PROBE_HEADER]: '1' } });
     const peer = this.peer(request);
     if (peer) return relay(request, peer);
@@ -141,7 +155,7 @@ export class OfficeMcpServer {
   }
 
   private serverFor(caller: OfficeMcpCaller | undefined, disconnected: AbortSignal | undefined): Server {
-    const server = new Server({ name: 'droid-office', version: '1.0.0' }, { capabilities: { tools: {} }, instructions: INSTRUCTIONS });
+    const server = new Server({ name: 'droid-office', version: '1.0.0' }, { capabilities: { tools: {} }, instructions: caller?.worker.remote ? remoteInstructions : INSTRUCTIONS });
     server.setRequestHandler('tools/list', () => ({ tools: caller ? [...this.tools.values()].filter((t) => t.access(caller) === undefined).map((t) => t.listed) : [] }));
     server.setRequestHandler('tools/call', async ({ params }, ctx) => {
       const tool = this.tools.get(params.name);
@@ -176,8 +190,9 @@ export class OfficeMcpServer {
     const token = /^Bearer\s+(.+)$/i.exec(request.headers.get('authorization') ?? '')?.[1];
     if (!id || !token) return undefined;
     const floor = this.deps.floor(id);
-    const worker = floor?.workers.authenticate(id, token);
+    const worker = this.deps.remoteTransport ? (this.deps.remote?.store.authenticate(id, token) ? floor?.workers.get(id) : undefined) : floor?.workers.authenticate(id, token);
     if (!floor || !worker || worker.kind !== 'agent' || worker.guest || worker.cloud) return undefined;
+    if (!!worker.remote !== !!this.deps.remoteTransport) return undefined;
     const relative = workspaceOf(worker);
     return { worker, floor, settings, cwd: relative ? path.join(floor.dir, relative) : floor.dir };
   }
@@ -188,7 +203,19 @@ export function createOfficeMcp(deps: OfficeMcpDeps): OfficeMcpServer {
   registerTeam(server, deps);
   registerWhiteboard(server, deps);
   registerVisits(server, deps);
+  registerRemote(server, deps);
   return server;
+}
+
+/** Headers from the dedicated local Serve proxy, never trusted on a network-bound listener. */
+export function tailnetIdentity(headers: Headers): boolean {
+  if (headers.get('tailscale-user-login')?.trim()) return true;
+  try {
+    const caps: unknown = JSON.parse(headers.get('tailscale-app-capabilities') ?? '{}');
+    return record(caps) && Array.isArray(caps['droid-office/remote-worker']) && caps['droid-office/remote-worker'].length > 0;
+  } catch {
+    return false;
+  }
 }
 
 export function record(value: unknown): value is Record<string, unknown> {

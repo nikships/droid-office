@@ -549,15 +549,15 @@ export class Visits {
     const host = this.workers.get(hostId);
     if (!host) return;
     const last = this.last.get(hostId);
-    if (last && now - last.at < GAP_MS) return;
+    if (!host.remote && last && now - last.at < GAP_MS) return;
     // The last message's turn hasn't started (or ended): a normal one waits for it.
-    if (!note.urgent && last && !last.sawWork && now - last.at < SETTLE_MS) return;
+    if (!host.remote && !note.urgent && last && !last.sawWork && now - last.at < SETTLE_MS) return;
     // Typed into lately by someone (not by the last message from here): they may be mid-sentence.
     const typed = host.lastInputAt !== undefined && now - host.lastInputAt < TYPING_MS && !(last && host.lastInputAt <= last.at + 1000);
-    if (typed) return;
+    if (!host.remote && typed) return;
     // A dialog the status hasn't caught up with: Enter would answer it, even if the last status was done.
     if (this.workers.turnScreen(hostId) === 'asking') return;
-    switch (host.status) {
+    switch (host.remote ? 'idle' : host.status) {
       case 'starting':
       case 'needs_input':
         // A permission prompt is the owner's to answer: even an urgent message waits for it.

@@ -120,6 +120,7 @@ data class TeamBadge(val id: String = "", val role: String = "", val leadName: S
 data class WorkerInfo(
     val id: String,
     val kind: String = "agent",
+    val remote: Boolean = false,
     val model: String? = null,
     val effort: String? = null,
     val activeModel: String? = null,
