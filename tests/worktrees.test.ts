@@ -457,7 +457,7 @@ test("freshening leaves the checkout alone when that would get in someone's way,
     assert.equal(f.git('rev-parse', 'HEAD'), head);
   };
   stays(trees.freshen(['Pixel']), /^Pixel is working in it$/);
-  stays(trees.freshen(['Pixel', 'Byte', 'a guest']), /^Pixel, Byte and a guest are working in it$/);
+  stays(trees.freshen(['Pixel', 'Byte', 'Sparks']), /^Pixel, Byte and Sparks are working in it$/);
   writeFileSync(path.join(f.dir, 'a.txt'), 'edited');
   stays(trees.freshen(), /^it has 1 uncommitted change on feature$/);
   f.git('checkout', '-q', '--', 'a.txt');

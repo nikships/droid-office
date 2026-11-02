@@ -104,7 +104,7 @@ fun AskCard(
         if (menu != null) {
             SecondaryButton(
                 "Answer questions", { opened = OfficeJson.encodeToString(Menu.serializer(), menu) },
-                Modifier.tagged(Tags.Answer.OPEN), enabled = enabled && connected && !worker.isShell && !worker.isCloud && !worker.isGuest, color = Palette.Accent,
+                Modifier.tagged(Tags.Answer.OPEN), enabled = enabled && connected && !worker.isShell && !worker.isCloud, color = Palette.Accent,
             )
         } else {
             Text("This question needs Raw TTY.", style = MaterialTheme.typography.bodySmall, modifier = Modifier.tagged(Tags.Asks.WAITING))

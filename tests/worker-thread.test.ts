@@ -581,12 +581,11 @@ test('WorkerManager exposes only a server-known local agent session and cwd', ()
       ['agent', { info: { kind: 'agent', sessionId: 'owned', worktree: { path: '.droid-office/worktrees/agent' } } }],
       ['shell', { info: { kind: 'shell', sessionId: 'shell-session' } }],
       ['cloud', { info: { kind: 'cloud', sessionId: 'cloud-session' } }],
-      ['guest', { info: { kind: 'agent', sessionId: 'guest-session', guest: {} } }],
       ['starting', { info: { kind: 'agent' } }],
     ]),
   );
   assert.deepEqual(manager.threadSession('agent'), { sessionId: 'owned', cwd: '/project/.droid-office/worktrees/agent', drops: path.join('/data', 'drops', 'agent') });
-  for (const id of ['shell', 'cloud', 'guest', 'starting', 'missing']) assert.equal(manager.threadSession(id), undefined);
+  for (const id of ['shell', 'cloud', 'starting', 'missing']) assert.equal(manager.threadSession(id), undefined);
 });
 
 test('pages carry the presentation built over the whole window, so a group keeps its first entry', async (t) => {

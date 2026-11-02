@@ -560,7 +560,6 @@ test('real worker managers restore remote seats and off-floor leads without laun
   assert.equal(alpha.tell(worker.id, 'Report from old floor'), undefined);
   assert.equal(store.inbox(worker.id).messages[0].floor, 'alpha');
   assert.match(beta.resume(worker.id)!, /remotely/);
-  assert.equal(beta.owners().length, 0);
   beta.shutdown();
   assert.deepEqual(JSON.parse(readFileSync(path.join(dir, 'beta', 'workers.json'), 'utf8')), []);
   assert.equal(new RemoteWorkers(dir).workers('beta').length, 1);

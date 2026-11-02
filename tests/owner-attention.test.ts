@@ -2,7 +2,6 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import type { WorkerInfo } from '../src/shared/protocol.js';
 import { needsOwnerAttention, needsOwnerInput } from '../src/shared/status.js';
-import { statusWord } from '../src/shared/guests.js';
 import { waitingOnSomeone, DesktopNotifier } from '../src/client/notify.js';
 import { officeStatus, waitingStatus } from '../src/server/office-status.js';
 
@@ -32,7 +31,6 @@ test('all terminal questions need the owner, while subagent completions stay wit
         assert.equal(needsOwnerAttention(w), attention);
         assert.equal(waitingOnSomeone(w), attention);
         assert.equal(waitingStatus(w), attention ? status : undefined);
-        assert.equal(statusWord(w, { needs_input: 'needs you' }), input ? 'needs you' : status);
         assert.equal(w.status, status, 'display helpers do not change orchestrator-visible state');
       }
     }

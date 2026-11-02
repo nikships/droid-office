@@ -3,13 +3,13 @@ import { OFFICE_SHELL_ID } from '../shared/office-shell';
 import type { WorkerInfo } from '../shared/protocol';
 import { isAsleep } from '../shared/status';
 
-type TerminalWorker = Pick<WorkerInfo, 'id' | 'deskId' | 'status' | 'guest' | 'cloud' | 'lost'>;
+type TerminalWorker = Pick<WorkerInfo, 'id' | 'deskId' | 'status' | 'cloud' | 'lost'>;
 const deskOrder = new Map([...DESK_BY_ID.keys()].map((id, i) => [id, i]));
 
 /** Live local terminals in desk order, then the boss monitor's shell. Never resumes a stopped worker. */
 export function nextTerminal(workers: Iterable<TerminalWorker>, current: string | null, direction: -1 | 1): string {
   const ids = [...workers]
-    .filter((w) => !w.guest && !w.cloud && !w.lost && !isAsleep(w.status))
+    .filter((w) => !w.cloud && !w.lost && !isAsleep(w.status))
     .sort((a, b) => (deskOrder.get(a.deskId) ?? Infinity) - (deskOrder.get(b.deskId) ?? Infinity) || a.id.localeCompare(b.id))
     .map((w) => w.id);
   ids.push(OFFICE_SHELL_ID);

@@ -5,7 +5,6 @@ import type { ClientMsg, WorkerInfo } from '../shared/protocol';
 import { canAnswer, readMenu, sameMenu, type Menu } from '../shared/asks';
 import { questionPresentation } from '../shared/ask-question';
 import { isAsleep, isBusy, needsOwnerInput, workerActivity } from '../shared/status';
-import { statusWord } from '../shared/guests';
 import { sessionWebUrl } from '../shared/factory-sessions';
 import { forkRefusal } from '../shared/worker-fork';
 import { draftKey } from './browser-session';
@@ -261,9 +260,8 @@ export function createPane(host: PaneHost, index: number): Pane {
     if (w.remote) return 'info';
     // A cloud worker has no terminal here: its Thread is its Factory session.
     if (w.cloud) return 'thread';
-    const local = !w.guest && !w.cloud;
-    if (local && w.kind === 'agent' && view === 'thread') return 'thread';
-    return local && !isAsleep(w.status) ? 'terminal' : 'info';
+    if (w.kind === 'agent' && view === 'thread') return 'thread';
+    return !isAsleep(w.status) ? 'terminal' : 'info';
   }
 
   function build(w: WorkerInfo | undefined, next: PaneMode) {
@@ -344,8 +342,8 @@ export function createPane(host: PaneHost, index: number): Pane {
           'data-status': m.status,
           'aria-current': String(m.id === w?.id),
           disabled: !host.live(),
-          title: `${m.name} · ${lead ? 'Main worker' : `Subworker of ${team.lead.name}`} · ${statusWord(m, STATUS_LABEL)}`,
-          'aria-label': `Open ${m.name}, ${lead ? 'main worker' : 'subworker'}, ${statusWord(m, STATUS_LABEL)}`,
+          title: `${m.name} · ${lead ? 'Main worker' : `Subworker of ${team.lead.name}`} · ${STATUS_LABEL[m.status] ?? m.status}`,
+          'aria-label': `Open ${m.name}, ${lead ? 'main worker' : 'subworker'}, ${STATUS_LABEL[m.status] ?? m.status}`,
           onclick: () => {
             if (host.usable(m.id, intended)) host.assign(index, m.id);
           },
@@ -365,7 +363,7 @@ export function createPane(host: PaneHost, index: number): Pane {
 
   function paintHead(s: PaneState) {
     const w = s.worker;
-    const local = !!w && !w.guest && !w.cloud && !w.remote;
+    const local = !!w && !w.cloud && !w.remote;
     const threaded = mode === 'thread';
     const key = JSON.stringify([w && [w.id, w.name, w.color, w.status, w.acked, w.lead, doingLine(w), w.task?.name, w.title, w.activeModel ?? w.model, w.activeEffort ?? w.effort], mode, s.maximized, s.canMaximize, host.live()]);
     if (key === headKey) return;
@@ -395,7 +393,7 @@ export function createPane(host: PaneHost, index: number): Pane {
     model.textContent = (w.kind === 'agent' ? modelBadge(w.activeModel ?? w.model, w.activeEffort ?? w.effort) : kind(w)) ?? '';
     pill.hidden = false;
     pill.className = `pill ${w.status}`;
-    pill.textContent = statusWord(w, STATUS_LABEL);
+    pill.textContent = STATUS_LABEL[w.status] ?? w.status;
     const toggles = local && w.kind === 'agent';
     views.hidden = flip.hidden = !toggles;
     views.setAttribute('aria-label', `${w.name} view`);
@@ -421,19 +419,19 @@ export function createPane(host: PaneHost, index: number): Pane {
 
   function paintActions(w: WorkerInfo | undefined) {
     const enabled = !!w && host.live() && !host.busy(w.id);
-    const key = JSON.stringify(w ? [w.id, w.name, w.kind, w.status, w.guest ? 1 : 0, w.cloud ? 1 : 0, w.sessionId, w.pr, w.prOpening, w.worktree?.branch, w.lost ? 1 : 0, forkRefusal(w), mode, enabled] : null);
+    const key = JSON.stringify(w ? [w.id, w.name, w.kind, w.status, w.cloud ? 1 : 0, w.sessionId, w.pr, w.prOpening, w.worktree?.branch, w.lost ? 1 : 0, forkRefusal(w), mode, enabled] : null);
     if (key === actionsKey) return;
     actionsKey = key;
     if (!w) return actions.replaceChildren();
     const btn = (label: string, glyph: IconName, ok: boolean, run: () => void, cls = '', tip = '') =>
       h('button.btn.icon.sm.ghost', { type: 'button', class: cls, title: tip || label, 'aria-label': label, disabled: !enabled || !ok, onclick: run }, icon(glyph, 14));
     const asleep = isAsleep(w.status);
-    const local = !w.guest && !w.cloud && !w.remote;
+    const local = !w.cloud && !w.remote;
     const intended = host.floor();
     const fork = local && w.kind === 'agent' ? forkRefusal(w) : 'none';
     actions.replaceChildren(
       ...(w.cloud && w.sessionId ? [h('a.btn.icon.sm.ghost', { href: sessionWebUrl(w.sessionId), target: '_blank', rel: 'noopener noreferrer', title: 'Factory session', 'aria-label': 'Factory session' }, icon('external', 14))] : []),
-      ...(asleep && !w.guest && !w.remote
+      ...(asleep && !w.remote
         ? [
             btn(
               w.kind === 'shell' ? 'Restart' : 'Resume',
@@ -465,7 +463,7 @@ export function createPane(host: PaneHost, index: number): Pane {
             ]
           : []),
       ...(fork !== 'none' ? [btn('Fork', 'fork', !fork, () => openForkWorker(host.net, w.id), '', fork ?? 'Fork this conversation and its files into an independent worker')] : []),
-      btn('Send home', 'home', !w.guest, () => host.sendHome(w), 'dash-home', 'Send it home'),
+      btn('Send home', 'home', true, () => host.sendHome(w), 'dash-home', 'Send it home'),
     );
   }
 
@@ -515,13 +513,11 @@ export function createPane(host: PaneHost, index: number): Pane {
           ? 'External worker. Messages and team updates arrive through its MCP inbox. No local terminal or conversation.'
           : w.lost
             ? 'Its worktree is missing, so it can’t resume or take prompts.'
-            : w.guest
-              ? 'Running outside the office. Use its own terminal.'
-              : w.cloud
-                ? `On Factory · ${w.cloud.computerName}. No local terminal.`
-                : isAsleep(w.status)
-                  ? 'Asleep. Resume it to see its terminal and prompt it.'
-                  : 'A local terminal',
+            : w.cloud
+              ? `On Factory · ${w.cloud.computerName}. No local terminal.`
+              : isAsleep(w.status)
+                ? 'Asleep. Resume it to see its terminal and prompt it.'
+                : 'A local terminal',
       ],
       ['Lead', lead ? lead.name : w.lead ? 'No longer on this floor' : undefined],
       ['Subagents', team.length ? team.map((m) => m.name).join(', ') : undefined],
@@ -577,11 +573,9 @@ export function createPane(host: PaneHost, index: number): Pane {
             h('b', {}, `${w.name} needs you. `),
             w.cloud
               ? 'There is no local menu to answer: open its Factory session.'
-              : w.guest
-                ? 'Answer it in its own terminal; the office won’t type for it.'
-                : mode === 'thread'
-                  ? 'This CLI dialog cannot be answered safely here. Open TTY to continue.'
-                  : 'Its screen has no menu the companion can answer safely. Answer it in the terminal below.',
+              : mode === 'thread'
+                ? 'This CLI dialog cannot be answered safely here. Open TTY to continue.'
+                : 'Its screen has no menu the companion can answer safely. Answer it in the terminal below.',
           ),
         ),
       );

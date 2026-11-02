@@ -11,7 +11,7 @@ can select the .44 Magnum instead. Both sidearms use the same targeting and work
 - This includes the Pipeline agent, Team lead, Issues agent and PR agent, even before
   their first task. `station.open` starts their session without inventing an owner task;
   `worker.open` opens it only in the requesting window.
-- Guest and cloud workers open their usual views.
+- Cloud workers open their usual views.
 - A registered laptop screen or other interactive display still opens its usual UI.
 - The nearest visible solid blocks the shot. There is no reach limit.
 - There is no downed state, fall, bleed-out, blood pool, spell circle, revival deadline,
@@ -28,7 +28,7 @@ Hold the primary button for 0.75 seconds and release to fire a charged shot.
   vertical heavenly ascent instead of the ordinary send-home walk.
 - The laptop shuts and shrinks; the worker, laptop and beam resources are released once.
 - There is no revival window.
-- Guests and cloud workers cannot be dismissed this way.
+- Cloud workers cannot be dismissed this way.
 - Screen hits still open their UI, and visible furniture still blocks shots.
 - Holstering, switching sidearms or spells, opening a window, Escape and losing focus
   cancel a held charge without firing.

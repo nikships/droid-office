@@ -21,7 +21,7 @@ object Asks {
 
     /** The thread can answer only a live local worker's waiting question with a readable menu. */
     fun canAnswer(w: WorkerInfo, screen: ScreenState?): Boolean =
-        w.state == WorkerStatus.NeedsInput && !w.isShell && !w.isCloud && !w.isGuest && menu(w, screen) != null
+        w.state == WorkerStatus.NeedsInput && !w.isShell && !w.isCloud && menu(w, screen) != null
 
     /** One line of what it's on, above the question: its task or title, else the start of its prompt. */
     fun context(w: WorkerInfo): String? =

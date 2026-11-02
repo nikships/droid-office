@@ -270,7 +270,6 @@ test('ping picker: eligibility and why for each worker, the ones that can first'
   const labels = { idle: 'ready', working: 'working', needs_input: 'needs input', starting: 'starting', offline: 'asleep', done: 'done', exited: 'exited' };
   const rows = pingRows(
     [
-      worker({ id: 'g', name: 'Guest', guest: true }),
       worker({ id: 'n', name: 'Nibble', status: 'needs_input' }),
       worker({ id: 'z', name: 'Zed', status: 'idle' }),
       worker({ id: 'a', name: 'Ada', status: 'offline' }),
@@ -283,7 +282,7 @@ test('ping picker: eligibility and why for each worker, the ones that can first'
   );
   assert.deepEqual(
     rows.map((r) => r.id),
-    ['a', 'q', 'z', 'b', 'c', 'g', 'n', 's'],
+    ['a', 'q', 'z', 'b', 'c', 'n', 's'],
   );
   const by = Object.fromEntries(rows.map((r) => [r.id, r]));
   assert.equal(by.z.how, 'type');
@@ -292,9 +291,6 @@ test('ping picker: eligibility and why for each worker, the ones that can first'
   assert.equal(by.q.how, 'queue');
   assert.equal(by.b.ok, false);
   assert.equal(by.b.busy, true);
-  assert.equal(by.g.guest, true);
-  assert.equal(by.g.status, 'guest');
-  assert.match(by.g.note, /Bring it in/);
   assert.match(by.n.note, /waiting on an answer/);
   assert.match(by.z.note, /Types the line/);
   assert.equal(by.z.task, undefined);

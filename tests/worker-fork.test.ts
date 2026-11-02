@@ -18,7 +18,7 @@ test('fork eligibility admits only local agents between turns with a known sessi
   assert.match(forkRefusal({ ...w, prOpening: true })!, /pull request/);
 });
 
-test('the nearest available desk wins, guests hold seats, and overflow uses a bean bag', () => {
+test('the nearest available desk wins, holds reserve seats, and overflow uses a bean bag', () => {
   const source = DESK_BY_ID.get('desk-1')!;
   const taken = new Set(['desk-1']);
   assert.equal(nearestForkSeat(source, (id) => taken.has(id))?.id, 'desk-3');

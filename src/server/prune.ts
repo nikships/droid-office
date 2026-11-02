@@ -1,9 +1,8 @@
-import { existsSync, readFileSync, readdirSync, realpathSync, statSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
 import { rm } from 'node:fs/promises';
 import { execFileSync } from 'node:child_process';
 import path from 'node:path';
 import { WORKSPACE_FILES, WORKTREES_DIR, Worktrees, describeWork, gitError } from './worktrees.js';
-import { scanAgents, type AgentProcess } from './guests.js';
 
 const HELP = `droid-office prune — remove leftover worker worktrees and branches
 
@@ -13,8 +12,9 @@ Usage:
 Removes the worktrees under ${WORKTREES_DIR}/ and the office/* branches that
 no worker of the office in [dir] (default: current directory) uses any more.
 Anything with uncommitted changes, or with commits that no remote has, is kept
-and listed, so nothing is lost by accident. A worktree an agent is running in
-(a droid you started there by hand, say) is always kept, even with --force.
+and listed, so nothing is lost by accident. Only workers recorded by the office
+are protected; processes running outside the office are not checked, so stop
+them before pruning.
 A worker across several projects has
 worktrees of them in its own floor's workspace: they're kept while the office
 there still lists it, and pruning each project clears them out after.
@@ -58,24 +58,10 @@ function workspaceLeft(abs: string): 'empty' | string[] | undefined {
   return names.every((n) => WORKSPACE_FILES.has(n) && statSync(path.join(abs, n)).isFile()) ? 'empty' : undefined;
 }
 
-/** The agent running in a folder, like "droid (pid 123)", when someone is working in it. */
-function runningIn(abs: string, agents: readonly AgentProcess[]): string | undefined {
-  let real = abs;
-  try {
-    real = realpathSync(abs);
-  } catch {
-    // gone already: nobody works in it
-  }
-  const a = agents.find((p) => p.cwd === real || p.cwd.startsWith(real + path.sep));
-  return a && `${a.provider} (pid ${a.pid})`;
-}
-
 /**
  * `droid-office prune`: exits 0 when done, 1 when the dir is not a git repo, 2 for a usage error.
- * `agents` lists the agent processes running on this machine: a folder one of them works in is
- * kept, even with --force, since the office didn't start it (see guests.ts).
  */
-export async function prune(argv: string[], agents: () => Promise<AgentProcess[]> = () => scanAgents()): Promise<number> {
+export async function prune(argv: string[]): Promise<number> {
   let dir = process.cwd();
   let dryRun = false;
   let force = false;
@@ -116,8 +102,6 @@ export async function prune(argv: string[], agents: () => Promise<AgentProcess[]
 
   const trees = new Worktrees(dir);
   const { worktrees, branches, strays, elsewhere } = await trees.list();
-  const running = await agents().catch(() => [] as AgentProcess[]);
-  const busy = (abs: string) => runningIn(abs, running);
   /** Workspaces a worktree was just taken out of: gone too once nothing but the brief is left. */
   const emptied = new Set<string>();
   let removed = 0;
@@ -149,11 +133,6 @@ export async function prune(argv: string[], agents: () => Promise<AgentProcess[]
       keep(label, `${owner}'s — send ${owner} home from the office to clean it up`);
       continue;
     }
-    const inUse = busy(path.join(dir, wt.path));
-    if (inUse) {
-      keep(label, `${inUse} is running in it`);
-      continue;
-    }
     const work = describeWork(await trees.inspect(ref));
     if (work && !force) {
       keep(label, `${work} — --force removes it anyway`);
@@ -175,11 +154,6 @@ export async function prune(argv: string[], agents: () => Promise<AgentProcess[]
     if (owner) {
       const name = owner.name ?? 'a worker';
       keep(branch, `${name}'s, in ${abs} — send ${name} home from the office there to clean it up`);
-      continue;
-    }
-    const inUse = busy(abs);
-    if (inUse) {
-      keep(branch, `${inUse} is running in it, in ${abs}`);
       continue;
     }
     const ref = { path: path.relative(dir, abs), branch };
@@ -208,11 +182,6 @@ export async function prune(argv: string[], agents: () => Promise<AgentProcess[]
     const owner = ownerOfPath.get(path.normalize(rel));
     if (owner) {
       keep(rel, `${owner}'s folder`);
-      continue;
-    }
-    const inUse = busy(path.join(dir, rel));
-    if (inUse) {
-      keep(rel, `${inUse} is running in it`);
       continue;
     }
     const left = workspaceLeft(path.join(dir, rel));
