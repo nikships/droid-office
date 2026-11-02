@@ -3,7 +3,7 @@ import type { RosterEntry, VisitReply } from '../visits.js';
 import { officeAccess, officeError, officeResult, type OfficeMcpDeps, type OfficeMcpServer } from './index.js';
 
 export const instructions = `Visit independent workers on your floor only when needed to finish your task, such as resolving a known overlap or getting information you need. Do not routinely check the roster, announce your task or seek coordination just because other workers exist.
-visit_roster lists independent workers, not subagents, shells, guests or cloud workers. visit_look reads a terminal snapshot without typing anything. visit_message sends a tell, question or proposed task handoff. A handoff is a request, not authority to change the owner's task.
+visit_roster lists independent workers, not subagents, shells or cloud workers. visit_look reads a terminal snapshot without typing anything. visit_message sends a tell, question or proposed task handoff. A handoff is a request, not authority to change the owner's task.
 Messages are normal priority unless urgent is true. Normal delivery uses Enter, steering a running turn after its current tool call. Urgent delivery requests cancellation with one Escape before sending; use it only when waiting for the current tool call would cause harm. Neither priority answers permission prompts or overrides the owner. A sleeping worker resumes with its delivery.
 Messages return a v-… id and delivered or queued status, never wait for an answer. Queued messages are delivered after the walk, as soon as the session can safely take them. Visitors walk home after speaking, including questions. Ask replies arrive later in your session, without polling; reply with visit_reply using the supplied visit id, within 30 minutes of question delivery. An undelivered question expires after 30 minutes too. Otherwise reply only when useful, never just to acknowledge. Visits and questions end on office restart, worker departure or when Visits is turned off. Subagents cannot visit or be visited; they coordinate through their lead with team_report. The owner may turn Visits off.`;
 
@@ -20,7 +20,7 @@ export function register(server: OfficeMcpServer, deps: OfficeMcpDeps): void {
     {
       name: 'visit_roster',
       description:
-        'List independent workers on your floor with their desk, status, task and current activity. Use only when coordination is needed for your task, not for routine checks or announcements. Subagents, shells, guests and cloud workers are not on the roster.',
+        'List independent workers on your floor with their desk, status, task and current activity. Use only when coordination is needed for your task, not for routine checks or announcements. Subagents, shells and cloud workers are not on the roster.',
       inputSchema: z.object({}),
       annotations: { ...annotations, readOnlyHint: true, idempotentHint: true },
     },

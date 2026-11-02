@@ -1,14 +1,15 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { Building, isCheckout, originRepo, type FloorDef } from '../src/server/building.js';
-import { projectInfo } from '../src/server/floor.js';
+import { Floor, projectInfo, type FloorContext } from '../src/server/floor.js';
 import { NoBoard } from '../src/server/forge.js';
 import { floorPipelines } from '../src/server/pipelines.js';
 import { Worktrees } from '../src/server/worktrees.js';
+import { SUBAGENT_DEFAULTS } from '../src/shared/protocol.js';
 
 /** A workspace folder with a checkout in it, a plain folder inside that checkout, and folders outside the workspace. */
 function machine(t: { after(fn: () => void): void }) {
@@ -145,4 +146,38 @@ test("a plain folder's board and pipelines are empty and refuse what needs a rep
   assert.equal(pipelines.state.error, undefined);
   assert.deepEqual((await pipelines.detail(1)).jobs, []);
   assert.match((await pipelines.run('ci.yml', 'main', {})) ?? '', /./);
+});
+
+test('a floor removes leftover guests.json on load', (t) => {
+  const root = mkdtempSync(path.join(tmpdir(), 'droid-office-floor-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const dataDir = path.join(root, '.droid-office');
+  mkdirSync(dataDir, { recursive: true });
+  const guestsFile = path.join(dataDir, 'guests.json');
+  writeFileSync(guestsFile, JSON.stringify([{ desk: 'desk-1', name: 'Guest' }]));
+  assert.equal(existsSync(guestsFile), true);
+
+  const ctx: FloorContext = {
+    agentCmd: 'droid',
+    agentArgs: [],
+    hook: { url: 'http://127.0.0.1:4600', token: '' },
+    jira: { connected: false, client: () => undefined },
+    prompts: new Map(),
+    emit: () => {},
+    toast: () => {},
+    termData: () => {},
+    changes: () => {},
+    workerChanged: () => {},
+    connections: () => 0,
+    leaveOnMerge: () => false,
+    freshMain: () => false,
+    officeDataDir: dataDir,
+    subagents: () => ({ ...SUBAGENT_DEFAULTS, wakeLead: false }),
+    floor: () => undefined,
+    pullsChanged: () => {},
+    lent: () => false,
+  };
+  const floor = new Floor({ id: 'test', name: 'test', dir: root }, ctx);
+  t.after(() => floor.shutdown());
+  assert.equal(existsSync(guestsFile), false, 'guests.json was cleaned up on floor load');
 });

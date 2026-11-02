@@ -64,7 +64,7 @@ test('incomplete, stale lists and unsupported workers are not synthetic question
   assert.equal(sameMenu({ choices: [null] } as unknown as Menu, menu), false);
   const w = { kind: 'agent', status: 'needs_input' };
   assert.equal(canAnswer(w, BOX), true);
-  for (const patch of [{ kind: 'shell' }, { kind: 'cloud' }, { guest: {} }, { cloud: {} }, { status: 'working' }, { status: 'offline' }]) assert.equal(canAnswer({ ...w, ...patch }, BOX), false);
+  for (const patch of [{ kind: 'shell' }, { kind: 'cloud' }, { cloud: {} }, { status: 'working' }, { status: 'offline' }]) assert.equal(canAnswer({ ...w, ...patch }, BOX), false);
   assert.equal(workerMenu(w, undefined), undefined);
 });
 

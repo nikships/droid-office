@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process';
-import { mkdirSync } from 'node:fs';
+import { mkdirSync, rmSync } from 'node:fs';
 import path from 'node:path';
 import type { ChangesState, FloorInfo, ProjectInfo, ServerMsg, WorkerInfo } from '../shared/protocol.js';
 import { isBusy } from '../shared/status.js';
@@ -9,7 +9,6 @@ import { excludeFromGit } from './config.js';
 import { OFFICE_SHELL_ID } from '../shared/office-shell.js';
 import { OfficeShell } from './office-shell.js';
 import { COLORS, NAMES, WorkerManager, type HookEnv } from './workers.js';
-import { Guests, attribute, stopGuest, type AgentProcess } from './guests.js';
 import { CloudWorkers } from './cloud-workers.js';
 import { GitHub, MergeWatch } from './github.js';
 import { GitLab } from './gitlab.js';
@@ -170,8 +169,6 @@ export class Floor {
   readonly team: Team;
   /** Independent workers visiting each other's desks with the Office MCP's visit tools (see visits.ts). */
   readonly visits: Visits;
-  /** Agent processes started by hand in this checkout, outside the office, at desks of their own (see guests.ts). */
-  readonly guests: Guests;
   /** Workers whose Droid session runs on a Factory computer, not on this machine (see cloud-workers.ts). */
   readonly cloud: CloudWorkers;
   /** The floor's Whiteboard, in its checkout's .droid-office/whiteboard (see whiteboard.ts). */
@@ -202,6 +199,12 @@ export class Floor {
     this.plain = !isCheckout(def.dir);
     const dataDir = path.join(def.dir, '.droid-office');
     mkdirSync(dataDir, { recursive: true, mode: 0o700 });
+    // Leftover from when guests were supported: remove it so stale state is cleaned up.
+    try {
+      rmSync(path.join(dataDir, 'guests.json'), { force: true });
+    } catch {
+      // ignore
+    }
     // A plain folder has no .git of its own: its info/exclude would be some other checkout's.
     if (!this.plain) excludeFromGit(def.dir);
     seedAutoHeal(dataDir, ctx.officeDataDir);
@@ -276,27 +279,11 @@ export class Floor {
     );
     this.branchInfo = { baseBranch: this.workers.baseBranch, selectedBranch: this.workers.selectedBranch };
 
-    // Someone's own droid (or claude, codex…) in this checkout: watched at a desk, never run by the office.
     const own = this.workers;
     const ownNames = () => own.list().map((w) => w.name.replace(/ 🐚$/, ''));
-    this.guests = new Guests(
-      dataDir,
-      { deskTaken: (id) => own.ownDesk(id) || this.cloud.deskTaken(id), names: () => [...ownNames(), ...this.cloud.names()], pool: { names: NAMES, colors: COLORS }, checkout: def.dir },
-      {
-        update: (worker) => {
-          ctx.emit(this, { t: 'worker.update', worker });
-          ctx.workerChanged(this, worker);
-        },
-        remove: (workerId) => {
-          ctx.emit(this, { t: 'worker.remove', workerId });
-          ctx.workerChanged(this, workerId);
-        },
-        data: (workerId, data, connectionIds) => ctx.termData(workerId, data, connectionIds),
-      },
-    );
     this.cloud = new CloudWorkers(
       dataDir,
-      { deskTaken: (id) => own.ownDesk(id) || this.guests.deskTaken(id), names: () => [...ownNames(), ...this.guests.names()], pool: { names: NAMES, colors: COLORS } },
+      { deskTaken: (id) => own.ownDesk(id), names: ownNames, pool: { names: NAMES, colors: COLORS } },
       {
         update: (worker) => {
           ctx.emit(this, { t: 'worker.update', worker });
@@ -311,9 +298,8 @@ export class Floor {
       },
     );
     this.workers.holds = {
-      desk: (id) => this.guests.deskTaken(id) || this.cloud.deskTaken(id),
-      names: () => [...this.guests.names(), ...this.cloud.names()],
-      inCheckout: () => this.guests.list().map((g) => g.name),
+      desk: (id) => this.cloud.deskTaken(id),
+      names: () => this.cloud.names(),
     };
     this.workers.freshMain = () => ctx.freshMain();
     this.workers.visitsOn = () => ctx.subagents().visits;
@@ -563,40 +549,9 @@ export class Floor {
     });
   }
 
-  /**
-   * The agent processes working in this floor's checkout, from the building's scan (see GuestScanner):
-   * one started by hand in a worker's own worktree is that worker's, the rest are guests.
-   */
-  async syncGuests(procs: AgentProcess[]): Promise<void> {
-    const { guests, outside } = attribute(procs, this.workers.folders());
-    this.workers.setOutside(outside);
-    await this.guests.sync(guests, this.workers.sessionIds());
-  }
-
-  /**
-   * Makes a droid guest one of the office's own workers: its process outside is asked to quit, and
-   * once it has, a worker at the same desk resumes the same session in a terminal of the office's.
-   * Two droids in one session would write over each other, so the worker only starts after the guest's
-   * droid is gone. Resolves to the new worker, or why the guest stays a guest.
-   */
-  async bringIn(guestId: string, by: string): Promise<WorkerInfo | string> {
-    const full = this.workers.full();
-    if (full) return full;
-    const out = await this.guests.takeOut(guestId);
-    if (typeof out === 'string') return out;
-    const { info, session } = out;
-    const why = await stopGuest(info.guest!.pid, guestId);
-    if (why) {
-      this.guests.stay(guestId);
-      return `${info.name}'s droid (pid ${info.guest!.pid} on ${info.guest!.tty}) ${why}`;
-    }
-    this.guests.handOver(guestId);
-    return this.workers.takeIn(info, session, by);
-  }
-
-  /** Everyone at a desk here: the office's workers, its cloud workers and the guests. */
+  /** Everyone at a desk here: the office's workers and its cloud workers. */
   everyone(): WorkerInfo[] {
-    return [...this.workers.list(), ...this.cloud.list(), ...this.guests.list()];
+    return [...this.workers.list(), ...this.cloud.list()];
   }
 
   /** Someone just walked in: boards that haven't been looked at in a while get fetched again. */
@@ -650,7 +605,6 @@ export class Floor {
     this.pipelines.stop();
     this.team.stop();
     this.visits.stop();
-    this.guests.stop();
     this.changes.stop();
     this.whiteboard.stop();
     this.workers.shutdown(keep);

@@ -53,9 +53,7 @@ function rig(workers = [worker('one')]) {
 
 test('team eligibility uses lead ownership and only local office-owned Droid workers', () => {
   const local = worker('local');
-  assert.deepEqual(teamThreadChildren('lead', [worker('lead'), worker('other', { lead: 'elsewhere' }), worker('shell', { kind: 'shell' }), worker('cloud', { kind: 'cloud' }), worker('guest', { guest: {} as WorkerInfo['guest'] }), local]), [
-    local,
-  ]);
+  assert.deepEqual(teamThreadChildren('lead', [worker('lead'), worker('other', { lead: 'elsewhere' }), worker('shell', { kind: 'shell' }), worker('cloud', { kind: 'cloud' }), local]), [local]);
   assert.deepEqual(
     teamThreadChildren('lead', [worker('z'), worker('a'), worker('first', { createdAt: 0 })]).map((w) => w.id),
     ['first', 'a', 'z'],

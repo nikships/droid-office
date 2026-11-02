@@ -19,7 +19,6 @@ import { createDroidCommandCatalogue } from './droid-commands.js';
 import { createDroidModelCatalogue } from './droid-models.js';
 import { HiddenModels } from './hidden-models.js';
 import { Upgrader } from './upgrade.js';
-import { GUEST_REFUSED, GuestScanner, guestRefusal, type AgentProcess } from './guests.js';
 import { officeStatus } from './office-status.js';
 import { HostUpdates, hostUpdateCommand } from './host-updates.js';
 import { PhoneSizes } from './phone-sizes.js';
@@ -274,11 +273,6 @@ export async function startServer(cfg: Config) {
     for (const f of floors.values()) if (f.workers.get(workerId)) return f;
     return undefined;
   };
-  /** The floor a guest sits on (see guests.ts): an agent someone runs outside the office, which the office only watches. */
-  const guestFloor = (workerId: string): Floor | undefined => {
-    for (const f of floors.values()) if (f.guests.get(workerId)) return f;
-    return undefined;
-  };
   /** To everyone on one floor. */
   const toFloor = (floor: Floor, msg: ServerMsg, droppable = false) => {
     const json = JSON.stringify(msg);
@@ -445,7 +439,7 @@ export async function startServer(cfg: Config) {
       toast: (floorId, text, level) => toastFloor(floors.get(floorId), text, level),
       prompt: (id, vars) => officePrompt(prompts, id, vars),
     },
-    // Every floor's workers (desk, cloud and guests) with a session, so each shows what it has cost.
+    // Every floor's workers (desk and cloud) with a session, so each shows what it has cost.
     // Cloud workers live in the floor's CloudWorkers store, not WorkerManager, hence everyone().
     officeSessions: () =>
       [...floors.values()].flatMap((f) =>
@@ -1475,7 +1469,6 @@ export async function startServer(cfg: Config) {
       for (const f of floors.values()) {
         f.workers.detachAll(id);
         f.shell.detach(id);
-        f.guests.detachAll(id);
         f.cloud.detachAll(id);
         f.changes.unwatchAll(id);
       }
@@ -1613,7 +1606,6 @@ export async function startServer(cfg: Config) {
     if (was) {
       was.workers.detachAll(c.id);
       was.shell.detach(c.id);
-      was.guests.detachAll(c.id);
       was.cloud.detachAll(c.id);
       was.changes.unwatchAll(c.id);
     }
@@ -1657,8 +1649,8 @@ export async function startServer(cfg: Config) {
     );
   };
 
-  /** Opens a worker's terminal for `c`, or the banner a guest has instead of one. */
-  const attachTerminal = (wid: string, c: Client) => workerFloor(wid)?.workers.attach(wid, c.id) ?? guestFloor(wid)?.guests.attach(wid, c.id);
+  /** Opens a worker's terminal for `c`. */
+  const attachTerminal = (wid: string, c: Client) => workerFloor(wid)?.workers.attach(wid, c.id);
 
   const handleMessage = (c: Client, msg: ClientMsg) => {
     const who = c.peer.name;
@@ -1705,16 +1697,13 @@ export async function startServer(cfg: Config) {
       const floor = workerFloor(wid);
       return floor ? { wid, floor, info: floor.workers.get(wid)! } : undefined;
     };
-    // A guest runs outside the office: nothing the office does with its own workers is done to it.
     const asked = (msg as { workerId?: unknown }).workerId;
     if (requestId && typeof asked === 'string') {
-      const floor = workerFloor(asked) ?? guestFloor(asked) ?? floors.get(cloud.find(asked)?.floor.id ?? '');
+      const floor = workerFloor(asked) ?? floors.get(cloud.find(asked)?.floor.id ?? '');
       if (floor && floor.id !== c.floor) return done('That worker is not on the active floor. Nothing was sent.');
     }
-    const guest = GUEST_REFUSED.has(msg.t) && typeof asked === 'string' ? guestFloor(asked)?.guests.get(asked) : undefined;
-    if (guest?.guest) return refuse(guestRefusal(guest, msg.t));
     // A cloud worker's session runs on a Factory computer: factory/cloud.ts answers for it.
-    const cloudie = typeof asked === 'string' && /^(worker|term|changes|guest)\./.test(msg.t) ? cloud.find(asked) : undefined;
+    const cloudie = typeof asked === 'string' && /^(worker|term|changes)\./.test(msg.t) ? cloud.find(asked) : undefined;
     if (cloudie) {
       const floor = floors.get(cloudie.floor.id);
       cloud.message(msg as Parameters<typeof cloud.message>[0], { who, client: c.id, warn: (text) => warn(c, text), done, takeIssue: (n) => floor && takeIssue(c, floor, n) });
@@ -1908,16 +1897,6 @@ export async function startServer(cfg: Config) {
         done(error, w?.wid);
         break;
       }
-      case 'guest.bringIn': {
-        const wid = str(msg.workerId, 64);
-        const floor = guestFloor(wid);
-        if (!floor) return stop(workerFloor(wid) ? "That's already one of the office's workers" : 'That guest has gone home');
-        void floor.bringIn(wid, who).then((r) => {
-          if (typeof r === 'string') warn(c, r);
-          else toastFloor(floor, `🚪 ${who} brought ${r.name} into the office: its session carries on at its desk`);
-        });
-        break;
-      }
       case 'worker.shoot': {
         const w = worker(msg.workerId);
         if (!w) break;
@@ -2001,7 +1980,6 @@ export async function startServer(cfg: Config) {
         const wid = str(msg.workerId, 32);
         c.attached.delete(wid);
         workerFloor(wid)?.workers.detach(wid, c.id);
-        guestFloor(wid)?.guests.detach(wid, c.id);
         break;
       }
       case 'shell.attach': {
@@ -2140,7 +2118,7 @@ export async function startServer(cfg: Config) {
           break;
         }
         if (!source || !floor) {
-          sendTo(c, { ...reply, entries: [], hasMore: false, error: 'Thread is available only for office-owned Droid workers with a session on this floor. Shells and guests have no thread.' });
+          sendTo(c, { ...reply, entries: [], hasMore: false, error: 'Thread is available only for office-owned Droid workers with a session on this floor. Shells have no thread.' });
           break;
         }
         void workerThreads.read(source, before, floor.workers.threadBusy(workerId)).then((page) => {
@@ -2646,12 +2624,6 @@ export async function startServer(cfg: Config) {
     server.once('error', reject);
     server.listen(cfg.port, cfg.host, () => resolve());
   });
-  // Agents someone started by hand in a floor's checkout, at desks of their own (see guests.ts).
-  const guestScanner = new GuestScanner(
-    () => [...floors.values()].map((f) => ({ id: f.id, dir: f.dir, home: building.isHome(f.id), syncGuests: (procs: AgentProcess[]) => f.syncGuests(procs) })),
-    () => [...floors.values()].flatMap((f) => f.workers.owners()),
-  );
-  guestScanner.start();
   await hotReload.start();
   workerLabels.start();
 
@@ -2666,7 +2638,6 @@ export async function startServer(cfg: Config) {
     clearTimeout(floorsTimer);
     upgrader.stop();
     void hotReload.stop().catch((err) => console.error('droid-office: source reload cleanup:', err));
-    guestScanner.stop();
     machine.stop();
     sky.stop();
     factory.stop();

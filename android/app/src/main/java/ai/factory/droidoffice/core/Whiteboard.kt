@@ -578,7 +578,6 @@ object WhiteboardPing {
     /** What the office does when the owner pings [w] now, or why it can't (pingEligibility). */
     fun eligibility(w: WorkerInfo): PingCheck {
         val name = w.name.ifBlank { w.id }
-        if (w.isGuest) return PingCheck.No("$name is a guest the office only watches: it has no terminal the office can type into. Bring it in first.")
         if (w.isCloud) return PingCheck.No("$name runs on a Factory computer, which can't reach this office's Whiteboard yet.")
         if (w.isShell) return PingCheck.No("$name is a plain shell, not an agent.")
         if (w.lost != null) return PingCheck.No("$name's worktree is gone, so it can't start. Rebuild it first.")

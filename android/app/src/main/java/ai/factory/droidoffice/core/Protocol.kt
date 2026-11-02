@@ -74,9 +74,6 @@ data class WorktreeRef(val path: String = "", val branch: String = "", val base:
 @Serializable
 data class PrRef(val number: Int = 0, val url: String = "")
 
-@Serializable
-data class GuestInfo(val pid: Int = 0, val provider: String = "", val cwd: String = "", val seen: String = "")
-
 /** A cloud worker's Factory computer (src/shared/factory-cloud.ts): its Droid session runs there, not in a terminal of the office's. */
 @Serializable
 data class CloudRef(
@@ -154,14 +151,12 @@ data class WorkerInfo(
     val team: TeamBadge? = null,
     val workedMs: Long? = null,
     val workingSince: Long? = null,
-    val guest: GuestInfo? = null,
     val cloud: CloudRef? = null,
     /** Its worktree was deleted; the office says where its branch still is. */
     val lost: JsonObject? = null,
 ) {
     val state: WorkerStatus get() = WorkerStatus.of(status)
     val isShell: Boolean get() = kind == "shell"
-    val isGuest: Boolean get() = guest != null
     /** It works on a Factory computer: no terminal to show, but it takes prompts. */
     val isCloud: Boolean get() = kind == "cloud" || cloud != null
     /** A board agent standing at a kiosk (see STATIONS in src/shared/layout.ts), not hired at a desk. */

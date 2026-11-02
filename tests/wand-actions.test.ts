@@ -10,7 +10,6 @@ function worker(patch: Partial<WorkerInfo> = {}): WorkerInfo {
   return { id: 'worker', name: 'Sky', kind: 'agent', deskId: 'desk-1', color: '#ffbd69', status: 'idle', acked: true, createdBy: 'test', createdAt: 0, ...patch };
 }
 
-const guest: NonNullable<WorkerInfo['guest']> = { pid: 1, tty: 'test', provider: 'droid', cwd: '/test', startedAt: 0, seen: 'process' };
 const cloud: NonNullable<WorkerInfo['cloud']> = { computerId: 'computer', computerName: 'Remote', autonomy: 'high' };
 
 test('Ship it requires one directly aimed body in close range, never a nearest-worker fallback', () => {
@@ -35,16 +34,7 @@ test('Ship it sends only an intent prompt to the selected worker, leaving Git de
 });
 
 test('Ship it cannot type a shipping request into a shell or target a missing or unavailable worker', () => {
-  for (const w of [
-    undefined,
-    worker({ kind: 'shell' }),
-    worker({ guest }),
-    worker({ cloud: { ...cloud, error: 'Gone' } }),
-    worker({ lost: true }),
-    worker({ status: 'offline' }),
-    worker({ status: 'exited' }),
-    worker({ status: 'starting' }),
-  ])
+  for (const w of [undefined, worker({ kind: 'shell' }), worker({ cloud: { ...cloud, error: 'Gone' } }), worker({ lost: true }), worker({ status: 'offline' }), worker({ status: 'exited' }), worker({ status: 'starting' })])
     assert.equal(typeof wandShipRequest(w, 'Ship my work'), 'string');
   assert.equal(typeof wandShipRequest(worker(), '  '), 'string');
 });

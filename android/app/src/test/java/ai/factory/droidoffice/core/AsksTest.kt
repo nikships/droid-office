@@ -59,12 +59,11 @@ class AsksTest {
     }
 
     @Test
-    fun shellsCloudWorkersAndGuestsCannotAnswerThroughTheThread() {
+    fun shellsAndCloudWorkersCannotAnswerThroughTheThread() {
         val w = WorkerInfo(id = "a", status = "needs_input")
         assertFalse(Asks.canAnswer(w.copy(kind = "shell"), box))
         assertFalse(Asks.canAnswer(w.copy(kind = "cloud"), box))
         assertFalse(Asks.canAnswer(w.copy(cloud = CloudRef()), box))
-        assertFalse(Asks.canAnswer(w.copy(guest = GuestInfo()), box))
     }
 
     @Test
