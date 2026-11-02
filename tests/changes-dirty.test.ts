@@ -8,7 +8,7 @@ import { Changes } from '../src/server/changes.js';
 import type { ChangesState } from '../src/shared/protocol.js';
 
 /** Everything, including the remote and PR host, stays local to this temporary fixture. */
-function fixture(t: TestContext, initial: Record<string, string> = { 'demo.txt': 'baseline\n' }) {
+function fixture(t: TestContext, initial: Record<string, string> = { 'demo.txt': 'baseline\n' }, { hooked }: { hooked?: boolean } = {}) {
   // Actions refresh the watcher themselves; a background poll must not race fixture assertions.
   t.mock.timers.enable({ apis: ['setInterval'] });
   const root = mkdtempSync(path.join(tmpdir(), 'office-changes-dirty-'));
@@ -39,7 +39,7 @@ function fixture(t: TestContext, initial: Record<string, string> = { 'demo.txt':
   let receive: ((state: ChangesState) => void) | undefined;
   const changes = new Changes(
     'main',
-    (id) => (id === 'w1' ? { name: 'Fixture', cwd: dir, rel: 'repo' } : undefined),
+    (id) => (id === 'w1' ? { name: 'Fixture', cwd: dir, rel: 'repo', hooked } : undefined),
     () => undefined,
     {
       state(state) {
@@ -372,3 +372,42 @@ test('cancelling edits preserve NUL-delimited paths and counts for unusual filen
   assert.equal(f.state().files[0].deletions, 1);
   assert.match(await f.diff(name), /-committed worker change\n\+baseline/);
 });
+
+test("a worker's tool call shows in its open Changes window at once, without waiting for the next poll", async (t) => {
+  const f = fixture(t);
+  await f.snapshot();
+  assert.deepEqual(f.state().files, []);
+  f.write('demo.txt', 'edited by the worker\n');
+  f.changes.touched('w1');
+  // A second look asked for while the first is under way runs after it, not never.
+  f.changes.touched('w1');
+  // Polls on a timer are off in this fixture: only the touch can have looked.
+  let got = f.state();
+  for (let i = 0; i < 200 && !got.files.length; i++) {
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    got = f.state();
+  }
+  assert.deepEqual(
+    got.files.map((file) => file.path),
+    ['demo.txt'],
+  );
+  f.changes.touched('nobody');
+});
+
+for (const hooked of [false, true]) {
+  test(`an open Changes window looks on a timer every ${hooked ? '10 seconds at a Droid worker’s checkout, whose hooks say when it changes' : '2 seconds at a checkout no hook reports on'}`, async (t) => {
+    const f = fixture(t, undefined, { hooked });
+    const every: unknown[] = [];
+    const set = globalThis.setInterval;
+    globalThis.setInterval = ((fn: () => void, ms?: number) => {
+      every.push(ms);
+      return set(fn, ms);
+    }) as typeof setInterval;
+    try {
+      await f.snapshot();
+    } finally {
+      globalThis.setInterval = set;
+    }
+    assert.deepEqual(every, [hooked ? 10_000 : 2000]);
+  });
+}

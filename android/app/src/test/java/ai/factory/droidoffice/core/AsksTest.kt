@@ -156,6 +156,26 @@ class AsksTest {
     }
 
     @Test
+    fun theHooksAskWinsOverTheThreadAndAPermissionNamesItsCall() {
+        val menu = Choices.read(noMark)!!
+        val hook = WorkerAsk(kind = "question", questions = listOf(AskedQuestion("Which size should the summary use for the release notes?", "Size", listOf("Short: one line", "Long: a page"))))
+        val w = WorkerInfo(id = "a", name = "Ada", status = "needs_input", ask = hook)
+        // No thread history at all: the hook's questionnaire still names the question and every option.
+        assertEquals("Which size should the summary use for the release notes?", Asks.question(PendingAsk(w, menu)))
+        assertEquals(listOf("Short: one line", "Long: a page"), Asks.display(menu, emptyList(), hook).choices.map { it.label })
+        // Options that don't match the screen never relabel the answers.
+        val other = hook.copy(questions = listOf(AskedQuestion("Colour?", options = listOf("Red", "Blue", "Green"))))
+        assertEquals(menu, Asks.display(menu, emptyList(), other))
+
+        val allow = Menu(null, listOf(Choice(1, "Yes, allow"), Choice(2, "No, cancel")), null)
+        val permission = WorkerAsk(kind = "permission", tool = "Execute", command = "git push origin HEAD", risk = "medium")
+        assertEquals("Approve medium-risk command: git push origin HEAD", Asks.question(PendingAsk(w.copy(ask = permission), allow)))
+        assertEquals(allow.choices, Asks.display(allow, emptyList(), permission).choices)
+        assertEquals("Approve Edit: src/a.ts", Asks.permissionLine(WorkerAsk(kind = "permission", tool = "Edit", file = "src/a.ts")))
+        assertEquals("Approve WebSearch", Asks.permissionLine(WorkerAsk(kind = "permission", tool = "WebSearch", risk = "extreme")))
+    }
+
+    @Test
     fun theLiveLineIsTheLastLineWithWords() {
         assertEquals("↑/↓ Navigate · Space/Enter/1-9 Select · ESC stop agent", Asks.liveLine(box))
         assertEquals("ok", Asks.liveLine(screen("│ ok │", "╰────╯", "  ")))

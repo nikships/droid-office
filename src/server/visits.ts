@@ -30,6 +30,8 @@ export interface VisitWorkers {
   tail(id: string, lines: number): string | undefined;
   /** Types `text` in and submits it with Enter. */
   prompt(id: string, text: string): string | undefined;
+  /** Mid-turn, through its hooks rather than typed in (see WorkerManager.tell). */
+  tell?(id: string, text: string): string | undefined;
   resume(id: string, text: string): string | undefined;
   /** Sends one Escape to cancel the agent's turn, only if it's mid-turn on screen; says whether it did. */
   cancelTurn(id: string): boolean;
@@ -574,7 +576,8 @@ export class Visits {
         break;
     }
     const text = this.noteText(note);
-    const err = isAsleep(host.status) ? this.workers.resume(hostId, text) : this.workers.prompt(hostId, text);
+    // A normal message mid-turn goes through the host's hooks when they can carry it (see WorkerManager.tell).
+    const err = isAsleep(host.status) ? this.workers.resume(hostId, text) : !note.urgent && this.workers.tell ? this.workers.tell(hostId, text) : this.workers.prompt(hostId, text);
     notes.shift();
     if (!notes.length) this.inbox.delete(hostId);
     const run = note.kind === 'reply' ? undefined : (this.runs.get(note.visit) ?? this.questions.get(note.visit));

@@ -57,6 +57,7 @@ export const SETTINGS_CARDS = [
   { pane: 'subagents', title: 'Team size', keywords: 'team size most subagents per lead max' },
   { pane: 'subagents', title: 'Where subagents work', keywords: 'subagents worktree checkout lead branch' },
   { pane: 'subagents', title: 'Waking the lead', keywords: 'waking lead wake report subagent rest' },
+  { pane: 'subagents', title: 'Droid’s Task tool', keywords: 'task tool droid builtin subagent refuse deny team_hire' },
   { pane: 'subagents', title: 'Subagent worker', keywords: 'subagent default worker model effort lead' },
   { pane: 'subagents', title: 'Models leads can pick', keywords: 'subagent models leads pick limit notes credit' },
   { pane: 'subagents', title: 'Visits between workers', keywords: 'visits visit_roster workers desks talk handoff ask' },

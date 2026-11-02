@@ -1,12 +1,15 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
-import { execFileSync } from 'node:child_process';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { execFileSync, spawn } from 'node:child_process';
+import http from 'node:http';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { CARRY_ON_PROMPT, WorkerManager, setupFailedNote, type WorkerEvents } from '../src/server/workers.js';
+import { CARRY_ON_PROMPT, HOOK_VERSION, SPOOL_MAX_BYTES, STOP_GRACE_MS, WorkerManager, setupFailedNote, type WorkerEvents } from '../src/server/workers.js';
+import type { ToolRefresh } from '../src/server/hook-refresh.js';
 import { Worktrees } from '../src/server/worktrees.js';
 import type { PromptSource } from '../src/server/prompts.js';
+import { CLEAR_DROID_QUEUE } from '../src/shared/droid-queue.js';
 import { PROMPTS } from '../src/shared/prompts.js';
 import type { AgentChoice, AgentEffort, GhPull, WorkerInfo } from '../src/shared/protocol.js';
 import { SCREEN_SETTLE_MS } from '../src/server/droid-screen.js';
@@ -203,7 +206,7 @@ function pastedInto(f: Fixture, launch: Invocation): string[] {
  */
 async function startedWith(f: Fixture, workers: WorkerManager, launch: Invocation, session: string): Promise<string | undefined> {
   const before = pastedInto(f, launch).length;
-  assert.equal(workers.handleHook(launch.env.workerId!, launch.env.hookToken!, 'SessionStart', { session_id: session, hook_event_name: 'SessionStart' }), true);
+  assert.equal(workers.hookReply(launch.env.workerId!, launch.env.hookToken!, 'SessionStart', { session_id: session, hook_event_name: 'SessionStart' }) !== undefined, true);
   const end = Date.now() + 1000;
   while (pastedInto(f, launch).length === before && Date.now() < end) await new Promise((resolve) => setTimeout(resolve, 25));
   return pastedInto(f, launch)[before];
@@ -257,7 +260,7 @@ test('Droid workers launch with their own hook overlay and resume the correct se
   assert.match(settings.hooks.SessionStart[0].hooks[0].command, /\/hooks\/droid/);
   assert.ok(!settings.hooks.PermissionRequest, 'Droid only receives supported hook events');
 
-  const hook = (event: string, data: Record<string, unknown> = {}, token = first.env.hookToken!) => workers.handleHook(worker.id, token, event, { session_id: 'droid-1', hook_event_name: event, ...data });
+  const hook = (event: string, data: Record<string, unknown> = {}, token = first.env.hookToken!) => workers.hookReply(worker.id, token, event, { session_id: 'droid-1', hook_event_name: event, ...data }) !== undefined;
   assert.equal(hook('SessionStart', { source: 'startup' }, 'wrong-token'), false);
   await new Promise((resolve) => setTimeout(resolve, 200));
   assert.deepEqual(pastedInto(f, first), [], 'nothing is typed before droid can take it');
@@ -287,8 +290,8 @@ test('Droid workers launch with their own hook overlay and resume the correct se
   await settleIdle(workers, worker.id);
   assert.equal(workers.get(worker.id)?.status, 'done');
   // A hook payload without its event name, or one from another session, is turned away.
-  assert.equal(workers.handleHook(worker.id, first.env.hookToken!, 'Stop', { session_id: 'droid-1' }), false);
-  assert.equal(workers.handleHook(worker.id, first.env.hookToken!, 'Stop', { session_id: 'other', hook_event_name: 'Stop' }), false);
+  assert.equal(workers.hookReply(worker.id, first.env.hookToken!, 'Stop', { session_id: 'droid-1' }) !== undefined, false);
+  assert.equal(workers.hookReply(worker.id, first.env.hookToken!, 'Stop', { session_id: 'other', hook_event_name: 'Stop' }) !== undefined, false);
 
   await waitFor(
     () => workers.get(worker.id)?.status,
@@ -769,7 +772,7 @@ test('a board agent is hired with its brief on the first prompt, then prompted, 
   );
 
   // Waiting on an answer, a prompt would answer the question, so it's refused.
-  assert.equal(workers.handleHook(id, first.env.hookToken!, 'Notification', { session_id: 'issues-session', hook_event_name: 'Notification', notification_type: 'permission_prompt' }), true);
+  assert.equal(workers.hookReply(id, first.env.hookToken!, 'Notification', { session_id: 'issues-session', hook_event_name: 'Notification', notification_type: 'permission_prompt' }) !== undefined, true);
   assert.equal(workers.get(id)?.status, 'needs_input');
   assert.match(workers.station('station-issues', 'Ada', 'hello?') as string, /waiting on an answer/i);
 
@@ -904,7 +907,7 @@ test('a Droid worker acts out its latest tool call, and puts its head in its han
   assert.ok(settings.hooks.PostToolUse, 'tool calls are reported');
 
   const token = launch.env.hookToken!;
-  const hook = (event: string, payload: object) => assert.equal(workers.handleHook(worker.id, token, event, { session_id: 'acting', hook_event_name: event, ...payload }), true);
+  const hook = (event: string, payload: object) => assert.equal(workers.hookReply(worker.id, token, event, { session_id: 'acting', hook_event_name: event, ...payload }) !== undefined, true);
   const action = () => workers.get(worker.id)?.action;
   const npmTest = { tool_name: 'Bash', tool_input: { command: 'npm test 2>&1 | tail -5' } };
   hook('SessionStart', { source: 'startup' });
@@ -956,7 +959,7 @@ test('a worker is stamped with when it started waiting on someone, afresh each t
   if (typeof worker === 'string') return;
   const calls = await waitFor(f.read, (x) => x.some((r) => r.kind === 'droid' && r.args.includes('--settings')));
   const token = calls.find((r) => r.kind === 'droid' && r.args.includes('--settings'))!.env.hookToken!;
-  const hook = (event: string, extra = {}) => workers.handleHook(worker.id, token, event, { session_id: 'waiting', hook_event_name: event, ...extra });
+  const hook = (event: string, extra = {}) => workers.hookReply(worker.id, token, event, { session_id: 'waiting', hook_event_name: event, ...extra }) !== undefined;
   hook('SessionStart', { source: 'startup' });
   hook('UserPromptSubmit', { prompt: 'fix the login' });
   assert.equal(workers.get(worker.id)?.status, 'working');
@@ -990,9 +993,9 @@ async function liveWorker(t: { after(fn: () => void): void }, session: string) {
   const worker = workers.spawn('desk-1', 'test', 'fix the login');
   if (typeof worker === 'string') throw new Error(worker);
   const token = (await waitFor(f.read, (x) => x.some((r) => r.kind === 'droid' && r.args.includes('--settings')))).find((r) => r.kind === 'droid' && r.args.includes('--settings'))!.env.hookToken!;
-  const hook = (event: string, extra: Record<string, unknown> = {}, from = session) => workers.handleHook(worker.id, token, event, { session_id: from, hook_event_name: event, ...extra });
+  const hook = (event: string, extra: Record<string, unknown> = {}, from = session) => workers.hookReply(worker.id, token, event, { session_id: from, hook_event_name: event, ...extra }) !== undefined;
   const status = () => workers.get(worker.id)?.status;
-  return { workers, worker, hook, status, updates, data: f.data, f };
+  return { workers, worker, hook, status, updates, data: f.data, f, token };
 }
 
 test("a prompt answered in the terminal puts the worker back to work, and a cancelled one puts it at rest (droid's own hook order)", async (t) => {
@@ -1139,38 +1142,44 @@ async function settleIdle(workers: WorkerManager, id: string) {
   workers.reconcile(now + SCREEN_SETTLE_MS);
 }
 
-test('Stop cannot publish done while Droid continues working or runs corrective hooks', async (t) => {
+test('a Stop is done once its grace passes with no other hook, unless the spinner is still going', async (t) => {
   const { workers, worker, hook, status, updates } = await liveWorker(t, 'premature-stop');
   hook('SessionStart', { source: 'startup' });
   hook('UserPromptSubmit', { prompt: 'fix the login' });
   hook('PreToolUse', { tool_name: 'Read', tool_input: { file_path: 'a.ts' } });
+  const start = Date.now();
+  t.mock.timers.enable({ apis: ['Date'], now: start });
   await show(workers, worker.id, ' ⠋ Executing...  (Press ESC to stop)');
   const before = { action: worker.action, acked: worker.acked, waitingSince: worker.waitingSince };
   hook('Stop', { stop_hook_active: false });
-  assert.equal(status(), 'working', 'Stop runs before Droid has actually stopped');
+  assert.equal(status(), 'working', 'Stop starts a grace, in case a Stop hook carries the turn on');
   assert.deepEqual({ action: worker.action, acked: worker.acked, waitingSince: worker.waitingSince }, before);
-  const start = Date.now();
-  t.mock.timers.enable({ apis: ['Date'], now: start });
+  // Another Stop hook continued it: the spinner keeps printing.
+  t.mock.timers.setTime(start + STOP_GRACE_MS);
+  await show(workers, worker.id, ' ⠙ Thinking...  (Press ESC to stop)');
   workers.reconcile();
-  t.mock.timers.setTime(start + 5000);
-  workers.reconcile();
-  assert.equal(status(), 'working', 'even a quiet busy screen is not completion');
+  assert.equal(status(), 'working', 'a printing spinner is not completion');
   hook('PreToolUse', { tool_name: 'Read', tool_input: { file_path: 'b.ts' } });
   hook('PostToolUse', { tool_name: 'Read' });
-  assert.equal(status(), 'working');
+  t.mock.timers.setTime(start + 10 * STOP_GRACE_MS);
+  workers.reconcile();
+  assert.equal(status(), 'working', 'a hook after the Stop means the turn went on');
   assert.ok(!updates.some((info) => info.status === 'done'), 'downstream consumers never receive the premature done state');
   hook('Stop', { stop_hook_active: true });
-  assert.equal(status(), 'working', 'a repeated Stop is still not confirmation');
-  // Droid replaces the spinner with its reply; this terminal only appends, so the reply pushes it up.
   for (let i = 0; i < 8; i++) await show(workers, worker.id, `Reply line ${i}`);
-  await settleIdle(workers, worker.id);
-  assert.equal(status(), 'done', 'the real idle screen confirms completion');
+  await showIdle(workers, worker.id);
+  t.mock.timers.setTime(start + 11 * STOP_GRACE_MS - 1);
+  workers.reconcile();
+  assert.equal(status(), 'working');
+  t.mock.timers.setTime(start + 11 * STOP_GRACE_MS);
+  workers.reconcile();
+  assert.equal(status(), 'done', 'the Stop with nothing after it finishes the turn');
   assert.equal(worker.action, undefined);
   assert.equal(worker.acked, false);
   assert.equal(updates.filter((info, i) => info.status === 'done' && updates[i - 1]?.status !== 'done').length, 1);
 });
 
-test('a Stop the screen cannot confirm still finishes once the terminal is quiet, and is never carried on after a restart', async (t) => {
+test('a Stop finishes even on a screen the office cannot read, and is never carried on after a restart', async (t) => {
   const { workers, worker, hook, status, data } = await liveWorker(t, 'unreadable-stop');
   const midTurn = () => (JSON.parse(readFileSync(path.join(data, 'workers.json'), 'utf8')) as { id: string; midTurn?: boolean }[]).find((s) => s.id === worker.id)?.midTurn;
   hook('SessionStart', { source: 'startup' });
@@ -1183,9 +1192,9 @@ test('a Stop the screen cannot confirm still finishes once the terminal is quiet
   hook('Stop', {});
   assert.equal(status(), 'working');
   assert.equal(midTurn(), false, 'a turn that sent its Stop is not resumed with the carry-on prompt');
-  workers.reconcile(start + 9999);
+  workers.reconcile(start + STOP_GRACE_MS - 1);
   assert.equal(status(), 'working');
-  workers.reconcile(start + 10_000);
+  workers.reconcile(start + STOP_GRACE_MS);
   assert.equal(status(), 'done');
   // A Stop followed by more work is not a finish.
   hook('UserPromptSubmit', { prompt: 'again' });
@@ -1196,7 +1205,29 @@ test('a Stop the screen cannot confirm still finishes once the terminal is quiet
   assert.equal(midTurn(), true);
 });
 
-test('completion waits for a quiet idle screen, and new activity prevents it', async (t) => {
+test('a Stop while asking finishes the turn; one while the dialog is still up waits for it', async (t) => {
+  const { workers, worker, hook, status } = await liveWorker(t, 'stop-asking');
+  hook('SessionStart', { source: 'startup' });
+  hook('UserPromptSubmit', { prompt: 'deploy it' });
+  await show(workers, worker.id, ' ⠋ Executing...  (Press ESC to stop)');
+  hook('PreToolUse', { tool_name: 'Execute', tool_input: { command: 'git push', riskLevel: 'high', summary: 'Push the fix' } });
+  hook('Notification', { notification_type: 'permission_prompt', message: 'Factory CLI needs permission to execute 1 tool(s)' });
+  assert.equal(status(), 'needs_input');
+  assert.deepEqual(workers.get(worker.id)?.ask, { kind: 'permission', tool: 'Execute', command: 'git push', risk: 'high', summary: 'Push the fix' });
+  assert.equal(workers.get(worker.id)?.activity, 'Approve high-risk command: git push');
+  const start = Date.now();
+  t.mock.timers.enable({ apis: ['Date'], now: start });
+  await show(workers, worker.id, '  ↑↓ navigate   Enter select   Esc cancel   Alt/Option+E to inspect approval details');
+  hook('Stop', {});
+  workers.reconcile(start + STOP_GRACE_MS);
+  assert.equal(status(), 'needs_input', 'the dialog is still up');
+  // Denied with Esc: droid ends the turn, and the dialog goes.
+  await showIdle(workers, worker.id);
+  workers.reconcile(start + 2 * STOP_GRACE_MS);
+  assert.equal(status(), 'done');
+  assert.equal(workers.get(worker.id)?.ask, undefined, 'the ask goes with the need for input');
+});
+test('a hook within its grace keeps a Stop from finishing, and the screen settles what follows', async (t) => {
   const { workers, worker, hook, status, updates } = await liveWorker(t, 'confirmed-stop');
   hook('SessionStart', { source: 'startup' });
   hook('UserPromptSubmit', { prompt: 'fix the login' });
@@ -1210,10 +1241,11 @@ test('completion waits for a quiet idle screen, and new activity prevents it', a
   await showIdle(workers, worker.id);
   at(0);
   at(3000);
+  t.mock.timers.setTime(start + 5000);
   hook('Stop', {});
-  at(4000);
-  assert.equal(status(), 'working');
   at(6000);
+  assert.equal(status(), 'working');
+  t.mock.timers.setTime(start + 6100);
   hook('PreToolUse', { tool_name: 'Read', tool_input: { file_path: 'a.ts' } });
   at(9000);
   assert.equal(status(), 'working', 'new activity invalidates an attempted completion');
@@ -1239,7 +1271,7 @@ test("a status the hooks left wrong follows the agent's screen once it has settl
     workers.reconcile();
   };
 
-  // Its Stop never came (the office was down longer than the hook retries): at rest on screen, and still.
+  // Its Stop never came (another program's hook broke the chain): at rest on screen, and still.
   await show(workers, worker.id, '[⏱ 6s, context: 4%] ? for help');
   at(0);
   at(3000);
@@ -1326,7 +1358,7 @@ test('a first prompt whose SessionStart never comes is typed in once droid shows
   await new Promise((resolve) => setTimeout(resolve, 200));
   assert.deepEqual(pastedInto(f, launch).slice(before), ['fix the login']);
   // Its SessionStart turning up late doesn't send it again.
-  assert.equal(workers.handleHook(worker.id, launch.env.hookToken!, 'SessionStart', { session_id: 'late', hook_event_name: 'SessionStart' }), true);
+  assert.equal(workers.hookReply(worker.id, launch.env.hookToken!, 'SessionStart', { session_id: 'late', hook_event_name: 'SessionStart' }) !== undefined, true);
   await new Promise((resolve) => setTimeout(resolve, 200));
   assert.deepEqual(pastedInto(f, launch).slice(before), ['fix the login']);
 });
@@ -1389,7 +1421,7 @@ async function hireInState(f: Fixture, workers: WorkerManager, deskId: string, s
       (x) => x.length > before,
     )
   ).at(-1)?.env.hookToken as string;
-  const hook = (event: string, extra: Record<string, unknown> = {}) => assert.equal(workers.handleHook(worker.id, token, event, { session_id: session, hook_event_name: event, ...extra }), true);
+  const hook = (event: string, extra: Record<string, unknown> = {}) => assert.equal(workers.hookReply(worker.id, token, event, { session_id: session, hook_event_name: event, ...extra }) !== undefined, true);
   hook('SessionStart', { source: 'startup' });
   hook('UserPromptSubmit', { prompt: `task for ${session}` });
   if (state === 'needs_input') hook('Notification', { notification_type: 'permission_prompt' });
@@ -1766,8 +1798,8 @@ test("a new worktree is set up in the worker's terminal before its agent starts,
   // The agent came after the setup: the worktree has its .env and what the command wrote.
   assert.equal(readFileSync(path.join(cwd, '.env'), 'utf8'), 'SECRET=1');
   assert.equal(readFileSync(path.join(cwd, 'set-up.txt'), 'utf8'), f.root);
-  const setupHook = (body: Record<string, unknown>) => workers.handleHook(worker.id, launch.env.hookToken!, 'WorktreeSetup', { hook_event_name: 'WorktreeSetup', ...body });
-  assert.equal(workers.handleHook(worker.id, 'wrong', 'WorktreeSetup', { hook_event_name: 'WorktreeSetup', phase: 'start' }), false);
+  const setupHook = (body: Record<string, unknown>) => workers.hookReply(worker.id, launch.env.hookToken!, 'WorktreeSetup', { hook_event_name: 'WorktreeSetup', ...body }) !== undefined;
+  assert.equal(workers.hookReply(worker.id, 'wrong', 'WorktreeSetup', { hook_event_name: 'WorktreeSetup', phase: 'start' }) !== undefined, false);
   assert.equal(setupHook({ phase: 'later' }), false);
   assert.equal(setupHook({ phase: 'start', commands: ['npm ci'] }), true);
   assert.equal(workers.get(worker.id)?.activity, 'Setting up its worktree: npm ci');
@@ -1802,7 +1834,7 @@ test('a worktree worker that makes its own branch is followed there: O finds the
       (x) => x.length > 0,
     )
   )[0].env.hookToken!;
-  const hook = (event: string, extra: Record<string, unknown> = {}) => assert.equal(workers.handleHook(worker.id, token, event, { session_id: 'own-branch', hook_event_name: event, ...extra }), true);
+  const hook = (event: string, extra: Record<string, unknown> = {}) => assert.equal(workers.hookReply(worker.id, token, event, { session_id: 'own-branch', hook_event_name: event, ...extra }) !== undefined, true);
   hook('SessionStart', { source: 'startup' });
   hook('UserPromptSubmit', { prompt: 'fix x on a new branch and open a PR' });
   // What the task told it to do: a branch of its own, a commit, a PR from there.
@@ -1967,7 +1999,7 @@ test("a worker that renames the office's branch goes home with it; one that dele
       (x) => x.length > 0,
     )
   )[0].env.hookToken!;
-  const hook = (event: string, extra: Record<string, unknown> = {}) => assert.equal(workers.handleHook(a.w.id, token, event, { session_id: 'renamed', hook_event_name: event, ...extra }), true);
+  const hook = (event: string, extra: Record<string, unknown> = {}) => assert.equal(workers.hookReply(a.w.id, token, event, { session_id: 'renamed', hook_event_name: event, ...extra }) !== undefined, true);
   hook('SessionStart', { source: 'startup' });
   hook('UserPromptSubmit', { prompt: 'fix x and name the branch after it' });
   writeFileSync(path.join(a.cwd, 'x.txt'), 'x');
@@ -2051,7 +2083,7 @@ test('a worker whose worktree was deleted outside the office waits, marked lost,
         (x) => x.length > n,
       )
     ).at(-1)!.env.hookToken!;
-    assert.equal(before.handleHook(w.id, token, 'SessionStart', { session_id: session, hook_event_name: 'SessionStart' }), true);
+    assert.equal(before.hookReply(w.id, token, 'SessionStart', { session_id: session, hook_event_name: 'SessionStart' }) !== undefined, true);
     return w;
   };
   const kept = await hire('desk-1', 'kept-branch');
@@ -2775,4 +2807,336 @@ test('cancelTurn sends one Escape, and only to a droid that works and shows its 
   assert.equal(workers.cancelTurn(worker.id), true);
   assert.deepEqual(sent, ['\x1b'], 'one Escape, never Ctrl+C');
   assert.equal(workers.cancelTurn('nobody'), false);
+});
+
+test('the hook command subscribes every event, says its version, and refuses Task unless Settings allow it', async (t) => {
+  const f = carryOnFixture(t);
+  const workers = manager(f, []);
+  t.after(() => workers.shutdown());
+  let deny = true;
+  workers.denyTask = () => deny;
+  const settingsOf = async (deskId: string) => {
+    const before = launchesOf(f).length;
+    assert.notEqual(typeof workers.spawn(deskId, 'test', undefined), 'string');
+    const launch = (
+      await waitFor(
+        () => launchesOf(f),
+        (x) => x.length > before,
+      )
+    ).at(-1)!;
+    return JSON.parse(readFileSync(launch.args[launch.args.indexOf('--settings') + 1], 'utf8')) as { hooks: Record<string, { matcher?: string; hooks: { command: string }[] }[]> };
+  };
+  const first = await settingsOf('desk-1');
+  const events = ['SessionStart', 'UserPromptSubmit', 'PreToolUse', 'PostToolUse', 'Notification', 'Stop', 'SubagentStop', 'PreCompact'];
+  assert.deepEqual(Object.keys(first.hooks).sort(), [...events].sort(), 'only the events the office acts on');
+  for (const event of events) {
+    const office = first.hooks[event]?.find((e) => !e.matcher);
+    assert.match(office?.hooks[0].command ?? '', new RegExp(`event=${event}&v=${HOOK_VERSION}`), event);
+  }
+  const task = first.hooks.PreToolUse.find((e) => e.matcher === 'Task');
+  assert.ok(task, 'Task is refused by default');
+  const out = JSON.parse(execFileSync('sh', ['-c', task.hooks[0].command], { encoding: 'utf8' }));
+  assert.equal(out.hookSpecificOutput.hookEventName, 'PreToolUse');
+  assert.equal(out.hookSpecificOutput.permissionDecision, 'deny');
+  assert.match(out.hookSpecificOutput.permissionDecisionReason, /team_hire/);
+  deny = false;
+  const second = await settingsOf('desk-2');
+  assert.equal(
+    second.hooks.PreToolUse.find((e) => e.matcher === 'Task'),
+    undefined,
+    'allowed in Settings, the next start lets it through',
+  );
+});
+
+/** Runs a hook command line as Droid does: `body` on its stdin, the worker's environment around it. */
+function runHook(command: string, body: string, env: Record<string, string>, args: string[] = []): Promise<{ code: number | null; stdout: string }> {
+  return new Promise((resolve) => {
+    const child = spawn(args.length ? command : 'sh', args.length ? args : ['-c', command], { env: { ...process.env, ...env }, stdio: ['pipe', 'pipe', 'ignore'] });
+    let stdout = '';
+    child.stdout.setEncoding('utf8');
+    child.stdout.on('data', (c) => (stdout += c));
+    child.on('close', (code) => resolve({ code, stdout }));
+    child.stdin.end(body);
+  });
+}
+
+test('a hook prints what the office answers, and keeps what it cannot deliver in a capped spool', async (t) => {
+  const f = carryOnFixture(t);
+  const workers = manager(f, []);
+  t.after(() => workers.shutdown());
+  assert.notEqual(typeof workers.spawn('desk-1', 'test', undefined), 'string');
+  const launch = (
+    await waitFor(
+      () => launchesOf(f),
+      (x) => x.length > 0,
+    )
+  )[0];
+  const settings = JSON.parse(readFileSync(launch.args[launch.args.indexOf('--settings') + 1], 'utf8'));
+  const command: string = settings.hooks.Stop[0].hooks[0].command;
+  const seen: string[] = [];
+  let status = 200;
+  let slow = false;
+  const server = http.createServer((req, res) => {
+    seen.push(req.url ?? '');
+    req.resume();
+    req.on('end', () => {
+      if (slow) return;
+      res.writeHead(status);
+      res.end(status === 200 ? '{"decision":"block","reason":"Droid Office notice"}' : '{}');
+    });
+  });
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+  t.after(() => server.close());
+  const port = (server.address() as { port: number }).port;
+  const env = { DROID_OFFICE_WORKER_ID: 'w1', DROID_OFFICE_HOOK_TOKEN: 'tok', DROID_OFFICE_HOOK_URL: `http://127.0.0.1:${port}` };
+  const body = JSON.stringify({ hook_event_name: 'Stop', session_id: 's1' });
+  const spool = path.join(f.data, 'hook-spool', 'w1.jsonl');
+  const rows = () =>
+    existsSync(spool)
+      ? readFileSync(spool, 'utf8')
+          .split('\n')
+          .filter(Boolean)
+          .map((l) => JSON.parse(l))
+      : [];
+
+  const answered = await runHook(command, body, env);
+  assert.equal(answered.stdout, '{"decision":"block","reason":"Droid Office notice"}');
+  assert.match(seen[0], /worker=w1&event=Stop&v=2/);
+  assert.deepEqual(rows(), [], 'delivered: nothing spooled');
+
+  // Its Node half prints the answer only for a command that says so: one from before HOOK_VERSION throws it away.
+  const script = path.join(f.data, 'hook.cjs');
+  assert.equal((await runHook(process.execPath, body, env, [script, 'Stop', 'reply'])).stdout, '{"decision":"block","reason":"Droid Office notice"}');
+  assert.match(seen.at(-1)!, /event=Stop&v=2/);
+  await runHook(process.execPath, body, env, [script, 'Stop']);
+  assert.match(seen.at(-1)!, /event=Stop&v=0/, 'a legacy command is answered as one');
+
+  // The office took it but answered too late: it isn't spooled to be replayed a second time.
+  slow = true;
+  const late = await Promise.all([runHook(command, body, env), runHook(process.execPath, body, env, [script, 'Stop', 'reply'])]);
+  slow = false;
+  assert.deepEqual(
+    late.map((r) => [r.code, r.stdout]),
+    [
+      [0, ''],
+      [0, ''],
+    ],
+  );
+  assert.equal(seen.length, 5);
+  assert.deepEqual(rows(), [], 'taken late: nothing spooled');
+  server.closeAllConnections();
+
+  // Refused (a worker the office doesn't know), then unreachable: kept, in order, and nothing printed.
+  status = 401;
+  assert.equal((await runHook(command, body, env)).stdout, '');
+  await new Promise<void>((resolve) => server.close(() => resolve()));
+  const down = await runHook(command, JSON.stringify({ hook_event_name: 'Stop', session_id: 's2' }), env);
+  assert.equal(down.code, 0, 'a hook never fails its droid');
+  assert.equal(down.stdout, '');
+  assert.deepEqual(
+    rows().map((r) => [r.event, r.token, r.payload.session_id]),
+    [
+      ['Stop', 'tok', 's1'],
+      ['Stop', 'tok', 's2'],
+    ],
+  );
+  assert.equal(statSync(spool).mode & 0o777, 0o600);
+
+  // At the cap, the oldest go first.
+  const big = JSON.stringify({ hook_event_name: 'PostToolUse', session_id: 'big', pad: 'x'.repeat(200 * 1024) });
+  for (let i = 0; i < 3; i++) await runHook(process.execPath, big, env, [script, 'PostToolUse', 'spool']);
+  const kept = rows();
+  assert.ok(statSync(spool).size <= SPOOL_MAX_BYTES);
+  assert.equal(kept.length, 2, 'two of the big ones fit');
+  assert.ok(kept.every((r) => r.payload.session_id === 'big'));
+});
+
+test('hooks spooled while the office was down are replayed in order when it picks the worker back up', async (t) => {
+  const f = carryOnFixture(t);
+  const before = manager(f, []);
+  await before.start();
+  const worker = await hireInState(f, before, 'desk-1', 'spooled', 'working');
+  const token = launchesOf(f).at(-1)!.env.hookToken!;
+  before.shutdown(true);
+  const dir = path.join(f.data, 'hook-spool');
+  mkdirSync(dir, { recursive: true });
+  const row = (event: string, at: number, extra: Record<string, unknown> = {}, from = token) => JSON.stringify({ event, at, token: from, payload: { session_id: 'spooled', hook_event_name: event, ...extra } });
+  const now = Date.now();
+  writeFileSync(
+    path.join(dir, `${worker.id}.jsonl`),
+    [
+      row('PreToolUse', now, { tool_name: 'Execute', tool_input: { command: 'rm -rf build', riskLevel: 'high' } }),
+      row('Stop', now + 1, {}, 'an-earlier-run'),
+      'not json',
+      row('Notification', now + 2, { notification_type: 'permission_prompt' }),
+    ].join('\n'),
+  );
+  // A worker who left the floor while the office was down.
+  writeFileSync(path.join(dir, 'gone.jsonl'), row('Stop', now));
+
+  const after = manager(f, []);
+  t.after(() => after.shutdown());
+  assert.equal(existsSync(path.join(dir, 'gone.jsonl')), false, "a gone worker's spool is dropped");
+  await after.start();
+  assert.equal(after.get(worker.id)?.status, 'needs_input', 'the permission prompt it raised while the office was down');
+  assert.equal(after.get(worker.id)?.activity, 'Approve high-risk command: rm -rf build');
+  assert.equal(existsSync(path.join(dir, `${worker.id}.jsonl`)), false, 'replayed once');
+
+  // A Stop spooled while the office was coming up, then a live hook: the Stop is older, and stale.
+  const refusedAt = Date.now() - 1;
+  assert.equal(after.hookReply(worker.id, token, 'PostToolUse', { session_id: 'spooled', hook_event_name: 'PostToolUse', tool_name: 'Execute' }) !== undefined, true);
+  assert.equal(after.get(worker.id)?.status, 'working');
+  writeFileSync(path.join(dir, `${worker.id}.jsonl`), [row('Stop', refusedAt), row('PreToolUse', Date.now() + 1000, { tool_name: 'Read', tool_input: { file_path: 'b.ts' } })].join('\n'));
+  after.replaySpools();
+  assert.equal(after.get(worker.id)?.activity, 'Read: b.ts');
+  t.mock.timers.enable({ apis: ['Date'], now: Date.now() + 10 * STOP_GRACE_MS });
+  after.reconcile();
+  assert.equal(after.get(worker.id)?.status, 'working', 'the stale Stop was skipped');
+});
+
+test('notices promised to a working droid outlive an office restart that keeps its terminal', async (t) => {
+  const f = carryOnFixture(t);
+  const before = manager(f, []);
+  await before.start();
+  const worker = await hireInState(f, before, 'desk-1', 'kept', 'working');
+  const token = launchesOf(f).at(-1)!.env.hookToken!;
+  const live = (workers: WorkerManager, event: string, extra: Record<string, unknown> = {}) => workers.hookReply(worker.id, token, event, { session_id: 'kept', hook_event_name: event, ...extra }, HOOK_VERSION);
+  live(before, 'PreToolUse', { tool_name: 'Read', tool_input: { file_path: 'a.ts' } });
+  assert.equal(before.notice(worker.id, 'Droid Office notice: from Ada'), true);
+  before.shutdown(true);
+
+  const after = manager(f, []);
+  t.after(() => after.shutdown());
+  await after.start();
+  assert.equal(after.get(worker.id)?.status, 'working');
+  assert.deepEqual(JSON.parse(live(after, 'PostToolUse', { tool_name: 'Read' })!), { hookSpecificOutput: { hookEventName: 'PostToolUse', additionalContext: 'Droid Office notice: from Ada' } });
+});
+test('office notices reach a working droid with its next tool call or as its Stop is blocked, once', async (t) => {
+  const { workers, worker, status, token, f } = await liveWorker(t, 'noticed');
+  const reply = (event: string, extra: Record<string, unknown> = {}, version = HOOK_VERSION) => workers.hookReply(worker.id, token, event, { session_id: 'noticed', hook_event_name: event, ...extra }, version);
+  assert.equal(reply('SessionStart', { source: 'startup' }), '');
+  assert.equal(workers.notice(worker.id, 'Droid Office notice: hi'), false, 'at rest it is typed in instead');
+  reply('UserPromptSubmit', { prompt: 'fix the login' });
+  assert.equal(workers.notice(worker.id, 'Droid Office notice: hi'), true);
+  assert.deepEqual(JSON.parse(reply('PostToolUse', { tool_name: 'Read' })!), { hookSpecificOutput: { hookEventName: 'PostToolUse', additionalContext: 'Droid Office notice: hi' } });
+  assert.equal(reply('PostToolUse', { tool_name: 'Read' }), '', 'handed over once');
+  // A notice whose rewritten prompt dropped the office's marker still carries it, so the Thread knows it.
+  workers.notice(worker.id, 'Look at card 3');
+  assert.equal(JSON.parse(reply('PostToolUse', { tool_name: 'Read' })!).hookSpecificOutput.additionalContext, 'Droid Office notice:\nLook at card 3');
+
+  // Its turn ends with one waiting: the Stop is blocked with it, and the one after goes through.
+  workers.notice(worker.id, 'second');
+  let stops = 0;
+  workers.beforeStop = () => (++stops === 1 ? 'Droid Office notice: report to your lead' : undefined);
+  assert.deepEqual(JSON.parse(reply('Stop', { stop_hook_active: false })!), { decision: 'block', reason: 'Droid Office notice:\nsecond\n\nDroid Office notice: report to your lead' });
+  assert.equal(status(), 'working');
+  workers.notice(worker.id, 'third');
+  assert.equal(reply('Stop', { stop_hook_active: true }), '', 'a Stop a block continued is never blocked again');
+  // At rest, what's left is typed in.
+  const launch = launchesOf(f).at(-1)!;
+  t.mock.timers.enable({ apis: ['Date'], now: Date.now() + 10 * STOP_GRACE_MS });
+  workers.reconcile();
+  assert.equal(status(), 'done');
+  await waitFor(
+    () => pastedInto(f, launch),
+    (p) => p.includes('third'),
+  );
+
+  // Cancelled with Esc: never blocked, whatever is waiting.
+  reply('UserPromptSubmit', { prompt: 'again' });
+  workers.notice(worker.id, 'fourth');
+  workers.write(worker.id, '\x1b');
+  assert.equal(reply('Stop', { stop_hook_active: false }), '');
+
+  // A hook command from before the office's (version 0) can't carry notices.
+  reply('UserPromptSubmit', { prompt: 'and again' }, 0);
+  assert.equal(workers.notice(worker.id, 'fifth'), false);
+});
+
+test('a message queued with Ctrl+Enter keeps its worker working through the Stop before it', async (t) => {
+  const { workers, worker, status, token } = await liveWorker(t, 'queued');
+  const hook = (event: string, extra: Record<string, unknown> = {}) => workers.hookReply(worker.id, token, event, { session_id: 'queued', hook_event_name: event, ...extra }, HOOK_VERSION);
+  hook('SessionStart', { source: 'startup' });
+  hook('UserPromptSubmit', { prompt: 'first' });
+  assert.equal(workers.prompt(worker.id, 'then this', [], true), undefined);
+  const turns: string[] = [];
+  workers.nextTurn = (info) => turns.push(info.id);
+  const start = Date.now() + 1000;
+  t.mock.timers.enable({ apis: ['Date'], now: start });
+  hook('Stop', {});
+  workers.reconcile(start + 10 * STOP_GRACE_MS);
+  assert.equal(status(), 'working', 'the queued message runs next');
+  assert.deepEqual(turns, [worker.id], 'and starts a turn of its own');
+  hook('Stop', {});
+  workers.reconcile(start + 20 * STOP_GRACE_MS);
+  assert.equal(status(), 'done');
+  hook('Stop', {});
+  assert.equal(status(), 'done', 'a Stop at rest changes nothing');
+});
+
+test('a cleared queue lets the next Stop finish the turn', async (t) => {
+  const { workers, worker, status, token } = await liveWorker(t, 'cleared');
+  const hook = (event: string, extra: Record<string, unknown> = {}) => workers.hookReply(worker.id, token, event, { session_id: 'cleared', hook_event_name: event, ...extra }, HOOK_VERSION);
+  hook('SessionStart', { source: 'startup' });
+  hook('UserPromptSubmit', { prompt: 'first' });
+  // Cleared with Clear queue (Droid's Ctrl+X): nothing runs after this turn.
+  workers.prompt(worker.id, 'then this', [], true);
+  workers.write(worker.id, CLEAR_DROID_QUEUE);
+  hook('Stop', {});
+  workers.reconcile(Date.now() + 10 * STOP_GRACE_MS);
+  assert.equal(status(), 'done');
+
+  // Emptied some other way (Ctrl+R in its terminal): its screen shows the input box with no queue.
+  hook('UserPromptSubmit', { prompt: 'second' });
+  workers.prompt(worker.id, 'and this', [], true);
+  await showIdle(workers, worker.id);
+  hook('Stop', {});
+  workers.reconcile(Date.now() + 10 * STOP_GRACE_MS);
+  assert.equal(status(), 'done');
+});
+test('a question or permission prompt is published whole from the hooks, and clears once answered', async (t) => {
+  const { workers, worker, hook, status } = await liveWorker(t, 'asked');
+  hook('SessionStart', { source: 'startup', transcript_path: '/tmp/sessions/-tmp-proj/asked.jsonl' });
+  assert.equal(workers.threadSession(worker.id)?.transcript, '/tmp/sessions/-tmp-proj/asked.jsonl');
+  hook('UserPromptSubmit', { prompt: 'ask me', transcript_path: '/tmp/sessions/-tmp-proj/someone-else.jsonl' });
+  assert.equal(workers.threadSession(worker.id)?.transcript, '/tmp/sessions/-tmp-proj/asked.jsonl', "another session's file is not its own");
+  const questionnaire = '1. [question] Which color?\n[topic] Color\n[option] Red\n[option] Blue\n\n2. [question] Which sizes? (multi)\n[topic] Sizes\n[option] S\n[option] M';
+  hook('PreToolUse', { tool_name: 'AskUser', tool_input: { questionnaire } });
+  assert.equal(status(), 'needs_input');
+  assert.deepEqual(workers.get(worker.id)?.ask, {
+    kind: 'question',
+    questions: [
+      { question: 'Which color?', topic: 'Color', options: ['Red', 'Blue'], multiSelect: false },
+      { question: 'Which sizes?', topic: 'Sizes', options: ['S', 'M'], multiSelect: true },
+    ],
+  });
+  assert.equal(workers.get(worker.id)?.activity, 'Which color? (+1 more)');
+  hook('Notification', { notification_type: 'elicitation_dialog', message: 'Factory CLI is asking the user 2 question(s)' });
+  assert.equal(workers.get(worker.id)?.activity, 'Which color? (+1 more)', 'the dialog notice keeps the question');
+  hook('PostToolUse', { tool_name: 'AskUser', tool_response: '[answer] Red' });
+  assert.equal(status(), 'working');
+  assert.equal(workers.get(worker.id)?.ask, undefined);
+  // Compaction shows as what it's doing, until the conversation carries on.
+  hook('PreCompact', { trigger: 'auto' });
+  assert.equal(workers.get(worker.id)?.activity, 'Compacting its conversation');
+  hook('SessionStart', { source: 'compact' });
+  assert.equal(status(), 'working', 'compacting is inside the turn');
+  assert.equal(workers.get(worker.id)?.activity, undefined);
+});
+
+test("a tool call that changed the worker's files, branch or pull requests says so at once", async (t) => {
+  const f = carryOnFixture(t);
+  const refreshed: [string, ToolRefresh][] = [];
+  const workers = managed(f, f.root, f.data, f.droid, ['--from-test'], { url: 'http://127.0.0.1:1', token: '' }, { ...events([]), tool: (id, r) => refreshed.push([id, r]) });
+  t.after(() => workers.shutdown());
+  const worker = await hireInState(f, workers, 'desk-1', 'tools', 'working');
+  const token = launchesOf(f).at(-1)!.env.hookToken!;
+  const post = (tool_name: string, tool_input: Record<string, unknown>) => workers.hookReply(worker.id, token, 'PostToolUse', { session_id: 'tools', hook_event_name: 'PostToolUse', tool_name, tool_input }) !== undefined;
+  post('Read', { file_path: 'a.ts' });
+  post('Edit', { file_path: 'a.ts' });
+  post('Execute', { command: 'git push -u origin HEAD' });
+  assert.deepEqual(refreshed, [
+    [worker.id, { changes: true }],
+    [worker.id, { changes: true, board: true, pipelines: true }],
+  ]);
 });

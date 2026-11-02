@@ -1,6 +1,7 @@
 import { menuTakesText, type Menu } from '../../shared/asks';
 import { questionPresentation } from '../../shared/ask-question';
 import type { ThreadEntry } from '../../shared/worker-thread';
+import type { WorkerAsk } from '../../shared/protocol';
 import { h, openModal } from './dom';
 import { windowHeader } from './kit';
 
@@ -11,6 +12,8 @@ export interface QuestionDraft {
 export interface QuestionState {
   menu: Menu;
   entries: readonly ThreadEntry[];
+  /** The worker's pending ask from its hooks, which has the whole text (see WorkerInfo.ask). */
+  ask?: WorkerAsk;
   enabled: boolean;
   sending: boolean;
   answered: boolean;
@@ -70,7 +73,7 @@ export function openQuestionWorkspace(opts: { name: string; state: QuestionState
   };
   const update = (next: QuestionState) => {
     state = next;
-    const display = questionPresentation(state.menu, state.entries);
+    const display = questionPresentation(state.menu, state.entries, state.ask);
     const nextKey = JSON.stringify([state.menu.question, state.menu.choices.map((c) => [c.number, c.label, c.description]), state.menu.multiSelect, display]);
     if (key !== nextKey) {
       const first = !key;

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { askedQuestions, questionPresentation } from '../src/shared/ask-question.js';
+import { askedQuestions, inputQuestions, parseQuestionnaire, permissionLine, questionPresentation } from '../src/shared/ask-question.js';
 import { readMenu } from '../src/shared/asks.js';
 import type { ThreadEntry } from '../src/shared/worker-thread.js';
 
@@ -106,7 +106,7 @@ test('question and option paragraphs stay complete without crossing topic bounda
   const parsed = askedQuestions([
     entry({ questionnaire: '1. [question] Context before the question.\n\nWhich design? (multi)\n[topic] Design\nIgnored topic detail\n[option] Persistent roster\nwith live status\n[option] Several conversations\nside by side' }),
   ]);
-  assert.deepEqual(parsed, [{ question: 'Context before the question.\n\nWhich design?', multiSelect: true, options: ['Persistent roster\nwith live status', 'Several conversations\nside by side'] }]);
+  assert.deepEqual(parsed, [{ question: 'Context before the question.\n\nWhich design?', multiSelect: true, options: ['Persistent roster\nwith live status', 'Several conversations\nside by side'], topic: 'Design' }]);
 });
 
 test('multi-select metadata, multiline questions and malformed calls stay safe', () => {
@@ -121,4 +121,37 @@ test('multi-select metadata, multiline questions and malformed calls stay safe',
   const array = entry({ questions: [{ question: 'Complete question?', options: ['Persistent roster', 'Several conversations'], multiSelect: true }] });
   assert.equal(questionPresentation(multi, [array]).question, 'Complete question?');
   assert.equal(questionPresentation(multi, [entry({ questions: [{ question, options: ['Persistent roster', 'Several conversations'] }] })]).complete, false);
+});
+
+test("the hook's pending ask names the question without any Thread history, and a permission prompt's tool call", () => {
+  const ask = { kind: 'question' as const, questions: parseQuestionnaire(`1. [question] ${question}\n[topic] Design direction\n${options.map((option) => `[option] ${option}`).join('\n')}`) };
+  assert.equal(ask.questions[0].topic, 'Design direction');
+  const shown = questionPresentation(screen, [], ask);
+  assert.equal(shown.question, question);
+  assert.deepEqual(
+    shown.choices.map((choice) => choice.label),
+    options,
+  );
+  assert.equal(shown.complete, true);
+  // An ask whose options don't match what's on screen can't relabel the answers.
+  assert.equal(questionPresentation(screen, [], { kind: 'question', questions: [{ question, options: ['red', 'green'], multiSelect: false }] }).complete, false);
+
+  const permission = readMenu([
+    '  Execute: git push origin HEAD',
+    '',
+    '> 1. Yes, allow',
+    '  2. Yes, and always allow low risk commands',
+    '  3. No, cancel',
+    '',
+    '  ↑↓ navigate   Enter select   Esc cancel   Alt/Option+E to inspect approval details',
+  ])!;
+  const asked = questionPresentation(permission, [], { kind: 'permission', tool: 'Execute', command: 'git push origin HEAD', risk: 'medium', summary: 'Push the fix' });
+  assert.equal(asked.question, 'Approve medium-risk command: git push origin HEAD');
+  assert.deepEqual(
+    asked.choices.map((c) => c.label),
+    permission.choices.map((c) => c.label),
+  );
+  assert.equal(permissionLine({ kind: 'permission', tool: 'Edit', file: 'src/a.ts' }), 'Approve Edit: src/a.ts');
+  assert.equal(permissionLine({ kind: 'permission', tool: 'WebSearch', risk: 'extreme' }), 'Approve WebSearch');
+  assert.deepEqual(inputQuestions({ questions: 'nope' }), []);
 });

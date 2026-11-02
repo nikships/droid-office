@@ -334,8 +334,13 @@ export async function startServer(cfg: Config) {
     const workers = workerFloor(workerId)?.workers;
     if (!workers) return send(res, 401, {});
     const event = url.searchParams.get('event') ?? '';
-    const ok = workers.handleHook(workerId, token, event, payload);
-    send(res, ok ? 200 : 401, {});
+    // The hook command's version (see HOOK_VERSION): one from before it is 0, and doesn't print what it gets back.
+    const version = Number(url.searchParams.get('v')) || 0;
+    const reply = workers.hookReply(workerId, token, event, payload, version);
+    if (reply === undefined) return send(res, 401, {});
+    // What the command prints is what its droid reads: nothing, or the office's hook output.
+    res.writeHead(200, { 'content-type': reply ? 'application/json' : 'text/plain' });
+    res.end(reply);
   });
   // Workers' terminals outlive a restart of the office (see ptys.ts) with this address in their
   // environment, so listen where the last office did when that port is free.
@@ -1482,7 +1487,8 @@ export async function startServer(cfg: Config) {
     const can = pingEligibility(info);
     if (!can.ok) return pinged(false, { error: can.reason });
     const text = officePrompt(prompts, 'whiteboard.ping', { floor: floor.def.name });
-    const err = can.how === 'resume' ? floor.workers.resume(id, text) : floor.workers.prompt(id, text, [], can.how === 'queue');
+    // Mid-turn, its hooks hand the line over with its next tool call; a hook command that can't, gets it queued behind the turn.
+    const err = can.how === 'resume' ? floor.workers.resume(id, text) : can.how === 'queue' && floor.workers.notice(id, text) ? undefined : floor.workers.prompt(id, text, [], can.how === 'queue');
     if (err) return pinged(false, { error: `${info.name}: ${err}` });
     pinged(true, { how: can.how });
   };

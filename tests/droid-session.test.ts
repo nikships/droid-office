@@ -62,3 +62,19 @@ test('ignores an effort the office does not know', async (t) => {
   s.put('-app', ID, { model: 'glm-5', reasoningEffort: 'off' });
   assert.deepEqual(await new DroidSessionReader(s.root).read(ID, '/app'), { model: 'glm-5' });
 });
+
+test('reads the settings next to the conversation file its hooks named, and only inside the sessions folder', async (t) => {
+  const s = sessions();
+  const outside = mkdtempSync(path.join(tmpdir(), 'droid-outside-'));
+  t.after(() => {
+    rmSync(s.root, { recursive: true, force: true });
+    rmSync(outside, { recursive: true, force: true });
+  });
+  s.put('-where-hooks-said', ID, { model: 'glm-5' });
+  s.put('-app', ID, { model: 'kimi-k2.6' });
+  const reader = new DroidSessionReader(s.root);
+  assert.deepEqual(await reader.read(ID, '/app', path.join(s.root, '-where-hooks-said', `${ID}.jsonl`)), { model: 'glm-5' });
+  writeFileSync(path.join(outside, `${ID}.settings.json`), JSON.stringify({ model: 'claude-sonnet-5-5' }));
+  assert.deepEqual(await new DroidSessionReader(s.root).read(ID, '/app', path.join(outside, `${ID}.jsonl`)), { model: 'kimi-k2.6' }, 'a file outside the sessions folder is never read');
+  assert.deepEqual(await new DroidSessionReader(s.root).read(ID, '/app', path.join(s.root, '-where-hooks-said', 'other.jsonl')), { model: 'kimi-k2.6' }, "another session's file is not this one's");
+});

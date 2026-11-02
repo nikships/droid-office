@@ -131,6 +131,11 @@ export interface WorkerInfo {
   open: boolean;
   /** Latest line of meaningful activity (e.g. last prompt or tool). */
   activity?: string;
+  /**
+   * What it is waiting on the owner for, from its hooks: the whole AskUser questionnaire, or the tool
+   * call a permission prompt is about. Set while it needs input; the answer still goes into its terminal.
+   */
+  ask?: WorkerAsk;
   /** What its latest tool call is, for the worker to act out while it works. */
   action?: WorkerAction;
   /** Stable subject and current work, generated from visible conversation text (server/worker-labels.ts). */
@@ -174,6 +179,17 @@ export interface WorkerInfo {
    */
   cloud?: CloudWorker;
 }
+
+/** One question of an AskUser questionnaire. */
+export interface AskedQuestion {
+  question: string;
+  topic?: string;
+  options: string[];
+  multiSelect: boolean;
+}
+
+/** A worker's pending ask (see WorkerInfo.ask). `sub` is set when a Task subagent in its terminal asks. */
+export type WorkerAsk = { kind: 'question'; questions: AskedQuestion[]; sub?: true } | { kind: 'permission'; tool: string; command?: string; file?: string; risk?: string; summary?: string; sub?: true };
 
 /** The glyph a team wears beside its accent color, so two teams never differ by color alone. */
 export type TeamEmblem = 'chevron' | 'star' | 'diamond' | 'bolt' | 'ring' | 'cross' | 'hex' | 'triangle';
@@ -738,6 +754,8 @@ export interface SubagentSettings {
    * visit tools are hidden and refused.
    */
   visits: boolean;
+  /** Droid's built-in Task tool is refused with a pointer to `team_hire`, so workers delegate through the office. */
+  denyTask: boolean;
 }
 
 /** A model a lead may give its subagents, and what the office's owner says it's for. */
@@ -747,7 +765,7 @@ export interface SubagentModel {
   note?: string;
 }
 
-export const SUBAGENT_DEFAULTS: SubagentSettings = { officeMcp: true, on: true, deskWorkers: true, worktree: true, maxPerLead: 4, wakeLead: true, visits: true };
+export const SUBAGENT_DEFAULTS: SubagentSettings = { officeMcp: true, on: true, deskWorkers: true, worktree: true, maxPerLead: 4, wakeLead: true, visits: true, denyTask: true };
 export const SUBAGENT_MAX_PER_LEAD = 8;
 export const SUBAGENT_MODELS_MAX = 100;
 export const SUBAGENT_MODEL_NOTE_MAX = 200;

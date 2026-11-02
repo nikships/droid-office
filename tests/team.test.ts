@@ -643,3 +643,34 @@ test('the Pipeline agent hires the worker that heals a failed run, even when onl
   assert.equal(off.status, 403);
   assert.match(off.body.error, /Subagents are turned off/);
 });
+
+test("a turn about to end hears what it's missing: a subagent that hasn't reported, a lead its team's news", async (t) => {
+  const r = rig(t, { nudgeDelayMs: 60_000 });
+  await r.call('lead', { action: 'hire', task: 'a' });
+  r.set('sub1', 'working');
+  const sub = () => r.fake.get('sub1')!;
+  const lead = () => r.fake.get('lead')!;
+  assert.match(r.team.beforeStop(sub()) ?? '', /^Droid Office notice: report to your lead\nYour turn is ending without a report to Nibble\. Call `team_report`/);
+  assert.equal(r.team.beforeStop(lead()), undefined, 'no news yet');
+  await r.call('sub1', { action: 'report', text: 'Which branch?', question: true });
+  assert.equal(r.team.beforeStop(sub()), undefined, 'a question counts as speaking up');
+  // The lead is mid-turn: its Stop carries the news, so it isn't woken for it again.
+  r.set('lead', 'working');
+  assert.match(r.team.beforeStop(lead()) ?? '', /^Droid Office notice: team update\nPixel asked you a question\./);
+  assert.equal(r.team.beforeStop(lead()), undefined, 'told once');
+  r.set('lead', 'done');
+  r.set('sub1', 'done');
+  r.set('sub1', 'working');
+  assert.ok(r.team.beforeStop(sub()), 'a new turn needs a new report');
+  await r.call('sub1', { action: 'report', text: 'First task done' });
+  assert.equal(r.team.beforeStop(sub()), undefined);
+  // A message queued behind the turn starts the next one without coming to rest.
+  r.team.nextTurn('sub1');
+  assert.ok(r.team.beforeStop(sub()), 'a queued turn needs its own report');
+  r.settings.officeMcp = false;
+  assert.equal(r.team.beforeStop(sub()), undefined, 'with the Office MCP off there is no tool to report with');
+  r.settings.officeMcp = true;
+  r.settings.wakeLead = false;
+  await r.call('sub1', { action: 'report', text: 'Done' });
+  assert.equal(r.team.beforeStop(lead()), undefined, 'with waking off, the lead checks for itself');
+});

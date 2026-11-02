@@ -538,11 +538,11 @@ export function createPane(host: PaneHost, index: number): Pane {
     const current = sameMenu(shownMenu, next);
     const settling = questionReplying || Date.now() < answerSettlesAt;
     const entries = thread?.entries() ?? [];
-    const display = shownMenu && questionPresentation(shownMenu, entries);
+    const display = shownMenu && questionPresentation(shownMenu, entries, w.ask);
     const supported = !shownMenu?.multiSelect || store.workerAnswerMultiSelect;
     const live = host.live();
     const enabled = live && supported && current && !host.busy(w.id) && !answered && !questionReplying;
-    const qs = shownMenu && { menu: shownMenu, entries, enabled, supported, sending: questionReplying, answered, current, connected: live };
+    const qs = shownMenu && { menu: shownMenu, entries, ask: w.ask, enabled, supported, sending: questionReplying, answered, current, connected: live };
     if (qs) questionWorkspace?.update(qs);
     else if (questionWorkspace && !settling) questionWorkspace.close();
     const key = JSON.stringify([shownMenu, display, current, supported, live, host.busy(w.id), answered, questionReplying, settling, w.status, mode]);

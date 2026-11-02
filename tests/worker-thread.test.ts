@@ -612,3 +612,60 @@ test('pages carry the presentation built over the whole window, so a group keeps
     ['prompt:0', 'activity:tool:call-0'],
   );
 });
+
+// Hook records as Droid 1.1.0 wrote them for the office's PostToolUse notice and Stop block, trimmed.
+const hookRecord = (id: string, hookEventName: string, stdout: string) =>
+  message(id, 'user', [], {
+    visibility: 'user_only',
+    hookEventName,
+    hookCommands: [{ type: 'command', command: 'office hook' }],
+    hookStatus: 'completed',
+    hookResults: [
+      { exitCode: 0, stdout, stderr: '' },
+      { exitCode: 0, stdout: '', stderr: '' },
+    ],
+  });
+
+test('what the office handed over through hooks shows as office notices, and other hooks stay hidden', async (t) => {
+  const { reader, source } = await rig(t, [
+    text('prompt', 'Fix the login', 'user'),
+    message('call', 'assistant', [{ type: 'tool_use', id: 'call-1', name: 'Execute', input: { command: 'echo hi' } }]),
+    message('result', 'user', [{ type: 'tool_result', tool_use_id: 'call-1', content: 'hi' }]),
+    hookRecord('post', 'PostToolUse', JSON.stringify({ hookSpecificOutput: { hookEventName: 'PostToolUse', additionalContext: 'Droid Office notice: team update\nPixel reported back.' } })),
+    hookRecord('other', 'PostToolUse', JSON.stringify({ hookSpecificOutput: { hookEventName: 'PostToolUse', additionalContext: 'Someone else said PRIVATE_OTHER' } })),
+    hookRecord('broken', 'PostToolUse', '{ not json'),
+    hookRecord('stop', 'Stop', JSON.stringify({ decision: 'block', reason: 'Droid Office notice: report to your lead\nCall team_report.' })),
+    message('reason', 'user', [{ type: 'text', text: 'Droid Office notice: report to your lead\nCall team_report.' }], { interactionMode: 'auto' }),
+    text('done', 'Reported.'),
+  ]);
+  const page = await reader.read(source);
+  const shown = page.entries.filter((e) => e.kind === 'notice' || e.kind === 'text').map((e) => [e.role, e.kind, e.text]);
+  assert.deepEqual(shown, [
+    ['user', 'text', 'Fix the login'],
+    ['system', 'notice', 'Office notice: team update\nPixel reported back.'],
+    ['system', 'notice', 'Office notice: report to your lead\nCall team_report.'],
+    ['assistant', 'text', 'Reported.'],
+  ]);
+  assert.doesNotMatch(JSON.stringify(page), /PRIVATE_OTHER/);
+});
+
+test("the conversation file the worker's hooks named is read first, and only from the sessions folder", async (t) => {
+  const { root, reader, source } = await rig(t, [text('found', 'Found by its folder')]);
+  const elsewhere = path.join(root, '-somewhere-else');
+  await mkdir(elsewhere);
+  await writeFile(path.join(elsewhere, `${source.sessionId}.jsonl`), lines({ type: 'session_start', id: source.sessionId, cwd: '/somewhere/else' }, text('named', 'Named by the hooks')));
+  const named = await reader.read({ ...source, transcript: path.join(elsewhere, `${source.sessionId}.jsonl`) });
+  assert.deepEqual(
+    named.entries.map((e) => e.text),
+    ['Named by the hooks'],
+  );
+  const outside = await mkdtemp(path.join(os.tmpdir(), 'office-thread-outside-'));
+  t.after(() => rm(outside, { recursive: true, force: true }));
+  await writeFile(path.join(outside, `${source.sessionId}.jsonl`), lines(text('outside', 'PRIVATE_OUTSIDE')));
+  const fresh = new WorkerThreadReader(root);
+  const page = await fresh.read({ ...source, transcript: path.join(outside, `${source.sessionId}.jsonl`) });
+  assert.deepEqual(
+    page.entries.map((e) => e.text),
+    ['Found by its folder'],
+  );
+});

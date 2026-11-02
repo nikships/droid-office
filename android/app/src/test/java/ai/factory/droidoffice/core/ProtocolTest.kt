@@ -104,6 +104,18 @@ class ProtocolTest {
     }
 
     @Test
+    fun readsWhatAWorkerIsAskedFromItsHooks() {
+        fun decode(json: String) = (Protocol.decode("""{"t":"worker.update","worker":$json}""") as ServerMsg.WorkerUpdate).worker
+        val q = decode("""{"id":"w1","status":"needs_input","ask":{"kind":"question","questions":[{"question":"Which size?","topic":"Size","options":["Short","Long"],"multiSelect":false}]}}""").ask!!
+        assertEquals(listOf(AskedQuestion("Which size?", "Size", listOf("Short", "Long"), false)), q.questions)
+        assertFalse(q.isPermission)
+        val p = decode("""{"id":"w1","ask":{"kind":"permission","tool":"Execute","command":"git push","risk":"medium","sub":true}}""").ask!!
+        assertTrue(p.isPermission)
+        assertTrue(p.sub)
+        assertNull(decode("""{"id":"w1"}""").ask)
+    }
+
+    @Test
     fun anUnknownStatusIsUnknownNotACrash() {
         val m = Protocol.decode("""{"t":"worker.update","worker":{"id":"w9","status":"daydreaming"}}""") as ServerMsg.WorkerUpdate
         assertEquals(WorkerStatus.Unknown, m.worker.state)

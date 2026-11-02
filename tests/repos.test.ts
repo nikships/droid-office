@@ -146,7 +146,7 @@ async function sessionStart(workers: WorkerManager, data: string, id: string) {
     () => (JSON.parse(readFileSync(path.join(data, 'workers.json'), 'utf8')) as { id: string; hookToken?: string }[]).find((s) => s.id === id)?.hookToken,
     (t) => typeof t === 'string' && t.length > 0,
   );
-  assert.equal(workers.handleHook(id, token, 'SessionStart', { hook_event_name: 'SessionStart', session_id: 'session-1' }), true);
+  assert.equal(workers.hookReply(id, token, 'SessionStart', { hook_event_name: 'SessionStart', session_id: 'session-1' }) !== undefined, true);
 }
 
 async function waitFor<T>(read: () => T, ok: (v: T) => boolean, timeout = 5000): Promise<T> {

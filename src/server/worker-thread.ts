@@ -3,6 +3,7 @@ import path from 'node:path';
 import { IMAGE_PLACEHOLDER, pageRows, presentThread, THREAD_MODEL_VERSION, type ThreadPresentation, type ThreadRow } from '../shared/thread-presentation.js';
 import type { ThreadEntry, ThreadImage } from '../shared/worker-thread.js';
 import { LABEL_TEXT_CHARS } from '../shared/worker-labels.js';
+import { OFFICE_SAYS } from '../shared/prompts.js';
 import { DROID_SESSIONS_DIR } from './droid-session.js';
 import { imageAddress, imageAt, imageRef, IMAGES_PER_ENTRY, promptPictures } from './thread-images.js';
 
@@ -14,6 +15,11 @@ const CHUNK_BYTES = 64 * 1024;
 const TRUNCATED = '\n[… truncated]';
 const SESSION_ID = /^[a-zA-Z0-9-]{1,160}$/;
 
+/** An office notice as the Thread shows it. */
+function officeNotice(text: string): string {
+  return `Office notice: ${text.replace(/^Droid Office notice:\s*/, '')}`;
+}
+
 export interface ThreadSession {
   sessionId: string;
   cwd: string;
@@ -21,6 +27,8 @@ export interface ThreadSession {
   since?: number;
   /** The worker's own drops folder: a prompt shows the pictures sent with it only from there. */
   drops?: string;
+  /** Its conversation file, as its hooks named it (transcript_path): looked at before searching. */
+  transcript?: string;
 }
 
 export interface ThreadPage {
@@ -41,6 +49,8 @@ interface Projection {
   dropped: boolean;
   before: number;
   drops?: string;
+  /** The reason the office last blocked a Stop with, until the user message carrying it (see officeHook). */
+  blocked?: string;
 }
 
 interface CachedSession {
@@ -174,8 +184,21 @@ export class WorkerThreadReader {
     return { size: 0, position: 0, pending: Buffer.alloc(0), oversized: false, head: Buffer.alloc(0), tail: Buffer.alloc(0), projection: projection(Infinity, since, drops), pages: new Map() };
   }
 
-  private async find({ sessionId, cwd }: ThreadSession): Promise<string | undefined> {
+  private async find({ sessionId, cwd, transcript }: ThreadSession): Promise<string | undefined> {
     const name = `${sessionId}.jsonl`;
+    // Where the worker's own hooks say its conversation is, when that's in the sessions folder.
+    if (transcript && path.basename(transcript) === name) {
+      const rel = path.relative(this.root, transcript);
+      const inside = !!rel && !rel.startsWith('..') && !path.isAbsolute(rel);
+      if (
+        inside &&
+        (await stat(transcript).then(
+          (s) => s.isFile(),
+          () => false,
+        ))
+      )
+        return transcript;
+    }
     const canonical = await realpath(cwd).catch(() => cwd);
     for (const directory of new Set([cwd, canonical])) {
       const guess = path.join(this.root, directory.replace(/[^a-zA-Z0-9-]/g, '-'), name);
@@ -330,7 +353,10 @@ export class WorkerThreadReader {
     if (row.type !== 'message') return;
     const message = object(row.message);
     if (message.role !== 'user' && message.role !== 'assistant') return;
-    if ([message, row].some((item) => Object.keys(item).some((key) => key.startsWith('hook')))) return;
+    if ([message, row].some((item) => Object.keys(item).some((key) => key.startsWith('hook')))) {
+      if (!this.textOnly) this.officeHook(state, id, message);
+      return;
+    }
     if ([message.visibility, row.visibility].some((visibility) => visibility !== undefined && visibility !== 'both' && visibility !== 'user_only')) return;
     if (message.userMessageSource && message.userMessageSource !== 'cli_tui') return;
     // Slash skills append a separate CLI acknowledgement, not another owner prompt.
@@ -396,8 +422,36 @@ export class WorkerThreadReader {
     }
   }
 
+  /**
+   * The record of a hook run. Only what the office said through it shows: a notice it handed over
+   * with a tool's result, and the reason it gave for blocking a Stop, whose user message follows.
+   */
+  private officeHook(state: Projection, id: string, message: Record<string, unknown>): void {
+    const event = message.hookEventName;
+    const results = Array.isArray(message.hookResults) ? message.hookResults.slice(0, 16) : [];
+    for (const [index, result] of results.entries()) {
+      const stdout = object(result).stdout;
+      if (typeof stdout !== 'string' || !stdout.trimStart().startsWith('{')) continue;
+      let out: Record<string, unknown>;
+      try {
+        out = object(JSON.parse(stdout));
+      } catch {
+        continue;
+      }
+      const context = object(out.hookSpecificOutput).additionalContext;
+      if (event === 'PostToolUse' && typeof context === 'string' && context.startsWith(OFFICE_SAYS)) this.add(state, { id: `${id}:office:${index}`, role: 'system', kind: 'notice', text: officeNotice(clean(context)) });
+      else if (event === 'Stop' && out.decision === 'block' && typeof out.reason === 'string' && out.reason.startsWith(OFFICE_SAYS)) state.blocked = clean(out.reason);
+    }
+  }
+
   /** A message's text. The owner's prompt shows the pictures it was sent with instead of where the office kept them. */
   private async text(state: Projection, id: string, role: 'user' | 'assistant', text: string): Promise<void> {
+    // The reason the office blocked a Stop with comes back as a user message: it's the office's, not the owner's.
+    if (role === 'user' && state.blocked !== undefined && text === state.blocked) {
+      state.blocked = undefined;
+      this.add(state, { id, role: 'system', kind: 'notice', text: officeNotice(text) });
+      return;
+    }
     const sent = role === 'user' ? await promptPictures(text, state.drops) : undefined;
     if (sent) this.add(state, { id, role, kind: 'text', text: sent.text, images: sent.images });
     else if (text) this.add(state, { id, role, kind: 'text', text });

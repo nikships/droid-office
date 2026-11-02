@@ -56,6 +56,7 @@ test('every setting is in a category', () => {
     ['Team size', 'subagents'],
     ['Where subagents work', 'subagents'],
     ['Waking the lead', 'subagents'],
+    ['Droid’s Task tool', 'subagents'],
     ['Visits between workers', 'subagents'],
     ['Droid', 'connections'],
     ['Factory API key', 'connections'],

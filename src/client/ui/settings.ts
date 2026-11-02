@@ -122,8 +122,8 @@ function choiceLabel(c: AgentChoice): string {
 
 /** The Subagents settings as the office keeps them, without who set them. */
 function subagentSettings(): SubagentSettings {
-  const { officeMcp, on, deskWorkers, worktree, maxPerLead, wakeLead, visits, agent, models } = store.subagents;
-  return { officeMcp: officeMcp ?? true, on, deskWorkers, worktree, maxPerLead, wakeLead, visits: visits ?? true, ...(agent ? { agent } : {}), ...(models?.length ? { models } : {}) };
+  const { officeMcp, on, deskWorkers, worktree, maxPerLead, wakeLead, visits, denyTask, agent, models } = store.subagents;
+  return { officeMcp: officeMcp ?? true, on, deskWorkers, worktree, maxPerLead, wakeLead, visits: visits ?? true, denyTask: denyTask ?? true, ...(agent ? { agent } : {}), ...(models?.length ? { models } : {}) };
 }
 
 /**
@@ -642,6 +642,15 @@ export function openSettings(
     () => store.subagents.wakeLead,
     (wakeLead) => subSet({ wakeLead }),
   );
+  const subTask = radios(
+    'Droid’s Task tool',
+    [
+      [true, 'Refuse it'],
+      [false, 'Allow it'],
+    ] as const,
+    () => store.subagents.denyTask ?? true,
+    (denyTask) => subSet({ denyTask }),
+  );
 
   // What a subagent runs when its lead doesn't say: every model droid lists.
   const subFallback = () => store.subagents.agent ?? officeChoice();
@@ -681,14 +690,18 @@ export function openSettings(
     card('Who can hire', { desc: desc('The Team lead can always hire.'), control: subWho.row }),
     card('Team size', { desc: subSizeNote, control: subSize.row }),
     card('Where subagents work', { desc: desc('Own worktrees let subagents change files side by side, each on its own branch. A lead can still choose when hiring.'), control: subTree.row }),
-    card('Waking the lead', { desc: desc('When a subagent reports back, a resting lead is nudged to read it. A busy lead hears it when it next stops.'), control: subWake.row }),
+    card('Waking the lead', { desc: desc('When a subagent reports back, a resting lead is nudged to read it. A busy lead hears it as its turn ends, and carries on with it.'), control: subWake.row }),
+    card('Droid’s Task tool', {
+      desc: desc('Refused, a worker that reaches for Droid’s own Task subagents is told to hire with team_hire instead, so every helper gets a desk and a terminal you can watch. Workers pick a change up when they next start.'),
+      control: subTask.row,
+    }),
     card('Subagent worker', { desc: subAgentNote, below: [subAgent.element, h('div.row', {}, subAgentSave, subAgentBack)] }),
     card('Models leads can pick', { desc: subModelsNote, below: [subModelsMore] }),
   );
 
   const paintSubagents = () => {
     const s = store.subagents;
-    for (const r of [officeMcp, subOn, subWho, subSize, subTree, subWake, visitsOn]) r.paint();
+    for (const r of [officeMcp, subOn, subWho, subSize, subTree, subWake, subTask, visitsOn]) r.paint();
     subOptions.classList.toggle('hidden', !s.on);
     subNote.textContent = s.on
       ? 'A lead hires with team_hire and the subagent sits at the nearest free desk with its own terminal. It reports back, and its lead sends it home.'
