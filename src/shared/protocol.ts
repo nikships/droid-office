@@ -138,6 +138,11 @@ export interface WorkerInfo {
   ask?: WorkerAsk;
   /** What its latest tool call is, for the worker to act out while it works. */
   action?: WorkerAction;
+  /**
+   * Its todo list, from its latest TodoWrite (shared/todos.ts): items done, of how many, and the one
+   * in progress. Cleared with its conversation, and once every item is done and its turn ends.
+   */
+  todos?: TodoProgress;
   /** Stable subject and current work, generated from visible conversation text (server/worker-labels.ts). */
   task?: WorkerTask;
   /** A /clear boundary for the read-only sign writer, including across Office restarts. */
@@ -178,6 +183,14 @@ export interface WorkerInfo {
    * It has no terminal, worktree or hooks on this machine.
    */
   cloud?: CloudWorker;
+}
+
+/** A worker's todo list as its card shows it (see WorkerInfo.todos). */
+export interface TodoProgress {
+  done: number;
+  total: number;
+  /** The item in progress, when one is. */
+  current?: string;
 }
 
 /** One question of an AskUser questionnaire. */

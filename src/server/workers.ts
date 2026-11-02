@@ -25,6 +25,7 @@ import { officePrompt, type PromptSource } from './prompts.js';
 import { forgeVars, officeSays, placeholders, PROMPTS, WORKER_VISITS, workerBranchPolicy, workerMessageVars } from '../shared/prompts.js';
 import { isBusy } from '../shared/status.js';
 import { fallbackTask } from './tasks.js';
+import { todoProgress, todosFinished, validTodoProgress } from '../shared/todos.js';
 import { forkRefusal, nearestForkSeat } from '../shared/worker-fork.js';
 import { githubPulls } from './github.js';
 import type { PullHost } from './forge.js';
@@ -1963,6 +1964,8 @@ export class WorkerManager {
       this.setStatus(w, 'working');
     } else if (event === 'PreToolUse') this.toolStarted(w, session, report);
     else if (event === 'PostToolUse') {
+      // The structured list (PreToolUse has it as typed text).
+      if (report.tool_name === 'TodoWrite') this.noteTodos(w, report.tool_input);
       this.noteOutcome(w, report, false);
       this.refreshAfter(w, report);
       // A hook command from before SubagentStop: a subagent that asked has finished once its Task returns.
@@ -2166,10 +2169,18 @@ export class WorkerManager {
     w.info.task = fallbackTask(prompt);
   }
 
+  /** Its latest TodoWrite list; one with no items clears it. */
+  private noteTodos(w: Worker, input: unknown) {
+    const todos = todoProgress(input);
+    if (todos) w.info.todos = todos;
+    else delete w.info.todos;
+  }
+
   private clearTask(w: Worker, cleared: boolean) {
     w.taskEpoch++;
     w.info.taskSince = cleared ? Date.now() : undefined;
     w.info.task = undefined;
+    delete w.info.todos;
     this.emitUpdate(w);
     this.persist();
   }
@@ -2443,6 +2454,8 @@ export class WorkerManager {
     }
     // Done, idle or asleep: it's not acting anything out any more.
     if (status !== 'working' && status !== 'needs_input') w.info.action = undefined;
+    // A finished list stays up for the turn that finished it, not after.
+    if ((status === 'done' || status === 'idle') && w.info.todos && todosFinished(w.info.todos)) delete w.info.todos;
     // Nobody is looking at the terminal right now -> raise the flag (the worker jumps).
     if (status === 'done' || status === 'needs_input') {
       w.info.acked = status === 'done' && w.info.open;
@@ -2635,6 +2648,7 @@ export class WorkerManager {
       activity: info.activity,
       task: info.task,
       taskSince: info.taskSince,
+      todos: info.todos,
       pr: info.pr,
       lead: info.lead,
       team: info.team,
@@ -2690,6 +2704,7 @@ export class WorkerManager {
           activity: s.activity,
           task: validTask(s.task),
           taskSince: typeof s.taskSince === 'number' && Number.isFinite(s.taskSince) && s.taskSince > 0 ? s.taskSince : undefined,
+          ...(!shell && validTodoProgress(s.todos) ? { todos: validTodoProgress(s.todos) } : {}),
           pr: s.pr && typeof s.pr.number === 'number' && typeof s.pr.url === 'string' ? { number: s.pr.number, url: s.pr.url } : undefined,
           cols: 100,
           rows: 30,

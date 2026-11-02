@@ -77,6 +77,23 @@ test('worker roster preserves hierarchy, focus and entry motion across updates',
   assert.match(await page.locator('#roster').innerText(), /needs? you/);
   assert.ok((await page.locator('.dash-subworker.attn, .dash-subworker .needs_input, .dash-subworker [data-status=needs_input]').count()) > 0);
   assert.match((await page.locator('[data-worker=dot]').getAttribute('aria-label')) ?? '', /needs input/);
+  assert.equal(await page.locator('.dash-row-todos').count(), 0, 'no todo list, no bar');
+  await page.evaluate(() => {
+    const w = window as any;
+    w.workers[0].todos = { done: 3, total: 5, current: 'Write the tests' };
+    w.paint();
+  });
+  const meter = page.locator('[data-worker=pixel] .dash-row-todos');
+  assert.equal(await meter.getAttribute('title'), '3/5 · Write the tests', 'the item in progress is its tooltip');
+  assert.equal(await meter.innerText(), '3/5');
+  assert.equal(await meter.locator('progress').evaluate((p) => [(p as HTMLProgressElement).value, (p as HTMLProgressElement).max].join('/')), '3/5');
+  assert.match((await page.locator('[data-worker=pixel]').getAttribute('aria-label')) ?? '', /todo list 3\/5 · Write the tests/);
+  await page.evaluate(() => {
+    const w = window as any;
+    delete w.workers[0].todos;
+    w.paint();
+  });
+  assert.equal(await page.locator('.dash-row-todos').count(), 0, 'a cleared list goes away');
   await page.evaluate(() => {
     const w = window as any;
     w.workers[0].status = 'needs_input';

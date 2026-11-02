@@ -116,6 +116,14 @@ class ProtocolTest {
     }
 
     @Test
+    fun readsATodoListsProgress() {
+        fun decode(json: String) = (Protocol.decode("""{"t":"worker.update","worker":$json}""") as ServerMsg.WorkerUpdate).worker
+        assertEquals(TodoProgress(1, 3, "beta"), decode("""{"id":"w1","status":"working","todos":{"done":1,"total":3,"current":"beta"}}""").todos)
+        assertEquals(TodoProgress(3, 3, null), decode("""{"id":"w1","todos":{"done":3,"total":3}}""").todos)
+        assertNull(decode("""{"id":"w1"}""").todos)
+    }
+
+    @Test
     fun anUnknownStatusIsUnknownNotACrash() {
         val m = Protocol.decode("""{"t":"worker.update","worker":{"id":"w9","status":"daydreaming"}}""") as ServerMsg.WorkerUpdate
         assertEquals(WorkerStatus.Unknown, m.worker.state)

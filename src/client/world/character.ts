@@ -3,8 +3,9 @@ import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { HAIR_COLORS, HAIR_STYLES, SKIN_TONES, type Look } from '../../shared/avatar';
 import { EMOTE_BY_ID, type Emote, type EmoteId } from '../../shared/emotes';
-import type { CarriedIssue, TeamBadge, WorkerAction, WorkerStatus, WorkerTask } from '../../shared/protocol';
+import type { CarriedIssue, TeamBadge, TodoProgress, WorkerAction, WorkerStatus, WorkerTask } from '../../shared/protocol';
 import { isAsleep, type WorkerPr } from '../../shared/status';
+import { todoCount, todoFraction, todoLine } from '../../shared/todos';
 import { HIPS } from '../player';
 import { OpenBook } from './book';
 import { HeldCard } from './card';
@@ -1279,6 +1280,8 @@ export class Worker {
   /** The bubble is a task card: it hangs from its tail instead of floating. */
   private bubbleIsCard = false;
   private task: WorkerTask | undefined;
+  /** Its todo list's progress (WorkerInfo.todos): a bar on its card. */
+  private todos: TodoProgress | undefined;
   /** Its pull request, open or merged: its bubble is outlined (and labelled, while it rests) to match. */
   private pr: PrBadge | undefined;
   /** Its worktree was deleted outside the office (WorkerInfo.lost): its bubble says so until it's fixed. */
@@ -1606,6 +1609,11 @@ export class Worker {
     this.drawBubble();
   }
 
+  setTodos(todos: TodoProgress | undefined) {
+    this.todos = todos;
+    this.drawBubble();
+  }
+
   setLost(lost: boolean) {
     this.lost = lost;
     this.drawBubble();
@@ -1735,7 +1743,7 @@ export class Worker {
 
   private drawBubble() {
     if (this.leaving || this.dead) return;
-    const { status, bouncing: bounce, task, pr, lost } = this;
+    const { status, bouncing: bounce, task, pr, lost, todos } = this;
     const hot = status === 'needs_input' || (status === 'done' && bounce);
     // Every card is a dark panel; what it needs from you shows in its outline, not a pastel fill.
     const signal = hot || status === 'working' ? STATUS_BULB[status] : undefined;
@@ -1750,11 +1758,11 @@ export class Worker {
           : status === 'done' && bounce
             ? '\u2713 DONE'
             : status === 'working'
-              ? '\u25B8 WORKING'
+              ? `\u25B8 WORKING${todos ? ` ${todoCount(todos)}` : ''}`
               : isAsleep(status)
                 ? 'ZZZ'
                 : '';
-    const key = `${lost}|${border}|${prLabel}|${task ? `${status}|${bounce}|${task.name}|${task.summary}` : bubble}`;
+    const key = `${lost}|${border}|${prLabel}|${task ? `${status}|${bounce}|${task.name}|${task.summary}|${todos ? todoLine(todos) : ''}` : bubble}`;
     if (key === this.bubbleKey) return;
     this.bubbleKey = key;
     if (this.bubble) {
@@ -1773,6 +1781,7 @@ export class Worker {
         border: border ?? '#eeeeee',
         color: '#ffffff',
         muted: '#a6a6a6',
+        ...(todos ? { progress: { label: todoLine(todos), fraction: todoFraction(todos), color: '#ee6018' } } : {}),
       });
       this.bubble.scale.multiplyScalar(CARD_SCALE);
     } else if (bubble) this.bubble = textSprite(bubble, { bg: '#0a0a0a', color: lost ? LOST_CHIP[1] : (border ?? '#eeeeee'), border: border ?? (lost ? LOST_CHIP[1] : '#2f2f2f'), size: 38 });

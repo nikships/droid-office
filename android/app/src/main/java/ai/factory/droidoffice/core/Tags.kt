@@ -196,6 +196,7 @@ object Tags {
         const val CARD_META = "home.worker.meta"
         const val CARD_TITLE = "home.worker.title"
         const val CARD_DETAIL = "home.worker.detail"
+        const val CARD_TODOS = "home.worker.todos"
 
         fun floor(id: String) = "home.floor/$id"
         fun worker(id: String) = "home.worker/$id"

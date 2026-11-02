@@ -106,4 +106,21 @@ class WorkersTest {
         assertTrue(describeWorktree(WorktreeState(error = "no git"), "b").second)
         assertFalse(describeWorktree(WorktreeState(ahead = 3), "b").second)
     }
+
+    @Test
+    fun aTodoListReadsTheWayTheOfficeWordsIt() {
+        val p = TodoProgress(3, 5, "Write the tests")
+        val agent = WorkerInfo(id = "a", todos = p)
+        assertEquals(p, Workers.todos(agent))
+        assertEquals("3/5", Workers.todoCount(p))
+        assertEquals("3/5 · Write the tests", Workers.todoLine(p))
+        assertEquals("5/5 done", Workers.todoLine(TodoProgress(5, 5)))
+        assertEquals("1/2 done", Workers.todoLine(TodoProgress(1, 2, " ")))
+        assertEquals(0.6f, Workers.todoFraction(p), 0.0001f)
+        assertEquals(0f, Workers.todoFraction(TodoProgress(0, 0)), 0f)
+        assertNull(Workers.todos(WorkerInfo(id = "s", kind = "shell", todos = p)))
+        assertNull(Workers.todos(WorkerInfo(id = "e", todos = TodoProgress(0, 0))))
+        assertNull(Workers.todos(WorkerInfo(id = "x", todos = TodoProgress(4, 3))))
+        assertNull(Workers.todos(WorkerInfo(id = "n")))
+    }
 }

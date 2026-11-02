@@ -92,6 +92,18 @@ object Workers {
 
     fun title(w: WorkerInfo): String? = w.task?.name?.takeIf { it.isNotBlank() } ?: w.title?.takeIf { it.isNotBlank() }
 
+    /** Its todo list, when it has one with items (src/shared/todos.ts); a shell has none. */
+    fun todos(w: WorkerInfo): TodoProgress? = w.todos?.takeIf { !w.isShell && it.total > 0 && it.done in 0..it.total }
+
+    /** "3/5" (todoCount). */
+    fun todoCount(p: TodoProgress): String = "${p.done}/${p.total}"
+
+    /** "3/5 · Write the tests", or "3/5 done" with nothing in progress (todoLine). */
+    fun todoLine(p: TodoProgress): String = p.current?.trim()?.takeIf { it.isNotEmpty() }?.let { "${todoCount(p)} · $it" } ?: "${todoCount(p)} done"
+
+    /** How far along it is, 0 to 1 (todoFraction). */
+    fun todoFraction(p: TodoProgress): Float = if (p.total > 0) (p.done.toFloat() / p.total).coerceIn(0f, 1f) else 0f
+
     enum class PrState { Open, Merged, Opening }
 
     /** Its pull request and where it stands: an open one wins over a merged one (see src/shared/status.ts). */
