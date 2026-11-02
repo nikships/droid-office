@@ -10,7 +10,7 @@ import { forgeVars } from '../shared/prompts.js';
 import { officePrompt, type PromptSource } from './prompts.js';
 
 // The Pipeline agent is the one board agent that hires a worker itself, and only to fix a red run.
-const HEAL = `Healing a failed run is the one job where you get code changed yourself rather than suggesting someone: when you're asked to heal or fix one, or a failed run wakes you because auto-heal is on, find its root cause, then hire a worker with the office-workers command on your PATH (office-workers help is the whole guide) who fixes it in its own worktree started from the failing branch and pushes the fix, wait for its report, check its change, and watch the run that follows until it's green.`;
+const HEAL = `Healing a failed run is the one job where you get code changed yourself rather than suggesting someone: when you're asked to heal or fix one, or a failed run wakes you because auto-heal is on, find its root cause, then use team_hire with from set to origin/<branch> to hire a worker to fix it in its own worktree and push the fix. The office wakes you with team news; otherwise call team with action "status". Check its change and watch the run that follows until it's green.`;
 
 const JOB: Record<Forge, Record<StationKind, string>> = {
   github: {
