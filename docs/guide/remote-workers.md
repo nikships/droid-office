@@ -60,7 +60,8 @@ Tailscale at all; Settings then says so. CI and office clones run that way.
 
 - See open floors with `office_floors` and choose its active workspace with
   `office_move`. Moving its desk does **not** abandon work: subagents stay on
-  their original floors and keep reporting to the same lead.
+  their original floors and keep reporting to the same lead. If you take its
+  floor off the building, its desk moves to another open floor.
 - Hire using `team_models` and `team_hire` on its current floor. Normal Settings,
   model permissions, office capacity, and the per-lead team limit still apply.
   The per-lead limit counts its subagents across the whole building.

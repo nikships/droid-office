@@ -357,7 +357,7 @@ export class WorkerManager {
     private prompts?: PromptSource,
     /** The floor is a plain folder, not a git checkout of its own (see Floor.plain). */
     private plain = false,
-    private remote?: { store: RemoteWorkers; floor: string; revoke?(id: string): void },
+    private remote?: { store: RemoteWorkers; floor: string; revoke(id: string): void },
   ) {
     this.trees = new Worktrees(dir, plain);
     if (!plain) this.trees.ensureBranchFile();
@@ -572,8 +572,10 @@ export class WorkerManager {
   remoteStatus(id: string, status: 'idle' | 'working' | 'done', activity?: string) {
     const w = this.workers.get(id);
     if (!w?.info.remote) throw new Error('No remote worker here');
+    const said = activity !== undefined && activity !== w.info.activity;
     w.info.activity = activity ?? w.info.activity;
-    this.setStatus(w, status);
+    if (w.info.status !== status) this.setStatus(w, status);
+    else if (said) this.emitUpdate(w);
   }
 
   /** The folder an agent's droid runs in, where its project skills and commands come from. */
@@ -1243,12 +1245,7 @@ export class WorkerManager {
     const w = this.workers.get(id);
     if (!w) return {};
     if (w.info.remote) {
-      if (this.remote?.revoke) this.remote.revoke(id);
-      else {
-        this.remote?.store.remove(id);
-        this.detachRemote(id);
-        this.releaseRemoteLead(id);
-      }
+      this.remote?.revoke(id);
       return {};
     }
     this.workers.delete(id);

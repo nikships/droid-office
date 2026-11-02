@@ -18,6 +18,7 @@ import { Team, type TeamWorkers } from '../src/server/team.js';
 import { Visits } from '../src/server/visits.js';
 import { WhiteboardStore } from '../src/server/whiteboard.js';
 import { WorkerManager } from '../src/server/workers.js';
+import { workerLeft } from '../src/server/floor.js';
 import { SUBAGENT_DEFAULTS, type WorkerInfo } from '../src/shared/protocol.js';
 import { DESKS } from '../src/shared/layout.js';
 
@@ -250,6 +251,11 @@ test('real MCP transport enforces host, tailnet identity, remote bearer auth, re
   assert.equal((await client.callTool({ name: 'office_move', arguments: { floor: 'beta' } })).isError, undefined);
   const who = await client.callTool({ name: 'office_whoami', arguments: {} });
   assert.deepEqual(who.structuredContent?.floor, { id: 'beta', name: 'beta' });
+  // Its floor is gone without it being re-seated (closed with no other open, then one opened): the next call seats it.
+  r.maps[1].delete(r.remote.worker.id);
+  r.floors.splice(1, 1);
+  const healed = await client.callTool({ name: 'office_whoami', arguments: {} });
+  assert.deepEqual(healed.structuredContent?.floor, { id: 'alpha', name: 'alpha' });
   r.settings.officeMcp = false;
   await assert.rejects(client.listTools(), /Active remote worker/);
   r.settings.officeMcp = true;
@@ -378,6 +384,149 @@ test('without Tailscale the office still opens, says why, and serves once Tailsc
   assert.equal(up.status, 'serving');
   assert.equal(up.url, `https://${DNS}:8443/office/mcp`);
 });
+
+test('while Tailscale waits on the owner, opening Settings does not run serve again', async (t) => {
+  const r = rig(t);
+  const calls: string[][] = [];
+  // The real CLI's answer on a tailnet without HTTPS certificates, the node id replaced.
+  const run: CliRun = async (_bin, args) => {
+    calls.push(args);
+    if (args[0] === 'status') return { ok: true, stdout: JSON.stringify(STATUS), stderr: '' };
+    if (args[1] === 'status') return { ok: true, stdout: '{}\n', stderr: '' };
+    return { ok: false, stdout: 'Serve is not enabled on your tailnet.\nTo enable, visit:\n\n         https://login.tailscale.com/f/serve?node=nXXXX\n', stderr: '' };
+  };
+  const service = new RemoteMcp({ dataDir: r.dir, office: r.office, mcp: { floor: r.floor, settings: () => r.settings }, floors: () => [], cli: new TailscaleCli(['tailscale'], run), backendPort: 0, retryMs: 60_000, log() {} });
+  t.after(() => service.stop());
+  const waiting = await service.start();
+  assert.equal(waiting.status, 'unavailable');
+  assert.equal(waiting.fixUrl, 'https://login.tailscale.com/f/serve?node=nXXXX');
+  const serves = () => calls.filter((c) => c[1] === '--bg').length;
+  assert.equal(serves(), 1);
+  const again = await service.refresh();
+  assert.equal(again.fixUrl, waiting.fixUrl);
+  assert.equal(serves(), 1, 'the admin link is still the answer; serve would only block on it again');
+});
+
+test('a remote lead moving between real floors keeps its team log and visits; a closed floor re-seats it', async (t) => {
+  const dir = mkdtempSync(path.join(os.tmpdir(), 'remote-floors-'));
+  const store = new RemoteWorkers(dir);
+  const { worker: grok } = store.add('Grok', 'alpha', 'desk-1');
+  mkdirSync(path.join(dir, 'alpha'));
+  writeFileSync(path.join(dir, 'alpha', 'workers.json'), JSON.stringify([{ id: 'sub', kind: 'agent', name: 'Byte', deskId: 'desk-2', lead: grok.id }]));
+  const settings = { ...SUBAGENT_DEFAULTS, deskWorkers: true, visits: true, maxPerLead: 3 };
+  let now = 1000;
+  const floors: RemoteFloor[] = [];
+  const office = new RemoteOffice(store, () => floors);
+  const managers: WorkerManager[] = [];
+  const removed: string[] = [];
+  const updates: WorkerInfo[] = [];
+  t.after(() => {
+    for (const f of floors) {
+      f.whiteboard.stop();
+      (f.team as Team).stop();
+      (f.visits as Visits).stop();
+    }
+    for (const m of managers) m.shutdown();
+    rmSync(dir, { recursive: true, force: true });
+  });
+  const open = (id: string) => {
+    const data = path.join(dir, id);
+    mkdirSync(data, { recursive: true });
+    const floor = {} as RemoteFloor;
+    const m = new WorkerManager(
+      dir,
+      data,
+      'missing-test-agent',
+      [],
+      { url: 'http://127.0.0.1:1', token: '' },
+      {
+        update: (w) => updates.push({ ...w }),
+        remove: (wid) => {
+          removed.push(wid);
+          workerLeft(wid, store, floor);
+        },
+        data() {},
+        screen() {},
+        toast() {},
+      },
+      undefined,
+      undefined,
+      undefined,
+      true,
+      { store, floor: id, revoke: (wid) => office.revoke(wid) },
+    );
+    managers.push(m);
+    const get = (wid: string) => m.get(wid) ?? m.remoteIdentity(wid);
+    const team = new Team(
+      {
+        list: () => m.list(),
+        get,
+        deskOccupied: (d) => m.deskOccupied(d),
+        officeDefault: undefined,
+        hire: () => 'No hiring in this test',
+        prompt: (wid, text) => m.tell(wid, text),
+        resume: (wid, text) => m.resume(wid, text),
+        kill: (wid) => m.kill(wid),
+        tail: (wid, lines) => m.tail(wid, lines),
+        setTask: (wid, task) => m.setTask(wid, task),
+      },
+      { dataDir: data, dir: data, git: false, settings: () => settings, toast() {}, now: () => now },
+    );
+    const visits = new Visits(
+      {
+        list: () => m.list(),
+        get,
+        tail: (wid, lines) => m.tail(wid, lines),
+        prompt: (wid, text) => m.prompt(wid, text),
+        tell: (wid, text) => m.tell(wid, text),
+        resume: (wid, text) => m.resume(wid, text),
+        cancelTurn: (wid) => m.cancelTurn(wid),
+        turnScreen: (wid) => m.turnScreen(wid),
+      },
+      { on: () => settings.visits, emit() {}, now: () => now },
+    );
+    Object.assign(floor, { id, dir: data, def: { name: id }, workers: m, team, visits, whiteboard: new WhiteboardStore(data) });
+    floors.push(floor);
+    return floor;
+  };
+  const alpha = open('alpha');
+  const beta = open('beta');
+  const alice = office.add('Alice', 'alpha').worker;
+
+  assert.equal((await alpha.team.handle(alpha.workers.get('sub')!, { action: 'report', text: 'Alpha finished' })).status, 200);
+  const ask = alpha.visits.handle(alice, { action: 'visit', kind: 'ask', worker: grok.id, text: 'Are you ready?' });
+  assert.equal(ask.status, 200);
+
+  office.move(grok.id, 'beta');
+  assert.ok(removed.includes(grok.id), 'the move went through the floor’s real remove path');
+  assert.equal(alpha.workers.get(grok.id), undefined);
+  assert.equal(beta.workers.get(grok.id)?.remote, true);
+  assert.equal(alpha.team.inbox(grok.id).length, 1, 'the old floor kept its report to the lead');
+  now += 60_000;
+  (alpha.visits as Visits).tick(now);
+  assert.ok(
+    office.inbox(grok.id).messages.some((m) => /Are you ready/.test(m.text)),
+    'the question reached it on its new floor',
+  );
+  assert.equal(office.reply(beta.workers.get(grok.id)!, String(ask.body.visit), 'Yes').status, 200);
+
+  beta.workers.remoteStatus(grok.id, 'working', 'Reading the issue');
+  const seen = updates.length;
+  beta.workers.remoteStatus(grok.id, 'working', 'Writing the fix');
+  assert.equal(updates.length, seen + 1, 'new activity alone is sent to clients');
+  assert.equal(updates.at(-1)?.activity, 'Writing the fix');
+
+  // Beta comes off the building: the server re-seats its external workers first.
+  assert.equal(office.rehome(grok.id, 'beta'), true);
+  floors.splice(floors.indexOf(beta), 1);
+  assert.equal(office.floor(grok.id)?.id, 'alpha');
+  assert.equal(store.identity(grok.id)?.deskId, alpha.workers.get(grok.id)?.deskId);
+  assert.equal(alpha.team.inbox(grok.id).length, 1);
+
+  await alpha.workers.kill(grok.id);
+  assert.equal(store.identity(grok.id), undefined, 'removing it at its desk revokes it everywhere');
+  assert.equal(alpha.workers.get('sub')?.lead, undefined);
+});
 test('real worker managers restore remote seats and off-floor leads without launching a terminal', (t) => {
   const dir = mkdtempSync(path.join(os.tmpdir(), 'remote-manager-'));
   const store = new RemoteWorkers(dir);
@@ -393,7 +542,11 @@ test('real worker managers restore remote seats and off-floor leads without laun
   const make = (floor: string) => {
     const data = path.join(dir, floor);
     mkdirSync(data, { recursive: true });
-    const m = new WorkerManager(dir, data, 'missing-test-agent', [], { url: 'http://127.0.0.1:1', token: '' }, { update() {}, remove() {}, data() {}, screen() {}, toast() {} }, undefined, undefined, undefined, true, { store, floor });
+    const m = new WorkerManager(dir, data, 'missing-test-agent', [], { url: 'http://127.0.0.1:1', token: '' }, { update() {}, remove() {}, data() {}, screen() {}, toast() {} }, undefined, undefined, undefined, true, {
+      store,
+      floor,
+      revoke: (id) => store.remove(id),
+    });
     managers.push(m);
     return m;
   };

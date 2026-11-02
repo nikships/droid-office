@@ -192,8 +192,14 @@ export class OfficeMcpServer {
     const id = request.headers.get(OFFICE_MCP_WORKER_HEADER);
     const token = /^Bearer\s+(.+)$/i.exec(request.headers.get('authorization') ?? '')?.[1];
     if (!id || !token) return undefined;
-    const floor = this.deps.floor(id);
-    const worker = this.deps.remoteTransport ? (this.deps.remote?.store.authenticate(id, token) ? floor?.workers.get(id) : undefined) : floor?.workers.authenticate(id, token);
+    let floor = this.deps.floor(id);
+    let worker: WorkerInfo | undefined;
+    if (this.deps.remoteTransport) {
+      if (!this.deps.remote?.store.authenticate(id, token)) return undefined;
+      // Its floor closed with no other open, or went from floors.json while the office was down: a desk on one open now.
+      if (!floor && this.deps.remote.rehome(id)) floor = this.deps.floor(id);
+      worker = floor?.workers.get(id);
+    } else worker = floor?.workers.authenticate(id, token);
     if (!floor || !worker || worker.kind !== 'agent' || worker.guest || worker.cloud) return undefined;
     if (!!worker.remote !== !!this.deps.remoteTransport) return undefined;
     const relative = workspaceOf(worker);

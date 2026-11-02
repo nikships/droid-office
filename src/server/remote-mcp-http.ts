@@ -87,6 +87,7 @@ export class RemoteMcp {
   private httpsPort?: number;
   private work: Promise<unknown> = Promise.resolve();
   private retry?: NodeJS.Timeout;
+  private triedAt = 0;
   private closed = false;
   private readonly cli: TailscaleCli;
   private readonly file: string;
@@ -108,6 +109,12 @@ export class RemoteMcp {
 
   /** Settings asks again: a Tailscale that came up since, or a mapping removed from outside, is caught here. */
   refresh(): Promise<RemoteMcpState> {
+    // Waiting on the owner in Tailscale's admin console, `serve` blocks on the same link again: Settings gets
+    // what's known now, and the office asks again in the background at most once per retry interval.
+    if (this.fixUrl) {
+      if (Date.now() - this.triedAt >= (this.opts.retryMs ?? RETRY_MS)) void this.start();
+      return Promise.resolve(this.state());
+    }
     return this.start();
   }
 
@@ -168,6 +175,7 @@ export class RemoteMcp {
   private async enable() {
     clearTimeout(this.retry);
     if (this.closed || !this.saved.on) return;
+    this.triedAt = Date.now();
     if (this.status !== 'serving') this.status = 'starting';
     const backend = await this.listen();
     const self = await this.cli.self();

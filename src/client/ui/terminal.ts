@@ -136,7 +136,14 @@ export function openTerminal(net: Net, workerId: string, onChanges?: () => void,
       if (!w) modal.close();
       else status.textContent = `${w.status}: ${w.activity ?? ''}`;
     });
-    const modal = openModal(el, { onClose: unsubscribe });
+    // Attached while it's open, like a terminal: looking at a finished turn acknowledges it.
+    net.send({ t: 'worker.attach', workerId });
+    const modal = openModal(el, {
+      onClose: () => {
+        unsubscribe();
+        net.send({ t: 'worker.detach', workerId });
+      },
+    });
     return;
   }
 

@@ -42,6 +42,15 @@ import type { RemoteWorkers } from './remote-workers.js';
 
 type ToastLevel = 'info' | 'warn' | 'error';
 
+/** A worker left a floor's desks. A remote desk moving to another floor is not a departure from its teams, conversations or board. */
+export function workerLeft(id: string, remote: Pick<RemoteWorkers, 'identity'> | undefined, floor: { team?: Pick<Team, 'onWorkerGone'>; visits?: Pick<Visits, 'onWorkerGone'>; whiteboard?: Pick<WhiteboardStore, 'forgetReader'> }) {
+  if (remote?.identity(id)) return;
+  floor.team?.onWorkerGone(id);
+  floor.visits?.onWorkerGone(id);
+  // A dismissed worker's read points would hold the board's tombstones for good.
+  floor.whiteboard?.forgetReader(id);
+}
+
 /** What a floor needs from the building around it. */
 export interface FloorContext {
   remoteWorkers?: RemoteWorkers;
@@ -242,13 +251,7 @@ export class Floor {
         remove: (workerId, shot) => {
           this.changes?.forget(workerId);
           ctx.emit(this, { t: 'worker.remove', workerId, ...(shot ? { shot } : {}) });
-          // A remote desk moving away is not a departure from its teams or conversations.
-          if (!ctx.remoteWorkers?.identity(workerId)) {
-            this.team?.onWorkerGone(workerId);
-            this.visits?.onWorkerGone(workerId);
-          }
-          // A dismissed worker's read points would hold the board's tombstones for good.
-          if (!ctx.remoteWorkers?.identity(workerId)) this.whiteboard?.forgetReader(workerId);
+          workerLeft(workerId, ctx.remoteWorkers, this);
           ctx.workerChanged(this, workerId);
         },
         data: (workerId, data, connectionIds) => ctx.termData(workerId, data, connectionIds),
@@ -269,7 +272,7 @@ export class Floor {
       this.board,
       ctx.prompts,
       this.plain,
-      ctx.remoteWorkers ? { store: ctx.remoteWorkers, floor: this.id, revoke: ctx.remoteRevoke } : undefined,
+      ctx.remoteWorkers && ctx.remoteRevoke ? { store: ctx.remoteWorkers, floor: this.id, revoke: ctx.remoteRevoke } : undefined,
     );
     this.branchInfo = { baseBranch: this.workers.baseBranch, selectedBranch: this.workers.selectedBranch };
 

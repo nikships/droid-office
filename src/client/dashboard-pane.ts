@@ -169,6 +169,8 @@ export function createPane(host: PaneHost, index: number): Pane {
   let emptyKey = '';
   let teamKey = '';
   let info: { name: HTMLElement; meta: HTMLElement; activity: HTMLElement; who: HTMLElement; preview?: HTMLElement } | undefined;
+  /** The external worker whose details are up: attached like a terminal, so a finished turn shown here counts as seen. */
+  let watching: string | undefined;
 
   let shownMenu: Menu | undefined;
   let questionKey = '';
@@ -224,6 +226,8 @@ export function createPane(host: PaneHost, index: number): Pane {
   // --- The body ---------------------------------------------------------------------------------
   function teardown(keepThread = false) {
     questionWorkspace?.close();
+    if (watching) host.net.send({ t: 'worker.detach', workerId: watching });
+    watching = undefined;
     if (keepThread) thread?.activate(false);
     else {
       thread?.dispose();
@@ -271,6 +275,10 @@ export function createPane(host: PaneHost, index: number): Pane {
       return;
     }
     if (next === 'info') {
+      if (w.remote) {
+        watching = w.id;
+        host.net.send({ t: 'worker.attach', workerId: w.id });
+      }
       info = { name: h('h2'), activity: h('p.dash-info-activity'), meta: h('dl.dash-meta'), who: h('div.dash-info-who') };
       const s = store.screens.get(w.id);
       info.preview = s ? h('pre.dash-preview.big', { 'aria-label': `${w.name}’s screen` }) : undefined;

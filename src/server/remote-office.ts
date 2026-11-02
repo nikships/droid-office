@@ -61,6 +61,20 @@ export class RemoteOffice {
     return this.list(id);
   }
 
+  /** Seats a remote worker on the first other open floor with a free desk, when its own closed. */
+  rehome(id: string, leaving?: string): boolean {
+    for (const f of this.floors()) {
+      if (f.id === leaving) continue;
+      try {
+        this.move(id, f.id);
+        return true;
+      } catch {
+        // no free desk there, or its name is taken: the next floor
+      }
+    }
+    return false;
+  }
+
   revoke(id: string) {
     this.store.remove(id);
     for (const floor of this.floors()) {

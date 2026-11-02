@@ -1600,6 +1600,8 @@ export async function startServer(cfg: Config) {
         sendTo(c, { t: 'toast', text: next ? `🛗 ${who} took ${name} off the building, so you rode the elevator to ${next.def.name}` : `🛗 ${who} took ${name}, the last floor, off the building`, level: 'warn' });
       } else sendTo(c, { t: 'toast', text: `🛗 ${who} took ${name} off the building`, level: 'info' });
     }
+    // An external worker keeps its identity and teams: its desk moves to a floor still open.
+    for (const w of floor.workers.list()) if (w.remote) remoteOffice.rehome(w.id, floor.id);
     floors.delete(floor.id);
     floor.shutdown();
     floorsChanged();
