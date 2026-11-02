@@ -258,6 +258,7 @@ object Tags {
     }
 
     object Worker {
+        const val REMOTE = "worker.remote"
         const val BACK = "worker.back"
         const val NAME = "worker.name"
         const val META = "worker.meta"

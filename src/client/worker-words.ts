@@ -6,6 +6,7 @@ import { workerActivity } from '../shared/status';
 
 /** What sort of worker it is: a Droid here or on a Factory computer, a shell, or a guest agent. */
 export function workerKind(w: WorkerInfo): string {
+  if (w.remote) return 'External worker · MCP';
   return w.guest ? `${PROVIDER_LABEL[w.guest.provider]} · outside office` : w.cloud ? 'Droid · Factory' : w.kind === 'shell' ? 'Shell' : 'Droid';
 }
 

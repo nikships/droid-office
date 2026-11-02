@@ -138,6 +138,28 @@ fun WorkerScreen(workerId: String, onBack: () -> Unit, embedded: Boolean = false
     val screens by connection.screens.collectAsStateWithLifecycle()
     val link by connection.link.collectAsStateWithLifecycle()
     val worker = data.workers[workerId]
+    if (worker?.remote == true) {
+        // Attached while it's on screen, like a terminal: looking at a finished turn acknowledges it.
+        DisposableEffect(workerId) {
+            connection.attach(workerId)
+            graph.visibility.viewing.value = workerId
+            graph.alerts.cancel(workerId)
+            onDispose {
+                connection.detach(workerId)
+                if (graph.visibility.viewing.value == workerId) graph.visibility.viewing.value = null
+            }
+        }
+        Column(Modifier.fillMaxSize().padding(16.dp).tagged(Tags.Worker.REMOTE), verticalArrangement = Arrangement.spacedBy(16.dp)) {
+            IconButton(onClick = onBack, modifier = Modifier.tagged(Tags.Worker.BACK)) {
+                Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
+            }
+            Text(worker.name, style = MaterialTheme.typography.titleLarge, modifier = Modifier.tagged(Tags.Worker.NAME))
+            Text("External worker · MCP")
+            Text("${worker.status}: ${worker.activity.orEmpty()}", modifier = Modifier.tagged(Tags.Worker.STATUS))
+            Text("This worker runs elsewhere. Messages and team updates arrive through its MCP inbox. It has no local terminal or conversation.")
+        }
+        return
+    }
     // Receipts for messages sent to Droid's queue: one per office, floor and worker, shared by both
     // views for this process, and kept on disk while any is unconfirmed so a restart, rotation or
     // force-stop brings them back with their session, sequence and matched ids.

@@ -41,6 +41,7 @@ import { readScreenMenu } from '../shared/asks.js';
 import { SCREEN_SETTLE_MS, readDroidScreen, screenStatus, type DroidScreen } from './droid-screen.js';
 import type { Capacity } from './machine.js';
 import { setupStep, writePlan, writeSetupScript, type SetupStep } from './worktree-setup.js';
+import type { RemoteWorkers } from './remote-workers.js';
 
 type HeadlessTerminal = InstanceType<typeof headless.Terminal>;
 type Worktree = NonNullable<WorkerInfo['worktree']>;
@@ -356,6 +357,7 @@ export class WorkerManager {
     private prompts?: PromptSource,
     /** The floor is a plain folder, not a git checkout of its own (see Floor.plain). */
     private plain = false,
+    private remote?: { store: RemoteWorkers; floor: string; revoke(id: string): void },
   ) {
     this.trees = new Worktrees(dir, plain);
     if (!plain) this.trees.ensureBranchFile();
@@ -379,6 +381,7 @@ export class WorkerManager {
     this.host = new PtyHost(dataDir, () => this.events.toast("The workers' terminal host stopped — resuming them", 'warn'));
     this.scrollback = new ScrollbackStore(dataDir);
     this.drops = new DropStore(dataDir);
+    for (const info of remote?.store.workers(remote.floor) ?? []) this.workers.set(info.id, newWorker(info));
     this.restore();
     this.scrollback.prune(new Set(this.workers.keys()));
     this.pruneSpools();
@@ -405,6 +408,7 @@ export class WorkerManager {
     await this.host.connect();
     await Promise.all(
       [...this.workers.values()].map(async (w) => {
+        if (w.info.remote) return;
         const saved = w.saved;
         w.saved = undefined;
         const adopted = saved && (await this.host.attach(saved.ptyId));
@@ -493,7 +497,7 @@ export class WorkerManager {
    * lead picked, or the one its own HEAD is on, so a lead sitting on an old main doesn't hand it that.
    */
   fetchStart(lead: string, from?: string): Promise<void> | undefined {
-    const boss = this.workers.get(lead)?.info;
+    const boss = this.get(lead) ?? this.remoteIdentity(lead);
     if (!boss) return undefined;
     const cwd = boss.worktree ? path.join(this.dir, boss.worktree.path) : this.dir;
     const where = existsSync(cwd) ? cwd : this.dir;
@@ -524,10 +528,60 @@ export class WorkerManager {
     return this.workers.get(id)?.info;
   }
 
+  /** A remote lead remains reachable from its original floor after moving its desk elsewhere. */
+  remoteIdentity(id: string): WorkerInfo | undefined {
+    return this.remote?.store.identity(id);
+  }
+
+  releaseRemoteLead(id: string) {
+    for (const w of this.workers.values()) {
+      if (w.info.lead !== id) continue;
+      delete w.info.lead;
+      this.emitUpdate(w);
+    }
+    this.persist();
+  }
+
+  /** Remote seats are real occupants but never launch a process or count as a session. */
+  remoteSeat(name: string, moving = false): string {
+    if (this.closing || this.selectingBranch) throw new Error('The floor is not ready for a remote worker');
+    if (!moving) {
+      const full = this.capacity?.full();
+      if (full) throw new Error(full);
+    }
+    if (this.list().some((w) => w.name.toLowerCase() === name.toLowerCase()) || [...(this.holds?.names() ?? [])].some((n) => n.toLowerCase() === name.toLowerCase())) throw new Error('That worker name is already on this floor');
+    const seat = [...DESK_BY_ID.values()].find((d) => !d.station && !this.deskOccupied(d.id));
+    if (!seat) throw new Error('This floor has no free desk');
+    return seat.id;
+  }
+
+  attachRemote(info: WorkerInfo) {
+    if (!info.remote || this.deskOccupied(info.deskId)) throw new Error('Remote desk is not available');
+    const w = newWorker(info);
+    this.workers.set(info.id, w);
+    this.emitUpdate(w);
+  }
+
+  detachRemote(id: string) {
+    if (!this.workers.get(id)?.info.remote) return;
+    this.workers.delete(id);
+    this.subscribers.delete(id);
+    this.events.remove(id);
+  }
+
+  remoteStatus(id: string, status: 'idle' | 'working' | 'done', activity?: string) {
+    const w = this.workers.get(id);
+    if (!w?.info.remote) throw new Error('No remote worker here');
+    const said = activity !== undefined && activity !== w.info.activity;
+    w.info.activity = activity ?? w.info.activity;
+    if (w.info.status !== status) this.setStatus(w, status);
+    else if (said) this.emitUpdate(w);
+  }
+
   /** The folder an agent's droid runs in, where its project skills and commands come from. */
   agentFolder(id: string): string | undefined {
     const info = this.workers.get(id)?.info;
-    return info?.kind === 'agent' && !info.cloud && !info.guest ? this.cwd(info) : undefined;
+    return info?.kind === 'agent' && !info.cloud && !info.guest && !info.remote ? this.cwd(info) : undefined;
   }
 
   /**
@@ -635,7 +689,7 @@ export class WorkerManager {
     let start: WorktreeStart = fresh ? 'main' : 'checkout';
     if (from !== undefined && (lead === undefined || !worktree)) return 'Only a subagent in its own worktree starts from a branch its lead picks';
     if (lead !== undefined) {
-      const boss = this.workers.get(lead)?.info;
+      const boss = this.get(lead) ?? this.remoteIdentity(lead);
       if (!boss) return 'Its lead has left';
       if (boss.lead) return "A subagent can't hire subagents of its own";
       if (kind !== 'agent' || seat.station) return 'A subagent is an agent at a desk or a bean bag';
@@ -940,7 +994,7 @@ export class WorkerManager {
     const station = DESK_BY_ID.get(w.info.deskId)?.station;
     if (station) return `${stationBrief(station, this.forge, this.prompts)}\n\n${prompt ?? 'Wait for the owner to give you a task in this terminal.'}`;
     if (!prompt) return prompt;
-    const lead = w.info.lead ? this.workers.get(w.info.lead)?.info : undefined;
+    const lead = w.info.lead ? (this.get(w.info.lead) ?? this.remoteIdentity(w.info.lead)) : undefined;
     if (!lead) return prompt;
     const wt = w.info.worktree;
     const where = wt
@@ -955,6 +1009,8 @@ export class WorkerManager {
 
   /** The end of a worker's terminal as plain text, its scrollback included: what a lead reads of its subagent. */
   tail(id: string, lines: number): string | undefined {
+    const info = this.workers.get(id)?.info;
+    if (info?.remote) return `${info.name} is an external worker. No local terminal is available.\nStatus: ${info.status}\n${info.activity ?? ''}`;
     const term = this.workers.get(id)?.term;
     if (!term) return undefined;
     const buf = term.buffer.active;
@@ -1049,6 +1105,7 @@ export class WorkerManager {
 
   /** Starts a worker that isn't running again, carrying on its session, with `prompt` as its next message. */
   resume(id: string, prompt?: string): string | undefined {
+    if (this.remoteIdentity(id)) return prompt ? this.prompt(id, prompt) : 'This worker runs remotely; it cannot be resumed locally';
     const w = this.workers.get(id);
     if (!w) return 'No such worker';
     if (w.pty) return 'Worker is already running';
@@ -1149,7 +1206,7 @@ export class WorkerManager {
 
   /** Starts every worker that isn't running: nobody should be found asleep at their desk. */
   wakeAll() {
-    for (const w of this.workers.values()) if (!w.pty) this.resume(w.info.id);
+    for (const w of this.workers.values()) if (!w.pty && !w.info.remote) this.resume(w.info.id);
   }
 
   /** Keeps a file dropped or pasted into a worker's terminal on this machine; where it is, for the terminal to type. */
@@ -1187,6 +1244,10 @@ export class WorkerManager {
   async kill(id: string, cleanup?: WorktreeCleanup, landed?: string, landedRepos?: Record<string, string | undefined>, shot = false): Promise<{ note?: string; error?: string }> {
     const w = this.workers.get(id);
     if (!w) return {};
+    if (w.info.remote) {
+      this.remote?.revoke(id);
+      return {};
+    }
     this.workers.delete(id);
     this.subscribers.delete(id);
     const proc = w.pty;
@@ -1564,6 +1625,10 @@ export class WorkerManager {
    * Droid queues the message behind its current turn.
    */
   prompt(id: string, text: string, images?: readonly string[], queue = false): string | undefined {
+    if (this.remoteIdentity(id) && this.remote) {
+      if (images?.length) return 'Remote workers accept text through their MCP inbox, not local image paths';
+      return this.remote.store.enqueue(id, text, this.remote.floor);
+    }
     const w = this.workers.get(id);
     if (!w) return 'No such worker';
     if (!w.pty) return 'Worker is not running';
@@ -2627,39 +2692,41 @@ export class WorkerManager {
   private persist(onShutdown = false) {
     // A stopped manager's pending callbacks must not overwrite its successor's state.
     if (this.closing && !onShutdown) return;
-    const saved = [...this.workers.values()].map(({ info, hookToken, pty, bootBlocked, stopAt, interrupted, worktreeOwnership, launchPrompt, pendingFork, outbox }) => ({
-      id: info.id,
-      kind: info.kind,
-      model: info.model,
-      effort: info.effort,
-      deskId: info.deskId,
-      name: info.name,
-      color: info.color,
-      createdBy: info.createdBy,
-      createdAt: info.createdAt,
-      prompt: info.prompt,
-      worktree: info.worktree,
-      worktreeOwnership,
-      repos: info.repos,
-      title: info.title,
-      sessionId: info.sessionId,
-      forkedFrom: info.forkedFrom,
-      pendingFork,
-      activity: info.activity,
-      task: info.task,
-      taskSince: info.taskSince,
-      todos: info.todos,
-      pr: info.pr,
-      lead: info.lead,
-      team: info.team,
-      // A terminal still running in the host, to pick back up after a restart. Its hooks keep the token.
-      hookToken,
-      // Its first message, while its droid hasn't taken it yet: the next office types it in at SessionStart.
-      // Notices it was promised and hasn't been handed yet, which the next office hands over instead.
-      pty: pty?.id ? { id: pty.id, status: info.status, acked: info.acked, waitingSince: info.waitingSince, launchPrompt, ...(outbox.length ? { outbox } : {}) } : undefined,
-      // In the middle of something: if its terminal doesn't make it through a restart, it carries on after.
-      midTurn: !this.stopping && (!!interrupted || midTurn({ info, bootBlocked, stopAt })),
-    }));
+    const saved = [...this.workers.values()]
+      .filter((w) => !w.info.remote)
+      .map(({ info, hookToken, pty, bootBlocked, stopAt, interrupted, worktreeOwnership, launchPrompt, pendingFork, outbox }) => ({
+        id: info.id,
+        kind: info.kind,
+        model: info.model,
+        effort: info.effort,
+        deskId: info.deskId,
+        name: info.name,
+        color: info.color,
+        createdBy: info.createdBy,
+        createdAt: info.createdAt,
+        prompt: info.prompt,
+        worktree: info.worktree,
+        worktreeOwnership,
+        repos: info.repos,
+        title: info.title,
+        sessionId: info.sessionId,
+        forkedFrom: info.forkedFrom,
+        pendingFork,
+        activity: info.activity,
+        task: info.task,
+        taskSince: info.taskSince,
+        todos: info.todos,
+        pr: info.pr,
+        lead: info.lead,
+        team: info.team,
+        // A terminal still running in the host, to pick back up after a restart. Its hooks keep the token.
+        hookToken,
+        // Its first message, while its droid hasn't taken it yet: the next office types it in at SessionStart.
+        // Notices it was promised and hasn't been handed yet, which the next office hands over instead.
+        pty: pty?.id ? { id: pty.id, status: info.status, acked: info.acked, waitingSince: info.waitingSince, launchPrompt, ...(outbox.length ? { outbox } : {}) } : undefined,
+        // In the middle of something: if its terminal doesn't make it through a restart, it carries on after.
+        midTurn: !this.stopping && (!!interrupted || midTurn({ info, bootBlocked, stopAt })),
+      }));
     try {
       writeFileSync(this.statePath, JSON.stringify([...saved, ...this.retired], null, 2), { mode: 0o600 });
     } catch {
@@ -2736,8 +2803,8 @@ export class WorkerManager {
       }
       // A lead that didn't come back, or is a subagent itself, leads nobody.
       for (const w of this.workers.values()) {
-        const lead = w.info.lead && this.workers.get(w.info.lead);
-        if (w.info.lead && (!lead || lead.info.lead)) delete w.info.lead;
+        const lead = w.info.lead && (this.get(w.info.lead) ?? this.remoteIdentity(w.info.lead));
+        if (w.info.lead && (!lead || lead.lead)) delete w.info.lead;
       }
       // Markings follow who leads whom now; an office from before them gives each team its own.
       const teams = settleTeams([...this.workers.values()].map((w) => w.info));

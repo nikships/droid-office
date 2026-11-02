@@ -59,6 +59,7 @@ if [[ -z "$PORT" ]]; then
 fi
 
 EXCLUDES=(--exclude workers.json --exclude cloud-workers.json --exclude guests.json
+  --exclude remote-workers.json --exclude remote-mcp.json
   --exclude pty.sock --exclude 'pty-host.*' --exclude hook-port --exclude 'shell.*'
   --exclude scrollback/ --exclude worktrees/ --exclude drops/ --exclude 'wiki-run*'
   --exclude bin/ --exclude 'droid-*.json' --exclude 'system-*.md' --exclude grok-home/ --exclude muse-home/)
@@ -122,6 +123,8 @@ if [[ "$(uname)" == Darwin ]]; then BROWSERS="$REAL_HOME/Library/Caches/droid-of
   printf 'export GIT_CONFIG_GLOBAL=%q\n' "$REAL_HOME/.gitconfig"
   printf 'export DROID_OFFICE_BROWSERS_PATH=%q\n' "$BROWSERS"
   echo 'unset DROID_OFFICE_HOME DROID_OFFICE_WORKER_ID DROID_OFFICE_HOOK_TOKEN'
+  # A clone leaves the owner's tailnet alone unless the run asks for it (DROID_OFFICE_REMOTE_MCP=on ./start.sh).
+  echo 'export DROID_OFFICE_REMOTE_MCP="${DROID_OFFICE_REMOTE_MCP:-off}"'
   printf 'exec node bin/droid-office.js --home %q --port %s --host 127.0.0.1 --projects %q "$@"\n' "$DEST/office" "$PORT" "$DEST/floors"
 } >"$DEST/start.sh"
 chmod 700 "$DEST/start.sh"

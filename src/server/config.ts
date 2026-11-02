@@ -18,6 +18,11 @@ export interface Config {
   /** Signed native Keychain bridge supplied by the packaged Mac app, never enabled by default. */
   finderBridge?: string;
   /**
+   * Serve external workers' MCP on the tailnet with Tailscale Serve (the CLI sets it unless
+   * DROID_OFFICE_REMOTE_MCP=off; unset in tests, so they never touch a tailnet).
+   */
+  remoteMcp?: boolean;
+  /**
    * Render Whiteboard cards with the headless Chromium, downloading it on the first render when it's
    * missing (the CLI sets it; unset in tests, so they never start a browser or a download).
    */

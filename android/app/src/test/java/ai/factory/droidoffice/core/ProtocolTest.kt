@@ -13,6 +13,14 @@ import org.junit.Test
 
 class ProtocolTest {
     @Test
+    fun externalWorkersAreNotLocalTerminals() {
+        val local = Protocol.decode("""{"t":"worker.update","worker":{"id":"local"}}""") as ServerMsg.WorkerUpdate
+        val remote = Protocol.decode("""{"t":"worker.update","worker":{"id":"remote","remote":true}}""") as ServerMsg.WorkerUpdate
+        assertFalse(local.worker.remote)
+        assertTrue(remote.worker.remote)
+    }
+
+    @Test
     fun checkboxAnswersRequireAnExplicitWelcomeCapabilityNotAVersionGuess() {
         assertFalse((Protocol.decode(welcome) as ServerMsg.Welcome).workerAnswerMultiSelect)
         val supported = welcome.replace(""""pulls":""", """"workerAnswerMultiSelect":true,"pulls":""")

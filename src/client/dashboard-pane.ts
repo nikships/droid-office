@@ -169,6 +169,8 @@ export function createPane(host: PaneHost, index: number): Pane {
   let emptyKey = '';
   let teamKey = '';
   let info: { name: HTMLElement; meta: HTMLElement; activity: HTMLElement; who: HTMLElement; preview?: HTMLElement } | undefined;
+  /** The external worker whose details are up: attached like a terminal, so a finished turn shown here counts as seen. */
+  let watching: string | undefined;
 
   let shownMenu: Menu | undefined;
   let questionKey = '';
@@ -224,6 +226,8 @@ export function createPane(host: PaneHost, index: number): Pane {
   // --- The body ---------------------------------------------------------------------------------
   function teardown(keepThread = false) {
     questionWorkspace?.close();
+    if (watching) host.net.send({ t: 'worker.detach', workerId: watching });
+    watching = undefined;
     if (keepThread) thread?.activate(false);
     else {
       thread?.dispose();
@@ -254,6 +258,7 @@ export function createPane(host: PaneHost, index: number): Pane {
 
   function modeFor(w: WorkerInfo | undefined, view: PaneView): PaneMode {
     if (!w) return 'empty';
+    if (w.remote) return 'info';
     // A cloud worker has no terminal here: its Thread is its Factory session.
     if (w.cloud) return 'thread';
     const local = !w.guest && !w.cloud;
@@ -270,6 +275,10 @@ export function createPane(host: PaneHost, index: number): Pane {
       return;
     }
     if (next === 'info') {
+      if (w.remote) {
+        watching = w.id;
+        host.net.send({ t: 'worker.attach', workerId: w.id });
+      }
       info = { name: h('h2'), activity: h('p.dash-info-activity'), meta: h('dl.dash-meta'), who: h('div.dash-info-who') };
       const s = store.screens.get(w.id);
       info.preview = s ? h('pre.dash-preview.big', { 'aria-label': `${w.name}’s screen` }) : undefined;
@@ -356,7 +365,7 @@ export function createPane(host: PaneHost, index: number): Pane {
 
   function paintHead(s: PaneState) {
     const w = s.worker;
-    const local = !!w && !w.guest && !w.cloud;
+    const local = !!w && !w.guest && !w.cloud && !w.remote;
     const threaded = mode === 'thread';
     const key = JSON.stringify([w && [w.id, w.name, w.color, w.status, w.acked, w.lead, doingLine(w), w.task?.name, w.title, w.activeModel ?? w.model, w.activeEffort ?? w.effort], mode, s.maximized, s.canMaximize, host.live()]);
     if (key === headKey) return;
@@ -419,12 +428,12 @@ export function createPane(host: PaneHost, index: number): Pane {
     const btn = (label: string, glyph: IconName, ok: boolean, run: () => void, cls = '', tip = '') =>
       h('button.btn.icon.sm.ghost', { type: 'button', class: cls, title: tip || label, 'aria-label': label, disabled: !enabled || !ok, onclick: run }, icon(glyph, 14));
     const asleep = isAsleep(w.status);
-    const local = !w.guest && !w.cloud;
+    const local = !w.guest && !w.cloud && !w.remote;
     const intended = host.floor();
     const fork = local && w.kind === 'agent' ? forkRefusal(w) : 'none';
     actions.replaceChildren(
       ...(w.cloud && w.sessionId ? [h('a.btn.icon.sm.ghost', { href: sessionWebUrl(w.sessionId), target: '_blank', rel: 'noopener noreferrer', title: 'Factory session', 'aria-label': 'Factory session' }, icon('external', 14))] : []),
-      ...(asleep && !w.guest
+      ...(asleep && !w.guest && !w.remote
         ? [
             btn(
               w.kind === 'shell' ? 'Restart' : 'Resume',
@@ -502,15 +511,17 @@ export function createPane(host: PaneHost, index: number): Pane {
       ['Worktree', w.worktree?.path],
       [
         'Where',
-        w.lost
-          ? 'Its worktree is missing, so it can’t resume or take prompts.'
-          : w.guest
-            ? 'Running outside the office. Use its own terminal.'
-            : w.cloud
-              ? `On Factory · ${w.cloud.computerName}. No local terminal.`
-              : isAsleep(w.status)
-                ? 'Asleep. Resume it to see its terminal and prompt it.'
-                : 'A local terminal',
+        w.remote
+          ? 'External worker. Messages and team updates arrive through its MCP inbox. No local terminal or conversation.'
+          : w.lost
+            ? 'Its worktree is missing, so it can’t resume or take prompts.'
+            : w.guest
+              ? 'Running outside the office. Use its own terminal.'
+              : w.cloud
+                ? `On Factory · ${w.cloud.computerName}. No local terminal.`
+                : isAsleep(w.status)
+                  ? 'Asleep. Resume it to see its terminal and prompt it.'
+                  : 'A local terminal',
       ],
       ['Lead', lead ? lead.name : w.lead ? 'No longer on this floor' : undefined],
       ['Subagents', team.length ? team.map((m) => m.name).join(', ') : undefined],

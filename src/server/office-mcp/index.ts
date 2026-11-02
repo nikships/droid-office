@@ -14,6 +14,8 @@ import { sendResponse, webRequest } from './node-http.js';
 import { instructions as teamInstructions, register as registerTeam } from './team.js';
 import { instructions as whiteboardInstructions, register as registerWhiteboard } from './whiteboard.js';
 import { instructions as visitInstructions, register as registerVisits } from './visits.js';
+import { register as registerRemote, remoteInstructions } from './remote.js';
+import type { RemoteOffice } from '../remote-office.js';
 
 export const OFFICE_MCP_PATH = '/office/mcp';
 export const OFFICE_MCP_WORKER_HEADER = 'x-droid-office-worker-id';
@@ -36,6 +38,12 @@ export interface OfficeMcpFloor {
 }
 
 export interface OfficeMcpDeps {
+  remote?: RemoteOffice;
+  /**
+   * Dedicated loopback listener behind Tailscale Serve; never enabled on the hook listener. `hostname` is
+   * this machine's MagicDNS name once it serves, `owner` the login it is signed in as.
+   */
+  remoteTransport?: { hostname(): string | undefined; owner(): string | undefined };
   /** This office's own hook server origin; requests for workers of another local office go there. */
   hookUrl?: string;
   settings(): SubagentSettings;
@@ -58,6 +66,7 @@ export const officeAccess = {
   mayHire: ((c) => c.floor.team.cannotHire(c.worker)) satisfies OfficeMcpAccess,
   team: ((c) => {
     if (c.worker.lead) return 'Subagents report to their lead with team_report; they cannot manage a team.';
+    if (c.worker.remote) return undefined;
     return c.floor.workers.list().some((w) => w.lead === c.worker.id) || c.floor.team.hasNews(c.worker.id) ? undefined : c.floor.team.cannotHire(c.worker);
   }) satisfies OfficeMcpAccess,
   subagent: ((c) => (c.worker.lead ? undefined : 'Only a subagent reports to a lead. Independent workers answer the owner in their terminal.')) satisfies OfficeMcpAccess,
@@ -119,8 +128,16 @@ export class OfficeMcpServer {
 
   private async fetch(request: Request): Promise<Response> {
     // Loopback only: a page on another site can't reach this server by rebinding its own name.
-    const badHost = hostHeaderValidationResponse(request, localhostAllowedHostnames());
+    const remote = this.deps.remoteTransport;
+    const hostname = remote?.hostname();
+    if (remote && !hostname) return Response.json({ error: 'The office is not serving external workers on its tailnet yet' }, { status: 503 });
+    const badHost = hostHeaderValidationResponse(request, hostname ? [hostname] : localhostAllowedHostnames());
     if (badHost) return badHost;
+    if (remote) {
+      if (request.headers.has('origin') || !tailnetIdentity(request.headers, remote.owner())) return Response.json({ error: 'Only the owner’s own Tailscale devices may connect; browser and Funnel requests are refused' }, { status: 403 });
+      if (!this.caller(request)) return Response.json({ error: 'Active remote worker id and bearer credential required' }, { status: 401 });
+      return this.mcp.fetch(request);
+    }
     if (request.method === 'OPTIONS') return new Response(null, { status: 204, headers: { Allow: 'POST, GET, DELETE, OPTIONS', [PROBE_HEADER]: '1' } });
     const peer = this.peer(request);
     if (peer) return relay(request, peer);
@@ -141,7 +158,7 @@ export class OfficeMcpServer {
   }
 
   private serverFor(caller: OfficeMcpCaller | undefined, disconnected: AbortSignal | undefined): Server {
-    const server = new Server({ name: 'droid-office', version: '1.0.0' }, { capabilities: { tools: {} }, instructions: INSTRUCTIONS });
+    const server = new Server({ name: 'droid-office', version: '1.0.0' }, { capabilities: { tools: {} }, instructions: caller?.worker.remote ? remoteInstructions : INSTRUCTIONS });
     server.setRequestHandler('tools/list', () => ({ tools: caller ? [...this.tools.values()].filter((t) => t.access(caller) === undefined).map((t) => t.listed) : [] }));
     server.setRequestHandler('tools/call', async ({ params }, ctx) => {
       const tool = this.tools.get(params.name);
@@ -175,9 +192,16 @@ export class OfficeMcpServer {
     const id = request.headers.get(OFFICE_MCP_WORKER_HEADER);
     const token = /^Bearer\s+(.+)$/i.exec(request.headers.get('authorization') ?? '')?.[1];
     if (!id || !token) return undefined;
-    const floor = this.deps.floor(id);
-    const worker = floor?.workers.authenticate(id, token);
+    let floor = this.deps.floor(id);
+    let worker: WorkerInfo | undefined;
+    if (this.deps.remoteTransport) {
+      if (!this.deps.remote?.store.authenticate(id, token)) return undefined;
+      // Its floor closed with no other open, or went from floors.json while the office was down: a desk on one open now.
+      if (!floor && this.deps.remote.rehome(id)) floor = this.deps.floor(id);
+      worker = floor?.workers.get(id);
+    } else worker = floor?.workers.authenticate(id, token);
     if (!floor || !worker || worker.kind !== 'agent' || worker.guest || worker.cloud) return undefined;
+    if (!!worker.remote !== !!this.deps.remoteTransport) return undefined;
     const relative = workspaceOf(worker);
     return { worker, floor, settings, cwd: relative ? path.join(floor.dir, relative) : floor.dir };
   }
@@ -188,7 +212,20 @@ export function createOfficeMcp(deps: OfficeMcpDeps): OfficeMcpServer {
   registerTeam(server, deps);
   registerWhiteboard(server, deps);
   registerVisits(server, deps);
+  registerRemote(server, deps);
   return server;
+}
+
+/**
+ * Whether a request reached the dedicated loopback listener from one of the owner's own devices. Serve
+ * drops these headers from every incoming request and sets its own: Funnel traffic is marked, a device
+ * signed in as a user carries that user's login, and a tagged device of the tailnet (or this machine)
+ * carries none. A shared-in user's login isn't the owner's. Never trusted on a network-bound listener.
+ */
+export function tailnetIdentity(headers: Headers, owner?: string): boolean {
+  if (headers.has('tailscale-funnel-request')) return false;
+  const login = headers.get('tailscale-user-login')?.trim();
+  return !login || !owner || login.toLowerCase() === owner.toLowerCase();
 }
 
 export function record(value: unknown): value is Record<string, unknown> {

@@ -119,6 +119,33 @@ export function openTerminal(net: Net, workerId: string, onChanges?: () => void,
   }
   const info = store.workers.get(workerId);
   if (!info) return;
+  if (info.remote) {
+    const status = h('p', {}, `${info.status}: ${info.activity ?? ''}`);
+    const el = h(
+      'div.modal',
+      {},
+      h('header', {}, h('div.titles', {}, h('h2', {}, info.name), h('p.sub', {}, 'External worker · MCP'))),
+      h('div.body.stack', {}, status, h('p.note.info', {}, 'This worker runs elsewhere. Messages and team updates arrive through its MCP inbox. It has no local terminal or conversation.')),
+    );
+    if (inline) {
+      inline.mount.replaceChildren(el);
+      return;
+    }
+    const unsubscribe = store.on('workers', () => {
+      const w = store.workers.get(workerId);
+      if (!w) modal.close();
+      else status.textContent = `${w.status}: ${w.activity ?? ''}`;
+    });
+    // Attached while it's open, like a terminal: looking at a finished turn acknowledges it.
+    net.send({ t: 'worker.attach', workerId });
+    const modal = openModal(el, {
+      onClose: () => {
+        unsubscribe();
+        net.send({ t: 'worker.detach', workerId });
+      },
+    });
+    return;
+  }
 
   // A guest has no terminal here: its window shows what the office knows of it, and takes no input.
   const guest = !!info.guest;

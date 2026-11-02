@@ -548,36 +548,11 @@ export class Visits {
     if (!notes || !note) return;
     const host = this.workers.get(hostId);
     if (!host) return;
-    const last = this.last.get(hostId);
-    if (last && now - last.at < GAP_MS) return;
-    // The last message's turn hasn't started (or ended): a normal one waits for it.
-    if (!note.urgent && last && !last.sawWork && now - last.at < SETTLE_MS) return;
-    // Typed into lately by someone (not by the last message from here): they may be mid-sentence.
-    const typed = host.lastInputAt !== undefined && now - host.lastInputAt < TYPING_MS && !(last && host.lastInputAt <= last.at + 1000);
-    if (typed) return;
-    // A dialog the status hasn't caught up with: Enter would answer it, even if the last status was done.
-    if (this.workers.turnScreen(hostId) === 'asking') return;
-    switch (host.status) {
-      case 'starting':
-      case 'needs_input':
-        // A permission prompt is the owner's to answer: even an urgent message waits for it.
-        return;
-      case 'working':
-        // A normal message steers the running turn: plain Enter puts it in front of droid now,
-        // and droid reads it once its current tool call finishes. Only an urgent one stops it.
-        if (!note.urgent) break;
-        if (note.interruptedAt === undefined) {
-          note.interruptedAt = now;
-          // The status can lag the screen: a turn that has just ended on screen gets no key at all.
-          if (this.workers.cancelTurn(hostId)) return;
-        }
-        // Stopped on screen before its status catches up (the Stop hook and the screen settle take seconds).
-        if (this.workers.turnScreen(hostId) !== 'idle' && now - note.interruptedAt < URGENT_WAIT_MS) return;
-        break;
-    }
+    // A remote host has no terminal to pace: its MCP inbox queues the message.
+    if (!host.remote && this.mustWait(hostId, host, note, now)) return;
     const text = this.noteText(note);
     // A normal message mid-turn goes through the host's hooks when they can carry it (see WorkerManager.tell).
-    const err = isAsleep(host.status) ? this.workers.resume(hostId, text) : !note.urgent && this.workers.tell ? this.workers.tell(hostId, text) : this.workers.prompt(hostId, text);
+    const err = host.remote ? this.workers.prompt(hostId, text) : isAsleep(host.status) ? this.workers.resume(hostId, text) : !note.urgent && this.workers.tell ? this.workers.tell(hostId, text) : this.workers.prompt(hostId, text);
     notes.shift();
     if (!notes.length) this.inbox.delete(hostId);
     const run = note.kind === 'reply' ? undefined : (this.runs.get(note.visit) ?? this.questions.get(note.visit));
@@ -591,6 +566,36 @@ export class Visits {
       run.delivered = true;
       if (run.visit.kind === 'ask') run.deadline = now + ASK_REPLY_MS;
     }
+  }
+
+  /** Whether a local host's terminal can't take `note` yet; may stop its turn for an urgent one. */
+  private mustWait(hostId: string, host: WorkerInfo, note: Note, now: number): boolean {
+    const last = this.last.get(hostId);
+    if (last && now - last.at < GAP_MS) return true;
+    // The last message's turn hasn't started (or ended): a normal one waits for it.
+    if (!note.urgent && last && !last.sawWork && now - last.at < SETTLE_MS) return true;
+    // Typed into lately by someone (not by the last message from here): they may be mid-sentence.
+    if (host.lastInputAt !== undefined && now - host.lastInputAt < TYPING_MS && !(last && host.lastInputAt <= last.at + 1000)) return true;
+    // A dialog the status hasn't caught up with: Enter would answer it, even if the last status was done.
+    if (this.workers.turnScreen(hostId) === 'asking') return true;
+    switch (host.status) {
+      case 'starting':
+      case 'needs_input':
+        // A permission prompt is the owner's to answer: even an urgent message waits for it.
+        return true;
+      case 'working':
+        // A normal message steers the running turn: plain Enter puts it in front of droid now,
+        // and droid reads it once its current tool call finishes. Only an urgent one stops it.
+        if (!note.urgent) return false;
+        if (note.interruptedAt === undefined) {
+          note.interruptedAt = now;
+          // The status can lag the screen: a turn that has just ended on screen gets no key at all.
+          if (this.workers.cancelTurn(hostId)) return true;
+        }
+        // Stopped on screen before its status catches up (the Stop hook and the screen settle take seconds).
+        return this.workers.turnScreen(hostId) !== 'idle' && now - note.interruptedAt < URGENT_WAIT_MS;
+    }
+    return false;
   }
 
   /** The message as the host's session gets it: who it's from, at which desk, and how to answer. */

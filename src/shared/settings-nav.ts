@@ -13,7 +13,7 @@ export const SETTINGS_PANES: { id: SettingsPane; icon: string; label: string; se
   { id: 'subagents', icon: '🧭', label: 'Subagents & visits', section: 'Workers', scope: 'Everyone', blurb: 'Workers that hire workers at the desks near them, and workers visiting each other’s desks.' },
   { id: 'connections', icon: '🔌', label: 'Connections', section: 'Office', scope: 'Office-wide', blurb: 'Droid and Factory, the Claude or ChatGPT plans you already pay for, and Jira. Connect once; every floor uses them.' },
   { id: 'office', icon: '🏢', label: 'Office & floors', section: 'Office', scope: 'Office-wide', blurb: 'Where the elevator finds projects, the sky outside, updates and developer tools.' },
-  { id: 'phone', icon: '📱', label: 'Phone & web', section: 'Office', scope: 'Your devices', blurb: 'Droid Office for Android and the web companion, on your Wi-Fi or over Tailscale.' },
+  { id: 'phone', icon: '📱', label: 'Phone & web', section: 'Office', scope: 'Your devices', blurb: 'Droid Office for Android, the web companion, and bots on your Tailscale devices.' },
 ];
 
 /** Pane ids Settings used before a reorganization, and where those settings live now. Old links and callers keep working. */
@@ -74,6 +74,7 @@ export const SETTINGS_CARDS = [
   { pane: 'office', title: 'Source hot reload', keywords: 'source hot reload development build reload local vite developer' },
   { pane: 'phone', title: 'Droid Office for Android', keywords: 'android phone pair pairing qr app mobile' },
   { pane: 'phone', title: 'Web companion', keywords: 'web companion dashboard browser pair desktop link' },
+  { pane: 'phone', title: 'Tailscale MCP', keywords: 'tailscale mcp external remote bot openclaw agent serve url key connection' },
 ] as const satisfies readonly { pane: SettingsPane; title: string; keywords: string }[];
 
 export type SettingsCardTitle = (typeof SETTINGS_CARDS)[number]['title'];

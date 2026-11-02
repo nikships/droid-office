@@ -18,6 +18,7 @@ import { workerLabelSettings } from './worker-labels';
 import { openHostUpdate } from './host-update';
 import { openPhone, pairedPhones } from './phone';
 import { companionState, openCompanion } from './companion';
+import { remoteMcpSettings } from './remote-mcp';
 import type { PairingState } from '../../shared/devices';
 import type { PairedDevice } from '../../shared/devices';
 import { INCLUDE_FILE, SETUP_FILE, describeSetup, parsePatterns } from '../../shared/worktree-setup';
@@ -890,6 +891,9 @@ export function openSettings(
   void companionState().then(paintWeb);
   webOpen.addEventListener('click', () => openCompanion(paintWeb));
 
+  // External bots on the owner's Tailscale devices, as workers with their own desks.
+  const remoteMcp = remoteMcpSettings();
+
   // ---- The panes ----------------------------------------------------------------------------------
   const panes: Record<SettingsPane, Node[]> = {
     you: [
@@ -983,6 +987,11 @@ export function openSettings(
         null,
         card('Droid Office for Android', { desc: h('span.stack.tight', {}, desc('Hire, watch and prompt workers from your phone. A paired phone keeps working after restarts.'), phoneStatus), control: phoneOpen }),
         card('Web companion', { desc: h('span.stack.tight', {}, desc('Your workers, their terminals and the Whiteboard in any desktop browser, at /dashboard.'), webStatus), control: webOpen }),
+        card('Tailscale MCP', {
+          desc: h('span.stack.tight', {}, desc('Bots on your own Tailscale devices, such as an OpenClaw agent, join as workers with their own desks through this MCP server.'), remoteMcp.meta),
+          control: remoteMcp.control,
+          below: [remoteMcp.panel],
+        }),
       ),
     ],
   };

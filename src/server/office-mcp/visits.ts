@@ -15,7 +15,7 @@ function result(reply: VisitReply, describe: (body: Record<string, unknown>) => 
   return reply.status >= 400 ? officeError(String(reply.body.error ?? 'The visit could not be completed.')) : officeResult(describe(reply.body), reply.body);
 }
 
-export function register(server: OfficeMcpServer, _deps: OfficeMcpDeps): void {
+export function register(server: OfficeMcpServer, deps: OfficeMcpDeps): void {
   server.tool(
     {
       name: 'visit_roster',
@@ -90,6 +90,10 @@ export function register(server: OfficeMcpServer, _deps: OfficeMcpDeps): void {
       annotations,
     },
     officeAccess.visits,
-    (args, caller) => result(caller.floor.visits.handle(caller.worker, { action: 'reply', ...args }), (body) => `${body.visit}: answer ${body.delivered ? 'delivered' : 'queued'} for ${body.to}.`),
+    (args, caller) =>
+      result(
+        caller.worker.remote && deps.remote ? deps.remote.reply(caller.worker, args.visit, args.text) : caller.floor.visits.handle(caller.worker, { action: 'reply', ...args }),
+        (body) => `${body.visit}: answer ${body.delivered ? 'delivered' : 'queued'} for ${body.to}.`,
+      ),
   );
 }
