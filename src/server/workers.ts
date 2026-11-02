@@ -6,7 +6,7 @@ import path from 'node:path';
 import headless from '@xterm/headless';
 import serialize from '@xterm/addon-serialize';
 import unicode11 from '@xterm/addon-unicode11';
-import type { AgentChoice, AgentEffort, GhPull, OutsideProcess, TeamBadge, TeamEmblem, TerminalHit, WorkerAsk, WorkerInfo, WorkerKind, WorkerRepo, WorkerStatus, WorkerTask } from '../shared/protocol.js';
+import type { AgentChoice, AgentEffort, GhPull, TeamBadge, TeamEmblem, TerminalHit, WorkerAsk, WorkerInfo, WorkerKind, WorkerRepo, WorkerStatus, WorkerTask } from '../shared/protocol.js';
 import { inputQuestions, permissionLine } from '../shared/ask-question.js';
 import { toolRefresh, type ToolRefresh } from './hook-refresh.js';
 import { TEAM_EMBLEMS, leadBadge, memberBadge, settleTeams } from '../shared/team.js';
@@ -46,7 +46,7 @@ import type { RemoteWorkers } from './remote-workers.js';
 type HeadlessTerminal = InstanceType<typeof headless.Terminal>;
 type Worktree = NonNullable<WorkerInfo['worktree']>;
 
-/** Workers' names, and their colors; guests (see guests.ts) pick from the same. */
+/** Workers' names, and their colors. */
 export const NAMES = [
   'Pixel',
   'Byte',
@@ -287,8 +287,8 @@ export class WorkerManager {
   private droidSessions = new DroidSessionReader();
   private agentPath: string | null = null;
 
-  /** Desks and names taken by the floor's guests (see guests.ts), which the office's hires leave alone. */
-  holds?: { desk(deskId: string): boolean; names(): Iterable<string>; inCheckout?(): string[] };
+  /** Desks and names taken by other workers (e.g. cloud workers), which the office's hires leave alone. */
+  holds?: { desk(deskId: string): boolean; names(): Iterable<string> };
   /**
    * ⚙️ Settings → Workers: a fresh worker starts from the latest of the default branch, its worktree
    * cut from origin's and the checkout brought there for one without (see freshen). Off, or unset:
@@ -581,7 +581,7 @@ export class WorkerManager {
   /** The folder an agent's droid runs in, where its project skills and commands come from. */
   agentFolder(id: string): string | undefined {
     const info = this.workers.get(id)?.info;
-    return info?.kind === 'agent' && !info.cloud && !info.guest && !info.remote ? this.cwd(info) : undefined;
+    return info?.kind === 'agent' && !info.cloud && !info.remote ? this.cwd(info) : undefined;
   }
 
   /**
@@ -591,7 +591,7 @@ export class WorkerManager {
   threadSession(id: string): { sessionId: string; cwd: string; drops?: string; transcript?: string } | undefined {
     const w = this.workers.get(id);
     const info = w?.info;
-    if (!w || info?.kind !== 'agent' || info.cloud || info.guest || !info.sessionId) return undefined;
+    if (!w || info?.kind !== 'agent' || info.cloud || !info.sessionId) return undefined;
     return { sessionId: info.sessionId, cwd: this.cwd(info), drops: this.drops.folder(id), ...(w.transcript ? { transcript: w.transcript } : {}) };
   }
 
@@ -609,7 +609,7 @@ export class WorkerManager {
     if (w && session) return { ...session, epoch: w.taskEpoch, since: w.info.taskSince };
   }
 
-  /** The workers' terminal process IDs, so the guest scan leaves them out. */
+  /** The workers' terminal process IDs. */
   owners(): number[] {
     return [...this.workers.values()].flatMap((w) => (w.pty?.pid ? [w.pty.pid] : []));
   }
@@ -619,7 +619,7 @@ export class WorkerManager {
     return !!this.holds?.desk(deskId);
   }
 
-  /** Whether one of the office's own workers sits there, guests aside. */
+  /** Whether one of the office's own workers sits there. */
   ownDesk(deskId: string): boolean {
     for (const w of this.workers.values()) if (w.info.deskId === deskId) return true;
     return false;
@@ -630,20 +630,9 @@ export class WorkerManager {
     return [...this.workers.values()].map((w) => ({ id: w.info.id, folder: w.info.worktree ? this.cwd(w.info) : undefined }));
   }
 
-  /** The Droid sessions the office's own workers here are in, which are never a guest's. */
+  /** The Droid sessions the office's own workers here are in. */
   sessionIds(): Set<string> {
     return new Set([...this.workers.values()].flatMap((w) => (w.info.sessionId ? [w.info.sessionId] : [])));
-  }
-
-  /** The agent processes someone started by hand in each worker's own folder (see guests.ts attribute). */
-  setOutside(outside: ReadonlyMap<string, OutsideProcess[]>) {
-    for (const w of this.workers.values()) {
-      const now = outside.get(w.info.id);
-      if (JSON.stringify(now) === JSON.stringify(w.info.outside)) continue;
-      if (now?.length) w.info.outside = now;
-      else delete w.info.outside;
-      this.emitUpdate(w);
-    }
   }
 
   /**
@@ -884,7 +873,7 @@ export class WorkerManager {
   }
 
   /**
-   * Worktrees.freshen with who's in the checkout sorted out: guests and workers mid-turn block it;
+   * Worktrees.freshen with who's in the checkout sorted out: workers mid-turn block it;
    * workers at rest only block leaving a branch they may come back to, which they don't once its
    * work has landed (`delivered`).
    */
@@ -892,7 +881,7 @@ export class WorkerManager {
     const there = [...this.workers.values()].filter((w) => w.pty && !w.info.worktree && !boardAgent(w.info));
     const active = there.filter((w) => isBusy(w.info.status)).map((w) => w.info.name);
     const resting = delivered ? [] : there.filter((w) => !isBusy(w.info.status)).map((w) => w.info.name);
-    return this.trees.freshen([...active, ...(this.holds?.inCheckout?.() ?? [])], resting, target);
+    return this.trees.freshen(active, resting, target);
   }
 
   /**
@@ -941,48 +930,6 @@ export class WorkerManager {
   /** Why nobody can be hired anywhere in the office right now (its worker limit), if so. */
   full(): string | undefined {
     return this.capacity?.full();
-  }
-
-  /**
-   * One of the office's own workers in place of a guest whose droid just quit (see Floor.bringIn): at
-   * its desk, with its name and color, in the floor's checkout, resuming its session `sessionId`.
-   * Its model and effort stay the session's own.
-   */
-  takeIn(guest: WorkerInfo, sessionId: string, by: string): WorkerInfo | string {
-    const seat = DESK_BY_ID.get(guest.deskId);
-    if (!seat || seat.station) return 'A guest is brought in at a desk or a bean bag';
-    if (this.deskOccupied(guest.deskId)) return `That ${seat.beanbag ? 'bean bag' : 'desk'} is taken`;
-    const full = this.capacity?.full();
-    if (full) return full;
-    const used = new Set([...this.workers.values()].map((w) => w.info.name.replace(/ 🐚$/, '')).concat([...(this.holds?.names() ?? [])]));
-    const name = !used.has(guest.name) ? guest.name : (NAMES.find((n) => !used.has(n)) ?? `Worker ${this.workers.size + 1}`);
-    const id = randomBytes(6).toString('hex');
-    const prompt = guest.prompt?.trim() || undefined;
-    const info: WorkerInfo = {
-      id,
-      kind: 'agent',
-      deskId: guest.deskId,
-      name,
-      color: guest.color,
-      status: 'starting',
-      acked: true,
-      createdBy: by,
-      createdAt: Date.now(),
-      prompt,
-      sessionId,
-      activeModel: guest.activeModel,
-      activeEffort: guest.activeEffort,
-      cols: 100,
-      rows: 30,
-      open: false,
-      activity: prompt ? truncate(prompt, 80) : undefined,
-      task: guest.task?.name ? { name: guest.task.name, summary: prompt ? truncate(prompt, 140) : 'Brought in from outside the office' } : undefined,
-    };
-    const w = newWorker(info);
-    this.workers.set(id, w);
-    this.launch(w, undefined, sessionId);
-    this.persist();
-    return info;
   }
 
   /**

@@ -170,7 +170,7 @@ export function waitWords(ms: number): string {
 
 /** A worker that takes part in visits: an agent at a desk here, hired by the owner rather than by a lead. */
 export function independent(w: WorkerInfo): boolean {
-  return w.kind === 'agent' && !w.lead && !w.guest && !w.cloud;
+  return w.kind === 'agent' && !w.lead && !w.cloud;
 }
 
 export class Visits {

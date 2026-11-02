@@ -37,7 +37,6 @@ import { ciForFloor } from '../shared/factory-ci';
 import { wikiShelfLine } from '../shared/factory-wiki';
 import { isPaletteKey } from '../shared/palette';
 import { isAsleep, isBusy, workerActivity, workerPr } from '../shared/status';
-import { PROVIDER_LABEL, guestKeyNote, outsideNote, processLabel, statusWord } from '../shared/guests';
 import { Net } from './net';
 import { removedFloorNotice, standSpot } from './arrival';
 import { floorShortcut } from './floor-shortcuts';
@@ -113,7 +112,7 @@ import { linkStep, parseWorkerLink, type WorkerLink } from './worker-link';
 import { $, h, clip, closeAllModals, hintToast, modalOpen, onModalChange, openModalList, readingNow, toast, STATUS_LABEL } from './ui/dom';
 import { deskApproach, type ApproachPose } from './approach';
 import { createAutomation, facingToward, pitchToward, runCommand, type CameraPose } from './automation';
-import { onBringIn, onOpenTeammate, openOfficeShell, openTerminal, openTerminalFor, routeTerminalMessage, terminalOnTop, type TerminalFind } from './ui/terminal';
+import { onOpenTeammate, openOfficeShell, openTerminal, openTerminalFor, routeTerminalMessage, terminalOnTop, type TerminalFind } from './ui/terminal';
 import { openSearch } from './ui/search';
 import { changesLogFor, openChanges, openChangesFor, routeChangesMessage } from './ui/changes';
 import { openRepoPulls, workerRepos } from './ui/repos';
@@ -1031,11 +1030,11 @@ function landShot(result: ReturnType<typeof gunHit>, direction: THREE.Vector3, s
     return;
   }
   if (!superShot) return openWorkerTerminal(workerId);
-  // Guests and cloud workers aren't local processes the office can dismiss with a charged shot.
+  // Cloud workers aren't local processes the office can dismiss with a charged shot.
   const target = store.workers.get(workerId);
-  if (target?.guest || target?.cloud) {
+  if (target?.cloud) {
     missAt(hit, superShot);
-    hintToast(target.cloud ? `${target.name} works on ${cloudBadge(target.cloud)}: there's nobody really at this desk ${arms().target}` : `${target.name} is a guest from outside the office: the office leaves it alone`, 'info');
+    hintToast(`${target.name} works on ${cloudBadge(target.cloud)}: there's nobody really at this desk ${arms().target}`, 'info');
     return;
   }
   const out = hit.face ? hit.face.normal.clone().transformDirection(hit.object.matrixWorld) : direction.clone().negate();
@@ -1624,7 +1623,7 @@ function syncWorkers() {
     if (deskDef) sound.setTyping(w.id, deskDef.x, deskDef.z, w.status === 'working' && (!w.action || w.action === 'edit'));
     const again = w.kind === 'shell' ? 'restart' : 'resume';
     const lost = `🌿 ${w.name}'s worktree was deleted — press E to fix it`;
-    const outside = w.guest ? `🚪 ${PROVIDER_LABEL[w.guest.provider]}, outside the office · ${w.guest.tty}` : w.cloud && (w.cloud.error ? `☁ ${w.cloud.error}` : `☁ Running on ${w.cloud.computerName} · E to open`);
+    const outside = w.cloud && (w.cloud.error ? `☁ ${w.cloud.error}` : `☁ Running on ${w.cloud.computerName} · E to open`);
     v.laptop.setPlaceholder(outside ? outside : w.lost ? lost : w.status === 'offline' ? `💤 ${w.name} is asleep — press R to ${again}` : w.status === 'exited' ? `${w.name} exited` : 'booting…');
   }
   for (const [id, v] of workerViews) {
@@ -1938,29 +1937,6 @@ function askStation(deskId: string, initial?: string) {
   });
 }
 
-/**
- * Makes a droid guest one of the office's workers (see 'guest.bringIn'): once it has sat back down
- * as one, its terminal opens, unless another window took the screen meanwhile.
- */
-function bringInGuest(w: WorkerInfo) {
-  const g = w.guest;
-  if (!g) return;
-  if (g.cantBringIn) return toast(`${w.name} can't be brought in: ${g.cantBringIn}`, 'warn');
-  const body = `Its droid on ${g.tty} quits, and that terminal goes back to the shell. ${w.name} then carries on the same session at this desk, as one of the office's workers: you type to it here.`;
-  confirmDialog(`Bring ${w.name} into the office?`, body, 'Bring it in', () => {
-    net.send({ t: 'guest.bringIn', workerId: w.id });
-    const { deskId } = w;
-    const off = store.on('workers', () => {
-      const now = store.workerAtDesk(deskId);
-      if (!now || now.guest) return;
-      off();
-      const open = openTerminalFor();
-      if (!open || open === w.id) openWorkerTerminal(now.id);
-    });
-    setTimeout(off, 15_000);
-  });
-}
-
 function resumeWorker(w: WorkerInfo) {
   if (w.lost) return fixLostWorktree(w);
   if (!w.sessionId && w.kind !== 'shell') toast(`${w.name} has no saved Droid session — starting a fresh one`, 'warn');
@@ -2166,17 +2142,12 @@ function followWorkerLink() {
 function openWorkerTerminal(id: string, find?: TerminalFind) {
   const w = store.workers.get(id);
   if (!w) return;
-  if (w.guest) return openTerminal(net, id, undefined, find);
   if (w.cloud) return openCloudWindow(net, id);
   if (w.lost) return fixLostWorktree(w);
   if (isAsleep(w.status)) resumeWorker(w);
   openTerminal(net, id, () => openWorkerChanges(id), find);
 }
 onOpenTeammate((id) => openWorkerTerminal(id));
-onBringIn((id) => {
-  const w = store.workers.get(id);
-  if (w) bringInGuest(w);
-});
 
 /** 🔎 every terminal; a terminal line opens that terminal right at it. */
 function showSearch() {
@@ -2187,7 +2158,6 @@ function showSearch() {
 function openWorkerChanges(id: string, repo?: string) {
   const w = store.workers.get(id);
   if (!w) return;
-  if (w.guest) return toast(guestKeyNote(w, 'C'), 'warn');
   if (w.cloud) return toast(cloudKeyNote(w), 'warn');
   if (w.lost) return fixLostWorktree(w);
   if (plainFloor()) return toast('This floor is a plain folder, not a git checkout, so there are no changes to show', 'warn');
@@ -2242,7 +2212,7 @@ function paletteEntries(): PaletteEntry[] {
       icon: desk?.station ? STATION_INFO[desk.station].icon : w.kind === 'shell' ? '🐚' : w.cloud ? '☁️' : '🧑‍💻',
       kind: 'Worker',
       title: w.name,
-      detail: [w.task?.name, desk?.label, statusWord(w, STATUS_LABEL), w.guest && 'outside the office', w.cloud && cloudBadge(w.cloud)].filter(Boolean).join(' · '),
+      detail: [w.task?.name, desk?.label, STATUS_LABEL[w.status] ?? w.status, w.cloud && cloudBadge(w.cloud)].filter(Boolean).join(' · '),
       keywords: [w.title, w.worktree?.branch],
       open,
       walk: desk && pose ? () => walkThen(pose.at, `${w.name} at ${desk.label}`, open, pose) : undefined,
@@ -2405,7 +2375,7 @@ function turnPage() {
 /** A prompt from the boards goes to a new worker at a free desk, or to one already at a desk. With `issue`, that worker takes the issue, as with a carried card. */
 function sendToWorker(title: string, text: { context?: string; initial?: string }, issue?: number) {
   const desk = freeDesk();
-  const awake = [...store.workers.values()].filter((w) => (w.kind === 'agent' || (w.kind === 'cloud' && !w.cloud?.error)) && !w.guest && !isAsleep(w.status));
+  const awake = [...store.workers.values()].filter((w) => (w.kind === 'agent' || (w.kind === 'cloud' && !w.cloud?.error)) && !isAsleep(w.status));
   if (!desk && !awake.length) {
     toast('Every desk and bean bag is taken — send a worker home first', 'warn');
     return;
@@ -2446,9 +2416,6 @@ function interact(target: Interactable | null, key: DeskKey, note = aimedNote, s
   if (target.kind === 'desk' && target.deskId) {
     const w = store.workerAtDesk(target.deskId);
     if (key === 'B' && !w) return openShell(target.deskId);
-    // A guest runs outside the office: there's only what the office knows of it to look at, or bringing it in.
-    if (w?.guest && key === 'R') return bringInGuest(w);
-    if (w?.guest && key !== 'E') return toast(guestKeyNote(w, key), 'warn');
     if (key === 'P') return promptAtDesk(target.deskId);
     if (key === 'E') return w ? openWorkerTerminal(w.id) : hireAtDesk(target.deskId);
     if (key === 'C' && w) return openWorkerChanges(w.id);
@@ -2556,7 +2523,6 @@ function putDown() {
 /** Why the worker at a desk can't be handed an issue card right now, or '' when it can. */
 function cantTakeCard(w: WorkerInfo): string {
   if (w.kind === 'shell') return `${w.name} is a shell, not an agent`;
-  if (w.guest) return guestKeyNote(w, 'P');
   if (w.lost) return `${w.name}'s worktree was deleted — press E at its desk to fix it`;
   if (isAsleep(w.status)) return `${w.name} is asleep — press R to resume first`;
   if (w.status === 'needs_input') return `${w.name} is waiting on an answer — open the terminal first`;
@@ -2884,7 +2850,7 @@ function deskHint(deskId: string): Hint {
     return {
       k: `cloud|${w.id}|${w.status}|${doing}|${cloudLine(w)}|${credits}`,
       parts: [
-        h('span.title', {}, `${w.name} · ${statusWord(w, STATUS_LABEL)}`),
+        h('span.title', {}, `${w.name} · ${STATUS_LABEL[w.status]}`),
         credits ? h('span.cost', { title: 'Factory credits its Droid session (and its subagents) used' }, credits) : '',
         aside(cloudLine(w)),
         doing ? aside(doing) : '',
@@ -2894,16 +2860,9 @@ function deskHint(deskId: string): Hint {
       ],
     };
   }
-  if (w.guest) {
-    const doing = w.activity ? clip(w.activity, 48) : '';
-    return {
-      k: `guest|${w.id}|${w.status}|${w.guest.seen}|${doing}|${w.guest.cantBringIn ?? ''}`,
-      parts: [h('span.title', {}, `${w.name} · ${statusWord(w, STATUS_LABEL)}`), aside(`🚪 outside the office · ${processLabel(w.guest)}`), doing ? aside(doing) : '', key('E', 'Look'), w.guest.cantBringIn ? '' : key('R', 'Bring it in')],
-    };
-  }
   const doing = w.activity ? clip(w.activity, 48) : '';
   const shell = w.kind === 'shell';
-  const team = [teamNote(w), outsideNote(w)].filter(Boolean).join(' · ');
+  const team = teamNote(w) ?? '';
   const credits = creditsNote(store.factory.sessions, w.sessionId);
   return {
     k: w.status + w.id + (w.pr?.number ?? '') + (w.repos?.map((r) => r.pr?.number ?? '-').join() ?? '') + (w.prOpening ? '!' : '') + doing + team + credits,

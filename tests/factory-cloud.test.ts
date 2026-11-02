@@ -943,8 +943,8 @@ test('messages: a cloud worker takes prompts, opens and closes its window, and s
   send({ t: 'changes.unwatch' });
   assert.deepEqual(warned, []);
 
-  for (const t of ['worker.shoot', 'worker.pr', 'worker.worktree', 'worker.rebuild', 'changes.watch', 'changes.commit', 'guest.bringIn']) send({ t });
-  assert.equal(warned.length, 7);
+  for (const t of ['worker.shoot', 'worker.pr', 'worker.worktree', 'worker.rebuild', 'changes.watch', 'changes.commit']) send({ t });
+  assert.equal(warned.length, 6);
   assert.match(warned[0], /nobody really at this desk to shoot/);
   assert.match(warned[1], /open the pull request itself/);
   assert.match(warned[2], /only works for a worker on this machine/);

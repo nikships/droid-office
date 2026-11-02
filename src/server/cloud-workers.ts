@@ -19,7 +19,7 @@ const FILE = 'cloud-workers.json';
 /** Fields of a WorkerInfo that only mean something while the office runs. */
 const LIVE: readonly (keyof WorkerInfo)[] = ['open'];
 
-/** What else on the floor takes desks and names: its own workers and guests. */
+/** What else on the floor takes desks and names: its own workers. */
 export interface CloudSeating {
   deskTaken(deskId: string): boolean;
   names(): Iterable<string>;

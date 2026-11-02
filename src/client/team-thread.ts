@@ -38,7 +38,7 @@ export class TeamThreadPaint {
 
 /** Only office-owned local Droid children have JSONL threads. Team badges aren't ownership. */
 export function teamThreadChildren(lead: string, workers: readonly WorkerInfo[]): WorkerInfo[] {
-  return workers.filter((worker) => worker.id !== lead && worker.lead === lead && worker.kind === 'agent' && !worker.guest && !worker.cloud).sort((a, b) => a.createdAt - b.createdAt || a.id.localeCompare(b.id));
+  return workers.filter((worker) => worker.id !== lead && worker.lead === lead && worker.kind === 'agent' && !worker.cloud).sort((a, b) => a.createdAt - b.createdAt || a.id.localeCompare(b.id));
 }
 
 function boundedEntries(entries: readonly ThreadEntry[]): ThreadEntry[] {

@@ -11,7 +11,6 @@ import { h, hintToast, openModal, STATUS_LABEL, toast, type Modal } from './dom'
 import { colorDot } from './kit';
 import { OFFICE_SHELL_ID } from '../../shared/office-shell';
 import type { ServerMsg, WorkerInfo } from '../../shared/protocol';
-import { PROVIDER_LABEL, outsideNote, statusWord } from '../../shared/guests';
 import { teamSummary, workerTeams } from '../../shared/team';
 import { forkRefusal } from '../../shared/worker-fork';
 import { openForkWorker } from './fork-worker';
@@ -47,12 +46,6 @@ let openTeammate: (workerId: string) => void = () => {};
 
 export function onOpenTeammate(fn: (workerId: string) => void) {
   openTeammate = fn;
-}
-/** Brings a guest in from its window (main wires it up, with its confirmation). */
-let bringIn: (workerId: string) => void = () => {};
-
-export function onBringIn(fn: (workerId: string) => void) {
-  bringIn = fn;
 }
 /** Whether we've said, this page load, that Esc now goes to the terminal and how to leave instead. */
 let escHinted = false;
@@ -147,8 +140,6 @@ export function openTerminal(net: Net, workerId: string, onChanges?: () => void,
     return;
   }
 
-  // A guest has no terminal here: its window shows what the office knows of it, and takes no input.
-  const guest = !!info.guest;
   const header = inline
     ? undefined
     : (() => {
@@ -172,10 +163,9 @@ export function openTerminal(net: Net, workerId: string, onChanges?: () => void,
               '🌿 Changes',
             )
           : null;
-        const fork = info.kind === 'agent' && !guest ? h('button.btn', { type: 'button', onclick: () => openForkWorker(net, workerId) }, 'Fork') : null;
-        const bring = guest ? h('button.btn', { type: 'button', onclick: () => bringIn(workerId) }, '🚪 Bring it in') : null;
+        const fork = info.kind === 'agent' ? h('button.btn', { type: 'button', onclick: () => openForkWorker(net, workerId) }, 'Fork') : null;
         const close = h('button.btn.icon.close', { title: 'Leave terminal (Shift+Esc or Ctrl+]) · Esc goes to the terminal', 'aria-label': 'Close', onclick: () => modal.close() }, '✕');
-        const element = h('header', {}, colorDot(info.color), h('div.titles', {}, h('div.term-title', {}, title, pill), sub), h('div.actions', {}, zoom, changes, fork, bring), close);
+        const element = h('header', {}, colorDot(info.color), h('div.titles', {}, h('div.term-title', {}, title, pill), sub), h('div.actions', {}, zoom, changes, fork), close);
         const zoomBy = (dir: 1 | -1) => {
           setTermFontSize(stepTermFont(term.options.fontSize ?? termFontSize(), dir));
           term.focus();
@@ -183,12 +173,10 @@ export function openTerminal(net: Net, workerId: string, onChanges?: () => void,
         return {
           element,
           refresh(w: WorkerInfo) {
-            const engine = w.kind !== 'agent' ? null : w.guest ? PROVIDER_LABEL[w.guest.provider] : 'Droid';
+            const engine = w.kind !== 'agent' ? null : 'Droid';
             title.textContent = [engine, w.name].filter(Boolean).join(' · ');
             title.title = title.textContent;
             sub.textContent = [
-              w.guest && `outside the office · pid ${w.guest.pid}`,
-              outsideNote(w),
               w.task?.name ?? w.title,
               w.forkedFrom && `Fork of ${w.forkedFrom.name}`,
               w.worktree && `🌿 ${w.worktree.branch}`,
@@ -200,16 +188,11 @@ export function openTerminal(net: Net, workerId: string, onChanges?: () => void,
             sub.title = sub.textContent;
             sub.classList.toggle('hidden', !sub.textContent);
             pill.className = `pill ${w.status}`;
-            pill.textContent = statusWord(w, STATUS_LABEL);
+            pill.textContent = STATUS_LABEL[w.status] ?? w.status;
             if (fork) {
               const why = forkRefusal(w);
               fork.disabled = !net.up || !!why;
               fork.title = why ?? 'Fork this conversation and its files into an independent worker';
-            }
-            if (bring && w.guest) {
-              const why = w.guest.cantBringIn;
-              bring.toggleAttribute('disabled', !!why);
-              bring.title = why ? `Can't be brought in right now: ${why}` : "Quit its droid outside and carry on the same session here, as one of the office's workers (R at its desk)";
             }
           },
           zoom(px: number) {
@@ -220,7 +203,7 @@ export function openTerminal(net: Net, workerId: string, onChanges?: () => void,
         };
       })();
   const disconnected = h('p.note.warn.hidden', { role: 'status' }, 'Disconnected. Terminal input is disabled until a fresh snapshot arrives.');
-  const host = h('div.term-host', guest ? {} : { 'data-drop': 'Drop screenshots or files to put them in the terminal' });
+  const host = h('div.term-host', { 'data-drop': 'Drop screenshots or files to put them in the terminal' });
   // A lead's subagents, or a subagent's lead and teammates: one click to the next terminal.
   const team = h('div.term-team.chips.hidden', { role: 'group', 'aria-label': 'Team' });
   let teamKey = '';
@@ -259,7 +242,7 @@ export function openTerminal(net: Net, workerId: string, onChanges?: () => void,
     lineHeight: 1.1,
     theme: TERM_THEME,
     minimumContrastRatio: 4.5,
-    cursorBlink: !guest,
+    cursorBlink: true,
     disableStdin: true,
     scrollback: 5000,
     allowProposedApi: true,
@@ -301,15 +284,6 @@ export function openTerminal(net: Net, workerId: string, onChanges?: () => void,
     if (!host.clientWidth || !host.clientHeight) return;
     if (typing || paneSizeChanged) adoptSharedSize = false;
     paneSizeChanged = false;
-    // No terminal to size: the banner just fills the window.
-    if (guest) {
-      try {
-        fit.fit();
-      } catch {
-        // not laid out yet
-      }
-      return;
-    }
     if (!typing && adoptSharedSize) {
       const w = store.workers.get(workerId);
       if (w && (w.cols !== term.cols || w.rows !== term.rows)) term.resize(w.cols, w.rows);
@@ -347,7 +321,7 @@ export function openTerminal(net: Net, workerId: string, onChanges?: () => void,
     lastPtySize = ptySize;
     const acknowledged = changed ? pendingSizes.indexOf(ptySize) : -1;
     if (acknowledged >= 0) pendingSizes.splice(0, acknowledged + 1);
-    if (mirror.ready && !guest && changed && acknowledged < 0 && ptySize !== `${term.cols}x${term.rows}` && ptySize !== lastSentSize) {
+    if (mirror.ready && changed && acknowledged < 0 && ptySize !== `${term.cols}x${term.rows}` && ptySize !== lastSentSize) {
       adoptSharedSize = true;
       term.resize(w.cols, w.rows);
       lastSentSize = '';
@@ -389,7 +363,7 @@ export function openTerminal(net: Net, workerId: string, onChanges?: () => void,
       adoptSharedSize = snapshot.shared ?? adoptSharedSize;
       lastSentSize = '';
       pendingSizes.length = 0;
-      term.options.disableStdin = guest || !net.up;
+      term.options.disableStdin = !net.up;
       disconnected.classList.add('hidden');
       sendSize();
       term.scrollToBottom();
@@ -504,7 +478,7 @@ export function openTerminal(net: Net, workerId: string, onChanges?: () => void,
     return false;
   });
   term.onData((data) => {
-    if (guest || !mirror.ready || !net.up) return;
+    if (!mirror.ready || !net.up) return;
     sendSize(true);
     net.send({ t: 'term.input', workerId, data });
   });
@@ -515,7 +489,6 @@ export function openTerminal(net: Net, workerId: string, onChanges?: () => void,
   const insertFiles = async (files: File[]) => {
     if (!files.length) return;
     if (!mirror.ready || !net.up) return toast('Disconnected. No files were sent.', 'warn');
-    if (guest) return toast(`${info.name} runs outside the office: drop files into its own terminal`, 'warn');
     el.classList.toggle('uploading', ++uploading > 0);
     try {
       const paths = await Promise.all(files.map((f) => uploadDrop(workerId, f)));

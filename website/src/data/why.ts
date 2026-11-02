@@ -33,8 +33,6 @@ export const whyPoints: WhyPoint[] = [
   },
 ];
 
-export const guests = ['droid', 'claude', 'codex', 'opencode', 'grok', 'muse'];
-
 export const stats: Stat[] = [
   { value: '16', label: 'desks per floor' },
   { value: '12', label: 'bean bags for overflow' },

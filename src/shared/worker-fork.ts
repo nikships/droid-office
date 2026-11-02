@@ -3,7 +3,7 @@ import type { WorkerInfo } from './protocol.js';
 
 /** Shared eligibility for the dialog and the server; capacity and filesystem checks stay server-side. */
 export function forkRefusal(w: WorkerInfo): string | undefined {
-  if (w.kind !== 'agent' || w.guest || w.remote) return 'Only local Droid workers can be forked';
+  if (w.kind !== 'agent' || w.remote) return 'Only local Droid workers can be forked';
   if (w.lost) return 'Restore its missing worktree before forking';
   if (!w.sessionId) return 'Wait for its Droid session to start before forking';
   if (w.status !== 'idle' && w.status !== 'done') return 'Wait until its turn ends before forking';
