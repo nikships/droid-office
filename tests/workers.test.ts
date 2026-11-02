@@ -5,7 +5,7 @@ import { execFileSync, spawn } from 'node:child_process';
 import http from 'node:http';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { CARRY_ON_PROMPT, HOOK_VERSION, SPOOL_MAX_BYTES, STOP_GRACE_MS, WorkerManager, setupFailedNote, type WorkerEvents } from '../src/server/workers.js';
+import { CARRY_ON_PROMPT, HOOK_VERSION, NAMES, SPOOL_MAX_BYTES, STOP_GRACE_MS, WorkerManager, setupFailedNote, type WorkerEvents } from '../src/server/workers.js';
 import type { ToolRefresh } from '../src/server/hook-refresh.js';
 import { Worktrees } from '../src/server/worktrees.js';
 import type { PromptSource } from '../src/server/prompts.js';
@@ -230,7 +230,6 @@ test('Droid workers launch with their own hook overlay and resume the correct se
 
   const workers = manager(f, updates);
   t.after(() => workers.shutdown());
-  assert.deepEqual(workers.owners(), [], 'no worker terminal processes yet');
   const worker = workers.spawn('desk-2', 'test', '- inspect this code');
   assert.equal(typeof worker, 'object');
   if (typeof worker === 'string') return;
@@ -242,9 +241,6 @@ test('Droid workers launch with their own hook overlay and resume the correct se
       (records) => records.some((r) => r.kind === 'droid' && r.args.includes('--settings')),
     )
   ).find((r) => r.kind === 'droid' && r.args.includes('--settings'))!;
-  const pids = workers.owners();
-  assert.equal(pids.length, 1, 'the owners list gets the running worker terminal');
-  assert.ok(Number.isInteger(pids[0]) && pids[0] > 0, 'ownership is a PID list');
   const systemFile = path.join(f.data, `system-${worker.id}.md`);
   assert.deepEqual(first.args.slice(0, 5), ['--settings', path.join(f.data, 'droid-hooks.json'), '--append-system-prompt-file', systemFile, '--from-test']);
   const system = readFileSync(systemFile, 'utf8');
@@ -297,7 +293,6 @@ test('Droid workers launch with their own hook overlay and resume the correct se
     () => workers.get(worker.id)?.status,
     (status) => status === 'exited',
   );
-  assert.deepEqual(workers.owners(), [], 'exited workers have no terminal process to exclude');
   assert.equal(workers.resume(worker.id), undefined);
   const second = (
     await waitFor(
@@ -337,12 +332,17 @@ test('the office’s hires treat a desk and name held as taken', (t) => {
   const workers = manager(f, []);
   t.after(() => workers.shutdown());
   assert.equal(workers.deskOccupied('desk-2'), false);
-  workers.holds = { desk: (id) => id === 'desk-2', names: () => ['Reserved'] };
+  const heldName = NAMES[0];
+  workers.holds = { desk: (id) => id === 'desk-2', names: () => [heldName] };
   assert.equal(workers.deskOccupied('desk-2'), true);
   assert.equal(workers.ownDesk('desk-2'), false);
   assert.match(String(workers.spawn('desk-2', 'test')), /taken/);
-  assert.deepEqual(workers.folders(), []);
-  assert.deepEqual([...workers.sessionIds()], []);
+  const spawned = workers.spawn('desk-1', 'test');
+  assert.equal(typeof spawned, 'object');
+  if (typeof spawned === 'object') {
+    assert.notEqual(spawned.name, heldName);
+    assert.equal(spawned.name, NAMES[1]);
+  }
 });
 
 test('Droid workers pin their model and effort in a per-worker settings overlay, kept across a restart', async (t) => {
@@ -1358,8 +1358,8 @@ test('fixture cleanup shuts down every manager before deleting its directory', a
   assert.equal(existsSync(f.root), false);
   t.mock.restoreAll();
   await waitFor(
-    () => workers.owners(),
-    (owners) => owners.length === 0,
+    () => workers.get(worker.id)?.status,
+    (status) => status === 'exited',
   );
   assert.equal(existsSync(f.root), false, 'late terminal exits must not recreate the fixture');
 });

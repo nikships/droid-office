@@ -260,9 +260,8 @@ export function createPane(host: PaneHost, index: number): Pane {
     if (w.remote) return 'info';
     // A cloud worker has no terminal here: its Thread is its Factory session.
     if (w.cloud) return 'thread';
-    const local = !w.cloud;
-    if (local && w.kind === 'agent' && view === 'thread') return 'thread';
-    return local && !isAsleep(w.status) ? 'terminal' : 'info';
+    if (w.kind === 'agent' && view === 'thread') return 'thread';
+    return !isAsleep(w.status) ? 'terminal' : 'info';
   }
 
   function build(w: WorkerInfo | undefined, next: PaneMode) {

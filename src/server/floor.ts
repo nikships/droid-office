@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process';
-import { mkdirSync } from 'node:fs';
+import { mkdirSync, rmSync } from 'node:fs';
 import path from 'node:path';
 import type { ChangesState, FloorInfo, ProjectInfo, ServerMsg, WorkerInfo } from '../shared/protocol.js';
 import { isBusy } from '../shared/status.js';
@@ -199,6 +199,12 @@ export class Floor {
     this.plain = !isCheckout(def.dir);
     const dataDir = path.join(def.dir, '.droid-office');
     mkdirSync(dataDir, { recursive: true, mode: 0o700 });
+    // Leftover from when guests were supported: remove it so stale state is cleaned up.
+    try {
+      rmSync(path.join(dataDir, 'guests.json'), { force: true });
+    } catch {
+      // ignore
+    }
     // A plain folder has no .git of its own: its info/exclude would be some other checkout's.
     if (!this.plain) excludeFromGit(def.dir);
     seedAutoHeal(dataDir, ctx.officeDataDir);

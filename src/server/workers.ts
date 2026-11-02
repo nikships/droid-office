@@ -609,11 +609,6 @@ export class WorkerManager {
     if (w && session) return { ...session, epoch: w.taskEpoch, since: w.info.taskSince };
   }
 
-  /** The workers' terminal process IDs. */
-  owners(): number[] {
-    return [...this.workers.values()].flatMap((w) => (w.pty?.pid ? [w.pty.pid] : []));
-  }
-
   deskOccupied(deskId: string): boolean {
     for (const w of this.workers.values()) if (w.info.deskId === deskId) return true;
     return !!this.holds?.desk(deskId);
@@ -623,16 +618,6 @@ export class WorkerManager {
   ownDesk(deskId: string): boolean {
     for (const w of this.workers.values()) if (w.info.deskId === deskId) return true;
     return false;
-  }
-
-  /** Each worker in a folder of its own (its worktree or workspace), with that folder: whose a process started by hand there is. */
-  folders(): { id: string; folder?: string }[] {
-    return [...this.workers.values()].map((w) => ({ id: w.info.id, folder: w.info.worktree ? this.cwd(w.info) : undefined }));
-  }
-
-  /** The Droid sessions the office's own workers here are in. */
-  sessionIds(): Set<string> {
-    return new Set([...this.workers.values()].flatMap((w) => (w.info.sessionId ? [w.info.sessionId] : [])));
   }
 
   /**

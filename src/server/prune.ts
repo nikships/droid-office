@@ -12,7 +12,9 @@ Usage:
 Removes the worktrees under ${WORKTREES_DIR}/ and the office/* branches that
 no worker of the office in [dir] (default: current directory) uses any more.
 Anything with uncommitted changes, or with commits that no remote has, is kept
-and listed, so nothing is lost by accident.
+and listed, so nothing is lost by accident. Only workers recorded by the office
+are protected; processes running outside the office are not checked, so stop
+them before pruning.
 A worker across several projects has
 worktrees of them in its own floor's workspace: they're kept while the office
 there still lists it, and pruning each project clears them out after.

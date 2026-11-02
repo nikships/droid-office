@@ -127,6 +127,7 @@ droid-office prune [dir] [-n|--dry-run] [-f|--force]
 
   Removes leftover worker worktrees under .droid-office/worktrees/ and their
   office/* branches, in one floor's checkout (dir). Anything with uncommitted changes or unpushed commits is
-  kept unless --force is given. A worker across several projects has worktrees of them in its
+  kept unless --force is given. Only workers recorded by the office are protected; outside processes are not
+  checked. A worker across several projects has worktrees of them in its
   own floor's workspace: prune each project to clear those out.
 ```

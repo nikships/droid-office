@@ -213,7 +213,6 @@ In one change, before the Whiteboard takes the slot:
 
 - **Server:**
   - Remove `src/server/services.ts`, `src/server/relay.ts` and their wiring in `server.ts`: the port scan, the `services` state, and the tunnel relay for HTTP and WebSockets.
-  - `WorkerManager.owners()` stays as a pid list of the workers' PIDs.
 - **Protocol and client:**
   - Remove `ServiceInfo`, `ServicesState` and the `services` message from `protocol.ts`, and `store.services`.
   - Remove `src/client/ui/services.ts` and `ServicesBoardTexture`.
