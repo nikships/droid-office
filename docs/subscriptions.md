@@ -11,7 +11,7 @@ Three things stand between a fresh Mac and a first worker, and the office does e
 ## The owner's decisions
 
 - The office's word for it is **Subscriptions**: the welcome step and the ⚙️ Settings pane are called that, and DroidProxy is named underneath as the app that does it.
-- No policy bans on models. Every model the owner enabled stays usable, by them and by leads hiring subagents. The office refuses a model only when a worker on it can't run: its provider has no signed-in account, the provider is switched off, every account is out of quota, or DroidProxy isn't installed. That applies to every hire: the owner's own, board agents, and `office-workers hire`.
+- No policy bans on models. Every model the owner enabled stays usable, by them and by leads hiring subagents. The office refuses a model only when a worker on it can't run: its provider has no signed-in account, the provider is switched off, every account is out of quota, or DroidProxy isn't installed. That applies to every hire: the owner's own, board agents, and `team_hire` in the [Office MCP](office-mcp.md).
 - Quota comes from DroidProxy's usage data (the same as `GET /droidproxy/usage`). When nobody can tell (an older DroidProxy, a provider with no usage API, DroidProxy not answering for a while), the model is not refused.
 - Droid sign-in is required, and the welcome never promises it is free: Factory has paid plans, and the copy says "sign in, or create an account".
 
@@ -83,8 +83,8 @@ A window covers a model unless it is named for another model family: Claude's "W
 | Where | What happens |
 | --- | --- |
 | `WorkerManager.spawn` (`modelGate`) | Every hire of an agent: the owner's, board agents', subagents'. Refused with `availabilityWords`: "Can't hire on GPT 6.1 Sol: out of quota, back in 3 h 10 min (5-hour). Pick another model." |
-| `office-workers models` | Each model that can't run says why on its own line, and the default too. |
-| `office-workers hire` | A model that can't run, named or the default, is refused before a desk is taken, naming the ones that can. |
+| `team_models` | Each model that can't run says why on its own line, and the default too. |
+| `team_hire` | A model that can't run, named or the default, is refused before a desk is taken, naming the ones that can. |
 | Model pickers (web and Android) | Shown dimmed with the reason and not pickable; a stopped DroidProxy only shows a note. |
 
 ## The UI
@@ -111,7 +111,7 @@ A window covers a model unless it is named for another model family: Claude's "W
 | `src/shared/subscriptions.ts` | `SubscriptionsState`, `ModelAvailability`, `cannotRun`, `availabilityWords`, `providerName`. |
 | `src/server/setup/` | `index.ts` (`mountSetup`), the Droid installer, its sign-in, `setup.json`. |
 | `src/server/subscriptions/` | `index.ts` (`mountSubscriptions`), the DroidProxy installer, the control API client, availability and the gate. |
-| `src/server/team.ts`, `bin/office-workers.js` | `office-workers models` and `hire` with availability. |
+| `src/server/team.ts`, `src/server/office-mcp/team.ts` | Team tools with model availability. |
 | `src/client/ui/welcome.ts`, `subscriptions-settings.ts`, `droid-settings.ts` | The welcome and the two Settings cards. |
 | `src/client/ui/models.ts`, `model-search.ts`, `model-picker.ts`, `subagent-models.ts` | Availability in pickers. |
 | `android/` | Availability in the hire sheet. |

@@ -237,7 +237,7 @@ test('hire: makes the session on the computer, seats the worker and sends its fi
       'Repository: nikships/droid-office on GitHub (https://github.com/nikships/droid-office). Use `gh` for its issues and pull requests.',
       "Your session starts in `/home/factory-user/proj`. If it isn't a clone of nikships/droid-office, find the repository's clone on this computer or clone https://github.com/nikships/droid-office, and work there.",
       'Base new work and pull requests on `main`, the floor branch, unless the task names another.',
-      "Droid Office's own commands (office-workers, office-whiteboard, office-visit) aren't on this computer: do the work yourself, and report what changed, checks and links in this session.",
+      "Droid Office's tools aren't available on this computer: do the work yourself, and report what changed, checks and links in this session.",
       '',
       'say hi',
     ].join('\n'),

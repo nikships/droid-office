@@ -24,7 +24,7 @@ function facts(m: DroidModelOption | undefined, id: string, why?: string): strin
 /**
  * ⚙️ Settings → Subagents & visits: a checkbox for every model droid lists that is not hidden in
  * Models → Models shown in pickers, cheapest first, and a note for each one picked that the Team
- * lead reads in `office-workers models` when it chooses one. A pick hidden since stays listed,
+ * lead reads in `team_models` when it chooses one. A pick hidden since stays listed,
  * marked, so it can be unticked. Nothing picked lets leads run any model.
  */
 export function subagentModelPicker(save: (models: SubagentModel[] | undefined) => void): SubagentModelPicker {

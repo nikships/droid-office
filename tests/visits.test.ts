@@ -243,7 +243,7 @@ test('a normal tell to a busy host goes in at once as a steer, with no Escape an
   assert.deepEqual(r.fake.escapes, [], 'a normal message never cancels a turn');
   const { text } = r.fake.typed[0];
   assert.match(text, /^Droid Office delivery: message from Pixel \(Desk 3\), a worker, not the owner\n+## Worker message\n```text\nI renamed auth\.ts to session\.ts\n```\n\n## Office guidance\n/);
-  assert.match(text, /office-visit tell Pixel/);
+  assert.match(text, /`visit_message`, name Pixel and kind "tell"/);
   assert.doesNotMatch(text, /urgent/i);
   r.advance(TALK_MIN_MS);
   assert.equal(r.lastList()[0].phase, 'returning');

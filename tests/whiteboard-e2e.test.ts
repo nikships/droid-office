@@ -280,7 +280,7 @@ test('an agent and the owner share a floor Whiteboard end to end: office-whitebo
   send({ t: 'whiteboard.ping', worker: launch.env.workerId });
   const second = await waitFor(() => pinged()[1], 'the second ping');
   assert.deepEqual([second.ok, second.how], [true, 'type']);
-  await waitFor(() => readFileSync(log, 'utf8').includes('office-whiteboard read') || undefined, 'the line typed in');
+  await waitFor(() => readFileSync(log, 'utf8').includes('whiteboard_read') || undefined, 'the line typed in');
   assert.equal((await hook('UserPromptSubmit')).status, 200);
   send({ t: 'whiteboard.ping', worker: launch.env.workerId });
   const third = await waitFor(() => pinged()[2], 'the third ping');

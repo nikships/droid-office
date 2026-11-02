@@ -171,7 +171,7 @@ export function durationWords(ms: number): string {
 }
 
 /**
- * Why a model can't run, in one line for a picker, a refusal or `office-workers models`; '' when
+ * Why a model can't run, in one line for a picker, a refusal or `team_models`; '' when
  * it can. `now` is ms since the epoch.
  */
 export function availabilityWords(a: ModelAvailability | undefined, now: number): string {
