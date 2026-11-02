@@ -280,7 +280,7 @@ class Store {
   hiddenModels: string[] = [];
   workerLabels: WorkerLabelState = { settings: { ...WORKER_LABEL_DEFAULTS }, running: 0, queued: 0 };
   workerAnswerMultiSelect = false;
-  /** Whether the droid-office-whiteboard skill is installed (⚙️ Settings), and where. */
+  /** Legacy Whiteboard skill state received from older servers. */
   whiteboardSkill: WhiteboardSkillState = { on: true };
   /** Each floor's Whiteboard as this window has it, with the owner's batches until they're committed (see whiteboard-sync.ts). */
   readonly whiteboard = new WhiteboardSync((msg) => whiteboardSend(msg));

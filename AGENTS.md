@@ -26,7 +26,7 @@ Planned work has written plans; follow them and keep them current when doing tha
 | `electron-builder.yml`, `build/` | How the Mac app is packaged, signed and notarized; its icon and entitlements |
 | `android/` | Droid Office for Android, the phone companion app (Kotlin, Compose; its own Gradle build) |
 | `bin/droid-office.js` | Source checkout and Mac app CLI entry; loads the built `dist/server/server/cli.js` |
-| `bin/office-workers.js` | Plain-Node `office-workers` command that agents use to hire and run subagents (`src/server/team.ts`) |
+| `src/server/office-mcp/` | Authenticated Office MCP tools for teams, visits and Whiteboards |
 | `tests/` | `node:test` suites run through `tsx` |
 | `deploy/` | `aws.sh` (EC2 lifecycle) and `provision.sh` (machine setup it runs) |
 | `docs/` | `guide/` (chapters for every feature, setup and how each subsystem works) and the README pictures |

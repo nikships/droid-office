@@ -558,7 +558,7 @@ export interface BoardPatch {
 }
 
 /**
- * What a client (an office tab, or one `office-whiteboard` run) sends: its server-issued epoch and the
+ * What a client (an office tab or Office MCP tool call) sends: its server-issued epoch and the
  * batch's sequence number in that epoch, which make a retry recognisable and applied once.
  */
 export interface OpEnvelope {

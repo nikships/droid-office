@@ -246,8 +246,8 @@ test('Droid workers launch with their own hook overlay and resume the correct se
   assert.deepEqual(first.args.slice(0, 5), ['--settings', path.join(f.data, 'droid-hooks.json'), '--append-system-prompt-file', systemFile, '--from-test']);
   const system = readFileSync(systemFile, 'utf8');
   assert.match(system, new RegExp(`^You're ${worker.name}, a worker in Droid Office`));
-  assert.match(system, /office-workers/);
-  assert.match(system, /office-whiteboard/);
+  assert.match(system, /team_hire/);
+  assert.match(system, /whiteboard_card/);
   assert.doesNotMatch(system, /\{\{/, 'every placeholder is filled in');
   // Droid started with a prompt argument never opens /rewind-conversation: the prompt is typed in instead.
   assert.equal(first.args.at(-1), '--from-test');
@@ -523,14 +523,14 @@ test('only a worker with no lead is told about office-visit, and only while visi
   const lead = workers.spawn('desk-2', 'test', 'look around');
   if (typeof lead === 'string') return assert.fail(lead);
   await launched(lead.id);
-  assert.match(systemOf(lead.id), /- `office-visit`: coordinate with independent workers only as needed/);
-  assert.match(systemOf(lead.id), /Don't routinely check the roster, announce your task/);
-  assert.match(systemOf(lead.id), /The office puts its commands on your PATH/);
+  assert.match(systemOf(lead.id), /`visit_roster`, `visit_look` and `visit_message`/);
+  assert.match(systemOf(lead.id), /Don't routinely check the roster or announce your task/);
+  assert.match(systemOf(lead.id), /Use the Droid Office MCP tools/);
 
   const sub = workers.spawn('desk-3', 'test', 'help out', false, 'agent', undefined, undefined, [], lead.id);
   if (typeof sub === 'string') return assert.fail(sub);
   await launched(sub.id);
-  assert.doesNotMatch(systemOf(sub.id), /office-visit/, 'a subagent is never told');
+  assert.doesNotMatch(systemOf(sub.id), /visit_roster/, 'a subagent is never told');
   assert.doesNotMatch(systemOf(sub.id), /\n{3,}/, 'no gap where it would have been');
 
   // An owner's own system prompt from before visits still tells a worker about them.
@@ -538,14 +538,14 @@ test('only a worker with no lead is told about office-visit, and only while visi
   const custom = workers.spawn('desk-4', 'test', 'read');
   if (typeof custom === 'string') return assert.fail(custom);
   await launched(custom.id);
-  assert.match(systemOf(custom.id), /^You are .*, at a desk\.\n\n- `office-visit`/);
+  assert.match(systemOf(custom.id), /^You are .*, at a desk\.\n\n- Use `visit_roster`/);
 
   on = false;
   system = PROMPTS['worker.system'].text;
   const off = workers.spawn('desk-5', 'test', 'read');
   if (typeof off === 'string') return assert.fail(off);
   await launched(off.id);
-  assert.doesNotMatch(systemOf(off.id), /office-visit/);
+  assert.doesNotMatch(systemOf(off.id), /visit_roster/);
 });
 test("a plain folder's workers get no branch policy, no worktrees, no board agents, and git that stops at the folder", async (t) => {
   const f = fixture();
@@ -2287,7 +2287,7 @@ test('a subagent sits down told who hired it and where it works; every agent get
   const brief = (await startedWith(f, workers, subLaunch, 'sub-session')) ?? '';
   assert.match(brief, new RegExp(`^Droid Office role: ${sub.name}, subagent of ${lead.name} \\(a worker, not the owner\\)`));
   assert.match(brief, /the project's main checkout/);
-  assert.match(brief, /office-workers report <<'EOF'/);
+  assert.match(brief, /`team_report`/);
   assert.ok(brief.endsWith(`## Task from ${lead.name}\n\`\`\`text\nFix the redirect\n\`\`\``));
   for (const r of [leadLaunch, subLaunch]) assert.ok((r.env.path ?? '').split(path.delimiter).includes(bin), 'office-workers is on every agent’s PATH');
   assert.equal((leadLaunch.env.path ?? '').split(path.delimiter).includes(path.join(f.data, 'bin')), false, 'nothing else is put in the data directory’s bin');

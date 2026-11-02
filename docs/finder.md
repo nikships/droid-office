@@ -8,7 +8,7 @@ The Mac app bundles a FinderSync extension and a native Keychain bridge. Finder 
 - Reuse the canonical checkout's existing floor. Register unknown repositories persistently in the office's existing `.droid-office/floors.json`, including explicitly selected checkouts outside the workspace folder. No checkout is cloned or moved.
 - Name a new floor after its directory, qualify collisions with the parent directory, then a numeric suffix when necessary.
 - Group non-git targets on Home. Limit selections to 100 targets and five groups.
-- Keep normal Team lead, worker and worktree ownership. Finder does not create its own lead, brief, branch convention or worktree lifecycle. The standard lead chooses and hires its team using `office-workers`.
+- Keep normal Team lead, worker and worktree ownership. Finder does not create its own lead, brief, branch convention or worktree lifecycle. The standard lead chooses and hires its team using the [Office MCP](office-mcp.md).
 - Submit the user's task followed by quoted canonical paths to `station-lead`. An absent lead starts with its standard brief; an existing lead keeps its conversation. Busy leads and unanswered CLI dialogs reject dispatch visibly.
 - Apply a chosen model when a ready lead resumes, preserving the conversation. Remember only successful explicit Finder model choices per floor in the office's `finder.json`.
 

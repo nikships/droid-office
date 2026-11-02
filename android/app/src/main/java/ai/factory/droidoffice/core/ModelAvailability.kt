@@ -72,7 +72,7 @@ object Availability {
     /** A quiet remark for a model that can run: DroidProxy is stopped and the office will start it. */
     fun note(a: ModelAvailability?, now: Long): String? = if (a is ModelAvailability.ProxyDown && a.installed) words(a, now) else null
 
-    /** One line for a picker, a refusal or `office-workers models`; empty when the model can run. */
+    /** One line for a picker, a refusal or `team_models`; empty when the model can run. */
     fun words(a: ModelAvailability?, now: Long): String = when (a) {
         null, ModelAvailability.Ok -> ""
         is ModelAvailability.Exhausted -> {
