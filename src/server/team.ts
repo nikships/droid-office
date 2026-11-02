@@ -188,10 +188,7 @@ export class Team {
     const prev = this.known.get(w.id);
     this.known.set(w.id, { name: w.name, lead: w.lead, status: w.status });
     if (!prev || prev.status === w.status) return;
-    if (w.status === 'working' && (prev.status === 'done' || prev.status === 'idle')) {
-      this.reported.delete(w.id);
-      this.spoke.delete(w.id);
-    }
+    if (w.status === 'working' && (prev.status === 'done' || prev.status === 'idle')) this.nextTurn(w.id);
     if ((w.status === 'done' || w.status === 'idle') && this.unnudged(w.id).length) this.scheduleNudge(w.id);
     if (!w.lead || prev.status === 'offline') return;
     let kind: TeamEventKind | undefined;
@@ -203,6 +200,12 @@ export class Team {
     if (!kind) return;
     const text = kind === 'needs_input' ? w.activity : kind === 'done' ? (w.task?.summary ?? w.activity) : w.exitCode !== undefined ? `exit code ${w.exitCode}` : undefined;
     this.push({ lead: w.lead, worker: w.id, name: w.name, kind, ...(text ? { text } : {}) });
+  }
+
+  /** A worker started a new turn: what it reported in the last one doesn't count for this one. */
+  nextTurn(id: string) {
+    this.reported.delete(id);
+    this.spoke.delete(id);
   }
 
   /** A worker left the floor: forget it and discard its own news. */

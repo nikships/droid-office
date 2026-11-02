@@ -662,6 +662,11 @@ test("a turn about to end hears what it's missing: a subagent that hasn't report
   r.set('sub1', 'done');
   r.set('sub1', 'working');
   assert.ok(r.team.beforeStop(sub()), 'a new turn needs a new report');
+  await r.call('sub1', { action: 'report', text: 'First task done' });
+  assert.equal(r.team.beforeStop(sub()), undefined);
+  // A message queued behind the turn starts the next one without coming to rest.
+  r.team.nextTurn('sub1');
+  assert.ok(r.team.beforeStop(sub()), 'a queued turn needs its own report');
   r.settings.officeMcp = false;
   assert.equal(r.team.beforeStop(sub()), undefined, 'with the Office MCP off there is no tool to report with');
   r.settings.officeMcp = true;

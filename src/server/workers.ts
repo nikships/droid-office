@@ -306,6 +306,8 @@ export class WorkerManager {
    * team's news, or a subagent's reminder to report (see Team.beforeStop). Only asked when its Stop can be blocked.
    */
   beforeStop?: (info: WorkerInfo) => string | undefined;
+  /** A turn ended and the message queued behind it starts the next one, with no rest between (see stopped). */
+  nextTurn?: (info: WorkerInfo) => void;
   private settling = false;
   private spoolTimer?: NodeJS.Timeout;
 
@@ -1999,6 +2001,7 @@ export class WorkerManager {
     // A message queued with Ctrl+Enter runs next, without a UserPromptSubmit of its own.
     if (w.queued > 0) {
       w.queued--;
+      this.nextTurn?.(w.info);
       return undefined;
     }
     const cancelled = w.cancelAt !== undefined && Date.now() - w.cancelAt < CANCEL_MS;

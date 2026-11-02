@@ -3059,11 +3059,14 @@ test('a message queued with Ctrl+Enter keeps its worker working through the Stop
   hook('SessionStart', { source: 'startup' });
   hook('UserPromptSubmit', { prompt: 'first' });
   assert.equal(workers.prompt(worker.id, 'then this', [], true), undefined);
+  const turns: string[] = [];
+  workers.nextTurn = (info) => turns.push(info.id);
   const start = Date.now() + 1000;
   t.mock.timers.enable({ apis: ['Date'], now: start });
   hook('Stop', {});
   workers.reconcile(start + 10 * STOP_GRACE_MS);
   assert.equal(status(), 'working', 'the queued message runs next');
+  assert.deepEqual(turns, [worker.id], 'and starts a turn of its own');
   hook('Stop', {});
   workers.reconcile(start + 20 * STOP_GRACE_MS);
   assert.equal(status(), 'done');

@@ -314,6 +314,7 @@ export class Floor {
       return s.denyTask && s.on && s.officeMcp;
     };
     this.workers.beforeStop = (info) => this.team.beforeStop(info);
+    this.workers.nextTurn = (info) => this.team.nextTurn(info.id);
 
     // The 🚀 Pipelines board: runs that end while someone watches say so (a failure always, a pass when the office started it).
     this.pipelines = floorPipelines(
