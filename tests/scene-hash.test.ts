@@ -30,6 +30,7 @@ const NOT_SCENE: Record<string, string> = {
   'src/shared/protocol': 'message types',
   'src/shared/status': 'worker status',
   'src/shared/subscriptions': 'subscription data on a screen',
+  'src/shared/todos': "a worker's todo progress on its card (workers are hidden while baking)",
   'src/shared/visits': 'visitors (hidden while baking)',
   'src/shared/whiteboard': 'board data',
 };

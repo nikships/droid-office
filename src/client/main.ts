@@ -1614,6 +1614,7 @@ function syncWorkers() {
     v.heard = true;
     v.model.setPr(prBadge(w));
     v.model.setLost(!!w.lost);
+    v.model.setTodos(w.kind === 'shell' ? undefined : w.todos);
     const engineBadge = w.cloud ? cloudBadge(w.cloud) : w.kind === 'agent' ? modelBadge(w.activeModel ?? w.model, w.activeEffort ?? w.effort) : undefined;
     const deskDef = DESK_BY_ID.get(w.deskId);
     // A cloud worker's card says where it runs even before it has a task.

@@ -64,6 +64,10 @@ enum class Effort(val wire: String, val label: String) {
 @Serializable
 data class WorkerTask(val name: String = "", val summary: String = "")
 
+/** Its todo list from its latest TodoWrite (src/shared/protocol.ts TodoProgress): items done, of how many, and the one in progress. */
+@Serializable
+data class TodoProgress(val done: Int = 0, val total: Int = 0, val current: String? = null)
+
 @Serializable
 data class WorktreeRef(val path: String = "", val branch: String = "", val base: String = "", val from: String? = null, val made: String? = null)
 
@@ -143,6 +147,7 @@ data class WorkerInfo(
     val ask: WorkerAsk? = null,
     val action: String? = null,
     val task: WorkerTask? = null,
+    val todos: TodoProgress? = null,
     val lastInputAt: Long? = null,
     val lead: String? = null,
     val team: TeamBadge? = null,

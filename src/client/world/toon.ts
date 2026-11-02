@@ -282,6 +282,8 @@ export interface CardOpts {
   maxWidth?: number;
   /** Most lines of body text before it ends in "…" (3 unless given). */
   bodyLines?: number;
+  /** A line and a bar under the body: a todo list's "3/5 · Write the tests", `fraction` (0 to 1) of it filled in `color`. */
+  progress?: { label: string; fraction: number; color: string };
 }
 
 /** Cards draw their text in smaller type than other labels, so they get a density of their own. */
@@ -317,12 +319,20 @@ export function cardSprite(o: CardOpts): THREE.Sprite {
   const bodyW = body.length ? Math.max(...body.map((l) => measure(ctx, l, bodyPx))) : 0;
   ctx.font = chipFont;
   const chipW = o.chip ? ctx.measureText(o.chip.text).width + 24 * R : 0;
+  const progressPx = 19 * R;
+  const progressFont = `500 ${progressPx}px ${MONO}`;
+  const progressLH = 25 * R;
+  const barH = 5 * R;
+  ctx.font = progressFont;
+  const progressLine = o.progress ? wrapText(ctx, withGlyph(o.progress.label), maxW, 1, progressPx) : [];
+  const progressW = progressLine.length ? measure(ctx, progressLine[0], progressPx) : 0;
 
-  const w = Math.ceil(Math.max(titleW, bodyW, chipW + 2 * pad) + 2 * pad);
+  const w = Math.ceil(Math.max(titleW, bodyW, progressW, chipW + 2 * pad) + 2 * pad);
   const top = o.chip ? chipH / 2 : lw;
   const titleY = top + (o.chip ? chipH / 2 + 6 * R : pad);
   const bodyY = titleY + title.length * titleLH + 4 * R;
-  const bottom = bodyY + body.length * bodyLH + pad * 0.7;
+  const progressY = bodyY + body.length * bodyLH + 6 * R;
+  const bottom = (o.progress ? progressY + progressLH + barH + 4 * R : bodyY + body.length * bodyLH) + pad * 0.7;
   const h = Math.ceil(bottom + tail + lw);
 
   const canvas = ctx.canvas;
@@ -369,6 +379,23 @@ export function cardSprite(o: CardOpts): THREE.Sprite {
   ctx.font = bodyFont;
   ctx.fillStyle = o.muted ?? '#5c5f77';
   body.forEach((l, i) => fillGlyphText(ctx, l, cx, bodyY + (i + 0.5) * bodyLH, bodyPx));
+  if (o.progress) {
+    ctx.font = progressFont;
+    progressLine.forEach((l) => fillGlyphText(ctx, l, cx, progressY + progressLH / 2, progressPx));
+    const barY = progressY + progressLH + 2 * R;
+    const barW = w - 2 * pad;
+    ctx.beginPath();
+    ctx.roundRect(pad, barY, barW, barH, barH / 2);
+    ctx.fillStyle = '#2f2f2f';
+    ctx.fill();
+    const filled = barW * Math.min(1, Math.max(0, o.progress.fraction));
+    if (filled > 0) {
+      ctx.beginPath();
+      ctx.roundRect(pad, barY, Math.max(filled, barH), barH, barH / 2);
+      ctx.fillStyle = o.progress.color;
+      ctx.fill();
+    }
+  }
 
   const tex = new THREE.CanvasTexture(canvas);
   tex.colorSpace = THREE.SRGBColorSpace;

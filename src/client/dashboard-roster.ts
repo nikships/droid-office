@@ -1,9 +1,10 @@
-import type { WorkerInfo } from '../shared/protocol';
+import type { TodoProgress, WorkerInfo } from '../shared/protocol';
 import { statusWord } from '../shared/guests';
 import { isAsleep, isBusy, needsOwnerAttention, needsOwnerInput } from '../shared/status';
 import { shortDuration, workedFor } from './dashboard-workspace';
 import { workerDot, workingBars, WORKER_MIME } from './dashboard-pane';
 import { teamCounts, workerTeams } from '../shared/team';
+import { todoCount, todoLine } from '../shared/todos';
 import { doingLine, workerKind } from './worker-words';
 import { h, STATUS_LABEL } from './ui/dom';
 import { icon } from './ui/icons';
@@ -16,6 +17,17 @@ export function reconcileChildren(parent: HTMLElement, children: HTMLElement[]) 
   children.forEach((child, index) => {
     if (parent.children[index] !== child) parent.insertBefore(child, parent.children[index] ?? null);
   });
+}
+
+/** A worker's todo list as a bar and "3/5", with the item in progress as its tooltip. */
+export function todoMeter(p: TodoProgress): HTMLElement {
+  const line = todoLine(p);
+  return h(
+    'span.dash-row-todos',
+    { title: line, role: 'img', 'aria-label': `Todo list ${line}` },
+    h('progress.dash-todo-bar', { max: p.total, value: p.done, 'aria-hidden': 'true' }),
+    h('span.dash-todo-count', { 'aria-hidden': 'true' }, todoCount(p)),
+  );
 }
 
 interface RosterState {
@@ -103,12 +115,13 @@ export function createWorkerRoster(el: HTMLElement, open: (id: string) => void, 
       const worked = workedFor(w.workedMs, w.workingSince, Date.now());
       const meta = [w.kind === 'agent' && !w.guest ? modelBadge(w.activeModel ?? w.model, w.activeEffort ?? w.effort) : workerKind(w), worked >= 1000 ? shortDuration(worked) : ''].filter(Boolean).join(' · ');
       const relationship = parent ? `Subworker of ${parent.name}` : w.lead ? 'Lead unavailable' : hasChildren ? 'Main worker' : '';
-      const key = JSON.stringify([w.name, w.color, w.status, w.acked, w.lead, doingLine(w), meta, relationship, next.pane(w.id)]);
+      const todos = w.kind === 'shell' ? undefined : w.todos;
+      const key = JSON.stringify([w.name, w.color, w.status, w.acked, w.lead, doingLine(w), meta, relationship, next.pane(w.id), todos]);
       if (key !== r.key) {
         r.key = key;
         const status = statusWord(w, STATUS_LABEL);
-        r.open.title = [w.name, relationship, status, doingLine(w), meta].filter(Boolean).join(' · ');
-        r.open.setAttribute('aria-label', `Open ${w.name}${relationship ? `, ${relationship}` : ''}, ${status}: ${doingLine(w)}`);
+        r.open.title = [w.name, relationship, status, doingLine(w), todos && `Todos ${todoLine(todos)}`, meta].filter(Boolean).join(' · ');
+        r.open.setAttribute('aria-label', `Open ${w.name}${relationship ? `, ${relationship}` : ''}, ${status}: ${doingLine(w)}${todos ? `, todo list ${todoLine(todos)}` : ''}`);
         r.split.setAttribute('aria-label', `Open ${w.name} in a new pane`);
         r.open.replaceChildren(
           workerDot(w),
@@ -124,6 +137,7 @@ export function createWorkerRoster(el: HTMLElement, open: (id: string) => void, 
               h('span.dash-row-state', {}, needsOwnerAttention(w) ? h('span.pill', { class: w.status }, status) : isBusy(w.status) && w.status !== 'needs_input' ? workingBars(status) : null),
             ),
             h('span.dash-row-doing', {}, doingLine(w)),
+            todos ? todoMeter(todos) : null,
             h('span.dash-row-meta', {}, w.lead && !parent ? 'Lead unavailable' : meta),
           ),
         );

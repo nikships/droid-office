@@ -2305,6 +2305,12 @@ html:has(body.dashboard), body.dashboard { overflow: auto; }
 .dash-row-name { overflow: hidden; font-weight: 500; text-overflow: ellipsis; white-space: nowrap; }
 .dash-row-pane { flex: none; padding: 0 var(--space-1); border: 1px solid var(--border); border-radius: var(--radius); font: 400 9.5px/14px var(--font-mono); color: var(--text-secondary); }
 .dash-row-state { flex: none; display: flex; align-items: center; margin-left: auto; }
+.dash-row-todos { display: flex; align-items: center; gap: var(--space-2); min-width: 0; margin-top: 2px; }
+.dash-todo-bar { flex: 1; min-width: 24px; height: 3px; border: 0; border-radius: 2px; background: var(--border); overflow: hidden; appearance: none; }
+.dash-todo-bar::-webkit-progress-bar { border-radius: 2px; background: var(--border); }
+.dash-todo-bar::-webkit-progress-value { border-radius: 2px; background: var(--accent); }
+.dash-todo-bar::-moz-progress-bar { border-radius: 2px; background: var(--accent); }
+.dash-todo-count { flex: none; font: 400 10px/13px var(--font-mono); letter-spacing: .04em; color: var(--text-secondary); }
 .dash-row-doing { overflow: hidden; font-size: var(--text-small); line-height: 17px; color: var(--text-secondary); text-overflow: ellipsis; white-space: nowrap; }
 .dash-row-meta { margin-top: 2px; padding-right: var(--space-7); overflow: hidden; font: 400 10px/13px var(--font-mono); text-transform: uppercase; letter-spacing: .08em; color: var(--text-tertiary); text-overflow: ellipsis; white-space: nowrap; }
 .dash-row-split { position: absolute; right: var(--space-1); bottom: var(--space-1); opacity: 0; transition: opacity var(--duration) var(--ease); }

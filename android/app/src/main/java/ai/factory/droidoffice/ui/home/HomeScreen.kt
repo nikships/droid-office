@@ -39,6 +39,7 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExtendedFloatingActionButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.SnackbarResult
 import androidx.compose.material3.Text
@@ -499,6 +500,21 @@ private fun WorkerCard(row: WorkerRow, data: OfficeData, now: Long, selected: Bo
                             overflow = TextOverflow.Ellipsis,
                             modifier = Modifier.tagged(Tags.Home.CARD_DETAIL),
                         )
+                    }
+                }
+            }
+            val todos = Workers.todos(w)
+            if (todos != null) {
+                val line = Workers.todoLine(todos)
+                Row(
+                    Modifier.padding(start = 26.dp, top = 8.dp).fillMaxWidth().tagged(Tags.Home.CARD_TODOS).semantics(mergeDescendants = true) { contentDescription = "Todo list $line" },
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    LinearProgressIndicator(progress = { Workers.todoFraction(todos) }, modifier = Modifier.width(56.dp).height(3.dp), color = Palette.Accent, trackColor = Palette.SurfaceHigh)
+                    Text(Workers.todoCount(todos), style = LocalOfficeType.current.eyebrow.copy(fontSize = 10.sp), color = Palette.TextSecondary, maxLines = 1)
+                    todos.current?.takeIf { it.isNotBlank() }?.let {
+                        Text(it, style = MaterialTheme.typography.bodySmall, color = Palette.TextSecondary, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f, fill = false))
                     }
                 }
             }

@@ -3094,6 +3094,56 @@ test('a cleared queue lets the next Stop finish the turn', async (t) => {
   workers.reconcile(Date.now() + 10 * STOP_GRACE_MS);
   assert.equal(status(), 'done');
 });
+test("a worker's TodoWrite list is published as progress, kept until it's all done at the end of a turn, and cleared with its conversation", async (t) => {
+  const { workers, worker, hook, status, f } = await liveWorker(t, 'todos');
+  const list = (...statuses: string[]) => ({ todos: statuses.map((s, i) => ({ id: String(i + 1), status: s, content: ['alpha', 'beta', 'gamma'][i], priority: 'high' })) });
+  const todos = () => workers.get(worker.id)?.todos;
+  hook('SessionStart', { source: 'startup' });
+  hook('UserPromptSubmit', { prompt: 'work through the list' });
+  hook('PreToolUse', { tool_name: 'TodoWrite', tool_input: { todos: '1. [in_progress] alpha\n2. [pending] beta\n3. [pending] gamma' } });
+  assert.equal(todos(), undefined, 'the list is taken from PostToolUse, which has it structured');
+  hook('PostToolUse', { tool_name: 'TodoWrite', tool_input: list('in_progress', 'pending', 'pending') });
+  assert.deepEqual(todos(), { done: 0, total: 3, current: 'alpha' });
+
+  // A Task subagent's own list isn't the worker's.
+  hook('SessionStart', { source: 'startup', calling_session_id: 'todos' }, 'todos-sub');
+  hook('PostToolUse', { tool_name: 'TodoWrite', tool_input: list('completed', 'completed', 'completed') }, 'todos-sub');
+  assert.deepEqual(todos(), { done: 0, total: 3, current: 'alpha' });
+
+  hook('PostToolUse', { tool_name: 'TodoWrite', tool_input: list('completed', 'in_progress', 'pending') });
+  assert.deepEqual(todos(), { done: 1, total: 3, current: 'beta' });
+  const saved = () => (JSON.parse(readFileSync(path.join(f.data, 'workers.json'), 'utf8')) as WorkerInfo[]).find((w) => w.id === worker.id)?.todos;
+  assert.deepEqual(saved(), { done: 1, total: 3, current: 'beta' });
+  hook('Stop', {});
+  workers.reconcile(Date.now() + 10 * STOP_GRACE_MS);
+  assert.equal(status(), 'done');
+  assert.deepEqual(todos(), { done: 1, total: 3, current: 'beta' }, 'a list left unfinished stays up');
+
+  hook('UserPromptSubmit', { prompt: 'finish it' });
+  hook('PostToolUse', { tool_name: 'TodoWrite', tool_input: list('completed', 'completed', 'completed') });
+  assert.deepEqual(todos(), { done: 3, total: 3 }, 'a finished list shows for the rest of its turn');
+  hook('Stop', {});
+  workers.reconcile(Date.now() + 10 * STOP_GRACE_MS);
+  assert.equal(status(), 'done');
+  assert.equal(todos(), undefined);
+
+  hook('UserPromptSubmit', { prompt: 'a new list' });
+  hook('PostToolUse', { tool_name: 'TodoWrite', tool_input: list('in_progress', 'pending') });
+  assert.deepEqual(todos(), { done: 0, total: 2, current: 'alpha' });
+  hook('PostToolUse', { tool_name: 'TodoWrite', tool_input: { todos: [] } });
+  assert.equal(todos(), undefined, 'an empty list clears it');
+  hook('PostToolUse', { tool_name: 'TodoWrite', tool_input: list('in_progress', 'pending') });
+  hook('SessionStart', { source: 'clear' });
+  assert.equal(todos(), undefined, '/clear starts a new conversation');
+
+  hook('UserPromptSubmit', { prompt: 'and again' });
+  hook('PostToolUse', { tool_name: 'TodoWrite', tool_input: list('completed', 'in_progress', 'pending') });
+  workers.shutdown();
+  const restored = manager(f, []);
+  t.after(() => restored.shutdown());
+  await restored.start();
+  assert.deepEqual(restored.get(worker.id)?.todos, { done: 1, total: 3, current: 'beta' }, 'a restarted office keeps it');
+});
 test('a question or permission prompt is published whole from the hooks, and clears once answered', async (t) => {
   const { workers, worker, hook, status } = await liveWorker(t, 'asked');
   hook('SessionStart', { source: 'startup', transcript_path: '/tmp/sessions/-tmp-proj/asked.jsonl' });
