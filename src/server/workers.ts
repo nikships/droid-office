@@ -106,7 +106,7 @@ const RELATED_END = '<!-- /agent-office:related -->';
  */
 export const HOOK_VERSION = 2;
 /** The events the office subscribes its workers' droids to. */
-const HOOK_EVENTS = ['SessionStart', 'UserPromptSubmit', 'PreToolUse', 'PostToolUse', 'Notification', 'Stop', 'SubagentStop', 'SessionEnd', 'PreCompact'];
+const HOOK_EVENTS = ['SessionStart', 'UserPromptSubmit', 'PreToolUse', 'PostToolUse', 'Notification', 'Stop', 'SubagentStop', 'PreCompact'];
 /** The most a worker's hook spool holds (see hook.cjs); the oldest events go first. */
 export const SPOOL_MAX_BYTES = 512 * 1024;
 /** Where hooks that couldn't reach the office wait for it, one file per worker, in the floor's .droid-office. */
@@ -235,7 +235,7 @@ interface Worker {
   /** Bumped by /clear: a new conversation, so a new task. */
   taskEpoch: number;
   /** Its terminal in the host as of the last save, and how it was doing, to pick back up after a restart. */
-  saved?: { ptyId: string; status: WorkerStatus; acked: boolean; waitingSince?: number; launchPrompt?: { text: string; at: number } };
+  saved?: { ptyId: string; status: WorkerStatus; acked: boolean; waitingSince?: number; launchPrompt?: { text: string; at: number }; outbox?: string[] };
   /** Its process went away mid-turn with the office or the terminal host: its next start carries on (CARRY_ON_PROMPT). */
   interrupted?: boolean;
   /** Output since its scrollback was last saved to disk. */
@@ -410,6 +410,8 @@ export class WorkerManager {
             this.adopt(w, adopted, saved);
             // Its droid kept running while the office was down: what it said meanwhile, before any live hook.
             this.replaySpool(w);
+            // Notices from the last office: typed in if it's at rest by now, else handed over by its hooks.
+            this.flushOutbox(w);
           }
         }
         // A process that didn't make it: its spooled hooks are about a turn that's over.
@@ -1742,11 +1744,6 @@ export class WorkerManager {
     this.emitUpdate(w);
   }
 
-  /** Droid lifecycle hook callback: what a worker is doing, from its hooks. Says whether it was the worker's. */
-  handleHook(workerId: string, token: string, event: string, payload: unknown, version = 0): boolean {
-    return this.hookReply(workerId, token, event, payload, version) !== undefined;
-  }
-
   /**
    * A hook from a worker's droid, with the version of the command that sent it (see HOOK_VERSION).
    * Resolves to what the command prints back to Droid ('' for nothing), or undefined when the hook
@@ -1863,6 +1860,8 @@ export class WorkerManager {
     const clean = text.replace(/\r\n?/g, '\n').trim();
     if (!w?.pty || !clean || w.info.kind !== 'agent' || w.info.status !== 'working' || w.bootBlocked || w.hookVersion < HOOK_VERSION) return false;
     w.outbox.push(clean);
+    // Promised to whoever sent it: it outlives an office restart that keeps the terminal.
+    this.persist();
     return true;
   }
 
@@ -1892,6 +1891,7 @@ export class WorkerManager {
     const text = w.outbox.join('\n\n');
     w.outbox = [];
     this.prompt(w.info.id, text);
+    this.persist();
   }
   /** The setup script in a new worktree's terminal (see worktree-setup.ts) started, or finished. */
   private setupHook(w: Worker, report: Record<string, unknown>): boolean {
@@ -2300,6 +2300,7 @@ export class WorkerManager {
     w.interrupted = false;
     // Its droid hadn't taken its first message yet: SessionStart (or the screen fallback) still types it in.
     w.launchPrompt = saved.launchPrompt;
+    w.outbox = saved.outbox ?? [];
     info.cols = adopted.cols;
     info.rows = adopted.rows;
     const term = this.newTerm(w);
@@ -2521,8 +2522,10 @@ export class WorkerManager {
       return (
         `if [ -z "$DROID_OFFICE_WORKER_ID" ] || [ -z "$DROID_OFFICE_HOOK_URL" ]; then exit 0; fi; ` +
         `body=$(cat); ` +
-        `if command -v curl >/dev/null 2>&1; then printf '%s' "$body" | ${curl} && exit 0; printf '%s' "$body" | ${node} ${event} spool >/dev/null 2>&1; ` +
-        `else printf '%s' "$body" | ${node} ${event} 2>/dev/null; fi; true`
+        // curl's 28 is a timeout after connecting (a loopback connect is refused at once, never slow):
+        // the office has the hook, so it isn't spooled to be taken twice.
+        `if command -v curl >/dev/null 2>&1; then printf '%s' "$body" | ${curl}; c=$?; if [ $c -eq 0 ] || [ $c -eq 28 ]; then exit 0; fi; printf '%s' "$body" | ${node} ${event} spool >/dev/null 2>&1; ` +
+        `else printf '%s' "$body" | ${node} ${event} reply 2>/dev/null; fi; true`
       );
     };
     this.writeDroidSettings();
@@ -2603,7 +2606,7 @@ export class WorkerManager {
   private persist(onShutdown = false) {
     // A stopped manager's pending callbacks must not overwrite its successor's state.
     if (this.closing && !onShutdown) return;
-    const saved = [...this.workers.values()].map(({ info, hookToken, pty, bootBlocked, stopAt, interrupted, worktreeOwnership, launchPrompt, pendingFork }) => ({
+    const saved = [...this.workers.values()].map(({ info, hookToken, pty, bootBlocked, stopAt, interrupted, worktreeOwnership, launchPrompt, pendingFork, outbox }) => ({
       id: info.id,
       kind: info.kind,
       model: info.model,
@@ -2630,7 +2633,8 @@ export class WorkerManager {
       // A terminal still running in the host, to pick back up after a restart. Its hooks keep the token.
       hookToken,
       // Its first message, while its droid hasn't taken it yet: the next office types it in at SessionStart.
-      pty: pty?.id ? { id: pty.id, status: info.status, acked: info.acked, waitingSince: info.waitingSince, launchPrompt } : undefined,
+      // Notices it was promised and hasn't been handed yet, which the next office hands over instead.
+      pty: pty?.id ? { id: pty.id, status: info.status, acked: info.acked, waitingSince: info.waitingSince, launchPrompt, ...(outbox.length ? { outbox } : {}) } : undefined,
       // In the middle of something: if its terminal doesn't make it through a restart, it carries on after.
       midTurn: !this.stopping && (!!interrupted || midTurn({ info, bootBlocked, stopAt })),
     }));
@@ -2699,6 +2703,7 @@ export class WorkerManager {
             acked: s.pty.acked !== false,
             waitingSince: typeof s.pty.waitingSince === 'number' ? s.pty.waitingSince : undefined,
             launchPrompt: typeof launch?.text === 'string' && launch.text && typeof launch.at === 'number' ? { text: launch.text, at: launch.at } : undefined,
+            outbox: Array.isArray(s.pty.outbox) ? s.pty.outbox.filter((n: unknown): n is string => typeof n === 'string' && !!n) : undefined,
           };
         }
         // Mid-turn as the office went down: cut off, unless its terminal is picked back up still
@@ -2912,12 +2917,16 @@ function send() {
   const url = new URL(process.env.DROID_OFFICE_HOOK_URL + '/hooks/droid');
   url.searchParams.set('worker', worker);
   url.searchParams.set('event', event);
-  url.searchParams.set('v', '${HOOK_VERSION}');
+  // A command from before HOOK_VERSION runs this file too, after an update rewrote it, and throws
+  // its output away: only one that says 'reply' prints what the office answers.
+  url.searchParams.set('v', mode === 'reply' ? '${HOOK_VERSION}' : '0');
   let done = false;
+  let sent = false;
+  // Once the office has the whole hook, a slow answer isn't a failure: spooling it would replay it.
   const fail = () => {
     if (done) return;
     done = true;
-    spool();
+    if (!sent) spool();
   };
   const req = http.request(url, { method: 'POST', timeout: 2000, headers: { authorization: 'Bearer ' + token, 'content-type': 'application/json' } }, (res) => {
     let out = '';
@@ -2925,8 +2934,10 @@ function send() {
     res.on('data', (c) => (out += c));
     res.on('error', fail);
     res.on('end', () => {
-      if (res.statusCode !== 200) return fail();
+      if (done) return;
       done = true;
+      // Refused (a worker the office hasn't picked back up yet): kept for the replay.
+      if (res.statusCode !== 200) return spool();
       process.stdout.write(out);
     });
   });
@@ -2935,7 +2946,7 @@ function send() {
   req.on('error', fail);
   req.on('close', () => clearTimeout(connect));
   req.on('timeout', () => req.destroy());
-  req.end(body);
+  req.end(body, () => (sent = true));
 }
 function spool() {
   let payload;

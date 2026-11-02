@@ -243,6 +243,8 @@ export class Team {
    * been woken for, which then needs no waking.
    */
   beforeStop(w: WorkerInfo): string | undefined {
+    // Both ask for an Office MCP tool, which refuses every call while it's off.
+    if (this.opts.settings().officeMcp === false) return undefined;
     const lead = w.lead ? this.workers.get(w.lead) : undefined;
     if (lead) return this.spoke.has(w.id) ? undefined : officePrompt(this.opts.prompts, 'subagent.report', { lead: lead.name });
     if (!this.opts.settings().wakeLead) return undefined;
@@ -253,7 +255,8 @@ export class Team {
     return officePrompt(this.opts.prompts, 'subagent.nudge', { news: newsWords(news) });
   }
 
-  /** A former lead can still drain final reports and departures after hiring is disabled. */ hasNews(lead: string): boolean {
+  /** A former lead can still drain final reports and departures after hiring is disabled. */
+  hasNews(lead: string): boolean {
     return this.log.some((event) => event.lead === lead && !event.seen);
   }
 

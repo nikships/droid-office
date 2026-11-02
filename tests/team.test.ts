@@ -662,6 +662,9 @@ test("a turn about to end hears what it's missing: a subagent that hasn't report
   r.set('sub1', 'done');
   r.set('sub1', 'working');
   assert.ok(r.team.beforeStop(sub()), 'a new turn needs a new report');
+  r.settings.officeMcp = false;
+  assert.equal(r.team.beforeStop(sub()), undefined, 'with the Office MCP off there is no tool to report with');
+  r.settings.officeMcp = true;
   r.settings.wakeLead = false;
   await r.call('sub1', { action: 'report', text: 'Done' });
   assert.equal(r.team.beforeStop(lead()), undefined, 'with waking off, the lead checks for itself');

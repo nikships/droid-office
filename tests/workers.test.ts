@@ -205,7 +205,7 @@ function pastedInto(f: Fixture, launch: Invocation): string[] {
  */
 async function startedWith(f: Fixture, workers: WorkerManager, launch: Invocation, session: string): Promise<string | undefined> {
   const before = pastedInto(f, launch).length;
-  assert.equal(workers.handleHook(launch.env.workerId!, launch.env.hookToken!, 'SessionStart', { session_id: session, hook_event_name: 'SessionStart' }), true);
+  assert.equal(workers.hookReply(launch.env.workerId!, launch.env.hookToken!, 'SessionStart', { session_id: session, hook_event_name: 'SessionStart' }) !== undefined, true);
   const end = Date.now() + 1000;
   while (pastedInto(f, launch).length === before && Date.now() < end) await new Promise((resolve) => setTimeout(resolve, 25));
   return pastedInto(f, launch)[before];
@@ -259,7 +259,7 @@ test('Droid workers launch with their own hook overlay and resume the correct se
   assert.match(settings.hooks.SessionStart[0].hooks[0].command, /\/hooks\/droid/);
   assert.ok(!settings.hooks.PermissionRequest, 'Droid only receives supported hook events');
 
-  const hook = (event: string, data: Record<string, unknown> = {}, token = first.env.hookToken!) => workers.handleHook(worker.id, token, event, { session_id: 'droid-1', hook_event_name: event, ...data });
+  const hook = (event: string, data: Record<string, unknown> = {}, token = first.env.hookToken!) => workers.hookReply(worker.id, token, event, { session_id: 'droid-1', hook_event_name: event, ...data }) !== undefined;
   assert.equal(hook('SessionStart', { source: 'startup' }, 'wrong-token'), false);
   await new Promise((resolve) => setTimeout(resolve, 200));
   assert.deepEqual(pastedInto(f, first), [], 'nothing is typed before droid can take it');
@@ -289,8 +289,8 @@ test('Droid workers launch with their own hook overlay and resume the correct se
   await settleIdle(workers, worker.id);
   assert.equal(workers.get(worker.id)?.status, 'done');
   // A hook payload without its event name, or one from another session, is turned away.
-  assert.equal(workers.handleHook(worker.id, first.env.hookToken!, 'Stop', { session_id: 'droid-1' }), false);
-  assert.equal(workers.handleHook(worker.id, first.env.hookToken!, 'Stop', { session_id: 'other', hook_event_name: 'Stop' }), false);
+  assert.equal(workers.hookReply(worker.id, first.env.hookToken!, 'Stop', { session_id: 'droid-1' }) !== undefined, false);
+  assert.equal(workers.hookReply(worker.id, first.env.hookToken!, 'Stop', { session_id: 'other', hook_event_name: 'Stop' }) !== undefined, false);
 
   await waitFor(
     () => workers.get(worker.id)?.status,
@@ -771,7 +771,7 @@ test('a board agent is hired with its brief on the first prompt, then prompted, 
   );
 
   // Waiting on an answer, a prompt would answer the question, so it's refused.
-  assert.equal(workers.handleHook(id, first.env.hookToken!, 'Notification', { session_id: 'issues-session', hook_event_name: 'Notification', notification_type: 'permission_prompt' }), true);
+  assert.equal(workers.hookReply(id, first.env.hookToken!, 'Notification', { session_id: 'issues-session', hook_event_name: 'Notification', notification_type: 'permission_prompt' }) !== undefined, true);
   assert.equal(workers.get(id)?.status, 'needs_input');
   assert.match(workers.station('station-issues', 'Ada', 'hello?') as string, /waiting on an answer/i);
 
@@ -906,7 +906,7 @@ test('a Droid worker acts out its latest tool call, and puts its head in its han
   assert.ok(settings.hooks.PostToolUse, 'tool calls are reported');
 
   const token = launch.env.hookToken!;
-  const hook = (event: string, payload: object) => assert.equal(workers.handleHook(worker.id, token, event, { session_id: 'acting', hook_event_name: event, ...payload }), true);
+  const hook = (event: string, payload: object) => assert.equal(workers.hookReply(worker.id, token, event, { session_id: 'acting', hook_event_name: event, ...payload }) !== undefined, true);
   const action = () => workers.get(worker.id)?.action;
   const npmTest = { tool_name: 'Bash', tool_input: { command: 'npm test 2>&1 | tail -5' } };
   hook('SessionStart', { source: 'startup' });
@@ -958,7 +958,7 @@ test('a worker is stamped with when it started waiting on someone, afresh each t
   if (typeof worker === 'string') return;
   const calls = await waitFor(f.read, (x) => x.some((r) => r.kind === 'droid' && r.args.includes('--settings')));
   const token = calls.find((r) => r.kind === 'droid' && r.args.includes('--settings'))!.env.hookToken!;
-  const hook = (event: string, extra = {}) => workers.handleHook(worker.id, token, event, { session_id: 'waiting', hook_event_name: event, ...extra });
+  const hook = (event: string, extra = {}) => workers.hookReply(worker.id, token, event, { session_id: 'waiting', hook_event_name: event, ...extra }) !== undefined;
   hook('SessionStart', { source: 'startup' });
   hook('UserPromptSubmit', { prompt: 'fix the login' });
   assert.equal(workers.get(worker.id)?.status, 'working');
@@ -992,7 +992,7 @@ async function liveWorker(t: { after(fn: () => void): void }, session: string) {
   const worker = workers.spawn('desk-1', 'test', 'fix the login');
   if (typeof worker === 'string') throw new Error(worker);
   const token = (await waitFor(f.read, (x) => x.some((r) => r.kind === 'droid' && r.args.includes('--settings')))).find((r) => r.kind === 'droid' && r.args.includes('--settings'))!.env.hookToken!;
-  const hook = (event: string, extra: Record<string, unknown> = {}, from = session) => workers.handleHook(worker.id, token, event, { session_id: from, hook_event_name: event, ...extra });
+  const hook = (event: string, extra: Record<string, unknown> = {}, from = session) => workers.hookReply(worker.id, token, event, { session_id: from, hook_event_name: event, ...extra }) !== undefined;
   const status = () => workers.get(worker.id)?.status;
   return { workers, worker, hook, status, updates, data: f.data, f, token };
 }
@@ -1357,7 +1357,7 @@ test('a first prompt whose SessionStart never comes is typed in once droid shows
   await new Promise((resolve) => setTimeout(resolve, 200));
   assert.deepEqual(pastedInto(f, launch).slice(before), ['fix the login']);
   // Its SessionStart turning up late doesn't send it again.
-  assert.equal(workers.handleHook(worker.id, launch.env.hookToken!, 'SessionStart', { session_id: 'late', hook_event_name: 'SessionStart' }), true);
+  assert.equal(workers.hookReply(worker.id, launch.env.hookToken!, 'SessionStart', { session_id: 'late', hook_event_name: 'SessionStart' }) !== undefined, true);
   await new Promise((resolve) => setTimeout(resolve, 200));
   assert.deepEqual(pastedInto(f, launch).slice(before), ['fix the login']);
 });
@@ -1420,7 +1420,7 @@ async function hireInState(f: Fixture, workers: WorkerManager, deskId: string, s
       (x) => x.length > before,
     )
   ).at(-1)?.env.hookToken as string;
-  const hook = (event: string, extra: Record<string, unknown> = {}) => assert.equal(workers.handleHook(worker.id, token, event, { session_id: session, hook_event_name: event, ...extra }), true);
+  const hook = (event: string, extra: Record<string, unknown> = {}) => assert.equal(workers.hookReply(worker.id, token, event, { session_id: session, hook_event_name: event, ...extra }) !== undefined, true);
   hook('SessionStart', { source: 'startup' });
   hook('UserPromptSubmit', { prompt: `task for ${session}` });
   if (state === 'needs_input') hook('Notification', { notification_type: 'permission_prompt' });
@@ -1797,8 +1797,8 @@ test("a new worktree is set up in the worker's terminal before its agent starts,
   // The agent came after the setup: the worktree has its .env and what the command wrote.
   assert.equal(readFileSync(path.join(cwd, '.env'), 'utf8'), 'SECRET=1');
   assert.equal(readFileSync(path.join(cwd, 'set-up.txt'), 'utf8'), f.root);
-  const setupHook = (body: Record<string, unknown>) => workers.handleHook(worker.id, launch.env.hookToken!, 'WorktreeSetup', { hook_event_name: 'WorktreeSetup', ...body });
-  assert.equal(workers.handleHook(worker.id, 'wrong', 'WorktreeSetup', { hook_event_name: 'WorktreeSetup', phase: 'start' }), false);
+  const setupHook = (body: Record<string, unknown>) => workers.hookReply(worker.id, launch.env.hookToken!, 'WorktreeSetup', { hook_event_name: 'WorktreeSetup', ...body }) !== undefined;
+  assert.equal(workers.hookReply(worker.id, 'wrong', 'WorktreeSetup', { hook_event_name: 'WorktreeSetup', phase: 'start' }) !== undefined, false);
   assert.equal(setupHook({ phase: 'later' }), false);
   assert.equal(setupHook({ phase: 'start', commands: ['npm ci'] }), true);
   assert.equal(workers.get(worker.id)?.activity, 'Setting up its worktree: npm ci');
@@ -1833,7 +1833,7 @@ test('a worktree worker that makes its own branch is followed there: O finds the
       (x) => x.length > 0,
     )
   )[0].env.hookToken!;
-  const hook = (event: string, extra: Record<string, unknown> = {}) => assert.equal(workers.handleHook(worker.id, token, event, { session_id: 'own-branch', hook_event_name: event, ...extra }), true);
+  const hook = (event: string, extra: Record<string, unknown> = {}) => assert.equal(workers.hookReply(worker.id, token, event, { session_id: 'own-branch', hook_event_name: event, ...extra }) !== undefined, true);
   hook('SessionStart', { source: 'startup' });
   hook('UserPromptSubmit', { prompt: 'fix x on a new branch and open a PR' });
   // What the task told it to do: a branch of its own, a commit, a PR from there.
@@ -1998,7 +1998,7 @@ test("a worker that renames the office's branch goes home with it; one that dele
       (x) => x.length > 0,
     )
   )[0].env.hookToken!;
-  const hook = (event: string, extra: Record<string, unknown> = {}) => assert.equal(workers.handleHook(a.w.id, token, event, { session_id: 'renamed', hook_event_name: event, ...extra }), true);
+  const hook = (event: string, extra: Record<string, unknown> = {}) => assert.equal(workers.hookReply(a.w.id, token, event, { session_id: 'renamed', hook_event_name: event, ...extra }) !== undefined, true);
   hook('SessionStart', { source: 'startup' });
   hook('UserPromptSubmit', { prompt: 'fix x and name the branch after it' });
   writeFileSync(path.join(a.cwd, 'x.txt'), 'x');
@@ -2082,7 +2082,7 @@ test('a worker whose worktree was deleted outside the office waits, marked lost,
         (x) => x.length > n,
       )
     ).at(-1)!.env.hookToken!;
-    assert.equal(before.handleHook(w.id, token, 'SessionStart', { session_id: session, hook_event_name: 'SessionStart' }), true);
+    assert.equal(before.hookReply(w.id, token, 'SessionStart', { session_id: session, hook_event_name: 'SessionStart' }) !== undefined, true);
     return w;
   };
   const kept = await hire('desk-1', 'kept-branch');
@@ -2826,7 +2826,9 @@ test('the hook command subscribes every event, says its version, and refuses Tas
     return JSON.parse(readFileSync(launch.args[launch.args.indexOf('--settings') + 1], 'utf8')) as { hooks: Record<string, { matcher?: string; hooks: { command: string }[] }[]> };
   };
   const first = await settingsOf('desk-1');
-  for (const event of ['SessionStart', 'UserPromptSubmit', 'PreToolUse', 'PostToolUse', 'Notification', 'Stop', 'SubagentStop', 'SessionEnd', 'PreCompact']) {
+  const events = ['SessionStart', 'UserPromptSubmit', 'PreToolUse', 'PostToolUse', 'Notification', 'Stop', 'SubagentStop', 'PreCompact'];
+  assert.deepEqual(Object.keys(first.hooks).sort(), [...events].sort(), 'only the events the office acts on');
+  for (const event of events) {
     const office = first.hooks[event]?.find((e) => !e.matcher);
     assert.match(office?.hooks[0].command ?? '', new RegExp(`event=${event}&v=${HOOK_VERSION}`), event);
   }
@@ -2872,10 +2874,12 @@ test('a hook prints what the office answers, and keeps what it cannot deliver in
   const command: string = settings.hooks.Stop[0].hooks[0].command;
   const seen: string[] = [];
   let status = 200;
+  let slow = false;
   const server = http.createServer((req, res) => {
     seen.push(req.url ?? '');
     req.resume();
     req.on('end', () => {
+      if (slow) return;
       res.writeHead(status);
       res.end(status === 200 ? '{"decision":"block","reason":"Droid Office notice"}' : '{}');
     });
@@ -2899,6 +2903,28 @@ test('a hook prints what the office answers, and keeps what it cannot deliver in
   assert.match(seen[0], /worker=w1&event=Stop&v=2/);
   assert.deepEqual(rows(), [], 'delivered: nothing spooled');
 
+  // Its Node half prints the answer only for a command that says so: one from before HOOK_VERSION throws it away.
+  const script = path.join(f.data, 'hook.cjs');
+  assert.equal((await runHook(process.execPath, body, env, [script, 'Stop', 'reply'])).stdout, '{"decision":"block","reason":"Droid Office notice"}');
+  assert.match(seen.at(-1)!, /event=Stop&v=2/);
+  await runHook(process.execPath, body, env, [script, 'Stop']);
+  assert.match(seen.at(-1)!, /event=Stop&v=0/, 'a legacy command is answered as one');
+
+  // The office took it but answered too late: it isn't spooled to be replayed a second time.
+  slow = true;
+  const late = await Promise.all([runHook(command, body, env), runHook(process.execPath, body, env, [script, 'Stop', 'reply'])]);
+  slow = false;
+  assert.deepEqual(
+    late.map((r) => [r.code, r.stdout]),
+    [
+      [0, ''],
+      [0, ''],
+    ],
+  );
+  assert.equal(seen.length, 5);
+  assert.deepEqual(rows(), [], 'taken late: nothing spooled');
+  server.closeAllConnections();
+
   // Refused (a worker the office doesn't know), then unreachable: kept, in order, and nothing printed.
   status = 401;
   assert.equal((await runHook(command, body, env)).stdout, '');
@@ -2916,7 +2942,6 @@ test('a hook prints what the office answers, and keeps what it cannot deliver in
   assert.equal(statSync(spool).mode & 0o777, 0o600);
 
   // At the cap, the oldest go first.
-  const script = path.join(f.data, 'hook.cjs');
   const big = JSON.stringify({ hook_event_name: 'PostToolUse', session_id: 'big', pad: 'x'.repeat(200 * 1024) });
   for (let i = 0; i < 3; i++) await runHook(process.execPath, big, env, [script, 'PostToolUse', 'spool']);
   const kept = rows();
@@ -2956,10 +2981,11 @@ test('hooks spooled while the office was down are replayed in order when it pick
   assert.equal(after.get(worker.id)?.activity, 'Approve high-risk command: rm -rf build');
   assert.equal(existsSync(path.join(dir, `${worker.id}.jsonl`)), false, 'replayed once');
 
-  // A live hook came in before a slow one that spooled: the older one is stale.
-  assert.equal(after.handleHook(worker.id, token, 'PostToolUse', { session_id: 'spooled', hook_event_name: 'PostToolUse', tool_name: 'Execute' }), true);
+  // A Stop spooled while the office was coming up, then a live hook: the Stop is older, and stale.
+  const refusedAt = Date.now() - 1;
+  assert.equal(after.hookReply(worker.id, token, 'PostToolUse', { session_id: 'spooled', hook_event_name: 'PostToolUse', tool_name: 'Execute' }) !== undefined, true);
   assert.equal(after.get(worker.id)?.status, 'working');
-  writeFileSync(path.join(dir, `${worker.id}.jsonl`), [row('Stop', now + 3), row('PreToolUse', Date.now() + 1000, { tool_name: 'Read', tool_input: { file_path: 'b.ts' } })].join('\n'));
+  writeFileSync(path.join(dir, `${worker.id}.jsonl`), [row('Stop', refusedAt), row('PreToolUse', Date.now() + 1000, { tool_name: 'Read', tool_input: { file_path: 'b.ts' } })].join('\n'));
   after.replaySpools();
   assert.equal(after.get(worker.id)?.activity, 'Read: b.ts');
   t.mock.timers.enable({ apis: ['Date'], now: Date.now() + 10 * STOP_GRACE_MS });
@@ -2967,6 +2993,23 @@ test('hooks spooled while the office was down are replayed in order when it pick
   assert.equal(after.get(worker.id)?.status, 'working', 'the stale Stop was skipped');
 });
 
+test('notices promised to a working droid outlive an office restart that keeps its terminal', async (t) => {
+  const f = carryOnFixture(t);
+  const before = manager(f, []);
+  await before.start();
+  const worker = await hireInState(f, before, 'desk-1', 'kept', 'working');
+  const token = launchesOf(f).at(-1)!.env.hookToken!;
+  const live = (workers: WorkerManager, event: string, extra: Record<string, unknown> = {}) => workers.hookReply(worker.id, token, event, { session_id: 'kept', hook_event_name: event, ...extra }, HOOK_VERSION);
+  live(before, 'PreToolUse', { tool_name: 'Read', tool_input: { file_path: 'a.ts' } });
+  assert.equal(before.notice(worker.id, 'Droid Office notice: from Ada'), true);
+  before.shutdown(true);
+
+  const after = manager(f, []);
+  t.after(() => after.shutdown());
+  await after.start();
+  assert.equal(after.get(worker.id)?.status, 'working');
+  assert.deepEqual(JSON.parse(live(after, 'PostToolUse', { tool_name: 'Read' })!), { hookSpecificOutput: { hookEventName: 'PostToolUse', additionalContext: 'Droid Office notice: from Ada' } });
+});
 test('office notices reach a working droid with its next tool call or as its Stop is blocked, once', async (t) => {
   const { workers, worker, status, token, f } = await liveWorker(t, 'noticed');
   const reply = (event: string, extra: Record<string, unknown> = {}, version = HOOK_VERSION) => workers.hookReply(worker.id, token, event, { session_id: 'noticed', hook_event_name: event, ...extra }, version);
@@ -3061,7 +3104,7 @@ test("a tool call that changed the worker's files, branch or pull requests says 
   t.after(() => workers.shutdown());
   const worker = await hireInState(f, workers, 'desk-1', 'tools', 'working');
   const token = launchesOf(f).at(-1)!.env.hookToken!;
-  const post = (tool_name: string, tool_input: Record<string, unknown>) => workers.handleHook(worker.id, token, 'PostToolUse', { session_id: 'tools', hook_event_name: 'PostToolUse', tool_name, tool_input });
+  const post = (tool_name: string, tool_input: Record<string, unknown>) => workers.hookReply(worker.id, token, 'PostToolUse', { session_id: 'tools', hook_event_name: 'PostToolUse', tool_name, tool_input }) !== undefined;
   post('Read', { file_path: 'a.ts' });
   post('Edit', { file_path: 'a.ts' });
   post('Execute', { command: 'git push -u origin HEAD' });
