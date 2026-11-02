@@ -23,7 +23,7 @@ export interface OfficeMcpFloor {
   name: string;
   dir: string;
   workers: Pick<WorkerManager, 'authenticate' | 'get' | 'list'>;
-  team: Pick<Team, 'handle' | 'cannotHire'>;
+  team: Pick<Team, 'handle' | 'cannotHire' | 'hasNews'>;
   visits: Pick<Visits, 'handle' | 'cannotVisit'>;
   whiteboard: WhiteboardStore;
 }
@@ -49,7 +49,7 @@ export const officeAccess = {
   mayHire: ((c) => c.floor.team.cannotHire(c.worker)) satisfies OfficeMcpAccess,
   team: ((c) => {
     if (c.worker.lead) return 'Subagents report to their lead with team_report; they cannot manage a team.';
-    return c.floor.workers.list().some((w) => w.lead === c.worker.id) ? undefined : c.floor.team.cannotHire(c.worker);
+    return c.floor.workers.list().some((w) => w.lead === c.worker.id) || c.floor.team.hasNews(c.worker.id) ? undefined : c.floor.team.cannotHire(c.worker);
   }) satisfies OfficeMcpAccess,
   subagent: ((c) => (c.worker.lead ? undefined : 'Only a subagent reports to a lead. Independent workers answer the owner in their terminal.')) satisfies OfficeMcpAccess,
   visits: ((c) => c.floor.visits.cannotVisit(c.worker)) satisfies OfficeMcpAccess,

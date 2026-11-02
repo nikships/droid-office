@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { accessSync, constants, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -865,7 +865,7 @@ test('an office-queue command an older office left behind is cleared away, and n
   t.after(() => workers.shutdown());
   assert.equal(existsSync(path.join(bin, 'office-queue')), false);
   assert.equal(existsSync(path.join(bin, 'office-queue.cmd')), false);
-  accessSync(path.join(bin, 'team', 'office-workers'), constants.X_OK);
+  assert.equal(existsSync(path.join(bin, 'team', 'office-workers')), false);
 
   const hired = workers.station('station-actions', 'Ada', 'Kick off the release workflow');
   assert.equal(typeof hired, 'object');
@@ -2249,16 +2249,14 @@ test('a worker restored from before subscriptions keeps its names, maps its last
   );
 });
 
-test('a subagent sits down told who hired it and where it works; every agent gets office-workers, and its lead goes on record', async (t) => {
+test('a subagent sits down told who hired it and where it works; its lead goes on record without an office-workers command', async (t) => {
   const f = carryOnFixture(t);
   const workers = manager(f, [], []);
   t.after(() => workers.shutdown());
   const bin = path.join(f.data, 'bin', 'team');
   const launches = (id: string) => launchesOf(f).filter((r) => r.env.workerId === id);
 
-  // The command is there, and runs the shipped script with the office's own node.
-  accessSync(path.join(bin, 'office-workers'), constants.X_OK);
-  assert.match(execFileSync(path.join(bin, 'office-workers'), ['--help'], { encoding: 'utf8' }), /office-workers hire --title/);
+  assert.equal(existsSync(path.join(bin, 'office-workers')), false, 'team tools replace the legacy command');
 
   const lead = workers.spawn('desk-1', 'Ada', 'Ship the login fix');
   assert.ok(typeof lead === 'object');
@@ -2289,7 +2287,7 @@ test('a subagent sits down told who hired it and where it works; every agent get
   assert.match(brief, /the project's main checkout/);
   assert.match(brief, /office-workers report <<'EOF'/);
   assert.ok(brief.endsWith(`## Task from ${lead.name}\n\`\`\`text\nFix the redirect\n\`\`\``));
-  for (const r of [leadLaunch, subLaunch]) assert.ok((r.env.path ?? '').split(path.delimiter).includes(bin), 'office-workers is on every agent’s PATH');
+  for (const r of [leadLaunch, subLaunch]) assert.ok((r.env.path ?? '').split(path.delimiter).includes(bin), 'remaining office commands stay on the agent PATH during migration');
   assert.equal((leadLaunch.env.path ?? '').split(path.delimiter).includes(path.join(f.data, 'bin')), false, 'nothing else is put in the data directory’s bin');
 
   // What its lead reads of it: the end of its terminal, as text (the brief typed into it, echoed).
