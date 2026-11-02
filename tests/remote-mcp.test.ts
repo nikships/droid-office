@@ -10,8 +10,10 @@ import path from 'node:path';
 import { Client, StreamableHTTPClientTransport } from '@modelcontextprotocol/client';
 import { RemoteWorkers } from '../src/server/remote-workers.js';
 import { RemoteOffice, type RemoteFloor } from '../src/server/remote-office.js';
-import { remoteMcpListener, RemoteMcpAdmin, REMOTE_ADMIN_TOKEN } from '../src/server/remote-mcp-http.js';
+import { REMOTE_MCP_FILE, RemoteMcp, remoteMcpListener } from '../src/server/remote-mcp-http.js';
 import { createOfficeMcp, tailnetIdentity } from '../src/server/office-mcp/index.js';
+import { planServe, serveFailure, TailscaleCli, type CliRun } from '../src/server/tailscale.js';
+import { remoteMcpConfig } from '../src/shared/remote-mcp.js';
 import { Team, type TeamWorkers } from '../src/server/team.js';
 import { Visits } from '../src/server/visits.js';
 import { WhiteboardStore } from '../src/server/whiteboard.js';
@@ -156,7 +158,8 @@ test('remote credentials and explicit inbox acknowledgments persist, rotate and 
   const restarted = new RemoteWorkers(dir);
   assert.deepEqual(restarted.inbox(worker.id), first);
   assert.equal(statSync(path.join(dir, 'remote-workers.json')).mode & 0o777, 0o600);
-  assert.ok(!readFileSync(path.join(dir, 'remote-workers.json'), 'utf8').includes(token));
+  assert.equal(restarted.token(worker.id), token, 'Settings can show a bot its connection again');
+  assert.ok(!JSON.stringify(restarted.list()).includes(token));
   const newToken = restarted.rotate(worker.id);
   assert.equal(restarted.authenticate(worker.id, token), false);
   assert.equal(restarted.authenticate(worker.id, newToken), true);
@@ -226,12 +229,14 @@ test('visit questions and answers route to the remote inbox after its desk moves
 test('real MCP transport enforces host, tailnet identity, remote bearer auth, revocation, and route isolation', async (t) => {
   const r = rig(t);
   const hostname = 'office.example.ts.net';
-  const server = remoteMcpListener({ remote: r.office, remoteTransport: { hostname }, floor: r.floor, settings: () => r.settings });
+  const owner = 'owner@example.com';
+  const server = remoteMcpListener({ remote: r.office, remoteTransport: { hostname: () => hostname, owner: () => owner }, floor: r.floor, settings: () => r.settings });
   const origin = await listening(t, server);
   const url = new URL('/office/mcp', origin);
-  const headers = { host: hostname, 'tailscale-user-login': 'test-user', Authorization: `Bearer ${r.remote.token}`, 'x-droid-office-worker-id': r.remote.worker.id };
+  const headers = { host: `${hostname}:8443`, 'tailscale-user-login': owner, Authorization: `Bearer ${r.remote.token}`, 'x-droid-office-worker-id': r.remote.worker.id };
   assert.equal((await proxyFetch(url, { method: 'POST', headers: { ...headers, host: 'evil.example' }, body: '{}' })).status, 403);
-  assert.equal((await proxyFetch(url, { method: 'POST', headers: { ...headers, 'tailscale-user-login': '' }, body: '{}' })).status, 403);
+  assert.equal((await proxyFetch(url, { method: 'POST', headers: { ...headers, 'tailscale-user-login': 'friend@example.com' }, body: '{}' })).status, 403, 'a shared-in user is not one of the owner’s devices');
+  assert.equal((await proxyFetch(url, { method: 'POST', headers: { ...headers, 'tailscale-funnel-request': '?1' }, body: '{}' })).status, 403, 'Funnel traffic is public');
   assert.equal((await proxyFetch(url, { method: 'POST', headers: { ...headers, Origin: `https://${hostname}` }, body: '{}' })).status, 403);
   assert.equal((await proxyFetch(url, { method: 'POST', headers: { ...headers, Authorization: 'Bearer wrong' }, body: '{}' })).status, 401);
   for (const route of ['/hooks/droid', '/api/finder/dispatch', '/office/remote-workers', '/']) assert.equal((await fetch(new URL(route, origin), { headers })).status, 404);
@@ -250,11 +255,13 @@ test('real MCP transport enforces host, tailnet identity, remote bearer auth, re
   r.settings.officeMcp = true;
   r.store.rotate(r.remote.worker.id);
   await assert.rejects(client.listTools(), /Active remote worker/);
-  assert.equal(tailnetIdentity(new Headers({ 'tailscale-app-capabilities': '{"droid-office/remote-worker":[{}]}' })), true);
-  assert.equal(tailnetIdentity(new Headers({ 'tailscale-app-capabilities': '{"other":[{}]}' })), false);
+  assert.equal(tailnetIdentity(new Headers(), owner), true, 'a tagged device of the tailnet carries no login');
+  assert.equal(tailnetIdentity(new Headers({ 'tailscale-user-login': 'OWNER@example.com' }), owner), true);
+  assert.equal(tailnetIdentity(new Headers({ 'tailscale-user-login': 'friend@example.com' }), owner), false);
+  assert.equal(tailnetIdentity(new Headers({ 'tailscale-funnel-request': '?1' }), owner), false);
 });
 
-test('remote tokens never authenticate on the local hook MCP, and provisioning requires its separate owner secret', async (t) => {
+test('remote tokens never authenticate on the local hook MCP', async (t) => {
   const r = rig(t);
   const local = createOfficeMcp({ floor: r.floor, settings: () => r.settings });
   const origin = await listening(
@@ -263,18 +270,114 @@ test('remote tokens never authenticate on the local hook MCP, and provisioning r
   );
   const response = await fetch(`${origin}/office/mcp`, { method: 'POST', headers: { Authorization: `Bearer ${r.remote.token}`, 'x-droid-office-worker-id': r.remote.worker.id }, body: '{}' });
   assert.equal(response.status, 401);
-  const admin = new RemoteMcpAdmin(r.dir, r.office, 'office.example.ts.net', 4611);
-  const adminOrigin = await listening(
-    t,
-    createServer((req, res) => void admin.handle(req, res)),
-  );
-  const secret = readFileSync(path.join(r.dir, REMOTE_ADMIN_TOKEN), 'utf8');
-  assert.equal((await fetch(adminOrigin)).status, 403);
-  assert.equal((await fetch(adminOrigin, { headers: { Authorization: `Bearer ${r.remote.token}` } })).status, 403);
-  assert.equal((await fetch(adminOrigin, { headers: { Authorization: `Bearer ${secret}`, Origin: 'http://evil.example' } })).status, 403);
-  assert.equal((await fetch(adminOrigin, { headers: { Authorization: `Bearer ${secret}` } })).status, 200);
 });
 
+// Trimmed from this Mac's real `tailscale status --json` and `tailscale serve status --json`, the address and login replaced.
+const DNS = 'office-mac.tail08b849.ts.net';
+const STATUS = {
+  BackendState: 'Running',
+  Self: { DNSName: `${DNS}.`, TailscaleIPs: ['100.101.102.103', 'fd7a:115c:a1e0::1'], UserID: 4463762094514452 },
+  User: { '4463762094514452': { ID: 4463762094514452, LoginName: 'owner@example.com', DisplayName: 'Office Owner' } },
+  CurrentTailnet: { Name: 'owner@example.com', MagicDNSSuffix: 'tail08b849.ts.net', MagicDNSEnabled: true },
+};
+const SKEW = 'Warning: client version "1.104.2-te26db7a57" != tailscaled server version "1.104.4-t938213198-gd38c96d6a"\n';
+const servedAt = (port: number, proxy: string) => ({ TCP: { [port]: { HTTPS: true } }, Web: { [`${DNS}:${port}`]: { Handlers: { '/': { Proxy: proxy } } } } });
+
+/** tailscaled's Serve config behind a fake CLI that answers the way the real one does. */
+function fakeTailscale(start: { TCP?: Record<string, unknown>; Web?: Record<string, unknown> } = {}, up = true) {
+  const state = { serve: { TCP: { ...start.TCP }, Web: { ...start.Web } } as { TCP: Record<string, unknown>; Web: Record<string, unknown> }, up, calls: [] as string[][] };
+  const run: CliRun = async (_bin, args) => {
+    state.calls.push(args);
+    if (!state.up) return { ok: false, stdout: '', stderr: 'failed to connect to local tailscaled; it doesn’t appear to be running\n' };
+    if (args[0] === 'status') return { ok: true, stdout: JSON.stringify(STATUS), stderr: SKEW };
+    if (args[0] === 'serve' && args[1] === 'status') return { ok: true, stdout: Object.keys(state.serve.TCP).length ? JSON.stringify(state.serve, null, 2) : '{}\n', stderr: SKEW };
+    const port = Number(args.find((a) => a.startsWith('--https='))?.slice('--https='.length));
+    if (args.at(-1) === 'off') {
+      delete state.serve.TCP[port];
+      delete state.serve.Web[`${DNS}:${port}`];
+    } else {
+      const next = servedAt(port, args.at(-1)!);
+      Object.assign(state.serve.TCP, next.TCP);
+      Object.assign(state.serve.Web, next.Web);
+    }
+    return { ok: true, stdout: '', stderr: SKEW };
+  };
+  return { ...state, state, cli: () => new TailscaleCli(['tailscale'], run) };
+}
+
+test('Serve ports: the office reuses its own mapping, reclaims its old one and never takes another service’s', () => {
+  const other = { port: 8443, proxy: 'http://127.0.0.1:3000', funnel: false };
+  assert.deepEqual(planServe([other], 'http://127.0.0.1:4611'), { port: 8444, existing: false });
+  assert.deepEqual(planServe([other, { port: 8444, proxy: 'http://127.0.0.1:4611', funnel: false }], 'http://127.0.0.1:4611'), { port: 8444, existing: true });
+  assert.deepEqual(planServe([{ port: 8445, proxy: 'http://127.0.0.1:5000', funnel: false }], 'http://127.0.0.1:4611', 8445, 'http://127.0.0.1:5000'), { port: 8445, existing: false });
+  assert.deepEqual(planServe([{ port: 8445, proxy: 'http://127.0.0.1:5000', funnel: false }], 'http://127.0.0.1:4611', 8445, 'http://127.0.0.1:6000'), { port: 8443, existing: false });
+  assert.deepEqual(serveFailure(`${SKEW}error: cannot serve web; already serving TCP\n`), { message: 'error: cannot serve web; already serving TCP' });
+});
+
+test('the office serves external workers on its tailnet by itself, keeps the URL across restarts and unserves only its own mapping', async (t) => {
+  const r = rig(t);
+  const ts = fakeTailscale(servedAt(8443, 'http://127.0.0.1:3000'));
+  const opts = { dataDir: r.dir, office: r.office, mcp: { floor: r.floor, settings: () => r.settings }, floors: () => r.floors.map((f) => ({ id: f.id, name: f.def.name })), backendPort: 0, log() {} };
+  const first = new RemoteMcp({ ...opts, cli: ts.cli() });
+  t.after(() => first.stop());
+  const on = await first.start();
+  assert.equal(on.on, true, 'on by default');
+  assert.equal(on.status, 'serving');
+  assert.equal(on.url, `https://${DNS}:8444/office/mcp`, 'another service keeps 8443');
+  assert.equal(ts.state.calls.filter((c) => c[1] === '--bg').length, 1);
+  const bot = on.bots.find((b) => b.id === r.remote.worker.id)!;
+  assert.deepEqual(bot.connection, { url: on.url, headers: { Authorization: `Bearer ${r.remote.token}`, 'x-droid-office-worker-id': r.remote.worker.id } });
+  assert.match(remoteMcpConfig(bot.connection!), /"type": "http"/);
+
+  // What a bot on the owner's laptop sends through Serve reaches the office's tools.
+  const backend = (ts.state.serve.Web[`${DNS}:8444`] as { Handlers: { '/': { Proxy: string } } }).Handlers['/'].Proxy;
+  const client = new Client({ name: 'bot', version: '1' });
+  t.after(() => client.close());
+  const headers = { ...bot.connection!.headers, host: `${DNS}:8444`, 'tailscale-user-login': 'owner@example.com' };
+  await client.connect(new StreamableHTTPClientTransport(new URL('/office/mcp', backend), { fetch: proxyFetch, requestInit: { headers } }));
+  assert.ok((await client.listTools()).tools.some((tool) => tool.name === 'office_inbox'));
+
+  const added = first.add('Claw', 'beta');
+  const claw = added.bots.find((b) => b.name === 'Claw')!;
+  assert.equal(claw.floorName, 'beta');
+  const rotated = first.rotate(claw.id).bots.find((b) => b.id === claw.id)!;
+  assert.notEqual(rotated.connection!.headers.Authorization, claw.connection!.headers.Authorization);
+  assert.equal(
+    first.revoke(claw.id).bots.some((b) => b.id === claw.id),
+    false,
+  );
+  first.stop();
+
+  const again = new RemoteMcp({ ...opts, cli: ts.cli() });
+  t.after(() => again.stop());
+  assert.equal((await again.start()).url, on.url, 'same URL after a restart');
+  assert.equal(ts.state.calls.filter((c) => c[1] === '--bg').length, 1, 'the mapping tailscaled kept is reused');
+
+  const off = await again.set(false);
+  assert.equal(off.status, 'off');
+  assert.equal(off.url, undefined);
+  assert.deepEqual(Object.keys(ts.state.serve.TCP), ['8443'], 'the other service is untouched');
+  assert.equal(JSON.parse(readFileSync(path.join(r.dir, REMOTE_MCP_FILE), 'utf8')).on, false);
+  const stillOff = new RemoteMcp({ ...opts, cli: ts.cli() });
+  assert.equal((await stillOff.start()).status, 'off');
+  assert.equal((await stillOff.set(true)).url, on.url, 'turned back on, at the same address');
+  stillOff.stop();
+});
+
+test('without Tailscale the office still opens, says why, and serves once Tailscale is up', async (t) => {
+  const r = rig(t);
+  const ts = fakeTailscale({}, false);
+  const service = new RemoteMcp({ dataDir: r.dir, office: r.office, mcp: { floor: r.floor, settings: () => r.settings }, floors: () => [], cli: ts.cli(), backendPort: 0, log() {} });
+  t.after(() => service.stop());
+  const down = await service.start();
+  assert.equal(down.status, 'unavailable');
+  assert.match(down.reason!, /Tailscale isn’t running/);
+  assert.equal(down.bots[0].connection, undefined);
+  ts.state.up = true;
+  const up = await service.refresh();
+  assert.equal(up.status, 'serving');
+  assert.equal(up.url, `https://${DNS}:8443/office/mcp`);
+});
 test('real worker managers restore remote seats and off-floor leads without launching a terminal', (t) => {
   const dir = mkdtempSync(path.join(os.tmpdir(), 'remote-manager-'));
   const store = new RemoteWorkers(dir);

@@ -4,6 +4,58 @@ An external bot, including an OpenClaw agent, can join the office as an independ
 worker with its own identity and desk. It uses stateless Streamable HTTP MCP.
 It does not launch a local Droid or invent a local terminal.
 
+## Turn it on and connect a bot
+
+It is on by default. Open ⚙️ Settings → **Phone & web** → **Tailscale MCP**:
+
+- The switch turns the endpoint on or off. On, the office serves it on your tailnet
+  by itself; off, it removes its Tailscale Serve mapping and closes the listener.
+- The **URL** is the MCP server address, `https://<this Mac's MagicDNS name>:8443/office/mcp`
+  (another port when something else already serves 8443). It stays the same across restarts.
+- **Add bot** gives a bot a name and a desk on the floor you pick. Open the bot's row to
+  see its connection and **Copy config**: an `mcpServers` entry with the URL and the two
+  headers the bot sends, `Authorization: Bearer <its key>` and
+  `x-droid-office-worker-id: <its worker id>`. **Copy key** copies the key alone.
+- **New key** replaces a bot's key; the old one stops working at once. **Remove** revokes
+  the key and frees its desk; any subagents it hired become independent.
+
+The bot's MCP client must support Streamable HTTP and custom request headers. It needs no
+session id and no push integration.
+
+Settings manages this only in the office on its own computer: the panel holds every bot's key,
+so a paired phone or another browser is refused.
+
+## What only your devices can reach
+
+The office runs `tailscale serve --bg --https=<port> http://127.0.0.1:<port>` itself, the first
+time and whenever Tailscale comes back. That is [Tailscale Serve](https://tailscale.com/kb/1312/serve):
+HTTPS on your tailnet only, never the public internet. The office never turns on Funnel, and refuses
+any request that comes through Funnel (Serve marks those) if someone does.
+
+Serve replaces the identity headers on every request. The office accepts a request only when it comes
+from a device signed in as the same Tailscale user as this Mac, or from a tagged device of your tailnet,
+which carries no user. A user you shared this Mac with has their own login and is refused. Every request
+also needs a bot's key.
+
+The listener binds **only** to `127.0.0.1` (port 4611 unless that's taken) and serves **only**
+`/office/mcp`. It is separate from the main office server and the hook listener, and Browser Origins
+and other Host names are refused. Never put another network-accessible proxy in front of it.
+
+The office leaves other Serve mappings alone: it picks a port nothing serves (8443, then 8444 up to 8449,
+then 10443) and only removes a mapping that points at its own listener.
+
+## When it can't serve
+
+The row says why, and the office keeps trying every 30 seconds:
+
+- **Tailscale isn't running, or MagicDNS is off.** It turns on by itself once Tailscale is up.
+- **Serve or HTTPS certificates aren't enabled for the tailnet.** Tailscale prints an admin link,
+  which the row shows as **Open Tailscale**. After you enable it there, the endpoint comes up.
+- Turning off **Office MCP** in Settings → Subagents & visits refuses every bot as well as local workers.
+
+`DROID_OFFICE_REMOTE_MCP=off` in the environment that starts the office keeps it from touching
+Tailscale at all; Settings then says so. CI and office clones run that way.
+
 ## What the bot can do
 
 - See open floors with `office_floors` and choose its active workspace with
@@ -29,93 +81,15 @@ MCP inbox. Worker messages are not owner instructions.
 
 The desk is visible in 3D, the web companion, and Android. Opening it explains
 that it runs externally, rather than showing a broken terminal. The office
-cannot stop its external process. Sending the worker home revokes its
-credential and releases its desk; any remaining subagents become independent.
-
-## Enable the endpoint
-
-Remote MCP is off by default. Start the office with
-`--remote-mcp-port 4611`, or set `DROID_OFFICE_REMOTE_MCP_PORT=4611` in the
-environment that starts it. The Mac app must run a release containing this
-feature; do not modify an installed signed app bundle.
-
-The office checks its local Tailscale connection for its MagicDNS hostname.
-The new listener binds **only** to `127.0.0.1:4611`, and serves **only**
-`/office/mcp`. It is separate from both the main office server and the hook
-listener.
-
-Check existing Serve configuration before adding a dedicated HTTPS port:
-
-```bash
-tailscale serve status --json
-tailscale serve --bg --yes --https=8443 http://127.0.0.1:4611
-```
-
-Do not overwrite a port already used by another service. Do not use Funnel.
-Never forward the hook port or the main office port. Disable this mapping with:
-
-```bash
-tailscale serve --https=8443 off
-```
-
-[Tailscale Serve](https://tailscale.com/kb/1312/serve) provides tailnet-only HTTPS;
-tailnet access rules apply. The backend additionally requires the identity
-headers that Serve strips from incoming requests and supplies itself. Browser
-Origins and unrecognized Host headers are refused. Funnel supplies no tailnet
-identity, so public Funnel requests are refused even with a worker credential.
-The loopback host is a trusted boundary: do not put another network-accessible
-proxy in front of this listener or trust client-supplied forwarding headers.
-
-**Tagged devices:** Serve does not send user identity headers for tagged nodes.
-Grant the bot node the Tailscale application capability
-`droid-office/remote-worker` with at least one capability value in your tailnet
-policy, and add `--accept-app-caps=droid-office/remote-worker` to the Serve
-command. The backend accepts that specific capability as the tailnet proof.
-A bearer worker credential is still required in either case.
-
-## Give the bot its own credential
-
-Provisioning runs locally as the owner, not through remote MCP. The CLI uses a
-separate local admin credential. Replace the office folder below with the one
-your app uses:
-
-```bash
-node bin/droid-office.js remote list --home /path/to/office
-node bin/droid-office.js remote add Grok home --home /path/to/office --out /absolute/path/grok-office.json
-```
-
-Use a floor id returned by `list`, not necessarily `home`. The output file must
-not exist. It is written with mode `0600` and holds the connection URL and
-headers. Credentials are not printed. Supply those fields to the bot's MCP
-client:
-
-- URL: `https://<office-magicdns-name>:8443/office/mcp`
-- `Authorization: Bearer <worker credential>`
-- `x-droid-office-worker-id: <worker id>`
-
-This is a generic HTTP MCP connection, not a claim about a particular
-OpenClaw plugin's configuration format. The client must support Streamable HTTP
-and custom request headers. It needs no `x-droid-office-url` header, no
-`mcp-session-id`, and no separate push integration.
-
-Rotate or revoke locally:
-
-```bash
-node bin/droid-office.js remote rotate <worker-id> --home /path/to/office --out /absolute/path/new-connection.json
-node bin/droid-office.js remote revoke <worker-id> --home /path/to/office
-```
-
-Rotation immediately rejects the old credential without changing the worker's
-desk, teams, or inbox. Turning off Office MCP in Settings rejects every remote
-protocol request as well as local workers' requests.
+cannot stop its external process. Sending the worker home works like **Remove**.
 
 ## Persistence and limits
 
-The office's `.droid-office/remote-workers.json` stores credential hashes,
-identities, the one authoritative floor/desk per identity, and queued messages.
-Atomic replacement preserves a single seat across a crash during a floor move.
-It never stores the plaintext worker credential. The local provisioning secret
-is separate and changes on server restart.
+The office's `.droid-office/remote-mcp.json` keeps whether the endpoint is on and the ports it last
+used. `.droid-office/remote-workers.json` (mode `0600`) stores each bot's identity, key, the one
+authoritative floor and desk, and queued messages. Atomic replacement preserves a single seat across
+a crash during a floor move. Tailscale keeps the Serve mapping itself, across restarts of the office
+and of the Mac.
 
 Message reads are repeatable until acknowledged. Each remote inbox holds 500
 messages; a full inbox refuses another delivery rather than silently replacing
@@ -132,4 +106,4 @@ after restart. Send a new visit message instead.
 All `cwd` values and Whiteboard file paths refer to the **office machine**, not
 the bot's host. Inline HTML can be supplied directly. Full worker permissions
 include hiring agents that run on the owner's machine and reading local files
-through the existing Whiteboard tools. Give credentials only to a trusted bot.
+through the existing Whiteboard tools. Give keys only to a trusted bot.

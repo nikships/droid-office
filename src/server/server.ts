@@ -10,7 +10,7 @@ import type { Config } from './config.js';
 import type { AddressInfo } from 'node:net';
 import { bearerToken, isLoopback, lanAllowed, loopbackHost, lanIPv4s, mintLanToken, tailscaleIPv4s } from './lan.js';
 import { DevicesStore, machineName, pairingAddresses } from './devices.js';
-import { TailscaleWatch, tailscaleSelf } from './tailscale.js';
+import { TailscaleWatch } from './tailscale.js';
 import { WebCompanion } from './web-companion.js';
 import { COMPANION_OFF, pairingLink, type PairedDevice, type PairingState } from '../shared/devices.js';
 import { MAX_REPOS, childEnv, resolveAgent, type RepoSource } from './workers.js';
@@ -68,7 +68,8 @@ import { labelSettings, WorkerLabelPreferences } from './worker-label-settings.j
 import { FinderDispatch, finderCatalogue, handleFinder, publishFinder } from './finder.js';
 import { RemoteWorkers } from './remote-workers.js';
 import { RemoteOffice } from './remote-office.js';
-import { RemoteMcpAdmin, REMOTE_ADMIN_PATH, remoteMcpListener } from './remote-mcp-http.js';
+import { RemoteMcp } from './remote-mcp-http.js';
+import type { RemoteMcpState } from '../shared/remote-mcp.js';
 
 const MIME: Record<string, string> = {
   '.html': 'text/html; charset=utf-8',
@@ -266,8 +267,7 @@ export async function startServer(cfg: Config) {
   const floors = new Map<string, Floor>();
   const remoteWorkers = new RemoteWorkers(cfg.dataDir);
   const remoteOffice = new RemoteOffice(remoteWorkers, () => [...floors.values()]);
-  let remoteAdmin: RemoteMcpAdmin | undefined;
-  let remoteServer: http.Server | undefined;
+  let remoteMcp: RemoteMcp | undefined;
   const floorOf = (c: Client): Floor | undefined => (c.floor ? floors.get(c.floor) : undefined);
   /** The floor a worker sits on. Worker ids are unique across the building. */
   const workerFloor = (workerId: string): Floor | undefined => {
@@ -324,10 +324,6 @@ export async function startServer(cfg: Config) {
       return send(res, 400, {});
     }
     if (url.pathname.startsWith('/api/finder/')) return handleFinder(req, res, url.pathname, finderToken, finder, finderModels);
-    if (url.pathname === REMOTE_ADMIN_PATH) {
-      if (!remoteAdmin) return send(res, 503, { error: 'Remote MCP is disabled; enable --remote-mcp-port first' });
-      return remoteAdmin.handle(req, res);
-    }
     if (url.pathname === OFFICE_MCP_PATH) {
       if (!officeMcp) return send(res, 503, { error: 'Office MCP is starting' });
       return officeMcp.handle(req, res);
@@ -606,27 +602,21 @@ export async function startServer(cfg: Config) {
   );
   // Workers still running from the last office are back at their desks before anyone walks in.
   await Promise.all([...floors.values()].map((f) => f.ready));
-  if (cfg.remoteMcpPort) {
-    const self = await tailscaleSelf();
-    if (!self?.dnsName) throw new Error('Remote MCP requires a running Tailscale connection with MagicDNS and Serve HTTPS');
-    remoteServer = remoteMcpListener({
-      remote: remoteOffice,
-      remoteTransport: { hostname: self.dnsName },
-      settings: () => subagents.settings,
-      floor: (id) => {
-        const f = remoteOffice.floor(id);
-        return f ? { id: f.id, name: f.def.name, dir: f.dir, workers: f.workers, team: f.team, visits: f.visits, whiteboard: f.whiteboard } : undefined;
+  if (cfg.remoteMcp) {
+    remoteMcp = new RemoteMcp({
+      dataDir: cfg.dataDir,
+      office: remoteOffice,
+      floors: () => [...floors.values()].map((f) => ({ id: f.id, name: f.def.name })),
+      mcp: {
+        settings: () => subagents.settings,
+        floor: (id) => {
+          const f = remoteOffice.floor(id);
+          return f ? { id: f.id, name: f.def.name, dir: f.dir, workers: f.workers, team: f.team, visits: f.visits, whiteboard: f.whiteboard } : undefined;
+        },
       },
     });
-    const listener = remoteServer;
-    await new Promise<void>((resolve, reject) => {
-      listener.once('error', reject);
-      listener.listen(cfg.remoteMcpPort, '127.0.0.1', () => {
-        listener.off('error', reject);
-        resolve();
-      });
-    });
-    remoteAdmin = new RemoteMcpAdmin(cfg.dataDir, remoteOffice, self.dnsName, cfg.remoteMcpPort);
+    // Tailscale may be slow or missing: the office opens without waiting, and Settings shows how it went.
+    void remoteMcp.start();
   }
 
   /** Everything on a floor, for whoever just arrived there. */
@@ -1046,6 +1036,31 @@ export async function startServer(cfg: Config) {
           return forgetDevice(p.slice('/api/mobile/devices/'.length)) ? send(res, 200, await pairingState()) : send(res, 404, { error: 'No such phone' });
         }
         return send(res, 405, { error: 'Method not allowed' });
+      }
+      // External workers' MCP on the tailnet. Its state holds every bot's credential, so only the office's own page.
+      if (p === '/api/remote-mcp') {
+        if (gate.device || !ownPage(req)) return send(res, 403, { error: 'External workers are set up from the office itself, on its own computer' });
+        if (!remoteMcp) return send(res, 200, { on: false, status: 'off', locked: 'This office was started with DROID_OFFICE_REMOTE_MCP=off.', bots: [], floors: [] } satisfies RemoteMcpState);
+        if (req.method === 'GET') return send(res, 200, await remoteMcp.refresh());
+        if (req.method !== 'PUT' && req.method !== 'POST') return send(res, 405, { error: 'Use GET, PUT or POST' });
+        let body: Record<string, unknown>;
+        try {
+          const raw: unknown = JSON.parse(await readBody(req, 1024));
+          body = raw && typeof raw === 'object' ? (raw as Record<string, unknown>) : {};
+        } catch {
+          return send(res, 400, { error: 'Send JSON' });
+        }
+        if (req.method === 'PUT') return typeof body.on === 'boolean' ? send(res, 200, await remoteMcp.set(body.on)) : send(res, 400, { error: 'Send JSON: {"on": true}' });
+        const name = typeof body.name === 'string' ? body.name.trim() : '';
+        const id = typeof body.id === 'string' ? body.id : '';
+        try {
+          if (body.action === 'add' && name && name.length <= 60 && typeof body.floor === 'string') return send(res, 200, remoteMcp.add(name, body.floor));
+          if (body.action === 'rotate' && id) return send(res, 200, remoteMcp.rotate(id));
+          if (body.action === 'revoke' && id) return send(res, 200, remoteMcp.revoke(id));
+        } catch (err) {
+          return send(res, 409, { error: (err as Error).message });
+        }
+        return send(res, 400, { error: 'Send {"action": "add", "name", "floor"} or {"action": "rotate" | "revoke", "id"}' });
       }
       // The Mac app's menu bar icon: busy workers, who is waiting and connected devices. Only the app itself gets them:
       // a request from this Mac, to a loopback host name, with no device token and no Origin.
@@ -2660,8 +2675,7 @@ export async function startServer(cfg: Config) {
     for (const c of clients.values()) c.ws.close();
     server.close();
     hookServer.close();
-    remoteServer?.closeAllConnections();
-    remoteServer?.close();
+    remoteMcp?.stop();
     return labelsStopped;
   };
 

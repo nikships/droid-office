@@ -219,6 +219,8 @@ jobs:
       - name: Start the office from the checkout
         env:
           DROID_OFFICE_HOME: ${{ runner.temp }}/office
+          # A CI office never makes Tailscale Serve mappings on the runner's tailnet.
+          DROID_OFFICE_REMOTE_MCP: 'off'
         run: |
           cd "$RUNNER_TEMP"
           # A free port: more than one job can be running on this Mac at once.
@@ -432,6 +434,8 @@ jobs:
       # On the Helper binary, as src/desktop/runtime.ts runs it, so this is the signed binary the app uses.
       - name: Start the office on the app's own Electron
         if: env.PUBLISHING == 'true'
+        env:
+          DROID_OFFICE_REMOTE_MCP: 'off'
         run: |
           app="release/mac-arm64/Droid Office.app"
           # A free port: more than one job can be running on this Mac at once.

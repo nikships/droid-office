@@ -9,10 +9,6 @@ import { FACTORY_SKILLS_DIR } from './subagents.js';
 import { COMPANION_PATH } from '../shared/devices.js';
 
 const argv = process.argv.slice(2);
-if (argv[0] === 'remote') {
-  const { remoteCommand } = await import('./remote-command.js');
-  process.exit(await remoteCommand(argv.slice(1)));
-}
 if (argv[0] === 'prune') {
   const { prune } = await import('./prune.js');
   process.exit(await prune(argv.slice(1)));
@@ -31,6 +27,7 @@ const cfg = loadConfig(argv);
 cfg.homeFloor = os.homedir();
 cfg.skillsDir = FACTORY_SKILLS_DIR;
 cfg.renders = true;
+cfg.remoteMcp = !/^(0|off|false|no)$/i.test(process.env.DROID_OFFICE_REMOTE_MCP?.trim() ?? '');
 await ensureSelfSigned(cfg);
 // A new office started in a terminal: where projects go, GitHub or GitLab, and the first floor, before it opens.
 if (!cfg.project) {

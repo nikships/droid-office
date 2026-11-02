@@ -11,13 +11,16 @@ const savedSchema = z.object({
   deskId: z.string(),
   name: z.string().min(1).max(60),
   createdAt: z.number(),
-  tokenHash: z.string().regex(/^[a-f0-9]{64}$/),
+  token: z.string().regex(/^[a-f0-9]{64}$/),
   inbox: z.array(messageSchema).max(500),
 });
 type SavedRemote = z.infer<typeof savedSchema>;
 export type RemoteMessage = z.infer<typeof messageSchema>;
 
-/** One authoritative file for remote identities and their seats, including across floor moves. */
+/**
+ * One authoritative file for remote identities and their seats, including across floor moves. It keeps each
+ * bot's credential (mode 0600, like workers.json's hook tokens) so Settings can show it again.
+ */
 export class RemoteWorkers {
   private records: SavedRemote[];
   private readonly file: string;
@@ -34,7 +37,11 @@ export class RemoteWorkers {
   }
 
   list() {
-    return this.records.map(({ tokenHash: _token, inbox, ...r }) => ({ ...r, unread: inbox.length }));
+    return this.records.map(({ token: _token, inbox, ...r }) => ({ ...r, unread: inbox.length }));
+  }
+
+  token(id: string): string | undefined {
+    return this.records.find((r) => r.id === id)?.token;
   }
 
   workers(floor: string): WorkerInfo[] {
@@ -67,19 +74,19 @@ export class RemoteWorkers {
 
   authenticate(id: string, token: string): boolean {
     const row = this.records.find((r) => r.id === id);
-    return !!row && timingSafeEqual(Buffer.from(row.tokenHash, 'hex'), hash(token));
+    return !!row && timingSafeEqual(hash(row.token), hash(token));
   }
 
   add(name: string, floor: string, deskId: string): { worker: WorkerInfo; token: string } {
     const token = randomBytes(32).toString('hex');
-    const row: SavedRemote = { id: `remote-${randomBytes(12).toString('hex')}`, floor, deskId, name, createdAt: Date.now(), tokenHash: hash(token).toString('hex'), inbox: [] };
+    const row: SavedRemote = { id: `remote-${randomBytes(12).toString('hex')}`, floor, deskId, name, createdAt: Date.now(), token, inbox: [] };
     this.commit([...this.records, row]);
     return { worker: this.info(row), token };
   }
 
   rotate(id: string): string {
     const token = randomBytes(32).toString('hex');
-    this.change(id, (r) => ({ ...r, tokenHash: hash(token).toString('hex') }));
+    this.change(id, (r) => ({ ...r, token }));
     return token;
   }
 

@@ -156,6 +156,9 @@ test('tailscale status --json: the MagicDNS name (no trailing dot) and the IPv4s
   assert.equal(parseTailscaleStatus({ BackendState: 'Running', Self: { DNSName: '', TailscaleIPs: [] } }), undefined);
   assert.equal(parseTailscaleStatus({ BackendState: 'Running' }), undefined);
   assert.equal(parseTailscaleStatus(null), undefined);
+  const user = { User: { '4463762094514452': { LoginName: 'owner@example.com' } } };
+  assert.equal(parseTailscaleStatus({ BackendState: 'Running', Self: { DNSName: 'a.b.', TailscaleIPs: ['100.96.1.2'], UserID: 4463762094514452 }, ...user })?.login, 'owner@example.com');
+  assert.equal(parseTailscaleStatus({ BackendState: 'Running', Self: { DNSName: 'a.b.', TailscaleIPs: ['100.96.1.2'], UserID: 4463762094514452, Tags: ['tag:server'] }, ...user })?.login, undefined, 'a tagged machine has no user');
 });
 
 test('tailscaleSelf asks the first CLI that answers, and copes with none', { skip: process.platform === 'win32' }, async (t) => {
@@ -243,6 +246,21 @@ const socket = (url: string, headers: Record<string, string>) =>
     });
     ws.once('error', () => resolve({ ws, status: -1 }));
   });
+
+test('external workers are set up only from the office’s own page, and an office started without them says so', { timeout: 60_000 }, async (t) => {
+  const home = mkdtempSync(path.join(os.tmpdir(), 'devices-office-'));
+  t.after(() => rmSync(home, { recursive: true, force: true }));
+  const { port } = await startOffice(t, home, '--host', '127.0.0.1');
+  const url = `http://127.0.0.1:${port}/api/remote-mcp`;
+  const own = { 'sec-fetch-site': 'same-origin' };
+  const res = await fetch(url, { headers: own });
+  assert.equal(res.status, 200);
+  const state = (await res.json()) as { on: boolean; locked?: string };
+  assert.equal(state.on, false);
+  assert.match(state.locked!, /DROID_OFFICE_REMOTE_MCP=off/);
+  assert.equal((await fetch(url, { headers: { ...own, authorization: 'Bearer phone' } })).status, 401, 'a device token is never the office’s own page');
+  assert.equal((await fetch(url, { headers: { origin: 'http://evil.test' } })).status, 403);
+});
 
 test('pairing over the LAN: the token pairs, the bearer opens HTTP and the socket, forgetting refuses it', { timeout: 60_000 }, async (t) => {
   const home = mkdtempSync(path.join(os.tmpdir(), 'devices-office-'));

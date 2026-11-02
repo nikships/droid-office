@@ -39,8 +39,11 @@ export interface OfficeMcpFloor {
 
 export interface OfficeMcpDeps {
   remote?: RemoteOffice;
-  /** Dedicated loopback listener behind Tailscale Serve; never enabled on the hook listener. */
-  remoteTransport?: { hostname: string };
+  /**
+   * Dedicated loopback listener behind Tailscale Serve; never enabled on the hook listener. `hostname` is
+   * this machine's MagicDNS name once it serves, `owner` the login it is signed in as.
+   */
+  remoteTransport?: { hostname(): string | undefined; owner(): string | undefined };
   /** This office's own hook server origin; requests for workers of another local office go there. */
   hookUrl?: string;
   settings(): SubagentSettings;
@@ -126,12 +129,12 @@ export class OfficeMcpServer {
   private async fetch(request: Request): Promise<Response> {
     // Loopback only: a page on another site can't reach this server by rebinding its own name.
     const remote = this.deps.remoteTransport;
-    const badHost = hostHeaderValidationResponse(request, remote ? [remote.hostname] : localhostAllowedHostnames());
+    const hostname = remote?.hostname();
+    if (remote && !hostname) return Response.json({ error: 'The office is not serving external workers on its tailnet yet' }, { status: 503 });
+    const badHost = hostHeaderValidationResponse(request, hostname ? [hostname] : localhostAllowedHostnames());
     if (badHost) return badHost;
     if (remote) {
-      // Serve strips spoofed identity headers and supplies them only for tailnet traffic.
-      // Tagged nodes need the explicit app capability; Funnel supplies neither.
-      if (request.headers.has('origin') || !tailnetIdentity(request.headers)) return Response.json({ error: 'Tailnet Serve identity required; browser and Funnel requests are refused' }, { status: 403 });
+      if (request.headers.has('origin') || !tailnetIdentity(request.headers, remote.owner())) return Response.json({ error: 'Only the owner’s own Tailscale devices may connect; browser and Funnel requests are refused' }, { status: 403 });
       if (!this.caller(request)) return Response.json({ error: 'Active remote worker id and bearer credential required' }, { status: 401 });
       return this.mcp.fetch(request);
     }
@@ -207,15 +210,16 @@ export function createOfficeMcp(deps: OfficeMcpDeps): OfficeMcpServer {
   return server;
 }
 
-/** Headers from the dedicated local Serve proxy, never trusted on a network-bound listener. */
-export function tailnetIdentity(headers: Headers): boolean {
-  if (headers.get('tailscale-user-login')?.trim()) return true;
-  try {
-    const caps: unknown = JSON.parse(headers.get('tailscale-app-capabilities') ?? '{}');
-    return record(caps) && Array.isArray(caps['droid-office/remote-worker']) && caps['droid-office/remote-worker'].length > 0;
-  } catch {
-    return false;
-  }
+/**
+ * Whether a request reached the dedicated loopback listener from one of the owner's own devices. Serve
+ * drops these headers from every incoming request and sets its own: Funnel traffic is marked, a device
+ * signed in as a user carries that user's login, and a tagged device of the tailnet (or this machine)
+ * carries none. A shared-in user's login isn't the owner's. Never trusted on a network-bound listener.
+ */
+export function tailnetIdentity(headers: Headers, owner?: string): boolean {
+  if (headers.has('tailscale-funnel-request')) return false;
+  const login = headers.get('tailscale-user-login')?.trim();
+  return !login || !owner || login.toLowerCase() === owner.toLowerCase();
 }
 
 export function record(value: unknown): value is Record<string, unknown> {

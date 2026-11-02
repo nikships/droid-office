@@ -1,17 +1,20 @@
-import { randomBytes } from 'node:crypto';
-import { writeFileSync } from 'node:fs';
-import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
+import { readFileSync, writeFileSync } from 'node:fs';
+import { createServer, type Server } from 'node:http';
+import type { AddressInfo } from 'node:net';
 import path from 'node:path';
-import { z } from 'zod';
-import { bearerToken, isLoopback, lanTokenOk, loopbackHost } from './lan.js';
-import { createOfficeMcp, OFFICE_MCP_PATH, type OfficeMcpDeps } from './office-mcp/index.js';
+import { isLoopback } from './lan.js';
+import { createOfficeMcp, OFFICE_MCP_PATH, OFFICE_MCP_WORKER_HEADER, type OfficeMcpDeps } from './office-mcp/index.js';
 import type { RemoteOffice } from './remote-office.js';
+import { planServe, TailscaleCli } from './tailscale.js';
+import type { RemoteMcpBot, RemoteMcpState, RemoteMcpStatus } from '../shared/remote-mcp.js';
 
-export const REMOTE_ADMIN_PATH = '/office/remote-workers';
-export const REMOTE_ADMIN_TOKEN = 'remote-mcp-admin-token';
+/** In the office's own `.droid-office/`: whether the endpoint is on, and the ports it last used, so its URL stays put. */
+export const REMOTE_MCP_FILE = 'remote-mcp.json';
+const BACKEND_PORT = 4611;
+const RETRY_MS = 30_000;
 
 /** This listener has exactly one route. It must NEVER be attached to the main or hook server. */
-export function remoteMcpListener(deps: OfficeMcpDeps & { remote: RemoteOffice; remoteTransport: { hostname: string } }) {
+export function remoteMcpListener(deps: OfficeMcpDeps & { remote: RemoteOffice; remoteTransport: NonNullable<OfficeMcpDeps['remoteTransport']> }) {
   const mcp = createOfficeMcp(deps);
   const server = createServer(async (req, res) => {
     if (!isLoopback(req.socket.remoteAddress) || req.url?.split('?')[0] !== OFFICE_MCP_PATH) {
@@ -35,49 +38,224 @@ export function remoteMcpListener(deps: OfficeMcpDeps & { remote: RemoteOffice; 
   return server;
 }
 
-const commandSchema = z.discriminatedUnion('action', [
-  z.object({ action: z.literal('add'), name: z.string().trim().min(1).max(60), floor: z.string().min(1).max(128) }),
-  z.object({ action: z.enum(['rotate', 'revoke']), id: z.string().min(1).max(128) }),
-]);
+interface Saved {
+  on: boolean;
+  backendPort?: number;
+  httpsPort?: number;
+}
 
-/** Provisioning is owner-local, protected by a separate file credential, never a remote MCP tool. */
-export class RemoteMcpAdmin {
-  private readonly token = randomBytes(32).toString('hex');
+const port = (v: unknown) => (Number.isInteger(v) && (v as number) > 0 && (v as number) < 65536 ? (v as number) : undefined);
 
-  constructor(
-    dataDir: string,
-    private readonly office: RemoteOffice,
-    private readonly hostname: string,
-    private readonly port: number,
-  ) {
-    writeFileSync(path.join(dataDir, REMOTE_ADMIN_TOKEN), this.token, { mode: 0o600 });
+function readSaved(file: string): Saved {
+  try {
+    const raw = JSON.parse(readFileSync(file, 'utf8')) as Record<string, unknown>;
+    return { on: raw.on !== false, backendPort: port(raw.backendPort), httpsPort: port(raw.httpsPort) };
+  } catch {
+    return { on: true };
+  }
+}
+
+export function remoteMcpUrl(hostname: string, httpsPort: number): string {
+  return `https://${hostname}${httpsPort === 443 ? '' : `:${httpsPort}`}${OFFICE_MCP_PATH}`;
+}
+
+export interface RemoteMcpOptions {
+  dataDir: string;
+  office: RemoteOffice;
+  mcp: Omit<OfficeMcpDeps, 'remote' | 'remoteTransport'>;
+  floors(): { id: string; name: string }[];
+  cli?: TailscaleCli;
+  /** Where the loopback listener tries first; 0 picks any free port. */
+  backendPort?: number;
+  retryMs?: number;
+  log?(line: string): void;
+}
+
+/**
+ * External workers' MCP on the owner's tailnet, on by default: a loopback-only listener, and a Tailscale
+ * Serve mapping to it the office makes and removes itself. Serve is tailnet-only HTTPS (never Funnel), and
+ * tailscaled keeps the mapping across restarts, so the URL in Settings stays the same.
+ */
+export class RemoteMcp {
+  private saved: Saved;
+  private server?: Server;
+  private status: RemoteMcpStatus = 'off';
+  private reason?: string;
+  private fixUrl?: string;
+  private hostname?: string;
+  private owner?: string;
+  private httpsPort?: number;
+  private work: Promise<unknown> = Promise.resolve();
+  private retry?: NodeJS.Timeout;
+  private closed = false;
+  private readonly cli: TailscaleCli;
+  private readonly file: string;
+
+  constructor(private readonly opts: RemoteMcpOptions) {
+    this.file = path.join(opts.dataDir, REMOTE_MCP_FILE);
+    this.cli = opts.cli ?? new TailscaleCli();
+    this.saved = readSaved(this.file);
   }
 
-  async handle(req: IncomingMessage, res: ServerResponse) {
-    const send = (status: number, body: unknown) => {
-      res.writeHead(status, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
-      res.end(JSON.stringify(body));
-    };
-    if (!isLoopback(req.socket.remoteAddress) || !loopbackHost(req.headers.host) || req.headers.origin || req.headers['sec-fetch-site'] || !lanTokenOk(bearerToken(req), this.token))
-      return send(403, { error: 'Owner-local provisioning credential required' });
-    if (req.method === 'GET') return send(200, { workers: this.office.store.list(), floors: this.office.list(''), hostname: this.hostname, backendPort: this.port });
-    if (req.method !== 'POST') return send(405, { error: 'Use GET or POST' });
-    try {
-      let body = '';
-      for await (const chunk of req) {
-        body += chunk.toString();
-        if (body.length > 4096) return send(413, { error: 'Request too large' });
-      }
-      const command = commandSchema.parse(JSON.parse(body));
-      if (command.action === 'add') {
-        const { worker, token } = this.office.add(command.name, command.floor);
-        return send(200, { worker: worker.id, token, hostname: this.hostname });
-      }
-      if (command.action === 'rotate') return send(200, { worker: command.id, token: this.office.store.rotate(command.id), hostname: this.hostname });
-      await this.office.revoke(command.id);
-      return send(200, { revoked: command.id });
-    } catch (err) {
-      return send(400, { error: err instanceof z.ZodError ? 'Invalid provisioning request' : err instanceof Error ? err.message : 'Provisioning failed' });
+  start(): Promise<RemoteMcpState> {
+    return this.saved.on ? this.queue(() => this.enable()) : Promise.resolve(this.state());
+  }
+
+  set(on: boolean): Promise<RemoteMcpState> {
+    this.save({ ...this.saved, on });
+    return this.queue(() => (on ? this.enable() : this.disable()));
+  }
+
+  /** Settings asks again: a Tailscale that came up since, or a mapping removed from outside, is caught here. */
+  refresh(): Promise<RemoteMcpState> {
+    return this.start();
+  }
+
+  add(name: string, floor: string): RemoteMcpState {
+    this.opts.office.add(name, floor);
+    return this.state();
+  }
+
+  rotate(id: string): RemoteMcpState {
+    this.opts.office.store.rotate(id);
+    return this.state();
+  }
+
+  revoke(id: string): RemoteMcpState {
+    this.opts.office.revoke(id);
+    return this.state();
+  }
+
+  state(): RemoteMcpState {
+    const url = this.status === 'serving' && this.hostname && this.httpsPort ? remoteMcpUrl(this.hostname, this.httpsPort) : undefined;
+    const floors = this.opts.floors();
+    const bots = this.opts.office.store.list().map((r): RemoteMcpBot => {
+      const worker = this.opts.office.floor(r.id)?.workers.get(r.id);
+      const token = this.opts.office.store.token(r.id);
+      return {
+        id: r.id,
+        name: r.name,
+        floor: r.floor,
+        floorName: floors.find((f) => f.id === r.floor)?.name,
+        createdAt: r.createdAt,
+        unread: r.unread,
+        ...(worker ? { status: worker.status, activity: worker.activity } : {}),
+        ...(url && token ? { connection: { url, headers: { Authorization: `Bearer ${token}`, [OFFICE_MCP_WORKER_HEADER]: r.id } } } : {}),
+      };
+    });
+    return { on: this.saved.on, status: this.status, ...(url ? { url } : {}), ...(this.reason ? { reason: this.reason } : {}), ...(this.fixUrl ? { fixUrl: this.fixUrl } : {}), bots, floors };
+  }
+
+  /** The office is stopping. The Serve mapping stays, so the next start keeps the same URL. */
+  stop() {
+    this.closed = true;
+    clearTimeout(this.retry);
+    this.closeListener();
+  }
+
+  private queue(task: () => Promise<void>): Promise<RemoteMcpState> {
+    const run = this.work.then(task);
+    this.work = run.catch(() => undefined);
+    return run.then(
+      () => this.state(),
+      (err: Error) => {
+        this.unavailable(err.message);
+        return this.state();
+      },
+    );
+  }
+
+  private async enable() {
+    clearTimeout(this.retry);
+    if (this.closed || !this.saved.on) return;
+    if (this.status !== 'serving') this.status = 'starting';
+    const backend = await this.listen();
+    const self = await this.cli.self();
+    if (!self?.dnsName) return this.unavailable('Tailscale isn’t running on this computer, or MagicDNS is off. This turns on by itself once it is.');
+    const routes = await this.cli.routes(self.dnsName);
+    if (!routes) return this.unavailable('Tailscale didn’t say what it serves. Update Tailscale, then turn this off and on.');
+    const target = `http://127.0.0.1:${backend}`;
+    const previous = this.saved.backendPort !== undefined && this.saved.backendPort !== backend ? `http://127.0.0.1:${this.saved.backendPort}` : undefined;
+    const plan = planServe(routes, target, this.saved.httpsPort, previous);
+    if (!plan) return this.unavailable('Something else already serves every HTTPS port the office tries on your tailnet.');
+    if (!plan.existing) {
+      const done = await this.cli.serve(plan.port, target);
+      if (!done.ok) return this.unavailable(done.message, done.fixUrl);
+      this.log(`  🔌  External workers’ MCP is on your tailnet: ${remoteMcpUrl(self.dnsName, plan.port)}`);
     }
+    if (this.closed) return;
+    this.hostname = self.dnsName;
+    this.owner = self.login;
+    this.httpsPort = plan.port;
+    this.status = 'serving';
+    this.reason = routes.find((r) => r.port === plan.port)?.funnel ? 'Funnel is on for this port. The office refuses every request that comes through it.' : undefined;
+    this.fixUrl = undefined;
+    this.save({ ...this.saved, backendPort: backend, httpsPort: plan.port });
+  }
+
+  private async disable() {
+    clearTimeout(this.retry);
+    const backend = this.server?.listening ? (this.server.address() as AddressInfo).port : undefined;
+    const ports = new Set([this.httpsPort, this.saved.httpsPort].filter((p) => p !== undefined));
+    this.status = 'off';
+    this.reason = this.fixUrl = this.hostname = this.owner = this.httpsPort = undefined;
+    this.closeListener();
+    const self = await this.cli.self();
+    if (!self?.dnsName) return;
+    const targets = new Set([backend, this.saved.backendPort].filter((p) => p !== undefined).map((p) => `http://127.0.0.1:${p}`));
+    // Only the office's own mapping: a port someone pointed elsewhere since is theirs.
+    for (const r of (await this.cli.routes(self.dnsName)) ?? []) if (ports.has(r.port) && r.proxy && targets.has(r.proxy)) await this.cli.unserve(r.port);
+  }
+
+  private unavailable(reason: string, fixUrl?: string) {
+    this.status = 'unavailable';
+    this.reason = reason;
+    this.fixUrl = fixUrl;
+    this.hostname = this.owner = this.httpsPort = undefined;
+    clearTimeout(this.retry);
+    // Waiting on the owner in Tailscale's admin console: asking again soon only repeats the same link.
+    const wait = (this.opts.retryMs ?? RETRY_MS) * (fixUrl ? 10 : 1);
+    if (!this.closed && this.saved.on) this.retry = setTimeout(() => void this.start(), wait).unref();
+  }
+
+  private async listen(): Promise<number> {
+    if (this.server?.listening) return (this.server.address() as AddressInfo).port;
+    const server = remoteMcpListener({ ...this.opts.mcp, remote: this.opts.office, remoteTransport: { hostname: () => this.hostname, owner: () => this.owner } });
+    const first = this.saved.backendPort ?? this.opts.backendPort ?? BACKEND_PORT;
+    for (const p of first ? [first, 0] : [0]) {
+      try {
+        await new Promise<void>((resolve, reject) => {
+          server.once('error', reject);
+          server.listen(p, '127.0.0.1', () => {
+            server.off('error', reject);
+            resolve();
+          });
+        });
+        this.server = server;
+        return (server.address() as AddressInfo).port;
+      } catch (err) {
+        if ((err as NodeJS.ErrnoException).code !== 'EADDRINUSE' || p === 0) throw err;
+      }
+    }
+    throw new Error('No free port for the external workers’ MCP');
+  }
+
+  private closeListener() {
+    this.server?.closeAllConnections();
+    this.server?.close();
+    this.server = undefined;
+  }
+
+  private save(next: Saved) {
+    this.saved = next;
+    try {
+      writeFileSync(this.file, `${JSON.stringify(next)}\n`, { mode: 0o600 });
+    } catch {
+      // the office still runs; the setting just won't survive a restart
+    }
+  }
+
+  private log(line: string) {
+    (this.opts.log ?? console.log)(line);
   }
 }

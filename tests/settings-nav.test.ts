@@ -71,6 +71,7 @@ test('every setting is in a category', () => {
     ['Source hot reload', 'office'],
     ['Droid Office for Android', 'phone'],
     ['Web companion', 'phone'],
+    ['Tailscale MCP', 'phone'],
   ];
   assert.equal(byTitle.size, expect.length);
   for (const [title, pane] of expect) {
@@ -113,7 +114,11 @@ test('search finds a setting by name, pane or keyword, every word required', () 
   assert.deepEqual(searchSettings('droid sign in'), [{ pane: 'connections', title: 'Droid' }]);
   assert.deepEqual(searchSettings('host update'), [{ pane: 'office', title: 'Host desktop app' }]);
   assert.deepEqual(searchSettings('prompt chips'), []);
-  assert.deepEqual(searchSettings('office mcp'), [{ pane: 'subagents', title: 'Office MCP' }]);
+  assert.deepEqual(searchSettings('office mcp'), [
+    { pane: 'subagents', title: 'Office MCP' },
+    { pane: 'phone', title: 'Tailscale MCP' },
+  ]);
+  assert.deepEqual(searchSettings('openclaw'), [{ pane: 'phone', title: 'Tailscale MCP' }]);
   assert.deepEqual(searchSettings('whiteboard'), [{ pane: 'subagents', title: 'Office MCP' }]);
   assert.deepEqual(searchSettings('skill'), []);
   assert.deepEqual(searchSettings('mouse'), [

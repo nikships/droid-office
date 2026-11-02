@@ -2019,6 +2019,9 @@ li.cmp-muted:hover { background: none; }
 .env-instance .list-end { gap: var(--space-2); }
 .env-log { margin: 0; max-height: 320px; overflow: auto; padding: var(--space-3); border: 1px solid var(--border); border-radius: var(--radius); background: var(--bg); font: 400 11px/1.55 var(--font-mono); color: var(--text-secondary); white-space: pre-wrap; overflow-wrap: anywhere; }
 .env-log-line.val { color: var(--info); }
+
+/* Settings → Phone & web → Tailscale MCP. */
+.rmcp-config { margin: 0; max-height: 240px; overflow: auto; padding: var(--space-3); border: 1px solid var(--border); border-radius: var(--radius); background: var(--bg); font: 400 11px/1.55 var(--font-mono); color: var(--text-secondary); white-space: pre-wrap; overflow-wrap: anywhere; user-select: text; }
 .env-log-line.ok { color: var(--success); }
 .env-log-line.bad { color: var(--danger); }
 .env-script { border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface-raised); }
