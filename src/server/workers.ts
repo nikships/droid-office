@@ -1,9 +1,8 @@
 import { randomBytes } from 'node:crypto';
-import { existsSync, readFileSync, writeFileSync, accessSync, chmodSync, mkdirSync, readdirSync, rmdirSync, rmSync, unlinkSync, constants } from 'node:fs';
+import { existsSync, readFileSync, writeFileSync, accessSync, readdirSync, rmdirSync, rmSync, unlinkSync, constants } from 'node:fs';
 import { execFile, execFileSync } from 'node:child_process';
 import { homedir } from 'node:os';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
 import headless from '@xterm/headless';
 import serialize from '@xterm/addon-serialize';
 import unicode11 from '@xterm/addon-unicode11';
@@ -265,8 +264,6 @@ export class WorkerManager {
   private get forge(): Forge {
     return this.pulls.forge ?? 'github';
   }
-  /** Where the remaining Whiteboard and visit commands are, for every agent's PATH. */
-  private teamBin: string | undefined;
   /** The script a new worktree's terminal runs before its agent (see worktree-setup.ts). */
   private setupScript: string | undefined;
   private screenTimer: NodeJS.Timeout;
@@ -320,7 +317,8 @@ export class WorkerManager {
     // The task queue's command, from before the queue was taken out.
     rmSync(path.join(dataDir, 'bin', 'office-queue'), { force: true });
     rmSync(path.join(dataDir, 'bin', 'office-queue.cmd'), { force: true });
-    this.teamBin = this.writeOfficeCommand(path.join('bin', 'team'), 'office-whiteboard', "The floor's Whiteboard, for every agent");
+    // The office-workers, office-whiteboard and office-visit commands, from before the Office MCP.
+    rmSync(path.join(dataDir, 'bin', 'team'), { recursive: true, force: true });
     try {
       this.setupScript = writeSetupScript(dataDir);
     } catch {
@@ -1976,14 +1974,6 @@ export class WorkerManager {
     // The MCP profile expands these only for office agents. A droid started by hand in a shell
     // must not inherit an office identity (nor do outside guests or Factory cloud workers).
     if (!isShell) Object.assign(env, { DROID_OFFICE_WORKER_ID: info.id, DROID_OFFICE_HOOK_URL: this.hook.url, DROID_OFFICE_HOOK_TOKEN: w.hookToken });
-    // Keep the remaining Whiteboard and visit commands on the agent's PATH during migration.
-    const bins = [!isShell && this.teamBin].filter((d): d is string => !!d);
-    if (bins.length) {
-      // Windows spells it Path.
-      const key = Object.keys(env).find((k) => k.toUpperCase() === 'PATH') ?? 'PATH';
-      env[key] = [...bins, env[key]].filter(Boolean).join(path.delimiter);
-    }
-
     const cwd = this.cwd(info);
     // A workspace isn't a repository, but it's inside this floor's checkout: git run in it must not
     // find that checkout (and switch its branch, say) instead of saying it's no repository.
@@ -2325,25 +2315,6 @@ process.stdin.on('end', () => {
     }
   }
 
-  /**
-   * Writes one of the remaining Whiteboard or visit commands into `sub` of the data
-   * dir, running bin/<name>.js with the office's own node, and returns that directory. Rewritten on
-   * every start, so after an upgrade it runs the new install's script.
-   */
-  private writeOfficeCommand(sub: string, name: string, what: string): string | undefined {
-    const script = officeScript(name);
-    if (!script) return undefined;
-    const dir = path.join(this.dataDir, sub);
-    mkdirSync(dir, { recursive: true, mode: 0o700 });
-    const file = path.join(dir, name);
-    const node = runAsNode();
-    writeFileSync(file, `#!/bin/sh\n# ${what} (see bin/${name}.js).\n${node.sh}exec ${shq(process.execPath)} ${shq(script)} "$@"\n`, { mode: 0o700 });
-    chmodSync(file, 0o700);
-    // cmd.exe and PowerShell find it by PATHEXT; Git Bash (Droid's shell there) runs the sh one.
-    if (WIN) writeFileSync(`${file}.cmd`, `@${node.cmd}"${process.execPath}" "${script}" %*\r\n`);
-    return dir;
-  }
-
   private saveScrollback(w: Worker) {
     if (!w.term || !w.ser) return;
     w.unsaved = false;
@@ -2544,15 +2515,6 @@ function validTask(t: unknown): WorkerTask | undefined {
 }
 
 /** bin/<name>.js in the install this office runs from (src/server under tsx, dist/server/server built). */
-function officeScript(name: string): string | undefined {
-  let dir = path.dirname(fileURLToPath(import.meta.url));
-  for (let i = 0; i < 4; i++, dir = path.dirname(dir)) {
-    const file = path.join(dir, 'bin', `${name}.js`);
-    if (existsSync(file)) return file;
-  }
-  return undefined;
-}
-
 /**
  * What a script prefixes to `process.execPath` to run a .js file with it. Under the Mac app that's
  * the Electron binary, which only behaves as Node with ELECTRON_RUN_AS_NODE set, and workers don't

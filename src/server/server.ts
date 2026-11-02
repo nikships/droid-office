@@ -59,7 +59,6 @@ import { MAX_ASSET_BYTES, OWNER_AUTHOR, parseEnvelope } from '../shared/whiteboa
 import { pingEligibility } from '../shared/whiteboard-ping.js';
 import { CARD_ROUTE, cardResponse, renderInfo, renderStatus, type CardResponse } from './whiteboard.js';
 import { RenderEngine } from './whiteboard-render.js';
-import { handleAgent } from './whiteboard-agent.js';
 import { officePrompt } from './prompts.js';
 import { Answers } from './answers.js';
 import { WorkerThreadReader } from './worker-thread.js';
@@ -322,7 +321,6 @@ export async function startServer(cfg: Config) {
       if (!officeMcp) return send(res, 503, { error: 'Office MCP is starting' });
       return officeMcp.handle(req, res);
     }
-    if (url.pathname === '/office/whiteboard') return officeWhiteboard(req, res, url);
     if (req.method !== 'POST' || url.pathname !== '/hooks/droid') return send(res, 404, { ok: false });
     let payload: unknown = {};
     try {
@@ -339,30 +337,6 @@ export async function startServer(cfg: Config) {
     const ok = workers.handleHook(workerId, token, event, payload);
     send(res, ok ? 200 : 401, {});
   });
-  /** The floor's Whiteboard, for the office-whiteboard command (see whiteboard-agent.ts). */
-  const officeWhiteboard = async (req: http.IncomingMessage, res: http.ServerResponse, url: URL) => {
-    const workerId = url.searchParams.get('worker') ?? '';
-    const token = (req.headers.authorization ?? '').replace(/^Bearer\s+/i, '');
-    const floor = workerFloor(workerId);
-    const agent = floor?.workers.authenticate(workerId, token);
-    if (!floor || !agent) return send(res, 401, { error: 'Send your own DROID_OFFICE_WORKER_ID as ?worker= and DROID_OFFICE_HOOK_TOKEN as the bearer token' });
-    if (agent.kind === 'shell') return send(res, 403, { error: 'A plain shell has no place on the Whiteboard: only agents do' });
-    if (req.method !== 'POST') return send(res, 405, { error: 'POST, with the action in a JSON body' });
-    let body: unknown;
-    try {
-      body = JSON.parse(await readBody(req, 4 * 1024 * 1024));
-    } catch {
-      return send(res, 400, { error: 'Send JSON: {"action": "read"}' });
-    }
-    try {
-      const r = await handleAgent(floor.whiteboard, agent, { id: floor.id, name: floor.def.name }, body);
-      send(res, r.status, r.body);
-    } catch (err) {
-      // The batch may have been committed before what failed, so don't promise it wasn't: a retry in
-      // the same epoch is applied once either way.
-      send(res, 500, { error: `The office failed while handling this: ${(err as Error).message}. Run office-whiteboard read to see whether the change is on the board before you try again.` });
-    }
-  };
   // Workers' terminals outlive a restart of the office (see ptys.ts) with this address in their
   // environment, so listen where the last office did when that port is free.
   const hookPortPath = path.join(cfg.dataDir, 'hook-port');

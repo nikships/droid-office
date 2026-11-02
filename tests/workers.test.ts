@@ -2251,12 +2251,14 @@ test('a worker restored from before subscriptions keeps its names, maps its last
 
 test('a subagent sits down told who hired it and where it works; its lead goes on record without an office-workers command', async (t) => {
   const f = carryOnFixture(t);
+  const bin = path.join(f.data, 'bin', 'team');
+  mkdirSync(bin, { recursive: true });
+  writeFileSync(path.join(bin, 'office-workers'), '#!/bin/sh\n');
   const workers = manager(f, [], []);
   t.after(() => workers.shutdown());
-  const bin = path.join(f.data, 'bin', 'team');
   const launches = (id: string) => launchesOf(f).filter((r) => r.env.workerId === id);
 
-  assert.equal(existsSync(path.join(bin, 'office-workers')), false, 'team tools replace the legacy command');
+  assert.equal(existsSync(bin), false, 'the commands from before the Office MCP are deleted');
 
   const lead = workers.spawn('desk-1', 'Ada', 'Ship the login fix');
   assert.ok(typeof lead === 'object');
