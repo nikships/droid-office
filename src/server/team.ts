@@ -53,7 +53,7 @@ export interface TeamOptions {
   now?: () => number;
 }
 
-export type TeamEventKind = 'report' | 'question' | 'done' | 'needs_input' | 'stopped' | 'left';
+export type TeamEventKind = 'report' | 'question' | 'done' | 'needs_input' | 'stopped' | 'left' | 'sent_home';
 
 /** Something a lead hasn't heard yet about one of its subagents. */
 export interface TeamEvent {
@@ -127,13 +127,14 @@ const LOG_MAX = 400;
 const TYPING_MS = 5000;
 
 /** The most telling news about one subagent, when there's more than one. */
-const WEIGHT: Record<TeamEventKind, number> = { question: 5, report: 4, needs_input: 3, stopped: 2, left: 2, done: 1 };
+const WEIGHT: Record<TeamEventKind, number> = { question: 5, report: 4, needs_input: 3, stopped: 2, left: 2, sent_home: 2, done: 1 };
 const NEWS: Record<TeamEventKind, string> = {
   question: 'asked you a question',
   report: 'reported back',
   needs_input: 'needs someone to answer it in its own terminal',
   stopped: 'stopped',
   left: 'left the floor',
+  sent_home: 'was sent home by the owner',
   done: 'finished its turn without reporting',
 };
 
@@ -155,8 +156,8 @@ export class Team {
   private known = new Map<string, { name: string; lead?: string; status: WorkerStatus }>();
   /** Subagents that have reported in the turn they're in, whose turn ending is no news. */
   private reported = new Set<string>();
-  /** Subagents their own lead is sending home: the lead knows, so their leaving is no news. */
-  private dismissing = new Set<string>();
+  /** Workers being sent home, and by whom: a lead knows when it did it, and hears when the owner did. */
+  private sending = new Map<string, 'lead' | 'owner'>();
   private path: string;
   private now: () => number;
 
@@ -192,7 +193,8 @@ export class Team {
   /** A worker left the floor: forget it and discard its own news. */
   onWorkerGone(id: string) {
     const previous = this.known.get(id);
-    if (previous?.lead && !this.dismissing.has(id) && this.workers.get(previous.lead)) this.push({ lead: previous.lead, worker: id, name: previous.name, kind: 'left' });
+    const by = this.sending.get(id);
+    if (previous?.lead && by !== 'lead' && this.workers.get(previous.lead)) this.push({ lead: previous.lead, worker: id, name: previous.name, kind: by === 'owner' ? 'sent_home' : 'left' });
     this.known.delete(id);
     this.reported.delete(id);
     const before = this.log.length;
@@ -201,6 +203,17 @@ export class Team {
     clearTimeout(this.timers.get(id));
     this.timers.delete(id);
     if (this.log.length !== before) this.persist();
+  }
+
+  /** Runs `send`, which may send worker `id` home, so its lead hears who did it. */
+  sendingHome<T>(id: string, by: 'lead' | 'owner', send: () => T): T {
+    // WorkerManager.kill removes the worker before its first await, so only the synchronous part needs the mark.
+    this.sending.set(id, by);
+    try {
+      return send();
+    } finally {
+      this.sending.delete(id);
+    }
   }
 
   stop() {
@@ -508,8 +521,7 @@ export class Team {
   private async dismiss(lead: WorkerInfo, b: Record<string, unknown>): Promise<TeamReply> {
     const w = this.resolve(lead, b.worker);
     if (typeof w === 'string') return no(404, w);
-    this.dismissing.add(w.id);
-    const { note, error } = await this.workers.kill(w.id).finally(() => this.dismissing.delete(w.id));
+    const { note, error } = await this.sendingHome(w.id, 'lead', () => this.workers.kill(w.id));
     if (error) return no(409, `${w.name}: ${error}`);
     this.opts.toast(`👋 ${lead.name} sent ${w.name} home${note ? `. ${note}` : ''}`, 'info');
     return ok({ name: w.name, ...(note ? { note } : {}) });

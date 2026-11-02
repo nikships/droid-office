@@ -501,6 +501,23 @@ test('a subagent its own lead sends home is no news to that lead', async (t) => 
   assert.deepEqual((await r.call('lead', { action: 'status' })).body.events, []);
 });
 
+test('a subagent the owner sends home is news to its lead, saying who sent it', async (t) => {
+  const r = rig(t);
+  await r.call('lead', { action: 'hire', task: 'a' });
+  r.set('lead', 'done');
+  r.team.sendingHome('sub1', 'owner', () => {
+    r.fake.ws.delete('sub1');
+    r.team.onWorkerGone('sub1');
+  });
+  await sleep(40);
+  assert.equal(r.fake.prompts.length, 1);
+  assert.match(r.fake.prompts[0][1], /Pixel was sent home by the owner\./);
+  assert.deepEqual(
+    (await r.call('lead', { action: 'status' })).body.events.map((e: any) => [e.kind, e.name]),
+    [['sent_home', 'Pixel']],
+  );
+});
+
 test('a lead at rest is woken once per batch of news, and a busy one when it comes to rest', async (t) => {
   const r = rig(t);
   await r.call('lead', { action: 'hire', task: 'a' });

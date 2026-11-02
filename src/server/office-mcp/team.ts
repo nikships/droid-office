@@ -32,7 +32,7 @@ function memberText(member: TeamMember & { terminal?: string; terminalUnavailabl
 
 function eventText(event: TeamEvent): string {
   if (event.kind === 'report' || event.kind === 'question') return `Worker ${event.kind} from ${event.name}:\n${event.text ?? ''}`;
-  const status = { done: 'finished its turn without reporting', needs_input: 'needs someone to answer in its own terminal', stopped: 'stopped', left: 'left the floor' };
+  const status = { done: 'finished its turn without reporting', needs_input: 'needs someone to answer in its own terminal', stopped: 'stopped', left: 'left the floor', sent_home: 'was sent home by the owner' };
   return `Office status: ${event.name} ${status[event.kind]}${event.text ? `: ${event.text}` : ''}.${event.kind === 'needs_input' ? ' Tell whoever asked you; someone must answer at its desk.' : ''}`;
 }
 

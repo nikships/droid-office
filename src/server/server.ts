@@ -1862,7 +1862,10 @@ export async function startServer(cfg: Config) {
       case 'worker.shoot': {
         const w = worker(msg.workerId);
         if (!w) break;
-        warn(c, w.floor.workers.shoot(w.wid, msg.superShot === true));
+        warn(
+          c,
+          w.floor.team.sendingHome(w.wid, 'owner', () => w.floor.workers.shoot(w.wid, msg.superShot === true)),
+        );
         break;
       }
       case 'worker.kill': {
@@ -1870,7 +1873,7 @@ export async function startServer(cfg: Config) {
         if (!w) return done('No such worker');
         const { floor, info } = w;
         // The worker leaves right away; its worktree is dealt with after that, and the outcome follows.
-        const cleanup = floor.workers.kill(info.id, CLEANUPS.has(String(msg.cleanup)) ? msg.cleanup : undefined);
+        const cleanup = floor.team.sendingHome(info.id, 'owner', () => floor.workers.kill(info.id, CLEANUPS.has(String(msg.cleanup)) ? msg.cleanup : undefined));
         toastFloor(floor, `${who} sent ${info.name} home`);
         defer();
         void cleanup.then(

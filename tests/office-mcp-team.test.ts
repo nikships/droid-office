@@ -335,6 +335,16 @@ test('message and dismiss enforce ownership and give readable delivery and clean
   assert.match(after, /No unread team news/);
 });
 
+test('status says when the owner sent a subagent home', async (t) => {
+  const r = await rig(t);
+  await r.hire();
+  r.team.sendingHome('sub1', 'owner', () => {
+    r.people.delete('sub1');
+    r.team.onWorkerGone('sub1');
+  });
+  assert.match((await r.status()).output, /Office status: Pixel was sent home by the owner\./);
+});
+
 test('hire reports runtime capacity refusal and non-git worktree guidance', async (t) => {
   const r = await rig(t);
   r.refuse('Every desk is taken: ask the person to send someone home');
