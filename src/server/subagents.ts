@@ -77,6 +77,7 @@ export function cleanSettings(raw: unknown, base: SubagentSettings = SUBAGENT_DE
   if (r.models === null) models = undefined;
   else if (Array.isArray(r.models)) models = cleanModels(r.models);
   return {
+    officeMcp: bool('officeMcp'),
     on: bool('on'),
     deskWorkers: bool('deskWorkers'),
     skill: bool('skill'),

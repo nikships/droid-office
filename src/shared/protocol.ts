@@ -713,6 +713,8 @@ export interface AutoHealState {
 
 /** What ⚙️ Settings → Subagents & visits sets: how workers hire subagents with office-workers (see server/team.ts). */
 export interface SubagentSettings {
+  /** Expose the authenticated Office MCP to local Droid workers. */
+  officeMcp: boolean;
   /** Workers may hire subagents at all. Off: `office-workers hire` is refused; a team already working carries on. */
   on: boolean;
   /** Desk workers may hire too, not just the Team lead at its kiosk. */
@@ -747,7 +749,7 @@ export interface SubagentModel {
   note?: string;
 }
 
-export const SUBAGENT_DEFAULTS: SubagentSettings = { on: true, deskWorkers: true, skill: true, worktree: true, maxPerLead: 4, wakeLead: true, visits: true };
+export const SUBAGENT_DEFAULTS: SubagentSettings = { officeMcp: true, on: true, deskWorkers: true, skill: true, worktree: true, maxPerLead: 4, wakeLead: true, visits: true };
 export const SUBAGENT_MAX_PER_LEAD = 8;
 export const SUBAGENT_MODELS_MAX = 100;
 export const SUBAGENT_MODEL_NOTE_MAX = 200;

@@ -153,6 +153,29 @@ function manager(f: Fixture, updates: WorkerInfo[], args = ['--from-test']) {
   return managed(f, f.root, f.data, f.droid, args, { url: 'http://127.0.0.1:1', token: '' }, events(updates));
 }
 
+test('a plain shell never inherits the agent identity used by Office MCP', async (t) => {
+  const f = fixture();
+  isolateAgentEnvironment(f, t);
+  const previous = { SHELL: process.env.SHELL, FAKE_AGENT_LOG: process.env.FAKE_AGENT_LOG };
+  process.env.SHELL = f.droid;
+  process.env.FAKE_AGENT_LOG = f.log;
+  t.after(() => {
+    f.close();
+    for (const [key, value] of Object.entries(previous)) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+  });
+  const workers = manager(f, []);
+  const shell = workers.spawn('desk-1', 'test', undefined, false, 'shell');
+  assert.notEqual(typeof shell, 'string');
+  const launch = (await waitFor(f.read, (records) => records.length > 0))[0];
+  assert.deepEqual(launch.args, ['-l']);
+  assert.equal(launch.env.workerId, undefined);
+  assert.equal(launch.env.hookToken, undefined);
+  assert.equal(launch.env.hookUrl, undefined);
+});
+
 async function waitFor<T>(read: () => T, predicate: (value: T) => boolean, timeout = 4000): Promise<T> {
   const end = Date.now() + timeout;
   let value = read();

@@ -36,6 +36,7 @@ import { Sky } from './sky.js';
 import { LeaveOnMerge } from './leave-on-merge.js';
 import { FreshMain } from './saved-switch.js';
 import { Subagents } from './subagents.js';
+import { createOfficeMcp, OFFICE_MCP_PATH, syncOfficeMcpConnection, type OfficeMcpServer } from './office-mcp/index.js';
 import { OfficePrompts } from './prompts.js';
 import { HotReload, sourceAppDir } from './hot-reload.js';
 import { readGpuStats } from './gpu-stats.js';
@@ -309,6 +310,7 @@ export async function startServer(cfg: Config) {
   let finder: FinderDispatch | undefined;
   let finderToken: string | undefined;
   const finderModels = async () => finderCatalogue(await droidModels.get(), hiddenModels.state(), prompts.agent()?.model);
+  let officeMcp: OfficeMcpServer | undefined;
   const hookServer = http.createServer(async (req, res) => {
     let url: URL;
     try {
@@ -317,6 +319,10 @@ export async function startServer(cfg: Config) {
       return send(res, 400, {});
     }
     if (url.pathname.startsWith('/api/finder/')) return handleFinder(req, res, url.pathname, finderToken, finder, finderModels);
+    if (url.pathname === OFFICE_MCP_PATH) {
+      if (!officeMcp) return send(res, 503, { error: 'Office MCP is starting' });
+      return officeMcp.handle(req, res);
+    }
     if (url.pathname === '/office/workers') return officeWorkers(req, res, url);
     if (url.pathname === '/office/whiteboard') return officeWhiteboard(req, res, url);
     if (url.pathname === '/office/visits') return officeVisits(req, res, url);
@@ -439,8 +445,27 @@ export async function startServer(cfg: Config) {
   // The prompts the office writes for workers by itself, and the worker a new one starts on when nobody picks (Settings).
   const prompts = new OfficePrompts(cfg.dataDir, (state) => broadcast({ t: 'prompts', state }));
   // How workers hire subagents at the desks, on every floor, and the Droid skill that tells them how (Settings).
-  const subagents = new Subagents(cfg.dataDir, (state) => broadcast({ t: 'subagents', state }), cfg.skillsDir);
+  const syncOfficeMcp = (on: boolean) => {
+    const problem = syncOfficeMcpConnection(cfg.skillsDir ? path.join(path.dirname(cfg.skillsDir), 'mcp.json') : undefined, `http://127.0.0.1:${hookPort}`, on);
+    if (problem) console.warn(problem);
+  };
+  const subagents = new Subagents(
+    cfg.dataDir,
+    (state) => {
+      syncOfficeMcp(state.officeMcp);
+      broadcast({ t: 'subagents', state });
+    },
+    cfg.skillsDir,
+  );
   subagents.syncSkill();
+  syncOfficeMcp(subagents.settings.officeMcp);
+  officeMcp = createOfficeMcp({
+    settings: () => subagents.settings,
+    floor: (id) => {
+      const floor = workerFloor(id);
+      return floor ? { id: floor.id, name: floor.def.name, dir: floor.dir, workers: floor.workers, team: floor.team, visits: floor.visits, whiteboard: floor.whiteboard } : undefined;
+    },
+  });
   // The Droid skill that tells workers how to use the Whiteboard (Settings).
   const whiteboardSkill = new WhiteboardSkill(cfg.dataDir, (state) => broadcast({ t: 'whiteboardSkill', state }), cfg.skillsDir);
   whiteboardSkill.syncSkill();

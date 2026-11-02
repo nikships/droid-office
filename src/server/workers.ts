@@ -1975,10 +1975,10 @@ export class WorkerManager {
     Object.assign(env, {
       TERM: 'xterm-256color',
       COLORTERM: 'truecolor',
-      DROID_OFFICE_WORKER_ID: info.id,
-      DROID_OFFICE_HOOK_URL: this.hook.url,
-      DROID_OFFICE_HOOK_TOKEN: w.hookToken,
     });
+    // The MCP profile expands these only for office agents. A droid started by hand in a shell
+    // must not inherit an office identity (nor do outside guests or Factory cloud workers).
+    if (!isShell) Object.assign(env, { DROID_OFFICE_WORKER_ID: info.id, DROID_OFFICE_HOOK_URL: this.hook.url, DROID_OFFICE_HOOK_TOKEN: w.hookToken });
     // Any agent runs its subagents with office-workers, and uses the Whiteboard with office-whiteboard.
     const bins = [!isShell && this.teamBin].filter((d): d is string => !!d);
     if (bins.length) {
