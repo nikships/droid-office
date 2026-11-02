@@ -16,6 +16,12 @@ import { instructions as visitInstructions, register as registerVisits } from '.
 
 export const OFFICE_MCP_PATH = '/office/mcp';
 export const OFFICE_MCP_WORKER_HEADER = 'x-droid-office-worker-id';
+/** The worker's own office, so whichever office the shared profile entry points at can route to it. */
+export const OFFICE_MCP_OFFICE_HEADER = 'x-droid-office-url';
+const FORWARDED_HEADER = 'x-droid-office-forwarded';
+const PROBE_HEADER = 'x-droid-office-mcp';
+/** Not passed on when relaying another office's response. */
+const HOP_HEADERS = ['connection', 'keep-alive', 'transfer-encoding', 'content-length', 'content-encoding'];
 
 /** Only the caller's floor is exposed to a tool, never the building's other floors. */
 export interface OfficeMcpFloor {
@@ -29,6 +35,8 @@ export interface OfficeMcpFloor {
 }
 
 export interface OfficeMcpDeps {
+  /** This office's own hook server origin; requests for workers of another local office go there. */
+  hookUrl?: string;
   settings(): SubagentSettings;
   floor(workerId: string): OfficeMcpFloor | undefined;
 }
@@ -104,7 +112,9 @@ export class OfficeMcpServer {
     });
     this.handle = toNodeHandler({
       fetch: async (request) => {
-        if (request.method === 'OPTIONS') return new Response(null, { status: 204, headers: { Allow: 'POST, GET, DELETE, OPTIONS' } });
+        if (request.method === 'OPTIONS') return new Response(null, { status: 204, headers: { Allow: 'POST, GET, DELETE, OPTIONS', [PROBE_HEADER]: '1' } });
+        const peer = this.peer(request);
+        if (peer) return relay(request, peer);
         if (!this.caller(request)) {
           return Response.json({ error: 'Office MCP requires an active local agent, its worker id header and its own bearer hook token, with Office MCP on in Settings.' }, { status: 401 });
         }
@@ -123,10 +133,19 @@ export class OfficeMcpServer {
       if (why) return officeError(why);
       try {
         return await handler(args as z.infer<z.ZodObject<S>>, caller);
-      } catch {
+      } catch (err) {
+        console.error(`Office MCP tool ${definition.name} failed for ${caller.worker.name}:`, err);
         return officeError('The office could not finish this tool call. Read the current state before retrying a change.');
       }
     });
+  }
+
+  /** Another office on this machine that the caller says it belongs to, if it isn't this one. */
+  private peer(request: Request): URL | undefined {
+    const value = request.headers.get(OFFICE_MCP_OFFICE_HEADER);
+    if (!value || !this.deps.hookUrl || request.headers.has(FORWARDED_HEADER)) return undefined;
+    const office = localOffice(value);
+    return office && office.origin !== new URL(this.deps.hookUrl).origin ? new URL(OFFICE_MCP_PATH, office.origin) : undefined;
   }
 
   private caller(request: Request): OfficeMcpCaller | undefined {
@@ -151,8 +170,44 @@ export function createOfficeMcp(deps: OfficeMcpDeps): OfficeMcpServer {
   return server;
 }
 
-function record(value: unknown): value is Record<string, unknown> {
+export function record(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
+/** Only an office's loopback hook server is ever a routing target. */
+function localOffice(value: string): URL | undefined {
+  try {
+    const url = new URL(value);
+    return url.protocol === 'http:' && url.hostname === '127.0.0.1' && url.port ? url : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+async function relay(request: Request, target: URL): Promise<Response> {
+  const headers = new Headers(request.headers);
+  headers.delete('host');
+  headers.set(FORWARDED_HEADER, '1');
+  try {
+    const body = request.method === 'GET' || request.method === 'HEAD' ? undefined : await request.arrayBuffer();
+    const response = await fetch(target, { method: request.method, headers, body, signal: request.signal });
+    const back = new Headers(response.headers);
+    for (const name of HOP_HEADERS) back.delete(name);
+    return new Response(response.body, { status: response.status, statusText: response.statusText, headers: back });
+  } catch {
+    return Response.json({ error: "This worker's office is not answering. Restart it, or ask the owner to check that office." }, { status: 502 });
+  }
+}
+
+/** Whether a live office answers the Office MCP at `url`. */
+export async function officeAnswers(url: string): Promise<boolean> {
+  if (!localOffice(url)) return false;
+  try {
+    const response = await fetch(url, { method: 'OPTIONS', signal: AbortSignal.timeout(1500) });
+    return response.status === 204 && response.headers.get(PROBE_HEADER) === '1';
+  } catch {
+    return false;
+  }
 }
 
 function officeConnection(hookUrl: string) {
@@ -160,7 +215,11 @@ function officeConnection(hookUrl: string) {
     type: 'http',
     url: new URL(OFFICE_MCP_PATH, hookUrl).href,
     oauth: false,
-    headers: { Authorization: `Bearer \${DROID_OFFICE_HOOK_TOKEN}`, [OFFICE_MCP_WORKER_HEADER]: `\${DROID_OFFICE_WORKER_ID}` },
+    headers: {
+      Authorization: `Bearer \${DROID_OFFICE_HOOK_TOKEN}`,
+      [OFFICE_MCP_WORKER_HEADER]: `\${DROID_OFFICE_WORKER_ID}`,
+      [OFFICE_MCP_OFFICE_HEADER]: `\${DROID_OFFICE_HOOK_URL}`,
+    },
   };
 }
 
@@ -169,8 +228,24 @@ function ownedConnection(value: unknown): boolean {
   return value.headers.Authorization === `Bearer \${DROID_OFFICE_HOOK_TOKEN}` && value.headers[OFFICE_MCP_WORKER_HEADER] === `\${DROID_OFFICE_WORKER_ID}`;
 }
 
+/**
+ * Droid has one user profile, so every office on this machine shares one entry. Another live office
+ * that routes by worker office keeps it; this office claims it when that office is gone, and
+ * removes it only while it points here.
+ */
+export async function syncOfficeMcpConnection(file: string | undefined, hookUrl: string, on: boolean, answers: (url: string) => Promise<boolean> = officeAnswers): Promise<string | undefined> {
+  let peer: string | undefined;
+  const first = applyOfficeMcpConnection(file, hookUrl, on, (url) => {
+    peer = url;
+    return true;
+  });
+  if (!peer) return first;
+  const alive = await answers(peer);
+  return applyOfficeMcpConnection(file, hookUrl, on, (url) => alive && url === peer);
+}
+
 /** Merge only our entry; unset file disables profile writes in tests and isolated office clones. */
-export function syncOfficeMcpConnection(file: string | undefined, hookUrl: string, on: boolean): string | undefined {
+function applyOfficeMcpConnection(file: string | undefined, hookUrl: string, on: boolean, keepPeer: (url: string) => boolean): string | undefined {
   if (!file) return undefined;
   let current: Record<string, unknown>;
   try {
@@ -185,12 +260,15 @@ export function syncOfficeMcpConnection(file: string | undefined, hookUrl: strin
   const servers = (current.mcpServers ?? {}) as Record<string, unknown>;
   const existing = servers['droid-office'];
   if (existing !== undefined && !ownedConnection(existing)) return `Office MCP left the existing droid-office entry in ${file} unchanged because it was not written by the office.`;
+  const next = officeConnection(hookUrl);
+  const elsewhere = record(existing) && typeof existing.url === 'string' && existing.url !== next.url ? existing.url : undefined;
   if (on) {
-    const next = officeConnection(hookUrl);
     if (JSON.stringify(existing) === JSON.stringify(next)) return undefined;
+    const routes = record(existing) && record(existing.headers) && existing.headers[OFFICE_MCP_OFFICE_HEADER] === next.headers[OFFICE_MCP_OFFICE_HEADER];
+    if (elsewhere && routes && keepPeer(elsewhere)) return undefined;
     servers['droid-office'] = next;
   } else {
-    if (existing === undefined) return undefined;
+    if (existing === undefined || elsewhere) return undefined;
     delete servers['droid-office'];
   }
   const temporary = `${file}.${process.pid}.${randomUUID()}.tmp`;

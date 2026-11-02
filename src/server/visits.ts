@@ -54,8 +54,6 @@ export interface VisitReply {
 /** The outcome of delivering a visit, not of waiting for an answer. */
 export interface VisitResult {
   ok: boolean;
-  /** look: the host's screen. */
-  text?: string;
   /** Typed into the host's session while the visitor stood there. */
   delivered?: boolean;
   /** Its session couldn't take it while the visitor stood there, so it's still queued. */
@@ -88,7 +86,6 @@ interface Run {
   text: string;
   title?: string;
   urgent: boolean;
-  lines: number;
   walkMs: number;
   /** Not on the list yet: the visitor's last visit, which it finishes (back at its own desk) first. */
   after?: string;
@@ -106,12 +103,14 @@ interface Note {
   from: string;
   fromName: string;
   fromDesk: string;
-  kind: Exclude<VisitKind, 'look'> | 'reply';
+  kind: VisitKind | 'reply';
   urgent: boolean;
   text: string;
   title?: string;
   /** When the office set about cancelling the host's turn for it. */
   interruptedAt?: number;
+  /** A reply's question, reopened if the reply can't be typed in. */
+  question?: Run;
 }
 
 const TEXT_MAX = 20_000;
@@ -119,8 +118,6 @@ const TITLE_MAX = 80;
 const LINES_DEFAULT = 80;
 const LINES_MAX = 400;
 export const ASK_REPLY_MS = 30 * 60_000;
-/** Leaning over the host's laptop. */
-export const READ_MS = 3500;
 /** Standing at the desk while the message goes in: at least this long, so the bubble can be read. */
 export const TALK_MIN_MS = 3000;
 /** A message that can't go in (a dialog, a host that needs the owner): the visitor waits this long, then leaves it in the queue. */
@@ -156,7 +153,7 @@ const whole = (v: unknown, max: number, fallback: number) => (Number.isInteger(v
 const outVisiting = (r: Run) => r.after === undefined && r.visit.phase !== 'returning';
 
 /** What a visitor's message is called, and how the office's toast says it was given. */
-const SAYING: Record<Exclude<VisitKind, 'look'>, { what: string; verb: string; icon: string }> = {
+const SAYING: Record<VisitKind, { what: string; verb: string; icon: string }> = {
   tell: { what: 'message', verb: 'told', icon: '💬' },
   ask: { what: 'question', verb: 'asked', icon: '❓' },
   handoff: { what: 'task', verb: 'handed a task to', icon: '📦' },
@@ -178,7 +175,7 @@ export class Visits {
   private runs = new Map<string, Run>();
   /** Reply eligibility outlives the asker's walk home and does not require polling. */
   private questions = new Map<string, Run>();
-  /** Visits that ended, with how, for status or a reply that came late. */
+  /** Visits that ended, with how, to explain a reply that came late. */
   private ended = new Map<string, { run: Run; at: number; why?: string }>();
   private inbox = new Map<string, Note[]>();
   /** The last message typed into each host, and whether a turn has started since. */
@@ -294,12 +291,10 @@ export class Visits {
         const text = this.workers.tail(host.id, whole(b.lines, LINES_MAX, LINES_DEFAULT));
         return text === undefined ? no(409, `${host.name} has no terminal yet: it's ${host.status}`) : ok({ host: host.name, text });
       }
-      case 'status':
-        return this.status(caller, b);
       case 'reply':
         return this.reply(caller, b);
       default:
-        return no(400, 'Unknown action: use whoami, roster, visit, status or reply');
+        return no(400, 'Unknown action: use whoami, roster, visit, look or reply');
     }
   }
 
@@ -351,11 +346,10 @@ export class Visits {
     const host = this.resolve(caller, b.worker);
     if (!('id' in host)) return host;
     const text = str(b.text, TEXT_MAX);
-    if (kind !== 'look' && !text) return no(400, `Give the ${SAYING[kind].what} in visit_message's text parameter`);
-    if (kind === 'look' && this.workers.tail(host.id, 1) === undefined) return no(409, `${host.name} has no terminal yet: it's ${host.status}`);
+    if (!text) return no(400, `Give the ${SAYING[kind].what} in visit_message's text parameter`);
     const mine = [...this.runs.values()].filter((r) => r.visit.visitor === caller.id);
-    // One whose outcome is in (a look that's read) is only finishing up: the next one waits for it.
-    const busy = mine.find((r) => r.after !== undefined || (r.visit.phase !== 'returning' && !r.result));
+    // One walking home is only finishing up: the next one waits for it.
+    const busy = mine.find((r) => r.after !== undefined || r.visit.phase !== 'returning');
     if (busy) return no(409, `You're already on a visit to ${busy.hostName} (${busy.visit.id}): one at a time`);
     const now = this.now();
     const back = mine.find((r) => r.after === undefined);
@@ -370,7 +364,6 @@ export class Visits {
       hostDeskId: host.deskId,
       text,
       urgent: b.urgent === true,
-      lines: whole(b.lines, LINES_MAX, LINES_DEFAULT),
       walkMs: 0,
     };
     const title = str(b.title, TITLE_MAX);
@@ -380,21 +373,7 @@ export class Visits {
     this.runs.set(id, run);
     if (kind === 'ask') this.questions.set(id, run);
     if (!back) this.appear(run, now);
-    return ok({ visit: id, kind, host: { id: host.id, name: host.name, desk: run.hostDesk }, ...(back ? { after: this.homeIn(back, now) } : { walkMs: run.walkMs }), ...(kind !== 'look' ? { queued: true } : {}) });
-  }
-
-  /** How the caller's delivery and walk are going. */
-  private status(caller: WorkerInfo, b: Record<string, unknown>): VisitReply {
-    const id = typeof b.visit === 'string' ? b.visit : '';
-    const run = this.runs.get(id);
-    if (run && run.visit.visitor === caller.id) {
-      return ok({ visit: id, kind: run.visit.kind, phase: run.after === undefined ? run.visit.phase : 'pending', host: run.hostName, done: !!run.result, ...(run.result ?? {}) });
-    }
-    const gone = this.ended.get(id);
-    if (gone && gone.run.visit.visitor === caller.id) {
-      return ok({ visit: id, kind: gone.run.visit.kind, phase: 'ended', host: gone.run.hostName, done: true, ...(gone.run.result ?? { ok: false, error: gone.why ?? 'The visit ended' }) });
-    }
-    return no(404, `No visit ${clip(id, 20) || '(none given)'} of yours: the office may have restarted, which ends every visit`);
+    return ok({ visit: id, kind, host: { id: host.id, name: host.name, desk: run.hostDesk }, ...(back ? { after: this.homeIn(back, now) } : { walkMs: run.walkMs }), queued: true });
   }
 
   /** The host answers a delivered ask; the answer is a new non-urgent session delivery. */
@@ -413,19 +392,23 @@ export class Visits {
     run.answeredAt = now;
     this.questions.delete(id);
     const notes = this.inbox.get(run.visit.visitor) ?? [];
-    const note: Note = { visit: id, from: caller.id, fromName: caller.name, fromDesk: deskLabel(caller.deskId), kind: 'reply', urgent: false, text };
+    const note: Note = { visit: id, from: caller.id, fromName: caller.name, fromDesk: deskLabel(caller.deskId), kind: 'reply', urgent: false, text, question: run };
     notes.push(note);
     this.inbox.set(run.visit.visitor, notes);
     const error = this.deliver(run.visit.visitor, now);
-    if (error && !notes.includes(note)) {
-      run.answeredAt = undefined;
-      this.questions.set(id, run);
-      return no(409, `Couldn't deliver your answer to ${run.visitorName}: ${error}. Retry visit_reply when its session is available`);
-    }
+    if (error && !notes.includes(note)) return no(409, `Couldn't deliver your answer to ${run.visitorName}: ${error}. Retry visit_reply when its session is available`);
     if (!this.runs.has(id)) this.ended.set(id, { run, at: now });
     this.opts.emit({ t: 'visit_say', visit: id, worker: caller.id, text });
     this.opts.toast?.(`💬 ${caller.name} answered ${run.visitorName}: “${clip(text, 90)}”`, 'info', caller.id);
     return ok({ visit: id, to: run.visitorName, ...(notes.includes(note) ? { queued: true } : { delivered: true }) });
+  }
+
+  /** A reply that couldn't be typed in leaves its question open, so the host can answer again. */
+  private reopen(run: Run, note: Note, error: string) {
+    if (run.questionError) return;
+    run.answeredAt = undefined;
+    this.questions.set(run.visit.id, run);
+    this.opts.toast?.(`Couldn't get ${note.fromName}'s answer to ${run.visitorName}: ${error}. The question is open again.`, 'warn', note.from);
   }
 
   private closeQuestion(run: Run, error: string, now: number) {
@@ -441,8 +424,7 @@ export class Visits {
     const spent = now - run.visit.since;
     if (run.visit.phase === 'returning') return Math.max(0, (run.visit.returnMs ?? run.walkMs) - spent);
     let stay = 0;
-    if (run.visit.phase === 'reading') stay = READ_MS - spent;
-    else if (run.visit.phase === 'talking') stay = TALK_MIN_MS - spent;
+    if (run.visit.phase === 'talking') stay = TALK_MIN_MS - spent;
     else if (run.visit.phase === 'walking') stay = run.walkMs - spent;
     return Math.max(0, stay) + run.walkMs;
   }
@@ -500,9 +482,6 @@ export class Visits {
       case 'walking':
         if (spent >= run.walkMs) this.arrive(run, now);
         return;
-      case 'reading':
-        if (spent >= READ_MS) this.setPhase(run, 'returning', now);
-        return;
       case 'talking':
         if ((run.delivered || run.result) && spent >= TALK_MIN_MS) {
           run.result ??= { ok: true, delivered: true };
@@ -521,21 +500,9 @@ export class Visits {
     }
   }
 
-  /** At the host's desk: it reads the screen, or says its piece. */
+  /** At the host's desk: it says its piece. */
   private arrive(run: Run, now: number) {
     const { visit } = run;
-    if (visit.kind === 'look') {
-      const text = this.workers.tail(visit.host, run.lines);
-      if (text === undefined) {
-        run.result = { ok: false, error: `${run.hostName} has no terminal any more` };
-        this.setPhase(run, 'returning', now);
-        return;
-      }
-      run.result = { ok: true, text };
-      this.setPhase(run, 'reading', now);
-      this.opts.toast?.(`👀 ${run.visitorName} is reading ${run.hostName}'s screen`, 'info', visit.visitor);
-      return;
-    }
     this.setPhase(run, 'talking', now);
     this.opts.emit({ t: 'visit_say', visit: visit.id, worker: visit.visitor, text: run.title ? `${run.title}: ${run.text}` : run.text });
     const note: Note = {
@@ -613,6 +580,7 @@ export class Visits {
     const run = note.kind === 'reply' ? undefined : (this.runs.get(note.visit) ?? this.questions.get(note.visit));
     if (err) {
       if (run) this.fail(run, `Couldn't get it to ${host.name}: ${err}`, now);
+      if (note.question) this.reopen(note.question, note, err);
       return err;
     }
     this.last.set(hostId, { at: now, sawWork: false });

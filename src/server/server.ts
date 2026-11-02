@@ -369,16 +369,23 @@ export async function startServer(cfg: Config) {
   const prompts = new OfficePrompts(cfg.dataDir, (state) => broadcast({ t: 'prompts', state }));
   // Office tools and how workers hire subagents, on every floor (Settings).
   for (const problem of removeBundledSkills(cfg.skillsDir)) console.warn(problem);
+  const hookUrl = `http://127.0.0.1:${hookPort}`;
+  let mcpProfile = Promise.resolve();
   const syncOfficeMcp = (on: boolean) => {
-    const problem = syncOfficeMcpConnection(cfg.skillsDir ? path.join(path.dirname(cfg.skillsDir), 'mcp.json') : undefined, `http://127.0.0.1:${hookPort}`, on);
-    if (problem) console.warn(problem);
+    mcpProfile = mcpProfile.then(async () => {
+      const problem = await syncOfficeMcpConnection(cfg.skillsDir ? path.join(path.dirname(cfg.skillsDir), 'mcp.json') : undefined, hookUrl, on);
+      if (problem) console.warn(problem);
+    });
   };
   const subagents = new Subagents(cfg.dataDir, (state) => {
     syncOfficeMcp(state.officeMcp);
     broadcast({ t: 'subagents', state });
   });
   syncOfficeMcp(subagents.settings.officeMcp);
+  // Another office that held the shared profile entry may stop: take it over then.
+  setInterval(() => syncOfficeMcp(subagents.settings.officeMcp), 30_000).unref();
   officeMcp = createOfficeMcp({
+    hookUrl,
     settings: () => subagents.settings,
     floor: (id) => {
       const floor = workerFloor(id);

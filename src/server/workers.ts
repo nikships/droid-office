@@ -1967,13 +1967,14 @@ export class WorkerManager {
     w.lastTool.clear();
     w.asking = undefined;
     const env = childEnv();
+    // Shells keep these for worktree setup reporting; the Office MCP refuses any caller that isn't an agent.
     Object.assign(env, {
       TERM: 'xterm-256color',
       COLORTERM: 'truecolor',
+      DROID_OFFICE_WORKER_ID: info.id,
+      DROID_OFFICE_HOOK_URL: this.hook.url,
+      DROID_OFFICE_HOOK_TOKEN: w.hookToken,
     });
-    // The MCP profile expands these only for office agents. A droid started by hand in a shell
-    // must not inherit an office identity (nor do outside guests or Factory cloud workers).
-    if (!isShell) Object.assign(env, { DROID_OFFICE_WORKER_ID: info.id, DROID_OFFICE_HOOK_URL: this.hook.url, DROID_OFFICE_HOOK_TOKEN: w.hookToken });
     const cwd = this.cwd(info);
     // A workspace isn't a repository, but it's inside this floor's checkout: git run in it must not
     // find that checkout (and switch its branch, say) instead of saying it's no repository.
@@ -2514,7 +2515,6 @@ function validTask(t: unknown): WorkerTask | undefined {
     : undefined;
 }
 
-/** bin/<name>.js in the install this office runs from (src/server under tsx, dist/server/server built). */
 /**
  * What a script prefixes to `process.execPath` to run a .js file with it. Under the Mac app that's
  * the Electron binary, which only behaves as Node with ELECTRON_RUN_AS_NODE set, and workers don't

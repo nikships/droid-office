@@ -138,7 +138,7 @@ test('visit poses and speech keep an otherwise idle worker animating until they 
   };
   frames(360);
   assert.equal(worker.animating, false);
-  for (const pose of ['stand', 'peer', 'talk'] as const) {
+  for (const pose of ['stand', 'talk'] as const) {
     worker.visitPose = pose;
     assert.equal(worker.animating, true, pose);
   }
@@ -151,20 +151,20 @@ test('visit poses and speech keep an otherwise idle worker animating until they 
   worker.dispose();
 });
 
-test('a cheer never overrides a visitor leaning over the host laptop', (t) => {
+test("a cheer never overrides a visitor's pose at the host desk", (t) => {
   t.after(canvasDocument());
   const worker = new Worker('Visitor', '#e76f51');
   const control = new Worker('Control', '#e76f51');
   for (const model of [worker, control]) {
     model.setStatus('idle', false);
-    model.visitPose = 'peer';
+    model.visitPose = 'talk';
     for (let i = 0; i < 120; i++) model.update(1 / 60, i / 60);
   }
   worker.cheer(3);
   for (let i = 120; i < 180; i++) {
     worker.update(1 / 60, i / 60);
     control.update(1 / 60, i / 60);
-    assert.ok(Math.abs(worker.lean - control.lean) < 1e-9, 'the peer pose still controls the body');
+    assert.ok(Math.abs(worker.lean - control.lean) < 1e-9, 'the visit pose still controls the body');
     assert.equal(worker.root.children[0].position.y, control.root.children[0].position.y, 'no celebration hop');
   }
   worker.dispose();

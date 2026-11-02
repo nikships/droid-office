@@ -120,7 +120,6 @@ export interface TeamModel {
 const TASK_MAX = 20_000;
 const TITLE_MAX = 80;
 const FROM_MAX = 200;
-const READ_DEFAULT = 80;
 const READ_MAX = 400;
 /** How many events the floor keeps, all leads together. */
 const LOG_MAX = 400;
@@ -218,18 +217,12 @@ export class Team {
     switch (b.action) {
       case 'whoami':
         return ok(this.whoami(caller));
-      case 'list':
-        return ok({ ...this.whoami(caller), team: this.teamOf(caller.id).map((w) => this.member(w)) });
       case 'status':
         return this.status(caller, b);
       case 'hire':
         return this.hire(caller, b);
       case 'models':
         return this.models(caller);
-      case 'events':
-        return this.events(caller, b);
-      case 'read':
-        return this.read(caller, b);
       case 'send':
         return this.send(caller, b);
       case 'dismiss':
@@ -237,7 +230,7 @@ export class Team {
       case 'report':
         return this.report(caller, b);
       default:
-        return no(400, 'Unknown action: use whoami, status, list, hire, models, events, read, send, dismiss or report');
+        return no(400, 'Unknown action: use whoami, status, hire, models, send, dismiss or report');
     }
   }
 
@@ -485,40 +478,15 @@ export class Team {
       const text = this.workers.tail(w.id, lines);
       return { ...member, ...(text === undefined ? { terminalUnavailable: `${w.name} has no terminal yet: it's ${w.status}` } : { terminal: text }) };
     });
-    const news = this.events(lead, {});
-    return ok({ ...this.whoami(lead), team, events: news.body.events });
+    return ok({ ...this.whoami(lead), team, events: this.drainNews(lead) });
   }
 
-  /** What the lead hasn't heard yet; draining news counts as heard. */
-  private events(lead: WorkerInfo, b: Record<string, unknown>): TeamReply {
-    let only: Set<string> | undefined;
-    if (Array.isArray(b.workers) && b.workers.length) {
-      only = new Set();
-      for (const ref of b.workers) {
-        const w = this.resolve(lead, ref);
-        // One that's gone may still have news waiting: its last word, or that it left.
-        const gone = typeof w === 'string' ? this.log.find((e) => e.lead === lead.id && (e.worker === ref || e.name.toLowerCase() === String(ref).toLowerCase())) : undefined;
-        if (typeof w !== 'string') only.add(w.id);
-        else if (gone) only.add(gone.worker);
-        else return no(404, w);
-      }
-    }
-    const news = this.log.filter((e) => e.lead === lead.id && !e.seen && (!only || only.has(e.worker)));
+  /** What the lead hasn't heard yet, including from subagents that already left; draining counts as heard. */
+  private drainNews(lead: WorkerInfo): Pick<TeamEvent, 'kind' | 'worker' | 'name' | 'at' | 'text'>[] {
+    const news = this.log.filter((e) => e.lead === lead.id && !e.seen);
     for (const e of news) e.seen = true;
     if (news.length) this.persist();
-    return ok({
-      events: news.map((e) => ({ kind: e.kind, worker: e.worker, name: e.name, at: e.at, ...(e.text ? { text: e.text } : {}) })),
-      team: this.teamOf(lead.id).map((w) => this.member(w)),
-    });
-  }
-
-  private read(lead: WorkerInfo, b: Record<string, unknown>): TeamReply {
-    const w = this.resolve(lead, b.worker);
-    if (typeof w === 'string') return no(404, w);
-    const lines = Number.isInteger(b.lines) ? Math.min(READ_MAX, Math.max(1, b.lines as number)) : READ_DEFAULT;
-    const text = this.workers.tail(w.id, lines);
-    if (text === undefined) return no(409, `${w.name} has no terminal yet: it's ${w.status}`);
-    return ok({ worker: this.member(w), text });
+    return news.map((e) => ({ kind: e.kind, worker: e.worker, name: e.name, at: e.at, ...(e.text ? { text: e.text } : {}) }));
   }
 
   private send(lead: WorkerInfo, b: Record<string, unknown>): TeamReply {

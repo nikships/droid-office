@@ -4,7 +4,7 @@ import { z } from 'zod';
 import { readerOf, stateAt, type Anchor, type Op } from '../../shared/whiteboard.js';
 import { readBoard, workerAuthor } from '../whiteboard-agent.js';
 import { formatRead, printable } from './whiteboard-format.js';
-import { officeAccess, officeError, officeResult, type OfficeMcpCaller, type OfficeMcpDeps, type OfficeMcpServer } from './index.js';
+import { officeAccess, officeError, officeResult, record, type OfficeMcpCaller, type OfficeMcpDeps, type OfficeMcpServer } from './index.js';
 
 export const instructions = `The Whiteboard is the floor's shared wall of HTML artifacts and canvases. Use it for reviewable screenshots, mockups, diagrams, reports, plans, decisions, options and forms. Plain progress and short answers stay in your terminal. After creating a card, name its title and id in your terminal so the owner can find it. Read feedback with whiteboard_read before changing an existing card, and answer the owner's comments, stickies, form answers and button presses. CHANGED means someone else changed that piece since your last read of that card.
 Good artifacts have stable data-wb-id anchors on sections, options and steps, and a layout 1280 pixels wide (any height). Never put secrets in an artifact: its sandbox has network access. Pages run on an opaque origin without shared cookies or localStorage; keep persistent data in the card's JSON state.
@@ -30,11 +30,7 @@ const box = z.object({ x: z.number().optional(), y: z.number().optional(), w: z.
 const newId = (prefix: string) => `${prefix}-${randomBytes(5).toString('hex')}`;
 const dotted = (value?: string) => (!value || value === '.' ? [] : value.split('.'));
 
-function record(value: unknown): value is Record<string, unknown> {
-  return value !== null && typeof value === 'object' && !Array.isArray(value);
-}
-
-/** Keep the CLI's allowed source paths, resolving only disk inputs, not package entries or URLs. */
+/** Resolve relative disk sources against the caller's working folder, leaving package entries and URLs as given. */
 function resolvePaths(ops: Record<string, unknown>[], cwd: string): Op[] {
   const absolute = (value: unknown) => (typeof value === 'string' ? path.resolve(cwd, value) : value);
   return ops.map((original) => {

@@ -4,14 +4,14 @@
 import { DESK_BY_ID, DESK_LAPTOP, KIOSK, type DeskDef } from './layout.js';
 import { deskPoint, nearestWalkable, wayTo, walkable, type Pt } from './nav.js';
 
-export type VisitKind = 'look' | 'tell' | 'ask' | 'handoff';
+export type VisitKind = 'tell' | 'ask' | 'handoff';
 
 /**
- * walking: on its way to the host's desk. reading: leaning over the host's laptop. talking: standing at
- * the desk while its message is delivered (including an ask). returning: walking
- * back to its own desk. A visit leaves the list once it has walked back.
+ * walking: on its way to the host's desk. talking: standing at the desk while its message is
+ * delivered (including an ask). returning: walking back to its own desk. A visit leaves the list
+ * once it has walked back.
  */
-export type VisitPhase = 'walking' | 'reading' | 'talking' | 'returning';
+export type VisitPhase = 'walking' | 'talking' | 'returning';
 
 export interface Visit {
   id: string;
@@ -29,8 +29,8 @@ export interface Visit {
   returnMs?: number;
 }
 
-export const VISIT_KINDS: readonly VisitKind[] = ['look', 'tell', 'ask', 'handoff'];
-export const VISIT_PHASES: readonly VisitPhase[] = ['walking', 'reading', 'talking', 'returning'];
+export const VISIT_KINDS: readonly VisitKind[] = ['tell', 'ask', 'handoff'];
+export const VISIT_PHASES: readonly VisitPhase[] = ['walking', 'talking', 'returning'];
 
 /** Walking speed in m/s, the server's timing and the client's walk alike: an errand, not a stroll. */
 export const VISIT_WALK_SPEED = 1.6;

@@ -17,7 +17,7 @@ test('a visitor gets up, walks at the visit speed and stands on its spot', () =>
   near(visitProgress('walking', VISIT_HOP_MS + 1000, L), VISIT_WALK_SPEED);
   assert.equal(visitProgress('walking', 60_000, L), L, 'a walk the server has not ended yet waits on the spot');
   assert.equal(visitProgress('walking', -500, L), SEATED, 'a phase that starts after now has not started');
-  for (const phase of ['reading', 'talking'] as const) assert.equal(visitProgress(phase, 1234, L), L);
+  assert.equal(visitProgress('talking', 1234, L), L);
   assert.equal(visitProgress(null, 0, L), SEATED);
 });
 
@@ -158,13 +158,10 @@ test('a visitor walks over, leans in while reading, and sits back exactly where 
   near(at.x, spot.x, 1e-3);
   near(at.z, spot.z, 1e-3);
   assert.equal(a.model.walking, false);
-  visitors.sync([visit({ phase: 'reading', since: clock.now })]);
-  run(0.5);
-  assert.equal(a.model.visitPose, 'peer');
-  assert.ok(Math.abs(wrap(visitors.info('a')!.facing - spot.rotY)) < 0.05, 'faces the host’s laptop');
   visitors.sync([visit({ phase: 'talking', since: clock.now })]);
-  run(0.1);
+  run(0.5);
   assert.equal(a.model.visitPose, 'talk');
+  assert.ok(Math.abs(wrap(visitors.info('a')!.facing - spot.rotY)) < 0.05, 'faces the host’s laptop');
   visitors.sync([visit({ phase: 'returning', since: clock.now })]);
   run(1);
   assert.equal(visitors.info('a')?.step, 'walking back');
@@ -193,7 +190,7 @@ test('a page that opens mid-visit puts the visitor where the clock says, not bac
   near(seats.get('a')!.model.root.rotation.y, mid.heading, 1e-6);
   // On the spot already, a second visitor at the same host stands on the other slot.
   const two = floor({ a: 'desk-3', b: 'desk-5', h: 'desk-9' });
-  two.visitors.sync([visit({ phase: 'reading', since: two.clock.now - 5000 }), visit({ id: 'v2', visitor: 'b', slot: 1, phase: 'talking', since: two.clock.now - 5000 })]);
+  two.visitors.sync([visit({ phase: 'talking', since: two.clock.now - 5000 }), visit({ id: 'v2', visitor: 'b', slot: 1, phase: 'talking', since: two.clock.now - 5000 })]);
   const s0 = visitSpot('desk-9', 0);
   const s1 = visitSpot('desk-9', 1);
   const a = two.visitors.info('a')!;
@@ -201,7 +198,7 @@ test('a page that opens mid-visit puts the visitor where the clock says, not bac
   near(a.x, s0.x);
   near(b.x, s1.x);
   assert.ok(Math.hypot(a.x - b.x, a.z - b.z) >= 0.6);
-  assert.equal(two.seats.get('a')!.model.visitPose, 'peer');
+  assert.equal(two.seats.get('a')!.model.visitPose, 'talk');
   assert.equal(two.seats.get('b')!.model.visitPose, 'talk');
 });
 
@@ -235,9 +232,9 @@ test('a visit that vanishes sends the visitor back along its route, and release 
   assert.equal(a.model.root.parent, seat);
   assert.equal(visitors.info('a'), null);
   // A visit whose host isn't on the floor is nobody's to show.
-  visitors.sync([visit({ host: 'nobody', phase: 'reading', since: clock.now })]);
+  visitors.sync([visit({ host: 'nobody', phase: 'talking', since: clock.now })]);
   assert.equal(visitors.info('a'), null);
-  visitors.sync([visit({ phase: 'reading', since: clock.now })]);
+  visitors.sync([visit({ phase: 'talking', since: clock.now })]);
   assert.equal(visitors.info('a')?.step, 'at spot');
   visitors.clear();
   assert.equal(a.model.root.parent, seat);

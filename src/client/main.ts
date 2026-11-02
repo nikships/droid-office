@@ -1711,7 +1711,7 @@ store.on('visits', () => {
 });
 
 /** What a visitor's speech card says it's doing. */
-const SAY_CHIP: Record<VisitKind, string> = { look: 'SAYS', tell: 'TELLS', ask: 'ASKS', handoff: 'HANDS OFF' };
+const SAY_CHIP: Record<VisitKind, string> = { tell: 'TELLS', ask: 'ASKS', handoff: 'HANDS OFF' };
 store.on('visitSay', () => {
   const said = store.lastSay;
   const view = said && workerViews.get(said.worker);

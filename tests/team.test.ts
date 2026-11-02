@@ -383,7 +383,7 @@ test('whoami and list say who you are, what you may do, and how your team is doi
 
   r.set('sub1', 'working', { activity: 'Editing login.ts' });
   await r.call('sub1', { action: 'report', text: 'Fixed it in #12' });
-  const list = (await r.call('lead', { action: 'list' })).body;
+  const list = (await r.call('lead', { action: 'status' })).body;
   assert.equal(list.team.length, 1);
   assert.equal(list.team[0].activity, 'Editing login.ts');
   assert.equal(list.team[0].settled, false);
@@ -395,7 +395,7 @@ test("a subagent's reports, questions and turns reach its lead once, and finishi
   const r = rig(t, { nudgeDelayMs: 60_000 });
   await r.call('lead', { action: 'hire', task: 'a' });
   await r.call('lead', { action: 'hire', task: 'b' });
-  const events = async (body: Record<string, unknown> = {}) => (await r.call('lead', { action: 'events', ...body })).body;
+  const events = async (body: Record<string, unknown> = {}) => (await r.call('lead', { action: 'status', ...body })).body;
 
   r.set('sub1', 'working');
   r.set('sub2', 'working');
@@ -427,12 +427,13 @@ test("a subagent's reports, questions and turns reach its lead once, and finishi
   await r.call('sub1', { action: 'report', text: 'Which branch?', question: true });
   r.set('sub1', 'working');
   r.set('sub1', 'exited', { exitCode: 1 });
-  got = await events({ workers: ['pixel'] });
+  got = await events();
   assert.deepEqual(
-    got.events.map((e: any) => [e.kind, e.text]),
+    got.events.map((e: any) => [e.kind, e.name, e.text]),
     [
-      ['question', 'Which branch?'],
-      ['stopped', 'exit code 1'],
+      ['done', 'Byte', 'Tidying the tests'],
+      ['question', 'Pixel', 'Which branch?'],
+      ['stopped', 'Pixel', 'exit code 1'],
     ],
   );
   r.fake.ws.delete('sub2');
@@ -440,12 +441,9 @@ test("a subagent's reports, questions and turns reach its lead once, and finishi
   got = await events();
   assert.deepEqual(
     got.events.map((e: any) => [e.kind, e.name, e.text]),
-    [
-      ['done', 'Byte', 'Tidying the tests'],
-      ['left', 'Byte', undefined],
-    ],
+    [['left', 'Byte', undefined]],
   );
-  assert.match((await r.call('lead', { action: 'events', workers: ['Nova'] })).body.error, /No subagent called Nova: yours are Pixel/);
+  assert.match((await r.call('lead', { action: 'status', worker: 'Nova' })).body.error, /No subagent called Nova: yours are Pixel/);
 
   // Restored asleep after a restart and woken: no news in that.
   r.set('sub1', 'offline');
@@ -463,7 +461,7 @@ test("a lead's news outlives a restart, and goes with the lead", async (t) => {
   t.after(() => again.stop());
   const lead = r.fake.get('lead')!;
   assert.deepEqual(
-    ((await again.handle(lead, { action: 'events' })).body.events as any[]).map((e) => e.text),
+    ((await again.handle(lead, { action: 'status' })).body.events as any[]).map((e) => e.text),
     ['All done'],
   );
   await again.handle(r.fake.get('sub1')!, { action: 'report', text: 'One more thing' });
@@ -472,7 +470,7 @@ test("a lead's news outlives a restart, and goes with the lead", async (t) => {
   const third = new Team(r.fake, { dataDir: r.dir, dir: '/proj', git: true, settings: () => r.settings, toast() {} });
   t.after(() => third.stop());
   r.fake.add(lead);
-  assert.deepEqual((await third.handle(lead, { action: 'events' })).body.events, []);
+  assert.deepEqual((await third.handle(lead, { action: 'status' })).body.events, []);
 });
 
 test('a subagent leaving creates news for its lead', async (t) => {
@@ -485,7 +483,7 @@ test('a subagent leaving creates news for its lead', async (t) => {
   assert.equal(r.fake.prompts.length, 1);
   assert.match(r.fake.prompts[0][1], /Pixel left the floor/);
   assert.deepEqual(
-    (await r.call('lead', { action: 'events' })).body.events.map((e: any) => [e.kind, e.name]),
+    (await r.call('lead', { action: 'status' })).body.events.map((e: any) => [e.kind, e.name]),
     [['left', 'Pixel']],
   );
 });
@@ -522,7 +520,7 @@ test('a lead at rest is woken once per batch of news, and a busy one when it com
   // News it has already heard with wait wakes nobody, and neither does someone typing to it.
   r.set('lead', 'working');
   await r.call('sub1', { action: 'report', text: 'And the tests' });
-  await r.call('lead', { action: 'events' });
+  await r.call('lead', { action: 'status' });
   r.set('lead', 'done');
   await sleep(30);
   assert.equal(r.fake.prompts.length, 2);
@@ -545,11 +543,11 @@ test("a lead reads, messages and dismisses only its own subagents, and a subagen
   r.fake.add(worker({ id: 'other', deskId: 'desk-9', name: 'Gizmo' }));
   await r.call('lead', { action: 'hire', task: 'a' });
   r.fake.tails.set('sub1', 'line 1\nline 2');
-  assert.deepEqual((await r.call('lead', { action: 'read', worker: 'PIXEL', lines: 2 })).body.text, 'line 1\nline 2');
-  assert.match((await r.call('lead', { action: 'read', worker: 'Gizmo' })).body.error, /Gizmo isn't one of your subagents: yours are Pixel/);
-  assert.match((await r.call('lead', { action: 'read', worker: '' })).body.error, /Name the subagent/);
+  assert.deepEqual((await r.call('lead', { action: 'status', worker: 'PIXEL', lines: 2 })).body.team[0].terminal, 'line 1\nline 2');
+  assert.match((await r.call('lead', { action: 'status', worker: 'Gizmo' })).body.error, /Gizmo isn't one of your subagents: yours are Pixel/);
+  assert.match((await r.call('lead', { action: 'status', worker: '' })).body.error, /Name the subagent/);
   r.set('sub1', 'working');
-  assert.match((await r.call('lead', { action: 'read', worker: 'sub2' })).body.error, /No subagent called sub2/);
+  assert.match((await r.call('lead', { action: 'status', worker: 'sub2' })).body.error, /No subagent called sub2/);
 
   assert.match((await r.call('lead', { action: 'send', worker: 'Pixel' })).body.error, /Provide text/);
   assert.equal((await r.call('lead', { action: 'send', worker: 'Pixel', text: 'Use main' })).status, 200);

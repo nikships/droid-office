@@ -122,8 +122,10 @@ export function register(server: OfficeMcpServer, _deps: OfficeMcpDeps): void {
           ),
         worktree: z
           .boolean()
-          .default(true)
-          .describe('Default true: isolated git worktree. False: use the project main checkout without switching its branch, only for read-only work or when your uncommitted changes must be visible. Non-git floors require false.'),
+          .optional()
+          .describe(
+            "Omit to follow the owner's Subagents setting (office_whoami shows it). True: isolated git worktree. False: use the project main checkout without switching its branch, only for read-only work or when your uncommitted changes must be visible. Non-git floors require false.",
+          ),
       }),
       annotations: changesState,
     },

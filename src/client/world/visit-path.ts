@@ -29,7 +29,6 @@ export function visitProgress(phase: VisitPhase | null, elapsedMs: number, lengt
     case 'walking':
       if (s < HOP_S) return SEATED + s / HOP_S;
       return Math.min(length, (s - HOP_S) * VISIT_WALK_SPEED);
-    case 'reading':
     case 'talking':
       return length;
     case 'returning': {

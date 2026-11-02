@@ -153,7 +153,7 @@ function manager(f: Fixture, updates: WorkerInfo[], args = ['--from-test']) {
   return managed(f, f.root, f.data, f.droid, args, { url: 'http://127.0.0.1:1', token: '' }, events(updates));
 }
 
-test('a plain shell never inherits the agent identity used by Office MCP', async (t) => {
+test('a plain shell gets its hook identity for worktree setup reporting; Office MCP refuses non-agents itself', async (t) => {
   const f = fixture();
   isolateAgentEnvironment(f, t);
   const previous = { SHELL: process.env.SHELL, FAKE_AGENT_LOG: process.env.FAKE_AGENT_LOG };
@@ -171,9 +171,9 @@ test('a plain shell never inherits the agent identity used by Office MCP', async
   assert.notEqual(typeof shell, 'string');
   const launch = (await waitFor(f.read, (records) => records.length > 0))[0];
   assert.deepEqual(launch.args, ['-l']);
-  assert.equal(launch.env.workerId, undefined);
-  assert.equal(launch.env.hookToken, undefined);
-  assert.equal(launch.env.hookUrl, undefined);
+  assert.equal(launch.env.workerId, (shell as WorkerInfo).id);
+  assert.match(launch.env.hookToken ?? '', /^[0-9a-f]{32}$/);
+  assert.equal(launch.env.hookUrl, 'http://127.0.0.1:1');
 });
 
 async function waitFor<T>(read: () => T, predicate: (value: T) => boolean, timeout = 4000): Promise<T> {

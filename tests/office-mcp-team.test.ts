@@ -340,10 +340,21 @@ test('hire reports runtime capacity refusal and non-git worktree guidance', asyn
   assert.equal(result.isError, true);
   assert.match(result.output, /ask the person/);
   const plain = await rig(t, { git: false });
-  const noTree = await plain.hire();
+  const noTree = await plain.hire({ worktree: true });
   assert.equal(noTree.isError, true);
   assert.match(noTree.output, /set worktree: false/);
   assert.equal((await plain.hire({ worktree: false })).isError, undefined);
+  assert.equal((await plain.hire()).isError, undefined, 'a non-git floor needs no worktree argument');
+});
+
+test("hire without worktree follows the owner's Subagents setting", async (t) => {
+  const r = await rig(t);
+  r.settings.worktree = false;
+  await r.hire();
+  assert.equal(r.hired[0][3], false, "Lead's checkout is kept when the lead leaves worktree out");
+  r.settings.worktree = true;
+  await r.hire();
+  assert.equal(r.hired[1][3], true);
 });
 
 test('team tool schemas reject missing text and unsupported values before hiring or delivery', async (t) => {
