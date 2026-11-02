@@ -98,13 +98,12 @@ test('the HTTP MCP refuses missing, mismatched and non-agent identities', async 
   assert.equal(response.status, 401, 'a bare token is not a bearer credential');
 });
 
-test('the foundation registers only office_whoami', async (t) => {
+test('the server registers office tools without test probes', async (t) => {
   const r = await rig(t, false);
   const client = await r.connect('lead');
-  assert.deepEqual(
-    (await client.listTools()).tools.map((tool) => tool.name),
-    ['office_whoami'],
-  );
+  const names = (await client.listTools()).tools.map((tool) => tool.name);
+  assert.ok(names.includes('office_whoami'));
+  assert.ok(names.every((name) => !name.startsWith('test_')));
 });
 
 test('a real HTTP MCP client reads office identity and server instructions', async (t) => {
@@ -132,7 +131,11 @@ test('a real HTTP MCP client reads office identity and server instructions', asy
 test('discovery and direct calls apply the same permissions per caller, including live changes', async (t) => {
   const r = await rig(t);
   const [lead, sub] = await Promise.all([r.connect('lead'), r.connect('sub')]);
-  const names = async (client: Client) => (await client.listTools()).tools.map((tool) => tool.name).sort();
+  const names = async (client: Client) =>
+    (await client.listTools()).tools
+      .map((tool) => tool.name)
+      .filter((name) => name === 'office_whoami' || name.startsWith('test_'))
+      .sort();
   assert.deepEqual(await names(lead), ['office_whoami', 'test_error', 'test_hire', 'test_team', 'test_visit']);
   assert.deepEqual(await names(sub), ['office_whoami', 'test_error', 'test_report']);
   const forbidden = await sub.callTool({ name: 'test_hire', arguments: {} });
