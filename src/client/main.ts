@@ -2862,7 +2862,7 @@ function deskHint(deskId: string): Hint {
   }
   const doing = w.activity ? clip(w.activity, 48) : '';
   const shell = w.kind === 'shell';
-  const team = teamNote(w) ?? '';
+  const team = teamNote(w);
   const credits = creditsNote(store.factory.sessions, w.sessionId);
   return {
     k: w.status + w.id + (w.pr?.number ?? '') + (w.repos?.map((r) => r.pr?.number ?? '-').join() ?? '') + (w.prOpening ? '!' : '') + doing + team + credits,
