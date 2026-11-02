@@ -2,7 +2,7 @@
 export const COMPANION_CHROME = `
   .dashboard .dash-top {
     height: auto;
-    min-height: 68px;
+    min-height: 52px;
     padding-left: 96px;
     -webkit-app-region: drag;
     background: linear-gradient(115deg, rgba(238,96,24,.14), rgba(18,18,20,.88) 42%, rgba(18,18,20,.72));

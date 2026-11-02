@@ -12,7 +12,7 @@ export function createCompanionWindow(officeUrl: () => string | undefined): Brow
     minHeight: 480,
     backgroundColor: '#050505',
     titleBarStyle: 'hiddenInset',
-    trafficLightPosition: { x: 16, y: 27 },
+    trafficLightPosition: { x: 16, y: 20 },
     show: false,
     webPreferences: { sandbox: true, contextIsolation: true, nodeIntegration: false, webviewTag: false, partition: 'persist:office-companion' },
   });
