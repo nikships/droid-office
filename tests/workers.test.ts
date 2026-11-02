@@ -9,6 +9,7 @@ import { CARRY_ON_PROMPT, HOOK_VERSION, SPOOL_MAX_BYTES, STOP_GRACE_MS, WorkerMa
 import type { ToolRefresh } from '../src/server/hook-refresh.js';
 import { Worktrees } from '../src/server/worktrees.js';
 import type { PromptSource } from '../src/server/prompts.js';
+import { CLEAR_DROID_QUEUE } from '../src/shared/droid-queue.js';
 import { PROMPTS } from '../src/shared/prompts.js';
 import type { AgentChoice, AgentEffort, GhPull, WorkerInfo } from '../src/shared/protocol.js';
 import { SCREEN_SETTLE_MS } from '../src/server/droid-screen.js';
@@ -3070,6 +3071,26 @@ test('a message queued with Ctrl+Enter keeps its worker working through the Stop
   assert.equal(status(), 'done', 'a Stop at rest changes nothing');
 });
 
+test('a cleared queue lets the next Stop finish the turn', async (t) => {
+  const { workers, worker, status, token } = await liveWorker(t, 'cleared');
+  const hook = (event: string, extra: Record<string, unknown> = {}) => workers.hookReply(worker.id, token, event, { session_id: 'cleared', hook_event_name: event, ...extra }, HOOK_VERSION);
+  hook('SessionStart', { source: 'startup' });
+  hook('UserPromptSubmit', { prompt: 'first' });
+  // Cleared with Clear queue (Droid's Ctrl+X): nothing runs after this turn.
+  workers.prompt(worker.id, 'then this', [], true);
+  workers.write(worker.id, CLEAR_DROID_QUEUE);
+  hook('Stop', {});
+  workers.reconcile(Date.now() + 10 * STOP_GRACE_MS);
+  assert.equal(status(), 'done');
+
+  // Emptied some other way (Ctrl+R in its terminal): its screen shows the input box with no queue.
+  hook('UserPromptSubmit', { prompt: 'second' });
+  workers.prompt(worker.id, 'and this', [], true);
+  await showIdle(workers, worker.id);
+  hook('Stop', {});
+  workers.reconcile(Date.now() + 10 * STOP_GRACE_MS);
+  assert.equal(status(), 'done');
+});
 test('a question or permission prompt is published whole from the hooks, and clears once answered', async (t) => {
   const { workers, worker, hook, status } = await liveWorker(t, 'asked');
   hook('SessionStart', { source: 'startup', transcript_path: '/tmp/sessions/-tmp-proj/asked.jsonl' });

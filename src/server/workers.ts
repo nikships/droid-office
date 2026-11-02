@@ -15,6 +15,7 @@ import { isAgentEffort } from '../shared/protocol.js';
 import { OFFICE_SHELL_ID } from '../shared/office-shell.js';
 import { withImages } from '../shared/drops.js';
 import { CTRL_ENTER, wantsCsiEnter } from '../shared/csi-enter.js';
+import { CLEAR_DROID_QUEUE, readDroidQueue } from '../shared/droid-queue.js';
 import { WORKSPACE_FILES, WORKTREES_DIR, Worktrees, describeWork, workspaceOf, type WorktreeCleanup, type WorktreeOwnership, type WorktreeRef, type WorktreeStart, type WorktreeState } from './worktrees.js';
 import { checkoutDirty, choosePullBase, pushBranch } from './open-pull.js';
 import { normalizeRepo } from '../shared/floors.js';
@@ -1531,6 +1532,7 @@ export class WorkerManager {
     if (!w?.pty) return false;
     w.pty.write(data);
     if (w.info.kind === 'agent' && w.info.status === 'working') w.queued += data.split(CTRL_ENTER).length - 1;
+    if (data === CLEAR_DROID_QUEUE) w.queued = 0;
     if (data === '\x1b' || data === '\x03') w.cancelAt = Date.now();
     let changed = this.typed(w);
     if (w.info.status === 'needs_input' && w.info.acked === false) {
@@ -1992,6 +1994,8 @@ export class WorkerManager {
    * nor one right after a cancel or with a queued message to run next.
    */
   private stopped(w: Worker, report: Record<string, unknown>, replies: boolean): string | undefined {
+    // Droid's queue was emptied some other way (Ctrl+R in its terminal): nothing runs next.
+    if (w.queued > 0 && w.term && readDroidQueue(screenRows(w.term))?.length === 0) w.queued = 0;
     // A message queued with Ctrl+Enter runs next, without a UserPromptSubmit of its own.
     if (w.queued > 0) {
       w.queued--;
