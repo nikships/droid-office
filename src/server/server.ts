@@ -35,7 +35,7 @@ import { Floor, type FloorContext } from './floor.js';
 import { Sky } from './sky.js';
 import { LeaveOnMerge } from './leave-on-merge.js';
 import { FreshMain } from './saved-switch.js';
-import { Subagents } from './subagents.js';
+import { Subagents, removeBundledSkills } from './subagents.js';
 import { createOfficeMcp, OFFICE_MCP_PATH, syncOfficeMcpConnection, type OfficeMcpServer } from './office-mcp/index.js';
 import { OfficePrompts } from './prompts.js';
 import { HotReload, sourceAppDir } from './hot-reload.js';
@@ -60,7 +60,6 @@ import { pingEligibility } from '../shared/whiteboard-ping.js';
 import { CARD_ROUTE, cardResponse, renderInfo, renderStatus, type CardResponse } from './whiteboard.js';
 import { RenderEngine } from './whiteboard-render.js';
 import { handleAgent } from './whiteboard-agent.js';
-import { WhiteboardSkill } from './whiteboard-skill.js';
 import { officePrompt } from './prompts.js';
 import { Answers } from './answers.js';
 import { WorkerThreadReader } from './worker-thread.js';
@@ -419,20 +418,16 @@ export async function startServer(cfg: Config) {
   const freshMain = new FreshMain(cfg.dataDir, (state) => broadcast({ t: 'freshMain', state }));
   // The prompts the office writes for workers by itself, and the worker a new one starts on when nobody picks (Settings).
   const prompts = new OfficePrompts(cfg.dataDir, (state) => broadcast({ t: 'prompts', state }));
-  // How workers hire subagents at the desks, on every floor, and the Droid skill that tells them how (Settings).
+  // Office tools and how workers hire subagents, on every floor (Settings).
+  for (const problem of removeBundledSkills(cfg.skillsDir)) console.warn(problem);
   const syncOfficeMcp = (on: boolean) => {
     const problem = syncOfficeMcpConnection(cfg.skillsDir ? path.join(path.dirname(cfg.skillsDir), 'mcp.json') : undefined, `http://127.0.0.1:${hookPort}`, on);
     if (problem) console.warn(problem);
   };
-  const subagents = new Subagents(
-    cfg.dataDir,
-    (state) => {
-      syncOfficeMcp(state.officeMcp);
-      broadcast({ t: 'subagents', state });
-    },
-    cfg.skillsDir,
-  );
-  subagents.syncSkill();
+  const subagents = new Subagents(cfg.dataDir, (state) => {
+    syncOfficeMcp(state.officeMcp);
+    broadcast({ t: 'subagents', state });
+  });
   syncOfficeMcp(subagents.settings.officeMcp);
   officeMcp = createOfficeMcp({
     settings: () => subagents.settings,
@@ -441,9 +436,6 @@ export async function startServer(cfg: Config) {
       return floor ? { id: floor.id, name: floor.def.name, dir: floor.dir, workers: floor.workers, team: floor.team, visits: floor.visits, whiteboard: floor.whiteboard } : undefined;
     },
   });
-  // The Droid skill that tells workers how to use the Whiteboard (Settings).
-  const whiteboardSkill = new WhiteboardSkill(cfg.dataDir, (state) => broadcast({ t: 'whiteboardSkill', state }), cfg.skillsDir);
-  whiteboardSkill.syncSkill();
   // Every floor's Whiteboard renders with one headless Chromium, downloaded on the first render if it's missing.
   const renderer = cfg.renders
     ? new RenderEngine({
@@ -1437,7 +1429,6 @@ export async function startServer(cfg: Config) {
       hiddenModels: hiddenModels.state(),
       workerLabels: workerLabels.state(),
       workerAnswerMultiSelect: true,
-      whiteboardSkill: whiteboardSkill.state(),
       prompts: prompts.state(),
       factory: factory.state(),
       setup: setup.state(),
@@ -1789,9 +1780,6 @@ export async function startServer(cfg: Config) {
         console.log(`  ${who} added a floor for ${r.repo ?? r.name} (${r.dir})`);
         toastAll(`🛗 New floor: ${r.name}, added by ${who}`);
         sendTo(c, { t: 'floor.added', dir, floor: floor.id });
-        // Its Droid workers find out how to hire subagents from the skill: put it back if it went missing.
-        if (subagents.syncSkill()) broadcast({ t: 'subagents', state: subagents.state() });
-        if (whiteboardSkill.syncSkill()) broadcast({ t: 'whiteboardSkill', state: whiteboardSkill.state() });
         break;
       }
       case 'floor.remove': {
@@ -2366,14 +2354,6 @@ export async function startServer(cfg: Config) {
         const after = subagents.settings;
         if (before.on !== after.on) toastAll(after.on ? `🧭 ${who} let workers hire subagents` : `🧭 ${who} turned subagents off: nobody hires new ones`);
         else toastAll(`🧭 ${who} changed the Subagents settings`);
-        break;
-      }
-      case 'whiteboardSkill.set': {
-        if (typeof msg.on !== 'boolean') return;
-        whiteboardSkill.set(msg.on, who);
-        const state = whiteboardSkill.state();
-        if (state.skillError) warn(c, state.skillError);
-        else toastAll(msg.on ? `🧑‍🎨 ${who} turned the Whiteboard skill on` : `🧑‍🎨 ${who} turned the Whiteboard skill off`);
         break;
       }
       case 'whiteboard.apply':

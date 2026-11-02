@@ -120,10 +120,10 @@ function choiceLabel(c: AgentChoice): string {
   return badge ? `Droid on ${badge}` : 'Droid on its default model';
 }
 
-/** The Subagents settings as the office keeps them, without who set them or where the skill is. */
+/** The Subagents settings as the office keeps them, without who set them. */
 function subagentSettings(): SubagentSettings {
-  const { officeMcp, on, deskWorkers, skill, worktree, maxPerLead, wakeLead, visits, agent, models } = store.subagents;
-  return { officeMcp: officeMcp ?? true, on, deskWorkers, skill, worktree, maxPerLead, wakeLead, visits: visits ?? true, ...(agent ? { agent } : {}), ...(models?.length ? { models } : {}) };
+  const { officeMcp, on, deskWorkers, worktree, maxPerLead, wakeLead, visits, agent, models } = store.subagents;
+  return { officeMcp: officeMcp ?? true, on, deskWorkers, worktree, maxPerLead, wakeLead, visits: visits ?? true, ...(agent ? { agent } : {}), ...(models?.length ? { models } : {}) };
 }
 
 /**
@@ -556,24 +556,6 @@ export function openSettings(
   };
   paintPrompts();
 
-  // The Whiteboard's skill, for the whole office.
-  const boardSkill = toggle(
-    'Whiteboard skill installed',
-    () => store.whiteboardSkill.on,
-    (on) => net.send({ t: 'whiteboardSkill.set', on }),
-  );
-  const boardSkillNote = desc();
-  const paintBoardSkill = () => {
-    const s = store.whiteboardSkill;
-    boardSkill.paint();
-    boardSkillNote.textContent =
-      s.skillError ??
-      (s.on
-        ? 'Droid workers learn to put cards on the floor’s Whiteboard and read your marks, from the droid-office-whiteboard skill.'
-        : 'Not in ~/.factory/skills. Workers can still learn it from office-whiteboard help when you point them there.');
-  };
-  paintBoardSkill();
-
   // Worker labels: the form folds away; its summary says what they're doing now.
   const workerLabels = workerLabelSettings(net);
   const labels = disclosure('Configure', workerLabels.element);
@@ -683,12 +665,11 @@ export function openSettings(
   const subModelsNote = desc();
   const subModelsMore = disclosure('Choose models', subModels.element);
 
-  const subSkill = toggle(
-    'Subagents skill installed',
-    () => store.subagents.skill,
-    (skill) => subSet({ skill }),
+  const officeMcp = toggle(
+    'Office MCP',
+    () => store.subagents.officeMcp ?? true,
+    (officeMcp) => subSet({ officeMcp }),
   );
-  const subSkillNote = desc();
   const visitsOn = toggle(
     'Visits between workers',
     () => store.subagents.visits ?? true,
@@ -699,41 +680,35 @@ export function openSettings(
   const subOptions = nest(
     card('Who can hire', { desc: desc('The Team lead can always hire.'), control: subWho.row }),
     card('Team size', { desc: subSizeNote, control: subSize.row }),
-    card('Where subagents work', { desc: desc('Own worktrees let subagents change files side by side, each on its own branch. A lead can still ask with --worktree or --no-worktree.'), control: subTree.row }),
+    card('Where subagents work', { desc: desc('Own worktrees let subagents change files side by side, each on its own branch. A lead can still choose when hiring.'), control: subTree.row }),
     card('Waking the lead', { desc: desc('When a subagent reports back, a resting lead is nudged to read it. A busy lead hears it when it next stops.'), control: subWake.row }),
     card('Subagent worker', { desc: subAgentNote, below: [subAgent.element, h('div.row', {}, subAgentSave, subAgentBack)] }),
     card('Models leads can pick', { desc: subModelsNote, below: [subModelsMore] }),
-    card('Subagents skill', { desc: subSkillNote, control: subSkill.el }),
   );
 
   const paintSubagents = () => {
     const s = store.subagents;
-    for (const r of [subOn, subWho, subSize, subTree, subWake, subSkill, visitsOn]) r.paint();
+    for (const r of [officeMcp, subOn, subWho, subSize, subTree, subWake, visitsOn]) r.paint();
     subOptions.classList.toggle('hidden', !s.on);
     subNote.textContent = s.on
-      ? 'A lead runs office-workers hire and the subagent sits at the nearest free desk with its own terminal. It reports back, and its lead sends it home.'
+      ? 'A lead hires with team_hire and the subagent sits at the nearest free desk with its own terminal. It reports back, and its lead sends it home.'
       : 'Hiring is refused. Subagents already working carry on and can still report back.';
     subSizeNote.textContent = `Up to ${s.maxPerLead} per lead at once; the worker limit still counts each one.`;
     if (!subAgentTouched) subAgent.set(subFallback());
     subAgentBack.classList.toggle('hidden', !s.agent);
     subAgentNote.textContent = s.agent
-      ? `Subagents start on ${choiceLabel(s.agent)} unless their lead asks for another with --model or --effort.`
-      : `Subagents start on the default worker (${choiceLabel(officeChoice())}, Models → Default worker) unless their lead asks for another with --model or --effort.`;
+      ? `Subagents start on ${choiceLabel(s.agent)} unless their lead chooses another model or effort.`
+      : `Subagents start on the default worker (${choiceLabel(officeChoice())}, Models → Default worker) unless their lead chooses another model or effort.`;
     subModels.paint(s.models);
     const n = s.models?.length ?? 0;
     subModelsMore.meta.textContent = n ? `${n} picked` : 'Any model';
     subModelsNote.textContent = n
       ? `Leads choose from these ${n} by your notes and each model’s credit multiplier; hire refuses any other. The subagent worker is always allowed.`
       : 'Leads may give a subagent any model. Pick some to limit them, with a note on what each is for.';
-    subSkillNote.textContent =
-      s.skillError ??
-      (s.skill
-        ? 'Desk workers learn to hire from the droid-office-subagents skill. The Team lead always knows from its brief.'
-        : 'Not in ~/.factory/skills. Desk workers hire only when you point them at office-workers; the Team lead always knows.');
     visitsNote.textContent =
       (s.visits ?? true)
-        ? 'Workers you hired find each other with office-visit, walk over, read each other’s screens, and tell, ask or hand off work. An urgent message cancels the other worker’s turn.'
-        : 'Every office-visit command is refused, and visits under way end.';
+        ? 'Workers you hired find each other with visit_roster, walk over, read each other’s screens, and tell, ask or hand off work. An urgent message cancels the other worker’s turn.'
+        : 'Visit tools are unavailable, and visits under way end.';
   };
   paintSubagents();
 
@@ -947,7 +922,6 @@ export function openSettings(
       group(
         'Guidance',
         card('Prompts', { desc: promptsNote, control: promptsOpen }),
-        card('Whiteboard skill', { desc: boardSkillNote, control: boardSkill.el }),
         card('Worker labels', { desc: desc('A task subject and a one-line summary over each local worker, written by a small model as it works.'), below: [labels] }),
       ),
     ],
@@ -958,7 +932,11 @@ export function openSettings(
         card('Models shown in pickers', { desc: desc('Hide the models you never use from every picker on desktop, web and Android. Running workers and saved defaults stay as they are.'), below: [pickerModels] }),
       ),
     ],
-    subagents: [group('Subagents', card('Subagents', { desc: subNote, control: subOn.el }), subOptions), group('Visits', card('Visits between workers', { desc: visitsNote, control: visitsOn.el }))],
+    subagents: [
+      group(null, card('Office MCP', { desc: desc('Local Droid workers get the office’s tools for subagents, the Whiteboard and visits. Off: workers get no office tools.'), control: officeMcp.el })),
+      group('Subagents', card('Subagents', { desc: subNote, control: subOn.el }), subOptions),
+      group('Visits', card('Visits between workers', { desc: visitsNote, control: visitsOn.el })),
+    ],
     connections: [
       group('Factory', card('Droid', droid.parts), card('Factory API key', factoryKey.key)),
       subscriptions.unsupported,
@@ -1148,7 +1126,6 @@ export function openSettings(
     store.on('prompts', paintPrompts),
     store.on('prompts', paintSubagents),
     store.on('subagents', paintSubagents),
-    store.on('whiteboardSkill', paintBoardSkill),
     store.on('workerLabels', paintLabels),
     store.on('hiddenModels', paintPickerModels),
     offSetup,

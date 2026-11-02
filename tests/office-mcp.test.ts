@@ -164,7 +164,7 @@ test('tool failures return useful errors without internal diagnostics', async (t
 
 test('Office MCP defaults on and survives old clients and persisted settings', (t) => {
   const dir = temporary(t);
-  const make = () => new Subagents(dir, () => {}, undefined);
+  const make = () => new Subagents(dir, () => {});
   const settings = make();
   assert.equal(settings.settings.officeMcp, true);
   assert.equal(settings.set({ officeMcp: false }, 'test'), undefined);
