@@ -216,7 +216,7 @@ export function fileIcon(path: string): FileIcon {
   if (base.startsWith('.env')) return badge('ENV', C.env, true);
   if (/^dockerfile\./.test(base) || /\.dockerfile$/.test(base)) return badge('DK', C.docker);
   if (TEST_FILE.test(base)) return badge(base.endsWith('x') ? 'TSX' : /\.[cm]?ts$/.test(base) ? 'TS' : 'JS', C.test, true);
-  if (/^\.?(eslint|prettier|stylelint|babel|lint-staged|commitlint)/.test(base)) return { shape: 'cog', color: C.config };
+  if (/^\.?(eslint|oxlint|prettier|stylelint|babel|lint-staged|commitlint)/.test(base)) return { shape: 'cog', color: C.config };
   const dot = base.lastIndexOf('.');
   if (dot > 0 || (dot === 0 && base.length > 1)) {
     const byExt = BY_EXT[base.slice(dot + 1)];

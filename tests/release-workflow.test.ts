@@ -53,7 +53,7 @@ test('shared build inputs and manual runs trigger the relevant jobs', () => {
   assert.deepEqual(checksFor(['package.json'], { androidVersionChanged: true }), all);
   assert.deepEqual(checksFor(['vite.config.ts', 'tsconfig.base.json']), { ...none, node: true, mac: true });
   assert.deepEqual(checksFor(['tools/scene-hash.mjs']), { ...none, node: true, mac: true });
-  assert.deepEqual(checksFor(['biome.jsonc']), { ...none, node: true, website: true });
+  for (const file of ['biome.jsonc', '.oxlintrc.json']) assert.deepEqual(checksFor([file]), { ...none, node: true, website: true });
   for (const file of ['.github/workflows/release.yml', '.github/scripts/release-changes.mjs']) assert.deepEqual(checksFor([file]), all);
   assert.deepEqual(checksFor([], { manual: true }), all);
   assert.deepEqual(checksFor([]), none);
@@ -238,7 +238,7 @@ test('PRs retain builds, native compilation, coverage, Android tests and checkou
 test('only change detection fetches history, and website checks are not repeated by two jobs', () => {
   assert.equal(workflow.match(/fetch-depth: 0/g)?.length, 1);
   assert.match(jobSteps('changes')[0], /fetch-depth: 0/);
-  for (const fragment of ['npx biome check', 'npm run typecheck --workspace website']) {
+  for (const fragment of ['npx oxlint', 'npm run typecheck --workspace website']) {
     const step = jobSteps('website').find((candidate) => candidate.includes(fragment));
     assert.ok(step);
     assert.equal(stepRuns(step, 'pull_request', 'refs/pull/1/merge', 'true'), false);

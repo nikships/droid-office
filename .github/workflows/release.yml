@@ -40,6 +40,7 @@ on:
       - 'tsconfig*.json'
       - 'vite.config.ts'
       - 'biome.jsonc'
+      - '.oxlintrc.json'
       - '.env.example'
       - '.gitignore'
       - 'electron-builder.yml'
@@ -77,6 +78,7 @@ on:
       - 'tsconfig*.json'
       - 'vite.config.ts'
       - 'biome.jsonc'
+      - '.oxlintrc.json'
       - '.env.example'
       - '.gitignore'
       - 'electron-builder.yml'
@@ -158,6 +160,9 @@ jobs:
         with:
           node-version: 22
           cache: npm
+
+      - uses: oven-sh/setup-bun@v2
+        if: github.event_name == 'pull_request'
 
       - name: Check the runner's toolchain
         if: github.event_name != 'pull_request'
@@ -252,13 +257,15 @@ jobs:
         with:
           node-version: 22
           cache: npm
+      - uses: oven-sh/setup-bun@v2
+        if: github.event_name == 'pull_request'
       - name: Check the runner's toolchain
         if: github.event_name != 'pull_request'
         run: .github/scripts/runner-toolchain.sh node
       # No office build, Chromium or native dependencies are needed to check the website.
       - run: npm ci --ignore-scripts --prefer-offline --no-audit --no-fund
       # The Node job's repository-wide checks already include the website.
-      - run: npx biome check --error-on-warnings website
+      - run: npx oxlint --deny-warnings website
         if: needs.changes.outputs.node != 'true'
       - run: npm run typecheck --workspace website
         if: needs.changes.outputs.node != 'true'

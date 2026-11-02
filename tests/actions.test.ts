@@ -46,6 +46,8 @@ test('shell commands that run tests or builds', () => {
     'timeout 300 make -j8',
     './gradlew assemble',
     'npx tsc --noEmit',
+    'npx oxlint',
+    'bun check -p tsconfig.json',
   ])
     assert.equal(commandAction(cmd), 'test', cmd);
 });
