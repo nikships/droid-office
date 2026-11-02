@@ -8,10 +8,10 @@ export type VisitKind = 'look' | 'tell' | 'ask' | 'handoff';
 
 /**
  * walking: on its way to the host's desk. reading: leaning over the host's laptop. talking: standing at
- * the desk while its message is delivered. waiting: standing at the desk for an answer. returning: walking
+ * the desk while its message is delivered (including an ask). returning: walking
  * back to its own desk. A visit leaves the list once it has walked back.
  */
-export type VisitPhase = 'walking' | 'reading' | 'talking' | 'waiting' | 'returning';
+export type VisitPhase = 'walking' | 'reading' | 'talking' | 'returning';
 
 export interface Visit {
   id: string;
@@ -30,7 +30,7 @@ export interface Visit {
 }
 
 export const VISIT_KINDS: readonly VisitKind[] = ['look', 'tell', 'ask', 'handoff'];
-export const VISIT_PHASES: readonly VisitPhase[] = ['walking', 'reading', 'talking', 'waiting', 'returning'];
+export const VISIT_PHASES: readonly VisitPhase[] = ['walking', 'reading', 'talking', 'returning'];
 
 /** Walking speed in m/s, the server's timing and the client's walk alike: an errand, not a stroll. */
 export const VISIT_WALK_SPEED = 1.6;

@@ -31,7 +31,6 @@ export function visitProgress(phase: VisitPhase | null, elapsedMs: number, lengt
       return Math.min(length, (s - HOP_S) * VISIT_WALK_SPEED);
     case 'reading':
     case 'talking':
-    case 'waiting':
       return length;
     case 'returning': {
       const walked = s * VISIT_WALK_SPEED;

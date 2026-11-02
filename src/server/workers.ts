@@ -321,7 +321,6 @@ export class WorkerManager {
     rmSync(path.join(dataDir, 'bin', 'office-queue'), { force: true });
     rmSync(path.join(dataDir, 'bin', 'office-queue.cmd'), { force: true });
     this.teamBin = this.writeOfficeCommand(path.join('bin', 'team'), 'office-whiteboard', "The floor's Whiteboard, for every agent");
-    this.writeOfficeCommand(path.join('bin', 'team'), 'office-visit', 'Visits between independent workers on a floor');
     try {
       this.setupScript = writeSetupScript(dataDir);
     } catch {
