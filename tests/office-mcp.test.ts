@@ -144,7 +144,11 @@ test('discovery and direct calls apply the same permissions per caller, includin
   assert.equal((await lead.callTool({ name: 'test_report', arguments: {} })).isError, true);
   r.settings.on = false;
   r.settings.visits = false;
-  assert.deepEqual(await names(lead), ['office_whoami', 'team', 'test_error', 'test_team'], 'an existing lead keeps team status when hiring is off');
+  assert.deepEqual(await names(lead), ['office_whoami', 'test_error', 'test_team']);
+  assert.ok(
+    (await lead.listTools()).tools.some((tool) => tool.name === 'team'),
+    'an existing lead keeps team status when hiring is off',
+  );
   r.people.delete('sub');
   assert.deepEqual(await names(lead), ['office_whoami', 'test_error']);
   assert.equal((await lead.callTool({ name: 'test_visit', arguments: {} })).isError, true);
