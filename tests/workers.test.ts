@@ -3019,12 +3019,15 @@ test('office notices reach a working droid with its next tool call or as its Sto
   assert.equal(workers.notice(worker.id, 'Droid Office notice: hi'), true);
   assert.deepEqual(JSON.parse(reply('PostToolUse', { tool_name: 'Read' })!), { hookSpecificOutput: { hookEventName: 'PostToolUse', additionalContext: 'Droid Office notice: hi' } });
   assert.equal(reply('PostToolUse', { tool_name: 'Read' }), '', 'handed over once');
+  // A notice whose rewritten prompt dropped the office's marker still carries it, so the Thread knows it.
+  workers.notice(worker.id, 'Look at card 3');
+  assert.equal(JSON.parse(reply('PostToolUse', { tool_name: 'Read' })!).hookSpecificOutput.additionalContext, 'Droid Office notice:\nLook at card 3');
 
   // Its turn ends with one waiting: the Stop is blocked with it, and the one after goes through.
   workers.notice(worker.id, 'second');
   let stops = 0;
   workers.beforeStop = () => (++stops === 1 ? 'Droid Office notice: report to your lead' : undefined);
-  assert.deepEqual(JSON.parse(reply('Stop', { stop_hook_active: false })!), { decision: 'block', reason: 'second\n\nDroid Office notice: report to your lead' });
+  assert.deepEqual(JSON.parse(reply('Stop', { stop_hook_active: false })!), { decision: 'block', reason: 'Droid Office notice:\nsecond\n\nDroid Office notice: report to your lead' });
   assert.equal(status(), 'working');
   workers.notice(worker.id, 'third');
   assert.equal(reply('Stop', { stop_hook_active: true }), '', 'a Stop a block continued is never blocked again');

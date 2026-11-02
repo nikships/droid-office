@@ -3,6 +3,7 @@ import path from 'node:path';
 import { IMAGE_PLACEHOLDER, pageRows, presentThread, THREAD_MODEL_VERSION, type ThreadPresentation, type ThreadRow } from '../shared/thread-presentation.js';
 import type { ThreadEntry, ThreadImage } from '../shared/worker-thread.js';
 import { LABEL_TEXT_CHARS } from '../shared/worker-labels.js';
+import { OFFICE_SAYS } from '../shared/prompts.js';
 import { DROID_SESSIONS_DIR } from './droid-session.js';
 import { imageAddress, imageAt, imageRef, IMAGES_PER_ENTRY, promptPictures } from './thread-images.js';
 
@@ -13,8 +14,6 @@ const LINE_BYTES = 4 * 1024 * 1024;
 const CHUNK_BYTES = 64 * 1024;
 const TRUNCATED = '\n[… truncated]';
 const SESSION_ID = /^[a-zA-Z0-9-]{1,160}$/;
-/** How every message the office writes for a worker starts. */
-const OFFICE_SAYS = 'Droid Office';
 
 /** An office notice as the Thread shows it. */
 function officeNotice(text: string): string {

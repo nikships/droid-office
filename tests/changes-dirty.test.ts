@@ -8,7 +8,7 @@ import { Changes } from '../src/server/changes.js';
 import type { ChangesState } from '../src/shared/protocol.js';
 
 /** Everything, including the remote and PR host, stays local to this temporary fixture. */
-function fixture(t: TestContext, initial: Record<string, string> = { 'demo.txt': 'baseline\n' }) {
+function fixture(t: TestContext, initial: Record<string, string> = { 'demo.txt': 'baseline\n' }, { hooked }: { hooked?: boolean } = {}) {
   // Actions refresh the watcher themselves; a background poll must not race fixture assertions.
   t.mock.timers.enable({ apis: ['setInterval'] });
   const root = mkdtempSync(path.join(tmpdir(), 'office-changes-dirty-'));
@@ -39,7 +39,7 @@ function fixture(t: TestContext, initial: Record<string, string> = { 'demo.txt':
   let receive: ((state: ChangesState) => void) | undefined;
   const changes = new Changes(
     'main',
-    (id) => (id === 'w1' ? { name: 'Fixture', cwd: dir, rel: 'repo' } : undefined),
+    (id) => (id === 'w1' ? { name: 'Fixture', cwd: dir, rel: 'repo', hooked } : undefined),
     () => undefined,
     {
       state(state) {
@@ -393,3 +393,21 @@ test("a worker's tool call shows in its open Changes window at once, without wai
   );
   f.changes.touched('nobody');
 });
+
+for (const hooked of [false, true]) {
+  test(`an open Changes window looks on a timer every ${hooked ? '10 seconds at a Droid worker’s checkout, whose hooks say when it changes' : '2 seconds at a checkout no hook reports on'}`, async (t) => {
+    const f = fixture(t, undefined, { hooked });
+    const every: unknown[] = [];
+    const set = globalThis.setInterval;
+    globalThis.setInterval = ((fn: () => void, ms?: number) => {
+      every.push(ms);
+      return set(fn, ms);
+    }) as typeof setInterval;
+    try {
+      await f.snapshot();
+    } finally {
+      globalThis.setInterval = set;
+    }
+    assert.deepEqual(every, [hooked ? 10_000 : 2000]);
+  });
+}

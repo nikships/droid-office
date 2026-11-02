@@ -21,7 +21,7 @@ import { normalizeRepo } from '../shared/floors.js';
 import { DESK_BY_ID, STATION_AGENT } from '../shared/layout.js';
 import { stationBrief } from './stations.js';
 import { officePrompt, type PromptSource } from './prompts.js';
-import { forgeVars, placeholders, PROMPTS, WORKER_VISITS, workerBranchPolicy, workerMessageVars } from '../shared/prompts.js';
+import { forgeVars, officeSays, placeholders, PROMPTS, WORKER_VISITS, workerBranchPolicy, workerMessageVars } from '../shared/prompts.js';
 import { isBusy } from '../shared/status.js';
 import { fallbackTask } from './tasks.js';
 import { forkRefusal, nearestForkSeat } from '../shared/worker-fork.js';
@@ -1791,8 +1791,9 @@ export class WorkerManager {
   /**
    * Replays the hooks its droid spooled while the office couldn't take them (see hook.cjs), in the
    * order they fired, then forgets them. The file's place in the floor's .droid-office stands in for
-   * the hook token; the session checks still apply. One older than the last hook the office took
-   * was already taken (a slow answer the command gave up on) and is skipped.
+   * the hook token; the session checks still apply. Only hooks the office refused or couldn't be
+   * reached for are spooled; one older than the last hook the office took is stale, superseded by
+   * that newer one, and is skipped.
    */
   private replaySpool(w: Worker) {
     const file = this.spoolFile(w.info.id);
@@ -1964,7 +1965,7 @@ export class WorkerManager {
       if (w.hookVersion < HOOK_VERSION && w.asking && w.asking.session !== session && report.tool_name === 'Task') this.setStatus(w, 'working');
       else this.toolFinished(w, session, report);
       if (replies && w.outbox.length) {
-        reply = JSON.stringify({ hookSpecificOutput: { hookEventName: 'PostToolUse', additionalContext: w.outbox.join('\n\n') } });
+        reply = JSON.stringify({ hookSpecificOutput: { hookEventName: 'PostToolUse', additionalContext: officeSays(w.outbox.join('\n\n')) } });
         w.outbox = [];
       }
     } else if (event === 'Notification') {
@@ -2003,7 +2004,7 @@ export class WorkerManager {
       if (more) notes.push(more);
       if (notes.length) {
         w.outbox = [];
-        return JSON.stringify({ decision: 'block', reason: notes.join('\n\n') });
+        return JSON.stringify({ decision: 'block', reason: officeSays(notes.join('\n\n')) });
       }
     }
     // Already at rest: a queued turn that used no tools ended. It doesn't finish (and ding) again.

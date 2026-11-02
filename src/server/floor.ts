@@ -405,6 +405,7 @@ export class Floor {
             worktreeBase: w.worktree?.base,
             baseBranch: w.worktree?.from ?? this.workers.selectedBranch ?? this.project.branch ?? null,
             prBaseFallback: this.workers.selectedBranch ?? this.project.branch ?? null,
+            hooked: w.kind === 'agent',
           };
         // One of the other floors' repositories it works in: diffed against, and PRs opened against, that floor's branch.
         const r = w.repos?.find((x) => x.floor === repo);
@@ -419,6 +420,7 @@ export class Floor {
           prBaseFallback: other?.workers.selectedBranch ?? other?.project.branch ?? null,
           openPull: (branch) => (other ? openPull(other, branch) : undefined),
           refreshGitHub: () => void other?.board.refresh(),
+          hooked: w.kind === 'agent',
         };
       },
       (branch) => openPull(this, branch),

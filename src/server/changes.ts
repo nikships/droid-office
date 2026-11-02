@@ -11,10 +11,13 @@ import { checkoutDirty, choosePullBase, pushBranch } from './open-pull.js';
 // What a worker changed, for the Changes window at its desk: the files it touched and their diff,
 // against the newer of the branch the office was opened on and its origin copy. While anyone has the window open, the office
 // looks at that worker's checkout (its worktree, or the project folder) as soon as one of its tool calls
-// finishes (see hook-refresh.ts), and every few seconds besides for changes made some other way, and
+// finishes (see hook-refresh.ts), and on a timer besides for changes made some other way, and
 // pushes the file list whenever it changes. Diffs of single files are fetched on demand.
 
+/** How often a Droid worker's checkout is looked at: its hooks say when its own tool calls change it. */
 const POLL_MS = 10_000;
+/** How often a checkout no hook reports on (a shell's) is looked at. */
+const UNHOOKED_POLL_MS = 2000;
 const MAX_FILES = 400;
 const MAX_DIFF = 200_000;
 /** Untracked files bigger than this aren't read to count their lines. */
@@ -41,6 +44,8 @@ export interface ChangesTarget {
   prBaseFallback?: string | null;
   openPull?(branch: string): { number: number; url: string } | undefined;
   refreshGitHub?(): void;
+  /** Its worker's hooks report its tool calls (see touched), so the timer can be slow. */
+  hooked?: boolean;
 }
 
 export interface ChangesEvents {
@@ -254,7 +259,7 @@ export class Changes {
     const key = watchKey(workerId, repo);
     const w = this.entry(workerId, repo);
     // An entry an action made (see action()) has no timer yet.
-    w.timer ??= setInterval(() => void this.poll(key), POLL_MS);
+    w.timer ??= setInterval(() => void this.poll(key), this.target(workerId, repo)?.hooked ? POLL_MS : UNHOOKED_POLL_MS);
     w.clients.add(clientId);
     if (w.last) this.events.state(w.last, [clientId]);
     void this.poll(key, true);
