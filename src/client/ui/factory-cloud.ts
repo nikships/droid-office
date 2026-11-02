@@ -1,7 +1,6 @@
 import { CLOUD_HIRE_CONFIRM_MS, canHost, cloudBadge, cloudHire, cloudSessionUrl, computerHome, type CloudComputer } from '../../shared/factory-cloud';
 import { canStartFrom, repoName, type FactoryEnvironment } from '../../shared/factory-environments';
 import { creditsNote } from '../../shared/factory-sessions';
-import { statusWord } from '../../shared/guests';
 import type { AgentEffort, ClientMsg, WorkerInfo } from '../../shared/protocol';
 import { watchFactory } from '../factory';
 import type { Net } from '../net';
@@ -238,7 +237,7 @@ export function openCloudWindow(net: Net, workerId: string) {
     title.textContent = [`☁ ${w.name}`, w.title].filter(Boolean).join(' · ');
     title.title = title.textContent;
     pill.className = `pill ${w.status}`;
-    pill.textContent = statusWord(w, STATUS_LABEL);
+    pill.textContent = STATUS_LABEL[w.status] ?? w.status;
     meta.textContent = [cloudLine(w), `autonomy ${w.cloud.autonomy}`, creditsNote(store.factory.sessions, w.sessionId)].filter(Boolean).join(' · ');
     meta.title = meta.textContent;
     error.textContent = w.cloud.error ? `☁ ${w.name} can't work: ${w.cloud.error}. Check again, or send it home and hire another.` : '';

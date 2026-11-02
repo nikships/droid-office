@@ -44,9 +44,8 @@ The owner left these to the implementer. Each one is a decision, with its reason
 
 The board's tools and the ping work for the office's own workers on the floor: any agent at a desk, the Team lead, and every subagent. These have a terminal the office owns and a hook token.
 
-Two kinds of desk occupant are excluded, and the window and the guide say so:
+Cloud workers are excluded, and the window and the guide say so:
 
-- **Guests** (agents started by hand in a floor's checkout) have no hook token and no terminal the office can type into. A droid guest becomes a full worker through the existing **Bring it in** action, and from then on it uses the board like any worker. The ping picker lists guests as unavailable, with that hint.
 - **Cloud workers** run on a Factory computer without access to the Office MCP. They are out of scope; including them later needs a floor-scoped transport and a cloud ping.
 
 ## What the owner sees
@@ -92,7 +91,7 @@ Two kinds of desk occupant are excluded, and the window and the guide say so:
 - A picker of the floor's workers (name, color, status), with each one's eligibility. Each row also says what the worker is on, so the owner can pick one without knowing its name: its task card's title (else the first line of the prompt it was hired with, else "No task yet"), and its branch and pull request.
 - **Idle, done or asleep:** the office types the line in (an asleep worker is resumed with it), as a team message does.
 - **Working:** a Droid agent gets the line queued behind its current turn (the `queue` flag of `WorkerManager.prompt`, which sends Ctrl+Enter). Another agent kind that can't queue is shown as busy: ping it when it's free.
-- **Starting, waiting on an answer in its terminal (`needs_input`), or down:** not eligible, with the reason. The office never types into a permission prompt, an AskUser dialog, a plain shell, or a guest.
+- **Starting, waiting on an answer in its terminal (`needs_input`), or down:** not eligible, with the reason. The office never types into a permission prompt, an AskUser dialog, or a plain shell.
 - If a worker's status changes while the picker is open, the picker updates. A ping that becomes ineligible on the way fails with an inline reason.
 - The line is an editable office prompt (`src/shared/prompts.ts`), directing the worker to `whiteboard_read`.
 
@@ -214,7 +213,6 @@ In one change, before the Whiteboard takes the slot:
 
 - **Server:**
   - Remove `src/server/services.ts`, `src/server/relay.ts` and their wiring in `server.ts`: the port scan, the `services` state, and the tunnel relay for HTTP and WebSockets.
-  - `WorkerManager.owners()` stays, because `GuestScanner` uses it for the workers' PIDs. Replace it with a pid list (or move its type), so it no longer imports the deleted file.
 - **Protocol and client:**
   - Remove `ServiceInfo`, `ServicesState` and the `services` message from `protocol.ts`, and `store.services`.
   - Remove `src/client/ui/services.ts` and `ServicesBoardTexture`.
@@ -248,7 +246,7 @@ The work is done when each of these passes, by test where it can be automated an
 - **Links:** edit, atomic replace, delete and restore of a linked file, an update refused while linked, unlink, and a deleted worktree.
 - **Anchoring:** marks survive typical agent rewrites. Detached marks show up and reattach. Marks are in the same place in the window, on the wall and in the PNG.
 - **Lifetimes:** a dismissed author, a floor removed and added back, and the selection after a restart and after deleting the selected card.
-- **Ping:** each status in the picker, a Droid agent queued mid-turn, refusals for `needs_input`, starting, down and guests.
+- **Ping:** each status in the picker, a Droid agent queued mid-turn, refusals for `needs_input`, starting and down.
 - **Renderer:** it installs and renders, with Chromium's sandbox on, in the packaged signed Mac app and developer source checkouts on macOS, Linux (including Ubuntu 24.04 EC2 through `deploy/aws.sh`) and Windows. Where the sandbox can't run, or the browser or libraries are missing, the office still starts and the failure is reported, never silent.
 - **UI:** the window at 1440×900 and 1024×700, Fit and 100% on a long artifact, the wall's blown-up view of that long artifact at the owner's last viewport, and Esc, the stack, and walking away mid-edit.
 

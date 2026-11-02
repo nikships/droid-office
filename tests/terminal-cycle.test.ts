@@ -27,7 +27,6 @@ test('only running terminals on the supplied floor participate, without waking s
     worker('asleep', 'desk-1', { status: 'offline' }),
     worker('exited', 'desk-2', { status: 'exited' }),
     worker('lost', 'desk-3', { lost: {} as WorkerInfo['lost'] }),
-    worker('guest', 'desk-4', { guest: {} as WorkerInfo['guest'] }),
     worker('cloud', 'desk-5', { cloud: {} as WorkerInfo['cloud'] }),
     worker('starting', 'desk-6', { status: 'starting' }),
     worker('working', 'desk-7', { status: 'working' }),

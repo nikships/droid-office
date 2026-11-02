@@ -224,13 +224,12 @@ export function sameMenu(a: Menu | undefined, b: Menu | undefined): boolean {
 export interface AskWorker {
   status: string;
   kind: string;
-  guest?: unknown;
   cloud?: unknown;
 }
 
 /** The numbered menu on a worker's screen: a shell's numbered output is never an ask. */
 export function workerMenu(worker: AskWorker, lines: readonly string[] | undefined): Menu | undefined {
-  if (worker.kind !== 'agent' || worker.cloud || worker.guest || !lines) return undefined;
+  if (worker.kind !== 'agent' || worker.cloud || !lines) return undefined;
   return readMenu(lines);
 }
 

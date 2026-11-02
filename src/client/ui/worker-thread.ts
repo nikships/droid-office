@@ -1,6 +1,5 @@
 import type { ClientMsg, ServerMsg, WorkerInfo } from '../../shared/protocol';
 import { isAsleep, isBusy, needsOwnerInput } from '../../shared/status';
-import { statusWord } from '../../shared/guests';
 import { threadArgumentsText, threadOutputText, type ThreadBlock, type ThreadModelAction, type ThreadRow } from '../../shared/thread-presentation';
 import type { ThreadEntry, ThreadImage } from '../../shared/worker-thread';
 import { CLEAR_DROID_QUEUE, readDroidQueue } from '../../shared/droid-queue';
@@ -605,7 +604,7 @@ export function mountWorkerThread(net: Net, opts: ThreadOptions): WorkerThread {
       card.name.title = child.name;
       card.status.className = `pill ${child.status}`;
       card.status.hidden = !connected;
-      card.status.textContent = isAsleep(child.status) ? 'Asleep' : statusWord(child, STATUS_LABEL);
+      card.status.textContent = isAsleep(child.status) ? 'Asleep' : (STATUS_LABEL[child.status] ?? child.status);
       card.open.disabled = !connected || !opts.openWorker;
       const rows = member.history.rows.slice(-4);
       const loaded = new Map(member.history.entries.map((entry) => [entry.id, entry]));

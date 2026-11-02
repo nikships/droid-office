@@ -7,7 +7,6 @@ import { windowHeader } from './kit';
 import { cloudLine } from './factory-cloud';
 import { DESK_BY_ID } from '../../shared/layout';
 import { TEAM_MARK, teamStanding, teamSummary, workersByTeam } from '../../shared/team';
-import { PROVIDER_LABEL, processLabel, statusWord } from '../../shared/guests';
 import { creditsNote } from '../../shared/factory-sessions';
 import { workerActivity } from '../../shared/status';
 
@@ -24,14 +23,13 @@ export function renderWorkers(onOpen: (id: string) => void) {
     const sub = [
       standing && `${TEAM_MARK[standing.badge.emblem]} ${standing.label}`,
       teamSummary(team),
-      w.kind === 'agent' && `⚙️ ${w.guest ? PROVIDER_LABEL[w.guest.provider] : 'Droid'}${badge ? ` · ${badge}` : ''}`,
+      w.kind === 'agent' && `⚙️ Droid${badge ? ` · ${badge}` : ''}`,
       w.cloud && cloudLine(w),
       w.cloud?.error && `⚠️ ${w.cloud.error}`,
       w.worktree && `🌿 ${w.worktree.branch}`,
       w.repos?.length && `🗂️ ${w.repos.length + 1} repos`,
       w.pr && `🔀 PR #${w.pr.number}`,
       creditsNote(store.factory.sessions, w.sessionId),
-      w.guest && `🚪 outside the office · pid ${w.guest.pid}`,
       w.task?.name,
       workerActivity(w) || w.title || w.prompt,
     ]
@@ -42,19 +40,13 @@ export function renderWorkers(onOpen: (id: string) => void) {
         'li',
         {
           onclick: () => onOpen(w.id),
-          title: w.cloud
-            ? `Open ${w.name}'s window: its session runs on ${w.cloud.computerName}`
-            : w.guest
-              ? `${w.name} runs outside the office (${processLabel(w.guest)}): see what the office knows of it`
-              : lead
-                ? `Open ${w.name}'s terminal (a subagent of ${lead.name})`
-                : `Open ${w.name}'s terminal`,
+          title: w.cloud ? `Open ${w.name}'s window: its session runs on ${w.cloud.computerName}` : lead ? `Open ${w.name}'s terminal (a subagent of ${lead.name})` : `Open ${w.name}'s terminal`,
           class: lead ? 'subagent' : team.length ? 'lead' : undefined,
           style: lead ? `--lead:${lead.color}` : undefined,
         },
         h('span.dot', { style: `background:${w.color}` }),
         h('span.name', {}, w.name, sub ? h('span.sub', {}, model ? modelLogo({ id: model, name: droidDisplayName(model) }) : null, withoutGlyph(sub)) : null),
-        w.lost ? h('span.pill.lost', { title: 'Its worktree was deleted outside droid-office: open it to fix it' }, 'worktree deleted') : h('span.pill', { class: w.status }, statusWord(w, STATUS_LABEL)),
+        w.lost ? h('span.pill.lost', { title: 'Its worktree was deleted outside droid-office: open it to fix it' }, 'worktree deleted') : h('span.pill', { class: w.status }, STATUS_LABEL[w.status] ?? w.status),
       ),
     );
   }

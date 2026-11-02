@@ -21,7 +21,6 @@ export interface PingRow {
   /** What pressing Ping does, or why it can't. */
   note: string;
   busy?: boolean;
-  guest?: boolean;
 }
 
 const HOW_NOTE: Record<PingHow, string> = {
@@ -55,7 +54,7 @@ export function pingWhere(w: WorkerInfo, words: ForgeWords = forgeWords(undefine
 export function pingRows(workers: Iterable<WorkerInfo>, statusLabel: Record<string, string>, words: ForgeWords = forgeWords(undefined)): PingRow[] {
   const rows = [...workers].map((w): PingRow => {
     const e = pingEligibility(w);
-    const status = w.guest ? 'guest' : (statusLabel[w.status] ?? w.status);
+    const status = statusLabel[w.status] ?? w.status;
     const task = pingTask(w);
     const where = pingWhere(w, words);
     const base = {
@@ -65,8 +64,7 @@ export function pingRows(workers: Iterable<WorkerInfo>, statusLabel: Record<stri
       ...(task ? { task } : {}),
       ...(where ? { where } : {}),
       status,
-      statusClass: w.guest ? 'offline' : w.status,
-      ...(w.guest ? { guest: true } : {}),
+      statusClass: w.status,
     };
     return e.ok ? { ...base, ok: true, how: e.how, note: HOW_NOTE[e.how] } : { ...base, ok: false, note: e.reason, ...(e.busy ? { busy: true } : {}) };
   });

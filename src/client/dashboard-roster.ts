@@ -1,5 +1,4 @@
 import type { TodoProgress, WorkerInfo } from '../shared/protocol';
-import { statusWord } from '../shared/guests';
 import { isAsleep, isBusy, needsOwnerAttention, needsOwnerInput } from '../shared/status';
 import { shortDuration, workedFor } from './dashboard-workspace';
 import { workerDot, workingBars, WORKER_MIME } from './dashboard-pane';
@@ -113,13 +112,13 @@ export function createWorkerRoster(el: HTMLElement, open: (id: string) => void, 
       r.open.disabled = !next.live;
       r.split.disabled = !next.live;
       const worked = workedFor(w.workedMs, w.workingSince, Date.now());
-      const meta = [w.kind === 'agent' && !w.guest ? modelBadge(w.activeModel ?? w.model, w.activeEffort ?? w.effort) : workerKind(w), worked >= 1000 ? shortDuration(worked) : ''].filter(Boolean).join(' · ');
+      const meta = [w.kind === 'agent' ? modelBadge(w.activeModel ?? w.model, w.activeEffort ?? w.effort) : workerKind(w), worked >= 1000 ? shortDuration(worked) : ''].filter(Boolean).join(' · ');
       const relationship = parent ? `Subworker of ${parent.name}` : w.lead ? 'Lead unavailable' : hasChildren ? 'Main worker' : '';
       const todos = w.kind === 'shell' ? undefined : w.todos;
       const key = JSON.stringify([w.name, w.color, w.status, w.acked, w.lead, doingLine(w), meta, relationship, next.pane(w.id), todos]);
       if (key !== r.key) {
         r.key = key;
-        const status = statusWord(w, STATUS_LABEL);
+        const status = STATUS_LABEL[w.status] ?? w.status;
         r.open.title = [w.name, relationship, status, doingLine(w), todos && `Todos ${todoLine(todos)}`, meta].filter(Boolean).join(' · ');
         r.open.setAttribute('aria-label', `Open ${w.name}${relationship ? `, ${relationship}` : ''}, ${status}: ${doingLine(w)}${todos ? `, todo list ${todoLine(todos)}` : ''}`);
         r.split.setAttribute('aria-label', `Open ${w.name} in a new pane`);

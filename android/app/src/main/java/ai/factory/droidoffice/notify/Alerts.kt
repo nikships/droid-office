@@ -161,7 +161,7 @@ class Alerts(
             // The system's guesses ("Open link" for a file name in a prompt) only get in the way of a reply.
             .setAllowSystemGeneratedContextualActions(false)
             .setContentIntent(openWorker(officeId, w.id))
-        if (!w.isGuest && menu?.multiSelect != true) {
+        if (menu?.multiSelect != true) {
             // Up to three buttons: its first two choices, then Reply, which takes a digit or your own answer.
             menu?.choices?.take(2)?.forEach { c -> builder.addAction(choiceAction(officeId, w, menu, c)) }
             builder.addAction(replyAction(officeId, w, menu))

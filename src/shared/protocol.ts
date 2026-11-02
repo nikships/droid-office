@@ -169,17 +169,6 @@ export interface WorkerInfo {
   workedMs?: number;
   workingSince?: number;
   /**
-   * Set for a guest: an agent process the office didn't start, running on the office's machine in
-   * this floor's checkout (see server/guests.ts). The office only watches it: it has no terminal
-   * here, takes no prompts or tasks, and is never stopped by the office.
-   */
-  guest?: GuestInfo;
-  /**
-   * Agent processes started by hand inside this worker's own worktree, outside the office (see
-   * server/guests.ts): they're this worker's, rather than guests of their own.
-   */
-  outside?: OutsideProcess[];
-  /**
    * Set for a cloud worker (kind 'cloud'): its Droid session (`sessionId`) runs on one of the
    * account's Factory computers, driven through Factory's Sessions API (see server/factory/cloud.ts).
    * It has no terminal, worktree or hooks on this machine.
@@ -219,37 +208,6 @@ export interface TeamBadge {
   emblem: TeamEmblem;
   /** The lead's name when the team formed, for "Ada's team · Lead has left". */
   leadName: string;
-}
-
-/** The agent CLIs whose processes the office recognises as guests. */
-export type GuestProvider = 'droid' | 'claude' | 'codex' | 'opencode' | 'grok' | 'muse';
-
-/** An agent process running outside the office: which CLI, and where. */
-export interface OutsideProcess {
-  pid: number;
-  /** Its controlling terminal, like /dev/ttys004. */
-  tty: string;
-  provider: GuestProvider;
-}
-
-/** What the office knows of a guest (see WorkerInfo.guest). */
-export interface GuestInfo extends OutsideProcess {
-  /** Its working directory, symlinks resolved. */
-  cwd: string;
-  /** When the process started (ms). */
-  startedAt: number;
-  /**
-   * Where its status comes from: Droid's session transcript (`~/.factory/sessions/`), or only that
-   * the process is running, when there's no transcript the office can tie to it.
-   */
-  seen: 'transcript' | 'process';
-  /** When its transcript was last written (ms), when it has one. */
-  writtenAt?: number;
-  /**
-   * Why it can't be brought in as one of the office's own workers right now (see 'guest.bringIn'),
-   * or unset when it can: a droid session the office has tied to it, in the floor's checkout, between turns.
-   */
-  cantBringIn?: string;
 }
 
 /** Where the branch of a worker whose worktree was deleted still is (see WorkerInfo.lost). */
@@ -859,11 +817,6 @@ type ClientMessage =
   | { t: 'worker.rebuild'; workerId: string; all?: boolean }
   | { t: 'worker.attach'; workerId: string }
   | { t: 'worker.detach'; workerId: string }
-  /**
-   * Makes a guest one of the office's own workers (see GuestInfo.cantBringIn): its process outside
-   * the office is asked to quit, and a worker at the same desk, with the same name, resumes its session.
-   */
-  | { t: 'guest.bringIn'; workerId: string }
   /**
    * With `issue`, the prompt hands the worker that GitHub issue, which is taken as for worker.spawn.
    * With `queue`, an agent's prompt is submitted with Ctrl+Enter instead of Enter, so Droid queues it

@@ -18,7 +18,7 @@ export function wandWorker(aim: WandAim | null, reach = Infinity): string | null
 /** Shipping is an intent sent to one agent, never shell input or a direct Git operation. */
 export function wandShipRequest(worker: WorkerInfo | undefined, prompt: string): Extract<ClientMsg, { t: 'worker.prompt' }> | string {
   if (!worker) return 'That worker has gone home';
-  if (worker.guest || worker.kind === 'shell') return 'Ship it needs an office agent';
+  if (worker.kind === 'shell') return 'Ship it needs an office agent';
   if (worker.lost) return `Restore ${worker.name}'s worktree before asking it to ship`;
   if (isAsleep(worker.status) || worker.status === 'starting' || worker.cloud?.error) return `${worker.name} is not ready for a shipping prompt`;
   if (!prompt.trim()) return 'The Ship it prompt is empty';

@@ -200,7 +200,7 @@ export class OfficeMcpServer {
       if (!floor && this.deps.remote.rehome(id)) floor = this.deps.floor(id);
       worker = floor?.workers.get(id);
     } else worker = floor?.workers.authenticate(id, token);
-    if (!floor || !worker || worker.kind !== 'agent' || worker.guest || worker.cloud) return undefined;
+    if (!floor || !worker || worker.kind !== 'agent' || worker.cloud) return undefined;
     if (!!worker.remote !== !!this.deps.remoteTransport) return undefined;
     const relative = workspaceOf(worker);
     return { worker, floor, settings, cwd: relative ? path.join(floor.dir, relative) : floor.dir };

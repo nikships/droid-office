@@ -1,7 +1,7 @@
 import { Columns3, Factory, GitMerge, KanbanSquare, KeyRound, Sparkles, type LucideIcon } from 'lucide-react';
 import { Reveal } from './Reveal';
 import { SectionHeader } from './SectionHeader';
-import { guests, stats, whyPoints } from '../../data/why';
+import { stats, whyPoints } from '../../data/why';
 const icons: Record<string, LucideIcon> = {
   droid: Sparkles,
   gitlab: GitMerge,
@@ -32,20 +32,6 @@ export function WhySection() {
             );
           })}
         </div>
-
-        <Reveal className="mt-4 flex flex-col gap-4 rounded-[6px] border border-line bg-bg-panel p-5 md:flex-row md:items-center md:justify-between">
-          <div>
-            <p className="font-heading text-[10px] font-semibold uppercase tracking-[0.16em] text-text-dim">Guests welcome</p>
-            <p className="mt-1 text-[14px] text-text-dim">Agents you start in a terminal get a desk too, and can be brought in.</p>
-          </div>
-          <ul className="flex flex-wrap gap-2">
-            {guests.map((g) => (
-              <li key={g} className="rounded-[3px] border border-line-strong bg-bg-raised px-2.5 py-1 font-heading text-[11px] text-text">
-                {g}
-              </li>
-            ))}
-          </ul>
-        </Reveal>
 
         <dl className="mt-16 grid grid-cols-2 border-t border-line lg:grid-cols-4">
           {stats.map((stat, i) => (

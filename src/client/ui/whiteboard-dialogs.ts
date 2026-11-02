@@ -34,7 +34,7 @@ export function openPing(net: Net) {
     { 'aria-label': 'Ping a worker', tabindex: '-1' },
     windowHeader('Ping a worker', 'Tell a worker on this floor to look at the board'),
     body,
-    h('footer', {}, h('span.grow', {}, 'Guests and cloud workers can’t use the board yet'), h('button.btn.ghost', { type: 'button', onclick: () => modal.close() }, 'Done')),
+    h('footer', {}, h('span.grow', {}, 'Cloud workers can’t use the board yet'), h('button.btn.ghost', { type: 'button', onclick: () => modal.close() }, 'Done')),
   );
   const paint = () => {
     const rows = pingRows(store.workers.values(), STATUS_LABEL, words());
@@ -52,7 +52,7 @@ export function openPing(net: Net) {
           if (!net.send({ t: 'whiteboard.ping', worker: r.id })) results.set(r.id, { ok: false, text: 'The office is offline. Ping again once it’s back.' });
           paint();
         });
-        const meta = res && res !== 'sending' ? h('span.list-meta', { class: res.ok ? 'wb-ok' : 'wb-bad', title: res.text }, res.text) : h('span.list-meta', { title: r.note }, r.guest ? `${r.note} (Bring it in from its desk.)` : r.note);
+        const meta = res && res !== 'sending' ? h('span.list-meta', { class: res.ok ? 'wb-ok' : 'wb-bad', title: res.text }, res.text) : h('span.list-meta', { title: r.note }, r.note);
         const task = r.task ?? (r.statusClass === 'starting' ? 'Starting, no task yet' : 'No task yet');
         const job = h('span.list-meta.wb-ping-task', { class: r.task ? '' : 'wb-ping-none', title: [r.task, r.where].filter(Boolean).join('\n') || task }, task);
         return h(

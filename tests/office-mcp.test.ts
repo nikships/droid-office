@@ -32,7 +32,6 @@ async function rig(t: { after(fn: () => void | Promise<void>): void }, probes = 
     ['lead', worker('lead')],
     ['sub', worker('sub', { lead: 'lead', deskId: 'desk-2', worktree: { path: '.droid-office/worktrees/sub', branch: 'office/sub', base: 'abc' } })],
     ['shell', worker('shell', { kind: 'shell' })],
-    ['guest', worker('guest', { guest: { pid: 1, cmd: 'droid' } as WorkerInfo['guest'] })],
     ['cloud', worker('cloud', { kind: 'cloud' })],
   ]);
   const tokens = new Map([...people.keys()].map((id) => [id, `test-token-${id}`]));
@@ -95,7 +94,7 @@ test('the HTTP MCP refuses missing, mismatched and non-agent identities', async 
   await assert.rejects(r.connect(), /Office MCP requires/);
   await assert.rejects(r.connect('lead', 'test-token-sub'), /Office MCP requires/);
   await assert.rejects(r.connect('missing', 'test-token-lead'), /Office MCP requires/);
-  for (const id of ['shell', 'guest', 'cloud']) await assert.rejects(r.connect(id), /Office MCP requires/);
+  for (const id of ['shell', 'cloud']) await assert.rejects(r.connect(id), /Office MCP requires/);
   const response = await fetch(r.url, { method: 'POST', headers: { [OFFICE_MCP_WORKER_HEADER]: 'lead', Authorization: 'test-token-lead' } });
   assert.equal(response.status, 401, 'a bare token is not a bearer credential');
   const rebound = await new Promise<number | undefined>((resolve, reject) => {

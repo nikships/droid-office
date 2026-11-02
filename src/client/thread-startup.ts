@@ -3,7 +3,7 @@ import { NEW_SESSION_GRACE_MS } from '../shared/factory-sessions';
 import { isAsleep, isBusy } from '../shared/status';
 
 function localThread(worker: WorkerInfo): boolean {
-  return worker.kind === 'agent' && !worker.cloud && !worker.guest && !worker.lost;
+  return worker.kind === 'agent' && !worker.cloud && !worker.lost;
 }
 
 /** Worktree setup and CLI boot happen before a local conversation can be read. */

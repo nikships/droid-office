@@ -58,7 +58,7 @@ export interface FactorySession {
   fetchedAt?: number;
 }
 
-/** One of the office's own workers (on any floor, desk or cloud, guests too) and its session. */
+/** One of the office's own workers (on any floor, desk or cloud) and its session. */
 export interface FactoryOfficeSession {
   workerId: string;
   name: string;
