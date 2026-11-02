@@ -20,6 +20,7 @@ class Fake implements TeamWorkers {
   prompts: [string, string][] = [];
   resumed: [string, string | undefined][] = [];
   killed: string[] = [];
+  gone?: (id: string) => void;
   tails = new Map<string, string>();
   fetched = 0;
   starts: [string, string | undefined][] = [];
@@ -65,6 +66,7 @@ class Fake implements TeamWorkers {
   async kill(id: string) {
     this.ws.delete(id);
     this.killed.push(id);
+    this.gone?.(id);
     return { note: 'Kept its worktree' };
   }
   tail(id: string) {
@@ -486,6 +488,17 @@ test('a subagent leaving creates news for its lead', async (t) => {
     (await r.call('lead', { action: 'status' })).body.events.map((e: any) => [e.kind, e.name]),
     [['left', 'Pixel']],
   );
+});
+
+test('a subagent its own lead sends home is no news to that lead', async (t) => {
+  const r = rig(t);
+  r.fake.gone = (id) => r.team.onWorkerGone(id);
+  await r.call('lead', { action: 'hire', task: 'a' });
+  r.set('lead', 'done');
+  assert.equal((await r.call('lead', { action: 'dismiss', worker: 'Pixel' })).status, 200);
+  await sleep(40);
+  assert.equal(r.fake.prompts.length, 0);
+  assert.deepEqual((await r.call('lead', { action: 'status' })).body.events, []);
 });
 
 test('a lead at rest is woken once per batch of news, and a busy one when it comes to rest', async (t) => {

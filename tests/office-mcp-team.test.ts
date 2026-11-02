@@ -330,7 +330,9 @@ test('message and dismiss enforce ownership and give readable delivery and clean
   const gone = await r.call(r.lead, 'team', { action: 'dismiss', name: 'Pixel' });
   assert.match(gone.output, /Sent Pixel home.*Kept its worktree/);
   assert.equal(r.people.has('sub1'), false);
-  assert.match((await r.status()).output, /Pixel left the floor/);
+  const after = (await r.status()).output;
+  assert.doesNotMatch(after, /Pixel left the floor/);
+  assert.match(after, /No unread team news/);
 });
 
 test('hire reports runtime capacity refusal and non-git worktree guidance', async (t) => {

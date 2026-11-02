@@ -155,6 +155,8 @@ export class Team {
   private known = new Map<string, { name: string; lead?: string; status: WorkerStatus }>();
   /** Subagents that have reported in the turn they're in, whose turn ending is no news. */
   private reported = new Set<string>();
+  /** Subagents their own lead is sending home: the lead knows, so their leaving is no news. */
+  private dismissing = new Set<string>();
   private path: string;
   private now: () => number;
 
@@ -190,7 +192,7 @@ export class Team {
   /** A worker left the floor: forget it and discard its own news. */
   onWorkerGone(id: string) {
     const previous = this.known.get(id);
-    if (previous?.lead && this.workers.get(previous.lead)) this.push({ lead: previous.lead, worker: id, name: previous.name, kind: 'left' });
+    if (previous?.lead && !this.dismissing.has(id) && this.workers.get(previous.lead)) this.push({ lead: previous.lead, worker: id, name: previous.name, kind: 'left' });
     this.known.delete(id);
     this.reported.delete(id);
     const before = this.log.length;
@@ -506,7 +508,8 @@ export class Team {
   private async dismiss(lead: WorkerInfo, b: Record<string, unknown>): Promise<TeamReply> {
     const w = this.resolve(lead, b.worker);
     if (typeof w === 'string') return no(404, w);
-    const { note, error } = await this.workers.kill(w.id);
+    this.dismissing.add(w.id);
+    const { note, error } = await this.workers.kill(w.id).finally(() => this.dismissing.delete(w.id));
     if (error) return no(409, `${w.name}: ${error}`);
     this.opts.toast(`👋 ${lead.name} sent ${w.name} home${note ? `. ${note}` : ''}`, 'info');
     return ok({ name: w.name, ...(note ? { note } : {}) });
