@@ -95,7 +95,7 @@ test('an agent and the owner share a floor Whiteboard end to end: MCP, the windo
       .find((r) => r.env?.hookToken) as { env: { workerId: string; hookToken: string; hookUrl: string; path: string } } | undefined;
   }, 'the agent to start');
   assert.equal(
-    launch.env.path.split(path.delimiter).some((dir) => dir.endsWith(path.join('bin', 'team'))),
+    launch.env.path.split(path.delimiter).some((dir) => dir.startsWith(root)),
     false,
     'no office command folder is on the agent PATH',
   );

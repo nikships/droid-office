@@ -497,7 +497,7 @@ test('the worker system prompt is the office’s as rewritten, filled in for eac
   assert.equal(existsSync(path.join(f.data, `system-${b.id}.md`)), false);
 });
 
-test('only a worker with no lead is told about office-visit, and only while visits are on', async (t) => {
+test('only a worker with no lead is told about the visit tools, and only while visits are on', async (t) => {
   const f = fixture();
   isolateAgentEnvironment(f, t);
   const previousLog = process.env.FAKE_AGENT_LOG;
@@ -865,7 +865,7 @@ test('an office-queue command an older office left behind is cleared away, and n
   t.after(() => workers.shutdown());
   assert.equal(existsSync(path.join(bin, 'office-queue')), false);
   assert.equal(existsSync(path.join(bin, 'office-queue.cmd')), false);
-  assert.equal(existsSync(path.join(bin, 'team', 'office-workers')), false);
+  assert.equal(existsSync(path.join(bin, 'team')), false);
 
   const hired = workers.station('station-actions', 'Ada', 'Kick off the release workflow');
   assert.equal(typeof hired, 'object');
@@ -2249,7 +2249,7 @@ test('a worker restored from before subscriptions keeps its names, maps its last
   );
 });
 
-test('a subagent sits down told who hired it and where it works; its lead goes on record without an office-workers command', async (t) => {
+test('a subagent sits down told who hired it and where it works; its lead goes on record with no office command on disk', async (t) => {
   const f = carryOnFixture(t);
   const bin = path.join(f.data, 'bin', 'team');
   mkdirSync(bin, { recursive: true });
@@ -2289,7 +2289,7 @@ test('a subagent sits down told who hired it and where it works; its lead goes o
   assert.match(brief, /the project's main checkout/);
   assert.match(brief, /`team_report`/);
   assert.ok(brief.endsWith(`## Task from ${lead.name}\n\`\`\`text\nFix the redirect\n\`\`\``));
-  for (const r of [leadLaunch, subLaunch]) assert.ok((r.env.path ?? '').split(path.delimiter).includes(bin), 'remaining office commands stay on the agent PATH during migration');
+  for (const r of [leadLaunch, subLaunch]) assert.equal((r.env.path ?? '').split(path.delimiter).includes(bin), false, 'no office command folder is on the agent PATH');
   assert.equal((leadLaunch.env.path ?? '').split(path.delimiter).includes(path.join(f.data, 'bin')), false, 'nothing else is put in the data directory’s bin');
 
   // What its lead reads of it: the end of its terminal, as text (the brief typed into it, echoed).

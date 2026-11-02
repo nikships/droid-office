@@ -148,9 +148,9 @@ export class Floor {
   readonly decor: Decor;
   /** The bookshelf: the project's Markdown files (see docs.ts). */
   readonly docs: Docs;
-  /** Leads and the subagents they hire with office-workers (see team.ts). */
+  /** Leads and the subagents they hire with the Office MCP's team tools (see team.ts). */
   readonly team: Team;
-  /** Independent workers visiting each other's desks with office-visit (see visits.ts). */
+  /** Independent workers visiting each other's desks with the Office MCP's visit tools (see visits.ts). */
   readonly visits: Visits;
   /** Agent processes started by hand in this checkout, outside the office, at desks of their own (see guests.ts). */
   readonly guests: Guests;

@@ -227,7 +227,7 @@ test('hire refusals are actionable errors and do not take a desk', async (t) => 
   assert.match(full.output, /action dismiss/);
   assert.equal(r.hired.length, 1);
   const sub = await r.connect('sub1');
-  const tools = (await sub.listTools()).tools.map((tool) => tool.name);
+  const tools = (await sub.listTools()).tools.map((tool) => tool.name).filter((name) => !name.startsWith('whiteboard_'));
   assert.deepEqual(tools, ['office_whoami', 'team_report']);
   assert.equal((await r.call(sub, 'team_hire', { title: 'No', brief: 'No' })).isError, true);
   assert.equal((await r.call(sub, 'team_models')).isError, true);

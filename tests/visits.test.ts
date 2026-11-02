@@ -656,7 +656,7 @@ test('a visitor turned back mid-walk reaches home on the same shortened clock as
   }
 });
 
-test('office-workers carries on as before beside visits: a lead reaches its subagent with no walk and no visit', async (t) => {
+test('team messages carry on as before beside visits: a lead reaches its subagent with no walk and no visit', async (t) => {
   const dir = mkdtempSync(path.join(tmpdir(), 'droid-office-visits-team-'));
   t.after(() => rmSync(dir, { recursive: true, force: true }));
   const r = rig(t);

@@ -253,7 +253,7 @@ export class WorkerManager {
    * from the branch the checkout is on, which is left alone.
    */
   freshMain?: () => boolean;
-  /** ⚙️ Settings → Subagents & visits → Visits: a worker with no lead is told about office-visit when it starts. */
+  /** ⚙️ Settings → Subagents & visits → Visits: a worker with no lead is told about the visit tools when it starts. */
   visitsOn?: () => boolean;
   /** The floor's pull requests as the board last listed them, to tell a checkout whose branch merged (see settleCheckout). */
   pullList?: () => GhPull[];
@@ -2291,7 +2291,7 @@ process.stdin.on('end', () => {
     // A plain folder has no branches to keep in sync.
     const branchPolicy = this.plain ? '' : workerBranchPolicy(this.trees.baseBranch() ?? this.trees.currentBranch(), this.trees.branchFile);
     const template = this.prompts?.text('worker.system') ?? PROMPTS['worker.system'].text;
-    // Only a worker with no lead may visit the others; a subagent isn't told office-visit exists.
+    // Only a worker with no lead may visit the others; a subagent isn't told the visit tools exist.
     const visits = info.kind === 'agent' && !info.lead && this.visitsOn?.() ? WORKER_VISITS : '';
     let text = officePrompt(this.prompts, 'worker.system', { name: info.name, visits, branchPolicy });
     // A saved system prompt from before visits existed still tells the worker about them.

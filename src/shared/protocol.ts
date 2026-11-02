@@ -140,7 +140,7 @@ export interface WorkerInfo {
   /** When its terminal last took input (keystrokes or a prompt). */
   lastInputAt?: number;
   /**
-   * The worker that hired this one as its subagent with `office-workers hire` (see server/team.ts),
+   * The worker that hired this one as its subagent with the Office MCP's `team_hire` (see server/team.ts),
    * while that worker is still on the floor. Subagents report back to it and can't hire their own.
    */
   lead?: string;
@@ -733,9 +733,9 @@ export interface SubagentSettings {
   /** A lead at rest is prompted to read what its subagents said once they report or finish. */
   wakeLead: boolean;
   /**
-   * Independent workers (no lead) on a floor may visit each other's desks with office-visit: read a
-   * terminal, tell, ask and hand off work (see server/visits.ts and shared/visits.ts). Off: every
-   * office-visit command is refused.
+   * Independent workers (no lead) on a floor may visit each other's desks with the Office MCP's visit tools: read
+   * a terminal, tell, ask and hand off work (see server/visits.ts and shared/visits.ts). Off: the
+   * visit tools are hidden and refused.
    */
   visits: boolean;
 }

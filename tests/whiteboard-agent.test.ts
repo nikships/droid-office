@@ -6,7 +6,7 @@ import path from 'node:path';
 import { OWNER, OWNER_AUTHOR, type Op } from '../src/shared/whiteboard.js';
 import type { WorkerInfo } from '../src/shared/protocol.js';
 import { WhiteboardStore, type CardRenders, type PinnedCard, type RenderImage, type RenderOutcome, type WhiteboardRenderer } from '../src/server/whiteboard.js';
-import { boardReaders, handleAgent, readBoard, workerAuthor, type CardOut } from '../src/server/whiteboard-agent.js';
+import { boardReaders, readBoard, workerAuthor, type CardOut } from '../src/server/whiteboard-agent.js';
 
 const PNG = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==', 'base64');
 const WORKER = { id: 'w1', kind: 'agent', deskId: 'desk-1', name: 'Pixel', color: '#ff8800', status: 'idle' } as unknown as WorkerInfo;
@@ -143,34 +143,7 @@ test("a read's png says why there's no image: no renderer, a failed render, or a
   assert.equal(wrong && !wrong.ok ? wrong.last?.current : undefined, false);
 });
 
-test('the agent route: hello, read, apply, and what it refuses', async (t) => {
-  const { store, owner } = rig(t);
-  owner({ op: 'card.create', card: 'c1', kind: 'canvas', title: 'Sketch' });
-  const hello = await handleAgent(store, WORKER, FLOOR, { action: 'hello' });
-  assert.equal(hello.status, 200);
-  const h = hello.body as { epoch: string; worker: { id: string }; rev: number; cards: number; renderer: { available: boolean } };
-  assert.equal(h.worker.id, 'w1');
-  assert.equal(h.rev, 1);
-  assert.equal(h.cards, 1);
-  assert.equal(h.renderer.available, true);
-
-  assert.equal((await handleAgent(store, WORKER, FLOOR, { action: 'read', cards: 'c1' })).status, 400);
-  const read = await handleAgent(store, WORKER, FLOOR, { action: 'read', cards: ['c1'], timeoutMs: 5 });
-  assert.equal(read.status, 200);
-  assert.deepEqual((read.body as { returned: string[] }).returned, ['c1']);
-
-  const ok = await handleAgent(store, WORKER, FLOOR, { action: 'apply', envelope: { epoch: h.epoch, seq: 1, ops: [{ op: 'card.title', card: 'c1', title: 'New' }] } });
-  assert.deepEqual(ok, { status: 200, body: { ok: true, rev: 2 } });
-  const dup = await handleAgent(store, WORKER, FLOOR, { action: 'apply', envelope: { epoch: h.epoch, seq: 1, ops: [{ op: 'card.title', card: 'c1', title: 'New' }] } });
-  assert.deepEqual(dup, { status: 200, body: { ok: true, rev: 2, duplicate: true } });
-  const bad = await handleAgent(store, WORKER, FLOOR, { action: 'apply', envelope: { epoch: h.epoch, seq: 2, ops: [{ op: 'card.title', card: 'gone', title: 'x' }] } });
-  assert.equal(bad.status, 422);
-  const expired = await handleAgent(store, WORKER, FLOOR, { action: 'apply', envelope: { epoch: 'not-an-epoch', seq: 1, ops: [] } });
-  assert.equal(expired.status, 409);
-  assert.equal((expired.body as { reason: string }).reason, 'expired');
-  assert.equal((await handleAgent(store, WORKER, FLOOR, { action: 'apply', envelope: 'x' })).status, 400);
-  assert.equal((await handleAgent(store, WORKER, FLOOR, null)).status, 400);
-
+test('a worker writes as itself, and the owner reads alongside every worker', () => {
   assert.deepEqual(workerAuthor(WORKER), { kind: 'worker', id: 'w1', name: 'Pixel', color: '#ff8800' });
   assert.deepEqual(boardReaders([WORKER]), [OWNER, 'w1']);
 });
