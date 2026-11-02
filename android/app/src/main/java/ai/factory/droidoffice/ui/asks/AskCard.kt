@@ -175,7 +175,8 @@ private fun AnswerWorkspace(worker: WorkerInfo, shown: Menu, entries: List<Threa
     val supported = !shown.multiSelect || data.workerAnswerMultiSelect
     val active = connected && same && !interrupted && !uncertain && supported
     val epoch = remember { connection.answerEpoch }
-    val display = remember(shown, metadata) { Asks.display(shown, metadata) }
+    val pendingAsk = now?.ask ?: worker.ask
+    val display = remember(shown, metadata, pendingAsk) { Asks.display(shown, metadata, pendingAsk) }
     fun keep() {
         draft.selected = selected.toList()
         draft.text = text

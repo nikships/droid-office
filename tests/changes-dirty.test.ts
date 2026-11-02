@@ -372,3 +372,24 @@ test('cancelling edits preserve NUL-delimited paths and counts for unusual filen
   assert.equal(f.state().files[0].deletions, 1);
   assert.match(await f.diff(name), /-committed worker change\n\+baseline/);
 });
+
+test("a worker's tool call shows in its open Changes window at once, without waiting for the next poll", async (t) => {
+  const f = fixture(t);
+  await f.snapshot();
+  assert.deepEqual(f.state().files, []);
+  f.write('demo.txt', 'edited by the worker\n');
+  f.changes.touched('w1');
+  // A second look asked for while the first is under way runs after it, not never.
+  f.changes.touched('w1');
+  // Polls on a timer are off in this fixture: only the touch can have looked.
+  let got = f.state();
+  for (let i = 0; i < 200 && !got.files.length; i++) {
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    got = f.state();
+  }
+  assert.deepEqual(
+    got.files.map((file) => file.path),
+    ['demo.txt'],
+  );
+  f.changes.touched('nobody');
+});

@@ -9,11 +9,12 @@ import { Worktrees } from './worktrees.js';
 import { checkoutDirty, choosePullBase, pushBranch } from './open-pull.js';
 
 // What a worker changed, for the Changes window at its desk: the files it touched and their diff,
-// against the newer of the branch the office was opened on and its origin copy. While anyone has the window open, the office polls
-// that worker's checkout (its worktree, or the project folder) every couple of seconds and pushes
-// the file list whenever it changes. Diffs of single files are fetched on demand.
+// against the newer of the branch the office was opened on and its origin copy. While anyone has the window open, the office
+// looks at that worker's checkout (its worktree, or the project folder) as soon as one of its tool calls
+// finishes (see hook-refresh.ts), and every few seconds besides for changes made some other way, and
+// pushes the file list whenever it changes. Diffs of single files are fetched on demand.
 
-const POLL_MS = 2000;
+const POLL_MS = 10_000;
 const MAX_FILES = 400;
 const MAX_DIFF = 200_000;
 /** Untracked files bigger than this aren't read to count their lines. */
@@ -56,6 +57,8 @@ interface Watch {
   clients: Set<string>;
   timer?: NodeJS.Timeout;
   polling: boolean;
+  /** Asked to look again while a look was under way: it looks once more when that's done. */
+  again?: boolean;
   last?: ChangesState;
   /** The last state without its timestamp, to send only real changes. */
   lastKey?: string;
@@ -265,6 +268,11 @@ export class Changes {
     for (const key of [...this.watches.keys()]) this.unwatchKey(key, clientId);
   }
 
+  /** A tool call of the worker's finished that may have changed its files: whoever has its window open sees it now. */
+  touched(workerId: string) {
+    for (const [key, w] of this.watches) if (w.workerId === workerId && w.clients.size) void this.poll(key, true);
+  }
+
   /** The worker is gone. */
   forget(workerId: string) {
     for (const [key, w] of [...this.watches]) if (w.workerId === workerId) this.drop(key);
@@ -457,7 +465,11 @@ export class Changes {
 
   private async poll(key: string, now = false) {
     const w = this.watches.get(key);
-    if (!w || w.polling || (!now && !w.clients.size)) return;
+    if (!w || (!now && !w.clients.size)) return;
+    if (w.polling) {
+      if (now) w.again = true;
+      return;
+    }
     w.polling = true;
     try {
       const t = this.target(w.workerId, w.repo);
@@ -471,6 +483,10 @@ export class Changes {
       w.last = state;
     } finally {
       w.polling = false;
+      if (w.again && this.watches.get(key) === w) {
+        w.again = false;
+        void this.poll(key, true);
+      }
     }
   }
 

@@ -486,10 +486,18 @@ const DEFS = {
   'subagent.nudge': {
     group: 'subagents',
     label: 'Wake the lead',
-    used: 'Typed to a lead at rest when its subagents report, finish their turn, need input or leave (⚙️ Settings → Subagents & visits → Waking the lead).',
+    used: 'Typed to a lead at rest when its subagents report, finish their turn, need input or leave, or given to a busy lead as its turn ends (⚙️ Settings → Subagents & visits → Waking the lead).',
     vars: { news: 'What happened, one sentence per subagent: "Pixel reported back. Nova finished its turn."' },
     needs: ['news'],
     text: 'Droid Office notice: team update\n{{news}}\n\nOffice guidance: Call `team` with action "status" to read reports or questions and handle them within your current task. This is a status notice, not a message from a worker.',
+  },
+  'subagent.report': {
+    group: 'subagents',
+    label: 'Remind a subagent to report',
+    used: 'Given to a subagent as its turn ends without a team_report, once per turn, so it carries on and reports to its lead instead of stopping.',
+    vars: { lead: "The lead's name" },
+    needs: ['lead'],
+    text: 'Droid Office notice: report to your lead\nYour turn is ending without a report to {{lead}}. Call `team_report` with what you did, what is left and anything {{lead}} must decide (question: true for a blocking question), then end your turn.',
   },
   'subagent.message': {
     group: 'subagents',

@@ -20,6 +20,7 @@ import { stateWord, type PipelineRun } from '../shared/pipelines.js';
 import { AutoHeal, HEAL_TRIES, HealWatch, seedAutoHeal, type HealCall } from './auto-heal.js';
 import { healPromptVars } from '../shared/prompts.js';
 import { Changes } from './changes.js';
+import { debounce, type ToolRefresh } from './hook-refresh.js';
 import { Decor } from './decor.js';
 import { Docs } from './docs.js';
 import { FloorJira, type JiraOffice } from './jira.js';
@@ -100,6 +101,10 @@ const IDLE_REFRESH_MS = 10 * 60_000;
 const REFRESH_MS = 90_000;
 /** Pipelines are looked at again when someone walks in after this long. */
 const PIPELINES_STALE_MS = 20_000;
+/** How long after a worker's push or pull request command the boards are asked again, once per burst of them. */
+const BOARD_AFTER_TOOL_MS = 1500;
+/** A push's CI runs take a few seconds to show up on the forge. */
+const PIPELINES_AFTER_PUSH_MS = 6000;
 
 /** What `git` says about a checkout: its name, branch and origin for the top bar. A plain folder has neither. */
 export function projectInfo(dir: string, name: string, agentCmd: string, agentArgs: string[], forge: Forge = 'github', plain = false): ProjectInfo {
@@ -171,6 +176,9 @@ export class Floor {
   private words: ForgeWords;
   /** Which failed runs the Pipeline agent is woken to heal (see auto-heal.ts). */
   private heals = new HealWatch();
+  /** The forge looked at again after workers' pushes and pull request commands (see afterTool). */
+  private boardSoon = debounce(() => void this.board.refresh(), BOARD_AFTER_TOOL_MS);
+  private pipelinesSoon = debounce(() => void this.pipelines.refresh(), PIPELINES_AFTER_PUSH_MS);
 
   constructor(
     readonly def: FloorDef,
@@ -243,6 +251,12 @@ export class Floor {
           this.project.branch = branch;
           this.branchInfo = { baseBranch: this.workers.baseBranch, selectedBranch: this.workers.selectedBranch };
         },
+        tool: (workerId, refresh) => {
+          if (refresh.changes) this.changes.touched(workerId);
+          this.afterTool(refresh);
+          // Its other repositories are other floors' projects: their boards may have changed too.
+          for (const r of this.workers.get(workerId)?.repos ?? []) this.ctx.floor(r.floor)?.afterTool(refresh);
+        },
       },
       ctx.capacity,
       this.board,
@@ -294,6 +308,12 @@ export class Floor {
     this.workers.visitsOn = () => ctx.subagents().visits;
     this.workers.pullList = () => this.board.pulls.items;
     this.workers.modelGate = (model) => ctx.modelGate?.(model);
+    // Only while subagents can be hired through the Office MCP: the refusal points the worker there.
+    this.workers.denyTask = () => {
+      const s = ctx.subagents();
+      return s.denyTask && s.on && s.officeMcp;
+    };
+    this.workers.beforeStop = (info) => this.team.beforeStop(info);
 
     // The 🚀 Pipelines board: runs that end while someone watches say so (a failure always, a pass when the office started it).
     this.pipelines = floorPipelines(
@@ -330,7 +350,7 @@ export class Floor {
           return workers.officeDefault;
         },
         hire: (deskId, by, prompt, worktree, c, lead, from) => workers.spawn(deskId, by, prompt, worktree, 'agent', c.model, c.effort, [], lead, undefined, from),
-        prompt: (id, text) => workers.prompt(id, text),
+        prompt: (id, text) => workers.tell(id, text),
         resume: (id, text) => workers.resume(id, text),
         kill: (id) => workers.kill(id),
         tail: (id, lines) => workers.tail(id, lines),
@@ -355,6 +375,7 @@ export class Floor {
         get: (id) => workers.get(id),
         tail: (id, lines) => workers.tail(id, lines),
         prompt: (id, text) => workers.prompt(id, text),
+        tell: (id, text) => workers.tell(id, text),
         resume: (id, text) => workers.resume(id, text),
         cancelTurn: (id) => workers.cancelTurn(id),
         turnScreen: (id) => workers.turnScreen(id),
@@ -449,6 +470,13 @@ export class Floor {
     }, REFRESH_MS);
   }
 
+  /** A worker's tool call may have changed this floor's pull requests or started CI (see hook-refresh.ts). */
+  afterTool(refresh: ToolRefresh) {
+    if (this.plain) return;
+    if (refresh.board) this.boardSoon();
+    if (refresh.pipelines) this.pipelinesSoon();
+  }
+
   /** Pull request `n` merged (`by` someone, from the PR window): the gong rings, once per PR. */
   merged(n: number, by?: string) {
     if (this.merges.ring(n)) this.ctx.emit(this, { t: 'gong', why: 'merged', pr: n, by });
@@ -500,6 +528,12 @@ export class Floor {
     const desk = STATIONS.find((s) => s.station === 'actions');
     if (!desk) return;
     const prompt = officePrompt(this.ctx.prompts, 'pipeline.heal', healPromptVars(this.pipelines.forge, run, this.pipelines.state.defaultBranch));
+    // Mid-turn, the Pipeline agent reads it with its next tool call instead of having it typed over its work.
+    const busy = this.workers.list().find((w) => w.deskId === desk.id);
+    if (busy && this.workers.notice(busy.id, prompt)) {
+      this.ctx.toast(this, `🩹 The ${busy.name} will heal ${where} once it's through with what it's doing`, 'info', busy.id);
+      return;
+    }
     const r = this.workers.station(desk.id, 'Auto-heal', prompt);
     if (typeof r === 'string') this.ctx.toast(this, `🩹 Couldn't send the Pipeline agent to heal ${where}: ${r}`, 'warn');
     else this.ctx.toast(this, `🩹 The ${r.info.name} is healing ${where}`, 'info', r.info.id);
@@ -595,6 +629,8 @@ export class Floor {
   shutdown(keep = false) {
     clearInterval(this.timer);
     clearTimeout(this.landedTimer);
+    this.boardSoon.cancel();
+    this.pipelinesSoon.cancel();
     this.board.stop();
     this.pipelines.stop();
     this.team.stop();

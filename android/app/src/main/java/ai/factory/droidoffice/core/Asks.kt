@@ -33,7 +33,8 @@ object Asks {
      * asking the user 1 question(s)") says nothing a reader can answer, so it never stands in.
      */
     fun question(ask: PendingAsk, entries: List<ThreadEntry> = emptyList()): String =
-        asked(entries, ask.menu)
+        ask.worker.ask?.takeIf { it.isPermission }?.let(::permissionLine)
+            ?: matching(known(ask.worker.ask, entries), ask.menu)?.question
             ?: ask.menu?.question
             ?: Workers.detail(ask.worker)?.takeUnless(::generic)
             ?: "${ask.worker.name.ifBlank { "It" }} is waiting on an answer"
@@ -118,16 +119,29 @@ object Asks {
      * The open ask call's question whose ordered options and mode match [menu].
      * Ambiguous or mismatching questions never replace the screen's text.
      */
-    fun asked(entries: List<ThreadEntry>, menu: Menu?): String? {
-        val all = questions(entries)
-        if (all.isEmpty()) return null
-        return matching(all, menu)?.question
+    fun asked(entries: List<ThreadEntry>, menu: Menu?): String? = matching(questions(entries), menu)?.question
+
+    /** The hook's questionnaire has the exact text; the thread's open call is the fallback for an office that sends none. */
+    private fun known(ask: WorkerAsk?, entries: List<ThreadEntry>): List<Asked> =
+        ask?.takeIf { it.kind == "question" && it.questions.isNotEmpty() }?.questions
+            ?.filter { it.question.isNotBlank() }?.map { Asked(it.question.trim(), it.options.map(String::trim), it.multiSelect) }
+            ?: questions(entries)
+
+    private val RISK = Regex("^(low|medium|high)$")
+
+    /** What a permission prompt asks, in one line (src/shared/ask-question.ts permissionLine): "Approve high-risk command: rm -rf build". */
+    fun permissionLine(ask: WorkerAsk): String {
+        val risk = ask.risk?.takeIf { RISK.matches(it) }?.let { "$it-risk " }.orEmpty()
+        val what = if (ask.tool == "Execute") "command" else ask.tool.orEmpty()
+        val detail = (ask.command ?: ask.file ?: ask.summary)?.let { ": $it" }.orEmpty()
+        return "Approve $risk$what$detail"
     }
 
     private fun norm(s: String) = s.lowercase().replace(Regex("""\s+"""), " ").trim().trimEnd('…', '.')
 
     /** Match by numbered prefixes, never by an option appearing at a different number. */
     private fun matching(all: List<Asked>, menu: Menu?): Asked? {
+        if (all.isEmpty()) return null
         if (menu == null) return all.singleOrNull()
         val candidates = all.filter { a ->
             a.multiSelect == menu.multiSelect && a.options.size == menu.choices.size && menu.choices.all { c ->
@@ -146,8 +160,9 @@ object Asks {
     }
 
     /** Full pending-call metadata is for display only. Send the original screen menu, never this copy. */
-    fun display(menu: Menu, entries: List<ThreadEntry>): Menu {
-        val asked = matching(questions(entries), menu) ?: return menu
+    fun display(menu: Menu, entries: List<ThreadEntry>, ask: WorkerAsk? = null): Menu {
+        if (ask?.isPermission == true) return menu.copy(question = permissionLine(ask))
+        val asked = matching(known(ask, entries), menu) ?: return menu
         return menu.copy(
             question = asked.question,
             choices = menu.choices.map { c -> c.copy(label = asked.options[c.number - 1].trim(), description = null) },

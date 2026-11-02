@@ -89,6 +89,25 @@ data class CloudRef(
     val where: String? get() = environmentName?.ifBlank { null } ?: computerName.ifBlank { null }
 }
 
+/** One question of an AskUser questionnaire (src/shared/protocol.ts AskedQuestion). */
+@Serializable
+data class AskedQuestion(val question: String = "", val topic: String? = null, val options: List<String> = emptyList(), val multiSelect: Boolean = false)
+
+/** A pending ask: `kind` "question" carries the whole questionnaire, "permission" the tool call it is about. */
+@Serializable
+data class WorkerAsk(
+    val kind: String = "",
+    val questions: List<AskedQuestion> = emptyList(),
+    val tool: String? = null,
+    val command: String? = null,
+    val file: String? = null,
+    val risk: String? = null,
+    val summary: String? = null,
+    val sub: Boolean = false,
+) {
+    val isPermission: Boolean get() = kind == "permission" && !tool.isNullOrBlank()
+}
+
 /** A worker's team markings (src/shared/protocol.ts TeamBadge): `lead` formed the team, `member` was hired into it. */
 @Serializable
 data class TeamBadge(val id: String = "", val role: String = "", val leadName: String = "")
@@ -120,6 +139,8 @@ data class WorkerInfo(
     val rows: Int = 24,
     val open: Boolean = false,
     val activity: String? = null,
+    /** What it waits on the owner for, from its hooks (src/shared/protocol.ts WorkerAsk). */
+    val ask: WorkerAsk? = null,
     val action: String? = null,
     val task: WorkerTask? = null,
     val lastInputAt: Long? = null,

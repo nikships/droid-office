@@ -1,8 +1,9 @@
 // What a Droid worker's terminal shows it doing, as a check on the status its hooks report.
 //
-// The hooks miss some turns (a message queued with Ctrl+Enter starts one without UserPromptSubmit)
-// and the office misses hooks that fire while it's down for longer than they retry. Droid's own
-// screen says which of three states it's in, in the rows at the bottom of the terminal.
+// The hooks rarely miss a turn: the office counts messages queued with Ctrl+Enter, and hooks that
+// fired while it was down are spooled and replayed. For what they still miss (a hook another program
+// broke, a message queued some other way), Droid's own screen says which of three states it's in,
+// in the rows at the bottom of the terminal.
 
 import type { WorkerStatus } from '../shared/protocol.js';
 
@@ -11,8 +12,7 @@ export type DroidScreen = 'busy' | 'asking' | 'idle';
 
 /**
  * How long the screen has to say one thing, with no hook coming in, before the status follows it.
- * Activity hooks take priority; Stop only announces an attempted finish, so completion needs this
- * confirmation too.
+ * Hooks take priority: a Stop finishes a turn by itself (see WorkerManager.stopped).
  */
 export const SCREEN_SETTLE_MS = 4000;
 

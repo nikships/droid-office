@@ -26,16 +26,17 @@ const exists = (file: string) =>
  * Reads the model and reasoning effort Droid records for a session in
  * `<sessions dir>/<working directory, slashes as dashes>/<session id>.settings.json`. That is the
  * model actually in use, including the one droid picked from its own settings when the worker
- * pinned nothing, and one changed with /model since.
+ * pinned nothing, and one changed with /model since. The file sits next to the session's
+ * conversation, which the worker's hooks name, so that's looked at first.
  */
 export class DroidSessionReader {
   private files = new Map<string, string>();
 
   constructor(private root: string = DROID_SESSIONS_DIR) {}
 
-  async read(sessionId: string, cwd: string): Promise<DroidSessionModel | undefined> {
+  async read(sessionId: string, cwd: string, transcript?: string): Promise<DroidSessionModel | undefined> {
     if (!SESSION_ID.test(sessionId)) return undefined;
-    const file = await this.find(sessionId, cwd);
+    const file = (await this.beside(sessionId, transcript)) ?? (await this.find(sessionId, cwd));
     if (!file) return undefined;
     try {
       const text = await readFile(file, 'utf8');
@@ -47,6 +48,15 @@ export class DroidSessionReader {
       // being rewritten, or gone: the next hook asks again
       return undefined;
     }
+  }
+
+  /** The settings file next to the session's conversation file, as its hooks named it (transcript_path), when it's in the sessions folder. */
+  private async beside(sessionId: string, transcript: string | undefined): Promise<string | undefined> {
+    if (!transcript || path.basename(transcript) !== `${sessionId}.jsonl`) return undefined;
+    const file = path.join(path.dirname(transcript), `${sessionId}.settings.json`);
+    const rel = path.relative(this.root, file);
+    if (rel.startsWith('..') || path.isAbsolute(rel)) return undefined;
+    return (await exists(file)) ? file : undefined;
   }
 
   private async find(sessionId: string, cwd: string): Promise<string | undefined> {

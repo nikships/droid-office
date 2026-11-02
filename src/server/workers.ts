@@ -1,12 +1,14 @@
 import { randomBytes } from 'node:crypto';
-import { existsSync, readFileSync, writeFileSync, accessSync, readdirSync, rmdirSync, rmSync, unlinkSync, constants } from 'node:fs';
+import { existsSync, readFileSync, writeFileSync, accessSync, readdirSync, renameSync, rmdirSync, rmSync, unlinkSync, constants } from 'node:fs';
 import { execFile, execFileSync } from 'node:child_process';
 import { homedir } from 'node:os';
 import path from 'node:path';
 import headless from '@xterm/headless';
 import serialize from '@xterm/addon-serialize';
 import unicode11 from '@xterm/addon-unicode11';
-import type { AgentChoice, AgentEffort, GhPull, OutsideProcess, TeamBadge, TeamEmblem, TerminalHit, WorkerInfo, WorkerKind, WorkerRepo, WorkerStatus, WorkerTask } from '../shared/protocol.js';
+import type { AgentChoice, AgentEffort, GhPull, OutsideProcess, TeamBadge, TeamEmblem, TerminalHit, WorkerAsk, WorkerInfo, WorkerKind, WorkerRepo, WorkerStatus, WorkerTask } from '../shared/protocol.js';
+import { inputQuestions, permissionLine } from '../shared/ask-question.js';
+import { toolRefresh, type ToolRefresh } from './hook-refresh.js';
 import { TEAM_EMBLEMS, leadBadge, memberBadge, settleTeams } from '../shared/team.js';
 import { FAILS_TO_DESPAIR, outputFailed, toolAction } from '../shared/actions.js';
 import { isAgentEffort } from '../shared/protocol.js';
@@ -98,19 +100,42 @@ export const MAX_REPOS = 8;
 const RELATED_START = '<!-- agent-office:related -->';
 const RELATED_END = '<!-- /agent-office:related -->';
 /**
- * A hook finding the office restarting (its workers keep running through that) retries, once a
- * second, this many times in all: long enough for a dev-server reload.
+ * The hook command's version, sent in its URL. Droid reads its hooks once, at start, so a worker
+ * the terminal host kept across an office update still runs the command it started with: only one
+ * that says 2 prints the office's reply and spools the events it can't deliver (see writeHookSettings).
  */
-const HOOK_TRIES = 6;
+export const HOOK_VERSION = 2;
+/** The events the office subscribes its workers' droids to. */
+const HOOK_EVENTS = ['SessionStart', 'UserPromptSubmit', 'PreToolUse', 'PostToolUse', 'Notification', 'Stop', 'SubagentStop', 'SessionEnd', 'PreCompact'];
+/** The most a worker's hook spool holds (see hook.cjs); the oldest events go first. */
+export const SPOOL_MAX_BYTES = 512 * 1024;
+/** Where hooks that couldn't reach the office wait for it, one file per worker, in the floor's .droid-office. */
+const SPOOL_DIR = 'hook-spool';
+/** How long after an office start a second look at the spools catches hooks that failed while it was coming up. */
+const SPOOL_RECHECK_MS = 5000;
+/**
+ * How long a Stop waits for another hook before the turn is done: a Stop hook that blocks shows up
+ * as a new tool call or a second Stop well within it.
+ */
+export const STOP_GRACE_MS = 1200;
+/** How long the owner's typing holds back office notices typed in once a worker comes to rest. */
+const NOTICE_TYPING_MS = 5000;
+/** How long after Escape or Ctrl+C a Stop counts as the turn being cancelled (see stopped). */
+const CANCEL_MS = 3000;
+/** A worker's activity while Droid compacts its conversation (PreCompact, until the compact SessionStart). */
+const COMPACTING = 'Compacting its conversation';
+/** What Droid's built-in Task tool is refused with (see hookEntries). */
+const TASK_DENY = JSON.stringify({
+  hookSpecificOutput: {
+    hookEventName: 'PreToolUse',
+    permissionDecision: 'deny',
+    permissionDecisionReason: "Droid Office refuses Droid's built-in Task tool. To delegate, hire a subagent with team_hire (Office MCP): it gets its own desk, terminal and worktree the owner can watch.",
+  },
+});
 /** How often every worker's folder is checked for having been deleted. */
 const WATCH_MS = 10_000;
 /** How often each agent's screen is checked against its status (see reconcile). */
 const SCREEN_CHECK_MS = 1000;
-/**
- * How long after its Stop a worker whose screen can't confirm it (an unreadable layout, a quoted
- * spinner) counts as done anyway: no hook and nothing printed since, while a real turn prints every second.
- */
-const STOP_FALLBACK_MS = 10_000;
 /**
  * How long a launch prompt waits for SessionStart before the input box on its screen is enough to
  * type it in: well past a normal start, so it only matters when the hooks can't reach the office.
@@ -182,15 +207,27 @@ interface Worker {
    * worker's token but their own session id, and their SessionStart and Stop are theirs, not its.
    */
   subSessions: Set<string>;
-  /** The latest tool each session started (PreToolUse), to know which one a permission prompt is about. */
-  lastTool: Map<string, string>;
+  /** The latest tool each session started (PreToolUse), and its input, to know which call a permission prompt is about. */
+  lastTool: Map<string, { tool: string; input: unknown }>;
   /** Who raised its needs_input from a hook: the session asking, and the tool it asks about. */
   asking?: { session: string; tool?: string };
   /** When its last hook came in, and its terminal last printed something (see reconcile). */
   hookAt: number;
   outputAt: number;
-  /** When its own session's Stop came, with no hook since: a finish its screen hasn't confirmed yet. */
+  /** When its own session's Stop came, with no hook since: a finish waiting out STOP_GRACE_MS. */
   stopAt?: number;
+  /** The version of the hook command its droid runs (see HOOK_VERSION), as its last hook said. */
+  hookVersion: number;
+  /** Its session's conversation file, as its hooks name it (transcript_path). */
+  transcript?: string;
+  /** Office notices for its next tool call or Stop (see notice). */
+  outbox: string[];
+  /** When the owner (or a visit) last pressed Escape or Ctrl+C in its terminal: a Stop right after is a cancel, never blocked. */
+  cancelAt?: number;
+  /** Notices left in its outbox when it came to rest wait for the owner to stop typing (see flushOutbox). */
+  outboxTimer?: NodeJS.Timeout;
+  /** Messages queued with Ctrl+Enter during this turn: each runs after the turn's Stop, as a turn with no UserPromptSubmit. */
+  queued: number;
   /** What its screen has shown since when (see droid-screen.ts). */
   screenSeen?: { state: DroidScreen; since: number };
   /** Test runs and builds that have failed in a row (see FAILS_TO_DESPAIR). */
@@ -227,6 +264,8 @@ export interface WorkerEvents {
   toast(text: string, level: 'info' | 'warn' | 'error', workerId?: string): void;
   /** The office moved the project's checkout onto `branch` (see Worktrees.freshen). */
   checkout?(branch: string): void;
+  /** A worker's tool call finished that may have changed what the office shows (see hook-refresh.ts). */
+  tool?(workerId: string, refresh: ToolRefresh): void;
 }
 
 export class WorkerManager {
@@ -259,7 +298,15 @@ export class WorkerManager {
   pullList?: () => GhPull[];
   /** Subscriptions: why an agent on this model can't start now (out of quota, say); undefined when it can (docs/subscriptions.md). */
   modelGate?: (model: string | undefined) => string | undefined;
+  /** ⚙️ Settings → Subagents & visits: Droid's built-in Task tool is refused (see hookEntries). Unset: refused. */
+  denyTask?: () => boolean;
+  /**
+   * What the office tells a worker whose turn is about to end instead of letting it stop, once: its
+   * team's news, or a subagent's reminder to report (see Team.beforeStop). Only asked when its Stop can be blocked.
+   */
+  beforeStop?: (info: WorkerInfo) => string | undefined;
   private settling = false;
+  private spoolTimer?: NodeJS.Timeout;
 
   private get forge(): Forge {
     return this.pulls.forge ?? 'github';
@@ -330,6 +377,7 @@ export class WorkerManager {
     this.drops = new DropStore(dataDir);
     this.restore();
     this.scrollback.prune(new Set(this.workers.keys()));
+    this.pruneSpools();
     // The boss shell's drops live in the same folder and are not a worker's.
     this.drops.prune(new Set([...this.workers.keys(), OFFICE_SHELL_ID]));
     for (const w of this.workers.values()) this.refreshDroidModel(w);
@@ -358,10 +406,19 @@ export class WorkerManager {
         const adopted = saved && (await this.host.attach(saved.ptyId));
         if (adopted) {
           if (this.workers.get(w.info.id) !== w || this.closing) adopted.pty.kill();
-          else this.adopt(w, adopted, saved);
+          else {
+            this.adopt(w, adopted, saved);
+            // Its droid kept running while the office was down: what it said meanwhile, before any live hook.
+            this.replaySpool(w);
+          }
         }
+        // A process that didn't make it: its spooled hooks are about a turn that's over.
+        else rmSync(this.spoolFile(w.info.id), { force: true });
       }),
     );
+    // A hook that failed while this office was coming up (before its worker was picked back up) spooled meanwhile.
+    this.spoolTimer = setTimeout(() => this.replaySpools(), SPOOL_RECHECK_MS);
+    this.spoolTimer.unref();
     // Before unclaimed sessions are ended, so a shell the host kept is not taken for a leftover.
     if (this.officeShell) await this.officeShell.start();
     // Terminals nobody saved a claim on (their worker was sent home as the office went down).
@@ -467,11 +524,15 @@ export class WorkerManager {
     return info?.kind === 'agent' && !info.cloud && !info.guest ? this.cwd(info) : undefined;
   }
 
-  /** Read-only conversation identity. Never accepts a caller-supplied path or session. */
-  threadSession(id: string): { sessionId: string; cwd: string; drops?: string } | undefined {
-    const info = this.workers.get(id)?.info;
-    if (info?.kind !== 'agent' || info.cloud || info.guest || !info.sessionId) return undefined;
-    return { sessionId: info.sessionId, cwd: this.cwd(info), drops: this.drops.folder(id) };
+  /**
+   * Read-only conversation identity. Never accepts a caller-supplied path or session: the file is the
+   * one the worker's own hooks named for its session, when they have.
+   */
+  threadSession(id: string): { sessionId: string; cwd: string; drops?: string; transcript?: string } | undefined {
+    const w = this.workers.get(id);
+    const info = w?.info;
+    if (!w || info?.kind !== 'agent' || info.cloud || info.guest || !info.sessionId) return undefined;
+    return { sessionId: info.sessionId, cwd: this.cwd(info), drops: this.drops.folder(id), ...(w.transcript ? { transcript: w.transcript } : {}) };
   }
 
   /** Whether the worker is in a turn, so its newest Thread activity can still be working. */
@@ -481,7 +542,7 @@ export class WorkerManager {
   }
 
   /** The global sign writer never accepts an external path, nor writes after this manager closes. */
-  labelSession(id: string): { sessionId: string; cwd: string; epoch: number; since?: number } | undefined {
+  labelSession(id: string): { sessionId: string; cwd: string; transcript?: string; epoch: number; since?: number } | undefined {
     if (this.closing) return;
     const w = this.workers.get(id);
     const session = this.threadSession(id);
@@ -1135,6 +1196,7 @@ export class WorkerManager {
     if (w.info.kind === 'agent') {
       try {
         rmSync(path.join(this.dataDir, `system-${id}.md`), { force: true });
+        rmSync(this.spoolFile(id), { force: true });
         if (w.info.model !== undefined || w.info.effort !== undefined) rmSync(path.join(this.dataDir, `droid-${id}.json`), { force: true });
       } catch {
         // a leftover overlay is harmless: the next launch rewrites it
@@ -1451,6 +1513,7 @@ export class WorkerManager {
     if (!w?.pty || !w.term || w.info.kind !== 'agent' || w.info.status !== 'working') return false;
     if (readDroidScreen(screenRows(w.term)) !== 'busy') return false;
     w.pty.write('\x1b');
+    w.cancelAt = Date.now();
     return true;
   }
 
@@ -1465,6 +1528,8 @@ export class WorkerManager {
     const w = this.workers.get(id);
     if (!w?.pty) return false;
     w.pty.write(data);
+    if (w.info.kind === 'agent' && w.info.status === 'working') w.queued += data.split(CTRL_ENTER).length - 1;
+    if (data === '\x1b' || data === '\x03') w.cancelAt = Date.now();
     let changed = this.typed(w);
     if (w.info.status === 'needs_input' && w.info.acked === false) {
       w.info.acked = true;
@@ -1498,7 +1563,9 @@ export class WorkerManager {
     const typed = text.replace(/\r\n?/g, '\n').trim();
     const clean = images?.length ? withImages(typed, this.drops.adopt(id, images)) : typed;
     if (!clean) return 'Empty prompt';
-    this.typeIn(w, clean, queue && wantsCsiEnter(w.info.kind) ? CTRL_ENTER : '\r');
+    const ctrlEnter = queue && wantsCsiEnter(w.info.kind);
+    if (ctrlEnter && w.info.status === 'working') w.queued++;
+    this.typeIn(w, clean, ctrlEnter ? CTRL_ENTER : '\r');
     const shown = typed || 'See the attached images';
     w.info.activity = truncate(shown, 80);
     this.notePrompt(w, shown);
@@ -1675,35 +1742,157 @@ export class WorkerManager {
     this.emitUpdate(w);
   }
 
-  /** Droid lifecycle hook callback: what a worker is doing, from its hooks. */
-  handleHook(workerId: string, token: string, event: string, payload: unknown): boolean {
+  /** Droid lifecycle hook callback: what a worker is doing, from its hooks. Says whether it was the worker's. */
+  handleHook(workerId: string, token: string, event: string, payload: unknown, version = 0): boolean {
+    return this.hookReply(workerId, token, event, payload, version) !== undefined;
+  }
+
+  /**
+   * A hook from a worker's droid, with the version of the command that sent it (see HOOK_VERSION).
+   * Resolves to what the command prints back to Droid ('' for nothing), or undefined when the hook
+   * isn't this worker's. It answers at once: Droid waits for each hook before it carries on.
+   */
+  hookReply(workerId: string, token: string, event: string, payload: unknown, version = 0): string | undefined {
     const w = this.workers.get(workerId);
-    if (!w?.pty || !safeEq(token, w.hookToken)) return false;
-    if (!payload || typeof payload !== 'object') return false;
+    if (!w?.pty || !safeEq(token, w.hookToken)) return undefined;
+    return this.accept(w, event, payload, { version });
+  }
+
+  /** A hook from the worker's droid, live (`version`) or replayed from its spool (`at`, when it fired). */
+  private accept(w: Worker, event: string, payload: unknown, from: { version: number } | { at: number }): string | undefined {
+    if (!payload || typeof payload !== 'object') return undefined;
     const report = payload as Record<string, unknown>;
-    if (report.hook_event_name !== event) return false;
-    if (event === 'WorktreeSetup') return this.setupHook(w, report);
-    if (w.info.kind !== 'agent' || typeof report.session_id !== 'string' || !report.session_id) return false;
-    if (!['SessionStart', 'UserPromptSubmit', 'PreToolUse', 'PostToolUse', 'Notification', 'Stop'].includes(event)) return false;
+    if (report.hook_event_name !== event) return undefined;
+    if (event === 'WorktreeSetup') return this.setupHook(w, report) ? '' : undefined;
+    if (w.info.kind !== 'agent' || typeof report.session_id !== 'string' || !report.session_id) return undefined;
+    if (!HOOK_EVENTS.includes(event)) return undefined;
     const session = report.session_id;
     const caller = typeof report.calling_session_id === 'string' && report.calling_session_id ? report.calling_session_id : undefined;
     if (event === 'SessionStart' && caller) {
       // A subagent its droid just started (the Task tool): a session of its own, inside this one's turn.
       w.info.sessionId ??= caller;
-      if (caller !== w.info.sessionId && !w.subSessions.has(caller)) return false;
+      if (caller !== w.info.sessionId && !w.subSessions.has(caller)) return undefined;
       w.subSessions.add(session);
     }
     const sub = w.subSessions.has(session);
-    if (!sub && event !== 'SessionStart' && w.info.sessionId && session !== w.info.sessionId) return false;
-    w.hookAt = Date.now();
-    w.stopAt = !sub && event === 'Stop' ? w.hookAt : undefined;
-    if (sub) this.subagentHook(w, event, report);
-    else this.sessionHook(w, event, report);
+    if (!sub && event !== 'SessionStart' && w.info.sessionId && session !== w.info.sessionId) return undefined;
+    const live = 'version' in from;
+    if (live) w.hookVersion = from.version;
+    w.hookAt = live ? Date.now() : from.at;
+    // Any hook after a Stop means the turn went on: a Stop starts the grace again (see stopped).
+    w.stopAt = undefined;
+    const reply = sub ? this.subagentHook(w, event, report, live) : this.sessionHook(w, event, report, live && w.hookVersion >= HOOK_VERSION);
     this.emitUpdate(w);
     this.persist();
+    return reply ?? '';
+  }
+
+  private spoolFile(id: string): string {
+    return path.join(this.dataDir, SPOOL_DIR, `${id}.jsonl`);
+  }
+
+  /**
+   * Replays the hooks its droid spooled while the office couldn't take them (see hook.cjs), in the
+   * order they fired, then forgets them. The file's place in the floor's .droid-office stands in for
+   * the hook token; the session checks still apply. One older than the last hook the office took
+   * was already taken (a slow answer the command gave up on) and is skipped.
+   */
+  private replaySpool(w: Worker) {
+    const file = this.spoolFile(w.info.id);
+    const taken = `${file}.replay`;
+    try {
+      // Moved aside first, so a hook spooling meanwhile starts a new file instead of being truncated away.
+      renameSync(file, taken);
+    } catch {
+      return;
+    }
+    let text = '';
+    try {
+      text = readFileSync(taken, 'utf8');
+    } catch {
+      // gone again: nothing to replay
+    } finally {
+      rmSync(taken, { force: true });
+    }
+    const since = w.hookAt;
+    for (const line of text.split('\n')) {
+      if (!line.trim()) continue;
+      let row: { event?: unknown; at?: unknown; token?: unknown; payload?: unknown };
+      try {
+        row = JSON.parse(line);
+      } catch {
+        continue;
+      }
+      if (typeof row.event !== 'string' || typeof row.at !== 'number' || row.at < since) continue;
+      // From an earlier run of its droid, which had another token.
+      if (typeof row.token !== 'string' || !safeEq(row.token, w.hookToken)) continue;
+      if (this.workers.get(w.info.id) !== w || !w.pty) return;
+      this.accept(w, row.event, row.payload, { at: row.at });
+    }
+  }
+
+  /** Every running worker's spooled hooks, replayed (see replaySpool). */
+  replaySpools() {
+    for (const w of this.workers.values()) if (w.pty) this.replaySpool(w);
+  }
+
+  /** Spools of workers who aren't on the floor any more. */
+  private pruneSpools() {
+    const dir = path.join(this.dataDir, SPOOL_DIR);
+    let names: string[] = [];
+    try {
+      names = readdirSync(dir);
+    } catch {
+      return;
+    }
+    for (const name of names) {
+      const id = name.slice(0, name.indexOf('.'));
+      if (!this.workers.has(id) || name !== `${id}.jsonl`) rmSync(path.join(dir, name), { force: true });
+    }
+  }
+
+  /**
+   * Hands an office notice to a worker in the middle of a turn: its droid reads it with the result
+   * of its next tool call, or as the reason its turn goes on when it tries to stop. Says whether it
+   * took it; a worker at rest, asking, or on a hook command that can't carry it (one its droid
+   * started before this office) is typed into by the caller instead, as before. One still waiting
+   * when the worker comes to rest is typed in then.
+   */
+  notice(id: string, text: string): boolean {
+    const w = this.workers.get(id);
+    const clean = text.replace(/\r\n?/g, '\n').trim();
+    if (!w?.pty || !clean || w.info.kind !== 'agent' || w.info.status !== 'working' || w.bootBlocked || w.hookVersion < HOOK_VERSION) return false;
+    w.outbox.push(clean);
     return true;
   }
 
+  /**
+   * An office message for a worker (a visit, a lead's message, a Whiteboard ping): mid-turn it goes
+   * through its hooks (see notice), otherwise it's typed in like a prompt.
+   */
+  tell(id: string, text: string): string | undefined {
+    return this.notice(id, text) ? undefined : this.prompt(id, text);
+  }
+
+  /**
+   * Types in the notices its hooks didn't get to hand over before it came to rest, once nobody has
+   * typed into its terminal for NOTICE_TYPING_MS. One that's busy again by then gets them through its hooks.
+   */
+  private flushOutbox(w: Worker) {
+    clearTimeout(w.outboxTimer);
+    w.outboxTimer = undefined;
+    if (!w.outbox.length || this.closing || this.workers.get(w.info.id) !== w || !w.pty) return;
+    if (w.info.status !== 'done' && w.info.status !== 'idle') return;
+    const wait = (w.info.lastInputAt ?? 0) + NOTICE_TYPING_MS - Date.now();
+    if (wait > 0) {
+      w.outboxTimer = setTimeout(() => this.flushOutbox(w), wait);
+      w.outboxTimer.unref();
+      return;
+    }
+    const text = w.outbox.join('\n\n');
+    w.outbox = [];
+    this.prompt(w.info.id, text);
+  }
   /** The setup script in a new worktree's terminal (see worktree-setup.ts) started, or finished. */
   private setupHook(w: Worker, report: Record<string, unknown>): boolean {
     const { info } = w;
@@ -1734,10 +1923,20 @@ export class WorkerManager {
     return true;
   }
 
-  /** A hook from the worker's own session. */
-  private sessionHook(w: Worker, event: string, report: Record<string, unknown>) {
+  /**
+   * A hook from the worker's own session. With `replies` (a live hook from a command that prints
+   * what the office answers), PostToolUse and Stop can carry its notices; the reply is returned.
+   */
+  private sessionHook(w: Worker, event: string, report: Record<string, unknown>, replies: boolean): string | undefined {
     const session = report.session_id as string;
-    if (event === 'SessionStart') {
+    const transcript = report.transcript_path;
+    if (typeof transcript === 'string' && path.isAbsolute(transcript) && path.basename(transcript) === `${session}.jsonl`) w.transcript = transcript;
+    let reply: string | undefined;
+    if (event === 'SessionStart' && report.source === 'compact') {
+      // Compaction finished inside a turn: the same conversation carries on.
+      w.info.sessionId = session;
+      if (w.info.activity === COMPACTING) w.info.activity = undefined;
+    } else if (event === 'SessionStart') {
       if ((w.info.sessionId && w.info.sessionId !== session) || report.source === 'clear') this.clearTask(w, report.source === 'clear');
       w.info.sessionId = session;
       w.pendingFork = undefined;
@@ -1745,6 +1944,7 @@ export class WorkerManager {
       w.lastTool.clear();
       w.bootBlocked = false;
       w.settingUp = false;
+      w.queued = 0;
       w.info.activity = undefined;
       this.setStatus(w, 'idle');
       this.sendLaunchPrompt(w);
@@ -1759,40 +1959,111 @@ export class WorkerManager {
     } else if (event === 'PreToolUse') this.toolStarted(w, session, report);
     else if (event === 'PostToolUse') {
       this.noteOutcome(w, report, false);
-      // A subagent that asked has finished, its question answered.
-      if (w.asking && w.asking.session !== session && report.tool_name === 'Task') this.setStatus(w, 'working');
+      this.refreshAfter(w, report);
+      // A hook command from before SubagentStop: a subagent that asked has finished once its Task returns.
+      if (w.hookVersion < HOOK_VERSION && w.asking && w.asking.session !== session && report.tool_name === 'Task') this.setStatus(w, 'working');
       else this.toolFinished(w, session, report);
+      if (replies && w.outbox.length) {
+        reply = JSON.stringify({ hookSpecificOutput: { hookEventName: 'PostToolUse', additionalContext: w.outbox.join('\n\n') } });
+        w.outbox = [];
+      }
     } else if (event === 'Notification') {
-      // Droid sends idle_prompt when a turn is cancelled (Esc) instead of Stop, prompt or no prompt.
+      // The hooks reference says a cancelled turn sends idle_prompt instead of Stop; Droid 1.1.0 sends Stop.
       if (report.notification_type === 'idle_prompt' && (w.info.status === 'working' || (w.info.status === 'needs_input' && !w.bootBlocked))) this.setStatus(w, 'done');
       else this.notified(w, session, report);
-    }
-    // Stop runs before Droid finishes: another Stop hook can block it and continue the turn.
-    // Only reconcile's settled, quiet input box confirms completion, without publishing a false done.
+    } else if (event === 'Stop') reply = this.stopped(w, report, replies);
+    else if (event === 'SubagentStop') {
+      // A Task subagent finished: a question it was asking in this terminal is over.
+      if (w.info.status === 'needs_input' && w.asking && w.asking.session !== session) this.setStatus(w, 'working');
+      const name = typeof report.task_name === 'string' && report.task_name ? report.task_name : 'A subagent';
+      if (w.info.status === 'working') w.info.activity = truncate(`${name} finished${typeof report.task_error === 'string' && report.task_error ? ' with an error' : ''}`, 80);
+    } else if (event === 'PreCompact') w.info.activity = COMPACTING;
     // /model can change it between turns, and droid writes the file a moment after SessionStart.
     if (event === 'SessionStart' || event === 'UserPromptSubmit' || event === 'Stop') this.refreshDroidModel(w);
+    return reply;
+  }
+
+  /**
+   * Its own session's Stop. A Stop hook that blocks (the office's own, below, or another one the
+   * owner set up) keeps the turn going, so a Stop is only done once STOP_GRACE_MS passes with no
+   * other hook (see settleStop). With `replies`, the office blocks it to hand over what it has for
+   * the worker, but never a Stop that a block already continued (stop_hook_active), so it can't loop,
+   * nor one right after a cancel or with a queued message to run next.
+   */
+  private stopped(w: Worker, report: Record<string, unknown>, replies: boolean): string | undefined {
+    // A message queued with Ctrl+Enter runs next, without a UserPromptSubmit of its own.
+    if (w.queued > 0) {
+      w.queued--;
+      return undefined;
+    }
+    const cancelled = w.cancelAt !== undefined && Date.now() - w.cancelAt < CANCEL_MS;
+    if (replies && !cancelled && report.stop_hook_active !== true && (w.info.status === 'working' || w.info.status === 'needs_input')) {
+      const notes = [...w.outbox];
+      const more = this.beforeStop?.(w.info);
+      if (more) notes.push(more);
+      if (notes.length) {
+        w.outbox = [];
+        return JSON.stringify({ decision: 'block', reason: notes.join('\n\n') });
+      }
+    }
+    // Already at rest: a queued turn that used no tools ended. It doesn't finish (and ding) again.
+    if (w.info.status !== 'working' && (w.info.status !== 'needs_input' || w.bootBlocked)) return undefined;
+    const at = Date.now();
+    w.stopAt = at;
+    setTimeout(() => this.settleStop(w, at), STOP_GRACE_MS).unref();
+    return undefined;
+  }
+
+  /**
+   * A Stop's grace passed with no other hook: the turn is done, unless its screen shows it still
+   * going. Asked again every second (see reconcile) while it isn't.
+   */
+  private settleStop(w: Worker, at: number, now = Date.now()) {
+    if (w.stopAt !== at || this.closing || this.workers.get(w.info.id) !== w || !w.term) return;
+    if (w.info.status !== 'working' && w.info.status !== 'needs_input') return;
+    const screen = readDroidScreen(screenRows(w.term));
+    // A dialog is up, or another Stop hook continued the turn before any tool: its spinner is still
+    // printing. One quoted in a reply doesn't print, and doesn't hold the finish up.
+    if (screen === 'asking' || (screen === 'busy' && now - w.outputAt < STOP_GRACE_MS)) return;
+    this.setStatus(w, 'done');
+  }
+
+  /** A tool call finished: what it may have changed is looked at now rather than on the next timer (see hook-refresh.ts). */
+  private refreshAfter(w: Worker, report: Record<string, unknown>) {
+    const refresh = toolRefresh(report.tool_name, report.tool_input);
+    if (!refresh) return;
+    if (refresh.branch) void this.syncBranch(w);
+    this.events.tool?.(w.info.id, refresh);
   }
 
   /**
    * A hook from one of its subagents. It works inside the worker's turn, and its permission prompts
    * and questions show in the worker's terminal; its own start, prompt and end are not the worker's.
    */
-  private subagentHook(w: Worker, event: string, report: Record<string, unknown>) {
+  private subagentHook(w: Worker, event: string, report: Record<string, unknown>, live: boolean): undefined {
     const session = report.session_id as string;
-    if (event === 'PreToolUse') this.toolStarted(w, session, report);
+    if (event === 'PreToolUse') this.toolStarted(w, session, report, true);
     else if (event === 'PostToolUse') {
       this.noteOutcome(w, report, false);
+      if (live) this.refreshAfter(w, report);
       this.toolFinished(w, session, report);
-    } else if (event === 'Notification') this.notified(w, session, report);
+    } else if (event === 'Notification') this.notified(w, session, report, true);
     else if ((event === 'SessionStart' || event === 'UserPromptSubmit') && (w.info.status === 'done' || w.info.status === 'idle')) this.setStatus(w, 'working');
+    return undefined;
   }
 
-  private toolStarted(w: Worker, session: string, report: Record<string, unknown>) {
+  private toolStarted(w: Worker, session: string, report: Record<string, unknown>, sub = false) {
     const tool = report.tool_name;
-    if (typeof tool === 'string') w.lastTool.set(session, tool);
+    if (typeof tool === 'string') w.lastTool.set(session, { tool, input: report.tool_input });
     if (ASK_TOOLS.has(tool)) {
       this.setStatus(w, 'needs_input');
       w.asking = { session, tool: tool as string };
+      const input = report.tool_input && typeof report.tool_input === 'object' ? (report.tool_input as Record<string, unknown>) : {};
+      const questions = inputQuestions(input);
+      if (questions.length) {
+        w.info.ask = { kind: 'question', questions, ...(sub ? { sub: true as const } : {}) };
+        w.info.activity = truncate(questions.length > 1 ? `${questions[0].question} (+${questions.length - 1} more)` : questions[0].question, 80);
+      }
       return;
     }
     w.info.activity = describeTool(report);
@@ -1808,16 +2079,22 @@ export class WorkerManager {
     if (asking.tool === undefined || asking.tool === report.tool_name) this.setStatus(w, 'working');
   }
 
-  private notified(w: Worker, session: string, report: Record<string, unknown>) {
+  private notified(w: Worker, session: string, report: Record<string, unknown>, sub = false) {
     if (report.notification_type !== 'permission_prompt' && report.notification_type !== 'elicitation_dialog') return;
-    w.info.activity = typeof report.message === 'string' ? truncate(report.message, 80) : 'Waiting for input';
+    const call = w.lastTool.get(session);
+    const permission = report.notification_type === 'permission_prompt' && call && !ASK_TOOLS.has(call.tool) ? permissionAsk(call.tool, call.input, sub) : undefined;
+    const question = w.info.status === 'needs_input' && w.info.ask?.kind === 'question' ? w.info.activity : undefined;
+    w.info.activity = permission ? truncate(permissionLine(permission), 80) : (question ?? (typeof report.message === 'string' ? truncate(report.message, 80) : 'Waiting for input'));
     this.setStatus(w, 'needs_input');
-    w.asking = { session, tool: w.lastTool.get(session) };
+    w.asking = { session, tool: call?.tool };
+    if (permission) w.info.ask = permission;
   }
 
   /**
-   * Confirms completion and heals missed hooks: once the screen settles without recent hooks,
-   * status follows it (see droid-screen.ts). Runs every second; `now` is for tests.
+   * Heals what the hooks missed, as a slow safety net: once the screen has said one thing for
+   * SCREEN_SETTLE_MS with no hook in that time, status follows it (see droid-screen.ts). Hooks that
+   * fired while the office was down are replayed from the spool, so this should rarely act; each
+   * time it does, it says so in the log. Runs every second; `now` is for tests.
    */
   reconcile(now = Date.now()) {
     for (const w of this.workers.values()) {
@@ -1828,11 +2105,9 @@ export class WorkerManager {
         w.screenSeen = undefined;
         continue;
       }
+      // A Stop whose grace timer hasn't fired yet (a test's clock, a busy event loop).
+      if (w.stopAt !== undefined && now - w.stopAt >= STOP_GRACE_MS) this.settleStop(w, w.stopAt, now);
       const state = readDroidScreen(screenRows(w.term));
-      if (w.stopAt !== undefined && info.status === 'working' && state !== 'asking' && now - w.stopAt >= STOP_FALLBACK_MS && now - w.outputAt >= STOP_FALLBACK_MS) {
-        this.setStatus(w, 'done');
-        continue;
-      }
       if (!state) {
         w.screenSeen = undefined;
         continue;
@@ -1841,6 +2116,7 @@ export class WorkerManager {
       if (now - w.screenSeen.since < SCREEN_SETTLE_MS || now - w.hookAt < SCREEN_SETTLE_MS) continue;
       const next = screenStatus(info.status, state, now - w.outputAt >= SCREEN_SETTLE_MS);
       if (!next) continue;
+      console.log(`  🖥️  ${info.name}'s screen corrected its status from ${info.status} to ${next}: no hook said so`);
       if (next === 'needs_input') info.activity = 'Waiting for input';
       this.setStatus(w, next);
     }
@@ -1850,7 +2126,7 @@ export class WorkerManager {
   private refreshDroidModel(w: Worker) {
     const { sessionId } = w.info;
     if (w.info.kind !== 'agent' || !sessionId) return;
-    void this.droidSessions.read(sessionId, this.cwd(w.info)).then((seen) => {
+    void this.droidSessions.read(sessionId, this.cwd(w.info), w.transcript).then((seen) => {
       if (!seen || this.workers.get(w.info.id) !== w || w.info.sessionId !== sessionId) return;
       if (seen.model === w.info.activeModel && seen.effort === w.info.activeEffort) return;
       w.info.activeModel = seen.model;
@@ -1858,7 +2134,6 @@ export class WorkerManager {
       this.emitUpdate(w);
     });
   }
-
   /**
    * A tool call finished. Tests or a build that failed again (by exit code, or by the summary it
    * printed when the exit code was piped away) and the worker puts its head in its hands, until its
@@ -1904,6 +2179,7 @@ export class WorkerManager {
     clearInterval(this.watchTimer);
     clearInterval(this.statusTimer);
     clearInterval(this.saveTimer);
+    clearTimeout(this.spoolTimer);
     for (const w of this.workers.values()) {
       // Before the process goes, so the next office shows what it was doing, not how it was stopped.
       if (w.unsaved) this.saveScrollback(w);
@@ -1966,6 +2242,10 @@ export class WorkerManager {
     w.subSessions.clear();
     w.lastTool.clear();
     w.asking = undefined;
+    w.hookVersion = 0;
+    w.outbox = [];
+    w.queued = 0;
+    delete info.ask;
     const env = childEnv();
     // Shells keep these for worktree setup reporting; the Office MCP refuses any caller that isn't an agent.
     Object.assign(env, {
@@ -2148,7 +2428,10 @@ export class WorkerManager {
     if (w.info.status === 'needs_input') w.leftNeedsInputAt = Date.now();
     w.info.status = status;
     if (status !== 'working') w.stopAt = undefined;
-    if (status !== 'needs_input') w.asking = undefined;
+    if (status !== 'needs_input') {
+      w.asking = undefined;
+      delete w.info.ask;
+    }
     // Done, idle or asleep: it's not acting anything out any more.
     if (status !== 'working' && status !== 'needs_input') w.info.action = undefined;
     // Nobody is looking at the terminal right now -> raise the flag (the worker jumps).
@@ -2160,7 +2443,10 @@ export class WorkerManager {
     // What a restarted office picks the worker back up as, should its terminal outlive this one.
     if (w.pty?.id) this.persist();
     // At rest: it may have made a branch of its own this turn, and opened its PR from there.
-    if (status === 'done' || status === 'idle') void this.syncBranch(w);
+    if (status === 'done' || status === 'idle') {
+      void this.syncBranch(w);
+      if (w.outbox.length) this.flushOutbox(w);
+    }
   }
 
   /** The connections subscribed to a worker's terminal, oldest first. */
@@ -2223,49 +2509,40 @@ export class WorkerManager {
   }
 
   private writeHookSettings() {
-    // Minimal VPS images sometimes lack curl; the office's own node binary is always there.
+    // Minimal VPS images sometimes lack curl; the office's own node binary is always there. It also
+    // keeps what couldn't be delivered (spool), which curl can't do within a size cap.
     const nodeHook = path.join(this.dataDir, 'hook.cjs');
-    writeFileSync(
-      nodeHook,
-      `const http = require('http');
-const event = process.argv[2];
-let body = '';
-process.stdin.on('data', (c) => (body += c));
-process.stdin.on('end', () => {
-  const url = new URL(process.env.DROID_OFFICE_HOOK_URL + '/hooks/droid');
-  url.searchParams.set('worker', process.env.DROID_OFFICE_WORKER_ID);
-  url.searchParams.set('event', event);
-  const send = (tries) => {
-    const req = http.request(url, { method: 'POST', timeout: 3000, headers: { authorization: 'Bearer ' + process.env.DROID_OFFICE_HOOK_TOKEN, 'content-type': 'application/json' } }, (res) => res.resume());
-    req.on('error', (err) => {
-      if (err.code === 'ECONNREFUSED' && tries > 1) setTimeout(() => send(tries - 1), 1000);
-    });
-    req.on('timeout', () => req.destroy());
-    req.end(body);
-  };
-  send(${HOOK_TRIES});
-});
-`,
-      { mode: 0o600 },
-    );
-    const commandFor = (event: string) => {
+    writeFileSync(nodeHook, hookScript(), { mode: 0o600 });
+    const node = `${runAsNode().sh}${shq(process.execPath)} ${shq(nodeHook)}`;
+    this.hookCommand = (event: string) => {
       const curl =
-        `curl -sS -m 3 --retry ${HOOK_TRIES - 1} --retry-delay 1 --retry-connrefused -X POST -H "Authorization: Bearer $DROID_OFFICE_HOOK_TOKEN" -H "Content-Type: application/json" ` +
-        `--data-binary @- "$DROID_OFFICE_HOOK_URL/hooks/droid?worker=$DROID_OFFICE_WORKER_ID&event=${event}"`;
+        `curl -sSf --connect-timeout 0.5 -m 2 -X POST -H "Authorization: Bearer $DROID_OFFICE_HOOK_TOKEN" -H "Content-Type: application/json" ` +
+        `--data-binary @- "$DROID_OFFICE_HOOK_URL/hooks/droid?worker=$DROID_OFFICE_WORKER_ID&event=${event}&v=${HOOK_VERSION}" 2>/dev/null`;
       return (
         `if [ -z "$DROID_OFFICE_WORKER_ID" ] || [ -z "$DROID_OFFICE_HOOK_URL" ]; then exit 0; fi; ` +
-        `if command -v curl >/dev/null 2>&1; then ${curl} >/dev/null 2>&1; ` +
-        `else ${runAsNode().sh}${shq(process.execPath)} ${shq(nodeHook)} ${event} >/dev/null 2>&1; fi; true`
+        `body=$(cat); ` +
+        `if command -v curl >/dev/null 2>&1; then printf '%s' "$body" | ${curl} && exit 0; printf '%s' "$body" | ${node} ${event} spool >/dev/null 2>&1; ` +
+        `else printf '%s' "$body" | ${node} ${event} 2>/dev/null; fi; true`
       );
     };
-    const droidHooks: Record<string, unknown[]> = {};
-    for (const event of ['SessionStart', 'UserPromptSubmit', 'PreToolUse', 'PostToolUse', 'Notification', 'Stop']) {
-      droidHooks[event] = [{ hooks: [{ type: 'command', command: commandFor(event) }] }];
-    }
-    this.droidHooks = droidHooks;
-    writeFileSync(this.droidSettingsPath, JSON.stringify({ hooks: droidHooks }, null, 2), { mode: 0o600 });
+    this.writeDroidSettings();
   }
 
+  private hookCommand: (event: string) => string = () => 'true';
+
+  /** The hooks a worker's droid starts with: every event to the office, and Task refused unless Settings allow it. */
+  private hookEntries(): Record<string, unknown[]> {
+    const hooks: Record<string, unknown[]> = {};
+    for (const event of HOOK_EVENTS) hooks[event] = [{ hooks: [{ type: 'command', command: this.hookCommand(event) }] }];
+    if (this.denyTask?.() ?? true) hooks.PreToolUse.unshift({ matcher: 'Task', hooks: [{ type: 'command', command: `printf '%s' ${shq(TASK_DENY)}` }] });
+    return hooks;
+  }
+
+  /** Droid reads its hooks once, at start: written again before each launch, so a change in Settings reaches the next one. */
+  private writeDroidSettings() {
+    this.droidHooks = this.hookEntries();
+    writeFileSync(this.droidSettingsPath, JSON.stringify({ hooks: this.droidHooks }, null, 2), { mode: 0o600 });
+  }
   /**
    * The settings file a Droid worker launches with. Interactive droid has no --model flag: a
    * worker with a model or effort pinned gets its own overlay with the office hooks and a
@@ -2273,6 +2550,7 @@ process.stdin.on('end', () => {
    * untouched. Rewritten on every launch, so a resume pins the same model again.
    */
   private droidSettings(info: WorkerInfo): string {
+    this.writeDroidSettings();
     if (info.model === undefined && info.effort === undefined) return this.droidSettingsPath;
     const file = path.join(this.dataDir, `droid-${info.id}.json`);
     const sessionDefaultSettings: Record<string, string> = {};
@@ -2481,6 +2759,9 @@ function newWorker(info: WorkerInfo, hookToken = randomBytes(16).toString('hex')
     lastTool: new Map(),
     hookAt: 0,
     outputAt: 0,
+    hookVersion: 0,
+    outbox: [],
+    queued: 0,
   };
 }
 
@@ -2607,6 +2888,101 @@ export function resolveAgent(cmd: string): string | null {
   } catch {
     return null;
   }
+}
+
+/**
+ * The hook command's Node half (see writeHookSettings): posts one hook to the office with a short
+ * connect timeout and prints its answer, or, given `spool` or when the office can't take it, keeps
+ * it in hook-spool/<worker>.jsonl for the office to replay. The file holds at most SPOOL_MAX_BYTES;
+ * the oldest hooks go first.
+ */
+function hookScript(): string {
+  return String.raw`const http = require('http');
+const fs = require('fs');
+const path = require('path');
+const MAX = ${SPOOL_MAX_BYTES};
+const [event, mode] = process.argv.slice(2);
+const worker = process.env.DROID_OFFICE_WORKER_ID || '';
+const token = process.env.DROID_OFFICE_HOOK_TOKEN || '';
+let body = '';
+process.stdin.setEncoding('utf8');
+process.stdin.on('data', (c) => (body += c));
+process.stdin.on('end', () => (mode === 'spool' ? spool() : send()));
+function send() {
+  const url = new URL(process.env.DROID_OFFICE_HOOK_URL + '/hooks/droid');
+  url.searchParams.set('worker', worker);
+  url.searchParams.set('event', event);
+  url.searchParams.set('v', '${HOOK_VERSION}');
+  let done = false;
+  const fail = () => {
+    if (done) return;
+    done = true;
+    spool();
+  };
+  const req = http.request(url, { method: 'POST', timeout: 2000, headers: { authorization: 'Bearer ' + token, 'content-type': 'application/json' } }, (res) => {
+    let out = '';
+    res.setEncoding('utf8');
+    res.on('data', (c) => (out += c));
+    res.on('error', fail);
+    res.on('end', () => {
+      if (res.statusCode !== 200) return fail();
+      done = true;
+      process.stdout.write(out);
+    });
+  });
+  const connect = setTimeout(() => req.destroy(), 500);
+  req.on('socket', (s) => s.once('connect', () => clearTimeout(connect)));
+  req.on('error', fail);
+  req.on('close', () => clearTimeout(connect));
+  req.on('timeout', () => req.destroy());
+  req.end(body);
+}
+function spool() {
+  let payload;
+  try {
+    payload = JSON.parse(body);
+  } catch {
+    return;
+  }
+  if (!/^[\w-]+$/.test(worker)) return;
+  const dir = path.join(__dirname, 'hook-spool');
+  const file = path.join(dir, worker + '.jsonl');
+  const line = JSON.stringify({ event, at: Date.now(), token, payload }) + '\n';
+  const size = Buffer.byteLength(line);
+  if (size > MAX) return;
+  try {
+    fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+    let had = 0;
+    try {
+      had = fs.statSync(file).size;
+    } catch {}
+    if (had + size <= MAX) return fs.appendFileSync(file, line, { mode: 0o600 });
+    const rows = fs.readFileSync(file, 'utf8').split('\n').filter(Boolean);
+    const kept = [];
+    let total = size;
+    for (let i = rows.length - 1; i >= 0; i--) {
+      const n = Buffer.byteLength(rows[i]) + 1;
+      if (total + n > MAX) break;
+      total += n;
+      kept.unshift(rows[i] + '\n');
+    }
+    const tmp = file + '.' + process.pid + '.tmp';
+    fs.writeFileSync(tmp, kept.join('') + line, { mode: 0o600 });
+    fs.renameSync(tmp, file);
+  } catch {}
+}
+`;
+}
+
+/** The pending ask for a permission prompt about `tool` called with `input` (see WorkerInfo.ask). */
+function permissionAsk(tool: string, input: unknown, sub: boolean): Extract<WorkerAsk, { kind: 'permission' }> {
+  const i = input && typeof input === 'object' ? (input as Record<string, unknown>) : {};
+  const str = (v: unknown, max: number) => (typeof v === 'string' && v.trim() ? v.trim().slice(0, max) : undefined);
+  const command = str(i.command, 2000);
+  const file = str(i.file_path ?? i.path, 1000);
+  const risk = str(i.riskLevel ?? i.risk_level, 20);
+  const summary = str(i.summary ?? i.description, 300);
+  return { kind: 'permission', tool, ...(command ? { command } : {}), ...(file ? { file } : {}), ...(risk ? { risk } : {}), ...(summary ? { summary } : {}), ...(sub ? { sub: true as const } : {}) };
 }
 
 function describeTool(payload: any): string {

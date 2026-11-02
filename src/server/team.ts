@@ -146,6 +146,16 @@ const clip = (s: string, n: number) => {
   return flat.length > n ? `${flat.slice(0, n - 1)}…` : flat;
 };
 
+/** One sentence per subagent, its weightiest news: "Pixel reported back. Nova finished its turn." */
+function newsWords(news: TeamEvent[]): string {
+  const latest = new Map<string, TeamEvent>();
+  for (const e of news) {
+    const had = latest.get(e.worker);
+    if (!had || WEIGHT[e.kind] >= WEIGHT[had.kind]) latest.set(e.worker, e);
+  }
+  return [...latest.values()].map((e) => `${e.name} ${NEWS[e.kind]}.`).join(' ');
+}
+
 export class Team {
   private log: TeamEvent[] = [];
   private seq = 0;
@@ -156,6 +166,8 @@ export class Team {
   private known = new Map<string, { name: string; lead?: string; status: WorkerStatus }>();
   /** Subagents that have reported in the turn they're in, whose turn ending is no news. */
   private reported = new Set<string>();
+  /** Subagents that reported or asked their lead something in the turn they're in: their turn may end (see beforeStop). */
+  private spoke = new Set<string>();
   /** Workers being sent home, and by whom: a lead knows when it did it, and hears when the owner did. */
   private sending = new Map<string, 'lead' | 'owner'>();
   private path: string;
@@ -176,7 +188,10 @@ export class Team {
     const prev = this.known.get(w.id);
     this.known.set(w.id, { name: w.name, lead: w.lead, status: w.status });
     if (!prev || prev.status === w.status) return;
-    if (w.status === 'working' && (prev.status === 'done' || prev.status === 'idle')) this.reported.delete(w.id);
+    if (w.status === 'working' && (prev.status === 'done' || prev.status === 'idle')) {
+      this.reported.delete(w.id);
+      this.spoke.delete(w.id);
+    }
     if ((w.status === 'done' || w.status === 'idle') && this.unnudged(w.id).length) this.scheduleNudge(w.id);
     if (!w.lead || prev.status === 'offline') return;
     let kind: TeamEventKind | undefined;
@@ -197,6 +212,7 @@ export class Team {
     if (previous?.lead && by !== 'lead' && this.workers.get(previous.lead)) this.push({ lead: previous.lead, worker: id, name: previous.name, kind: by === 'owner' ? 'sent_home' : 'left' });
     this.known.delete(id);
     this.reported.delete(id);
+    this.spoke.delete(id);
     const before = this.log.length;
     this.log = this.log.filter((e) => e.lead !== id);
     this.nudged.delete(id);
@@ -221,8 +237,23 @@ export class Team {
     this.timers.clear();
   }
 
-  /** A former lead can still drain final reports and departures after hiring is disabled. */
-  hasNews(lead: string): boolean {
+  /**
+   * What a worker whose turn is ending is told instead of stopping (see WorkerManager.beforeStop): a
+   * subagent that hasn't reported this turn, to report to its lead; a lead, its team's news it hasn't
+   * been woken for, which then needs no waking.
+   */
+  beforeStop(w: WorkerInfo): string | undefined {
+    const lead = w.lead ? this.workers.get(w.lead) : undefined;
+    if (lead) return this.spoke.has(w.id) ? undefined : officePrompt(this.opts.prompts, 'subagent.report', { lead: lead.name });
+    if (!this.opts.settings().wakeLead) return undefined;
+    const news = this.unnudged(w.id);
+    if (!news.length) return undefined;
+    this.nudged.set(w.id, news[news.length - 1].seq);
+    this.persist();
+    return officePrompt(this.opts.prompts, 'subagent.nudge', { news: newsWords(news) });
+  }
+
+  /** A former lead can still drain final reports and departures after hiring is disabled. */ hasNews(lead: string): boolean {
     return this.log.some((event) => event.lead === lead && !event.seen);
   }
 
@@ -515,6 +546,7 @@ export class Team {
     const err = isAsleep(w.status) ? this.workers.resume(w.id, message) : this.workers.prompt(w.id, message);
     if (err) return no(409, `${w.name}: ${err}`);
     this.reported.delete(w.id);
+    this.spoke.delete(w.id);
     return ok({ worker: this.member(this.workers.get(w.id) ?? w) });
   }
 
@@ -535,6 +567,7 @@ export class Team {
     const question = b.question === true;
     this.push({ lead: lead.id, worker: w.id, name: w.name, kind: question ? 'question' : 'report', text });
     if (!question) this.reported.add(w.id);
+    this.spoke.add(w.id);
     this.opts.toast(`${question ? `❓ ${w.name} asked ${lead.name}` : `📨 ${w.name} reported to ${lead.name}`}: “${clip(text, 90)}”`, 'info', w.id);
     return ok({ lead: lead.name });
   }
@@ -579,13 +612,7 @@ export class Team {
       this.scheduleNudge(leadId);
       return;
     }
-    const latest = new Map<string, TeamEvent>();
-    for (const e of news) {
-      const had = latest.get(e.worker);
-      if (!had || WEIGHT[e.kind] >= WEIGHT[had.kind]) latest.set(e.worker, e);
-    }
-    const said = [...latest.values()].map((e) => `${e.name} ${NEWS[e.kind]}.`).join(' ');
-    if (this.workers.prompt(leadId, officePrompt(this.opts.prompts, 'subagent.nudge', { news: said }))) return;
+    if (this.workers.prompt(leadId, officePrompt(this.opts.prompts, 'subagent.nudge', { news: newsWords(news) }))) return;
     this.nudged.set(leadId, news[news.length - 1].seq);
     this.persist();
   }
