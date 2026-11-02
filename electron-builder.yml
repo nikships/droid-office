@@ -1,4 +1,4 @@
-# The Droid Office Mac app (src/desktop): `npm run package:mac` builds it into release/.
+# The Droid Office Mac app (src/desktop): `bun run package:mac` builds it into release/.
 # .github/workflows/release.yml builds, signs and notarizes it for every release, and the app
 # updates itself from the newest GitHub release through electron-updater (latest-mac.yml).
 appId: com.nikships.droid-office
@@ -14,7 +14,7 @@ files:
   - bin/**/*
   - dist/**/*
   - '!dist/**/*.map'
-  # Only the compiled presenter (npm run build:native), not its sources or node-gyp's intermediates. It
+  # Only the compiled presenter (bun run build:native), not its sources or node-gyp's intermediates. It
   # stays a file on disk (no asar), signed with the app by electron-builder, and src/desktop loads it by path.
   - native/presenter/build/Release/presenter.node
   - native/mac/build/DroidOfficeFinderBridge.app/**/*

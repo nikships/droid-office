@@ -295,7 +295,7 @@ async function chooseOfficeDir(firstRun: boolean): Promise<string | undefined> {
     const { response } = await dialog.showMessageBox({
       type: 'question',
       message: 'Where does your office live?',
-      detail: `Droid Office keeps its data (floors, workers, pictures) in a folder. Pick a folder an office already ran in to carry on with it, such as the checkout you ran \`npm start\` in. You can change this later from Office → Change Office Folder….`,
+      detail: `Droid Office keeps its data (floors, workers, pictures) in a folder. Pick a folder an office already ran in to carry on with it, such as the checkout you ran \`bun run start\` in. You can change this later from Office → Change Office Folder….`,
       buttons: [`Use ${fallback.replace(os.homedir(), '~')}`, 'Choose Folder…'],
       defaultId: 0,
       cancelId: 0,
@@ -334,7 +334,7 @@ async function openOffice() {
   try {
     const { port, running } = await findPort();
     if (running) {
-      // Another office (a terminal's `npm start`, an earlier app) already answers here: use it rather than start a second one.
+      // Another office (a terminal's `bun run start`, an earlier app) already answers here: use it rather than start a second one.
       officeUrl = `http://localhost:${port}/`;
     } else {
       const dir = settings.officeDir ?? defaultOfficeDir();

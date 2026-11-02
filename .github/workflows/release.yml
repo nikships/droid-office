@@ -18,8 +18,10 @@ name: Release
 #
 # On the Mac Mini, three runner instances share that one machine so independent jobs run at once.
 # That machine runs the suite on Homebrew `node` (26 today), with `runner-toolchain.sh` checking
-# toolchains before builds on main. Artifacts between platform jobs and `publish` are handed over
-# through `~/ci-artifacts` on the machine's disk.
+# toolchains before builds on main. Bun, the package manager and script runner, comes from
+# oven-sh/setup-bun on every runner, at the version in package.json's `packageManager`.
+# Artifacts between platform jobs and `publish` are handed over through `~/ci-artifacts` on the
+# machine's disk.
 
 on:
   push:
@@ -36,7 +38,7 @@ on:
       - '.agents/skills/office-video-capture/references/example-launch/example-composition.html'
       - '.husky/**'
       - 'package.json'
-      - 'package-lock.json'
+      - 'bun.lock'
       - 'tsconfig*.json'
       - 'vite.config.ts'
       - 'biome.jsonc'
@@ -74,7 +76,7 @@ on:
       - '.agents/skills/office-video-capture/references/example-launch/example-composition.html'
       - '.husky/**'
       - 'package.json'
-      - 'package-lock.json'
+      - 'bun.lock'
       - 'tsconfig*.json'
       - 'vite.config.ts'
       - 'biome.jsonc'
@@ -155,22 +157,26 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
+      # Node still runs the office, its tests and node-gyp: node-pty's native PTYs don't work under Bun.
       - uses: actions/setup-node@v7
         if: github.event_name == 'pull_request'
         with:
           node-version: 22
-          cache: npm
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version-file: package.json
 
       - name: Check the runner's toolchain
         if: github.event_name != 'pull_request'
         run: .github/scripts/runner-toolchain.sh node
 
       - name: Install and build
-        run: npm ci --prefer-offline --no-audit --no-fund # its prepare script builds the client and the server
+        run: bun install --frozen-lockfile # its prepare script builds the client and the server
 
-      - run: npm run lint
+      - run: bun run lint
 
-      - run: npm run typecheck
+      - run: bun run typecheck
 
       # On Ubuntu (PR checks), Chromium runs in a temp folder and needs its OS libraries and AppArmor profile.
       - name: Choose the shared Chromium folder
@@ -200,7 +206,7 @@ jobs:
         run: node bin/droid-office.js browser install
 
       - name: Test with coverage
-        run: npm run test:coverage # fails below the line and function thresholds in package.json
+        run: bun run test:coverage # fails below the line and function thresholds in package.json
 
       - name: Test the Office performance proof contract
         env:
@@ -215,7 +221,7 @@ jobs:
         id: version
         run: |
           version="${{ needs.changes.outputs.version }}"
-          npm version "$version" --no-git-tag-version --allow-same-version
+          bun pm version "$version" --no-git-tag-version --allow-same-version
           echo "version=$version" >> "$GITHUB_OUTPUT"
 
       - name: Start the office from the checkout
@@ -249,27 +255,22 @@ jobs:
       ELECTRON_SKIP_BINARY_DOWNLOAD: '1'
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/setup-node@v7
-        if: github.event_name == 'pull_request'
+      - uses: oven-sh/setup-bun@v2
         with:
-          node-version: 22
-          cache: npm
+          bun-version-file: package.json
       - name: Check the runner's toolchain
         if: github.event_name != 'pull_request'
         run: .github/scripts/runner-toolchain.sh node
       # No office build, Chromium or native dependencies are needed to check the website.
-      - run: npm ci --ignore-scripts --prefer-offline --no-audit --no-fund
-      # npm's locked Bun package needs its install script to replace the executable stub.
-      - run: npm rebuild bun
-        if: needs.changes.outputs.node != 'true'
+      - run: bun install --frozen-lockfile --ignore-scripts
       # The Node job's repository-wide checks already include the website.
-      - run: npx oxlint --deny-warnings website
+      - run: bunx oxlint --deny-warnings website
         if: needs.changes.outputs.node != 'true'
-      - run: npx biome check --error-on-warnings website
+      - run: bunx biome check --error-on-warnings website
         if: needs.changes.outputs.node != 'true'
-      - run: npm run typecheck --workspace website
+      - run: bun run --cwd website typecheck
         if: needs.changes.outputs.node != 'true'
-      - run: npm run build:website
+      - run: bun run build:website
 
   mac:
     needs: changes
@@ -279,11 +280,15 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
+      # Node builds the presenter with node-gyp and runs the Finder test; Bun installs and runs scripts.
       - uses: actions/setup-node@v7
         if: github.event_name == 'pull_request'
         with:
           node-version: 22
-          cache: npm
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version-file: package.json
 
       # A run killed mid-signing can leave its temp keychain as the Mac's default. The runner's temp
       # folder is emptied between jobs, so that default would point at a file that no longer exists,
@@ -307,7 +312,7 @@ jobs:
         env:
           # PRs compile the Node-API presenter without downloading the unused Electron runtime.
           ELECTRON_SKIP_BINARY_DOWNLOAD: ${{ env.PUBLISHING != 'true' && '1' || '' }}
-        run: npm ci --prefer-offline --no-audit --no-fund # its prepare script builds the client, the server, the app's main process and the native Metal presenter
+        run: bun install --frozen-lockfile # its prepare script builds the client, the server, the app's main process and the native Metal presenter
 
       - name: Check the native Metal presenter was built for the Mac app
         run: |
@@ -333,7 +338,7 @@ jobs:
         id: version
         run: |
           version="${{ needs.changes.outputs.version }}"
-          npm version "$version" --no-git-tag-version --allow-same-version
+          bun pm version "$version" --no-git-tag-version --allow-same-version
           echo "version=$version" >> "$GITHUB_OUTPUT"
 
       - name: Stamp the Finder bundle release versions
@@ -396,7 +401,7 @@ jobs:
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-        run: npx electron-builder --mac --arm64 --publish never
+        run: bunx electron-builder --mac --arm64 --publish never
 
       # The macOS 14 floor for electron-updater, which compares it with the Darwin version (23 is macOS 14),
       # so a Mac on macOS 13 or earlier is never offered a build that refuses to open there.

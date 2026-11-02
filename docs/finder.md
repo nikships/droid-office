@@ -76,8 +76,8 @@ Focused checks:
 ```bash
 node --import tsx --test tests/finder.test.ts tests/building.test.ts tests/config.test.ts tests/desktop-tray.test.ts
 node --import tsx --test --test-name-pattern='Finder dispatch' tests/workers.test.ts
-npm run typecheck
+bun run typecheck
 node --import tsx --test tests/finder-native.test.ts
 ```
 
-The full native build is part of `npm run build`. Signed Finder activation and shared Keychain access must be verified in a correctly provisioned Mac app; an unsigned compile is not evidence that those capabilities work.
+The full native build is part of `bun run build`. Signed Finder activation and shared Keychain access must be verified in a correctly provisioned Mac app; an unsigned compile is not evidence that those capabilities work.

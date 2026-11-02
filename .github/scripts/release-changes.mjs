@@ -3,7 +3,7 @@ import { appendFileSync, readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 
 const workflow = /^(?:\.github\/workflows\/release\.yml|\.github\/scripts\/release-[^/]+\.mjs|\.github\/scripts\/runner-toolchain\.sh|\.github\/scripts\/free-port\.mjs)$/;
-const packages = /^package(?:-lock)?\.json$/;
+const packages = /^(?:package\.json|bun\.lock)$/;
 const config = /^(?:tsconfig[^/]*\.json|vite\.config\.ts|tools\/scene-hash\.mjs)$/;
 
 export function checksFor(files, { manual = false, androidVersionChanged = false } = {}) {
@@ -21,7 +21,7 @@ export function checksFor(files, { manual = false, androidVersionChanged = false
     website: all || touches(packages) || touches(/^(?:website\/|firebase\.json$|\.firebaserc$|biome\.jsonc$|\.oxlintrc\.json$)/),
     // The client is shipped inside the Mac app, even though Linux can build its static files.
     mac: all || touches(packages) || touches(config) || touches(/^(?:src\/|bin\/|build\/|native\/|android\/app\/src\/main\/assets\/model-icons\/|electron-builder\.yml$)/),
-    // Root npm dependency/script edits don't rebuild Android; its terminal dependencies are vendored.
+    // Root dependency/script edits don't rebuild Android; its terminal dependencies are vendored.
     android: all || androidVersionChanged || touches(/^(?:android\/(?!docs\/|.*\.md$)|tools\/android-model-icons\.mjs$)/),
   };
 }

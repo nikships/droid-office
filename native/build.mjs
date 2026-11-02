@@ -1,5 +1,5 @@
 // Builds the native Metal presenter (native/presenter) into native/presenter/build/Release/presenter.node.
-// `npm run build` runs it. It is a no-op anywhere but macOS: the presenter is Objective-C++ for the Mac app,
+// `bun run build` runs it. It is a no-op anywhere but macOS: the presenter is Objective-C++ for the Mac app,
 // and the Linux CI job, a developer checkout on Linux and the Cursor image only need the office itself.
 import { spawnSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
@@ -19,7 +19,7 @@ if (process.platform !== 'darwin') {
 // so the .node loads in Electron's Node unchanged: no Electron headers, no @electron/rebuild.
 const gyp = path.join(root, 'node_modules', 'node-gyp', 'bin', 'node-gyp.js');
 if (!existsSync(gyp)) {
-  console.error('native: node-gyp is missing; run npm ci');
+  console.error('native: node-gyp is missing; run bun install');
   process.exit(1);
 }
 const run = spawnSync(process.execPath, [gyp, 'rebuild', '--arch=arm64', '--directory', addon], { cwd: root, stdio: 'inherit' });

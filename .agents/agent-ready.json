@@ -10,7 +10,7 @@
   "verdict": "ready",
   "score": 100,
   "grade": "A+",
-  "summary": "typescript, javascript npm package (Node server + Vite client). All 13 criteria pass.",
+  "summary": "typescript, javascript Bun-managed package (Node server + Vite client). All 13 criteria pass.",
   "stack": {
     "languages": [
       "typescript",
@@ -27,7 +27,7 @@
       "status": "pass",
       "notes": "Biome lints and formats every .js, .mjs and .ts file outside dist/ (biome.jsonc tracked); package.json has \"lint\" (biome check --error-on-warnings .) and \"format\" scripts. 284 files pass with no suppression comments.",
       "measurement": {
-        "command": "npm run lint"
+        "command": "bun run lint"
       }
     },
     {
@@ -35,7 +35,7 @@
       "status": "pass",
       "notes": "package.json \"typecheck\" runs tsc --noEmit on tsconfig.server.json and tsconfig.client.json (both extend strict tsconfig.base.json).",
       "measurement": {
-        "command": "npm run typecheck"
+        "command": "bun run typecheck"
       }
     },
     {
@@ -43,7 +43,7 @@
       "status": "pass",
       "notes": "37 test files under tests/*.test.ts (268 tests), run by node:test through tsx.",
       "measurement": {
-        "command": "npm test"
+        "command": "bun run test"
       }
     },
     {
@@ -51,15 +51,15 @@
       "status": "pass",
       "notes": "package.json \"build\" runs vite build (client) then tsc -p tsconfig.server.json (server into dist/server).",
       "measurement": {
-        "command": "npm run build"
+        "command": "bun run build"
       }
     },
     {
       "id": "setup",
       "status": "pass",
-      "notes": "AGENTS.md \"Commands\" and docs/guide/development.md document npm ci / npm install, build, lint, typecheck, tests and running bin/droid-office.js; \"dev\" and \"start\" scripts exist.",
+      "notes": "AGENTS.md \"Commands\" and docs/guide/development.md document bun install, build, lint, typecheck, tests and running bin/droid-office.js; \"dev\" and \"start\" scripts exist.",
       "measurement": {
-        "command": "npm ci && npm run dev"
+        "command": "bun install && bun run dev"
       }
     },
     {
@@ -75,9 +75,9 @@
     {
       "id": "ci_parity",
       "status": "pass",
-      "notes": ".github/workflows/release.yml runs npm ci (prepare builds), npm run lint, npm run typecheck and npm run test:coverage on pull requests and main, then packs and install-smokes the release. No continue-on-error.",
+      "notes": ".github/workflows/release.yml runs bun install (prepare builds), bun run lint, bun run typecheck and bun run test:coverage on pull requests and main, then packs and install-smokes the release. No continue-on-error.",
       "measurement": {
-        "command": "npm ci && npm run lint && npm run typecheck && npm run test:coverage"
+        "command": "bun install && bun run lint && bun run typecheck && bun run test:coverage"
       }
     },
     {
@@ -88,20 +88,20 @@
     {
       "id": "precommit",
       "status": "pass",
-      "notes": ".husky/pre-commit runs lint-staged (biome check --write on staged files) and npm run typecheck; prepare installs it through .husky/install.mjs, skipped in CI and installs without dev dependencies."
+      "notes": ".husky/pre-commit runs lint-staged (biome check --write on staged files) and bun run typecheck; prepare installs it through .husky/install.mjs, skipped in CI and installs without dev dependencies."
     },
     {
       "id": "coverage",
       "status": "pass",
       "notes": "package.json \"test:coverage\" runs node:test with --experimental-test-coverage and --test-coverage-lines=78 / --test-coverage-functions=61; release.yml runs it. Measured on Node 22: 80.22% lines, 71.95% functions.",
       "measurement": {
-        "command": "npm run test:coverage"
+        "command": "bun run test:coverage"
       }
     },
     {
       "id": "lockfile",
       "status": "pass",
-      "notes": "package-lock.json is tracked for the root package.json."
+      "notes": "bun.lock is tracked for the root package.json and the website workspace."
     },
     {
       "id": "gitignore_hygiene",

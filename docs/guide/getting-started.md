@@ -11,7 +11,7 @@ For the production Mac app:
 - **Chromium**, for the Whiteboard's renderer: about 100 MB to download and 200 MB on disk, downloaded for you (see [Chromium for the Whiteboard](#chromium-for-the-whiteboard)). The office runs without it.
 - `curl` is optional. The status hooks use it when it's there and fall back to Node when it isn't.
 
-Developer checkouts also need **Node.js 20+** and npm. On macOS, `npm run build` also compiles the native Metal presenter (`native/presenter`, with node-gyp), which needs Xcode or its command line tools; elsewhere that step is skipped. The source can run on macOS, Linux and Windows, but those checkouts are not supported production installations.
+Developer checkouts also need **[Bun](https://bun.com) 1.4.4+**, which installs the dependencies and runs the scripts, and **Node.js 20+**, which runs the office server and its tests. On macOS, `bun run build` also compiles the native Metal presenter (`native/presenter`, with node-gyp), which needs Xcode or its command line tools; elsewhere that step is skipped. The source can run on macOS, Linux and Windows, but those checkouts are not supported production installations.
 
 ## Install & run
 
@@ -26,8 +26,8 @@ To run the built source without Vite:
 ```bash
 git clone https://github.com/nikships/droid-office.git
 cd droid-office
-npm ci              # builds the client, server and desktop app
-npm run start       # runs the built office from this checkout
+bun install              # builds the client, server and desktop app
+bun run start       # runs the built office from this checkout
 ```
 
 The command examples below use `droid-office` as shorthand for `node bin/droid-office.js` from the checkout. They are developer tools, not a production installation method.

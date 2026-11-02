@@ -21,21 +21,21 @@
     "test": "node --import tsx --test --test-timeout=120000 tests/*.test.ts",
     "test:coverage": "node --import tsx --test --test-timeout=120000 --experimental-test-coverage --test-coverage-lines=78 --test-coverage-functions=61 --test-coverage-exclude='tests/**' tests/*.test.ts",
     "dev": "concurrently -k \"vite\" \"tsx watch src/server/cli.ts --port 4600\"",
-    "build": "npm run build:client && npm run build:server && npm run build:desktop && npm run build:native",
+    "build": "bun run build:client && bun run build:server && bun run build:desktop && bun run build:native",
     "build:client": "vite build",
     "build:server": "tsc -p tsconfig.server.json",
     "build:desktop": "tsc -p tsconfig.desktop.json && tsc -p tsconfig.desktop-page.json",
     "build:native": "node native/build.mjs",
-    "build:website": "npm run build --workspace website",
-    "dev:website": "npm run dev --workspace website",
+    "build:website": "bun run --cwd website build",
+    "dev:website": "bun run --cwd website dev",
     "deploy:website": "firebase deploy --only hosting --project droid-office",
-    "typecheck": "bun check -p tsconfig.server.json && bun check -p tsconfig.client.json && bun check -p tsconfig.desktop.json && bun check -p tsconfig.desktop-page.json && npm run typecheck --workspace website",
+    "typecheck": "bun check -p tsconfig.server.json && bun check -p tsconfig.client.json && bun check -p tsconfig.desktop.json && bun check -p tsconfig.desktop-page.json && bun run --cwd website typecheck",
     "lint": "oxlint --deny-warnings . && biome check --error-on-warnings .",
     "format": "biome format --write .",
     "start": "node bin/droid-office.js",
-    "desktop": "npm run build && electron .",
-    "package:mac": "npm run build && electron-builder --mac --arm64 --publish never",
-    "prepare": "node .husky/install.mjs && npm run build"
+    "desktop": "bun run build && electron .",
+    "package:mac": "bun run build && electron-builder --mac --arm64 --publish never",
+    "prepare": "bun .husky/install.mjs && bun run build"
   },
   "lint-staged": {
     "*.{js,mjs,cjs,ts,mts,cts}": [
@@ -43,7 +43,9 @@
       "biome check --write --error-on-warnings --no-errors-on-unmatched"
     ]
   },
+  "packageManager": "bun@1.4.4",
   "engines": {
+    "bun": ">=1.4.4",
     "node": ">=20"
   },
   "license": "MIT",
@@ -79,7 +81,6 @@
     "@xterm/addon-fit": "^0.11.0",
     "@xterm/addon-web-links": "^0.12.0",
     "@xterm/xterm": "^6.0.0",
-    "bun": "^1.4.4",
     "codemirror": "^6.0.2",
     "concurrently": "^10.0.6",
     "dompurify": "^3.4.17",

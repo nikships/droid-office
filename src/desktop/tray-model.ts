@@ -33,7 +33,7 @@ export interface TrayView {
   ownWindows: number;
   /** What the app's window shows, or opens as. */
   mode: WindowMode;
-  /** The app is showing an office it didn't start (a terminal's `npm start`), which quitting leaves running. */
+  /** The app is showing an office it didn't start (a terminal's `bun run start`), which quitting leaves running. */
   external: boolean;
   /** Whether the app notifies while its window is closed and a worker starts to wait on the owner. */
   notify: boolean;

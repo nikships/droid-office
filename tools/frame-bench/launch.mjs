@@ -47,7 +47,7 @@ export function appCommand({ app, source }) {
   if (actual.startsWith('/Applications/')) throw new Error(`refusing to run ${actual}: measure a build, not the installed app`);
   if (source) {
     const pkg = JSON.parse(readFileSync(path.join(actual, 'package.json'), 'utf8'));
-    if (pkg.name !== 'droid-office' || pkg.main !== 'dist/desktop/main.js' || !existsSync(path.join(actual, pkg.main))) throw new Error('source must be a built Droid Office checkout: run npm run build first');
+    if (pkg.name !== 'droid-office' || pkg.main !== 'dist/desktop/main.js' || !existsSync(path.join(actual, pkg.main))) throw new Error('source must be a built Droid Office checkout: run bun run build first');
   }
   const exe = source ? createRequire(path.join(actual, 'package.json'))('electron') : path.join(actual, 'Contents/MacOS/Droid Office');
   if (!existsSync(exe)) throw new Error(`no app at ${exe}`);

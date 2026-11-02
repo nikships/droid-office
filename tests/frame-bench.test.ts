@@ -107,7 +107,7 @@ test('a source launch uses that built checkout with its own Electron executable'
   const dir = realpathSync(mkdtempSync(path.join(os.tmpdir(), 'bench-source-')));
   t.after(() => rmSync(dir, { recursive: true, force: true }));
   writeFileSync(path.join(dir, 'package.json'), '{"name":"droid-office","main":"dist/desktop/main.js"}');
-  assert.throws(() => appCommand({ source: dir }), /npm run build/);
+  assert.throws(() => appCommand({ source: dir }), /bun run build/);
   mkdirSync(path.join(dir, 'dist/desktop'), { recursive: true });
   writeFileSync(path.join(dir, 'dist/desktop/main.js'), '');
   const electron = path.join(dir, 'node_modules/electron');

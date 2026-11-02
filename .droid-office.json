@@ -1,1 +1,1 @@
-{ "worktree": { "setup": "npm ci", "copy": ["/android/local.properties"] } }
+{ "worktree": { "setup": "bun install --frozen-lockfile", "copy": ["/android/local.properties"] } }

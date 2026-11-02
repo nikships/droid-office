@@ -5,7 +5,7 @@ Measures how the Mac app paces frames and how long a mouse move takes to reach t
 ## Setup
 
 ```bash
-npm run build && npx electron-builder --mac --arm64 --dir --publish never   # release/mac-arm64/Droid Office.app, signed when the keychain has the Developer ID
+bun run build && bunx electron-builder --mac --arm64 --dir --publish never   # release/mac-arm64/Droid Office.app, signed when the keychain has the Developer ID
 .agents/skills/office-clone/scripts/clone-office.sh                          # prints /tmp/office-clone-XXXX
 /tmp/office-clone-XXXX/start.sh                                              # fireAndForget; the app attaches to it (port 4677)
 swiftc -O tools/frame-bench/display-trace/display-trace.swift -o /tmp/display-trace

@@ -8,13 +8,15 @@ import { fileURLToPath } from 'node:url';
 
 const root = fileURLToPath(new URL('../', import.meta.url));
 const bin = path.join(root, 'node_modules', '.bin');
+// Bun is the package manager, so `bun check` is the Bun on PATH (`bun run test` puts itself first).
+const executable = (tool: 'bun' | 'tsc') => (tool === 'bun' ? 'bun' : path.join(bin, tool));
 const projects = ['tsconfig.server.json', 'tsconfig.client.json', 'tsconfig.desktop.json', 'tsconfig.desktop-page.json', 'website/tsconfig.json'];
 
 function check(tool: 'bun' | 'tsc', project: string) {
   const args = tool === 'bun' ? ['check', '-p', project, '--no-pretty'] : ['-p', project, '--noEmit', '--pretty', 'false'];
   const env = { ...process.env };
   for (const key of ['AGENT', 'CLAUDECODE', 'REPL_ID']) delete env[key];
-  const result = spawnSync(path.join(bin, tool), args, { cwd: root, env, encoding: 'utf8', timeout: 30_000 });
+  const result = spawnSync(executable(tool), args, { cwd: root, env, encoding: 'utf8', timeout: 30_000 });
   assert.ifError(result.error);
   assert.equal(result.signal, null);
   return { status: result.status, output: result.stdout + result.stderr };

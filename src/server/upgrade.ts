@@ -185,8 +185,8 @@ export class Upgrader {
       await rm(STAGE, { recursive: true, force: true });
       await mkdir(next, { recursive: true });
       await run('sh', ['-c', 'git archive "$1" | tar -x -C "$2"', 'sh', sha, next]);
-      // npm install runs the prepare script, which builds the client and the server.
-      await run('npm', ['install', '--no-audit', '--no-fund'], { cwd: next, timeout: 15 * 60_000 });
+      // bun install runs the prepare script, which builds the client and the server.
+      await run('bun', ['install', '--frozen-lockfile'], { cwd: next, timeout: 15 * 60_000 });
       for (const f of ['dist/server/server/cli.js', 'dist/public/index.html']) {
         if (!existsSync(path.join(next, f))) throw new Error(`the build didn't produce ${f}`);
       }

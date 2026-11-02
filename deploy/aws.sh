@@ -619,7 +619,12 @@ cmd_update() {
     git -C /opt/droid-office fetch --depth 1 origin \"\$ref\" -q
     git -C /opt/droid-office reset --hard FETCH_HEAD -q
     echo \"   at \$(git -C /opt/droid-office log -1 --format='%h %s')\"
-    cd /opt/droid-office && npm install --no-audit --no-fund --loglevel=error >/dev/null
+    # Offices provisioned before the switch to Bun have only npm.
+    if ! command -v bun >/dev/null 2>&1; then
+      sudo apt-get -y -q install unzip >/dev/null
+      curl -fsSL https://bun.com/install | sudo BUN_INSTALL=/usr/local bash >/dev/null
+    fi
+    cd /opt/droid-office && bun install --frozen-lockfile >/dev/null
     # Offices provisioned before KillMode=process: without it the restart stops every worker too.
     if [ \"\$(systemctl show --property=KillMode --value droid-office)\" != process ]; then
       sudo mkdir -p /etc/systemd/system/droid-office.service.d

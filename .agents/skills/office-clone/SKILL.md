@@ -31,13 +31,13 @@ It leaves out what a started office would **act on**: `workers.json`, `cloud-wor
 
 ```bash
 T=/tmp/office-clone-Kk3x     # what clone-office.sh printed
-npm run build                # start.sh runs this checkout's dist/
+bun run build                # start.sh runs this checkout's dist/
 $T/start.sh                  # fireAndForget; prints the URL (port 4677, or the next free one)
 ```
 
 `start.sh` runs this checkout's `node bin/droid-office.js --home $T/office --projects $T/floors` on `127.0.0.1` with `HOME=$T/home`, so the Home floor and every PTY host are the clone's. `gh` and `git` keep the owner's sign-in (`GH_CONFIG_DIR`, `GIT_CONFIG_GLOBAL`), so the boards read the real forge, and the Whiteboard renders with the owner's Chromium. The Factory features use the owner's real key from `factory.json`.
 
-Run `npm run build` again after every source change, then restart `start.sh`. The clone's data stays as it is.
+Run `bun run build` again after every source change, then restart `start.sh`. The clone's data stays as it is.
 
 ## 3. Drive it as the owner: `office-run.mjs`
 

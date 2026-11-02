@@ -144,7 +144,7 @@ async function run(options) {
       if (interrupted) throw new Error('measurement interrupted');
       const build = path.resolve(buildPath),
         trialOut = path.join(out, label);
-      if (!existsSync(path.join(build, 'dist/server/server/cli.js'))) throw new Error(`build ${build} first with npm run build`);
+      if (!existsSync(path.join(build, 'dist/server/server/cli.js'))) throw new Error(`build ${build} first with bun run build`);
       const commit = execFileSync('git', ['-C', build, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
       mkdirSync(trialOut);
       const params = { ...options, label, variant, commit, macmon: path.resolve(options.macmon), storage: storageFor(clone, { config: options.config, cap: options.fps, graphics: { stats: false } }) };

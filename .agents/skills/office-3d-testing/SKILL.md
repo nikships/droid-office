@@ -11,10 +11,10 @@ The full command reference lives in [docs/guide/development.md, "Automation API"
 
 ## 1. Build and start a clone of the owner's office
 
-Test on a copy of the owner's real install, made and started by [`office-clone`](../office-clone/SKILL.md): their floors and repositories, Factory account, decor, Whiteboards and browser settings, with nobody at the desks. Never test on invented, mocked or seeded data or an empty throwaway office, and never against the owner's own office (the Mac app or `npm run dev` on :4600): commands move their player and open windows on their screen.
+Test on a copy of the owner's real install, made and started by [`office-clone`](../office-clone/SKILL.md): their floors and repositories, Factory account, decor, Whiteboards and browser settings, with nobody at the desks. Never test on invented, mocked or seeded data or an empty throwaway office, and never against the owner's own office (the Mac app or `bun run dev` on :4600): commands move their player and open windows on their screen.
 
 ```bash
-npm run build                                          # the clone runs this checkout's dist/
+bun run build                                          # the clone runs this checkout's dist/
 .agents/skills/office-clone/scripts/clone-office.sh    # prints T, e.g. /tmp/office-clone-Kk3x
 $T/start.sh                                            # fireAndForget; port 4677 or the next free one
 ```

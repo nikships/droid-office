@@ -49,8 +49,16 @@ sudo chmod go+r /etc/apt/keyrings/githubcli-archive-keyring.gpg
 echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" \
   | sudo tee /etc/apt/sources.list.d/github-cli.list >/dev/null
 quiet "${APT[@]}" update
-quiet "${APT[@]}" install git gh curl ca-certificates build-essential python3
+quiet "${APT[@]}" install git gh curl ca-certificates build-essential python3 unzip
 echo "    $(gh --version | head -1)"
+
+# Bun installs the office's dependencies and runs its build; Node still runs the office itself.
+# System-wide in /usr/local/bin, so the service and the office's own upgrade find it on PATH.
+if ! command -v bun >/dev/null 2>&1; then
+  step "Installing Bun"
+  quiet bash -c 'curl -fsSL https://bun.com/install | sudo BUN_INSTALL=/usr/local bash'
+fi
+echo "    bun $(bun --version)"
 
 if ! command -v droid >/dev/null 2>&1; then
   step "Installing the Droid CLI"
@@ -94,8 +102,8 @@ else
   quiet git clone --depth 1 --branch "$APP_REF" "$APP_REPO" /opt/droid-office
 fi
 echo "    at $(git -C /opt/droid-office log -1 --format='%h %s')"
-step "npm install (builds the office)"
-(cd /opt/droid-office && quiet npm install --no-audit --no-fund)
+step "bun install (builds the office)"
+(cd /opt/droid-office && quiet bun install --frozen-lockfile)
 
 # The Whiteboard renders cards with a headless Chromium, which `droid-office browser` downloads into one
 # folder the service shares. None of this stops the office from starting: a step that fails says so, and

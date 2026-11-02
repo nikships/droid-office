@@ -5,36 +5,36 @@ Developers can clone, run and modify the source on their own machines. Source ch
 ```bash
 git clone https://github.com/nikships/droid-office.git
 cd droid-office
-npm ci               # also builds, and installs the pre-commit hook
-npm run dev          # Vite on :5173, server on :4600
-npm run build        # vite (client) + tsc (server and desktop app) + the native Metal presenter (macOS only)
-npm run lint         # Oxlint + Biome policy and formatting checks, fails on any warning
-npm run format       # Biome: rewrite the files in the house format
-npm run typecheck    # npm-locked Bun: all five TypeScript projects
-npm test             # worker, pipelines, PTY and doc tests, and .env.example in sync
-npm run test:coverage  # the same tests with a coverage report; needs Node 22.8+
+bun install            # also builds, and installs the pre-commit hook
+bun run dev            # Vite on :5173, server on :4600
+bun run build          # vite (client) + tsc (server and desktop app) + the native Metal presenter (macOS only)
+bun run lint           # Oxlint + Biome policy and formatting checks, fails on any warning
+bun run format         # Biome: rewrite the files in the house format
+bun run typecheck      # `bun check`: all five TypeScript projects
+bun run test           # worker, pipelines, PTY and doc tests, and .env.example in sync (on Node's test runner)
+bun run test:coverage  # the same tests with a coverage report; needs Node 22.8+
 node bin/droid-office.js /path/to/project
-npm run desktop      # builds, then runs the Mac app from the checkout (it doesn't update itself)
-npm run package:mac  # builds release/Droid Office.app, a dmg and a zip; signs with your Developer ID if the keychain has it
+bun run desktop        # builds, then runs the Mac app from the checkout (it doesn't update itself)
+bun run package:mac    # builds release/Droid Office.app, a dmg and a zip; signs with your Developer ID if the keychain has it
 ```
 
-`npm run package:mac` notarizes the app too when `APPLE_ID`, `APPLE_APP_SPECIFIC_PASSWORD` and `APPLE_TEAM_ID` are set; `CSC_IDENTITY_AUTO_DISCOVERY=false npm run package:mac -- -c.mac.identity=null` builds it unsigned. electron-builder's settings are in [`electron-builder.yml`](../../electron-builder.yml), and the icon and entitlements in [`build/`](../../build).
+`bun run package:mac` notarizes the app too when `APPLE_ID`, `APPLE_APP_SPECIFIC_PASSWORD` and `APPLE_TEAM_ID` are set; `CSC_IDENTITY_AUTO_DISCOVERY=false bun run package:mac -- -c.mac.identity=null` builds it unsigned. electron-builder's settings are in [`electron-builder.yml`](../../electron-builder.yml), and the icon and entitlements in [`build/`](../../build).
 
-A worktree the office cuts of this repository sets itself up from [`.droid-office.json`](../../.droid-office.json): it copies `android/local.properties` from the checkout when there is one and runs `npm ci`.
+A worktree the office cuts of this repository sets itself up from [`.droid-office.json`](../../.droid-office.json): it copies `android/local.properties` from the checkout when there is one and runs `bun install --frozen-lockfile`.
 
-**Lint and format.** [Oxlint](https://oxc.rs/docs/guide/usage/linter.html) runs the correctness rules in [`.oxlintrc.json`](../../.oxlintrc.json). Its categories do not map one-to-one to Biome's recommended preset, so [Biome](https://biomejs.dev) deliberately remains a compatibility check for the existing recommended lint policy, including suspicious, complexity and style rules. This is not yet an Oxlint-only lint gate. Both CI and pre-commit run both linters; CI also checks formatting. [`biome.jsonc`](../../biome.jsonc) keeps two-space indents, single quotes, semicolons, trailing commas and 240-column lines. `npm run format` fixes the formatting.
+**Lint and format.** [Oxlint](https://oxc.rs/docs/guide/usage/linter.html) runs the correctness rules in [`.oxlintrc.json`](../../.oxlintrc.json). Its categories do not map one-to-one to Biome's recommended preset, so [Biome](https://biomejs.dev) deliberately remains a compatibility check for the existing recommended lint policy, including suspicious, complexity and style rules. This is not yet an Oxlint-only lint gate. Both CI and pre-commit run both linters; CI also checks formatting. [`biome.jsonc`](../../biome.jsonc) keeps two-space indents, single quotes, semicolons, trailing commas and 240-column lines. `bun run format` fixes the formatting.
 
-**Typechecking.** [`bun check`](https://bun.com/docs/runtime/check) reads the same tsconfigs and reports TypeScript 7 diagnostics without emitting files. Bun 1.4.4 embeds TypeScript 7.0.2, matching the locked `typescript` package. `tests/typecheck-parity.test.ts` runs both compilers on all five real projects and compares their diagnostics on injected type errors under each project's options. Builds still use `tsc` to emit JavaScript. npm supplies Bun from `package-lock.json` on developer machines and all CI runners; a global Bun installation is not required. A scripts-disabled install leaves Bun's executable as a stub, so run `npm rebuild bun` after `npm ci --ignore-scripts` before typechecking, as website-only CI does.
+**Typechecking.** [`bun check`](https://bun.com/docs/runtime/check) reads the same tsconfigs and reports TypeScript 7 diagnostics without emitting files. Bun 1.4.4 embeds TypeScript 7.0.2, matching the locked `typescript` package. `tests/typecheck-parity.test.ts` runs both compilers on all five real projects and compares their diagnostics on injected type errors under each project's options. Builds still use `tsc` to emit JavaScript. `bun check` needs Bun 1.4.4 or later; CI installs the version in `package.json`'s `packageManager` with `oven-sh/setup-bun`.
 
-**Pre-commit hook.** `npm ci` or `npm install` in a clone points git at [`.husky/`](../../.husky) (through the `prepare` script), and every commit then runs [lint-staged](https://github.com/lint-staged/lint-staged) and `npm run typecheck`. lint-staged runs `oxlint --deny-warnings` and `biome check --write --error-on-warnings` on the staged files, so formatting is fixed and added to the commit, and a lint finding stops it. The hook is a convenience; CI runs the same `npm run lint` and `npm run typecheck`. `git commit --no-verify` skips it, and `HUSKY=0` skips installing it. It isn't installed in CI (`CI=true`) or where dev dependencies aren't.
+**Pre-commit hook.** `bun install` in a clone points git at [`.husky/`](../../.husky) (through the `prepare` script), and every commit then runs [lint-staged](https://github.com/lint-staged/lint-staged) and `bun run typecheck`. lint-staged runs `oxlint --deny-warnings` and `biome check --write --error-on-warnings` on the staged files, so formatting is fixed and added to the commit, and a lint finding stops it. The hook is a convenience; CI runs the same `bun run lint` and `bun run typecheck`. `git commit --no-verify` skips it, and `HUSKY=0` skips installing it. It isn't installed in CI (`CI=true`) or where dev dependencies aren't.
 
-`npm run test:coverage` fails when line or function coverage of `src/` and `bin/` drops below the thresholds in its `package.json` script, and CI runs it in place of `npm test`. `npm test` still runs on Node 20.
+`bun run test:coverage` fails when line or function coverage of `src/` and `bin/` drops below the thresholds in its `package.json` script, and CI runs it in place of `bun run test`. `bun run test` still runs on Node 20: the scripts run through Bun, but the tests themselves run on Node's test runner, because the office's PTYs (node-pty) don't work under Bun.
 
-`npm run dev` runs Vite with hot reload on :5173 and proxies to the server on :4600. Server edits restart the server, not the workers.
+`bun run dev` runs Vite with hot reload on :5173 and proxies to the server on :4600. Server edits restart the server, not the workers.
 
 ### Source hot reload with the normal local launch
 
-For a local checkout started with **`npm run build && npm run start`**, open **⚙️ Settings → Office & floors → Source hot reload** and enable it. The choice is saved in the office’s `.droid-office/hot-reload.json`. Enabling it builds once immediately; after that, saving client source, shared code, styles, HTML, public assets or the Vite/TypeScript build configuration triggers another build. It watches the checkout the office itself runs from, not whichever project floor is open. No separate dev server is needed.
+For a local checkout started with **`bun run build && bun run start`**, open **⚙️ Settings → Office & floors → Source hot reload** and enable it. The choice is saved in the office’s `.droid-office/hot-reload.json`. Enabling it builds once immediately; after that, saving client source, shared code, styles, HTML, public assets or the Vite/TypeScript build configuration triggers another build. It watches the checkout the office itself runs from, not whichever project floor is open. No separate dev server is needed.
 
 The office checks for changes every second and waits briefly for saves to settle. It typechecks and builds the client in child processes into a private staging folder, then switches to the complete bundle and refreshes the browser. It does **not** replace individual live three.js modules: a full page refresh avoids stale scene objects, event listeners and incompatible module state after arbitrary game changes. The server, workers and PTYs keep running. Your saved browser settings, floor and position return, but open windows, unsent drafts and browser-only game state may need reopening.
 
@@ -111,11 +111,12 @@ Because the jobs share one machine, the workflow is written so they can run side
 - Gradle's build cache in `~/.gradle` carries over between runs. Its daemon doesn't: the runner kills what it spawned when a job ends.
 - The built app and APK go from the platform jobs to `publish` through `~/ci-artifacts/run-<run id>` on the machine's disk, instead of being uploaded to and downloaded from GitHub's artifact service. The last published set is kept in `~/ci-artifacts/latest-release`, so a release that rebuilt only one platform reuses the other's assets instead of downloading 400 MB. `publish` clears the run's folder in a final `always()` step, and the `changes` job sweeps folders older than two days.
 
-The machine, not the workflow, provides the toolchain. A job that needs another tool adds it here rather than to the workflow:
+The machine, not the workflow, provides the toolchain. A job that needs another tool adds it here rather than to the workflow (Bun is the one exception: `oven-sh/setup-bun` installs it per job, so the runner needs no Bun of its own):
 
 | Tool | Where |
 | --- | --- |
 | Node 22 or later | `/opt/homebrew/bin/node`, on the runner's `PATH` (26 today; a newer major passes the check, an older one fails it) |
+| Bun | installed by `oven-sh/setup-bun` in each job, at the version in `package.json`'s `packageManager` |
 | Xcode and the macOS SDK | `/Volumes/NVMe/Xcode.app`, through `DEVELOPER_DIR` in the launch agent (unused by the Node and website jobs) |
 | JDK 21 | `/opt/homebrew/opt/openjdk@21`, through `JAVA_HOME` |
 | Android SDK | `~/Library/Android/sdk`, through `ANDROID_HOME` and `ANDROID_SDK_ROOT` |

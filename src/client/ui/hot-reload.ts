@@ -4,7 +4,7 @@ import { h } from './dom';
 
 /** Polls separately from the game connection, only while Settings is open. `note` is the row's description, `element` its controls and status. */
 export function hotReloadSettings(): { note: HTMLElement; element: HTMLElement; dispose: () => void } {
-  const note = h('small', {}, 'For a local office started with npm run build && npm run start (normally :4600): source changes rebuild the client and refresh your page. Server changes still need a restart.');
+  const note = h('small', {}, 'For a local office started with bun run build && bun run start (normally :4600): source changes rebuild the client and refresh your page. Server changes still need a restart.');
   const status = h('p.note.info', { role: 'status', 'aria-live': 'polite' }, 'Checking source reload…');
   const error = h('pre.setting-error', { hidden: true });
   const toggle = h('button.btn.sm', { type: 'button', disabled: true }, 'Enable');

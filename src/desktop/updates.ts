@@ -82,7 +82,7 @@ export class Updates {
     });
   }
 
-  /** Only a packaged app updates itself; `npm run desktop` runs whatever the checkout has. */
+  /** Only a packaged app updates itself; `bun run desktop` runs whatever the checkout has. */
   get enabled(): boolean {
     return app.isPackaged;
   }

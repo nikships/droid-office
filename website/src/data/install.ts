@@ -13,8 +13,8 @@ export const requirements = [
 
 export const devCommands = `git clone https://github.com/nikships/droid-office.git
 cd droid-office
-npm ci
-npm run dev`;
+bun install
+bun run dev`;
 
 export const pocketSteps = [
   { title: 'Install the APK', body: 'Grab Droid-Office-<version>.apk from the latest release.' },

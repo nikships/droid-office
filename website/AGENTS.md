@@ -1,11 +1,11 @@
 # Website
 
 The public marketing site, separate from the 3D office client in `src/client/`.
-React, Vite and Tailwind; an npm workspace using the root `package-lock.json`.
+React, Vite and Tailwind; a Bun workspace using the root `bun.lock`.
 
-- From the repository root: `npm run dev:website`, `npm run build:website`.
-- `npm run typecheck` and `npm run lint` include the website.
-- `npm run deploy:website` uses Firebase CLI to deploy only Hosting to project `droid-office`.
+- From the repository root: `bun run dev:website`, `bun run build:website`.
+- `bun run typecheck` and `bun run lint` include the website.
+- `bun run deploy:website` uses Firebase CLI to deploy only Hosting to project `droid-office`.
   The root `firebase.json` typechecks and builds first, then publishes `website/dist`.
 - The public site is https://droid-office.web.app.
 - Preserve the supplied design and content.

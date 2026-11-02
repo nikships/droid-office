@@ -48,7 +48,7 @@ test('CI checks only the affected platforms and builds every client change into 
 });
 
 test('shared build inputs and manual runs trigger the relevant jobs', () => {
-  assert.deepEqual(checksFor(['package-lock.json']), { ...all, android: false });
+  assert.deepEqual(checksFor(['bun.lock']), { ...all, android: false });
   assert.deepEqual(checksFor(['package.json']), { ...all, android: false });
   assert.deepEqual(checksFor(['package.json'], { androidVersionChanged: true }), all);
   assert.deepEqual(checksFor(['vite.config.ts', 'tsconfig.base.json']), { ...none, node: true, mac: true });
@@ -201,7 +201,7 @@ test('release versions, packages, signing, bundle smoke checks and uploads only 
     ...jobSteps('release').filter((step) => step.includes('name: Set the release version')),
     ...jobSteps('mac').filter(
       (step) =>
-        !/actions\/checkout|actions\/setup-node|name: Install and build|name: Recover a keychain left by an interrupted run|name: Check the runner's toolchain|name: Restore the runner's keychains|name: Check the native (?:Metal presenter|Finder integration)/.test(
+        !/actions\/checkout|actions\/setup-node|oven-sh\/setup-bun|name: Install and build|name: Recover a keychain left by an interrupted run|name: Check the runner's toolchain|name: Restore the runner's keychains|name: Check the native (?:Metal presenter|Finder integration)/.test(
           step,
         ),
     ),
@@ -221,10 +221,10 @@ test('release versions, packages, signing, bundle smoke checks and uploads only 
 
 test('PRs retain builds, native compilation, coverage, Android tests and checkout smoke checks', () => {
   for (const [job, fragments] of [
-    ['release', ['name: Install and build', 'run: npm run lint', 'run: npm run typecheck', 'name: Test with coverage', 'name: Start the office from the checkout']],
+    ['release', ['name: Install and build', 'run: bun run lint', 'run: bun run typecheck', 'name: Test with coverage', 'name: Start the office from the checkout']],
     ['mac', ['name: Install and build', 'name: Check the native Metal presenter', 'name: Check the native Finder integration']],
     ['android', ['name: Unit tests and lint']],
-    ['website', ['run: npm run build:website']],
+    ['website', ['run: bun run build:website']],
   ] as const) {
     for (const fragment of fragments) {
       const step = jobSteps(job).find((candidate) => candidate.includes(fragment));
@@ -238,7 +238,7 @@ test('PRs retain builds, native compilation, coverage, Android tests and checkou
 test('only change detection fetches history, and website checks are not repeated by two jobs', () => {
   assert.equal(workflow.match(/fetch-depth: 0/g)?.length, 1);
   assert.match(jobSteps('changes')[0], /fetch-depth: 0/);
-  for (const fragment of ['npm rebuild bun', 'npx oxlint', 'npx biome check', 'npm run typecheck --workspace website']) {
+  for (const fragment of ['bunx oxlint', 'bunx biome check', 'bun run --cwd website typecheck']) {
     const step = jobSteps('website').find((candidate) => candidate.includes(fragment));
     assert.ok(step);
     assert.equal(stepRuns(step, 'pull_request', 'refs/pull/1/merge', 'true'), false);
@@ -246,16 +246,20 @@ test('only change detection fetches history, and website checks are not repeated
   }
 });
 
-test('website-only checks initialize npm-locked Bun after the scripts-disabled install', () => {
-  const steps = jobSteps('website');
-  const install = steps.findIndex((step) => step.includes('npm ci --ignore-scripts'));
-  const rebuild = steps.findIndex((step) => step.includes('npm rebuild bun'));
-  const typecheck = steps.findIndex((step) => step.includes('npm run typecheck --workspace website'));
-  assert.ok(install >= 0 && rebuild > install && typecheck > rebuild);
-  assert.doesNotMatch(workflow, /oven-sh\/setup-bun/);
-  for (const event of ['pull_request', 'push', 'workflow_dispatch']) {
-    assert.equal(stepRuns(steps[rebuild], event, 'refs/heads/main', 'false'), true, event);
+test('every job that installs dependencies sets up the Bun pinned in package.json first', () => {
+  const pkg = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'));
+  assert.match(pkg.packageManager, /^bun@\d+\.\d+\.\d+$/);
+  assert.doesNotMatch(workflow, /\bnpm (?:ci|install|rebuild)\b|\bnpx\b|cache: npm/);
+  for (const job of ['release', 'website', 'mac']) {
+    const steps = jobSteps(job);
+    const setup = steps.findIndex((step) => step.includes('uses: oven-sh/setup-bun@v2'));
+    const install = steps.findIndex((step) => step.includes('bun install --frozen-lockfile'));
+    assert.ok(setup >= 0 && install > setup, job);
+    assert.match(steps[setup], /bun-version-file: package\.json/, job);
+    for (const event of ['pull_request', 'push', 'workflow_dispatch']) assert.equal(stepRuns(steps[setup], event, 'refs/heads/main', 'false'), true, `${job}: ${event}`);
   }
+  // No office build, Chromium or native dependencies are needed to check the website.
+  assert.ok(jobSteps('website').some((step) => step.includes('bun install --frozen-lockfile --ignore-scripts')));
 });
 
 test('lint retains the recommended policy and formatting in CI and pre-commit', () => {
@@ -267,7 +271,7 @@ test('lint retains the recommended policy and formatting in CI and pre-commit', 
   const biome = readFileSync(new URL('../biome.jsonc', import.meta.url), 'utf8');
   assert.match(biome, /"linter":\s*\{[\s\S]*?"enabled": true/);
   assert.match(biome, /"preset": "recommended"/);
-  assert.match(jobSteps('website').join('\n'), /npx biome check --error-on-warnings website/);
+  assert.match(jobSteps('website').join('\n'), /bunx biome check --error-on-warnings website/);
 });
 
 test('PR checks run on GitHub runners while main builds and releases on the Mac Mini runner', () => {

@@ -211,13 +211,13 @@ Install `Droid-Office-<version>.apk`, then scan the QR code in **Settings → Ph
 
 ## For developers
 
-Run the source to modify or contribute. You need **Node.js 20+**, npm and the tools above; macOS builds also need Xcode Command Line Tools.
+Run the source to modify or contribute. You need **[Bun](https://bun.com) 1.4.4+** (the package manager and script runner), **Node.js 20+** (the office server and its tests run on Node) and the tools above; macOS builds also need Xcode Command Line Tools.
 
 ```bash
 git clone https://github.com/nikships/droid-office.git
 cd droid-office
-npm ci
-npm run dev
+bun install
+bun run dev
 ```
 
 Open `http://localhost:5173`. A developer checkout is not a supported production installation.

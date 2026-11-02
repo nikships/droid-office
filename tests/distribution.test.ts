@@ -27,7 +27,7 @@ test('installation guidance points to the Mac release and keeps source developme
     assert.match(text, /only supported production install/);
     assert.match(text, /Droid-Office-<version>-arm64\.dmg/);
     assert.match(text, /git clone https:\/\/github\.com\/nikships\/droid-office\.git/);
-    assert.match(text, /npm ci/);
+    assert.match(text, /bun install/);
     assert.doesNotMatch(text, /install\.sh|install\.ps1|npm install -g/);
   }
   assert.doesNotMatch(read('.agents/skills/office-video-capture/references/example-launch/example-composition.html'), /install\.sh|install\.ps1/);

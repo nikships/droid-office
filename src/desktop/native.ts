@@ -1,7 +1,7 @@
 import { createRequire } from 'node:module';
 import path from 'node:path';
 
-/** Where `npm run build:native` writes the presenter, and where electron-builder ships it (`files` in electron-builder.yml), relative to the app's root. */
+/** Where `bun run build:native` writes the presenter, and where electron-builder ships it (`files` in electron-builder.yml), relative to the app's root. */
 export const PRESENTER_MODULE = path.join('native', 'presenter', 'build', 'Release', 'presenter.node');
 
 /** The presenter's file for an app rooted at `appPath` (`app.getAppPath()`: the bundle's Resources/app, or the checkout). */

@@ -104,7 +104,7 @@ try {
   const r = await fetch(url);
   if (!r.ok) throw new Error(`HTTP ${r.status}`);
 } catch (err) {
-  console.error(`office-run: nothing answers on ${url} (${err.message}): start the clone with ${start} (fireAndForget) after npm run build`);
+  console.error(`office-run: nothing answers on ${url} (${err.message}): start the clone with ${start} (fireAndForget) after bun run build`);
   process.exit(1);
 }
 

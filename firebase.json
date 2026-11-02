@@ -4,8 +4,8 @@
     "public": "website/dist",
     "ignore": ["firebase.json", "**/.*", "**/node_modules/**"],
     "predeploy": [
-      "npm run typecheck --workspace website",
-      "npm run build:website"
+      "bun run --cwd website typecheck",
+      "bun run build:website"
     ],
     "headers": [
       {

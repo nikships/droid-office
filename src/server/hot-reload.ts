@@ -39,7 +39,7 @@ interface SourceStamp {
   server: string;
 }
 
-const BUILD_INPUTS = ['vite.config.ts', 'package.json', 'package-lock.json', 'tsconfig.base.json', 'tsconfig.client.json'];
+const BUILD_INPUTS = ['vite.config.ts', 'package.json', 'bun.lock', 'tsconfig.base.json', 'tsconfig.client.json'];
 
 async function sourceStamp(appDir: string): Promise<SourceStamp> {
   const tree = async (relative: string): Promise<string[]> => {
@@ -124,7 +124,7 @@ export class HotReload {
       reason: available
         ? undefined
         : source
-          ? 'Source hot reload needs the office’s development dependencies (npm ci in its checkout).'
+          ? 'Source hot reload needs the office’s development dependencies (bun install in its checkout).'
           : 'Source hot reload needs a source checkout of the running office; packaged releases do not contain source.',
       enabled: available && enabled,
       phase: 'idle',

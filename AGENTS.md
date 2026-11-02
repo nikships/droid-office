@@ -22,7 +22,7 @@ Planned work has written plans; follow them and keep them current when doing tha
 | `src/shared/` | Types and pure logic compiled into both server and client, including the WebSocket protocol (`protocol.ts`) |
 | `src/client/` | Vite root: HTML entry pages, `main.ts`, `ui/` (DOM windows and panels), `world/` (three.js scene) |
 | `src/desktop/` | The Mac app's Electron main process: starts the office on Electron's Node, full-screen window, electron-updater (`tsconfig.desktop.json`, built to `dist/desktop`) |
-| `native/` | The Mac app's native Metal presenter (`native/presenter`, Objective-C++ Node-API addon built by `npm run build:native`) and its build script |
+| `native/` | The Mac app's native Metal presenter (`native/presenter`, Objective-C++ Node-API addon built by `bun run build:native`) and its build script |
 | `electron-builder.yml`, `build/` | How the Mac app is packaged, signed and notarized; its icon and entitlements |
 | `android/` | Droid Office for Android, the phone companion app (Kotlin, Compose; its own Gradle build) |
 | `bin/droid-office.js` | Source checkout and Mac app CLI entry; loads the built `dist/server/server/cli.js` |
@@ -33,29 +33,29 @@ Planned work has written plans; follow them and keep them current when doing tha
 
 ## Commands
 
-Run from the repository root. npm with `package-lock.json` is the only package manager; do not add another lockfile.
+Run from the repository root. Bun with `bun.lock` is the only package manager; do not add another lockfile. Bun installs and runs the scripts; the office itself (`bin/droid-office.js`, the dev server, the tests) runs on Node, because node-pty's PTYs don't work under Bun.
 
 | Task | Command |
 | --- | --- |
-| Clean install (`prepare` also installs the pre-commit hook and builds client and server) | `npm ci` |
+| Clean install (`prepare` also installs the pre-commit hook and builds client and server) | `bun install` |
 | One test file | `node --import tsx --test tests/<name>.test.ts` |
 | Run the built office against a project | `node bin/droid-office.js <project>` |
 | Android app tests, lint and release APK (JDK 17+, Android SDK) | `cd android && ./gradlew testDebugUnitTest lintDebug assembleRelease` |
 
-`npm run dev` serves Vite on :5173 and the server on :4600. `node bin/droid-office.js` runs `dist/`, so run `npm run build` after changing source.
+`bun run dev` serves Vite on :5173 and the server on :4600. `node bin/droid-office.js` runs `dist/`, so run `bun run build` after changing source.
 
-`.droid-office.json` at the root is what Droid Office runs in a fresh worktree of this repository: `npm ci`, after copying an untracked `android/local.properties` from the main checkout. Update it when a fresh clone needs another step or local file.
+`.droid-office.json` at the root is what Droid Office runs in a fresh worktree of this repository: `bun install --frozen-lockfile`, after copying an untracked `android/local.properties` from the main checkout. Update it when a fresh clone needs another step or local file.
 
 ## Conventions
 
 - `.droid-office/` is runtime state (config, workers, scrollback, worktrees). Never commit it.
-- The Mac app release is the only supported production install. Developers can clone and run the source; do not add standalone installers, release tarballs or curl/PowerShell install commands. The npm package is private.
+- The Mac app release is the only supported production install. Developers can clone and run the source; do not add standalone installers, release tarballs or curl/PowerShell install commands. The package is private.
 - The Mac app runs the office, its PTY host and the commands written for workers on the Electron binary (`process.execPath`) with `ELECTRON_RUN_AS_NODE=1`. A new script the office runs with `process.execPath` goes through `runAsNode` in `src/server/workers.ts`, and must stay a file on disk (the app has no asar archive).
 - `.env.example` lists every environment variable the office reads. Adding, renaming or removing one updates `.env.example` in the same change; `tests/env-example.test.ts` fails otherwise. Never commit a `.env` file.
 - Do not change the `version` in `package.json` except to start a new minor. `.github/workflows/release.yml` publishes every change on `main` as `v<major>.<minor>.<commit count on main>`.
 - Commit subjects use a conventional prefix: `feat:`, `fix:`, `docs:` or `chore:`.
-- `npm run lint` runs Oxlint (`.oxlintrc.json`) and Biome (`biome.jsonc`). Biome retains the existing recommended rules and formatting policy until Oxlint rule parity is established. Fix findings in code; never add suppression comments or turn off rules in either config to pass a check.
-- `npm run typecheck` uses the npm-locked Bun binary, not a global installation. After `npm ci --ignore-scripts`, run `npm rebuild bun` before typechecking. `tests/typecheck-parity.test.ts` compares Bun with TypeScript on all five projects and injected type errors.
+- `bun run lint` runs Oxlint (`.oxlintrc.json`) and Biome (`biome.jsonc`). Biome retains the existing recommended rules and formatting policy until Oxlint rule parity is established. Fix findings in code; never add suppression comments or turn off rules in either config to pass a check.
+- `bun run typecheck` uses `bun check`, so it needs Bun 1.4.4 or later (`packageManager` in `package.json` pins the version CI uses). `tests/typecheck-parity.test.ts` compares Bun with TypeScript on all five projects and injected type errors.
 - Do not bypass the pre-commit hook (`.husky/pre-commit`) with `--no-verify`; fix what it reports.
 
 ## Companion parity
@@ -82,10 +82,10 @@ When a running-office check is worthwhile, use a clone of the owner's real insta
 Run the checks CI runs (`.github/workflows/release.yml`, Node 26), in order, and fix any failure:
 
 ```bash
-npm ci
-npm run lint
-npm run typecheck
-npm run test:coverage
+bun install
+bun run lint
+bun run typecheck
+bun run test:coverage
 ```
 
 CI starts the built office from the checkout (step "Start the office from the checkout"). When changing server startup, also run that smoke test locally as the workflow writes it. PR checks run on GitHub-hosted runners (`ubuntu-latest` for Node, website and Android; `macos-26` for the native Mac presenter and Finder checks). Actual merges to `main`, building the Mac and Android release apps, signing, notarizing and publishing run on the owner's Mac Mini self-hosted runner (`docs/guide/development.md`, "CI on the Mac Mini"): the toolchain for release builds is installed on that machine and checked with `.github/scripts/runner-toolchain.sh`. PRs compile the Mac native presenter and run Android tests/lint, but never set release versions, package apps or upload artifacts. On main, the Mac job also packages the app and starts the office on the app's own Electron; when changing app packaging or startup, run that smoke test locally before merging.

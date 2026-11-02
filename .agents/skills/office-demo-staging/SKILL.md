@@ -34,7 +34,7 @@ $D/hire.sh desk-1 "Opus 5.5"   "Work on GitHub issue #157 …"
 
 - `hire.sh` refuses to hire when the dialog offers no worktree, which happens on a floor whose checkout isn't on a git branch. Set `ALLOW_NO_WORKTREE=1` only when it's fine for the worker to work in that folder itself.
 - Pick free desks next to each other (`office.list()`, `office.state().workers`) so one side view shows several workers. Give each worker a different model; the desk labels show the model.
-- Space hires about 20 s apart, because each new worktree runs the floor's setup (`npm ci` here).
+- Space hires about 20 s apart, because each new worktree runs the floor's setup (`bun install --frozen-lockfile` here).
 - If a hire fails or the model list differs, read the dialog with `agent-browser snapshot -i`.
 
 ## 3. Cue a state for the camera

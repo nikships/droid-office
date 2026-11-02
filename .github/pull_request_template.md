@@ -16,10 +16,10 @@
 
 These are the checks `.github/workflows/release.yml` runs on this PR, in order. Run the first four locally before you push.
 
-- [ ] `npm ci` (its `prepare` script runs `npm run build`, building the client and the server)
-- [ ] `npm run lint`
-- [ ] `npm run typecheck`
-- [ ] `npm run test:coverage` (the tests, failing below the coverage thresholds in `package.json`)
+- [ ] `bun install` (its `prepare` script runs `bun run build`, building the client and the server)
+- [ ] `bun run lint`
+- [ ] `bun run typecheck`
+- [ ] `bun run test:coverage` (the tests, failing below the coverage thresholds in `package.json`)
 - [ ] Start the built office from the checkout (smoke test: `/` answers 200)
 - [ ] When the Mac job runs, package the app and start the office on its own Electron (smoke test: `/` answers 200)
 
