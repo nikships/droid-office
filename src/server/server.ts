@@ -59,7 +59,6 @@ import { MAX_ASSET_BYTES, OWNER_AUTHOR, parseEnvelope } from '../shared/whiteboa
 import { pingEligibility } from '../shared/whiteboard-ping.js';
 import { CARD_ROUTE, cardResponse, renderInfo, renderStatus, type CardResponse } from './whiteboard.js';
 import { RenderEngine } from './whiteboard-render.js';
-import { handleAgent } from './whiteboard-agent.js';
 import { WhiteboardSkill } from './whiteboard-skill.js';
 import { officePrompt } from './prompts.js';
 import { Answers } from './answers.js';
@@ -324,7 +323,6 @@ export async function startServer(cfg: Config) {
       return officeMcp.handle(req, res);
     }
     if (url.pathname === '/office/workers') return officeWorkers(req, res, url);
-    if (url.pathname === '/office/whiteboard') return officeWhiteboard(req, res, url);
     if (url.pathname === '/office/visits') return officeVisits(req, res, url);
     if (req.method !== 'POST' || url.pathname !== '/hooks/droid') return send(res, 404, { ok: false });
     let payload: unknown = {};
@@ -388,30 +386,6 @@ export async function startServer(cfg: Config) {
       send(res, r.status, r.body);
     } catch (err) {
       send(res, 500, { error: (err as Error).message });
-    }
-  };
-  /** The floor's Whiteboard, for the office-whiteboard command (see whiteboard-agent.ts). */
-  const officeWhiteboard = async (req: http.IncomingMessage, res: http.ServerResponse, url: URL) => {
-    const workerId = url.searchParams.get('worker') ?? '';
-    const token = (req.headers.authorization ?? '').replace(/^Bearer\s+/i, '');
-    const floor = workerFloor(workerId);
-    const agent = floor?.workers.authenticate(workerId, token);
-    if (!floor || !agent) return send(res, 401, { error: 'Send your own DROID_OFFICE_WORKER_ID as ?worker= and DROID_OFFICE_HOOK_TOKEN as the bearer token' });
-    if (agent.kind === 'shell') return send(res, 403, { error: 'A plain shell has no place on the Whiteboard: only agents do' });
-    if (req.method !== 'POST') return send(res, 405, { error: 'POST, with the action in a JSON body' });
-    let body: unknown;
-    try {
-      body = JSON.parse(await readBody(req, 4 * 1024 * 1024));
-    } catch {
-      return send(res, 400, { error: 'Send JSON: {"action": "read"}' });
-    }
-    try {
-      const r = await handleAgent(floor.whiteboard, agent, { id: floor.id, name: floor.def.name }, body);
-      send(res, r.status, r.body);
-    } catch (err) {
-      // The batch may have been committed before what failed, so don't promise it wasn't: a retry in
-      // the same epoch is applied once either way.
-      send(res, 500, { error: `The office failed while handling this: ${(err as Error).message}. Run office-whiteboard read to see whether the change is on the board before you try again.` });
     }
   };
   // Workers' terminals outlive a restart of the office (see ptys.ts) with this address in their

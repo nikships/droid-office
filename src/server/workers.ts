@@ -322,7 +322,6 @@ export class WorkerManager {
     rmSync(path.join(dataDir, 'bin', 'office-queue.cmd'), { force: true });
     this.teamBin = this.writeOfficeCommand(path.join('bin', 'team'), 'office-workers', "Droid Office's subagents, for every agent");
     // In the same folder, so it's on every agent's PATH with office-workers.
-    this.writeOfficeCommand(path.join('bin', 'team'), 'office-whiteboard', "The floor's Whiteboard, for every agent");
     this.writeOfficeCommand(path.join('bin', 'team'), 'office-visit', 'Visits between independent workers on a floor');
     try {
       this.setupScript = writeSetupScript(dataDir);
