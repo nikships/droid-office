@@ -21,6 +21,16 @@ export const whyPoints: WhyPoint[] = [
     title: 'Built like a Factory',
     body: 'A dark, industrial look in Factory orange. The Mac app opens your office full screen and keeps itself up to date.',
   },
+  {
+    id: 'companion',
+    title: 'One window, two modes',
+    body: 'Switch the Mac app between the 3D office and the companion: up to eight workers side by side, each as its Thread or its live terminal. A browser on your Wi-Fi or tailnet can pair with it too.',
+  },
+  {
+    id: 'plans',
+    title: 'Runs on the plan you have',
+    body: 'The welcome installs Droid and signs it in to Factory. It can also connect the Claude or ChatGPT plan you already pay for, through DroidProxy.',
+  },
 ];
 
 export const guests = ['droid', 'claude', 'codex', 'opencode', 'grok', 'muse'];

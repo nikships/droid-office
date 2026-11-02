@@ -8,6 +8,7 @@ import { SiteFooter } from '../components/site/SiteFooter';
 import { SiteNav } from '../components/site/SiteNav';
 import { TourSection } from '../components/site/TourSection';
 import { WhySection } from '../components/site/WhySection';
+import { WorkersSection } from '../components/site/WorkersSection';
 
 export function Landing() {
   return (
@@ -19,6 +20,7 @@ export function Landing() {
         <PlaySection />
         <TourSection />
         <AgentsSection />
+        <WorkersSection />
         <WhySection />
         <PocketSection />
         <InstallSection />

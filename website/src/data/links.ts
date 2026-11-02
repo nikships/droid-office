@@ -11,13 +11,15 @@ export const images = {
   hero: `${RAW}/docs/hero.jpg`,
   desk: `${RAW}/docs/desk.jpg`,
   phoneHome: `${RAW}/android/docs/home.jpg`,
-  phoneWorker: `${RAW}/android/docs/worker.jpg`,
+  phoneThread: `${RAW}/android/docs/thread.jpg`,
+  phoneHire: `${RAW}/android/docs/hire.jpg`,
   phoneNotification: `${RAW}/android/docs/notification.jpg`,
 };
 
 export const navLinks: NavLink[] = [
   { href: '#tour', label: 'Tour' },
   { href: '#agents', label: 'Agents' },
+  { href: '#workers', label: 'Workers' },
   { href: '#why', label: 'Why' },
   { href: '#pocket', label: 'Android' },
   { href: '#install', label: 'Install' },

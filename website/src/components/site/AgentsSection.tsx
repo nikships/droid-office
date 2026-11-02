@@ -69,7 +69,9 @@ export function AgentsSection() {
           <Reveal delay={0.08} className="order-1 lg:order-2">
             <Eyebrow index="03.2">Team lead</Eyebrow>
             <h3 className="mt-4 font-body text-[28px] font-medium leading-[1.15] tracking-[-0.02em] text-text md:text-[34px]">One job in. Real workers out.</h3>
-            <p className="mt-4 text-[16px] leading-[1.6] text-text-dim">Hire a lead at the Team kiosk. It splits the job, hires up to eight subagents to real desks, and reviews their reports before calling it done.</p>
+            <p className="mt-4 text-[16px] leading-[1.6] text-text-dim">
+              Hire a lead at the Team kiosk. It splits the job, hires up to eight subagents to real desks through the Office MCP, and reviews their reports before calling it done.
+            </p>
             <dl className="mt-8 grid grid-cols-2 gap-px overflow-hidden rounded-[6px] border border-line bg-line">
               <div className="bg-bg-panel p-4">
                 <dt className="font-heading text-[10px] uppercase tracking-[0.1em] text-text-dim">Default</dt>

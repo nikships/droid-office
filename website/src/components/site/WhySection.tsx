@@ -1,4 +1,4 @@
-import { Factory, GitMerge, KanbanSquare, Sparkles, type LucideIcon } from 'lucide-react';
+import { Columns3, Factory, GitMerge, KanbanSquare, KeyRound, Sparkles, type LucideIcon } from 'lucide-react';
 import { Reveal } from './Reveal';
 import { SectionHeader } from './SectionHeader';
 import { guests, stats, whyPoints } from '../../data/why';
@@ -7,13 +7,15 @@ const icons: Record<string, LucideIcon> = {
   gitlab: GitMerge,
   jira: KanbanSquare,
   factory: Factory,
+  companion: Columns3,
+  plans: KeyRound,
 };
 export function WhySection() {
   return (
     <section id="why" className="scroll-mt-14 border-b border-line" aria-labelledby="why-title">
       <div className="mx-auto max-w-[1240px] px-6 py-24">
         <Reveal>
-          <SectionHeader id="why-title" index="04" label="Why Droid Office" title="Built for teams that live in Factory." lede="It started as a fork of agent-office and went its own way: Droid first, GitLab and Jira on the wall." />
+          <SectionHeader id="why-title" index="05" label="Why Droid Office" title="Built for teams that live in Factory." lede="It started as a fork of agent-office and went its own way: Droid first, GitLab and Jira on the wall." />
         </Reveal>
 
         <div className="mt-14 grid gap-px overflow-hidden rounded-[6px] border border-line bg-line md:grid-cols-2">

@@ -15,7 +15,7 @@ export function Hero() {
               <BadgeDot spinning />
               Built for Factory Droid
             </Badge>
-            <span className="font-heading text-[11px] uppercase tracking-[0.08em] text-text-dim">Mac app · Android companion · MIT</span>
+            <span className="font-heading text-[11px] uppercase tracking-[0.08em] text-text-dim">Mac app · web and Android companions · MIT</span>
           </div>
 
           <div className="grid items-end gap-10 lg:grid-cols-[1.4fr_1fr]">
@@ -38,7 +38,7 @@ export function Hero() {
                   <ArrowRight size={14} aria-hidden />
                 </Button>
               </div>
-              <p className="mt-4 font-heading text-[10px] uppercase tracking-[0.1em] text-text-dim">Apple Silicon · self-updating · no Node required</p>
+              <p className="mt-4 font-heading text-[10px] uppercase tracking-[0.1em] text-text-dim">Apple M-series Pro, Max or Ultra · self-updating · no Node required</p>
             </div>
           </div>
         </motion.div>

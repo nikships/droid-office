@@ -27,7 +27,7 @@ export function InstallSection() {
     <section id="install" className="scroll-mt-14 border-b border-line" aria-labelledby="install-title">
       <div className="mx-auto max-w-[1240px] px-6 py-24">
         <Reveal>
-          <SectionHeader id="install-title" index="06" label="Install" title="Get started in a minute." />
+          <SectionHeader id="install-title" index="07" label="Install" title="Get started in a minute." />
         </Reveal>
 
         <div className="mt-14 grid gap-4 lg:grid-cols-2">
@@ -67,7 +67,7 @@ export function InstallSection() {
                   Get the Droid CLI
                 </Button>
               </div>
-              <p className="mt-3 font-heading text-[10px] uppercase tracking-[0.1em] text-text-dim">Apple Silicon · the only supported production install</p>
+              <p className="mt-3 font-heading text-[10px] uppercase tracking-[0.1em] text-text-dim">M-series Pro, Max or Ultra · the only supported production install</p>
             </div>
           </Reveal>
 

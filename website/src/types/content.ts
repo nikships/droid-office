@@ -52,6 +52,25 @@ export type Stat = {
   label: string;
 };
 
+export type RunsOn = {
+  id: string;
+  name: string;
+  where: string;
+  tool: string;
+  body: string;
+  does: string[];
+};
+
+export type HookSignal = {
+  name: string;
+  note: string;
+};
+
+export type OfficeTool = {
+  name: string;
+  note: string;
+};
+
 export type NavLink = {
   href: string;
   label: string;
