@@ -75,8 +75,8 @@ export function register(server: OfficeMcpServer, _deps: OfficeMcpDeps): void {
       annotations: { destructiveHint: false, openWorldHint: false },
     },
     officeAccess.worker,
-    async (args, caller) => {
-      const out = await readBoard(caller.floor.whiteboard, readerOf(workerAuthor(caller.worker)), { id: caller.floor.id, name: caller.floor.name }, args);
+    async (args, caller, signal) => {
+      const out = await readBoard(caller.floor.whiteboard, readerOf(workerAuthor(caller.worker)), { id: caller.floor.id, name: caller.floor.name }, { ...args, signal });
       const result = officeResult('');
       result.content = [];
       const pngs = new Map<string, string>();
@@ -98,6 +98,7 @@ export function register(server: OfficeMcpServer, _deps: OfficeMcpDeps): void {
       result.content.unshift({ type: 'text', text });
       result.structuredContent = structured;
       // Build the complete response before recording a read. Rendering failures stay unread.
+      if (signal.aborted) return officeError('The read was cancelled before its result reached you, so nothing was marked read.');
       const returned = out.returned.filter((id) => !args.png || !out.cards.some((card) => card.id === id && !card.png?.ok));
       if (returned.length) {
         const moved = apply(caller, [{ op: 'read', cards: returned, rev: out.rev }]);

@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { once } from 'node:events';
-import { createServer } from 'node:http';
+import { createServer, request } from 'node:http';
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import type { AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
@@ -24,15 +24,19 @@ class Renderer implements WhiteboardRenderer {
   throwing = false;
   images = new Map<string, RenderImage>();
   during?: () => void;
+  gate?: Promise<void>;
+  after?: () => void;
   status() {
     return this.available ? { available: true } : { available: false, reason: 'no browser' };
   }
   async render(pin: PinnedCard): Promise<RenderOutcome> {
     if (this.throwing) throw new Error('private renderer failure');
     this.during?.();
+    await this.gate;
     if (this.failed.has(pin.card.id)) return { ok: false, error: 'the page crashed' };
     const image: RenderImage = { key: pin.key, rev: pin.rev, at: Date.now() - 5, width: 1280, height: 40, tileHeight: 20, tiles: [PNG, PNG], capped: { capPx: 40 } };
     this.images.set(pin.card.id, image);
+    queueMicrotask(() => this.after?.());
     return { ok: true, image };
   }
   changed() {}
@@ -85,9 +89,17 @@ async function rig(t: { after(fn: () => void | Promise<void>): void }) {
   const store = new WhiteboardStore(dir, { renderer, readers: () => [OWNER, ...people.map((person) => person.id)] });
   const floor: OfficeMcpFloor = { id: 'floor', name: 'Main', dir, workers, team, visits, whiteboard: store };
   const mcp = createOfficeMcp({ settings: () => settings, floor: (id) => (workers.get(id) ? floor : undefined) });
+  let disconnected: (() => void) | undefined;
   const http = createServer((req, res) => {
     void mcp.handle(req, res);
+    res.once('close', () => {
+      if (!res.writableFinished) disconnected?.();
+    });
   });
+  const disconnect = () =>
+    new Promise<void>((resolve) => {
+      disconnected = resolve;
+    });
   http.listen(0, '127.0.0.1');
   await once(http, 'listening');
   const clients: Client[] = [];
@@ -120,7 +132,8 @@ async function rig(t: { after(fn: () => void | Promise<void>): void }) {
     const result = store.apply({ epoch: store.issueEpoch(), seq: 1, ops }, OWNER_AUTHOR, 'window');
     assert.equal(result.kind, 'ack', JSON.stringify(result));
   };
-  return { dir, cwd, client, connect, call, ok, card, owner, store, renderer };
+  const url = new URL(`http://127.0.0.1:${(http.address() as AddressInfo).port}${OFFICE_MCP_PATH}`);
+  return { dir, cwd, url, disconnect, client, connect, call, ok, card, owner, store, renderer };
 }
 
 const textOf = (result: { content: unknown }) =>
@@ -243,6 +256,39 @@ test('PNG failures keep those cards unread, unavailable renders never return sta
   assert.deepEqual(r.store.board.reads, before);
 });
 
+test('a PNG read the worker disconnects from moves no read points', async (t) => {
+  const r = await rig(t);
+  const card = (await r.card()).card as string;
+  r.owner({ op: 'state.set', card, path: ['x'], value: 1 });
+  const before = structuredClone(r.store.board.reads);
+  let started!: () => void;
+  const rendering = new Promise<void>((resolve) => {
+    started = resolve;
+  });
+  let release!: () => void;
+  r.renderer.gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  r.renderer.during = started;
+  let finished!: () => void;
+  const done = new Promise<void>((resolve) => {
+    finished = resolve;
+  });
+  r.renderer.after = finished;
+  const body = JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'whiteboard_read', arguments: { cards: [card], png: true } } });
+  const req = request(r.url, { method: 'POST', headers: { 'content-type': 'application/json', accept: 'application/json, text/event-stream', [OFFICE_MCP_WORKER_HEADER]: 'sub', Authorization: 'Bearer token-sub' } });
+  req.on('error', () => undefined);
+  req.end(body);
+  await rendering;
+  const gone = r.disconnect();
+  req.destroy();
+  await gone;
+  release();
+  await done;
+  for (let i = 0; i < 5; i++) await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(r.store.board.reads, before, 'the read never reached the worker, so its feedback stays CHANGED');
+  assert.equal(readOf(await r.ok('whiteboard_read', { cards: [card] })).cards[0].changed, true);
+});
 test('card sources load from the calling worktree, preserve assets and marks, and support canvas/image/link/show', async (t) => {
   const r = await rig(t);
   writeFileSync(path.join(r.cwd, 'plan.html'), '<link rel="stylesheet" href="style.css"><h1>Worktree</h1><img src="../outside.png">');

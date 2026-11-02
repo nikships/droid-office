@@ -67,7 +67,7 @@ export interface ReadOut {
  * The board as one reader sees it at one snapshot revision. With `png`, every card returned is
  * rendered from that same snapshot (pinned, so later changes can't reach it), or the read says why not.
  */
-export async function readBoard(store: WhiteboardStore, reader: string, floor: { id: string; name: string }, opts: { cards?: string[]; png?: boolean; timeoutMs?: number } = {}): Promise<ReadOut> {
+export async function readBoard(store: WhiteboardStore, reader: string, floor: { id: string; name: string }, opts: { cards?: string[]; png?: boolean; timeoutMs?: number; signal?: AbortSignal } = {}): Promise<ReadOut> {
   const board = store.board;
   const wanted = opts.cards ? [...new Set(opts.cards)] : undefined;
   const onBoard = wanted ? wanted.flatMap((id) => findCard(board, id) ?? []) : board.cards;
@@ -81,7 +81,7 @@ export async function readBoard(store: WhiteboardStore, reader: string, floor: {
     const cards: CardOut[] = onBoard.map((card) => cardOut(store, board, reader, card));
     let next = 0;
     const renderNext = async () => {
-      for (let i = next++; i < onBoard.length; i = next++) {
+      for (let i = next++; i < onBoard.length && !opts.signal?.aborted; i = next++) {
         const pin = pins?.get(onBoard[i].id);
         if (pin) cards[i].png = await png(store, pin, opts.timeoutMs ?? READ_RENDER_TIMEOUT_MS);
       }

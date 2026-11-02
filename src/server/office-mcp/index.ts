@@ -89,7 +89,7 @@ interface RegisteredTool {
   listed: Tool;
   schema: z.ZodObject;
   access: OfficeMcpAccess;
-  run(args: unknown, caller: OfficeMcpCaller): CallToolResult | Promise<CallToolResult>;
+  run(args: unknown, caller: OfficeMcpCaller, signal: AbortSignal): CallToolResult | Promise<CallToolResult>;
 }
 
 const INSTRUCTIONS = [GENERAL_INSTRUCTIONS, teamInstructions, whiteboardInstructions, visitInstructions].filter(Boolean).join('\n\n');
@@ -105,7 +105,7 @@ export class OfficeMcpServer {
   private readonly mcp: McpHttpHandler;
 
   constructor(private readonly deps: OfficeMcpDeps) {
-    this.mcp = createMcpHandler(({ requestInfo }) => this.serverFor(requestInfo ? this.caller(requestInfo) : undefined), {
+    this.mcp = createMcpHandler(({ requestInfo }) => this.serverFor(requestInfo ? this.caller(requestInfo) : undefined, requestInfo?.signal), {
       legacy: 'stateless',
       onerror: (err) => console.error('Office MCP:', err.message),
     });
@@ -128,21 +128,22 @@ export class OfficeMcpServer {
     return this.mcp.fetch(request);
   }
 
-  tool<S extends z.ZodRawShape>(definition: OfficeTool<S>, access: OfficeMcpAccess, handler: (args: z.infer<z.ZodObject<S>>, caller: OfficeMcpCaller) => CallToolResult | Promise<CallToolResult>): void {
+  /** `signal` aborts when the caller cancels or disconnects; a tool must not record that its result was seen after that. */
+  tool<S extends z.ZodRawShape>(definition: OfficeTool<S>, access: OfficeMcpAccess, handler: (args: z.infer<z.ZodObject<S>>, caller: OfficeMcpCaller, signal: AbortSignal) => CallToolResult | Promise<CallToolResult>): void {
     if (this.tools.has(definition.name)) throw new Error(`Duplicate office tool: ${definition.name}`);
     const { name, description, inputSchema, annotations } = definition;
     this.tools.set(name, {
       listed: { name, description, inputSchema: z.toJSONSchema(inputSchema, { io: 'input' }) as Tool['inputSchema'], ...(annotations ? { annotations } : {}) },
       schema: inputSchema,
       access,
-      run: (args, caller) => handler(args as z.infer<z.ZodObject<S>>, caller),
+      run: (args, caller, signal) => handler(args as z.infer<z.ZodObject<S>>, caller, signal),
     });
   }
 
-  private serverFor(caller: OfficeMcpCaller | undefined): Server {
+  private serverFor(caller: OfficeMcpCaller | undefined, disconnected: AbortSignal | undefined): Server {
     const server = new Server({ name: 'droid-office', version: '1.0.0' }, { capabilities: { tools: {} }, instructions: INSTRUCTIONS });
     server.setRequestHandler('tools/list', () => ({ tools: caller ? [...this.tools.values()].filter((t) => t.access(caller) === undefined).map((t) => t.listed) : [] }));
-    server.setRequestHandler('tools/call', async ({ params }) => {
+    server.setRequestHandler('tools/call', async ({ params }, ctx) => {
       const tool = this.tools.get(params.name);
       if (!tool) throw new ProtocolError(ProtocolErrorCode.InvalidParams, `No office tool called ${params.name}`);
       if (!caller) return officeError('Your office identity is no longer active or Office MCP is off. Ask the owner to check Settings.');
@@ -151,7 +152,7 @@ export class OfficeMcpServer {
       const args = tool.schema.safeParse(params.arguments ?? {});
       if (!args.success) return officeError(`Invalid arguments for ${params.name}:\n${z.prettifyError(args.error)}`);
       try {
-        return await tool.run(args.data, caller);
+        return await tool.run(args.data, caller, disconnected ? AbortSignal.any([ctx.mcpReq.signal, disconnected]) : ctx.mcpReq.signal);
       } catch (err) {
         console.error(`Office MCP tool ${params.name} failed for ${caller.worker.name}:`, err);
         return officeError('The office could not finish this tool call. Read the current state before retrying a change.');
