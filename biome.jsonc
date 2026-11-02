@@ -26,6 +26,7 @@
     }
   },
   "linter": {
+    // Retain the existing recommended policy alongside Oxlint until rule parity is established.
     "enabled": true,
     "rules": {
       "preset": "recommended",

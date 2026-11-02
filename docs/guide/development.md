@@ -8,9 +8,9 @@ cd droid-office
 npm ci               # also builds, and installs the pre-commit hook
 npm run dev          # Vite on :5173, server on :4600
 npm run build        # vite (client) + tsc (server and desktop app) + the native Metal presenter (macOS only)
-npm run lint         # Biome: lint and formatting check, fails on any warning
+npm run lint         # Oxlint + Biome policy and formatting checks, fails on any warning
 npm run format       # Biome: rewrite the files in the house format
-npm run typecheck
+npm run typecheck    # npm-locked Bun: all five TypeScript projects
 npm test             # worker, pipelines, PTY and doc tests, and .env.example in sync
 npm run test:coverage  # the same tests with a coverage report; needs Node 22.8+
 node bin/droid-office.js /path/to/project
@@ -22,9 +22,11 @@ npm run package:mac  # builds release/Droid Office.app, a dmg and a zip; signs w
 
 A worktree the office cuts of this repository sets itself up from [`.droid-office.json`](../../.droid-office.json): it copies `android/local.properties` from the checkout when there is one and runs `npm ci`.
 
-**Lint and format.** [Biome](https://biomejs.dev) lints and formats every `.js`, `.mjs` and `.ts` file outside `dist/`, with the settings in [`biome.jsonc`](../../biome.jsonc): two-space indents, single quotes, semicolons, trailing commas and 240-column lines. `npm run format` fixes the formatting.
+**Lint and format.** [Oxlint](https://oxc.rs/docs/guide/usage/linter.html) runs the correctness rules in [`.oxlintrc.json`](../../.oxlintrc.json). Its categories do not map one-to-one to Biome's recommended preset, so [Biome](https://biomejs.dev) deliberately remains a compatibility check for the existing recommended lint policy, including suspicious, complexity and style rules. This is not yet an Oxlint-only lint gate. Both CI and pre-commit run both linters; CI also checks formatting. [`biome.jsonc`](../../biome.jsonc) keeps two-space indents, single quotes, semicolons, trailing commas and 240-column lines. `npm run format` fixes the formatting.
 
-**Pre-commit hook.** `npm ci` or `npm install` in a clone points git at [`.husky/`](../../.husky) (through the `prepare` script), and every commit then runs [lint-staged](https://github.com/lint-staged/lint-staged) and `npm run typecheck`. lint-staged runs `biome check --write` on the staged files, so formatting is fixed and added to the commit, and a lint finding stops it. The hook is a convenience; CI runs the same `npm run lint` and `npm run typecheck`. `git commit --no-verify` skips it, and `HUSKY=0` skips installing it. It isn't installed in CI (`CI=true`) or where dev dependencies aren't.
+**Typechecking.** [`bun check`](https://bun.com/docs/runtime/check) reads the same tsconfigs and reports TypeScript 7 diagnostics without emitting files. Bun 1.4.4 embeds TypeScript 7.0.2, matching the locked `typescript` package. `tests/typecheck-parity.test.ts` runs both compilers on all five real projects and compares their diagnostics on injected type errors under each project's options. Builds still use `tsc` to emit JavaScript. npm supplies Bun from `package-lock.json` on developer machines and all CI runners; a global Bun installation is not required. A scripts-disabled install leaves Bun's executable as a stub, so run `npm rebuild bun` after `npm ci --ignore-scripts` before typechecking, as website-only CI does.
+
+**Pre-commit hook.** `npm ci` or `npm install` in a clone points git at [`.husky/`](../../.husky) (through the `prepare` script), and every commit then runs [lint-staged](https://github.com/lint-staged/lint-staged) and `npm run typecheck`. lint-staged runs `oxlint --deny-warnings` and `biome check --write --error-on-warnings` on the staged files, so formatting is fixed and added to the commit, and a lint finding stops it. The hook is a convenience; CI runs the same `npm run lint` and `npm run typecheck`. `git commit --no-verify` skips it, and `HUSKY=0` skips installing it. It isn't installed in CI (`CI=true`) or where dev dependencies aren't.
 
 `npm run test:coverage` fails when line or function coverage of `src/` and `bin/` drops below the thresholds in its `package.json` script, and CI runs it in place of `npm test`. `npm test` still runs on Node 20.
 

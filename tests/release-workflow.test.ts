@@ -53,7 +53,7 @@ test('shared build inputs and manual runs trigger the relevant jobs', () => {
   assert.deepEqual(checksFor(['package.json'], { androidVersionChanged: true }), all);
   assert.deepEqual(checksFor(['vite.config.ts', 'tsconfig.base.json']), { ...none, node: true, mac: true });
   assert.deepEqual(checksFor(['tools/scene-hash.mjs']), { ...none, node: true, mac: true });
-  assert.deepEqual(checksFor(['biome.jsonc']), { ...none, node: true, website: true });
+  for (const file of ['biome.jsonc', '.oxlintrc.json']) assert.deepEqual(checksFor([file]), { ...none, node: true, website: true });
   for (const file of ['.github/workflows/release.yml', '.github/scripts/release-changes.mjs']) assert.deepEqual(checksFor([file]), all);
   assert.deepEqual(checksFor([], { manual: true }), all);
   assert.deepEqual(checksFor([]), none);
@@ -238,12 +238,36 @@ test('PRs retain builds, native compilation, coverage, Android tests and checkou
 test('only change detection fetches history, and website checks are not repeated by two jobs', () => {
   assert.equal(workflow.match(/fetch-depth: 0/g)?.length, 1);
   assert.match(jobSteps('changes')[0], /fetch-depth: 0/);
-  for (const fragment of ['npx biome check', 'npm run typecheck --workspace website']) {
+  for (const fragment of ['npm rebuild bun', 'npx oxlint', 'npx biome check', 'npm run typecheck --workspace website']) {
     const step = jobSteps('website').find((candidate) => candidate.includes(fragment));
     assert.ok(step);
     assert.equal(stepRuns(step, 'pull_request', 'refs/pull/1/merge', 'true'), false);
     assert.equal(stepRuns(step, 'pull_request', 'refs/pull/1/merge', 'false'), true);
   }
+});
+
+test('website-only checks initialize npm-locked Bun after the scripts-disabled install', () => {
+  const steps = jobSteps('website');
+  const install = steps.findIndex((step) => step.includes('npm ci --ignore-scripts'));
+  const rebuild = steps.findIndex((step) => step.includes('npm rebuild bun'));
+  const typecheck = steps.findIndex((step) => step.includes('npm run typecheck --workspace website'));
+  assert.ok(install >= 0 && rebuild > install && typecheck > rebuild);
+  assert.doesNotMatch(workflow, /oven-sh\/setup-bun/);
+  for (const event of ['pull_request', 'push', 'workflow_dispatch']) {
+    assert.equal(stepRuns(steps[rebuild], event, 'refs/heads/main', 'false'), true, event);
+  }
+});
+
+test('lint retains the recommended policy and formatting in CI and pre-commit', () => {
+  const pkg = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'));
+  assert.match(pkg.scripts.lint, /oxlint --deny-warnings \. && biome check --error-on-warnings \./);
+  const staged = pkg['lint-staged']['*.{js,mjs,cjs,ts,mts,cts}'];
+  assert.ok(staged.some((command: string) => command.startsWith('oxlint --deny-warnings')));
+  assert.ok(staged.some((command: string) => command.startsWith('biome check --write --error-on-warnings')));
+  const biome = readFileSync(new URL('../biome.jsonc', import.meta.url), 'utf8');
+  assert.match(biome, /"linter":\s*\{[\s\S]*?"enabled": true/);
+  assert.match(biome, /"preset": "recommended"/);
+  assert.match(jobSteps('website').join('\n'), /npx biome check --error-on-warnings website/);
 });
 
 test('PR checks run on GitHub runners while main builds and releases on the Mac Mini runner', () => {

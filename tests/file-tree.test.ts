@@ -27,6 +27,7 @@ test('each file gets the icon its name, then its extension, says', () => {
   assert.equal(icon('.env.example'), 'badge:ENV');
   assert.equal(icon('.gitignore'), 'badge:GIT');
   assert.equal(icon('.prettierrc'), 'cog');
+  assert.equal(icon('.oxlintrc.json'), 'cog');
   assert.equal(icon('.somethingrc'), 'cog');
   assert.equal(icon('scripts/run.sh'), 'badge:$_');
   assert.equal(icon('.github/workflows/release.yml'), 'badge:YML');
