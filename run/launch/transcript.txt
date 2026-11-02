@@ -1,0 +1,2 @@
+office-run: ready on http://127.0.0.1:4677/ (floor droid-office, 0 workers; WebGL ANGLE (Apple, ANGLE Metal Renderer: Apple M4, Unspecified Version))
+shot /tmp/verify-droid-office-evidence/verify-droid-office-QpJq/launch/office.png

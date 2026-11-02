@@ -1,0 +1,12 @@
+ok    port :4677 is not the owner's :4600
+ok    office pid 6085 is alive (mode fresh)
+ok    listener on :4677 (pid 6085) belongs to this run's process group
+ok    GET / 200
+ok    GET /dashboard 200
+ok    Office MCP on hook port :58826 refuses an anonymous call (401)
+ok    serving /Users/nikhilanand/droid-office-verify at f2f6ea95, dist/ newer than src/
+ok    browser profile present (local-storage.json)
+warn  native Mac app unavailable: Apple M4 is a base chip and the app refuses it (drive headless; do not set DROID_OFFICE_ALLOW_ANY_CHIP)
+ok    no office on :4600
+ok    adb sees 0 Android device(s)
+ok    evidence goes to /tmp/verify-droid-office-evidence/verify-droid-office-QpJq

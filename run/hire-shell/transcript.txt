@@ -1,0 +1,15 @@
+office-run: ready on http://127.0.0.1:4677/ (floor droid-office, 0 workers; WebGL ANGLE (Apple, ANGLE Metal Renderer: Apple M4, Unspecified Version))
+step free desk {"desk":"desk-1","floor":{"id":"droid-office","name":"droid-office"},"workers":0}
+shot /tmp/verify-droid-office-evidence/verify-droid-office-QpJq/hire-shell/01-free-desk.png
+step hired shell {"id":"768a584f7264","name":"Pixel 🐚","kind":"shell","deskId":"desk-1","desk":"Desk 1","status":"idle","waiting":false}
+shot /tmp/verify-droid-office-evidence/verify-droid-office-QpJq/hire-shell/02-shell-hired.png
+shot /tmp/verify-droid-office-evidence/verify-droid-office-QpJq/hire-shell/03-run-window.png
+step shell side effect {"file":"/tmp/verify-droid-office-evidence/verify-droid-office-QpJq/hire-shell/shell-wrote.txt","content":"verify-mvzowfyz"}
+step terminal shows output {"terminal":{"workerId":"768a584f7264","name":"Pixel 🐚"},"modals":[{"label":"Pixel 🐚 terminal","doing":"💻 in Pixel 🐚's terminal"}]}
+shot /tmp/verify-droid-office-evidence/verify-droid-office-QpJq/hire-shell/04-terminal.png
+step web companion lists worker {"label":"Open Pixel 🐚, ready: echo verify-mvzowfyz | tee /tmp/verify-droid-office-evidence/verify-droid-offic…"}
+shot /tmp/verify-droid-office-evidence/verify-droid-office-QpJq/hire-shell/05-web-companion.png
+shot /tmp/verify-droid-office-evidence/verify-droid-office-QpJq/hire-shell/06-send-home.png
+step sent home {"workers":0,"deskFree":true}
+shot /tmp/verify-droid-office-evidence/verify-droid-office-QpJq/hire-shell/07-desk-free.png
+proof /tmp/verify-droid-office-evidence/verify-droid-office-QpJq/hire-shell/proof.json
