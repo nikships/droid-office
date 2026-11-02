@@ -13,7 +13,7 @@ export interface Config {
   projectsDir: string;
   /** The folder that is always a floor (the CLI sets the home folder; unset in tests so they never touch it). */
   homeFloor?: string;
-  /** Where the Droid subagents skill goes (the CLI sets ~/.factory/skills; unset in tests so they never touch it). */
+  /** Factory skills directory for legacy cleanup and locating mcp.json; unset in tests to leave the user's profile alone. */
   skillsDir?: string;
   /** Signed native Keychain bridge supplied by the packaged Mac app, never enabled by default. */
   finderBridge?: string;

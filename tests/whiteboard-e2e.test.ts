@@ -71,7 +71,7 @@ test('an agent and the owner share a floor Whiteboard end to end: office-whitebo
   t.after(() => ws.terminate());
   ws.on('message', (raw) => msgs.push(JSON.parse(String(raw))));
   const welcome = await waitFor(() => msgs.find((m) => m.t === 'welcome') as Extract<ServerMsg, { t: 'welcome' }> | undefined, 'welcome');
-  assert.equal(welcome.whiteboardSkill.on, true);
+  assert.equal('whiteboardSkill' in welcome, false);
   const floor = welcome.floor!;
   const snap = await waitFor(() => msgs.find((m) => m.t === 'whiteboard' && m.update.kind === 'snapshot') as Extract<ServerMsg, { t: 'whiteboard' }> | undefined, 'the snapshot');
   assert.equal(snap.floor, floor);
@@ -293,12 +293,6 @@ test('an agent and the owner share a floor Whiteboard end to end: office-whitebo
   const resync = await waitFor(() => boardMsgs().filter((m) => m.update.kind === 'snapshot')[1], 'the resync');
   assert.equal(resync.update.kind === 'snapshot' && resync.update.epoch, epoch);
   assert.equal((resync.update as { board: Board }).board.rev, store().board.rev);
-
-  // The skill toggle.
-  send({ t: 'whiteboardSkill.set', on: false });
-  const skill = await waitFor(() => msgs.find((m) => m.t === 'whiteboardSkill') as Extract<ServerMsg, { t: 'whiteboardSkill' }> | undefined, 'the skill state');
-  assert.equal(skill.state.on, false);
-  assert.equal(JSON.parse(readFileSync(path.join(cfg.dataDir, 'whiteboard-skill.json'), 'utf8')).on, false);
 
   // Dismissed, its read points go.
   send({ t: 'worker.kill', workerId: launch.env.workerId, cleanup: 'keep' });

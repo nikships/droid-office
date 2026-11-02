@@ -17,7 +17,6 @@ import type {
   SkyState,
   SubagentsState,
   UpgradeState,
-  WhiteboardSkillState,
   WorkerInfo,
   ClientMsg,
 } from '../shared/protocol';
@@ -70,7 +69,6 @@ export type Topic =
   | 'subscriptions'
   | 'worktreeSetup'
   | 'whiteboard'
-  | 'whiteboardSkill'
   | 'visits'
   | 'visitSay';
 
@@ -280,8 +278,6 @@ class Store {
   hiddenModels: string[] = [];
   workerLabels: WorkerLabelState = { settings: { ...WORKER_LABEL_DEFAULTS }, running: 0, queued: 0 };
   workerAnswerMultiSelect = false;
-  /** Whether the droid-office-whiteboard skill is installed (⚙️ Settings), and where. */
-  whiteboardSkill: WhiteboardSkillState = { on: true };
   /** Each floor's Whiteboard as this window has it, with the owner's batches until they're committed (see whiteboard-sync.ts). */
   readonly whiteboard = new WhiteboardSync((msg) => whiteboardSend(msg));
   /** The office's prompts as rewritten in Settings, and the worker a new one starts on when nobody picks: the same on every floor. */
@@ -383,13 +379,12 @@ class Store {
         this.emit('workerLabels');
         this.workerAnswerMultiSelect = msg.workerAnswerMultiSelect === true;
         this.emit('hiddenModels');
-        this.whiteboardSkill = msg.whiteboardSkill ?? { on: true };
         this.prompts = msg.prompts ?? { custom: {} };
         this.factory = msg.factory ?? emptyFactoryState();
         this.setup = msg.setup ?? emptySetupState();
         this.subscriptions = msg.subscriptions ?? emptySubscriptionsState();
         this.enter(msg);
-        for (const t of ['upgrade', 'machine', 'floors', 'projectsDir', 'sky', 'jukebox', 'leaveOnMerge', 'freshMain', 'subagents', 'whiteboardSkill', 'prompts', 'factory', 'setup', 'subscriptions'] as Topic[]) this.emit(t);
+        for (const t of ['upgrade', 'machine', 'floors', 'projectsDir', 'sky', 'jukebox', 'leaveOnMerge', 'freshMain', 'subagents', 'prompts', 'factory', 'setup', 'subscriptions'] as Topic[]) this.emit(t);
         break;
       case 'floor.enter':
         this.arrival = msg.arrival;
@@ -506,10 +501,6 @@ class Store {
       case 'subagents':
         this.subagents = msg.state;
         this.emit('subagents');
-        break;
-      case 'whiteboardSkill':
-        this.whiteboardSkill = msg.state;
-        this.emit('whiteboardSkill');
         break;
       case 'prompts':
         this.prompts = msg.state;

@@ -46,17 +46,16 @@ test('every setting is in a category', () => {
     ['Worker limit', 'workers'],
     ['Workers whose pull request merged', 'workers'],
     ['Worktree setup', 'workers'],
-    ['Whiteboard skill', 'workers'],
     ['Default worker', 'models'],
     ['Models shown in pickers', 'models'],
     ['Subagents', 'subagents'],
+    ['Office MCP', 'subagents'],
     ['Who can hire', 'subagents'],
     ['Subagent worker', 'subagents'],
     ['Models leads can pick', 'subagents'],
     ['Team size', 'subagents'],
     ['Where subagents work', 'subagents'],
     ['Waking the lead', 'subagents'],
-    ['Subagents skill', 'subagents'],
     ['Visits between workers', 'subagents'],
     ['Droid', 'connections'],
     ['Factory API key', 'connections'],
@@ -113,6 +112,9 @@ test('search finds a setting by name, pane or keyword, every word required', () 
   assert.deepEqual(searchSettings('droid sign in'), [{ pane: 'connections', title: 'Droid' }]);
   assert.deepEqual(searchSettings('host update'), [{ pane: 'office', title: 'Host desktop app' }]);
   assert.deepEqual(searchSettings('prompt chips'), []);
+  assert.deepEqual(searchSettings('office mcp'), [{ pane: 'subagents', title: 'Office MCP' }]);
+  assert.deepEqual(searchSettings('whiteboard'), [{ pane: 'subagents', title: 'Office MCP' }]);
+  assert.deepEqual(searchSettings('skill'), []);
   assert.deepEqual(searchSettings('mouse'), [
     { pane: 'you', title: 'Look sensitivity' },
     { pane: 'you', title: 'Raw mouse input' },
