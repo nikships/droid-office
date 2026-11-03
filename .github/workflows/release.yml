@@ -64,6 +64,7 @@ on:
       - '.agents/skills/office-3d-testing/**'
       - '.agents/skills/office-thermals/**'
       - '.agents/skills/performance-proof/**'
+      - '.agents/skills/verify-droid-office/**'
   pull_request:
     paths:
       - 'src/**'
@@ -103,6 +104,7 @@ on:
       - '.agents/skills/office-3d-testing/**'
       - '.agents/skills/office-thermals/**'
       - '.agents/skills/performance-proof/**'
+      - '.agents/skills/verify-droid-office/**'
   workflow_dispatch:
 
 permissions:

@@ -70,6 +70,8 @@ Prefer lightweight verification for simple, bounded changes. Focused tests or ch
 
 When a running-office check is worthwhile, use a clone of the owner's real installed office, made with the [`office-clone`](.agents/skills/office-clone/SKILL.md) skill: their floors and repositories, Factory account, decor, Whiteboards and browser settings, run from this checkout's build. Drive it with that skill's `scripts/office-run.mjs`, one self-contained browser run per check, rather than a browser session held open across commands. Screenshots and video for a pull request come from that clone too. Never test on mocked, invented or seeded data or an empty throwaway office. Driving the owner's own office on :4600 and their real devices (an Android phone or tablet over adb) is fine too, and is the way to check a client change, such as the Android app or the web companion, against what they actually run. When what you need to show isn't in the owner's account yet, make it for real (with their go-ahead for anything that costs money or writes outside the office) and remove it afterwards. Unit tests in `tests/` stub the network only because CI has no keys; see [`tests/AGENTS.md`](tests/AGENTS.md).
 
+To prove a change end to end, use the [`verify-droid-office`](.agents/skills/verify-droid-office/SKILL.md) skill: it launches an isolated clone (or, on a machine with no installed office, a fresh office), checks it, drives a mapped feature, and keeps screenshots and transcripts for the pull request.
+
 ## Pushing and pull requests
 
 **Always push to and open pull requests (MRs) in `nikships/droid-office`. Never push to or open a pull request against the upstream `AgentSystemLabs/agent-office`.**

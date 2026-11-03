@@ -5,7 +5,7 @@
 # its real `origin`, each floor's own state (decor, jukebox, Whiteboard, team), and the Mac app's
 # browser settings (profile, graphics, per-desk models).
 #
-#   .agents/skills/office-clone/scripts/clone-office.sh [--office DIR] [--dest DIR] [--port N]
+#   .agents/skills/office-clone/scripts/clone-office.sh [--fresh | --office DIR] [--dest DIR] [--port N]
 #
 # Prints the folder and writes two files into it:
 #   start.sh             starts this checkout's built office (dist/) on the copy, on 127.0.0.1
@@ -23,9 +23,11 @@ REAL_HOME=$HOME
 OFFICE=""
 DEST=""
 PORT=""
+FRESH=false
 while [[ $# -gt 0 ]]; do
   [[ "$1" != --office && "$1" != --dest && "$1" != --port || $# -ge 2 ]] || { echo "clone-office: $1 needs a value" >&2; exit 2; }
   case "$1" in
+    --fresh) FRESH=true; shift ;;
     --office) OFFICE=$2; shift 2 ;;
     --dest) DEST=$2; shift 2 ;;
     --port) PORT=$2; shift 2 ;;
@@ -37,16 +39,30 @@ done
 CHECKOUT=$(cd "$(dirname "$0")/../../../.." && pwd)
 APP_DATA="$REAL_HOME/Library/Application Support/com.nikships.droid-office"
 
+if [[ "$FRESH" == true && -n "$OFFICE" ]]; then
+  echo "clone-office: --fresh and --office cannot be combined" >&2
+  exit 2
+fi
+
 # The office the owner runs: --office, else $DROID_OFFICE_HOME, else the Mac app's officeDir, else ~/droid-office.
-if [[ -z "$OFFICE" ]]; then
+if [[ "$FRESH" == false && -z "$OFFICE" ]]; then
   if [[ -n "${DROID_OFFICE_HOME:-}" ]]; then OFFICE=$DROID_OFFICE_HOME
   elif [[ -f "$APP_DATA/settings.json" ]]; then OFFICE=$(node -e 'const s=require(process.argv[1]); if (s.officeDir) console.log(s.officeDir)' "$APP_DATA/settings.json")
   fi
   OFFICE=${OFFICE:-$REAL_HOME/droid-office}
 fi
-[[ -f "$OFFICE/.droid-office/floors.json" ]] || { echo "clone-office: no office in $OFFICE (no .droid-office/floors.json); pass --office" >&2; exit 1; }
+if [[ "$FRESH" == false && ! -f "$OFFICE/.droid-office/floors.json" ]]; then
+  echo "clone-office: no office in $OFFICE (no .droid-office/floors.json); pass --office" >&2
+  exit 1
+fi
 
-[[ -z "$PORT" || "$PORT" =~ ^[0-9]+$ ]] || { echo "clone-office: --port takes a number" >&2; exit 2; }
+if [[ -n "$PORT" ]]; then
+  [[ "$PORT" =~ ^[0-9]{1,5}$ ]] || { echo "clone-office: --port takes a number" >&2; exit 2; }
+  PORT=$((10#$PORT))
+  [[ "$PORT" -ge 1 && "$PORT" -le 65535 && "$PORT" -ne 4600 ]] || { echo "clone-office: --port takes a number from 1 to 65535 other than 4600" >&2; exit 2; }
+fi
+[[ -f "$CHECKOUT/dist/server/server/cli.js" ]] || { echo "clone-office: run bun run build before preparing an office" >&2; exit 1; }
+BROWSERS=$(cd "$CHECKOUT" && node bin/droid-office.js browser path)
 
 # The copy holds the owner's Factory and Jira keys: only they may read it.
 DEST=${DEST:-$(mktemp -d /tmp/office-clone-XXXX)}
@@ -57,7 +73,13 @@ if [[ -z "$PORT" ]]; then
   PORT=4677
   while lsof -nP -iTCP:"$PORT" -sTCP:LISTEN >/dev/null 2>&1; do PORT=$((PORT + 1)); done
 fi
+[[ "$PORT" -le 65535 ]] || { echo "clone-office: no free port" >&2; exit 1; }
 
+if [[ "$FRESH" == true ]]; then
+  git clone -q --local -- "$CHECKOUT" "$DEST/floors/droid-office"
+  git -C "$DEST/floors/droid-office" remote set-url origin "$(git -C "$CHECKOUT" remote get-url origin)"
+  echo '{"droid-office.profile":"{\"name\":\"Verifier\",\"color\":\"#4f86f7\",\"look\":{\"skin\":2,\"hair\":1,\"style\":0}}"}' >"$DEST/local-storage.json"
+else
 EXCLUDES=(--exclude workers.json --exclude cloud-workers.json --exclude guests.json
   --exclude remote-workers.json --exclude remote-mcp.json
   --exclude pty.sock --exclude 'pty-host.*' --exclude hook-port --exclude 'shell.*'
@@ -109,8 +131,7 @@ while IFS=$'\t' read -r -u 3 id from to; do
   fi
   copy_state "$from" "$to"
 done 3<<<"$MAP"
-
-if [[ "$(uname)" == Darwin ]]; then BROWSERS="$REAL_HOME/Library/Caches/droid-office/browsers"; else BROWSERS="${XDG_CACHE_HOME:-$REAL_HOME/.cache}/droid-office/browsers"; fi
+fi
 
 # HOME is the scratch home: the office always adds a Home floor there, and the owner's real one holds
 # their workers. gh and git keep the owner's sign-in, so the boards read the real forge; the
@@ -119,17 +140,19 @@ if [[ "$(uname)" == Darwin ]]; then BROWSERS="$REAL_HOME/Library/Caches/droid-of
   echo '#!/usr/bin/env bash'
   printf 'cd %q\n' "$CHECKOUT"
   printf 'export HOME=%q\n' "$DEST/home"
-  printf 'export GH_CONFIG_DIR=%q\n' "$REAL_HOME/.config/gh"
+  printf 'export GH_CONFIG_DIR=%q\n' "${GH_CONFIG_DIR:-$REAL_HOME/.config/gh}"
   printf 'export GIT_CONFIG_GLOBAL=%q\n' "$REAL_HOME/.gitconfig"
   printf 'export DROID_OFFICE_BROWSERS_PATH=%q\n' "$BROWSERS"
   echo 'unset DROID_OFFICE_HOME DROID_OFFICE_WORKER_ID DROID_OFFICE_HOOK_TOKEN'
   # A clone leaves the owner's tailnet alone unless the run asks for it (DROID_OFFICE_REMOTE_MCP=on ./start.sh).
   echo 'export DROID_OFFICE_REMOTE_MCP="${DROID_OFFICE_REMOTE_MCP:-off}"'
-  printf 'exec node bin/droid-office.js --home %q --port %s --host 127.0.0.1 --projects %q "$@"\n' "$DEST/office" "$PORT" "$DEST/floors"
+  printf 'exec node bin/droid-office.js '
+  [[ "$FRESH" == false ]] || printf '%q ' "$DEST/floors/droid-office"
+  printf -- '--home %q --port %s --host 127.0.0.1 --projects %q "$@"\n' "$DEST/office" "$PORT" "$DEST/floors"
 } >"$DEST/start.sh"
 chmod 700 "$DEST/start.sh"
 
-if [[ -d "$APP_DATA/Local Storage/leveldb" ]]; then
+if [[ "$FRESH" == false && -d "$APP_DATA/Local Storage/leveldb" ]]; then
   echo "==> the Mac app's browser settings -> $DEST/local-storage.json"
   if out=$("$(dirname "$0")/export-local-storage.sh" "$APP_DATA/Local Storage/leveldb" "$DEST/local-storage.json" 2>&1); then
     echo "    $out"
@@ -146,6 +169,6 @@ fs.writeFileSync(process.argv[2], "(() => { const d = " + JSON.stringify(d) + ";
 fi
 
 echo
-echo "Cloned the office in $OFFICE to $DEST"
+if [[ "$FRESH" == true ]]; then echo "Created a fresh office in $DEST"; else echo "Cloned the office in $OFFICE to $DEST"; fi
 echo "Start it (fireAndForget):  $DEST/start.sh"
 echo "Then open:                 http://127.0.0.1:$PORT/"

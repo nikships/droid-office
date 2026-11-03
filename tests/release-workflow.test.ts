@@ -43,6 +43,7 @@ test('CI checks only the affected platforms and builds every client change into 
     '.agents/skills/performance-proof/SKILL.md',
     '.agents/skills/performance-proof/scripts/performance.py',
     '.agents/skills/performance-proof/tests/test_performance.py',
+    '.agents/skills/verify-droid-office/scripts/launch.sh',
   ]) {
     assert.deepEqual(checksFor([file]), { ...none, node: true }, file);
   }
@@ -169,6 +170,7 @@ test('each job is path-gated and the filter script and its tests trigger the wor
     '.agents/skills/office-3d-testing/**',
     '.agents/skills/office-thermals/**',
     '.agents/skills/performance-proof/**',
+    '.agents/skills/verify-droid-office/**',
   ]) {
     assert.equal(workflow.split(`      - '${filter}'`).length - 1, 2, filter);
   }
