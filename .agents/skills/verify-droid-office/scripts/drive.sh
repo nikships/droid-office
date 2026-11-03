@@ -15,6 +15,8 @@ NATIVE=${4:-}
 [[ -f "$RUN/verify.env" ]] || { echo "drive: $RUN has no verify.env: start one with launch.sh" >&2; exit 1; }
 # shellcheck source=/dev/null
 source "$RUN/verify.env"
+source "$(dirname "$0")/run-process.sh"
+owns_listener "$PORT" "$PID" || { echo "drive: :$PORT is not owned by this run" >&2; exit 1; }
 [[ "$NAME" =~ ^[A-Za-z0-9._-]+$ ]] || { echo "drive: name must be a plain word" >&2; exit 2; }
 
 OUT="$EVIDENCE/$NAME"
@@ -23,9 +25,10 @@ ARGS=("$CHECKOUT/.agents/skills/office-clone/scripts/office-run.mjs" "$RUN")
 [[ "$STEPS" == - ]] || ARGS+=("$(cd "$(dirname "$STEPS")" && pwd)/$(basename "$STEPS")")
 ARGS+=(--out "$OUT" --timeout "${VERIFY_TIMEOUT:-180}")
 [[ "$NATIVE" == --native ]] && ARGS+=(--source "$CHECKOUT")
+BROWSERS=$(cd "$CHECKOUT" && node bin/droid-office.js browser path)
 
 set +e
-VERIFY_RUN=$RUN VERIFY_EVIDENCE=$EVIDENCE VERIFY_OUT=$OUT node "${ARGS[@]}" 2>&1 | tee "$OUT/transcript.txt"
+DROID_OFFICE_BROWSERS_PATH="$BROWSERS" VERIFY_RUN=$RUN VERIFY_EVIDENCE=$EVIDENCE VERIFY_OUT=$OUT node "${ARGS[@]}" 2>&1 | tee "$OUT/transcript.txt"
 code=${PIPESTATUS[0]}
 set -e
 echo "$code" >"$OUT/exit-code"

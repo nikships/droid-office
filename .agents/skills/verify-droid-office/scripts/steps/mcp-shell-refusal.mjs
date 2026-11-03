@@ -1,8 +1,9 @@
 // Hires a Shell, has it call the Office MCP with its own office credentials (kept in its environment,
 // never printed), records the HTTP status the office answered, then sends the Shell home.
 //   .agents/skills/verify-droid-office/scripts/drive.sh "$RUN" .agents/skills/verify-droid-office/scripts/steps/mcp-shell-refusal.mjs mcp-shell
-import { existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { writeFileSync } from 'node:fs';
 import path from 'node:path';
+import { assertMcpRefusal, resetProbe, shellQuote, waitForProbe } from './shell-probe.mjs';
 
 export default async ({ page, js, shot, waitFor, log, out }) => {
   const status = path.join(out, 'mcp-shell-status.txt');
@@ -24,13 +25,12 @@ export default async ({ page, js, shot, waitFor, log, out }) => {
     `curl -s -o /dev/null -w '%{http_code}\\n' -X POST "$DROID_OFFICE_HOOK_URL/office/mcp"`,
     `-H "Authorization: Bearer $DROID_OFFICE_HOOK_TOKEN" -H "x-droid-office-worker-id: $DROID_OFFICE_WORKER_ID"`,
     `-H 'content-type: application/json' -H 'accept: application/json, text/event-stream'`,
-    `-d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}' | tee ${status}`,
+    `-d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}' | tee ${shellQuote(status)}`,
   ].join(' ');
   await runWindow.locator('textarea[aria-label=Prompt]').fill(call);
+  resetProbe(status);
   await runWindow.locator('button[type=submit]').click();
-  const t0 = Date.now();
-  while (!(existsSync(status) && readFileSync(status, 'utf8').trim()) && Date.now() - t0 < 15_000) await new Promise((r) => setTimeout(r, 250));
-  const code = existsSync(status) ? readFileSync(status, 'utf8').trim() : '';
+  const code = await waitForProbe(status, (value) => /^\d{3}$/.test(value));
   log(`step shell MCP call answered ${code || 'nothing'}`);
   await js(() => window.office.interact('E'));
   await waitFor(() => (document.querySelector('.xterm-rows')?.textContent ?? '').includes('/office/mcp'), undefined, 10_000);
@@ -44,6 +44,5 @@ export default async ({ page, js, shot, waitFor, log, out }) => {
   await confirm.locator('button', { hasText: 'Send home' }).click();
   await waitFor((id) => !window.office.state().workers.some((w) => w.id === id), worker.id, 30_000);
   writeFileSync(path.join(out, 'proof.json'), `${JSON.stringify({ worker: worker.name, desk, status: code }, null, 2)}\n`);
-  if (!/^\d{3}$/.test(code)) throw new Error(`the shell's MCP call wrote no status to ${status}`);
-  if (code === '200') throw new Error('the Office MCP answered a Shell worker with 200: only local agents may call it');
+  assertMcpRefusal(code);
 };

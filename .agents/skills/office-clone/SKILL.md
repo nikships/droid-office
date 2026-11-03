@@ -11,6 +11,8 @@ Unit tests are the one exception: CI has no keys or sign-ins, so `tests/` stubs 
 
 ## 1. Clone
 
+Build this checkout first with `npm ci` (which builds) or `npm run build`. The helper uses its `droid-office browser path` command to share the app's browser-cache resolution.
+
 ```bash
 .agents/skills/office-clone/scripts/clone-office.sh          # prints the folder, e.g. /tmp/office-clone-Kk3x
 ```
@@ -26,6 +28,8 @@ It finds the owner's office (`--office DIR`, else `$DROID_OFFICE_HOME`, else the
 | The Mac app's browser settings: profile, graphics, per-desk models, the floor it was on | its `localStorage` (LevelDB, read with `uv`) |
 
 It leaves out what a started office would **act on**: `workers.json`, `cloud-workers.json` and `guests.json` (an office resumes every saved worker, so a copy would run the owner's real Droid sessions a second time), the terminals and hooks (`pty.sock`, `pty-host.*`, `hook-port`, `shell.*`), scrollback, worktrees, drops and AutoWiki runs. The clone has the owner's floors and data with nobody at the desks.
+
+On a machine with no installed office, `--fresh` prepares a new office with a local clone of this checkout and a test browser profile instead. It shares the same port selection and startup generator, including the browser cache resolved by `droid-office browser path` (`DROID_OFFICE_BROWSERS_PATH` overrides it). `--fresh` and `--office` cannot be combined. Use the owner's clone for app screenshots when it is available.
 
 ## 2. Start it
 

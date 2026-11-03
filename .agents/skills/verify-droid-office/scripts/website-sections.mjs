@@ -2,8 +2,8 @@
 // Opens the marketing site in Playwright's headless shell, checks every landing section by its id and
 // heading, and saves one screenshot per section plus the page's console errors.
 //   node .agents/skills/verify-droid-office/scripts/website-sections.mjs <url> <out-dir>
-import { existsSync, mkdirSync, readdirSync, writeFileSync } from 'node:fs';
-import os from 'node:os';
+import { execFileSync } from 'node:child_process';
+import { mkdirSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
@@ -16,17 +16,10 @@ if (!url || !outArg) {
 const out = path.resolve(outArg);
 mkdirSync(out, { recursive: true });
 const repo = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../../..');
-const root = path.join(os.homedir(), 'Library/Caches/droid-office/browsers');
-const shell = existsSync(root)
-  ? readdirSync(root)
-      .filter((d) => d.startsWith('chromium_headless_shell-'))
-      .sort()
-      .reverse()
-      .flatMap((d) => readdirSync(path.join(root, d)).map((s) => path.join(root, d, s, 'chrome-headless-shell')))
-      .find(existsSync)
-  : undefined;
+const status = JSON.parse(execFileSync(process.execPath, [path.join(repo, 'bin/droid-office.js'), 'browser', 'status', '--json'], { encoding: 'utf8' }));
+if (!status.executable) throw new Error(`no headless shell in ${status.path}: run node bin/droid-office.js browser install`);
 const { chromium } = await import(pathToFileURL(path.join(repo, 'node_modules/playwright-core/index.mjs')).href);
-const browser = await chromium.launch({ executablePath: shell, headless: true });
+const browser = await chromium.launch({ executablePath: status.executable, headless: true });
 const errors = [];
 const report = { url, sections: [] };
 let code = 0;

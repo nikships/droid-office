@@ -1,8 +1,9 @@
 // Hires a Shell worker at a free desk with B, runs a command in it through its P window, reads the
 // result in its terminal (E) and in the web companion, then sends it home with X.
 //   .agents/skills/verify-droid-office/scripts/drive.sh "$RUN" .agents/skills/verify-droid-office/scripts/steps/hire-shell.mjs hire-shell
-import { existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { writeFileSync } from 'node:fs';
 import path from 'node:path';
+import { resetProbe, shellQuote, waitForProbe } from './shell-probe.mjs';
 
 export default async ({ page, js, shot, waitFor, sleep, log, out, url }) => {
   const marker = `verify-${Date.now().toString(36)}`;
@@ -35,14 +36,13 @@ export default async ({ page, js, shot, waitFor, sleep, log, out, url }) => {
   await js(() => window.office.interact('P'));
   const runWindow = page.locator(`[role=dialog][aria-label="🐚 Run in ${worker.name}"]`);
   await runWindow.waitFor({ timeout: 10_000 });
-  await runWindow.locator('textarea[aria-label=Prompt]').fill(`echo ${marker} | tee ${sideEffect}`);
+  resetProbe(sideEffect);
+  await runWindow.locator('textarea[aria-label=Prompt]').fill(`echo ${marker} | tee ${shellQuote(sideEffect)}`);
   await shot('03-run-window');
   await runWindow.locator('button[type=submit]').click();
   await waitFor(() => !document.querySelector(`[role=dialog][aria-label^="🐚 Run in"]`), undefined, 5_000);
 
-  const t0 = Date.now();
-  while (!existsSync(sideEffect) && Date.now() - t0 < 15_000) await new Promise((r) => setTimeout(r, 250));
-  const wrote = existsSync(sideEffect) ? readFileSync(sideEffect, 'utf8').trim() : null;
+  const wrote = await waitForProbe(sideEffect, (value) => value === marker);
   if (wrote !== marker) throw new Error(`the shell did not write ${marker} to ${sideEffect} (got ${JSON.stringify(wrote)})`);
   step('shell side effect', { file: sideEffect, content: wrote });
 
@@ -56,6 +56,7 @@ export default async ({ page, js, shot, waitFor, sleep, log, out, url }) => {
   const companion = await page.context().newPage();
   try {
     await companion.goto(new URL('/dashboard', url).href);
+    await companion.locator(`button.dash-floor-chip[data-floor="${before.floor.id}"]`).click({ timeout: 30_000 });
     const row = companion.locator(`button.dash-row-open[data-worker="${worker.id}"]`);
     await row.waitFor({ timeout: 30_000 });
     step('web companion lists worker', { label: await row.getAttribute('aria-label') });

@@ -9,6 +9,7 @@ RUN=${1:-}
 [[ -n "$RUN" && -f "$RUN/verify.env" ]] || { echo "fail  no verify.env in '${RUN}': start an office with launch.sh"; exit 1; }
 # shellcheck source=/dev/null
 source "$RUN/verify.env"
+source "$(dirname "$0")/run-process.sh"
 bad=0
 ok() { echo "ok    $*"; }
 warn() { echo "warn  $*"; }
@@ -17,13 +18,10 @@ fail() { echo "fail  $*"; bad=1; }
 [[ "$PORT" != 4600 ]] && ok "port :$PORT is not the owner's :4600" || fail "port is :4600, the owner's office"
 if kill -0 "$PID" 2>/dev/null; then ok "office pid $PID is alive (mode $MODE)"; else fail "office pid $PID is gone: see $RUN/office.log"; fi
 
-listener=$(lsof -nP -t -iTCP:"$PORT" -sTCP:LISTEN 2>/dev/null | head -1)
-if [[ -z "$listener" ]]; then
-  fail "nothing listens on :$PORT"
-elif [[ "$(ps -o pgid= -p "$listener" | tr -d ' ')" == "$PID" ]]; then
-  ok "listener on :$PORT (pid $listener) belongs to this run's process group"
+if owns_listener "$PORT" "$PID"; then
+  ok "listener on :$PORT belongs to this run's process group"
 else
-  fail "listener on :$PORT is pid $listener, not this run's office: someone else owns the port"
+  fail "listener on :$PORT is missing or not this run's office: someone else may own the port"
 fi
 
 for path in / /dashboard; do
@@ -40,9 +38,8 @@ else
 fi
 
 head=$(git -C "$CHECKOUT" rev-parse --short HEAD)
-built=$(stat -f %m "$CHECKOUT/dist/server/server/cli.js" 2>/dev/null || stat -c %Y "$CHECKOUT/dist/server/server/cli.js")
-newest=$(git -C "$CHECKOUT" ls-files -z src bin | xargs -0 stat -f %m 2>/dev/null | sort -n | tail -1)
-if [[ -n "$newest" && "$newest" -gt "$built" ]]; then warn "dist/ is older than src/ at $head: npm run build, then relaunch"; else ok "serving $CHECKOUT at $head, dist/ newer than src/"; fi
+fresh=$(node "$(dirname "$0")/build-freshness.mjs" "$CHECKOUT")
+if [[ "$fresh" == stale ]]; then warn "dist/ is older than src/ at $head: npm run build, then relaunch"; elif [[ "$fresh" == current ]]; then ok "serving $CHECKOUT at $head, dist/ newer than src/"; else fail "could not check dist/ freshness"; fi
 
 [[ -f "$RUN/local-storage.json" ]] && ok "browser profile present (local-storage.json)" || warn "no local-storage.json: the office opens on the character picker"
 

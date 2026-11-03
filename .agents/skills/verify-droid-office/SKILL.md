@@ -106,4 +106,4 @@ All are executable and run from the repository root.
 
 ## Keeping it current
 
-The map in `features/` rots as the app changes. Run `/maintain-verification-skill` on this skill to check every feature against source and the live app, and to ship corrections.
+The map in `features/` rots as the app changes. Check its feature recipes against the current source and the live app using the launch, doctor and drive steps above, then update any stale handles, assertions or evidence instructions.
