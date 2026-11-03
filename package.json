@@ -35,7 +35,7 @@
     "start": "node bin/droid-office.js",
     "desktop": "bun run build && electron .",
     "package:mac": "bun run build && electron-builder --mac --arm64 --publish never",
-    "prepare": "bun .husky/install.mjs && bun run build"
+    "prepare": "node bin/prepare.mjs"
   },
   "lint-staged": {
     "*.{js,mjs,cjs,ts,mts,cts}": [

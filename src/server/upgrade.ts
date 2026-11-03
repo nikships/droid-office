@@ -185,11 +185,9 @@ export class Upgrader {
       await rm(STAGE, { recursive: true, force: true });
       await mkdir(next, { recursive: true });
       await run('sh', ['-c', 'git archive "$1" | tar -x -C "$2"', 'sh', sha, next]);
-      // bun install runs the prepare script, which builds the client and the server. A box provisioned
-      // before the switch from npm has no Bun until `deploy/aws.sh update` installs it.
-      await run('bun', ['install', '--frozen-lockfile'], { cwd: next, timeout: 15 * 60_000 }).catch((err: Error) => {
-        throw /\bENOENT\b/.test(err.message) ? new Error('Bun is not installed on this machine: run `deploy/aws.sh update` from your computer to install it.') : err;
-      });
+      // Node bootstraps the staged version's pinned Bun on older machines before the frozen
+      // install and prepare build. Pass build output through unchanged, including ENOENT errors.
+      await run(process.execPath, [path.join(next, 'bin/prepare.mjs'), '--install'], { cwd: next, timeout: 15 * 60_000 });
       for (const f of ['dist/server/server/cli.js', 'dist/public/index.html']) {
         if (!existsSync(path.join(next, f))) throw new Error(`the build didn't produce ${f}`);
       }

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
@@ -8,9 +8,14 @@ import { fileURLToPath } from 'node:url';
 
 const root = fileURLToPath(new URL('../', import.meta.url));
 const bin = path.join(root, 'node_modules', '.bin');
-// Bun is the package manager, so `bun check` is the Bun on PATH (`bun run test` puts itself first).
+// Direct Node runs must verify the same Bun version as package-manager-driven CI runs.
 const executable = (tool: 'bun' | 'tsc') => (tool === 'bun' ? 'bun' : path.join(bin, tool));
 const projects = ['tsconfig.server.json', 'tsconfig.client.json', 'tsconfig.desktop.json', 'tsconfig.desktop-page.json', 'website/tsconfig.json'];
+const expectedBun = JSON.parse(readFileSync(path.join(root, 'package.json'), 'utf8')).packageManager.replace(/^bun@/, '');
+const bunVersion = spawnSync(executable('bun'), ['--version'], { encoding: 'utf8' });
+assert.ifError(bunVersion.error);
+assert.equal(bunVersion.status, 0, bunVersion.stderr);
+assert.equal(bunVersion.stdout.trim(), expectedBun, `Typecheck parity requires the pinned Bun ${expectedBun}`);
 
 function check(tool: 'bun' | 'tsc', project: string) {
   const args = tool === 'bun' ? ['check', '-p', project, '--no-pretty'] : ['-p', project, '--noEmit', '--pretty', 'false'];
