@@ -3,9 +3,11 @@
 //   .agents/skills/verify-droid-office/scripts/drive.sh "$RUN" .agents/skills/verify-droid-office/scripts/steps/hire-shell.mjs hire-shell
 import { writeFileSync } from 'node:fs';
 import path from 'node:path';
+import { freeShellDesk, hireShell, openShellRun, sendShellHome } from './shell-journey.mjs';
 import { resetProbe, shellQuote, waitForProbe } from './shell-probe.mjs';
 
-export default async ({ page, js, shot, waitFor, sleep, log, out, url }) => {
+export default async (helpers) => {
+  const { page, js, shot, waitFor, sleep, log, out, url } = helpers;
   const marker = `verify-${Date.now().toString(36)}`;
   const sideEffect = path.join(out, 'shell-wrote.txt');
   const proof = { marker, steps: [] };
@@ -15,27 +17,17 @@ export default async ({ page, js, shot, waitFor, sleep, log, out, url }) => {
   };
   const state = () => js(() => window.office.state());
 
-  await js(() => window.office.closeAll());
-  const desk = await js(() => {
-    const taken = new Set(window.office.state().workers.map((w) => w.deskId));
-    return window.office.list().find((t) => t.kind === 'desk' && !t.worker && !taken.has(t.id))?.id;
-  });
-  if (!desk) throw new Error('no free desk on this floor: send a worker home or ride to another floor');
+  const desk = await freeShellDesk(js);
   const before = await state();
   step('free desk', { desk, floor: before.floor, workers: before.workers.length });
-  await js((d) => window.office.goTo(d), desk);
   await js(() => window.office.camera('first'));
   await shot('01-free-desk');
 
-  await js(() => window.office.interact('B'));
-  await waitFor((d) => window.office.state().workers.some((w) => w.deskId === d && w.kind === 'shell'), desk, 30_000);
-  const worker = (await state()).workers.find((w) => w.deskId === desk);
+  const worker = await hireShell(helpers, desk);
   step('hired shell', worker);
   await shot('02-shell-hired');
 
-  await js(() => window.office.interact('P'));
-  const runWindow = page.locator(`[role=dialog][aria-label="🐚 Run in ${worker.name}"]`);
-  await runWindow.waitFor({ timeout: 10_000 });
+  const runWindow = await openShellRun(helpers, worker);
   resetProbe(sideEffect);
   await runWindow.locator('textarea[aria-label=Prompt]').fill(`echo ${marker} | tee ${shellQuote(sideEffect)}`);
   await shot('03-run-window');
@@ -66,14 +58,10 @@ export default async ({ page, js, shot, waitFor, sleep, log, out, url }) => {
     await companion.close();
   }
 
-  await js((d) => window.office.goTo(d), desk);
-  await js(() => window.office.interact('X'));
-  const confirm = page.locator(`[role=alertdialog][aria-label="Send ${worker.name} home?"]`);
-  await confirm.waitFor({ timeout: 10_000 });
-  await sleep(500);
-  await shot('06-send-home');
-  await confirm.locator('button', { hasText: 'Send home' }).click();
-  await waitFor((id) => !window.office.state().workers.some((w) => w.id === id), worker.id, 30_000);
+  await sendShellHome(helpers, worker, async () => {
+    await sleep(500);
+    await shot('06-send-home');
+  });
   const after = await state();
   step('sent home', { workers: after.workers.length, deskFree: !after.workers.some((w) => w.deskId === desk) });
   await shot('07-desk-free');
