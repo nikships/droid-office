@@ -52,14 +52,6 @@ quiet "${APT[@]}" update
 quiet "${APT[@]}" install git gh curl ca-certificates build-essential python3 unzip
 echo "    $(gh --version | head -1)"
 
-# Bun installs the office's dependencies and runs its build; Node still runs the office itself.
-# System-wide in /usr/local/bin, so the service and the office's own upgrade find it on PATH.
-if ! command -v bun >/dev/null 2>&1; then
-  step "Installing Bun"
-  quiet bash -c 'curl -fsSL https://bun.com/install | sudo BUN_INSTALL=/usr/local bash'
-fi
-echo "    bun $(bun --version)"
-
 if ! command -v droid >/dev/null 2>&1; then
   step "Installing the Droid CLI"
   quiet bash -c 'curl -fsSL https://app.factory.ai/cli | sh'
@@ -102,6 +94,14 @@ else
   quiet git clone --depth 1 --branch "$APP_REF" "$APP_REPO" /opt/droid-office
 fi
 echo "    at $(git -C /opt/droid-office log -1 --format='%h %s')"
+# Use the same release as UI upgrades, not an unrelated latest Bun. Keep it system-wide
+# so the service and worker setup commands find Bun without downloading a second copy.
+BUN_VERSION=$(node -p 'require("/opt/droid-office/package.json").packageManager.slice(4)')
+if ! command -v bun >/dev/null 2>&1 || [[ "$(bun --version)" != "$BUN_VERSION" ]]; then
+  step "Installing Bun $BUN_VERSION"
+  quiet bash -o pipefail -c 'curl -fsSL https://bun.com/install | sudo BUN_INSTALL=/usr/local bash -s -- "$1"' bash "bun-v$BUN_VERSION"
+fi
+echo "    bun $(bun --version)"
 step "bun install (builds the office)"
 (cd /opt/droid-office && quiet bun install --frozen-lockfile)
 

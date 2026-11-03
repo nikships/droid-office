@@ -25,6 +25,8 @@ test('CI checks only the affected platforms and builds every client change into 
   assert.deepEqual(checksFor(['website/src/App.tsx']), { ...none, website: true });
   assert.deepEqual(checksFor(['firebase.json', '.firebaserc']), { ...none, website: true });
   assert.deepEqual(checksFor(['tests/desktop.test.ts']), { ...none, node: true });
+  assert.deepEqual(checksFor(['deploy/provision.sh', 'deploy/aws.sh']), { ...none, node: true });
+  assert.equal([...workflow.matchAll(/- 'deploy\/\*\*'/g)].length, 2, 'deployment regressions run for pushes and pull requests');
   assert.deepEqual(checksFor(['README.md', 'docs/guide/getting-started.md']), { ...none, node: true });
   assert.deepEqual(checksFor(['tools/android-terminal.mjs']), { ...none, node: true });
   assert.deepEqual(checksFor(['tools/android-model-icons.mjs']), { ...none, node: true, android: true });

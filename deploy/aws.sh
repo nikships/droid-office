@@ -614,15 +614,16 @@ cmd_update() {
   preflight
   require_instance
   say "Updating droid-office on $IP"
-  remote "set -e
+  remote "set -e -o pipefail
     ref=\$(git -C /opt/droid-office rev-parse --abbrev-ref HEAD)
     git -C /opt/droid-office fetch --depth 1 origin \"\$ref\" -q
     git -C /opt/droid-office reset --hard FETCH_HEAD -q
     echo \"   at \$(git -C /opt/droid-office log -1 --format='%h %s')\"
-    # Offices provisioned before the switch to Bun have only npm.
-    if ! command -v bun >/dev/null 2>&1; then
+    # Provisioning, CLI updates and UI upgrades all select the checkout's pinned release.
+    bun_version=\$(node -p 'require(\"/opt/droid-office/package.json\").packageManager.slice(4)')
+    if ! command -v bun >/dev/null 2>&1 || [ \"\$(bun --version)\" != \"\$bun_version\" ]; then
       sudo apt-get -y -q install unzip >/dev/null
-      curl -fsSL https://bun.com/install | sudo BUN_INSTALL=/usr/local bash >/dev/null
+      curl -fsSL https://bun.com/install | sudo BUN_INSTALL=/usr/local bash -s -- \"bun-v\$bun_version\" >/dev/null
     fi
     cd /opt/droid-office && bun install --frozen-lockfile >/dev/null
     # Offices provisioned before KillMode=process: without it the restart stops every worker too.
