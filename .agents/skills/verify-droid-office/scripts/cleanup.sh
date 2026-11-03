@@ -9,6 +9,7 @@ RUN=${1:-}
 [[ "$RUN" == /tmp/verify-droid-office-* ]] || { echo "cleanup: $RUN is not a launch.sh folder" >&2; exit 1; }
 # shellcheck source=/dev/null
 source "$RUN/verify.env"
+node "$(dirname "$0")/evidence-path.mjs" "$RUN" "$EVIDENCE" || { echo "cleanup: refusing to delete a run containing its evidence" >&2; exit 1; }
 
 # The office's process group, then PTY hosts serving sockets inside RUN (they outlive the office).
 kill -INT -- "-$PID" 2>/dev/null

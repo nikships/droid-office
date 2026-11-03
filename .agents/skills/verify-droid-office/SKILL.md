@@ -70,7 +70,7 @@ Handles to use, from the source:
 
 ## Evidence
 
-Everything goes under `$EVIDENCE` (default `/tmp/verify-droid-office-evidence/<run id>`, outside `$RUN`; set `VERIFY_EVIDENCE_ROOT` to move it). Each drive writes `$EVIDENCE/<name>/`, with its screenshots, `transcript.txt` (all runner output, including the page's console errors), `exit-code`, and whatever the steps file writes. Cleanup adds `office.log` with tokens removed.
+Everything goes under `$EVIDENCE` (default `/tmp/verify-droid-office-evidence/<run id>`, outside `$RUN`; set `VERIFY_EVIDENCE_ROOT` to move it). Launch and cleanup reject evidence paths that resolve to `$RUN` or a directory beneath it, including symlink aliases. Each drive writes `$EVIDENCE/<name>/`, with its screenshots, `transcript.txt` (all runner output, including the page's console errors), `exit-code`, and whatever the steps file writes. Cleanup adds `office.log` with tokens removed.
 
 Proof standards:
 

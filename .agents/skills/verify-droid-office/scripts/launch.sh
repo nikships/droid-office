@@ -29,6 +29,10 @@ RUN=$(mktemp -d /tmp/verify-droid-office-XXXX)
 RUN_ID=$(basename "$RUN")
 EVIDENCE="${VERIFY_EVIDENCE_ROOT:-/tmp/verify-droid-office-evidence}/$RUN_ID"
 mkdir -p "$EVIDENCE"
+if ! node "$HERE/evidence-path.mjs" "$RUN" "$EVIDENCE"; then
+  rm -rf "$RUN"
+  exit 1
+fi
 PID=""
 # A launch that fails leaves nothing behind but the evidence it gathered.
 on_exit() {

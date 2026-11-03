@@ -1,12 +1,13 @@
 import assert from 'node:assert/strict';
 import { execFileSync, spawn, spawnSync } from 'node:child_process';
 import { once } from 'node:events';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { buildFreshness } from '../.agents/skills/verify-droid-office/scripts/build-freshness.mjs';
+import { assertEvidenceOutsideRun } from '../.agents/skills/verify-droid-office/scripts/evidence-path.mjs';
 import { assertMcpRefusal, resetProbe, shellQuote, waitForProbe } from '../.agents/skills/verify-droid-office/scripts/steps/shell-probe.mjs';
 
 const repo = fileURLToPath(new URL('../', import.meta.url));
@@ -17,6 +18,44 @@ function cliEnv(overrides: NodeJS.ProcessEnv = {}) {
   env.NODE_V8_COVERAGE = '';
   return env;
 }
+
+test('evidence stays outside scratch paths, including symlink aliases', (t) => {
+  const dir = mkdtempSync(path.join(os.tmpdir(), 'verify-evidence-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const run = path.join(dir, 'run');
+  const nested = path.join(run, 'nested');
+  const sibling = path.join(dir, 'run-evidence');
+  mkdirSync(nested, { recursive: true });
+  mkdirSync(sibling);
+  const alias = path.join(dir, 'alias');
+  symlinkSync(run, alias, 'dir');
+  for (const evidence of [run, nested, alias, path.join(alias, 'nested'), path.join(nested, '..')]) {
+    assert.throws(() => assertEvidenceOutsideRun(run, evidence), /outside the scratch directory/);
+  }
+  assert.doesNotThrow(() => assertEvidenceOutsideRun(run, sibling));
+});
+
+test('launch rejects /tmp as evidence root before starting an office', () => {
+  const launch = spawnSync('bash', [path.join(scripts, 'launch.sh'), '--fresh'], {
+    cwd: repo,
+    env: cliEnv({ VERIFY_EVIDENCE_ROOT: '/tmp' }),
+    encoding: 'utf8',
+  });
+  assert.equal(launch.status, 1);
+  assert.match(launch.stderr, /evidence must be outside the scratch directory/);
+});
+
+test('cleanup refuses a legacy run whose evidence is inside scratch', (t) => {
+  const run = mkdtempSync('/tmp/verify-droid-office-test-');
+  t.after(() => rmSync(run, { recursive: true, force: true }));
+  const proof = path.join(run, 'proof.txt');
+  writeFileSync(proof, 'retained');
+  writeFileSync(path.join(run, 'verify.env'), `RUN=${shellQuote(run)}\nEVIDENCE=${shellQuote(run)}\nPID=2147483647\nPORT=4677\n`);
+  const cleanup = spawnSync('bash', [path.join(scripts, 'cleanup.sh'), run], { encoding: 'utf8', env: cliEnv() });
+  assert.equal(cleanup.status, 1);
+  assert.match(cleanup.stderr, /refusing to delete a run containing its evidence/);
+  assert.equal(readFileSync(proof, 'utf8'), 'retained');
+});
 
 test('shell proof paths preserve spaces, apostrophes and shell metacharacters', (t) => {
   const dir = mkdtempSync(path.join(os.tmpdir(), 'verify-probe-'));
