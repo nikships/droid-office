@@ -28,7 +28,7 @@ import { instructions as whiteboardInstructions, register as registerWhiteboard 
 import { instructions as visitInstructions, register as registerVisits } from './visits.js';
 import { register as registerRemote, remoteIdentityInstructions, remoteInstructions } from './remote.js';
 import { register as registerTeamEvents } from './team-events.js';
-import { ownerInstructions, register as registerOwner, type OwnerOffice } from './owner.js';
+import { hasOwnerAccess, ownerInstructions, register as registerOwner, type OwnerOffice } from './owner.js';
 import type { RemoteOffice } from '../remote-office.js';
 import type { RemoteKeyId } from '../remote-workers.js';
 
@@ -237,7 +237,7 @@ export class OfficeMcpServer {
 
   private serverFor(caller: OfficeMcpCaller | undefined, disconnected: AbortSignal | undefined): Server {
     const remote = caller?.worker.remote ? `${remoteInstructions}\n${remoteIdentityInstructions(caller.worker)}` : undefined;
-    const instructions = remote ? (this.deps.owner ? `${remote}\n\n${ownerInstructions}` : remote) : INSTRUCTIONS;
+    const instructions = remote ? (caller && hasOwnerAccess(caller.worker, this.deps.owner) ? `${remote}\n\n${ownerInstructions}` : remote) : INSTRUCTIONS;
     const server = new Server({ name: 'droid-office', version: '1.0.0' }, { capabilities: { tools: {} }, instructions });
     server.setRequestHandler('tools/list', () => ({ tools: caller ? [...this.tools.values()].filter((t) => t.access(caller) === undefined).map((t) => t.listed) : [] }));
     server.setRequestHandler('tools/call', async ({ params }, ctx) => {

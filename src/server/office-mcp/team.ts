@@ -1,6 +1,7 @@
 import path from 'node:path';
 import { z } from 'zod';
 import type { TeamEvent, TeamMember, TeamModel, TeamReply } from '../team.js';
+import { hasOwnerAccess } from './owner.js';
 import { officeAccess, officeError, officeResult, type OfficeMcpCaller, type OfficeMcpDeps, type OfficeMcpServer } from './index.js';
 import { compactEvent, compactEventText, compactWorker, compactWorkerText, cursorOf, EVENT_FILTERS, eventKinds, parseCursor } from './team-events.js';
 
@@ -203,14 +204,14 @@ export function register(server: OfficeMcpServer, deps: OfficeMcpDeps): void {
     async (_args, caller) => {
       const { body } = await caller.floor.team.handle(caller.worker, { action: 'whoami' });
       const visitRefusal = caller.floor.visits.cannotVisit(caller.worker);
-      const owner = !!caller.worker.remote && !!deps.owner;
+      const owner = hasOwnerAccess(caller.worker, deps.owner);
       const identity = { ...body, floor: { id: caller.floor.id, name: caller.floor.name }, cwd: caller.cwd, canVisit: !visitRefusal, ...(visitRefusal ? { visitRefusal } : {}), ownerAccess: owner };
       const lead = caller.worker.lead ? (caller.floor.workers.get(caller.worker.lead)?.name ?? caller.worker.lead) : undefined;
       return officeResult(
         [
           `${caller.worker.name} (${caller.worker.id}), ${caller.floor.name}, ${lead ? `subagent of ${lead}` : 'independent worker'}.`,
           `Working folder: ${caller.cwd}`,
-          `May hire: ${body.canHire ? 'yes' : 'no'}. Subagents: ${body.subagents ?? 0}/${body.max ?? 0}. Wake the lead: ${body.wakeLead ? 'on' : 'off'}.`,
+          `May hire: ${body.canHire ? 'yes' : 'no'}. Subagents: ${body.subagents ?? 0}${typeof body.max === 'number' ? `/${body.max}` : ', no limit'}. Wake the lead: ${body.wakeLead ? 'on' : 'off'}.`,
           ...(typeof body.why === 'string' ? [body.why] : []),
           `May visit: ${visitRefusal ? `no. ${visitRefusal}` : 'yes'}.`,
           ...(owner ? ['Owner access: yes. office_roster, office_look, office_send_home and office_owner act on every floor as the owner does.'] : []),

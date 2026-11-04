@@ -9,6 +9,7 @@ import { mkdirSync, mkdtempSync, rmSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { WebSocket } from 'ws';
+import headless from '@xterm/headless';
 import { Client, StreamableHTTPClientTransport } from '@modelcontextprotocol/client';
 import { RemoteWorkers } from '../src/server/remote-workers.js';
 import { RemoteOffice, type RemoteFloor } from '../src/server/remote-office.js';
@@ -16,6 +17,7 @@ import { remoteMcpListener } from '../src/server/remote-mcp-http.js';
 import { createOfficeMcp, type OfficeMcpFloor } from '../src/server/office-mcp/index.js';
 import { findWorker, pickFloor, roster, type OwnerFloor, type OwnerOffice, type OwnerReply } from '../src/server/office-mcp/owner.js';
 import { WhiteboardStore } from '../src/server/whiteboard.js';
+import { plainTail } from '../src/server/history.js';
 import { loadConfig } from '../src/server/config.js';
 import { startServer } from '../src/server/server.js';
 import { SUBAGENT_DEFAULTS, type ServerMsg, type WorkerInfo } from '../src/shared/protocol.js';
@@ -250,6 +252,8 @@ test('office_owner forwards any owner action and reports its refusal, reply and 
   r.answers['gh.merge'] = () => ({ notes: ['🎉 Grok merged PR #12'], reply: { t: 'gh.merged', number: 12 } as ServerMsg });
   r.answers['worker.prompt'] = () => ({ error: 'No such worker', notes: [] });
   r.answers['pipelines.run'] = () => ({ pending: true, notes: [] });
+  r.answers['worker.shoot'] = () => ({ unconfirmed: true, notes: [] });
+  r.answers['thread.read'] = () => ({ notes: [], reply: { t: 'thread.snapshot', workerId: 'b-1', text: 'x'.repeat(70_000) } as unknown as ServerMsg });
   const merged = await r.call('office_owner', { action: 'gh.merge', args: { number: 12, method: 'squash', deleteBranch: true }, floor: '2' });
   assert.equal(merged.error, false, merged.text);
   assert.match(merged.text, /gh\.merge: done\.\n🎉 Grok merged PR #12\nReply \(gh\.merged\)/);
@@ -258,9 +262,15 @@ test('office_owner forwards any owner action and reports its refusal, reply and 
   assert.equal(refused.error, true);
   assert.match(refused.text, /worker\.prompt refused: No such worker/);
   assert.match((await r.call('office_owner', { action: 'pipelines.run', args: { workflow: 'ci', ref: 'main' } })).text, /started; no outcome yet/);
+  const silent = await r.call('office_owner', { action: 'worker.shoot', args: { workerId: 'stale' } });
+  assert.equal(silent.error, false);
+  assert.match(silent.text, /neither refused nor confirmed/, 'silence is not reported as done');
+  const big = await r.call('office_owner', { action: 'thread.read', args: { workerId: 'b-1' } });
+  assert.match(big.text, /\[Truncated: \d+ more characters\]$/);
+  assert.equal(r.calls.length, 5);
   assert.equal((await r.call('office_owner', { action: 'automation.result', args: {} })).error, true, 'only the listed owner actions');
   assert.equal((await r.call('office_owner', { action: 'gh.merge', floor: 'attic' })).error, true);
-  assert.equal(r.calls.length, 3);
+  assert.equal(r.calls.length, 5);
 });
 
 test('local workers never get owner access', async (t) => {
@@ -346,6 +356,11 @@ test('owner actions from an external worker run through the owner’s own handle
   assert.equal(missing.error, 'No such worker');
   const wrongFloor = await office.owner.act(grok, { t: 'floor.branch', floor: second.id, request: 'r', branch: null }, { floor: first.id });
   assert.match(wrongFloor.error!, /Choose a branch on the floor you are on/);
+  const ignored = await office.owner.act(grok, { t: 'worker.shoot', workerId: 'nobody' });
+  assert.deepEqual([ignored.error, ignored.unconfirmed], [undefined, true], 'a handler that ignores the action is not reported as done');
+  const aborted = new AbortController();
+  aborted.abort();
+  assert.equal((await office.owner.act(grok, { t: 'floor.repos' }, { signal: aborted.signal })).pending, true, 'an already cancelled call returns at once');
   const repos = await office.owner.act(grok, { t: 'floor.repos' });
   assert.equal(repos.reply?.t, 'floor.repos', 'an action with an answer gets it back');
 
@@ -361,4 +376,12 @@ test('owner actions from an external worker run through the owner’s own handle
     false,
     'the owner standing on another floor gets that floor’s toasts only',
   );
+});
+
+test('office_look text joins the rows a long line wrapped onto', async () => {
+  const term = new headless.Terminal({ cols: 10, rows: 5, scrollback: 50, allowProposedApi: true });
+  await new Promise<void>((resolve) => term.write('first\r\n0123456789abcdefghij-end\r\nlast\r\n', resolve));
+  assert.equal(plainTail(term, 2), '0123456789abcdefghij-end\nlast');
+  assert.equal(plainTail(term, 10), 'first\n0123456789abcdefghij-end\nlast');
+  term.dispose();
 });

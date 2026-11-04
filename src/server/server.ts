@@ -128,7 +128,7 @@ interface Client {
   /** The Whiteboard epoch this connection numbers its batches in, per floor (see WhiteboardStore.issueEpoch). */
   boards: Map<string, string>;
   /** An external worker's owner action: `refused` is the first warning it was given, its outcome when nothing else says. */
-  owner?: { refused?: string };
+  owner?: { refused?: string; unconfirmed?: boolean };
 }
 
 const SLOW_CLIENT_BYTES = 8 * 1024 * 1024;
@@ -2558,13 +2558,11 @@ export async function startServer(cfg: Config) {
         const changes = w.floor.changes;
         const repo = repoOf(msg.repo);
         defer();
-        void (
-          msg.t === 'changes.commit'
-            ? changes.commit(w.wid, str(msg.message, 5000), who, repo)
-            : msg.t === 'changes.discard'
-              ? changes.discard(w.wid, typeof msg.path === 'string' ? str(msg.path, 4096) : undefined, who, repo)
-              : changes.pullRequest(w.wid, str(msg.title, 300), str(msg.body, 20000), who, repo)
-        ).then(
+        let change: Promise<string | undefined>;
+        if (msg.t === 'changes.commit') change = changes.commit(w.wid, str(msg.message, 5000), who, repo);
+        else if (msg.t === 'changes.discard') change = changes.discard(w.wid, typeof msg.path === 'string' ? str(msg.path, 4096) : undefined, who, repo);
+        else change = changes.pullRequest(w.wid, str(msg.title, 300), str(msg.body, 20000), who, repo);
+        void change.then(
           (err) => (err ? refuse(err) : done(undefined, w.wid)),
           (err: unknown) => refuse(err instanceof Error ? err.message : 'The office could not confirm the change.'),
         );
@@ -2575,11 +2573,14 @@ export async function startServer(cfg: Config) {
         break;
       case 'upgrade.start':
         defer();
-        void upgrader.start(who).then((err) => {
-          if (err) return refuse(err);
-          toastAll(`${who} is upgrading the office — it restarts when the new version is built`);
-          done();
-        });
+        void upgrader.start(who).then(
+          (err) => {
+            if (err) return refuse(err);
+            toastAll(`${who} is upgrading the office — it restarts when the new version is built`);
+            done();
+          },
+          (err: unknown) => refuse(err instanceof Error ? err.message : 'The upgrade could not start.'),
+        );
         break;
       case 'decor.add': {
         const floor = here();
@@ -2638,7 +2639,11 @@ export async function startServer(cfg: Config) {
         break;
     }
     // A request id is a receipt request. Sync handlers that did not answer, and actions the companion does not await, still close the receipt so the client does not wait out its timeout.
-    if (!pending) done(c.owner ? c.owner.refused : 'This action was not confirmed. Check the office before trying again; it was not replayed.');
+    if (!pending && !finished) {
+      // A handler that neither answered nor warned may have done nothing at all (an unknown id it ignores).
+      if (c.owner && !c.owner.refused) c.owner.unconfirmed = true;
+      done(c.owner ? c.owner.refused : 'This action was not confirmed. Check the office before trying again; it was not replayed.');
+    }
   };
 
   /**
@@ -2656,18 +2661,29 @@ export async function startServer(cfg: Config) {
         let receipt: { error?: string; workerId?: string } | undefined;
         let reply: ServerMsg | undefined;
         let settled = false;
+        const onAbort = () => finish(true);
         const finish = (pending = false) => {
           if (settled) return;
           settled = true;
           clearTimeout(timer);
+          opts.signal?.removeEventListener('abort', onAbort);
           const refused = receipt?.error ?? (reply && 'error' in reply && typeof reply.error === 'string' ? reply.error : undefined);
-          resolve({ ...(refused ? { error: refused } : {}), ...(pending ? { pending } : {}), ...(receipt?.workerId ? { workerId: receipt.workerId } : {}), notes, ...(reply ? { reply } : {}) });
+          // A success toast is confirmation enough; silence is not.
+          const unconfirmed = !refused && !pending && !notes.length && client.owner?.unconfirmed;
+          resolve({
+            ...(refused ? { error: refused } : {}),
+            ...(pending ? { pending } : {}),
+            ...(unconfirmed ? { unconfirmed } : {}),
+            ...(receipt?.workerId ? { workerId: receipt.workerId } : {}),
+            notes,
+            ...(reply ? { reply } : {}),
+          });
         };
         const check = () => {
-          if (receipt && (receipt.error || !expects || reply)) finish();
+          // Handlers often toast right after done(), in the same turn: let those land in the notes first.
+          if (receipt && (receipt.error || !expects || reply)) setImmediate(() => finish());
         };
         const timer = setTimeout(() => finish(true), OWNER_ACTION_WAIT_MS);
-        opts.signal?.addEventListener('abort', () => finish(true), { once: true });
         const workerId = typeof msg.workerId === 'string' ? msg.workerId : undefined;
         const worksOn = workerId ? (workerFloor(workerId) ?? floors.get(cloud.find(workerId)?.floor.id ?? '')) : undefined;
         const home = [...floors.values()].find((f) => f.workers.get(by.id));
@@ -2678,7 +2694,9 @@ export async function startServer(cfg: Config) {
             const m = JSON.parse(json) as ServerMsg;
             if (m.t === 'action.result' && m.requestId === requestId) receipt = { ...(m.error ? { error: m.error } : {}), ...(m.workerId ? { workerId: m.workerId } : {}) };
             else if (m.t === 'toast') {
+              if (settled) return;
               notes.push(m.text);
+              // A synchronous handler refuses by warning without done(); only the first warning counts.
               if (m.level !== 'info') client.owner!.refused ??= m.text;
             } else if (m.t === expects) reply = m;
             check();
@@ -2702,6 +2720,8 @@ export async function startServer(cfg: Config) {
           boards: new Map(),
           owner: {},
         };
+        if (opts.signal?.aborted) return finish(true);
+        opts.signal?.addEventListener('abort', onAbort, { once: true });
         // Timers a hire starts keep this context after the action settles; they no longer add to its notes.
         acting.run(
           (text) => {

@@ -446,10 +446,11 @@ export class Team {
       canHire: !why,
       ...(why ? { why } : {}),
       subagents: team,
-      max: s.maxPerLead,
+      // External workers have the owner's access: no team size or model list limits them.
+      ...(w.remote ? {} : { max: s.maxPerLead }),
       worktree: s.worktree && this.opts.git,
       wakeLead: s.wakeLead,
-      ...(s.models?.length ? { models: s.models.length } : {}),
+      ...(s.models?.length && !w.remote ? { models: s.models.length } : {}),
     };
   }
 
@@ -534,7 +535,7 @@ export class Team {
    * Why a subagent can't be hired on `model` (`undefined`: the default), naming the models the lead
    * may pick that can run; undefined when it can. `named`: the lead asked for it with --model.
    */
-  private async refuseModel(model: string | undefined, named: boolean): Promise<string | undefined> {
+  private async refuseModel(model: string | undefined, named: boolean, anyModel = false): Promise<string | undefined> {
     if (!this.opts.availability) return undefined;
     const picked = model ?? this.defaultModel();
     const catalogue = picked && !this.blocked(picked) ? undefined : await this.catalogue();
@@ -544,7 +545,7 @@ export class Team {
     const known = new Map((catalogue?.models ?? []).map((m) => [m.id, m]));
     const name = (x: string) => known.get(x)?.displayName?.replace(/^DroidProxy:\s*/i, '') ?? x;
     const s = this.opts.settings();
-    const pool = s.models?.length ? s.models.map((m) => m.id) : (catalogue?.models ?? []).filter((m) => !m.legacy).map((m) => m.id);
+    const pool = s.models?.length && !anyModel ? s.models.map((m) => m.id) : (catalogue?.models ?? []).filter((m) => !m.legacy).map((m) => m.id);
     const fine = pool.filter((x) => x !== id && !this.blocked(x));
     const head = hireRefusal(name(id), a, this.now());
     const which = named ? '' : ' It is the default subagent model, so set model in team_hire.';
@@ -629,7 +630,7 @@ export class Team {
     const outside = !lead.remote && asked && s.models?.length && !s.models.some((m) => m.id === asked) && !this.defaultModel();
     const choice = this.choice(b, outside ? (await this.catalogue())?.defaultModel : undefined, lead.remote);
     if (typeof choice === 'string') return no(400, choice);
-    const refused = await this.refuseModel(choice.model, !!asked);
+    const refused = await this.refuseModel(choice.model, !!asked, !!lead.remote);
     if (refused) return no(409, refused);
     // External leads have the owner's access, which no team size limits.
     const full = () => {

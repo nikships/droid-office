@@ -247,6 +247,8 @@ test('a moving remote lead keeps both teams, reports and replies, with the owner
   assert.equal(r.teams[1].cannotHire(worker), undefined, 'Subagents off does not stop an external worker');
   assert.equal((await r.teams[1].handle(worker, { action: 'hire', task: 'Any model', model: 'strong-model' })).status, 200, 'the Subagents model list does not limit it');
   assert.equal(((await r.teams[1].handle(worker, { action: 'models' })).body as { restricted: boolean }).restricted, false);
+  const me = (await r.teams[1].handle(worker, { action: 'whoami' })).body;
+  assert.equal('max' in me || 'models' in me, false, 'whoami reports no team size or model list to an external worker');
   const local = { ...worker, id: 'local', remote: undefined, deskId: 'desk-9' } as WorkerInfo;
   assert.match(r.teams[1].cannotHire(local)!, /turned off/, 'a local worker keeps the owner’s Subagents setting');
   r.settings.on = true;
