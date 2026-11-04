@@ -17,10 +17,17 @@ It is on by default. Open ⚙️ Settings → **Phone & web** → **Tailscale MC
   headers the bot sends, `Authorization: Bearer <its key>` and
   `x-droid-office-worker-id: <its worker id>`. **Copy key** copies the key alone.
 - **New key** replaces a bot's key; the old one stops working at once. **Remove** revokes
-  the key and frees its desk; any subagents it hired become independent.
+  every key of the bot and frees its desk; any subagents it hired become independent.
+- **Add key** under a bot gives it another named key (`laptop`, `relay`) for another client it
+  runs as. Each acts as the same bot, shows when it was last used, and **Revoke** cuts off only
+  that client. The bot's row says when its main key was last used.
 
-The bot's MCP client must support Streamable HTTP and custom request headers. It needs no
-session id and no push integration.
+The key alone identifies the bot: the `x-droid-office-worker-id` header is optional, and the
+office returns the worker id at `initialize` and on every response. The bot's MCP client must
+support Streamable HTTP and custom request headers. It needs no session id and no push
+integration. A plain HTTP client can send `Accept: application/json` and get one JSON body
+instead of an SSE stream. The [remote MCP reference](remote-mcp.md) has the headers, a curl
+example and every tool.
 
 Settings manages this only in the office on its own computer: the panel holds every bot's key,
 so a paired phone or another browser is refused.
@@ -39,7 +46,8 @@ also needs a bot's key.
 
 The listener binds **only** to `127.0.0.1` (port 4611 unless that's taken) and serves **only**
 `/office/mcp`. It is separate from the main office server and the hook listener, and Browser Origins
-and other Host names are refused. Never put another network-accessible proxy in front of it.
+and other Host names are refused. Never put another network-accessible proxy in front of it. For a bot
+that isn't on your tailnet, see [Reaching it from outside the tailnet](remote-mcp.md#reaching-it-from-outside-the-tailnet).
 
 The office leaves other Serve mappings alone: it picks a port nothing serves (8443, then 8444 up to 8449,
 then 10443) and only removes a mapping that points at its own listener.
@@ -65,9 +73,10 @@ Tailscale at all; Settings then says so. CI and office clones run that way.
 - Hire using `team_models` and `team_hire` on its current floor. Normal Settings,
   model permissions, office capacity, and the per-lead team limit still apply.
   The per-lead limit counts its subagents across the whole building.
-- Use `team` to read, message, or dismiss its subagents across floors. Status
-  defaults to all its teams. Use a worker id or the optional `floor` argument
-  when names repeat.
+- Use `team_status`, `team_message` and `team_dismiss` to read, message, or
+  dismiss its subagents across floors, and `worker_log` and `worker_diff` to
+  inspect one. Status defaults to all its teams. Use a worker id or the optional
+  `floor` argument when names repeat. The older `team` tool still works.
 - Visit independent workers on the current floor and use that floor's
   Whiteboard. A reply to an earlier visit routes to its original floor.
 - Read messages and team updates from every floor with `office_inbox`.

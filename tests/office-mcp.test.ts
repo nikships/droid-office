@@ -132,6 +132,24 @@ test("a worker reaching another local office's endpoint is routed to its own off
   assert.equal(await officeAnswers('https://example.com/office/mcp'), false);
 });
 
+test('a local worker client that accepts only JSON gets one JSON body, and an SSE client still streams', async (t) => {
+  const r = await rig(t);
+  const post = (accept: string, id: number) =>
+    fetch(r.url, {
+      method: 'POST',
+      headers: { [OFFICE_MCP_WORKER_HEADER]: 'lead', Authorization: 'Bearer test-token-lead', Accept: accept, 'Content-Type': 'application/json', 'MCP-Protocol-Version': '2025-06-18' },
+      body: JSON.stringify({ jsonrpc: '2.0', id, method: 'tools/call', params: { name: 'office_whoami', arguments: {} } }),
+    });
+  const plain = await post('application/json', 1);
+  assert.match(plain.headers.get('content-type')!, /^application\/json/);
+  const body = (await plain.json()) as { id: number; result: { structuredContent: { cwd: string } } };
+  assert.equal(body.id, 1);
+  assert.equal(body.result.structuredContent.cwd, r.dir);
+  const streamed = await post('application/json, text/event-stream', 2);
+  assert.match(streamed.headers.get('content-type')!, /^text\/event-stream/);
+  assert.match(await streamed.text(), /^data: .*"id":2/m);
+});
+
 test('the server registers office tools without test probes', async (t) => {
   const r = await rig(t, false);
   const client = await r.connect('lead');

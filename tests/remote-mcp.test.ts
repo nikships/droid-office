@@ -9,10 +9,10 @@ import os from 'node:os';
 import path from 'node:path';
 import { Client, StreamableHTTPClientTransport } from '@modelcontextprotocol/client';
 import { Answers } from '../src/server/answers.js';
-import { RemoteWorkers } from '../src/server/remote-workers.js';
+import { MAX_KEYS, RemoteWorkers } from '../src/server/remote-workers.js';
 import { RemoteOffice, type RemoteFloor } from '../src/server/remote-office.js';
 import { REMOTE_MCP_FILE, RemoteMcp, remoteMcpListener } from '../src/server/remote-mcp-http.js';
-import { createOfficeMcp, tailnetIdentity } from '../src/server/office-mcp/index.js';
+import { acceptsOnlyJson, createOfficeMcp, tailnetIdentity } from '../src/server/office-mcp/index.js';
 import { planServe, serveFailure, TailscaleCli, type CliRun } from '../src/server/tailscale.js';
 import { remoteMcpConfig } from '../src/shared/remote-mcp.js';
 import { Team, type TeamWorkers } from '../src/server/team.js';
@@ -39,6 +39,8 @@ const proxyFetch: typeof fetch = async (input, init) => {
     outgoing.end(body);
   });
 };
+/** Whether `token` is one of the keys of remote worker `id`. */
+const owns = (store: RemoteWorkers, id: string, token: string) => store.resolve(token)?.id === id;
 function temporary(t: Cleanup) {
   const dir = mkdtempSync(path.join(os.tmpdir(), 'remote-mcp-'));
   t.after(() => rmSync(dir, { recursive: true, force: true }));
@@ -152,8 +154,8 @@ test('remote credentials and explicit inbox acknowledgments persist, rotate and 
   const dir = temporary(t);
   const store = new RemoteWorkers(dir);
   const { worker, token } = store.add('Grok', 'alpha', 'desk-1');
-  assert.equal(store.authenticate(worker.id, token), true);
-  assert.equal(store.authenticate(worker.id, 'wrong'), false);
+  assert.equal(owns(store, worker.id, token), true);
+  assert.equal(owns(store, worker.id, 'wrong'), false);
   assert.equal(store.enqueue(worker.id, 'hello', 'alpha'), undefined);
   const first = store.inbox(worker.id);
   assert.equal(store.inbox(worker.id).messages.length, 1);
@@ -163,13 +165,60 @@ test('remote credentials and explicit inbox acknowledgments persist, rotate and 
   assert.equal(restarted.token(worker.id), token, 'Settings can show a bot its connection again');
   assert.ok(!JSON.stringify(restarted.list()).includes(token));
   const newToken = restarted.rotate(worker.id);
-  assert.equal(restarted.authenticate(worker.id, token), false);
-  assert.equal(restarted.authenticate(worker.id, newToken), true);
+  assert.equal(owns(restarted, worker.id, token), false);
+  assert.equal(owns(restarted, worker.id, newToken), true);
   restarted.inbox(worker.id, [first.messages[0].id]);
   assert.equal(new RemoteWorkers(dir).inbox(worker.id).messages.length, 0);
   restarted.remove(worker.id);
-  assert.equal(restarted.authenticate(worker.id, newToken), false);
+  assert.equal(owns(restarted, worker.id, newToken), false);
   assert.equal(new RemoteWorkers(dir).identity(worker.id), undefined);
+});
+
+test('named keys act as their bot, record when they were last used, and revoke on their own', (t) => {
+  const dir = temporary(t);
+  const store = new RemoteWorkers(dir);
+  const { worker, token } = store.add('Grok', 'alpha', 'desk-1');
+  const other = store.add('Claw', 'alpha', 'desk-2');
+  assert.deepEqual(store.resolve(token), { id: worker.id, key: 'main' }, 'the main key alone names its bot');
+  assert.deepEqual(store.resolve(other.token), { id: other.worker.id, key: 'main' });
+  assert.equal(store.resolve('wrong'), undefined);
+
+  const laptop = store.addKey(worker.id, 'laptop');
+  assert.deepEqual(store.resolve(laptop.token), { id: worker.id, key: laptop.key.id });
+  assert.equal(owns(store, worker.id, laptop.token), true);
+  assert.equal(owns(store, other.worker.id, laptop.token), false, 'a key is scoped to its own bot');
+  assert.throws(() => store.addKey(worker.id, 'Laptop'), /already has a key/);
+  assert.throws(() => store.addKey(worker.id, '  '), /name/);
+  assert.equal(store.token(worker.id, laptop.key.id), laptop.token);
+  assert.ok(!JSON.stringify(store.list()).includes(laptop.token), 'listing never carries a key');
+
+  store.touch(worker.id, laptop.key.id, 1_000_000);
+  store.touch(worker.id, 'main', 1_000_000);
+  store.touch(worker.id, laptop.key.id, 1_030_000);
+  const saved = new RemoteWorkers(dir).list().find((r) => r.id === worker.id)!;
+  assert.equal(saved.lastUsedAt, 1_000_000);
+  assert.equal(saved.keys[0].lastUsedAt, 1_000_000, 'saved at most once a minute');
+  store.touch(worker.id, laptop.key.id, 1_060_000);
+  assert.equal(new RemoteWorkers(dir).list().find((r) => r.id === worker.id)!.keys[0].lastUsedAt, 1_060_000);
+  store.touch(worker.id, laptop.key.id, 500_000);
+  assert.equal(store.list().find((r) => r.id === worker.id)!.keys[0].lastUsedAt, 500_000, 'a clock set back still records the use');
+
+  store.rotate(worker.id);
+  assert.equal(store.list().find((r) => r.id === worker.id)!.lastUsedAt, undefined, 'a new main key has not been used yet');
+  assert.equal(owns(store, worker.id, laptop.token), true, 'rotating the main key leaves named keys alone');
+  store.revokeKey(worker.id, laptop.key.id);
+  assert.equal(store.resolve(laptop.token), undefined);
+  assert.throws(() => store.revokeKey(worker.id, laptop.key.id), /No such key/);
+  for (let i = 0; i < MAX_KEYS; i++) store.addKey(worker.id, `client ${i}`);
+  assert.throws(() => store.addKey(worker.id, 'one more'), /at most/);
+
+  // A file written before named keys existed still loads.
+  const old = temporary(t);
+  const legacy = { id: 'remote-old', floor: 'alpha', deskId: 'desk-1', name: 'Old', createdAt: 1, token: 'a'.repeat(64), inbox: [] };
+  writeFileSync(path.join(old, 'remote-workers.json'), JSON.stringify([legacy]));
+  const loaded = new RemoteWorkers(old);
+  assert.deepEqual(loaded.resolve('a'.repeat(64)), { id: 'remote-old', key: 'main' });
+  assert.deepEqual(loaded.list()[0].keys, []);
 });
 
 test('full inbox refuses new delivery rather than silently losing old messages; corrupt state fails closed', (t) => {
@@ -339,6 +388,111 @@ test('a remote lead gets structured status, cursors, waits and questions across 
   assert.deepEqual((await call('questions_list')).questions, []);
 });
 
+test('a bot that sends only its key gets its worker id from the office, and any named key connects as it', async (t) => {
+  const r = rig(t);
+  const hostname = 'office.example.ts.net';
+  const server = remoteMcpListener({ answers: new Answers(), remote: r.office, remoteTransport: { hostname: () => hostname, owner: () => undefined }, floor: r.floor, settings: () => r.settings });
+  const url = new URL('/office/mcp', await listening(t, server));
+  const base = { host: `${hostname}:8443` };
+  const seen: (string | null)[] = [];
+  const watching: typeof fetch = async (input, init) => {
+    const response = await proxyFetch(input, init);
+    seen.push(response.headers.get('x-droid-office-worker-id'));
+    return response;
+  };
+  const client = new Client({ name: 'key-only', version: '1' });
+  t.after(() => client.close());
+  await client.connect(new StreamableHTTPClientTransport(url, { fetch: watching, requestInit: { headers: { ...base, Authorization: `Bearer ${r.remote.token}` } } }));
+  assert.match(client.getInstructions()!, new RegExp(`worker id ${r.remote.worker.id}`), 'initialize says which worker the key is');
+  assert.ok((await client.listTools()).tools.some((tool) => tool.name === 'office_inbox'));
+  assert.ok(seen.length && seen.every((id) => id === r.remote.worker.id), 'every response carries the issued id');
+  assert.ok(r.store.list()[0].lastUsedAt, 'the main key recorded its use');
+
+  const other = r.office.add('Claw', 'alpha');
+  const mismatched = await proxyFetch(url, { method: 'POST', headers: { ...base, Authorization: `Bearer ${r.remote.token}`, 'x-droid-office-worker-id': other.worker.id }, body: '{}' });
+  assert.equal(mismatched.status, 401, 'a hand-made id must be the key’s own');
+  const wrong = await proxyFetch(url, { method: 'POST', headers: { ...base, Authorization: 'Bearer wrong' }, body: '{}' });
+  assert.equal(wrong.status, 401);
+  assert.equal(((await wrong.json()) as { code: string }).code, 'bad_token', 'a remote key names its bot, so no worker id header is missing');
+
+  const laptop = r.store.addKey(r.remote.worker.id, 'laptop');
+  const named = new Client({ name: 'laptop', version: '1' });
+  t.after(() => named.close());
+  await named.connect(new StreamableHTTPClientTransport(url, { fetch: proxyFetch, requestInit: { headers: { ...base, Authorization: `Bearer ${laptop.token}`, 'x-droid-office-worker-id': r.remote.worker.id } } }));
+  assert.equal((await named.callTool({ name: 'office_move', arguments: { floor: 'beta' } })).isError, undefined);
+  assert.equal(r.office.floor(r.remote.worker.id)?.id, 'beta', 'the named key acts as its bot');
+  assert.ok(r.store.list().find((b) => b.id === r.remote.worker.id)!.keys[0].lastUsedAt);
+  r.store.revokeKey(r.remote.worker.id, laptop.key.id);
+  await assert.rejects(named.listTools(), /Active remote worker/);
+  assert.ok((await client.listTools()).tools.length, 'the main key still works');
+});
+
+test('Accept: application/json gets one plain JSON-RPC body; clients that also accept SSE get SSE as before', async (t) => {
+  const r = rig(t);
+  const hostname = 'office.example.ts.net';
+  const server = remoteMcpListener({ answers: new Answers(), remote: r.office, remoteTransport: { hostname: () => hostname, owner: () => undefined }, floor: r.floor, settings: () => r.settings });
+  const url = new URL('/office/mcp', await listening(t, server));
+  const auth = { host: `${hostname}:8443`, Authorization: `Bearer ${r.remote.token}`, 'Content-Type': 'application/json' };
+  const post = (accept: string | undefined, body: unknown, version = true) =>
+    proxyFetch(url, { method: 'POST', headers: { ...auth, ...(accept ? { Accept: accept } : {}), ...(version ? { 'MCP-Protocol-Version': '2025-06-18' } : {}) }, body: JSON.stringify(body) });
+  const init = { jsonrpc: '2.0', id: 1, method: 'initialize', params: { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 'curl', version: '1' } } };
+
+  const plain = await post('application/json', init, false);
+  assert.equal(plain.status, 200);
+  assert.match(plain.headers.get('content-type')!, /^application\/json/);
+  assert.equal(plain.headers.get('x-droid-office-worker-id'), r.remote.worker.id);
+  const hello = (await plain.json()) as { id: number; result: { instructions: string; serverInfo: { name: string } } };
+  assert.equal(hello.id, 1);
+  assert.equal(hello.result.serverInfo.name, 'droid-office');
+  assert.match(hello.result.instructions, new RegExp(r.remote.worker.id));
+
+  const list = (await (await post('application/json', { jsonrpc: '2.0', id: 2, method: 'tools/list' })).json()) as { result: { tools: { name: string }[] } };
+  assert.ok(list.result.tools.some((tool) => tool.name === 'office_whoami'));
+  const call = (await (await post(undefined, { jsonrpc: '2.0', id: 3, method: 'tools/call', params: { name: 'office_whoami', arguments: {} } })).json()) as { result: { structuredContent: { floor: { id: string } } } };
+  assert.equal(call.result.structuredContent.floor.id, 'alpha', 'no Accept header at all is a plain JSON client too');
+
+  // What the existing curl client sends: both media types, and it parses `event: message` / `data:` lines.
+  const streamed = await post('application/json, text/event-stream', { jsonrpc: '2.0', id: 4, method: 'tools/list' });
+  assert.equal(streamed.status, 200);
+  assert.match(streamed.headers.get('content-type')!, /^text\/event-stream/);
+  assert.equal(streamed.headers.get('x-droid-office-worker-id'), r.remote.worker.id);
+  assert.match(await streamed.text(), /^event: message\ndata: \{"result":\{"tools":/m);
+  assert.equal((await post('text/html', { jsonrpc: '2.0', id: 5, method: 'tools/list' })).status, 406, 'a client that takes neither is still refused');
+  const stale = await proxyFetch(url, { method: 'POST', headers: { ...auth, Accept: 'application/json', 'MCP-Protocol-Version': '1999-01-01' }, body: JSON.stringify({ jsonrpc: '2.0', id: 6, method: 'tools/list' }) });
+  assert.equal(stale.status, 400);
+  const diagnosed = (await stale.json()) as { code: string; hint: string; error: unknown };
+  assert.equal(diagnosed.code, 'bad_protocol_version', 'plain JSON clients get the same diagnostics as streamed ones');
+  assert.ok(diagnosed.hint && diagnosed.error);
+
+  assert.equal(acceptsOnlyJson(new Request('http://x/', { method: 'POST', headers: { Accept: 'application/json;q=0.9' } })), true);
+  assert.equal(acceptsOnlyJson(new Request('http://x/', { method: 'POST', headers: { Accept: '*/*' } })), true);
+  assert.equal(acceptsOnlyJson(new Request('http://x/', { method: 'POST', headers: { Accept: 'text/event-stream' } })), false);
+  assert.equal(acceptsOnlyJson(new Request('http://x/', { method: 'GET', headers: { Accept: 'application/json' } })), false);
+});
+
+test('a plain JSON client can hold team_wait open and gets one JSON body when news arrives', async (t) => {
+  const r = rig(t);
+  const hostname = 'office.example.ts.net';
+  const sub = (await r.teams[0].handle(r.remote.worker, { action: 'hire', task: 'Work on alpha' })).body.worker as WorkerInfo;
+  const server = remoteMcpListener({ answers: new Answers(), remote: r.office, remoteTransport: { hostname: () => hostname, owner: () => undefined }, floor: r.floor, settings: () => r.settings });
+  const url = new URL('/office/mcp', await listening(t, server));
+  const call = { jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'team_wait', arguments: { until: ['report'], timeoutSec: 20 }, _meta: { progressToken: 1 } } };
+  const waiting = proxyFetch(url, {
+    method: 'POST',
+    headers: { host: `${hostname}:8443`, Authorization: `Bearer ${r.remote.token}`, 'Content-Type': 'application/json', Accept: 'application/json', 'MCP-Protocol-Version': '2025-06-18' },
+    body: JSON.stringify(call),
+  });
+  for (let i = 0; i < 500 && r.teams[0].watchers() !== 1; i++) await new Promise((resolve) => setTimeout(resolve, 10));
+  assert.equal(r.teams[0].watchers(), 1);
+  assert.equal((await r.teams[0].handle(r.maps[0].get(sub.id)!, { action: 'report', text: 'Done' })).status, 200);
+  const response = await waiting;
+  assert.match(response.headers.get('content-type')!, /^application\/json/);
+  const body = (await response.json()) as { id: number; result: { structuredContent: { matched: boolean; reason: string } } };
+  assert.equal(body.id, 1);
+  assert.deepEqual([body.result.structuredContent.matched, body.result.structuredContent.reason], [true, 'report']);
+  assert.equal(r.teams[0].watchers(), 0);
+});
+
 test('remote status starts at the current news, advances per caller, and timestamps each item', async (t) => {
   const r = rig(t);
   const worker = r.remote.worker;
@@ -470,6 +624,62 @@ test('remote tokens never authenticate on the local hook MCP', async (t) => {
   assert.equal(response.status, 401);
 });
 
+const REMOTE_DOC = 'docs/guide/remote-mcp.md';
+type Schema = { type?: string | string[]; enum?: unknown[]; items?: Schema; anyOf?: Schema[]; description?: string; default?: unknown; properties?: Record<string, Schema>; required?: string[] };
+const cell = (text: string) => text.replace(/\s*\n\s*/g, ' ').replace(/\|/g, '\\|');
+function schemaType(s: Schema): string {
+  if (s.enum) return s.enum.map((v) => JSON.stringify(v)).join(' \\| ');
+  if (s.anyOf) return s.anyOf.map(schemaType).join(' \\| ');
+  if (s.type === 'array') return `${s.items ? schemaType(s.items) : 'any'}[]`;
+  return Array.isArray(s.type) ? s.type.join(' \\| ') : (s.type ?? 'any');
+}
+function argRow(name: string, s: Schema, required: boolean): string {
+  const need = required ? 'yes' : s.default === undefined ? 'no' : `no, default \`${JSON.stringify(s.default)}\``;
+  return `| \`${name}\` | ${schemaType(s)} | ${need} | ${cell(s.description ?? '')} |`;
+}
+function docEntry(tool: { name: string; description?: string; inputSchema: Schema }): string {
+  const props = Object.entries(tool.inputSchema.properties ?? {});
+  const table = props.length ? ['| Argument | Type | Required | Description |', '| --- | --- | --- | --- |', ...props.map(([n, s]) => argRow(n, s, !!tool.inputSchema.required?.includes(n)))].join('\n') : 'No arguments.';
+  return `### \`${tool.name}\`\n\n${tool.description ?? ''}\n\n${table}`;
+}
+
+test(`${REMOTE_DOC} documents every tool a remote bot lists, with every argument`, async (t) => {
+  const r = rig(t);
+  const hostname = 'office.example.ts.net';
+  const server = remoteMcpListener({ answers: new Answers(), remote: r.office, remoteTransport: { hostname: () => hostname, owner: () => undefined }, floor: r.floor, settings: () => r.settings });
+  const url = new URL('/office/mcp', await listening(t, server));
+  const client = new Client({ name: 'doc-sync', version: '1' });
+  t.after(() => client.close());
+  await client.connect(new StreamableHTTPClientTransport(url, { fetch: proxyFetch, requestInit: { headers: { host: `${hostname}:8443`, Authorization: `Bearer ${r.remote.token}` } } }));
+  const listed = (await client.listTools()).tools as unknown as { name: string; description?: string; inputSchema: Schema }[];
+  let doc = '';
+  try {
+    doc = readFileSync(new URL(`../${REMOTE_DOC}`, import.meta.url), 'utf8');
+  } catch {
+    // Reported below as a missing Tools section.
+  }
+  const section = doc.split(/^## Tools$/m)[1]?.split(/^## /m)[0] ?? '';
+  const documented = new Map(
+    section
+      .split(/^### /m)
+      .slice(1)
+      .map((s) => [/^`([^`]+)`/.exec(s)?.[1] ?? s.split('\n')[0], s] as const),
+  );
+  const problems: string[] = [];
+  if (!section) problems.push('Add a "## Tools" section with one "### `tool_name`" heading per tool.');
+  for (const tool of listed) {
+    const entry = documented.get(tool.name);
+    if (!entry) {
+      problems.push(`Add this under "## Tools":\n\n${docEntry(tool)}`);
+      continue;
+    }
+    for (const [name, s] of Object.entries(tool.inputSchema.properties ?? {}))
+      if (!entry.includes(`| \`${name}\` |`)) problems.push(`Add this row to the argument table of ### \`${tool.name}\`:\n\n${argRow(name, s, !!tool.inputSchema.required?.includes(name))}`);
+  }
+  for (const name of documented.keys()) if (!listed.some((tool) => tool.name === name)) problems.push(`Remove ### \`${name}\` from "## Tools": tools/list no longer has it.`);
+  if (problems.length) assert.fail(`${REMOTE_DOC} is out of sync with tools/list for a remote bot:\n\n${problems.join('\n\n')}\n`);
+});
+
 // Trimmed from this Mac's real `tailscale status --json` and `tailscale serve status --json`, the address and login replaced.
 const DNS = 'office-mac.tail08b849.ts.net';
 const STATUS = {
@@ -540,6 +750,12 @@ test('the office serves external workers on its tailnet by itself, keeps the URL
   assert.equal(claw.floorName, 'beta');
   const rotated = first.rotate(claw.id).bots.find((b) => b.id === claw.id)!;
   assert.notEqual(rotated.connection!.headers.Authorization, claw.connection!.headers.Authorization);
+  const keyed = first.addKey(claw.id, 'relay').bots.find((b) => b.id === claw.id)!;
+  assert.equal(keyed.keys[0].name, 'relay');
+  assert.match(keyed.keys[0].connection!.headers.Authorization, /^Bearer [a-f0-9]{64}$/);
+  assert.notEqual(keyed.keys[0].connection!.headers.Authorization, rotated.connection!.headers.Authorization, 'a named key is its own credential');
+  assert.equal(keyed.keys[0].connection!.headers['x-droid-office-worker-id'], claw.id);
+  assert.deepEqual(first.revokeKey(claw.id, keyed.keys[0].id).bots.find((b) => b.id === claw.id)!.keys, []);
   assert.equal(
     first.revoke(claw.id).bots.some((b) => b.id === claw.id),
     false,

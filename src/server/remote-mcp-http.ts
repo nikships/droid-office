@@ -6,7 +6,7 @@ import { isLoopback } from './lan.js';
 import { createOfficeMcp, OFFICE_MCP_PATH, OFFICE_MCP_WORKER_HEADER, type OfficeMcpDeps } from './office-mcp/index.js';
 import type { RemoteOffice } from './remote-office.js';
 import { planServe, TailscaleCli } from './tailscale.js';
-import type { RemoteMcpBot, RemoteMcpState, RemoteMcpStatus } from '../shared/remote-mcp.js';
+import type { RemoteMcpBot, RemoteMcpConnection, RemoteMcpState, RemoteMcpStatus } from '../shared/remote-mcp.js';
 
 /** In the office's own `.droid-office/`: whether the endpoint is on, and the ports it last used, so its URL stays put. */
 export const REMOTE_MCP_FILE = 'remote-mcp.json';
@@ -133,12 +133,26 @@ export class RemoteMcp {
     return this.state();
   }
 
+  addKey(id: string, name: string): RemoteMcpState {
+    this.opts.office.store.addKey(id, name);
+    return this.state();
+  }
+
+  revokeKey(id: string, key: string): RemoteMcpState {
+    this.opts.office.store.revokeKey(id, key);
+    return this.state();
+  }
+
   state(): RemoteMcpState {
     const url = this.status === 'serving' && this.hostname && this.httpsPort ? remoteMcpUrl(this.hostname, this.httpsPort) : undefined;
     const floors = this.opts.floors();
     const bots = this.opts.office.store.list().map((r): RemoteMcpBot => {
       const worker = this.opts.office.floor(r.id)?.workers.get(r.id);
-      const token = this.opts.office.store.token(r.id);
+      const connection = (key?: string): RemoteMcpConnection | undefined => {
+        const token = this.opts.office.store.token(r.id, key);
+        return url && token ? { url, headers: { Authorization: `Bearer ${token}`, [OFFICE_MCP_WORKER_HEADER]: r.id } } : undefined;
+      };
+      const main = connection();
       return {
         id: r.id,
         name: r.name,
@@ -146,8 +160,13 @@ export class RemoteMcp {
         floorName: floors.find((f) => f.id === r.floor)?.name,
         createdAt: r.createdAt,
         unread: r.unread,
+        ...(r.lastUsedAt ? { lastUsedAt: r.lastUsedAt } : {}),
         ...(worker ? { status: worker.status, activity: worker.activity } : {}),
-        ...(url && token ? { connection: { url, headers: { Authorization: `Bearer ${token}`, [OFFICE_MCP_WORKER_HEADER]: r.id } } } : {}),
+        ...(main ? { connection: main } : {}),
+        keys: r.keys.map((k) => {
+          const c = connection(k.id);
+          return { ...k, ...(c ? { connection: c } : {}) };
+        }),
       };
     });
     return { on: this.saved.on, status: this.status, ...(url ? { url } : {}), ...(this.reason ? { reason: this.reason } : {}), ...(this.fixUrl ? { fixUrl: this.fixUrl } : {}), bots, floors };
