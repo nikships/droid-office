@@ -309,6 +309,9 @@ export class Team {
         const w = this.resolve(caller, b.worker);
         if (typeof w === 'string') return no(404, w);
         if (!this.opts.git) return no(400, 'Worker diffs require a Git floor; plain folders cannot inspect an enclosing checkout.');
+        if (b.commits !== undefined && (typeof b.commits !== 'number' || !Number.isInteger(b.commits) || b.commits < 1 || b.commits > 1000)) return no(400, 'commits takes the last 1–1000 commits through HEAD.');
+        if (b.base !== undefined && typeof b.base !== 'string') return no(400, 'base takes a branch, tag or commit.');
+        if (b.base !== undefined && b.commits !== undefined) return no(400, 'Choose base or commits, not both.');
         try {
           return ok(await workerDiff(this.opts.dir, w, typeof b.base === 'string' ? b.base : undefined, typeof b.commits === 'number' ? b.commits : undefined));
         } catch (err) {
@@ -606,7 +609,7 @@ export class Team {
   }
 
   /** What the lead hasn't heard yet, including from subagents that already left; draining counts as heard. */
-  private drainNews(lead: WorkerInfo): Pick<TeamEvent, 'kind' | 'worker' | 'name' | 'at' | 'text'>[] {
+  private drainNews(lead: WorkerInfo): Pick<TeamEvent, 'kind' | 'worker' | 'name' | 'at' | 'text' | 'pushedSha' | 'prUrl'>[] {
     const news = this.log.filter((e) => e.lead === lead.id && !e.seen);
     for (const e of news) e.seen = true;
     if (news.length) this.persist();
@@ -631,11 +634,16 @@ export class Team {
   private async dismiss(lead: WorkerInfo, b: Record<string, unknown>): Promise<TeamReply> {
     const w = this.resolve(lead, b.worker);
     if (typeof w === 'string') return no(404, w);
-    if (b.pruneWorktree !== undefined && !this.workers.dismiss) return no(409, 'Safe worktree cleanup is unavailable on this floor; no worker was dismissed');
+    if (b.pruneWorktree !== undefined && typeof b.pruneWorktree !== 'boolean') return no(400, 'pruneWorktree takes true or false.');
+    if (b.keepBranch !== undefined && typeof b.keepBranch !== 'boolean') return no(400, 'keepBranch takes true or false.');
+    if (b.keepBranch === false && b.pruneWorktree !== true) return no(400, 'keepBranch: false requires pruneWorktree: true.');
+    const safe = b.pruneWorktree !== undefined || b.keepBranch !== undefined;
+    // Even false needs retention-safe dismissal: legacy kill may prune clean worktrees.
+    if (safe && !this.workers.dismiss) return no(409, 'Safe worktree cleanup is unavailable on this floor; no worker was dismissed');
     let result: { note?: string; error?: string };
     this.sending.set(w.id, 'lead');
     try {
-      result = await (b.pruneWorktree === undefined ? this.workers.kill(w.id) : this.workers.dismiss!(w.id, b.pruneWorktree === true, b.keepBranch !== false));
+      result = await (safe ? this.workers.dismiss!(w.id, b.pruneWorktree === true, b.keepBranch !== false) : this.workers.kill(w.id));
     } finally {
       // Safe dismissal checks Git asynchronously before killing; keep attribution through those awaits.
       this.sending.delete(w.id);
@@ -651,6 +659,8 @@ export class Team {
     if (!lead) return no(403, 'You have no lead to report to: say it in your own terminal instead');
     const text = str(b.text, TASK_MAX).trim();
     if (!text) return no(400, 'Provide text for team_report');
+    if (b.pushedSha !== undefined && (typeof b.pushedSha !== 'string' || !/^[0-9a-f]{40,64}$/.test(b.pushedSha))) return no(400, 'pushedSha takes a full hexadecimal commit SHA.');
+    if (b.prUrl !== undefined && (typeof b.prUrl !== 'string' || b.prUrl.length > 2000 || !URL.canParse(b.prUrl))) return no(400, 'prUrl takes a valid URL of at most 2000 characters.');
     const question = b.question === true;
     const sha = typeof b.pushedSha === 'string' ? b.pushedSha : await pushedSha(this.opts.dir, w);
     const prUrl = typeof b.prUrl === 'string' ? b.prUrl : (w.pr?.url ?? /https:\/\/(?:github\.com|gitlab\.com)\/[^\s)<>]+\/(?:pull|merge_requests)\/\d+/.exec(text)?.[0]);

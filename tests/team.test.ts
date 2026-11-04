@@ -255,6 +255,9 @@ test('worker logs are bounded and safe dismissal is attributed to its lead acros
   assert.equal(log.body.terminal.length, 48_000);
   assert.equal(log.body.truncated, true);
   assert.equal((await r.call('lead', { action: 'dismiss', worker: hired, pruneWorktree: true })).status, 409);
+  assert.equal((await r.call('lead', { action: 'dismiss', worker: hired, pruneWorktree: false })).status, 409);
+  assert.equal((await r.call('lead', { action: 'dismiss', worker: hired, keepBranch: true })).status, 409);
+  assert.deepEqual(r.fake.killed, [], 'explicit retention must not fall back to a legacy kill that could prune');
   assert.ok(r.fake.get(hired), 'unavailable safe cleanup cannot fall through to legacy cleanup');
   (r.fake as TeamWorkers).dismiss = async (id, prune, keep) => {
     assert.equal(prune, true);
@@ -265,6 +268,59 @@ test('worker logs are bounded and safe dismissal is attributed to its lead acros
   assert.equal((await r.call('lead', { action: 'dismiss', worker: hired, pruneWorktree: true })).status, 200);
   assert.deepEqual((await r.call('lead', { action: 'status' })).body.events, []);
   assert.equal((await r.call('lead', { action: 'log', worker: 'missing' })).status, 404);
+});
+
+test('direct dismissal validates new cleanup flags without changing legacy dismissal', async (t) => {
+  const r = rig(t);
+  const hired = (await r.call('lead', { action: 'hire', task: 'ticket' })).body.worker.id;
+  const calls: unknown[] = [];
+  (r.fake as TeamWorkers).dismiss = async (...args) => {
+    calls.push(args);
+    return {};
+  };
+  for (const flags of [{ pruneWorktree: 'false' }, { pruneWorktree: 0 }, { keepBranch: 'true' }, { keepBranch: false }, { pruneWorktree: false, keepBranch: false }]) {
+    assert.equal((await r.call('lead', { action: 'dismiss', worker: hired, ...flags })).status, 400, JSON.stringify(flags));
+  }
+  assert.deepEqual(calls, []);
+  assert.deepEqual(r.fake.killed, []);
+  assert.equal((await r.call('lead', { action: 'dismiss', worker: hired, pruneWorktree: false })).status, 200);
+  assert.equal((await r.call('lead', { action: 'dismiss', worker: hired, keepBranch: true })).status, 200);
+  assert.equal((await r.call('lead', { action: 'dismiss', worker: hired, pruneWorktree: true, keepBranch: false })).status, 200);
+  assert.deepEqual(calls, [
+    [hired, false, true],
+    [hired, false, true],
+    [hired, true, false],
+  ]);
+  assert.equal((await r.call('lead', { action: 'dismiss', worker: hired })).status, 200);
+  assert.deepEqual(r.fake.killed, [hired], 'omitting cleanup flags preserves legacy behavior');
+});
+
+test('direct diff inspection validates commit bounds and mutually exclusive revision selectors', async (t) => {
+  const r = rig(t);
+  const hired = (await r.call('lead', { action: 'hire', task: 'ticket' })).body.worker.id;
+  for (const commits of [0, -1, 1.5, 1001, Number.NaN, Number.POSITIVE_INFINITY, '1', null]) {
+    const result = await r.call('lead', { action: 'diff', worker: hired, commits });
+    assert.equal(result.status, 400);
+    assert.match(result.body.error, /1–1000/);
+  }
+  assert.match((await r.call('lead', { action: 'diff', worker: hired, base: 1 })).body.error, /base takes/);
+  assert.match((await r.call('lead', { action: 'diff', worker: hired, base: 'HEAD', commits: 1 })).body.error, /not both/);
+});
+
+test('direct reports validate provenance before persisting news or acknowledging a report', async (t) => {
+  const r = rig(t);
+  const hired = (await r.call('lead', { action: 'hire', task: 'ticket' })).body.worker.id;
+  for (const fields of [{ pushedSha: 'bad' }, { pushedSha: 42 }, { pushedSha: 'a'.repeat(65) }, { prUrl: 'not a URL' }, { prUrl: 42 }, { prUrl: `https://example.com/${'x'.repeat(2000)}` }]) {
+    assert.equal((await r.call(hired, { action: 'report', text: 'Done', ...fields })).status, 400);
+  }
+  assert.deepEqual((await r.call('lead', { action: 'status' })).body.events, []);
+  const fields = { pushedSha: 'a'.repeat(40), prUrl: 'https://github.com/nikships/droid-office/pull/375' };
+  const report = await r.call(hired, { action: 'report', text: 'Done', ...fields });
+  assert.equal(report.status, 200);
+  assert.equal(report.body.pushedSha, fields.pushedSha);
+  const status = (await r.call('lead', { action: 'status' })).body;
+  assert.equal(status.events[0].prUrl, fields.prUrl);
+  assert.equal(status.team[0].report.pushedSha, fields.pushedSha);
 });
 
 test('models lists what a lead may pick, with credit multipliers and notes, and hire keeps to it', async (t) => {

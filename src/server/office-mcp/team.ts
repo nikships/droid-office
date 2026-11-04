@@ -17,7 +17,7 @@ function reply(result: TeamReply, describe: (body: Record<string, unknown>) => s
   if (result.status >= 400)
     return officeError(
       typeof result.body.error === 'string' ? result.body.error : 'The team could not finish this action. Read team status before retrying.',
-      result.status === 404 ? 'unknown_worker' : result.status === 403 ? 'permission_denied' : result.status === 409 ? 'conflict' : 'bad_argument',
+      result.status === 404 || result.status === 410 ? 'unknown_worker' : result.status === 403 ? 'permission_denied' : result.status === 409 ? 'conflict' : 'bad_argument',
     );
   return officeResult(describe(result.body), result.body);
 }
@@ -123,7 +123,9 @@ export function register(server: OfficeMcpServer, deps: OfficeMcpDeps): void {
     },
     officeAccess.mayHire,
     async (_args, caller) =>
-      reply(await caller.floor.team.handle(caller.worker, { action: 'models_list' }), (body) => (body.models as TeamModel[]).map((model) => `${model.enabled === false ? 'Switched off: ' : ''}${modelText(model)}`).join('\n\n')),
+      reply(await caller.floor.team.handle(caller.worker, { action: 'models_list' }), (body) =>
+        (body.models as TeamModel[]).map((model) => `${model.enabled === false ? (model.cannotRun ? 'Unavailable: ' : 'Not allowed: ') : ''}${modelText(model)}`).join('\n\n'),
+      ),
   );
   server.tool(
     {

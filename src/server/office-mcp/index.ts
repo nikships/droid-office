@@ -170,7 +170,9 @@ export class OfficeMcpServer {
     const protocol = /protocol.?version/i.test(detail);
     const code = protocol ? 'bad_protocol_version' : 'bad_argument';
     const hint = protocol ? 'Use an MCP-Protocol-Version supported by the server (2025-06-18 is supported).' : 'Send a valid MCP JSON-RPC request with Content-Type: application/json.';
-    return Response.json({ ...(record(body) ? body : { error: 'Bad MCP request' }), code, hint }, { status: 400, headers: response.headers });
+    const headers = new Headers(response.headers);
+    for (const name of HOP_HEADERS) headers.delete(name);
+    return Response.json({ ...(record(body) ? body : { error: 'Bad MCP request' }), code, hint }, { status: 400, headers });
   }
 
   /** `signal` aborts when the caller cancels or disconnects; a tool must not record that its result was seen after that. */

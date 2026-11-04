@@ -86,7 +86,7 @@ async function rig(t: { after(fn: () => void | Promise<void>): void }, probes = 
     await client.connect(new StreamableHTTPClientTransport(via, { requestInit: { headers: { ...(id ? { [OFFICE_MCP_WORKER_HEADER]: id } : {}), ...(token ? { Authorization: `Bearer ${token}` } : {}), ...headers } } }));
     return client;
   };
-  return { dir, settings, people, tokens, connect, url, origin, office, workers };
+  return { dir, settings, people, tokens, connect, url, origin, office, workers, team };
 }
 
 test('the HTTP MCP refuses missing, mismatched and non-agent identities', async (t) => {
@@ -244,6 +244,32 @@ test('split team tools have strict action-specific schemas and retain the deprec
   assert.deepEqual(dismissal, ['sub', false, true]);
 });
 
+test('Gone team errors identify an unknown worker rather than a bad argument', async (t) => {
+  const r = await rig(t);
+  const client = await r.connect('lead');
+  t.mock.method(r.team, 'handle', async () => ({ status: 410, body: { error: 'The lead left the floor' } }));
+  const result = await client.callTool({ name: 'team_status', arguments: {} });
+  assert.equal(result.isError, true);
+  assert.equal(result.structuredContent?.code, 'unknown_worker');
+});
+
+test('full model discovery distinguishes owner restrictions from unavailable models in prose', async (t) => {
+  const r = await rig(t);
+  const client = await r.connect('lead');
+  t.mock.method(r.team, 'handle', async () => ({
+    status: 200,
+    body: {
+      models: [
+        { id: 'opus', name: 'Opus', enabled: false },
+        { id: 'custom:mine', name: 'Mine', enabled: false, cannotRun: 'Switched off in Droid.' },
+      ],
+    },
+  }));
+  const result = await client.callTool({ name: 'models_list', arguments: {} });
+  assert.match(JSON.stringify(result.content), /Not allowed: opus: Opus/);
+  assert.match(JSON.stringify(result.content), /Unavailable: custom:mine: Mine/);
+});
+
 test('structured hire controls base and branch and immediately returns its worktree', async (t) => {
   const r = await rig(t);
   const client = await r.connect('lead');
@@ -310,6 +336,25 @@ test('HTTP authentication and SDK argument errors carry code and hint without ch
   assert.equal(body.code, 'bad_protocol_version');
   assert.ok(body.hint);
   assert.ok(body.error, 'SDK JSON-RPC error remains');
+});
+
+test('rewritten SDK errors discard stale body framing while retaining protocol headers and JSON-RPC errors', async (t) => {
+  const r = await rig(t);
+  const headers = { [OFFICE_MCP_WORKER_HEADER]: 'lead', Authorization: 'Bearer test-token-lead', Accept: 'application/json, text/event-stream', 'Content-Type': 'application/json' };
+  const sdk = (r.office as unknown as { mcp: { fetch(request: Request): Promise<Response> } }).mcp;
+  const original = await sdk.fetch(new Request(r.url, { method: 'POST', headers, body: '{}' }));
+  assert.equal(original.status, 400);
+  const body = await original.json();
+  t.mock.method(sdk, 'fetch', async () => Response.json(body, { status: 400, headers: { 'content-length': '1', 'content-encoding': 'gzip', 'MCP-Protocol-Version': '2025-06-18' } }));
+  const response = await fetch(r.url, { method: 'POST', headers, body: '{}' });
+  assert.equal(response.status, 400);
+  assert.equal(response.headers.get('content-encoding'), null);
+  assert.notEqual(response.headers.get('content-length'), '1');
+  assert.equal(response.headers.get('MCP-Protocol-Version'), '2025-06-18');
+  const rewritten = await response.json();
+  assert.deepEqual(rewritten.error, body.error);
+  assert.equal(rewritten.code, 'bad_argument');
+  assert.ok(rewritten.hint);
 });
 
 test('Office MCP defaults on and survives old clients and persisted settings', (t) => {
