@@ -355,6 +355,9 @@ test('a remote lead gets structured status, cursors, waits and questions across 
   t.after(() => client.close());
   await client.connect(new StreamableHTTPClientTransport(url, { fetch: proxyFetch, requestInit: { headers: { host: `${hostname}:8443`, Authorization: `Bearer ${r.remote.token}`, 'x-droid-office-worker-id': id } } }));
   const call = async (name: string, args: Record<string, unknown> = {}) => (await client.callTool({ name, arguments: args })).structuredContent as Record<string, any>;
+  const who = await client.callTool({ name: 'office_whoami', arguments: {} });
+  assert.equal(who.structuredContent?.subagents, 2, 'identity counts teams left behind after moving floors');
+  assert.match(JSON.stringify(who.content), /Subagents: 2, no limit/);
   assert.ok(
     (await client.listTools()).tools.some((tool) => tool.name === 'team_wait'),
     'an external worker has no wake notes, so it may wait',

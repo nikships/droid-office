@@ -131,6 +131,8 @@ Read your office identity, desk, lead if you are a subagent, permission to hire 
 
 No arguments.
 
+For an external worker, the subagent count covers all open floors, including teams left behind after `office_move`.
+
 ### `office_floors`
 
 List open floors, your current workspace, and your teams and unread team updates on each floor.
@@ -173,7 +175,7 @@ List every worker in the building, or on one floor: id, name, floor id and numbe
 
 ### `office_look`
 
-Read the end of any worker's terminal, on any floor, without typing anything. name "office-shell" reads the floor's boss shell. A snapshot, not a transcript; for a cloud worker use office_owner with thread.read.
+Read the end of any worker's terminal, on any floor, without typing anything. name "office-shell" reads the floor's boss shell. At most 48,000 characters, with a truncation marker if older text was omitted. A snapshot, not a transcript; for a cloud worker use office_owner with thread.read.
 
 | Argument | Type | Required | Description |
 | --- | --- | --- | --- |

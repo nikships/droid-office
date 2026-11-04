@@ -179,6 +179,7 @@ const remoteOnly: OfficeMcpAccess = (c) => (c.worker.remote ? undefined : 'Only 
 const floorRef = z.string().trim().min(1).max(128).describe('Floor id, number (1 is the top of the elevator list) or name.');
 const workerRef = z.string().trim().min(1).max(64).describe('Worker name or id, case-insensitive. Use office_roster to find it.');
 const REPLY_MAX = 60_000;
+const TERMINAL_MAX = 48_000;
 
 /** A floor by id, elevator number or name. */
 export function pickFloor(floors: OwnerFloor[], ref: string): { floor: OwnerFloor; number: number } | string {
@@ -265,6 +266,10 @@ function outcomeText(r: OwnerReply): string {
   return 'done.';
 }
 
+function terminalText(text: string): { text: string; truncated?: true } {
+  return text.length > TERMINAL_MAX ? { text: text.slice(-TERMINAL_MAX), truncated: true } : { text };
+}
+
 function replyText(r: OwnerReply): { text: string; truncated: boolean } {
   const json = r.reply ? JSON.stringify(r.reply, null, 1) : '';
   const truncated = json.length > REPLY_MAX;
@@ -308,7 +313,7 @@ export function register(server: OfficeMcpServer, deps: OfficeMcpDeps): void {
   server.tool(
     {
       name: 'office_look',
-      description: `Read the end of any worker's terminal, on any floor, without typing anything. name "${OFFICE_SHELL_ID}" reads the floor's boss shell. A snapshot, not a transcript; for a cloud worker use office_owner with thread.read.`,
+      description: `Read the end of any worker's terminal, on any floor, without typing anything. name "${OFFICE_SHELL_ID}" reads the floor's boss shell. At most 48,000 characters, with a truncation marker if older text was omitted. A snapshot, not a transcript; for a cloud worker use office_owner with thread.read.`,
       inputSchema: z.object({ name: workerRef, floor: floorRef.optional(), lines: z.number().int().min(1).max(400).default(80).describe('Latest terminal lines, default 80, at most 400.') }),
       annotations: readOnly,
     },
@@ -325,13 +330,19 @@ export function register(server: OfficeMcpServer, deps: OfficeMcpDeps): void {
         if (!shellFloor) return officeError('Name the floor whose shell to read.');
         const text = owner.tail(OFFICE_SHELL_ID, lines, shellFloor.id);
         if (text === undefined) return officeError(`${shellFloor.name}'s shell is not running.`);
-        return officeResult(`${shellFloor.name}'s shell:\n\n${text || '(empty)'}`, { worker: OFFICE_SHELL_ID, floor: shellFloor.id, text });
+        const shown = terminalText(text);
+        return officeResult(`${shellFloor.name}'s shell:\n\n${shown.truncated ? '[Truncated: latest 48,000 characters]\n' : ''}${shown.text || '(empty)'}`, { worker: OFFICE_SHELL_ID, floor: shellFloor.id, ...shown });
       }
       const found = findWorker(owner.floors(), name, floor);
       if (typeof found === 'string') return officeError(found);
       const text = owner.tail(found.worker.id, lines);
       if (text === undefined) return officeError(`${found.worker.name} has no terminal to read (${found.worker.cloud ? 'a cloud worker: use office_owner thread.read' : found.worker.status}).`);
-      return officeResult(`${found.worker.name} on floor ${found.number} (${found.floor.name}):\n\n${text || '(its terminal is empty)'}`, { worker: found.worker.id, floor: found.floor.id, text });
+      const shown = terminalText(text);
+      return officeResult(`${found.worker.name} on floor ${found.number} (${found.floor.name}):\n\n${shown.truncated ? '[Truncated: latest 48,000 characters]\n' : ''}${shown.text || '(its terminal is empty)'}`, {
+        worker: found.worker.id,
+        floor: found.floor.id,
+        ...shown,
+      });
     },
   );
   server.tool(

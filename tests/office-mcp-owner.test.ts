@@ -175,7 +175,7 @@ async function remoteRig(t: TestContext) {
     const r = await client.callTool({ name, arguments: args });
     return { error: r.isError === true, text: (r.content as { text?: string }[]).map((c) => c.text ?? '').join('\n'), data: r.structuredContent };
   };
-  return { client, call, calls, answers, grok: grok.worker, people, dir };
+  return { client, call, calls, answers, owner, grok: grok.worker, people, dir };
 }
 
 test('an external worker sees the whole building and every worker’s terminal through the Office MCP', async (t) => {
@@ -205,6 +205,24 @@ test('an external worker sees the whole building and every worker’s terminal t
   assert.match((await r.call('office_look', { name: 'office-shell', floor: 'api' })).text, /api's shell:\n\nnpm test/);
   assert.equal((await r.call('office_look', { name: 'Byte' })).error, true, 'a repeated name needs a floor or id');
   assert.equal(r.calls.length, 0, 'reading the building takes no owner action');
+});
+
+test('office_look bounds worker and boss-shell output while preserving the latest text', async (t) => {
+  const r = await remoteRig(t);
+  const long = `${'older\n'.repeat(10_000)}latest output`;
+  r.owner.tail = () => long;
+  for (const args of [
+    { name: 'Pixel', lines: 400 },
+    { name: 'office-shell', floor: 'api', lines: 400 },
+  ]) {
+    const result = await r.call('office_look', args);
+    assert.equal(result.error, false);
+    assert.equal(result.data?.text, long.slice(-48_000));
+    assert.equal(result.data?.truncated, true);
+    assert.match(result.text, /\[Truncated: latest 48,000 characters\]/);
+    assert.ok(result.text.endsWith('latest output'));
+    assert.ok(result.text.length < 48_100);
+  }
 });
 
 test('office_send_home sends anyone home through the owner’s path, keeping the worktree unless asked', async (t) => {
