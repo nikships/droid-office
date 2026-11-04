@@ -305,6 +305,7 @@ export class Team {
       case 'diff': {
         const w = this.resolve(caller, b.worker);
         if (typeof w === 'string') return no(404, w);
+        if (!this.opts.git) return no(400, 'Worker diffs require a Git floor; plain folders cannot inspect an enclosing checkout.');
         try {
           return ok(await workerDiff(this.opts.dir, w, typeof b.base === 'string' ? b.base : undefined, typeof b.commits === 'number' ? b.commits : undefined));
         } catch (err) {

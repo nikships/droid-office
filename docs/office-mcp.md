@@ -53,7 +53,7 @@ Twenty local-worker tools, plus four external-worker tools. Names, inputs and wh
 | `team_status` | team snapshot | `worker?`, `floor?` (external only), `lines?` (1–400). Includes observed `idleSince` and `idleForMs` | has or may have subagents |
 | `team_message` | team follow-up | `worker`, `text`, `floor?` (external only) | same |
 | `team_dismiss` | safe lifecycle cleanup | `worker`, `floor?` (external only), `pruneWorktree?` (default false), `keepBranch?` (default true; false requires pruning) | same |
-| `worker_diff` | read-only work inspection | `worker`, `floor?` (external only), `base?` or `commits?` (1–1000); diff cap 48,000 bytes plus 8,000-byte stat | same |
+| `worker_diff` | read-only work inspection on Git floors only | `worker`, `floor?` (external only), `base?` or `commits?` (1–1000); diff cap 48,000 bytes plus 8,000-byte stat | same |
 | `worker_log` | read-only activity inspection | `worker`, `tail` (1–400), `floor?` (external only); cap 48,000 characters | same |
 | `team` | deprecated alias for `list`, `read`, `send`, `dismiss` | `action`: `status` \| `message` \| `dismiss`; `name?` (status: one subagent, else all); `lines?` (number, status: include that many terminal lines, max 400); `text?` (message). Legacy dismissal retains its existing cleanup policy | has or may have subagents |
 | `team_report` | `office-workers report [--question]` | `text`, `question?` (boolean), `pushedSha?` (full commit SHA), `prUrl?`. Missing provenance uses a locally known upstream SHA and linked/report PR URL where available, without fetching | subagents only |

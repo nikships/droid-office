@@ -10,6 +10,8 @@ import { githubPulls } from '../src/server/github.js';
 import type { ChangesState } from '../src/shared/protocol.js';
 import { inspectGit, pushedSha, workerDiff } from '../src/server/team-inspect.js';
 import type { WorkerInfo } from '../src/shared/protocol.js';
+import { SUBAGENT_DEFAULTS } from '../src/shared/protocol.js';
+import { Team, type TeamWorkers } from '../src/server/team.js';
 
 /**
  * A project cloned from a bare origin, plus a second clone standing in for the forge: whatever it
@@ -116,6 +118,36 @@ test('worker diffs distinguish working changes and last commits, bound output an
   assert.ok(Buffer.byteLength(diff.diff) <= 48_000);
   const capped = await inspectGit(cwd, ['diff', '--no-ext-diff'], 40);
   assert.equal(capped.truncated, true);
+});
+
+test('diff inspection refuses a plain floor nested inside a Git checkout without exposing parent changes', async (t) => {
+  const f = fixture(t);
+  const floor = path.join(f.dir, 'plain-floor');
+  mkdirSync(floor);
+  writeFileSync(path.join(f.dir, 'a.txt'), 'outside the plain floor');
+  assert.match((await inspectGit(floor, ['diff', 'HEAD', '--'])).text, /outside the plain floor/, 'Git itself discovers the enclosing checkout');
+  const lead = { id: 'lead', name: 'Lead', kind: 'agent', status: 'done' } as WorkerInfo;
+  const sub = { id: 'sub', name: 'Sub', kind: 'agent', status: 'done', lead: lead.id } as WorkerInfo;
+  const workers: TeamWorkers = {
+    list: () => [lead, sub],
+    get: (id) => [lead, sub].find((w) => w.id === id),
+    officeDefault: undefined,
+    deskOccupied: () => false,
+    hire: () => 'unused',
+    prompt: () => undefined,
+    resume: () => undefined,
+    kill: async () => ({}),
+    tail: () => undefined,
+    setTask: () => {},
+  };
+  const team = new Team(workers, { dataDir: floor, dir: floor, git: false, settings: () => SUBAGENT_DEFAULTS, toast: () => {} });
+  t.after(() => team.stop());
+  for (const options of [{}, { base: 'HEAD' }, { commits: 1 }]) {
+    const result = await team.handle(lead, { action: 'diff', worker: sub.id, ...options });
+    assert.equal(result.status, 400);
+    assert.match(String(result.body.error), /require a Git floor/);
+    assert.equal('diff' in result.body, false);
+  }
 });
 
 test('forks copy staged, unstaged, binary, deleted, executable and untracked files without touching the source', (t) => {
