@@ -186,6 +186,8 @@ Hire one fresh subagent at the nearest free desk for an independent task. It get
 
 Manage only your own subagents. Status returns one named subagent or all, with unread reports, questions, finished turns, terminal input requests, stops and departures since your last status call. News is drained per caller, even for a named snapshot; nothing waits. Message answers a question or follows up, best between turns. Dismiss only after review and integration when worker and worktree are no longer needed; worktrees with work are kept.
 
+For an external worker, status news follows a cursor kept for that bot across reconnects and office restarts: the first status call sets a baseline without replaying old reports, later calls return only newer events, and each news line starts with its UTC time. Reading status does not acknowledge anything in `office_inbox`.
+
 | Argument | Type | Required | Description |
 | --- | --- | --- | --- |
 | `action` | "status" \| "message" \| "dismiss" | yes | What to do. |
