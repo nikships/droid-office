@@ -100,10 +100,13 @@ test('worker diffs distinguish working changes and last commits, bound output an
   await assert.rejects(workerDiff(f.dir, w, '--output=/tmp/no'), /leading dash/);
   await assert.rejects(workerDiff(f.dir, w, 'unknown-ref'), /revision/);
   execFileSync('git', ['branch', '--set-upstream-to=origin/main', made.branch], { cwd, stdio: 'ignore' });
-  assert.equal(await pushedSha(f.dir, w), made.base);
+  assert.equal(await pushedSha(f.dir, w), undefined, 'the unchanged origin/main base is not a worker push');
   // Commit via the fixture's existing Git identity, then return to the subagent's branch.
   f.commit('next.txt');
   execFileSync('git', ['merge', '--ff-only', 'main'], { cwd, stdio: 'ignore' });
+  assert.equal(await pushedSha(f.dir, w), undefined, 'a stale tracking ref must not be reported as the new work');
+  execFileSync('git', ['push', '-u', 'origin', made.branch], { cwd, stdio: 'ignore' });
+  assert.equal(await pushedSha(f.dir, w), execFileSync('git', ['rev-parse', 'HEAD'], { cwd, encoding: 'utf8' }).trim(), 'an upstream matching the changed HEAD supplies provenance');
   diff = await workerDiff(f.dir, w, undefined, 1);
   assert.match(diff.diff, /next.txt/);
   assert.doesNotMatch(diff.diff, /working change/);

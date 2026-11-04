@@ -47,9 +47,11 @@ export async function workerDiff(dir: string, worker: WorkerInfo, base?: string,
 export async function pushedSha(dir: string, worker: WorkerInfo): Promise<string | undefined> {
   if (!worker.worktree) return undefined;
   try {
-    const result = await inspectGit(path.resolve(dir, worker.worktree.path), ['rev-parse', '--verify', '@{upstream}'], 1024);
+    const cwd = path.resolve(dir, worker.worktree.path);
+    const [result, head] = await Promise.all([inspectGit(cwd, ['rev-parse', '--verify', '@{upstream}'], 1024), inspectGit(cwd, ['rev-parse', '--verify', 'HEAD'], 1024)]);
     const sha = result.text.trim();
-    return /^[0-9a-f]{40,64}$/.test(sha) ? sha : undefined;
+    // A stale tracking tip or an unchanged base is not evidence that this worker pushed its work.
+    return /^[0-9a-f]{40,64}$/.test(sha) && sha === head.text.trim() && sha !== worker.worktree.base ? sha : undefined;
   } catch {
     return undefined;
   }
