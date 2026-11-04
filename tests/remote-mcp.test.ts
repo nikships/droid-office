@@ -292,6 +292,7 @@ test('a remote lead gets structured status, cursors, waits and questions across 
     [`${alpha.id}@alpha`, `${beta.id}@beta`],
   );
   assert.equal(first.cursor, 'team:alpha:0,team:beta:0');
+  assert.equal((await call('team', { action: 'status', name: alpha.id, verbose: false })).cursor, 'team:alpha:0,team:beta:0', 'a named status cursor covers every floor, so a building-wide status can reuse it');
   assert.equal((await r.teams[0].handle(r.maps[0].get(alpha.id)!, { action: 'report', text: 'Which API?', question: true, options: ['REST', 'GraphQL'] })).status, 200);
   const news = await call('team', { action: 'status', since: first.cursor, verbose: false });
   assert.deepEqual(

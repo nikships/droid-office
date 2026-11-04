@@ -501,10 +501,13 @@ export function register(server: OfficeMcpServer, deps: OfficeMcpDeps): void {
       if (!now?.answerable || now.id !== args.questionId) return officeError('The question changed or was already answered, so nothing was sent. questions_list shows the current one.');
       if (args.optionId !== undefined && args.text !== undefined) return officeError('A terminal question takes optionId or text, not both: text alone types your own answer, and a multi-select takes optionIds with text.');
       const shown = scope.workers.screenMenu?.(w.id);
-      if (!shown) return officeError('The question changed or was already answered, so nothing was sent.');
+      // The menu answered must be the one the id names, not one that replaced it since.
+      if (!shown || menuHash(shown) !== args.questionId.slice(args.questionId.lastIndexOf(':') + 1)) return officeError('The question changed or was already answered, so nothing was sent.');
       const number = (id: string) => (/^\d+$/.test(id) ? Number(id) : NaN);
       const reply = args.optionId !== undefined ? { choice: number(args.optionId) } : { ...(args.optionIds !== undefined ? { choices: args.optionIds.map(number) } : {}), ...(args.text !== undefined ? { text: args.text } : {}) };
       if (reply.choice !== undefined && !shown.choices.some((c) => c.number === reply.choice)) return officeError(`${args.optionId} is not one of this question's options.`);
+      const unknown = args.optionIds?.find((id) => !shown.choices.some((c) => c.number === number(id)));
+      if (unknown !== undefined) return officeError(`${unknown} is not one of this question's options.`);
       const error = await deps.answers.answer(w.id, shown, reply, {
         worker: () => scope.workers.get(w.id),
         lines: () => scope.workers.screenLines?.(w.id),

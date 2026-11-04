@@ -116,7 +116,10 @@ export class RemoteOffice {
       if (matches.length !== 1) return { status: 409, body: { error: matches.length ? 'That name occurs on several floors; use the worker id or specify floor' : 'No such subagent in your teams' } };
       const { f, w } = matches[0];
       const result = await f.team.handle(worker, { ...args, worker: w.id, since: args.since ? (args.since[f.id] ?? 0) : undefined });
-      return args.action === 'status' && result.status < 400 ? { status: 200, body: { ...result.body, ...merged([{ floor: f.id, result }]) } } : result;
+      if (args.action !== 'status' || result.status >= 400) return result;
+      // Every floor's position, so this cursor also serves a later status of the whole building.
+      const latest = Object.fromEntries(floors.map((x) => [x.id, x === f ? result.body.latest : x.team.latest()]));
+      return { status: 200, body: { ...result.body, ...merged([{ floor: f.id, result }]), latest } };
     }
     if (args.action !== 'status') return { status: 400, body: { error: 'Name a subagent' } };
     const snapshots = await Promise.all(floors.map(async (f) => ({ floor: f.id, result: await f.team.handle(worker, { ...args, since: args.since ? (args.since[f.id] ?? 0) : undefined }) })));
@@ -135,8 +138,8 @@ export class RemoteOffice {
 /** Floor snapshots as one status, each subagent and event tagged with its floor, and each floor's latest event seq. */
 function merged(snapshots: { floor: string; result: TeamReply }[]): Record<string, unknown> {
   return {
-    team: snapshots.flatMap(({ floor, result }) => (result.body.team as Record<string, unknown>[]).map((w) => ({ ...w, floor }))),
-    events: snapshots.flatMap(({ floor, result }) => (result.body.events as Record<string, unknown>[]).map((e) => ({ ...e, floor }))),
+    team: snapshots.flatMap(({ floor, result }) => ((result.body.team as Record<string, unknown>[] | undefined) ?? []).map((w) => ({ ...w, floor }))),
+    events: snapshots.flatMap(({ floor, result }) => ((result.body.events as Record<string, unknown>[] | undefined) ?? []).map((e) => ({ ...e, floor }))),
     latest: Object.fromEntries(snapshots.map(({ floor, result }) => [floor, result.body.latest])),
   };
 }

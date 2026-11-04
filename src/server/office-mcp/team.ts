@@ -146,7 +146,12 @@ export function register(server: OfficeMcpServer, deps: OfficeMcpDeps): void {
         name: z.string().trim().min(1).optional().describe('Subagent name or id, case-insensitive. Status: omit for all. Required for message and dismiss.'),
         verbose: z.boolean().optional().describe('Status only: false for one compact line per subagent and per event, with summaries instead of whole reports. Omit or true for the full text.'),
         since: z.string().trim().min(1).max(4000).optional().describe('Status only: a cursor from an earlier status (cursor field) or one event id. News is everything after it, heard or not, instead of only unread news.'),
-        kinds: z.array(z.enum(EVENT_FILTERS)).min(1).max(EVENT_FILTERS.length).optional().describe('Status only: just these news kinds (blocked is needs_input). Other news stays unread.'),
+        kinds: z
+          .array(z.enum(EVENT_FILTERS))
+          .min(1)
+          .max(EVENT_FILTERS.length)
+          .optional()
+          .describe('Status only: just these news kinds (blocked is needs_input). Other news stays unread, but the cursor moves past it: reuse a filtered cursor only with the same kinds.'),
         lines: z.number().int().min(1).max(400).optional().describe('Status only: include this many recent terminal lines per selected subagent, at most 400. Omit to leave terminals out.'),
         text: text.optional().describe('Message only: answer or follow-up to type into the subagent session. Cannot answer a permission prompt in its own terminal.'),
       }),

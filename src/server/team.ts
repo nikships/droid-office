@@ -517,7 +517,7 @@ export class Team {
     const last = [...this.log].reverse().find((e) => e.worker === w.id && (e.kind === 'report' || e.kind === 'question'));
     const model = w.activeModel ?? w.model;
     const effort = w.activeEffort ?? w.effort;
-    const open = this.log.find((e) => e.worker === w.id && e.kind === 'question' && !e.answered && e.lead === w.lead);
+    const open = [...this.log].reverse().find((e) => e.worker === w.id && e.kind === 'question' && !e.answered && e.lead === w.lead);
     const asking = w.status === 'needs_input' && w.ask?.kind === 'question';
     return {
       id: w.id,

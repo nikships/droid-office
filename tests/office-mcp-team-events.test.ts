@@ -285,6 +285,7 @@ test('terminal questions are listed like the Asks inbox and answered only while 
   assert.match((await r.call(r.lead, 'question_answer', { questionId: menu.id, optionId: '3', text: 'notes.txt' })).text, /not both/, 'a terminal question never drops the typed half of an answer');
   assert.deepEqual(r.writes, []);
   assert.equal((await r.call(r.lead, 'question_answer', { questionId: menu.id, optionId: '9' })).isError, true);
+  assert.match((await r.call(r.lead, 'question_answer', { questionId: menu.id, optionIds: ['x'] })).text, /x is not one of this question's options/);
   assert.equal((await r.call(r.lead, 'question_answer', { questionId: menu.id, optionId: '1' })).isError, undefined);
   assert.deepEqual(r.writes, [['sub1', '1']]);
   assert.match((await r.call(r.lead, 'question_answer', { questionId: menu.id, optionId: '1' })).text, /already being answered/, 'the shared answer queue stops a second answer');
