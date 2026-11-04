@@ -40,7 +40,9 @@ import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
-import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.onClick
+import androidx.compose.ui.semantics.role
+import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -128,9 +130,15 @@ private fun QuotaRing(provider: SubscriptionProvider, account: SubscriptionAccou
     val windows = account.windows.take(3)
     Column(
         Modifier.width(80.dp)
-            .selectable(picked, role = Role.Button, onClick = onClick)
-            .semantics { contentDescription = Subscriptions.ringLabel(provider, account) }
             .tagged(Tags.Subscriptions.ring(provider.key, account.id))
+            .selectable(picked, role = Role.Button, onClick = onClick)
+            // One node that reads the whole ring: without this its name lands on a child node instead of the tapped one.
+            .clearAndSetSemantics {
+                contentDescription = Subscriptions.ringLabel(provider, account)
+                selected = picked
+                role = Role.Button
+                onClick { onClick(); true }
+            }
             .padding(vertical = 4.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.spacedBy(8.dp),
@@ -154,7 +162,7 @@ private fun QuotaRing(provider: SubscriptionProvider, account: SubscriptionAccou
             },
             contentAlignment = Alignment.Center,
         ) { BrandLogo(ModelBrand.provider(provider.key), Modifier.size(18.dp)) }
-        Text(account.label, style = MaterialTheme.typography.bodySmall, color = Palette.TextTertiary, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.clearAndSetSemantics {})
+        Text(account.label, style = MaterialTheme.typography.bodySmall, color = Palette.TextTertiary, maxLines = 1, overflow = TextOverflow.Ellipsis)
     }
 }
 
