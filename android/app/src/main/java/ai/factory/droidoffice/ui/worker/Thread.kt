@@ -987,8 +987,6 @@ private fun ActionRow(a: ThreadModelAction, entry: ThreadEntry?, open: Boolean, 
                         if (d.recorded) {
                             if (d.output.isNotEmpty() || !pictures) {
                                 Mono(d.result, d.output.ifEmpty { "(empty)" }, if (a.state == ActivityState.Cancelled) Palette.TextSecondary else if (d.result == "Error") Palette.Danger else Palette.Text)
-                            } else {
-                                Eyebrow(d.result, color = Palette.TextSecondary)
                             }
                             if (pictures) ThreadPictures(d.images, a.title, a.detail, end = false)
                         } else {

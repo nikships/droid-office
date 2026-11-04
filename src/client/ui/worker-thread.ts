@@ -455,7 +455,7 @@ export function mountWorkerThread(net: Net, opts: ThreadOptions): WorkerThread {
           ? [
               item.arguments ? h('div.wt-detail-label', {}, item.arguments.label) : null,
               item.arguments ? h('pre.wt-code', {}, threadArgumentsText(entry.input, item.arguments)) : null,
-              h('div.wt-detail-label', {}, item.result),
+              output || !images ? h('div.wt-detail-label', {}, item.result) : null,
               output || !images ? h('pre.wt-code.wt-output', {}, output ?? 'No result recorded in this session.') : null,
               images,
             ]

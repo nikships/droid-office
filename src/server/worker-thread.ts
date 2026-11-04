@@ -112,6 +112,22 @@ function contentText(content: unknown): string {
   );
 }
 
+/**
+ * A call made inside a Script records only a stand-in for a picture it returned, without the data: the
+ * picture itself arrives in the Script's own result (Droid's `image()`).
+ */
+function pictureStandIn(content: unknown): boolean {
+  if (typeof content !== 'string' || !content.startsWith('{"type":"image"')) return false;
+  try {
+    const part = object(JSON.parse(content));
+    return part.type === 'image' && object(part.source).type === 'base64';
+  } catch {
+    return false;
+  }
+}
+
+const leaf = (name = '') => name.split(/[.:/]/).at(-1)?.toLowerCase() ?? '';
+
 const projection = (before = Infinity, since = 0, drops?: string): Projection => ({ text: '', since, entries: [], tools: new Map(), bytes: 0, seq: 0, dropped: false, before, drops });
 const entryBytes = (entry: ThreadEntry) => Buffer.byteLength(JSON.stringify(entry));
 
@@ -392,7 +408,7 @@ export class WorkerThreadReader {
         const tool = state.tools.get(`tool:${toolId}`);
         if (!tool) continue;
         state.bytes -= entryBytes(tool);
-        tool.output = contentText(part.content);
+        tool.output = pictureStandIn(part.content) ? IMAGE_PLACEHOLDER : contentText(part.content);
         tool.error = part.is_error === true;
         const images = Array.isArray(part.content)
           ? part.content
@@ -405,6 +421,7 @@ export class WorkerThreadReader {
         else delete tool.images;
         tool.resultSeq = state.seq;
         state.bytes += entryBytes(tool);
+        if (images.length && leaf(tool.name) === 'script') this.givePictures(state, tool, images);
         this.trim(state);
       } else if (part.type === 'tool_use') {
         const toolId = clean(part.id, 160);
@@ -420,6 +437,27 @@ export class WorkerThreadReader {
         if (text) this.add(state, { id: partId, role, kind: 'thinking', text });
       }
     }
+  }
+
+  /**
+   * The Thread hides a Script that has calls under it, so its pictures go to the calls inside it that
+   * returned a picture: one each when the counts match, otherwise all of them to the last such call.
+   */
+  private givePictures(state: Projection, script: ThreadEntry, images: ThreadImage[]): void {
+    const after = state.entries.slice(state.entries.indexOf(script) + 1);
+    const next = after.findIndex((entry) => entry.kind === 'tool' && leaf(entry.name) === 'script');
+    const calls = (next < 0 ? after : after.slice(0, next)).filter((entry) => entry.kind === 'tool' && !entry.images && entry.output === IMAGE_PLACEHOLDER);
+    if (!calls.length) return;
+    const give = (entry: ThreadEntry, pictures: ThreadImage[]) => {
+      state.bytes -= entryBytes(entry);
+      entry.images = pictures;
+      state.bytes += entryBytes(entry);
+    };
+    if (calls.length === images.length) calls.forEach((entry, i) => give(entry, [images[i]]));
+    else give(calls[calls.length - 1], images);
+    state.bytes -= entryBytes(script);
+    delete script.images;
+    state.bytes += entryBytes(script);
   }
 
   /**

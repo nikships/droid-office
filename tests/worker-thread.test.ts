@@ -8,7 +8,7 @@ import { WorkerThreadReader } from '../src/server/worker-thread.js';
 import { withImages } from '../src/shared/drops.js';
 import { WorkerManager } from '../src/server/workers.js';
 import { LABEL_TEXT_CHARS } from '../src/shared/worker-labels.js';
-import { threadOutputText } from '../src/shared/thread-presentation.js';
+import { presentThread, threadOutputText, type ThreadModelAction } from '../src/shared/thread-presentation.js';
 
 // Shapes sampled from the owner's local Factory JSONL, including todo_state's nested todos,
 // cli_tui source, hook visibility, thinking signatures, image source and tool_result.is_error.
@@ -190,6 +190,55 @@ test('pictures in tool results and messages are referenced by id and served from
   await writeFile(file, before.replace(png.toString('base64'), Buffer.concat([png, Buffer.from([0])]).toString('base64')));
   assert.equal(await reader.image(source, read.images![0].id), undefined);
 });
+test("a picture read inside a Script shows on that Read, from the Script's own result", async (t) => {
+  const png = await readFile(new URL('../src/client/public/icons/icon-192.png', import.meta.url));
+  const picture = { type: 'image', source: { type: 'base64', data: png.toString('base64'), media_type: 'image/png' } };
+  // Droid records each call inside a Script with a stand-in where the picture was; image() puts it in the Script's result.
+  const standIn = JSON.stringify({ type: 'image', source: { type: 'base64', mediaType: 'image/png', data: '[image data omitted; pass this image block to image() to show it]' } });
+  const script = (id: string, calls: { id: string; name: string; input: unknown; output: string }[], content: unknown[]) => [
+    message(`${id}-use`, 'assistant', [{ type: 'tool_use', id, name: 'Script', input: { script: 'image(await tools.Read(...))' } }]),
+    ...calls.flatMap((call) => [
+      message(`${call.id}-use`, 'assistant', [{ type: 'tool_use', id: call.id, name: call.name, input: call.input }]),
+      message(`${call.id}-result`, 'user', [{ type: 'tool_result', tool_use_id: call.id, content: call.output }]),
+    ]),
+    message(`${id}-result`, 'user', [{ type: 'tool_result', tool_use_id: id, is_error: false, content }]),
+  ];
+  const done = { type: 'text', text: '[Script completed · 0.1 s elapsed · 1 call]' };
+  const { reader, source } = await rig(t, [
+    ...script('script-1', [{ id: 'nested-1', name: 'Read', input: { file_path: '/project/shot.png' }, output: standIn }], [picture, done]),
+    ...script(
+      'script-2',
+      [
+        { id: 'nested-2', name: 'Execute', input: { command: 'screencap' }, output: 'ok' },
+        { id: 'nested-3', name: 'Read', input: { file_path: '/project/a.png' }, output: standIn },
+        { id: 'nested-4', name: 'Read', input: { file_path: '/project/b.png' }, output: standIn },
+      ],
+      [{ type: 'text', text: 'exit 0' }, picture, picture, done],
+    ),
+    ...script('script-3', [{ id: 'nested-5', name: 'Read', input: { file_path: '/project/unshown.png' }, output: standIn }], [done]),
+  ]);
+  const page = await reader.read(source);
+  const entry = (id: string) => page.entries.find((e) => e.id === `tool:${id}`)!;
+  for (const id of ['nested-1', 'nested-3', 'nested-4']) {
+    assert.equal(entry(id).output, '[Image attachment]', 'the stand-in is never shown as JSON');
+    assert.equal(entry(id).images?.length, 1);
+    assert.equal(threadOutputText(entry(id)), '');
+    assert.deepEqual((await reader.image(source, entry(id).images![0].id))?.body, png);
+  }
+  assert.notEqual(entry('nested-3').images![0].id, entry('nested-4').images![0].id, 'each Read gets its own picture');
+  assert.equal(entry('script-1').images, undefined, 'the hidden Script no longer holds them');
+  assert.equal(entry('nested-2').images, undefined);
+  assert.equal(entry('nested-5').output, '[Image attachment]');
+  assert.equal(entry('nested-5').images, undefined, 'a Script that never showed the picture has none to give');
+
+  const actions = presentThread(page.entries, false).flatMap((row) => (row.kind === 'activity' ? row.blocks.flatMap((block) => (block.kind === 'tools' ? block.actions : [])) : []));
+  const action = (id: string) => actions.find((a: ThreadModelAction) => a.id === `tool:${id}`)!;
+  assert.equal(action('nested-1').arguments, undefined, 'a Read that returned a picture shows just the picture');
+  assert.equal(action('nested-5').arguments?.label, 'Arguments');
+  assert.equal(action('nested-2').arguments?.label, 'Command');
+  assert.equal(action('script-1'), undefined);
+});
+
 test("the owner's prompt shows the pictures the office sent with it, not where it kept them", async (t) => {
   const png = await readFile(new URL('../src/client/public/icons/icon-192.png', import.meta.url));
   const jpeg = await readFile(new URL('../android/docs/unpaired.jpg', import.meta.url));

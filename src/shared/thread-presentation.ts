@@ -433,7 +433,8 @@ function notice(entry: ThreadEntry): Extract<ThreadRow, { kind: 'notice' }> | un
 const STATUS: Record<ActivityState, string> = { complete: '', working: 'Running', failed: 'Failed', incomplete: 'No result', cancelled: 'Cancelled' };
 
 function modelAction(action: ThreadAction): ThreadModelAction {
-  const args = threadArguments(action.entry);
+  // A Read that returned a picture shows just the picture: its path is already in the title.
+  const args = leaf(action.entry.name) === 'read' && action.entry.images?.length ? undefined : threadArguments(action.entry);
   return {
     id: action.entry.id,
     title: action.title,
