@@ -24,7 +24,6 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
@@ -261,7 +260,7 @@ private fun KindSwitch(connected: Boolean, onShell: () -> Unit) {
     Column {
         val shape = RoundedCornerShape(12.dp)
         Row(Modifier.fillMaxWidth().panel(shape, Palette.Surface).padding(4.dp), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-            Segment(OfficeIcons.Agent, "Droid", true, Modifier.weight(1f).selectable(true, role = Role.RadioButton) {}.tagged(Tags.Hire.DROID))
+            Segment(OfficeIcons.Agent, "Droid", true, Modifier.weight(1f).semantics { selected = true }.tagged(Tags.Hire.DROID))
             Segment(OfficeIcons.Shell, "Shell", false, Modifier.weight(1f).clickable(enabled = connected, role = Role.Button, onClick = onShell).tagged(Tags.Hire.SHELL))
         }
         Text(

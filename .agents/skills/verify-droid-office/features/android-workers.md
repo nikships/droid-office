@@ -8,11 +8,14 @@ The Android companion app lists every worker on every floor of the paired office
 - `android-status` shows each worker's status as the content-desc of `home.worker.status` (`Needs you`, `Working`, `Ready`, `Done`, `Asleep`).
 - `android-open` opens a worker (`screen.worker`), with `worker.view.thread` and `worker.view.tty`.
 - `android-hire` hires from the phone (`hire.droid`; `hire.shell` opens a shell at once).
+- `android-hire-asks` opens a shell's terminal from Asks → Hire → Shell, without switching to Office first.
+- `android-hire-snackbar` opens a shell immediately even while a Droid's Open snackbar remains visible.
 
 ## How to get to it (user POV)
 
 - Open Droid Office on the phone and choose the Office tab (`tab.office`).
 - Tap a worker card to open it.
+- Tap Hire on Office, or Hire on an empty Asks tab, then Shell.
 
 ## Driving it with adb and uiautomator
 

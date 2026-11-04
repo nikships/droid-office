@@ -26,11 +26,13 @@ import androidx.compose.material3.NavigationBarItemDefaults
 import androidx.compose.material3.NavigationRail
 import androidx.compose.material3.NavigationRailItem
 import androidx.compose.material3.NavigationRailItemDefaults
+import androidx.compose.material3.SnackbarResult
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
@@ -42,12 +44,14 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import ai.factory.droidoffice.core.Tags
 import ai.factory.droidoffice.core.WorkerStatus
+import ai.factory.droidoffice.core.collectHires
 import ai.factory.droidoffice.ui.asks.AsksScreen
 import ai.factory.droidoffice.ui.board.WhiteboardScreen
 import ai.factory.droidoffice.ui.components.tagged
 import ai.factory.droidoffice.ui.home.HireSheet
 import ai.factory.droidoffice.ui.offices.OfficesScreen
 import ai.factory.droidoffice.ui.home.HomeScreen
+import ai.factory.droidoffice.ui.home.deskLabel
 import ai.factory.droidoffice.ui.theme.LocalOfficeType
 import ai.factory.droidoffice.ui.theme.OfficeIcons
 import ai.factory.droidoffice.ui.theme.Palette
@@ -74,6 +78,8 @@ fun MainTabs(onOpenWorker: (id: String, draft: String?) -> Unit, onOpenCard: (fl
     val badge = { t: MainTab -> if (t == MainTab.Asks) waiting else if (t == MainTab.Board) changed else 0 }
     var tab by rememberSaveable { mutableStateOf<MainTab?>(null) }
     var hiring by rememberSaveable { mutableStateOf(false) }
+    var selected by rememberSaveable { mutableStateOf<String?>(null) }
+    val snackbar = LocalSnackbar.current
     // Opens on Asks when something is waiting the first time the office is in, else on Office.
     LaunchedEffect(data.synced) { if (tab == null && data.synced) tab = if (waiting > 0) MainTab.Asks else MainTab.Office }
     val shown = tab ?: MainTab.Office
@@ -81,11 +87,25 @@ fun MainTabs(onOpenWorker: (id: String, draft: String?) -> Unit, onOpenCard: (fl
     BoxWithConstraints(Modifier.fillMaxSize().background(Palette.Bg)) {
         val wide = maxWidth >= 840.dp
         val content: @Composable (Modifier) -> Unit = { m ->
-            Box(m) {
+            BoxWithConstraints(m) {
+                val split = maxWidth >= 840.dp
+                val open by rememberUpdatedState<(String) -> Unit> { id ->
+                    if (split && shown == MainTab.Office) selected = id else onOpenWorker(id, null)
+                }
+                // Both Asks and Office can hire. A snackbar must never hold up the next shell result.
+                LaunchedEffect(graph.connection) {
+                    graph.connection.hired.collectHires(
+                        onShell = { open(it.id) },
+                        onDroid = { w ->
+                            val result = snackbar.showSnackbar("${w.name} is at ${deskLabel(w.deskId)}", actionLabel = "Open", withDismissAction = true)
+                            if (result == SnackbarResult.ActionPerformed) open(w.id)
+                        },
+                    )
+                }
                 Crossfade(shown, animationSpec = tween(160), label = "tab") { t ->
                     when (t) {
                         MainTab.Asks -> AsksScreen(onOpenWorker = onOpenWorker, onHire = { hiring = true })
-                        MainTab.Office -> HomeScreen(onOpenWorker = { onOpenWorker(it, null) }, onOffices = { tab = MainTab.Me }, onScan = onScan)
+                        MainTab.Office -> HomeScreen(onOpenWorker = open, selected = selected, onCloseWorker = { selected = null }, onOffices = { tab = MainTab.Me }, onScan = onScan)
                         MainTab.Board -> WhiteboardScreen(onOpenCard = onOpenCard)
                         MainTab.Me -> OfficesScreen(onBack = { tab = MainTab.Office }, onPairNew = onScan, onSwitched = { tab = MainTab.Office }, embedded = true)
                     }
