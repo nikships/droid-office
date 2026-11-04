@@ -682,16 +682,22 @@ export class Team {
     return ok({ ...this.whoami(lead), team, events: this.statusNews(lead, since, kinds), latest: this.seq });
   }
 
-  /** First poll establishes a baseline; later polls return only this caller's newer events. */
-  private remoteStatusNews(lead: string): TeamEvent[] {
+  /**
+   * First poll establishes a baseline; later polls return only this caller's newer events. A kinds filter
+   * moves the cursor only up to the first event it leaves out, so that news stays unheard; matching news
+   * after it may be returned again.
+   */
+  private remoteStatusNews(lead: string, kinds?: ReadonlySet<TeamEventKind>): TeamEvent[] {
     const previous = this.statusCursors.get(lead);
     const after = previous ?? this.seq;
-    const news = this.log.filter((e) => e.lead === lead && e.seq > after).map((e) => ({ ...e }));
-    if (previous !== this.seq) {
-      this.statusCursors.set(lead, this.seq);
+    const news = this.log.filter((e) => e.lead === lead && e.seq > after);
+    const skipped = kinds && news.find((e) => !kinds.has(e.kind));
+    const next = skipped ? skipped.seq - 1 : this.seq;
+    if (previous !== next) {
+      this.statusCursors.set(lead, next);
       this.persist();
     }
-    return news;
+    return news.filter((e) => !kinds || kinds.has(e.kind)).map((e) => ({ ...e }));
   }
 
   /**
@@ -700,7 +706,7 @@ export class Team {
    */
   private statusNews(lead: WorkerInfo, since: number | undefined, kinds: ReadonlySet<TeamEventKind> | undefined) {
     // A remote lead's unheard news is its office_inbox; without since, status moves its own cursor instead.
-    if (lead.remote) return since === undefined ? this.remoteStatusNews(lead.id).filter((e) => !kinds || kinds.has(e.kind)) : this.news(lead.id, { after: since, kinds });
+    if (lead.remote) return since === undefined ? this.remoteStatusNews(lead.id, kinds) : this.news(lead.id, { after: since, kinds });
     const news = this.news(lead.id, since === undefined ? { unread: true, kinds } : { after: since, kinds });
     this.markSeen(
       lead.id,
@@ -766,6 +772,7 @@ export class Team {
     if (b.pushedSha !== undefined && (typeof b.pushedSha !== 'string' || !/^[0-9a-f]{40,64}$/.test(b.pushedSha))) return no(400, 'pushedSha takes a full hexadecimal commit SHA.');
     if (b.prUrl !== undefined && (typeof b.prUrl !== 'string' || b.prUrl.length > 2000 || !URL.canParse(b.prUrl))) return no(400, 'prUrl takes a valid URL of at most 2000 characters.');
     const question = b.question === true;
+    if (b.options !== undefined && !question) return no(400, 'options are only for a question: add question: true, or leave options out of a report.');
     const options =
       question && Array.isArray(b.options)
         ? b.options

@@ -108,7 +108,7 @@ interface RegisteredTool {
   listed: Tool;
   schema: z.ZodObject;
   access: OfficeMcpAccess;
-  run(args: unknown, caller: OfficeMcpCaller, signal: AbortSignal, progress: OfficeProgress): CallToolResult | Promise<CallToolResult>;
+  run(args: unknown, caller: OfficeMcpCaller, signal: AbortSignal, progress?: OfficeProgress): CallToolResult | Promise<CallToolResult>;
 }
 
 const INSTRUCTIONS = [GENERAL_INSTRUCTIONS, teamInstructions, whiteboardInstructions, visitInstructions].filter(Boolean).join('\n\n');
@@ -203,7 +203,7 @@ export class OfficeMcpServer {
       },
       schema: inputSchema,
       access,
-      run: (args, caller, signal, progress) => handler(args as z.infer<z.ZodObject<S>>, caller, signal, progress),
+      run: (args, caller, signal, progress = () => {}) => handler(args as z.infer<z.ZodObject<S>>, caller, signal, progress),
     });
   }
 

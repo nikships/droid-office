@@ -297,7 +297,7 @@ export function register(server: OfficeMcpServer, deps: OfficeMcpDeps): void {
     {
       name: 'team_wait',
       description:
-        'Wait until one of your subagents reports, asks a question, gets blocked in its terminal or settles, then return at once with what happened, typed events with ids and a cursor. Returns immediately only for matching news you have not heard (or news after since). A terminal question counts once it appears during the wait, and idle once every watched subagent settles during it; questions already waiting are listed in questions without ending the wait. Otherwise returns at timeoutSec (default 30, at most 600) with matched false. Without since, a local lead hears the news it is shown, like team status. Longer waits need a client timeout to match; with a progress token it sends progress every 15 s.',
+        'Wait until one of your subagents reports, asks a question, gets blocked in its terminal or settles, then return at once with what happened, typed events with ids and a cursor. Returns immediately only for matching news you have not heard (or news after since). A terminal question counts once it appears during the wait, and idle once every watched subagent settles during it; questions already waiting are listed in questions without ending the wait. Otherwise returns at timeoutSec (default 30, at most 600) with matched false. The cursor moves past news until leaves out, so reuse it with the same until. Without since, a local lead hears the news it is shown, like team status. Longer waits need a client timeout to match; with a progress token it sends progress every 15 s.',
       inputSchema: z.object({
         until: z
           .array(z.enum(WAIT_FOR))
@@ -416,7 +416,7 @@ export function register(server: OfficeMcpServer, deps: OfficeMcpDeps): void {
       if (typeof scopes === 'string') return officeError(scopes);
       const lead = caller.worker.id;
       const wanted = args.id === undefined ? undefined : parseCursor(args.id, caller.floor.id);
-      if (args.id !== undefined && wanted?.size !== 1) return officeError('id takes one event id, such as team:<floor>:<seq> from lastReportId.');
+      if (args.id !== undefined && (wanted?.size !== 1 || args.id.includes(','))) return officeError('id takes one event id, such as team:<floor>:<seq> from lastReportId.');
       const [floor, seq] = wanted ? [...wanted][0] : [];
       const found = scopes.flatMap((s) =>
         s.team
@@ -479,7 +479,7 @@ export function register(server: OfficeMcpServer, deps: OfficeMcpDeps): void {
       const lead = caller.worker.id;
       const done = (name: string, worker: string) => officeResult(`Answered ${name}'s question.`, { answered: true, questionId: args.questionId, worker });
       const team = parseCursor(args.questionId, caller.floor.id);
-      if (args.questionId.startsWith('team:') && team?.size === 1) {
+      if (args.questionId.startsWith('team:') && !args.questionId.includes(',') && team?.size === 1) {
         const [floor, seq] = [...team][0];
         const scope = scopes.find((s) => s.id === floor);
         const asked = scope?.team.questions(lead).find((e) => e.seq === seq);

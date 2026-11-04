@@ -434,6 +434,21 @@ test('remote status cursors survive restart independently for each caller', asyn
   );
 });
 
+test('a kinds-filtered remote status leaves the news it filters out for the next status', async (t) => {
+  const r = rig(t);
+  const worker = r.remote.worker;
+  await r.teams[0].handle(worker, { action: 'status' });
+  await r.teams[0].handle(worker, { action: 'hire', task: 'Fix the report' });
+  const sub = r.maps[0].get('sub-1')!;
+  r.teams[0].onWorker(sub);
+  await r.teams[0].handle(sub, { action: 'report', text: 'Done' });
+  await r.teams[0].handle(sub, { action: 'report', text: 'Which API?', question: true });
+  const kinds = async (filter?: string[]) => ((await r.teams[0].handle(worker, { action: 'status', ...(filter ? { kinds: filter } : {}) })).body.events as { kind: string; text: string }[]).map((e) => `${e.kind} ${e.text}`);
+  assert.deepEqual(await kinds(['question']), ['question Which API?']);
+  assert.deepEqual(await kinds(), ['report Done', 'question Which API?'], 'the report it filtered out is still news; the question after it may repeat');
+  assert.deepEqual(await kinds(), []);
+});
+
 test('unchanged remote status polls do not rewrite team state', async (t) => {
   const r = rig(t);
   const persist = t.mock.method(r.teams[0] as unknown as { persist(): void }, 'persist');

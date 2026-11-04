@@ -167,6 +167,7 @@ test('status keeps its prose and adds compact workers, typed news with ids and t
   );
   assert.equal((await r.call(r.lead, 'team_report_get', { id: 'team:floor:1' })).body.report.id, 'team:floor:1');
   assert.equal((await r.call(r.lead, 'team_report_get', { id: 'team:floor:99' })).isError, true);
+  assert.equal((await r.call(r.lead, 'team_report_get', { id: 'team:floor:1,team:floor:2' })).isError, true, 'a cursor is not one id');
   assert.equal((await r.call(r.lead, 'team_report_get', {})).isError, true);
   await r.call(r.lead, 'team', { action: 'dismiss', name: 'Pixel' });
   assert.equal((await r.call(r.lead, 'team_report_get', { worker: 'Pixel' })).body.report.text, LONG_REPORT, 'reports outlive the subagent');
@@ -243,12 +244,14 @@ test('a question makes the subagent blocked_on_question until its lead answers t
   const r = await rig(t);
   await r.hire();
   const pixel = await r.connect('sub1');
+  assert.match((await r.call(pixel, 'team_report', { text: 'Pick one', options: ['A', 'B'] })).text, /only for a question/, 'a report never drops options silently');
   await r.call(pixel, 'team_report', { text: 'Which database?', question: true, options: ['Postgres', 'SQLite'] });
   r.set('sub1', 'done');
   const listed = await r.call(r.lead, 'questions_list');
   assert.equal(listed.body.questions.length, 1);
   const [asked] = listed.body.questions;
   assert.equal(asked.id, 'team:floor:1');
+  assert.equal((await r.call(r.lead, 'question_answer', { questionId: 'team:floor:0,team:floor:1', optionId: '1' })).isError, true, 'a cursor is not one question id');
   assert.equal(asked.kind, 'team');
   assert.deepEqual(asked.options, [
     { id: '1', label: 'Postgres' },
