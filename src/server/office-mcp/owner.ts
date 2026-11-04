@@ -176,7 +176,7 @@ export function hasOwnerAccess(worker: WorkerInfo, owner: OwnerOffice | undefine
 }
 
 const remoteOnly: OfficeMcpAccess = (c) => (c.worker.remote ? undefined : 'Only external workers have owner access through the Office MCP');
-const floorRef = z.string().trim().min(1).max(128).describe('Floor id, number (1 is the top of the elevator list) or name. Omit for every floor.');
+const floorRef = z.string().trim().min(1).max(128).describe('Floor id, number (1 is the top of the elevator list) or name.');
 const workerRef = z.string().trim().min(1).max(64).describe('Worker name or id, case-insensitive. Use office_roster to find it.');
 const REPLY_MAX = 60_000;
 
@@ -367,7 +367,7 @@ export function register(server: OfficeMcpServer, deps: OfficeMcpDeps): void {
       name: 'office_owner',
       description: `Send one action the owner's office window sends, with the same effect and toast, attributed to you. args are that action's fields from the office protocol (src/shared/protocol.ts ClientMsg), for example worker.spawn {deskId: "auto", prompt, worktree, model, effort}, worker.prompt {workerId, prompt}, worker.answer {workerId, menu, choice}, gh.merge {number, method, deleteBranch}, subagents.set {settings}. Floor-scoped actions run on floor (default: the worker's floor for worker actions, else your desk's). Returns the outcome, toasts and any reply. Actions: ${OWNER_ACTIONS.join(', ')}.`,
       inputSchema: z.object({
-        action: z.enum(OWNER_ACTIONS),
+        action: z.enum(OWNER_ACTIONS).describe('The owner action, a ClientMsg type.'),
         args: z.record(z.string(), z.unknown()).default({}).describe('The action fields, without t.'),
         floor: floorRef.optional(),
       }),

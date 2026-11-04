@@ -654,7 +654,9 @@ function docEntry(tool: { name: string; description?: string; inputSchema: Schem
 test(`${REMOTE_DOC} documents every tool a remote bot lists, with every argument`, async (t) => {
   const r = rig(t);
   const hostname = 'office.example.ts.net';
-  const server = remoteMcpListener({ answers: new Answers(), remote: r.office, remoteTransport: { hostname: () => hostname, owner: () => undefined }, floor: r.floor, settings: () => r.settings });
+  // The office always gives external workers its owner bridge, so their tool list includes the owner tools.
+  const owner = { floors: () => [], tail: () => undefined, act: async () => ({ notes: [] }) };
+  const server = remoteMcpListener({ answers: new Answers(), owner, remote: r.office, remoteTransport: { hostname: () => hostname, owner: () => undefined }, floor: r.floor, settings: () => r.settings });
   const url = new URL('/office/mcp', await listening(t, server));
   const client = new Client({ name: 'doc-sync', version: '1' });
   t.after(() => client.close());

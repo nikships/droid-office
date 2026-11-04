@@ -121,13 +121,13 @@ The office never turns on [Tailscale Funnel](https://tailscale.com/kb/1223/funne
 
 ## Tools
 
-Every tool a remote bot sees in `tools/list` when every Setting allows it. Some depend on Settings → **Subagents & visits**: hiring (`team_models`, `models_list`, `team_hire`) needs subagents on and desk workers allowed to hire, and the `visit_*` tools need **Visits between workers** on. A tool that is off is not listed, and a direct call to it says why. `tests/remote-mcp.test.ts` checks that this list matches `tools/list`, with every argument, and prints the exact entry to add when a tool changes.
+Every tool a remote bot sees in `tools/list` when every Setting allows it. The `visit_*` tools need Settings → **Subagents & visits** → **Visits between workers** on. Hiring does not depend on the Subagents setting: a bot has the owner's access. A tool that is off is not listed, and a direct call to it says why. `office_roster`, `office_look`, `office_send_home` and `office_owner` give a bot the owner's access to the whole building; no Setting turns them off, so give a key only to a bot you would trust with the office. `tests/remote-mcp.test.ts` checks that this list matches `tools/list`, with every argument, and prints the exact entry to add when a tool changes.
 
 Whiteboard file paths and `cwd` values are on the **office machine**, not the bot's host.
 
 ### `office_whoami`
 
-Read your office identity, desk, lead if you are a subagent, permission to hire and visit, team size, worktree default and wake-note setting. Use this to establish your role before coordinating work. It does not hire, message or wait.
+Read your office identity, desk, lead if you are a subagent, permission to hire and visit, owner access, team size, worktree default and wake-note setting. Use this to establish your role before coordinating work. It does not hire, message or wait.
 
 No arguments.
 
@@ -162,6 +162,44 @@ Set your self-reported office status and optional short activity. This does not 
 | --- | --- | --- | --- |
 | `status` | "idle" \| "working" \| "done" | yes | Shown at your desk. |
 | `activity` | string | no | A short line of what you're doing, at most 140 characters. |
+
+### `office_roster`
+
+List every worker in the building, or on one floor: id, name, floor id and number (1-based, the elevator's order), desk, status, task, model, lead, and whether it is you or your own subagent. Includes owner-hired workers, subagents, shells, cloud and external workers.
+
+| Argument | Type | Required | Description |
+| --- | --- | --- | --- |
+| `floor` | string | no | Floor id, number (1 is the top of the elevator list) or name. |
+
+### `office_look`
+
+Read the end of any worker's terminal, on any floor, without typing anything. name "office-shell" reads the floor's boss shell. A snapshot, not a transcript; for a cloud worker use office_owner with thread.read.
+
+| Argument | Type | Required | Description |
+| --- | --- | --- | --- |
+| `name` | string | yes | Worker name or id, case-insensitive. Use office_roster to find it. |
+| `floor` | string | no | Floor id, number (1 is the top of the elevator list) or name. |
+| `lines` | integer | no, default `80` | Latest terminal lines, default 80, at most 400. |
+
+### `office_send_home`
+
+Send any worker home, on any floor, exactly as the owner's SEND HOME does: owner-hired workers, other leads' subagents, external workers, you or your lead. cleanup keep (the default) leaves its worktree and branch; worktree deletes the worktree and keeps the branch; all deletes both, including commits no remote has. The reply says what the worktree held. Its subagents stay, without a lead.
+
+| Argument | Type | Required | Description |
+| --- | --- | --- | --- |
+| `name` | string | yes | Worker name or id, case-insensitive. Use office_roster to find it. |
+| `floor` | string | no | Floor id, number (1 is the top of the elevator list) or name. |
+| `cleanup` | "keep" \| "worktree" \| "all" | no, default `"keep"` | What becomes of its worktree. Default keep. Use worktree or all only when the owner asked to delete it. |
+
+### `office_owner`
+
+Send one action the owner's office window sends, with the same effect and toast, attributed to you. args are that action's fields from the office protocol (src/shared/protocol.ts ClientMsg), for example worker.spawn {deskId: "auto", prompt, worktree, model, effort}, worker.prompt {workerId, prompt}, worker.answer {workerId, menu, choice}, gh.merge {number, method, deleteBranch}, subagents.set {settings}. Floor-scoped actions run on floor (default: the worker's floor for worker actions, else your desk's). Returns the outcome, toasts and any reply. Actions: floor.reorder, floor.repos, floor.folders, floor.branches, floor.branch, floor.add, floor.remove, floor.projectsDir, worker.spawn, worker.fork, worker.resume, worker.shoot, worker.kill, worker.worktree, worker.rebuild, worker.prompt, worker.answer, worker.pr, worker.interrupt, thread.read, term.input, station.open, station.prompt, shell.input, gh.refresh, gh.merge, gh.comment, gh.close, gh.labels, gong, pipelines.refresh, pipelines.detail, pipelines.rerun, pipelines.cancel, pipelines.run, leaveOnMerge.set, freshMain.set, autoHeal.set, models.hide, workerLabels.set, subagents.set, prompts.set, prompts.agent, worktreeSetup.get, worktreeSetup.set, machine.limit, jira.connect, jira.disconnect, jira.epic, jira.refresh, factory.connect, factory.disconnect, factory.refresh, setup.check, setup.droid.install, setup.droid.signIn, setup.droid.signInCancel, setup.onboarded, subscriptions.proxy, subscriptions.connect, subscriptions.connectCancel, subscriptions.disconnect, subscriptions.provider, subscriptions.models, subscriptions.refresh, changes.diff, changes.commit, changes.discard, changes.pr, upgrade.check, upgrade.start, decor.add, decor.update, decor.remove, jukebox.play, jukebox.skip, jukebox.stop, whiteboard.ping.
+
+| Argument | Type | Required | Description |
+| --- | --- | --- | --- |
+| `action` | "floor.reorder" \| "floor.repos" \| "floor.folders" \| "floor.branches" \| "floor.branch" \| "floor.add" \| "floor.remove" \| "floor.projectsDir" \| "worker.spawn" \| "worker.fork" \| "worker.resume" \| "worker.shoot" \| "worker.kill" \| "worker.worktree" \| "worker.rebuild" \| "worker.prompt" \| "worker.answer" \| "worker.pr" \| "worker.interrupt" \| "thread.read" \| "term.input" \| "station.open" \| "station.prompt" \| "shell.input" \| "gh.refresh" \| "gh.merge" \| "gh.comment" \| "gh.close" \| "gh.labels" \| "gong" \| "pipelines.refresh" \| "pipelines.detail" \| "pipelines.rerun" \| "pipelines.cancel" \| "pipelines.run" \| "leaveOnMerge.set" \| "freshMain.set" \| "autoHeal.set" \| "models.hide" \| "workerLabels.set" \| "subagents.set" \| "prompts.set" \| "prompts.agent" \| "worktreeSetup.get" \| "worktreeSetup.set" \| "machine.limit" \| "jira.connect" \| "jira.disconnect" \| "jira.epic" \| "jira.refresh" \| "factory.connect" \| "factory.disconnect" \| "factory.refresh" \| "setup.check" \| "setup.droid.install" \| "setup.droid.signIn" \| "setup.droid.signInCancel" \| "setup.onboarded" \| "subscriptions.proxy" \| "subscriptions.connect" \| "subscriptions.connectCancel" \| "subscriptions.disconnect" \| "subscriptions.provider" \| "subscriptions.models" \| "subscriptions.refresh" \| "changes.diff" \| "changes.commit" \| "changes.discard" \| "changes.pr" \| "upgrade.check" \| "upgrade.start" \| "decor.add" \| "decor.update" \| "decor.remove" \| "jukebox.play" \| "jukebox.skip" \| "jukebox.stop" \| "whiteboard.ping" | yes | The owner action, a ClientMsg type. |
+| `args` | object | no, default `{}` | The action fields, without t. |
+| `floor` | string | no | Floor id, number (1 is the top of the elevator list) or name. |
 
 ### `team_models`
 
