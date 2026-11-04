@@ -121,11 +121,11 @@ test('answer workspace: full text, explicit selection, responsive scrolling and 
     await page.getByRole('button', { name: 'Submit answer', exact: true }).click();
     assert.deepEqual(await page.evaluate(() => (window as any).replies.map((reply: any) => reply.value)), [{ choice: 1 }]);
   }
-  const capturedQuestion = "Install the Agent Insights plugin on entire.com for droid-office? It's free token-usage analytics across your agent sessions.";
+  const capturedQuestion = "Install the analytics plugin on example.com for droid-office? It's free token-usage analytics across your agent sessions.";
   const capturedMenu = readMenu([
     '  Ask User',
     '',
-    "  Install the Agent Insights plugin on entire.com for droid-office? It's free token-usage analytics",
+    "  Install the analytics plugin on example.com for droid-office? It's free token-usage analytics",
     '  across your agent sessions.',
     '',
     '  1. Yes, install it',
