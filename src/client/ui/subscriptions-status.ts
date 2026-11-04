@@ -1,48 +1,43 @@
-import { providerName } from '../../shared/subscriptions';
 import { store } from '../state';
-import { h, openModal } from './dom';
+import { claimEscape, h, openModal } from './dom';
 import { windowHeader } from './kit';
-import { providerLogo } from './model-logo';
-import { subscriptionsOrder } from './subscriptions-order';
-import { accountRow, proxyWords } from './subscriptions-settings';
+import { proxyLine, RingTips, subscriptionsView } from './subscriptions-rings';
 
 /** Companion clients read the office's plans; installation and sign-in happen on its Mac. */
 export function openSubscriptionsStatus() {
+  const proxy = h('span.subs-proxy');
   const body = h('div.body.stack');
+  const footer = h('footer', {}, h('span.grow', {}, 'Manage accounts in Settings → Connections on the office’s Mac'));
+  const content = h('div.modal.subs-status', {}, windowHeader('Subscriptions', proxy), body, footer);
+  const tips = new RingTips();
+  let shown = '';
   const paint = () => {
     const s = store.subscriptions;
-    body.replaceChildren(
-      h('p', {}, 'The plans your workers run on. Manage sign-ins, accounts and DroidProxy in Settings → Connections on the office’s Mac.'),
-      h('section.stack.tight', {}, h('h3', {}, 'DroidProxy'), h('p', {}, proxyWords(s.proxy)), s.proxy.error ? h('p.note.bad', {}, s.proxy.error) : null),
-      ...(s.models ? [h('p.sub', {}, `${s.models.installed} models in Droid · ${s.models.available} available${s.models.stale ? ' · update the model list on the Mac' : ''}`)] : []),
-      ...subscriptionsOrder(s.providers).map((p) =>
-        h(
-          'section.subs-provider',
-          {},
-          h(
-            'div.subs-provider-head',
-            {},
-            h('span.subs-provider-logo', {}, providerLogo(p.key)),
-            h(
-              'div.group-label',
-              {},
-              h('b', {}, providerName(p.key)),
-              h('small', {}, !p.enabled ? 'Switched off: its models don’t run' : p.accounts.length ? `${p.accounts.length} account${p.accounts.length === 1 ? '' : 's'}` : 'Not connected'),
-            ),
-          ),
-          h('ul.subs-accounts', {}, ...p.accounts.map((a) => accountRow(a))),
-        ),
-      ),
-      ...(!s.providers.length && s.proxy.phase !== 'unsupported' ? [h('p.note.info', {}, 'No accounts are listed yet. Connect a plan on the office’s Mac.')] : []),
-    );
+    const now = Date.now();
+    proxy.textContent = proxyLine(s);
+    proxy.dataset.phase = s.proxy.phase;
+    footer.classList.toggle('hidden', s.proxy.phase === 'unsupported');
+    // Rebuilt only when it would look different (and once a minute for "resets in"), so a poll doesn't close an open tooltip.
+    const next = JSON.stringify([s.proxy, s.models, s.providers, Math.floor(now / 60_000)]);
+    if (next === shown) return;
+    shown = next;
+    const keep = tips.current;
+    const view = subscriptionsView(s, now);
+    body.replaceChildren(...view.nodes);
+    tips.attach(view.rings, keep);
   };
   paint();
   const off = store.on('subscriptions', paint);
   const timer = setInterval(paint, 30_000);
-  const modal = openModal(h('div.modal', {}, windowHeader('Subscriptions', 'Accounts and usage from your office'), body), {
+  const unclaim = claimEscape(content, () => tips.dismiss());
+  content.addEventListener('pointerdown', (e) => {
+    if (!(e.target as Element | null)?.closest?.('.subs-tile')) tips.dismiss();
+  });
+  const modal = openModal(content, {
     onClose: () => {
       off();
       clearInterval(timer);
+      unclaim();
     },
   });
   return modal;

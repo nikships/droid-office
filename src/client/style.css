@@ -2908,3 +2908,40 @@ html:has(body.dashboard), body.dashboard { overflow: auto; }
 .subs-usage-error { color: var(--text-secondary); }
 .subs-connecting { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2) var(--space-3); }
 .subs-connecting > .device-code { flex: 1 1 auto; padding: 0; border: 0; background: none; }
+
+/* The companion's Subscriptions window: DroidProxy in the header, a quota ring per account grouped by provider, and one muted line for the plans that are off. */
+.subs-proxy { display: inline-flex; align-items: center; gap: var(--space-2); min-width: 0; }
+.subs-proxy::before { content: ''; flex: none; width: 6px; height: 6px; border-radius: 50%; background: var(--warning); }
+.subs-proxy[data-phase=running]::before { background: var(--success); }
+.subs-proxy:is([data-phase=unsupported], [data-phase=missing])::before { background: var(--text-tertiary); }
+.subs-groups { display: flex; flex-wrap: wrap; gap: var(--space-5) var(--space-8); margin: 0; padding: 0; list-style: none; }
+.subs-group { display: flex; flex-direction: column; gap: var(--space-3); min-width: 0; }
+.subs-group-name, .subs-off-label { font: 500 var(--text-label)/1.4 var(--font-mono); text-transform: uppercase; letter-spacing: .08em; color: var(--text-secondary); }
+.subs-tiles { display: flex; flex-wrap: wrap; gap: var(--space-3); margin: 0; padding: 0; list-style: none; }
+.subs-tile { display: flex; flex-direction: column; align-items: center; gap: var(--space-2); width: 80px; min-width: 0; }
+.subs-tile-label { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: 400 var(--text-small)/var(--leading-small) var(--font-sans); color: var(--text-tertiary); }
+/* Each window is an arc, outermost first, filled clockwise from the top by how much is left. */
+.subs-ring { position: relative; display: grid; place-items: center; width: 56px; height: 56px; padding: 0; border: 0; border-radius: 50%; background: none; color: inherit; cursor: pointer; transition: transform var(--duration) var(--ease); }
+.subs-ring:hover, .subs-ring.on { transform: scale(1.06); }
+.subs-ring:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+.subs-ring .ai-logo { position: relative; width: 18px; height: 18px; }
+.subs-ring.muted > :is(.subs-arc, .ai-logo) { opacity: .45; }
+.subs-arc { --tone: var(--success); position: absolute; inset: 0; border-radius: 50%; background: conic-gradient(var(--tone) calc(var(--left, 0) * 1%), rgba(255, 255, 255, .08) 0); mask: radial-gradient(farthest-side, transparent calc(100% - 4px), #000 calc(100% - 3.5px)); }
+.subs-arc.layer-1 { inset: 6px; }
+.subs-arc.layer-2 { inset: 12px; }
+.subs-arc.warn { --tone: var(--warning); }
+.subs-arc.bad { background: rgba(239, 68, 68, .3); }
+.subs-arc.empty { background: rgba(255, 255, 255, .08); }
+/* A popover, so it sits in the top layer: the scrolling body can't clip it. */
+.subs-tip { position: fixed; inset: auto; left: var(--tip-x, 0); top: var(--tip-y, 0); display: none; flex-direction: column; gap: var(--space-1); width: max-content; max-width: 280px; margin: 0; padding: var(--space-2) var(--space-3); border: 1px solid var(--border-strong); border-radius: var(--radius); background: var(--surface-raised); box-shadow: var(--shadow-pop); color: var(--text); font: 400 var(--text-small)/var(--leading-small) var(--font-sans); }
+.subs-tip:popover-open { display: flex; }
+.subs-tip > b { font-weight: 500; overflow-wrap: anywhere; }
+.subs-tip small { font-size: var(--text-small); color: var(--text-secondary); }
+.subs-tip-window { display: flex; flex-direction: column; font-variant-numeric: tabular-nums; }
+.subs-tip-state { color: var(--warning); }
+.subs-off { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-1) var(--space-3); margin: 0; font: 400 var(--text-small)/var(--leading-small) var(--font-sans); color: var(--text-tertiary); }
+.subs-off-label { color: var(--text-tertiary); }
+.subs-off-chip { display: inline-flex; align-items: center; gap: var(--space-1); }
+.subs-off-chip .ai-logo { width: 14px; height: 14px; opacity: .5; }
+.subs-off-chip .ai-logo:not(.mono) { filter: grayscale(1); }
+.subs-empty { margin: 0; color: var(--text-secondary); }
