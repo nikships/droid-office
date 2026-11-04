@@ -212,6 +212,23 @@ test('a moving remote lead keeps both teams, reports, replies, and a building-wi
   assert.equal(r.maps[1].has(id), false);
 });
 
+test('remote hires select an open task repository and inspection resolves across floors', async (t) => {
+  const r = rig(t);
+  const lead = r.remote.worker;
+  const hire = await r.office.team(lead, { action: 'hire', repo: 'beta', task: 'Inspect beta', worktree: false });
+  assert.equal(hire.status, 200);
+  const sub = hire.body.worker as WorkerInfo;
+  assert.equal(r.maps[1].has(sub.id), true);
+  assert.equal(r.maps[0].has(sub.id), false);
+  const log = await r.office.team(lead, { action: 'log', worker: sub.id, tail: 10 });
+  assert.equal(log.body.terminal, 'working');
+  assert.equal((await r.office.team(lead, { action: 'hire', repo: 'missing', task: 'No' })).status, 404);
+  assert.equal((await r.office.team(lead, { action: 'log', worker: 'missing', tail: 10 })).status, 404);
+  const local = await r.office.team(lead, { action: 'hire', task: 'Current floor', worktree: false });
+  assert.equal(local.status, 200);
+  assert.equal(r.maps[0].has((local.body.worker as WorkerInfo).id), true);
+});
+
 test('visit questions and answers route to the remote inbox after its desk moves', (t) => {
   const r = rig(t);
   const a = r.office.add('Alice', 'alpha').worker;

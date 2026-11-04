@@ -203,6 +203,64 @@ const CATALOGUE: DroidModelCatalogue = {
   defaultModel: 'claude-opus-5-5',
 };
 
+test('models_list includes disabled subscriptions and disallowed models without changing team_models', async (t) => {
+  const r = rig(t, { models: async () => CATALOGUE, availability: (id) => (id === 'custom:mine' ? { state: 'disabled', provider: 'grok' } : undefined) });
+  const allowed = (await r.call('lead', { action: 'models' })).body.models;
+  assert.equal(
+    allowed.find((m: { id: string }) => m.id === 'old'),
+    undefined,
+  );
+  assert.equal('enabled' in allowed[0], false);
+  r.settings.models = [{ id: 'custom:mine' }];
+  const all = (await r.call('lead', { action: 'models_list' })).body.models;
+  assert.equal(all.find((m: { id: string }) => m.id === 'custom:mine').enabled, false);
+  assert.match(all.find((m: { id: string }) => m.id === 'custom:mine').cannotRun, /off/i);
+  assert.equal(all.find((m: { id: string }) => m.id === 'glm-5.3-flash').enabled, false);
+  assert.equal(all.find((m: { id: string }) => m.id === 'claude-opus-5-5').enabled, true);
+});
+
+test('team status measures idle time from state transitions and preserves it across restore', async (t) => {
+  let now = 1000;
+  const r = rig(t, { now: () => now });
+  const hired = (await r.call('lead', { action: 'hire', task: 'ticket' })).body.worker.id;
+  r.set(hired, 'done');
+  now += 3_600_000;
+  const status = (await r.call('lead', { action: 'status' })).body.team[0];
+  assert.equal(status.idleSince, 1000);
+  assert.equal(status.idleForMs, 3_600_000);
+  r.fake.get(hired)!.status = 'offline';
+  const restored = new Team(r.fake, { dataDir: r.dir, dir: '/proj', git: true, settings: () => r.settings, now: () => now, toast() {} });
+  t.after(() => restored.stop());
+  const offline = await restored.handle(r.fake.get('lead')!, { action: 'status' });
+  assert.equal((offline.body.team as { idleForMs?: number }[])[0].idleForMs, undefined);
+  r.fake.get(hired)!.status = 'done';
+  restored.onWorker(r.fake.get(hired)!);
+  const next = await restored.handle(r.fake.get('lead')!, { action: 'status' });
+  assert.equal((next.body.team as { idleForMs: number }[])[0].idleForMs, 3_600_000);
+  r.set(hired, 'working');
+  assert.equal((await r.call('lead', { action: 'status' })).body.team[0].idleForMs, undefined);
+});
+
+test('worker logs are bounded and safe dismissal is attributed to its lead across async checks', async (t) => {
+  const r = rig(t);
+  const hired = (await r.call('lead', { action: 'hire', task: 'ticket' })).body.worker.id;
+  r.fake.tails.set(hired, 'x'.repeat(60_000));
+  const log = await r.call('lead', { action: 'log', worker: hired, tail: 400 });
+  assert.equal(log.body.terminal.length, 48_000);
+  assert.equal(log.body.truncated, true);
+  assert.equal((await r.call('lead', { action: 'dismiss', worker: hired, pruneWorktree: true })).status, 409);
+  assert.ok(r.fake.get(hired), 'unavailable safe cleanup cannot fall through to legacy cleanup');
+  (r.fake as TeamWorkers).dismiss = async (id, prune, keep) => {
+    assert.equal(prune, true);
+    assert.equal(keep, true);
+    await Promise.resolve();
+    return r.fake.kill(id);
+  };
+  assert.equal((await r.call('lead', { action: 'dismiss', worker: hired, pruneWorktree: true })).status, 200);
+  assert.deepEqual((await r.call('lead', { action: 'status' })).body.events, []);
+  assert.equal((await r.call('lead', { action: 'log', worker: 'missing' })).status, 404);
+});
+
 test('models lists what a lead may pick, with credit multipliers and notes, and hire keeps to it', async (t) => {
   const r = rig(t, { models: () => Promise.resolve(CATALOGUE) });
   // Nothing picked in Settings: every current model, the legacy ones left out.

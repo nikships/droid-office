@@ -86,7 +86,7 @@ async function rig(t: { after(fn: () => void | Promise<void>): void }, probes = 
     await client.connect(new StreamableHTTPClientTransport(via, { requestInit: { headers: { ...(id ? { [OFFICE_MCP_WORKER_HEADER]: id } : {}), ...(token ? { Authorization: `Bearer ${token}` } : {}), ...headers } } }));
     return client;
   };
-  return { dir, settings, people, tokens, connect, url, origin, office };
+  return { dir, settings, people, tokens, connect, url, origin, office, workers };
 }
 
 test('the HTTP MCP refuses missing, mismatched and non-agent identities', async (t) => {
@@ -203,8 +203,113 @@ test('tool failures return useful errors without internal diagnostics', async (t
   const invalid = await client.callTool({ name: 'test_count', arguments: { count: 'three' } });
   assert.equal(invalid.isError, true);
   assert.match(JSON.stringify(invalid.content), /Invalid arguments for test_count/);
-  await assert.rejects(client.callTool({ name: 'no_such_tool', arguments: {} }), /No office tool called no_such_tool/);
+  const unknown = await client.callTool({ name: 'no_such_tool', arguments: {} });
+  assert.equal(unknown.isError, true);
+  assert.equal(unknown.structuredContent?.code, 'unknown_tool');
+  assert.equal(invalid.structuredContent?.code, 'bad_argument');
+  assert.equal(result.structuredContent?.code, 'internal_error');
   assert.throws(() => r.office.tool({ name: 'test_error', description: 'Duplicate', inputSchema: z.object({}) }, officeAccess.worker, () => officeResult('no')), /Duplicate/);
+});
+
+test('split team tools have strict action-specific schemas and retain the deprecated alias', async (t) => {
+  const r = await rig(t);
+  const client = await r.connect('lead');
+  const listed = (await client.listTools()).tools;
+  for (const name of ['team_status', 'team_message', 'team_dismiss', 'models_list', 'worker_diff', 'worker_log']) {
+    const tool = listed.find((tool) => tool.name === name);
+    assert.ok(tool, name);
+    assert.equal(tool.inputSchema.additionalProperties, false, name);
+  }
+  assert.match(listed.find((tool) => tool.name === 'team')!.description!, /Deprecated/);
+  assert.equal((await client.callTool({ name: 'team_message', arguments: { worker: 'sub' } })).structuredContent?.code, 'bad_argument');
+  assert.equal((await client.callTool({ name: 'team_status', arguments: { text: 'not a status argument' } })).isError, true);
+  assert.equal((await client.callTool({ name: 'team_status', arguments: { worker: 'missing' } })).structuredContent?.code, 'unknown_worker');
+  assert.equal((await client.callTool({ name: 'team_message', arguments: { worker: 'sub', text: 'Follow up' } })).isError, undefined);
+  const snapshot = await client.callTool({ name: 'team_status', arguments: { worker: 'sub' } });
+  assert.ok(snapshot.structuredContent);
+  assert.equal((snapshot.structuredContent.team as { id: string }[])[0].id, 'sub');
+  const terminal = await client.callTool({ name: 'worker_log', arguments: { worker: 'sub', tail: 20 } });
+  assert.equal(terminal.structuredContent?.terminal, '');
+  assert.equal((await client.callTool({ name: 'worker_log', arguments: { worker: 'sub', tail: 401 } })).isError, true);
+  assert.equal((await client.callTool({ name: 'worker_diff', arguments: { worker: 'sub', base: 'HEAD', commits: 1 } })).isError, true);
+  assert.equal((await client.callTool({ name: 'worker_diff', arguments: { worker: 'sub', base: '--output=/tmp/no' } })).isError, true);
+  let dismissal: unknown;
+  r.workers.dismiss = async (...args) => {
+    dismissal = args;
+    return { note: 'Kept worktree' };
+  };
+  assert.equal((await client.callTool({ name: 'team_dismiss', arguments: { worker: 'sub', keepBranch: false } })).isError, true);
+  const dismissed = await client.callTool({ name: 'team_dismiss', arguments: { worker: 'sub' } });
+  assert.equal(dismissed.isError, undefined);
+  assert.deepEqual(dismissal, ['sub', false, true]);
+});
+
+test('structured hire controls base and branch and immediately returns its worktree', async (t) => {
+  const r = await rig(t);
+  const client = await r.connect('lead');
+  let brief = '';
+  r.workers.hire = (_desk, _by, prompt, worktree, _choice, lead, from, branch) => {
+    brief = prompt;
+    assert.equal(worktree, true);
+    assert.equal(lead, 'lead');
+    assert.equal(from, 'main');
+    assert.equal(branch, 'feat/ticket');
+    return worker('new', { lead, worktree: { path: '.droid-office/worktrees/new', branch: branch!, base: 'abc' } });
+  };
+  const task = { title: 'Ticket', brief: 'Fix the bug', repo: r.dir, baseBranch: 'main', branch: 'feat/ticket', prNumber: 375, acceptanceCriteria: ['Regression tests pass'] };
+  const result = await client.callTool({ name: 'team_hire', arguments: { task } });
+  assert.equal(result.isError, undefined);
+  assert.equal(result.structuredContent?.worktree, path.join(r.dir, '.droid-office/worktrees/new'));
+  assert.equal(result.structuredContent?.branch, 'feat/ticket');
+  assert.match(brief, /Regression tests pass/);
+  assert.match(brief, /Pull request: #375/);
+  for (const args of [{}, { task, from: 'other' }, { task, worktree: false }, { task: { ...task, repo: '/another/repo' } }]) {
+    assert.equal((await client.callTool({ name: 'team_hire', arguments: args })).structuredContent?.code, 'bad_argument');
+  }
+});
+
+test('reports preserve structured pushed SHA and PR URL alongside prose', async (t) => {
+  const r = await rig(t);
+  const [lead, sub] = await Promise.all([r.connect('lead'), r.connect('sub')]);
+  const pushedSha = 'a'.repeat(40);
+  const prUrl = 'https://github.com/nikships/droid-office/pull/375';
+  const report = await sub.callTool({ name: 'team_report', arguments: { text: 'All done', pushedSha, prUrl } });
+  assert.equal(report.structuredContent?.pushedSha, pushedSha);
+  const status = await lead.callTool({ name: 'team_status', arguments: {} });
+  assert.ok(status.structuredContent);
+  const member = (status.structuredContent.team as { report: { pushedSha: string; prUrl: string } }[])[0];
+  assert.equal(member.report.pushedSha, pushedSha);
+  assert.equal(member.report.prUrl, prUrl);
+  const events = status.structuredContent?.events as { pushedSha: string; prUrl: string }[];
+  assert.equal(events[0].pushedSha, pushedSha);
+  assert.equal(events[0].prUrl, prUrl);
+});
+
+test('HTTP authentication and SDK argument errors carry code and hint without changing status', async (t) => {
+  const r = await rig(t);
+  const base = { [OFFICE_MCP_WORKER_HEADER]: 'lead', Authorization: 'Bearer test-token-lead' };
+  for (const [headers, code] of [
+    [{}, 'missing_token'],
+    [{ Authorization: base.Authorization }, 'missing_worker_id'],
+    [{ ...base, [OFFICE_MCP_WORKER_HEADER]: 'missing' }, 'unknown_worker_id'],
+    [{ ...base, Authorization: 'Bearer wrong' }, 'bad_token'],
+  ] as const) {
+    const response = await fetch(r.url, { method: 'POST', headers });
+    assert.equal(response.status, 401);
+    const body = await response.json();
+    assert.equal(body.code, code);
+    assert.ok(body.hint);
+  }
+  const response = await fetch(r.url, {
+    method: 'POST',
+    headers: { ...base, Accept: 'application/json, text/event-stream', 'Content-Type': 'application/json', 'MCP-Protocol-Version': '1999-01-01' },
+    body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/list' }),
+  });
+  assert.equal(response.status, 400);
+  const body = await response.json();
+  assert.equal(body.code, 'bad_protocol_version');
+  assert.ok(body.hint);
+  assert.ok(body.error, 'SDK JSON-RPC error remains');
 });
 
 test('Office MCP defaults on and survives old clients and persisted settings', (t) => {
