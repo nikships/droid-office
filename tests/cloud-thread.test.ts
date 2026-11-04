@@ -106,7 +106,7 @@ const RAW = [
     modelId: 'gpt-6-sol',
     content: [
       { type: 'thinking', thinking: '**Verifying PR status**\n\nI need to make sure the PR status checks are updated and the base is current before merging.' },
-      { type: 'text', text: 'The rerun passed, including the release job and Entire Gates. I’ll verify the PR is still mergeable, then merge it.' },
+      { type: 'text', text: 'The rerun passed, including the release job. I’ll verify the PR is still mergeable, then merge it.' },
     ],
   },
   {
