@@ -78,7 +78,9 @@ Tailscale at all; Settings then says so. CI and office clones run that way.
   After an office restart it shows offline until it reports status again.
 
 There are no push callbacks. The bot's own scheduler decides when to check its
-MCP inbox. Worker messages are not owner instructions.
+MCP inbox, or it can hold a `team_wait` call open (up to 600 seconds) that returns as soon as one
+of its subagents reports, asks, gets blocked or settles. Pass the `cursor` from the last status or
+wait as `since` to see only what is new. Worker messages are not owner instructions.
 
 The desk is visible in 3D, the web companion, and Android. Opening it explains
 that it runs externally, rather than showing a broken terminal. The office

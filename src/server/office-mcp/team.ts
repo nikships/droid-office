@@ -1,11 +1,12 @@
 import { z } from 'zod';
 import type { TeamEvent, TeamMember, TeamModel, TeamReply } from '../team.js';
 import { officeAccess, officeError, officeResult, type OfficeMcpDeps, type OfficeMcpServer } from './index.js';
+import { compactEvent, compactEventText, compactWorker, compactWorkerText, cursorOf, EVENT_FILTERS, eventKinds, parseCursor } from './team-events.js';
 
 export const instructions = `Your team consists of real workers at nearby desks on this floor, not hidden tasks. A subagent has its own terminal and normally its own git worktree. Its lead is another worker. The owner controls hiring permissions, team size, allowed models and wake notes. Subagents cannot hire.
 Split work into independent pieces that do not edit the same files. Hire one fresh subagent per task, and no more than the work needs. Write each brief like a ticket: goal, relevant context and files, boundaries, checks, and how to finish (commit in its worktree and report, or another explicitly requested deliverable). Commit anything a new worktree needs first; uncommitted changes do not follow it.
 Read team_models before hiring and choose per task. A credit multiplier is relative token cost: x0.2 is a fifth, x4 four times; an owner's own API key costs no Factory credits. Use the cheapest capable model: around x0.5 or less for mechanical work, around x1 for ordinary features and fixes, and the strongest suitable model for hard design, security, concurrency or subtle debugging. Owner notes take priority; between equally capable models pick the cheaper one. Higher effort on a mid-priced model may be enough before a pricier one. Never give visual work to a no-images model. Report which model each subagent ran.
-Wake notes tell you when your team has news. With Wake the lead off, use team action status for a non-blocking snapshot and unread news; do not poll in a loop. Answer questions with team action message, review the actual commits and diff, send a follow-up if incomplete, and integrate the work. A question only a person can answer goes to whoever asked you. A subagent needing permission in its own terminal needs that person at its named desk, not a message saying yes.
+Wake notes tell you when your team has news. With Wake the lead off, use team action status for a non-blocking snapshot and unread news, or team_wait to wait for news; do not poll status in a loop. Status with verbose: false returns one compact line per subagent and per event; read a full report with team_report_get. questions_list and question_answer handle questions waiting on you. Answer questions with team action message, review the actual commits and diff, send a follow-up if incomplete, and integrate the work. A question only a person can answer goes to whoever asked you. A subagent needing permission in its own terminal needs that person at its named desk, not a message saying yes.
 Dismiss a finished subagent only when both worker and worktree are no longer needed, after review and integration. Tell whoever asked what each subagent did, with checks and links. Subagents use team_report for results or questions, then end their turn; the lead's answer arrives as a later message.`;
 
 const readOnly = { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false };
@@ -137,11 +138,15 @@ export function register(server: OfficeMcpServer, deps: OfficeMcpDeps): void {
     {
       name: 'team',
       description:
-        'Manage only your own subagents. Status returns one named subagent or all, with unread reports, questions, finished turns, terminal input requests, stops and departures since your last status call. News is drained per caller, even for a named snapshot; nothing waits. Message answers a question or follows up, best between turns. Dismiss only after review and integration when worker and worktree are no longer needed; worktrees with work are kept.',
+        'Manage only your own subagents. Status returns one named subagent or all, with unread reports, questions, finished turns, terminal input requests, stops and departures since your last status call. News is drained per caller, even for a named snapshot; nothing waits. structuredContent has workers (one compact object each, with state blocked_on_question while a question waits on an answer), news (typed events with ids and times) and a cursor for since. verbose: false makes the text compact too; team_report_get reads a full report. Message answers a question or follows up, best between turns. Dismiss only after review and integration when worker and worktree are no longer needed; worktrees with work are kept.',
       inputSchema: z.object({
         action: z.enum(['status', 'message', 'dismiss']),
         floor: z.string().min(1).max(128).optional().describe('External workers only: restrict team operations to this floor. Omit for all your teams across the building.'),
         name: z.string().trim().min(1).optional().describe('Subagent name or id, case-insensitive. Status: omit for all. Required for message and dismiss.'),
+        worker: z.string().trim().min(1).optional().describe('Status only: the same as name.'),
+        verbose: z.boolean().optional().describe('Status only: false for one compact line per subagent and per event, with summaries instead of whole reports. Omit or true for the full text.'),
+        since: z.string().trim().min(1).max(4000).optional().describe('Status only: a cursor from an earlier status (cursor field) or one event id. News is everything after it, heard or not, instead of only unread news.'),
+        kinds: z.array(z.enum(EVENT_FILTERS)).min(1).max(EVENT_FILTERS.length).optional().describe('Status only: just these news kinds (blocked is needs_input). Other news stays unread.'),
         lines: z.number().int().min(1).max(400).optional().describe('Status only: include this many recent terminal lines per selected subagent, at most 400. Omit to leave terminals out.'),
         text: text.optional().describe('Message only: answer or follow-up to type into the subagent session. Cannot answer a permission prompt in its own terminal.'),
       }),
@@ -154,15 +159,39 @@ export function register(server: OfficeMcpServer, deps: OfficeMcpDeps): void {
       if (args.action !== 'status' && args.lines !== undefined) return officeError('lines is only for team action status. Leave it out for message or dismiss.');
       if (args.action !== 'message' && args.text !== undefined) return officeError('text is only for team action message. Leave it out for status or dismiss.');
       if (args.floor && !caller.worker.remote) return officeError('Local workers manage only their own floor');
-      const command = { action: args.action === 'message' ? 'send' : args.action, worker: args.name, lines: args.lines, text: args.text, floor: args.floor };
-      const result = caller.worker.remote && deps.remote ? await deps.remote.team(caller.worker, command) : await caller.floor.team.handle(caller.worker, command);
-      return reply(result, (body) => {
-        if (args.action === 'message') return `Sent to ${(body.worker as TeamMember).name}.`;
-        if (args.action === 'dismiss') return `Sent ${body.name} home.${body.note ? ` ${body.note}.` : ''}`;
-        const members = body.team as TeamMember[];
-        const news = body.events as TeamEvent[];
-        return [...(members.length ? members.map(memberText) : ['You have no subagents.']), news.length ? `News since your last status call:\n${news.map(eventText).join('\n\n')}` : 'No unread team news.'].join('\n\n');
-      });
+      if (args.action !== 'status' && (args.worker !== undefined || args.verbose !== undefined || args.since !== undefined || args.kinds !== undefined))
+        return officeError('worker, verbose, since and kinds are only for team action status.');
+      if (args.worker && args.name && args.worker.toLowerCase() !== args.name.toLowerCase()) return officeError('name and worker name the same subagent: give one of them.');
+      const cursor = args.since === undefined ? undefined : parseCursor(args.since, caller.floor.id);
+      if (args.since !== undefined && !cursor) return officeError('since takes the cursor from an earlier team status or team_wait, or one team:<floor>:<seq> event id.');
+      const kinds = eventKinds(args.kinds);
+      const command = {
+        action: args.action === 'message' ? 'send' : args.action,
+        worker: args.name ?? args.worker,
+        lines: args.lines,
+        text: args.text,
+        floor: args.floor,
+        ...(kinds ? { kinds: [...kinds] } : {}),
+      };
+      const remote = caller.worker.remote ? deps.remote : undefined;
+      const result = remote
+        ? await remote.team(caller.worker, { ...command, ...(cursor ? { since: Object.fromEntries(cursor) } : {}) })
+        : await caller.floor.team.handle(caller.worker, { ...command, ...(cursor ? { since: cursor.get(caller.floor.id) ?? 0 } : {}) });
+      if (args.action !== 'status' || result.status >= 400) return reply(result, (body) => (args.action === 'message' ? `Sent to ${(body.worker as TeamMember).name}.` : `Sent ${body.name} home.${body.note ? ` ${body.note}.` : ''}`));
+      const { team, events, latest, ...rest } = result.body as { team: (TeamMember & { floor?: string })[]; events: (TeamEvent & { floor?: string })[]; latest: number | Record<string, number> };
+      const own = caller.floor.id;
+      const workers = team.map((m) => compactWorker(m, m.floor ?? own));
+      const news = events.map((e) => compactEvent(e, e.floor ?? own, args.verbose === true));
+      const position = cursorOf(typeof latest === 'number' ? { [own]: latest } : latest);
+      if (args.verbose === false)
+        return officeResult([...(workers.length ? workers.map(compactWorkerText) : ['You have no subagents.']), ...(news.length ? news.map(compactEventText) : ['No team news.']), `Cursor: ${position}`].join('\n'), {
+          ...rest,
+          workers,
+          news,
+          cursor: position,
+        });
+      const prose = [...(team.length ? team.map(memberText) : ['You have no subagents.']), events.length ? `News since your last status call:\n${events.map(eventText).join('\n\n')}` : 'No unread team news.'].join('\n\n');
+      return officeResult(prose, { ...result.body, workers, news, cursor: position });
     },
   );
   server.tool(
@@ -173,6 +202,7 @@ export function register(server: OfficeMcpServer, deps: OfficeMcpDeps): void {
       inputSchema: z.object({
         text: text.describe('Results, checks, remaining work and links, or the blocking question with relevant context.'),
         question: z.boolean().optional().describe('True for a question to your lead; omit or false for a report.'),
+        options: z.array(z.string().trim().min(1).max(200)).min(2).max(9).optional().describe('Questions only: the answers your lead may pick from, in order.'),
       }),
       annotations: changesState,
     },

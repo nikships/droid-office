@@ -1,5 +1,5 @@
 import type { WorkerInfo } from '../shared/protocol.js';
-import type { Team, TeamReply } from './team.js';
+import type { Team, TeamReply, TeamViews } from './team.js';
 import type { Visits, VisitReply } from './visits.js';
 import type { RemoteWorkers } from './remote-workers.js';
 import type { WorkerManager } from './workers.js';
@@ -9,8 +9,8 @@ export interface RemoteFloor {
   id: string;
   def: { name: string };
   dir: string;
-  workers: Pick<WorkerManager, 'get' | 'list' | 'authenticate' | 'remoteSeat' | 'attachRemote' | 'detachRemote' | 'releaseRemoteLead' | 'remoteStatus'>;
-  team: Pick<Team, 'handle' | 'inbox' | 'onWorkerGone' | 'cannotHire' | 'hasNews'>;
+  workers: Pick<WorkerManager, 'get' | 'list' | 'authenticate' | 'remoteSeat' | 'attachRemote' | 'detachRemote' | 'releaseRemoteLead' | 'remoteStatus'> & Partial<Pick<WorkerManager, 'screenLines' | 'screenMenu' | 'write'>>;
+  team: Pick<Team, 'handle' | 'inbox' | 'onWorkerGone' | 'cannotHire' | 'hasNews' | TeamViews>;
   visits: Pick<Visits, 'handle' | 'onWorkerGone' | 'cannotVisit'>;
   whiteboard: WhiteboardStore;
 }
@@ -24,6 +24,11 @@ export class RemoteOffice {
 
   floor(id: string): RemoteFloor | undefined {
     return this.floors().find((f) => f.workers.get(id)?.remote);
+  }
+
+  /** Every open floor, where a remote lead's teams may be. */
+  teamFloors(): RemoteFloor[] {
+    return this.floors();
   }
 
   list(id: string) {
@@ -100,7 +105,8 @@ export class RemoteOffice {
     return { messages: messages.slice(0, limit), remaining: Math.max(0, messages.length - limit), floors: this.list(id) };
   }
 
-  async team(worker: WorkerInfo, args: { action: string; worker?: string; lines?: number; text?: string; floor?: string }): Promise<TeamReply> {
+  /** `since` holds a status cursor per floor; a floor it leaves out reports everything it keeps. */
+  async team(worker: WorkerInfo, args: { action: string; worker?: string; lines?: number; text?: string; floor?: string; since?: Record<string, number>; kinds?: string[] }): Promise<TeamReply> {
     const floors = this.floors().filter((f) => !args.floor || f.id === args.floor);
     if (!floors.length) return { status: 404, body: { error: 'No such open floor' } };
     if (args.worker) {
@@ -112,17 +118,13 @@ export class RemoteOffice {
           .map((w) => ({ f, w })),
       );
       if (matches.length !== 1) return { status: 409, body: { error: matches.length ? 'That name occurs on several floors; use the worker id or specify floor' : 'No such subagent in your teams' } };
-      return matches[0].f.team.handle(worker, { ...args, worker: matches[0].w.id });
+      const { f, w } = matches[0];
+      const result = await f.team.handle(worker, { ...args, worker: w.id, since: args.since ? (args.since[f.id] ?? 0) : undefined });
+      return args.action === 'status' && result.status < 400 ? { status: 200, body: { ...result.body, ...merged([{ floor: f.id, result }]) } } : result;
     }
     if (args.action !== 'status') return { status: 400, body: { error: 'Name a subagent' } };
-    const snapshots = await Promise.all(floors.map(async (f) => ({ floor: f.id, result: await f.team.handle(worker, args) })));
-    return {
-      status: 200,
-      body: {
-        team: snapshots.flatMap(({ floor, result }) => (result.body.team as Record<string, unknown>[]).map((w) => ({ ...w, floor }))),
-        events: snapshots.flatMap(({ floor, result }) => (result.body.events as Record<string, unknown>[]).map((e) => ({ ...e, floor }))),
-      },
-    };
+    const snapshots = await Promise.all(floors.map(async (f) => ({ floor: f.id, result: await f.team.handle(worker, { ...args, since: args.since ? (args.since[f.id] ?? 0) : undefined }) })));
+    return { status: 200, body: merged(snapshots) };
   }
 
   reply(worker: WorkerInfo, visit: string, text: string): VisitReply {
@@ -132,4 +134,13 @@ export class RemoteOffice {
     }
     return { status: 404, body: { error: 'No live question with that id is addressed to you. Questions expire after 30 minutes and on office restart; use visit_message for a follow-up.' } };
   }
+}
+
+/** Floor snapshots as one status, each subagent and event tagged with its floor, and each floor's latest event seq. */
+function merged(snapshots: { floor: string; result: TeamReply }[]): Record<string, unknown> {
+  return {
+    team: snapshots.flatMap(({ floor, result }) => (result.body.team as Record<string, unknown>[]).map((w) => ({ ...w, floor }))),
+    events: snapshots.flatMap(({ floor, result }) => (result.body.events as Record<string, unknown>[]).map((e) => ({ ...e, floor }))),
+    latest: Object.fromEntries(snapshots.map(({ floor, result }) => [floor, result.body.latest])),
+  };
 }

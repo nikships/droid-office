@@ -267,6 +267,59 @@ test('real MCP transport enforces host, tailnet identity, remote bearer auth, re
   assert.equal(tailnetIdentity(new Headers({ 'tailscale-funnel-request': '?1' }), owner), false);
 });
 
+test('a remote lead gets structured status, cursors, waits and questions across every floor its teams are on', async (t) => {
+  const r = rig(t);
+  const hostname = 'office.example.ts.net';
+  const id = r.remote.worker.id;
+  const alpha = (await r.teams[0].handle(r.remote.worker, { action: 'hire', task: 'Work on alpha' })).body.worker as WorkerInfo;
+  r.office.move(id, 'beta');
+  const beta = (await r.teams[1].handle(r.maps[1].get(id)!, { action: 'hire', task: 'Work on beta' })).body.worker as WorkerInfo;
+  const server = remoteMcpListener({ remote: r.office, remoteTransport: { hostname: () => hostname, owner: () => undefined }, floor: r.floor, settings: () => r.settings });
+  const url = new URL('/office/mcp', await listening(t, server));
+  const client = new Client({ name: 'remote-test', version: '1' });
+  t.after(() => client.close());
+  await client.connect(new StreamableHTTPClientTransport(url, { fetch: proxyFetch, requestInit: { headers: { host: `${hostname}:8443`, Authorization: `Bearer ${r.remote.token}`, 'x-droid-office-worker-id': id } } }));
+  const call = async (name: string, args: Record<string, unknown> = {}) => (await client.callTool({ name, arguments: args })).structuredContent as Record<string, any>;
+  assert.ok(
+    (await client.listTools()).tools.some((tool) => tool.name === 'team_wait'),
+    'an external worker has no wake notes, so it may wait',
+  );
+
+  const first = await call('team', { action: 'status', verbose: false });
+  assert.deepEqual(
+    first.workers.map((w: { id: string; floor: string }) => `${w.id}@${w.floor}`),
+    [`${alpha.id}@alpha`, `${beta.id}@beta`],
+  );
+  assert.equal(first.cursor, 'team:alpha:0,team:beta:0');
+  assert.equal((await r.teams[0].handle(r.maps[0].get(alpha.id)!, { action: 'report', text: 'Which API?', question: true, options: ['REST', 'GraphQL'] })).status, 200);
+  const news = await call('team', { action: 'status', since: first.cursor, verbose: false });
+  assert.deepEqual(
+    news.news.map((e: { id: string; kind: string }) => `${e.kind} ${e.id}`),
+    ['question team:alpha:1'],
+  );
+  assert.deepEqual((await call('team', { action: 'status', since: news.cursor })).news, []);
+  const [question] = (await call('questions_list')).questions;
+  assert.equal(question.id, 'team:alpha:1');
+  assert.equal(question.floor, 'alpha');
+
+  const waiting = call('team_wait', { until: ['report'], since: news.cursor, timeoutSec: 20 });
+  await new Promise((resolve) => setTimeout(resolve, 100));
+  assert.equal((await r.teams[1].handle(r.maps[1].get(beta.id)!, { action: 'report', text: 'Beta finished' })).status, 200);
+  const woke = await waiting;
+  assert.equal(woke.reason, 'report');
+  assert.deepEqual(
+    woke.events.map((e: { id: string; floor: string }) => `${e.id}@${e.floor}`),
+    ['team:beta:1@beta'],
+  );
+  assert.equal(woke.cursor, 'team:alpha:1,team:beta:1');
+  assert.equal(r.teams[0].watchers() + r.teams[1].watchers(), 0);
+  assert.equal(r.office.inbox(id).messages.length, 2, 'a remote wait consumes nothing; office_inbox still acknowledges');
+
+  assert.equal((await call('team_report_get', { worker: beta.id })).report.text, 'Beta finished');
+  assert.deepEqual(await call('question_answer', { questionId: question.id, optionId: '2' }), { answered: true, questionId: 'team:alpha:1', worker: alpha.id });
+  assert.deepEqual((await call('questions_list')).questions, []);
+});
+
 test('remote tokens never authenticate on the local hook MCP', async (t) => {
   const r = rig(t);
   const local = createOfficeMcp({ floor: r.floor, settings: () => r.settings });
