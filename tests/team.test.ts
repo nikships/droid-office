@@ -203,6 +203,126 @@ const CATALOGUE: DroidModelCatalogue = {
   defaultModel: 'claude-opus-5-5',
 };
 
+test('models_list includes Droid-disabled, disabled subscription and disallowed models without changing team_models', async (t) => {
+  const r = rig(t, { models: async () => ({ ...CATALOGUE, disabledModels: [{ id: 'off-model', displayName: 'Off', disabled: true }] }), availability: (id) => (id === 'custom:mine' ? { state: 'disabled', provider: 'grok' } : undefined) });
+  const allowed = (await r.call('lead', { action: 'models' })).body.models;
+  assert.equal(
+    allowed.find((m: { id: string }) => m.id === 'old'),
+    undefined,
+  );
+  assert.equal('enabled' in allowed[0], false);
+  assert.equal(
+    allowed.some((m: { id: string }) => m.id === 'off-model'),
+    false,
+  );
+  r.settings.models = [{ id: 'custom:mine' }];
+  const all = (await r.call('lead', { action: 'models_list' })).body.models;
+  assert.equal(all.find((m: { id: string }) => m.id === 'custom:mine').enabled, false);
+  assert.match(all.find((m: { id: string }) => m.id === 'custom:mine').cannotRun, /off/i);
+  assert.equal(all.find((m: { id: string }) => m.id === 'glm-5.3-flash').enabled, false);
+  assert.equal(all.find((m: { id: string }) => m.id === 'claude-opus-5-5').enabled, true);
+  assert.equal(all.find((m: { id: string }) => m.id === 'off-model').enabled, false);
+  assert.match(all.find((m: { id: string }) => m.id === 'off-model').cannotRun, /Switched off in Droid/);
+});
+
+test('team status measures idle time from state transitions and preserves it across restore', async (t) => {
+  let now = 1000;
+  const r = rig(t, { now: () => now });
+  const hired = (await r.call('lead', { action: 'hire', task: 'ticket' })).body.worker.id;
+  r.set(hired, 'done');
+  now += 3_600_000;
+  const status = (await r.call('lead', { action: 'status' })).body.team[0];
+  assert.equal(status.idleSince, 1000);
+  assert.equal(status.idleForMs, 3_600_000);
+  r.fake.get(hired)!.status = 'offline';
+  const restored = new Team(r.fake, { dataDir: r.dir, dir: '/proj', git: true, settings: () => r.settings, now: () => now, toast() {} });
+  t.after(() => restored.stop());
+  const offline = await restored.handle(r.fake.get('lead')!, { action: 'status' });
+  assert.equal((offline.body.team as { idleForMs?: number }[])[0].idleForMs, undefined);
+  r.fake.get(hired)!.status = 'done';
+  restored.onWorker(r.fake.get(hired)!);
+  const next = await restored.handle(r.fake.get('lead')!, { action: 'status' });
+  assert.equal((next.body.team as { idleForMs: number }[])[0].idleForMs, 3_600_000);
+  r.set(hired, 'working');
+  assert.equal((await r.call('lead', { action: 'status' })).body.team[0].idleForMs, undefined);
+});
+
+test('worker logs are bounded and safe dismissal is attributed to its lead across async checks', async (t) => {
+  const r = rig(t);
+  const hired = (await r.call('lead', { action: 'hire', task: 'ticket' })).body.worker.id;
+  r.fake.tails.set(hired, 'x'.repeat(60_000));
+  const log = await r.call('lead', { action: 'log', worker: hired, tail: 400 });
+  assert.equal(log.body.terminal.length, 48_000);
+  assert.equal(log.body.truncated, true);
+  assert.equal((await r.call('lead', { action: 'dismiss', worker: hired, pruneWorktree: true })).status, 409);
+  assert.equal((await r.call('lead', { action: 'dismiss', worker: hired, pruneWorktree: false })).status, 409);
+  assert.equal((await r.call('lead', { action: 'dismiss', worker: hired, keepBranch: true })).status, 409);
+  assert.deepEqual(r.fake.killed, [], 'explicit retention must not fall back to a legacy kill that could prune');
+  assert.ok(r.fake.get(hired), 'unavailable safe cleanup cannot fall through to legacy cleanup');
+  (r.fake as TeamWorkers).dismiss = async (id, prune, keep) => {
+    assert.equal(prune, true);
+    assert.equal(keep, true);
+    await Promise.resolve();
+    return r.fake.kill(id);
+  };
+  assert.equal((await r.call('lead', { action: 'dismiss', worker: hired, pruneWorktree: true })).status, 200);
+  assert.deepEqual((await r.call('lead', { action: 'status' })).body.events, []);
+  assert.equal((await r.call('lead', { action: 'log', worker: 'missing' })).status, 404);
+});
+
+test('direct dismissal validates new cleanup flags without changing legacy dismissal', async (t) => {
+  const r = rig(t);
+  const hired = (await r.call('lead', { action: 'hire', task: 'ticket' })).body.worker.id;
+  const calls: unknown[] = [];
+  (r.fake as TeamWorkers).dismiss = async (...args) => {
+    calls.push(args);
+    return {};
+  };
+  for (const flags of [{ pruneWorktree: 'false' }, { pruneWorktree: 0 }, { keepBranch: 'true' }, { keepBranch: false }, { pruneWorktree: false, keepBranch: false }]) {
+    assert.equal((await r.call('lead', { action: 'dismiss', worker: hired, ...flags })).status, 400, JSON.stringify(flags));
+  }
+  assert.deepEqual(calls, []);
+  assert.deepEqual(r.fake.killed, []);
+  assert.equal((await r.call('lead', { action: 'dismiss', worker: hired, pruneWorktree: false })).status, 200);
+  assert.equal((await r.call('lead', { action: 'dismiss', worker: hired, keepBranch: true })).status, 200);
+  assert.equal((await r.call('lead', { action: 'dismiss', worker: hired, pruneWorktree: true, keepBranch: false })).status, 200);
+  assert.deepEqual(calls, [
+    [hired, false, true],
+    [hired, false, true],
+    [hired, true, false],
+  ]);
+  assert.equal((await r.call('lead', { action: 'dismiss', worker: hired })).status, 200);
+  assert.deepEqual(r.fake.killed, [hired], 'omitting cleanup flags preserves legacy behavior');
+});
+
+test('direct diff inspection validates commit bounds and mutually exclusive revision selectors', async (t) => {
+  const r = rig(t);
+  const hired = (await r.call('lead', { action: 'hire', task: 'ticket' })).body.worker.id;
+  for (const commits of [0, -1, 1.5, 1001, Number.NaN, Number.POSITIVE_INFINITY, '1', null]) {
+    const result = await r.call('lead', { action: 'diff', worker: hired, commits });
+    assert.equal(result.status, 400);
+    assert.match(result.body.error, /1–1000/);
+  }
+  assert.match((await r.call('lead', { action: 'diff', worker: hired, base: 1 })).body.error, /base takes/);
+  assert.match((await r.call('lead', { action: 'diff', worker: hired, base: 'HEAD', commits: 1 })).body.error, /not both/);
+});
+
+test('direct reports validate provenance before persisting news or acknowledging a report', async (t) => {
+  const r = rig(t);
+  const hired = (await r.call('lead', { action: 'hire', task: 'ticket' })).body.worker.id;
+  for (const fields of [{ pushedSha: 'bad' }, { pushedSha: 42 }, { pushedSha: 'a'.repeat(65) }, { prUrl: 'not a URL' }, { prUrl: 42 }, { prUrl: `https://example.com/${'x'.repeat(2000)}` }]) {
+    assert.equal((await r.call(hired, { action: 'report', text: 'Done', ...fields })).status, 400);
+  }
+  assert.deepEqual((await r.call('lead', { action: 'status' })).body.events, []);
+  const fields = { pushedSha: 'a'.repeat(40), prUrl: 'https://github.com/nikships/droid-office/pull/375' };
+  const report = await r.call(hired, { action: 'report', text: 'Done', ...fields });
+  assert.equal(report.status, 200);
+  assert.equal(report.body.pushedSha, fields.pushedSha);
+  const status = (await r.call('lead', { action: 'status' })).body;
+  assert.equal(status.events[0].prUrl, fields.prUrl);
+  assert.equal(status.team[0].report.pushedSha, fields.pushedSha);
+});
+
 test('models lists what a lead may pick, with credit multipliers and notes, and hire keeps to it', async (t) => {
   const r = rig(t, { models: () => Promise.resolve(CATALOGUE) });
   // Nothing picked in Settings: every current model, the legacy ones left out.

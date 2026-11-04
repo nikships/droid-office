@@ -347,10 +347,11 @@ export class Floor {
         get officeDefault() {
           return workers.officeDefault;
         },
-        hire: (deskId, by, prompt, worktree, c, lead, from) => workers.spawn(deskId, by, prompt, worktree, 'agent', c.model, c.effort, [], lead, undefined, from),
+        hire: (deskId, by, prompt, worktree, c, lead, from, branch) => workers.spawn(deskId, by, prompt, worktree, 'agent', c.model, c.effort, [], lead, undefined, from, branch),
         prompt: (id, text) => workers.tell(id, text),
         resume: (id, text) => workers.resume(id, text),
         kill: (id) => workers.kill(id),
+        dismiss: (id, pruneWorktree, keepBranch) => workers.dismissTeam(id, pruneWorktree, keepBranch),
         tail: (id, lines) => workers.tail(id, lines),
         setTask: (id, task) => workers.setTask(id, task),
         fetchStart: (lead, from) => workers.fetchStart(lead, from),
