@@ -7,7 +7,7 @@ The Android companion app lists every worker on every floor of the paired office
 - `android-home` lists workers grouped by floor (`screen.home`, `home.worker/<id>`, `home.floor/<id>`).
 - `android-status` shows each worker's status as the content-desc of `home.worker.status` (`Needs you`, `Working`, `Ready`, `Done`, `Asleep`).
 - `android-open` opens a worker (`screen.worker`), with `worker.view.thread` and `worker.view.tty`.
-- `android-hire` hires from the phone (`hire.droid`, `hire.shell`).
+- `android-hire` hires from the phone (`hire.droid`; `hire.shell` opens a shell at once).
 
 ## How to get to it (user POV)
 

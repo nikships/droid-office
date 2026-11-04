@@ -147,6 +147,8 @@ fun HomeScreen(onOpenWorker: (String) -> Unit, onOffices: () -> Unit, onScan: ()
 
         LaunchedEffect(Unit) {
             connection.hired.collect { w ->
+                // A shell opens straight away, as the office opens one at an empty desk.
+                if (w.isShell) return@collect open(w.id)
                 val r = snackbar.showSnackbar("${w.name} is at ${deskLabel(w.deskId)}", actionLabel = "Open", withDismissAction = true)
                 if (r == SnackbarResult.ActionPerformed) open(w.id)
             }

@@ -1,8 +1,8 @@
 package ai.factory.droidoffice.ui.home
 
-import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.border
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
@@ -25,7 +25,6 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.selection.selectable
-import androidx.compose.foundation.selection.selectableGroup
 import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
@@ -91,8 +90,9 @@ private var promptDraft = ""
 
 /**
  * Hire a worker at the next free desk, or at [deskId] when one was picked on the map: a Droid agent
- * with a task (or none yet), or a plain shell. A full screen with its own close button rather than a
- * sheet, so scrolling the form can never drag it away.
+ * with a task (or none yet), or a plain shell, which opens as soon as Shell is tapped, as B at an
+ * empty desk does in the office. A full screen with its own close button rather than a sheet, so
+ * scrolling the form can never drag it away.
  */
 @Composable
 fun HireSheet(onDismiss: () -> Unit, deskId: String? = null) {
@@ -105,7 +105,6 @@ fun HireSheet(onDismiss: () -> Unit, deskId: String? = null) {
     val worktreeOption = data.floor?.home != true && data.floor?.plain != true && !data.project?.branch.isNullOrBlank()
     val places = remember(factory) { FactoryCloud.choices(factory) }
 
-    var shell by rememberSaveable { mutableStateOf(false) }
     var prompt by rememberSaveable { mutableStateOf(promptDraft) }
     var worktree by rememberSaveable { mutableStateOf(true) }
     var modelId by rememberSaveable { mutableStateOf<String?>(null) }
@@ -133,22 +132,25 @@ fun HireSheet(onDismiss: () -> Unit, deskId: String? = null) {
     val efforts = model?.supportedReasoningEfforts?.mapNotNull(Effort::of).orEmpty()
     // A computer or Environment that went away falls back to this machine.
     val place = places.firstOrNull { it.key == placeKey } ?: RunsOn.ThisMachine
-    val cloud = !shell && place != RunsOn.ThisMachine
+    val cloud = place != RunsOn.ThisMachine
     val cloudBlocked = cloud && !FactoryCloud.runsInCloud(modelId)
     val pickable = if (!cloud) availability else availability + catalogue?.models.orEmpty().filterNot { FactoryCloud.runsInCloud(it.id) }.associate { it.id to ModelAvailability.NotInCloud }
     val connected = link.phase == Phase.Connected
 
     fun hire() {
-        val kind = if (shell) "shell" else "agent"
         val e = effort?.takeIf { w -> efforts.isEmpty() || efforts.any { it.wire == w } }
-        val ok = connection.hire(prompt.trim().takeIf { !shell && it.isNotBlank() }, kind, modelId, e, worktreeOption && worktree && !cloud, deskId, if (cloud) FactoryCloud.hire(place, folder) else null)
+        val ok = connection.hire(prompt.trim().takeIf { it.isNotBlank() }, "agent", modelId, e, worktreeOption && worktree && !cloud, deskId, if (cloud) FactoryCloud.hire(place, folder) else null)
         if (ok) {
-            if (!shell) promptDraft = ""
-            if (!shell && modelId != null) graph.scope.launch { graph.store.settings { it.copy(hireModel = modelId, hireEffort = e) } }
+            promptDraft = ""
+            if (modelId != null) graph.scope.launch { graph.store.settings { it.copy(hireModel = modelId, hireEffort = e) } }
             onDismiss()
         } else {
             failed = true
         }
+    }
+
+    fun openShell() {
+        if (connection.hire(null, "shell", null, null, false, deskId)) onDismiss() else failed = true
     }
 
     Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false)) {
@@ -166,58 +168,54 @@ fun HireSheet(onDismiss: () -> Unit, deskId: String? = null) {
                 Modifier.weight(1f).fillMaxWidth().verticalScroll(rememberScrollState()).padding(horizontal = 20.dp, vertical = 18.dp),
                 verticalArrangement = Arrangement.spacedBy(22.dp),
             ) {
-                KindSwitch(shell) { shell = it }
-                AnimatedVisibility(!shell) {
-                    Column(verticalArrangement = Arrangement.spacedBy(22.dp)) {
-                        Field("Task") {
-                            OutlinedTextField(
-                                value = prompt,
-                                onValueChange = { prompt = it; promptDraft = it },
-                                modifier = Modifier.fillMaxWidth().heightIn(min = 120.dp, max = 260.dp).tagged(Tags.Hire.PROMPT),
-                                placeholder = { Text("What should it work on?", color = Palette.TextTertiary) },
-                                supportingText = { Text("Leave it empty to brief it later.", color = Palette.TextTertiary) },
-                                textStyle = MaterialTheme.typography.bodyLarge,
-                                shape = RoundedCornerShape(12.dp),
-                                keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Sentences),
-                                colors = fieldColors(),
-                            )
-                        }
-                        Field("Model") {
-                            ModelPicker(catalogue, loadingModels && connected, modelId, pickable) { m ->
-                                modelId = m.id
-                                effort = m.defaultReasoningEffort ?: effort
-                            }
-                        }
-                        if (efforts.isNotEmpty()) Field("Reasoning") {
-                            Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                efforts.forEach { e -> Chip(e.label, effort == e.wire, { effort = e.wire }, Modifier.tagged(Tags.Hire.effort(e.wire))) }
-                            }
-                        }
-                        if (places.size > 1) Field("Runs on") {
-                            RunsOnMenu(places, place) { placeKey = it.key }
-                            if (cloudBlocked) Text(
-                                "Your own models can't run on a Factory computer. Pick one of Factory's models, or run it on this machine.",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = Palette.Danger,
-                                modifier = Modifier.padding(top = 8.dp).tagged(Tags.Hire.CLOUD_MODEL),
-                            )
-                        }
-                        if (cloud) Field("Folder") {
-                            OutlinedTextField(
-                                value = folder,
-                                onValueChange = { folder = it },
-                                modifier = Modifier.fillMaxWidth().tagged(Tags.Hire.FOLDER),
-                                supportingText = FactoryCloud.folderPlaceholder(place, data.floor?.repo)?.let { { Text(it, color = Palette.TextSecondary) } },
-                                singleLine = true,
-                                textStyle = MaterialTheme.typography.bodyLarge,
-                                shape = RoundedCornerShape(12.dp),
-                                keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.None, autoCorrectEnabled = false),
-                                colors = fieldColors(),
-                            )
-                            FactoryCloud.note(place)?.let {
-                                Text(it, style = MaterialTheme.typography.bodySmall, color = Palette.TextTertiary, modifier = Modifier.padding(top = 4.dp, start = 16.dp).tagged(Tags.Hire.FOLDER_NOTE))
-                            }
-                        }
+                KindSwitch(connected, ::openShell)
+                Field("Task") {
+                    OutlinedTextField(
+                        value = prompt,
+                        onValueChange = { prompt = it; promptDraft = it },
+                        modifier = Modifier.fillMaxWidth().heightIn(min = 120.dp, max = 260.dp).tagged(Tags.Hire.PROMPT),
+                        placeholder = { Text("What should it work on?", color = Palette.TextTertiary) },
+                        supportingText = { Text("Leave it empty to brief it later.", color = Palette.TextTertiary) },
+                        textStyle = MaterialTheme.typography.bodyLarge,
+                        shape = RoundedCornerShape(12.dp),
+                        keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Sentences),
+                        colors = fieldColors(),
+                    )
+                }
+                Field("Model") {
+                    ModelPicker(catalogue, loadingModels && connected, modelId, pickable) { m ->
+                        modelId = m.id
+                        effort = m.defaultReasoningEffort ?: effort
+                    }
+                }
+                if (efforts.isNotEmpty()) Field("Reasoning") {
+                    Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        efforts.forEach { e -> Chip(e.label, effort == e.wire, { effort = e.wire }, Modifier.tagged(Tags.Hire.effort(e.wire))) }
+                    }
+                }
+                if (places.size > 1) Field("Runs on") {
+                    RunsOnMenu(places, place) { placeKey = it.key }
+                    if (cloudBlocked) Text(
+                        "Your own models can't run on a Factory computer. Pick one of Factory's models, or run it on this machine.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = Palette.Danger,
+                        modifier = Modifier.padding(top = 8.dp).tagged(Tags.Hire.CLOUD_MODEL),
+                    )
+                }
+                if (cloud) Field("Folder") {
+                    OutlinedTextField(
+                        value = folder,
+                        onValueChange = { folder = it },
+                        modifier = Modifier.fillMaxWidth().tagged(Tags.Hire.FOLDER),
+                        supportingText = FactoryCloud.folderPlaceholder(place, data.floor?.repo)?.let { { Text(it, color = Palette.TextSecondary) } },
+                        singleLine = true,
+                        textStyle = MaterialTheme.typography.bodyLarge,
+                        shape = RoundedCornerShape(12.dp),
+                        keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.None, autoCorrectEnabled = false),
+                        colors = fieldColors(),
+                    )
+                    FactoryCloud.note(place)?.let {
+                        Text(it, style = MaterialTheme.typography.bodySmall, color = Palette.TextTertiary, modifier = Modifier.padding(top = 4.dp, start = 16.dp).tagged(Tags.Hire.FOLDER_NOTE))
                     }
                 }
                 if (worktreeOption && !cloud) WorktreeSwitch(worktree) { worktree = it }
@@ -227,11 +225,11 @@ fun HireSheet(onDismiss: () -> Unit, deskId: String? = null) {
                 // The bar's surface runs under the navigation bar; the button rides on the keyboard.
                 Column(Modifier.fillMaxWidth().windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Bottom)).padding(horizontal = 20.dp, vertical = 14.dp)) {
                     PrimaryButton(
-                        if (shell) "Open a shell" else "Hire",
+                        "Hire",
                         { hire() },
                         Modifier.fillMaxWidth().tagged(Tags.Hire.SUBMIT),
-                        enabled = connected && (shell || (!Availability.cannotRun(availability[modelId]) && !cloudBlocked)),
-                        icon = if (shell) OfficeIcons.Shell else OfficeIcons.Sparkle,
+                        enabled = connected && !Availability.cannotRun(availability[modelId]) && !cloudBlocked,
+                        icon = OfficeIcons.Sparkle,
                     )
                     val status = when {
                         !connected -> "Waiting for the office…"
@@ -257,17 +255,17 @@ private fun Field(label: String, content: @Composable ColumnScope.() -> Unit) {
     }
 }
 
-/** Droid or Shell, as one segmented control. */
+/** Droid, the form below it, or Shell, which opens a plain shell right away with nothing to fill in. */
 @Composable
-private fun KindSwitch(shell: Boolean, onShell: (Boolean) -> Unit) {
+private fun KindSwitch(connected: Boolean, onShell: () -> Unit) {
     Column {
         val shape = RoundedCornerShape(12.dp)
-        Row(Modifier.fillMaxWidth().panel(shape, Palette.Surface).padding(4.dp).selectableGroup(), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-            Segment(OfficeIcons.Agent, "Droid", !shell, Modifier.weight(1f).tagged(Tags.Hire.DROID)) { onShell(false) }
-            Segment(OfficeIcons.Shell, "Shell", shell, Modifier.weight(1f).tagged(Tags.Hire.SHELL)) { onShell(true) }
+        Row(Modifier.fillMaxWidth().panel(shape, Palette.Surface).padding(4.dp), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+            Segment(OfficeIcons.Agent, "Droid", true, Modifier.weight(1f).selectable(true, role = Role.RadioButton) {}.tagged(Tags.Hire.DROID))
+            Segment(OfficeIcons.Shell, "Shell", false, Modifier.weight(1f).clickable(enabled = connected, role = Role.Button, onClick = onShell).tagged(Tags.Hire.SHELL))
         }
         Text(
-            if (shell) "A plain terminal at a desk, with no agent in it." else "An agent that takes a task and works on it.",
+            "An agent that takes a task and works on it. Shell opens a plain terminal at a desk now.",
             style = MaterialTheme.typography.bodySmall,
             modifier = Modifier.padding(start = 4.dp, top = 8.dp),
         )
@@ -275,12 +273,12 @@ private fun KindSwitch(shell: Boolean, onShell: (Boolean) -> Unit) {
 }
 
 @Composable
-private fun Segment(icon: ImageVector, label: String, selected: Boolean, modifier: Modifier, onClick: () -> Unit) {
+private fun Segment(icon: ImageVector, label: String, selected: Boolean, modifier: Modifier) {
     val shape = RoundedCornerShape(9.dp)
     Row(
-        modifier.clip(shape).background(if (selected) Palette.AccentMuted else Palette.Surface)
+        Modifier.clip(shape).background(if (selected) Palette.AccentMuted else Palette.Surface)
             .border(1.dp, if (selected) Palette.Accent else Palette.Surface, shape)
-            .selectable(selected, role = Role.RadioButton, onClick = onClick).heightIn(min = 44.dp).padding(horizontal = 12.dp, vertical = 10.dp),
+            .then(modifier).heightIn(min = 44.dp).padding(horizontal = 12.dp, vertical = 10.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.Center,
     ) {
