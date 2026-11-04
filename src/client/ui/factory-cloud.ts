@@ -82,7 +82,7 @@ export function runsOnPicker(): RunsOn | null {
   const select = h(
     'select.select',
     { id: 'runs-on', 'aria-label': 'Runs on' },
-    h('option', { value: '' }, '💻 This machine'),
+    h('option', { value: '' }, 'This machine'),
     envs.length ? h('optgroup', { label: 'A fresh computer from an Environment' }, ...envs.map((e) => h('option', { value: `env:${e.id}` }, `⧉ ${e.name}${e.isDefault ? ' (default)' : ''}`))) : null,
     computers.length ? h('optgroup', { label: 'One of your computers' }, ...computers.map((c) => h('option', { value: c.id }, `${cloudBadge({ computerName: c.name })} · ${c.providerType}`))) : null,
   ) as HTMLSelectElement;

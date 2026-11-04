@@ -124,7 +124,7 @@ export function mountWorkerThread(net: Net, opts: ThreadOptions): WorkerThread {
   const teamTitle = h('span', {}, 'Team activity');
   const teamBody = h('div.wt-team-body');
   const teamLimit = h('p.wt-team-note', { hidden: true });
-  const teamSection = h('details.wt-team', { hidden: true }, h('summary', {}, teamTitle, h('span.wt-chevron', { 'aria-hidden': true }, '›')), teamBody, teamLimit);
+  const teamSection = h('details.wt-team', { hidden: true }, h('summary', {}, teamTitle, h('span.wt-chevron', { 'aria-hidden': true }, icon('chevron', 14))), teamBody, teamLimit);
   const scroll = h('div.wt-scroll', { tabindex: 0, 'aria-label': 'Conversation history' }, earlier, list, empty, queuedBox, opts.question);
   const latest = h(
     'button.btn.sm.wt-latest.hidden',
@@ -410,7 +410,7 @@ export function mountWorkerThread(net: Net, opts: ThreadOptions): WorkerThread {
     },
     true,
   );
-  const chevron = () => h('span.wt-chevron', { 'aria-hidden': true }, '›');
+  const chevron = () => h('span.wt-chevron', { 'aria-hidden': true }, icon('chevron', 14));
   const disclosure = <T extends HTMLDetailsElement>(details: T, open: boolean) => {
     details.open = open;
     return details;
@@ -513,7 +513,11 @@ export function mountWorkerThread(net: Net, opts: ThreadOptions): WorkerThread {
     const entry = loaded.get(row.id);
     const text = entry?.text ?? '';
     if (row.role === 'assistant') {
-      if (row.startsTurn) node.append(h('div.wt-who', {}, author.name));
+      if (row.startsTurn) {
+        const dot = h('span.wt-who-dot', { 'aria-hidden': 'true' });
+        dot.style.setProperty('--who', author.color);
+        node.append(h('div.wt-who', {}, dot, author.name));
+      }
       const body = markdown(text);
       prepareCode(body);
       node.append(body);
@@ -593,7 +597,7 @@ export function mountWorkerThread(net: Net, opts: ThreadOptions): WorkerThread {
         const element = h(
           'details.wt-team-member',
           {},
-          h('summary', {}, h('span.wt-team-who', {}, name, activity), status, h('span.wt-chevron', { 'aria-hidden': true }, '›')),
+          h('summary', {}, h('span.wt-team-who', {}, name, activity), status, h('span.wt-chevron', { 'aria-hidden': true }, icon('chevron', 14))),
           h('div.wt-team-content', {}, h('div.wt-team-actions', {}, open), body, note),
         );
         card = { sessionId: child.sessionId, element, name, status, activity, body, note, open, expanded: new Set(), rows: new Map() };
