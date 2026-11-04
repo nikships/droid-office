@@ -20,6 +20,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -467,16 +468,11 @@ internal fun Thread(
                 }
             }
             Box(Modifier.align(Alignment.TopCenter).fillMaxWidth().height(8.dp).background(Brush.verticalGradient(listOf(Palette.Bg, Color.Transparent))))
-        }
-        if (ThreadView.showJump(follow, stuck, list.canScrollForward) && rows.isNotEmpty() && !state.newerTrimmed) {
-            val from = rows.indexOfFirst { it.id == seen }
-            val fresh = if (from < 0) 0 else rows.drop(from + 1).count { it is ThreadRow.Message && it.role != ThreadRole.User }
-            Box(
-                Modifier.fillMaxWidth().background(Palette.Bg).drawBehind { drawLine(Palette.Border, Offset.Zero, Offset(size.width, 0f), 1.dp.toPx()) }
-                    .heightIn(min = 48.dp).padding(vertical = 4.dp),
-                contentAlignment = Alignment.Center,
-            ) {
-                Jump(fresh, Modifier, ::resume)
+            // Floats over the conversation's bottom corner rather than taking a row of its own above the composer.
+            if (ThreadView.showJump(follow, stuck, list.canScrollForward) && rows.isNotEmpty() && !state.newerTrimmed) {
+                val from = rows.indexOfFirst { it.id == seen }
+                val fresh = if (from < 0) 0 else rows.drop(from + 1).count { it is ThreadRow.Message && it.role != ThreadRole.User }
+                Jump(fresh, Modifier.align(Alignment.BottomEnd).padding(end = side, bottom = 8.dp), ::resume)
             }
         }
     }
@@ -592,30 +588,36 @@ private fun gap(prev: ThreadRow?, row: ThreadRow): Dp {
 }
 
 /**
- * Back to the newest message and following it, saying how many came in while the owner was reading
- * further up. Only shown while there is content below the viewport, even when following is paused.
+ * A down arrow back to the newest message and following it, with a count of the replies that came in
+ * while the owner was reading further up. Only shown while there is content below the viewport, even
+ * when following is paused.
  */
 @Composable
 private fun Jump(fresh: Int, modifier: Modifier, onClick: () -> Unit) {
     val shape = RoundedCornerShape(4.dp)
-    Row(
-        modifier.clip(shape).background(Palette.SurfaceHigh).border(1.dp, Palette.BorderStrong, shape)
-            .clickable(onClickLabel = "Jump to the latest message", onClick = onClick)
-            .tagged(Tags.Worker.THREAD_JUMP)
-            .heightIn(min = 36.dp).padding(horizontal = 12.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        if (fresh > 0) {
-            Box(Modifier.size(6.dp).background(Palette.Accent, RoundedCornerShape(1.dp)))
-            Spacer(Modifier.width(8.dp))
+    val label = if (fresh > 0) "$fresh new message${if (fresh == 1) "" else "s"}" else "Jump to latest"
+    Box(modifier) {
+        Box(
+            Modifier.size(40.dp).clip(shape).background(Palette.SurfaceHigh).border(1.dp, Palette.BorderStrong, shape)
+                .clickable(onClickLabel = "Jump to the latest message", role = Role.Button, onClick = onClick)
+                .tagged(Tags.Worker.THREAD_JUMP),
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(
+                OfficeIcons.ArrowDown, null,
+                Modifier.size(18.dp).semantics { contentDescription = label; liveRegion = LiveRegionMode.Polite }.tagged(Tags.Worker.THREAD_JUMP_LABEL),
+                tint = Palette.Text,
+            )
         }
-        Text(
-            (if (fresh > 0) "$fresh new message${if (fresh == 1) "" else "s"}" else "Jump to latest").uppercase(),
-            style = LocalOfficeType.current.eyebrow.copy(color = Palette.Text),
-            modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite }.tagged(Tags.Worker.THREAD_JUMP_LABEL),
-        )
-        Spacer(Modifier.width(8.dp))
-        Icon(OfficeIcons.ArrowDown, null, Modifier.size(14.dp), tint = Palette.TextSecondary)
+        if (fresh > 0) {
+            Box(
+                Modifier.align(Alignment.TopEnd).offset(x = 6.dp, y = (-6).dp).heightIn(min = 16.dp).widthIn(min = 16.dp)
+                    .background(Palette.Accent, RoundedCornerShape(2.dp)).padding(horizontal = 4.dp).clearAndSetSemantics { },
+                contentAlignment = Alignment.Center,
+            ) {
+                Text(if (fresh > 99) "99+" else "$fresh", style = LocalOfficeType.current.eyebrow.copy(color = Color.White))
+            }
+        }
     }
 }
 

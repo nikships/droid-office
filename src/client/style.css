@@ -2643,9 +2643,10 @@ summary:hover > .wt-chevron { color: var(--text-secondary); }
 .wt-empty p { margin: var(--space-1) 0 0; }
 .wt-empty-mark { display: block; width: 7px; height: 7px; margin: 0 auto var(--space-3); border-radius: 1px; background: var(--text-tertiary); }
 .wt-loading-spinner { display: block; width: 24px; height: 24px; margin: 0 auto var(--space-3); border-color: var(--border); border-top-color: var(--accent); }
-.wt-latest-anchor { flex-shrink: 0; display: flex; justify-content: center; padding: var(--space-1); border-top: 1px solid var(--border); background: var(--bg); }
-.wt-latest-anchor:has(.wt-latest.hidden) { display: none; }
-.wt-latest { background: var(--surface); border-color: var(--border-strong); }
+/* Zero height and as wide as the composer's box, so the arrow floats just above its top-right corner. */
+.wt-latest-anchor { flex-shrink: 0; position: relative; z-index: 1; height: 0; width: calc(100% - var(--space-5) * 2); max-width: var(--wt-measure); margin: 0 auto; }
+.wt-latest { position: absolute; right: 0; bottom: var(--space-2); background: var(--surface-raised); border-color: var(--border-strong); color: var(--text); box-shadow: 0 4px 16px rgba(0, 0, 0, .5); }
+.wt-latest:hover { background: var(--surface-hover); }
 /* A small, persistent work signal; only its four tiles animate, never the transcript or text. */
 .wt-progress { flex-shrink: 0; padding: var(--space-2) var(--space-5) 0; }
 .wt-progress[hidden] { display: none; }
@@ -2717,6 +2718,7 @@ summary:hover > .wt-chevron { color: var(--text-secondary); }
 @media (max-width: 720px) {
   .wt-progress { padding: var(--space-2) var(--space-3) 0; }
   .wt-scroll, .wt-feedback, .wt-composer { padding: var(--space-3); }
+  .wt-latest-anchor { width: calc(100% - var(--space-3) * 2); }
   .wt-list { gap: var(--space-5); }
   .wt-entry.user { max-width: 94%; }
   .wt-entry .md, .wt-user-text { font-size: 14px; }

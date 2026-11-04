@@ -127,9 +127,11 @@ export function mountWorkerThread(net: Net, opts: ThreadOptions): WorkerThread {
   const teamSection = h('details.wt-team', { hidden: true }, h('summary', {}, teamTitle, h('span.wt-chevron', { 'aria-hidden': true }, icon('chevron', 14))), teamBody, teamLimit);
   const scroll = h('div.wt-scroll', { tabindex: 0, 'aria-label': 'Conversation history' }, earlier, list, empty, queuedBox, opts.question);
   const latest = h(
-    'button.btn.sm.wt-latest.hidden',
+    'button.btn.icon.wt-latest.hidden',
     {
       type: 'button',
+      'aria-label': 'Jump to latest',
+      title: 'Jump to latest',
       onclick: () => {
         if (history.historical) {
           history.clear(worker.sessionId);
@@ -138,9 +140,14 @@ export function mountWorkerThread(net: Net, opts: ThreadOptions): WorkerThread {
         } else follow();
       },
     },
-    'Jump to latest',
+    icon('arrowDown', 16),
   );
+  // No height of its own: the arrow floats over the transcript at the composer's top-right corner.
   const latestAnchor = h('div.wt-latest-anchor', {}, latest);
+  const labelLatest = (label: string) => {
+    latest.setAttribute('aria-label', label);
+    latest.title = label;
+  };
   let queueKey = '';
   // Keys go straight to the attached terminal, as Raw TTY types them: an office before term.input
   // confirmations would answer a confirmed send with a refusal after typing the keys anyway.
@@ -376,7 +383,7 @@ export function mountWorkerThread(net: Net, opts: ThreadOptions): WorkerThread {
   };
   const updateLatest = () => {
     latest.classList.toggle('hidden', !history.historical && !inspecting && atBottom());
-    latest.textContent = inspecting && atBottom() ? 'Follow latest' : 'Jump to latest';
+    labelLatest(inspecting && atBottom() ? 'Follow latest' : 'Jump to latest');
   };
   let questionContent = '';
   const questionChanges = new MutationObserver(() => {
@@ -405,7 +412,7 @@ export function mountWorkerThread(net: Net, opts: ThreadOptions): WorkerThread {
         inspecting = true;
         followingLayout = false;
         latest.classList.remove('hidden');
-        latest.textContent = atBottom() ? 'Follow latest' : 'Jump to latest';
+        labelLatest(atBottom() ? 'Follow latest' : 'Jump to latest');
       }
     },
     true,
@@ -783,7 +790,7 @@ export function mountWorkerThread(net: Net, opts: ThreadOptions): WorkerThread {
         ?.focus({ preventScroll: true });
     }
     earlier.classList.toggle('hidden', !history.hasMore);
-    latest.textContent = history.historical ? 'Back to the latest' : 'Jump to latest';
+    labelLatest(history.historical ? 'Back to the latest' : 'Jump to latest');
     empty.hidden = rows.length > 0;
     paintEmpty();
     if (stick) follow();
