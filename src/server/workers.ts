@@ -33,7 +33,7 @@ import { forgeWords, type Forge } from '../shared/floors.js';
 import { PtyHost, SCROLLBACK, type Adopted, type Pty } from './ptys.js';
 import { DroidSessionReader } from './droid-session.js';
 import { isValidDroidModel, validateWorkerEffort, validateWorkerModel } from './agents.js';
-import { ScrollbackStore, searchTerminal, terminalTail } from './history.js';
+import { ScrollbackStore, plainTail, searchTerminal, terminalTail } from './history.js';
 import { DropStore } from './drops.js';
 import { screenSnapshot } from './screen.js';
 import { snapshotScreen, type ScreenFrame } from './screen-frame.js';
@@ -946,15 +946,7 @@ export class WorkerManager {
     const info = this.workers.get(id)?.info;
     if (info?.remote) return `${info.name} is an external worker. No local terminal is available.\nStatus: ${info.status}\n${info.activity ?? ''}`;
     const term = this.workers.get(id)?.term;
-    if (!term) return undefined;
-    const buf = term.buffer.active;
-    const text = (y: number) => buf.getLine(y)?.translateToString(true) ?? '';
-    // The rows under the cursor are blank until something is written there: they aren't the end.
-    let end = buf.length;
-    while (end > 0 && !text(end - 1).trim()) end--;
-    const out: string[] = [];
-    for (let y = Math.max(0, end - Math.max(1, lines)); y < end; y++) out.push(text(y));
-    return out.join('\n');
+    return term ? plainTail(term, lines) : undefined;
   }
 
   /** The card over a worker's head, until its own sign writer has something better (a subagent's title from its lead). */

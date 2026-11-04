@@ -195,7 +195,7 @@ export function register(server: OfficeMcpServer, deps: OfficeMcpDeps): void {
     {
       name: 'office_whoami',
       description:
-        'Read your office identity, desk, lead if you are a subagent, permission to hire and visit, team size, worktree default and wake-note setting. Use this to establish your role before coordinating work. It does not hire, message or wait.',
+        'Read your office identity, desk, lead if you are a subagent, permission to hire and visit, owner access, team size, worktree default and wake-note setting. Use this to establish your role before coordinating work. It does not hire, message or wait.',
       inputSchema: z.object({}),
       annotations: readOnly,
     },
@@ -203,7 +203,8 @@ export function register(server: OfficeMcpServer, deps: OfficeMcpDeps): void {
     async (_args, caller) => {
       const { body } = await caller.floor.team.handle(caller.worker, { action: 'whoami' });
       const visitRefusal = caller.floor.visits.cannotVisit(caller.worker);
-      const identity = { ...body, floor: { id: caller.floor.id, name: caller.floor.name }, cwd: caller.cwd, canVisit: !visitRefusal, ...(visitRefusal ? { visitRefusal } : {}) };
+      const owner = !!caller.worker.remote && !!deps.owner;
+      const identity = { ...body, floor: { id: caller.floor.id, name: caller.floor.name }, cwd: caller.cwd, canVisit: !visitRefusal, ...(visitRefusal ? { visitRefusal } : {}), ownerAccess: owner };
       const lead = caller.worker.lead ? (caller.floor.workers.get(caller.worker.lead)?.name ?? caller.worker.lead) : undefined;
       return officeResult(
         [
@@ -212,6 +213,7 @@ export function register(server: OfficeMcpServer, deps: OfficeMcpDeps): void {
           `May hire: ${body.canHire ? 'yes' : 'no'}. Subagents: ${body.subagents ?? 0}/${body.max ?? 0}. Wake the lead: ${body.wakeLead ? 'on' : 'off'}.`,
           ...(typeof body.why === 'string' ? [body.why] : []),
           `May visit: ${visitRefusal ? `no. ${visitRefusal}` : 'yes'}.`,
+          ...(owner ? ['Owner access: yes. office_roster, office_look, office_send_home and office_owner act on every floor as the owner does.'] : []),
         ].join('\n'),
         identity,
       );

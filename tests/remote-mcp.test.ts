@@ -102,10 +102,7 @@ function rig(t: Cleanup) {
       tail: () => 'working',
       setTask() {},
     };
-    const team = new Team(
-      { ...workers, get },
-      { dataDir: data, dir: data, git: false, settings: () => settings, remoteTeamSize: (id) => maps.flatMap((m) => [...m.values()]).filter((w) => w.lead === id).length, toast() {}, now: () => now },
-    );
+    const team = new Team({ ...workers, get }, { dataDir: data, dir: data, git: false, settings: () => settings, toast() {}, now: () => now });
     teams.push(team);
     const visit = new Visits({ ...workers, get, tell: workers.prompt, cancelTurn: () => false, turnScreen: () => undefined }, { on: () => settings.visits, emit() {}, now: () => now });
     visits.push(visit);
@@ -232,7 +229,7 @@ test('full inbox refuses new delivery rather than silently losing old messages; 
   assert.throws(() => new RemoteWorkers(dir), /not reset/);
 });
 
-test('a moving remote lead keeps both teams, reports, replies, and a building-wide hiring cap', async (t) => {
+test('a moving remote lead keeps both teams, reports and replies, with the owner’s hiring access', async (t) => {
   const r = rig(t);
   const id = r.remote.worker.id;
   const first = await r.teams[0].handle(r.remote.worker, { action: 'hire', task: 'Work on alpha' });
@@ -244,14 +241,23 @@ test('a moving remote lead keeps both teams, reports, replies, and a building-wi
   const second = await r.teams[1].handle(worker, { action: 'hire', task: 'Work on beta' });
   assert.equal(second.status, 200);
   assert.equal((await r.teams[1].handle(worker, { action: 'hire', task: 'More work' })).status, 200);
-  assert.equal((await r.teams[1].handle(worker, { action: 'hire', task: 'Too many' })).status, 409);
+  assert.equal((await r.teams[1].handle(worker, { action: 'hire', task: 'Past the per-lead limit' })).status, 200, 'the owner hires past maxPerLead, and so does an external worker');
+  r.settings.on = false;
+  r.settings.models = [{ id: 'cheap-model' }];
+  assert.equal(r.teams[1].cannotHire(worker), undefined, 'Subagents off does not stop an external worker');
+  assert.equal((await r.teams[1].handle(worker, { action: 'hire', task: 'Any model', model: 'strong-model' })).status, 200, 'the Subagents model list does not limit it');
+  assert.equal(((await r.teams[1].handle(worker, { action: 'models' })).body as { restricted: boolean }).restricted, false);
+  const local = { ...worker, id: 'local', remote: undefined, deskId: 'desk-9' } as WorkerInfo;
+  assert.match(r.teams[1].cannotHire(local)!, /turned off/, 'a local worker keeps the owner’s Subagents setting');
+  r.settings.on = true;
+  delete r.settings.models;
   const sub = r.maps[0].get((first.body.worker as WorkerInfo).id)!;
   assert.equal((await r.teams[0].handle(sub, { action: 'report', text: 'Alpha finished' })).status, 200);
   const inbox = r.office.inbox(id);
   assert.match(inbox.messages[0].text, /Alpha finished/);
   assert.equal(inbox.messages[0].floor, 'alpha');
   const status = await r.office.team(worker, { action: 'status' });
-  assert.equal((status.body.team as unknown[]).length, 3);
+  assert.equal((status.body.team as unknown[]).length, 5);
   assert.equal(r.office.inbox(id).messages.length, 1, 'status does not consume a remote report');
   assert.equal((await r.office.team(worker, { action: 'send', worker: sub.id, text: 'Please continue' })).status, 200);
   assert.equal((await r.office.team(worker, { action: 'send', worker: 'Byte', text: 'Ambiguous' })).status, 409);

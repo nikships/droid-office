@@ -85,6 +85,18 @@ export function terminalTail(term: HeadlessTerminal, ser: Serializer, maxLines: 
   return out;
 }
 
+/** A terminal's last `lines` non-blank lines as plain text, its scrollback included. */
+export function plainTail(term: HeadlessTerminal, lines: number): string {
+  const buf = term.buffer.active;
+  const text = (y: number) => buf.getLine(y)?.translateToString(true) ?? '';
+  // The rows under the cursor are blank until something is written there: they aren't the end.
+  let end = buf.length;
+  while (end > 0 && !text(end - 1).trim()) end--;
+  const out: string[] = [];
+  for (let y = Math.max(0, end - Math.max(1, lines)); y < end; y++) out.push(text(y));
+  return out.join('\n');
+}
+
 /**
  * The lines of a worker's terminal holding `needle` (a searchKey), newest first, one per distinct
  * line: a full-screen program's screen first, then the scrollback.
