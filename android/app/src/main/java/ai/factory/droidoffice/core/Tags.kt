@@ -254,7 +254,11 @@ object Tags {
         const val SHEET = "subscriptions.sheet"
         const val STATUS = "subscriptions.status"
         const val CLOSE = "subscriptions.close"
+        const val DETAIL = "subscriptions.detail"
+        const val OFF = "subscriptions.off"
+        const val UNCONNECTED = "subscriptions.unconnected"
         fun provider(key: String) = "subscriptions.provider/$key"
+        fun ring(provider: String, account: String) = "subscriptions.ring/$provider/$account"
     }
 
     object Worker {
