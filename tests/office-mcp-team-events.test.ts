@@ -412,15 +412,20 @@ test('team_wait returns every event that landed before it answered, and counts a
   r.set('sub2', 'working');
   const question = r.call(r.lead, 'team_wait', { until: ['question'], timeoutSec: 20 });
   await new Promise((resolve) => setTimeout(resolve, 50));
-  r.screens.set('sub1', DIGITS);
+  // The AskUser hook comes before its menu is drawn, and drawing it signals no wait.
   r.set('sub1', 'needs_input', { ask: { kind: 'question', questions: [{ question: 'Which file should I create?', options: ['hello.txt', 'bye.txt', 'Other (type your answer)'], multiSelect: false }] } });
   const asked = await question;
   assert.equal(asked.body.reason, 'question');
   assert.deepEqual(asked.body.events, [], 'its needs_input news is not what this wait asked for');
   assert.equal(asked.body.questions[0].kind, 'terminal');
+  assert.equal(asked.body.questions[0].answerable, false);
+  assert.match(asked.body.questions[0].why, /not on screen yet/);
+  r.screens.set('sub1', DIGITS);
+  const [drawn] = (await r.call(r.lead, 'questions_list')).body.questions;
+  assert.equal(drawn.answerable, true, 'answerable once its menu shows');
   const again = await r.call(r.lead, 'team_wait', { until: ['question'], timeoutSec: 1 });
   assert.equal(again.body.matched, false, 'the same terminal question does not end the next wait');
-  assert.equal(again.body.questions[0].id, asked.body.questions[0].id);
+  assert.equal(again.body.questions[0].id, drawn.id);
 });
 
 test('team_wait sends progress to a client that asked for it', async (t) => {

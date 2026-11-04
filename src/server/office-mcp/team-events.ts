@@ -188,7 +188,18 @@ function terminalQuestion(scope: TeamScope, w: WorkerInfo): OpenQuestion | undef
   const lines = scope.workers.screenLines?.(w.id);
   const menu = w.ask?.kind === 'question' && canAnswer(w, lines) ? scope.workers.screenMenu?.(w.id) : undefined;
   if (!menu || !scope.workers.write)
-    return { ...base, id: `ask:${scope.id}:${w.id}:terminal`, kind: 'terminal', question: w.activity ?? 'Waiting for input in its terminal', options: [], multiSelect: false, takesText: false, answerable: false, why: atDesk };
+    return {
+      ...base,
+      id: `ask:${scope.id}:${w.id}:terminal`,
+      kind: 'terminal',
+      question: w.activity ?? 'Waiting for input in its terminal',
+      options: [],
+      multiSelect: false,
+      takesText: false,
+      answerable: false,
+      // The hook says it asks before the menu has drawn.
+      why: w.ask?.kind === 'question' ? `Its menu is not on screen yet: list questions again in a moment. ${atDesk}` : atDesk,
+    };
   const shown = questionPresentation(menu, [], w.ask);
   return {
     ...base,
@@ -322,11 +333,12 @@ export function register(server: OfficeMcpServer, deps: OfficeMcpDeps): void {
         const after = new Map(scopes.map((s) => [s.id, since ? (since.get(s.id) ?? 0) : caller.worker.remote ? s.team.latest() : undefined]));
         const news = () => scopes.flatMap((s) => s.team.news(lead, { after: after.get(s.id), unread: after.get(s.id) === undefined, kinds, workers: watched }).map((e) => ({ e, floor: s.id })));
         const reasonOf = (events: Matched['events']) => (events[0].e.kind === 'needs_input' && !until.has('needs_input') ? 'blocked' : events[0].e.kind);
-        const asks = () => openQuestions(scopes, lead, watched).filter((q) => q.kind === 'terminal' && q.answerable);
         const team = () => scopes.flatMap((s) => s.workers.list().filter((w) => w.lead === lead && (!watched || watched.has(w.id))));
+        // From the hooks' account of the question, not the screen: its menu may draw after the last signal a wait hears.
+        const asks = () => team().flatMap((w) => (w.status === 'needs_input' && w.kind === 'agent' && !w.cloud && w.ask?.kind === 'question' ? [`${w.id}:${w.waitingSince ?? 0}:${JSON.stringify(w.ask.questions)}`] : []));
         // A terminal question or a settled team counts only when it comes about during the wait: one that was
         // already so would end every default wait at once. Team questions are news, which since already orders.
-        const askedBefore = new Set(asks().map((q) => q.id));
+        const askedBefore = new Set(asks());
         let busy = !team().every(settled);
         const started = Date.now();
         const outcome = await waitFor(scopes, {
@@ -336,7 +348,7 @@ export function register(server: OfficeMcpServer, deps: OfficeMcpDeps): void {
           check: () => {
             const events = news();
             if (events.length) return { reason: reasonOf(events), events };
-            if (until.has('question') && asks().some((q) => !askedBefore.has(q.id))) return { reason: 'question', events: [] };
+            if (until.has('question') && asks().some((q) => !askedBefore.has(q))) return { reason: 'question', events: [] };
             if (until.has('idle')) {
               if (!team().every(settled)) busy = true;
               else if (busy) return { reason: 'idle', events: [] };
