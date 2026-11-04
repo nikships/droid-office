@@ -41,7 +41,6 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.SnackbarResult
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
@@ -127,30 +126,20 @@ fun rememberNow(periodMs: Long = 1_000): Long {
 /** The worker list. */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun HomeScreen(onOpenWorker: (String) -> Unit, onOffices: () -> Unit, onScan: () -> Unit) {
+fun HomeScreen(onOpenWorker: (String) -> Unit, selected: String?, onCloseWorker: () -> Unit, onOffices: () -> Unit, onScan: () -> Unit) {
     val graph = LocalGraph.current
-    val snackbar = LocalSnackbar.current
     val connection = graph.connection
     val link by connection.link.collectAsStateWithLifecycle()
     val data by connection.data.collectAsStateWithLifecycle()
     val store by graph.store.snapshot.collectAsStateWithLifecycle()
     val office = store.active
     var hiring by rememberSaveable { mutableStateOf(false) }
-    var selected by rememberSaveable { mutableStateOf<String?>(null) }
 
     // The catalogue names the models on the cards.
     LaunchedEffect(link.phase, link.officeId) { if (link.phase == Phase.Connected) connection.models() }
 
     BoxWithConstraints(Modifier.fillMaxSize().tagged(Tags.Screen.HOME).background(Palette.Bg)) {
         val wide = maxWidth >= 840.dp
-        val open: (String) -> Unit = { id -> if (wide) selected = id else onOpenWorker(id) }
-
-        LaunchedEffect(Unit) {
-            connection.hired.collect { w ->
-                val r = snackbar.showSnackbar("${w.name} is at ${deskLabel(w.deskId)}", actionLabel = "Open", withDismissAction = true)
-                if (r == SnackbarResult.ActionPerformed) open(w.id)
-            }
-        }
 
         Row(Modifier.fillMaxSize()) {
             Box(if (wide) Modifier.width(420.dp).fillMaxHeight() else Modifier.fillMaxSize()) {
@@ -160,7 +149,7 @@ fun HomeScreen(onOpenWorker: (String) -> Unit, onOffices: () -> Unit, onScan: ()
                     link = link,
                     data = data,
                     selected = if (wide) selected else null,
-                    onOpen = open,
+                    onOpen = onOpenWorker,
                     onOffices = onOffices,
                     onScan = onScan,
                     onHire = { hiring = true },
@@ -182,7 +171,7 @@ fun HomeScreen(onOpenWorker: (String) -> Unit, onOffices: () -> Unit, onScan: ()
                 Box(Modifier.weight(1f).fillMaxHeight()) {
                     val id = selected
                     if (id != null && data.workers.containsKey(id)) {
-                        WorkerScreen(workerId = id, onBack = { selected = null }, embedded = true)
+                        WorkerScreen(workerId = id, onBack = onCloseWorker, embedded = true)
                     } else {
                         Column(Modifier.fillMaxSize().tagged(Tags.Home.PICK_WORKER), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
                             GlyphMark(size = 48.dp, glow = false)

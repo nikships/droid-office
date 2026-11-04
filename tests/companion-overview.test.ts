@@ -14,10 +14,19 @@ test('companions open worker panes or a list instead of the 3D floor', () => {
 
 test('companion hiring forwards its captured pane through confirmed floor-scoped actions', () => {
   const web = readFileSync(new URL('../src/client/dashboard.ts', import.meta.url), 'utf8');
-  assert.match(web, /hire: \(index\) => hire\('agent', 'auto', index\)/);
-  assert.match(web, /function hire\(kind: 'agent' \| 'shell', deskId = 'auto', targetPane\?: number\)/);
+  assert.match(web, /hire: \(index\) => hire\('auto', index\)/);
+  assert.match(web, /function hire\(deskId = 'auto', targetPane\?: number\)/);
   assert.match(web, /await action\(\{ t: 'worker\.spawn',[^\n]+targetPane\)/);
   assert.match(web, /msg\.t === 'worker\.spawn' && result\.workerId && floor === intendedFloor/);
   assert.match(web, /if \(hired\) openHere\(hired, true, targetPane\)/);
   assert.match(web, /openWorker\(ws, id, targetPane\)/);
+});
+
+test('the companion Shell button opens a shell at once, with no prompt or worktree, like B in the office', () => {
+  const web = readFileSync(new URL('../src/client/dashboard.ts', import.meta.url), 'utf8');
+  assert.match(web, /onclick: \(\) => openShell\(\) \}, icon\('terminal'/);
+  const body = web.match(/function openShell\(\) \{\n([\s\S]*?)\n\}/)?.[1];
+  assert.ok(body, 'openShell is defined');
+  assert.match(body, /action\(\{ t: 'worker\.spawn', deskId: 'auto', kind: 'shell' \}/);
+  assert.doesNotMatch(body, /openPrompt|worktree/);
 });

@@ -41,5 +41,5 @@ Each feature file starts with an H1 title and one paragraph describing the user-
 | [Hire a worker](./hire-worker.md) | Office page, web companion | All but `hire-droid-dialog` (`hire-shell.mjs`), Mac Mini, fresh office, 2026-11-02 |
 | [Whiteboard](./whiteboard.md) | Office page, Android | Not yet driven |
 | [Office MCP tool call](./office-mcp.md) | Office MCP over HTTP | `mcp-refuse-anon` and `mcp-refuse-shell` (`mcp-shell-refusal.mjs`), Mac Mini, fresh office, 2026-11-02 |
-| [Android Workers list](./android-workers.md) | Android app (adb) | Not yet driven: needs a paired device |
+| [Android Workers list](./android-workers.md) | Android app (adb) | Pixel 9 Pro XL emulator, cloned owner office: Shell from Asks and past a pending Droid snackbar |
 | [Website sections](./website.md) | Marketing site | `website-sections.mjs`, Mac Mini, 2026-11-02 |

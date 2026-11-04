@@ -144,8 +144,8 @@ const authPanel = h('section.dash-gate', { hidden: true });
 
 const sideTitle = h('h2.dash-side-title');
 const sideSub = h('p.dash-side-sub');
-const agentBtn = h('button.btn.accent.dash-hire', { type: 'button', title: 'Hire a Droid on this floor (⌘ N)', onclick: () => hire('agent') }, icon('plus', 14), h('span', {}, 'Hire Droid'));
-const shellBtn = h('button.btn.dash-hire', { type: 'button', title: 'Open a plain shell at a desk', onclick: () => hire('shell') }, icon('terminal', 14), h('span', {}, 'Shell'));
+const agentBtn = h('button.btn.accent.dash-hire', { type: 'button', title: 'Hire a Droid on this floor (⌘ N)', onclick: () => hire() }, icon('plus', 14), h('span', {}, 'Hire Droid'));
+const shellBtn = h('button.btn.dash-hire', { type: 'button', title: 'Open a plain shell at the next free desk', onclick: () => openShell() }, icon('terminal', 14), h('span', {}, 'Shell'));
 const workerList = h('nav.dash-workers', { 'aria-label': 'Workers' });
 const roster = createWorkerRoster(workerList, (id) => openHere(id, true), openBesideHere);
 const side = h(
@@ -352,7 +352,7 @@ const paneHost: PaneHost = {
   },
   openBeside: (id) => openBesideHere(id),
   sendHome: (w) => sendHome(w),
-  hire: (index) => hire('agent', 'auto', index),
+  hire: (index) => hire('auto', index),
 };
 
 /** Where a pane sits: its box, less half the 8px gap on every side that touches another pane. */
@@ -886,31 +886,36 @@ function schedulePreviews() {
 }
 // --- Actions ------------------------------------------------------------------------------------------
 
-function hire(kind: 'agent' | 'shell', deskId = 'auto', targetPane?: number) {
+/** A shell opens at once, as B at an empty desk does in the office: no prompt and no worktree. */
+function openShell() {
+  if (!live() || !store.currentFloor()) return;
+  void action({ t: 'worker.spawn', deskId: 'auto', kind: 'shell' }, '', floor, 'Shell opened.').then(warn);
+}
+function hire(deskId = 'auto', targetPane?: number) {
   if (!live() || !store.currentFloor()) return;
   const intended = floor;
-  const key = draftKey(intended, `hire:${kind}`);
+  const key = draftKey(intended, 'hire:agent');
   const desk = deskId === 'auto' ? undefined : DESK_BY_ID.get(deskId)?.label;
   openPrompt({
-    title: kind === 'shell' ? 'Open a shell' : 'Hire Droid',
+    title: 'Hire Droid',
     subtitle: [store.currentFloor()?.name, desk].filter(Boolean).join(' · '),
-    submitLabel: kind === 'shell' ? 'Open shell' : 'Hire Droid',
+    submitLabel: 'Hire Droid',
     allowEmpty: true,
     initial: read(key),
     onDraft: (v) => remember(key, v),
-    modelOption: kind === 'agent',
+    modelOption: true,
     deskId: deskId === 'auto' ? undefined : deskId,
-    imagesOption: kind === 'agent',
-    recall: kind === 'agent',
+    imagesOption: true,
+    recall: true,
     worktreeOption: !store.currentFloor()?.home && !store.currentFloor()?.plain && !!store.currentFloor()?.branch,
-    runsOn: kind === 'agent' ? runsOnPicker() : null,
+    runsOn: runsOnPicker(),
     onCloud: async (text, o) => {
       const error = await action(cloudSpawn(deskId, text, o), '', intended, `Droid hired on ${o.cloud.computerName}.`, targetPane);
       if (!error) remember(key, '');
       return error;
     },
     onSubmit: async (text, opts) => {
-      const error = await action({ t: 'worker.spawn', deskId, kind, prompt: text, ...opts }, '', intended, kind === 'shell' ? 'Shell opened.' : 'Droid hired.', targetPane);
+      const error = await action({ t: 'worker.spawn', deskId, kind: 'agent', prompt: text, ...opts }, '', intended, 'Droid hired.', targetPane);
       if (!error) remember(key, '');
       return error;
     },
@@ -1085,7 +1090,7 @@ window.addEventListener(
             break;
           }
           case 'hire':
-            hire('agent', 'auto', ws.focused);
+            hire('auto', ws.focused);
             break;
           case 'board':
             void openBoard();
