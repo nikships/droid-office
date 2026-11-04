@@ -326,6 +326,21 @@ test('ping picker: each row says what the worker is on and where', () => {
   assert.equal(pingTask(worker({ prompt: 'short' })), 'short');
 });
 
+test("ping picker: the open card's author is tagged and first, whatever its status", () => {
+  const labels = { idle: 'ready', working: 'working', needs_input: 'needs input' };
+  const ws = [worker({ id: 'a', name: 'Ada', status: 'idle' }), worker({ id: 'n', name: 'Nibble', status: 'needs_input' }), worker({ id: 'z', name: 'Zed', status: 'idle' })];
+  const rows = pingRows(ws, labels, undefined, 'n');
+  assert.deepEqual(
+    rows.map((r) => r.id),
+    ['n', 'a', 'z'],
+  );
+  assert.equal(rows[0].author, true);
+  assert.equal(rows[0].ok, false);
+  assert.ok(rows.slice(1).every((r) => r.author === undefined));
+  // An author that has left the floor tags nobody.
+  assert.ok(pingRows(ws, labels, undefined, 'gone').every((r) => r.author === undefined));
+});
+
 test('Copy for agent: one line with the id, the title and the read command', () => {
   const line = copyForAgent({ id: 'c-1a2b', title: '  Pricing\n draft ', kind: 'html' });
   assert.equal(line, 'Whiteboard card c-1a2b “Pricing draft” (artifact): call `whiteboard_read` with cards: ["c-1a2b"] to see it with my marks.');

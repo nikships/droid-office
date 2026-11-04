@@ -89,6 +89,7 @@ Cloud workers are excluded, and the window and the guide say so:
 ### Ping a worker
 
 - A picker of the floor's workers (name, color, status), with each one's eligibility. Each row also says what the worker is on, so the owner can pick one without knowing its name: its task card's title (else the first line of the prompt it was hired with, else "No task yet"), and its branch and pull request.
+- Opened from a card a worker made, that worker's row comes first, highlighted and tagged **Made this card**, while it's still on the floor. From the grid, or on a card the owner made, no row is tagged.
 - **Idle, done or asleep:** the office types the line in (an asleep worker is resumed with it), as a team message does.
 - **Working:** a Droid agent gets the line queued behind its current turn (the `queue` flag of `WorkerManager.prompt`, which sends Ctrl+Enter). Another agent kind that can't queue is shown as busy: ping it when it's free.
 - **Starting, waiting on an answer in its terminal (`needs_input`), or down:** not eligible, with the reason. The office never types into a permission prompt, an AskUser dialog, or a plain shell.

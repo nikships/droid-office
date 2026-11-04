@@ -595,10 +595,22 @@ object WhiteboardPing {
     fun doing(w: WorkerInfo): String =
         Workers.title(w) ?: w.prompt?.lineSequence()?.map { it.trim() }?.firstOrNull { it.isNotEmpty() } ?: "No task yet"
 
-    /** Pingable workers first, then the busy ones, then the rest; each group by name. */
-    fun order(workers: Collection<WorkerInfo>): List<Pair<WorkerInfo, PingCheck>> =
+    /** The worker that made [card], by id, or null when the owner made it (pingRows' `author`). */
+    fun author(card: WbCard?): String? = card?.author?.takeUnless { it.isOwner }?.id?.ifBlank { null }
+
+    /** The open card's [author] first, then pingable workers, then the busy ones, then the rest; each group by name. */
+    fun order(workers: Collection<WorkerInfo>, author: String? = null): List<Pair<WorkerInfo, PingCheck>> =
         workers.map { it to eligibility(it) }
-            .sortedWith(compareBy<Pair<WorkerInfo, PingCheck>>({ (_, c) -> if (c is PingCheck.Ok) 0 else if ((c as PingCheck.No).busy) 1 else 2 }, { it.first.name.lowercase() }))
+            .sortedWith(
+                compareBy<Pair<WorkerInfo, PingCheck>>({ (w, c) ->
+                    when {
+                        author != null && w.id == author -> -1
+                        c is PingCheck.Ok -> 0
+                        c is PingCheck.No && c.busy -> 1
+                        else -> 2
+                    }
+                }, { it.first.name.lowercase() }),
+            )
 
     /** What the office said it did with a ping that went in. */
     fun outcome(name: String, how: String?): String = when (how) {

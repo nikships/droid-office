@@ -331,6 +331,14 @@ class WhiteboardTest {
     }
 
     @Test
+    fun theCardsAuthorComesFirst() {
+        val ws = listOf(worker("needs_input", name = "Ash"), worker("idle", name = "Cleo"))
+        assertEquals(listOf("Ash", "Cleo"), WhiteboardPing.order(ws, "ash").map { it.first.name })
+        assertEquals(listOf("Cleo", "Ash"), WhiteboardPing.order(ws, "gone").map { it.first.name })
+        assertNull(WhiteboardPing.author(null))
+    }
+
+    @Test
     fun readsWhatThePingDid() {
         val ok = WbPinged.of(obj("""{"t":"whiteboard.pinged","worker":"w1","ok":true,"how":"queue"}"""))!!
         assertTrue(ok.ok)

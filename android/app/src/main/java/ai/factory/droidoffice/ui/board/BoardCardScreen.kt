@@ -108,6 +108,7 @@ import ai.factory.droidoffice.core.WbPoint
 import ai.factory.droidoffice.core.WbResult
 import ai.factory.droidoffice.core.WbSticky
 import ai.factory.droidoffice.core.WbThread
+import ai.factory.droidoffice.core.WhiteboardPing
 import ai.factory.droidoffice.core.WhiteboardView
 import ai.factory.droidoffice.core.Workers
 import ai.factory.droidoffice.ui.LocalGraph
@@ -452,7 +453,7 @@ fun BoardCardScreen(floorId: String, cardId: String, onBack: () -> Unit) {
             },
         )
     }
-    if (pinging) PingSheet(onDismiss = { pinging = false })
+    if (pinging) PingSheet(onDismiss = { pinging = false }, author = WhiteboardPing.author(card))
 }
 
 /** Use or Mark up, a picture to add, and the comments, under the live card. */

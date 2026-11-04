@@ -21,6 +21,8 @@ export interface PingRow {
   /** What pressing Ping does, or why it can't. */
   note: string;
   busy?: boolean;
+  /** It made the card the picker was opened from. */
+  author?: boolean;
 }
 
 const HOW_NOTE: Record<PingHow, string> = {
@@ -50,8 +52,12 @@ export function pingWhere(w: WorkerInfo, words: ForgeWords = forgeWords(undefine
   return parts.length ? parts.join(' · ') : undefined;
 }
 
-/** The picker's rows: every worker on the floor with whether it can be pinged now and why not; the ones that can first, then A to Z. */
-export function pingRows(workers: Iterable<WorkerInfo>, statusLabel: Record<string, string>, words: ForgeWords = forgeWords(undefined)): PingRow[] {
+/**
+ * The picker's rows: every worker on the floor with whether it can be pinged now and why not. The
+ * worker that made the open card (`author`, a worker id) comes first, then the ones that can be pinged,
+ * then A to Z.
+ */
+export function pingRows(workers: Iterable<WorkerInfo>, statusLabel: Record<string, string>, words: ForgeWords = forgeWords(undefined), author?: string): PingRow[] {
   const rows = [...workers].map((w): PingRow => {
     const e = pingEligibility(w);
     const status = statusLabel[w.status] ?? w.status;
@@ -65,10 +71,15 @@ export function pingRows(workers: Iterable<WorkerInfo>, statusLabel: Record<stri
       ...(where ? { where } : {}),
       status,
       statusClass: w.status,
+      ...(author && w.id === author ? { author: true } : {}),
     };
     return e.ok ? { ...base, ok: true, how: e.how, note: HOW_NOTE[e.how] } : { ...base, ok: false, note: e.reason, ...(e.busy ? { busy: true } : {}) };
   });
-  const rank = (r: PingRow) => (r.ok ? 0 : r.busy ? 1 : 2);
+  const rank = (r: PingRow) => {
+    if (r.author) return -1;
+    if (r.ok) return 0;
+    return r.busy ? 1 : 2;
+  };
   return rows.sort((a, b) => rank(a) - rank(b) || a.name.localeCompare(b.name));
 }
 

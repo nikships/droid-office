@@ -88,6 +88,8 @@ object Tags {
         fun showThread(id: String) = "board.thread.show/$id"
         fun moveThread(id: String) = "board.thread.move/$id"
         fun pingWorker(id: String) = "board.ping/$id"
+        /** On the ping sheet row of the worker that made the open card. */
+        fun pingAuthor(id: String) = "board.ping.author/$id"
     }
 
     object Answer {

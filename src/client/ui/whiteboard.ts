@@ -447,7 +447,7 @@ export function openWhiteboard(net: Net, opts: { card?: string; queueOffline?: b
     });
     actions.replaceChildren(
       copyBtn,
-      h('button.btn.sm', { type: 'button', onclick: () => openPing(net) }, 'Ping a worker'),
+      h('button.btn.sm', { type: 'button', onclick: () => openPing(net, c.author.kind === 'worker' ? c.author.id : undefined) }, 'Ping a worker'),
       h(
         'button.btn.sm.danger',
         {

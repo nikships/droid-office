@@ -23,8 +23,11 @@ export function routePinged(msg: Pinged) {
   for (const fn of pingWaiters) fn(msg);
 }
 
-/** The picker: every worker on the floor, whether the office can type the line in now, and a Ping button. */
-export function openPing(net: Net) {
+/**
+ * The picker: every worker on the floor, whether the office can type the line in now, and a Ping button.
+ * `author` is the worker id that made the open card; its row is first and tagged while it's on the floor.
+ */
+export function openPing(net: Net, author?: string) {
   const results = new Map<string, { ok: boolean; text: string } | 'sending'>();
   const list = h('ul.list.boxed.wb-ping-list');
   const none = emptyState('🤖', 'No workers on this floor', 'Hire one at a desk first.');
@@ -37,10 +40,10 @@ export function openPing(net: Net) {
     h('footer', {}, h('span.grow', {}, 'Cloud workers can’t use the board yet'), h('button.btn.ghost', { type: 'button', onclick: () => modal.close() }, 'Done')),
   );
   const paint = () => {
-    const rows = pingRows(store.workers.values(), STATUS_LABEL, words());
+    const rows = pingRows(store.workers.values(), STATUS_LABEL, words(), author);
     // Both stay in the window, so a worker sitting down while the picker is open shows up in it.
-    list.hidden = !rows.length;
-    none.hidden = !!rows.length;
+    list.classList.toggle('hidden', !rows.length);
+    none.classList.toggle('hidden', !!rows.length);
     for (const id of results.keys()) if (!rows.some((r) => r.id === id)) results.delete(id);
     if (!rows.length) return;
     list.replaceChildren(
@@ -55,11 +58,12 @@ export function openPing(net: Net) {
         const meta = res && res !== 'sending' ? h('span.list-meta', { class: res.ok ? 'wb-ok' : 'wb-bad', title: res.text }, res.text) : h('span.list-meta', { title: r.note }, r.note);
         const task = r.task ?? (r.statusClass === 'starting' ? 'Starting, no task yet' : 'No task yet');
         const job = h('span.list-meta.wb-ping-task', { class: r.task ? '' : 'wb-ping-none', title: [r.task, r.where].filter(Boolean).join('\n') || task }, task);
+        const name = h('span.wb-ping-name', {}, h('span.list-title', { title: r.name }, r.name), r.author ? h('span.wb-ping-author-tag', { title: `${r.name} made this card` }, 'Made this card') : null);
         return h(
           'li.list-row',
-          { class: r.ok ? '' : 'wb-ineligible', 'data-worker': r.id },
+          { class: [r.ok ? '' : 'wb-ineligible', r.author ? 'on' : ''].filter(Boolean).join(' '), 'data-worker': r.id },
           h('span.list-icon', {}, colorDot(r.color)),
-          h('span.list-main', {}, h('span.list-title', { title: r.name }, r.name), job, r.where ? h('span.list-meta.wb-ping-where', { title: r.where }, r.where) : null, meta),
+          h('span.list-main', {}, name, job, r.where ? h('span.list-meta.wb-ping-where', { title: r.where }, r.where) : null, meta),
           h('span.list-end', {}, h('span.pill', { class: r.statusClass }, r.status), btn),
         );
       }),

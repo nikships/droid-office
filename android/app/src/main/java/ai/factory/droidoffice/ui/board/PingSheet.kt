@@ -43,17 +43,18 @@ import kotlinx.coroutines.launch
 /**
  * Ping a worker: pick one of the floor's workers and the office types the Whiteboard line into its
  * terminal, as its status allows. Rows that can't take it say why; the list follows status changes.
+ * [author] is the worker id that made the open card: its row is first and tagged while it's on the floor.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun PingSheet(onDismiss: () -> Unit) {
+fun PingSheet(onDismiss: () -> Unit, author: String? = null) {
     val graph = LocalGraph.current
     val snackbar = LocalSnackbar.current
     val connection = graph.connection
     val data by connection.data.collectAsStateWithLifecycle()
     val sheet = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     val scope = rememberCoroutineScope()
-    val rows = WhiteboardPing.order(data.workers.values)
+    val rows = WhiteboardPing.order(data.workers.values, author)
 
     ModalBottomSheet(onDismissRequest = onDismiss, sheetState = sheet, containerColor = Palette.Surface, shape = RoundedCornerShape(topStart = 22.dp, topEnd = 22.dp)) {
         Column(Modifier.fillMaxWidth().tagged(Tags.Board.PING_SHEET).padding(horizontal = 20.dp).navigationBarsPadding().padding(bottom = 14.dp)) {
@@ -69,9 +70,10 @@ fun PingSheet(onDismiss: () -> Unit) {
             LazyColumn(Modifier.heightIn(max = 520.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 items(rows, key = { it.first.id }) { (w, check) ->
                     val ok = check is PingCheck.Ok
+                    val made = author != null && w.id == author
                     Row(
                         Modifier.fillMaxWidth()
-                            .panel(RoundedCornerShape(12.dp), Palette.SurfaceRaised, Palette.Border)
+                            .panel(RoundedCornerShape(12.dp), if (made) Palette.AccentMuted else Palette.SurfaceRaised, if (made) Palette.Accent else Palette.Border)
                             .clickable(enabled = ok, onClickLabel = "Ping ${w.name}") {
                                 if (connection.pingBoard(w.id)) {
                                     scope.launch { sheet.hide() }.invokeOnCompletion { onDismiss() }
@@ -85,7 +87,10 @@ fun PingSheet(onDismiss: () -> Unit) {
                     ) {
                         WorkerDot(parseColor(w.color), w.state, 10.dp)
                         Column(Modifier.weight(1f).padding(start = 2.dp, end = 8.dp)) {
-                            Text(w.name.ifBlank { w.id }, style = MaterialTheme.typography.titleSmall, color = if (ok) Palette.Text else Palette.TextSecondary, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                Text(w.name.ifBlank { w.id }, style = MaterialTheme.typography.titleSmall, color = if (ok) Palette.Text else Palette.TextSecondary, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f, fill = false))
+                                if (made) Eyebrow("Made this card", Modifier.tagged(Tags.Board.pingAuthor(w.id)), color = Palette.Accent)
+                            }
                             val on = listOfNotNull(WhiteboardPing.doing(w), w.worktree?.branch?.takeIf { it.isNotBlank() }?.let { "🌿 $it" }, w.pr?.number?.takeIf { it > 0 }?.let { "#$it" })
                             Text(on.joinToString(" · "), style = MaterialTheme.typography.bodySmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
                             if (check is PingCheck.No) Text(check.reason, style = MaterialTheme.typography.bodySmall, color = if (check.busy) Palette.Warning else Palette.TextTertiary, maxLines = 2, overflow = TextOverflow.Ellipsis)
