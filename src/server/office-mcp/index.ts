@@ -188,9 +188,12 @@ export class OfficeMcpServer {
     const forwarded = new Request(request, init);
     const server = this.serverFor(caller, request.signal);
     const transport = new WebStandardStreamableHTTPServerTransport({ sessionIdGenerator: undefined, enableJsonResponse: true });
-    await server.connect(transport);
     try {
+      await server.connect(transport);
       return diagnosed(await transport.handleRequest(forwarded));
+    } catch (err) {
+      console.error('Office MCP:', (err as Error).message);
+      return Response.json({ jsonrpc: '2.0', id: null, error: { code: -32603, message: 'The office could not answer this MCP request.' } }, { status: 500 });
     } finally {
       void transport.close().catch(() => undefined);
       void server.close().catch(() => undefined);

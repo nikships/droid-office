@@ -1051,8 +1051,8 @@ export async function startServer(cfg: Config) {
           if (body.action === 'add' && name && name.length <= 60 && typeof body.floor === 'string') return send(res, 200, remoteMcp.add(name, body.floor));
           if (body.action === 'rotate' && id) return send(res, 200, remoteMcp.rotate(id));
           if (body.action === 'revoke' && id) return send(res, 200, remoteMcp.revoke(id));
-          if (body.action === 'add-key' && id && name) return send(res, 200, remoteMcp.addKey(id, name));
-          if (body.action === 'revoke-key' && id && typeof body.key === 'string') return send(res, 200, remoteMcp.revokeKey(id, body.key));
+          if (body.action === 'add-key' && id && name && name.length <= 60) return send(res, 200, remoteMcp.addKey(id, name));
+          if (body.action === 'revoke-key' && id && typeof body.key === 'string' && body.key) return send(res, 200, remoteMcp.revokeKey(id, body.key));
         } catch (err) {
           return send(res, 409, { error: (err as Error).message });
         }

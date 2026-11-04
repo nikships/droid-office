@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import type { WorkerInfo } from '../../shared/protocol.js';
-import { officeError, officeResult, type OfficeMcpAccess, type OfficeMcpDeps, type OfficeMcpServer } from './index.js';
+import { OFFICE_MCP_WORKER_HEADER, officeError, officeResult, type OfficeMcpAccess, type OfficeMcpDeps, type OfficeMcpServer } from './index.js';
 
 export const remoteInstructions = `You are an external worker, not a local Droid process. There is no terminal or conversation file for you on the Office machine. Your desk is real, but your agent runs elsewhere.
 Use office_floors to discover workspaces and office_move to move your desk. Moving never abandons teams or conversations: subagents keep working on their original floors. Team status includes your teams across the building; use worker ids or the optional floor to disambiguate repeated names. Hiring uses your current floor. Normal hiring settings and the building-wide per-lead limit still apply.
@@ -10,7 +10,7 @@ All Whiteboard file paths and cwd values refer to the OFFICE MACHINE, never the 
 
 /** The office issues each bot its worker id with its key; this says it at `initialize`, so the client needn't keep it. */
 export function remoteIdentityInstructions(worker: Pick<WorkerInfo, 'id' | 'name'>): string {
-  return `You are ${worker.name}, worker id ${worker.id}. The office issued this id with your key: your key alone identifies you, so the x-droid-office-worker-id header is optional. Every response carries the id in that header, and office_whoami returns it.`;
+  return `You are ${worker.name}, worker id ${worker.id}. The office issued this id with your key: your key alone identifies you, so the ${OFFICE_MCP_WORKER_HEADER} header is optional. Every response carries the id in that header, and office_whoami returns it.`;
 }
 
 const remote: OfficeMcpAccess = (c) => (c.worker.remote ? undefined : 'Only external workers use this tool');

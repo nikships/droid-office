@@ -199,6 +199,8 @@ test('named keys act as their bot, record when they were last used, and revoke o
   assert.equal(saved.keys[0].lastUsedAt, 1_000_000, 'saved at most once a minute');
   store.touch(worker.id, laptop.key.id, 1_060_000);
   assert.equal(new RemoteWorkers(dir).list().find((r) => r.id === worker.id)!.keys[0].lastUsedAt, 1_060_000);
+  store.touch(worker.id, laptop.key.id, 500_000);
+  assert.equal(store.list().find((r) => r.id === worker.id)!.keys[0].lastUsedAt, 500_000, 'a clock set back still records the use');
 
   store.rotate(worker.id);
   assert.equal(store.list().find((r) => r.id === worker.id)!.lastUsedAt, undefined, 'a new main key has not been used yet');

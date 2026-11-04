@@ -100,7 +100,8 @@ export class RemoteWorkers {
   touch(id: string, key: RemoteKeyId, now = Date.now()) {
     const row = this.records.find((r) => r.id === id);
     const last = key === 'main' ? row?.lastUsedAt : row?.keys?.find((k) => k.id === key)?.lastUsedAt;
-    if (!row || (last !== undefined && now - last < TOUCH_MS)) return;
+    // A clock set back must not freeze the time until it catches up again.
+    if (!row || (last !== undefined && now >= last && now - last < TOUCH_MS)) return;
     try {
       this.change(id, (r) => (key === 'main' ? { ...r, lastUsedAt: now } : { ...r, keys: r.keys?.map((k) => (k.id === key ? { ...k, lastUsedAt: now } : k)) }));
     } catch {
