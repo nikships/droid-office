@@ -168,6 +168,8 @@ function newsWords(news: TeamEvent[]): string {
 export class Team {
   private log: TeamEvent[] = [];
   private seq = 0;
+  /** Remote status polls advance independently of the explicitly acknowledged inbox. */
+  private statusCursors = new Map<string, number>();
   /** Per lead: the last event it has been woken for. */
   private nudged = new Map<string, number>();
   private timers = new Map<string, NodeJS.Timeout>();
@@ -236,9 +238,10 @@ export class Team {
     const before = this.log.length;
     this.log = this.log.filter((e) => e.lead !== id);
     this.nudged.delete(id);
+    const hadCursor = this.statusCursors.delete(id);
     clearTimeout(this.timers.get(id));
     this.timers.delete(id);
-    if (this.log.length !== before) this.persist();
+    if (this.log.length !== before || hadCursor) this.persist();
   }
 
   /** Runs `send`, which may send worker `id` home, so its lead hears who did it. */
@@ -587,7 +590,19 @@ export class Team {
       const text = this.workers.tail(w.id, lines);
       return { ...member, ...(text === undefined ? { terminalUnavailable: `${w.name} has no terminal yet: it's ${w.status}` } : { terminal: text }) };
     });
-    return ok({ ...this.whoami(lead), team, events: lead.remote ? this.inbox(lead.id) : this.drainNews(lead) });
+    return ok({ ...this.whoami(lead), team, events: lead.remote ? this.remoteStatusNews(lead.id) : this.drainNews(lead) });
+  }
+
+  /** First poll establishes a baseline; later polls return only this caller's newer events. */
+  private remoteStatusNews(lead: string): TeamEvent[] {
+    const previous = this.statusCursors.get(lead);
+    const after = previous ?? this.seq;
+    const news = this.log.filter((e) => e.lead === lead && e.seq > after).map((e) => ({ ...e }));
+    if (previous !== this.seq) {
+      this.statusCursors.set(lead, this.seq);
+      this.persist();
+    }
+    return news;
   }
 
   /** What the lead hasn't heard yet, including from subagents that already left; draining counts as heard. */
@@ -694,7 +709,7 @@ export class Team {
 
   private restore() {
     try {
-      const raw = JSON.parse(readFileSync(this.path, 'utf8')) as { events?: unknown; nudged?: unknown; idleSince?: unknown };
+      const raw = JSON.parse(readFileSync(this.path, 'utf8')) as { events?: unknown; nudged?: unknown; idleSince?: unknown; statusCursors?: unknown };
       if (raw.idleSince && typeof raw.idleSince === 'object')
         for (const [id, at] of Object.entries(raw.idleSince)) {
           const status = this.workers.get(id)?.status;
@@ -721,17 +736,20 @@ export class Team {
       }
       this.log = this.log.slice(-LOG_MAX);
       if (raw.nudged && typeof raw.nudged === 'object') for (const [k, v] of Object.entries(raw.nudged)) if (typeof v === 'number') this.nudged.set(k, v);
+      if (raw.statusCursors && typeof raw.statusCursors === 'object') {
+        for (const [id, seq] of Object.entries(raw.statusCursors)) if (Number.isSafeInteger(seq) && (seq as number) >= 0) this.statusCursors.set(id, seq as number);
+      }
     } catch {
       // nothing kept yet
     }
     // A lead that didn't come back with the office has nobody to hear its news.
     this.log = this.log.filter((e) => !!this.workers.get(e.lead));
-    this.seq = this.log.reduce((m, e) => Math.max(m, e.seq), 0);
+    this.seq = this.log.reduce((m, e) => Math.max(m, e.seq), Math.max(0, ...this.statusCursors.values()));
   }
 
   private persist() {
     try {
-      writeFileSync(this.path, JSON.stringify({ events: this.log, nudged: Object.fromEntries(this.nudged), idleSince: Object.fromEntries(this.idleSince) }), { mode: 0o600 });
+      writeFileSync(this.path, JSON.stringify({ events: this.log, nudged: Object.fromEntries(this.nudged), idleSince: Object.fromEntries(this.idleSince), statusCursors: Object.fromEntries(this.statusCursors) }), { mode: 0o600 });
     } catch {
       // disk issues shouldn't take the office down
     }

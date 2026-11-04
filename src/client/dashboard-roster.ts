@@ -180,7 +180,7 @@ export function createWorkerRoster(el: HTMLElement, open: (id: string) => void, 
       group.toggle.setAttribute('aria-expanded', String(expanded));
       group.toggle.setAttribute('aria-label', `${expanded ? 'Collapse' : 'Expand'} ${lead.name}'s ${children.length} subworkers`);
       group.toggle.replaceChildren(
-        h('span.dash-team-chevron', { 'aria-hidden': 'true' }, '›'),
+        h('span.dash-team-chevron', { 'aria-hidden': 'true' }, icon('chevron', 12)),
         h('span', {}, `${children.length} subworker${children.length === 1 ? '' : 's'}`),
         h('span.dash-team-activity', { class: activity.attention ? 'dash-team-attention' : '' }, activity.attention ? `${activity.attention} need you` : `${activity.working} working`),
       );
@@ -205,7 +205,7 @@ export function createWorkerRoster(el: HTMLElement, open: (id: string) => void, 
         collapsed.delete(id);
       }
     if (!next.workers.length) {
-      empty.textContent = next.live ? 'Nobody on this floor yet.' : 'Waiting for the office…';
+      empty.textContent = next.live ? 'No workers yet.' : 'Waiting for the office…';
       content.push(empty);
     }
     reconcileChildren(el, content);

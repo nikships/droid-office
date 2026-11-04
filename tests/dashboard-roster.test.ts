@@ -147,7 +147,7 @@ test('worker roster preserves hierarchy, focus and entry motion across updates',
     w.state.workers = [];
     w.paint();
   });
-  assert.match(await page.locator('#roster').innerText(), /Nobody on this floor/);
+  assert.match(await page.locator('#roster').innerText(), /No workers yet/);
   assert.deepEqual(errors, []);
 
   // Exercise the real pane's team trail, without starting a terminal or a worker.

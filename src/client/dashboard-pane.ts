@@ -25,7 +25,7 @@ import { workerTeams } from '../shared/team';
 
 /** What a sidebar row carries when it's dragged onto a pane. */
 export const WORKER_MIME = 'application/x-droid-worker';
-/** What a pane's grip carries when it's dragged onto another pane. */
+/** What a pane's number carries when it's dragged onto another pane. */
 export const SLOT_MIME = 'application/x-droid-slot';
 export const VIEW_KEY = 'droid-office.companion-view';
 
@@ -137,8 +137,8 @@ export function renderPreview(into: HTMLElement, id: string, max: number) {
 }
 
 export function createPane(host: PaneHost, index: number): Pane {
-  const grip = h('span.dash-pane-grip', { draggable: 'true', title: 'Drag to swap panes', 'aria-hidden': 'true' }, icon('grip', 13));
-  const badge = h('span.dash-pane-no', {}, String(index + 1));
+  // The pane's number is its handle: drag it onto another pane to swap them.
+  const badge = h('span.dash-pane-no', { title: 'Drag to swap panes' }, String(index + 1));
   const who = h('span.dash-pane-who');
   const name = h('span.dash-pane-name');
   const task = h('span.dash-pane-task');
@@ -149,7 +149,7 @@ export function createPane(host: PaneHost, index: number): Pane {
   const actions = h('div.dash-pane-actions', { role: 'group', 'aria-label': 'Worker actions' });
   const maxBtn = h('button.btn.icon.sm.ghost', { type: 'button', onclick: () => host.toggleMax(index) });
   const closeBtn = h('button.btn.icon.sm.ghost.dash-pane-close', { type: 'button', 'aria-label': 'Close pane', title: 'Close pane', onclick: () => host.close(index) }, icon('x', 14));
-  const head = h('header.dash-pane-head', {}, grip, badge, who, h('span.dash-pane-titles', {}, name, task, model), pill, views, flip, actions, maxBtn, closeBtn);
+  const head = h('header.dash-pane-head', {}, badge, who, h('span.dash-pane-titles', {}, name, task, model), pill, views, flip, actions, maxBtn, closeBtn);
   const teamNav = h('nav.dash-team-nav', { 'aria-label': 'Worker team', hidden: true });
   const question = h('section.dash-question', { 'aria-label': 'Question requiring input', hidden: true });
   const stage = h('div.dash-stage');
@@ -199,7 +199,7 @@ export function createPane(host: PaneHost, index: number): Pane {
     pane.focusContent();
   });
   el.addEventListener('focusin', () => host.focus(index));
-  grip.addEventListener('dragstart', (e) => {
+  badge.addEventListener('dragstart', (e) => {
     e.dataTransfer?.setData(SLOT_MIME, String(index));
     if (e.dataTransfer) e.dataTransfer.effectAllowed = 'move';
   });
@@ -369,7 +369,7 @@ export function createPane(host: PaneHost, index: number): Pane {
     if (key === headKey) return;
     headKey = key;
     el.setAttribute('aria-label', w ? `Pane ${index + 1}: ${w.name}` : `Pane ${index + 1}: empty`);
-    grip.hidden = !w;
+    badge.draggable = !!w;
     closeBtn.hidden = !w;
     maxBtn.hidden = !s.canMaximize;
     maxBtn.replaceChildren(icon(s.maximized ? 'minimize' : 'maximize', 13));
@@ -489,7 +489,8 @@ export function createPane(host: PaneHost, index: number): Pane {
         h('h3', {}, s.anyone ? 'Open a worker here' : 'Nobody on this floor yet'),
         h('p', {}, s.anyone ? (chips.length ? 'Pick someone from the floor, or drag them in from the list.' : 'Everyone on the floor is open in another pane.') : 'Hire a Droid and its terminal opens here.'),
         chips.length ? h('div.dash-picks', {}, ...chips) : null,
-        h('button.btn.accent', { type: 'button', disabled: !host.live(), onclick: () => host.hire(index) }, icon('plus', 14), 'Hire Droid here'),
+        // The floor's one orange call to action when nobody works here yet; beside other panes the sidebar's Hire is.
+        h(s.anyone ? 'button.btn' : 'button.btn.accent', { type: 'button', disabled: !host.live(), onclick: () => host.hire(index) }, icon('plus', 14), 'Hire Droid here'),
       ),
     );
   }
