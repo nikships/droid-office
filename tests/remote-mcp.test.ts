@@ -8,6 +8,7 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync }
 import os from 'node:os';
 import path from 'node:path';
 import { Client, StreamableHTTPClientTransport } from '@modelcontextprotocol/client';
+import { Answers } from '../src/server/answers.js';
 import { MAX_KEYS, RemoteWorkers } from '../src/server/remote-workers.js';
 import { RemoteOffice, type RemoteFloor } from '../src/server/remote-office.js';
 import { REMOTE_MCP_FILE, RemoteMcp, remoteMcpListener } from '../src/server/remote-mcp-http.js';
@@ -297,7 +298,7 @@ test('real MCP transport enforces host, tailnet identity, remote bearer auth, re
   const r = rig(t);
   const hostname = 'office.example.ts.net';
   const owner = 'owner@example.com';
-  const server = remoteMcpListener({ remote: r.office, remoteTransport: { hostname: () => hostname, owner: () => owner }, floor: r.floor, settings: () => r.settings });
+  const server = remoteMcpListener({ answers: new Answers(), remote: r.office, remoteTransport: { hostname: () => hostname, owner: () => owner }, floor: r.floor, settings: () => r.settings });
   const origin = await listening(t, server);
   const url = new URL('/office/mcp', origin);
   const headers = { host: `${hostname}:8443`, 'tailscale-user-login': owner, Authorization: `Bearer ${r.remote.token}`, 'x-droid-office-worker-id': r.remote.worker.id };
@@ -333,10 +334,64 @@ test('real MCP transport enforces host, tailnet identity, remote bearer auth, re
   assert.equal(tailnetIdentity(new Headers({ 'tailscale-funnel-request': '?1' }), owner), false);
 });
 
+test('a remote lead gets structured status, cursors, waits and questions across every floor its teams are on', async (t) => {
+  const r = rig(t);
+  const hostname = 'office.example.ts.net';
+  const id = r.remote.worker.id;
+  const alpha = (await r.teams[0].handle(r.remote.worker, { action: 'hire', task: 'Work on alpha' })).body.worker as WorkerInfo;
+  r.office.move(id, 'beta');
+  const beta = (await r.teams[1].handle(r.maps[1].get(id)!, { action: 'hire', task: 'Work on beta' })).body.worker as WorkerInfo;
+  const server = remoteMcpListener({ answers: new Answers(), remote: r.office, remoteTransport: { hostname: () => hostname, owner: () => undefined }, floor: r.floor, settings: () => r.settings });
+  const url = new URL('/office/mcp', await listening(t, server));
+  const client = new Client({ name: 'remote-test', version: '1' });
+  t.after(() => client.close());
+  await client.connect(new StreamableHTTPClientTransport(url, { fetch: proxyFetch, requestInit: { headers: { host: `${hostname}:8443`, Authorization: `Bearer ${r.remote.token}`, 'x-droid-office-worker-id': id } } }));
+  const call = async (name: string, args: Record<string, unknown> = {}) => (await client.callTool({ name, arguments: args })).structuredContent as Record<string, any>;
+  assert.ok(
+    (await client.listTools()).tools.some((tool) => tool.name === 'team_wait'),
+    'an external worker has no wake notes, so it may wait',
+  );
+
+  const first = await call('team', { action: 'status', verbose: false });
+  assert.deepEqual(
+    first.workers.map((w: { id: string; floor: string }) => `${w.id}@${w.floor}`),
+    [`${alpha.id}@alpha`, `${beta.id}@beta`],
+  );
+  assert.equal(first.cursor, 'team:alpha:0,team:beta:0');
+  assert.equal((await call('team', { action: 'status', name: alpha.id, verbose: false })).cursor, 'team:alpha:0,team:beta:0', 'a named status cursor covers every floor, so a building-wide status can reuse it');
+  assert.equal((await r.teams[0].handle(r.maps[0].get(alpha.id)!, { action: 'report', text: 'Which API?', question: true, options: ['REST', 'GraphQL'] })).status, 200);
+  const news = await call('team', { action: 'status', since: first.cursor, verbose: false });
+  assert.deepEqual(
+    news.news.map((e: { id: string; kind: string }) => `${e.kind} ${e.id}`),
+    ['question team:alpha:1'],
+  );
+  assert.deepEqual((await call('team', { action: 'status', since: news.cursor })).news, []);
+  const [question] = (await call('questions_list')).questions;
+  assert.equal(question.id, 'team:alpha:1');
+  assert.equal(question.floor, 'alpha');
+
+  const waiting = call('team_wait', { until: ['report'], since: news.cursor, timeoutSec: 20 });
+  await new Promise((resolve) => setTimeout(resolve, 100));
+  assert.equal((await r.teams[1].handle(r.maps[1].get(beta.id)!, { action: 'report', text: 'Beta finished' })).status, 200);
+  const woke = await waiting;
+  assert.equal(woke.reason, 'report');
+  assert.deepEqual(
+    woke.events.map((e: { id: string; floor: string }) => `${e.id}@${e.floor}`),
+    ['team:beta:1@beta'],
+  );
+  assert.equal(woke.cursor, 'team:alpha:1,team:beta:1');
+  assert.equal(r.teams[0].watchers() + r.teams[1].watchers(), 0);
+  assert.equal(r.office.inbox(id).messages.length, 2, 'a remote wait consumes nothing; office_inbox still acknowledges');
+
+  assert.equal((await call('team_report_get', { worker: beta.id })).report.text, 'Beta finished');
+  assert.deepEqual(await call('question_answer', { questionId: question.id, optionId: '2' }), { answered: true, questionId: 'team:alpha:1', worker: alpha.id });
+  assert.deepEqual((await call('questions_list')).questions, []);
+});
+
 test('a bot that sends only its key gets its worker id from the office, and any named key connects as it', async (t) => {
   const r = rig(t);
   const hostname = 'office.example.ts.net';
-  const server = remoteMcpListener({ remote: r.office, remoteTransport: { hostname: () => hostname, owner: () => undefined }, floor: r.floor, settings: () => r.settings });
+  const server = remoteMcpListener({ answers: new Answers(), remote: r.office, remoteTransport: { hostname: () => hostname, owner: () => undefined }, floor: r.floor, settings: () => r.settings });
   const url = new URL('/office/mcp', await listening(t, server));
   const base = { host: `${hostname}:8443` };
   const seen: (string | null)[] = [];
@@ -375,7 +430,7 @@ test('a bot that sends only its key gets its worker id from the office, and any 
 test('Accept: application/json gets one plain JSON-RPC body; clients that also accept SSE get SSE as before', async (t) => {
   const r = rig(t);
   const hostname = 'office.example.ts.net';
-  const server = remoteMcpListener({ remote: r.office, remoteTransport: { hostname: () => hostname, owner: () => undefined }, floor: r.floor, settings: () => r.settings });
+  const server = remoteMcpListener({ answers: new Answers(), remote: r.office, remoteTransport: { hostname: () => hostname, owner: () => undefined }, floor: r.floor, settings: () => r.settings });
   const url = new URL('/office/mcp', await listening(t, server));
   const auth = { host: `${hostname}:8443`, Authorization: `Bearer ${r.remote.token}`, 'Content-Type': 'application/json' };
   const post = (accept: string | undefined, body: unknown, version = true) =>
@@ -415,6 +470,29 @@ test('Accept: application/json gets one plain JSON-RPC body; clients that also a
   assert.equal(acceptsOnlyJson(new Request('http://x/', { method: 'GET', headers: { Accept: 'application/json' } })), false);
 });
 
+test('a plain JSON client can hold team_wait open and gets one JSON body when news arrives', async (t) => {
+  const r = rig(t);
+  const hostname = 'office.example.ts.net';
+  const sub = (await r.teams[0].handle(r.remote.worker, { action: 'hire', task: 'Work on alpha' })).body.worker as WorkerInfo;
+  const server = remoteMcpListener({ answers: new Answers(), remote: r.office, remoteTransport: { hostname: () => hostname, owner: () => undefined }, floor: r.floor, settings: () => r.settings });
+  const url = new URL('/office/mcp', await listening(t, server));
+  const call = { jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'team_wait', arguments: { until: ['report'], timeoutSec: 20 }, _meta: { progressToken: 1 } } };
+  const waiting = proxyFetch(url, {
+    method: 'POST',
+    headers: { host: `${hostname}:8443`, Authorization: `Bearer ${r.remote.token}`, 'Content-Type': 'application/json', Accept: 'application/json', 'MCP-Protocol-Version': '2025-06-18' },
+    body: JSON.stringify(call),
+  });
+  for (let i = 0; i < 500 && r.teams[0].watchers() !== 1; i++) await new Promise((resolve) => setTimeout(resolve, 10));
+  assert.equal(r.teams[0].watchers(), 1);
+  assert.equal((await r.teams[0].handle(r.maps[0].get(sub.id)!, { action: 'report', text: 'Done' })).status, 200);
+  const response = await waiting;
+  assert.match(response.headers.get('content-type')!, /^application\/json/);
+  const body = (await response.json()) as { id: number; result: { structuredContent: { matched: boolean; reason: string } } };
+  assert.equal(body.id, 1);
+  assert.deepEqual([body.result.structuredContent.matched, body.result.structuredContent.reason], [true, 'report']);
+  assert.equal(r.teams[0].watchers(), 0);
+});
+
 test('remote status starts at the current news, advances per caller, and timestamps each item', async (t) => {
   const r = rig(t);
   const worker = r.remote.worker;
@@ -423,7 +501,7 @@ test('remote status starts at the current news, advances per caller, and timesta
   await r.teams[0].handle(sub, { action: 'report', text: 'An old report' });
   r.advance(86_400_000);
   const hostname = 'office.example.ts.net';
-  const server = remoteMcpListener({ remote: r.office, remoteTransport: { hostname: () => hostname, owner: () => undefined }, floor: r.floor, settings: () => r.settings });
+  const server = remoteMcpListener({ answers: new Answers(), remote: r.office, remoteTransport: { hostname: () => hostname, owner: () => undefined }, floor: r.floor, settings: () => r.settings });
   const origin = await listening(t, server);
   const connect = async () => {
     const client = new Client({ name: 'remote-news-test', version: '1' });
@@ -510,6 +588,21 @@ test('remote status cursors survive restart independently for each caller', asyn
   );
 });
 
+test('a kinds-filtered remote status leaves the news it filters out for the next status', async (t) => {
+  const r = rig(t);
+  const worker = r.remote.worker;
+  await r.teams[0].handle(worker, { action: 'status' });
+  await r.teams[0].handle(worker, { action: 'hire', task: 'Fix the report' });
+  const sub = r.maps[0].get('sub-1')!;
+  r.teams[0].onWorker(sub);
+  await r.teams[0].handle(sub, { action: 'report', text: 'Done' });
+  await r.teams[0].handle(sub, { action: 'report', text: 'Which API?', question: true });
+  const kinds = async (filter?: string[]) => ((await r.teams[0].handle(worker, { action: 'status', ...(filter ? { kinds: filter } : {}) })).body.events as { kind: string; text: string }[]).map((e) => `${e.kind} ${e.text}`);
+  assert.deepEqual(await kinds(['question']), ['question Which API?']);
+  assert.deepEqual(await kinds(), ['report Done', 'question Which API?'], 'the report it filtered out is still news; the question after it may repeat');
+  assert.deepEqual(await kinds(), []);
+});
+
 test('unchanged remote status polls do not rewrite team state', async (t) => {
   const r = rig(t);
   const persist = t.mock.method(r.teams[0] as unknown as { persist(): void }, 'persist');
@@ -522,7 +615,7 @@ test('unchanged remote status polls do not rewrite team state', async (t) => {
 
 test('remote tokens never authenticate on the local hook MCP', async (t) => {
   const r = rig(t);
-  const local = createOfficeMcp({ floor: r.floor, settings: () => r.settings });
+  const local = createOfficeMcp({ answers: new Answers(), floor: r.floor, settings: () => r.settings });
   const origin = await listening(
     t,
     createServer((req, res) => void local.handle(req, res)),
@@ -553,7 +646,7 @@ function docEntry(tool: { name: string; description?: string; inputSchema: Schem
 test(`${REMOTE_DOC} documents every tool a remote bot lists, with every argument`, async (t) => {
   const r = rig(t);
   const hostname = 'office.example.ts.net';
-  const server = remoteMcpListener({ remote: r.office, remoteTransport: { hostname: () => hostname, owner: () => undefined }, floor: r.floor, settings: () => r.settings });
+  const server = remoteMcpListener({ answers: new Answers(), remote: r.office, remoteTransport: { hostname: () => hostname, owner: () => undefined }, floor: r.floor, settings: () => r.settings });
   const url = new URL('/office/mcp', await listening(t, server));
   const client = new Client({ name: 'doc-sync', version: '1' });
   t.after(() => client.close());

@@ -392,6 +392,7 @@ export async function startServer(cfg: Config) {
   setInterval(() => syncOfficeMcp(subagents.settings.officeMcp), 30_000).unref();
   officeMcp = createOfficeMcp({
     hookUrl,
+    answers,
     settings: () => subagents.settings,
     floor: (id) => {
       const floor = workerFloor(id);
@@ -602,6 +603,7 @@ export async function startServer(cfg: Config) {
       office: remoteOffice,
       floors: () => [...floors.values()].map((f) => ({ id: f.id, name: f.def.name })),
       mcp: {
+        answers,
         settings: () => subagents.settings,
         floor: (id) => {
           const f = remoteOffice.floor(id);

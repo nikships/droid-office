@@ -59,6 +59,12 @@ export interface TeamOptions {
 
 export type TeamEventKind = 'report' | 'question' | 'done' | 'needs_input' | 'stopped' | 'left' | 'sent_home';
 
+/** What a subagent is doing, as team tools show it: its own status, or that it waits on an answer from its lead or the person. */
+export type TeamState = WorkerStatus | 'blocked_on_question';
+
+/** Delivered to subscribers (team_wait) as it happens: news for a lead, or a subagent's changed status. */
+export type TeamSignal = { type: 'event'; event: TeamEvent } | { type: 'worker'; worker: WorkerInfo };
+
 /** Something a lead hasn't heard yet about one of its subagents. */
 export interface TeamEvent {
   seq: number;
@@ -68,9 +74,13 @@ export interface TeamEvent {
   name: string;
   kind: TeamEventKind;
   text?: string;
+  /** A question's suggested answers, which the lead may pick with question_answer. */
+  options?: string[];
   at: number;
   /** Drained by this lead's status request. */
   seen?: boolean;
+  /** A question its lead has since answered, or that the subagent moved on from in a new turn. */
+  answered?: boolean;
   pushedSha?: string;
   prUrl?: string;
 }
@@ -80,6 +90,8 @@ export interface TeamMember {
   id: string;
   name: string;
   status: WorkerStatus;
+  /** Its status, or blocked_on_question while an asked question or a terminal question waits for an answer. */
+  state: TeamState;
   desk: string;
   model?: string;
   effort?: string;
@@ -91,7 +103,9 @@ export interface TeamMember {
   /** It has been given its task and isn't in the middle of a turn now. */
   settled: boolean;
   /** What it last reported or asked. */
-  report?: { text: string; question: boolean; at: number; pushedSha?: string; prUrl?: string };
+  report?: { text: string; question: boolean; at: number; seq: number; pushedSha?: string; prUrl?: string };
+  /** The event seq of a team_report question nobody has answered yet. */
+  openQuestion?: number;
   idleSince?: number;
   idleForMs?: number;
 }
@@ -130,6 +144,8 @@ const TASK_MAX = 20_000;
 const TITLE_MAX = 80;
 const FROM_MAX = 200;
 const READ_MAX = 400;
+const OPTIONS_MAX = 9;
+const OPTION_MAX = 200;
 /** How many events the floor keeps, all leads together. */
 const LOG_MAX = 400;
 /** Someone typed into the lead this recently: they may be mid-sentence, so news waits. */
@@ -165,8 +181,14 @@ function newsWords(news: TeamEvent[]): string {
   return [...latest.values()].map((e) => `${e.name} ${NEWS[e.kind]}.`).join(' ');
 }
 
+export const TEAM_EVENT_KINDS = Object.keys(WEIGHT) as TeamEventKind[];
+
+/** The read and watch side of a team that structured status, team_wait and questions use. */
+export type TeamViews = 'subscribe' | 'latest' | 'news' | 'markSeen' | 'questions' | 'reports' | 'roster';
+
 export class Team {
   private log: TeamEvent[] = [];
+  private listeners = new Set<(signal: TeamSignal) => void>();
   private seq = 0;
   /** Remote status polls advance independently of the explicitly acknowledged inbox. */
   private statusCursors = new Map<string, number>();
@@ -200,6 +222,12 @@ export class Team {
 
   /** A worker on the floor changed: a subagent's turn may have ended, or a lead may have come to rest with news. */
   onWorker(w: WorkerInfo) {
+    this.observe(w);
+    // After any news it made, so a waiter sees the event before the state it left behind.
+    if (w.lead) this.emit({ type: 'worker', worker: w });
+  }
+
+  private observe(w: WorkerInfo) {
     const prev = this.known.get(w.id);
     this.known.set(w.id, { name: w.name, lead: w.lead, status: w.status });
     if (w.status !== 'idle' && w.status !== 'done') this.idleSince.delete(w.id);
@@ -224,6 +252,7 @@ export class Team {
   nextTurn(id: string) {
     this.reported.delete(id);
     this.spoke.delete(id);
+    this.settleQuestions(id);
   }
 
   /** A worker left the floor: forget it and discard its own news. */
@@ -258,6 +287,57 @@ export class Team {
   stop() {
     for (const t of this.timers.values()) clearTimeout(t);
     this.timers.clear();
+  }
+
+  /** Hears every new event and every subagent change on this floor until the returned function is called. */
+  subscribe(listener: (signal: TeamSignal) => void): () => void {
+    this.listeners.add(listener);
+    return () => this.listeners.delete(listener);
+  }
+
+  /** How many subscribers are listening, so tests can tell that a wait cleaned up. */
+  watchers(): number {
+    return this.listeners.size;
+  }
+
+  /** The last event seq on this floor: a cursor that skips everything said so far. */
+  latest(): number {
+    return this.seq;
+  }
+
+  /** `lead`'s events after `after` (all it still keeps when unset), heard or not, without changing what it has heard. */
+  news(lead: string, filter: { after?: number; kinds?: ReadonlySet<TeamEventKind>; workers?: ReadonlySet<string>; unread?: boolean } = {}): TeamEvent[] {
+    return this.log
+      .filter((e) => e.lead === lead && e.seq > (filter.after ?? 0) && (!filter.unread || !e.seen) && (!filter.kinds || filter.kinds.has(e.kind)) && (!filter.workers || filter.workers.has(e.worker)))
+      .map((e) => ({ ...e, ...(e.options ? { options: [...e.options] } : {}) }));
+  }
+
+  /** Marks these of `lead`'s events heard, as a status read does. */
+  markSeen(lead: string, seqs: Iterable<number>) {
+    const ids = new Set(seqs);
+    let changed = false;
+    for (const e of this.log)
+      if (e.lead === lead && ids.has(e.seq) && !e.seen) {
+        e.seen = true;
+        changed = true;
+      }
+    if (changed) this.persist();
+  }
+
+  /** Questions `lead`'s current subagents asked with team_report that nobody has answered yet. */
+  questions(lead: string): TeamEvent[] {
+    return this.news(lead, { kinds: new Set(['question']) }).filter((e) => !e.answered && this.workers.get(e.worker)?.lead === lead);
+  }
+
+  /** What `lead`'s subagents reported or asked, oldest first, kept even after one leaves; `ref` picks one subagent by id or name. */
+  reports(lead: string, ref?: string): TeamEvent[] {
+    const want = ref?.trim().toLowerCase();
+    return this.news(lead, { kinds: new Set(['report', 'question']) }).filter((e) => !want || e.worker === want || e.name.toLowerCase() === want || e.name.replace(/ 🐚$/, '').toLowerCase() === want);
+  }
+
+  /** `lead`'s subagents as team tools show them. */
+  roster(lead: string): TeamMember[] {
+    return this.teamOf(lead).map((w) => this.member(w));
   }
 
   /**
@@ -484,10 +564,13 @@ export class Team {
     const last = [...this.log].reverse().find((e) => e.worker === w.id && (e.kind === 'report' || e.kind === 'question'));
     const model = w.activeModel ?? w.model;
     const effort = w.activeEffort ?? w.effort;
+    const open = [...this.log].reverse().find((e) => e.worker === w.id && e.kind === 'question' && !e.answered && e.lead === w.lead);
+    const asking = w.status === 'needs_input' && w.ask?.kind === 'question';
     return {
       id: w.id,
       name: w.name,
       status: w.status,
+      state: open || asking ? 'blocked_on_question' : w.status,
       desk: DESK_BY_ID.get(w.deskId)?.label ?? w.deskId,
       ...(model ? { model } : {}),
       ...(effort ? { effort } : {}),
@@ -496,7 +579,8 @@ export class Team {
       ...(w.task ? { task: w.task.name } : {}),
       ...(w.pr ? { pr: w.pr } : {}),
       settled: settled(w),
-      ...(last?.text ? { report: { text: last.text, question: last.kind === 'question', at: last.at, ...(last.pushedSha ? { pushedSha: last.pushedSha } : {}), ...(last.prUrl ? { prUrl: last.prUrl } : {}) } } : {}),
+      ...(last?.text ? { report: { text: last.text, question: last.kind === 'question', at: last.at, seq: last.seq, ...(last.pushedSha ? { pushedSha: last.pushedSha } : {}), ...(last.prUrl ? { prUrl: last.prUrl } : {}) } } : {}),
+      ...(open ? { openQuestion: open.seq } : {}),
       ...((w.status === 'idle' || w.status === 'done') && this.idleSince.has(w.id) ? { idleSince: this.idleSince.get(w.id), idleForMs: Math.max(0, this.now() - this.idleSince.get(w.id)!) } : {}),
     };
   }
@@ -593,27 +677,52 @@ export class Team {
       const text = this.workers.tail(w.id, lines);
       return { ...member, ...(text === undefined ? { terminalUnavailable: `${w.name} has no terminal yet: it's ${w.status}` } : { terminal: text }) };
     });
-    return ok({ ...this.whoami(lead), team, events: lead.remote ? this.remoteStatusNews(lead.id) : this.drainNews(lead) });
+    const since = Number.isSafeInteger(b.since) && (b.since as number) >= 0 ? (b.since as number) : undefined;
+    const kinds = Array.isArray(b.kinds) ? new Set(b.kinds.filter((k): k is TeamEventKind => TEAM_EVENT_KINDS.includes(k as TeamEventKind))) : undefined;
+    return ok({ ...this.whoami(lead), team, events: this.statusNews(lead, since, kinds), latest: this.seq });
   }
 
-  /** First poll establishes a baseline; later polls return only this caller's newer events. */
-  private remoteStatusNews(lead: string): TeamEvent[] {
+  /**
+   * First poll establishes a baseline; later polls return only this caller's newer events. A kinds filter
+   * moves the cursor only up to the first event it leaves out, so that news stays unheard; matching news
+   * after it may be returned again.
+   */
+  private remoteStatusNews(lead: string, kinds?: ReadonlySet<TeamEventKind>): TeamEvent[] {
     const previous = this.statusCursors.get(lead);
     const after = previous ?? this.seq;
-    const news = this.log.filter((e) => e.lead === lead && e.seq > after).map((e) => ({ ...e }));
-    if (previous !== this.seq) {
-      this.statusCursors.set(lead, this.seq);
+    const news = this.log.filter((e) => e.lead === lead && e.seq > after);
+    const skipped = kinds && news.find((e) => !kinds.has(e.kind));
+    const next = skipped ? skipped.seq - 1 : this.seq;
+    if (previous !== next) {
+      this.statusCursors.set(lead, next);
       this.persist();
     }
-    return news;
+    return news.filter((e) => !kinds || kinds.has(e.kind)).map((e) => ({ ...e }));
   }
 
-  /** What the lead hasn't heard yet, including from subagents that already left; draining counts as heard. */
-  private drainNews(lead: WorkerInfo): Pick<TeamEvent, 'kind' | 'worker' | 'name' | 'at' | 'text' | 'pushedSha' | 'prUrl'>[] {
-    const news = this.log.filter((e) => e.lead === lead.id && !e.seen);
-    for (const e of news) e.seen = true;
-    if (news.length) this.persist();
-    return news.map((e) => ({ kind: e.kind, worker: e.worker, name: e.name, at: e.at, ...(e.text ? { text: e.text } : {}), ...(e.pushedSha ? { pushedSha: e.pushedSha } : {}), ...(e.prUrl ? { prUrl: e.prUrl } : {}) }));
+  /**
+   * News for a status read: what the lead hasn't heard yet, or with `since` everything after that
+   * cursor, including from subagents that already left. A local lead hears only what it was shown.
+   */
+  private statusNews(lead: WorkerInfo, since: number | undefined, kinds: ReadonlySet<TeamEventKind> | undefined) {
+    // A remote lead's unheard news is its office_inbox; without since, status moves its own cursor instead.
+    if (lead.remote) return since === undefined ? this.remoteStatusNews(lead.id, kinds) : this.news(lead.id, { after: since, kinds });
+    const news = this.news(lead.id, since === undefined ? { unread: true, kinds } : { after: since, kinds });
+    this.markSeen(
+      lead.id,
+      news.map((e) => e.seq),
+    );
+    return news.map((e) => ({
+      seq: e.seq,
+      kind: e.kind,
+      worker: e.worker,
+      name: e.name,
+      at: e.at,
+      ...(e.text ? { text: e.text } : {}),
+      ...(e.options ? { options: e.options } : {}),
+      ...(e.pushedSha ? { pushedSha: e.pushedSha } : {}),
+      ...(e.prUrl ? { prUrl: e.prUrl } : {}),
+    }));
   }
 
   private send(lead: WorkerInfo, b: Record<string, unknown>): TeamReply {
@@ -628,6 +737,7 @@ export class Team {
     if (err) return no(409, `${w.name}: ${err}`);
     this.reported.delete(w.id);
     this.spoke.delete(w.id);
+    this.settleQuestions(w.id);
     return ok({ worker: this.member(this.workers.get(w.id) ?? w) });
   }
 
@@ -662,10 +772,18 @@ export class Team {
     if (b.pushedSha !== undefined && (typeof b.pushedSha !== 'string' || !/^[0-9a-f]{40,64}$/.test(b.pushedSha))) return no(400, 'pushedSha takes a full hexadecimal commit SHA.');
     if (b.prUrl !== undefined && (typeof b.prUrl !== 'string' || b.prUrl.length > 2000 || !URL.canParse(b.prUrl))) return no(400, 'prUrl takes a valid URL of at most 2000 characters.');
     const question = b.question === true;
+    if (b.options !== undefined && !question) return no(400, 'options are only for a question: add question: true, or leave options out of a report.');
+    const options =
+      question && Array.isArray(b.options)
+        ? b.options
+            .map((o) => str(o, OPTION_MAX).trim())
+            .filter(Boolean)
+            .slice(0, OPTIONS_MAX)
+        : [];
     const sha = typeof b.pushedSha === 'string' ? b.pushedSha : await pushedSha(this.opts.dir, w);
     const prUrl = typeof b.prUrl === 'string' ? b.prUrl : (w.pr?.url ?? /https:\/\/(?:github\.com|gitlab\.com)\/[^\s)<>]+\/(?:pull|merge_requests)\/\d+/.exec(text)?.[0]);
     const provenance = { ...(sha ? { pushedSha: sha } : {}), ...(prUrl ? { prUrl } : {}) };
-    this.push({ lead: lead.id, worker: w.id, name: w.name, kind: question ? 'question' : 'report', text, ...provenance });
+    this.push({ lead: lead.id, worker: w.id, name: w.name, kind: question ? 'question' : 'report', text, ...(options.length ? { options } : {}), ...provenance });
     if (!question) this.reported.add(w.id);
     this.spoke.add(w.id);
     this.opts.toast(`${question ? `❓ ${w.name} asked ${lead.name}` : `📨 ${w.name} reported to ${lead.name}`}: “${clip(text, 90)}”`, 'info', w.id);
@@ -673,7 +791,8 @@ export class Team {
   }
 
   private push(e: Omit<TeamEvent, 'seq' | 'at'>) {
-    this.log.push({ ...e, seq: ++this.seq, at: this.now() });
+    const event: TeamEvent = { ...e, seq: ++this.seq, at: this.now() };
+    this.log.push(event);
     if (this.log.length > LOG_MAX) {
       // What's been heard goes first.
       const heard = this.log.findIndex((x) => x.seen);
@@ -681,6 +800,28 @@ export class Team {
     }
     this.persist();
     this.scheduleNudge(e.lead);
+    this.emit({ type: 'event', event: { ...event } });
+  }
+
+  private emit(signal: TeamSignal) {
+    for (const listener of [...this.listeners]) {
+      try {
+        listener(signal);
+      } catch (err) {
+        console.error('Team listener failed:', err);
+      }
+    }
+  }
+
+  /** A subagent's open questions are over: its lead answered, or it started another turn. */
+  private settleQuestions(worker: string) {
+    let changed = false;
+    for (const e of this.log)
+      if (e.worker === worker && e.kind === 'question' && !e.answered) {
+        e.answered = true;
+        changed = true;
+      }
+    if (changed) this.persist();
   }
 
   /** News for `lead` it hasn't heard or been woken for. */
@@ -719,7 +860,8 @@ export class Team {
 
   private restore() {
     try {
-      const raw = JSON.parse(readFileSync(this.path, 'utf8')) as { events?: unknown; nudged?: unknown; idleSince?: unknown; statusCursors?: unknown };
+      const raw = JSON.parse(readFileSync(this.path, 'utf8')) as { events?: unknown; nudged?: unknown; seq?: unknown; idleSince?: unknown; statusCursors?: unknown };
+      if (Number.isSafeInteger(raw.seq)) this.seq = raw.seq as number;
       if (raw.idleSince && typeof raw.idleSince === 'object')
         for (const [id, at] of Object.entries(raw.idleSince)) {
           const status = this.workers.get(id)?.status;
@@ -739,7 +881,16 @@ export class Team {
           kind: x.kind as TeamEventKind,
           at: x.at,
           ...(typeof x.text === 'string' ? { text: x.text.slice(0, TASK_MAX) } : {}),
+          ...(Array.isArray(x.options)
+            ? {
+                options: x.options
+                  .filter((o): o is string => typeof o === 'string')
+                  .map((o) => o.slice(0, OPTION_MAX))
+                  .slice(0, OPTIONS_MAX),
+              }
+            : {}),
           ...(x.seen === true ? { seen: true } : {}),
+          ...(x.answered === true ? { answered: true } : {}),
           ...(typeof x.pushedSha === 'string' && /^[0-9a-f]{40,64}$/.test(x.pushedSha) ? { pushedSha: x.pushedSha } : {}),
           ...(typeof x.prUrl === 'string' ? { prUrl: x.prUrl.slice(0, 2000) } : {}),
         });
@@ -754,12 +905,15 @@ export class Team {
     }
     // A lead that didn't come back with the office has nobody to hear its news.
     this.log = this.log.filter((e) => !!this.workers.get(e.lead));
-    this.seq = this.log.reduce((m, e) => Math.max(m, e.seq), Math.max(0, ...this.statusCursors.values()));
+    // Cursors and inbox ids name a seq, so it never goes back, even when the newest events left with their lead.
+    this.seq = this.log.reduce((m, e) => Math.max(m, e.seq), Math.max(this.seq, ...this.statusCursors.values()));
   }
 
   private persist() {
     try {
-      writeFileSync(this.path, JSON.stringify({ events: this.log, nudged: Object.fromEntries(this.nudged), idleSince: Object.fromEntries(this.idleSince), statusCursors: Object.fromEntries(this.statusCursors) }), { mode: 0o600 });
+      writeFileSync(this.path, JSON.stringify({ seq: this.seq, events: this.log, nudged: Object.fromEntries(this.nudged), idleSince: Object.fromEntries(this.idleSince), statusCursors: Object.fromEntries(this.statusCursors) }), {
+        mode: 0o600,
+      });
     } catch {
       // disk issues shouldn't take the office down
     }

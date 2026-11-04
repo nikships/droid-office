@@ -1648,6 +1648,44 @@ test('a worker whose terminal outlives the office is picked back up mid-turn, no
   assert.equal(launchesOf(f).length, 1);
 });
 
+test('a question or permission prompt still up after a restart that keeps its terminal is still known for what it asks', async (t) => {
+  const f = carryOnFixture(t);
+  const before = manager(f, []);
+  await before.start();
+  const live = async (deskId: string, session: string) => {
+    const n = launchesOf(f).length;
+    const worker = before.spawn(deskId, 'test', 'ask me');
+    if (typeof worker === 'string') throw new Error(worker);
+    const token = (
+      await waitFor(
+        () => launchesOf(f),
+        (x) => x.length > n,
+      )
+    ).at(-1)?.env.hookToken as string;
+    const hook = (event: string, extra: Record<string, unknown> = {}) => assert.notEqual(before.hookReply(worker.id, token, event, { session_id: session, hook_event_name: event, ...extra }), undefined);
+    hook('SessionStart', { source: 'startup' });
+    hook('UserPromptSubmit', { prompt: 'ask me' });
+    return { id: worker.id, hook };
+  };
+  const asking = await live('desk-1', 'asking');
+  asking.hook('PreToolUse', { tool_name: 'AskUser', tool_input: { questionnaire: '1. [question] Which color?\n[topic] Color\n[option] Red\n[option] Blue' } });
+  const question = { kind: 'question', questions: [{ question: 'Which color?', topic: 'Color', options: ['Red', 'Blue'], multiSelect: false }] };
+  assert.deepEqual(before.get(asking.id)?.ask, question);
+  const approving = await live('desk-2', 'approving');
+  approving.hook('PreToolUse', { tool_name: 'Execute', tool_input: { command: 'rm -rf build', riskLevel: 'high' } });
+  approving.hook('Notification', { notification_type: 'permission_prompt' });
+  const permission = before.get(approving.id)?.ask;
+  assert.equal(permission?.kind, 'permission');
+  before.shutdown(true);
+
+  const after = manager(f, []);
+  t.after(() => after.shutdown());
+  await after.start();
+  assert.equal(after.get(asking.id)?.status, 'needs_input');
+  assert.deepEqual(after.get(asking.id)?.ask, question, 'its question can still be answered from the Asks inbox and the Office MCP');
+  assert.deepEqual(after.get(approving.id)?.ask, permission, 'a permission prompt stays one, never mistaken for a menu');
+});
+
 test('a first message its droid had not taken yet survives a restart that keeps its terminal, and is typed in once', async (t) => {
   const f = carryOnFixture(t);
   const before = manager(f, []);

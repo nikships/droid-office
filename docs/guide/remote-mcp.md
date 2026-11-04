@@ -191,7 +191,7 @@ Hire one fresh subagent at the nearest free desk for an independent task. It get
 
 ### `team_status`
 
-Read your subagents and unread team news without waiting. Optionally select a worker and recent terminal lines. Does not message or dismiss.
+Read your subagents and unread team news without waiting. Optionally select a worker and recent terminal lines. structuredContent has workers (one compact object each, with state blocked_on_question while a question waits on an answer), news (typed events with ids and times) and a cursor for since. verbose: false makes the text compact too; team_report_get reads a full report. Does not message or dismiss.
 
 For an external worker, status news follows a cursor kept for that bot across reconnects and office restarts: the first status call sets a baseline without replaying old reports, later calls return only newer events, and each news line starts with its UTC time. `team` with action `status` reads the same cursor. Reading status does not acknowledge anything in `office_inbox`.
 
@@ -200,6 +200,9 @@ For an external worker, status news follows a cursor kept for that bot across re
 | `worker` | string | no | Your subagent’s name or id, case-insensitive. Omit for all. |
 | `floor` | string | no | External workers only: restrict to an open floor id. |
 | `lines` | integer | no | Include this many recent terminal lines per selected subagent, at most 400. Omit to leave terminals out. |
+| `verbose` | boolean | no | false for one compact line per subagent and per event, with summaries instead of whole reports. Omit or true for the full text. |
+| `since` | string | no | A cursor from an earlier status (cursor field) or one event id. News is everything after it, heard or not, instead of only unread news. |
+| `kinds` | "question" \| "report" \| "needs_input" \| "stopped" \| "left" \| "sent_home" \| "done" \| "blocked"[] | no | Just these news kinds (blocked is needs_input). Other news stays unread, but the cursor moves past it: reuse a filtered cursor only with the same kinds. |
 
 ### `team_message`
 
@@ -245,7 +248,7 @@ Read recent terminal output and current tool activity for your subagent without 
 
 ### `team`
 
-Deprecated alias: prefer team_status, team_message and team_dismiss. Manage only your own subagents. Status returns one named subagent or all, with unread news since your last status call. Message answers a question or follows up. Dismiss uses the legacy cleanup policy: worktrees with work are kept. Existing clients that call it keep working unchanged.
+Deprecated alias: prefer team_status, team_message and team_dismiss. Manage only your own subagents. Status returns one named subagent or all, with unread news since your last status call. Message answers a question or follows up. Dismiss uses the legacy cleanup policy: worktrees with work are kept. Status has the same structuredContent (workers, news, cursor), verbose, since and kinds as team_status. Existing clients that call it keep working unchanged.
 
 | Argument | Type | Required | Description |
 | --- | --- | --- | --- |
@@ -254,6 +257,54 @@ Deprecated alias: prefer team_status, team_message and team_dismiss. Manage only
 | `name` | string | no | Subagent name or id, case-insensitive. Status: omit for all. Required for message and dismiss. |
 | `lines` | integer | no | Status only: include this many recent terminal lines per selected subagent, at most 400. Omit to leave terminals out. |
 | `text` | string | no | Message only: answer or follow-up to type into the subagent session. Cannot answer a permission prompt in its own terminal. |
+| `verbose` | boolean | no | Status only: false for one compact line per subagent and per event, with summaries instead of whole reports. Omit or true for the full text. |
+| `since` | string | no | Status only: a cursor from an earlier status (cursor field) or one event id. News is everything after it, heard or not, instead of only unread news. |
+| `kinds` | "question" \| "report" \| "needs_input" \| "stopped" \| "left" \| "sent_home" \| "done" \| "blocked"[] | no | Status only: just these news kinds (blocked is needs_input). Other news stays unread, but the cursor moves past it: reuse a filtered cursor only with the same kinds. |
+
+### `team_wait`
+
+Wait until one of your subagents reports, asks a question, gets blocked in its terminal or settles, then return at once with what happened, typed events with ids and a cursor. Returns immediately only for matching news you have not heard (or news after since). A terminal question counts once it appears during the wait, and idle once every watched subagent settles during it; questions already waiting are listed in questions without ending the wait. Otherwise returns at timeoutSec (default 30, at most 600) with matched false. The cursor moves past news until leaves out, so reuse it with the same until. Without since, a local lead hears the news it is shown, like team status. Longer waits need a client timeout to match; with a progress token it sends progress every 15 s.
+
+Without `since`, an external worker's wait starts from the news as it stands when the call arrives, and it consumes nothing in `office_inbox` or the status cursor. A plain JSON client (`Accept: application/json`) gets no progress notifications, so its HTTP timeout must cover `timeoutSec`.
+
+| Argument | Type | Required | Description |
+| --- | --- | --- | --- |
+| `until` | "question" \| "report" \| "needs_input" \| "stopped" \| "left" \| "sent_home" \| "done" \| "blocked" \| "idle"[] | no | What to wait for. Event kinds, blocked (needs input in its own terminal), or idle (every watched subagent settles during the wait). Default report, question, blocked, idle. |
+| `workers` | string[] | no | Subagent names or ids to watch. Omit for your whole team. |
+| `timeoutSec` | integer | no | Longest wait in seconds, default 30, at most 600. |
+| `since` | string | no | A cursor from an earlier response (cursor field), or one event id: only events after it are considered, whether or not you have heard them. |
+| `floor` | string | no | External workers only: just this floor. Omit for all your teams across the building. |
+| `verbose` | boolean | no | Include each event full text, not just its summary. |
+
+### `team_report_get`
+
+Read one full report or question from your subagents, by its event id (lastReportId or a news id) or the latest from a named subagent, with that subagent's recent report history. Kept after the subagent leaves. Reading changes nothing.
+
+| Argument | Type | Required | Description |
+| --- | --- | --- | --- |
+| `worker` | string | no | Subagent name or id: its latest report or question. |
+| `id` | string | no | An event id such as team:<floor>:<seq>. |
+| `floor` | string | no | External workers only: just this floor. Omit for all your teams across the building. |
+
+### `questions_list`
+
+List questions waiting on you from your subagents, like the owner's Asks inbox: team_report questions, and AskUser questions in their own terminals with numbered options. Permission prompts are listed but only the person at that desk can answer them. Answer with question_answer using the id. Reading changes nothing.
+
+| Argument | Type | Required | Description |
+| --- | --- | --- | --- |
+| `workers` | string[] | no | Subagent names or ids. Omit for your whole team. |
+| `floor` | string | no | External workers only: just this floor. Omit for all your teams across the building. |
+
+### `question_answer`
+
+Answer one question from questions_list by its id: optionId picks a numbered option, optionIds the boxes of a multi-select question, text a typed answer (with optionIds, the typed extra). A team question gets your answer as a message, optionId and text together; a terminal question takes optionId or text, not both, and is answered in the subagent terminal only while it still shows the same question. Permission prompts are refused: only the person at the desk can approve.
+
+| Argument | Type | Required | Description |
+| --- | --- | --- | --- |
+| `questionId` | string | yes | The id from questions_list. |
+| `optionId` | string | no | One option id. |
+| `optionIds` | string[] | no | Multi-select only: every option to have selected. |
+| `text` | string | no | A typed answer. |
 
 ### `whiteboard_read`
 
