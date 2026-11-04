@@ -33,7 +33,8 @@ export interface RemoteMcpBot {
   lastUsedAt?: number;
   /** Only while the endpoint is on the tailnet. */
   connection?: RemoteMcpConnection;
-  keys: RemoteMcpKey[];
+  /** Named keys besides the main one; absent from an office older than named keys. */
+  keys?: RemoteMcpKey[];
 }
 
 export interface RemoteMcpState {

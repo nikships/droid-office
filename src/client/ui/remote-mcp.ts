@@ -96,7 +96,9 @@ export function remoteMcpSettings(): { control: HTMLElement; meta: HTMLElement; 
   function botRow(b: RemoteMcpBot): Node {
     const where = [b.floorName ?? b.floor, b.status ? `${b.status}${b.activity ? `: ${b.activity}` : ''}` : undefined, `added ${timeAgo(b.createdAt)}`, lastUsed(b.lastUsedAt, 'main key')].filter(Boolean).join(' · ');
     const rotate = h('button.btn.sm.ghost', { type: 'button', title: 'Give this bot a new key. The old one stops working at once.' }, 'New key');
-    rotate.addEventListener('click', () => confirmDialog(`New key for ${b.name}?`, 'Its old key stops working at once. Give the bot the new connection afterwards.', 'New key', () => void act('POST', { action: 'rotate', id: b.id })));
+    rotate.addEventListener('click', () =>
+      confirmDialog(`New key for ${b.name}?`, 'Its old main key stops working at once; its named keys keep working. Give the bot the new connection afterwards.', 'New key', () => void act('POST', { action: 'rotate', id: b.id })),
+    );
     const remove = h('button.btn.sm.danger', { type: 'button' }, 'Remove');
     remove.addEventListener('click', () =>
       confirmDialog(`Remove ${b.name}?`, 'Its key stops working and its desk is freed. Any subagents it hired stay and work on their own.', 'Remove', () => void act('POST', { action: 'revoke', id: b.id })),
@@ -128,13 +130,17 @@ export function remoteMcpSettings(): { control: HTMLElement; meta: HTMLElement; 
 
   /** Extra keys for one bot, one per client it runs on, so a lost laptop's key goes without the bot's other clients. */
   function keys(b: RemoteMcpBot): Node {
-    const rows = b.keys.map((k) => keyRow(b, k));
+    // An office that hasn't restarted since a source hot reload sends bots without named keys.
+    const rows = (b.keys ?? []).map((k) => keyRow(b, k));
     const name = h('input.input', { type: 'text', maxlength: 60, placeholder: 'Key name, like laptop or relay', 'aria-label': `New key name for ${b.name}` });
     const add = h('button.btn.sm', { type: 'button' }, 'Add key');
     const submit = () => {
       const n = name.value.trim();
       if (!n) return name.focus();
-      void act('POST', { action: 'add-key', id: b.id, name: n }, () => toast(`${b.name} has a new key, ${n}. Copy its config below.`));
+      void act('POST', { action: 'add-key', id: b.id, name: n }, (s) => {
+        const key = s.bots.find((x) => x.id === b.id)?.keys?.find((k) => k.name === n);
+        toast(key?.connection ? `${b.name} has a new key, ${n}. Copy its config below.` : `${b.name} has a new key, ${n}. Its config shows here once the office is on your tailnet.`);
+      });
     };
     add.addEventListener('click', submit);
     name.addEventListener('keydown', (e) => {
