@@ -548,10 +548,13 @@ export class Team {
 
   /** First poll establishes a baseline; later polls return only this caller's newer events. */
   private remoteStatusNews(lead: string): TeamEvent[] {
-    const after = this.statusCursors.get(lead) ?? this.seq;
+    const previous = this.statusCursors.get(lead);
+    const after = previous ?? this.seq;
     const news = this.log.filter((e) => e.lead === lead && e.seq > after).map((e) => ({ ...e }));
-    this.statusCursors.set(lead, this.seq);
-    this.persist();
+    if (previous !== this.seq) {
+      this.statusCursors.set(lead, this.seq);
+      this.persist();
+    }
     return news;
   }
 

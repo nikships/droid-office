@@ -290,11 +290,15 @@ test('remote status starts at the current news, advances per caller, and timesta
   };
   let client = await connect();
   const status = () => client.callTool({ name: 'team', arguments: { action: 'status' } });
-  assert.deepEqual((await status()).structuredContent?.events, [], 'a new caller does not replay historical news');
+  const baseline = await status();
+  assert.deepEqual(baseline.structuredContent?.events, [], 'a new caller does not replay historical news, even after hiring');
+  assert.ok(baseline.structuredContent);
+  assert.equal((baseline.structuredContent.team as { report: { text: string } }[])[0].report.text, 'An old report', 'the status snapshot retains the report');
   assert.deepEqual((await status()).structuredContent?.events, []);
 
-  await r.teams[0].handle(sub, { action: 'report', text: 'A new report' });
   const other = r.office.add('Other bot', 'beta').worker;
+  await r.office.team(other, { action: 'status' });
+  await r.teams[0].handle(sub, { action: 'report', text: 'A new report' });
   assert.deepEqual((await r.office.team(other, { action: 'status' })).body.events, [], 'another caller sees no foreign news');
   await client.close();
   client = await connect();
@@ -346,6 +350,16 @@ test('remote status cursors survive restart independently for each caller', asyn
     (await read()).map((e) => e.text),
     ['After restart'],
   );
+});
+
+test('unchanged remote status polls do not rewrite team state', async (t) => {
+  const r = rig(t);
+  const persist = t.mock.method(r.teams[0] as unknown as { persist(): void }, 'persist');
+  const worker = r.remote.worker;
+  await r.teams[0].handle(worker, { action: 'status' });
+  assert.equal(persist.mock.callCount(), 1, 'the first baseline is persisted, including a zero cursor');
+  await r.teams[0].handle(worker, { action: 'status' });
+  assert.equal(persist.mock.callCount(), 1, 'an unchanged cursor needs no write');
 });
 
 test('remote tokens never authenticate on the local hook MCP', async (t) => {
