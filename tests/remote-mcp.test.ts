@@ -38,6 +38,8 @@ const proxyFetch: typeof fetch = async (input, init) => {
     outgoing.end(body);
   });
 };
+/** Whether `token` is one of the keys of remote worker `id`. */
+const owns = (store: RemoteWorkers, id: string, token: string) => store.resolve(token)?.id === id;
 function temporary(t: Cleanup) {
   const dir = mkdtempSync(path.join(os.tmpdir(), 'remote-mcp-'));
   t.after(() => rmSync(dir, { recursive: true, force: true }));
@@ -151,8 +153,8 @@ test('remote credentials and explicit inbox acknowledgments persist, rotate and 
   const dir = temporary(t);
   const store = new RemoteWorkers(dir);
   const { worker, token } = store.add('Grok', 'alpha', 'desk-1');
-  assert.equal(store.authenticate(worker.id, token), true);
-  assert.equal(store.authenticate(worker.id, 'wrong'), false);
+  assert.equal(owns(store, worker.id, token), true);
+  assert.equal(owns(store, worker.id, 'wrong'), false);
   assert.equal(store.enqueue(worker.id, 'hello', 'alpha'), undefined);
   const first = store.inbox(worker.id);
   assert.equal(store.inbox(worker.id).messages.length, 1);
@@ -162,12 +164,12 @@ test('remote credentials and explicit inbox acknowledgments persist, rotate and 
   assert.equal(restarted.token(worker.id), token, 'Settings can show a bot its connection again');
   assert.ok(!JSON.stringify(restarted.list()).includes(token));
   const newToken = restarted.rotate(worker.id);
-  assert.equal(restarted.authenticate(worker.id, token), false);
-  assert.equal(restarted.authenticate(worker.id, newToken), true);
+  assert.equal(owns(restarted, worker.id, token), false);
+  assert.equal(owns(restarted, worker.id, newToken), true);
   restarted.inbox(worker.id, [first.messages[0].id]);
   assert.equal(new RemoteWorkers(dir).inbox(worker.id).messages.length, 0);
   restarted.remove(worker.id);
-  assert.equal(restarted.authenticate(worker.id, newToken), false);
+  assert.equal(owns(restarted, worker.id, newToken), false);
   assert.equal(new RemoteWorkers(dir).identity(worker.id), undefined);
 });
 
@@ -182,8 +184,8 @@ test('named keys act as their bot, record when they were last used, and revoke o
 
   const laptop = store.addKey(worker.id, 'laptop');
   assert.deepEqual(store.resolve(laptop.token), { id: worker.id, key: laptop.key.id });
-  assert.equal(store.authenticate(worker.id, laptop.token), true);
-  assert.equal(store.authenticate(other.worker.id, laptop.token), false, 'a key is scoped to its own bot');
+  assert.equal(owns(store, worker.id, laptop.token), true);
+  assert.equal(owns(store, other.worker.id, laptop.token), false, 'a key is scoped to its own bot');
   assert.throws(() => store.addKey(worker.id, 'Laptop'), /already has a key/);
   assert.throws(() => store.addKey(worker.id, '  '), /name/);
   assert.equal(store.token(worker.id, laptop.key.id), laptop.token);
@@ -200,7 +202,7 @@ test('named keys act as their bot, record when they were last used, and revoke o
 
   store.rotate(worker.id);
   assert.equal(store.list().find((r) => r.id === worker.id)!.lastUsedAt, undefined, 'a new main key has not been used yet');
-  assert.equal(store.authenticate(worker.id, laptop.token), true, 'rotating the main key leaves named keys alone');
+  assert.equal(owns(store, worker.id, laptop.token), true, 'rotating the main key leaves named keys alone');
   store.revokeKey(worker.id, laptop.key.id);
   assert.equal(store.resolve(laptop.token), undefined);
   assert.throws(() => store.revokeKey(worker.id, laptop.key.id), /No such key/);

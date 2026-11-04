@@ -29,6 +29,7 @@ import { instructions as whiteboardInstructions, register as registerWhiteboard 
 import { instructions as visitInstructions, register as registerVisits } from './visits.js';
 import { register as registerRemote, remoteIdentityInstructions, remoteInstructions } from './remote.js';
 import type { RemoteOffice } from '../remote-office.js';
+import type { RemoteKeyId } from '../remote-workers.js';
 
 export const OFFICE_MCP_PATH = '/office/mcp';
 export const OFFICE_MCP_WORKER_HEADER = 'x-droid-office-worker-id';
@@ -127,7 +128,8 @@ export class OfficeMcpServer {
   private readonly mcp: McpHttpHandler;
 
   constructor(private readonly deps: OfficeMcpDeps) {
-    this.mcp = createMcpHandler(({ requestInfo }) => this.serverFor(requestInfo ? this.caller(requestInfo) : undefined, requestInfo?.signal), {
+    // `fetch` identifies the caller once and hands it over in `authInfo`, which the SDK passes through untouched.
+    this.mcp = createMcpHandler(({ authInfo, requestInfo }) => this.serverFor(authInfo?.extra?.caller as OfficeMcpCaller | undefined, requestInfo?.signal), {
       legacy: 'stateless',
       onerror: (err) => console.error('Office MCP:', err.message),
     });
@@ -148,31 +150,31 @@ export class OfficeMcpServer {
     if (badHost) return badHost;
     if (remote) {
       if (request.headers.has('origin') || !tailnetIdentity(request.headers, remote.owner())) return Response.json({ error: 'Only the owner’s own Tailscale devices may connect; browser and Funnel requests are refused' }, { status: 403 });
-      const who = this.remoteKey(request);
-      const caller = who && this.caller(request);
-      if (!who || !caller) return Response.json({ error: 'Active remote worker id and bearer credential required' }, { status: 401 });
-      this.deps.remote?.store.touch(who.id, who.key);
-      return withHeader(await this.serve(request), OFFICE_MCP_WORKER_HEADER, caller.worker.id);
+      const who = this.caller(request);
+      if (!who) return Response.json({ error: 'Active remote worker id and bearer credential required' }, { status: 401 });
+      if (who.key) this.deps.remote?.store.touch(who.caller.worker.id, who.key);
+      return withHeader(await this.serve(request, who.caller), OFFICE_MCP_WORKER_HEADER, who.caller.worker.id);
     }
     if (request.method === 'OPTIONS') return new Response(null, { status: 204, headers: { Allow: 'POST, GET, DELETE, OPTIONS', [PROBE_HEADER]: '1' } });
     const peer = this.peer(request);
     if (peer) return relay(request, peer);
-    if (!this.caller(request)) return Response.json({ error: UNAUTHORIZED }, { status: 401 });
-    return this.serve(request);
+    const who = this.caller(request);
+    if (!who) return Response.json({ error: UNAUTHORIZED }, { status: 401 });
+    return this.serve(request, who.caller);
   }
 
   /**
    * A one-shot client that doesn't read SSE gets its answer as one JSON body. The SDK's own stateless legacy
    * serving always streams, so these requests get the same per-request server over its JSON response mode.
    */
-  private async serve(request: Request): Promise<Response> {
-    if (!acceptsOnlyJson(request) || !(await isLegacyRequest(request))) return this.mcp.fetch(request);
+  private async serve(request: Request, caller: OfficeMcpCaller): Promise<Response> {
+    if (!acceptsOnlyJson(request) || !(await isLegacyRequest(request))) return this.mcp.fetch(request, { authInfo: { token: bearer(request) ?? '', clientId: caller.worker.id, scopes: [], extra: { caller } } });
     // JSON mode never streams, but the transport still checks for the SSE half of the Streamable HTTP Accept header.
     const headers = new Headers(request.headers);
     headers.set('accept', 'application/json, text/event-stream');
     const init: RequestInit & { duplex: 'half' } = { headers, duplex: 'half' };
     const forwarded = new Request(request, init);
-    const server = this.serverFor(this.caller(request), request.signal);
+    const server = this.serverFor(caller, request.signal);
     const transport = new WebStandardStreamableHTTPServerTransport({ sessionIdGenerator: undefined, enableJsonResponse: true });
     await server.connect(transport);
     try {
@@ -226,22 +228,19 @@ export class OfficeMcpServer {
   }
 
   /**
-   * The remote identity and which of its keys a request carries. The key alone names the bot, so the worker
-   * id header is optional; when a client sends one, it must be the key's own.
+   * Who a request is from, and for an external worker which of its keys it used. A remote key alone names
+   * its bot, so the worker id header is optional there; when a client sends one, it must be the key's own.
    */
-  private remoteKey(request: Request) {
-    const token = bearer(request);
-    const found = token ? this.deps.remote?.store.resolve(token) : undefined;
-    const id = request.headers.get(OFFICE_MCP_WORKER_HEADER)?.trim();
-    return found && (!id || id === found.id) ? found : undefined;
-  }
-
-  private caller(request: Request): OfficeMcpCaller | undefined {
+  private caller(request: Request): { caller: OfficeMcpCaller; key?: RemoteKeyId } | undefined {
     const settings = this.deps.settings();
     if (!settings.officeMcp) return undefined;
     const token = bearer(request);
-    const id = this.deps.remoteTransport ? this.remoteKey(request)?.id : request.headers.get(OFFICE_MCP_WORKER_HEADER);
-    if (!id || !token) return undefined;
+    if (!token) return undefined;
+    const sent = request.headers.get(OFFICE_MCP_WORKER_HEADER)?.trim();
+    const found = this.deps.remoteTransport ? this.deps.remote?.store.resolve(token) : undefined;
+    if (found && sent && sent !== found.id) return undefined;
+    const id = this.deps.remoteTransport ? found?.id : sent;
+    if (!id) return undefined;
     let floor = this.deps.floor(id);
     let worker: WorkerInfo | undefined;
     if (this.deps.remoteTransport) {
@@ -252,7 +251,7 @@ export class OfficeMcpServer {
     if (!floor || !worker || worker.kind !== 'agent' || worker.cloud) return undefined;
     if (!!worker.remote !== !!this.deps.remoteTransport) return undefined;
     const relative = workspaceOf(worker);
-    return { worker, floor, settings, cwd: relative ? path.join(floor.dir, relative) : floor.dir };
+    return { caller: { worker, floor, settings, cwd: relative ? path.join(floor.dir, relative) : floor.dir }, ...(found ? { key: found.key } : {}) };
   }
 }
 

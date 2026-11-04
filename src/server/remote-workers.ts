@@ -3,6 +3,7 @@ import { mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node
 import path from 'node:path';
 import { z } from 'zod';
 import type { WorkerInfo } from '../shared/protocol.js';
+import type { RemoteMcpKey } from '../shared/remote-mcp.js';
 
 /** Named keys a bot may hold besides its main key. */
 export const MAX_KEYS = 10;
@@ -28,12 +29,7 @@ type SavedRemote = z.infer<typeof savedSchema>;
 export type RemoteMessage = z.infer<typeof messageSchema>;
 /** Which of a bot's keys a request used: `main` for the one Settings first gave it, otherwise a named key's id. */
 export type RemoteKeyId = 'main' | (string & {});
-export interface RemoteKey {
-  id: string;
-  name: string;
-  createdAt: number;
-  lastUsedAt?: number;
-}
+export type RemoteKey = Omit<RemoteMcpKey, 'connection'>;
 
 /**
  * One authoritative file for remote identities and their seats, including across floor moves. It keeps each
@@ -89,11 +85,6 @@ export class RemoteWorkers {
       open: false,
       activity: 'Remote worker, polls the MCP inbox',
     };
-  }
-
-  authenticate(id: string, token: string): boolean {
-    const row = this.records.find((r) => r.id === id);
-    return !!row && matchKey(row, token) !== undefined;
   }
 
   /** The identity a key belongs to, so a client that sends only its key needn't know its worker id. */
