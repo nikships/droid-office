@@ -121,7 +121,12 @@ while IFS=$'\t' read -r -u 3 id from to; do
     echo "==> floor $id (Home) -> $to"
   elif git -C "$from" rev-parse --git-dir >/dev/null 2>&1; then
     echo "==> floor $id $from -> $to"
-    git clone -q --local -- "$from" "$to"
+    # A shallow or partial checkout can't be copied whole; the tip of each of its branches can.
+    if [[ "$(git -C "$from" rev-parse --is-shallow-repository)" == true || -n "$(git -C "$from" config --get remote.origin.promisor || true)" ]]; then
+      git clone -q --depth 1 --no-single-branch -- "file://$from" "$to"
+    else
+      git clone -q --local -- "$from" "$to"
+    fi
     origin=$(git -C "$from" remote get-url origin 2>/dev/null || true)
     if [[ -n "$origin" ]]; then git -C "$to" remote set-url origin "$origin"; else git -C "$to" remote remove origin; fi
     git -C "$to" fetch -q origin 2>/dev/null || true
