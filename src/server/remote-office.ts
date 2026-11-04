@@ -102,8 +102,8 @@ export class RemoteOffice {
   }
 
   /** `since` holds a status cursor per floor; a floor it leaves out reports everything it keeps. */
-  async team(worker: WorkerInfo, args: { action: string; worker?: string; lines?: number; text?: string; floor?: string; since?: Record<string, number>; kinds?: string[] }): Promise<TeamReply> {
-    const floors = this.floors().filter((f) => !args.floor || f.id === args.floor);
+  async team(worker: WorkerInfo, args: { action: string; worker?: string; lines?: number; text?: string; floor?: string; since?: Record<string, number>; kinds?: string[]; [key: string]: unknown }): Promise<TeamReply> {
+    const floors = this.floors().filter((f) => (!args.floor || f.id === args.floor) && (typeof args.repo !== 'string' || f.id === args.repo || f.def.name === args.repo || f.dir === args.repo));
     if (!floors.length) return { status: 404, body: { error: 'No such open floor' } };
     if (args.worker) {
       const wanted = args.worker.toLowerCase();
@@ -113,13 +113,18 @@ export class RemoteOffice {
           .filter((w) => w.lead === worker.id && (w.id === wanted || w.name.toLowerCase() === wanted))
           .map((w) => ({ f, w })),
       );
-      if (matches.length !== 1) return { status: 409, body: { error: matches.length ? 'That name occurs on several floors; use the worker id or specify floor' : 'No such subagent in your teams' } };
+      if (matches.length !== 1) return { status: matches.length ? 409 : 404, body: { error: matches.length ? 'That name occurs on several floors; use the worker id or specify floor' : 'No such subagent in your teams' } };
       const { f, w } = matches[0];
       const result = await f.team.handle(worker, { ...args, worker: w.id, since: args.since ? (args.since[f.id] ?? 0) : undefined });
       if (args.action !== 'status' || result.status >= 400) return result;
       // Every floor's position, so this cursor also serves a later status of the whole building.
       const latest = Object.fromEntries(floors.map((x) => [x.id, x === f ? result.body.latest : x.team.latest()]));
       return { status: 200, body: { ...result.body, ...merged([{ floor: f.id, result }]), latest } };
+    }
+    if (args.action === 'hire') {
+      const target = args.repo || args.floor ? (floors.length === 1 ? floors[0] : undefined) : this.floor(worker.id);
+      if (!target) return { status: 400, body: { error: 'Choose exactly one open repository floor for the task' } };
+      return target.team.handle(worker, args);
     }
     if (args.action !== 'status') return { status: 400, body: { error: 'Name a subagent' } };
     const snapshots = await Promise.all(floors.map(async (f) => ({ floor: f.id, result: await f.team.handle(worker, { ...args, since: args.since ? (args.since[f.id] ?? 0) : undefined }) })));

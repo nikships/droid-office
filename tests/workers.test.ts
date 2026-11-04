@@ -1866,6 +1866,29 @@ test('a worktree worker that makes its own branch is followed there: O finds the
   const left = await workers.kill(other.id, 'all');
   assert.equal(left.note, `Deleted ${other.name}'s worktree and branch ${other.worktree!.branch}`);
   assert.equal(git(f.root, 'branch', '--list', '--format=%(refname:short)', 'release', other.worktree!.branch), 'release');
+  const lead = workers.spawn('desk-1', 'test');
+  if (typeof lead === 'string') throw new Error(lead);
+  assert.match((await workers.dismissTeam(lead.id, true, false)).error!, /main checkout/);
+  const named = workers.spawn('desk-2', 'test', 'inspect', true, 'agent', undefined, undefined, [], lead.id, undefined, 'main', 'feat/structured-task');
+  if (typeof named === 'string') throw new Error(named);
+  assert.equal(named.worktree!.branch, 'feat/structured-task');
+  assert.match((await workers.dismissTeam(named.id, true, true)).error!, /finish/);
+  named.status = 'done';
+  const namedCwd = path.join(f.root, named.worktree!.path);
+  writeFileSync(path.join(namedCwd, 'a.txt'), 'uncommitted');
+  assert.match((await workers.dismissTeam(named.id, true, true)).error!, /dirty/);
+  assert.ok(workers.get(named.id), 'dirty preflight does not dismiss');
+  writeFileSync(path.join(namedCwd, 'a.txt'), 'a');
+  const removed = await workers.dismissTeam(named.id, true, true);
+  assert.equal(removed.error, undefined);
+  assert.equal(existsSync(namedCwd), false);
+  assert.ok(git(f.root, 'branch', '--list', 'feat/structured-task'), 'keeps branch by default');
+  const kept = workers.spawn('desk-2', 'test', 'read', true);
+  if (typeof kept === 'string') throw new Error(kept);
+  assert.equal((await workers.dismissTeam(kept.id, false, true)).error, undefined);
+  assert.equal(existsSync(path.join(f.root, kept.worktree!.path)), true);
+  assert.equal(workers.get(kept.id), undefined);
+  assert.equal((await workers.dismissTeam('unknown-worker', false, true)).error, 'Worker is no longer on this floor');
 });
 
 test("the office's branch keeps a worker's commits once it has moved on: the dialog warns, and sending it home never deletes them", async (t) => {

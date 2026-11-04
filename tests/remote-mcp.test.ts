@@ -213,6 +213,23 @@ test('a moving remote lead keeps both teams, reports, replies, and a building-wi
   assert.equal(r.maps[1].has(id), false);
 });
 
+test('remote hires select an open task repository and inspection resolves across floors', async (t) => {
+  const r = rig(t);
+  const lead = r.remote.worker;
+  const hire = await r.office.team(lead, { action: 'hire', repo: 'beta', task: 'Inspect beta', worktree: false });
+  assert.equal(hire.status, 200);
+  const sub = hire.body.worker as WorkerInfo;
+  assert.equal(r.maps[1].has(sub.id), true);
+  assert.equal(r.maps[0].has(sub.id), false);
+  const log = await r.office.team(lead, { action: 'log', worker: sub.id, tail: 10 });
+  assert.equal(log.body.terminal, 'working');
+  assert.equal((await r.office.team(lead, { action: 'hire', repo: 'missing', task: 'No' })).status, 404);
+  assert.equal((await r.office.team(lead, { action: 'log', worker: 'missing', tail: 10 })).status, 404);
+  const local = await r.office.team(lead, { action: 'hire', task: 'Current floor', worktree: false });
+  assert.equal(local.status, 200);
+  assert.equal(r.maps[0].has((local.body.worker as WorkerInfo).id), true);
+});
+
 test('visit questions and answers route to the remote inbox after its desk moves', (t) => {
   const r = rig(t);
   const a = r.office.add('Alice', 'alpha').worker;
@@ -366,6 +383,7 @@ test('remote status starts at the current news, advances per caller, and timesta
   );
   assert.match(JSON.stringify(fresh.content), /\[1970-01-02T00:00:01\.000Z\] Worker report from Byte/);
   assert.deepEqual((await status()).structuredContent?.events, [], 'each report appears once in status');
+  assert.deepEqual((await client.callTool({ name: 'team_status', arguments: {} })).structuredContent?.events, [], 'the new status tool shares the legacy per-caller cursor');
 
   // Sequence cursors do not miss events that share the previous status call's millisecond.
   await r.teams[0].handle(sub, { action: 'report', text: 'A question', question: true });
@@ -386,11 +404,16 @@ test('remote status cursors survive restart independently for each caller', asyn
   await r.teams[0].handle(worker, { action: 'status' });
   await r.teams[0].handle(worker, { action: 'hire', task: 'Fix the report' });
   const sub = r.maps[0].get('sub-1')!;
+  r.teams[0].onWorker(sub);
   await r.teams[0].handle(sub, { action: 'report', text: 'Before restart' });
   const other = r.office.add('Other bot', 'alpha').worker;
   await r.teams[0].handle(other, { action: 'status' });
   r.teams[0].stop();
   const floor = r.floors[0];
+  const saved = JSON.parse(readFileSync(path.join(floor.dir, 'team.json'), 'utf8'));
+  assert.equal(saved.statusCursors[worker.id], 0, 'the original caller cursor is persisted alongside idle times');
+  assert.equal(saved.statusCursors[other.id], 1);
+  assert.equal(saved.idleSince[sub.id], 1000);
   const restarted = new Team({ ...floor.workers, get: (id) => floor.workers.get(id) ?? r.store.identity(id) } as TeamWorkers, { dataDir: floor.dir, dir: floor.dir, git: false, settings: () => r.settings, toast() {}, now: () => 1234 });
   t.after(() => restarted.stop());
   const read = async () => (await restarted.handle(worker, { action: 'status' })).body.events as { text: string }[];
@@ -399,6 +422,10 @@ test('remote status cursors survive restart independently for each caller', asyn
     ['Before restart'],
     'another caller did not advance this cursor',
   );
+  const snapshot = await restarted.handle(worker, { action: 'status' });
+  const restored = (snapshot.body.team as { idleSince: number; idleForMs: number }[])[0];
+  assert.equal(restored.idleSince, 1000, 'idle time survives the same restore as the remote cursor');
+  assert.equal(restored.idleForMs, 234);
   assert.deepEqual(await read(), []);
   await restarted.handle(sub, { action: 'report', text: 'After restart' });
   assert.deepEqual(

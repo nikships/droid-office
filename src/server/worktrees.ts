@@ -189,11 +189,12 @@ export class Worktrees {
    * `slug`, which is in `root` (the worker's own floor, when that isn't this project). The path it
    * returns is relative to `root`.
    */
-  create(slug: string, sub?: string, root = this.dir, start: WorktreeStart = 'checkout'): (Required<Omit<WorktreeRef, 'made'>> & { from?: string; note?: string }) | string {
+  create(slug: string, sub?: string, root = this.dir, start: WorktreeStart = 'checkout', requestedBranch?: string): (Required<Omit<WorktreeRef, 'made'>> & { from?: string; note?: string }) | string {
     try {
       const { base, from, note } = this.startOf(start);
       const rel = path.join(WORKTREES_DIR, slug, sub ?? '');
-      const branch = `${BRANCH_PREFIX}${slug}`;
+      const branch = requestedBranch ?? `${BRANCH_PREFIX}${slug}`;
+      this.gitSync(['check-ref-format', '--branch', branch]);
       this.gitSync(['worktree', 'add', '-b', branch, path.resolve(root, rel), base]);
       return { path: rel, branch, base, from, note };
     } catch (err) {
@@ -760,6 +761,31 @@ export class Worktrees {
         if (extra) await this.git(['branch', '-D', extra]).catch(() => undefined);
       }
       return { note };
+    } catch (err) {
+      return { error: gitError(err) };
+    }
+  }
+
+  /** MCP cleanup never uses force, even if a worker writes between preflight and removal. */
+  async removeClean(wt: WorktreeRef, keepBranch: boolean, home = this.dir, ownership?: WorktreeOwnership): Promise<SentHome> {
+    try {
+      const cur = await this.followed(wt);
+      if (!cur.path || !within(path.join(real(home), WORKTREES_DIR), real(path.resolve(this.dir, cur.path)))) throw new Error('refusing to remove the main checkout or a worktree outside the owning office');
+      const abs = path.resolve(this.dir, cur.path);
+      if (real(path.resolve(abs, await this.git(['rev-parse', '--git-common-dir'], abs))) !== this.commonDir()) throw new Error('the worktree belongs to a different repository');
+      if (!(await this.branchOf(cur))) throw new Error('keep a detached worktree until its commits are on a local branch');
+      if ((await this.inspect(cur)).dirty) throw new Error('worktree has uncommitted changes; commit them or keep the worktree');
+      // Git refuses dirty/untracked/locked worktrees and checked-out branches without force.
+      await this.git(['worktree', 'remove', abs]);
+      if (!keepBranch) {
+        if (cur.branch === this.currentBranch() || (ownership?.existing.includes(cur.branch) && cur.branch !== ownership.branch)) return { note: `Removed worktree; kept pre-existing branch ${cur.branch}` };
+        try {
+          await this.git(['branch', '-d', cur.branch]);
+        } catch {
+          return { note: `Removed worktree; kept branch ${cur.branch} because Git refused safe deletion` };
+        }
+      }
+      return { note: `Removed worktree${keepBranch ? `; kept branch ${cur.branch}` : ` and branch ${cur.branch}`}` };
     } catch (err) {
       return { error: gitError(err) };
     }

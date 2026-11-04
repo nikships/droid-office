@@ -179,6 +179,33 @@ test('status keeps its prose and adds compact workers, typed news with ids and t
     assert.equal((await r.call(r.lead, 'team', args)).isError, true, JSON.stringify(args));
 });
 
+test('team_status returns the same structured workers, news and cursor, with verbose, since and kinds', async (t) => {
+  const r = await rig(t);
+  await r.hire();
+  const pixel = await r.connect('sub1');
+  await r.call(pixel, 'team_report', { text: LONG_REPORT });
+  const full = await r.call(r.lead, 'team_status');
+  assert.match(full.text, /Last report:\nDone: fixed the redirect\./);
+  assert.equal(full.body.workers[0].lastReportId, 'team:floor:1');
+  assert.equal(full.body.news[0].id, 'team:floor:1');
+  assert.equal(full.body.cursor, 'team:floor:1');
+  await r.call(pixel, 'team_report', { text: 'Which branch?', question: true });
+  const compact = await r.call(r.lead, 'team_status', { worker: 'Pixel', verbose: false, kinds: ['question'] });
+  assert.match(compact.text, /^Pixel \(sub1\) blocked_on_question/);
+  assert.equal(compact.body.team, undefined);
+  assert.deepEqual(
+    compact.body.news.map((e: { id: string }) => e.id),
+    ['team:floor:2'],
+  );
+  const replay = await r.call(r.lead, 'team_status', { since: 'team:floor:0', verbose: false });
+  assert.deepEqual(
+    replay.body.news.map((e: { id: string }) => e.id),
+    ['team:floor:1', 'team:floor:2'],
+  );
+  assert.equal((await r.call(r.lead, 'team_status', { since: 'yesterday' })).isError, true);
+  assert.equal((await r.call(r.lead, 'team_status', { kinds: ['soon'] })).isError, true);
+});
+
 test('since reads news after a cursor without draining what else is unread, and kinds filter by type', async (t) => {
   const r = await rig(t);
   await r.hire();
@@ -441,7 +468,7 @@ test('team_wait sends progress to a client that asked for it', async (t) => {
   assert.deepEqual(beats, [15]);
 });
 
-test('the team event seq never goes back, so cursors stay valid after a lead leaves and the office restarts', (t) => {
+test('the team event seq never goes back, so cursors stay valid after a lead leaves and the office restarts', async (t) => {
   const dir = mkdtempSync(path.join(tmpdir(), 'team-seq-'));
   t.after(() => rmSync(dir, { recursive: true, force: true }));
   const people = new Map([
@@ -463,7 +490,7 @@ test('the team event seq never goes back, so cursors stay valid after a lead lea
   };
   const options = { dataDir: dir, dir, git: true, settings: () => ({ ...SUBAGENT_DEFAULTS, wakeLead: false }), toast() {} };
   const team = new Team(workers, options);
-  void team.handle(people.get('s')!, { action: 'report', text: 'to b' });
+  await team.handle(people.get('s')!, { action: 'report', text: 'to b' });
   assert.equal(team.latest(), 1);
   people.delete('b');
   people.delete('s');

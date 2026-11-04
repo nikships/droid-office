@@ -8,6 +8,10 @@ import { Changes } from '../src/server/changes.js';
 import { Worktrees } from '../src/server/worktrees.js';
 import { githubPulls } from '../src/server/github.js';
 import type { ChangesState } from '../src/shared/protocol.js';
+import { inspectGit, pushedSha, workerDiff } from '../src/server/team-inspect.js';
+import type { WorkerInfo } from '../src/shared/protocol.js';
+import { SUBAGENT_DEFAULTS } from '../src/shared/protocol.js';
+import { Team, type TeamWorkers } from '../src/server/team.js';
 
 /**
  * A project cloned from a bare origin, plus a second clone standing in for the forge: whatever it
@@ -42,6 +46,109 @@ function fixture(t: { after(fn: () => void): void }) {
   };
   return { root, dir, git: (...args: string[]) => run(dir, ...args), commit: (file: string) => commit(dir, file), merge };
 }
+
+test('MCP worktree creation accepts a new named branch but refuses collisions and invalid names', (t) => {
+  const f = fixture(t);
+  const trees = new Worktrees(f.dir);
+  const made = trees.create('named', undefined, f.dir, 'checkout', 'feat/named');
+  assert.notEqual(typeof made, 'string');
+  if (typeof made === 'string') return;
+  assert.equal(made.branch, 'feat/named');
+  assert.match(String(trees.create('collision', undefined, f.dir, 'checkout', 'feat/named')), /already exists/);
+  assert.equal(existsSync(path.join(f.dir, '.droid-office/worktrees/collision')), false);
+  assert.match(String(trees.create('invalid', undefined, f.dir, 'checkout', '--invalid')), /Could not create/);
+});
+
+test('MCP cleanup refuses the checkout, dirty/untracked and detached worktrees, and keeps branches unless asked', async (t) => {
+  const f = fixture(t);
+  const trees = new Worktrees(f.dir);
+  assert.match((await trees.removeClean({ path: '.', branch: 'main' }, false)).error!, /main checkout/);
+  const made = trees.create('safe');
+  if (typeof made === 'string') throw new Error(made);
+  const cwd = path.join(f.dir, made.path);
+  writeFileSync(path.join(cwd, 'a.txt'), 'dirty');
+  assert.match((await trees.removeClean(made, true)).error!, /uncommitted/);
+  assert.ok(existsSync(cwd));
+  writeFileSync(path.join(cwd, 'a.txt'), 'a');
+  writeFileSync(path.join(cwd, 'untracked.txt'), 'keep');
+  assert.match((await trees.removeClean(made, false)).error!, /uncommitted/);
+  unlinkSync(path.join(cwd, 'untracked.txt'));
+  execFileSync('git', ['switch', '--detach'], { cwd, stdio: 'ignore' });
+  assert.match((await trees.removeClean(made, true)).error!, /detached/);
+  execFileSync('git', ['switch', made.branch], { cwd, stdio: 'ignore' });
+  assert.equal((await trees.removeClean(made, true)).error, undefined);
+  assert.equal(existsSync(cwd), false);
+  assert.equal(f.git('branch', '--list', '--format=%(refname:short)', made.branch), made.branch);
+  const remove = trees.create('delete-branch');
+  if (typeof remove === 'string') throw new Error(remove);
+  assert.equal((await trees.removeClean(remove, false)).error, undefined);
+  assert.equal(f.git('branch', '--list', remove.branch), '');
+});
+
+test('worker diffs distinguish working changes and last commits, bound output and refuse option injection', async (t) => {
+  const f = fixture(t);
+  const trees = new Worktrees(f.dir);
+  const made = trees.create('diff');
+  if (typeof made === 'string') throw new Error(made);
+  const cwd = path.join(f.dir, made.path);
+  const w = { id: 'sub', worktree: made } as WorkerInfo;
+  writeFileSync(path.join(cwd, 'a.txt'), 'working change\n');
+  let diff = await workerDiff(f.dir, w);
+  assert.match(diff.diff, /working change/);
+  assert.match(diff.stat, /a.txt/);
+  assert.equal(diff.truncated, false);
+  assert.equal(await pushedSha(f.dir, w), undefined);
+  assert.equal(await pushedSha(f.dir, { id: 'shared' } as WorkerInfo), undefined);
+  await assert.rejects(workerDiff(f.dir, w, '--output=/tmp/no'), /leading dash/);
+  await assert.rejects(workerDiff(f.dir, w, 'unknown-ref'), /revision/);
+  execFileSync('git', ['branch', '--set-upstream-to=origin/main', made.branch], { cwd, stdio: 'ignore' });
+  assert.equal(await pushedSha(f.dir, w), undefined, 'the unchanged origin/main base is not a worker push');
+  // Commit via the fixture's existing Git identity, then return to the subagent's branch.
+  f.commit('next.txt');
+  execFileSync('git', ['merge', '--ff-only', 'main'], { cwd, stdio: 'ignore' });
+  assert.equal(await pushedSha(f.dir, w), undefined, 'a stale tracking ref must not be reported as the new work');
+  execFileSync('git', ['push', '-u', 'origin', made.branch], { cwd, stdio: 'ignore' });
+  assert.equal(await pushedSha(f.dir, w), execFileSync('git', ['rev-parse', 'HEAD'], { cwd, encoding: 'utf8' }).trim(), 'an upstream matching the changed HEAD supplies provenance');
+  diff = await workerDiff(f.dir, w, undefined, 1);
+  assert.match(diff.diff, /next.txt/);
+  assert.doesNotMatch(diff.diff, /working change/);
+  writeFileSync(path.join(cwd, 'a.txt'), `${'a large line\n'.repeat(10_000)}`);
+  diff = await workerDiff(f.dir, w);
+  assert.equal(diff.truncated, true);
+  assert.ok(Buffer.byteLength(diff.diff) <= 48_000);
+  const capped = await inspectGit(cwd, ['diff', '--no-ext-diff'], 40);
+  assert.equal(capped.truncated, true);
+});
+
+test('diff inspection refuses a plain floor nested inside a Git checkout without exposing parent changes', async (t) => {
+  const f = fixture(t);
+  const floor = path.join(f.dir, 'plain-floor');
+  mkdirSync(floor);
+  writeFileSync(path.join(f.dir, 'a.txt'), 'outside the plain floor');
+  assert.match((await inspectGit(floor, ['diff', 'HEAD', '--'])).text, /outside the plain floor/, 'Git itself discovers the enclosing checkout');
+  const lead = { id: 'lead', name: 'Lead', kind: 'agent', status: 'done' } as WorkerInfo;
+  const sub = { id: 'sub', name: 'Sub', kind: 'agent', status: 'done', lead: lead.id } as WorkerInfo;
+  const workers: TeamWorkers = {
+    list: () => [lead, sub],
+    get: (id) => [lead, sub].find((w) => w.id === id),
+    officeDefault: undefined,
+    deskOccupied: () => false,
+    hire: () => 'unused',
+    prompt: () => undefined,
+    resume: () => undefined,
+    kill: async () => ({}),
+    tail: () => undefined,
+    setTask: () => {},
+  };
+  const team = new Team(workers, { dataDir: floor, dir: floor, git: false, settings: () => SUBAGENT_DEFAULTS, toast: () => {} });
+  t.after(() => team.stop());
+  for (const options of [{}, { base: 'HEAD' }, { commits: 1 }]) {
+    const result = await team.handle(lead, { action: 'diff', worker: sub.id, ...options });
+    assert.equal(result.status, 400);
+    assert.match(String(result.body.error), /require a Git floor/);
+    assert.equal('diff' in result.body, false);
+  }
+});
 
 test('forks copy staged, unstaged, binary, deleted, executable and untracked files without touching the source', (t) => {
   const f = fixture(t);
