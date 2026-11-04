@@ -114,7 +114,12 @@ async function rig(t: { after(fn: () => void | Promise<void>): void }) {
     Object.assign(w, extra, { status });
     team.onWorker({ ...w });
   }
-  return { dir, url, settings, people, screens, writes, prompts, team, connect, call, lead, hire, status, set, tick: (ms: number) => (now += ms) };
+  /** Resolves once `n` waits are listening, however slow the machine is. */
+  async function held(n: number) {
+    for (let i = 0; i < 500 && team.watchers() !== n; i++) await new Promise((resolve) => setTimeout(resolve, 10));
+    assert.equal(team.watchers(), n);
+  }
+  return { dir, url, settings, people, screens, writes, prompts, team, connect, call, lead, hire, status, set, held, tick: (ms: number) => (now += ms) };
 }
 
 test('status keeps its prose and adds compact workers, typed news with ids and times, and a cursor', async (t) => {
@@ -312,8 +317,7 @@ test('team_wait returns as soon as news arrives, times out, cancels and never le
 
   const started = Date.now();
   const waiting = r.call(r.lead, 'team_wait', { until: ['report'], timeoutSec: 20 });
-  await new Promise((resolve) => setTimeout(resolve, 100));
-  assert.equal(r.team.watchers(), 1);
+  await r.held(1);
   assert.equal((await r.status({ verbose: false })).isError, undefined, 'other calls are served while a wait is open');
   await r.call(pixel, 'team_report', { text: 'Finished the redirect.' });
   const woke = await waiting;
@@ -331,7 +335,7 @@ test('team_wait returns as soon as news arrives, times out, cancels and never le
   assert.equal(r.team.watchers(), 0);
 
   const blocked = r.call(r.lead, 'team_wait', { until: ['blocked'], workers: ['Byte'], timeoutSec: 20 });
-  await new Promise((resolve) => setTimeout(resolve, 50));
+  await r.held(1);
   r.set('sub1', 'needs_input', { activity: 'ignored: not watched' });
   r.set('sub2', 'needs_input', { activity: 'Allow rm?' });
   const got = await blocked;
@@ -346,7 +350,7 @@ test('team_wait returns as soon as news arrives, times out, cancels and never le
   const rested = await r.call(r.lead, 'team_wait', { until: ['idle'], timeoutSec: 1 });
   assert.equal(rested.body.matched, false, 'a team already at rest is no news, so the wait does not return at once');
   const idle = r.call(r.lead, 'team_wait', { until: ['idle'], timeoutSec: 20 });
-  await new Promise((resolve) => setTimeout(resolve, 50));
+  await r.held(1);
   r.set('sub2', 'working');
   await new Promise((resolve) => setTimeout(resolve, 50));
   assert.equal(r.team.watchers(), 1, 'still waiting while one works');
@@ -374,15 +378,14 @@ test('team_wait returns as soon as news arrives, times out, cancels and never le
     headers: { 'content-type': 'application/json', accept: 'application/json, text/event-stream', 'mcp-protocol-version': '2025-06-18', [OFFICE_MCP_WORKER_HEADER]: 'lead', Authorization: 'Bearer token-lead' },
     body: JSON.stringify({ jsonrpc: '2.0', id: 7, method: 'tools/call', params: { name: 'team_wait', arguments: { until: ['report'], timeoutSec: 20 } } }),
   }).then((response) => response.text());
-  await new Promise((resolve) => setTimeout(resolve, 200));
-  assert.equal(r.team.watchers(), 1);
+  await r.held(1);
   controller.abort();
   await assert.rejects(raw);
   for (let i = 0; i < 50 && r.team.watchers(); i++) await new Promise((resolve) => setTimeout(resolve, 20));
   assert.equal(r.team.watchers(), 0, 'a wait whose caller hung up unsubscribes');
 
   const held = Array.from({ length: 4 }, () => r.call(r.lead, 'team_wait', { until: ['report'], timeoutSec: 2 }));
-  await new Promise((resolve) => setTimeout(resolve, 100));
+  await r.held(4);
   assert.match((await r.call(r.lead, 'team_wait', { until: ['report'], timeoutSec: 1 })).text, /already have 4/);
   await Promise.all(held);
   assert.equal(r.team.watchers(), 0);
@@ -398,7 +401,7 @@ test('team_wait returns every event that landed before it answered, and counts a
   await r.hire();
   await r.hire();
   const blocked = r.call(r.lead, 'team_wait', { until: ['blocked'], timeoutSec: 20 });
-  await new Promise((resolve) => setTimeout(resolve, 50));
+  await r.held(1);
   // Both get stuck in one pass: the first wakes the wait, the second lands before it answers.
   r.set('sub1', 'needs_input', { activity: 'Allow rm?' });
   r.set('sub2', 'needs_input', { activity: 'Allow push?' });
@@ -412,7 +415,7 @@ test('team_wait returns every event that landed before it answered, and counts a
   r.set('sub1', 'working');
   r.set('sub2', 'working');
   const question = r.call(r.lead, 'team_wait', { until: ['question'], timeoutSec: 20 });
-  await new Promise((resolve) => setTimeout(resolve, 50));
+  await r.held(1);
   // The AskUser hook comes before its menu is drawn, and drawing it signals no wait.
   r.set('sub1', 'needs_input', { ask: { kind: 'question', questions: [{ question: 'Which file should I create?', options: ['hello.txt', 'bye.txt', 'Other (type your answer)'], multiSelect: false }] } });
   const asked = await question;
