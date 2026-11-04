@@ -167,8 +167,11 @@ export class RingTips {
   private open: QuotaRing | null = null;
   private pinned = false;
 
-  /** Wires a fresh set of rings, and shows `keep`'s account's tooltip again (what was open before a repaint). */
-  attach(rings: QuotaRing[], keep = this.current) {
+  /**
+   * Wires a fresh set of rings. After a repaint, `keep` (what was open before it) opens again and
+   * `focused` (the account whose ring had focus) gets focus back, so a keyboard user stays put.
+   */
+  attach(rings: QuotaRing[], keep = this.current, focused?: string) {
     this.hide(true);
     this.open = null;
     this.pinned = false;
@@ -188,6 +191,7 @@ export class RingTips {
     }
     const again = keep ? rings.find((r) => r.key === keep.key) : undefined;
     if (again) this.show(again, keep?.pinned);
+    if (focused) rings.find((r) => r.key === focused)?.ring.focus({ preventScroll: true });
   }
 
   show(r: QuotaRing, pin = false) {

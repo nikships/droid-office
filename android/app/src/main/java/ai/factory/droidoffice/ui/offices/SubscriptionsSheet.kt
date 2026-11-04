@@ -90,7 +90,7 @@ fun SubscriptionsSheet(onDismiss: () -> Unit) {
                     groups.active.forEach { provider ->
                         Column(Modifier.tagged(Tags.Subscriptions.provider(provider.key)), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                             Eyebrow(Subscriptions.provider(provider.key))
-                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                                 provider.accounts.forEach { account ->
                                     val key = "${provider.key}/${account.id}"
                                     QuotaRing(provider, account, picked == key) { picked = if (picked == key) null else key }

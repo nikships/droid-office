@@ -16,7 +16,6 @@ data class SubscriptionProxy(val phase: String = "", val version: String? = null
 @Serializable
 data class SubscriptionWindow(val name: String = "", val usedPercent: Double = 0.0, val resetsAt: Long? = null) {
     val left: Int get() = (100 - usedPercent).roundToInt().coerceIn(0, 100)
-    fun words(now: Long): String = "$left% left" + (resetsAt?.takeIf { it > now }?.let { " · resets in ${Availability.duration(it - now)}" } ?: "")
     /** "Weekly: 29% left". */
     val line: String get() = "$name: $left% left"
     /** "Resets in 5 h (Nov 4, 2026, 4:31 AM)"; null when the office doesn't say or the time has passed. */

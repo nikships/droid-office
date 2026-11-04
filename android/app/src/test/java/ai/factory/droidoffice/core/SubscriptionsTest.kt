@@ -23,9 +23,10 @@ class SubscriptionsTest {
 
     @Test fun usageClampsRoundsAndExplainsFutureResets() {
         val now = Instant.parse("2026-10-25T20:12:45Z").toEpochMilli()
-        assertEquals("0% left · resets in 2 h", SubscriptionWindow("5-hour", 100.0, now + 7_200_000).words(now))
-        assertEquals("84% left", SubscriptionWindow("Weekly", 16.0, null).words(now))
-        assertEquals("84% left", SubscriptionWindow("Weekly", 16.4, now - 1).words(now))
+        assertEquals("5-hour: 0% left", SubscriptionWindow("5-hour", 100.0, now + 7_200_000).line)
+        assertEquals("Resets in 2 h (later)", SubscriptionWindow("5-hour", 100.0, now + 7_200_000).reset(now) { "later" })
+        assertEquals("Weekly: 84% left", SubscriptionWindow("Weekly", 16.4, now - 1).line)
+        assertNull(SubscriptionWindow("Weekly", 16.4, now - 1).reset(now))
         assertEquals(0, SubscriptionWindow(usedPercent = 120.0).left)
         assertEquals(100, SubscriptionWindow(usedPercent = -20.0).left)
     }

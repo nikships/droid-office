@@ -22,9 +22,10 @@ export function openSubscriptionsStatus() {
     if (next === shown) return;
     shown = next;
     const keep = tips.current;
+    const focused = body.contains(document.activeElement) ? (document.activeElement as HTMLElement).dataset.account : undefined;
     const view = subscriptionsView(s, now);
     body.replaceChildren(...view.nodes);
-    tips.attach(view.rings, keep);
+    tips.attach(view.rings, keep, focused);
   };
   paint();
   const off = store.on('subscriptions', paint);

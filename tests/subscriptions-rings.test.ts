@@ -44,6 +44,7 @@ class FakeElement {
   props = new Map<string, string>();
   style = { setProperty: (k: string, v: string) => this.props.set(k, v) };
   popoverOpen = false;
+  focused = false;
   classList = {
     add: (c: string) => {
       if (!this.classList.contains(c)) this.className = `${this.className} ${c}`.trim();
@@ -73,6 +74,10 @@ class FakeElement {
   }
   append(c: FakeElement | string) {
     this.children.push(c);
+  }
+  focus() {
+    this.focused = true;
+    this.fire('focus');
   }
   showPopover() {
     this.popoverOpen = true;
@@ -256,4 +261,12 @@ test('tooltips open on mouse hover and keyboard focus, pin on click or tap, and 
   assert.ok(!tip(a).popoverOpen);
   assert.equal(tips.dismiss(), true);
   assert.equal(tips.dismiss(), false);
+
+  const focusedAgain = subscriptionsView(ownerState(), NOW + 120_000, date);
+  tips.attach(focusedAgain.rings, null, b.key);
+  const bAgain = focusedAgain.rings[1].ring as unknown as FakeElement;
+  assert.ok(bAgain.focused, 'a repaint gives the focused ring its focus back');
+  assert.deepEqual(tips.current, { key: b.key, pinned: false });
+  bAgain.fire('blur');
+  assert.equal(tips.current, null, 'so leaving it still closes its tooltip');
 });
