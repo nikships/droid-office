@@ -19,16 +19,12 @@ export interface RemoteFloor {
 export class RemoteOffice {
   constructor(
     readonly store: RemoteWorkers,
-    private readonly floors: () => RemoteFloor[],
+    /** Every open floor, where a remote lead's teams may be. */
+    readonly floors: () => RemoteFloor[],
   ) {}
 
   floor(id: string): RemoteFloor | undefined {
     return this.floors().find((f) => f.workers.get(id)?.remote);
-  }
-
-  /** Every open floor, where a remote lead's teams may be. */
-  teamFloors(): RemoteFloor[] {
-    return this.floors();
   }
 
   list(id: string) {

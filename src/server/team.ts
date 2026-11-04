@@ -177,7 +177,7 @@ function newsWords(news: TeamEvent[]): string {
 export const TEAM_EVENT_KINDS = Object.keys(WEIGHT) as TeamEventKind[];
 
 /** The read and watch side of a team that structured status, team_wait and questions use. */
-export type TeamViews = 'subscribe' | 'watchers' | 'latest' | 'news' | 'markSeen' | 'questions' | 'reports' | 'roster';
+export type TeamViews = 'subscribe' | 'latest' | 'news' | 'markSeen' | 'questions' | 'reports' | 'roster';
 
 export class Team {
   private log: TeamEvent[] = [];

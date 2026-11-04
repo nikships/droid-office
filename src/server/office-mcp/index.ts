@@ -6,7 +6,7 @@ import { type CallToolResult, createMcpHandler, hostHeaderValidationResponse, lo
 import { z } from 'zod';
 import type { SubagentSettings, WorkerInfo } from '../../shared/protocol.js';
 import type { Team, TeamViews } from '../team.js';
-import { Answers } from '../answers.js';
+import type { Answers } from '../answers.js';
 import type { Visits } from '../visits.js';
 import type { WhiteboardStore } from '../whiteboard.js';
 import type { WorkerManager } from '../workers.js';
@@ -52,7 +52,7 @@ export interface OfficeMcpDeps {
   settings(): SubagentSettings;
   floor(workerId: string): OfficeMcpFloor | undefined;
   /** The office's one answer queue for terminal questions, shared with the phone's Asks so two answers never race. */
-  answers?: Pick<Answers, 'answer'>;
+  answers: Pick<Answers, 'answer'>;
 }
 
 export interface OfficeMcpCaller {
@@ -235,7 +235,7 @@ export class OfficeMcpServer {
 export function createOfficeMcp(deps: OfficeMcpDeps): OfficeMcpServer {
   const server = new OfficeMcpServer(deps);
   registerTeam(server, deps);
-  registerTeamEvents(server, { ...deps, answers: deps.answers ?? new Answers() });
+  registerTeamEvents(server, deps);
   registerWhiteboard(server, deps);
   registerVisits(server, deps);
   registerRemote(server, deps);

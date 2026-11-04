@@ -8,6 +8,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { Client, StreamableHTTPClientTransport } from '@modelcontextprotocol/client';
 import { z } from 'zod';
+import { Answers } from '../src/server/answers.js';
 import { createOfficeMcp, OFFICE_MCP_OFFICE_HEADER, OFFICE_MCP_PATH, OFFICE_MCP_WORKER_HEADER, officeAccess, officeAnswers, officeResult, syncOfficeMcpConnection, type OfficeMcpFloor } from '../src/server/office-mcp/index.js';
 import { Team, type TeamWorkers } from '../src/server/team.js';
 import { Visits } from '../src/server/visits.js';
@@ -60,7 +61,7 @@ async function rig(t: { after(fn: () => void | Promise<void>): void }, probes = 
   http.listen(0, '127.0.0.1');
   await once(http, 'listening');
   const origin = `http://127.0.0.1:${(http.address() as AddressInfo).port}`;
-  office = createOfficeMcp({ hookUrl: origin, settings: () => settings, floor: (id) => (people.has(id) ? floor : undefined) });
+  office = createOfficeMcp({ answers: new Answers(), hookUrl: origin, settings: () => settings, floor: (id) => (people.has(id) ? floor : undefined) });
   if (probes) {
     for (const [name, access] of Object.entries({ test_hire: officeAccess.mayHire, test_team: officeAccess.team, test_report: officeAccess.subagent, test_visit: officeAccess.visits })) {
       office.tool({ name, description: 'Permission probe', inputSchema: z.object({}) }, access, () => officeResult('allowed'));

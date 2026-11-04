@@ -7,6 +7,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import { Client, StreamableHTTPClientTransport } from '@modelcontextprotocol/client';
+import { Answers } from '../src/server/answers.js';
 import { createOfficeMcp, OFFICE_MCP_PATH, OFFICE_MCP_WORKER_HEADER, type OfficeMcpFloor } from '../src/server/office-mcp/index.js';
 import { Team, type TeamWorkers } from '../src/server/team.js';
 import { ASK_REPLY_MS, TALK_MAX_MS, TALK_MIN_MS, Visits, type VisitWorkers } from '../src/server/visits.js';
@@ -67,7 +68,7 @@ async function rig(t: { after(fn: () => void | Promise<void>): void }) {
   const team = new Team(workers, { dataDir: dir, dir, git: true, settings: () => settings, toast() {} });
   const whiteboard = new WhiteboardStore(dir);
   const floor: OfficeMcpFloor = { id: 'floor', name: 'Floor', dir, workers, team, visits, whiteboard };
-  const office = createOfficeMcp({ settings: () => settings, floor: (id) => (people.has(id) ? floor : undefined) });
+  const office = createOfficeMcp({ answers: new Answers(), settings: () => settings, floor: (id) => (people.has(id) ? floor : undefined) });
   const http = createServer((req, res) => {
     if (req.url === OFFICE_MCP_PATH) void office.handle(req, res);
     else res.writeHead(404).end();

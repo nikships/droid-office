@@ -8,6 +8,7 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync }
 import os from 'node:os';
 import path from 'node:path';
 import { Client, StreamableHTTPClientTransport } from '@modelcontextprotocol/client';
+import { Answers } from '../src/server/answers.js';
 import { RemoteWorkers } from '../src/server/remote-workers.js';
 import { RemoteOffice, type RemoteFloor } from '../src/server/remote-office.js';
 import { REMOTE_MCP_FILE, RemoteMcp, remoteMcpListener } from '../src/server/remote-mcp-http.js';
@@ -231,7 +232,7 @@ test('real MCP transport enforces host, tailnet identity, remote bearer auth, re
   const r = rig(t);
   const hostname = 'office.example.ts.net';
   const owner = 'owner@example.com';
-  const server = remoteMcpListener({ remote: r.office, remoteTransport: { hostname: () => hostname, owner: () => owner }, floor: r.floor, settings: () => r.settings });
+  const server = remoteMcpListener({ answers: new Answers(), remote: r.office, remoteTransport: { hostname: () => hostname, owner: () => owner }, floor: r.floor, settings: () => r.settings });
   const origin = await listening(t, server);
   const url = new URL('/office/mcp', origin);
   const headers = { host: `${hostname}:8443`, 'tailscale-user-login': owner, Authorization: `Bearer ${r.remote.token}`, 'x-droid-office-worker-id': r.remote.worker.id };
@@ -274,7 +275,7 @@ test('a remote lead gets structured status, cursors, waits and questions across 
   const alpha = (await r.teams[0].handle(r.remote.worker, { action: 'hire', task: 'Work on alpha' })).body.worker as WorkerInfo;
   r.office.move(id, 'beta');
   const beta = (await r.teams[1].handle(r.maps[1].get(id)!, { action: 'hire', task: 'Work on beta' })).body.worker as WorkerInfo;
-  const server = remoteMcpListener({ remote: r.office, remoteTransport: { hostname: () => hostname, owner: () => undefined }, floor: r.floor, settings: () => r.settings });
+  const server = remoteMcpListener({ answers: new Answers(), remote: r.office, remoteTransport: { hostname: () => hostname, owner: () => undefined }, floor: r.floor, settings: () => r.settings });
   const url = new URL('/office/mcp', await listening(t, server));
   const client = new Client({ name: 'remote-test', version: '1' });
   t.after(() => client.close());
@@ -322,7 +323,7 @@ test('a remote lead gets structured status, cursors, waits and questions across 
 
 test('remote tokens never authenticate on the local hook MCP', async (t) => {
   const r = rig(t);
-  const local = createOfficeMcp({ floor: r.floor, settings: () => r.settings });
+  const local = createOfficeMcp({ answers: new Answers(), floor: r.floor, settings: () => r.settings });
   const origin = await listening(
     t,
     createServer((req, res) => void local.handle(req, res)),

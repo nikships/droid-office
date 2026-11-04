@@ -6,7 +6,7 @@ import path from 'node:path';
 import headless from '@xterm/headless';
 import serialize from '@xterm/addon-serialize';
 import unicode11 from '@xterm/addon-unicode11';
-import type { AgentChoice, AgentEffort, GhPull, TeamBadge, TeamEmblem, TerminalHit, WorkerAsk, WorkerInfo, WorkerKind, WorkerRepo, WorkerStatus, WorkerTask } from '../shared/protocol.js';
+import type { AgentChoice, AgentEffort, AskedQuestion, GhPull, TeamBadge, TeamEmblem, TerminalHit, WorkerAsk, WorkerInfo, WorkerKind, WorkerRepo, WorkerStatus, WorkerTask } from '../shared/protocol.js';
 import { inputQuestions, permissionLine } from '../shared/ask-question.js';
 import { toolRefresh, type ToolRefresh } from './hook-refresh.js';
 import { TEAM_EMBLEMS, leadBadge, memberBadge, settleTeams } from '../shared/team.js';
@@ -238,7 +238,7 @@ interface Worker {
   /** Bumped by /clear: a new conversation, so a new task. */
   taskEpoch: number;
   /** Its terminal in the host as of the last save, and how it was doing, to pick back up after a restart. */
-  saved?: { ptyId: string; status: WorkerStatus; acked: boolean; waitingSince?: number; launchPrompt?: { text: string; at: number }; outbox?: string[] };
+  saved?: { ptyId: string; status: WorkerStatus; acked: boolean; waitingSince?: number; ask?: WorkerAsk; launchPrompt?: { text: string; at: number }; outbox?: string[] };
   /** Its process went away mid-turn with the office or the terminal host: its next start carries on (CARRY_ON_PROMPT). */
   interrupted?: boolean;
   /** Output since its scrollback was last saved to disk. */
@@ -2071,6 +2071,7 @@ export class WorkerManager {
       if (questions.length) {
         w.info.ask = { kind: 'question', questions, ...(sub ? { sub: true as const } : {}) };
         w.info.activity = truncate(questions.length > 1 ? `${questions[0].question} (+${questions.length - 1} more)` : questions[0].question, 80);
+        if (w.pty?.id) this.persist();
       }
       return;
     }
@@ -2095,7 +2096,10 @@ export class WorkerManager {
     w.info.activity = permission ? truncate(permissionLine(permission), 80) : (question ?? (typeof report.message === 'string' ? truncate(report.message, 80) : 'Waiting for input'));
     this.setStatus(w, 'needs_input');
     w.asking = { session, tool: call?.tool };
-    if (permission) w.info.ask = permission;
+    if (permission) {
+      w.info.ask = permission;
+      if (w.pty?.id) this.persist();
+    }
   }
 
   /**
@@ -2331,6 +2335,7 @@ export class WorkerManager {
       info.status = saved.status;
       info.acked = saved.acked;
       info.waitingSince = saved.waitingSince;
+      if (saved.status === 'needs_input' && saved.ask) info.ask = saved.ask;
     }
     this.follow(w, adopted.pty, term);
     this.emitUpdate(w);
@@ -2655,7 +2660,10 @@ export class WorkerManager {
         hookToken,
         // Its first message, while its droid hasn't taken it yet: the next office types it in at SessionStart.
         // Notices it was promised and hasn't been handed yet, which the next office hands over instead.
-        pty: pty?.id ? { id: pty.id, status: info.status, acked: info.acked, waitingSince: info.waitingSince, launchPrompt, ...(outbox.length ? { outbox } : {}) } : undefined,
+        // The question or permission prompt it waits on, so a terminal picked back up can still be answered from the hooks' account of it.
+        pty: pty?.id
+          ? { id: pty.id, status: info.status, acked: info.acked, waitingSince: info.waitingSince, ...(info.status === 'needs_input' && info.ask ? { ask: info.ask } : {}), launchPrompt, ...(outbox.length ? { outbox } : {}) }
+          : undefined,
         // In the middle of something: if its terminal doesn't make it through a restart, it carries on after.
         midTurn: !this.stopping && (!!interrupted || midTurn({ info, bootBlocked, stopAt })),
       }));
@@ -2724,6 +2732,7 @@ export class WorkerManager {
             status,
             acked: s.pty.acked !== false,
             waitingSince: typeof s.pty.waitingSince === 'number' ? s.pty.waitingSince : undefined,
+            ask: status === 'needs_input' ? validAsk(s.pty.ask) : undefined,
             launchPrompt: typeof launch?.text === 'string' && launch.text && typeof launch.at === 'number' ? { text: launch.text, at: launch.at } : undefined,
             outbox: Array.isArray(s.pty.outbox) ? s.pty.outbox.filter((n: unknown): n is string => typeof n === 'string' && !!n) : undefined,
           };
@@ -2814,6 +2823,23 @@ function validTeam(t: unknown): TeamBadge | undefined {
   if (!v || typeof v.id !== 'string' || !v.id || (v.role !== 'lead' && v.role !== 'member') || typeof v.leadName !== 'string') return undefined;
   if (typeof v.accent !== 'string' || !/^#[0-9a-f]{6}$/i.test(v.accent) || !TEAM_EMBLEMS.includes(v.emblem as TeamEmblem)) return undefined;
   return { id: v.id, role: v.role, accent: v.accent, emblem: v.emblem as TeamEmblem, leadName: v.leadName.slice(0, 80) };
+}
+
+function validAsk(a: unknown): WorkerAsk | undefined {
+  const v = a as Record<string, unknown> | null | undefined;
+  if (!v || typeof v !== 'object') return undefined;
+  const sub = v.sub === true ? { sub: true as const } : {};
+  if (v.kind === 'question' && Array.isArray(v.questions)) {
+    const questions = v.questions.flatMap((q: Partial<AskedQuestion> | null) =>
+      q && typeof q.question === 'string' && Array.isArray(q.options) && q.options.every((o) => typeof o === 'string') && typeof q.multiSelect === 'boolean'
+        ? [{ question: q.question, ...(typeof q.topic === 'string' ? { topic: q.topic } : {}), options: [...q.options], multiSelect: q.multiSelect }]
+        : [],
+    );
+    return questions.length ? { kind: 'question', questions, ...sub } : undefined;
+  }
+  if (v.kind !== 'permission' || typeof v.tool !== 'string') return undefined;
+  const text = (key: 'command' | 'file' | 'risk' | 'summary') => (typeof v[key] === 'string' ? { [key]: v[key] as string } : {});
+  return { kind: 'permission', tool: v.tool, ...text('command'), ...text('file'), ...text('risk'), ...text('summary'), ...sub };
 }
 
 function validTask(t: unknown): WorkerTask | undefined {

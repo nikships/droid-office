@@ -20,7 +20,6 @@ export interface TeamScope {
 
 /** What a filter or wait may name: every event kind, plus blocked (a subagent needs input in its own terminal). */
 export const EVENT_FILTERS = [...TEAM_EVENT_KINDS, 'blocked'] as const;
-export type EventFilter = (typeof EVENT_FILTERS)[number];
 const WAIT_FOR = [...EVENT_FILTERS, 'idle'] as const;
 const WAIT_DEFAULT: (typeof WAIT_FOR)[number][] = ['report', 'question', 'blocked', 'idle'];
 const WAIT_DEFAULT_SEC = 30;
@@ -127,7 +126,7 @@ export function compactEventText(e: CompactEvent): string {
 /** The floors whose teams a caller's team tools cover: its own, or for an external worker every open floor (or the one named). */
 export function teamScopes(caller: OfficeMcpCaller, deps: OfficeMcpDeps, floor?: string): TeamScope[] | string {
   if (caller.worker.remote && deps.remote) {
-    const all = deps.remote.teamFloors().filter((f) => !floor || f.id === floor);
+    const all = deps.remote.floors().filter((f) => !floor || f.id === floor);
     return all.length ? all : 'No such open floor: office_floors lists them';
   }
   if (floor && floor !== caller.floor.id) return 'Local workers manage only their own floor';
@@ -280,28 +279,28 @@ const floorArg = z.string().min(1).max(128).optional().describe('External worker
 /** Waiting suits a lead that hears nothing otherwise: an external worker, or a local one with Wake the lead off. */
 const mayWait: OfficeMcpAccess = (c) => officeAccess.team(c) ?? (c.worker.remote || !c.settings.wakeLead ? undefined : 'Wake the lead is on, so a wake note tells you when your team has news: end your turn instead of waiting.');
 
-export function register(server: OfficeMcpServer, deps: OfficeMcpDeps & { answers: NonNullable<OfficeMcpDeps['answers']> }): void {
+export function register(server: OfficeMcpServer, deps: OfficeMcpDeps): void {
   const waiting = new Map<string, number>();
 
   server.tool(
     {
       name: 'team_wait',
       description:
-        'Wait until one of your subagents reports, asks a question, gets blocked in its terminal or settles, then return at once with what happened, typed events with ids and a cursor. Returns immediately when it already has: unread matching news (or news after since), a question waiting on you, or, with idle, every watched subagent settled. Otherwise returns at timeoutSec (default 30, at most 600) with matched false. Without since, a local lead hears the news it is shown, like team status. Longer waits need a client timeout to match; with a progress token it sends progress every 15 s.',
+        'Wait until one of your subagents reports, asks a question, gets blocked in its terminal or settles, then return at once with what happened, typed events with ids and a cursor. Returns immediately only for matching news you have not heard (or news after since). A terminal question counts once it appears during the wait, and idle once every watched subagent settles during it; questions already waiting are listed in questions without ending the wait. Otherwise returns at timeoutSec (default 30, at most 600) with matched false. Without since, a local lead hears the news it is shown, like team status. Longer waits need a client timeout to match; with a progress token it sends progress every 15 s.',
       inputSchema: z.object({
         until: z
           .array(z.enum(WAIT_FOR))
           .min(1)
           .max(WAIT_FOR.length)
           .optional()
-          .describe(`What to wait for. Event kinds, blocked (needs input in its own terminal), or idle (every watched subagent has settled). Default ${WAIT_DEFAULT.join(', ')}.`),
+          .describe(`What to wait for. Event kinds, blocked (needs input in its own terminal), or idle (every watched subagent settles during the wait). Default ${WAIT_DEFAULT.join(', ')}.`),
         workers: z.array(z.string().trim().min(1).max(128)).min(1).max(20).optional().describe('Subagent names or ids to watch. Omit for your whole team.'),
         timeoutSec: z.number().int().min(1).max(WAIT_MAX_SEC).optional().describe(`Longest wait in seconds, default ${WAIT_DEFAULT_SEC}, at most ${WAIT_MAX_SEC}.`),
         since: cursorArg.optional(),
         floor: floorArg,
         verbose: z.boolean().optional().describe('Include each event full text, not just its summary.'),
       }),
-      outputSchema: z.looseObject({ matched: z.boolean(), reason: z.string(), waitedMs: z.number(), events: z.array(eventOut), questions: z.array(questionOut), ...statusOutput }),
+      outputSchema: z.looseObject({ matched: z.boolean(), reason: z.string(), waitedMs: z.number(), events: z.array(eventOut), questions: z.array(questionOut), workers: statusOutput.workers, cursor: statusOutput.cursor }),
       annotations: readOnly,
     },
     mayWait,
@@ -321,34 +320,44 @@ export function register(server: OfficeMcpServer, deps: OfficeMcpDeps & { answer
         const kinds = eventKinds([...until]);
         // A remote lead's unheard news stays in office_inbox; without a cursor it waits for what's new from now.
         const after = new Map(scopes.map((s) => [s.id, since ? (since.get(s.id) ?? 0) : caller.worker.remote ? s.team.latest() : undefined]));
+        const news = () => scopes.flatMap((s) => s.team.news(lead, { after: after.get(s.id), unread: after.get(s.id) === undefined, kinds, workers: watched }).map((e) => ({ e, floor: s.id })));
+        const reasonOf = (events: Matched['events']) => (events[0].e.kind === 'needs_input' && !until.has('needs_input') ? 'blocked' : events[0].e.kind);
+        const asks = () => openQuestions(scopes, lead, watched).filter((q) => q.kind === 'terminal' && q.answerable);
+        const team = () => scopes.flatMap((s) => s.workers.list().filter((w) => w.lead === lead && (!watched || watched.has(w.id))));
+        // A terminal question or a settled team counts only when it comes about during the wait: one that was
+        // already so would end every default wait at once. Team questions are news, which since already orders.
+        const askedBefore = new Set(asks().map((q) => q.id));
+        let busy = !team().every(settled);
         const started = Date.now();
         const outcome = await waitFor(scopes, {
           signal,
           progress,
           timeoutMs: (args.timeoutSec ?? WAIT_DEFAULT_SEC) * 1000,
           check: () => {
-            const events = scopes.flatMap((s) => s.team.news(lead, { after: after.get(s.id), unread: after.get(s.id) === undefined, kinds, workers: watched }).map((e) => ({ e, floor: s.id })));
-            if (events.length) return { reason: events[0].e.kind === 'needs_input' && !until.has('needs_input') ? 'blocked' : events[0].e.kind, events };
-            if (until.has('question')) {
-              const questions = openQuestions(scopes, lead, watched).filter((q) => q.answerable);
-              if (questions.length) return { reason: 'question', events: [] };
-            }
+            const events = news();
+            if (events.length) return { reason: reasonOf(events), events };
+            if (until.has('question') && asks().some((q) => !askedBefore.has(q.id))) return { reason: 'question', events: [] };
             if (until.has('idle')) {
-              const team = scopes.flatMap((s) => s.workers.list().filter((w) => w.lead === lead && (!watched || watched.has(w.id))));
-              if (team.every(settled)) return { reason: 'idle', events: [] };
+              if (!team().every(settled)) busy = true;
+              else if (busy) return { reason: 'idle', events: [] };
             }
             return undefined;
           },
         });
         if (signal.aborted) return officeError('Wait cancelled.');
-        const matched = outcome ?? { reason: 'timeout', events: [] };
+        // Read the news again beside the cursor: a later signal may have added events after the match, and the
+        // cursor must not pass any event this response leaves out.
+        const found = news();
+        const cursor = cursorOf(Object.fromEntries(scopes.map((s) => [s.id, s.team.latest()])));
+        const matched = !!outcome || found.length > 0;
+        const reason = outcome?.reason ?? (found.length ? reasonOf(found) : 'timeout');
         if (!caller.worker.remote)
           for (const s of scopes)
             s.team.markSeen(
               lead,
-              matched.events.filter((x) => x.floor === s.id).map((x) => x.e.seq),
+              found.filter((x) => x.floor === s.id).map((x) => x.e.seq),
             );
-        const events = matched.events.map(({ e, floor }) => compactEvent(e, floor, args.verbose));
+        const events = found.map(({ e, floor }) => compactEvent(e, floor, args.verbose));
         const questions = openQuestions(scopes, lead, watched);
         const workers = scopes.flatMap((s) =>
           s.team
@@ -356,11 +365,10 @@ export function register(server: OfficeMcpServer, deps: OfficeMcpDeps & { answer
             .filter((m) => !watched || watched.has(m.id))
             .map((m) => compactWorker(m, s.id)),
         );
-        const cursor = cursorOf(Object.fromEntries(scopes.map((s) => [s.id, s.team.latest()])));
-        const body = { matched: !!outcome, reason: matched.reason, waitedMs: Date.now() - started, events, questions, workers, news: events, cursor };
+        const body = { matched, reason, waitedMs: Date.now() - started, events, questions, workers, cursor };
         return officeResult(
           [
-            outcome ? `Matched ${matched.reason}.` : `Nothing matched within ${args.timeoutSec ?? WAIT_DEFAULT_SEC} s.`,
+            matched ? `Matched ${reason}.` : `Nothing matched within ${args.timeoutSec ?? WAIT_DEFAULT_SEC} s.`,
             ...events.map(compactEventText),
             ...(questions.length ? [`Questions waiting on you:\n${questions.map(questionText).join('\n')}`] : []),
             ...(workers.length ? workers.map(compactWorkerText) : ['You have no subagents.']),
@@ -440,7 +448,7 @@ export function register(server: OfficeMcpServer, deps: OfficeMcpDeps & { answer
     {
       name: 'question_answer',
       description:
-        'Answer one question from questions_list by its id: optionId picks a numbered option, optionIds the boxes of a multi-select question, text a typed answer (with optionIds, the typed extra). A team question gets your answer as a message; a terminal question is answered in the subagent terminal only while it still shows the same question. Permission prompts are refused: only the person at the desk can approve.',
+        'Answer one question from questions_list by its id: optionId picks a numbered option, optionIds the boxes of a multi-select question, text a typed answer (with optionIds, the typed extra). A team question gets your answer as a message, optionId and text together; a terminal question takes optionId or text, not both, and is answered in the subagent terminal only while it still shows the same question. Permission prompts are refused: only the person at the desk can approve.',
       inputSchema: z.object({
         questionId: z.string().trim().min(1).max(400).describe('The id from questions_list.'),
         optionId: z.string().trim().min(1).max(8).optional().describe('One option id.'),
@@ -479,6 +487,7 @@ export function register(server: OfficeMcpServer, deps: OfficeMcpDeps & { answer
       const now = terminalQuestion(scope, w);
       if (now?.kind === 'permission') return officeError(now.why ?? 'Only the person at its desk can answer a permission prompt.');
       if (!now?.answerable || now.id !== args.questionId) return officeError('The question changed or was already answered, so nothing was sent. questions_list shows the current one.');
+      if (args.optionId !== undefined && args.text !== undefined) return officeError('A terminal question takes optionId or text, not both: text alone types your own answer, and a multi-select takes optionIds with text.');
       const shown = scope.workers.screenMenu?.(w.id);
       if (!shown) return officeError('The question changed or was already answered, so nothing was sent.');
       const number = (id: string) => (/^\d+$/.test(id) ? Number(id) : NaN);

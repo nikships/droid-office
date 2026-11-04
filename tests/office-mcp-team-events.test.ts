@@ -7,6 +7,7 @@ import type { AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { Client, StreamableHTTPClientTransport } from '@modelcontextprotocol/client';
+import { Answers } from '../src/server/answers.js';
 import { createOfficeMcp, OFFICE_MCP_PATH, OFFICE_MCP_WORKER_HEADER, type OfficeMcpFloor } from '../src/server/office-mcp/index.js';
 import { parseCursor } from '../src/server/office-mcp/team-events.js';
 import { Team, type TeamWorkers } from '../src/server/team.js';
@@ -76,7 +77,7 @@ async function rig(t: { after(fn: () => void | Promise<void>): void }) {
   const visits = new Visits({ ...workers, cancelTurn: () => false, turnScreen: () => undefined }, { on: () => settings.visits, emit() {} });
   const whiteboard = new WhiteboardStore(dir);
   const floor: OfficeMcpFloor = { id: 'floor', name: 'Floor', dir, workers, team, visits, whiteboard };
-  const office = createOfficeMcp({ settings: () => settings, floor: (id) => (people.has(id) ? floor : undefined) });
+  const office = createOfficeMcp({ answers: new Answers(), settings: () => settings, floor: (id) => (people.has(id) ? floor : undefined) });
   const http = createServer((req, res) => {
     if (req.url === OFFICE_MCP_PATH) void office.handle(req, res);
     else res.writeHead(404).end();
@@ -149,7 +150,7 @@ test('status keeps its prose and adds compact workers, typed news with ids and t
   assert.match(compact.text, /Cursor: team:floor:2$/);
   assert.equal(compact.body.team, undefined, 'compact structured content drops the whole reports');
   assert.equal(compact.body.news[0].text, undefined);
-  assert.equal((await r.status({ worker: 'pixel', verbose: false })).body.workers.length, 1, 'worker filters like name');
+  assert.equal((await r.status({ name: 'pixel', verbose: false })).body.workers.length, 1, 'name filters the structured workers too');
 
   const full = await r.call(r.lead, 'team_report_get', { worker: 'Pixel' });
   assert.equal(full.isError, undefined);
@@ -168,7 +169,6 @@ test('status keeps its prose and adds compact workers, typed news with ids and t
   for (const args of [
     { action: 'message', name: 'Pixel', text: 'hi', verbose: false },
     { action: 'dismiss', name: 'Pixel', since: '1' },
-    { action: 'status', name: 'Pixel', worker: 'Byte' },
     { action: 'status', since: 'yesterday' },
   ])
     assert.equal((await r.call(r.lead, 'team', args)).isError, true, JSON.stringify(args));
@@ -282,6 +282,8 @@ test('terminal questions are listed like the Asks inbox and answered only while 
   assert.match((await r.call(r.lead, 'question_answer', { questionId: menu.id, optionId: '1' })).text, /question changed/);
   assert.deepEqual(r.writes, []);
   r.screens.set('sub1', DIGITS);
+  assert.match((await r.call(r.lead, 'question_answer', { questionId: menu.id, optionId: '3', text: 'notes.txt' })).text, /not both/, 'a terminal question never drops the typed half of an answer');
+  assert.deepEqual(r.writes, []);
   assert.equal((await r.call(r.lead, 'question_answer', { questionId: menu.id, optionId: '9' })).isError, true);
   assert.equal((await r.call(r.lead, 'question_answer', { questionId: menu.id, optionId: '1' })).isError, undefined);
   assert.deepEqual(r.writes, [['sub1', '1']]);
@@ -340,8 +342,15 @@ test('team_wait returns as soon as news arrives, times out, cancels and never le
 
   r.set('sub1', 'done');
   r.set('sub2', 'done');
-  const idle = await r.call(r.lead, 'team_wait', { until: ['idle'], timeoutSec: 20 });
-  assert.equal(idle.body.reason, 'idle', 'nothing is running, so there is nothing to wait for');
+  const rested = await r.call(r.lead, 'team_wait', { until: ['idle'], timeoutSec: 1 });
+  assert.equal(rested.body.matched, false, 'a team already at rest is no news, so the wait does not return at once');
+  const idle = r.call(r.lead, 'team_wait', { until: ['idle'], timeoutSec: 20 });
+  await new Promise((resolve) => setTimeout(resolve, 50));
+  r.set('sub2', 'working');
+  await new Promise((resolve) => setTimeout(resolve, 50));
+  assert.equal(r.team.watchers(), 1, 'still waiting while one works');
+  r.set('sub2', 'done');
+  assert.equal((await idle).body.reason, 'idle', 'the team settling during the wait ends it');
 
   await r.status();
   const question = r.call(r.lead, 'team_wait', { timeoutSec: 20 });
@@ -351,8 +360,10 @@ test('team_wait returns as soon as news arrives, times out, cancels and never le
   const asked = await question;
   assert.equal(asked.body.reason, 'question');
   assert.equal(asked.body.questions[0].id, asked.body.events[0].id);
-  const again = await r.call(r.lead, 'team_wait', { until: ['question'], timeoutSec: 20 });
-  assert.equal(again.body.reason, 'question', 'an unanswered question returns at once');
+  const again = await r.call(r.lead, 'team_wait', { until: ['question'], timeoutSec: 1 });
+  assert.equal(again.body.matched, false, 'a question already heard does not end the next wait');
+  assert.equal(again.body.questions[0].id, asked.body.events[0].id, 'it is still listed as waiting on the lead');
+  assert.equal(again.body.news, undefined, 'events is the one list of what happened');
 
   // The plain curl-style client a remote bot uses: one POST, then it hangs up.
   const controller = new AbortController();
@@ -379,6 +390,37 @@ test('team_wait returns as soon as news arrives, times out, cancels and never le
   r.settings.wakeLead = true;
   assert.ok(!(await r.lead.listTools()).tools.some((tool) => tool.name === 'team_wait'), 'wake notes replace waiting for a local lead');
   assert.match((await r.call(r.lead, 'team_wait', {})).text, /Wake the lead is on/);
+});
+
+test('team_wait returns every event that landed before it answered, and counts a terminal question that appears during it', async (t) => {
+  const r = await rig(t);
+  await r.hire();
+  await r.hire();
+  const blocked = r.call(r.lead, 'team_wait', { until: ['blocked'], timeoutSec: 20 });
+  await new Promise((resolve) => setTimeout(resolve, 50));
+  // Both get stuck in one pass: the first wakes the wait, the second lands before it answers.
+  r.set('sub1', 'needs_input', { activity: 'Allow rm?' });
+  r.set('sub2', 'needs_input', { activity: 'Allow push?' });
+  const got = await blocked;
+  assert.deepEqual(
+    got.body.events.map((e: { id: string }) => e.id),
+    ['team:floor:1', 'team:floor:2'],
+  );
+  assert.equal(got.body.cursor, 'team:floor:2');
+
+  r.set('sub1', 'working');
+  r.set('sub2', 'working');
+  const question = r.call(r.lead, 'team_wait', { until: ['question'], timeoutSec: 20 });
+  await new Promise((resolve) => setTimeout(resolve, 50));
+  r.screens.set('sub1', DIGITS);
+  r.set('sub1', 'needs_input', { ask: { kind: 'question', questions: [{ question: 'Which file should I create?', options: ['hello.txt', 'bye.txt', 'Other (type your answer)'], multiSelect: false }] } });
+  const asked = await question;
+  assert.equal(asked.body.reason, 'question');
+  assert.deepEqual(asked.body.events, [], 'its needs_input news is not what this wait asked for');
+  assert.equal(asked.body.questions[0].kind, 'terminal');
+  const again = await r.call(r.lead, 'team_wait', { until: ['question'], timeoutSec: 1 });
+  assert.equal(again.body.matched, false, 'the same terminal question does not end the next wait');
+  assert.equal(again.body.questions[0].id, asked.body.questions[0].id);
 });
 
 test('team_wait sends progress to a client that asked for it', async (t) => {

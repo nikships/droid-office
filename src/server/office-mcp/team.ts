@@ -143,7 +143,6 @@ export function register(server: OfficeMcpServer, deps: OfficeMcpDeps): void {
         action: z.enum(['status', 'message', 'dismiss']),
         floor: z.string().min(1).max(128).optional().describe('External workers only: restrict team operations to this floor. Omit for all your teams across the building.'),
         name: z.string().trim().min(1).optional().describe('Subagent name or id, case-insensitive. Status: omit for all. Required for message and dismiss.'),
-        worker: z.string().trim().min(1).optional().describe('Status only: the same as name.'),
         verbose: z.boolean().optional().describe('Status only: false for one compact line per subagent and per event, with summaries instead of whole reports. Omit or true for the full text.'),
         since: z.string().trim().min(1).max(4000).optional().describe('Status only: a cursor from an earlier status (cursor field) or one event id. News is everything after it, heard or not, instead of only unread news.'),
         kinds: z.array(z.enum(EVENT_FILTERS)).min(1).max(EVENT_FILTERS.length).optional().describe('Status only: just these news kinds (blocked is needs_input). Other news stays unread.'),
@@ -159,15 +158,13 @@ export function register(server: OfficeMcpServer, deps: OfficeMcpDeps): void {
       if (args.action !== 'status' && args.lines !== undefined) return officeError('lines is only for team action status. Leave it out for message or dismiss.');
       if (args.action !== 'message' && args.text !== undefined) return officeError('text is only for team action message. Leave it out for status or dismiss.');
       if (args.floor && !caller.worker.remote) return officeError('Local workers manage only their own floor');
-      if (args.action !== 'status' && (args.worker !== undefined || args.verbose !== undefined || args.since !== undefined || args.kinds !== undefined))
-        return officeError('worker, verbose, since and kinds are only for team action status.');
-      if (args.worker && args.name && args.worker.toLowerCase() !== args.name.toLowerCase()) return officeError('name and worker name the same subagent: give one of them.');
+      if (args.action !== 'status' && (args.verbose !== undefined || args.since !== undefined || args.kinds !== undefined)) return officeError('verbose, since and kinds are only for team action status.');
       const cursor = args.since === undefined ? undefined : parseCursor(args.since, caller.floor.id);
       if (args.since !== undefined && !cursor) return officeError('since takes the cursor from an earlier team status or team_wait, or one team:<floor>:<seq> event id.');
       const kinds = eventKinds(args.kinds);
       const command = {
         action: args.action === 'message' ? 'send' : args.action,
-        worker: args.name ?? args.worker,
+        worker: args.name,
         lines: args.lines,
         text: args.text,
         floor: args.floor,
