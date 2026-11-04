@@ -121,7 +121,7 @@ The office never turns on [Tailscale Funnel](https://tailscale.com/kb/1223/funne
 
 ## Tools
 
-Every tool a remote bot sees in `tools/list` when every Setting allows it. Some depend on Settings → **Subagents & visits**: hiring (`team_models`, `team_hire`) needs subagents on and desk workers allowed to hire, and the `visit_*` tools need **Visits between workers** on. A tool that is off is not listed, and a direct call to it says why. `tests/remote-mcp.test.ts` checks that this list matches `tools/list`, with every argument, and prints the exact entry to add when a tool changes.
+Every tool a remote bot sees in `tools/list` when every Setting allows it. Some depend on Settings → **Subagents & visits**: hiring (`team_models`, `models_list`, `team_hire`) needs subagents on and desk workers allowed to hire, and the `visit_*` tools need **Visits between workers** on. A tool that is off is not listed, and a direct call to it says why. `tests/remote-mcp.test.ts` checks that this list matches `tools/list`, with every argument, and prints the exact entry to add when a tool changes.
 
 Whiteboard file paths and `cwd` values are on the **office machine**, not the bot's host.
 
@@ -169,24 +169,83 @@ Read the models allowed for your subagents, including ids, providers, credit mul
 
 No arguments.
 
+### `models_list`
+
+Read the full Droid/Subscriptions/DroidProxy model catalogue, including switched-off or disallowed models (enabled: false), availability, allowed-model restrictions and the default. team_models still lists the allowed subagent picks.
+
+No arguments.
+
 ### `team_hire`
 
 Hire one fresh subagent at the nearest free desk for an independent task. It gets your brief, its own terminal, and normally a fresh worktree. Read team_models first. Permission, capacity and model refusals explain what to do; no desk is taken for an unavailable model. Commit shared prerequisites before hiring.
 
 | Argument | Type | Required | Description |
 | --- | --- | --- | --- |
-| `title` | string | yes | Short task title shown over the subagent. |
-| `brief` | string | yes | Complete task ticket: goal, context and files, boundaries, checks, and how to finish and report. Quotes, dollar signs and backticks are preserved. |
+| `title` | string | no | Short task title, required unless task supplies it. |
+| `brief` | string | no | Complete task ticket, required unless task supplies it. Quotes, dollar signs and backticks are preserved. |
+| `task` | object | no | Structured task ticket. Its title/brief take precedence; baseBranch controls the fresh worktree base. Fields: `title`, `brief`, `repo` (an open floor's id or name, or its repository path), `baseBranch`, and optional `branch`, `prNumber` and `acceptanceCriteria`. |
 | `model` | string | no | Id from team_models. Omit for the Subagents setting, else the office default, else Droid default. Pick by owner notes, task difficulty and credit multiplier. |
 | `effort` | "low" \| "medium" \| "high" \| "xhigh" \| "max" | no | Reasoning effort; choose a value this model supports according to team_models. Omit to inherit its configured effort. |
 | `from` | string | no | Branch, tag or commit for the fresh worktree, without spaces or a leading dash. Origin is fetched first. Omit to start on your branch at HEAD, refreshed if behind origin. Uncommitted changes do not follow. Requires worktree: true. |
 | `worktree` | boolean | no | Omit to follow the owner's Subagents setting (office_whoami shows it). True: isolated git worktree. False: use the project main checkout without switching its branch, only for read-only work or when your uncommitted changes must be visible. Non-git floors require false. |
 
+### `team_status`
+
+Read your subagents and unread team news without waiting. Optionally select a worker and recent terminal lines. Does not message or dismiss.
+
+For an external worker, status news follows a cursor kept for that bot across reconnects and office restarts: the first status call sets a baseline without replaying old reports, later calls return only newer events, and each news line starts with its UTC time. `team` with action `status` reads the same cursor. Reading status does not acknowledge anything in `office_inbox`.
+
+| Argument | Type | Required | Description |
+| --- | --- | --- | --- |
+| `worker` | string | no | Your subagent’s name or id, case-insensitive. Omit for all. |
+| `floor` | string | no | External workers only: restrict to an open floor id. |
+| `lines` | integer | no | Include this many recent terminal lines per selected subagent, at most 400. Omit to leave terminals out. |
+
+### `team_message`
+
+Send an answer or follow-up to one of your subagents. Cannot answer a permission prompt in its terminal.
+
+| Argument | Type | Required | Description |
+| --- | --- | --- | --- |
+| `worker` | string | yes | Your subagent’s name or id, case-insensitive. |
+| `text` | string | yes | The answer or follow-up, typed into the subagent's session. |
+| `floor` | string | no | External workers only: restrict to an open floor id. |
+
+### `team_dismiss`
+
+Dismiss a reviewed subagent. Defaults to keeping its worktree and branch. pruneWorktree removes only a clean, owned worktree after its worker finishes, never the main checkout. keepBranch defaults true; false requests safe local branch deletion, which Git may refuse. No force option.
+
+| Argument | Type | Required | Description |
+| --- | --- | --- | --- |
+| `worker` | string | yes | Your subagent’s name or id, case-insensitive. |
+| `floor` | string | no | External workers only: restrict to an open floor id. |
+| `pruneWorktree` | boolean | no | Remove the subagent's worktree if it is clean and owned by the office. Default false. |
+| `keepBranch` | boolean | no | Default true. False also deletes the local branch safely; needs `pruneWorktree: true`. |
+
+### `worker_diff`
+
+Read a size-capped Git diff and stat for your subagent. Defaults to its recorded base versus the tracked working tree (no untracked files). base selects another revision. commits selects the last N commits through HEAD, excluding uncommitted changes. Never runs external diff drivers or textconv.
+
+| Argument | Type | Required | Description |
+| --- | --- | --- | --- |
+| `worker` | string | yes | Your subagent’s name or id, case-insensitive. |
+| `floor` | string | no | External workers only: restrict to an open floor id. |
+| `base` | string | no | Revision to diff against instead of the recorded base. Not with `commits`. |
+| `commits` | integer | no | Diff only the last N commits through HEAD, 1 to 1000. Not with `base`. |
+
+### `worker_log`
+
+Read recent terminal output and current tool activity for your subagent without writing to or attaching its terminal. At most 400 lines and 48,000 characters.
+
+| Argument | Type | Required | Description |
+| --- | --- | --- | --- |
+| `worker` | string | yes | Your subagent’s name or id, case-insensitive. |
+| `floor` | string | no | External workers only: restrict to an open floor id. |
+| `tail` | integer | yes | Latest terminal lines to read, 1 to 400. |
+
 ### `team`
 
-Manage only your own subagents. Status returns one named subagent or all, with unread reports, questions, finished turns, terminal input requests, stops and departures since your last status call. News is drained per caller, even for a named snapshot; nothing waits. Message answers a question or follows up, best between turns. Dismiss only after review and integration when worker and worktree are no longer needed; worktrees with work are kept.
-
-For an external worker, status news follows a cursor kept for that bot across reconnects and office restarts: the first status call sets a baseline without replaying old reports, later calls return only newer events, and each news line starts with its UTC time. Reading status does not acknowledge anything in `office_inbox`.
+Deprecated alias: prefer team_status, team_message and team_dismiss. Manage only your own subagents. Status returns one named subagent or all, with unread news since your last status call. Message answers a question or follows up. Dismiss uses the legacy cleanup policy: worktrees with work are kept. Existing clients that call it keep working unchanged.
 
 | Argument | Type | Required | Description |
 | --- | --- | --- | --- |

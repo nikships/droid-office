@@ -73,9 +73,10 @@ Tailscale at all; Settings then says so. CI and office clones run that way.
 - Hire using `team_models` and `team_hire` on its current floor. Normal Settings,
   model permissions, office capacity, and the per-lead team limit still apply.
   The per-lead limit counts its subagents across the whole building.
-- Use `team` to read, message, or dismiss its subagents across floors. Status
-  defaults to all its teams. Use a worker id or the optional `floor` argument
-  when names repeat.
+- Use `team_status`, `team_message` and `team_dismiss` to read, message, or
+  dismiss its subagents across floors, and `worker_log` and `worker_diff` to
+  inspect one. Status defaults to all its teams. Use a worker id or the optional
+  `floor` argument when names repeat. The older `team` tool still works.
 - Visit independent workers on the current floor and use that floor's
   Whiteboard. A reply to an earlier visit routes to its original floor.
 - Read messages and team updates from every floor with `office_inbox`.

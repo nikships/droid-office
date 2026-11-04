@@ -38,7 +38,7 @@ Each module exports `instructions` and `register(server, deps)`. Register with `
 
 ## Tools
 
-Fourteen local-worker tools, plus four external-worker tools. Names, inputs and who sees them are the contract between the modules; change them only by changing this table.
+Twenty local-worker tools, plus four external-worker tools. Names, inputs and who sees them are the contract between the modules; change them only by changing this table.
 
 | Tool | Replaces | Input (all strings unless noted) | Who sees it |
 | --- | --- | --- | --- |
@@ -48,9 +48,15 @@ Fourteen local-worker tools, plus four external-worker tools. Names, inputs and 
 | `office_inbox` | external worker delivery | `ack?` (exact message ids), `limit?` (1–100) | external workers only; no implicit acknowledgment |
 | `office_status` | external worker self-reported activity | `status`: idle/working/done; `activity?` | external workers only |
 | `team_models` | `office-workers models` | none | may hire |
-| `team_hire` | `office-workers hire` | `title`, `brief`, `model?`, `effort?` (low/medium/high/xhigh/max), `from?` (ref), `worktree?` (boolean; omitted follows the owner's Subagents setting) | may hire |
-| `team` | `list`, `read`, `send`, `dismiss` | `action`: `status` \| `message` \| `dismiss`; `name?` (status: one subagent, else all); `lines?` (number, status: include that many terminal lines, max 400); `text?` (message) | has or may have subagents |
-| `team_report` | `office-workers report [--question]` | `text`, `question?` (boolean) | subagents only |
+| `models_list` | full model discovery | none; includes `enabled: false` for switched-off/disallowed models | may hire |
+| `team_hire` | `office-workers hire` | `title`, `brief` (or `task: {title, brief, repo, baseBranch, branch?, prNumber?, acceptanceCriteria?}`), `model?`, `effort?` (low/medium/high/xhigh/max), `from?` (ref), `worktree?` (boolean; omitted follows the owner's Subagents setting). Returns `worktree` and `branch` immediately | may hire |
+| `team_status` | team snapshot | `worker?`, `floor?` (external only), `lines?` (1–400). Includes observed `idleSince` and `idleForMs` | has or may have subagents |
+| `team_message` | team follow-up | `worker`, `text`, `floor?` (external only) | same |
+| `team_dismiss` | safe lifecycle cleanup | `worker`, `floor?` (external only), `pruneWorktree?` (default false), `keepBranch?` (default true; false requires pruning) | same |
+| `worker_diff` | read-only work inspection on Git floors only | `worker`, `floor?` (external only), `base?` or `commits?` (1–1000); diff cap 48,000 bytes plus 8,000-byte stat | same |
+| `worker_log` | read-only activity inspection | `worker`, `tail` (1–400), `floor?` (external only); cap 48,000 characters | same |
+| `team` | deprecated alias for `list`, `read`, `send`, `dismiss` | `action`: `status` \| `message` \| `dismiss`; `name?` (status: one subagent, else all); `lines?` (number, status: include that many terminal lines, max 400); `text?` (message). Legacy dismissal retains its existing cleanup policy | has or may have subagents |
+| `team_report` | `office-workers report [--question]` | `text`, `question?` (boolean), `pushedSha?` (full commit SHA), `prUrl?`. Missing provenance uses a locally known upstream SHA and linked/report PR URL where available, without fetching | subagents only |
 | `visit_roster` | `office-visit roster` | none | independent worker, Visits on |
 | `visit_look` | `office-visit look` | `name`, `lines?` (number) | same |
 | `visit_message` | `tell`, `ask`, `handoff` | `name`, `kind`: `tell` \| `ask` \| `handoff`, `text`, `title?` (handoff), `urgent?` (boolean) | same |
@@ -61,7 +67,9 @@ Fourteen local-worker tools, plus four external-worker tools. Names, inputs and 
 | `whiteboard_marks` | `comment`, `sticky`, `picture` | `card`, `kind`: `comment` \| `sticky` \| `picture`, `op`: `add` \| `reply` \| `edit` \| `resolve` \| `reopen` \| `move` \| `file` \| `reattach` \| `remove`, `id?` (thread/sticky/picture), `message?`, `text?`, `anchor?` (`{ on }` \| `{ selector, quote? }` \| `{ at: {x,y} }`, with `offset?`), `box?`, `color?`, `file?` | every office worker |
 | `whiteboard_apply` | `office-whiteboard apply` | `ops` (array of the operations `apply` takes today) | every office worker |
 
-Each tool returns a short readable `content` text and, where useful, `structuredContent`. Errors are `isError` results whose text says what to do next, never stack traces.
+Each tool returns readable `content` text and, where useful, `structuredContent`. Errors are `isError` results with `structuredContent: {code, hint}` whose text says what to do next, never stack traces. HTTP authentication and malformed-request errors include `code` and `hint` alongside their existing body and unchanged 401/400 status.
+
+Structured hires require a fresh worktree. Local workers select their own repository by absolute path; external workers may select any open repository by path, floor id or floor name. A requested branch must be new. Pruning first checks ownership and dirty state, then stops the worker and asks Git to remove the worktree without force. A race that makes it dirty leaves it on disk and returns an error. Detached worktrees stay until their commits are on a branch. Safe branch deletion may leave a pre-existing or unmerged branch, with an explanatory note; it never deletes a remote branch.
 
 For external workers, `team` additionally accepts `floor?`; without it, status
 includes teams across all open floors. Names must be unambiguous, or use a worker

@@ -259,6 +259,23 @@ test('a moving remote lead keeps both teams, reports, replies, and a building-wi
   assert.equal(r.maps[1].has(id), false);
 });
 
+test('remote hires select an open task repository and inspection resolves across floors', async (t) => {
+  const r = rig(t);
+  const lead = r.remote.worker;
+  const hire = await r.office.team(lead, { action: 'hire', repo: 'beta', task: 'Inspect beta', worktree: false });
+  assert.equal(hire.status, 200);
+  const sub = hire.body.worker as WorkerInfo;
+  assert.equal(r.maps[1].has(sub.id), true);
+  assert.equal(r.maps[0].has(sub.id), false);
+  const log = await r.office.team(lead, { action: 'log', worker: sub.id, tail: 10 });
+  assert.equal(log.body.terminal, 'working');
+  assert.equal((await r.office.team(lead, { action: 'hire', repo: 'missing', task: 'No' })).status, 404);
+  assert.equal((await r.office.team(lead, { action: 'log', worker: 'missing', tail: 10 })).status, 404);
+  const local = await r.office.team(lead, { action: 'hire', task: 'Current floor', worktree: false });
+  assert.equal(local.status, 200);
+  assert.equal(r.maps[0].has((local.body.worker as WorkerInfo).id), true);
+});
+
 test('visit questions and answers route to the remote inbox after its desk moves', (t) => {
   const r = rig(t);
   const a = r.office.add('Alice', 'alpha').worker;
@@ -337,6 +354,9 @@ test('a bot that sends only its key gets its worker id from the office, and any 
   const other = r.office.add('Claw', 'alpha');
   const mismatched = await proxyFetch(url, { method: 'POST', headers: { ...base, Authorization: `Bearer ${r.remote.token}`, 'x-droid-office-worker-id': other.worker.id }, body: '{}' });
   assert.equal(mismatched.status, 401, 'a hand-made id must be the key’s own');
+  const wrong = await proxyFetch(url, { method: 'POST', headers: { ...base, Authorization: 'Bearer wrong' }, body: '{}' });
+  assert.equal(wrong.status, 401);
+  assert.equal(((await wrong.json()) as { code: string }).code, 'bad_token', 'a remote key names its bot, so no worker id header is missing');
 
   const laptop = r.store.addKey(r.remote.worker.id, 'laptop');
   const named = new Client({ name: 'laptop', version: '1' });
@@ -381,6 +401,11 @@ test('Accept: application/json gets one plain JSON-RPC body; clients that also a
   assert.equal(streamed.headers.get('x-droid-office-worker-id'), r.remote.worker.id);
   assert.match(await streamed.text(), /^event: message\ndata: \{"result":\{"tools":/m);
   assert.equal((await post('text/html', { jsonrpc: '2.0', id: 5, method: 'tools/list' })).status, 406, 'a client that takes neither is still refused');
+  const stale = await proxyFetch(url, { method: 'POST', headers: { ...auth, Accept: 'application/json', 'MCP-Protocol-Version': '1999-01-01' }, body: JSON.stringify({ jsonrpc: '2.0', id: 6, method: 'tools/list' }) });
+  assert.equal(stale.status, 400);
+  const diagnosed = (await stale.json()) as { code: string; hint: string; error: unknown };
+  assert.equal(diagnosed.code, 'bad_protocol_version', 'plain JSON clients get the same diagnostics as streamed ones');
+  assert.ok(diagnosed.hint && diagnosed.error);
 
   assert.equal(acceptsOnlyJson(new Request('http://x/', { method: 'POST', headers: { Accept: 'application/json;q=0.9' } })), true);
   assert.equal(acceptsOnlyJson(new Request('http://x/', { method: 'POST', headers: { Accept: '*/*' } })), true);
@@ -432,6 +457,7 @@ test('remote status starts at the current news, advances per caller, and timesta
   );
   assert.match(JSON.stringify(fresh.content), /\[1970-01-02T00:00:01\.000Z\] Worker report from Byte/);
   assert.deepEqual((await status()).structuredContent?.events, [], 'each report appears once in status');
+  assert.deepEqual((await client.callTool({ name: 'team_status', arguments: {} })).structuredContent?.events, [], 'the new status tool shares the legacy per-caller cursor');
 
   // Sequence cursors do not miss events that share the previous status call's millisecond.
   await r.teams[0].handle(sub, { action: 'report', text: 'A question', question: true });
@@ -452,11 +478,16 @@ test('remote status cursors survive restart independently for each caller', asyn
   await r.teams[0].handle(worker, { action: 'status' });
   await r.teams[0].handle(worker, { action: 'hire', task: 'Fix the report' });
   const sub = r.maps[0].get('sub-1')!;
+  r.teams[0].onWorker(sub);
   await r.teams[0].handle(sub, { action: 'report', text: 'Before restart' });
   const other = r.office.add('Other bot', 'alpha').worker;
   await r.teams[0].handle(other, { action: 'status' });
   r.teams[0].stop();
   const floor = r.floors[0];
+  const saved = JSON.parse(readFileSync(path.join(floor.dir, 'team.json'), 'utf8'));
+  assert.equal(saved.statusCursors[worker.id], 0, 'the original caller cursor is persisted alongside idle times');
+  assert.equal(saved.statusCursors[other.id], 1);
+  assert.equal(saved.idleSince[sub.id], 1000);
   const restarted = new Team({ ...floor.workers, get: (id) => floor.workers.get(id) ?? r.store.identity(id) } as TeamWorkers, { dataDir: floor.dir, dir: floor.dir, git: false, settings: () => r.settings, toast() {}, now: () => 1234 });
   t.after(() => restarted.stop());
   const read = async () => (await restarted.handle(worker, { action: 'status' })).body.events as { text: string }[];
@@ -465,6 +496,10 @@ test('remote status cursors survive restart independently for each caller', asyn
     ['Before restart'],
     'another caller did not advance this cursor',
   );
+  const snapshot = await restarted.handle(worker, { action: 'status' });
+  const restored = (snapshot.body.team as { idleSince: number; idleForMs: number }[])[0];
+  assert.equal(restored.idleSince, 1000, 'idle time survives the same restore as the remote cursor');
+  assert.equal(restored.idleForMs, 234);
   assert.deepEqual(await read(), []);
   await restarted.handle(sub, { action: 'report', text: 'After restart' });
   assert.deepEqual(

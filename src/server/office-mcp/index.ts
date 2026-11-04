@@ -9,8 +9,6 @@ import {
   isLegacyRequest,
   localhostAllowedHostnames,
   type McpHttpHandler,
-  ProtocolError,
-  ProtocolErrorCode,
   Server,
   type Tool,
   type ToolAnnotations,
@@ -93,8 +91,8 @@ Start with office_whoami when you need your identity, lead, or permissions. Only
 Do not block waiting for subagents or poll in a loop. Team wake notes arrive in your session. If "Wake the lead" is off, use team with action "status" when you need an update. Questions and visit replies arrive as later session deliveries. After reporting to your lead, end your turn.
 Use the Whiteboard for reviewable artifacts and decisions; plain progress and short answers stay in your terminal. Read feedback before changing an existing card. Relative file paths are relative to your working folder, not the office server.`;
 
-export function officeError(message: string): CallToolResult {
-  return { isError: true, content: [{ type: 'text', text: message }] };
+export function officeError(message: string, code = 'bad_argument', hint = message): CallToolResult {
+  return { isError: true, content: [{ type: 'text', text: message }], structuredContent: { code, hint } };
 }
 
 export function officeResult(text: string, structuredContent?: Record<string, unknown>): CallToolResult {
@@ -151,7 +149,7 @@ export class OfficeMcpServer {
     if (remote) {
       if (request.headers.has('origin') || !tailnetIdentity(request.headers, remote.owner())) return Response.json({ error: 'Only the owner’s own Tailscale devices may connect; browser and Funnel requests are refused' }, { status: 403 });
       const who = this.caller(request);
-      if (!who) return Response.json({ error: 'Active remote worker id and bearer credential required' }, { status: 401 });
+      if (!who) return this.unauthorized(request, 'Active remote worker id and bearer credential required');
       if (who.key) this.deps.remote?.store.touch(who.caller.worker.id, who.key);
       return withHeader(await this.serve(request, who.caller), OFFICE_MCP_WORKER_HEADER, who.caller.worker.id);
     }
@@ -159,8 +157,22 @@ export class OfficeMcpServer {
     const peer = this.peer(request);
     if (peer) return relay(request, peer);
     const who = this.caller(request);
-    if (!who) return Response.json({ error: UNAUTHORIZED }, { status: 401 });
+    if (!who) return this.unauthorized(request, UNAUTHORIZED);
     return this.serve(request, who.caller);
+  }
+
+  /** A remote key names its own worker, so only a local caller is missing anything without the worker id header. */
+  private unauthorized(request: Request, error: string): Response {
+    const id = request.headers.get(OFFICE_MCP_WORKER_HEADER)?.trim();
+    const local = !this.deps.remoteTransport;
+    const code = !bearer(request) ? 'missing_token' : !id && local ? 'missing_worker_id' : !this.deps.settings().officeMcp ? 'office_mcp_off' : id && !this.deps.floor(id)?.workers.get(id) ? 'unknown_worker_id' : 'bad_token';
+    const hint =
+      code === 'missing_token' || code === 'bad_token'
+        ? 'Send this worker’s active credential as Authorization: Bearer <token>.'
+        : code === 'missing_worker_id' || code === 'unknown_worker_id'
+          ? 'Send an active worker id in x-droid-office-worker-id; ask the owner to check the worker credential.'
+          : 'Ask the owner to enable Office MCP in Settings.';
+    return Response.json({ error, code, hint }, { status: 401 });
   }
 
   /**
@@ -168,7 +180,7 @@ export class OfficeMcpServer {
    * serving always streams, so these requests get the same per-request server over its JSON response mode.
    */
   private async serve(request: Request, caller: OfficeMcpCaller): Promise<Response> {
-    if (!acceptsOnlyJson(request) || !(await isLegacyRequest(request))) return this.mcp.fetch(request, { authInfo: { token: bearer(request) ?? '', clientId: caller.worker.id, scopes: [], extra: { caller } } });
+    if (!acceptsOnlyJson(request) || !(await isLegacyRequest(request))) return diagnosed(await this.mcp.fetch(request, { authInfo: { token: bearer(request) ?? '', clientId: caller.worker.id, scopes: [], extra: { caller } } }));
     // JSON mode never streams, but the transport still checks for the SSE half of the Streamable HTTP Accept header.
     const headers = new Headers(request.headers);
     headers.set('accept', 'application/json, text/event-stream');
@@ -178,7 +190,7 @@ export class OfficeMcpServer {
     const transport = new WebStandardStreamableHTTPServerTransport({ sessionIdGenerator: undefined, enableJsonResponse: true });
     await server.connect(transport);
     try {
-      return await transport.handleRequest(forwarded);
+      return diagnosed(await transport.handleRequest(forwarded));
     } finally {
       void transport.close().catch(() => undefined);
       void server.close().catch(() => undefined);
@@ -203,17 +215,17 @@ export class OfficeMcpServer {
     server.setRequestHandler('tools/list', () => ({ tools: caller ? [...this.tools.values()].filter((t) => t.access(caller) === undefined).map((t) => t.listed) : [] }));
     server.setRequestHandler('tools/call', async ({ params }, ctx) => {
       const tool = this.tools.get(params.name);
-      if (!tool) throw new ProtocolError(ProtocolErrorCode.InvalidParams, `No office tool called ${params.name}`);
-      if (!caller) return officeError('Your office identity is no longer active or Office MCP is off. Ask the owner to check Settings.');
+      if (!tool) return officeError(`No office tool called ${params.name}`, 'unknown_tool', 'Read tools/list to find the available office tools.');
+      if (!caller) return officeError('Your office identity is no longer active or Office MCP is off. Ask the owner to check Settings.', 'unknown_worker_id');
       const why = tool.access(caller);
-      if (why) return officeError(why);
+      if (why) return officeError(why, 'permission_denied');
       const args = tool.schema.safeParse(params.arguments ?? {});
       if (!args.success) return officeError(`Invalid arguments for ${params.name}:\n${z.prettifyError(args.error)}`);
       try {
         return await tool.run(args.data, caller, disconnected ? AbortSignal.any([ctx.mcpReq.signal, disconnected]) : ctx.mcpReq.signal);
       } catch (err) {
         console.error(`Office MCP tool ${params.name} failed for ${caller.worker.name}:`, err);
-        return officeError('The office could not finish this tool call. Read the current state before retrying a change.');
+        return officeError('The office could not finish this tool call. Read the current state before retrying a change.', 'internal_error');
       }
     });
     return server;
@@ -292,6 +304,21 @@ export function acceptsOnlyJson(request: Request): boolean {
     .filter(Boolean);
   if (!types.length) return true;
   return !types.includes('text/event-stream') && types.some((t) => t === 'application/json' || t === 'application/*' || t === '*/*');
+}
+
+/** Keeps the SDK's JSON-RPC error and status on a 400, adding actionable HTTP-level diagnostics. */
+async function diagnosed(response: Response): Promise<Response> {
+  if (response.status !== 400) return response;
+  const body: unknown = await response
+    .clone()
+    .json()
+    .catch(() => undefined);
+  const protocol = /protocol.?version/i.test(JSON.stringify(body));
+  const code = protocol ? 'bad_protocol_version' : 'bad_argument';
+  const hint = protocol ? 'Use an MCP-Protocol-Version supported by the server (2025-06-18 is supported).' : 'Send a valid MCP JSON-RPC request with Content-Type: application/json.';
+  const headers = new Headers(response.headers);
+  for (const name of HOP_HEADERS) headers.delete(name);
+  return Response.json({ ...(record(body) ? body : { error: 'Bad MCP request' }), code, hint }, { status: 400, headers });
 }
 
 function withHeader(response: Response, name: string, value: string): Response {

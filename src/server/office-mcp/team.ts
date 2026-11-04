@@ -1,6 +1,7 @@
+import path from 'node:path';
 import { z } from 'zod';
 import type { TeamEvent, TeamMember, TeamModel, TeamReply } from '../team.js';
-import { officeAccess, officeError, officeResult, type OfficeMcpDeps, type OfficeMcpServer } from './index.js';
+import { officeAccess, officeError, officeResult, type OfficeMcpCaller, type OfficeMcpDeps, type OfficeMcpServer } from './index.js';
 
 export const instructions = `Your team consists of real workers at nearby desks on this floor, not hidden tasks. A subagent has its own terminal and normally its own git worktree. Its lead is another worker. The owner controls hiring permissions, team size, allowed models and wake notes. Subagents cannot hire.
 Split work into independent pieces that do not edit the same files. Hire one fresh subagent per task, and no more than the work needs. Write each brief like a ticket: goal, relevant context and files, boundaries, checks, and how to finish (commit in its worktree and report, or another explicitly requested deliverable). Commit anything a new worktree needs first; uncommitted changes do not follow it.
@@ -13,13 +14,18 @@ const changesState = { readOnlyHint: false, destructiveHint: false, idempotentHi
 const text = z.string().trim().min(1).max(20_000);
 
 function reply(result: TeamReply, describe: (body: Record<string, unknown>) => string) {
-  if (result.status >= 400) return officeError(typeof result.body.error === 'string' ? result.body.error : 'The team could not finish this action. Read team status before retrying.');
+  if (result.status >= 400)
+    return officeError(
+      typeof result.body.error === 'string' ? result.body.error : 'The team could not finish this action. Read team status before retrying.',
+      result.status === 404 || result.status === 410 ? 'unknown_worker' : result.status === 403 ? 'permission_denied' : result.status === 409 ? 'conflict' : 'bad_argument',
+    );
   return officeResult(describe(result.body), result.body);
 }
 
 function memberText(member: TeamMember & { terminal?: string; terminalUnavailable?: string }): string {
   return [
     `${member.name} (${member.id}), ${member.status}, ${member.desk}${member.model ? `, ${member.model}${member.effort ? ` ${member.effort}` : ''}` : ''}.`,
+    ...(member.idleForMs !== undefined ? [`Idle for ${Math.floor(member.idleForMs / 60_000)} minutes.`] : []),
     ...(member.task ? [`Task: ${member.task}`] : []),
     ...(member.activity ? [`Doing: ${member.activity}`] : []),
     member.worktree ? `Worktree: ${member.worktree.path} on ${member.worktree.branch}${member.worktree.from ? ` from ${member.worktree.from}` : ''}.` : 'Working in the main checkout.',
@@ -57,6 +63,98 @@ function modelText(model: TeamModel): string {
 }
 
 export function register(server: OfficeMcpServer, deps: OfficeMcpDeps): void {
+  const command = (caller: OfficeMcpCaller, args: { action: string; worker?: string; floor?: string; [key: string]: unknown }) =>
+    caller.worker.remote && deps.remote ? deps.remote.team(caller.worker, args) : caller.floor.team.handle(caller.worker, args);
+  const statusText = (body: Record<string, unknown>) => {
+    const members = body.team as TeamMember[];
+    const news = body.events as TeamEvent[];
+    return [...(members.length ? members.map(memberText) : ['You have no subagents.']), news.length ? `News since your last status call:\n${news.map(eventText).join('\n\n')}` : 'No unread team news.'].join('\n\n');
+  };
+  const worker = z.string().trim().min(1).max(200).describe('Your subagent’s name or id, case-insensitive.');
+  const floor = z.string().min(1).max(128).optional().describe('External workers only: restrict to an open floor id.');
+  server.tool(
+    {
+      name: 'team_status',
+      description: 'Read your subagents and unread team news without waiting. Optionally select a worker and recent terminal lines. Does not message or dismiss.',
+      inputSchema: z.strictObject({ worker: worker.optional(), floor, lines: z.number().int().min(1).max(400).optional() }),
+      annotations: readOnly,
+    },
+    officeAccess.team,
+    async (args, caller) => {
+      if (args.floor && !caller.worker.remote) return officeError('Local workers manage only their own floor');
+      return reply(await command(caller, { action: 'status', ...args }), statusText);
+    },
+  );
+  server.tool(
+    {
+      name: 'team_message',
+      description: 'Send an answer or follow-up to one of your subagents. Cannot answer a permission prompt in its terminal.',
+      inputSchema: z.strictObject({ worker, text, floor }),
+      annotations: changesState,
+    },
+    officeAccess.team,
+    async (args, caller) => {
+      if (args.floor && !caller.worker.remote) return officeError('Local workers manage only their own floor');
+      return reply(await command(caller, { action: 'send', ...args }), (body) => `Sent to ${(body.worker as TeamMember).name}.`);
+    },
+  );
+  server.tool(
+    {
+      name: 'team_dismiss',
+      description:
+        'Dismiss a reviewed subagent. Defaults to keeping its worktree and branch. pruneWorktree removes only a clean, owned worktree after its worker finishes, never the main checkout. keepBranch defaults true; false requests safe local branch deletion, which Git may refuse. No force option.',
+      inputSchema: z.strictObject({ worker, floor, pruneWorktree: z.boolean().optional(), keepBranch: z.boolean().optional() }),
+      annotations: { ...changesState, destructiveHint: true },
+    },
+    officeAccess.team,
+    async (args, caller) => {
+      if (args.floor && !caller.worker.remote) return officeError('Local workers manage only their own floor');
+      if (args.keepBranch === false && !args.pruneWorktree) return officeError('keepBranch: false requires pruneWorktree: true.');
+      return reply(await command(caller, { action: 'dismiss', ...args, pruneWorktree: args.pruneWorktree ?? false }), (body) => `Sent ${body.name} home.${body.note ? ` ${body.note}.` : ''}`);
+    },
+  );
+  server.tool(
+    {
+      name: 'models_list',
+      description:
+        'Read the full Droid/Subscriptions/DroidProxy model catalogue, including switched-off or disallowed models (enabled: false), availability, allowed-model restrictions and the default. team_models still lists the allowed subagent picks.',
+      inputSchema: z.strictObject({}),
+      annotations: readOnly,
+    },
+    officeAccess.mayHire,
+    async (_args, caller) =>
+      reply(await caller.floor.team.handle(caller.worker, { action: 'models_list' }), (body) =>
+        (body.models as TeamModel[]).map((model) => `${model.enabled === false ? (model.cannotRun ? 'Unavailable: ' : 'Not allowed: ') : ''}${modelText(model)}`).join('\n\n'),
+      ),
+  );
+  server.tool(
+    {
+      name: 'worker_diff',
+      description:
+        'Read a size-capped Git diff and stat for your subagent. Defaults to its recorded base versus the tracked working tree (no untracked files). base selects another revision. commits selects the last N commits through HEAD, excluding uncommitted changes. Never runs external diff drivers or textconv.',
+      inputSchema: z.strictObject({ worker, floor, base: z.string().trim().min(1).max(200).optional(), commits: z.number().int().min(1).max(1000).optional() }),
+      annotations: readOnly,
+    },
+    officeAccess.team,
+    async (args, caller) => {
+      if (args.floor && !caller.worker.remote) return officeError('Local workers manage only their own floor');
+      if (args.base !== undefined && args.commits !== undefined) return officeError('Choose base or commits, not both.');
+      return reply(await command(caller, { action: 'diff', ...args }), (body) => `${body.stat}\n${body.diff}${body.truncated ? '\n[Truncated: diff exceeds the output limit.]' : ''}`);
+    },
+  );
+  server.tool(
+    {
+      name: 'worker_log',
+      description: 'Read recent terminal output and current tool activity for your subagent without writing to or attaching its terminal. At most 400 lines and 48,000 characters.',
+      inputSchema: z.strictObject({ worker, floor, tail: z.number().int().min(1).max(400) }),
+      annotations: readOnly,
+    },
+    officeAccess.team,
+    async (args, caller) => {
+      if (args.floor && !caller.worker.remote) return officeError('Local workers manage only their own floor');
+      return reply(await command(caller, { action: 'log', ...args }), (body) => `${body.activity ? `Doing: ${body.activity}\n` : ''}${body.terminal ?? 'Terminal unavailable.'}${body.truncated ? '\n[Truncated]' : ''}`);
+    },
+  );
   server.tool(
     {
       name: 'office_whoami',
@@ -107,9 +205,21 @@ export function register(server: OfficeMcpServer, deps: OfficeMcpDeps): void {
       name: 'team_hire',
       description:
         'Hire one fresh subagent at the nearest free desk for an independent task. It gets your brief, its own terminal, and normally a fresh worktree. Read team_models first. Permission, capacity and model refusals explain what to do; no desk is taken for an unavailable model. Commit shared prerequisites before hiring.',
-      inputSchema: z.object({
-        title: z.string().trim().min(1).max(80).describe('Short task title shown over the subagent.'),
-        brief: text.describe('Complete task ticket: goal, context and files, boundaries, checks, and how to finish and report. Quotes, dollar signs and backticks are preserved.'),
+      inputSchema: z.strictObject({
+        title: z.string().trim().min(1).max(80).optional().describe('Short task title, required unless task supplies it.'),
+        brief: text.optional().describe('Complete task ticket, required unless task supplies it. Quotes, dollar signs and backticks are preserved.'),
+        task: z
+          .strictObject({
+            title: z.string().trim().min(1).max(80),
+            brief: text,
+            repo: z.string().trim().min(1).max(4096).describe('Local floor repository path. Remote workers may also select an open floor by id or name.'),
+            baseBranch: z.string().trim().min(1).max(200),
+            branch: z.string().trim().min(1).max(200).optional().describe('Name for the new local branch; must not already exist.'),
+            prNumber: z.number().int().positive().optional(),
+            acceptanceCriteria: z.array(z.string().trim().min(1).max(2000)).max(30).optional(),
+          })
+          .optional()
+          .describe('Structured task ticket. Its title/brief take precedence; baseBranch controls the fresh worktree base.'),
         model: z.string().trim().min(1).optional().describe('Id from team_models. Omit for the Subagents setting, else the office default, else Droid default. Pick by owner notes, task difficulty and credit multiplier.'),
         effort: z.enum(['low', 'medium', 'high', 'xhigh', 'max']).optional().describe('Reasoning effort; choose a value this model supports according to team_models. Omit to inherit its configured effort.'),
         from: z
@@ -131,14 +241,28 @@ export function register(server: OfficeMcpServer, deps: OfficeMcpDeps): void {
       annotations: changesState,
     },
     officeAccess.mayHire,
-    async ({ brief, ...args }, caller) =>
-      reply(await caller.floor.team.handle(caller.worker, { action: 'hire', ...args, task: brief }), (body) => `Hired ${memberText(body.worker as TeamMember)}\nIt is working on the brief. Review its report and commits before integration.`),
+    async ({ brief, task, ...args }, caller) => {
+      const title = task?.title ?? args.title;
+      const ticket = task?.brief ?? brief;
+      if (!title || !ticket) return officeError('team_hire needs title and brief, either at the top level or in task.');
+      if (task && args.from && args.from !== task.baseBranch) return officeError('from and task.baseBranch disagree; provide one base.');
+      if (task && args.worktree === false) return officeError('A structured task with baseBranch requires a fresh worktree.');
+      if (task && !caller.worker.remote && path.resolve(task.repo) !== path.resolve(caller.floor.dir)) return officeError('task.repo must name your floor repository. External workers can select another open floor.');
+      const prompt = task
+        ? `${ticket}\n\nRepository: ${task.repo}\nBase branch: ${task.baseBranch}${task.branch ? `\nTask branch: ${task.branch}` : ''}${task.prNumber ? `\nPull request: #${task.prNumber}` : ''}${task.acceptanceCriteria?.length ? `\nAcceptance criteria:\n${task.acceptanceCriteria.map((c) => `- ${c}`).join('\n')}` : ''}`
+        : ticket;
+      if (prompt.length > 20_000) return officeError('The complete structured task ticket must fit in 20,000 characters.');
+      return reply(
+        await command(caller, { action: 'hire', ...args, title, task: prompt, ...(task ? { repo: task.repo, from: task.baseBranch, branch: task.branch, worktree: true } : {}) }),
+        (body) => `Hired ${memberText(body.worker as TeamMember)}\nIt is working on the brief. Review its report and commits before integration.`,
+      );
+    },
   );
   server.tool(
     {
       name: 'team',
       description:
-        'Manage only your own subagents. Status returns one named subagent or all, with unread reports, questions, finished turns, terminal input requests, stops and departures since your last status call. News is drained per caller, even for a named snapshot; nothing waits. Message answers a question or follows up, best between turns. Dismiss only after review and integration when worker and worktree are no longer needed; worktrees with work are kept.',
+        'Deprecated alias: prefer team_status, team_message and team_dismiss. Manage only your own subagents. Status returns one named subagent or all, with unread news since your last status call. Message answers a question or follows up. Dismiss uses the legacy cleanup policy: worktrees with work are kept.',
       inputSchema: z.object({
         action: z.enum(['status', 'message', 'dismiss']),
         floor: z.string().min(1).max(128).optional().describe('External workers only: restrict team operations to this floor. Omit for all your teams across the building.'),
@@ -160,9 +284,7 @@ export function register(server: OfficeMcpServer, deps: OfficeMcpDeps): void {
       return reply(result, (body) => {
         if (args.action === 'message') return `Sent to ${(body.worker as TeamMember).name}.`;
         if (args.action === 'dismiss') return `Sent ${body.name} home.${body.note ? ` ${body.note}.` : ''}`;
-        const members = body.team as TeamMember[];
-        const news = body.events as TeamEvent[];
-        return [...(members.length ? members.map(memberText) : ['You have no subagents.']), news.length ? `News since your last status call:\n${news.map(eventText).join('\n\n')}` : 'No unread team news.'].join('\n\n');
+        return statusText(body);
       });
     },
   );
@@ -174,6 +296,12 @@ export function register(server: OfficeMcpServer, deps: OfficeMcpDeps): void {
       inputSchema: z.object({
         text: text.describe('Results, checks, remaining work and links, or the blocking question with relevant context.'),
         question: z.boolean().optional().describe('True for a question to your lead; omit or false for a report.'),
+        pushedSha: z
+          .string()
+          .regex(/^[0-9a-f]{40,64}$/)
+          .optional()
+          .describe('Full pushed commit SHA. Otherwise read from the locally known upstream ref when available, without fetching.'),
+        prUrl: z.url().max(2000).optional().describe('Pull request URL. Otherwise use the worker’s linked PR or a GitHub/GitLab PR URL in the report.'),
       }),
       annotations: changesState,
     },

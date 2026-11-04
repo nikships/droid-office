@@ -640,6 +640,7 @@ export class WorkerManager {
     /** Pictures staged for its first prompt (see stageImage), listed after it. */
     images?: readonly string[],
     from?: string,
+    branch?: string,
   ): WorkerInfo | string {
     if (this.selectingBranch) return 'Wait for the floor branch switch to finish before hiring';
     // Nobody picked (a board agent, say): the office's default worker, model and effort included.
@@ -662,6 +663,7 @@ export class WorkerManager {
     const fresh = !this.plain && this.freshBase();
     let start: WorktreeStart = fresh ? 'main' : 'checkout';
     if (from !== undefined && (lead === undefined || !worktree)) return 'Only a subagent in its own worktree starts from a branch its lead picks';
+    if (branch !== undefined && (lead === undefined || !worktree || repos.length)) return 'A named branch requires a subagent with one fresh worktree';
     if (lead !== undefined) {
       const boss = this.get(lead) ?? this.remoteIdentity(lead);
       if (!boss) return 'Its lead has left';
@@ -684,7 +686,7 @@ export class WorkerManager {
     if (!worktree && fresh && kind === 'agent' && !seat.station && lead === undefined) this.freshenCheckout(name);
     if (worktree) {
       const slug = `${name.toLowerCase()}-${id.slice(0, 4)}`;
-      const made = repos.length ? this.makeWorkspace(slug, repos, start) : this.trees.create(slug, undefined, this.dir, start);
+      const made = repos.length ? this.makeWorkspace(slug, repos, start) : this.trees.create(slug, undefined, this.dir, start, branch);
       if (typeof made === 'string') return made;
       if ('repos' in made) {
         ({ worktree: wt, repos: others } = made);
@@ -1165,6 +1167,29 @@ export class WorkerManager {
       (err: Error) => this.events.toast(`Couldn't dismiss ${w.info.name}: ${err.message}`, 'warn', id),
     );
     return undefined;
+  }
+
+  /** MCP's opt-in cleanup preflights before dismissing and never forces removal. */
+  async dismissTeam(id: string, pruneWorktree: boolean, keepBranch: boolean): Promise<{ note?: string; error?: string }> {
+    const w = this.workers.get(id);
+    if (!w) return { error: 'Worker is no longer on this floor' };
+    if (!pruneWorktree) return this.kill(id, 'keep');
+    if (!w.info.worktree) return { error: 'Refusing to prune the main checkout; this worker has no worktree' };
+    if (w.info.status === 'working' || w.info.status === 'starting' || w.info.status === 'needs_input') return { error: 'Wait for the worker to finish before pruning its worktree' };
+    const trees = this.treesOf(w.info);
+    for (const t of trees) {
+      const abs = t.ref.path && path.resolve(t.dir, t.ref.path);
+      if (!abs || !this.trees.owns(abs)) return { error: 'Refusing to prune a worktree outside the owning office' };
+      const state = await t.trees.inspect(t.ref);
+      if (!state.exists || state.error || state.dirty) return { error: 'Refusing to prune an unavailable or dirty worktree; commit changes or keep it' };
+    }
+    if (this.workers.get(id) !== w || ['working', 'starting', 'needs_input'].includes(w.info.status)) return { error: 'Worker changed during cleanup checks; read status before retrying' };
+    // Stop the PTY before removal. Keep the existing cleanup path from ever forcing deletion.
+    await this.kill(id, 'keep');
+    const results = [];
+    for (const t of trees) results.push(await t.trees.removeClean(t.ref, keepBranch, this.dir, w.worktreeOwnership?.[t.dir]));
+    const errors = results.flatMap((r) => (r.error ? [r.error] : []));
+    return errors.length ? { error: `Worker dismissed, but worktree cleanup refused: ${errors.join('; ')}` } : { note: results.map((r) => r.note).join('; ') };
   }
 
   /**

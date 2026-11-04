@@ -15,6 +15,7 @@ import { availabilityWords, cannotRun, type ModelAvailability } from '../shared/
 import { officePrompt, type PromptSource } from './prompts.js';
 import { workerMessageVars } from '../shared/prompts.js';
 import { hireRefusal } from './subscriptions/map.js';
+import { pushedSha, workerDiff } from './team-inspect.js';
 
 /** What the team needs from the floor's workers. Narrow on purpose, so a test can fake it. */
 export interface TeamWorkers {
@@ -26,10 +27,11 @@ export interface TeamWorkers {
    * Hires `lead`'s subagent at `deskId`; returns it, or why not. Its worktree starts from `from` (a
    * branch, tag or commit), else where its lead is.
    */
-  hire(deskId: string, by: string, prompt: string, worktree: boolean, choice: Partial<AgentChoice>, lead: string, from?: string): WorkerInfo | string;
+  hire(deskId: string, by: string, prompt: string, worktree: boolean, choice: Partial<AgentChoice>, lead: string, from?: string, branch?: string): WorkerInfo | string;
   prompt(id: string, text: string): string | undefined;
   resume(id: string, prompt?: string): string | undefined;
   kill(id: string): Promise<{ note?: string; error?: string }>;
+  dismiss?(id: string, pruneWorktree: boolean, keepBranch: boolean): Promise<{ note?: string; error?: string }>;
   tail(id: string, lines: number): string | undefined;
   setTask(id: string, task: WorkerTask): void;
   fetchStart?(lead: string, from?: string): Promise<void> | undefined;
@@ -69,6 +71,8 @@ export interface TeamEvent {
   at: number;
   /** Drained by this lead's status request. */
   seen?: boolean;
+  pushedSha?: string;
+  prUrl?: string;
 }
 
 /** A subagent as the team tools show it. */
@@ -87,7 +91,9 @@ export interface TeamMember {
   /** It has been given its task and isn't in the middle of a turn now. */
   settled: boolean;
   /** What it last reported or asked. */
-  report?: { text: string; question: boolean; at: number };
+  report?: { text: string; question: boolean; at: number; pushedSha?: string; prUrl?: string };
+  idleSince?: number;
+  idleForMs?: number;
 }
 
 export interface TeamReply {
@@ -117,6 +123,7 @@ export interface TeamModel {
   unlisted?: true;
   /** Why a worker on it can't run now (out of quota, nobody signed in): hire refuses it. */
   cannotRun?: string;
+  enabled?: boolean;
 }
 
 const TASK_MAX = 20_000;
@@ -176,6 +183,7 @@ export class Team {
   private sending = new Map<string, 'lead' | 'owner'>();
   private path: string;
   private now: () => number;
+  private idleSince = new Map<string, number>();
 
   constructor(
     private workers: TeamWorkers,
@@ -184,14 +192,20 @@ export class Team {
     this.path = path.join(opts.dataDir, 'team.json');
     this.now = opts.now ?? Date.now;
     this.restore();
-    for (const w of workers.list()) this.known.set(w.id, { name: w.name, lead: w.lead, status: w.status });
+    for (const w of workers.list()) {
+      this.known.set(w.id, { name: w.name, lead: w.lead, status: w.status });
+      if ((w.status === 'idle' || w.status === 'done') && !this.idleSince.has(w.id)) this.idleSince.set(w.id, this.now());
+    }
   }
 
   /** A worker on the floor changed: a subagent's turn may have ended, or a lead may have come to rest with news. */
   onWorker(w: WorkerInfo) {
     const prev = this.known.get(w.id);
     this.known.set(w.id, { name: w.name, lead: w.lead, status: w.status });
+    if (w.status !== 'idle' && w.status !== 'done') this.idleSince.delete(w.id);
+    else if (!this.idleSince.has(w.id)) this.idleSince.set(w.id, this.now());
     if (!prev || prev.status === w.status) return;
+    this.persist();
     if (w.status === 'working' && (prev.status === 'done' || prev.status === 'idle')) this.nextTurn(w.id);
     if ((w.status === 'done' || w.status === 'idle') && this.unnudged(w.id).length) this.scheduleNudge(w.id);
     if (!w.lead || prev.status === 'offline') return;
@@ -218,6 +232,7 @@ export class Team {
     const by = this.sending.get(id);
     if (previous?.lead && by !== 'lead' && this.workers.get(previous.lead)) this.push({ lead: previous.lead, worker: id, name: previous.name, kind: by === 'owner' ? 'sent_home' : 'left' });
     this.known.delete(id);
+    this.idleSince.delete(id);
     this.reported.delete(id);
     this.spoke.delete(id);
     const before = this.log.length;
@@ -288,6 +303,28 @@ export class Team {
         return this.hire(caller, b);
       case 'models':
         return this.models(caller);
+      case 'models_list':
+        return this.models(caller, true);
+      case 'diff': {
+        const w = this.resolve(caller, b.worker);
+        if (typeof w === 'string') return no(404, w);
+        if (!this.opts.git) return no(400, 'Worker diffs require a Git floor; plain folders cannot inspect an enclosing checkout.');
+        if (b.commits !== undefined && (typeof b.commits !== 'number' || !Number.isInteger(b.commits) || b.commits < 1 || b.commits > 1000)) return no(400, 'commits takes the last 1–1000 commits through HEAD.');
+        if (b.base !== undefined && typeof b.base !== 'string') return no(400, 'base takes a branch, tag or commit.');
+        if (b.base !== undefined && b.commits !== undefined) return no(400, 'Choose base or commits, not both.');
+        try {
+          return ok(await workerDiff(this.opts.dir, w, typeof b.base === 'string' ? b.base : undefined, typeof b.commits === 'number' ? b.commits : undefined));
+        } catch (err) {
+          return no(400, (err as Error).message);
+        }
+      }
+      case 'log': {
+        const w = this.resolve(caller, b.worker);
+        if (typeof w === 'string') return no(404, w);
+        const tail = Number.isInteger(b.tail) ? Math.min(READ_MAX, Math.max(1, b.tail as number)) : 100;
+        const terminal = this.workers.tail(w.id, tail);
+        return ok({ worker: w.id, tail, activity: w.activity ?? null, action: w.action ?? null, terminal: terminal?.slice(-48_000) ?? null, truncated: (terminal?.length ?? 0) > 48_000 });
+      }
       case 'send':
         return this.send(caller, b);
       case 'dismiss':
@@ -357,15 +394,15 @@ export class Team {
    * The models a lead may give a subagent, with what it needs to choose: credit multiplier,
    * provider, efforts and the owner's note. With no list in Settings, every current model droid has.
    */
-  private async models(caller: WorkerInfo): Promise<TeamReply> {
+  private async models(caller: WorkerInfo, includeDisabled = false): Promise<TeamReply> {
     const why = this.cannotHire(caller);
     if (why) return no(403, why);
     const s = this.opts.settings();
     const catalogue = await this.catalogue();
-    const known = new Map((catalogue?.models ?? []).map((m) => [m.id, m]));
+    const known = new Map([...(catalogue?.models ?? []), ...(includeDisabled ? (catalogue?.disabledModels ?? []) : [])].map((m) => [m.id, m]));
     const fallback = this.defaultModel(catalogue?.defaultModel);
     const describe = (id: string, m: DroidModelOption | undefined, note?: string): TeamModel => {
-      const stuck = this.whyNot(id);
+      const stuck = m?.disabled ? 'Switched off in Droid.' : this.whyNot(id);
       return {
         id,
         name: m?.displayName ?? id,
@@ -384,9 +421,19 @@ export class Team {
       };
     };
     const allowed = s.models?.length ? s.models : undefined;
-    const models = allowed ? allowed.map((a) => describe(a.id, known.get(a.id), a.note)) : (catalogue?.models ?? []).filter((m) => !m.legacy).map((m) => describe(m.id, m));
+    const models = includeDisabled
+      ? [...new Set([...known.keys(), ...(allowed ?? []).map((m) => m.id)])].map((id) => {
+          const model = describe(id, known.get(id), allowed?.find((m) => m.id === id)?.note);
+          return { ...model, enabled: !model.cannotRun && (!allowed || allowed.some((m) => m.id === id) || id === fallback) };
+        })
+      : allowed
+        ? allowed.map((a) => describe(a.id, known.get(a.id), a.note))
+        : (catalogue?.models ?? []).filter((m) => !m.legacy).map((m) => describe(m.id, m));
     // The default is what a hire without --model runs, so the lead sees it even when the list leaves it out.
-    if (fallback && !models.some((m) => m.id === fallback)) models.unshift(describe(fallback, known.get(fallback)));
+    if (fallback && !models.some((m) => m.id === fallback)) {
+      const model = describe(fallback, known.get(fallback));
+      models.unshift({ ...model, ...(includeDisabled ? { enabled: !model.cannotRun } : {}) });
+    }
     return ok({ restricted: !!allowed, models, ...(fallback ? { defaultModel: fallback } : {}), ...(catalogue ? {} : { unavailable: true }) });
   }
 
@@ -449,7 +496,8 @@ export class Team {
       ...(w.task ? { task: w.task.name } : {}),
       ...(w.pr ? { pr: w.pr } : {}),
       settled: settled(w),
-      ...(last?.text ? { report: { text: last.text, question: last.kind === 'question', at: last.at } } : {}),
+      ...(last?.text ? { report: { text: last.text, question: last.kind === 'question', at: last.at, ...(last.pushedSha ? { pushedSha: last.pushedSha } : {}), ...(last.prUrl ? { prUrl: last.prUrl } : {}) } } : {}),
+      ...((w.status === 'idle' || w.status === 'done') && this.idleSince.has(w.id) ? { idleSince: this.idleSince.get(w.id), idleForMs: Math.max(0, this.now() - this.idleSince.get(w.id)!) } : {}),
     };
   }
 
@@ -508,6 +556,8 @@ export class Team {
     if (b.worktree === true && !this.opts.git) return no(400, "This floor's project isn't a git checkout, so subagents can't have worktrees: set worktree: false in team_hire");
     const worktree = (typeof b.worktree === 'boolean' ? b.worktree : s.worktree) && this.opts.git;
     const from = typeof b.from === 'string' && b.from.trim() ? b.from.trim() : undefined;
+    const branch = typeof b.branch === 'string' ? b.branch.trim() : undefined;
+    if (branch !== undefined && (!worktree || branch.length > 200 || !/^[^-\s][^\s]*$/.test(branch))) return no(400, 'branch requires a fresh worktree and a valid local branch name');
     if (from !== undefined) {
       if (!worktree) return no(400, 'from is where a subagent’s own worktree starts: hire it with a worktree, or leave from out');
       if (from.length > FROM_MAX || !/^[^-\s][^\s]*$/.test(from)) return no(400, `from takes a branch, tag or commit (got ${clip(from, 40)})`);
@@ -522,13 +572,13 @@ export class Team {
     const at = DESK_BY_ID.get(still.deskId);
     const seat = at && nearestFreeSeat(at.x, at.z, (id) => this.workers.deskOccupied(id));
     if (!seat) return no(409, 'Every desk and bean bag on this floor is taken: dismiss a subagent you are done with, or ask the person to send someone home');
-    const info = this.workers.hire(seat.id, still.name, task, worktree, choice, still.id, from);
+    const info = branch === undefined ? this.workers.hire(seat.id, still.name, task, worktree, choice, still.id, from) : this.workers.hire(seat.id, still.name, task, worktree, choice, still.id, from, branch);
     if (typeof info === 'string') return no(409, info);
     const title = str(b.title, TITLE_MAX).trim();
     if (title) this.workers.setTask(info.id, { name: title, summary: clip(task, 120) });
     this.known.set(info.id, { name: info.name, lead: still.id, status: info.status });
     this.opts.toast(`🧭 ${still.name} hired ${info.name} at ${seat.label}${title ? `: ${title}` : ''}`, 'info', info.id);
-    return ok({ worker: this.member(this.workers.get(info.id) ?? info) });
+    return ok({ worker: this.member(this.workers.get(info.id) ?? info), worktree: info.worktree ? path.resolve(this.opts.dir, info.worktree.path) : this.opts.dir, branch: info.worktree?.branch ?? null });
   }
 
   /** Snapshot and all unread news for this caller, without waiting for new events. */
@@ -559,11 +609,11 @@ export class Team {
   }
 
   /** What the lead hasn't heard yet, including from subagents that already left; draining counts as heard. */
-  private drainNews(lead: WorkerInfo): Pick<TeamEvent, 'kind' | 'worker' | 'name' | 'at' | 'text'>[] {
+  private drainNews(lead: WorkerInfo): Pick<TeamEvent, 'kind' | 'worker' | 'name' | 'at' | 'text' | 'pushedSha' | 'prUrl'>[] {
     const news = this.log.filter((e) => e.lead === lead.id && !e.seen);
     for (const e of news) e.seen = true;
     if (news.length) this.persist();
-    return news.map((e) => ({ kind: e.kind, worker: e.worker, name: e.name, at: e.at, ...(e.text ? { text: e.text } : {}) }));
+    return news.map((e) => ({ kind: e.kind, worker: e.worker, name: e.name, at: e.at, ...(e.text ? { text: e.text } : {}), ...(e.pushedSha ? { pushedSha: e.pushedSha } : {}), ...(e.prUrl ? { prUrl: e.prUrl } : {}) }));
   }
 
   private send(lead: WorkerInfo, b: Record<string, unknown>): TeamReply {
@@ -584,23 +634,42 @@ export class Team {
   private async dismiss(lead: WorkerInfo, b: Record<string, unknown>): Promise<TeamReply> {
     const w = this.resolve(lead, b.worker);
     if (typeof w === 'string') return no(404, w);
-    const { note, error } = await this.sendingHome(w.id, 'lead', () => this.workers.kill(w.id));
+    if (b.pruneWorktree !== undefined && typeof b.pruneWorktree !== 'boolean') return no(400, 'pruneWorktree takes true or false.');
+    if (b.keepBranch !== undefined && typeof b.keepBranch !== 'boolean') return no(400, 'keepBranch takes true or false.');
+    if (b.keepBranch === false && b.pruneWorktree !== true) return no(400, 'keepBranch: false requires pruneWorktree: true.');
+    const safe = b.pruneWorktree !== undefined || b.keepBranch !== undefined;
+    // Even false needs retention-safe dismissal: legacy kill may prune clean worktrees.
+    if (safe && !this.workers.dismiss) return no(409, 'Safe worktree cleanup is unavailable on this floor; no worker was dismissed');
+    let result: { note?: string; error?: string };
+    this.sending.set(w.id, 'lead');
+    try {
+      result = await (safe ? this.workers.dismiss!(w.id, b.pruneWorktree === true, b.keepBranch !== false) : this.workers.kill(w.id));
+    } finally {
+      // Safe dismissal checks Git asynchronously before killing; keep attribution through those awaits.
+      this.sending.delete(w.id);
+    }
+    const { note, error } = result;
     if (error) return no(409, `${w.name}: ${error}`);
     this.opts.toast(`👋 ${lead.name} sent ${w.name} home${note ? `. ${note}` : ''}`, 'info');
     return ok({ name: w.name, ...(note ? { note } : {}) });
   }
 
-  private report(w: WorkerInfo, b: Record<string, unknown>): TeamReply {
+  private async report(w: WorkerInfo, b: Record<string, unknown>): Promise<TeamReply> {
     const lead = w.lead ? this.workers.get(w.lead) : undefined;
     if (!lead) return no(403, 'You have no lead to report to: say it in your own terminal instead');
     const text = str(b.text, TASK_MAX).trim();
     if (!text) return no(400, 'Provide text for team_report');
+    if (b.pushedSha !== undefined && (typeof b.pushedSha !== 'string' || !/^[0-9a-f]{40,64}$/.test(b.pushedSha))) return no(400, 'pushedSha takes a full hexadecimal commit SHA.');
+    if (b.prUrl !== undefined && (typeof b.prUrl !== 'string' || b.prUrl.length > 2000 || !URL.canParse(b.prUrl))) return no(400, 'prUrl takes a valid URL of at most 2000 characters.');
     const question = b.question === true;
-    this.push({ lead: lead.id, worker: w.id, name: w.name, kind: question ? 'question' : 'report', text });
+    const sha = typeof b.pushedSha === 'string' ? b.pushedSha : await pushedSha(this.opts.dir, w);
+    const prUrl = typeof b.prUrl === 'string' ? b.prUrl : (w.pr?.url ?? /https:\/\/(?:github\.com|gitlab\.com)\/[^\s)<>]+\/(?:pull|merge_requests)\/\d+/.exec(text)?.[0]);
+    const provenance = { ...(sha ? { pushedSha: sha } : {}), ...(prUrl ? { prUrl } : {}) };
+    this.push({ lead: lead.id, worker: w.id, name: w.name, kind: question ? 'question' : 'report', text, ...provenance });
     if (!question) this.reported.add(w.id);
     this.spoke.add(w.id);
     this.opts.toast(`${question ? `❓ ${w.name} asked ${lead.name}` : `📨 ${w.name} reported to ${lead.name}`}: “${clip(text, 90)}”`, 'info', w.id);
-    return ok({ lead: lead.name });
+    return ok({ lead: lead.name, ...provenance });
   }
 
   private push(e: Omit<TeamEvent, 'seq' | 'at'>) {
@@ -650,7 +719,13 @@ export class Team {
 
   private restore() {
     try {
-      const raw = JSON.parse(readFileSync(this.path, 'utf8')) as { events?: unknown; nudged?: unknown; statusCursors?: unknown };
+      const raw = JSON.parse(readFileSync(this.path, 'utf8')) as { events?: unknown; nudged?: unknown; idleSince?: unknown; statusCursors?: unknown };
+      if (raw.idleSince && typeof raw.idleSince === 'object')
+        for (const [id, at] of Object.entries(raw.idleSince)) {
+          const status = this.workers.get(id)?.status;
+          // WorkerManager initially restores PTY-backed workers offline, then adopts their saved state.
+          if ((status === 'idle' || status === 'done' || status === 'offline') && typeof at === 'number' && Number.isFinite(at) && at <= this.now()) this.idleSince.set(id, at);
+        }
       const kinds = new Set<string>(Object.keys(WEIGHT));
       for (const e of Array.isArray(raw.events) ? raw.events : []) {
         if (!e || typeof e !== 'object') continue;
@@ -665,6 +740,8 @@ export class Team {
           at: x.at,
           ...(typeof x.text === 'string' ? { text: x.text.slice(0, TASK_MAX) } : {}),
           ...(x.seen === true ? { seen: true } : {}),
+          ...(typeof x.pushedSha === 'string' && /^[0-9a-f]{40,64}$/.test(x.pushedSha) ? { pushedSha: x.pushedSha } : {}),
+          ...(typeof x.prUrl === 'string' ? { prUrl: x.prUrl.slice(0, 2000) } : {}),
         });
       }
       this.log = this.log.slice(-LOG_MAX);
@@ -682,7 +759,7 @@ export class Team {
 
   private persist() {
     try {
-      writeFileSync(this.path, JSON.stringify({ events: this.log, nudged: Object.fromEntries(this.nudged), statusCursors: Object.fromEntries(this.statusCursors) }), { mode: 0o600 });
+      writeFileSync(this.path, JSON.stringify({ events: this.log, nudged: Object.fromEntries(this.nudged), idleSince: Object.fromEntries(this.idleSince), statusCursors: Object.fromEntries(this.statusCursors) }), { mode: 0o600 });
     } catch {
       // disk issues shouldn't take the office down
     }
