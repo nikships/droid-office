@@ -9,13 +9,15 @@ import { isLabelEffort, type LabelEffort } from '../shared/worker-labels.js';
 export const DROID_SETTINGS_PATH = path.join(homedir(), '.factory', 'settings.json');
 export const DROID_CATALOGUE_TTL_MS = 60_000;
 
-/** A Droid model the hire dialog can offer. */
+/** A Droid model described by the selectable or read-only discovery catalogue. */
 export interface DroidModelOption {
   id: string;
   /** The display name droid shows, or the id when nothing names it. */
   displayName: string;
   /** A BYOK model from the user's `customModels`. */
   custom?: true;
+  /** Listed by Droid but switched off; exposed only through the full discovery catalogue. */
+  disabled?: true;
   /** A model droid still runs but has replaced or deprecated. */
   legacy?: true;
   defaultReasoningEffort?: AgentEffort;
@@ -35,6 +37,8 @@ export interface DroidModelOption {
 export interface DroidModelCatalogue {
   /** Every selectable model: custom models first, then Factory's current models, then legacy ones. */
   models: DroidModelOption[];
+  /** Droid-disabled entries retained for read-only discovery, never offered in hire pickers. */
+  disabledModels?: DroidModelOption[];
   /** The global default model droid runs without an override, when settings names a valid one. */
   defaultModel?: string;
   defaultReasoningEffort?: AgentEffort;
@@ -113,16 +117,16 @@ export function readDroidModels(settingsPath: string = DROID_SETTINGS_PATH): Dro
 
 /**
  * Droid's own model list (`droid.list_models` results) as hire-dialog options: disabled models
- * dropped, efforts the office can't pin dropped (`off`, `none`, `minimal`), and custom models
+ * dropped by default (retained for full discovery), efforts the office can't pin dropped, and custom models
  * first, then current Factory models, then legacy and deprecated ones.
  */
-export function parseDroidModelList(list: unknown[]): DroidModelOption[] {
+export function parseDroidModelList(list: unknown[], includeDisabled = false): DroidModelOption[] {
   const groups: [DroidModelOption[], DroidModelOption[], DroidModelOption[]] = [[], [], []];
   const seen = new Set<string>();
   for (const entry of list) {
     if (!entry || typeof entry !== 'object') continue;
     const e = entry as Record<string, unknown>;
-    if (!isValidDroidModel(e.id) || seen.has(e.id) || e.disabled === true) continue;
+    if (!isValidDroidModel(e.id) || seen.has(e.id) || (e.disabled === true && !includeDisabled)) continue;
     seen.add(e.id);
     const custom = e.isCustom === true;
     const legacy = !custom && (e.legacy === true || e.deprecated === true);
@@ -135,6 +139,7 @@ export function parseDroidModelList(list: unknown[]): DroidModelOption[] {
       id: e.id,
       displayName: displayName(e.displayName, e.id),
       ...(custom ? { custom: true as const } : {}),
+      ...(e.disabled === true ? { disabled: true as const } : {}),
       ...(legacy ? { legacy: true as const } : {}),
       ...(fallback ? { defaultReasoningEffort: fallback } : {}),
       ...(supported ? { supportedReasoningEfforts: supported } : {}),
@@ -192,15 +197,20 @@ export function createDroidModelCatalogue(options: DroidCatalogueOptions = {}): 
   const load = async (): Promise<DroidModelCatalogue> => {
     const settings = readDroidModels(settingsPath);
     let listed: DroidModelOption[] = [];
+    let disabled: DroidModelOption[] = [];
     try {
-      listed = parseDroidModelList(await lister(typeof command === 'function' ? command() : command, cwd));
+      const raw = await lister(typeof command === 'function' ? command() : command, cwd);
+      listed = parseDroidModelList(raw);
+      const selectable = new Set(listed.map((m) => m.id));
+      disabled = parseDroidModelList(raw, true).filter((m) => m.disabled && !selectable.has(m.id));
     } catch {
       // Settings alone are still a usable list.
     }
-    if (!listed.length) return settings;
+    const discovery = disabled.length ? { disabledModels: disabled } : {};
+    if (!listed.length) return { ...settings, ...discovery };
     const known = new Set(listed.map((m) => m.id));
     const extra = settings.models.filter((m) => !known.has(m.id));
-    return { ...settings, models: [...listed.filter((m) => m.custom), ...extra, ...listed.filter((m) => !m.custom)] };
+    return { ...settings, ...discovery, models: [...listed.filter((m) => m.custom), ...extra, ...listed.filter((m) => !m.custom)] };
   };
   return {
     peek: () => cached?.catalogue,

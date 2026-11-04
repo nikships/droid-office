@@ -203,20 +203,26 @@ const CATALOGUE: DroidModelCatalogue = {
   defaultModel: 'claude-opus-5-5',
 };
 
-test('models_list includes disabled subscriptions and disallowed models without changing team_models', async (t) => {
-  const r = rig(t, { models: async () => CATALOGUE, availability: (id) => (id === 'custom:mine' ? { state: 'disabled', provider: 'grok' } : undefined) });
+test('models_list includes Droid-disabled, disabled subscription and disallowed models without changing team_models', async (t) => {
+  const r = rig(t, { models: async () => ({ ...CATALOGUE, disabledModels: [{ id: 'off-model', displayName: 'Off', disabled: true }] }), availability: (id) => (id === 'custom:mine' ? { state: 'disabled', provider: 'grok' } : undefined) });
   const allowed = (await r.call('lead', { action: 'models' })).body.models;
   assert.equal(
     allowed.find((m: { id: string }) => m.id === 'old'),
     undefined,
   );
   assert.equal('enabled' in allowed[0], false);
+  assert.equal(
+    allowed.some((m: { id: string }) => m.id === 'off-model'),
+    false,
+  );
   r.settings.models = [{ id: 'custom:mine' }];
   const all = (await r.call('lead', { action: 'models_list' })).body.models;
   assert.equal(all.find((m: { id: string }) => m.id === 'custom:mine').enabled, false);
   assert.match(all.find((m: { id: string }) => m.id === 'custom:mine').cannotRun, /off/i);
   assert.equal(all.find((m: { id: string }) => m.id === 'glm-5.3-flash').enabled, false);
   assert.equal(all.find((m: { id: string }) => m.id === 'claude-opus-5-5').enabled, true);
+  assert.equal(all.find((m: { id: string }) => m.id === 'off-model').enabled, false);
+  assert.match(all.find((m: { id: string }) => m.id === 'off-model').cannotRun, /Switched off in Droid/);
 });
 
 test('team status measures idle time from state transitions and preserves it across restore', async (t) => {

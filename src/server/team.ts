@@ -392,10 +392,10 @@ export class Team {
     if (why) return no(403, why);
     const s = this.opts.settings();
     const catalogue = await this.catalogue();
-    const known = new Map((catalogue?.models ?? []).map((m) => [m.id, m]));
+    const known = new Map([...(catalogue?.models ?? []), ...(includeDisabled ? (catalogue?.disabledModels ?? []) : [])].map((m) => [m.id, m]));
     const fallback = this.defaultModel(catalogue?.defaultModel);
     const describe = (id: string, m: DroidModelOption | undefined, note?: string): TeamModel => {
-      const stuck = this.whyNot(id);
+      const stuck = m?.disabled ? 'Switched off in Droid.' : this.whyNot(id);
       return {
         id,
         name: m?.displayName ?? id,

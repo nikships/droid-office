@@ -83,6 +83,33 @@ test('Droid model list keeps what a lead weighs: provider, credit multiplier, im
   assert.deepEqual(bad, { id: 'odd', displayName: 'odd' });
 });
 
+test('the cached discovery catalogue retains Droid-disabled entries without adding them to picker models', async (t) => {
+  const file = settingsFile(t, {});
+  let calls = 0;
+  const catalogue = createDroidModelCatalogue({
+    settingsPath: file,
+    lister: async () => {
+      calls++;
+      return [
+        { id: 'glm-5.3-flash', displayName: 'disabled duplicate', disabled: true },
+        { id: 'glm-5.3-flash', displayName: 'GLM-5.3-Flash' },
+        { id: 'off-model', displayName: 'Off', disabled: true },
+      ];
+    },
+  });
+  const first = await catalogue.get();
+  assert.deepEqual(
+    first.models.map((m) => m.id),
+    ['glm-5.3-flash'],
+  );
+  assert.deepEqual(first.disabledModels, [{ id: 'off-model', displayName: 'Off', disabled: true }]);
+  assert.equal(await catalogue.get(), first);
+  assert.equal(calls, 1);
+  const onlyDisabled = createDroidModelCatalogue({ settingsPath: file, lister: async () => [{ id: 'off-model', displayName: 'Off', disabled: true }] });
+  assert.deepEqual((await onlyDisabled.get()).disabledModels, [{ id: 'off-model', displayName: 'Off', disabled: true }]);
+  assert.deepEqual((await onlyDisabled.get()).models, []);
+});
+
 test("Droid catalogue lists droid's own models and keeps settings-only ids and the settings default", async (t) => {
   const file = settingsFile(t, {
     customModels: [{ id: 'custom:a', displayName: 'A' }],
