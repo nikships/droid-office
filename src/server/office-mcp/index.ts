@@ -2,7 +2,18 @@ import { randomUUID } from 'node:crypto';
 import { mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import type { IncomingMessage, ServerResponse } from 'node:http';
-import { type CallToolResult, createMcpHandler, hostHeaderValidationResponse, localhostAllowedHostnames, type McpHttpHandler, Server, type Tool, type ToolAnnotations } from '@modelcontextprotocol/server';
+import {
+  type CallToolResult,
+  createMcpHandler,
+  hostHeaderValidationResponse,
+  isLegacyRequest,
+  localhostAllowedHostnames,
+  type McpHttpHandler,
+  Server,
+  type Tool,
+  type ToolAnnotations,
+  WebStandardStreamableHTTPServerTransport,
+} from '@modelcontextprotocol/server';
 import { z } from 'zod';
 import type { SubagentSettings, WorkerInfo } from '../../shared/protocol.js';
 import type { Team } from '../team.js';
@@ -14,8 +25,9 @@ import { sendResponse, webRequest } from './node-http.js';
 import { instructions as teamInstructions, register as registerTeam } from './team.js';
 import { instructions as whiteboardInstructions, register as registerWhiteboard } from './whiteboard.js';
 import { instructions as visitInstructions, register as registerVisits } from './visits.js';
-import { register as registerRemote, remoteInstructions } from './remote.js';
+import { register as registerRemote, remoteIdentityInstructions, remoteInstructions } from './remote.js';
 import type { RemoteOffice } from '../remote-office.js';
+import type { RemoteKeyId } from '../remote-workers.js';
 
 export const OFFICE_MCP_PATH = '/office/mcp';
 export const OFFICE_MCP_WORKER_HEADER = 'x-droid-office-worker-id';
@@ -114,7 +126,8 @@ export class OfficeMcpServer {
   private readonly mcp: McpHttpHandler;
 
   constructor(private readonly deps: OfficeMcpDeps) {
-    this.mcp = createMcpHandler(({ requestInfo }) => this.serverFor(requestInfo ? this.caller(requestInfo) : undefined, requestInfo?.signal), {
+    // `fetch` identifies the caller once and hands it over in `authInfo`, which the SDK passes through untouched.
+    this.mcp = createMcpHandler(({ authInfo, requestInfo }) => this.serverFor(authInfo?.extra?.caller as OfficeMcpCaller | undefined, requestInfo?.signal), {
       legacy: 'stateless',
       onerror: (err) => console.error('Office MCP:', err.message),
     });
@@ -135,20 +148,24 @@ export class OfficeMcpServer {
     if (badHost) return badHost;
     if (remote) {
       if (request.headers.has('origin') || !tailnetIdentity(request.headers, remote.owner())) return Response.json({ error: 'Only the owner’s own Tailscale devices may connect; browser and Funnel requests are refused' }, { status: 403 });
-      if (!this.caller(request)) return this.unauthorized(request, 'Active remote worker id and bearer credential required');
-      return this.protocolResponse(request);
+      const who = this.caller(request);
+      if (!who) return this.unauthorized(request, 'Active remote worker id and bearer credential required');
+      if (who.key) this.deps.remote?.store.touch(who.caller.worker.id, who.key);
+      return withHeader(await this.serve(request, who.caller), OFFICE_MCP_WORKER_HEADER, who.caller.worker.id);
     }
     if (request.method === 'OPTIONS') return new Response(null, { status: 204, headers: { Allow: 'POST, GET, DELETE, OPTIONS', [PROBE_HEADER]: '1' } });
     const peer = this.peer(request);
     if (peer) return relay(request, peer);
-    if (!this.caller(request)) return this.unauthorized(request, UNAUTHORIZED);
-    return this.protocolResponse(request);
+    const who = this.caller(request);
+    if (!who) return this.unauthorized(request, UNAUTHORIZED);
+    return this.serve(request, who.caller);
   }
 
+  /** A remote key names its own worker, so only a local caller is missing anything without the worker id header. */
   private unauthorized(request: Request, error: string): Response {
-    const id = request.headers.get(OFFICE_MCP_WORKER_HEADER);
-    const token = /^Bearer\s+(.+)$/i.exec(request.headers.get('authorization') ?? '')?.[1];
-    const code = !token ? 'missing_token' : !id ? 'missing_worker_id' : !this.deps.settings().officeMcp ? 'office_mcp_off' : !this.deps.floor(id)?.workers.get(id) ? 'unknown_worker_id' : 'bad_token';
+    const id = request.headers.get(OFFICE_MCP_WORKER_HEADER)?.trim();
+    const local = !this.deps.remoteTransport;
+    const code = !bearer(request) ? 'missing_token' : !id && local ? 'missing_worker_id' : !this.deps.settings().officeMcp ? 'office_mcp_off' : id && !this.deps.floor(id)?.workers.get(id) ? 'unknown_worker_id' : 'bad_token';
     const hint =
       code === 'missing_token' || code === 'bad_token'
         ? 'Send this worker’s active credential as Authorization: Bearer <token>.'
@@ -158,21 +175,29 @@ export class OfficeMcpServer {
     return Response.json({ error, code, hint }, { status: 401 });
   }
 
-  private async protocolResponse(request: Request): Promise<Response> {
-    const response = await this.mcp.fetch(request);
-    if (response.status !== 400) return response;
-    // Preserve the SDK's JSON-RPC error and status, adding actionable HTTP-level diagnostics.
-    const body: unknown = await response
-      .clone()
-      .json()
-      .catch(() => undefined);
-    const detail = JSON.stringify(body);
-    const protocol = /protocol.?version/i.test(detail);
-    const code = protocol ? 'bad_protocol_version' : 'bad_argument';
-    const hint = protocol ? 'Use an MCP-Protocol-Version supported by the server (2025-06-18 is supported).' : 'Send a valid MCP JSON-RPC request with Content-Type: application/json.';
-    const headers = new Headers(response.headers);
-    for (const name of HOP_HEADERS) headers.delete(name);
-    return Response.json({ ...(record(body) ? body : { error: 'Bad MCP request' }), code, hint }, { status: 400, headers });
+  /**
+   * A one-shot client that doesn't read SSE gets its answer as one JSON body. The SDK's own stateless legacy
+   * serving always streams, so these requests get the same per-request server over its JSON response mode.
+   */
+  private async serve(request: Request, caller: OfficeMcpCaller): Promise<Response> {
+    if (!acceptsOnlyJson(request) || !(await isLegacyRequest(request))) return diagnosed(await this.mcp.fetch(request, { authInfo: { token: bearer(request) ?? '', clientId: caller.worker.id, scopes: [], extra: { caller } } }));
+    // JSON mode never streams, but the transport still checks for the SSE half of the Streamable HTTP Accept header.
+    const headers = new Headers(request.headers);
+    headers.set('accept', 'application/json, text/event-stream');
+    const init: RequestInit & { duplex: 'half' } = { headers, duplex: 'half' };
+    const forwarded = new Request(request, init);
+    const server = this.serverFor(caller, request.signal);
+    const transport = new WebStandardStreamableHTTPServerTransport({ sessionIdGenerator: undefined, enableJsonResponse: true });
+    try {
+      await server.connect(transport);
+      return diagnosed(await transport.handleRequest(forwarded));
+    } catch (err) {
+      console.error('Office MCP:', (err as Error).message);
+      return Response.json({ jsonrpc: '2.0', id: null, error: { code: -32603, message: 'The office could not answer this MCP request.' } }, { status: 500 });
+    } finally {
+      void transport.close().catch(() => undefined);
+      void server.close().catch(() => undefined);
+    }
   }
 
   /** `signal` aborts when the caller cancels or disconnects; a tool must not record that its result was seen after that. */
@@ -188,7 +213,8 @@ export class OfficeMcpServer {
   }
 
   private serverFor(caller: OfficeMcpCaller | undefined, disconnected: AbortSignal | undefined): Server {
-    const server = new Server({ name: 'droid-office', version: '1.0.0' }, { capabilities: { tools: {} }, instructions: caller?.worker.remote ? remoteInstructions : INSTRUCTIONS });
+    const instructions = caller?.worker.remote ? `${remoteInstructions}\n${remoteIdentityInstructions(caller.worker)}` : INSTRUCTIONS;
+    const server = new Server({ name: 'droid-office', version: '1.0.0' }, { capabilities: { tools: {} }, instructions });
     server.setRequestHandler('tools/list', () => ({ tools: caller ? [...this.tools.values()].filter((t) => t.access(caller) === undefined).map((t) => t.listed) : [] }));
     server.setRequestHandler('tools/call', async ({ params }, ctx) => {
       const tool = this.tools.get(params.name);
@@ -216,24 +242,31 @@ export class OfficeMcpServer {
     return office && office.origin !== new URL(this.deps.hookUrl).origin ? new URL(OFFICE_MCP_PATH, office.origin) : undefined;
   }
 
-  private caller(request: Request): OfficeMcpCaller | undefined {
+  /**
+   * Who a request is from, and for an external worker which of its keys it used. A remote key alone names
+   * its bot, so the worker id header is optional there; when a client sends one, it must be the key's own.
+   */
+  private caller(request: Request): { caller: OfficeMcpCaller; key?: RemoteKeyId } | undefined {
     const settings = this.deps.settings();
     if (!settings.officeMcp) return undefined;
-    const id = request.headers.get(OFFICE_MCP_WORKER_HEADER);
-    const token = /^Bearer\s+(.+)$/i.exec(request.headers.get('authorization') ?? '')?.[1];
-    if (!id || !token) return undefined;
+    const token = bearer(request);
+    if (!token) return undefined;
+    const sent = request.headers.get(OFFICE_MCP_WORKER_HEADER)?.trim();
+    const found = this.deps.remoteTransport ? this.deps.remote?.store.resolve(token) : undefined;
+    if (found && sent && sent !== found.id) return undefined;
+    const id = this.deps.remoteTransport ? found?.id : sent;
+    if (!id) return undefined;
     let floor = this.deps.floor(id);
     let worker: WorkerInfo | undefined;
     if (this.deps.remoteTransport) {
-      if (!this.deps.remote?.store.authenticate(id, token)) return undefined;
       // Its floor closed with no other open, or went from floors.json while the office was down: a desk on one open now.
-      if (!floor && this.deps.remote.rehome(id)) floor = this.deps.floor(id);
+      if (!floor && this.deps.remote?.rehome(id)) floor = this.deps.floor(id);
       worker = floor?.workers.get(id);
     } else worker = floor?.workers.authenticate(id, token);
     if (!floor || !worker || worker.kind !== 'agent' || worker.cloud) return undefined;
     if (!!worker.remote !== !!this.deps.remoteTransport) return undefined;
     const relative = workspaceOf(worker);
-    return { worker, floor, settings, cwd: relative ? path.join(floor.dir, relative) : floor.dir };
+    return { caller: { worker, floor, settings, cwd: relative ? path.join(floor.dir, relative) : floor.dir }, ...(found ? { key: found.key } : {}) };
   }
 }
 
@@ -256,6 +289,45 @@ export function tailnetIdentity(headers: Headers, owner?: string): boolean {
   if (headers.has('tailscale-funnel-request')) return false;
   const login = headers.get('tailscale-user-login')?.trim();
   return !login || !owner || login.toLowerCase() === owner.toLowerCase();
+}
+
+function bearer(request: Request): string | undefined {
+  return /^Bearer\s+(.+)$/i.exec(request.headers.get('authorization') ?? '')?.[1];
+}
+
+/**
+ * Whether a POST's Accept header takes JSON but not SSE (or names nothing), the shape of a plain curl or
+ * fetch client. A client that lists `text/event-stream` keeps getting the SDK's normal answer.
+ */
+export function acceptsOnlyJson(request: Request): boolean {
+  if (request.method !== 'POST') return false;
+  const types = (request.headers.get('accept') ?? '')
+    .split(',')
+    .map((t) => t.split(';')[0].trim().toLowerCase())
+    .filter(Boolean);
+  if (!types.length) return true;
+  return !types.includes('text/event-stream') && types.some((t) => t === 'application/json' || t === 'application/*' || t === '*/*');
+}
+
+/** Keeps the SDK's JSON-RPC error and status on a 400, adding actionable HTTP-level diagnostics. */
+async function diagnosed(response: Response): Promise<Response> {
+  if (response.status !== 400) return response;
+  const body: unknown = await response
+    .clone()
+    .json()
+    .catch(() => undefined);
+  const protocol = /protocol.?version/i.test(JSON.stringify(body));
+  const code = protocol ? 'bad_protocol_version' : 'bad_argument';
+  const hint = protocol ? 'Use an MCP-Protocol-Version supported by the server (2025-06-18 is supported).' : 'Send a valid MCP JSON-RPC request with Content-Type: application/json.';
+  const headers = new Headers(response.headers);
+  for (const name of HOP_HEADERS) headers.delete(name);
+  return Response.json({ ...(record(body) ? body : { error: 'Bad MCP request' }), code, hint }, { status: 400, headers });
+}
+
+function withHeader(response: Response, name: string, value: string): Response {
+  const headers = new Headers(response.headers);
+  headers.set(name, value);
+  return new Response(response.body, { status: response.status, statusText: response.statusText, headers });
 }
 
 export function record(value: unknown): value is Record<string, unknown> {

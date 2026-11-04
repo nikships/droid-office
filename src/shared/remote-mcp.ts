@@ -9,6 +9,17 @@ export interface RemoteMcpConnection {
   headers: Record<string, string>;
 }
 
+/** A named key a bot holds besides its main one, so each of its clients can be revoked on its own. */
+export interface RemoteMcpKey {
+  id: string;
+  name: string;
+  createdAt: number;
+  /** To the minute; unset until the key is first used. */
+  lastUsedAt?: number;
+  /** Only while the endpoint is on the tailnet. */
+  connection?: RemoteMcpConnection;
+}
+
 export interface RemoteMcpBot {
   id: string;
   name: string;
@@ -18,8 +29,12 @@ export interface RemoteMcpBot {
   status?: string;
   activity?: string;
   unread: number;
+  /** When its main key last connected, to the minute. */
+  lastUsedAt?: number;
   /** Only while the endpoint is on the tailnet. */
   connection?: RemoteMcpConnection;
+  /** Named keys besides the main one; absent from an office older than named keys. */
+  keys?: RemoteMcpKey[];
 }
 
 export interface RemoteMcpState {

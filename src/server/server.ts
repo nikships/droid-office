@@ -1051,10 +1051,12 @@ export async function startServer(cfg: Config) {
           if (body.action === 'add' && name && name.length <= 60 && typeof body.floor === 'string') return send(res, 200, remoteMcp.add(name, body.floor));
           if (body.action === 'rotate' && id) return send(res, 200, remoteMcp.rotate(id));
           if (body.action === 'revoke' && id) return send(res, 200, remoteMcp.revoke(id));
+          if (body.action === 'add-key' && id && name && name.length <= 60) return send(res, 200, remoteMcp.addKey(id, name));
+          if (body.action === 'revoke-key' && id && typeof body.key === 'string' && body.key) return send(res, 200, remoteMcp.revokeKey(id, body.key));
         } catch (err) {
           return send(res, 409, { error: (err as Error).message });
         }
-        return send(res, 400, { error: 'Send {"action": "add", "name", "floor"} or {"action": "rotate" | "revoke", "id"}' });
+        return send(res, 400, { error: 'Send {"action": "add", "name", "floor"}, {"action": "rotate" | "revoke", "id"}, {"action": "add-key", "id", "name"} or {"action": "revoke-key", "id", "key"}' });
       }
       // The Mac app's menu bar icon: busy workers, who is waiting and connected devices. Only the app itself gets them:
       // a request from this Mac, to a loopback host name, with no device token and no Origin.
