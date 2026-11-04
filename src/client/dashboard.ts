@@ -128,10 +128,10 @@ const title = h('h1.dash-office', {}, officeName);
 const linkDot = h('span.dash-link', { role: 'img', 'aria-label': 'Connecting' });
 const brand = h('div.dash-brand', {}, h('img', { src: '/factory-glyph.svg', alt: '', width: 18, height: 18 }), h('span.dash-brand-text', {}, h('span.eyebrow', {}, 'Web companion'), h('span.dash-brand-name', {}, title, linkDot)));
 const floors = h('nav.dash-floor-strip', { 'aria-label': 'Floors' });
-const reorderFloors = h('button.btn.icon.sm.ghost', { type: 'button', 'aria-label': 'Reorder floors', title: 'Reorder floors', onclick: () => openFloorOrder(net) }, '⠿');
+const reorderFloors = h('button.btn.icon.sm.ghost', { type: 'button', 'aria-label': 'Reorder floors', title: 'Reorder floors', onclick: () => openFloorOrder(net) }, icon('grip', 14));
 const floorPicker = h('div.dash-floor', {}, floors, reorderFloors);
 const boardCount = h('span.dash-count.hidden');
-const board = h('button.btn.dash-top-btn.dash-board', { type: 'button', title: 'The floor’s Whiteboard (⌘ B)', onclick: () => void openBoard() }, icon('board', 14), h('span.dash-top-label', {}, 'Whiteboard'), boardCount);
+const board = h('button.btn.ghost.dash-top-btn.dash-board', { type: 'button', title: 'The floor’s Whiteboard (⌘ B)', onclick: () => void openBoard() }, icon('board', 14), h('span.dash-top-label', {}, 'Whiteboard'), boardCount);
 const subscriptions = h('button.btn.ghost.dash-top-btn', { type: 'button', title: 'Subscriptions and account usage', onclick: () => openSubscriptionsStatus() }, icon('key', 14), h('span.dash-top-label', {}, 'Subscriptions'));
 const top = h('header.dash-top', {}, brand, floorPicker, h('div.dash-top-end', {}, subscriptions, board));
 
@@ -148,13 +148,20 @@ const agentBtn = h('button.btn.accent.dash-hire', { type: 'button', title: 'Hire
 const shellBtn = h('button.btn.dash-hire', { type: 'button', title: 'Open a plain shell at the next free desk', onclick: () => openShell() }, icon('terminal', 14), h('span', {}, 'Shell'));
 const workerList = h('nav.dash-workers', { 'aria-label': 'Workers' });
 const roster = createWorkerRoster(workerList, (id) => openHere(id, true), openBesideHere);
-const side = h(
-  'aside.dash-side',
-  { 'aria-label': 'Floor' },
-  h('div.dash-side-head', {}, sideTitle, sideSub),
-  workerList,
-  h('footer.dash-side-foot', {}, h('div.dash-side-hire', {}, agentBtn, shellBtn), h('div.dash-keys', { 'aria-hidden': 'true' }, ...keyHints(nativeCompanion ? [...WORKSPACE_KEY_HINTS, ['⌘ − +', 'floors']] : WORKSPACE_KEY_HINTS))),
-);
+const side = h('aside.dash-side', { 'aria-label': 'Floor' }, h('div.dash-side-head', {}, sideTitle, sideSub), workerList, h('footer.dash-side-foot', {}, h('div.dash-side-hire', {}, agentBtn, shellBtn), keyLegend()));
+
+/** The workspace's shortcuts, folded under one line until the owner opens them (remembered in this browser). */
+function keyLegend() {
+  const KEYS_KEY = 'droid-office.companion-keys';
+  const fold = h(
+    'details.dash-keys-fold',
+    { open: read(KEYS_KEY) === 'open' },
+    h('summary', {}, 'Keyboard shortcuts', h('span.wt-chevron', { 'aria-hidden': 'true' }, icon('chevron', 12))),
+    h('div.dash-keys', { 'aria-hidden': 'true' }, ...keyHints(nativeCompanion ? [...WORKSPACE_KEY_HINTS, ['⌘ − +', 'floors']] : WORKSPACE_KEY_HINTS)),
+  ) as HTMLDetailsElement;
+  fold.addEventListener('toggle', () => remember(KEYS_KEY, fold.open ? 'open' : ''));
+  return fold;
+}
 
 /** The layout switcher's little pictures: the same boxes the layout puts its panes in. */
 function layoutGlyph(mode: LayoutMode) {
@@ -196,19 +203,59 @@ const autoButton = h(
   'Auto',
 );
 const layoutButtons = LAYOUT_ORDER.map((mode, i) =>
-  h('button.dash-layout', { type: 'button', role: 'radio', 'aria-label': LAYOUT_LABEL[mode], title: `${LAYOUT_LABEL[mode]} (⌘ ${i + 1})`, onclick: () => changeLayout(mode) }, layoutGlyph(mode)),
+  h(
+    'button.dash-layout',
+    { type: 'button', role: 'radio', 'aria-label': LAYOUT_LABEL[mode], title: `${LAYOUT_LABEL[mode]} (⌘ ${i + 1})`, onclick: () => changeLayout(mode) },
+    layoutGlyph(mode),
+    h('span.dash-layout-label', { 'aria-hidden': 'true' }, LAYOUT_LABEL[mode]),
+  ),
 );
 const layouts = h('div.dash-layouts', { role: 'radiogroup', 'aria-label': 'Pane layout' }, autoButton, ...layoutButtons);
 const smaller = h('button.btn.sm', { type: 'button', 'aria-label': 'Smaller terminal text', title: 'Smaller terminal text', onclick: () => zoom(-1) }, 'A−');
 const bigger = h('button.btn.sm', { type: 'button', 'aria-label': 'Bigger terminal text', title: 'Bigger terminal text', onclick: () => zoom(1) }, 'A+');
-const zoomSeg = h('div.seg.dash-zoom', { role: 'group', 'aria-label': 'Terminal text size' }, smaller, bigger);
-const toolbar = h(
-  'div.dash-toolbar',
-  {},
-  sideToggle,
-  h('div.dash-crumb', {}, h('span.eyebrow', {}, 'Workspace'), h('span.dash-crumb-sep', { 'aria-hidden': 'true' }, '/'), wsSummary),
-  h('div.dash-toolbar-end', {}, zoomSeg, h('span.dash-toolbar-sep'), layouts),
+const zoomSize = h('span.dash-zoom-size');
+const zoomSeg = h('div.seg.dash-zoom', { role: 'group', 'aria-label': 'Terminal text size' }, smaller, zoomSize, bigger);
+// The layouts and the terminal text size are set now and then, so they wait behind one button that names the layout.
+const layoutNow = h('span.dash-layout-now');
+const layoutName = h('span.dash-layout-name');
+const layoutTrigger = h(
+  'button.btn.sm.ghost.dash-layout-trigger',
+  { type: 'button', 'aria-haspopup': 'dialog', 'aria-expanded': 'false', 'aria-controls': 'dash-layout-pop', title: 'Pane layout (⌘ 1–8)', onclick: () => showLayouts(!!layoutPop.hidden) },
+  layoutNow,
+  layoutName,
+  h('span.dash-layout-caret', { 'aria-hidden': 'true' }, icon('chevron', 12)),
 );
+const layoutPop = h(
+  'div.dash-layout-pop',
+  { id: 'dash-layout-pop', role: 'dialog', 'aria-label': 'Workspace layout', hidden: true },
+  h('p.dash-layout-pop-title', {}, 'Layout'),
+  layouts,
+  h('div.dash-layout-pop-row', {}, h('span', {}, 'Terminal text'), zoomSeg),
+);
+const layoutMenu = h('div.dash-layout-menu', {}, layoutTrigger, layoutPop);
+function showLayouts(open: boolean, refocus = false) {
+  layoutPop.hidden = !open;
+  layoutTrigger.setAttribute('aria-expanded', String(open));
+  layoutTrigger.classList.toggle('on', open);
+  if (open) (layouts.querySelector<HTMLElement>('[aria-checked=true]') ?? autoButton).focus({ preventScroll: true });
+  else if (refocus) layoutTrigger.focus({ preventScroll: true });
+}
+document.addEventListener('pointerdown', (e) => {
+  if (!layoutPop.hidden && !layoutMenu.contains(e.target as Node)) showLayouts(false);
+});
+layoutMenu.addEventListener('keydown', (e) => {
+  if (e.key !== 'Escape' || layoutPop.hidden) return;
+  e.preventDefault();
+  e.stopPropagation();
+  showLayouts(false, true);
+});
+layoutMenu.addEventListener('focusout', (e) => {
+  if (e.relatedTarget instanceof Node && !layoutMenu.contains(e.relatedTarget)) showLayouts(false);
+});
+layouts.addEventListener('click', (e) => {
+  if ((e.target as Element).closest('.dash-layout')) showLayouts(false, true);
+});
+const toolbar = h('div.dash-toolbar', {}, sideToggle, h('div.dash-crumb', {}, h('span.eyebrow', {}, 'Workspace'), h('span.dash-crumb-sep', { 'aria-hidden': 'true' }, '/'), wsSummary), h('div.dash-toolbar-end', {}, layoutMenu));
 const colHandle = h('div.dash-handle.col', { role: 'separator', 'aria-orientation': 'vertical', 'aria-label': 'Resize columns', tabindex: 0, title: 'Drag to resize · double-click to even out' });
 const rowHandle = h('div.dash-handle.row', { role: 'separator', 'aria-orientation': 'horizontal', 'aria-label': 'Resize rows', tabindex: 0, title: 'Drag to resize · double-click to even out' });
 const workspaceEl = h('div.dash-workspace', {}, colHandle, rowHandle);
@@ -234,6 +281,7 @@ function paintZoom() {
   smaller.disabled = px <= TERM_FONT_MIN;
   bigger.disabled = px >= TERM_FONT_MAX;
   zoomSeg.title = `Terminal text ${px} px`;
+  zoomSize.textContent = `${px} px`;
 }
 function zoom(dir: 1 | -1) {
   setTermFontSize(stepTermFont(termFontSize(), dir));
@@ -553,7 +601,18 @@ floors.addEventListener(
   },
   { passive: false },
 );
-if (typeof ResizeObserver === 'function') new ResizeObserver(() => floors.querySelector('.on')?.scrollIntoView({ block: 'nearest', inline: 'nearest' })).observe(floors);
+/** Fades whichever edge of the floor strip has more floors past it, so a cut-off name reads as scrollable. */
+function markFloorOverflow() {
+  const max = floors.scrollWidth - floors.clientWidth;
+  floors.classList.toggle('more-start', floors.scrollLeft > 1);
+  floors.classList.toggle('more-end', floors.scrollLeft < max - 1);
+}
+floors.addEventListener('scroll', markFloorOverflow, { passive: true });
+if (typeof ResizeObserver === 'function')
+  new ResizeObserver(() => {
+    floors.querySelector('.on')?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+    markFloorOverflow();
+  }).observe(floors);
 
 function live() {
   return authorized && net.up && fresh && !switching;
@@ -634,7 +693,7 @@ function paintFloors(up: boolean) {
             onclick: () => goFloor(f.id),
           },
           h('span.dash-floor-number', { 'aria-hidden': 'true' }, String(i + 1)),
-          h('span.dash-floor-name', { class: f.home ? undefined : 'mono' }, f.name),
+          h('span.dash-floor-name', {}, f.name),
           f.waiting && f.id !== store.floor ? h('span.dash-floor-attn', { role: 'img', 'aria-label': `${f.waiting} waiting` }) : null,
         ),
       ),
@@ -650,6 +709,7 @@ function paintFloors(up: boolean) {
   }
   if (changedList || shownFloor !== store.floor) floors.querySelector('.on')?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
   shownFloor = store.floor;
+  markFloorOverflow();
 }
 
 function paint() {
@@ -658,6 +718,8 @@ function paint() {
   const here = store.currentFloor();
   reorderFloors.disabled = !up || store.floors.length < 2;
   agentBtn.disabled = shellBtn.disabled = !up || !here || busy.has('hire');
+  // An empty floor's pane carries the orange Hire; once someone works here the sidebar's does.
+  agentBtn.classList.toggle('accent', !here || store.workers.size > 0);
   board.disabled = !up || !here;
   subscriptions.disabled = !up;
   const link = up ? 'Connected' : authorized && !net.up ? 'Disconnected' : 'Connecting';
@@ -816,7 +878,8 @@ function paintSide() {
   sideTitle.textContent = store.floor === ROOF ? 'Rooftop' : (here?.name ?? 'No floor');
   sideTitle.title = sideTitle.textContent;
   const where = here ? [here.repo ?? 'Not a git repository', here.branch].filter(Boolean).join(' · ') : store.floors.length ? 'Choose a floor above.' : 'No floors yet. Add a project from the office itself.';
-  sideSub.replaceChildren(icon('branch', 12), h('span', { title: where }, where));
+  // The floor name above already says which repository this is, so the line under it is the branch.
+  sideSub.replaceChildren(icon('branch', 12), h('span', { title: where }, here?.repo && here.branch ? here.branch : where));
   roster.update({ floor, workers: [...store.workers.values()], focused: focusedWorker(ws) ?? '', live: live(), pane: (id) => paneOf(ws, id) });
 }
 
@@ -861,11 +924,18 @@ function paintWorkspace() {
   rowHandle.setAttribute('aria-valuenow', String(Math.round(ws.row * 100)));
   const open = shown.filter(Boolean).length;
   const fw = store.workers.get(focusedWorker(ws) ?? '');
-  wsSummary.replaceChildren(`${open} of ${count} open`, ...(fw ? [h('span.dash-crumb-sep', {}, ' · '), 'focused on ', h('b', {}, fw.name)] : []));
+  wsSummary.replaceChildren(`${open} of ${count} open`, ...(fw && count > 1 ? [h('span.dash-crumb-sep', {}, ' · '), 'focused on ', h('b', {}, fw.name)] : []));
   layoutButtons.forEach((b, i) => {
     b.setAttribute('aria-checked', String(!ws.auto && LAYOUT_ORDER[i] === ws.layout));
   });
   autoButton.setAttribute('aria-checked', String(ws.auto));
+  const shownLayout = `${ws.auto ? 'Auto · ' : ''}${LAYOUT_LABEL[ws.layout]}`;
+  if (layoutName.textContent !== shownLayout || layoutNow.dataset.mode !== ws.layout) {
+    layoutName.textContent = shownLayout;
+    layoutTrigger.setAttribute('aria-label', `Layout: ${shownLayout}`);
+    layoutNow.dataset.mode = ws.layout;
+    layoutNow.replaceChildren(layoutGlyph(ws.layout));
+  }
   autoButton.title = `Auto: ${LAYOUT_LABEL[ws.layout].toLowerCase()}. Subagents expand the layout only below five main workers.`;
   sideToggle.setAttribute('aria-label', sideOpen ? 'Hide floor' : 'Show floor');
   sideToggle.setAttribute('aria-pressed', String(!sideOpen));

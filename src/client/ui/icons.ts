@@ -40,6 +40,7 @@ const PATHS = {
   columns: '<rect x="3" y="3" width="18" height="18" rx="2"/><path d="M12 3v18"/>',
   panel: '<rect x="3" y="3" width="18" height="18" rx="2"/><path d="M9 3v18"/>',
   panes: '<rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M9 21V9"/>',
+  chevron: '<path d="m9 6 6 6-6 6"/>',
 };
 
 export type IconName = keyof typeof PATHS;

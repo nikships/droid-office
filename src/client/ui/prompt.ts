@@ -138,7 +138,7 @@ export function openPrompt(opts: PromptOptions) {
       'div.body.stack',
       {},
       opts.warning ? h('p.note.bad', { role: 'alert' }, opts.warning) : null,
-      h('div.prompt-input', {}, extras?.element ?? ta, images ? pictureHint() : null, add, file, images?.element ?? null),
+      h('div.prompt-input', {}, extras?.element ?? ta, images ? h('div.prompt-attach', {}, pictureHint(), add) : null, file, images?.element ?? null),
       rows.length ? h('div.group.prompt-opts', { role: 'group', 'aria-label': 'Options' }, ...rows) : null,
       failed,
     ),
