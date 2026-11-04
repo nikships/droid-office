@@ -100,7 +100,7 @@ export function createWorkerRoster(el: HTMLElement, open: (id: string) => void, 
           e.dataTransfer?.setData(WORKER_MIME, w.id);
           if (e.dataTransfer) e.dataTransfer.effectAllowed = 'copyMove';
         });
-        const beside = h('button.btn.icon.sm.ghost.dash-row-split', { type: 'button', title: 'Open in a new pane', 'aria-label': `Open ${w.name} in a new pane`, onclick: () => split(w.id) }, icon('columns', 13)) as HTMLButtonElement;
+        const beside = h('button.btn.icon.sm.ghost.dash-row-split', { type: 'button', title: 'Open in a new pane', 'aria-label': `Open ${w.name} in a new pane`, onclick: () => split(w.id) }, icon('paneAdd', 13)) as HTMLButtonElement;
         r = { wrap: h('div.dash-row', {}, button, beside), open: button, split: beside, key: '' };
         rows.set(w.id, r);
       }
