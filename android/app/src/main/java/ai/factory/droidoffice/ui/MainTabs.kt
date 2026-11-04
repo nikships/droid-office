@@ -71,6 +71,8 @@ enum class MainTab(val label: String, val icon: ImageVector, val tag: String) {
 @Composable
 fun MainTabs(onOpenWorker: (id: String, draft: String?) -> Unit, onOpenCard: (floor: String, card: String) -> Unit, onScan: () -> Unit) {
     val graph = LocalGraph.current
+    val store by graph.store.snapshot.collectAsStateWithLifecycle()
+    val officeId = store.active?.id
     val data by graph.connection.data.collectAsStateWithLifecycle()
     val waiting = data.workers.values.count { it.state == WorkerStatus.NeedsInput }
     val boards by graph.connection.boards.collectAsStateWithLifecycle()
@@ -78,7 +80,7 @@ fun MainTabs(onOpenWorker: (id: String, draft: String?) -> Unit, onOpenCard: (fl
     val badge = { t: MainTab -> if (t == MainTab.Asks) waiting else if (t == MainTab.Board) changed else 0 }
     var tab by rememberSaveable { mutableStateOf<MainTab?>(null) }
     var hiring by rememberSaveable { mutableStateOf(false) }
-    var selected by rememberSaveable { mutableStateOf<String?>(null) }
+    var selected by rememberSaveable(officeId) { mutableStateOf<String?>(null) }
     val snackbar = LocalSnackbar.current
     // Opens on Asks when something is waiting the first time the office is in, else on Office.
     LaunchedEffect(data.synced) { if (tab == null && data.synced) tab = if (waiting > 0) MainTab.Asks else MainTab.Office }
@@ -93,7 +95,7 @@ fun MainTabs(onOpenWorker: (id: String, draft: String?) -> Unit, onOpenCard: (fl
                     if (split && shown == MainTab.Office) selected = id else onOpenWorker(id, null)
                 }
                 // Both Asks and Office can hire. A snackbar must never hold up the next shell result.
-                LaunchedEffect(graph.connection) {
+                LaunchedEffect(graph.connection, officeId) {
                     graph.connection.hired.collectHires(
                         onShell = { open(it.id) },
                         onDroid = { w ->
