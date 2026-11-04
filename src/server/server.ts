@@ -2662,14 +2662,17 @@ export async function startServer(cfg: Config) {
         let reply: ServerMsg | undefined;
         let settled = false;
         const onAbort = () => finish(true);
-        const finish = (pending = false) => {
+        const complete = () => !!receipt && (!!receipt.error || !expects || !!reply);
+        const finish = (timedOut = false) => {
           if (settled) return;
+          // A receipt already in is the outcome, even if the wait ends before its toasts are collected.
+          const pending = timedOut && !complete();
           settled = true;
           clearTimeout(timer);
           opts.signal?.removeEventListener('abort', onAbort);
           const refused = receipt?.error ?? (reply && 'error' in reply && typeof reply.error === 'string' ? reply.error : undefined);
           // A success toast is confirmation enough; silence is not.
-          const unconfirmed = !refused && !pending && !notes.length && client.owner?.unconfirmed;
+          const unconfirmed = !refused && !pending && !reply && !notes.length && client.owner?.unconfirmed;
           resolve({
             ...(refused ? { error: refused } : {}),
             ...(pending ? { pending } : {}),
@@ -2679,9 +2682,12 @@ export async function startServer(cfg: Config) {
             ...(reply ? { reply } : {}),
           });
         };
+        let ready = false;
         const check = () => {
+          if (ready || !complete()) return;
+          ready = true;
           // Handlers often toast right after done(), in the same turn: let those land in the notes first.
-          if (receipt && (receipt.error || !expects || reply)) setImmediate(() => finish());
+          setImmediate(() => finish());
         };
         const timer = setTimeout(() => finish(true), OWNER_ACTION_WAIT_MS);
         const workerId = typeof msg.workerId === 'string' ? msg.workerId : undefined;

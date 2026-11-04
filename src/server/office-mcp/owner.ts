@@ -259,6 +259,12 @@ function worktreeWords(s: WorktreeState): string {
   return parts.length ? `Its worktree had ${parts.join(' and ')}.` : 'Its worktree held no unsaved or unpushed work.';
 }
 
+function outcomeText(r: OwnerReply): string {
+  if (r.pending) return 'started; no outcome yet. Read the office before repeating it.';
+  if (r.unconfirmed) return 'sent. The office neither refused nor confirmed it; check the notes or the office before repeating it.';
+  return 'done.';
+}
+
 function replyText(r: OwnerReply): { text: string; truncated: boolean } {
   const json = r.reply ? JSON.stringify(r.reply, null, 1) : '';
   const truncated = json.length > REPLY_MAX;
@@ -383,7 +389,7 @@ export function register(server: OfficeMcpServer, deps: OfficeMcpDeps): void {
       }
       const result = await owner.act(caller.worker, { ...args, t: action }, { floor: at, signal });
       if (result.error) return officeError(`${action} refused: ${result.error}${result.notes.length ? `\n${result.notes.join('\n')}` : ''}`);
-      const outcome = result.pending ? 'started; no outcome yet. Read the office before repeating it.' : result.unconfirmed ? 'sent. The office neither refused nor confirmed it; check the notes or the office before repeating it.' : 'done.';
+      const outcome = outcomeText(result);
       const details = replyText(result);
       return officeResult(`${action}: ${outcome}${details.text ? `\n${details.text}` : ''}`, {
         action,

@@ -363,6 +363,7 @@ test('owner actions from an external worker run through the owner’s own handle
   assert.equal((await office.owner.act(grok, { t: 'floor.repos' }, { signal: aborted.signal })).pending, true, 'an already cancelled call returns at once');
   const repos = await office.owner.act(grok, { t: 'floor.repos' });
   assert.equal(repos.reply?.t, 'floor.repos', 'an action with an answer gets it back');
+  assert.equal(repos.unconfirmed, undefined, 'its answer confirms it');
 
   const sent = await office.owner.act(grok, { t: 'worker.kill', workerId: shell.id, cleanup: 'keep' });
   assert.equal(sent.error, undefined, JSON.stringify(sent));
@@ -379,9 +380,13 @@ test('owner actions from an external worker run through the owner’s own handle
 });
 
 test('office_look text joins the rows a long line wrapped onto', async () => {
-  const term = new headless.Terminal({ cols: 10, rows: 5, scrollback: 50, allowProposedApi: true });
+  const term = new headless.Terminal({ cols: 10, rows: 5, scrollback: 1000, allowProposedApi: true });
   await new Promise<void>((resolve) => term.write('first\r\n0123456789abcdefghij-end\r\nlast\r\n', resolve));
   assert.equal(plainTail(term, 2), '0123456789abcdefghij-end\nlast');
   assert.equal(plainTail(term, 10), 'first\n0123456789abcdefghij-end\nlast');
+  await new Promise<void>((resolve) => term.write(`${'y'.repeat(5000)}\r\n`, resolve));
+  const long = plainTail(term, 1);
+  assert.equal(long.length, 4001, 'one very long line is capped to its end');
+  assert.ok(long.startsWith('…y'));
   term.dispose();
 });

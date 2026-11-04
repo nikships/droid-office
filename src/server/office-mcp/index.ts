@@ -237,7 +237,8 @@ export class OfficeMcpServer {
 
   private serverFor(caller: OfficeMcpCaller | undefined, disconnected: AbortSignal | undefined): Server {
     const remote = caller?.worker.remote ? `${remoteInstructions}\n${remoteIdentityInstructions(caller.worker)}` : undefined;
-    const instructions = remote ? (caller && hasOwnerAccess(caller.worker, this.deps.owner) ? `${remote}\n\n${ownerInstructions}` : remote) : INSTRUCTIONS;
+    const owner = remote && caller && hasOwnerAccess(caller.worker, this.deps.owner);
+    const instructions = owner ? `${remote}\n\n${ownerInstructions}` : (remote ?? INSTRUCTIONS);
     const server = new Server({ name: 'droid-office', version: '1.0.0' }, { capabilities: { tools: {} }, instructions });
     server.setRequestHandler('tools/list', () => ({ tools: caller ? [...this.tools.values()].filter((t) => t.access(caller) === undefined).map((t) => t.listed) : [] }));
     server.setRequestHandler('tools/call', async ({ params }, ctx) => {
