@@ -2,7 +2,20 @@ import { randomUUID } from 'node:crypto';
 import { mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import type { IncomingMessage, ServerResponse } from 'node:http';
-import { type CallToolResult, createMcpHandler, hostHeaderValidationResponse, localhostAllowedHostnames, type McpHttpHandler, ProtocolError, ProtocolErrorCode, Server, type Tool, type ToolAnnotations } from '@modelcontextprotocol/server';
+import {
+  type CallToolResult,
+  createMcpHandler,
+  hostHeaderValidationResponse,
+  isLegacyRequest,
+  localhostAllowedHostnames,
+  type McpHttpHandler,
+  ProtocolError,
+  ProtocolErrorCode,
+  Server,
+  type Tool,
+  type ToolAnnotations,
+  WebStandardStreamableHTTPServerTransport,
+} from '@modelcontextprotocol/server';
 import { z } from 'zod';
 import type { SubagentSettings, WorkerInfo } from '../../shared/protocol.js';
 import type { Team } from '../team.js';
@@ -14,7 +27,7 @@ import { sendResponse, webRequest } from './node-http.js';
 import { instructions as teamInstructions, register as registerTeam } from './team.js';
 import { instructions as whiteboardInstructions, register as registerWhiteboard } from './whiteboard.js';
 import { instructions as visitInstructions, register as registerVisits } from './visits.js';
-import { register as registerRemote, remoteInstructions } from './remote.js';
+import { register as registerRemote, remoteIdentityInstructions, remoteInstructions } from './remote.js';
 import type { RemoteOffice } from '../remote-office.js';
 
 export const OFFICE_MCP_PATH = '/office/mcp';
@@ -135,14 +148,39 @@ export class OfficeMcpServer {
     if (badHost) return badHost;
     if (remote) {
       if (request.headers.has('origin') || !tailnetIdentity(request.headers, remote.owner())) return Response.json({ error: 'Only the owner’s own Tailscale devices may connect; browser and Funnel requests are refused' }, { status: 403 });
-      if (!this.caller(request)) return Response.json({ error: 'Active remote worker id and bearer credential required' }, { status: 401 });
-      return this.mcp.fetch(request);
+      const who = this.remoteKey(request);
+      const caller = who && this.caller(request);
+      if (!who || !caller) return Response.json({ error: 'Active remote worker id and bearer credential required' }, { status: 401 });
+      this.deps.remote?.store.touch(who.id, who.key);
+      return withHeader(await this.serve(request), OFFICE_MCP_WORKER_HEADER, caller.worker.id);
     }
     if (request.method === 'OPTIONS') return new Response(null, { status: 204, headers: { Allow: 'POST, GET, DELETE, OPTIONS', [PROBE_HEADER]: '1' } });
     const peer = this.peer(request);
     if (peer) return relay(request, peer);
     if (!this.caller(request)) return Response.json({ error: UNAUTHORIZED }, { status: 401 });
-    return this.mcp.fetch(request);
+    return this.serve(request);
+  }
+
+  /**
+   * A one-shot client that doesn't read SSE gets its answer as one JSON body. The SDK's own stateless legacy
+   * serving always streams, so these requests get the same per-request server over its JSON response mode.
+   */
+  private async serve(request: Request): Promise<Response> {
+    if (!acceptsOnlyJson(request) || !(await isLegacyRequest(request))) return this.mcp.fetch(request);
+    // JSON mode never streams, but the transport still checks for the SSE half of the Streamable HTTP Accept header.
+    const headers = new Headers(request.headers);
+    headers.set('accept', 'application/json, text/event-stream');
+    const init: RequestInit & { duplex: 'half' } = { headers, duplex: 'half' };
+    const forwarded = new Request(request, init);
+    const server = this.serverFor(this.caller(request), request.signal);
+    const transport = new WebStandardStreamableHTTPServerTransport({ sessionIdGenerator: undefined, enableJsonResponse: true });
+    await server.connect(transport);
+    try {
+      return await transport.handleRequest(forwarded);
+    } finally {
+      void transport.close().catch(() => undefined);
+      void server.close().catch(() => undefined);
+    }
   }
 
   /** `signal` aborts when the caller cancels or disconnects; a tool must not record that its result was seen after that. */
@@ -158,7 +196,8 @@ export class OfficeMcpServer {
   }
 
   private serverFor(caller: OfficeMcpCaller | undefined, disconnected: AbortSignal | undefined): Server {
-    const server = new Server({ name: 'droid-office', version: '1.0.0' }, { capabilities: { tools: {} }, instructions: caller?.worker.remote ? remoteInstructions : INSTRUCTIONS });
+    const instructions = caller?.worker.remote ? `${remoteInstructions}\n${remoteIdentityInstructions(caller.worker)}` : INSTRUCTIONS;
+    const server = new Server({ name: 'droid-office', version: '1.0.0' }, { capabilities: { tools: {} }, instructions });
     server.setRequestHandler('tools/list', () => ({ tools: caller ? [...this.tools.values()].filter((t) => t.access(caller) === undefined).map((t) => t.listed) : [] }));
     server.setRequestHandler('tools/call', async ({ params }, ctx) => {
       const tool = this.tools.get(params.name);
@@ -186,18 +225,28 @@ export class OfficeMcpServer {
     return office && office.origin !== new URL(this.deps.hookUrl).origin ? new URL(OFFICE_MCP_PATH, office.origin) : undefined;
   }
 
+  /**
+   * The remote identity and which of its keys a request carries. The key alone names the bot, so the worker
+   * id header is optional; when a client sends one, it must be the key's own.
+   */
+  private remoteKey(request: Request) {
+    const token = bearer(request);
+    const found = token ? this.deps.remote?.store.resolve(token) : undefined;
+    const id = request.headers.get(OFFICE_MCP_WORKER_HEADER)?.trim();
+    return found && (!id || id === found.id) ? found : undefined;
+  }
+
   private caller(request: Request): OfficeMcpCaller | undefined {
     const settings = this.deps.settings();
     if (!settings.officeMcp) return undefined;
-    const id = request.headers.get(OFFICE_MCP_WORKER_HEADER);
-    const token = /^Bearer\s+(.+)$/i.exec(request.headers.get('authorization') ?? '')?.[1];
+    const token = bearer(request);
+    const id = this.deps.remoteTransport ? this.remoteKey(request)?.id : request.headers.get(OFFICE_MCP_WORKER_HEADER);
     if (!id || !token) return undefined;
     let floor = this.deps.floor(id);
     let worker: WorkerInfo | undefined;
     if (this.deps.remoteTransport) {
-      if (!this.deps.remote?.store.authenticate(id, token)) return undefined;
       // Its floor closed with no other open, or went from floors.json while the office was down: a desk on one open now.
-      if (!floor && this.deps.remote.rehome(id)) floor = this.deps.floor(id);
+      if (!floor && this.deps.remote?.rehome(id)) floor = this.deps.floor(id);
       worker = floor?.workers.get(id);
     } else worker = floor?.workers.authenticate(id, token);
     if (!floor || !worker || worker.kind !== 'agent' || worker.cloud) return undefined;
@@ -226,6 +275,30 @@ export function tailnetIdentity(headers: Headers, owner?: string): boolean {
   if (headers.has('tailscale-funnel-request')) return false;
   const login = headers.get('tailscale-user-login')?.trim();
   return !login || !owner || login.toLowerCase() === owner.toLowerCase();
+}
+
+function bearer(request: Request): string | undefined {
+  return /^Bearer\s+(.+)$/i.exec(request.headers.get('authorization') ?? '')?.[1];
+}
+
+/**
+ * Whether a POST's Accept header takes JSON but not SSE (or names nothing), the shape of a plain curl or
+ * fetch client. A client that lists `text/event-stream` keeps getting the SDK's normal answer.
+ */
+export function acceptsOnlyJson(request: Request): boolean {
+  if (request.method !== 'POST') return false;
+  const types = (request.headers.get('accept') ?? '')
+    .split(',')
+    .map((t) => t.split(';')[0].trim().toLowerCase())
+    .filter(Boolean);
+  if (!types.length) return true;
+  return !types.includes('text/event-stream') && types.some((t) => t === 'application/json' || t === 'application/*' || t === '*/*');
+}
+
+function withHeader(response: Response, name: string, value: string): Response {
+  const headers = new Headers(response.headers);
+  headers.set(name, value);
+  return new Response(response.body, { status: response.status, statusText: response.statusText, headers });
 }
 
 export function record(value: unknown): value is Record<string, unknown> {

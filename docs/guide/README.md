@@ -15,6 +15,7 @@ Install the [Mac app release](getting-started.md#the-mac-app) for production use
 - **[Models and prompts](models-and-prompts.md)**: Choosing models, Droid CLI configuration, and customizing prompts.
 - **[Deployment](deployment.md)**: Hosting developer checkouts remotely with one command on AWS EC2 or on a VPS.
 - **[How it works](how-it-works.md)**: Subsystem architecture, status hooks, worktrees, PTYs, render loops, and state files.
+- **[External workers over Tailscale](remote-workers.md)**: Letting an outside bot join the office as a worker, and the [remote MCP reference](remote-mcp.md) its author needs: endpoint, keys, response formats and every tool.
 - **[Security notes](security.md)**: Authentication model, LAN tokens, device tokens, and proxy considerations.
 - **[Development](development.md)**: Developing from source, source hot reload, the `window.office` automation API, and releases.
 

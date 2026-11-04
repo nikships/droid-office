@@ -4,18 +4,36 @@ import path from 'node:path';
 import { z } from 'zod';
 import type { WorkerInfo } from '../shared/protocol.js';
 
+/** Named keys a bot may hold besides its main key. */
+export const MAX_KEYS = 10;
+const TOUCH_MS = 60_000;
+
 const messageSchema = z.object({ id: z.string(), at: z.number(), text: z.string().max(24_000), floor: z.string().optional() });
+const tokenSchema = z.string().regex(/^[a-f0-9]{64}$/);
+const keySchema = z.object({ id: z.string(), name: z.string().min(1).max(60), token: tokenSchema, createdAt: z.number(), lastUsedAt: z.number().optional() });
 const savedSchema = z.object({
   id: z.string(),
   floor: z.string(),
   deskId: z.string(),
   name: z.string().min(1).max(60),
   createdAt: z.number(),
-  token: z.string().regex(/^[a-f0-9]{64}$/),
+  token: tokenSchema,
+  /** When the main key last authenticated, to the minute. */
+  lastUsedAt: z.number().optional(),
+  /** Extra named keys for the same identity, one per client, each revocable on its own. */
+  keys: z.array(keySchema).max(MAX_KEYS).optional(),
   inbox: z.array(messageSchema).max(500),
 });
 type SavedRemote = z.infer<typeof savedSchema>;
 export type RemoteMessage = z.infer<typeof messageSchema>;
+/** Which of a bot's keys a request used: `main` for the one Settings first gave it, otherwise a named key's id. */
+export type RemoteKeyId = 'main' | (string & {});
+export interface RemoteKey {
+  id: string;
+  name: string;
+  createdAt: number;
+  lastUsedAt?: number;
+}
 
 /**
  * One authoritative file for remote identities and their seats, including across floor moves. It keeps each
@@ -37,11 +55,12 @@ export class RemoteWorkers {
   }
 
   list() {
-    return this.records.map(({ token: _token, inbox, ...r }) => ({ ...r, unread: inbox.length }));
+    return this.records.map(({ token: _token, keys, inbox, ...r }) => ({ ...r, keys: (keys ?? []).map(({ token: _t, ...k }): RemoteKey => k), unread: inbox.length }));
   }
 
-  token(id: string): string | undefined {
-    return this.records.find((r) => r.id === id)?.token;
+  token(id: string, key: RemoteKeyId = 'main'): string | undefined {
+    const row = this.records.find((r) => r.id === id);
+    return key === 'main' ? row?.token : row?.keys?.find((k) => k.id === key)?.token;
   }
 
   workers(floor: string): WorkerInfo[] {
@@ -74,7 +93,47 @@ export class RemoteWorkers {
 
   authenticate(id: string, token: string): boolean {
     const row = this.records.find((r) => r.id === id);
-    return !!row && timingSafeEqual(hash(row.token), hash(token));
+    return !!row && matchKey(row, token) !== undefined;
+  }
+
+  /** The identity a key belongs to, so a client that sends only its key needn't know its worker id. */
+  resolve(token: string): { id: string; key: RemoteKeyId } | undefined {
+    for (const row of this.records) {
+      const key = matchKey(row, token);
+      if (key) return { id: row.id, key };
+    }
+    return undefined;
+  }
+
+  /** Records that a key was just used. Saved at most once a minute per key, so a busy bot doesn't rewrite the file on every call. */
+  touch(id: string, key: RemoteKeyId, now = Date.now()) {
+    const row = this.records.find((r) => r.id === id);
+    const last = key === 'main' ? row?.lastUsedAt : row?.keys?.find((k) => k.id === key)?.lastUsedAt;
+    if (!row || (last !== undefined && now - last < TOUCH_MS)) return;
+    try {
+      this.change(id, (r) => (key === 'main' ? { ...r, lastUsedAt: now } : { ...r, keys: r.keys?.map((k) => (k.id === key ? { ...k, lastUsedAt: now } : k)) }));
+    } catch {
+      // The call already authenticated; a "last used" time that can't be saved must not refuse it.
+    }
+  }
+
+  addKey(id: string, name: string): { key: RemoteKey; token: string } {
+    const row = this.records.find((r) => r.id === id);
+    if (!row) throw new Error('Remote worker was revoked');
+    const label = name.trim();
+    if (!label || label.length > 60) throw new Error('Give the key a name of up to 60 characters');
+    if ((row.keys?.length ?? 0) >= MAX_KEYS) throw new Error(`A bot has at most ${MAX_KEYS} named keys; revoke one first`);
+    if (row.keys?.some((k) => k.name.toLowerCase() === label.toLowerCase())) throw new Error('This bot already has a key with that name');
+    const saved = { id: `key-${randomBytes(8).toString('hex')}`, name: label, token: randomBytes(32).toString('hex'), createdAt: Date.now() };
+    this.change(id, (r) => ({ ...r, keys: [...(r.keys ?? []), saved] }));
+    const { token, ...key } = saved;
+    return { key, token };
+  }
+
+  /** The named key stops working at once; the bot's main key and its other keys keep working. */
+  revokeKey(id: string, key: string) {
+    if (!this.records.find((r) => r.id === id)?.keys?.some((k) => k.id === key)) throw new Error('No such key for this bot');
+    this.change(id, (r) => ({ ...r, keys: r.keys?.filter((k) => k.id !== key) }));
   }
 
   add(name: string, floor: string, deskId: string): { worker: WorkerInfo; token: string } {
@@ -86,7 +145,7 @@ export class RemoteWorkers {
 
   rotate(id: string): string {
     const token = randomBytes(32).toString('hex');
-    this.change(id, (r) => ({ ...r, token }));
+    this.change(id, (r) => ({ ...r, token, lastUsedAt: undefined }));
     return token;
   }
 
@@ -144,4 +203,12 @@ export class RemoteWorkers {
 
 function hash(token: string) {
   return createHash('sha256').update(token).digest();
+}
+
+/** Compares every key of the row, so the time taken doesn't say which one, if any, matched. */
+function matchKey(row: SavedRemote, token: string): RemoteKeyId | undefined {
+  const given = hash(token);
+  let found: RemoteKeyId | undefined = timingSafeEqual(hash(row.token), given) ? 'main' : undefined;
+  for (const k of row.keys ?? []) if (timingSafeEqual(hash(k.token), given) && !found) found = k.id;
+  return found;
 }

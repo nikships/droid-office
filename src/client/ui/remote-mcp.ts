@@ -1,4 +1,4 @@
-import { remoteMcpConfig, type RemoteMcpBot, type RemoteMcpState } from '../../shared/remote-mcp';
+import { remoteMcpConfig, type RemoteMcpBot, type RemoteMcpKey, type RemoteMcpState } from '../../shared/remote-mcp';
 import { withToken } from '../token';
 import { copyButton } from './clipboard';
 import { h, timeAgo, toast } from './dom';
@@ -25,6 +25,10 @@ async function call(method: 'GET' | 'PUT' | 'POST', body?: unknown): Promise<Ans
   } catch {
     return 'Could not reach the office.';
   }
+}
+
+function lastUsed(at: number | undefined, what?: string): string | undefined {
+  return at ? `${what ? `${what} ` : ''}used ${timeAgo(at)}` : undefined;
 }
 
 const STATUS: Record<RemoteMcpState['status'], string> = { off: 'Off', starting: 'Starting…', serving: 'On your tailnet', unavailable: 'Waiting for Tailscale' };
@@ -90,7 +94,7 @@ export function remoteMcpSettings(): { control: HTMLElement; meta: HTMLElement; 
   }
 
   function botRow(b: RemoteMcpBot): Node {
-    const where = [b.floorName ?? b.floor, b.status ? `${b.status}${b.activity ? `: ${b.activity}` : ''}` : undefined, `added ${timeAgo(b.createdAt)}`].filter(Boolean).join(' · ');
+    const where = [b.floorName ?? b.floor, b.status ? `${b.status}${b.activity ? `: ${b.activity}` : ''}` : undefined, `added ${timeAgo(b.createdAt)}`, lastUsed(b.lastUsedAt, 'main key')].filter(Boolean).join(' · ');
     const rotate = h('button.btn.sm.ghost', { type: 'button', title: 'Give this bot a new key. The old one stops working at once.' }, 'New key');
     rotate.addEventListener('click', () => confirmDialog(`New key for ${b.name}?`, 'Its old key stops working at once. Give the bot the new connection afterwards.', 'New key', () => void act('POST', { action: 'rotate', id: b.id })));
     const remove = h('button.btn.sm.danger', { type: 'button' }, 'Remove');
@@ -114,11 +118,56 @@ export function remoteMcpSettings(): { control: HTMLElement; meta: HTMLElement; 
               rotate,
               remove,
             ),
+            keys(b),
           )
-        : h('div.stack.tight', {}, h('p.note', {}, 'Its connection shows here once the office is on your tailnet.'), h('div.row.wrap', {}, rotate, remove)),
+        : h('div.stack.tight', {}, h('p.note', {}, 'Its connection shows here once the office is on your tailnet.'), h('div.row.wrap', {}, rotate, remove), keys(b)),
     );
     details.meta.textContent = b.status ?? '';
     return details;
+  }
+
+  /** Extra keys for one bot, one per client it runs on, so a lost laptop's key goes without the bot's other clients. */
+  function keys(b: RemoteMcpBot): Node {
+    const rows = b.keys.map((k) => keyRow(b, k));
+    const name = h('input.input', { type: 'text', maxlength: 60, placeholder: 'Key name, like laptop or relay', 'aria-label': `New key name for ${b.name}` });
+    const add = h('button.btn.sm', { type: 'button' }, 'Add key');
+    const submit = () => {
+      const n = name.value.trim();
+      if (!n) return name.focus();
+      void act('POST', { action: 'add-key', id: b.id, name: n }, () => toast(`${b.name} has a new key, ${n}. Copy its config below.`));
+    };
+    add.addEventListener('click', submit);
+    name.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') submit();
+    });
+    return h(
+      'div.stack.tight',
+      {},
+      h('small.setting-meta', {}, 'Named keys act as this bot. Give each client its own, and revoke one without touching the others.'),
+      rows.length ? h('ul.list.boxed', { 'aria-label': `Named keys for ${b.name}` }, ...rows) : null,
+      h('div.input-group', {}, name, add),
+    );
+  }
+
+  function keyRow(b: RemoteMcpBot, k: RemoteMcpKey): Node {
+    const revoke = h('button.btn.sm.danger', { type: 'button' }, 'Revoke');
+    revoke.addEventListener('click', () =>
+      confirmDialog(`Revoke ${k.name}?`, `The client using this key loses access at once. ${b.name}'s other keys keep working.`, 'Revoke', () => void act('POST', { action: 'revoke-key', id: b.id, key: k.id })),
+    );
+    const connection = k.connection;
+    const meta = [`added ${timeAgo(k.createdAt)}`, lastUsed(k.lastUsedAt) ?? 'never used'].join(' · ');
+    return h(
+      'li.list-row',
+      {},
+      h('div.list-main', {}, h('div.list-title', { title: k.name }, k.name), h('div.list-meta', { title: k.lastUsedAt ? `Last used ${new Date(k.lastUsedAt).toLocaleString()}` : 'Not used yet' }, meta)),
+      h(
+        'div.list-end',
+        {},
+        connection ? copyButton('Copy config', () => remoteMcpConfig(connection), 'sm ghost') : null,
+        connection ? copyButton('Copy key', () => connection.headers.Authorization.replace(/^Bearer /, ''), 'sm ghost') : null,
+        revoke,
+      ),
+    );
   }
 
   function addForm(s: RemoteMcpState): Node {
