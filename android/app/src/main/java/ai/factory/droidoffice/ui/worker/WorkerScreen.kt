@@ -85,6 +85,7 @@ import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import ai.factory.droidoffice.core.Asks
 import ai.factory.droidoffice.core.Choices
+import ai.factory.droidoffice.core.EffortDial
 import ai.factory.droidoffice.core.ClientMsg
 import ai.factory.droidoffice.core.Keys
 import ai.factory.droidoffice.core.PhoneSizing
@@ -105,6 +106,7 @@ import ai.factory.droidoffice.session.Phase
 import ai.factory.droidoffice.ui.LocalGraph
 import ai.factory.droidoffice.ui.LocalSnackbar
 import ai.factory.droidoffice.ui.LocalSnackbarLift
+import ai.factory.droidoffice.ui.components.EffortDialMark
 import ai.factory.droidoffice.ui.components.SecondaryButton
 import ai.factory.droidoffice.ui.components.Spinner
 import ai.factory.droidoffice.ui.components.StatusPill
@@ -405,15 +407,16 @@ private fun Header(w: WorkerInfo, embedded: Boolean, connected: Boolean, onBack:
             val parts = buildList {
                 w.cloud?.where?.let { add("☁ $it") }
                 if (w.isShell) add("Shell") else Workers.modelId(w)?.let { add(catalogue.nameOf(it).replace(Regex("^DroidProxy:\\s*", RegexOption.IGNORE_CASE), "")) }
-                Workers.effort(w)?.let { if (!w.isShell) add(it.label) }
                 add(deskLabel(w.deskId).replaceFirstChar { it.uppercaseChar() })
                 Workers.workedMs(w, now).takeIf { it >= 1000 }?.let { add(Workers.duration(it)) }
             }
             // Model names as they're written ("GPT 6.1 Sol", "Sonnet 5.5"), and all of it: a narrow
             // screen or a large font wraps between the parts rather than cutting the desk off.
             Row(verticalAlignment = Alignment.Top, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                WorkerModelLogo(w, catalogue, modifier = Modifier.padding(top = 1.dp).size(14.dp))
-                MetaLine(parts, Modifier.weight(1f).tagged(Tags.Worker.META))
+                WorkerModelLogo(w, catalogue, modifier = Modifier.padding(top = 1.dp).size(14.dp), behind = Palette.Bg)
+                val effort = Workers.effort(w)?.takeIf { !w.isShell && Workers.modelId(w) != null }
+                val spoken = parts.toMutableList().apply { if (effort != null) add(if (w.cloud != null) 2 else 1, EffortDial.label(effort)) }.joinToString(" · ")
+                MetaLine(parts, Modifier.weight(1f).tagged(Tags.Worker.META), spoken, effort?.let { e -> { EffortDialMark(e, Modifier.padding(start = 6.dp)) } }, if (w.cloud != null) 1 else 0)
             }
         }
         // Out of reach, the last status the office sent may be long gone: the offline notice says so instead.
@@ -651,16 +654,17 @@ private fun QuickKey(label: String, spoken: String, tag: String, accent: Boolean
  * a large font wraps between parts, and no line starts or ends with a dot. It reads as one line.
  */
 @Composable
-private fun MetaLine(parts: List<String>, modifier: Modifier) {
+private fun MetaLine(parts: List<String>, modifier: Modifier, spoken: String = parts.joinToString(" · "), mark: (@Composable () -> Unit)? = null, markAfter: Int = 0) {
     val style = LocalOfficeType.current.monoBody.copy(fontSize = 11.sp, lineHeight = 15.sp, color = Palette.TextSecondary)
     Layout(
         content = {
             parts.forEachIndexed { i, part ->
                 if (i > 0) Text(" · ", style = style, maxLines = 1)
-                Text(part, style = style)
+                // The mark (the effort dial) travels with its part, so a wrap never strands it.
+                if (mark != null && i == markAfter) Row(verticalAlignment = Alignment.CenterVertically) { Text(part, style = style); mark() } else Text(part, style = style)
             }
         },
-        modifier = modifier.clearAndSetSemantics { text = AnnotatedString(parts.joinToString(" · ")) },
+        modifier = modifier.clearAndSetSemantics { text = AnnotatedString(spoken) },
     ) { measurables, constraints ->
         val loose = constraints.copy(minWidth = 0, minHeight = 0)
         val placeables = measurables.map { it.measure(loose) }

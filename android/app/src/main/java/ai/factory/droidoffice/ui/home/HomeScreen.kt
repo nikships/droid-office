@@ -73,12 +73,16 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.CustomAccessibilityAction
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.customActions
+import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.text
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import ai.factory.droidoffice.core.Tags
+import ai.factory.droidoffice.core.EffortDial
 import ai.factory.droidoffice.core.FloorOrder
 import ai.factory.droidoffice.core.WorkerInfo
 import ai.factory.droidoffice.core.WorkerRow
@@ -94,6 +98,7 @@ import ai.factory.droidoffice.session.Phase
 import ai.factory.droidoffice.ui.LocalGraph
 import ai.factory.droidoffice.ui.LocalSnackbar
 import ai.factory.droidoffice.ui.components.Chip
+import ai.factory.droidoffice.ui.components.EffortDialMark
 import ai.factory.droidoffice.ui.components.Eyebrow
 import ai.factory.droidoffice.ui.components.GlyphMark
 import ai.factory.droidoffice.ui.components.PrimaryButton
@@ -467,9 +472,20 @@ private fun WorkerCard(row: WorkerRow, data: OfficeData, now: Long, selected: Bo
                         if (w.isCloud) Tag("CLOUD")
                         if (row.subagents > 0) Tag("+${row.subagents}")
                     }
-                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    val effort = Workers.effort(w)?.takeIf { !w.isShell && model != null }
+                    val rest = meta(w, now, graph.connection.officeName)
+                    val shown = model?.takeIf { !w.isShell }?.replace(Regex("^DroidProxy:\\s*", RegexOption.IGNORE_CASE), "")?.uppercase()
+                    val spoken = listOfNotNull(model?.takeIf { !w.isShell }?.let { it + (effort?.let { e -> " · ${EffortDial.label(e)}" } ?: "") }, rest.takeIf { it.isNotEmpty() }).joinToString(" · ")
+                    val metaStyle = LocalOfficeType.current.eyebrow.copy(fontSize = 10.sp)
+                    Row(
+                        Modifier.tagged(Tags.Home.CARD_META).clearAndSetSemantics { text = AnnotatedString(spoken) },
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    ) {
                         WorkerModelLogo(w, catalogue, modifier = Modifier.size(14.dp))
-                        Text(meta(w, now, model, graph.connection.officeName), style = LocalOfficeType.current.eyebrow.copy(fontSize = 10.sp), maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.tagged(Tags.Home.CARD_META))
+                        if (shown != null) Text(shown, style = metaStyle, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f, fill = false))
+                        if (effort != null) EffortDialMark(effort)
+                        if (rest.isNotEmpty()) Text(if (shown != null) "· $rest" else rest, style = metaStyle, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f, fill = false))
                     }
                 }
                 StatusPill(state, acked = w.acked, tag = Tags.Home.CARD_STATUS)
@@ -526,10 +542,9 @@ private fun WorkerCard(row: WorkerRow, data: OfficeData, now: Long, selected: Bo
     }
 }
 
-/** The card's metadata line. A shell's tag already says it's a shell; what this phone hired doesn't say who. */
-private fun meta(w: WorkerInfo, now: Long, model: String?, me: String): String {
+/** The card's metadata after the model and its dial. A shell's tag already says it's a shell; what this phone hired doesn't say who. */
+private fun meta(w: WorkerInfo, now: Long, me: String): String {
     val parts = mutableListOf<String>()
-    if (!w.isShell && model != null) parts += model + (Workers.effort(w)?.let { " · ${it.label.lowercase()}" } ?: "")
     val worked = Workers.workedMs(w, now)
     if (worked >= 1_000) parts += Workers.duration(worked)
     if ((w.state == WorkerStatus.NeedsInput || (w.state == WorkerStatus.Done && !w.acked)) && w.waitingSince != null) parts += Workers.ago(w.waitingSince, now)

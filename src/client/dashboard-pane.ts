@@ -15,7 +15,7 @@ import { store } from './state';
 import { h, STATUS_LABEL, toast } from './ui/dom';
 import { colorDot } from './ui/kit';
 import { icon, type IconName } from './ui/icons';
-import { modelBadge, modelBadgeNode } from './ui/models';
+import { modelBadgeLabel, modelBadgeNode } from './ui/models';
 import { openForkWorker } from './ui/fork-worker';
 import { mountWorkerThread, type WorkerThread } from './ui/worker-thread';
 import { openQuestionWorkspace, type QuestionDraft, type QuestionReply } from './ui/question-workspace';
@@ -379,7 +379,7 @@ export function createPane(host: PaneHost, index: number): Pane {
       who.replaceChildren();
       name.textContent = 'Empty pane';
       task.textContent = '';
-      model.textContent = '';
+      model.replaceChildren();
       pill.hidden = true;
       views.hidden = flip.hidden = true;
       return;
@@ -390,7 +390,8 @@ export function createPane(host: PaneHost, index: number): Pane {
     const doing = w.task?.name ?? w.title ?? doingLine(w);
     task.textContent = doing;
     task.title = doing;
-    model.textContent = (w.kind === 'agent' ? modelBadge(w.activeModel ?? w.model, w.activeEffort ?? w.effort) : kind(w)) ?? '';
+    const engine = w.kind === 'agent' ? modelBadgeNode(w.activeModel ?? w.model, w.activeEffort ?? w.effort) : kind(w);
+    model.replaceChildren(...(engine ? [engine] : []));
     pill.hidden = false;
     pill.className = `pill ${w.status}`;
     pill.textContent = STATUS_LABEL[w.status] ?? w.status;
@@ -504,7 +505,7 @@ export function createPane(host: PaneHost, index: number): Pane {
     const lead = w.lead && store.workers.get(w.lead);
     const team = store.teamOf(w.id);
     const rows: [string, string | undefined][] = [
-      ['Model', w.kind === 'agent' ? modelBadge(w.activeModel ?? w.model, w.activeEffort ?? w.effort) : undefined],
+      ['Model', w.kind === 'agent' ? modelBadgeLabel(w.activeModel ?? w.model, w.activeEffort ?? w.effort) : undefined],
       ['Task', w.task?.name ?? w.title],
       ['Branch', w.worktree?.branch ?? store.currentFloor()?.branch],
       ['Worktree', w.worktree?.path],
@@ -524,7 +525,9 @@ export function createPane(host: PaneHost, index: number): Pane {
       ['Subagents', team.length ? team.map((m) => m.name).join(', ') : undefined],
       ['Other projects', w.repos?.map((r) => `${r.name} · ${r.branch}`).join(', ')],
     ];
-    info.meta.replaceChildren(...rows.filter(([, v]) => !!v).flatMap(([label, value]) => [h('dt', {}, label), h('dd', { title: value }, label === 'Model' ? modelBadgeNode(w.activeModel ?? w.model, w.activeEffort ?? w.effort) : value)]));
+    info.meta.replaceChildren(
+      ...rows.filter(([, v]) => !!v).flatMap(([label, value]) => [h('dt', {}, label), h('dd', { title: value }, label === 'Model' ? modelBadgeNode(w.activeModel ?? w.model, w.activeEffort ?? w.effort, { words: true }) : value)]),
+    );
     if (info.preview) renderPreview(info.preview, w.id, 40);
   }
 
