@@ -40,7 +40,19 @@ test('worker roster preserves hierarchy, focus and entry motion across updates',
       ['Nibble', '#4dbed4', 'Verifying DNS & networking'],
       ['Dot', '#d395ce', 'Rerunning messaging collector'],
       ['Widget', '#ce95ce', 'Reviewing logs & cost data'],
-    ].map(([name, color, prompt], index) => ({ id: name.toLowerCase(), name, color, prompt, createdAt: index, lead: index ? 'pixel' : undefined, kind: 'agent', status: 'working', acked: false }));
+    ].map(([name, color, prompt], index) => ({
+      id: name.toLowerCase(),
+      name,
+      color,
+      prompt,
+      createdAt: index,
+      lead: index ? 'pixel' : undefined,
+      kind: 'agent',
+      model: 'custom:droidproxy:opus-5-5',
+      effort: 'high',
+      status: 'working',
+      acked: false,
+    }));
     w.roster = w.TeamUI.createWorkerRoster(
       document.querySelector('#roster'),
       (id: string) => w.opened.push(id),
@@ -53,6 +65,14 @@ test('worker roster preserves hierarchy, focus and entry motion across updates',
   assert.deepEqual(await page.evaluate(() => (window as any).arrivals), [], 'initial snapshot does not animate');
   assert.equal(await page.locator('.dash-worker-team').count(), 1);
   assert.equal(await page.locator('.dash-subworker').count(), 1);
+  const rosterStyle = await page.addStyleTag({ content: readFileSync(new URL('../src/client/style.css', import.meta.url), 'utf8') });
+  const leadModel = page.locator('[data-worker=pixel] .dash-row-meta .model-badge');
+  const subworkerModel = page.locator('[data-worker=nibble] .dash-row-meta .model-badge');
+  assert.equal(await leadModel.isVisible(), true);
+  assert.equal(await subworkerModel.isVisible(), true, 'subworkers show the same model badge as their lead');
+  assert.equal(await subworkerModel.innerText(), await leadModel.innerText());
+  assert.equal(await subworkerModel.locator('.effort-dial').isVisible(), true, 'subworker model badges include effort');
+  await rosterStyle.evaluate((style) => style.remove());
   const toggle = page.locator('.dash-team-toggle');
   await toggle.focus();
   await page.evaluate(() => {

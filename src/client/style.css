@@ -2334,7 +2334,6 @@ html:has(body.dashboard), body.dashboard { overflow: auto; }
 .dash-subworker:last-child::after { bottom: auto; height: 21px; }
 .dash-subworker.on::before { background: var(--accent); }
 .dash-subworker .dash-row-open { padding: var(--space-2); border-radius: var(--radius); }
-.dash-subworker .dash-row-meta { display: none; }
 .dash-row { position: relative; margin-bottom: 2px; }
 .dash-row-open { display: flex; align-items: flex-start; gap: var(--space-2); width: 100%; padding: var(--space-2) var(--space-3) var(--space-2) var(--space-2); border: 1px solid transparent; border-radius: var(--radius-lg); background: none; color: var(--text); font: inherit; text-align: left; cursor: pointer; user-select: none; transition: background var(--duration) var(--ease), border-color var(--duration) var(--ease); }
 .dash-row-open:active { cursor: grabbing; }
