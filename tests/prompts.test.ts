@@ -61,7 +61,7 @@ test('worker deliveries separate sender text from office guidance without reinte
 });
 
 test('automatic notices label the office as their source', () => {
-  for (const id of ['subagent.nudge', 'whiteboard.ping', 'pipeline.heal'] as const) {
+  for (const id of ['subagent.nudge', 'whiteboard.ping', 'whiteboard.button', 'pipeline.heal'] as const) {
     assert.match(PROMPTS[id].text, /^Droid Office notice:/, id);
   }
   assert.match(PROMPTS['subagent.nudge'].text, /not a message from a worker/);

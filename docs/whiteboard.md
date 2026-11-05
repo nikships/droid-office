@@ -16,7 +16,7 @@ Status: **implemented**, apart from the renderer checks on Linux, Windows, the E
 - **What the owner creates:** a blank canvas card (for stickies, pictures and comments), and their own pasted or uploaded HTML as an artifact.
 - **Agents are not limited.** Anything the owner can do on the board, an agent can do through Office MCP tools, and more: create, update, rename, delete, reply to and resolve comments, manage stickies and pictures, read and set state, and choose what the wall shows.
 - **One board per floor.** Every agent on that floor reads and edits every card (see [Which agents](#which-agents) for what "agent" covers). An agent cannot reach another floor's board.
-- **Feedback is never sent.** The owner tells an agent to look. The window has one helper for that: a **Ping a worker** button. You pick an active worker on the floor, and the office types a line into its terminal telling it to read the board. There is no blocking `wait` command.
+- **Feedback is never sent.** The owner tells an agent to look. The window has one helper for that: a **Ping a worker** button. You pick an active worker on the floor, and the office types a line into its terminal telling it to read the board. A card's own buttons can do it too: a `data-wb-ping` button tells the worker who made the page, once (see [Buttons that tell a worker](#buttons-that-tell-a-worker)). There is no blocking `wait` command.
 - **The wall mirrors the window.** If you left the board on the grid, the wall shows the grid of thumbnails. If you left it on one artifact (opened it, did something, walked away without going back to the grid), the wall keeps that artifact up large, live.
 - **You work on artifacts in a full-size window inside the office**, like the PR or terminal window. There is no separate browser page.
 - **Only the current state is kept.** There are no versions and no change log. The "changed since you last looked" marks come from revision stamps, not history (see [Reading the board](#reading-the-board)).
@@ -96,6 +96,18 @@ Cloud workers are excluded, and the window and the guide say so:
 - If a worker's status changes while the picker is open, the picker updates. A ping that becomes ineligible on the way fails with an inline reason.
 - The line is an editable office prompt (`src/shared/prompts.ts`), directing the worker to `whiteboard_read`.
 
+### Buttons that tell a worker
+
+A plain `data-wb-action` press is only recorded, for the next read. A button that asks a worker to do something (Accept, Approve, Deny, Pick this one) also carries the message for it: `<button data-wb-action="accept" data-wb-ping="The owner accepted the proposal. Build it.">Accept and build</button>`.
+
+- **Who it tells:** the worker who last edited the card's page (its content stamp's author, so the worker that keeps the card up to date). A title or state change doesn't count. A page the owner made or replaced tells nobody.
+- **When it works:** only while that worker is on the floor, is an agent and still has its worktree. Otherwise the SDK disables every `data-wb-ping` button on the card, with the reason as its tooltip, and enables it again when the worker comes back. Until the window or the Android app says who the buttons tell, they stay disabled.
+- **How it goes in:** as an editable office notice (the *A Whiteboard button tells a worker* prompt, `whiteboard.button`) naming the button, the card and the message, fenced as data. It steers a working turn (handed over by its hooks), is typed in when the worker is idle or done, wakes an asleep one, and waits for a worker that's starting or waiting on an answer in its terminal until it has started or the question is answered. Nothing is typed into a question.
+- **Once:** the press records `state.actions[name]` as any action does, and `state.pinged[name] = { text, label, at }`. While that entry is there the button stays disabled as sent, on every window and the phone. The worker re-arms it by deleting `pinged.<name>` with `whiteboard_state`. A second press that arrives anyway (another window) is recorded but not sent again.
+- **When it can't go:** the server checks the target again when the press arrives. If the worker left in between, or typing into it fails, the office deletes the `pinged` entry so the button works again, and tells the owner why.
+- **What the page can style:** each `data-wb-ping` button carries `data-wb-ping-state` (`ready`, `sent` or `unavailable`) and `aria-disabled`. A button the page disabled itself stays disabled, and the page's own `title` comes back when the button is ready.
+- The window confirms a press with a toast naming who it went to and how ("Sent “Accept” to Pixel, waking it up"), the Android app with a snackbar.
+
 ## What agents get
 
 ### Office MCP tools
@@ -122,7 +134,7 @@ The authenticated [Office MCP](office-mcp.md) gives local workers tools to read 
 The office injects a small script into every artifact's sandbox:
 
 - `whiteboard.state.get(path?)`, `whiteboard.state.set(value)`, `whiteboard.state.merge(obj)`, `whiteboard.state.del(path)`, and `whiteboard.on('state', fn)` whenever it changes: at once for the page's own writes and presses (the window never echoes those back, so the page tells its own listeners), and as they arrive for the owner's and agents'. A write made inside a state listener doesn't fire it again, so a listener that writes can't loop.
-- `whiteboard.action(name, data?)` records the last press of a named action (`{ name, data, at }`) in the card's state. A `<button data-wb-action="approve">` does that with no script. The window confirms each press the board accepts with a toast, at most once every few seconds for the same action, so a button with no script of its own still visibly works.
+- `whiteboard.action(name, data?)` records the last press of a named action (`{ name, data, at }`) in the card's state. A `<button data-wb-action="approve">` does that with no script. The window confirms each press the board accepts with a toast, at most once every few seconds for the same action, so a button with no script of its own still visibly works. A button that also has `data-wb-ping` sends its message to the worker who made the page (see [Buttons that tell a worker](#buttons-that-tell-a-worker)).
 - Form fields with a `name` or `id` are saved into `state.fields` and restored on load, with no script.
 - `whiteboard.card` holds the card's id, title and author.
 - `whiteboard.rendering` is `true` when the renderer loaded the card. Then writes are dropped, and an artifact can skip side effects such as analytics or one-time network calls.
@@ -133,7 +145,7 @@ The Office MCP instructions cover:
 
 - When to use the board: anything visual, a plan to review, a choice to make, or a form for the owner to fill in.
 - Read before you change anything, and `changed` marks the owner's new input.
-- The JavaScript API.
+- The JavaScript API, and `data-wb-ping` on any button that asks the worker to act, with re-arming through `pinged.<name>`.
 - Good artifact habits: a `data-wb-id` on elements people will comment on, a layout that works at 1280 pixels wide, and no secrets in artifacts, since they have network access.
 
 The **Office MCP** switch in Settings controls access to all Office tools.
@@ -205,7 +217,7 @@ The **Office MCP** switch in Settings controls access to all Office tools.
 - `src/server/whiteboard.ts`: the per-floor store in the floor checkout's `.droid-office/whiteboard/` (`board.json` with the operation record, `key` for the HMAC card and epoch capabilities, and content-addressed `blobs/<sha256>`), crash-safe writes, epochs, leases and pinned snapshots, links and watchers, card responses, limits and pruning. `whiteboard-assets.ts` reads local assets, `whiteboard-sdk.ts` is injected into each page, and `office-mcp/whiteboard.ts` exposes agent tools.
 - `src/server/whiteboard-render.ts`: the renderer (`RenderEngine`, and the `FloorRenderer` each floor's store calls), its install, queue and cache, and the broadcasts `whiteboard.rendered` (per floor and card) and `whiteboard.renderer` (status). The office starts it only when the CLI runs it; a server started without `renders` (the tests) keeps `NoRenderer`.
 - `src/server/server.ts`: the Office MCP mount, the card route `/whiteboard/c/<cap>/<path>`, `/api/whiteboard/file` and `/api/whiteboard/blob` for the window, the render routes (`/api/whiteboard/render`, `/api/whiteboard/render/status`), the WebSocket messages and Ping a worker.
-- `src/shared/protocol.ts`: the Whiteboard snapshots, patches, acknowledgements, rejections, sync and ping messages. `src/shared/whiteboard-ping.ts` says whether a worker can be pinged.
+- `src/shared/protocol.ts`: the Whiteboard snapshots, patches, acknowledgements, rejections, sync and ping messages. `src/shared/whiteboard-ping.ts` says whether a worker can be pinged, and who a card's `data-wb-ping` buttons tell (`buttonTarget`) and how (`buttonDelivery`); `src/server/whiteboard-buttons.ts` sends a press on.
 - `src/client/whiteboard-sync.ts` (the window's board: optimistic batches, the queue while offline, resends in each batch's epoch, drafts of expired batches), `src/client/ui/whiteboard.ts` (the window), the sandbox bridge, and `src/client/world/boards.ts` (`WhiteboardTexture`, replacing `ServicesBoardTexture`).
 
 ## Removing Services
@@ -266,6 +278,7 @@ From the original integration pass. "By test" names the suite in `tests/`; "by h
 | Anchoring | Passed by test (`whiteboard-sdk`, 13 rewrites; numbers under [Risks](#risks-and-open-questions); `whiteboard-model` and `whiteboard-render`: detach and reattach, and marks drawn where the SDK places them). Passed by hand: a pin and a sticky far down a 6981-pixel page sit in the same place in the window, on the wall and in the PNG, and canvas stickies at negative points line up on the wall. |
 | Lifetimes | Passed by test (`whiteboard-model`, `whiteboard-store`). Passed by hand: a dismissed author's card still says who made it, a floor removed and added back keeps its board and selection, the selection survives a restart, and deleting the selected card puts the wall on the grid. |
 | Ping | Passed by test (`whiteboard-sync`: every status, kind and condition; `whiteboard-e2e`: refused while starting, typed when idle, queued behind a working turn). By hand, the picker refused plain shells and two workers in `needs_input`, each with its reason. |
+| Buttons that tell a worker | Passed by test (`whiteboard-buttons`: the one-shot `pinged` record, who a page's buttons tell, delivery by status, the notice; `whiteboard-sdk`: disabled until the window says who, spent after a press, re-armed, buttons added later; `whiteboard-e2e`: a press typed into the agent once, re-armed through `whiteboard_state`, and taken back on the owner's own page). |
 | Renderer | Passed by test on macOS from a checkout (`whiteboard-browser`: a real launch with the sandbox on; `whiteboard-render`: install progress, failed downloads, a browser that can't start, no renderer). **Not run:** the packaged signed Mac app, fresh Linux and Windows source checkouts, and an Ubuntu 24.04 EC2 checkout through `deploy/aws.sh`. |
 | UI | Passed by hand at 1440×900 and 1024×700: the grid, Fit and 100% on a long page, the wall's view of it at the last viewport (top and bottom of the page, across tile seams), Esc from inside the frame and on the stack (the ping picker first, then the window), and walking away mid-edit. Passed by test (`whiteboard-window`, `whiteboard-wall`: the view and region math). |
 | Viewport navigation | Passed by test (`whiteboard-sdk`, real Chromium wheel/Ctrl-wheel and pointer input): pointer-anchored pinch, two-axis pan, fractional gesture bursts, stale layout acknowledgements, middle-button drag, Pan while marking up, temporary Space-pan, form typing, navigation shortcuts inside HTML, nested-scroll handoff, remembered views, and canvas navigation. `whiteboard-window` checks subpixel anchors and device delta normalization; `whiteboard-model` checks bridge validation. |

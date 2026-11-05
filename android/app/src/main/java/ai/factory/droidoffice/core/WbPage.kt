@@ -38,9 +38,10 @@ sealed interface WbPageMsg {
      * Operations the page made for this card: a form field or the page's own state, a recorded action,
      * a mark moved or reattached, a new sticky or picture, where its marks landed. The page shows them
      * at once and waits for [WbPage.done] with [id]. [action] names an action the page recorded, so the
-     * app can confirm it.
+     * app can confirm it; [ping] is the button's words when that was a `data-wb-ping` button's first
+     * press, which the office sends on to its worker.
      */
-    data class Ops(val id: Long, val ops: List<JsonObject>, val what: String, val action: String? = null) : WbPageMsg
+    data class Ops(val id: Long, val ops: List<JsonObject>, val what: String, val action: String? = null, val ping: String? = null) : WbPageMsg
 
     /** The owner tapped a spot in Mark up: the comment composer opens on this anchor. */
     data class Comment(val anchor: JsonObject, val point: WbPoint) : WbPageMsg
@@ -219,7 +220,7 @@ object WbPage {
                 val ops = (o["ops"] as? JsonArray).orEmpty().mapNotNull { it as? JsonObject }
                     .filter { op -> op.text("op") in PAGE_OPS && op.text("card") == cardId }
                 // Some dropped: the page showed them all, so the board's answer puts it right.
-                WbPageMsg.Ops(id, ops, str("what")?.takeIf { it.isNotBlank() } ?: "Saving it", str("action")?.takeIf { it.isNotBlank() })
+                WbPageMsg.Ops(id, ops, str("what")?.takeIf { it.isNotBlank() } ?: "Saving it", str("action")?.takeIf { it.isNotBlank() }, str("ping")?.takeIf { it.isNotBlank() })
             }
             "comment" -> {
                 val anchor = o["anchor"] as? JsonObject ?: return null
@@ -299,6 +300,17 @@ object WbPage {
     fun focus(id: String) = call("focus") { put("id", id) }
 
     fun width(widthDp: Float) = call("width") { put("widthDp", widthDp) }
+
+    /** Who the card's `data-wb-ping` buttons tell now; the page passes it to the card, which disables them otherwise. */
+    fun buttons(target: ButtonTarget) = call("buttons") {
+        when (target) {
+            is ButtonTarget.To -> put("to", target.name)
+            is ButtonTarget.No -> {
+                put("to", JsonNull)
+                put("reason", target.reason)
+            }
+        }
+    }
 
     // A JSON object is a JavaScript expression, so the message goes in as written.
     private inline fun call(t: String, crossinline body: kotlinx.serialization.json.JsonObjectBuilder.() -> Unit): String =

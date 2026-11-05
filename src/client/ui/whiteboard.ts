@@ -10,6 +10,7 @@
 import type { ServerMsg } from '../../shared/protocol';
 import { changesSince, type ChangeItem } from '../../shared/whiteboard-marks';
 import { OWNER, cardChanged, cardsNewestFirst, findCard, type Board, type Card, type CardView, type Op, type Selection } from '../../shared/whiteboard';
+import { buttonDelivery, buttonTarget } from '../../shared/whiteboard-ping';
 import type { Net } from '../net';
 import { store } from '../state';
 import { withToken } from '../token';
@@ -33,6 +34,17 @@ let open: WindowCtl | null = null;
 
 /** How long a card's same action stays quiet after its "Recorded" toast. */
 const ACTED_TOAST_MS = 4000;
+
+/** What the window says when a `data-wb-ping` button's press goes to its worker (the office warns if it can't). */
+function sentToast(button: string, card: Card | undefined): string {
+  const t = card ? buttonTarget(card, store.workers.values()) : undefined;
+  if (!t?.ok) return `📨 Sent “${button}”.`;
+  const w = store.workers.get(t.id);
+  const how = w ? buttonDelivery(w) : 'tell';
+  if (how === 'resume') return `📨 Sent “${button}” to ${t.name}, waking it up.`;
+  if (how === 'hold') return w?.status === 'needs_input' ? `📨 Sent “${button}” to ${t.name}. It gets it once you answer the question in its terminal.` : `📨 Sent “${button}” to ${t.name}. It gets it once it has started.`;
+  return `📨 Sent “${button}” to ${t.name}.`;
+}
 
 /** Cards changed since the owner last opened them, for the ☰ menu's count. */
 export function whiteboardChanged(): number {
@@ -259,13 +271,15 @@ export function openWhiteboard(net: Net, opts: { card?: string; queueOffline?: b
         floor,
         apply,
         notify: (text) => toast(text, 'warn'),
-        acted: (name) => {
+        acted: (name, ping) => {
+          if (ping) return toast(sentToast(ping.label || name, board() ? findCard(board()!, c.id) : undefined));
           // A page that records actions by itself (a game, a timer) would otherwise bury the screen in toasts.
           const now = Date.now();
           if (now - (actedAt.get(name) ?? 0) < ACTED_TOAST_MS) return;
           actedAt.set(name, now);
           toast(`✅ Recorded “${name}” on this card. Workers see it when they read the board; Ping a worker to tell one now.`);
         },
+        buttons: (now) => buttonTarget(now, store.workers.values()),
         cardUrl: (nonce) => sync.cardUrl(floor, c.id, nonce),
         fileUrl,
         live: () => sync.state(floor) === 'live',
@@ -638,7 +652,7 @@ export function openWhiteboard(net: Net, opts: { card?: string; queueOffline?: b
     paintBars();
   }
 
-  const offs = [store.on('whiteboard', onBoard), store.on('workers', () => !card && paintGrid()), store.on('floor', () => store.floor !== floor && modal.close())];
+  const offs = [store.on('whiteboard', onBoard), store.on('workers', () => (card ? surface?.refreshButtons() : paintGrid())), store.on('floor', () => store.floor !== floor && modal.close())];
   const clock = window.setInterval(() => (card ? paintHeader() : paintGrid()), 30_000);
 
   // Keys: M switches Use and Mark up; H pans; F is full screen; + - 0 1 zoom. Not while typing in a field of the window.

@@ -158,6 +158,7 @@ test('both lead and subagent discover all five Whiteboard tools and their comple
   const instructions = r.client.getInstructions() ?? '';
   for (const detail of ['reviewable screenshots', 'name its title and id', 'Read feedback', 'window.whiteboard', 'data-wb-id', '1280', 'Never put secrets', 'state.fields', 'Linked cards', 'board.json'])
     assert.ok(instructions.includes(detail), detail);
+  for (const detail of ['data-wb-ping="', 'pinged.<name>', 'data-wb-ping-state']) assert.ok(instructions.includes(detail), detail);
 });
 
 test('reads move only returned read points, preserve full feedback, and sanitize text but not exact JSON', async (t) => {

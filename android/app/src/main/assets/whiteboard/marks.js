@@ -90,8 +90,24 @@ export function stateWith(state, op, now = Date.now()) {
     if (isObj(parent)) delete parent[path[path.length - 1]];
   } else if (op.op === 'state.action') {
     walk(s, ['actions'])[op.name] = { name: op.name, data: op.data === undefined ? null : copy(op.data), at: now };
+    if (isObj(op.ping) && !pinged(s, op.name)) {
+      const label = typeof op.ping.label === 'string' ? op.ping.label.trim() : '';
+      walk(s, ['pinged'])[op.name] = label ? { text: op.ping.text, label, at: now } : { text: op.ping.text, at: now };
+    }
   }
   return s;
+}
+
+/** Whether a `data-wb-ping` button's press is recorded, so the button stays disabled until its worker re-arms it. */
+export function pinged(state, name) {
+  return isObj(state?.pinged) && Object.hasOwn(state.pinged, name);
+}
+
+/** A frame action's `ping` (parseFrameMsg): undefined when there is none, null when it's the wrong shape. */
+export function pingOf(v) {
+  if (v === undefined) return undefined;
+  if (!isObj(v) || typeof v.text !== 'string' || (v.label !== undefined && typeof v.label !== 'string')) return null;
+  return v.label === undefined ? { text: v.text } : { text: v.text, label: v.label };
 }
 
 /** The board operation a frame's state write becomes (writeOp); null for a write of the wrong shape (parseFrameMsg). */
@@ -103,7 +119,7 @@ export function writeOp(card, w) {
   return null;
 }
 
-export const actionOp = (card, name, data) => (data === undefined ? { op: 'state.action', card, name } : { op: 'state.action', card, name, data });
+export const actionOp = (card, name, data, ping) => ({ op: 'state.action', card, name, ...(data === undefined ? {} : { data }), ...(ping === undefined ? {} : { ping }) });
 
 /** The state leaves that changed between two versions of a card, and who changed each: for "changed by Pixel". */
 export function stateChanges(before, next) {

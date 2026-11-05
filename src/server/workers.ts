@@ -1902,6 +1902,22 @@ export class WorkerManager {
   }
 
   /**
+   * An office message for a worker that mustn't be typed into now (it's starting, or asking in its
+   * terminal, where Enter would answer): its hooks hand it over once its turn goes on, or it's typed
+   * in once it comes to rest (see flushOutbox).
+   */
+  hold(id: string, text: string): string | undefined {
+    const w = this.workers.get(id);
+    if (!w) return 'No such worker';
+    if (!w.pty) return 'Worker is not running';
+    const clean = text.replace(/\r\n?/g, '\n').trim();
+    if (!clean) return 'Empty prompt';
+    w.outbox.push(clean);
+    this.persist();
+    return undefined;
+  }
+
+  /**
    * Types in the notices its hooks didn't get to hand over before it came to rest, once nobody has
    * typed into its terminal for NOTICE_TYPING_MS. One that's busy again by then gets them through its hooks.
    */
