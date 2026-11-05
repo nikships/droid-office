@@ -215,7 +215,7 @@ export function register(server: OfficeMcpServer, deps: OfficeMcpDeps): void {
           `May hire: ${body.canHire ? 'yes' : 'no'}. Subagents: ${subagents}${typeof body.max === 'number' ? `/${body.max}` : ', no limit'}. Wake the lead: ${body.wakeLead ? 'on' : 'off'}.`,
           ...(typeof body.why === 'string' ? [body.why] : []),
           `May visit: ${visitRefusal ? `no. ${visitRefusal}` : 'yes'}.`,
-          ...(owner ? ['Owner access: yes. office_roster, office_look, office_send_home and office_owner act on every floor as the owner does.'] : []),
+          ...(owner ? ['Owner access: yes. Focused office_* tools act across the building as the owner does. Use team_* for your subagents and visit_* for peer coordination.'] : []),
         ].join('\n'),
         identity,
       );

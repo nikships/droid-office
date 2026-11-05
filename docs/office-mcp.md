@@ -6,7 +6,8 @@ Status: implemented. One MCP server, `droid-office`, replaces the three commands
 
 - **External workers.** A separate loopback listener, which the office puts behind Tailscale Serve itself (on by default, switched in Settings → Phone & web → Tailscale MCP), serves external agents without a dummy Droid or PTY, with the owner's full access (below). Only the owner's own Tailscale devices reach it, and each bot has its own revocable key, separate from hook tokens. Their identities, teams, and inbox span floors: moving a desk does not strand subagents or conversations. See [External workers over Tailscale](guide/remote-workers.md) for provisioning, the network boundary, polling and persistence.
 
-- **Owner access for external workers.** The owner decided an external worker may do everything the owner can, with no setting and no refusals: it has the owner's trust because the owner provisioned its key. Four external-only tools carry this. `office_roster` lists every worker in the building; `office_look` reads any worker's terminal or a floor's boss shell; `office_send_home` sends any worker home (owner-hired, another lead's subagent, another external worker, itself or its lead), defaulting to cleanup `keep` and reporting a dirty worktree or unpushed commits first; `office_owner` sends any other action the owner's window sends. Each action runs through the same WebSocket handler (`handleMessage` in `server.ts`) on a virtual owner connection named after the caller, so it has the owner's checks, effects and toasts, attributed to the worker. The reply is `done`, a refusal, `pending` (no outcome within 30 seconds) or `unconfirmed` (the handler neither refused nor confirmed it, as when it ignores an unknown id), with the toasts the action raised and any answer, capped at 60,000 characters of text. External workers also skip the Subagents permission, the allowed-model list and the per-lead team size; office capacity and models that cannot run still refuse. Local Droid workers keep their existing rules and never see the owner tools. `office_owner` leaves out actions that only make sense for a live window: `profile`, `floor.go`, `worker.attach`/`detach`, `shell.attach`/`detach`/`resize`, `term.resize`, `whiteboard.apply`/`sync` (the Whiteboard tools cover these), `changes.watch`/`unwatch`, `factory.watch`, `automation.result` and `ping`.
+- **Owner access for external workers.** A provisioned external bot has the owner's authority, without an additional permission toggle, but the owner's normal runtime checks still apply. `office_roster`, `office_look` and `office_send_home` inspect and manage any worker across the building. Seventy-nine focused tools in `owner-tools.ts` cover the remaining operations, one named operation per tool: workers, raw terminal input, floors, forge writes, pipelines, settings, connections, setup, worktree changes, pictures and music. There is no generic `office_owner` tool. Each tool has a strict, self-contained schema checked against its `ClientMsg` type, appropriate read-only/destructive/external-effect annotations, and a documented scope. The three DroidProxy operations are separate tools with no action selector. Shared nested schemas live in `owner-schemas.ts`; unknown fields and invalid combinations are refused before dispatch.
+- **Owner routing and outcomes.** Worker tools resolve ids or unambiguous names across floors; a supplied floor must match. Floor tools resolve ids, names or elevator numbers; office-wide tools accept no floor. The server supplies internal request ids and routes through the same `handleMessage` owner handler on a virtual connection named after the bot. Results report `done`, refusal, `pending` (no confirmed outcome within 30 seconds) or `unconfirmed`, with notes and a bounded reply. Uncertain mutations are never automatically replayed. Sending home keeps worktrees, branches and cloud sessions by default, with explicit deletion options. External workers bypass local Subagents permissions, model allowlists and per-lead limits, but still obey capacity and model availability. Local workers keep their existing tools and rules. Window streaming, subscriptions and heartbeat messages remain internal: `profile`, `floor.go`, attach/detach/resize, `changes.watch`/`unwatch`, `factory.watch`, `automation.result` and `ping`; Whiteboard tools already cover board operations.
 - **Library.** The official TypeScript SDK's server package, [`@modelcontextprotocol/server`](https://github.com/modelcontextprotocol/typescript-sdk) **2.3.1**, pinned, with Zod **4.6.7**. `createMcpHandler` serves stateless Streamable HTTP and builds a low-level `Server` per request for the authenticated caller, so its `tools/list` handler lists only the tools that caller may use and its `tools/call` handler applies the same predicate. Requests whose `Host` is not a loopback name are refused (`hostHeaderValidationResponse`), so a web page cannot reach the server by rebinding its own name. A small adapter (`node-http.ts`) turns the hook server's Node request into a web `Request` and streams the `Response` back. The SDK has no telemetry and discovers nothing on its own.
 - **Transport and mount.** Streamable HTTP, mounted on the office's hook server (`127.0.0.1:<hookPort>`) at `/office/mcp`. The tools call the server-side code (`team.ts`, `whiteboard.ts` and `whiteboard-agent.ts`, `visits.ts`) directly, not over HTTP.
 - **Identity.** Every protocol request carries `Authorization: Bearer <DROID_OFFICE_HOOK_TOKEN>` and `x-droid-office-worker-id: <DROID_OFFICE_WORKER_ID>`. The token is resolved through `WorkerManager.authenticate`, as the status hooks are. Missing, mismatched, revoked and non-agent identities are refused before protocol initialization; there are no anonymous tools.
@@ -41,7 +42,7 @@ Each module exports `instructions` and `register(server, deps)`. Register with `
 
 ## Tools
 
-Twenty-four local-worker tools, plus eight external-worker tools. Names, inputs and who sees them are the contract between the modules; change them only by changing this table.
+Existing team, visit and Whiteboard tools retain their contracts. External workers additionally have identity/workspace tools and 82 owner tools (three building-wide helpers and 79 focused operations). Names and inputs are the contract; update this table and the [remote reference](guide/remote-mcp.md) when they change.
 
 | Tool | Replaces | Input (all strings unless noted) | Who sees it |
 | --- | --- | --- | --- |
@@ -52,8 +53,86 @@ Twenty-four local-worker tools, plus eight external-worker tools. Names, inputs 
 | `office_status` | external worker self-reported activity | `status`: idle/working/done; `activity?` | external workers only |
 | `office_roster` | the owner's view of the building | `floor?` (id, 1-based number or name) | external workers only |
 | `office_look` | the owner opening a terminal | `name` (worker id or name, or `office-shell`), `floor?`, `lines?` (1–400, default 80) | external workers only |
-| `office_send_home` | the owner's SEND HOME | `name`, `floor?`, `cleanup?`: `keep` (default) \| `worktree` \| `all` | external workers only; any worker, including itself |
-| `office_owner` | every other owner window action | `action` (a `ClientMsg` type from `src/shared/protocol.ts`), `args` (its fields), `floor?` | external workers only; same effect and toast as the owner |
+| `office_send_home` | the owner's SEND HOME | `name`, `floor?`, `cleanup?`: `keep` (default) \| `worktree` \| `all`; `deleteSession?` (default false) | external workers only; any worker, including itself |
+| `office_floor_reorder` | `floor.reorder` | `floor`, `before`; [full schema reference](guide/remote-mcp.md#office_floor_reorder) | external workers only |
+| `office_repositories_list` | `floor.repos` | `refresh?`; [full schema reference](guide/remote-mcp.md#office_repositories_list) | external workers only |
+| `office_folders_list` | `floor.folders` | `dir?`; [full schema reference](guide/remote-mcp.md#office_folders_list) | external workers only |
+| `office_floor_branches` | `floor.branches` | `floor?`; [full schema reference](guide/remote-mcp.md#office_floor_branches) | external workers only |
+| `office_floor_branch_set` | `floor.branch` | `floor?`, `branch`; [full schema reference](guide/remote-mcp.md#office_floor_branch_set) | external workers only |
+| `office_floor_add` | `floor.add` | `dir`; [full schema reference](guide/remote-mcp.md#office_floor_add) | external workers only |
+| `office_floor_remove` | `floor.remove` | `floor`; [full schema reference](guide/remote-mcp.md#office_floor_remove) | external workers only |
+| `office_workspace_set` | `floor.projectsDir` | `dir`; [full schema reference](guide/remote-mcp.md#office_workspace_set) | external workers only |
+| `office_worker_spawn` | `worker.spawn` | `floor?`, `deskId?`, `prompt?`, `worktree?`, `kind?`, `model?`, `effort?`, `issue?`, `repos?`, `images?`, `cloud?`; [full schema reference](guide/remote-mcp.md#office_worker_spawn) | external workers only |
+| `office_worker_fork` | `worker.fork` | `workerId`, `floor?`, `prompt?`; [full schema reference](guide/remote-mcp.md#office_worker_fork) | external workers only |
+| `office_worker_resume` | `worker.resume` | `workerId`, `floor?`; [full schema reference](guide/remote-mcp.md#office_worker_resume) | external workers only |
+| `office_worker_shoot` | `worker.shoot` | `workerId`, `floor?`, `superShot?`; [full schema reference](guide/remote-mcp.md#office_worker_shoot) | external workers only |
+| `office_worker_worktree` | `worker.worktree` | `workerId`, `floor?`; [full schema reference](guide/remote-mcp.md#office_worker_worktree) | external workers only |
+| `office_worker_rebuild` | `worker.rebuild` | `workerId`, `floor?`, `all?`; [full schema reference](guide/remote-mcp.md#office_worker_rebuild) | external workers only |
+| `office_worker_prompt` | `worker.prompt` | `workerId`, `floor?`, `prompt`, `issue?`, `images?`, `queue?`; [full schema reference](guide/remote-mcp.md#office_worker_prompt) | external workers only |
+| `office_worker_answer` | `worker.answer` | `workerId`, `floor?`, `menu`, `choice?`, `choices?`, `text?`; [full schema reference](guide/remote-mcp.md#office_worker_answer) | external workers only |
+| `office_worker_pr_create` | `worker.pr` | `workerId`, `floor?`; [full schema reference](guide/remote-mcp.md#office_worker_pr_create) | external workers only |
+| `office_worker_interrupt` | `worker.interrupt` | `workerId`, `floor?`; [full schema reference](guide/remote-mcp.md#office_worker_interrupt) | external workers only |
+| `office_worker_thread` | `thread.read` | `workerId`, `floor?`, `before?`; [full schema reference](guide/remote-mcp.md#office_worker_thread) | external workers only |
+| `office_terminal_write` | `term.input` | `workerId`, `floor?`, `data`; [full schema reference](guide/remote-mcp.md#office_terminal_write) | external workers only |
+| `office_station_open` | `station.open` | `floor?`, `deskId`; [full schema reference](guide/remote-mcp.md#office_station_open) | external workers only |
+| `office_station_prompt` | `station.prompt` | `floor?`, `deskId`, `prompt`, `model?`, `effort?`, `images?`; [full schema reference](guide/remote-mcp.md#office_station_prompt) | external workers only |
+| `office_shell_write` | `shell.input` | `floor?`, `data`; [full schema reference](guide/remote-mcp.md#office_shell_write) | external workers only |
+| `office_forge_refresh` | `gh.refresh` | `floor?`; [full schema reference](guide/remote-mcp.md#office_forge_refresh) | external workers only |
+| `office_pull_merge` | `gh.merge` | `floor?`, `number`, `method`, `deleteBranch?`, `auto?`; [full schema reference](guide/remote-mcp.md#office_pull_merge) | external workers only |
+| `office_forge_comment` | `gh.comment` | `floor?`, `kind`, `number`, `body`; [full schema reference](guide/remote-mcp.md#office_forge_comment) | external workers only |
+| `office_forge_close` | `gh.close` | `floor?`, `kind`, `number`, `comment?`, `reason?`, `deleteBranch?`; [full schema reference](guide/remote-mcp.md#office_forge_close) | external workers only |
+| `office_forge_labels` | `gh.labels` | `floor?`, `kind`, `number`, `add?`, `remove?`; [full schema reference](guide/remote-mcp.md#office_forge_labels) | external workers only |
+| `office_gong_ring` | `gong` | `floor?`; [full schema reference](guide/remote-mcp.md#office_gong_ring) | external workers only |
+| `office_pipelines_refresh` | `pipelines.refresh` | `floor?`; [full schema reference](guide/remote-mcp.md#office_pipelines_refresh) | external workers only |
+| `office_pipeline_detail` | `pipelines.detail` | `floor?`, `id`; [full schema reference](guide/remote-mcp.md#office_pipeline_detail) | external workers only |
+| `office_pipeline_rerun` | `pipelines.rerun` | `floor?`, `id`, `failed`; [full schema reference](guide/remote-mcp.md#office_pipeline_rerun) | external workers only |
+| `office_pipeline_cancel` | `pipelines.cancel` | `floor?`, `id`; [full schema reference](guide/remote-mcp.md#office_pipeline_cancel) | external workers only |
+| `office_pipeline_run` | `pipelines.run` | `floor?`, `workflow`, `ref`, `inputs?`; [full schema reference](guide/remote-mcp.md#office_pipeline_run) | external workers only |
+| `office_leave_on_merge_set` | `leaveOnMerge.set` | `on`; [full schema reference](guide/remote-mcp.md#office_leave_on_merge_set) | external workers only |
+| `office_fresh_main_set` | `freshMain.set` | `on`; [full schema reference](guide/remote-mcp.md#office_fresh_main_set) | external workers only |
+| `office_auto_heal_set` | `autoHeal.set` | `floor?`, `on`; [full schema reference](guide/remote-mcp.md#office_auto_heal_set) | external workers only |
+| `office_model_visibility_set` | `models.hide` | `id`, `hidden`; [full schema reference](guide/remote-mcp.md#office_model_visibility_set) | external workers only |
+| `office_worker_labels_set` | `workerLabels.set` | `settings`; [full schema reference](guide/remote-mcp.md#office_worker_labels_set) | external workers only |
+| `office_subagents_set` | `subagents.set` | `settings`; [full schema reference](guide/remote-mcp.md#office_subagents_set) | external workers only |
+| `office_prompt_set` | `prompts.set` | `id`, `text`; [full schema reference](guide/remote-mcp.md#office_prompt_set) | external workers only |
+| `office_default_agent_set` | `prompts.agent` | `choice`; [full schema reference](guide/remote-mcp.md#office_default_agent_set) | external workers only |
+| `office_worktree_setup_get` | `worktreeSetup.get` | `floor?`; [full schema reference](guide/remote-mcp.md#office_worktree_setup_get) | external workers only |
+| `office_worktree_setup_set` | `worktreeSetup.set` | `floor?`, `setup`; [full schema reference](guide/remote-mcp.md#office_worktree_setup_set) | external workers only |
+| `office_worker_limit_set` | `machine.limit` | `limit`; [full schema reference](guide/remote-mcp.md#office_worker_limit_set) | external workers only |
+| `office_jira_connect` | `jira.connect` | `site`, `email`, `token`; [full schema reference](guide/remote-mcp.md#office_jira_connect) | external workers only |
+| `office_jira_disconnect` | `jira.disconnect` | none; [full schema reference](guide/remote-mcp.md#office_jira_disconnect) | external workers only |
+| `office_jira_epic_set` | `jira.epic` | `floor?`, `key`; [full schema reference](guide/remote-mcp.md#office_jira_epic_set) | external workers only |
+| `office_jira_refresh` | `jira.refresh` | `floor?`; [full schema reference](guide/remote-mcp.md#office_jira_refresh) | external workers only |
+| `office_factory_connect` | `factory.connect` | `key`; [full schema reference](guide/remote-mcp.md#office_factory_connect) | external workers only |
+| `office_factory_disconnect` | `factory.disconnect` | none; [full schema reference](guide/remote-mcp.md#office_factory_disconnect) | external workers only |
+| `office_factory_refresh` | `factory.refresh` | `feature?`; [full schema reference](guide/remote-mcp.md#office_factory_refresh) | external workers only |
+| `office_setup_check` | `setup.check` | none; [full schema reference](guide/remote-mcp.md#office_setup_check) | external workers only |
+| `office_droid_install` | `setup.droid.install` | none; [full schema reference](guide/remote-mcp.md#office_droid_install) | external workers only |
+| `office_droid_sign_in` | `setup.droid.signIn` | none; [full schema reference](guide/remote-mcp.md#office_droid_sign_in) | external workers only |
+| `office_droid_sign_in_cancel` | `setup.droid.signInCancel` | none; [full schema reference](guide/remote-mcp.md#office_droid_sign_in_cancel) | external workers only |
+| `office_onboarding_set` | `setup.onboarded` | `done`; [full schema reference](guide/remote-mcp.md#office_onboarding_set) | external workers only |
+| `office_proxy_install` | `subscriptions.proxy` | none; [full schema reference](guide/remote-mcp.md#office_proxy_install) | external workers only |
+| `office_proxy_start` | `subscriptions.proxy` | none; [full schema reference](guide/remote-mcp.md#office_proxy_start) | external workers only |
+| `office_proxy_open` | `subscriptions.proxy` | none; [full schema reference](guide/remote-mcp.md#office_proxy_open) | external workers only |
+| `office_subscription_connect` | `subscriptions.connect` | `provider`; [full schema reference](guide/remote-mcp.md#office_subscription_connect) | external workers only |
+| `office_subscription_connect_cancel` | `subscriptions.connectCancel` | `provider`; [full schema reference](guide/remote-mcp.md#office_subscription_connect_cancel) | external workers only |
+| `office_subscription_disconnect` | `subscriptions.disconnect` | `provider`, `account`; [full schema reference](guide/remote-mcp.md#office_subscription_disconnect) | external workers only |
+| `office_subscription_provider_set` | `subscriptions.provider` | `provider`, `enabled`; [full schema reference](guide/remote-mcp.md#office_subscription_provider_set) | external workers only |
+| `office_subscription_models_sync` | `subscriptions.models` | none; [full schema reference](guide/remote-mcp.md#office_subscription_models_sync) | external workers only |
+| `office_subscriptions_refresh` | `subscriptions.refresh` | none; [full schema reference](guide/remote-mcp.md#office_subscriptions_refresh) | external workers only |
+| `office_changes_diff` | `changes.diff` | `workerId`, `floor?`, `path`, `repo?`; [full schema reference](guide/remote-mcp.md#office_changes_diff) | external workers only |
+| `office_changes_commit` | `changes.commit` | `workerId`, `floor?`, `message`, `repo?`; [full schema reference](guide/remote-mcp.md#office_changes_commit) | external workers only |
+| `office_changes_discard` | `changes.discard` | `workerId`, `floor?`, `path?`, `repo?`; [full schema reference](guide/remote-mcp.md#office_changes_discard) | external workers only |
+| `office_changes_pr_create` | `changes.pr` | `workerId`, `floor?`, `title`, `body`, `repo?`; [full schema reference](guide/remote-mcp.md#office_changes_pr_create) | external workers only |
+| `office_upgrade_check` | `upgrade.check` | none; [full schema reference](guide/remote-mcp.md#office_upgrade_check) | external workers only |
+| `office_upgrade_start` | `upgrade.start` | none; [full schema reference](guide/remote-mcp.md#office_upgrade_start) | external workers only |
+| `office_picture_add` | `decor.add` | `floor?`, `decor`; [full schema reference](guide/remote-mcp.md#office_picture_add) | external workers only |
+| `office_picture_update` | `decor.update` | `floor?`, `id`, `decor`; [full schema reference](guide/remote-mcp.md#office_picture_update) | external workers only |
+| `office_picture_remove` | `decor.remove` | `floor?`, `id`; [full schema reference](guide/remote-mcp.md#office_picture_remove) | external workers only |
+| `office_jukebox_play` | `jukebox.play` | `track?`, `url?`; [full schema reference](guide/remote-mcp.md#office_jukebox_play) | external workers only |
+| `office_jukebox_skip` | `jukebox.skip` | none; [full schema reference](guide/remote-mcp.md#office_jukebox_skip) | external workers only |
+| `office_jukebox_stop` | `jukebox.stop` | none; [full schema reference](guide/remote-mcp.md#office_jukebox_stop) | external workers only |
+| `office_whiteboard_ping` | `whiteboard.ping` | `worker`, `floor?`; [full schema reference](guide/remote-mcp.md#office_whiteboard_ping) | external workers only |
 | `team_models` | `office-workers models` | none | may hire |
 | `models_list` | full model discovery | none; includes `enabled: false` for switched-off/disallowed models | may hire |
 | `team_hire` | `office-workers hire` | `title`, `brief` (or `task: {title, brief, repo, baseBranch, branch?, prNumber?, acceptanceCriteria?}`), `model?`, `effort?` (low/medium/high/xhigh/max), `from?` (ref), `worktree?` (boolean; omitted follows the owner's Subagents setting). Returns `worktree` and `branch` immediately | may hire |
@@ -93,4 +172,5 @@ Local workers keep their existing floor scope and terminal delivery semantics.
 
 - `src/server/office-mcp/index.ts`: the server, its `instructions`, auth, per-caller filtering, the mount on the hook server, and the Droid connection config.
 - `src/server/office-mcp/team.ts`, `team-events.ts` (structured status helpers, `team_wait`, `team_report_get`, `questions_list`, `question_answer`), `whiteboard.ts`, `visits.ts`: one module per area, each exporting a `register(server, deps)` function. Each owns its tools' descriptions and its slice of the instructions.
+- `owner.ts`: roster, terminal reads, dismissal and common owner results; `owner-tools.ts`: focused tool registry and routing; `owner-schemas.ts`: shared validated inputs. Tests assert all 78 underlying owner actions remain reachable, without a generic gateway.
 - Tests: `tests/office-mcp*.test.ts`, calling tools through a real MCP client against the mounted server.
