@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url';
 import { app, type BaseWindow, clipboard, dialog, Menu, type MenuItemConstructorOptions, Notification, shell, type WebContents } from 'electron';
 import { downloadBrowser } from './browser.js';
 import { createCompanionWindow } from './companion.js';
+import { companionWindowMenu, sendCompanionCommand } from './companion-commands.js';
 import { contextMenu, editMenu } from './edit-menu.js';
 import { finderBridgeArgs, parseThreadLink } from './finder-links.js';
 import { leaveFullScreen } from './full-screen.js';
@@ -690,7 +691,14 @@ function menu(): Menu {
       submenu: [
         { label: 'Minimize', accelerator: 'CmdOrCtrl+M', click: () => base()?.minimize() },
         { label: 'Zoom', click: () => (base()?.isMaximized() ? base()?.unmaximize() : base()?.maximize()) },
-        { label: 'Close', accelerator: 'CmdOrCtrl+W', click: () => base()?.close() },
+        ...(companionMode()
+          ? companionWindowMenu(
+              (command) => {
+                if (base()?.isFocused()) sendCompanionCommand(contents(), officeUrl, command);
+              },
+              () => base()?.close(),
+            )
+          : [{ label: 'Close', accelerator: 'CmdOrCtrl+W', click: () => base()?.close() }]),
         { type: 'separator' },
         { role: 'front' },
       ],

@@ -9,7 +9,7 @@ import { BROWSER_KEY, DASHBOARD_FLOOR_KEY, browserCredential, draftKey, forgetBr
 import { Net } from './net';
 import { connectWhiteboard, store } from './state';
 import { setBrowserAuth, withToken } from './token';
-import { $, closeAllModals, h, modalOpen, openModal, toast } from './ui/dom';
+import { $, closeAllModals, closeTopModal, h, modalOpen, onModalChange, openModal, toast } from './ui/dom';
 import { windowHeader } from './ui/kit';
 import { icon, type IconName } from './ui/icons';
 import { confirmDialog, openPrompt, routeWorktreeMessage, sendHomeDialog } from './ui/prompt';
@@ -54,6 +54,9 @@ import {
 } from './dashboard-workspace';
 import { createPane, type Pane, type PaneHost, VIEW_KEY } from './dashboard-pane';
 import { createWorkerRoster } from './dashboard-roster';
+import { createWorkerMenu } from './dashboard-worker-menu';
+import { openForkWorker } from './ui/fork-worker';
+import { copy } from './ui/clipboard';
 import { workersByTeam } from '../shared/team';
 const read = (key: string) => {
   try {
@@ -147,7 +150,59 @@ const sideSub = h('p.dash-side-sub');
 const agentBtn = h('button.btn.accent.dash-hire', { type: 'button', title: 'Hire a Droid on this floor (⌘ N)', onclick: () => hire() }, icon('plus', 14), h('span', {}, 'Hire Droid'));
 const shellBtn = h('button.btn.dash-hire', { type: 'button', title: 'Open a plain shell at the next free desk', onclick: () => openShell() }, icon('terminal', 14), h('span', {}, 'Shell'));
 const workerList = h('nav.dash-workers', { 'aria-label': 'Workers' });
-const roster = createWorkerRoster(workerList, (id) => openHere(id, true), openBesideHere);
+const workerMenu = createWorkerMenu({
+  state(id) {
+    const worker = store.workers.get(id);
+    return worker ? { worker, floor, pane: paneOf(ws, id), live: live(), busy: busy.has(id), native: nativeCompanion } : undefined;
+  },
+  run(command, { worker: w, floor: intended, pane }) {
+    switch (command) {
+      case 'open':
+        openHere(w.id, true);
+        break;
+      case 'split':
+        openBesideHere(w.id);
+        break;
+      case 'close':
+        paneHost.close(pane);
+        break;
+      case 'resume':
+        void action({ t: 'worker.resume', workerId: w.id }, w.id, intended).then(warn);
+        break;
+      case 'interrupt':
+        void action({ t: 'worker.interrupt', workerId: w.id }, w.id, intended).then(warn);
+        break;
+      case 'fork':
+        openForkWorker(net, w.id);
+        break;
+      case 'pr':
+        if (w.pr) {
+          const url = URL.canParse(w.pr.url) ? new URL(w.pr.url) : undefined;
+          if (url && (url.protocol === 'https:' || url.protocol === 'http:')) window.open(url.href, '_blank', 'noopener,noreferrer');
+          else toast('This pull request link is invalid.', 'warn');
+        } else void action({ t: 'worker.pr', workerId: w.id }, w.id, intended, 'Opening a pull request…').then(warn);
+        break;
+      case 'copy-name':
+      case 'copy-branch':
+        void copy(command === 'copy-name' ? w.name : (w.worktree?.branch ?? '')).then((ok) => toast(ok ? 'Copied.' : 'Could not copy.', ok ? 'info' : 'warn'));
+        break;
+      case 'home':
+        sendHome(w);
+        break;
+    }
+  },
+});
+const roster = createWorkerRoster(
+  workerList,
+  (id) => openHere(id, true),
+  openBesideHere,
+  (id, event, anchor) => {
+    if (!modalOpen()) workerMenu.open(id, event, anchor);
+  },
+);
+onModalChange((open) => {
+  if (open) workerMenu.close();
+});
 const side = h('aside.dash-side', { 'aria-label': 'Floor' }, h('div.dash-side-head', {}, sideTitle, sideSub), workerList, h('footer.dash-side-foot', {}, h('div.dash-side-hire', {}, agentBtn, shellBtn), keyLegend()));
 
 /** The workspace's shortcuts, folded under one line until the owner opens them (remembered in this browser). */
@@ -157,7 +212,7 @@ function keyLegend() {
     'details.dash-keys-fold',
     { open: read(KEYS_KEY) === 'open' },
     h('summary', {}, 'Keyboard shortcuts', h('span.wt-chevron', { 'aria-hidden': 'true' }, icon('chevron', 12))),
-    h('div.dash-keys', { 'aria-hidden': 'true' }, ...keyHints(nativeCompanion ? [...WORKSPACE_KEY_HINTS, ['⌘ − +', 'floors']] : WORKSPACE_KEY_HINTS)),
+    h('div.dash-keys', { 'aria-hidden': 'true' }, ...keyHints(nativeCompanion ? [...WORKSPACE_KEY_HINTS, ['⌘ − +', 'floors'], ['⌘ W', 'close pane'], ['⇧ ⌘ W', 'send home']] : WORKSPACE_KEY_HINTS)),
   ) as HTMLDetailsElement;
   fold.addEventListener('toggle', () => remember(KEYS_KEY, fold.open ? 'open' : ''));
   return fold;
@@ -386,6 +441,7 @@ const paneHost: PaneHost = {
   close(i) {
     closeSlot(ws, i);
     changed();
+    panes[ws.focused]?.focusContent();
   },
   toggleMax: (i) => toggleMaxPane(i),
   assign(i, id) {
@@ -713,6 +769,7 @@ function paintFloors(up: boolean) {
 }
 
 function paint() {
+  workerMenu.refresh();
   title.textContent = officeName;
   const up = live();
   const here = store.currentFloor();
@@ -1123,11 +1180,23 @@ function accessDialog() {
 
 // --- Keys ------------------------------------------------------------------------------------------------
 
+if (nativeCompanion) {
+  window.addEventListener('droid-office:close-pane', () => {
+    if (workerMenu.close(true) || closeTopModal()) return;
+    if (live() && (focusedWorker(ws) || SLOT_COUNT[ws.layout] > 1)) paneHost.close(ws.focused);
+  });
+  window.addEventListener('droid-office:send-home', () => {
+    if (!live() || modalOpen() || workerMenu.isOpen()) return;
+    const w = store.workers.get(focusedWorker(ws) ?? '');
+    if (w && !busy.has(w.id)) sendHome(w);
+  });
+}
+
 // Capture Command chords even inside terminals and composers. Other keys belong to their editor.
 window.addEventListener(
   'keydown',
   (e) => {
-    if (!live() || modalOpen()) return;
+    if (!live() || modalOpen() || workerMenu.isOpen()) return;
     workspaceShortcut(
       e,
       (command) => {

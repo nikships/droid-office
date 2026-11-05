@@ -54,7 +54,7 @@ interface Group {
   children: HTMLElement;
 }
 
-export function createWorkerRoster(el: HTMLElement, open: (id: string) => void, split: (id: string) => void) {
+export function createWorkerRoster(el: HTMLElement, open: (id: string) => void, split: (id: string) => void, context?: (id: string, event: MouseEvent | KeyboardEvent, anchor: HTMLElement) => void) {
   const rows = new Map<string, Row>();
   const groups = new Map<string, Group>();
   const collapsed = new Set<string>();
@@ -108,6 +108,13 @@ export function createWorkerRoster(el: HTMLElement, open: (id: string) => void, 
         });
         const beside = h('button.btn.icon.sm.ghost.dash-row-split', { type: 'button', title: 'Open in a new pane', 'aria-label': `Open ${w.name} in a new pane`, onclick: () => split(w.id) }, icon('paneAdd', 13)) as HTMLButtonElement;
         r = { wrap: h('div.dash-row', {}, button, beside), open: button, split: beside, key: '' };
+        if (context) {
+          button.setAttribute('aria-haspopup', 'menu');
+          r.wrap.addEventListener('contextmenu', (event) => context(w.id, event, button));
+          r.wrap.addEventListener('keydown', (event) => {
+            if (event.key === 'ContextMenu' || (event.key === 'F10' && event.shiftKey)) context(w.id, event, button);
+          });
+        }
         rows.set(w.id, r);
       }
       r.wrap.classList.toggle('dash-subworker', !!parent);
