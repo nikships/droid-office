@@ -1,6 +1,7 @@
 import { BrowserWindow, shell } from 'electron';
 import { COMPANION_CHROME } from './companion-chrome.js';
 import { companionNavigation } from './finder-links.js';
+import { companionCommand, sendCompanionCommand } from './companion-commands.js';
 
 /** The dashboard in an ordinary Electron window, without the walkable office's Metal presenter. `main.ts` loads the page and owns the window. */
 export function createCompanionWindow(officeUrl: () => string | undefined): BrowserWindow {
@@ -17,6 +18,13 @@ export function createCompanionWindow(officeUrl: () => string | undefined): Brow
     webPreferences: { sandbox: true, contextIsolation: true, nodeIntegration: false, webviewTag: false, partition: 'persist:office-companion' },
   });
   const navigation = (url: string) => companionNavigation(url, officeUrl() ?? '');
+  win.webContents.on('before-input-event', (event, input) => {
+    const command = companionCommand(input);
+    if (!command) return;
+    // Stop both page input and the menu accelerator; a held key must not close successive panes.
+    event.preventDefault();
+    if (!input.isAutoRepeat) sendCompanionCommand(win.webContents, officeUrl(), command);
+  });
   win.webContents.setWindowOpenHandler(({ url }) => {
     if (navigation(url) === 'external') void shell.openExternal(url);
     return { action: 'deny' };

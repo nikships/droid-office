@@ -281,9 +281,16 @@ export function openInSplit(ws: Workspace, id: string) {
 }
 
 export function closeSlot(ws: Workspace, slot: number) {
+  const count = SLOT_COUNT[ws.layout];
+  if (!Number.isInteger(slot) || slot < 0 || slot >= count) return;
   ws.auto = false;
-  ws.slots[slot] = null;
-  if (ws.maximized === slot) ws.maximized = null;
+  ws.slots.splice(slot, 1);
+  // Hidden slots stay hidden when the visible layout loses a pane.
+  ws.slots.splice(count - 1, 0, null);
+  changeLayout(ws, LAYOUT_ORDER[Math.max(0, count - 2)]);
+  ws.focused = Math.min(ws.focused > slot ? ws.focused - 1 : ws.focused, Math.max(0, count - 2));
+  if (count <= 2 || ws.maximized === slot) ws.maximized = null;
+  else if (ws.maximized !== null && ws.maximized > slot) ws.maximized--;
 }
 
 export function toggleMax(ws: Workspace, slot: number) {
