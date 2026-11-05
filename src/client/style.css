@@ -681,8 +681,21 @@ label.choice:has(> input:disabled) { opacity: .5; cursor: default; }
 .ai-logo:where(.tile) { background: #fff; border-radius: var(--radius); }
 .ai-logo:where(.fallback) { display: inline-flex; align-items: center; justify-content: center; border: 1px solid var(--border-strong); border-radius: var(--radius); color: var(--text-tertiary); font: 400 14px/1 var(--font-sans); }
 .model-badge { display: inline-flex; align-items: center; gap: var(--space-2); min-width: 0; max-width: 100%; vertical-align: middle; }
-.model-badge > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.model-badge > :where(span:not([class])), .model-badge-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .model-badge .ai-logo, .sub .ai-logo { width: 14px; height: 14px; }
+.model-badge-logo { position: relative; flex: none; display: inline-flex; }
+.model-badge-logo .ai-logo { display: block; }
+/* The pinwheel on the logo's corner: this model runs through DroidProxy. */
+.model-badge-via { position: absolute; right: -4px; bottom: -4px; display: grid; place-items: center; width: 10px; height: 10px; border-radius: 50%; background: var(--bg); }
+.model-badge-via .glyph { display: block; width: 8px; height: 8px; }
+.model-badge-effort { flex: none; }
+/* The effort dial (src/shared/effort-dial.ts): a white-to-orange arc and needle over a dim track. */
+.effort-dial { flex: none; display: block; overflow: visible; }
+.effort-dial-tick { stroke: rgba(255, 255, 255, .28); stroke-width: .7; }
+.effort-dial-track { fill: none; stroke: rgba(255, 255, 255, .13); stroke-width: 1.6; stroke-linecap: round; }
+.effort-dial-arc { fill: none; stroke-width: 1.6; stroke-linecap: round; }
+.effort-dial-needle { stroke-width: 1.1; stroke-linecap: round; }
+.effort-dial-hub { fill: #ededed; }
 .sub .ai-logo { margin-right: var(--space-1); }
 
 /* Model picker (ui/model-picker.ts): a button that opens a searchable list of models, in a popover on the page (a bottom sheet on a phone). */
@@ -2344,7 +2357,9 @@ html:has(body.dashboard), body.dashboard { overflow: auto; }
 .dash-todo-bar::-moz-progress-bar { border-radius: 2px; background: var(--accent); }
 .dash-todo-count { flex: none; font: 400 10px/13px var(--font-mono); letter-spacing: .04em; color: var(--text-secondary); }
 .dash-row-doing { overflow: hidden; font-size: var(--text-small); line-height: 17px; color: var(--text-secondary); text-overflow: ellipsis; white-space: nowrap; }
-.dash-row-meta { margin-top: 2px; padding-right: var(--space-7); overflow: hidden; font: 400 10px/13px var(--font-mono); text-transform: uppercase; letter-spacing: .08em; color: #8a8a8a; text-overflow: ellipsis; white-space: nowrap; }
+.dash-row-meta { display: flex; align-items: center; gap: var(--space-2); min-height: 14px; margin-top: 2px; padding-right: var(--space-7); overflow: hidden; font: 400 10px/13px var(--font-mono); text-transform: uppercase; letter-spacing: .08em; color: #8a8a8a; text-overflow: ellipsis; white-space: nowrap; }
+.dash-row-meta > .model-badge { flex: 0 1 auto; }
+.dash-row-meta-sep { flex: none; color: #555; }
 .dash-row-split { position: absolute; right: var(--space-1); bottom: var(--space-1); opacity: 0; transition: opacity var(--duration) var(--ease); }
 .dash-row:hover .dash-row-split, .dash-row-split:focus-visible { opacity: 1; }
 .dash-side-empty { margin: var(--space-2) var(--space-2); font-size: var(--text-small); color: var(--text-tertiary); }
@@ -2446,7 +2461,7 @@ html:has(body.dashboard), body.dashboard { overflow: auto; }
 .dash-pane[data-mode=empty] .dash-pane-name { font-size: 12.5px; font-weight: 400; color: var(--text-tertiary); }
 .dash-workspace[data-layout=single] .dash-pane[data-mode=empty] .dash-pane-head { visibility: hidden; }
 .dash-pane-task { min-width: 0; overflow: hidden; font-size: 12.5px; color: var(--text-secondary); text-overflow: ellipsis; white-space: nowrap; }
-.dash-pane-model { display: none; min-width: 0; overflow: hidden; font: 400 10px/1 var(--font-mono); text-transform: uppercase; letter-spacing: .08em; color: var(--text-tertiary); text-overflow: ellipsis; white-space: nowrap; }
+.dash-pane-model { display: none; align-self: center; min-width: 0; overflow: hidden; font: 400 10px/1 var(--font-mono); text-transform: uppercase; letter-spacing: .08em; color: var(--text-tertiary); text-overflow: ellipsis; white-space: nowrap; }
 .dash-pane-views { flex: none; }
 .dash-pane-head .dash-pane-views.seg { padding: 2px; border: 0; border-radius: calc(var(--radius) + 2px); box-shadow: inset 0 0 0 1px var(--border); }
 .dash-pane-head .dash-pane-views.seg > .btn { min-height: 22px; margin: 0; padding: 0 var(--space-2); border: 0; border-radius: var(--radius); background: none; color: var(--text-tertiary); font-size: 10px; }
@@ -2459,7 +2474,7 @@ html:has(body.dashboard), body.dashboard { overflow: auto; }
 .btn.dash-home:hover:where(:not(:disabled)) { color: var(--danger); }
 @container pane (max-width: 600px) {
   .dash-pane-task { display: none; }
-  .dash-pane-model { display: block; }
+  .dash-pane-model { display: flex; }
   .dash-pane-pr > span { display: none; }
 }
 @container pane (max-width: 460px) {

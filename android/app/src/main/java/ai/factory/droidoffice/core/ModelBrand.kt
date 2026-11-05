@@ -35,6 +35,12 @@ object ModelBrand {
         "openrouter" to "openrouter", "nvidia" to "nvidia", "cohere" to "cohere", "perplexity" to "perplexity",
     )
 
+    private val droidProxy = Regex("""(?:^|:)droidproxy[\w.-]*:""", RegexOption.IGNORE_CASE)
+
+    /** DroidProxy serves it: its id has a droidproxy provider segment, or its catalogue name says so. */
+    fun viaDroidProxy(id: String?, name: String? = null): Boolean =
+        (id != null && droidProxy.containsMatchIn(id)) || name?.startsWith("DroidProxy:", ignoreCase = true) == true
+
     fun provider(key: String?): String? = key?.lowercase(Locale.ROOT)?.replace(Regex("[^a-z0-9]"), "")?.let(providers::get)
     fun of(id: String? = null, name: String? = null, provider: String? = null): String? {
         for (text in listOfNotNull(id, name)) {

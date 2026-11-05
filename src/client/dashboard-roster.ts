@@ -7,7 +7,7 @@ import { todoCount, todoLine } from '../shared/todos';
 import { doingLine, workerKind } from './worker-words';
 import { h, STATUS_LABEL } from './ui/dom';
 import { icon } from './ui/icons';
-import { modelBadge } from './ui/models';
+import { modelBadgeLabel, modelBadgeNode } from './ui/models';
 
 /** Keep nodes in place on status ticks: focus, drags and entry animations must survive updates. */
 export function reconcileChildren(parent: HTMLElement, children: HTMLElement[]) {
@@ -27,6 +27,12 @@ export function todoMeter(p: TodoProgress): HTMLElement {
     h('progress.dash-todo-bar', { max: p.total, value: p.done, 'aria-hidden': 'true' }),
     h('span.dash-todo-count', { 'aria-hidden': 'true' }, todoCount(p)),
   );
+}
+
+/** A row's meta line: the model badge (or what kind of worker it is) and how long it has worked. */
+function metaLine(engine: HTMLElement | string | undefined, duration: string): (HTMLElement | string)[] {
+  const parts = [engine, duration].filter((p): p is HTMLElement | string => !!p);
+  return parts.flatMap((p, i) => (i ? [h('span.dash-row-meta-sep', { 'aria-hidden': 'true' }, '·'), p] : [p]));
 }
 
 interface RosterState {
@@ -112,7 +118,10 @@ export function createWorkerRoster(el: HTMLElement, open: (id: string) => void, 
       r.open.disabled = !next.live;
       r.split.disabled = !next.live;
       const worked = workedFor(w.workedMs, w.workingSince, Date.now());
-      const meta = [w.kind === 'agent' ? modelBadge(w.activeModel ?? w.model, w.activeEffort ?? w.effort) : workerKind(w), worked >= 1000 ? shortDuration(worked) : ''].filter(Boolean).join(' · ');
+      const model = w.activeModel ?? w.model;
+      const effort = w.activeEffort ?? w.effort;
+      const duration = worked >= 1000 ? shortDuration(worked) : '';
+      const meta = [w.kind === 'agent' ? modelBadgeLabel(model, effort) : workerKind(w), duration].filter(Boolean).join(' · ');
       const relationship = parent ? `Subworker of ${parent.name}` : w.lead ? 'Lead unavailable' : hasChildren ? 'Main worker' : '';
       const todos = w.kind === 'shell' ? undefined : w.todos;
       const key = JSON.stringify([w.name, w.color, w.status, w.acked, w.lead, doingLine(w), meta, relationship, next.pane(w.id), todos]);
@@ -137,7 +146,7 @@ export function createWorkerRoster(el: HTMLElement, open: (id: string) => void, 
             ),
             h('span.dash-row-doing', {}, doingLine(w)),
             todos ? todoMeter(todos) : null,
-            h('span.dash-row-meta', {}, w.lead && !parent ? 'Lead unavailable' : meta),
+            h('span.dash-row-meta', {}, ...(w.lead && !parent ? ['Lead unavailable'] : metaLine(w.kind === 'agent' ? modelBadgeNode(model, effort) : workerKind(w), duration))),
           ),
         );
       }

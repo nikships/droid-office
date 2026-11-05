@@ -5,17 +5,13 @@ import { withoutGlyph } from '../world/glyph';
 import { store } from '../state';
 import { withToken } from '../token';
 import { h } from './dom';
+import { effortDial } from './effort-dial';
+import { EFFORT_LABEL } from './effort-label';
 import { modelLogo } from './model-logo';
 import { modelPicker, type NoneOption } from './model-picker';
 import { availabilityOf, multiplierLabel, type PickerModel } from './model-search';
 
-export const EFFORT_LABEL: Record<AgentEffort, string> = {
-  low: 'Low',
-  medium: 'Medium',
-  high: 'High',
-  xhigh: 'Extra high',
-  max: 'Max',
-};
+export { EFFORT_LABEL };
 
 /** A Droid model the office can offer, from droid's own model list (GET /api/agents/droid/models). */
 export interface DroidModelOption {
@@ -190,6 +186,9 @@ export function factoryModels(): Promise<DroidModelOption[]> {
   return fetchCatalogue().then((c) => c.models.filter((m) => !m.custom && !m.legacy));
 }
 
+// Any droidproxy provider segment ("custom:droidproxy:…", "custom:droidproxy-2:…") is a DroidProxy model.
+const DROIDPROXY_SEGMENT = /(?:^|:)droidproxy[\w.-]*:/i;
+
 /**
  * A Droid model id as the office shows it: its display name when the catalogue has loaded, else the id
  * tidied up ("custom:droidproxy:opus-5-5" is "DroidProxy: Opus 5.5"). The "DroidProxy" stays in so
@@ -198,8 +197,7 @@ export function factoryModels(): Promise<DroidModelOption[]> {
 export function droidDisplayName(id: string): string {
   const known = catalogue?.models.find((m) => m.id === id)?.displayName;
   if (known) return known;
-  // Any droidproxy provider segment ("custom:droidproxy:…", "custom:droidproxy-2:…") is a DroidProxy model.
-  const proxy = /(?:^|:)droidproxy[\w.-]*:/i.exec(id);
+  const proxy = DROIDPROXY_SEGMENT.exec(id);
   const bare = proxy ? id.slice(proxy.index + proxy[0].length) : id.replace(/^custom:(?:[^:]+:)?/, '');
   const name = bare
     .replace(/^claude-/, '')
@@ -216,12 +214,37 @@ export function modelBadge(model: string | undefined, effort: AgentEffort | unde
   return parts.length ? parts.join(' · ') : undefined;
 }
 
-/** A model badge for DOM surfaces; canvas labels keep the plain-text modelBadge above. */
-export function modelBadgeNode(model: string | undefined, effort: AgentEffort | undefined): HTMLElement | undefined {
-  const text = modelBadge(model, effort);
-  if (!text) return undefined;
-  const known = catalogue?.models.find((m) => m.id === model);
-  return h('span.model-badge', { title: text }, model ? modelLogo({ id: model, name: known?.displayName, provider: known?.provider }) : null, h('span', {}, withoutGlyph(text)));
+/** The words a model badge stands for, for its tooltip and screen readers: "DroidProxy: Opus 5.5 · High effort". */
+export function modelBadgeLabel(model: string | undefined, effort: AgentEffort | undefined): string | undefined {
+  const parts = [model ? droidDisplayName(model) : undefined, effort ? `${EFFORT_LABEL[effort]} effort` : undefined].filter((v): v is string => !!v);
+  return parts.length ? parts.join(' · ') : undefined;
+}
+
+/**
+ * A model badge for DOM surfaces: the model's logo (with the pinwheel on it when DroidProxy serves the
+ * model), its name and the effort dial. `words` adds the effort's name after the dial where there is room.
+ * Canvas labels keep the plain-text modelBadge above.
+ */
+export function modelBadgeNode(model: string | undefined, effort: AgentEffort | undefined, { words = false } = {}): HTMLElement | undefined {
+  const label = modelBadgeLabel(model, effort);
+  if (!label) return undefined;
+  const known = model ? catalogue?.models.find((m) => m.id === model) : undefined;
+  const logo = model
+    ? h(
+        'span.model-badge-logo',
+        {},
+        modelLogo({ id: model, name: known?.displayName, provider: known?.provider }),
+        DROIDPROXY_SEGMENT.test(model) || /^droidproxy:/i.test(known?.displayName ?? '') ? h('span.model-badge-via', {}, h('img.glyph', { src: '/factory-glyph.svg', alt: '', 'aria-hidden': 'true' })) : null,
+      )
+    : null;
+  return h(
+    'span.model-badge',
+    { title: label, role: 'img', 'aria-label': label },
+    logo,
+    model ? h('span.model-badge-name', { 'aria-hidden': 'true' }, withoutGlyph(droidDisplayName(model))) : null,
+    effort ? effortDial(effort) : null,
+    effort && words ? h('span.model-badge-effort', { 'aria-hidden': 'true' }, EFFORT_LABEL[effort]) : null,
+  );
 }
 
 /** Remembers the last model/effort chosen at a picker's key (a desk, or a fixed key). */
