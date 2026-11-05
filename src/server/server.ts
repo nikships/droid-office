@@ -54,10 +54,11 @@ import { MAX_FLOORS, forgeWords, returnLanding } from '../shared/floors.js';
 import { PROMPTS, PROMPT_MAX, isPromptId } from '../shared/prompts.js';
 import { ROOF } from '../shared/rooftop.js';
 import { NO_PIPELINES } from '../shared/pipelines.js';
-import { MAX_ASSET_BYTES, OWNER_AUTHOR, parseEnvelope } from '../shared/whiteboard.js';
+import { MAX_ASSET_BYTES, OWNER_AUTHOR, PINGED_KEY, findCard, parseEnvelope, pinged } from '../shared/whiteboard.js';
 import { pingEligibility } from '../shared/whiteboard-ping.js';
 import { CARD_ROUTE, cardResponse, renderInfo, renderStatus, type CardResponse } from './whiteboard.js';
 import { RenderEngine } from './whiteboard-render.js';
+import { deliverPress, freshPresses, type ButtonPress } from './whiteboard-buttons.js';
 import { officePrompt } from './prompts.js';
 import { Answers } from './answers.js';
 import { WorkerThreadReader } from './worker-thread.js';
@@ -1506,6 +1507,7 @@ export async function startServer(cfg: Config) {
     if (!floor) return warn(c, 'That floor is no longer in the building');
     const env = parseEnvelope(raw);
     if (typeof env === 'string') return warn(c, `The Whiteboard change was malformed: ${env}`);
+    const presses = freshPresses(floor.whiteboard.board, env.ops);
     let out: ReturnType<typeof floor.whiteboard.apply>;
     try {
       out = floor.whiteboard.apply(env, OWNER_AUTHOR, 'window');
@@ -1515,9 +1517,27 @@ export async function startServer(cfg: Config) {
       return warn(c, `The Whiteboard couldn't be saved: ${(err as Error).message}`);
     }
     const head = { epoch: env.epoch, seq: env.seq };
-    if (out.kind === 'ack') sendTo(c, { t: 'whiteboard', floor: floor.id, update: { kind: 'ack', ...head, rev: out.rev } });
-    else if (out.reason === 'expired') sendTo(c, { t: 'whiteboard', floor: floor.id, update: { kind: 'rejected', ...head, reason: 'expired' } });
+    if (out.kind === 'ack') {
+      sendTo(c, { t: 'whiteboard', floor: floor.id, update: { kind: 'ack', ...head, rev: out.rev } });
+      // A retry the record recognised applied nothing new, so a press in it was already delivered.
+      if (!out.duplicate) pressButtons(c, floor, presses);
+    } else if (out.reason === 'expired') sendTo(c, { t: 'whiteboard', floor: floor.id, update: { kind: 'rejected', ...head, reason: 'expired' } });
     else sendTo(c, { t: 'whiteboard', floor: floor.id, update: { kind: 'rejected', ...head, reason: 'invalid', error: out.error } });
+  };
+  /**
+   * The first press of each `data-wb-ping` button in the owner's batch goes to the worker who last
+   * edited its card's page. One that can't get there is taken back, so its button works again, and
+   * the owner is told why.
+   */
+  const pressButtons = (c: Client, floor: Floor, presses: ButtonPress[]) => {
+    for (const press of presses) {
+      const card = findCard(floor.whiteboard.board, press.card);
+      if (!card || !pinged(card.state, press.name)) continue;
+      const out = deliverPress(floor.whiteboard.board, press, floor.everyone(), floor.workers, floor.def.name, prompts);
+      if (out.ok) continue;
+      floor.whiteboard.applyOffice([{ op: 'state.del', card: press.card, path: [PINGED_KEY, press.name] }]);
+      warn(c, `“${press.ping.label || press.name}” didn't reach a worker: ${out.error}`);
+    }
   };
   /** Ping a worker: the Whiteboard line typed into its terminal, as its status allows (see whiteboard-ping.ts). */
   const pingWorker = (c: Client, id: string) => {

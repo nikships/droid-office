@@ -13,7 +13,7 @@
 // - While `rendering` is true (the renderer loaded the card), the SDK drops writes and actions, and
 //   the host ignores any that arrive.
 
-import type { Anchor, Author, Json, Op, Point, StateObject } from './whiteboard.js';
+import type { ActionPing, Anchor, Author, Json, Op, Point, StateObject } from './whiteboard.js';
 
 export const BRIDGE_CHANNEL = 'droid-office-whiteboard';
 export const BRIDGE_VERSION = 1;
@@ -80,14 +80,19 @@ export type HostMsg =
    * Sent when the new frame is swapped in and focused, not with `init`: the new frame loads hidden
    * behind the old one, and focusing it then would take keys the owner is still typing into the old one.
    */
-  | { type: 'focus'; field: FocusedField };
+  | { type: 'focus'; field: FocusedField }
+  /**
+   * Who the card's `data-wb-ping` buttons tell now (a worker's name), or null and why not: the SDK
+   * disables them until a host says. Sent after `init` and whenever it changes.
+   */
+  | { type: 'buttons'; to: string | null; reason?: string };
 
 /** Frame to host. */
 export type FrameMsg =
   | { type: 'ready'; version: number }
   | { type: 'write'; write: StateWrite }
-  /** `whiteboard.action(name, data)`, or a `data-wb-action` button. */
-  | { type: 'action'; name: string; data?: Json }
+  /** `whiteboard.action(name, data)`, or a `data-wb-action` button; `ping` when the button has `data-wb-ping`. */
+  | { type: 'action'; name: string; data?: Json; ping?: ActionPing }
   /** The answer to `anchorAt`; null when the point is outside the page. */
   | { type: 'anchor'; req: number; anchor: Anchor | null }
   /** The answer to `locate`: each anchor's page point, or detached when it can't be placed. */
@@ -150,6 +155,10 @@ export function parseHostMsg(data: unknown, nonce: string): HostMsg | undefined 
       const field = focusedField(d.field);
       return field ? { type: 'focus', field } : undefined;
     }
+    case 'buttons':
+      if (d.to !== null && !(typeof d.to === 'string' && d.to)) return undefined;
+      if (d.reason !== undefined && typeof d.reason !== 'string') return undefined;
+      return d.to === null ? { type: 'buttons', to: null, ...(d.reason === undefined ? {} : { reason: d.reason }) } : { type: 'buttons', to: d.to };
     default:
       return undefined;
   }
@@ -175,8 +184,10 @@ export function parseFrameMsg(data: unknown, nonce: string): FrameMsg | undefine
     }
     case 'action': {
       if (typeof d.name !== 'string' || d.name === '') return undefined;
+      if (d.ping !== undefined && !(isObject(d.ping) && typeof d.ping.text === 'string' && (d.ping.label === undefined || typeof d.ping.label === 'string'))) return undefined;
       const msg: FrameMsg = { type: 'action', name: d.name };
       if (d.data !== undefined) msg.data = d.data;
+      if (d.ping !== undefined) msg.ping = d.ping.label === undefined ? { text: d.ping.text } : { text: d.ping.text, label: d.ping.label };
       return msg;
     }
     case 'anchor':
@@ -218,8 +229,8 @@ export function writeOp(card: string, write: StateWrite): Op {
   return { op: 'state.set', card, path: write.path, value: write.value };
 }
 
-export function actionOp(card: string, name: string, data?: Json): Op {
-  return data === undefined ? { op: 'state.action', card, name } : { op: 'state.action', card, name, data };
+export function actionOp(card: string, name: string, data?: Json, ping?: ActionPing): Op {
+  return { op: 'state.action', card, name, ...(data === undefined ? {} : { data }), ...(ping === undefined ? {} : { ping }) };
 }
 
 /** The longest unsaved value a focus report carries: a field's value goes into state, so the state limit applies when it's saved. */

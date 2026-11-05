@@ -589,6 +589,22 @@ const DEFS = {
     vars: { floor: "The floor's name" },
     text: 'Droid Office notice: the owner pinged you from the Whiteboard.\nCall `whiteboard_read` to read the feedback.',
   },
+  'whiteboard.button': {
+    group: 'whiteboard',
+    label: 'A Whiteboard button tells a worker',
+    used: "Typed into the worker who last edited a Whiteboard card's page when the owner presses one of its data-wb-ping buttons: steering its turn when it's working, waking it when it's asleep, and handed over once it has started or its question is answered.",
+    vars: {
+      floor: "The floor's name",
+      card: "The card's id",
+      title: "The card's title",
+      button: "The button's words, else its action name",
+      action: "The button's data-wb-action name",
+      text: "The button's data-wb-ping message, as the card wrote it",
+      fence: 'Message boundary, longer than any backtick run in the message',
+    },
+    needs: ['action', 'text'],
+    text: 'Droid Office notice: the owner pressed “{{button}}” on the Whiteboard card “{{title}}” ({{card}}).\n\n## Button message\n{{fence}}text\n{{text}}\n{{fence}}\n\n## Office guidance\nThe button stays disabled until you re-arm it: `whiteboard_state` with op "del" and path "pinged.{{action}}". Call `whiteboard_read` for anything else the owner changed on the card.',
+  },
 
   'cloud.context': {
     group: 'workers',

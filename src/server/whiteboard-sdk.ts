@@ -1,12 +1,13 @@
 // The script the office injects at the top of every Whiteboard artifact's page (see injectSdk in
 // whiteboard.ts): the artifact JavaScript API (`window.whiteboard`), plain form fields saved into
-// `state.fields` and restored, `data-wb-action` buttons, and the frame's side of the postMessage
+// `state.fields` and restored, `data-wb-action` buttons (and `data-wb-ping` ones, which tell the worker
+// who last edited the page, once, and are disabled while they can't), and the frame's side of the postMessage
 // bridge in shared/whiteboard-bridge.ts (nonce from `#wb=`, messages only from `window.parent`).
 // It runs inside the sandboxed frame and depends on nothing outside it, so it is plain browser
 // JavaScript in a string. Keep it ES2017, with no template literals (this is a String.raw).
 
 /** Changes whenever the script does, so cached card pages are fetched again. */
-export const SDK_VERSION = '6';
+export const SDK_VERSION = '7';
 
 export const SDK_SCRIPT = String.raw`(function () {
   'use strict';
@@ -15,6 +16,8 @@ export const SDK_SCRIPT = String.raw`(function () {
   var VERSION = 1;
   var FIELDS = 'fields';
   var ACTIONS = 'actions';
+  var PINGED = 'pinged';
+  var PING_LABEL_MAX = 120;
   var IDLE_MS = 1000;
   var found = /(?:^#|&)wb=([A-Za-z0-9_-]{16,128})(?:&|$)/.exec(location.hash);
   var nonce = found ? found[1] : '';
@@ -24,6 +27,8 @@ export const SDK_SCRIPT = String.raw`(function () {
   var rendering = false;
   var mode = 'use';
   var started = false;
+  // Who data-wb-ping buttons tell, as the host last said ({ to, reason }); null until it does.
+  var buttons = null;
   var listeners = { state: [], ready: [], mode: [] };
   var resolveReady;
   var ready = new Promise(function (r) { resolveReady = r; });
@@ -147,17 +152,31 @@ export const SDK_SCRIPT = String.raw`(function () {
       var i = list.indexOf(fn);
       if (i >= 0) list.splice(i, 1);
     },
-    action: function (name, data) {
-      if (typeof name !== 'string' || !name) throw new TypeError('whiteboard.action needs a name');
-      if (rendering) return;
-      var value = data === undefined ? null : copy(data);
-      walk(state, [ACTIONS])[name] = { name: name, data: value, at: Date.now() };
-      var msg = { type: 'action', name: name };
-      if (data !== undefined) msg.data = value;
-      post(msg);
-      fireState(own([ACTIONS, name]));
-    }
+    action: function (name, data) { act(name, data); }
   };
+  /** Records a press. With ping (a data-wb-ping button), the first press also goes to the worker, until it re-arms the button. */
+  function act(name, data, ping) {
+    if (typeof name !== 'string' || !name) throw new TypeError('whiteboard.action needs a name');
+    if (rendering) return;
+    var value = data === undefined ? null : copy(data);
+    var now = Date.now();
+    walk(state, [ACTIONS])[name] = { name: name, data: value, at: now };
+    var msg = { type: 'action', name: name };
+    if (data !== undefined) msg.data = value;
+    var changes = own([ACTIONS, name]);
+    if (ping) {
+      msg.ping = ping.label ? { text: ping.text, label: ping.label } : { text: ping.text };
+      if (!sent(name)) {
+        var entry = { text: ping.text, at: now };
+        if (ping.label) entry.label = ping.label;
+        walk(state, [PINGED])[name] = entry;
+        changes.push({ path: [PINGED, name], author: { kind: 'owner' } });
+      }
+    }
+    post(msg);
+    fireState(changes);
+    syncPings();
+  }
   Object.defineProperty(api, 'card', { enumerable: true, get: function () { return copy(card); } });
   Object.defineProperty(api, 'rendering', { enumerable: true, get: function () { return rendering; } });
   Object.defineProperty(api, 'mode', { enumerable: true, get: function () { return mode; } });
@@ -461,11 +480,71 @@ export const SDK_SCRIPT = String.raw`(function () {
   document.addEventListener('click', function (e) {
     var el = e.target && e.target.closest ? e.target.closest('[data-wb-action]') : null;
     if (!el) return;
+    var ping = el.getAttribute('data-wb-ping');
+    // A disabled <button> gets no click at all; anything else marked data-wb-ping is stopped here.
+    if (ping !== null && blocked(el)) {
+      e.preventDefault();
+      return;
+    }
     var form = el.form || (el.closest && el.closest('form'));
     if (form && !form.hasAttribute('action')) e.preventDefault();
     if (form) Array.prototype.forEach.call(form.elements, function (f) { if (isField(f)) emit(keyOf(f)); });
-    api.action(el.getAttribute('data-wb-action'), dataOf(el));
+    act(el.getAttribute('data-wb-action'), dataOf(el), ping === null ? undefined : { text: ping, label: labelOf(el) });
   });
+
+  // ---- Buttons that tell a worker (data-wb-ping) ----
+
+  function sent(name) { return isObj(state[PINGED]) && Object.prototype.hasOwnProperty.call(state[PINGED], name); }
+  function labelOf(el) {
+    var t = el.getAttribute('aria-label') || norm(el.textContent) || (typeof el.value === 'string' ? el.value : '');
+    return norm(t).slice(0, PING_LABEL_MAX);
+  }
+  /** Why a data-wb-ping button can't be pressed now ({ state, why }), or null when it can. */
+  function blocked(el) {
+    var name = el.getAttribute('data-wb-action');
+    if (!name) return { state: 'unavailable', why: 'This button needs a data-wb-action name to tell a worker.' };
+    if (sent(name)) return { state: 'sent', why: buttons && buttons.to ? 'Sent to ' + buttons.to + '.' : 'Sent.' };
+    // A render shows what was sent; who it would go to is the window's to say.
+    if (rendering) return null;
+    if (!buttons) return { state: 'unavailable', why: 'Waiting for the office.' };
+    if (!buttons.to) return { state: 'unavailable', why: buttons.reason || 'There is no worker to tell.' };
+    return null;
+  }
+  // What the page itself had on a button before it was disabled here, to put back once it can be pressed.
+  var held = new WeakMap();
+  function restoreAttr(el, attr, value) {
+    if (value === null) el.removeAttribute(attr);
+    else el.setAttribute(attr, value);
+  }
+  var pingQueued = false;
+  function syncPings() {
+    pingQueued = false;
+    if (!started) return;
+    Array.prototype.forEach.call(document.querySelectorAll('[data-wb-ping]'), function (el) {
+      var b = blocked(el);
+      el.setAttribute('data-wb-ping-state', b ? b.state : 'ready');
+      var was = held.get(el);
+      if (b) {
+        if (!was) held.set(el, { disabled: el.disabled === true, title: el.getAttribute('title'), aria: el.getAttribute('aria-disabled') });
+        if ('disabled' in el) el.disabled = true;
+        el.setAttribute('aria-disabled', 'true');
+        el.setAttribute('title', b.why);
+      } else if (was) {
+        held.delete(el);
+        if ('disabled' in el) el.disabled = was.disabled;
+        restoreAttr(el, 'aria-disabled', was.aria);
+        restoreAttr(el, 'title', was.title);
+      }
+    });
+  }
+  function schedulePings() {
+    if (pingQueued) return;
+    pingQueued = true;
+    setTimeout(syncPings, 0);
+  }
+  if (typeof MutationObserver === 'function') {
+    new MutationObserver(schedulePings).observe(document.documentElement, { childList: true, subtree: true, attributes: true, attributeFilter: ['data-wb-ping', 'data-wb-action'] });
+  }
   // A form with nowhere to go would reload the page: its fields are saved and its submit is recorded instead.
   document.addEventListener('submit', function (e) {
     var form = e.target;
@@ -711,6 +790,7 @@ export const SDK_SCRIPT = String.raw`(function () {
       var first = !started;
       started = true;
       fireState([]);
+      syncPings();
       if (first) {
         resolveReady(api);
         fire('ready', api);
@@ -724,6 +804,11 @@ export const SDK_SCRIPT = String.raw`(function () {
       state = copy(d.state);
       showRemote(was, changes);
       fireState(changes);
+      syncPings();
+    } else if (d.type === 'buttons') {
+      if (d.to !== null && !(typeof d.to === 'string' && d.to)) return;
+      buttons = { to: d.to, reason: typeof d.reason === 'string' ? d.reason : '' };
+      syncPings();
     } else if (d.type === 'anchorAt') {
       if (Number.isSafeInteger(d.req) && isPoint(d.point)) post({ type: 'anchor', req: d.req, anchor: anchorAt(d.point) });
     } else if (d.type === 'locate') {

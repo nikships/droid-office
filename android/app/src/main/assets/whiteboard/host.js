@@ -38,6 +38,8 @@ import {
   kindOf,
   normalize,
   pictureSize,
+  pingOf,
+  pinged,
   reattachMarkOps,
   stateChanges,
   stateWith,
@@ -115,6 +117,8 @@ let draft = null;
 let picking = null;
 let selected = null;
 let flashId = null;
+/** Who the card's data-wb-ping buttons tell, as the app last said ({ to, reason? }); the frame keeps them disabled until then. */
+let buttons = null;
 
 let opSeq = 0;
 let inflight = 0;
@@ -204,6 +208,10 @@ function receive(m) {
     case 'picture':
       if (isObj(m.file) && /^[0-9a-f]{64}$/.test(m.file.hash) && isNum(m.w) && isNum(m.h)) addPicture(m.file, m.w, m.h);
       break;
+    case 'buttons':
+      buttons = typeof m.to === 'string' && m.to ? { to: m.to } : { to: null, ...(typeof m.reason === 'string' ? { reason: m.reason } : {}) };
+      for (const s of [slot, incoming]) if (s?.ready) post(s, { type: 'buttons', ...buttons });
+      break;
   }
 }
 
@@ -292,12 +300,12 @@ function adopt(next) {
 }
 
 /** Sends the page's operations for this card; they show here at once. */
-function apply(ops, what, action) {
+function apply(ops, what, action, ping) {
   if (!ops.length) return;
   inflight++;
   clearTimeout(settleTimer);
   for (const op of ops) applyLocal(card, op);
-  send({ t: 'ops', id: ++opSeq, ops, what, ...(action ? { action } : {}) });
+  send({ t: 'ops', id: ++opSeq, ops, what, ...(action ? { action } : {}), ...(ping ? { ping } : {}) });
 }
 
 function setMode(next) {
@@ -457,6 +465,7 @@ function onFrame(s, d) {
       if (!isNum(d.version)) return;
       s.ready = true;
       post(s, { type: 'init', card: { id: card.id, title: card.title ?? '', author: card.author ?? { kind: 'owner' } }, state: card.state, rendering: false, mode, width: CANONICAL_WIDTH });
+      if (buttons) post(s, { type: 'buttons', ...buttons });
       if (s === slot) frameState = card.state;
       if (s.sendFocus) {
         post(s, { type: 'focus', field: s.sendFocus });
@@ -495,10 +504,13 @@ function onFrame(s, d) {
       break;
     }
     case 'action': {
-      if (s !== slot || typeof d.name !== 'string' || !d.name) break;
-      const op = actionOp(card.id, d.name, d.data);
+      const ping = pingOf(d.ping);
+      if (s !== slot || typeof d.name !== 'string' || !d.name || ping === null) break;
+      const op = actionOp(card.id, d.name, d.data, ping);
+      // The words of a data-wb-ping button's first press, so the app can say who it went to.
+      const fresh = ping && !pinged(frameState, d.name) ? ping.label?.trim() || d.name : undefined;
       frameState = stateWith(frameState, op);
-      apply([op], 'Recording the action', d.name);
+      apply([op], 'Recording the action', d.name, fresh);
       break;
     }
     case 'anchor':

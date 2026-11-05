@@ -349,4 +349,31 @@ class WhiteboardTest {
         assertEquals("Atlas is busy", no.error)
         assertEquals("""{"t":"whiteboard.ping","worker":"w1"}""", WbPinged.ping("w1"))
     }
+
+    private fun page(by: String) =
+        OfficeJson.decodeFromString(WbCard.serializer(), """{"id":"c1","stamps":{"title":{"rev":1,"author":$owner},"content":{"rev":2,"author":$by}}}""")
+
+    @Test
+    fun buttonsTellWhoeverLastEditedThePage() {
+        val atlasPage = page("""{"kind":"worker","id":"atlas","name":"Atlas","color":"#ee6018"}""")
+        assertEquals(ButtonTarget.To("atlas", "Atlas"), WhiteboardPing.buttonTarget(atlasPage, listOf(worker("idle", name = "Bolt"), worker("working"))))
+        assertEquals(ButtonTarget.No("Atlas is no longer on this floor."), WhiteboardPing.buttonTarget(atlasPage, listOf(worker("idle", name = "Bolt"))))
+        assertTrue((WhiteboardPing.buttonTarget(atlasPage, listOf(worker("idle", kind = "shell"))) as ButtonTarget.No).reason.contains("can't take messages"))
+        assertTrue((WhiteboardPing.buttonTarget(atlasPage, listOf(worker("idle", extra = ""","lost":{"branch":"droid/atlas"}"""))) as ButtonTarget.No).reason.contains("Rebuild"))
+        // The owner's own page, or a canvas with no page at all, has nobody to tell.
+        assertTrue((WhiteboardPing.buttonTarget(page(owner), listOf(worker("idle"))) as ButtonTarget.No).reason.startsWith("You made this page"))
+        val canvas = OfficeJson.decodeFromString(WbCard.serializer(), """{"id":"c2","kind":"canvas"}""")
+        assertTrue(WhiteboardPing.buttonTarget(canvas, listOf(worker("idle"))) is ButtonTarget.No)
+    }
+
+    @Test
+    fun saysWhereAButtonPressWent() {
+        val to = ButtonTarget.To("atlas", "Atlas")
+        assertEquals("Sent “Accept” to Atlas.", WhiteboardPing.sent("Accept", to, worker("working")))
+        assertEquals("Sent “Accept” to Atlas, waking it up.", WhiteboardPing.sent("Accept", to, worker("offline")))
+        assertEquals("Sent “Accept” to Atlas. It gets it once you answer the question in its terminal.", WhiteboardPing.sent("Accept", to, worker("needs_input")))
+        assertEquals("Sent “Accept” to Atlas. It gets it once it has started.", WhiteboardPing.sent("Accept", to, worker("starting")))
+        assertEquals("Sent “Accept” to Atlas.", WhiteboardPing.sent("Accept", to, worker("offline", extra = ""","remote":true""")))
+        assertEquals("Sent “Accept”.", WhiteboardPing.sent("Accept", ButtonTarget.No("Gone."), null))
+    }
 }

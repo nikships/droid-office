@@ -124,6 +124,11 @@ class WbPageTest {
         assertEquals("c1", ops.ops.single()["card"]!!.jsonPrimitive.content)
         // All dropped, it's still a batch the page waits on.
         assertEquals(WbPageMsg.Ops(5, emptyList(), "Saving it"), WbPage.decode("""{"t":"ops","id":5,"ops":[{"op":"card.rm","card":"c1"}]}""", "c1"))
+        // A data-wb-ping button's first press carries the button's words, for the snackbar.
+        val press = WbPage.decode("""{"t":"ops","id":6,"action":"accept","ping":"Accept","ops":[{"op":"state.action","card":"c1","name":"accept","ping":{"text":"Go"}}]}""", "c1") as WbPageMsg.Ops
+        assertEquals("Accept", press.ping)
+        assertEquals("accept", press.action)
+        assertNull(ops.ping)
         val c = WbPage.decode("""{"t":"comment","anchor":{"kind":"element","point":{"x":10.5,"y":20},"wbId":"x"}}""", "c1") as WbPageMsg.Comment
         assertEquals(WbPoint(10.5, 20.0), c.point)
         assertEquals("x", c.anchor["wbId"]!!.jsonPrimitive.content)
@@ -176,6 +181,8 @@ class WbPageTest {
         assertEquals(Json.parseToJsonElement("""{"t":"pick","kind":"thread","id":"t1"}"""), message(WbPage.pick("thread", "t1")))
         assertEquals(Json.parseToJsonElement("""{"t":"mode","mode":"use"}"""), message(WbPage.mode("use")))
         assertEquals(Json.parseToJsonElement("""{"t":"live","live":false}"""), message(WbPage.live(false)))
+        assertEquals(Json.parseToJsonElement("""{"t":"buttons","to":"Atlas"}"""), message(WbPage.buttons(ButtonTarget.To("w1", "Atlas"))))
+        assertEquals(Json.parseToJsonElement("""{"t":"buttons","to":null,"reason":"Gone."}"""), message(WbPage.buttons(ButtonTarget.No("Gone."))))
         assertEquals(Json.parseToJsonElement("""{"t":"draft","point":{"x":1.0,"y":2.0}}"""), message(WbPage.draft(WbPoint(1.0, 2.0))))
         assertEquals(Json.parseToJsonElement("""{"t":"draft","point":null}"""), message(WbPage.draft(null)))
         assertEquals(Json.parseToJsonElement("""{"t":"focus","id":"s1"}"""), message(WbPage.focus("s1")))

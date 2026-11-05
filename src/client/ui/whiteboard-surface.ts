@@ -23,6 +23,8 @@ import {
   findCard,
   jsonEqual,
   parseStatePathKey,
+  pinged,
+  type ActionPing,
   type Anchor,
   type Author,
   type Card,
@@ -37,6 +39,7 @@ import {
   type Thread,
 } from '../../shared/whiteboard';
 import { canvasBounds, dragBox, dragMarkOps, dragPreview, pictureSize, reattachMarkOps } from '../../shared/whiteboard-marks';
+import type { ButtonTarget } from '../../shared/whiteboard-ping';
 import { withToken } from '../token';
 import { claimEscape, h } from './dom';
 import { colorDot } from './kit';
@@ -72,8 +75,13 @@ export interface SurfaceHost {
   apply(ops: Op[], what?: string): Promise<boolean>;
   /** Says something went wrong that isn't a batch: an upload, a file that isn't a picture. */
   notify(text: string): void;
-  /** The card recorded a press of one of its actions (a `data-wb-action` button or `whiteboard.action`). */
-  acted(name: string): void;
+  /**
+   * The card recorded a press of one of its actions (a `data-wb-action` button or `whiteboard.action`),
+   * with `ping` when it was a `data-wb-ping` button's first press, which the office sends on.
+   */
+  acted(name: string, ping?: ActionPing): void;
+  /** Who the card's `data-wb-ping` buttons tell now, or why nobody. */
+  buttons(card: Card): ButtonTarget;
   /** The frame URL for a load with this nonce; undefined until the card's capability is known. */
   cardUrl(nonce: string): string | undefined;
   /** A card file's URL (a picture), by hash. */
@@ -109,6 +117,8 @@ interface Slot {
   typedAt: number;
   /** Focus to put back once the frame is ready, when it was swapped in before it was. */
   sendFocus?: FocusedField;
+  /** The `buttons` message it was last sent, as JSON. */
+  buttons?: string;
 }
 
 interface Located {
@@ -581,6 +591,7 @@ export class Surface {
       else if (!this.slot && !this.incoming) this.load();
       if (!jsonEqual(card.state, this.frameState)) this.pushState(before, card);
     }
+    this.refreshButtons();
     const marksChanged = before.threads !== card.threads || before.stickies !== card.stickies || before.pictures !== card.pictures || before.revs.marks !== card.revs.marks;
     if (marksChanged) {
       this.renderMarks();
@@ -706,6 +717,19 @@ export class Surface {
     slot.iframe.contentWindow?.postMessage(wrap(msg, slot.nonce), '*');
   }
 
+  /** Tells the frames who the card's `data-wb-ping` buttons tell now, when that changed: the worker list or the page's last editor did. */
+  refreshButtons() {
+    if (this.card.kind !== 'html') return;
+    const t = this.host.buttons(this.card);
+    const msg: HostMsg = t.ok ? { type: 'buttons', to: t.name } : { type: 'buttons', to: null, reason: t.reason };
+    const json = JSON.stringify(msg);
+    for (const slot of [this.slot, this.incoming]) {
+      if (!slot?.ready || slot.buttons === json) continue;
+      slot.buttons = json;
+      this.post(slot, msg);
+    }
+  }
+
   private onMessage(e: MessageEvent) {
     const slot = [this.slot, this.incoming].find((s) => s && e.source === s.iframe.contentWindow);
     if (!slot) return;
@@ -716,6 +740,8 @@ export class Surface {
         slot.ready = true;
         this.post(slot, { type: 'init', card: { id: this.card.id, title: this.card.title, author: this.card.author }, state: this.card.state, rendering: false, mode: this.mode, width: CANONICAL_WIDTH });
         if (slot === this.slot) this.frameState = this.card.state;
+        slot.buttons = undefined;
+        this.refreshButtons();
         if (slot.sendFocus) {
           this.post(slot, { type: 'focus', field: slot.sendFocus });
           slot.sendFocus = undefined;
@@ -780,11 +806,14 @@ export class Surface {
         this.frameState = this.stateWith(writeOp(this.card.id, msg.write));
         this.host.apply([writeOp(this.card.id, msg.write)], 'Saving the form');
         break;
-      case 'action':
+      case 'action': {
         if (slot !== this.slot) break;
-        this.frameState = this.stateWith(actionOp(this.card.id, msg.name, msg.data));
-        void this.host.apply([actionOp(this.card.id, msg.name, msg.data)], 'Recording the action').then((ok) => ok && !this.disposed && this.host.acted(msg.name));
+        const op = actionOp(this.card.id, msg.name, msg.data, msg.ping);
+        const fresh = msg.ping && !pinged(this.frameState, msg.name) ? msg.ping : undefined;
+        this.frameState = this.stateWith(op);
+        void this.host.apply([op], 'Recording the action').then((ok) => ok && !this.disposed && this.host.acted(msg.name, fresh));
         break;
+      }
       case 'anchor':
       case 'positions': {
         const done = this.reqs.get(msg.req);
