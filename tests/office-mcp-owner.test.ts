@@ -191,7 +191,7 @@ test('an external worker sees the whole building and every worker’s terminal t
   const names = (await r.client.listTools()).tools.map((x) => x.name);
   for (const name of ['office_roster', 'office_look', 'office_send_home', ...OWNER_TOOLS.map((tool) => tool.name)]) assert.ok(names.includes(name), name);
   assert.ok(!names.includes('office_owner'), 'no untyped owner gateway');
-  assert.match(r.client.getInstructions()!, /owner's full access/);
+  assert.match(r.client.getInstructions()!, /owner-level access/);
   const who = await r.call('office_whoami');
   assert.match(who.text, /Owner access: yes/);
   assert.doesNotMatch(who.text, /office_owner/);
@@ -277,48 +277,28 @@ test('office_send_home sends anyone home through the owner’s path, keeping the
 
 test('focused owner tools report refusal, pending, unconfirmed and bounded replies', async (t) => {
   const r = await remoteRig(t);
-  r.answers['gh.merge'] = () => ({ notes: ['🎉 Grok merged PR #12'], reply: { t: 'gh.merged', number: 12 } as ServerMsg });
   r.answers['worker.prompt'] = () => ({ error: 'No such worker', notes: [] });
-  r.answers['pipelines.run'] = () => ({ pending: true, notes: [] });
-  r.answers['worker.shoot'] = () => ({ unconfirmed: true, notes: [] });
+  r.answers['worker.spawn'] = () => ({ pending: true, notes: [] });
+  r.answers['worker.interrupt'] = () => ({ unconfirmed: true, notes: [] });
   r.answers['thread.read'] = () => ({ notes: [], reply: { t: 'thread.snapshot', workerId: 'b-1', text: 'x'.repeat(70_000) } as unknown as ServerMsg });
-  const merged = await r.call('office_pull_merge', { number: 12, method: 'squash', deleteBranch: true, floor: '2' });
-  assert.equal(merged.error, false, merged.text);
-  assert.match(merged.text, /office_pull_merge: done\.\n🎉 Grok merged PR #12\nReply \(gh\.merged\)/);
-  assert.equal(merged.data?.status, 'done');
-  assert.deepEqual(r.calls[0], { msg: { number: 12, method: 'squash', deleteBranch: true, auto: false, t: 'gh.merge' }, floor: 'f-api', by: 'Grok' });
   const refused = await r.call('office_worker_prompt', { workerId: 'pixel', prompt: 'hi' });
   assert.equal(refused.error, true);
   assert.match(refused.text, /office_worker_prompt refused: No such worker/);
-  assert.match((await r.call('office_pipeline_run', { workflow: 'ci', ref: 'main' })).text, /started; no outcome yet/);
-  const silent = await r.call('office_worker_shoot', { workerId: 'pixel' });
+  assert.match((await r.call('office_worker_spawn')).text, /started; no outcome yet/);
+  const silent = await r.call('office_worker_interrupt', { workerId: 'pixel' });
   assert.equal(silent.error, false);
   assert.match(silent.text, /neither refused nor confirmed/, 'silence is not reported as done');
   assert.equal(silent.data?.status, 'unconfirmed');
   const big = await r.call('office_worker_thread', { workerId: 'b-1' });
   assert.match(big.text, /\[Truncated: \d+ more characters\]$/);
-  assert.equal(r.calls.length, 5);
-  assert.equal((await r.call('office_owner', { action: 'gh.merge', args: { number: 12 } })).error, true, 'old gateway cannot be called');
-  assert.equal((await r.call('office_pull_merge', { number: 12, method: 'merge', floor: 'attic' })).error, true);
-  assert.equal(r.calls.length, 5);
+  assert.equal(r.calls.length, 4);
+  assert.equal((await r.call('office_owner', { action: 'worker.spawn', args: {} })).error, true, 'old gateway cannot be called');
+  assert.equal(r.calls.length, 4);
 });
 
 // Tool inputs only: no external service is called. The rig records the message sent to the owner bridge.
-const actionInputs: Record<Exclude<OwnerAction, 'worker.kill'>, Record<string, unknown>> = {
-  'floor.reorder': { floor: 'api', before: 'app' },
-  'floor.repos': {},
-  'floor.folders': {},
-  'floor.branches': {},
-  'floor.branch': { branch: null },
-  'floor.add': { dir: '/tmp/project' },
-  'floor.remove': { floor: 'api' },
-  'floor.projectsDir': { dir: '' },
+const actionInputs: Record<Exclude<OwnerAction, 'worker.kill' | 'worker.worktree'>, Record<string, unknown>> = {
   'worker.spawn': {},
-  'worker.fork': { workerId: 'pixel' },
-  'worker.resume': { workerId: 'pixel' },
-  'worker.shoot': { workerId: 'pixel' },
-  'worker.worktree': { workerId: 'pixel' },
-  'worker.rebuild': { workerId: 'pixel' },
   'worker.prompt': { workerId: 'pixel', prompt: 'Continue' },
   'worker.answer': {
     workerId: 'pixel',
@@ -331,72 +311,13 @@ const actionInputs: Record<Exclude<OwnerAction, 'worker.kill'>, Record<string, u
     },
     choice: 1,
   },
-  'worker.pr': { workerId: 'pixel' },
   'worker.interrupt': { workerId: 'pixel' },
   'thread.read': { workerId: 'pixel' },
-  'term.input': { workerId: 'pixel', data: 'pwd\r' },
-  'station.open': { deskId: 'station-lead' },
-  'station.prompt': { deskId: 'station-lead', prompt: 'Continue' },
-  'shell.input': { data: 'pwd\r' },
-  'gh.refresh': {},
-  'gh.merge': { number: 381, method: 'squash' },
-  'gh.comment': { kind: 'pull', number: 381, body: 'Reviewed' },
-  'gh.close': { kind: 'issue', number: 381 },
-  'gh.labels': { kind: 'issue', number: 381 },
-  gong: {},
-  'pipelines.refresh': {},
-  'pipelines.detail': { id: 1 },
-  'pipelines.rerun': { id: 1, failed: true },
-  'pipelines.cancel': { id: 1 },
-  'pipelines.run': { workflow: 'ci', ref: 'main', inputs: { check: 'true' } },
-  'leaveOnMerge.set': { on: false },
-  'freshMain.set': { on: true },
-  'autoHeal.set': { on: false },
-  'models.hide': { id: null, hidden: false },
-  'workerLabels.set': { settings: { on: true, model: 'glm-5.3-flash', effort: 'low', intervalSeconds: 60 } },
-  'subagents.set': { settings: SUBAGENT_DEFAULTS },
-  'prompts.set': { id: 'worker.system', text: null },
-  'prompts.agent': { choice: null },
-  'worktreeSetup.get': {},
-  'worktreeSetup.set': { setup: { setup: 'npm ci', copy: [] } },
-  'machine.limit': { limit: null },
-  'jira.connect': { site: 'example.atlassian.net', email: 'owner@example.com', token: 'test-only-not-a-credential' },
-  'jira.disconnect': {},
-  'jira.epic': { key: '' },
-  'jira.refresh': {},
-  'factory.connect': { key: 'test-only-not-a-credential' },
-  'factory.disconnect': {},
-  'factory.refresh': {},
-  'setup.check': {},
-  'setup.droid.install': {},
-  'setup.droid.signIn': {},
-  'setup.droid.signInCancel': {},
-  'setup.onboarded': { done: true },
-  'subscriptions.proxy': {},
-  'subscriptions.connect': { provider: 'codex' },
-  'subscriptions.connectCancel': { provider: 'codex' },
-  'subscriptions.disconnect': { provider: 'codex', account: 'test-account' },
-  'subscriptions.provider': { provider: 'codex', enabled: true },
-  'subscriptions.models': {},
-  'subscriptions.refresh': {},
-  'changes.diff': { workerId: 'pixel', path: 'src/index.ts' },
-  'changes.commit': { workerId: 'pixel', message: 'fix: update tools' },
-  'changes.discard': { workerId: 'pixel', path: 'src/index.ts' },
-  'changes.pr': { workerId: 'pixel', title: 'Fix tools', body: 'Typed tools.' },
-  'upgrade.check': {},
-  'upgrade.start': {},
-  'decor.add': { decor: { url: 'https://example.com/picture.png', wall: 'north', u: 1, y: 2, w: 1, h: 1, frame: 0 } },
-  'decor.update': { id: 'picture', decor: { title: 'New title' } },
-  'decor.remove': { id: 'picture' },
-  'jukebox.play': {},
-  'jukebox.skip': {},
-  'jukebox.stop': {},
-  'whiteboard.ping': { worker: 'pixel' },
 };
 
-test('every previous owner action has a focused replacement with a strict self-contained schema', async (t) => {
+test('every retained owner tool has a strict self-contained schema', async (t) => {
   const r = await remoteRig(t);
-  assert.deepEqual(new Set([...OWNER_TOOLS.map((tool) => tool.action), 'worker.kill']), new Set(OWNER_ACTIONS));
+  assert.deepEqual(new Set([...OWNER_TOOLS.map((tool) => tool.action), 'worker.kill', 'worker.worktree']), new Set(OWNER_ACTIONS));
   assert.equal(new Set(OWNER_TOOLS.map((tool) => tool.name)).size, OWNER_TOOLS.length);
   const listed = (await r.client.listTools()).tools;
   for (const entry of OWNER_TOOLS) {
@@ -406,25 +327,19 @@ test('every previous owner action has a focused replacement with a strict self-c
     assert.ok(!('args' in (definition.inputSchema.properties ?? {})), entry.name);
     assert.ok(!('action' in (definition.inputSchema.properties ?? {})), entry.name);
     assert.doesNotMatch(definition.description ?? '', /protocol\.ts|ClientMsg/);
-    const args = actionInputs[entry.action as Exclude<OwnerAction, 'worker.kill'>];
+    const args = actionInputs[entry.action as Exclude<OwnerAction, 'worker.kill' | 'worker.worktree'>];
     const result = await r.call(entry.name, args);
     assert.equal(result.error, false, `${entry.name}: ${result.text}`);
     const sent = r.calls.at(-1)!;
     assert.equal(sent.msg.t, entry.action, entry.name);
     assert.equal(sent.by, 'Grok');
     if (entry.scope === 'worker') assert.equal(sent.floor, 'f-api', entry.name);
-    if (entry.scope === 'global') assert.equal(sent.floor, undefined, entry.name);
     if (entry.scope === 'floor') assert.equal(sent.floor, 'f-app', entry.name);
     const count = r.calls.length;
     assert.equal((await r.call(entry.name, { ...args, unexpected: true })).error, true, entry.name);
     assert.equal(r.calls.length, count, 'unknown fields cannot reach the bridge');
   }
   assert.equal(r.calls.length, OWNER_TOOLS.length);
-  const proxy = r.calls.filter((call) => call.msg.t === 'subscriptions.proxy');
-  assert.deepEqual(
-    proxy.map((call) => call.msg.action),
-    ['install', 'start', 'open'],
-  );
   // Ensure zod conversion used by MCP includes nested fields rather than unconstrained dictionaries.
   for (const entry of OWNER_TOOLS) assert.doesNotThrow(() => z.toJSONSchema(entry.inputSchema, { io: 'input' }));
 });
@@ -433,12 +348,6 @@ test('focused tools resolve names, bind target floors and generate internal requ
   const r = await remoteRig(t);
   await r.call('office_worker_prompt', { workerId: 'Pixel', floor: '2', prompt: 'Continue' });
   assert.deepEqual(r.calls.at(-1), { by: 'Grok', floor: 'f-api', msg: { t: 'worker.prompt', workerId: 'pixel', prompt: 'Continue', queue: false } });
-  await r.call('office_floor_branch_set', { floor: 'API', branch: null });
-  assert.equal(r.calls.at(-1)?.floor, 'f-api');
-  assert.equal(r.calls.at(-1)?.msg.floor, 'f-api');
-  assert.equal(typeof r.calls.at(-1)?.msg.request, 'string');
-  await r.call('office_floor_reorder', { floor: '3', before: 'app' });
-  assert.deepEqual(r.calls.at(-1)?.msg, { t: 'floor.reorder', floor: 'f-docs', before: 'f-app' });
   await r.call('office_worker_thread', { workerId: 'Pixel', before: 10 });
   assert.equal(r.calls.at(-1)?.msg.before, 10);
   assert.equal(typeof r.calls.at(-1)?.msg.request, 'string');
@@ -447,8 +356,7 @@ test('focused tools resolve names, bind target floors and generate internal requ
     ['office_worker_prompt', { workerId: 'Byte', prompt: 'Continue' }],
     ['office_worker_prompt', { workerId: 'Pixel', floor: 'app', prompt: 'Continue' }],
     ['office_worker_prompt', { workerId: 'Nobody', prompt: 'Continue' }],
-    ['office_floor_reorder', { floor: 'app', before: 'missing' }],
-    ['office_floor_add', { dir: '/tmp/project', floor: 'api' }],
+    ['office_worker_spawn', { floor: 'missing' }],
   ] as const)
     assert.equal((await r.call(name, args)).error, true, name);
   assert.equal(r.calls.length, count, 'ambiguous, unknown or mismatched targets cannot act');
@@ -457,8 +365,6 @@ test('focused tools resolve names, bind target floors and generate internal requ
 test('nested and conditional arguments are rejected before owner actions', async (t) => {
   const r = await remoteRig(t);
   const invalid: [string, Record<string, unknown>][] = [
-    ['office_pull_merge', { number: 1, method: 'sqush' }],
-    ['office_pull_merge', { number: '1', method: 'merge' }],
     ['office_worker_thread', { workerId: 'pixel', before: -1 }],
     ['office_worker_spawn', { kind: 'cloud' }],
     ['office_worker_spawn', { kind: 'agent', cloud: { computerId: 'one' } }],
@@ -466,41 +372,10 @@ test('nested and conditional arguments are rejected before owner actions', async
     ['office_worker_spawn', { kind: 'cloud', cloud: { computerId: 'one', extra: true } }],
     ['office_worker_answer', { ...actionInputs['worker.answer'], text: 'Yes' }],
     ['office_worker_answer', { workerId: 'pixel', menu: { choices: [], freeText: false }, choice: 1 }],
-    ['office_subagents_set', { settings: { on: true } }],
-    ['office_subagents_set', { settings: { ...SUBAGENT_DEFAULTS, surprise: true } }],
-    ['office_subagents_set', { settings: { ...SUBAGENT_DEFAULTS, models: [] } }],
-    ['office_subagents_set', { settings: { ...SUBAGENT_DEFAULTS, models: [{ id: 'model' }, { id: 'model' }] } }],
     ['office_worker_spawn', { model: 'bad model' }],
     ['office_worker_spawn', { model: 'x'.repeat(257) }],
     ['office_worker_spawn', { images: ['not-an-upload-id'] }],
     ['office_worker_spawn', { images: Array(11).fill('0123456789abcdef') }],
-    ['office_worker_labels_set', { settings: { on: true, model: 'glm-5.3-flash', effort: 'low', intervalSeconds: 1 } }],
-    ['office_worker_labels_set', { settings: { on: true, model: 'glm-5.3-flash', effort: 'low', intervalSeconds: 60, implementation: 'custom', command: 'relative-script' } }],
-    ['office_worktree_setup_set', { setup: { setup: 'npm ci', copy: [12] } }],
-    ['office_pipeline_run', { workflow: 'ci', ref: 'main', inputs: { secret: { nested: true } } }],
-    ['office_pipeline_run', { workflow: 'ci', ref: 'main', inputs: { 'bad key': 'value' } }],
-    ['office_pipeline_run', { workflow: 'ci', ref: 'main', inputs: { value: 'x'.repeat(2001) } }],
-    ['office_pipeline_run', { workflow: 'ci', ref: 'main', inputs: Object.fromEntries(Array.from({ length: 51 }, (_, i) => [`k${i}`, 'v'])) }],
-    ['office_pipeline_run', { workflow: 'x'.repeat(201), ref: 'main' }],
-    ['office_pipeline_run', { workflow: 'ci', ref: 'x'.repeat(256) }],
-    ['office_worktree_setup_set', { setup: { setup: '', copy: Array(51).fill('file') } }],
-    ['office_worktree_setup_set', { setup: { setup: '', copy: ['x'.repeat(301)] } }],
-    ['office_changes_commit', { workerId: 'pixel', message: 'x'.repeat(5001) }],
-    ['office_changes_pr_create', { workerId: 'pixel', title: 'x'.repeat(301), body: '' }],
-    ['office_changes_pr_create', { workerId: 'pixel', title: 'title', body: 'x'.repeat(20_001) }],
-    ['office_changes_discard', { workerId: 'pixel', path: 'x'.repeat(4097) }],
-    ['office_picture_remove', { id: 'x'.repeat(33) }],
-    ['office_station_open', { deskId: 'x'.repeat(33) }],
-    ['office_forge_close', { kind: 'issue', number: 1, comment: 'x'.repeat(20_001) }],
-    ['office_factory_connect', { key: 'x'.repeat(601) }],
-    ['office_jira_connect', { site: 'example.atlassian.net', email: 'owner@example.com', token: 'x'.repeat(2001) }],
-    ['office_picture_update', { id: 'picture', decor: {} }],
-    ['office_picture_add', { decor: { ...(actionInputs['decor.add'].decor as object), frame: 999 } }],
-    ['office_picture_add', { decor: { ...(actionInputs['decor.add'].decor as object), title: 'x'.repeat(81) } }],
-    ['office_picture_add', { decor: { ...(actionInputs['decor.add'].decor as object), url: 'file:///tmp/picture.png' } }],
-    ['office_proxy_start', { action: 'install' }],
-    ['office_model_visibility_set', { id: null, hidden: true }],
-    ['office_terminal_write', { workerId: 'pixel', data: 'x'.repeat(65_537) }],
   ];
   for (const [name, args] of invalid) assert.equal((await r.call(name, args)).error, true, name);
   assert.equal(r.calls.length, 0);
@@ -570,7 +445,7 @@ test('local workers never get owner access', async (t) => {
   const guessed = await client.callTool({ name: 'office_send_home', arguments: { name: 'Pixel' } });
   assert.equal(guessed.isError, true);
   assert.match(JSON.stringify(guessed.content), /Only external workers have owner access/);
-  assert.doesNotMatch(client.getInstructions()!, /owner's full access/);
+  assert.doesNotMatch(client.getInstructions()!, /owner-level access/);
   assert.deepEqual(acted, []);
 });
 
@@ -592,21 +467,24 @@ test('owner actions from an external worker run through the owner’s own handle
     await closed;
   });
   const grok = worker('remote-grok', 'Grok', { remote: true, color: '#123456' });
-  // A second floor, added the way the owner's elevator panel adds one.
-  const added = await office.owner.act(grok, { t: 'floor.add', dir: home });
-  assert.equal(added.reply?.t, 'floor.added');
-  assert.ok(
-    added.notes.some((n) => n.includes('added by Grok')),
-    added.notes.join('; '),
-  );
-  const [first, second] = office.owner.floors();
-  assert.ok(second, 'the project floor and the added one');
+  const first = office.owner.floors()[0];
   const base = `ws://127.0.0.1:${(office.server.address() as AddressInfo).port}/ws?name=Owner&floor=${first.id}`;
   const msgs: ServerMsg[] = [];
   const ws = new WebSocket(base, { origin: base.replace('ws:', 'http:').split('/ws')[0] });
   t.after(() => ws.terminate());
   ws.on('message', (raw) => msgs.push(JSON.parse(String(raw))));
   await once(ws, 'open');
+
+  // Floor controls remain available in the owner's UI, not through remote-bot MCP.
+  const added = new Promise<void>((resolve) =>
+    ws.on('message', (raw) => {
+      if ((JSON.parse(String(raw)) as ServerMsg).t === 'floor.added') resolve();
+    }),
+  );
+  ws.send(JSON.stringify({ t: 'floor.add', dir: home }));
+  await added;
+  const second = office.owner.floors()[1];
+  assert.ok(second, 'the project floor and the added one');
 
   // A shell on the second floor, where the owner's window isn't.
   const hired = await office.owner.act(grok, { t: 'worker.spawn', deskId: 'auto', kind: 'shell' }, { floor: second.id });
@@ -618,16 +496,14 @@ test('owner actions from an external worker run through the owner’s own handle
 
   const missing = await office.owner.act(grok, { t: 'worker.kill', workerId: 'nobody', cleanup: 'keep' });
   assert.equal(missing.error, 'No such worker');
-  const wrongFloor = await office.owner.act(grok, { t: 'floor.branch', floor: second.id, request: 'r', branch: null }, { floor: first.id });
-  assert.match(wrongFloor.error!, /Choose a branch on the floor you are on/);
-  const ignored = await office.owner.act(grok, { t: 'worker.shoot', workerId: 'nobody' });
-  assert.deepEqual([ignored.error, ignored.unconfirmed], [undefined, true], 'a handler that ignores the action is not reported as done');
+  const interrupted = await office.owner.act(grok, { t: 'worker.interrupt', workerId: 'nobody' });
+  assert.equal(interrupted.error, 'No such worker');
   const aborted = new AbortController();
   aborted.abort();
-  assert.equal((await office.owner.act(grok, { t: 'floor.repos' }, { signal: aborted.signal })).pending, true, 'an already cancelled call returns at once');
-  const repos = await office.owner.act(grok, { t: 'floor.repos' });
-  assert.equal(repos.reply?.t, 'floor.repos', 'an action with an answer gets it back');
-  assert.equal(repos.unconfirmed, undefined, 'its answer confirms it');
+  assert.equal((await office.owner.act(grok, { t: 'thread.read', workerId: shell.id, request: 'r' }, { signal: aborted.signal })).pending, true, 'an already cancelled call returns at once');
+  const thread = await office.owner.act(grok, { t: 'thread.read', workerId: shell.id, request: 'r' });
+  assert.equal(thread.reply?.t, 'thread.snapshot', 'an action with an answer gets it back');
+  assert.equal(thread.unconfirmed, undefined, 'its answer confirms it, including a refused shell thread');
 
   const sent = await office.owner.act(grok, { t: 'worker.kill', workerId: shell.id, cleanup: 'keep' });
   assert.equal(sent.error, undefined, JSON.stringify(sent));

@@ -363,20 +363,20 @@ test('a remote lead gets structured status, cursors, waits and questions across 
     'an external worker has no wake notes, so it may wait',
   );
 
-  const first = await call('team', { action: 'status', verbose: false });
+  const first = await call('team_status', { verbose: false });
   assert.deepEqual(
     first.workers.map((w: { id: string; floor: string }) => `${w.id}@${w.floor}`),
     [`${alpha.id}@alpha`, `${beta.id}@beta`],
   );
   assert.equal(first.cursor, 'team:alpha:0,team:beta:0');
-  assert.equal((await call('team', { action: 'status', name: alpha.id, verbose: false })).cursor, 'team:alpha:0,team:beta:0', 'a named status cursor covers every floor, so a building-wide status can reuse it');
+  assert.equal((await call('team_status', { worker: alpha.id, verbose: false })).cursor, 'team:alpha:0,team:beta:0', 'a named status cursor covers every floor, so a building-wide status can reuse it');
   assert.equal((await r.teams[0].handle(r.maps[0].get(alpha.id)!, { action: 'report', text: 'Which API?', question: true, options: ['REST', 'GraphQL'] })).status, 200);
-  const news = await call('team', { action: 'status', since: first.cursor, verbose: false });
+  const news = await call('team_status', { since: first.cursor, verbose: false });
   assert.deepEqual(
     news.news.map((e: { id: string; kind: string }) => `${e.kind} ${e.id}`),
     ['question team:alpha:1'],
   );
-  assert.deepEqual((await call('team', { action: 'status', since: news.cursor })).news, []);
+  assert.deepEqual((await call('team_status', { since: news.cursor })).news, []);
   const [question] = (await call('questions_list')).questions;
   assert.equal(question.id, 'team:alpha:1');
   assert.equal(question.floor, 'alpha');
@@ -526,7 +526,7 @@ test('remote status starts at the current news, advances per caller, and timesta
     return client;
   };
   let client = await connect();
-  const status = () => client.callTool({ name: 'team', arguments: { action: 'status' } });
+  const status = () => client.callTool({ name: 'team_status', arguments: {} });
   const baseline = await status();
   assert.deepEqual(baseline.structuredContent?.events, [], 'a new caller does not replay historical news, even after hiring');
   assert.ok(baseline.structuredContent);
@@ -548,7 +548,7 @@ test('remote status starts at the current news, advances per caller, and timesta
   );
   assert.match(JSON.stringify(fresh.content), /\[1970-01-02T00:00:01\.000Z\] Worker report from Byte/);
   assert.deepEqual((await status()).structuredContent?.events, [], 'each report appears once in status');
-  assert.deepEqual((await client.callTool({ name: 'team_status', arguments: {} })).structuredContent?.events, [], 'the new status tool shares the legacy per-caller cursor');
+  assert.deepEqual((await client.callTool({ name: 'team_status', arguments: {} })).structuredContent?.events, [], 'the status tool retains the per-caller cursor');
 
   // Sequence cursors do not miss events that share the previous status call's millisecond.
   await r.teams[0].handle(sub, { action: 'report', text: 'A question', question: true });
@@ -654,7 +654,7 @@ function docEntry(tool: { name: string; description?: string; inputSchema: Schem
   return `### \`${tool.name}\`\n\n${tool.description ?? ''}\n\n${table}`;
 }
 
-test(`${REMOTE_DOC} documents every tool a remote bot lists, with every argument`, async (t) => {
+test('external-bot tools/list returns exactly the 26 supported tools and their documented arguments', async (t) => {
   const r = rig(t);
   const hostname = 'office.example.ts.net';
   // The office always gives external workers its owner bridge, so their tool list includes the owner tools.
@@ -665,6 +665,68 @@ test(`${REMOTE_DOC} documents every tool a remote bot lists, with every argument
   t.after(() => client.close());
   await client.connect(new StreamableHTTPClientTransport(url, { fetch: proxyFetch, requestInit: { headers: { host: `${hostname}:8443`, Authorization: `Bearer ${r.remote.token}` } } }));
   const listed = (await client.listTools()).tools as unknown as { name: string; description?: string; inputSchema: Schema }[];
+  const expected = [
+    'office_whoami',
+    'office_floors',
+    'office_move',
+    'office_inbox',
+    'office_status',
+    'team_models',
+    'team_hire',
+    'team_status',
+    'team_wait',
+    'team_message',
+    'team_report_get',
+    'questions_list',
+    'question_answer',
+    'worker_diff',
+    'worker_log',
+    'team_dismiss',
+    'visit_message',
+    'visit_reply',
+    'office_roster',
+    'office_look',
+    'office_send_home',
+    'office_worker_spawn',
+    'office_worker_interrupt',
+    'office_worker_prompt',
+    'office_worker_answer',
+    'office_worker_thread',
+  ];
+  assert.equal(listed.length, 26);
+  assert.deepEqual(new Set(listed.map((tool) => tool.name)), new Set(expected));
+  t.diagnostic(
+    `external-bot tools/list: ${listed.length} tools, exact set equality passed: ${listed
+      .map((tool) => tool.name)
+      .sort()
+      .join(', ')}`,
+  );
+  // The surface stays fixed with local hiring/visit permissions off; runtime actions still enforce them.
+  r.settings.on = false;
+  r.settings.visits = false;
+  r.settings.deskWorkers = false;
+  assert.deepEqual(new Set((await client.listTools()).tools.map((tool) => tool.name)), new Set(expected));
+  assert.equal((await client.callTool({ name: 'visit_message', arguments: { name: 'Byte', text: 'Hello' } })).isError, true, 'listing visit tools does not bypass the Visits setting');
+  for (const name of [
+    'team',
+    'models_list',
+    'whiteboard_read',
+    'whiteboard_card',
+    'whiteboard_state',
+    'whiteboard_marks',
+    'whiteboard_apply',
+    'visit_roster',
+    'visit_look',
+    'team_report',
+    'office_whiteboard_ping',
+    'office_owner',
+    'office_terminal_write',
+    'office_floor_add',
+  ]) {
+    const refused = await client.callTool({ name, arguments: {} });
+    assert.equal(refused.isError, true, name);
+    assert.ok(['permission_denied', 'unknown_tool'].includes(String(refused.structuredContent?.code)), name);
+  }
   let doc = '';
   try {
     doc = readFileSync(new URL(`../${REMOTE_DOC}`, import.meta.url), 'utf8');
