@@ -158,6 +158,16 @@ test('the server registers office tools without test probes', async (t) => {
   assert.ok(names.every((name) => !name.startsWith('test_')));
 });
 
+test('internal workers retain the tools removed from remote-bot MCP under their existing permissions', async (t) => {
+  const r = await rig(t, false);
+  const lead = await r.connect('lead');
+  const names = new Set((await lead.listTools()).tools.map((tool) => tool.name));
+  for (const name of ['team', 'models_list', 'visit_roster', 'visit_look', 'whiteboard_read', 'whiteboard_card', 'whiteboard_state', 'whiteboard_marks', 'whiteboard_apply']) assert.ok(names.has(name), name);
+  assert.ok(!names.has('team_report'), 'only subagents report to a lead');
+  const subagent = await r.connect('sub');
+  assert.ok((await subagent.listTools()).tools.some((tool) => tool.name === 'team_report'));
+});
+
 test('a real HTTP MCP client reads office identity and server instructions', async (t) => {
   const r = await rig(t);
   const lead = await r.connect('lead');

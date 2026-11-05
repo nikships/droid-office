@@ -77,25 +77,23 @@ Tailscale at all; Settings then says so. CI and office clones run that way.
 - Use `team_status`, `team_message` and `team_dismiss` to read, message, or
   dismiss its subagents across floors, and `worker_log` and `worker_diff` to
   inspect one. Status defaults to all its teams. Use a worker id or the optional
-  `floor` argument when names repeat. The older `team` tool still works.
-- Visit independent workers on the current floor and use that floor's
-  Whiteboard. A reply to an earlier visit routes to its original floor.
+  `floor` argument when names repeat. Use `team_report_get` for a full report.
+- Message independent workers on the current floor with `visit_message` and
+  `visit_reply`. A reply to an earlier visit routes to its original floor.
 - Read messages and team updates from every floor with `office_inbox`.
   Reads do not consume messages. After processing an item, send its exact `id`
   in a later call's `ack` array. Deduplicate by id: delivery is at least once.
-- Do anything you can do in the office. `office_roster` lists every worker on
+- Inspect and control workers across the office. `office_roster` lists every worker on
   every floor; `office_look` reads any terminal; `office_send_home` sends any
   worker home, including workers you hired, other leads' subagents and itself.
   It keeps the worktree and branch unless asked otherwise, and says first
-  whether the worktree had uncommitted or unpushed work. Focused tools such as
-  `office_worker_prompt`, `office_pull_merge`, `office_pipeline_run` and
-  `office_floor_add` perform the other owner operations. Each has its own
-  validated fields; there is no generic action dispatcher or untyped argument
-  object. Raw terminal input is separate from prompting (`office_terminal_write`
-  and `office_shell_write`). Settings, pictures, the jukebox, Factory, Jira and
-  subscriptions have their own tools too. Each shows the same toast as when you do
-  it, naming the bot. There is no setting for this: a bot's key is the owner's
-  trust, so keep keys to bots you trust and revoke one to take it away.
+  whether the worktree had uncommitted or unpushed work. `office_worker_spawn`
+  hires an independent worker; `office_worker_prompt`, `office_worker_interrupt`,
+  `office_worker_answer` and `office_worker_thread` direct or inspect one.
+  The external MCP exposes exactly 26 tools, with no Whiteboard, raw terminal
+  input, settings, floor-management, forge, pipeline, connection, picture or music
+  controls. Those features remain in the app. Internal workers keep their existing
+  tools and permissions. Worker-control actions name the bot in their toasts.
   The [tool reference](remote-mcp.md#tools) explains the scope and arguments of
   every operation. A `pending` or `unconfirmed` result must be checked before
   retrying a mutation. Cloud sessions are kept on dismissal unless
@@ -133,7 +131,6 @@ restart ends open questions and undelivered visits. A previously delivered
 question may remain in the durable inbox, but its old reply id no longer works
 after restart. Send a new visit message instead.
 
-All `cwd` values and Whiteboard file paths refer to the **office machine**, not
-the bot's host. Inline HTML can be supplied directly. Full worker permissions
-include hiring agents that run on the owner's machine and reading local files
-through the existing Whiteboard tools. Give keys only to a trusted bot.
+All `cwd` values and worker paths refer to the **office machine**, not the bot's host.
+A key still permits hiring agents that run commands on the owner's machine and
+controlling their turns. Give keys only to a trusted bot.
