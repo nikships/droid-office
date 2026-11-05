@@ -2459,6 +2459,7 @@ html:has(body.dashboard), body.dashboard { overflow: auto; }
 .dash-pane-titles { flex: 1; min-width: 0; display: flex; align-items: baseline; gap: var(--space-2); }
 .dash-pane-name { flex: none; max-width: 50%; overflow: hidden; font-size: 13px; font-weight: 500; text-overflow: ellipsis; white-space: nowrap; }
 .dash-pane[data-mode=empty] .dash-pane-name { font-size: 12.5px; font-weight: 400; color: var(--text-tertiary); }
+.dash-workspace[data-layout=single] .dash-pane[data-mode=empty] { border-color: transparent; }
 .dash-workspace[data-layout=single] .dash-pane[data-mode=empty] .dash-pane-head { visibility: hidden; }
 .dash-pane-task { min-width: 0; overflow: hidden; font-size: 12.5px; color: var(--text-secondary); text-overflow: ellipsis; white-space: nowrap; }
 .dash-pane-model { display: none; align-self: center; min-width: 0; overflow: hidden; font: 400 10px/1 var(--font-mono); text-transform: uppercase; letter-spacing: .08em; color: var(--text-tertiary); text-overflow: ellipsis; white-space: nowrap; }
