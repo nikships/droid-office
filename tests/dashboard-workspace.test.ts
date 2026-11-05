@@ -410,6 +410,35 @@ test('only the layouts with a divider to drag show one', () => {
   assert.deepEqual(LAYOUT_DIVIDERS.eight, { col: false, row: false });
 });
 
+test('a divider the previous layout hid starts even, and a placed one stays put', () => {
+  const ws = emptyWorkspace('single');
+  assert.equal(ws.col, 0.5);
+  ws.col = 0.7;
+  ws.row = 0.3;
+  const previous = new Map<string, number>();
+  syncWorkspace(ws, workers(['a']), previous);
+  syncWorkspace(ws, workers(['a', 'b']), previous);
+  assert.equal(ws.layout, 'split');
+  assert.deepEqual(rectsFor(ws.layout, ws.col, ws.row), [
+    [0, 0, 0.5, 1],
+    [0.5, 0, 0.5, 1],
+  ]);
+  ws.col = 0.35;
+  setLayout(ws, 'triple');
+  assert.equal(ws.col, 0.35, 'the column divider was already showing');
+  assert.equal(ws.row, 0.5, 'the row divider is new');
+  ws.row = 0.65;
+  setLayout(ws, 'six');
+  setLayout(ws, 'grid');
+  assert.equal(ws.col, 0.5);
+  assert.equal(ws.row, 0.5);
+  const lone = emptyWorkspace('single');
+  openInSplit(lone, 'a');
+  openInSplit(lone, 'b');
+  assert.equal(lone.layout, 'split');
+  assert.equal(lone.col, 0.5);
+});
+
 test('dividers stay away from the edges', () => {
   assert.equal(clampRatio(0.05), 0.22);
   assert.equal(clampRatio(0.95), 0.78);

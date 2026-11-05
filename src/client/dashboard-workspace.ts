@@ -59,7 +59,16 @@ export function clampRatio(v: number): number {
 }
 
 export function emptyWorkspace(layout: LayoutMode = 'triple'): Workspace {
-  return { layout, auto: true, slots: Array(MAX_SLOTS).fill(null), focused: 0, maximized: null, col: 0.56, row: 0.5, views: {} };
+  return { layout, auto: true, slots: Array(MAX_SLOTS).fill(null), focused: 0, maximized: null, col: 0.5, row: 0.5, views: {} };
+}
+
+/** Switches layout. A divider the old layout hid starts even, since nobody could have placed it. */
+function changeLayout(ws: Workspace, layout: LayoutMode) {
+  const before = LAYOUT_DIVIDERS[ws.layout];
+  const after = LAYOUT_DIVIDERS[layout];
+  if (after.col && !before.col) ws.col = 0.5;
+  if (after.row && !before.row) ws.row = 0.5;
+  ws.layout = layout;
 }
 
 /** The panes the layout shows now, in order. */
@@ -147,7 +156,7 @@ export function rectsFor(layout: LayoutMode, c: number, r: number): Rect[] {
 }
 
 export function setLayout(ws: Workspace, layout: LayoutMode) {
-  ws.layout = layout;
+  changeLayout(ws, layout);
   ws.auto = false;
   ws.maximized = null;
   ws.focused = Math.min(ws.focused, SLOT_COUNT[layout] - 1);
@@ -201,7 +210,7 @@ export function autoLayout(ws: Workspace, workers: readonly LayoutWorker[]): boo
   const present = new Set(workers.map((w) => w.id));
   const parked = ws.slots.filter((id): id is string => !!id && present.has(id) && !selected.has(id));
   ws.slots = [...slots, ...parked, ...Array(MAX_SLOTS).fill(null)].slice(0, MAX_SLOTS);
-  ws.layout = LAYOUT_ORDER[count - 1];
+  changeLayout(ws, LAYOUT_ORDER[count - 1]);
   ws.auto = true;
   const focusAt = focused ? slots.indexOf(focused) : -1;
   ws.focused = focusAt >= 0 ? focusAt : Math.min(ws.focused, count - 1);
