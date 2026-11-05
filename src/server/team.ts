@@ -38,8 +38,6 @@ export interface TeamWorkers {
 }
 
 export interface TeamOptions {
-  /** Remote leads own teams across floors; the normal per-lead cap still applies building-wide. */
-  remoteTeamSize?(id: string): number;
   dataDir: string;
   /** The floor's checkout, which worktree paths are relative to. */
   dir: string;
@@ -418,6 +416,8 @@ export class Team {
 
   /** Why `w` can't hire a subagent now, if it can't. */
   cannotHire(w: WorkerInfo): string | undefined {
+    // External workers have the owner's access, and the owner hires whatever the Subagents settings say.
+    if (w.remote) return undefined;
     const s = this.opts.settings();
     const lead = STATION_AGENT.lead.name;
     if (!s.on) return 'Subagents are turned off in this office (⚙️ Settings → Subagents & visits)';
@@ -446,10 +446,11 @@ export class Team {
       canHire: !why,
       ...(why ? { why } : {}),
       subagents: team,
-      max: s.maxPerLead,
+      // External workers have the owner's access: no team size or model list limits them.
+      ...(w.remote ? {} : { max: s.maxPerLead }),
       worktree: s.worktree && this.opts.git,
       wakeLead: s.wakeLead,
-      ...(s.models?.length ? { models: s.models.length } : {}),
+      ...(s.models?.length && !w.remote ? { models: s.models.length } : {}),
     };
   }
 
@@ -500,7 +501,7 @@ export class Team {
         ...(stuck ? { cannotRun: stuck } : {}),
       };
     };
-    const allowed = s.models?.length ? s.models : undefined;
+    const allowed = s.models?.length && !caller.remote ? s.models : undefined;
     const models = includeDisabled
       ? [...new Set([...known.keys(), ...(allowed ?? []).map((m) => m.id)])].map((id) => {
           const model = describe(id, known.get(id), allowed?.find((m) => m.id === id)?.note);
@@ -534,7 +535,7 @@ export class Team {
    * Why a subagent can't be hired on `model` (`undefined`: the default), naming the models the lead
    * may pick that can run; undefined when it can. `named`: the lead asked for it with --model.
    */
-  private async refuseModel(model: string | undefined, named: boolean): Promise<string | undefined> {
+  private async refuseModel(model: string | undefined, named: boolean, anyModel = false): Promise<string | undefined> {
     if (!this.opts.availability) return undefined;
     const picked = model ?? this.defaultModel();
     const catalogue = picked && !this.blocked(picked) ? undefined : await this.catalogue();
@@ -544,7 +545,7 @@ export class Team {
     const known = new Map((catalogue?.models ?? []).map((m) => [m.id, m]));
     const name = (x: string) => known.get(x)?.displayName?.replace(/^DroidProxy:\s*/i, '') ?? x;
     const s = this.opts.settings();
-    const pool = s.models?.length ? s.models.map((m) => m.id) : (catalogue?.models ?? []).filter((m) => !m.legacy).map((m) => m.id);
+    const pool = s.models?.length && !anyModel ? s.models.map((m) => m.id) : (catalogue?.models ?? []).filter((m) => !m.legacy).map((m) => m.id);
     const fine = pool.filter((x) => x !== id && !this.blocked(x));
     const head = hireRefusal(name(id), a, this.now());
     const which = named ? '' : ' It is the default subagent model, so set model in team_hire.';
@@ -601,12 +602,12 @@ export class Team {
    * What a subagent runs: what its lead asked for, else the Subagents setting, else the office
    * default. `droidDefault` is droid's own default model, which the model list never refuses.
    */
-  private choice(b: Record<string, unknown>, droidDefault?: string): Partial<AgentChoice> | string {
+  private choice(b: Record<string, unknown>, droidDefault?: string, anyModel = false): Partial<AgentChoice> | string {
     const s = this.opts.settings();
     const model = typeof b.model === 'string' && b.model.trim() ? b.model.trim() : undefined;
     const effort = b.effort === undefined || b.effort === '' ? undefined : b.effort;
     if (effort !== undefined && !isAgentEffort(effort)) return `Effort is one of ${AGENT_EFFORTS.join(', ')}`;
-    if (model !== undefined && s.models?.length && model !== this.defaultModel(droidDefault) && !s.models.some((m) => m.id === model)) {
+    if (model !== undefined && !anyModel && s.models?.length && model !== this.defaultModel(droidDefault) && !s.models.some((m) => m.id === model)) {
       return `${clip(model, 60)} isn't one of the models this office lets subagents use (⚙️ Settings → Subagents & visits): pick one from team_models, or leave model out for the default`;
     }
     if (model === undefined && effort === undefined) return s.agent ? { ...s.agent } : {};
@@ -626,13 +627,15 @@ export class Team {
     const s = this.opts.settings();
     const asked = typeof b.model === 'string' ? b.model.trim() : '';
     // Only a model outside the list needs droid's own default, which subagents may always run.
-    const outside = asked && s.models?.length && !s.models.some((m) => m.id === asked) && !this.defaultModel();
-    const choice = this.choice(b, outside ? (await this.catalogue())?.defaultModel : undefined);
+    const outside = !lead.remote && asked && s.models?.length && !s.models.some((m) => m.id === asked) && !this.defaultModel();
+    const choice = this.choice(b, outside ? (await this.catalogue())?.defaultModel : undefined, lead.remote);
     if (typeof choice === 'string') return no(400, choice);
-    const refused = await this.refuseModel(choice.model, !!asked);
+    const refused = await this.refuseModel(choice.model, !!asked, !!lead.remote);
     if (refused) return no(409, refused);
+    // External leads have the owner's access, which no team size limits.
     const full = () => {
-      const n = lead.remote ? (this.opts.remoteTeamSize?.(lead.id) ?? this.teamOf(lead.id).length) : this.teamOf(lead.id).length;
+      if (lead.remote) return undefined;
+      const n = this.teamOf(lead.id).length;
       return n >= s.maxPerLead ? `You have ${n} subagents, the most one lead has at once in this office: use team with action dismiss and its name only when both worker and worktree are no longer needed` : undefined;
     };
     const tooMany = full();

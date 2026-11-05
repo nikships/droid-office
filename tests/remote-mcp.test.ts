@@ -102,10 +102,7 @@ function rig(t: Cleanup) {
       tail: () => 'working',
       setTask() {},
     };
-    const team = new Team(
-      { ...workers, get },
-      { dataDir: data, dir: data, git: false, settings: () => settings, remoteTeamSize: (id) => maps.flatMap((m) => [...m.values()]).filter((w) => w.lead === id).length, toast() {}, now: () => now },
-    );
+    const team = new Team({ ...workers, get }, { dataDir: data, dir: data, git: false, settings: () => settings, toast() {}, now: () => now });
     teams.push(team);
     const visit = new Visits({ ...workers, get, tell: workers.prompt, cancelTurn: () => false, turnScreen: () => undefined }, { on: () => settings.visits, emit() {}, now: () => now });
     visits.push(visit);
@@ -232,7 +229,7 @@ test('full inbox refuses new delivery rather than silently losing old messages; 
   assert.throws(() => new RemoteWorkers(dir), /not reset/);
 });
 
-test('a moving remote lead keeps both teams, reports, replies, and a building-wide hiring cap', async (t) => {
+test('a moving remote lead keeps both teams, reports and replies, with the owner’s hiring access', async (t) => {
   const r = rig(t);
   const id = r.remote.worker.id;
   const first = await r.teams[0].handle(r.remote.worker, { action: 'hire', task: 'Work on alpha' });
@@ -244,14 +241,25 @@ test('a moving remote lead keeps both teams, reports, replies, and a building-wi
   const second = await r.teams[1].handle(worker, { action: 'hire', task: 'Work on beta' });
   assert.equal(second.status, 200);
   assert.equal((await r.teams[1].handle(worker, { action: 'hire', task: 'More work' })).status, 200);
-  assert.equal((await r.teams[1].handle(worker, { action: 'hire', task: 'Too many' })).status, 409);
+  assert.equal((await r.teams[1].handle(worker, { action: 'hire', task: 'Past the per-lead limit' })).status, 200, 'the owner hires past maxPerLead, and so does an external worker');
+  r.settings.on = false;
+  r.settings.models = [{ id: 'cheap-model' }];
+  assert.equal(r.teams[1].cannotHire(worker), undefined, 'Subagents off does not stop an external worker');
+  assert.equal((await r.teams[1].handle(worker, { action: 'hire', task: 'Any model', model: 'strong-model' })).status, 200, 'the Subagents model list does not limit it');
+  assert.equal(((await r.teams[1].handle(worker, { action: 'models' })).body as { restricted: boolean }).restricted, false);
+  const me = (await r.teams[1].handle(worker, { action: 'whoami' })).body;
+  assert.equal('max' in me || 'models' in me, false, 'whoami reports no team size or model list to an external worker');
+  const local = { ...worker, id: 'local', remote: undefined, deskId: 'desk-9' } as WorkerInfo;
+  assert.match(r.teams[1].cannotHire(local)!, /turned off/, 'a local worker keeps the owner’s Subagents setting');
+  r.settings.on = true;
+  delete r.settings.models;
   const sub = r.maps[0].get((first.body.worker as WorkerInfo).id)!;
   assert.equal((await r.teams[0].handle(sub, { action: 'report', text: 'Alpha finished' })).status, 200);
   const inbox = r.office.inbox(id);
   assert.match(inbox.messages[0].text, /Alpha finished/);
   assert.equal(inbox.messages[0].floor, 'alpha');
   const status = await r.office.team(worker, { action: 'status' });
-  assert.equal((status.body.team as unknown[]).length, 3);
+  assert.equal((status.body.team as unknown[]).length, 5);
   assert.equal(r.office.inbox(id).messages.length, 1, 'status does not consume a remote report');
   assert.equal((await r.office.team(worker, { action: 'send', worker: sub.id, text: 'Please continue' })).status, 200);
   assert.equal((await r.office.team(worker, { action: 'send', worker: 'Byte', text: 'Ambiguous' })).status, 409);
@@ -347,6 +355,9 @@ test('a remote lead gets structured status, cursors, waits and questions across 
   t.after(() => client.close());
   await client.connect(new StreamableHTTPClientTransport(url, { fetch: proxyFetch, requestInit: { headers: { host: `${hostname}:8443`, Authorization: `Bearer ${r.remote.token}`, 'x-droid-office-worker-id': id } } }));
   const call = async (name: string, args: Record<string, unknown> = {}) => (await client.callTool({ name, arguments: args })).structuredContent as Record<string, any>;
+  const who = await client.callTool({ name: 'office_whoami', arguments: {} });
+  assert.equal(who.structuredContent?.subagents, 2, 'identity counts teams left behind after moving floors');
+  assert.match(JSON.stringify(who.content), /Subagents: 2, no limit/);
   assert.ok(
     (await client.listTools()).tools.some((tool) => tool.name === 'team_wait'),
     'an external worker has no wake notes, so it may wait',
@@ -646,7 +657,9 @@ function docEntry(tool: { name: string; description?: string; inputSchema: Schem
 test(`${REMOTE_DOC} documents every tool a remote bot lists, with every argument`, async (t) => {
   const r = rig(t);
   const hostname = 'office.example.ts.net';
-  const server = remoteMcpListener({ answers: new Answers(), remote: r.office, remoteTransport: { hostname: () => hostname, owner: () => undefined }, floor: r.floor, settings: () => r.settings });
+  // The office always gives external workers its owner bridge, so their tool list includes the owner tools.
+  const owner = { floors: () => [], tail: () => undefined, act: async () => ({ notes: [] }) };
+  const server = remoteMcpListener({ answers: new Answers(), owner, remote: r.office, remoteTransport: { hostname: () => hostname, owner: () => undefined }, floor: r.floor, settings: () => r.settings });
   const url = new URL('/office/mcp', await listening(t, server));
   const client = new Client({ name: 'doc-sync', version: '1' });
   t.after(() => client.close());

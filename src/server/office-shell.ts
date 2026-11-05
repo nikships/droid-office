@@ -5,7 +5,7 @@ import serialize from '@xterm/addon-serialize';
 import unicode11 from '@xterm/addon-unicode11';
 import { OFFICE_SHELL_ID } from '../shared/office-shell.js';
 import { DropStore } from './drops.js';
-import { terminalTail } from './history.js';
+import { plainTail, terminalTail } from './history.js';
 import { type PtyHost, SCROLLBACK, type Pty } from './ptys.js';
 import { screenSnapshot } from './screen.js';
 import { snapshotScreen, type ScreenFrame } from './screen-frame.js';
@@ -142,6 +142,11 @@ export class OfficeShell {
 
   write(data: string) {
     this.pty?.write(data);
+  }
+
+  /** The end of its screen as plain text; undefined until it has started. */
+  tail(lines: number): string | undefined {
+    return this.term ? plainTail(this.term, lines) : undefined;
   }
 
   resize(cols: number, rows: number) {

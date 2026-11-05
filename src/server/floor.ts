@@ -53,7 +53,6 @@ export function workerLeft(id: string, remote: Pick<RemoteWorkers, 'identity'> |
 /** What a floor needs from the building around it. */
 export interface FloorContext {
   remoteWorkers?: RemoteWorkers;
-  remoteTeamSize?(id: string): number;
   remoteRevoke?(id: string): void;
   agentCmd: string;
   agentArgs: string[];
@@ -360,7 +359,6 @@ export class Floor {
         dataDir,
         dir: def.dir,
         git: !this.plain && !!this.project.branch,
-        remoteTeamSize: ctx.remoteTeamSize,
         settings: () => ctx.subagents(),
         ...(ctx.droidModels ? { models: ctx.droidModels.bind(ctx) } : {}),
         availability: (model) => ctx.modelAvailability?.(model),

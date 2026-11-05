@@ -1,6 +1,7 @@
 import path from 'node:path';
 import { z } from 'zod';
 import type { TeamEvent, TeamMember, TeamModel, TeamReply } from '../team.js';
+import { hasOwnerAccess } from './owner.js';
 import { officeAccess, officeError, officeResult, type OfficeMcpCaller, type OfficeMcpDeps, type OfficeMcpServer } from './index.js';
 import { compactEvent, compactEventText, compactWorker, compactWorkerText, cursorOf, EVENT_FILTERS, eventKinds, parseCursor } from './team-events.js';
 
@@ -195,7 +196,7 @@ export function register(server: OfficeMcpServer, deps: OfficeMcpDeps): void {
     {
       name: 'office_whoami',
       description:
-        'Read your office identity, desk, lead if you are a subagent, permission to hire and visit, team size, worktree default and wake-note setting. Use this to establish your role before coordinating work. It does not hire, message or wait.',
+        'Read your office identity, desk, lead if you are a subagent, permission to hire and visit, owner access, team size, worktree default and wake-note setting. Use this to establish your role before coordinating work. It does not hire, message or wait.',
       inputSchema: z.object({}),
       annotations: readOnly,
     },
@@ -203,15 +204,18 @@ export function register(server: OfficeMcpServer, deps: OfficeMcpDeps): void {
     async (_args, caller) => {
       const { body } = await caller.floor.team.handle(caller.worker, { action: 'whoami' });
       const visitRefusal = caller.floor.visits.cannotVisit(caller.worker);
-      const identity = { ...body, floor: { id: caller.floor.id, name: caller.floor.name }, cwd: caller.cwd, canVisit: !visitRefusal, ...(visitRefusal ? { visitRefusal } : {}) };
+      const owner = hasOwnerAccess(caller.worker, deps.owner);
+      const subagents = caller.worker.remote && deps.remote ? deps.remote.floors().reduce((n, f) => n + f.workers.list().filter((w) => w.lead === caller.worker.id).length, 0) : (body.subagents ?? 0);
+      const identity = { ...body, subagents, floor: { id: caller.floor.id, name: caller.floor.name }, cwd: caller.cwd, canVisit: !visitRefusal, ...(visitRefusal ? { visitRefusal } : {}), ownerAccess: owner };
       const lead = caller.worker.lead ? (caller.floor.workers.get(caller.worker.lead)?.name ?? caller.worker.lead) : undefined;
       return officeResult(
         [
           `${caller.worker.name} (${caller.worker.id}), ${caller.floor.name}, ${lead ? `subagent of ${lead}` : 'independent worker'}.`,
           `Working folder: ${caller.cwd}`,
-          `May hire: ${body.canHire ? 'yes' : 'no'}. Subagents: ${body.subagents ?? 0}/${body.max ?? 0}. Wake the lead: ${body.wakeLead ? 'on' : 'off'}.`,
+          `May hire: ${body.canHire ? 'yes' : 'no'}. Subagents: ${subagents}${typeof body.max === 'number' ? `/${body.max}` : ', no limit'}. Wake the lead: ${body.wakeLead ? 'on' : 'off'}.`,
           ...(typeof body.why === 'string' ? [body.why] : []),
           `May visit: ${visitRefusal ? `no. ${visitRefusal}` : 'yes'}.`,
+          ...(owner ? ['Owner access: yes. Focused office_* tools act across the building as the owner does. Use team_* for your subagents and visit_* for peer coordination.'] : []),
         ].join('\n'),
         identity,
       );

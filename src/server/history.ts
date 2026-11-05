@@ -85,6 +85,35 @@ export function terminalTail(term: HeadlessTerminal, ser: Serializer, maxLines: 
   return out;
 }
 
+const TAIL_LINE_MAX = 4000;
+
+/**
+ * A terminal's last `lines` lines as printed (wrapped rows joined) in plain text, its scrollback
+ * included. Read from the end; a line longer than TAIL_LINE_MAX keeps only its end.
+ */
+export function plainTail(term: HeadlessTerminal, lines: number): string {
+  const buf = term.buffer.active;
+  const want = Math.max(1, lines);
+  const out: string[] = [];
+  let run: string[] = [];
+  const flush = () => {
+    const text = run.reverse().join('').trimEnd();
+    run = [];
+    // The rows under the cursor are blank until something is written there: they aren't the end.
+    if (out.length || text) out.push(text.length > TAIL_LINE_MAX ? `…${text.slice(-TAIL_LINE_MAX)}` : text);
+  };
+  for (let y = buf.length - 1; y >= 0 && out.length < want; y--) {
+    const line = buf.getLine(y);
+    if (!line) continue;
+    // A row that wraps onto the next keeps its trailing spaces; they are part of the line.
+    run.push(line.translateToString(buf.getLine(y + 1)?.isWrapped !== true));
+    if (!line.isWrapped) flush();
+  }
+  // The oldest line can begin above the scrollback that is kept: what remains of it still counts.
+  if (run.length && out.length < want) flush();
+  return out.reverse().join('\n');
+}
+
 /**
  * The lines of a worker's terminal holding `needle` (a searchKey), newest first, one per distinct
  * line: a full-screen program's screen first, then the scrollback.

@@ -1,5 +1,6 @@
 import http from 'node:http';
 import https from 'node:https';
+import { AsyncLocalStorage } from 'node:async_hooks';
 import { randomBytes } from 'node:crypto';
 import { createReadStream, existsSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
@@ -36,12 +37,13 @@ import { LeaveOnMerge } from './leave-on-merge.js';
 import { FreshMain } from './saved-switch.js';
 import { Subagents, removeBundledSkills } from './subagents.js';
 import { createOfficeMcp, OFFICE_MCP_PATH, syncOfficeMcpConnection, type OfficeMcpServer } from './office-mcp/index.js';
+import { OWNER_REPLIES, type OwnerOffice, type OwnerReply } from './office-mcp/owner.js';
 import { OfficePrompts } from './prompts.js';
 import { HotReload, sourceAppDir } from './hot-reload.js';
 import { readGpuStats } from './gpu-stats.js';
 import { TrackpadHaptics } from './haptics.js';
 import { OFFICE_SHELL_ID } from '../shared/office-shell.js';
-import type { Arrival, ClientMsg, FloorInfo, FloorView, SearchResults, ServerMsg } from '../shared/protocol.js';
+import type { Arrival, ClientMsg, FloorInfo, FloorView, SearchResults, ServerMsg, WorkerInfo } from '../shared/protocol.js';
 import { AUTO_DESK, GH_COMMENT_MAX, GH_LABEL_MAX, isAgentEffort } from '../shared/protocol.js';
 import { elevatorSpot, nextFreeSeat, streetBelow } from '../shared/layout.js';
 import { STREAM } from '../shared/jukebox.js';
@@ -100,7 +102,8 @@ type ToastLevel = Extract<ServerMsg, { t: 'toast' }>['level'];
 
 interface Client {
   id: string;
-  ws: WebSocket;
+  /** An external MCP worker's owner action runs on a socket of its own that is never in `clients` (see ownerOffice). */
+  ws: Pick<WebSocket, 'readyState' | 'bufferedAmount' | 'send' | 'close' | 'ping' | 'terminate'>;
   /** The floor this connection is on (ROOF, or null out in the empty lobby); routing reads this. */
   floor: string | null;
   /**
@@ -124,9 +127,13 @@ interface Client {
   requests: Set<string>;
   /** The Whiteboard epoch this connection numbers its batches in, per floor (see WhiteboardStore.issueEpoch). */
   boards: Map<string, string>;
+  /** An external worker's owner action: `refused` is the first warning it was given, its outcome when nothing else says. */
+  owner?: { refused?: string; unconfirmed?: boolean };
 }
 
 const SLOW_CLIENT_BYTES = 8 * 1024 * 1024;
+/** How long an external worker's owner action waits for its outcome before saying it is still under way. */
+const OWNER_ACTION_WAIT_MS = 30_000;
 
 function findPublicDir(): string {
   const here = path.dirname(fileURLToPath(import.meta.url));
@@ -256,7 +263,12 @@ export async function startServer(cfg: Config) {
       c.ws.send(json);
     }
   };
-  const toastAll = (text: string, level: ToastLevel = 'info') => broadcast({ t: 'toast', text, level });
+  /** The toasts an external worker's owner action raises, through every callback that action starts. */
+  const acting = new AsyncLocalStorage<(text: string) => void>();
+  const toastAll = (text: string, level: ToastLevel = 'info') => {
+    acting.getStore()?.(text);
+    broadcast({ t: 'toast', text, level });
+  };
 
   // --- The building: a floor per project, each with its own workers and boards -----------------
   const building = new Building(cfg.dataDir, cfg.projectsDir);
@@ -284,7 +296,9 @@ export async function startServer(cfg: Config) {
     }
   };
   const toastFloor = (floor: Floor | undefined, text: string, level: ToastLevel = 'info', workerId?: string) => {
-    if (floor) toFloor(floor, workerId === undefined ? { t: 'toast', text, level } : { t: 'toast', text, level, workerId });
+    if (!floor) return;
+    acting.getStore()?.(text);
+    toFloor(floor, workerId === undefined ? { t: 'toast', text, level } : { t: 'toast', text, level, workerId });
   };
   const floorInfos = (): FloorInfo[] => [...floors.values()].map((f) => ({ ...f.info(), ...(building.isLocal(f.id) ? { local: true } : {}), ...(building.isHome(f.id) ? { home: true } : {}) }));
   // The elevator's counts change with every worker update; tell everyone at most a few times a second.
@@ -521,7 +535,6 @@ export async function startServer(cfg: Config) {
   const floorContext: FloorContext = {
     remoteWorkers,
     remoteRevoke: (id) => remoteOffice.revoke(id),
-    remoteTeamSize: (id) => [...floors.values()].reduce((n, f) => n + f.workers.list().filter((w) => w.lead === id).length, 0),
     agentCmd: cfg.agentCmd,
     agentArgs: cfg.agentArgs,
     hook: { url: `http://127.0.0.1:${hookPort}`, token: '' },
@@ -605,6 +618,8 @@ export async function startServer(cfg: Config) {
       floors: () => [...floors.values()].map((f) => ({ id: f.id, name: f.def.name })),
       mcp: {
         answers,
+        // Declared with the message handler below; nothing calls it before the listener is serving.
+        owner: { floors: () => ownerOffice.floors(), tail: (...a) => ownerOffice.tail(...a), act: (...a) => ownerOffice.act(...a) },
         settings: () => subagents.settings,
         floor: (id) => {
           const f = remoteOffice.floor(id);
@@ -2535,29 +2550,37 @@ export async function startServer(cfg: Config) {
         });
         break;
       }
-      case 'changes.commit': {
-        const w = worker(msg.workerId);
-        if (w) void w.floor.changes.commit(w.wid, str(msg.message, 5000), who, repoOf(msg.repo)).then((err) => warn(c, err));
-        break;
-      }
-      case 'changes.discard': {
-        const w = worker(msg.workerId);
-        if (w) void w.floor.changes.discard(w.wid, typeof msg.path === 'string' ? str(msg.path, 4096) : undefined, who, repoOf(msg.repo)).then((err) => warn(c, err));
-        break;
-      }
+      case 'changes.commit':
+      case 'changes.discard':
       case 'changes.pr': {
         const w = worker(msg.workerId);
-        if (w) void w.floor.changes.pullRequest(w.wid, str(msg.title, 300), str(msg.body, 20000), who, repoOf(msg.repo)).then((err) => warn(c, err));
+        if (!w) return done('No such worker');
+        const changes = w.floor.changes;
+        const repo = repoOf(msg.repo);
+        defer();
+        let change: Promise<string | undefined>;
+        if (msg.t === 'changes.commit') change = changes.commit(w.wid, str(msg.message, 5000), who, repo);
+        else if (msg.t === 'changes.discard') change = changes.discard(w.wid, typeof msg.path === 'string' ? str(msg.path, 4096) : undefined, who, repo);
+        else change = changes.pullRequest(w.wid, str(msg.title, 300), str(msg.body, 20000), who, repo);
+        void change.then(
+          (err) => (err ? refuse(err) : done(undefined, w.wid)),
+          (err: unknown) => refuse(err instanceof Error ? err.message : 'The office could not confirm the change.'),
+        );
         break;
       }
       case 'upgrade.check':
         void upgrader.check();
         break;
       case 'upgrade.start':
-        void upgrader.start(who).then((err) => {
-          if (err) warn(c, err);
-          else toastAll(`${who} is upgrading the office — it restarts when the new version is built`);
-        });
+        defer();
+        void upgrader.start(who).then(
+          (err) => {
+            if (err) return refuse(err);
+            toastAll(`${who} is upgrading the office — it restarts when the new version is built`);
+            done();
+          },
+          (err: unknown) => refuse(err instanceof Error ? err.message : 'The upgrade could not start.'),
+        );
         break;
       case 'decor.add': {
         const floor = here();
@@ -2616,7 +2639,103 @@ export async function startServer(cfg: Config) {
         break;
     }
     // A request id is a receipt request. Sync handlers that did not answer, and actions the companion does not await, still close the receipt so the client does not wait out its timeout.
-    if (!pending) done('This action was not confirmed. Check the office before trying again; it was not replayed.');
+    if (!pending && !finished) {
+      // A handler that neither answered nor warned may have done nothing at all (an unknown id it ignores).
+      if (c.owner && !c.owner.refused) c.owner.unconfirmed = true;
+      done(c.owner ? c.owner.refused : 'This action was not confirmed. Check the office before trying again; it was not replayed.');
+    }
+  };
+
+  /**
+   * The owner's window for external MCP workers. Each action goes through handleMessage on a connection
+   * of its own, named for the worker, so it has the owner's checks, effects and toasts exactly.
+   */
+  const ownerOffice: OwnerOffice = {
+    floors: () => [...floors.values()].map((f) => ({ id: f.id, name: f.def.name, workers: f.everyone() })),
+    tail: (id, lines, floorId) => (id === OFFICE_SHELL_ID ? floors.get(floorId ?? '')?.shell.tail(lines) : workerFloor(id)?.workers.tail(id, lines)),
+    act: (by: WorkerInfo, msg, opts = {}) =>
+      new Promise<OwnerReply>((resolve) => {
+        const notes: string[] = [];
+        const expects = OWNER_REPLIES[msg.t];
+        const requestId = randomBytes(8).toString('hex');
+        let receipt: { error?: string; workerId?: string } | undefined;
+        let reply: ServerMsg | undefined;
+        let settled = false;
+        const onAbort = () => finish(true);
+        const complete = () => !!receipt && (!!receipt.error || !expects || !!reply);
+        const finish = (timedOut = false) => {
+          if (settled) return;
+          // A receipt already in is the outcome, even if the wait ends before its toasts are collected.
+          const pending = timedOut && !complete();
+          settled = true;
+          clearTimeout(timer);
+          opts.signal?.removeEventListener('abort', onAbort);
+          const refused = receipt?.error ?? (reply && 'error' in reply && typeof reply.error === 'string' ? reply.error : undefined);
+          // A success toast is confirmation enough; silence is not.
+          const unconfirmed = !refused && !pending && !reply && !notes.length && client.owner?.unconfirmed;
+          resolve({
+            ...(refused ? { error: refused } : {}),
+            ...(pending ? { pending } : {}),
+            ...(unconfirmed ? { unconfirmed } : {}),
+            ...(receipt?.workerId ? { workerId: receipt.workerId } : {}),
+            notes,
+            ...(reply ? { reply } : {}),
+          });
+        };
+        let ready = false;
+        const check = () => {
+          if (ready || !complete()) return;
+          ready = true;
+          // Handlers often toast right after done(), in the same turn: let those land in the notes first.
+          setImmediate(() => finish());
+        };
+        const timer = setTimeout(() => finish(true), OWNER_ACTION_WAIT_MS);
+        const workerId = typeof msg.workerId === 'string' ? msg.workerId : undefined;
+        const worksOn = workerId ? (workerFloor(workerId) ?? floors.get(cloud.find(workerId)?.floor.id ?? '')) : undefined;
+        const home = [...floors.values()].find((f) => f.workers.get(by.id));
+        const socket = {
+          readyState: WebSocket.OPEN,
+          bufferedAmount: 0,
+          send: (json: string) => {
+            const m = JSON.parse(json) as ServerMsg;
+            if (m.t === 'action.result' && m.requestId === requestId) receipt = { ...(m.error ? { error: m.error } : {}), ...(m.workerId ? { workerId: m.workerId } : {}) };
+            else if (m.t === 'toast') {
+              if (settled) return;
+              notes.push(m.text);
+              // A synchronous handler refuses by warning without done(); only the first warning counts.
+              if (m.level !== 'info') client.owner!.refused ??= m.text;
+            } else if (m.t === expects) reply = m;
+            check();
+          },
+          close() {},
+          ping() {},
+          terminate() {},
+        };
+        const client: Client = {
+          id: `mcp-${requestId}`,
+          ws: socket,
+          // A worker action runs where that worker sits, as the owner's window has to be on its floor.
+          floor: worksOn?.id ?? opts.floor ?? (typeof msg.floor === 'string' && floors.has(msg.floor) ? msg.floor : undefined) ?? home?.id ?? null,
+          peer: { name: by.name, color: by.color },
+          attached: new Set([...(workerId ? [workerId] : []), OFFICE_SHELL_ID]),
+          stale: new Set(),
+          lastGongAt: 0,
+          isAlive: true,
+          dashboard: true,
+          requests: new Set(),
+          boards: new Map(),
+          owner: {},
+        };
+        if (opts.signal?.aborted) return finish(true);
+        opts.signal?.addEventListener('abort', onAbort, { once: true });
+        // Timers a hire starts keep this context after the action settles; they no longer add to its notes.
+        acting.run(
+          (text) => {
+            if (!settled) notes.push(text);
+          },
+          () => handleMessage(client, { ...msg, requestId } as unknown as ClientMsg),
+        );
+      }),
   };
 
   const resync = setInterval(() => {
@@ -2713,6 +2832,7 @@ export async function startServer(cfg: Config) {
     publicDir,
     hookPort,
     floors: () => [...floors.values()],
+    owner: ownerOffice,
     projectsDir: () => building.projectsDir,
     resolvedAgent: agentPath,
   };

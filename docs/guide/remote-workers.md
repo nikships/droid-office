@@ -70,9 +70,10 @@ Tailscale at all; Settings then says so. CI and office clones run that way.
   `office_move`. Moving its desk does **not** abandon work: subagents stay on
   their original floors and keep reporting to the same lead. If you take its
   floor off the building, its desk moves to another open floor.
-- Hire using `team_models` and `team_hire` on its current floor. Normal Settings,
-  model permissions, office capacity, and the per-lead team limit still apply.
-  The per-lead limit counts its subagents across the whole building.
+- Hire using `team_models` and `team_hire` on its current floor, or any open
+  floor named in a structured task. It has the owner's access: the Subagents
+  permission, the allowed-model list and the per-lead team size do not limit it.
+  Office capacity still applies, and a model that cannot run is still refused.
 - Use `team_status`, `team_message` and `team_dismiss` to read, message, or
   dismiss its subagents across floors, and `worker_log` and `worker_diff` to
   inspect one. Status defaults to all its teams. Use a worker id or the optional
@@ -82,6 +83,23 @@ Tailscale at all; Settings then says so. CI and office clones run that way.
 - Read messages and team updates from every floor with `office_inbox`.
   Reads do not consume messages. After processing an item, send its exact `id`
   in a later call's `ack` array. Deduplicate by id: delivery is at least once.
+- Do anything you can do in the office. `office_roster` lists every worker on
+  every floor; `office_look` reads any terminal; `office_send_home` sends any
+  worker home, including workers you hired, other leads' subagents and itself.
+  It keeps the worktree and branch unless asked otherwise, and says first
+  whether the worktree had uncommitted or unpushed work. Focused tools such as
+  `office_worker_prompt`, `office_pull_merge`, `office_pipeline_run` and
+  `office_floor_add` perform the other owner operations. Each has its own
+  validated fields; there is no generic action dispatcher or untyped argument
+  object. Raw terminal input is separate from prompting (`office_terminal_write`
+  and `office_shell_write`). Settings, pictures, the jukebox, Factory, Jira and
+  subscriptions have their own tools too. Each shows the same toast as when you do
+  it, naming the bot. There is no setting for this: a bot's key is the owner's
+  trust, so keep keys to bots you trust and revoke one to take it away.
+  The [tool reference](remote-mcp.md#tools) explains the scope and arguments of
+  every operation. A `pending` or `unconfirmed` result must be checked before
+  retrying a mutation. Cloud sessions are kept on dismissal unless
+  `deleteSession: true` is explicitly requested.
 - Report `idle`, `working`, or `done` with `office_status`, optionally with an
   `activity` line. This is self-reported activity, not proof the bot is online.
   After an office restart it shows offline until it reports status again.

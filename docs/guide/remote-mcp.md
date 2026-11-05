@@ -121,15 +121,30 @@ The office never turns on [Tailscale Funnel](https://tailscale.com/kb/1223/funne
 
 ## Tools
 
-Every tool a remote bot sees in `tools/list` when every Setting allows it. Some depend on Settings → **Subagents & visits**: hiring (`team_models`, `models_list`, `team_hire`) needs subagents on and desk workers allowed to hire, and the `visit_*` tools need **Visits between workers** on. A tool that is off is not listed, and a direct call to it says why. `tests/remote-mcp.test.ts` checks that this list matches `tools/list`, with every argument, and prints the exact entry to add when a tool changes.
+Every tool a remote bot sees in `tools/list` when settings allow it. Visits need **Visits between workers** on. Hiring and the focused owner tools do not depend on the Subagents permission, model allowlist or team-size limit; office capacity, model availability and the owner's normal action checks still apply. Turning off **Office MCP** or revoking a bot's key cuts off access.
 
-Whiteboard file paths and `cwd` values are on the **office machine**, not the bot's host.
+**Choosing a tool:**
+- Manage your own subagents with `team_*`, `worker_log`, `worker_diff`, `questions_list` and `question_answer`.
+- Coordinate with independent peers through `visit_*`. These are worker messages, not owner instructions.
+- Inspect the whole building with `office_roster`, `office_look` and `office_worker_thread`.
+- Direct another worker as the owner with `office_worker_prompt`; use `office_terminal_write` or `office_shell_write` only for literal terminal input.
+- Use the named floor, forge, pipeline, configuration, connection, picture and jukebox tools below for other owner operations. There is no `office_owner` gateway and no untyped `args` object.
+
+Every owner operation has a strict input schema, including nested objects. Unknown fields are refused. Floor references accept an id, elevator number or name. Worker references accept an id or unambiguous name; an explicitly supplied floor must contain that worker. Worker operations follow the target worker's floor, other floor operations default to the bot's current floor, and office-wide tools accept no floor. Internal protocol fields and request ids are supplied by the server.
+
+Owner action results contain `status: done | pending | unconfirmed`, notes, and any bounded reply; refusals return `isError`. `pending` means no confirmed outcome within 30 seconds. `unconfirmed` means the handler neither confirmed nor refused it. Neither is a safe reason to retry a mutation. `office_send_home` keeps worktrees, branches and cloud sessions unless deletion is explicitly requested.
+
+A bot's key still conveys owner-level authority, including terminal execution, remote writes and destructive actions. The split makes each operation explicit; it is not a permission reduction. Local workers do not see these owner tools. Whiteboard paths and `cwd` values refer to the **office machine**, not the bot's host.
+
+`tests/remote-mcp.test.ts` checks this reference against the live MCP tool list and arguments. `tests/office-mcp-owner.test.ts` verifies every original owner action has a focused replacement.
 
 ### `office_whoami`
 
-Read your office identity, desk, lead if you are a subagent, permission to hire and visit, team size, worktree default and wake-note setting. Use this to establish your role before coordinating work. It does not hire, message or wait.
+Read your office identity, desk, lead if you are a subagent, permission to hire and visit, owner access, team size, worktree default and wake-note setting. Use this to establish your role before coordinating work. It does not hire, message or wait.
 
 No arguments.
+
+For an external worker, the subagent count covers all open floors, including teams left behind after `office_move`.
 
 ### `office_floors`
 
@@ -162,6 +177,778 @@ Set your self-reported office status and optional short activity. This does not 
 | --- | --- | --- | --- |
 | `status` | "idle" \| "working" \| "done" | yes | Shown at your desk. |
 | `activity` | string | no | A short line of what you're doing, at most 140 characters. |
+
+### `office_roster`
+
+List every worker in the building, or on one floor: id, name, floor id and number (1-based, the elevator's order), desk, status, task, model, lead, and whether it is you or your own subagent. Includes owner-hired workers, subagents, shells, cloud and external workers.
+
+| Argument | Type | Required | Description |
+| --- | --- | --- | --- |
+| `floor` | string | no | Floor id, number (1 is the top of the elevator list) or name. |
+
+### `office_look`
+
+Read the end of any worker's terminal, on any floor, without typing anything. name "office-shell" reads the floor's boss shell. At most 48,000 characters, with a truncation marker if older text was omitted. A snapshot, not a transcript; for conversation history or a cloud worker use office_worker_thread.
+
+| Argument | Type | Required | Description |
+| --- | --- | --- | --- |
+| `name` | string | yes | Worker name or id, case-insensitive. Use office_roster to find it. |
+| `floor` | string | no | Floor id, number (1 is the top of the elevator list) or name. |
+| `lines` | integer | no, default `80` | Latest terminal lines, default 80, at most 400. |
+
+### `office_send_home`
+
+Send any worker home, on any floor, exactly as the owner's SEND HOME does: owner-hired workers, other leads' subagents, external workers, you or your lead. cleanup keep (the default) leaves its worktree and branch; worktree deletes the worktree and keeps the branch; all deletes both, including commits no remote has. deleteSession true also deletes a cloud worker's Factory session, only when the owner asked. The reply preserves the target and pre-dismissal worktree report even when the outcome is uncertain. Its subagents stay, without a lead.
+
+| Argument | Type | Required | Description |
+| --- | --- | --- | --- |
+| `name` | string | yes | Worker name or id, case-insensitive. Use office_roster to find it. |
+| `floor` | string | no | Floor id, number (1 is the top of the elevator list) or name. |
+| `cleanup` | "keep" \| "worktree" \| "all" | no, default `"keep"` | What becomes of its worktree. Default keep. Use worktree or all only when the owner asked to delete it. |
+| `deleteSession` | boolean | no, default `false` | Also delete a cloud worker’s Factory session, only when the owner asked. Otherwise it is kept. |
+
+### `office_floor_reorder`
+
+Move a floor before another in elevator order, or to the end. Does not move its workers or files.
+
+| Argument | Type | Required | Description |
+| --- | --- | --- | --- |
+| `floor` | string | yes | Floor id, elevator number or name. Omit for the target worker’s floor, otherwise your current floor. |
+| `before` | string \| null | yes | Floor to place this one before; null puts it last. |
+
+### `office_repositories_list`
+
+List local checkouts eligible to become office floors. Does not clone or add them.
+
+| Argument | Type | Required | Description |
+| --- | --- | --- | --- |
+| `refresh` | boolean | no | Rescan the workspace instead of using its cached list. |
+
+### `office_folders_list`
+
+List subfolders on the office machine, with checkout and eligibility information.
+
+| Argument | Type | Required | Description |
+| --- | --- | --- | --- |
+| `dir` | string | no | Absolute folder path; omit for the workspace folder. |
+
+### `office_floor_branches`
+
+List the selected floor’s local/origin branches and its current and default base.
+
+| Argument | Type | Required | Description |
+| --- | --- | --- | --- |
+| `floor` | string | no | Floor id, elevator number or name. Omit for the target worker’s floor, otherwise your current floor. |
+
+### `office_floor_branch_set`
+
+Safely change the selected floor’s worker base branch. Existing work or workers can prevent switching.
+
+| Argument | Type | Required | Description |
+| --- | --- | --- | --- |
+| `floor` | string | no | Floor id, elevator number or name. Omit for the target worker’s floor, otherwise your current floor. |
+| `branch` | string \| null | yes | Existing local or origin branch; null restores the repository default. |
+
+### `office_floor_add`
+
+Add an existing folder as a floor. Git checkouts must be in the workspace; plain folders may be elsewhere. Does not clone or move files.
+
+| Argument | Type | Required | Description |
+| --- | --- | --- | --- |
+| `dir` | string | yes | Absolute existing folder on the office machine. |
+
+### `office_floor_remove`
+
+Remove a floor from the building. Its folder stays on disk and external desks are rehomed. Home cannot be removed.
+
+| Argument | Type | Required | Description |
+| --- | --- | --- | --- |
+| `floor` | string | yes | Floor id, elevator number or name. Omit for the target worker’s floor, otherwise your current floor. |
+
+### `office_workspace_set`
+
+Change where the office searches for repositories. This is an office-wide setting.
+
+| Argument | Type | Required | Description |
+| --- | --- | --- | --- |
+| `dir` | string | yes | Absolute workspace folder; empty string restores the default. |
+
+### `office_worker_spawn`
+
+Hire an independent worker, shell or cloud worker on a floor. For a subagent that reports to you, use team_hire instead. Cloud hires can incur charges.
+
+| Argument | Type | Required | Description |
+| --- | --- | --- | --- |
+| `floor` | string | no | Floor id, elevator number or name. Omit for the target worker’s floor, otherwise your current floor. |
+| `deskId` | string | no, default `"auto"` | Seat id, or auto for the first free seat. |
+| `prompt` | string | no |  |
+| `worktree` | boolean | no | Use an isolated Git worktree for a local agent. |
+| `kind` | "agent" \| "shell" \| "cloud" | no, default `"agent"` |  |
+| `model` | string | no | Exact model id from models_list; must be available. |
+| `effort` | "low" \| "medium" \| "high" \| "xhigh" \| "max" | no | Reasoning effort supported by the selected model. |
+| `issue` | integer | no | Issue to assign to this worker on the floor’s forge. |
+| `repos` | string[] | no | Additional open repository floor ids for a multi-repository worker. |
+| `images` | string[] | no | Existing office-upload image ids, not paths or image bytes. |
+| `cloud` | object | no | Required for kind cloud; choose a Factory computer or environment. |
+| `cloud.computerId` | string | no | Existing Factory computer id. Choose this or environmentId, not both. |
+| `cloud.environmentId` | string | no | Factory environment id; starts a computer for this worker, which may incur charges. |
+| `cloud.cwd` | string | no | Working folder on that remote computer; omit for its home. |
+
+### `office_worker_fork`
+
+Fork an idle or done worker’s conversation and work into a new worker. Git floors copy committed and uncommitted work into a new worktree; plain floors share files.
+
+| Argument | Type | Required | Description |
+| --- | --- | --- | --- |
+| `workerId` | string | yes | Worker id or unambiguous name from office_roster. May target any worker, not only your subagents. |
+| `floor` | string | no | Floor id, elevator number or name. Omit for the target worker’s floor, otherwise your current floor. |
+| `prompt` | string | no |  |
+
+### `office_worker_resume`
+
+Resume an existing stopped or sleeping worker’s saved session.
+
+| Argument | Type | Required | Description |
+| --- | --- | --- | --- |
+| `workerId` | string | yes | Worker id or unambiguous name from office_roster. May target any worker, not only your subagents. |
+| `floor` | string | no | Floor id, elevator number or name. Omit for the target worker’s floor, otherwise your current floor. |
+
+### `office_worker_shoot`
+
+Apply the office’s shot effect to a worker. A fully charged superShot dismisses it and deletes owned worktrees and branches, including unpushed work. Prefer office_send_home with cleanup keep for ordinary dismissal.
+
+| Argument | Type | Required | Description |
+| --- | --- | --- | --- |
+| `workerId` | string | yes | Worker id or unambiguous name from office_roster. May target any worker, not only your subagents. |
+| `floor` | string | no | Floor id, elevator number or name. Omit for the target worker’s floor, otherwise your current floor. |
+| `superShot` | boolean | no, default `false` | True requests destructive charged-shot dismissal. Use only when the owner explicitly requested it. |
+
+### `office_worker_worktree`
+
+Inspect any worker’s worktree, including uncommitted files and commits on no remote. Does not modify it.
+
+| Argument | Type | Required | Description |
+| --- | --- | --- | --- |
+| `workerId` | string | yes | Worker id or unambiguous name from office_roster. May target any worker, not only your subagents. |
+| `floor` | string | no | Floor id, elevator number or name. Omit for the target worker’s floor, otherwise your current floor. |
+
+### `office_worker_rebuild`
+
+Recreate a lost worker’s worktree and restart it from its recoverable branch.
+
+| Argument | Type | Required | Description |
+| --- | --- | --- | --- |
+| `workerId` | string | yes | Worker id or unambiguous name from office_roster. May target any worker, not only your subagents. |
+| `floor` | string | no | Floor id, elevator number or name. Omit for the target worker’s floor, otherwise your current floor. |
+| `all` | boolean | no, default `false` | True rebuilds every lost worker on this worker’s floor, not just the named worker. |
+
+### `office_worker_prompt`
+
+Send a prompt to any worker as the owner. Use team_message for your own subagents and visit_message for peer coordination. This is not raw terminal input.
+
+| Argument | Type | Required | Description |
+| --- | --- | --- | --- |
+| `workerId` | string | yes | Worker id or unambiguous name from office_roster. May target any worker, not only your subagents. |
+| `floor` | string | no | Floor id, elevator number or name. Omit for the target worker’s floor, otherwise your current floor. |
+| `prompt` | string | yes |  |
+| `issue` | integer | no |  |
+| `images` | string[] | no | Existing office-upload image ids, not paths or image bytes. |
+| `queue` | boolean | no, default `false` | Queue behind the current turn using Ctrl+Enter instead of sending immediately. |
+
+### `office_worker_answer`
+
+Answer a worker’s currently displayed menu as the owner. Supply its exact menu snapshot; changed menus are refused. Unlike question_answer, this is owner-level terminal control.
+
+| Argument | Type | Required | Description |
+| --- | --- | --- | --- |
+| `workerId` | string | yes | Worker id or unambiguous name from office_roster. May target any worker, not only your subagents. |
+| `floor` | string | no | Floor id, elevator number or name. Omit for the target worker’s floor, otherwise your current floor. |
+| `menu` | object | yes | Exact menu snapshot from the worker’s screen. The server refuses an answer if the menu changed. |
+| `menu.question` | string | no | Exact question currently shown. |
+| `menu.choices` | object[] | yes | The currently displayed options, in order, with their original numbers and labels. |
+| `menu.pointer` | integer | no | Currently focused zero-based option. |
+| `menu.freeText` | boolean | yes | Whether the displayed menu accepts a typed answer. |
+| `menu.multiSelect` | boolean | no | Whether the displayed menu has checkboxes. |
+| `choice` | integer | no | One displayed option number; not with choices or text. |
+| `choices` | integer[] | no | Complete set of checkbox option numbers; may accompany text. |
+| `text` | string | no | Typed answer, optionally accompanying checkbox choices. |
+
+### `office_worker_pr_create`
+
+Push a worker’s branch and create a pull/merge request drafted from its task. Publishes to the floor’s forge.
+
+| Argument | Type | Required | Description |
+| --- | --- | --- | --- |
+| `workerId` | string | yes | Worker id or unambiguous name from office_roster. May target any worker, not only your subagents. |
+| `floor` | string | no | Floor id, elevator number or name. Omit for the target worker’s floor, otherwise your current floor. |
+
+### `office_worker_interrupt`
+
+Interrupt any worker’s current turn without dismissing it. Sends Escape locally or interrupts its Factory session.
+
+| Argument | Type | Required | Description |
+| --- | --- | --- | --- |
+| `workerId` | string | yes | Worker id or unambiguous name from office_roster. May target any worker, not only your subagents. |
+| `floor` | string | no | Floor id, elevator number or name. Omit for the target worker’s floor, otherwise your current floor. |
+
+### `office_worker_thread`
+
+Read one page of any local or cloud agent’s conversation. Does not attach or type into its terminal. Returns a bounded snapshot and pagination information.
+
+| Argument | Type | Required | Description |
+| --- | --- | --- | --- |
+| `workerId` | string | yes | Worker id or unambiguous name from office_roster. May target any worker, not only your subagents. |
+| `floor` | string | no | Floor id, elevator number or name. Omit for the target worker’s floor, otherwise your current floor. |
+| `before` | integer | no | Exclusive entry sequence for older history; omit for the newest page. |
+
+### `office_terminal_write`
+
+Send raw input to any worker’s terminal as the owner. Can run commands, interrupt work or approve prompts. Prefer office_worker_prompt for normal instructions.
+
+| Argument | Type | Required | Description |
+| --- | --- | --- | --- |
+| `workerId` | string | yes | Worker id or unambiguous name from office_roster. May target any worker, not only your subagents. |
+| `floor` | string | no | Floor id, elevator number or name. Omit for the target worker’s floor, otherwise your current floor. |
+| `data` | string | yes | Literal terminal input, including control characters. Include \r to press Enter. This can execute commands or answer permission prompts. |
+
+### `office_station_open`
+
+Start or wake a floor’s board agent and return its worker id. Does not open a terminal stream for this bot.
+
+| Argument | Type | Required | Description |
+| --- | --- | --- | --- |
+| `floor` | string | no | Floor id, elevator number or name. Omit for the target worker’s floor, otherwise your current floor. |
+| `deskId` | string | yes | Board station id, such as station-lead, station-issues, station-pulls or station-actions. |
+
+### `office_station_prompt`
+
+Send a prompt to a board agent, hiring or waking it if needed. Model and effort only apply when hiring.
+
+| Argument | Type | Required | Description |
+| --- | --- | --- | --- |
+| `floor` | string | no | Floor id, elevator number or name. Omit for the target worker’s floor, otherwise your current floor. |
+| `deskId` | string | yes |  |
+| `prompt` | string | yes |  |
+| `model` | string | no | Exact model id from models_list; must be available. |
+| `effort` | "low" \| "medium" \| "high" \| "xhigh" \| "max" | no | Reasoning effort supported by the selected model. |
+| `images` | string[] | no | Existing office-upload image ids, not paths or image bytes. |
+
+### `office_shell_write`
+
+Send raw input to the selected floor’s boss shell as the owner. May execute arbitrary commands. Read it first with office_look name office-shell.
+
+| Argument | Type | Required | Description |
+| --- | --- | --- | --- |
+| `floor` | string | no | Floor id, elevator number or name. Omit for the target worker’s floor, otherwise your current floor. |
+| `data` | string | yes | Literal terminal input, including control characters. Include \r to press Enter. This can execute commands or answer permission prompts. |
+
+### `office_forge_refresh`
+
+Refresh the selected floor’s issue and pull/merge request boards from its forge.
+
+| Argument | Type | Required | Description |
+| --- | --- | --- | --- |
+| `floor` | string | no | Floor id, elevator number or name. Omit for the target worker’s floor, otherwise your current floor. |
+
+### `office_pull_merge`
+
+Merge a pull/merge request on the selected floor’s forge, or enable automatic merging. This changes the remote repository.
+
+| Argument | Type | Required | Description |
+| --- | --- | --- | --- |
+| `floor` | string | no | Floor id, elevator number or name. Omit for the target worker’s floor, otherwise your current floor. |
+| `number` | integer | yes |  |
+| `method` | "squash" \| "merge" \| "rebase" | yes |  |
+| `deleteBranch` | boolean | no, default `false` | Delete the remote source branch after merging. |
+| `auto` | boolean | no, default `false` | Enable automatic merge when required checks pass instead of merging immediately. |
+
+### `office_forge_comment`
+
+Post a comment on an issue or pull/merge request using the owner’s forge account.
+
+| Argument | Type | Required | Description |
+| --- | --- | --- | --- |
+| `floor` | string | no | Floor id, elevator number or name. Omit for the target worker’s floor, otherwise your current floor. |
+| `kind` | "issue" \| "pull" | yes | Issue or pull/merge request. |
+| `number` | integer | yes |  |
+| `body` | string | yes |  |
+
+### `office_forge_close`
+
+Close an issue or close a pull/merge request without merging it. Optional comment is posted publicly to that repository.
+
+| Argument | Type | Required | Description |
+| --- | --- | --- | --- |
+| `floor` | string | no | Floor id, elevator number or name. Omit for the target worker’s floor, otherwise your current floor. |
+| `kind` | "issue" \| "pull" | yes | Issue or pull/merge request. |
+| `number` | integer | yes |  |
+| `comment` | string | no |  |
+| `reason` | "completed" \| "not planned" | no | Issue closing reason. |
+| `deleteBranch` | boolean | no, default `false` | Also delete the pull/merge request’s remote source branch. |
+
+### `office_forge_labels`
+
+Add and remove labels on an issue or pull/merge request using the owner’s forge account.
+
+| Argument | Type | Required | Description |
+| --- | --- | --- | --- |
+| `floor` | string | no | Floor id, elevator number or name. Omit for the target worker’s floor, otherwise your current floor. |
+| `kind` | "issue" \| "pull" | yes | Issue or pull/merge request. |
+| `number` | integer | yes |  |
+| `add` | string[] | no, default `[]` |  |
+| `remove` | string[] | no, default `[]` |  |
+
+### `office_gong_ring`
+
+Ring the gong on the selected floor.
+
+| Argument | Type | Required | Description |
+| --- | --- | --- | --- |
+| `floor` | string | no | Floor id, elevator number or name. Omit for the target worker’s floor, otherwise your current floor. |
+
+### `office_pipelines_refresh`
+
+Refresh the floor’s GitHub Actions runs or GitLab pipelines.
+
+| Argument | Type | Required | Description |
+| --- | --- | --- | --- |
+| `floor` | string | no | Floor id, elevator number or name. Omit for the target worker’s floor, otherwise your current floor. |
+
+### `office_pipeline_detail`
+
+Read a pipeline or workflow run’s jobs and steps.
+
+| Argument | Type | Required | Description |
+| --- | --- | --- | --- |
+| `floor` | string | no | Floor id, elevator number or name. Omit for the target worker’s floor, otherwise your current floor. |
+| `id` | integer | yes |  |
+
+### `office_pipeline_rerun`
+
+Rerun a completed workflow or pipeline. Can incur CI costs.
+
+| Argument | Type | Required | Description |
+| --- | --- | --- | --- |
+| `floor` | string | no | Floor id, elevator number or name. Omit for the target worker’s floor, otherwise your current floor. |
+| `id` | integer | yes |  |
+| `failed` | boolean | yes | True reruns failed jobs only; false reruns the whole run. |
+
+### `office_pipeline_cancel`
+
+Cancel a queued or running workflow/pipeline.
+
+| Argument | Type | Required | Description |
+| --- | --- | --- | --- |
+| `floor` | string | no | Floor id, elevator number or name. Omit for the target worker’s floor, otherwise your current floor. |
+| `id` | integer | yes |  |
+
+### `office_pipeline_run`
+
+Start a workflow or pipeline on a Git ref. Can execute deployment workflows and incur CI costs.
+
+| Argument | Type | Required | Description |
+| --- | --- | --- | --- |
+| `floor` | string | no | Floor id, elevator number or name. Omit for the target worker’s floor, otherwise your current floor. |
+| `workflow` | string | yes | GitHub workflow id/name; use pipeline on GitLab. |
+| `ref` | string | yes | Branch or tag to run. |
+| `inputs` | object | no | Workflow inputs, or GitLab pipeline variables, as string values. |
+
+### `office_leave_on_merge_set`
+
+Set office-wide automatic dismissal after a worker’s PR merges. Enabled cleanup deletes its worktree and branch after it rests.
+
+| Argument | Type | Required | Description |
+| --- | --- | --- | --- |
+| `on` | boolean | yes | True enables this setting; false disables it. |
+
+### `office_fresh_main_set`
+
+Set whether fresh workers start from the latest default branch or the checkout’s current branch.
+
+| Argument | Type | Required | Description |
+| --- | --- | --- | --- |
+| `on` | boolean | yes | True enables this setting; false disables it. |
+
+### `office_auto_heal_set`
+
+Set whether a failed pipeline wakes this floor’s Pipeline agent to diagnose it and hire a fix worker.
+
+| Argument | Type | Required | Description |
+| --- | --- | --- | --- |
+| `floor` | string | no | Floor id, elevator number or name. Omit for the target worker’s floor, otherwise your current floor. |
+| `on` | boolean | yes | True enables this setting; false disables it. |
+
+### `office_model_visibility_set`
+
+Hide or show a model in every device’s picker. Does not block model use or alter workers.
+
+| Argument | Type | Required | Description |
+| --- | --- | --- | --- |
+| `id` | string \| null | yes | Exact model id; null with hidden false shows all models. |
+| `hidden` | boolean | yes |  |
+
+### `office_worker_labels_set`
+
+Replace the office-wide worker-label generation settings. Custom label scripts execute as the owner.
+
+| Argument | Type | Required | Description |
+| --- | --- | --- | --- |
+| `settings` | object | yes | Complete replacement of worker-label settings. A custom executable runs with the owner’s permissions. |
+| `settings.on` | boolean | yes |  |
+| `settings.implementation` | "droid" \| "custom" | no | Custom runs an executable as the owner; omitted uses Droid. |
+| `settings.command` | string | no | Absolute executable path on the office machine for custom labels. |
+| `settings.args` | string[] | no | Literal executable arguments, not a shell command. |
+| `settings.model` | string | yes | Exact model id from models_list; must be available. |
+| `settings.effort` | "off" \| "none" \| "minimal" \| "low" \| "medium" \| "high" \| "xhigh" \| "max" | yes |  |
+| `settings.intervalSeconds` | integer | yes | Seconds between label refreshes, 15 to 3600. |
+
+### `office_subagents_set`
+
+Replace the office-wide Subagents settings. Setting officeMcp false immediately cuts off this bot’s access. External bots retain owner-level hiring while MCP is enabled.
+
+| Argument | Type | Required | Description |
+| --- | --- | --- | --- |
+| `settings` | object | yes | Complete replacement of the office-wide Subagents settings, not a patch. |
+| `settings.officeMcp` | boolean | yes | False immediately disables this MCP connection as well as local workers’ access. |
+| `settings.on` | boolean | yes | Allow local workers to hire subagents. |
+| `settings.deskWorkers` | boolean | yes | Allow local desk workers, not just station leads, to hire. |
+| `settings.agent` | object | no | Default subagent model and effort; omit to inherit the office default. |
+| `settings.agent.model` | string | no | Exact model id from models_list; must be available. |
+| `settings.agent.effort` | "low" \| "medium" \| "high" \| "xhigh" \| "max" | no | Reasoning effort supported by the selected model. |
+| `settings.models` | object[] | no | Allowed local subagent models with routing notes; omit for unrestricted. |
+| `settings.worktree` | boolean | yes | Default to isolated worktrees for subagents. |
+| `settings.maxPerLead` | integer | yes | Local lead’s maximum team size. |
+| `settings.wakeLead` | boolean | yes | Wake resting leads when their teams have news. |
+| `settings.visits` | boolean | yes | Enable visits between independent workers. |
+| `settings.denyTask` | boolean | yes | Direct local workers to Office hiring instead of the built-in Task tool. |
+
+### `office_prompt_set`
+
+Replace one office-authored prompt, or restore its default. Affects future uses of that prompt.
+
+| Argument | Type | Required | Description |
+| --- | --- | --- | --- |
+| `id` | "worker.system" \| "issue.work" \| "issue.ask" \| "pull.review" \| "pull.fixMerge" \| "pull.fixConflicts" \| "pull.ask" \| "changes.ship" \| "station.issues" \| "station.pulls" \| "station.actions" \| "pipeline.heal" \| "station.lead" \| "subagent.brief" \| "subagent.nudge" \| "subagent.report" \| "subagent.message" \| "visit.tell" \| "visit.ask" \| "visit.reply" \| "visit.handoff" \| "whiteboard.ping" \| "whiteboard.button" \| "cloud.context" \| "cloud.environment" \| "worker.repos" \| "worktree.setup" \| "wand.ship" \| "office.namer" | yes |  |
+| `text` | string \| null | yes | Replacement prompt; null restores the default. |
+
+### `office_default_agent_set`
+
+Set the default model and effort for newly hired workers; null restores the office’s configured agent.
+
+| Argument | Type | Required | Description |
+| --- | --- | --- | --- |
+| `choice` | object \| null | yes |  |
+| `choice.model` | string | no | Exact model id from models_list; must be available. |
+| `choice.effort` | "low" \| "medium" \| "high" \| "xhigh" \| "max" | no | Reasoning effort supported by the selected model. |
+
+### `office_worktree_setup_get`
+
+Read how new worktrees on the selected floor are prepared.
+
+| Argument | Type | Required | Description |
+| --- | --- | --- | --- |
+| `floor` | string | no | Floor id, elevator number or name. Omit for the target worker’s floor, otherwise your current floor. |
+
+### `office_worktree_setup_set`
+
+Replace this floor’s worktree setup command and copied files. The command runs as the owner in future worktrees.
+
+| Argument | Type | Required | Description |
+| --- | --- | --- | --- |
+| `floor` | string | no | Floor id, elevator number or name. Omit for the target worker’s floor, otherwise your current floor. |
+| `setup` | object \| null | yes | Null restores repository-defined or detected setup. |
+| `setup.setup` | string | yes | Shell setup command; empty means no command. |
+| `setup.copy` | string[] | yes | Repository-relative ignored files or folders to copy into new worktrees. |
+
+### `office_worker_limit_set`
+
+Set the building-wide worker capacity. The startup ceiling still applies.
+
+| Argument | Type | Required | Description |
+| --- | --- | --- | --- |
+| `limit` | integer \| null | yes | Maximum workers, or null to remove the user-set limit. |
+
+### `office_jira_connect`
+
+Replace the office’s Jira Cloud connection. Sends the provided credential to that Jira site.
+
+| Argument | Type | Required | Description |
+| --- | --- | --- | --- |
+| `site` | string | yes | Jira Cloud site hostname or URL. |
+| `email` | string | yes |  |
+| `token` | string | yes | Owner-authorized Jira API token. |
+
+### `office_jira_disconnect`
+
+Forget the office’s Jira connection.
+
+No arguments.
+
+### `office_jira_epic_set`
+
+Choose the Jira epic shown on this floor.
+
+| Argument | Type | Required | Description |
+| --- | --- | --- | --- |
+| `floor` | string | no | Floor id, elevator number or name. Omit for the target worker’s floor, otherwise your current floor. |
+| `key` | string | yes | Epic key; empty string removes the selected epic. |
+
+### `office_jira_refresh`
+
+Refresh the selected floor’s Jira tab.
+
+| Argument | Type | Required | Description |
+| --- | --- | --- | --- |
+| `floor` | string | no | Floor id, elevator number or name. Omit for the target worker’s floor, otherwise your current floor. |
+
+### `office_factory_connect`
+
+Replace the office’s Factory connection with an owner-authorized API key.
+
+| Argument | Type | Required | Description |
+| --- | --- | --- | --- |
+| `key` | string | yes | Factory API key. Do not put it in progress notes or artifacts. |
+
+### `office_factory_disconnect`
+
+Forget the office’s Factory key and the data read with it.
+
+No arguments.
+
+### `office_factory_refresh`
+
+Refresh one Factory feature, or recheck the key and refresh all features.
+
+| Argument | Type | Required | Description |
+| --- | --- | --- | --- |
+| `feature` | "computers" \| "environments" \| "sessions" \| "ci" \| "wiki" \| "cloud" | no |  |
+
+### `office_setup_check`
+
+Recheck Droid installation/sign-in and DroidProxy status.
+
+No arguments.
+
+### `office_droid_install`
+
+Install or update Droid on the office machine. Downloads and runs the installer.
+
+No arguments.
+
+### `office_droid_sign_in`
+
+Start Droid’s Factory sign-in on the office machine. The owner may need to complete browser/device-code authorization.
+
+No arguments.
+
+### `office_droid_sign_in_cancel`
+
+Cancel a pending Droid sign-in.
+
+No arguments.
+
+### `office_onboarding_set`
+
+Mark the welcome as completed, or request that it be shown again.
+
+| Argument | Type | Required | Description |
+| --- | --- | --- | --- |
+| `done` | boolean | yes | True marks onboarding complete; false shows it again. |
+
+### `office_proxy_install`
+
+Install or update DroidProxy on the office machine.
+
+No arguments.
+
+### `office_proxy_start`
+
+Start the installed DroidProxy service.
+
+No arguments.
+
+### `office_proxy_open`
+
+Open DroidProxy’s own settings window on the office machine.
+
+No arguments.
+
+### `office_subscription_connect`
+
+Start connecting a subscription account. Opens browser sign-in or device-code authorization for the owner.
+
+| Argument | Type | Required | Description |
+| --- | --- | --- | --- |
+| `provider` | "claude" \| "codex" \| "antigravity" \| "kimi" \| "junie" \| "grok" \| "copilot" \| "meta" | yes | Subscription provider. |
+
+### `office_subscription_connect_cancel`
+
+Cancel a pending subscription-provider sign-in.
+
+| Argument | Type | Required | Description |
+| --- | --- | --- | --- |
+| `provider` | "claude" \| "codex" \| "antigravity" \| "kimi" \| "junie" \| "grok" \| "copilot" \| "meta" | yes | Subscription provider. |
+
+### `office_subscription_disconnect`
+
+Forget one connected subscription account.
+
+| Argument | Type | Required | Description |
+| --- | --- | --- | --- |
+| `provider` | "claude" \| "codex" \| "antigravity" \| "kimi" \| "junie" \| "grok" \| "copilot" \| "meta" | yes | Subscription provider. |
+| `account` | string | yes | Exact account id from the subscription state. |
+
+### `office_subscription_provider_set`
+
+Enable or disable the models supplied by one subscription provider.
+
+| Argument | Type | Required | Description |
+| --- | --- | --- | --- |
+| `provider` | "claude" \| "codex" \| "antigravity" \| "kimi" \| "junie" \| "grok" \| "copilot" \| "meta" | yes | Subscription provider. |
+| `enabled` | boolean | yes |  |
+
+### `office_subscription_models_sync`
+
+Replace DroidProxy-managed model entries in Droid’s settings with the current catalogue.
+
+No arguments.
+
+### `office_subscriptions_refresh`
+
+Recheck DroidProxy and subscription accounts.
+
+No arguments.
+
+### `office_changes_diff`
+
+Read one changed file’s diff from any worker’s checkout. Unlike worker_diff, this is one file and may target workers outside your team.
+
+| Argument | Type | Required | Description |
+| --- | --- | --- | --- |
+| `workerId` | string | yes | Worker id or unambiguous name from office_roster. May target any worker, not only your subagents. |
+| `floor` | string | no | Floor id, elevator number or name. Omit for the target worker’s floor, otherwise your current floor. |
+| `path` | string | yes | Repository-relative changed file path. |
+| `repo` | string | no | Another repository of this worker’s multi-repository workspace; omit for its own. |
+
+### `office_changes_commit`
+
+Commit the changes in a worker’s checkout with the supplied message.
+
+| Argument | Type | Required | Description |
+| --- | --- | --- | --- |
+| `workerId` | string | yes | Worker id or unambiguous name from office_roster. May target any worker, not only your subagents. |
+| `floor` | string | no | Floor id, elevator number or name. Omit for the target worker’s floor, otherwise your current floor. |
+| `message` | string | yes | Commit message. |
+| `repo` | string | no | Another repository of this worker’s multi-repository workspace; omit for its own. |
+
+### `office_changes_discard`
+
+Permanently discard uncommitted changes in a worker’s checkout. Omit path only when the owner explicitly asked to discard all changes.
+
+| Argument | Type | Required | Description |
+| --- | --- | --- | --- |
+| `workerId` | string | yes | Worker id or unambiguous name from office_roster. May target any worker, not only your subagents. |
+| `floor` | string | no | Floor id, elevator number or name. Omit for the target worker’s floor, otherwise your current floor. |
+| `path` | string | no | Repository-relative file; omit to discard every uncommitted change. |
+| `repo` | string | no | Another repository of this worker’s multi-repository workspace; omit for its own. |
+
+### `office_changes_pr_create`
+
+Push a worker’s changes and open a pull/merge request with an explicit title and description.
+
+| Argument | Type | Required | Description |
+| --- | --- | --- | --- |
+| `workerId` | string | yes | Worker id or unambiguous name from office_roster. May target any worker, not only your subagents. |
+| `floor` | string | no | Floor id, elevator number or name. Omit for the target worker’s floor, otherwise your current floor. |
+| `title` | string | yes |  |
+| `body` | string | yes |  |
+| `repo` | string | no | Another repository of this worker’s multi-repository workspace; omit for its own. |
+
+### `office_upgrade_check`
+
+Check for a source-office upgrade. Packaged Mac app updates use a separate mechanism.
+
+No arguments.
+
+### `office_upgrade_start`
+
+Start an available source-office upgrade, build and restart. This can interrupt the office and this MCP connection.
+
+No arguments.
+
+### `office_picture_add`
+
+Hang an image on a wall of the selected floor.
+
+| Argument | Type | Required | Description |
+| --- | --- | --- | --- |
+| `floor` | string | no | Floor id, elevator number or name. Omit for the target worker’s floor, otherwise your current floor. |
+| `decor` | object | yes |  |
+| `decor.url` | string | yes | HTTP(S) image URL or existing upload:<hash>.<extension> reference. |
+| `decor.title` | string | no |  |
+| `decor.wall` | "north" \| "south" \| "east" \| "west" | yes |  |
+| `decor.u` | number | yes | Horizontal center along the wall in meters. |
+| `decor.y` | number | yes | Center height in meters. |
+| `decor.w` | number | yes | Image width in meters. |
+| `decor.h` | number | yes | Image height in meters. |
+| `decor.frame` | integer | yes | Frame index: 0 Wood, 1 Black, 2 White, 3 Gold, 4 Coral, 5 Teal. |
+
+### `office_picture_update`
+
+Change an existing wall picture’s placement, frame, title or image.
+
+| Argument | Type | Required | Description |
+| --- | --- | --- | --- |
+| `floor` | string | no | Floor id, elevator number or name. Omit for the target worker’s floor, otherwise your current floor. |
+| `id` | string | yes |  |
+| `decor` | object | yes |  |
+| `decor.url` | string | no | HTTP(S) image URL or existing upload:<hash>.<extension> reference. |
+| `decor.title` | string | no |  |
+| `decor.wall` | "north" \| "south" \| "east" \| "west" | no |  |
+| `decor.u` | number | no | Horizontal center along the wall in meters. |
+| `decor.y` | number | no | Center height in meters. |
+| `decor.w` | number | no | Image width in meters. |
+| `decor.h` | number | no | Image height in meters. |
+| `decor.frame` | integer | no | Frame index: 0 Wood, 1 Black, 2 White, 3 Gold, 4 Coral, 5 Teal. |
+
+### `office_picture_remove`
+
+Remove a wall picture from the selected floor.
+
+| Argument | Type | Required | Description |
+| --- | --- | --- | --- |
+| `floor` | string | no | Floor id, elevator number or name. Omit for the target worker’s floor, otherwise your current floor. |
+| `id` | string | yes |  |
+
+### `office_jukebox_play`
+
+Play a built-in tune or an audio stream; with neither, resume the office jukebox.
+
+| Argument | Type | Required | Description |
+| --- | --- | --- | --- |
+| `track` | string | no | Built-in tune id. |
+| `url` | string | no | HTTP(S) audio-stream URL. |
+
+### `office_jukebox_skip`
+
+Skip to the next jukebox tune.
+
+No arguments.
+
+### `office_jukebox_stop`
+
+Stop the office jukebox.
+
+No arguments.
+
+### `office_whiteboard_ping`
+
+Ask any worker to read its floor’s Whiteboard. Does not modify cards or send an arbitrary prompt.
+
+| Argument | Type | Required | Description |
+| --- | --- | --- | --- |
+| `worker` | string | yes | Worker id or unambiguous name from office_roster. May target any worker, not only your subagents. |
+| `floor` | string | no | Floor id, elevator number or name. Omit for the target worker’s floor, otherwise your current floor. |
 
 ### `team_models`
 
