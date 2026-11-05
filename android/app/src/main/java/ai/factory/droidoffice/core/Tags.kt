@@ -342,7 +342,7 @@ object Tags {
 
         /** The row in the Thread view with the Thread and Raw TTY switch, the PR and the branch. */
         const val THREAD_BAR = "worker.thread.bar"
-        /** "Jump to latest" or the new-message count, only while there is content below the viewport. */
+        /** The [THREAD_JUMP] arrow, described as "Jump to latest" or the new-message count. */
         const val THREAD_JUMP_LABEL = "worker.thread.jump.label"
         /** A Markdown table in a message: its columns line up and it scrolls sideways as one. */
         const val THREAD_TABLE = "worker.thread.table"

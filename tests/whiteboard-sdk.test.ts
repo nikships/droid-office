@@ -274,6 +274,8 @@ window.applied = [];
 window.shut = false;
 window.loads = [];
 window.views = [];
+window.acted = [];
+window.buttonsTarget = { ok: false, reason: 'Nobody.' };
 function commit(ops, actor) {
   var r = WB.applyOps(board, ops, actor || WB.OWNER_AUTHOR, board.rev + 1, Date.now());
   if (!r.ok) throw new Error(JSON.stringify(r.error));
@@ -288,7 +290,8 @@ window.start = function (page, hash, kind) {
     floor: 'f',
     apply: function (ops) { applied.push(ops); if (window.applyAtOnce) commit(ops); else setTimeout(function () { commit(ops); }, 0); return Promise.resolve(true); },
     notify: function () {},
-    acted: function () {},
+    acted: function (name, ping) { acted.push([name, ping || null]); },
+    buttons: function () { return window.buttonsTarget; },
     cardUrl: function (n) { loads.push(version); return '/card/' + version + '/#wb=' + n; },
     fileUrl: function () { return ''; },
     live: function () { return true; },
@@ -634,6 +637,7 @@ window.start = function () {
   commit([{ op: 'card.create', card: 'c1', kind: 'html', title: 'Page', content: content }]);
   var host = {
     floor: 'f', apply: function () { return Promise.resolve(true); }, notify: function () {}, acted: function () {},
+    buttons: function () { return { ok: false, reason: 'Nobody.' }; },
     cardUrl: function (n) { return '/card/tall/#wb=' + n; }, fileUrl: function () { return ''; }, live: function () { return true; },
     selectMark: function () {}, changed: function () {}, located: function () {}, view: function () {},
     changedMarks: function () { return new Set(); }, render: function () { return undefined; }
@@ -749,5 +753,79 @@ test("a card's own full screen (its video's control) is the card's: its keys sta
   await page.waitForFunction('!document.fullscreenElement');
   await page.waitForFunction('surface.zoom === 1.5');
   assert.equal(await page.evaluate('window.shut'), false);
+  assert.deepEqual(errors, []);
+});
+
+const PING_PAGE = `<!doctype html><html><body>
+<button id="accept" type="button" data-wb-action="accept" data-wb-ping="Build it.">Accept and build</button>
+<button id="deny" type="button" data-wb-action="deny" data-wb-ping="Stop." title="Page title" disabled>Deny</button>
+<button id="plain" type="button" data-wb-action="plain">Plain</button>
+</body></html>`;
+
+test('data-wb-ping buttons are disabled until a worker can hear them, tell it once, and work again once re-armed', { skip, timeout: 60_000 }, async (t) => {
+  const browser = await launchBrowser();
+  t.after(() => closeBrowser());
+  const context = await newIsolatedContext(browser, { viewport: { width: 1440, height: 900 } });
+  t.after(() => context.close().catch(() => {}));
+  const css = readFileSync('src/client/style.css', 'utf8').replace(/^@import[^\n]*\n/m, '');
+  await serve(context, () => surfaceHost(bundle(SURFACE_ENTRY, 'WB'), css), new Map([['ping', PING_PAGE]]));
+  const page = await context.newPage();
+  const errors: string[] = [];
+  page.on('pageerror', (e) => errors.push(String(e)));
+  await page.goto(`${ORIGIN}/host`);
+  await page.evaluate(`window.buttonsTarget = { ok: false, reason: 'Pixel is no longer on this floor.' }; start('ping', '${hash(1)}')`);
+  const frame = await waitFor(() => frameOf(page, 'ping'), 'the frame');
+  await frame.waitForFunction('window.whiteboard && whiteboard.card.id === "c1"');
+  const button = (id: string) =>
+    frame.evaluate(
+      `(function () { var b = document.getElementById('${id}'); return { disabled: b.disabled, state: b.getAttribute('data-wb-ping-state'), title: b.getAttribute('title'), aria: b.getAttribute('aria-disabled') }; })()`,
+    ) as Promise<{
+      disabled: boolean;
+      state: string | null;
+      title: string | null;
+      aria: string | null;
+    }>;
+
+  await waitFor(async () => (await button('accept')).state === 'unavailable', 'the buttons to be disabled');
+  assert.deepEqual(await button('accept'), { disabled: true, state: 'unavailable', title: 'Pixel is no longer on this floor.', aria: 'true' });
+  assert.deepEqual(await button('plain'), { disabled: false, state: null, title: null, aria: null }, 'a plain action button is left alone');
+
+  // The worker is back: the buttons work, and the page's own attributes are put back.
+  await page.evaluate(`window.buttonsTarget = { ok: true, id: 'w-pixel', name: 'Pixel' }; surface.refreshButtons()`);
+  await waitFor(async () => (await button('accept')).state === 'ready', 'the buttons to be enabled');
+  assert.deepEqual(await button('accept'), { disabled: false, state: 'ready', title: null, aria: null });
+  assert.deepEqual(await button('deny'), { disabled: true, state: 'ready', title: 'Page title', aria: null }, 'a button the page disabled stays disabled');
+
+  // A press: recorded with its message and words, handed to the window once, then the button is spent.
+  await frame.evaluate(`document.getElementById('accept').click()`);
+  assert.deepEqual(await button('accept'), { disabled: true, state: 'sent', title: 'Sent to Pixel.', aria: 'true' });
+  await waitFor(() => page.evaluate(`window.acted.length === 1`), 'the press to be recorded');
+  assert.deepEqual(await page.evaluate('window.acted'), [['accept', { text: 'Build it.', label: 'Accept and build' }]]);
+  assert.deepEqual(await page.evaluate('applied[0]'), [{ op: 'state.action', card: 'c1', name: 'accept', ping: { text: 'Build it.', label: 'Accept and build' } }]);
+  await frame.evaluate(`document.getElementById('accept').click()`);
+  await delay(100);
+  assert.equal(await page.evaluate('applied.length'), 1, 'a spent button sends nothing');
+  const pingedState = () => page.evaluate(`WB.findCard(board, 'c1').state.pinged`) as Promise<Record<string, { text: string; label?: string }> | undefined>;
+  await waitFor(async () => (await pingedState())?.accept, 'the press on the board');
+  assert.equal((await pingedState())!.accept.label, 'Accept and build');
+
+  // The worker re-arms it.
+  await page.evaluate(`commit([{ op: 'state.del', card: 'c1', path: ['pinged', 'accept'] }], PIXEL)`);
+  await waitFor(async () => (await button('accept')).state === 'ready', 'the button to be re-armed');
+  assert.equal((await button('accept')).disabled, false);
+
+  // A button the page adds later is handled too; one with no action name never is.
+  await frame.evaluate(`(function () {
+    var b = document.createElement('button'); b.id = 'later'; b.setAttribute('data-wb-action', 'later'); b.setAttribute('data-wb-ping', 'Later.'); b.textContent = 'Later';
+    var n = document.createElement('button'); n.id = 'nameless'; n.setAttribute('data-wb-ping', 'Hi.'); n.textContent = 'Nameless';
+    document.body.append(b, n);
+  })()`);
+  await waitFor(async () => (await button('later')).state === 'ready', 'the new button');
+  assert.equal((await button('nameless')).state, 'unavailable');
+
+  // The worker leaves: the buttons go off again.
+  await page.evaluate(`window.buttonsTarget = { ok: false, reason: 'Gone.' }; surface.refreshButtons()`);
+  await waitFor(async () => (await button('later')).state === 'unavailable', 'the buttons to be disabled again');
+  assert.equal((await button('accept')).title, 'Gone.');
   assert.deepEqual(errors, []);
 });

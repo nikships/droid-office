@@ -39,7 +39,7 @@ async function waitFor<T>(read: () => T | undefined, what: string, ms = 15_000):
   }
 }
 
-test('an agent and the owner share a floor Whiteboard end to end: MCP, the window, card routes and pings', { timeout: 90_000 }, async (t) => {
+test('an agent and the owner share a floor Whiteboard end to end: MCP, the window, card routes, pings and buttons', { timeout: 90_000 }, async (t) => {
   const root = mkdtempSync(path.join(tmpdir(), 'droid-office-wb-e2e-'));
   const project = path.join(root, 'project');
   const home = path.join(root, 'home');
@@ -292,6 +292,27 @@ test('an agent and the owner share a floor Whiteboard end to end: MCP, the windo
   assert.deepEqual([third.ok, third.how], [true, 'queue']);
   send({ t: 'whiteboard.ping', worker: 'nobody' });
   assert.equal((await waitFor(() => pinged()[3], 'the fourth ping')).ok, false);
+
+  // A data-wb-ping button on the agent's card: its first press is typed into the agent, once, until the agent re-arms it.
+  assert.equal((await hook('Stop')).status, 200);
+  const buttonSays = () => readFileSync(log, 'utf8').split('Ship the plan.').length - 1;
+  const press = (seq: number, on: string, extra: unknown[] = []) =>
+    send({ t: 'whiteboard.apply', floor, envelope: { epoch, seq, ops: [...extra, { op: 'state.action', card: on, name: 'accept', ping: { text: 'Ship the plan.', label: 'Accept' } }] } });
+  press(4, card);
+  await waitFor(() => buttonSays() > 0 || undefined, 'the button message typed in');
+  assert.match(readFileSync(log, 'utf8'), /pressed “Accept” on the Whiteboard card “The plan”/);
+  assert.deepEqual(Object.keys(findCard(store().board, card)!.state.pinged as object), ['accept']);
+  press(5, card);
+  await waitFor(() => boardMsgs().find((m) => m.update.kind === 'ack' && m.update.seq === 5), 'the second press');
+  await delay(300);
+  assert.equal(buttonSays(), 1, 'a sent button tells the agent once');
+  assert.equal((await tool('whiteboard_state', { card, op: 'del', path: 'pinged.accept' })).code, 0);
+  assert.deepEqual(findCard(store().board, card)!.state.pinged, {}, 'the agent re-armed it');
+  // On a page the owner made, a press has nobody to go to: it's taken back and the owner is told.
+  press(6, 'c-0wnerpage1', [{ op: 'card.create', card: 'c-0wnerpage1', kind: 'canvas', title: 'Mine' }]);
+  const nowhere = await waitFor(() => msgs.find((m): m is Extract<ServerMsg, { t: 'toast' }> => m.t === 'toast' && /didn't reach a worker/.test(m.text)), 'the warning');
+  assert.match(nowhere.text, /“Accept” didn't reach a worker: You made this page/);
+  assert.deepEqual(findCard(store().board, 'c-0wnerpage1')!.state.pinged, {});
 
   // A resync gives the same epoch, so its resends are still recognised.
   send({ t: 'whiteboard.sync', floor });

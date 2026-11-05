@@ -34,6 +34,8 @@ export const MAX_STATE_BYTES = 256 * KB;
 export const MAX_STATE_DEPTH = 32;
 export const MAX_STATE_KEY_LENGTH = 200;
 export const MAX_ACTION_NAME_LENGTH = 100;
+export const MAX_PING_TEXT_LENGTH = 4_000;
+export const MAX_PING_LABEL_LENGTH = 120;
 export const MAX_COMMENT_LENGTH = 10_000;
 export const MAX_STICKY_TEXT_LENGTH = 2_000;
 export const MAX_THREADS_PER_CARD = 300;
@@ -65,6 +67,17 @@ export const PICTURE_MIMES = ['image/png', 'image/jpeg', 'image/webp', 'image/gi
 export const FIELDS_KEY = 'fields';
 /** Where `whiteboard.action(name, data)` records the last press of each action, by name. */
 export const ACTIONS_KEY = 'actions';
+/**
+ * Where a `data-wb-ping` button's press is recorded, by action name: `{ text, label?, at }`. Its button
+ * stays disabled while the entry is there; the worker deletes it to re-arm the button.
+ */
+export const PINGED_KEY = 'pinged';
+
+/** What a `data-wb-ping` button tells the worker who last edited its card's page: its message, and the button's own words. */
+export interface ActionPing {
+  text: string;
+  label?: string;
+}
 
 /** A reader is the owner or a worker, by worker id. */
 export type ReaderId = string;
@@ -288,8 +301,12 @@ export type Op =
   | { op: 'state.set'; card: string; path: string[]; value: Json }
   | { op: 'state.merge'; card: string; path: string[]; value: StateObject }
   | { op: 'state.del'; card: string; path: string[] }
-  /** The last press of a named action: sets `state.actions[name]` to `{ name, data, at }`. */
-  | { op: 'state.action'; card: string; name: string; data?: Json }
+  /**
+   * The last press of a named action: sets `state.actions[name]` to `{ name, data, at }`. With `ping`
+   * (a `data-wb-ping` button), also sets `state.pinged[name]` unless it's already there, and the office
+   * then tells the worker who last edited the card's page.
+   */
+  | { op: 'state.action'; card: string; name: string; data?: Json; ping?: ActionPing }
   // Comment threads.
   | { op: 'comment.add'; card: string; thread: string; message: string; anchor: Anchor; text: string }
   | { op: 'comment.reply'; card: string; thread: string; message: string; text: string }
@@ -433,6 +450,11 @@ export function stateAt(state: StateObject, path: readonly string[]): Json | und
     cur = cur[k];
   }
   return cur;
+}
+
+/** Whether a `data-wb-ping` button's press is recorded (and its button disabled) until the worker re-arms it. */
+export function pinged(state: StateObject, name: string): boolean {
+  return stateAt(state, [PINGED_KEY, name]) !== undefined;
 }
 
 /** Every leaf of a state: each value that isn't an object with keys (arrays are leaves, replaced whole). */
@@ -741,6 +763,14 @@ function statePath(v: unknown, opts: { root: boolean }): string[] {
   return v.slice();
 }
 
+function pingOf(v: unknown): ActionPing {
+  if (!isObject(v)) fail('ping must be an object with its text');
+  const ping: ActionPing = { text: text(v.text, 'ping.text', MAX_PING_TEXT_LENGTH, { empty: true }) };
+  const label = v.label === undefined ? '' : text(v.label, 'ping.label', MAX_PING_LABEL_LENGTH, { empty: true }).trim();
+  if (label) ping.label = label;
+  return ping;
+}
+
 function stateKey(k: unknown, what: string): void {
   if (typeof k !== 'string' || k === '') fail(`${what} must be a non-empty string`);
   if (k.length > MAX_STATE_KEY_LENGTH) fail(`The state key "${k.slice(0, 40)}…" is ${k.length} characters; the limit is ${MAX_STATE_KEY_LENGTH}`);
@@ -1041,8 +1071,10 @@ class Tx {
         const name = text(o.name, 'name', MAX_ACTION_NAME_LENGTH);
         stateKey(name, 'name');
         const data = o.data === undefined ? null : jsonOf(o.data, 'data');
+        const ping = o.ping === undefined ? undefined : pingOf(o.ping);
         this.writeState(card, (state) => {
           walk(state, [ACTIONS_KEY])[name] = { name, data, at: this.now };
+          if (ping && !pinged(state, name)) walk(state, [PINGED_KEY])[name] = { ...ping, at: this.now } as StateObject;
           return state;
         });
         return;

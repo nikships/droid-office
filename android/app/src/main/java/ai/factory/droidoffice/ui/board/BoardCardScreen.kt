@@ -98,6 +98,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.LifecycleStartEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import ai.factory.droidoffice.core.ButtonTarget
 import ai.factory.droidoffice.core.Tags
 import ai.factory.droidoffice.core.WB_OWNER
 import ai.factory.droidoffice.core.WbBoard
@@ -143,6 +144,7 @@ fun BoardCardScreen(floorId: String, cardId: String, onBack: () -> Unit) {
     val density = LocalDensity.current
     val scope = rememberCoroutineScope()
     val boards by connection.boards.collectAsStateWithLifecycle()
+    val data by connection.data.collectAsStateWithLifecycle()
     val floor = boards[floorId]
     val board = floor?.board
     val card = board?.card(cardId)
@@ -220,6 +222,8 @@ fun BoardCardScreen(floorId: String, cardId: String, onBack: () -> Unit) {
     var widthDp by remember { mutableFloatStateOf(0f) }
     val sinceNow = since ?: board?.readPoint(WB_OWNER, cardId) ?: 0
     val changedMarks = if (board != null && card != null) board.changedMarks(card, sinceNow) else emptySet()
+    // Who its data-wb-ping buttons tell; the worker list the app has is the floor it's on.
+    val buttons = card?.let { WhiteboardPing.buttonTarget(it, if (data.floorId == floorId) data.workers.values else emptyList()) }
 
     fun clearDraft() {
         draftX = null
@@ -249,7 +253,15 @@ fun BoardCardScreen(floorId: String, cardId: String, onBack: () -> Unit) {
                     connection.applyBoard(floorId, msg.ops) { r ->
                         page?.send(WbPage.done(msg.id, r is WbResult.Ok, (r as? WbResult.Ok)?.rev ?: 0))
                         when (r) {
-                            is WbResult.Ok -> msg.action?.let(::acted)
+                            is WbResult.Ok -> {
+                                val ping = msg.ping
+                                if (ping == null) {
+                                    msg.action?.let(::acted)
+                                } else {
+                                    val to = (buttons as? ButtonTarget.To)?.let { data.workers[it.id] }
+                                    scope.launch { snackbar.showSnackbar(WhiteboardPing.sent(ping, buttons, to)) }
+                                }
+                            }
                             is WbResult.Invalid -> scope.launch { snackbar.showSnackbar("${msg.what} didn't work: ${r.reason}") }
                             WbResult.Expired -> scope.launch { snackbar.showSnackbar(EXPIRED) }
                         }
@@ -285,6 +297,7 @@ fun BoardCardScreen(floorId: String, cardId: String, onBack: () -> Unit) {
         LaunchedEffect(page, readyCount, mode) { if (readyCount > 0) page.send(WbPage.mode(mode)) }
         LaunchedEffect(page, readyCount, floor.live) { if (readyCount > 0) page.send(WbPage.live(floor.live)) }
         LaunchedEffect(page, readyCount, widthDp) { if (readyCount > 0 && widthDp > 0) page.send(WbPage.width(widthDp)) }
+        LaunchedEffect(page, readyCount, buttons) { if (readyCount > 0 && buttons != null) page.send(WbPage.buttons(buttons)) }
     }
 
     val picker = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri ->

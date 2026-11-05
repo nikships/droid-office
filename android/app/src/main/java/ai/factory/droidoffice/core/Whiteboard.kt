@@ -618,6 +618,39 @@ object WhiteboardPing {
         "resume" -> "Woke $name to look at the board"
         else -> "Asked $name to look at the board"
     }
+
+    /**
+     * Who a card's `data-wb-ping` buttons tell (buttonTarget): the worker who last edited its page,
+     * while it's among [workers] (the floor's), else why nobody. The page disables the buttons then.
+     */
+    fun buttonTarget(card: WbCard, workers: Collection<WorkerInfo>): ButtonTarget {
+        val by = card.stamps.content?.author
+        if (by == null || by.kind != "worker") return ButtonTarget.No("You made this page, so its buttons have no worker to tell.")
+        val w = workers.lastOrNull { it.id == by.id } ?: return ButtonTarget.No("${by.name ?: by.id ?: "Its worker"} is no longer on this floor.")
+        val name = w.name.ifBlank { w.id }
+        if (w.kind != "agent" || w.isCloud) return ButtonTarget.No("$name can't take messages from the Whiteboard.")
+        if (w.lost != null) return ButtonTarget.No("$name's worktree is gone. Rebuild it first.")
+        return ButtonTarget.To(w.id, name)
+    }
+
+    /** What the app says when a `data-wb-ping` button's press goes to its worker, by how the office gets it there (buttonDelivery). */
+    fun sent(button: String, target: ButtonTarget?, w: WorkerInfo?): String {
+        if (target !is ButtonTarget.To) return "Sent “$button”."
+        val to = "Sent “$button” to ${target.name}"
+        if (w == null || w.remote) return "$to."
+        return when (w.state) {
+            WorkerStatus.Exited, WorkerStatus.Offline -> "$to, waking it up."
+            WorkerStatus.NeedsInput -> "$to. It gets it once you answer the question in its terminal."
+            WorkerStatus.Starting -> "$to. It gets it once it has started."
+            else -> "$to."
+        }
+    }
+}
+
+/** Who a card's `data-wb-ping` buttons tell now, or why nobody. */
+sealed interface ButtonTarget {
+    data class To(val id: String, val name: String) : ButtonTarget
+    data class No(val reason: String) : ButtonTarget
 }
 
 /** `whiteboard.pinged`: the line went in, or why it didn't. */
