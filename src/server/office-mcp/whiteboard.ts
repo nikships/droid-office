@@ -13,20 +13,32 @@ Buttons that tell you: a plain data-wb-action press is only recorded for your ne
 File sources resolve against your working folder, never the office server's. A file collects its markup/CSS assets inside its folder; a dir includes runtime-loaded files (modules, fetch), except hidden files and node_modules. Outside references, missing files and limits are reported, never silently included; folder entries and symlink assets cannot escape the folder. Remote URLs stay remote. Linked cards follow their source file/folder: edit that source, or unlink before replacing content. A missing linked source keeps its last good content and reports a broken link until it recovers.
 The floor stores board.json, its key and content-addressed blobs under .droid-office/whiteboard/. File paths returned by reads are read-only blob paths: never edit them. Use whiteboard_state for answers and application data, whiteboard_marks for feedback, and whiteboard_apply for atomic batches.`;
 
+// Each argument is one flat, closed object checked by the handler, never a union of closed objects: Droid validates
+// Script tool calls with Ajv removeAdditional, which strips keys while trying each anyOf branch and empties the value.
 const point = z.object({ x: z.number(), y: z.number() });
-const anchor = z.union([
-  z.object({ on: z.string(), at: point.optional(), offset: point.optional() }).strict(),
-  z.object({ selector: z.string(), quote: z.string().optional(), at: point.optional(), offset: point.optional() }).strict(),
-  z.object({ at: point }).strict(),
-]);
-const source = z.union([
-  z.object({ html: z.string() }).strict(),
-  z.object({ file: z.string() }).strict(),
-  z.object({ dir: z.string(), entry: z.string().optional() }).strict(),
-  z.object({ image: z.string() }).strict(),
-  z.object({ link: z.string(), entry: z.string().optional() }).strict(),
-  z.object({ canvas: z.literal(true) }).strict(),
-]);
+const anchor = z
+  .object({
+    on: z.string().optional().describe('A data-wb-id.'),
+    selector: z.string().optional().describe('A CSS selector, instead of on.'),
+    quote: z.string().optional().describe('Text inside the selected element.'),
+    at: point.optional().describe('Page position, the fallback when the element is missing.'),
+    offset: point.optional().describe('From the element top-left, with on or selector.'),
+  })
+  .strict();
+const SOURCES = ['html', 'file', 'dir', 'image', 'link', 'canvas'] as const;
+const source = z
+  .object({
+    html: z.string().optional().describe('Inline HTML.'),
+    file: z.string().optional().describe('An HTML file; its referenced assets are collected.'),
+    dir: z.string().optional().describe('A folder package, shown from entry.'),
+    image: z.string().optional().describe('A PNG, JPEG, GIF or WebP file.'),
+    link: z.string().optional().describe('A file or folder the card follows.'),
+    entry: z.string().optional().describe('With dir or link: the page inside the folder, default index.html.'),
+    canvas: z.literal(true).optional().describe('Create only: a blank canvas.'),
+  })
+  .strict();
+type Source = z.infer<typeof source>;
+type SourceKind = (typeof SOURCES)[number];
 const box = z.object({ x: z.number().optional(), y: z.number().optional(), w: z.number().optional(), h: z.number().optional() });
 const newId = (prefix: string) => `${prefix}-${randomBytes(5).toString('hex')}`;
 const dotted = (value?: string) => (!value || value === '.' ? [] : value.split('.'));
@@ -54,10 +66,33 @@ function apply(caller: OfficeMcpCaller, ops: Record<string, unknown>[], extra: R
   return officeResult(`Done at revision ${out.rev}.${extra.card ? ` Card: ${extra.card}.` : ''}${extra.id ? ` Mark: ${extra.id}.` : ''}`, { ok: true, rev: out.rev, ...extra });
 }
 
+/** The one kind of content a source names, and the load it becomes, or what is wrong with it. */
+function sourceOf(value: Source): { kind: SourceKind; load: Record<string, unknown> } | string {
+  const given = SOURCES.filter((key) => value[key] !== undefined);
+  if (given.length !== 1) {
+    const example = 'for example {"dir": "artifacts/report", "entry": "index.html"} or {"file": "report.html"}';
+    return given.length ? `source takes exactly one of html, file, dir, image, link or canvas, not ${given.join(' and ')}.` : `source needs one of html, file, dir, image, link or canvas, ${example}.`;
+  }
+  const kind = given[0];
+  if (value.entry !== undefined && kind !== 'dir' && kind !== 'link') return `entry goes with dir or link, not ${kind}. Use {"dir": "folder", "entry": "page.html"} for a page inside a folder.`;
+  return { kind, load: { [kind]: value[kind], ...(value.entry === undefined ? {} : { entry: value.entry }) } };
+}
+
+function anchorProblem(value: z.infer<typeof anchor>): string | undefined {
+  if (value.on !== undefined && value.selector !== undefined) return 'An anchor takes on or selector, not both.';
+  if (value.on === undefined && value.selector === undefined) {
+    if (!value.at) return 'An anchor needs on (a data-wb-id), selector or at {x,y}.';
+    if (value.offset) return 'offset goes with on or selector; use at alone for a page position.';
+  }
+  if (value.quote !== undefined && value.selector === undefined) return 'quote goes with selector.';
+  return undefined;
+}
+
 function anchorOf(value?: z.infer<typeof anchor>): Anchor {
-  const fallback = value && 'at' in value && value.at ? value.at : { x: 40, y: 40 };
-  if (value && ('on' in value || 'selector' in value)) {
-    return { kind: 'element', ...('on' in value ? { wbId: value.on } : { selector: value.selector, ...(value.quote === undefined ? {} : { quote: value.quote }) }), point: fallback, offset: value.offset ?? { x: 0, y: 0 } };
+  const fallback = value?.at ?? { x: 40, y: 40 };
+  if (value?.on !== undefined || value?.selector !== undefined) {
+    const target = value.on !== undefined ? { wbId: value.on } : { selector: value.selector, ...(value.quote === undefined ? {} : { quote: value.quote }) };
+    return { kind: 'element', ...target, point: fallback, offset: value.offset ?? { x: 0, y: 0 } };
   }
   return { kind: 'point', point: fallback };
 }
@@ -117,7 +152,11 @@ export function register(server: OfficeMcpServer, _deps: OfficeMcpDeps): void {
         action: z.enum(['create', 'update', 'link', 'unlink', 'remove', 'show']),
         card: z.string().optional().describe('Existing card id, or optional chosen id when creating (1–64 letters, digits, _ or -).'),
         title: z.string().optional(),
-        source: source.optional().describe('Exactly one source. Relative disk paths use your working folder; entry stays relative to its folder. Canvas is only for create.'),
+        source: source
+          .optional()
+          .describe(
+            'One object with exactly one of html, file, dir, image, link or canvas, plus entry only with dir or link, e.g. {"dir": "artifacts/report", "entry": "index.html"}. Relative disk paths use your working folder; entry stays relative to its folder. Canvas is only for create.',
+          ),
         grid: z.boolean().optional().describe('For show: true selects the card grid; do not combine with card.'),
       }),
       annotations: { openWorldHint: false },
@@ -130,10 +169,12 @@ export function register(server: OfficeMcpServer, _deps: OfficeMcpDeps): void {
         return apply(caller, [{ op: 'show', selection: card ? { kind: 'card', id: card } : { kind: 'grid' } }]);
       }
       if (!card) return officeError('Give the card id. whiteboard_read lists cards.');
-      const content = args.source && !('canvas' in args.source) ? { load: args.source } : undefined;
+      const picked = args.source ? sourceOf(args.source) : undefined;
+      if (typeof picked === 'string') return officeError(picked);
+      const content = picked && picked.kind !== 'canvas' ? { load: picked.load } : undefined;
       if (args.action === 'create') {
-        if (!args.title?.trim() || !args.source) return officeError('Create needs a nonempty title and a source: html, file, dir, image, link or canvas.');
-        const result = apply(caller, [{ op: 'card.create', card, title: args.title.trim(), kind: 'canvas' in args.source ? 'canvas' : 'html', ...(content ? { content } : {}) }], { card });
+        if (!args.title?.trim() || !picked) return officeError('Create needs a nonempty title and a source: html, file, dir, image, link or canvas.');
+        const result = apply(caller, [{ op: 'card.create', card, title: args.title.trim(), kind: picked.kind === 'canvas' ? 'canvas' : 'html', ...(content ? { content } : {}) }], { card });
         if (!result.isError) {
           const created = await readBoard(caller.floor.whiteboard, caller.worker.id, caller.floor, { cards: [card] });
           const details = created.cards[0];
@@ -143,15 +184,15 @@ export function register(server: OfficeMcpServer, _deps: OfficeMcpDeps): void {
         return result;
       }
       if (args.action === 'update') {
-        if (args.source && ('canvas' in args.source || 'link' in args.source)) return officeError('Update takes HTML, file, dir or image. Use link to link a source; canvas is only for create.');
+        if (picked?.kind === 'canvas' || picked?.kind === 'link') return officeError('Update takes html, file, dir or image. Use the link action to link a source; canvas is only for create.');
         const ops: Record<string, unknown>[] = [];
         if (args.title !== undefined) ops.push({ op: 'card.title', card, title: args.title.trim() });
         if (content) ops.push({ op: 'card.content', card, content });
         return ops.length ? apply(caller, ops, { card }) : officeError('Update needs a title or source.');
       }
       if (args.action === 'link') {
-        if (!args.source || !('link' in args.source)) return officeError('Link needs source: {link: "file-or-folder", entry?: "index.html"}.');
-        return apply(caller, [{ op: 'card.linkTo', card, path: args.source.link, ...(args.source.entry === undefined ? {} : { entry: args.source.entry }) }], { card });
+        if (picked?.kind !== 'link') return officeError('Link needs source: {link: "file-or-folder", entry?: "index.html"}.');
+        return apply(caller, [{ op: 'card.linkTo', card, path: picked.load.link, ...(picked.load.entry === undefined ? {} : { entry: picked.load.entry }) }], { card });
       }
       return apply(caller, [{ op: args.action === 'remove' ? 'card.rm' : 'card.unlink', card }], { card });
     },
@@ -203,7 +244,9 @@ export function register(server: OfficeMcpServer, _deps: OfficeMcpDeps): void {
       if (!allowed[args.kind].includes(args.op)) return officeError(`${args.kind} supports ${allowed[args.kind].join(', ')}.`);
       if (args.op !== 'add' && !args.id) return officeError('Give the existing mark id. Read the card to find it.');
       if (args.op === 'reattach' && !args.anchor) return officeError('Reattach needs an anchor: on, selector or at.');
-      if (args.op === 'move' && !Object.keys(args.box ?? {}).length && !(args.anchor && 'at' in args.anchor)) return officeError('Move needs a box position/size or anchor.at.');
+      const badAnchor = args.anchor && anchorProblem(args.anchor);
+      if (badAnchor) return officeError(badAnchor);
+      if (args.op === 'move' && !Object.keys(args.box ?? {}).length && !args.anchor?.at) return officeError('Move needs a box position/size or anchor.at.');
       if (args.kind === 'comment' && ['add', 'reply', 'edit'].includes(args.op) && !args.text?.trim()) return officeError('Give nonempty text for the comment.');
       if (args.kind === 'comment' && args.op === 'edit' && !args.message) return officeError('Editing a comment needs its message id.');
       if (args.kind === 'picture' && ['add', 'file'].includes(args.op) && !args.file) return officeError('Give the local picture file path.');
@@ -213,7 +256,7 @@ export function register(server: OfficeMcpServer, _deps: OfficeMcpDeps): void {
       if (args.color !== undefined) op.color = args.color;
       if (args.op === 'add' || args.op === 'reattach') op.anchor = anchorOf(args.anchor);
       if (args.box !== undefined) op.box = args.box;
-      if (args.op === 'move' && args.anchor && 'at' in args.anchor && args.anchor.at) op.box = { ...args.box, ...args.anchor.at };
+      if (args.op === 'move' && args.anchor?.at) op.box = { ...args.box, ...args.anchor.at };
       if (args.kind === 'picture' && args.file !== undefined) op.file = { load: args.file };
       if (args.kind === 'comment') {
         if (args.op === 'add' || args.op === 'reply') op.message = newId('m');

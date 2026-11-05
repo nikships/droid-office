@@ -149,6 +149,31 @@ interface OfficeTool<S extends z.ZodRawShape> {
 /** Reports progress on a long call when the client asked for it with a progress token; otherwise does nothing. */
 export type OfficeProgress = (progress: number, message?: string) => void;
 
+/**
+ * Where a JSON Schema has an anyOf/oneOf branch that is a closed object, if anywhere. Droid validates Script
+ * tool calls with Ajv's removeAdditional, which deletes keys while trying such a branch, so a value that
+ * matches a later branch arrives empty and fails every branch.
+ */
+export function closedUnionAt(schema: unknown, at = ''): string | undefined {
+  if (Array.isArray(schema)) {
+    for (const [index, item] of schema.entries()) {
+      const found = closedUnionAt(item, `${at}/${index}`);
+      if (found !== undefined) return found;
+    }
+    return undefined;
+  }
+  if (!record(schema)) return undefined;
+  for (const key of ['anyOf', 'oneOf']) {
+    const branches = schema[key];
+    if (Array.isArray(branches) && branches.some((branch) => record(branch) && branch.additionalProperties === false)) return `${at}/${key}`;
+  }
+  for (const [key, value] of Object.entries(schema)) {
+    const found = closedUnionAt(value, `${at}/${key}`);
+    if (found !== undefined) return found;
+  }
+  return undefined;
+}
+
 interface RegisteredTool {
   listed: Tool;
   schema: z.ZodObject;
@@ -251,11 +276,14 @@ export class OfficeMcpServer {
   ): void {
     if (this.tools.has(definition.name)) throw new Error(`Duplicate office tool: ${definition.name}`);
     const { name, description, inputSchema, outputSchema, annotations } = definition;
+    const listedInput = z.toJSONSchema(inputSchema, { io: 'input' });
+    const closed = closedUnionAt(listedInput);
+    if (closed !== undefined) throw new Error(`Office tool ${name} lists a union of closed objects at ${closed || '/'}; use one object and check it in the handler.`);
     this.tools.set(name, {
       listed: {
         name,
         description,
-        inputSchema: z.toJSONSchema(inputSchema, { io: 'input' }) as Tool['inputSchema'],
+        inputSchema: listedInput as Tool['inputSchema'],
         ...(outputSchema ? { outputSchema: z.toJSONSchema(outputSchema, { io: 'output' }) as Tool['outputSchema'] } : {}),
         ...(annotations ? { annotations } : {}),
       },

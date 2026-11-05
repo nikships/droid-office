@@ -7,8 +7,9 @@ import type { AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { Client, StreamableHTTPClientTransport } from '@modelcontextprotocol/client';
+import Ajv from 'ajv';
 import { Answers } from '../src/server/answers.js';
-import { createOfficeMcp, OFFICE_MCP_PATH, OFFICE_MCP_WORKER_HEADER, type OfficeMcpFloor } from '../src/server/office-mcp/index.js';
+import { closedUnionAt, createOfficeMcp, OFFICE_MCP_PATH, OFFICE_MCP_WORKER_HEADER, type OfficeMcpFloor } from '../src/server/office-mcp/index.js';
 import { Team, type TeamWorkers } from '../src/server/team.js';
 import { Visits } from '../src/server/visits.js';
 import { WhiteboardStore, type CardRenders, type PinnedCard, type RenderImage, type RenderOutcome, type WhiteboardRenderer } from '../src/server/whiteboard.js';
@@ -327,6 +328,67 @@ test('card sources load from the calling worktree, preserve assets and marks, an
   assert.equal((await r.call('whiteboard_card', { action: 'show', card, grid: true })).isError, true);
   await r.ok('whiteboard_card', { action: 'remove', card: live });
   assert.equal(findCard(r.store.board, live), undefined);
+});
+
+test('Droid validation with Ajv removeAdditional keeps every source and anchor shape intact', async (t) => {
+  const r = await rig(t);
+  const listed = new Map((await r.client.listTools()).tools.map((tool) => [tool.name, tool.inputSchema]));
+  // Droid checks Script tool calls against the listed schema with these options before sending them.
+  const ajv = new Ajv({ removeAdditional: true, allErrors: true, useDefaults: true });
+  // The keywords involved behave the same in draft-07 and 2020-12; drop $schema so default Ajv compiles it.
+  const compile = (name: string) => ajv.compile({ ...listed.get(name)!, $schema: undefined });
+  const card = compile('whiteboard_card');
+  const marks = compile('whiteboard_marks');
+  const site = { dir: '/repo/.droid-office/artifacts/setup', entry: 'index.html' };
+  const calls: [typeof card, Record<string, unknown>][] = [
+    [card, { action: 'update', card: 'atlas-mcp-setup', title: 'Setup', source: site }],
+    [card, { action: 'update', card: 'atlas-mcp-setup', source: { file: '/repo/index.html' } }],
+    ...[{ html: '<p>x</p>' }, { image: 'shot.png' }, { canvas: true }, { link: 'site', entry: 'page.html' }, { dir: 'site' }].map((source): [typeof card, Record<string, unknown>] => [card, { action: 'create', title: 'T', source }]),
+    ...[{ on: 'title', offset: { x: 1, y: 2 } }, { selector: 'h1', quote: 'Plan', at: { x: 1, y: 2 } }, { at: { x: 3, y: 4 } }].map((anchor): [typeof card, Record<string, unknown>] => [
+      marks,
+      { card: 'c', kind: 'comment', op: 'add', text: 'Hi', anchor },
+    ]),
+  ];
+  for (const [validate, args] of calls) {
+    const sent = structuredClone(args);
+    assert.ok(validate(sent), `${JSON.stringify(args)}: ${ajv.errorsText(validate.errors)}`);
+    assert.deepEqual(sent, args, 'validation must not strip any key');
+  }
+  for (const [name, schema] of listed) assert.equal(closedUnionAt(schema), undefined, name);
+  assert.equal(closedUnionAt({ properties: { source: { anyOf: [{ type: 'object', additionalProperties: false }] } } }), '/properties/source/anyOf');
+
+  writeFileSync(path.join(r.cwd, 'v1.html'), '<p>First</p>');
+  mkdirSync(path.join(r.cwd, 'site'));
+  writeFileSync(path.join(r.cwd, 'site', 'index.html'), '<p>Revised</p>');
+  const id = (await r.card('Setup', { file: 'v1.html' })).card as string;
+  await r.ok('whiteboard_card', { action: 'update', card: id, title: 'Setup, revised', source: { dir: 'site', entry: 'index.html' } });
+  const stored = findCard(r.store.board, id)!;
+  assert.equal(stored.title, 'Setup, revised');
+  assert.match(r.store.readBlob(stored.content!.files['index.html'].hash)!.toString(), /Revised/);
+});
+
+test('source and anchor mistakes get errors that say how to fix them and change nothing', async (t) => {
+  const r = await rig(t);
+  const card = (await r.card()).card as string;
+  const before = r.store.board.rev;
+  const refusal = async (name: string, args: Record<string, unknown>, expected: RegExp) => {
+    const result = await r.call(name, args);
+    assert.equal(result.isError, true, JSON.stringify(args));
+    assert.match(textOf(result), expected);
+  };
+  await refusal('whiteboard_card', { action: 'update', card, source: {} }, /source needs one of html, file, dir, image, link or canvas, for example \{"dir"/);
+  await refusal('whiteboard_card', { action: 'update', card, source: { file: 'a.html', dir: 'site' } }, /exactly one of .*not file and dir/);
+  await refusal('whiteboard_card', { action: 'update', card, source: { file: 'a.html', entry: 'index.html' } }, /entry goes with dir or link, not file/);
+  await refusal('whiteboard_card', { action: 'update', card, source: { link: 'a.html' } }, /Use the link action/);
+  await refusal('whiteboard_card', { action: 'link', card, source: { dir: 'site' } }, /Link needs source/);
+  await refusal('whiteboard_card', { action: 'create', title: 'X', source: { canvas: true, html: '<p>x</p>' } }, /not html and canvas/);
+  await refusal('whiteboard_card', { action: 'update', card, source: { dirr: 'site' } }, /Unrecognized key/);
+  const mark = { card, kind: 'comment', op: 'add', text: 'Hi' };
+  await refusal('whiteboard_marks', { ...mark, anchor: { on: 'title', selector: 'h1' } }, /on or selector, not both/);
+  await refusal('whiteboard_marks', { ...mark, anchor: {} }, /anchor needs on/);
+  await refusal('whiteboard_marks', { ...mark, anchor: { at: { x: 1, y: 2 }, offset: { x: 1, y: 1 } } }, /offset goes with on or selector/);
+  await refusal('whiteboard_marks', { ...mark, anchor: { on: 'title', quote: 'Plan' } }, /quote goes with selector/);
+  assert.equal(r.store.board.rev, before);
 });
 
 test('directory and batch file loads preserve CLI containment and resolve paths without changing the server cwd', async (t) => {
