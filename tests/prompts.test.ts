@@ -5,7 +5,6 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { PROMPTS, PROMPT_IDS, PROMPT_MAX, WORKER_VISITS, fillPrompt, issuePromptVars, mergeCommand, placeholders, promptText, pullPromptVars, shipPromptVars, workerMessageVars } from '../src/shared/prompts.js';
 import { OfficePrompts, officePrompt, type PromptSource } from '../src/server/prompts.js';
-import { stationBrief } from '../src/server/stations.js';
 import type { AgentChoice, PromptsState } from '../src/shared/protocol.js';
 
 function scratch(t: { after(fn: () => void): void }) {
@@ -38,6 +37,21 @@ test('the editor names no prompt with an emoji', () => {
   for (const id of PROMPT_IDS) assert.doesNotMatch(PROMPTS[id].label, /\p{Extended_Pictographic}/u, id);
 });
 
+test('retired kiosk and healing prompts cannot return through saved custom prompts', (t) => {
+  const dir = scratch(t);
+  const retired = ['station.issues', 'station.pulls', 'station.actions', 'station.lead', 'pipeline.heal'];
+  const custom = Object.fromEntries([...retired, 'office.namer', 'whiteboard.ping'].map((id) => [id, { text: `custom ${id}`, by: 'owner', at: 1 }]));
+  writeFileSync(path.join(dir, 'prompts.json'), JSON.stringify({ custom }));
+  const prompts = new OfficePrompts(dir, () => {});
+  assert.deepEqual(Object.keys(prompts.state().custom).sort(), ['office.namer', 'whiteboard.ping']);
+  for (const id of retired) {
+    assert.ok(!PROMPT_IDS.some((offered) => offered === id));
+    assert.equal(prompts.setPrompt(id, 'bring it back', 'owner'), 'Unknown prompt');
+  }
+  assert.equal(prompts.text('office.namer'), 'custom office.namer');
+  assert.equal(prompts.text('whiteboard.ping'), 'custom whiteboard.ping');
+});
+
 test('coordination is only as needed, not a routine roster check or task announcement', () => {
   assert.match(WORKER_VISITS, /only when your task needs it/);
   assert.match(WORKER_VISITS, /Don't routinely check the roster or announce your task/);
@@ -61,7 +75,7 @@ test('worker deliveries separate sender text from office guidance without reinte
 });
 
 test('automatic notices label the office as their source', () => {
-  for (const id of ['subagent.nudge', 'whiteboard.ping', 'whiteboard.button', 'pipeline.heal'] as const) {
+  for (const id of ['subagent.nudge', 'whiteboard.ping', 'whiteboard.button'] as const) {
     assert.match(PROMPTS[id].text, /^Droid Office notice:/, id);
   }
   assert.match(PROMPTS['subagent.nudge'].text, /not a message from a worker/);
@@ -205,25 +219,6 @@ test('a rewritten board prompt fills in the floor it is sent on', () => {
   );
 });
 
-test('the board agents are briefed for their forge on both forges', () => {
-  for (const forge of ['github', 'gitlab'] as const) {
-    const [site, cli, pull] = forge === 'gitlab' ? ['GitLab', 'glab', 'merge request'] : ['GitHub', 'gh', 'pull request'];
-    for (const kind of ['issues', 'pulls', 'actions'] as const) {
-      const b = stationBrief(kind, forge);
-      assert.doesNotMatch(b, /\{\{/, `${forge} ${kind}`);
-      assert.doesNotMatch(b, /task queue|office-queue/, `${forge} ${kind}`);
-      assert.match(b, new RegExp(`to open a ${pull}\\.`), `${forge} ${kind}`);
-      assert.ok(b.endsWith('The request:'));
-    }
-    assert.match(stationBrief('issues', forge), new RegExp(`${site} issues with the ${cli} CLI`));
-  }
-  assert.match(stationBrief('pulls', 'gitlab'), /merge requests with the glab CLI: sum them up and review them \(glab mr view --comments, glab mr diff, glab ci status\)/);
-  assert.equal(
-    stationBrief('issues', 'github').split('\n\n')[1],
-    "You look after this repository's GitHub issues with the gh CLI: file new ones (a clear title, what's wrong or wanted, and how to reproduce it when that applies), find and sum them up, triage, label, comment on, close and reopen them.",
-  );
-});
-
 test('a rewritten prompt is kept, used, and put back to the default', (t) => {
   const dir = scratch(t);
   const told: PromptsState[] = [];
@@ -276,11 +271,4 @@ test('the default worker is checked before it is kept, and one the office can no
   writeFileSync(file, '{nope');
   assert.deepEqual(new OfficePrompts(dir, () => {}).state(), { custom: {} });
   assert.ok(readFileSync(file, 'utf8'));
-});
-
-test('a board agent is told its rewritten brief, with the floor filled in', () => {
-  const source: PromptSource = { text: (id) => (id === 'station.pulls' ? 'You review {{pullName}}s with {{site}}. The request:' : PROMPTS[id].text), agent: () => undefined };
-  assert.equal(stationBrief('pulls', 'github', source), 'You review pull requests with GitHub. The request:');
-  assert.equal(stationBrief('pulls', 'gitlab', source), 'You review merge requests with GitLab. The request:');
-  assert.equal(stationBrief('issues', 'gitlab', source), stationBrief('issues', 'gitlab'));
 });

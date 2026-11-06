@@ -25,22 +25,6 @@ export type FunThing = {
   note: string;
 };
 
-export type BoardAgent = {
-  id: string;
-  name: string;
-  station: string;
-  tool: string;
-  body: string;
-  does: string[];
-};
-
-export type AutoHealStep = {
-  time: string;
-  actor: string;
-  message: string;
-  status: 'failed' | 'running' | 'success';
-};
-
 export type WhyPoint = {
   id: string;
   title: string;

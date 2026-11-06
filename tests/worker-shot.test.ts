@@ -136,22 +136,6 @@ test('restart ignores old saved revival deadlines, even expired ones, and keeps 
   assert.deepEqual(f.removed, []);
 });
 
-test('all pre-made agents can open a terminal before their first task, without duplicate hires', (t) => {
-  const f = fixture(t);
-  const workers = f.manager();
-  for (const deskId of ['station-issues', 'station-pulls', 'station-actions', 'station-lead']) {
-    const info = workers.openStation(deskId, 'test');
-    if (typeof info === 'string') assert.fail(info);
-    assert.equal(info.deskId, deskId);
-    assert.equal(info.prompt, undefined, 'opening a terminal must not invent an owner task');
-    assert.equal(workers.openStation(deskId, 'test'), info);
-    assert.equal(workers.list().filter((w) => w.deskId === deskId).length, 1);
-    assert.equal(workers.shoot(info.id), undefined);
-    assert.equal(workers.get(info.id), info);
-  }
-  assert.equal(workers.openStation('desk-1', 'test'), 'There is no agent to ask there');
-});
-
 test('shots reject missing workers and do nothing while the office closes', (t) => {
   const f = fixture(t);
   const workers = f.manager();

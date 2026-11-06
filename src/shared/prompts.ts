@@ -1,5 +1,5 @@
 // Every prompt the office writes for a worker by itself: what Hand to a worker, Review and the
-// boards' other buttons send, the board agents' briefs and the sign writer's instructions. Each can be rewritten in Settings (kept by
+// boards' other buttons send and the sign writer's instructions. Each can be rewritten in Settings (kept by
 // server/prompts.ts, for the whole building); these are the defaults, which "Default" goes back to.
 // A {{name}} in one is filled in by the office when it's sent. One template serves GitHub and
 // GitLab floors: whatever differs between them ({{cli}}, {{pullName}}, {{ref}}, the commands) is a
@@ -7,9 +7,8 @@
 
 import type { Forge } from './floors.js';
 import { forgeWords } from './floors.js';
-import { STATION_AGENT, type StationKind } from './layout.js';
 
-export type PromptGroup = 'workers' | 'issues' | 'pulls' | 'changes' | 'repos' | 'worktrees' | 'stations' | 'subagents' | 'visits' | 'whiteboard' | 'wand' | 'office';
+export type PromptGroup = 'workers' | 'issues' | 'pulls' | 'changes' | 'repos' | 'worktrees' | 'subagents' | 'visits' | 'whiteboard' | 'wand' | 'office';
 
 /** The editor's sections, in order. */
 export const PROMPT_GROUPS: Record<PromptGroup, string> = {
@@ -19,8 +18,7 @@ export const PROMPT_GROUPS: Record<PromptGroup, string> = {
   changes: '🌿 Changes window',
   repos: '🗂️ Across repositories',
   worktrees: 'Worktree setup',
-  stations: 'Board agents',
-  subagents: '🧭 Team lead & subagents',
+  subagents: '🧭 Subagents',
   visits: '🚶 Visits between workers',
   whiteboard: '🧑‍🎨 Whiteboard',
   office: 'Worker signs',
@@ -136,80 +134,6 @@ export function mergeCommand(forge: Forge | undefined, n: number, method: 'merge
   return `gh pr merge ${n} --${method}${deleteBranch ? ' --delete-branch' : ''} --repo ${repo}`;
 }
 
-/** A failed run, for the prompt that wakes the Pipeline agent to heal it. */
-export interface FailedRunForPrompt {
-  id: number;
-  number: number;
-  workflow: string;
-  title: string;
-  branch: string;
-  sha: string;
-  event: string;
-  url: string;
-  /** GitHub: its workflow file, `.github/workflows/release.yml`. */
-  path?: string;
-}
-
-/** What the heal prompt fills in for a failed run on a floor whose default branch is `defaultBranch`. */
-export function healPromptVars(forge: Forge | undefined, run: FailedRunForPrompt, defaultBranch: string | undefined) {
-  const lab = forge === 'gitlab';
-  const vars = forgeVars(forge);
-  const b = run.branch;
-  const file = run.path?.split('/').pop();
-  const onDefault = !!defaultBranch && b === defaultBranch;
-  return {
-    ...vars,
-    id: run.id,
-    number: run.number,
-    workflow: run.workflow,
-    title: run.title,
-    branch: b,
-    sha: run.sha.slice(0, 7),
-    event: run.event,
-    url: run.url,
-    logs: lab ? `\`glab ci get --pipeline-id ${run.id} --with-job-details\` and \`glab ci trace <job id>\` for each failed job` : `\`gh run view ${run.id} --log-failed\``,
-    rerun: lab ? `\`glab api --method POST projects/:id/pipelines/${run.id}/retry\`` : `\`gh run rerun ${run.id} --failed\``,
-    watch: lab ? `\`glab ci status --branch ${b} --live\`` : `find it with \`gh run list --branch ${b}${file ? ` --workflow ${file}` : ''} --limit 3\`, then \`gh run watch <id> --exit-status\``,
-    finish: onDefault
-      ? `commit the fix on a new branch, push it, and open a ${vars.pullName} against \`${b}\` with \`${vars.cli}\` (don't push straight to \`${b}\`), then report its link`
-      : `commit the fix and push it to \`${b}\` (\`git push origin HEAD:${b}\`), which updates any ${vars.pullName} open for it, then report the commit`,
-  };
-}
-
-// --- Board agents ---------------------------------------------------------------------------------
-
-type BoardKind = Exclude<StationKind, 'lead'>;
-
-const BOARD: Record<BoardKind, string> = {
-  issues: 'the 📌 Issues board',
-  pulls: 'the 🔀 Pull Requests board',
-  actions: 'the 🚀 Pipelines board',
-};
-
-/** What a board agent is told ahead of the first request typed to it. */
-function stationDefault(kind: BoardKind): string {
-  return [
-    `Droid Office role: ${STATION_AGENT[kind].name} at ${BOARD[kind]}.`,
-    '{{job}}',
-    "Office instructions:\n- Don't edit files, commit or switch branches in this shared checkout.\n- If code changes are needed, give a desk worker or the Team lead a brief: what to change, where, how to check it, and to open a {{pullName}}.\n- Report the result briefly with links, then wait for another request.",
-    `The request:`,
-  ].join('\n\n');
-}
-
-// --- The Team lead and its subagents (see server/team.ts and server/office-mcp/) ---------------
-
-const LEAD_DEFAULT = [
-  `Droid Office role: ${STATION_AGENT.lead.name}. Delegate implementation to subagents rather than doing it yourself. {{job}}`,
-  `Office instructions:
-1. Read enough to split the request into independent pieces. Use one subagent for a small request; avoid overlapping edits.
-2. Check \`team_models\`. Respect the owner's model notes; use the cheapest capable model for routine work and a strong model for hard design or debugging.
-3. Hire with \`team_hire\`. Include the goal, files, constraints, checks and delivery (usually a commit and {{pullName}}) in the brief.
-4. The office wakes you with team news; otherwise call \`team\` with action "status". Use \`team\` to inspect terminals and send follow-ups. Review changes and checks before accepting work.
-5. Integrate each finished subagent's changes as needed. Dismiss it only if both the worker and its worktree are no longer needed. Report each subagent's result and model, links and remaining work, then wait for another request.`,
-  "Don't edit, commit or switch branches in the shared project checkout.",
-  `The request:`,
-].join('\n\n');
-
 const SUBAGENT_DEFAULT = [
   'Droid Office role: {{name}}, subagent of {{lead}} (a worker, not the owner).',
   '## Office instructions',
@@ -274,18 +198,6 @@ const PULL_WORDS = {
   pr: 'PR, or MR on a GitLab floor',
 };
 
-const station = (kind: BoardKind): PromptDef => ({
-  group: 'stations',
-  label: `${STATION_AGENT[kind].name}'s brief`,
-  used: `Told to the ${STATION_AGENT[kind].name} at ${BOARD[kind].replace(/^the \S+ /, 'the ')} when it's hired, with the first request typed to it right after.`,
-  vars: {
-    job: `What the ${STATION_AGENT[kind].name} looks after, and with which CLI: the office's own wording for GitHub or GitLab`,
-    site: FORGE_VARS.site,
-    pullName: PULL_WORDS.pullName,
-  },
-  text: stationDefault(kind),
-});
-
 const ISSUE_VARS = { number: 'The issue number', title: 'The issue title', url: 'Its page on GitHub or GitLab', ...FORGE_VARS };
 const PULL_VARS = {
   number: 'The pull request number',
@@ -320,7 +232,7 @@ const DEFS = {
   'worker.system': {
     group: 'workers',
     label: 'Worker system prompt',
-    used: 'Added to the system prompt of every Droid worker the office starts or resumes: at a desk, at a kiosk, and every subagent. A change reaches a worker the next time its session starts or resumes. Leave it empty to add nothing.',
+    used: 'Added to the system prompt of every Droid worker the office starts or resumes: at a desk and every subagent. A change reaches a worker the next time its session starts or resumes. Leave it empty to add nothing.',
     vars: {
       name: "The worker's name",
       visits: 'How to use visit tools with independent workers, for a worker that may (no lead, Visits on in Settings → Subagents & visits); empty for a subagent',
@@ -428,55 +340,6 @@ const DEFS = {
     ].join('\n'),
   },
 
-  // --- Board agents ---
-  'station.issues': station('issues'),
-  'station.pulls': station('pulls'),
-  'station.actions': station('actions'),
-  'pipeline.heal': {
-    group: 'stations',
-    label: 'Heal a failed run',
-    used: 'Typed to the Pipeline agent when a run fails while auto-heal is on (the Pipelines window): it hires the agent when nobody is at the kiosk, wakes it when it is asleep, and waits behind its turn when it is busy.',
-    vars: {
-      workflow: 'The workflow (on GitLab, the pipeline) that failed',
-      number: 'The run number as people say it',
-      id: "The run's id, which gh and glab take",
-      title: 'What it ran for: the commit or pull request title',
-      branch: 'The branch it ran on',
-      sha: 'The commit it ran on, short',
-      event: 'What started it: push, pull_request, schedule…',
-      url: 'The run on GitHub or GitLab',
-      logs: 'The commands that print what failed, in backticks',
-      rerun: 'The command that re-runs only what failed, in backticks',
-      watch: 'How to watch the run that follows the fix, in backticks',
-      finish: 'How the worker hands in the fix: push to the branch, or a pull request when the branch is the default one',
-      ...PULL_WORDS,
-      ...FORGE_VARS,
-    },
-    needs: ['url'],
-    text: [
-      'Droid Office notice: CI failure (auto-heal enabled)\n{{workflow}} #{{number}} on `{{branch}}`: "{{title}}"\nCommit: {{sha}} | Event: {{event}}\n{{url}}',
-      '',
-      'Office instructions:',
-      '1. Diagnose with {{logs}} and the relevant code and commits on `origin/{{branch}}` after `git fetch origin {{branch}}`.',
-      '2. For a transient failure, retry with {{rerun}} and explain why. If a secret, permission or setting needs the owner, report that blocker.',
-      '3. For a code fix, check your team with `team` action "status". Send the failure to a worker already fixing `{{branch}}`; otherwise hire with `team_hire`, title "Fix {{workflow}} on {{branch}}" and from "origin/{{branch}}". Select a capable model from `team_models`. Include the cause, files, reproduction, project checks and delivery: {{finish}}.',
-      '4. The office wakes you with team news; otherwise check `team` action "status". Inspect the diff and checks, then watch the resulting run: {{watch}}. Send any new failure back to that worker.',
-      '5. Report cause, fix and links. If hiring is blocked, report why and provide the brief instead.',
-    ].join('\n'),
-  },
-
-  // --- Team lead & subagents ---
-  'station.lead': {
-    group: 'subagents',
-    label: `${STATION_AGENT.lead.name}'s brief`,
-    used: `Told to the ${STATION_AGENT.lead.name} at its kiosk on the east wall when it's hired, with the first request typed to it right after.`,
-    vars: {
-      job: "Where the team's work goes: the office's own wording for GitHub or GitLab",
-      ...PULL_WORDS,
-      ...FORGE_VARS,
-    },
-    text: LEAD_DEFAULT,
-  },
   'subagent.brief': {
     group: 'subagents',
     label: 'Subagent brief',

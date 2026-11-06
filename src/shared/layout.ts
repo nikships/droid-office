@@ -15,8 +15,6 @@ export interface DeskDef {
   label: string;
   /** A bean bag on the floor instead of a desk; the worker sits on it at (x, z), facing -z at rotY 0. */
   beanbag?: boolean;
-  /** A board agent's kiosk instead of a desk (see STATIONS): the worker stands behind it. */
-  station?: StationKind;
 }
 
 const DESK_WIDTH = 2.2;
@@ -73,7 +71,6 @@ export const BEANBAGS: DeskDef[] = (
     [12.2, -5.6, -Math.PI / 2],
     [12.2, 5.6, -Math.PI / 2],
     [-16.1, 3, Math.PI / 2],
-    // Clear of the board agents' kiosks, and of the floor in front of them.
     [-13.2, -9.8, 0],
     [-12.6, 9.2, Math.PI / 2],
     [-5.4, -9.8, 0],
@@ -82,38 +79,6 @@ export const BEANBAGS: DeskDef[] = (
 
 /** Everywhere a worker can sit: the desks, then the bean bags. */
 export const SEATS: DeskDef[] = [...DESKS, ...BEANBAGS];
-
-/**
- * The agents standing at kiosks: one by each of the Issues board, the PR board and the Pipelines board,
- * and the Team lead, who hires subagents at the desks for whatever it's asked (see server/team.ts).
- */
-export type StationKind = 'issues' | 'pulls' | 'actions' | 'lead';
-
-/**
- * The board agents: a worker standing behind a little kiosk just west of each of those boards (see
- * BOARDS), there for anyone to prompt about it, and the Team lead's on the east wall. (x, z) is the
- * kiosk. They face into the room, so the worker stands on the wall side of it: at rotY PI by the north
- * wall, at PI / 2 by the east one. Nobody hires them from the desks.
- */
-export const STATIONS: DeskDef[] = [
-  // Between the north-west corner and the Issues board.
-  { id: 'station-issues', station: 'issues', x: -15.6, z: FLOOR.minZ + 1.3, rotY: Math.PI, label: 'Issues board' },
-  // Between the Pipelines board and the PR board.
-  { id: 'station-pulls', station: 'pulls', x: 0, z: FLOOR.minZ + 1.3, rotY: Math.PI, label: 'PR board' },
-  // Between the Issues board and the Pipelines board.
-  { id: 'station-actions', station: 'actions', x: -7.8, z: FLOOR.minZ + 1.3, rotY: Math.PI, label: 'Pipelines board' },
-  // On the east wall between the Whiteboard slot and the TV, looking out over the desks it hires at.
-  { id: 'station-lead', station: 'lead', x: FLOOR.maxX - 1.3, z: -4.2, rotY: Math.PI / 2, label: 'Team kiosk' },
-];
-/** A board agent's kiosk: its top, and how far behind its middle (toward the wall) the agent stands. */
-export const KIOSK = { width: 0.8, depth: 0.5, height: 0.55, stand: 0.55 } as const;
-/** Each board agent's name and its color, the same whenever it's hired. */
-export const STATION_AGENT: Record<StationKind, { name: string; color: string }> = {
-  issues: { name: 'Issues agent', color: '#ef476f' },
-  pulls: { name: 'PR agent', color: '#118ab2' },
-  actions: { name: 'Pipeline agent', color: '#06d6a0' },
-  lead: { name: 'Team lead', color: '#ffd166' },
-};
 
 /** The upstairs office: a glass-walled loft on posts in the south-east corner, looking down on the desks. */
 export const LOFT = { minX: 9, maxX: FLOOR.maxX, minZ: 8, maxZ: FLOOR.maxZ, y: 3, height: 2.8 } as const;
@@ -141,8 +106,8 @@ export const GLASS_ROOM_CHAIRS: readonly Pick<DeskDef, 'x' | 'z' | 'rotY'>[] = (
 /** The decorative screen on the room's back (south) wall. */
 export const GLASS_ROOM_BOARD = { x: GLASS_ROOM_TABLE.x, y: 1.95, z: FLOOR.maxZ - 0.08, width: 3.6, height: 1.2 } as const;
 
-/** Any place a worker can be by id: the seats and the board agents' kiosks. */
-export const DESK_BY_ID = new Map([...SEATS, ...STATIONS].map((d) => [d.id, d]));
+/** Any place a worker can be by id: the desks and bean bags. */
+export const DESK_BY_ID = new Map(SEATS.map((d) => [d.id, d]));
 
 /** The seat a new worker takes when nobody picks one: the first free desk, else the first free bean bag. */
 export function nextFreeSeat(taken: (id: string) => boolean): DeskDef | undefined {
@@ -177,13 +142,7 @@ export function beanbagsOut(taken: (id: string) => boolean): Set<string> {
   return out;
 }
 
-/**
- * The places nobody is at: every seat and board agent's kiosk with no worker there and nobody sent
- * home still packing up there (`packing`). Each shows that it's free, with a '+' over a seat and the
- * board agent waiting at a kiosk. It's worked out afresh from who's there rather than seat by seat as
- * workers come and go, so swapping one floor's workers for another's never leaves a place showing
- * free under someone (two floors can each have a Pipeline agent at the same kiosk).
- */
+/** Unoccupied seats, excluding workers still packing up. */
 export function vacantSeats(workers: Iterable<{ deskId: string }>, packing: (id: string) => boolean = () => false): Set<string> {
   const taken = new Set<string>();
   for (const w of workers) taken.add(w.deskId);
@@ -202,7 +161,7 @@ export function deskSeat(desk: Pick<DeskDef, 'x' | 'z' | 'rotY'>, offset = 0.85)
 export const BOARDS = {
   // Side by side along the north wall, the way work goes: issues, the GitHub Actions runs or GitLab
   // pipelines that build and check the code (the screen in the middle), and the pull requests they
-  // check. Each has its board agent's kiosk just west of it (see STATIONS).
+  // check.
   issues: { x: -11.7, y: 2.1, z: FLOOR.minZ + 0.08, rotY: 0, width: 6, height: 3, label: '01 TRIAGE' },
   actions: { x: -3.9, y: 2.1, z: FLOOR.minZ + 0.08, rotY: 0, width: 6, height: 3, label: '02 PIPELINES' },
   pulls: { x: 3.9, y: 2.1, z: FLOOR.minZ + 0.08, rotY: 0, width: 6, height: 3, label: '03 CODE REVIEW' },

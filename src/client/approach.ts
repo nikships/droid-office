@@ -18,9 +18,9 @@ export interface ApproachPose {
   pitchFixed: boolean;
 }
 
-/** In front of a kiosk, beside a bean bag, or behind a worker. */
+/** Beside a bean bag, or behind a worker. */
 function standOff(desk: DeskDef): number {
-  return desk.station ? -1.6 : desk.beanbag ? 1.6 : 2.4;
+  return desk.beanbag ? 1.6 : 2.4;
 }
 
 /** The one pose for standing at a desk: the spot, the facing, and the pitch. */

@@ -17,7 +17,7 @@ import type { ClientMsg, WorkerInfo } from '../src/shared/protocol.js';
 
 const KEY = 'fk-test-cloud-1234';
 const json = (status: number, body: unknown) => new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
-const DESK = DESKS.filter((d) => !d.station && !d.beanbag);
+const DESK = DESKS.filter((d) => !d.beanbag);
 const PNG = Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), Buffer.from('not really a picture')]);
 const tick = () => new Promise((r) => setTimeout(r, 15));
 
@@ -385,7 +385,7 @@ test('hire: refuses what can’t run on a Factory computer before asking Factory
   await refused({ model: 'bad model' }, /not valid/);
   await refused({ deskId: DESK[1].id }, /taken/);
   await refused({ deskId: 'nowhere' }, /Unknown desk/);
-  await refused({ deskId: DESKS.find((d) => d.station)?.id ?? 'station-issues' }, /board agent|Unknown desk/);
+  await refused({ deskId: 'station-issues' }, /Unknown desk/);
   assert.equal(f.calls.length, 0);
 });
 

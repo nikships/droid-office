@@ -8,9 +8,7 @@ can select the .44 Magnum instead. Both sidearms use the same targeting and work
 - One normal shot or wand bolt opens the hit worker's terminal for the user who fired it.
 - The worker stays at its desk with its task and session untouched. Repeated normal hits
   only reopen that same terminal.
-- This includes the Pipeline agent, Team lead, Issues agent and PR agent, even before
-  their first task. `station.open` starts their session without inventing an owner task;
-  `worker.open` opens it only in the requesting window.
+- `worker.open` opens the terminal only in the requesting window.
 - Cloud workers open their usual views.
 - A registered laptop screen or other interactive display still opens its usual UI.
 - The nearest visible solid blocks the shot. There is no reach limit.
@@ -48,6 +46,6 @@ See [Heavenly ascent](docs/heavenly-ascent.md) and the [feature guide](docs/guid
 ## Validation
 
 `tests/worker-shot.test.ts` covers harmless normal shots, charged cleanup, old-state
-restoration and pre-made session opening. `tests/gun-hit.test.ts` covers visible targeting,
-blockers, screens and idle pre-made models. The casualty and wand tests cover immediate
+restoration and ordinary session opening. `tests/gun-hit.test.ts` covers visible targeting,
+blockers and screens. The casualty and wand tests cover immediate
 ascent, resource cleanup and the five-spell menu.

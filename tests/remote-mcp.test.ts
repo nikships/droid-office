@@ -50,7 +50,7 @@ function temporary(t: Cleanup) {
 function rig(t: Cleanup) {
   const dir = mkdtempSync(path.join(os.tmpdir(), 'remote-mcp-'));
   const store = new RemoteWorkers(dir);
-  const settings = { ...SUBAGENT_DEFAULTS, deskWorkers: true, visits: true, maxPerLead: 3 };
+  const settings = { ...SUBAGENT_DEFAULTS, visits: true, maxPerLead: 3 };
   let now = 1000;
   const floors: RemoteFloor[] = [];
   const office = new RemoteOffice(store, () => floors);
@@ -704,7 +704,6 @@ test('external-bot tools/list returns exactly the 26 supported tools and their d
   // The surface stays fixed with local hiring/visit permissions off; runtime actions still enforce them.
   r.settings.on = false;
   r.settings.visits = false;
-  r.settings.deskWorkers = false;
   assert.deepEqual(new Set((await client.listTools()).tools.map((tool) => tool.name)), new Set(expected));
   assert.equal((await client.callTool({ name: 'visit_message', arguments: { name: 'Byte', text: 'Hello' } })).isError, true, 'listing visit tools does not bypass the Visits setting');
   for (const name of [
@@ -896,7 +895,7 @@ test('a remote lead moving between real floors keeps its team log and visits; a 
   const { worker: grok } = store.add('Grok', 'alpha', 'desk-1');
   mkdirSync(path.join(dir, 'alpha'));
   writeFileSync(path.join(dir, 'alpha', 'workers.json'), JSON.stringify([{ id: 'sub', kind: 'agent', name: 'Byte', deskId: 'desk-2', lead: grok.id }]));
-  const settings = { ...SUBAGENT_DEFAULTS, deskWorkers: true, visits: true, maxPerLead: 3 };
+  const settings = { ...SUBAGENT_DEFAULTS, visits: true, maxPerLead: 3 };
   let now = 1000;
   const floors: RemoteFloor[] = [];
   const office = new RemoteOffice(store, () => floors);

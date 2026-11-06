@@ -16,7 +16,6 @@ import {
   FLOOR,
   GONG,
   JUKEBOX,
-  KIOSK,
   LADDER,
   LOFT,
   GLASS_ROOM,
@@ -25,7 +24,6 @@ import {
   PARACHUTE,
   ROAD,
   STAIRS,
-  STATIONS,
   type DeskDef,
 } from './layout.js';
 
@@ -77,13 +75,6 @@ function obstacles(): { rects: Rect[]; circles: Circle[] } {
   // always come out in the same spots, so workers keep off those.
   for (const b of BEANBAGS) {
     const corners = [deskPoint(b, -0.62, -1.1), deskPoint(b, 0.62, -1.1), deskPoint(b, -0.62, 0.64), deskPoint(b, 0.62, 0.64)];
-    const xs = corners.map(([x]) => x);
-    const zs = corners.map(([, z]) => z);
-    rects.push([Math.min(...xs), Math.max(...xs), Math.min(...zs), Math.max(...zs)]);
-  }
-  // The board agents' kiosks, and the agent standing behind each one.
-  for (const k of STATIONS) {
-    const corners = [deskPoint(k, -KIOSK.width / 2, -KIOSK.depth / 2), deskPoint(k, KIOSK.width / 2, -KIOSK.depth / 2), deskPoint(k, -KIOSK.width / 2, KIOSK.stand + 0.35), deskPoint(k, KIOSK.width / 2, KIOSK.stand + 0.35)];
     const xs = corners.map(([x]) => x);
     const zs = corners.map(([, z]) => z);
     rects.push([Math.min(...xs), Math.max(...xs), Math.min(...zs), Math.max(...zs)]);
@@ -328,15 +319,10 @@ export function walkOff(from: Pt): Pt[] {
 /** From beside `seat`, where it hops down, round the furniture to `door` on the office floor. */
 export function wayTo(seat: DeskDef, door: Pt): Pt[] {
   const ways = [-1, 1].map((side) => {
-    // Beside the chair and back from the desk into the aisle, off the bean bag and round behind it, or
-    // out from behind the kiosk and round its front, into the room.
-    const [down, back] = seat.beanbag
-      ? [deskPoint(seat, side * 1.05, 0.1), deskPoint(seat, side * 1.05, 1.25)]
-      : seat.station
-        ? [deskPoint(seat, side * 0.95, KIOSK.stand), deskPoint(seat, side * 0.95, -1)]
-        : [deskPoint(seat, side * 0.7, 0.95), deskPoint(seat, side * 0.7, 1.75)];
-    // A bean bag or a kiosk can stand with one side up against something (the elevator, by the Pipelines board).
-    const blocked = !!(seat.beanbag || seat.station) && !walkable(down[0], down[1]);
+    // Beside the chair into the aisle, or off the bean bag and round behind it.
+    const [down, back] = seat.beanbag ? [deskPoint(seat, side * 1.05, 0.1), deskPoint(seat, side * 1.05, 1.25)] : [deskPoint(seat, side * 0.7, 0.95), deskPoint(seat, side * 0.7, 1.75)];
+    // A bean bag can stand with one side up against something (the elevator, by the Pipelines board).
+    const blocked = !!seat.beanbag && !walkable(down[0], down[1]);
     const pts = [down, ...route(back, door)];
     return { pts, cost: (blocked ? 1000 : 0) + pathLength(pts) };
   });

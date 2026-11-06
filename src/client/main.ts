@@ -14,8 +14,6 @@ import {
   LOFT,
   SEATING_BY_ID,
   SLAB,
-  STATIONS,
-  STATION_AGENT,
   STOREY,
   WALL_HEIGHT,
   beanbagsOut,
@@ -28,7 +26,6 @@ import {
   type DeskDef,
   type SeatDef,
   type SeatPlace,
-  type StationKind,
 } from '../shared/layout';
 import { floorPalette, forgeOf, forgeWords, normalizeRepo, repoWebUrl } from '../shared/floors';
 import { OFFICE_SHELL_ID } from '../shared/office-shell';
@@ -61,7 +58,6 @@ import { installCityFacades } from './world/city-facades';
 import { installCableTrays } from './world/cable-tray';
 import { installBoardFrames } from './world/board-frame';
 import { installLoungeSofa } from './world/lounge-sofa';
-import { installAgentKiosks } from './world/agent-kiosk';
 import { installLoungeTable } from './world/lounge-table';
 import { installFloorLadder } from './world/floor-ladder';
 import { installDroidRack } from './world/droid-rack';
@@ -290,12 +286,6 @@ const propsReady = loadPropManifest()
     if (loungeBeanbag) installLoungeBeanbags(loungeBeanbag, office.group);
     const teamKit = propScene('droid-team-kit');
     if (teamKit) setTeamKit(teamKit);
-    const agentKiosk = propScene('agent-kiosk');
-    if (agentKiosk)
-      installAgentKiosks(
-        agentKiosk,
-        STATIONS.map(({ id }) => office.desks.get(id)!.group),
-      );
     const taskChair = propScene('task-chair');
     if (taskChair) installTaskChairs(taskChair, [...DESKS.map(({ id }) => office.desks.get(id)!.chair), office.bossChair]);
   })
@@ -315,27 +305,6 @@ const noOutline = (obj: THREE.Object3D) =>
     for (const mat of mats) if (flat || mat instanceof THREE.MeshBasicMaterial) mat.userData.outlineParameters = { visible: false };
   });
 noOutline(office.group);
-
-// ---- Board agents -------------------------------------------------------------------------------
-
-const STATION_INFO: Record<StationKind, { icon: string; offer: string; does: string; example: string }> = {
-  issues: { icon: '📌', offer: 'Ask me about issues', does: 'I file, find, triage, label and close them', example: 'File an issue: the bean bag walks straight through the jukebox' },
-  pulls: { icon: '🔀', offer: 'Ask me about PRs', does: 'I sum up, review, comment on and merge them', example: 'Review the newest PR and tell me if it’s ready to merge' },
-  actions: { icon: '🚀', offer: 'Ask me about CI', does: 'I kick off pipelines, re-run failures and explain what broke', example: 'Kick off the release workflow on main and tell me when it’s done' },
-  lead: { icon: '🧭', offer: 'Give me a big job', does: 'I split it up and hire a team of subagents at the desks', example: 'Add dark mode: one subagent on the settings, one on the styles, one on the tests' },
-};
-/** The board agents waiting by their boards before anyone has asked them anything (see buildKiosk). */
-const idleAgents = STATIONS.map((def) => {
-  const kind = def.station!;
-  const agent = STATION_AGENT[kind];
-  const model = new Worker(agent.name, agent.color);
-  model.setStatus('idle', false);
-  model.setTask({ name: STATION_INFO[kind].offer, summary: STATION_INFO[kind].does });
-  const view = office.desks.get(def.id)!;
-  view.vacancy.children[0].add(model.root);
-  noOutline(model.root);
-  return { model, view };
-});
 
 // Boards: each draws onto a canvas texture, redrawn whenever what it shows changes.
 /** How much of its light a wall board gives off in the dark room: dim, but its text stays easy to read. */
@@ -1020,9 +989,6 @@ function landShot(result: ReturnType<typeof gunHit>, direction: THREE.Vector3, s
   if (result?.laptopWorkerId) return openWorkerTerminal(result.laptopWorkerId);
   if (result?.hit.object === bossLaptop.screen) return openOfficeShell(net);
   if (result?.interactable && openPane(result.interactable, runUnder({ it: result.interactable, hit: result.hit }))) return;
-  if (!superShot && result?.interactable?.kind === 'station' && result.interactable.deskId) {
-    return openStationTerminal(result.interactable.deskId);
-  }
   const hit = result?.hit;
   const workerId = result?.workerId ?? null;
   if (!hit || workerId === null) {
@@ -1048,12 +1014,6 @@ function landShot(result: ReturnType<typeof gunHit>, direction: THREE.Vector3, s
   net.send({ t: 'worker.shoot', workerId, superShot: true });
 }
 
-/** Idle board agents have no session yet; the server starts one and opens it for this user only. */
-function openStationTerminal(deskId: string) {
-  const worker = store.workerAtDesk(deskId);
-  if (worker) return openWorkerTerminal(worker.id);
-  if (!officeIsFull()) net.send({ t: 'station.open', deskId });
-}
 let firstWelcome = true;
 /** The server version this page was loaded with. */
 let bootVersion = '';
@@ -1401,7 +1361,7 @@ function tripFailed() {
   player.enabled = !modalOpen();
 }
 
-/** The floor you're on is a plain folder, not a git checkout: no boards, board agents, pipelines or CI. */
+/** The floor you're on is a plain folder, not a git checkout: no boards, pipelines or CI. */
 function plainFloor(): boolean {
   return !!store.currentFloor()?.plain;
 }
@@ -1676,7 +1636,7 @@ function syncTeamLines() {
   teamLines.set(links);
 }
 
-/** The team of whoever you're aiming at (at a desk or a kiosk), whose links and markings light up. */
+/** The team of whoever you're aiming at (at a desk), whose links and markings light up. */
 let focusedTeam: string | null = null;
 function focusTeam(it: Interactable | null) {
   const w = it?.deskId ? store.workerAtDesk(it.deskId) : undefined;
@@ -1689,7 +1649,7 @@ function focusTeam(it: Interactable | null) {
 }
 
 /**
- * A seat or kiosk shows it's free (its '+', or the board agent waiting there) only while nobody's at
+ * A seat shows it's free (its '+') only while nobody's at
  * it, and once every desk is taken, bean bags come out for the workers who don't fit.
  */
 function arrangeSeats() {
@@ -1895,48 +1855,9 @@ function killWorker(id: string) {
     });
     return;
   }
-  const body = DESK_BY_ID.get(w.deskId)?.station
-    ? `This stops its ${session} for everyone, and it forgets what it was asked. The next prompt at the ${where} starts a fresh one.`
-    : `This stops the ${session} at ${where} for everyone and frees the desk.`;
+  const body = `This stops the ${session} at ${where} for everyone and frees the desk.`;
   confirmDialog(`Send ${w.name} home?`, body, 'Send home', () => net.send({ t: 'worker.kill', workerId: id }));
 }
-/** E at a board agent: type it a request, starting from `initial`. It's hired with it when nobody is there yet. */
-function askStation(deskId: string, initial?: string) {
-  const kind = DESK_BY_ID.get(deskId)?.station;
-  if (!kind) return;
-  const w = store.workerAtDesk(deskId);
-  const name = STATION_AGENT[kind].name;
-  const info = STATION_INFO[kind];
-  // A prompt typed into a question it's asking would answer it.
-  if (w?.status === 'needs_input') {
-    toast(`The ${name} is waiting on an answer — here's its terminal`, 'warn');
-    return openWorkerTerminal(w.id);
-  }
-  // Nobody there yet: asking hires the agent.
-  if (!w && officeIsFull()) return;
-  const subtitle = !w
-    ? `${info.does}, in a terminal of my own: press O at the kiosk to watch.`
-    : isAsleep(w.status)
-      ? `The ${name} is asleep: this wakes it up, and it carries on where it left off.`
-      : isBusy(w.status)
-        ? `The ${name} is busy. Your prompt waits in its input box until it's done.`
-        : undefined;
-  openPrompt({
-    title: `${info.icon} Ask the ${name}`,
-    subtitle,
-    placeholder: `e.g. ${info.example}`,
-    initial,
-    submitLabel: 'Send ✨',
-    warning: w ? undefined : pressureNote(store.machine),
-    modelOption: !w,
-    imagesOption: true,
-    deskId,
-    onSubmit: (text, o) => {
-      net.send({ t: 'station.prompt', deskId, prompt: text, model: o.model, effort: o.effort, images: o.images.length ? o.images : undefined });
-    },
-  });
-}
-
 function resumeWorker(w: WorkerInfo) {
   if (w.lost) return fixLostWorktree(w);
   if (!w.sessionId && w.kind !== 'shell') toast(`${w.name} has no saved Droid session — starting a fresh one`, 'warn');
@@ -2025,7 +1946,7 @@ function goToDesk(deskId: string) {
   toast(w ? `You're at ${desk.label}, ${w.name}'s desk` : `You're at ${desk.label}`);
 }
 
-/** Behind the worker, looking over their shoulder at the laptop (or in front of a board agent's kiosk). */
+/** Behind the worker, looking over their shoulder at the laptop. */
 function standAt(desk: DeskDef) {
   if (player.seat) standUp();
   if (hanger.active) hanger.cancel();
@@ -2164,11 +2085,9 @@ function openWorkerChanges(id: string, repo?: string) {
   openChanges(net, id, () => openWorkerTerminal(id), repo);
 }
 
-/** The Pipeline agent's kiosk, by the board. */
-const PIPELINES_DESK = 'station-actions';
 /** The Pipelines window: on one run, or on its Run workflow form. */
 function showPipelines(open: PipelinesOpen = {}) {
-  openPipelines(net, { askAgent: (initial) => askStation(PIPELINES_DESK, initial) }, open);
+  openPipelines(net, open);
 }
 
 // ---- The command palette (Ctrl+K, ⌘K on a Mac) ------------------------------------------------------
@@ -2184,7 +2103,7 @@ function nearestFreeDesk(): DeskDef | undefined {
   let best: DeskDef | undefined;
   let bestD = Infinity;
   for (const d of [...DESKS, ...BEANBAGS]) {
-    if (d.station || store.workerAtDesk(d.id)) continue;
+    if (store.workerAtDesk(d.id)) continue;
     if (d.beanbag && office.interactables.find((it) => it.deskId === d.id)?.off !== false) continue;
     const dist = Math.hypot(d.x - player.pos.x, d.z - player.pos.z);
     if (dist < bestD) {
@@ -2209,7 +2128,7 @@ function paletteEntries(): PaletteEntry[] {
     const pose = desk && deskApproach(desk);
     const open = () => openWorkerTerminal(w.id);
     out.push({
-      icon: desk?.station ? STATION_INFO[desk.station].icon : w.kind === 'shell' ? '🐚' : w.cloud ? '☁️' : '🧑‍💻',
+      icon: w.kind === 'shell' ? '🐚' : w.cloud ? '☁️' : '🧑‍💻',
       kind: 'Worker',
       title: w.name,
       detail: [w.task?.name, desk?.label, STATUS_LABEL[w.status] ?? w.status, w.cloud && cloudBadge(w.cloud)].filter(Boolean).join(' · '),
@@ -2424,13 +2343,6 @@ function interact(target: Interactable | null, key: DeskKey, note = aimedNote, s
     if (key === 'O' && w) return pullRequestFor(w);
     return;
   }
-  if (target.kind === 'station' && target.deskId) {
-    const w = store.workerAtDesk(target.deskId);
-    if (key === 'E' || key === 'P') return askStation(target.deskId);
-    if (key === 'O' && w) return openWorkerTerminal(w.id);
-    if (key === 'X' && w) return killWorker(w.id);
-    return;
-  }
   // A note on the issues board: E takes it straight off the cork, O opens it to read first.
   if (note && key === 'E') return pickUp(note);
   if (note && key === 'O') return openIssue(note, net, boardActions());
@@ -2623,8 +2535,6 @@ function danceParty() {
     const desk = office.desks.get(v.deskId);
     if (desk && !isAsleep(store.workers.get(id)?.status ?? 'offline')) v.model.dance(stageOf(desk, v.model));
   }
-  // The board agents still waiting to be asked, too.
-  for (const a of idleAgents) if (a.view.vacancy.visible) a.model.dance(stageOf(a.view, a.model));
 }
 
 /** Where confetti rains from downstairs over (x, z): the ceiling, or under the loft, the underside of its floor. */
@@ -2724,8 +2634,6 @@ function hintFor(it: Interactable): Hint {
   switch (it.kind) {
     case 'desk':
       return it.deskId ? deskHint(it.deskId) : { k: '', parts: [] };
-    case 'station':
-      return it.deskId ? stationHint(it.deskId) : { k: '', parts: [] };
     case 'issues':
       if (aimedSpot?.kind === 'tab') {
         const label = aimedSpot.tab === 'jira' ? `🎫 Jira · ${store.jiraBoard?.epic ?? 'epic'}` : `📌 ${words().site} issues`;
@@ -2905,34 +2813,6 @@ function reposKey(w: WorkerInfo) {
   if (w.prOpening) return aside('⏳ Opening PRs…');
   if (prs) return key('O', `${prs} of ${repos.length} PRs`);
   return prReady(w) ? key('O', `Open PRs (${repos.length} repos)`) : '';
-}
-
-function stationHint(deskId: string): Hint {
-  const kind = DESK_BY_ID.get(deskId)?.station;
-  if (!kind) return { k: '', parts: [] };
-  const w = store.workerAtDesk(deskId);
-  const info = STATION_INFO[kind];
-  if (!w) {
-    const m = store.machine;
-    const full = officeFull(m);
-    return {
-      k: `${full}|${m.workers}|${m.limit}`,
-      parts: [h('span.title', {}, `${info.icon} ${STATION_AGENT[kind].name}`), aside(info.offer.replace(/^Ask me /, '')), full ? h('span.cost', {}, `🚫 Office full · ${m.workers} of ${m.limit} workers`) : key('E', 'Prompt')],
-    };
-  }
-  const doing = w.activity ? clip(w.activity, 48) : '';
-  const team = teamNote(w);
-  return {
-    k: w.status + w.id + doing + team,
-    parts: [
-      h('span.title', {}, `${info.icon} ${w.name} · ${STATUS_LABEL[w.status]}`),
-      team ? aside(team) : '',
-      doing ? aside(doing) : '',
-      key('E', isAsleep(w.status) ? 'Wake with a prompt' : 'Prompt'),
-      key('O', 'Terminal'),
-      key('X', 'Send home'),
-    ],
-  };
 }
 
 /** The spells on 1–5 as the hint and the wheel name them: Lumos is Nox while it's lit. */
@@ -3234,7 +3114,6 @@ const CROSSHAIR = new THREE.Vector2(0, 0);
 /** How close (meters from your eyes) you must be to use each kind of thing. */
 const REACH: Record<InteractKind, number> = {
   desk: 4.5,
-  station: 4.5,
   issues: 9,
   pulls: 9,
   actions: 9,
@@ -3698,7 +3577,6 @@ function gpuRendererName(): string {
 /** A worker walking, hopping, mid-turn, leaving, or being carried out. */
 function workerMoving(): boolean {
   for (const v of workerViews.values()) if (v.model.animating) return true;
-  for (const a of idleAgents) if (a.view.vacancy.visible && a.model.animating) return true;
   return departures.positions().length > 0 || casualties.active || visitors.moving;
 }
 
@@ -3882,8 +3760,6 @@ function drawFrame(dt: number, t: number, frame: { at: number; paced: boolean })
     workerPos.y += WORKER_HEAD;
     v.model.seenFrom(workerPos.distanceTo(camPos));
     v.model.update(dt, t);
-    // A board agent's kiosk has no laptop to paint (see buildKiosk).
-    if (desk.station) continue;
     v.laptop.update(dt, store.screens.get(id), Math.hypot(desk.x - camPos.x, desk.z - camPos.z));
     const glow = (screenGlows[screens] ??= { pos: new THREE.Vector3(), dir: new THREE.Vector3(), power: 0 });
     glow.power = v.laptop.glow(glow.pos, glow.dir);
@@ -3893,7 +3769,6 @@ function drawFrame(dt: number, t: number, frame: { at: number; paced: boolean })
   bossGlow.power = bossLaptop.glow(bossGlow.pos, bossGlow.dir);
   if (bossGlow.power > 0.01) screens++;
   sky.setScreens(screenGlows, screens, camPos);
-  for (const a of idleAgents) if (a.view.vacancy.visible) a.model.update(dt, t);
   departures.update(dt, t);
   casualties.update(dt, t);
   for (let i = puffs.length - 1; i >= 0; i--) {

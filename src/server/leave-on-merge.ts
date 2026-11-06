@@ -1,5 +1,4 @@
 import type { GhPull, LeaveOnMergeState, WorkerInfo } from '../shared/protocol.js';
-import { DESK_BY_ID } from '../shared/layout.js';
 import { isBusy, workerPr, type WorkerPr } from '../shared/status.js';
 import { SavedSwitch } from './saved-switch.js';
 
@@ -29,14 +28,14 @@ export interface Landed {
 /**
  * The workers free to go home because their work landed: a pull request of theirs merged and none
  * is still open (the same call as the purple bubble, see workerPr), they're at rest, and nobody has
- * their terminal open. Board agents and shells don't come and go by pull request.
+ * their terminal open. Shells don't come and go by pull request.
  * A worker across repositories has pull requests on other floors too (`pullsOf` has their lists):
  * none of them may be open, or opened from its desk but missing from its floor's list.
  */
 export function landedWorkers(workers: WorkerInfo[], pulls: GhPull[], pullsOf?: (floor: string) => GhPull[] | undefined): Landed[] {
   const out: Landed[] = [];
   for (const w of workers) {
-    if (w.kind !== 'agent' || DESK_BY_ID.get(w.deskId)?.station) continue;
+    if (w.kind !== 'agent') continue;
     if (isBusy(w.status) || w.prOpening || w.open) continue;
     const pr = workerPr(w, pulls);
     if (w.repos?.length) {

@@ -430,7 +430,7 @@ test('cloud feature: stream events drive busy/tool/completion, stale REST cannot
   const dir = mkdtempSync(path.join(os.tmpdir(), 'cloud-stream-'));
   t.after(() => rmSync(dir, { recursive: true, force: true }));
   const cloud = new CloudWorkers(dir, { deskTaken: () => false, names: () => [], pool: { names: ['Ada'], colors: ['#fff'] } }, { update: () => {}, remove: () => {} });
-  const worker = cloud.add({ deskId: DESKS.find((d) => !d.station && !d.beanbag)!.id, by: 'owner', sessionId: 'session', cloud: { computerId: 'computer', computerName: 'mac-mini', providerType: 'byom' } });
+  const worker = cloud.add({ deskId: DESKS.find((d) => !d.beanbag)!.id, by: 'owner', sessionId: 'session', cloud: { computerId: 'computer', computerName: 'mac-mini', providerType: 'byom' } });
   let connected = true;
   const pollStarted = deferred();
   const pollAnswer = deferred();
@@ -492,7 +492,7 @@ function featureRig(t: test.TestContext, answer: (url: string) => Promise<Respon
   const dir = mkdtempSync(path.join(os.tmpdir(), 'cloud-stream-'));
   t.after(() => rmSync(dir, { recursive: true, force: true }));
   const cloud = new CloudWorkers(dir, { deskTaken: () => false, names: () => [], pool: { names: ['Ada'], colors: ['#fff'] } }, { update: () => {}, remove: () => {} });
-  const worker = cloud.add({ deskId: DESKS.find((d) => !d.station && !d.beanbag)!.id, by: 'owner', sessionId: 'session', cloud: { computerId: 'computer', computerName: 'mac-mini', providerType: 'byom' } });
+  const worker = cloud.add({ deskId: DESKS.find((d) => !d.beanbag)!.id, by: 'owner', sessionId: 'session', cloud: { computerId: 'computer', computerName: 'mac-mini', providerType: 'byom' } });
   let now = 1_000_000;
   let connected = credential;
   const toasts: { floor: string; text: string; level?: string }[] = [];

@@ -241,19 +241,19 @@ test('a visit that vanishes sends the visitor back along its route, and release 
   assert.equal(visitors.moving, false);
 });
 
-test('the lead at the kiosk walks out round its front to visit, and is visited on the kiosk’s own spots', () => {
-  const { seats, clock, visitors, run } = floor({ lead: 'station-lead', h: 'desk-9', b: 'desk-7' });
+test('the lead at the desk walks out round its front to visit, and is visited on the desk’s own spots', () => {
+  const { seats, clock, visitors, run } = floor({ lead: 'desk-11', h: 'desk-9', b: 'desk-7' });
   const lead = seats.get('lead')!;
   const seat = lead.model.root.parent;
   visitors.sync([visit({ visitor: 'lead', phase: 'walking', since: clock.now }), visit({ id: 'v2', visitor: 'b', host: 'lead', phase: 'walking', since: clock.now })]);
-  run(Math.max(visitWalkMs(visitRoute('desk-7', 'station-lead', 0)), visitWalkMs(visitRoute('station-lead', 'desk-9', 0))) / 1000 + 1);
+  run(Math.max(visitWalkMs(visitRoute('desk-7', 'desk-11', 0)), visitWalkMs(visitRoute('desk-11', 'desk-9', 0))) / 1000 + 1);
   const there = visitSpot('desk-9', 0);
   near(visitors.info('lead')!.x, there.x, 1e-3);
   near(visitors.info('lead')!.z, there.z, 1e-3);
-  const kiosk = visitSpot('station-lead', 0);
-  near(visitors.info('b')!.x, kiosk.x, 1e-3);
-  near(visitors.info('b')!.z, kiosk.z, 1e-3);
-  assert.ok(Math.abs(wrap(visitors.info('b')!.facing - kiosk.rotY)) < 0.05);
+  const desk = visitSpot('desk-11', 0);
+  near(visitors.info('b')!.x, desk.x, 1e-3);
+  near(visitors.info('b')!.z, desk.z, 1e-3);
+  assert.ok(Math.abs(wrap(visitors.info('b')!.facing - desk.rotY)) < 0.05);
   visitors.sync([]);
   run(20);
   assert.equal(lead.model.root.parent, seat);

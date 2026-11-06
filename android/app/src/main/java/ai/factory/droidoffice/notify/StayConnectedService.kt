@@ -51,7 +51,7 @@ class StayConnectedService : LifecycleService() {
                     val office = store.active?.displayName ?: "the office"
                     when (link.phase) {
                         Phase.Connected -> {
-                            val workers = data.workers.values.filterNot { it.isStation }
+                            val workers = data.workers.values
                             val waiting = workers.count { it.state == WorkerStatus.NeedsInput }
                             val working = workers.count { it.state == WorkerStatus.Working || it.state == WorkerStatus.Starting }
                             val route = link.kind?.label ?: "LAN"

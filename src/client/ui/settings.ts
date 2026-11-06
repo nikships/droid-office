@@ -123,8 +123,8 @@ function choiceLabel(c: AgentChoice): string {
 
 /** The Subagents settings as the office keeps them, without who set them. */
 function subagentSettings(): SubagentSettings {
-  const { officeMcp, on, deskWorkers, worktree, maxPerLead, wakeLead, visits, denyTask, agent, models } = store.subagents;
-  return { officeMcp: officeMcp ?? true, on, deskWorkers, worktree, maxPerLead, wakeLead, visits: visits ?? true, denyTask: denyTask ?? true, ...(agent ? { agent } : {}), ...(models?.length ? { models } : {}) };
+  const { officeMcp, on, worktree, maxPerLead, wakeLead, visits, denyTask, agent, models } = store.subagents;
+  return { officeMcp: officeMcp ?? true, on, worktree, maxPerLead, wakeLead, visits: visits ?? true, denyTask: denyTask ?? true, ...(agent ? { agent } : {}), ...(models?.length ? { models } : {}) };
 }
 
 /**
@@ -419,9 +419,7 @@ export function openSettings(
     limitClear.textContent = m.ceiling ? `Back to ${m.ceiling}` : 'No limit';
     limitClear.classList.toggle('hidden', !m.set);
     limitNote.textContent =
-      m.limit === undefined
-        ? `No limit: a worker for every free seat. ${m.workers} working now, across every floor.`
-        : `At most ${m.limit} at once across every floor, shells and board agents included (${m.workers} now). Hiring past it is refused.`;
+      m.limit === undefined ? `No limit: a worker for every free seat. ${m.workers} working now, across every floor.` : `At most ${m.limit} at once across every floor, shells included (${m.workers} now). Hiring past it is refused.`;
   };
   paintLimit();
   const saveLimit = () => {
@@ -553,7 +551,7 @@ export function openSettings(
   const promptsNote = desc();
   const paintPrompts = () => {
     const n = rewrittenPrompts();
-    promptsNote.textContent = `What the office tells workers for you: handoffs, reviews, board agents, subagent briefs, visits and the sign writer. ${n ? `${n} rewritten.` : 'All as the office wrote them.'}`;
+    promptsNote.textContent = `What the office tells workers for you: handoffs, reviews, subagent briefs, visits and the sign writer. ${n ? `${n} rewritten.` : 'All as the office wrote them.'}`;
   };
   paintPrompts();
 
@@ -609,15 +607,6 @@ export function openSettings(
     (on) => subSet({ on }),
   );
   const subNote = desc();
-  const subWho = radios(
-    'Who can hire',
-    [
-      [true, 'Lead and desk workers'],
-      [false, 'Only the lead'],
-    ] as const,
-    () => store.subagents.deskWorkers,
-    (deskWorkers) => subSet({ deskWorkers }),
-  );
   const subSize = radios(
     'Most subagents per lead',
     Array.from({ length: SUBAGENT_MAX_PER_LEAD }, (_, i) => [i + 1, String(i + 1)] as const),
@@ -688,7 +677,6 @@ export function openSettings(
   const visitsNote = desc();
 
   const subOptions = nest(
-    card('Who can hire', { desc: desc('The Team lead can always hire.'), control: subWho.row }),
     card('Team size', { desc: subSizeNote, control: subSize.row }),
     card('Where subagents work', { desc: desc('Own worktrees let subagents change files side by side, each on its own branch. A lead can still choose when hiring.'), control: subTree.row }),
     card('Waking the lead', { desc: desc('When a subagent reports back, a resting lead is nudged to read it. A busy lead hears it as its turn ends, and carries on with it.'), control: subWake.row }),
@@ -702,10 +690,10 @@ export function openSettings(
 
   const paintSubagents = () => {
     const s = store.subagents;
-    for (const r of [officeMcp, subOn, subWho, subSize, subTree, subWake, subTask, visitsOn]) r.paint();
+    for (const r of [officeMcp, subOn, subSize, subTree, subWake, subTask, visitsOn]) r.paint();
     subOptions.classList.toggle('hidden', !s.on);
     subNote.textContent = s.on
-      ? 'A lead hires with team_hire and the subagent sits at the nearest free desk with its own terminal. It reports back, and its lead sends it home.'
+      ? 'Any ordinary worker can hire with team_hire. Its subagents sit at nearby desks and report back, but cannot hire subagents of their own.'
       : 'Hiring is refused. Subagents already working carry on and can still report back.';
     subSizeNote.textContent = `Up to ${s.maxPerLead} per lead at once; the worker limit still counts each one.`;
     if (!subAgentTouched) subAgent.set(subFallback());

@@ -107,7 +107,6 @@ export class CloudWorkers {
   seatRefusal(deskId: string): string | undefined {
     const seat = DESK_BY_ID.get(deskId);
     if (!seat) return 'Unknown desk';
-    if (seat.station) return 'A board agent always works on this machine';
     if (this.deskTaken(deskId) || this.seating.deskTaken(deskId)) return `That ${seat.beanbag ? 'bean bag' : 'desk'} is taken`;
     return undefined;
   }

@@ -73,10 +73,9 @@ test('a worker stays while it works, waits on someone, opens a PR or has its ter
   assert.deepEqual(ids([worker('a', 'done', { open: false })], merged), ['a']);
 });
 
-test('shells and board agents never go by pull request', () => {
+test('shells never go by pull request', () => {
   const merged = [pull(1, 'MERGED', 'office/a')];
   assert.deepEqual(ids([worker('a', 'done', { kind: 'shell' })], merged), []);
-  assert.deepEqual(ids([worker('a', 'done', { deskId: 'station-pulls' })], merged), []);
 });
 
 test('the setting is off until someone turns it on, and keeps across restarts', (t) => {

@@ -51,7 +51,6 @@ export function cleanSettings(raw: unknown, base: SubagentSettings = SUBAGENT_DE
   return {
     officeMcp: bool('officeMcp'),
     on: bool('on'),
-    deskWorkers: bool('deskWorkers'),
     worktree: bool('worktree'),
     wakeLead: bool('wakeLead'),
     visits: bool('visits'),

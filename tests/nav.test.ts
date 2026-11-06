@@ -1,10 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { BALCONY, BALCONY_DOOR, EXIT_DOOR, EXIT_STAIRS, FLOOR, GLASS_ROOM, PARACHUTE, ROAD, SEATS, STATIONS } from '../src/shared/layout.js';
+import { BALCONY, BALCONY_DOOR, EXIT_DOOR, EXIT_STAIRS, FLOOR, GLASS_ROOM, PARACHUTE, ROAD, SEATS } from '../src/shared/layout.js';
 import { route, walkable, wayHome, wayToBalcony, type Pt } from '../src/shared/nav.js';
 
 test('a worker sent home walks round the furniture, out the exit door and off along the sidewalk', () => {
-  for (const seat of [...SEATS, ...STATIONS]) {
+  for (const seat of SEATS) {
     const way = wayHome(seat);
     // It hops down right beside where it sat.
     assert.ok(Math.hypot(way[0][0] - seat.x, way[0][1] - seat.z) < 1.2, `${seat.id} hops down beside its seat`);
@@ -62,7 +62,7 @@ test('the unused glass room remains walkable through its doorway', () => {
 });
 
 test('upstairs, with no exit door, a worker sent home walks out onto the balcony to the railing', () => {
-  for (const seat of [...SEATS, ...STATIONS]) {
+  for (const seat of SEATS) {
     const way = wayToBalcony(seat);
     assert.ok(Math.hypot(way[0][0] - seat.x, way[0][1] - seat.z) < 1.2, `${seat.id} hops down beside its seat`);
     const out = way.findIndex(([, z]) => z > FLOOR.maxZ);

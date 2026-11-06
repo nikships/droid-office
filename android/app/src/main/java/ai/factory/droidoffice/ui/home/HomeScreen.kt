@@ -206,7 +206,7 @@ private fun WorkerList(
     onFloor: (String) -> Unit,
 ) {
     val now = rememberNow()
-    val (rows, stations) = remember(data.workers) { Workers.arrange(data.workers.values) }
+    val rows = remember(data.workers) { Workers.arrange(data.workers.values) }
     var refreshing by remember { mutableStateOf(false) }
     LaunchedEffect(refreshing, link.phase) {
         if (refreshing && link.phase == Phase.Connected) {
@@ -234,7 +234,7 @@ private fun WorkerList(
             },
             modifier = Modifier.fillMaxSize(),
         ) {
-            if (data.synced && rows.isEmpty() && stations.isEmpty()) {
+            if (data.synced && rows.isEmpty()) {
                 EmptyFloor(onHire)
             } else if (!data.synced) {
                 Box(Modifier.fillMaxSize().tagged(Tags.Home.LOADING).semantics { contentDescription = "Loading the office" }, contentAlignment = Alignment.Center) {
@@ -248,12 +248,6 @@ private fun WorkerList(
                 ) {
                     items(rows, key = { it.worker.id }) { row ->
                         WorkerCard(row, data, now, row.worker.id == selected, onOpen, Modifier.animateItem())
-                    }
-                    if (stations.isNotEmpty()) {
-                        item(key = "stations") { Eyebrow("At the kiosks", Modifier.padding(top = 14.dp, start = 4.dp, bottom = 2.dp)) }
-                        items(stations, key = { it.id }) { w ->
-                            WorkerCard(WorkerRow(w, 0, 0, null), data, now, w.id == selected, onOpen, Modifier.animateItem())
-                        }
                     }
                 }
             }
@@ -630,6 +624,5 @@ private fun Repair(officeName: String, legacy: Boolean, onScan: () -> Unit) {
 fun deskLabel(deskId: String): String = when {
     deskId.startsWith("desk-") -> "desk ${deskId.removePrefix("desk-")}"
     deskId.startsWith("beanbag-") -> "beanbag ${deskId.removePrefix("beanbag-")}"
-    deskId.startsWith("station-") -> "the ${deskId.removePrefix("station-")} kiosk"
     else -> deskId
 }

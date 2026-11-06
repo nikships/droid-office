@@ -572,7 +572,6 @@ export async function startServer(cfg: Config) {
     },
     leaveOnMerge: () => leaveOnMerge.on,
     freshMain: () => freshMain.on,
-    officeDataDir: cfg.dataDir,
     subagents: () => subagents.settings,
     droidModels: () => droidModels.get(),
     modelGate: (model) => subscriptions.gate(model),
@@ -642,7 +641,6 @@ export async function startServer(cfg: Config) {
     decor: floor?.decor.list() ?? [],
     jira: floor?.jira.state() ?? { connection: jira.connection() },
     jiraBoard: floor?.jira.board ?? null,
-    autoHeal: floor?.autoHeal.state() ?? { on: false },
   });
   /** The roof: nobody works up there, so it has none of a floor's things. */
   const roofView = (): FloorView => ({ ...floorView(undefined), floor: ROOF });
@@ -2077,26 +2075,6 @@ export async function startServer(cfg: Config) {
           );
         break;
       }
-      case 'station.open': {
-        const floor = here();
-        if (!floor) break;
-        const result = floor.workers.openStation(str(msg.deskId, 32), who);
-        if (typeof result === 'string') warn(c, result);
-        else sendTo(c, { t: 'worker.open', workerId: result.id });
-        break;
-      }
-      case 'station.prompt': {
-        const floor = here();
-        if (!floor) break;
-        const model = msg.model === undefined ? undefined : str(msg.model, MODEL_MAX + 1);
-        const effort = isAgentEffort(msg.effort) ? msg.effort : undefined;
-        const images = imageIds(msg.images);
-        const r = floor.workers.station(str(msg.deskId, 32), who, str(msg.prompt, 20000), model, effort, images);
-        floor.workers.unstage(images);
-        if (typeof r === 'string') warn(c, r);
-        else if (r.hired) toastFloor(floor, `${who} asked the ${r.info.name} something`);
-        break;
-      }
       case 'worker.pr': {
         const w = worker(msg.workerId);
         if (!w) return done('No such worker');
@@ -2337,15 +2315,6 @@ export async function startServer(cfg: Config) {
         if (on === freshMain.on) break;
         freshMain.set(on, who);
         toastAll(on ? `🌿 ${who} set fresh workers to start from the latest main` : `🌿 ${who} set fresh workers to start from the branch the checkout is on`);
-        break;
-      }
-      case 'autoHeal.set': {
-        const floor = here();
-        if (!floor) break;
-        const on = msg.on === true;
-        if (on === floor.autoHeal.on) break;
-        floor.autoHeal.set(on, who);
-        toastFloor(floor, on ? `🩹 ${who} turned auto-heal on for this floor: a run that fails wakes the Pipeline agent to fix it` : `🩹 ${who} turned auto-heal off for this floor`);
         break;
       }
       case 'models.hide': {
@@ -2804,7 +2773,7 @@ export async function startServer(cfg: Config) {
       dispatch: (def, text, model) => {
         const floor = floors.get(def.id) ?? openFloor(def);
         if (!floor) return 'The floor could not be opened. Check the office log.';
-        const result = floor.workers.dispatchLead(text, model);
+        const result = floor.workers.dispatchWorker(text, model);
         if (typeof result === 'string') return result;
         return { leadId: result.info.id, model: result.info.activeModel ?? result.info.model };
       },

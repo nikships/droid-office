@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import * as THREE from 'three';
-import { BEANBAGS, COMPUTE_WALL, DESK_SIZE, DESKS, DROID_RACK, EXIT_DOOR, FLOOR, STATIONS, WALL_HEIGHT, WINDOWS } from '../src/shared/layout';
+import { BEANBAGS, COMPUTE_WALL, DESK_SIZE, DESKS, DROID_RACK, EXIT_DOOR, FLOOR, WALL_HEIGHT, WINDOWS } from '../src/shared/layout';
 import type { DressingKit } from '../src/client/world/factory-floor';
 import { placeFactoryProps } from '../src/client/world/factory-props';
 import type { Collider } from '../src/client/world/office';
@@ -65,11 +65,11 @@ test('the compute wall is on the west wall, clear of its windows, the exit door,
   assert.ok(CW.machineWidth + CW.gap < CW.width / 2, 'the fleet gets the bigger screen');
 });
 
-test('the rack does not sit on a desk, a bean bag or a kiosk', () => {
+test('the rack does not sit on a desk or a bean bag', () => {
   const { k } = kit();
   placeFactoryProps(k);
   const desks = DESKS.map((d) => ({ minX: d.x - DESK_SIZE.width / 2, maxX: d.x + DESK_SIZE.width / 2, minZ: d.z - DESK_SIZE.depth / 2 - 0.8, maxZ: d.z + DESK_SIZE.depth / 2 + 0.8 }));
-  const seats = [...BEANBAGS, ...STATIONS].map((s) => ({ minX: s.x - 0.8, maxX: s.x + 0.8, minZ: s.z - 0.8, maxZ: s.z + 0.8 }));
+  const seats = BEANBAGS.map((s) => ({ minX: s.x - 0.8, maxX: s.x + 0.8, minZ: s.z - 0.8, maxZ: s.z + 0.8 }));
   for (const prop of [DROID_RACK]) {
     for (const spot of [...desks, ...seats]) assert.equal(overlaps(prop, spot), false, `${JSON.stringify(prop)} overlaps ${JSON.stringify(spot)}`);
   }

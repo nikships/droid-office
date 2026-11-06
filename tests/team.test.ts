@@ -453,7 +453,6 @@ test('models without a model list still names the default and the picks', async 
 
 test("hiring is refused when it shouldn't happen, with a reason the agent can act on", async (t) => {
   const r = rig(t, { git: false }, { maxPerLead: 1 });
-  r.fake.add(worker({ id: 'issues', deskId: 'station-issues', name: 'Issues agent' }));
   r.fake.add(worker({ id: 'shell', deskId: 'desk-8', kind: 'shell', name: 'Shell 🐚' }));
   const no = async (caller: string, body: Record<string, unknown>, status: number, why: RegExp) => {
     const res = await r.call(caller, body);
@@ -463,7 +462,6 @@ test("hiring is refused when it shouldn't happen, with a reason the agent can ac
   await no('lead', { action: 'hire' }, 400, /needs a task/);
   await no('lead', { action: 'hire', task: 'x', effort: 'ludicrous' }, 400, /Effort is one of low, medium, high, xhigh, max/);
   await no('lead', { action: 'hire', task: 'x', worktree: true }, 400, /isn't a git checkout/);
-  await no('issues', { action: 'hire', task: 'x' }, 403, /Issues agent doesn't hire subagents: suggest the Team lead/);
   await no('shell', { action: 'hire', task: 'x' }, 403, /Only agents/);
   await no('lead', { action: 'nope' }, 400, /Unknown action/);
 
@@ -474,10 +472,8 @@ test("hiring is refused when it shouldn't happen, with a reason the agent can ac
   await no('lead', { action: 'hire', task: 'y' }, 409, /You have 1 subagents, the most one lead has at once/);
   await no('sub1', { action: 'hire', task: 'y' }, 403, /You're a subagent of Nibble, and subagents can't hire their own/);
 
-  r.settings.deskWorkers = false;
   r.settings.maxPerLead = 4;
-  await no('lead', { action: 'hire', task: 'y' }, 403, /Only the Team lead hires subagents/);
-  r.fake.add(worker({ id: 'tl', deskId: 'station-lead', name: 'Team lead' }));
+  r.fake.add(worker({ id: 'tl', deskId: 'desk-9', name: 'Independent worker' }));
   assert.equal((await r.call('tl', { action: 'hire', task: 'y' })).status, 200);
   r.settings.on = false;
   await no('tl', { action: 'hire', task: 'z' }, 403, /turned off/);
@@ -748,9 +744,9 @@ test('a team reads as one block: each lead with its subagents under it, and a su
   assert.equal(teamSummary(teamOf(ws, 'lone')), undefined);
 });
 
-test('the Pipeline agent hires the worker that heals a failed run, even when only the Team lead hires', async (t) => {
-  const r = rig(t, {}, { deskWorkers: false });
-  r.fake.add(worker({ id: 'pipes', deskId: 'station-actions', name: 'Pipeline agent' }));
+test('every ordinary root worker may hire, and its subagents cannot hire nested subagents', async (t) => {
+  const r = rig(t);
+  r.fake.add(worker({ id: 'pipes', deskId: 'desk-8', name: 'Ordinary worker' }));
   const who = (await r.call('pipes', { action: 'whoami' })).body;
   assert.equal(who.canHire, true);
   const res = await r.call('pipes', { action: 'hire', task: 'Fix the failing lint step', title: 'Fix CI on main', from: 'origin/main' });
@@ -758,6 +754,10 @@ test('the Pipeline agent hires the worker that heals a failed run, even when onl
   assert.equal(r.fake.hired[0].lead, 'pipes');
   assert.equal(r.fake.hired[0].from, 'origin/main');
   assert.ok(r.fake.hired[0].worktree);
+  const nested = await r.call('sub1', { action: 'hire', task: 'nested helper' });
+  assert.equal(nested.status, 403);
+  assert.match(nested.body.error, /subagents can't hire their own/);
+  assert.equal(r.fake.hired.length, 1);
   r.settings.on = false;
   const off = await r.call('pipes', { action: 'hire', task: 'again' });
   assert.equal(off.status, 403);

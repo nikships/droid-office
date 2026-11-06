@@ -526,7 +526,7 @@ test('cloud feature: thread, interrupt and a hire over the WebSocket', async (t)
     feature: (key: string) => (key === 'computers' ? { state: () => ({ items: [ORB], instances: [], metrics: {}, providers: [], waking: {}, secrets: [], fetchedAt: 1 }) } : undefined),
   } as unknown as FactoryRegistry;
   const mounted = mountCloud(registry, { floors: () => [floor], agentArgs: [], toast: () => {} });
-  const desk = DESKS.filter((d) => !d.station && !d.beanbag);
+  const desk = DESKS.filter((d) => !d.beanbag);
 
   const hired = await mounted.hire({ floor: 'f1', deskId: desk[0].id, computerId: 'orb-id', prompt: '' }, 'Nik');
   assert.ok(typeof hired !== 'string');

@@ -7,8 +7,8 @@ import type { WorkerInfo } from '../src/shared/protocol.js';
 const worker = (id: string, deskId: string, over: Partial<WorkerInfo> = {}): WorkerInfo => ({ id, deskId, status: 'idle', ...over }) as WorkerInfo;
 
 test('terminal cycling follows desk order, not insertion order, and wraps through the boss shell', () => {
-  const workers = [worker('ten', 'desk-10'), worker('two', 'desk-2'), worker('one', 'desk-1'), worker('kiosk', 'station-issues'), worker('bean', 'beanbag-1')];
-  const order = ['one', 'two', 'ten', 'bean', 'kiosk', OFFICE_SHELL_ID];
+  const workers = [worker('ten', 'desk-10'), worker('two', 'desk-2'), worker('one', 'desk-1'), worker('bean', 'beanbag-1')];
+  const order = ['one', 'two', 'ten', 'bean', OFFICE_SHELL_ID];
   for (let i = 0; i < order.length; i++) {
     assert.equal(nextTerminal(workers, order[i], 1), order[(i + 1) % order.length]);
     assert.equal(nextTerminal(workers, order[i], -1), order[(i - 1 + order.length) % order.length]);
@@ -17,7 +17,7 @@ test('terminal cycling follows desk order, not insertion order, and wraps throug
   assert.equal(nextTerminal(workers, null, -1), OFFICE_SHELL_ID);
   assert.deepEqual(
     workers.map((w) => w.id),
-    ['ten', 'two', 'one', 'kiosk', 'bean'],
+    ['ten', 'two', 'one', 'bean'],
     'does not reorder the store',
   );
 });

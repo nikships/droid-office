@@ -19,8 +19,7 @@ import { CLEAR_DROID_QUEUE, readDroidQueue } from '../shared/droid-queue.js';
 import { WORKSPACE_FILES, WORKTREES_DIR, Worktrees, describeWork, workspaceOf, type WorktreeCleanup, type WorktreeOwnership, type WorktreeRef, type WorktreeStart, type WorktreeState } from './worktrees.js';
 import { checkoutDirty, choosePullBase, pushBranch } from './open-pull.js';
 import { normalizeRepo } from '../shared/floors.js';
-import { DESK_BY_ID, STATION_AGENT } from '../shared/layout.js';
-import { stationBrief } from './stations.js';
+import { DESK_BY_ID, nextFreeSeat } from '../shared/layout.js';
 import { officePrompt, type PromptSource } from './prompts.js';
 import { forgeVars, officeSays, placeholders, PROMPTS, WORKER_VISITS, workerBranchPolicy, workerMessageVars } from '../shared/prompts.js';
 import { isBusy } from '../shared/status.js';
@@ -550,7 +549,7 @@ export class WorkerManager {
       if (full) throw new Error(full);
     }
     if (this.list().some((w) => w.name.toLowerCase() === name.toLowerCase()) || [...(this.holds?.names() ?? [])].some((n) => n.toLowerCase() === name.toLowerCase())) throw new Error('That worker name is already on this floor');
-    const seat = [...DESK_BY_ID.values()].find((d) => !d.station && !this.deskOccupied(d.id));
+    const seat = [...DESK_BY_ID.values()].find((d) => !this.deskOccupied(d.id));
     if (!seat) throw new Error('This floor has no free desk');
     return seat.id;
   }
@@ -643,7 +642,7 @@ export class WorkerManager {
     branch?: string,
   ): WorkerInfo | string {
     if (this.selectingBranch) return 'Wait for the floor branch switch to finish before hiring';
-    // Nobody picked (a board agent, say): the office's default worker, model and effort included.
+    // Nobody picked a model: the office's default worker, model and effort included.
     const picked = kind === 'agent' && model === undefined ? this.officeDefault : undefined;
     if (picked) ({ model, effort } = picked);
     const modelError = validateWorkerModel(kind, model);
@@ -654,11 +653,9 @@ export class WorkerManager {
     if (gated) return gated;
     const seat = DESK_BY_ID.get(deskId);
     if (!seat) return 'Unknown desk';
-    if (this.deskOccupied(deskId)) return seat.station ? `The ${STATION_AGENT[seat.station].name} is already there` : `That ${seat.beanbag ? 'bean bag' : 'desk'} is taken`;
-    if (kind === 'shell' && seat.station) return 'A board agent is always an agent, not a shell';
-    if (this.plain && seat.station && seat.station !== 'lead') return `${PLAIN_FLOOR}, so it has no ${STATION_AGENT[seat.station].name}`;
+    if (this.deskOccupied(deskId)) return `That ${seat.beanbag ? 'bean bag' : 'desk'} is taken`;
     if (this.plain && worktree) return `${PLAIN_FLOOR}, so workers can't have worktrees`;
-    if (repos.length && (kind !== 'agent' || !worktree || seat.station)) return 'Only a worker in its own worktree can work in other repositories too';
+    if (repos.length && (kind !== 'agent' || !worktree)) return 'Only a worker in its own worktree can work in other repositories too';
     if (repos.length > MAX_REPOS) return `A worker can take on at most ${MAX_REPOS} other repositories`;
     const fresh = !this.plain && this.freshBase();
     let start: WorktreeStart = fresh ? 'main' : 'checkout';
@@ -668,7 +665,7 @@ export class WorkerManager {
       const boss = this.get(lead) ?? this.remoteIdentity(lead);
       if (!boss) return 'Its lead has left';
       if (boss.lead) return "A subagent can't hire subagents of its own";
-      if (kind !== 'agent' || seat.station) return 'A subagent is an agent at a desk or a bean bag';
+      if (kind !== 'agent') return 'A subagent is an agent at a desk or a bean bag';
       if (worktree) {
         const at = this.leadStart(boss, from);
         if (typeof at === 'string') return at;
@@ -678,12 +675,11 @@ export class WorkerManager {
     const full = this.capacity?.full();
     if (full) return full;
     const used = new Set([...this.workers.values()].map((w) => w.info.name.replace(/ 🐚$/, '')).concat([...(this.holds?.names() ?? [])]));
-    const agent = seat.station && STATION_AGENT[seat.station];
-    const name = agent ? agent.name : (NAMES.find((n) => !used.has(n)) ?? `Worker ${this.workers.size + 1}`);
+    const name = NAMES.find((n) => !used.has(n)) ?? `Worker ${this.workers.size + 1}`;
     const id = randomBytes(6).toString('hex');
     let wt: WorkerInfo['worktree'];
     let others: WorkerRepo[] | undefined;
-    if (!worktree && fresh && kind === 'agent' && !seat.station && lead === undefined) this.freshenCheckout(name);
+    if (!worktree && fresh && kind === 'agent' && lead === undefined) this.freshenCheckout(name);
     if (worktree) {
       const slug = `${name.toLowerCase()}-${id.slice(0, 4)}`;
       const made = repos.length ? this.makeWorkspace(slug, repos, start) : this.trees.create(slug, undefined, this.dir, start, branch);
@@ -708,7 +704,7 @@ export class WorkerManager {
       effort,
       deskId,
       name: kind === 'shell' ? `${name} 🐚` : name,
-      color: kind === 'shell' ? '#8d99ae' : agent ? agent.color : COLORS[Math.floor(Math.random() * COLORS.length)],
+      color: kind === 'shell' ? '#8d99ae' : COLORS[Math.floor(Math.random() * COLORS.length)],
       status: 'starting',
       acked: true,
       createdBy: by,
@@ -865,7 +861,7 @@ export class WorkerManager {
    * work has landed (`delivered`).
    */
   private freshenWith(delivered: boolean, target?: string) {
-    const there = [...this.workers.values()].filter((w) => w.pty && !w.info.worktree && !boardAgent(w.info));
+    const there = [...this.workers.values()].filter((w) => w.pty && !w.info.worktree);
     const active = there.filter((w) => isBusy(w.info.status)).map((w) => w.info.name);
     const resting = delivered ? [] : there.filter((w) => !isBusy(w.info.status)).map((w) => w.info.name);
     return this.trees.freshen(active, resting, target);
@@ -921,12 +917,10 @@ export class WorkerManager {
 
   /**
    * A first prompt with what the agent is told ahead of it, for a session starting from nothing: a
-   * board agent what it's there for, a subagent who hired it and how to report back. What shows on
+   * subagent who hired it and how to report back. What shows on
    * its card is the prompt alone.
    */
   private briefed(w: Worker, prompt: string | undefined): string | undefined {
-    const station = DESK_BY_ID.get(w.info.deskId)?.station;
-    if (station) return `${stationBrief(station, this.forge, this.prompts)}\n\n${prompt ?? 'Wait for the owner to give you a task in this terminal.'}`;
     if (!prompt) return prompt;
     const lead = w.info.lead ? (this.get(w.info.lead) ?? this.remoteIdentity(w.info.lead)) : undefined;
     if (!lead) return prompt;
@@ -1039,7 +1033,7 @@ export class WorkerManager {
     clockWork(w.info, 'starting');
     w.info.status = 'starting';
     w.info.exitCode = undefined;
-    // A board agent or a subagent with no session to carry on starts over, so it needs telling what it's for again.
+    // A subagent with no session to carry on starts over, so it needs telling what it's for again.
     const first = w.info.sessionId ? prompt : this.briefed(w, prompt);
     if (prompt) {
       w.info.activity = truncate(prompt, 80);
@@ -1052,47 +1046,14 @@ export class WorkerManager {
     return undefined;
   }
 
-  /** Opens a pre-made agent without inventing an owner task, reusing its session when it exists. */
-  openStation(deskId: string, by: string): WorkerInfo | string {
-    if (!DESK_BY_ID.get(deskId)?.station) return 'There is no agent to ask there';
-    const w = [...this.workers.values()].find((worker) => worker.info.deskId === deskId);
-    if (!w) return this.spawn(deskId, by);
-    if (!w.pty) {
-      const error = this.resume(w.info.id);
-      if (error) return error;
-    }
-    return w.info;
-  }
-
-  /**
-   * A request for the agent standing by a board (see STATIONS): typed into its session, which is woken
-   * up with it if it's asleep, or it's hired there with it when nobody is. Returns what went wrong, or
-   * the agent and whether it was just hired.
-   */
-  station(deskId: string, by: string, text: string, model?: string, effort?: AgentEffort, images?: readonly string[]): { info: WorkerInfo; hired: boolean } | string {
-    if (!DESK_BY_ID.get(deskId)?.station) return 'There is no agent to ask there';
-    const clean = text.replace(/\r\n?/g, '\n').trim();
-    if (!clean && !images?.length) return 'Empty prompt';
-    const w = [...this.workers.values()].find((x) => x.info.deskId === deskId);
-    if (!w) {
-      const info = this.spawn(deskId, by, clean, false, 'agent', model, effort, [], undefined, images);
-      return typeof info === 'string' ? info : { info, hired: true };
-    }
-    // Typed into the question it's asking, the prompt would answer it.
-    if (w.info.status === 'needs_input') return `The ${w.info.name} is waiting on an answer in its terminal`;
-    if (!w.pty) w.info.lastInputAt = Date.now();
-    const err = w.pty ? this.prompt(w.info.id, clean, images) : this.resume(w.info.id, withImages(clean, this.drops.adopt(w.info.id, images ?? [])) || undefined);
-    return err ?? { info: w.info, hired: false };
-  }
-
-  /** Finder reuses the Team lead and its standard brief; never type a task into a running turn or a CLI question. */
-  dispatchLead(text: string, model?: string): { info: WorkerInfo; hired: boolean } | string {
+  /** Finder reuses an ordinary worker it hired; never overwrite a running turn or CLI question. */
+  dispatchWorker(text: string, model?: string): { info: WorkerInfo; hired: boolean } | string {
     if (this.closing) return 'The office is closing';
     if (!text.trim()) return 'Empty prompt';
-    const w = [...this.workers.values()].find((x) => x.info.deskId === 'station-lead');
+    const w = [...this.workers.values()].find((x) => x.info.createdBy === 'Finder' && x.info.kind === 'agent' && !x.info.lead && !x.info.remote);
     if (w) {
       if (isBusy(w.info.status) || w.launchPrompt || (w.info.lastInputAt !== undefined && Date.now() - w.info.lastInputAt < 2000)) {
-        return 'The Team lead is busy or waiting on input. Open its thread and try again when it is ready.';
+        return 'The Finder worker is busy or waiting on input. Open its thread and try again when it is ready.';
       }
       const effectiveModel = model ?? w.info.activeModel ?? w.info.model;
       const error = validateWorkerModel('agent', effectiveModel) ?? this.modelGate?.(effectiveModel);
@@ -1109,9 +1070,17 @@ export class WorkerManager {
         w.info.activeEffort = undefined;
       }
     }
-    const result = this.station('station-lead', 'Finder', text, model);
-    if (typeof result !== 'string') result.info.lastInputAt = Date.now();
-    return result;
+    if (w) {
+      w.info.lastInputAt = Date.now();
+      const error = w.pty ? this.prompt(w.info.id, text) : this.resume(w.info.id, text);
+      return error ?? { info: w.info, hired: false };
+    }
+    const seat = nextFreeSeat((id) => this.deskOccupied(id));
+    if (!seat) return 'No free desks or bean bags for Finder dispatch';
+    const info = this.spawn(seat.id, 'Finder', text, false, 'agent', model);
+    if (typeof info === 'string') return info;
+    info.lastInputAt = Date.now();
+    return { info, hired: true };
   }
 
   /** Keeps a picture pasted into a prompt that isn't sent yet; its id, or undefined when it isn't a picture or couldn't be kept. */
@@ -2793,13 +2762,6 @@ export class WorkerManager {
   }
 }
 // ---------------------------------------------------------------------------
-
-/** In the middle of a turn: working, or asking something (not stuck on a trust or login screen). */
-/** An agent at the issues, PR or Pipelines kiosk, which works through the forge whatever branch the checkout is on. */
-function boardAgent(info: WorkerInfo): boolean {
-  const station = DESK_BY_ID.get(info.deskId)?.station;
-  return !!station && station !== 'lead';
-}
 
 /** Cut off if it stopped now. A turn that already sent its Stop has finished, even before its screen confirms it. */
 function midTurn({ info, bootBlocked, stopAt }: Pick<Worker, 'info' | 'bootBlocked' | 'stopAt'>): boolean {

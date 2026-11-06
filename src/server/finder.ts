@@ -248,7 +248,7 @@ export class FinderDispatch {
         });
         if (explicitModel && (sent.model ?? model)) this.remembered[def.id] = (sent.model ?? model)!;
       } catch {
-        result.errors.push({ floorId: def.id, error: 'The office failed during dispatch. Open the Team lead thread before trying again.' });
+        result.errors.push({ floorId: def.id, error: 'The office failed during dispatch. Open the Finder worker thread before trying again.' });
       }
     }
     if (this.stopped) return result;
@@ -324,6 +324,6 @@ export async function handleFinder(req: IncomingMessage, res: ServerResponse, pa
     const catalogue = await models();
     return send(200, { groups: await finder.resolve(paths), ...catalogue });
   } catch (err) {
-    send(err instanceof FinderError ? err.status : 500, { error: err instanceof FinderError ? err.message : 'Finder request failed. Check the Team lead before retrying a dispatch.' });
+    send(err instanceof FinderError ? err.status : 500, { error: err instanceof FinderError ? err.message : 'Finder request failed. Check the Finder worker before retrying a dispatch.' });
   }
 }

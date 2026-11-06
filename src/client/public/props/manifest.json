@@ -1,17 +1,4 @@
 {
-  "agent-kiosk": {
-    "bytes": 29184,
-    "depth": 0.52,
-    "height": 0.55,
-    "materials": 4,
-    "tags": [
-      "furniture",
-      "station"
-    ],
-    "triangles": 4664,
-    "url": "/props/agent-kiosk.glb",
-    "width": 0.8
-  },
   "balcony-bench": {
     "bytes": 39712,
     "depth": 0.46,
@@ -105,7 +92,7 @@
   },
   "city-facades": {
     "bytes": 2689780,
-    "depth": 0.0,
+    "depth": 0,
     "height": 3.3,
     "materials": 10,
     "tags": [
@@ -464,7 +451,7 @@
     ],
     "triangles": 7800,
     "url": "/props/sports-cars.glb",
-    "width": 2.0
+    "width": 2
   },
   "task-chair": {
     "bytes": 31724,

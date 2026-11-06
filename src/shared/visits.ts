@@ -1,7 +1,7 @@
 // Workers visiting each other's desks (see server/visits.ts): who is where, and where a visitor stands
 // and walks. The server times each phase by the same walk the client shows.
 
-import { DESK_BY_ID, DESK_LAPTOP, KIOSK, type DeskDef } from './layout.js';
+import { DESK_BY_ID, DESK_LAPTOP, type DeskDef } from './layout.js';
 import { deskPoint, nearestWalkable, wayTo, walkable, type Pt } from './nav.js';
 
 export type VisitKind = 'tell' | 'ask' | 'handoff';
@@ -54,22 +54,15 @@ const BEANBAG_SPOTS: readonly Pt[] = [
   [1.05, 1.25],
   [-1.05, 1.25],
 ];
-const KIOSK_SPOTS: readonly Pt[] = [
-  [0.95, KIOSK.stand],
-  [-0.95, KIOSK.stand],
-  [0.95, -1],
-  [-0.95, -1],
-];
 /** Past the spots above, each further visitor waits this much further back than the last pair. */
 const QUEUE_STEP = 0.7;
 
 function spotsFor(d: DeskDef): readonly Pt[] {
-  return d.beanbag ? BEANBAG_SPOTS : d.station ? KIOSK_SPOTS : DESK_SPOTS;
+  return d.beanbag ? BEANBAG_SPOTS : DESK_SPOTS;
 }
 
-/** What the visitor leans over: the laptop on a desk, the kiosk's top, the lap desk on a bean bag. */
+/** What the visitor leans over: the laptop on a desk, the lap desk on a bean bag. */
 function screenOf(d: DeskDef): Pt {
-  if (d.station) return deskPoint(d, 0, 0);
   if (d.beanbag) return deskPoint(d, 0, -0.35);
   return deskPoint(d, 0, DESK_LAPTOP.z);
 }
@@ -103,7 +96,7 @@ function seatSpot(d: DeskDef, n: number): Pt {
     // Alternating sides like the pairs before, a step further back for each pair.
     const extra = n - spots.length;
     t = spots[extra % 2][0];
-    s += (Math.floor(extra / 2) + 1) * QUEUE_STEP * (d.station ? -1 : 1);
+    s += (Math.floor(extra / 2) + 1) * QUEUE_STEP;
   }
   return deskPoint(d, t, s);
 }

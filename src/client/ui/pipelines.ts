@@ -10,11 +10,6 @@ import { confirmDialog } from './prompt';
 // pipelines down the side (running, waiting, then the latest finished), the picked run's jobs and
 // steps beside them, and from there re-run, cancel or start a workflow by hand.
 
-export interface PipelinesActions {
-  /** Ask the Pipeline agent at its kiosk, starting from `initial`. */
-  askAgent(initial?: string): void;
-}
-
 export interface PipelinesOpen {
   /** Open on this run. */
   runId?: number;
@@ -70,7 +65,7 @@ function runClock(r: PipelineRun, now: number): string {
   return t ? clock(t) : '';
 }
 
-export function openPipelines(net: Net, actions: PipelinesActions, opts: PipelinesOpen = {}) {
+export function openPipelines(net: Net, opts: PipelinesOpen = {}) {
   const policy = () => pipelinePolicy(store.project?.forge);
   const title = () => policy().copy.windowTitle;
   /** GitLab's form is variables for one pipeline; GitHub's picks a workflow and its inputs. */
@@ -92,31 +87,12 @@ export function openPipelines(net: Net, actions: PipelinesActions, opts: Pipelin
   const side = h('nav.pl-side', { 'aria-label': 'Runs' });
   const pane = h('div.pl-pane');
   const foot = h('span.grow.pl-foot');
-  const ask = h('button.btn', { type: 'button', title: 'Ask the Pipeline agent at the kiosk by the board' }, '🚀 Ask the Pipeline agent');
-  const heal = toggle({
-    label: '🩹 Auto-heal',
-    checked: store.autoHeal.on,
-    onChange: (on) => {
-      // The roof and the lobby have no floor, so there is nothing for this switch to turn on.
-      if (!store.currentFloor()) {
-        heal.input.checked = store.autoHeal.on;
-        return;
-      }
-      if (store.autoHeal.on !== on) net.send({ t: 'autoHeal.set', on });
-    },
-  });
-  const paintHeal = () => {
-    const { on, by, at } = store.autoHeal;
-    heal.input.checked = on;
-    const set = by ? `\n${on ? 'Turned on' : 'Turned off'} by ${by}${at ? ` ${timeAgo(at)}` : ''}` : '';
-    heal.title = `A run that fails wakes the Pipeline agent: it finds the root cause and hires a worker who fixes it and pushes. This floor only.${set}`;
-  };
   const el = h(
     'div.modal.xl.pl-window',
     { role: 'dialog', 'aria-label': 'Pipelines' },
     h('header', {}, h('div.titles', {}, h2, sub), h('div.actions', {}, refresh, runBtn)),
     h('div.body.flush.split.pl-split', {}, side, pane),
-    h('footer', {}, foot, heal, ask),
+    h('footer', {}, foot),
   );
 
   refresh.addEventListener('click', () => {
@@ -127,12 +103,6 @@ export function openPipelines(net: Net, actions: PipelinesActions, opts: Pipelin
     form = true;
     render();
   });
-  ask.addEventListener('click', () => {
-    const run = current();
-    modal.close();
-    actions.askAgent(run && !form ? `About ${run.workflow} #${run.number} (${run.url}): ` : undefined);
-  });
-
   const current = (): PipelineRun | undefined => store.pipelines.runs.find((r) => r.id === picked);
 
   function fetchDetail(id: number, force = false) {
@@ -444,7 +414,7 @@ export function openPipelines(net: Net, actions: PipelinesActions, opts: Pipelin
   };
   el.addEventListener('keydown', onKey);
 
-  const unsubs = [store.on('pipelines', render), store.on('project', render), store.on('autoHeal', paintHeal)];
+  const unsubs = [store.on('pipelines', render), store.on('project', render)];
   // Clocks tick on running and waiting runs, without rebuilding what you might be clicking.
   const tick = setInterval(() => {
     const now = Date.now();
@@ -456,7 +426,7 @@ export function openPipelines(net: Net, actions: PipelinesActions, opts: Pipelin
     const run = current();
     if (run && isLive(run.state) && !form) fetchDetail(run.id);
   }, 1000);
-  const modal = openModal(el, {
+  openModal(el, {
     doing: '🚀 at the pipelines board',
     onClose: () => {
       unsubs.forEach((u) => u());
@@ -468,7 +438,6 @@ export function openPipelines(net: Net, actions: PipelinesActions, opts: Pipelin
   // Opening the window is a good moment to look again.
   if (Date.now() - store.pipelines.fetchedAt > 10_000) net.send({ t: 'pipelines.refresh' });
   render();
-  paintHeal();
   el.tabIndex = -1;
   if (!form) setTimeout(() => el.focus(), 30);
 }

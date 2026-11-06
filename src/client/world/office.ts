@@ -16,7 +16,6 @@ import {
   FLOOR,
   GONG,
   JUKEBOX,
-  KIOSK,
   LADDER,
   LOFT,
   GLASS_ROOM_BOARD,
@@ -26,7 +25,6 @@ import {
   SEATING_BY_ID,
   SLAB,
   STAIRS,
-  STATIONS,
   STOREY,
   STREET_Y,
   TV,
@@ -38,7 +36,6 @@ import {
   type DeskDef,
   type Opening,
   type Side,
-  type StationKind,
 } from '../../shared/layout';
 import { wallFacing, type WallId, type WallRect } from '../../shared/decor';
 import { deskPoint } from '../../shared/nav';
@@ -70,7 +67,7 @@ export interface Collider {
   fence?: boolean;
 }
 
-export type InteractKind = 'desk' | 'station' | 'issues' | 'pulls' | 'actions' | 'ci' | 'whiteboard' | 'decor' | 'elevator' | 'gong' | 'jukebox' | 'seat' | 'ladder' | 'bookshelf' | 'computers';
+export type InteractKind = 'desk' | 'issues' | 'pulls' | 'actions' | 'ci' | 'whiteboard' | 'decor' | 'elevator' | 'gong' | 'jukebox' | 'seat' | 'ladder' | 'bookshelf' | 'computers';
 
 /** Something you can use. Its scene object carries it as `userData.interact`, for clicking. */
 export interface Interactable {
@@ -87,7 +84,7 @@ export interface Interactable {
   off?: boolean;
 }
 
-/** A desk, a bean bag or a board agent's kiosk: somewhere a worker sits (or stands). */
+/** A desk or bean bag: somewhere a worker sits. */
 export interface DeskView {
   def: DeskDef;
   group: THREE.Group;
@@ -103,7 +100,7 @@ export interface DeskView {
   /** Where the worker gets up to dance when a pull request merges: its feet, and the way it faces. */
   stage: THREE.Object3D;
   chair: THREE.Group;
-  /** Shown while nobody is there: empty at a free seat, or the board agent waiting to be asked. */
+  /** Shown while nobody is there: empty at a free seat. */
   vacancy: THREE.Group;
 }
 
@@ -111,7 +108,7 @@ export interface Office {
   group: THREE.Group;
   colliders: Collider[];
   interactables: Interactable[];
-  /** Every seat by id: the desks, the bean bags and the board agents' kiosks. */
+  /** Every seat by id: the desks and bean bags. */
   desks: Map<string, DeskView>;
   /**
    * Brings out the bean bags in `out` and puts the rest away. Returns the colliders of the ones that
@@ -145,8 +142,8 @@ export interface Office {
   /** Paints the walls, their trim and the floor in a floor's colors, so each project looks like itself. */
   setLook(p: FloorPalette): void;
   /**
-   * A plain folder's floor (not a git checkout) has no Issues, Pipelines, PR or CI board and no board
-   * agents: they're put away, with their kiosks' colliders and every way to use them. Returns the
+   * A plain folder's floor (not a git checkout) puts away Issues, Pipelines, PR and CI boards.
+   * Returns the
    * colliders that just came back, in case someone is standing there.
    */
   setPlain(plain: boolean): Collider[];
@@ -1023,68 +1020,6 @@ function buildBeanbag(def: DeskDef, index: number): DeskView {
   return { def, group, laptopAnchor, propSpot: new THREE.Vector3(0.9, 1.15, -0.94), seatAnchor, stage, chair: bag, vacancy };
 }
 
-const KIOSK_SIGN: Record<StationKind, string> = { issues: '01 ASK ME', pulls: '03 ASK ME', actions: '02 ASK ME', lead: '04 ASK ME' };
-
-/** The wall behind a kiosk: the one the agent stands with its back to. */
-export function kioskWall(def: DeskDef): WallId {
-  // Behind the counter is +z in the kiosk's own frame (see buildKiosk).
-  const bx = Math.round(Math.sin(def.rotY));
-  const bz = Math.round(Math.cos(def.rotY));
-  return bx > 0 ? 'east' : bx < 0 ? 'west' : bz > 0 ? 'south' : 'north';
-}
-
-/**
- * A board agent's kiosk: a little counter in its color with a sign on the front, and the agent standing
- * behind it. Its `vacancy` is where the agent waits before anyone has asked it anything (main.ts puts
- * one there), in the same spot and pose as the one who gets hired.
- */
-function buildKiosk(def: DeskDef): DeskView {
-  const kind = def.station!;
-  const group = new THREE.Group();
-  group.position.set(def.x, 0, def.z);
-  group.rotation.y = def.rotY;
-  const { width, depth, height } = KIOSK;
-  // Narrower at the foot, like a lectern, with a steel lip round the top and an orange LED strip
-  // under the lip's front edge.
-  const body = new THREE.Group();
-  body.add(mesh(roundedBox(width - 0.16, height - 0.1, depth - 0.12, 0.02), toon('#727272'), 0, (height - 0.1) / 2 + 0.04, 0));
-  body.add(mesh(roundedBox(width - 0.02, 0.06, depth + 0.02, 0.02), toon(PALETTE.ink), 0, 0.03, 0));
-  body.add(mesh(roundedBox(width, 0.05, depth, 0.02), toon(PALETTE.steel), 0, height - 0.025, 0));
-  body.add(mesh(box(width - 0.24, 0.014, 0.01), toon(PALETTE.accent, { emissive: PALETTE.accent }), 0, height - 0.08, -(depth - 0.12) / 2 - 0.004));
-  const kiosk = mergeByMaterial(body);
-  kiosk.name = 'agent-kiosk';
-  group.add(kiosk);
-  const sign = textPlane(KIOSK_SIGN[kind], { bg: '#0a0a0a', color: '#eeeeee', border: '#2f2f2f', size: 56 });
-  sign.scale.multiplyScalar(0.62);
-  sign.position.set(0, height * 0.55, -(depth - 0.12) / 2 - 0.012);
-  sign.rotation.y = Math.PI;
-  group.add(sign);
-
-  // No laptop: its lid would hide the agent's face from whoever walks up, and its screen would face
-  // the wall. The agent's terminal is a key press away (O).
-  const laptopAnchor = new THREE.Object3D();
-  laptopAnchor.visible = false;
-  group.add(laptopAnchor);
-
-  // On its feet behind the kiosk, facing it and the room beyond.
-  const stand = new THREE.Object3D();
-  stand.position.set(0, -0.07 * 1.1, KIOSK.stand);
-  stand.rotation.y = Math.PI;
-  stand.scale.setScalar(1.1);
-  const seatAnchor = stand.clone();
-  group.add(seatAnchor);
-  const vacancy = new THREE.Group();
-  vacancy.add(stand);
-  group.add(vacancy);
-  // Up on the counter, facing the room.
-  const stage = new THREE.Object3D();
-  stage.position.set(0, height - 0.1, 0);
-  stage.rotation.y = Math.PI;
-  group.add(stage);
-
-  return { def, group, laptopAnchor, propSpot: new THREE.Vector3(0.62, 0.9, 0), seatAnchor, stage, chair: new THREE.Group(), vacancy };
-}
-
 /** A framed board on a wall; the face gets a canvas texture (cork, chalk or whiteboard). */
 function wallBoard(width: number, height: number, frameColor: string): { group: THREE.Group; face: THREE.Mesh } {
   const group = new THREE.Group();
@@ -1212,42 +1147,8 @@ export function buildOffice(): Office {
     const collider = { minX: Math.min(...xs), maxX: Math.max(...xs), minZ: Math.min(...zs), maxZ: Math.max(...zs), top: BEANBAG_BOX.top };
     beanbags.set(def.id, { view, it, collider });
   });
-  // What a plain folder's floor puts away (see setPlain): the git boards and their agents' kiosks.
+  // What a plain folder's floor puts away (see setPlain): the git boards.
   const gitOnly: { objects: THREE.Object3D[]; colliders: Collider[]; spots: Interactable[] } = { objects: [], colliders: [], spots: [] };
-  // The board agents' kiosks, each just west of its board.
-  for (const def of STATIONS) {
-    const view = buildKiosk(def);
-    group.add(view.group);
-    desks.set(def.id, view);
-    // The kiosk and the agent behind it, back to the wall it stands by (north for the boards, east for
-    // the Team lead) so nobody squeezes in behind, and up over the agent's head so nobody hops on it.
-    const corners = [-1, 1].flatMap((t) => [-KIOSK.depth / 2, KIOSK.stand + 0.35].map((sz) => deskPoint(def, (t * KIOSK.width) / 2, sz)));
-    const xs = corners.map(([x]) => x);
-    const zs = corners.map(([, z]) => z);
-    const wall = kioskWall(def);
-    const collider: Collider = {
-      minX: wall === 'west' ? FLOOR.minX : Math.min(...xs),
-      maxX: wall === 'east' ? FLOOR.maxX : Math.max(...xs),
-      minZ: wall === 'north' ? FLOOR.minZ : Math.min(...zs),
-      maxZ: wall === 'south' ? FLOOR.maxZ : Math.max(...zs),
-      top: 1.5,
-      fence: true,
-    };
-    colliders.push(collider);
-    // Walk up to its front.
-    const [fx, fz] = deskPoint(def, 0, -1);
-    const it: Interactable = { kind: 'station', deskId: def.id, x: fx, z: fz, radius: 1.3 };
-    interactables.push(it);
-    view.group.userData.interact = it;
-    // The Team lead needs no repository: only the board agents go with their boards.
-    if (def.station !== 'lead') {
-      gitOnly.objects.push(view.group);
-      gitOnly.colliders.push(collider);
-      gitOnly.spots.push(it);
-    }
-    // The agent, its name tag and the card over its head, up against the wall.
-    fixture(wall, wall === 'north' || wall === 'south' ? def.x : def.z, 1.45, 1.4, 2.9);
-  }
   const setBeanbags = (out: Set<string>) => {
     const appeared: Collider[] = [];
     for (const [id, b] of beanbags) {

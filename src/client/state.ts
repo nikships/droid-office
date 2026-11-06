@@ -6,7 +6,6 @@ import type {
   GhPull,
   GhState,
   LeaveOnMergeState,
-  AutoHealState,
   FreshMainState,
   MachineState,
   ProjectInfo,
@@ -57,7 +56,6 @@ export type Topic =
   | 'sky'
   | 'leaveOnMerge'
   | 'freshMain'
-  | 'autoHeal'
   | 'subagents'
   | 'hiddenModels'
   | 'workerLabels'
@@ -271,8 +269,6 @@ class Store {
   leaveOnMerge: LeaveOnMergeState = { on: false };
   /** Whether fresh workers start from the latest of the default branch (⚙️ Settings). */
   freshMain: FreshMainState = { on: true };
-  /** Whether a run that fails on this floor wakes the Pipeline agent to heal it (the Pipelines window). */
-  autoHeal: AutoHealState = { on: false };
   /** How workers hire subagents (⚙️ Settings → Subagents & visits), and where the Droid skill is. */
   subagents: SubagentsState = { ...SUBAGENT_DEFAULTS };
   hiddenModels: string[] = [];
@@ -340,11 +336,10 @@ class Store {
     this.jira = v.jira ?? {};
     this.jiraBoard = v.jiraBoard ?? null;
     this.decor = v.decor;
-    this.autoHeal = v.autoHeal ?? { on: false };
     this.worktreeSetup = null;
     // The new floor's visits follow in their own message.
     this.visits = [];
-    for (const t of ['floor', 'project', 'workers', 'issues', 'pulls', 'pipelines', 'decor', 'jira', 'jiraBoard', 'autoHeal', 'worktreeSetup', 'visits'] as Topic[]) this.emit(t);
+    for (const t of ['floor', 'project', 'workers', 'issues', 'pulls', 'pipelines', 'decor', 'jira', 'jiraBoard', 'worktreeSetup', 'visits'] as Topic[]) this.emit(t);
   }
 
   /** When the track started on this page's clock: from the office's clock once it's known, else from `elapsed`. */
@@ -485,10 +480,6 @@ class Store {
       case 'freshMain':
         this.freshMain = msg.state;
         this.emit('freshMain');
-        break;
-      case 'autoHeal':
-        this.autoHeal = msg.state;
-        this.emit('autoHeal');
         break;
       case 'models.hidden':
         this.hiddenModels = msg.ids;

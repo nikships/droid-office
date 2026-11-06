@@ -13,7 +13,7 @@ class WorkersTest {
 
     @Test
     fun whoNeedsYouComesFirst() {
-        val (rows, _) = Workers.arrange(
+        val rows = Workers.arrange(
             listOf(
                 w("idle", "idle"),
                 w("asleep", "exited"),
@@ -28,26 +28,24 @@ class WorkersTest {
 
     @Test
     fun theLongestWaitGoesFirst() {
-        val (rows, _) = Workers.arrange(listOf(w("b", "needs_input", waiting = 2_000), w("a", "needs_input", waiting = 1_000)))
+        val rows = Workers.arrange(listOf(w("b", "needs_input", waiting = 2_000), w("a", "needs_input", waiting = 1_000)))
         assertEquals(listOf("a", "b"), rows.map { it.worker.id })
     }
 
     @Test
     fun subagentsSitUnderTheirLeadAndLiftIt() {
-        val (rows, stations) = Workers.arrange(
+        val rows = Workers.arrange(
             listOf(
                 w("other", "working"),
                 w("lead", "idle"),
                 w("sub", "needs_input", lead = "lead"),
                 w("orphan", "idle", lead = "gone"),
-                w("kiosk", "working", desk = "station-pr"),
             ),
         )
         assertEquals(listOf("lead", "sub", "other", "orphan"), rows.map { it.worker.id })
         assertEquals(1, rows[0].subagents)
         assertEquals(1, rows[1].depth)
         assertEquals("lead", rows[1].leadName)
-        assertEquals(listOf("kiosk"), stations.map { it.id })
     }
 
     @Test
