@@ -294,11 +294,11 @@ class OfficeConnection(
      * Hires at [deskId], or at a desk the office picks (`deskId: "auto"`). An older office (one paired
      * by LAN token) can't pick, so the lowest free desk is chosen here. With [cloud], it works on a Factory computer.
      */
-    fun hire(prompt: String?, kind: String, model: String?, effort: String?, worktree: Boolean, deskId: String? = null, cloud: ai.factory.droidoffice.core.CloudHire? = null): Boolean {
+    fun hire(prompt: String?, kind: String, model: String?, effort: String?, worktree: Boolean, deskId: String? = null, cloud: ai.factory.droidoffice.core.CloudHire? = null, repos: List<String> = emptyList()): Boolean {
         val office = store.snapshot.value.active
         val desk = deskId ?: if (office?.auth == AuthMode.Lan) Workers.freeDesk(_data.value.workers.values) else "auto"
         hireAskedAt = System.currentTimeMillis()
-        return send(ClientMsg.spawn(desk, prompt, worktree, kind, model, effort, cloud))
+        return send(ClientMsg.spawn(desk, prompt, worktree, kind, model, effort, cloud, repos))
     }
 
     private val _catalogue = MutableStateFlow<ModelCatalogue?>(null)

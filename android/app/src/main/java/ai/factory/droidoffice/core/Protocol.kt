@@ -392,12 +392,16 @@ object ClientMsg {
             text?.let { put("text", it) }
         }
     }
-    /** With [cloud], an agent is hired on a Factory computer instead of this machine: no worktree there. */
-    fun spawn(deskId: String, prompt: String?, worktree: Boolean, kind: String, model: String?, effort: String?, cloud: CloudHire? = null): String = obj("worker.spawn") {
+    /**
+     * With [cloud], an agent is hired on a Factory computer instead of this machine: no worktree there.
+     * [repos] are other floors an agent in its own worktree works in too (WorkerInfo.repos on the office).
+     */
+    fun spawn(deskId: String, prompt: String?, worktree: Boolean, kind: String, model: String?, effort: String?, cloud: CloudHire? = null, repos: List<String> = emptyList()): String = obj("worker.spawn") {
         val inCloud = cloud != null && kind == "agent"
         put("deskId", deskId)
         if (!prompt.isNullOrBlank()) put("prompt", prompt)
         put("worktree", worktree && !inCloud)
+        if (kind == "agent" && worktree && !inCloud && repos.isNotEmpty()) put("repos", JsonArray(repos.distinct().map(::JsonPrimitive)))
         put("kind", kind)
         if (kind == "agent" && model != null) put("model", model)
         if (kind == "agent" && effort != null) put("effort", effort)

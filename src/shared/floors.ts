@@ -151,6 +151,14 @@ export function sameRepo(a: string | undefined, b: string | undefined): boolean 
 }
 
 /**
+ * The other floors a worker hired on `current` can work in too, each in a worktree of its own
+ * (see WorkerInfo.repos): any floor but its own that is a git checkout on a branch.
+ */
+export function repoChoices(floors: readonly { id: string; name: string; branch?: string; plain?: boolean }[], current: string | null | undefined): { id: string; name: string }[] {
+  return floors.filter((f) => f.id !== current && f.branch && !f.plain).map((f) => ({ id: f.id, name: f.name }));
+}
+
+/**
  * Where someone coming back in lands. `floorIds` is the building's floors in arrival order.
  * A floor that's gone (not the roof, and no longer in the building) sends them to the roof
  * instead of the first floor. `back` means the place they asked for is still there, so the

@@ -3,6 +3,7 @@ import type { ClientMsg, WorkerInfo } from '../shared/protocol';
 import { needsOwnerInput } from '../shared/status';
 import { cardsNewestFirst, cardChanged, OWNER } from '../shared/whiteboard';
 import { ROOF } from '../shared/rooftop';
+import { repoChoices } from '../shared/floors';
 import { DESK_BY_ID } from '../shared/layout';
 import { originKind, type OriginKind } from '../shared/devices';
 import { BROWSER_KEY, DASHBOARD_FLOOR_KEY, browserCredential, draftKey, forgetBrowserCredential, isBrowserCredential, saveBrowserCredential, type BrowserCredential } from './browser-session';
@@ -1035,6 +1036,7 @@ function hire(deskId = 'auto', targetPane?: number) {
     imagesOption: true,
     recall: true,
     worktreeOption: !store.currentFloor()?.home && !store.currentFloor()?.plain && !!store.currentFloor()?.branch,
+    repoOptions: repoChoices(store.floors, intended),
     runsOn: runsOnPicker(),
     onCloud: async (text, o) => {
       const error = await action(cloudSpawn(deskId, text, o), '', intended, `Droid hired on ${o.cloud.computerName}.`, targetPane);

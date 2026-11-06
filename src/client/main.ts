@@ -27,7 +27,7 @@ import {
   type SeatDef,
   type SeatPlace,
 } from '../shared/layout';
-import { floorPalette, forgeOf, forgeWords, normalizeRepo, repoWebUrl } from '../shared/floors';
+import { floorPalette, forgeOf, forgeWords, normalizeRepo, repoChoices as otherRepos, repoWebUrl } from '../shared/floors';
 import { OFFICE_SHELL_ID } from '../shared/office-shell';
 import type { AgentEffort, CarriedIssue, FloorInfo, GhIssue, GongWhy, WorkerInfo } from '../shared/protocol';
 import { ciForFloor } from '../shared/factory-ci';
@@ -1743,7 +1743,7 @@ function hire(deskId: string, prompt?: string, worktree = false, model?: string,
 
 /** The building's other projects a new worker can work in too, each in a worktree of its own (see WorkerInfo.repos). */
 function repoChoices(): { id: string; name: string }[] {
-  return store.floors.filter((f) => f.id !== store.floor && f.branch).map((f) => ({ id: f.id, name: f.name }));
+  return otherRepos(store.floors, store.floor);
 }
 
 function openShell(deskId: string) {

@@ -229,6 +229,9 @@ object Tags {
         const val PROMPT = "hire.prompt"
         const val MODEL = "hire.model"
         const val WORKTREE = "hire.worktree"
+        /** "Also work in": other floors' projects a Droid in its own worktree takes on too. */
+        const val REPOS = "hire.repos"
+        fun repo(floorId: String) = "hire.repo/$floorId"
         const val SUBMIT = "hire.submit"
         const val MODEL_SHEET = "hire.model_sheet"
         const val MODEL_SEARCH = "hire.model_search"

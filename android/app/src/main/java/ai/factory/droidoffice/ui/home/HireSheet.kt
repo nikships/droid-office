@@ -9,6 +9,8 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
@@ -72,6 +74,7 @@ import ai.factory.droidoffice.core.ModelAvailability
 import ai.factory.droidoffice.core.ModelSearch
 import ai.factory.droidoffice.core.RunsOn
 import ai.factory.droidoffice.core.Tags
+import ai.factory.droidoffice.core.repoChoices
 import ai.factory.droidoffice.net.ModelCatalogue
 import ai.factory.droidoffice.session.Phase
 import ai.factory.droidoffice.ui.LocalGraph
@@ -103,9 +106,11 @@ fun HireSheet(onDismiss: () -> Unit, deskId: String? = null) {
     val factory by connection.factory.collectAsStateWithLifecycle()
     val worktreeOption = data.floor?.home != true && data.floor?.plain != true && !data.project?.branch.isNullOrBlank()
     val places = remember(factory) { FactoryCloud.choices(factory) }
+    val otherRepos = remember(data.floors, data.floorId) { repoChoices(data.floors, data.floorId) }
 
     var prompt by rememberSaveable { mutableStateOf(promptDraft) }
     var worktree by rememberSaveable { mutableStateOf(true) }
+    var repos by rememberSaveable { mutableStateOf(emptyList<String>()) }
     var modelId by rememberSaveable { mutableStateOf<String?>(null) }
     var effort by rememberSaveable { mutableStateOf<String?>(null) }
     var placeKey by rememberSaveable { mutableStateOf("") }
@@ -138,7 +143,9 @@ fun HireSheet(onDismiss: () -> Unit, deskId: String? = null) {
 
     fun hire() {
         val e = effort?.takeIf { w -> efforts.isEmpty() || efforts.any { it.wire == w } }
-        val ok = connection.hire(prompt.trim().takeIf { it.isNotBlank() }, "agent", modelId, e, worktreeOption && worktree && !cloud, deskId, if (cloud) FactoryCloud.hire(place, folder) else null)
+        val ownWorktree = worktreeOption && worktree && !cloud
+        val also = if (ownWorktree) repos.filter { id -> otherRepos.any { it.id == id } } else emptyList()
+        val ok = connection.hire(prompt.trim().takeIf { it.isNotBlank() }, "agent", modelId, e, ownWorktree, deskId, if (cloud) FactoryCloud.hire(place, folder) else null, also)
         if (ok) {
             promptDraft = ""
             if (modelId != null) graph.scope.launch { graph.store.settings { it.copy(hireModel = modelId, hireEffort = e) } }
@@ -217,7 +224,17 @@ fun HireSheet(onDismiss: () -> Unit, deskId: String? = null) {
                         Text(it, style = MaterialTheme.typography.bodySmall, color = Palette.TextTertiary, modifier = Modifier.padding(top = 4.dp, start = 16.dp).tagged(Tags.Hire.FOLDER_NOTE))
                     }
                 }
-                if (worktreeOption && !cloud) WorktreeSwitch(worktree) { worktree = it }
+                if (worktreeOption && !cloud) {
+                    WorktreeSwitch(worktree) {
+                        worktree = it
+                        if (!it) repos = emptyList()
+                    }
+                    if (otherRepos.isNotEmpty()) RepoPicks(otherRepos, repos) { id ->
+                        repos = if (id in repos) repos - id else repos + id
+                        // A worktree of another project needs one of this floor's too.
+                        if (id in repos) worktree = true
+                    }
+                }
             }
             Column(Modifier.fillMaxWidth().background(Palette.Surface)) {
                 Box(Modifier.fillMaxWidth().height(1.dp).background(Palette.Border))
@@ -305,6 +322,23 @@ private fun WorktreeSwitch(on: Boolean, onChange: (Boolean) -> Unit) {
             onCheckedChange = null,
             colors = SwitchDefaults.colors(checkedTrackColor = Palette.Accent, checkedThumbColor = Palette.Bg, uncheckedTrackColor = Palette.SurfaceHigh, uncheckedBorderColor = Palette.BorderStrong),
         )
+    }
+}
+
+/** "Also work in": other floors' projects, each a worktree of its own on the same branch with a pull request of its own. */
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun RepoPicks(choices: List<ai.factory.droidoffice.core.FloorInfo>, picked: List<String>, onToggle: (String) -> Unit) {
+    Column(Modifier.fillMaxWidth().tagged(Tags.Hire.REPOS)) {
+        Eyebrow("Also work in")
+        Spacer(Modifier.height(4.dp))
+        Text("A worktree of each on the same branch, with a pull request of its own", style = MaterialTheme.typography.bodySmall)
+        Spacer(Modifier.height(10.dp))
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            choices.forEach { floor ->
+                Chip(floor.name.ifBlank { floor.id }, floor.id in picked, { onToggle(floor.id) }, Modifier.tagged(Tags.Hire.repo(floor.id)), icon = OfficeIcons.Branch)
+            }
+        }
     }
 }
 

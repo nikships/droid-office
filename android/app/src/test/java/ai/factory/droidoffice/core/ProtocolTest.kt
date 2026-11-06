@@ -301,6 +301,14 @@ class ProtocolTest {
     }
 
     @Test
+    fun anAgentInItsOwnWorktreeCarriesItsOtherProjects() {
+        val o = json(ClientMsg.spawn("auto", "fix it", worktree = true, kind = "agent", model = "m", effort = null, repos = listOf("atlas", "sabre", "atlas")))
+        assertEquals(listOf("atlas", "sabre"), o["repos"]!!.jsonArray.map { it.jsonPrimitive.content })
+        assertFalse("repos" in json(ClientMsg.spawn("auto", "fix it", worktree = false, kind = "agent", model = "m", effort = null, repos = listOf("atlas"))))
+        assertFalse("repos" in json(ClientMsg.spawn("auto", "fix it", worktree = true, kind = "agent", model = "m", effort = null)))
+    }
+
+    @Test
     fun aPromptCarriesItsPictures() {
         assertFalse("images" in json(ClientMsg.prompt("w1", "hi")))
         val o: JsonObject = json(ClientMsg.prompt("w1", "", listOf("0123456789abcdef")))

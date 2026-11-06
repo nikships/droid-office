@@ -26,6 +26,7 @@ class TagsTest {
     fun dynamicPartsFollowASlash() {
         assertEquals("home.worker/w-1a2b", Tags.Home.worker("w-1a2b"))
         assertEquals("hire.model/custom:droidproxy:opus-5-5", Tags.Hire.model("custom:droidproxy:opus-5-5"))
+        assertEquals("hire.repo/atlas", Tags.Hire.repo("atlas"))
         assertEquals("worker.choice/2", Tags.Worker.choice(2))
         assertEquals("send_home.option/all", Tags.SendHome.option("all"))
         assertEquals("worker.thread.entry/u1", Tags.Worker.threadEntry("u1"))
