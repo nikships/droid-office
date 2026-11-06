@@ -78,7 +78,6 @@ test('floor arrivals preserve the exact music state and never notify the player 
     decor: [],
     jira: {},
     jiraBoard: null,
-    autoHeal: { on: false },
   };
   let changes = 0;
   const unsubscribe = store.on('jukebox', () => changes++);

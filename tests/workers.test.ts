@@ -15,6 +15,7 @@ import type { AgentChoice, AgentEffort, GhPull, WorkerInfo } from '../src/shared
 import { SCREEN_SETTLE_MS } from '../src/server/droid-screen.js';
 
 type Invocation = {
+  pid: number;
   kind: string;
   args: string[];
   cwd: string;
@@ -82,6 +83,7 @@ const args = process.argv.slice(2);
 const record = (extra = {}) => fs.appendFileSync(log, JSON.stringify({
   kind,
   args,
+  pid: process.pid,
   cwd: process.cwd(),
   ...extra,
   env: {
@@ -505,7 +507,7 @@ test('only a worker with no lead is told about the visit tools, and only while v
   await launched(off.id);
   assert.doesNotMatch(systemOf(off.id), /visit_roster/);
 });
-test("a plain folder's workers get no branch policy, no worktrees, no board agents, and git that stops at the folder", async (t) => {
+test("a plain folder's workers get no branch policy, no worktrees, and git that stops at the folder", async (t) => {
   const f = fixture();
   isolateAgentEnvironment(f, t);
   const previousLog = process.env.FAKE_AGENT_LOG;
@@ -525,8 +527,8 @@ test("a plain folder's workers get no branch policy, no worktrees, no board agen
   assert.equal(existsSync(path.join(data, 'floor-branch.json')), false, 'plain floors have no branch setting');
 
   assert.match(String(workers.spawn('desk-2', 'test', 'branch out', true)), /plain folder.*can't have worktrees/);
-  assert.match(String(workers.station('station-issues', 'test', 'triage')), /plain folder.*no Issues agent/);
-  assert.match(String(workers.station('station-actions', 'test', 'heal')), /no Pipeline agent/);
+  assert.equal(workers.spawn('station-issues', 'test', 'triage'), 'Unknown desk');
+  assert.equal(workers.spawn('station-actions', 'test', 'heal'), 'Unknown desk');
 
   const w = workers.spawn('desk-2', 'test', 'tidy the notes');
   if (typeof w === 'string') return assert.fail(w);
@@ -544,39 +546,7 @@ test("a plain folder's workers get no branch policy, no worktrees, no board agen
   assert.doesNotMatch(system, /\n{3,}/, 'no gap where the branch policy was');
 });
 
-test('board agents are hired with the requested model and effort', async (t) => {
-  const f = fixture();
-  const updates: WorkerInfo[] = [];
-  isolateAgentEnvironment(f, t);
-  const previousLog = process.env.FAKE_AGENT_LOG;
-  process.env.FAKE_AGENT_LOG = f.log;
-  t.after(() => {
-    if (previousLog === undefined) delete process.env.FAKE_AGENT_LOG;
-    else process.env.FAKE_AGENT_LOG = previousLog;
-    f.close();
-  });
-  const workers = manager(f, updates);
-  t.after(() => workers.shutdown());
-  assert.match(workers.station('station-actions', 'test', 'run the release', 'has a space') as string, /Droid model/i);
-  const r = workers.station('station-actions', 'test', 'run the release', 'custom:droidproxy:gpt-6-sol', 'low');
-  assert.equal(typeof r, 'object');
-  if (typeof r === 'string') return;
-  assert.equal(r.hired, true);
-  assert.equal(r.info.model, 'custom:droidproxy:gpt-6-sol');
-  assert.equal(r.info.effort, 'low');
-  await waitFor(
-    () => f.read(),
-    (records) => records.some((x) => x.kind === 'droid' && x.args.includes('--settings')),
-  );
-  // An agent that's already there keeps its engine; the prompt just goes to its session.
-  const again = workers.station('station-actions', 'test', 'and this', 'glm-5.3-flash', 'max');
-  assert.equal(typeof again, 'object');
-  if (typeof again === 'string') return;
-  assert.equal(again.hired, false);
-  assert.equal(workers.get(r.info.id)?.model, 'custom:droidproxy:gpt-6-sol');
-});
-
-test('a worker nobody picked for starts on the office default worker, told its board brief in the office’s words', async (t) => {
+test('a worker nobody picked for starts on the office default worker', async (t) => {
   const f = fixture();
   isolateAgentEnvironment(f, t);
   const previousLog = process.env.FAKE_AGENT_LOG;
@@ -587,12 +557,14 @@ test('a worker nobody picked for starts on the office default worker, told its b
     f.close();
   });
   let agent: AgentChoice | undefined = { model: 'custom:droidproxy:opus-5-5', effort: 'high' };
-  const prompts: PromptSource = { text: (id) => (id === 'station.pulls' ? 'You review {{pullName}}s on {{site}}. The request:' : PROMPTS[id].text), agent: () => agent };
+  const prompts: PromptSource = { text: (id) => PROMPTS[id].text, agent: () => agent };
   const workers = managed(f, f.root, f.data, f.droid, [], { url: 'http://127.0.0.1:1', token: '' }, events([]), undefined, undefined, prompts);
   t.after(() => workers.shutdown());
   assert.deepEqual(workers.officeDefault, agent);
 
-  const r = workers.station('station-pulls', 'Ada', 'Sum up the open PRs');
+  const info = workers.spawn('desk-4', 'Ada', 'Sum up the open PRs');
+  if (typeof info === 'string') return assert.fail(info);
+  const r = { info };
   if (typeof r === 'string') return assert.fail(r);
   assert.deepEqual([r.info.model, r.info.effort], ['custom:droidproxy:opus-5-5', 'high']);
   const launch = (
@@ -601,7 +573,7 @@ test('a worker nobody picked for starts on the office default worker, told its b
       (records) => records.some((x) => x.kind === 'droid' && x.args.includes('--settings')),
     )
   ).find((x) => x.kind === 'droid' && x.args.includes('--settings'))!;
-  assert.equal(await startedWith(f, workers, launch, 'pulls-session'), 'You review pull requests on GitHub. The request:\n\nSum up the open PRs');
+  assert.equal(await startedWith(f, workers, launch, 'pulls-session'), 'Sum up the open PRs');
   const overlay = JSON.parse(readFileSync(path.join(f.data, `droid-${r.info.id}.json`), 'utf8'));
   assert.equal(overlay.sessionDefaultSettings.model, 'custom:droidproxy:opus-5-5');
   assert.equal(overlay.sessionDefaultSettings.reasoningEffort, 'high');
@@ -678,78 +650,7 @@ test('workers at removed seats are not resumed and their saved work is preserved
   assert.deepEqual(JSON.parse(readFileSync(state, 'utf8')), [retired]);
 });
 
-test('a board agent is hired with its brief on the first prompt, then prompted, woken and asked to prove who it is', async (t) => {
-  const f = fixture();
-  const updates: WorkerInfo[] = [];
-  isolateAgentEnvironment(f, t);
-  const previousExit = process.env.FAKE_AGENT_EXIT_MS;
-  const previousLog = process.env.FAKE_AGENT_LOG;
-  process.env.FAKE_AGENT_EXIT_MS = '1500';
-  process.env.FAKE_AGENT_LOG = f.log;
-  t.after(() => {
-    if (previousExit === undefined) delete process.env.FAKE_AGENT_EXIT_MS;
-    else process.env.FAKE_AGENT_EXIT_MS = previousExit;
-    if (previousLog === undefined) delete process.env.FAKE_AGENT_LOG;
-    else process.env.FAKE_AGENT_LOG = previousLog;
-    f.close();
-  });
-  const workers = manager(f, updates);
-  t.after(() => workers.shutdown());
-  // Each start of the agent, not what it reads from its terminal afterwards.
-  const launches = () => f.read().filter((r) => r.kind === 'droid' && r.args.includes('--settings') && r.stdin === undefined);
-
-  assert.match(workers.station('desk-1', 'test', 'file an issue') as string, /no agent/i);
-  assert.match(workers.station('station-issues', 'test', '   ') as string, /empty/i);
-  assert.match(workers.spawn('station-issues', 'test', undefined, false, 'shell') as string, /shell/i);
-
-  // Nobody there yet: it's hired, told what it's for, with the request after that.
-  const hired = workers.station('station-issues', 'Ada', 'File an issue about the dog');
-  assert.equal(typeof hired, 'object');
-  if (typeof hired === 'string') return;
-  assert.equal(hired.hired, true);
-  assert.equal(hired.info.name, 'Issues agent');
-  assert.equal(hired.info.deskId, 'station-issues');
-  assert.equal(hired.info.activity, 'File an issue about the dog');
-  const [first] = await waitFor(launches, (l) => l.length === 1);
-  const initial = (await startedWith(f, workers, first, 'issues-session')) ?? '';
-  assert.match(initial, /Issues agent/);
-  assert.match(initial, /GitHub issues with the gh CLI/);
-  assert.doesNotMatch(initial, /office-queue|task queue/);
-  assert.ok(initial.endsWith('File an issue about the dog'));
-  const id = hired.info.id;
-
-  // The same agent takes the next request in its session.
-  const again = workers.station('station-issues', 'Grace', 'Label it as a bug');
-  assert.deepEqual(typeof again === 'object' && [again.hired, again.info.id], [false, id]);
-  await waitFor(
-    () => f.read(),
-    (records) => records.some((r) => r.stdin?.includes('Label it as a bug')),
-  );
-
-  // Waiting on an answer, a prompt would answer the question, so it's refused.
-  assert.equal(workers.hookReply(id, first.env.hookToken!, 'Notification', { session_id: 'issues-session', hook_event_name: 'Notification', notification_type: 'permission_prompt' }) !== undefined, true);
-  assert.equal(workers.get(id)?.status, 'needs_input');
-  assert.match(workers.station('station-issues', 'Ada', 'hello?') as string, /waiting on an answer/i);
-
-  // Its own token proves who it is; anyone else's doesn't.
-  assert.equal(workers.authenticate(id, first.env.hookToken!)?.id, id);
-  assert.equal(workers.authenticate(id, 'not-its-token'), undefined);
-  assert.equal(workers.authenticate(id, ''), undefined);
-
-  // Asleep, a request wakes it up carrying on its session, without the brief again.
-  await waitFor(
-    () => workers.get(id)?.status,
-    (s) => s === 'exited',
-  );
-  assert.equal(workers.authenticate(id, first.env.hookToken!), undefined);
-  const woken = workers.station('station-issues', 'Ada', 'Close the duplicates');
-  assert.deepEqual(typeof woken === 'object' && [woken.hired, woken.info.id], [false, id]);
-  const [, second] = await waitFor(launches, (l) => l.length === 2);
-  assert.ok(second.args.includes('--resume') && second.args.includes('issues-session'));
-  assert.equal(await startedWith(f, workers, second, 'issues-session'), 'Close the duplicates');
-});
-
-test('Finder dispatch keeps the Team lead session and standard brief, refuses busy turns, and applies a chosen model on resume', async (t) => {
+test('Finder dispatch creates and reuses an ordinary worker session, refuses busy turns, and applies a chosen model on resume', async (t) => {
   const f = fixture();
   isolateAgentEnvironment(f, t);
   const previousLog = process.env.FAKE_AGENT_LOG;
@@ -763,32 +664,34 @@ test('Finder dispatch keeps the Team lead session and standard brief, refuses bu
   t.after(() => workers.shutdown());
   const launches = () => f.read().filter((r) => r.kind === 'droid' && r.args.includes('--settings') && r.stdin === undefined);
   const prompt = 'Inspect token refresh\n\n"/selected/auth.ts"';
-  const hired = workers.dispatchLead(prompt, 'gpt-6.1-sol');
+  const hired = workers.dispatchWorker(prompt, 'gpt-6.1-sol');
   assert.equal(typeof hired, 'object');
   if (typeof hired === 'string') return;
   assert.equal(hired.hired, true);
-  assert.equal(hired.info.deskId, 'station-lead');
+  assert.equal(hired.info.deskId, 'desk-1');
+  assert.equal(hired.info.createdBy, 'Finder');
+  assert.equal(hired.info.lead, undefined);
   const [first] = await waitFor(launches, (l) => l.length === 1);
   const initial = (await startedWith(f, workers, first, 'finder-lead-session')) ?? '';
-  assert.match(initial, /Team lead/);
+  assert.equal(initial, prompt);
   assert.ok(initial.endsWith(prompt));
   assert.doesNotMatch(initial, /Finder orchestrator|finder-specific|Dispatch Flow/);
-  assert.match(workers.dispatchLead('Another request') as string, /busy/);
+  assert.match(workers.dispatchWorker('Another request') as string, /busy/);
   const info = workers.get(hired.info.id)!;
   info.status = 'working';
   info.lastInputAt = Date.now() - 3000;
-  assert.match(workers.dispatchLead('Still working') as string, /busy/);
+  assert.match(workers.dispatchWorker('Still working') as string, /busy/);
   info.status = 'needs_input';
-  assert.match(workers.dispatchLead('Not an answer') as string, /busy/);
+  assert.match(workers.dispatchWorker('Not an answer') as string, /busy/);
   info.status = 'done';
   info.lastInputAt = Date.now() - 3000;
   info.worktree = { path: '.droid-office/worktrees/missing-finder', branch: 'missing-finder', base: 'main' };
-  assert.equal(typeof workers.dispatchLead('Cannot switch a lost checkout', 'glm-5.3-flash'), 'string');
+  assert.equal(typeof workers.dispatchWorker('Cannot switch a lost checkout', 'glm-5.3-flash'), 'string');
   assert.equal(info.model, 'gpt-6.1-sol');
   assert.equal(launches().length, 1);
   info.worktree = undefined;
   info.lost = undefined;
-  const again = workers.dispatchLead('Follow up', 'gpt-6.1-sol');
+  const again = workers.dispatchWorker('Follow up', 'gpt-6.1-sol');
   assert.deepEqual(typeof again === 'object' && [again.hired, again.info.id], [false, info.id]);
   await waitFor(
     () => pastedInto(f, first),
@@ -796,7 +699,7 @@ test('Finder dispatch keeps the Team lead session and standard brief, refuses bu
   );
   info.status = 'done';
   info.lastInputAt = Date.now() - 3000;
-  const changed = workers.dispatchLead('Use the other model', 'glm-5.3-flash');
+  const changed = workers.dispatchWorker('Use the other model', 'glm-5.3-flash');
   assert.deepEqual(typeof changed === 'object' && [changed.hired, changed.info.id], [false, info.id]);
   const [, second] = await waitFor(launches, (l) => l.length === 2);
   assert.ok(second.args.includes('--resume') && second.args.includes('finder-lead-session'));
@@ -805,7 +708,7 @@ test('Finder dispatch keeps the Team lead session and standard brief, refuses bu
   assert.equal(launches().length, 2);
 });
 
-test('an office-queue command an older office left behind is cleared away, and no board agent gets one', async (t) => {
+test('an office-queue command an older office left behind is cleared away, and ordinary workers get no legacy command', async (t) => {
   const f = fixture();
   isolateAgentEnvironment(f, t);
   const previousLog = process.env.FAKE_AGENT_LOG;
@@ -825,10 +728,12 @@ test('an office-queue command an older office left behind is cleared away, and n
   assert.equal(existsSync(path.join(bin, 'office-queue.cmd')), false);
   assert.equal(existsSync(path.join(bin, 'team')), false);
 
-  const hired = workers.station('station-actions', 'Ada', 'Kick off the release workflow');
+  const info = workers.spawn('desk-1', 'Ada', 'Kick off the release workflow');
+  if (typeof info === 'string') return assert.fail(info);
+  const hired = { info };
   assert.equal(typeof hired, 'object');
   if (typeof hired === 'string') return;
-  assert.equal(hired.info.name, 'Pipeline agent');
+  assert.ok(NAMES.includes(hired.info.name));
   const [first] = await waitFor(
     () => f.read().filter((r) => r.kind === 'droid' && r.args.includes('--settings') && r.stdin === undefined && r.env.workerId === hired.info.id),
     (l) => l.length === 1,
@@ -1648,6 +1553,50 @@ test('a worker whose terminal outlives the office is picked back up mid-turn, no
   assert.equal(launchesOf(f).length, 1);
 });
 
+test('an upgrade stops the four kiosk sessions and preserves ordinary workers, subworkers and their worktrees', async (t) => {
+  const f = carryOnFixture(t);
+  const before = manager(f, []);
+  await before.start();
+  const removed = [];
+  const stations = ['station-issues', 'station-pulls', 'station-actions', 'station-lead'];
+  for (const [i, deskId] of stations.entries()) {
+    const w = await hireInState(f, before, `desk-${i + 1}`, `legacy-${i}`, 'working');
+    w.deskId = deskId;
+    removed.push(w);
+  }
+  const root = await hireInState(f, before, 'desk-5', 'ordinary-root', 'working');
+  const bag = await hireInState(f, before, 'beanbag-1', 'ordinary-bag', 'working');
+  const sub = await hireInState(f, before, 'desk-6', 'ordinary-sub', 'working');
+  sub.lead = root.id;
+  const orphan = await hireInState(f, before, 'desk-7', 'retired-lead-sub', 'working');
+  orphan.lead = removed[3].id;
+  const history = path.join(f.data, 'worktrees', 'legacy-history');
+  mkdirSync(history, { recursive: true });
+  const note = path.join(history, 'uncommitted-notes.txt');
+  writeFileSync(note, 'Keep user work');
+  sub.worktree = { path: path.relative(f.root, history), branch: 'office/legacy-history', base: 'main' };
+  before.shutdown(true);
+  const processes = new Map(launchesOf(f).map((r) => [r.env.workerId, r.pid]));
+  const alive = (pid: number) => {
+    try {
+      process.kill(pid, 0);
+      return true;
+    } catch {
+      return false;
+    }
+  };
+  const after = manager(f, []);
+  t.after(() => after.shutdown());
+  await after.start();
+  assert.deepEqual(new Set(after.list().map((w) => w.id)), new Set([root.id, bag.id, sub.id, orphan.id]));
+  assert.equal(after.get(sub.id)?.lead, root.id);
+  assert.equal(after.get(orphan.id)?.lead, undefined, 'a retired kiosk lead does not remove its ordinary subworker');
+  await waitFor(() => removed.every((w) => !alive(processes.get(w.id)!)), Boolean);
+  for (const w of [root, bag, sub, orphan]) assert.ok(alive(processes.get(w.id)!), w.id);
+  assert.equal(launchesOf(f).length, 8, 'ordinary PTYs are adopted, not relaunched');
+  assert.equal(readFileSync(note, 'utf8'), 'Keep user work');
+});
+
 test('a question or permission prompt still up after a restart that keeps its terminal is still known for what it asks', async (t) => {
   const f = carryOnFixture(t);
   const before = manager(f, []);
@@ -2314,7 +2263,7 @@ test('a subagent sits down told who hired it and where it works; its lead goes o
   assert.equal(lead.lead, undefined);
   assert.match(workers.spawn('desk-3', lead.name, 'x', false, 'agent', undefined, undefined, [], 'nobody') as string, /lead has left/);
   assert.match(workers.spawn('desk-3', lead.name, 'x', false, 'shell', undefined, undefined, [], lead.id) as string, /an agent at a desk/);
-  assert.match(workers.spawn('station-lead', lead.name, 'x', false, 'agent', undefined, undefined, [], lead.id) as string, /an agent at a desk/);
+  assert.match(workers.spawn('station-lead', lead.name, 'x', false, 'agent', undefined, undefined, [], lead.id) as string, /Unknown desk/);
 
   const sub = workers.spawn('desk-3', lead.name, 'Fix the redirect', false, 'agent', undefined, undefined, [], lead.id);
   assert.ok(typeof sub === 'object');
@@ -2541,7 +2490,9 @@ test('a picture-only first prompt hires a worker with the list as its prompt', a
   const workers = manager(f, updates);
   t.after(() => workers.shutdown());
   const a = workers.stageImage('shot.png', PICTURE)!;
-  const hired = workers.station('station-issues', 'Ada', '', undefined, undefined, [a]);
+  const info = workers.spawn('desk-1', 'Ada', '', false, 'agent', undefined, undefined, [], undefined, [a]);
+  if (typeof info === 'string') return assert.fail(info);
+  const hired = { info };
   assert.equal(typeof hired, 'object');
   if (typeof hired === 'string') return;
   assert.equal(hired.info.prompt, 'See the attached images');
@@ -2549,8 +2500,7 @@ test('a picture-only first prompt hires a worker with the list as its prompt', a
     () => f.read().filter((r) => r.kind === 'droid' && r.args.includes('--settings') && r.stdin === undefined),
     (l) => l.length === 1,
   );
-  assert.match((await startedWith(f, workers, first, 'shot-session')) ?? '', /\n\nImage 1: .*[0-9a-f]{8}-shot\.png$/);
-  assert.equal(workers.station('station-issues', 'Ada', '', undefined, undefined, []), 'Empty prompt');
+  assert.match((await startedWith(f, workers, first, 'shot-session')) ?? '', /^Image 1: .*[0-9a-f]{8}-shot\.png$/);
 });
 
 test('a queued prompt is submitted to an agent with Ctrl+Enter, a plain one with Enter', async (t) => {

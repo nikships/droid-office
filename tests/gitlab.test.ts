@@ -2,7 +2,6 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { forgeOf, forgeWords, gitlabParts, normalizeRepo, repoPath, repoWebUrl } from '../src/shared/floors.js';
 import { closesOf, mergeState, splitDiscussions } from '../src/server/gitlab.js';
-import { stationBrief } from '../src/server/stations.js';
 
 test('GitHub repositories stay owner/repo, however they are typed', () => {
   assert.equal(normalizeRepo('nikships/droidproxy'), 'nikships/droidproxy');
@@ -101,15 +100,4 @@ test('discussions split into comments, approvals and threads on lines of code', 
       [6, undefined, 'b.ts', 4, 'LEFT'],
     ],
   );
-});
-
-test('board agents on a GitLab floor are briefed for glab and merge requests', () => {
-  const pulls = stationBrief('pulls', 'gitlab');
-  assert.match(pulls, /merge requests with the glab CLI/);
-  assert.match(pulls, /glab mr diff/);
-  assert.doesNotMatch(pulls, /\bgh pr\b/);
-  assert.match(stationBrief('issues', 'gitlab'), /GitLab issues with the glab CLI/);
-  assert.match(stationBrief('actions', 'gitlab'), /GitLab CI\/CD pipelines with the glab CLI/);
-  // GitHub floors are briefed as before.
-  assert.match(stationBrief('pulls'), /gh pr diff/);
 });

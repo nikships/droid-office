@@ -59,7 +59,7 @@ export interface PromptsState {
   /** Prompts someone rewrote, by id; the rest are the defaults. */
   custom: Partial<Record<PromptId, { text: string; by: string; at: number }>>;
   /**
-   * What a worker starts on when whoever starts it picks no model (a board agent, say).
+   * What a worker starts on when whoever starts it picks no model (a hire with no model selected).
    * Unset: Droid's own default model.
    */
   agent?: AgentChoice & { by: string; at: number };
@@ -343,7 +343,7 @@ export interface MachineState {
   history: [number, number][];
   /** What makes another worker a strain right now, e.g. "memory is 93% used"; missing when nothing does. */
   pressure?: string;
-  /** Workers in the office now: every floor's, shells and board agents too. */
+  /** Workers in the office now: every floor's, including shells. */
   workers: number;
   /** The most workers the office takes; missing when there's no limit. */
   limit?: number;
@@ -492,7 +492,7 @@ export interface FloorInfo {
   addedAt: number;
   /**
    * For the elevator panel: what's under way there. `workers` counts the ones hired onto
-   * desks and bean bags, not the board agents at their kiosks.
+   * desks and bean bags.
    */
   workers: number;
   busy: number;
@@ -548,8 +548,6 @@ export interface FloorView {
   jira: JiraFloorState;
   /** The Jira tab of the issue board; null on a floor without an epic. */
   jiraBoard: JiraBoardState | null;
-  /** Whether a failed run on this floor wakes the Pipeline agent. Off until someone on the floor turns it on. */
-  autoHeal: AutoHealState;
 }
 
 export type ChangeStatus = 'M' | 'A' | 'D' | 'R' | 'T' | '?';
@@ -689,25 +687,12 @@ export interface FreshMainState {
   at?: number;
 }
 
-/**
- * Whether a run that fails on one floor wakes the Pipeline agent to heal it (the Pipelines window):
- * it finds the root cause and hires a worker who pushes the fix. Off by default. Each floor has its own.
- */
-export interface AutoHealState {
-  on: boolean;
-  /** Who set it, and when. Unset for the default (off). */
-  by?: string;
-  at?: number;
-}
-
 /** What ⚙️ Settings → Subagents & visits sets: Office MCP access and how workers hire subagents (see server/team.ts). */
 export interface SubagentSettings {
   /** Expose the authenticated Office MCP to local Droid workers. */
   officeMcp: boolean;
   /** Workers may hire subagents at all. Off: `team_hire` is refused; a team already working carries on. */
   on: boolean;
-  /** Desk workers may hire too, not just the Team lead at its kiosk. */
-  deskWorkers: boolean;
   /** What a subagent runs when its lead doesn't pick. Unset: the office's default worker. */
   agent?: AgentChoice;
   /**
@@ -738,7 +723,7 @@ export interface SubagentModel {
   note?: string;
 }
 
-export const SUBAGENT_DEFAULTS: SubagentSettings = { officeMcp: true, on: true, deskWorkers: true, worktree: true, maxPerLead: 4, wakeLead: true, visits: true, denyTask: true };
+export const SUBAGENT_DEFAULTS: SubagentSettings = { officeMcp: true, on: true, worktree: true, maxPerLead: 4, wakeLead: true, visits: true, denyTask: true };
 export const SUBAGENT_MAX_PER_LEAD = 8;
 export const SUBAGENT_MODELS_MAX = 100;
 export const SUBAGENT_MODEL_NOTE_MAX = 200;
@@ -826,14 +811,6 @@ type ClientMessage =
   /** Rechecks the current worker and screen on the server before answering the menu shown to the owner.
    * Send exactly one of `choice` or `text`. The server rejects neither and both. */
   | { t: 'worker.answer'; workerId: string; menu: Menu; choice?: number; choices?: number[]; text?: string }
-  /** Opens a board agent's terminal, starting its session if nobody has asked it anything yet. */
-  | { t: 'station.open'; deskId: string }
-  /**
-   * A prompt for the agent standing by a board (`deskId` is its kiosk, see STATIONS in layout). It's
-   * typed into its session, which is woken up first if it's asleep, or hired there when nobody is.
-   * `model`/`effort` pick its engine when it's hired; an agent that's already there keeps its own.
-   */
-  | { t: 'station.prompt'; deskId: string; prompt: string; model?: string; effort?: AgentEffort; images?: string[] }
   /** Push a worktree worker's branch and open a pull request for it, drafted from its task. */
   | { t: 'worker.pr'; workerId: string }
   | { t: 'term.input'; workerId: string; data: string }
@@ -956,8 +933,6 @@ type ClientMessage =
   | { t: 'leaveOnMerge.set'; on: boolean }
   /** Fresh workers start from the latest of the default branch (true), or from the branch the checkout is on. */
   | { t: 'freshMain.set'; on: boolean }
-  /** A run that fails on the floor you're on wakes the Pipeline agent to heal it (true), or only toasts. */
-  | { t: 'autoHeal.set'; on: boolean }
   /** How workers hire subagents (⚙️ Settings → Subagents & visits), for every floor. */
   | { t: 'subagents.set'; settings: SubagentSettings }
   /** Hide one model from every device's picker, or show all with a null id and hidden=false. */
@@ -1106,8 +1081,6 @@ export type ServerMsg =
   | { t: 'sky'; state: SkyState }
   | { t: 'leaveOnMerge'; state: LeaveOnMergeState }
   | { t: 'freshMain'; state: FreshMainState }
-  /** To everyone on the floor: whether a failed run there wakes the Pipeline agent. */
-  | { t: 'autoHeal'; state: AutoHealState }
   | { t: 'subagents'; state: SubagentsState }
   | { t: 'models.hidden'; ids: string[] }
   | { t: 'workerLabels'; state: WorkerLabelState }

@@ -1,6 +1,5 @@
 import { store, type HudPanel, type Settings, type Topic } from '../state';
 import { waitingOnSomeone } from '../notify';
-import { DESK_BY_ID } from '../../shared/layout';
 import { $, h, openModal, type Modal } from './dom';
 
 /** One thing the ☰ menu does. Any of them can be pinned to the top bar. */
@@ -136,8 +135,7 @@ export function mountHud(actions: HudAction[], settings: Settings, save: () => v
   function render() {
     const items: HTMLElement[] = actions.filter((a) => offered(a) && (pinned(a) || a.status?.())).map(dockButton);
     const workers = [...store.workers.values()];
-    // Hired onto desks and bean bags; the board agents at their kiosks don't count.
-    const hired = workers.filter((w) => !DESK_BY_ID.get(w.deskId)?.station).length;
+    const hired = workers.length;
     const waiting = workers.filter(waitingOnSomeone).length;
     const workersTitle = hired || waiting ? `${hired} worker${hired === 1 ? '' : 's'} on this floor${waiting ? `, ${waiting} waiting on someone` : ''}` : 'No workers on this floor yet';
     // Who's waiting has its own button on the bar (the 'waiting' action), so this just counts them.

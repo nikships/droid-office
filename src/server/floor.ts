@@ -3,7 +3,6 @@ import { mkdirSync, rmSync } from 'node:fs';
 import path from 'node:path';
 import type { ChangesState, FloorInfo, ProjectInfo, ServerMsg, WorkerInfo } from '../shared/protocol.js';
 import { isBusy } from '../shared/status.js';
-import { DESK_BY_ID, STATIONS } from '../shared/layout.js';
 import { isCheckout, type FloorDef } from './building.js';
 import { excludeFromGit } from './config.js';
 import { OFFICE_SHELL_ID } from '../shared/office-shell.js';
@@ -15,9 +14,7 @@ import { GitLab } from './gitlab.js';
 import { NoBoard, type Board } from './forge.js';
 import { forgeOf, forgeWords, type Forge, type ForgeWords } from '../shared/floors.js';
 import { floorPipelines, type Pipelines } from './pipelines.js';
-import { stateWord, type PipelineRun } from '../shared/pipelines.js';
-import { AutoHeal, HEAL_TRIES, HealWatch, seedAutoHeal, type HealCall } from './auto-heal.js';
-import { healPromptVars } from '../shared/prompts.js';
+import { stateWord } from '../shared/pipelines.js';
 import { Changes } from './changes.js';
 import { debounce, type ToolRefresh } from './hook-refresh.js';
 import { Decor } from './decor.js';
@@ -25,7 +22,7 @@ import { Docs } from './docs.js';
 import { FloorJira, type JiraOffice } from './jira.js';
 import { landedWorkers } from './leave-on-merge.js';
 import type { Capacity } from './machine.js';
-import { officePrompt, type PromptSource } from './prompts.js';
+import type { PromptSource } from './prompts.js';
 import { Team } from './team.js';
 import { Visits } from './visits.js';
 import type { DroidModelCatalogue } from './droid-models.js';
@@ -81,8 +78,6 @@ export interface FloorContext {
   freshMain(): boolean;
   /** ⚙️ Settings → Subagents & visits: how workers hire subagents. */
   subagents(): SubagentSettings;
-  /** The office's .droid-office, so a floor with no auto-heal.json yet can start from the old office-wide file. */
-  officeDataDir: string;
   /** Droid's model list, which leads choose subagents' models from. */
   droidModels?(): Promise<DroidModelCatalogue>;
   /** Subscriptions: why an agent on `model` can't start now, or undefined when it can (docs/subscriptions.md). */
@@ -158,8 +153,6 @@ export class Floor {
   readonly jira: FloorJira;
   /** Its repository's GitHub Actions runs, or its GitLab project's pipelines (see pipelines.ts). */
   readonly pipelines: Pipelines;
-  /** Whether a failed run on this floor wakes the Pipeline agent (see auto-heal.ts). */
-  readonly autoHeal: AutoHeal;
   readonly changes: Changes;
   readonly decor: Decor;
   /** The bookshelf: the project's Markdown files (see docs.ts). */
@@ -183,8 +176,6 @@ export class Floor {
   private landing = new Set<string>();
   /** How this floor's forge names things: PR #n on GitHub, MR !n on GitLab. */
   private words: ForgeWords;
-  /** Which failed runs the Pipeline agent is woken to heal (see auto-heal.ts). */
-  private heals = new HealWatch();
   /** The forge looked at again after workers' pushes and pull request commands (see afterTool). */
   private boardSoon = debounce(() => void this.board.refresh(), BOARD_AFTER_TOOL_MS);
   private pipelinesSoon = debounce(() => void this.pipelines.refresh(), PIPELINES_AFTER_PUSH_MS);
@@ -206,8 +197,6 @@ export class Floor {
     }
     // A plain folder has no .git of its own: its info/exclude would be some other checkout's.
     if (!this.plain) excludeFromGit(def.dir);
-    seedAutoHeal(dataDir, ctx.officeDataDir);
-    this.autoHeal = new AutoHeal(dataDir, (state) => ctx.emit(this, { t: 'autoHeal', state }));
     const forge = forgeOf(def.repo) ?? 'github';
     const words = forgeWords(forge);
     this.words = words;
@@ -320,8 +309,6 @@ export class Floor {
       {
         state: (state) => ctx.emit(this, { t: 'pipelines', state }),
         finished: (run, ours) => {
-          const heal = this.heals.finished(run, this.autoHeal.on);
-          if (heal) this.heal(run, heal);
           if (run.state !== 'failure' && !(ours && run.state === 'success')) return;
           const icon = run.state === 'failure' ? '❌' : '✅';
           ctx.toast(this, `${icon} ${run.workflow} #${run.number} ${stateWord(run)} on ${run.branch}: ${run.title}`, run.state === 'failure' ? 'warn' : 'info');
@@ -329,12 +316,7 @@ export class Floor {
       },
       this.plain,
     );
-    // With auto-heal on for this floor, a failure is noticed within a minute even when nobody is on it.
-    if (!this.plain)
-      this.pipelines.start(
-        () => this.ctx.connections(this) > 0,
-        () => this.autoHeal.on,
-      );
+    if (!this.plain) this.pipelines.start(() => this.ctx.connections(this) > 0);
 
     const workers = this.workers;
 
@@ -515,30 +497,6 @@ export class Floor {
     }, LANDED_DELAY_MS);
   }
 
-  /**
-   * Auto-heal: a run failed, so the Pipeline agent is hired at its kiosk with the heal prompt, woken
-   * with it, or has it waiting behind its turn. After HEAL_TRIES failures in a row it's left to a person.
-   */
-  private heal(run: PipelineRun, call: HealCall) {
-    const where = `${run.workflow} #${run.number} on ${run.branch}`;
-    if (call === 'gaveUp') {
-      this.ctx.toast(this, `🩹 Auto-heal stopped on ${run.workflow} on ${run.branch}: it failed ${HEAL_TRIES + 1} times in a row. It's yours now`, 'warn');
-      return;
-    }
-    const desk = STATIONS.find((s) => s.station === 'actions');
-    if (!desk) return;
-    const prompt = officePrompt(this.ctx.prompts, 'pipeline.heal', healPromptVars(this.pipelines.forge, run, this.pipelines.state.defaultBranch));
-    // Mid-turn, the Pipeline agent reads it with its next tool call instead of having it typed over its work.
-    const busy = this.workers.list().find((w) => w.deskId === desk.id);
-    if (busy && this.workers.notice(busy.id, prompt)) {
-      this.ctx.toast(this, `🩹 The ${busy.name} will heal ${where} once it's through with what it's doing`, 'info', busy.id);
-      return;
-    }
-    const r = this.workers.station(desk.id, 'Auto-heal', prompt);
-    if (typeof r === 'string') this.ctx.toast(this, `🩹 Couldn't send the Pipeline agent to heal ${where}: ${r}`, 'warn');
-    else this.ctx.toast(this, `🩹 The ${r.info.name} is healing ${where}`, 'info', r.info.id);
-  }
-
   private goHome(worker: WorkerInfo, why: string, head?: string, heads?: Record<string, string | undefined>) {
     const done = this.workers.kill(worker.id, undefined, head, heads);
     this.ctx.toast(this, `🏠 ${worker.name} went home: ${why}`);
@@ -588,7 +546,7 @@ export class Floor {
       ...(this.plain ? { plain: true } : {}),
       addedBy: this.def.addedBy,
       addedAt: this.def.addedAt,
-      workers: ws.filter((w) => !DESK_BY_ID.get(w.deskId)?.station).length,
+      workers: ws.length,
       busy: ws.filter((w) => w.status === 'working').length,
       waiting: ws.filter((w) => waitingStatus(w)).length,
     };

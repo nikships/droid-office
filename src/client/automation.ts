@@ -4,7 +4,7 @@
 // targets, picks where to stand, waits for things to finish and builds the state snapshot. It stays
 // loadable in Node (tests/automation.test.ts): no window, document or WebGL at import time.
 
-import { DESK_BY_ID, STATION_AGENT, type DeskDef } from '../shared/layout';
+import { DESK_BY_ID } from '../shared/layout';
 import type { FloorInfo, WorkerInfo } from '../shared/protocol';
 import { ROOF, ROOF_NAME } from '../shared/rooftop';
 import type { Visit } from '../shared/visits';
@@ -30,7 +30,7 @@ export type AutomationCommand = (typeof AUTOMATION_COMMANDS)[number];
 /** The boards on the wall, which `goTo` lists as kind 'board'. */
 const BOARD_KINDS = new Set<InteractKind>(['issues', 'pulls', 'actions', 'ci', 'whiteboard', 'computers']);
 /** Interactables that aren't a place to go to by name: there are many of them, or they move. */
-const UNNAMED_KINDS = new Set<InteractKind>(['desk', 'station', 'seat', 'decor']);
+const UNNAMED_KINDS = new Set<InteractKind>(['desk', 'seat', 'decor']);
 
 const PLACE_LABEL: Partial<Record<InteractKind, string>> = {
   issues: 'Issues board',
@@ -46,7 +46,7 @@ const PLACE_LABEL: Partial<Record<InteractKind, string>> = {
   bookshelf: 'Bookshelf',
 };
 
-export type TargetKind = 'desk' | 'kiosk' | 'board' | 'place' | 'floor';
+export type TargetKind = 'desk' | 'board' | 'place' | 'floor';
 
 /** Something `goTo` can take you to, as `list()` reports it. */
 export interface TargetInfo {
@@ -78,7 +78,6 @@ export interface ResolvedTarget extends TargetInfo {
 type Point = { x: number; z: number };
 type Point3 = { x: number; y: number; z: number };
 
-const deskKind = (d: DeskDef): TargetKind => (d.station ? 'kiosk' : 'desk');
 const deskSpotOf = (spots: Interactable[], deskId: string) => spots.find((s) => s.deskId === deskId && !s.off);
 
 /** Everything `goTo` can take you to from here: the desks with a worker or a free seat, the boards, the places, and the floors. */
@@ -92,7 +91,7 @@ export function listTargets(ctx: TargetContext): TargetInfo[] {
     if (!desk) continue;
     const w = byDesk.get(desk.id);
     seen.add(desk.id);
-    out.push({ id: desk.id, kind: deskKind(desk), label: desk.label, deskId: desk.id, ...(w ? { worker: { id: w.id, name: w.name, status: w.status } } : {}) });
+    out.push({ id: desk.id, kind: 'desk', label: desk.label, deskId: desk.id, ...(w ? { worker: { id: w.id, name: w.name, status: w.status } } : {}) });
   }
   const kinds = new Set<InteractKind>();
   for (const spot of ctx.spots) {
@@ -107,7 +106,7 @@ export function listTargets(ctx: TargetContext): TargetInfo[] {
 
 /**
  * The target a `goTo` query names: an id from `list()` (a desk id, a board or place kind, a floor
- * id), a worker's id or name, a desk's label, a board agent's name or a floor's name. Case doesn't
+ * id), a worker's id or name, a desk's label, a floor's name. Case doesn't
  * matter past an exact id. 'roof' is the roof.
  */
 export function resolveTarget(query: string, ctx: TargetContext): { ok: true; target: ResolvedTarget } | { ok: false; error: string } {
@@ -123,8 +122,7 @@ export function resolveTarget(query: string, ctx: TargetContext): { ok: true; ta
     return roof ? done(roof) : { ok: false, error: 'There is no roof yet: the building has no floors' };
   }
   const names = (t: TargetInfo) => {
-    const desk = t.deskId ? DESK_BY_ID.get(t.deskId) : undefined;
-    return [t.id, t.label, t.worker?.name, desk?.station && STATION_AGENT[desk.station].name].filter((n): n is string => !!n).map((n) => n.toLowerCase());
+    return [t.id, t.label, t.worker?.name].filter((n): n is string => !!n).map((n) => n.toLowerCase());
   };
   const hits = targets.filter((t) => names(t).includes(low));
   if (hits.length === 1) return done(hits[0]);
@@ -142,7 +140,7 @@ function withSpot(t: TargetInfo, spots: Interactable[]): ResolvedTarget {
 
 /**
  * Where to stand for a target, which way to face, and the pitch: behind a worker or in front of a
- * kiosk (the desk pose N and go-to-desk use, whose pitch is fixed), or (anywhere else) on the
+ * bean bag (the desk pose N and go-to-desk use, whose pitch is fixed), or (anywhere else) on the
  * interactable's spot, stepping out from it when something stands there, looking with pitchToward
  * from eye height at `center` (the thing itself, when the scene knows it).
  */

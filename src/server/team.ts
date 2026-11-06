@@ -1,4 +1,4 @@
-// A floor's leads and their subagents. Any agent at a desk, and the Team lead at its kiosk, can hire
+// A floor's leads and their subagents. Any ordinary agent without a lead can hire
 // subagents through the authenticated Office MCP team tools. A subagent is a real worker: it sits at the free desk nearest
 // its lead, with its own laptop and terminal, and its WorkerInfo.lead says whose it is. This keeps
 // what the lead hasn't heard yet: its subagents' reports and questions, and when one finishes a
@@ -7,7 +7,7 @@
 
 import { readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
-import { DESK_BY_ID, STATION_AGENT, nearestFreeSeat } from '../shared/layout.js';
+import { DESK_BY_ID, nearestFreeSeat } from '../shared/layout.js';
 import { AGENT_EFFORTS, isAgentEffort, type AgentChoice, type SubagentSettings, type WorkerInfo, type WorkerStatus, type WorkerTask } from '../shared/protocol.js';
 import { isAsleep } from '../shared/status.js';
 import type { DroidModelCatalogue, DroidModelOption } from './droid-models.js';
@@ -416,21 +416,15 @@ export class Team {
 
   /** Why `w` can't hire a subagent now, if it can't. */
   cannotHire(w: WorkerInfo): string | undefined {
-    // External workers have the owner's access, and the owner hires whatever the Subagents settings say.
-    if (w.remote) return undefined;
-    const s = this.opts.settings();
-    const lead = STATION_AGENT.lead.name;
-    if (!s.on) return 'Subagents are turned off in this office (⚙️ Settings → Subagents & visits)';
-    if (w.kind !== 'agent') return 'Only agents hire subagents';
     if (w.lead) {
       const boss = this.workers.get(w.lead)?.name ?? 'your lead';
       return `You're a subagent of ${boss}, and subagents can't hire their own: do your task yourself, or ask ${boss} with team_report and question: true`;
     }
-    const station = DESK_BY_ID.get(w.deskId)?.station;
-    // The Pipeline agent hires the worker that heals a failed run.
-    if (station === 'actions') return undefined;
-    if (station && station !== 'lead') return `The ${STATION_AGENT[station].name} doesn't hire subagents: suggest the Team lead at the kiosk on the east wall for work that needs a team`;
-    if (!station && !s.deskWorkers) return `Only the ${lead} hires subagents in this office (⚙️ Settings → Subagents & visits)`;
+    // External workers have the owner's access, and the owner hires whatever the Subagents settings say.
+    if (w.remote) return undefined;
+    const s = this.opts.settings();
+    if (!s.on) return 'Subagents are turned off in this office (⚙️ Settings → Subagents & visits)';
+    if (w.kind !== 'agent') return 'Only agents hire subagents';
     return undefined;
   }
 
@@ -439,9 +433,8 @@ export class Team {
     const why = this.cannotHire(w);
     const lead = w.lead ? this.workers.get(w.lead) : undefined;
     const team = this.teamOf(w.id).length;
-    const station = DESK_BY_ID.get(w.deskId)?.station;
     return {
-      you: { id: w.id, name: w.name, desk: DESK_BY_ID.get(w.deskId)?.label ?? w.deskId, role: lead ? 'subagent' : team || station === 'lead' ? 'lead' : 'worker' },
+      you: { id: w.id, name: w.name, desk: DESK_BY_ID.get(w.deskId)?.label ?? w.deskId, role: lead ? 'subagent' : team ? 'lead' : 'worker' },
       ...(lead ? { lead: { id: lead.id, name: lead.name } } : {}),
       canHire: !why,
       ...(why ? { why } : {}),

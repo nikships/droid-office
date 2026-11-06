@@ -7,7 +7,7 @@ import { VISIT_HOP_MS, VISIT_WALK_SPEED, visitRoute, visitSpot, visitWalkMs } fr
 const dist = (a: { x: number; z: number }, b: { x: number; z: number }) => Math.hypot(a.x - b.x, a.z - b.z);
 
 test('the first two visitors stand on different open spots beside the host', () => {
-  for (const id of ['desk-1', 'desk-9', 'beanbag-2', 'station-lead']) {
+  for (const id of ['desk-1', 'desk-9', 'beanbag-2']) {
     const a = visitSpot(id, 0);
     const b = visitSpot(id, 1);
     assert.ok(walkable(a.x, a.z), `${id} slot 0 is on open floor`);

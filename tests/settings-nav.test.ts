@@ -50,7 +50,6 @@ test('every setting is in a category', () => {
     ['Models shown in pickers', 'models'],
     ['Subagents', 'subagents'],
     ['Office MCP', 'subagents'],
-    ['Who can hire', 'subagents'],
     ['Subagent worker', 'subagents'],
     ['Models leads can pick', 'subagents'],
     ['Team size', 'subagents'],
@@ -102,6 +101,7 @@ test('notifications sit with sound, are personal and only offer desktop notifica
 });
 
 test('search finds a setting by name, pane or keyword, every word required', () => {
+  assert.deepEqual(searchSettings('who can hire'), [], 'the retired dedicated-vs-ordinary hiring choice is not searchable');
   assert.deepEqual(searchSettings(''), []);
   assert.deepEqual(searchSettings('  '), []);
   assert.deepEqual(searchSettings('jira epic'), [{ pane: 'connections', title: "This floor's Jira epic" }]);

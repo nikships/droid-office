@@ -2,30 +2,30 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { DESK_BY_ID, seatHere, vacantSeats } from '../src/shared/layout.js';
 
-// Two floors that each have a Pipeline agent hired at the Pipelines kiosk and a worker at desk 3.
+// Two floors with workers at the same ordinary desks.
 const droidOffice = [
-  { id: 'w-actions-a', deskId: 'station-actions' },
+  { id: 'w-actions-a', deskId: 'desk-5' },
   { id: 'w-desk-a', deskId: 'desk-3' },
   { id: 'w-bag-a', deskId: 'beanbag-1' },
 ];
 const survive = [
-  { id: 'w-actions-b', deskId: 'station-actions' },
+  { id: 'w-actions-b', deskId: 'desk-5' },
   { id: 'w-desk-b', deskId: 'desk-3' },
 ];
 
-test('an empty floor shows every seat and kiosk free, board agents included', () => {
+test('an empty floor shows every desk and bean bag free', () => {
   assert.deepEqual(vacantSeats([]), new Set(DESK_BY_ID.keys()));
 });
 
-test('riding the elevator between floors that share a kiosk and a desk leaves neither showing free', () => {
+test('riding the elevator between floors that share desks leaves neither showing free', () => {
   for (const [from, to] of [
     [droidOffice, survive],
     [survive, droidOffice],
   ]) {
     const before = vacantSeats(from);
     const after = vacantSeats(to);
-    // Same kiosk, same desk, different workers: still taken, so no idle Pipeline agent and no '+'.
-    assert.ok(!after.has('station-actions'), 'no idle Pipeline agent beside the hired one');
+    // Same desks, different workers: still taken, so no vacancy sign.
+    assert.ok(!after.has('desk-5'), 'no idle worker beside the hired one');
     assert.ok(!after.has('desk-3'), "no '+' over the worker at desk 3");
     for (const w of to) assert.ok(!after.has(w.deskId), `${w.deskId} is taken`);
     // A seat only the old floor used is free again; the rest are free on both.
@@ -34,16 +34,16 @@ test('riding the elevator between floors that share a kiosk and a desk leaves ne
   assert.ok(vacantSeats(survive).has('beanbag-1'), 'the bean bag only droid-office uses is free on the other floor');
 });
 
-test('a kiosk shows its idle agent again only once the hired one sent home has got up', () => {
-  const packing = new Set(['station-actions']);
-  // Sent home: gone from the store, but still packing up at the kiosk.
-  assert.ok(!vacantSeats([], (id) => packing.has(id)).has('station-actions'));
-  // Up and walking off: the idle agent is back.
+test('a desk shows its vacancy sign again only once the hired one sent home has got up', () => {
+  const packing = new Set(['desk-5']);
+  // Sent home: gone from the store, but still packing up at the desk.
+  assert.ok(!vacantSeats([], (id) => packing.has(id)).has('desk-5'));
+  // Up and walking off: the vacancy sign is back.
   packing.clear();
-  assert.ok(vacantSeats([], (id) => packing.has(id)).has('station-actions'));
+  assert.ok(vacantSeats([], (id) => packing.has(id)).has('desk-5'));
   // Someone new hired there while the last one was still packing: taken either way.
-  packing.add('station-actions');
-  assert.ok(!vacantSeats([{ deskId: 'station-actions' }], (id) => packing.has(id)).has('station-actions'));
+  packing.add('desk-5');
+  assert.ok(!vacantSeats([{ deskId: 'desk-5' }], (id) => packing.has(id)).has('desk-5'));
 });
 
 test('you can only sit on a floor seat while you are on a floor', () => {

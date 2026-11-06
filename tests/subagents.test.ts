@@ -20,9 +20,9 @@ function rig(t: { after(fn: () => void): void }) {
 test('cleanSettings keeps what is valid, clamps the team size and falls back on the rest', () => {
   assert.deepEqual(cleanSettings(undefined), SUBAGENT_DEFAULTS);
   assert.deepEqual(cleanSettings('nope'), SUBAGENT_DEFAULTS);
-  const s = cleanSettings({ on: false, deskWorkers: 'yes', maxPerLead: 99, agent: { model: 'glm-5.3', effort: 'max' } });
+  const s = cleanSettings({ on: false, maxPerLead: 99, agent: { model: 'glm-5.3', effort: 'max' } });
   assert.equal(s.on, false);
-  assert.equal(s.deskWorkers, true, 'a non-boolean is the default');
+  assert.equal('deskWorkers' in cleanSettings({ deskWorkers: false }), false, 'obsolete kiosk-only hiring preferences are ignored');
   assert.equal(s.maxPerLead, SUBAGENT_MAX_PER_LEAD);
   assert.deepEqual(s.agent, { model: 'glm-5.3', effort: 'max' });
   assert.equal(cleanSettings({ maxPerLead: 0 }).maxPerLead, 1);

@@ -323,6 +323,31 @@ test('structured hire controls base and branch and immediately returns its workt
   }
 });
 
+test('ordinary workers may hire through MCP but subagents cannot list or invoke nested hiring', async (t) => {
+  const r = await rig(t, false);
+  Object.assign(r.settings, { deskWorkers: false });
+  const [root, sub] = await Promise.all([r.connect('lead'), r.connect('sub')]);
+  let hires = 0;
+  r.workers.hire = (_desk, _by, _prompt, _worktree, _choice, lead) => {
+    hires++;
+    return worker('new', { lead, deskId: 'desk-3' });
+  };
+  const rootTools = (await root.listTools()).tools.map((tool) => tool.name);
+  assert.ok(rootTools.includes('team_hire'));
+  assert.equal((await root.callTool({ name: 'office_whoami', arguments: {} })).structuredContent?.canHire, true);
+  const hired = await root.callTool({ name: 'team_hire', arguments: { title: 'Read source', brief: 'Read the source', worktree: false } });
+  assert.equal(hired.isError, undefined, JSON.stringify(hired.content));
+  assert.equal(hires, 1);
+  assert.ok(!(await sub.listTools()).tools.some((tool) => tool.name === 'team_hire'));
+  assert.equal((await sub.callTool({ name: 'office_whoami', arguments: {} })).structuredContent?.canHire, false);
+  const nested = await sub.callTool({ name: 'team_hire', arguments: { title: 'Nested helper', brief: 'Nested helper', worktree: false } });
+  assert.equal(nested.isError, true);
+  assert.equal(nested.structuredContent?.code, 'permission_denied');
+  assert.equal(hires, 1, 'a direct call cannot bypass discovery permissions');
+  r.people.get('sub')!.remote = true;
+  assert.ok(r.team.cannotHire(r.people.get('sub')!), 'external identities cannot bypass the no-nested rule');
+});
+
 test('reports preserve structured pushed SHA and PR URL alongside prose', async (t) => {
   const r = await rig(t);
   const [lead, sub] = await Promise.all([r.connect('lead'), r.connect('sub')]);

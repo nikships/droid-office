@@ -3,7 +3,7 @@
 // (world/boards.ts) and listed in the Pipelines window (ui/pipelines.ts). Both forges speak these
 // shapes; what each one calls a status is kept in `status`, and `state` is the office's word for it.
 // What differs between the forges (which run was just started, whether a full re-run keeps its id,
-// and the words on the window, the wall and the station) is `PIPELINE_POLICIES` below.
+// and the words on the window and the wall) is `PIPELINE_POLICIES` below.
 
 import type { Forge } from './floors.js';
 

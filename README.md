@@ -79,9 +79,9 @@ Walk up to a worker and open its terminal in a large interactive window. Read th
 
 ### Give the lead a team
 
-Hand a larger task to the Team lead and let it hire subagents at nearby desks. Glowing floor links show who belongs together, and every worker has a live terminal you can open.
+Hand a larger task to any worker and let it hire subagents at nearby desks. Glowing floor links show who belongs together, and every worker has a live terminal you can open.
 
-[Team leads and subagents →](docs/guide/features.md)
+[Worker teams and subagents →](docs/guide/features.md)
 
 </td>
 <td width="50%">

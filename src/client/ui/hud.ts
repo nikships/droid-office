@@ -5,7 +5,6 @@ import { modelLogo } from './model-logo';
 import { withoutGlyph } from '../world/glyph';
 import { windowHeader } from './kit';
 import { cloudLine } from './factory-cloud';
-import { DESK_BY_ID } from '../../shared/layout';
 import { TEAM_MARK, teamStanding, teamSummary, workersByTeam } from '../../shared/team';
 import { creditsNote } from '../../shared/factory-sessions';
 import { workerActivity } from '../../shared/status';
@@ -51,9 +50,7 @@ export function renderWorkers(onOpen: (id: string) => void) {
     );
   }
   if (!workers.length) ul.append(h('li.empty', {}, 'Walk up to a desk and press E to hire one'));
-  // The count is the workers hired onto desks and bean bags: the board agents
-  // standing at the Issues, PR, Pipelines and Team kiosks are listed but aren't counted.
-  const hired = workers.filter((w) => !DESK_BY_ID.get(w.deskId)?.station).length;
+  const hired = workers.length;
   $('worker-count').textContent = hired ? String(hired) : '';
 }
 
@@ -65,7 +62,7 @@ export function openHelp(sidearm: Sidearm = 'wand') {
   const mac = typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.platform);
   const seven: HelpRow =
     sidearm === 'wand'
-      ? ['Droid wand', 'Click opens a worker’s terminal, including board agents. Hold for a charged shot to send a worker home. 2 lifts a worker, 3 starts a dance party, and 4 asks one closely aimed worker to ship', ['7']]
+      ? ['Droid wand', 'Click opens a worker’s terminal. Hold for a charged shot to send a worker home. 2 lifts a worker, 3 starts a dance party, and 4 asks one closely aimed worker to ship', ['7']]
       : ['.44 Magnum', 'Draw or holster it; click a worker to open its terminal. Hold for a charged shot to send it skyward', ['7']];
   const sections: [string, HelpRow[]][] = [
     [
@@ -83,7 +80,6 @@ export function openHelp(sidearm: Sidearm = 'wand') {
       'Use things',
       [
         ['Use what you look at', 'Hire a worker, open its terminal, read a board, play the jukebox, sit down (walk off to get up)', ['Click', 'or', 'E']],
-        ['Ask a board agent', 'One stands at the issues board, the PR board, the Pipelines board and the Team kiosk. E there and type what you want; O opens its terminal, X sends it home', ['E']],
         ['Put back an issue card', 'Pick one up with E on the issues board or in an issue, then E at an empty desk or a worker', ['Q']],
         ['Hang a picture', 'From the web, on a wall. E at a picture moves, edits or takes it down', ['F']],
       ],

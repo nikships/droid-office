@@ -10,7 +10,7 @@ data class PendingAsk(val worker: WorkerInfo, val menu: Menu?)
 
 /** The Asks tab: who is waiting on an answer, oldest first, and what to show for each. */
 object Asks {
-    /** Desk and kiosk workers waiting on the owner, whoever has waited longest first. */
+    /** Workers waiting on the owner, whoever has waited longest first. */
     fun queue(workers: Collection<WorkerInfo>, screens: Map<String, ScreenState>): List<PendingAsk> =
         workers.filter { it.state == WorkerStatus.NeedsInput }
             .sortedWith(compareBy<WorkerInfo> { it.waitingSince ?: Long.MAX_VALUE }.thenBy { it.createdAt }.thenBy { it.id })

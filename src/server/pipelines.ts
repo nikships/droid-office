@@ -1,7 +1,7 @@
 // A floor's CI, for the 02 PIPELINES board and the Pipelines window: its repository's GitHub Actions
 // runs through `gh`, or its GitLab project's pipelines through `glab`, in the shapes of
 // shared/pipelines.ts. Each floor polls its own (see Floor), quickly while a run is going and someone
-// is there to watch, and starts, re-runs and cancels runs for the window and the Pipeline agent's board.
+// is there to watch, and starts, re-runs and cancels runs for the window.
 
 import { existsSync, readFileSync } from 'node:fs';
 import path from 'node:path';
@@ -75,13 +75,13 @@ export class Pipelines {
     return this.source.forge;
   }
 
-  /** `active`: someone is on the floor. `watching`: something acts on runs ending even when nobody is. */
-  start(active: () => boolean, watching: () => boolean = () => false) {
+  /** `active`: someone is on the floor. */
+  start(active: () => boolean) {
     this.timer = setInterval(() => {
       const here = active();
       let wait = IDLE_MS;
       if (here && this.state.runs.some((r) => isLive(r.state))) wait = LIVE_MS;
-      else if (here || watching()) wait = ACTIVE_MS;
+      else if (here) wait = ACTIVE_MS;
       if (Date.now() - this.lastLook >= wait) void this.refresh();
     }, TICK_MS);
   }

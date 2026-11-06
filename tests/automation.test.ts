@@ -1,13 +1,13 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { FrameStats } from '../src/client/frame-stats.js';
-import { BOARDS, DESK_BY_ID, deskSeat, FLOOR, STATIONS } from '../src/shared/layout.js';
+import { BOARDS, DESK_BY_ID, deskSeat, FLOOR } from '../src/shared/layout.js';
 import { ROOF } from '../src/shared/rooftop.js';
 import type { WorkerInfo } from '../src/shared/protocol.js';
 import type { Interactable } from '../src/client/world/office.js';
 import { buildSnapshot, cameraPose, createAutomation, facingToward, freeSpotNear, listTargets, pitchToward, resolveTarget, runCommand, standFor, type AutomationHost, type RawState, type TargetContext } from '../src/client/automation.js';
 
-/** The spots a floor has, the way world/office.ts lays them out: desks, a kiosk, a bean bag and the boards. */
+/** The spots a floor has, the way world/office.ts lays them out: desks, a bean bag and the boards. */
 function floorSpots(): Interactable[] {
   const desk = (id: string): Interactable => {
     const s = deskSeat(DESK_BY_ID.get(id)!, 1.25);
@@ -17,12 +17,10 @@ function floorSpots(): Interactable[] {
     const b = BOARDS[kind];
     return { kind, x: b.x + Math.sin(b.rotY) * 1.6, z: b.z + Math.cos(b.rotY) * 1.6, radius: 2.4 };
   };
-  const kiosk = STATIONS.find((s) => s.station === 'issues')!;
   return [
     desk('desk-1'),
     desk('desk-2'),
     { kind: 'desk', deskId: 'beanbag-1', x: 15, z: -9.8, radius: 1.8, off: true },
-    { kind: 'station', deskId: kiosk.id, x: kiosk.x, z: kiosk.z + 1, radius: 1.3 },
     board('issues'),
     board('pulls'),
     { kind: 'jukebox', x: 17, z: 12, radius: 1.4 },
@@ -46,13 +44,16 @@ function context(over: Partial<TargetContext> = {}): TargetContext {
   };
 }
 
-test('list() names the desks, kiosks, boards, places and floors you can go to from here', () => {
+test('list() names the desks, boards, places and floors you can go to from here', () => {
   const list = listTargets(context());
   const ids = list.map((t) => t.id);
-  assert.deepEqual(ids, ['desk-1', 'desk-2', 'station-issues', 'issues', 'pulls', 'jukebox', 'f1', 'f2', ROOF]);
+  assert.deepEqual(ids, ['desk-1', 'desk-2', 'issues', 'pulls', 'jukebox', 'f1', 'f2', ROOF]);
   assert.deepEqual(list[0], { id: 'desk-1', kind: 'desk', label: 'Desk 1', deskId: 'desk-1', worker: { id: 'w1', name: 'Ada', status: 'idle' } });
   assert.equal(list[1].worker, undefined, 'a free desk is listed without a worker');
-  assert.equal(list.find((t) => t.id === 'station-issues')?.kind, 'kiosk');
+  assert.ok(
+    list.every((t) => !t.id.startsWith('station-')),
+    'no dedicated-agent targets remain',
+  );
   assert.equal(list.find((t) => t.id === 'issues')?.kind, 'board');
   assert.equal(list.find((t) => t.id === 'jukebox')?.kind, 'place');
   assert.ok(!ids.includes('beanbag-1'), 'a bean bag that is put away is nowhere to go');
@@ -103,8 +104,8 @@ test('goTo targets resolve by id, worker, label, agent name and floor, and say w
   assert.equal(id('w1').id, 'desk-1', 'a worker id goes to its desk');
   assert.equal(id('ada').id, 'desk-1', 'a worker name, any case');
   assert.equal(id('desk 2').id, 'desk-2', 'a desk label');
-  assert.equal(id('Issues agent').id, 'station-issues', "the board agent's name goes to its kiosk");
-  assert.equal(id('issues').kind, 'board', 'the board, not its kiosk');
+  assert.equal(resolveTarget('Issues agent', ctx).ok, false);
+  assert.equal(id('issues').kind, 'board', 'the issues board');
   assert.equal(id('issues').spot?.kind, 'issues');
   assert.equal(id('Jukebox').id, 'jukebox');
   assert.equal(id('website').id, 'f2', 'a floor by name');
@@ -145,17 +146,6 @@ test('standing at a desk puts you behind the worker, looking at its laptop', () 
   assert.equal(stand.lookPitch, -0.2, 'a desk arrival uses the desk pitch, not pitchToward');
   assert.equal(stand.pitchFixed, true);
   assert.ok(pitchToward({ ...stand.at, y: 1.4 }, stand.face) < 0, 'the laptop is still below eye level');
-});
-
-test('standing at a kiosk puts you in front of it, on the room side', () => {
-  const t = resolveTarget('station-issues', context());
-  assert.ok(t.ok);
-  const stand = standFor(t.target, () => false)!;
-  const kiosk = DESK_BY_ID.get('station-issues')!;
-  assert.ok(stand.at.z > kiosk.z + 1, 'out from the north wall');
-  assert.ok(Math.abs(stand.at.x - kiosk.x) < 1e-9);
-  assert.equal(stand.lookPitch, -0.2);
-  assert.equal(stand.pitchFixed, true);
 });
 
 test('standing at a board or a place uses its spot, stepping out of anything in the way', () => {
@@ -216,7 +206,7 @@ function raw(over: Partial<RawState> = {}): RawState {
     using: null,
     modals: [],
     terminal: null,
-    workers: [worker({ status: 'needs_input', task: { name: 'Fix the jukebox' } }), worker({ id: 'w2', name: 'Grace', deskId: 'station-issues', status: 'done', acked: true })],
+    workers: [worker({ status: 'needs_input', task: { name: 'Fix the jukebox' } }), worker({ id: 'w2', name: 'Grace', deskId: 'desk-2', status: 'done', acked: true })],
     carrying: null,
     hanging: false,
     gun: false,
@@ -242,7 +232,7 @@ test('state() is a rounded JSON snapshot of where you are, what is open and who 
   assert.equal(s.terminal, null);
   assert.deepEqual(s.workers, [
     { id: 'w1', name: 'Ada', kind: 'agent', deskId: 'desk-1', desk: 'Desk 1', status: 'needs_input', waiting: true, task: 'Fix the jukebox' },
-    { id: 'w2', name: 'Grace', kind: 'agent', deskId: 'station-issues', desk: 'Issues board', status: 'done', waiting: false },
+    { id: 'w2', name: 'Grace', kind: 'agent', deskId: 'desk-2', desk: 'Desk 2', status: 'done', waiting: false },
   ]);
   assert.deepEqual(s.floors, [
     { id: 'f1', name: 'droid-office', waiting: 1, here: true },

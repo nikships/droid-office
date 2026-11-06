@@ -8,8 +8,8 @@ The Mac app bundles a FinderSync extension and a native Keychain bridge. Finder 
 - Reuse the canonical checkout's existing floor. Register unknown repositories persistently in the office's existing `.droid-office/floors.json`, including explicitly selected checkouts outside the workspace folder. No checkout is cloned or moved.
 - Name a new floor after its directory, qualify collisions with the parent directory, then a numeric suffix when necessary.
 - Group non-git targets on Home. Limit selections to 100 targets and five groups.
-- Keep normal Team lead, worker and worktree ownership. Finder does not create its own lead, brief, branch convention or worktree lifecycle. The standard lead chooses and hires its team using the [Office MCP](office-mcp.md).
-- Submit the user's task followed by quoted canonical paths to `station-lead`. An absent lead starts with its standard brief; an existing lead keeps its conversation. Busy leads and unanswered CLI dialogs reject dispatch visibly.
+- Keep normal worker and worktree ownership. Finder creates or reuses an ordinary desk worker with no special brief, branch convention or worktree lifecycle. Like any root worker, it can hire subagents using the [Office MCP](office-mcp.md).
+- Submit the user's task followed by quoted canonical paths to a free desk, reusing the ordinary worker Finder last hired when it is still there. It keeps its conversation. Busy workers and unanswered CLI dialogs reject dispatch visibly.
 - Apply a chosen model when a ready lead resumes, preserving the conversation. Remember only successful explicit Finder model choices per floor in the office's `finder.json`.
 
 Opening the resolve preview can register a floor. Cancelling the task does not remove that persistent floor.
@@ -28,7 +28,7 @@ All routes require `X-Droid-Office-Token`, a literal `127.0.0.1` Host and a loop
 
 Use `model: "floor-default"` to use the floor's remembered explicit Finder model choice. Without a remembered choice, an existing lead keeps its current model; only a new lead uses the normal office/Droid default. Explicit model IDs must appear in the visible model catalogue; normal subscription and worker-capacity gates still apply.
 
-Dispatch receipts are retained for that daemon run. Reusing a request ID with the same payload returns the original result; changing its payload is rejected. Partial success is explicit and must not be retried as a new whole-batch request. A transport failure is ambiguous: inspect the Team lead before sending another task. No task is stored for delivery after an offline period.
+Dispatch receipts are retained for that daemon run. Reusing a request ID with the same payload returns the original result; changing its payload is rejected. Partial success is explicit and must not be retried as a new whole-batch request. A transport failure is ambiguous: inspect the Finder worker before sending another task. No task is stored for delivery after an offline period.
 
 ## Native boundary
 

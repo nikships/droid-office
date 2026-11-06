@@ -27,15 +27,12 @@ object Workers {
 
     /**
      * Desk workers sorted by [priority], each lead followed by its subagents. A lead's group sorts by
-     * its most urgent member, so a subagent's question still lifts the group to the top. Board agents
-     * at their kiosks come back separately.
+     * its most urgent member, so a subagent's question still lifts the group to the top.
      */
-    fun arrange(all: Collection<WorkerInfo>): Pair<List<WorkerRow>, List<WorkerInfo>> {
-        val stations = all.filter { it.isStation }.sortedWith(order)
-        val desk = all.filterNot { it.isStation }
-        val byId = desk.associateBy { it.id }
-        val subsOf = desk.filter { it.lead != null && byId.containsKey(it.lead) }.groupBy { it.lead!! }
-        val roots = desk.filter { it.lead == null || !byId.containsKey(it.lead) }
+    fun arrange(all: Collection<WorkerInfo>): List<WorkerRow> {
+        val byId = all.associateBy { it.id }
+        val subsOf = all.filter { it.lead != null && byId.containsKey(it.lead) }.groupBy { it.lead!! }
+        val roots = all.filter { it.lead == null || !byId.containsKey(it.lead) }
         val groupPriority = roots.associate { root ->
             root.id to (listOf(root) + subsOf[root.id].orEmpty()).minOf(::priority)
         }
@@ -46,7 +43,7 @@ object Workers {
             rows += WorkerRow(root, 0, subs.size, null)
             for (s in subs) rows += WorkerRow(s, 1, 0, root.name)
         }
-        return rows to stations
+        return rows
     }
 
     /** How long it has spent working: the stretches that ended, plus the one it's in now. */

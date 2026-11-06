@@ -65,7 +65,7 @@ export const tourChapters: TourChapter[] = [
     index: '05',
     label: 'Pipelines',
     title: 'CI on the wall',
-    summary: 'GitHub Actions runs or GitLab pipelines show up as they run, wait and finish. Open a run, re-run what failed, or ask the Pipeline agent.',
+    summary: 'GitHub Actions runs or GitLab pipelines show up as they run, wait and finish. Open a run, inspect its jobs, re-run what failed or cancel it.',
     video: {
       title: 'Watching and re-running CI from the Pipelines board',
       duration: '0:23',
