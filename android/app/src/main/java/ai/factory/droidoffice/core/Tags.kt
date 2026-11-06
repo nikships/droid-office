@@ -204,6 +204,22 @@ object Tags {
         fun worker(id: String) = "home.worker/$id"
     }
 
+    object WorkerActions {
+        const val SHEET = "worker_actions.sheet"
+        const val NAME = "worker_actions.name"
+        const val FORK = "worker_actions.fork"
+        const val FORK_REASON = "worker_actions.fork_reason"
+        const val DISMISS = "worker_actions.dismiss"
+    }
+
+    object Fork {
+        const val DIALOG = "fork.dialog"
+        const val PROMPT = "fork.prompt"
+        const val CONFIRM = "fork.confirm"
+        const val CANCEL = "fork.cancel"
+        const val ERROR = "fork.error"
+    }
+
     object Hire {
         const val SHEET = "hire.sheet"
         /** Closes the hire screen without hiring. */
@@ -399,6 +415,7 @@ object Tags {
     object SendHome {
         const val DIALOG = "send_home.dialog"
         const val CONFIRM = "send_home.confirm"
+        const val ERROR = "send_home.error"
         /** For a cloud worker: also delete its Factory session. */
         const val DELETE_SESSION = "send_home.delete_session"
         const val CANCEL = "send_home.cancel"
