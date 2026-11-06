@@ -27,6 +27,12 @@ process.stdin.on('data', (d) => {
   fs.appendFileSync(dir + '/keys.txt', d);
   if (d.toString() !== '\\r' || process.env.FAKE_MODE === 'other') return;
   process.stdout.write('\\x1b[2J\\x1b[HIf the link does not open automatically, please visit https://auth.factory.ai/device and enter code\\r\\nQSMK-CDLX to complete authentication.\\r\\n');
+  if (process.env.FAKE_MODE === 'slow-open') {
+    const open = process.env.BROWSER;
+    const shim = fs.readFileSync(open, 'utf8');
+    // The redirect creates opened.txt before printf writes, as on a busy CI runner.
+    fs.writeFileSync(open, shim.replace('#!/bin/sh\\n', '#!/bin/sh\\nprintf() { sleep 0.2; command printf "$@"; }\\n'));
+  }
   spawnSync('open', ['https://auth.factory.ai/device?user_code=QSMK-CDLX']);
   process.stdout.write('\\r\\nWaiting for authentication to complete...\\r\\n');
   if (process.env.FAKE_MODE === 'exit') process.exit(0);
@@ -99,9 +105,16 @@ test('sign-in presses Enter once on Login, shows the code, and stops Droid once 
 });
 
 test('the open shim records the page instead of opening it', async (t) => {
-  const f = fakeDroid(t);
+  const f = fakeDroid(t, 'slow-open');
   const s = startSignIn({ droid: f.droid, env: f.env, tmpRoot: f.dir, pollMs: 60_000, signedIn: async () => false, onCode: () => {} });
-  await until(() => readdirSync(f.dir).some((n) => n.startsWith('droid-office-signin-') && existsSync(path.join(f.dir, n, 'opened.txt'))));
+  t.after(() => s.cancel());
+  await until(() =>
+    readdirSync(f.dir).some((n) => {
+      if (!n.startsWith('droid-office-signin-')) return false;
+      const opened = path.join(f.dir, n, 'opened.txt');
+      return existsSync(opened) && readFileSync(opened, 'utf8').endsWith('\n');
+    }),
+  );
   const run = readdirSync(f.dir).find((n) => n.startsWith('droid-office-signin-'));
   assert.equal(readFileSync(path.join(f.dir, run!, 'opened.txt'), 'utf8'), 'https://auth.factory.ai/device?user_code=QSMK-CDLX\n');
   s.cancel();
