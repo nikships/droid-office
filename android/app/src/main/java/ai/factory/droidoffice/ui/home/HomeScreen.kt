@@ -476,10 +476,11 @@ internal fun WorkerCard(row: WorkerRow, data: OfficeData, now: Long, selected: B
                 WorkerDot(color, state, 10.dp)
                 Column(Modifier.weight(1f).padding(start = 2.dp)) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text(w.name.ifBlank { w.id }, style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f, fill = false).tagged(Tags.Home.CARD_NAME))
+                        Text(w.name.ifBlank { w.id }, style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f).tagged(Tags.Home.CARD_NAME))
                         if (w.isShell) Tag("SHELL")
                         if (w.isCloud) Tag("CLOUD")
                         if (row.subagents > 0) Tag("+${row.subagents}")
+                        StatusPill(state, acked = w.acked, tag = Tags.Home.CARD_STATUS, compact = true)
                     }
                     val effort = Workers.effort(w)?.takeIf { !w.isShell && model != null }
                     val rest = meta(w, now, graph.connection.officeName)
@@ -497,7 +498,6 @@ internal fun WorkerCard(row: WorkerRow, data: OfficeData, now: Long, selected: B
                         if (rest.isNotEmpty()) Text(if (shown != null) "· $rest" else rest, style = metaStyle, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f, fill = false))
                     }
                 }
-                StatusPill(state, acked = w.acked, tag = Tags.Home.CARD_STATUS, compact = true)
             }
             val title = Workers.title(w)
             val detail = Workers.detail(w)
