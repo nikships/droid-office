@@ -34,6 +34,7 @@ import androidx.compose.foundation.selection.toggleable
 import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
 import ai.factory.droidoffice.core.Tags
+import ai.factory.droidoffice.core.WorkerActions
 import ai.factory.droidoffice.core.WorkerInfo
 import ai.factory.droidoffice.core.WorktreeState
 import ai.factory.droidoffice.ui.LocalGraph
@@ -177,8 +178,9 @@ fun SendHomeDialog(w: WorkerInfo, onDismiss: () -> Unit, onSent: () -> Unit) {
                 error = null
                 scope.launch {
                     val id = UUID.randomUUID().toString()
-                    val result = graph.connection.actionConfirmed(id, ClientMsg.kill(w.id, if (wt != null) cleanup else null, deleteSession = w.isCloud && deleteSession, requestId = id, floor = floor))
-                    pending = false
+                    val result = WorkerActions.confirm(onFinished = { pending = false }) {
+                        graph.connection.actionConfirmed(id, ClientMsg.kill(w.id, if (wt != null) cleanup else null, deleteSession = w.isCloud && deleteSession, requestId = id, floor = floor))
+                    }
                     if (result?.ok == true) onSent()
                     else error = result?.error ?: "Dismissal could not be confirmed. Check the floor before trying again. Nothing will be resent automatically."
                 }

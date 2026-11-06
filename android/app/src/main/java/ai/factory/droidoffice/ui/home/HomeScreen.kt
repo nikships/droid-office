@@ -191,11 +191,12 @@ fun HomeScreen(onOpenWorker: (String) -> Unit, selected: String?, onCloseWorker:
         }
     }
     if (hiring) HireSheet(onDismiss = { hiring = false })
-    actionWorker?.let { id ->
-        val worker = data.workers[id]
-        if (worker != null) WorkerActionsSheet(worker, onDismiss = { actionWorker = null })
-        else LaunchedEffect(id) { actionWorker = null }
+    val actionId = actionWorker
+    LaunchedEffect(actionId, data.workers.keys) {
+        if (actionId != null && actionId !in data.workers) actionWorker = null
     }
+    val actionTarget = actionId?.let { data.workers[it] }
+    if (actionTarget != null) WorkerActionsSheet(actionTarget, onDismiss = { actionWorker = null })
 }
 
 @OptIn(ExperimentalMaterial3Api::class)

@@ -41,7 +41,12 @@ fun WorkerActionsSheet(worker: WorkerInfo, onDismiss: () -> Unit) {
     val data by connection.data.collectAsStateWithLifecycle()
     var action by remember(worker.id) { mutableStateOf<String?>(null) }
     val live = link.phase == Phase.Connected && data.synced
-    val refusal = if (!live) "Disconnected. Reconnect to use worker actions." else WorkerActions.forkRefusal(worker)
+    val current = data.workers[worker.id]
+    val refusal = when {
+        !live -> "Disconnected. Reconnect to use worker actions."
+        current == null -> "The worker has left."
+        else -> WorkerActions.forkRefusal(current)
+    }
 
     when (action) {
         "fork" -> ForkWorkerDialog(worker, onDismiss)

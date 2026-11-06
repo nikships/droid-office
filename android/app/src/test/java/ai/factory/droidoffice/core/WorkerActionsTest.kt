@@ -4,6 +4,8 @@ import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -13,6 +15,40 @@ import ai.factory.droidoffice.ui.components.statusLook
 
 class WorkerActionsTest {
     private val ready = WorkerInfo(id = "source", kind = "agent", status = "idle", sessionId = "session")
+
+    @Test
+    fun confirmationAlwaysFinishesAndPreservesReceipts() = runBlocking {
+        var finished = 0
+        listOf(ServerMsg.ActionResult("fork", true, null), ServerMsg.ActionResult("dismiss", false, "Refused"), null).forEach { receipt ->
+            assertEquals(receipt, WorkerActions.confirm(onFinished = { finished++ }) { receipt })
+        }
+        assertEquals(3, finished)
+    }
+
+    @Test
+    fun failedSendIsUnconfirmedAndReleasesPendingWithoutRetrying() = runBlocking {
+        var finished = false
+        var sends = 0
+        assertNull(WorkerActions.confirm(onFinished = { finished = true }) {
+            sends++
+            throw IllegalStateException("Socket closed")
+        })
+        assertTrue(finished)
+        assertEquals(1, sends)
+    }
+
+    @Test
+    fun cancelledConfirmationReleasesPendingAndStillCancels() = runBlocking {
+        var finished = false
+        var cancelled = false
+        try {
+            WorkerActions.confirm(onFinished = { finished = true }) { throw CancellationException("Left the floor") }
+        } catch (_: CancellationException) {
+            cancelled = true
+        }
+        assertTrue(cancelled)
+        assertTrue(finished)
+    }
 
     @Test
     fun onlyIdleOrDoneLocalDroidsWithASessionCanFork() {

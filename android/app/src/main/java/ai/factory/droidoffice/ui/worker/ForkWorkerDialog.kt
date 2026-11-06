@@ -96,8 +96,9 @@ fun ForkWorkerDialog(worker: WorkerInfo, onDismiss: () -> Unit) {
                     error = null
                     scope.launch {
                         val id = UUID.randomUUID().toString()
-                        val result = connection.actionConfirmed(id, ClientMsg.fork(worker.id, prompt, id, floor))
-                        pending = false
+                        val result = WorkerActions.confirm(onFinished = { pending = false }) {
+                            connection.actionConfirmed(id, ClientMsg.fork(worker.id, prompt, id, floor))
+                        }
                         if (result?.ok == true) {
                             onDismiss()
                             graph.scope.launch { snackbar.showSnackbar("Fork created at the nearest free seat") }
