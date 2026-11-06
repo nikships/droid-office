@@ -22,6 +22,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -33,9 +34,12 @@ import androidx.compose.foundation.selection.toggleable
 import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
 import ai.factory.droidoffice.core.Tags
+import ai.factory.droidoffice.core.WorkerActions
 import ai.factory.droidoffice.core.WorkerInfo
 import ai.factory.droidoffice.core.WorktreeState
 import ai.factory.droidoffice.ui.LocalGraph
+import ai.factory.droidoffice.session.Phase
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import ai.factory.droidoffice.ui.components.Spinner
 import ai.factory.droidoffice.ui.components.tagged
 import ai.factory.droidoffice.ui.home.deskLabel
@@ -45,6 +49,8 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withTimeoutOrNull
+import kotlinx.coroutines.launch
+import java.util.UUID
 
 /** What deleting the worktree would lose, as the office's own send-home dialog words it (src/client/ui/prompt.ts). */
 fun describeWorktree(s: WorktreeState, branch: String): Pair<List<String>, Boolean> {
@@ -69,14 +75,20 @@ private fun plural(n: Int, noun: String) = "$n $noun${if (n == 1) "" else "s"}"
 @Composable
 fun SendHomeDialog(w: WorkerInfo, onDismiss: () -> Unit, onSent: () -> Unit) {
     val graph = LocalGraph.current
+    val data by graph.connection.data.collectAsStateWithLifecycle()
+    val link by graph.connection.link.collectAsStateWithLifecycle()
+    val floor = remember(w.id) { data.floorId }
+    val office = remember(w.id) { data.officeId }
+    val scope = rememberCoroutineScope()
+    var pending by remember { mutableStateOf(false) }
+    var error by remember { mutableStateOf<String?>(null) }
     val wt = w.worktree?.takeIf { it.branch.isNotBlank() }
-    var cleanup by remember { mutableStateOf("keep") }
-    var touched by remember { mutableStateOf(false) }
-    var status by remember { mutableStateOf<Pair<List<String>, Boolean>?>(null) }
-    var deleteSession by remember { mutableStateOf(false) }
+    var cleanup by remember(w.id, wt) { mutableStateOf("keep") }
+    var status by remember(w.id, wt) { mutableStateOf<Pair<List<String>, Boolean>?>(null) }
+    var deleteSession by remember(w.id) { mutableStateOf(false) }
 
     if (wt != null) {
-        LaunchedEffect(w.id) {
+        LaunchedEffect(w.id, wt) {
             val state = coroutineScope {
                 val answer = async(start = CoroutineStart.UNDISPATCHED) { graph.connection.worktrees.first { it.workerId == w.id } }
                 graph.connection.send(ClientMsg.worktree(w.id))
@@ -84,13 +96,18 @@ fun SendHomeDialog(w: WorkerInfo, onDismiss: () -> Unit, onSent: () -> Unit) {
             }
             val described = describeWorktree(state?.state ?: WorktreeState(error = "the office did not answer"), wt.branch)
             status = described
-            if (!touched) cleanup = if (described.second) "keep" else "all"
         }
     }
 
     val labels = mapOf("keep" to "Send home", "worktree" to "Send home, delete worktree", "all" to "Send home, delete both")
+    val refusal = when {
+        link.phase != Phase.Connected -> "Disconnected. Nothing can be sent."
+        data.floorId != floor || data.officeId != office -> "The active floor changed. Nothing was sent."
+        !data.workers.containsKey(w.id) -> "The worker has left."
+        else -> null
+    }
     AlertDialog(
-        onDismissRequest = onDismiss,
+        onDismissRequest = { if (!pending) onDismiss() },
         modifier = Modifier.tagged(Tags.SendHome.DIALOG),
         containerColor = Palette.SurfaceRaised,
         shape = RoundedCornerShape(16.dp),
@@ -106,7 +123,7 @@ fun SendHomeDialog(w: WorkerInfo, onDismiss: () -> Unit, onSent: () -> Unit) {
                 if (w.isCloud) {
                     Spacer(Modifier.height(10.dp))
                     Row(
-                        Modifier.fillMaxWidth().toggleable(deleteSession, role = Role.Switch) { deleteSession = it }.tagged(Tags.SendHome.DELETE_SESSION).padding(vertical = 4.dp),
+                        Modifier.fillMaxWidth().toggleable(deleteSession, enabled = !pending, role = Role.Switch) { deleteSession = it }.tagged(Tags.SendHome.DELETE_SESSION).padding(vertical = 4.dp),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
                         Column(Modifier.weight(1f)) {
@@ -128,7 +145,7 @@ fun SendHomeDialog(w: WorkerInfo, onDismiss: () -> Unit, onSent: () -> Unit) {
                         Triple("keep", "Keep both", "Leaves everything as it is; droid-office prune tidies up later."),
                     ).forEach { (value, title, sub) ->
                         Row(
-                            Modifier.fillMaxWidth().selectable(cleanup == value, role = Role.RadioButton) { cleanup = value; touched = true }.tagged(Tags.SendHome.option(value)).padding(vertical = 4.dp),
+                            Modifier.fillMaxWidth().selectable(cleanup == value, enabled = !pending, role = Role.RadioButton) { cleanup = value }.tagged(Tags.SendHome.option(value)).padding(vertical = 4.dp),
                             verticalAlignment = Alignment.Top,
                         ) {
                             RadioButton(cleanup == value, null, colors = RadioButtonDefaults.colors(selectedColor = Palette.Accent))
@@ -150,14 +167,25 @@ fun SendHomeDialog(w: WorkerInfo, onDismiss: () -> Unit, onSent: () -> Unit) {
                         s.first.forEach { Text(it, style = MaterialTheme.typography.bodySmall, color = if (s.second) Palette.Warning else Palette.TextSecondary) }
                     }
                 }
+                (refusal ?: error)?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = Palette.Warning, modifier = Modifier.tagged(Tags.SendHome.ERROR)) }
             }
         },
         confirmButton = {
-            TextButton(onClick = {
-                graph.connection.send(ClientMsg.kill(w.id, if (wt != null) cleanup else null, deleteSession = w.isCloud && deleteSession))
-                onSent()
-            }, modifier = Modifier.tagged(Tags.SendHome.CONFIRM)) { Text(labels.getValue(if (wt != null) cleanup else "keep"), color = Palette.Danger) }
+            TextButton(enabled = !pending && refusal == null && (cleanup == "keep" || status != null), onClick = {
+                val latest = graph.connection.data.value
+                if (!graph.connection.connected || latest.floorId != floor || latest.officeId != office || !latest.workers.containsKey(w.id)) return@TextButton
+                pending = true
+                error = null
+                scope.launch {
+                    val id = UUID.randomUUID().toString()
+                    val result = WorkerActions.confirm(onFinished = { pending = false }) {
+                        graph.connection.actionConfirmed(id, ClientMsg.kill(w.id, if (wt != null) cleanup else null, deleteSession = w.isCloud && deleteSession, requestId = id, floor = floor))
+                    }
+                    if (result?.ok == true) onSent()
+                    else error = result?.error ?: "Dismissal could not be confirmed. Check the floor before trying again. Nothing will be resent automatically."
+                }
+            }, modifier = Modifier.tagged(Tags.SendHome.CONFIRM)) { Text(if (pending) "Sending home…" else labels.getValue(if (wt != null) cleanup else "keep"), color = if (pending || refusal != null) Palette.TextSecondary else Palette.Danger) }
         },
-        dismissButton = { TextButton(onClick = onDismiss, modifier = Modifier.tagged(Tags.SendHome.CANCEL)) { Text("Never mind", color = Palette.TextSecondary) } },
+        dismissButton = { TextButton(enabled = !pending, onClick = onDismiss, modifier = Modifier.tagged(Tags.SendHome.CANCEL)) { Text("Never mind", color = Palette.TextSecondary) } },
     )
 }

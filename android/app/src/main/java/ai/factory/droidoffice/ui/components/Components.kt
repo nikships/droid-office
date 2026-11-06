@@ -40,6 +40,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.drawscope.rotate
@@ -94,8 +95,9 @@ fun Modifier.tagged(name: String) = this.semantics {
 
 /** A square mono pill with a status-colored indicator; it blinks for "needs you", like the office's. */
 @Composable
-fun StatusPill(status: WorkerStatus, modifier: Modifier = Modifier, acked: Boolean = true, tag: String? = null) {
+fun StatusPill(status: WorkerStatus, modifier: Modifier = Modifier, acked: Boolean = true, tag: String? = null, compact: Boolean = false) {
     val look = statusLook(status, acked)
+    val indicatorOnly = compact && (status == WorkerStatus.Working || status == WorkerStatus.Done)
     val blink = if (look.loud) {
         val t = rememberInfiniteTransition(label = "blink")
         t.animateFloat(1f, 0.25f, infiniteRepeatable(tween(600, easing = LinearEasing), RepeatMode.Reverse), label = "blink").value
@@ -110,34 +112,38 @@ fun StatusPill(status: WorkerStatus, modifier: Modifier = Modifier, acked: Boole
                     testTag = tag
                 }
             }
-            .clip(RoundedCornerShape(3.dp))
-            .background(if (look.loud) look.color.copy(alpha = 0.12f) else Palette.SurfaceRaised)
-            .border(1.dp, look.color.copy(alpha = if (look.loud) 0.55f else 0.35f), RoundedCornerShape(3.dp))
-            .padding(horizontal = 7.dp, vertical = 4.dp),
+            .then(
+                if (indicatorOnly) Modifier.size(24.dp)
+                else Modifier
+                    .clip(RoundedCornerShape(3.dp))
+                    .background(if (look.loud) look.color.copy(alpha = 0.12f) else Palette.SurfaceRaised)
+                    .border(1.dp, look.color.copy(alpha = if (look.loud) 0.55f else 0.35f), RoundedCornerShape(3.dp))
+                    .padding(horizontal = 7.dp, vertical = 4.dp),
+            ),
         verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(6.dp),
+        horizontalArrangement = if (indicatorOnly) Arrangement.Center else Arrangement.spacedBy(6.dp),
     ) {
         if (status == WorkerStatus.Working || status == WorkerStatus.Starting) {
-            WorkingBars(look.color)
+            WorkingBars(look.color, height = if (indicatorOnly) 12.dp else 8.dp, width = if (indicatorOnly) 12.dp else 9.dp)
         } else {
-            Box(Modifier.size(5.dp).alpha(blink).clip(RoundedCornerShape(1.dp)).background(look.color))
+            Box(Modifier.size(if (indicatorOnly) 9.dp else 5.dp).alpha(blink).clip(if (indicatorOnly) CircleShape else RoundedCornerShape(1.dp)).background(look.color))
         }
-        Text(look.label.uppercase(), style = LocalOfficeType.current.eyebrow.copy(color = look.color, fontSize = 9.5.sp))
+        if (!indicatorOnly) Text(look.label.uppercase(), style = LocalOfficeType.current.eyebrow.copy(color = look.color, fontSize = 9.5.sp))
     }
 }
 
 /** Three bars that rise and fall in turn: a worker mid-turn. */
 @Composable
-fun WorkingBars(color: Color, height: Dp = 8.dp) {
+fun WorkingBars(color: Color, height: Dp = 8.dp, width: Dp = 9.dp) {
     val t = rememberInfiniteTransition(label = "bars")
     val bars = (0 until 3).map { i ->
         t.animateFloat(0.3f, 1f, infiniteRepeatable(tween(420, easing = FastOutSlowInEasing), RepeatMode.Reverse, StartOffset(i * 140)), label = "bar$i")
     }
-    Canvas(Modifier.width(9.dp).height(height)) {
+    Canvas(Modifier.width(width).height(height)) {
         val w = size.width / 5
         bars.forEachIndexed { i, a ->
             val h = size.height * a.value
-            drawRect(color, topLeft = Offset(i * 2 * w, size.height - h), size = androidx.compose.ui.geometry.Size(w, h))
+            drawRoundRect(color, topLeft = Offset(i * 2 * w, size.height - h), size = androidx.compose.ui.geometry.Size(w, h), cornerRadius = CornerRadius(w / 2))
         }
     }
 }
