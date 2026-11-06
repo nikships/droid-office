@@ -445,11 +445,20 @@ object ClientMsg {
     fun pr(workerId: String) = obj("worker.pr") { put("workerId", workerId) }
     fun worktree(workerId: String) = obj("worker.worktree") { put("workerId", workerId) }
 
+    fun fork(workerId: String, prompt: String?, requestId: String, floor: String?) = obj("worker.fork") {
+        put("workerId", workerId)
+        prompt?.trim()?.takeIf { it.isNotEmpty() }?.let { put("prompt", it) }
+        put("requestId", requestId)
+        floor?.let { put("requestFloor", it) }
+    }
+
     /** [deleteSession]: a cloud worker's Factory session is deleted too, not just left on the account. */
-    fun kill(workerId: String, cleanup: String?, deleteSession: Boolean = false) = obj("worker.kill") {
+    fun kill(workerId: String, cleanup: String?, deleteSession: Boolean = false, requestId: String? = null, floor: String? = null) = obj("worker.kill") {
         put("workerId", workerId)
         if (cleanup != null) put("cleanup", cleanup)
         if (deleteSession) put("deleteSession", true)
+        requestId?.let { put("requestId", it) }
+        floor?.let { put("requestFloor", it) }
     }
 
     fun floorGo(floor: String) = obj("floor.go") { put("floor", floor) }

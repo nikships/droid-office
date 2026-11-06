@@ -8,6 +8,7 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
 import androidx.compose.foundation.gestures.scrollBy
 import androidx.compose.foundation.horizontalScroll
@@ -139,6 +140,7 @@ fun HomeScreen(onOpenWorker: (String) -> Unit, selected: String?, onCloseWorker:
     val store by graph.store.snapshot.collectAsStateWithLifecycle()
     val office = store.active
     var hiring by rememberSaveable { mutableStateOf(false) }
+    var actionWorker by remember(data.officeId, data.floorId) { mutableStateOf<String?>(null) }
 
     // The catalogue names the models on the cards.
     LaunchedEffect(link.phase, link.officeId) { if (link.phase == Phase.Connected) connection.models() }
@@ -155,6 +157,7 @@ fun HomeScreen(onOpenWorker: (String) -> Unit, selected: String?, onCloseWorker:
                     data = data,
                     selected = if (wide) selected else null,
                     onOpen = onOpenWorker,
+                    onActions = { actionWorker = it },
                     onOffices = onOffices,
                     onScan = onScan,
                     onHire = { hiring = true },
@@ -188,6 +191,11 @@ fun HomeScreen(onOpenWorker: (String) -> Unit, selected: String?, onCloseWorker:
         }
     }
     if (hiring) HireSheet(onDismiss = { hiring = false })
+    actionWorker?.let { id ->
+        val worker = data.workers[id]
+        if (worker != null) WorkerActionsSheet(worker, onDismiss = { actionWorker = null })
+        else LaunchedEffect(id) { actionWorker = null }
+    }
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -199,6 +207,7 @@ private fun WorkerList(
     data: OfficeData,
     selected: String?,
     onOpen: (String) -> Unit,
+    onActions: (String) -> Unit,
     onOffices: () -> Unit,
     onScan: () -> Unit,
     onHire: () -> Unit,
@@ -247,12 +256,12 @@ private fun WorkerList(
                     verticalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
                     items(rows, key = { it.worker.id }) { row ->
-                        WorkerCard(row, data, now, row.worker.id == selected, onOpen, Modifier.animateItem())
+                        WorkerCard(row, data, now, row.worker.id == selected, onOpen, onActions, Modifier.animateItem())
                     }
                     if (stations.isNotEmpty()) {
                         item(key = "stations") { Eyebrow("At the kiosks", Modifier.padding(top = 14.dp, start = 4.dp, bottom = 2.dp)) }
                         items(stations, key = { it.id }) { w ->
-                            WorkerCard(WorkerRow(w, 0, 0, null), data, now, w.id == selected, onOpen, Modifier.animateItem())
+                            WorkerCard(WorkerRow(w, 0, 0, null), data, now, w.id == selected, onOpen, onActions, Modifier.animateItem())
                         }
                     }
                 }
@@ -436,7 +445,7 @@ internal fun FloorChips(data: OfficeData, onFloor: (String) -> Unit) {
 }
 
 @Composable
-private fun WorkerCard(row: WorkerRow, data: OfficeData, now: Long, selected: Boolean, onOpen: (String) -> Unit, modifier: Modifier = Modifier) {
+internal fun WorkerCard(row: WorkerRow, data: OfficeData, now: Long, selected: Boolean, onOpen: (String) -> Unit, onActions: (String) -> Unit, modifier: Modifier = Modifier) {
     val w = row.worker
     val graph = LocalGraph.current
     val catalogue by graph.connection.catalogue.collectAsStateWithLifecycle()
@@ -459,7 +468,12 @@ private fun WorkerCard(row: WorkerRow, data: OfficeData, now: Long, selected: Bo
         Column(
             Modifier.weight(1f)
                 .panel(RoundedCornerShape(12.dp), if (loud) Palette.Danger.copy(alpha = 0.05f) else Palette.Surface, border)
-                .clickable(onClickLabel = "Open ${w.name.ifBlank { w.id }}") { onOpen(w.id) }
+                .combinedClickable(
+                    onClickLabel = "Open ${w.name.ifBlank { w.id }}",
+                    onLongClickLabel = "Worker actions",
+                    onLongClick = { onActions(w.id) },
+                    onClick = { onOpen(w.id) },
+                )
                 .tagged(Tags.Home.worker(w.id))
                 .padding(start = 8.dp, end = 12.dp, top = 10.dp, bottom = 12.dp),
         ) {
@@ -488,7 +502,7 @@ private fun WorkerCard(row: WorkerRow, data: OfficeData, now: Long, selected: Bo
                         if (rest.isNotEmpty()) Text(if (shown != null) "· $rest" else rest, style = metaStyle, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f, fill = false))
                     }
                 }
-                StatusPill(state, acked = w.acked, tag = Tags.Home.CARD_STATUS)
+                StatusPill(state, acked = w.acked, tag = Tags.Home.CARD_STATUS, compact = true)
             }
             val title = Workers.title(w)
             val detail = Workers.detail(w)

@@ -186,7 +186,7 @@ class OfficeConnection(
     @Volatile private var hireAskedAt = 0L
     private var models: Triple<String, Long, ModelCatalogue>? = null
     private val slash = ConcurrentHashMap<String, Triple<String, Long, List<DroidCommand>>>()
-    private val answerRequests = ConcurrentHashMap<String, CompletableDeferred<ServerMsg.ActionResult?>>()
+    private val actionRequests = ConcurrentHashMap<String, CompletableDeferred<ServerMsg.ActionResult?>>()
     /** Changes when a socket ends, so a delayed answer cannot cross a reconnection. */
     var answerEpoch: Long = 0
         private set
@@ -226,14 +226,17 @@ class OfficeConnection(
     fun send(json: String): Boolean = socket?.takeIf { _link.value.phase == Phase.Connected }?.send(json) ?: false
 
     /** A successful socket write is not an answer receipt. Never queue or replay an answer. */
-    suspend fun answerConfirmed(requestId: String, json: String): ServerMsg.ActionResult? {
+    suspend fun answerConfirmed(requestId: String, json: String): ServerMsg.ActionResult? = actionConfirmed(requestId, json)
+
+    /** Await the office's receipt, without queuing or replaying an unconfirmed action. */
+    suspend fun actionConfirmed(requestId: String, json: String): ServerMsg.ActionResult? {
         val receipt = CompletableDeferred<ServerMsg.ActionResult?>()
-        answerRequests[requestId] = receipt
+        actionRequests[requestId] = receipt
         return try {
             if (!send(json)) return null
             withTimeoutOrNull(60_000) { receipt.await() }
         } finally {
-            answerRequests.remove(requestId)
+            actionRequests.remove(requestId)
         }
     }
 
@@ -566,8 +569,8 @@ class OfficeConnection(
             upgrade?.cancel()
             socket = null
             answerEpoch++
-            answerRequests.values.forEach { it.complete(null) }
-            answerRequests.clear()
+            actionRequests.values.forEach { it.complete(null) }
+            actionRequests.clear()
             ws.cancel()
             whiteboard.status(false)
         }
@@ -625,7 +628,7 @@ class OfficeConnection(
             is ServerMsg.Whiteboard -> whiteboard.handle(msg.t, msg.obj)
             is ServerMsg.Pinged -> _pinged.tryEmit(msg.result)
             is ServerMsg.ThreadSnapshot -> _threads.tryEmit(msg)
-            is ServerMsg.ActionResult -> answerRequests.remove(msg.requestId)?.complete(msg)
+            is ServerMsg.ActionResult -> actionRequests.remove(msg.requestId)?.complete(msg)
             is ServerMsg.Pong, is ServerMsg.Ignored -> Unit
         }
     }

@@ -94,8 +94,9 @@ fun Modifier.tagged(name: String) = this.semantics {
 
 /** A square mono pill with a status-colored indicator; it blinks for "needs you", like the office's. */
 @Composable
-fun StatusPill(status: WorkerStatus, modifier: Modifier = Modifier, acked: Boolean = true, tag: String? = null) {
+fun StatusPill(status: WorkerStatus, modifier: Modifier = Modifier, acked: Boolean = true, tag: String? = null, compact: Boolean = false) {
     val look = statusLook(status, acked)
+    val indicatorOnly = compact && (status == WorkerStatus.Working || status == WorkerStatus.Done)
     val blink = if (look.loud) {
         val t = rememberInfiniteTransition(label = "blink")
         t.animateFloat(1f, 0.25f, infiniteRepeatable(tween(600, easing = LinearEasing), RepeatMode.Reverse), label = "blink").value
@@ -110,19 +111,23 @@ fun StatusPill(status: WorkerStatus, modifier: Modifier = Modifier, acked: Boole
                     testTag = tag
                 }
             }
-            .clip(RoundedCornerShape(3.dp))
-            .background(if (look.loud) look.color.copy(alpha = 0.12f) else Palette.SurfaceRaised)
-            .border(1.dp, look.color.copy(alpha = if (look.loud) 0.55f else 0.35f), RoundedCornerShape(3.dp))
-            .padding(horizontal = 7.dp, vertical = 4.dp),
+            .then(
+                if (indicatorOnly) Modifier.padding(horizontal = 8.dp, vertical = 8.dp)
+                else Modifier
+                    .clip(RoundedCornerShape(3.dp))
+                    .background(if (look.loud) look.color.copy(alpha = 0.12f) else Palette.SurfaceRaised)
+                    .border(1.dp, look.color.copy(alpha = if (look.loud) 0.55f else 0.35f), RoundedCornerShape(3.dp))
+                    .padding(horizontal = 7.dp, vertical = 4.dp),
+            ),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(6.dp),
     ) {
         if (status == WorkerStatus.Working || status == WorkerStatus.Starting) {
             WorkingBars(look.color)
         } else {
-            Box(Modifier.size(5.dp).alpha(blink).clip(RoundedCornerShape(1.dp)).background(look.color))
+            Box(Modifier.size(if (indicatorOnly) 8.dp else 5.dp).alpha(blink).clip(RoundedCornerShape(1.dp)).background(look.color))
         }
-        Text(look.label.uppercase(), style = LocalOfficeType.current.eyebrow.copy(color = look.color, fontSize = 9.5.sp))
+        if (!indicatorOnly) Text(look.label.uppercase(), style = LocalOfficeType.current.eyebrow.copy(color = look.color, fontSize = 9.5.sp))
     }
 }
 
