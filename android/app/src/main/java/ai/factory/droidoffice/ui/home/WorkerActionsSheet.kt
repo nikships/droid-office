@@ -34,7 +34,6 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import ai.factory.droidoffice.core.Tags
 import ai.factory.droidoffice.core.WorkerActions
@@ -42,8 +41,7 @@ import ai.factory.droidoffice.core.WorkerInfo
 import ai.factory.droidoffice.session.Phase
 import ai.factory.droidoffice.ui.LocalGraph
 import ai.factory.droidoffice.ui.components.tagged
-import ai.factory.droidoffice.ui.components.parseColor
-import ai.factory.droidoffice.ui.theme.LocalOfficeType
+import ai.factory.droidoffice.ui.components.statusLook
 import ai.factory.droidoffice.ui.theme.OfficeIcons
 import ai.factory.droidoffice.ui.theme.Palette
 import ai.factory.droidoffice.ui.worker.ForkWorkerDialog
@@ -78,23 +76,29 @@ fun WorkerActionsSheet(worker: WorkerInfo, onDismiss: () -> Unit) {
             modifier = Modifier.tagged(Tags.WorkerActions.SHEET),
         ) {
             Column(
-                Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(start = 20.dp, end = 20.dp, bottom = 20.dp),
-                verticalArrangement = Arrangement.spacedBy(20.dp),
+                Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(start = 20.dp, end = 20.dp, bottom = 16.dp),
+                verticalArrangement = Arrangement.spacedBy(16.dp),
             ) {
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                     Box(Modifier.size(44.dp).clip(RoundedCornerShape(12.dp)).background(Palette.SurfaceHigh).border(1.dp, Palette.Border, RoundedCornerShape(12.dp)), contentAlignment = Alignment.Center) {
-                        Icon(if (worker.isShell) OfficeIcons.Shell else OfficeIcons.Agent, null, Modifier.size(24.dp), tint = parseColor(worker.color))
+                        Icon(if (worker.isShell) OfficeIcons.Shell else OfficeIcons.Agent, null, Modifier.size(24.dp), tint = Palette.TextSecondary)
                     }
                     Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
                         Text(worker.name.ifBlank { worker.id }, style = MaterialTheme.typography.headlineSmall, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.tagged(Tags.WorkerActions.NAME))
-                        Text("Worker actions", style = MaterialTheme.typography.bodySmall)
+                        val kind = when {
+                            worker.isShell -> "Shell"
+                            worker.isCloud -> "Cloud Droid"
+                            worker.remote -> "Remote Droid"
+                            else -> "Local Droid"
+                        }
+                        Text("$kind · ${statusLook(worker.state, worker.acked).label}", style = MaterialTheme.typography.bodySmall)
                     }
                 }
                 Column(Modifier.clip(RoundedCornerShape(12.dp)).background(Palette.SurfaceHover).border(1.dp, Palette.Border, RoundedCornerShape(12.dp))) {
                     WorkerActionRow(
-                        label = "FORK",
+                        label = "Fork",
                         description = refusal ?: "Continue in a new worker",
-                        icon = OfficeIcons.Branch,
+                        icon = OfficeIcons.Fork,
                         enabled = refusal == null,
                         tag = Tags.WorkerActions.FORK,
                         descriptionTag = if (refusal != null) Tags.WorkerActions.FORK_REASON else null,
@@ -105,9 +109,9 @@ fun WorkerActionsSheet(worker: WorkerInfo, onDismiss: () -> Unit) {
                     )
                     HorizontalDivider(Modifier.padding(horizontal = 16.dp), color = Palette.Border)
                     WorkerActionRow(
-                        label = "DISMISS",
+                        label = "Dismiss",
                         description = "Remove from this floor",
-                        icon = OfficeIcons.Door,
+                        icon = OfficeIcons.Trash,
                         enabled = live,
                         tag = Tags.WorkerActions.DISMISS,
                         color = Palette.Danger,
@@ -123,15 +127,14 @@ fun WorkerActionsSheet(worker: WorkerInfo, onDismiss: () -> Unit) {
 private fun WorkerActionRow(label: String, description: String, icon: ImageVector, enabled: Boolean, tag: String, onClick: () -> Unit, color: Color = Palette.Text, descriptionTag: String? = null) {
     val ink = if (enabled) color else Palette.TextSecondary
     Row(
-        Modifier.fillMaxWidth().heightIn(min = 80.dp).clickable(enabled = enabled, role = Role.Button, onClick = onClick).tagged(tag).padding(horizontal = 16.dp, vertical = 16.dp),
+        Modifier.fillMaxWidth().heightIn(min = 72.dp).clickable(enabled = enabled, role = Role.Button, onClick = onClick).tagged(tag).padding(horizontal = 16.dp, vertical = 14.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(16.dp),
     ) {
         Icon(icon, null, Modifier.size(22.dp), tint = ink)
         Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-            Text(label, style = LocalOfficeType.current.eyebrow.copy(fontSize = 13.sp, color = ink))
+            Text(label, style = MaterialTheme.typography.titleMedium, color = ink)
             Text(description, style = MaterialTheme.typography.bodySmall, modifier = if (descriptionTag != null) Modifier.tagged(descriptionTag) else Modifier)
         }
-        Icon(OfficeIcons.Chevron, null, Modifier.size(18.dp), tint = if (enabled) Palette.TextSecondary else Palette.TextTertiary)
     }
 }
