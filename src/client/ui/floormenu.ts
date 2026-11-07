@@ -70,26 +70,25 @@ export function toggleFloorMenu(anchor: HTMLElement, opts: FloorMenuOptions): vo
   const branchSelect = h('select.select', { 'aria-label': 'Floor branch', disabled: true }) as HTMLSelectElement;
   const branchError = h('p.field-error', { role: 'alert' });
   const branchNote = h('p.field-hint', {}, 'New workers start here. Existing worktrees stay on their branches.');
-  const apply = h('button.btn.accent.sm', { type: 'button', disabled: true }, 'Switch branch') as HTMLButtonElement;
   let pending = true;
   let selected: string | null = null;
   let request = String(++branchRequest);
-  const changed = () => {
-    apply.disabled = pending || (branchSelect.value || null) === selected;
-  };
-  branchSelect.addEventListener('change', changed);
-  apply.addEventListener('click', () => {
-    if (!floor || pending) return;
+  branchSelect.addEventListener('change', () => {
+    const branch = branchSelect.value || null;
+    if (!floor || branch === selected) return;
+    if (pending) {
+      branchSelect.value = selected ?? '';
+      return;
+    }
     pending = true;
-    changed();
     branchSelect.disabled = true;
     branchError.textContent = '';
     request = String(++branchRequest);
-    if (!opts.net.send({ t: 'floor.branch', floor: floor.id, request, branch: branchSelect.value || null })) {
+    if (!opts.net.send({ t: 'floor.branch', floor: floor.id, request, branch })) {
       pending = false;
+      branchSelect.value = selected ?? '';
       branchSelect.disabled = false;
       branchError.textContent = 'Disconnected. Reconnect and try again.';
-      changed();
     }
   });
   const onBranches = (msg: Extract<ServerMsg, { t: 'floor.branches' }>) => {
@@ -105,10 +104,9 @@ export function toggleFloorMenu(anchor: HTMLElement, opts: FloorMenuOptions): vo
     branchSelect.title = selected ?? msg.defaultBranch ?? '';
     branchSelect.disabled = !msg.branches.length && !selected;
     branchError.textContent = msg.error ?? '';
-    changed();
   };
   if (floor?.branch) {
-    branchSection.append(h('label.eyebrow', {}, 'Floor branch'), branchSelect, branchNote, h('div.row', {}, apply), branchError);
+    branchSection.append(h('label.eyebrow', {}, 'Floor branch'), branchSelect, branchNote, branchError);
     branchWaiters.add(onBranches);
     if (!opts.net.send({ t: 'floor.branches', floor: floor.id, request })) branchError.textContent = 'Disconnected. Reopen this menu after reconnecting.';
   }
@@ -188,7 +186,6 @@ export function toggleFloorMenu(anchor: HTMLElement, opts: FloorMenuOptions): vo
       if (floor && !pending && selected !== (store.currentFloor()?.selectedBranch ?? null)) {
         request = String(++branchRequest);
         pending = opts.net.send({ t: 'floor.branches', floor: floor.id, request });
-        changed();
       }
     }),
     store.on('floor', () => close()),
