@@ -135,7 +135,7 @@
     label: string;
     el: HTMLElement;
   }
-  let menu: { select: HTMLSelectElement; host: HTMLElement; rows: Row[]; active: number; close: () => void } | null = null;
+  let menu: { select: HTMLSelectElement; host: HTMLElement; rows: Row[]; active: number; close: () => void; pick: (x: number, y: number) => void } | null = null;
   const plainSelect = (t: EventTarget | null): HTMLSelectElement | null => (t instanceof HTMLSelectElement && !t.multiple && t.size <= 1 && !t.disabled ? t : null);
 
   // Registered once, here, ahead of every script the page runs: a window with its own capturing Esc handler (the office's)
@@ -154,6 +154,32 @@
           return;
         }
         menuKey?.(key);
+      },
+      true,
+    );
+  }
+
+  // A native list takes the mouse for itself, so nothing in the page hears a click on it. Without this, a popup the select
+  // sits in that closes on a press outside itself (the floor menu, say) would see the list as outside and close under it.
+  // Registered ahead of the page's capturing listeners so they never run; the list picks the row here instead. Picking
+  // removes the list before its click, which then lands on the page, so that click is swallowed too.
+  let pickedClick = false;
+  for (const type of ['pointerdown', 'mousedown', 'pointerup', 'mouseup', 'click', 'auxclick', 'dblclick', 'contextmenu']) {
+    window.addEventListener(
+      type,
+      (e) => {
+        if (type === 'pointerdown') pickedClick = false;
+        const picked = type === 'click' && pickedClick;
+        if (picked) pickedClick = false;
+        else if (!menu || !e.composedPath().includes(menu.host)) return;
+        e.stopImmediatePropagation();
+        // A cancelled pointerdown would stop Chromium sending the mousedown and mouseup the list picks with.
+        if (!type.startsWith('pointer')) e.preventDefault();
+        const mouse = e as MouseEvent;
+        if (menu && type === 'mouseup' && mouse.button === 0) {
+          pickedClick = true;
+          menu.pick(mouse.clientX, mouse.clientY);
+        }
       },
       true,
     );
@@ -203,7 +229,7 @@
       });
       rows[active]?.el.scrollIntoView({ block: 'nearest' });
     };
-    const state = { select, host, rows, active: selected, close: () => {} };
+    const state = { select, host, rows, active: selected, close: () => {}, pick: (_x: number, _y: number) => {} };
     const choose = (i: number) => {
       const row = rows[i];
       if (!row?.option) return;
@@ -245,10 +271,13 @@
       window.removeEventListener('wheel', onOutside, true);
       host.remove();
     };
+    state.pick = (x, y) => {
+      const hit = root.elementFromPoint(x, y);
+      const i = rows.findIndex((r) => r.el === hit);
+      if (i >= 0) choose(i);
+    };
     rows.forEach((r, i) => {
       r.el.addEventListener('mousemove', () => r.option && state.active !== i && paint((state.active = i)));
-      r.el.addEventListener('mouseup', () => choose(i));
-      r.el.addEventListener('mousedown', (e) => e.preventDefault());
     });
     root.append(list);
     document.documentElement.append(host);
