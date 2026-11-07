@@ -503,7 +503,7 @@ internal fun WorkerCard(row: WorkerRow, data: OfficeData, now: Long, selected: B
             val detail = Workers.detail(w)
             if (title != null || detail != null) {
                 Column(Modifier.padding(start = 26.dp, top = 6.dp)) {
-                    if (title != null) Text(title, style = MaterialTheme.typography.bodyMedium, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.tagged(Tags.Home.CARD_TITLE))
+                    if (title != null) Text(title, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.tagged(Tags.Home.CARD_TITLE))
                     if (detail != null && detail != title) {
                         Text(
                             detail,

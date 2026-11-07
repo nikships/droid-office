@@ -2368,7 +2368,7 @@ html:has(body.dashboard), body.dashboard { overflow: auto; }
 .dash-todo-bar::-webkit-progress-value { border-radius: 2px; background: var(--accent); }
 .dash-todo-bar::-moz-progress-bar { border-radius: 2px; background: var(--accent); }
 .dash-todo-count { flex: none; font: 400 10px/13px var(--font-mono); letter-spacing: .04em; color: var(--text-secondary); }
-.dash-row-doing { overflow: hidden; font-size: var(--text-small); line-height: 17px; color: var(--text-secondary); text-overflow: ellipsis; white-space: nowrap; }
+.dash-row-doing { overflow-wrap: anywhere; font-size: var(--text-small); line-height: 17px; color: var(--text-secondary); }
 .dash-row-meta { display: flex; align-items: center; gap: var(--space-2); min-height: 14px; margin-top: 2px; padding-right: var(--space-7); overflow: hidden; font: 400 10px/13px var(--font-mono); text-transform: uppercase; letter-spacing: .08em; color: #8a8a8a; text-overflow: ellipsis; white-space: nowrap; }
 .dash-row-meta > .model-badge { flex: 0 1 auto; }
 .dash-row-meta-sep { flex: none; color: #555; }
