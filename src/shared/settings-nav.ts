@@ -169,9 +169,7 @@ export function settingsPaneAfter(current: SettingsPane, key: string, surface: S
   if (key === 'End') return panes[panes.length - 1].id;
   const step = { ArrowDown: 1, ArrowRight: 1, ArrowUp: -1, ArrowLeft: -1 }[key];
   if (!step) return null;
-  const i = Math.max(
-    0,
-    panes.findIndex((p) => p.id === current),
-  );
+  const i = panes.findIndex((p) => p.id === current);
+  if (i < 0) return null;
   return panes[(i + step + panes.length) % panes.length].id;
 }

@@ -1078,7 +1078,8 @@ export function openSettings(net: Net, opts: SettingsOptions) {
     row.scrollIntoView({ block: 'center' });
     flashTimer = setTimeout(() => row.classList.remove('flash'), 2000);
   };
-  let lastPane = lastPanes[surface] ?? shown[0].id;
+  const remembered = lastPanes[surface];
+  let lastPane = remembered && shown.some((p) => p.id === remembered) ? remembered : shown[0].id;
   const show = (id: SettingsPane) => {
     lastPane = lastPanes[surface] = id;
     searchInput.value = '';

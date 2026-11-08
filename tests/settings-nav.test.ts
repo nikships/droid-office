@@ -232,4 +232,6 @@ test('a companion’s search and arrow keys stay among its own settings', () => 
   assert.equal(settingsPaneAfter('models', 'Home', 'companion'), 'workers');
   assert.equal(settingsPaneAfter('models', 'End', 'companion'), 'office');
   assert.equal(settingsPaneAfter('models', 'End', 'mac-companion'), 'phone');
+  assert.equal(settingsPaneAfter('you', 'ArrowDown', 'companion'), null, 'a pane the surface lacks moves nowhere');
+  assert.equal(settingsPaneAfter('phone', 'ArrowUp', 'companion'), null);
 });
