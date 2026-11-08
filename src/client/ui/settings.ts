@@ -2,7 +2,7 @@ import type { Net } from '../net';
 import { store, type Settings, type Sidearm } from '../state';
 import { askNotifyPermission, notifyPermission, type DesktopNotifier } from '../notify';
 import { SUBAGENT_MAX_PER_LEAD, type AgentChoice, type SubagentSettings } from '../../shared/protocol';
-import { SETTINGS_CARDS, SETTINGS_PANES, searchSettings, settingsPaneAfter, type SettingsCardTitle, type SettingsPane } from '../../shared/settings-nav';
+import { SETTINGS_PANES, searchSettings, settingsCards, settingsPaneAfter, settingsPanes, type SettingsCardTitle, type SettingsPane, type SettingsSurface } from '../../shared/settings-nav';
 import { claimEscape, h, openModal, timeAgo } from './dom';
 import { onJiraSetup } from './jira';
 import { disclosure, field, toggle as kitToggle } from './kit';
@@ -68,8 +68,8 @@ const nest = (...rows: Node[]) => h('div.group-nest', {}, ...rows);
 /** A setting's description, its text set by whoever paints it. */
 const desc = (text = '') => h('small', {}, text);
 
-/** Where Settings was last, so it opens there again. */
-let lastPane: SettingsPane = 'you';
+/** Where Settings was last on each surface, so it opens there again. */
+const lastPanes: Partial<Record<SettingsSurface, SettingsPane>> = {};
 
 /** An on/off switch for one setting; `paint` sets it from `now`. */
 function toggle(label: string, now: () => boolean, pick: (on: boolean) => void) {
@@ -127,24 +127,32 @@ function subagentSettings(): SubagentSettings {
   return { officeMcp: officeMcp ?? true, on, worktree, maxPerLead, wakeLead, visits: visits ?? true, denyTask: denyTask ?? true, ...(agent ? { agent } : {}), ...(models?.length ? { models } : {}) };
 }
 
-/**
- * `outside` describes the sky over the office (see describeSky), once the server has said. `first` opens on that category instead of the last one.
- * `hireForSetup` opens the hire window with a task to write the repository's worktree setup.
- * `previewAlerts` plays the three worker tones, so the mute can be checked by ear.
- */
-export function openSettings(
-  net: Net,
-  settings: Settings,
-  onChange: (s: Settings) => void,
-  onCharacter: () => void,
-  previewSound: () => void,
-  previewAlerts: () => void,
-  notifier: DesktopNotifier,
-  outside?: { now: string; live: boolean },
-  first?: SettingsPane,
-  hireForSetup?: () => void,
-  renderer?: { remastered: () => boolean; set: (remastered: boolean) => void; hdr: () => boolean; setHdr: (on: boolean) => void; hdrNote: () => string },
-) {
+/** What only the 3D office's Settings has: you, your sound, how it draws, Jira, the sky and source hot reload. */
+export interface OfficeSettings {
+  /** This browser's own settings; `onChange` saves and applies them. */
+  settings: Settings;
+  onChange: (s: Settings) => void;
+  onCharacter: () => void;
+  previewSound: () => void;
+  /** Plays the three worker tones, so the mute can be checked by ear. */
+  previewAlerts: () => void;
+  notifier: DesktopNotifier;
+  /** The sky over the office (see describeSky), once the server has said. */
+  outside?: { now: string; live: boolean };
+  renderer?: { remastered: () => boolean; set: (remastered: boolean) => void; hdr: () => boolean; setHdr: (on: boolean) => void; hdrNote: () => string };
+}
+
+export type SettingsOptions = {
+  /** Opens on this category instead of the last one, when the surface has it. */
+  first?: SettingsPane;
+  /** Opens the hire window with a task to write the repository's worktree setup. */
+  hireForSetup?: () => void;
+} & ({ surface: 'office'; office: OfficeSettings } | { surface: 'companion' | 'mac-companion'; office?: undefined });
+
+/** The 3D office's own rows. `dispose` stops what they listen to. */
+function officeRows(net: Net, office: OfficeSettings) {
+  let settings = office.settings;
+  const { onChange, previewSound, previewAlerts, notifier, outside, renderer } = office;
   // ---- You ----------------------------------------------------------------------------------------
   const character = h('button.btn', { type: 'button' }, 'Change look & name');
   const sidearmNote = desc();
@@ -387,6 +395,224 @@ export function openSettings(
   paintRenderer();
   paintHdr();
 
+  // ---- Connections: Jira --------------------------------------------------------------------------
+  // Jira: the office's one account (a read-only token is enough), and the epic this floor's issue board shows.
+  const jiraSite = h('input.input', { type: 'text', placeholder: 'https://your-site.atlassian.net', 'aria-label': 'Jira Cloud site', spellcheck: 'false', autocomplete: 'off' }) as HTMLInputElement;
+  const jiraEmail = h('input.input', { type: 'email', placeholder: 'you@example.com', 'aria-label': 'Atlassian account email', spellcheck: 'false', autocomplete: 'off' }) as HTMLInputElement;
+  const jiraToken = h('input.input', { type: 'password', placeholder: 'Read-only is enough', 'aria-label': 'Atlassian API token', spellcheck: 'false', autocomplete: 'new-password' }) as HTMLInputElement;
+  const jiraConnect = h('button.btn.primary', { type: 'button' }, 'Connect') as HTMLButtonElement;
+  const jiraCancel = h('button.btn.ghost', { type: 'button' }, 'Cancel');
+  const jiraForm = h('div.stack.tight.jira-form', {}, field('Site', jiraSite), field('Account email', jiraEmail), field('API token', jiraToken), h('div.row', {}, jiraConnect, jiraCancel));
+  const jiraChange = h('button.btn.sm', { type: 'button' }, 'Change');
+  const jiraRemove = h('button.btn.sm.danger', { type: 'button' }, 'Remove');
+  const jiraActions = h('div.row', {}, jiraChange, jiraRemove);
+  const jiraNote = desc();
+  const jiraFail = h('p.note.bad', { role: 'alert' });
+  const epicInput = h('input.input', { type: 'text', placeholder: 'Epic key, e.g. EDP-168', 'aria-label': 'Jira epic for this floor', spellcheck: 'false', autocomplete: 'off' }) as HTMLInputElement;
+  const epicSave = h('button.btn', { type: 'button' }, 'Set epic') as HTMLButtonElement;
+  const epicRemove = h('button.btn.ghost', { type: 'button' }, 'Remove epic');
+  const epicRow = h('div.row.wrap', {}, h('div.input-group.grow', {}, epicInput, epicSave), epicRemove);
+  const epicNote = desc();
+  const epicFail = h('p.note.bad', { role: 'alert' });
+  const epicCard = card("This floor's Jira epic", { desc: epicNote, below: [epicRow, epicFail] });
+  let editingJira = false;
+  let jiraBusy: '' | 'connect' | 'epic' = '';
+  let jiraError = '';
+  let epicError = '';
+  const paintJira = () => {
+    const { connection, epic } = store.jira;
+    jiraForm.classList.toggle('hidden', !!connection && !editingJira);
+    jiraCancel.classList.toggle('hidden', !connection);
+    jiraActions.classList.toggle('hidden', !connection || editingJira);
+    jiraConnect.disabled = jiraBusy === 'connect';
+    jiraConnect.textContent = jiraBusy === 'connect' ? 'Checking…' : 'Connect';
+    jiraFail.classList.toggle('hidden', !jiraError);
+    jiraFail.textContent = jiraError;
+    jiraNote.textContent = connection
+      ? `Reading ${connection.site} as ${connection.name === connection.email ? connection.email : `${connection.name} (${connection.email})`}. The office only reads Jira; it never changes a ticket.`
+      : 'Connect with your site, email and an API token from https://id.atlassian.com/manage-profile/security/api-tokens (read:jira-work is enough). Each floor then picks its own epic.';
+    epicCard.classList.toggle('hidden', !connection || !store.floor);
+    epicRemove.classList.toggle('hidden', !epic);
+    epicSave.disabled = jiraBusy === 'epic';
+    epicSave.textContent = jiraBusy === 'epic' ? 'Checking…' : 'Set epic';
+    if (!epicInput.value && epic) epicInput.value = epic.key;
+    epicFail.classList.toggle('hidden', !epicError);
+    epicFail.textContent = epicError;
+    epicNote.textContent = epic
+      ? `This floor’s issue board has a Jira tab for ${epic.key}${epic.summary ? ` (“${epic.summary}”)` : ''}, in To Do, In Progress and Done.`
+      : 'Give this floor an epic and its issue board gets a Jira tab with the epic’s tickets.';
+  };
+  const offSetup = onJiraSetup((msg) => {
+    if (msg.step === 'connect') {
+      jiraBusy = '';
+      jiraError = msg.error ?? '';
+      if (msg.ok) {
+        editingJira = false;
+        jiraToken.value = '';
+      }
+    } else {
+      jiraBusy = '';
+      epicError = msg.error ?? '';
+    }
+    paintJira();
+  });
+  paintJira();
+  const connectJira = () => {
+    if (!jiraSite.value.trim()) return jiraSite.focus();
+    if (!jiraEmail.value.trim()) return jiraEmail.focus();
+    if (!jiraToken.value.trim()) return jiraToken.focus();
+    jiraBusy = 'connect';
+    jiraError = '';
+    net.send({ t: 'jira.connect', site: jiraSite.value.trim(), email: jiraEmail.value.trim(), token: jiraToken.value.trim() });
+    paintJira();
+  };
+  jiraConnect.addEventListener('click', connectJira);
+  jiraToken.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') connectJira();
+  });
+  jiraChange.addEventListener('click', () => {
+    editingJira = true;
+    jiraSite.value = store.jira.connection?.site ?? '';
+    jiraEmail.value = store.jira.connection?.email ?? '';
+    paintJira();
+    jiraToken.focus();
+  });
+  jiraCancel.addEventListener('click', () => {
+    editingJira = false;
+    jiraError = '';
+    jiraToken.value = '';
+    paintJira();
+  });
+  jiraRemove.addEventListener('click', () => {
+    if (confirm('Disconnect the office from Jira? Every floor’s Jira tab goes away until someone connects it again.')) net.send({ t: 'jira.disconnect' });
+  });
+  const saveEpic = () => {
+    const key = epicInput.value.trim();
+    if (!key) return epicInput.focus();
+    jiraBusy = 'epic';
+    epicError = '';
+    net.send({ t: 'jira.epic', key });
+    paintJira();
+  };
+  epicSave.addEventListener('click', saveEpic);
+  epicInput.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') saveEpic();
+  });
+  epicRemove.addEventListener('click', () => {
+    epicInput.value = '';
+    net.send({ t: 'jira.epic', key: '' });
+  });
+
+  const offJira = store.on('jira', paintJira);
+
+  // ---- Office & floors: the sky and source hot reload ---------------------------------------------
+  const sourceReload = hotReloadSettings();
+
+  return {
+    character,
+    you: [
+      group('Profile', card('Your character', { desc: desc('How you look and the name above your head.'), control: character })),
+      group(
+        'Controls',
+        card('What 7 puts in your hand', { desc: sidearmNote, control: sidearm.row }),
+        card('Look sensitivity', { desc: desc('How far the view turns for the same mouse movement. 1× is the office’s own speed.'), control: lookRow }),
+        card('Raw mouse input', {
+          desc: desc('Skips macOS pointer acceleration, so the same hand movement always turns the view the same amount. Applies the next time the office captures the mouse.'),
+          control: rawMouse.el,
+        }),
+      ),
+    ],
+    sound: [
+      group(
+        'Volume',
+        card('Office sounds', { desc: desc('Typing, thunder and the rest of the room. Muting it silences alerts too.'), control: soundRow }),
+        card('Jukebox', { desc: desc('Your own volume; the music is louder near the jukebox.'), control: musicRow }),
+      ),
+      group('Alerts', card('Alert sounds', { desc: desc('A short tone when a worker needs you, finishes, or its tests fail.'), control: alertRow }), card('Desktop notifications', { desc: notifyNote, control: notifyRow })),
+    ],
+    graphics: [
+      group('Quality', card('Renderer', { desc: rendererNote, control: rendererPick.row }), hdrRows, classicRows),
+      group(
+        'Performance',
+        card('Frame rate limit', {
+          desc: desc('The most frames a second while something moves; 40, 60 and 120 fit a 120 Hz display evenly. A still office idles lower.'),
+          control: fpsCap.row,
+        }),
+        card('Performance overlay', { desc: desc('Bottom right: frame rate and pacing, GPU time and load, and the render resolution.'), control: stats.el }),
+      ),
+      group('Lighting', card('Overhead lights', { desc: desc('How bright the ceiling lights are. At 0% the moon, the screens and the bounce light are all that light the room.'), control: overhead.row })),
+    ],
+    jira: group('Jira', card('Jira', { desc: jiraNote, below: [jiraForm, jiraFail, jiraActions] }), epicCard),
+    outside: outside
+      ? card('Outside', {
+          desc: desc(outside.live ? 'The office’s clock, and the live weather where it is.' : 'The office’s clock, and made-up weather. Start the office with --city for a real forecast.'),
+          control: outsideNow(outside.now),
+        })
+      : null,
+    hotReload: card('Source hot reload', { desc: sourceReload.note, below: [sourceReload.element] }),
+    dispose: () => {
+      offJira();
+      offSetup();
+      sourceReload.dispose();
+      window.removeEventListener('office:hdr', onHdrStatus);
+    },
+  };
+}
+
+/**
+ * Phone & web: pairing Android, the web companion's links and paired browsers, and bots on Tailscale.
+ * `companion` is Settings in the Mac app's companion, which turning the web companion off disconnects too.
+ */
+function phoneRows(companion: boolean): Node[] {
+  // Droid Office for Android: the pairing QR code is its own window, over this one.
+  const phoneOpen = h('button.btn.primary', { type: 'button' }, 'Pair a phone…');
+  const phoneStatus = h('span.setting-meta', {}, 'Checking for paired phones…');
+  const paintPhones = (list: PairedDevice[] | string) => {
+    if (typeof list === 'string') phoneStatus.textContent = list;
+    else if (!list.length) phoneStatus.textContent = 'No phones paired yet.';
+    else phoneStatus.textContent = `${list.length} paired: ${list.map((d) => `${d.name} (seen ${timeAgo(d.lastSeenAt)})`).join(', ')}.`;
+  };
+  void pairedPhones().then(paintPhones);
+  phoneOpen.addEventListener('click', () => openPhone(paintPhones));
+
+  // The web companion: /dashboard in a desktop browser. Its links and paired browsers are their own window.
+  const webOpen = h('button.btn.primary', { type: 'button' }, 'Links & browsers…');
+  const webStatus = h('span.setting-meta', {}, 'Checking the web companion…');
+  const paintWeb = (s: PairingState | string) => {
+    if (typeof s === 'string') webStatus.textContent = s;
+    else {
+      const n = s.devices.filter((d) => d.kind === 'browser').length;
+      webStatus.textContent = `${s.companion ? 'On' : 'Off'} · ${n ? `${n} browser${n === 1 ? '' : 's'} paired` : 'no browsers paired'} · ${s.local.replace(/^https?:\/\//, '')}/dashboard`;
+    }
+  };
+  void companionState().then(paintWeb);
+  webOpen.addEventListener('click', () => openCompanion(paintWeb, { companion }));
+
+  // External bots on the owner's Tailscale devices, as workers with their own desks.
+  const remoteMcp = remoteMcpSettings();
+
+  return [
+    group(
+      null,
+      card('Droid Office for Android', { desc: h('span.stack.tight', {}, desc('Hire, watch and prompt workers from your phone. A paired phone keeps working after restarts.'), phoneStatus), control: phoneOpen }),
+      card('Web companion', { desc: h('span.stack.tight', {}, desc('Your workers, their terminals and the Whiteboard in any desktop browser, at /dashboard.'), webStatus), control: webOpen }),
+      card('Tailscale MCP', {
+        desc: h('span.stack.tight', {}, desc('Bots on your own Tailscale devices, such as an OpenClaw agent, join as workers with their own desks through this MCP server.'), remoteMcp.meta),
+        control: remoteMcp.control,
+        below: [remoteMcp.panel],
+      }),
+    ),
+  ];
+}
+
+/**
+ * Settings: the categories down the side, the one picked on the right. `surface` decides which
+ * categories and settings there are (see SETTINGS_CARDS); the 3D office passes its own rows in `office`.
+ */
+export function openSettings(net: Net, opts: SettingsOptions) {
+  const { surface, first, hireForSetup } = opts;
+  const only = opts.surface === 'office' ? officeRows(net, opts.office) : undefined;
+  const shown = settingsPanes(surface);
   // ---- Workers ------------------------------------------------------------------------------------
   // Where a fresh worker starts: the latest main, or the branch the checkout is on.
   const freshNote = desc();
@@ -715,113 +941,6 @@ export function openSettings(
   paintSubagents();
 
   // ---- Connections --------------------------------------------------------------------------------
-  // Jira: the office's one account (a read-only token is enough), and the epic this floor's issue board shows.
-  const jiraSite = h('input.input', { type: 'text', placeholder: 'https://your-site.atlassian.net', 'aria-label': 'Jira Cloud site', spellcheck: 'false', autocomplete: 'off' }) as HTMLInputElement;
-  const jiraEmail = h('input.input', { type: 'email', placeholder: 'you@example.com', 'aria-label': 'Atlassian account email', spellcheck: 'false', autocomplete: 'off' }) as HTMLInputElement;
-  const jiraToken = h('input.input', { type: 'password', placeholder: 'Read-only is enough', 'aria-label': 'Atlassian API token', spellcheck: 'false', autocomplete: 'new-password' }) as HTMLInputElement;
-  const jiraConnect = h('button.btn.primary', { type: 'button' }, 'Connect') as HTMLButtonElement;
-  const jiraCancel = h('button.btn.ghost', { type: 'button' }, 'Cancel');
-  const jiraForm = h('div.stack.tight.jira-form', {}, field('Site', jiraSite), field('Account email', jiraEmail), field('API token', jiraToken), h('div.row', {}, jiraConnect, jiraCancel));
-  const jiraChange = h('button.btn.sm', { type: 'button' }, 'Change');
-  const jiraRemove = h('button.btn.sm.danger', { type: 'button' }, 'Remove');
-  const jiraActions = h('div.row', {}, jiraChange, jiraRemove);
-  const jiraNote = desc();
-  const jiraFail = h('p.note.bad', { role: 'alert' });
-  const epicInput = h('input.input', { type: 'text', placeholder: 'Epic key, e.g. EDP-168', 'aria-label': 'Jira epic for this floor', spellcheck: 'false', autocomplete: 'off' }) as HTMLInputElement;
-  const epicSave = h('button.btn', { type: 'button' }, 'Set epic') as HTMLButtonElement;
-  const epicRemove = h('button.btn.ghost', { type: 'button' }, 'Remove epic');
-  const epicRow = h('div.row.wrap', {}, h('div.input-group.grow', {}, epicInput, epicSave), epicRemove);
-  const epicNote = desc();
-  const epicFail = h('p.note.bad', { role: 'alert' });
-  const epicCard = card("This floor's Jira epic", { desc: epicNote, below: [epicRow, epicFail] });
-  let editingJira = false;
-  let jiraBusy: '' | 'connect' | 'epic' = '';
-  let jiraError = '';
-  let epicError = '';
-  const paintJira = () => {
-    const { connection, epic } = store.jira;
-    jiraForm.classList.toggle('hidden', !!connection && !editingJira);
-    jiraCancel.classList.toggle('hidden', !connection);
-    jiraActions.classList.toggle('hidden', !connection || editingJira);
-    jiraConnect.disabled = jiraBusy === 'connect';
-    jiraConnect.textContent = jiraBusy === 'connect' ? 'Checking…' : 'Connect';
-    jiraFail.classList.toggle('hidden', !jiraError);
-    jiraFail.textContent = jiraError;
-    jiraNote.textContent = connection
-      ? `Reading ${connection.site} as ${connection.name === connection.email ? connection.email : `${connection.name} (${connection.email})`}. The office only reads Jira; it never changes a ticket.`
-      : 'Connect with your site, email and an API token from https://id.atlassian.com/manage-profile/security/api-tokens (read:jira-work is enough). Each floor then picks its own epic.';
-    epicCard.classList.toggle('hidden', !connection || !store.floor);
-    epicRemove.classList.toggle('hidden', !epic);
-    epicSave.disabled = jiraBusy === 'epic';
-    epicSave.textContent = jiraBusy === 'epic' ? 'Checking…' : 'Set epic';
-    if (!epicInput.value && epic) epicInput.value = epic.key;
-    epicFail.classList.toggle('hidden', !epicError);
-    epicFail.textContent = epicError;
-    epicNote.textContent = epic
-      ? `This floor’s issue board has a Jira tab for ${epic.key}${epic.summary ? ` (“${epic.summary}”)` : ''}, in To Do, In Progress and Done.`
-      : 'Give this floor an epic and its issue board gets a Jira tab with the epic’s tickets.';
-  };
-  const offSetup = onJiraSetup((msg) => {
-    if (msg.step === 'connect') {
-      jiraBusy = '';
-      jiraError = msg.error ?? '';
-      if (msg.ok) {
-        editingJira = false;
-        jiraToken.value = '';
-      }
-    } else {
-      jiraBusy = '';
-      epicError = msg.error ?? '';
-    }
-    paintJira();
-  });
-  paintJira();
-  const connectJira = () => {
-    if (!jiraSite.value.trim()) return jiraSite.focus();
-    if (!jiraEmail.value.trim()) return jiraEmail.focus();
-    if (!jiraToken.value.trim()) return jiraToken.focus();
-    jiraBusy = 'connect';
-    jiraError = '';
-    net.send({ t: 'jira.connect', site: jiraSite.value.trim(), email: jiraEmail.value.trim(), token: jiraToken.value.trim() });
-    paintJira();
-  };
-  jiraConnect.addEventListener('click', connectJira);
-  jiraToken.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter') connectJira();
-  });
-  jiraChange.addEventListener('click', () => {
-    editingJira = true;
-    jiraSite.value = store.jira.connection?.site ?? '';
-    jiraEmail.value = store.jira.connection?.email ?? '';
-    paintJira();
-    jiraToken.focus();
-  });
-  jiraCancel.addEventListener('click', () => {
-    editingJira = false;
-    jiraError = '';
-    jiraToken.value = '';
-    paintJira();
-  });
-  jiraRemove.addEventListener('click', () => {
-    if (confirm('Disconnect the office from Jira? Every floor’s Jira tab goes away until someone connects it again.')) net.send({ t: 'jira.disconnect' });
-  });
-  const saveEpic = () => {
-    const key = epicInput.value.trim();
-    if (!key) return epicInput.focus();
-    jiraBusy = 'epic';
-    epicError = '';
-    net.send({ t: 'jira.epic', key });
-    paintJira();
-  };
-  epicSave.addEventListener('click', saveEpic);
-  epicInput.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter') saveEpic();
-  });
-  epicRemove.addEventListener('click', () => {
-    epicInput.value = '';
-    net.send({ t: 'jira.epic', key: '' });
-  });
-
   const droid = droidSettings(net);
   const factoryKey = factoryKeySettings(net);
   const subscriptions = subscriptionsSettings(net);
@@ -852,70 +971,10 @@ export function openSettings(
     if (e.key === 'Enter') saveDir();
   });
   dirDefault.addEventListener('click', () => net.send({ t: 'floor.projectsDir', dir: '' }));
-  const sourceReload = hotReloadSettings();
-
-  // ---- Phone & web --------------------------------------------------------------------------------
-  // Droid Office for Android: the pairing QR code is its own window, over this one.
-  const phoneOpen = h('button.btn.primary', { type: 'button' }, 'Pair a phone…');
-  const phoneStatus = h('span.setting-meta', {}, 'Checking for paired phones…');
-  const paintPhones = (list: PairedDevice[] | string) => {
-    if (typeof list === 'string') phoneStatus.textContent = list;
-    else if (!list.length) phoneStatus.textContent = 'No phones paired yet.';
-    else phoneStatus.textContent = `${list.length} paired: ${list.map((d) => `${d.name} (seen ${timeAgo(d.lastSeenAt)})`).join(', ')}.`;
-  };
-  void pairedPhones().then(paintPhones);
-  phoneOpen.addEventListener('click', () => openPhone(paintPhones));
-
-  // The web companion: /dashboard in a desktop browser. Its links and paired browsers are their own window.
-  const webOpen = h('button.btn.primary', { type: 'button' }, 'Links & browsers…');
-  const webStatus = h('span.setting-meta', {}, 'Checking the web companion…');
-  const paintWeb = (s: PairingState | string) => {
-    if (typeof s === 'string') webStatus.textContent = s;
-    else {
-      const n = s.devices.filter((d) => d.kind === 'browser').length;
-      webStatus.textContent = `${s.companion ? 'On' : 'Off'} · ${n ? `${n} browser${n === 1 ? '' : 's'} paired` : 'no browsers paired'} · ${s.local.replace(/^https?:\/\//, '')}/dashboard`;
-    }
-  };
-  void companionState().then(paintWeb);
-  webOpen.addEventListener('click', () => openCompanion(paintWeb));
-
-  // External bots on the owner's Tailscale devices, as workers with their own desks.
-  const remoteMcp = remoteMcpSettings();
 
   // ---- The panes ----------------------------------------------------------------------------------
-  const panes: Record<SettingsPane, Node[]> = {
-    you: [
-      group('Profile', card('Your character', { desc: desc('How you look and the name above your head.'), control: character })),
-      group(
-        'Controls',
-        card('What 7 puts in your hand', { desc: sidearmNote, control: sidearm.row }),
-        card('Look sensitivity', { desc: desc('How far the view turns for the same mouse movement. 1× is the office’s own speed.'), control: lookRow }),
-        card('Raw mouse input', {
-          desc: desc('Skips macOS pointer acceleration, so the same hand movement always turns the view the same amount. Applies the next time the office captures the mouse.'),
-          control: rawMouse.el,
-        }),
-      ),
-    ],
-    sound: [
-      group(
-        'Volume',
-        card('Office sounds', { desc: desc('Typing, thunder and the rest of the room. Muting it silences alerts too.'), control: soundRow }),
-        card('Jukebox', { desc: desc('Your own volume; the music is louder near the jukebox.'), control: musicRow }),
-      ),
-      group('Alerts', card('Alert sounds', { desc: desc('A short tone when a worker needs you, finishes, or its tests fail.'), control: alertRow }), card('Desktop notifications', { desc: notifyNote, control: notifyRow })),
-    ],
-    graphics: [
-      group('Quality', card('Renderer', { desc: rendererNote, control: rendererPick.row }), hdrRows, classicRows),
-      group(
-        'Performance',
-        card('Frame rate limit', {
-          desc: desc('The most frames a second while something moves; 40, 60 and 120 fit a 120 Hz display evenly. A still office idles lower.'),
-          control: fpsCap.row,
-        }),
-        card('Performance overlay', { desc: desc('Bottom right: frame rate and pacing, GPU time and load, and the render resolution.'), control: stats.el }),
-      ),
-      group('Lighting', card('Overhead lights', { desc: desc('How bright the ceiling lights are. At 0% the moon, the screens and the bounce light are all that light the room.'), control: overhead.row })),
-    ],
+  const panes: Partial<Record<SettingsPane, Node[]>> = {
+    ...(only ? { you: only.you, sound: only.sound, graphics: only.graphics } : {}),
     workers: [
       group(
         'Hiring',
@@ -942,46 +1001,19 @@ export function openSettings(
       group('Subagents', card('Subagents', { desc: subNote, control: subOn.el }), subOptions),
       group('Visits', card('Visits between workers', { desc: visitsNote, control: visitsOn.el })),
     ],
-    connections: [
-      group('Factory', card('Droid', droid.parts), card('Factory API key', factoryKey.key)),
-      subscriptions.unsupported,
-      subscriptionGroup,
-      group('Jira', card('Jira', { desc: jiraNote, below: [jiraForm, jiraFail, jiraActions] }), epicCard),
-    ],
+    connections: [group('Factory', card('Droid', droid.parts), card('Factory API key', factoryKey.key)), subscriptions.unsupported, subscriptionGroup, ...(only ? [only.jira] : [])],
     office: [
-      group(
-        null,
-        card('Workspace folder', { desc: dirNote, below: [dirRow] }),
-        ...(outside
-          ? [
-              card('Outside', {
-                desc: desc(outside.live ? 'The office’s clock, and the live weather where it is.' : 'The office’s clock, and made-up weather. Start the office with --city for a real forecast.'),
-                control: outsideNow(outside.now),
-              }),
-            ]
-          : []),
-      ),
+      group(null, card('Workspace folder', { desc: dirNote, below: [dirRow] }), ...(only?.outside ? [only.outside] : [])),
       group(
         'App',
         card('Host desktop app', {
           desc: desc('Check for a signed update to the Mac app. Workers keep running while it restarts.'),
           control: h('button.btn', { type: 'button', onclick: openHostUpdate }, 'Check for updates…'),
         }),
-        card('Source hot reload', { desc: sourceReload.note, below: [sourceReload.element] }),
+        ...(only ? [only.hotReload] : []),
       ),
     ],
-    phone: [
-      group(
-        null,
-        card('Droid Office for Android', { desc: h('span.stack.tight', {}, desc('Hire, watch and prompt workers from your phone. A paired phone keeps working after restarts.'), phoneStatus), control: phoneOpen }),
-        card('Web companion', { desc: h('span.stack.tight', {}, desc('Your workers, their terminals and the Whiteboard in any desktop browser, at /dashboard.'), webStatus), control: webOpen }),
-        card('Tailscale MCP', {
-          desc: h('span.stack.tight', {}, desc('Bots on your own Tailscale devices, such as an OpenClaw agent, join as workers with their own desks through this MCP server.'), remoteMcp.meta),
-          control: remoteMcp.control,
-          below: [remoteMcp.panel],
-        }),
-      ),
-    ],
+    ...(shown.some((p) => p.id === 'phone') ? { phone: phoneRows(surface === 'mac-companion') } : {}),
   };
 
   // The categories down the side, grouped under Personal / Workers / Office, the one picked on the right.
@@ -994,7 +1026,7 @@ export function openSettings(
   const tabs = new Map<SettingsPane, HTMLButtonElement>();
   const bodies = new Map<SettingsPane, HTMLElement>();
   let navSection = '';
-  for (const p of SETTINGS_PANES) {
+  for (const p of shown) {
     if (p.section !== navSection) {
       navSection = p.section;
       nav.append(h('div.settings-nav-section', { 'aria-hidden': 'true' }, p.section));
@@ -1013,14 +1045,14 @@ export function openSettings(
         'section.settings-pane',
         { role: 'tabpanel', id: `settings-pane-${p.id}`, 'aria-labelledby': `settings-tab-${p.id}` },
         h('div.settings-head', {}, h('div.settings-head-row', {}, h('h3', {}, h('span.icon', { 'aria-hidden': 'true' }, p.icon), p.label), h('span.pill', {}, p.scope)), h('p', {}, p.blurb)),
-        ...panes[p.id],
+        ...(panes[p.id] ?? []),
       ),
     );
   }
   /** Each card's row, by its title, so a search pick can jump to it. Only rows the registry names count. */
   const rowByTitle = new Map<string, { pane: SettingsPane; row: HTMLElement }>();
   {
-    const known = new Set<string>(SETTINGS_CARDS.map((c) => c.title));
+    const known = new Set<string>(settingsCards(surface).map((c) => c.title));
     for (const [pane, body] of bodies) {
       for (const row of body.querySelectorAll<HTMLElement>('.group-row')) {
         const title = row.querySelector(':scope > .group-label > b')?.textContent ?? '';
@@ -1046,8 +1078,10 @@ export function openSettings(
     row.scrollIntoView({ block: 'center' });
     flashTimer = setTimeout(() => row.classList.remove('flash'), 2000);
   };
+  const remembered = lastPanes[surface];
+  let lastPane = remembered && shown.some((p) => p.id === remembered) ? remembered : shown[0].id;
   const show = (id: SettingsPane) => {
-    lastPane = id;
+    lastPane = lastPanes[surface] = id;
     searchInput.value = '';
     results.classList.add('hidden');
     for (const [t, tab] of tabs) {
@@ -1064,14 +1098,20 @@ export function openSettings(
   const paintSearch = () => {
     const query = searchInput.value.trim();
     if (!query) return show(lastPane);
-    const hits = searchSettings(query);
+    const hits = searchSettings(query, surface);
     const paneLabel = new Map(SETTINGS_PANES.map((p) => [p.id, p]));
     results.replaceChildren(
       h(
         'div.settings-head',
         {},
         h('h3', {}, 'Search results'),
-        h('p', {}, hits.length ? `${hits.length} setting${hits.length === 1 ? ' matches' : 's match'} “${query}”. Pick one to jump to it.` : `No settings match “${query}”. Try a setting's name, like “Jira”, “models” or “volume”.`),
+        h(
+          'p',
+          {},
+          hits.length
+            ? `${hits.length} setting${hits.length === 1 ? ' matches' : 's match'} “${query}”. Pick one to jump to it.`
+            : `No settings match “${query}”. Try a setting's name, like ${surface === 'office' ? '“Jira”, “models” or “volume”' : '“models”, “worktree” or “Factory”'}.`,
+        ),
       ),
       ...(hits.length
         ? [
@@ -1113,7 +1153,7 @@ export function openSettings(
     return true;
   });
   nav.addEventListener('keydown', (e) => {
-    const next = settingsPaneAfter(lastPane, e.key);
+    const next = settingsPaneAfter(lastPane, e.key, surface);
     if (!next) return;
     e.preventDefault();
     show(next);
@@ -1131,14 +1171,12 @@ export function openSettings(
     store.on('freshMain', paintFresh),
     store.on('machine', paintLimit),
     store.on('projectsDir', paintDir),
-    store.on('jira', paintJira),
     store.on('prompts', paintAgent),
     store.on('prompts', paintPrompts),
     store.on('prompts', paintSubagents),
     store.on('subagents', paintSubagents),
     store.on('workerLabels', paintLabels),
     store.on('hiddenModels', paintPickerModels),
-    offSetup,
     ...offWorktreeSetup,
   ];
   const modal = openModal(el, {
@@ -1148,19 +1186,18 @@ export function openSettings(
       clearTimeout(flashTimer);
       wide.removeEventListener('change', orient);
       for (const off of offStore) off();
-      sourceReload.dispose();
+      only?.dispose();
       factoryKey.dispose();
       subscriptions.dispose();
       droid.dispose();
       modelVisibility.dispose();
       workerLabels.dispose();
-      window.removeEventListener('office:hdr', onHdrStatus);
     },
   });
-  show(first ?? lastPane);
+  show(first && shown.some((p) => p.id === first) ? first : lastPane);
   close.addEventListener('click', () => modal.close());
-  character.addEventListener('click', () => {
+  only?.character.addEventListener('click', () => {
     modal.close();
-    onCharacter();
+    opts.office?.onCharacter();
   });
 }

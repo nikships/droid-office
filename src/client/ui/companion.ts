@@ -5,6 +5,7 @@ import { copy } from './clipboard';
 import { h, openModal, timeAgo, toast } from './dom';
 import { icon, type IconName } from './icons';
 import { emptyState, toggle, windowHeader } from './kit';
+import { confirmDialog } from './prompt';
 
 // The 🌐 Web companion window: whether desktop browsers may use the office at /dashboard, the link for
 // each way to reach this computer (this computer itself, the Wi-Fi, Tailscale), how pairing works,
@@ -58,9 +59,25 @@ function ways(state: PairingState): Way[] {
   return [local, ...state.addresses.map(other)];
 }
 
-/** Opens the Web companion window. `onChange` hears the state whenever it's read again. */
-export function openCompanion(onChange?: (state: PairingState) => void) {
-  const toggleEl = toggle({ label: 'Web companion', bare: true, onChange: (on) => void setOn(on) });
+/**
+ * Opens the Web companion window. `onChange` hears the state whenever it's read again. `companion`
+ * is the window opened from the companion itself, which turning it off disconnects too.
+ */
+export function openCompanion(onChange?: (state: PairingState) => void, { companion = false } = {}) {
+  const toggleEl = toggle({
+    label: 'Web companion',
+    bare: true,
+    onChange: (on) => {
+      if (on || !companion) return void setOn(on);
+      toggleEl.input.checked = true;
+      confirmDialog(
+        'Turn off the web companion?',
+        'This window disconnects too, and every paired browser with it. To turn it back on, switch to the 3D office from the menu bar icon or the Office menu, then open Settings → Phone & web.',
+        'Turn off',
+        () => void setOn(false),
+      );
+    },
+  });
   const statePill = h('span.pill');
   const heroText = h('small');
   const hero = h('section.wc-hero', {}, h('span.wc-hero-icon', {}, icon('monitor', 26)), h('div.wc-hero-text', {}, h('div.wc-hero-title', {}, h('b', {}, 'Your office in any desktop browser'), statePill), heroText), toggleEl);

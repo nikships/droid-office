@@ -1,6 +1,6 @@
 import { LAYOUT_ORDER, type LayoutMode } from './dashboard-workspace';
 
-export type WorkspaceCommand = { action: 'layout'; mode: LayoutMode } | { action: 'maximize' | 'hire' | 'board' | 'sidebar' } | { action: 'pane' | 'worker' | 'floor'; direction: -1 | 1 };
+export type WorkspaceCommand = { action: 'layout'; mode: LayoutMode } | { action: 'maximize' | 'hire' | 'board' | 'sidebar' | 'settings' } | { action: 'pane' | 'worker' | 'floor'; direction: -1 | 1 };
 
 type ShortcutEvent = Pick<KeyboardEvent, 'key' | 'metaKey' | 'ctrlKey' | 'altKey' | 'shiftKey' | 'isComposing' | 'defaultPrevented' | 'repeat' | 'preventDefault' | 'stopImmediatePropagation'>;
 
@@ -12,6 +12,7 @@ export const WORKSPACE_KEY_HINTS: [string, string][] = [
   ['⌘ N', 'hire'],
   ['⌘ B', 'board'],
   ['⌘ \\', 'sidebar'],
+  ['⌘ ,', 'settings'],
 ];
 
 /** Only Command chords belong to the workspace. All CLI and editing keys pass through. */
@@ -41,6 +42,8 @@ export function workspaceCommand(e: ShortcutEvent, nativeCompanion = false): Wor
       return { action: 'board' };
     case '\\':
       return { action: 'sidebar' };
+    case ',':
+      return { action: 'settings' };
   }
 }
 
