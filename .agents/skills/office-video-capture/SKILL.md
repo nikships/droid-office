@@ -1,13 +1,13 @@
 ---
 name: office-video-capture
-description: Record smooth video of the Droid Office 3D office — demo clips, B-roll, README GIFs, social posts, bug repros or PR video proof. Records 30/60 fps MP4 takes of scripted moves from a headed agent-browser session, reviews them with contact sheets and a stutter check, and covers turning takes into a finished, voiced video with HyperFrames. Use when asked to record, film, screen-capture or make a video or clip of the office or a feature in it.
+description: Record smooth video of the Droid Office 3D office (demo clips, B-roll, README GIFs, social posts, bug repros, PR video proof) as 30/60 fps MP4 takes of scripted moves from a headed agent-browser session, review them with contact sheets and a stutter check, and cut them into a finished, voiced video with HyperFrames. Use when asked to record, film or make a video or clip of the office or a feature in it.
 ---
 
 # Recording the office
 
 Recording builds on [`office-choreography`](../office-choreography/SKILL.md): a take is a choreography move with a recorder wrapped round it. Boot that session first (`office-choreography/scripts/boot.sh`). For a busy office with real work in it, stage it with [`office-demo-staging`](../office-demo-staging/SKILL.md).
 
-**Capture scope.** This browser recorder captures the scene page, not macOS menus, sheets, the native Metal/HDR presenter or OS input delivery. Use the clone runner's optional [`desktop` helper](../office-clone/references/native-desktop.md) for native accessibility observations and window stills, and native display capture tools for display proof. `agent-desktop` is not a video recorder; its cursor overlay is presentation only. Do not replace this recorder or the movement rig with desktop key holds.
+**Capture scope.** This recorder captures the scene page only: macOS menus, sheets, the native Metal/HDR presenter and OS input delivery are outside it. Native window stills and accessibility observations come from the clone runner's optional [`desktop` helper](../office-clone/references/native-desktop.md), and display proof from native display capture tools. `agent-desktop` records no video and its cursor overlay is presentation only, so takes always use this recorder and the movement rig.
 
 ## 1. Record a take
 
@@ -27,9 +27,9 @@ $V/sheet.sh clips/b-computers.mp4 3 6
 The action decides how long the take is, so end it with an `__sleep` to leave a tail to cut on.
 
 - **FPS.** Use 60 for camera moves that will play slowed down (half speed reads as a dolly). Use 30 for everything else. The recorder captures 60 distinct frames a second at 1920×1080, but only if the tab draws them. `boot.sh` opens the tab at `?pace=full`, so it never drops to the office's idle pace (about 5 FPS after 30 s of stillness) or stops while covered. Check `document.getElementById('fps').textContent` before a long or static take.
-- **Dry-run anything that can miss.** For example, aim at a card without the final E. Then put the scene back (Q puts a card back) and record. A missed take after a real hire can't be redone.
+- **Dry-run anything that can miss.** For example, aim at a card without the final E, put the scene back (Q returns a card) and only then record: a missed take after a real hire can't be redone.
 - **Stills.** `agent-browser screenshot <path>`.
-- **Long waits.** A take that waits on a worker (confetti, a needs-input jump) records with `moves/hold.js` and a long `MOVE_ARG`. Watch for the status flip from a second shell with `wait-status.sh`, not from inside the page.
+- **Long waits.** A take that waits on a worker (confetti, a needs-input jump) records with `moves/hold.js` and a long `MOVE_ARG`. Watch for the status flip from a second shell with `wait-status.sh`.
 
 `references/shot-recipes.md` lists the takes that worked, with their FPS, lengths and usable ranges.
 
@@ -39,7 +39,7 @@ The action decides how long the take is, so end it with an `__sleep` to leave a 
 - a toast, a dialog or the HUD you didn't want;
 - the camera clipping into furniture;
 - a private terminal or a worker the owner didn't want shown;
-- the .44 Magnum (never show it).
+- the .44 Magnum, which never appears in a take.
 
 Note each clip's usable range ("confetti at 4–6 s") while it is fresh.
 

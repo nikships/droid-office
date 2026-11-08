@@ -7,14 +7,14 @@ This directory is the maintained source for verifying the user-facing behavior o
 - Build this checkout with `npm ci` or `npm run build`.
 - Launch with `scripts/launch.sh` (clone of the owner's office) or `scripts/launch.sh --fresh` (no installed office on this machine). Keep the printed `RUN` and `EVIDENCE`.
 - Run `scripts/doctor.sh "$RUN"` and require no `fail` lines.
-- Never drive the owner's office on :4600, their installed Mac app, or an instance this run did not start.
+- Drive only the office this run launched; the helpers refuse :4600.
 
 ## Driving conventions
 
 - Start every recipe from the launched state, with no windows open (`window.office.closeAll()`).
-- Prefer `window.office` for the scene and `aria-label`, `role` and `data-*` handles for windows. Do not use coordinates or tab order.
+- Use `window.office` for the scene and `aria-label`, `role` and `data-*` handles for windows; coordinates and tab order break between runs.
 - Run office page drives through `scripts/drive.sh "$RUN" <steps.mjs> <name>`.
-- Undo what a recipe makes. Send hired workers home, and delete cards or comments the run created. Do not remove proof artifacts.
+- Undo what a recipe makes: send hired workers home, and delete cards or comments the run created. Proof artifacts stay.
 
 ## Proof and skip reporting
 
@@ -22,8 +22,7 @@ This directory is the maintained source for verifying the user-facing behavior o
 - UI proof includes numbered screenshots and the drive's `transcript.txt`.
 - Mutation proof includes a second, read-only view, such as the web companion row or a file the worker wrote.
 - Record the feature ID and entry point with every artifact (the drive name, `proof.json`).
-- Report an unreachable path with the command you tried and the unmet precondition.
-- Do not report a skipped entry point as verified through a different path.
+- Report an unreachable path with the command you tried and the unmet precondition, as skipped: an entry point counts as verified only through its own path.
 
 ## Feature entry contract
 

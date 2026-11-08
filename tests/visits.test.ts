@@ -259,7 +259,7 @@ test('a normal tell to a busy host goes in at once as a steer, with no Escape an
   assert.deepEqual(r.fake.escapes, [], 'a normal message never cancels a turn');
   const { text } = r.fake.typed[0];
   assert.match(text, /^Droid Office delivery: message from Pixel \(Desk 3\), a worker, not the owner\n+## Worker message\n```text\nI renamed auth\.ts to session\.ts\n```\n\n## Office guidance\n/);
-  assert.match(text, /`visit_message`, name Pixel and kind "tell"/);
+  assert.match(text, /`visit_message` \(name Pixel, kind "tell"\)/);
   assert.doesNotMatch(text, /urgent/i);
   r.advance(TALK_MIN_MS);
   assert.equal(r.lastList()[0].phase, 'returning');
@@ -401,9 +401,9 @@ test('an ask walks home without an answer or polling; a later answer is delivere
   assert.equal(r.lastList()[0].phase, 'talking');
   const text = r.fake.typed[0].text;
   assert.match(text, /^Droid Office delivery: question from Pixel \(Desk 3\), a worker, not the owner\n+## Worker message\n```text\nWhich port/);
-  assert.ok(text.includes(`visit_reply with visit "${id}"`), text);
+  assert.ok(text.includes(`visit_reply\` (visit "${id}"`), text);
   assert.match(text, /within about 30 minutes of this delivery/);
-  assert.match(text, /not waiting at your desk/);
+  assert.match(text, /walked back to its desk/);
 
   assert.equal(r.call('dot', { action: 'reply', visit: id, text: '5173' }).status, 404, 'only the host answers');
   assert.match(r.call('nibble', { action: 'reply', visit: id, text: '' }).body.error, /Give the answer in visit_reply/);

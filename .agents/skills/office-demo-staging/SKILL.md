@@ -1,6 +1,6 @@
 ---
 name: office-demo-staging
-description: Set up a believable, real Droid Office demo and tear it down afterwards. Opens demo GitHub issues, hires real droid workers in their own worktrees on chosen models, prompts them, waits for the states worth showing (working, acting out a tool, needs_input jump, done confetti, a pull request on the boards), and then closes exactly the issues, PRs, branches, worktrees and workers it made. Use before a live demo, a recording or screenshots that need a busy office, or whenever demo workers or issues need cleaning up.
+description: Stage a real, busy Droid Office for a demo and tear it down afterwards. Opens demo GitHub issues, hires real droid workers in their own worktrees on chosen models, cues the states worth showing (working, acting out a tool, the needs-you jump, done confetti, a pull request on the boards), then closes exactly the issues, PRs, branches, worktrees and workers it made. Use before a live demo, a recording or screenshots that need a busy office, or to clean up demo workers and issues.
 ---
 
 # Staging a demo office
@@ -9,11 +9,10 @@ A demo looks best with real work in it: issues on the wall, workers at desks on 
 
 ## Ground rules
 
-- **Only for a demo the owner asked for.** Tests, bug repros and pull-request proof never stage anything: they run on a clone of the owner's real office ([`office-clone`](../office-clone/SKILL.md)) and show what is really there.
-
+- **Only for a demo the owner asked for.** Tests, bug repros and pull-request proof run on a clone of the owner's real office ([`office-clone`](../office-clone/SKILL.md)) and show what is really there.
 - **Ask before you write to GitHub or the owner's office.** Opening issues and hiring workers are outside-world writes. Agree on the repository and how many issues, and agree to clean up afterwards.
-- **Every hire gets a worktree.** `boot.sh` sets the tab's `droid-office.worktree` pref, and `hire.sh` ticks the dialog's worktree box. Handing a carried issue card to a desk hires at once with **only** the tab's pref. If you hire without the pref, the worker edits and branches in the owner's checkout. If that happens, stop the worker and save its diff (`git diff > patch`). Then restore only the files it touched, switch back to the branch the checkout was on, and delete the branch it made. Never touch changes that were there before.
-- **Leave the owner's workers alone.** Don't prompt them, send them home, or film their terminals unless the owner says so. All the scripts take explicit names or desks.
+- **Every hire gets a worktree.** `boot.sh` sets the tab's `droid-office.worktree` pref, and `hire.sh` ticks the dialog's worktree box. Handing a carried issue card to a desk hires at once with **only** the tab's pref, so a hire without it edits and branches in the owner's checkout. To recover, stop the worker and save its diff (`git diff > patch`), restore only the files it touched, switch back to the branch the checkout was on, and delete the branch it made. Changes that were there before stay exactly as they were.
+- **Touch only the workers you staged.** Prompt, send home or film the owner's own workers only when they say so; every script takes explicit names or desks.
 - **Workers run real tools.** A worker may start servers, run tests or push. Tell workers to stay inside their worktree. Afterwards, check that nothing is left listening that a worker started (`lsof -nP -iTCP -sTCP:LISTEN`), and tell the owner about any surprises.
 
 ## 1. Issues on the wall
@@ -52,7 +51,7 @@ $D/send.sh Widget "…"                                  # prompt a worker (P di
 $D/wait-status.sh Widget done 180 --via working        # block in the shell until the flip
 ```
 
-When you record, start before the state flips. Never wait inside one long page eval, because it drops the browser connection. `wait-status.sh` polls with short evals.
+When you record, start before the state flips. Wait from the shell with `wait-status.sh`, which polls with short evals: one long page eval drops the browser connection.
 
 ## 4. Tear it down
 
@@ -66,7 +65,7 @@ The script does three things:
 - It closes their PRs with `--delete-branch`. A PR counts only when its head branch is `office/<name>-*` and it was opened after the log started.
 - It closes the staged issues as "not planned" with a comment.
 
-Use `send-home.sh <name>...` alone to dismiss one worker. A worker waiting on a question is sent home fine; you don't need to answer it first.
+`send-home.sh <name>...` dismisses single workers, including one waiting on a question.
 
 Afterwards:
 - Run `git worktree list` and `git branch --list 'office/*'` to confirm that only branches older than the log remain.

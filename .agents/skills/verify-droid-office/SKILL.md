@@ -1,21 +1,20 @@
 ---
 name: verify-droid-office
-description: Launch an isolated Droid Office, check it is healthy, drive one user-facing feature the way the owner does, and keep screenshots, transcripts and side-effect proof for a pull request. Covers the Mac app's office page (primary), the web companion, the Office MCP, the Android app and the marketing website. Use before you call a change to droid-office done, when a PR needs real evidence, or to reproduce a visual bug.
+description: Launch an isolated Droid Office, check it is healthy, drive one user-facing feature the way the owner does, and keep screenshots, transcripts and side-effect proof for a pull request. Covers the office page (primary), the web companion, the Office MCP, the Android app and the marketing website. Use before calling a droid-office change done, when a PR needs real evidence, or to reproduce a visual bug.
 ---
 
 # Verify Droid Office
 
-Proof that a change works comes from the running app, not from `npm test`. This skill starts an office that cannot touch the owner's, drives a mapped feature through `window.office` and Playwright, and files the evidence where cleanup cannot remove it. The feature recipes are in [features/README.md](features/README.md). Read the index, then the feature file, before you drive.
+Proof that a change works comes from the running app, not from `npm test`. This skill starts an isolated office, drives a mapped feature through `window.office` and Playwright, and files the evidence where cleanup cannot remove it. Read the feature index, [features/README.md](features/README.md), then the feature's own file, before you drive.
 
 It builds on [office-clone](../office-clone/SKILL.md) (the clone, `start.sh` and `office-run.mjs`) and [office-3d-testing](../office-3d-testing/SKILL.md) (the `window.office` commands). It adds the launch, doctor, evidence and cleanup lifecycle around them.
 
-## Isolation rules
+## Isolation
 
-- Never drive the owner's office on :4600 or their installed Mac app. Every helper refuses :4600, and `doctor.sh` fails when the port belongs to another process.
-- Each run gets its own scratch folder `RUN=/tmp/verify-droid-office-XXXX`, with its own `HOME`, office data, floors and port (4677 or the next free one). Two runs can go side by side.
-- Default mode clones the owner's installed office, as the repository's `AGENTS.md` requires for screenshots of the running office. A clone carries the owner's Factory key and real forge sign-in. Writes to Factory or GitHub from the clone are real (see office-clone section 4).
+- Each run gets its own scratch folder `RUN=/tmp/verify-droid-office-XXXX`, with its own `HOME`, office data, floors and port (4677 or the next free one), so two runs can go side by side. The helpers drive only the office their run launched: they refuse :4600, and `doctor.sh` fails when the port belongs to another process. Checking against the owner's own office is a separate path (root `AGENTS.md`, "Testing the running office").
+- Default mode clones the owner's installed office. A clone carries the owner's Factory key and real forge sign-in, so writes to Factory or GitHub from it are real ([office-clone](../office-clone/SKILL.md) section 4).
 - `--fresh` is for a machine with no installed office, such as the Mac Mini CI runner. It starts a new office whose floor is a `git clone --local` of this checkout with its real `origin`, plus a test browser profile so the character picker is skipped. Say in the PR that the evidence came from a fresh office.
-- If you cannot isolate a run (no free port, the clone fails, `doctor.sh` fails on ownership), stop and report it. Do not fall back to the owner's office.
+- When a run cannot be isolated (no free port, the clone fails, `doctor.sh` fails on ownership), stop and report it.
 
 ## Launch
 
@@ -41,7 +40,7 @@ Read-only. Run it after launch, before the first drive, and after any drive that
 .agents/skills/verify-droid-office/scripts/doctor.sh "$RUN"
 ```
 
-It checks the port is not :4600, the office process is alive, the listener belongs to this run's process group, `/` and `/dashboard` answer 200, and the Office MCP on the hook port refuses an anonymous call. It also checks that `dist/` is newer than `src/` at the served commit, and whether the native Mac app can run on this Mac. It reports whether the owner's :4600 office is up, so you know to leave it alone, and how many Android devices `adb` sees. Any `fail` line exits 1. Fix it or relaunch. Do not drive through it.
+It checks the port is not :4600, the office process is alive, the listener belongs to this run's process group, `/` and `/dashboard` answer 200, and the Office MCP on the hook port refuses an anonymous call. It also checks that `dist/` is newer than `src/` at the served commit, and whether the native Mac app can run on this Mac. It reports whether the owner's :4600 office is up, so you know to leave it alone, and how many Android devices `adb` sees. Any `fail` line exits 1: fix it or relaunch, and drive only once doctor passes.
 
 ## Drive
 
@@ -53,7 +52,7 @@ It checks the port is not :4600, the office process is alive, the listener belon
 `drive.sh` wraps `office-run.mjs`. One browser run per drive opens the office as the owner, waits for it to be ready, runs the steps file, saves screenshots, and closes. A steps file exports one async function that gets `page`, `js`, `open`, `click`, `shot`, `waitFor`, `sleep`, `rig`, `reload`, `log`, `out` and `url` (see office-clone section 3). Inside steps, `process.env.VERIFY_OUT` is the drive's evidence folder.
 
 - **Office page (primary).** This is the page the Mac app shows. Headless by default (Playwright's headless shell, Metal WebGL through ANGLE).
-- **Native Mac app.** `--native` launches this checkout's Electron app on a fresh profile against the run's office. The app refuses base M-series chips, so `doctor.sh` warns on the Mac Mini (Apple M4). Do not set `DROID_OFFICE_ALLOW_ANY_CHIP` to get past it; it is for CI only. For native menus and sheets, see office-clone's [native desktop checks](../office-clone/references/native-desktop.md).
+- **Native Mac app.** `--native` launches this checkout's Electron app on a fresh profile against the run's office. The app refuses base M-series chips, so `doctor.sh` warns on the Mac Mini (Apple M4); `DROID_OFFICE_ALLOW_ANY_CHIP` is for CI only, so report the limit instead. For native menus and sheets, see office-clone's [native desktop checks](../office-clone/references/native-desktop.md).
 - **Web companion.** Open `new URL('/dashboard', url)` in a second page from the same steps file (`page.context().newPage()`), as `hire-shell.mjs` does.
 - **Office MCP, Android, website.** These have their own drivers. See their feature files.
 
@@ -74,13 +73,13 @@ Everything goes under `$EVIDENCE` (default `/tmp/verify-droid-office-evidence/<r
 
 Proof standards:
 
-- Drive the user's path, meaning the keys, windows and buttons the owner uses. Do not call internal setters, send raw WebSocket messages or use test-only endpoints.
+- Drive the user's path: the keys, windows and buttons the owner uses, never internal setters, raw WebSocket messages or test-only endpoints.
 - Capture the action and the result, not only the final screen. Number the shots in order (`01-free-desk`, `02-shell-hired`, and so on).
 - Check side effects next to the pixels: a file the worker wrote, the row in the web companion, the worker gone from `state()` after send-home. Write them to `proof.json` in the drive folder.
-- Assert, do not eyeball. A steps file throws when a check fails. `drive.sh` then exits 1 and saves `failure.png`.
-- No mocks. Use the owner's real data (a clone) or a fresh office on this checkout. Never invent or seed board data.
-- Treat secrets as private. Never log or screenshot the Factory key, hook tokens, `DROID_OFFICE_HOOK_TOKEN`, the pairing link or a device token. In a worker shell, refer to them as `$VARIABLES`, never as values.
-- For a PR, commit no evidence. Upload the screenshots to the PR or its comments, and quote `proof.json` lines in the body.
+- Assert in code. A steps file throws when a check fails; `drive.sh` then exits 1 and saves `failure.png`.
+- Use the owner's real data (a clone) or a fresh office on this checkout, never invented or seeded board data.
+- Keep secrets out of evidence: the Factory key, hook tokens, `DROID_OFFICE_HOOK_TOKEN`, the pairing link and device tokens never appear in a log or screenshot. In a worker shell, refer to them as `$VARIABLES`.
+- Evidence stays out of git. Upload the screenshots to the PR or its comments, and quote `proof.json` lines in the body.
 
 ## Cleanup
 
@@ -88,7 +87,7 @@ Proof standards:
 .agents/skills/verify-droid-office/scripts/cleanup.sh "$RUN"
 ```
 
-It stops the office's process group (SIGINT, then SIGKILL after 10 s), stops PTY hosts whose sockets are inside `$RUN`, saves a redacted `office.log`, and deletes `$RUN`. Then it checks that the port is free and lists the evidence it kept. It never kills by process name. Run it after every failed iteration too. Remove anything the drive made outside the office (a Factory session, a GitHub comment) yourself.
+It stops the office's process group (SIGINT, then SIGKILL after 10 s), stops PTY hosts whose sockets are inside `$RUN`, saves a redacted `office.log`, and deletes `$RUN`. Then it checks that the port is free and lists the evidence it kept. It kills by process group and socket, never by name. Run it after every failed iteration too, and remove anything the drive made outside the office (a Factory session, a GitHub comment) yourself.
 
 ## Helpers
 
@@ -106,4 +105,4 @@ All are executable and run from the repository root.
 
 ## Keeping it current
 
-The map in `features/` rots as the app changes. Check its feature recipes against the current source and the live app using the launch, doctor and drive steps above, then update any stale handles, assertions or evidence instructions.
+The map in `features/` goes stale as the app changes. After a drive, update any handle, assertion or evidence step that no longer matched the source or the live app, and the feature's "Last live proof" row in the index.

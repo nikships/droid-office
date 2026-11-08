@@ -173,7 +173,7 @@ test('a real HTTP MCP client reads office identity and server instructions', asy
   const lead = await r.connect('lead');
   assert.equal(lead.getServerVersion()?.name, 'droid-office');
   assert.match(lead.getInstructions() ?? '', /owner's instructions outrank/);
-  assert.match(lead.getInstructions() ?? '', /Do not block waiting/);
+  assert.match(lead.getInstructions() ?? '', /end your turn instead of waiting or polling/);
   const result = await lead.callTool({ name: 'office_whoami', arguments: {} });
   assert.equal(result.isError, undefined);
   assert.equal(result.structuredContent?.canHire, true);

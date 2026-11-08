@@ -6,7 +6,7 @@ DOM windows and panels. The three.js scene is `../world`.
 - Actions on workers, pipelines and floors are `ClientMsg` through `Net`. A new HTTP route is a branch in `src/server/server.ts` in the same change; the current ones are the `/api/*` handlers there.
 - Issue, pull-request and doc HTML goes through `markdown.ts` (`marked`, then DOMPurify). Anywhere else, forge or doc text is text.
 - Styles live in `../style.css`. Biome does not format CSS.
-- Check a window in the running office (`npm run dev`, page on :5173, server on :4600). Click through the open, update and close path, including Esc.
+- In the running office, click through a window's open, update and close path, including Esc.
 
 ## The UI kit
 
@@ -14,7 +14,7 @@ Every window builds from the shared classes in the "UI kit" block of `../style.c
 
 - Tokens: `--space-1..8` (4, 8, 12, 16, 20, 24, 32, 40px; no other gap, padding or margin values), `--radius` 4px for controls, `--radius-lg` 8px for windows and groups, `--radius-xs` for chips and pills, `--control-h` 32px (`-sm` 26, `-lg` 38), `--shadow-window`, `--text-body` 13.5px, `--text-small` 12px, `--text-label` 10.5px.
 - Type: body copy and row titles are sentence-case sans at 400/500. Mono uppercase is only for window titles, labels, eyebrows, buttons, badges and keycaps. No 700/900 in body text.
-- Window anatomy: `.modal` (560px, the default) or `.sm` 420 (confirms), `.lg` 760, `.xl` 960, `.full` (terminal, diff, PR); `openModal(el, { size })` adds it. There is no `.md` size class: `.md` is the Markdown body (`markdown.ts`), so never put it on a window. `header` > `.titles` (`h2` + `p.sub`) + `.actions`, then the ✕ that `openModal` appends last. `.body` scrolls (`.body.flush` has no padding). `footer`: `.grow` on the left (a hint, meta or the destructive action), Cancel as `.btn.ghost`, the primary button rightmost. Show a shortcut as a `.key`, not a sentence.
+- Window anatomy: `.modal` (560px, the default) or `.sm` 420 (confirms), `.lg` 760, `.xl` 960, `.full` (terminal, diff, PR); `openModal(el, { size })` adds it. `.md` is the Markdown body (`markdown.ts`), not a size, so it never goes on a window. `header` > `.titles` (`h2` + `p.sub`) + `.actions`, then the ✕ that `openModal` appends last. `.body` scrolls (`.body.flush` has no padding). `footer`: `.grow` on the left (a hint, meta or the destructive action), Cancel as `.btn.ghost`, the primary button rightmost. Show a shortcut as a `.key`, not a sentence.
 - Buttons: `.btn` (secondary), `.primary` (white), `.accent` (orange, the one "make it happen" button), `.danger`, `.ghost`; `.sm`, `.lg`, `.icon` (square). `.seg` is a row of buttons; with `role=radiogroup`/`group` or a button lit `.on` it becomes one joined segmented control.
 - Layout: `.stack` (column, 16px; `.tight` 8, `.loose` 24), `.row` (`.between`, `.wrap`; a `.grow` child fills), `.split` (sidebar + pane; the sidebar is `--split-side`, 220px unless the window or a parent sets it), `.section` > `.eyebrow` (optional `.no` index) + content, `hr.divider`.
 - Forms: `.field` > `label` + control + `.field-hint` / `.field-error`, `.field.inline` (label left). `.input` and `select.select` (custom chevron) anywhere; bare text inputs, textareas and selects in a `.modal` get the same look at low specificity. `.input-group` joins an input and a button.
