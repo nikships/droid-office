@@ -3351,40 +3351,42 @@ function startHanging() {
   hanger.start();
 }
 function showSettings(pane?: SettingsPane) {
-  openSettings(
-    net,
-    settings,
-    (s) => {
-      Object.assign(settings, s);
-      saveSettings(settings);
-      sound.setVolume(settings.volume, settings.muted);
-      sound.setAlertsMuted(settings.alertsMuted);
-      sound.setMusicVolume(settings.music, settings.musicMuted);
-      applyGraphics();
-      // The hint names what's in your hand; the hands swap props by themselves next frame.
-      hintKey = 'stale';
-    },
-    editProfile,
-    () => sound.floorChime(),
-    () => sound.previewAlerts(),
-    notifier,
-    store.sky ? { now: describeSky(store.sky), live: !!store.sky.city } : undefined,
-    pane,
-    hireForWorktreeSetup,
-    {
-      remastered: () => remasterSettings.enabled,
-      set: (on) => changeRemaster({ ...remasterSettings, enabled: on }),
-      hdr: () => remasterSettings.hdr,
-      setHdr: (on) => changeRemaster({ ...remasterSettings, hdr: on }),
-      hdrNote: () => {
-        if (!remasterSettings.enabled || !remasterSettings.hdr) return '';
-        const h = remaster.hdr;
-        if (h.state === 'starting') return 'Starting HDR output…';
-        if (h.state === 'unsupported') return `HDR is off: ${h.reason}.`;
-        return h.reason ? `HDR is on, but ${h.reason}.` : '';
+  openSettings(net, {
+    surface: 'office',
+    first: pane,
+    hireForSetup: hireForWorktreeSetup,
+    office: {
+      settings,
+      onChange: (s) => {
+        Object.assign(settings, s);
+        saveSettings(settings);
+        sound.setVolume(settings.volume, settings.muted);
+        sound.setAlertsMuted(settings.alertsMuted);
+        sound.setMusicVolume(settings.music, settings.musicMuted);
+        applyGraphics();
+        // The hint names what's in your hand; the hands swap props by themselves next frame.
+        hintKey = 'stale';
+      },
+      onCharacter: editProfile,
+      previewSound: () => sound.floorChime(),
+      previewAlerts: () => sound.previewAlerts(),
+      notifier,
+      outside: store.sky ? { now: describeSky(store.sky), live: !!store.sky.city } : undefined,
+      renderer: {
+        remastered: () => remasterSettings.enabled,
+        set: (on) => changeRemaster({ ...remasterSettings, enabled: on }),
+        hdr: () => remasterSettings.hdr,
+        setHdr: (on) => changeRemaster({ ...remasterSettings, hdr: on }),
+        hdrNote: () => {
+          if (!remasterSettings.enabled || !remasterSettings.hdr) return '';
+          const h = remaster.hdr;
+          if (h.state === 'starting') return 'Starting HDR output…';
+          if (h.state === 'unsupported') return `HDR is off: ${h.reason}.`;
+          return h.reason ? `HDR is on, but ${h.reason}.` : '';
+        },
       },
     },
-  );
+  });
 }
 
 function editProfile() {

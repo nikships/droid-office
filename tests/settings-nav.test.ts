@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { SETTINGS_CARDS, SETTINGS_PANES, resolveSettingsPane, searchSettings, settingsPaneAfter, type SettingsPane } from '../src/shared/settings-nav.js';
+import { SETTINGS_CARDS, SETTINGS_PANES, resolveSettingsPane, searchSettings, settingsCards, settingsPaneAfter, settingsPanes, type SettingsPane } from '../src/shared/settings-nav.js';
 
 test('settings has the nine categories, grouped Personal / Workers / Office, in order', () => {
   assert.deepEqual(
@@ -150,4 +150,86 @@ test('arrow keys move between categories and wrap, Home and End jump', () => {
   assert.equal(settingsPaneAfter('you', 'Enter'), null);
   assert.equal(settingsPaneAfter('you', 'Escape'), null);
   assert.equal(settingsPaneAfter('models', 'a'), null);
+});
+
+test('the companions leave out what only the 3D office has, and only the Mac app’s has Phone & web', () => {
+  assert.deepEqual(
+    settingsPanes('office').map((p) => p.id),
+    SETTINGS_PANES.map((p) => p.id),
+  );
+  assert.deepEqual(
+    settingsPanes('companion').map((p) => p.label),
+    ['Workers', 'Models', 'Subagents & visits', 'Connections', 'Office & floors'],
+  );
+  assert.deepEqual(
+    settingsPanes('mac-companion').map((p) => p.label),
+    ['Workers', 'Models', 'Subagents & visits', 'Connections', 'Office & floors', 'Phone & web'],
+  );
+  const officeOnly = [
+    'Your character',
+    'What 7 puts in your hand',
+    'Look sensitivity',
+    'Raw mouse input',
+    'Office sounds',
+    'Jukebox',
+    'Alert sounds',
+    'Desktop notifications',
+    'Renderer',
+    'HDR',
+    'Render resolution',
+    'Temporal anti-aliasing',
+    'Sharpening',
+    'Frame rate limit',
+    'Performance overlay',
+    'Overhead lights',
+    'Jira',
+    "This floor's Jira epic",
+    'Outside',
+    'Source hot reload',
+  ];
+  const phone = ['Droid Office for Android', 'Web companion', 'Tailscale MCP'];
+  const titles = (surface: 'office' | 'companion' | 'mac-companion') => settingsCards(surface).map((c) => c.title as string);
+  assert.deepEqual(
+    titles('office'),
+    SETTINGS_CARDS.map((c) => c.title),
+  );
+  assert.deepEqual(
+    titles('companion'),
+    SETTINGS_CARDS.map((c) => c.title as string).filter((t) => !officeOnly.includes(t) && !phone.includes(t)),
+  );
+  assert.deepEqual(
+    titles('mac-companion'),
+    SETTINGS_CARDS.map((c) => c.title as string).filter((t) => !officeOnly.includes(t)),
+  );
+  for (const kept of ['Workspace folder', 'Host desktop app', 'Droid', 'Factory API key', 'DroidProxy', 'Worktree setup', 'Default worker']) assert.ok(titles('companion').includes(kept), kept);
+});
+
+test('a companion’s blurbs only promise what it shows', () => {
+  for (const surface of ['companion', 'mac-companion'] as const) {
+    const blurb = new Map(settingsPanes(surface).map((p) => [p.id, p.blurb]));
+    assert.doesNotMatch(blurb.get('connections') ?? '', /jira/i);
+    assert.doesNotMatch(blurb.get('office') ?? '', /sky|developer/i);
+    assert.equal(blurb.get('workers'), SETTINGS_PANES.find((p) => p.id === 'workers')?.blurb);
+  }
+  assert.match(settingsPanes('office').find((p) => p.id === 'connections')?.blurb ?? '', /Jira/);
+});
+
+test('a companion’s search and arrow keys stay among its own settings', () => {
+  assert.deepEqual(searchSettings('jira', 'companion'), []);
+  assert.deepEqual(searchSettings('volume', 'companion'), []);
+  assert.deepEqual(searchSettings('outside', 'companion'), []);
+  assert.deepEqual(searchSettings('hot reload', 'companion'), []);
+  assert.deepEqual(searchSettings('hide models', 'companion'), [{ pane: 'models', title: 'Models shown in pickers' }]);
+  assert.deepEqual(searchSettings('host update', 'companion'), [{ pane: 'office', title: 'Host desktop app' }]);
+  assert.deepEqual(searchSettings('openclaw', 'companion'), []);
+  assert.deepEqual(searchSettings('openclaw', 'mac-companion'), [{ pane: 'phone', title: 'Tailscale MCP' }]);
+  assert.deepEqual(searchSettings('office mcp', 'companion'), [{ pane: 'subagents', title: 'Office MCP' }]);
+
+  assert.equal(settingsPaneAfter('workers', 'ArrowUp', 'companion'), 'office');
+  assert.equal(settingsPaneAfter('office', 'ArrowDown', 'companion'), 'workers');
+  assert.equal(settingsPaneAfter('office', 'ArrowDown', 'mac-companion'), 'phone');
+  assert.equal(settingsPaneAfter('phone', 'ArrowDown', 'mac-companion'), 'workers');
+  assert.equal(settingsPaneAfter('models', 'Home', 'companion'), 'workers');
+  assert.equal(settingsPaneAfter('models', 'End', 'companion'), 'office');
+  assert.equal(settingsPaneAfter('models', 'End', 'mac-companion'), 'phone');
 });

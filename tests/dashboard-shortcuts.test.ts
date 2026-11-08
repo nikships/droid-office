@@ -75,6 +75,7 @@ test('Command shortcuts cover workspace actions without Option or Control', () =
     ['N', 'hire'],
     ['b', 'board'],
     ['\\', 'sidebar'],
+    [',', 'settings'],
   ])
     assert.deepEqual(workspaceCommand(key(value!)), { action });
   for (const [value, action, direction] of [

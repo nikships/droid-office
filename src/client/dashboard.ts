@@ -59,6 +59,11 @@ import { createWorkerMenu } from './dashboard-worker-menu';
 import { openForkWorker } from './ui/fork-worker';
 import { copy } from './ui/clipboard';
 import { workersByTeam } from '../shared/team';
+import { resolveSettingsPane, type SettingsPane } from '../shared/settings-nav';
+import { OPEN_SETTINGS_EVENT } from './ui/model-picker';
+import { officePrompt } from './ui/prompts';
+import { forgeVars } from '../shared/prompts';
+import { INCLUDE_FILE, SETUP_FILE, describeSetup } from '../shared/worktree-setup';
 const read = (key: string) => {
   try {
     return localStorage.getItem(key) ?? '';
@@ -114,6 +119,7 @@ let persisted = true;
 let retryTimer: ReturnType<typeof setTimeout> | undefined;
 let terminal: typeof import('./ui/terminal') | undefined;
 let whiteboard: typeof import('./ui/whiteboard') | undefined;
+let settingsUi: typeof import('./ui/settings') | undefined;
 const busy = new Set<string>();
 
 function defaultBrowserName() {
@@ -137,7 +143,8 @@ const floorPicker = h('div.dash-floor', {}, floors, reorderFloors);
 const boardCount = h('span.dash-count.hidden');
 const board = h('button.btn.ghost.dash-top-btn.dash-board', { type: 'button', title: 'The floor’s Whiteboard (⌘ B)', onclick: () => void openBoard() }, icon('board', 14), h('span.dash-top-label', {}, 'Whiteboard'), boardCount);
 const subscriptions = h('button.btn.ghost.dash-top-btn', { type: 'button', title: 'Subscriptions and account usage', onclick: () => openSubscriptionsStatus() }, icon('key', 14), h('span.dash-top-label', {}, 'Subscriptions'));
-const top = h('header.dash-top', {}, brand, floorPicker, h('div.dash-top-end', {}, subscriptions, board));
+const settingsBtn = h('button.btn.ghost.dash-top-btn', { type: 'button', title: 'Settings (⌘ ,)', onclick: () => void showSettings() }, icon('settings', 14), h('span.dash-top-label', {}, 'Settings'));
+const top = h('header.dash-top', {}, brand, floorPicker, h('div.dash-top-end', {}, settingsBtn, subscriptions, board));
 
 const bannerIcon = h('span.dash-banner-icon');
 const bannerText = h('p.dash-banner-text');
@@ -779,7 +786,7 @@ function paint() {
   // An empty floor's pane carries the orange Hire; once someone works here the sidebar's does.
   agentBtn.classList.toggle('accent', !here || store.workers.size > 0);
   board.disabled = !up || !here;
-  subscriptions.disabled = !up;
+  subscriptions.disabled = settingsBtn.disabled = !up;
   const link = up ? 'Connected' : authorized && !net.up ? 'Disconnected' : 'Connecting';
   linkDot.dataset.state = up ? 'up' : authorized && !net.up ? 'down' : 'wait';
   linkDot.setAttribute('aria-label', link);
@@ -789,7 +796,7 @@ function paint() {
   content.hidden = !authorized;
   authPanel.hidden = authorized;
   floorPicker.hidden = !authorized;
-  board.hidden = !authorized;
+  board.hidden = settingsBtn.hidden = !authorized;
   paintBanner();
   if (!authorized) {
     disposePanes();
@@ -1075,6 +1082,36 @@ function sendHome(w: WorkerInfo) {
       () => confirm(),
     );
 }
+/** The office's Settings, less what only the 3D office has (see SETTINGS_CARDS); the Mac app's companion also gets Phone & web. */
+async function showSettings(pane?: SettingsPane) {
+  settingsUi ??= await import('./ui/settings');
+  if (!live()) return;
+  settingsUi.openSettings(net, { surface: nativeCompanion ? 'mac-companion' : 'companion', first: pane, hireForSetup: hireForWorktreeSetup });
+}
+// A model picker's "Use your Claude or ChatGPT plan": Settings on that pane, or the open Settings turned to it.
+window.addEventListener(OPEN_SETTINGS_EVENT, (e) => {
+  const pane = resolveSettingsPane((e as CustomEvent<{ pane?: string }>).detail?.pane);
+  const tab = pane && document.getElementById(`settings-tab-${pane}`);
+  if (tab) tab.click();
+  else void showSettings(pane);
+});
+/** Settings' "Have a worker set it up…": the hire window with a task to write this repository's worktree setup and open a pull request. */
+function hireForWorktreeSetup() {
+  if (!live() || !store.currentFloor()) return;
+  const intended = floor;
+  const now = store.worktreeSetup ? describeSetup(store.worktreeSetup.resolved) : 'runs what the office detects from its lockfiles';
+  openPrompt({
+    title: 'Set up worktrees',
+    subtitle: 'A worker writes this repository’s worktree setup, tests it, and opens a pull request with it. Pick its model, edit the task if you like, then hire.',
+    initial: officePrompt('worktree.setup', { file: SETUP_FILE, include: INCLUDE_FILE, now, ...forgeVars(store.project?.forge) }),
+    submitLabel: 'Hire & start',
+    modelOption: true,
+    worktreeOption: true,
+    worktreeChecked: true,
+    imagesOption: true,
+    onSubmit: (text, opts) => action({ t: 'worker.spawn', deskId: 'auto', kind: 'agent', prompt: text, ...opts }, '', intended, 'Droid hired.'),
+  });
+}
 async function openBoard() {
   const intended = floor;
   whiteboard ??= await import('./ui/whiteboard');
@@ -1235,6 +1272,9 @@ window.addEventListener(
             break;
           case 'board':
             void openBoard();
+            break;
+          case 'settings':
+            void showSettings();
             break;
           case 'sidebar':
             toggleSide();
