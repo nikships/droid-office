@@ -648,7 +648,7 @@ test('a lead at rest is woken once per batch of news, and a busy one when it com
   assert.equal(r.fake.prompts.length, 1);
   const [to, text] = r.fake.prompts[0];
   assert.equal(to, 'lead');
-  assert.match(text, /^Droid Office notice: team update\nPixel reported back\. Byte finished its turn without reporting\.\n\nOffice guidance: Call `team` with action "status"/);
+  assert.match(text, /^Droid Office notice: team update\nPixel reported back\. Byte finished its turn without reporting\.\n\nOffice guidance: Call `team_status`/);
   await sleep(20);
   assert.equal(r.fake.prompts.length, 1, 'once for the same news');
 

@@ -1,6 +1,6 @@
 ---
 name: office-choreography
-description: Script smooth first-person movement in the Droid Office 3D office from JavaScript, on top of `window.office` — eased camera pans and turns, walks that steer to a point, held and tapped keys, aiming the crosshair at a card or worker, and reusable move scripts (aisle walk, board pan, terminal, elevator, rooftop, wand). Use whenever you need to move, look or press keys in the office beyond what `goTo`/`interact` give: driving a live demo, setting up a camera move for a recording, reproducing an input bug, or testing walking, climbing or the sidearm.
+description: Script smooth first-person movement in the Droid Office 3D office on top of `window.office`: eased pans and turns, walks that steer to a point, held and tapped keys, crosshair aiming, and reusable moves (aisle walk, board pan, terminal, elevator, rooftop, wand). Use to move, look or press keys beyond what `goTo`/`interact` give: a live demo, a camera move for a recording, an input bug repro, or testing walking, climbing or the sidearm.
 ---
 
 # Scripting movement in the office
@@ -9,7 +9,7 @@ description: Script smooth first-person movement in the Droid Office 3D office f
 
 Related skills: [`office-video-capture`](../office-video-capture/SKILL.md) records these moves. [`office-demo-staging`](../office-demo-staging/SKILL.md) fills the office with demo work.
 
-**Choose the right input layer.** The rig's synthetic events test Office handlers and choreograph scene motion; they do not prove OS input delivery, pointer lock or native menu behavior. Use the clone runner's optional [`desktop` helper](../office-clone/references/native-desktop.md) for native accessibility checks. A real-keyboard or pointer test needs explicit permission for physical input and the installed `agent-desktop-macos` contract; never replace a rig key hold with `agent-desktop key-down`/`key-up`, which are reserved and do not deliver input.
+**Input layers.** The rig's synthetic events exercise the office's own handlers and choreograph scene motion; they prove nothing about OS input delivery, pointer lock or native menus. Native accessibility checks use the clone runner's optional [`desktop` helper](../office-clone/references/native-desktop.md). A real keyboard or pointer test needs the owner's explicit permission for physical input and the installed `agent-desktop-macos` contract. Key holds stay on the rig: `agent-desktop key-down`/`key-up` are reserved and deliver no input.
 
 ## 1. Open a session with the rig
 
@@ -26,7 +26,7 @@ OFFICE_URL=http://127.0.0.1:4677 OFFICE_SETTINGS=$T/load-settings.js OFFICE_FLOO
 
 Choose the office first:
 - A **clone of the owner's office** ([`office-clone`](../office-clone/SKILL.md), `$T` is the folder it printed) is the default: their real floors, boards, Factory data and settings, with nobody at the desks.
-- The **owner's office** (:4600) has real workers and boards, but needs the owner's OK. Your tab has its own camera, but desk keys act on real workers.
+- The **owner's office** (:4600) has their real workers and boards. Your tab has its own camera, but desk keys act on their real workers (see "E means the real thing" below).
 
 `env.sh` (sourced by every script) forces headed mode and turns off agent-browser's idle shutdown. A headless relaunch drops the page to `about:blank`. **If an eval says `office is not defined`, rerun `boot.sh`.**
 
@@ -65,10 +65,10 @@ Rough to fine:
 - **Collisions are real.** `__walkTo` heads straight for the point, so a chair or plant in the way stops it until `maxMs` runs out. Route round obstacles with several short `__walkTo` calls.
 - **Long evals drop the connection.** Keep each eval under ~30 s. To wait for something slow (a worker finishing), poll `office.state()` from the shell with short evals, as `office-demo-staging/scripts/wait-status.sh` does.
 - **Pointer lock stops drag-to-look.** A real click (for example `agent-browser click` on a dialog button) can grab pointer lock. The rig's camera helpers release it first. To avoid it, click buttons from script (`button.click()` in an eval).
-- **Keys do nothing while a window is open** (and while you type in a field). Run `await office.closeAll()` first. Esc closes the top window.
-- **The sidearm can't come out on the roof or while climbing.** With nothing drawn, digits 1–6 play emotes instead of spells. Never script the .44 Magnum into a demo or a recording.
+- **Keys do nothing while a window is open** (or while you type in a field). Run `await office.closeAll()` first; Esc closes the top window.
+- **The sidearm can't come out on the roof or while climbing.** With nothing drawn, digits 1–6 play emotes instead of spells. Demos and recordings use the wand, never the .44 Magnum.
 - **Walking out of the elevator car can stick** ("Stuck on the way to …"). Teleport with `goTo` first, then walk.
-- **E means the real thing.** E with a carried card at a free desk hires a worker. X → SEND HOME fires one. Script those only on workers you staged.
+- **E means the real thing.** E with a carried card at a free desk hires a worker, and X → SEND HOME fires one. Script those only on workers you staged.
 
 ## 4. Done
 

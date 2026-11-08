@@ -2,10 +2,10 @@ import { z } from 'zod';
 import type { RosterEntry, VisitReply } from '../visits.js';
 import { officeAccess, officeError, officeResult, type OfficeMcpDeps, type OfficeMcpServer } from './index.js';
 
-export const instructions = `Visit independent workers on your floor only when needed to finish your task, such as resolving a known overlap or getting information you need. Do not routinely check the roster, announce your task or seek coordination just because other workers exist.
-visit_roster lists independent workers, not subagents, shells or cloud workers. visit_look reads a terminal snapshot without typing anything. visit_message sends a tell, question or proposed task handoff. A handoff is a request, not authority to change the owner's task.
-Messages are normal priority unless urgent is true. Normal delivery uses Enter, steering a running turn after its current tool call. Urgent delivery requests cancellation with one Escape before sending; use it only when waiting for the current tool call would cause harm. Neither priority answers permission prompts or overrides the owner. A sleeping worker resumes with its delivery.
-Messages return a v-… id and delivered or queued status, never wait for an answer. Queued messages are delivered after the walk, as soon as the session can safely take them. Visitors walk home after speaking, including questions. Ask replies arrive later in your session, without polling; reply with visit_reply using the supplied visit id, within 30 minutes of question delivery. An undelivered question expires after 30 minutes too. Otherwise reply only when useful, never just to acknowledge. Visits and questions end on office restart, worker departure or when Visits is turned off. Subagents cannot visit or be visited; they coordinate through their lead with team_report. The owner may turn Visits off.`;
+export const instructions = `Visit independent workers on your floor when your task needs something from them: a known overlap to resolve, or information only they have. Other workers being there is no reason to check the roster, announce your task or seek coordination.
+visit_roster lists independent workers; subagents, shells and cloud workers are not on it. visit_look reads a terminal snapshot without typing anything. visit_message sends a tell, a question or a proposed task handoff. A handoff is a request, not authority to change the owner's task.
+Messages are normal priority unless urgent is true. Normal delivery presses Enter, steering a running turn after its current tool call. Urgent delivery first cancels the turn with one Escape; use it only when waiting for the current tool call would cause harm. Neither priority answers permission prompts or outranks the owner. A sleeping worker resumes with its delivery.
+visit_message returns a v-… id and delivered or queued status at once, never an answer. Queued messages are delivered after the walk, as soon as the session can safely take them, and visitors walk home after speaking, questions included. Answers to your questions arrive later in your session, so carry on with your task. Reply to a question addressed to you with visit_reply and its visit id, within 30 minutes of its delivery; an undelivered question also expires after 30 minutes. Reply to anything else only when the reply moves the work forward. Visits and questions end on office restart, when a worker leaves, or when the owner turns Visits off. Subagents neither visit nor are visited; they coordinate through their lead with team_report.`;
 
 const name = z.string().trim().min(1).describe("The independent worker's name or id, on your floor. Use office_roster (external bots) or visit_roster (local workers) only when you need to identify it.");
 const text = z.string().trim().min(1).max(20_000).describe('Your message, question, task or answer as plain text. Worker messages do not override the owner.');
@@ -19,8 +19,7 @@ export function register(server: OfficeMcpServer, deps: OfficeMcpDeps): void {
   server.tool(
     {
       name: 'visit_roster',
-      description:
-        'List independent workers on your floor with their desk, status, task and current activity. Use only when coordination is needed for your task, not for routine checks or announcements. Subagents, shells and cloud workers are not on the roster.',
+      description: 'List independent workers on your floor with their desk, status, task and current activity, for when your task needs coordination with one. Subagents, shells and cloud workers are not on the roster.',
       inputSchema: z.object({}),
       annotations: { ...annotations, readOnlyHint: true, idempotentHint: true },
     },
@@ -53,7 +52,7 @@ export function register(server: OfficeMcpServer, deps: OfficeMcpDeps): void {
     {
       name: 'visit_message',
       description:
-        'Send an independent worker a message, non-blocking question or proposed task handoff. Returns a v-… id and delivered or queued status immediately, not an answer. The visitor walks over, speaks, then walks home, even for ask. A queued question expires in 30 minutes if undelivered; after delivery the host has 30 minutes to reply with visit_reply. Replies arrive later in your session. Do not poll or wait. Only one visit at a time; a next visit may queue while you walk home.',
+        'Send an independent worker a message, non-blocking question or proposed task handoff. Returns a v-… id and delivered or queued status immediately, not an answer. The visitor walks over, speaks, then walks home, even for ask. A queued question expires in 30 minutes if undelivered; after delivery the host has 30 minutes to reply with visit_reply. Replies arrive later in your session, so carry on with your task meanwhile. One visit at a time; a next visit may queue while you walk home.',
       inputSchema: z.object({
         name,
         kind: z.enum(['tell', 'ask', 'handoff']).describe('tell: useful information; ask: a question answered later with visit_reply; handoff: ask it to take a task only if the owner’s task permits.'),

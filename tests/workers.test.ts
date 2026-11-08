@@ -484,7 +484,7 @@ test('only a worker with no lead is told about the visit tools, and only while v
   if (typeof lead === 'string') return assert.fail(lead);
   await launched(lead.id);
   assert.match(systemOf(lead.id), /`visit_roster`, `visit_look` and `visit_message`/);
-  assert.match(systemOf(lead.id), /Don't routinely check the roster or announce your task/);
+  assert.match(systemOf(lead.id), /when your task needs something from an independent worker/);
   assert.match(systemOf(lead.id), /Use the Droid Office MCP tools/);
 
   const sub = workers.spawn('desk-3', 'test', 'help out', false, 'agent', undefined, undefined, [], lead.id);

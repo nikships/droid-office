@@ -201,7 +201,7 @@ test('hiring preserves the literal brief, uses nearest desk and a worktree, and 
   assert.match((await r.hire({ worktree: false, from: 'main' })).output, /leave from out/);
   assert.match((await r.hire({ from: '--upload-pack=evil' })).output, /branch, tag or commit/);
   const instructions = r.lead.getInstructions() ?? '';
-  for (const rule of [/fresh subagent per task/, /do not edit the same files/, /Owner notes take priority/, /no-images/, /review and integration/, /Subagents cannot hire/]) assert.match(instructions, rule);
+  for (const rule of [/fresh subagent per task/, /touch separate files/, /Owner notes take priority/, /no-images/, /review and integration/, /Subagents cannot hire/]) assert.match(instructions, rule);
 });
 
 test('hire refusals are actionable errors and do not take a desk', async (t) => {

@@ -135,7 +135,7 @@ test('real MCP discovery, auth and live permissions gate every visit tool', asyn
   assert.equal(result.isError, true);
   assert.match(JSON.stringify(result.content), /turned off/);
   assert.deepEqual(r.typed, []);
-  assert.match(lead.getInstructions() ?? '', /Do not routinely check the roster/);
+  assert.match(lead.getInstructions() ?? '', /no reason to check the roster/);
   assert.match(lead.getInstructions() ?? '', /30 minutes/);
 });
 
@@ -203,7 +203,7 @@ test('ask never waits for the host or an answer, walks home, and accepts one lat
   assert.equal((await host.callTool({ name: 'visit_reply', arguments: { visit: id, text: 'too early' } })).isError, true);
   r.setStatus('Nibble', 'done');
   r.advance(250);
-  assert.match(messages(r, 'Nibble')[0].text, new RegExp(`visit_reply with visit "${id}"`));
+  assert.match(messages(r, 'Nibble')[0].text, new RegExp(`visit_reply\` \\(visit "${id}"`));
   assert.match(messages(r, 'Nibble')[0].text, /about 30 minutes/);
   assert.equal((await other.callTool({ name: 'visit_reply', arguments: { visit: id, text: 'not mine' } })).isError, true);
   r.advance(20 * 60_000);

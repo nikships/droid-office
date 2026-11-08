@@ -1,10 +1,10 @@
 # Server
 
 - Compiled by `tsconfig.server.json` (NodeNext, Node types, no DOM) into `dist/server`. Relative imports end in `.js`.
-- This process owns workers, PTYs, boards, pipelines and floors. It does not import `src/client`.
-- Office options (CLI flags and their `DROID_OFFICE_*` / `PORT` environment equivalents) are parsed by `loadConfig` in `config.ts` into `Config`. Add a new option there and document it in `HELP` in the same file.
-- Two different `.droid-office/` directories exist. The office's own (next to where `droid-office` was started) holds `floors.json`, `jira.json`, `factory.json`, `prompts.json`, `jukebox.json`, `leave-on-merge.json`, `fresh-main.json`, `subagents.json`, `devices.json`, `web-companion.json`, `hot-reload.json` and `setup.json` (whether the welcome is done, docs/subscriptions.md). Each floor's checkout has its own, with that floor's workers, scrollback, decor, team and Whiteboard (`whiteboard/`: `board.json`, its key and its blobs). Stale `guests.json` from earlier releases is removed on floor load. Write a key to the directory the guide names for it.
-- A change to how status hooks, the PTY host, worktrees, pipelines, floors or those state files behave starts from the matching bullet in [docs/guide/how-it-works.md](../../docs/guide/how-it-works.md). Update that bullet in the same change.
+- This process owns workers, PTYs, boards, pipelines and floors, and never imports `src/client`.
+- Office options (CLI flags and their `DROID_OFFICE_*` / `PORT` environment equivalents) are parsed by `loadConfig` in `config.ts` into `Config`. A new option goes there and into `HELP` in the same file.
+- There are two kinds of `.droid-office/` directory: the office's own (next to where `droid-office` was started) for office-wide settings, and one in each floor's checkout for that floor's workers, scrollback, decor, team and Whiteboard. The "State." bullet of [docs/guide/how-it-works.md](../../docs/guide/how-it-works.md) names the file each one holds; a new file goes in the directory that matches its scope, and into that bullet.
+- A change to how status hooks, the PTY host, worktrees, pipelines, floors or those state files behave starts from the matching bullet in how-it-works.md and updates it in the same change.
 
 ## PTY host
 
