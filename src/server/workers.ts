@@ -1031,8 +1031,11 @@ export class WorkerManager {
     for (const file of WORKSPACE_FILES) writeFileSync(path.join(this.dir, path.dirname(primary.path), file), `${brief.trim()}\n`);
   }
 
-  /** Starts a worker that isn't running again, carrying on its session, with `prompt` as its next message. */
-  resume(id: string, prompt?: string): string | undefined {
+  /**
+   * Starts a worker that isn't running again, carrying on its session, with `prompt` as its next
+   * message and any staged pictures listed after it.
+   */
+  resume(id: string, prompt?: string, images?: readonly string[]): string | undefined {
     if (this.buildingIdentity(id)) return prompt ? this.prompt(id, prompt) : 'A building agent is not started from a floor';
     const w = this.workers.get(id);
     if (!w) return 'No such worker';
@@ -1041,11 +1044,13 @@ export class WorkerManager {
     clockWork(w.info, 'starting');
     w.info.status = 'starting';
     w.info.exitCode = undefined;
+    const text = images?.length ? withImages(prompt ?? '', this.drops.adopt(id, images)) : prompt;
     // A subagent with no session to carry on starts over, so it needs telling what it's for again.
-    const first = w.info.sessionId ? prompt : this.briefed(w, prompt);
-    if (prompt) {
-      w.info.activity = truncate(prompt, 80);
-      this.notePrompt(w, prompt);
+    const first = w.info.sessionId ? text : this.briefed(w, text);
+    const shown = prompt?.trim() || (text ? 'See the attached images' : undefined);
+    if (shown) {
+      w.info.activity = truncate(shown, 80);
+      this.notePrompt(w, shown);
     }
     // Cut off mid-turn by a restart: it gets on with it, as whoever was watching would have told it to.
     const carryOn = !prompt && w.interrupted && w.info.kind === 'agent' && !!w.info.sessionId;

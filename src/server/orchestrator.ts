@@ -184,7 +184,7 @@ export class Orchestrator {
       return typeof started === 'string' ? started : undefined;
     }
     // Not running: carry its conversation on, with this as its next message.
-    if (!this.running()) return images?.length ? 'The Orchestrator is starting. Send the pictures again in a moment.' : this.workers.resume(ORCHESTRATOR_ID, text);
+    if (!this.running()) return this.workers.resume(ORCHESTRATOR_ID, text, images);
     return this.workers.prompt(ORCHESTRATOR_ID, text, images, queue);
   }
 
