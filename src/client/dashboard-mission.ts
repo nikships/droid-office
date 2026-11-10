@@ -3,12 +3,12 @@
 // with their floor.
 
 import { missionAgentNeedsOwner, ORCHESTRATOR_ID, type MissionAgent, type MissionControlState, type MissionTeamMember } from '../shared/mission-control';
-import type { WorkerInfo, WorkerStatus } from '../shared/protocol';
+import type { WorkerInfo } from '../shared/protocol';
 import { isBusy } from '../shared/status';
 import { teamCounts } from '../shared/team';
-import { workerDot, workingBars, WORKER_MIME } from './dashboard-pane';
+import { statusDot, workerDot, workingBars, WORKER_MIME } from './dashboard-pane';
 import { reconcileChildren, todoMeter } from './dashboard-roster';
-import { botLine, orchestratorLine, orchestratorWorker } from './mission';
+import { botLine, orchestratorBlocked, orchestratorLine, orchestratorWorker } from './mission';
 import { h, STATUS_LABEL, timeAgo } from './ui/dom';
 import { icon } from './ui/icons';
 import { modelBadgeLabel, modelBadgeNode } from './ui/models';
@@ -43,17 +43,26 @@ interface Row {
   key: string;
 }
 
+/** A row the sidebar's arrow keys walk. A subagent on another floor opens only on Enter or a click, so walking never changes floors. */
+export interface MissionSideRow {
+  id: string;
+  button: HTMLButtonElement;
+  opens: boolean;
+}
+
 interface Block {
   el: HTMLElement;
   toggle: HTMLButtonElement;
+  toggleKey: string;
   children: HTMLElement;
 }
 
-/** A status dot for a subagent, in its colour when it's on this floor. */
-function memberDot(status: WorkerStatus, color: string) {
-  const el = h('span.dash-dot', { 'data-status': status, 'aria-hidden': 'true' });
-  el.style.setProperty('--who', color);
-  return el;
+/** Lets a row be dragged onto a pane to open its worker there. */
+function dragsWorker(button: HTMLButtonElement, id: string) {
+  button.addEventListener('dragstart', (e) => {
+    e.dataTransfer?.setData(WORKER_MIME, id);
+    if (e.dataTransfer) e.dataTransfer.effectAllowed = 'copyMove';
+  });
 }
 
 const plural = (n: number, one: string) => `${n} ${one}${n === 1 ? '' : 's'}`;
@@ -62,7 +71,8 @@ export function createMissionRoster(el: HTMLElement, host: MissionRosterHost) {
   const rows = new Map<string, Row>();
   const blocks = new Map<string, Block>();
   const collapsed = new Set<string>();
-  const head = h('div.dash-mission-head');
+  const caption = h('span.dash-mission-caption');
+  const head = h('div.dash-mission-head', {}, h('span.dash-mission-title', {}, icon('satellite', 12), h('span', {}, 'Mission Control')), caption);
   const off = h(
     'button.dash-mission-off',
     { type: 'button', onclick: () => host.settings() },
@@ -71,31 +81,25 @@ export function createMissionRoster(el: HTMLElement, host: MissionRosterHost) {
     h('span.dash-mission-off-go', { 'aria-hidden': 'true' }, icon('chevron', 12)),
   ) as HTMLButtonElement;
   let state: MissionRosterState | undefined;
-  let visible: string[] = [];
+  let visible: MissionSideRow[] = [];
 
   function agentRow(id: string): Row {
     let r = rows.get(id);
     if (r) return r;
     const open = h('button.dash-row-open', { type: 'button', 'data-worker': id, draggable: 'true', onclick: () => host.open(id) }) as HTMLButtonElement;
-    open.addEventListener('dragstart', (e) => {
-      e.dataTransfer?.setData(WORKER_MIME, id);
-      if (e.dataTransfer) e.dataTransfer.effectAllowed = 'copyMove';
-    });
+    dragsWorker(open, id);
     const split = h('button.btn.icon.sm.ghost.dash-row-split', { type: 'button', title: 'Open in a new pane', onclick: () => host.split(id) }, icon('paneAdd', 13)) as HTMLButtonElement;
     r = { wrap: h('div.dash-row.dash-mission-row', {}, open, split), open, split, key: '' };
     rows.set(id, r);
     return r;
   }
 
-  function memberRow(m: MissionTeamMember, agent: MissionAgent, s: MissionRosterState): HTMLElement {
+  function memberRow(m: MissionTeamMember, agent: MissionAgent, s: MissionRosterState): Row {
     const id = `member:${m.id}`;
     let r = rows.get(id);
     if (!r) {
       const open = h('button.dash-row-open', { type: 'button', 'data-member': m.id }) as HTMLButtonElement;
-      open.addEventListener('dragstart', (e) => {
-        e.dataTransfer?.setData(WORKER_MIME, m.id);
-        if (e.dataTransfer) e.dataTransfer.effectAllowed = 'copyMove';
-      });
+      dragsWorker(open, m.id);
       r = { wrap: h('div.dash-row.dash-subworker.dash-mission-member', {}, open), open, key: '' };
       rows.set(id, r);
     }
@@ -105,6 +109,7 @@ export function createMissionRoster(el: HTMLElement, host: MissionRosterHost) {
     r.open.draggable = !!here;
     r.open.disabled = !s.live;
     r.wrap.classList.toggle('on', m.id === s.focused);
+    r.open.setAttribute('aria-current', String(m.id === s.focused));
     r.wrap.classList.toggle('attn', m.status === 'needs_input');
     r.wrap.classList.toggle('elsewhere', m.floor !== s.floor);
     const status = STATUS_LABEL[m.status] ?? m.status;
@@ -116,7 +121,7 @@ export function createMissionRoster(el: HTMLElement, host: MissionRosterHost) {
       r.open.title = [m.name, `Subagent of ${agent.worker.name}`, where, status, doing].join(' · ');
       r.open.setAttribute('aria-label', `Open ${m.name}, subagent of ${agent.worker.name} on the ${where}, ${status}: ${doing}`);
       r.open.replaceChildren(
-        memberDot(m.status, here?.color ?? agent.worker.color),
+        statusDot(m.status, here?.color ?? agent.worker.color),
         h(
           'span.dash-row-main',
           {},
@@ -132,14 +137,16 @@ export function createMissionRoster(el: HTMLElement, host: MissionRosterHost) {
         ),
       );
     }
-    return r.wrap;
+    return r;
   }
 
-  function paintAgent(agent: MissionAgent | undefined, w: WorkerInfo, s: MissionRosterState): HTMLElement {
+  /** `session` is undefined only for the Orchestrator before its first prompt, when `w` stands in for it. */
+  function paintAgent(session: MissionAgent | undefined, w: WorkerInfo, s: MissionRosterState): HTMLElement {
+    const agent = session ?? { worker: w, team: [] };
     const orchestrator = w.id === ORCHESTRATOR_ID;
     const r = agentRow(w.id);
-    const waits = orchestrator && missionAgentNeedsOwner(agent ?? { worker: w, team: [] });
-    const blocked = orchestrator ? s.mission?.orchestrator.blocked : undefined;
+    const waits = orchestrator && missionAgentNeedsOwner(agent);
+    const blocked = orchestrator ? orchestratorBlocked(s.mission) : undefined;
     r.wrap.classList.toggle('on', w.id === s.focused);
     r.wrap.classList.toggle('attn', orchestrator && w.status === 'needs_input');
     r.wrap.classList.toggle('blocked', !!blocked);
@@ -147,12 +154,12 @@ export function createMissionRoster(el: HTMLElement, host: MissionRosterHost) {
     r.open.setAttribute('aria-current', String(w.id === s.focused));
     r.open.disabled = !s.live;
     if (r.split) r.split.disabled = !s.live;
-    const team = agent?.team ?? [];
+    const team = agent.team;
     const model = w.activeModel ?? w.model;
     const effort = w.activeEffort ?? w.effort;
-    const line = orchestrator ? orchestratorLine(s.mission) : botLine(agent ?? { worker: w, team: [] });
+    const line = orchestrator ? orchestratorLine(s.mission) : botLine(agent);
     const status = blocked ? 'blocked' : (STATUS_LABEL[w.status] ?? w.status);
-    const lastUsed = !orchestrator && agent?.lastUsedAt ? `used ${timeAgo(agent.lastUsedAt)}` : '';
+    const lastUsed = !orchestrator && agent.lastUsedAt ? `used ${timeAgo(agent.lastUsedAt)}` : '';
     const todos = orchestrator ? w.todos : undefined;
     const key = JSON.stringify([w.name, w.color, w.status, w.acked, line, status, model, effort, team.length, lastUsed, s.pane(w.id), todos, waits, s.shortcut]);
     if (key !== r.key) {
@@ -193,7 +200,7 @@ export function createMissionRoster(el: HTMLElement, host: MissionRosterHost) {
         ),
       );
     }
-    visible.push(w.id);
+    visible.push({ id: w.id, button: r.open, opens: true });
     let block = blocks.get(w.id);
     if (!block) {
       const list = h('div.dash-team-children', { id: `dash-mission-team-${w.id}`, role: 'group' });
@@ -206,7 +213,7 @@ export function createMissionRoster(el: HTMLElement, host: MissionRosterHost) {
           if (state) update(state);
         },
       }) as HTMLButtonElement;
-      block = { el: h('section.dash-mission-agent'), toggle, children: list };
+      block = { el: h('section.dash-mission-agent'), toggle, toggleKey: '', children: list };
       blocks.set(w.id, block);
     }
     block.el.setAttribute('aria-label', orchestrator ? 'The Orchestrator and its team' : `${w.name} and its team`);
@@ -222,14 +229,21 @@ export function createMissionRoster(el: HTMLElement, host: MissionRosterHost) {
     block.children.hidden = !expanded;
     block.toggle.setAttribute('aria-expanded', String(expanded));
     block.toggle.setAttribute('aria-label', `${expanded ? 'Collapse' : 'Expand'} ${w.name}'s ${plural(team.length, 'subagent')}`);
-    block.toggle.replaceChildren(
-      h('span.dash-team-chevron', { 'aria-hidden': 'true' }, icon('chevron', 12)),
-      h('span', {}, `${plural(team.length, 'subagent')}${floors > 1 ? ` · ${floors} floors` : ''}`),
-      h('span.dash-team-activity', { class: counts.attention ? 'dash-team-attention' : '' }, counts.attention ? `${counts.attention} need you` : `${counts.working} working`),
+    const toggleKey = JSON.stringify([team.length, floors, counts.attention, counts.working]);
+    if (toggleKey !== block.toggleKey) {
+      block.toggleKey = toggleKey;
+      block.toggle.replaceChildren(
+        h('span.dash-team-chevron', { 'aria-hidden': 'true' }, icon('chevron', 12)),
+        h('span', {}, `${plural(team.length, 'subagent')}${floors > 1 ? ` · ${floors} floors` : ''}`),
+        h('span.dash-team-activity', { class: counts.attention ? 'dash-team-attention' : '' }, counts.attention ? `${counts.attention} need you` : `${counts.working} working`),
+      );
+    }
+    const children = team.map((m) => memberRow(m, agent, s));
+    if (expanded) team.forEach((m, i) => visible.push({ id: m.id, button: children[i]!.open, opens: m.floor === s.floor }));
+    reconcileChildren(
+      block.children,
+      children.map((c) => c.wrap),
     );
-    const children = team.map((m) => memberRow(m, agent!, s));
-    if (expanded) for (const m of team) visible.push(m.id);
-    reconcileChildren(block.children, children);
     reconcileChildren(block.el, [r.wrap, block.toggle, block.children]);
     return block.el;
   }
@@ -271,10 +285,8 @@ export function createMissionRoster(el: HTMLElement, host: MissionRosterHost) {
       }
     const attention = (orchestrator && missionAgentNeedsOwner(mc.orchestrator.agent) ? 1 : 0) + team.filter((m) => m.status === 'needs_input').length;
     const working = agents.filter((a) => a && isBusy(a.worker.status)).length + team.filter((m) => isBusy(m.status) && m.status !== 'needs_input').length;
-    head.replaceChildren(
-      h('span.dash-mission-title', {}, icon('satellite', 12), h('span', {}, 'Mission Control')),
-      h('span.dash-mission-caption', { class: attention ? 'dash-team-attention' : '' }, attention ? `${attention} need${attention === 1 ? 's' : ''} you` : working ? `${working} working` : 'Every floor'),
-    );
+    caption.classList.toggle('dash-team-attention', !!attention);
+    caption.textContent = attention ? `${attention} need${attention === 1 ? 's' : ''} you` : working ? `${working} working` : 'Every floor';
     reconcileChildren(el, content);
     if (focused?.isConnected && document.activeElement !== focused) focused.focus({ preventScroll: true });
   }
@@ -283,10 +295,6 @@ export function createMissionRoster(el: HTMLElement, host: MissionRosterHost) {
     update,
     /** Each building agent, followed by its expanded team, in display order. */
     visible: () => visible,
-    member(id: string) {
-      const mc = state?.mission;
-      return [mc?.orchestrator.agent, ...(mc?.bots ?? [])].flatMap((agent) => agent?.team ?? []).find((m) => m.id === id);
-    },
     button(id: string) {
       return rows.get(id)?.open ?? rows.get(`member:${id}`)?.open;
     },

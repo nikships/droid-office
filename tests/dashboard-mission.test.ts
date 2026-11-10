@@ -56,6 +56,11 @@ test('Mission Control pins the building’s agents in the sidebar and opens the 
       member: (m: any) => w.calls.push(['member', m.id, m.floor]),
       settings: () => w.calls.push(['settings']),
     });
+    w.repaintKeeps = (selector: string, repaint: () => void) => {
+      const nodes = [...document.querySelectorAll(selector)];
+      repaint();
+      return nodes.length > 0 && nodes.every((n) => n.isConnected);
+    };
     w.paintRoster = () => w.roster.update({ mission: w.mission, floor: 'f-web', focused: '', live: true, pane: () => -1, here: () => undefined, shortcut: '⌘ O' });
     w.paintRoster();
   });
@@ -68,6 +73,11 @@ test('Mission Control pins the building’s agents in the sidebar and opens the 
   assert.match(text, /2 subagents · 2 floors/);
   assert.equal(await roster.locator('.dash-mission-member.elsewhere').count(), 2, 'Dot and Nibble sit on another floor');
   assert.deepEqual(await roster.locator('.dash-mission-member .dash-row-floor').allInnerTexts(), ['web-app', 'api', 'api']);
+  assert.equal(
+    await page.evaluate(() => (window as any).repaintKeeps('#mission .dash-mission-caption, #mission .dash-team-toggle > span, #mission .dash-row-name', () => (window as any).paintRoster())),
+    true,
+    'a repaint with nothing new rebuilds nothing',
+  );
   await roster.locator('[data-member=w-dot]').click();
   await roster.locator('[data-worker=orchestrator]').click();
   await roster.locator('[data-worker=bot-claw]').click();
@@ -76,19 +86,21 @@ test('Mission Control pins the building’s agents in the sidebar and opens the 
     ['open', 'orchestrator'],
     ['open', 'bot-claw'],
   ]);
-  assert.deepEqual(await page.evaluate(() => (window as any).roster.visible()), ['orchestrator', 'w-byte', 'w-dot', 'bot-claw', 'w-nib']);
+  // The arrow keys walk each agent and its expanded team; only this floor's subagents open as they go.
+  const walked = () => page.evaluate(() => (window as any).roster.visible().map((r: any) => [r.id, r.opens, r.button === (window as any).roster.button(r.id)]));
+  assert.deepEqual(await walked(), [
+    ['orchestrator', true, true],
+    ['w-byte', true, true],
+    ['w-dot', false, true],
+    ['bot-claw', true, true],
+    ['w-nib', false, true],
+  ]);
   await roster.locator('.dash-team-toggle').first().click();
-  assert.deepEqual(await page.evaluate(() => (window as any).roster.visible()), ['orchestrator', 'bot-claw', 'w-nib']);
+  assert.deepEqual(
+    (await walked()).map(([id]) => id),
+    ['orchestrator', 'bot-claw', 'w-nib'],
+  );
   await roster.locator('.dash-team-toggle').first().click();
-  await page.evaluate(() => {
-    const w = window as any;
-    w.calls = [];
-    w.mission.orchestrator.agent.team[1].activity = 'Still waiting';
-    w.paintRoster();
-  });
-  assert.deepEqual(await page.evaluate(() => (window as any).calls), [], 'status updates never replay member navigation');
-  await page.evaluate(() => (window as any).roster.button('w-dot').click());
-  assert.deepEqual(await page.evaluate(() => (window as any).calls), [['member', 'w-dot', 'f-api']], 'keyboard activation uses the member’s own floor');
 
   // Off: one row that points to Settings, and its team is nobody's.
   await page.evaluate(() => {
@@ -168,6 +180,21 @@ test('Mission Control pins the building’s agents in the sidebar and opens the 
   assert.equal(await pane.locator('.dash-pane-task').innerText(), 'Can’t start yet', 'the reason is said once, in place of the composer');
   assert.equal(await pane.locator('.orc-example:disabled').count(), 3, 'no composer to fill');
 
+  // A session already running when something blocks a new start keeps its status, its composer and Stop.
+  await page.evaluate(() => {
+    const w = window as any;
+    const worker = { ...w.MissionUI.orchestratorWorker({ orchestrator: { settings: { on: true } }, bots: [] }), status: 'working', sessionId: 's-1', task: { name: 'Get CI green on every floor' } };
+    w.mission = { ...w.mission, orchestrator: { ...w.mission.orchestrator, agent: { worker, team: [] } } };
+    w.paintPane('orchestrator');
+  });
+  assert.equal(await pane.locator('.wt-blocked').isHidden(), true);
+  assert.equal(await pane.locator('.wt-stop').isVisible(), true, 'Stop is reachable');
+  assert.equal(await pane.locator('.dash-pane-head .pill').innerText(), 'working');
+  assert.equal(await pane.locator('.dash-pane-task').innerText(), 'Get CI green on every floor');
+  await page.evaluate(() => (window as any).paintRoster());
+  assert.equal(await roster.locator('[data-worker=orchestrator] .dash-mission-mark').getAttribute('data-status'), 'working');
+  assert.match(await roster.locator('[data-worker=orchestrator]').innerText(), /Get CI green on every floor/);
+
   // A bot: what it is and its team, no terminal; a subagent opens on its own floor.
   await page.evaluate(() => (window as any).paintPane('bot-claw', 'terminal'));
   assert.equal(await pane.getAttribute('data-mode'), 'info');
@@ -175,5 +202,57 @@ test('Mission Control pins the building’s agents in the sidebar and opens the 
   assert.equal(await pane.locator('.xterm').count(), 0);
   await pane.locator('.dash-bot-member').click();
   assert.ok((await page.evaluate(() => (window as any).calls)).some((c: any) => c[0] === 'across' && c[1] === 'w-nib' && c[2] === 'f-api'));
+  assert.equal(
+    await page.evaluate(() => (window as any).repaintKeeps('.dash-bot .dash-info-who > *, .dash-bot dd, .dash-bot-member', () => (window as any).paintPane('bot-claw', 'terminal'))),
+    true,
+    'a repaint with nothing new rebuilds nothing',
+  );
+  await page.evaluate(() => {
+    const w = window as any;
+    w.mission.bots[0].worker = { ...w.mission.bots[0].worker, activity: 'Planning the release' };
+    w.paintPane('bot-claw', 'terminal');
+  });
+  assert.equal(await pane.locator('.dash-info-activity').innerText(), 'Planning the release');
+
+  // Asleep, its session has no terminal to show: Thread stands in, and a prompt wakes it.
+  await page.evaluate(() => {
+    const w = window as any;
+    w.mission = { orchestrator: { settings: { on: true }, agent: { worker: { ...w.mission.orchestrator.agent.worker, status: 'exited' }, team: [] } }, bots: w.mission.bots };
+    w.paintPane('orchestrator', 'terminal');
+  });
+  assert.equal(await pane.getAttribute('data-mode'), 'thread');
+  assert.equal(await pane.locator('.dash-pane-views').isHidden(), true, 'no TTY to switch to');
+  assert.equal(await pane.locator('textarea.wt-input').isDisabled(), false, 'a prompt wakes it');
+  await page.evaluate(() => {
+    const w = window as any;
+    w.mission.orchestrator.agent.worker = { ...w.mission.orchestrator.agent.worker, status: 'idle' };
+    w.paintPane('orchestrator', 'terminal');
+  });
+  assert.equal(await pane.getAttribute('data-mode'), 'terminal', 'awake, its terminal opens');
+
+  // A subagent's pane: the strip across the top is its lead's team across floors.
+  await page.evaluate(() => {
+    const w = window as any;
+    const team = [
+      { id: 'w-byte', name: 'Byte', floor: 'f-web', floorName: 'web-app', status: 'working', activity: 'Fixing the flaky test' },
+      { id: 'w-dot', name: 'Dot', floor: 'f-api', floorName: 'api', status: 'working' },
+    ];
+    w.mission.orchestrator.agent = { ...w.mission.orchestrator.agent, team };
+    w.byte = { id: 'w-byte', name: 'Byte', kind: 'agent', color: '#4dbed4', deskId: 'd-1', status: 'working', acked: true, lead: 'orchestrator', createdBy: '', createdAt: 0, cols: 120, rows: 40, open: true };
+    w.paintByte = () => w.pane.update({ worker: w.byte, view: 'thread', focused: true, maximized: false, canMaximize: false, covered: false, candidates: [], anyone: true, takeFocus: false });
+    w.paintByte();
+  });
+  assert.deepEqual(await pane.locator('.dash-team-nav .dash-team-chip-name').allInnerTexts(), ['Orchestrator', 'Byte', 'Dot']);
+  assert.deepEqual(await pane.locator('.dash-team-nav .dash-team-chip-floor').allInnerTexts(), ['api'], 'only the subagent elsewhere is tagged');
+  const keeps = await page.evaluate(() => {
+    const w = window as any;
+    return w.repaintKeeps('.dash-team-nav .dash-team-chip', () => {
+      w.mission.orchestrator.agent.team[0].activity = 'Running the tests';
+      w.paintByte();
+    });
+  });
+  assert.equal(keeps, true, 'activity the strip doesn’t show rebuilds nothing');
+  await pane.locator('.dash-team-nav [data-member=w-dot]').click();
+  assert.ok((await page.evaluate(() => (window as any).calls)).some((c: any) => c[0] === 'across' && c[1] === 'w-dot' && c[2] === 'f-api'));
   assert.deepEqual(errors, []);
 });

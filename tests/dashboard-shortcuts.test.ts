@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { adjacentFloor, WORKSPACE_KEY_HINTS, workspaceCommand, workspaceShortcut } from '../src/client/dashboard-shortcuts.js';
+import { adjacentFloor, sideStep, WORKSPACE_KEY_HINTS, workspaceCommand, workspaceShortcut } from '../src/client/dashboard-shortcuts.js';
 
 function key(key: string, overrides: Partial<KeyboardEvent> = {}): KeyboardEvent {
   return {
@@ -122,4 +122,23 @@ test('a recognized chord is stopped before the terminal, including held-key repe
     false,
   );
   assert.deepEqual(calls, []);
+});
+
+test('the sidebar’s arrow keys walk Mission Control and the floor as one list, a worker in both once in each', () => {
+  // Byte is the Orchestrator’s subagent on this floor, so it has a row under Mission Control and one in the floor’s list.
+  const row = (id: string, list: string) => ({ id, button: { list, id }, opens: true });
+  const rows = [row('orchestrator', 'mission'), row('w-byte', 'mission'), row('bot-claw', 'mission'), row('w-ada', 'floor'), row('w-byte', 'floor'), row('w-cy', 'floor')];
+  const step = (from: number | undefined, focused: string, direction: -1 | 1) => {
+    const next = sideStep(rows, from === undefined ? undefined : rows[from]!.button, focused, direction);
+    return next && rows.indexOf(next);
+  };
+  assert.equal(step(4, 'w-byte', 1), 5, 'down from Byte’s floor row stays in the floor’s list');
+  assert.equal(step(4, 'w-byte', -1), 3);
+  assert.equal(step(1, 'w-byte', 1), 2, 'down from its Mission Control row stays there');
+  assert.equal(step(5, '', 1), 0, 'wraps at the end');
+  assert.equal(step(0, '', -1), 5, 'and at the start');
+  assert.equal(step(undefined, 'w-ada', 1), 4, 'with the keyboard elsewhere, from the open worker');
+  assert.equal(step(undefined, '', 1), 0, 'from nowhere, down is the first row');
+  assert.equal(step(undefined, '', -1), 5, 'and up the last');
+  assert.equal(sideStep([], undefined, '', 1), undefined);
 });

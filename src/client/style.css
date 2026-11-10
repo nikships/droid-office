@@ -2380,7 +2380,6 @@ html:has(body.dashboard), body.dashboard { overflow: auto; }
 .dash-side-hire { display: grid; grid-template-columns: 1fr auto; gap: var(--space-2); }
 /* Mission Control: the building's agents, pinned above the floor's list on every floor. */
 .dash-mission { flex: none; max-height: 42%; overflow: auto; padding: var(--space-2) var(--space-2) var(--space-1); border-bottom: 1px solid var(--border); background: linear-gradient(180deg, rgba(238, 96, 24, .05), transparent 64px); }
-.dash-mission[hidden] { display: none; }
 .dash-mission-head { display: flex; align-items: center; gap: var(--space-2); min-height: 24px; padding: 0 var(--space-2) var(--space-1); }
 .dash-mission-title { display: inline-flex; align-items: center; gap: var(--space-2); color: var(--accent); font: 500 var(--text-label)/16px var(--font-mono); letter-spacing: .08em; text-transform: uppercase; }
 .dash-mission-caption { margin-left: auto; color: var(--text-tertiary); font: 400 10px/16px var(--font-mono); }
@@ -2715,7 +2714,6 @@ summary:hover > .wt-chevron { color: var(--text-secondary); }
 .orc-intro .orc-intro-foot { font-size: var(--text-small); color: var(--text-tertiary); }
 /* Why the Orchestrator can't start, in place of its composer. */
 .wt-blocked { display: flex; align-items: center; gap: var(--space-3); box-sizing: border-box; width: calc(100% - 2 * var(--space-5)); max-width: var(--wt-measure); margin: var(--space-2) auto var(--space-4); }
-.wt-blocked[hidden] { display: none; }
 .wt-blocked > svg { flex: none; }
 .wt-blocked-text { flex: 1; min-width: 0; margin: 0; }
 .wt-blocked > .btn { flex: none; }

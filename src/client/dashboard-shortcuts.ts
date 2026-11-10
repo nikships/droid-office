@@ -60,6 +60,18 @@ export function workspaceShortcut(e: ShortcutEvent, run: (command: WorkspaceComm
   return true;
 }
 
+/**
+ * The row ↑/↓ goes to in the sidebar, which walks Mission Control's rows and then the floor's as one list:
+ * on from the row with the keyboard, else from the worker in the focused pane. A worker in both lists has a row in each.
+ */
+export function sideStep<T extends { id: string; button?: unknown }>(rows: readonly T[], from: unknown, focused: string, direction: -1 | 1): T | undefined {
+  if (!rows.length) return undefined;
+  let at = from ? rows.findIndex((r) => r.button === from) : -1;
+  if (at < 0) at = rows.findIndex((r) => r.id === focused);
+  if (at < 0) return rows[direction > 0 ? 0 : rows.length - 1];
+  return rows[(at + direction + rows.length) % rows.length];
+}
+
 export function adjacentFloor(floors: readonly { id: string }[], current: string | null, direction: -1 | 1): string | undefined {
   const at = floors.findIndex((floor) => floor.id === current);
   if (floors.length < 2 || at < 0) return;

@@ -4,9 +4,8 @@
 
 import { missionAgent, ORCHESTRATOR_COLOR, ORCHESTRATOR_ID, ORCHESTRATOR_NAME, orchestratorNeedsOwner, type MissionAgent, type MissionControlState } from '../shared/mission-control';
 import type { ClientMsg, WorkerInfo } from '../shared/protocol';
+import { isAsleep } from '../shared/status';
 import { doingLine } from './worker-words';
-
-export { ORCHESTRATOR_COLOR } from '../shared/mission-control';
 
 /** What the Orchestrator is for, in its empty state and on its Settings card. */
 export const ORCHESTRATOR_PITCH = 'Tell it what you want done anywhere in the building. It plans, hires workers on any floor, answers their questions, checks their work and reports back. It never edits code itself.';
@@ -50,11 +49,6 @@ export function missionWorker(state: MissionControlState | undefined, id: string
   return id === ORCHESTRATOR_ID ? orchestratorWorker(state) : missionAgent(state, id)?.worker;
 }
 
-/** Whether an id names a building agent at all, the Orchestrator while it's off included. */
-export function isMissionId(state: MissionControlState | undefined, id: string): boolean {
-  return !!state && (id === ORCHESTRATOR_ID || state.bots.some((b) => b.worker.id === id));
-}
-
 /** The building agents that wait on the owner, for the tab title, notifications and the menu bar. */
 export function missionWaiting(state: MissionControlState | undefined): number {
   return orchestratorNeedsOwner(state) ? 1 : 0;
@@ -65,11 +59,22 @@ export function missionLead(state: MissionControlState | undefined, lead: string
   return lead ? missionAgent(state, lead) : undefined;
 }
 
+/**
+ * Why the Orchestrator can't start, while it has no session running (none yet, or asleep). A session that is
+ * running keeps its status and its Stop, as the 3D office's `orchestratorPhase` has it.
+ */
+export function orchestratorBlocked(state: MissionControlState | undefined): string | undefined {
+  const o = state?.orchestrator;
+  const w = o?.agent?.worker;
+  return o?.settings.on && o.blocked && (!w || isAsleep(w.status)) ? o.blocked : undefined;
+}
+
 /** The Orchestrator in a line: off, why it can't start, what it's doing, or that it's ready for a task. */
 export function orchestratorLine(state: MissionControlState | undefined): string {
   const o = state?.orchestrator;
   if (!o?.settings.on) return 'Off. Turn it on in Settings → Orchestrator.';
-  if (o.blocked) return o.blocked;
+  const blocked = orchestratorBlocked(state);
+  if (blocked) return blocked;
   const w = o.agent?.worker;
   if (!w || (w.status === 'idle' && !w.task && !w.title && !w.activity)) return 'Ready for a task anywhere in the building';
   return doingLine(w);
