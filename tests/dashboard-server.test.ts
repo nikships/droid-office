@@ -12,6 +12,7 @@ import { build } from 'vite';
 import { Client, StreamableHTTPClientTransport } from '@modelcontextprotocol/client';
 import { loadConfig } from '../src/server/config.js';
 import { leaveFloorTerminals, startServer } from '../src/server/server.js';
+import { HOOK_VERSION } from '../src/server/workers.js';
 import { DevicesStore } from '../src/server/devices.js';
 import { OFFICE_MCP_PATH, OFFICE_MCP_WORKER_HEADER } from '../src/server/office-mcp/index.js';
 import { ORCHESTRATOR_ID } from '../src/shared/mission-control.js';
@@ -183,11 +184,22 @@ async function missionOffice(t: TestContext) {
       return { error: r.isError === true, text: (r.content as { text?: string }[]).map((c) => c.text ?? '').join('\n'), data: (r.structuredContent ?? {}) as Record<string, unknown> };
     };
   };
+  /** A hook from one session, as Droid's hook command sends it; what the office answers is what Droid reads. */
+  const hook = async (launch: Launch, event: string, extra: Record<string, unknown> = {}) => {
+    const res = await fetch(`${launch.hookUrl}/hooks/droid?worker=${launch.workerId}&event=${event}&v=${HOOK_VERSION}`, {
+      method: 'POST',
+      headers: { authorization: `Bearer ${launch.hookToken}` },
+      body: JSON.stringify({ session_id: `session-${launch.workerId}`, hook_event_name: event, ...extra }),
+    });
+    assert.equal(res.status, 200, event);
+    return res.text();
+  };
   let running = await office(t, dir, agent);
   return {
     dir,
     launched,
     mcp,
+    hook,
     get base() {
       return running.base;
     },
@@ -271,6 +283,28 @@ async function orchestratorTeam(t: TestContext) {
   assert.equal(leadOf(), ORCHESTRATOR_ID);
   return { o, owner, lead, sub, id, leadOf };
 }
+
+test('a Stop the office holds for the Orchestrator carries its own team’s news, never another lead’s', async (t) => {
+  const { o, owner, sub, id } = await orchestratorTeam(t);
+  const session = await o.launched(ORCHESTRATOR_ID);
+  const mine = o.server.floors()[0].workers.get(id)!.name;
+  owner.send({ t: 'worker.spawn', deskId: 'auto', requestId: 'hire', requestFloor: o.server.floors()[0].id });
+  const other = (await owner.wait('action.result', (m) => m.requestId === 'hire')).workerId!;
+  const otherLead = await o.mcp(await o.launched(other));
+  const hired = await otherLead('team_hire', { title: 'Run lint', brief: 'Run lint and report.', worktree: false });
+  assert.equal(hired.error, false, hired.text);
+  const theirs = hired.data.worker as { id: string; name: string };
+  const otherSub = await o.mcp(await o.launched(theirs.id));
+
+  await o.hook(session, 'SessionStart');
+  await o.hook(session, 'UserPromptSubmit', { prompt: 'Plan the release' });
+  assert.equal((await sub('team_report', { text: 'Found the tests folder' })).error, false);
+  assert.equal((await otherSub('team_report', { text: 'Lint is clean' })).error, false);
+  const held = JSON.parse(await o.hook(session, 'Stop')) as { decision: string; reason: string };
+  assert.equal(held.decision, 'block');
+  assert.ok(held.reason.includes(`${mine} reported back.`), held.reason);
+  assert.ok(!held.reason.includes(theirs.name), held.reason);
+});
 
 test('the Orchestrator’s team survives it being off across an office restart, and reports to it again once it is on', async (t) => {
   const { o, owner, sub, id, leadOf } = await orchestratorTeam(t);

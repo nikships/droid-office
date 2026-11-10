@@ -3,9 +3,9 @@ import assert from 'node:assert/strict';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { Orchestrator } from '../src/server/orchestrator.js';
+import { Orchestrator, type OrchestratorFloor } from '../src/server/orchestrator.js';
 import { Team } from '../src/server/team.js';
-import { WorkerManager } from '../src/server/workers.js';
+import { HOOK_VERSION, WorkerManager } from '../src/server/workers.js';
 import { ORCHESTRATOR_ID } from '../src/shared/mission-control.js';
 import { SUBAGENT_DEFAULTS, type WorkerInfo } from '../src/shared/protocol.js';
 
@@ -32,7 +32,7 @@ async function until<T>(read: () => T | undefined | false, what: string): Promis
 }
 
 /** An Orchestrator whose Droid is `fakeDroid`, with its launches and the hooks a real session would send. */
-function rig(t: { after(fn: () => void): void }, dir = mkdtempSync(path.join(tmpdir(), 'orchestrator-'))) {
+function rig(t: { after(fn: () => void): void }, dir = mkdtempSync(path.join(tmpdir(), 'orchestrator-')), floors: () => OrchestratorFloor[] = () => []) {
   const droid = path.join(dir, 'droid');
   const log = path.join(dir, 'launches.jsonl');
   if (!existsSync(droid)) {
@@ -47,7 +47,7 @@ function rig(t: { after(fn: () => void): void }, dir = mkdtempSync(path.join(tmp
     agentCmd: droid,
     agentArgs: [],
     hook: { url: 'http://127.0.0.1:1', token: '' },
-    floors: () => [],
+    floors,
     unready: () => blocked,
     changed() {},
     data() {},
@@ -77,8 +77,12 @@ function rig(t: { after(fn: () => void): void }, dir = mkdtempSync(path.join(tmp
         .join('')
         .matchAll(/\x1b\[200~([\s\S]*?)\x1b\[201~/g),
     ].map((m) => m[1]);
-  const hook = (launch: Launch, event: string, extra: Record<string, unknown> = {}) =>
-    assert.notEqual(orchestrator.workers.hookReply(ORCHESTRATOR_ID, launch.token, event, { session_id: 'session-1', hook_event_name: event, ...extra }), undefined, event);
+  /** A hook from one launch's session; what the office answers is what Droid reads. */
+  const hook = (launch: Launch, event: string, extra: Record<string, unknown> = {}) => {
+    const reply = orchestrator.workers.hookReply(ORCHESTRATOR_ID, launch.token, event, { session_id: 'session-1', hook_event_name: event, ...extra }, HOOK_VERSION);
+    assert.notEqual(reply, undefined, event);
+    return reply;
+  };
   return {
     dir,
     orchestrator,
@@ -193,110 +197,66 @@ test('a new conversation ends the Orchestrator’s session, and a prompt sent st
   assert.equal(r.orchestrator.info?.sessionId, undefined);
 });
 
-test('reports, questions and finishes wake a resting deskless Orchestrator through its floor delivery path', { timeout: 10_000 }, async (t) => {
-  const dir = mkdtempSync(path.join(tmpdir(), 'orchestrator-wake-'));
-  const orchestrator = new Orchestrator({
-    dataDir: dir,
-    agentCmd: '/not-a-droid',
-    agentArgs: [],
-    hook: { url: 'http://127.0.0.1:1', token: '' },
-    floors: () => [],
-    unready: () => undefined,
-    changed() {},
-    data() {},
-    screen() {},
-    toast() {},
+test('its team’s news is typed into an Orchestrator at rest, and handed over at the end of a turn in progress', async (t) => {
+  const dir = mkdtempSync(path.join(tmpdir(), 'orchestrator-'));
+  const floors: OrchestratorFloor[] = [];
+  let floor: WorkerManager | undefined;
+  let team: Team | undefined;
+  // Before the rig's own cleanup, which removes the folder they save to.
+  t.after(() => {
+    team?.stop();
+    floor?.shutdown();
   });
-  const lead: WorkerInfo = {
-    id: 'orchestrator',
-    name: 'Orchestrator',
-    kind: 'agent',
-    deskId: '',
-    color: '#ee6018',
-    status: 'done',
-    acked: true,
-    createdBy: 'owner',
-    createdAt: 1,
-    cols: 100,
-    rows: 30,
-    open: false,
+  const r = rig(t, dir, () => floors);
+  const sub: WorkerInfo = { id: 'sub', name: 'Byte', kind: 'agent', deskId: 'desk-1', color: '#4f9dde', status: 'working', acked: true, createdBy: 'owner', createdAt: 1, cols: 100, rows: 30, open: false, lead: ORCHESTRATOR_ID };
+  mkdirSync(path.join(dir, 'floor'));
+  const building = {
+    agents: {
+      identity: (id: string) => (id === ORCHESTRATOR_ID ? r.orchestrator.identity() : undefined),
+      known: (id: string) => id === ORCHESTRATOR_ID,
+      tell: (_id: string, text: string) => r.orchestrator.tell(text),
+    },
+    floor: 'alpha',
   };
-  const sub: WorkerInfo = { ...lead, id: 'sub', name: 'Byte', lead: lead.id, deskId: 'desk-1', status: 'working' };
-  t.mock.method(orchestrator.workers, 'get', () => lead);
-  t.mock.method(orchestrator.workers, 'running', () => true);
-  let delivered: ((text: string) => void) | undefined;
-  t.mock.method(orchestrator.workers, 'tell', (id: string, text: string) => {
-    assert.equal(id, 'orchestrator');
-    delivered?.(text);
-    return undefined;
-  });
-  mkdirSync(path.join(dir, 'floor'), { recursive: true });
-  const floor = new WorkerManager(
-    dir,
-    path.join(dir, 'floor'),
-    '/not-a-droid',
-    [],
-    { url: 'http://127.0.0.1:1', token: '' },
-    {
-      update() {},
-      remove() {},
-      data() {},
-      screen() {},
-      toast() {},
-    },
-    undefined,
-    undefined,
-    undefined,
-    true,
-    {
-      agents: {
-        identity: (id) => (id === lead.id ? orchestrator.identity() : undefined),
-        known: (id) => id === lead.id,
-        tell: (_id, text) => orchestrator.tell(text),
-      },
-      floor: 'alpha',
-    },
-  );
-  const team = new Team(
+  floor = new WorkerManager(dir, path.join(dir, 'floor'), '/not-a-droid', [], { url: 'http://127.0.0.1:1', token: '' }, { update() {}, remove() {}, data() {}, screen() {}, toast() {} }, undefined, undefined, undefined, true, building);
+  const workers = floor;
+  team = new Team(
     {
       list: () => [sub],
-      get: (id) => (id === sub.id ? sub : floor.buildingIdentity(id)),
+      get: (id) => (id === sub.id ? sub : workers.buildingIdentity(id)),
       officeDefault: undefined,
       deskOccupied: () => false,
       hire: () => 'Not used',
-      prompt: (id, text) => floor.tell(id, text),
+      prompt: (id, text) => workers.tell(id, text),
       resume: () => undefined,
       kill: async () => ({}),
       tail: () => '',
       setTask() {},
     },
-    { dataDir: path.join(dir, 'team'), dir, git: false, settings: () => ({ ...SUBAGENT_DEFAULTS, wakeLead: true }), toast() {}, nudgeDelayMs: 1 },
+    // A clock a minute ahead: the prompt just typed for the owner no longer holds a wake note back.
+    { dataDir: path.join(dir, 'team'), dir, git: false, settings: () => ({ ...SUBAGENT_DEFAULTS, wakeLead: true }), toast() {}, nudgeDelayMs: 1, now: () => Date.now() + 60_000 },
   );
-  t.after(() => {
-    team.stop();
-    floor.shutdown();
-    orchestrator.shutdown();
-    rmSync(dir, { recursive: true, force: true });
-  });
-  const news = () =>
-    new Promise<string>((resolve) => {
-      delivered = resolve;
-    });
-  for (const question of [false, true]) {
-    const wake = news();
-    const result = await team.handle(sub, { action: 'report', text: question ? 'Which branch?' : 'Tests passed', question });
-    assert.equal(result.status, 200);
-    assert.match(await wake, question ? /asked you a question/ : /reported back/);
+  floors.push({ id: 'alpha', def: { name: 'alpha' }, workers: { list: () => [sub] }, team });
+
+  assert.equal(r.orchestrator.prompt('Plan the release'), undefined);
+  const session = await r.launched(1);
+  r.hook(session, 'SessionStart');
+  await until(() => r.typed(session).length === 1, 'the prompt its session started for');
+  assert.equal((await team.handle(sub, { action: 'report', text: 'Tests passed' })).status, 200);
+  assert.match(await until(() => r.typed(session)[1], 'the wake note typed in at rest'), /Byte reported back/);
+
+  r.hook(session, 'UserPromptSubmit', { prompt: 'Read the report' });
+  assert.equal((await team.handle(sub, { action: 'report', text: 'Which branch?', question: true })).status, 200);
+  const held = JSON.parse(r.hook(session, 'Stop') ?? '') as { decision: string; reason: string };
+  assert.equal(held.decision, 'block');
+  assert.match(held.reason, /Byte asked you a question/);
+
+  // Its subagent finishes a turn without a word while the Orchestrator's own turn goes on.
+  for (const status of ['idle', 'working', 'done'] as const) {
+    sub.status = status;
+    team.onWorker({ ...sub });
   }
-  lead.status = 'working';
-  sub.status = 'idle';
-  team.onWorker({ ...sub });
-  sub.status = 'working';
-  team.onWorker({ ...sub });
-  sub.status = 'done';
-  team.onWorker({ ...sub });
-  const wake = news();
-  lead.status = 'done';
-  team.leadRested(lead.id);
-  assert.match(await wake, /finished its turn without reporting/);
+  assert.equal(r.hook(session, 'Stop', { stop_hook_active: true }), '', 'a Stop the office already held is not held again');
+  assert.match(await until(() => r.typed(session)[2], 'the wake note once its turn ended'), /Byte finished its turn without reporting/);
+  assert.equal(r.typed(session).length, 3, 'nothing was typed into the turn in progress');
 });
