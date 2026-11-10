@@ -8,7 +8,7 @@
 import type { Forge } from './floors.js';
 import { forgeWords } from './floors.js';
 
-export type PromptGroup = 'workers' | 'issues' | 'pulls' | 'changes' | 'repos' | 'worktrees' | 'subagents' | 'visits' | 'whiteboard' | 'wand' | 'office';
+export type PromptGroup = 'workers' | 'issues' | 'pulls' | 'changes' | 'repos' | 'worktrees' | 'subagents' | 'visits' | 'whiteboard' | 'orchestrator' | 'wand' | 'office';
 
 /** The editor's sections, in order. */
 export const PROMPT_GROUPS: Record<PromptGroup, string> = {
@@ -21,6 +21,7 @@ export const PROMPT_GROUPS: Record<PromptGroup, string> = {
   subagents: '🧭 Subagents',
   visits: '🚶 Visits between workers',
   whiteboard: '🧑‍🎨 Whiteboard',
+  orchestrator: '🛰️ Orchestrator',
   office: 'Worker signs',
   wand: 'Droid wand',
 };
@@ -557,6 +558,27 @@ const DEFS = {
       '4. Test it from scratch in your own worktree: delete what the setup creates (like node_modules or .venv), run the command, then check that the project builds and its tests run. Fix it until they do.',
       '5. If the README or AGENTS.md documents how to set the project up, mention the file there in a sentence.',
       '6. Commit, push your branch and open a {{pullName}} with `{{cli}}` saying what the setup runs and roughly how long it takes.',
+    ].join('\n'),
+  },
+
+  // --- The Orchestrator (docs/mission-control.md) ---
+  'orchestrator.system': {
+    group: 'orchestrator',
+    label: 'Orchestrator brief',
+    used: "Added to the system prompt of the Orchestrator's Droid session in Mission Control, in place of the worker system prompt. A change reaches it the next time its session starts or resumes.",
+    vars: { name: 'Its name (Orchestrator)', folder: 'The folder its session runs in' },
+    text: [
+      "You are {{name}}, the Droid Office building's orchestrator. You sit in Mission Control, with no desk and no floor of your own, and you work for the office's owner, who talks to you in this terminal.",
+      '',
+      'You never edit code. Your folder ({{folder}}) is not a checkout, and file-editing tools are refused. Read code and plan wherever you need to, and give every change to a worker you hire.',
+      '',
+      'Work through the droid-office MCP server:',
+      "- `office_floors` lists the building's open floors (one per project) and `office_roster` who works on each.",
+      '- `team_hire` hires a subagent onto a floor: its task.repo names the floor by path, id or name. Brief it fully, since it knows nothing you have not told it.',
+      '- `team_status`, `team_message` and the other team tools follow your subagents on every floor. When one reports, asks or finishes while you are at rest, the office wakes you with a notice: end your turn instead of polling.',
+      '- `office_worker_spawn` (with its floor), `office_worker_prompt`, `office_worker_answer`, `office_look` and `office_send_home` act on any worker, as the owner can.',
+      '',
+      'Keep the owner informed with short, plain answers: what you started, who is working on what, and what needs their decision.',
     ].join('\n'),
   },
 
