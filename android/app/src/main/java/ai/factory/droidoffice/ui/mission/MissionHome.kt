@@ -106,7 +106,8 @@ private fun OrchestratorCard(agent: MissionAgent?, blocked: String?, now: Long, 
                     val team = agent?.team.orEmpty()
                     if (team.isNotEmpty()) MissionTag("TEAM ${team.size}")
                     Spacer(Modifier.width(6.dp))
-                    StatusPill(state, acked = w?.acked ?: true, tag = Tags.Mission.ORCHESTRATOR_STATUS, compact = true, blocked = blocked != null)
+                    // Blocked says why in its line, in the warning colour, so the row needs no pill as well.
+                    if (blocked == null) StatusPill(state, acked = w?.acked ?: true, tag = Tags.Mission.ORCHESTRATOR_STATUS, compact = true)
                 }
                 val model = w?.let(Workers::modelId)?.let(catalogue::nameOf)?.replace(Regex("^DroidProxy:\\s*", RegexOption.IGNORE_CASE), "")
                 val effort = w?.let(Workers::effort)?.takeIf { model != null }

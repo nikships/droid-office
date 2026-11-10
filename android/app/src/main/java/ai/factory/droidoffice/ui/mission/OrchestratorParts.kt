@@ -231,7 +231,7 @@ internal fun OrchestratorIdle(state: OrchestratorState?, synced: Boolean, embedd
                         if (!connection.send(ClientMsg.orchestratorSet(state.settings.copy(on = true)))) scope.launch { snackbar.showSnackbar("Couldn't reach the office. Nothing changed.") }
                     }, Modifier.tagged(Tags.Orchestrator.TURN_ON), enabled = connected, icon = OfficeIcons.Bolt)
                 }
-                else -> Intro(onExample = {
+                else -> Intro(enabled = connected && state.blocked == null, onExample = {
                     fill = it
                     fillRequest++
                 })
@@ -247,7 +247,7 @@ internal fun OrchestratorIdle(state: OrchestratorState?, synced: Boolean, embedd
 }
 
 @Composable
-private fun Intro(onExample: (String) -> Unit) {
+private fun Intro(enabled: Boolean, onExample: (String) -> Unit) {
     Column(Modifier.widthIn(max = 460.dp).fillMaxWidth().tagged(Tags.Orchestrator.INTRO)) {
         Spacer(Modifier.height(12.dp))
         AgentTile(OfficeIcons.Orbit, Palette.Accent)
@@ -265,13 +265,14 @@ private fun Intro(onExample: (String) -> Unit) {
             MissionControl.examples.forEachIndexed { i, example ->
                 if (i > 0) HorizontalDivider(color = Palette.Border)
                 Row(
-                    Modifier.fillMaxWidth().clickable(onClickLabel = "Use this prompt") { onExample(example) }
+                    // An example only fills a composer that's there to take it.
+                    Modifier.fillMaxWidth().clickable(enabled = enabled, onClickLabel = "Use this prompt") { onExample(example) }
                         .tagged(Tags.Orchestrator.example(i + 1)).padding(horizontal = 14.dp, vertical = 12.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    Text("›", style = LocalOfficeType.current.monoBody.copy(color = Palette.Accent))
+                    Text("›", style = LocalOfficeType.current.monoBody.copy(color = if (enabled) Palette.Accent else Palette.TextTertiary))
                     Spacer(Modifier.width(10.dp))
-                    Text(example, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
+                    Text(example, style = MaterialTheme.typography.bodyMedium, color = if (enabled) Palette.Text else Palette.TextSecondary, modifier = Modifier.weight(1f))
                 }
             }
         }
