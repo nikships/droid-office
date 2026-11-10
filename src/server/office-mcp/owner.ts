@@ -90,7 +90,7 @@ export interface RosterWorker {
   pr?: { number: number; url: string };
 }
 
-export const ownerInstructions = `You have owner-level access to workers on every floor through the office_* tools; your own subagents go through team_*. Inspect any worker with office_roster, office_look and office_worker_thread; hire an independent worker with office_worker_spawn (and send it home with office_send_home once it is no longer needed), direct one with office_worker_prompt, and control its current turn with office_worker_interrupt or office_worker_answer.
+export const ownerInstructions = `You have owner-level access to workers on every floor through the office_* tools; your own subagents go through team_*. Inspect any worker with office_roster, office_look and office_worker_thread; hire an independent worker with office_worker_spawn, direct one with office_worker_prompt, and control its current turn with office_worker_interrupt or office_worker_answer.
 Each action has the owner's effects and is attributed to you, so act on the owner's instructions alone. Keep worktrees, branches and cloud sessions unless the owner asked to delete them. A pending or unconfirmed outcome calls for inspection before any retry of a non-idempotent action.`;
 
 const readOnly = { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false };
