@@ -5,9 +5,10 @@
 
 import { GLASS_ROOM, GLASS_ROOM_CHAIRS, MISSION_HEAD, deskSeat } from '../shared/layout';
 import { ORCHESTRATOR_COLOR, ORCHESTRATOR_ID, ORCHESTRATOR_NAME, orchestratorNeedsOwner, type MissionAgent, type MissionControlState, type MissionTeamMember } from '../shared/mission-control';
-import type { TeamBadge, TodoProgress, WorkerInfo, WorkerStatus } from '../shared/protocol';
+import type { TeamBadge, WorkerInfo, WorkerStatus } from '../shared/protocol';
 import { isAsleep } from '../shared/status';
 import { teamCounts } from '../shared/team';
+import { orchestratorWorker } from './mission';
 import type { TeamLink } from './world/team-lines';
 
 /** Where a building agent is in the room: its feet, and its heading (`Object3D.rotation.y`, forward +z). */
@@ -77,11 +78,20 @@ export const PHASE_WORD: Record<OrchestratorPhase, string> = {
   offline: 'asleep',
 };
 
-/** The building agents in the room: the Orchestrator while it's on and has a session, then the bots in the order they were added. */
+/**
+ * The building agents in the room: the Orchestrator while it's on (a stand-in before its first prompt and after
+ * a new conversation, when its team is still its team), then the bots in the order they were added.
+ */
 export function missionAgents(state: MissionControlState | null | undefined): MissionAgent[] {
   if (!state) return [];
-  const o = state.orchestrator;
-  return [...(o.settings.on && o.agent ? [o.agent] : []), ...state.bots];
+  const o = orchestratorWorker(state);
+  return [...(o ? [state.orchestrator.agent ?? { worker: o, team: [] }] : []), ...state.bots];
+}
+
+/** The Orchestrator's session while its terminal can open: started and awake. Otherwise its prompt box stands in, and a prompt wakes it. */
+export function orchestratorAwake(state: MissionControlState | null | undefined): WorkerInfo | undefined {
+  const w = state?.orchestrator.settings.on ? state.orchestrator.agent?.worker : undefined;
+  return w && !isAsleep(w.status) ? w : undefined;
 }
 
 /** The bots that have a chair at the table, and which; the rest are on the roster screen only. */
@@ -107,7 +117,10 @@ export function missionBadge(w: Pick<WorkerInfo, 'id' | 'name' | 'color' | 'team
   return { id: w.id, role: 'lead', accent: orchestrator ? ORCHESTRATOR_COLOR : w.color, emblem: orchestrator ? 'star' : 'hex', leadName: w.name };
 }
 
-/** Saved session badges may predate the Orchestrator's fixed accent; its team's markings always match it. */
+/**
+ * A worker's team markings as the office paints them. The Orchestrator's team takes a look of its own on each
+ * floor, like any team; its accent is painted in the Orchestrator's colour so its markings match the room's.
+ */
 export function missionTeamBadge(w: Pick<WorkerInfo, 'id' | 'lead' | 'team'>): TeamBadge | undefined {
   return w.team && (w.id === ORCHESTRATOR_ID || w.lead === ORCHESTRATOR_ID) ? { ...w.team, accent: ORCHESTRATOR_COLOR } : w.team;
 }
@@ -131,12 +144,6 @@ export function lastUsedWords(at: number | undefined, now: number): string {
   if (s < 86_400) return `${Math.floor(s / 3600)} h ago`;
   const d = Math.floor(s / 86_400);
   return `${d} day${d === 1 ? '' : 's'} ago`;
-}
-
-/** The todo line on the Orchestrator's screen: "3 of 7 · Hire a worker for the CI fix". */
-export function todoLine(t: TodoProgress | undefined): string | undefined {
-  if (!t?.total) return undefined;
-  return [`${t.done} of ${t.total}`, t.current].filter(Boolean).join(' · ');
 }
 
 type Point = { x: number; y: number; z: number };

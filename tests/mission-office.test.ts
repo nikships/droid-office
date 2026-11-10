@@ -1,10 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { GLASS_ROOM, GLASS_ROOM_CHAIRS, GLASS_ROOM_TABLE, MISSION_HEAD } from '../src/shared/layout.js';
-import { ORCHESTRATOR_ID, type MissionAgent, type MissionControlState } from '../src/shared/mission-control.js';
+import { ORCHESTRATOR_COLOR, ORCHESTRATOR_ID, type MissionAgent, type MissionControlState } from '../src/shared/mission-control.js';
 import { walkable } from '../src/shared/nav.js';
 import type { WorkerInfo } from '../src/shared/protocol.js';
-import { ORCHESTRATOR_COLOR } from '../src/client/mission.js';
 import {
   ORCHESTRATOR_SPOT,
   botChairs,
@@ -17,9 +16,9 @@ import {
   missionTeamBadge,
   missionTeamLine,
   missionView,
+  orchestratorAwake,
   orchestratorPhase,
   orchestratorWaiting,
-  todoLine,
 } from '../src/client/mission-office.js';
 
 const worker = (over: Partial<WorkerInfo>): WorkerInfo =>
@@ -58,7 +57,7 @@ test('you stand inside the glass, on open floor, within reach of whom you talk t
   }
 });
 
-test('the Orchestrator is in the room while it is on with a session; bots take the chairs in the order they were added', () => {
+test('the Orchestrator is in the room while it is on; bots take the chairs in the order they were added', () => {
   const agent = { worker: worker({ status: 'working' }), team: [] };
   const bots = ['a', 'b', 'c', 'd', 'e', 'f'].map((id) => bot(id));
   assert.deepEqual(
@@ -69,6 +68,11 @@ test('the Orchestrator is in the room while it is on with a session; bots take t
     missionAgents(state({ settings: { on: false }, agent }, bots.slice(0, 1))).map((a) => a.worker.id),
     ['a'],
     'off, it is not',
+  );
+  assert.deepEqual(
+    missionAgents(state()).map((a) => [a.worker.id, a.worker.color, a.team.length]),
+    [[ORCHESTRATOR_ID, ORCHESTRATOR_COLOR, 0]],
+    'before its first prompt and after a new conversation, its stand-in',
   );
   assert.deepEqual(missionAgents(undefined), []);
   const chairs = botChairs(state({}, bots));
@@ -97,6 +101,15 @@ test('its phase: off, blocked, fresh, or its session’s status', () => {
   assert.equal(orchestratorWaiting(state({ agent: { worker: worker({ status: 'working' }), team: [] } })), undefined);
 });
 
+test('its terminal opens only while it has a session that is awake; otherwise its prompt box stands in', () => {
+  const at = (status: WorkerInfo['status']) => state({ agent: { worker: worker({ status }), team: [] } });
+  assert.equal(orchestratorAwake(undefined), undefined);
+  assert.equal(orchestratorAwake(state()), undefined, 'never prompted');
+  assert.equal(orchestratorAwake(state({ settings: { on: false }, agent: { worker: worker({ status: 'working' }), team: [] } })), undefined, 'off');
+  for (const status of ['exited', 'offline'] as const) assert.equal(orchestratorAwake(at(status)), undefined, status);
+  for (const status of ['starting', 'idle', 'working', 'needs_input', 'done'] as const) assert.equal(orchestratorAwake(at(status))?.id, ORCHESTRATOR_ID, status);
+});
+
 test('a building agent wears its own lead badge, else its subagents’, else a team of its own colour', () => {
   const o = worker({});
   const own = missionBadge(o, []);
@@ -111,7 +124,7 @@ test('a building agent wears its own lead badge, else its subagents’, else a t
   assert.deepEqual(missionBadge(b, []), { id: 'claw', role: 'lead', accent: '#33aaff', emblem: 'hex', leadName: 'claw' });
 });
 
-test('the words: a team across floors, when a bot was last used, the todo line', () => {
+test('the words: a team across floors, and when a bot was last used', () => {
   assert.equal(missionTeamLine([]), undefined);
   assert.equal(
     missionTeamLine([
@@ -127,8 +140,6 @@ test('the words: a team across floors, when a bot was last used, the todo line',
   assert.equal(lastUsedWords(now - 12 * 60_000, now), '12 min ago');
   assert.equal(lastUsedWords(now - 3 * 3_600_000, now), '3 h ago');
   assert.equal(lastUsedWords(now - 86_400_000, now), '1 day ago');
-  assert.equal(todoLine({ done: 3, total: 7, current: 'Hire a worker' }), '3 of 7 · Hire a worker');
-  assert.equal(todoLine({ done: 0, total: 0 }), undefined);
 });
 
 test('team dashes leave Mission Control through its doorway, one lane per agent, then branch to each subagent here', () => {
@@ -164,6 +175,16 @@ test('team dashes leave Mission Control through its doorway, one lane per agent,
     ],
   );
   assert.deepEqual(missionLinks(undefined, floor, seat), []);
+  const reset = missionLinks(state({}, []), floor, seat);
+  assert.deepEqual(
+    reset.filter((l) => !l.via).map((l) => [l.to.x, l.to.z]),
+    [
+      [2, 2],
+      [5, 3],
+    ],
+    'after a new conversation its team is still its team, and its dashes stay',
+  );
+  assert.equal(missionLinks(state({ settings: { on: false } }, []), floor, seat).length, 0, 'off, its team reports to nobody');
 });
 
 test('the screens’ view: the Orchestrator’s card and every building agent with its team', () => {

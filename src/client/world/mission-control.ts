@@ -57,7 +57,6 @@ export class MissionRoom {
     for (const m of [mounts.board, mounts.roster, mounts.sign]) m.material.needsUpdate = true;
     mounts.board.userData.interact = this.orchestratorSpot;
     interactables.push(this.orchestratorSpot);
-    this.ringMat.emissive = new THREE.Color(ORCHESTRATOR_COLOR).multiplyScalar(0.7);
     const ring = mesh(new THREE.TorusGeometry(MISSION_HEAD.radius - 0.015, 0.016, 6, 40).rotateX(Math.PI / 2), this.ringMat, MISSION_HEAD.x, MISSION_HEAD.height, MISSION_HEAD.z);
     ring.name = 'mission-ring';
     this.group.add(ring);
@@ -79,9 +78,10 @@ export class MissionRoom {
   /**
    * Puts the building agents in `state` in their places and paints the screens with `view`. `dress` paints
    * an agent's status, card and markings the way a floor's worker's are; the room then puts its lead
-   * markings on (a building agent leads its team from here, whatever its own record says).
+   * markings on (a building agent leads its team from here, whatever its own record says). Says whether a
+   * new body came into the room.
    */
-  sync(state: MissionControlState | undefined, floorWorkers: readonly WorkerInfo[], view: MissionView, dress: (v: MissionAgentView, w: WorkerInfo) => void) {
+  sync(state: MissionControlState | undefined, floorWorkers: readonly WorkerInfo[], view: MissionView, dress: (v: MissionAgentView, w: WorkerInfo) => void): boolean {
     this.phase = orchestratorPhase(state);
     this.paintRing();
     this.screens.render(view);
@@ -99,9 +99,13 @@ export class MissionRoom {
       if (next && v.color === next.color) continue;
       this.remove(id);
     }
+    let added = false;
     for (const [id, { w, color, spot, chair }] of want) {
       let v = this.views.get(id);
-      v ??= this.add(id, w?.name ?? ORCHESTRATOR_NAME, color, chair);
+      if (!v) {
+        v = this.add(id, w?.name ?? ORCHESTRATOR_NAME, color, chair);
+        added = true;
+      }
       if (v.chair !== chair || !v.model.root.parent) this.place(v, spot, chair);
       if (w) dress(v, w);
       else {
@@ -119,6 +123,7 @@ export class MissionRoom {
       }
       v.model.setTeam(missionBadge(w ?? { id, name: ORCHESTRATOR_NAME, color: ORCHESTRATOR_COLOR }, floorWorkers));
     }
+    return added;
   }
 
   /** The ring's pulse while the Orchestrator waits on you. */

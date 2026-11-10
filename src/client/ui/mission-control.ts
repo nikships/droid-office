@@ -1,8 +1,8 @@
 import { ORCHESTRATOR_ID, ORCHESTRATOR_NAME, type MissionTeamMember } from '../../shared/mission-control';
 import { isBusy } from '../../shared/status';
-import { ORCHESTRATOR_PITCH } from '../mission';
-import { lastUsedWords, missionTeamLine, orchestratorPhase } from '../mission-office';
-import { newOrchestratorConversation } from './orchestrator';
+import { botLine, ORCHESTRATOR_PITCH } from '../mission';
+import { lastUsedWords, missionTeamLine, orchestratorAwake, orchestratorPhase } from '../mission-office';
+import { newOrchestratorConversation, stopOrchestrator } from './orchestrator';
 import type { Net } from '../net';
 import { store } from '../state';
 import { h, openModal, STATUS_LABEL, toast } from './dom';
@@ -18,14 +18,11 @@ export interface OrchestratorActions {
   settings(): void;
 }
 
-/** What the Orchestrator is for, where nothing else says. */
-const ABOUT = ORCHESTRATOR_PITCH;
-
 /** E at the Orchestrator, M, the ☰ menu or the palette: talk to it, or say why you can't and how to fix it. */
 export function openOrchestrator(net: Net, actions: OrchestratorActions) {
   const state = store.missionControl;
   if (!state) {
-    toast('🛰️ This office has no Orchestrator yet: update it to get one', 'warn');
+    toast('🛰️ This office has no Orchestrator yet: restart it to get one', 'warn');
     return;
   }
   const o = state.orchestrator;
@@ -34,16 +31,15 @@ export function openOrchestrator(net: Net, actions: OrchestratorActions) {
   if (phase === 'blocked') return orchestratorBlocked(o.blocked ?? '', actions);
   const w = o.agent?.worker;
   const busy = !!w && isBusy(w.status);
-  const terminal = w ? h('button.btn.sm', { type: 'button', title: 'Its terminal and conversation (O at the Orchestrator)', onclick: () => actions.terminal() }, 'Terminal') : null;
+  // Asleep, its terminal would only bring this box back: the prompt wakes it.
+  const terminal = orchestratorAwake(state) ? h('button.btn.sm', { type: 'button', title: 'Its terminal and conversation (O at the Orchestrator)', onclick: () => actions.terminal() }, 'Terminal') : null;
   const stop = busy
     ? h(
         'button.btn.sm',
         {
           type: 'button',
           title: 'Stop its turn (X at the Orchestrator)',
-          onclick: () => {
-            if (net.send({ t: 'orchestrator.interrupt' })) toast(`✋ Stopping ${w.name}`);
-          },
+          onclick: () => stopOrchestrator(net, w.name),
         },
         'Stop',
       )
@@ -61,7 +57,7 @@ export function openOrchestrator(net: Net, actions: OrchestratorActions) {
     : null;
   openPrompt({
     title: `🛰️ ${w?.name ?? ORCHESTRATOR_NAME}`,
-    subtitle: !w ? ABOUT : busy ? `${STATUS_LABEL[w.status] ?? w.status}${w.task?.name ? ` · ${w.task.name}` : ''}. Send steers its turn; Queue waits until it's over.` : (w.task?.name ?? ABOUT),
+    subtitle: !w ? ORCHESTRATOR_PITCH : busy ? `${STATUS_LABEL[w.status] ?? w.status}${w.task?.name ? ` · ${w.task.name}` : ''}. Send steers its turn; Queue waits until it's over.` : (w.task?.name ?? ORCHESTRATOR_PITCH),
     warning: w?.status === 'needs_input' ? `${w.name} is waiting on an answer: open its terminal to reply.` : undefined,
     placeholder: 'What do you want done? It can hire and direct workers on any floor',
     imagesOption: true,
@@ -79,7 +75,7 @@ function orchestratorOff(net: Net, actions: OrchestratorActions) {
     'div.modal',
     { role: 'dialog', 'aria-label': 'The Orchestrator is off' },
     windowHeader('🛰️ The Orchestrator is off', 'Mission Control'),
-    h('div.body.stack', {}, h('p', {}, ABOUT), h('p.note.info', {}, 'While it is off, its team carries on working and reports to nobody until it is back.')),
+    h('div.body.stack', {}, h('p', {}, ORCHESTRATOR_PITCH), h('p.note.info', {}, 'While it is off, its team carries on working and reports to nobody until it is back.')),
     h('footer', {}, h('span.grow'), settings, on),
   );
   const modal = openModal(el, { size: 'sm' });
@@ -138,7 +134,7 @@ export function openBot(id: string, actions: BotActions) {
     }
     const w = b.worker;
     sub.textContent = `Runs externally · last used ${lastUsedWords(b.lastUsedAt, Date.now())}`;
-    const status = h('div.row', {}, h('span.pill', { class: w.status }, STATUS_LABEL[w.status] ?? w.status), h('span.grow', {}, w.activity ?? w.task?.name ?? (w.status === 'offline' ? 'Nothing reported since the office started' : '')));
+    const status = h('div.row', {}, h('span.pill', { class: w.status }, STATUS_LABEL[w.status] ?? w.status), h('span.grow', {}, botLine(b)));
     const team = b.team.length
       ? h(
           'ul.list.boxed',

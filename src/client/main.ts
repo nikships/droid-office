@@ -30,8 +30,8 @@ import {
 import { floorPalette, forgeOf, forgeWords, normalizeRepo, repoChoices as otherRepos, repoWebUrl } from '../shared/floors';
 import { OFFICE_SHELL_ID } from '../shared/office-shell';
 import { ORCHESTRATOR_ID, ORCHESTRATOR_NAME } from '../shared/mission-control';
-import { botLine, missionWaiting, missionWorker, orchestratorLine, orchestratorStarted, orchestratorWorker } from './mission';
-import { ORCHESTRATOR_SPOT, PHASE_WORD, missionBadge, missionLinks, missionStand, missionTeamBadge, missionTeamLine, missionView, orchestratorPhase, orchestratorWaiting } from './mission-office';
+import { botLine, missionWaiting, missionWorker, orchestratorLine, orchestratorWorker } from './mission';
+import { ORCHESTRATOR_SPOT, PHASE_WORD, missionBadge, missionLinks, missionStand, missionTeamBadge, missionTeamLine, missionView, orchestratorAwake, orchestratorPhase, orchestratorWaiting } from './mission-office';
 import type { AgentEffort, CarriedIssue, FloorInfo, GhIssue, GongWhy, WorkerInfo } from '../shared/protocol';
 import { ciForFloor } from '../shared/factory-ci';
 import { wikiShelfLine } from '../shared/factory-wiki';
@@ -94,6 +94,7 @@ import { Casualties } from './world/casualties';
 import { TeamLines, type TeamLink } from './world/team-lines';
 import { MissionRoom, type MissionAgentView } from './world/mission-control';
 import { openBot, openOrchestrator } from './ui/mission-control';
+import { stopOrchestrator } from './ui/orchestrator';
 import { forkLinks } from '../shared/worker-fork';
 import { TEAM_MARK, teamLinks, teamStanding, teamSummary } from '../shared/team';
 import { BloodSpray, gunHit, Puff, setMagnumModel } from './world/gun';
@@ -1582,7 +1583,7 @@ function syncWorkers() {
     v.model.setPr(prBadge(w));
     v.model.setLost(!!w.lost);
     v.model.setTodos(w.kind === 'shell' ? undefined : w.todos);
-    const engineBadge = w.cloud ? cloudBadge(w.cloud) : w.kind === 'agent' ? modelBadge(w.activeModel ?? w.model, w.activeEffort ?? w.effort) : undefined;
+    const engineBadge = engineOf(w);
     const deskDef = DESK_BY_ID.get(w.deskId);
     // A cloud worker's card says where it runs even before it has a task.
     const task = w.task ?? (w.cloud ? { name: 'Ready', summary: w.cloud.error ?? 'Waiting for a prompt' } : undefined);
@@ -1637,8 +1638,7 @@ function engineOf(w: WorkerInfo): string | undefined {
 function syncMission() {
   const floorWorkers = [...store.workers.values()];
   const view = missionView(store.missionControl, floorWorkers, { model: engineOf, activity: workerActivity });
-  mission.sync(store.missionControl, floorWorkers, view, dressAgent);
-  noOutline(mission.group);
+  if (mission.sync(store.missionControl, floorWorkers, view, dressAgent)) noOutline(mission.group);
 }
 
 /** A building agent's status light, card and todos, as a worker at a desk wears them. A bot runs elsewhere, so it never dings. */
@@ -2027,25 +2027,19 @@ function goToNextWaiting() {
   if (trip) return;
   const w = nextUp.next(waitingHere(), waitingBeside());
   const desk = w && DESK_BY_ID.get(w.deskId);
+  const orchestrator = w?.id === ORCHESTRATOR_ID;
   nextToast?.remove();
-  if (w?.id === ORCHESTRATOR_ID) {
-    closeAllModals();
-    standAtOrchestrator();
-    const waiting = waitingInOrder(waitingHere());
-    const of = waiting.length > 1 ? ` (${waiting.findIndex((x) => x.id === w.id) + 1} of ${waiting.length})` : '';
-    nextToast = toast(`${w.status === 'needs_input' ? `🙋 ${w.name} needs input` : `✅ ${w.name} is done`}${of}. O opens its terminal`);
-    return;
-  }
-  if (!w || !desk) {
+  if (!w || (!desk && !orchestrator)) {
     const other = store.floors.find((f) => f.id !== store.floor && f.waiting > 0);
     nextToast = toast(other ? `🛗 Nobody's waiting on this floor. ${other.waiting} on the ${other.name} floor: take the elevator` : '👍 Nobody is waiting on you');
     return;
   }
   closeAllModals();
-  standAt(desk);
+  if (desk) standAt(desk);
+  else standAtOrchestrator();
   const waiting = waitingInOrder(waitingHere());
   const of = waiting.length > 1 ? ` (${waiting.findIndex((x) => x.id === w.id) + 1} of ${waiting.length})` : '';
-  nextToast = toast(`${w.status === 'needs_input' ? `🙋 ${w.name} needs input` : `✅ ${w.name} is done`}${of}. E opens its terminal`);
+  nextToast = toast(`${w.status === 'needs_input' ? `🙋 ${w.name} needs input` : `✅ ${w.name} is done`}${of}. ${orchestrator ? 'O' : 'E'} opens its terminal`);
 }
 
 /** The waiting worker you're standing at, if any: N skips it while anyone else is waiting. */
@@ -2166,8 +2160,7 @@ onOpenTeammate((id) => openWorkerTerminal(id));
 
 /** The Orchestrator's terminal, from any floor. Before its first prompt, or asleep, there's no session to show: its prompt box wakes it. */
 function openOrchestratorTerminal(find?: TerminalFind) {
-  const w = orchestratorStarted(store.missionControl) ? store.worker(ORCHESTRATOR_ID) : undefined;
-  if (!w || isAsleep(w.status)) return showOrchestrator();
+  if (!orchestratorAwake(store.missionControl)) return showOrchestrator();
   openTerminal(net, ORCHESTRATOR_ID, undefined, find);
 }
 
@@ -2514,8 +2507,8 @@ function interact(target: Interactable | null, key: DeskKey, note = aimedNote, s
 function useOrchestrator(key: DeskKey) {
   if (key === 'E') return showOrchestrator();
   if (key === 'O') return openOrchestratorTerminal();
-  const w = orchestratorStarted(store.missionControl) ? store.worker(ORCHESTRATOR_ID) : undefined;
-  if (key === 'X' && w && isBusy(w.status) && net.send({ t: 'orchestrator.interrupt' })) toast(`✋ Stopping ${w.name}`);
+  const w = orchestratorAwake(store.missionControl);
+  if (key === 'X' && w && isBusy(w.status)) stopOrchestrator(net, w.name);
 }
 
 /** Opening a pane is safe from across the room; physical controls still need a nearby E. */
@@ -2886,13 +2879,13 @@ function hintFor(it: Interactable): Hint {
 function orchestratorHint(): Hint {
   const mc = store.missionControl;
   const title = (text: string) => h('span.title', {}, text);
-  if (!mc) return { k: 'none', parts: [title('🛰️ Orchestrator'), aside('update the office to get one')] };
+  if (!mc) return { k: 'none', parts: [title('🛰️ Orchestrator'), aside('restart the office to get one')] };
   const phase = orchestratorPhase(mc);
   if (phase === 'off') return { k: 'off', parts: [title('🛰️ Orchestrator · off'), aside('directs workers on every floor'), key('E', 'Turn it on')] };
   if (phase === 'blocked') return { k: `blocked|${mc.orchestrator.blocked}`, parts: [title("🛰️ Orchestrator · can't start"), aside(clip(mc.orchestrator.blocked ?? '', 56)), key('E', 'See why')] };
   const w = orchestratorWorker(mc)!;
-  const started = orchestratorStarted(mc) && !isAsleep(w.status);
-  const busy = started && isBusy(w.status);
+  const started = !!orchestratorAwake(mc);
+  const busy = isBusy(w.status);
   const doing = phase === 'fresh' ? 'ready for a task anywhere in the building' : clip(workerActivity(w) ?? w.task?.name ?? '', 48);
   const team = missionTeamLine(mc.orchestrator.agent?.team ?? []) ?? '';
   return {
@@ -3165,7 +3158,7 @@ window.addEventListener(
     if (!store.floor || upTop || trip || climber.active || hanger.active) return;
     if (modalOpen() ? !terminalOnTop() : isTyping(e)) return;
     terminalShortcut(e, (direction) => {
-      const o = orchestratorStarted(store.missionControl) ? store.worker(ORCHESTRATOR_ID) : undefined;
+      const o = orchestratorAwake(store.missionControl);
       const id = nextTerminal(o ? [...store.workers.values(), o] : store.workers.values(), openTerminalFor(), direction);
       if (id === OFFICE_SHELL_ID) openOfficeShell(net);
       else openWorkerTerminal(id);
@@ -3528,7 +3521,7 @@ const hudActions: HudAction[] = [
     section: 'Open',
     key: 'M',
     shown: () => !!store.missionControl,
-    status: () => ['working', 'needs_input'].includes(orchestratorPhase(store.missionControl)) || !!orchestratorWaiting(store.missionControl),
+    status: () => orchestratorPhase(store.missionControl) === 'working' || !!orchestratorWaiting(store.missionControl),
     chip: () => `Orchestrator · ${orchestratorWaiting(store.missionControl)?.status === 'done' ? 'done' : PHASE_WORD[orchestratorPhase(store.missionControl)]}`,
     on: () => orchestratorPhase(store.missionControl) === 'working',
     tone: () => (orchestratorPhase(store.missionControl) === 'needs_input' ? 'danger' : undefined),
