@@ -57,7 +57,7 @@ export const OWNER_TOOLS = [
   tool(
     'worker.prompt',
     'office_worker_prompt',
-    'Send a prompt to any worker as the owner. Use team_message for your own subagents. This is not raw terminal input.',
+    'Send a prompt to any floor worker as the owner. Use team_message for your own subagents. This is not raw terminal input.',
     z.strictObject({ ...worker, prompt: text.min(1), issue: number.optional(), images: images.optional(), queue: z.boolean().default(false).describe('Queue behind the current turn using Ctrl+Enter instead of sending immediately.') }),
     'worker',
     'write',

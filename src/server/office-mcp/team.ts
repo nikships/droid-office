@@ -3,7 +3,7 @@ import { z } from 'zod';
 import type { TeamEvent, TeamMember, TeamModel, TeamReply } from '../team.js';
 import { hasOwnerAccess } from './owner.js';
 import { officeAccess, officeError, officeResult, ownFloor, type OfficeMcpCaller, type OfficeMcpDeps, type OfficeMcpServer } from './index.js';
-import { compactEvent, compactEventText, compactWorker, compactWorkerText, cursorOf, EVENT_FILTERS, eventKinds, parseCursor } from './team-events.js';
+import { compactEvent, compactEventText, compactWorker, compactWorkerText, cursorOf, EVENT_FILTERS, eventKinds, floorArg, parseCursor } from './team-events.js';
 
 export const instructions = `Your team is real workers at nearby desks on this floor, not hidden tasks. A subagent has its own terminal and normally its own git worktree; its lead is another worker. The owner controls hiring permission, team size, allowed models and wake notes. Subagents cannot hire.
 Split work into independent pieces that touch separate files. Hire one fresh subagent per task, and only as many as the work needs. Write each brief like a ticket: goal, relevant context and files, boundaries, checks, and how to finish (commit in its worktree and report, or another deliverable you name). Commit anything a new worktree needs first: uncommitted changes stay behind.
@@ -109,13 +109,12 @@ export function register(server: OfficeMcpServer, deps: OfficeMcpDeps): void {
     return officeResult(statusText(result.body), { ...result.body, workers, news, cursor: position });
   };
   const worker = z.string().trim().min(1).max(200).describe('Your subagent’s name or id, case-insensitive.');
-  const floor = z.string().trim().min(1).max(4096).optional().describe('Building agents only: just this open floor, by id, name or checkout path.');
   server.tool(
     {
       name: 'team_status',
       description:
         'Read your subagents and unread team news without waiting. Optionally select a worker and recent terminal lines. structuredContent has workers (one compact object each, with state blocked_on_question while a question waits on an answer), news (typed events with ids and times) and a cursor for since. verbose: false makes the text compact too; team_report_get reads a full report. Does not message or dismiss.',
-      inputSchema: z.strictObject({ worker: worker.optional(), floor, lines: z.number().int().min(1).max(400).optional(), ...statusOptions }),
+      inputSchema: z.strictObject({ worker: worker.optional(), floor: floorArg, lines: z.number().int().min(1).max(400).optional(), ...statusOptions }),
       annotations: readOnly,
     },
     officeAccess.team,
@@ -128,7 +127,7 @@ export function register(server: OfficeMcpServer, deps: OfficeMcpDeps): void {
     {
       name: 'team_message',
       description: 'Send an answer or follow-up to one of your subagents. Cannot answer a permission prompt in its terminal.',
-      inputSchema: z.strictObject({ worker, text, floor }),
+      inputSchema: z.strictObject({ worker, text, floor: floorArg }),
       annotations: changesState,
     },
     officeAccess.team,
@@ -142,7 +141,7 @@ export function register(server: OfficeMcpServer, deps: OfficeMcpDeps): void {
       name: 'team_dismiss',
       description:
         'Dismiss a reviewed subagent. Defaults to keeping its worktree and branch. pruneWorktree removes only a clean, owned worktree after its worker finishes, never the main checkout. keepBranch defaults true; false requests safe local branch deletion, which Git may refuse. No force option.',
-      inputSchema: z.strictObject({ worker, floor, pruneWorktree: z.boolean().optional(), keepBranch: z.boolean().optional() }),
+      inputSchema: z.strictObject({ worker, floor: floorArg, pruneWorktree: z.boolean().optional(), keepBranch: z.boolean().optional() }),
       annotations: { ...changesState, destructiveHint: true },
     },
     officeAccess.team,
@@ -174,7 +173,7 @@ export function register(server: OfficeMcpServer, deps: OfficeMcpDeps): void {
       name: 'worker_diff',
       description:
         'Read a size-capped Git diff and stat for your subagent. Defaults to its recorded base versus the tracked working tree (no untracked files). base selects another revision. commits selects the last N commits through HEAD, excluding uncommitted changes. Never runs external diff drivers or textconv.',
-      inputSchema: z.strictObject({ worker, floor, base: z.string().trim().min(1).max(200).optional(), commits: z.number().int().min(1).max(1000).optional() }),
+      inputSchema: z.strictObject({ worker, floor: floorArg, base: z.string().trim().min(1).max(200).optional(), commits: z.number().int().min(1).max(1000).optional() }),
       annotations: readOnly,
     },
     officeAccess.team,
@@ -188,7 +187,7 @@ export function register(server: OfficeMcpServer, deps: OfficeMcpDeps): void {
     {
       name: 'worker_log',
       description: 'Read recent terminal output and current tool activity for your subagent without writing to or attaching its terminal. At most 400 lines and 48,000 characters.',
-      inputSchema: z.strictObject({ worker, floor, tail: z.number().int().min(1).max(400) }),
+      inputSchema: z.strictObject({ worker, floor: floorArg, tail: z.number().int().min(1).max(400) }),
       annotations: readOnly,
     },
     officeAccess.team,
@@ -353,7 +352,7 @@ export function register(server: OfficeMcpServer, deps: OfficeMcpDeps): void {
         'Deprecated alias: prefer team_status, team_message and team_dismiss. Manage only your own subagents. Status returns one named subagent or all, with unread news since your last status call, and the same structuredContent (workers, news, cursor), verbose, since and kinds as team_status. Message answers a question or follows up. Dismiss uses the legacy cleanup policy: worktrees with work are kept.',
       inputSchema: z.object({
         action: z.enum(['status', 'message', 'dismiss']),
-        floor: z.string().min(1).max(128).optional().describe('Building agents only: restrict team operations to this floor. Omit for all your teams across the building.'),
+        floor: floorArg,
         name: z.string().trim().min(1).optional().describe('Subagent name or id, case-insensitive. Status: omit for all. Required for message and dismiss.'),
         verbose: z.boolean().optional().describe('Status only: false for one compact line per subagent and per event, with summaries instead of whole reports. Omit or true for the full text.'),
         since: z.string().trim().min(1).max(4000).optional().describe('Status only: a cursor from an earlier status (cursor field) or one event id. News is everything after it, heard or not, instead of only unread news.'),

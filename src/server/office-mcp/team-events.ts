@@ -289,7 +289,7 @@ export const statusOutput = { workers: z.array(workerOut), news: z.array(eventOu
 
 const readOnly = { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false };
 const cursorArg = z.string().trim().min(1).max(4000).describe('A cursor from an earlier response (cursor field), or one event id: only events after it are considered, whether or not you have heard them.');
-const floorArg = z.string().min(1).max(128).optional().describe('Building agents only: just this floor. Omit for all your teams across the building.');
+export const floorArg = z.string().trim().min(1).max(4096).optional().describe('Building agents only: just this open floor, by id, name or checkout path. Omit for all your teams across the building.');
 
 /** Waiting suits a lead that hears nothing otherwise: an external bot, or one woken by notes with Wake the lead off. */
 const mayWait: OfficeMcpAccess = (c) => officeAccess.team(c) ?? (c.worker.remote || !c.settings.wakeLead ? undefined : 'Wake the lead is on, so a wake note tells you when your team has news: end your turn instead of waiting.');
