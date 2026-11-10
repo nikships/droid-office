@@ -12,6 +12,8 @@ import type { AgentEffort, WorkerInfo, WorkerStatus } from './protocol.js';
  */
 export const ORCHESTRATOR_ID = 'orchestrator';
 export const ORCHESTRATOR_NAME = 'Orchestrator';
+/** The Orchestrator's colour in every client: the office accent, before and after its first prompt. */
+export const ORCHESTRATOR_COLOR = '#ee6018';
 
 export interface OrchestratorSettings {
   /** Off: hidden in the office and both companions, its session stops, and its team carries on reporting to nobody. */

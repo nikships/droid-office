@@ -20,6 +20,7 @@ import { Visits } from '../src/server/visits.js';
 import { WhiteboardStore } from '../src/server/whiteboard.js';
 import { WorkerManager } from '../src/server/workers.js';
 import { workerLeft } from '../src/server/floor.js';
+import type { BuildingAgents } from '../src/server/building-agent.js';
 import { SUBAGENT_DEFAULTS, type WorkerInfo } from '../src/shared/protocol.js';
 import { DESKS } from '../src/shared/layout.js';
 
@@ -68,23 +69,8 @@ function rig(t: Cleanup) {
       list: () => [...people.values()],
       get: (id) => people.get(id),
       authenticate: () => undefined,
-      remoteSeat: (name) => {
-        if ([...people.values()].some((w) => w.name === name)) throw new Error('Name taken');
-        const seat = DESKS.find((d) => ![...people.values()].some((w) => w.deskId === d.id));
-        if (!seat) throw new Error('No free desk');
-        return seat.id;
-      },
-      attachRemote: (w) => {
-        people.set(w.id, w);
-      },
-      detachRemote: (id) => {
-        people.delete(id);
-      },
-      releaseRemoteLead: (id) => {
+      releaseLead: (id) => {
         for (const w of people.values()) if (w.lead === id) delete w.lead;
-      },
-      remoteStatus: (id, status, activity) => {
-        Object.assign(people.get(id)!, { status, activity });
       },
       officeDefault: undefined,
       deskOccupied: (id) => [...people.values()].some((w) => w.deskId === id),
@@ -108,16 +94,23 @@ function rig(t: Cleanup) {
     visits.push(visit);
     floors.push({ id, dir: data, def: { name: id }, workers, team, visits: visit, whiteboard: new WhiteboardStore(data) });
   }
-  const remote = office.add('Grok', 'alpha');
+  const remote = office.add('Grok');
   t.after(() => {
     for (const f of floors) f.whiteboard.stop();
     for (const team of teams) team.stop();
     for (const v of visits) v.stop();
     rmSync(dir, { recursive: true, force: true });
   });
+  /** A floor worker's own floor; a building agent has none. */
   const floor = (id: string) => {
-    const f = office.floor(id);
+    const f = floors.find((x) => x.workers.get(id));
     return f ? { ...f, name: f.def.name } : undefined;
+  };
+  /** A worker at a desk of floor `i`, for the floor's side of a test. */
+  const local = (i: number, name: string): WorkerInfo => {
+    const w: WorkerInfo = { id: `local-${++seq}`, name, kind: 'agent', deskId: DESKS[10 + seq].id, color: '#888', status: 'idle', acked: true, createdAt: now, createdBy: 'test', cols: 100, rows: 30, open: false };
+    maps[i].set(w.id, w);
+    return w;
   };
   return {
     dir,
@@ -130,6 +123,7 @@ function rig(t: Cleanup) {
     teams,
     visits,
     floor,
+    local,
     advance: (ms: number) => {
       now += ms;
       for (const v of visits) v.tick(now);
@@ -150,7 +144,7 @@ async function listening(t: Cleanup, server: ReturnType<typeof createServer>) {
 test('remote credentials and explicit inbox acknowledgments persist, rotate and revoke', (t) => {
   const dir = temporary(t);
   const store = new RemoteWorkers(dir);
-  const { worker, token } = store.add('Grok', 'alpha', 'desk-1');
+  const { worker, token } = store.add('Grok');
   assert.equal(owns(store, worker.id, token), true);
   assert.equal(owns(store, worker.id, 'wrong'), false);
   assert.equal(store.enqueue(worker.id, 'hello', 'alpha'), undefined);
@@ -174,8 +168,8 @@ test('remote credentials and explicit inbox acknowledgments persist, rotate and 
 test('named keys act as their bot, record when they were last used, and revoke on their own', (t) => {
   const dir = temporary(t);
   const store = new RemoteWorkers(dir);
-  const { worker, token } = store.add('Grok', 'alpha', 'desk-1');
-  const other = store.add('Claw', 'alpha', 'desk-2');
+  const { worker, token } = store.add('Grok');
+  const other = store.add('Claw');
   assert.deepEqual(store.resolve(token), { id: worker.id, key: 'main' }, 'the main key alone names its bot');
   assert.deepEqual(store.resolve(other.token), { id: other.worker.id, key: 'main' });
   assert.equal(store.resolve('wrong'), undefined);
@@ -221,7 +215,7 @@ test('named keys act as their bot, record when they were last used, and revoke o
 test('full inbox refuses new delivery rather than silently losing old messages; corrupt state fails closed', (t) => {
   const dir = temporary(t);
   const store = new RemoteWorkers(dir);
-  const { worker } = store.add('Grok', 'alpha', 'desk-1');
+  const { worker } = store.add('Grok');
   for (let i = 0; i < 500; i++) assert.equal(store.enqueue(worker.id, String(i)), undefined);
   assert.match(store.enqueue(worker.id, 'overflow')!, /full/);
   assert.equal(store.inbox(worker.id, [], 500).messages.length, 500);
@@ -229,15 +223,14 @@ test('full inbox refuses new delivery rather than silently losing old messages; 
   assert.throws(() => new RemoteWorkers(dir), /not reset/);
 });
 
-test('a moving remote lead keeps both teams, reports and replies, with the owner’s hiring access', async (t) => {
+test('a building lead leads teams on every floor from no desk, with the owner’s hiring access', async (t) => {
   const r = rig(t);
   const id = r.remote.worker.id;
   const first = await r.teams[0].handle(r.remote.worker, { action: 'hire', task: 'Work on alpha' });
   assert.equal(first.status, 200);
-  r.office.move(id, 'beta');
-  assert.equal(r.maps[0].has(id), false);
-  assert.equal(r.maps[1].has(id), true);
-  const worker = r.maps[1].get(id)!;
+  assert.equal(r.maps[0].has(id) || r.maps[1].has(id), false, 'it sits at no floor’s desk');
+  const worker = r.store.identity(id)!;
+  assert.equal(worker.deskId, '');
   const second = await r.teams[1].handle(worker, { action: 'hire', task: 'Work on beta' });
   assert.equal(second.status, 200);
   assert.equal((await r.teams[1].handle(worker, { action: 'hire', task: 'More work' })).status, 200);
@@ -266,8 +259,9 @@ test('a moving remote lead keeps both teams, reports and replies, with the owner
   r.office.inbox(id, [inbox.messages[0].id]);
   assert.equal(r.office.inbox(id).messages.length, 0);
   r.office.revoke(id);
-  assert.equal(r.maps[0].get(sub.id)?.lead, undefined);
-  assert.equal(r.maps[1].has(id), false);
+  assert.equal(r.maps[0].get(sub.id)?.lead, undefined, 'its subagents carry on as independent workers');
+  assert.ok([...r.maps[1].values()].every((w) => w.lead !== id));
+  assert.equal(r.store.identity(id), undefined);
 });
 
 test('remote hires select an open task repository and inspection resolves across floors', async (t) => {
@@ -282,24 +276,52 @@ test('remote hires select an open task repository and inspection resolves across
   assert.equal(log.body.terminal, 'working');
   assert.equal((await r.office.team(lead, { action: 'hire', repo: 'missing', task: 'No' })).status, 404);
   assert.equal((await r.office.team(lead, { action: 'log', worker: 'missing', tail: 10 })).status, 404);
-  const local = await r.office.team(lead, { action: 'hire', task: 'Current floor', worktree: false });
-  assert.equal(local.status, 200);
-  assert.equal(r.maps[0].has((local.body.worker as WorkerInfo).id), true);
+  const unnamed = await r.office.team(lead, { action: 'hire', task: 'No floor named', worktree: false });
+  assert.equal(unnamed.status, 400, 'a building agent has no floor of its own to hire on');
+  assert.match(String(unnamed.body.error), /Name the floor/);
+  const byPath = await r.office.team(lead, { action: 'hire', repo: r.floors[0].dir, task: 'By path', worktree: false });
+  assert.equal(byPath.status, 200);
+  assert.equal(r.maps[0].has((byPath.body.worker as WorkerInfo).id), true);
+  const byName = await r.office.team(lead, { action: 'hire', repo: 'ALPHA', task: 'By name', worktree: false });
+  assert.equal(byName.status, 200);
+  assert.equal(r.maps[0].has((byName.body.worker as WorkerInfo).id), true);
 });
 
-test('visit questions and answers route to the remote inbox after its desk moves', (t) => {
+test('a building agent hires through MCP by naming a floor, and a structured task needs no invented base branch', async (t) => {
   const r = rig(t);
-  const a = r.office.add('Alice', 'alpha').worker;
+  const hostname = 'office.example.ts.net';
+  const server = remoteMcpListener({ answers: new Answers(), remote: r.office, remoteTransport: { hostname: () => hostname, owner: () => undefined }, floor: r.floor, settings: () => r.settings });
+  const url = new URL('/office/mcp', await listening(t, server));
+  const client = new Client({ name: 'building-hire-test', version: '1' });
+  t.after(() => client.close());
+  await client.connect(new StreamableHTTPClientTransport(url, { fetch: proxyFetch, requestInit: { headers: { host: `${hostname}:8443`, Authorization: `Bearer ${r.remote.token}`, 'x-droid-office-worker-id': r.remote.worker.id } } }));
+  const call = async (args: Record<string, unknown>) => {
+    const result = await client.callTool({ name: 'team_hire', arguments: args });
+    return { ...result, text: (result.content as { type: string; text?: string }[]).map((c) => c.text ?? '').join('\n'), body: result.structuredContent as Record<string, any> };
+  };
+  const unnamed = await call({ title: 'Count the tests', brief: 'Count tests/*.test.ts and report the number.', worktree: false });
+  assert.equal(unnamed.isError, true);
+  assert.match(unnamed.text, /names the floor/);
+  assert.match(unnamed.text, /office_floors/);
+
+  const hired = await call({ title: 'Count the tests', brief: 'Count tests/*.test.ts and report the number.', floor: 'beta', worktree: false });
+  assert.equal(hired.isError, undefined, hired.text);
+  assert.equal(r.maps[1].has(hired.body.worker.id), true, 'the worker landed on the floor the building agent named');
+  assert.equal(r.maps[0].has(hired.body.worker.id), false);
+
+  const structured = await call({ task: { title: 'Inspect alpha', brief: 'Read the checkout and report what it is.', repo: 'alpha' }, worktree: false });
+  assert.equal(structured.isError, undefined, structured.text);
+  assert.equal(r.maps[0].has(structured.body.worker.id), true);
+});
+
+test('floor workers do not visit building agents, which walk nowhere', (t) => {
+  const r = rig(t);
+  const a = r.local(0, 'Alice');
   const g = r.remote.worker;
   const ask = r.visits[0].handle(a, { action: 'visit', kind: 'ask', worker: g.id, text: 'Are you ready?' });
-  assert.equal(ask.status, 200);
-  r.office.move(g.id, 'beta');
+  assert.ok(ask.status >= 400, 'a building agent is not on the floor’s visit roster');
   r.advance(60_000);
-  assert.match(r.office.inbox(g.id).messages[0].text, /Are you ready/);
-  const reply = r.office.reply(r.maps[1].get(g.id)!, String(ask.body.visit), 'Yes');
-  assert.equal(reply.status, 200);
-  assert.match(r.office.inbox(a.id).messages[0].text, /Yes/);
-  assert.equal(r.office.reply(r.maps[1].get(g.id)!, String(ask.body.visit), 'Again').status, 409);
+  assert.deepEqual(r.office.inbox(g.id).messages, []);
 });
 
 test('real MCP transport enforces host, tailnet identity, remote bearer auth, revocation, and route isolation', async (t) => {
@@ -320,17 +342,12 @@ test('real MCP transport enforces host, tailnet identity, remote bearer auth, re
   t.after(() => client.close());
   await client.connect(new StreamableHTTPClientTransport(url, { fetch: proxyFetch, requestInit: { headers } }));
   const names = (await client.listTools()).tools.map((t) => t.name);
-  assert.ok(names.includes('office_move') && names.includes('office_inbox') && names.includes('team_hire'));
-  assert.ok(!names.includes('team_report'));
+  assert.ok(names.includes('office_inbox') && names.includes('team_hire') && names.includes('office_status'));
+  assert.ok(!names.includes('team_report') && !names.includes('office_move') && !names.includes('visit_message'));
   assert.match(client.getInstructions()!, /OFFICE MACHINE/);
-  assert.equal((await client.callTool({ name: 'office_move', arguments: { floor: 'beta' } })).isError, undefined);
   const who = await client.callTool({ name: 'office_whoami', arguments: {} });
-  assert.deepEqual(who.structuredContent?.floor, { id: 'beta', name: 'beta' });
-  // Its floor is gone without it being re-seated (closed with no other open, then one opened): the next call seats it.
-  r.maps[1].delete(r.remote.worker.id);
-  r.floors.splice(1, 1);
-  const healed = await client.callTool({ name: 'office_whoami', arguments: {} });
-  assert.deepEqual(healed.structuredContent?.floor, { id: 'alpha', name: 'alpha' });
+  assert.equal(who.structuredContent?.floor, null, 'Mission Control is no floor');
+  assert.equal(who.structuredContent?.room, 'Mission Control');
   r.settings.officeMcp = false;
   await assert.rejects(client.listTools(), /Active remote worker/);
   r.settings.officeMcp = true;
@@ -347,8 +364,7 @@ test('a remote lead gets structured status, cursors, waits and questions across 
   const hostname = 'office.example.ts.net';
   const id = r.remote.worker.id;
   const alpha = (await r.teams[0].handle(r.remote.worker, { action: 'hire', task: 'Work on alpha' })).body.worker as WorkerInfo;
-  r.office.move(id, 'beta');
-  const beta = (await r.teams[1].handle(r.maps[1].get(id)!, { action: 'hire', task: 'Work on beta' })).body.worker as WorkerInfo;
+  const beta = (await r.teams[1].handle(r.remote.worker, { action: 'hire', task: 'Work on beta' })).body.worker as WorkerInfo;
   const server = remoteMcpListener({ answers: new Answers(), remote: r.office, remoteTransport: { hostname: () => hostname, owner: () => undefined }, floor: r.floor, settings: () => r.settings });
   const url = new URL('/office/mcp', await listening(t, server));
   const client = new Client({ name: 'remote-test', version: '1' });
@@ -356,8 +372,8 @@ test('a remote lead gets structured status, cursors, waits and questions across 
   await client.connect(new StreamableHTTPClientTransport(url, { fetch: proxyFetch, requestInit: { headers: { host: `${hostname}:8443`, Authorization: `Bearer ${r.remote.token}`, 'x-droid-office-worker-id': id } } }));
   const call = async (name: string, args: Record<string, unknown> = {}) => (await client.callTool({ name, arguments: args })).structuredContent as Record<string, any>;
   const who = await client.callTool({ name: 'office_whoami', arguments: {} });
-  assert.equal(who.structuredContent?.subagents, 2, 'identity counts teams left behind after moving floors');
-  assert.match(JSON.stringify(who.content), /Subagents: 2, no limit/);
+  assert.equal(who.structuredContent?.subagents, 2, 'identity counts its teams on every floor');
+  assert.match(JSON.stringify(who.content), /no team size limit\. Subagents: 2 \(1 on alpha, 1 on beta\)/);
   assert.ok(
     (await client.listTools()).tools.some((tool) => tool.name === 'team_wait'),
     'an external worker has no wake notes, so it may wait',
@@ -419,7 +435,7 @@ test('a bot that sends only its key gets its worker id from the office, and any 
   assert.ok(seen.length && seen.every((id) => id === r.remote.worker.id), 'every response carries the issued id');
   assert.ok(r.store.list()[0].lastUsedAt, 'the main key recorded its use');
 
-  const other = r.office.add('Claw', 'alpha');
+  const other = r.office.add('Claw');
   const mismatched = await proxyFetch(url, { method: 'POST', headers: { ...base, Authorization: `Bearer ${r.remote.token}`, 'x-droid-office-worker-id': other.worker.id }, body: '{}' });
   assert.equal(mismatched.status, 401, 'a hand-made id must be the key’s own');
   const wrong = await proxyFetch(url, { method: 'POST', headers: { ...base, Authorization: 'Bearer wrong' }, body: '{}' });
@@ -430,8 +446,8 @@ test('a bot that sends only its key gets its worker id from the office, and any 
   const named = new Client({ name: 'laptop', version: '1' });
   t.after(() => named.close());
   await named.connect(new StreamableHTTPClientTransport(url, { fetch: proxyFetch, requestInit: { headers: { ...base, Authorization: `Bearer ${laptop.token}`, 'x-droid-office-worker-id': r.remote.worker.id } } }));
-  assert.equal((await named.callTool({ name: 'office_move', arguments: { floor: 'beta' } })).isError, undefined);
-  assert.equal(r.office.floor(r.remote.worker.id)?.id, 'beta', 'the named key acts as its bot');
+  assert.equal((await named.callTool({ name: 'office_status', arguments: { status: 'working', activity: 'From the laptop' } })).isError, undefined);
+  assert.equal(r.store.identity(r.remote.worker.id)?.activity, 'From the laptop', 'the named key acts as its bot');
   assert.ok(r.store.list().find((b) => b.id === r.remote.worker.id)!.keys[0].lastUsedAt);
   r.store.revokeKey(r.remote.worker.id, laptop.key.id);
   await assert.rejects(named.listTools(), /Active remote worker/);
@@ -459,8 +475,8 @@ test('Accept: application/json gets one plain JSON-RPC body; clients that also a
 
   const list = (await (await post('application/json', { jsonrpc: '2.0', id: 2, method: 'tools/list' })).json()) as { result: { tools: { name: string }[] } };
   assert.ok(list.result.tools.some((tool) => tool.name === 'office_whoami'));
-  const call = (await (await post(undefined, { jsonrpc: '2.0', id: 3, method: 'tools/call', params: { name: 'office_whoami', arguments: {} } })).json()) as { result: { structuredContent: { floor: { id: string } } } };
-  assert.equal(call.result.structuredContent.floor.id, 'alpha', 'no Accept header at all is a plain JSON client too');
+  const call = (await (await post(undefined, { jsonrpc: '2.0', id: 3, method: 'tools/call', params: { name: 'office_whoami', arguments: {} } })).json()) as { result: { structuredContent: { you: { id: string } } } };
+  assert.equal(call.result.structuredContent.you.id, r.remote.worker.id, 'no Accept header at all is a plain JSON client too');
 
   // What the existing curl client sends: both media types, and it parses `event: message` / `data:` lines.
   const streamed = await post('application/json, text/event-stream', { jsonrpc: '2.0', id: 4, method: 'tools/list' });
@@ -533,7 +549,7 @@ test('remote status starts at the current news, advances per caller, and timesta
   assert.equal((baseline.structuredContent.team as { report: { text: string } }[])[0].report.text, 'An old report', 'the status snapshot retains the report');
   assert.deepEqual((await status()).structuredContent?.events, []);
 
-  const other = r.office.add('Other bot', 'beta').worker;
+  const other = r.office.add('Other bot').worker;
   await r.office.team(other, { action: 'status' });
   await r.teams[0].handle(sub, { action: 'report', text: 'A new report' });
   assert.deepEqual((await r.office.team(other, { action: 'status' })).body.events, [], 'another caller sees no foreign news');
@@ -571,7 +587,7 @@ test('remote status cursors survive restart independently for each caller', asyn
   const sub = r.maps[0].get('sub-1')!;
   r.teams[0].onWorker(sub);
   await r.teams[0].handle(sub, { action: 'report', text: 'Before restart' });
-  const other = r.office.add('Other bot', 'alpha').worker;
+  const other = r.office.add('Other bot').worker;
   await r.teams[0].handle(other, { action: 'status' });
   r.teams[0].stop();
   const floor = r.floors[0];
@@ -654,7 +670,7 @@ function docEntry(tool: { name: string; description?: string; inputSchema: Schem
   return `### \`${tool.name}\`\n\n${tool.description ?? ''}\n\n${table}`;
 }
 
-test('external-bot tools/list returns exactly the 26 supported tools and their documented arguments', async (t) => {
+test('external-bot tools/list returns exactly the 23 supported tools and their documented arguments', async (t) => {
   const r = rig(t);
   const hostname = 'office.example.ts.net';
   // The office always gives external workers its owner bridge, so their tool list includes the owner tools.
@@ -668,7 +684,6 @@ test('external-bot tools/list returns exactly the 26 supported tools and their d
   const expected = [
     'office_whoami',
     'office_floors',
-    'office_move',
     'office_inbox',
     'office_status',
     'team_models',
@@ -682,8 +697,6 @@ test('external-bot tools/list returns exactly the 26 supported tools and their d
     'worker_diff',
     'worker_log',
     'team_dismiss',
-    'visit_message',
-    'visit_reply',
     'office_roster',
     'office_look',
     'office_send_home',
@@ -693,7 +706,7 @@ test('external-bot tools/list returns exactly the 26 supported tools and their d
     'office_worker_answer',
     'office_worker_thread',
   ];
-  assert.equal(listed.length, 26);
+  assert.equal(listed.length, 23);
   assert.deepEqual(new Set(listed.map((tool) => tool.name)), new Set(expected));
   t.diagnostic(
     `external-bot tools/list: ${listed.length} tools, exact set equality passed: ${listed
@@ -705,8 +718,10 @@ test('external-bot tools/list returns exactly the 26 supported tools and their d
   r.settings.on = false;
   r.settings.visits = false;
   assert.deepEqual(new Set((await client.listTools()).tools.map((tool) => tool.name)), new Set(expected));
-  assert.equal((await client.callTool({ name: 'visit_message', arguments: { name: 'Byte', text: 'Hello' } })).isError, true, 'listing visit tools does not bypass the Visits setting');
   for (const name of [
+    'office_move',
+    'visit_message',
+    'visit_reply',
     'team',
     'models_list',
     'whiteboard_read',
@@ -819,9 +834,9 @@ test('the office serves external workers on its tailnet by itself, keeps the URL
   await client.connect(new StreamableHTTPClientTransport(new URL('/office/mcp', backend), { fetch: proxyFetch, requestInit: { headers } }));
   assert.ok((await client.listTools()).tools.some((tool) => tool.name === 'office_inbox'));
 
-  const added = first.add('Claw', 'beta');
+  const added = first.add('Claw');
   const claw = added.bots.find((b) => b.name === 'Claw')!;
-  assert.equal(claw.floorName, 'beta');
+  assert.equal(claw.floor, undefined, 'a bot sits on no floor');
   const rotated = first.rotate(claw.id).bots.find((b) => b.id === claw.id)!;
   assert.notEqual(rotated.connection!.headers.Authorization, claw.connection!.headers.Authorization);
   const keyed = first.addKey(claw.id, 'relay').bots.find((b) => b.id === claw.id)!;
@@ -889,19 +904,19 @@ test('while Tailscale waits on the owner, opening Settings does not run serve ag
   assert.equal(serves(), 1, 'the admin link is still the answer; serve would only block on it again');
 });
 
-test('a remote lead moving between real floors keeps its team log and visits; a closed floor re-seats it', async (t) => {
+test('a building lead’s subagents on a real floor report to it from no desk, and removing the bot frees them', async (t) => {
   const dir = mkdtempSync(path.join(os.tmpdir(), 'remote-floors-'));
   const store = new RemoteWorkers(dir);
-  const { worker: grok } = store.add('Grok', 'alpha', 'desk-1');
+  const { worker: grok } = store.add('Grok');
   mkdirSync(path.join(dir, 'alpha'));
   writeFileSync(path.join(dir, 'alpha', 'workers.json'), JSON.stringify([{ id: 'sub', kind: 'agent', name: 'Byte', deskId: 'desk-2', lead: grok.id }]));
   const settings = { ...SUBAGENT_DEFAULTS, visits: true, maxPerLead: 3 };
-  let now = 1000;
+  const now = 1000;
   const floors: RemoteFloor[] = [];
   const office = new RemoteOffice(store, () => floors);
   const managers: WorkerManager[] = [];
-  const removed: string[] = [];
   const updates: WorkerInfo[] = [];
+  const agents: BuildingAgents = { identity: (id) => store.identity(id), tell: (id, text, floor) => store.enqueue(id, text, floor) };
   t.after(() => {
     for (const f of floors) {
       f.whiteboard.stop();
@@ -923,10 +938,7 @@ test('a remote lead moving between real floors keeps its team log and visits; a 
       { url: 'http://127.0.0.1:1', token: '' },
       {
         update: (w) => updates.push({ ...w }),
-        remove: (wid) => {
-          removed.push(wid);
-          workerLeft(wid, store, floor);
-        },
+        remove: (wid) => workerLeft(wid, agents, floor),
         data() {},
         screen() {},
         toast() {},
@@ -935,10 +947,10 @@ test('a remote lead moving between real floors keeps its team log and visits; a 
       undefined,
       undefined,
       true,
-      { store, floor: id, revoke: (wid) => office.revoke(wid) },
+      { agents, floor: id },
     );
     managers.push(m);
-    const get = (wid: string) => m.get(wid) ?? m.remoteIdentity(wid);
+    const get = (wid: string) => m.get(wid) ?? m.buildingIdentity(wid);
     const team = new Team(
       {
         list: () => m.list(),
@@ -957,7 +969,7 @@ test('a remote lead moving between real floors keeps its team log and visits; a 
     const visits = new Visits(
       {
         list: () => m.list(),
-        get,
+        get: (wid) => m.get(wid),
         tail: (wid, lines) => m.tail(wid, lines),
         prompt: (wid, text) => m.prompt(wid, text),
         tell: (wid, text) => m.tell(wid, text),
@@ -972,47 +984,37 @@ test('a remote lead moving between real floors keeps its team log and visits; a 
     return floor;
   };
   const alpha = open('alpha');
-  const beta = open('beta');
-  const alice = office.add('Alice', 'alpha').worker;
+  open('beta');
 
   assert.equal((await alpha.team.handle(alpha.workers.get('sub')!, { action: 'report', text: 'Alpha finished' })).status, 200);
-  const ask = alpha.visits.handle(alice, { action: 'visit', kind: 'ask', worker: grok.id, text: 'Are you ready?' });
-  assert.equal(ask.status, 200);
-
-  office.move(grok.id, 'beta');
-  assert.ok(removed.includes(grok.id), 'the move went through the floor’s real remove path');
-  assert.equal(alpha.workers.get(grok.id), undefined);
-  assert.equal(beta.workers.get(grok.id)?.remote, true);
-  assert.equal(alpha.team.inbox(grok.id).length, 1, 'the old floor kept its report to the lead');
-  now += 60_000;
-  (alpha.visits as Visits).tick(now);
+  assert.equal(alpha.team.inbox(grok.id).length, 1, 'the floor keeps its report to the lead');
+  assert.ok(office.inbox(grok.id).messages.some((m) => /Alpha finished/.test(m.text) && m.floor === 'alpha'));
   assert.ok(
-    office.inbox(grok.id).messages.some((m) => /Are you ready/.test(m.text)),
-    'the question reached it on its new floor',
+    floors.every((f) => f.workers.list().every((w) => !w.remote)),
+    'no floor lists a building agent',
   );
-  assert.equal(office.reply(beta.workers.get(grok.id)!, String(ask.body.visit), 'Yes').status, 200);
+  assert.ok(
+    updates.every((w) => !w.remote),
+    'no worker.update carries one',
+  );
 
-  beta.workers.remoteStatus(grok.id, 'working', 'Reading the issue');
-  const seen = updates.length;
-  beta.workers.remoteStatus(grok.id, 'working', 'Writing the fix');
-  assert.equal(updates.length, seen + 1, 'new activity alone is sent to clients');
-  assert.equal(updates.at(-1)?.activity, 'Writing the fix');
+  store.report(grok.id, 'working', 'Reading the issue');
+  assert.deepEqual([store.identity(grok.id)?.status, store.identity(grok.id)?.activity], ['working', 'Reading the issue']);
+  assert.equal(new RemoteWorkers(dir).identity(grok.id)?.status, 'offline', 'what it reported is gone after a restart, until it reports again');
 
-  // Beta comes off the building: the server re-seats its external workers first.
-  assert.equal(office.rehome(grok.id, 'beta'), true);
-  floors.splice(floors.indexOf(beta), 1);
-  assert.equal(office.floor(grok.id)?.id, 'alpha');
-  assert.equal(store.identity(grok.id)?.deskId, alpha.workers.get(grok.id)?.deskId);
-  assert.equal(alpha.team.inbox(grok.id).length, 1);
-
-  await alpha.workers.kill(grok.id);
-  assert.equal(store.identity(grok.id), undefined, 'removing it at its desk revokes it everywhere');
-  assert.equal(alpha.workers.get('sub')?.lead, undefined);
+  office.revoke(grok.id);
+  assert.equal(store.identity(grok.id), undefined);
+  assert.equal(alpha.workers.get('sub')?.lead, undefined, 'its subagents carry on as independent workers');
 });
-test('real worker managers restore remote seats and off-floor leads without launching a terminal', (t) => {
+
+test('old seated bots load without a desk, and floors tell them through their inbox without a terminal', (t) => {
   const dir = mkdtempSync(path.join(os.tmpdir(), 'remote-manager-'));
+  // A bot saved when bots sat at a floor's desk.
+  writeFileSync(path.join(dir, 'remote-workers.json'), JSON.stringify([{ id: 'remote-old', floor: 'beta', deskId: 'desk-1', name: 'Grok', createdAt: 1, token: 'b'.repeat(64), inbox: [] }]));
   const store = new RemoteWorkers(dir);
-  const { worker, token } = store.add('Grok', 'beta', 'desk-1');
+  const worker = store.identity('remote-old')!;
+  assert.equal(worker.deskId, '', 'its old desk is free');
+  assert.equal(worker.remote, true);
   const data = path.join(dir, 'alpha');
   mkdirSync(data);
   writeFileSync(path.join(data, 'workers.json'), JSON.stringify([{ id: 'sub', kind: 'agent', name: 'Byte', deskId: 'desk-2', lead: worker.id }]));
@@ -1021,28 +1023,26 @@ test('real worker managers restore remote seats and off-floor leads without laun
     for (const m of managers) m.shutdown();
     rmSync(dir, { recursive: true, force: true });
   });
+  const agents: BuildingAgents = { identity: (id) => store.identity(id), tell: (id, text, floor) => store.enqueue(id, text, floor) };
   const make = (floor: string) => {
     const data = path.join(dir, floor);
     mkdirSync(data, { recursive: true });
-    const m = new WorkerManager(dir, data, 'missing-test-agent', [], { url: 'http://127.0.0.1:1', token: '' }, { update() {}, remove() {}, data() {}, screen() {}, toast() {} }, undefined, undefined, undefined, true, {
-      store,
-      floor,
-      revoke: (id) => store.remove(id),
-    });
+    const m = new WorkerManager(dir, data, 'missing-test-agent', [], { url: 'http://127.0.0.1:1', token: '' }, { update() {}, remove() {}, data() {}, screen() {}, toast() {} }, undefined, undefined, undefined, true, { agents, floor });
     managers.push(m);
     return m;
   };
   const alpha = make('alpha');
   const beta = make('beta');
   assert.equal(alpha.get('sub')?.lead, worker.id);
-  assert.equal(beta.get(worker.id)?.remote, true);
-  assert.equal(beta.authenticate(worker.id, token), undefined);
+  assert.equal(beta.get(worker.id), undefined, 'not in a floor’s worker list');
+  assert.equal(beta.buildingIdentity(worker.id)?.remote, true);
+  assert.equal(beta.authenticate(worker.id, 'b'.repeat(64)), undefined);
   assert.equal(beta.threadSession(worker.id), undefined);
   assert.equal(beta.agentFolder(worker.id), undefined);
-  assert.equal(alpha.tell(worker.id, 'Report from old floor'), undefined);
+  assert.equal(alpha.tell(worker.id, 'Report from alpha'), undefined);
   assert.equal(store.inbox(worker.id).messages[0].floor, 'alpha');
-  assert.match(beta.resume(worker.id)!, /remotely/);
+  assert.match(beta.resume(worker.id)!, /not started from a floor/);
   beta.shutdown();
   assert.deepEqual(JSON.parse(readFileSync(path.join(dir, 'beta', 'workers.json'), 'utf8')), []);
-  assert.equal(new RemoteWorkers(dir).workers('beta').length, 1);
+  assert.equal(new RemoteWorkers(dir).workers().length, 1);
 });
