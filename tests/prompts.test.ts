@@ -6,7 +6,7 @@ import path from 'node:path';
 import { PROMPTS, PROMPT_IDS, PROMPT_MAX, WORKER_VISITS, fillPrompt, floorHint, issuePromptVars, mergeCommand, placeholders, promptText, pullPromptVars, shipPromptVars, withoutReminders, workerMessageVars } from '../src/shared/prompts.js';
 import { buildingInstructions } from '../src/server/office-mcp/remote.js';
 import { ownerInstructions } from '../src/server/office-mcp/owner.js';
-import { instructions as teamInstructions } from '../src/server/office-mcp/team.js';
+import { INSTRUCTIONS } from '../src/server/office-mcp/index.js';
 import { OfficePrompts, officePrompt, type PromptSource } from '../src/server/prompts.js';
 import type { AgentChoice, PromptsState } from '../src/shared/protocol.js';
 
@@ -292,15 +292,23 @@ test('a floor hint names the floor and its checkout on one line, and the officeâ
   assert.equal(withoutReminders(hint), '');
 });
 
-test('each audience is told once to send workers home, and the standing rules are not repeated across surfaces', () => {
-  const dismiss = /team_dismiss/g;
-  const count = (text: string) => (text.match(dismiss) ?? []).length;
+test("each audience is told once to send workers home and to weigh a subscription's quota, and the standing rules are not repeated across surfaces", () => {
+  // Built the way the Office MCP's serverFor does: a building agent with owner access reads its building text and the owner text, any other worker the general text.
   const orchestrator = [PROMPTS['orchestrator.system'].text, buildingInstructions({ id: 'orchestrator', name: 'Orchestrator' }), ownerInstructions].join('\n');
   const bot = [buildingInstructions({ id: 'remote-1', name: 'Bot', remote: true }), ownerInstructions].join('\n');
-  const lead = [PROMPTS['worker.system'].text, PROMPTS['subagent.nudge'].text, teamInstructions].join('\n');
-  assert.deepEqual([count(orchestrator), count(bot), count(lead)], [1, 1, 1]);
+  const lead = [PROMPTS['worker.system'].text, PROMPTS['subagent.nudge'].text, INSTRUCTIONS].join('\n');
+  const count = (text: string, rule: RegExp) => (text.match(rule) ?? []).length;
+  assert.deepEqual(
+    [orchestrator, bot, lead].map((text) => count(text, /team_dismiss/g)),
+    [1, 1, 1],
+  );
+  assert.deepEqual(
+    [orchestrator, bot, lead].map((text) => count(text, /nearly spent one off long tasks/g)),
+    [1, 1, 1],
+    'the quota guidance reaches every audience once',
+  );
   for (const text of [orchestrator, bot]) {
-    assert.equal((text.match(/never prompt, interrupt, answer or send home/g) ?? []).length, 1, 'the rule about building agents is kept once');
-    assert.equal((text.match(/worktrees, branches and cloud sessions/g) ?? []).length, 1, 'the rule about keeping worktrees is kept once');
+    assert.equal(count(text, /never prompt, interrupt, answer or send home/g), 1, 'the rule about building agents is kept once');
+    assert.equal(count(text, /worktrees, branches and cloud sessions/g), 1, 'the rule about keeping worktrees is kept once');
   }
 });

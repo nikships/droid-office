@@ -197,7 +197,7 @@ interface RegisteredTool {
   run(args: unknown, caller: OfficeMcpCaller, signal: AbortSignal, progress?: OfficeProgress): CallToolResult | Promise<CallToolResult>;
 }
 
-const INSTRUCTIONS = [GENERAL_INSTRUCTIONS, teamInstructions, whiteboardInstructions, visitInstructions].filter(Boolean).join('\n\n');
+export const INSTRUCTIONS = [GENERAL_INSTRUCTIONS, teamInstructions, whiteboardInstructions, visitInstructions].filter(Boolean).join('\n\n');
 const UNAUTHORIZED = 'Office MCP requires an active local agent, its worker id header and its own bearer hook token, with Office MCP on in Settings.';
 
 /**
