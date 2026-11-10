@@ -214,6 +214,22 @@ test('Mission Control pins the building’s agents in the sidebar and opens the 
   });
   assert.equal(await pane.locator('.dash-info-activity').innerText(), 'Planning the release');
 
+  // Asleep, its session has no terminal to show: Thread stands in, and a prompt wakes it.
+  await page.evaluate(() => {
+    const w = window as any;
+    w.mission = { orchestrator: { settings: { on: true }, agent: { worker: { ...w.mission.orchestrator.agent.worker, status: 'exited' }, team: [] } }, bots: w.mission.bots };
+    w.paintPane('orchestrator', 'terminal');
+  });
+  assert.equal(await pane.getAttribute('data-mode'), 'thread');
+  assert.equal(await pane.locator('.dash-pane-views').isHidden(), true, 'no TTY to switch to');
+  assert.equal(await pane.locator('textarea.wt-input').isDisabled(), false, 'a prompt wakes it');
+  await page.evaluate(() => {
+    const w = window as any;
+    w.mission.orchestrator.agent.worker = { ...w.mission.orchestrator.agent.worker, status: 'idle' };
+    w.paintPane('orchestrator', 'terminal');
+  });
+  assert.equal(await pane.getAttribute('data-mode'), 'terminal', 'awake, its terminal opens');
+
   // A subagent's pane: the strip across the top is its lead's team across floors.
   await page.evaluate(() => {
     const w = window as any;

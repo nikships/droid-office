@@ -25,6 +25,7 @@ import { workerTeams } from '../shared/team';
 import { missionAgent, ORCHESTRATOR_ID, type MissionAgent, type MissionControlState, type MissionTeamMember } from '../shared/mission-control';
 import type { SettingsPane } from '../shared/settings-nav';
 import { botLine, missionLead, ORCHESTRATOR_EXAMPLES, ORCHESTRATOR_PITCH, orchestratorBlocked, orchestratorLine, orchestratorMessage, orchestratorStarted } from './mission';
+import { orchestratorAwake } from './mission-office';
 
 /** What a sidebar row carries when it's dragged onto a pane. */
 export const WORKER_MIME = 'application/x-droid-worker';
@@ -276,8 +277,8 @@ export function createPane(host: PaneHost, index: number): Pane {
     if (!w) return 'empty';
     // An external bot runs elsewhere: its pane says what it is and who's on its team.
     if (w.remote) return 'info';
-    // Before its first prompt the Orchestrator has no session, so no terminal: its Thread is where you start it.
-    if (w.id === ORCHESTRATOR_ID) return view === 'terminal' && orchestratorStarted(host.mission()) && !isAsleep(w.status) ? 'terminal' : 'thread';
+    // Before its first prompt, or asleep, the Orchestrator has no terminal: its Thread is where a prompt starts it.
+    if (w.id === ORCHESTRATOR_ID) return view === 'terminal' && orchestratorAwake(host.mission()) ? 'terminal' : 'thread';
     // A cloud worker has no terminal here: its Thread is its Factory session.
     if (w.cloud) return 'thread';
     if (w.kind === 'agent' && view === 'thread') return 'thread';
@@ -340,7 +341,7 @@ export function createPane(host: PaneHost, index: number): Pane {
         raw: w.cloud
           ? undefined
           : () => {
-              if (!orchestrator || orchestratorStarted(host.mission())) host.setView(w.id, 'terminal');
+              if (!orchestrator || orchestratorAwake(host.mission())) host.setView(w.id, 'terminal');
             },
         floor: intended,
         ...(orchestrator
@@ -515,8 +516,8 @@ export function createPane(host: PaneHost, index: number): Pane {
     const w = s.worker;
     const local = !!w && !w.cloud && !w.remote;
     const threaded = mode === 'thread';
-    // The Orchestrator has a terminal only once its first prompt has started a session.
-    const toggles = local && w.kind === 'agent' && (w.id !== ORCHESTRATOR_ID || orchestratorStarted(host.mission()));
+    // The Orchestrator has a terminal only while a session it started is awake.
+    const toggles = local && w.kind === 'agent' && (w.id !== ORCHESTRATOR_ID || !!orchestratorAwake(host.mission()));
     const key = JSON.stringify([w && [w.id, w.name, w.color, w.status, w.acked, w.lead, headLine(w), w.activeModel ?? w.model, w.activeEffort ?? w.effort], toggles, mode, s.maximized, s.canMaximize, host.live()]);
     if (key === headKey) return;
     headKey = key;

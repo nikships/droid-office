@@ -7,8 +7,6 @@ import type { ClientMsg, WorkerInfo } from '../shared/protocol';
 import { isAsleep } from '../shared/status';
 import { doingLine } from './worker-words';
 
-export { ORCHESTRATOR_COLOR } from '../shared/mission-control';
-
 /** What the Orchestrator is for, in its empty state and on its Settings card. */
 export const ORCHESTRATOR_PITCH = 'Tell it what you want done anywhere in the building. It plans, hires workers on any floor, answers their questions, checks their work and reports back. It never edits code itself.';
 
