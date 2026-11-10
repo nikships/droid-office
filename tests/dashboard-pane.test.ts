@@ -180,6 +180,7 @@ test('only the focused thread pane shows its composer, reclaiming space without 
   const bottomGap = () => first.locator('.wt-scroll').evaluate((el) => el.scrollHeight - el.scrollTop - el.clientHeight);
   const smallHeight = await height();
   const composerHeight = await first.locator('.wt-composer').evaluate((el) => el.getBoundingClientRect().height);
+  assert.equal(await page.getByRole('textbox', { name: 'Message to Pixel' }).count(), 1, 'the composer names its worker');
   await first.locator('.wt-input').fill('Keep this unsent draft');
   await first.locator('.wt-input').evaluate((el) => ((window as any).originalInput = el));
   await second.locator('.dash-pane-head').click();

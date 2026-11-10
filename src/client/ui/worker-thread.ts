@@ -235,7 +235,7 @@ export function mountWorkerThread(net: Net, opts: ThreadOptions): WorkerThread {
     },
     'Resume',
   );
-  const input = h('textarea.wt-input', { rows: 1, maxlength: 20000, placeholder: `Reply to ${worker.name}…`, 'aria-label': 'Message to worker' });
+  const input = h('textarea.wt-input', { rows: 1, maxlength: 20000, placeholder: `Reply to ${worker.name}…`, 'aria-label': `Message to ${worker.name}` });
   input.value = opts.draft;
   input.addEventListener('input', () => {
     opts.onDraft(input.value);
