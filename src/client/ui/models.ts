@@ -221,6 +221,25 @@ export function modelBadgeLabel(model: string | undefined, effort: AgentEffort |
 }
 
 /**
+ * A badge's logo, drawn from the catalogue's name and provider. The dashboard never opens a picker, so its
+ * badges can be built before anything has loaded the catalogue; they ask for it and redraw the logo once it
+ * arrives, so a model whose id names no family still shows its provider's mark.
+ */
+function badgeLogo(model: string): HTMLElement {
+  const box = h('span.model-badge-logo');
+  const paint = () => {
+    const known = catalogue?.models.find((m) => m.id === model);
+    box.replaceChildren(
+      modelLogo({ id: model, name: known?.displayName, provider: known?.provider }),
+      ...(DROIDPROXY_SEGMENT.test(model) || /^droidproxy:/i.test(known?.displayName ?? '') ? [h('span.model-badge-via', {}, h('img.glyph', { src: '/factory-glyph.svg', alt: '', 'aria-hidden': 'true' }))] : []),
+    );
+  };
+  paint();
+  if (!catalogue) fetchCatalogue().then(paint, () => undefined);
+  return box;
+}
+
+/**
  * A model badge for DOM surfaces: the model's logo (with the pinwheel on it when DroidProxy serves the
  * model), its name and the effort dial. `words` adds the effort's name after the dial where there is room.
  * Canvas labels keep the plain-text modelBadge above.
@@ -228,15 +247,7 @@ export function modelBadgeLabel(model: string | undefined, effort: AgentEffort |
 export function modelBadgeNode(model: string | undefined, effort: AgentEffort | undefined, { words = false } = {}): HTMLElement | undefined {
   const label = modelBadgeLabel(model, effort);
   if (!label) return undefined;
-  const known = model ? catalogue?.models.find((m) => m.id === model) : undefined;
-  const logo = model
-    ? h(
-        'span.model-badge-logo',
-        {},
-        modelLogo({ id: model, name: known?.displayName, provider: known?.provider }),
-        DROIDPROXY_SEGMENT.test(model) || /^droidproxy:/i.test(known?.displayName ?? '') ? h('span.model-badge-via', {}, h('img.glyph', { src: '/factory-glyph.svg', alt: '', 'aria-hidden': 'true' })) : null,
-      )
-    : null;
+  const logo = model ? badgeLogo(model) : null;
   return h(
     'span.model-badge',
     { title: label, role: 'img', 'aria-label': label },

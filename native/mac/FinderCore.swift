@@ -248,7 +248,7 @@ enum ModelBrands {
         "junie": Mark(), "copilot": Mark(mono: true), "antigravity": Mark(), "openrouter": Mark(), "nvidia": Mark(), "cohere": Mark(), "perplexity": Mark(),
     ]
     private static let families: [(String, NSRegularExpression)] = [
-        ("claude", #"\b(?:claude|opus|sonnet|haiku)\b"#), ("codex", #"\bcodex\b"#), ("gemini", #"\bgemini\b"#), ("gemma", #"\bgemma\b"#),
+        ("claude", #"\b(?:claude|opus|sonnet|haiku|fable)\b"#), ("codex", #"\bcodex\b"#), ("gemini", #"\bgemini\b"#), ("gemma", #"\bgemma\b"#),
         ("deepseek", #"\bdeep[\s-]?seek\b"#), ("qwen", #"\bqwen(?:\d|\b)"#), ("grok", #"\bgrok\b"#), ("kimi", #"\bkimi\b"#),
         ("glm", #"\b(?:chat)?glm(?:\d|\b)"#), ("minimax", #"\bminimax\b"#), ("mistral", #"\b(?:mistral|mixtral|codestral|devstral|magistral)\b"#),
         ("muse", #"\bmuse\b"#), ("meta", #"\bllama(?:\d|\b)"#), ("cohere", #"\b(?:command(?:[ -][ar])?|aya)\b"#), ("nvidia", #"\bnemotron\b"#),

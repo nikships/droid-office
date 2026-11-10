@@ -12,8 +12,18 @@ class ModelBrandTest {
         assertNull(ModelBrand.of("custom:droidproxy:opaque", provider = "generic-chat-completion-api"))
     }
 
+    @Test fun fableIsAClaudeModelWithOrWithoutTheProvider() {
+        val id = "custom:droidproxy:fable-5-2"
+        val name = "DroidProxy: Fable 5.2"
+        assertEquals("claude", ModelBrand.of(id, name, "anthropic"))
+        assertEquals("claude", ModelBrand.of(id, name))
+        assertEquals("claude", ModelBrand.of(id))
+        assertEquals("claude", ModelBrand.of("claude-fable-5.1", "Fable 5.1", "anthropic"))
+    }
+
     @Test fun aliasesAndProviderFallbacksUseModelBrands() {
         val names = mapOf(
+            "Fable 5.2" to "claude", "OPUS 5.5" to "claude", "haiku" to "claude",
             "gpt-5-codex" to "codex", "Gemini 3 Pro" to "gemini", "gemma-3" to "gemma",
             "DeepSeek V4 Pro" to "deepseek", "Qwen3-Coder" to "qwen", "GLM-5.3" to "glm",
             "MiniMax-M2" to "minimax", "Codestral" to "mistral", "Llama4" to "meta",

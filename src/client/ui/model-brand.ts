@@ -26,7 +26,7 @@ export const MODEL_BRANDS = {
 export type ModelBrand = keyof typeof MODEL_BRANDS;
 
 const FAMILIES: readonly [ModelBrand, RegExp][] = [
-  ['claude', /\b(?:claude|opus|sonnet|haiku)\b/i],
+  ['claude', /\b(?:claude|opus|sonnet|haiku|fable)\b/i],
   ['codex', /\bcodex\b/i],
   ['gemini', /\bgemini\b/i],
   ['gemma', /\bgemma\b/i],
