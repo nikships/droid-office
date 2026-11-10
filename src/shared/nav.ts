@@ -21,6 +21,7 @@ import {
   GLASS_ROOM,
   GLASS_ROOM_CHAIRS,
   GLASS_ROOM_TABLE,
+  MISSION_HEAD,
   PARACHUTE,
   ROAD,
   STAIRS,
@@ -79,8 +80,8 @@ function obstacles(): { rects: Rect[]; circles: Circle[] } {
     const zs = corners.map(([, z]) => z);
     rects.push([Math.min(...xs), Math.max(...xs), Math.min(...zs), Math.max(...zs)]);
   }
-  // The unused room under the loft: its glass walls, with the doorway in the north one, and the
-  // table with its chairs, as office.ts puts them.
+  // Mission Control under the loft: its glass walls, with the doorway in the north one, and the
+  // table with its chairs and the Orchestrator's plinth, as office.ts and world/mission-control.ts put them.
   const room = GLASS_ROOM;
   const G = 0.06;
   rects.push([room.minX - G, room.minX + G, room.minZ - G, room.maxZ]);
@@ -93,6 +94,7 @@ function obstacles(): { rects: Rect[]; circles: Circle[] } {
     const [cx, cz] = deskPoint(d, 0, 0.85);
     circles.push([cx, cz, 0.3]);
   }
+  circles.push([MISSION_HEAD.x, MISSION_HEAD.z, MISSION_HEAD.radius]);
   return { rects, circles };
 }
 

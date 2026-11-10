@@ -12,6 +12,8 @@ import { colorDot } from './kit';
 import { OFFICE_SHELL_ID } from '../../shared/office-shell';
 import type { ServerMsg, WorkerInfo } from '../../shared/protocol';
 import { teamSummary, workerTeams } from '../../shared/team';
+import { missionAgent } from '../../shared/mission-control';
+import { missionTeamLine } from '../mission-office';
 import { forkRefusal } from '../../shared/worker-fork';
 import { openForkWorker } from './fork-worker';
 import { creditsNote } from '../../shared/factory-sessions';
@@ -41,6 +43,21 @@ async function uploadDrop(workerId: string, f: File): Promise<string> {
 }
 
 let current: { workerId: string; modal: Modal; find(f: TerminalFind): void } | null = null;
+
+/**
+ * The team strip's people for `w`: its lead and teammates on this floor, or its own subagents. A building
+ * agent (the Orchestrator) leads from Mission Control, so its team spans floors and the strip shows the ones
+ * here with the whole team's line.
+ */
+function teamAround(w: WorkerInfo): { lead?: WorkerInfo; mates: WorkerInfo[]; summary?: string } {
+  const agent = missionAgent(store.missionControl, w.id);
+  if (agent) return { mates: agent.team.flatMap((m) => store.workers.get(m.id) ?? []), summary: missionTeamLine(agent.team) };
+  const building = w.lead ? missionAgent(store.missionControl, w.lead) : undefined;
+  if (building) return { lead: building.worker, mates: [...store.workers.values()].filter((x) => x.lead === w.lead && x.id !== w.id) };
+  const group = workerTeams(store.workers.values()).find((t) => t.lead.id === w.id || t.children.some((s) => s.id === w.id));
+  const mates = group?.children.filter((s) => s.id !== w.id) ?? [];
+  return { lead: group && group.lead.id !== w.id ? group.lead : undefined, mates, summary: teamSummary(mates) };
+}
 /** Opens a teammate's terminal from the team strip (main wires it up, to resume or fix it first). */
 let openTeammate: (workerId: string) => void = () => {};
 
@@ -167,7 +184,8 @@ export function openTerminal(net: Net, workerId: string, onChanges?: () => void,
               '🌿 Changes',
             )
           : null;
-        const fork = info.kind === 'agent' ? h('button.btn', { type: 'button', onclick: () => openForkWorker(net, workerId) }, 'Fork') : null;
+        // A building agent has no desk for a fork to sit at.
+        const fork = info.kind === 'agent' && info.deskId ? h('button.btn', { type: 'button', onclick: () => openForkWorker(net, workerId) }, 'Fork') : null;
         const close = h('button.btn.icon.close', { title: 'Leave terminal (Shift+Esc or Ctrl+]) · Esc goes to the terminal', 'aria-label': 'Close', onclick: () => modal.close() }, '✕');
         const element = h('header', {}, colorDot(info.color), h('div.titles', {}, h('div.term-title', {}, title, pill), sub), h('div.actions', {}, zoom, changes, fork), close);
         const zoomBy = (dir: 1 | -1) => {
@@ -221,10 +239,8 @@ export function openTerminal(net: Net, workerId: string, onChanges?: () => void,
   );
   const paintTeam = (w: WorkerInfo) => {
     if (inline?.hideTeam) return;
-    const group = workerTeams(store.workers.values()).find((t) => t.lead.id === w.id || t.children.some((s) => s.id === w.id));
-    const lead = group && group.lead.id !== w.id ? group.lead : undefined;
-    const mates = group?.children.filter((s) => s.id !== w.id) ?? [];
-    const key = [lead, ...mates].map((x) => x && `${x.id}:${x.name}:${x.status}:${x.acked}:${x.title ?? ''}`).join('|');
+    const { lead, mates, summary } = teamAround(w);
+    const key = [summary, lead, ...mates].map((x) => (typeof x === 'string' ? x : x && `${x.id}:${x.name}:${x.status}:${x.acked}:${x.title ?? ''}`)).join('|');
     if (key === teamKey) return;
     teamKey = key;
     const chip = (x: WorkerInfo) =>
@@ -237,7 +253,7 @@ export function openTerminal(net: Net, workerId: string, onChanges?: () => void,
       );
     team.classList.toggle('hidden', !lead && !mates.length);
     if (lead) team.replaceChildren(h('span.term-team-label', {}, 'Subagent of'), chip(lead), ...(mates.length ? [h('span.term-team-label', {}, 'with'), ...mates.map(chip)] : []));
-    else team.replaceChildren(h('span.term-team-label', {}, teamSummary(mates) ?? ''), ...mates.map(chip));
+    else team.replaceChildren(h('span.term-team-label', {}, summary ?? ''), ...mates.map(chip));
   };
 
   const term = new Terminal({

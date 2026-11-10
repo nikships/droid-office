@@ -27,7 +27,7 @@ const BLUE = '#5aa9e6';
 const STATUS_COLOR: Record<string, string> = { running: ORANGE, pending: AMBER, idle: DIM };
 
 /** `text` cut to fit `max` px in the current font, with an ellipsis. */
-function fit(g: CanvasRenderingContext2D, text: string, max: number): string {
+export function fit(g: CanvasRenderingContext2D, text: string, max: number): string {
   if (g.measureText(text).width <= max) return text;
   let lo = 0;
   let hi = text.length;

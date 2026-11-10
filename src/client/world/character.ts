@@ -825,7 +825,7 @@ export class Person {
 
 // -----------------------------------------------------------------------------------------------
 
-const STATUS_BULB: Record<string, string> = {
+export const STATUS_BULB: Record<string, string> = {
   starting: '#8c8c8c',
   idle: '#5aa9e6',
   working: '#f2b84b',

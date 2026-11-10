@@ -29,6 +29,9 @@ import {
 } from '../shared/layout';
 import { floorPalette, forgeOf, forgeWords, normalizeRepo, repoChoices as otherRepos, repoWebUrl } from '../shared/floors';
 import { OFFICE_SHELL_ID } from '../shared/office-shell';
+import { ORCHESTRATOR_ID, ORCHESTRATOR_NAME } from '../shared/mission-control';
+import { botLine, missionWaiting, missionWorker, orchestratorLine, orchestratorStarted, orchestratorWorker } from './mission';
+import { ORCHESTRATOR_SPOT, PHASE_WORD, missionBadge, missionLinks, missionStand, missionTeamLine, missionView, orchestratorPhase, orchestratorWaiting } from './mission-office';
 import type { AgentEffort, CarriedIssue, FloorInfo, GhIssue, GongWhy, WorkerInfo } from '../shared/protocol';
 import { ciForFloor } from '../shared/factory-ci';
 import { wikiShelfLine } from '../shared/factory-wiki';
@@ -89,6 +92,8 @@ import { sayFor, trimSay } from './world/visit-path';
 import type { VisitKind } from '../shared/visits';
 import { Casualties } from './world/casualties';
 import { TeamLines, type TeamLink } from './world/team-lines';
+import { MissionRoom, type MissionAgentView } from './world/mission-control';
+import { openBot, openOrchestrator } from './ui/mission-control';
 import { forkLinks } from '../shared/worker-fork';
 import { TEAM_MARK, teamLinks, teamStanding, teamSummary } from '../shared/team';
 import { BloodSpray, gunHit, Puff, setMagnumModel } from './world/gun';
@@ -208,6 +213,9 @@ const office = buildOffice();
 scene.add(office.group);
 const teamLines = new TeamLines();
 office.group.add(teamLines.group);
+// Mission Control's building agents: the Orchestrator at the head of the table, the external bots in its chairs.
+const mission = new MissionRoom(office.mission, office.interactables);
+office.group.add(mission.group);
 
 // The MacBook GLBs load after the scene exists; each laptop swaps its procedural
 // stand-in for them the first frame they are cached (see world/laptop.ts). A gun drawn before
@@ -1082,7 +1090,7 @@ net.onMessage((msg) => {
       // After a reconnect the server has forgotten which terminal we had open.
       const openId = openTerminalFor();
       if (openId === OFFICE_SHELL_ID) net.send({ t: 'shell.attach' });
-      else if (openId && store.workers.has(openId)) net.send({ t: 'worker.attach', workerId: openId });
+      else if (openId && store.worker(openId)) net.send({ t: 'worker.attach', workerId: openId });
       const watching = openChangesFor();
       if (watching && store.workers.has(watching.workerId)) net.send({ t: 'changes.watch', ...watching });
       const following = changesLogFor();
@@ -1124,8 +1132,8 @@ net.onMessage((msg) => {
       if (msg.level === 'error') sound.ding('error');
       const el = toast(msg.text, msg.level);
       const id = msg.workerId;
-      // About a worker on this floor (a subagent hired, a report back): a click opens its terminal.
-      if (id && store.workers.has(id)) {
+      // About a worker on this floor or a building agent (a subagent hired, a report back): a click opens its terminal.
+      if (id && anyWorker(id)) {
         el.classList.add('link');
         el.title = 'Open its terminal';
         el.addEventListener('click', () => openWorkerTerminal(id));
@@ -1204,7 +1212,7 @@ store.on('freshMain', renderProject);
 function renderTitle() {
   const name = store.project?.name;
   const elsewhere = store.floors.reduce((n, f) => n + (f.id === store.floor ? 0 : f.waiting), 0);
-  const waiting = [...store.workers.values()].filter(waitingOnSomeone).length + elsewhere;
+  const waiting = [...store.workers.values()].filter(waitingOnSomeone).length + elsewhere + missionWaiting(store.missionControl);
   document.title = officeTitle(name, waiting, document.hidden || !document.hasFocus());
 }
 window.addEventListener('visibilitychange', renderTitle);
@@ -1607,11 +1615,50 @@ function syncWorkers() {
   }
   arrangeSeats();
   visitors.sync(store.visits);
+  syncMission();
   syncTeamLines();
   renderWorkers((id) => openWorkerTerminal(id));
   renderWaiting();
-  notifier.sync(store.workers);
+  notifier.sync(store.workers, (id) => missionWorker(store.missionControl, id));
   renderTitle();
+}
+
+/** A worker by id: one on this floor, or one of Mission Control's building agents (the Orchestrator before its first prompt included). */
+function anyWorker(id: string): WorkerInfo | undefined {
+  return store.workers.get(id) ?? missionWorker(store.missionControl, id);
+}
+
+/** The engine on a card: a cloud worker's computer, an agent's model and effort. */
+function engineOf(w: WorkerInfo): string | undefined {
+  return w.cloud ? cloudBadge(w.cloud) : w.kind === 'agent' ? modelBadge(w.activeModel ?? w.model, w.activeEffort ?? w.effort) : undefined;
+}
+
+/** Who's in Mission Control and what its screens say, the same on every floor. */
+function syncMission() {
+  const floorWorkers = [...store.workers.values()];
+  const view = missionView(store.missionControl, floorWorkers, { model: engineOf, activity: workerActivity });
+  mission.sync(store.missionControl, floorWorkers, view, dressAgent);
+  noOutline(mission.group);
+}
+
+/** A building agent's status light, card and todos, as a worker at a desk wears them. A bot runs elsewhere, so it never dings. */
+function dressAgent(v: MissionAgentView, w: WorkerInfo) {
+  const waiting = !w.remote && waitingOnSomeone(w);
+  if (v.status !== w.status || v.acked !== w.acked) {
+    if (waiting && v.status !== '' && w.status !== v.status) {
+      sound.ding(w.status);
+      notifier.alert(w);
+    }
+    if (w.status === 'done' && (v.status === 'working' || v.status === 'needs_input')) v.model.celebrate();
+    v.status = w.status;
+    v.acked = w.acked;
+    v.model.setStatus(w.status, waiting);
+  }
+  v.model.setAction(w.action);
+  v.model.setTodos(w.todos);
+  const engine = w.remote ? 'External bot' : engineOf(w);
+  const task = w.task;
+  v.model.setTask(task ? { ...task, summary: workerActivity(w) ?? task.summary, name: engine ? `${engine} · ${task.name}` : task.name } : undefined);
 }
 
 /** The dashes on the floor from each lead to each of its subagents, whatever they're doing; a working subagent's march. */
@@ -1633,14 +1680,16 @@ function syncTeamLines() {
     const to = seat(twin.deskId);
     if (from && to) links.push({ from, to, color: twin.color, team: `fork:${source.id}`, moving: twin.status === 'working' });
   }
+  links.push(...missionLinks(store.missionControl, [...store.workers.values()], seat));
   teamLines.set(links);
 }
 
 /** The team of whoever you're aiming at (at a desk), whose links and markings light up. */
 let focusedTeam: string | null = null;
 function focusTeam(it: Interactable | null) {
+  const agent = it?.agentId ? anyWorker(it.agentId) : undefined;
   const w = it?.deskId ? store.workerAtDesk(it.deskId) : undefined;
-  const badge = w?.team;
+  const badge = agent ? missionBadge(agent, store.workers.values()) : w?.team;
   const id = badge?.id ?? (w ? `fork:${w.forkedFrom?.workerId ?? w.id}` : null);
   if (id === focusedTeam) return;
   focusedTeam = id;
@@ -1665,6 +1714,7 @@ function liftOnto(appeared: Collider[]) {
   for (const c of appeared) if (p.y > -0.1 && p.y < c.top && p.x > c.minX - 0.3 && p.x < c.maxX + 0.3 && p.z > c.minZ - 0.3 && p.z < c.maxZ + 0.3) p.y = c.top;
 }
 store.on('workers', syncWorkers);
+store.on('missionControl', syncWorkers);
 store.on('visits', () => {
   visitors.sync(store.visits);
   renderWake();
@@ -1966,12 +2016,26 @@ const compass = new Compass($('compass'));
 /** What the last press of N said, which the next press replaces. */
 let nextToast: HTMLElement | null = null;
 
+/** Everyone who waits on you here: this floor's workers, and the Orchestrator, which is on every floor. */
+function waitingHere(): WorkerInfo[] {
+  const o = orchestratorWaiting(store.missionControl);
+  return o ? [...store.workers.values(), o] : [...store.workers.values()];
+}
+
 /** N: to the worker that has waited longest on someone, and on each press after, the next. */
 function goToNextWaiting() {
   if (trip) return;
-  const w = nextUp.next(store.workers.values(), waitingBeside());
+  const w = nextUp.next(waitingHere(), waitingBeside());
   const desk = w && DESK_BY_ID.get(w.deskId);
   nextToast?.remove();
+  if (w?.id === ORCHESTRATOR_ID) {
+    closeAllModals();
+    standAtOrchestrator();
+    const waiting = waitingInOrder(waitingHere());
+    const of = waiting.length > 1 ? ` (${waiting.findIndex((x) => x.id === w.id) + 1} of ${waiting.length})` : '';
+    nextToast = toast(`${w.status === 'needs_input' ? `🙋 ${w.name} needs input` : `✅ ${w.name} is done`}${of}. O opens its terminal`);
+    return;
+  }
   if (!w || !desk) {
     const other = store.floors.find((f) => f.id !== store.floor && f.waiting > 0);
     nextToast = toast(other ? `🛗 Nobody's waiting on this floor. ${other.waiting} on the ${other.name} floor: take the elevator` : '👍 Nobody is waiting on you');
@@ -1979,7 +2043,7 @@ function goToNextWaiting() {
   }
   closeAllModals();
   standAt(desk);
-  const waiting = waitingInOrder(store.workers.values());
+  const waiting = waitingInOrder(waitingHere());
   const of = waiting.length > 1 ? ` (${waiting.findIndex((x) => x.id === w.id) + 1} of ${waiting.length})` : '';
   nextToast = toast(`${w.status === 'needs_input' ? `🙋 ${w.name} needs input` : `✅ ${w.name} is done`}${of}. E opens its terminal`);
 }
@@ -1997,11 +2061,32 @@ function waitingBeside(): string | undefined {
       best = w.id;
     }
   }
+  const o = mission.orchestrator;
+  if (o && orchestratorWaiting(store.missionControl) && o.model.root.getWorldPosition(workerPos).distanceTo(player.pos) < bestD) best = ORCHESTRATOR_ID;
   return best;
 }
 
+/** On your feet beside the Orchestrator, looking up at it. */
+function standAtOrchestrator() {
+  if (player.seat) standUp();
+  if (hanger.active) hanger.cancel();
+  if (climber.active) climber.abort();
+  if (errand) stopWalking();
+  const pose = missionPose('orchestrator', ORCHESTRATOR_SPOT);
+  player.pos.set(pose.at.x, pose.at.y, pose.at.z);
+  player.vy = 0;
+  aimAt(pose);
+  renderWake();
+}
+
+/** Where you stand to talk to a building agent at (x, z), and how you look at it. */
+function missionPose(kind: 'orchestrator' | 'bot', spot: { x: number; z: number }): ApproachPose {
+  const { at, face } = missionStand({ kind, x: spot.x, z: spot.z });
+  return { at, face, facing: facingToward(at, face), lookPitch: pitchToward({ x: at.x, y: at.y + player.eyeHeight, z: at.z }, face), pitchFixed: false };
+}
+
 function renderWaiting() {
-  const waiting = waitingInOrder(store.workers.values());
+  const waiting = waitingInOrder(waitingHere());
   const el = $('waiting');
   el.classList.toggle('hidden', !waiting.length);
   el.classList.toggle(
@@ -2024,6 +2109,13 @@ function pointToWaiting(now: number) {
       const at = v.model.root.getWorldPosition((heads[bearings.length] ??= new THREE.Vector3()));
       at.y += 1.2;
       bearings.push({ id: w.id, name: w.name, status: w.status, at });
+    }
+    const o = orchestratorWaiting(store.missionControl);
+    const v = o && mission.orchestrator;
+    if (o && v) {
+      const at = v.model.root.getWorldPosition((heads[bearings.length] ??= new THREE.Vector3()));
+      at.y += 1.4;
+      bearings.push({ id: o.id, name: o.name, status: o.status, at });
     }
   }
   compass.update(camera, bearings, now);
@@ -2051,7 +2143,7 @@ window.addEventListener('hashchange', () => {
 function followWorkerLink() {
   const link = linkedWorker;
   if (!link || firstWelcome || trip) return;
-  const step = linkStep(link, { floor: store.floor, hasWorker: (id) => store.workers.has(id), hasFloor: (id) => store.floors.some((f) => f.id === id) });
+  const step = linkStep(link, { floor: store.floor, hasWorker: (id) => !!anyWorker(id), hasFloor: (id) => store.floors.some((f) => f.id === id) });
   // The floor's arrival (floor.enter) comes back here.
   if (step === 'go' && link.floor) return switchFloor(link.floor);
   linkedWorker = undefined;
@@ -2061,6 +2153,8 @@ function followWorkerLink() {
 
 /** Opening a sleeping worker's terminal wakes it, so there's nothing to press first. */
 function openWorkerTerminal(id: string, find?: TerminalFind) {
+  if (id === ORCHESTRATOR_ID) return openOrchestratorTerminal(find);
+  if (!store.workers.has(id) && missionWorker(store.missionControl, id)) return showBot(id);
   const w = store.workers.get(id);
   if (!w) return;
   if (w.cloud) return openCloudWindow(net, id);
@@ -2069,6 +2163,35 @@ function openWorkerTerminal(id: string, find?: TerminalFind) {
   openTerminal(net, id, () => openWorkerChanges(id), find);
 }
 onOpenTeammate((id) => openWorkerTerminal(id));
+
+/** The Orchestrator's terminal, from any floor. Before its first prompt, or asleep, there's no session to show: its prompt box wakes it. */
+function openOrchestratorTerminal(find?: TerminalFind) {
+  const w = orchestratorStarted(store.missionControl) ? store.worker(ORCHESTRATOR_ID) : undefined;
+  if (!w || isAsleep(w.status)) return showOrchestrator();
+  openTerminal(net, ORCHESTRATOR_ID, undefined, find);
+}
+
+/** E at the Orchestrator, M, the ☰ menu or the palette: its prompt box, or what stops it. */
+function showOrchestrator() {
+  openOrchestrator(net, { terminal: () => openOrchestratorTerminal(), settings: () => showSettings('orchestrator') });
+}
+
+/** M from anywhere: the Orchestrator's terminal while it waits on you, else its prompt box. */
+function orchestratorKey() {
+  if (orchestratorWaiting(store.missionControl)) openOrchestratorTerminal();
+  else showOrchestrator();
+}
+
+/** E at a bot at the table: its card, whose team rows open a subagent here or after a ride to its floor. */
+function showBot(id: string) {
+  openBot(id, {
+    openMember: (m) => {
+      if (m.floor === store.floor) return openWorkerTerminal(m.id);
+      linkedWorker = { worker: m.id, floor: m.floor };
+      followWorkerLink();
+    },
+  });
+}
 
 /** 🔎 every terminal; a terminal line opens that terminal right at it. */
 function showSearch() {
@@ -2136,6 +2259,35 @@ function paletteEntries(): PaletteEntry[] {
       open,
       walk: desk && pose ? () => walkThen(pose.at, `${w.name} at ${desk.label}`, open, pose) : undefined,
     });
+  }
+
+  const mc = store.missionControl;
+  if (mc) {
+    const o = orchestratorWorker(mc);
+    const pose = missionPose('orchestrator', ORCHESTRATOR_SPOT);
+    out.push({
+      icon: '🛰️',
+      kind: 'Mission Control',
+      title: o?.name ?? ORCHESTRATOR_NAME,
+      detail: orchestratorLine(mc),
+      keywords: ['orchestrator', 'mission control', 'building agent', 'lead', 'every floor'],
+      open: showOrchestrator,
+      walk: () => walkThen(pose.at, 'the Orchestrator', showOrchestrator, pose),
+    });
+    for (const b of mc.bots) {
+      const v = mission.views.get(b.worker.id);
+      const botPose = v && missionPose('bot', v.it);
+      const open = () => showBot(b.worker.id);
+      out.push({
+        icon: '🤖',
+        kind: 'External bot',
+        title: b.worker.name,
+        detail: [botLine(b), missionTeamLine(b.team)].filter(Boolean).join(' · '),
+        keywords: ['mission control', 'tailscale', 'mcp', 'bot'],
+        open,
+        walk: botPose ? () => walkThen(botPose.at, b.worker.name, open, botPose) : undefined,
+      });
+    }
   }
 
   const free = nearestFreeDesk();
@@ -2343,6 +2495,11 @@ function interact(target: Interactable | null, key: DeskKey, note = aimedNote, s
     if (key === 'O' && w) return pullRequestFor(w);
     return;
   }
+  if (target.kind === 'orchestrator') return useOrchestrator(key);
+  if (target.kind === 'bot' && target.agentId) {
+    if (key === 'E') showBot(target.agentId);
+    return;
+  }
   // A note on the issues board: E takes it straight off the cork, O opens it to read first.
   if (note && key === 'E') return pickUp(note);
   if (note && key === 'O') return openIssue(note, net, boardActions());
@@ -2351,6 +2508,14 @@ function interact(target: Interactable | null, key: DeskKey, note = aimedNote, s
   if (target.kind === 'seat' && target.seatId) useSeat(target.seatId);
   else if (target.kind === 'gong') hitGong();
   else if (target.kind === 'ladder') grabLadder();
+}
+
+/** At the Orchestrator: E talks to it, O opens its terminal, X stops its turn. */
+function useOrchestrator(key: DeskKey) {
+  if (key === 'E') return showOrchestrator();
+  if (key === 'O') return openOrchestratorTerminal();
+  const w = orchestratorStarted(store.missionControl) ? store.worker(ORCHESTRATOR_ID) : undefined;
+  if (key === 'X' && w && isBusy(w.status) && net.send({ t: 'orchestrator.interrupt' })) toast(`✋ Stopping ${w.name}`);
 }
 
 /** Opening a pane is safe from across the room; physical controls still need a nearby E. */
@@ -2704,6 +2869,10 @@ function hintFor(it: Interactable): Hint {
       const full = !freePlace(seat);
       return { k: `${seat.id}|${full}`, parts: [title(seat.label), seat.shell ? aside('shell on the laptop') : '', full ? aside('no room') : key('E', 'Sit down')] };
     }
+    case 'orchestrator':
+      return orchestratorHint();
+    case 'bot':
+      return botHint(it.agentId ?? '');
     case 'ladder': {
       const up = floorThere(1)?.name;
       const down = floorThere(-1)?.name;
@@ -2711,6 +2880,34 @@ function hintFor(it: Interactable): Hint {
       return { k: where, parts: [title('🪜 Ladder'), aside(where || 'no other floors yet'), key('E', 'Climb on')] };
     }
   }
+}
+
+/** At the Orchestrator: what it's doing and its team, and E, O and X. */
+function orchestratorHint(): Hint {
+  const mc = store.missionControl;
+  const title = (text: string) => h('span.title', {}, text);
+  if (!mc) return { k: 'none', parts: [title('🛰️ Orchestrator'), aside('update the office to get one')] };
+  const phase = orchestratorPhase(mc);
+  if (phase === 'off') return { k: 'off', parts: [title('🛰️ Orchestrator · off'), aside('directs workers on every floor'), key('E', 'Turn it on')] };
+  if (phase === 'blocked') return { k: `blocked|${mc.orchestrator.blocked}`, parts: [title("🛰️ Orchestrator · can't start"), aside(clip(mc.orchestrator.blocked ?? '', 56)), key('E', 'See why')] };
+  const w = orchestratorWorker(mc)!;
+  const started = orchestratorStarted(mc) && !isAsleep(w.status);
+  const busy = started && isBusy(w.status);
+  const doing = phase === 'fresh' ? 'ready for a task anywhere in the building' : clip(workerActivity(w) ?? w.task?.name ?? '', 48);
+  const team = missionTeamLine(mc.orchestrator.agent?.team ?? []) ?? '';
+  return {
+    k: ['orch', w.name, phase, doing, team, busy].join('|'),
+    parts: [title(`🛰️ ${w.name} · ${PHASE_WORD[phase]}`), doing ? aside(doing) : '', team ? aside(team) : '', key('E', busy ? 'Steer or queue' : 'Prompt'), started ? key('O', 'Terminal') : '', busy ? key('X', 'Stop') : ''],
+  };
+}
+
+/** At an external bot: what it last reported, and its team. */
+function botHint(id: string): Hint {
+  const b = store.missionControl?.bots.find((x) => x.worker.id === id);
+  if (!b) return { k: '', parts: [] };
+  const team = missionTeamLine(b.team) ?? '';
+  const doing = clip(botLine(b), 48);
+  return { k: ['bot', id, b.worker.name, b.worker.status, doing, team].join('|'), parts: [h('span.title', {}, `🤖 ${b.worker.name} · external`), aside(doing), team ? aside(team) : '', key('E', 'Details')] };
 }
 
 /** With an issue card in your hands: what E does with it here, and how to put it back. */
@@ -2798,10 +2995,10 @@ function cloudKeyNote(w: WorkerInfo): string {
  * "Ada's team · Lead has left") with the team's emblem, and how a lead's subagents are doing.
  */
 function teamNote(w: WorkerInfo): string {
-  const standing = teamStanding(w, (id) => store.workers.get(id));
+  const standing = teamStanding(w, anyWorker);
   const summary = teamSummary(store.teamOf(w.id));
   if (standing) return [`${TEAM_MARK[standing.badge.emblem]} ${standing.label}`, summary].filter(Boolean).join(' · ');
-  const lead = w.lead ? store.workers.get(w.lead) : undefined;
+  const lead = w.lead ? anyWorker(w.lead) : undefined;
   if (lead) return `🧭 ${lead.name}'s subagent`;
   return summary ?? '';
 }
@@ -2968,7 +3165,8 @@ window.addEventListener(
     if (!store.floor || upTop || trip || climber.active || hanger.active) return;
     if (modalOpen() ? !terminalOnTop() : isTyping(e)) return;
     terminalShortcut(e, (direction) => {
-      const id = nextTerminal(store.workers.values(), openTerminalFor(), direction);
+      const o = orchestratorStarted(store.missionControl) ? store.worker(ORCHESTRATOR_ID) : undefined;
+      const id = nextTerminal(o ? [...store.workers.values(), o] : store.workers.values(), openTerminalFor(), direction);
       if (id === OFFICE_SHELL_ID) openOfficeShell(net);
       else openWorkerTerminal(id);
     });
@@ -3021,6 +3219,9 @@ function officeKey(e: KeyboardEvent): boolean {
       return true;
     case 'KeyN':
       goToNextWaiting();
+      return true;
+    case 'KeyM':
+      orchestratorKey();
       return true;
     case 'KeyQ':
       if (!carrying) return false;
@@ -3127,6 +3328,9 @@ const REACH: Record<InteractKind, number> = {
   seat: 3,
   ladder: 3,
   bookshelf: 4,
+  // Up on its plinth, and on the screen over the table.
+  orchestrator: 7,
+  bot: 4,
 };
 /** What the ray through `ndc` lands on first, whether it is within reach (plus `slack` meters), and where it hit. */
 function aimedAt(ndc: THREE.Vector2, slack = 0): { it: Interactable; near: boolean; hit: THREE.Intersection } | null {
@@ -3228,7 +3432,7 @@ $('project').addEventListener('click', () => {
 });
 
 // ---- The HUD: a few buttons on the top bar, everything else in the ☰ menu ----------------------------
-const waitingNow = () => waitingInOrder(store.workers.values());
+const waitingNow = () => waitingInOrder(waitingHere());
 const hudActions: HudAction[] = [
   { id: 'issues', icon: '📌', label: 'Issues', section: 'Open', shown: () => !plainFloor(), count: () => store.issues.items.filter((i) => i.state === 'OPEN').length, run: () => openBoard('issues', net, boardActions()) },
   { id: 'pulls', icon: '🔀', label: 'Pull requests', section: 'Open', shown: () => !plainFloor(), count: () => store.pulls.items.filter((p) => p.state === 'OPEN').length, run: () => openBoard('pulls', net, boardActions()) },
@@ -3315,6 +3519,21 @@ const hudActions: HudAction[] = [
     tone: () => (store.upgrade.latest && store.upgrade.phase !== 'building' ? 'primary' : undefined),
     title: () => (store.upgrade.latest ? `New version: ${store.upgrade.latest.subject}` : 'Upgrade the office'),
     run: () => openUpgrade(net),
+  },
+  // Up on the top bar while it works or waits on you.
+  {
+    id: 'orchestrator',
+    icon: '🛰️',
+    label: 'Orchestrator',
+    section: 'Open',
+    key: 'M',
+    shown: () => !!store.missionControl,
+    status: () => ['working', 'needs_input'].includes(orchestratorPhase(store.missionControl)) || !!orchestratorWaiting(store.missionControl),
+    chip: () => `Orchestrator · ${orchestratorWaiting(store.missionControl)?.status === 'done' ? 'done' : PHASE_WORD[orchestratorPhase(store.missionControl)]}`,
+    on: () => orchestratorPhase(store.missionControl) === 'working',
+    tone: () => (orchestratorPhase(store.missionControl) === 'needs_input' ? 'danger' : undefined),
+    title: () => `Mission Control's Orchestrator: ${orchestratorLine(store.missionControl)} (M)`,
+    run: orchestratorKey,
   },
   // Up on the top bar while workers wait on someone (N does the same), next to the Workers button.
   {
@@ -3525,7 +3744,7 @@ const remaster = new Remaster(
 );
 // Who is on this floor (the workers, their laptops, the free-seat signs, the bean bags and team lines) changes from
 // floor to floor; the room around them doesn't, so the bounce light is baked without them and fits every floor.
-remaster.gi.hideWhileBaking = () => [...office.occupants, teamLines.group];
+remaster.gi.hideWhileBaking = () => [...office.occupants, teamLines.group, mission.group];
 let remasterSavedAt = 0;
 let remasterSaveTimer = 0;
 /** A new outline effect has empty caches. Compile them before the next frame, for the draw that's on now. */
@@ -3579,7 +3798,7 @@ function gpuRendererName(): string {
 /** A worker walking, hopping, mid-turn, leaving, or being carried out. */
 function workerMoving(): boolean {
   for (const v of workerViews.values()) if (v.model.animating) return true;
-  return departures.positions().length > 0 || casualties.active || visitors.moving;
+  return departures.positions().length > 0 || casualties.active || visitors.moving || mission.animating;
 }
 
 /** Traffic is the thing you're looking at, not just the street outside the windows. */
@@ -3770,6 +3989,14 @@ function drawFrame(dt: number, t: number, frame: { at: number; paced: boolean })
   const bossGlow = (screenGlows[screens] ??= { pos: new THREE.Vector3(), dir: new THREE.Vector3(), power: 0 });
   bossGlow.power = bossLaptop.glow(bossGlow.pos, bossGlow.dir);
   if (bossGlow.power > 0.01) screens++;
+  for (const v of mission.views.values()) {
+    const d = v.model.root.getWorldPosition(workerPos).distanceTo(player.pos);
+    v.model.held = d < (v.model.held ? HOLD_LEAVE : HOLD_NEAR);
+    workerPos.y += WORKER_HEAD;
+    v.model.seenFrom(workerPos.distanceTo(camPos));
+    v.model.update(dt, t);
+  }
+  mission.update(reduceMotion.matches ? 0 : dt);
   sky.setScreens(screenGlows, screens, camPos);
   departures.update(dt, t);
   casualties.update(dt, t);
@@ -4004,8 +4231,15 @@ function setCamera(pose: CameraPose) {
   renderWake();
 }
 
+/** Mission Control's building agents as workers: the Orchestrator while it's on (its stand-in before the first prompt), then the bots. */
+function missionAgentsNow(): WorkerInfo[] {
+  const mc = store.missionControl;
+  const o = orchestratorWorker(mc);
+  return [...(o ? [o] : []), ...(mc?.bots.map((b) => b.worker) ?? [])];
+}
+
 const automation = createAutomation({
-  context: () => ({ workers: [...store.workers.values()], spots: usable().flat(), floors: store.floors, floor: store.floor }),
+  context: () => ({ workers: [...store.workers.values()], spots: usable().flat(), floors: store.floors, floor: store.floor, agents: missionAgentsNow() }),
   raw: () => ({
     floor: store.floor,
     floors: store.floors,
@@ -4027,6 +4261,7 @@ const automation = createAutomation({
     modals: openModalList(),
     terminal: openTerminalFor(),
     workers: [...store.workers.values()],
+    ...(store.missionControl ? { agents: missionAgentsNow() } : {}),
     carrying: carrying?.issue ?? null,
     hanging: hanger.active,
     gun: gunOut,

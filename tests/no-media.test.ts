@@ -70,7 +70,6 @@ test('the desktop has no voice or share actions, hotkeys, or mounts', () => {
     'new Voice',
     'noMedia',
     'KeyV',
-    'KeyM',
     'V / M',
     'SHARE SCREEN',
     'Watch full screen',
@@ -80,6 +79,8 @@ test('the desktop has no voice or share actions, hotkeys, or mounts', () => {
     'Sound & voice',
   ])
     assert.doesNotMatch(main, new RegExp(gone.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')), gone);
+  // M, which was mute, is the Orchestrator's key now, and only that.
+  assert.deepEqual(main.match(/KeyM[^\n]*\n[^\n]*/g), ["KeyM':\n      orchestratorKey();"]);
   assert.doesNotMatch(file('client/ui/hud.ts'), /V \/ M|updateSpeaking|from '\.\.\/voice'/);
   assert.doesNotMatch(file('client/index.html'), /shares/);
   assert.doesNotMatch(file('client/style.css'), /#shares|\.share-thumb|\.speaking|\.modal\.viewer/);

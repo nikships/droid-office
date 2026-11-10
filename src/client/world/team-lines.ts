@@ -18,6 +18,11 @@ export interface TeamLink {
   team: string;
   /** Its subagent is working: its dashes march. */
   moving: boolean;
+  /**
+   * Corners it turns on the way, for a link that has to go round a wall (out of Mission Control through
+   * its doorway). The caller routes it, so no wall check applies.
+   */
+  via?: { x: number; y: number; z: number }[];
 }
 
 type Look = 'still' | 'moving' | 'still-focus' | 'moving-focus';
@@ -94,9 +99,10 @@ export class TeamLines {
 
   /** Draws `links` instead of what was there. */
   set(links: TeamLink[]) {
-    const drawn = links.filter((l) => !linkBlocked(l.from, l.to) && Math.hypot(l.to.x - l.from.x, l.to.z - l.from.z) >= 0.3);
+    const drawn = links.filter((l) => !!l.via?.length || (!linkBlocked(l.from, l.to) && Math.hypot(l.to.x - l.from.x, l.to.z - l.from.z) >= 0.3));
     this.anyMoving = drawn.some((l) => l.moving);
-    const key = drawn.map((l) => `${l.team}:${l.color}:${l.moving ? 1 : 0}:${l.from.x.toFixed(2)},${l.from.z.toFixed(2)}>${l.to.x.toFixed(2)},${l.to.z.toFixed(2)}`).join('|');
+    const at = (p: { x: number; z: number }) => `${p.x.toFixed(2)},${p.z.toFixed(2)}`;
+    const key = drawn.map((l) => `${l.team}:${l.color}:${l.moving ? 1 : 0}:${[l.from, ...(l.via ?? []), l.to].map(at).join('>')}`).join('|');
     if (key === this.key) return;
     this.key = key;
     for (const child of [...this.group.children]) {
@@ -106,24 +112,30 @@ export class TeamLines {
     }
     const anchored = new Set<string>();
     for (const l of drawn) {
-      const dx = l.to.x - l.from.x;
-      const dz = l.to.z - l.from.z;
-      const len = Math.hypot(dx, dz);
-      const geo = new THREE.PlaneGeometry(len, WIDTH).rotateX(-Math.PI / 2);
-      // Dashes a fixed length apart whatever the line's length: the texture repeats along u.
-      const uv = geo.getAttribute('uv') as THREE.BufferAttribute;
-      for (let i = 0; i < uv.count; i++) uv.setX(i, uv.getX(i) * (len / PERIOD));
-      const m = new THREE.Mesh(geo, this.material(l.color, l.moving ? 'moving' : 'still'));
-      m.position.set((l.from.x + l.to.x) / 2, Math.min(l.from.y, l.to.y) + LINK_LIFT, (l.from.z + l.to.z) / 2);
-      m.rotation.y = Math.atan2(-dz, dx);
-      m.renderOrder = 1;
-      m.userData = { team: l.team, color: l.color, moving: l.moving };
-      this.group.add(m);
+      const points = [l.from, ...(l.via ?? []), l.to];
+      for (let i = 1; i < points.length; i++) {
+        const a = points[i - 1];
+        const b = points[i];
+        const dx = b.x - a.x;
+        const dz = b.z - a.z;
+        const len = Math.hypot(dx, dz);
+        if (len < 0.01) continue;
+        // Overlapping a little at each corner, so a turn reads as one line.
+        const geo = new THREE.PlaneGeometry(len + (points.length > 2 ? WIDTH : 0), WIDTH).rotateX(-Math.PI / 2);
+        // Dashes a fixed length apart whatever the line's length: the texture repeats along u.
+        const uv = geo.getAttribute('uv') as THREE.BufferAttribute;
+        for (let j = 0; j < uv.count; j++) uv.setX(j, uv.getX(j) * (len / PERIOD));
+        const m = new THREE.Mesh(geo, this.material(l.color, l.moving ? 'moving' : 'still'));
+        m.position.set((a.x + b.x) / 2, Math.min(a.y, b.y) + LINK_LIFT, (a.z + b.z) / 2);
+        m.rotation.y = Math.atan2(-dz, dx);
+        m.renderOrder = 1;
+        m.userData = { team: l.team, color: l.color, moving: l.moving };
+        this.group.add(m);
+      }
       // A pad under each end, so a link reads as anchored at the desks rather than a stray stripe.
       for (const p of [l.from, l.to]) {
-        const at = `${p.x.toFixed(2)},${p.z.toFixed(2)}`;
-        if (anchored.has(at)) continue;
-        anchored.add(at);
+        if (anchored.has(at(p))) continue;
+        anchored.add(at(p));
         this.anchorGeo ??= new THREE.CircleGeometry(ANCHOR_RADIUS, 20).rotateX(-Math.PI / 2);
         const pad = new THREE.Mesh(this.anchorGeo, this.material(l.color, 'still', true));
         pad.position.set(p.x, p.y + LINK_LIFT, p.z);

@@ -9,6 +9,7 @@ import type { FloorInfo, WorkerInfo } from '../shared/protocol';
 import { ROOF, ROOF_NAME } from '../shared/rooftop';
 import type { Visit } from '../shared/visits';
 import { deskApproach, type ApproachPose } from './approach';
+import { missionStand } from './mission-office';
 import type { FrameReport } from './frame-stats';
 import { waitingOnSomeone } from './notify';
 import { EYE_HEIGHT } from './player';
@@ -30,7 +31,7 @@ export type AutomationCommand = (typeof AUTOMATION_COMMANDS)[number];
 /** The boards on the wall, which `goTo` lists as kind 'board'. */
 const BOARD_KINDS = new Set<InteractKind>(['issues', 'pulls', 'actions', 'ci', 'whiteboard', 'computers']);
 /** Interactables that aren't a place to go to by name: there are many of them, or they move. */
-const UNNAMED_KINDS = new Set<InteractKind>(['desk', 'seat', 'decor']);
+const UNNAMED_KINDS = new Set<InteractKind>(['desk', 'seat', 'decor', 'bot']);
 
 const PLACE_LABEL: Partial<Record<InteractKind, string>> = {
   issues: 'Issues board',
@@ -44,6 +45,7 @@ const PLACE_LABEL: Partial<Record<InteractKind, string>> = {
   jukebox: 'Jukebox',
   ladder: 'Ladder',
   bookshelf: 'Bookshelf',
+  orchestrator: 'Orchestrator',
 };
 
 export type TargetKind = 'desk' | 'board' | 'place' | 'floor';
@@ -66,6 +68,8 @@ export interface TargetContext {
   /** What you can use where you are (main.ts usable()), put-away ones included. */
   spots: Interactable[];
   floors: Pick<FloorInfo, 'id' | 'name'>[];
+  /** The building agents in Mission Control, which every floor has: the Orchestrator and the external bots. */
+  agents?: Pick<WorkerInfo, 'id' | 'name' | 'status'>[];
   /** The floor you're on, ROOF up on the roof, or null in the lobby. */
   floor: string | null;
 }
@@ -98,6 +102,12 @@ export function listTargets(ctx: TargetContext): TargetInfo[] {
     if (spot.off || UNNAMED_KINDS.has(spot.kind) || kinds.has(spot.kind)) continue;
     kinds.add(spot.kind);
     out.push({ id: spot.kind, kind: BOARD_KINDS.has(spot.kind) ? 'board' : 'place', label: PLACE_LABEL[spot.kind] ?? spot.kind });
+  }
+  // Each external bot at the Mission Control table, by its worker id.
+  for (const spot of ctx.spots) {
+    if (spot.off || spot.kind !== 'bot' || !spot.agentId) continue;
+    const bot = ctx.agents?.find((a) => a.id === spot.agentId);
+    out.push({ id: spot.agentId, kind: 'place', label: bot?.name ?? spot.agentId, ...(bot ? { worker: { id: bot.id, name: bot.name, status: bot.status } } : {}) });
   }
   for (const f of ctx.floors) out.push({ id: f.id, kind: 'floor', label: f.name, ...(f.id === ctx.floor ? { here: true } : {}) });
   if (ctx.floors.length) out.push({ id: ROOF, kind: 'floor', label: ROOF_NAME, ...(ctx.floor === ROOF ? { here: true } : {}) });
@@ -134,7 +144,7 @@ export function resolveTarget(query: string, ctx: TargetContext): { ok: true; ta
 
 function withSpot(t: TargetInfo, spots: Interactable[]): ResolvedTarget {
   if (t.kind === 'floor') return t;
-  const spot = t.deskId ? deskSpotOf(spots, t.deskId) : spots.find((s) => s.kind === t.id && !s.off);
+  const spot = t.deskId ? deskSpotOf(spots, t.deskId) : spots.find((s) => (s.kind === t.id || (s.kind === 'bot' && s.agentId === t.id)) && !s.off);
   return spot ? { ...t, spot } : t;
 }
 
@@ -149,6 +159,10 @@ export function standFor(t: ResolvedTarget, blocked: (x: number, z: number, y: n
   if (desk) return deskApproach(desk);
   const spot = t.spot;
   if (!spot) return null;
+  if (spot.kind === 'orchestrator' || spot.kind === 'bot') {
+    const { at, face } = missionStand({ kind: spot.kind, x: spot.x, z: spot.z });
+    if (!blocked(at.x, at.z, at.y)) return { at, facing: facingToward(at, face), lookPitch: pitchToward({ x: at.x, y: at.y + EYE_HEIGHT, z: at.z }, face), face, pitchFixed: false };
+  }
   const y = spot.y ?? 0;
   const free = freeSpotNear({ x: spot.x, z: spot.z }, y, Math.max(0.6, spot.radius - 0.2), blocked);
   if (!free) return null;
@@ -206,6 +220,8 @@ export interface RawState {
   /** The worker whose terminal is open, if one is. */
   terminal: string | null;
   workers: WorkerInfo[];
+  /** The building agents in Mission Control (the Orchestrator while it's on, then the bots), when the office has any. */
+  agents?: WorkerInfo[];
   carrying: number | null;
   hanging: boolean;
   gun: boolean;
@@ -245,6 +261,8 @@ export interface Snapshot {
   terminal: { workerId: string; name: string } | null;
   workers: { id: string; name: string; kind: string; deskId: string; desk: string; status: string; waiting: boolean; task?: string }[];
   floors: { id: string; name: string; waiting: number; here: boolean }[];
+  /** Mission Control's building agents, the same on every floor; absent from an office without Mission Control. */
+  agents?: { id: string; name: string; remote: boolean; status: string; waiting: boolean; task?: string }[];
 }
 
 const r2 = (n: number) => Math.round(n * 100) / 100;
@@ -255,8 +273,8 @@ export function buildSnapshot(raw: RawState): Snapshot {
   const floorName = (id: string) => (id === ROOF ? ROOF_NAME : (raw.floors.find((f) => f.id === id)?.name ?? id));
   const p = raw.player;
   const u = raw.using;
-  const usingId = u ? (u.deskId ?? (UNNAMED_KINDS.has(u.kind) ? (u.seatId ?? u.decorId ?? u.kind) : u.kind)) : '';
-  const term = raw.terminal ? raw.workers.find((w) => w.id === raw.terminal) : undefined;
+  const usingId = u ? (u.deskId ?? (UNNAMED_KINDS.has(u.kind) ? (u.seatId ?? u.decorId ?? u.agentId ?? u.kind) : u.kind)) : '';
+  const term = raw.terminal ? [...raw.workers, ...(raw.agents ?? [])].find((w) => w.id === raw.terminal) : undefined;
   return {
     floor: raw.floor ? { id: raw.floor, name: floorName(raw.floor) } : null,
     onRoof: raw.floor === ROOF,
@@ -279,7 +297,7 @@ export function buildSnapshot(raw: RawState): Snapshot {
       sidearm: raw.sidearm,
     },
     camera: { x: r2(raw.camera.x), y: r2(raw.camera.y), z: r2(raw.camera.z) },
-    using: u ? { kind: u.kind, id: usingId, label: (u.deskId && DESK_BY_ID.get(u.deskId)?.label) || PLACE_LABEL[u.kind] || u.kind } : null,
+    using: u ? { kind: u.kind, id: usingId, label: (u.deskId && DESK_BY_ID.get(u.deskId)?.label) || (u.agentId && raw.agents?.find((a) => a.id === u.agentId)?.name) || PLACE_LABEL[u.kind] || u.kind } : null,
     modals: raw.modals.map((m) => (m.doing ? { label: m.label, doing: m.doing } : { label: m.label })),
     terminal: raw.terminal ? { workerId: raw.terminal, name: term?.name ?? raw.terminal } : null,
     workers: raw.workers.map((w) => ({
@@ -293,6 +311,7 @@ export function buildSnapshot(raw: RawState): Snapshot {
       ...(w.task?.name ? { task: w.task.name } : {}),
     })),
     floors: raw.floors.map((f) => ({ id: f.id, name: f.name, waiting: f.waiting, here: f.id === raw.floor })),
+    ...(raw.agents ? { agents: raw.agents.map((w) => ({ id: w.id, name: w.name, remote: !!w.remote, status: w.status, waiting: !w.remote && waitingOnSomeone(w), ...(w.task?.name ? { task: w.task.name } : {}) })) } : {}),
   };
 }
 
