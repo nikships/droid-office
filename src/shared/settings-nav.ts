@@ -1,5 +1,5 @@
 /** The categories down the side of Settings, grouped so a setting's place can be guessed: what is only yours, what workers do, and what the whole office shares. */
-export type SettingsPane = 'you' | 'sound' | 'graphics' | 'workers' | 'models' | 'subagents' | 'connections' | 'office' | 'phone';
+export type SettingsPane = 'you' | 'sound' | 'graphics' | 'workers' | 'models' | 'subagents' | 'orchestrator' | 'connections' | 'office' | 'phone';
 
 /** The sidebar groups, in order. Every pane belongs to exactly one. */
 export type SettingsSection = 'Personal' | 'Workers' | 'Office';
@@ -29,6 +29,14 @@ export const SETTINGS_PANES: PaneDef[] = [
   { id: 'workers', icon: '🤖', label: 'Workers', section: 'Workers', scope: 'Everyone', blurb: 'Where new workers start, how many run, when they leave, how their worktrees are set up and what the office tells them.' },
   { id: 'models', icon: '🧠', label: 'Models', section: 'Workers', scope: 'Everyone', blurb: 'The model a worker starts on, and which models the pickers offer.' },
   { id: 'subagents', icon: '🧭', label: 'Subagents & visits', section: 'Workers', scope: 'Everyone', blurb: 'Workers that hire workers at the desks near them, and workers visiting each other’s desks.' },
+  {
+    id: 'orchestrator',
+    icon: '🛰️',
+    label: 'Orchestrator',
+    section: 'Workers',
+    scope: 'Office-wide',
+    blurb: 'The building’s own agent in Mission Control: whether it runs, the model it runs on, its conversation and its brief.',
+  },
   {
     id: 'connections',
     icon: '🔌',
@@ -107,6 +115,10 @@ export const SETTINGS_CARDS = [
   { pane: 'subagents', title: 'Subagent worker', keywords: 'subagent default worker model effort lead' },
   { pane: 'subagents', title: 'Models leads can pick', keywords: 'subagent models leads pick limit notes credit' },
   { pane: 'subagents', title: 'Visits between workers', keywords: 'visits visit_roster workers desks talk handoff ask' },
+  { pane: 'orchestrator', title: 'Orchestrator', keywords: 'orchestrator mission control building agent on off' },
+  { pane: 'orchestrator', title: 'Orchestrator model', keywords: 'orchestrator model effort reasoning mission control' },
+  { pane: 'orchestrator', title: 'New conversation', keywords: 'orchestrator new conversation reset forget start over fresh session' },
+  { pane: 'orchestrator', title: 'Orchestrator brief', keywords: 'orchestrator brief prompt instructions edit mission control' },
   { pane: 'connections', title: 'Droid', keywords: 'droid version update sign in install agent account factory' },
   { pane: 'connections', title: 'Factory API key', keywords: 'factory api key connect cloud computers sessions credits ci autowiki' },
   { pane: 'connections', title: 'DroidProxy', keywords: 'droidproxy subscriptions claude chatgpt plan menu bar install start' },
