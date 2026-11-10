@@ -152,6 +152,7 @@ test('Mission Control pins the building’s agents in the sidebar and opens the 
   assert.equal(await pane.locator('.wt-blocked').isVisible(), true);
   assert.match(await pane.locator('.wt-blocked').innerText(), /Droid is signed out/);
   assert.equal(await pane.locator('form').first().isHidden(), true);
+  assert.equal(await pane.locator('.dash-pane-head .pill').innerText(), 'blocked');
 
   // A bot: what it is and its team, no terminal; a subagent opens on its own floor.
   await page.evaluate(() => (window as any).paintPane('bot-claw', 'terminal'));

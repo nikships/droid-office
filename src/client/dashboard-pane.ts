@@ -558,8 +558,9 @@ export function createPane(host: PaneHost, index: number): Pane {
     const engine = w.kind === 'agent' ? modelBadgeNode(w.activeModel ?? w.model, w.activeEffort ?? w.effort) : kind(w);
     model.replaceChildren(...(engine ? [engine] : []));
     pill.hidden = false;
-    pill.className = `pill ${w.status}`;
-    pill.textContent = STATUS_LABEL[w.status] ?? w.status;
+    const blocked = w.id === ORCHESTRATOR_ID && !!host.mission()?.orchestrator.blocked;
+    pill.className = blocked ? 'pill warn' : `pill ${w.status}`;
+    pill.textContent = blocked ? 'blocked' : (STATUS_LABEL[w.status] ?? w.status);
     views.hidden = flip.hidden = !toggles;
     views.setAttribute('aria-label', `${w.name} view`);
     views.replaceChildren(
