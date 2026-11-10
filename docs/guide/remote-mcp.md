@@ -369,7 +369,7 @@ Read one full report or question from your subagents, by its event id (lastRepor
 
 | Argument | Type | Required | Description |
 | --- | --- | --- | --- |
-| `worker` | string | no | Subagent name or id: its latest report or question. |
+| `worker` | string | no | Subagent name or id: its latest report or question. A name hired again after a dismissal means the one on your team now. |
 | `id` | string | no | An event id such as team:<floor>:<seq>. |
 | `floor` | string | no | Building agents only: just this open floor, by id, name or checkout path. Omit for all your teams across the building. |
 

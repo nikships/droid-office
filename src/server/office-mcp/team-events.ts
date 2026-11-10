@@ -406,7 +406,7 @@ export function register(server: OfficeMcpServer, deps: OfficeMcpDeps): void {
       description:
         "Read one full report or question from your subagents, by its event id (lastReportId or a news id) or the latest from a named subagent, with that subagent's recent report history. Kept after the subagent leaves. Reading changes nothing.",
       inputSchema: z.object({
-        worker: z.string().trim().min(1).max(128).optional().describe('Subagent name or id: its latest report or question.'),
+        worker: z.string().trim().min(1).max(128).optional().describe('Subagent name or id: its latest report or question. A name hired again after a dismissal means the one on your team now.'),
         id: z.string().trim().min(1).max(200).optional().describe('An event id such as team:<floor>:<seq>.'),
         floor: floorArg,
       }),
@@ -422,15 +422,21 @@ export function register(server: OfficeMcpServer, deps: OfficeMcpDeps): void {
       const wanted = args.id === undefined ? undefined : parseCursor(args.id, caller.floor?.id);
       if (args.id !== undefined && (wanted?.size !== 1 || args.id.includes(','))) return officeError('id takes one event id, such as team:<floor>:<seq> from lastReportId.');
       const [floor, seq] = wanted ? [...wanted][0] : [];
-      const found = scopes.flatMap((s) =>
+      let found = scopes.flatMap((s) =>
         s.team
           .reports(lead, args.worker)
           .filter((e) => seq === undefined || (s.id === floor && e.seq === seq))
           .map((e) => ({ e, floor: s.id })),
       );
+      if (!args.id && new Set(found.map((x) => x.e.worker)).size > 1) {
+        // Reports outlive their subagent, so a name hired again after a dismissal means the one on the team now.
+        const onTeam = new Set(scopes.flatMap((s) => s.workers.list().flatMap((w) => (w.lead === lead ? [w.id] : []))));
+        const current = found.filter((x) => onTeam.has(x.e.worker));
+        if (new Set(current.map((x) => x.e.worker)).size !== 1) return officeError(`${args.worker} names more than one subagent: use the worker id${scopes.length > 1 ? ' or floor' : ''}.`);
+        found = current;
+      }
       const pick = found.at(-1);
       if (!pick) return officeError(args.id ? `No report or question ${args.id} from your subagents.` : `${args.worker} has not reported or asked anything you can still read.`);
-      if (!args.id && new Set(found.map((x) => x.e.worker)).size > 1) return officeError(`${args.worker} names subagents on several floors: use the worker id or floor.`);
       const history = scopes.flatMap((s) => s.team.reports(lead, pick.e.worker).map((e) => compactEvent(e, s.id))).slice(-HISTORY_MAX);
       const report = compactEvent(pick.e, pick.floor, true);
       return officeResult(
