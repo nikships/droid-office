@@ -55,6 +55,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.liveRegion
@@ -67,6 +68,7 @@ import ai.factory.droidoffice.core.ClientMsg
 import ai.factory.droidoffice.core.Effort
 import ai.factory.droidoffice.core.MissionControl
 import ai.factory.droidoffice.core.MissionTeamMember
+import ai.factory.droidoffice.core.ORCHESTRATOR_COLOR
 import ai.factory.droidoffice.core.ORCHESTRATOR_ID
 import ai.factory.droidoffice.core.ORCHESTRATOR_NAME
 import ai.factory.droidoffice.core.OrchestratorSettings
@@ -97,7 +99,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
 
 /** The Orchestrator before its first prompt (or after a new conversation), and while it is off: what it's for, and how to start. */
-internal val IdleOrchestrator = WorkerInfo(id = ORCHESTRATOR_ID, name = ORCHESTRATOR_NAME, color = "#ee6018", status = "idle")
+internal val IdleOrchestrator = WorkerInfo(id = ORCHESTRATOR_ID, name = ORCHESTRATOR_NAME, color = ORCHESTRATOR_COLOR, status = "idle")
 
 /**
  * Opens a subagent of a building agent where it sits: moves the phone to its floor first when it is on
@@ -113,14 +115,14 @@ internal suspend fun follow(connection: OfficeConnection, member: MissionTeamMem
 
 /** A building agent's subagents as a row of chips, each tagged with its floor: tapping one opens it there. */
 @Composable
-internal fun TeamStrip(team: List<MissionTeamMember>, onOpen: (MissionTeamMember) -> Unit, modifier: Modifier = Modifier, tag: String = Tags.Orchestrator.TEAM) {
+internal fun TeamStrip(team: List<MissionTeamMember>, onOpen: (MissionTeamMember) -> Unit, modifier: Modifier = Modifier, tag: String = Tags.Orchestrator.TEAM, color: Color = Palette.TextSecondary) {
     if (team.isEmpty()) return
     Row(
         modifier.fillMaxWidth().tagged(tag).horizontalScroll(rememberScrollState()).padding(horizontal = 12.dp, vertical = 4.dp),
         horizontalArrangement = Arrangement.spacedBy(6.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Eyebrow("Team", Modifier.padding(end = 2.dp))
+        Eyebrow("Team", Modifier.padding(end = 2.dp), color = color)
         MissionControl.arrangeTeam(team).forEach { m -> MemberChip(m) { onOpen(m) } }
     }
 }
@@ -173,7 +175,7 @@ internal fun OrchestratorBlocked(reason: String) {
 private fun IdleHeader(embedded: Boolean, onBack: () -> Unit, sub: String, onMenu: () -> Unit) {
     Row(Modifier.fillMaxWidth().padding(start = 4.dp, end = 4.dp, top = 6.dp, bottom = 4.dp), verticalAlignment = Alignment.CenterVertically) {
         IconButton(onClick = onBack, modifier = Modifier.tagged(Tags.Worker.BACK)) { Icon(if (embedded) Icons.Default.Close else Icons.AutoMirrored.Filled.ArrowBack, "Back") }
-        AgentTile(OfficeIcons.Orbit, Palette.Accent, small = true)
+        AgentTile(OfficeIcons.Orbit, orchestratorTint(null), small = true)
         Column(Modifier.weight(1f).padding(start = 10.dp)) {
             Text(ORCHESTRATOR_NAME, style = MaterialTheme.typography.titleLarge, maxLines = 1, modifier = Modifier.tagged(Tags.Worker.NAME))
             Text(sub, style = LocalOfficeType.current.monoBody.copy(color = Palette.TextSecondary, fontSize = MaterialTheme.typography.bodySmall.fontSize), maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.tagged(Tags.Worker.META))
@@ -250,7 +252,7 @@ internal fun OrchestratorIdle(state: OrchestratorState?, synced: Boolean, embedd
 private fun Intro(enabled: Boolean, onExample: (String) -> Unit) {
     Column(Modifier.widthIn(max = 460.dp).fillMaxWidth().tagged(Tags.Orchestrator.INTRO)) {
         Spacer(Modifier.height(12.dp))
-        AgentTile(OfficeIcons.Orbit, Palette.Accent)
+        AgentTile(OfficeIcons.Orbit, orchestratorTint(null))
         Spacer(Modifier.height(16.dp))
         Text("Run the whole building from here", style = MaterialTheme.typography.headlineSmall)
         Spacer(Modifier.height(8.dp))
@@ -328,7 +330,7 @@ fun OrchestratorSheet(state: OrchestratorState, onDismiss: () -> Unit) {
             verticalArrangement = Arrangement.spacedBy(18.dp),
         ) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                AgentTile(OfficeIcons.Orbit, Palette.Accent)
+                AgentTile(OfficeIcons.Orbit, orchestratorTint(state.agent?.worker))
                 Column(Modifier.weight(1f).padding(start = 12.dp)) {
                     Text(ORCHESTRATOR_NAME, style = MaterialTheme.typography.headlineSmall)
                     Text("Plans and directs workers on every floor", style = MaterialTheme.typography.bodySmall)

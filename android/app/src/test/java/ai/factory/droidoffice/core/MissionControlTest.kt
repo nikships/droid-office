@@ -10,6 +10,15 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class MissionControlTest {
+    @Test
+    fun orchestratorColorBeforeAndAfterItsFirstPrompt() {
+        // Mirrors ORCHESTRATOR_COLOR in src/shared/mission-control.ts.
+        assertEquals("#ee6018", ORCHESTRATOR_COLOR)
+        assertEquals(ORCHESTRATOR_COLOR, MissionControl.orchestratorColor(null))
+        assertEquals(ORCHESTRATOR_COLOR, MissionControl.orchestratorColor(WorkerInfo(id = ORCHESTRATOR_ID, color = "")))
+        assertEquals("#123456", MissionControl.orchestratorColor(WorkerInfo(id = ORCHESTRATOR_ID, color = "#123456")))
+    }
+
     private val welcome = """
         {"t":"welcome","connection":"c1","arrival":{"floor":"home","via":"start"},"version":"0.9.200",
          "floors":[{"id":"home","name":"droid-office","dir":"/x"}],"floor":"home","workers":[],"pulls":{"items":[]}}

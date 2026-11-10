@@ -124,6 +124,7 @@ import ai.factory.droidoffice.ui.mission.OrchestratorIdle
 import ai.factory.droidoffice.ui.mission.OrchestratorSheet
 import ai.factory.droidoffice.ui.mission.TeamStrip
 import ai.factory.droidoffice.ui.mission.follow
+import ai.factory.droidoffice.ui.mission.orchestratorTint
 import ai.factory.droidoffice.ui.home.rememberNow
 import ai.factory.droidoffice.ui.theme.LocalOfficeType
 import ai.factory.droidoffice.ui.theme.OfficeIcons
@@ -265,7 +266,7 @@ fun WorkerScreen(workerId: String, onBack: () -> Unit, embedded: Boolean = false
             Actions(worker, lead = { InlineViewToggle(tty, pickView) }, resumable = !mission)
             if (mission) TeamStrip(orchestrator?.agent?.team.orEmpty(), onOpen = { m ->
                 onOpenWorker?.let { open -> followScope.launch { follow(connection, m, open) } }
-            })
+            }, color = orchestratorTint(worker))
             Box(Modifier.fillMaxWidth().height(4.dp))
             Box(Modifier.fillMaxWidth().height(1.dp).background(Palette.Border))
         }
@@ -410,7 +411,7 @@ private fun Header(w: WorkerInfo, embedded: Boolean, connected: Boolean, onBack:
     val catalogue by graph.connection.catalogue.collectAsStateWithLifecycle()
     Row(Modifier.fillMaxWidth().padding(start = 4.dp, end = 4.dp, top = 6.dp, bottom = 4.dp), verticalAlignment = Alignment.CenterVertically) {
         IconButton(onClick = onBack, modifier = Modifier.tagged(Tags.Worker.BACK)) { Icon(if (embedded) Icons.Default.Close else Icons.AutoMirrored.Filled.ArrowBack, "Back") }
-        if (mission) Box(Modifier.padding(end = 8.dp)) { AgentTile(OfficeIcons.Orbit, if (w.state == WorkerStatus.NeedsInput) Palette.Danger else Palette.Accent, small = true) }
+        if (mission) Box(Modifier.padding(end = 8.dp)) { AgentTile(OfficeIcons.Orbit, if (w.state == WorkerStatus.NeedsInput) Palette.Danger else orchestratorTint(w), small = true) }
         else WorkerDot(parseColor(w.color), w.state, 10.dp)
         Column(Modifier.weight(1f).padding(start = 2.dp)) {
             Text(w.name.ifBlank { w.id }, style = MaterialTheme.typography.titleLarge, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.tagged(Tags.Worker.NAME))
