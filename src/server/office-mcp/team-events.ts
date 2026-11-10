@@ -301,7 +301,7 @@ export function register(server: OfficeMcpServer, deps: OfficeMcpDeps): void {
     {
       name: 'team_wait',
       description:
-        'Wait until one of your subagents reports, asks a question, gets blocked in its terminal or settles, then return at once with what happened, typed events with ids and a cursor. Returns immediately only for matching news you have not heard (or news after since). A terminal question counts once it appears during the wait, and idle once every watched subagent settles during it; questions already waiting are listed in questions without ending the wait. Otherwise returns at timeoutSec (default 30, at most 600) with matched false. The cursor moves past news until leaves out, so reuse it with the same until. Without since, a local lead hears the news it is shown, like team status. Longer waits need a client timeout to match; with a progress token it sends progress every 15 s.',
+        'Wait until one of your subagents reports, asks, gets blocked in its terminal or settles, then return with what happened: typed events with ids, waiting questions and a cursor. Matching news you have not heard (or news after since) returns at once. A terminal question counts when it appears during the wait, and idle when every watched subagent settles during it; questions already waiting are listed without ending the wait. At timeoutSec it returns with matched false. The cursor moves past news that until leaves out, so reuse it with the same until. Without since, a local lead hears the news it is shown, as with team_status. Set your client timeout to cover long waits; with a progress token it reports progress every 15 s.',
       inputSchema: z.object({
         until: z
           .array(z.enum(WAIT_FOR))

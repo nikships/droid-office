@@ -140,7 +140,7 @@ Remote bots have no Whiteboard, visits, raw terminal input, floor-management, fo
 
 ### `office_whoami`
 
-Read your office identity, desk, lead if you are a subagent, permission to hire and visit, owner access, team size, worktree default and wake-note setting. Use this to establish your role before coordinating work. It does not hire, message or wait.
+Read your office identity: desk (or Mission Control), lead if you are a subagent, permission to hire and visit, owner access, team size, worktree default and wake-note setting. Call it to learn your role before coordinating work.
 
 No arguments.
 
@@ -167,12 +167,12 @@ Set your self-reported office status and optional short activity. This does not 
 
 | Argument | Type | Required | Description |
 | --- | --- | --- | --- |
-| `status` | "idle" \| "working" \| "done" | yes | Shown at your desk. |
+| `status` | "idle" \| "working" \| "done" | yes | Shown in Mission Control. |
 | `activity` | string | no | A short line of what you're doing, at most 140 characters. |
 
 ### `office_roster`
 
-List every worker in the building, or on one floor: id, name, floor id and number (1-based, the elevator's order), desk, status, task, model, lead, and whether it is you or your own subagent. Includes owner-hired workers, subagents, shells and cloud workers. Mission Control's building agents are a separate section: they have no floor or desk and MCP tools never control them.
+List every worker in the building, or on one floor: id, name, floor id and number (1-based, the elevator's order), desk, status, task, model, lead, and whether it is you or your own subagent. Includes owner-hired workers, subagents, shells and cloud workers. Mission Control's building agents have their own section, with no floor or desk: tools read them and never control them.
 
 | Argument | Type | Required | Description |
 | --- | --- | --- | --- |
@@ -190,7 +190,7 @@ Read the end of any worker's terminal, on any floor, without typing anything. na
 
 ### `office_send_home`
 
-Send any floor worker home, exactly as the owner's SEND HOME does: an owner-hired worker or any lead's subagent, yours included. Building agents in Mission Control cannot be sent home through the Office MCP, including yourself. cleanup keep (the default) leaves its worktree and branch; worktree deletes the worktree and keeps the branch; all deletes both, including commits no remote has. deleteSession true also deletes a cloud worker's Factory session, only when the owner asked. The reply preserves the target and pre-dismissal worktree report even when the outcome is uncertain. Its subagents stay, without a lead.
+Send any floor worker home, exactly as the owner's SEND HOME does: an owner-hired worker or any lead's subagent, yours included. Building agents in Mission Control, you included, stay. cleanup keep (the default) leaves its worktree and branch; worktree deletes the worktree and keeps the branch; all deletes both, including commits no remote has. deleteSession true also deletes a cloud worker's Factory session, only when the owner asked. The reply preserves the target and pre-dismissal worktree report even when the outcome is uncertain. Its subagents stay, without a lead.
 
 | Argument | Type | Required | Description |
 | --- | --- | --- | --- |
@@ -222,7 +222,7 @@ Hire an independent worker, shell or cloud worker on a floor. For a subagent tha
 
 ### `office_worker_prompt`
 
-Send a prompt to any floor worker as the owner. Use team_message for your own subagents. This is not raw terminal input.
+Prompt any floor worker as the owner, as a message in its session. Your own subagents take team_message.
 
 | Argument | Type | Required | Description |
 | --- | --- | --- | --- |
@@ -272,7 +272,7 @@ Read one page of any local or cloud agent’s conversation, including the Orches
 
 ### `team_models`
 
-Read the models allowed for your subagents, including ids, providers, credit multipliers, efforts, owner notes, no-images limits, the default, and why any cannot run. Read this before choosing a model for each task. Hiring refuses blocked models, including the default, before taking a desk.
+Read the models allowed for your subagents, including ids, providers, credit multipliers, efforts, owner notes, no-images limits, the default, and why any cannot run. Read it before choosing each task's model. Hiring refuses a blocked model, the default included, before taking a desk.
 
 No arguments.
 
@@ -288,12 +288,12 @@ Hire one fresh subagent at the nearest free desk for an independent task. It get
 | `task` | object | no | Structured task ticket. Its title/brief take precedence; an optional baseBranch controls the fresh worktree base. Fields: `title`, `brief`, `repo` (an open floor's id or name, or its repository path), optional `baseBranch`, and optional `branch`, `prNumber` and `acceptanceCriteria`. A structured task uses a fresh worktree unless `worktree: false`; then it has no baseBranch or branch. |
 | `model` | string | no | Id from team_models. Omit for the Subagents setting, else the office default, else Droid default. Pick by owner notes, task difficulty and credit multiplier. |
 | `effort` | "low" \| "medium" \| "high" \| "xhigh" \| "max" | no | Reasoning effort; choose a value this model supports according to team_models. Omit to inherit its configured effort. |
-| `from` | string | no | Branch, tag or commit for the fresh worktree, without spaces or a leading dash. Origin is fetched first. Omit to start on your branch at HEAD, refreshed if behind origin. Uncommitted changes do not follow. Requires worktree: true. |
+| `from` | string | no | Branch, tag or commit for the fresh worktree, without spaces or a leading dash. Origin is fetched first. Omit to start on your branch at HEAD, refreshed if behind origin. Only committed work follows. Requires worktree: true. |
 | `worktree` | boolean | no | Omit to follow the owner's Subagents setting (office_whoami shows it). True: isolated git worktree. False: use the project main checkout without switching its branch, only for read-only work or when your uncommitted changes must be visible. Non-git floors require false. |
 
 ### `team_status`
 
-Read your subagents and unread team news without waiting. Optionally select a worker and recent terminal lines. structuredContent has workers (one compact object each, with state blocked_on_question while a question waits on an answer), news (typed events with ids and times) and a cursor for since. verbose: false makes the text compact too; team_report_get reads a full report. Does not message or dismiss.
+Read your subagents and unread team news at once, without waiting; optionally one worker, with recent terminal lines. structuredContent has workers (one compact object each; state blocked_on_question while a question waits for an answer), news (typed events with ids and times) and a cursor to pass as since. verbose: false makes the text compact too. team_report_get reads a full report.
 
 For an external worker, status news follows a cursor kept for that bot across reconnects and office restarts: the first status call sets a baseline without replaying old reports, later calls return only newer events, and each news line starts with its UTC time. `team` with action `status` reads the same cursor. Reading status does not acknowledge anything in `office_inbox`.
 
@@ -308,7 +308,7 @@ For an external worker, status news follows a cursor kept for that bot across re
 
 ### `team_message`
 
-Send an answer or follow-up to one of your subagents. Cannot answer a permission prompt in its terminal.
+Send one of your subagents an answer or follow-up, as a message in its session. A permission prompt in its terminal needs the person at its desk.
 
 | Argument | Type | Required | Description |
 | --- | --- | --- | --- |
@@ -318,7 +318,7 @@ Send an answer or follow-up to one of your subagents. Cannot answer a permission
 
 ### `team_dismiss`
 
-Dismiss a reviewed subagent. Defaults to keeping its worktree and branch. pruneWorktree removes only a clean, owned worktree after its worker finishes, never the main checkout. keepBranch defaults true; false requests safe local branch deletion, which Git may refuse. No force option.
+Dismiss a reviewed subagent, keeping its worktree and branch by default. pruneWorktree: true removes its worktree once the worker finishes, and only a clean worktree the office made; the main checkout always stays. keepBranch: false, with pruneWorktree, asks Git for a safe local branch deletion, which Git may refuse. Git is never forced.
 
 | Argument | Type | Required | Description |
 | --- | --- | --- | --- |
@@ -329,7 +329,7 @@ Dismiss a reviewed subagent. Defaults to keeping its worktree and branch. pruneW
 
 ### `worker_diff`
 
-Read a size-capped Git diff and stat for your subagent. Defaults to its recorded base versus the tracked working tree (no untracked files). base selects another revision. commits selects the last N commits through HEAD, excluding uncommitted changes. Never runs external diff drivers or textconv.
+Read a size-capped Git diff and stat for your subagent. Defaults to its recorded base versus the tracked working tree (no untracked files). base selects another revision. commits selects the last N commits through HEAD, excluding uncommitted changes. Uses Git's built-in diff only, with no external diff drivers or textconv.
 
 | Argument | Type | Required | Description |
 | --- | --- | --- | --- |
@@ -340,7 +340,7 @@ Read a size-capped Git diff and stat for your subagent. Defaults to its recorded
 
 ### `worker_log`
 
-Read recent terminal output and current tool activity for your subagent without writing to or attaching its terminal. At most 400 lines and 48,000 characters.
+Read your subagent's recent terminal output and current tool activity, read-only. At most 400 lines and 48,000 characters.
 
 | Argument | Type | Required | Description |
 | --- | --- | --- | --- |
@@ -350,7 +350,7 @@ Read recent terminal output and current tool activity for your subagent without 
 
 ### `team_wait`
 
-Wait until one of your subagents reports, asks a question, gets blocked in its terminal or settles, then return at once with what happened, typed events with ids and a cursor. Returns immediately only for matching news you have not heard (or news after since). A terminal question counts once it appears during the wait, and idle once every watched subagent settles during it; questions already waiting are listed in questions without ending the wait. Otherwise returns at timeoutSec (default 30, at most 600) with matched false. The cursor moves past news until leaves out, so reuse it with the same until. Without since, a local lead hears the news it is shown, like team status. Longer waits need a client timeout to match; with a progress token it sends progress every 15 s.
+Wait until one of your subagents reports, asks, gets blocked in its terminal or settles, then return with what happened: typed events with ids, waiting questions and a cursor. Matching news you have not heard (or news after since) returns at once. A terminal question counts when it appears during the wait, and idle when every watched subagent settles during it; questions already waiting are listed without ending the wait. At timeoutSec it returns with matched false. The cursor moves past news that until leaves out, so reuse it with the same until. Without since, a local lead hears the news it is shown, as with team_status. Set your client timeout to cover long waits; with a progress token it reports progress every 15 s.
 
 Without `since`, an external worker's wait starts from the news as it stands when the call arrives, and it consumes nothing in `office_inbox` or the status cursor. A plain JSON client (`Accept: application/json`) gets no progress notifications, so its HTTP timeout must cover `timeoutSec`.
 

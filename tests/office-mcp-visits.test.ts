@@ -135,7 +135,7 @@ test('real MCP discovery, auth and live permissions gate every visit tool', asyn
   assert.equal(result.isError, true);
   assert.match(JSON.stringify(result.content), /turned off/);
   assert.deepEqual(r.typed, []);
-  assert.match(lead.getInstructions() ?? '', /no reason to check the roster/);
+  assert.match(lead.getInstructions() ?? '', /Otherwise keep to your own task/);
   assert.match(lead.getInstructions() ?? '', /30 minutes/);
 });
 

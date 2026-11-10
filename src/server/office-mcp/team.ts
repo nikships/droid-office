@@ -5,11 +5,11 @@ import { hasOwnerAccess } from './owner.js';
 import { officeAccess, officeError, officeResult, ownFloor, type OfficeMcpCaller, type OfficeMcpDeps, type OfficeMcpServer } from './index.js';
 import { compactEvent, compactEventText, compactWorker, compactWorkerText, cursorOf, EVENT_FILTERS, eventKinds, floorArg, parseCursor } from './team-events.js';
 
-export const instructions = `Your team is real workers at nearby desks on this floor, not hidden tasks. A subagent has its own terminal and normally its own git worktree; its lead is another worker. The owner controls hiring permission, team size, allowed models and wake notes. Subagents cannot hire.
-Split work into independent pieces that touch separate files. Hire one fresh subagent per task, and only as many as the work needs. Write each brief like a ticket: goal, relevant context and files, boundaries, checks, and how to finish (commit in its worktree and report, or another deliverable you name). Commit anything a new worktree needs first: uncommitted changes stay behind.
-Read team_models before hiring and choose per task. A credit multiplier is relative token cost: x0.2 is a fifth, x4 four times; an owner's own API key costs no Factory credits. Use the cheapest capable model: around x0.5 or less for mechanical work, around x1 for ordinary features and fixes, and the strongest suitable model for hard design, security, concurrency or subtle debugging. Owner notes take priority; between equally capable models pick the cheaper one. Higher effort on a mid-priced model may be enough before a pricier one. Visual work goes to a model that reads images, never a no-images model. Report which model each subagent ran.
-Wake notes tell you when your team has news. With Wake the lead off, team_status gives a non-blocking snapshot and unread news, and team_wait waits for news, so a polling loop is never needed. team_status with verbose: false returns one compact line per subagent and per event; team_report_get reads a full report. questions_list and question_answer handle questions waiting on you, and team_message sends an answer or a follow-up. Review the actual commits and diff (worker_diff), send a follow-up if the work is incomplete, and integrate it. A question only a person can answer goes to whoever asked you. A subagent stopped at a permission prompt in its own terminal needs that person at its named desk; a message saying yes cannot answer it.
-Dismiss a subagent with team_dismiss once its work is through review and integration and neither it nor its worktree is still needed. Tell whoever asked what each subagent did, with checks and links. Subagents use team_report for results or questions, then end their turn; the lead's answer arrives as a later message.`;
+export const instructions = `Your team is real workers at nearby desks on this floor. Each subagent has its own terminal and normally its own git worktree, and reports to the worker who hired it, its lead. The owner sets hiring permission, team size, allowed models and wake notes. Subagents cannot hire.
+Split work into independent pieces that touch separate files, and hire one fresh subagent per task, only as many as the work needs. Write each brief as a ticket: goal, relevant context and files, boundaries, checks, and how to finish (commit in its worktree and report, or another deliverable you name). A new worktree sees only committed work, so commit what it needs first.
+Read team_models before hiring and choose per task. A credit multiplier is relative token cost: x0.2 is a fifth, x4 four times; a model on the owner's own API key costs no Factory credits. Owner notes take priority. Then pick the cheapest capable model: around x0.5 or less for mechanical work, around x1 for ordinary features and fixes, the strongest suitable model for hard design, security, concurrency or subtle debugging. Try higher effort on a mid-priced model before a pricier one. Give visual work to a model that reads images; a no-images model cannot see them. Report which model each subagent ran.
+A wake note tells you when your team has news. With Wake the lead off, call team_status for a snapshot, or team_wait when nothing else is left until your team has news. Read full reports with team_report_get, answer questions with questions_list and question_answer, and send corrections or follow-ups with team_message. Review the actual commits and diff with worker_diff, then integrate. Pass a question only a person can answer to whoever asked you. A subagent stopped at a permission prompt in its own terminal needs that person at its desk: a message saying yes cannot approve it.
+Dismiss a subagent with team_dismiss after review and integration, once neither it nor its worktree is still needed. Tell whoever asked what each subagent did, with checks and links.`;
 
 const readOnly = { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false };
 const changesState = { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false };
@@ -113,7 +113,7 @@ export function register(server: OfficeMcpServer, deps: OfficeMcpDeps): void {
     {
       name: 'team_status',
       description:
-        'Read your subagents and unread team news without waiting. Optionally select a worker and recent terminal lines. structuredContent has workers (one compact object each, with state blocked_on_question while a question waits on an answer), news (typed events with ids and times) and a cursor for since. verbose: false makes the text compact too; team_report_get reads a full report. Does not message or dismiss.',
+        'Read your subagents and unread team news at once, without waiting; optionally one worker, with recent terminal lines. structuredContent has workers (one compact object each; state blocked_on_question while a question waits for an answer), news (typed events with ids and times) and a cursor to pass as since. verbose: false makes the text compact too. team_report_get reads a full report.',
       inputSchema: z.strictObject({ worker: worker.optional(), floor: floorArg, lines: z.number().int().min(1).max(400).optional(), ...statusOptions }),
       annotations: readOnly,
     },
@@ -126,7 +126,7 @@ export function register(server: OfficeMcpServer, deps: OfficeMcpDeps): void {
   server.tool(
     {
       name: 'team_message',
-      description: 'Send an answer or follow-up to one of your subagents. Cannot answer a permission prompt in its terminal.',
+      description: 'Send one of your subagents an answer or follow-up, as a message in its session. A permission prompt in its terminal needs the person at its desk.',
       inputSchema: z.strictObject({ worker, text, floor: floorArg }),
       annotations: changesState,
     },
@@ -140,7 +140,7 @@ export function register(server: OfficeMcpServer, deps: OfficeMcpDeps): void {
     {
       name: 'team_dismiss',
       description:
-        'Dismiss a reviewed subagent. Defaults to keeping its worktree and branch. pruneWorktree removes only a clean, owned worktree after its worker finishes, never the main checkout. keepBranch defaults true; false requests safe local branch deletion, which Git may refuse. No force option.',
+        'Dismiss a reviewed subagent, keeping its worktree and branch by default. pruneWorktree: true removes its worktree once the worker finishes, and only a clean worktree the office made; the main checkout always stays. keepBranch: false, with pruneWorktree, asks Git for a safe local branch deletion, which Git may refuse. Git is never forced.',
       inputSchema: z.strictObject({ worker, floor: floorArg, pruneWorktree: z.boolean().optional(), keepBranch: z.boolean().optional() }),
       annotations: { ...changesState, destructiveHint: true },
     },
@@ -155,7 +155,7 @@ export function register(server: OfficeMcpServer, deps: OfficeMcpDeps): void {
     {
       name: 'models_list',
       description:
-        'Read the full Droid/Subscriptions/DroidProxy model catalogue, including switched-off or disallowed models (enabled: false), availability, allowed-model restrictions and the default. team_models still lists the allowed subagent picks.',
+        "Read the full Droid/Subscriptions/DroidProxy model catalogue, including switched-off or disallowed models (enabled: false), availability, allowed-model restrictions and the default. To pick a subagent's model, read team_models.",
       inputSchema: z.strictObject({}),
       annotations: readOnly,
     },
@@ -172,7 +172,7 @@ export function register(server: OfficeMcpServer, deps: OfficeMcpDeps): void {
     {
       name: 'worker_diff',
       description:
-        'Read a size-capped Git diff and stat for your subagent. Defaults to its recorded base versus the tracked working tree (no untracked files). base selects another revision. commits selects the last N commits through HEAD, excluding uncommitted changes. Never runs external diff drivers or textconv.',
+        "Read a size-capped Git diff and stat for your subagent. Defaults to its recorded base versus the tracked working tree (no untracked files). base selects another revision. commits selects the last N commits through HEAD, excluding uncommitted changes. Uses Git's built-in diff only, with no external diff drivers or textconv.",
       inputSchema: z.strictObject({ worker, floor: floorArg, base: z.string().trim().min(1).max(200).optional(), commits: z.number().int().min(1).max(1000).optional() }),
       annotations: readOnly,
     },
@@ -186,7 +186,7 @@ export function register(server: OfficeMcpServer, deps: OfficeMcpDeps): void {
   server.tool(
     {
       name: 'worker_log',
-      description: 'Read recent terminal output and current tool activity for your subagent without writing to or attaching its terminal. At most 400 lines and 48,000 characters.',
+      description: "Read your subagent's recent terminal output and current tool activity, read-only. At most 400 lines and 48,000 characters.",
       inputSchema: z.strictObject({ worker, floor: floorArg, tail: z.number().int().min(1).max(400) }),
       annotations: readOnly,
     },
@@ -200,7 +200,7 @@ export function register(server: OfficeMcpServer, deps: OfficeMcpDeps): void {
     {
       name: 'office_whoami',
       description:
-        'Read your office identity, desk, lead if you are a subagent, permission to hire and visit, owner access, team size, worktree default and wake-note setting. Use this to establish your role before coordinating work. It does not hire, message or wait.',
+        'Read your office identity: desk (or Mission Control), lead if you are a subagent, permission to hire and visit, owner access, team size, worktree default and wake-note setting. Call it to learn your role before coordinating work.',
       inputSchema: z.object({}),
       annotations: readOnly,
     },
@@ -261,7 +261,7 @@ export function register(server: OfficeMcpServer, deps: OfficeMcpDeps): void {
     {
       name: 'team_models',
       description:
-        'Read the models allowed for your subagents, including ids, providers, credit multipliers, efforts, owner notes, no-images limits, the default, and why any cannot run. Read this before choosing a model for each task. Hiring refuses blocked models, including the default, before taking a desk.',
+        "Read the models allowed for your subagents, including ids, providers, credit multipliers, efforts, owner notes, no-images limits, the default, and why any cannot run. Read it before choosing each task's model. Hiring refuses a blocked model, the default included, before taking a desk.",
       inputSchema: z.object({}),
       annotations: readOnly,
     },
@@ -283,7 +283,7 @@ export function register(server: OfficeMcpServer, deps: OfficeMcpDeps): void {
     {
       name: 'team_hire',
       description:
-        'Hire one fresh subagent at the nearest free desk (to you, or for a building agent to Mission Control on the floor it names with floor or task.repo) for an independent task. It gets your brief, its own terminal, and normally a fresh worktree. Read team_models first. Permission, capacity and model refusals explain what to do; no desk is taken for an unavailable model. Commit shared prerequisites before hiring.',
+        'Hire one fresh subagent for an independent task, at the free desk nearest you (for a building agent, nearest Mission Control on the floor it names with floor or task.repo). It gets your brief, its own terminal and normally a fresh worktree. Read team_models first, and commit shared prerequisites before hiring. A refusal for permission, capacity or model says what to do, and an unavailable model takes no desk.',
       inputSchema: z.strictObject({
         title: z.string().trim().min(1).max(80).optional().describe('Short task title, required unless task supplies it.'),
         brief: text.optional().describe('Complete task ticket, required unless task supplies it. Quotes, dollar signs and backticks are preserved.'),
@@ -309,7 +309,7 @@ export function register(server: OfficeMcpServer, deps: OfficeMcpDeps): void {
           .max(200)
           .optional()
           .describe(
-            'Branch, tag or commit for the fresh worktree, without spaces or a leading dash. Origin is fetched first. Omit to start on your branch at HEAD, refreshed if behind origin. Uncommitted changes do not follow. Requires worktree: true.',
+            'Branch, tag or commit for the fresh worktree, without spaces or a leading dash. Origin is fetched first. Omit to start on your branch at HEAD, refreshed if behind origin. Only committed work follows. Requires worktree: true.',
           ),
         worktree: z
           .boolean()
@@ -384,8 +384,7 @@ export function register(server: OfficeMcpServer, deps: OfficeMcpDeps): void {
   server.tool(
     {
       name: 'team_report',
-      description:
-        'For a subagent: send results and checks, remaining work and commit or PR links to your lead, or ask a blocking question with question: true. Then end your turn. The lead replies as a later message. A question only a person can answer must be passed to whoever asked your lead. This does not block for the reply.',
+      description: 'For a subagent: send your lead your results, checks, remaining work and commit or PR links, or ask a blocking question with question: true. Then end your turn: the lead replies as a later message.',
       inputSchema: z.object({
         text: text.describe('Results, checks, remaining work and links, or the blocking question with relevant context.'),
         question: z.boolean().optional().describe('True for a question to your lead; omit or false for a report.'),
