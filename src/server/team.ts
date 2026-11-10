@@ -15,7 +15,7 @@ import { availabilityWords, cannotRun, type ModelAvailability } from '../shared/
 import { officePrompt, type PromptSource } from './prompts.js';
 import { workerMessageVars } from '../shared/prompts.js';
 import { hireRefusal } from './subscriptions/map.js';
-import { isBuildingAgent, MISSION_CONTROL_DOOR } from './building-agent.js';
+import { ignoresModelList, isBuildingAgent, MISSION_CONTROL_DOOR } from './building-agent.js';
 import { pushedSha, workerDiff } from './team-inspect.js';
 
 /** What the team needs from the floor's workers. Narrow on purpose, so a test can fake it. */
@@ -447,11 +447,11 @@ export class Team {
       canHire: !why,
       ...(why ? { why } : {}),
       subagents: team,
-      // Building agents have the owner's access: no team size or model list limits them.
+      // Building agents have the owner's access, which no team size limits; external bots ignore the model list too.
       ...(isBuildingAgent(w) ? {} : { max: s.maxPerLead }),
       worktree: s.worktree && this.opts.git,
       wakeLead: s.wakeLead,
-      ...(s.models?.length && !isBuildingAgent(w) ? { models: s.models.length } : {}),
+      ...(s.models?.length && !ignoresModelList(w) ? { models: s.models.length } : {}),
     };
   }
 
@@ -502,7 +502,7 @@ export class Team {
         ...(stuck ? { cannotRun: stuck } : {}),
       };
     };
-    const allowed = s.models?.length && !isBuildingAgent(caller) ? s.models : undefined;
+    const allowed = s.models?.length && !ignoresModelList(caller) ? s.models : undefined;
     const models = includeDisabled
       ? [...new Set([...known.keys(), ...(allowed ?? []).map((m) => m.id)])].map((id) => {
           const model = describe(id, known.get(id), allowed?.find((m) => m.id === id)?.note);
@@ -628,13 +628,14 @@ export class Team {
     const s = this.opts.settings();
     const asked = typeof b.model === 'string' ? b.model.trim() : '';
     // Only a model outside the list needs droid's own default, which subagents may always run.
-    const building = isBuildingAgent(lead);
-    const outside = !building && asked && s.models?.length && !s.models.some((m) => m.id === asked) && !this.defaultModel();
-    const choice = this.choice(b, outside ? (await this.catalogue())?.defaultModel : undefined, building);
+    const anyModel = ignoresModelList(lead);
+    const outside = !anyModel && asked && s.models?.length && !s.models.some((m) => m.id === asked) && !this.defaultModel();
+    const choice = this.choice(b, outside ? (await this.catalogue())?.defaultModel : undefined, anyModel);
     if (typeof choice === 'string') return no(400, choice);
-    const refused = await this.refuseModel(choice.model, !!asked, building);
+    const refused = await this.refuseModel(choice.model, !!asked, anyModel);
     if (refused) return no(409, refused);
     // Building agents have the owner's access, which no team size limits.
+    const building = isBuildingAgent(lead);
     const full = () => {
       if (building) return undefined;
       const n = this.teamOf(lead.id).length;

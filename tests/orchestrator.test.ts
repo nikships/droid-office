@@ -248,6 +248,65 @@ test('a new conversation ends the Orchestrator’s session, and a prompt sent st
   assert.equal(r.orchestrator.info?.sessionId, undefined);
 });
 
+test('a prompt carries the owner’s floor once: on the first prompt, and again only when the floor changes', async (t) => {
+  const r = rig(t);
+  const alpha = { name: 'droid-office', dir: '/Users/nik/repos/droid-office' };
+  const beta = { name: 'website', dir: '/Users/nik/repos/website' };
+  const hintFor = (f: { name: string; dir: string }) => `\n\n<system-reminder>\nThe owner sent this from the ${f.name} floor (${f.dir}).\n</system-reminder>`;
+
+  r.block('Sign in first');
+  assert.equal(r.orchestrator.prompt('Get all open PRs merged', [], false, alpha), 'Sign in first');
+  r.block(undefined);
+  assert.equal(r.orchestrator.prompt('Get all open PRs merged', [], false, alpha), undefined, 'a prompt that was refused did not use up the hint');
+  const first = await r.launched(1);
+  r.hook(first, 'SessionStart', { source: 'startup' });
+  const message = await until(() => r.typed(first)[0], 'the first prompt');
+  assert.equal(message, `Get all open PRs merged${hintFor(alpha)}`, 'the owner’s words, then the floor and its checkout');
+  assert.equal(r.orchestrator.info?.prompt, 'Get all open PRs merged', 'its card shows what the owner typed');
+  r.hook(first, 'UserPromptSubmit', { prompt: message });
+  assert.equal(r.orchestrator.info?.activity, 'Get all open PRs merged', 'a hook carrying the reminder does not put it on the card');
+  assert.deepEqual([r.orchestrator.info?.task?.name, r.orchestrator.info?.task?.summary], ['Get all open PRs', 'Get all open PRs merged'], 'nor does it end up in its task label');
+  r.hook(first, 'Stop');
+
+  const next = async (text: string, floor?: { name: string; dir: string }) => {
+    const count = r.typed(first).length;
+    assert.equal(r.orchestrator.prompt(text, [], false, floor), undefined);
+    const sent = await until(() => r.typed(first).length > count && r.typed(first)[count], text);
+    r.hook(first, 'UserPromptSubmit', { prompt: sent });
+    r.hook(first, 'Stop');
+    return sent;
+  };
+  assert.equal(await next('And the issues', alpha), 'And the issues', 'the same floor again adds nothing');
+  assert.equal(await next('Now the other repo', beta), `Now the other repo${hintFor(beta)}`, 'a different floor is named once');
+  assert.equal(await next('Check its CI', beta), 'Check its CI');
+  assert.equal(await next('From Mission Control'), 'From Mission Control', 'no floor, no hint');
+  assert.equal(await next('Back on the same floor', beta), 'Back on the same floor', 'Mission Control did not change the last floor named');
+  assert.equal(await next('Back to the first', alpha), `Back to the first${hintFor(alpha)}`);
+  assert.equal(r.launches().length, 1);
+
+  // A session that ended resumes the same conversation, which already knows the floor.
+  r.orchestrator.workers.halt(ORCHESTRATOR_ID);
+  assert.equal(r.orchestrator.prompt('Carry on', [], false, alpha), undefined);
+  const second = await r.launched(2);
+  r.hook(second, 'SessionStart', { source: 'resume' });
+  assert.equal(await until(() => r.typed(second)[0], 'the resumed prompt'), 'Carry on');
+
+  // A new conversation starts the naming over.
+  r.orchestrator.reset();
+  assert.equal(r.orchestrator.prompt('Start over', [], false, alpha), undefined);
+  const third = await r.launched(3);
+  r.hook(third, 'SessionStart', { source: 'startup' });
+  assert.equal(await until(() => r.typed(third)[0], 'the new conversation’s prompt'), `Start over${hintFor(alpha)}`);
+});
+
+test('a prompt from Mission Control, with no floor, starts the Orchestrator with no hint', async (t) => {
+  const r = rig(t);
+  assert.equal(r.orchestrator.prompt('What is everyone doing?'), undefined);
+  const first = await r.launched(1);
+  r.hook(first, 'SessionStart', { source: 'startup' });
+  assert.equal(await until(() => r.typed(first)[0], 'the prompt'), 'What is everyone doing?');
+});
+
 test('its team’s news is typed into an Orchestrator at rest, and handed over at the end of a turn in progress', async (t) => {
   const dir = mkdtempSync(path.join(tmpdir(), 'orchestrator-'));
   const floors: OrchestratorFloor[] = [];

@@ -1841,7 +1841,8 @@ export async function startServer(cfg: Config) {
     }
     const promptOrchestrator = (m: { prompt: string; images?: string[]; queue?: boolean }) => {
       const images = imageIds(m.images);
-      const err = orchestrator.prompt(str(m.prompt, 20000), images, m.queue === true);
+      const at = floorOf(c);
+      const err = orchestrator.prompt(str(m.prompt, 20000), images, m.queue === true, at && { name: at.def.name, dir: at.dir });
       orchestrator.workers.unstage(images);
       warn(c, err);
       done(err, ORCHESTRATOR_ID);

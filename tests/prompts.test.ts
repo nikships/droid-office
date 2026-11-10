@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { PROMPTS, PROMPT_IDS, PROMPT_MAX, WORKER_VISITS, fillPrompt, issuePromptVars, mergeCommand, placeholders, promptText, pullPromptVars, shipPromptVars, workerMessageVars } from '../src/shared/prompts.js';
+import { PROMPTS, PROMPT_IDS, PROMPT_MAX, WORKER_VISITS, fillPrompt, floorHint, issuePromptVars, mergeCommand, placeholders, promptText, pullPromptVars, shipPromptVars, withoutReminders, workerMessageVars } from '../src/shared/prompts.js';
 import { OfficePrompts, officePrompt, type PromptSource } from '../src/server/prompts.js';
 import type { AgentChoice, PromptsState } from '../src/shared/protocol.js';
 
@@ -271,4 +271,20 @@ test('the default worker is checked before it is kept, and one the office can no
   writeFileSync(file, '{nope');
   assert.deepEqual(new OfficePrompts(dir, () => {}).state(), { custom: {} });
   assert.ok(readFileSync(file, 'utf8'));
+});
+
+test('the Orchestrator brief says the floor hint is a default that a named repository overrides, and a custom brief keeps working', () => {
+  const brief = officePrompt(undefined, 'orchestrator.system', { name: 'Orchestrator', folder: '/tmp/o' });
+  assert.match(brief, /default for a request that names no repository, never a restriction, and a floor or repository the request names wins/);
+  const custom: PromptSource = { text: (id) => (id === 'orchestrator.system' ? 'Be {{name}}.' : undefined) } as unknown as PromptSource;
+  assert.equal(officePrompt(custom, 'orchestrator.system', { name: 'Orchestrator', folder: '/tmp/o' }), 'Be Orchestrator.');
+});
+
+test('a floor hint names the floor and its checkout on one line, and the office’s labels leave it out', () => {
+  const hint = floorHint({ name: 'droid-office', dir: '/Users/nik/repos/droid-office' });
+  assert.equal(hint, '<system-reminder>\nThe owner sent this from the droid-office floor (/Users/nik/repos/droid-office).\n</system-reminder>');
+  assert.equal(floorHint({ name: 'a\nb <x>', dir: '/p' }).includes('<x>'), false, 'a name cannot close the reminder or open another tag');
+  assert.equal(withoutReminders(`Merge the PRs\n\n${hint}`), 'Merge the PRs');
+  assert.equal(withoutReminders('Merge the PRs'), 'Merge the PRs');
+  assert.equal(withoutReminders(hint), '');
 });

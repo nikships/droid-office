@@ -172,6 +172,22 @@ export function officeSays(text: string): string {
   return text.startsWith(OFFICE_SAYS) ? text : `${OFFICE_SAYS} notice:\n${text}`;
 }
 
+const REMINDER_BLOCK = /<(system-(?:reminder|notification))\b[^>]*>[\s\S]*?(?:<\/\1\s*>|$)/gi;
+
+/** What the owner typed: their message without the `<system-reminder>` blocks the office added after it. */
+export function withoutReminders(text: string): string {
+  return text.replace(REMINDER_BLOCK, '').trim();
+}
+
+/**
+ * Which floor the owner sent a prompt to the Orchestrator from, as a reminder to go after their words.
+ * The Thread and the office's own labels leave reminders out, so the message stays what they typed.
+ */
+export function floorHint(floor: { name: string; dir: string }): string {
+  const plain = (s: string) => s.replace(/[\r\n<>]+/g, ' ').trim();
+  return `<system-reminder>\nThe owner sent this from the ${plain(floor.name)} floor (${plain(floor.dir)}).\n</system-reminder>`;
+}
+
 /** Preserve worker text inside a fence longer than any backtick run in it. */
 export function workerMessageVars(text: string): { text: string; fence: string } {
   const longest = (text.match(/`+/g) ?? []).reduce((n, run) => Math.max(n, run.length), 0);
@@ -572,9 +588,9 @@ const DEFS = {
       '',
       "Your folder ({{folder}}) is scratch space, not a checkout. Read code wherever you need context. Write and run short scripts and shell commands from here to coordinate: check on workers, poll CI or a pull request, start or stop a server, open a pull request or merge request for a worker's branch. Say what you ran. Workers you hire make the changes to a repository's code: hand them the change. Delegate through the droid-office MCP server; its team tools replace built-in Task and hidden agents.",
       '',
-      'Look first. `office_floors` lists open repositories and `office_roster` shows who is already working. Read an existing worker with `office_look` and message it before hiring someone for overlapping work. Answer building-status questions yourself from those facts. For implementation, split only genuinely independent scopes with non-overlapping files. One capable worker is enough for a small request.',
+      'Look first. `office_floors` lists open repositories and `office_roster` shows who is already working. Read an existing worker with `office_look` and message it before hiring someone for overlapping work. Answer building-status questions yourself from those facts. For implementation, split only genuinely independent scopes with non-overlapping files. One capable worker is enough for a small request. A prompt may end with a reminder naming the floor the owner sent it from: that floor is the default for a request that names no repository, never a restriction, and a floor or repository the request names wins.',
       '',
-      "Read `team_models` before each hire. Follow the owner's model notes and pick the cheapest capable model for routine work, reserving a strong model for difficult design or debugging. Consider credit multipliers and image support, and tell the owner which model actually ran if the runtime changes it.",
+      "Read `team_models` before each hire: it lists the models the owner lets you pick. Follow the owner's model notes and pick the cheapest capable model for routine work, reserving a strong model for difficult design or debugging. Consider credit multipliers and image support, and tell the owner which model actually ran if the runtime changes it.",
       '',
       "Hire with `team_hire`. Prefer a standalone structured task: title, brief and repo (the floor's path, id or name), plus baseBranch and branch when the task needs them. For a read-only task in the checkout, use worktree: false and omit baseBranch and branch. Your worker has none of your conversation: name the goal, repository and files, relevant findings, constraints and boundaries, acceptance criteria, checks, and delivery (commit and report, or a pull request/merge request on that floor's forge only when authorized). A new worktree sees only what is committed: commit prerequisites before the hire.",
       '',

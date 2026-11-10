@@ -138,10 +138,12 @@ if (args[0] === '--version') { console.log('0.249.0'); process.exit(0); }
 if (args[0] === 'doctor') { process.stdout.write('{"ok":true,"results":[{"id":"auth.verify","status":"pass","detail":"authenticated as o***@example.com via stored login session"}]}'); process.exit(0); }
 if (args.includes('--output-format')) process.exit(0);
 fs.appendFileSync(process.env.FAKE_AGENT_LOG, JSON.stringify({ workerId: process.env.DROID_OFFICE_WORKER_ID, hookToken: process.env.DROID_OFFICE_HOOK_TOKEN, hookUrl: process.env.DROID_OFFICE_HOOK_URL }) + '\\n');
+process.stdin.setEncoding('utf8');
+process.stdin.on('data', (chunk) => fs.appendFileSync(process.env.FAKE_AGENT_LOG, JSON.stringify({ workerId: process.env.DROID_OFFICE_WORKER_ID, stdin: chunk }) + '\\n'));
 process.stdin.resume();
 `;
 
-type Launch = { workerId: string; hookToken: string; hookUrl: string };
+type Launch = { workerId: string; hookToken: string; hookUrl: string; stdin?: string };
 
 /** An office whose Droid is `signedInDroid`, so the Orchestrator can start, with each launch it made. */
 async function missionOffice(t: TestContext) {
@@ -158,12 +160,22 @@ async function missionOffice(t: TestContext) {
     if (before === undefined) delete process.env.FAKE_AGENT_LOG;
     else process.env.FAKE_AGENT_LOG = before;
   });
-  const launches = (): Launch[] =>
+  const records = (): Launch[] =>
     readFileSync(log, 'utf8')
       .split('\n')
       // A poll can land mid-append; a finished record ends with a newline.
       .slice(0, -1)
       .map((line) => JSON.parse(line) as Launch);
+  const launches = () => records().filter((l) => l.stdin === undefined);
+  /** Every message pasted into a worker's terminal, oldest first. */
+  const typed = (workerId: string) =>
+    [
+      ...records()
+        .filter((l) => l.workerId === workerId && l.stdin !== undefined)
+        .map((l) => l.stdin)
+        .join('')
+        .matchAll(/\x1b\[200~([\s\S]*?)\x1b\[201~/g),
+    ].map((m) => m[1]);
   /** The `count`th session the office started for a worker. */
   const launched = async (workerId: string, count = 1): Promise<Launch> => {
     const end = Date.now() + 8000;
@@ -198,6 +210,7 @@ async function missionOffice(t: TestContext) {
   return {
     dir,
     launched,
+    typed,
     mcp,
     hook,
     get base() {
@@ -266,6 +279,33 @@ test('a read of the Orchestrator’s conversation and a resize of its terminal e
   const thread = await call('office_worker_thread', { workerId: ORCHESTRATOR_ID });
   assert.equal(thread.data.pending, undefined, thread.text);
   assert.match(thread.text, /no conversation yet/);
+});
+
+test('a prompt from a floor reaches the Orchestrator with that floor named once, and its Thread keeps what the owner typed', async (t) => {
+  const o = await missionOffice(t);
+  const owner = await ownerWindow(t, o.base);
+  const floor = o.server.floors()[0];
+  owner.send({ t: 'orchestrator.prompt', prompt: 'Get all open PRs merged', requestId: 'first' });
+  assert.equal((await owner.wait('action.result', (m) => m.requestId === 'first')).ok, true);
+  const session = await o.launched(ORCHESTRATOR_ID);
+  await o.hook(session, 'SessionStart', { source: 'startup' });
+  const until = async <T>(read: () => T | undefined | false) => {
+    const end = Date.now() + 8000;
+    for (;;) {
+      const v = read();
+      if (v) return v;
+      if (Date.now() > end) assert.fail('timed out');
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    }
+  };
+  const hint = `\n\n<system-reminder>\nThe owner sent this from the ${floor.def.name} floor (${floor.dir}).\n</system-reminder>`;
+  assert.equal(await until(() => o.typed(ORCHESTRATOR_ID)[0]), `Get all open PRs merged${hint}`);
+  await o.hook(session, 'UserPromptSubmit', { prompt: `Get all open PRs merged${hint}` });
+  await o.hook(session, 'Stop');
+  // A worker sent the same way takes the same path: the companion's worker.prompt for the Orchestrator.
+  owner.send({ t: 'worker.prompt', workerId: ORCHESTRATOR_ID, prompt: 'And the issues', requestId: 'second' });
+  assert.equal((await owner.wait('action.result', (m) => m.requestId === 'second')).ok, true);
+  assert.equal(await until(() => o.typed(ORCHESTRATOR_ID)[1]), 'And the issues', 'the same floor again adds nothing');
 });
 
 /** The Orchestrator in its first conversation, leading one subagent on the office's floor. */

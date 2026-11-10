@@ -22,7 +22,7 @@ import { checkoutDirty, choosePullBase, pushBranch } from './open-pull.js';
 import { normalizeRepo } from '../shared/floors.js';
 import { DESK_BY_ID, nextFreeSeat } from '../shared/layout.js';
 import { officePrompt, type PromptSource } from './prompts.js';
-import { forgeVars, officeSays, placeholders, PROMPTS, WORKER_VISITS, workerBranchPolicy, workerMessageVars } from '../shared/prompts.js';
+import { forgeVars, officeSays, placeholders, PROMPTS, WORKER_VISITS, withoutReminders, workerBranchPolicy, workerMessageVars } from '../shared/prompts.js';
 import { isBusy } from '../shared/status.js';
 import { fallbackTask } from './tasks.js';
 import { todoProgress, todosFinished, validTodoProgress } from '../shared/todos.js';
@@ -1030,7 +1030,7 @@ export class WorkerManager {
     const text = images?.length ? withImages(prompt ?? '', this.drops.adopt(id, images)) : prompt;
     // A subagent with no session to carry on starts over, so it needs telling what it's for again.
     const first = w.info.sessionId ? text : this.briefed(w, text);
-    const shown = prompt?.trim() || (text ? 'See the attached images' : undefined);
+    const shown = (prompt && withoutReminders(prompt)) || (text ? 'See the attached images' : undefined);
     if (shown) {
       w.info.activity = truncate(shown, 80);
       this.notePrompt(w, shown);
@@ -1054,7 +1054,7 @@ export class WorkerManager {
     const typed = prompt.replace(/\r\n?/g, '\n').trim();
     const text = images?.length ? withImages(typed, this.drops.adopt(id, images)) : typed;
     if (!text) return 'Empty prompt';
-    const shown = typed || 'See the attached images';
+    const shown = withoutReminders(typed) || 'See the attached images';
     const info: WorkerInfo = {
       id,
       kind: 'agent',
@@ -1650,7 +1650,7 @@ export class WorkerManager {
     const ctrlEnter = queue && wantsCsiEnter(w.info.kind);
     if (ctrlEnter && w.info.status === 'working') w.queued++;
     this.typeIn(w, clean, ctrlEnter ? CTRL_ENTER : '\r');
-    const shown = typed || 'See the attached images';
+    const shown = withoutReminders(typed) || 'See the attached images';
     w.info.activity = truncate(shown, 80);
     this.notePrompt(w, shown);
     w.info.lastInputAt = Date.now();
@@ -2051,8 +2051,10 @@ export class WorkerManager {
       w.bootBlocked = false;
       w.info.action = undefined;
       if (typeof report.prompt === 'string') {
-        w.info.activity = truncate(report.prompt, 80);
-        this.notePrompt(w, report.prompt);
+        // The office's reminders after the owner's words (an Orchestrator prompt's floor) aren't what was asked.
+        const said = withoutReminders(report.prompt) || report.prompt;
+        w.info.activity = truncate(said, 80);
+        this.notePrompt(w, said);
       }
       this.setStatus(w, 'working');
     } else if (event === 'PreToolUse') this.toolStarted(w, session, report);

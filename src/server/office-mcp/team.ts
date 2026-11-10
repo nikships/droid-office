@@ -15,6 +15,9 @@ const readOnly = { readOnlyHint: true, destructiveHint: false, idempotentHint: t
 const changesState = { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false };
 const text = z.string().trim().min(1).max(20_000);
 
+/** `main` and `origin/main` are one base: hiring fetches origin and resolves both to the branch `main`. */
+const sameBase = (a: string, b: string) => a.replace(/^origin\//, '') === b.replace(/^origin\//, '');
+
 function reply(result: TeamReply, describe: (body: Record<string, unknown>) => string) {
   if (result.status >= 400)
     return officeError(
@@ -293,7 +296,7 @@ export function register(server: OfficeMcpServer, deps: OfficeMcpDeps): void {
             title: z.string().trim().min(1).max(80),
             brief: text,
             repo: z.string().trim().min(1).max(4096).describe('Your floor repository path. A building agent names any open floor: its path, id or name.'),
-            baseBranch: z.string().trim().min(1).max(200).optional().describe('Base for the fresh worktree; omit for where its lead is now.'),
+            baseBranch: z.string().trim().min(1).max(200).optional().describe('Base for the fresh worktree; omit for where its lead is now. The same setting as from: use this one with a structured task.'),
             branch: z.string().trim().min(1).max(200).optional().describe('Name for the new local branch; must not already exist.'),
             prNumber: z.number().int().positive().optional(),
             acceptanceCriteria: z.array(z.string().trim().min(1).max(2000)).max(30).optional(),
@@ -309,7 +312,7 @@ export function register(server: OfficeMcpServer, deps: OfficeMcpDeps): void {
           .max(200)
           .optional()
           .describe(
-            'Branch, tag or commit for the fresh worktree, without spaces or a leading dash. Origin is fetched first. Omit to start on your branch at HEAD, refreshed if behind origin. Only committed work follows. Requires worktree: true.',
+            'Branch, tag or commit for the fresh worktree, without spaces or a leading dash. Origin is fetched first. Omit to start on your branch at HEAD, refreshed if behind origin. Only committed work follows. Requires worktree: true. The same setting as task.baseBranch: with a structured task, use that instead.',
           ),
         worktree: z
           .boolean()
@@ -329,7 +332,9 @@ export function register(server: OfficeMcpServer, deps: OfficeMcpDeps): void {
         return officeError('A building agent names the floor to hire on: pass floor with the open floor’s id, name or path from office_floors, or use a structured task whose repo names it.');
       }
       if (!title || !ticket) return officeError('team_hire needs title and brief, either at the top level or in task.');
-      if (task && args.from && task.baseBranch && args.from !== task.baseBranch) return officeError('from and task.baseBranch disagree; provide one base.');
+      if (task && args.from && task.baseBranch && !sameBase(args.from, task.baseBranch)) {
+        return officeError(`from (${args.from}) and task.baseBranch (${task.baseBranch}) name different bases. They set the same thing, so give only one.`);
+      }
       if (task && args.worktree === false && (task.baseBranch || task.branch))
         return officeError('A structured task with baseBranch or branch requires a fresh worktree: leave worktree out, or omit baseBranch and branch for read-only work in the checkout.');
       if (task && !caller.building && path.resolve(task.repo) !== path.resolve(ownFloor(caller).dir)) return officeError('task.repo must name your floor repository.');

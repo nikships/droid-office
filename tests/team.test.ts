@@ -365,6 +365,48 @@ test('models lists what a lead may pick, with credit multipliers and notes, and 
   assert.match(sub.body.error, /subagents can't hire their own/);
 });
 
+test('the Orchestrator keeps to the models leads can pick, as any lead does, and an external bot does not', async (t) => {
+  const r = rig(t, { models: () => Promise.resolve(CATALOGUE) });
+  r.fake.add(worker({ id: 'orchestrator', deskId: '', name: 'Orchestrator' }));
+  r.fake.add(worker({ id: 'remote-bot', deskId: '', name: 'Bot', remote: true }));
+  const models = async (caller: string) => (await r.call(caller, { action: 'models' })).body;
+  // Nothing picked: it may hire any model, with no list to name.
+  assert.equal((await models('orchestrator')).restricted, false);
+  assert.equal((await r.call('orchestrator', { action: 'hire', task: 'a', model: 'old' })).status, 200, 'an empty list lets it hire any model');
+
+  r.settings.models = [{ id: 'glm-5.3-flash', note: 'tests and docs' }];
+  for (const caller of ['orchestrator', 'lead']) {
+    const res = await models(caller);
+    assert.equal(res.restricted, true, caller);
+    assert.deepEqual(
+      res.models.map((m: Record<string, unknown>) => [m.id, m.note]),
+      [
+        ['claude-opus-5-5', undefined],
+        ['glm-5.3-flash', 'tests and docs'],
+      ],
+      `${caller} sees the picks with their notes, and the default`,
+    );
+  }
+  assert.equal((await r.call('orchestrator', { action: 'whoami' })).body.models, 1);
+  assert.equal((await r.call('orchestrator', { action: 'hire', task: 'b', model: 'glm-5.3-flash' })).status, 200);
+  assert.equal((await r.call('orchestrator', { action: 'hire', task: 'c', model: 'claude-opus-5-5' })).status, 200, 'the default model is allowed, as for a lead');
+  const refused = await r.call('orchestrator', { action: 'hire', task: 'd', model: 'old' });
+  assert.equal(refused.status, 400);
+  assert.match(refused.body.error, /old isn't one of the models this office lets subagents use[\s\S]*team_models/);
+  assert.equal((await r.call('orchestrator', { action: 'hire', task: 'e', effort: 'low' })).status, 200, 'leaving the model out is never refused');
+  assert.equal((await r.call('orchestrator', { action: 'hire', task: 'f', model: 'old' })).status, 400);
+
+  // An external bot is not limited, as before.
+  const bot = await models('remote-bot');
+  assert.equal(bot.restricted, false);
+  assert.ok(bot.models.some((m: Record<string, unknown>) => m.id === 'custom:mine'));
+  assert.equal('models' in (await r.call('remote-bot', { action: 'whoami' })).body, false);
+  assert.equal((await r.call('remote-bot', { action: 'hire', task: 'g', model: 'old' })).status, 200);
+  // The Orchestrator still has no team size limit.
+  r.settings.maxPerLead = 1;
+  assert.equal((await r.call('orchestrator', { action: 'hire', task: 'h', model: 'glm-5.3-flash' })).status, 200);
+});
+
 test("hire checks droid's own default against a fresh model list, not one a lead had to ask for first", async (t) => {
   let asks = 0;
   const r = rig(
@@ -427,6 +469,16 @@ test("models says which subscription models can't run and why, and hire refuses 
   assert.equal(r.fake.hired.length, 0, 'no desk was taken');
   assert.equal(r.fake.fetched, 0);
   assert.equal((await r.call('lead', { action: 'hire', task: 'c', model: GROK })).status, 200);
+
+  // The Orchestrator keeps the availability check, and with a model list it is offered only the picks that can run.
+  r.fake.add(worker({ id: 'orchestrator', deskId: '', name: 'Orchestrator' }));
+  assert.equal((await r.call('orchestrator', { action: 'hire', task: 'o', model: OPUS })).status, 409, 'a model that cannot run is refused with no list');
+  r.settings.models = [{ id: OPUS }, { id: GROK }];
+  const listed = await r.call('orchestrator', { action: 'hire', task: 'p', model: OPUS });
+  assert.equal(listed.status, 409);
+  assert.equal(listed.body.error, `Can't hire on Opus 5.5: no Claude account is connected. Pick one that can: ${GROK}.`, 'it is pointed to the picks, not every model');
+  delete r.settings.models;
+  r.fake.hired.length = 0;
 
   // Droid's own default is judged too, and with nothing else that can run the lead is told to ask.
   r.fake.officeDefault = undefined;
