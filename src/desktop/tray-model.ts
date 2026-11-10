@@ -5,6 +5,7 @@ export interface StatusWaiting {
   id: string;
   name: string;
   status: 'needs_input' | 'done';
+  /** Empty for a building agent (the Orchestrator), which sits in Mission Control on every floor. */
   floor: string;
   floorName: string;
   task?: string;
@@ -53,6 +54,7 @@ export function switchLabel(mode: WindowMode): string {
 /** Which worker a click opens: the office goes to its floor and opens its terminal (see src/client/worker-link.ts). */
 export interface WorkerLink {
   worker: string;
+  /** Empty for a building agent, which every floor opens. */
   floor: string;
   /** The companion opens the worker in Thread; the 3D office opens its terminal either way. */
   view?: 'thread';
@@ -70,7 +72,7 @@ function parseWaiting(raw: unknown): StatusWaiting | undefined {
   const r = raw as Record<string, unknown>;
   const id = plain(r.id, 200);
   const floor = plain(r.floor, 200);
-  if (!id || !floor || (r.status !== 'needs_input' && r.status !== 'done') || !natural(r.since)) return undefined;
+  if (!id || (r.status !== 'needs_input' && r.status !== 'done') || !natural(r.since)) return undefined;
   const task = plain(r.task, NAME_MAX);
   return { id, name: plain(r.name, NAME_MAX) || 'A worker', status: r.status, floor, floorName: plain(r.floorName, NAME_MAX), ...(task ? { task } : {}), since: r.since };
 }
@@ -156,7 +158,7 @@ export function trayMenu(v: TrayView): TrayItem[] {
 
 /** The notification for a worker that started to wait: the same words as the office's own (src/client/notify.ts). */
 export function waitingNotice(w: StatusWaiting, floors: number): { title: string; body: string } {
-  return { title: waitingLabel(w), body: [w.task, floors > 1 ? `${w.floorName} floor` : undefined].filter(Boolean).join('\n') };
+  return { title: waitingLabel(w), body: [w.task, !w.floor ? 'Mission Control' : floors > 1 ? `${w.floorName} floor` : undefined].filter(Boolean).join('\n') };
 }
 
 /** The status names fewer waiting workers than there are: the rest are cut off by the server's cap. */
@@ -188,5 +190,5 @@ export class WaitingWatch {
 
 /** `#worker=<id>&floor=<id>[&view=thread]`: what the office page reads to open a worker's terminal (src/client/worker-link.ts). */
 export function workerHash(link: WorkerLink): string {
-  return `#${new URLSearchParams({ worker: link.worker, floor: link.floor, ...(link.view ? { view: link.view } : {}) }).toString()}`;
+  return `#${new URLSearchParams({ worker: link.worker, ...(link.floor ? { floor: link.floor } : {}), ...(link.view ? { view: link.view } : {}) }).toString()}`;
 }

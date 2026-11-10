@@ -174,6 +174,17 @@ test('a worker link survives the trip to the page and takes you to its floor fir
   assert.equal(linkStep({ worker: 'w-bob' }, here), 'gone');
 });
 
+test('the Orchestrator waits on you from Mission Control, on no floor', () => {
+  const orchestrator = { id: 'orchestrator', name: 'Orchestrator', status: 'needs_input', floor: '', floorName: 'Mission Control', since: 7 };
+  const parsed = parseStatus({ ...status, waiting: [orchestrator, { ...orchestrator, id: 'w-x', floor: undefined }] });
+  assert.deepEqual(parsed?.waiting[0], orchestrator);
+  assert.deepEqual(waitingNotice(orchestrator as StatusWaiting, 3), { title: 'Orchestrator needs input', body: 'Mission Control' });
+  const hash = workerHash({ worker: 'orchestrator', floor: '' });
+  assert.equal(hash, '#worker=orchestrator');
+  assert.deepEqual(parseWorkerLink(hash), { worker: 'orchestrator' });
+  assert.equal(linkStep(parseWorkerLink(hash)!, { floor: 'f-web', hasWorker: (id) => id === 'orchestrator', hasFloor: () => true }), 'open', 'every floor opens it');
+});
+
 test('one switch names the mode it goes to', () => {
   assert.equal(switchLabel('office'), 'Switch to Office Companion');
   assert.equal(switchLabel('companion'), 'Switch to 3D Office');
