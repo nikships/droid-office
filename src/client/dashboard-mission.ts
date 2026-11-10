@@ -173,12 +173,13 @@ export function createMissionRoster(el: HTMLElement, host: MissionRosterHost) {
             h('span.dash-row-name', {}, w.name),
             orchestrator ? null : h('span.dash-row-role', {}, 'Bot'),
             s.pane(w.id) >= 0 ? h('span.dash-row-pane', { title: `In pane ${s.pane(w.id) + 1}` }, `P${s.pane(w.id) + 1}`) : null,
-            orchestrator && s.shortcut && s.pane(w.id) < 0 && !waits && !isBusy(w.status) ? h('span.key.dash-mission-key', { title: `Open the Orchestrator (${s.shortcut})` }, s.shortcut) : null,
+            orchestrator && s.shortcut && s.pane(w.id) < 0 && !waits && !blocked && !isBusy(w.status) ? h('span.key.dash-mission-key', { title: `Open the Orchestrator (${s.shortcut})` }, s.shortcut) : null,
             h(
               'span.dash-row-state',
               {},
+              // Blocked says why in its line, in the warning colour; a pill as well would squeeze its name.
               blocked
-                ? h('span.pill.warn', {}, 'blocked')
+                ? null
                 : waits
                   ? h('span.pill', { class: w.status }, status)
                   : isBusy(w.status) && w.status !== 'needs_input'
