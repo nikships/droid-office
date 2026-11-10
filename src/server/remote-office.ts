@@ -16,11 +16,15 @@ export interface RemoteFloor {
   whiteboard: WhiteboardStore;
 }
 
-/** The open floor a reference names: its id, its name (any case) or its checkout's path. */
-export function floorNamed<F extends { id: string; def: { name: string }; dir: string }>(floors: readonly F[], ref: string): F | undefined {
+/** The open floor a reference names (its id, its checkout's path, or its name in any case), or why it names none. */
+export function floorNamed<F extends { id: string; def: { name: string }; dir: string }>(floors: readonly F[], ref: string): F | string {
   const want = ref.trim();
-  const lower = want.toLowerCase();
-  return floors.find((f) => f.id === want) ?? floors.find((f) => path.isAbsolute(want) && path.resolve(f.dir) === path.resolve(want)) ?? floors.find((f) => f.def.name.toLowerCase() === lower);
+  const exact = floors.find((f) => f.id === want) ?? floors.find((f) => path.isAbsolute(want) && path.resolve(f.dir) === path.resolve(want));
+  if (exact) return exact;
+  const named = floors.filter((f) => f.def.name.toLowerCase() === want.toLowerCase());
+  if (named.length === 1) return named[0];
+  if (named.length) return `Several open floors are called ${want}. Use the floor id: ${named.map((f) => f.id).join(', ')}.`;
+  return `No open floor ${want}. office_floors lists them: ${floors.map((f) => `${f.def.name} (${f.id})`).join(', ') || 'none open'}.`;
 }
 
 /**
@@ -76,15 +80,18 @@ export class RemoteOffice {
   /** `since` holds a status cursor per floor; a floor it leaves out reports everything it keeps. */
   async team(worker: WorkerInfo, args: { action: string; worker?: string; lines?: number; text?: string; floor?: string; since?: Record<string, number>; kinds?: string[]; [key: string]: unknown }): Promise<TeamReply> {
     const all = this.floors();
+    const named = args.floor === undefined ? undefined : floorNamed(all, args.floor);
+    if (typeof named === 'string') return { status: 404, body: { error: named } };
     if (args.action === 'hire') {
-      const ref = typeof args.repo === 'string' ? args.repo : args.floor;
-      if (!ref) return { status: 400, body: { error: 'Name the floor to hire on: task.repo takes an open floor’s path, id or name (office_floors lists them).' } };
-      const target = floorNamed(all, ref);
-      if (!target) return { status: 404, body: { error: `No open floor ${ref}. office_floors lists them: ${all.map((f) => `${f.def.name} (${f.id})`).join(', ') || 'none open'}.` } };
-      return target.team.handle(worker, { ...args, ...(typeof args.repo === 'string' ? { repo: target.dir } : {}) });
+      const repo = typeof args.repo === 'string' ? floorNamed(all, args.repo) : undefined;
+      if (typeof repo === 'string') return { status: 404, body: { error: repo } };
+      if (repo && named && repo !== named) return { status: 400, body: { error: `floor and task.repo name different floors (${named.def.name} and ${repo.def.name}). Name one floor.` } };
+      const target = repo ?? named;
+      if (!target) return { status: 400, body: { error: 'Name the floor to hire on: floor or task.repo takes an open floor’s id, name or path (office_floors lists them).' } };
+      return target.team.handle(worker, { ...args, ...(repo ? { repo: target.dir } : {}) });
     }
-    const floors = all.filter((f) => !args.floor || f.id === args.floor);
-    if (!floors.length) return { status: 404, body: { error: 'No such open floor' } };
+    const floors = named ? [named] : all;
+    if (!floors.length) return { status: 404, body: { error: 'No floor is open.' } };
     if (args.worker) {
       const wanted = args.worker.toLowerCase();
       const matches = floors.flatMap((f) =>

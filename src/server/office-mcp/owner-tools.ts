@@ -5,7 +5,7 @@ import type { ClientMsg } from '../../shared/protocol.js';
 import { AUTO_DESK } from '../../shared/protocol.js';
 import type { OfficeMcpServer } from './index.js';
 import { officeError } from './index.js';
-import { buildingOnly, findMissionAgent, findWorker, missionControlRefusal, pickFloor, ownerResult, type OwnerAction, type OwnerOffice } from './owner.js';
+import { buildingOnly, findMissionAgent, findWorker, missionControlRefusal, outsideOffice, pickFloor, ownerResult, type OwnerAction, type OwnerOffice } from './owner.js';
 import { cloud, effort, floorRef, id, images, menu, model, text, workerRef } from './owner-schemas.js';
 
 type Input<A extends OwnerAction> = Omit<Extract<ClientMsg, { t: A }>, 't' | 'request' | 'requestId' | 'requestFloor' | 'floor'> & { floor?: string };
@@ -103,8 +103,9 @@ export function registerOwnerTools(server: OfficeMcpServer, owner: OwnerOffice):
         if (typeof found === 'string') {
           const building = findMissionAgent(owner, String(args.workerId));
           if (!building) return officeError(found);
-          // Reading the Orchestrator's own thread is the one control-shaped action allowed on a building agent.
-          if (entry.action !== 'thread.read' || building.worker.id !== ORCHESTRATOR_ID) return officeError(missionControlRefusal(building, entry.action === 'thread.read' ? 'read' : entry.name));
+          // Building agents are read, never controlled, and only the Orchestrator's conversation is in this office.
+          if (entry.action !== 'thread.read') return officeError(missionControlRefusal(building, entry.name));
+          if (building.worker.id !== ORCHESTRATOR_ID) return officeError(outsideOffice(building, 'conversation'));
           args.workerId = building.worker.id;
         } else {
           args.workerId = found.worker.id;

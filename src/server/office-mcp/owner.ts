@@ -55,12 +55,14 @@ export function findMissionAgent(owner: OwnerOffice, ref: string): MissionAgent 
   return all.find((a) => a.worker.id.toLowerCase() === want) ?? all.find((a) => a.worker.name.toLowerCase() === want);
 }
 
-/** What every controlling owner tool says about a building agent, which may only be read. */
-export function missionControlRefusal(agent: MissionAgent, action: string): string {
-  const who = `${agent.worker.name} (${agent.worker.id}) is a building agent in Mission Control`;
-  return action === 'read'
-    ? `${who}: office_look and office_worker_thread may read it, but Office MCP tools never prompt, interrupt, answer or send home a building agent.`
-    : `${who}, not a floor worker: ${action} is not available for building agents. Nothing was sent.`;
+/** What a controlling owner tool says about a building agent, which may only be read. */
+export function missionControlRefusal(agent: MissionAgent, tool: string): string {
+  return `${agent.worker.name} (${agent.worker.id}) is a building agent in Mission Control, not a floor worker: ${tool} is not available for building agents. Nothing was sent.`;
+}
+
+/** Why an external bot has nothing here to read: its session runs on its own machine. */
+export function outsideOffice(agent: MissionAgent, what: 'terminal' | 'conversation'): string {
+  return `${agent.worker.name} runs outside this office, so it has no ${what} to read. Use team_status or office_inbox.`;
 }
 
 export interface RosterWorker {
@@ -296,7 +298,7 @@ export function register(server: OfficeMcpServer, deps: OfficeMcpDeps): void {
       if (typeof found === 'string') {
         const building = findMissionAgent(owner, name);
         if (!building) return officeError(found);
-        if (building.worker.id !== ORCHESTRATOR_ID) return officeError(`${building.worker.name} runs outside this office, so it has no terminal to read. Use team_status or office_inbox.`);
+        if (building.worker.id !== ORCHESTRATOR_ID) return officeError(outsideOffice(building, 'terminal'));
         const text = owner.tail(building.worker.id, lines);
         if (text === undefined) return officeError(`${building.worker.name} has no terminal yet (${building.worker.status}).`);
         const shown = terminalText(text);

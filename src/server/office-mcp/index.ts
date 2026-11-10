@@ -250,7 +250,7 @@ export class OfficeMcpServer {
   private unauthorized(request: Request, error: string): Response {
     const id = request.headers.get(OFFICE_MCP_WORKER_HEADER)?.trim();
     const local = !this.deps.remoteTransport;
-    const known = (id: string) => (id === ORCHESTRATOR_ID && !!this.deps.orchestrator) || !!this.deps.floor(id)?.workers.get(id);
+    const known = (id: string) => (local ? (id === ORCHESTRATOR_ID && !!this.deps.orchestrator) || !!this.deps.floor(id)?.workers.get(id) : !!this.deps.remote?.store.identity(id));
     const code = !bearer(request) ? 'missing_token' : !id && local ? 'missing_worker_id' : !this.deps.settings().officeMcp ? 'office_mcp_off' : id && !known(id) ? 'unknown_worker_id' : 'bad_token';
     const hint =
       code === 'missing_token' || code === 'bad_token'

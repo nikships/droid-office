@@ -314,6 +314,60 @@ test('a building agent hires through MCP by naming a floor, and a structured tas
   assert.equal(r.maps[0].has(structured.body.worker.id), true);
 });
 
+test('a building agent’s team tools take a floor by id, name or path, and refuse a shared name, two floors at once and a bare seq', async (t) => {
+  const r = rig(t);
+  r.floors[0].def.name = 'Web';
+  r.floors[1].def.name = 'API';
+  const hostname = 'office.example.ts.net';
+  const server = remoteMcpListener({ answers: new Answers(), remote: r.office, remoteTransport: { hostname: () => hostname, owner: () => undefined }, floor: r.floor, settings: () => r.settings });
+  const url = new URL('/office/mcp', await listening(t, server));
+  const client = new Client({ name: 'building-floor-test', version: '1' });
+  t.after(() => client.close());
+  await client.connect(new StreamableHTTPClientTransport(url, { fetch: proxyFetch, requestInit: { headers: { host: `${hostname}:8443`, Authorization: `Bearer ${r.remote.token}` } } }));
+  const call = async (name: string, args: Record<string, unknown>) => {
+    const result = await client.callTool({ name, arguments: args });
+    return { error: result.isError === true, text: (result.content as { text?: string }[]).map((c) => c.text ?? '').join('\n'), body: (result.structuredContent ?? {}) as Record<string, any> };
+  };
+  const ticket = { title: 'Count the tests', brief: 'Count tests/*.test.ts and report the number.', worktree: false };
+  const hired = await call('team_hire', { ...ticket, floor: 'api' });
+  assert.equal(hired.error, false, hired.text);
+  assert.equal(r.maps[1].has(hired.body.worker.id), true);
+  for (const floor of ['beta', 'API', r.floors[1].dir]) {
+    const status = await call('team_status', { floor, verbose: false });
+    assert.equal(status.error, false, `${floor}: ${status.text}`);
+    assert.deepEqual(
+      status.body.workers.map((w: { id: string }) => w.id),
+      [hired.body.worker.id],
+      floor,
+    );
+    assert.equal(status.body.cursor, 'team:beta:0', 'one floor’s cursor');
+  }
+  assert.equal((await call('team_message', { worker: hired.body.worker.id, floor: 'API', text: 'Carry on' })).error, false);
+  assert.match((await call('team_status', { floor: 'attic' })).text, /No open floor attic\. office_floors lists them: Web \(alpha\), API \(beta\)\./);
+
+  const before = r.maps[0].size + r.maps[1].size;
+  const split = await call('team_hire', { task: { title: 'Ticket', brief: 'Read it', repo: 'alpha' }, floor: 'beta', worktree: false });
+  assert.equal(split.error, true);
+  assert.match(split.text, /floor and task\.repo name different floors \(API and Web\)/);
+  r.floors[0].def.name = 'app';
+  r.floors[1].def.name = 'App';
+  const shared = await call('team_hire', { ...ticket, floor: 'app' });
+  assert.equal(shared.error, true);
+  assert.match(shared.text, /Several open floors are called app\. Use the floor id: alpha, beta\./);
+  assert.equal((await call('team_status', { floor: 'APP' })).error, true);
+  assert.equal(r.maps[0].size + r.maps[1].size, before, 'neither refusal hired anyone');
+
+  for (const [name, args] of [
+    ['team_status', { since: '3' }],
+    ['team_wait', { since: '3', timeoutSec: 1 }],
+    ['team_report_get', { id: '3' }],
+  ] as const) {
+    const bare = await call(name, args);
+    assert.equal(bare.error, true, `${name} has no floor of its own to read a bare seq on`);
+    assert.match(bare.text, /team:<floor>:<seq>/, name);
+  }
+});
+
 test('floor workers do not visit building agents, which walk nowhere', (t) => {
   const r = rig(t);
   const a = r.local(0, 'Alice');
@@ -336,7 +390,11 @@ test('real MCP transport enforces host, tailnet identity, remote bearer auth, re
   assert.equal((await proxyFetch(url, { method: 'POST', headers: { ...headers, 'tailscale-user-login': 'friend@example.com' }, body: '{}' })).status, 403, 'a shared-in user is not one of the owner’s devices');
   assert.equal((await proxyFetch(url, { method: 'POST', headers: { ...headers, 'tailscale-funnel-request': '?1' }, body: '{}' })).status, 403, 'Funnel traffic is public');
   assert.equal((await proxyFetch(url, { method: 'POST', headers: { ...headers, Origin: `https://${hostname}` }, body: '{}' })).status, 403);
-  assert.equal((await proxyFetch(url, { method: 'POST', headers: { ...headers, Authorization: 'Bearer wrong' }, body: '{}' })).status, 401);
+  const wrongKey = await proxyFetch(url, { method: 'POST', headers: { ...headers, Authorization: 'Bearer wrong' }, body: '{}' });
+  assert.equal(wrongKey.status, 401);
+  assert.equal(((await wrongKey.json()) as { code: string }).code, 'bad_token', 'a bot that names itself is told its key is wrong, not its id');
+  const stranger = await proxyFetch(url, { method: 'POST', headers: { ...headers, Authorization: 'Bearer wrong', 'x-droid-office-worker-id': 'remote-nobody' }, body: '{}' });
+  assert.equal(((await stranger.json()) as { code: string }).code, 'unknown_worker_id');
   for (const route of ['/hooks/droid', '/api/finder/dispatch', '/office/remote-workers', '/']) assert.equal((await fetch(new URL(route, origin), { headers })).status, 404);
   const client = new Client({ name: 'remote-test', version: '1' });
   t.after(() => client.close());
@@ -1031,6 +1089,23 @@ test('old seated bots load without a desk, and floors tell them through their in
     managers.push(m);
     return m;
   };
+  // A floor's file claiming building agents' ids: no office writes one.
+  const claimed = [
+    { id: worker.id, kind: 'agent', name: 'Grok', deskId: 'desk-3' },
+    { id: 'orchestrator', kind: 'agent', name: 'Orchestrator', deskId: 'desk-4' },
+  ];
+  mkdirSync(path.join(dir, 'gamma'));
+  writeFileSync(path.join(dir, 'gamma', 'workers.json'), JSON.stringify(claimed));
+  agents.known = (id) => id === 'orchestrator' || !!store.identity(id);
+  const gamma = make('gamma');
+  assert.deepEqual(gamma.list(), [], 'a floor seats nobody under a building agent’s id');
+  assert.equal(gamma.authenticate('orchestrator', ''), undefined);
+  gamma.shutdown();
+  assert.deepEqual(
+    JSON.parse(readFileSync(path.join(dir, 'gamma', 'workers.json'), 'utf8')).map((w: { id: string }) => w.id),
+    claimed.map((w) => w.id),
+    'the records stay on disk',
+  );
   const alpha = make('alpha');
   const beta = make('beta');
   assert.equal(alpha.get('sub')?.lead, worker.id);

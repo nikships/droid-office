@@ -2837,7 +2837,8 @@ export class WorkerManager {
         lastInput?: unknown;
       })[];
       for (const s of saved) {
-        const seated = this.deskless ? s.deskId === '' : !!s.deskId && DESK_BY_ID.has(s.deskId);
+        // A building agent's id is its own: no floor seats a record that claims one.
+        const seated = (this.deskless ? s.deskId === '' : !!s.deskId && DESK_BY_ID.has(s.deskId)) && !(s.id && this.building?.agents.known(s.id));
         if (s.id && typeof s.deskId === 'string' && !seated) this.retired.push(s);
         if (!s.id || typeof s.deskId !== 'string' || !seated || (!this.deskless && this.deskOccupied(s.deskId))) continue;
         const shell = s.kind === 'shell';

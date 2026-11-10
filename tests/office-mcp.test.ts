@@ -349,6 +349,22 @@ test('structured hire controls base and branch and immediately returns its workt
   }
 });
 
+test('a structured task with no baseBranch of its own starts from the base named with from', async (t) => {
+  const r = await rig(t);
+  const client = await r.connect('lead');
+  const bases: (string | undefined)[] = [];
+  r.workers.hire = (_desk, _by, _prompt, _worktree, _choice, lead, from) => {
+    bases.push(from);
+    return worker('new', { lead, worktree: { path: '.droid-office/worktrees/new', branch: 'office/new', base: 'abc' } });
+  };
+  const task = { title: 'Ticket', brief: 'Fix the bug', repo: r.dir };
+  for (const args of [{ task, from: 'release' }, { task }, { task: { ...task, baseBranch: 'release' }, from: 'release' }]) {
+    const hired = await client.callTool({ name: 'team_hire', arguments: args });
+    assert.equal(hired.isError, undefined, JSON.stringify(hired.content));
+  }
+  assert.deepEqual(bases, ['release', undefined, 'release']);
+});
+
 test('ordinary workers may hire through MCP but subagents cannot list or invoke nested hiring', async (t) => {
   const r = await rig(t, false);
   Object.assign(r.settings, { deskWorkers: false });

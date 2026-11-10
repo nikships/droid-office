@@ -165,10 +165,7 @@ async function remoteRig(t: TestContext) {
     owner,
     remoteTransport: { hostname: () => hostname, owner: () => undefined },
     settings: () => ({ ...SUBAGENT_DEFAULTS }),
-    floor: (id) => {
-      const f = office.floor(id);
-      return f ? ({ ...f, name: f.def.name } as unknown as OfficeMcpFloor) : undefined;
-    },
+    floor: () => undefined,
   });
   server.listen(0, '127.0.0.1');
   await once(server, 'listening');
@@ -250,7 +247,11 @@ test('Mission Control is discoverable before a session and building agents canno
   assert.equal(r.calls.length, 0, 'no refused action reached the owner handler');
   assert.equal((await r.call('office_worker_thread', { workerId: 'orchestrator' })).error, false);
   assert.equal(r.calls[0].msg.workerId, 'orchestrator');
-  assert.equal((await r.call('office_worker_thread', { workerId: 'other-bot' })).error, true);
+  const outside = await r.call('office_worker_thread', { workerId: 'other-bot' });
+  assert.equal(outside.error, true);
+  assert.match(outside.text, /runs outside this office, so it has no conversation to read/);
+  assert.doesNotMatch(outside.text, /may read it/);
+  assert.equal(r.calls.length, 1, 'a bot’s thread asks the owner handler for nothing');
 });
 
 test('office_look bounds worker and boss-shell output while preserving the latest text', async (t) => {

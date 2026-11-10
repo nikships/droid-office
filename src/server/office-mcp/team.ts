@@ -86,7 +86,7 @@ export function register(server: OfficeMcpServer, deps: OfficeMcpDeps): void {
   };
   const status = async (caller: OfficeMcpCaller, args: { worker?: string; floor?: string; lines?: number; verbose?: boolean; since?: string; kinds?: (typeof EVENT_FILTERS)[number][] }) => {
     const own = caller.floor?.id ?? '';
-    const cursor = args.since === undefined ? undefined : parseCursor(args.since, own);
+    const cursor = args.since === undefined ? undefined : parseCursor(args.since, caller.floor?.id);
     if (args.since !== undefined && !cursor) return officeError('since takes the cursor from an earlier team status or team_wait, or one team:<floor>:<seq> event id.');
     const kinds = eventKinds(args.kinds);
     const request = { action: 'status', worker: args.worker, lines: args.lines, floor: args.floor, ...(kinds ? { kinds: [...kinds] } : {}) };
@@ -109,7 +109,7 @@ export function register(server: OfficeMcpServer, deps: OfficeMcpDeps): void {
     return officeResult(statusText(result.body), { ...result.body, workers, news, cursor: position });
   };
   const worker = z.string().trim().min(1).max(200).describe('Your subagent’s name or id, case-insensitive.');
-  const floor = z.string().min(1).max(128).optional().describe('Building agents only: restrict to an open floor id.');
+  const floor = z.string().trim().min(1).max(4096).optional().describe('Building agents only: just this open floor, by id, name or checkout path.');
   server.tool(
     {
       name: 'team_status',
@@ -342,7 +342,7 @@ export function register(server: OfficeMcpServer, deps: OfficeMcpDeps): void {
       // which is the only way a building agent can run a read-only task without inventing a base branch.
       const worktree = task ? (args.worktree ?? true) : args.worktree;
       return reply(
-        await command(caller, { action: 'hire', ...args, title, task: prompt, ...(task ? { repo: task.repo, from: task.baseBranch, branch: task.branch } : {}), worktree }),
+        await command(caller, { action: 'hire', ...args, title, task: prompt, ...(task ? { repo: task.repo, from: task.baseBranch ?? args.from, branch: task.branch } : {}), worktree }),
         (body) => `Hired ${memberText(body.worker as TeamMember)}\nIt is working on the brief. Review its report and commits before integration.`,
       );
     },
