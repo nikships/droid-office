@@ -14,7 +14,6 @@ const root = path.resolve(import.meta.dirname, '..');
 const NOT_SCENE: Record<string, string> = {
   'src/client/fonts': 'glyph shapes on labels',
   'src/client/graphics': 'the Classic upscaler',
-  'src/client/mission': "the Orchestrator's colour (building agents are hidden while baking)",
   'src/client/mission-office': 'who is in Mission Control and what its screens say (hidden while baking, or live data)',
   'src/client/player': 'movement',
   'src/client/state': 'live office state for the boards',
