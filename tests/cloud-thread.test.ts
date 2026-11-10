@@ -200,7 +200,7 @@ test('projection: a call still running, a failed one, pictures, errors and remin
         createdAt: 1,
         seq: 1,
         content: [
-          { type: 'text', text: 'look <system-reminder>secret plumbing</system-reminder>' },
+          { type: 'text', text: 'look <system-reminder>secret plumbing</system-reminder>&lt;system-reminder&gt;escaped plumbing&lt;/system-reminder&gt;\n\nDroid Office notice: The owner sent this from the web floor (/w).' },
           { type: 'image', source: { mediaType: 'image/png', data: 'iVBORw0KGgo=' } },
         ],
       },

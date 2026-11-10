@@ -302,6 +302,21 @@ test('filters system, hooks, hidden/source bookkeeping and system-reminder block
   assert.doesNotMatch(JSON.stringify(page), /PRIVATE_|system-reminder|base64|x{100}|a{100}/);
 });
 
+test('the Thread and the labels hide the floor line and a reminder Droid escaped', async (t) => {
+  const floor = 'Droid Office notice: The owner sent this from the droid-office floor (/Users/nik/repos/droid-office).';
+  const { reader, root, source } = await rig(t, [
+    text('floor', `What's untracked?\n\n${floor}`, 'user'),
+    text('escaped', "What's untracked?\n\n&lt;system-reminder&gt;\nThe owner sent this from the droid-office floor (/p).\n&lt;/system-reminder&gt;", 'user'),
+    text('answer', 'Two files.'),
+  ]);
+  assert.deepEqual(
+    (await reader.read(source)).entries.map((entry) => entry.text),
+    ["What's untracked?", "What's untracked?", 'Two files.'],
+  );
+  const labels = new WorkerThreadReader(root, { sessions: 8, entries: 0, bytes: 0 }, true);
+  assert.doesNotMatch((await labels.readText(source))!, /Droid Office notice|system-reminder|owner sent/);
+});
+
 test('slash skills keep only the submitted prompt in threads and worker labels', async (t) => {
   // Trimmed from the owner's /office-thermals invocation and following CLI acknowledgement.
   const notification =

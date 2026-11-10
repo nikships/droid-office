@@ -1,4 +1,5 @@
 import type { FactoryBlock, FactoryMessage } from './factory-sessions.js';
+import { hideOfficeText } from './prompts.js';
 import { IMAGE_PLACEHOLDER } from './thread-presentation.js';
 import type { ThreadEntry } from './worker-thread.js';
 
@@ -13,8 +14,7 @@ import type { ThreadEntry } from './worker-thread.js';
  */
 export const SEQ_STRIDE = 256;
 
-const REMINDER = /<(system-(?:reminder|notification))\b[^>]*>[\s\S]*?(?:<\/\1\s*>|$)/gi;
-const clean = (text: string) => text.replace(REMINDER, '').trim();
+const clean = (text: string) => hideOfficeText(text).trim();
 
 /** A TodoWrite's list in the "1. [completed] Step" form threadPlan reads, from either input shape Droid sends. */
 export function todoText(input: Record<string, unknown>): string | undefined {

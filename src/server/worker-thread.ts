@@ -3,7 +3,7 @@ import path from 'node:path';
 import { IMAGE_PLACEHOLDER, pageRows, presentThread, THREAD_MODEL_VERSION, type ThreadPresentation, type ThreadRow } from '../shared/thread-presentation.js';
 import type { ThreadEntry, ThreadImage } from '../shared/worker-thread.js';
 import { LABEL_TEXT_CHARS } from '../shared/worker-labels.js';
-import { OFFICE_SAYS } from '../shared/prompts.js';
+import { hideOfficeText, OFFICE_SAYS } from '../shared/prompts.js';
 import { DROID_SESSIONS_DIR } from './droid-session.js';
 import { imageAddress, imageAt, imageRef, IMAGES_PER_ENTRY, promptPictures } from './thread-images.js';
 
@@ -75,8 +75,7 @@ const object = (value: unknown): Record<string, unknown> => (value && typeof val
 /** Only printable content is projected; transport metadata is never serialized. */
 function clean(value: unknown, limit = FIELD_CHARS): string {
   if (typeof value !== 'string') return '';
-  const text = value
-    .replace(/<(system-(?:reminder|notification))\b[^>]*>[\s\S]*?(?:<\/\1\s*>|$)/gi, '')
+  const text = hideOfficeText(value)
     .replace(/data:[^\s"'<>]*;base64,[a-zA-Z0-9+/=\s]+/gi, '[attachment omitted]')
     .replace(/[a-zA-Z0-9+/]{256,}={0,2}/g, '[binary data omitted]')
     .trim();

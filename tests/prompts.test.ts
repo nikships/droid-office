@@ -283,13 +283,24 @@ test('the Orchestrator brief says the floor hint is a default that a named repos
   assert.equal(officePrompt(custom, 'orchestrator.system', { name: 'Orchestrator', folder: '/tmp/o' }), 'Be Orchestrator.');
 });
 
-test('a floor hint names the floor and its checkout on one line, and the office’s labels leave it out', () => {
+test('a floor hint is one plain notice line with no tag for Droid to escape, and the office’s labels leave it out', () => {
   const hint = floorHint({ name: 'droid-office', dir: '/Users/nik/repos/droid-office' });
-  assert.equal(hint, '<system-reminder>\nThe owner sent this from the droid-office floor (/Users/nik/repos/droid-office).\n</system-reminder>');
-  assert.equal(floorHint({ name: 'a\nb <x>', dir: '/p' }).includes('<x>'), false, 'a name cannot close the reminder or open another tag');
+  assert.equal(hint, 'Droid Office notice: The owner sent this from the droid-office floor (/Users/nik/repos/droid-office).');
+  assert.equal(/[<>&]/.test(hint), false);
+  assert.equal(floorHint({ name: 'a\nb', dir: '/p\r\nq' }), 'Droid Office notice: The owner sent this from the a b floor (/p q).', 'a name cannot start a second line');
   assert.equal(withoutReminders(`Merge the PRs\n\n${hint}`), 'Merge the PRs');
+  assert.equal(withoutReminders(`Merge the PRs\n\n${hint}\n\nPictures:\n/tmp/a.png`), 'Merge the PRs\n\n\n\nPictures:\n/tmp/a.png', 'a picture list after it stays');
   assert.equal(withoutReminders('Merge the PRs'), 'Merge the PRs');
   assert.equal(withoutReminders(hint), '');
+  assert.equal(withoutReminders('Droid Office notice: the owner sent this from somewhere'), 'Droid Office notice: the owner sent this from somewhere', 'only the exact line goes');
+});
+
+test('reminder and notification blocks are hidden whether Droid left them raw or escaped them', () => {
+  assert.equal(withoutReminders('Merge the PRs\n\n&lt;system-reminder&gt;\nThe owner sent this from the droid-office floor (/p).\n&lt;/system-reminder&gt;'), 'Merge the PRs');
+  assert.equal(withoutReminders('A &lt;system-notification kind="x"&gt;secret&lt;/system-notification&gt;B'), 'A B');
+  assert.equal(withoutReminders('A <system-reminder>secret</system-reminder>B &lt;SYSTEM-REMINDER&gt;more&lt;/SYSTEM-REMINDER&gt;'), 'A B');
+  assert.equal(withoutReminders('Keep\n&lt;system-reminder&gt;unclosed'), 'Keep');
+  assert.equal(withoutReminders('a &lt;b&gt; c'), 'a &lt;b&gt; c', 'other escaped text stays');
 });
 
 test("each audience is told once to send workers home and to weigh a subscription's quota, and the standing rules are not repeated across surfaces", () => {
