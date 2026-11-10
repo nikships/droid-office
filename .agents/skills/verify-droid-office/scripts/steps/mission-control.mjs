@@ -50,9 +50,20 @@ export default async ({ page, js, shot, waitFor, out, url, log }) => {
     const row = companion.locator('button.dash-row-open[data-worker="orchestrator"]');
     await row.waitFor({ state: 'visible', timeout: 30_000 });
     await row.click();
-    await companion.locator('.dash-pane').filter({ hasText: 'Orchestrator' }).first().waitFor();
+    const pane = companion.locator('.dash-pane[aria-label$=": Orchestrator"]');
+    await pane.locator('.dash-pane-name').getByText('Orchestrator', { exact: true }).waitFor();
+    await pane.locator('.worker-thread[aria-label="Orchestrator thread"]').waitFor();
+    await pane.locator('.orc-intro').waitFor();
+    await pane.evaluate(async (el) => {
+      await Promise.all(
+        el
+          .getAnimations({ subtree: true })
+          .filter((a) => a.effect?.getComputedTiming().iterations !== Infinity)
+          .map((a) => a.finished),
+      );
+    });
     await companion.screenshot({ path: path.join(out, '04-companion.png') });
-    record('mission-companion', { row: await row.getAttribute('aria-label') });
+    record('mission-companion', { row: await row.getAttribute('aria-label'), intro: await pane.locator('.orc-intro h3').textContent(), blocked: await pane.locator('.wt-blocked').isVisible() });
 
     await setToggle(toggle, false);
     await waitFor(() => !window.office.state().agents?.some((a) => a.id === 'orchestrator'), undefined, 10_000);

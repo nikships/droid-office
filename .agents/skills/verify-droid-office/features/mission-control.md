@@ -42,3 +42,4 @@ Preconditions:
 - A floor worker and a building agent have different MCP permissions. `office_move` and visit tools are absent from the building surface; hires explicitly name a floor/repository.
 - The Orchestrator's PTY host lives under the office's `orchestrator/.droid-office/` directory. Stop it during cleanup as well as floor hosts.
 - New conversation preserves its team. Turning it off stops only its own session.
+- Wait for finite pane entrance animations before a companion screenshot; a visible DOM node can still be at zero opacity.
