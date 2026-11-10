@@ -128,38 +128,8 @@ export function openTerminal(net: Net, workerId: string, onChanges?: () => void,
     current?.modal.close();
   }
   const info = store.worker(workerId);
-  if (!info) return;
-  if (info.remote) {
-    const status = h('p', {}, `${info.status}: ${info.activity ?? ''}`);
-    const el = h(
-      'div.modal',
-      {},
-      h('header', {}, h('div.titles', {}, h('h2', {}, info.name), h('p.sub', {}, 'External bot · Mission Control'))),
-      h('div.body.stack', {}, status, h('p.note.info', {}, 'This bot runs externally and reaches the office over Tailscale MCP. Messages and team updates arrive through its MCP inbox. It has no local terminal or conversation.')),
-    );
-    if (inline) {
-      inline.mount.replaceChildren(el);
-      return;
-    }
-    const paintBot = () => {
-      const w = store.worker(workerId);
-      if (!w) modal.close();
-      else status.textContent = `${w.status}: ${w.activity ?? ''}`;
-    };
-    const offs = [store.on('workers', paintBot), store.on('missionControl', paintBot)];
-    const unsubscribe = () => {
-      for (const off of offs) off();
-    };
-    // Attached while it's open, like a terminal: looking at a finished turn acknowledges it.
-    net.send({ t: 'worker.attach', workerId });
-    const modal = openModal(el, {
-      onClose: () => {
-        unsubscribe();
-        net.send({ t: 'worker.detach', workerId });
-      },
-    });
-    return;
-  }
+  // An external bot runs elsewhere and has no terminal here: its card in Mission Control stands in.
+  if (!info || info.remote) return;
 
   const header = inline
     ? undefined
@@ -240,7 +210,8 @@ export function openTerminal(net: Net, workerId: string, onChanges?: () => void,
   const paintTeam = (w: WorkerInfo) => {
     if (inline?.hideTeam) return;
     const { lead, mates, summary } = teamAround(w);
-    const key = [summary, lead, ...mates].map((x) => (typeof x === 'string' ? x : x && `${x.id}:${x.name}:${x.status}:${x.acked}:${x.title ?? ''}`)).join('|');
+    const chipKey = (x: WorkerInfo | undefined) => (x ? `${x.id}:${x.name}:${x.status}:${x.acked}:${x.title ?? ''}` : '');
+    const key = [summary ?? '', chipKey(lead), ...mates.map(chipKey)].join('|');
     if (key === teamKey) return;
     teamKey = key;
     const chip = (x: WorkerInfo) =>

@@ -23,7 +23,6 @@ import type { PairingState } from '../../shared/devices';
 import type { PairedDevice } from '../../shared/devices';
 import { INCLUDE_FILE, SETUP_FILE, describeSetup, parsePatterns } from '../../shared/worktree-setup';
 import { DEFAULT_ORCHESTRATOR_SETTINGS, type OrchestratorSettings } from '../../shared/mission-control';
-import { PROMPT_IDS, PROMPTS } from '../../shared/prompts';
 import { orchestratorStarted } from '../mission';
 import { newOrchestratorConversation } from './orchestrator';
 import {
@@ -976,22 +975,25 @@ export function openSettings(net: Net, opts: SettingsOptions) {
   });
   const orcReset = h('button.btn.sm', { type: 'button', onclick: () => newOrchestratorConversation(net) }, 'New conversation…');
   const orcResetNote = desc();
-  // Its brief is the prompt editor's 🛰️ Orchestrator group; an office without one leaves the row out.
-  const orcBriefId = PROMPT_IDS.find((id) => (PROMPTS[id].group as string) === 'orchestrator');
-  const orcBrief = h('button.btn.sm', { type: 'button', onclick: () => orcBriefId && openPromptEditor(net, orcBriefId) }, 'Edit brief…');
+  const orcBrief = h('button.btn.sm', { type: 'button', onclick: () => openPromptEditor(net, 'orchestrator.system') }, 'Edit brief…');
   const orcOptions = nest(
     card('Orchestrator model', { desc: orcAgentNote, below: [orcAgent.element, h('div.row', {}, orcSave, orcBack)] }),
     card('New conversation', { desc: orcResetNote, control: orcReset }),
-    ...(orcBriefId ? [card('Orchestrator brief', { desc: desc('What the office tells the Orchestrator about its job and its tools. It reads a change when its next conversation starts.'), control: orcBrief })] : []),
+    card('Orchestrator brief', { desc: desc('What the office tells the Orchestrator about its job and its tools. It reads a change when its next conversation starts.'), control: orcBrief }),
   );
   const paintOrchestrator = () => {
     const s = orcSettings();
     const blocked = store.missionControl?.orchestrator.blocked;
+    // A page newer than the office it talks to (source hot reload before a restart): nothing here would take.
+    const missing = !store.missionControl;
     orcOn.paint();
-    orcOptions.classList.toggle('hidden', !s.on);
-    orcNote.textContent = s.on
-      ? 'One agent for the whole building, at the top of Mission Control on every floor. Tell it what you want done; it hires workers on any floor, answers their questions and reports back.'
-      : 'Off: it’s hidden on every floor and its session stops. Workers it hired keep working and report to nobody.';
+    orcOn.el.classList.toggle('hidden', missing);
+    orcOptions.classList.toggle('hidden', missing || !s.on);
+    orcNote.textContent = missing
+      ? 'This office has no Orchestrator yet: restart it to get one.'
+      : s.on
+        ? 'One agent for the whole building, at the top of Mission Control on every floor. Tell it what you want done; it hires workers on any floor, answers their questions and reports back.'
+        : 'Off: it’s hidden on every floor and its session stops. Workers it hired keep working and report to nobody.';
     orcBlocked.textContent = s.on && blocked ? `It can’t start now: ${blocked}` : '';
     orcBlocked.classList.toggle('hidden', !(s.on && blocked));
     const picked = orcPicked();

@@ -854,15 +854,13 @@ export function mountWorkerThread(net: Net, opts: ThreadOptions): WorkerThread {
     stop.disabled = !allowed || sending || stopping;
     sendLabel.textContent = sending ? 'Sending…' : busy ? (cloud ? 'Queue' : 'Send now') : 'Send';
     send.title = busy ? (cloud ? `Sent to ${worker.name} once this turn is over` : `Steer ${worker.name}: it reads this now, during the turn`) : '';
-    input.placeholder = broken
-      ? `${worker.name} can’t take messages`
-      : introNow()
-        ? `Tell ${worker.name} what you want done…`
-        : busy
-          ? cloud
-            ? `Queue a message for after this turn…`
-            : `Steer ${worker.name}, or queue for after this turn…`
-          : `Reply to ${worker.name}…`;
+    const placeholder = () => {
+      if (broken) return `${worker.name} can’t take messages`;
+      if (introNow()) return `Tell ${worker.name} what you want done…`;
+      if (!busy) return `Reply to ${worker.name}…`;
+      return cloud ? `Queue a message for after this turn…` : `Steer ${worker.name}, or queue for after this turn…`;
+    };
+    input.placeholder = placeholder();
     hint.replaceChildren(
       ...(cloud
         ? [shortcut('Enter', busy ? 'queue' : 'send'), shortcut('⇧ Enter', 'new line')]
