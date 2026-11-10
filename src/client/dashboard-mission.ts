@@ -177,16 +177,8 @@ export function createMissionRoster(el: HTMLElement, host: MissionRosterHost) {
             h(
               'span.dash-row-state',
               {},
-              // Blocked says why in its line, in the warning colour; a pill as well would squeeze its name.
-              blocked
-                ? null
-                : waits
-                  ? h('span.pill', { class: w.status }, status)
-                  : isBusy(w.status) && w.status !== 'needs_input'
-                    ? workingBars(status)
-                    : !orchestrator && w.status === 'offline'
-                      ? h('span.pill', { class: w.status }, status)
-                      : null,
+              // Blocked and an offline bot say so in their line; a pill as well would squeeze the name.
+              blocked ? null : waits ? h('span.pill', { class: w.status }, status) : isBusy(w.status) && w.status !== 'needs_input' ? workingBars(status) : null,
             ),
           ),
           h('span.dash-row-doing', {}, line),

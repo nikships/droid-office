@@ -678,6 +678,8 @@ export function createPane(host: PaneHost, index: number): Pane {
     info.who.replaceChildren(workerDot(w), h('div', {}, h('div.dash-info-name', {}, info.name), h('div.dash-info-kind', {}, kind(w))));
     info.name.textContent = w.name;
     info.activity.textContent = bot ? botLine(bot) : (w.activity ?? 'Hasn’t reported yet');
+    // Offline, that line is what the Status row already says.
+    info.activity.hidden = w.status === 'offline';
     const rows: [string, string | undefined][] = [
       ['Status', w.status === 'offline' ? 'Hasn’t reported since the office started' : (STATUS_LABEL[w.status] ?? w.status)],
       ['Doing', w.title],
@@ -719,6 +721,7 @@ export function createPane(host: PaneHost, index: number): Pane {
     info.who.replaceChildren(workerDot(w), h('div', {}, h('div.dash-info-name', {}, info.name), h('div.dash-info-kind', {}, kind(w))));
     info.name.textContent = w.name;
     info.activity.textContent = workerActivity(w) ?? w.prompt ?? 'Waiting for a task.';
+    info.activity.hidden = false;
     const lead = w.lead && store.workers.get(w.lead);
     const team = store.teamOf(w.id);
     const rows: [string, string | undefined][] = [
