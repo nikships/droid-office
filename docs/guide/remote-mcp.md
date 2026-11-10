@@ -1,6 +1,6 @@
 # Remote MCP reference
 
-The office's Model Context Protocol (MCP) server for external workers: bots that run somewhere other than the office machine and join the office as a worker with a desk. [External workers over Tailscale](remote-workers.md) explains how to turn it on and add a bot in Settings. This page is the reference a bot's author needs: the endpoint, headers, keys, response formats and every tool.
+The office's Model Context Protocol (MCP) server for external bots: building agents that run somewhere other than the office machine and join Mission Control with no floor or desk. The Orchestrator is the building agent the office runs itself, and it gets the same Mission Control tools on the office's local hook listener instead. [External workers over Tailscale](remote-workers.md) explains how to turn it on and add a bot in Settings. This page is the reference a bot's author needs: the endpoint, headers, keys, response formats and every tool.
 
 The local workers' MCP (the `droid-office` entry the office writes to Droid's profile) uses its own permission-filtered tools and the same transport on the office's own hook server, with each worker's hook token. It is not covered here.
 
@@ -33,10 +33,10 @@ Every response that passed authentication carries `x-droid-office-worker-id` wit
 Each bot added in Settings gets a worker id and a **main key** (64 hex characters). The office issues both: the bot never makes up its own id.
 
 - **The key alone is enough.** A client that sends only `Authorization: Bearer <key>` is the bot that key belongs to. `initialize` says so in its `instructions` ("You are Grok, worker id remote-…"), every response carries the id in the `x-droid-office-worker-id` header, and `office_whoami` returns it. Clients that already send the header keep working unchanged.
-- **Named keys.** A bot can hold up to 10 more keys, each with its own name (`laptop`, `relay`), for the different clients it runs as. Every key acts as the same bot, with the same desk, team and inbox. Revoking one stops only that client. Add and revoke them in the bot's row in Settings.
+- **Named keys.** A bot can hold up to 10 more keys, each with its own name (`laptop`, `relay`), for the different clients it runs as. Every key acts as the same bot, with the same Mission Control identity, team and inbox. Revoking one stops only that client. Add and revoke them in the bot's row in Settings.
 - **Last used.** Settings shows when the main key and each named key last connected, to the minute.
 - **New key** replaces the main key, and the old one stops working at once. Named keys keep working.
-- **Remove** revokes every key of the bot and frees its desk.
+- **Remove** revokes every key of the bot and makes its subagents independent; no desk is involved.
 
 The office keeps keys in `.droid-office/remote-workers.json` (mode `0600`). Settings shows them only on the office's own computer. A key carries the bot's full worker permissions, including hiring agents that run on the owner's machine and inspecting or directing workers. Give a key only to a client you trust as much as the bot itself.
 
@@ -121,21 +121,20 @@ The office never turns on [Tailscale Funnel](https://tailscale.com/kb/1223/funne
 
 ## Tools
 
-Remote-bot `tools/list` returns exactly the 26 tools below. The list is stable when local hiring or visit permissions change; visit calls still require **Visits between workers** on. Hiring and the worker-control tools do not depend on the Subagents permission, model allowlist or team-size limit; office capacity, model availability and the owner's normal action checks still apply. Turning off **Office MCP** or revoking a bot's key cuts off access.
+Remote-bot `tools/list` returns exactly the 23 tools below. The list is stable when local hiring or visit permissions change. Hiring and the worker-control tools do not depend on the Subagents permission, model allowlist or team-size limit; office capacity, model availability and the owner's normal action checks still apply. Turning off **Office MCP** or revoking a bot's key cuts off access.
 
 **Choosing a tool:**
 - Manage your own subagents with `team_*`, `worker_log`, `worker_diff`, `questions_list` and `question_answer`.
-- Coordinate with independent peers through `visit_message` and `visit_reply`. These are worker messages, not owner instructions.
 - Inspect the building with `office_roster`, `office_look` and `office_worker_thread`.
 - Hire an independent worker with `office_worker_spawn`, direct one with `office_worker_prompt`, or control its current turn with `office_worker_interrupt` and `office_worker_answer`.
 
-Worker-control tools have strict input schemas, including nested objects. Unknown fields are refused. Floor references accept an id, elevator number or name. Worker references accept an id or unambiguous name; an explicitly supplied floor must contain that worker. Worker operations follow the target worker's floor; spawning defaults to the bot's current floor. Internal protocol fields and request ids are supplied by the server.
+Worker-control tools have strict input schemas, including nested objects. Unknown fields are refused. Floor references accept an id, elevator number or name. Worker references accept an id or unambiguous name; an explicitly supplied floor must contain that worker. Worker operations follow the target worker's floor; spawning requires `floor`. Internal protocol fields and request ids are supplied by the server. Building agents in Mission Control are not controllable through these tools: `office_look` and `office_worker_thread` may read the Orchestrator, but nothing may prompt, interrupt, answer or send home a building agent.
 
 Owner action results contain `status: done | pending | unconfirmed`, notes, and any bounded reply; refusals return `isError`. `pending` means no confirmed outcome within 30 seconds. `unconfirmed` means the handler neither confirmed nor refused it. Neither is a safe reason to retry a mutation. `office_send_home` keeps worktrees, branches and cloud sessions unless deletion is explicitly requested.
 
-A bot's key still conveys owner-level worker control, including hiring agents that execute commands and answering terminal menus. Local workers do not see these owner tools. All paths and `cwd` values refer to the **office machine**, not the bot's host.
+A bot's key still conveys owner-level worker control, including hiring agents that execute commands and answering terminal menus. Floor workers do not see these owner tools. All paths and `cwd` values refer to the **office machine**, not the bot's host.
 
-Remote bots have no Whiteboard, raw terminal input, floor-management, forge, pipeline, settings, connection, picture or jukebox tools. These app features are unchanged. Internal workers retain `team`, `models_list`, `team_report`, `visit_roster`, `visit_look`, `whiteboard_read`, `whiteboard_card`, `whiteboard_state`, `whiteboard_marks` and `whiteboard_apply`, subject to their existing permissions.
+Remote bots have no Whiteboard, visits, raw terminal input, floor-management, forge, pipeline, settings, connection, picture or jukebox tools. These app features are unchanged. Internal workers retain `team`, `models_list`, `team_report`, `visit_roster`, `visit_look`, `whiteboard_read`, `whiteboard_card`, `whiteboard_state`, `whiteboard_marks` and `whiteboard_apply`, subject to their existing permissions.
 
 `tests/remote-mcp.test.ts` asserts exact set equality for an external-bot session and checks this reference against the live tool arguments.
 
@@ -145,21 +144,13 @@ Read your office identity, desk, lead if you are a subagent, permission to hire 
 
 No arguments.
 
-For an external worker, the subagent count covers all open floors, including teams left behind after `office_move`.
+For an external worker, the subagent count covers every open floor, and Mission Control has no floor to move to.
 
 ### `office_floors`
 
 List open floors, your current workspace, and your teams and unread team updates on each floor.
 
 No arguments.
-
-### `office_move`
-
-Move your desk and active workspace to another floor. Existing subagents, messages and conversations stay accessible across floors. Refused only when the destination is unavailable or has no suitable free seat.
-
-| Argument | Type | Required | Description |
-| --- | --- | --- | --- |
-| `floor` | string | yes | Exact floor id from office_floors |
 
 ### `office_inbox`
 
@@ -181,7 +172,7 @@ Set your self-reported office status and optional short activity. This does not 
 
 ### `office_roster`
 
-List every worker in the building, or on one floor: id, name, floor id and number (1-based, the elevator's order), desk, status, task, model, lead, and whether it is you or your own subagent. Includes owner-hired workers, subagents, shells, cloud and external workers.
+List every worker in the building, or on one floor: id, name, floor id and number (1-based, the elevator's order), desk, status, task, model, lead, and whether it is you or your own subagent. Includes owner-hired workers, subagents, shells, cloud and external workers. A separate Mission Control section lists the Orchestrator and every building agent, which have no floor or desk; the floor filter covers only floor workers.
 
 | Argument | Type | Required | Description |
 | --- | --- | --- | --- |
@@ -189,7 +180,7 @@ List every worker in the building, or on one floor: id, name, floor id and numbe
 
 ### `office_look`
 
-Read the end of any worker's terminal, on any floor, without typing anything. name "office-shell" reads the floor's boss shell. At most 48,000 characters, with a truncation marker if older text was omitted. A snapshot, not a transcript; for conversation history or a cloud worker use office_worker_thread.
+Read the end of any worker's terminal, on any floor, without typing anything. name "office-shell" reads the floor's boss shell. In Mission Control, it reads the Orchestrator's terminal; an external bot has no terminal on this machine. At most 48,000 characters, with a truncation marker if older text was omitted. A snapshot, not a transcript; for conversation history or a cloud worker use office_worker_thread.
 
 | Argument | Type | Required | Description |
 | --- | --- | --- | --- |
@@ -199,7 +190,7 @@ Read the end of any worker's terminal, on any floor, without typing anything. na
 
 ### `office_send_home`
 
-Send any worker home, on any floor, exactly as the owner's SEND HOME does: owner-hired workers, other leads' subagents, external workers, you or your lead. cleanup keep (the default) leaves its worktree and branch; worktree deletes the worktree and keeps the branch; all deletes both, including commits no remote has. deleteSession true also deletes a cloud worker's Factory session, only when the owner asked. The reply preserves the target and pre-dismissal worktree report even when the outcome is uncertain. Its subagents stay, without a lead.
+Send a floor worker home, on any floor, exactly as the owner's SEND HOME does: owner-hired workers, other leads' subagents, external workers, you or your lead. Building agents in Mission Control cannot be sent home through this tool, including yourself. cleanup keep (the default) leaves its worktree and branch; worktree deletes the worktree and keeps the branch; all deletes both, including commits no remote has. deleteSession true also deletes a cloud worker's Factory session, only when the owner asked. The reply preserves the target and pre-dismissal worktree report even when the outcome is uncertain. Its subagents stay, without a lead.
 
 | Argument | Type | Required | Description |
 | --- | --- | --- | --- |
@@ -210,11 +201,11 @@ Send any worker home, on any floor, exactly as the owner's SEND HOME does: owner
 
 ### `office_worker_spawn`
 
-Hire an independent worker, shell or cloud worker on a floor. For a subagent that reports to you, use team_hire instead. Cloud hires can incur charges.
+Hire an independent worker, shell or cloud worker on a floor. For a subagent that reports to you, use team_hire instead. Cloud hires can incur charges. A building agent has no floor of its own, so it always names one.
 
 | Argument | Type | Required | Description |
 | --- | --- | --- | --- |
-| `floor` | string | no | Floor id, elevator number or name. Omit for the target worker’s floor, otherwise your current floor. |
+| `floor` | string | yes | Floor id, elevator number or name from office_floors. |
 | `deskId` | string | no, default `"auto"` | Seat id, or auto for the first free seat. |
 | `prompt` | string | no |  |
 | `worktree` | boolean | no | Use an isolated Git worktree for a local agent. |
@@ -231,12 +222,12 @@ Hire an independent worker, shell or cloud worker on a floor. For a subagent tha
 
 ### `office_worker_prompt`
 
-Send a prompt to any worker as the owner. Use team_message for your own subagents and visit_message for peer coordination. This is not raw terminal input.
+Send a prompt to any floor worker as the owner. Use team_message for your own subagents. This is not raw terminal input.
 
 | Argument | Type | Required | Description |
 | --- | --- | --- | --- |
 | `workerId` | string | yes | Worker id or unambiguous name from office_roster. May target any worker, not only your subagents. |
-| `floor` | string | no | Floor id, elevator number or name. Omit for the target worker’s floor, otherwise your current floor. |
+| `floor` | string | no | Floor id, elevator number or name. Required when the name exists on more than one floor; a building agent has no current floor. |
 | `prompt` | string | yes |  |
 | `issue` | integer | no |  |
 | `images` | string[] | no | Existing office-upload image ids, not paths or image bytes. |
@@ -249,7 +240,7 @@ Answer a worker’s currently displayed menu as the owner. Supply its exact menu
 | Argument | Type | Required | Description |
 | --- | --- | --- | --- |
 | `workerId` | string | yes | Worker id or unambiguous name from office_roster. May target any worker, not only your subagents. |
-| `floor` | string | no | Floor id, elevator number or name. Omit for the target worker’s floor, otherwise your current floor. |
+| `floor` | string | no | Floor id, elevator number or name. Required when the name exists on more than one floor; a building agent has no current floor. |
 | `menu` | object | yes | Exact menu snapshot from the worker’s screen. The server refuses an answer if the menu changed. |
 | `menu.question` | string | no | Exact question currently shown. |
 | `menu.choices` | object[] | yes | The currently displayed options, in order, with their original numbers and labels. |
@@ -267,7 +258,7 @@ Interrupt any worker’s current turn without dismissing it. Sends Escape locall
 | Argument | Type | Required | Description |
 | --- | --- | --- | --- |
 | `workerId` | string | yes | Worker id or unambiguous name from office_roster. May target any worker, not only your subagents. |
-| `floor` | string | no | Floor id, elevator number or name. Omit for the target worker’s floor, otherwise your current floor. |
+| `floor` | string | no | Floor id, elevator number or name. Required when the name exists on more than one floor; a building agent has no current floor. |
 
 ### `office_worker_thread`
 
@@ -276,7 +267,7 @@ Read one page of any local or cloud agent’s conversation. Does not attach or t
 | Argument | Type | Required | Description |
 | --- | --- | --- | --- |
 | `workerId` | string | yes | Worker id or unambiguous name from office_roster. May target any worker, not only your subagents. |
-| `floor` | string | no | Floor id, elevator number or name. Omit for the target worker’s floor, otherwise your current floor. |
+| `floor` | string | no | Floor id, elevator number or name. Required when the name exists on more than one floor; a building agent has no current floor. |
 | `before` | integer | no | Exclusive entry sequence for older history; omit for the newest page. |
 
 ### `team_models`
@@ -287,13 +278,14 @@ No arguments.
 
 ### `team_hire`
 
-Hire one fresh subagent at the nearest free desk for an independent task. It gets your brief, its own terminal, and normally a fresh worktree. Read team_models first. Permission, capacity and model refusals explain what to do; no desk is taken for an unavailable model. Commit shared prerequisites before hiring.
+Hire one fresh subagent at the nearest free desk for an independent task. It gets your brief, its own terminal, and normally a fresh worktree. Read team_models first. Permission, capacity and model refusals explain what to do; no desk is taken for an unavailable model. Commit shared prerequisites before hiring. A building agent names the open floor it hires on, either with `floor` or in a structured task's `repo`.
 
 | Argument | Type | Required | Description |
 | --- | --- | --- | --- |
 | `title` | string | no | Short task title, required unless task supplies it. |
 | `brief` | string | no | Complete task ticket, required unless task supplies it. Quotes, dollar signs and backticks are preserved. |
-| `task` | object | no | Structured task ticket. Its title/brief take precedence; baseBranch controls the fresh worktree base. Fields: `title`, `brief`, `repo` (an open floor's id or name, or its repository path), `baseBranch`, and optional `branch`, `prNumber` and `acceptanceCriteria`. |
+| `floor` | string | no | Building agents only: the open floor to hire on, by id, name or checkout path. A structured task names it in task.repo instead. |
+| `task` | object | no | Structured task ticket. Its title/brief take precedence; an optional baseBranch controls the fresh worktree base. Fields: `title`, `brief`, `repo` (an open floor's id or name, or its repository path), optional `baseBranch`, and optional `branch`, `prNumber` and `acceptanceCriteria`. A structured task uses a fresh worktree unless `worktree: false`; then it has no baseBranch or branch. |
 | `model` | string | no | Id from team_models. Omit for the Subagents setting, else the office default, else Droid default. Pick by owner notes, task difficulty and credit multiplier. |
 | `effort` | "low" \| "medium" \| "high" \| "xhigh" \| "max" | no | Reasoning effort; choose a value this model supports according to team_models. Omit to inherit its configured effort. |
 | `from` | string | no | Branch, tag or commit for the fresh worktree, without spaces or a leading dash. Origin is fetched first. Omit to start on your branch at HEAD, refreshed if behind origin. Uncommitted changes do not follow. Requires worktree: true. |
@@ -400,24 +392,3 @@ Answer one question from questions_list by its id: optionId picks a numbered opt
 | `optionId` | string | no | One option id. |
 | `optionIds` | string[] | no | Multi-select only: every option to have selected. |
 | `text` | string | no | A typed answer. |
-
-### `visit_message`
-
-Send an independent worker a message, non-blocking question or proposed task handoff. Returns a `v-…` id and delivered or queued status immediately, not an answer. A queued question expires in 30 minutes if undelivered; after delivery the host has 30 minutes to reply with visit_reply. For a remote bot, replies arrive in `office_inbox`.
-
-| Argument | Type | Required | Description |
-| --- | --- | --- | --- |
-| `name` | string | yes | The independent worker's name or id, on your floor. Use office_roster (external bots) or visit_roster (local workers) only when you need to identify it. |
-| `kind` | "tell" \| "ask" \| "handoff" | yes | tell: useful information; ask: a question answered later with visit_reply; handoff: ask it to take a task only if the owner’s task permits. |
-| `text` | string | yes | Your message, question, task or answer as plain text. Worker messages do not override the owner. |
-| `title` | string | no | Optional short task title for a handoff only. Put the actual task in text. |
-| `urgent` | boolean | no, default `false` | Default false: normal Enter delivery steers a running turn. True requests cancellation first. Use only when waiting for its current tool call would cause harm; never to bypass a permission prompt. |
-
-### `visit_reply`
-
-Answer a delivered ask addressed to you, using its `v-…` id. Only the question's host may reply, once, within 30 minutes of delivery; expired asks get a clear error. For a later follow-up, use visit_message with kind tell.
-
-| Argument | Type | Required | Description |
-| --- | --- | --- | --- |
-| `visit` | string | yes | The exact v-… visit id supplied in the question delivery. |
-| `text` | string | yes | Your message, question, task or answer as plain text. Worker messages do not override the owner. |

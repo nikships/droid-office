@@ -284,16 +284,17 @@ export function register(server: OfficeMcpServer, deps: OfficeMcpDeps): void {
     {
       name: 'team_hire',
       description:
-        'Hire one fresh subagent at the nearest free desk (to you, or for a building agent to Mission Control on the floor task.repo names) for an independent task. It gets your brief, its own terminal, and normally a fresh worktree. Read team_models first. Permission, capacity and model refusals explain what to do; no desk is taken for an unavailable model. Commit shared prerequisites before hiring.',
+        'Hire one fresh subagent at the nearest free desk (to you, or for a building agent to Mission Control on the floor it names with floor or task.repo) for an independent task. It gets your brief, its own terminal, and normally a fresh worktree. Read team_models first. Permission, capacity and model refusals explain what to do; no desk is taken for an unavailable model. Commit shared prerequisites before hiring.',
       inputSchema: z.strictObject({
         title: z.string().trim().min(1).max(80).optional().describe('Short task title, required unless task supplies it.'),
         brief: text.optional().describe('Complete task ticket, required unless task supplies it. Quotes, dollar signs and backticks are preserved.'),
+        floor: z.string().trim().min(1).max(4096).optional().describe('Building agents only: the open floor to hire on, by id, name or checkout path. A structured task names it in task.repo instead.'),
         task: z
           .strictObject({
             title: z.string().trim().min(1).max(80),
             brief: text,
             repo: z.string().trim().min(1).max(4096).describe('Your floor repository path. A building agent names any open floor: its path, id or name.'),
-            baseBranch: z.string().trim().min(1).max(200),
+            baseBranch: z.string().trim().min(1).max(200).optional().describe('Base for the fresh worktree; omit for where its lead is now.'),
             branch: z.string().trim().min(1).max(200).optional().describe('Name for the new local branch; must not already exist.'),
             prNumber: z.number().int().positive().optional(),
             acceptanceCriteria: z.array(z.string().trim().min(1).max(2000)).max(30).optional(),
@@ -324,17 +325,24 @@ export function register(server: OfficeMcpServer, deps: OfficeMcpDeps): void {
     async ({ brief, task, ...args }, caller) => {
       const title = task?.title ?? args.title;
       const ticket = task?.brief ?? brief;
-      if (caller.building && !task) return officeError('A building agent hires with a structured task: task.repo names the open floor (its path, id or name from office_floors), with title, brief and baseBranch.');
+      if (args.floor && !caller.building) return officeError('Floor workers manage only their own floor');
+      if (caller.building && !task && !args.floor) {
+        return officeError('A building agent names the floor to hire on: pass floor with the open floor’s id, name or path from office_floors, or use a structured task whose repo names it.');
+      }
       if (!title || !ticket) return officeError('team_hire needs title and brief, either at the top level or in task.');
-      if (task && args.from && args.from !== task.baseBranch) return officeError('from and task.baseBranch disagree; provide one base.');
-      if (task && args.worktree === false) return officeError('A structured task with baseBranch requires a fresh worktree.');
+      if (task && args.from && task.baseBranch && args.from !== task.baseBranch) return officeError('from and task.baseBranch disagree; provide one base.');
+      if (task && args.worktree === false && (task.baseBranch || task.branch))
+        return officeError('A structured task with baseBranch or branch requires a fresh worktree: leave worktree out, or omit baseBranch and branch for read-only work in the checkout.');
       if (task && !caller.building && path.resolve(task.repo) !== path.resolve(ownFloor(caller).dir)) return officeError('task.repo must name your floor repository.');
       const prompt = task
-        ? `${ticket}\n\nRepository: ${task.repo}\nBase branch: ${task.baseBranch}${task.branch ? `\nTask branch: ${task.branch}` : ''}${task.prNumber ? `\nPull request: #${task.prNumber}` : ''}${task.acceptanceCriteria?.length ? `\nAcceptance criteria:\n${task.acceptanceCriteria.map((c) => `- ${c}`).join('\n')}` : ''}`
+        ? `${ticket}\n\nRepository: ${task.repo}${task.baseBranch ? `\nBase branch: ${task.baseBranch}` : ''}${task.branch ? `\nTask branch: ${task.branch}` : ''}${task.prNumber ? `\nPull request: #${task.prNumber}` : ''}${task.acceptanceCriteria?.length ? `\nAcceptance criteria:\n${task.acceptanceCriteria.map((c) => `- ${c}`).join('\n')}` : ''}`
         : ticket;
       if (prompt.length > 20_000) return officeError('The complete structured task ticket must fit in 20,000 characters.');
+      // A structured task still means a fresh worktree unless the caller explicitly asks for the checkout,
+      // which is the only way a building agent can run a read-only task without inventing a base branch.
+      const worktree = task ? (args.worktree ?? true) : args.worktree;
       return reply(
-        await command(caller, { action: 'hire', ...args, title, task: prompt, ...(task ? { repo: task.repo, from: task.baseBranch, branch: task.branch, worktree: true } : {}) }),
+        await command(caller, { action: 'hire', ...args, title, task: prompt, ...(task ? { repo: task.repo, from: task.baseBranch, branch: task.branch } : {}), worktree }),
         (body) => `Hired ${memberText(body.worker as TeamMember)}\nIt is working on the brief. Review its report and commits before integration.`,
       );
     },

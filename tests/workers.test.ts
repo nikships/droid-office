@@ -6,6 +6,7 @@ import http from 'node:http';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { CARRY_ON_PROMPT, HOOK_VERSION, NAMES, SPOOL_MAX_BYTES, STOP_GRACE_MS, WorkerManager, setupFailedNote, type WorkerEvents } from '../src/server/workers.js';
+import { Orchestrator } from '../src/server/orchestrator.js';
 import type { ToolRefresh } from '../src/server/hook-refresh.js';
 import { Worktrees } from '../src/server/worktrees.js';
 import type { PromptSource } from '../src/server/prompts.js';
@@ -390,6 +391,61 @@ test('Droid workers pin their model and effort in a per-worker settings overlay,
   assert.equal(restored.get(worker.id)?.effort, 'high');
   await workers.kill(worker.id);
   assert.equal(existsSync(overlayPath), false, 'a worker going home takes its overlay with it');
+});
+
+test('the Orchestrator approves only Office MCP tools; its edits, shell and other MCP servers stay gated', (t) => {
+  const f = fixture();
+  const orchestrator = new Orchestrator({
+    dataDir: f.data,
+    agentCmd: f.droid,
+    agentArgs: ['--from-test'],
+    hook: { url: 'http://127.0.0.1:1', token: '' },
+    floors: () => [],
+    unready: () => undefined,
+    changed() {},
+    data() {},
+    screen() {},
+    toast() {},
+  });
+  t.after(() => {
+    orchestrator.shutdown();
+    f.close();
+  });
+  const dormant = orchestrator.rosterAgent();
+  assert.equal(dormant?.worker.id, 'orchestrator');
+  assert.equal(dormant?.worker.color, '#ee6018');
+  assert.equal(dormant?.worker.activity, 'Ready for its first prompt');
+  assert.equal(orchestrator.info, undefined, 'discovery does not create a worker or launch a PTY');
+  assert.equal(orchestrator.authenticate('orchestrator', 'another-worker-token'), undefined);
+  assert.equal(orchestrator.prompt('Hire a worker'), undefined);
+  const hooks = JSON.parse(readFileSync(path.join(orchestrator.cwd, '.droid-office', 'droid-hooks.json'), 'utf8')) as {
+    hooks: { PreToolUse: { matcher: string; hooks: { command: string }[] }[] };
+  };
+  const entries = hooks.hooks.PreToolUse;
+  const allow = entries.find((entry) => entry.hooks[0]?.command.includes('"permissionDecision":"allow"'));
+  assert.ok(allow, 'the Orchestrator gets a scoped Office MCP approval hook');
+  assert.match('droid-office___team_hire', new RegExp(allow.matcher), 'the name Droid sends today');
+  assert.match('mcp__droid-office__office_look', new RegExp(allow.matcher), 'and the mcp__ spelling');
+  for (const gated of ['Execute', 'Edit', 'MultiEdit', 'Create', 'ApplyPatch', 'Task', 'mcp__github__create_issue', 'droidproxy___run']) {
+    assert.doesNotMatch(gated, new RegExp(allow.matcher), `${gated} keeps its own permission prompt`);
+  }
+  const edits = entries.find((entry) => entry.matcher === '^(Edit|MultiEdit|Create|ApplyPatch)$');
+  assert.ok(edits, 'the Orchestrator still never edits files');
+  assert.match(edits.hooks[0].command, /"permissionDecision":"deny"/);
+  assert.match('Edit', new RegExp(edits.matcher));
+  assert.doesNotMatch('droid-office___team_hire', new RegExp(edits.matcher));
+  const tasks = entries.find((entry) => entry.matcher === 'Task');
+  assert.ok(tasks, "Droid's own Task tool is still refused");
+  assert.match(tasks.hooks[0].command, /"permissionDecision":"deny"/);
+
+  const floor = manager(f, []);
+  const floorHooks = JSON.parse(readFileSync(path.join(f.data, 'droid-hooks.json'), 'utf8')) as { hooks: { PreToolUse: { matcher?: string }[] } };
+  assert.equal(
+    floorHooks.hooks.PreToolUse.some((entry) => entry.matcher?.includes('droid-office')),
+    false,
+    'a floor worker keeps its permission prompts',
+  );
+  floor.shutdown();
 });
 
 test('opening a git floor creates the branch setting in its checkout before any workers launch', (t) => {
@@ -1625,6 +1681,12 @@ test('a question or permission prompt still up after a restart that keeps its te
   approving.hook('Notification', { notification_type: 'permission_prompt' });
   const permission = before.get(approving.id)?.ask;
   assert.equal(permission?.kind, 'permission');
+  const hiring = await live('desk-3', 'hiring');
+  hiring.hook('PreToolUse', { tool_name: 'droid-office___team_hire', tool_input: { title: 'Count tests/*.test.ts', brief: 'Read-only count and report.', worktree: false } });
+  hiring.hook('Notification', { notification_type: 'permission_prompt' });
+  const hirePermission = { kind: 'permission', tool: 'droid-office___team_hire', summary: 'Count tests/*.test.ts' };
+  assert.deepEqual(before.get(hiring.id)?.ask, hirePermission, 'an MCP permission prompt retains the task being approved');
+  assert.equal(before.get(hiring.id)?.status, 'needs_input');
   before.shutdown(true);
 
   const after = manager(f, []);
@@ -1633,6 +1695,7 @@ test('a question or permission prompt still up after a restart that keeps its te
   assert.equal(after.get(asking.id)?.status, 'needs_input');
   assert.deepEqual(after.get(asking.id)?.ask, question, 'its question can still be answered from the Asks inbox and the Office MCP');
   assert.deepEqual(after.get(approving.id)?.ask, permission, 'a permission prompt stays one, never mistaken for a menu');
+  assert.deepEqual(after.get(hiring.id)?.ask, hirePermission, 'an MCP permission prompt remains visible after reconnecting');
 });
 
 test('a first message its droid had not taken yet survives a restart that keeps its terminal, and is typed in once', async (t) => {
