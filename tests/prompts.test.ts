@@ -3,7 +3,10 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { PROMPTS, PROMPT_IDS, PROMPT_MAX, WORKER_VISITS, fillPrompt, issuePromptVars, mergeCommand, placeholders, promptText, pullPromptVars, shipPromptVars, workerMessageVars } from '../src/shared/prompts.js';
+import { PROMPTS, PROMPT_IDS, PROMPT_MAX, WORKER_VISITS, fillPrompt, floorHint, issuePromptVars, mergeCommand, placeholders, promptText, pullPromptVars, shipPromptVars, withoutReminders, workerMessageVars } from '../src/shared/prompts.js';
+import { buildingInstructions } from '../src/server/office-mcp/remote.js';
+import { ownerInstructions } from '../src/server/office-mcp/owner.js';
+import { INSTRUCTIONS } from '../src/server/office-mcp/index.js';
 import { OfficePrompts, officePrompt, type PromptSource } from '../src/server/prompts.js';
 import type { AgentChoice, PromptsState } from '../src/shared/protocol.js';
 
@@ -271,4 +274,41 @@ test('the default worker is checked before it is kept, and one the office can no
   writeFileSync(file, '{nope');
   assert.deepEqual(new OfficePrompts(dir, () => {}).state(), { custom: {} });
   assert.ok(readFileSync(file, 'utf8'));
+});
+
+test('the Orchestrator brief says the floor hint is a default that a named repository overrides, and a custom brief keeps working', () => {
+  const brief = officePrompt(undefined, 'orchestrator.system', { name: 'Orchestrator', folder: '/tmp/o' });
+  assert.match(brief, /default for a request that names no repository, never a restriction\. A floor or repository the request names wins/);
+  const custom: PromptSource = { text: (id) => (id === 'orchestrator.system' ? 'Be {{name}}.' : undefined) } as unknown as PromptSource;
+  assert.equal(officePrompt(custom, 'orchestrator.system', { name: 'Orchestrator', folder: '/tmp/o' }), 'Be Orchestrator.');
+});
+
+test('a floor hint names the floor and its checkout on one line, and the office’s labels leave it out', () => {
+  const hint = floorHint({ name: 'droid-office', dir: '/Users/nik/repos/droid-office' });
+  assert.equal(hint, '<system-reminder>\nThe owner sent this from the droid-office floor (/Users/nik/repos/droid-office).\n</system-reminder>');
+  assert.equal(floorHint({ name: 'a\nb <x>', dir: '/p' }).includes('<x>'), false, 'a name cannot close the reminder or open another tag');
+  assert.equal(withoutReminders(`Merge the PRs\n\n${hint}`), 'Merge the PRs');
+  assert.equal(withoutReminders('Merge the PRs'), 'Merge the PRs');
+  assert.equal(withoutReminders(hint), '');
+});
+
+test("each audience is told once to send workers home and to weigh a subscription's quota, and the standing rules are not repeated across surfaces", () => {
+  // Built the way the Office MCP's serverFor does: a building agent with owner access reads its building text and the owner text, any other worker the general text.
+  const orchestrator = [PROMPTS['orchestrator.system'].text, buildingInstructions({ id: 'orchestrator', name: 'Orchestrator' }), ownerInstructions].join('\n');
+  const bot = [buildingInstructions({ id: 'remote-1', name: 'Bot', remote: true }), ownerInstructions].join('\n');
+  const lead = [PROMPTS['worker.system'].text, PROMPTS['subagent.nudge'].text, INSTRUCTIONS].join('\n');
+  const count = (text: string, rule: RegExp) => (text.match(rule) ?? []).length;
+  assert.deepEqual(
+    [orchestrator, bot, lead].map((text) => count(text, /team_dismiss/g)),
+    [1, 1, 1],
+  );
+  assert.deepEqual(
+    [orchestrator, bot, lead].map((text) => count(text, /nearly spent one off long tasks/g)),
+    [1, 1, 1],
+    'the quota guidance reaches every audience once',
+  );
+  for (const text of [orchestrator, bot]) {
+    assert.equal(count(text, /never prompt, interrupt, answer or send home/g), 1, 'the rule about building agents is kept once');
+    assert.equal(count(text, /worktrees, branches and cloud sessions/g), 1, 'the rule about keeping worktrees is kept once');
+  }
 });

@@ -78,12 +78,23 @@ How DroidProxy judges a model, from the same cached usage as `/droidproxy/usage`
 
 A window covers a model unless it is named for another model family: Claude's "Weekly (Opus)" covers only Opus models, "Weekly (Sonnet)" only Sonnet. Providers DroidProxy has no usage for are `unknown` once signed in.
 
+## What a plan has left, for whoever picks the model
+
+`team_models` and `models_list` add `Subscription usage: ChatGPT: 5-hour 100% left (resets in 4 h 56 min), Weekly 61% left (resets in 2 d 9 h)` to a subscription model, so a lead can prefer a plan with plenty of quota (it costs no Factory credits) and keep a nearly spent one off long tasks. It is `TeamModel.usage` (`ModelUsage` in `src/shared/subscriptions.ts`), worked out once by `modelUsage` from the same provider slice the Subscriptions panel reads, and printed by `modelUsageWords`; the text renderer and `models_list` share it.
+
+- The provider comes from `modelProviders`; only its accounts that are signed in, not expired and not switched off count.
+- **Several accounts: the account with the most left.** DroidProxy serves a request while any account has quota, and marks a model exhausted only when every account is out, so the best account is what a hire can count on. "Most left" is the highest of an account's lowest window. The line shows that one account's windows (never the best of each window mixed from two accounts) and says `best of N accounts` when there are several.
+- Windows named for another model family (`Weekly (Opus)` on a Sonnet model) are left out, as DroidProxy judges them.
+- A sample older than 10 minutes says how old it is (`read 40 min ago, may be out of date`). A reset time already past says `reset due, not yet re-read`.
+- No account with usage: `usage couldn't be read (the reason DroidProxy gave)`.
+- A model that can't run keeps its `Cannot run:` line and the refusal text; a signed-out or switched-off provider has no usable account, so no usage line. Models that aren't subscription models have none.
+
 ## Where a model is refused
 
 | Where | What happens |
 | --- | --- |
 | `WorkerManager.spawn` (`modelGate`) | Every hire of an agent: the owner's, subagents'. Refused with `availabilityWords`: "Can't hire on GPT 6.1 Sol: out of quota, back in 3 h 10 min (5-hour). Pick another model." |
-| `team_models` | Each model that can't run says why on its own line, and the default too. |
+| `team_models` | Each model that can't run says why on its own line, and the default too. A subscription model also gets a "Subscription usage" line (below). |
 | `team_hire` | A model that can't run, named or the default, is refused before a desk is taken, naming the ones that can. |
 | Model pickers (web and Android) | Shown dimmed with the reason and not pickable; a stopped DroidProxy only shows a note. |
 

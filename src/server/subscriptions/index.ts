@@ -8,8 +8,10 @@ import {
   isSubscriptionModel,
   isSubscriptionProvider,
   modelAvailability,
+  modelUsage,
   providerName,
   type ModelAvailability,
+  type ModelUsage,
   type ProxyState,
   type SubscriptionProviderKey,
   type SubscriptionsState,
@@ -59,6 +61,8 @@ export interface Subscriptions {
   message(who: string, msg: SubscriptionsMsg): void;
   /** Whether `model` can run now, as last known; undefined when it isn't a subscription model or nobody can tell. */
   availability(model: string | undefined): ModelAvailability | undefined;
+  /** What the plan behind `model` has left as of `at` (ms since the epoch), from the last usage DroidProxy gave; undefined when it isn't a subscription model or no account could serve it. */
+  usage(model: string | undefined, at: number): ModelUsage | undefined;
   /**
    * Why a worker on `model` can't start now, in words for whoever hired it; undefined when it can,
    * or when nobody can tell. Synchronous, from the last known state. A stopped DroidProxy doesn't
@@ -550,6 +554,7 @@ export function mountSubscriptions(opts: SubscriptionsOptions): Subscriptions {
       void handle(msg).catch((err) => fail(message(err)));
     },
     availability,
+    usage: (model, at) => modelUsage(state, model, at),
     gate(model) {
       const a = availability(model);
       if (!a || !model) return undefined;

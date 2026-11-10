@@ -11,6 +11,7 @@ import type { ScreenFrame } from './screen-frame.js';
 import { missionTeam } from './building-agent.js';
 import { BUILDING_TOOLS } from './office-mcp/index.js';
 import { officePrompt, type PromptSource } from './prompts.js';
+import { floorHint } from '../shared/prompts.js';
 import type { Team } from './team.js';
 import { WorkerManager, type HookEnv } from './workers.js';
 
@@ -75,6 +76,8 @@ export class Orchestrator {
   private lastStatus?: WorkerInfo['status'];
   /** A new model or effort waits for its turn to end before its session restarts on it. */
   private restartAtRest = false;
+  /** The floor hint its conversation last got: the next prompt names a floor only when it differs. */
+  private hint?: string;
 
   constructor(private readonly opts: OrchestratorOptions) {
     this.file = path.join(opts.dataDir, ORCHESTRATOR_FILE);
@@ -180,11 +183,23 @@ export class Orchestrator {
     return why ? { why } : undefined;
   }
 
-  /** The owner's prompt: the first one starts its session. */
-  prompt(text: string, images?: readonly string[], queue = false): string | undefined {
+  /**
+   * The owner's prompt: the first one starts its session. `floor` is where the owner is, if they are on one:
+   * the prompt that starts a conversation and any later one from another floor carry it as a reminder after
+   * their words, so a request that names no repository has a default.
+   */
+  prompt(text: string, images?: readonly string[], queue = false, floor?: { name: string; dir: string }): string | undefined {
     if (!this.settings.on) return 'The Orchestrator is off. Turn it on in ⚙️ Settings → Orchestrator.';
     const blocked = this.blocked();
     if (blocked) return blocked.why;
+    const hint = floor ? floorHint(floor) : undefined;
+    const give = hint !== undefined && hint !== this.hint;
+    const error = this.send(give ? `${text}\n\n${hint}` : text, images, queue);
+    if (!error && give) this.hint = hint;
+    return error;
+  }
+
+  private send(text: string, images: readonly string[] | undefined, queue: boolean): string | undefined {
     const info = this.info;
     if (!info) {
       const { model, effort } = this.choice();
@@ -214,6 +229,7 @@ export class Orchestrator {
   /** New conversation: its session and terminal go, and its team stays its own. */
   reset() {
     this.restartAtRest = false;
+    this.hint = undefined;
     this.workers.forget(ORCHESTRATOR_ID);
     this.opts.changed();
   }

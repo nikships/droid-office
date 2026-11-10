@@ -299,6 +299,14 @@ test('a running DroidProxy: providers with their windows, models in Droid, and w
     ['5-hour', 'Weekly'],
   );
   assert.equal(r.subs.availability(SOL)?.state, 'exhausted');
+  const usage = r.subs.usage(SOL, 1_000);
+  assert.equal(usage?.provider, 'codex');
+  assert.deepEqual(
+    usage?.windows.map((w) => w.name),
+    ['5-hour', 'Weekly'],
+    "the model's plan is read from the usage DroidProxy gave",
+  );
+  assert.equal(r.subs.usage('claude-opus-5-5', 1_000), undefined, 'a model that is not a subscription has none');
   assert.equal(r.subs.gate(SOL), "Can't hire on GPT 6.1 Sol: out of quota, back in 41 min (5-hour). Pick another model.");
   assert.equal(r.subs.gate(OPUS), "Can't hire on Opus 5.5: Claude is switched off in Subscriptions. Pick another model.");
   assert.equal(r.subs.gate(GROK), undefined);

@@ -170,6 +170,81 @@ export function durationWords(ms: number): string {
   return h % 24 ? `${d} d ${h % 24} h` : `${d} d`;
 }
 
+/** Usage sampled longer ago than this is shown with its age: DroidProxy reads it every few minutes. */
+export const USAGE_STALE_MS = 10 * 60_000;
+
+export interface ModelUsageWindow {
+  name: string;
+  /** 0..100, whole percent. */
+  leftPercent: number;
+  /** When it resets, ms since the epoch; null when the provider doesn't say. */
+  resetsAt: number | null;
+}
+
+/**
+ * What a subscription model's plan has left, for whoever picks a model (`team_models`).
+ * - `accounts`: the provider's signed-in, switched-on accounts, which requests are served from
+ * - `windows`: the account with the most left, since a request runs while any account has quota
+ *   (the same rule that marks a model exhausted); empty when no account's usage could be read
+ * - `updatedAt`: when DroidProxy sampled that account
+ * - `unreadable`: why there are no windows
+ * - `at`: when this was worked out; resets and ages are measured from it
+ */
+export interface ModelUsage {
+  provider: SubscriptionProviderKey;
+  accounts: number;
+  windows: ModelUsageWindow[];
+  updatedAt?: number;
+  unreadable?: string;
+  at: number;
+}
+
+const leftPercent = (w: UsageWindow): number => Math.max(0, Math.min(100, Math.round(100 - w.usedPercent)));
+
+/** A window named for a model family ("Weekly (Opus)", "Weekly (Sonnet)") covers only that family's models, as DroidProxy judges availability. */
+function covers(window: UsageWindow, model: string): boolean {
+  const family = /\((opus|sonnet)\)\s*$/i.exec(window.name)?.[1];
+  return !family || model.toLowerCase().includes(family.toLowerCase());
+}
+
+/**
+ * The usage of the plan that serves `model`: the windows that cover it. Undefined when it isn't a
+ * subscription model, nobody can tell which provider serves it, or no account could serve it
+ * (availability says why).
+ */
+export function modelUsage(s: SubscriptionsState, model: string | undefined, now: number): ModelUsage | undefined {
+  if (!model || !isSubscriptionModel(model)) return undefined;
+  const key = s.modelProviders?.[model];
+  const provider = key ? s.providers.find((p) => p.key === key) : undefined;
+  if (!key || !provider?.enabled) return undefined;
+  const live = provider.accounts.filter((a) => !a.expired && !a.disabled);
+  if (!live.length) return undefined;
+  const windowsOf = (a: SubscriptionAccount) => a.windows.filter((w) => covers(w, model));
+  const readable = live.filter((a) => windowsOf(a).length);
+  if (!readable.length) return { provider: key, accounts: live.length, windows: [], unreadable: live.find((a) => a.usageError)?.usageError ?? 'the plan reports no usage', at: now };
+  const headroom = (a: SubscriptionAccount) => Math.min(...windowsOf(a).map(leftPercent));
+  const best = readable.reduce((b, a) => (headroom(a) > headroom(b) ? a : b));
+  return {
+    provider: key,
+    accounts: live.length,
+    windows: windowsOf(best).map((w) => ({ name: w.name, leftPercent: leftPercent(w), resetsAt: w.resetsAt })),
+    ...(best.usageUpdatedAt !== undefined ? { updatedAt: best.usageUpdatedAt } : {}),
+    at: now,
+  };
+}
+
+/** "ChatGPT: 5-hour 100% left (resets in 4 h 56 min), Weekly 61% left (resets in 2 d 9 h)". */
+export function modelUsageWords(u: ModelUsage): string {
+  const name = providerName(u.provider);
+  if (!u.windows.length) return `${name}: usage couldn't be read (${u.unreadable ?? 'no usage reported'})`;
+  const parts = u.windows.map((w) => {
+    const reset = w.resetsAt === null ? '' : w.resetsAt > u.at ? ` (resets in ${durationWords(w.resetsAt - u.at)})` : ' (reset due, not yet re-read)';
+    return `${w.name} ${w.leftPercent}% left${reset}`;
+  });
+  const stale = u.updatedAt !== undefined && u.at - u.updatedAt > USAGE_STALE_MS ? `; read ${durationWords(u.at - u.updatedAt)} ago, may be out of date` : '';
+  return `${name}${u.accounts > 1 ? `, best of ${u.accounts} accounts` : ''}: ${parts.join(', ')}${stale}`;
+}
+
 /**
  * Why a model can't run, in one line for a picker, a refusal or `team_models`; '' when
  * it can. `now` is ms since the epoch.

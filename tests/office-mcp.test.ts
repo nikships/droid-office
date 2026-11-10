@@ -365,6 +365,35 @@ test('a structured task with no baseBranch of its own starts from the base named
   assert.deepEqual(bases, ['release', undefined, 'release']);
 });
 
+test('from and task.baseBranch are one setting: origin/main agrees with main, and different bases are refused naming both', async (t) => {
+  const r = await rig(t);
+  const client = await r.connect('lead');
+  const bases: (string | undefined)[] = [];
+  r.workers.hire = (_desk, _by, _prompt, _worktree, _choice, lead, from) => {
+    bases.push(from);
+    return worker('new', { lead, worktree: { path: '.droid-office/worktrees/new', branch: 'office/new', base: 'abc' } });
+  };
+  const task = { title: 'Ticket', brief: 'Fix the bug', repo: r.dir, baseBranch: 'main', branch: 'feat/ticket' };
+  for (const args of [
+    { task, from: 'origin/main' },
+    { task, from: 'main' },
+    { task: { ...task, baseBranch: 'origin/main' }, from: 'main' },
+  ]) {
+    const hired = await client.callTool({ name: 'team_hire', arguments: args });
+    assert.equal(hired.isError, undefined, JSON.stringify(hired.content));
+  }
+  assert.deepEqual(bases, ['main', 'main', 'origin/main'], 'the structured task’s baseBranch is the one the hire uses');
+  const refused = await client.callTool({ name: 'team_hire', arguments: { task: { ...task, baseBranch: 'dev' }, from: 'origin/main' } });
+  assert.equal(refused.structuredContent?.code, 'bad_argument');
+  assert.match(JSON.stringify(refused.content), /from \(origin\/main\) and task\.baseBranch \(dev\) name different bases\. They set the same thing, so give only one\./);
+  assert.equal((await client.callTool({ name: 'team_hire', arguments: { task, from: 'origin/dev' } })).structuredContent?.code, 'bad_argument');
+  assert.equal(bases.length, 3, 'a refused hire starts nothing');
+  const tools = (await client.listTools()).tools.find((tool) => tool.name === 'team_hire')!;
+  const props = tools.inputSchema.properties as Record<string, { description?: string; properties?: Record<string, { description?: string }> }>;
+  assert.match(props.from.description!, /same setting as task\.baseBranch/);
+  assert.match(props.task.properties!.baseBranch.description!, /same setting as from/);
+});
+
 test('ordinary workers may hire through MCP but subagents cannot list or invoke nested hiring', async (t) => {
   const r = await rig(t, false);
   Object.assign(r.settings, { deskWorkers: false });

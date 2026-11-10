@@ -1,19 +1,23 @@
 import path from 'node:path';
 import { z } from 'zod';
 import type { TeamEvent, TeamMember, TeamModel, TeamReply } from '../team.js';
+import { modelUsageWords } from '../../shared/subscriptions.js';
 import { hasOwnerAccess } from './owner.js';
 import { officeAccess, officeError, officeResult, ownFloor, type OfficeMcpCaller, type OfficeMcpDeps, type OfficeMcpServer } from './index.js';
 import { compactEvent, compactEventText, compactWorker, compactWorkerText, cursorOf, EVENT_FILTERS, eventKinds, floorArg, parseCursor } from './team-events.js';
 
 export const instructions = `Your team is real workers at nearby desks on this floor. Each subagent has its own terminal and normally its own git worktree, and reports to the worker who hired it, its lead. The owner sets hiring permission, team size, allowed models and wake notes. Subagents cannot hire.
 Split work into independent pieces that touch separate files, and hire one fresh subagent per task, only as many as the work needs. Write each brief as a ticket: goal, relevant context and files, boundaries, checks, and how to finish (commit in its worktree and report, or another deliverable you name). A new worktree sees only committed work, so commit what it needs first.
-Read team_models before hiring and choose per task. A credit multiplier is relative token cost: x0.2 is a fifth, x4 four times; a model on the owner's own API key costs no Factory credits. Owner notes take priority. Then pick the cheapest capable model: around x0.5 or less for mechanical work, around x1 for ordinary features and fixes, the strongest suitable model for hard design, security, concurrency or subtle debugging. Try higher effort on a mid-priced model before a pricier one. Give visual work to a model that reads images; a no-images model cannot see them. Report which model each subagent ran.
-A wake note tells you when your team has news. With Wake the lead off, call team_status for a snapshot, or team_wait when nothing else is left until your team has news. Read full reports with team_report_get, answer questions with questions_list and question_answer, and send corrections or follow-ups with team_message. Review the actual commits and diff with worker_diff, then integrate. Pass a question only a person can answer to whoever asked you. A subagent stopped at a permission prompt in its own terminal needs that person at its desk: a message saying yes cannot approve it.
-Dismiss a subagent with team_dismiss after review and integration, once neither it nor its worktree is still needed. Tell whoever asked what each subagent did, with checks and links.`;
+Read team_models before hiring and choose per task. A credit multiplier is relative token cost: x0.2 is a fifth, x4 four times; a model on the owner's own API key or subscription costs no Factory credits, and team_models shows how much quota a subscription has left: prefer one with plenty for fitting work, and keep a nearly spent one off long tasks. Owner notes take priority. Then pick the cheapest capable model: around x0.5 or less for mechanical work, around x1 for ordinary features and fixes, the strongest suitable model for hard design, security, concurrency or subtle debugging. Try higher effort on a mid-priced model before a pricier one. Give visual work to a model that reads images; a no-images model cannot see them. Report which model each subagent ran.
+With Wake the lead off, call team_status for a snapshot, or team_wait when nothing else is left until your team has news. Read full reports with team_report_get, answer questions with questions_list and question_answer, and send corrections or follow-ups with team_message. Review the actual commits and diff with worker_diff, then integrate. Pass a question only a person can answer to whoever asked you. A subagent stopped at a permission prompt in its own terminal needs that person at its desk: a message saying yes cannot approve it.
+Dismiss a subagent with team_dismiss after review and integration, once neither it nor its worktree is still needed.`;
 
 const readOnly = { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false };
 const changesState = { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false };
 const text = z.string().trim().min(1).max(20_000);
+
+/** `main` and `origin/main` are one base: hiring fetches origin and resolves both to the branch `main`. */
+const sameBase = (a: string, b: string) => a.replace(/^origin\//, '') === b.replace(/^origin\//, '');
 
 function reply(result: TeamReply, describe: (body: Record<string, unknown>) => string) {
   if (result.status >= 400)
@@ -59,6 +63,7 @@ function modelText(model: TeamModel): string {
     ]
       .filter(Boolean)
       .join(', '),
+    ...(model.usage ? [`Subscription usage: ${modelUsageWords(model.usage)}`] : []),
     ...(model.note ? [`Owner's note: ${model.note}`] : []),
     ...(model.cannotRun ? [`Cannot run: ${model.cannotRun}`] : []),
   ].join('\n');
@@ -155,7 +160,7 @@ export function register(server: OfficeMcpServer, deps: OfficeMcpDeps): void {
     {
       name: 'models_list',
       description:
-        "Read the full Droid/Subscriptions/DroidProxy model catalogue, including switched-off or disallowed models (enabled: false), availability, allowed-model restrictions and the default. To pick a subagent's model, read team_models.",
+        "Read the full Droid/Subscriptions/DroidProxy model catalogue, including switched-off or disallowed models (enabled: false), availability, subscription quota left, allowed-model restrictions and the default. To pick a subagent's model, read team_models.",
       inputSchema: z.strictObject({}),
       annotations: readOnly,
     },
@@ -261,7 +266,7 @@ export function register(server: OfficeMcpServer, deps: OfficeMcpDeps): void {
     {
       name: 'team_models',
       description:
-        "Read the models allowed for your subagents, including ids, providers, credit multipliers, efforts, owner notes, no-images limits, the default, and why any cannot run. Read it before choosing each task's model. Hiring refuses a blocked model, the default included, before taking a desk.",
+        "Read the models allowed for your subagents, including ids, providers, credit multipliers, efforts, owner notes, no-images limits, the default, the quota a subscription model's plan has left, and why any cannot run. Read it before choosing each task's model. Hiring refuses a blocked model, the default included, before taking a desk.",
       inputSchema: z.object({}),
       annotations: readOnly,
     },
@@ -293,7 +298,7 @@ export function register(server: OfficeMcpServer, deps: OfficeMcpDeps): void {
             title: z.string().trim().min(1).max(80),
             brief: text,
             repo: z.string().trim().min(1).max(4096).describe('Your floor repository path. A building agent names any open floor: its path, id or name.'),
-            baseBranch: z.string().trim().min(1).max(200).optional().describe('Base for the fresh worktree; omit for where its lead is now.'),
+            baseBranch: z.string().trim().min(1).max(200).optional().describe('Base for the fresh worktree; omit for where its lead is now. The same setting as from: use this one with a structured task.'),
             branch: z.string().trim().min(1).max(200).optional().describe('Name for the new local branch; must not already exist.'),
             prNumber: z.number().int().positive().optional(),
             acceptanceCriteria: z.array(z.string().trim().min(1).max(2000)).max(30).optional(),
@@ -309,7 +314,7 @@ export function register(server: OfficeMcpServer, deps: OfficeMcpDeps): void {
           .max(200)
           .optional()
           .describe(
-            'Branch, tag or commit for the fresh worktree, without spaces or a leading dash. Origin is fetched first. Omit to start on your branch at HEAD, refreshed if behind origin. Only committed work follows. Requires worktree: true.',
+            'Branch, tag or commit for the fresh worktree, without spaces or a leading dash. Origin is fetched first. Omit to start on your branch at HEAD, refreshed if behind origin. Only committed work follows. Requires worktree: true. The same setting as task.baseBranch: with a structured task, use that instead.',
           ),
         worktree: z
           .boolean()
@@ -329,7 +334,9 @@ export function register(server: OfficeMcpServer, deps: OfficeMcpDeps): void {
         return officeError('A building agent names the floor to hire on: pass floor with the open floor’s id, name or path from office_floors, or use a structured task whose repo names it.');
       }
       if (!title || !ticket) return officeError('team_hire needs title and brief, either at the top level or in task.');
-      if (task && args.from && task.baseBranch && args.from !== task.baseBranch) return officeError('from and task.baseBranch disagree; provide one base.');
+      if (task && args.from && task.baseBranch && !sameBase(args.from, task.baseBranch)) {
+        return officeError(`from (${args.from}) and task.baseBranch (${task.baseBranch}) name different bases. They set the same thing, so give only one.`);
+      }
       if (task && args.worktree === false && (task.baseBranch || task.branch))
         return officeError('A structured task with baseBranch or branch requires a fresh worktree: leave worktree out, or omit baseBranch and branch for read-only work in the checkout.');
       if (task && !caller.building && path.resolve(task.repo) !== path.resolve(ownFloor(caller).dir)) return officeError('task.repo must name your floor repository.');
