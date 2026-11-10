@@ -120,5 +120,9 @@ object OfficeIcons {
     val Shell = icon("Shell", "M4 17.5l5-5.5-5-5.5", "M11.5 18h8.5")
     val Plus = icon("Plus", "M12 5v14", "M5 12h14")
     val Minus = icon("Minus", "M5 12h14")
+    /** The Orchestrator: a ring round the building with one satellite on it. */
+    val Orbit = icon("Orbit", "M12 9.5a2.5 2.5 0 1 0 0 5a2.5 2.5 0 1 0 0-5z", "M3 12a9 4 0 1 0 18 0a9 4 0 1 0-18 0", fills = listOf(dot(18.4f, 8.9f, 1.6f) to 1f))
+    /** An external bot, reaching the office from elsewhere. */
+    val Antenna = icon("Antenna", "M12 12.5v8", "M8.5 20.5h7", "M9.2 9.2a4 4 0 0 1 5.6 0", "M6.4 6.4a8 8 0 0 1 11.2 0", fills = listOf(dot(12f, 12f, 1.4f) to 1f))
     val Agent = icon("Agent", "M7 7.5a5 5 0 0 1 10 0V12a5 5 0 0 1-10 0z", "M9.8 9.6h.01", "M14.2 9.6h.01", "M9.8 13a3 3 0 0 0 4.4 0", "M4.5 20.5a8.5 8.5 0 0 1 15 0", "M12 2.5v0")
 }

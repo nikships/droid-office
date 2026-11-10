@@ -34,13 +34,13 @@ import { WhiteboardStore, renderInfo } from './whiteboard.js';
 import type { WhiteboardRenderers } from './whiteboard-render.js';
 import { boardReaders } from './whiteboard-agent.js';
 import { waitingStatus } from './office-status.js';
-import type { RemoteWorkers } from './remote-workers.js';
+import type { BuildingAgents } from './building-agent.js';
 
 type ToastLevel = 'info' | 'warn' | 'error';
 
-/** A worker left a floor's desks. A remote desk moving to another floor is not a departure from its teams, conversations or board. */
-export function workerLeft(id: string, remote: Pick<RemoteWorkers, 'identity'> | undefined, floor: { team?: Pick<Team, 'onWorkerGone'>; visits?: Pick<Visits, 'onWorkerGone'>; whiteboard?: Pick<WhiteboardStore, 'forgetReader'> }) {
-  if (remote?.identity(id)) return;
+/** A worker left a floor's desks. A building agent's session ending (a new Orchestrator conversation) is not a departure from its teams. */
+export function workerLeft(id: string, building: Pick<BuildingAgents, 'identity'> | undefined, floor: { team?: Pick<Team, 'onWorkerGone'>; visits?: Pick<Visits, 'onWorkerGone'>; whiteboard?: Pick<WhiteboardStore, 'forgetReader'> }) {
+  if (building?.identity(id)) return;
   floor.team?.onWorkerGone(id);
   floor.visits?.onWorkerGone(id);
   // A dismissed worker's read points would hold the board's tombstones for good.
@@ -49,8 +49,8 @@ export function workerLeft(id: string, remote: Pick<RemoteWorkers, 'identity'> |
 
 /** What a floor needs from the building around it. */
 export interface FloorContext {
-  remoteWorkers?: RemoteWorkers;
-  remoteRevoke?(id: string): void;
+  /** The building's agents, who lead subagents on any floor from Mission Control (docs/mission-control.md). */
+  building?: BuildingAgents;
   agentCmd: string;
   agentArgs: string[];
   hook: HookEnv;
@@ -242,7 +242,7 @@ export class Floor {
         remove: (workerId, shot) => {
           this.changes?.forget(workerId);
           ctx.emit(this, { t: 'worker.remove', workerId, ...(shot ? { shot } : {}) });
-          workerLeft(workerId, ctx.remoteWorkers, this);
+          workerLeft(workerId, ctx.building, this);
           ctx.workerChanged(this, workerId);
         },
         data: (workerId, data, connectionIds) => ctx.termData(workerId, data, connectionIds),
@@ -263,7 +263,7 @@ export class Floor {
       this.board,
       ctx.prompts,
       this.plain,
-      ctx.remoteWorkers && ctx.remoteRevoke ? { store: ctx.remoteWorkers, floor: this.id, revoke: ctx.remoteRevoke } : undefined,
+      ctx.building ? { agents: ctx.building, floor: this.id } : undefined,
     );
     this.branchInfo = { baseBranch: this.workers.baseBranch, selectedBranch: this.workers.selectedBranch };
 
@@ -323,7 +323,8 @@ export class Floor {
     this.team = new Team(
       {
         list: () => workers.list(),
-        get: (id) => workers.get(id) ?? workers.remoteIdentity(id),
+        get: (id) => workers.get(id) ?? workers.buildingIdentity(id),
+        buildingAgent: (id) => workers.buildingAgent(id),
         deskOccupied: (id) => workers.deskOccupied(id),
         get officeDefault() {
           return workers.officeDefault;
@@ -352,7 +353,7 @@ export class Floor {
     this.visits = new Visits(
       {
         list: () => workers.list(),
-        get: (id) => workers.get(id) ?? workers.remoteIdentity(id),
+        get: (id) => workers.get(id),
         tail: (id, lines) => workers.tail(id, lines),
         prompt: (id, text) => workers.prompt(id, text),
         tell: (id, text) => workers.tell(id, text),

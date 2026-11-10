@@ -24,6 +24,8 @@ export interface PromptOptions {
   modelOption?: boolean;
   /** Take pictures pasted or dropped into the prompt: for a prompt that goes to an agent. */
   imagesOption?: boolean;
+  /** The prompt's recipient, so its pictures are staged in the right worker's home. */
+  workerId?: string;
   /**
    * Prompt history. On unless this box is a shell command, a commit message, or a
    * pull-request description (`recall: false`). Not tied to pictures.
@@ -35,6 +37,8 @@ export interface PromptOptions {
   repoOptions?: { id: string; name: string }[];
   /** Offer Queue beside Send, for a worker on a turn: Send steers the turn, Queue waits until it's over. */
   queueOption?: boolean;
+  /** Buttons in the header, beside the title (an Orchestrator's Terminal and Stop). */
+  actions?: (HTMLElement | null)[];
   onDraft?(text: string): void;
   /** An async refusal keeps the box, text and attachments open rather than claiming delivery. */
   onSubmit(text: string, opts: { worktree: boolean; model?: string; effort?: AgentEffort; repos: string[]; images: string[]; queue?: boolean }): undefined | boolean | Promise<string | undefined>;
@@ -105,7 +109,7 @@ export function pictureHint(): HTMLElement {
 export function openPrompt(opts: PromptOptions) {
   const ta = h('textarea.input', { rows: opts.modelOption ? 5 : 4, placeholder: opts.placeholder ?? 'What should the worker work on?', 'aria-label': 'Prompt' }) as HTMLTextAreaElement;
   ta.value = opts.initial ?? '';
-  const images: PromptImages | null = opts.imagesOption ? promptImages(ta) : null;
+  const images: PromptImages | null = opts.imagesOption ? promptImages(ta, opts.workerId) : null;
   ta.addEventListener('input', () => opts.onDraft?.(ta.value));
   const file = images ? h('input.hidden', { type: 'file', accept: 'image/png,image/jpeg,image/gif,image/webp', multiple: true, 'aria-label': 'Choose pictures' }) : null;
   file?.addEventListener('change', () => {
@@ -133,7 +137,7 @@ export function openPrompt(opts: PromptOptions) {
   const form = h(
     'form.modal.prompt-box',
     { role: 'dialog', 'aria-label': opts.title },
-    windowHeader(opts.title, opts.subtitle),
+    windowHeader(opts.title, opts.subtitle, ...(opts.actions ?? [])),
     h(
       'div.body.stack',
       {},

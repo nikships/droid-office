@@ -22,6 +22,9 @@ import { remoteMcpSettings } from './remote-mcp';
 import type { PairingState } from '../../shared/devices';
 import type { PairedDevice } from '../../shared/devices';
 import { INCLUDE_FILE, SETUP_FILE, describeSetup, parsePatterns } from '../../shared/worktree-setup';
+import { DEFAULT_ORCHESTRATOR_SETTINGS, type OrchestratorSettings } from '../../shared/mission-control';
+import { ORCHESTRATOR_MODEL_CHANGE, orchestratorStarted } from '../mission';
+import { newOrchestratorConversation } from './orchestrator';
 import {
   FPS_CAPS,
   LOOK_SENSITIVITY_MAX,
@@ -940,6 +943,70 @@ export function openSettings(net: Net, opts: SettingsOptions) {
   };
   paintSubagents();
 
+  // ---- Orchestrator -------------------------------------------------------------------------------
+  const orcSettings = (): OrchestratorSettings => store.missionControl?.orchestrator.settings ?? DEFAULT_ORCHESTRATOR_SETTINGS;
+  const orcSet = (settings: OrchestratorSettings) => net.send({ t: 'orchestrator.set', settings });
+  const orcOn = toggle(
+    'Orchestrator',
+    () => orcSettings().on,
+    (on) => orcSet({ ...orcSettings(), on }),
+  );
+  const orcNote = desc();
+  const orcBlocked = h('p.note.warn.hidden', { role: 'status' });
+  const orcPicked = (): AgentChoice | undefined => {
+    const { model, effort } = orcSettings();
+    return model || effort ? { ...(model ? { model } : {}), ...(effort ? { effort } : {}) } : undefined;
+  };
+  const orcAgent = agentFields('orchestrator-agent', orcPicked() ?? officeChoice());
+  let orcTouched = false;
+  orcAgent.element.addEventListener('change', () => (orcTouched = true));
+  orcAgent.element.addEventListener('input', () => (orcTouched = true));
+  const orcSave = h('button.btn.sm.primary', { type: 'button' }, 'Save');
+  const orcBack = h('button.btn.sm', { type: 'button' }, 'Use the default worker');
+  const orcAgentNote = desc();
+  orcSave.addEventListener('click', () => {
+    orcTouched = false;
+    const { model, effort } = orcAgent.choice();
+    orcSet({ on: orcSettings().on, ...(model ? { model } : {}), ...(effort ? { effort } : {}) });
+  });
+  orcBack.addEventListener('click', () => {
+    orcTouched = false;
+    orcSet({ on: orcSettings().on });
+  });
+  const orcReset = h('button.btn.sm', { type: 'button', onclick: () => newOrchestratorConversation(net) }, 'New conversation…');
+  const orcResetNote = desc();
+  const orcBrief = h('button.btn.sm', { type: 'button', onclick: () => openPromptEditor(net, 'orchestrator.system') }, 'Edit brief…');
+  const orcOptions = nest(
+    card('Orchestrator model', { desc: orcAgentNote, below: [orcAgent.element, h('div.row', {}, orcSave, orcBack)] }),
+    card('New conversation', { desc: orcResetNote, control: orcReset }),
+    card('Orchestrator brief', { desc: desc('What the office tells the Orchestrator about its job and its tools. It reads a change the next time its session starts or resumes.'), control: orcBrief }),
+  );
+  const paintOrchestrator = () => {
+    const s = orcSettings();
+    const blocked = store.missionControl?.orchestrator.blocked;
+    // A page newer than the office it talks to (source hot reload before a restart): nothing here would take.
+    const missing = !store.missionControl;
+    orcOn.paint();
+    orcOn.el.classList.toggle('hidden', missing);
+    orcOptions.classList.toggle('hidden', missing || !s.on);
+    const note = () => {
+      if (missing) return 'This office has no Orchestrator yet: restart it to get one.';
+      if (s.on) return 'One agent for the whole building, at the top of Mission Control on every floor. Tell it what you want done; it hires workers on any floor, answers their questions and reports back.';
+      return 'Off: it’s hidden on every floor and its session stops. Workers it hired keep working and report to nobody.';
+    };
+    orcNote.textContent = note();
+    orcBlocked.textContent = s.on && blocked ? `It can’t start now: ${blocked}` : '';
+    orcBlocked.classList.toggle('hidden', !(s.on && blocked));
+    const picked = orcPicked();
+    if (!orcTouched) orcAgent.set(picked ?? officeChoice());
+    orcBack.classList.toggle('hidden', !picked);
+    orcAgentNote.textContent = `${picked ? `It runs on ${choiceLabel(picked)}.` : `It runs on the default worker (${choiceLabel(officeChoice())}, Models → Default worker).`} ${ORCHESTRATOR_MODEL_CHANGE}`;
+    const started = orchestratorStarted(store.missionControl);
+    orcReset.toggleAttribute('disabled', !started);
+    orcResetNote.textContent = started ? 'It forgets this conversation and starts fresh on your next prompt. Workers it hired keep working and stay on its team.' : 'No conversation yet. Its first prompt starts one.';
+  };
+  paintOrchestrator();
+
   // ---- Connections --------------------------------------------------------------------------------
   const droid = droidSettings(net);
   const factoryKey = factoryKeySettings(net);
@@ -1001,6 +1068,7 @@ export function openSettings(net: Net, opts: SettingsOptions) {
       group('Subagents', card('Subagents', { desc: subNote, control: subOn.el }), subOptions),
       group('Visits', card('Visits between workers', { desc: visitsNote, control: visitsOn.el })),
     ],
+    orchestrator: [orcBlocked, group(null, card('Orchestrator', { desc: orcNote, control: orcOn.el }), orcOptions)],
     connections: [group('Factory', card('Droid', droid.parts), card('Factory API key', factoryKey.key)), subscriptions.unsupported, subscriptionGroup, ...(only ? [only.jira] : [])],
     office: [
       group(null, card('Workspace folder', { desc: dirNote, below: [dirRow] }), ...(only?.outside ? [only.outside] : [])),
@@ -1175,6 +1243,8 @@ export function openSettings(net: Net, opts: SettingsOptions) {
     store.on('prompts', paintPrompts),
     store.on('prompts', paintSubagents),
     store.on('subagents', paintSubagents),
+    store.on('missionControl', paintOrchestrator),
+    store.on('prompts', paintOrchestrator),
     store.on('workerLabels', paintLabels),
     store.on('hiddenModels', paintPickerModels),
     ...offWorktreeSetup,

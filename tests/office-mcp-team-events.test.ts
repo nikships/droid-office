@@ -180,6 +180,27 @@ test('status keeps its prose and adds compact workers, typed news with ids and t
     assert.equal((await r.call(r.lead, 'team', args)).isError, true, JSON.stringify(args));
 });
 
+test('team_report_get by a name reused after a dismissal reads the subagent on the team now', async (t) => {
+  const r = await rig(t);
+  await r.hire();
+  await r.call(await r.connect('sub1'), 'team_report', { text: 'First Pixel: 235 lines.' });
+  assert.equal((await r.call(r.lead, 'team', { action: 'dismiss', name: 'sub1' })).isError, undefined);
+  await r.hire();
+  r.people.get('sub2')!.name = 'Pixel';
+  await r.call(await r.connect('sub2'), 'team_report', { text: 'Second Pixel: 234 lines.' });
+  const now = await r.call(r.lead, 'team_report_get', { worker: 'Pixel' });
+  assert.equal(now.isError, undefined, now.text);
+  assert.equal(now.body.report.text, 'Second Pixel: 234 lines.');
+  assert.equal(now.body.report.worker, 'sub2');
+  assert.equal((await r.call(r.lead, 'team_report_get', { worker: 'sub1' })).body.report.text, 'First Pixel: 235 lines.', 'the id still reads the former one');
+
+  assert.equal((await r.call(r.lead, 'team', { action: 'dismiss', name: 'sub2' })).isError, undefined);
+  const gone = await r.call(r.lead, 'team_report_get', { worker: 'Pixel' });
+  assert.equal(gone.isError, true, 'two former subagents by one name stay ambiguous');
+  assert.match(gone.text, /Pixel names more than one subagent: use the worker id/);
+  assert.doesNotMatch(gone.text, /several floors/, 'they are on one floor');
+});
+
 test('team_status returns the same structured workers, news and cursor, with verbose, since and kinds', async (t) => {
   const r = await rig(t);
   await r.hire();

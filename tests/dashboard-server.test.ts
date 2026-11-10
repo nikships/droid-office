@@ -1,6 +1,6 @@
 import test, { type TestContext } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdirSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { once } from 'node:events';
 import http from 'node:http';
@@ -9,32 +9,37 @@ import os from 'node:os';
 import path from 'node:path';
 import { WebSocket } from 'ws';
 import { build } from 'vite';
+import { Client, StreamableHTTPClientTransport } from '@modelcontextprotocol/client';
 import { loadConfig } from '../src/server/config.js';
-import { startServer } from '../src/server/server.js';
+import { leaveFloorTerminals, startServer } from '../src/server/server.js';
+import { HOOK_VERSION } from '../src/server/workers.js';
 import { DevicesStore } from '../src/server/devices.js';
+import { OFFICE_MCP_PATH, OFFICE_MCP_WORKER_HEADER } from '../src/server/office-mcp/index.js';
+import { ORCHESTRATOR_ID } from '../src/shared/mission-control.js';
 import type { ClientMsg, ServerMsg } from '../src/shared/protocol.js';
 import type { PairingState } from '../src/shared/devices.js';
 import { reachableLan } from './lan-probe.js';
 
-async function office(t: TestContext, home?: string) {
+async function office(t: TestContext, home?: string, agent?: string) {
   const dir = home ?? mkdtempSync(path.join(os.tmpdir(), 'dashboard-'));
   if (!home) {
     t.after(() => rmSync(dir, { recursive: true, force: true }));
     execFileSync('git', ['init', '-q'], { cwd: dir });
   }
-  const cfg = loadConfig(['--home', dir, '--projects', dir, dir, '--weather', 'clear', '--host', '0.0.0.0']);
+  const cfg = loadConfig(['--home', dir, '--projects', dir, dir, '--weather', 'clear', '--host', '0.0.0.0', ...(agent ? ['--agent', agent] : [])]);
   cfg.port = 0;
   const server = await startServer(cfg);
   const port = (server.server.address() as AddressInfo).port;
   let stopped = false;
-  const stop = async () => {
+  /** With `keep`, as a restart does: workers' terminals stay up for the next office. */
+  const stop = async (keep = false) => {
     if (stopped) return;
     stopped = true;
     const closing = once(server.server, 'close');
-    server.shutdown();
+    server.shutdown(keep);
     await closing;
   };
-  t.after(stop);
+  t.after(() => stop());
   return { server, dir, stop, base: `http://127.0.0.1:${port}`, port };
 }
 
@@ -67,6 +72,313 @@ function socket(t: TestContext, base: string, query: string, origin = base) {
   const send = (msg: ClientMsg) => ws.send(JSON.stringify(msg));
   return { ws, messages, wait, send };
 }
+
+test('Mission Control readiness updates on one connected client after sign-in and Office MCP changes', async (t) => {
+  const dir = mkdtempSync(path.join(os.tmpdir(), 'mission-readiness-'));
+  const agent = path.join(dir, 'droid');
+  const signedIn = path.join(dir, 'signed-in');
+  // Trimmed auth.verify body from tests/setup-droid-state.test.ts's real Droid doctor output.
+  writeFileSync(
+    agent,
+    `#!/bin/sh
+if [ "$1" = "--version" ]; then echo '0.249.0'; exit 0; fi
+if [ "$1" = "doctor" ]; then
+  if [ -f '${signedIn}' ]; then
+    printf '%s' '{"ok":true,"results":[{"id":"auth.verify","status":"pass","detail":"authenticated as o***@example.com via stored login session"}]}'
+  else
+    printf '%s' '{"ok":true,"results":[{"id":"auth.verify","status":"warn","detail":"not signed in"}]}'
+  fi
+  exit 0
+fi
+exit 0
+`,
+    { mode: 0o700 },
+  );
+  const { base } = await office(t, dir, agent);
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const client = socket(t, base, 'client=dashboard');
+  const welcome = await client.wait('welcome');
+  assert.match(welcome.missionControl?.orchestrator.blocked ?? '', /Droid isn’t ready/);
+  if (welcome.setup.droid.signedIn !== false) {
+    client.send({ t: 'setup.check' });
+    await client.wait('setup', (m) => m.state.droid.signedIn === false);
+  }
+  writeFileSync(signedIn, '');
+  client.send({ t: 'setup.check' });
+  await client.wait('missionControl', (m) => !m.state.orchestrator.blocked);
+  client.messages.length = 0;
+  client.send({ t: 'subagents.set', settings: { ...welcome.subagents, officeMcp: false } });
+  await client.wait('missionControl', (m) => !!m.state.orchestrator.blocked?.includes('Office MCP'));
+  client.messages.length = 0;
+  client.send({ t: 'subagents.set', settings: { ...welcome.subagents, officeMcp: true } });
+  await client.wait('missionControl', (m) => !m.state.orchestrator.blocked);
+  client.messages.length = 0;
+  rmSync(signedIn);
+  client.send({ t: 'setup.check' });
+  await client.wait('missionControl', (m) => !!m.state.orchestrator.blocked?.includes('Droid isn’t ready'));
+  assert.equal(client.ws.readyState, WebSocket.OPEN);
+  assert.equal(welcome.missionControl?.orchestrator.agent, undefined, 'readiness changes need no first prompt or PTY');
+});
+
+test('a ride keeps the Orchestrator’s terminal open and still due the snapshot a slow link was waiting for', () => {
+  const c = { attached: new Set(['w-1', ORCHESTRATOR_ID, 'office-shell']), stale: new Set(['w-1', ORCHESTRATOR_ID]) };
+  leaveFloorTerminals(c);
+  assert.deepEqual([[...c.attached], [...c.stale]], [[ORCHESTRATOR_ID], [ORCHESTRATOR_ID]]);
+  const floorOnly = { attached: new Set(['w-1']), stale: new Set(['w-1']) };
+  leaveFloorTerminals(floorOnly);
+  assert.deepEqual([floorOnly.attached.size, floorOnly.stale.size], [0, 0]);
+});
+
+/** A signed-in Droid that records each launch's Office MCP credential and stays open like a session. */
+const signedInDroid = `#!/usr/bin/env node
+const fs = require('node:fs');
+const args = process.argv.slice(2);
+if (args[0] === '--version') { console.log('0.249.0'); process.exit(0); }
+// Trimmed auth.verify body from tests/setup-droid-state.test.ts's real Droid doctor output.
+if (args[0] === 'doctor') { process.stdout.write('{"ok":true,"results":[{"id":"auth.verify","status":"pass","detail":"authenticated as o***@example.com via stored login session"}]}'); process.exit(0); }
+if (args.includes('--output-format')) process.exit(0);
+fs.appendFileSync(process.env.FAKE_AGENT_LOG, JSON.stringify({ workerId: process.env.DROID_OFFICE_WORKER_ID, hookToken: process.env.DROID_OFFICE_HOOK_TOKEN, hookUrl: process.env.DROID_OFFICE_HOOK_URL }) + '\\n');
+process.stdin.resume();
+`;
+
+type Launch = { workerId: string; hookToken: string; hookUrl: string };
+
+/** An office whose Droid is `signedInDroid`, so the Orchestrator can start, with each launch it made. */
+async function missionOffice(t: TestContext) {
+  const dir = mkdtempSync(path.join(os.tmpdir(), 'mission-office-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  execFileSync('git', ['init', '-q'], { cwd: dir });
+  const agent = path.join(dir, 'droid');
+  writeFileSync(agent, signedInDroid, { mode: 0o700 });
+  const log = path.join(dir, 'launches.jsonl');
+  writeFileSync(log, '');
+  const before = process.env.FAKE_AGENT_LOG;
+  process.env.FAKE_AGENT_LOG = log;
+  t.after(() => {
+    if (before === undefined) delete process.env.FAKE_AGENT_LOG;
+    else process.env.FAKE_AGENT_LOG = before;
+  });
+  const launches = (): Launch[] =>
+    readFileSync(log, 'utf8')
+      .split('\n')
+      // A poll can land mid-append; a finished record ends with a newline.
+      .slice(0, -1)
+      .map((line) => JSON.parse(line) as Launch);
+  /** The `count`th session the office started for a worker. */
+  const launched = async (workerId: string, count = 1): Promise<Launch> => {
+    const end = Date.now() + 8000;
+    for (;;) {
+      const mine = launches().filter((l) => l.workerId === workerId);
+      if (mine.length >= count) return mine[count - 1];
+      if (Date.now() > end) assert.fail(`timed out waiting for launch ${count} of ${workerId}`);
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    }
+  };
+  /** The Office MCP as one launched session reaches it: the loopback listener, with its hook credential. */
+  const mcp = async (launch: Launch) => {
+    const client = new Client({ name: 'mission-office', version: '1' });
+    t.after(() => client.close());
+    await client.connect(new StreamableHTTPClientTransport(new URL(OFFICE_MCP_PATH, launch.hookUrl), { requestInit: { headers: { [OFFICE_MCP_WORKER_HEADER]: launch.workerId, Authorization: `Bearer ${launch.hookToken}` } } }));
+    return async (name: string, args: Record<string, unknown> = {}) => {
+      const r = await client.callTool({ name, arguments: args });
+      return { error: r.isError === true, text: (r.content as { text?: string }[]).map((c) => c.text ?? '').join('\n'), data: (r.structuredContent ?? {}) as Record<string, unknown> };
+    };
+  };
+  /** A hook from one session, as Droid's hook command sends it; what the office answers is what Droid reads. */
+  const hook = async (launch: Launch, event: string, extra: Record<string, unknown> = {}) => {
+    const res = await fetch(`${launch.hookUrl}/hooks/droid?worker=${launch.workerId}&event=${event}&v=${HOOK_VERSION}`, {
+      method: 'POST',
+      headers: { authorization: `Bearer ${launch.hookToken}` },
+      body: JSON.stringify({ session_id: `session-${launch.workerId}`, hook_event_name: event, ...extra }),
+    });
+    assert.equal(res.status, 200, event);
+    return res.text();
+  };
+  let running = await office(t, dir, agent);
+  return {
+    dir,
+    launched,
+    mcp,
+    hook,
+    get base() {
+      return running.base;
+    },
+    get server() {
+      return running.server;
+    },
+    /** The office goes down keeping its terminals, and a new one opens on the same folder. */
+    async restart() {
+      await running.stop(true);
+      running = await office(t, dir, agent);
+    },
+  };
+}
+
+/** The owner's window, once the office knows Droid is signed in and the Orchestrator may start. */
+async function ownerWindow(t: TestContext, base: string) {
+  const owner = socket(t, base, 'name=Owner');
+  const welcome = await owner.wait('welcome');
+  if (welcome.missionControl?.orchestrator.blocked) {
+    owner.send({ t: 'setup.check' });
+    await owner.wait('missionControl', (m) => !m.state.orchestrator.blocked);
+  }
+  return owner;
+}
+
+test('the Orchestrator finds Mission Control in office_roster and may read only its own terminal there', async (t) => {
+  const o = await missionOffice(t);
+  const owner = await ownerWindow(t, o.base);
+  owner.send({ t: 'orchestrator.prompt', prompt: 'Plan the release', requestId: 'first' });
+  assert.equal((await owner.wait('action.result', (m) => m.requestId === 'first')).ok, true);
+  const call = await o.mcp(await o.launched(ORCHESTRATOR_ID));
+  const roster = await call('office_roster');
+  assert.equal(roster.error, false, roster.text);
+  assert.match(roster.text, /\n\nMission Control\n {2}Orchestrator \(orchestrator\) \[you, orchestrator\], Mission Control, /);
+  const mission = roster.data.mission as { worker: { id: string } }[];
+  assert.deepEqual(
+    mission.map((a) => a.worker.id),
+    [ORCHESTRATOR_ID],
+  );
+  const look = await call('office_look', { name: ORCHESTRATOR_ID });
+  assert.equal(look.error, false, look.text);
+  assert.equal(look.data.missionControl, true);
+  const home = await call('office_send_home', { name: ORCHESTRATOR_ID });
+  assert.equal(home.error, true);
+  assert.match(home.text, /building agent in Mission Control/);
+});
+
+test('a read of the Orchestrator’s conversation and a resize of its terminal each get a receipt', async (t) => {
+  const o = await missionOffice(t);
+  const owner = await ownerWindow(t, o.base);
+  owner.send({ t: 'thread.read', workerId: ORCHESTRATOR_ID, request: 'page', requestId: 'read' });
+  assert.equal((await owner.wait('thread.snapshot', (m) => m.request === 'page')).error, 'The Orchestrator has no conversation yet.');
+  await owner.wait('action.result', (m) => m.requestId === 'read');
+  owner.send({ t: 'orchestrator.prompt', prompt: 'Plan the release', requestId: 'first' });
+  assert.equal((await owner.wait('action.result', (m) => m.requestId === 'first')).ok, true);
+  const call = await o.mcp(await o.launched(ORCHESTRATOR_ID));
+  owner.send({ t: 'worker.attach', workerId: ORCHESTRATOR_ID, requestId: 'open' });
+  assert.equal((await owner.wait('action.result', (m) => m.requestId === 'open')).ok, true);
+  owner.send({ t: 'term.resize', workerId: ORCHESTRATOR_ID, cols: 100, rows: 30, requestId: 'size' });
+  await owner.wait('action.result', (m) => m.requestId === 'size');
+  const [{ worker }] = o.server.owner.mission();
+  assert.deepEqual([worker.cols, worker.rows], [100, 30]);
+  // Through the Office MCP the read is the office's answer at once, not a wait for a receipt that never comes.
+  const thread = await call('office_worker_thread', { workerId: ORCHESTRATOR_ID });
+  assert.equal(thread.data.pending, undefined, thread.text);
+  assert.match(thread.text, /no conversation yet/);
+});
+
+/** The Orchestrator in its first conversation, leading one subagent on the office's floor. */
+async function orchestratorTeam(t: TestContext) {
+  const o = await missionOffice(t);
+  const owner = await ownerWindow(t, o.base);
+  owner.send({ t: 'orchestrator.prompt', prompt: 'Plan the release', requestId: 'first' });
+  assert.equal((await owner.wait('action.result', (m) => m.requestId === 'first')).ok, true);
+  const lead = await o.mcp(await o.launched(ORCHESTRATOR_ID));
+  const hired = await lead('team_hire', { title: 'Count the tests', brief: 'Count the test files and report.', floor: o.server.floors()[0].id, worktree: false });
+  assert.equal(hired.error, false, hired.text);
+  const id = (hired.data.worker as { id: string }).id;
+  const sub = await o.mcp(await o.launched(id));
+  const leadOf = () => o.server.floors()[0].workers.get(id)?.lead;
+  assert.equal(leadOf(), ORCHESTRATOR_ID);
+  return { o, owner, lead, sub, id, leadOf };
+}
+
+test('a Stop the office holds for the Orchestrator carries its own team’s news, never another lead’s', async (t) => {
+  const { o, owner, sub, id } = await orchestratorTeam(t);
+  const session = await o.launched(ORCHESTRATOR_ID);
+  const mine = o.server.floors()[0].workers.get(id)!.name;
+  owner.send({ t: 'worker.spawn', deskId: 'auto', requestId: 'hire', requestFloor: o.server.floors()[0].id });
+  const other = (await owner.wait('action.result', (m) => m.requestId === 'hire')).workerId!;
+  const otherLead = await o.mcp(await o.launched(other));
+  const hired = await otherLead('team_hire', { title: 'Run lint', brief: 'Run lint and report.', worktree: false });
+  assert.equal(hired.error, false, hired.text);
+  const theirs = hired.data.worker as { id: string; name: string };
+  const otherSub = await o.mcp(await o.launched(theirs.id));
+
+  await o.hook(session, 'SessionStart');
+  await o.hook(session, 'UserPromptSubmit', { prompt: 'Plan the release' });
+  assert.equal((await sub('team_report', { text: 'Found the tests folder' })).error, false);
+  assert.equal((await otherSub('team_report', { text: 'Lint is clean' })).error, false);
+  const held = JSON.parse(await o.hook(session, 'Stop')) as { decision: string; reason: string };
+  assert.equal(held.decision, 'block');
+  assert.ok(held.reason.includes(`${mine} reported back.`), held.reason);
+  assert.ok(!held.reason.includes(theirs.name), held.reason);
+});
+
+test('the Orchestrator’s team survives it being off across an office restart, and reports to it again once it is on', async (t) => {
+  const { o, owner, sub, id, leadOf } = await orchestratorTeam(t);
+  assert.equal((await sub('team_report', { text: 'Found the tests folder' })).error, false);
+  owner.send({ t: 'orchestrator.set', settings: { on: false }, requestId: 'off' });
+  assert.equal((await owner.wait('action.result', (m) => m.requestId === 'off')).ok, true);
+  const silent = await sub('team_report', { text: 'Counted 12 test files' });
+  assert.equal(silent.error, true);
+  assert.match(silent.text, /no lead to report to/, 'its team reports to nobody while it is off');
+  assert.equal(leadOf(), ORCHESTRATOR_ID);
+
+  await o.restart();
+  assert.equal(leadOf(), ORCHESTRATOR_ID, 'an office that opens with it off keeps its team');
+  const back = await ownerWindow(t, o.base);
+  back.send({ t: 'orchestrator.set', settings: { on: true }, requestId: 'on' });
+  assert.equal((await back.wait('action.result', (m) => m.requestId === 'on')).ok, true);
+  const state = await back.wait('missionControl', (m) => m.state.orchestrator.settings.on);
+  assert.deepEqual(
+    state.state.orchestrator.agent?.team.map((m) => m.id),
+    [id],
+  );
+  const heard = await sub('team_report', { text: 'Counted 12 test files' });
+  assert.equal(heard.error, false, heard.text);
+  assert.match(heard.text, /Reported to Orchestrator/);
+  const lead = await o.mcp(await o.launched(ORCHESTRATOR_ID, 2));
+  const status = await lead('team_status');
+  assert.match(status.text, /Found the tests folder/, 'news it had not read when it went off is still its own');
+  assert.match(status.text, /Counted 12 test files/);
+});
+
+test('a new Orchestrator conversation keeps its team across an office restart that comes before its next prompt', async (t) => {
+  const { o, owner, id, leadOf } = await orchestratorTeam(t);
+  owner.send({ t: 'orchestrator.reset', requestId: 'new' });
+  assert.equal((await owner.wait('action.result', (m) => m.requestId === 'new')).ok, true);
+  await o.restart();
+  assert.equal(leadOf(), ORCHESTRATOR_ID);
+  const back = await ownerWindow(t, o.base);
+  back.send({ t: 'orchestrator.prompt', prompt: 'Where were we?', requestId: 'next' });
+  assert.equal((await back.wait('action.result', (m) => m.requestId === 'next')).ok, true);
+  const lead = await o.mcp(await o.launched(ORCHESTRATOR_ID, 2));
+  const status = await lead('team_status');
+  assert.equal(status.error, false, status.text);
+  assert.deepEqual(
+    (status.data.workers as { id: string }[]).map((w) => w.id),
+    [id],
+  );
+});
+
+test('between a new Orchestrator conversation and its first prompt, its team still reports to it and the report is waiting', async (t) => {
+  const { o, owner, sub, id } = await orchestratorTeam(t);
+  owner.messages.length = 0;
+  owner.send({ t: 'orchestrator.reset', requestId: 'new' });
+  assert.equal((await owner.wait('action.result', (m) => m.requestId === 'new')).ok, true);
+  const dormant = (await owner.wait('missionControl', (m) => !m.state.orchestrator.agent)).state.orchestrator;
+  assert.deepEqual(
+    dormant.team.map((m) => m.id),
+    [id],
+    'every client still sees whose team it is',
+  );
+  const reported = await sub('team_report', { text: 'Counted 12 test files' });
+  assert.equal(reported.error, false, reported.text);
+  assert.match(reported.text, /Reported to Orchestrator/);
+  owner.send({ t: 'orchestrator.prompt', prompt: 'Where were we?', requestId: 'next' });
+  assert.equal((await owner.wait('action.result', (m) => m.requestId === 'next')).ok, true);
+  const lead = await o.mcp(await o.launched(ORCHESTRATOR_ID, 2));
+  const status = await lead('team_status');
+  assert.match(status.text, /Counted 12 test files/);
+  const more = await lead('team_hire', { title: 'Count the docs', brief: 'Count the docs and report.', floor: o.server.floors()[0].id, worktree: false });
+  assert.equal(more.error, false, more.text);
+  assert.deepEqual(
+    (await owner.wait('missionControl', (m) => m.state.orchestrator.agent?.team.length === 2)).state.orchestrator.agent?.team.map((m) => m.id),
+    [id, (more.data.worker as { id: string }).id],
+  );
+});
 
 test('hidden models sync to every device and new connections, with invalid changes refused', async (t) => {
   const { base, dir } = await office(t);

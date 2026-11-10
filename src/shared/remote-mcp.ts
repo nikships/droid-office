@@ -23,8 +23,6 @@ export interface RemoteMcpKey {
 export interface RemoteMcpBot {
   id: string;
   name: string;
-  floor: string;
-  floorName?: string;
   createdAt: number;
   status?: string;
   activity?: string;
@@ -48,7 +46,6 @@ export interface RemoteMcpState {
   /** Set when this office was started with the endpoint turned off (DROID_OFFICE_REMOTE_MCP=off). */
   locked?: string;
   bots: RemoteMcpBot[];
-  floors: { id: string; name: string }[];
 }
 
 /** The `mcpServers` entry most MCP clients take as JSON. */

@@ -5,6 +5,7 @@ import { BOARDS, DESK_BY_ID, deskSeat, FLOOR } from '../src/shared/layout.js';
 import { ROOF } from '../src/shared/rooftop.js';
 import type { WorkerInfo } from '../src/shared/protocol.js';
 import type { Interactable } from '../src/client/world/office.js';
+import { ORCHESTRATOR_SPOT, chairSpot } from '../src/client/mission-office.js';
 import { buildSnapshot, cameraPose, createAutomation, facingToward, freeSpotNear, listTargets, pitchToward, resolveTarget, runCommand, standFor, type AutomationHost, type RawState, type TargetContext } from '../src/client/automation.js';
 
 /** The spots a floor has, the way world/office.ts lays them out: desks, a bean bag and the boards. */
@@ -216,6 +217,46 @@ function raw(over: Partial<RawState> = {}): RawState {
   };
 }
 
+test('Mission Control: the Orchestrator is a place, each seated bot a target by id, and both stand you within reach', () => {
+  const orchestrator: Interactable = { kind: 'orchestrator', x: ORCHESTRATOR_SPOT.x, z: ORCHESTRATOR_SPOT.z, radius: 1.8, agentId: 'orchestrator' };
+  const seat = chairSpot(0)!;
+  const claw: Interactable = { kind: 'bot', x: seat.x, z: seat.z, radius: 0.9, agentId: 'bot-claw' };
+  const ctx = context({ spots: [...floorSpots(), orchestrator, claw], agents: [worker({ id: 'orchestrator', name: 'Orchestrator', deskId: '' }), worker({ id: 'bot-claw', name: 'OpenClaw', deskId: '', remote: true, status: 'working' })] });
+  const list = listTargets(ctx);
+  assert.deepEqual(
+    list.find((t) => t.id === 'orchestrator'),
+    { id: 'orchestrator', kind: 'place', label: 'Orchestrator' },
+  );
+  assert.deepEqual(
+    list.find((t) => t.id === 'bot-claw'),
+    { id: 'bot-claw', kind: 'place', label: 'OpenClaw', worker: { id: 'bot-claw', name: 'OpenClaw', status: 'working' } },
+  );
+  for (const [query, spot] of [
+    ['orchestrator', orchestrator],
+    ['OpenClaw', claw],
+  ] as const) {
+    const r = resolveTarget(query, ctx);
+    assert.ok(r.ok, query);
+    assert.equal(r.target.spot, spot, query);
+    const pose = standFor(r.target, () => false)!;
+    assert.ok(Math.hypot(pose.at.x - spot.x, pose.at.z - spot.z) < spot.radius, `${query}: within reach`);
+    assert.ok(Math.abs(facingToward(pose.at, { x: spot.x, y: 0, z: spot.z }) - pose.facing) < 1e-9, `${query}: facing it`);
+  }
+  const s = buildSnapshot(
+    raw({
+      using: claw,
+      terminal: 'orchestrator',
+      agents: [worker({ id: 'orchestrator', name: 'Orchestrator', deskId: '', status: 'needs_input', task: { name: 'Get CI green' } }), worker({ id: 'bot-claw', name: 'OpenClaw', deskId: '', remote: true, status: 'needs_input' })],
+    }),
+  );
+  assert.deepEqual(s.using, { kind: 'bot', id: 'bot-claw', label: 'OpenClaw' });
+  assert.deepEqual(s.terminal, { workerId: 'orchestrator', name: 'Orchestrator' });
+  assert.deepEqual(s.agents, [
+    { id: 'orchestrator', name: 'Orchestrator', remote: false, status: 'needs_input', waiting: true, task: 'Get CI green' },
+    { id: 'bot-claw', name: 'OpenClaw', remote: true, status: 'needs_input', waiting: false },
+  ]);
+  assert.equal(buildSnapshot(raw()).agents, undefined, 'an office without Mission Control has no agents');
+});
 test('state() is a rounded JSON snapshot of where you are, what is open and who is waiting', () => {
   const s = buildSnapshot(raw());
   assert.deepEqual(s.floor, { id: 'f1', name: 'droid-office' });

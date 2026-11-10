@@ -86,25 +86,34 @@ export const LOFT = { minX: 9, maxX: FLOOR.maxX, minZ: 8, maxZ: FLOOR.maxZ, y: 3
 export const STAIRS = { fromX: 3, toX: LOFT.minX, minZ: 11.2, maxZ: FLOOR.maxZ, steps: 15 } as const;
 
 /**
- * The unused glass room under the boss office. Its furnishings are scenery, not worker seats.
- * The glass stops under the loft's floor; the door faces the lounge.
+ * Mission Control, the glass room under the boss office: the building's agents (shared/mission-control.ts)
+ * are here on every floor. None of its seats is a desk. The glass stops under the loft's floor; the door
+ * faces the lounge.
  */
 export const GLASS_ROOM = { minX: LOFT.minX + 0.15, maxX: FLOOR.maxX, minZ: LOFT.minZ + 0.15, maxZ: FLOOR.maxZ, height: LOFT.y - 0.25, door: { x0: 10, x1: 11.4 } } as const;
 export const GLASS_ROOM_TABLE = { x: 13.7, z: 10.55, width: 3.6, depth: 1.2, height: 0.76 } as const;
 /**
- * Decorative chairs round the table. (x, z) is the table edge; the chair is offset by deskSeat.
+ * The chairs round the table, where external bots sit, nearest the head first. (x, z) is the table
+ * edge; the chair is offset by deskSeat.
  */
 export const GLASS_ROOM_CHAIRS: readonly Pick<DeskDef, 'x' | 'z' | 'rotY'>[] = (
   [
-    [GLASS_ROOM_TABLE.x - GLASS_ROOM_TABLE.width / 2 + 0.35, GLASS_ROOM_TABLE.z, -Math.PI / 2],
     [GLASS_ROOM_TABLE.x - 0.6, GLASS_ROOM_TABLE.z - GLASS_ROOM_TABLE.depth / 2 + 0.35, Math.PI],
     [GLASS_ROOM_TABLE.x - 0.6, GLASS_ROOM_TABLE.z + GLASS_ROOM_TABLE.depth / 2 - 0.35, 0],
     [GLASS_ROOM_TABLE.x + 1.1, GLASS_ROOM_TABLE.z - GLASS_ROOM_TABLE.depth / 2 + 0.35, Math.PI],
     [GLASS_ROOM_TABLE.x + 1.1, GLASS_ROOM_TABLE.z + GLASS_ROOM_TABLE.depth / 2 - 0.35, 0],
+    [GLASS_ROOM_TABLE.x + GLASS_ROOM_TABLE.width / 2 - 0.35, GLASS_ROOM_TABLE.z, Math.PI / 2],
   ] as const
 ).map(([x, z, rotY]) => ({ x, z, rotY }));
-/** The decorative screen on the room's back (south) wall. */
+/**
+ * The head of the table, where the Orchestrator stands on its plinth facing down the table (+x).
+ * `radius` is the plinth's.
+ */
+export const MISSION_HEAD = { x: GLASS_ROOM_TABLE.x - GLASS_ROOM_TABLE.width / 2 - 0.5, z: GLASS_ROOM_TABLE.z, rotY: Math.PI / 2, radius: 0.34, height: 0.16 } as const;
+/** The Orchestrator's screen on the room's back (south) wall, over the table. */
 export const GLASS_ROOM_BOARD = { x: GLASS_ROOM_TABLE.x, y: 1.95, z: FLOOR.maxZ - 0.08, width: 3.6, height: 1.2 } as const;
+/** The building agents' teams, on the room's east wall at the foot of the table. */
+export const MISSION_ROSTER = { x: FLOOR.maxX - 0.08, y: 1.6, z: GLASS_ROOM_TABLE.z, width: 2.8, height: 1.6 } as const;
 
 /** Any place a worker can be by id: the desks and bean bags. */
 export const DESK_BY_ID = new Map(SEATS.map((d) => [d.id, d]));

@@ -3,6 +3,7 @@ package ai.factory.droidoffice.notify
 import ai.factory.droidoffice.core.Asks
 import ai.factory.droidoffice.core.Choice
 import ai.factory.droidoffice.core.Menu
+import ai.factory.droidoffice.core.ORCHESTRATOR_ID
 import ai.factory.droidoffice.session.Answered
 
 import android.Manifest
@@ -68,7 +69,7 @@ class Alerts(
             connection.screens.collect {
                 val d = connection.data.value
                 for (id in shown.keys.toList()) {
-                    val w = d.workers[id] ?: continue
+                    val w = d.worker(id) ?: continue
                     if (w.state == WorkerStatus.NeedsInput && shown[id] != signature(w)) alert(w, d, update = true)
                 }
             }
@@ -83,12 +84,13 @@ class Alerts(
             baseline = key
             last.clear()
             acked.clear()
-            d.workers.values.forEach { last[it.id] = it.state; acked[it.id] = it.acked }
+            d.askable.forEach { last[it.id] = it.state; acked[it.id] = it.acked }
             d.floors.forEach { floorWaiting[it.id] = it.waiting }
             return
         }
         val settings = store.snapshot.value.settings
-        for (w in d.workers.values) {
+        val everyone = d.askable
+        for (w in everyone) {
             val prev = last.put(w.id, w.state)
             val wasAcked = acked.put(w.id, w.acked)
             if (prev == null) continue
@@ -107,7 +109,7 @@ class Alerts(
                 alert(w, d, update = true)
             }
         }
-        for (id in last.keys - d.workers.keys) {
+        for (id in last.keys - everyone.map { it.id }.toSet()) {
             last.remove(id)
             acked.remove(id)
             cancel(id)
@@ -152,7 +154,7 @@ class Alerts(
             .setContentTitle(title)
             .setContentText(detail)
             .setStyle(NotificationCompat.BigTextStyle().bigText(big))
-            .setSubText(listOfNotNull(officeName, d.floor?.name).joinToString(" · "))
+            .setSubText(listOfNotNull(officeName, if (w.id == ORCHESTRATOR_ID) "Mission Control" else d.floor?.name).joinToString(" · "))
             .setCategory(if (needs) NotificationCompat.CATEGORY_MESSAGE else NotificationCompat.CATEGORY_STATUS)
             .setPriority(if (needs) NotificationCompat.PRIORITY_HIGH else NotificationCompat.PRIORITY_DEFAULT)
             .setAutoCancel(true)

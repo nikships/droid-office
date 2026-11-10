@@ -6,12 +6,13 @@ import { DESK_BY_ID } from '../../shared/layout.js';
 import type { WorkerInfo } from '../../shared/protocol.js';
 import { settled, TEAM_EVENT_KINDS, type Team, type TeamEvent, type TeamEventKind, type TeamMember, type TeamViews } from '../team.js';
 import type { WorkerManager } from '../workers.js';
-import { officeAccess, officeError, officeResult, type OfficeMcpAccess, type OfficeMcpCaller, type OfficeMcpDeps, type OfficeMcpServer, type OfficeProgress } from './index.js';
+import { officeAccess, officeError, officeResult, ownFloor, type OfficeMcpAccess, type OfficeMcpCaller, type OfficeMcpDeps, type OfficeMcpServer, type OfficeProgress } from './index.js';
+import { floorNamed } from '../remote-office.js';
 
 // Structured team state for bots that manage subagents: compact worker objects, typed events with
 // ids, timestamps and cursors, a long-poll wait, and the questions waiting on the lead.
 
-/** One floor a lead's team is on: its own floor, or every open floor for an external worker. */
+/** One floor a lead's team is on: its own floor, or every open floor for a building agent. */
 export interface TeamScope {
   id: string;
   team: Pick<Team, 'handle' | TeamViews>;
@@ -52,15 +53,15 @@ export function eventKinds(filters: readonly string[] | undefined): Set<TeamEven
 
 /**
  * A status cursor: comma-separated event ids, one per floor (`team:<floor>:<seq>`). A bare number is a
- * seq on `own`, the caller's floor. Undefined when it isn't one.
+ * seq on `own`, the caller's floor, which a building agent doesn't have. Undefined when it isn't one.
  */
-export function parseCursor(value: string, own: string): Map<string, number> | undefined {
+export function parseCursor(value: string, own: string | undefined): Map<string, number> | undefined {
   const cursor = new Map<string, number>();
   for (const part of value.split(',').map((p) => p.trim())) {
     const m = EVENT_ID.exec(part);
     const seq = m ? Number(m[2]) : /^\d+$/.test(part) ? Number(part) : NaN;
-    if (!Number.isSafeInteger(seq)) return undefined;
     const floor = m ? m[1] : own;
+    if (!Number.isSafeInteger(seq) || floor === undefined) return undefined;
     cursor.set(floor, Math.max(seq, cursor.get(floor) ?? 0));
   }
   return cursor.size ? cursor : undefined;
@@ -123,14 +124,17 @@ export function compactEventText(e: CompactEvent): string {
   return `[${e.id} ${e.at}] ${e.kind} ${e.name}${e.summary ? `: ${e.summary}` : ''}`;
 }
 
-/** The floors whose teams a caller's team tools cover: its own, or for an external worker every open floor (or the one named). */
+/** The floors whose teams a caller's team tools cover: its own, or for a building agent every open floor (or the one named). */
 export function teamScopes(caller: OfficeMcpCaller, deps: OfficeMcpDeps, floor?: string): TeamScope[] | string {
-  if (caller.worker.remote && deps.remote) {
-    const all = deps.remote.floors().filter((f) => !floor || f.id === floor);
-    return all.length ? all : 'No such open floor: office_floors lists them';
+  if (caller.building && deps.remote) {
+    const all = deps.remote.floors();
+    if (floor === undefined) return all.length ? all : 'No floor is open.';
+    const named = floorNamed(all, floor);
+    return typeof named === 'string' ? named : [named];
   }
-  if (floor && floor !== caller.floor.id) return 'Local workers manage only their own floor';
-  return [caller.floor];
+  const own = ownFloor(caller);
+  if (floor && floor !== own.id) return 'Floor workers manage only their own floor';
+  return [own];
 }
 
 /** Subagent ids by name or id across scopes; a name on more than one floor, or none, is an error. */
@@ -285,9 +289,9 @@ export const statusOutput = { workers: z.array(workerOut), news: z.array(eventOu
 
 const readOnly = { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false };
 const cursorArg = z.string().trim().min(1).max(4000).describe('A cursor from an earlier response (cursor field), or one event id: only events after it are considered, whether or not you have heard them.');
-const floorArg = z.string().min(1).max(128).optional().describe('External workers only: just this floor. Omit for all your teams across the building.');
+export const floorArg = z.string().trim().min(1).max(4096).optional().describe('Building agents only: just this open floor, by id, name or checkout path. Omit for all your teams across the building.');
 
-/** Waiting suits a lead that hears nothing otherwise: an external worker, or a local one with Wake the lead off. */
+/** Waiting suits a lead that hears nothing otherwise: an external bot, or one woken by notes with Wake the lead off. */
 const mayWait: OfficeMcpAccess = (c) => officeAccess.team(c) ?? (c.worker.remote || !c.settings.wakeLead ? undefined : 'Wake the lead is on, so a wake note tells you when your team has news: end your turn instead of waiting.');
 
 export function register(server: OfficeMcpServer, deps: OfficeMcpDeps): void {
@@ -297,7 +301,7 @@ export function register(server: OfficeMcpServer, deps: OfficeMcpDeps): void {
     {
       name: 'team_wait',
       description:
-        'Wait until one of your subagents reports, asks a question, gets blocked in its terminal or settles, then return at once with what happened, typed events with ids and a cursor. Returns immediately only for matching news you have not heard (or news after since). A terminal question counts once it appears during the wait, and idle once every watched subagent settles during it; questions already waiting are listed in questions without ending the wait. Otherwise returns at timeoutSec (default 30, at most 600) with matched false. The cursor moves past news until leaves out, so reuse it with the same until. Without since, a local lead hears the news it is shown, like team status. Longer waits need a client timeout to match; with a progress token it sends progress every 15 s.',
+        'Wait until one of your subagents reports, asks, gets blocked in its terminal or settles, then return with what happened: typed events with ids, waiting questions and a cursor. Matching news you have not heard (or news after since) returns at once. A terminal question counts when it appears during the wait, and idle when every watched subagent settles during it; questions already waiting are listed without ending the wait. At timeoutSec it returns with matched false. The cursor moves past news that until leaves out, so reuse it with the same until. Without since, a local lead hears the news it is shown, as with team_status. Set your client timeout to cover long waits; with a progress token it reports progress every 15 s.',
       inputSchema: z.object({
         until: z
           .array(z.enum(WAIT_FOR))
@@ -321,7 +325,7 @@ export function register(server: OfficeMcpServer, deps: OfficeMcpDeps): void {
       const lead = caller.worker.id;
       const watched = watchedWorkers(scopes, lead, args.workers);
       if (typeof watched === 'string') return officeError(watched);
-      const since = args.since === undefined ? undefined : parseCursor(args.since, caller.floor.id);
+      const since = args.since === undefined ? undefined : parseCursor(args.since, caller.floor?.id);
       if (args.since !== undefined && !since) return officeError('since takes a cursor from an earlier team status or team_wait, or one team:<floor>:<seq> event id.');
       const open = waiting.get(lead) ?? 0;
       if (open >= WAITS_PER_CALLER) return officeError(`You already have ${open} team_wait calls open: let one return before starting another.`);
@@ -402,7 +406,7 @@ export function register(server: OfficeMcpServer, deps: OfficeMcpDeps): void {
       description:
         "Read one full report or question from your subagents, by its event id (lastReportId or a news id) or the latest from a named subagent, with that subagent's recent report history. Kept after the subagent leaves. Reading changes nothing.",
       inputSchema: z.object({
-        worker: z.string().trim().min(1).max(128).optional().describe('Subagent name or id: its latest report or question.'),
+        worker: z.string().trim().min(1).max(128).optional().describe('Subagent name or id: its latest report or question. A name hired again after a dismissal means the one on your team now.'),
         id: z.string().trim().min(1).max(200).optional().describe('An event id such as team:<floor>:<seq>.'),
         floor: floorArg,
       }),
@@ -415,18 +419,24 @@ export function register(server: OfficeMcpServer, deps: OfficeMcpDeps): void {
       const scopes = teamScopes(caller, deps, args.floor);
       if (typeof scopes === 'string') return officeError(scopes);
       const lead = caller.worker.id;
-      const wanted = args.id === undefined ? undefined : parseCursor(args.id, caller.floor.id);
+      const wanted = args.id === undefined ? undefined : parseCursor(args.id, caller.floor?.id);
       if (args.id !== undefined && (wanted?.size !== 1 || args.id.includes(','))) return officeError('id takes one event id, such as team:<floor>:<seq> from lastReportId.');
       const [floor, seq] = wanted ? [...wanted][0] : [];
-      const found = scopes.flatMap((s) =>
+      let found = scopes.flatMap((s) =>
         s.team
           .reports(lead, args.worker)
           .filter((e) => seq === undefined || (s.id === floor && e.seq === seq))
           .map((e) => ({ e, floor: s.id })),
       );
+      if (!args.id && new Set(found.map((x) => x.e.worker)).size > 1) {
+        // Reports outlive their subagent, so a name hired again after a dismissal means the one on the team now.
+        const onTeam = new Set(scopes.flatMap((s) => s.workers.list().flatMap((w) => (w.lead === lead ? [w.id] : []))));
+        const current = found.filter((x) => onTeam.has(x.e.worker));
+        if (new Set(current.map((x) => x.e.worker)).size !== 1) return officeError(`${args.worker} names more than one subagent: use the worker id${scopes.length > 1 ? ' or floor' : ''}.`);
+        found = current;
+      }
       const pick = found.at(-1);
       if (!pick) return officeError(args.id ? `No report or question ${args.id} from your subagents.` : `${args.worker} has not reported or asked anything you can still read.`);
-      if (!args.id && new Set(found.map((x) => x.e.worker)).size > 1) return officeError(`${args.worker} names subagents on several floors: use the worker id or floor.`);
       const history = scopes.flatMap((s) => s.team.reports(lead, pick.e.worker).map((e) => compactEvent(e, s.id))).slice(-HISTORY_MAX);
       const report = compactEvent(pick.e, pick.floor, true);
       return officeResult(
@@ -478,7 +488,7 @@ export function register(server: OfficeMcpServer, deps: OfficeMcpDeps): void {
       if (typeof scopes === 'string') return officeError(scopes);
       const lead = caller.worker.id;
       const done = (name: string, worker: string) => officeResult(`Answered ${name}'s question.`, { answered: true, questionId: args.questionId, worker });
-      const team = parseCursor(args.questionId, caller.floor.id);
+      const team = parseCursor(args.questionId, caller.floor?.id);
       if (args.questionId.startsWith('team:') && !args.questionId.includes(',') && team?.size === 1) {
         const [floor, seq] = [...team][0];
         const scope = scopes.find((s) => s.id === floor);

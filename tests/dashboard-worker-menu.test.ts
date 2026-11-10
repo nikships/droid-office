@@ -11,7 +11,7 @@ const worker = { id: 'pixel', name: 'Pixel', color: '#a8d354', kind: 'agent', st
 const state: WorkerMenuState = { worker, floor: 'home', pane: 0, live: true, busy: false, native: true };
 const actions = (s: WorkerMenuState) => workerMenuItems(s).map((i) => i.action);
 
-test('grouped menu adapts to agents, shells, cloud and external workers without offering invalid actions', () => {
+test('grouped menu adapts to agents, shells and cloud workers without offering invalid actions', () => {
   assert.deepEqual(actions(state), ['open', 'split', 'close', 'interrupt', 'fork', 'copy-name', 'home']);
   assert.equal(workerMenuItems(state).find((i) => i.action === 'fork')?.disabled, true);
   assert.equal(workerMenuItems({ ...state, worker: { ...worker, status: 'done' } }).find((i) => i.action === 'fork')?.disabled, false);
@@ -26,10 +26,6 @@ test('grouped menu adapts to agents, shells, cloud and external workers without 
   const shell = { ...state, worker: { ...worker, kind: 'shell' as const, status: 'exited' as const }, pane: -1 };
   assert.deepEqual(actions(shell), ['open', 'split', 'resume', 'copy-name', 'home']);
   assert.equal(workerMenuItems(shell).find((i) => i.action === 'resume')?.label, 'Restart');
-  assert.equal(
-    workerMenuItems({ ...state, worker: { ...worker, remote: {} as WorkerInfo['remote'] } }).some((i) => ['resume', 'interrupt', 'fork'].includes(i.action)),
-    false,
-  );
   assert.equal(
     workerMenuItems({ ...state, worker: { ...worker, cloud: {} as WorkerInfo['cloud'] } }).some((i) => i.action === 'fork'),
     false,

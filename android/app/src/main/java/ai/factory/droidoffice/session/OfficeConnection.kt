@@ -9,7 +9,11 @@ import ai.factory.droidoffice.core.DroidCommand
 import ai.factory.droidoffice.core.FloorInfo
 import ai.factory.droidoffice.core.FloorView
 import ai.factory.droidoffice.core.GhPull
+import ai.factory.droidoffice.core.MissionAgent
+import ai.factory.droidoffice.core.MissionControl
+import ai.factory.droidoffice.core.MissionControlState
 import ai.factory.droidoffice.core.ModelAvailability
+import ai.factory.droidoffice.core.ORCHESTRATOR_ID
 import ai.factory.droidoffice.core.Probe
 import ai.factory.droidoffice.core.ProjectInfo
 import ai.factory.droidoffice.core.Protocol
@@ -94,8 +98,19 @@ data class OfficeData(
     val synced: Boolean = false,
     /** Only a welcome that explicitly advertises the checkbox-answer contract enables it. */
     val workerAnswerMultiSelect: Boolean = false,
+    /** The building's agents, the same on every floor; null from an office that predates Mission Control. */
+    val mission: MissionControlState? = null,
 ) {
     val floor: FloorInfo? get() = floors.firstOrNull { it.id == floorId }
+
+    /** A worker on this floor, or a building agent in Mission Control (the Orchestrator while it is on, or a bot). */
+    fun worker(id: String): WorkerInfo? = workers[id] ?: MissionControl.agent(mission, id)?.worker
+
+    /** The Orchestrator's session while it is on and has one. */
+    val orchestrator: WorkerInfo? get() = MissionControl.orchestrator(mission)
+
+    /** Everyone whose questions and finished turns are the owner's: this floor's workers and the Orchestrator. */
+    val askable: Collection<WorkerInfo> get() = orchestrator?.let { workers.values + it } ?: workers.values
 }
 
 private data class Desire(val office: PairedOffice?, val wanted: Boolean, val online: Boolean, val networkKey: String?, val nonce: Int)
@@ -284,8 +299,11 @@ class OfficeConnection(
         if (workerId in attached) send(ClientMsg.attach(workerId))
     }
 
-    fun goFloor(floorId: String) {
-        if (send(ClientMsg.floorGo(floorId))) scope.launch { _data.value.officeId?.let { id -> store.update(id) { it.copy(lastFloor = floorId) } } }
+    /** Asks the office to move this phone to [floorId]; false when the message couldn't be sent. */
+    fun goFloor(floorId: String): Boolean {
+        val sent = send(ClientMsg.floorGo(floorId))
+        if (sent) scope.launch { _data.value.officeId?.let { id -> store.update(id) { it.copy(lastFloor = floorId) } } }
+        return sent
     }
 
     fun reorderFloor(floorId: String, before: String?): Boolean = send(ClientMsg.floorReorder(floorId, before))
@@ -329,14 +347,20 @@ class OfficeConnection(
         return api.hostUpdate(target.base, target.auth, action, version)
     }
 
-    suspend fun stageImage(name: String, type: String, bytes: ByteArray): Result<String> {
+    /** Stages a picture for a prompt to [workerId]: the Orchestrator keeps its own, whatever floor the phone is on. */
+    suspend fun stageImage(name: String, type: String, bytes: ByteArray, workerId: String? = null): Result<String> {
         val (base, auth) = current ?: return Result.failure(IllegalStateException("Not connected to the office"))
+        if (workerId == ORCHESTRATOR_ID) return api.stageImage(base, auth, null, name, type, bytes, worker = ORCHESTRATOR_ID)
         val floor = _data.value.floorId ?: return Result.failure(IllegalStateException("Not on a floor yet"))
         return api.stageImage(base, auth, floor, name, type, bytes)
     }
 
-    fun unstageImage(id: String) {
+    fun unstageImage(id: String, workerId: String? = null) {
         val (base, auth) = current ?: return
+        if (workerId == ORCHESTRATOR_ID) {
+            scope.launch { api.unstageImage(base, auth, null, id, worker = ORCHESTRATOR_ID) }
+            return
+        }
         val floor = _data.value.floorId ?: return
         scope.launch { api.unstageImage(base, auth, floor, id) }
     }
@@ -580,18 +604,20 @@ class OfficeConnection(
         when (msg) {
             is ServerMsg.Welcome -> {
                 _data.update { it.copy(workerAnswerMultiSelect = msg.workerAnswerMultiSelect) }
+                // An office that predates Mission Control sends none; one that sends it goes through the same path as a broadcast.
+                if (msg.missionControl != null) mission(msg.missionControl) else _data.update { it.copy(mission = null) }
                 whiteboard.status(true)
                 whiteboard.welcome(msg.view.floor)
                 _availability.value = msg.availability
                 _hiddenModels.value = msg.hiddenModels
                 _subscriptions.value = msg.subscriptions
                 _factory.value = msg.factory
-                enter(officeId, msg.view, msg.floors, msg.version)
+                enter(officeId, msg.view, msg.floors, msg.version, keepOrchestrator = false)
                 msg.view.project?.name?.ifBlank { null }?.let { p -> scope.launch { store.update(officeId) { it.copy(project = p) } } }
             }
             is ServerMsg.FloorEnter -> {
                 whiteboard.enter(msg.view.floor)
-                enter(officeId, msg.view, null, null)
+                enter(officeId, msg.view, null, null, keepOrchestrator = true)
                 msg.view.floor?.let { f -> scope.launch { store.update(officeId) { it.copy(lastFloor = f, project = msg.view.project?.name?.ifBlank { null } ?: it.project) } } }
             }
             is ServerMsg.HiddenModels -> _hiddenModels.value = msg.ids
@@ -601,8 +627,18 @@ class OfficeConnection(
                 _availability.value = msg.availability
                 _subscriptions.value = msg.state
             }
+            is ServerMsg.MissionControl -> mission(msg.state)
             is ServerMsg.WorkerUpdate -> {
                 val w = msg.worker
+                if (w.id == ORCHESTRATOR_ID) {
+                    // Its own update between Mission Control states: keep its team, take its new status.
+                    _data.value.mission?.let { m ->
+                        val o = m.orchestrator
+                        mission(m.copy(orchestrator = o.copy(agent = o.agent?.copy(worker = w) ?: MissionAgent(w))))
+                    }
+                    return
+                }
+                if (!MissionControl.isDeskWorker(w, _data.value.mission)) return
                 val before = _data.value.workers
                 if (!before.containsKey(w.id) && w.createdBy == officeName && System.currentTimeMillis() - hireAskedAt < HIRE_WINDOW_MS) {
                     hireAskedAt = 0
@@ -633,15 +669,32 @@ class OfficeConnection(
         }
     }
 
-    private fun enter(officeId: String, view: FloorView, floors: List<FloorInfo>?, version: String?) {
-        _screens.value = emptyMap()
+    private fun mission(state: MissionControlState) {
+        val was = _data.value.orchestrator
+        _data.update { it.copy(mission = state) }
+        val now = MissionControl.orchestrator(state)
+        when (MissionControl.sessionChange(was, now)) {
+            MissionControl.Session.Ended -> {
+                _screens.update { it - ORCHESTRATOR_ID }
+                // A screen still holding its terminal gets a feed with none of the old session in it.
+                if (feeds.containsKey(ORCHESTRATOR_ID)) feeds[ORCHESTRATOR_ID] = TermFeed()
+            }
+            MissionControl.Session.Resized -> now?.let { feeds[it.id]?.push(TermEvent.Resize(TermSize(it.cols, it.rows))) }
+            MissionControl.Session.Same -> Unit
+        }
+    }
+
+    /** [keepOrchestrator]: the Orchestrator's screen is the building's, so a change of floor leaves it be. */
+    private fun enter(officeId: String, view: FloorView, floors: List<FloorInfo>?, version: String?, keepOrchestrator: Boolean) {
+        _screens.update { screens -> if (keepOrchestrator) screens.filterKeys { it == ORCHESTRATOR_ID } else emptyMap() }
+        val mission = _data.value.mission
         _data.update {
             it.copy(
                 officeId = officeId,
                 floors = floors ?: it.floors,
                 floorId = view.floor,
                 project = view.project,
-                workers = view.workers.associateBy(WorkerInfo::id),
+                workers = view.workers.filter { w -> MissionControl.isDeskWorker(w, mission) }.associateBy(WorkerInfo::id),
                 pulls = view.pulls.items,
                 version = version ?: it.version,
                 synced = true,

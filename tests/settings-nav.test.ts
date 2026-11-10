@@ -2,18 +2,18 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { SETTINGS_CARDS, SETTINGS_PANES, resolveSettingsPane, searchSettings, settingsCards, settingsPaneAfter, settingsPanes, type SettingsPane } from '../src/shared/settings-nav.js';
 
-test('settings has the nine categories, grouped Personal / Workers / Office, in order', () => {
+test('settings has the ten categories, grouped Personal / Workers / Office, in order', () => {
   assert.deepEqual(
     SETTINGS_PANES.map((p) => p.label),
-    ['You', 'Sound & alerts', 'Display', 'Workers', 'Models', 'Subagents & visits', 'Connections', 'Office & floors', 'Phone & web'],
+    ['You', 'Sound & alerts', 'Display', 'Workers', 'Models', 'Subagents & visits', 'Orchestrator', 'Connections', 'Office & floors', 'Phone & web'],
   );
   assert.deepEqual(
     SETTINGS_PANES.map((p) => p.id),
-    ['you', 'sound', 'graphics', 'workers', 'models', 'subagents', 'connections', 'office', 'phone'],
+    ['you', 'sound', 'graphics', 'workers', 'models', 'subagents', 'orchestrator', 'connections', 'office', 'phone'],
   );
   assert.deepEqual(
     SETTINGS_PANES.map((p) => p.section),
-    ['Personal', 'Personal', 'Personal', 'Workers', 'Workers', 'Workers', 'Office', 'Office', 'Office'],
+    ['Personal', 'Personal', 'Personal', 'Workers', 'Workers', 'Workers', 'Workers', 'Office', 'Office', 'Office'],
   );
   for (const pane of SETTINGS_PANES) {
     assert.ok(pane.scope, `${pane.id} says who it applies to`);
@@ -57,6 +57,10 @@ test('every setting is in a category', () => {
     ['Waking the lead', 'subagents'],
     ['Droid’s Task tool', 'subagents'],
     ['Visits between workers', 'subagents'],
+    ['Orchestrator', 'orchestrator'],
+    ['Orchestrator model', 'orchestrator'],
+    ['New conversation', 'orchestrator'],
+    ['Orchestrator brief', 'orchestrator'],
     ['Droid', 'connections'],
     ['Factory API key', 'connections'],
     ['DroidProxy', 'connections'],
@@ -128,6 +132,8 @@ test('search finds a setting by name, pane or keyword, every word required', () 
   assert.deepEqual(searchSettings('workspace folder'), [{ pane: 'office', title: 'Workspace folder' }]);
   assert.deepEqual(searchSettings('hot reload'), [{ pane: 'office', title: 'Source hot reload' }]);
   assert.deepEqual(searchSettings('factory key'), [{ pane: 'connections', title: 'Factory API key' }]);
+  assert.deepEqual(searchSettings('new conversation'), [{ pane: 'orchestrator', title: 'New conversation' }]);
+  assert.deepEqual(searchSettings('orchestrator model'), [{ pane: 'orchestrator', title: 'Orchestrator model' }]);
   assert.deepEqual(searchSettings('there is no such setting'), []);
 });
 
@@ -138,7 +144,8 @@ test('arrow keys move between categories and wrap, Home and End jump', () => {
   assert.equal(settingsPaneAfter('you', 'ArrowLeft'), 'phone');
   assert.equal(settingsPaneAfter('workers', 'ArrowDown'), 'models');
   assert.equal(settingsPaneAfter('models', 'ArrowDown'), 'subagents');
-  assert.equal(settingsPaneAfter('subagents', 'ArrowDown'), 'connections');
+  assert.equal(settingsPaneAfter('subagents', 'ArrowDown'), 'orchestrator');
+  assert.equal(settingsPaneAfter('orchestrator', 'ArrowDown'), 'connections');
   assert.equal(settingsPaneAfter('phone', 'ArrowDown'), 'you');
   assert.equal(settingsPaneAfter('connections', 'ArrowDown'), 'office');
   assert.equal(settingsPaneAfter('office', 'ArrowDown'), 'phone');
@@ -159,11 +166,11 @@ test('the companions leave out what only the 3D office has, and only the Mac app
   );
   assert.deepEqual(
     settingsPanes('companion').map((p) => p.label),
-    ['Workers', 'Models', 'Subagents & visits', 'Connections', 'Office & floors'],
+    ['Workers', 'Models', 'Subagents & visits', 'Orchestrator', 'Connections', 'Office & floors'],
   );
   assert.deepEqual(
     settingsPanes('mac-companion').map((p) => p.label),
-    ['Workers', 'Models', 'Subagents & visits', 'Connections', 'Office & floors', 'Phone & web'],
+    ['Workers', 'Models', 'Subagents & visits', 'Orchestrator', 'Connections', 'Office & floors', 'Phone & web'],
   );
   const officeOnly = [
     'Your character',

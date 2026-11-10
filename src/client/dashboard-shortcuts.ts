@@ -1,6 +1,6 @@
 import { LAYOUT_ORDER, type LayoutMode } from './dashboard-workspace';
 
-export type WorkspaceCommand = { action: 'layout'; mode: LayoutMode } | { action: 'maximize' | 'hire' | 'board' | 'sidebar' | 'settings' } | { action: 'pane' | 'worker' | 'floor'; direction: -1 | 1 };
+export type WorkspaceCommand = { action: 'layout'; mode: LayoutMode } | { action: 'maximize' | 'hire' | 'board' | 'sidebar' | 'settings' | 'orchestrator' } | { action: 'pane' | 'worker' | 'floor'; direction: -1 | 1 };
 
 type ShortcutEvent = Pick<KeyboardEvent, 'key' | 'metaKey' | 'ctrlKey' | 'altKey' | 'shiftKey' | 'isComposing' | 'defaultPrevented' | 'repeat' | 'preventDefault' | 'stopImmediatePropagation'>;
 
@@ -13,6 +13,7 @@ export const WORKSPACE_KEY_HINTS: [string, string][] = [
   ['⌘ B', 'board'],
   ['⌘ \\', 'sidebar'],
   ['⌘ ,', 'settings'],
+  ['⌘ O', 'Orchestrator'],
 ];
 
 /** Only Command chords belong to the workspace. All CLI and editing keys pass through. */
@@ -44,6 +45,8 @@ export function workspaceCommand(e: ShortcutEvent, nativeCompanion = false): Wor
       return { action: 'sidebar' };
     case ',':
       return { action: 'settings' };
+    case 'o':
+      return { action: 'orchestrator' };
   }
 }
 
@@ -55,6 +58,18 @@ export function workspaceShortcut(e: ShortcutEvent, run: (command: WorkspaceComm
   e.stopImmediatePropagation();
   if (!e.repeat) run(command);
   return true;
+}
+
+/**
+ * The row ↑/↓ goes to in the sidebar, which walks Mission Control's rows and then the floor's as one list:
+ * on from the row with the keyboard, else from the worker in the focused pane. A worker in both lists has a row in each.
+ */
+export function sideStep<T extends { id: string; button?: unknown }>(rows: readonly T[], from: unknown, focused: string, direction: -1 | 1): T | undefined {
+  if (!rows.length) return undefined;
+  let at = from ? rows.findIndex((r) => r.button === from) : -1;
+  if (at < 0) at = rows.findIndex((r) => r.id === focused);
+  if (at < 0) return rows[direction > 0 ? 0 : rows.length - 1];
+  return rows[(at + direction + rows.length) % rows.length];
 }
 
 export function adjacentFloor(floors: readonly { id: string }[], current: string | null, direction: -1 | 1): string | undefined {

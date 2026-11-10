@@ -15,12 +15,15 @@ import { availabilityWords, cannotRun, type ModelAvailability } from '../shared/
 import { officePrompt, type PromptSource } from './prompts.js';
 import { workerMessageVars } from '../shared/prompts.js';
 import { hireRefusal } from './subscriptions/map.js';
+import { isBuildingAgent, MISSION_CONTROL_DOOR } from './building-agent.js';
 import { pushedSha, workerDiff } from './team-inspect.js';
 
 /** What the team needs from the floor's workers. Narrow on purpose, so a test can fake it. */
 export interface TeamWorkers {
   list(): WorkerInfo[];
   get(id: string): WorkerInfo | undefined;
+  /** `id` is a building agent, leading now or not: the news kept for it outlives a restart while it is away. */
+  buildingAgent?(id: string): boolean;
   deskOccupied(deskId: string): boolean;
   readonly officeDefault: AgentChoice | undefined;
   /**
@@ -356,6 +359,11 @@ export class Team {
     return officePrompt(this.opts.prompts, 'subagent.nudge', { news: newsWords(news) });
   }
 
+  /** A lead that isn't on this floor (a building agent) came to rest: news it hasn't been woken for wakes it now. */
+  leadRested(lead: string) {
+    if (this.unnudged(lead).length) this.scheduleNudge(lead);
+  }
+
   /** A former lead can still drain final reports and departures after hiring is disabled. */
   hasNews(lead: string): boolean {
     return this.log.some((event) => event.lead === lead && !event.seen);
@@ -420,8 +428,8 @@ export class Team {
       const boss = this.workers.get(w.lead)?.name ?? 'your lead';
       return `You're a subagent of ${boss}, and subagents can't hire their own: do your task yourself, or ask ${boss} with team_report and question: true`;
     }
-    // External workers have the owner's access, and the owner hires whatever the Subagents settings say.
-    if (w.remote) return undefined;
+    // Building agents have the owner's access, and the owner hires whatever the Subagents settings say.
+    if (isBuildingAgent(w)) return undefined;
     const s = this.opts.settings();
     if (!s.on) return 'Subagents are turned off in this office (⚙️ Settings → Subagents & visits)';
     if (w.kind !== 'agent') return 'Only agents hire subagents';
@@ -439,11 +447,11 @@ export class Team {
       canHire: !why,
       ...(why ? { why } : {}),
       subagents: team,
-      // External workers have the owner's access: no team size or model list limits them.
-      ...(w.remote ? {} : { max: s.maxPerLead }),
+      // Building agents have the owner's access: no team size or model list limits them.
+      ...(isBuildingAgent(w) ? {} : { max: s.maxPerLead }),
       worktree: s.worktree && this.opts.git,
       wakeLead: s.wakeLead,
-      ...(s.models?.length && !w.remote ? { models: s.models.length } : {}),
+      ...(s.models?.length && !isBuildingAgent(w) ? { models: s.models.length } : {}),
     };
   }
 
@@ -494,7 +502,7 @@ export class Team {
         ...(stuck ? { cannotRun: stuck } : {}),
       };
     };
-    const allowed = s.models?.length && !caller.remote ? s.models : undefined;
+    const allowed = s.models?.length && !isBuildingAgent(caller) ? s.models : undefined;
     const models = includeDisabled
       ? [...new Set([...known.keys(), ...(allowed ?? []).map((m) => m.id)])].map((id) => {
           const model = describe(id, known.get(id), allowed?.find((m) => m.id === id)?.note);
@@ -620,14 +628,15 @@ export class Team {
     const s = this.opts.settings();
     const asked = typeof b.model === 'string' ? b.model.trim() : '';
     // Only a model outside the list needs droid's own default, which subagents may always run.
-    const outside = !lead.remote && asked && s.models?.length && !s.models.some((m) => m.id === asked) && !this.defaultModel();
-    const choice = this.choice(b, outside ? (await this.catalogue())?.defaultModel : undefined, lead.remote);
+    const building = isBuildingAgent(lead);
+    const outside = !building && asked && s.models?.length && !s.models.some((m) => m.id === asked) && !this.defaultModel();
+    const choice = this.choice(b, outside ? (await this.catalogue())?.defaultModel : undefined, building);
     if (typeof choice === 'string') return no(400, choice);
-    const refused = await this.refuseModel(choice.model, !!asked, !!lead.remote);
+    const refused = await this.refuseModel(choice.model, !!asked, building);
     if (refused) return no(409, refused);
-    // External leads have the owner's access, which no team size limits.
+    // Building agents have the owner's access, which no team size limits.
     const full = () => {
-      if (lead.remote) return undefined;
+      if (building) return undefined;
       const n = this.teamOf(lead.id).length;
       return n >= s.maxPerLead ? `You have ${n} subagents, the most one lead has at once in this office: use team with action dismiss and its name only when both worker and worktree are no longer needed` : undefined;
     };
@@ -649,7 +658,8 @@ export class Team {
     if (!still) return no(410, "You've left the floor");
     const after = full();
     if (after) return no(409, after);
-    const at = DESK_BY_ID.get(still.deskId);
+    // A building agent has no desk: its subagent sits nearest Mission Control.
+    const at = DESK_BY_ID.get(still.deskId) ?? (building ? MISSION_CONTROL_DOOR : undefined);
     const seat = at && nearestFreeSeat(at.x, at.z, (id) => this.workers.deskOccupied(id));
     if (!seat) return no(409, 'Every desk and bean bag on this floor is taken: dismiss a subagent you are done with, or ask the person to send someone home');
     const info = branch === undefined ? this.workers.hire(seat.id, still.name, task, worktree, choice, still.id, from) : this.workers.hire(seat.id, still.name, task, worktree, choice, still.id, from, branch);
@@ -900,7 +910,7 @@ export class Team {
       // nothing kept yet
     }
     // A lead that didn't come back with the office has nobody to hear its news.
-    this.log = this.log.filter((e) => !!this.workers.get(e.lead));
+    this.log = this.log.filter((e) => !!this.workers.get(e.lead) || this.workers.buildingAgent?.(e.lead));
     // Cursors and inbox ids name a seq, so it never goes back, even when the newest events left with their lead.
     this.seq = this.log.reduce((m, e) => Math.max(m, e.seq), Math.max(this.seq, ...this.statusCursors.values()));
   }

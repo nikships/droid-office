@@ -825,7 +825,7 @@ export class Person {
 
 // -----------------------------------------------------------------------------------------------
 
-const STATUS_BULB: Record<string, string> = {
+export const STATUS_BULB: Record<string, string> = {
   starting: '#8c8c8c',
   idle: '#5aa9e6',
   working: '#f2b84b',
@@ -1368,6 +1368,8 @@ export class Worker {
   constructor(
     name: string,
     private color: string,
+    /** A compact nameplate where wall panels already identify the worker (Mission Control). */
+    private nameScale = 1,
   ) {
     const skin = (this.skin = toonUnique(color));
     const mats = getWorkerMats();
@@ -1515,6 +1517,7 @@ export class Worker {
       disposeSprite(this.nameTag);
     }
     this.nameTag = textSprite(name, { bg: '#0a0a0a', color: '#eeeeee', size: 36, border: this.teamAccent ?? '#2f2f2f' });
+    this.nameTag.scale.multiplyScalar(this.nameScale);
     this.nameTag.position.y = 1.55;
     this.root.add(this.nameTag);
   }

@@ -63,7 +63,6 @@ export interface RemoteMcpOptions {
   dataDir: string;
   office: RemoteOffice;
   mcp: Omit<OfficeMcpDeps, 'remote' | 'remoteTransport'>;
-  floors(): { id: string; name: string }[];
   cli?: TailscaleCli;
   /** Where the loopback listener tries first; 0 picks any free port. */
   backendPort?: number;
@@ -118,8 +117,8 @@ export class RemoteMcp {
     return this.start();
   }
 
-  add(name: string, floor: string): RemoteMcpState {
-    this.opts.office.add(name, floor);
+  add(name: string): RemoteMcpState {
+    this.opts.office.add(name);
     return this.state();
   }
 
@@ -145,9 +144,8 @@ export class RemoteMcp {
 
   state(): RemoteMcpState {
     const url = this.status === 'serving' && this.hostname && this.httpsPort ? remoteMcpUrl(this.hostname, this.httpsPort) : undefined;
-    const floors = this.opts.floors();
     const bots = this.opts.office.store.list().map((r): RemoteMcpBot => {
-      const worker = this.opts.office.floor(r.id)?.workers.get(r.id);
+      const worker = this.opts.office.store.identity(r.id);
       const connection = (key?: string): RemoteMcpConnection | undefined => {
         const token = this.opts.office.store.token(r.id, key);
         return url && token ? { url, headers: { Authorization: `Bearer ${token}`, [OFFICE_MCP_WORKER_HEADER]: r.id } } : undefined;
@@ -156,8 +154,6 @@ export class RemoteMcp {
       return {
         id: r.id,
         name: r.name,
-        floor: r.floor,
-        floorName: floors.find((f) => f.id === r.floor)?.name,
         createdAt: r.createdAt,
         unread: r.unread,
         ...(r.lastUsedAt ? { lastUsedAt: r.lastUsedAt } : {}),
@@ -169,7 +165,7 @@ export class RemoteMcp {
         }),
       };
     });
-    return { on: this.saved.on, status: this.status, ...(url ? { url } : {}), ...(this.reason ? { reason: this.reason } : {}), ...(this.fixUrl ? { fixUrl: this.fixUrl } : {}), bots, floors };
+    return { on: this.saved.on, status: this.status, ...(url ? { url } : {}), ...(this.reason ? { reason: this.reason } : {}), ...(this.fixUrl ? { fixUrl: this.fixUrl } : {}), bots };
   }
 
   /** The office is stopping. The Serve mapping stays, so the next start keeps the same URL. */

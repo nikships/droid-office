@@ -14,6 +14,7 @@ const root = path.resolve(import.meta.dirname, '..');
 const NOT_SCENE: Record<string, string> = {
   'src/client/fonts': 'glyph shapes on labels',
   'src/client/graphics': 'the Classic upscaler',
+  'src/client/mission-office': 'who is in Mission Control and what its screens say (hidden while baking, or live data)',
   'src/client/player': 'movement',
   'src/client/state': 'live office state for the boards',
   'src/client/term-theme': 'laptop screen colours (laptops are hidden while baking)',
@@ -25,6 +26,7 @@ const NOT_SCENE: Record<string, string> = {
   'src/shared/factory-computers': 'Factory data on screens',
   'src/shared/factory-sessions': 'Factory data on screens',
   'src/shared/jira': 'board data',
+  'src/shared/mission-control': 'building agents (hidden while baking)',
   'src/shared/nav': 'floor navigation',
   'src/shared/pipelines': 'board data',
   'src/shared/protocol': 'message types',

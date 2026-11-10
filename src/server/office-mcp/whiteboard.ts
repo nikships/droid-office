@@ -4,11 +4,11 @@ import { z } from 'zod';
 import { readerOf, stateAt, type Anchor, type Op } from '../../shared/whiteboard.js';
 import { readBoard, workerAuthor } from '../whiteboard-agent.js';
 import { formatRead, printable } from './whiteboard-format.js';
-import { officeAccess, officeError, officeResult, record, type OfficeMcpCaller, type OfficeMcpDeps, type OfficeMcpServer } from './index.js';
+import { officeAccess, officeError, officeResult, ownFloor, record, type OfficeMcpCaller, type OfficeMcpDeps, type OfficeMcpServer } from './index.js';
 
 export const instructions = `The Whiteboard is the floor's shared wall of HTML artifacts and canvases. Use it for reviewable screenshots, mockups, diagrams, reports, plans, decisions, options and forms. Plain progress and short answers stay in your terminal. After creating a card, name its title and id in your terminal so the owner can find it. Read feedback with whiteboard_read before changing an existing card, and answer the owner's comments, stickies, form answers and button presses. CHANGED means someone else changed that piece since your last read of that card.
 Good artifacts have stable data-wb-id anchors on sections, options and steps, and a layout 1280 pixels wide (any height). Never put secrets in an artifact: its sandbox has network access. Pages run on an opaque origin without shared cookies or localStorage; keep persistent data in the card's JSON state.
-The injected window.whiteboard API: state.get(path?) returns a copy; state.set(value) replaces the object, set(path,value) sets a leaf; state.merge(obj) or merge(path,obj) recursively merges leaves and replaces arrays; state.del(path) removes it. Paths are dotted strings or key arrays. on('state',fn) observes own and remote changes; on('ready',fn) and ready indicate state arrival; on('mode',fn) and mode are 'use' or 'markup'. action(name,data?) records state.actions[name] = {name,data,at}; card is {id,title,author}. rendering is true during image capture: writes are dropped, so skip external side effects then. Without JavaScript, fields with a name or id save/restore state.fields, buttons with data-wb-action and optional JSON data-wb-data record actions, and form submission records 'submit'. Typing is not overwritten mid-edit.
+The injected window.whiteboard API: state.get(path?) returns a copy; state.set(value) replaces the object, set(path,value) sets a leaf; state.merge(obj) or merge(path,obj) recursively merges leaves and replaces arrays; state.del(path) removes it. Paths are dotted strings or key arrays. on('state',fn) observes own and remote changes; on('ready',fn) and ready indicate state arrival; on('mode',fn) and mode are 'use' or 'markup'. action(name,data?) records state.actions[name] = {name,data,at}; card is {id,title,author}. rendering is true during image capture: writes are dropped, so skip external side effects then. Without JavaScript, fields with a name or id save/restore state.fields, buttons with data-wb-action and optional JSON data-wb-data record actions, and form submission records 'submit'. A field keeps what is being typed into it.
 Buttons that tell you: a plain data-wb-action press is only recorded for your next read, so any button that asks you to do something (Accept and build, Approve, Deny, Pick this one) must also have data-wb-ping="message", for example <button data-wb-action="accept" data-wb-ping="The owner accepted the proposal. Build it.">Accept and build</button>. When the owner presses it, the office types that message, with the button's words and the card, into the terminal of the worker who last edited the card's HTML: you, while you keep the card up to date yourself. It steers a running turn and wakes you if you're asleep. Give each choice its own action name. A press records state.actions[name] and state.pinged[name] = {text,label,at}, and that button then stays disabled until you re-arm it with whiteboard_state op del path pinged.<name>. The office also disables data-wb-ping buttons while the card's last HTML editor isn't on the floor. Each such button carries data-wb-ping-state="ready", "sent" or "unavailable" (and is disabled unless ready), so style those states.
 File sources resolve against your working folder, never the office server's. A file collects its markup/CSS assets inside its folder; a dir includes runtime-loaded files (modules, fetch), except hidden files and node_modules. Outside references, missing files and limits are reported, never silently included; folder entries and symlink assets cannot escape the folder. Remote URLs stay remote. Linked cards follow their source file/folder: edit that source, or unlink before replacing content. A missing linked source keeps its last good content and reports a broken link until it recovers.
 The floor stores board.json, its key and content-addressed blobs under .droid-office/whiteboard/. File paths returned by reads are read-only blob paths; change a card through these tools. Use whiteboard_state for answers and application data, whiteboard_marks for feedback, and whiteboard_apply for atomic batches.`;
@@ -60,8 +60,9 @@ function resolvePaths(ops: Record<string, unknown>[], cwd: string): Op[] {
 }
 
 function apply(caller: OfficeMcpCaller, ops: Record<string, unknown>[], extra: Record<string, unknown> = {}) {
-  const store = caller.floor.whiteboard;
-  const out = store.apply({ epoch: store.issueEpoch(), seq: 1, ops: resolvePaths(ops, caller.cwd) }, workerAuthor(caller.worker), 'agent');
+  const floor = ownFloor(caller);
+  const store = floor.whiteboard;
+  const out = store.apply({ epoch: store.issueEpoch(), seq: 1, ops: resolvePaths(ops, caller.cwd ?? floor.dir) }, workerAuthor(caller.worker), 'agent');
   if (out.kind !== 'ack') return officeError(out.reason === 'invalid' ? printable(out.error.message) : 'The batch expired. Read the board before retrying.');
   return officeResult(`Done at revision ${out.rev}.${extra.card ? ` Card: ${extra.card}.` : ''}${extra.id ? ` Mark: ${extra.id}.` : ''}`, { ok: true, rev: out.rev, ...extra });
 }
@@ -102,7 +103,7 @@ export function register(server: OfficeMcpServer, _deps: OfficeMcpDeps): void {
     {
       name: 'whiteboard_read',
       description:
-        'Read the board or selected cards, including HTML, read-only asset paths, state, comments, stickies, pictures, removals and CHANGED pieces. Only returned cards move their read points, to this snapshot revision. A failed read moves nothing. With png, each card returns current-snapshot PNG image tiles or an honest reason and last-image age; cards without images remain unread. Never use an older image as if it showed the current snapshot.',
+        "Read the board or selected cards, including HTML, read-only asset paths, state, comments, stickies, pictures, removals and CHANGED pieces. Only returned cards move their read points, to this snapshot revision. A failed read moves nothing. With png, each card returns current-snapshot PNG image tiles or the reason it has none and its last image's age; cards without images stay unread. An older image shows an older revision, never the current snapshot.",
       inputSchema: z.object({
         cards: z.array(z.string()).optional().describe('Card ids; omit for the whole board.'),
         json: z.boolean().optional().describe('Return exact JSON text instead of readable text; structuredContent is always available.'),
@@ -112,7 +113,8 @@ export function register(server: OfficeMcpServer, _deps: OfficeMcpDeps): void {
     },
     officeAccess.worker,
     async (args, caller, signal) => {
-      const out = await readBoard(caller.floor.whiteboard, readerOf(workerAuthor(caller.worker)), { id: caller.floor.id, name: caller.floor.name }, { ...args, signal });
+      const floor = ownFloor(caller);
+      const out = await readBoard(floor.whiteboard, readerOf(workerAuthor(caller.worker)), { id: floor.id, name: floor.name }, { ...args, signal });
       const result = officeResult('');
       result.content = [];
       const pngs = new Map<string, string>();
@@ -147,7 +149,7 @@ export function register(server: OfficeMcpServer, _deps: OfficeMcpDeps): void {
     {
       name: 'whiteboard_card',
       description:
-        'Create an HTML artifact or canvas, update its title/content in place, link/unlink a local file or folder, remove a card, or choose what the wall shows. Updates keep marks and state. Read feedback before updating. Create needs title and source; update needs title and/or non-canvas source. Link needs source {link,entry?}. A linked card refuses content updates until unlinked. Name the card in your terminal after creating it. show with grid:true shows the grid, not a card.',
+        'Create an HTML artifact or canvas, update its title/content in place, link/unlink a local file or folder, remove a card, or choose what the wall shows. Updates keep marks and state. Create needs title and source; update needs title and/or non-canvas source. Link needs source {link,entry?}. A linked card takes content updates once unlinked. show with grid:true shows the grid, not a card.',
       inputSchema: z.object({
         action: z.enum(['create', 'update', 'link', 'unlink', 'remove', 'show']),
         card: z.string().optional().describe('Existing card id, or optional chosen id when creating (1–64 letters, digits, _ or -).'),
@@ -176,7 +178,8 @@ export function register(server: OfficeMcpServer, _deps: OfficeMcpDeps): void {
         if (!args.title?.trim() || !picked) return officeError('Create needs a nonempty title and a source: html, file, dir, image, link or canvas.');
         const result = apply(caller, [{ op: 'card.create', card, title: args.title.trim(), kind: picked.kind === 'canvas' ? 'canvas' : 'html', ...(content ? { content } : {}) }], { card });
         if (!result.isError) {
-          const created = await readBoard(caller.floor.whiteboard, caller.worker.id, caller.floor, { cards: [card] });
+          const floor = ownFloor(caller);
+          const created = await readBoard(floor.whiteboard, caller.worker.id, floor, { cards: [card] });
           const details = created.cards[0];
           const warnings = [...(details?.content?.missing ?? []).map((missing) => `Not collected: ${missing.ref} (${missing.reason})`), ...(details?.link?.status === 'broken' ? [`The link is broken: ${details.link.reason}`] : [])];
           if (warnings.length) result.content.push({ type: 'text', text: printable(warnings.join('\n')) });
@@ -209,7 +212,8 @@ export function register(server: OfficeMcpServer, _deps: OfficeMcpDeps): void {
     async (args, caller) => {
       const path = dotted(args.path);
       if (args.op === 'get') {
-        const out = await readBoard(caller.floor.whiteboard, caller.worker.id, caller.floor, { cards: [args.card] });
+        const floor = ownFloor(caller);
+        const out = await readBoard(floor.whiteboard, caller.worker.id, floor, { cards: [args.card] });
         const card = out.cards[0];
         if (!card) return officeError(`No such card: ${args.card}. Use whiteboard_read to list cards.`);
         const value = stateAt(card.state, path);
@@ -223,7 +227,7 @@ export function register(server: OfficeMcpServer, _deps: OfficeMcpDeps): void {
     {
       name: 'whiteboard_marks',
       description:
-        'Add or change a comment thread, sticky or picture. Read before changing feedback. Comments support add/reply/edit/resolve/reopen/reattach/remove; sticky supports add/edit/move/reattach/remove; picture supports add/file/move/reattach/remove. Add generates and returns an id; other operations need id. Comment text uses text, and edit needs message (message id); remove with message removes just that message. Anchors prefer stable data-wb-id (on), else selector/quote, else at. Coordinates and box sizes are canonical pixels at 1280px wide. Missing elements detach marks until reattached.',
+        'Add or change a comment thread, sticky or picture. Comments support add/reply/edit/resolve/reopen/reattach/remove; sticky supports add/edit/move/reattach/remove; picture supports add/file/move/reattach/remove. Add generates and returns an id; other operations need id. Comment text uses text, and edit needs message (message id); remove with message removes just that message. Anchors prefer stable data-wb-id (on), else selector/quote, else at. Coordinates and box sizes are canonical pixels at 1280px wide. Missing elements detach marks until reattached.',
       inputSchema: z.object({
         card: z.string(),
         kind: z.enum(['comment', 'sticky', 'picture']),
@@ -275,7 +279,7 @@ comment.add {card,thread,message,anchor,text}; comment.reply|edit {card,thread,m
 sticky.add {card,id,anchor,box?,text?,color?}; sticky.edit {card,id,text?,color?}; sticky.move {card,id,box}; sticky.reattach {card,id,anchor}; sticky.rm {card,id}.
 picture.add {card,id,file,anchor,box?}; picture.file {card,id,file}; picture.move {card,id,box}; picture.reattach {card,id,anchor}; picture.rm {card,id}.
 show {selection:{kind:"grid"}|{kind:"card",id}}; read {cards:[ids],rev}.
-Content: {load:{html}|{file}|{dir,entry?}|{image}|{link,entry?}}. Picture file: {load:"path"}. Disk inputs resolve against your working folder, package entries stay inside their folder. Batch anchors use the stored form {kind:"point",point:{x,y}} or {kind:"element",wbId?,selector?,quote?,offset?:{x,y},point:{x,y}}, not whiteboard_marks shorthand. Read feedback before changes; prefer the focused tools for ordinary work.`,
+Content: {load:{html}|{file}|{dir,entry?}|{image}|{link,entry?}}. Picture file: {load:"path"}. Disk inputs resolve against your working folder, package entries stay inside their folder. Batch anchors use the stored form {kind:"point",point:{x,y}} or {kind:"element",wbId?,selector?,quote?,offset?:{x,y},point:{x,y}}, not whiteboard_marks shorthand. Use the focused tools for ordinary work.`,
       inputSchema: z.object({ ops: z.array(z.record(z.string(), z.unknown())).describe('Operations in order. Any invalid operation or file load rejects the whole batch, leaving the board unchanged.') }),
       annotations: { openWorldHint: false },
     },

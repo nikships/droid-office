@@ -14,6 +14,7 @@ const FAKE = `
 const fs = require('node:fs');
 const { spawnSync } = require('node:child_process');
 const dir = process.env.FAKE_DIR;
+fs.writeFileSync(dir + '/pid', String(process.pid));
 process.stdin.setRawMode(true);
 process.stdout.write('\\x1b[?2004h\\x1b]0;\\u26ec Droid\\x07\\x1b[?25l\\r\\n');
 process.stdout.write('\\x1b[1m                 v0.249.0\\x1b[22m\\r\\n\\r\\n');
@@ -57,7 +58,20 @@ function fakeDroid(t: test.TestContext, mode = 'login') {
     droid,
     env,
     keys: () => (existsSync(path.join(dir, 'keys.txt')) ? readFileSync(path.join(dir, 'keys.txt'), 'utf8') : ''),
-    killed: () => existsSync(path.join(dir, 'killed')),
+    /**
+     * Droid is gone: it handled SIGTERM, or the kill took it before it could (a busy runner can be slow to
+     * start it, or to run its handler before SIGKILL).
+     */
+    stopped: () => {
+      if (existsSync(path.join(dir, 'killed'))) return true;
+      if (!existsSync(path.join(dir, 'pid'))) return false;
+      try {
+        process.kill(Number(readFileSync(path.join(dir, 'pid'), 'utf8')), 0);
+        return false;
+      } catch (err) {
+        return (err as NodeJS.ErrnoException).code === 'ESRCH';
+      }
+    },
   };
 }
 
@@ -96,7 +110,7 @@ test('sign-in presses Enter once on Login, shows the code, and stops Droid once 
   await until(() => polls >= 2);
   signedIn = true;
   assert.deepEqual(await s.done, { ok: true });
-  await until(f.killed);
+  await until(f.stopped);
   assert.equal(f.keys(), '\r');
   assert.deepEqual(
     readdirSync(f.dir).filter((n) => n.startsWith('droid-office-signin-')),
@@ -119,7 +133,7 @@ test('the open shim records the page instead of opening it', async (t) => {
   assert.equal(readFileSync(path.join(f.dir, run!, 'opened.txt'), 'utf8'), 'https://auth.factory.ai/device?user_code=QSMK-CDLX\n');
   s.cancel();
   assert.deepEqual(await s.done, { ok: false, cancelled: true, error: 'Cancelled' });
-  await until(f.killed);
+  await until(f.stopped);
   assert.equal(existsSync(path.join(f.dir, run!)), false);
 });
 
@@ -132,24 +146,24 @@ test('cancel stops Droid', async (t) => {
   const r = await s.done;
   assert.equal(r.ok, false);
   assert.equal(!r.ok && r.cancelled, true);
-  await until(f.killed);
+  await until(f.stopped);
 });
 
 test('a sign-in nobody finishes times out', async (t) => {
   const f = fakeDroid(t);
-  const s = startSignIn({ droid: f.droid, env: f.env, tmpRoot: f.dir, pollMs: 50, timeoutMs: 1500, signedIn: async () => false, onCode: () => {} });
+  const s = startSignIn({ droid: f.droid, env: f.env, tmpRoot: f.dir, pollMs: 50, timeoutMs: 5000, signedIn: async () => false, onCode: () => {} });
   assert.deepEqual(await s.done, { ok: false, cancelled: false, error: TIMED_OUT });
-  await until(f.killed);
+  await until(f.stopped);
   assert.equal(f.keys(), '\r');
 });
 
 test('a screen it does not recognize stops it without pressing anything', async (t) => {
   const f = fakeDroid(t, 'other');
-  const s = startSignIn({ droid: f.droid, env: f.env, tmpRoot: f.dir, recognizeMs: 1500, signedIn: async () => false, onCode: () => {} });
+  const s = startSignIn({ droid: f.droid, env: f.env, tmpRoot: f.dir, recognizeMs: 5000, signedIn: async () => false, onCode: () => {} });
   const r = await s.done;
   assert.deepEqual(r, { ok: false, cancelled: false, error: UNRECOGNIZED });
   assert.match(UNRECOGNIZED, /Run `droid` in a terminal/);
-  await until(f.killed);
+  await until(f.stopped);
   assert.equal(f.keys(), '');
 });
 

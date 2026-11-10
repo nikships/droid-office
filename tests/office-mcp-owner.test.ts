@@ -145,13 +145,14 @@ async function remoteRig(t: TestContext) {
     whiteboard,
   } as unknown as RemoteFloor;
   const office = new RemoteOffice(store, () => [floor]);
-  const grok = office.add('Grok', 'f-app');
+  const grok = office.add('Grok');
   people.set('b-1', worker('b-1', 'Byte', { lead: grok.worker.id, deskId: 'desk-2', createdAt: Number.MAX_SAFE_INTEGER }));
   const calls: { msg: Record<string, unknown>; floor?: string; by: string }[] = [];
   const floors = () => [{ id: 'f-app', name: 'app', workers: [...people.values()] }, ...building().slice(1)];
   const answers: Record<string, (msg: Record<string, unknown>) => OwnerReply> = {};
   const owner: OwnerOffice = {
     floors,
+    mission: () => [{ worker: grok.worker, team: [] }],
     tail: (id, lines, floorId) => (id === 'office-shell' ? (floorId === 'f-api' ? 'npm test\nok' : undefined) : id === 'pixel' ? `last ${lines} lines of Pixel` : undefined),
     act: async (by, msg, opts) => {
       calls.push({ msg, floor: opts?.floor, by: by.name });
@@ -164,10 +165,7 @@ async function remoteRig(t: TestContext) {
     owner,
     remoteTransport: { hostname: () => hostname, owner: () => undefined },
     settings: () => ({ ...SUBAGENT_DEFAULTS }),
-    floor: (id) => {
-      const f = office.floor(id);
-      return f ? ({ ...f, name: f.def.name } as unknown as OfficeMcpFloor) : undefined;
-    },
+    floor: () => undefined,
   });
   server.listen(0, '127.0.0.1');
   await once(server, 'listening');
@@ -199,11 +197,12 @@ test('an external worker sees the whole building and every worker’s terminal t
 
   const all = await r.call('office_roster');
   assert.equal(all.error, false, all.text);
-  assert.match(all.text, /^Floor 1: app \(f-app\), 2 workers\n {2}Grok \(.+\) \[you, external\]/);
-  assert.match(all.text, /\n {2}Byte \(b-1\) \[your subagent\]/);
+  assert.match(all.text, /^Floor 1: app \(f-app\), 1 worker\n {2}Byte \(b-1\) \[your subagent\]/);
   assert.match(all.text, /Floor 2: api \(f-api\), 2 workers\n {2}Pixel \(pixel\), .*, idle, opus high\n {4}Task: Fix login: The session expires/);
   assert.match(all.text, /Floor 3: docs \(f-docs\), 1 worker\n {2}Sandy 🐚 \(sh\) \[shell\]/);
-  assert.equal((all.data!.workers as unknown[]).length, 5);
+  assert.match(all.text, /\n\nMission Control\n {2}Grok \(.+\) \[you, external\], Mission Control, offline/);
+  assert.equal((all.data!.workers as unknown[]).length, 4);
+  assert.equal((all.data!.mission as unknown[]).length, 1);
   const one = await r.call('office_roster', { floor: '3' });
   assert.deepEqual(
     (one.data!.workers as { id: string }[]).map((w) => w.id),
@@ -215,6 +214,44 @@ test('an external worker sees the whole building and every worker’s terminal t
   assert.match((await r.call('office_look', { name: 'office-shell', floor: 'api' })).text, /api's shell:\n\nnpm test/);
   assert.equal((await r.call('office_look', { name: 'Byte' })).error, true, 'a repeated name needs a floor or id');
   assert.equal(r.calls.length, 0, 'reading the building takes no owner action');
+});
+
+test('Mission Control is discoverable before a session and building agents cannot control each other', async (t) => {
+  const r = await remoteRig(t);
+  const bot = worker('other-bot', 'Orchestrator', { remote: true, deskId: '' });
+  const dormant = worker('orchestrator', 'Orchestrator', { deskId: '', activity: 'Ready for its first prompt' });
+  // Put the colliding bot name first: an exact id must still win over that name.
+  r.owner.mission = () => [
+    { worker: bot, team: [] },
+    { worker: dormant, team: [] },
+    { worker: r.grok, team: [] },
+  ];
+  const roster = await r.call('office_roster');
+  assert.match(roster.text, /Orchestrator \(orchestrator\) \[orchestrator\]/);
+  assert.match(roster.text, /Ready for its first prompt/);
+  const look = await r.call('office_look', { name: 'orchestrator' });
+  assert.equal(look.error, true);
+  assert.match(look.text, /has no terminal yet/, 'the fixed id never resolves to the bot with the same name');
+  for (const id of ['orchestrator', 'other-bot', r.grok.id]) {
+    for (const [name, args] of [
+      ['office_worker_prompt', { workerId: id, prompt: 'Do something' }],
+      ['office_worker_interrupt', { workerId: id }],
+      ['office_send_home', { name: id }],
+      ['office_worker_answer', { workerId: id, menu: { choices: [{ number: 1, label: 'Yes' }], freeText: false }, choice: 1 }],
+    ] as const) {
+      const result = await r.call(name, args);
+      assert.equal(result.error, true, name);
+      assert.match(result.text, /building agent in Mission Control/, name);
+    }
+  }
+  assert.equal(r.calls.length, 0, 'no refused action reached the owner handler');
+  assert.equal((await r.call('office_worker_thread', { workerId: 'orchestrator' })).error, false);
+  assert.equal(r.calls[0].msg.workerId, 'orchestrator');
+  const outside = await r.call('office_worker_thread', { workerId: 'other-bot' });
+  assert.equal(outside.error, true);
+  assert.match(outside.text, /runs outside this office, so it has no conversation to read/);
+  assert.doesNotMatch(outside.text, /may read it/);
+  assert.equal(r.calls.length, 1, 'a bot’s thread asks the owner handler for nothing');
 });
 
 test('office_look bounds worker and boss-shell output while preserving the latest text', async (t) => {
@@ -270,9 +307,10 @@ test('office_send_home sends anyone home through the owner’s path, keeping the
   assert.equal((await r.call('office_send_home', { name: 'Pixel', cleanup: 'everything' })).error, true, 'only keep, worktree or all');
 
   const self = await r.call('office_send_home', { name: r.grok.id });
-  assert.equal(self.error, false, 'it may send itself home');
-  assert.match(self.text, /That was you: your key no longer works/);
-  assert.equal(r.calls.at(-1)?.msg.workerId, r.grok.id);
+  assert.equal(self.error, true, 'a building agent cannot send itself home through MCP');
+  assert.match(self.text, /building agent in Mission Control/);
+  assert.match(self.text, /office_send_home is not available/);
+  assert.notEqual(r.calls.at(-1)?.msg.workerId, r.grok.id);
 });
 
 test('focused owner tools report refusal, pending, unconfirmed and bounded replies', async (t) => {
@@ -284,7 +322,7 @@ test('focused owner tools report refusal, pending, unconfirmed and bounded repli
   const refused = await r.call('office_worker_prompt', { workerId: 'pixel', prompt: 'hi' });
   assert.equal(refused.error, true);
   assert.match(refused.text, /office_worker_prompt refused: No such worker/);
-  assert.match((await r.call('office_worker_spawn')).text, /started; no outcome yet/);
+  assert.match((await r.call('office_worker_spawn', { floor: 'app' })).text, /started; no outcome yet/);
   const silent = await r.call('office_worker_interrupt', { workerId: 'pixel' });
   assert.equal(silent.error, false);
   assert.match(silent.text, /neither refused nor confirmed/, 'silence is not reported as done');
@@ -298,7 +336,7 @@ test('focused owner tools report refusal, pending, unconfirmed and bounded repli
 
 // Tool inputs only: no external service is called. The rig records the message sent to the owner bridge.
 const actionInputs: Record<Exclude<OwnerAction, 'worker.kill' | 'worker.worktree'>, Record<string, unknown>> = {
-  'worker.spawn': {},
+  'worker.spawn': { floor: 'app' },
   'worker.prompt': { workerId: 'pixel', prompt: 'Continue' },
   'worker.answer': {
     workerId: 'pixel',
@@ -386,7 +424,7 @@ test('send-home preserves cloud deletion capability and never claims uncertain d
   await r.call('office_send_home', { name: 'Sandy', deleteSession: true });
   assert.equal(r.calls.at(-1)?.msg.deleteSession, true);
   r.answers['worker.kill'] = () => ({ notes: [], unconfirmed: true });
-  const uncertain = await r.call('office_send_home', { name: r.grok.id });
+  const uncertain = await r.call('office_send_home', { name: 'Sandy' });
   assert.equal(uncertain.data?.status, 'unconfirmed');
   assert.doesNotMatch(uncertain.text, /Sent .* home|key no longer works/);
   r.answers['worker.kill'] = () => ({ notes: [], pending: true });
@@ -414,7 +452,7 @@ test('local workers never get owner access', async (t) => {
   t.after(() => whiteboard.stop());
   const me = worker('local', 'Ada');
   const acted: string[] = [];
-  const owner: OwnerOffice = { floors: building, tail: () => 'x', act: async (_by, msg) => (acted.push(msg.t), { notes: [] }) };
+  const owner: OwnerOffice = { floors: building, mission: () => [], tail: () => 'x', act: async (_by, msg) => (acted.push(msg.t), { notes: [] }) };
   const floor = {
     id: 'f-app',
     name: 'app',
@@ -440,11 +478,11 @@ test('local workers never get owner access', async (t) => {
     assert.ok(!names.includes(name), name);
     const result = await client.callTool({ name, arguments: {} });
     assert.equal(result.isError, true, name);
-    assert.match(JSON.stringify(result.content), /Only external workers have owner access/, name);
+    assert.match(JSON.stringify(result.content), /Only building agents have owner access/, name);
   }
   const guessed = await client.callTool({ name: 'office_send_home', arguments: { name: 'Pixel' } });
   assert.equal(guessed.isError, true);
-  assert.match(JSON.stringify(guessed.content), /Only external workers have owner access/);
+  assert.match(JSON.stringify(guessed.content), /Only building agents have owner access/);
   assert.doesNotMatch(client.getInstructions()!, /owner-level access/);
   assert.deepEqual(acted, []);
 });

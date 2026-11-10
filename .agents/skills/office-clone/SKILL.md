@@ -27,7 +27,7 @@ It finds the owner's office (`--office DIR`, else `$DROID_OFFICE_HOME`, else the
 | The Home floor's state | `~/.droid-office/` |
 | The Mac app's browser settings: profile, graphics, per-desk models, the floor it was on | its `localStorage` (LevelDB, read with `uv`) |
 
-It leaves out everything a started office would **act on**: `workers.json`, `cloud-workers.json` and `guests.json` (an office resumes every saved worker, so a copy would run the owner's real Droid sessions a second time), the terminals and hooks (`pty.sock`, `pty-host.*`, `hook-port`, `shell.*`), scrollback, worktrees, drops and AutoWiki runs.
+It leaves out everything a started office would **act on**: `workers.json`, `cloud-workers.json` and `guests.json` (an office resumes every saved worker, so a copy would run the owner's real Droid sessions a second time), the terminals and hooks (`pty.sock`, `pty-host.*`, `hook-port`, `shell.*`), scrollback, worktrees, drops and AutoWiki runs. It keeps `orchestrator.json` settings but excludes the entire `orchestrator/` session folder, including its nested `.droid-office/` tokens, workers, hooks, terminal socket and conversation references. A clone never resumes the owner's Orchestrator. External bot identities, keys and Serve settings are excluded too.
 
 On a machine with no installed office, `--fresh` prepares a new office with a local clone of this checkout and a test browser profile instead, with the same port selection, startup script and browser cache (`DROID_OFFICE_BROWSERS_PATH` overrides it). `--fresh` and `--office` exclude each other. Use the owner's clone for app screenshots whenever one is available.
 
@@ -88,6 +88,7 @@ export default async ({ page, js, open, click, shot, sleep, waitFor, rig, reload
 - **Factory is the owner's real account.** Reads are free. A write (create or delete a computer or Environment, start a cloud session, rebuild, open a CI pull request, start a wiki run) changes their account and may cost credits: ask first unless they already said yes, note what you made, and delete it when you're done.
 - **The boards are the owner's real repositories.** Opening, closing or commenting on an issue or a pull request from the clone does it on GitHub.
 - **A local worker hired in the clone** runs Droid under the scratch `HOME`, without the owner's Droid sign-in. Test hire dialogs freely; finish a real local hire only when the owner asks.
+- **An approved signed-in local-worker or Orchestrator check** may supply `FACTORY_API_KEY` from the clone's own `office/.droid-office/factory.json` when starting the clone. Read the key into the process environment without printing it. Keep `HOME=$T/home`; never point a clone at the real HOME, copy the whole real `.factory/` or edit the owner's Droid settings. Record the actual model (including quota fallback), and keep any no-push/no-PR limits in the brief.
 - **A cloud worker hired in the clone** is a real Factory session on a real computer. Send it home, and delete what it made, when the check is done.
 
 ## 5. Clean up
@@ -96,7 +97,7 @@ Stop what you started, and only that. A floor's PTY host keeps running after the
 
 ```bash
 kill <start.sh pid>
-lsof -t "$T"/home/.droid-office/pty.sock "$T"/floors/*/.droid-office/pty.sock 2>/dev/null | xargs kill 2>/dev/null
+lsof -t "$T"/office/.droid-office/orchestrator/.droid-office/pty.sock "$T"/home/.droid-office/pty.sock "$T"/floors/*/.droid-office/pty.sock 2>/dev/null | xargs kill 2>/dev/null
 rm -rf "$T"
 ```
 

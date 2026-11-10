@@ -27,6 +27,11 @@ object Models {
         return if (proxy != null) "DroidProxy: $name" else name
     }
 
+    private val PROXY_PREFIX = Regex("""^DroidProxy:\s*""", RegexOption.IGNORE_CASE)
+
+    /** A model's name without its gateway, for rows that already show where it runs: "DroidProxy: Opus 5.5" is "Opus 5.5". */
+    fun plainName(name: String): String = name.replace(PROXY_PREFIX, "")
+
     data class Group<T>(val label: String, val models: List<T>)
 
     /** The catalogue's groups in the order the office sends them: your own models, Factory's, then the old ones. */

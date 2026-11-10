@@ -164,6 +164,24 @@ test('worker roster preserves hierarchy, focus and entry motion across updates',
   assert.match(await page.locator('[data-worker=dot]').innerText(), /Lead unavailable/);
   await page.evaluate(() => {
     const w = window as any;
+    w.state.workers = [{ ...w.workers[1], lead: 'orchestrator' }];
+    w.state.mission = { orchestrator: { settings: { on: true }, team: [{ id: 'nibble', name: 'Nibble', floor: 'home', floorName: 'home', status: 'working' }] }, bots: [] };
+    w.paint();
+  });
+  assert.doesNotMatch(await page.locator('[data-worker=nibble]').innerText(), /Lead unavailable/, 'the Orchestrator leads it, with or without a session');
+  assert.match((await page.locator('[data-worker=nibble]').getAttribute('title')) ?? '', /Subworker of Orchestrator/);
+  assert.equal(await page.locator('[data-worker=nibble] .dash-row-meta .model-badge').count(), 1);
+  await page.evaluate(() => {
+    const w = window as any;
+    w.state.mission.orchestrator.settings.on = false;
+    w.paint();
+  });
+  assert.match(await page.locator('[data-worker=nibble]').innerText(), /Lead unavailable/, 'while the Orchestrator is off, nobody leads it');
+  await page.evaluate(() => {
+    delete (window as any).state.mission;
+  });
+  await page.evaluate(() => {
+    const w = window as any;
     w.state.workers = [];
     w.paint();
   });
@@ -188,6 +206,8 @@ test('worker roster preserves hierarchy, focus and entry motion across updates',
         terminal: async () => ({ openTerminal: () => ({ close() {}, attach() {}, focus() {} }) }),
         usable: (id: string) => w.state.live && w.TeamUI.store.workers.has(id),
         assign: (index: number, id: string) => w.assignments.push([index, id]),
+        mission: () => undefined,
+        worker: (id: string) => w.TeamUI.store.workers.get(id),
       },
       0,
     );

@@ -32,6 +32,7 @@ import { emptyFactoryState, type FactoryState } from '../shared/factory';
 import { emptySetupState, type SetupState } from '../shared/setup';
 import { emptySubscriptionsState, type SubscriptionsState } from '../shared/subscriptions';
 import { teamOf } from '../shared/team';
+import { missionAgent, type MissionControlState } from '../shared/mission-control';
 import type { Visit } from '../shared/visits';
 import type { WorktreeSetupState } from '../shared/worktree-setup';
 import { NO_PIPELINES, type PipelinesState } from '../shared/pipelines';
@@ -68,7 +69,8 @@ export type Topic =
   | 'worktreeSetup'
   | 'whiteboard'
   | 'visits'
-  | 'visitSay';
+  | 'visitSay'
+  | 'missionControl';
 
 export interface Profile {
   name: string;
@@ -288,6 +290,8 @@ class Store {
   worktreeSetup: WorktreeSetupState | null = null;
   /** Every visit on the floor you're on (see shared/visits.ts), as the server last sent them. */
   visits: Visit[] = [];
+  /** The building's agents (the Orchestrator and external bots), the same on every floor; undefined from an office that predates Mission Control. */
+  missionControl: MissionControlState | undefined;
   /** The last speech bubble said during a visit, for whoever shows it ('visitSay'). */
   lastSay: { visit: string; worker: string; text: string } | null = null;
   private subs = new Map<Topic, Set<() => void>>();
@@ -311,6 +315,11 @@ class Store {
   /** The office's clock (ms since 1970) as near as this page can tell. */
   officeNow(): number {
     return this.clock ? performance.now() + this.clock.offset : Date.now();
+  }
+
+  /** A worker on this floor, or a building agent in Mission Control (the Orchestrator once it has a session, an external bot). */
+  worker(id: string): WorkerInfo | undefined {
+    return this.workers.get(id) ?? missionAgent(this.missionControl, id)?.worker;
   }
 
   workerAtDesk(deskId: string): WorkerInfo | undefined {
@@ -378,8 +387,9 @@ class Store {
         this.factory = msg.factory ?? emptyFactoryState();
         this.setup = msg.setup ?? emptySetupState();
         this.subscriptions = msg.subscriptions ?? emptySubscriptionsState();
+        this.missionControl = msg.missionControl;
         this.enter(msg);
-        for (const t of ['upgrade', 'machine', 'floors', 'projectsDir', 'sky', 'jukebox', 'leaveOnMerge', 'freshMain', 'subagents', 'prompts', 'factory', 'setup', 'subscriptions'] as Topic[]) this.emit(t);
+        for (const t of ['upgrade', 'machine', 'floors', 'projectsDir', 'sky', 'jukebox', 'leaveOnMerge', 'freshMain', 'subagents', 'prompts', 'factory', 'setup', 'subscriptions', 'missionControl'] as Topic[]) this.emit(t);
         break;
       case 'floor.enter':
         this.arrival = msg.arrival;
@@ -516,6 +526,10 @@ class Store {
       case 'visit_say':
         this.lastSay = { visit: msg.visit, worker: msg.worker, text: msg.text };
         this.emit('visitSay');
+        break;
+      case 'missionControl':
+        this.missionControl = msg.state;
+        this.emit('missionControl');
         break;
       case 'worktreeSetup':
         if (msg.state.floor !== this.floor) break;

@@ -22,6 +22,8 @@ import {
   GLASS_ROOM,
   GLASS_ROOM_CHAIRS,
   GLASS_ROOM_TABLE,
+  MISSION_HEAD,
+  MISSION_ROSTER,
   SEATING_BY_ID,
   SLAB,
   STAIRS,
@@ -51,7 +53,6 @@ import { buildStack, type Stack } from './stack';
 import { buildTower } from './tower';
 import { dressFactoryFloor } from './factory-floor';
 import { placeFactoryProps } from './factory-props';
-import { glassRoomTexture } from './glass-room';
 import { screenMaterial } from './screen';
 import { type ContactFootprint, setContactFootprints } from './surface';
 
@@ -67,7 +68,7 @@ export interface Collider {
   fence?: boolean;
 }
 
-export type InteractKind = 'desk' | 'issues' | 'pulls' | 'actions' | 'ci' | 'whiteboard' | 'decor' | 'elevator' | 'gong' | 'jukebox' | 'seat' | 'ladder' | 'bookshelf' | 'computers';
+export type InteractKind = 'desk' | 'issues' | 'pulls' | 'actions' | 'ci' | 'whiteboard' | 'decor' | 'elevator' | 'gong' | 'jukebox' | 'seat' | 'ladder' | 'bookshelf' | 'computers' | 'orchestrator' | 'bot';
 
 /** Something you can use. Its scene object carries it as `userData.interact`, for clicking. */
 export interface Interactable {
@@ -80,6 +81,8 @@ export interface Interactable {
   deskId?: string;
   decorId?: string;
   seatId?: string;
+  /** A building agent in Mission Control (kind 'orchestrator' or 'bot'): its worker id. */
+  agentId?: string;
   /** Put away for now (a bean bag nobody needs yet): can't be used. */
   off?: boolean;
 }
@@ -128,6 +131,8 @@ export interface Office {
   proxyScreen: THREE.Mesh;
   /** What's already on the walls (boards, the TV, windows…), so pictures don't hang over it. */
   fixtures(): WallRect[];
+  /** Mission Control's screens, which world/mission-control.ts paints. */
+  mission: MissionMounts;
   elevator: Elevator;
   /** The merge gong by the PR board. */
   gong: Gong;
@@ -157,6 +162,13 @@ export interface Office {
   night: NightParts;
   /** Animates the office; doors open for anyone in `people` who comes up to them. */
   update(t: number, dt: number, people: Iterable<{ x: number; y: number; z: number }>): void;
+}
+
+/** Mission Control's screens: the Orchestrator's over the table, the teams on the east wall, and the sign by the door. */
+export interface MissionMounts {
+  board: THREE.Mesh<THREE.PlaneGeometry, THREE.MeshBasicMaterial>;
+  roster: THREE.Mesh<THREE.PlaneGeometry, THREE.MeshBasicMaterial>;
+  sign: THREE.Mesh<THREE.PlaneGeometry, THREE.MeshBasicMaterial>;
 }
 
 /** A door that opens by itself when someone comes up to it, and closes behind them. */
@@ -1307,9 +1319,10 @@ export function buildOffice(): Office {
   group.add(buildCeiling(night));
 
   const { bossChair, bossLaptopAnchor } = buildLoft(group, colliders, interactables, looks, night);
-  // Under the loft: the unused glass room.
-  buildGlassRoom(group, colliders, doors, night);
+  // Under the loft: Mission Control.
+  const mission = buildGlassRoom(group, colliders, doors, night);
   fixture('south', GLASS_ROOM_BOARD.x, GLASS_ROOM_BOARD.y, GLASS_ROOM_BOARD.width + 0.4, GLASS_ROOM_BOARD.height + 0.4);
+  fixture('east', MISSION_ROSTER.z, MISSION_ROSTER.y, MISSION_ROSTER.width + 0.4, MISSION_ROSTER.height + 0.4);
 
   // The elevator to the other floors, against the north wall between the PR board and the gong.
   const elevator = buildElevator();
@@ -1423,6 +1436,7 @@ export function buildOffice(): Office {
     fleetScreen,
     proxyScreen,
     fixtures: () => fixtures,
+    mission,
     elevator,
     gong,
     jukebox,
@@ -1439,9 +1453,10 @@ export function buildOffice(): Office {
 }
 
 /**
- * Scenery under the loft: glass walls, a sliding door, a table, chairs and static screens.
+ * Mission Control under the loft: glass walls, a sliding door, the table and its chairs, the Orchestrator's
+ * plinth at its head, and the screens world/mission-control.ts paints. Who is in the room is added there.
  */
-function buildGlassRoom(group: THREE.Group, colliders: Collider[], doors: Door[], night: NightParts): void {
+function buildGlassRoom(group: THREE.Group, colliders: Collider[], doors: Door[], night: NightParts): MissionMounts {
   const R = GLASS_ROOM;
   const H = R.height;
   const T = 0.1;
@@ -1537,16 +1552,34 @@ function buildGlassRoom(group: THREE.Group, colliders: Collider[], doors: Door[]
     group.add(ch);
   });
 
-  // Static artwork on the back wall.
+  // The Orchestrator's plinth at the head of the table: low enough to step past, fenced so nobody stands on it.
+  const head = MISSION_HEAD;
+  const plinth = new THREE.Group();
+  plinth.add(mesh(new THREE.CylinderGeometry(head.radius, head.radius + 0.03, head.height, 32), toon('#3a3a3a'), 0, head.height / 2, 0));
+  plinth.add(mesh(new THREE.CylinderGeometry(head.radius - 0.04, head.radius - 0.04, 0.012, 32), toon('#5a5a5a'), 0, head.height + 0.006, 0));
+  const pedestal = mergeByMaterial(plinth);
+  pedestal.name = 'mission-plinth';
+  pedestal.position.set(head.x, 0, head.z);
+  group.add(pedestal);
+  const pr = head.radius * 0.8;
+  colliders.push({ minX: head.x - pr, maxX: head.x + pr, minZ: head.z - pr, maxZ: head.z + pr, top: head.height });
+  colliders.push({ minX: head.x - pr, maxX: head.x + pr, minZ: head.z - pr, maxZ: head.z + pr, top: 1.4, fence: true });
+
+  // The Orchestrator's screen on the back wall, over the table, and the teams on the east wall at its foot.
+  const screen = (width: number, height: number, x: number, y: number, z: number, rotY: number) => {
+    const { group: frame, face } = wallBoard(width, height, PALETTE.steel);
+    (face.material as THREE.MeshBasicMaterial).color.setScalar(0.62);
+    frame.position.set(x, y, z);
+    frame.rotation.y = rotY;
+    group.add(frame);
+    return face as THREE.Mesh<THREE.PlaneGeometry, THREE.MeshBasicMaterial>;
+  };
   const b = GLASS_ROOM_BOARD;
-  const { group: frame, face } = wallBoard(b.width, b.height, PALETTE.steel);
-  (face.material as THREE.MeshBasicMaterial).map = glassRoomTexture('board');
-  (face.material as THREE.MeshBasicMaterial).color.setScalar(0.62);
-  frame.position.set(b.x, b.y, b.z);
-  frame.rotation.y = Math.PI;
-  group.add(frame);
-  // A decorative panel on the glass beside the door.
-  const sign = new THREE.Mesh(new THREE.PlaneGeometry(0.6, 0.96), screenMaterial({ color: new THREE.Color().setScalar(0.62), map: glassRoomTexture('sign') }));
+  const board = screen(b.width, b.height, b.x, b.y, b.z, Math.PI);
+  const r = MISSION_ROSTER;
+  const roster = screen(r.width, r.height, r.x, r.y, r.z, -Math.PI / 2);
+  // The sign on the glass beside the door, for the lounge.
+  const sign = new THREE.Mesh(new THREE.PlaneGeometry(0.6, 0.96), screenMaterial({ color: new THREE.Color().setScalar(0.62) }));
   sign.position.set((R.minX + R.door.x0) / 2 + 0.01, 1.45, R.minZ - T / 2 - 0.03);
   sign.rotation.y = Math.PI;
   group.add(sign);
@@ -1561,6 +1594,7 @@ function buildGlassRoom(group: THREE.Group, colliders: Collider[], doors: Door[]
     recessed.add(mesh(box(1.4, 0.02, 0.14), lit, top.x + dx, H - 0.03, top.z));
   }
   group.add(mergeByMaterial(recessed));
+  return { board, roster, sign };
 }
 
 /** The materials and textures a floor paints in its own colors. */

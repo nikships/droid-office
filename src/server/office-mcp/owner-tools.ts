@@ -1,10 +1,11 @@
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
+import { ORCHESTRATOR_ID } from '../../shared/mission-control.js';
 import type { ClientMsg } from '../../shared/protocol.js';
 import { AUTO_DESK } from '../../shared/protocol.js';
 import type { OfficeMcpServer } from './index.js';
 import { officeError } from './index.js';
-import { findWorker, pickFloor, remoteOnly, ownerResult, type OwnerAction, type OwnerOffice } from './owner.js';
+import { buildingOnly, findMissionAgent, findWorker, missionControlRefusal, outsideOffice, pickFloor, ownerResult, type OwnerAction, type OwnerOffice } from './owner.js';
 import { cloud, effort, floorRef, id, images, menu, model, text, workerRef } from './owner-schemas.js';
 
 type Input<A extends OwnerAction> = Omit<Extract<ClientMsg, { t: A }>, 't' | 'request' | 'requestId' | 'requestFloor' | 'floor'> & { floor?: string };
@@ -36,7 +37,7 @@ export const OWNER_TOOLS = [
     'Hire an independent worker, shell or cloud worker on a floor. For a subagent that reports to you, use team_hire instead. Cloud hires can incur charges.',
     z
       .strictObject({
-        ...floor,
+        floor: floorRef.describe('The floor to hire on: its id, elevator number or name, from office_floors.'),
         deskId: id.max(32).default(AUTO_DESK).describe(`Seat id, or ${AUTO_DESK} for the first free seat.`),
         prompt: text.optional(),
         worktree: z.boolean().optional().describe('Use an isolated Git worktree for a local agent.'),
@@ -56,7 +57,7 @@ export const OWNER_TOOLS = [
   tool(
     'worker.prompt',
     'office_worker_prompt',
-    'Send a prompt to any worker as the owner. Use team_message for your own subagents and visit_message for peer coordination. This is not raw terminal input.',
+    'Prompt any floor worker as the owner, as a message in its session. Your own subagents take team_message.',
     z.strictObject({ ...worker, prompt: text.min(1), issue: number.optional(), images: images.optional(), queue: z.boolean().default(false).describe('Queue behind the current turn using Ctrl+Enter instead of sending immediately.') }),
     'worker',
     'write',
@@ -82,7 +83,7 @@ export const OWNER_TOOLS = [
   tool(
     'thread.read',
     'office_worker_thread',
-    'Read one page of any local or cloud agent’s conversation. Does not attach or type into its terminal. Returns a bounded snapshot and pagination information.',
+    'Read one page of any local or cloud agent’s conversation, including the Orchestrator in Mission Control. Does not attach or type into its terminal. Returns a bounded snapshot and pagination information.',
     z.strictObject({ ...worker, before: z.number().int().nonnegative().optional().describe('Exclusive entry sequence for older history; omit for the newest page.') }),
     'worker',
     'read',
@@ -92,18 +93,28 @@ export const OWNER_TOOLS = [
 
 export function registerOwnerTools(server: OfficeMcpServer, owner: OwnerOffice): void {
   for (const entry of OWNER_TOOLS) {
-    server.tool(entry, remoteOnly, async (input, caller, signal) => {
+    server.tool(entry, buildingOnly, async (input, caller, signal) => {
       const args: Record<string, unknown> = { ...input };
       const ref = typeof args.floor === 'string' ? args.floor : undefined;
       delete args.floor;
       let floor: string | undefined;
       if (entry.scope === 'worker') {
         const found = findWorker(owner.floors(), String(args.workerId), ref);
-        if (typeof found === 'string') return officeError(found);
-        args.workerId = found.worker.id;
-        floor = found.floor.id;
+        if (typeof found === 'string') {
+          const building = findMissionAgent(owner, String(args.workerId));
+          if (!building) return officeError(found);
+          // Building agents are read, never controlled, and only the Orchestrator's conversation is in this office.
+          if (entry.action !== 'thread.read') return officeError(missionControlRefusal(building, entry.name));
+          if (building.worker.id !== ORCHESTRATOR_ID) return officeError(outsideOffice(building, 'conversation'));
+          args.workerId = building.worker.id;
+        } else {
+          args.workerId = found.worker.id;
+          floor = found.floor.id;
+        }
       } else {
-        const picked = pickFloor(owner.floors(), ref ?? caller.floor.id);
+        const at = ref ?? caller.floor?.id;
+        if (!at) return officeError('Name the floor: office_floors lists them.');
+        const picked = pickFloor(owner.floors(), at);
         if (typeof picked === 'string') return officeError(picked);
         floor = picked.floor.id;
       }

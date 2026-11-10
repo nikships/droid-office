@@ -74,7 +74,7 @@ fun MainTabs(onOpenWorker: (id: String, draft: String?) -> Unit, onOpenCard: (fl
     val store by graph.store.snapshot.collectAsStateWithLifecycle()
     val officeId = store.active?.id
     val data by graph.connection.data.collectAsStateWithLifecycle()
-    val waiting = data.workers.values.count { it.state == WorkerStatus.NeedsInput }
+    val waiting = data.askable.count { it.state == WorkerStatus.NeedsInput }
     val boards by graph.connection.boards.collectAsStateWithLifecycle()
     val changed = data.floorId?.let { boards[it]?.board?.changedCards() } ?: 0
     val badge = { t: MainTab -> if (t == MainTab.Asks) waiting else if (t == MainTab.Board) changed else 0 }

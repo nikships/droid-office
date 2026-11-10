@@ -220,14 +220,24 @@ export function autoLayout(ws: Workspace, workers: readonly LayoutWorker[]): boo
 }
 
 /** Rebalance Auto only on membership/priority changes, not on typing, focus or ordinary status ticks. */
-export function syncWorkspace(ws: Workspace, workers: readonly LayoutWorker[], previous: Map<string, number>) {
+export function syncWorkspace(ws: Workspace, workers: readonly LayoutWorker[], previous: Map<string, number>, keep: (id: string) => boolean = () => false) {
   const present = new Map(workers.map((w) => [w.id, panePriority(w)]));
   const arrivals = workers.filter((w) => !previous.has(w.id)).map((w) => w.id);
   const changed = present.size !== previous.size || workers.some((w) => previous.get(w.id) !== panePriority(w));
-  const gone = prune(ws, (id) => present.has(id));
+  // `keep` holds panes open on what isn't the floor's, such as a building agent.
+  const gone = prune(ws, (id) => present.has(id) || keep(id));
   previous.clear();
   for (const [id, priority] of present) previous.set(id, priority);
   return { gone, filled: ws.auto ? changed && autoLayout(ws, workers) : fillPanes(ws, arrivals) };
+}
+
+/** A floor's saved workspace, or a first one from its workers, less the panes on whoever has gone since. */
+export function restoreWorkspace(saved: string, workers: readonly LayoutWorker[], previous: Map<string, number>, keep: (id: string) => boolean): Workspace {
+  const ws = parseWorkspace(saved) ?? seedWorkspace(workers.map((w) => w.id));
+  previous.clear();
+  syncWorkspace(ws, workers, previous, keep);
+  if (ws.auto && !previous.size) autoLayout(ws, []);
+  return ws;
 }
 
 /** Puts a worker in a pane. If it was open in another one, the two panes trade places. */

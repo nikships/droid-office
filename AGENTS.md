@@ -13,6 +13,7 @@ These designs are implemented and have written plans. Work in one of their areas
 | The Whiteboard: the agent and owner board that replaced the Services board | [docs/whiteboard.md](docs/whiteboard.md) |
 | Setup and Subscriptions: installing and signing in Droid, the welcome, DroidProxy and the subscriptions workers run on, and refusing models that can't run | [docs/subscriptions.md](docs/subscriptions.md) |
 | The Office MCP: the one MCP server workers use for teams, visits and Whiteboards | [docs/office-mcp.md](docs/office-mcp.md) |
+| Mission Control: the building's agents (the Orchestrator and external Tailscale bots), with no desk, on the external MCP surface | [docs/mission-control.md](docs/mission-control.md) |
 
 ## Repository map
 

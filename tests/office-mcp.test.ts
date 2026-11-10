@@ -9,7 +9,18 @@ import path from 'node:path';
 import { Client, StreamableHTTPClientTransport } from '@modelcontextprotocol/client';
 import { z } from 'zod';
 import { Answers } from '../src/server/answers.js';
-import { createOfficeMcp, OFFICE_MCP_OFFICE_HEADER, OFFICE_MCP_PATH, OFFICE_MCP_WORKER_HEADER, officeAccess, officeAnswers, officeResult, syncOfficeMcpConnection, type OfficeMcpFloor } from '../src/server/office-mcp/index.js';
+import {
+  createOfficeMcp,
+  OFFICE_MCP_OFFICE_HEADER,
+  OFFICE_MCP_PATH,
+  OFFICE_MCP_WORKER_HEADER,
+  officeAccess,
+  officeAnswers,
+  officeResult,
+  syncOfficeMcpConnection,
+  type OfficeMcpDeps,
+  type OfficeMcpFloor,
+} from '../src/server/office-mcp/index.js';
 import { Team, type TeamWorkers } from '../src/server/team.js';
 import { Visits } from '../src/server/visits.js';
 import { WhiteboardStore } from '../src/server/whiteboard.js';
@@ -26,7 +37,7 @@ function temporary(t: { after(fn: () => void): void }) {
   return dir;
 }
 
-async function rig(t: { after(fn: () => void | Promise<void>): void }, probes = true) {
+async function rig(t: { after(fn: () => void | Promise<void>): void }, probes = true, orchestrator?: OfficeMcpDeps['orchestrator']) {
   const dir = mkdtempSync(path.join(tmpdir(), 'office-mcp-'));
   const settings = { ...SUBAGENT_DEFAULTS };
   const people = new Map([
@@ -61,7 +72,7 @@ async function rig(t: { after(fn: () => void | Promise<void>): void }, probes = 
   http.listen(0, '127.0.0.1');
   await once(http, 'listening');
   const origin = `http://127.0.0.1:${(http.address() as AddressInfo).port}`;
-  office = createOfficeMcp({ answers: new Answers(), hookUrl: origin, settings: () => settings, floor: (id) => (people.has(id) ? floor : undefined) });
+  office = createOfficeMcp({ answers: new Answers(), hookUrl: origin, settings: () => settings, floor: (id) => (people.has(id) ? floor : undefined), orchestrator });
   if (probes) {
     for (const [name, access] of Object.entries({ test_hire: officeAccess.mayHire, test_team: officeAccess.team, test_report: officeAccess.subagent, test_visit: officeAccess.visits })) {
       office.tool({ name, description: 'Permission probe', inputSchema: z.object({}) }, access, () => officeResult('allowed'));
@@ -107,6 +118,21 @@ test('the HTTP MCP refuses missing, mismatched and non-agent identities', async 
     req.end('{}');
   });
   assert.equal(rebound, 403, 'a page that rebinds its own name to loopback is refused');
+});
+
+test('a floor token cannot impersonate the reserved Orchestrator id, even if its floor claims that id', async (t) => {
+  const agent = worker('orchestrator', { name: 'Orchestrator', deskId: '' });
+  const r = await rig(t, false, { cwd: '/office/orchestrator', authenticate: (id, token) => (id === agent.id && token === 'orchestrator-own-hook-token' ? agent : undefined) });
+  r.people.set('orchestrator', worker('orchestrator'));
+  r.tokens.set('orchestrator', 'floor-own-hook-token');
+  await assert.rejects(r.connect('orchestrator'), /Office MCP requires/);
+  await assert.rejects(r.connect('orchestrator', 'test-token-lead'), /Office MCP requires/);
+  const client = await r.connect('orchestrator', 'orchestrator-own-hook-token');
+  const identity = await client.callTool({ name: 'office_whoami', arguments: {} });
+  assert.equal(identity.structuredContent?.floor, null);
+  assert.equal(identity.structuredContent?.cwd, '/office/orchestrator');
+  assert.equal(identity.structuredContent?.room, 'Mission Control');
+  assert.ok(!(await client.listTools()).tools.some((tool) => tool.name === 'office_status'));
 });
 
 test("a worker reaching another local office's endpoint is routed to its own office", async (t) => {
@@ -173,7 +199,7 @@ test('a real HTTP MCP client reads office identity and server instructions', asy
   const lead = await r.connect('lead');
   assert.equal(lead.getServerVersion()?.name, 'droid-office');
   assert.match(lead.getInstructions() ?? '', /owner's instructions outrank/);
-  assert.match(lead.getInstructions() ?? '', /end your turn instead of waiting or polling/);
+  assert.match(lead.getInstructions() ?? '', /end your turn when nothing else is left to do/);
   const result = await lead.callTool({ name: 'office_whoami', arguments: {} });
   assert.equal(result.isError, undefined);
   assert.equal(result.structuredContent?.canHire, true);
@@ -321,6 +347,22 @@ test('structured hire controls base and branch and immediately returns its workt
   for (const args of [{}, { task, from: 'other' }, { task, worktree: false }, { task: { ...task, repo: '/another/repo' } }]) {
     assert.equal((await client.callTool({ name: 'team_hire', arguments: args })).structuredContent?.code, 'bad_argument');
   }
+});
+
+test('a structured task with no baseBranch of its own starts from the base named with from', async (t) => {
+  const r = await rig(t);
+  const client = await r.connect('lead');
+  const bases: (string | undefined)[] = [];
+  r.workers.hire = (_desk, _by, _prompt, _worktree, _choice, lead, from) => {
+    bases.push(from);
+    return worker('new', { lead, worktree: { path: '.droid-office/worktrees/new', branch: 'office/new', base: 'abc' } });
+  };
+  const task = { title: 'Ticket', brief: 'Fix the bug', repo: r.dir };
+  for (const args of [{ task, from: 'release' }, { task }, { task: { ...task, baseBranch: 'release' }, from: 'release' }]) {
+    const hired = await client.callTool({ name: 'team_hire', arguments: args });
+    assert.equal(hired.isError, undefined, JSON.stringify(hired.content));
+  }
+  assert.deepEqual(bases, ['release', undefined, 'release']);
 });
 
 test('ordinary workers may hire through MCP but subagents cannot list or invoke nested hiring', async (t) => {

@@ -30,6 +30,12 @@ test('empty pane clicks hire in place without swallowing worker picks or allowin
           return w.live;
         },
         focus() {},
+        mission() {
+          return undefined;
+        },
+        worker() {
+          return undefined;
+        },
         hire(index: number) {
           w.hires.push(index);
         },
@@ -147,6 +153,8 @@ test('only the focused thread pane shows its composer, reclaiming space without 
       action: async (msg: any) => {
         w.actions.push(msg);
       },
+      mission: () => undefined,
+      worker: (id: string) => w.workers.find((m: any) => m.id === id),
       focus(index: number) {
         if (w.focused === index) return;
         w.focused = index;
@@ -172,6 +180,7 @@ test('only the focused thread pane shows its composer, reclaiming space without 
   const bottomGap = () => first.locator('.wt-scroll').evaluate((el) => el.scrollHeight - el.scrollTop - el.clientHeight);
   const smallHeight = await height();
   const composerHeight = await first.locator('.wt-composer').evaluate((el) => el.getBoundingClientRect().height);
+  assert.equal(await page.getByRole('textbox', { name: 'Message to Pixel' }).count(), 1, 'the composer names its worker');
   await first.locator('.wt-input').fill('Keep this unsent draft');
   await first.locator('.wt-input').evaluate((el) => ((window as any).originalInput = el));
   await second.locator('.dash-pane-head').click();

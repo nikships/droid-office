@@ -1,6 +1,7 @@
+import path from 'node:path';
 import type { WorkerInfo } from '../shared/protocol.js';
 import type { Team, TeamReply, TeamViews } from './team.js';
-import type { Visits, VisitReply } from './visits.js';
+import type { Visits } from './visits.js';
 import type { RemoteWorkers } from './remote-workers.js';
 import type { WorkerManager } from './workers.js';
 import type { WhiteboardStore } from './whiteboard.js';
@@ -9,86 +10,61 @@ export interface RemoteFloor {
   id: string;
   def: { name: string };
   dir: string;
-  workers: Pick<WorkerManager, 'get' | 'list' | 'authenticate' | 'remoteSeat' | 'attachRemote' | 'detachRemote' | 'releaseRemoteLead' | 'remoteStatus'> & Partial<Pick<WorkerManager, 'screenLines' | 'screenMenu' | 'write'>>;
-  team: Pick<Team, 'handle' | 'inbox' | 'onWorkerGone' | 'cannotHire' | 'hasNews' | TeamViews>;
+  workers: Pick<WorkerManager, 'get' | 'list' | 'authenticate' | 'releaseLead'> & Partial<Pick<WorkerManager, 'screenLines' | 'screenMenu' | 'write'>>;
+  team: Pick<Team, 'handle' | 'inbox' | 'onWorkerGone' | 'cannotHire' | 'hasNews' | 'leadRested' | TeamViews>;
   visits: Pick<Visits, 'handle' | 'onWorkerGone' | 'cannotVisit'>;
   whiteboard: WhiteboardStore;
 }
 
-/** Remote ownership is building-wide. Only its physical desk and default tool workspace move. */
+/** The open floor a reference names (its id, its checkout's path, or its name in any case), or why it names none. */
+export function floorNamed<F extends { id: string; def: { name: string }; dir: string }>(floors: readonly F[], ref: string): F | string {
+  const want = ref.trim();
+  const exact = floors.find((f) => f.id === want) ?? floors.find((f) => path.isAbsolute(want) && path.resolve(f.dir) === path.resolve(want));
+  if (exact) return exact;
+  const named = floors.filter((f) => f.def.name.toLowerCase() === want.toLowerCase());
+  if (named.length === 1) return named[0];
+  if (named.length) return `Several open floors are called ${want}. Use the floor id: ${named.map((f) => f.id).join(', ')}.`;
+  return `No open floor ${want}. office_floors lists them: ${floors.map((f) => `${f.def.name} (${f.id})`).join(', ') || 'none open'}.`;
+}
+
+/**
+ * The building agents' side of every floor: Mission Control has no desks, so a building agent's teams,
+ * inbox and hires span every open floor, and each hire names its floor.
+ */
 export class RemoteOffice {
   constructor(
     readonly store: RemoteWorkers,
-    /** Every open floor, where a remote lead's teams may be. */
+    /** Every open floor, where a building agent's teams may be. */
     readonly floors: () => RemoteFloor[],
   ) {}
-
-  floor(id: string): RemoteFloor | undefined {
-    return this.floors().find((f) => f.workers.get(id)?.remote);
-  }
 
   list(id: string) {
     return this.floors().map((f) => ({
       id: f.id,
       name: f.def.name,
       cwd: f.dir,
-      current: !!f.workers.get(id)?.remote,
       subagents: f.workers.list().filter((w) => w.lead === id).length,
       unreadTeam: f.team.inbox(id).length,
     }));
   }
 
-  add(name: string, floorId: string) {
-    const floor = this.floors().find((f) => f.id === floorId);
-    if (!floor) throw new Error('Choose an open floor');
-    const desk = floor.workers.remoteSeat(name);
-    const result = this.store.add(name, floor.id, desk);
-    floor.workers.attachRemote(result.worker);
-    return result;
+  add(name: string) {
+    return this.store.add(name);
   }
 
-  move(id: string, floorId: string) {
-    const old = this.floor(id);
-    const next = this.floors().find((f) => f.id === floorId);
-    if (!next) throw new Error('Choose an open floor from office_floors');
-    const worker = old?.workers.get(id) ?? this.store.identity(id);
-    if (!worker) throw new Error('This remote identity was revoked');
-    if (old === next) return this.list(id);
-    const deskId = next.workers.remoteSeat(worker.name, true);
-    // Persist the only authoritative seat before emitting the change. No await splits this move.
-    this.store.move(id, next.id, deskId);
-    old?.workers.detachRemote(id);
-    next.workers.attachRemote({ ...worker, deskId, open: false });
-    return this.list(id);
-  }
-
-  /** Seats a remote worker on the first other open floor with a free desk, when its own closed. */
-  rehome(id: string, leaving?: string): boolean {
-    for (const f of this.floors()) {
-      if (f.id === leaving) continue;
-      try {
-        this.move(id, f.id);
-        return true;
-      } catch {
-        // no free desk there, or its name is taken: the next floor
-      }
-    }
-    return false;
-  }
-
+  /** The bot's key stops working, and its subagents carry on as independent workers. */
   revoke(id: string) {
     this.store.remove(id);
     for (const floor of this.floors()) {
-      floor.workers.detachRemote(id);
-      floor.workers.releaseRemoteLead(id);
+      floor.workers.releaseLead(id);
       floor.team.onWorkerGone(id);
       floor.visits.onWorkerGone(id);
       floor.whiteboard.forgetReader(id);
     }
   }
 
-  inbox(id: string, ack: readonly string[] = [], limit = 50) {
-    const messages = this.store.inbox(id, ack, 500).messages.map((m) => ({ ...m, kind: 'message' }));
+  inbox(id: string, ack: readonly string[] = [], limit = 50, own = true) {
+    const messages = own ? this.store.inbox(id, ack, 500).messages.map((m) => ({ ...m, kind: 'message' })) : [];
     for (const floor of this.floors()) {
       const prefix = `team:${floor.id}:`;
       const heard = ack
@@ -103,8 +79,19 @@ export class RemoteOffice {
 
   /** `since` holds a status cursor per floor; a floor it leaves out reports everything it keeps. */
   async team(worker: WorkerInfo, args: { action: string; worker?: string; lines?: number; text?: string; floor?: string; since?: Record<string, number>; kinds?: string[]; [key: string]: unknown }): Promise<TeamReply> {
-    const floors = this.floors().filter((f) => (!args.floor || f.id === args.floor) && (typeof args.repo !== 'string' || f.id === args.repo || f.def.name === args.repo || f.dir === args.repo));
-    if (!floors.length) return { status: 404, body: { error: 'No such open floor' } };
+    const all = this.floors();
+    const named = args.floor === undefined ? undefined : floorNamed(all, args.floor);
+    if (typeof named === 'string') return { status: 404, body: { error: named } };
+    if (args.action === 'hire') {
+      const repo = typeof args.repo === 'string' ? floorNamed(all, args.repo) : undefined;
+      if (typeof repo === 'string') return { status: 404, body: { error: repo } };
+      if (repo && named && repo !== named) return { status: 400, body: { error: `floor and task.repo name different floors (${named.def.name} and ${repo.def.name}). Name one floor.` } };
+      const target = repo ?? named;
+      if (!target) return { status: 400, body: { error: 'Name the floor to hire on: floor or task.repo takes an open floor’s id, name or path (office_floors lists them).' } };
+      return target.team.handle(worker, { ...args, ...(repo ? { repo: target.dir } : {}) });
+    }
+    const floors = named ? [named] : all;
+    if (!floors.length) return { status: 404, body: { error: 'No floor is open.' } };
     if (args.worker) {
       const wanted = args.worker.toLowerCase();
       const matches = floors.flatMap((f) =>
@@ -121,22 +108,9 @@ export class RemoteOffice {
       const latest = Object.fromEntries(floors.map((x) => [x.id, x === f ? result.body.latest : x.team.latest()]));
       return { status: 200, body: { ...result.body, ...merged([{ floor: f.id, result }]), latest } };
     }
-    if (args.action === 'hire') {
-      const target = args.repo || args.floor ? (floors.length === 1 ? floors[0] : undefined) : this.floor(worker.id);
-      if (!target) return { status: 400, body: { error: 'Choose exactly one open repository floor for the task' } };
-      return target.team.handle(worker, args);
-    }
     if (args.action !== 'status') return { status: 400, body: { error: 'Name a subagent' } };
     const snapshots = await Promise.all(floors.map(async (f) => ({ floor: f.id, result: await f.team.handle(worker, { ...args, since: args.since ? (args.since[f.id] ?? 0) : undefined }) })));
     return { status: 200, body: merged(snapshots) };
-  }
-
-  reply(worker: WorkerInfo, visit: string, text: string): VisitReply {
-    for (const floor of this.floors()) {
-      const result = floor.visits.handle(worker, { action: 'reply', visit, text });
-      if (result.status !== 404) return result;
-    }
-    return { status: 404, body: { error: 'No live question with that id is addressed to you. Questions expire after 30 minutes and on office restart; use visit_message for a follow-up.' } };
   }
 }
 
