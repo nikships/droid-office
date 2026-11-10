@@ -64,6 +64,10 @@ import { OPEN_SETTINGS_EVENT } from './ui/model-picker';
 import { officePrompt } from './ui/prompts';
 import { forgeVars } from '../shared/prompts';
 import { INCLUDE_FILE, SETUP_FILE, describeSetup } from '../shared/worktree-setup';
+import { ORCHESTRATOR_ID } from '../shared/mission-control';
+import { createMissionRoster } from './dashboard-mission';
+import { missionWaiting, missionWorker } from './mission';
+import { newOrchestratorConversation } from './ui/orchestrator';
 const read = (key: string) => {
   try {
     return localStorage.getItem(key) ?? '';
@@ -158,6 +162,13 @@ const sideSub = h('p.dash-side-sub');
 const agentBtn = h('button.btn.accent.dash-hire', { type: 'button', title: 'Hire a Droid on this floor (⌘ N)', onclick: () => hire() }, icon('plus', 14), h('span', {}, 'Hire Droid'));
 const shellBtn = h('button.btn.dash-hire', { type: 'button', title: 'Open a plain shell at the next free desk', onclick: () => openShell() }, icon('terminal', 14), h('span', {}, 'Shell'));
 const workerList = h('nav.dash-workers', { 'aria-label': 'Workers' });
+const missionList = h('nav.dash-mission', { 'aria-label': 'Mission Control', hidden: true });
+const missionRoster = createMissionRoster(missionList, {
+  open: (id) => openHere(id, true),
+  split: (id) => openBesideHere(id),
+  member: (m) => openAcross(m.id, m.floor),
+  settings: () => void showSettings('orchestrator'),
+});
 const workerMenu = createWorkerMenu({
   state(id) {
     const worker = store.workers.get(id);
@@ -211,7 +222,7 @@ const roster = createWorkerRoster(
 onModalChange((open) => {
   if (open) workerMenu.close();
 });
-const side = h('aside.dash-side', { 'aria-label': 'Floor' }, h('div.dash-side-head', {}, sideTitle, sideSub), workerList, h('footer.dash-side-foot', {}, h('div.dash-side-hire', {}, agentBtn, shellBtn), keyLegend()));
+const side = h('aside.dash-side', { 'aria-label': 'Floor' }, missionList, h('div.dash-side-head', {}, sideTitle, sideSub), workerList, h('footer.dash-side-foot', {}, h('div.dash-side-hire', {}, agentBtn, shellBtn), keyLegend()));
 
 /** The workspace's shortcuts, folded under one line until the owner opens them (remembered in this browser). */
 function keyLegend() {
@@ -400,19 +411,33 @@ function toggleMaxPane(i: number) {
   toggleMax(ws, i);
   changed();
 }
+/** A worker on this floor, or a building agent, which every floor's workspace can open. */
+function workerOf(id: string): WorkerInfo | undefined {
+  return store.workers.get(id) ?? missionWorker(store.missionControl, id);
+}
+/** Building agents open in this floor's panes: the workspace keeps them while Mission Control has them. */
+const inMission = (id: string) => !store.workers.has(id) && !!missionWorker(store.missionControl, id);
 /** Opens a worker in the workspace; `focusIt` puts the keyboard in it as well. */
 function openHere(id: string, focusIt = false, targetPane?: number) {
-  if (!store.workers.has(id)) return;
+  if (!workerOf(id)) return;
   roster.reveal(id);
   openWorker(ws, id, targetPane);
   takeFocus = focusIt;
   changed();
   takeFocus = true;
   if (focusIt) panes[ws.focused]?.focusContent();
-  roster.scrollTo(id);
+  if (inMission(id)) missionRoster.scrollTo(id);
+  else roster.scrollTo(id);
+}
+/** Opens a building agent's subagent: here when it's on this floor, else on its own floor once the page has gone there. */
+function openAcross(id: string, to: string) {
+  if (!live()) return;
+  if (to === floor) return openHere(id, true);
+  workerLink.set({ worker: id, floor: to });
+  followWorkerLink();
 }
 function openBesideHere(id: string) {
-  if (!store.workers.has(id)) return;
+  if (!workerOf(id)) return;
   openInSplit(ws, id);
   fillPanes(ws, staff());
   changed();
@@ -465,6 +490,11 @@ const paneHost: PaneHost = {
   openBeside: (id) => openBesideHere(id),
   sendHome: (w) => sendHome(w),
   hire: (index) => hire('auto', index),
+  worker: (id) => workerOf(id),
+  mission: () => store.missionControl,
+  openAcross: (id, to) => openAcross(id, to),
+  resetOrchestrator: () => newOrchestratorConversation(net),
+  settings: (pane) => void showSettings(pane),
 };
 
 /** Where a pane sits: its box, less half the 8px gap on every side that touches another pane. */
@@ -628,7 +658,7 @@ net.onMessage((msg) => {
   }
   if (entering || msg.t === 'floors' || msg.t === 'worker.update') followWorkerLink();
 });
-for (const topic of ['floors', 'workers', 'whiteboard', 'project'] as const) store.on(topic, paint);
+for (const topic of ['floors', 'workers', 'whiteboard', 'project', 'missionControl'] as const) store.on(topic, paint);
 store.on('screens', () => {
   for (const p of panes) p?.paintQuestion();
   schedulePreviews();
@@ -683,7 +713,7 @@ function live() {
 }
 function followWorkerLink() {
   if (!live()) return;
-  const result = workerLink.follow({ floor: store.floor, hasWorker: (id) => store.workers.has(id), hasFloor: (id) => store.floors.some((f) => f.id === id) }, (floor) => net.send({ t: 'floor.go', floor }));
+  const result = workerLink.follow({ floor: store.floor, hasWorker: (id) => !!workerOf(id), hasFloor: (id) => store.floors.some((f) => f.id === id) }, (floor) => net.send({ t: 'floor.go', floor }));
   if (result.step === 'go') {
     switching = true;
     paint();
@@ -709,10 +739,10 @@ window.addEventListener('hashchange', () => {
   followWorkerLink();
 });
 function usable(id: string, intendedFloor: string) {
-  return live() && floor === intendedFloor && store.workers.has(id);
+  return live() && floor === intendedFloor && !!workerOf(id);
 }
 async function action(msg: ClientMsg, id = '', intendedFloor = floor, done?: string, targetPane?: number): Promise<string | undefined> {
-  if (!live() || floor !== intendedFloor || (id && !store.workers.has(id))) return 'The connection, floor or worker changed. Nothing was sent.';
+  if (!live() || floor !== intendedFloor || (id && !workerOf(id))) return 'The connection, floor or worker changed. Nothing was sent.';
   const key = id || 'hire';
   if (busy.has(key)) return 'An action for this worker is still waiting for confirmation.';
   busy.add(key);
@@ -808,11 +838,12 @@ function paint() {
   boardCount.textContent = String(unread);
   boardCount.classList.toggle('hidden', !unread);
   board.setAttribute('aria-label', unread ? `Whiteboard, ${unread} unread` : 'Whiteboard');
-  const needs = [...store.workers.values()].filter(needsOwnerInput).length;
+  const needs = [...store.workers.values()].filter(needsOwnerInput).length + missionWaiting(store.missionControl);
   document.title = `${needs ? `(${needs}) ` : ''}${officeName} · Web companion`;
   if (fresh && wsFloor === floor) {
-    const { gone, filled } = syncWorkspace(ws, ordered(), onFloor);
-    for (const id of gone) toast(`${names.get(id) ?? 'A worker'} has left the floor.`, 'info');
+    const { gone, filled } = syncWorkspace(ws, ordered(), onFloor, inMission);
+    // A building agent leaves no floor: it was turned off or removed, which the office already says.
+    for (const id of gone) if (names.has(id)) toast(`${names.get(id)} has left the floor.`, 'info');
     if (gone.length || filled) saveWorkspace();
   }
   for (const w of store.workers.values()) names.set(w.id, w.name);
@@ -946,6 +977,7 @@ function paintSide() {
   // The floor name above already says which repository this is, so the line under it is the branch.
   sideSub.replaceChildren(icon('branch', 12), h('span', { title: where }, here?.repo && here.branch ? here.branch : where));
   roster.update({ floor, workers: [...store.workers.values()], focused: focusedWorker(ws) ?? '', live: live(), pane: (id) => paneOf(ws, id) });
+  missionRoster.update({ mission: store.missionControl, floor, focused: focusedWorker(ws) ?? '', live: live(), pane: (id) => paneOf(ws, id), here: (id) => store.workers.get(id), shortcut: '⌘ O' });
 }
 
 function paintWorkspace() {
@@ -963,7 +995,7 @@ function paintWorkspace() {
     const max = ws.maximized === i;
     place(p.el, max ? FULL_RECT : (rects[i] ?? FULL_RECT));
     const id = ws.slots[i];
-    const w = id ? store.workers.get(id) : undefined;
+    const w = id ? workerOf(id) : undefined;
     p.update({
       worker: w,
       view: w ? viewOf(w.id) : 'terminal',
@@ -988,7 +1020,7 @@ function paintWorkspace() {
   colHandle.setAttribute('aria-valuenow', String(Math.round(ws.col * 100)));
   rowHandle.setAttribute('aria-valuenow', String(Math.round(ws.row * 100)));
   const open = shown.filter(Boolean).length;
-  const fw = store.workers.get(focusedWorker(ws) ?? '');
+  const fw = workerOf(focusedWorker(ws) ?? '');
   wsSummary.replaceChildren(`${open} of ${count} open`, ...(fw && count > 1 ? [h('span.dash-crumb-sep', {}, ' · '), 'focused on ', h('b', {}, fw.name)] : []));
   layoutButtons.forEach((b, i) => {
     b.setAttribute('aria-checked', String(!ws.auto && LAYOUT_ORDER[i] === ws.layout));
@@ -1276,11 +1308,16 @@ window.addEventListener(
           case 'settings':
             void showSettings();
             break;
+          case 'orchestrator':
+            if (workerOf(ORCHESTRATOR_ID)) openHere(ORCHESTRATOR_ID, true);
+            else void showSettings('orchestrator');
+            break;
           case 'sidebar':
             toggleSide();
             if (sideOpen) {
               roster.reveal(focusedWorker(ws) ?? '');
-              (roster.button(focusedWorker(ws) ?? '') ?? agentBtn).focus({ preventScroll: true });
+              const id = focusedWorker(ws) ?? '';
+              ((inMission(id) ? missionRoster.button(id) : roster.button(id)) ?? agentBtn).focus({ preventScroll: true });
             } else panes[ws.focused]?.focusContent();
             break;
         }
@@ -1291,24 +1328,27 @@ window.addEventListener(
   true,
 );
 
-workerList.addEventListener('keydown', (e) => {
+/** The arrow keys walk Mission Control, then the floor's list, as one list. */
+function sideKeys(e: KeyboardEvent) {
   if (!authorized || modalOpen() || e.metaKey || e.ctrlKey || e.altKey || e.isComposing) return;
   const t = e.target as HTMLElement | null;
   if (t?.closest('input, textarea, select, [contenteditable], .xterm, [role=separator], [role=radiogroup]')) return;
-  const list = roster.visible();
-  const at = list.findIndex((w) => w.id === focusedWorker(ws));
+  const list = [...new Set([...missionRoster.visible(), ...roster.visible().map((w) => w.id)])].filter((id) => !!workerOf(id));
+  const at = list.indexOf(focusedWorker(ws) ?? '');
   const go = (i: number) => {
-    const w = list[(i + list.length) % list.length];
-    if (!w) return;
-    openHere(w.id);
-    roster.button(w.id)?.focus({ preventScroll: true });
+    const id = list[(i + list.length) % list.length];
+    if (!id) return;
+    openHere(id);
+    (inMission(id) ? missionRoster.button(id) : roster.button(id))?.focus({ preventScroll: true });
   };
   const k = e.key.length === 1 ? e.key.toLowerCase() : e.key;
   if (k === 'ArrowDown' || k === 'j') go(at + 1);
   else if (k === 'ArrowUp' || k === 'k') go(at < 0 ? list.length - 1 : at - 1);
   else return;
   e.preventDefault();
-});
+}
+workerList.addEventListener('keydown', sideKeys);
+missionList.addEventListener('keydown', sideKeys);
 window.addEventListener('storage', (event) => {
   if (event.key !== BROWSER_KEY) return;
   net.close();

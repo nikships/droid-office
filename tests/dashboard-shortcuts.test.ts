@@ -76,6 +76,8 @@ test('Command shortcuts cover workspace actions without Option or Control', () =
     ['b', 'board'],
     ['\\', 'sidebar'],
     [',', 'settings'],
+    ['o', 'orchestrator'],
+    ['O', 'orchestrator'],
   ])
     assert.deepEqual(workspaceCommand(key(value!)), { action });
   for (const [value, action, direction] of [
@@ -89,6 +91,7 @@ test('Command shortcuts cover workspace actions without Option or Control', () =
   assert.equal(WORKSPACE_KEY_HINTS.find(([, label]) => label === 'panes')?.[0], '⌘ ← →');
   assert.equal(WORKSPACE_KEY_HINTS.find(([, label]) => label === 'workers')?.[0], '⌘ ↑ ↓');
   assert.equal(WORKSPACE_KEY_HINTS.find(([, label]) => label === 'layout')?.[0], '⌘ 1–8');
+  assert.equal(WORKSPACE_KEY_HINTS.find(([, label]) => label === 'Orchestrator')?.[0], '⌘ O');
 });
 
 test('CLI keys, editing shortcuts, IME composition and extra modifiers pass through', () => {

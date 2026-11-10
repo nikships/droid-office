@@ -188,6 +188,8 @@ test('worker roster preserves hierarchy, focus and entry motion across updates',
         terminal: async () => ({ openTerminal: () => ({ close() {}, attach() {}, focus() {} }) }),
         usable: (id: string) => w.state.live && w.TeamUI.store.workers.has(id),
         assign: (index: number, id: string) => w.assignments.push([index, id]),
+        mission: () => undefined,
+        worker: (id: string) => w.TeamUI.store.workers.get(id),
       },
       0,
     );

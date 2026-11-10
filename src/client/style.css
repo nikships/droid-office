@@ -2377,6 +2377,33 @@ html:has(body.dashboard), body.dashboard { overflow: auto; }
 .dash-side-empty { margin: var(--space-2) var(--space-2); font-size: var(--text-small); color: var(--text-tertiary); }
 .dash-side-foot { flex: none; display: flex; flex-direction: column; gap: var(--space-3); padding: var(--space-3); }
 .dash-side-hire { display: grid; grid-template-columns: 1fr auto; gap: var(--space-2); }
+/* Mission Control: the building's agents, pinned above the floor's list on every floor. */
+.dash-mission { flex: none; max-height: 42%; overflow: auto; padding: var(--space-2) var(--space-2) var(--space-1); border-bottom: 1px solid var(--border); background: linear-gradient(180deg, rgba(238, 96, 24, .05), transparent 64px); }
+.dash-mission[hidden] { display: none; }
+.dash-mission-head { display: flex; align-items: center; gap: var(--space-2); min-height: 24px; padding: 0 var(--space-2) var(--space-1); }
+.dash-mission-title { display: inline-flex; align-items: center; gap: var(--space-2); color: var(--accent); font: 500 var(--text-label)/16px var(--font-mono); letter-spacing: .08em; text-transform: uppercase; }
+.dash-mission-caption { margin-left: auto; color: var(--text-tertiary); font: 400 10px/16px var(--font-mono); }
+.dash-mission-agent { position: relative; margin-bottom: 2px; border: 1px solid transparent; border-radius: var(--radius-lg); }
+.dash-mission-agent:has(.dash-team-toggle) { border-color: var(--border); }
+.dash-mission-agent:has(.dash-team-toggle) > .dash-row { margin-bottom: 0; }
+.dash-mission-agent:has(.dash-team-toggle) > .dash-row > .dash-row-open { border-color: transparent; }
+.dash-mission-agent > .dash-team-toggle { border-radius: 0 0 var(--radius-lg) var(--radius-lg); }
+.dash-mission-mark { position: relative; flex: none; display: grid; place-items: center; width: 22px; height: 22px; border: 1px solid var(--border-strong); border-radius: var(--radius); color: var(--accent); }
+.dash-mission-bot .dash-mission-mark { color: var(--text-secondary); }
+.dash-mission-mark > .dash-dot { position: absolute; right: -3px; bottom: -3px; width: 7px; height: 7px; }
+.dash-mission-row.blocked .dash-row-doing { color: var(--warning); }
+.dash-mission-key { flex: none; margin: 0; }
+.dash-mission-off { display: flex; align-items: center; gap: var(--space-2); width: 100%; margin-bottom: var(--space-1); padding: var(--space-2); border: 1px dashed var(--border-strong); border-radius: var(--radius-lg); background: none; color: var(--text-secondary); font: inherit; text-align: left; cursor: pointer; transition: border-color var(--duration) var(--ease), color var(--duration) var(--ease); }
+.dash-mission-off:hover:not(:disabled) { border-color: var(--text-tertiary); color: var(--text); }
+.dash-mission-off:disabled { cursor: default; opacity: .6; }
+.dash-mission-off-icon { display: grid; place-items: center; width: 22px; height: 22px; border: 1px solid var(--border); border-radius: var(--radius); }
+.dash-mission-off-text { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.dash-mission-off-text b { font-weight: 500; color: var(--text); }
+.dash-mission-off-text span { font-size: var(--text-small); }
+.dash-mission-off-go { display: grid; color: var(--text-tertiary); }
+.dash-row-floor { flex: none; max-width: 96px; overflow: hidden; padding: 0 var(--space-1); border-radius: var(--radius-xs); background: var(--surface-raised); color: var(--text-secondary); font: 400 9.5px/16px var(--font-mono); text-overflow: ellipsis; white-space: nowrap; }
+.dash-mission-member.elsewhere .dash-row-name { color: var(--text-secondary); }
+.dash-team-chip-floor { flex: none; max-width: 72px; overflow: hidden; padding: 0 var(--space-1); border-radius: var(--radius-xs); background: var(--surface-raised); color: var(--text-tertiary); font-size: 9.5px; text-overflow: ellipsis; white-space: nowrap; }
 .dash-keys-fold > summary { display: flex; align-items: center; gap: var(--space-2); width: fit-content; padding: 0; color: var(--text-secondary); font: 400 11px/20px var(--font-sans); list-style: none; cursor: pointer; transition: color var(--duration) var(--ease); }
 .dash-keys-fold > summary::-webkit-details-marker { display: none; }
 .dash-keys-fold > summary:hover { color: var(--text); }
@@ -2669,6 +2696,27 @@ summary:hover > .wt-chevron { color: var(--text-secondary); }
 .wt-empty.error { color: var(--danger); }
 .wt-empty b { display: block; font-weight: 500; color: var(--text); }
 .wt-empty p { margin: var(--space-1) 0 0; }
+/* The Orchestrator's empty conversation: what it's for, and prompts that fill the composer. */
+.wt-empty.wt-intro { max-width: 520px; margin: var(--space-7) auto; padding: var(--space-5); text-align: left; color: var(--text); line-height: var(--leading-body); }
+.orc-intro { display: flex; flex-direction: column; align-items: flex-start; gap: var(--space-2); }
+.orc-intro-mark { display: grid; place-items: center; width: 40px; height: 40px; margin-bottom: var(--space-2); border: 1px solid rgba(238, 96, 24, .5); border-radius: var(--radius-lg); background: var(--accent-muted); color: var(--accent); }
+.orc-intro .eyebrow { color: var(--accent); }
+.orc-intro h3 { margin: 0; font: 500 19px/1.3 var(--font-sans); letter-spacing: -.01em; }
+.orc-intro p { margin: 0; color: var(--text-secondary); }
+.orc-examples { display: flex; flex-direction: column; gap: var(--space-2); width: 100%; margin: var(--space-3) 0 var(--space-1); }
+.orc-example { display: flex; align-items: center; gap: var(--space-3); width: 100%; padding: var(--space-3) var(--space-4); border: 1px solid var(--border-strong); border-radius: var(--radius-lg); background: var(--surface); color: var(--text); font: 400 var(--text-body)/var(--leading-body) var(--font-sans); text-align: left; cursor: pointer; transition: border-color var(--duration) var(--ease), background var(--duration) var(--ease); }
+.orc-example > span { flex: 1; min-width: 0; }
+.orc-example > svg { flex: none; color: var(--text-tertiary); transition: color var(--duration) var(--ease), transform var(--duration) var(--ease); }
+.orc-example:hover { border-color: rgba(238, 96, 24, .5); background: var(--surface-raised); }
+.orc-example:hover > svg { color: var(--accent); transform: translateX(2px); }
+.orc-example:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.orc-intro .orc-intro-foot { font-size: var(--text-small); color: var(--text-tertiary); }
+/* Why the Orchestrator can't start, in place of its composer. */
+.wt-blocked { display: flex; align-items: center; gap: var(--space-3); box-sizing: border-box; width: calc(100% - 2 * var(--space-5)); max-width: var(--wt-measure); margin: var(--space-2) auto var(--space-4); }
+.wt-blocked[hidden] { display: none; }
+.wt-blocked > svg { flex: none; }
+.wt-blocked-text { flex: 1; min-width: 0; margin: 0; }
+.wt-blocked > .btn { flex: none; }
 .wt-empty-mark { display: block; width: 7px; height: 7px; margin: 0 auto var(--space-3); border-radius: 1px; background: var(--text-tertiary); }
 .wt-loading-spinner { display: block; width: 24px; height: 24px; margin: 0 auto var(--space-3); border-color: var(--border); border-top-color: var(--accent); }
 /* Zero height and as wide as the composer's box, so the arrow floats just above its top-right corner. */
@@ -2762,6 +2810,11 @@ summary:hover > .wt-chevron { color: var(--text-secondary); }
 .dash-info-name { display: flex; align-items: center; gap: var(--space-3); }
 .dash-info-name h2 { margin: 0; font: 500 24px/1.2 var(--font-sans); }
 .dash-info-kind { margin-top: var(--space-1); font: 400 12px/1.4 var(--font-mono); color: var(--text-secondary); }
+.dash-bot-note { display: flex; align-items: flex-start; gap: var(--space-3); max-width: 640px; margin: 0; }
+.dash-bot-note > svg { flex: none; margin-top: 2px; }
+.dash-bot-team { display: flex; flex-direction: column; gap: var(--space-2); max-width: 640px; }
+.dash-bot-member .list-icon { display: grid; place-items: center; }
+.dash-bot-empty { margin: 0; font-size: var(--text-small); color: var(--text-tertiary); }
 .dash-info-activity { max-height: 160px; margin: 0; overflow: auto; color: var(--text-secondary); white-space: pre-wrap; overflow-wrap: anywhere; }
 .dash-meta { display: grid; grid-template-columns: 130px minmax(0, 1fr); margin: 0; overflow: hidden; border: 1px solid var(--border); border-radius: var(--radius-lg); background: var(--surface); }
 .dash-meta :is(dt, dd) { margin: 0; padding: var(--space-3) var(--space-4); border-bottom: 1px solid var(--border); }

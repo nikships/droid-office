@@ -12,7 +12,7 @@ import type { Net } from './net';
 import { previewRows } from './screen-preview';
 import { doingLine, workerKind as kind } from './worker-words';
 import { store } from './state';
-import { h, STATUS_LABEL, toast } from './ui/dom';
+import { h, STATUS_LABEL, timeAgo, toast } from './ui/dom';
 import { colorDot } from './ui/kit';
 import { icon, type IconName } from './ui/icons';
 import { modelBadgeLabel, modelBadgeNode } from './ui/models';
@@ -22,6 +22,9 @@ import { openQuestionWorkspace, type QuestionDraft, type QuestionReply } from '.
 import type { InlineTerminalHandle } from './ui/terminal';
 import type { PaneView } from './dashboard-workspace';
 import { workerTeams } from '../shared/team';
+import { missionAgent, ORCHESTRATOR_ID, type MissionAgent, type MissionControlState, type MissionTeamMember } from '../shared/mission-control';
+import type { SettingsPane } from '../shared/settings-nav';
+import { botLine, missionLead, ORCHESTRATOR_EXAMPLES, ORCHESTRATOR_PITCH, orchestratorLine, orchestratorMessage, orchestratorStarted } from './mission';
 
 /** What a sidebar row carries when it's dragged onto a pane. */
 export const WORKER_MIME = 'application/x-droid-worker';
@@ -52,6 +55,15 @@ export interface PaneHost {
   openBeside(id: string): void;
   sendHome(w: WorkerInfo): void;
   hire(index: number): void;
+  /** A worker on this floor, or a building agent (the Orchestrator, an external bot). */
+  worker(id: string): WorkerInfo | undefined;
+  /** Mission Control as the office last sent it. */
+  mission(): MissionControlState | undefined;
+  /** Opens a worker on its own floor: here at once, or once the page has gone there. */
+  openAcross(id: string, floor: string): void;
+  /** Asks, then starts the Orchestrator's conversation over. */
+  resetOrchestrator(): void;
+  settings(pane?: SettingsPane): void;
 }
 
 export interface PaneState {
@@ -167,9 +179,11 @@ export function createPane(host: PaneHost, index: number): Pane {
   let actionsKey = '';
   let emptyKey = '';
   let teamKey = '';
-  let info: { name: HTMLElement; meta: HTMLElement; activity: HTMLElement; who: HTMLElement; preview?: HTMLElement } | undefined;
-  /** The external worker whose details are up: attached like a terminal, so a finished turn shown here counts as seen. */
-  let watching: string | undefined;
+  let info: { name: HTMLElement; meta: HTMLElement; activity: HTMLElement; who: HTMLElement; preview?: HTMLElement; team?: HTMLElement; teamKey?: string } | undefined;
+  /** What the Orchestrator's empty conversation shows, made once per pane. */
+  let intro: HTMLElement | undefined;
+  /** The Orchestrator session this pane's thread shows: a new conversation starts a new thread. */
+  let orchestratorSession = '';
 
   let shownMenu: Menu | undefined;
   let questionKey = '';
@@ -225,8 +239,6 @@ export function createPane(host: PaneHost, index: number): Pane {
   // --- The body ---------------------------------------------------------------------------------
   function teardown(keepThread = false) {
     questionWorkspace?.close();
-    if (watching) host.net.send({ t: 'worker.detach', workerId: watching });
-    watching = undefined;
     if (keepThread) thread?.activate(false);
     else {
       thread?.dispose();
@@ -257,7 +269,10 @@ export function createPane(host: PaneHost, index: number): Pane {
 
   function modeFor(w: WorkerInfo | undefined, view: PaneView): PaneMode {
     if (!w) return 'empty';
+    // An external bot runs elsewhere: its pane says what it is and who's on its team.
     if (w.remote) return 'info';
+    // Before its first prompt the Orchestrator has no session, so no terminal: its Thread is where you start it.
+    if (w.id === ORCHESTRATOR_ID) return view === 'terminal' && orchestratorStarted(host.mission()) && !isAsleep(w.status) ? 'terminal' : 'thread';
     // A cloud worker has no terminal here: its Thread is its Factory session.
     if (w.cloud) return 'thread';
     if (w.kind === 'agent' && view === 'thread') return 'thread';
@@ -273,14 +288,62 @@ export function createPane(host: PaneHost, index: number): Pane {
       return;
     }
     if (next === 'info') {
-      if (w.remote) {
-        watching = w.id;
-        host.net.send({ t: 'worker.attach', workerId: w.id });
-      }
       info = { name: h('h2'), activity: h('p.dash-info-activity'), meta: h('dl.dash-meta'), who: h('div.dash-info-who') };
+      if (w.remote) {
+        info.team = h('div.dash-bot-team');
+        stage.replaceChildren(
+          h(
+            'div.dash-info.dash-bot',
+            {},
+            info.who,
+            info.activity,
+            h(
+              'p.note.info.dash-bot-note',
+              {},
+              icon('globe', 15),
+              h('span', {}, 'This bot runs externally and reaches the office over Tailscale MCP. It has no terminal or conversation here: it reads messages and its team’s reports from its MCP inbox.'),
+            ),
+            info.meta,
+            info.team,
+          ),
+        );
+        return;
+      }
       const s = store.screens.get(w.id);
       info.preview = s ? h('pre.dash-preview.big', { 'aria-label': `${w.name}’s screen` }) : undefined;
       stage.replaceChildren(h('div.dash-info', {}, info.who, info.activity, info.preview ?? null, info.meta));
+    } else if (next === 'thread' && w.id === ORCHESTRATOR_ID) {
+      const intended = host.floor();
+      const key = draftKey('mission', w.id);
+      const settingsBtn = h('button.btn.sm', { type: 'button', onclick: () => host.settings('orchestrator') }, icon('settings', 13), 'Settings');
+      thread ??= mountWorkerThread(host.net, {
+        worker: w,
+        question,
+        queueKey: `${key}:queue-receipts`,
+        draft: host.read(key),
+        onDraft: (text) => host.remember(key, text),
+        onEntries: () => paintQuestion(),
+        send: (msg) => host.action(orchestratorMessage(msg), w.id, intended),
+        screen: () => lines(w.id),
+        team: () => (host.floor() === intended ? [...store.workers.values()] : []),
+        openWorker: (mate) => {
+          if (!host.usable(mate, intended)) return;
+          host.setView(mate, 'thread');
+          host.openBeside(mate);
+        },
+        raw: () => {
+          if (orchestratorStarted(host.mission())) host.setView(w.id, 'terminal');
+        },
+        floor: intended,
+        intro: () => (orchestratorStarted(host.mission()) ? undefined : (intro ??= orchestratorIntro())),
+        blocked: () => host.mission()?.orchestrator.blocked,
+        blockedAction: settingsBtn,
+        interrupt: true,
+        promptWakes: true,
+      });
+      thread.element.querySelector('.wt-scroll')?.append(question);
+      stage.replaceChildren(thread.element);
+      thread.activate(true);
     } else if (next === 'thread') {
       const intended = host.floor();
       const key = draftKey(intended, w.id);
@@ -315,11 +378,103 @@ export function createPane(host: PaneHost, index: number): Pane {
     const terminal = await host.terminal();
     opening = false;
     if (disposed || mode !== 'terminal' || id !== wid || term || !stage.isConnected || !host.usable(wid, intended)) return;
+    // The Orchestrator's terminal is the same on every floor, so it isn't the floor's team strip either.
     term = terminal.openTerminal(host.net, wid, undefined, undefined, { mount: stage, focus: takeFocus, hideTeam: true });
   }
 
+  /** The Orchestrator's empty conversation: what it's for, and prompts that fill the composer. */
+  function orchestratorIntro() {
+    const fill = (text: string) => {
+      const input = thread?.element.querySelector<HTMLTextAreaElement>('textarea.wt-input');
+      if (!input || input.disabled) return;
+      input.value = text;
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+      input.focus();
+      input.setSelectionRange(text.length, text.length);
+    };
+    return h(
+      'div.orc-intro',
+      {},
+      h('div.orc-intro-mark', { 'aria-hidden': 'true' }, icon('satellite', 22)),
+      h('span.eyebrow', {}, 'Mission Control'),
+      h('h3', {}, 'What should the building get done?'),
+      h('p', {}, ORCHESTRATOR_PITCH),
+      h(
+        'div.orc-examples',
+        { role: 'group', 'aria-label': 'Example prompts' },
+        ...ORCHESTRATOR_EXAMPLES.map((text) => h('button.orc-example', { type: 'button', title: 'Put this in the message box', onclick: () => fill(text) }, h('span', {}, text), icon('arrow', 13))),
+      ),
+      h('p.orc-intro-foot', {}, 'It acts only on what you ask, and when its own team reports back.'),
+    );
+  }
+
   // --- The header -------------------------------------------------------------------------------
+  /** A building agent's team across floors: the agent first, then its subagents, each tagged with its floor when it's elsewhere. */
+  function paintMissionTeam(w: WorkerInfo, agent: MissionAgent) {
+    const members = agent.team;
+    const here = host.floor();
+    const key = JSON.stringify(['mission', w.id, host.live(), agent.worker.id, agent.worker.status, agent.worker.name, members, here]);
+    if (key === teamKey) return;
+    teamKey = key;
+    teamNav.hidden = !members.length;
+    if (!members.length) return teamNav.replaceChildren();
+    const focused = teamNav.contains(document.activeElement) ? (document.activeElement as HTMLElement).dataset.member : undefined;
+    const scroll = teamNav.querySelector('.dash-team-nav-members')?.scrollLeft ?? 0;
+    const lead = h(
+      'button.dash-team-chip',
+      {
+        type: 'button',
+        'data-member': agent.worker.id,
+        'data-status': agent.worker.status,
+        'aria-current': String(agent.worker.id === w.id),
+        disabled: !host.live(),
+        title: `${agent.worker.name} · Mission Control`,
+        'aria-label': `Open ${agent.worker.name}, Mission Control`,
+        onclick: () => host.assign(index, agent.worker.id),
+      },
+      h('span.dash-team-chip-role', {}, agent.worker.remote ? 'Bot' : 'Lead'),
+      workerDot(agent.worker),
+      h('span.dash-team-chip-name', {}, agent.worker.name),
+    );
+    const chip = (m: MissionTeamMember) => {
+      const dot = h('span.dash-dot', { 'data-status': m.status, 'aria-hidden': 'true' });
+      dot.style.setProperty('--who', store.workers.get(m.id)?.color ?? agent.worker.color);
+      const where = m.floor === here ? 'this floor' : `the ${m.floorName} floor`;
+      return h(
+        'button.dash-team-chip',
+        {
+          type: 'button',
+          'data-member': m.id,
+          'data-status': m.status,
+          'aria-current': String(m.id === w.id),
+          disabled: !host.live(),
+          title: `${m.name} · Subagent of ${agent.worker.name} on ${where} · ${STATUS_LABEL[m.status] ?? m.status}`,
+          'aria-label': `Open ${m.name}, subagent on ${where}, ${STATUS_LABEL[m.status] ?? m.status}`,
+          onclick: () => host.openAcross(m.id, m.floor),
+        },
+        dot,
+        h('span.dash-team-chip-name', {}, m.name),
+        m.floor === here ? null : h('span.dash-team-chip-floor', {}, m.floorName),
+      );
+    };
+    teamNav.replaceChildren(lead, h('span.dash-team-nav-label', {}, icon('branch', 12), `${members.length}`), h('div.dash-team-nav-members', {}, ...members.map(chip)));
+    const memberList = teamNav.querySelector('.dash-team-nav-members');
+    if (memberList) memberList.scrollLeft = scroll;
+    if (focused)
+      Array.from(teamNav.querySelectorAll<HTMLButtonElement>('button'))
+        .find((b) => b.dataset.member === focused)
+        ?.focus({ preventScroll: true });
+  }
+
   function paintTeam(w: WorkerInfo | undefined) {
+    const mission = w && (missionAgent(host.mission(), w.id) ?? missionLead(host.mission(), w.lead));
+    // A bot's own pane lists its team in full, so only its subagents' panes get the strip.
+    if (w && mission && !(w.remote && w.id === mission.worker.id)) return paintMissionTeam(w, mission);
+    if (w?.remote) {
+      teamKey = '';
+      teamNav.hidden = true;
+      return teamNav.replaceChildren();
+    }
     const team = w && workerTeams([...store.workers.values()]).find((t) => t.children.length && (t.lead.id === w.id || t.children.some((c) => c.id === w.id)));
     const members = team ? [team.lead, ...team.children] : [];
     const key = JSON.stringify([w?.id, host.live(), members.map((m) => [m.id, m.name, m.color, m.status, m.acked, m.lead])]);
@@ -361,11 +516,21 @@ export function createPane(host: PaneHost, index: number): Pane {
         ?.focus({ preventScroll: true });
   }
 
+  /** What the header says it's doing: building agents say it as their Mission Control row does. */
+  function headLine(w: WorkerInfo) {
+    if (w.id === ORCHESTRATOR_ID) return orchestratorLine(host.mission());
+    const bot = w.remote ? missionAgent(host.mission(), w.id) : undefined;
+    if (bot) return botLine(bot);
+    return w.task?.name ?? w.title ?? doingLine(w);
+  }
+
   function paintHead(s: PaneState) {
     const w = s.worker;
     const local = !!w && !w.cloud && !w.remote;
     const threaded = mode === 'thread';
-    const key = JSON.stringify([w && [w.id, w.name, w.color, w.status, w.acked, w.lead, doingLine(w), w.task?.name, w.title, w.activeModel ?? w.model, w.activeEffort ?? w.effort], mode, s.maximized, s.canMaximize, host.live()]);
+    // The Orchestrator has a terminal only once its first prompt has started a session.
+    const toggles = local && w.kind === 'agent' && (w.id !== ORCHESTRATOR_ID || orchestratorStarted(host.mission()));
+    const key = JSON.stringify([w && [w.id, w.name, w.color, w.status, w.acked, w.lead, headLine(w), w.activeModel ?? w.model, w.activeEffort ?? w.effort], toggles, mode, s.maximized, s.canMaximize, host.live()]);
     if (key === headKey) return;
     headKey = key;
     el.setAttribute('aria-label', w ? `Pane ${index + 1}: ${w.name}` : `Pane ${index + 1}: empty`);
@@ -387,7 +552,7 @@ export function createPane(host: PaneHost, index: number): Pane {
     who.replaceChildren(workerDot(w));
     name.textContent = w.name;
     name.title = `${w.name} · ${kind(w)}`;
-    const doing = w.task?.name ?? w.title ?? doingLine(w);
+    const doing = headLine(w);
     task.textContent = doing;
     task.title = doing;
     const engine = w.kind === 'agent' ? modelBadgeNode(w.activeModel ?? w.model, w.activeEffort ?? w.effort) : kind(w);
@@ -395,7 +560,6 @@ export function createPane(host: PaneHost, index: number): Pane {
     pill.hidden = false;
     pill.className = `pill ${w.status}`;
     pill.textContent = STATUS_LABEL[w.status] ?? w.status;
-    const toggles = local && w.kind === 'agent';
     views.hidden = flip.hidden = !toggles;
     views.setAttribute('aria-label', `${w.name} view`);
     views.replaceChildren(
@@ -420,19 +584,27 @@ export function createPane(host: PaneHost, index: number): Pane {
 
   function paintActions(w: WorkerInfo | undefined) {
     const enabled = !!w && host.live() && !host.busy(w.id);
-    const key = JSON.stringify(w ? [w.id, w.name, w.kind, w.status, w.cloud ? 1 : 0, w.sessionId, w.pr, w.prOpening, w.worktree?.branch, w.lost ? 1 : 0, forkRefusal(w), mode, enabled] : null);
+    const started = orchestratorStarted(host.mission());
+    const key = JSON.stringify(w ? [w.id, w.name, w.kind, w.status, w.cloud ? 1 : 0, w.remote ? 1 : 0, w.sessionId, w.pr, w.prOpening, w.worktree?.branch, w.lost ? 1 : 0, forkRefusal(w), mode, enabled, started] : null);
     if (key === actionsKey) return;
     actionsKey = key;
     if (!w) return actions.replaceChildren();
     const btn = (label: string, glyph: IconName, ok: boolean, run: () => void, cls = '', tip = '') =>
       h('button.btn.icon.sm.ghost', { type: 'button', class: cls, title: tip || label, 'aria-label': label, disabled: !enabled || !ok, onclick: run }, icon(glyph, 14));
+    // A building agent has no desk to send it home from, no branch to open a PR for, and nothing to fork.
+    if (w.id === ORCHESTRATOR_ID)
+      return actions.replaceChildren(
+        btn('New conversation', 'refresh', started, () => host.resetOrchestrator(), 'dash-orc-reset', started ? 'Start a new conversation' : 'No conversation yet'),
+        btn('Orchestrator settings', 'settings', true, () => host.settings('orchestrator'), 'dash-orc-settings', 'Settings → Orchestrator'),
+      );
+    if (w.remote) return actions.replaceChildren();
     const asleep = isAsleep(w.status);
-    const local = !w.cloud && !w.remote;
+    const local = !w.cloud;
     const intended = host.floor();
     const fork = local && w.kind === 'agent' ? forkRefusal(w) : 'none';
     actions.replaceChildren(
       ...(w.cloud && w.sessionId ? [h('a.btn.icon.sm.ghost', { href: sessionWebUrl(w.sessionId), target: '_blank', rel: 'noopener noreferrer', title: 'Factory session', 'aria-label': 'Factory session' }, icon('external', 14))] : []),
-      ...(asleep && !w.remote
+      ...(asleep
         ? [
             btn(
               w.kind === 'shell' ? 'Restart' : 'Resume',
@@ -497,8 +669,51 @@ export function createPane(host: PaneHost, index: number): Pane {
   }
 
   // --- No local terminal: what the office knows -------------------------------------------------
+  /** An external bot: what it last reported, when it last signed in, and its subagents across floors. */
+  function paintBot(w: WorkerInfo) {
+    if (!info) return;
+    const bot = missionAgent(host.mission(), w.id);
+    info.who.replaceChildren(workerDot(w), h('div', {}, h('div.dash-info-name', {}, info.name), h('div.dash-info-kind', {}, kind(w))));
+    info.name.textContent = w.name;
+    info.activity.textContent = bot ? botLine(bot) : (w.activity ?? 'Hasn’t reported yet');
+    const rows: [string, string | undefined][] = [
+      ['Status', w.status === 'offline' ? 'Hasn’t reported since the office started' : (STATUS_LABEL[w.status] ?? w.status)],
+      ['Doing', w.title],
+      ['Last used', bot?.lastUsedAt ? timeAgo(bot.lastUsedAt) : 'Not since it was added'],
+      ['Keys', 'Settings → Tailscale MCP'],
+    ];
+    info.meta.replaceChildren(...rows.filter(([, v]) => !!v).flatMap(([label, value]) => [h('dt', {}, label), h('dd', { title: value }, value)]));
+    const team = bot?.team ?? [];
+    const here = host.floor();
+    const key = JSON.stringify([team, here, host.live()]);
+    if (!info.team || key === info.teamKey) return;
+    info.teamKey = key;
+    info.team.replaceChildren(
+      h('span.eyebrow', {}, team.length ? `Team · ${team.length}` : 'Team'),
+      team.length
+        ? h(
+            'div.list.boxed',
+            {},
+            ...team.map((m) => {
+              const dot = h('span.dash-dot', { 'data-status': m.status, 'aria-hidden': 'true' });
+              dot.style.setProperty('--who', store.workers.get(m.id)?.color ?? w.color);
+              const status = STATUS_LABEL[m.status] ?? m.status;
+              return h(
+                'button.list-row.dash-bot-member',
+                { type: 'button', disabled: !host.live(), 'data-member': m.id, title: `${m.name} · ${m.floorName} · ${status}`, onclick: () => host.openAcross(m.id, m.floor) },
+                h('span.list-icon', {}, dot),
+                h('span.list-main', {}, h('span.list-title', {}, m.name), h('span.list-meta', {}, m.activity ?? m.title ?? status)),
+                h('span.list-end', {}, h('span.dash-row-floor', {}, m.floor === here ? 'This floor' : m.floorName)),
+              );
+            }),
+          )
+        : h('p.dash-bot-empty', {}, 'No subagents. Workers it hires on any floor show here.'),
+    );
+  }
+
   function paintInfo(w: WorkerInfo) {
     if (!info) return;
+    if (w.remote) return paintBot(w);
     info.who.replaceChildren(workerDot(w), h('div', {}, h('div.dash-info-name', {}, info.name), h('div.dash-info-kind', {}, kind(w))));
     info.name.textContent = w.name;
     info.activity.textContent = workerActivity(w) ?? w.prompt ?? 'Waiting for a task.';
@@ -511,15 +726,13 @@ export function createPane(host: PaneHost, index: number): Pane {
       ['Worktree', w.worktree?.path],
       [
         'Where',
-        w.remote
-          ? 'External worker. Messages and team updates arrive through its MCP inbox. No local terminal or conversation.'
-          : w.lost
-            ? 'Its worktree is missing, so it can’t resume or take prompts.'
-            : w.cloud
-              ? `On Factory · ${w.cloud.computerName}. No local terminal.`
-              : isAsleep(w.status)
-                ? 'Asleep. Resume it to see its terminal and prompt it.'
-                : 'A local terminal',
+        w.lost
+          ? 'Its worktree is missing, so it can’t resume or take prompts.'
+          : w.cloud
+            ? `On Factory · ${w.cloud.computerName}. No local terminal.`
+            : isAsleep(w.status)
+              ? 'Asleep. Resume it to see its terminal and prompt it.'
+              : 'A local terminal',
       ],
       ['Lead', lead ? lead.name : w.lead ? 'No longer on this floor' : undefined],
       ['Subagents', team.length ? team.map((m) => m.name).join(', ') : undefined],
@@ -533,7 +746,7 @@ export function createPane(host: PaneHost, index: number): Pane {
 
   // --- The worker's question --------------------------------------------------------------------
   function paintQuestion(review = false) {
-    const w = id ? store.workers.get(id) : undefined;
+    const w = id ? host.worker(id) : undefined;
     if (!w || mode === 'empty' || !mode) return;
     const screen = lines(w.id);
     const next = screen && canAnswer(w, screen) ? readMenu(screen) : undefined;
@@ -696,6 +909,17 @@ export function createPane(host: PaneHost, index: number): Pane {
       badge.title = `Pane ${index + 1}`;
       if ((w?.id ?? '') !== id) reset(w?.id ?? '');
       const next = modeFor(w, s.view);
+      if (w?.id === ORCHESTRATOR_ID) {
+        // Its first session grows out of the empty thread; any later change of session is a new conversation.
+        const session = w.sessionId ?? '';
+        const ended = !!orchestratorSession && session !== orchestratorSession;
+        orchestratorSession = session;
+        if (ended && mode === 'thread') {
+          thread?.dispose();
+          thread = undefined;
+          mode = '';
+        }
+      } else orchestratorSession = '';
       if (next !== mode) build(w, next);
       paintHead(s);
       paintTeam(w);
@@ -708,7 +932,7 @@ export function createPane(host: PaneHost, index: number): Pane {
     },
     paintQuestion,
     paintPreview() {
-      const w = id ? store.workers.get(id) : undefined;
+      const w = id ? host.worker(id) : undefined;
       if (w && mode === 'info' && info?.preview) renderPreview(info.preview, w.id, 40);
     },
     reattach() {

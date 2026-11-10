@@ -26,15 +26,15 @@ interface Item {
 export function workerMenuItems(s: WorkerMenuState): Item[] {
   const w = s.worker;
   const open = s.pane >= 0;
-  const local = !w.cloud && !w.remote;
+  const local = !w.cloud;
   const asleep = isAsleep(w.status);
   const items: Item[] = [
     { action: 'open', label: open ? 'Focus its pane' : 'Open', icon: 'external', section: 'Workspace' },
     { action: 'split', label: 'Open in new pane', icon: 'paneAdd', section: 'Workspace', disabled: open },
   ];
   if (open) items.push({ action: 'close', label: 'Close pane', icon: 'x', section: 'Workspace', shortcut: s.native ? '⌘W' : undefined });
-  if (asleep && !w.remote) items.push({ action: 'resume', label: w.kind === 'shell' ? 'Restart' : 'Resume', icon: 'play', section: 'Worker', disabled: !!w.lost });
-  if (!w.remote && w.kind === 'agent' && isBusy(w.status)) items.push({ action: 'interrupt', label: 'Stop turn', icon: 'power', section: 'Worker' });
+  if (asleep) items.push({ action: 'resume', label: w.kind === 'shell' ? 'Restart' : 'Resume', icon: 'play', section: 'Worker', disabled: !!w.lost });
+  if (w.kind === 'agent' && isBusy(w.status)) items.push({ action: 'interrupt', label: 'Stop turn', icon: 'power', section: 'Worker' });
   if (local && w.kind === 'agent') {
     const reason = forkRefusal(w);
     items.push({ action: 'fork', label: 'Fork…', icon: 'fork', section: 'Worker', disabled: !!reason, reason });

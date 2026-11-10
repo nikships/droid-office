@@ -162,6 +162,23 @@ test('hire confirmation moves an auto-placed arrival to the requested empty pane
   assert.deepEqual(visibleSlots(ws), ['a', null, null, 'new']);
 });
 
+test('a building agent open in a pane stays there on every floor until Mission Control loses it', () => {
+  const ws = emptyWorkspace('split');
+  ws.auto = false;
+  ws.slots[0] = 'a';
+  openWorker(ws, 'orchestrator');
+  const previous = known(['a']);
+  let mission = true;
+  assert.deepEqual(
+    syncWorkspace(ws, workers(['a']), previous, (id) => mission && id === 'orchestrator'),
+    { gone: [], filled: false },
+  );
+  assert.deepEqual(visibleSlots(ws), ['a', 'orchestrator']);
+  mission = false;
+  assert.deepEqual(syncWorkspace(ws, workers(['a']), previous, (id) => mission && id === 'orchestrator').gone, ['orchestrator']);
+  assert.deepEqual(visibleSlots(ws), ['a', null]);
+});
+
 test('hire confirmation keeps automatic placement when its target is occupied or hidden', () => {
   for (const target of [0, 4, -1]) {
     const ws = emptyWorkspace('grid');
