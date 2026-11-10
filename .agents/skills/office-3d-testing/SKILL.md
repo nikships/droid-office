@@ -34,14 +34,14 @@ export default async ({ js, shot, log }) => {
 | Command | Use |
 | --- | --- |
 | `office.list()` | Every target `goTo` accepts here: `{id, kind, label, worker?}` |
-| `office.goTo(target, {walk?, timeout?})` | Desk id (`desk-3`), worker id or name, desk label, board or place kind (`issues`, `pulls`, `actions`, `coffee`, `elevator`, `gong`, `jukebox`, `bookshelf`, `tv`, `ladder`, `bar`, `dj`), floor id or name, `roof`. `{walk: true}` walks the office paths instead of teleporting |
-| `office.interact(key = 'E')` | Presses E, P, R, X, B, C or O at the `goTo` target, or else at the nearest thing in reach. E at a worker opens its terminal |
-| `office.open(id)` | Runs a ☰ menu command (`issues`, `pulls`, `pipelines`, `search`, `elevator`, `roof`, `decor`, `settings`, `phone`, `help`, `upgrade`, `waiting`) |
+| `office.goTo(target, {walk?, timeout?})` | Desk id (`desk-3`), worker id or name, desk label, board or place kind (`issues`, `pulls`, `actions`, `coffee`, `elevator`, `gong`, `jukebox`, `bookshelf`, `tv`, `ladder`, `bar`, `dj`), floor id or name, `roof`, `orchestrator`, or a Mission Control bot's worker id or name. `{walk: true}` walks the office paths instead of teleporting |
+| `office.interact(key = 'E')` | Presses E, P, R, X, B, C or O at the `goTo` target, or else at the nearest thing in reach. E at a worker opens its terminal; at the Orchestrator its prompt box (O its terminal, X Stop); at a bot its card |
+| `office.open(id)` | Runs a ☰ menu command (`issues`, `pulls`, `pipelines`, `search`, `elevator`, `roof`, `decor`, `settings`, `phone`, `help`, `upgrade`, `waiting`, `orchestrator`) |
 | `office.commands()` | Those commands, with whether each is offered here and why one is blocked |
 | `office.closeAll()` | Closes every open window |
 | `office.ride(floor)` | Elevator to a floor id or name, or `roof` |
 | `office.camera(preset)` | `first`, a fixed level pose looking straight ahead, so screenshots compare between runs |
-| `office.state()` | Floor, position, facing, seat, `using` (what E would use), `modals` (open windows by label), `terminal`, `workers`, `floors` |
+| `office.state()` | Floor, position, facing, seat, `using` (what E would use), `modals` (open windows by label), `terminal`, `workers`, `floors`, and `agents` (Mission Control's Orchestrator and bots) when the office has Mission Control |
 
 Assert on `state()` JSON. Screenshots are for what JSON cannot show (a mesh, a layout, a colour): `await js(() => window.office.camera('first'))`, then `await shot('first')`.
 

@@ -32,6 +32,6 @@ They keep their Tailscale endpoint, keys and polling (`office_inbox`, `team_wait
 
 ## Where it shows
 
-- **3D office.** Mission Control is the same room on every floor. The Orchestrator stands at the head of the long table; each external bot has a chair at it. The wall panels show what the Orchestrator is doing and the building agents' teams across floors. Walk up to the Orchestrator to talk to it or open its terminal; walk up to a bot to see it. The ☰ menu, the palette and a key open the Orchestrator from anywhere on any floor.
+- **3D office.** Mission Control is the same room on every floor. The Orchestrator stands at the head of the long table; each external bot has a chair at it. The wall panels show what the Orchestrator is doing and the building agents' teams across floors. Walk up to the Orchestrator to talk to it or open its terminal; walk up to a bot to see it. The ☰ menu, the palette and **M** open the Orchestrator from anywhere on any floor.
 - **Web and Mac companion.** A pinned Mission Control group at the top of the sidebar on every floor: the Orchestrator, then each bot, with their subagents (each tagged with its floor) beneath them. The Orchestrator's pane has Thread and TTY like a worker's, a composer that sends while it works and Stop, and an empty state that says what it is for.
 - **Android.** A pinned Mission Control section on Home: the Orchestrator's card opens its Thread and terminal with a composer, and bots show their status and teams. Its questions are in Asks, with notifications when it finishes or needs you.
