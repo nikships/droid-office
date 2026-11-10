@@ -81,6 +81,7 @@ if [[ "$FRESH" == true ]]; then
   echo '{"droid-office.profile":"{\"name\":\"Verifier\",\"color\":\"#4f86f7\",\"look\":{\"skin\":2,\"hair\":1,\"style\":0}}"}' >"$DEST/local-storage.json"
 else
 EXCLUDES=(--exclude workers.json --exclude cloud-workers.json --exclude guests.json
+  --exclude /orchestrator/
   --exclude remote-workers.json --exclude remote-mcp.json
   --exclude pty.sock --exclude 'pty-host.*' --exclude hook-port --exclude 'shell.*'
   --exclude scrollback/ --exclude worktrees/ --exclude drops/ --exclude 'wiki-run*'

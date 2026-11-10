@@ -1,6 +1,6 @@
 import test, { type TestContext } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdirSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { once } from 'node:events';
 import http from 'node:http';
@@ -16,13 +16,13 @@ import type { ClientMsg, ServerMsg } from '../src/shared/protocol.js';
 import type { PairingState } from '../src/shared/devices.js';
 import { reachableLan } from './lan-probe.js';
 
-async function office(t: TestContext, home?: string) {
+async function office(t: TestContext, home?: string, agent?: string) {
   const dir = home ?? mkdtempSync(path.join(os.tmpdir(), 'dashboard-'));
   if (!home) {
     t.after(() => rmSync(dir, { recursive: true, force: true }));
     execFileSync('git', ['init', '-q'], { cwd: dir });
   }
-  const cfg = loadConfig(['--home', dir, '--projects', dir, dir, '--weather', 'clear', '--host', '0.0.0.0']);
+  const cfg = loadConfig(['--home', dir, '--projects', dir, dir, '--weather', 'clear', '--host', '0.0.0.0', ...(agent ? ['--agent', agent] : [])]);
   cfg.port = 0;
   const server = await startServer(cfg);
   const port = (server.server.address() as AddressInfo).port;
@@ -67,6 +67,53 @@ function socket(t: TestContext, base: string, query: string, origin = base) {
   const send = (msg: ClientMsg) => ws.send(JSON.stringify(msg));
   return { ws, messages, wait, send };
 }
+
+test('Mission Control readiness updates on one connected client after sign-in and Office MCP changes', async (t) => {
+  const dir = mkdtempSync(path.join(os.tmpdir(), 'mission-readiness-'));
+  const agent = path.join(dir, 'droid');
+  const signedIn = path.join(dir, 'signed-in');
+  // Trimmed auth.verify body from tests/setup-droid-state.test.ts's real Droid doctor output.
+  writeFileSync(
+    agent,
+    `#!/bin/sh
+if [ "$1" = "--version" ]; then echo '0.249.0'; exit 0; fi
+if [ "$1" = "doctor" ]; then
+  if [ -f '${signedIn}' ]; then
+    printf '%s' '{"ok":true,"results":[{"id":"auth.verify","status":"pass","detail":"authenticated as o***@example.com via stored login session"}]}'
+  else
+    printf '%s' '{"ok":true,"results":[{"id":"auth.verify","status":"warn","detail":"not signed in"}]}'
+  fi
+  exit 0
+fi
+exit 0
+`,
+    { mode: 0o700 },
+  );
+  const { base } = await office(t, dir, agent);
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const client = socket(t, base, 'client=dashboard');
+  const welcome = await client.wait('welcome');
+  assert.match(welcome.missionControl?.orchestrator.blocked ?? '', /Droid isn’t ready/);
+  if (welcome.setup.droid.signedIn !== false) {
+    client.send({ t: 'setup.check' });
+    await client.wait('setup', (m) => m.state.droid.signedIn === false);
+  }
+  writeFileSync(signedIn, '');
+  client.send({ t: 'setup.check' });
+  await client.wait('missionControl', (m) => !m.state.orchestrator.blocked);
+  client.messages.length = 0;
+  client.send({ t: 'subagents.set', settings: { ...welcome.subagents, officeMcp: false } });
+  await client.wait('missionControl', (m) => !!m.state.orchestrator.blocked?.includes('Office MCP'));
+  client.messages.length = 0;
+  client.send({ t: 'subagents.set', settings: { ...welcome.subagents, officeMcp: true } });
+  await client.wait('missionControl', (m) => !m.state.orchestrator.blocked);
+  client.messages.length = 0;
+  rmSync(signedIn);
+  client.send({ t: 'setup.check' });
+  await client.wait('missionControl', (m) => !!m.state.orchestrator.blocked?.includes('Droid isn’t ready'));
+  assert.equal(client.ws.readyState, WebSocket.OPEN);
+  assert.equal(welcome.missionControl?.orchestrator.agent, undefined, 'readiness changes need no first prompt or PTY');
+});
 
 test('hidden models sync to every device and new connections, with invalid changes refused', async (t) => {
   const { base, dir } = await office(t);
