@@ -235,6 +235,27 @@ test('the Orchestrator finds Mission Control in office_roster and may read only 
   assert.match(home.text, /building agent in Mission Control/);
 });
 
+test('a read of the Orchestrator’s conversation and a resize of its terminal each get a receipt', async (t) => {
+  const o = await missionOffice(t);
+  const owner = await ownerWindow(t, o.base);
+  owner.send({ t: 'thread.read', workerId: ORCHESTRATOR_ID, request: 'page', requestId: 'read' });
+  assert.equal((await owner.wait('thread.snapshot', (m) => m.request === 'page')).error, 'The Orchestrator has no conversation yet.');
+  await owner.wait('action.result', (m) => m.requestId === 'read');
+  owner.send({ t: 'orchestrator.prompt', prompt: 'Plan the release', requestId: 'first' });
+  assert.equal((await owner.wait('action.result', (m) => m.requestId === 'first')).ok, true);
+  const call = await o.mcp(await o.launched(ORCHESTRATOR_ID));
+  owner.send({ t: 'worker.attach', workerId: ORCHESTRATOR_ID, requestId: 'open' });
+  assert.equal((await owner.wait('action.result', (m) => m.requestId === 'open')).ok, true);
+  owner.send({ t: 'term.resize', workerId: ORCHESTRATOR_ID, cols: 100, rows: 30, requestId: 'size' });
+  await owner.wait('action.result', (m) => m.requestId === 'size');
+  const [{ worker }] = o.server.owner.mission();
+  assert.deepEqual([worker.cols, worker.rows], [100, 30]);
+  // Through the Office MCP the read is the office's answer at once, not a wait for a receipt that never comes.
+  const thread = await call('office_worker_thread', { workerId: ORCHESTRATOR_ID });
+  assert.equal(thread.data.pending, undefined, thread.text);
+  assert.match(thread.text, /no conversation yet/);
+});
+
 /** The Orchestrator in its first conversation, leading one subagent on the office's floor. */
 async function orchestratorTeam(t: TestContext) {
   const o = await missionOffice(t);

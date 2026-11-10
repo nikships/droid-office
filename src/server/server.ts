@@ -1806,6 +1806,13 @@ export async function startServer(cfg: Config) {
     const defer = () => {
       pending = true;
     };
+    /** A request id is a receipt request. Sync handlers that did not answer, and actions the companion does not await, still close the receipt so the client does not wait out its timeout. */
+    const unanswered = () => {
+      if (pending || finished) return;
+      // A handler that neither answered nor warned may have done nothing at all (an unknown id it ignores).
+      if (c.owner && !c.owner.refused) c.owner.unconfirmed = true;
+      done(c.owner ? c.owner.refused : 'This action was not confirmed. Check the office before trying again; it was not replayed.');
+    };
     if (requestId) {
       if (c.requests.has(requestId)) return done('That action was already received. It was not sent again.');
       c.requests.add(requestId);
@@ -1886,26 +1893,27 @@ export async function startServer(cfg: Config) {
           return done(orch.write(ORCHESTRATOR_ID, str(msg.data, 64 * 1024)) ? undefined : 'The Orchestrator is not running. Nothing was typed.');
         case 'term.resize': {
           const before = orch.get(ORCHESTRATOR_ID);
-          if (!c.attached.has(ORCHESTRATOR_ID) || !before) return;
+          if (!c.attached.has(ORCHESTRATOR_ID) || !before) return unanswered();
           const size = { cols: before.cols, rows: before.rows };
           orch.resize(ORCHESTRATOR_ID, num(msg.cols), num(msg.rows));
           const after = orch.get(ORCHESTRATOR_ID);
           if (after) c.phoneSizes?.resized(ORCHESTRATOR_ID, size, after);
-          return;
+          return unanswered();
         }
         case 'thread.read': {
           const request = str(msg.request, 128);
           const before = typeof msg.before === 'number' ? msg.before : undefined;
           const reply = { t: 'thread.snapshot' as const, workerId: ORCHESTRATOR_ID, request, ...(before !== undefined ? { before } : {}) };
-          if (msg.before !== undefined && (before === undefined || !Number.isSafeInteger(before) || before < 0)) return sendTo(c, { ...reply, entries: [], hasMore: false, error: 'Invalid conversation page.' });
+          const none = (error: string) => sendTo(c, { ...reply, entries: [], hasMore: false, error });
           const source = orch.threadSession(ORCHESTRATOR_ID);
-          if (!source) return sendTo(c, { ...reply, entries: [], hasMore: false, error: 'The Orchestrator has no conversation yet.' });
-          void workerThreads.read(source, before, orch.threadBusy(ORCHESTRATOR_ID)).then((page) => {
-            const current = orch.threadSession(ORCHESTRATOR_ID);
-            if (current?.sessionId !== source.sessionId) return sendTo(c, { ...reply, entries: [], hasMore: false, error: 'The Orchestrator’s conversation changed. Read the thread again.' });
-            sendTo(c, { ...reply, ...page });
-          });
-          return;
+          if (msg.before !== undefined && (before === undefined || !Number.isSafeInteger(before) || before < 0)) none('Invalid conversation page.');
+          else if (!source) none('The Orchestrator has no conversation yet.');
+          else
+            void workerThreads.read(source, before, orch.threadBusy(ORCHESTRATOR_ID)).then((page) => {
+              if (orch.threadSession(ORCHESTRATOR_ID)?.sessionId !== source.sessionId) return none('The Orchestrator’s conversation changed. Read the thread again.');
+              sendTo(c, { ...reply, ...page });
+            });
+          return unanswered();
         }
         default:
           return done('The Orchestrator works from Mission Control: it has no desk, worktree or changes of its own.');
@@ -2800,12 +2808,7 @@ export async function startServer(cfg: Config) {
         sendTo(c, { t: 'pong', at: num(msg.at), now: Date.now() });
         break;
     }
-    // A request id is a receipt request. Sync handlers that did not answer, and actions the companion does not await, still close the receipt so the client does not wait out its timeout.
-    if (!pending && !finished) {
-      // A handler that neither answered nor warned may have done nothing at all (an unknown id it ignores).
-      if (c.owner && !c.owner.refused) c.owner.unconfirmed = true;
-      done(c.owner ? c.owner.refused : 'This action was not confirmed. Check the office before trying again; it was not replayed.');
-    }
+    unanswered();
   };
 
   /**
