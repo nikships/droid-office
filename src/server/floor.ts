@@ -27,7 +27,7 @@ import { Team } from './team.js';
 import { Visits } from './visits.js';
 import type { DroidModelCatalogue } from './droid-models.js';
 import type { SubagentSettings } from '../shared/protocol.js';
-import type { ModelAvailability } from '../shared/subscriptions.js';
+import type { ModelAvailability, ModelUsage } from '../shared/subscriptions.js';
 import type { WorktreeSetupState } from '../shared/worktree-setup.js';
 import { setupState, writeOverride } from './worktree-setup.js';
 import { WhiteboardStore, renderInfo } from './whiteboard.js';
@@ -84,6 +84,8 @@ export interface FloorContext {
   modelGate?(model: string | undefined): string | undefined;
   /** Subscriptions: whether a subscription model can run now; undefined when it isn't one or nobody can tell. */
   modelAvailability?(model: string): ModelAvailability | undefined;
+  /** Subscriptions: what the plan behind a subscription model has left at `now`; undefined when it isn't one or nobody can tell. */
+  modelUsage?(model: string, now: number): ModelUsage | undefined;
   /** Another floor of the building: a worker across repositories works in its project too (see WorkerInfo.repos). */
   floor(id: string): Floor | undefined;
   /** This floor's pull requests came back: a worker on another floor with a repository here may have landed. */
@@ -345,6 +347,7 @@ export class Floor {
         settings: () => ctx.subagents(),
         ...(ctx.droidModels ? { models: ctx.droidModels.bind(ctx) } : {}),
         availability: (model) => ctx.modelAvailability?.(model),
+        usage: (model, now) => ctx.modelUsage?.(model, now),
         prompts: ctx.prompts,
         toast: (text, level, workerId) => ctx.toast(this, text, level, workerId),
       },

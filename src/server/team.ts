@@ -11,7 +11,7 @@ import { DESK_BY_ID, nearestFreeSeat } from '../shared/layout.js';
 import { AGENT_EFFORTS, isAgentEffort, type AgentChoice, type SubagentModel, type SubagentSettings, type WorkerInfo, type WorkerStatus, type WorkerTask } from '../shared/protocol.js';
 import { isAsleep } from '../shared/status.js';
 import type { DroidModelCatalogue, DroidModelOption } from './droid-models.js';
-import { availabilityWords, cannotRun, type ModelAvailability } from '../shared/subscriptions.js';
+import { availabilityWords, cannotRun, type ModelAvailability, type ModelUsage } from '../shared/subscriptions.js';
 import { officePrompt, type PromptSource } from './prompts.js';
 import { workerMessageVars } from '../shared/prompts.js';
 import { hireRefusal } from './subscriptions/map.js';
@@ -52,6 +52,8 @@ export interface TeamOptions {
   models?: () => Promise<DroidModelCatalogue>;
   /** Subscriptions: whether a subscription model can run now; undefined when it isn't one or nobody can tell (docs/subscriptions.md). */
   availability?: (model: string) => ModelAvailability | undefined;
+  /** Subscriptions: what the plan behind a subscription model has left at `now`, for team_models. */
+  usage?: (model: string, now: number) => ModelUsage | undefined;
   prompts?: PromptSource;
   toast(text: string, level: 'info' | 'warn', workerId?: string): void;
   /** How long news waits before a lead at rest is told, so a report and the turn ending with it go as one. */
@@ -139,6 +141,8 @@ export interface TeamModel {
   unlisted?: true;
   /** Why a worker on it can't run now (out of quota, nobody signed in): hire refuses it. */
   cannotRun?: string;
+  /** A subscription model: what its plan has left, so a lead can weigh a nearly spent plan against a full one. */
+  usage?: ModelUsage;
   enabled?: boolean;
 }
 
@@ -486,6 +490,7 @@ export class Team {
     const fallback = this.defaultModel(catalogue?.defaultModel);
     const describe = (id: string, m: DroidModelOption | undefined, note?: string): TeamModel => {
       const stuck = m?.disabled ? 'Switched off in Droid.' : this.whyNot(id);
+      const usage = this.opts.usage?.(id, this.now());
       return {
         id,
         name: m?.displayName ?? id,
@@ -501,6 +506,7 @@ export class Team {
         ...(id === fallback ? { default: true as const } : {}),
         ...(catalogue && !m ? { unlisted: true as const } : {}),
         ...(stuck ? { cannotRun: stuck } : {}),
+        ...(usage ? { usage } : {}),
       };
     };
     const allowed = modelList(caller, s);

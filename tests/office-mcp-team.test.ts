@@ -13,7 +13,7 @@ import { Team, type TeamOptions, type TeamWorkers } from '../src/server/team.js'
 import { Visits } from '../src/server/visits.js';
 import { WhiteboardStore } from '../src/server/whiteboard.js';
 import { SUBAGENT_DEFAULTS, type SubagentSettings, type WorkerInfo } from '../src/shared/protocol.js';
-import type { ModelAvailability } from '../src/shared/subscriptions.js';
+import type { ModelAvailability, ModelUsage } from '../src/shared/subscriptions.js';
 
 function worker(id: string, extra: Partial<WorkerInfo> = {}): WorkerInfo {
   return { id, name: id, kind: 'agent', deskId: 'desk-1', color: '#fff', status: 'done', acked: true, createdBy: 'test', createdAt: 1, cols: 100, rows: 30, open: false, ...extra };
@@ -182,6 +182,46 @@ test('team models describes costs, notes, efforts, images, default and unavailab
   assert.equal(fallback.body.unavailable, true);
   assert.match(fallback.output, /could not list its models/);
   assert.doesNotMatch(fallback.output, /private error/);
+});
+
+test('team_models and models_list print the plan a subscription model runs on, and leave other models alone', async (t) => {
+  const SOL = 'custom:droidproxy:gpt-6.1-sol';
+  const GROK = 'custom:droidproxy:grok-4.7';
+  const now = Date.now();
+  const availability: Record<string, ModelAvailability> = { [SOL]: { state: 'ok' }, [GROK]: { state: 'exhausted', until: now + 3_600_000, window: 'Weekly' } };
+  const usage: Record<string, ModelUsage> = {
+    [SOL]: {
+      provider: 'codex',
+      accounts: 2,
+      windows: [
+        { name: '5-hour', leftPercent: 100, resetsAt: now + 296 * 60_000 + 30_000 },
+        { name: 'Weekly', leftPercent: 61, resetsAt: now + 57 * 3_600_000 + 30_000 },
+      ],
+      updatedAt: now - 40 * 60_000,
+      at: now,
+    },
+    [GROK]: { provider: 'grok', accounts: 1, windows: [], unreadable: 'timed out', at: now },
+  };
+  const r = await rig(t, {
+    availability: (model) => availability[model],
+    usage: (model) => usage[model],
+    now: () => now,
+    models: async () => ({
+      defaultModel: 'glm-5.3-flash',
+      models: [
+        { id: SOL, displayName: 'DroidProxy: GPT 6.1 Sol', custom: true },
+        { id: GROK, displayName: 'DroidProxy: Grok 4.7', custom: true },
+        { id: 'glm-5.3-flash', displayName: 'GLM-5.3-Flash', tokenMultiplier: 0.06 },
+      ],
+    }),
+  });
+  const text = (await r.call(r.lead, 'team_models')).content as { text: string }[];
+  const shown = text.map((c) => c.text).join('\n');
+  assert.match(shown, /Subscription usage: ChatGPT, best of 2 accounts: 5-hour 100% left \(resets in 4 h 57 min\), Weekly 61% left \(resets in 2 d 9 h\); read 40 min ago, may be out of date/);
+  assert.match(shown, /Subscription usage: Grok: usage couldn't be read \(timed out\)\nCannot run: Out of quota, back in 1 h \(Weekly\)/);
+  assert.equal((shown.match(/Subscription usage/g) ?? []).length, 2, 'GLM is not a subscription model');
+  const listed = (await r.call(r.lead, 'models_list')).content as { text: string }[];
+  assert.match(listed.map((c) => c.text).join('\n'), /Subscription usage: ChatGPT, best of 2 accounts/);
 });
 
 test('hiring preserves the literal brief, uses nearest desk and a worktree, and forwards model, effort and from', async (t) => {

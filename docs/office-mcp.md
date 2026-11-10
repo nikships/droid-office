@@ -58,7 +58,7 @@ Floor workers retain their team, visit and Whiteboard contracts. External bots l
 | `office_worker_answer` | `worker.answer` | `workerId`, `floor?`, `menu`, `choice?`, `choices?`, `text?`; [full schema reference](guide/remote-mcp.md#office_worker_answer) | building agents; floor-worker targets only |
 | `office_worker_interrupt` | `worker.interrupt` | `workerId`, `floor?`; [full schema reference](guide/remote-mcp.md#office_worker_interrupt) | building agents; floor-worker targets only |
 | `office_worker_thread` | `thread.read` | `workerId`, `floor?`, `before?`; [full schema reference](guide/remote-mcp.md#office_worker_thread) | building agents; may read Orchestrator |
-| `team_models` | `office-workers models` | none | may hire |
+| `team_models` | `office-workers models`; a subscription model also shows what its plan has left (`TeamModel.usage`, [docs/subscriptions.md](subscriptions.md)) | none | may hire |
 | `models_list` | full model discovery | none; includes `enabled: false` for switched-off/disallowed models | internal workers only, with existing permissions |
 | `team_hire` | `office-workers hire` | `title`, `brief`, `floor?` (building agents: id, name or checkout path), or `task: {title, brief, repo, baseBranch?, branch?, prNumber?, acceptanceCriteria?}`; `model?`, `effort?`, `from?`, `worktree?`. Returns `worktree` and `branch` immediately | may hire |
 | `team_status` | team snapshot | `worker?`, `floor?` (building agents), `lines?` (1–400), `verbose?` (boolean), `since?` (cursor), `kinds?` (event kinds, `blocked`). Includes observed `idleSince` and `idleForMs` | has or may have subagents |

@@ -4,7 +4,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import type { DroidModelCatalogue } from '../src/server/droid-models.js';
-import type { ModelAvailability } from '../src/shared/subscriptions.js';
+import { emptySubscriptionsState, modelUsage, type ModelAvailability } from '../src/shared/subscriptions.js';
 import { modelList, outsideModelList } from '../src/server/model-policy.js';
 import { Team, settled, type TeamOptions, type TeamWorkers } from '../src/server/team.js';
 import { teamOf, teamSummary, workersByTeam } from '../src/shared/team.js';
@@ -512,6 +512,65 @@ test("models says which subscription models can't run and why, and hire refuses 
   availability[GROK] = { state: 'proxy-down', installed: true };
   assert.equal((await r.call('lead', { action: 'hire', task: 'e', model: GROK })).status, 200);
 });
+test('team models carries the usage of a subscription model next to its refusal, and none for other models', async (t) => {
+  const SOL = 'custom:droidproxy:gpt-6.1-sol';
+  const GROK = 'custom:droidproxy:grok-4.7';
+  const now = Date.parse('2026-11-10T12:09:00Z');
+  const subs = emptySubscriptionsState();
+  subs.modelProviders = { [SOL]: 'codex', [GROK]: 'grok' };
+  subs.providers = [
+    {
+      key: 'codex',
+      name: 'Codex',
+      enabled: true,
+      connect: 'browser',
+      accounts: [
+        {
+          id: 'a',
+          label: 'a@example.com',
+          expired: false,
+          disabled: false,
+          usageUpdatedAt: now - 60_000,
+          windows: [
+            { name: '5-hour', usedPercent: 0, resetsAt: now + 296 * 60_000 },
+            { name: 'Weekly', usedPercent: 39, resetsAt: now + 57 * 3_600_000 },
+          ],
+        },
+      ],
+    },
+    { key: 'grok', name: 'Grok', enabled: true, connect: 'app', accounts: [{ id: 'g', label: 'g', expired: false, disabled: false, windows: [{ name: 'Weekly', usedPercent: 100, resetsAt: now + 3_600_000 }] }] },
+  ];
+  const availability: Record<string, ModelAvailability> = { [SOL]: { state: 'ok' }, [GROK]: { state: 'exhausted', until: now + 3_600_000, window: 'Weekly' } };
+  const catalogue: DroidModelCatalogue = {
+    models: [
+      { id: SOL, displayName: 'DroidProxy: GPT 6.1 Sol', custom: true },
+      { id: GROK, displayName: 'DroidProxy: Grok 4.7', custom: true },
+      { id: 'glm-5.3-flash', displayName: 'GLM-5.3-Flash', tokenMultiplier: 0.06 },
+    ],
+    defaultModel: 'glm-5.3-flash',
+  };
+  const r = rig(t, { models: () => Promise.resolve(catalogue), availability: (m) => availability[m], usage: (m, at) => modelUsage(subs, m, at), now: () => now });
+  const res = (await r.call('lead', { action: 'models' })).body;
+  const by = Object.fromEntries(res.models.map((m: { id: string }) => [m.id, m]));
+  assert.deepEqual(by[SOL].usage, {
+    provider: 'codex',
+    accounts: 1,
+    windows: [
+      { name: '5-hour', leftPercent: 100, resetsAt: now + 296 * 60_000 },
+      { name: 'Weekly', leftPercent: 61, resetsAt: now + 57 * 3_600_000 },
+    ],
+    updatedAt: now - 60_000,
+    at: now,
+  });
+  assert.equal(by[SOL].cannotRun, undefined);
+  assert.equal(by[GROK].cannotRun, 'Out of quota, back in 1 h (Weekly)', 'the refusal text is unchanged');
+  assert.equal(by[GROK].usage.windows[0].leftPercent, 0, 'and the plan shows how empty it is');
+  assert.equal('usage' in by['glm-5.3-flash'], false, 'a model that is not a subscription has no usage');
+
+  const all = (await r.call('lead', { action: 'models_list' })).body;
+  assert.deepEqual(all.models.find((m: { id: string }) => m.id === SOL).usage, by[SOL].usage, 'models_list shares it');
+});
+
 test('models without a model list still names the default and the picks', async (t) => {
   const r = rig(t, { models: () => Promise.reject(new Error('no droid')) }, { agent: { model: 'glm-5.3' }, models: [{ id: 'glm-5.3-flash' }] });
   const res = (await r.call('lead', { action: 'models' })).body;

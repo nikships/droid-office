@@ -272,7 +272,7 @@ Read one page of any local or cloud agent’s conversation, including the Orches
 
 ### `team_models`
 
-Read the models allowed for your subagents, including ids, providers, credit multipliers, efforts, owner notes, no-images limits, the default, and why any cannot run. Read it before choosing each task's model. Hiring refuses a blocked model, the default included, before taking a desk.
+Read the models allowed for your subagents, including ids, providers, credit multipliers, efforts, owner notes, no-images limits, the default, the quota a subscription model's plan has left, and why any cannot run. Read it before choosing each task's model. Hiring refuses a blocked model, the default included, before taking a desk.
 
 No arguments.
 
