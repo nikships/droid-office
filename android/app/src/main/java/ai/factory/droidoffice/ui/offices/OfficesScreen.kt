@@ -103,7 +103,10 @@ fun OfficesScreen(onBack: () -> Unit, onPairNew: () -> Unit, onSwitched: () -> U
     val mission = data.mission?.orchestrator
     if (orchestrator && mission != null) OrchestratorSheet(mission) { orchestrator = false }
     var hostUpdate by remember { mutableStateOf(false) }
-    LaunchedEffect(store.active?.id) { hostUpdate = false }
+    LaunchedEffect(store.active?.id) {
+        hostUpdate = false
+        orchestrator = false
+    }
     val notify = rememberNotifyPermission()
     val canNotify = notify.granted
     val now = rememberNow(30_000)

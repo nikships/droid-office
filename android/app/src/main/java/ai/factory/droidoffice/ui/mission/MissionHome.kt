@@ -23,6 +23,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -37,10 +38,11 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import ai.factory.droidoffice.core.MissionAgent
 import ai.factory.droidoffice.core.MissionControl
 import ai.factory.droidoffice.core.MissionControlState
+import ai.factory.droidoffice.core.Models
+import ai.factory.droidoffice.core.ORCHESTRATOR_COLOR
 import ai.factory.droidoffice.core.ORCHESTRATOR_ID
 import ai.factory.droidoffice.core.ORCHESTRATOR_NAME
 import ai.factory.droidoffice.core.Tags
-import ai.factory.droidoffice.core.WorkerInfo
 import ai.factory.droidoffice.core.WorkerStatus
 import ai.factory.droidoffice.core.Workers
 import ai.factory.droidoffice.net.nameOf
@@ -58,7 +60,7 @@ import ai.factory.droidoffice.ui.theme.Palette
 
 /**
  * The pinned Mission Control section at the top of Home, the same on every floor: the Orchestrator's
- * card, then a row per external bot. Hidden while the Orchestrator is off and no bot is connected.
+ * card (a row that says so while it is off), then a row per external bot.
  */
 @Composable
 fun MissionControlSection(mission: MissionControlState?, now: Long, selected: String?, onOpen: (String) -> Unit, modifier: Modifier = Modifier) {
@@ -66,19 +68,41 @@ fun MissionControlSection(mission: MissionControlState?, now: Long, selected: St
     Column(modifier.fillMaxWidth().tagged(Tags.Mission.SECTION), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Row(Modifier.fillMaxWidth().padding(start = 4.dp, end = 4.dp, top = 2.dp), verticalAlignment = Alignment.CenterVertically) {
             Eyebrow("Mission Control", Modifier.weight(1f))
-            Eyebrow("Every floor", color = Palette.TextTertiary)
+            Eyebrow(MissionControl.caption(mission), color = Palette.TextTertiary)
         }
         val o = mission.orchestrator
-        if (o.settings.on) OrchestratorCard(o.agent, o.blocked, now, selected == ORCHESTRATOR_ID) { onOpen(ORCHESTRATOR_ID) }
+        val openOrchestrator = { onOpen(ORCHESTRATOR_ID) }
+        if (o.settings.on) OrchestratorCard(o.agent, o.blocked, now, selected == ORCHESTRATOR_ID, openOrchestrator) else OrchestratorOffRow(openOrchestrator)
         if (mission.bots.isNotEmpty()) {
             Column(Modifier.fillMaxWidth().panel(RoundedCornerShape(12.dp))) {
                 mission.bots.forEachIndexed { i, bot ->
-                    if (i > 0) HorizontalDivider(color = Palette.Border)
-                    BotRow(bot, selected == bot.worker.id) { onOpen(bot.worker.id) }
+                    key(bot.worker.id) {
+                        if (i > 0) HorizontalDivider(color = Palette.Border)
+                        BotRow(bot, selected == bot.worker.id) { onOpen(bot.worker.id) }
+                    }
                 }
             }
         }
         Spacer(Modifier.height(2.dp))
+    }
+}
+
+@Composable
+private fun OrchestratorOffRow(onOpen: () -> Unit) {
+    Row(
+        Modifier.fillMaxWidth()
+            .panel(RoundedCornerShape(12.dp))
+            .clickable(onClickLabel = "Open the Orchestrator", onClick = onOpen)
+            .tagged(Tags.Mission.ORCHESTRATOR_OFF)
+            .padding(12.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        AgentTile(OfficeIcons.Orbit, Palette.TextSecondary, small = true)
+        Column(Modifier.weight(1f).padding(start = 10.dp)) {
+            Text("Orchestrator is off", style = MaterialTheme.typography.titleSmall)
+            Text("Open it to turn it on", style = MaterialTheme.typography.bodySmall, color = Palette.TextSecondary)
+        }
+        Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, null, Modifier.size(18.dp), tint = Palette.TextTertiary)
     }
 }
 
@@ -88,11 +112,10 @@ private fun OrchestratorCard(agent: MissionAgent?, blocked: String?, now: Long, 
     val w = agent?.worker
     val state = w?.state ?: WorkerStatus.Idle
     val loud = state == WorkerStatus.NeedsInput
-    val tint = orchestratorTint(w)
     val border = when {
-        selected -> tint
+        selected -> OrchestratorTint
         loud -> Palette.Danger.copy(alpha = 0.5f)
-        else -> tint.copy(alpha = 0.28f)
+        else -> OrchestratorTint.copy(alpha = 0.28f)
     }
     Column(
         Modifier.fillMaxWidth()
@@ -102,17 +125,15 @@ private fun OrchestratorCard(agent: MissionAgent?, blocked: String?, now: Long, 
             .padding(start = 12.dp, end = 12.dp, top = 12.dp, bottom = 12.dp),
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            AgentTile(OfficeIcons.Orbit, if (loud) Palette.Danger else tint)
+            AgentTile(OfficeIcons.Orbit, if (loud) Palette.Danger else OrchestratorTint)
             Column(Modifier.weight(1f).padding(start = 10.dp)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text(ORCHESTRATOR_NAME, style = MaterialTheme.typography.titleMedium, maxLines = 1, modifier = Modifier.weight(1f))
-                    val team = agent?.team.orEmpty()
-                    if (team.isNotEmpty()) MissionTag("TEAM ${team.size}", tint)
                     Spacer(Modifier.width(6.dp))
                     // Blocked says why in its line, in the warning colour, so the row needs no pill as well.
                     if (blocked == null) StatusPill(state, acked = w?.acked ?: true, tag = Tags.Mission.ORCHESTRATOR_STATUS, compact = true)
                 }
-                val model = w?.let(Workers::modelId)?.let(catalogue::nameOf)?.replace(Regex("^DroidProxy:\\s*", RegexOption.IGNORE_CASE), "")
+                val model = w?.let(Workers::modelId)?.let(catalogue::nameOf)?.let(Models::plainName)
                 val effort = w?.let(Workers::effort)?.takeIf { model != null }
                 val rest = buildList {
                     MissionControl.teamLine(agent?.team.orEmpty())?.let(::add)
@@ -121,14 +142,14 @@ private fun OrchestratorCard(agent: MissionAgent?, blocked: String?, now: Long, 
                 }.joinToString(" · ").uppercase()
                 val style = LocalOfficeType.current.eyebrow.copy(fontSize = 10.sp)
                 Row(Modifier.tagged(Tags.Mission.ORCHESTRATOR_META), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    Text(model?.uppercase() ?: "PLANS AND HIRES ON EVERY FLOOR", style = style, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f, fill = false))
+                    Text((model ?: MissionControl.OFFICE_DEFAULT).uppercase(), style = style, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f, fill = false))
                     if (effort != null) EffortDialMark(effort)
                     if (rest.isNotEmpty()) Text("· $rest", style = style, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f, fill = false))
                 }
             }
         }
         val title = w?.let(Workers::title)
-        val detail = w?.let(Workers::detail) ?: if (blocked == null) "Ready for a task anywhere in the building" else null
+        val detail = w?.let(Workers::detail) ?: if (blocked == null) MissionControl.READY else null
         if (title != null || detail != null) {
             Column(Modifier.padding(start = 42.dp, top = 8.dp)) {
                 if (title != null) Text(title, style = MaterialTheme.typography.bodyMedium)
@@ -205,13 +226,12 @@ internal fun AgentTile(icon: ImageVector, tint: Color, small: Boolean = false) {
 }
 
 @Composable
-internal fun MissionTag(text: String, color: Color? = null) {
+private fun MissionTag(text: String) {
     Text(
         text,
-        style = LocalOfficeType.current.eyebrow.copy(fontSize = 9.sp, color = color ?: Palette.TextSecondary),
-        modifier = Modifier.clip(RoundedCornerShape(3.dp)).background(color?.copy(alpha = 0.12f) ?: Palette.SurfaceHigh).padding(horizontal = 5.dp, vertical = 1.dp),
+        style = LocalOfficeType.current.eyebrow.copy(fontSize = 9.sp, color = Palette.TextSecondary),
+        modifier = Modifier.clip(RoundedCornerShape(3.dp)).background(Palette.SurfaceHigh).padding(horizontal = 5.dp, vertical = 1.dp),
     )
 }
 
-/** The Orchestrator's colour as its tile, card and team draw it. */
-internal fun orchestratorTint(w: WorkerInfo?): Color = parseColor(MissionControl.orchestratorColor(w), Palette.Accent)
+internal val OrchestratorTint: Color = parseColor(ORCHESTRATOR_COLOR)

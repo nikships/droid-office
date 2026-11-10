@@ -5,6 +5,14 @@ import org.junit.Test
 
 class ModelsTest {
     @Test
+    fun plainNameDropsOnlyTheGatewayPrefix() {
+        assertEquals("Opus 5.5", Models.plainName("DroidProxy: Opus 5.5"))
+        assertEquals("Opus 5.5", Models.plainName("droidproxy:Opus 5.5"))
+        assertEquals("Sonnet 5.5", Models.plainName("Sonnet 5.5"))
+        assertEquals("Opus via DroidProxy: x", Models.plainName("Opus via DroidProxy: x"))
+    }
+
+    @Test
     fun tidiesAnIdTheCatalogueHasNoNameFor() {
         assertEquals("Haiku 4.5", Models.displayName("claude-haiku-4-5-20251001"))
         assertEquals("Opus 4.6", Models.displayName("claude-opus-4-6"))

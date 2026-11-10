@@ -212,6 +212,8 @@ object Tags {
         const val ORCHESTRATOR_META = "mission.orchestrator.meta"
         const val ORCHESTRATOR_DETAIL = "mission.orchestrator.detail"
         const val ORCHESTRATOR_BLOCKED = "mission.orchestrator.blocked"
+        /** The Orchestrator's row while it is off; it opens its screen, which can turn it on. */
+        const val ORCHESTRATOR_OFF = "mission.orchestrator_off"
         fun bot(id: String) = "mission.bot/$id"
     }
 

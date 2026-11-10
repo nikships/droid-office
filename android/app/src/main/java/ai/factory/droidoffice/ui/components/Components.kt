@@ -17,6 +17,10 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.RowScope
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.WindowInsetsSides
+import androidx.compose.foundation.layout.only
+import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -61,6 +65,7 @@ import androidx.compose.ui.unit.sp
 import ai.factory.droidoffice.R
 import ai.factory.droidoffice.core.RouteKind
 import ai.factory.droidoffice.core.WorkerStatus
+import ai.factory.droidoffice.core.Workers
 import ai.factory.droidoffice.ui.theme.LocalOfficeType
 import ai.factory.droidoffice.ui.theme.OfficeIcons
 import ai.factory.droidoffice.ui.theme.Palette
@@ -68,14 +73,22 @@ import ai.factory.droidoffice.ui.theme.Palette
 /** How a status reads at a glance, matching the office's pills (src/client/style.css .pill). */
 data class StatusLook(val label: String, val color: Color, val loud: Boolean = false)
 
-fun statusLook(status: WorkerStatus, acked: Boolean = true): StatusLook = when (status) {
-    WorkerStatus.NeedsInput -> StatusLook("Needs you", Palette.Danger, loud = true)
-    WorkerStatus.Working -> StatusLook("Working", Palette.Warning)
-    WorkerStatus.Starting -> StatusLook("Starting", Palette.Info)
-    WorkerStatus.Idle -> StatusLook("Ready", Palette.Info)
-    WorkerStatus.Done -> StatusLook(if (acked) "Done" else "Done · new", Palette.Success)
-    WorkerStatus.Exited, WorkerStatus.Offline -> StatusLook("Asleep", Palette.TextSecondary)
-    WorkerStatus.Unknown -> StatusLook("Unknown", Palette.TextSecondary)
+fun statusLook(status: WorkerStatus, acked: Boolean = true): StatusLook {
+    val word = Workers.statusWord(status, acked)
+    return when (status) {
+        WorkerStatus.NeedsInput -> StatusLook(word, Palette.Danger, loud = true)
+        WorkerStatus.Working -> StatusLook(word, Palette.Warning)
+        WorkerStatus.Starting, WorkerStatus.Idle -> StatusLook(word, Palette.Info)
+        WorkerStatus.Done -> StatusLook(word, Palette.Success)
+        WorkerStatus.Exited, WorkerStatus.Offline, WorkerStatus.Unknown -> StatusLook(word, Palette.TextSecondary)
+    }
+}
+
+/** The safe area a worker's pane keeps clear: beside the list on a wide screen it keeps only its top and right edge. */
+@Composable
+fun paneInsets(embedded: Boolean): WindowInsets {
+    val sides = if (embedded) WindowInsetsSides.Top + WindowInsetsSides.End else WindowInsetsSides.Top + WindowInsetsSides.Horizontal
+    return WindowInsets.safeDrawing.only(sides)
 }
 
 fun parseColor(hex: String, fallback: Color = Palette.TextSecondary): Color = runCatching {
