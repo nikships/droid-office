@@ -86,23 +86,23 @@ export class MissionRoom {
     this.phase = orchestratorPhase(state);
     this.paintRing();
     this.screens.render(view);
-    const want = new Map<string, { w: WorkerInfo | undefined; spot: MissionSpot; chair?: number }>();
+    const want = new Map<string, { w: WorkerInfo | undefined; color: string; spot: MissionSpot; chair?: number }>();
     const o = state?.orchestrator;
-    if (o?.settings.on) want.set(ORCHESTRATOR_ID, { w: o.agent?.worker, spot: ORCHESTRATOR_SPOT });
+    if (o?.settings.on) want.set(ORCHESTRATOR_ID, { w: o.agent?.worker, color: ORCHESTRATOR_COLOR, spot: ORCHESTRATOR_SPOT });
     const chairs = botChairs(state);
     for (const b of state?.bots ?? []) {
       const chair = chairs.get(b.worker.id);
       const spot = chair === undefined ? undefined : chairSpot(chair);
-      if (spot) want.set(b.worker.id, { w: b.worker, spot, chair });
+      if (spot) want.set(b.worker.id, { w: b.worker, color: b.worker.color, spot, chair });
     }
     for (const [id, v] of this.views) {
       const next = want.get(id);
-      if (next && v.color === (next.w?.color ?? ORCHESTRATOR_COLOR)) continue;
+      if (next && v.color === next.color) continue;
       this.remove(id);
     }
-    for (const [id, { w, spot, chair }] of want) {
+    for (const [id, { w, color, spot, chair }] of want) {
       let v = this.views.get(id);
-      v ??= this.add(id, w?.name ?? ORCHESTRATOR_NAME, w?.color ?? ORCHESTRATOR_COLOR, chair);
+      v ??= this.add(id, w?.name ?? ORCHESTRATOR_NAME, color, chair);
       if (v.chair !== chair || !v.model.root.parent) this.place(v, spot, chair);
       if (w) dress(v, w);
       else {
@@ -137,7 +137,7 @@ export class MissionRoom {
   }
 
   private add(id: string, name: string, color: string, chair: number | undefined): MissionAgentView {
-    const model = new Worker(name, color);
+    const model = new Worker(name, color, 0.5);
     const orchestrator = id === ORCHESTRATOR_ID;
     const it: Interactable = orchestrator ? this.orchestratorSpot : { kind: 'bot', x: 0, z: 0, radius: 0.9, agentId: id };
     if (!orchestrator) this.interactables.push(it);

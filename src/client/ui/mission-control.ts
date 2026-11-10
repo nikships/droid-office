@@ -1,4 +1,4 @@
-import { ORCHESTRATOR_NAME, type MissionTeamMember } from '../../shared/mission-control';
+import { ORCHESTRATOR_ID, ORCHESTRATOR_NAME, type MissionTeamMember } from '../../shared/mission-control';
 import { isBusy } from '../../shared/status';
 import { ORCHESTRATOR_PITCH } from '../mission';
 import { lastUsedWords, missionTeamLine, orchestratorPhase } from '../mission-office';
@@ -65,6 +65,7 @@ export function openOrchestrator(net: Net, actions: OrchestratorActions) {
     warning: w?.status === 'needs_input' ? `${w.name} is waiting on an answer: open its terminal to reply.` : undefined,
     placeholder: 'What do you want done? It can hire and direct workers on any floor',
     imagesOption: true,
+    workerId: ORCHESTRATOR_ID,
     queueOption: busy,
     actions: [terminal, stop, fresh],
     onSubmit: (text, opts) => net.send({ t: 'orchestrator.prompt', prompt: text, images: opts.images.length ? opts.images : undefined, queue: opts.queue || undefined }),

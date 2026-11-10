@@ -1,6 +1,13 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { existsSync, readFileSync } from 'node:fs';
+import * as THREE from 'three';
+import { ORCHESTRATOR_ID, type MissionControlState } from '../src/shared/mission-control.js';
+import type { WorkerInfo } from '../src/shared/protocol.js';
+import { ORCHESTRATOR_COLOR } from '../src/client/mission.js';
+import { missionView } from '../src/client/mission-office.js';
+import { Worker } from '../src/client/world/character.js';
+import { MissionRoom } from '../src/client/world/mission-control.js';
 import { DESK_BY_ID, FLOOR, GLASS_ROOM, GLASS_ROOM_BOARD, GLASS_ROOM_CHAIRS, GLASS_ROOM_TABLE, LOFT, MISSION_HEAD, MISSION_ROSTER } from '../src/shared/layout.js';
 import { PROMPT_IDS } from '../src/shared/prompts.js';
 import type { MissionView } from '../src/client/mission-office.js';
@@ -66,6 +73,44 @@ function fakeCanvas(t: { after(fn: () => void): void }): string[] {
   });
   return text;
 }
+
+test('Mission Control pins the Orchestrator’s body colour and keeps compact, fading nameplates through redraws', (t) => {
+  fakeCanvas(t);
+  const mount = () => new THREE.Mesh(new THREE.PlaneGeometry(), new THREE.MeshBasicMaterial());
+  const room = new MissionRoom({ board: mount(), roster: mount(), sign: mount() }, []);
+  const worker = (id: string, color: string): WorkerInfo => ({ id, color, name: id, kind: 'agent', status: 'idle', deskId: '', acked: true, createdBy: '', createdAt: 0, cols: 0, rows: 0, open: false }) as WorkerInfo;
+  const state: MissionControlState = {
+    orchestrator: { settings: { on: true }, agent: { worker: worker(ORCHESTRATOR_ID, '#00ff00'), team: [] } },
+    bots: [{ worker: worker('Proof Bot', '#33aaff'), team: [] }],
+  };
+  const sync = () => room.sync(state, [], missionView(state, [], { model: () => undefined, activity: () => undefined }), () => {});
+  sync();
+  const original = room.orchestrator!;
+  assert.equal(original.color, ORCHESTRATOR_COLOR);
+  assert.equal(room.views.get('Proof Bot')!.color, '#33aaff');
+  const nameplate = (model: Worker) => model.root.children.find((c): c is THREE.Sprite => c instanceof THREE.Sprite && c.position.y === 1.55)!;
+  const ordinary = new Worker(ORCHESTRATOR_ID, ORCHESTRATOR_COLOR);
+  t.after(() => ordinary.dispose());
+  const ordinaryWidth = nameplate(ordinary).scale.x;
+  assert.equal(nameplate(original.model).scale.x, ordinaryWidth * 0.5);
+  original.model.setTeam({ id: ORCHESTRATOR_ID, role: 'lead', accent: ORCHESTRATOR_COLOR, emblem: 'star', leadName: 'Orchestrator' });
+  assert.equal(nameplate(original.model).scale.x, ordinaryWidth * 0.5, 'a team redraw preserves the compact scale');
+  original.model.seenFrom(1);
+  original.model.update(0, 0);
+  assert.equal(nameplate(original.model).material.opacity, 0, 'names disappear close up, just like desk-worker names');
+  original.model.seenFrom(7);
+  original.model.update(0, 0);
+  assert.equal(nameplate(original.model).material.opacity, 1);
+  state.orchestrator.agent!.worker.color = '#ff00ff';
+  state.bots[0].worker.color = '#4455ff';
+  sync();
+  assert.equal(room.orchestrator, original, 'a session colour change does not replace the Orchestrator');
+  assert.equal(room.views.get('Proof Bot')!.color, '#4455ff', 'bots keep their own reported colours');
+  state.orchestrator.settings.on = false;
+  state.bots = [];
+  sync();
+  assert.equal(room.views.size, 0);
+});
 
 test('the screens say what the Orchestrator is doing and who is on each building agent’s team, and repaint only on a change', async (t) => {
   const text = fakeCanvas(t);

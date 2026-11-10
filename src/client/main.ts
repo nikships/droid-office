@@ -31,7 +31,7 @@ import { floorPalette, forgeOf, forgeWords, normalizeRepo, repoChoices as otherR
 import { OFFICE_SHELL_ID } from '../shared/office-shell';
 import { ORCHESTRATOR_ID, ORCHESTRATOR_NAME } from '../shared/mission-control';
 import { botLine, missionWaiting, missionWorker, orchestratorLine, orchestratorStarted, orchestratorWorker } from './mission';
-import { ORCHESTRATOR_SPOT, PHASE_WORD, missionBadge, missionLinks, missionStand, missionTeamLine, missionView, orchestratorPhase, orchestratorWaiting } from './mission-office';
+import { ORCHESTRATOR_SPOT, PHASE_WORD, missionBadge, missionLinks, missionStand, missionTeamBadge, missionTeamLine, missionView, orchestratorPhase, orchestratorWaiting } from './mission-office';
 import type { AgentEffort, CarriedIssue, FloorInfo, GhIssue, GongWhy, WorkerInfo } from '../shared/protocol';
 import { ciForFloor } from '../shared/factory-ci';
 import { wikiShelfLine } from '../shared/factory-wiki';
@@ -1575,7 +1575,7 @@ function syncWorkers() {
       noOutline(v.model.root);
     }
     v.model.setAction(w.action);
-    v.model.setTeam(w.team);
+    v.model.setTeam(missionTeamBadge(w));
     if (v.heard && w.action === 'failing' && v.action !== 'failing') sound.ding('error');
     v.action = w.action;
     v.heard = true;
