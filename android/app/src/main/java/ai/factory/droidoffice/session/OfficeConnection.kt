@@ -9,7 +9,11 @@ import ai.factory.droidoffice.core.DroidCommand
 import ai.factory.droidoffice.core.FloorInfo
 import ai.factory.droidoffice.core.FloorView
 import ai.factory.droidoffice.core.GhPull
+import ai.factory.droidoffice.core.MissionAgent
+import ai.factory.droidoffice.core.MissionControl
+import ai.factory.droidoffice.core.MissionControlState
 import ai.factory.droidoffice.core.ModelAvailability
+import ai.factory.droidoffice.core.ORCHESTRATOR_ID
 import ai.factory.droidoffice.core.Probe
 import ai.factory.droidoffice.core.ProjectInfo
 import ai.factory.droidoffice.core.Protocol
@@ -94,9 +98,23 @@ data class OfficeData(
     val synced: Boolean = false,
     /** Only a welcome that explicitly advertises the checkbox-answer contract enables it. */
     val workerAnswerMultiSelect: Boolean = false,
+    /** The building's agents, the same on every floor; null from an office that predates Mission Control. */
+    val mission: MissionControlState? = null,
 ) {
     val floor: FloorInfo? get() = floors.firstOrNull { it.id == floorId }
+
+    /** A worker on this floor, or a building agent in Mission Control (the Orchestrator while it is on, or a bot). */
+    fun worker(id: String): WorkerInfo? = workers[id] ?: MissionControl.agent(mission, id)?.worker
+
+    /** The Orchestrator's session while it is on and has one. */
+    val orchestrator: WorkerInfo? get() = MissionControl.orchestrator(mission)
+
+    /** Everyone whose questions and finished turns are the owner's: this floor's workers and the Orchestrator. */
+    val askable: Collection<WorkerInfo> get() = orchestrator?.let { workers.values + it } ?: workers.values
 }
+
+/** Building agents have no desk: they never sit in a floor's list, whatever an office sends. */
+private fun deskWorker(w: WorkerInfo) = !w.remote && w.id != ORCHESTRATOR_ID
 
 private data class Desire(val office: PairedOffice?, val wanted: Boolean, val online: Boolean, val networkKey: String?, val nonce: Int)
 
@@ -579,7 +597,7 @@ class OfficeConnection(
     private fun handle(officeId: String, msg: ServerMsg) {
         when (msg) {
             is ServerMsg.Welcome -> {
-                _data.update { it.copy(workerAnswerMultiSelect = msg.workerAnswerMultiSelect) }
+                _data.update { it.copy(workerAnswerMultiSelect = msg.workerAnswerMultiSelect, mission = msg.missionControl) }
                 whiteboard.status(true)
                 whiteboard.welcome(msg.view.floor)
                 _availability.value = msg.availability
@@ -601,8 +619,18 @@ class OfficeConnection(
                 _availability.value = msg.availability
                 _subscriptions.value = msg.state
             }
+            is ServerMsg.MissionControl -> mission(msg.state)
             is ServerMsg.WorkerUpdate -> {
                 val w = msg.worker
+                if (w.id == ORCHESTRATOR_ID) {
+                    // Its own update between Mission Control states: keep its team, take its new status.
+                    _data.value.mission?.let { m ->
+                        val o = m.orchestrator
+                        mission(m.copy(orchestrator = o.copy(agent = o.agent?.copy(worker = w) ?: MissionAgent(w))))
+                    }
+                    return
+                }
+                if (!deskWorker(w)) return
                 val before = _data.value.workers
                 if (!before.containsKey(w.id) && w.createdBy == officeName && System.currentTimeMillis() - hireAskedAt < HIRE_WINDOW_MS) {
                     hireAskedAt = 0
@@ -633,6 +661,13 @@ class OfficeConnection(
         }
     }
 
+    private fun mission(state: MissionControlState) {
+        val was = _data.value.orchestrator
+        _data.update { it.copy(mission = state) }
+        val now = MissionControl.orchestrator(state)
+        if (was != null && now != null && (was.cols != now.cols || was.rows != now.rows)) feeds[now.id]?.push(TermEvent.Resize(TermSize(now.cols, now.rows)))
+    }
+
     private fun enter(officeId: String, view: FloorView, floors: List<FloorInfo>?, version: String?) {
         _screens.value = emptyMap()
         _data.update {
@@ -641,7 +676,7 @@ class OfficeConnection(
                 floors = floors ?: it.floors,
                 floorId = view.floor,
                 project = view.project,
-                workers = view.workers.associateBy(WorkerInfo::id),
+                workers = view.workers.filter(::deskWorker).associateBy(WorkerInfo::id),
                 pulls = view.pulls.items,
                 version = version ?: it.version,
                 synced = true,

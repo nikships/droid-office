@@ -221,7 +221,7 @@ data class FloorView(
 )
 
 sealed interface ServerMsg {
-    data class Welcome(val connection: String, val arrival: Arrival, val floors: List<FloorInfo>, val version: String, val view: FloorView, val availability: Map<String, ModelAvailability> = emptyMap(), val subscriptions: SubscriptionState? = null, val hiddenModels: Set<String> = emptySet(), val workerAnswerMultiSelect: Boolean = false, val factory: FactoryState? = null) : ServerMsg
+    data class Welcome(val connection: String, val arrival: Arrival, val floors: List<FloorInfo>, val version: String, val view: FloorView, val availability: Map<String, ModelAvailability> = emptyMap(), val subscriptions: SubscriptionState? = null, val hiddenModels: Set<String> = emptySet(), val workerAnswerMultiSelect: Boolean = false, val factory: FactoryState? = null, val missionControl: MissionControlState? = null) : ServerMsg
     data class ActionResult(val requestId: String, val ok: Boolean, val error: String?) : ServerMsg
     data class HiddenModels(val ids: Set<String>) : ServerMsg
     /** The office's Factory state replaced: its connection, computers and Environments. */
@@ -229,6 +229,8 @@ sealed interface ServerMsg {
     /** Which Claude, ChatGPT and other plan models can run now. */
     data class Subscriptions(val availability: Map<String, ModelAvailability>, val state: SubscriptionState? = null) : ServerMsg
     data class FloorEnter(val arrival: Arrival, val view: FloorView) : ServerMsg
+    /** A building agent or its team changed: sent to every connection, whatever floor it is on. */
+    data class MissionControl(val state: MissionControlState) : ServerMsg
     data class Floors(val floors: List<FloorInfo>) : ServerMsg
     data class WorkerUpdate(val worker: WorkerInfo) : ServerMsg
     data class WorkerRemove(val workerId: String) : ServerMsg
@@ -287,12 +289,14 @@ object Protocol {
             hiddenModels = strings(o["hiddenModels"]),
             workerAnswerMultiSelect = o.bool("workerAnswerMultiSelect") == true,
             factory = FactoryCloud.parse(o["factory"]),
+            missionControl = MissionControl.parse(o["missionControl"]),
         )
         "floor.enter" -> ServerMsg.FloorEnter(
             arrival = o.obj("arrival")?.let { OfficeJson.decodeFromJsonElement<Arrival>(it) } ?: Arrival(),
             view = floorView(o),
         )
         "floors" -> ServerMsg.Floors(floors(o["floors"]))
+        "missionControl" -> MissionControl.parse(o["state"])?.let { ServerMsg.MissionControl(it) } ?: ServerMsg.Ignored(t)
         "models.hidden" -> ServerMsg.HiddenModels(strings(o["ids"]))
         "factory" -> FactoryCloud.parse(o["state"])?.let { ServerMsg.Factory(it) } ?: ServerMsg.Ignored(t)
         "subscriptions" -> ServerMsg.Subscriptions(Availability.parse(o["state"]), Subscriptions.parse(o["state"]))
@@ -413,14 +417,38 @@ object ClientMsg {
     }
 
     /** Stops the turn a worker is in: an interrupt of a cloud worker's Factory session, Escape in a local agent's terminal. */
-    fun interrupt(workerId: String) = obj("worker.interrupt") { put("workerId", workerId) }
+    fun interrupt(workerId: String) = if (workerId == ORCHESTRATOR_ID) orchestratorInterrupt() else obj("worker.interrupt") { put("workerId", workerId) }
 
-    /** With [queue], an agent gets the prompt with Ctrl+Enter, so Droid queues it behind its current turn. */
-    fun prompt(workerId: String, prompt: String, images: List<String> = emptyList(), queue: Boolean = false) = obj("worker.prompt") {
-        put("workerId", workerId)
+    /**
+     * With [queue], an agent gets the prompt with Ctrl+Enter, so Droid queues it behind its current turn.
+     * The Orchestrator takes its prompts as `orchestrator.prompt`, which also starts its session.
+     */
+    fun prompt(workerId: String, prompt: String, images: List<String> = emptyList(), queue: Boolean = false): String =
+        if (workerId == ORCHESTRATOR_ID) orchestratorPrompt(prompt, images, queue) else obj("worker.prompt") {
+            put("workerId", workerId)
+            put("prompt", prompt)
+            if (images.isNotEmpty()) put("images", JsonArray(images.map { JsonPrimitive(it) }))
+            if (queue) put("queue", true)
+        }
+
+    /** Starts or steers the Orchestrator; [queue] holds it for after the current turn. */
+    fun orchestratorPrompt(prompt: String, images: List<String> = emptyList(), queue: Boolean = false) = obj("orchestrator.prompt") {
         put("prompt", prompt)
         if (images.isNotEmpty()) put("images", JsonArray(images.map { JsonPrimitive(it) }))
         if (queue) put("queue", true)
+    }
+
+    fun orchestratorInterrupt() = obj("orchestrator.interrupt") {}
+
+    /** Ends its conversation: the next prompt starts a fresh session. Its team stays its team. */
+    fun orchestratorReset() = obj("orchestrator.reset") {}
+
+    fun orchestratorSet(settings: OrchestratorSettings) = obj("orchestrator.set") {
+        put("settings", buildJsonObject {
+            put("on", settings.on)
+            settings.model?.let { put("model", it) }
+            settings.effort?.let { put("effort", it) }
+        })
     }
 
     fun termInput(workerId: String, data: String) = obj("term.input") {
