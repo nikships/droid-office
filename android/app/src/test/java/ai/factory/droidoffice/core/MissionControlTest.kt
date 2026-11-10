@@ -110,6 +110,23 @@ class MissionControlTest {
         assertEquals(listOf("w2", "w1"), MissionControl.arrangeTeam(team).map { it.id })
     }
 
+    // Mirrors orchestratorLine / botLine in src/client/mission.ts, so both companions say the same.
+    @Test
+    fun linesMatchTheWebCompanion() {
+        val m = MissionControl.parse(OfficeJson.parseToJsonElement(state))!!
+        assertEquals("Hiring on two floors", MissionControl.orchestratorLine(m.orchestrator))
+        assertEquals("Off. Turn it on in Settings → Orchestrator.", MissionControl.orchestratorLine(OrchestratorState(OrchestratorSettings(on = false))))
+        assertEquals("Off. Turn it on in Settings → Orchestrator.", MissionControl.orchestratorLine(null))
+        assertEquals("Droid isn't signed in", MissionControl.orchestratorLine(OrchestratorState(blocked = "Droid isn't signed in")))
+        assertEquals("Ready for a task anywhere in the building", MissionControl.orchestratorLine(OrchestratorState()))
+        assertEquals("Ready for a task anywhere in the building", MissionControl.orchestratorLine(OrchestratorState(agent = agent("idle"))))
+        val bot = m.bots.single()
+        assertEquals("Hasn’t reported since the office started", MissionControl.botLine(bot))
+        assertEquals("Reviewing PRs", MissionControl.botLine(bot.copy(worker = bot.worker.copy(status = "working", activity = "Reviewing PRs"))))
+        assertEquals(3, MissionControl.examples.size)
+        assertEquals("What is everyone doing?", MissionControl.examples.last())
+    }
+
     @Test
     fun orchestratorMessagesMatchTheContract() {
         fun o(s: String): JsonObject = OfficeJson.parseToJsonElement(s).jsonObject

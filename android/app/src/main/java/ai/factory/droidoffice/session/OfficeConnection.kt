@@ -347,14 +347,20 @@ class OfficeConnection(
         return api.hostUpdate(target.base, target.auth, action, version)
     }
 
-    suspend fun stageImage(name: String, type: String, bytes: ByteArray): Result<String> {
+    /** Stages a picture for a prompt to [workerId]: the Orchestrator keeps its own, whatever floor the phone is on. */
+    suspend fun stageImage(name: String, type: String, bytes: ByteArray, workerId: String? = null): Result<String> {
         val (base, auth) = current ?: return Result.failure(IllegalStateException("Not connected to the office"))
+        if (workerId == ORCHESTRATOR_ID) return api.stageImage(base, auth, null, name, type, bytes, worker = ORCHESTRATOR_ID)
         val floor = _data.value.floorId ?: return Result.failure(IllegalStateException("Not on a floor yet"))
         return api.stageImage(base, auth, floor, name, type, bytes)
     }
 
-    fun unstageImage(id: String) {
+    fun unstageImage(id: String, workerId: String? = null) {
         val (base, auth) = current ?: return
+        if (workerId == ORCHESTRATOR_ID) {
+            scope.launch { api.unstageImage(base, auth, null, id, worker = ORCHESTRATOR_ID) }
+            return
+        }
         val floor = _data.value.floorId ?: return
         scope.launch { api.unstageImage(base, auth, floor, id) }
     }

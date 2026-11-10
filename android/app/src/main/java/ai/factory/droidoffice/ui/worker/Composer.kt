@@ -184,8 +184,8 @@ fun Composer(
                 }
                 val a = Attachment(System.nanoTime(), picture.thumb)
                 images += a
-                graph.connection.stageImage(picture.name, picture.type, picture.bytes)
-                    .onSuccess { id -> if (a in images) a.id = id else graph.connection.unstageImage(id) }
+                graph.connection.stageImage(picture.name, picture.type, picture.bytes, w.id)
+                    .onSuccess { id -> if (a in images) a.id = id else graph.connection.unstageImage(id, w.id) }
                     .onFailure { e ->
                         images -= a
                         snackbar.showSnackbar(e.message ?: "The picture couldn't be attached")
@@ -248,7 +248,7 @@ fun Composer(
                         Box(
                             Modifier.align(Alignment.TopEnd).padding(3.dp).size(18.dp).clip(CircleShape).background(Color(0xCC000000)).clickable {
                                 images -= a
-                                a.id?.let(graph.connection::unstageImage)
+                                a.id?.let { graph.connection.unstageImage(it, w.id) }
                             }.tagged(Tags.Worker.removeImage(i + 1)),
                             contentAlignment = Alignment.Center,
                         ) { Icon(Icons.Default.Close, "Remove image ${i + 1}", Modifier.size(12.dp), tint = Color.White) }

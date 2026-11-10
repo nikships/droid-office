@@ -255,7 +255,7 @@ private fun Intro(onExample: (String) -> Unit) {
         Text("Run the whole building from here", style = MaterialTheme.typography.headlineSmall)
         Spacer(Modifier.height(8.dp))
         Text(
-            "Tell the Orchestrator what you want done. It plans the work, hires workers on any floor, answers their questions, checks what they did and reports back. It never edits code itself.",
+            MissionControl.PITCH,
             style = MaterialTheme.typography.bodyMedium, color = Palette.TextSecondary,
         )
         Spacer(Modifier.height(22.dp))

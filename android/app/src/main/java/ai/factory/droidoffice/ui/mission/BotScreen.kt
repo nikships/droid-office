@@ -86,8 +86,8 @@ fun BotScreen(bot: MissionAgent, embedded: Boolean, onBack: () -> Unit, onOpenWo
                         Spacer(Modifier.width(8.dp))
                         Text("as it last reported", style = MaterialTheme.typography.bodySmall, color = Palette.TextTertiary)
                     }
-                    val activity = Workers.detail(w)
-                    if (activity != null) Text(activity, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.tagged(Tags.Bot.ACTIVITY))
+                    val activity = MissionControl.botLine(bot)
+                    Text(activity, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.tagged(Tags.Bot.ACTIVITY))
                     Text(
                         bot.lastUsedAt?.let { "Its key was last used ${Workers.ago(it, now)}." } ?: "Its key hasn't been used since the office started.",
                         style = MaterialTheme.typography.bodySmall,

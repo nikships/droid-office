@@ -211,9 +211,10 @@ class OfficeApi(base: OkHttpClient = OkHttpClient()) {
      * Keeps a picture on the office's machine for a prompt that isn't sent yet (POST
      * /api/prompt/image). Answers with its id for `images` on worker.prompt, or why it was refused.
      */
-    suspend fun stageImage(base: String, auth: OfficeAuth, floor: String, name: String, type: String, bytes: ByteArray): Result<String> = withContext(Dispatchers.IO) {
+    suspend fun stageImage(base: String, auth: OfficeAuth, floor: String?, name: String, type: String, bytes: ByteArray, worker: String? = null): Result<String> = withContext(Dispatchers.IO) {
         val url = request(base, "api/prompt/image", auth).build().url.newBuilder()
-            .addQueryParameter("floor", floor).addQueryParameter("name", name).build()
+            .apply { floor?.let { addQueryParameter("floor", it) }; worker?.let { addQueryParameter("worker", it) } }
+            .addQueryParameter("name", name).build()
         val req = request(base, "api/prompt/image", auth).url(url).post(bytes.toRequestBody(type.toMediaType())).build()
         try {
             client.newCall(req).await().use { res ->
@@ -227,8 +228,10 @@ class OfficeApi(base: OkHttpClient = OkHttpClient()) {
         }
     }
 
-    suspend fun unstageImage(base: String, auth: OfficeAuth, floor: String, id: String) = withContext(Dispatchers.IO) {
-        val url = request(base, "api/prompt/image", auth).build().url.newBuilder().addQueryParameter("floor", floor).addQueryParameter("id", id).build()
+    suspend fun unstageImage(base: String, auth: OfficeAuth, floor: String?, id: String, worker: String? = null) = withContext(Dispatchers.IO) {
+        val url = request(base, "api/prompt/image", auth).build().url.newBuilder()
+            .apply { floor?.let { addQueryParameter("floor", it) }; worker?.let { addQueryParameter("worker", it) } }
+            .addQueryParameter("id", id).build()
         runCatching { client.newCall(request(base, "api/prompt/image", auth).url(url).delete().build()).await().close() }
     }
 

@@ -123,10 +123,29 @@ object MissionControl {
         WorkerStatus.Unknown -> "Unknown"
     }
 
-    /** What to try first, on the Orchestrator's empty screen. */
+    /** What it is for, as the web companion says it (ORCHESTRATOR_PITCH in src/client/mission.ts). */
+    const val PITCH = "Tell it what you want done anywhere in the building. It plans, hires workers on any floor, answers their questions, checks their work and reports back. It never edits code itself."
+
+    /** What to try first, on its empty screen: the web companion's three (ORCHESTRATOR_EXAMPLES). */
     val examples = listOf(
-        "What is everyone doing right now?",
-        "Get CI green on every floor.",
-        "Triage the open issues across my projects and put workers on the top three.",
+        "Get CI green on every floor",
+        "Triage the open issues across my projects and put workers on the top three",
+        "What is everyone doing?",
     )
+
+    /** The Orchestrator in a line (orchestratorLine): off, why it can't start, what it's doing, or that it's ready for a task. */
+    fun orchestratorLine(state: OrchestratorState?): String {
+        if (state?.settings?.on != true) return "Off. Turn it on in Settings → Orchestrator."
+        state.blocked?.let { return it }
+        val w = state.agent?.worker
+        if (w == null || (w.state == WorkerStatus.Idle && w.task == null && w.title.isNullOrBlank() && w.activity.isNullOrBlank())) return "Ready for a task anywhere in the building"
+        return Workers.detail(w) ?: Workers.title(w) ?: "Ready for a task anywhere in the building"
+    }
+
+    /** An external bot in a line (botLine): what it last reported, or that it hasn't since the office started. */
+    fun botLine(bot: MissionAgent): String {
+        val w = bot.worker
+        if (w.state == WorkerStatus.Offline) return "Hasn’t reported since the office started"
+        return w.activity?.takeIf { it.isNotBlank() } ?: w.title?.takeIf { it.isNotBlank() } ?: Workers.detail(w) ?: botStatus(w)
+    }
 }

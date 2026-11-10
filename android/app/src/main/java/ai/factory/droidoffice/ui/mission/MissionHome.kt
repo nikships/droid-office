@@ -124,7 +124,7 @@ private fun OrchestratorCard(agent: MissionAgent?, blocked: String?, now: Long, 
             }
         }
         val title = w?.let(Workers::title)
-        val detail = w?.let(Workers::detail) ?: if (blocked == null) "Tell it what you want done across the building. It hires the workers and reports back." else null
+        val detail = w?.let(Workers::detail) ?: if (blocked == null) "Ready for a task anywhere in the building" else null
         if (title != null || detail != null) {
             Column(Modifier.padding(start = 42.dp, top = 8.dp)) {
                 if (title != null) Text(title, style = MaterialTheme.typography.bodyMedium)
@@ -183,7 +183,7 @@ private fun BotRow(bot: MissionAgent, selected: Boolean, onOpen: () -> Unit) {
                 Spacer(Modifier.width(6.dp))
                 MissionTag("EXTERNAL")
             }
-            val line = listOfNotNull(MissionControl.botStatus(w), w.activity?.takeIf { it.isNotBlank() } ?: MissionControl.teamLine(bot.team)).joinToString(" · ")
+            val line = listOfNotNull(MissionControl.botLine(bot), MissionControl.teamLine(bot.team)).joinToString(" · ")
             Text(line, style = MaterialTheme.typography.bodySmall, color = Palette.TextSecondary, maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
         Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, null, Modifier.size(18.dp), tint = Palette.TextTertiary)
