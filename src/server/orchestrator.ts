@@ -4,7 +4,7 @@
 
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
-import { DEFAULT_ORCHESTRATOR_SETTINGS, ORCHESTRATOR_ID, ORCHESTRATOR_NAME, type OrchestratorSettings, type OrchestratorState } from '../shared/mission-control.js';
+import { DEFAULT_ORCHESTRATOR_SETTINGS, ORCHESTRATOR_COLOR, ORCHESTRATOR_ID, ORCHESTRATOR_NAME, type MissionAgent, type OrchestratorSettings, type OrchestratorState } from '../shared/mission-control.js';
 import { AGENT_EFFORTS, type AgentChoice, type WorkerInfo } from '../shared/protocol.js';
 import type { ScreenFrame } from './screen-frame.js';
 import { missionTeam } from './building-agent.js';
@@ -16,7 +16,6 @@ import { WorkerManager, type HookEnv } from './workers.js';
 export const ORCHESTRATOR_FILE = 'orchestrator.json';
 /** Its folder in the office's own `.droid-office/`: where its session runs, never a checkout. */
 export const ORCHESTRATOR_DIR = 'orchestrator';
-const COLOR = '#5ec8e5';
 /** Droid's file-editing tools: the Orchestrator plans and hires, and never edits. */
 export const ORCHESTRATOR_DENIED_TOOLS = '^(Edit|MultiEdit|Create|ApplyPatch)$';
 const DENIED = 'The Orchestrator never edits files. Hire a worker with team_hire and give it the change.';
@@ -113,6 +112,8 @@ export class Orchestrator {
 
   /** Picks its terminal back up, or resumes its conversation, as a floor does its workers. */
   start(): Promise<void> {
+    // A session saved before its colour became the office accent.
+    this.workers.recolor(ORCHESTRATOR_ID, ORCHESTRATOR_COLOR);
     return this.workers.start();
   }
 
@@ -122,6 +123,29 @@ export class Orchestrator {
 
   get info(): WorkerInfo | undefined {
     return this.workers.get(ORCHESTRATOR_ID);
+  }
+
+  /** MCP discovery includes the configured agent before its first prompt, without starting a session. */
+  rosterAgent(): MissionAgent | undefined {
+    if (!this.settings.on) return undefined;
+    const choice = this.choice();
+    const worker: WorkerInfo = this.info ?? {
+      id: ORCHESTRATOR_ID,
+      name: ORCHESTRATOR_NAME,
+      kind: 'agent',
+      deskId: '',
+      color: ORCHESTRATOR_COLOR,
+      status: 'idle',
+      activity: this.blocked() ?? 'Ready for its first prompt',
+      acked: true,
+      createdBy: 'owner',
+      createdAt: 0,
+      cols: 100,
+      rows: 30,
+      open: false,
+      ...choice,
+    };
+    return { worker, team: missionTeam(this.opts.floors(), ORCHESTRATOR_ID) };
   }
 
   /** Who it is to the floors: nobody while it is off, so its team reports to nobody. */
@@ -152,7 +176,7 @@ export class Orchestrator {
     const info = this.info;
     if (!info) {
       const { model, effort } = this.choice();
-      const started = this.workers.spawnDeskless(ORCHESTRATOR_ID, ORCHESTRATOR_NAME, COLOR, 'owner', text, model, effort, images);
+      const started = this.workers.spawnDeskless(ORCHESTRATOR_ID, ORCHESTRATOR_NAME, ORCHESTRATOR_COLOR, 'owner', text, model, effort, images);
       return typeof started === 'string' ? started : undefined;
     }
     // Not running: carry its conversation on, with this as its next message.
