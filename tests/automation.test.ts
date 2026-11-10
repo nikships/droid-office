@@ -218,7 +218,7 @@ function raw(over: Partial<RawState> = {}): RawState {
 }
 
 test('Mission Control: the Orchestrator is a place, each seated bot a target by id, and both stand you within reach', () => {
-  const orchestrator: Interactable = { kind: 'orchestrator', x: ORCHESTRATOR_SPOT.x, z: ORCHESTRATOR_SPOT.z, radius: 1.5, agentId: 'orchestrator' };
+  const orchestrator: Interactable = { kind: 'orchestrator', x: ORCHESTRATOR_SPOT.x, z: ORCHESTRATOR_SPOT.z, radius: 1.8, agentId: 'orchestrator' };
   const seat = chairSpot(0)!;
   const claw: Interactable = { kind: 'bot', x: seat.x, z: seat.z, radius: 0.9, agentId: 'bot-claw' };
   const ctx = context({ spots: [...floorSpots(), orchestrator, claw], agents: [worker({ id: 'orchestrator', name: 'Orchestrator', deskId: '' }), worker({ id: 'bot-claw', name: 'OpenClaw', deskId: '', remote: true, status: 'working' })] });

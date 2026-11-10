@@ -39,11 +39,11 @@ export interface MissionStand {
 const WALL_GAP = 0.4;
 
 /**
- * Where to stand at a building agent at (x, z): on the Orchestrator's left, between the doorway and the
- * table, looking up at it on its plinth; behind a bot's chair and to one side, looking down at it.
+ * Where to stand at a building agent at (x, z): in front of the Orchestrator and to its left, by the
+ * table's corner on the doorway's side, looking up at it on its plinth; behind a bot's chair and to one side, looking down at it.
  */
 export function missionStand(it: { kind: 'orchestrator' | 'bot'; x: number; z: number }): MissionStand {
-  if (it.kind === 'orchestrator') return { at: { x: ORCHESTRATOR_SPOT.x, y: 0, z: ORCHESTRATOR_SPOT.z - 1.3 }, face: { x: ORCHESTRATOR_SPOT.x, y: MISSION_HEAD.height + 1.1, z: ORCHESTRATOR_SPOT.z } };
+  if (it.kind === 'orchestrator') return { at: { x: ORCHESTRATOR_SPOT.x + 0.7, y: 0, z: ORCHESTRATOR_SPOT.z - 1.45 }, face: { x: ORCHESTRATOR_SPOT.x, y: MISSION_HEAD.height + 1.1, z: ORCHESTRATOR_SPOT.z } };
   const spot = GLASS_ROOM_CHAIRS.map((_, i) => chairSpot(i)!).reduce((a, b) => (Math.hypot(b.x - it.x, b.z - it.z) < Math.hypot(a.x - it.x, a.z - it.z) ? b : a));
   const back = { x: -Math.sin(spot.rotY), z: -Math.cos(spot.rotY) };
   const side = { x: Math.cos(spot.rotY), z: -Math.sin(spot.rotY) };

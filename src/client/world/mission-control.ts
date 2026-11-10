@@ -40,7 +40,7 @@ export class MissionRoom {
   readonly group = new THREE.Group();
   readonly screens = new MissionScreens();
   /** The Orchestrator, and its screen over the table: E at either opens it, on or off. */
-  readonly orchestratorSpot: Interactable = { kind: 'orchestrator', x: ORCHESTRATOR_SPOT.x, z: ORCHESTRATOR_SPOT.z, radius: 1.5, agentId: ORCHESTRATOR_ID };
+  readonly orchestratorSpot: Interactable = { kind: 'orchestrator', x: ORCHESTRATOR_SPOT.x, z: ORCHESTRATOR_SPOT.z, radius: 1.8, agentId: ORCHESTRATOR_ID };
   /** The Orchestrator and the seated bots, by worker id. */
   readonly views = new Map<string, MissionAgentView>();
   private ringMat = toonUnique(ORCHESTRATOR_COLOR);

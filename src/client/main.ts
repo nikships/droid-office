@@ -2267,7 +2267,7 @@ function paletteEntries(): PaletteEntry[] {
     const pose = missionPose('orchestrator', ORCHESTRATOR_SPOT);
     out.push({
       icon: '🛰️',
-      kind: 'Mission Control',
+      kind: 'Building agent',
       title: o?.name ?? ORCHESTRATOR_NAME,
       detail: orchestratorLine(mc),
       keywords: ['orchestrator', 'mission control', 'building agent', 'lead', 'every floor'],
@@ -2280,7 +2280,7 @@ function paletteEntries(): PaletteEntry[] {
       const open = () => showBot(b.worker.id);
       out.push({
         icon: '🤖',
-        kind: 'External bot',
+        kind: 'Building agent',
         title: b.worker.name,
         detail: [botLine(b), missionTeamLine(b.team)].filter(Boolean).join(' · '),
         keywords: ['mission control', 'tailscale', 'mcp', 'bot'],

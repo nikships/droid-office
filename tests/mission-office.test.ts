@@ -45,7 +45,9 @@ test('the Orchestrator stands on its plinth facing down the table, and each bot 
 test('you stand inside the glass, on open floor, within reach of whom you talk to', () => {
   const o = missionStand({ kind: 'orchestrator', ...ORCHESTRATOR_SPOT });
   assert.ok(inside(o.at) && walkable(o.at.x, o.at.z), 'beside the Orchestrator');
-  assert.ok(Math.hypot(o.at.x - ORCHESTRATOR_SPOT.x, o.at.z - ORCHESTRATOR_SPOT.z) < 1.5, 'within its 1.5 m');
+  assert.ok(Math.hypot(o.at.x - ORCHESTRATOR_SPOT.x, o.at.z - ORCHESTRATOR_SPOT.z) < 1.8, 'within its 1.8 m');
+  const ahead = forward(ORCHESTRATOR_SPOT.rotY);
+  assert.ok((o.at.x - ORCHESTRATOR_SPOT.x) * ahead.x + (o.at.z - ORCHESTRATOR_SPOT.z) * ahead.z > 0, 'in front of it, where its face is');
   assert.ok(o.face.y > MISSION_HEAD.height + 0.8, 'looking up at its face on the plinth');
   for (let i = 0; i < GLASS_ROOM_CHAIRS.length; i++) {
     const s = chairSpot(i)!;
