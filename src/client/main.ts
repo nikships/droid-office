@@ -2892,7 +2892,7 @@ function orchestratorHint(): Hint {
   const started = !!orchestratorAwake(mc);
   const busy = isBusy(w.status);
   const doing = phase === 'fresh' ? 'ready for a task anywhere in the building' : clip(workerActivity(w) ?? w.task?.name ?? '', 48);
-  const team = missionTeamLine(mc.orchestrator.agent?.team ?? []) ?? '';
+  const team = missionTeamLine(mc.orchestrator.team) ?? '';
   return {
     k: ['orch', w.name, phase, doing, team, busy].join('|'),
     parts: [title(`🛰️ ${w.name} · ${PHASE_WORD[phase]}`), doing ? aside(doing) : '', team ? aside(team) : '', key('E', busy ? 'Steer or queue' : 'Prompt'), started ? key('O', 'Terminal') : '', busy ? key('X', 'Stop') : ''],

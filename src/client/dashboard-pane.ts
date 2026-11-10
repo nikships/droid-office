@@ -24,7 +24,7 @@ import type { PaneView } from './dashboard-workspace';
 import { workerTeams } from '../shared/team';
 import { missionAgent, ORCHESTRATOR_ID, type MissionAgent, type MissionControlState, type MissionTeamMember } from '../shared/mission-control';
 import type { SettingsPane } from '../shared/settings-nav';
-import { botLine, missionLead, ORCHESTRATOR_EXAMPLES, ORCHESTRATOR_PITCH, orchestratorBlocked, orchestratorLine, orchestratorMessage, orchestratorStarted } from './mission';
+import { botLine, buildingAgent, missionLead, ORCHESTRATOR_EXAMPLES, ORCHESTRATOR_PITCH, orchestratorBlocked, orchestratorLine, orchestratorMessage, orchestratorStarted } from './mission';
 import { orchestratorAwake } from './mission-office';
 
 /** What a sidebar row carries when it's dragged onto a pane. */
@@ -459,7 +459,7 @@ export function createPane(host: PaneHost, index: number): Pane {
   }
 
   function paintTeam(w: WorkerInfo | undefined) {
-    const mission = w && (missionAgent(host.mission(), w.id) ?? missionLead(host.mission(), w.lead));
+    const mission = w && (buildingAgent(host.mission(), w.id) ?? missionLead(host.mission(), w.lead));
     // A bot's own pane lists its team in full, so only its subagents' panes get the strip.
     if (w && mission && !(w.remote && w.id === mission.worker.id)) return paintMissionTeam(w, mission);
     if (w?.remote) {

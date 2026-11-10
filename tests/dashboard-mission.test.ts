@@ -50,6 +50,7 @@ test('Mission Control pins the building’s agents in the sidebar and opens the 
         },
       ],
     };
+    w.mission.orchestrator.team = w.mission.orchestrator.agent.team;
     w.roster = w.MissionUI.createMissionRoster(document.querySelector('#mission'), {
       open: (id: string) => w.calls.push(['open', id]),
       split: (id: string) => w.calls.push(['split', id]),
@@ -113,11 +114,22 @@ test('Mission Control pins the building’s agents in the sidebar and opens the 
   await roster.locator('.dash-mission-off').click();
   assert.deepEqual(await page.evaluate(() => (window as any).calls), [['settings']]);
 
+  // After a new conversation there is no session, and its team is still its own.
+  await page.evaluate(() => {
+    const w = window as any;
+    const { agent, ...rest } = w.mission.orchestrator;
+    w.mission = { ...w.mission, orchestrator: { ...rest, settings: { on: true }, team: agent.team } };
+    w.paintRoster();
+  });
+  assert.match(await roster.locator('[data-worker=orchestrator]').innerText(), /Ready for a task/);
+  assert.match(await roster.locator('.dash-team-toggle').first().innerText(), /2 subagents · 2 floors/);
+  assert.equal(await roster.locator('.dash-mission-agent').first().locator('.dash-mission-member').count(), 2, 'Byte and Dot are listed under it');
+
   // The Orchestrator's pane before its first prompt: what it's for, examples that fill the composer, a prompt that is its own message.
   await page.evaluate(() => {
     const w = window as any;
     w.calls = [];
-    w.mission = { orchestrator: { settings: { on: true } }, bots: w.mission.bots };
+    w.mission = { orchestrator: { settings: { on: true }, team: [] }, bots: w.mission.bots };
     const net = {
       send: (msg: any) => (w.calls.push(['send', msg.t]), true),
       onMessage: () => () => {},
@@ -184,7 +196,7 @@ test('Mission Control pins the building’s agents in the sidebar and opens the 
   await page.evaluate(() => {
     const w = window as any;
     const worker = { ...w.MissionUI.orchestratorWorker({ orchestrator: { settings: { on: true } }, bots: [] }), status: 'working', sessionId: 's-1', task: { name: 'Get CI green on every floor' } };
-    w.mission = { ...w.mission, orchestrator: { ...w.mission.orchestrator, agent: { worker, team: [] } } };
+    w.mission = { ...w.mission, orchestrator: { ...w.mission.orchestrator, agent: { worker, team: [] }, team: [] } };
     w.paintPane('orchestrator');
   });
   assert.equal(await pane.locator('.wt-blocked').isHidden(), true);
@@ -217,7 +229,7 @@ test('Mission Control pins the building’s agents in the sidebar and opens the 
   // Asleep, its session has no terminal to show: Thread stands in, and a prompt wakes it.
   await page.evaluate(() => {
     const w = window as any;
-    w.mission = { orchestrator: { settings: { on: true }, agent: { worker: { ...w.mission.orchestrator.agent.worker, status: 'exited' }, team: [] } }, bots: w.mission.bots };
+    w.mission = { orchestrator: { settings: { on: true }, agent: { worker: { ...w.mission.orchestrator.agent.worker, status: 'exited' }, team: [] }, team: [] }, bots: w.mission.bots };
     w.paintPane('orchestrator', 'terminal');
   });
   assert.equal(await pane.getAttribute('data-mode'), 'thread');

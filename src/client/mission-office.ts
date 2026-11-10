@@ -8,7 +8,7 @@ import { ORCHESTRATOR_COLOR, ORCHESTRATOR_ID, ORCHESTRATOR_NAME, orchestratorNee
 import type { TeamBadge, WorkerInfo, WorkerStatus } from '../shared/protocol';
 import { isAsleep } from '../shared/status';
 import { teamCounts } from '../shared/team';
-import { orchestratorWorker } from './mission';
+import { buildingAgent } from './mission';
 import type { TeamLink } from './world/team-lines';
 
 /** Where a building agent is in the room: its feet, and its heading (`Object3D.rotation.y`, forward +z). */
@@ -97,8 +97,8 @@ export const PHASE_WORD: Record<OrchestratorPhase, string> = {
  */
 export function missionAgents(state: MissionControlState | null | undefined): MissionAgent[] {
   if (!state) return [];
-  const o = orchestratorWorker(state);
-  return [...(o ? [state.orchestrator.agent ?? { worker: o, team: [] }] : []), ...state.bots];
+  const o = buildingAgent(state, ORCHESTRATOR_ID);
+  return [...(o ? [o] : []), ...state.bots];
 }
 
 /** The Orchestrator's session while its terminal can open: started and awake. Otherwise its prompt box stands in, and a prompt wakes it. */
@@ -238,7 +238,7 @@ export function missionView(state: MissionControlState | null | undefined, floor
   const w = o?.settings.on ? o.agent?.worker : undefined;
   const roster: RosterAgent[] = [];
   if (o?.settings.on) {
-    const team = o.agent?.team ?? [];
+    const team = o.team;
     roster.push({
       id: ORCHESTRATOR_ID,
       name: w?.name ?? ORCHESTRATOR_NAME,
@@ -266,7 +266,7 @@ export function missionView(state: MissionControlState | null | undefined, floor
     todos: t?.total ? { done: t.done, total: t.total, ...(t.current ? { current: t.current } : {}) } : undefined,
     model: w ? words.model(w) : undefined,
     blocked: o?.blocked,
-    teamLine: missionTeamLine(o?.agent?.team ?? []),
+    teamLine: missionTeamLine(o?.settings.on ? o.team : []),
     agents: roster,
   };
 }

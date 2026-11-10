@@ -8,7 +8,7 @@ import { isBusy } from '../shared/status';
 import { teamCounts } from '../shared/team';
 import { statusDot, workerDot, workingBars, WORKER_MIME } from './dashboard-pane';
 import { reconcileChildren, todoMeter } from './dashboard-roster';
-import { botLine, orchestratorBlocked, orchestratorLine, orchestratorWorker } from './mission';
+import { botLine, buildingAgent, orchestratorBlocked, orchestratorLine } from './mission';
 import { h, STATUS_LABEL, timeAgo } from './ui/dom';
 import { icon } from './ui/icons';
 import { modelBadgeLabel, modelBadgeNode } from './ui/models';
@@ -141,8 +141,8 @@ export function createMissionRoster(el: HTMLElement, host: MissionRosterHost) {
   }
 
   /** `session` is undefined only for the Orchestrator before its first prompt, when `w` stands in for it. */
-  function paintAgent(session: MissionAgent | undefined, w: WorkerInfo, s: MissionRosterState): HTMLElement {
-    const agent = session ?? { worker: w, team: [] };
+  function paintAgent(agent: MissionAgent, s: MissionRosterState): HTMLElement {
+    const w = agent.worker;
     const orchestrator = w.id === ORCHESTRATOR_ID;
     const r = agentRow(w.id);
     const waits = orchestrator && missionAgentNeedsOwner(agent);
@@ -262,20 +262,20 @@ export function createMissionRoster(el: HTMLElement, host: MissionRosterHost) {
     const focused = document.activeElement instanceof HTMLElement && el.contains(document.activeElement) ? document.activeElement : undefined;
     const content: HTMLElement[] = [head];
     const seen = new Set<string>();
-    const orchestrator = orchestratorWorker(mc);
+    const orchestrator = buildingAgent(mc, ORCHESTRATOR_ID);
     if (orchestrator) {
-      content.push(paintAgent(mc.orchestrator.agent, orchestrator, next));
-      seen.add(orchestrator.id);
+      content.push(paintAgent(orchestrator, next));
+      seen.add(ORCHESTRATOR_ID);
     } else {
       off.disabled = !next.live;
       content.push(off);
     }
     for (const bot of mc.bots) {
-      content.push(paintAgent(bot, bot.worker, next));
+      content.push(paintAgent(bot, next));
       seen.add(bot.worker.id);
     }
-    const agents = [...(orchestrator ? [mc.orchestrator.agent] : []), ...mc.bots];
-    const team = agents.flatMap((a) => a?.team ?? []);
+    const agents = [...(orchestrator ? [orchestrator] : []), ...mc.bots];
+    const team = agents.flatMap((a) => a.team);
     for (const m of team) seen.add(`member:${m.id}`);
     for (const id of rows.keys()) if (!seen.has(id)) rows.delete(id);
     for (const id of blocks.keys())
@@ -283,8 +283,8 @@ export function createMissionRoster(el: HTMLElement, host: MissionRosterHost) {
         blocks.delete(id);
         collapsed.delete(id);
       }
-    const attention = (orchestrator && missionAgentNeedsOwner(mc.orchestrator.agent) ? 1 : 0) + team.filter((m) => m.status === 'needs_input').length;
-    const working = agents.filter((a) => a && isBusy(a.worker.status)).length + team.filter((m) => isBusy(m.status) && m.status !== 'needs_input').length;
+    const attention = (orchestrator && missionAgentNeedsOwner(orchestrator) ? 1 : 0) + team.filter((m) => m.status === 'needs_input').length;
+    const working = agents.filter((a) => isBusy(a.worker.status)).length + team.filter((m) => isBusy(m.status) && m.status !== 'needs_input').length;
     caption.classList.toggle('dash-team-attention', !!attention);
     caption.textContent = attention ? `${attention} need${attention === 1 ? 's' : ''} you` : working ? `${working} working` : 'Every floor';
     reconcileChildren(el, content);

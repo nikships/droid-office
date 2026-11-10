@@ -38,6 +38,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import ai.factory.droidoffice.core.MissionAgent
 import ai.factory.droidoffice.core.MissionControl
 import ai.factory.droidoffice.core.MissionControlState
+import ai.factory.droidoffice.core.MissionTeamMember
 import ai.factory.droidoffice.core.Models
 import ai.factory.droidoffice.core.ORCHESTRATOR_COLOR
 import ai.factory.droidoffice.core.ORCHESTRATOR_ID
@@ -72,7 +73,7 @@ fun MissionControlSection(mission: MissionControlState?, now: Long, selected: St
         }
         val o = mission.orchestrator
         val openOrchestrator = { onOpen(ORCHESTRATOR_ID) }
-        if (o.settings.on) OrchestratorCard(o.agent, MissionControl.orchestratorBlocked(o), now, selected == ORCHESTRATOR_ID, openOrchestrator) else OrchestratorOffRow(openOrchestrator)
+        if (o.settings.on) OrchestratorCard(o.agent, MissionControl.team(o), MissionControl.orchestratorBlocked(o), now, selected == ORCHESTRATOR_ID, openOrchestrator) else OrchestratorOffRow(openOrchestrator)
         if (mission.bots.isNotEmpty()) {
             Column(Modifier.fillMaxWidth().panel(RoundedCornerShape(12.dp))) {
                 mission.bots.forEachIndexed { i, bot ->
@@ -107,7 +108,7 @@ private fun OrchestratorOffRow(onOpen: () -> Unit) {
 }
 
 @Composable
-private fun OrchestratorCard(agent: MissionAgent?, blocked: String?, now: Long, selected: Boolean, onOpen: () -> Unit) {
+private fun OrchestratorCard(agent: MissionAgent?, team: List<MissionTeamMember>, blocked: String?, now: Long, selected: Boolean, onOpen: () -> Unit) {
     val catalogue by LocalGraph.current.connection.catalogue.collectAsStateWithLifecycle()
     val w = agent?.worker
     val state = w?.state ?: WorkerStatus.Idle
@@ -136,7 +137,7 @@ private fun OrchestratorCard(agent: MissionAgent?, blocked: String?, now: Long, 
                 val model = w?.let(Workers::modelId)?.let(catalogue::nameOf)?.let(Models::plainName)
                 val effort = w?.let(Workers::effort)?.takeIf { model != null }
                 val rest = buildList {
-                    MissionControl.teamLine(agent?.team.orEmpty())?.let(::add)
+                    MissionControl.teamLine(team)?.let(::add)
                     w?.let { Workers.workedMs(it, now) }?.takeIf { it >= 1_000 }?.let { add(Workers.duration(it)) }
                     if ((state == WorkerStatus.NeedsInput || (state == WorkerStatus.Done && w?.acked == false)) && w?.waitingSince != null) add(Workers.ago(w.waitingSince, now))
                 }.joinToString(" · ").uppercase()

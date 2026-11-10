@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { ORCHESTRATOR_ID, type MissionAgent, type MissionControlState } from '../src/shared/mission-control.js';
 import type { WorkerInfo } from '../src/shared/protocol.js';
-import { botLine, missionLead, missionWaiting, missionWorker, ORCHESTRATOR_EXAMPLES, orchestratorBlocked, orchestratorLine, orchestratorMessage, orchestratorStarted, orchestratorWorker } from '../src/client/mission.js';
+import { botLine, buildingAgent, missionLead, missionWaiting, missionWorker, ORCHESTRATOR_EXAMPLES, orchestratorBlocked, orchestratorLine, orchestratorMessage, orchestratorStarted, orchestratorWorker } from '../src/client/mission.js';
 
 const worker = (over: Partial<WorkerInfo>): WorkerInfo =>
   ({ id: ORCHESTRATOR_ID, kind: 'agent', name: 'Orchestrator', color: '#ee6018', deskId: '', status: 'idle', acked: true, createdBy: '', createdAt: 0, cols: 120, rows: 40, open: true, ...over }) as WorkerInfo;
@@ -11,7 +11,8 @@ const bot: MissionAgent = {
   team: [{ id: 'w-1', name: 'Byte', floor: 'f-web', floorName: 'web-app', status: 'working' }],
   lastUsedAt: 1,
 };
-const state = (over: Partial<MissionControlState['orchestrator']> = {}, bots: MissionAgent[] = []): MissionControlState => ({ orchestrator: { settings: { on: true }, ...over }, bots });
+// As the server sends it: `team` is the session's team while there is one.
+const state = (over: Partial<MissionControlState['orchestrator']> = {}, bots: MissionAgent[] = []): MissionControlState => ({ orchestrator: { settings: { on: true }, team: over.agent?.team ?? [], ...over }, bots });
 
 test('before its first prompt the Orchestrator is an idle stand-in with no session, on its chosen model', () => {
   const s = state({ settings: { on: true, model: 'custom:opus', effort: 'high' } });
@@ -56,6 +57,18 @@ test('building agents are found by id', () => {
   assert.equal(missionLead(s, 'bot-claw'), bot);
   assert.equal(missionLead(s, undefined), undefined);
   assert.equal(missionLead(state({ settings: { on: false }, agent: { worker: worker({}), team: [] } }), ORCHESTRATOR_ID), undefined, 'its team reports to nobody while it is off');
+});
+
+test('with no session the Orchestrator’s stand-in still leads the team it kept', () => {
+  const team = [{ id: 'w-1', name: 'Byte', floor: 'f-web', floorName: 'web-app', status: 'working' as const }];
+  const s = state({ team });
+  const agent = buildingAgent(s, ORCHESTRATOR_ID);
+  assert.equal(agent?.worker.id, ORCHESTRATOR_ID);
+  assert.equal(agent?.worker.sessionId, undefined);
+  assert.deepEqual(agent?.team, team);
+  assert.equal(missionLead(s, ORCHESTRATOR_ID)?.team, team, 'its subagents still name it as their lead');
+  assert.equal(buildingAgent(s, 'bot-claw'), undefined);
+  assert.equal(buildingAgent(state({ settings: { on: false }, team }), ORCHESTRATOR_ID), undefined, 'off, it leads nobody');
 });
 
 test('only the Orchestrator waits on the owner: a question or an unread finished turn', () => {

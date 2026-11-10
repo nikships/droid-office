@@ -12,7 +12,7 @@ import { colorDot } from './kit';
 import { OFFICE_SHELL_ID } from '../../shared/office-shell';
 import type { ServerMsg, WorkerInfo } from '../../shared/protocol';
 import { teamSummary, workerTeams } from '../../shared/team';
-import { missionAgent } from '../../shared/mission-control';
+import { buildingAgent, missionLead } from '../mission';
 import { missionTeamLine } from '../mission-office';
 import { forkRefusal } from '../../shared/worker-fork';
 import { openForkWorker } from './fork-worker';
@@ -50,9 +50,9 @@ let current: { workerId: string; modal: Modal; find(f: TerminalFind): void } | n
  * here with the whole team's line.
  */
 function teamAround(w: WorkerInfo): { lead?: WorkerInfo; mates: WorkerInfo[]; summary?: string } {
-  const agent = missionAgent(store.missionControl, w.id);
+  const agent = buildingAgent(store.missionControl, w.id);
   if (agent) return { mates: agent.team.flatMap((m) => store.workers.get(m.id) ?? []), summary: missionTeamLine(agent.team) };
-  const building = w.lead ? missionAgent(store.missionControl, w.lead) : undefined;
+  const building = missionLead(store.missionControl, w.lead);
   if (building) return { lead: building.worker, mates: [...store.workers.values()].filter((x) => x.lead === w.lead && x.id !== w.id) };
   const group = workerTeams(store.workers.values()).find((t) => t.lead.id === w.id || t.children.some((s) => s.id === w.id));
   const mates = group?.children.filter((s) => s.id !== w.id) ?? [];

@@ -90,7 +90,7 @@ test('Mission Control pins the Orchestrator’s body colour and keeps compact na
   const room = new MissionRoom({ board: mount(), roster: mount(), sign: mount() }, []);
   const worker = (id: string, color: string): WorkerInfo => ({ id, color, name: id, kind: 'agent', status: 'idle', deskId: '', acked: true, createdBy: '', createdAt: 0, cols: 0, rows: 0, open: false }) as WorkerInfo;
   const state: MissionControlState = {
-    orchestrator: { settings: { on: true }, agent: { worker: worker(ORCHESTRATOR_ID, '#00ff00'), team: [] } },
+    orchestrator: { settings: { on: true }, agent: { worker: worker(ORCHESTRATOR_ID, '#00ff00'), team: [] }, team: [] },
     bots: [{ worker: worker('Proof Bot', '#33aaff'), team: [] }],
   };
   const sync = () => room.sync(state, [], missionView(state, [], { model: () => undefined, activity: () => undefined }), () => {});
@@ -194,7 +194,7 @@ test('dashes keep their spacing on every leg of a team line routed out through t
   fakeCanvas(t);
   const desk = (id: string) => ({ 'desk-1': { x: 2, y: 0, z: 2 } })[id];
   const sub = { id: 'w-1', name: 'Byte', kind: 'agent', deskId: 'desk-1', lead: ORCHESTRATOR_ID, status: 'idle', acked: true, color: '#33aaff', createdBy: '', createdAt: 0, cols: 0, rows: 0, open: false } as WorkerInfo;
-  const state: MissionControlState = { orchestrator: { settings: { on: true } }, bots: [] };
+  const state: MissionControlState = { orchestrator: { settings: { on: true }, team: [] }, bots: [] };
   const lines = new TeamLines();
   lines.set([...missionLinks(state, [sub], desk), { from: { x: -8, y: 0, z: -4 }, to: { x: -2, y: 0, z: -4 }, color: '#ff0000', team: 'straight', moving: false }]);
   const legs = lines.group.children.filter((c): c is THREE.Mesh<THREE.PlaneGeometry> => c instanceof THREE.Mesh && c.geometry instanceof THREE.PlaneGeometry);

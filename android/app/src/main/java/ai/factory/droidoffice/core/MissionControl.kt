@@ -56,6 +56,8 @@ data class OrchestratorState(
     val agent: MissionAgent? = null,
     /** Why it can't start now, shown in place of the composer. */
     val blocked: String? = null,
+    /** Its subagents across every open floor, in hiring order: still its own with no session and while it is off. */
+    val team: List<MissionTeamMember> = emptyList(),
 )
 
 @Serializable
@@ -117,6 +119,13 @@ object MissionControl {
         return state.bots.firstOrNull { it.worker.id == id }
     }
 
+    /**
+     * The Orchestrator's team while it is on, with or without a session. An office that sends no `team`
+     * beside its session has it only on the session.
+     */
+    fun team(state: OrchestratorState?): List<MissionTeamMember> =
+        if (state?.settings?.on != true) emptyList() else state.team.ifEmpty { state.agent?.team.orEmpty() }
+
     /** The Orchestrator's session while it is on and has one. */
     fun orchestrator(state: MissionControlState?): WorkerInfo? = agent(state, ORCHESTRATOR_ID)?.worker
 
@@ -135,7 +144,7 @@ object MissionControl {
     fun caption(state: MissionControlState?): String {
         if (state == null) return EVERY_FLOOR
         val agents = listOfNotNull(state.orchestrator.agent.takeIf { state.orchestrator.settings.on }) + state.bots
-        val team = agents.flatMap { it.team }
+        val team = team(state.orchestrator) + state.bots.flatMap { it.team }
         val attention = (if (orchestratorNeedsOwner(state)) 1 else 0) + team.count { it.state == WorkerStatus.NeedsInput }
         val working = agents.count { it.worker.state.busy } + team.count { it.state.busy && it.state != WorkerStatus.NeedsInput }
         return when {

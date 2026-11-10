@@ -162,7 +162,7 @@ fun WorkerScreen(workerId: String, onBack: () -> Unit, embedded: Boolean = false
     }
     val orchestrator = data.mission?.orchestrator
     if (mission && (orchestrator?.settings?.on != true || orchestrator.agent == null)) {
-        OrchestratorIdle(orchestrator, data.synced, embedded, onBack)
+        OrchestratorIdle(orchestrator, data.synced, embedded, onBack, onOpenWorker)
         return
     }
     val worker = data.worker(workerId)
@@ -268,7 +268,7 @@ fun WorkerScreen(workerId: String, onBack: () -> Unit, embedded: Boolean = false
         // The view switch shares the PR and branch row. Send home stays in the header.
         if (threadable && !cloud) Column(Modifier.fillMaxWidth().background(Palette.Bg)) {
             Actions(worker, lead = { InlineViewToggle(tty, pickView) }, resumable = !mission)
-            if (mission) TeamStrip(orchestrator?.agent?.team.orEmpty(), onOpen = { followTeamMember?.invoke(it) })
+            if (mission) TeamStrip(MissionControl.team(orchestrator), onOpen = { followTeamMember?.invoke(it) })
             Box(Modifier.fillMaxWidth().height(4.dp))
             Box(Modifier.fillMaxWidth().height(1.dp).background(Palette.Border))
         }

@@ -210,7 +210,7 @@ private fun IdleHeader(embedded: Boolean, onBack: () -> Unit, sub: String, onMen
  * composer whose first prompt starts it. While it is off, what that means and a way to turn it on.
  */
 @Composable
-internal fun OrchestratorIdle(state: OrchestratorState?, synced: Boolean, embedded: Boolean, onBack: () -> Unit) {
+internal fun OrchestratorIdle(state: OrchestratorState?, synced: Boolean, embedded: Boolean, onBack: () -> Unit, onOpenWorker: ((String) -> Unit)? = null) {
     val graph = LocalGraph.current
     val connection = graph.connection
     val link by connection.link.collectAsStateWithLifecycle()
@@ -221,12 +221,19 @@ internal fun OrchestratorIdle(state: OrchestratorState?, synced: Boolean, embedd
     val connected = link.phase == Phase.Connected
     val on = state?.settings?.on == true
     val blocked = MissionControl.orchestratorBlocked(state)
+    // After a new conversation its team is still its own, so the strip stays above the empty state.
+    val team = MissionControl.team(state)
+    val follow = rememberFollow(onOpenWorker)
     Column(
         Modifier.fillMaxSize().tagged(Tags.Screen.WORKER).background(Palette.Bg).windowInsetsPadding(paneInsets(embedded))
             .windowInsetsPadding(WindowInsets.ime.union(WindowInsets.navigationBars).only(WindowInsetsSides.Bottom)),
     ) {
         IdleHeader(embedded, onBack, if (state == null) "Mission Control" else if (!on) "Mission Control · off" else if (blocked != null) "Mission Control · blocked" else "Mission Control · ready", onMenu = if (state == null) null else ({ menu = true }))
         Box(Modifier.fillMaxWidth().height(1.dp).background(Palette.Border))
+        if (team.isNotEmpty()) {
+            TeamStrip(team, onOpen = { follow?.invoke(it) })
+            Box(Modifier.fillMaxWidth().height(1.dp).background(Palette.Border))
+        }
         Column(
             Modifier.weight(1f).fillMaxWidth().verticalScroll(rememberScrollState()).padding(horizontal = 24.dp, vertical = 28.dp),
             horizontalAlignment = Alignment.CenterHorizontally,

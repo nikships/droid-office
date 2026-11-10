@@ -24,7 +24,8 @@ import {
 const worker = (over: Partial<WorkerInfo>): WorkerInfo =>
   ({ id: ORCHESTRATOR_ID, kind: 'agent', name: 'Orchestrator', color: '#ee6018', deskId: '', status: 'idle', acked: true, createdBy: '', createdAt: 0, cols: 120, rows: 40, open: true, ...over }) as WorkerInfo;
 const bot = (id: string, over: Partial<MissionAgent> = {}): MissionAgent => ({ worker: worker({ id, name: id, color: '#33aaff', remote: true, status: 'working' }), team: [], ...over });
-const state = (over: Partial<MissionControlState['orchestrator']> = {}, bots: MissionAgent[] = []): MissionControlState => ({ orchestrator: { settings: { on: true }, ...over }, bots });
+// As the server sends it: `team` is the session's team while there is one.
+const state = (over: Partial<MissionControlState['orchestrator']> = {}, bots: MissionAgent[] = []): MissionControlState => ({ orchestrator: { settings: { on: true }, team: over.agent?.team ?? [], ...over }, bots });
 const forward = (rotY: number) => ({ x: Math.sin(rotY), z: Math.cos(rotY) });
 const inside = (p: { x: number; z: number }) => p.x > GLASS_ROOM.minX && p.x < GLASS_ROOM.maxX && p.z > GLASS_ROOM.minZ && p.z < GLASS_ROOM.maxZ;
 
@@ -216,4 +217,12 @@ test('the screens’ view: the Orchestrator’s card and every building agent wi
   assert.equal(off.phase, 'off');
   assert.equal(off.title, undefined);
   assert.deepEqual(off.agents, []);
+  assert.equal(off.teamLine, undefined);
+  const kept = missionView(state({ team }), [], words);
+  assert.equal(kept.phase, 'fresh');
+  assert.equal(kept.teamLine, '🧭 1 subagent · 1 working', 'after a new conversation its team is still on its card');
+  assert.deepEqual(
+    kept.agents.map((a) => [a.id, a.team.map((m) => m.name)]),
+    [[ORCHESTRATOR_ID, ['Byte']]],
+  );
 });

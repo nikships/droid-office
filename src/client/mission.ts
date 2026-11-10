@@ -44,9 +44,19 @@ export function orchestratorStarted(state: MissionControlState | undefined): boo
   return !!state?.orchestrator.settings.on && !!state.orchestrator.agent;
 }
 
+/**
+ * A building agent with its team, by id: an external bot, or the Orchestrator while it's on. Before its first
+ * prompt and after a new conversation the Orchestrator is its stand-in, still leading the team it kept.
+ */
+export function buildingAgent(state: MissionControlState | undefined, id: string): MissionAgent | undefined {
+  if (id !== ORCHESTRATOR_ID) return missionAgent(state, id);
+  const worker = orchestratorWorker(state);
+  return worker && (state?.orchestrator.agent ?? { worker, team: state?.orchestrator.team ?? [] });
+}
+
 /** A building agent as a worker, by id: the Orchestrator (even before its first prompt) or an external bot. */
 export function missionWorker(state: MissionControlState | undefined, id: string): WorkerInfo | undefined {
-  return id === ORCHESTRATOR_ID ? orchestratorWorker(state) : missionAgent(state, id)?.worker;
+  return buildingAgent(state, id)?.worker;
 }
 
 /** The building agents that wait on the owner, for the tab title, notifications and the menu bar. */
@@ -56,7 +66,7 @@ export function missionWaiting(state: MissionControlState | undefined): number {
 
 /** The building agent a worker reports to, when its lead is one: the Orchestrator only while it's on. */
 export function missionLead(state: MissionControlState | undefined, lead: string | undefined): MissionAgent | undefined {
-  return lead ? missionAgent(state, lead) : undefined;
+  return lead ? buildingAgent(state, lead) : undefined;
 }
 
 /**

@@ -178,6 +178,21 @@ class MissionControlTest {
         assertEquals("Every floor", MissionControl.caption(off))
     }
 
+    // After a new conversation the office sends the Orchestrator's team with no session (buildingAgent in src/client/mission.ts).
+    @Test
+    fun theOrchestratorKeepsItsTeamWithNoSession() {
+        val json = """{"orchestrator":{"settings":{"on":true},"team":[{"id":"w1","name":"Atlas","floor":"home","floorName":"droid-office","status":"needs_input"}]},"bots":[]}"""
+        val m = MissionControl.parse(OfficeJson.parseToJsonElement(json))!!
+        assertNull(m.orchestrator.agent)
+        assertEquals(listOf("w1"), MissionControl.team(m.orchestrator).map { it.id })
+        assertEquals("1 needs you", MissionControl.caption(m))
+        assertEquals(emptyList<MissionTeamMember>(), MissionControl.team(m.orchestrator.copy(settings = OrchestratorSettings(on = false))))
+        assertEquals(emptyList<MissionTeamMember>(), MissionControl.team(null))
+        // An office that sends the team only with the session.
+        val older = MissionControl.parse(OfficeJson.parseToJsonElement(state))!!
+        assertEquals(listOf("w1", "w2"), MissionControl.team(older.orchestrator).map { it.id })
+    }
+
     // Mirrors missionAgentNeedsOwner / orchestratorNeedsOwner in src/shared/mission-control.ts.
     @Test
     fun needsOwnerMatchesTheOffice() {
