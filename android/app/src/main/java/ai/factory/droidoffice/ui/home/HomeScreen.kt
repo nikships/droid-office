@@ -85,6 +85,8 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import ai.factory.droidoffice.core.Tags
 import ai.factory.droidoffice.core.EffortDial
 import ai.factory.droidoffice.core.FloorOrder
+import ai.factory.droidoffice.core.MissionControl
+import ai.factory.droidoffice.core.ORCHESTRATOR_ID
 import ai.factory.droidoffice.core.WorkerInfo
 import ai.factory.droidoffice.core.WorkerRow
 import ai.factory.droidoffice.core.WorkerStatus
@@ -113,6 +115,7 @@ import ai.factory.droidoffice.ui.components.tagged
 import ai.factory.droidoffice.ui.theme.LocalOfficeType
 import ai.factory.droidoffice.ui.theme.OfficeIcons
 import ai.factory.droidoffice.ui.theme.Palette
+import ai.factory.droidoffice.ui.mission.MissionControlSection
 import ai.factory.droidoffice.ui.worker.WorkerScreen
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -178,8 +181,8 @@ fun HomeScreen(onOpenWorker: (String) -> Unit, selected: String?, onCloseWorker:
                 Box(Modifier.width(1.dp).fillMaxHeight().background(Palette.Border))
                 Box(Modifier.weight(1f).fillMaxHeight()) {
                     val id = selected
-                    if (id != null && data.workers.containsKey(id)) {
-                        WorkerScreen(workerId = id, onBack = onCloseWorker, embedded = true)
+                    if (id != null && (data.worker(id) != null || id == ORCHESTRATOR_ID)) {
+                        WorkerScreen(workerId = id, onBack = onCloseWorker, embedded = true, onOpenWorker = onOpenWorker)
                     } else {
                         Column(Modifier.fillMaxSize().tagged(Tags.Home.PICK_WORKER), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
                             GlyphMark(size = 48.dp, glow = false)
@@ -245,7 +248,10 @@ private fun WorkerList(
             modifier = Modifier.fillMaxSize(),
         ) {
             if (data.synced && rows.isEmpty()) {
-                EmptyFloor(onHire)
+                Column(Modifier.fillMaxSize()) {
+                    MissionControlSection(data.mission, now, selected, onOpen, Modifier.padding(start = 14.dp, end = 14.dp, top = 6.dp))
+                    Box(Modifier.weight(1f)) { EmptyFloor(onHire) }
+                }
             } else if (!data.synced) {
                 Box(Modifier.fillMaxSize().tagged(Tags.Home.LOADING).semantics { contentDescription = "Loading the office" }, contentAlignment = Alignment.Center) {
                     if (link.phase == Phase.Connecting || link.phase == Phase.Idle) Spinner(Modifier.size(26.dp))
@@ -256,6 +262,12 @@ private fun WorkerList(
                     contentPadding = PaddingValues(start = 14.dp, end = 14.dp, top = 6.dp, bottom = 110.dp),
                     verticalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
+                    if (MissionControl.shown(data.mission)) item(key = "mission") {
+                        MissionControlSection(data.mission, now, selected, onOpen, Modifier.animateItem())
+                    }
+                    if (MissionControl.shown(data.mission)) item(key = "floor") {
+                        Eyebrow(data.floor?.name?.ifBlank { null } ?: "This floor", Modifier.padding(start = 4.dp, top = 6.dp))
+                    }
                     items(rows, key = { it.worker.id }) { row ->
                         WorkerCard(row, data, now, row.worker.id == selected, onOpen, onActions, Modifier.animateItem())
                     }

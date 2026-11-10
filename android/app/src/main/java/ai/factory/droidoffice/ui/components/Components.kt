@@ -93,11 +93,11 @@ fun Modifier.tagged(name: String) = this.semantics {
     testTag = name
 }
 
-/** A square mono pill with a status-colored indicator; it blinks for "needs you", like the office's. */
+/** A square mono pill with a status-colored indicator; it blinks for "needs you", like the office's. [blocked] reads "Blocked" whatever the status. */
 @Composable
-fun StatusPill(status: WorkerStatus, modifier: Modifier = Modifier, acked: Boolean = true, tag: String? = null, compact: Boolean = false) {
-    val look = statusLook(status, acked)
-    val indicatorOnly = compact && (status == WorkerStatus.Working || status == WorkerStatus.Done)
+fun StatusPill(status: WorkerStatus, modifier: Modifier = Modifier, acked: Boolean = true, tag: String? = null, compact: Boolean = false, blocked: Boolean = false) {
+    val look = if (blocked) StatusLook("Blocked", Palette.Warning) else statusLook(status, acked)
+    val indicatorOnly = !blocked && compact && (status == WorkerStatus.Working || status == WorkerStatus.Done)
     val blink = if (look.loud) {
         val t = rememberInfiniteTransition(label = "blink")
         t.animateFloat(1f, 0.25f, infiniteRepeatable(tween(600, easing = LinearEasing), RepeatMode.Reverse), label = "blink").value
@@ -123,7 +123,7 @@ fun StatusPill(status: WorkerStatus, modifier: Modifier = Modifier, acked: Boole
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = if (indicatorOnly) Arrangement.Center else Arrangement.spacedBy(6.dp),
     ) {
-        if (status == WorkerStatus.Working || status == WorkerStatus.Starting) {
+        if (!blocked && (status == WorkerStatus.Working || status == WorkerStatus.Starting)) {
             WorkingBars(look.color, height = if (indicatorOnly) 12.dp else 8.dp, width = if (indicatorOnly) 12.dp else 9.dp)
         } else {
             Box(Modifier.size(if (indicatorOnly) 9.dp else 5.dp).alpha(blink).clip(if (indicatorOnly) CircleShape else RoundedCornerShape(1.dp)).background(look.color))

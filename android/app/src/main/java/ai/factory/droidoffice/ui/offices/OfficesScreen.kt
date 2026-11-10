@@ -63,6 +63,7 @@ import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import ai.factory.droidoffice.ui.mission.OrchestratorSheet
 import ai.factory.droidoffice.BuildConfig
 import ai.factory.droidoffice.core.Routes
 import ai.factory.droidoffice.core.Tags
@@ -97,6 +98,10 @@ fun OfficesScreen(onBack: () -> Unit, onPairNew: () -> Unit, onSwitched: () -> U
     var forgetting by remember { mutableStateOf<PairedOffice?>(null) }
     var renaming by remember { mutableStateOf<PairedOffice?>(null) }
     var subscriptions by remember { mutableStateOf(false) }
+    var orchestrator by remember { mutableStateOf(false) }
+    val data by graph.connection.data.collectAsStateWithLifecycle()
+    val mission = data.mission?.orchestrator
+    if (orchestrator && mission != null) OrchestratorSheet(mission) { orchestrator = false }
     var hostUpdate by remember { mutableStateOf(false) }
     LaunchedEffect(store.active?.id) { hostUpdate = false }
     val notify = rememberNotifyPermission()
@@ -151,6 +156,11 @@ fun OfficesScreen(onBack: () -> Unit, onPairNew: () -> Unit, onSwitched: () -> U
                 SecondaryButton("Pair another office", onPairNew, Modifier.fillMaxWidth().tagged(Tags.Offices.PAIR_NEW), icon = OfficeIcons.Scan)
                 Spacer(Modifier.height(10.dp))
                 SecondaryButton("Subscriptions", { subscriptions = true }, Modifier.fillMaxWidth().tagged(Tags.Subscriptions.OPEN), enabled = store.active != null, icon = OfficeIcons.Sparkle)
+                // An office from before Mission Control has no Orchestrator to set.
+                if (mission != null) {
+                    Spacer(Modifier.height(10.dp))
+                    SecondaryButton(if (mission.settings.on) "Orchestrator" else "Orchestrator · off", { orchestrator = true }, Modifier.fillMaxWidth().tagged(Tags.Orchestrator.SETTINGS), icon = OfficeIcons.Orbit)
+                }
 
                 Eyebrow("Notifications", Modifier.padding(start = 4.dp, top = 26.dp, bottom = 8.dp))
                 Column(Modifier.fillMaxWidth().panel()) {

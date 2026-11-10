@@ -85,6 +85,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import ai.factory.droidoffice.core.ClientMsg
+import ai.factory.droidoffice.core.ORCHESTRATOR_ID
 import ai.factory.droidoffice.core.SlashCommands
 import ai.factory.droidoffice.core.Tags
 import ai.factory.droidoffice.core.ThreadQueue
@@ -129,6 +130,9 @@ fun Composer(
     onStop: (() -> Unit)? = null,
     /** Nothing sent would reach the worker (a cloud worker's session is gone): Send is off, the draft stays. */
     blocked: Boolean = false,
+    /** Replaces the draft with [fill] and focuses it each time [fillRequest] goes up, as an example prompt does. */
+    fill: String? = null,
+    fillRequest: Int = 0,
 ) {
     val graph = LocalGraph.current
     val snackbar = LocalSnackbar.current
@@ -160,6 +164,13 @@ fun Composer(
             keyboard?.show()
         }
     }
+    LaunchedEffect(visible, fillRequest) {
+        if (visible && fillRequest > 0 && fill != null) {
+            value = TextFieldValue(fill, selection = TextRange(fill.length))
+            focus.requestFocus()
+            keyboard?.show()
+        }
+    }
 
     val picker = rememberLauncherForActivityResult(ActivityResultContracts.PickMultipleVisualMedia(MAX_IMAGES)) { uris ->
         val room = MAX_IMAGES - images.size
@@ -173,8 +184,8 @@ fun Composer(
                 }
                 val a = Attachment(System.nanoTime(), picture.thumb)
                 images += a
-                graph.connection.stageImage(picture.name, picture.type, picture.bytes)
-                    .onSuccess { id -> if (a in images) a.id = id else graph.connection.unstageImage(id) }
+                graph.connection.stageImage(picture.name, picture.type, picture.bytes, w.id)
+                    .onSuccess { id -> if (a in images) a.id = id else graph.connection.unstageImage(id, w.id) }
                     .onFailure { e ->
                         images -= a
                         snackbar.showSnackbar(e.message ?: "The picture couldn't be attached")
@@ -237,7 +248,7 @@ fun Composer(
                         Box(
                             Modifier.align(Alignment.TopEnd).padding(3.dp).size(18.dp).clip(CircleShape).background(Color(0xCC000000)).clickable {
                                 images -= a
-                                a.id?.let(graph.connection::unstageImage)
+                                a.id?.let { graph.connection.unstageImage(it, w.id) }
                             }.tagged(Tags.Worker.removeImage(i + 1)),
                             contentAlignment = Alignment.Center,
                         ) { Icon(Icons.Default.Close, "Remove image ${i + 1}", Modifier.size(12.dp), tint = Color.White) }
@@ -259,6 +270,7 @@ fun Composer(
             }
             val hint = when {
                 w.isShell -> "Run a command…"
+                w.id == ORCHESTRATOR_ID && w.sessionId == null -> "Tell the Orchestrator what you want done…"
                 queueable -> "Steer ${w.name}, or queue for after this turn…"
                 // Factory holds a message sent mid-turn until the turn is over.
                 w.isCloud && w.state.busy -> "Message ${w.name} for after this turn…"
