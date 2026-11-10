@@ -2502,9 +2502,31 @@ export class WorkerManager {
         w.bootBlocked = true;
         info.activity = 'Waiting on Droid setup or hooks — open the terminal';
         this.setStatus(w, 'needs_input');
+        this.bootAsk(w);
       } else this.setStatus(w, 'idle');
     };
     setTimeout(check, BOOT_BLOCKED_MS).unref();
+  }
+
+  /**
+   * Droid stopped to ask something before its session started (Trust this folder?, for a folder it hasn't
+   * seen): the menu on its screen becomes the worker's question, so it can be answered without its terminal.
+   */
+  private bootAsk(w: Worker) {
+    if (!w.bootBlocked || w.info.status !== 'needs_input') return;
+    const menu = this.screenMenu(w.info.id);
+    const question = menu?.question?.trim();
+    const ask: WorkerAsk | undefined =
+      menu?.choices.length && !menu.multiSelect ? { kind: 'question', questions: [{ question: question || 'Droid asks before it starts', options: menu.choices.map((c) => c.label), multiSelect: false }] } : undefined;
+    if (JSON.stringify(ask) === JSON.stringify(w.info.ask)) return;
+    if (ask) {
+      w.info.ask = ask;
+      w.info.activity = question ? `Droid asks: ${truncate(question, 60)}` : 'Droid asks something before it starts';
+    } else {
+      delete w.info.ask;
+      w.info.activity = 'Waiting on Droid setup or hooks — open the terminal';
+    }
+    this.emitUpdate(w);
   }
 
   private startFailed(w: Worker, message: string) {
@@ -2615,6 +2637,7 @@ export class WorkerManager {
       w.screenDirty = false;
       const frame = snapshotScreen(w.term, w.lastLines);
       if (frame) this.events.screen(w.info.id, frame);
+      if (w.bootBlocked) this.bootAsk(w);
     }
   }
 
