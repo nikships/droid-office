@@ -4,11 +4,10 @@
 // companion share is mission.ts.
 
 import { GLASS_ROOM, GLASS_ROOM_CHAIRS, MISSION_HEAD, deskSeat } from '../shared/layout';
-import { ORCHESTRATOR_ID, ORCHESTRATOR_NAME, orchestratorNeedsOwner, type MissionAgent, type MissionControlState, type MissionTeamMember } from '../shared/mission-control';
+import { ORCHESTRATOR_COLOR, ORCHESTRATOR_ID, ORCHESTRATOR_NAME, orchestratorNeedsOwner, type MissionAgent, type MissionControlState, type MissionTeamMember } from '../shared/mission-control';
 import type { TeamBadge, TodoProgress, WorkerInfo, WorkerStatus } from '../shared/protocol';
 import { isAsleep } from '../shared/status';
 import { teamCounts } from '../shared/team';
-import { ORCHESTRATOR_COLOR } from './mission';
 import type { TeamLink } from './world/team-lines';
 
 /** Where a building agent is in the room: its feet, and its heading (`Object3D.rotation.y`, forward +z). */
