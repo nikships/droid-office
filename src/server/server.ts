@@ -430,8 +430,8 @@ export async function startServer(cfg: Config) {
     prompts,
     floors: () => [...floors.values()],
     unready: () => {
-      if (!droidReady(setup.state())) return 'Droid isn’t ready on this computer. Install it and sign in from Settings → Setup.';
-      if (subagents.settings.officeMcp === false) return 'Office tools (the Office MCP) are off. Turn them on in Settings → Subagents & visits.';
+      if (!droidReady(setup.state())) return 'Droid isn’t ready on this computer. Install it and sign in from ⚙️ Settings → Connections → Droid.';
+      if (subagents.settings.officeMcp === false) return 'Office tools (the Office MCP) are off. Turn them on in ⚙️ Settings → Subagents & visits → Office MCP.';
       return undefined;
     },
     modelGate: (model) => subscriptions.gate(model),
@@ -1199,7 +1199,8 @@ export async function startServer(cfg: Config) {
       if (p === '/api/agents/droid/commands' && req.method === 'GET') {
         // The skills and custom commands a worker's droid offers as slash commands (droid-commands.ts).
         const workerId = str(url.searchParams.get('worker'), 32);
-        const folder = workerId ? workersOf(workerId)?.agentFolder(workerId) : undefined;
+        // The Orchestrator's folder is there before its first prompt starts a session, and the composer asks at its first "/".
+        const folder = workerId === ORCHESTRATOR_ID ? orchestrator.cwd : workerId ? workersOf(workerId)?.agentFolder(workerId) : undefined;
         if (!folder) return send(res, 404, { error: 'No such worker' });
         return send(res, 200, { commands: await droidCommands.get(folder) });
       }
