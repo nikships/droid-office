@@ -121,8 +121,6 @@ export class Orchestrator {
 
   /** Picks its terminal back up, or resumes its conversation, as a floor does its workers. */
   start(): Promise<void> {
-    // A session saved before its colour became the office accent.
-    this.workers.recolor(ORCHESTRATOR_ID, ORCHESTRATOR_COLOR);
     return this.workers.start();
   }
 

@@ -323,7 +323,7 @@ export function register(server: OfficeMcpServer, deps: OfficeMcpDeps): void {
     {
       name: 'office_send_home',
       description:
-        "Send any floor worker home, exactly as the owner's SEND HOME does: owner-hired workers, other leads' subagents, you or your lead. Building agents in Mission Control cannot be sent home through the Office MCP, including yourself. cleanup keep (the default) leaves its worktree and branch; worktree deletes the worktree and keeps the branch; all deletes both, including commits no remote has. deleteSession true also deletes a cloud worker's Factory session, only when the owner asked. The reply preserves the target and pre-dismissal worktree report even when the outcome is uncertain. Its subagents stay, without a lead.",
+        "Send any floor worker home, exactly as the owner's SEND HOME does: an owner-hired worker or any lead's subagent, yours included. Building agents in Mission Control cannot be sent home through the Office MCP, including yourself. cleanup keep (the default) leaves its worktree and branch; worktree deletes the worktree and keeps the branch; all deletes both, including commits no remote has. deleteSession true also deletes a cloud worker's Factory session, only when the owner asked. The reply preserves the target and pre-dismissal worktree report even when the outcome is uncertain. Its subagents stay, without a lead.",
       inputSchema: z.strictObject({
         name: workerRef,
         floor: floorRef.optional(),

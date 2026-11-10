@@ -338,8 +338,7 @@ export function register(server: OfficeMcpServer, deps: OfficeMcpDeps): void {
         ? `${ticket}\n\nRepository: ${task.repo}${task.baseBranch ? `\nBase branch: ${task.baseBranch}` : ''}${task.branch ? `\nTask branch: ${task.branch}` : ''}${task.prNumber ? `\nPull request: #${task.prNumber}` : ''}${task.acceptanceCriteria?.length ? `\nAcceptance criteria:\n${task.acceptanceCriteria.map((c) => `- ${c}`).join('\n')}` : ''}`
         : ticket;
       if (prompt.length > 20_000) return officeError('The complete structured task ticket must fit in 20,000 characters.');
-      // A structured task still means a fresh worktree unless the caller explicitly asks for the checkout,
-      // which is the only way a building agent can run a read-only task without inventing a base branch.
+      // A structured task gets a fresh worktree unless the caller asks for the checkout.
       const worktree = task ? (args.worktree ?? true) : args.worktree;
       return reply(
         await command(caller, { action: 'hire', ...args, title, task: prompt, ...(task ? { repo: task.repo, from: task.baseBranch ?? args.from, branch: task.branch } : {}), worktree }),

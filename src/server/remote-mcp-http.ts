@@ -63,7 +63,6 @@ export interface RemoteMcpOptions {
   dataDir: string;
   office: RemoteOffice;
   mcp: Omit<OfficeMcpDeps, 'remote' | 'remoteTransport'>;
-  floors(): { id: string; name: string }[];
   cli?: TailscaleCli;
   /** Where the loopback listener tries first; 0 picks any free port. */
   backendPort?: number;
@@ -145,7 +144,6 @@ export class RemoteMcp {
 
   state(): RemoteMcpState {
     const url = this.status === 'serving' && this.hostname && this.httpsPort ? remoteMcpUrl(this.hostname, this.httpsPort) : undefined;
-    const floors = this.opts.floors();
     const bots = this.opts.office.store.list().map((r): RemoteMcpBot => {
       const worker = this.opts.office.store.identity(r.id);
       const connection = (key?: string): RemoteMcpConnection | undefined => {
@@ -167,7 +165,7 @@ export class RemoteMcp {
         }),
       };
     });
-    return { on: this.saved.on, status: this.status, ...(url ? { url } : {}), ...(this.reason ? { reason: this.reason } : {}), ...(this.fixUrl ? { fixUrl: this.fixUrl } : {}), bots, floors };
+    return { on: this.saved.on, status: this.status, ...(url ? { url } : {}), ...(this.reason ? { reason: this.reason } : {}), ...(this.fixUrl ? { fixUrl: this.fixUrl } : {}), bots };
   }
 
   /** The office is stopping. The Serve mapping stays, so the next start keeps the same URL. */

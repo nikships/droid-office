@@ -113,7 +113,8 @@ export function register(server: OfficeMcpServer, _deps: OfficeMcpDeps): void {
     },
     officeAccess.worker,
     async (args, caller, signal) => {
-      const out = await readBoard(ownFloor(caller).whiteboard, readerOf(workerAuthor(caller.worker)), { id: ownFloor(caller).id, name: ownFloor(caller).name }, { ...args, signal });
+      const floor = ownFloor(caller);
+      const out = await readBoard(floor.whiteboard, readerOf(workerAuthor(caller.worker)), { id: floor.id, name: floor.name }, { ...args, signal });
       const result = officeResult('');
       result.content = [];
       const pngs = new Map<string, string>();
@@ -177,7 +178,8 @@ export function register(server: OfficeMcpServer, _deps: OfficeMcpDeps): void {
         if (!args.title?.trim() || !picked) return officeError('Create needs a nonempty title and a source: html, file, dir, image, link or canvas.');
         const result = apply(caller, [{ op: 'card.create', card, title: args.title.trim(), kind: picked.kind === 'canvas' ? 'canvas' : 'html', ...(content ? { content } : {}) }], { card });
         if (!result.isError) {
-          const created = await readBoard(ownFloor(caller).whiteboard, caller.worker.id, ownFloor(caller), { cards: [card] });
+          const floor = ownFloor(caller);
+          const created = await readBoard(floor.whiteboard, caller.worker.id, floor, { cards: [card] });
           const details = created.cards[0];
           const warnings = [...(details?.content?.missing ?? []).map((missing) => `Not collected: ${missing.ref} (${missing.reason})`), ...(details?.link?.status === 'broken' ? [`The link is broken: ${details.link.reason}`] : [])];
           if (warnings.length) result.content.push({ type: 'text', text: printable(warnings.join('\n')) });
@@ -210,7 +212,8 @@ export function register(server: OfficeMcpServer, _deps: OfficeMcpDeps): void {
     async (args, caller) => {
       const path = dotted(args.path);
       if (args.op === 'get') {
-        const out = await readBoard(ownFloor(caller).whiteboard, caller.worker.id, ownFloor(caller), { cards: [args.card] });
+        const floor = ownFloor(caller);
+        const out = await readBoard(floor.whiteboard, caller.worker.id, floor, { cards: [args.card] });
         const card = out.cards[0];
         if (!card) return officeError(`No such card: ${args.card}. Use whiteboard_read to list cards.`);
         const value = stateAt(card.state, path);

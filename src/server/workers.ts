@@ -1083,16 +1083,6 @@ export class WorkerManager {
     return info;
   }
 
-  /** A fixed colour for an agent that has one (the Orchestrator), saved from now on. */
-  recolor(id: string, color: string): boolean {
-    const w = this.workers.get(id);
-    if (!w || w.info.color === color) return false;
-    w.info.color = color;
-    this.emitUpdate(w);
-    this.persist();
-    return true;
-  }
-
   /** Stops a worker's process and keeps it, conversation and all, to resume later. */
   halt(id: string): boolean {
     const w = this.workers.get(id);

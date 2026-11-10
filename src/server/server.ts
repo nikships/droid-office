@@ -704,7 +704,6 @@ export async function startServer(cfg: Config) {
     remoteMcp = new RemoteMcp({
       dataDir: cfg.dataDir,
       office: remoteOffice,
-      floors: () => [...floors.values()].map((f) => ({ id: f.id, name: f.def.name })),
       mcp: {
         answers,
         owner: ownerBridge,
@@ -1136,7 +1135,7 @@ export async function startServer(cfg: Config) {
       // External workers' MCP on the tailnet. Its state holds every bot's credential, so only the office's own page.
       if (p === '/api/remote-mcp') {
         if (gate.device || !ownPage(req)) return send(res, 403, { error: 'External workers are set up from the office itself, on its own computer' });
-        if (!remoteMcp) return send(res, 200, { on: false, status: 'off', locked: 'This office was started with DROID_OFFICE_REMOTE_MCP=off.', bots: [], floors: [] } satisfies RemoteMcpState);
+        if (!remoteMcp) return send(res, 200, { on: false, status: 'off', locked: 'This office was started with DROID_OFFICE_REMOTE_MCP=off.', bots: [] } satisfies RemoteMcpState);
         if (req.method === 'GET') return send(res, 200, await remoteMcp.refresh());
         if (req.method !== 'PUT' && req.method !== 'POST') return send(res, 405, { error: 'Use GET, PUT or POST' });
         let body: Record<string, unknown>;
@@ -2812,7 +2811,7 @@ export async function startServer(cfg: Config) {
   };
 
   /**
-   * The owner's window for external MCP workers. Each action goes through handleMessage on a connection
+   * The owner's window for building agents. Each action goes through handleMessage on a connection
    * of its own, named for the worker, so it has the owner's checks, effects and toasts exactly.
    */
   const ownerOffice: OwnerOffice = {

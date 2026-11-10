@@ -447,7 +447,7 @@ export class Team {
       canHire: !why,
       ...(why ? { why } : {}),
       subagents: team,
-      // External workers have the owner's access: no team size or model list limits them.
+      // Building agents have the owner's access: no team size or model list limits them.
       ...(isBuildingAgent(w) ? {} : { max: s.maxPerLead }),
       worktree: s.worktree && this.opts.git,
       wakeLead: s.wakeLead,

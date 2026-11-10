@@ -732,7 +732,7 @@ test('external-bot tools/list returns exactly the 23 supported tools and their d
   const r = rig(t);
   const hostname = 'office.example.ts.net';
   // The office always gives external workers its owner bridge, so their tool list includes the owner tools.
-  const owner = { floors: () => [], mission: () => [], tail: () => undefined, act: async () => ({ notes: [] }) };
+  const owner = { mission: () => [], tail: () => undefined, act: async () => ({ notes: [] }) };
   const server = remoteMcpListener({ answers: new Answers(), owner, remote: r.office, remoteTransport: { hostname: () => hostname, owner: () => undefined }, floor: r.floor, settings: () => r.settings });
   const url = new URL('/office/mcp', await listening(t, server));
   const client = new Client({ name: 'doc-sync', version: '1' });
@@ -928,7 +928,7 @@ test('the office serves external workers on its tailnet by itself, keeps the URL
 test('without Tailscale the office still opens, says why, and serves once Tailscale is up', async (t) => {
   const r = rig(t);
   const ts = fakeTailscale({}, false);
-  const service = new RemoteMcp({ dataDir: r.dir, office: r.office, mcp: { floor: r.floor, settings: () => r.settings }, floors: () => [], cli: ts.cli(), backendPort: 0, log() {} });
+  const service = new RemoteMcp({ dataDir: r.dir, office: r.office, mcp: { floor: r.floor, settings: () => r.settings }, cli: ts.cli(), backendPort: 0, log() {} });
   t.after(() => service.stop());
   const down = await service.start();
   assert.equal(down.status, 'unavailable');
@@ -950,7 +950,7 @@ test('while Tailscale waits on the owner, opening Settings does not run serve ag
     if (args[1] === 'status') return { ok: true, stdout: '{}\n', stderr: '' };
     return { ok: false, stdout: 'Serve is not enabled on your tailnet.\nTo enable, visit:\n\n         https://login.tailscale.com/f/serve?node=nXXXX\n', stderr: '' };
   };
-  const service = new RemoteMcp({ dataDir: r.dir, office: r.office, mcp: { floor: r.floor, settings: () => r.settings }, floors: () => [], cli: new TailscaleCli(['tailscale'], run), backendPort: 0, retryMs: 60_000, log() {} });
+  const service = new RemoteMcp({ dataDir: r.dir, office: r.office, mcp: { floor: r.floor, settings: () => r.settings }, cli: new TailscaleCli(['tailscale'], run), backendPort: 0, retryMs: 60_000, log() {} });
   t.after(() => service.stop());
   const waiting = await service.start();
   assert.equal(waiting.status, 'unavailable');
