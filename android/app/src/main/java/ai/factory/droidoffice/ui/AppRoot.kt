@@ -275,7 +275,7 @@ fun AppRoot(graph: AppGraph, incoming: MutableStateFlow<Incoming?>) {
                         )
                     }
                     entry<WorkerKey> { key ->
-                        WorkerScreen(workerId = key.id, onBack = { nav.pop() }, draft = key.draft)
+                        WorkerScreen(workerId = key.id, onBack = { nav.pop() }, draft = key.draft, onOpenWorker = { nav.push(WorkerKey(it)) })
                     }
                     entry<BoardCardKey> { key ->
                         BoardCardScreen(floorId = key.floor, cardId = key.card, onBack = { nav.pop() })

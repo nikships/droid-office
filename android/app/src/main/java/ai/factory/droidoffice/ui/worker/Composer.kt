@@ -85,6 +85,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import ai.factory.droidoffice.core.ClientMsg
+import ai.factory.droidoffice.core.ORCHESTRATOR_ID
 import ai.factory.droidoffice.core.SlashCommands
 import ai.factory.droidoffice.core.Tags
 import ai.factory.droidoffice.core.ThreadQueue
@@ -129,6 +130,9 @@ fun Composer(
     onStop: (() -> Unit)? = null,
     /** Nothing sent would reach the worker (a cloud worker's session is gone): Send is off, the draft stays. */
     blocked: Boolean = false,
+    /** Replaces the draft with [fill] and focuses it each time [fillRequest] goes up, as an example prompt does. */
+    fill: String? = null,
+    fillRequest: Int = 0,
 ) {
     val graph = LocalGraph.current
     val snackbar = LocalSnackbar.current
@@ -156,6 +160,13 @@ fun Composer(
     val keyboard = LocalSoftwareKeyboardController.current
     LaunchedEffect(visible, focusRequest) {
         if (visible && focusRequest > 0) {
+            focus.requestFocus()
+            keyboard?.show()
+        }
+    }
+    LaunchedEffect(visible, fillRequest) {
+        if (visible && fillRequest > 0 && fill != null) {
+            value = TextFieldValue(fill, selection = TextRange(fill.length))
             focus.requestFocus()
             keyboard?.show()
         }
@@ -259,6 +270,7 @@ fun Composer(
             }
             val hint = when {
                 w.isShell -> "Run a command…"
+                w.id == ORCHESTRATOR_ID && w.sessionId == null -> "Tell the Orchestrator what you want done…"
                 queueable -> "Steer ${w.name}, or queue for after this turn…"
                 // Factory holds a message sent mid-turn until the turn is over.
                 w.isCloud && w.state.busy -> "Message ${w.name} for after this turn…"

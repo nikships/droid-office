@@ -88,7 +88,6 @@ fun WorkerActionsSheet(worker: WorkerInfo, onDismiss: () -> Unit) {
                         val kind = when {
                             worker.isShell -> "Shell"
                             worker.isCloud -> "Cloud Droid"
-                            worker.remote -> "Remote Droid"
                             else -> "Local Droid"
                         }
                         Text("$kind · ${statusLook(worker.state, worker.acked).label}", style = MaterialTheme.typography.bodySmall)

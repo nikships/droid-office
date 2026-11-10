@@ -44,6 +44,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import ai.factory.droidoffice.core.Asks
 import ai.factory.droidoffice.core.Choices
 import ai.factory.droidoffice.core.Menu
+import ai.factory.droidoffice.core.ORCHESTRATOR_ID
 import ai.factory.droidoffice.core.PendingAsk
 import ai.factory.droidoffice.core.Tags
 import ai.factory.droidoffice.core.WorkerInfo
@@ -83,7 +84,7 @@ fun AsksScreen(onOpenWorker: (id: String, draft: String?) -> Unit, onHire: () ->
     val sent = remember { mutableStateListOf<Sent>() }
     var focus by rememberSaveable { mutableStateOf<String?>(null) }
 
-    val queue = remember(data.workers, screens) { Asks.queue(data.workers.values, screens) }
+    val queue = remember(data.workers, data.mission, screens) { Asks.queue(data.askable, screens) }
     val waiting = queue.filter { ask ->
         sent.none { it.workerId == ask.worker.id && now - it.at < 15_000 && Choices.same(it.menu, ask.menu) }
     }
@@ -91,10 +92,10 @@ fun AsksScreen(onOpenWorker: (id: String, draft: String?) -> Unit, onHire: () ->
     val rest = waiting.filter { it !== current }
     val connected = link.phase == Phase.Connected
 
-    fun where(w: WorkerInfo): String? = listOfNotNull(data.floor?.name?.takeIf { it.isNotBlank() }, w.worktree?.branch).joinToString(" · ").ifBlank { null }
+    fun where(w: WorkerInfo): String? = if (w.id == ORCHESTRATOR_ID) "Mission Control" else listOfNotNull(data.floor?.name?.takeIf { it.isNotBlank() }, w.worktree?.branch).joinToString(" · ").ifBlank { null }
 
     Column(Modifier.fillMaxSize().tagged(Tags.Screen.ASKS).background(Palette.Bg).windowInsetsPadding(WindowInsets.statusBars)) {
-        Header(waiting.size, data.workers.values)
+        Header(waiting.size, data.askable)
         Box(Modifier.fillMaxSize(), contentAlignment = Alignment.TopCenter) {
             LazyColumn(
                 Modifier.widthIn(max = 640.dp).fillMaxSize(),

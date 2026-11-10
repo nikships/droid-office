@@ -204,6 +204,59 @@ object Tags {
         fun worker(id: String) = "home.worker/$id"
     }
 
+    /** The pinned Mission Control section at the top of Home: the Orchestrator's card and a row per external bot. */
+    object Mission {
+        const val SECTION = "mission.section"
+        const val ORCHESTRATOR = "mission.orchestrator"
+        const val ORCHESTRATOR_STATUS = "mission.orchestrator.status"
+        const val ORCHESTRATOR_META = "mission.orchestrator.meta"
+        const val ORCHESTRATOR_DETAIL = "mission.orchestrator.detail"
+        const val ORCHESTRATOR_BLOCKED = "mission.orchestrator.blocked"
+        fun bot(id: String) = "mission.bot/$id"
+    }
+
+    /** The Orchestrator's screen, beyond the worker screen's own names, and its settings sheet. */
+    object Orchestrator {
+        /** What it is for, with example prompts, before its first prompt or after a new conversation. */
+        const val INTRO = "orchestrator.intro"
+        /** It is off: what that means, and [TURN_ON]. */
+        const val OFF = "orchestrator.off"
+        const val TURN_ON = "orchestrator.turn_on"
+        /** Why it can't start now, in place of the composer. */
+        const val BLOCKED = "orchestrator.blocked"
+        /** The header's overflow button, which opens [SHEET]. */
+        const val MENU = "orchestrator.menu"
+        /** Its team across floors, under the header. */
+        const val TEAM = "orchestrator.team"
+        const val SHEET = "orchestrator.sheet"
+        /** On or off, a toggle row (`checked` is on). */
+        const val SWITCH = "orchestrator.on"
+        const val MODEL_DEFAULT = "orchestrator.model_default"
+        const val NEW_CONVERSATION = "orchestrator.new_conversation"
+        const val NEW_DIALOG = "orchestrator.new_dialog"
+        const val NEW_CONFIRM = "orchestrator.new_confirm"
+        const val NEW_CANCEL = "orchestrator.new_cancel"
+        /** The row under Me that opens [SHEET]. */
+        const val SETTINGS = "settings.orchestrator"
+
+        /** An example prompt in [INTRO], from 1: tapping it fills the composer. */
+        fun example(n: Int) = "orchestrator.example/$n"
+        /** A reasoning choice in [SHEET]; `default` is the office's. */
+        fun effort(wire: String) = "orchestrator.effort/$wire"
+        /** A subagent in [TEAM] or on a bot's screen: opens it on its floor. */
+        fun member(id: String) = "orchestrator.team/$id"
+    }
+
+    /** An external bot's screen: it runs elsewhere, so there is no terminal or thread here. */
+    object Bot {
+        const val SCREEN = "screen.bot"
+        const val NAME = "bot.name"
+        const val STATUS = "bot.status"
+        const val ACTIVITY = "bot.activity"
+        const val LAST_USED = "bot.last_used"
+        const val TEAM = "bot.team"
+    }
+
     object WorkerActions {
         const val SHEET = "worker_actions.sheet"
         const val NAME = "worker_actions.name"
@@ -283,6 +336,7 @@ object Tags {
     }
 
     object Worker {
+        /** Reserved: external bots now open [Bot.SCREEN] from Mission Control. */
         const val REMOTE = "worker.remote"
         const val BACK = "worker.back"
         const val NAME = "worker.name"

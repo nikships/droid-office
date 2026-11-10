@@ -168,7 +168,7 @@ private fun AnswerWorkspace(worker: WorkerInfo, shown: Menu, entries: List<Threa
     var job by remember { mutableStateOf<Job?>(null) }
     val connected = link.phase == Phase.Connected
     LaunchedEffect(connected) { if (!connected) interrupted = true }
-    val now = data.workers[worker.id]
+    val now = data.worker(worker.id)
     val currentIdentity = "${data.officeId}/${data.floorId}/${worker.id}/${now?.sessionId}"
     val currentMenu = now?.let { Asks.menu(it, screens[worker.id]) }
     val same = currentIdentity == identity && now?.state == ai.factory.droidoffice.core.WorkerStatus.NeedsInput && Choices.same(shown, currentMenu)
@@ -271,7 +271,7 @@ private fun AnswerWorkspace(worker: WorkerInfo, shown: Menu, entries: List<Threa
                             try {
                                 if (store.settings.answerDelay) delay(ANSWER_DELAY_MS)
                                 val fresh = connection.data.value
-                                val freshWorker = fresh.workers[worker.id]
+                                val freshWorker = fresh.worker(worker.id)
                                 val freshIdentity = "${fresh.officeId}/${fresh.floorId}/${worker.id}/${freshWorker?.sessionId}"
                                 if (!connection.connected || connection.answerEpoch != epoch || freshIdentity != identity) {
                                     error = "The connection or session changed. Reopen this question before submitting. Your draft is kept."
