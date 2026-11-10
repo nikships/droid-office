@@ -46,6 +46,17 @@ object Workers {
         return rows
     }
 
+    /** A status in the words every pill and row uses; [acked] false marks a finished turn nobody has read. */
+    fun statusWord(status: WorkerStatus, acked: Boolean = true): String = when (status) {
+        WorkerStatus.NeedsInput -> "Needs you"
+        WorkerStatus.Working -> "Working"
+        WorkerStatus.Starting -> "Starting"
+        WorkerStatus.Idle -> "Ready"
+        WorkerStatus.Done -> if (acked) "Done" else "Done · new"
+        WorkerStatus.Exited, WorkerStatus.Offline -> "Asleep"
+        WorkerStatus.Unknown -> "Unknown"
+    }
+
     /** How long it has spent working: the stretches that ended, plus the one it's in now. */
     fun workedMs(w: WorkerInfo, now: Long): Long {
         val running = w.workingSince?.let { (now - it).coerceAtLeast(0) } ?: 0

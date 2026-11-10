@@ -24,7 +24,6 @@ import androidx.compose.foundation.layout.ime
 import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.only
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.union
 import androidx.compose.foundation.layout.width
@@ -101,6 +100,9 @@ import ai.factory.droidoffice.core.TermView
 import ai.factory.droidoffice.core.ThreadQueue
 import ai.factory.droidoffice.core.WorkerInfo
 import ai.factory.droidoffice.core.WorkerStatus
+import ai.factory.droidoffice.core.MissionAgent
+import ai.factory.droidoffice.core.MissionControl
+import ai.factory.droidoffice.core.Models
 import ai.factory.droidoffice.core.Workers
 import ai.factory.droidoffice.net.nameOf
 import ai.factory.droidoffice.ui.components.WorkerModelLogo
@@ -114,6 +116,7 @@ import ai.factory.droidoffice.ui.components.Spinner
 import ai.factory.droidoffice.ui.components.StatusPill
 import ai.factory.droidoffice.ui.components.WorkerDot
 import ai.factory.droidoffice.ui.components.panel
+import ai.factory.droidoffice.ui.components.paneInsets
 import ai.factory.droidoffice.ui.components.parseColor
 import ai.factory.droidoffice.ui.components.tagged
 import ai.factory.droidoffice.ui.home.deskLabel
@@ -123,8 +126,8 @@ import ai.factory.droidoffice.ui.mission.OrchestratorBlocked
 import ai.factory.droidoffice.ui.mission.OrchestratorIdle
 import ai.factory.droidoffice.ui.mission.OrchestratorSheet
 import ai.factory.droidoffice.ui.mission.TeamStrip
-import ai.factory.droidoffice.ui.mission.follow
-import ai.factory.droidoffice.ui.mission.orchestratorTint
+import ai.factory.droidoffice.ui.mission.OrchestratorTint
+import ai.factory.droidoffice.ui.mission.rememberFollow
 import ai.factory.droidoffice.ui.home.rememberNow
 import ai.factory.droidoffice.ui.theme.LocalOfficeType
 import ai.factory.droidoffice.ui.theme.OfficeIcons
@@ -151,7 +154,8 @@ fun WorkerScreen(workerId: String, onBack: () -> Unit, embedded: Boolean = false
     val link by connection.link.collectAsStateWithLifecycle()
     // Building agents aren't on any floor: the Orchestrator and the bots come from Mission Control.
     val mission = workerId == ORCHESTRATOR_ID
-    val bot = data.mission?.bots?.firstOrNull { it.worker.id == workerId }
+    // An office that predates Mission Control lists its external bots as ordinary floor workers.
+    val bot = data.mission?.bots?.firstOrNull { it.worker.id == workerId } ?: data.workers[workerId]?.takeIf { it.remote }?.let { MissionAgent(it) }
     if (bot != null) {
         BotScreen(bot, embedded, onBack, onOpenWorker)
         return
@@ -165,8 +169,9 @@ fun WorkerScreen(workerId: String, onBack: () -> Unit, embedded: Boolean = false
     // Receipts for messages sent to Droid's queue: one per office, floor and worker, shared by both
     // views for this process, and kept on disk while any is unconfirmed so a restart, rotation or
     // force-stop brings them back with their session, sequence and matched ids.
-    val queueKey = "${data.officeId}/${data.floorId}/$workerId"
-    val keepable = !data.officeId.isNullOrBlank() && !data.floorId.isNullOrBlank()
+    val floorScope = MissionControl.floorScope(data.floorId, workerId)
+    val queueKey = "${data.officeId}/$floorScope/$workerId"
+    val keepable = !data.officeId.isNullOrBlank() && !floorScope.isNullOrBlank()
     // Until the disk answers for this worker (or its office and floor are known), receipts go into a
     // queue of their own that is never synced, and join what the disk held once it has: none is lost.
     var receipts by remember(workerId) { mutableStateOf(localThreadQueues[queueKey]?.takeIf { keepable } ?: QueueReceipts(ThreadQueue(), null)) }
@@ -222,9 +227,8 @@ fun WorkerScreen(workerId: String, onBack: () -> Unit, embedded: Boolean = false
         }
     }
 
-    val insets = if (embedded) WindowInsets.safeDrawing.only(WindowInsetsSides.Top + WindowInsetsSides.End) else WindowInsets.safeDrawing.only(WindowInsetsSides.Top + WindowInsetsSides.Horizontal)
     Column(
-        Modifier.fillMaxSize().tagged(Tags.Screen.WORKER).background(Palette.Bg).windowInsetsPadding(insets)
+        Modifier.fillMaxSize().tagged(Tags.Screen.WORKER).background(Palette.Bg).windowInsetsPadding(paneInsets(embedded))
             .windowInsetsPadding(WindowInsets.ime.union(WindowInsets.navigationBars).only(WindowInsetsSides.Bottom)),
     ) {
         if (worker == null) {
@@ -238,7 +242,7 @@ fun WorkerScreen(workerId: String, onBack: () -> Unit, embedded: Boolean = false
         val live = !worker.state.asleep
         // Its next prompt starts or wakes the Orchestrator's session, so it always takes one.
         val composing = live || mission
-        val followScope = rememberCoroutineScope()
+        val followTeamMember = rememberFollow(onOpenWorker)
         val screen = screens[workerId]
         // Default to Raw TTY unless the owner last picked Thread or the thread has an answerable
         // question. Wait for the first screen before keeping the default, and never change the view
@@ -264,9 +268,7 @@ fun WorkerScreen(workerId: String, onBack: () -> Unit, embedded: Boolean = false
         // The view switch shares the PR and branch row. Send home stays in the header.
         if (threadable && !cloud) Column(Modifier.fillMaxWidth().background(Palette.Bg)) {
             Actions(worker, lead = { InlineViewToggle(tty, pickView) }, resumable = !mission)
-            if (mission) TeamStrip(orchestrator?.agent?.team.orEmpty(), onOpen = { m ->
-                onOpenWorker?.let { open -> followScope.launch { follow(connection, m, open) } }
-            }, color = orchestratorTint(worker))
+            if (mission) TeamStrip(orchestrator?.agent?.team.orEmpty(), onOpen = { followTeamMember?.invoke(it) })
             Box(Modifier.fillMaxWidth().height(4.dp))
             Box(Modifier.fillMaxWidth().height(1.dp).background(Palette.Border))
         }
@@ -411,13 +413,13 @@ private fun Header(w: WorkerInfo, embedded: Boolean, connected: Boolean, onBack:
     val catalogue by graph.connection.catalogue.collectAsStateWithLifecycle()
     Row(Modifier.fillMaxWidth().padding(start = 4.dp, end = 4.dp, top = 6.dp, bottom = 4.dp), verticalAlignment = Alignment.CenterVertically) {
         IconButton(onClick = onBack, modifier = Modifier.tagged(Tags.Worker.BACK)) { Icon(if (embedded) Icons.Default.Close else Icons.AutoMirrored.Filled.ArrowBack, "Back") }
-        if (mission) Box(Modifier.padding(end = 8.dp)) { AgentTile(OfficeIcons.Orbit, if (w.state == WorkerStatus.NeedsInput) Palette.Danger else orchestratorTint(w), small = true) }
+        if (mission) Box(Modifier.padding(end = 8.dp)) { AgentTile(OfficeIcons.Orbit, if (w.state == WorkerStatus.NeedsInput) Palette.Danger else OrchestratorTint, small = true) }
         else WorkerDot(parseColor(w.color), w.state, 10.dp)
         Column(Modifier.weight(1f).padding(start = 2.dp)) {
             Text(w.name.ifBlank { w.id }, style = MaterialTheme.typography.titleLarge, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.tagged(Tags.Worker.NAME))
             val parts = buildList {
                 w.cloud?.where?.let { add("☁ $it") }
-                if (w.isShell) add("Shell") else Workers.modelId(w)?.let { add(catalogue.nameOf(it).replace(Regex("^DroidProxy:\\s*", RegexOption.IGNORE_CASE), "")) }
+                if (w.isShell) add("Shell") else Workers.modelId(w)?.let { add(Models.plainName(catalogue.nameOf(it))) }
                 if (mission) add(0, "Mission Control") else add(deskLabel(w.deskId).replaceFirstChar { it.uppercaseChar() })
                 Workers.workedMs(w, now).takeIf { it >= 1000 }?.let { add(Workers.duration(it)) }
             }

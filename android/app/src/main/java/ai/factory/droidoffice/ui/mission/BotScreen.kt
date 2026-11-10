@@ -31,7 +31,7 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.key
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextOverflow
@@ -40,7 +40,6 @@ import ai.factory.droidoffice.core.MissionAgent
 import ai.factory.droidoffice.core.MissionControl
 import ai.factory.droidoffice.core.Tags
 import ai.factory.droidoffice.core.Workers
-import ai.factory.droidoffice.ui.LocalGraph
 import ai.factory.droidoffice.ui.components.Eyebrow
 import ai.factory.droidoffice.ui.components.WorkerDot
 import ai.factory.droidoffice.ui.components.panel
@@ -50,7 +49,6 @@ import ai.factory.droidoffice.ui.home.rememberNow
 import ai.factory.droidoffice.ui.theme.LocalOfficeType
 import ai.factory.droidoffice.ui.theme.OfficeIcons
 import ai.factory.droidoffice.ui.theme.Palette
-import kotlinx.coroutines.launch
 
 /**
  * An external bot (Settings → Tailscale MCP): it runs elsewhere and reaches the office over the
@@ -59,8 +57,7 @@ import kotlinx.coroutines.launch
  */
 @Composable
 fun BotScreen(bot: MissionAgent, embedded: Boolean, onBack: () -> Unit, onOpenWorker: ((String) -> Unit)?) {
-    val connection = LocalGraph.current.connection
-    val scope = rememberCoroutineScope()
+    val followTeamMember = rememberFollow(onOpenWorker)
     val now = rememberNow(30_000)
     val w = bot.worker
     val look = statusLook(w.state)
@@ -82,7 +79,7 @@ fun BotScreen(bot: MissionAgent, embedded: Boolean, onBack: () -> Unit, onOpenWo
                 Column(Modifier.fillMaxWidth().panel(RoundedCornerShape(8.dp)).padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         WorkerDot(look.color, w.state, 8.dp)
-                        Text(MissionControl.botStatus(w), style = MaterialTheme.typography.titleSmall, color = look.color, modifier = Modifier.tagged(Tags.Bot.STATUS))
+                        Text(look.label, style = MaterialTheme.typography.titleSmall, color = look.color, modifier = Modifier.tagged(Tags.Bot.STATUS))
                         Spacer(Modifier.width(8.dp))
                         Text("as it last reported", style = MaterialTheme.typography.bodySmall, color = Palette.TextTertiary)
                     }
@@ -103,14 +100,14 @@ fun BotScreen(bot: MissionAgent, embedded: Boolean, onBack: () -> Unit, onOpenWo
                 )
                 Eyebrow("Team", Modifier.padding(start = 4.dp, top = 12.dp))
                 if (bot.team.isEmpty()) {
-                    Text("No workers yet.", style = MaterialTheme.typography.bodyMedium, color = Palette.TextSecondary, modifier = Modifier.padding(horizontal = 4.dp).tagged(Tags.Bot.TEAM))
+                    Text("No team. Subagents it hires show here, with their floors.", style = MaterialTheme.typography.bodyMedium, color = Palette.TextSecondary, modifier = Modifier.padding(horizontal = 4.dp).tagged(Tags.Bot.TEAM))
                 } else Column(Modifier.fillMaxWidth().panel(RoundedCornerShape(8.dp)).tagged(Tags.Bot.TEAM)) {
-                    MissionControl.arrangeTeam(bot.team).forEachIndexed { i, m ->
+                    MissionControl.arrangeTeam(bot.team).forEachIndexed { i, m -> key(m.id) {
                         if (i > 0) HorizontalDivider(color = Palette.Border)
                         val ml = statusLook(m.state)
                         Row(
                             Modifier.fillMaxWidth()
-                                .clickable(enabled = onOpenWorker != null, onClickLabel = "Open ${m.name}") { onOpenWorker?.let { open -> scope.launch { follow(connection, m, open) } } }
+                                .clickable(enabled = followTeamMember != null, onClickLabel = "Open ${m.name}") { followTeamMember?.invoke(m) }
                                 .tagged(Tags.Orchestrator.member(m.id))
                                 .padding(start = 4.dp, end = 10.dp, top = 8.dp, bottom = 8.dp),
                             verticalAlignment = Alignment.CenterVertically,
@@ -118,12 +115,11 @@ fun BotScreen(bot: MissionAgent, embedded: Boolean, onBack: () -> Unit, onOpenWo
                             WorkerDot(ml.color, m.state, 8.dp)
                             Column(Modifier.weight(1f)) {
                                 Text(m.name.ifBlank { m.id }, style = MaterialTheme.typography.titleSmall, maxLines = 1)
-                                val line = listOfNotNull(m.floorName.ifBlank { m.floor }, ml.label, m.title ?: m.activity).joinToString(" · ")
-                                Text(line, style = MaterialTheme.typography.bodySmall, color = Palette.TextSecondary, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                Text(MissionControl.memberLine(m), style = MaterialTheme.typography.bodySmall, color = Palette.TextSecondary, maxLines = 1, overflow = TextOverflow.Ellipsis)
                             }
-                            Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, null, Modifier.size(18.dp), tint = Palette.TextTertiary)
+                            if (followTeamMember != null) Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, null, Modifier.size(18.dp), tint = Palette.TextTertiary)
                         }
-                    }
+                    } }
                 }
                 Spacer(Modifier.height(24.dp))
             }

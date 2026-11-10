@@ -82,6 +82,7 @@ import ai.factory.droidoffice.core.ActivityState
 import ai.factory.droidoffice.core.Asks
 import ai.factory.droidoffice.core.ClientMsg
 import ai.factory.droidoffice.core.DroidQueue
+import ai.factory.droidoffice.core.MissionControl
 import ai.factory.droidoffice.core.NoticeTone
 import ai.factory.droidoffice.core.ORCHESTRATOR_ID
 import ai.factory.droidoffice.core.PendingAsk
@@ -185,8 +186,9 @@ internal fun Thread(
     val snackbar = LocalSnackbar.current
     val scope = rememberCoroutineScope()
     val data by connection.data.collectAsStateWithLifecycle()
-    // A new feed per office, floor and worker: its request ids are its own, so no other's answers land here.
-    val feed = remember(data.officeId, data.floorId, w.id) { ThreadFeed(w.id) }
+    // A new feed per office, floor and worker (the Orchestrator's is the building's): its request ids are its own, so no other's answers land here.
+    val floorScope = MissionControl.floorScope(data.floorId, w.id)
+    val feed = remember(data.officeId, floorScope, w.id) { ThreadFeed(w.id) }
     var state by remember(feed) { mutableStateOf(feed.state) }
     var polls by remember(feed) { mutableIntStateOf(0) }
     val life by LocalLifecycleOwner.current.lifecycle.currentStateAsState()
@@ -239,7 +241,7 @@ internal fun Thread(
     val list = rememberLazyListState()
     // What the owner opened, whether they're following and where they were reading survive a font,
     // density or theme change recreating the screen, for this office, floor and worker only.
-    val kept = "${data.officeId}/${data.floorId}/${w.id}"
+    val kept = "${data.officeId}/$floorScope/${w.id}"
     // What this device opened or closed, by the model's ids (ThreadView.Open); the rest opens as the model says.
     val open = rememberSaveable(kept, saver = OpenSaver) { mutableStateMapOf() }
     var openSession by rememberSaveable(kept) { mutableStateOf<String?>(null) }

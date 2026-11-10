@@ -18,7 +18,6 @@ import androidx.compose.foundation.layout.ime
 import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.only
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.union
 import androidx.compose.foundation.layout.width
@@ -47,7 +46,7 @@ import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -55,7 +54,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.liveRegion
@@ -86,6 +84,7 @@ import ai.factory.droidoffice.ui.components.PrimaryButton
 import ai.factory.droidoffice.ui.components.SecondaryButton
 import ai.factory.droidoffice.ui.components.Spinner
 import ai.factory.droidoffice.ui.components.WorkerDot
+import ai.factory.droidoffice.ui.components.paneInsets
 import ai.factory.droidoffice.ui.components.panel
 import ai.factory.droidoffice.ui.components.statusLook
 import ai.factory.droidoffice.ui.components.tagged
@@ -94,6 +93,7 @@ import ai.factory.droidoffice.ui.theme.LocalOfficeType
 import ai.factory.droidoffice.ui.theme.OfficeIcons
 import ai.factory.droidoffice.ui.theme.Palette
 import ai.factory.droidoffice.ui.worker.Composer
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
@@ -103,27 +103,48 @@ internal val IdleOrchestrator = WorkerInfo(id = ORCHESTRATOR_ID, name = ORCHESTR
 
 /**
  * Opens a subagent of a building agent where it sits: moves the phone to its floor first when it is on
- * another, and opens it once that floor has arrived with it at its desk.
+ * another, and opens it once that floor has arrived with it at its desk. False, and nothing opened,
+ * when the office can't be asked, the floor never arrives with it, or it isn't on this floor.
  */
-internal suspend fun follow(connection: OfficeConnection, member: MissionTeamMember, open: (String) -> Unit) {
-    if (connection.data.value.floorId != member.floor && member.floor.isNotBlank()) {
-        connection.goFloor(member.floor)
-        withTimeoutOrNull(8_000) { connection.data.first { it.floorId == member.floor && it.workers.containsKey(member.id) } }
-    }
+internal suspend fun follow(connection: OfficeConnection, member: MissionTeamMember, open: (String) -> Unit): Boolean {
+    if (MissionControl.onAnotherFloor(member, connection.data.value.floorId)) {
+        if (!connection.goFloor(member.floor)) return false
+        withTimeoutOrNull(8_000) { connection.data.first { MissionControl.arrived(member, it.floorId, it.workers.keys) } } ?: return false
+    } else if (member.id !in connection.data.value.workers) return false
     open(member.id)
+    return true
+}
+
+/**
+ * What a tap on a subagent does: [follow] it, the latest tap winning over one still waiting for its
+ * floor, and say so when it can't be reached. Null when there is nowhere to open it.
+ */
+@Composable
+internal fun rememberFollow(onOpen: ((String) -> Unit)?): ((MissionTeamMember) -> Unit)? {
+    val connection = LocalGraph.current.connection
+    val snackbar = LocalSnackbar.current
+    val scope = rememberCoroutineScope()
+    var pending by remember { mutableStateOf<Job?>(null) }
+    val open = onOpen ?: return null
+    return { member ->
+        pending?.cancel()
+        pending = scope.launch {
+            if (!follow(connection, member, open)) snackbar.showSnackbar("Couldn't reach ${member.name} on ${member.floorName.ifBlank { member.floor }}. Try again.")
+        }
+    }
 }
 
 /** A building agent's subagents as a row of chips, each tagged with its floor: tapping one opens it there. */
 @Composable
-internal fun TeamStrip(team: List<MissionTeamMember>, onOpen: (MissionTeamMember) -> Unit, modifier: Modifier = Modifier, tag: String = Tags.Orchestrator.TEAM, color: Color = Palette.TextSecondary) {
+internal fun TeamStrip(team: List<MissionTeamMember>, onOpen: (MissionTeamMember) -> Unit, modifier: Modifier = Modifier, tag: String = Tags.Orchestrator.TEAM) {
     if (team.isEmpty()) return
     Row(
         modifier.fillMaxWidth().tagged(tag).horizontalScroll(rememberScrollState()).padding(horizontal = 12.dp, vertical = 4.dp),
         horizontalArrangement = Arrangement.spacedBy(6.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Eyebrow("Team", Modifier.padding(end = 2.dp), color = color)
-        MissionControl.arrangeTeam(team).forEach { m -> MemberChip(m) { onOpen(m) } }
+        Eyebrow("Team", Modifier.padding(end = 2.dp))
+        MissionControl.arrangeTeam(team).forEach { m -> key(m.id) { MemberChip(m) { onOpen(m) } } }
     }
 }
 
@@ -172,15 +193,15 @@ internal fun OrchestratorBlocked(reason: String) {
 
 /** The header the Orchestrator's screens share before its session exists. */
 @Composable
-private fun IdleHeader(embedded: Boolean, onBack: () -> Unit, sub: String, onMenu: () -> Unit) {
+private fun IdleHeader(embedded: Boolean, onBack: () -> Unit, sub: String, onMenu: (() -> Unit)?) {
     Row(Modifier.fillMaxWidth().padding(start = 4.dp, end = 4.dp, top = 6.dp, bottom = 4.dp), verticalAlignment = Alignment.CenterVertically) {
         IconButton(onClick = onBack, modifier = Modifier.tagged(Tags.Worker.BACK)) { Icon(if (embedded) Icons.Default.Close else Icons.AutoMirrored.Filled.ArrowBack, "Back") }
-        AgentTile(OfficeIcons.Orbit, orchestratorTint(null), small = true)
+        AgentTile(OfficeIcons.Orbit, OrchestratorTint, small = true)
         Column(Modifier.weight(1f).padding(start = 10.dp)) {
             Text(ORCHESTRATOR_NAME, style = MaterialTheme.typography.titleLarge, maxLines = 1, modifier = Modifier.tagged(Tags.Worker.NAME))
             Text(sub, style = LocalOfficeType.current.monoBody.copy(color = Palette.TextSecondary, fontSize = MaterialTheme.typography.bodySmall.fontSize), maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.tagged(Tags.Worker.META))
         }
-        IconButton(onClick = onMenu, modifier = Modifier.tagged(Tags.Orchestrator.MENU)) { Icon(Icons.Default.MoreVert, "Orchestrator settings", tint = Palette.TextSecondary) }
+        if (onMenu != null) IconButton(onClick = onMenu, modifier = Modifier.tagged(Tags.Orchestrator.MENU)) { Icon(Icons.Default.MoreVert, "Orchestrator settings", tint = Palette.TextSecondary) }
     }
 }
 
@@ -197,15 +218,13 @@ internal fun OrchestratorIdle(state: OrchestratorState?, synced: Boolean, embedd
     val scope = rememberCoroutineScope()
     var menu by remember { mutableStateOf(false) }
     var fill by remember { mutableStateOf<String?>(null) }
-    var fillRequest by remember { mutableIntStateOf(0) }
     val connected = link.phase == Phase.Connected
     val on = state?.settings?.on == true
-    val insets = if (embedded) WindowInsets.safeDrawing.only(WindowInsetsSides.Top + WindowInsetsSides.End) else WindowInsets.safeDrawing.only(WindowInsetsSides.Top + WindowInsetsSides.Horizontal)
     Column(
-        Modifier.fillMaxSize().tagged(Tags.Screen.WORKER).background(Palette.Bg).windowInsetsPadding(insets)
+        Modifier.fillMaxSize().tagged(Tags.Screen.WORKER).background(Palette.Bg).windowInsetsPadding(paneInsets(embedded))
             .windowInsetsPadding(WindowInsets.ime.union(WindowInsets.navigationBars).only(WindowInsetsSides.Bottom)),
     ) {
-        IdleHeader(embedded, onBack, if (state == null) "Mission Control" else if (!on) "Mission Control · off" else if (state.blocked != null) "Mission Control · blocked" else "Mission Control · ready", onMenu = { menu = true })
+        IdleHeader(embedded, onBack, if (state == null) "Mission Control" else if (!on) "Mission Control · off" else if (state.blocked != null) "Mission Control · blocked" else "Mission Control · ready", onMenu = if (state == null) null else ({ menu = true }))
         Box(Modifier.fillMaxWidth().height(1.dp).background(Palette.Border))
         Column(
             Modifier.weight(1f).fillMaxWidth().verticalScroll(rememberScrollState()).padding(horizontal = 24.dp, vertical = 28.dp),
@@ -233,16 +252,13 @@ internal fun OrchestratorIdle(state: OrchestratorState?, synced: Boolean, embedd
                         if (!connection.send(ClientMsg.orchestratorSet(state.settings.copy(on = true)))) scope.launch { snackbar.showSnackbar("Couldn't reach the office. Nothing changed.") }
                     }, Modifier.tagged(Tags.Orchestrator.TURN_ON), enabled = connected, icon = OfficeIcons.Bolt)
                 }
-                else -> Intro(enabled = connected && state.blocked == null, onExample = {
-                    fill = it
-                    fillRequest++
-                })
+                else -> Intro(enabled = connected && state.blocked == null, onExample = { fill = it })
             }
         }
         if (on) {
             val blocked = state.blocked
             if (blocked != null) OrchestratorBlocked(blocked)
-            else Composer(IdleOrchestrator, connected = connected, thread = true, fill = fill, fillRequest = fillRequest)
+            else Composer(IdleOrchestrator, connected = connected, thread = true, fill = fill, onFilled = { fill = null })
         }
     }
     if (menu && state != null) OrchestratorSheet(state, onDismiss = { menu = false })
@@ -252,7 +268,7 @@ internal fun OrchestratorIdle(state: OrchestratorState?, synced: Boolean, embedd
 private fun Intro(enabled: Boolean, onExample: (String) -> Unit) {
     Column(Modifier.widthIn(max = 460.dp).fillMaxWidth().tagged(Tags.Orchestrator.INTRO)) {
         Spacer(Modifier.height(12.dp))
-        AgentTile(OfficeIcons.Orbit, orchestratorTint(null))
+        AgentTile(OfficeIcons.Orbit, OrchestratorTint)
         Spacer(Modifier.height(16.dp))
         Text("Run the whole building from here", style = MaterialTheme.typography.headlineSmall)
         Spacer(Modifier.height(8.dp))
@@ -330,7 +346,7 @@ fun OrchestratorSheet(state: OrchestratorState, onDismiss: () -> Unit) {
             verticalArrangement = Arrangement.spacedBy(18.dp),
         ) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                AgentTile(OfficeIcons.Orbit, orchestratorTint(state.agent?.worker))
+                AgentTile(OfficeIcons.Orbit, OrchestratorTint)
                 Column(Modifier.weight(1f).padding(start = 12.dp)) {
                     Text(ORCHESTRATOR_NAME, style = MaterialTheme.typography.headlineSmall)
                     Text("Plans and directs workers on every floor", style = MaterialTheme.typography.bodySmall)

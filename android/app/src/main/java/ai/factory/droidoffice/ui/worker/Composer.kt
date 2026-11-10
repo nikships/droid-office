@@ -130,9 +130,9 @@ fun Composer(
     onStop: (() -> Unit)? = null,
     /** Nothing sent would reach the worker (a cloud worker's session is gone): Send is off, the draft stays. */
     blocked: Boolean = false,
-    /** Replaces the draft with [fill] and focuses it each time [fillRequest] goes up, as an example prompt does. */
+    /** Replaces the draft with [fill] and focuses it, as an example prompt does, then calls [onFilled] so the same text isn't put in again over what is typed next. */
     fill: String? = null,
-    fillRequest: Int = 0,
+    onFilled: () -> Unit = {},
 ) {
     val graph = LocalGraph.current
     val snackbar = LocalSnackbar.current
@@ -164,8 +164,9 @@ fun Composer(
             keyboard?.show()
         }
     }
-    LaunchedEffect(visible, fillRequest) {
-        if (visible && fillRequest > 0 && fill != null) {
+    LaunchedEffect(visible, fill) {
+        if (visible && fill != null) {
+            onFilled()
             value = TextFieldValue(fill, selection = TextRange(fill.length))
             focus.requestFocus()
             keyboard?.show()

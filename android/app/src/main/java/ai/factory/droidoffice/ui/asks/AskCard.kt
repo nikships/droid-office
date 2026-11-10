@@ -50,6 +50,7 @@ import ai.factory.droidoffice.core.Asks
 import ai.factory.droidoffice.core.Choices
 import ai.factory.droidoffice.core.ClientMsg
 import ai.factory.droidoffice.core.Menu
+import ai.factory.droidoffice.core.MissionControl
 import ai.factory.droidoffice.core.OfficeJson
 import ai.factory.droidoffice.core.QuestionAnswers
 import ai.factory.droidoffice.core.Tags
@@ -87,7 +88,7 @@ fun AskCard(
 ) {
     val graph = LocalGraph.current
     val data by graph.connection.data.collectAsStateWithLifecycle()
-    val identity = "${data.officeId}/${data.floorId}/${worker.id}/${worker.sessionId}"
+    val identity = "${data.officeId}/${MissionControl.floorScope(data.floorId, worker.id)}/${worker.id}/${worker.sessionId}"
     var opened by rememberSaveable(identity) { mutableStateOf<String?>(null) }
     Column(
         modifier.fillMaxWidth().tagged(Tags.Asks.CARD)
@@ -169,7 +170,7 @@ private fun AnswerWorkspace(worker: WorkerInfo, shown: Menu, entries: List<Threa
     val connected = link.phase == Phase.Connected
     LaunchedEffect(connected) { if (!connected) interrupted = true }
     val now = data.worker(worker.id)
-    val currentIdentity = "${data.officeId}/${data.floorId}/${worker.id}/${now?.sessionId}"
+    val currentIdentity = "${data.officeId}/${MissionControl.floorScope(data.floorId, worker.id)}/${worker.id}/${now?.sessionId}"
     val currentMenu = now?.let { Asks.menu(it, screens[worker.id]) }
     val same = currentIdentity == identity && now?.state == ai.factory.droidoffice.core.WorkerStatus.NeedsInput && Choices.same(shown, currentMenu)
     val supported = !shown.multiSelect || data.workerAnswerMultiSelect
@@ -272,7 +273,7 @@ private fun AnswerWorkspace(worker: WorkerInfo, shown: Menu, entries: List<Threa
                                 if (store.settings.answerDelay) delay(ANSWER_DELAY_MS)
                                 val fresh = connection.data.value
                                 val freshWorker = fresh.worker(worker.id)
-                                val freshIdentity = "${fresh.officeId}/${fresh.floorId}/${worker.id}/${freshWorker?.sessionId}"
+                                val freshIdentity = "${fresh.officeId}/${MissionControl.floorScope(fresh.floorId, worker.id)}/${worker.id}/${freshWorker?.sessionId}"
                                 if (!connection.connected || connection.answerEpoch != epoch || freshIdentity != identity) {
                                     error = "The connection or session changed. Reopen this question before submitting. Your draft is kept."
                                     interrupted = true

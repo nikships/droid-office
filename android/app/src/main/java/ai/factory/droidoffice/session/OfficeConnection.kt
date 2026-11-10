@@ -114,7 +114,6 @@ data class OfficeData(
 }
 
 /** Building agents have no desk: they never sit in a floor's list, whatever an office sends. */
-private fun deskWorker(w: WorkerInfo) = !w.remote && w.id != ORCHESTRATOR_ID
 
 private data class Desire(val office: PairedOffice?, val wanted: Boolean, val online: Boolean, val networkKey: String?, val nonce: Int)
 
@@ -302,8 +301,11 @@ class OfficeConnection(
         if (workerId in attached) send(ClientMsg.attach(workerId))
     }
 
-    fun goFloor(floorId: String) {
-        if (send(ClientMsg.floorGo(floorId))) scope.launch { _data.value.officeId?.let { id -> store.update(id) { it.copy(lastFloor = floorId) } } }
+    /** Asks the office to move this phone to [floorId]; false when the message couldn't be sent. */
+    fun goFloor(floorId: String): Boolean {
+        val sent = send(ClientMsg.floorGo(floorId))
+        if (sent) scope.launch { _data.value.officeId?.let { id -> store.update(id) { it.copy(lastFloor = floorId) } } }
+        return sent
     }
 
     fun reorderFloor(floorId: String, before: String?): Boolean = send(ClientMsg.floorReorder(floorId, before))
@@ -603,19 +605,21 @@ class OfficeConnection(
     private fun handle(officeId: String, msg: ServerMsg) {
         when (msg) {
             is ServerMsg.Welcome -> {
-                _data.update { it.copy(workerAnswerMultiSelect = msg.workerAnswerMultiSelect, mission = msg.missionControl) }
+                _data.update { it.copy(workerAnswerMultiSelect = msg.workerAnswerMultiSelect) }
+                // An office that predates Mission Control sends none; one that sends it goes through the same path as a broadcast.
+                if (msg.missionControl != null) mission(msg.missionControl) else _data.update { it.copy(mission = null) }
                 whiteboard.status(true)
                 whiteboard.welcome(msg.view.floor)
                 _availability.value = msg.availability
                 _hiddenModels.value = msg.hiddenModels
                 _subscriptions.value = msg.subscriptions
                 _factory.value = msg.factory
-                enter(officeId, msg.view, msg.floors, msg.version)
+                enter(officeId, msg.view, msg.floors, msg.version, keepOrchestrator = false)
                 msg.view.project?.name?.ifBlank { null }?.let { p -> scope.launch { store.update(officeId) { it.copy(project = p) } } }
             }
             is ServerMsg.FloorEnter -> {
                 whiteboard.enter(msg.view.floor)
-                enter(officeId, msg.view, null, null)
+                enter(officeId, msg.view, null, null, keepOrchestrator = true)
                 msg.view.floor?.let { f -> scope.launch { store.update(officeId) { it.copy(lastFloor = f, project = msg.view.project?.name?.ifBlank { null } ?: it.project) } } }
             }
             is ServerMsg.HiddenModels -> _hiddenModels.value = msg.ids
@@ -636,7 +640,7 @@ class OfficeConnection(
                     }
                     return
                 }
-                if (!deskWorker(w)) return
+                if (!MissionControl.isDeskWorker(w, _data.value.mission)) return
                 val before = _data.value.workers
                 if (!before.containsKey(w.id) && w.createdBy == officeName && System.currentTimeMillis() - hireAskedAt < HIRE_WINDOW_MS) {
                     hireAskedAt = 0
@@ -671,18 +675,28 @@ class OfficeConnection(
         val was = _data.value.orchestrator
         _data.update { it.copy(mission = state) }
         val now = MissionControl.orchestrator(state)
-        if (was != null && now != null && (was.cols != now.cols || was.rows != now.rows)) feeds[now.id]?.push(TermEvent.Resize(TermSize(now.cols, now.rows)))
+        when (MissionControl.sessionChange(was, now)) {
+            MissionControl.Session.Ended -> {
+                _screens.update { it - ORCHESTRATOR_ID }
+                // A screen still holding its terminal gets a feed with none of the old session in it.
+                if (feeds.containsKey(ORCHESTRATOR_ID)) feeds[ORCHESTRATOR_ID] = TermFeed()
+            }
+            MissionControl.Session.Resized -> now?.let { feeds[it.id]?.push(TermEvent.Resize(TermSize(it.cols, it.rows))) }
+            MissionControl.Session.Same -> Unit
+        }
     }
 
-    private fun enter(officeId: String, view: FloorView, floors: List<FloorInfo>?, version: String?) {
-        _screens.value = emptyMap()
+    /** [keepOrchestrator]: the Orchestrator's screen is the building's, so a change of floor leaves it be. */
+    private fun enter(officeId: String, view: FloorView, floors: List<FloorInfo>?, version: String?, keepOrchestrator: Boolean) {
+        _screens.update { screens -> if (keepOrchestrator) screens.filterKeys { it == ORCHESTRATOR_ID } else emptyMap() }
+        val mission = _data.value.mission
         _data.update {
             it.copy(
                 officeId = officeId,
                 floors = floors ?: it.floors,
                 floorId = view.floor,
                 project = view.project,
-                workers = view.workers.filter(::deskWorker).associateBy(WorkerInfo::id),
+                workers = view.workers.filter { w -> MissionControl.isDeskWorker(w, mission) }.associateBy(WorkerInfo::id),
                 pulls = view.pulls.items,
                 version = version ?: it.version,
                 synced = true,
