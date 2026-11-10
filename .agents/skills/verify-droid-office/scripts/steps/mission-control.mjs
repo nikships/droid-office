@@ -16,6 +16,8 @@ export default async ({ page, js, shot, waitFor, out, url, log }, { withCompanio
   };
   await js(() => window.office.closeAll());
   const before = await state();
+  const home = before.floor?.id;
+  const orchestratorOn = (on) => waitFor((want) => window.office.state().agents?.some((a) => a.id === 'orchestrator') === want, on, 10_000);
   assert.ok(before.agents, 'the office sends Mission Control');
   assert.ok(!before.workers.some((w) => w.id === 'orchestrator'), 'the Orchestrator takes no floor desk');
 
@@ -46,7 +48,7 @@ export default async ({ page, js, shot, waitFor, out, url, log }, { withCompanio
     if (withCompanion) companion = await page.context().newPage();
     else proof.skipped.push('mission-companion: native scene/settings run; use the browser drive for companion proof');
     await setToggle(toggle, true);
-    await waitFor(() => window.office.state().agents?.some((a) => a.id === 'orchestrator'), undefined, 10_000);
+    await orchestratorOn(true);
     await shot('03-orchestrator-settings');
     const row = companion?.locator('button.dash-row-open[data-worker="orchestrator"]');
     if (companion && row) {
@@ -70,12 +72,12 @@ export default async ({ page, js, shot, waitFor, out, url, log }, { withCompanio
     }
 
     await setToggle(toggle, false);
-    await waitFor(() => !window.office.state().agents?.some((a) => a.id === 'orchestrator'), undefined, 10_000);
+    await orchestratorOn(false);
     await companion?.locator('.dash-mission-off').waitFor({ state: 'visible' });
     await shot('05-orchestrator-off');
     record('mission-shared', { on: false, ...(companion ? { companion: 'off' } : {}) });
     await setToggle(toggle, true);
-    await waitFor(() => window.office.state().agents?.some((a) => a.id === 'orchestrator'), undefined, 10_000);
+    await orchestratorOn(true);
     await row?.waitFor({ state: 'visible' });
     await js(() => window.office.closeAll());
 
@@ -99,15 +101,21 @@ export default async ({ page, js, shot, waitFor, out, url, log }, { withCompanio
       }
       const botRow = companion.locator(`button.dash-row-open[data-worker="${bot.id}"]`);
       await botRow.click();
-      await companion.getByText('Runs externally', { exact: true }).last().waitFor();
+      // The row itself reads "Runs externally", so only the opened pane's note proves the click.
+      await companion.locator(`.dash-pane[aria-label$=${JSON.stringify(`: ${bot.name}`)}] .dash-bot-note`).waitFor();
       record('mission-bots', { id: bot.id, floorDesk: false, companion: await botRow.getAttribute('aria-label') });
     }
   } finally {
     await companion?.close();
     await js(() => window.office.closeAll());
+    if (home && (await state()).floor?.id !== home) {
+      const back = await js((id) => window.office.ride(id), home);
+      assert.equal(back.floor?.id, home);
+    }
     await js(() => window.office.open('settings'));
     await page.getByRole('tab', { name: /Orchestrator/ }).click();
     await setToggle(page.getByRole('dialog', { name: 'Settings', exact: true }).getByRole('checkbox', { name: 'Orchestrator', exact: true }), wasOn);
+    await orchestratorOn(wasOn);
     await js(() => window.office.closeAll());
   }
   writeFileSync(path.join(out, 'proof.json'), `${JSON.stringify(proof, null, 2)}\n`);
