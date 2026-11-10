@@ -247,7 +247,7 @@ export function mountWorkerThread(net: Net, opts: ThreadOptions): WorkerThread {
     slashMenu.scrollTop = 0;
     updateControls();
   });
-  const images = promptImages(input);
+  const images = promptImages(input, worker.id);
   const file = h('input.hidden', { type: 'file', accept: 'image/png,image/jpeg,image/gif,image/webp', multiple: true, 'aria-label': 'Choose pictures' });
   file.addEventListener('change', () => {
     images.add([...(file.files ?? [])]);

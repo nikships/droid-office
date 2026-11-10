@@ -146,7 +146,7 @@ export class Orchestrator {
 
   /** The owner's prompt: the first one starts its session. */
   prompt(text: string, images?: readonly string[], queue = false): string | undefined {
-    if (!this.settings.on) return 'The Orchestrator is off. Turn it on in Settings → Orchestrator.';
+    if (!this.settings.on) return 'The Orchestrator is off. Turn it on in ⚙️ Settings → Orchestrator.';
     const blocked = this.blocked();
     if (blocked) return blocked;
     const info = this.info;
