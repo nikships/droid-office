@@ -241,6 +241,34 @@ class MissionControlTest {
         assertEquals("Ready", MissionControl.botLine(bot.copy(worker = bot.worker.copy(status = "idle"))))
     }
 
+    // orchestratorBlocked in src/client/mission.ts: the office sets `blocked` whenever a new start couldn't happen.
+    @Test
+    fun blockedOnlyWhileNoSessionIsRunning() {
+        val why = "Droid isn't signed in"
+        fun blocked(agent: MissionAgent?, on: Boolean = true, reason: String? = why) =
+            OrchestratorState(OrchestratorSettings(on = on), agent, reason)
+        val working = agent("working").let { it.copy(worker = it.worker.copy(activity = "Hiring on two floors")) }
+
+        // No session yet, or one asleep: the office can't start it, so the reason replaces the composer.
+        assertEquals(why, MissionControl.orchestratorBlocked(blocked(null)))
+        assertEquals(why, MissionControl.orchestratorBlocked(blocked(agent("exited"))))
+        assertEquals(why, MissionControl.orchestratorBlocked(blocked(agent("offline"))))
+        assertEquals(why, MissionControl.orchestratorLine(blocked(agent("exited"))))
+
+        // A live session keeps its status, its line, its composer and its Stop, whatever the office reports.
+        for (status in listOf("working", "starting", "idle", "needs_input", "done")) {
+            assertNull(status, MissionControl.orchestratorBlocked(blocked(agent(status))))
+        }
+        assertEquals("Hiring on two floors", MissionControl.orchestratorLine(blocked(working)))
+
+        // Nothing reported, or off: nothing is blocked.
+        assertNull(MissionControl.orchestratorBlocked(blocked(null, reason = null)))
+        assertNull(MissionControl.orchestratorBlocked(blocked(agent("exited"), reason = null)))
+        assertNull(MissionControl.orchestratorBlocked(blocked(null, on = false)))
+        assertNull(MissionControl.orchestratorBlocked(null))
+        assertEquals("Off. Turn it on in Settings → Orchestrator.", MissionControl.orchestratorLine(blocked(null, on = false)))
+    }
+
     @Test
     fun statusWordsAreOneSetForWorkersAndBots() {
         val words = mapOf(
