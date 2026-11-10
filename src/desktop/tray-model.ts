@@ -156,9 +156,15 @@ export function trayMenu(v: TrayView): TrayItem[] {
   ];
 }
 
+/** Where a waiting worker is: Mission Control for a building agent, else its floor once there is more than one. */
+function waitingWhere(w: StatusWaiting, floors: number): string | undefined {
+  if (!w.floor) return 'Mission Control';
+  return floors > 1 ? `${w.floorName} floor` : undefined;
+}
+
 /** The notification for a worker that started to wait: the same words as the office's own (src/client/notify.ts). */
 export function waitingNotice(w: StatusWaiting, floors: number): { title: string; body: string } {
-  return { title: waitingLabel(w), body: [w.task, !w.floor ? 'Mission Control' : floors > 1 ? `${w.floorName} floor` : undefined].filter(Boolean).join('\n') };
+  return { title: waitingLabel(w), body: [w.task, waitingWhere(w, floors)].filter(Boolean).join('\n') };
 }
 
 /** The status names fewer waiting workers than there are: the rest are cut off by the server's cap. */
