@@ -1,11 +1,13 @@
 // How the companion words a worker on its cards and rows.
 
+import { ORCHESTRATOR_ID } from '../shared/mission-control';
 import type { WorkerInfo } from '../shared/protocol';
 import { workerActivity } from '../shared/status';
 
-/** What sort of worker it is: a Droid here or on a Factory computer, or a shell. */
+/** What sort of worker it is: a building agent, a Droid here or on a Factory computer, or a shell. */
 export function workerKind(w: WorkerInfo): string {
-  if (w.remote) return 'External worker · MCP';
+  if (w.id === ORCHESTRATOR_ID) return 'Orchestrator · Mission Control';
+  if (w.remote) return 'External bot · Mission Control';
   return w.cloud ? 'Droid · Factory' : w.kind === 'shell' ? 'Shell' : 'Droid';
 }
 

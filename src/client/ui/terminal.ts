@@ -110,25 +110,29 @@ export function openTerminal(net: Net, workerId: string, onChanges?: () => void,
     }
     current?.modal.close();
   }
-  const info = store.workers.get(workerId);
+  const info = store.worker(workerId);
   if (!info) return;
   if (info.remote) {
     const status = h('p', {}, `${info.status}: ${info.activity ?? ''}`);
     const el = h(
       'div.modal',
       {},
-      h('header', {}, h('div.titles', {}, h('h2', {}, info.name), h('p.sub', {}, 'External worker · MCP'))),
-      h('div.body.stack', {}, status, h('p.note.info', {}, 'This worker runs elsewhere. Messages and team updates arrive through its MCP inbox. It has no local terminal or conversation.')),
+      h('header', {}, h('div.titles', {}, h('h2', {}, info.name), h('p.sub', {}, 'External bot · Mission Control'))),
+      h('div.body.stack', {}, status, h('p.note.info', {}, 'This bot runs externally and reaches the office over Tailscale MCP. Messages and team updates arrive through its MCP inbox. It has no local terminal or conversation.')),
     );
     if (inline) {
       inline.mount.replaceChildren(el);
       return;
     }
-    const unsubscribe = store.on('workers', () => {
-      const w = store.workers.get(workerId);
+    const paintBot = () => {
+      const w = store.worker(workerId);
       if (!w) modal.close();
       else status.textContent = `${w.status}: ${w.activity ?? ''}`;
-    });
+    };
+    const offs = [store.on('workers', paintBot), store.on('missionControl', paintBot)];
+    const unsubscribe = () => {
+      for (const off of offs) off();
+    };
     // Attached while it's open, like a terminal: looking at a finished turn acknowledges it.
     net.send({ t: 'worker.attach', workerId });
     const modal = openModal(el, {
@@ -285,7 +289,7 @@ export function openTerminal(net: Net, workerId: string, onChanges?: () => void,
     if (typing || paneSizeChanged) adoptSharedSize = false;
     paneSizeChanged = false;
     if (!typing && adoptSharedSize) {
-      const w = store.workers.get(workerId);
+      const w = store.worker(workerId);
       if (w && (w.cols !== term.cols || w.rows !== term.rows)) term.resize(w.cols, w.rows);
       return;
     }
@@ -298,7 +302,7 @@ export function openTerminal(net: Net, workerId: string, onChanges?: () => void,
       return;
     }
     const key = `${term.cols}x${term.rows}`;
-    const w = store.workers.get(workerId);
+    const w = store.worker(workerId);
     if (w && (pendingSizes.length || w.cols !== term.cols || w.rows !== term.rows) && key !== lastSentSize) {
       lastSentSize = key;
       pendingSizes.push(key);
@@ -307,7 +311,7 @@ export function openTerminal(net: Net, workerId: string, onChanges?: () => void,
   };
 
   const refresh = () => {
-    const w = store.workers.get(workerId);
+    const w = store.worker(workerId);
     if (!w) {
       modal.close();
       return;
@@ -381,7 +385,13 @@ export function openTerminal(net: Net, workerId: string, onChanges?: () => void,
     }
   };
   listeners.add(onMsg);
-  const unsub = store.on('workers', refresh);
+  // A building agent (the Orchestrator) comes and goes with Mission Control state, not the floor's workers.
+  const offWorkers = store.on('workers', refresh);
+  const offMission = store.on('missionControl', refresh);
+  const unsub = () => {
+    offWorkers();
+    offMission();
+  };
   const unsubCredits = store.on('factory', refresh);
   let box: { width: number; height: number } | undefined;
   const ro = new ResizeObserver(([entry]) => {
@@ -395,7 +405,7 @@ export function openTerminal(net: Net, workerId: string, onChanges?: () => void,
     sendSize();
   });
   const offStatus = net.onStatus((up) => {
-    header?.refresh(store.workers.get(workerId) ?? info);
+    header?.refresh(store.worker(workerId) ?? info);
     if (up) return; // The welcome handler reattaches only after the authoritative worker snapshot.
     mirror.disconnect();
     term.options.disableStdin = true;
@@ -446,7 +456,7 @@ export function openTerminal(net: Net, workerId: string, onChanges?: () => void,
       doing: `💻 in ${info.name}'s terminal`,
       onClose,
     });
-  const csiEnter = () => wantsCsiEnter(store.workers.get(workerId)?.kind);
+  const csiEnter = () => wantsCsiEnter(store.worker(workerId)?.kind);
   if (!inline)
     current = {
       workerId,
@@ -551,7 +561,7 @@ export function openTerminal(net: Net, workerId: string, onChanges?: () => void,
     term.open(host);
     opened = true;
     ro.observe(host);
-    adoptSharedSize = store.workers.get(workerId)?.open === true;
+    adoptSharedSize = store.worker(workerId)?.open === true;
     net.send({ t: 'worker.attach', workerId });
     setTimeout(() => {
       if (alive && inline?.focus !== false) term.focus();

@@ -46,6 +46,15 @@ export interface ThreadOptions {
   openWorker?(id: string): void;
   /** The floor the worker is on: its pictures are fetched from there. Without it, none are shown. */
   floor?: string;
+  /** Shown in place of an empty conversation while it returns a node. With no session yet, nothing is read. */
+  intro?(): HTMLElement | undefined;
+  /** Why the worker can't take a message now, shown in place of the composer with `blockedAction` beside it. */
+  blocked?(): string | undefined;
+  blockedAction?: HTMLElement;
+  /** Stop asks the office to stop the turn (`worker.interrupt`) instead of typing Esc into the terminal. */
+  interrupt?: boolean;
+  /** A prompt starts the worker from rest: the composer stays open while it's asleep, with no Resume. */
+  promptWakes?: boolean;
 }
 
 /**
@@ -328,7 +337,9 @@ export function mountWorkerThread(net: Net, opts: ThreadOptions): WorkerThread {
       progressDetail,
     ),
   );
-  const element = h('section.worker-thread', { 'aria-label': `${worker.name} thread` }, teamSection, scroll, latestAnchor, progress, h('div.wt-feedback', {}, notice, retry, raw, resume), form);
+  const blockedText = h('p.wt-blocked-text');
+  const blockedNote = h('div.wt-blocked.note.warn', { role: 'status', hidden: true }, icon('lock', 15), blockedText, opts.blockedAction ?? null);
+  const element = h('section.worker-thread', { 'aria-label': `${worker.name} thread` }, teamSection, scroll, latestAnchor, progress, h('div.wt-feedback', {}, notice, retry, raw, resume), blockedNote, form);
   images.dropZone(form);
   const nodes = new Map<string, { key: string; node: HTMLElement; sourceIds: string[] }>();
   const expandedMessages = new Set<string>();
@@ -720,14 +731,20 @@ export function mountWorkerThread(net: Net, opts: ThreadOptions): WorkerThread {
   teamSection.addEventListener('focusout', teamFocus);
   document.addEventListener('selectionchange', teamSelection);
   let emptyKey = '';
+  const introNow = () => (history.entries.length ? undefined : opts.intro?.());
   const paintEmpty = () => {
     const starting = threadStarting(worker);
     const cloudWaiting = received && cloudStarting(worker, Date.now());
-    const key = JSON.stringify([error, received, starting, cloudWaiting, connected]);
+    const intro = introNow();
+    const key = JSON.stringify([error, received, starting, cloudWaiting, connected, !!intro]);
     if (key === emptyKey) return;
     emptyKey = key;
-    empty.setAttribute('aria-busy', String(connected && !error && !received));
-    if (error) empty.textContent = `Conversation unavailable. Retry below, or ${fallback}.`;
+    empty.classList.toggle('wt-intro', !!intro);
+    if (intro) empty.removeAttribute('role');
+    else empty.setAttribute('role', 'status');
+    empty.setAttribute('aria-busy', String(!intro && connected && !error && !received));
+    if (intro) empty.replaceChildren(intro);
+    else if (error) empty.textContent = `Conversation unavailable. Retry below, or ${fallback}.`;
     else if (!connected) empty.textContent = 'Waiting for the office to reconnect…';
     else if (!received)
       empty.replaceChildren(
@@ -818,9 +835,12 @@ export function mountWorkerThread(net: Net, opts: ThreadOptions): WorkerThread {
   };
   const updateControls = () => {
     const broken = worker.cloud?.error;
-    const allowed = active && connected && !disposed && !isAsleep(worker.status) && !worker.lost && !broken;
+    const blocked = opts.blocked?.();
+    const allowed = active && connected && !disposed && (opts.promptWakes || !isAsleep(worker.status)) && !worker.lost && !broken && !blocked;
     const waiting = worker.status === 'needs_input';
-    form.hidden = waiting;
+    form.hidden = waiting || !!blocked;
+    blockedNote.hidden = !blocked;
+    blockedText.textContent = blocked ?? '';
     if (needsOwnerInput(worker) && !waitingShown) requestAnimationFrame(() => opts.question.scrollIntoView({ block: 'nearest' }));
     waitingShown = waiting;
     input.disabled = !allowed || sending || waiting;
@@ -834,7 +854,15 @@ export function mountWorkerThread(net: Net, opts: ThreadOptions): WorkerThread {
     stop.disabled = !allowed || sending || stopping;
     sendLabel.textContent = sending ? 'Sending…' : busy ? (cloud ? 'Queue' : 'Send now') : 'Send';
     send.title = busy ? (cloud ? `Sent to ${worker.name} once this turn is over` : `Steer ${worker.name}: it reads this now, during the turn`) : '';
-    input.placeholder = broken ? `${worker.name} can’t take messages` : busy ? (cloud ? `Queue a message for after this turn…` : `Steer ${worker.name}, or queue for after this turn…`) : `Reply to ${worker.name}…`;
+    input.placeholder = broken
+      ? `${worker.name} can’t take messages`
+      : introNow()
+        ? `Tell ${worker.name} what you want done…`
+        : busy
+          ? cloud
+            ? `Queue a message for after this turn…`
+            : `Steer ${worker.name}, or queue for after this turn…`
+          : `Reply to ${worker.name}…`;
     hint.replaceChildren(
       ...(cloud
         ? [shortcut('Enter', busy ? 'queue' : 'send'), shortcut('⇧ Enter', 'new line')]
@@ -847,10 +875,12 @@ export function mountWorkerThread(net: Net, opts: ThreadOptions): WorkerThread {
     retry.disabled = !connected || !!pending;
     empty.classList.toggle('error', !!error && !history.entries.length);
     if (!history.entries.length) paintEmpty();
-    notice.textContent = connected ? error || told || (broken && !opts.cloudErrorShown ? `${worker.name} can’t work: ${broken}` : '') || (isAsleep(worker.status) ? 'Resume this worker to send another message.' : '') : '';
+    notice.textContent = connected
+      ? error || told || (broken && !opts.cloudErrorShown ? `${worker.name} can’t work: ${broken}` : '') || (isAsleep(worker.status) && !opts.promptWakes ? 'Resume this worker to send another message.' : '')
+      : '';
     raw?.classList.toggle('hidden', !connected || !error);
     // A cloud worker's Resume reads its Factory session again, which is also how one that broke is checked.
-    resume.hidden = !isAsleep(worker.status) && !broken;
+    resume.hidden = (!isAsleep(worker.status) || !!opts.promptWakes) && !broken;
     resume.disabled = !active || !connected || !!worker.lost || resuming;
     resume.textContent = broken ? (resuming ? 'Checking…' : 'Check again') : resuming ? 'Resuming…' : 'Resume';
     element.classList.toggle('has-feedback', !!notice.textContent);
@@ -860,6 +890,7 @@ export function mountWorkerThread(net: Net, opts: ThreadOptions): WorkerThread {
   const read = (before?: number) => {
     if (!active || !connected || disposed || document.hidden || pending) return;
     if (threadStarting(worker) && !worker.sessionId) return;
+    if (!worker.sessionId && opts.intro?.()) return;
     if (before === undefined && history.historical) return;
     if (before === undefined && Date.now() - lastReadAt < 1000) return;
     const request = `thread-${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
@@ -910,7 +941,7 @@ export function mountWorkerThread(net: Net, opts: ThreadOptions): WorkerThread {
     sending = true;
     updateControls();
     await images.settled();
-    if (disposed || !active || !connected || worker.status === 'needs_input') {
+    if (disposed || !active || !connected || worker.status === 'needs_input' || opts.blocked?.()) {
       sending = false;
       updateControls();
       return;
@@ -938,7 +969,7 @@ export function mountWorkerThread(net: Net, opts: ThreadOptions): WorkerThread {
   };
   const stopTurn = () => {
     if (stop.disabled) return;
-    if (cloud) {
+    if (cloud || opts.interrupt) {
       stopping = true;
       updateControls();
       void opts.send({ t: 'worker.interrupt', workerId: worker.id }).then((why) => {

@@ -61,10 +61,10 @@ export class DesktopNotifier {
     this.shown.set(w.id, n);
   }
 
-  /** Takes down notifications for workers nobody needs to get to any more (someone else did). */
-  sync(workers: Map<string, WorkerInfo>) {
+  /** Takes down notifications for workers nobody needs to get to any more (someone else did). `building` finds the building's agents, on no floor. */
+  sync(workers: ReadonlyMap<string, WorkerInfo>, building?: (id: string) => WorkerInfo | undefined) {
     for (const [id, n] of this.shown) {
-      const w = workers.get(id);
+      const w = workers.get(id) ?? building?.(id);
       if (w && waitingOnSomeone(w)) continue;
       n.close();
       this.shown.delete(id);
