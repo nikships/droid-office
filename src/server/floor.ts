@@ -324,6 +324,7 @@ export class Floor {
       {
         list: () => workers.list(),
         get: (id) => workers.get(id) ?? workers.buildingIdentity(id),
+        buildingAgent: (id) => workers.buildingAgent(id),
         deskOccupied: (id) => workers.deskOccupied(id),
         get officeDefault() {
           return workers.officeDefault;

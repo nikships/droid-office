@@ -127,30 +127,34 @@ export class Orchestrator {
 
   /** MCP discovery includes the configured agent before its first prompt, without starting a session. */
   rosterAgent(): MissionAgent | undefined {
-    if (!this.settings.on) return undefined;
-    const choice = this.choice();
-    const worker: WorkerInfo = this.info ?? {
-      id: ORCHESTRATOR_ID,
-      name: ORCHESTRATOR_NAME,
-      kind: 'agent',
-      deskId: '',
-      color: ORCHESTRATOR_COLOR,
-      status: 'idle',
-      activity: this.blocked() ?? 'Ready for its first prompt',
-      acked: true,
-      createdBy: 'owner',
-      createdAt: 0,
-      cols: 100,
-      rows: 30,
-      open: false,
-      ...choice,
-    };
-    return { worker, team: missionTeam(this.opts.floors(), ORCHESTRATOR_ID) };
+    const worker = this.identity();
+    return worker && { worker, team: missionTeam(this.opts.floors(), ORCHESTRATOR_ID) };
   }
 
-  /** Who it is to the floors: nobody while it is off, so its team reports to nobody. */
+  /**
+   * Who it is to the floors: nobody while it is off, so its team reports to nobody. Between conversations
+   * it is still their lead, with no session to wake: their news waits for its next one.
+   */
   identity(): WorkerInfo | undefined {
-    return this.settings.on ? this.info : undefined;
+    if (!this.settings.on) return undefined;
+    return (
+      this.info ?? {
+        id: ORCHESTRATOR_ID,
+        name: ORCHESTRATOR_NAME,
+        kind: 'agent',
+        deskId: '',
+        color: ORCHESTRATOR_COLOR,
+        status: 'idle',
+        activity: this.blocked() ?? 'Ready for its first prompt',
+        acked: true,
+        createdBy: 'owner',
+        createdAt: 0,
+        cols: 100,
+        rows: 30,
+        open: false,
+        ...this.choice(),
+      }
+    );
   }
 
   authenticate(id: string, token: string): WorkerInfo | undefined {
@@ -190,8 +194,8 @@ export class Orchestrator {
 
   /** A note for it from a floor (its team's news, a worker's message): handed over mid-turn, typed in at rest. */
   tell(text: string): string | undefined {
-    if (!this.settings.on || !this.info) return 'The Orchestrator is off';
-    if (!this.running()) return 'The Orchestrator is not running';
+    if (!this.settings.on) return 'The Orchestrator is off';
+    if (!this.running()) return 'The Orchestrator has no session running';
     return this.workers.tell(ORCHESTRATOR_ID, text);
   }
 

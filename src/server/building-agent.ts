@@ -15,7 +15,10 @@ export const MISSION_CONTROL_DOOR = { x: (GLASS_ROOM.door.x0 + GLASS_ROOM.door.x
 
 /** What a floor needs from the building's agents: who they are, and how to tell one something. */
 export interface BuildingAgents {
+  /** Who `id` is while it leads: nobody for the Orchestrator while it is off. */
   identity(id: string): WorkerInfo | undefined;
+  /** `id` is one of the building's agents, leading now or not: its team stays its own. */
+  known(id: string): boolean;
   /** A message from `floor` for building agent `id`: an external bot's inbox, or the Orchestrator's session. */
   tell(id: string, text: string, floor: string): string | undefined;
 }

@@ -135,6 +135,7 @@ test('reports, questions and finishes wake a resting deskless Orchestrator throu
     {
       agents: {
         identity: (id) => (id === lead.id ? orchestrator.identity() : undefined),
+        known: (id) => id === lead.id,
         tell: (_id, text) => orchestrator.tell(text),
       },
       floor: 'alpha',

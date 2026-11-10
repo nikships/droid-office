@@ -451,6 +451,7 @@ export async function startServer(cfg: Config) {
   const workersOf = (workerId: string) => (workerId === ORCHESTRATOR_ID ? orchestrator.workers : workerFloor(workerId)?.workers);
   const buildingAgents: BuildingAgents = {
     identity: (id) => (id === ORCHESTRATOR_ID ? orchestrator.identity() : remoteWorkers.identity(id)),
+    known: (id) => id === ORCHESTRATOR_ID || !!remoteWorkers.identity(id),
     tell: (id, text, floor) => (id === ORCHESTRATOR_ID ? orchestrator.tell(text) : remoteWorkers.enqueue(id, text, floor)),
   };
   const missionState = (): MissionControlState => {

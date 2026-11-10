@@ -562,6 +562,11 @@ export class WorkerManager {
     return this.workers.has(id) ? undefined : this.building?.agents.identity(id);
   }
 
+  /** `id` is a building agent, leading now or not (the Orchestrator while it is off): what it left here stays its own. */
+  buildingAgent(id: string): boolean {
+    return !this.workers.has(id) && !!this.building?.agents.known(id);
+  }
+
   /** `id` leads nobody here any more: its subagents carry on as independent workers. */
   releaseLead(id: string) {
     let changed = false;
@@ -2890,8 +2895,9 @@ export class WorkerManager {
       }
       // A lead that didn't come back, or is a subagent itself, leads nobody.
       for (const w of this.workers.values()) {
-        const lead = w.info.lead && (this.get(w.info.lead) ?? this.buildingIdentity(w.info.lead));
-        if (w.info.lead && (!lead || lead.lead)) delete w.info.lead;
+        if (!w.info.lead || this.buildingAgent(w.info.lead)) continue;
+        const lead = this.get(w.info.lead);
+        if (!lead || lead.lead) delete w.info.lead;
       }
       // Markings follow who leads whom now; an office from before them gives each team its own.
       const teams = settleTeams([...this.workers.values()].map((w) => w.info));

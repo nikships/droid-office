@@ -916,7 +916,7 @@ test('a building lead’s subagents on a real floor report to it from no desk, a
   const office = new RemoteOffice(store, () => floors);
   const managers: WorkerManager[] = [];
   const updates: WorkerInfo[] = [];
-  const agents: BuildingAgents = { identity: (id) => store.identity(id), tell: (id, text, floor) => store.enqueue(id, text, floor) };
+  const agents: BuildingAgents = { identity: (id) => store.identity(id), known: (id) => !!store.identity(id), tell: (id, text, floor) => store.enqueue(id, text, floor) };
   t.after(() => {
     for (const f of floors) {
       f.whiteboard.stop();
@@ -1023,7 +1023,7 @@ test('old seated bots load without a desk, and floors tell them through their in
     for (const m of managers) m.shutdown();
     rmSync(dir, { recursive: true, force: true });
   });
-  const agents: BuildingAgents = { identity: (id) => store.identity(id), tell: (id, text, floor) => store.enqueue(id, text, floor) };
+  const agents: BuildingAgents = { identity: (id) => store.identity(id), known: (id) => !!store.identity(id), tell: (id, text, floor) => store.enqueue(id, text, floor) };
   const make = (floor: string) => {
     const data = path.join(dir, floor);
     mkdirSync(data, { recursive: true });

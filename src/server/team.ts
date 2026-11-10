@@ -22,6 +22,8 @@ import { pushedSha, workerDiff } from './team-inspect.js';
 export interface TeamWorkers {
   list(): WorkerInfo[];
   get(id: string): WorkerInfo | undefined;
+  /** `id` is a building agent, leading now or not: the news kept for it outlives a restart while it is away. */
+  buildingAgent?(id: string): boolean;
   deskOccupied(deskId: string): boolean;
   readonly officeDefault: AgentChoice | undefined;
   /**
@@ -908,7 +910,7 @@ export class Team {
       // nothing kept yet
     }
     // A lead that didn't come back with the office has nobody to hear its news.
-    this.log = this.log.filter((e) => !!this.workers.get(e.lead));
+    this.log = this.log.filter((e) => !!this.workers.get(e.lead) || this.workers.buildingAgent?.(e.lead));
     // Cursors and inbox ids name a seq, so it never goes back, even when the newest events left with their lead.
     this.seq = this.log.reduce((m, e) => Math.max(m, e.seq), Math.max(this.seq, ...this.statusCursors.values()));
   }
