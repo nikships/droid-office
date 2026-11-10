@@ -56,6 +56,11 @@ test('Mission Control pins the building’s agents in the sidebar and opens the 
       member: (m: any) => w.calls.push(['member', m.id, m.floor]),
       settings: () => w.calls.push(['settings']),
     });
+    w.repaintKeeps = (selector: string, repaint: () => void) => {
+      const nodes = [...document.querySelectorAll(selector)];
+      repaint();
+      return nodes.length > 0 && nodes.every((n) => n.isConnected);
+    };
     w.paintRoster = () => w.roster.update({ mission: w.mission, floor: 'f-web', focused: '', live: true, pane: () => -1, here: () => undefined, shortcut: '⌘ O' });
     w.paintRoster();
   });
@@ -68,6 +73,11 @@ test('Mission Control pins the building’s agents in the sidebar and opens the 
   assert.match(text, /2 subagents · 2 floors/);
   assert.equal(await roster.locator('.dash-mission-member.elsewhere').count(), 2, 'Dot and Nibble sit on another floor');
   assert.deepEqual(await roster.locator('.dash-mission-member .dash-row-floor').allInnerTexts(), ['web-app', 'api', 'api']);
+  assert.equal(
+    await page.evaluate(() => (window as any).repaintKeeps('#mission .dash-mission-caption, #mission .dash-team-toggle > span, #mission .dash-row-name', () => (window as any).paintRoster())),
+    true,
+    'a repaint with nothing new rebuilds nothing',
+  );
   await roster.locator('[data-member=w-dot]').click();
   await roster.locator('[data-worker=orchestrator]').click();
   await roster.locator('[data-worker=bot-claw]').click();
@@ -192,5 +202,41 @@ test('Mission Control pins the building’s agents in the sidebar and opens the 
   assert.equal(await pane.locator('.xterm').count(), 0);
   await pane.locator('.dash-bot-member').click();
   assert.ok((await page.evaluate(() => (window as any).calls)).some((c: any) => c[0] === 'across' && c[1] === 'w-nib' && c[2] === 'f-api'));
+  assert.equal(
+    await page.evaluate(() => (window as any).repaintKeeps('.dash-bot .dash-info-who > *, .dash-bot dd, .dash-bot-member', () => (window as any).paintPane('bot-claw', 'terminal'))),
+    true,
+    'a repaint with nothing new rebuilds nothing',
+  );
+  await page.evaluate(() => {
+    const w = window as any;
+    w.mission.bots[0].worker = { ...w.mission.bots[0].worker, activity: 'Planning the release' };
+    w.paintPane('bot-claw', 'terminal');
+  });
+  assert.equal(await pane.locator('.dash-info-activity').innerText(), 'Planning the release');
+
+  // A subagent's pane: the strip across the top is its lead's team across floors.
+  await page.evaluate(() => {
+    const w = window as any;
+    const team = [
+      { id: 'w-byte', name: 'Byte', floor: 'f-web', floorName: 'web-app', status: 'working', activity: 'Fixing the flaky test' },
+      { id: 'w-dot', name: 'Dot', floor: 'f-api', floorName: 'api', status: 'working' },
+    ];
+    w.mission.orchestrator.agent = { ...w.mission.orchestrator.agent, team };
+    w.byte = { id: 'w-byte', name: 'Byte', kind: 'agent', color: '#4dbed4', deskId: 'd-1', status: 'working', acked: true, lead: 'orchestrator', createdBy: '', createdAt: 0, cols: 120, rows: 40, open: true };
+    w.paintByte = () => w.pane.update({ worker: w.byte, view: 'thread', focused: true, maximized: false, canMaximize: false, covered: false, candidates: [], anyone: true, takeFocus: false });
+    w.paintByte();
+  });
+  assert.deepEqual(await pane.locator('.dash-team-nav .dash-team-chip-name').allInnerTexts(), ['Orchestrator', 'Byte', 'Dot']);
+  assert.deepEqual(await pane.locator('.dash-team-nav .dash-team-chip-floor').allInnerTexts(), ['api'], 'only the subagent elsewhere is tagged');
+  const keeps = await page.evaluate(() => {
+    const w = window as any;
+    return w.repaintKeeps('.dash-team-nav .dash-team-chip', () => {
+      w.mission.orchestrator.agent.team[0].activity = 'Running the tests';
+      w.paintByte();
+    });
+  });
+  assert.equal(keeps, true, 'activity the strip doesn’t show rebuilds nothing');
+  await pane.locator('.dash-team-nav [data-member=w-dot]').click();
+  assert.ok((await page.evaluate(() => (window as any).calls)).some((c: any) => c[0] === 'across' && c[1] === 'w-dot' && c[2] === 'f-api'));
   assert.deepEqual(errors, []);
 });

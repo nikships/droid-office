@@ -1,7 +1,7 @@
 // One pane of the web companion's workspace (dashboard.ts): a worker's live terminal or thread, what
 // the office knows of one with no local terminal, or a picker when the pane is empty.
 
-import type { ClientMsg, WorkerInfo } from '../shared/protocol';
+import type { ClientMsg, WorkerInfo, WorkerStatus } from '../shared/protocol';
 import { canAnswer, readMenu, sameMenu, type Menu } from '../shared/asks';
 import { questionPresentation } from '../shared/ask-question';
 import { isAsleep, isBusy, needsOwnerInput, workerActivity } from '../shared/status';
@@ -114,8 +114,13 @@ function lines(id: string) {
 
 /** A worker's colour, ringed and pulsing by status. */
 export function workerDot(w: WorkerInfo) {
-  const el = h('span.dash-dot', { 'data-status': w.status, 'aria-hidden': 'true' });
-  el.style.setProperty('--who', w.color);
+  return statusDot(w.status, w.color);
+}
+
+/** A status dot in a colour: for a building agent's subagent, which may sit on another floor, its lead's. */
+export function statusDot(status: WorkerStatus, color: string) {
+  const el = h('span.dash-dot', { 'data-status': status, 'aria-hidden': 'true' });
+  el.style.setProperty('--who', color);
   return el;
 }
 
@@ -179,7 +184,7 @@ export function createPane(host: PaneHost, index: number): Pane {
   let actionsKey = '';
   let emptyKey = '';
   let teamKey = '';
-  let info: { name: HTMLElement; meta: HTMLElement; activity: HTMLElement; who: HTMLElement; preview?: HTMLElement; team?: HTMLElement; teamKey?: string } | undefined;
+  let info: { name: HTMLElement; meta: HTMLElement; activity: HTMLElement; who: HTMLElement; preview?: HTMLElement; team?: HTMLElement; key?: string } | undefined;
   /** What the Orchestrator's empty conversation shows, made once per pane. */
   let intro: HTMLElement | undefined;
   /** The Orchestrator session this pane's thread shows: a new conversation starts a new thread. */
@@ -312,41 +317,11 @@ export function createPane(host: PaneHost, index: number): Pane {
       const s = store.screens.get(w.id);
       info.preview = s ? h('pre.dash-preview.big', { 'aria-label': `${w.name}’s screen` }) : undefined;
       stage.replaceChildren(h('div.dash-info', {}, info.who, info.activity, info.preview ?? null, info.meta));
-    } else if (next === 'thread' && w.id === ORCHESTRATOR_ID) {
-      const intended = host.floor();
-      const key = draftKey('mission', w.id);
-      const settingsBtn = h('button.btn.sm', { type: 'button', onclick: () => host.settings('orchestrator') }, icon('settings', 13), 'Settings');
-      thread ??= mountWorkerThread(host.net, {
-        worker: w,
-        question,
-        queueKey: `${key}:queue-receipts`,
-        draft: host.read(key),
-        onDraft: (text) => host.remember(key, text),
-        onEntries: () => paintQuestion(),
-        send: (msg) => host.action(orchestratorMessage(msg), w.id, intended),
-        screen: () => lines(w.id),
-        team: () => (host.floor() === intended ? [...store.workers.values()] : []),
-        openWorker: (mate) => {
-          if (!host.usable(mate, intended)) return;
-          host.setView(mate, 'thread');
-          host.openBeside(mate);
-        },
-        raw: () => {
-          if (orchestratorStarted(host.mission())) host.setView(w.id, 'terminal');
-        },
-        floor: intended,
-        intro: () => (orchestratorStarted(host.mission()) ? undefined : (intro ??= orchestratorIntro())),
-        blocked: () => orchestratorBlocked(host.mission()),
-        blockedAction: settingsBtn,
-        interrupt: true,
-        promptWakes: true,
-      });
-      thread.element.querySelector('.wt-scroll')?.append(question);
-      stage.replaceChildren(thread.element);
-      thread.activate(true);
     } else if (next === 'thread') {
       const intended = host.floor();
-      const key = draftKey(intended, w.id);
+      const orchestrator = w.id === ORCHESTRATOR_ID;
+      // The Orchestrator's conversation is the same on every floor, and so is its draft.
+      const key = draftKey(orchestrator ? 'mission' : intended, w.id);
       thread ??= mountWorkerThread(host.net, {
         worker: w,
         question,
@@ -354,7 +329,7 @@ export function createPane(host: PaneHost, index: number): Pane {
         draft: host.read(key),
         onDraft: (text) => host.remember(key, text),
         onEntries: () => paintQuestion(),
-        send: (msg) => host.action(msg, w.id, intended),
+        send: (msg) => host.action(orchestrator ? orchestratorMessage(msg) : msg, w.id, intended),
         screen: w.cloud ? undefined : () => lines(w.id),
         team: () => (host.floor() === intended ? [...store.workers.values()] : []),
         openWorker: (mate) => {
@@ -362,8 +337,21 @@ export function createPane(host: PaneHost, index: number): Pane {
           host.setView(mate, 'thread');
           host.openBeside(mate);
         },
-        raw: w.cloud ? undefined : () => host.setView(w.id, 'terminal'),
+        raw: w.cloud
+          ? undefined
+          : () => {
+              if (!orchestrator || orchestratorStarted(host.mission())) host.setView(w.id, 'terminal');
+            },
         floor: intended,
+        ...(orchestrator
+          ? {
+              intro: () => (orchestratorStarted(host.mission()) ? undefined : (intro ??= orchestratorIntro())),
+              blocked: () => orchestratorBlocked(host.mission()),
+              blockedAction: h('button.btn.sm', { type: 'button', onclick: () => host.settings('orchestrator') }, icon('settings', 13), 'Settings'),
+              interrupt: true,
+              promptWakes: true,
+            }
+          : {}),
       });
       thread.element.querySelector('.wt-scroll')?.append(question);
       stage.replaceChildren(thread.element);
@@ -378,7 +366,6 @@ export function createPane(host: PaneHost, index: number): Pane {
     const terminal = await host.terminal();
     opening = false;
     if (disposed || mode !== 'terminal' || id !== wid || term || !stage.isConnected || !host.usable(wid, intended)) return;
-    // The Orchestrator's terminal is the same on every floor, so it isn't the floor's team strip either.
     term = terminal.openTerminal(host.net, wid, undefined, undefined, { mount: stage, focus: takeFocus, hideTeam: true });
   }
 
@@ -413,32 +400,29 @@ export function createPane(host: PaneHost, index: number): Pane {
   function paintMissionTeam(w: WorkerInfo, agent: MissionAgent) {
     const members = agent.team;
     const here = host.floor();
-    const key = JSON.stringify(['mission', w.id, host.live(), agent.worker.id, agent.worker.status, agent.worker.name, members, here]);
+    const lead = agent.worker;
+    const key = JSON.stringify(['mission', w.id, host.live(), here, [lead.id, lead.name, lead.color, lead.status], members.map((m) => [m.id, m.name, m.status, m.floor, m.floorName, store.workers.get(m.id)?.color])]);
     if (key === teamKey) return;
     teamKey = key;
     teamNav.hidden = !members.length;
     if (!members.length) return teamNav.replaceChildren();
-    const focused = teamNav.contains(document.activeElement) ? (document.activeElement as HTMLElement).dataset.member : undefined;
-    const scroll = teamNav.querySelector('.dash-team-nav-members')?.scrollLeft ?? 0;
-    const lead = h(
+    const leadChip = h(
       'button.dash-team-chip',
       {
         type: 'button',
-        'data-member': agent.worker.id,
-        'data-status': agent.worker.status,
-        'aria-current': String(agent.worker.id === w.id),
+        'data-member': lead.id,
+        'data-status': lead.status,
+        'aria-current': String(lead.id === w.id),
         disabled: !host.live(),
-        title: `${agent.worker.name} · Mission Control`,
-        'aria-label': `Open ${agent.worker.name}, Mission Control`,
-        onclick: () => host.assign(index, agent.worker.id),
+        title: `${lead.name} · Mission Control`,
+        'aria-label': `Open ${lead.name}, Mission Control`,
+        onclick: () => host.assign(index, lead.id),
       },
-      h('span.dash-team-chip-role', {}, agent.worker.remote ? 'Bot' : 'Lead'),
-      workerDot(agent.worker),
-      h('span.dash-team-chip-name', {}, agent.worker.name),
+      h('span.dash-team-chip-role', {}, lead.remote ? 'Bot' : 'Lead'),
+      workerDot(lead),
+      h('span.dash-team-chip-name', {}, lead.name),
     );
     const chip = (m: MissionTeamMember) => {
-      const dot = h('span.dash-dot', { 'data-status': m.status, 'aria-hidden': 'true' });
-      dot.style.setProperty('--who', store.workers.get(m.id)?.color ?? agent.worker.color);
       const where = m.floor === here ? 'this floor' : `the ${m.floorName} floor`;
       return h(
         'button.dash-team-chip',
@@ -448,16 +432,23 @@ export function createPane(host: PaneHost, index: number): Pane {
           'data-status': m.status,
           'aria-current': String(m.id === w.id),
           disabled: !host.live(),
-          title: `${m.name} · Subagent of ${agent.worker.name} on ${where} · ${STATUS_LABEL[m.status] ?? m.status}`,
+          title: `${m.name} · Subagent of ${lead.name} on ${where} · ${STATUS_LABEL[m.status] ?? m.status}`,
           'aria-label': `Open ${m.name}, subagent on ${where}, ${STATUS_LABEL[m.status] ?? m.status}`,
           onclick: () => host.openAcross(m.id, m.floor),
         },
-        dot,
+        statusDot(m.status, store.workers.get(m.id)?.color ?? lead.color),
         h('span.dash-team-chip-name', {}, m.name),
         m.floor === here ? null : h('span.dash-team-chip-floor', {}, m.floorName),
       );
     };
-    teamNav.replaceChildren(lead, h('span.dash-team-nav-label', {}, icon('branch', 12), `${members.length}`), h('div.dash-team-nav-members', {}, ...members.map(chip)));
+    fillTeamNav(leadChip, members.map(chip));
+  }
+
+  /** Fills the team strip, keeping the keyboard on the chip it was on and the members scrolled where they were. */
+  function fillTeamNav(lead: HTMLElement, members: HTMLElement[]) {
+    const focused = teamNav.contains(document.activeElement) ? (document.activeElement as HTMLElement).dataset.member : undefined;
+    const scroll = teamNav.querySelector('.dash-team-nav-members')?.scrollLeft ?? 0;
+    teamNav.replaceChildren(lead, h('span.dash-team-nav-label', {}, icon('branch', 12), `${members.length}`), h('div.dash-team-nav-members', {}, ...members));
     const memberList = teamNav.querySelector('.dash-team-nav-members');
     if (memberList) memberList.scrollLeft = scroll;
     if (focused)
@@ -485,8 +476,6 @@ export function createPane(host: PaneHost, index: number): Pane {
       teamNav.replaceChildren();
       return;
     }
-    const focused = teamNav.contains(document.activeElement) ? (document.activeElement as HTMLElement).dataset.member : undefined;
-    const scroll = teamNav.querySelector('.dash-team-nav-members')?.scrollLeft ?? 0;
     const intended = host.floor();
     const chip = (m: WorkerInfo, lead: boolean) =>
       h(
@@ -507,13 +496,10 @@ export function createPane(host: PaneHost, index: number): Pane {
         workerDot(m),
         h('span.dash-team-chip-name', {}, m.name),
       );
-    teamNav.replaceChildren(chip(team.lead, true), h('span.dash-team-nav-label', {}, icon('branch', 12), `${team.children.length}`), h('div.dash-team-nav-members', {}, ...team.children.map((m) => chip(m, false))));
-    const memberList = teamNav.querySelector('.dash-team-nav-members');
-    if (memberList) memberList.scrollLeft = scroll;
-    if (focused)
-      Array.from(teamNav.querySelectorAll<HTMLButtonElement>('button'))
-        .find((b) => b.dataset.member === focused)
-        ?.focus({ preventScroll: true });
+    fillTeamNav(
+      chip(team.lead, true),
+      team.children.map((m) => chip(m, false)),
+    );
   }
 
   /** What the header says it's doing: building agents say it as their Mission Control row does. */
@@ -673,8 +659,14 @@ export function createPane(host: PaneHost, index: number): Pane {
   // --- No local terminal: what the office knows -------------------------------------------------
   /** An external bot: what it last reported, when it last signed in, and its subagents across floors. */
   function paintBot(w: WorkerInfo) {
-    if (!info) return;
+    if (!info?.team) return;
     const bot = missionAgent(host.mission(), w.id);
+    const team = bot?.team ?? [];
+    const here = host.floor();
+    const lastUsed = bot?.lastUsedAt ? timeAgo(bot.lastUsedAt) : 'Not since it was added';
+    const key = JSON.stringify([w.name, w.color, w.status, w.activity, w.title, lastUsed, here, host.live(), team, team.map((m) => store.workers.get(m.id)?.color)]);
+    if (key === info.key) return;
+    info.key = key;
     info.who.replaceChildren(workerDot(w), h('div', {}, h('div.dash-info-name', {}, info.name), h('div.dash-info-kind', {}, kind(w))));
     info.name.textContent = w.name;
     info.activity.textContent = bot ? botLine(bot) : (w.activity ?? 'Hasn’t reported yet');
@@ -683,15 +675,10 @@ export function createPane(host: PaneHost, index: number): Pane {
     const rows: [string, string | undefined][] = [
       ['Status', w.status === 'offline' ? 'Hasn’t reported since the office started' : (STATUS_LABEL[w.status] ?? w.status)],
       ['Doing', w.title],
-      ['Last used', bot?.lastUsedAt ? timeAgo(bot.lastUsedAt) : 'Not since it was added'],
+      ['Last used', lastUsed],
       ['Keys', 'Settings → Tailscale MCP'],
     ];
     info.meta.replaceChildren(...rows.filter(([, v]) => !!v).flatMap(([label, value]) => [h('dt', {}, label), h('dd', { title: value }, value)]));
-    const team = bot?.team ?? [];
-    const here = host.floor();
-    const key = JSON.stringify([team, here, host.live()]);
-    if (!info.team || key === info.teamKey) return;
-    info.teamKey = key;
     info.team.replaceChildren(
       h('span.eyebrow', {}, team.length ? `Team · ${team.length}` : 'Team'),
       team.length
@@ -699,13 +686,11 @@ export function createPane(host: PaneHost, index: number): Pane {
             'div.list.boxed',
             {},
             ...team.map((m) => {
-              const dot = h('span.dash-dot', { 'data-status': m.status, 'aria-hidden': 'true' });
-              dot.style.setProperty('--who', store.workers.get(m.id)?.color ?? w.color);
               const status = STATUS_LABEL[m.status] ?? m.status;
               return h(
                 'button.list-row.dash-bot-member',
                 { type: 'button', disabled: !host.live(), 'data-member': m.id, title: `${m.name} · ${m.floorName} · ${status}`, onclick: () => host.openAcross(m.id, m.floor) },
-                h('span.list-icon', {}, dot),
+                h('span.list-icon', {}, statusDot(m.status, store.workers.get(m.id)?.color ?? w.color)),
                 h('span.list-main', {}, h('span.list-title', {}, m.name), h('span.list-meta', {}, m.activity ?? m.title ?? status)),
                 h('span.list-end', {}, h('span.dash-row-floor', {}, m.floor === here ? 'This floor' : m.floorName)),
               );
