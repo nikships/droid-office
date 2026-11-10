@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import type { RosterEntry, VisitReply } from '../visits.js';
-import { officeAccess, officeError, officeResult, type OfficeMcpDeps, type OfficeMcpServer } from './index.js';
+import { officeAccess, officeError, officeResult, ownFloor, type OfficeMcpDeps, type OfficeMcpServer } from './index.js';
 
 export const instructions = `Visit independent workers on your floor when your task needs something from them: a known overlap to resolve, or information only they have. Other workers being there is no reason to check the roster, announce your task or seek coordination.
 visit_roster lists independent workers; subagents, shells and cloud workers are not on it. visit_look reads a terminal snapshot without typing anything. visit_message sends a tell, a question or a proposed task handoff. A handoff is a request, not authority to change the owner's task.
@@ -15,7 +15,7 @@ function result(reply: VisitReply, describe: (body: Record<string, unknown>) => 
   return reply.status >= 400 ? officeError(String(reply.body.error ?? 'The visit could not be completed.')) : officeResult(describe(reply.body), reply.body);
 }
 
-export function register(server: OfficeMcpServer, deps: OfficeMcpDeps): void {
+export function register(server: OfficeMcpServer, _deps: OfficeMcpDeps): void {
   server.tool(
     {
       name: 'visit_roster',
@@ -25,7 +25,7 @@ export function register(server: OfficeMcpServer, deps: OfficeMcpDeps): void {
     },
     officeAccess.visits,
     (_args, caller) =>
-      result(caller.floor.visits.handle(caller.worker, { action: 'roster' }), (body) => {
+      result(ownFloor(caller).visits.handle(caller.worker, { action: 'roster' }), (body) => {
         const roster = body.roster as RosterEntry[];
         return [
           `${roster.length} independent workers on this floor:`,
@@ -46,7 +46,7 @@ export function register(server: OfficeMcpServer, deps: OfficeMcpDeps): void {
       annotations: { ...annotations, readOnlyHint: true, idempotentHint: true },
     },
     officeAccess.visits,
-    (args, caller) => result(caller.floor.visits.handle(caller.worker, { action: 'look', worker: args.name, lines: args.lines }), (body) => `${body.host}'s screen:\n\n${body.text || '(its terminal is empty)'}`),
+    (args, caller) => result(ownFloor(caller).visits.handle(caller.worker, { action: 'look', worker: args.name, lines: args.lines }), (body) => `${body.host}'s screen:\n\n${body.text || '(its terminal is empty)'}`),
   );
   server.tool(
     {
@@ -68,7 +68,7 @@ export function register(server: OfficeMcpServer, deps: OfficeMcpDeps): void {
     officeAccess.visits,
     (args, caller) => {
       if (args.title && args.kind !== 'handoff') return officeError('title is only for a handoff. Remove it or use kind: "handoff".');
-      return result(caller.floor.visits.handle(caller.worker, { action: 'visit', worker: args.name, ...args }), (body) => {
+      return result(ownFloor(caller).visits.handle(caller.worker, { action: 'visit', worker: args.name, ...args }), (body) => {
         const host = body.host as { name: string };
         return `${body.visit}: ${body.delivered ? `delivered to ${host.name}` : `queued for ${host.name}; it will be delivered after the walk when its session can take it`}.${args.kind === 'ask' ? ' Its answer will arrive later in your session. Continue your task; do not wait or poll.' : ''}`;
       });
@@ -89,10 +89,6 @@ export function register(server: OfficeMcpServer, deps: OfficeMcpDeps): void {
       annotations,
     },
     officeAccess.visits,
-    (args, caller) =>
-      result(
-        caller.worker.remote && deps.remote ? deps.remote.reply(caller.worker, args.visit, args.text) : caller.floor.visits.handle(caller.worker, { action: 'reply', ...args }),
-        (body) => `${body.visit}: answer ${body.delivered ? 'delivered' : 'queued'} for ${body.to}.`,
-      ),
+    (args, caller) => result(ownFloor(caller).visits.handle(caller.worker, { action: 'reply', ...args }), (body) => `${body.visit}: answer ${body.delivered ? 'delivered' : 'queued'} for ${body.to}.`),
   );
 }
