@@ -462,7 +462,7 @@ test('Droid workers pin their model and effort in a per-worker settings overlay,
   assert.equal(existsSync(overlayPath), false, 'a worker going home takes its overlay with it');
 });
 
-test('the Orchestrator approves only Office MCP tools; its edits, shell and other MCP servers stay gated', (t) => {
+test('the Orchestrator approves only Office MCP tools; its shell, edits and other MCP servers keep their prompts', (t) => {
   const f = fixture();
   const orchestrator = new Orchestrator({
     dataDir: f.data,
@@ -520,14 +520,12 @@ test('the Orchestrator approves only Office MCP tools; its edits, shell and othe
   ]) {
     assert.doesNotMatch(gated, approved, `${gated} keeps its own permission prompt`);
   }
-  const edits = entries.find((entry) => entry.matcher === '^(Edit|MultiEdit|Create|ApplyPatch)$');
-  assert.ok(edits, 'the Orchestrator still never edits files');
-  assert.match(edits.hooks[0].command, /"permissionDecision":"deny"/);
-  assert.match('Edit', new RegExp(edits.matcher));
-  assert.doesNotMatch('droid-office___team_hire', new RegExp(edits.matcher));
-  const tasks = entries.find((entry) => entry.matcher === 'Task');
-  assert.ok(tasks, "Droid's own Task tool is still refused");
-  assert.match(tasks.hooks[0].command, /"permissionDecision":"deny"/);
+  const denies = entries.filter((entry) => entry.hooks[0]?.command.includes('"permissionDecision":"deny"'));
+  assert.deepEqual(
+    denies.map((entry) => entry.matcher),
+    ['Task'],
+    'only the built-in Task tool is refused; edits and shell keep their ordinary prompts',
+  );
 
   const floor = manager(f, []);
   const floorHooks = JSON.parse(readFileSync(path.join(f.data, 'droid-hooks.json'), 'utf8')) as { hooks: { PreToolUse: { matcher?: string }[] } };

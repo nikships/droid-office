@@ -316,8 +316,6 @@ export class WorkerManager {
   nextTurn?: (info: WorkerInfo) => void;
   /** The system prompt its agents start with, in place of worker.system (the Orchestrator's brief). */
   systemPrompt?: (info: WorkerInfo) => string | undefined;
-  /** Tools its agents' droid is refused, by a PreToolUse matcher (a case-sensitive regex), and why. */
-  denyTools?: { matcher: string; reason: string };
   /** Tools its agents' droid calls without Droid's permission prompt, by a PreToolUse matcher, and why. */
   allowTools?: { matcher: string; reason: string };
   /** A worker that stays asleep when the floor wakes everyone (the Orchestrator while it is off). */
@@ -2682,7 +2680,6 @@ export class WorkerManager {
     const hooks: Record<string, unknown[]> = {};
     for (const event of HOOK_EVENTS) hooks[event] = [{ hooks: [{ type: 'command', command: this.hookCommand(event) }] }];
     if (this.denyTask?.() ?? true) hooks.PreToolUse.unshift({ matcher: 'Task', hooks: [{ type: 'command', command: `printf '%s' ${shq(TASK_DENY)}` }] });
-    if (this.denyTools) hooks.PreToolUse.unshift({ matcher: this.denyTools.matcher, hooks: [{ type: 'command', command: `printf '%s' ${shq(toolDecision('deny', this.denyTools.reason))}` }] });
     if (this.allowTools) hooks.PreToolUse.unshift({ matcher: this.allowTools.matcher, hooks: [{ type: 'command', command: `printf '%s' ${shq(toolDecision('allow', this.allowTools.reason))}` }] });
     return hooks;
   }

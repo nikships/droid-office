@@ -1,6 +1,6 @@
 # Mission Control
 
-The Orchestrator and external Tailscale bots are building agents, visible in Mission Control on every floor without occupying desks. The Orchestrator plans and delegates through the building-wide MCP surface; its session, settings and team stay the same when the owner changes floors.
+The Orchestrator and external Tailscale bots are building agents, visible in Mission Control on every floor without occupying desks. The Orchestrator plans and delegates code changes through the building-wide MCP surface; its session, settings and team stay the same when the owner changes floors.
 
 ## Sub-features
 

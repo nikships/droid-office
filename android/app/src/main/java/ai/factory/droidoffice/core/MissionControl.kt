@@ -179,7 +179,7 @@ object MissionControl {
     }
 
     /** ORCHESTRATOR_PITCH in src/client/mission.ts. */
-    const val PITCH = "Tell it what you want done anywhere in the building. It plans, hires workers on any floor, answers their questions, checks their work and reports back. It never edits code itself."
+    const val PITCH = "Tell it what you want done anywhere in the building. It plans, hires workers on any floor, answers their questions, checks their work and reports back. It leaves code changes to the workers it hires."
 
     /** ORCHESTRATOR_EXAMPLES. */
     val examples = listOf(

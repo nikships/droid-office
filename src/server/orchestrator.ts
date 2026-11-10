@@ -17,9 +17,6 @@ import { WorkerManager, type HookEnv } from './workers.js';
 export const ORCHESTRATOR_FILE = 'orchestrator.json';
 /** Its folder in the office's own `.droid-office/`: where its session runs, never a checkout. */
 export const ORCHESTRATOR_DIR = 'orchestrator';
-/** Droid's file-editing tools: the Orchestrator plans and hires, and never edits. */
-export const ORCHESTRATOR_DENIED_TOOLS = '^(Edit|MultiEdit|Create|ApplyPatch)$';
-const DENIED = 'The Orchestrator never edits files. Hire a worker with team_hire and give it the change.';
 /**
  * The building agents' Office MCP tools, by the two names Droid gives a tool of the `droid-office` server
  * (`droid-office___team_hire`, `mcp__droid-office__team_hire`). The Orchestrator calls these without Droid's
@@ -108,7 +105,6 @@ export class Orchestrator {
       true,
     );
     this.workers.systemPrompt = (info) => officePrompt(opts.prompts, 'orchestrator.system', { name: info.name, folder: this.cwd });
-    this.workers.denyTools = { matcher: ORCHESTRATOR_DENIED_TOOLS, reason: DENIED };
     this.workers.allowTools = { matcher: ORCHESTRATOR_ALLOWED_TOOLS, reason: ALLOWED };
     this.workers.asleep = () => !this.settings.on;
     this.workers.modelGate = (model) => opts.modelGate?.(model);
