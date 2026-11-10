@@ -13,7 +13,7 @@ import type { WorktreeSetupState } from './worktree-setup.js';
 import type { OpEnvelope, WhiteboardUpdate } from './whiteboard.js';
 import type { PingHow } from './whiteboard-ping.js';
 import type { Menu } from './asks.js';
-import type { OrchestratorSettings, OrchestratorState } from './orchestrator.js';
+import type { MissionControlState, OrchestratorSettings } from './mission-control.js';
 import type { Visit } from './visits.js';
 import type { SetupState } from './setup.js';
 import type { SubscriptionProviderKey, SubscriptionsState } from './subscriptions.js';
@@ -961,7 +961,7 @@ type ClientMessage =
   /** The answer to an `automation.run`: what the command resolved with, or why it rejected. */
   | { t: 'automation.result'; id: string; ok: boolean; value?: unknown; error?: string }
   /**
-   * The building's Orchestrator (shared/orchestrator.ts), from any floor. A prompt starts or wakes its session;
+   * The building's Orchestrator (shared/mission-control.ts), from any floor. A prompt starts or wakes its session;
    * `queue` holds it for after the current turn instead of steering it. Answered with `action.result` when
    * `requestId` is set. Its terminal, thread and menus use the usual worker messages with ORCHESTRATOR_ID.
    */
@@ -1023,14 +1023,14 @@ export type ServerMsg =
       setup: SetupState;
       /** DroidProxy, the subscriptions it serves, and which of their models can run now. */
       subscriptions: SubscriptionsState;
-      /** The building's Orchestrator; absent from an office that has none. */
-      orchestrator?: OrchestratorState;
+      /** The building's agents: the Orchestrator and external bots. Absent from an office that predates Mission Control. */
+      missionControl?: MissionControlState;
     } & FloorView)
   /** You arrived on another floor: everything on it, replacing the last one's. */
   | ({ t: 'floor.enter'; arrival: Arrival } & FloorView)
   | { t: 'floors'; floors: FloorInfo[] }
-  /** The Orchestrator changed: sent to every connection, whatever floor it is on. */
-  | { t: 'orchestrator'; state: OrchestratorState }
+  /** A building agent changed: sent to every connection, whatever floor it is on. */
+  | { t: 'missionControl'; state: MissionControlState }
   /** Branch choices and switch result, sent only to whoever asked. */
   | { t: 'floor.branches'; floor: string; request: string; branches: string[]; defaultBranch?: string; selectedBranch?: string; error?: string }
   /** Sent to whoever asked. */
