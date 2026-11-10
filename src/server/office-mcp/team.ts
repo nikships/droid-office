@@ -248,7 +248,7 @@ export function register(server: OfficeMcpServer, deps: OfficeMcpDeps): void {
     return officeResult(
       [
         `${caller.worker.name} (${caller.worker.id}), ${kind === 'external' ? 'an external bot' : "the office's Orchestrator"} in Mission Control: no floor or desk.`,
-        ...(caller.cwd ? [`Working folder: ${caller.cwd} (scratch space for your scripts; it is not a checkout).`] : []),
+        ...(caller.cwd ? [`Working folder: ${caller.cwd} (scratch space, not a checkout).`] : []),
         `May hire: yes, on any open floor, with no team size limit. Subagents: ${subagents}${teams.length ? ` (${teams.map((t) => `${t.subagents} on ${t.name}`).join(', ')})` : ''}.`,
         caller.worker.remote ? 'Wake notes: none; poll office_inbox or team_wait.' : `Wake notes: ${s.wakeLead ? 'on' : 'off'}.`,
         'May visit: no. Reach any worker with office_worker_prompt.',
