@@ -4,7 +4,7 @@
 
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
-import { DEFAULT_ORCHESTRATOR_SETTINGS, ORCHESTRATOR_COLOR, ORCHESTRATOR_ID, ORCHESTRATOR_NAME, type MissionAgent, type OrchestratorSettings, type OrchestratorState } from '../shared/mission-control.js';
+import { DEFAULT_ORCHESTRATOR_SETTINGS, ORCHESTRATOR_COLOR, ORCHESTRATOR_ID, ORCHESTRATOR_NAME, type MissionAgent, type OrchestratorBlock, type OrchestratorSettings, type OrchestratorState } from '../shared/mission-control.js';
 import { AGENT_EFFORTS, type AgentChoice, type WorkerInfo } from '../shared/protocol.js';
 import type { ScreenFrame } from './screen-frame.js';
 import { missionTeam } from './building-agent.js';
@@ -41,8 +41,8 @@ export interface OrchestratorOptions {
   hook: HookEnv;
   prompts?: PromptSource;
   floors(): OrchestratorFloor[];
-  /** Why no agent can start now: Droid missing or signed out, or the Office MCP off. */
-  unready(): string | undefined;
+  /** Why no agent can start now (Droid missing or signed out, or the Office MCP off), and the Settings pane that fixes it. */
+  unready(): OrchestratorBlock | undefined;
   /** Why an agent on this model can't start now (Subscriptions), if it can't. */
   modelGate?(model: string | undefined): string | undefined;
   /** Its state changed: Mission Control is due a broadcast. */
@@ -148,7 +148,7 @@ export class Orchestrator {
         deskId: '',
         color: ORCHESTRATOR_COLOR,
         status: 'idle',
-        activity: this.blocked() ?? 'Ready for its first prompt',
+        activity: this.blocked()?.why ?? 'Ready for its first prompt',
         acked: true,
         createdBy: 'owner',
         createdAt: 0,
@@ -171,15 +171,19 @@ export class Orchestrator {
     return { model: office?.model, effort: this.settings.effort ?? office?.effort };
   }
 
-  blocked(): string | undefined {
-    return this.opts.unready() ?? this.opts.modelGate?.(this.choice().model);
+  /** Why it can't start now. A model that can't run is fixed on its own Settings pane, so it names no other. */
+  blocked(): OrchestratorBlock | undefined {
+    const unready = this.opts.unready();
+    if (unready) return unready;
+    const why = this.opts.modelGate?.(this.choice().model);
+    return why ? { why } : undefined;
   }
 
   /** The owner's prompt: the first one starts its session. */
   prompt(text: string, images?: readonly string[], queue = false): string | undefined {
     if (!this.settings.on) return 'The Orchestrator is off. Turn it on in ⚙️ Settings → Orchestrator.';
     const blocked = this.blocked();
-    if (blocked) return blocked;
+    if (blocked) return blocked.why;
     const info = this.info;
     if (!info) {
       const { model, effort } = this.choice();
@@ -251,7 +255,7 @@ export class Orchestrator {
       settings: { ...this.settings },
       ...(info ? { agent: { worker: info, team } } : {}),
       team,
-      ...(blocked ? { blocked } : {}),
+      ...(blocked ? { blocked: blocked.why, ...(blocked.pane ? { blockedPane: blocked.pane } : {}) } : {}),
     };
   }
 

@@ -443,8 +443,8 @@ export async function startServer(cfg: Config) {
     prompts,
     floors: () => [...floors.values()],
     unready: () => {
-      if (!droidReady(setup.state())) return 'Droid isn’t ready on this computer. Install it and sign in from ⚙️ Settings → Connections → Droid.';
-      if (subagents.settings.officeMcp === false) return 'Office tools (the Office MCP) are off. Turn them on in ⚙️ Settings → Subagents & visits → Office MCP.';
+      if (!droidReady(setup.state())) return { why: 'Droid isn’t ready on this computer. Install it and sign in from ⚙️ Settings → Connections → Droid.', pane: 'connections' };
+      if (subagents.settings.officeMcp === false) return { why: 'Office tools (the Office MCP) are off. Turn them on in ⚙️ Settings → Subagents & visits → Office MCP.', pane: 'subagents' };
       return undefined;
     },
     modelGate: (model) => subscriptions.gate(model),

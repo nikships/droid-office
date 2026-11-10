@@ -63,6 +63,17 @@ export interface OrchestratorState {
   team: MissionTeamMember[];
   /** Why it can't start now (Droid missing or signed out, Office MCP off, its model can't run); shown in place of the composer. */
   blocked?: string;
+  /** The Settings pane where what blocks it is fixed. Absent when that is its own pane (a model that can't run). */
+  blockedPane?: OrchestratorFixPane;
+}
+
+/** A Settings pane (`SettingsPane` in settings-nav.ts) other than the Orchestrator's own that unblocks it. */
+export type OrchestratorFixPane = 'connections' | 'subagents';
+
+/** Why the Orchestrator can't start, and where the owner fixes it. */
+export interface OrchestratorBlock {
+  why: string;
+  pane?: OrchestratorFixPane;
 }
 
 export interface MissionControlState {

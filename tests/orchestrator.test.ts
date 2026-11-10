@@ -6,7 +6,7 @@ import path from 'node:path';
 import { Orchestrator, type OrchestratorFloor } from '../src/server/orchestrator.js';
 import { Team } from '../src/server/team.js';
 import { HOOK_VERSION, WorkerManager } from '../src/server/workers.js';
-import { ORCHESTRATOR_ID } from '../src/shared/mission-control.js';
+import { ORCHESTRATOR_ID, type OrchestratorBlock } from '../src/shared/mission-control.js';
 import { SUBAGENT_DEFAULTS, type WorkerInfo } from '../src/shared/protocol.js';
 
 type Launch = { args: string[]; token: string; stdin?: string };
@@ -41,7 +41,7 @@ function rig(t: { after(fn: () => void): void }, dir = mkdtempSync(path.join(tmp
   }
   const before = process.env.FAKE_AGENT_LOG;
   process.env.FAKE_AGENT_LOG = log;
-  let blocked: string | undefined;
+  let blocked: OrchestratorBlock | undefined;
   const orchestrator = new Orchestrator({
     dataDir: dir,
     agentCmd: droid,
@@ -90,18 +90,20 @@ function rig(t: { after(fn: () => void): void }, dir = mkdtempSync(path.join(tmp
     launched,
     typed,
     hook,
-    block: (why: string | undefined) => {
-      blocked = why;
+    block: (why: string | undefined, pane?: OrchestratorBlock['pane']) => {
+      blocked = why === undefined ? undefined : { why, ...(pane ? { pane } : {}) };
     },
   };
 }
 
 test('the Orchestrator starts on its first prompt, takes the next one in the same session, and stops no turn that isn’t running', async (t) => {
   const r = rig(t);
-  r.block('Sign in first');
+  r.block('Sign in first', 'connections');
   assert.equal(r.orchestrator.prompt('Plan the release'), 'Sign in first');
   assert.equal(r.orchestrator.identity()?.activity, 'Sign in first');
+  assert.deepEqual([r.orchestrator.state().blocked, r.orchestrator.state().blockedPane], ['Sign in first', 'connections'], 'it says why, and where to fix it');
   r.block(undefined);
+  assert.deepEqual([r.orchestrator.state().blocked, r.orchestrator.state().blockedPane], [undefined, undefined]);
   assert.equal(r.orchestrator.identity()?.activity, 'Ready for its first prompt');
   assert.equal(r.orchestrator.state().agent, undefined);
   assert.equal(r.orchestrator.interrupt(), false, 'no session, so no turn to stop');

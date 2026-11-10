@@ -2,7 +2,20 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { ORCHESTRATOR_ID, type MissionAgent, type MissionControlState } from '../src/shared/mission-control.js';
 import type { WorkerInfo } from '../src/shared/protocol.js';
-import { botLine, buildingAgent, missionLead, missionWaiting, missionWorker, ORCHESTRATOR_EXAMPLES, orchestratorBlocked, orchestratorLine, orchestratorMessage, orchestratorStarted, orchestratorWorker } from '../src/client/mission.js';
+import {
+  botLine,
+  buildingAgent,
+  missionLead,
+  missionWaiting,
+  missionWorker,
+  ORCHESTRATOR_EXAMPLES,
+  orchestratorBlocked,
+  orchestratorLine,
+  orchestratorMessage,
+  orchestratorSettingsPane,
+  orchestratorStarted,
+  orchestratorWorker,
+} from '../src/client/mission.js';
 
 const worker = (over: Partial<WorkerInfo>): WorkerInfo =>
   ({ id: ORCHESTRATOR_ID, kind: 'agent', name: 'Orchestrator', color: '#ee6018', deskId: '', status: 'idle', acked: true, createdBy: '', createdAt: 0, cols: 120, rows: 40, open: true, ...over }) as WorkerInfo;
@@ -47,6 +60,19 @@ test('it can’t start only while no session is running, so a running one keeps 
   assert.equal(orchestratorLine(state({ agent: asleep, blocked })), blocked);
   assert.equal(orchestratorLine(state({ blocked })), blocked, 'before its first prompt');
   assert.equal(orchestratorBlocked(state({ settings: { on: false }, blocked })), undefined, 'off says off');
+});
+
+test('its Settings button opens the pane that unblocks it, and its own pane otherwise', () => {
+  const blocked = 'Droid is signed out';
+  const running = { worker: worker({ sessionId: 's-1', status: 'working' }), team: [] };
+  assert.equal(orchestratorSettingsPane(state({ blocked, blockedPane: 'connections' })), 'connections');
+  assert.equal(orchestratorSettingsPane(state({ blocked: 'Office tools are off', blockedPane: 'subagents' })), 'subagents');
+  assert.equal(orchestratorSettingsPane(state({ blocked: 'That model can’t run. Pick another model.' })), 'orchestrator', 'its model is picked on its own pane');
+  assert.equal(orchestratorSettingsPane(state({ agent: running, blocked, blockedPane: 'connections' })), 'orchestrator', 'a running session isn’t blocked');
+  assert.equal(orchestratorSettingsPane(state()), 'orchestrator');
+  assert.equal(orchestratorSettingsPane(undefined), 'orchestrator');
+  const newer = { blocked, blockedPane: 'billing' } as unknown as Partial<MissionControlState['orchestrator']>;
+  assert.equal(orchestratorSettingsPane(state(newer)), 'orchestrator', 'a pane this client doesn’t have');
 });
 
 test('building agents are found by id', () => {

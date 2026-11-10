@@ -2171,7 +2171,7 @@ function openOrchestratorTerminal(find?: TerminalFind) {
 
 /** E at the Orchestrator, M, the ☰ menu or the palette: its prompt box, or what stops it. */
 function showOrchestrator() {
-  openOrchestrator(net, { terminal: () => openOrchestratorTerminal(), settings: () => showSettings('orchestrator') });
+  openOrchestrator(net, { terminal: () => openOrchestratorTerminal(), settings: (pane = 'orchestrator') => showSettings(pane) });
 }
 
 /** M from anywhere: the Orchestrator's terminal while it waits on you, else its prompt box. */

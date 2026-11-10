@@ -1,6 +1,7 @@
 import { ORCHESTRATOR_ID, ORCHESTRATOR_NAME, type MissionTeamMember } from '../../shared/mission-control';
+import type { SettingsPane } from '../../shared/settings-nav';
 import { isBusy } from '../../shared/status';
-import { botLine, ORCHESTRATOR_PITCH } from '../mission';
+import { botLine, ORCHESTRATOR_PITCH, orchestratorSettingsPane } from '../mission';
 import { lastUsedWords, missionTeamLine, orchestratorAwake, orchestratorPhase } from '../mission-office';
 import { newOrchestratorConversation, stopOrchestrator } from './orchestrator';
 import type { Net } from '../net';
@@ -15,7 +16,8 @@ import { openPrompt } from './prompt';
 export interface OrchestratorActions {
   /** Its terminal, from any floor. */
   terminal(): void;
-  settings(): void;
+  /** Settings on its own pane, or on the one named. */
+  settings(pane?: SettingsPane): void;
 }
 
 /** E at the Orchestrator, M, the ☰ menu or the palette: talk to it, or say why you can't and how to fix it. */
@@ -28,7 +30,7 @@ export function openOrchestrator(net: Net, actions: OrchestratorActions) {
   const o = state.orchestrator;
   const phase = orchestratorPhase(state);
   if (phase === 'off') return orchestratorOff(net, actions);
-  if (phase === 'blocked') return orchestratorBlocked(o.blocked ?? '', actions);
+  if (phase === 'blocked') return orchestratorBlocked(o.blocked ?? '', orchestratorSettingsPane(state), actions);
   const w = o.agent?.worker;
   const busy = !!w && isBusy(w.status);
   // Asleep, its terminal would only bring this box back: the prompt wakes it.
@@ -95,7 +97,7 @@ function orchestratorOff(net: Net, actions: OrchestratorActions) {
   setTimeout(() => on.focus(), 30);
 }
 
-function orchestratorBlocked(why: string, actions: OrchestratorActions) {
+function orchestratorBlocked(why: string, pane: SettingsPane, actions: OrchestratorActions) {
   const settings = h('button.btn.primary', { type: 'button' }, 'Open Settings');
   const close = h('button.btn.ghost', { type: 'button' }, 'Close');
   const el = h(
@@ -109,7 +111,7 @@ function orchestratorBlocked(why: string, actions: OrchestratorActions) {
   close.addEventListener('click', () => modal.close());
   settings.addEventListener('click', () => {
     modal.close();
-    actions.settings();
+    actions.settings(pane);
   });
   setTimeout(() => settings.focus(), 30);
 }

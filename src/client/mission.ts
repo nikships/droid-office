@@ -4,6 +4,7 @@
 
 import { missionAgent, ORCHESTRATOR_COLOR, ORCHESTRATOR_ID, ORCHESTRATOR_NAME, orchestratorNeedsOwner, type MissionAgent, type MissionControlState } from '../shared/mission-control';
 import type { ClientMsg, WorkerInfo } from '../shared/protocol';
+import { SETTINGS_PANES, type SettingsPane } from '../shared/settings-nav';
 import { isAsleep } from '../shared/status';
 import { doingLine } from './worker-words';
 
@@ -80,6 +81,15 @@ export function orchestratorBlocked(state: MissionControlState | undefined): str
   const o = state?.orchestrator;
   const w = o?.agent?.worker;
   return o?.settings.on && o.blocked && (!w || isAsleep(w.status)) ? o.blocked : undefined;
+}
+
+/**
+ * The Settings pane to open about the Orchestrator: where what blocks it is fixed (Connections for Droid,
+ * Subagents & visits for the Office MCP), else its own. A pane this client doesn't have is its own too.
+ */
+export function orchestratorSettingsPane(state: MissionControlState | undefined): SettingsPane {
+  const pane = orchestratorBlocked(state) ? state?.orchestrator.blockedPane : undefined;
+  return SETTINGS_PANES.find((p) => p.id === pane)?.id ?? 'orchestrator';
 }
 
 /** The Orchestrator in a line: off, why it can't start, what it's doing, or that it's ready for a task. */

@@ -24,7 +24,7 @@ import type { PaneView } from './dashboard-workspace';
 import { workerTeams } from '../shared/team';
 import { missionAgent, ORCHESTRATOR_ID, type MissionAgent, type MissionControlState, type MissionTeamMember } from '../shared/mission-control';
 import type { SettingsPane } from '../shared/settings-nav';
-import { botLine, buildingAgent, missionLead, ORCHESTRATOR_EXAMPLES, ORCHESTRATOR_PITCH, orchestratorBlocked, orchestratorLine, orchestratorMessage, orchestratorStarted } from './mission';
+import { botLine, buildingAgent, missionLead, ORCHESTRATOR_EXAMPLES, ORCHESTRATOR_PITCH, orchestratorBlocked, orchestratorLine, orchestratorMessage, orchestratorSettingsPane, orchestratorStarted } from './mission';
 import { orchestratorAwake } from './mission-office';
 
 /** What a sidebar row carries when it's dragged onto a pane. */
@@ -348,7 +348,7 @@ export function createPane(host: PaneHost, index: number): Pane {
           ? {
               intro: () => (orchestratorStarted(host.mission()) ? undefined : (intro ??= orchestratorIntro())),
               blocked: () => orchestratorBlocked(host.mission()),
-              blockedAction: h('button.btn.sm', { type: 'button', onclick: () => host.settings('orchestrator') }, icon('settings', 13), 'Settings'),
+              blockedAction: h('button.btn.sm', { type: 'button', onclick: () => host.settings(orchestratorSettingsPane(host.mission())) }, icon('settings', 13), 'Settings'),
               interrupt: true,
               promptWakes: true,
             }
