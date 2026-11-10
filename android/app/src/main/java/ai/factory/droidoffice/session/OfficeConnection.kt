@@ -113,8 +113,6 @@ data class OfficeData(
     val askable: Collection<WorkerInfo> get() = orchestrator?.let { workers.values + it } ?: workers.values
 }
 
-/** Building agents have no desk: they never sit in a floor's list, whatever an office sends. */
-
 private data class Desire(val office: PairedOffice?, val wanted: Boolean, val online: Boolean, val networkKey: String?, val nonce: Int)
 
 private sealed interface SocketEvent {
