@@ -291,8 +291,15 @@ test('a new Orchestrator conversation keeps its team across an office restart th
 
 test('between a new Orchestrator conversation and its first prompt, its team still reports to it and the report is waiting', async (t) => {
   const { o, owner, sub, id } = await orchestratorTeam(t);
+  owner.messages.length = 0;
   owner.send({ t: 'orchestrator.reset', requestId: 'new' });
   assert.equal((await owner.wait('action.result', (m) => m.requestId === 'new')).ok, true);
+  const dormant = (await owner.wait('missionControl', (m) => !m.state.orchestrator.agent)).state.orchestrator;
+  assert.deepEqual(
+    dormant.team.map((m) => m.id),
+    [id],
+    'every client still sees whose team it is',
+  );
   const reported = await sub('team_report', { text: 'Counted 12 test files' });
   assert.equal(reported.error, false, reported.text);
   assert.match(reported.text, /Reported to Orchestrator/);

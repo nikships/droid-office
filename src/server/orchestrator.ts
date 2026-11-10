@@ -243,9 +243,11 @@ export class Orchestrator {
   state(): OrchestratorState {
     const info = this.info;
     const blocked = this.settings.on ? this.blocked() : undefined;
+    const team = missionTeam(this.opts.floors(), ORCHESTRATOR_ID);
     return {
       settings: { ...this.settings },
-      ...(info ? { agent: { worker: info, team: missionTeam(this.opts.floors(), ORCHESTRATOR_ID) } } : {}),
+      ...(info ? { agent: { worker: info, team } } : {}),
+      team,
       ...(blocked ? { blocked } : {}),
     };
   }

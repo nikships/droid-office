@@ -56,6 +56,11 @@ export interface OrchestratorState {
    * labels and active model. Absent until its first prompt and after a new conversation.
    */
   agent?: MissionAgent;
+  /**
+   * Its subagents across every open floor, in hiring order: they stay its own between conversations and
+   * while it is off, when there is no `agent` to carry them.
+   */
+  team: MissionTeamMember[];
   /** Why it can't start now (Droid missing or signed out, Office MCP off, its model can't run); shown in place of the composer. */
   blocked?: string;
 }
