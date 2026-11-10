@@ -14,8 +14,6 @@ const tokenSchema = z.string().regex(/^[a-f0-9]{64}$/);
 const keySchema = z.object({ id: z.string(), name: z.string().min(1).max(60), token: tokenSchema, createdAt: z.number(), lastUsedAt: z.number().optional() });
 const savedSchema = z.object({
   id: z.string(),
-  floor: z.string(),
-  deskId: z.string(),
   name: z.string().min(1).max(60),
   createdAt: z.number(),
   token: tokenSchema,
@@ -26,22 +24,31 @@ const savedSchema = z.object({
   inbox: z.array(messageSchema).max(500),
 });
 type SavedRemote = z.infer<typeof savedSchema>;
+/** What a bot last said it is doing with office_status; offline until it says, after every office start. */
+type Reported = { status: 'idle' | 'working' | 'done'; activity?: string };
 export type RemoteMessage = z.infer<typeof messageSchema>;
 /** Which of a bot's keys a request used: `main` for the one Settings first gave it, otherwise a named key's id. */
 export type RemoteKeyId = 'main' | (string & {});
 export type RemoteKey = Omit<RemoteMcpKey, 'connection'>;
 
 /**
- * One authoritative file for remote identities and their seats, including across floor moves. It keeps each
- * bot's credential (mode 0600, like workers.json's hook tokens) so Settings can show it again.
+ * One authoritative file for external bots, the building agents that run elsewhere. They have no floor or desk
+ * (see docs/mission-control.md): a record saved with one loads without it. It keeps each bot's credential
+ * (mode 0600, like workers.json's hook tokens) so Settings can show it again.
  */
 export class RemoteWorkers {
   private records: SavedRemote[];
   private readonly file: string;
+  private reported = new Map<string, Reported>();
 
-  constructor(dataDir: string) {
+  constructor(
+    dataDir: string,
+    /** A bot was added, removed, reported its status, or a key of it was used. */
+    private readonly changed: () => void = () => {},
+  ) {
     this.file = path.join(dataDir, 'remote-workers.json');
     try {
+      // zod drops the floor and desk an office from before Mission Control saved, so their desks are free.
       this.records = z.array(savedSchema).parse(JSON.parse(readFileSync(this.file, 'utf8')));
       if (new Set(this.records.map((r) => r.id)).size !== this.records.length) throw new Error('Duplicate remote worker identity');
     } catch (err) {
@@ -59,8 +66,24 @@ export class RemoteWorkers {
     return key === 'main' ? row?.token : row?.keys?.find((k) => k.id === key)?.token;
   }
 
-  workers(floor: string): WorkerInfo[] {
-    return this.records.filter((r) => r.floor === floor).map((r) => this.info(r));
+  /** Every bot, in the order they were added. */
+  workers(): WorkerInfo[] {
+    return this.records.map((r) => this.info(r));
+  }
+
+  /** When any of the bot's keys last authenticated. */
+  lastUsedAt(id: string): number | undefined {
+    const row = this.records.find((r) => r.id === id);
+    const times = [row?.lastUsedAt, ...(row?.keys ?? []).map((k) => k.lastUsedAt)].filter((t): t is number => t !== undefined);
+    return times.length ? Math.max(...times) : undefined;
+  }
+
+  /** What the bot says it is doing (office_status). Kept only while the office runs. */
+  report(id: string, status: Reported['status'], activity?: string) {
+    if (!this.records.some((r) => r.id === id)) throw new Error('Remote worker was revoked');
+    const before = this.reported.get(id);
+    this.reported.set(id, { status, activity: activity ?? before?.activity });
+    this.changed();
   }
 
   identity(id: string): WorkerInfo | undefined {
@@ -69,21 +92,22 @@ export class RemoteWorkers {
   }
 
   private info(r: SavedRemote): WorkerInfo {
+    const said = this.reported.get(r.id);
     return {
       id: r.id,
       kind: 'agent',
       remote: true,
-      deskId: r.deskId,
+      deskId: '',
       name: r.name,
       color: '#ad8dff',
       createdAt: r.createdAt,
       createdBy: 'owner',
-      status: 'offline',
+      status: said?.status ?? 'offline',
       acked: true,
       cols: 100,
       rows: 30,
       open: false,
-      activity: 'Remote worker, polls the MCP inbox',
+      activity: said?.activity ?? 'External bot, polls the MCP inbox',
     };
   }
 
@@ -128,9 +152,12 @@ export class RemoteWorkers {
     this.change(id, (r) => ({ ...r, keys: r.keys?.filter((k) => k.id !== key) }));
   }
 
-  add(name: string, floor: string, deskId: string): { worker: WorkerInfo; token: string } {
+  add(name: string): { worker: WorkerInfo; token: string } {
+    const label = name.trim();
+    if (!label || label.length > 60) throw new Error('Give the bot a name of up to 60 characters');
+    if (this.records.some((r) => r.name.toLowerCase() === label.toLowerCase())) throw new Error('A bot already has that name');
     const token = randomBytes(32).toString('hex');
-    const row: SavedRemote = { id: `remote-${randomBytes(12).toString('hex')}`, floor, deskId, name, createdAt: Date.now(), token, inbox: [] };
+    const row: SavedRemote = { id: `remote-${randomBytes(12).toString('hex')}`, name: label, createdAt: Date.now(), token, inbox: [] };
     this.commit([...this.records, row]);
     return { worker: this.info(row), token };
   }
@@ -142,11 +169,8 @@ export class RemoteWorkers {
   }
 
   remove(id: string) {
+    this.reported.delete(id);
     this.commit(this.records.filter((r) => r.id !== id));
-  }
-
-  move(id: string, floor: string, deskId: string) {
-    this.change(id, (r) => ({ ...r, floor, deskId }));
   }
 
   enqueue(id: string, text: string, floor?: string): string | undefined {
@@ -190,6 +214,7 @@ export class RemoteWorkers {
     } finally {
       rmSync(temporary, { force: true });
     }
+    this.changed();
   }
 }
 

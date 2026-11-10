@@ -45,6 +45,8 @@ import { TrackpadHaptics } from './haptics.js';
 import { OFFICE_SHELL_ID } from '../shared/office-shell.js';
 import type { Arrival, ClientMsg, FloorInfo, FloorView, SearchResults, ServerMsg, WorkerInfo } from '../shared/protocol.js';
 import { AUTO_DESK, GH_COMMENT_MAX, GH_LABEL_MAX, isAgentEffort } from '../shared/protocol.js';
+import { ORCHESTRATOR_ID, orchestratorNeedsOwner, type MissionControlState, type OrchestratorSettings } from '../shared/mission-control.js';
+import { droidReady } from '../shared/setup.js';
 import { elevatorSpot, nextFreeSeat, streetBelow } from '../shared/layout.js';
 import { STREAM } from '../shared/jukebox.js';
 import { Jukebox } from './jukebox.js';
@@ -72,6 +74,8 @@ import { RemoteWorkers } from './remote-workers.js';
 import { RemoteOffice } from './remote-office.js';
 import { RemoteMcp } from './remote-mcp-http.js';
 import type { RemoteMcpState } from '../shared/remote-mcp.js';
+import { Orchestrator } from './orchestrator.js';
+import { missionTeam, type BuildingAgents } from './building-agent.js';
 
 const MIME: Record<string, string> = {
   '.html': 'text/html; charset=utf-8',
@@ -277,7 +281,7 @@ export async function startServer(cfg: Config) {
     if (err) console.error(`droid-office: --projects: ${err}`);
   }
   const floors = new Map<string, Floor>();
-  const remoteWorkers = new RemoteWorkers(cfg.dataDir);
+  const remoteWorkers = new RemoteWorkers(cfg.dataDir, () => missionChanged());
   const remoteOffice = new RemoteOffice(remoteWorkers, () => [...floors.values()]);
   let remoteMcp: RemoteMcp | undefined;
   const floorOf = (c: Client): Floor | undefined => (c.floor ? floors.get(c.floor) : undefined);
@@ -347,7 +351,7 @@ export async function startServer(cfg: Config) {
     }
     const token = (req.headers.authorization ?? '').replace(/^Bearer\s+/i, '');
     const workerId = url.searchParams.get('worker') ?? '';
-    const workers = workerFloor(workerId)?.workers;
+    const workers = workersOf(workerId);
     if (!workers) return send(res, 401, {});
     const event = url.searchParams.get('event') ?? '';
     // The hook command's version (see HOOK_VERSION): one from before it is 0, and doesn't print what it gets back.
@@ -405,14 +409,82 @@ export async function startServer(cfg: Config) {
   syncOfficeMcp(subagents.settings.officeMcp);
   // Another office that held the shared profile entry may stop: take it over then.
   setInterval(() => syncOfficeMcp(subagents.settings.officeMcp), 30_000).unref();
+
+  // --- Mission Control: the building's agents, with no desk on any floor (docs/mission-control.md) ---
+  const termData = (workerId: string, data: string, connectionIds: string[]) => {
+    const json = JSON.stringify({ t: 'term.data', workerId, data } satisfies ServerMsg);
+    for (const id of connectionIds) {
+      const c = clients.get(id);
+      if (!c || c.ws.readyState !== WebSocket.OPEN) continue;
+      // A connection on a slow link skips output and gets a fresh snapshot once it catches up,
+      // instead of queueing unbounded data in server memory.
+      if (c.stale.has(workerId) || c.ws.bufferedAmount > SLOW_CLIENT_BYTES) c.stale.add(workerId);
+      else c.ws.send(json);
+    }
+  };
+  const orchestrator = new Orchestrator({
+    dataDir: cfg.dataDir,
+    agentCmd: cfg.agentCmd,
+    agentArgs: cfg.agentArgs,
+    hook: { url: hookUrl, token: '' },
+    prompts,
+    floors: () => [...floors.values()],
+    unready: () => {
+      if (!droidReady(setup.state())) return 'Droid isn’t ready on this computer. Install it and sign in from Settings → Setup.';
+      if (subagents.settings.officeMcp === false) return 'Office tools (the Office MCP) are off. Turn them on in Settings → Subagents & visits.';
+      return undefined;
+    },
+    modelGate: (model) => subscriptions.gate(model),
+    changed: () => {
+      answers.changed(ORCHESTRATOR_ID, orchestrator.info?.status);
+      missionChanged();
+    },
+    data: termData,
+    screen: (workerId, frame) => broadcast({ t: 'screen', workerId, ...frame }, undefined, true),
+    toast: (text, level) => toastAll(text, level),
+  });
+  /** A worker's own manager: its floor's, or the Orchestrator's. */
+  const workersOf = (workerId: string) => (workerId === ORCHESTRATOR_ID ? orchestrator.workers : workerFloor(workerId)?.workers);
+  const buildingAgents: BuildingAgents = {
+    identity: (id) => (id === ORCHESTRATOR_ID ? orchestrator.identity() : remoteWorkers.identity(id)),
+    tell: (id, text, floor) => (id === ORCHESTRATOR_ID ? orchestrator.tell(text) : remoteWorkers.enqueue(id, text, floor)),
+  };
+  const missionState = (): MissionControlState => {
+    const open = [...floors.values()];
+    return {
+      orchestrator: orchestrator.state(),
+      bots: remoteWorkers.workers().map((worker) => {
+        const lastUsedAt = remoteWorkers.lastUsedAt(worker.id);
+        return { worker, team: missionTeam(open, worker.id), ...(lastUsedAt ? { lastUsedAt } : {}) };
+      }),
+    };
+  };
+  // Every hook and team change reaches it: tell everyone at most a few times a second, and only what changed.
+  let missionSent = '';
+  let missionTimer: NodeJS.Timeout | undefined;
+  const missionChanged = () => {
+    missionTimer ??= setTimeout(() => {
+      missionTimer = undefined;
+      const state = missionState();
+      const json = JSON.stringify(state);
+      if (json === missionSent) return;
+      missionSent = json;
+      broadcast({ t: 'missionControl', state });
+    }, 150);
+  };
+  const officeMcpFloor = (id: string) => {
+    const floor = workerFloor(id);
+    return floor ? { id: floor.id, name: floor.def.name, dir: floor.dir, workers: floor.workers, team: floor.team, visits: floor.visits, whiteboard: floor.whiteboard } : undefined;
+  };
   officeMcp = createOfficeMcp({
     hookUrl,
     answers,
     settings: () => subagents.settings,
-    floor: (id) => {
-      const floor = workerFloor(id);
-      return floor ? { id: floor.id, name: floor.def.name, dir: floor.dir, workers: floor.workers, team: floor.team, visits: floor.visits, whiteboard: floor.whiteboard } : undefined;
-    },
+    floor: officeMcpFloor,
+    remote: remoteOffice,
+    // Declared with the message handler below; nothing calls it before the office is serving.
+    owner: { floors: () => ownerOffice.floors(), tail: (...a) => ownerOffice.tail(...a), act: (...a) => ownerOffice.act(...a) },
+    orchestrator: { authenticate: (id, token) => orchestrator.authenticate(id, token), cwd: orchestrator.cwd },
   });
   // Every floor's Whiteboard renders with one headless Chromium, downloaded on the first render if it's missing.
   const renderer = cfg.renders
@@ -533,8 +605,7 @@ export async function startServer(cfg: Config) {
   machine.start();
 
   const floorContext: FloorContext = {
-    remoteWorkers,
-    remoteRevoke: (id) => remoteOffice.revoke(id),
+    building: buildingAgents,
     agentCmd: cfg.agentCmd,
     agentArgs: cfg.agentArgs,
     hook: { url: `http://127.0.0.1:${hookPort}`, token: '' },
@@ -543,17 +614,7 @@ export async function startServer(cfg: Config) {
     prompts,
     emit: toFloor,
     toast: toastFloor,
-    termData: (workerId, data, connectionIds) => {
-      const json = JSON.stringify({ t: 'term.data', workerId, data } satisfies ServerMsg);
-      for (const id of connectionIds) {
-        const c = clients.get(id);
-        if (!c || c.ws.readyState !== WebSocket.OPEN) continue;
-        // A connection on a slow link skips output and gets a fresh snapshot once it catches up,
-        // instead of queueing unbounded data in server memory.
-        if (c.stale.has(workerId) || c.ws.bufferedAmount > SLOW_CLIENT_BYTES) c.stale.add(workerId);
-        else c.ws.send(json);
-      }
-    },
+    termData,
     changes: (state, ids) => {
       for (const id of ids) {
         const c = clients.get(id);
@@ -564,6 +625,7 @@ export async function startServer(cfg: Config) {
       answers.changed(typeof w === 'string' ? w : w.id, typeof w === 'string' ? undefined : w.status);
       machine.workersChanged();
       floorsChanged();
+      missionChanged();
     },
     connections: (floor) => {
       let n = 0;
@@ -610,6 +672,8 @@ export async function startServer(cfg: Config) {
   );
   // Workers still running from the last office are back at their desks before anyone walks in.
   await Promise.all([...floors.values()].map((f) => f.ready));
+  // After the floors, so its team's news can wake it as it comes back.
+  await orchestrator.start();
   if (cfg.remoteMcp) {
     remoteMcp = new RemoteMcp({
       dataDir: cfg.dataDir,
@@ -620,10 +684,7 @@ export async function startServer(cfg: Config) {
         // Declared with the message handler below; nothing calls it before the listener is serving.
         owner: { floors: () => ownerOffice.floors(), tail: (...a) => ownerOffice.tail(...a), act: (...a) => ownerOffice.act(...a) },
         settings: () => subagents.settings,
-        floor: (id) => {
-          const f = remoteOffice.floor(id);
-          return f ? { id: f.id, name: f.def.name, dir: f.dir, workers: f.workers, team: f.team, visits: f.visits, whiteboard: f.whiteboard } : undefined;
-        },
+        floor: officeMcpFloor,
       },
     });
     // Tailscale may be slow or missing: the office opens without waiting, and Settings shows how it went.
@@ -1064,7 +1125,7 @@ export async function startServer(cfg: Config) {
         const name = typeof body.name === 'string' ? body.name.trim() : '';
         const id = typeof body.id === 'string' ? body.id : '';
         try {
-          if (body.action === 'add' && name && name.length <= 60 && typeof body.floor === 'string') return send(res, 200, remoteMcp.add(name, body.floor));
+          if (body.action === 'add' && name && name.length <= 60) return send(res, 200, remoteMcp.add(name));
           if (body.action === 'rotate' && id) return send(res, 200, remoteMcp.rotate(id));
           if (body.action === 'revoke' && id) return send(res, 200, remoteMcp.revoke(id));
           if (body.action === 'add-key' && id && name && name.length <= 60) return send(res, 200, remoteMcp.addKey(id, name));
@@ -1072,7 +1133,7 @@ export async function startServer(cfg: Config) {
         } catch (err) {
           return send(res, 409, { error: (err as Error).message });
         }
-        return send(res, 400, { error: 'Send {"action": "add", "name", "floor"}, {"action": "rotate" | "revoke", "id"}, {"action": "add-key", "id", "name"} or {"action": "revoke-key", "id", "key"}' });
+        return send(res, 400, { error: 'Send {"action": "add", "name"}, {"action": "rotate" | "revoke", "id"}, {"action": "add-key", "id", "name"} or {"action": "revoke-key", "id", "key"}' });
       }
       // The Mac app's menu bar icon: busy workers, who is waiting and connected devices. Only the app itself gets them:
       // a request from this Mac, to a loopback host name, with no device token and no Origin.
@@ -1084,6 +1145,7 @@ export async function startServer(cfg: Config) {
           officeStatus(
             [...floors.values()].map((f) => ({ id: f.id, name: f.def.name, workers: f.everyone() })),
             [...clients.values()].map((c) => ({ device: c.device, phone: !!c.phoneSizes })),
+            orchestratorNeedsOwner(missionState()) ? [orchestrator.info!] : [],
           ),
         );
       }
@@ -1137,7 +1199,7 @@ export async function startServer(cfg: Config) {
       if (p === '/api/agents/droid/commands' && req.method === 'GET') {
         // The skills and custom commands a worker's droid offers as slash commands (droid-commands.ts).
         const workerId = str(url.searchParams.get('worker'), 32);
-        const folder = workerId ? workerFloor(workerId)?.workers.agentFolder(workerId) : undefined;
+        const folder = workerId ? workersOf(workerId)?.agentFolder(workerId) : undefined;
         if (!folder) return send(res, 404, { error: 'No such worker' });
         return send(res, 200, { commands: await droidCommands.get(folder) });
       }
@@ -1167,10 +1229,12 @@ export async function startServer(cfg: Config) {
         // A picture a worker read or was sent, shown in its Thread (worker-thread.ts reads it from the session).
         const workerId = str(url.searchParams.get('worker'), 32);
         const id = str(url.searchParams.get('image'), 160);
-        const source = floor?.workers.threadSession(workerId);
+        // The Orchestrator's thread is the same from every floor.
+        const owner = workerId === ORCHESTRATOR_ID ? orchestrator.workers : floor?.workers;
+        const source = owner?.threadSession(workerId);
         // A picture sent with a prompt is served from that worker's own drops, never from the path the message names.
         const drop = DROP_IMAGE_ID.exec(id)?.[1];
-        const image = !source ? undefined : drop ? floor?.workers.dropPicture(workerId, drop) : await workerThreads.image(source, id);
+        const image = !source ? undefined : drop ? owner?.dropPicture(workerId, drop) : await workerThreads.image(source, id);
         if (!image) return send(res, 404, { error: 'That picture is no longer in the conversation.' });
         res.writeHead(200, {
           'content-type': image.type,
@@ -1188,10 +1252,12 @@ export async function startServer(cfg: Config) {
         // A file dropped or pasted into a worker's terminal, kept on this machine for the terminal to type its path.
         if (req.method !== 'POST') return send(res, 405, { error: 'Method not allowed' });
         if (!ownRequest()) return send(res, 403, { error: 'Forbidden' });
-        if (!floor) return send(res, 404, { error: 'No such floor' });
         const workerId = str(url.searchParams.get('worker'), 32);
+        const mission = workerId === ORCHESTRATOR_ID;
+        if (!floor && !mission) return send(res, 404, { error: 'No such floor' });
         const shellDrop = workerId === OFFICE_SHELL_ID;
-        if (!shellDrop && !floor.workers.get(workerId)) return send(res, 404, { error: 'No such worker' });
+        const target = mission ? orchestrator.workers : floor?.workers;
+        if (!shellDrop && !target?.get(workerId)) return send(res, 404, { error: 'No such worker' });
         const tooBig = `That file is too big to drop into a terminal (${DROP_MAX_BYTES / 1024 / 1024} MB at most)`;
         if (Number(req.headers['content-length']) > DROP_MAX_BYTES) return send(res, 413, { error: tooBig });
         let body: Buffer;
@@ -1202,16 +1268,18 @@ export async function startServer(cfg: Config) {
         }
         const name = str(url.searchParams.get('name'), 256);
         const type = str(req.headers['content-type'], 128);
-        const file = shellDrop ? floor.shell.drop(name, type, body) : floor.workers.drop(workerId, name, type, body);
+        const file = shellDrop ? floor?.shell.drop(name, type, body) : target?.drop(workerId, name, type, body);
         return file ? send(res, 200, { path: file }) : send(res, 500, { error: 'The office could not keep that file' });
       }
       if (p === '/api/prompt/image') {
         // A picture pasted into a prompt that isn't sent yet, kept on this machine until it is (POST), or taken out again (DELETE).
         if (req.method !== 'POST' && req.method !== 'DELETE') return send(res, 405, { error: 'Method not allowed' });
         if (!ownRequest()) return send(res, 403, { error: 'Forbidden' });
-        if (!floor) return send(res, 404, { error: 'No such floor' });
+        // ?worker=orchestrator: for a prompt to the Orchestrator, kept where its session reads it.
+        const stage = url.searchParams.get('worker') === ORCHESTRATOR_ID ? orchestrator.workers : floor?.workers;
+        if (!stage) return send(res, 404, { error: 'No such floor' });
         if (req.method === 'DELETE') {
-          floor.workers.unstage(imageIds([url.searchParams.get('id')]));
+          stage.unstage(imageIds([url.searchParams.get('id')]));
           return send(res, 200, {});
         }
         const tooBig = `That picture is too big to send with a prompt (${DROP_MAX_BYTES / 1024 / 1024} MB at most)`;
@@ -1222,7 +1290,7 @@ export async function startServer(cfg: Config) {
         } catch (err) {
           return (err as Error).message === 'too large' ? send(res, 413, { error: tooBig }) : send(res, 400, { error: 'Bad request' });
         }
-        const id = floor.workers.stageImage(str(url.searchParams.get('name'), 256), body);
+        const id = stage.stageImage(str(url.searchParams.get('name'), 256), body);
         return id ? send(res, 200, { id }) : send(res, 415, { error: 'Only PNG, JPEG, GIF and WebP pictures can be sent with a prompt' });
       }
       if (p === '/api/decor/picture') {
@@ -1457,6 +1525,7 @@ export async function startServer(cfg: Config) {
       factory: factory.state(),
       setup: setup.state(),
       subscriptions: subscriptions.state(),
+      missionControl: missionState(),
       ...(onRoof ? roofView() : floorView(floor)),
     });
     screensOf(client, floor);
@@ -1482,7 +1551,8 @@ export async function startServer(cfg: Config) {
     });
     ws.on('close', () => {
       clients.delete(id);
-      for (const r of client.phoneSizes?.restores((wid) => workerFloor(wid)?.workers.get(wid)) ?? []) workerFloor(r.workerId)?.workers.resize(r.workerId, r.size.cols, r.size.rows);
+      for (const r of client.phoneSizes?.restores((wid) => workersOf(wid)?.get(wid)) ?? []) workersOf(r.workerId)?.resize(r.workerId, r.size.cols, r.size.rows);
+      orchestrator.workers.detachAll(id);
       for (const wait of automationWaits.values()) if (wait.client === id) wait.done({ ok: false, error: 'The office tab closed before it answered' });
       for (const f of floors.values()) {
         f.workers.detachAll(id);
@@ -1630,11 +1700,10 @@ export async function startServer(cfg: Config) {
         sendTo(c, { t: 'toast', text: next ? `🛗 ${who} took ${name} off the building, so you rode the elevator to ${next.def.name}` : `🛗 ${who} took ${name}, the last floor, off the building`, level: 'warn' });
       } else sendTo(c, { t: 'toast', text: `🛗 ${who} took ${name} off the building`, level: 'info' });
     }
-    // An external worker keeps its identity and teams: its desk moves to a floor still open.
-    for (const w of floor.workers.list()) if (w.remote) remoteOffice.rehome(w.id, floor.id);
     floors.delete(floor.id);
     floor.shutdown();
     floorsChanged();
+    missionChanged();
   };
 
   /** Off the floor (or the roof) `c` was on, to `at` on the next one, or into its elevator car. */
@@ -1646,8 +1715,11 @@ export async function startServer(cfg: Config) {
       was.cloud.detachAll(c.id);
       was.changes.unwatchAll(c.id);
     }
+    // Mission Control is on every floor: the Orchestrator's terminal stays open through a ride.
+    const mission = c.attached.has(ORCHESTRATOR_ID);
     c.attached.clear();
     c.stale.clear();
+    if (mission) c.attached.add(ORCHESTRATOR_ID);
     const spot = at ?? { ...elevatorSpot(), y: 0, rotY: 0 };
     return { spot };
   };
@@ -1687,7 +1759,7 @@ export async function startServer(cfg: Config) {
   };
 
   /** Opens a worker's terminal for `c`. */
-  const attachTerminal = (wid: string, c: Client) => workerFloor(wid)?.workers.attach(wid, c.id);
+  const attachTerminal = (wid: string, c: Client) => workersOf(wid)?.attach(wid, c.id);
 
   const handleMessage = (c: Client, msg: ClientMsg) => {
     const who = c.peer.name;
@@ -1738,6 +1810,81 @@ export async function startServer(cfg: Config) {
     if (requestId && typeof asked === 'string') {
       const floor = workerFloor(asked) ?? floors.get(cloud.find(asked)?.floor.id ?? '');
       if (floor && floor.id !== c.floor) return done('That worker is not on the active floor. Nothing was sent.');
+    }
+    // The Orchestrator is in Mission Control on every floor: its terminal, thread and turn are reachable from any.
+    if (asked === ORCHESTRATOR_ID && /^(worker|term|thread|changes)\./.test(msg.t)) {
+      const orch = orchestrator.workers;
+      switch (msg.t) {
+        case 'worker.attach': {
+          const snap = orch.attach(ORCHESTRATOR_ID, c.id);
+          if (!snap) return done('The Orchestrator has no terminal yet. Send it a prompt first.');
+          c.attached.add(ORCHESTRATOR_ID);
+          sendTo(c, { t: 'term.snapshot', workerId: ORCHESTRATOR_ID, ...snap });
+          return done();
+        }
+        case 'worker.detach':
+          c.attached.delete(ORCHESTRATOR_ID);
+          orch.detach(ORCHESTRATOR_ID, c.id);
+          return done();
+        case 'worker.prompt': {
+          const images = imageIds(msg.images);
+          const err = orchestrator.prompt(str(msg.prompt, 20000), images, msg.queue === true);
+          orch.unstage(images);
+          warn(c, err);
+          return done(err, ORCHESTRATOR_ID);
+        }
+        case 'worker.interrupt':
+          return done(orch.write(ORCHESTRATOR_ID, '\u001b') ? undefined : 'The Orchestrator is not running. Nothing was stopped.');
+        case 'worker.answer': {
+          const hasChoice = typeof msg.choice === 'number';
+          const hasChoices = Array.isArray(msg.choices);
+          const hasText = typeof msg.text === 'string';
+          if (msg.choices !== undefined && !hasChoices) return done('Send checkbox selections as numbered choices.');
+          if (hasChoice ? hasChoices || hasText : !hasChoices && !hasText) return done('Send one choice, a checkbox selection, or a typed answer.');
+          defer();
+          void answers
+            .answer(ORCHESTRATOR_ID, msg.menu, hasChoice ? { choice: msg.choice } : { ...(hasChoices ? { choices: msg.choices } : {}), ...(hasText ? { text: str(msg.text, 20000) } : {}) }, {
+              worker: () => orch.get(ORCHESTRATOR_ID),
+              lines: () => orch.screenLines(ORCHESTRATOR_ID),
+              menu: () => orch.screenMenu(ORCHESTRATOR_ID),
+              write: (data) => orch.write(ORCHESTRATOR_ID, data),
+              live: () => c.ws.readyState === WebSocket.OPEN,
+            })
+            .then(
+              (error) => done(error, ORCHESTRATOR_ID),
+              () => done('The answer could not be verified. Check the terminal.'),
+            );
+          return;
+        }
+        case 'term.input':
+          if (!c.attached.has(ORCHESTRATOR_ID)) return done('Open the Orchestrator first. Nothing was typed.');
+          return done(orch.write(ORCHESTRATOR_ID, str(msg.data, 64 * 1024)) ? undefined : 'The Orchestrator is not running. Nothing was typed.');
+        case 'term.resize': {
+          const before = orch.get(ORCHESTRATOR_ID);
+          if (!c.attached.has(ORCHESTRATOR_ID) || !before) return;
+          const size = { cols: before.cols, rows: before.rows };
+          orch.resize(ORCHESTRATOR_ID, num(msg.cols), num(msg.rows));
+          const after = orch.get(ORCHESTRATOR_ID);
+          if (after) c.phoneSizes?.resized(ORCHESTRATOR_ID, size, after);
+          return;
+        }
+        case 'thread.read': {
+          const request = str(msg.request, 128);
+          const before = typeof msg.before === 'number' ? msg.before : undefined;
+          const reply = { t: 'thread.snapshot' as const, workerId: ORCHESTRATOR_ID, request, ...(before !== undefined ? { before } : {}) };
+          if (msg.before !== undefined && (before === undefined || !Number.isSafeInteger(before) || before < 0)) return sendTo(c, { ...reply, entries: [], hasMore: false, error: 'Invalid conversation page.' });
+          const source = orch.threadSession(ORCHESTRATOR_ID);
+          if (!source) return sendTo(c, { ...reply, entries: [], hasMore: false, error: 'The Orchestrator has no conversation yet.' });
+          void workerThreads.read(source, before, orch.threadBusy(ORCHESTRATOR_ID)).then((page) => {
+            const current = orch.threadSession(ORCHESTRATOR_ID);
+            if (current?.sessionId !== source.sessionId) return sendTo(c, { ...reply, entries: [], hasMore: false, error: 'The Orchestrator’s conversation changed. Read the thread again.' });
+            sendTo(c, { ...reply, ...page });
+          });
+          return;
+        }
+        default:
+          return done('The Orchestrator works from Mission Control: it has no desk, worktree or changes of its own.');
+      }
     }
     // A cloud worker's session runs on a Factory computer: factory/cloud.ts answers for it.
     const cloudie = typeof asked === 'string' && /^(worker|term|changes)\./.test(msg.t) ? cloud.find(asked) : undefined;
@@ -2603,6 +2750,32 @@ export async function startServer(cfg: Config) {
         wait.done(msg.ok === true ? { ok: true, value: msg.value } : { ok: false, error: str(msg.error, 2000) || 'The command failed' });
         break;
       }
+      case 'orchestrator.prompt': {
+        const images = imageIds(msg.images);
+        const err = orchestrator.prompt(str(msg.prompt, 20000), images, msg.queue === true);
+        orchestrator.workers.unstage(images);
+        warn(c, err);
+        done(err, ORCHESTRATOR_ID);
+        break;
+      }
+      case 'orchestrator.interrupt':
+        done(orchestrator.interrupt() ? undefined : 'The Orchestrator isn’t in the middle of a turn. Nothing was stopped.');
+        break;
+      case 'orchestrator.reset':
+        orchestrator.reset();
+        toastAll(`🛰️ ${who} started a new conversation with the Orchestrator`);
+        done();
+        break;
+      case 'orchestrator.set': {
+        const s = (msg.settings ?? {}) as Partial<OrchestratorSettings>;
+        if (typeof s.on !== 'boolean') return stop('Send the Orchestrator’s settings: {"on": true}');
+        const model = typeof s.model === 'string' && s.model.trim() ? str(s.model.trim(), 128) : undefined;
+        const effort = isAgentEffort(s.effort) ? s.effort : undefined;
+        const err = orchestrator.set({ on: s.on, ...(model ? { model } : {}), ...(effort ? { effort } : {}) });
+        if (err) return stop(err);
+        done();
+        break;
+      }
       case 'ping':
         sendTo(c, { t: 'pong', at: num(msg.at), now: Date.now() });
         break;
@@ -2621,7 +2794,7 @@ export async function startServer(cfg: Config) {
    */
   const ownerOffice: OwnerOffice = {
     floors: () => [...floors.values()].map((f) => ({ id: f.id, name: f.def.name, workers: f.everyone() })),
-    tail: (id, lines, floorId) => (id === OFFICE_SHELL_ID ? floors.get(floorId ?? '')?.shell.tail(lines) : workerFloor(id)?.workers.tail(id, lines)),
+    tail: (id, lines, floorId) => (id === OFFICE_SHELL_ID ? floors.get(floorId ?? '')?.shell.tail(lines) : workersOf(id)?.tail(id, lines)),
     act: (by: WorkerInfo, msg, opts = {}) =>
       new Promise<OwnerReply>((resolve) => {
         const notes: string[] = [];
@@ -2756,6 +2929,8 @@ export async function startServer(cfg: Config) {
     setup.stop();
     subscriptions.stop();
     for (const f of floors.values()) f.shutdown(keep);
+    orchestrator.shutdown(keep);
+    clearTimeout(missionTimer);
     void renderer?.close();
     for (const c of clients.values()) c.ws.close();
     server.close();

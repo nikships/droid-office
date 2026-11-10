@@ -3,7 +3,7 @@ import { AGENT_EFFORTS } from '../../shared/protocol.js';
 import { PROMPT_IMAGE_ID, PROMPT_IMAGES_MAX } from '../../shared/drops.js';
 import { DROID_MODEL_MAX, isValidDroidModel } from '../agents.js';
 
-export const floorRef = z.string().trim().min(1).max(128).describe('Floor id, elevator number or name. Omit for the target worker’s floor, otherwise your current floor.');
+export const floorRef = z.string().trim().min(1).max(128).describe('Floor id, elevator number or name. Omit for the target worker’s floor.');
 export const workerRef = z.string().trim().min(1).max(64).describe('Worker id or unambiguous name from office_roster. May target any worker, not only your subagents.');
 export const id = z.string().trim().min(1).max(1024);
 export const text = z.string().max(20_000);

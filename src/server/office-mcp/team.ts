@@ -2,7 +2,7 @@ import path from 'node:path';
 import { z } from 'zod';
 import type { TeamEvent, TeamMember, TeamModel, TeamReply } from '../team.js';
 import { hasOwnerAccess } from './owner.js';
-import { officeAccess, officeError, officeResult, type OfficeMcpCaller, type OfficeMcpDeps, type OfficeMcpServer } from './index.js';
+import { officeAccess, officeError, officeResult, ownFloor, type OfficeMcpCaller, type OfficeMcpDeps, type OfficeMcpServer } from './index.js';
 import { compactEvent, compactEventText, compactWorker, compactWorkerText, cursorOf, EVENT_FILTERS, eventKinds, parseCursor } from './team-events.js';
 
 export const instructions = `Your team is real workers at nearby desks on this floor, not hidden tasks. A subagent has its own terminal and normally its own git worktree; its lead is another worker. The owner controls hiring permission, team size, allowed models and wake notes. Subagents cannot hire.
@@ -66,7 +66,9 @@ function modelText(model: TeamModel): string {
 
 export function register(server: OfficeMcpServer, deps: OfficeMcpDeps): void {
   const command = (caller: OfficeMcpCaller, args: { action: string; worker?: string; floor?: string; [key: string]: unknown }) =>
-    caller.worker.remote && deps.remote ? deps.remote.team(caller.worker, args) : caller.floor.team.handle(caller.worker, args);
+    caller.building && deps.remote ? deps.remote.team(caller.worker, args) : ownFloor(caller).team.handle(caller.worker, args);
+  /** The team that answers for the office's models: the caller's floor, or for a building agent the first open one. */
+  const modelsTeam = (caller: OfficeMcpCaller) => caller.floor?.team ?? deps.remote?.floors()[0]?.team;
   const statusText = (body: Record<string, unknown>) => {
     const members = body.team as TeamMember[];
     const news = body.events as TeamEvent[];
@@ -83,17 +85,17 @@ export function register(server: OfficeMcpServer, deps: OfficeMcpDeps): void {
       .describe('Just these news kinds (blocked is needs_input). Other news stays unread, but the cursor moves past it: reuse a filtered cursor only with the same kinds.'),
   };
   const status = async (caller: OfficeMcpCaller, args: { worker?: string; floor?: string; lines?: number; verbose?: boolean; since?: string; kinds?: (typeof EVENT_FILTERS)[number][] }) => {
-    const cursor = args.since === undefined ? undefined : parseCursor(args.since, caller.floor.id);
+    const own = caller.floor?.id ?? '';
+    const cursor = args.since === undefined ? undefined : parseCursor(args.since, own);
     if (args.since !== undefined && !cursor) return officeError('since takes the cursor from an earlier team status or team_wait, or one team:<floor>:<seq> event id.');
     const kinds = eventKinds(args.kinds);
     const request = { action: 'status', worker: args.worker, lines: args.lines, floor: args.floor, ...(kinds ? { kinds: [...kinds] } : {}) };
-    const remote = caller.worker.remote ? deps.remote : undefined;
+    const remote = caller.building ? deps.remote : undefined;
     const result = remote
       ? await remote.team(caller.worker, { ...request, ...(cursor ? { since: Object.fromEntries(cursor) } : {}) })
-      : await caller.floor.team.handle(caller.worker, { ...request, ...(cursor ? { since: cursor.get(caller.floor.id) ?? 0 } : {}) });
+      : await ownFloor(caller).team.handle(caller.worker, { ...request, ...(cursor ? { since: cursor.get(own) ?? 0 } : {}) });
     if (result.status >= 400) return reply(result, statusText);
     const { team, events, latest, ...rest } = result.body as { team: (TeamMember & { floor?: string })[]; events: (TeamEvent & { floor?: string })[]; latest: number | Record<string, number> };
-    const own = caller.floor.id;
     const workers = team.map((m) => compactWorker(m, m.floor ?? own));
     const news = events.map((e) => compactEvent(e, e.floor ?? own, args.verbose === true));
     const position = cursorOf(typeof latest === 'number' ? { [own]: latest } : latest);
@@ -107,7 +109,7 @@ export function register(server: OfficeMcpServer, deps: OfficeMcpDeps): void {
     return officeResult(statusText(result.body), { ...result.body, workers, news, cursor: position });
   };
   const worker = z.string().trim().min(1).max(200).describe('Your subagent’s name or id, case-insensitive.');
-  const floor = z.string().min(1).max(128).optional().describe('External workers only: restrict to an open floor id.');
+  const floor = z.string().min(1).max(128).optional().describe('Building agents only: restrict to an open floor id.');
   server.tool(
     {
       name: 'team_status',
@@ -118,7 +120,7 @@ export function register(server: OfficeMcpServer, deps: OfficeMcpDeps): void {
     },
     officeAccess.team,
     async (args, caller) => {
-      if (args.floor && !caller.worker.remote) return officeError('Local workers manage only their own floor');
+      if (args.floor && !caller.building) return officeError('Floor workers manage only their own floor');
       return status(caller, args);
     },
   );
@@ -131,7 +133,7 @@ export function register(server: OfficeMcpServer, deps: OfficeMcpDeps): void {
     },
     officeAccess.team,
     async (args, caller) => {
-      if (args.floor && !caller.worker.remote) return officeError('Local workers manage only their own floor');
+      if (args.floor && !caller.building) return officeError('Floor workers manage only their own floor');
       return reply(await command(caller, { action: 'send', ...args }), (body) => `Sent to ${(body.worker as TeamMember).name}.`);
     },
   );
@@ -145,7 +147,7 @@ export function register(server: OfficeMcpServer, deps: OfficeMcpDeps): void {
     },
     officeAccess.team,
     async (args, caller) => {
-      if (args.floor && !caller.worker.remote) return officeError('Local workers manage only their own floor');
+      if (args.floor && !caller.building) return officeError('Floor workers manage only their own floor');
       if (args.keepBranch === false && !args.pruneWorktree) return officeError('keepBranch: false requires pruneWorktree: true.');
       return reply(await command(caller, { action: 'dismiss', ...args, pruneWorktree: args.pruneWorktree ?? false }), (body) => `Sent ${body.name} home.${body.note ? ` ${body.note}.` : ''}`);
     },
@@ -159,10 +161,13 @@ export function register(server: OfficeMcpServer, deps: OfficeMcpDeps): void {
       annotations: readOnly,
     },
     officeAccess.mayHire,
-    async (_args, caller) =>
-      reply(await caller.floor.team.handle(caller.worker, { action: 'models_list' }), (body) =>
+    async (_args, caller) => {
+      const team = modelsTeam(caller);
+      if (!team) return officeError('No floor is open, so the office cannot list models yet.');
+      return reply(await team.handle(caller.worker, { action: 'models_list' }), (body) =>
         (body.models as TeamModel[]).map((model) => `${model.enabled === false ? (model.cannotRun ? 'Unavailable: ' : 'Not allowed: ') : ''}${modelText(model)}`).join('\n\n'),
-      ),
+      );
+    },
   );
   server.tool(
     {
@@ -174,7 +179,7 @@ export function register(server: OfficeMcpServer, deps: OfficeMcpDeps): void {
     },
     officeAccess.team,
     async (args, caller) => {
-      if (args.floor && !caller.worker.remote) return officeError('Local workers manage only their own floor');
+      if (args.floor && !caller.building) return officeError('Floor workers manage only their own floor');
       if (args.base !== undefined && args.commits !== undefined) return officeError('Choose base or commits, not both.');
       return reply(await command(caller, { action: 'diff', ...args }), (body) => `${body.stat}\n${body.diff}${body.truncated ? '\n[Truncated: diff exceeds the output limit.]' : ''}`);
     },
@@ -188,7 +193,7 @@ export function register(server: OfficeMcpServer, deps: OfficeMcpDeps): void {
     },
     officeAccess.team,
     async (args, caller) => {
-      if (args.floor && !caller.worker.remote) return officeError('Local workers manage only their own floor');
+      if (args.floor && !caller.building) return officeError('Floor workers manage only their own floor');
       return reply(await command(caller, { action: 'log', ...args }), (body) => `${body.activity ? `Doing: ${body.activity}\n` : ''}${body.terminal ?? 'Terminal unavailable.'}${body.truncated ? '\n[Truncated]' : ''}`);
     },
   );
@@ -202,25 +207,57 @@ export function register(server: OfficeMcpServer, deps: OfficeMcpDeps): void {
     },
     officeAccess.worker,
     async (_args, caller) => {
-      const { body } = await caller.floor.team.handle(caller.worker, { action: 'whoami' });
-      const visitRefusal = caller.floor.visits.cannotVisit(caller.worker);
-      const owner = hasOwnerAccess(caller.worker, deps.owner);
-      const subagents = caller.worker.remote && deps.remote ? deps.remote.floors().reduce((n, f) => n + f.workers.list().filter((w) => w.lead === caller.worker.id).length, 0) : (body.subagents ?? 0);
-      const identity = { ...body, subagents, floor: { id: caller.floor.id, name: caller.floor.name }, cwd: caller.cwd, canVisit: !visitRefusal, ...(visitRefusal ? { visitRefusal } : {}), ownerAccess: owner };
-      const lead = caller.worker.lead ? (caller.floor.workers.get(caller.worker.lead)?.name ?? caller.worker.lead) : undefined;
+      if (caller.building) return buildingWhoami(caller);
+      const floor = ownFloor(caller);
+      const { body } = await floor.team.handle(caller.worker, { action: 'whoami' });
+      const visitRefusal = floor.visits.cannotVisit(caller.worker);
+      const identity = { ...body, floor: { id: floor.id, name: floor.name }, cwd: caller.cwd, canVisit: !visitRefusal, ...(visitRefusal ? { visitRefusal } : {}), ownerAccess: false };
+      const lead = caller.worker.lead ? (floor.workers.get(caller.worker.lead)?.name ?? caller.worker.lead) : undefined;
       return officeResult(
         [
-          `${caller.worker.name} (${caller.worker.id}), ${caller.floor.name}, ${lead ? `subagent of ${lead}` : 'independent worker'}.`,
+          `${caller.worker.name} (${caller.worker.id}), ${floor.name}, ${lead ? `subagent of ${lead}` : 'independent worker'}.`,
           `Working folder: ${caller.cwd}`,
-          `May hire: ${body.canHire ? 'yes' : 'no'}. Subagents: ${subagents}${typeof body.max === 'number' ? `/${body.max}` : ', no limit'}. Wake the lead: ${body.wakeLead ? 'on' : 'off'}.`,
+          `May hire: ${body.canHire ? 'yes' : 'no'}. Subagents: ${body.subagents ?? 0}${typeof body.max === 'number' ? `/${body.max}` : ', no limit'}. Wake the lead: ${body.wakeLead ? 'on' : 'off'}.`,
           ...(typeof body.why === 'string' ? [body.why] : []),
           `May visit: ${visitRefusal ? `no. ${visitRefusal}` : 'yes'}.`,
-          ...(owner ? ['Owner access: yes. Focused office_* tools act across the building as the owner does. Use team_* for your subagents and visit_* for peer coordination.'] : []),
         ].join('\n'),
         identity,
       );
     },
   );
+  /** A building agent: Mission Control, no floor or desk, its teams across every floor and the owner's access. */
+  const buildingWhoami = (caller: OfficeMcpCaller) => {
+    const s = caller.settings;
+    const floors = deps.remote?.floors() ?? [];
+    const teams = floors.map((f) => ({ floor: f.id, name: f.def.name, subagents: f.workers.list().filter((w) => w.lead === caller.worker.id).length })).filter((t) => t.subagents);
+    const subagents = teams.reduce((n, t) => n + t.subagents, 0);
+    const owner = hasOwnerAccess(caller, deps.owner);
+    const kind = caller.worker.remote ? 'external' : 'orchestrator';
+    const identity = {
+      you: { id: caller.worker.id, name: caller.worker.name, role: subagents ? 'lead' : 'worker', building: kind },
+      room: 'Mission Control',
+      floor: null,
+      ...(caller.cwd ? { cwd: caller.cwd } : {}),
+      canHire: true,
+      subagents,
+      teams,
+      worktree: s.worktree,
+      wakeLead: !caller.worker.remote && s.wakeLead,
+      canVisit: false,
+      ownerAccess: owner,
+    };
+    return officeResult(
+      [
+        `${caller.worker.name} (${caller.worker.id}), ${kind === 'external' ? 'an external bot' : "the office's Orchestrator"} in Mission Control: no floor or desk.`,
+        ...(caller.cwd ? [`Working folder: ${caller.cwd} (read-only planning; workers you hire make every change).`] : []),
+        `May hire: yes, on any open floor, with no team size limit. Subagents: ${subagents}${teams.length ? ` (${teams.map((t) => `${t.subagents} on ${t.name}`).join(', ')})` : ''}.`,
+        caller.worker.remote ? 'Wake notes: none; poll office_inbox or team_wait.' : `Wake notes: ${s.wakeLead ? 'on' : 'off'}.`,
+        'May visit: no. Reach any worker with office_worker_prompt.',
+        ...(owner ? ['Owner access: yes. Focused office_* tools act across the building as the owner does. Use team_* for your subagents.'] : []),
+      ].join('\n'),
+      identity,
+    );
+  };
   server.tool(
     {
       name: 'team_models',
@@ -230,21 +267,24 @@ export function register(server: OfficeMcpServer, deps: OfficeMcpDeps): void {
       annotations: readOnly,
     },
     officeAccess.mayHire,
-    async (_args, caller) =>
-      reply(await caller.floor.team.handle(caller.worker, { action: 'models' }), (body) =>
+    async (_args, caller) => {
+      const team = modelsTeam(caller);
+      if (!team) return officeError('No floor is open, so the office cannot list models yet.');
+      return reply(await team.handle(caller.worker, { action: 'models' }), (body) =>
         [
           body.restricted ? 'Settings restrict subagent models to the listed picks and the default.' : 'Subagents may use any current Droid model.',
           ...(body.unavailable ? ['Droid could not list its models; costs and providers may be missing.'] : []),
           ...(body.models as TeamModel[]).map(modelText),
           `Default: ${body.defaultModel ?? "Droid's own default"}.`,
         ].join('\n\n'),
-      ),
+      );
+    },
   );
   server.tool(
     {
       name: 'team_hire',
       description:
-        'Hire one fresh subagent at the nearest free desk for an independent task. It gets your brief, its own terminal, and normally a fresh worktree. Read team_models first. Permission, capacity and model refusals explain what to do; no desk is taken for an unavailable model. Commit shared prerequisites before hiring.',
+        'Hire one fresh subagent at the nearest free desk (to you, or for a building agent to Mission Control on the floor task.repo names) for an independent task. It gets your brief, its own terminal, and normally a fresh worktree. Read team_models first. Permission, capacity and model refusals explain what to do; no desk is taken for an unavailable model. Commit shared prerequisites before hiring.',
       inputSchema: z.strictObject({
         title: z.string().trim().min(1).max(80).optional().describe('Short task title, required unless task supplies it.'),
         brief: text.optional().describe('Complete task ticket, required unless task supplies it. Quotes, dollar signs and backticks are preserved.'),
@@ -252,7 +292,7 @@ export function register(server: OfficeMcpServer, deps: OfficeMcpDeps): void {
           .strictObject({
             title: z.string().trim().min(1).max(80),
             brief: text,
-            repo: z.string().trim().min(1).max(4096).describe('Local floor repository path. Remote workers may also select an open floor by id or name.'),
+            repo: z.string().trim().min(1).max(4096).describe('Your floor repository path. A building agent names any open floor: its path, id or name.'),
             baseBranch: z.string().trim().min(1).max(200),
             branch: z.string().trim().min(1).max(200).optional().describe('Name for the new local branch; must not already exist.'),
             prNumber: z.number().int().positive().optional(),
@@ -284,10 +324,11 @@ export function register(server: OfficeMcpServer, deps: OfficeMcpDeps): void {
     async ({ brief, task, ...args }, caller) => {
       const title = task?.title ?? args.title;
       const ticket = task?.brief ?? brief;
+      if (caller.building && !task) return officeError('A building agent hires with a structured task: task.repo names the open floor (its path, id or name from office_floors), with title, brief and baseBranch.');
       if (!title || !ticket) return officeError('team_hire needs title and brief, either at the top level or in task.');
       if (task && args.from && args.from !== task.baseBranch) return officeError('from and task.baseBranch disagree; provide one base.');
       if (task && args.worktree === false) return officeError('A structured task with baseBranch requires a fresh worktree.');
-      if (task && !caller.worker.remote && path.resolve(task.repo) !== path.resolve(caller.floor.dir)) return officeError('task.repo must name your floor repository. External workers can select another open floor.');
+      if (task && !caller.building && path.resolve(task.repo) !== path.resolve(ownFloor(caller).dir)) return officeError('task.repo must name your floor repository.');
       const prompt = task
         ? `${ticket}\n\nRepository: ${task.repo}\nBase branch: ${task.baseBranch}${task.branch ? `\nTask branch: ${task.branch}` : ''}${task.prNumber ? `\nPull request: #${task.prNumber}` : ''}${task.acceptanceCriteria?.length ? `\nAcceptance criteria:\n${task.acceptanceCriteria.map((c) => `- ${c}`).join('\n')}` : ''}`
         : ticket;
@@ -305,7 +346,7 @@ export function register(server: OfficeMcpServer, deps: OfficeMcpDeps): void {
         'Deprecated alias: prefer team_status, team_message and team_dismiss. Manage only your own subagents. Status returns one named subagent or all, with unread news since your last status call, and the same structuredContent (workers, news, cursor), verbose, since and kinds as team_status. Message answers a question or follows up. Dismiss uses the legacy cleanup policy: worktrees with work are kept.',
       inputSchema: z.object({
         action: z.enum(['status', 'message', 'dismiss']),
-        floor: z.string().min(1).max(128).optional().describe('External workers only: restrict team operations to this floor. Omit for all your teams across the building.'),
+        floor: z.string().min(1).max(128).optional().describe('Building agents only: restrict team operations to this floor. Omit for all your teams across the building.'),
         name: z.string().trim().min(1).optional().describe('Subagent name or id, case-insensitive. Status: omit for all. Required for message and dismiss.'),
         verbose: z.boolean().optional().describe('Status only: false for one compact line per subagent and per event, with summaries instead of whole reports. Omit or true for the full text.'),
         since: z.string().trim().min(1).max(4000).optional().describe('Status only: a cursor from an earlier status (cursor field) or one event id. News is everything after it, heard or not, instead of only unread news.'),
@@ -326,7 +367,7 @@ export function register(server: OfficeMcpServer, deps: OfficeMcpDeps): void {
       if (args.action === 'message' && !args.text) return officeError('team action message needs text: provide the answer or follow-up.');
       if (args.action !== 'status' && args.lines !== undefined) return officeError('lines is only for team action status. Leave it out for message or dismiss.');
       if (args.action !== 'message' && args.text !== undefined) return officeError('text is only for team action message. Leave it out for status or dismiss.');
-      if (args.floor && !caller.worker.remote) return officeError('Local workers manage only their own floor');
+      if (args.floor && !caller.building) return officeError('Floor workers manage only their own floor');
       if (args.action !== 'status' && (args.verbose !== undefined || args.since !== undefined || args.kinds !== undefined)) return officeError('verbose, since and kinds are only for team action status.');
       if (args.action === 'status') return status(caller, { worker: args.name, floor: args.floor, lines: args.lines, verbose: args.verbose, since: args.since, kinds: args.kinds });
       return reply(await command(caller, { action: args.action === 'message' ? 'send' : args.action, worker: args.name, text: args.text, floor: args.floor }), (body) =>
@@ -353,6 +394,7 @@ export function register(server: OfficeMcpServer, deps: OfficeMcpDeps): void {
       annotations: changesState,
     },
     officeAccess.subagent,
-    async (args, caller) => reply(await caller.floor.team.handle(caller.worker, { action: 'report', ...args }), (body) => `${args.question ? 'Asked' : 'Reported to'} ${body.lead}. End your turn now; the answer arrives as a later message.`),
+    async (args, caller) =>
+      reply(await ownFloor(caller).team.handle(caller.worker, { action: 'report', ...args }), (body) => `${args.question ? 'Asked' : 'Reported to'} ${body.lead}. End your turn now; the answer arrives as a later message.`),
   );
 }

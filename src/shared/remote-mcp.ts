@@ -23,7 +23,8 @@ export interface RemoteMcpKey {
 export interface RemoteMcpBot {
   id: string;
   name: string;
-  floor: string;
+  /** Offices from before Mission Control seated each bot on a floor; bots now have none (docs/mission-control.md). */
+  floor?: string;
   floorName?: string;
   createdAt: number;
   status?: string;

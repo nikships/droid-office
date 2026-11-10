@@ -4,7 +4,7 @@ import { z } from 'zod';
 import { readerOf, stateAt, type Anchor, type Op } from '../../shared/whiteboard.js';
 import { readBoard, workerAuthor } from '../whiteboard-agent.js';
 import { formatRead, printable } from './whiteboard-format.js';
-import { officeAccess, officeError, officeResult, record, type OfficeMcpCaller, type OfficeMcpDeps, type OfficeMcpServer } from './index.js';
+import { officeAccess, officeError, officeResult, ownFloor, record, type OfficeMcpCaller, type OfficeMcpDeps, type OfficeMcpServer } from './index.js';
 
 export const instructions = `The Whiteboard is the floor's shared wall of HTML artifacts and canvases. Use it for reviewable screenshots, mockups, diagrams, reports, plans, decisions, options and forms. Plain progress and short answers stay in your terminal. After creating a card, name its title and id in your terminal so the owner can find it. Read feedback with whiteboard_read before changing an existing card, and answer the owner's comments, stickies, form answers and button presses. CHANGED means someone else changed that piece since your last read of that card.
 Good artifacts have stable data-wb-id anchors on sections, options and steps, and a layout 1280 pixels wide (any height). Never put secrets in an artifact: its sandbox has network access. Pages run on an opaque origin without shared cookies or localStorage; keep persistent data in the card's JSON state.
@@ -60,8 +60,9 @@ function resolvePaths(ops: Record<string, unknown>[], cwd: string): Op[] {
 }
 
 function apply(caller: OfficeMcpCaller, ops: Record<string, unknown>[], extra: Record<string, unknown> = {}) {
-  const store = caller.floor.whiteboard;
-  const out = store.apply({ epoch: store.issueEpoch(), seq: 1, ops: resolvePaths(ops, caller.cwd) }, workerAuthor(caller.worker), 'agent');
+  const floor = ownFloor(caller);
+  const store = floor.whiteboard;
+  const out = store.apply({ epoch: store.issueEpoch(), seq: 1, ops: resolvePaths(ops, caller.cwd ?? floor.dir) }, workerAuthor(caller.worker), 'agent');
   if (out.kind !== 'ack') return officeError(out.reason === 'invalid' ? printable(out.error.message) : 'The batch expired. Read the board before retrying.');
   return officeResult(`Done at revision ${out.rev}.${extra.card ? ` Card: ${extra.card}.` : ''}${extra.id ? ` Mark: ${extra.id}.` : ''}`, { ok: true, rev: out.rev, ...extra });
 }
@@ -112,7 +113,7 @@ export function register(server: OfficeMcpServer, _deps: OfficeMcpDeps): void {
     },
     officeAccess.worker,
     async (args, caller, signal) => {
-      const out = await readBoard(caller.floor.whiteboard, readerOf(workerAuthor(caller.worker)), { id: caller.floor.id, name: caller.floor.name }, { ...args, signal });
+      const out = await readBoard(ownFloor(caller).whiteboard, readerOf(workerAuthor(caller.worker)), { id: ownFloor(caller).id, name: ownFloor(caller).name }, { ...args, signal });
       const result = officeResult('');
       result.content = [];
       const pngs = new Map<string, string>();
@@ -176,7 +177,7 @@ export function register(server: OfficeMcpServer, _deps: OfficeMcpDeps): void {
         if (!args.title?.trim() || !picked) return officeError('Create needs a nonempty title and a source: html, file, dir, image, link or canvas.');
         const result = apply(caller, [{ op: 'card.create', card, title: args.title.trim(), kind: picked.kind === 'canvas' ? 'canvas' : 'html', ...(content ? { content } : {}) }], { card });
         if (!result.isError) {
-          const created = await readBoard(caller.floor.whiteboard, caller.worker.id, caller.floor, { cards: [card] });
+          const created = await readBoard(ownFloor(caller).whiteboard, caller.worker.id, ownFloor(caller), { cards: [card] });
           const details = created.cards[0];
           const warnings = [...(details?.content?.missing ?? []).map((missing) => `Not collected: ${missing.ref} (${missing.reason})`), ...(details?.link?.status === 'broken' ? [`The link is broken: ${details.link.reason}`] : [])];
           if (warnings.length) result.content.push({ type: 'text', text: printable(warnings.join('\n')) });
@@ -209,7 +210,7 @@ export function register(server: OfficeMcpServer, _deps: OfficeMcpDeps): void {
     async (args, caller) => {
       const path = dotted(args.path);
       if (args.op === 'get') {
-        const out = await readBoard(caller.floor.whiteboard, caller.worker.id, caller.floor, { cards: [args.card] });
+        const out = await readBoard(ownFloor(caller).whiteboard, caller.worker.id, ownFloor(caller), { cards: [args.card] });
         const card = out.cards[0];
         if (!card) return officeError(`No such card: ${args.card}. Use whiteboard_read to list cards.`);
         const value = stateAt(card.state, path);
