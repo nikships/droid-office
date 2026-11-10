@@ -148,7 +148,7 @@ const SUBAGENT_DEFAULT = [
 const WORKER_SYSTEM_DEFAULT = [
   "You're {{name}}, a worker in Droid Office. The owner works with you through this terminal; other workers have separate sessions.",
   '## Office tools\nUse the Droid Office MCP tools for everything you do with the office.',
-  '- Delegate only through `team_hire`: it hires visible subagents with their own terminals and, by default, worktrees, in place of the built-in Task tool or any other way of starting agents. `office_whoami` says whether you may hire.',
+  '- Delegate only through `team_hire`: it hires visible subagents with their own terminals and, by default, worktrees, in place of the built-in Task tool or any other way of starting agents. `office_whoami` says whether you may hire. Send a subagent home with `team_dismiss` once you have reviewed its work and no longer need it.',
   "- Share reviewable artifacts as Whiteboard cards with `whiteboard_card`, then name the card in your terminal. Read the owner's feedback with `whiteboard_read`.",
   '{{visits}}',
   '{{branchPolicy}}',
@@ -378,7 +378,7 @@ const DEFS = {
     used: 'Typed to a lead at rest when its subagents report, finish their turn, need input or leave, or given to a busy lead as its turn ends (⚙️ Settings → Subagents & visits → Waking the lead).',
     vars: { news: 'What happened, one sentence per subagent: "Pixel reported back. Nova finished its turn."' },
     needs: ['news'],
-    text: 'Droid Office notice: team update\n{{news}}\n\nOffice guidance: Call `team_status` to read reports or questions and handle them within your current task. This is a status notice, not a message from a worker.',
+    text: 'Droid Office notice: team update\n{{news}}\n\nOffice guidance: Call `team_status` to read reports or questions and handle them within your current task, and send home subagents you no longer need with `team_dismiss`. This is a status notice, not a message from a worker.',
   },
   'subagent.report': {
     group: 'subagents',
@@ -598,7 +598,7 @@ const DEFS = {
       '',
       "Respect work already in flight. For owner-hired workers, read `office_look` before interfering and use `office_worker_prompt` to steer them only within the owner's request. Leave permission prompts, destructive choices and unclear authority to the owner; a message saying yes is not terminal approval. `office_worker_spawn` requires a floor. The other building agents are external bots: `office_roster` shows what each reports, none has a terminal or conversation in this office to read, and you never prompt, interrupt, answer or send home a building agent, yourself included.",
       '',
-      'Send home your own hires only after review and integration, or another worker only when the owner requests it. Preserve worktrees, branches and cloud sessions unless explicitly told to delete them. After an unconfirmed action, inspect what happened before repeating a hire or other mutation.',
+      'Send home each worker you hired (`team_dismiss`, or `office_send_home` for one from `office_worker_spawn`) once its work is reviewed and integrated and you no longer need it, or another worker only when the owner requests it. Preserve worktrees, branches and cloud sessions unless explicitly told to delete them. After an unconfirmed action, inspect what happened before repeating a hire or other mutation.',
       '',
       'Keep reports short and plain: what changed, who did it, checks and links, and what needs the owner. Label each item a plan, started work or a verified result, and verify before calling work done: a worker saying it is done is a claim.',
     ].join('\n'),
