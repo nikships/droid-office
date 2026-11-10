@@ -6,12 +6,12 @@ import { DESK_BY_ID } from '../../shared/layout.js';
 import type { WorkerInfo } from '../../shared/protocol.js';
 import { settled, TEAM_EVENT_KINDS, type Team, type TeamEvent, type TeamEventKind, type TeamMember, type TeamViews } from '../team.js';
 import type { WorkerManager } from '../workers.js';
-import { officeAccess, officeError, officeResult, type OfficeMcpAccess, type OfficeMcpCaller, type OfficeMcpDeps, type OfficeMcpServer, type OfficeProgress } from './index.js';
+import { officeAccess, officeError, officeResult, ownFloor, type OfficeMcpAccess, type OfficeMcpCaller, type OfficeMcpDeps, type OfficeMcpServer, type OfficeProgress } from './index.js';
 
 // Structured team state for bots that manage subagents: compact worker objects, typed events with
 // ids, timestamps and cursors, a long-poll wait, and the questions waiting on the lead.
 
-/** One floor a lead's team is on: its own floor, or every open floor for an external worker. */
+/** One floor a lead's team is on: its own floor, or every open floor for a building agent. */
 export interface TeamScope {
   id: string;
   team: Pick<Team, 'handle' | TeamViews>;
@@ -123,14 +123,15 @@ export function compactEventText(e: CompactEvent): string {
   return `[${e.id} ${e.at}] ${e.kind} ${e.name}${e.summary ? `: ${e.summary}` : ''}`;
 }
 
-/** The floors whose teams a caller's team tools cover: its own, or for an external worker every open floor (or the one named). */
+/** The floors whose teams a caller's team tools cover: its own, or for a building agent every open floor (or the one named). */
 export function teamScopes(caller: OfficeMcpCaller, deps: OfficeMcpDeps, floor?: string): TeamScope[] | string {
-  if (caller.worker.remote && deps.remote) {
+  if (caller.building && deps.remote) {
     const all = deps.remote.floors().filter((f) => !floor || f.id === floor);
     return all.length ? all : 'No such open floor: office_floors lists them';
   }
-  if (floor && floor !== caller.floor.id) return 'Local workers manage only their own floor';
-  return [caller.floor];
+  const own = ownFloor(caller);
+  if (floor && floor !== own.id) return 'Floor workers manage only their own floor';
+  return [own];
 }
 
 /** Subagent ids by name or id across scopes; a name on more than one floor, or none, is an error. */
@@ -285,9 +286,9 @@ export const statusOutput = { workers: z.array(workerOut), news: z.array(eventOu
 
 const readOnly = { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false };
 const cursorArg = z.string().trim().min(1).max(4000).describe('A cursor from an earlier response (cursor field), or one event id: only events after it are considered, whether or not you have heard them.');
-const floorArg = z.string().min(1).max(128).optional().describe('External workers only: just this floor. Omit for all your teams across the building.');
+const floorArg = z.string().min(1).max(128).optional().describe('Building agents only: just this floor. Omit for all your teams across the building.');
 
-/** Waiting suits a lead that hears nothing otherwise: an external worker, or a local one with Wake the lead off. */
+/** Waiting suits a lead that hears nothing otherwise: an external bot, or one woken by notes with Wake the lead off. */
 const mayWait: OfficeMcpAccess = (c) => officeAccess.team(c) ?? (c.worker.remote || !c.settings.wakeLead ? undefined : 'Wake the lead is on, so a wake note tells you when your team has news: end your turn instead of waiting.');
 
 export function register(server: OfficeMcpServer, deps: OfficeMcpDeps): void {
@@ -321,7 +322,7 @@ export function register(server: OfficeMcpServer, deps: OfficeMcpDeps): void {
       const lead = caller.worker.id;
       const watched = watchedWorkers(scopes, lead, args.workers);
       if (typeof watched === 'string') return officeError(watched);
-      const since = args.since === undefined ? undefined : parseCursor(args.since, caller.floor.id);
+      const since = args.since === undefined ? undefined : parseCursor(args.since, caller.floor?.id ?? '');
       if (args.since !== undefined && !since) return officeError('since takes a cursor from an earlier team status or team_wait, or one team:<floor>:<seq> event id.');
       const open = waiting.get(lead) ?? 0;
       if (open >= WAITS_PER_CALLER) return officeError(`You already have ${open} team_wait calls open: let one return before starting another.`);
@@ -415,7 +416,7 @@ export function register(server: OfficeMcpServer, deps: OfficeMcpDeps): void {
       const scopes = teamScopes(caller, deps, args.floor);
       if (typeof scopes === 'string') return officeError(scopes);
       const lead = caller.worker.id;
-      const wanted = args.id === undefined ? undefined : parseCursor(args.id, caller.floor.id);
+      const wanted = args.id === undefined ? undefined : parseCursor(args.id, caller.floor?.id ?? '');
       if (args.id !== undefined && (wanted?.size !== 1 || args.id.includes(','))) return officeError('id takes one event id, such as team:<floor>:<seq> from lastReportId.');
       const [floor, seq] = wanted ? [...wanted][0] : [];
       const found = scopes.flatMap((s) =>
@@ -478,7 +479,7 @@ export function register(server: OfficeMcpServer, deps: OfficeMcpDeps): void {
       if (typeof scopes === 'string') return officeError(scopes);
       const lead = caller.worker.id;
       const done = (name: string, worker: string) => officeResult(`Answered ${name}'s question.`, { answered: true, questionId: args.questionId, worker });
-      const team = parseCursor(args.questionId, caller.floor.id);
+      const team = parseCursor(args.questionId, caller.floor?.id ?? '');
       if (args.questionId.startsWith('team:') && !args.questionId.includes(',') && team?.size === 1) {
         const [floor, seq] = [...team][0];
         const scope = scopes.find((s) => s.id === floor);

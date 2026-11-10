@@ -54,21 +54,29 @@ export function waitingStatus(w: Pick<WorkerInfo, 'kind' | 'status' | 'acked' | 
   return undefined;
 }
 
-export function officeStatus(floors: Iterable<StatusFloor>, connections: Iterable<StatusConnection>): OfficeStatus {
+/**
+ * `missionControl` holds the building agents that wait on the owner (the Orchestrator): listed as waiting on
+ * floor '' (Mission Control, on every floor), and not counted among any floor's workers.
+ */
+export function officeStatus(floors: Iterable<StatusFloor>, connections: Iterable<StatusConnection>, missionControl: StatusFloor['workers'] = []): OfficeStatus {
   const out: OfficeStatus = { workers: 0, working: 0, needsInput: 0, done: 0, phones: 0, browsers: 0, floors: 0, waiting: [] };
+  const wait = (w: Parameters<typeof waitingStatus>[0] & Pick<WorkerInfo, 'id' | 'name' | 'waitingSince' | 'createdAt'> & { task?: { name: string } }, floor: string, floorName: string) => {
+    const waiting = waitingStatus(w);
+    if (waiting === 'needs_input') out.needsInput++;
+    if (waiting === 'done') out.done++;
+    if (!waiting) return;
+    const task = w.task?.name.trim();
+    out.waiting.push({ id: w.id, name: w.name, status: waiting, floor, floorName, ...(task ? { task } : {}), since: w.waitingSince ?? w.createdAt });
+  };
   for (const f of floors) {
     out.floors++;
     for (const w of f.workers) {
       out.workers++;
       if (w.status === 'working') out.working++;
-      const waiting = waitingStatus(w);
-      if (waiting === 'needs_input') out.needsInput++;
-      if (waiting === 'done') out.done++;
-      if (!waiting) continue;
-      const task = w.task?.name.trim();
-      out.waiting.push({ id: w.id, name: w.name, status: waiting, floor: f.id, floorName: f.name, ...(task ? { task } : {}), since: w.waitingSince ?? w.createdAt });
+      wait(w, f.id, f.name);
     }
   }
+  for (const w of missionControl) wait(w, '', 'Mission Control');
   // A question blocks its worker and a finished turn doesn't, so questions come first.
   out.waiting.sort((a, b) => Number(a.status === 'done') - Number(b.status === 'done') || a.since - b.since || a.id.localeCompare(b.id));
   out.waiting.length = Math.min(out.waiting.length, STATUS_WAITING_MAX);

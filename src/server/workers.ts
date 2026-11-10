@@ -40,7 +40,7 @@ import { readScreenMenu } from '../shared/asks.js';
 import { SCREEN_SETTLE_MS, readDroidScreen, screenStatus, type DroidScreen } from './droid-screen.js';
 import type { Capacity } from './machine.js';
 import { setupStep, writePlan, writeSetupScript, type SetupStep } from './worktree-setup.js';
-import type { RemoteWorkers } from './remote-workers.js';
+import type { BuildingAgents } from './building-agent.js';
 
 type HeadlessTerminal = InstanceType<typeof headless.Terminal>;
 type Worktree = NonNullable<WorkerInfo['worktree']>;
@@ -127,6 +127,11 @@ const CANCEL_MS = 3000;
 /** A worker's activity while Droid compacts its conversation (PreCompact, until the compact SessionStart). */
 const COMPACTING = 'Compacting its conversation';
 /** What Droid's built-in Task tool is refused with (see hookEntries). */
+/** What a PreToolUse hook prints to refuse a tool call, and why. */
+function denial(reason: string): string {
+  return JSON.stringify({ hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'deny', permissionDecisionReason: reason } });
+}
+
 const TASK_DENY = JSON.stringify({
   hookSpecificOutput: {
     hookEventName: 'PreToolUse',
@@ -309,6 +314,12 @@ export class WorkerManager {
   beforeStop?: (info: WorkerInfo) => string | undefined;
   /** A turn ended and the message queued behind it starts the next one, with no rest between (see stopped). */
   nextTurn?: (info: WorkerInfo) => void;
+  /** The system prompt its agents start with, in place of worker.system (the Orchestrator's brief). */
+  systemPrompt?: (info: WorkerInfo) => string | undefined;
+  /** Tools its agents' droid is refused, by a PreToolUse matcher (a case-sensitive regex), and why. */
+  denyTools?: { matcher: string; reason: string };
+  /** A worker that stays asleep when the floor wakes everyone (the Orchestrator while it is off). */
+  asleep?: (info: WorkerInfo) => boolean;
   private settling = false;
   private spoolTimer?: NodeJS.Timeout;
 
@@ -356,7 +367,10 @@ export class WorkerManager {
     private prompts?: PromptSource,
     /** The floor is a plain folder, not a git checkout of its own (see Floor.plain). */
     private plain = false,
-    private remote?: { store: RemoteWorkers; floor: string; revoke(id: string): void },
+    /** The building's agents (docs/mission-control.md), who lead subagents here from no desk: `floor` is this one. */
+    private building?: { agents: BuildingAgents; floor: string },
+    /** Workers here have no desk: the Orchestrator's own session (see orchestrator.ts). */
+    private deskless = false,
   ) {
     this.trees = new Worktrees(dir, plain);
     if (!plain) this.trees.ensureBranchFile();
@@ -380,7 +394,6 @@ export class WorkerManager {
     this.host = new PtyHost(dataDir, () => this.events.toast("The workers' terminal host stopped — resuming them", 'warn'));
     this.scrollback = new ScrollbackStore(dataDir);
     this.drops = new DropStore(dataDir);
-    for (const info of remote?.store.workers(remote.floor) ?? []) this.workers.set(info.id, newWorker(info));
     this.restore();
     this.scrollback.prune(new Set(this.workers.keys()));
     this.pruneSpools();
@@ -496,7 +509,7 @@ export class WorkerManager {
    * lead picked, or the one its own HEAD is on, so a lead sitting on an old main doesn't hand it that.
    */
   fetchStart(lead: string, from?: string): Promise<void> | undefined {
-    const boss = this.get(lead) ?? this.remoteIdentity(lead);
+    const boss = this.get(lead) ?? this.buildingIdentity(lead);
     if (!boss) return undefined;
     const cwd = boss.worktree ? path.join(this.dir, boss.worktree.path) : this.dir;
     const where = existsSync(cwd) ? cwd : this.dir;
@@ -527,54 +540,21 @@ export class WorkerManager {
     return this.workers.get(id)?.info;
   }
 
-  /** A remote lead remains reachable from its original floor after moving its desk elsewhere. */
-  remoteIdentity(id: string): WorkerInfo | undefined {
-    return this.remote?.store.identity(id);
+  /** A building agent (the Orchestrator or an external bot): it leads subagents here from Mission Control, at no desk of this floor. */
+  buildingIdentity(id: string): WorkerInfo | undefined {
+    return this.workers.has(id) ? undefined : this.building?.agents.identity(id);
   }
 
-  releaseRemoteLead(id: string) {
+  /** `id` leads nobody here any more: its subagents carry on as independent workers. */
+  releaseLead(id: string) {
+    let changed = false;
     for (const w of this.workers.values()) {
       if (w.info.lead !== id) continue;
       delete w.info.lead;
+      changed = true;
       this.emitUpdate(w);
     }
-    this.persist();
-  }
-
-  /** Remote seats are real occupants but never launch a process or count as a session. */
-  remoteSeat(name: string, moving = false): string {
-    if (this.closing || this.selectingBranch) throw new Error('The floor is not ready for a remote worker');
-    if (!moving) {
-      const full = this.capacity?.full();
-      if (full) throw new Error(full);
-    }
-    if (this.list().some((w) => w.name.toLowerCase() === name.toLowerCase()) || [...(this.holds?.names() ?? [])].some((n) => n.toLowerCase() === name.toLowerCase())) throw new Error('That worker name is already on this floor');
-    const seat = [...DESK_BY_ID.values()].find((d) => !this.deskOccupied(d.id));
-    if (!seat) throw new Error('This floor has no free desk');
-    return seat.id;
-  }
-
-  attachRemote(info: WorkerInfo) {
-    if (!info.remote || this.deskOccupied(info.deskId)) throw new Error('Remote desk is not available');
-    const w = newWorker(info);
-    this.workers.set(info.id, w);
-    this.emitUpdate(w);
-  }
-
-  detachRemote(id: string) {
-    if (!this.workers.get(id)?.info.remote) return;
-    this.workers.delete(id);
-    this.subscribers.delete(id);
-    this.events.remove(id);
-  }
-
-  remoteStatus(id: string, status: 'idle' | 'working' | 'done', activity?: string) {
-    const w = this.workers.get(id);
-    if (!w?.info.remote) throw new Error('No remote worker here');
-    const said = activity !== undefined && activity !== w.info.activity;
-    w.info.activity = activity ?? w.info.activity;
-    if (w.info.status !== status) this.setStatus(w, status);
-    else if (said) this.emitUpdate(w);
+    if (changed) this.persist();
   }
 
   /** The folder an agent's droid runs in, where its project skills and commands come from. */
@@ -662,7 +642,7 @@ export class WorkerManager {
     if (from !== undefined && (lead === undefined || !worktree)) return 'Only a subagent in its own worktree starts from a branch its lead picks';
     if (branch !== undefined && (lead === undefined || !worktree || repos.length)) return 'A named branch requires a subagent with one fresh worktree';
     if (lead !== undefined) {
-      const boss = this.get(lead) ?? this.remoteIdentity(lead);
+      const boss = this.get(lead) ?? this.buildingIdentity(lead);
       if (!boss) return 'Its lead has left';
       if (boss.lead) return "A subagent can't hire subagents of its own";
       if (kind !== 'agent') return 'A subagent is an agent at a desk or a bean bag';
@@ -817,7 +797,13 @@ export class WorkerManager {
   /** The team `leadId` leads, which it starts wearing the markings of with its first hire. */
   private formTeam(leadId: string): TeamBadge | undefined {
     const lead = this.workers.get(leadId);
-    if (!lead) return undefined;
+    if (!lead) {
+      const agent = this.buildingIdentity(leadId);
+      if (!agent) return undefined;
+      // A building agent sits on no floor: its team here wears what its subagents here already wear, else a look new to this floor.
+      const worn = [...this.workers.values()].find((w) => w.info.lead === leadId && w.info.team?.id === leadId)?.info.team;
+      return worn ? { ...worn, role: 'lead' } : leadBadge(agent, this.list());
+    }
     const badge = leadBadge(
       lead.info,
       [...this.workers.values()].map((w) => w.info),
@@ -922,7 +908,7 @@ export class WorkerManager {
    */
   private briefed(w: Worker, prompt: string | undefined): string | undefined {
     if (!prompt) return prompt;
-    const lead = w.info.lead ? (this.get(w.info.lead) ?? this.remoteIdentity(w.info.lead)) : undefined;
+    const lead = w.info.lead ? (this.get(w.info.lead) ?? this.buildingIdentity(w.info.lead)) : undefined;
     if (!lead) return prompt;
     const wt = w.info.worktree;
     const where = wt
@@ -1025,7 +1011,7 @@ export class WorkerManager {
 
   /** Starts a worker that isn't running again, carrying on its session, with `prompt` as its next message. */
   resume(id: string, prompt?: string): string | undefined {
-    if (this.remoteIdentity(id)) return prompt ? this.prompt(id, prompt) : 'This worker runs remotely; it cannot be resumed locally';
+    if (this.buildingIdentity(id)) return prompt ? this.prompt(id, prompt) : 'A building agent is not started from a floor';
     const w = this.workers.get(id);
     if (!w) return 'No such worker';
     if (w.pty) return 'Worker is already running';
@@ -1043,6 +1029,103 @@ export class WorkerManager {
     const carryOn = !prompt && w.interrupted && w.info.kind === 'agent' && !!w.info.sessionId;
     w.interrupted = false;
     this.launch(w, carryOn ? CARRY_ON_PROMPT : first, w.info.sessionId);
+    return undefined;
+  }
+
+  /**
+   * Starts an agent that has no desk, under a fixed id (the Orchestrator, in its own manager). Its first
+   * prompt is typed in once its droid is ready.
+   */
+  spawnDeskless(id: string, name: string, color: string, by: string, prompt: string, model?: string, effort?: AgentEffort, images?: readonly string[]): WorkerInfo | string {
+    if (this.closing) return 'The office is closing';
+    if (this.workers.has(id)) return 'Already started';
+    const modelError = validateWorkerModel('agent', model) ?? validateWorkerEffort('agent', effort) ?? this.modelGate?.(model);
+    if (modelError) return modelError;
+    const typed = prompt.replace(/\r\n?/g, '\n').trim();
+    const text = images?.length ? withImages(typed, this.drops.adopt(id, images)) : typed;
+    if (!text) return 'Empty prompt';
+    const shown = typed || 'See the attached images';
+    const info: WorkerInfo = {
+      id,
+      kind: 'agent',
+      model,
+      effort,
+      deskId: '',
+      name,
+      color,
+      status: 'starting',
+      acked: true,
+      createdBy: by,
+      createdAt: Date.now(),
+      prompt: shown,
+      cols: 100,
+      rows: 30,
+      open: false,
+      activity: truncate(shown, 80),
+    };
+    const w = newWorker(info);
+    this.notePrompt(w, shown);
+    this.workers.set(id, w);
+    this.launch(w, text, undefined);
+    this.persist();
+    return info;
+  }
+
+  /** Stops a worker's process and keeps it, conversation and all, to resume later. */
+  halt(id: string): boolean {
+    const w = this.workers.get(id);
+    const proc = w?.pty;
+    if (!w || !proc) return false;
+    w.pty = undefined;
+    w.launchPrompt = undefined;
+    try {
+      proc.kill();
+    } catch {
+      // already gone
+    }
+    clockWork(w.info, 'exited');
+    w.info.status = 'exited';
+    w.info.acked = true;
+    delete w.info.ask;
+    this.emitUpdate(w);
+    this.persist();
+    return true;
+  }
+
+  /** Stops a worker and forgets it and its conversation, but not who it leads: a new conversation for the same agent. */
+  forget(id: string): boolean {
+    const w = this.workers.get(id);
+    if (!w) return false;
+    this.workers.delete(id);
+    this.subscribers.delete(id);
+    const proc = w.pty;
+    w.pty = undefined;
+    try {
+      proc?.kill();
+    } catch {
+      // already gone
+    }
+    w.term?.dispose();
+    this.scrollback.remove(id);
+    this.drops.remove(id);
+    rmSync(this.spoolFile(id), { force: true });
+    this.events.remove(id);
+    this.persist();
+    return true;
+  }
+
+  /** The model and effort an agent runs on from its next launch; a running one keeps its current process until then. */
+  choose(id: string, model: string | undefined, effort: AgentEffort | undefined): string | undefined {
+    const w = this.workers.get(id);
+    if (!w) return 'No such worker';
+    const error = validateWorkerModel('agent', model) ?? validateWorkerEffort('agent', effort);
+    if (error) return error;
+    w.info.model = model;
+    w.info.effort = effort;
+    w.info.activeModel = undefined;
+    w.info.activeEffort = undefined;
+    this.emitUpdate(w);
+    this.persist();
     return undefined;
   }
 
@@ -1093,6 +1176,11 @@ export class WorkerManager {
     this.drops.unstage(ids);
   }
 
+  /** Whether its process is running. */
+  running(id: string): boolean {
+    return !!this.workers.get(id)?.pty;
+  }
+
   /** The worker whose terminal holds this hook token: how a worker proves it's asking for itself. */
   authenticate(id: string, token: string): WorkerInfo | undefined {
     const w = this.workers.get(id);
@@ -1101,7 +1189,7 @@ export class WorkerManager {
 
   /** Starts every worker that isn't running: nobody should be found asleep at their desk. */
   wakeAll() {
-    for (const w of this.workers.values()) if (!w.pty && !w.info.remote) this.resume(w.info.id);
+    for (const w of this.workers.values()) if (!w.pty && !w.info.remote && !this.asleep?.(w.info)) this.resume(w.info.id);
   }
 
   /** Keeps a file dropped or pasted into a worker's terminal on this machine; where it is, for the terminal to type. */
@@ -1162,10 +1250,6 @@ export class WorkerManager {
   async kill(id: string, cleanup?: WorktreeCleanup, landed?: string, landedRepos?: Record<string, string | undefined>, shot = false): Promise<{ note?: string; error?: string }> {
     const w = this.workers.get(id);
     if (!w) return {};
-    if (w.info.remote) {
-      this.remote?.revoke(id);
-      return {};
-    }
     this.workers.delete(id);
     this.subscribers.delete(id);
     const proc = w.pty;
@@ -1543,9 +1627,9 @@ export class WorkerManager {
    * Droid queues the message behind its current turn.
    */
   prompt(id: string, text: string, images?: readonly string[], queue = false): string | undefined {
-    if (this.remoteIdentity(id) && this.remote) {
-      if (images?.length) return 'Remote workers accept text through their MCP inbox, not local image paths';
-      return this.remote.store.enqueue(id, text, this.remote.floor);
+    if (this.building && this.buildingIdentity(id)) {
+      if (images?.length) return 'Building agents take text, not pictures, from a floor';
+      return this.building.agents.tell(id, text, this.building.floor);
     }
     const w = this.workers.get(id);
     if (!w) return 'No such worker';
@@ -2563,6 +2647,7 @@ export class WorkerManager {
     const hooks: Record<string, unknown[]> = {};
     for (const event of HOOK_EVENTS) hooks[event] = [{ hooks: [{ type: 'command', command: this.hookCommand(event) }] }];
     if (this.denyTask?.() ?? true) hooks.PreToolUse.unshift({ matcher: 'Task', hooks: [{ type: 'command', command: `printf '%s' ${shq(TASK_DENY)}` }] });
+    if (this.denyTools) hooks.PreToolUse.unshift({ matcher: this.denyTools.matcher, hooks: [{ type: 'command', command: `printf '%s' ${shq(denial(this.denyTools.reason))}` }] });
     return hooks;
   }
 
@@ -2595,6 +2680,7 @@ export class WorkerManager {
    */
   private systemPromptFile(info: WorkerInfo): string | undefined {
     const file = path.join(this.dataDir, `system-${info.id}.md`);
+    if (this.systemPrompt) return this.writeSystem(file, this.systemPrompt(info));
     // A plain folder has no branches to keep in sync.
     const branchPolicy = this.plain ? '' : workerBranchPolicy(this.trees.baseBranch() ?? this.trees.currentBranch(), this.trees.branchFile);
     const template = this.prompts?.text('worker.system') ?? PROMPTS['worker.system'].text;
@@ -2610,6 +2696,10 @@ export class WorkerManager {
       const files = info.worktree ? 'Your files are a private snapshot in your own worktree.' : 'You share this floor’s folder with the original worker. Files are not copied or isolated; coordinate before editing the same files.';
       text += `\n\nYou are ${info.name}, an independent fork of ${info.forkedFrom.name}'s conversation. ${files} The original may keep working. You are not the original worker or its subagent: use your own worker id and do not act on its terminal, worktree or team.`;
     }
+    return this.writeSystem(file, text);
+  }
+
+  private writeSystem(file: string, text: string | undefined): string | undefined {
     try {
       if (!text) {
         rmSync(file, { force: true });
@@ -2689,8 +2779,9 @@ export class WorkerManager {
         lastInput?: unknown;
       })[];
       for (const s of saved) {
-        if (s.id && typeof s.deskId === 'string' && !DESK_BY_ID.has(s.deskId)) this.retired.push(s);
-        if (!s.id || !s.deskId || !DESK_BY_ID.has(s.deskId) || this.deskOccupied(s.deskId)) continue;
+        const seated = this.deskless ? s.deskId === '' : !!s.deskId && DESK_BY_ID.has(s.deskId);
+        if (s.id && typeof s.deskId === 'string' && !seated) this.retired.push(s);
+        if (!s.id || typeof s.deskId !== 'string' || !seated || (!this.deskless && this.deskOccupied(s.deskId))) continue;
         const shell = s.kind === 'shell';
         const info: WorkerInfo = {
           id: s.id,
@@ -2746,7 +2837,7 @@ export class WorkerManager {
       }
       // A lead that didn't come back, or is a subagent itself, leads nobody.
       for (const w of this.workers.values()) {
-        const lead = w.info.lead && (this.get(w.info.lead) ?? this.remoteIdentity(w.info.lead));
+        const lead = w.info.lead && (this.get(w.info.lead) ?? this.buildingIdentity(w.info.lead));
         if (w.info.lead && (!lead || lead.lead)) delete w.info.lead;
       }
       // Markings follow who leads whom now; an office from before them gives each team its own.
