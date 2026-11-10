@@ -5,9 +5,9 @@ import { h, timeAgo, toast } from './dom';
 import { disclosure, toggle } from './kit';
 import { confirmDialog } from './prompt';
 
-// Settings → Phone & web → Tailscale MCP: external bots on the owner's own Tailscale devices join as
-// workers. The office serves and unserves the endpoint itself; this row switches it and hands out each
-// bot's connection.
+// Settings → Phone & web → Tailscale MCP: external bots on the owner's own Tailscale devices join the
+// building as agents at Mission Control, with no desk (docs/mission-control.md). The office serves and
+// unserves the endpoint itself; this row switches it and hands out each bot's connection.
 
 type Answer = RemoteMcpState | string;
 
@@ -94,15 +94,13 @@ export function remoteMcpSettings(): { control: HTMLElement; meta: HTMLElement; 
   }
 
   function botRow(b: RemoteMcpBot): Node {
-    const where = [b.floorName ?? b.floor, b.status ? `${b.status}${b.activity ? `: ${b.activity}` : ''}` : undefined, `added ${timeAgo(b.createdAt)}`, lastUsed(b.lastUsedAt, 'main key')].filter(Boolean).join(' · ');
+    const where = ['Mission Control', b.status ? `${b.status}${b.activity ? `: ${b.activity}` : ''}` : undefined, `added ${timeAgo(b.createdAt)}`, lastUsed(b.lastUsedAt, 'main key')].filter(Boolean).join(' · ');
     const rotate = h('button.btn.sm.ghost', { type: 'button', title: 'Give this bot a new key. The old one stops working at once.' }, 'New key');
     rotate.addEventListener('click', () =>
       confirmDialog(`New key for ${b.name}?`, 'Its old main key stops working at once; its named keys keep working. Give the bot the new connection afterwards.', 'New key', () => void act('POST', { action: 'rotate', id: b.id })),
     );
     const remove = h('button.btn.sm.danger', { type: 'button' }, 'Remove');
-    remove.addEventListener('click', () =>
-      confirmDialog(`Remove ${b.name}?`, 'Its key stops working and its desk is freed. Any subagents it hired stay and work on their own.', 'Remove', () => void act('POST', { action: 'revoke', id: b.id })),
-    );
+    remove.addEventListener('click', () => confirmDialog(`Remove ${b.name}?`, 'Its keys stop working. Any subagents it hired stay on their floors and work on their own.', 'Remove', () => void act('POST', { action: 'revoke', id: b.id })));
     const connection = b.connection;
     const details = disclosure(
       b.name,
@@ -178,18 +176,20 @@ export function remoteMcpSettings(): { control: HTMLElement; meta: HTMLElement; 
 
   function addForm(s: RemoteMcpState): Node {
     const name = h('input.input', { type: 'text', maxlength: 60, placeholder: 'Bot name, like Grok', 'aria-label': 'Bot name' });
-    const floor = h('select.select', { 'aria-label': 'Floor its desk is on' }, ...s.floors.map((f) => h('option', { value: f.id }, f.name)));
-    const add = h('button.btn.primary', { type: 'button', disabled: !s.floors.length }, 'Add bot');
+    const add = h('button.btn.primary', { type: 'button' }, 'Add bot');
     const submit = () => {
       const n = name.value.trim();
       if (!n) return name.focus();
-      void act('POST', { action: 'add', name: n, floor: floor.value }, () => toast(`${n} has a desk. Open it below and copy its config into the bot’s MCP client.`));
+      void act('POST', { action: 'add', name: n }, (next) => {
+        const bot = next.bots.find((b) => b.name === n && !s.bots.some((old) => old.id === b.id));
+        toast(bot?.connection ? `${n} joined Mission Control. Open it below and copy its config into the bot’s MCP client.` : `${n} joined Mission Control. Its config shows here once the office is on your tailnet.`);
+      });
     };
     add.addEventListener('click', submit);
     name.addEventListener('keydown', (e) => {
       if (e.key === 'Enter') submit();
     });
-    return h('div.input-group', {}, name, floor, add);
+    return h('div.input-group', {}, name, add);
   }
 
   void call('GET').then(paint);
