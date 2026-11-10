@@ -11,7 +11,7 @@ import { WebSocket } from 'ws';
 import { build } from 'vite';
 import { Client, StreamableHTTPClientTransport } from '@modelcontextprotocol/client';
 import { loadConfig } from '../src/server/config.js';
-import { startServer } from '../src/server/server.js';
+import { leaveFloorTerminals, startServer } from '../src/server/server.js';
 import { DevicesStore } from '../src/server/devices.js';
 import { OFFICE_MCP_PATH, OFFICE_MCP_WORKER_HEADER } from '../src/server/office-mcp/index.js';
 import { ORCHESTRATOR_ID } from '../src/shared/mission-control.js';
@@ -117,6 +117,15 @@ exit 0
   await client.wait('missionControl', (m) => !!m.state.orchestrator.blocked?.includes('Droid isn’t ready'));
   assert.equal(client.ws.readyState, WebSocket.OPEN);
   assert.equal(welcome.missionControl?.orchestrator.agent, undefined, 'readiness changes need no first prompt or PTY');
+});
+
+test('a ride keeps the Orchestrator’s terminal open and still due the snapshot a slow link was waiting for', () => {
+  const c = { attached: new Set(['w-1', ORCHESTRATOR_ID, 'office-shell']), stale: new Set(['w-1', ORCHESTRATOR_ID]) };
+  leaveFloorTerminals(c);
+  assert.deepEqual([[...c.attached], [...c.stale]], [[ORCHESTRATOR_ID], [ORCHESTRATOR_ID]]);
+  const floorOnly = { attached: new Set(['w-1']), stale: new Set(['w-1']) };
+  leaveFloorTerminals(floorOnly);
+  assert.deepEqual([floorOnly.attached.size, floorOnly.stale.size], [0, 0]);
 });
 
 /** A signed-in Droid that records each launch's Office MCP credential and stays open like a session. */

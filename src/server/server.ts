@@ -229,6 +229,15 @@ const COLOR_RE = /^#[0-9a-fA-F]{6}$/;
 /** The most lines per worker's terminal a search answers with. */
 const SEARCH_TERMINAL_HITS = 25;
 
+/**
+ * Closes the terminals a connection had open on the floor it leaves. Mission Control is on every floor: the
+ * Orchestrator's stays open through a ride, and still due a snapshot if a slow link was skipping its output.
+ */
+export function leaveFloorTerminals(c: Pick<Client, 'attached' | 'stale'>) {
+  for (const id of c.attached) if (id !== ORCHESTRATOR_ID) c.attached.delete(id);
+  for (const id of c.stale) if (id !== ORCHESTRATOR_ID) c.stale.delete(id);
+}
+
 export async function startServer(cfg: Config) {
   const publicDir = findPublicDir();
   const appDir = sourceAppDir();
@@ -1732,11 +1741,7 @@ export async function startServer(cfg: Config) {
       was.cloud.detachAll(c.id);
       was.changes.unwatchAll(c.id);
     }
-    // Mission Control is on every floor: the Orchestrator's terminal stays open through a ride.
-    const mission = c.attached.has(ORCHESTRATOR_ID);
-    c.attached.clear();
-    c.stale.clear();
-    if (mission) c.attached.add(ORCHESTRATOR_ID);
+    leaveFloorTerminals(c);
     const spot = at ?? { ...elevatorSpot(), y: 0, rotY: 0 };
     return { spot };
   };
@@ -1828,6 +1833,14 @@ export async function startServer(cfg: Config) {
       const floor = workerFloor(asked) ?? floors.get(cloud.find(asked)?.floor.id ?? '');
       if (floor && floor.id !== c.floor) return done('That worker is not on the active floor. Nothing was sent.');
     }
+    const promptOrchestrator = (m: { prompt: string; images?: string[]; queue?: boolean }) => {
+      const images = imageIds(m.images);
+      const err = orchestrator.prompt(str(m.prompt, 20000), images, m.queue === true);
+      orchestrator.workers.unstage(images);
+      warn(c, err);
+      done(err, ORCHESTRATOR_ID);
+    };
+    const interruptOrchestrator = () => done(orchestrator.interrupt() ? undefined : 'The Orchestrator isn’t in the middle of a turn. Nothing was stopped.');
     // The Orchestrator is in Mission Control on every floor: its terminal, thread and turn are reachable from any.
     if (asked === ORCHESTRATOR_ID && /^(worker|term|thread|changes)\./.test(msg.t)) {
       const orch = orchestrator.workers;
@@ -1843,15 +1856,10 @@ export async function startServer(cfg: Config) {
           c.attached.delete(ORCHESTRATOR_ID);
           orch.detach(ORCHESTRATOR_ID, c.id);
           return done();
-        case 'worker.prompt': {
-          const images = imageIds(msg.images);
-          const err = orchestrator.prompt(str(msg.prompt, 20000), images, msg.queue === true);
-          orch.unstage(images);
-          warn(c, err);
-          return done(err, ORCHESTRATOR_ID);
-        }
+        case 'worker.prompt':
+          return promptOrchestrator(msg);
         case 'worker.interrupt':
-          return done(orchestrator.interrupt() ? undefined : 'The Orchestrator isn’t in the middle of a turn. Nothing was stopped.');
+          return interruptOrchestrator();
         case 'worker.answer': {
           const hasChoice = typeof msg.choice === 'number';
           const hasChoices = Array.isArray(msg.choices);
@@ -2767,16 +2775,11 @@ export async function startServer(cfg: Config) {
         wait.done(msg.ok === true ? { ok: true, value: msg.value } : { ok: false, error: str(msg.error, 2000) || 'The command failed' });
         break;
       }
-      case 'orchestrator.prompt': {
-        const images = imageIds(msg.images);
-        const err = orchestrator.prompt(str(msg.prompt, 20000), images, msg.queue === true);
-        orchestrator.workers.unstage(images);
-        warn(c, err);
-        done(err, ORCHESTRATOR_ID);
+      case 'orchestrator.prompt':
+        promptOrchestrator(msg);
         break;
-      }
       case 'orchestrator.interrupt':
-        done(orchestrator.interrupt() ? undefined : 'The Orchestrator isn’t in the middle of a turn. Nothing was stopped.');
+        interruptOrchestrator();
         break;
       case 'orchestrator.reset':
         orchestrator.reset();
