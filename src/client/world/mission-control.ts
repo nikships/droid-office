@@ -1,8 +1,7 @@
 import * as THREE from 'three';
 import { MISSION_HEAD } from '../../shared/layout';
-import { ORCHESTRATOR_ID, ORCHESTRATOR_NAME, type MissionControlState } from '../../shared/mission-control';
+import { ORCHESTRATOR_COLOR, ORCHESTRATOR_ID, ORCHESTRATOR_NAME, type MissionControlState } from '../../shared/mission-control';
 import type { WorkerInfo } from '../../shared/protocol';
-import { ORCHESTRATOR_COLOR } from '../mission';
 import { ORCHESTRATOR_SPOT, botChairs, chairSpot, missionBadge, orchestratorPhase, type MissionSpot, type MissionView, type OrchestratorPhase } from '../mission-office';
 import { Worker } from './character';
 import { MissionScreens, phaseColor } from './mission-screens';
