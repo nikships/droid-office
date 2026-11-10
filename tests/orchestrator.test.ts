@@ -139,6 +139,32 @@ test('a prompt for an Orchestrator whose session ended carries its conversation 
   assert.equal(existsSync(/Image 1: (.+)$/.exec(message)![1]), true, 'the picture is the Orchestrator’s own file now');
 });
 
+test('pictures sent alone to an Orchestrator cut off mid-turn reach its session instead of a carry-on note', async (t) => {
+  const r = rig(t);
+  r.orchestrator.prompt('Plan the release');
+  const first = await r.launched(1);
+  r.hook(first, 'SessionStart', { source: 'startup' });
+  r.orchestrator.shutdown(true);
+  // The office went down mid-turn, and the next one opened without waking it.
+  const file = path.join(r.dir, 'orchestrator', '.droid-office', 'workers.json');
+  const saved = JSON.parse(readFileSync(file, 'utf8')) as Record<string, unknown>[];
+  writeFileSync(file, JSON.stringify(saved.map((s) => ({ ...s, midTurn: true }))));
+  const reopened = rig(t, r.dir);
+  const asleep = reopened.orchestrator.workers.asleep;
+  reopened.orchestrator.workers.asleep = () => true;
+  await reopened.orchestrator.start();
+  reopened.orchestrator.workers.asleep = asleep;
+  assert.equal(reopened.launches().length, 1);
+  const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==', 'base64');
+  const picture = reopened.orchestrator.workers.stageImage('mock.png', png);
+  assert.ok(picture);
+  assert.equal(reopened.orchestrator.prompt('', [picture]), undefined);
+  const second = await reopened.launched(2);
+  reopened.hook(second, 'SessionStart', { source: 'resume' });
+  const message = await until(() => reopened.typed(second)[0], 'the pictures');
+  assert.match(message, /^Image 1: .+mock\.png$/);
+});
+
 test('off stops only the Orchestrator’s session; on carries its conversation on, as an office restart does', async (t) => {
   const r = rig(t);
   r.orchestrator.prompt('Plan the release');

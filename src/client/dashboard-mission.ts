@@ -140,7 +140,7 @@ export function createMissionRoster(el: HTMLElement, host: MissionRosterHost) {
     return r;
   }
 
-  /** `session` is undefined only for the Orchestrator before its first prompt, when `w` stands in for it. */
+  /** A building agent's row; with no session the Orchestrator's is its stand-in from `buildingAgent`. */
   function paintAgent(agent: MissionAgent, s: MissionRosterState): HTMLElement {
     const w = agent.worker;
     const orchestrator = w.id === ORCHESTRATOR_ID;

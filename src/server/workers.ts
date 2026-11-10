@@ -1038,7 +1038,7 @@ export class WorkerManager {
       this.notePrompt(w, shown);
     }
     // Cut off mid-turn by a restart: it gets on with it, as whoever was watching would have told it to.
-    const carryOn = !prompt && w.interrupted && w.info.kind === 'agent' && !!w.info.sessionId;
+    const carryOn = !text && w.interrupted && w.info.kind === 'agent' && !!w.info.sessionId;
     w.interrupted = false;
     this.launch(w, carryOn ? CARRY_ON_PROMPT : first, w.info.sessionId);
     return undefined;
