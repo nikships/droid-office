@@ -14,6 +14,7 @@ import {
   missionBadge,
   missionLinks,
   missionStand,
+  missionTeamBadge,
   missionTeamLine,
   missionView,
   orchestratorPhase,
@@ -101,7 +102,11 @@ test('a building agent wears its own lead badge, else its subagents’, else a t
   const own = missionBadge(o, []);
   assert.deepEqual(own, { id: ORCHESTRATOR_ID, role: 'lead', accent: ORCHESTRATOR_COLOR, emblem: 'star', leadName: 'Orchestrator' });
   const sub = worker({ id: 'w-1', deskId: 'desk-1', lead: ORCHESTRATOR_ID, team: { id: 't-9', role: 'member', accent: '#00ff00', emblem: 'bolt', leadName: 'Orchestrator' } as WorkerInfo['team'] });
-  assert.deepEqual(missionBadge(o, [sub]), { id: 't-9', role: 'lead', accent: '#00ff00', emblem: 'bolt', leadName: 'Orchestrator' });
+  assert.deepEqual(missionBadge(o, [sub]), { id: 't-9', role: 'lead', accent: ORCHESTRATOR_COLOR, emblem: 'bolt', leadName: 'Orchestrator' });
+  assert.deepEqual(missionTeamBadge(sub), { ...sub.team, accent: ORCHESTRATOR_COLOR }, 'member markings use the same accent, even from an old session');
+  assert.equal(sub.team?.accent, '#00ff00', 'painting does not mutate the saved session');
+  assert.equal(missionBadge({ ...o, team: { ...sub.team!, role: 'lead' } }, []).accent, ORCHESTRATOR_COLOR, 'an existing lead badge is orange too');
+  assert.equal(missionTeamBadge({ ...sub, lead: 'claw' }), sub.team, 'bots keep their own team accents');
   const b = bot('claw').worker;
   assert.deepEqual(missionBadge(b, []), { id: 'claw', role: 'lead', accent: '#33aaff', emblem: 'hex', leadName: 'claw' });
 });

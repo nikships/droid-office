@@ -101,11 +101,16 @@ export function orchestratorWaiting(state: MissionControlState | null | undefine
  * The lead markings a building agent wears: its own lead badge, else the one its subagents on this floor
  * wear, else a team of its own colour (Mission Control's, for the Orchestrator).
  */
-export function missionBadge(w: Pick<WorkerInfo, 'id' | 'name' | 'color' | 'team'>, floorWorkers: Iterable<WorkerInfo>): TeamBadge {
-  if (w.team?.role === 'lead') return w.team;
-  for (const m of floorWorkers) if (m.lead === w.id && m.team) return { ...m.team, role: 'lead' };
+export function missionBadge(w: Pick<WorkerInfo, 'id' | 'name' | 'color' | 'team' | 'lead'>, floorWorkers: Iterable<WorkerInfo>): TeamBadge {
+  if (w.team?.role === 'lead') return missionTeamBadge(w)!;
+  for (const m of floorWorkers) if (m.lead === w.id && m.team) return { ...missionTeamBadge(m)!, role: 'lead' };
   const orchestrator = w.id === ORCHESTRATOR_ID;
   return { id: w.id, role: 'lead', accent: orchestrator ? ORCHESTRATOR_COLOR : w.color, emblem: orchestrator ? 'star' : 'hex', leadName: w.name };
+}
+
+/** Saved session badges may predate the Orchestrator's fixed accent; its team's markings always match it. */
+export function missionTeamBadge(w: Pick<WorkerInfo, 'id' | 'lead' | 'team'>): TeamBadge | undefined {
+  return w.team && (w.id === ORCHESTRATOR_ID || w.lead === ORCHESTRATOR_ID) ? { ...w.team, accent: ORCHESTRATOR_COLOR } : w.team;
 }
 
 /** "🧭 3 subagents on 2 floors · 2 working · 1 needs you", or undefined for an agent with no team. */
