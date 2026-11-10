@@ -24,7 +24,7 @@ import type { PaneView } from './dashboard-workspace';
 import { workerTeams } from '../shared/team';
 import { missionAgent, ORCHESTRATOR_ID, type MissionAgent, type MissionControlState, type MissionTeamMember } from '../shared/mission-control';
 import type { SettingsPane } from '../shared/settings-nav';
-import { botLine, missionLead, ORCHESTRATOR_EXAMPLES, ORCHESTRATOR_PITCH, orchestratorLine, orchestratorMessage, orchestratorStarted } from './mission';
+import { botLine, missionLead, ORCHESTRATOR_EXAMPLES, ORCHESTRATOR_PITCH, orchestratorBlocked, orchestratorLine, orchestratorMessage, orchestratorStarted } from './mission';
 
 /** What a sidebar row carries when it's dragged onto a pane. */
 export const WORKER_MIME = 'application/x-droid-worker';
@@ -336,7 +336,7 @@ export function createPane(host: PaneHost, index: number): Pane {
         },
         floor: intended,
         intro: () => (orchestratorStarted(host.mission()) ? undefined : (intro ??= orchestratorIntro())),
-        blocked: () => host.mission()?.orchestrator.blocked,
+        blocked: () => orchestratorBlocked(host.mission()),
         blockedAction: settingsBtn,
         interrupt: true,
         promptWakes: true,
@@ -519,7 +519,7 @@ export function createPane(host: PaneHost, index: number): Pane {
   /** What the header says it's doing: building agents say it as their Mission Control row does. */
   function headLine(w: WorkerInfo) {
     // The pane says why it's blocked in place of its composer.
-    if (w.id === ORCHESTRATOR_ID) return host.mission()?.orchestrator.blocked ? 'Can’t start yet' : orchestratorLine(host.mission());
+    if (w.id === ORCHESTRATOR_ID) return orchestratorBlocked(host.mission()) ? 'Can’t start yet' : orchestratorLine(host.mission());
     const bot = w.remote ? missionAgent(host.mission(), w.id) : undefined;
     if (bot) return botLine(bot);
     return w.task?.name ?? w.title ?? doingLine(w);
@@ -559,7 +559,7 @@ export function createPane(host: PaneHost, index: number): Pane {
     const engine = w.kind === 'agent' ? modelBadgeNode(w.activeModel ?? w.model, w.activeEffort ?? w.effort) : kind(w);
     model.replaceChildren(...(engine ? [engine] : []));
     pill.hidden = false;
-    const blocked = w.id === ORCHESTRATOR_ID && !!host.mission()?.orchestrator.blocked;
+    const blocked = w.id === ORCHESTRATOR_ID && !!orchestratorBlocked(host.mission());
     pill.className = blocked ? 'pill blocked' : `pill ${w.status}`;
     pill.textContent = blocked ? 'blocked' : (STATUS_LABEL[w.status] ?? w.status);
     views.hidden = flip.hidden = !toggles;
@@ -934,7 +934,7 @@ export function createPane(host: PaneHost, index: number): Pane {
       else if (mode === 'thread') {
         thread?.update(w, host.live());
         // An example can only fill a composer that's there to take it.
-        const open = host.live() && !host.mission()?.orchestrator.blocked;
+        const open = host.live() && !orchestratorBlocked(host.mission());
         for (const b of intro?.querySelectorAll<HTMLButtonElement>('.orc-example') ?? []) b.disabled = !open;
       } else paintInfo(w);
       paintQuestion();

@@ -8,7 +8,7 @@ import { isBusy } from '../shared/status';
 import { teamCounts } from '../shared/team';
 import { workerDot, workingBars, WORKER_MIME } from './dashboard-pane';
 import { reconcileChildren, todoMeter } from './dashboard-roster';
-import { botLine, orchestratorLine, orchestratorWorker } from './mission';
+import { botLine, orchestratorBlocked, orchestratorLine, orchestratorWorker } from './mission';
 import { h, STATUS_LABEL, timeAgo } from './ui/dom';
 import { icon } from './ui/icons';
 import { modelBadgeLabel, modelBadgeNode } from './ui/models';
@@ -146,7 +146,7 @@ export function createMissionRoster(el: HTMLElement, host: MissionRosterHost) {
     const orchestrator = w.id === ORCHESTRATOR_ID;
     const r = agentRow(w.id);
     const waits = orchestrator && missionAgentNeedsOwner(agent ?? { worker: w, team: [] });
-    const blocked = orchestrator ? s.mission?.orchestrator.blocked : undefined;
+    const blocked = orchestrator ? orchestratorBlocked(s.mission) : undefined;
     r.wrap.classList.toggle('on', w.id === s.focused);
     r.wrap.classList.toggle('attn', orchestrator && w.status === 'needs_input');
     r.wrap.classList.toggle('blocked', !!blocked);

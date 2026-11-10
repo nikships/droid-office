@@ -170,6 +170,21 @@ test('Mission Control pins the building’s agents in the sidebar and opens the 
   assert.equal(await pane.locator('.dash-pane-task').innerText(), 'Can’t start yet', 'the reason is said once, in place of the composer');
   assert.equal(await pane.locator('.orc-example:disabled').count(), 3, 'no composer to fill');
 
+  // A session already running when something blocks a new start keeps its status, its composer and Stop.
+  await page.evaluate(() => {
+    const w = window as any;
+    const worker = { ...w.MissionUI.orchestratorWorker({ orchestrator: { settings: { on: true } }, bots: [] }), status: 'working', sessionId: 's-1', task: { name: 'Get CI green on every floor' } };
+    w.mission = { ...w.mission, orchestrator: { ...w.mission.orchestrator, agent: { worker, team: [] } } };
+    w.paintPane('orchestrator');
+  });
+  assert.equal(await pane.locator('.wt-blocked').isHidden(), true);
+  assert.equal(await pane.locator('.wt-stop').isVisible(), true, 'Stop is reachable');
+  assert.equal(await pane.locator('.dash-pane-head .pill').innerText(), 'working');
+  assert.equal(await pane.locator('.dash-pane-task').innerText(), 'Get CI green on every floor');
+  await page.evaluate(() => (window as any).paintRoster());
+  assert.equal(await roster.locator('[data-worker=orchestrator] .dash-mission-mark').getAttribute('data-status'), 'working');
+  assert.match(await roster.locator('[data-worker=orchestrator]').innerText(), /Get CI green on every floor/);
+
   // A bot: what it is and its team, no terminal; a subagent opens on its own floor.
   await page.evaluate(() => (window as any).paintPane('bot-claw', 'terminal'));
   assert.equal(await pane.getAttribute('data-mode'), 'info');
