@@ -43,6 +43,13 @@ interface Row {
   key: string;
 }
 
+/** A row the sidebar's arrow keys walk. A subagent on another floor opens only on Enter or a click, so walking never changes floors. */
+export interface MissionSideRow {
+  id: string;
+  button: HTMLButtonElement;
+  opens: boolean;
+}
+
 interface Block {
   el: HTMLElement;
   toggle: HTMLButtonElement;
@@ -71,7 +78,7 @@ export function createMissionRoster(el: HTMLElement, host: MissionRosterHost) {
     h('span.dash-mission-off-go', { 'aria-hidden': 'true' }, icon('chevron', 12)),
   ) as HTMLButtonElement;
   let state: MissionRosterState | undefined;
-  let visible: string[] = [];
+  let visible: MissionSideRow[] = [];
 
   function agentRow(id: string): Row {
     let r = rows.get(id);
@@ -87,7 +94,7 @@ export function createMissionRoster(el: HTMLElement, host: MissionRosterHost) {
     return r;
   }
 
-  function memberRow(m: MissionTeamMember, agent: MissionAgent, s: MissionRosterState): HTMLElement {
+  function memberRow(m: MissionTeamMember, agent: MissionAgent, s: MissionRosterState): Row {
     const id = `member:${m.id}`;
     let r = rows.get(id);
     if (!r) {
@@ -132,7 +139,7 @@ export function createMissionRoster(el: HTMLElement, host: MissionRosterHost) {
         ),
       );
     }
-    return r.wrap;
+    return r;
   }
 
   function paintAgent(agent: MissionAgent | undefined, w: WorkerInfo, s: MissionRosterState): HTMLElement {
@@ -193,7 +200,7 @@ export function createMissionRoster(el: HTMLElement, host: MissionRosterHost) {
         ),
       );
     }
-    visible.push(w.id);
+    visible.push({ id: w.id, button: r.open, opens: true });
     let block = blocks.get(w.id);
     if (!block) {
       const list = h('div.dash-team-children', { id: `dash-mission-team-${w.id}`, role: 'group' });
@@ -228,8 +235,11 @@ export function createMissionRoster(el: HTMLElement, host: MissionRosterHost) {
       h('span.dash-team-activity', { class: counts.attention ? 'dash-team-attention' : '' }, counts.attention ? `${counts.attention} need you` : `${counts.working} working`),
     );
     const children = team.map((m) => memberRow(m, agent!, s));
-    if (expanded) for (const m of team) visible.push(m.id);
-    reconcileChildren(block.children, children);
+    if (expanded) team.forEach((m, i) => visible.push({ id: m.id, button: children[i]!.open, opens: m.floor === s.floor }));
+    reconcileChildren(
+      block.children,
+      children.map((c) => c.wrap),
+    );
     reconcileChildren(block.el, [r.wrap, block.toggle, block.children]);
     return block.el;
   }
@@ -283,10 +293,6 @@ export function createMissionRoster(el: HTMLElement, host: MissionRosterHost) {
     update,
     /** Each building agent, followed by its expanded team, in display order. */
     visible: () => visible,
-    member(id: string) {
-      const mc = state?.mission;
-      return [mc?.orchestrator.agent, ...(mc?.bots ?? [])].flatMap((agent) => agent?.team ?? []).find((m) => m.id === id);
-    },
     button(id: string) {
       return rows.get(id)?.open ?? rows.get(`member:${id}`)?.open;
     },

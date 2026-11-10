@@ -21,7 +21,7 @@ import { openSubscriptionsStatus } from './ui/subscriptions-status';
 import { onTermFontSize, setTermFontSize, stepTermFont, termFontSize, TERM_FONT_MAX, TERM_FONT_MIN } from './ui/term-font';
 import { parseWorkerLink } from './worker-link';
 import { DashboardWorkerLink } from './dashboard-worker-link';
-import { adjacentFloor, WORKSPACE_KEY_HINTS, workspaceShortcut } from './dashboard-shortcuts';
+import { adjacentFloor, sideStep, WORKSPACE_KEY_HINTS, workspaceShortcut } from './dashboard-shortcuts';
 import {
   assign,
   autoLayout,
@@ -426,9 +426,9 @@ function openHere(id: string, focusIt = false, targetPane?: number) {
   else roster.scrollTo(id);
 }
 /** Opens a building agent's subagent: here when it's on this floor, else on its own floor once the page has gone there. */
-function openAcross(id: string, to: string, focusIt = true) {
+function openAcross(id: string, to: string) {
   if (!live()) return;
-  if (to === floor) return openHere(id, focusIt);
+  if (to === floor) return openHere(id, true);
   workerLink.set({ worker: id, floor: to });
   followWorkerLink();
 }
@@ -1329,21 +1329,16 @@ function sideKeys(e: KeyboardEvent) {
   if (!authorized || modalOpen() || e.metaKey || e.ctrlKey || e.altKey || e.isComposing) return;
   const t = e.target as HTMLElement | null;
   if (t?.closest('input, textarea, select, [contenteditable], .xterm, [role=separator], [role=radiogroup]')) return;
-  const list = [...new Set([...missionRoster.visible(), ...roster.visible().map((w) => w.id)])];
-  const at = list.findIndex((id) => missionRoster.button(id) === t || roster.button(id) === t);
-  const selected = at < 0 ? list.indexOf(focusedWorker(ws) ?? '') : at;
-  const go = (i: number) => {
-    const id = list[(i + list.length) % list.length];
-    if (!id) return;
-    const missionButton = missionRoster.button(id);
-    const member = missionRoster.member(id);
-    if (member) openAcross(member.id, member.floor, false);
-    else openHere(id);
-    (missionButton ?? roster.button(id))?.focus({ preventScroll: true });
+  const rows = [...missionRoster.visible(), ...roster.visible().map((w) => ({ id: w.id, button: roster.button(w.id), opens: true }))];
+  const go = (direction: -1 | 1) => {
+    const row = sideStep(rows, t, focusedWorker(ws) ?? '', direction);
+    if (!row) return;
+    if (row.opens) openHere(row.id);
+    row.button?.focus({ preventScroll: true });
   };
   const k = e.key.length === 1 ? e.key.toLowerCase() : e.key;
-  if (k === 'ArrowDown' || k === 'j') go(selected + 1);
-  else if (k === 'ArrowUp' || k === 'k') go(selected < 0 ? list.length - 1 : selected - 1);
+  if (k === 'ArrowDown' || k === 'j') go(1);
+  else if (k === 'ArrowUp' || k === 'k') go(-1);
   else return;
   e.preventDefault();
 }
