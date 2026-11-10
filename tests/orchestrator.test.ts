@@ -208,6 +208,29 @@ test('a new model waits for the Orchestrator’s turn to end, then restarts its 
   assert.deepEqual(JSON.parse(readFileSync(path.join(r.dir, 'orchestrator.json'), 'utf8')), { on: true, model: 'claude-haiku-5-5', effort: 'low' });
 });
 
+test('a session that ended before its new model took over starts on it once, with no second restart', async (t) => {
+  const r = rig(t);
+  r.orchestrator.prompt('Plan the release');
+  const first = await r.launched(1);
+  r.hook(first, 'SessionStart', { source: 'startup' });
+  r.hook(first, 'UserPromptSubmit', { prompt: 'Plan the release' });
+  assert.equal(r.orchestrator.set({ on: true, model: 'claude-haiku-5-5' }), undefined);
+  // Its session ends mid-turn, before the restart the new model was waiting for.
+  assert.equal(r.orchestrator.workers.halt(ORCHESTRATOR_ID), true);
+  assert.equal(r.orchestrator.prompt('Carry on'), undefined);
+  const second = await r.launched(2);
+  assert.deepEqual(second.args.slice(-2), ['--resume', 'session-1']);
+  assert.equal(r.orchestrator.info?.model, 'claude-haiku-5-5');
+  r.hook(second, 'SessionStart', { source: 'resume' });
+  assert.equal(await until(() => r.typed(second)[0], 'the prompt that woke it'), 'Carry on');
+  r.hook(second, 'UserPromptSubmit', { prompt: 'Carry on' });
+  r.hook(second, 'Stop');
+  const rested = await until(() => r.orchestrator.info?.status !== 'working' && r.orchestrator.info?.status, 'its turn to end');
+  assert.equal(rested, 'done', 'it rests on the model it already started on');
+  assert.equal(r.orchestrator.authenticate(ORCHESTRATOR_ID, second.token)?.id, ORCHESTRATOR_ID, 'the same session is still its own');
+  assert.equal(r.launches().length, 2);
+});
+
 test('a new conversation ends the Orchestrator’s session, and a prompt sent straight after starts a fresh one', async (t) => {
   const r = rig(t);
   r.orchestrator.prompt('Plan the release');

@@ -6,6 +6,7 @@ import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { DEFAULT_ORCHESTRATOR_SETTINGS, ORCHESTRATOR_COLOR, ORCHESTRATOR_ID, ORCHESTRATOR_NAME, type MissionAgent, type OrchestratorBlock, type OrchestratorSettings, type OrchestratorState } from '../shared/mission-control.js';
 import { AGENT_EFFORTS, type AgentChoice, type WorkerInfo } from '../shared/protocol.js';
+import { isAsleep } from '../shared/status.js';
 import type { ScreenFrame } from './screen-frame.js';
 import { missionTeam } from './building-agent.js';
 import { BUILDING_TOOLS } from './office-mcp/index.js';
@@ -262,6 +263,8 @@ export class Orchestrator {
   private updated(w: WorkerInfo) {
     const was = this.lastStatus;
     this.lastStatus = w.status;
+    // A session that ended launches on the new model by itself; restarting that one too would drop its prompt.
+    if (isAsleep(w.status)) this.restartAtRest = false;
     const rested = (w.status === 'done' || w.status === 'idle') && was !== w.status && was !== 'done' && was !== 'idle';
     if (rested) {
       // A floor wakes a lead of its own when it comes to rest; it has to be told this one did.
