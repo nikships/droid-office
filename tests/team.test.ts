@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import type { DroidModelCatalogue } from '../src/server/droid-models.js';
 import type { ModelAvailability } from '../src/shared/subscriptions.js';
+import { modelList, outsideModelList } from '../src/server/model-policy.js';
 import { Team, settled, type TeamOptions, type TeamWorkers } from '../src/server/team.js';
 import { teamOf, teamSummary, workersByTeam } from '../src/shared/team.js';
 import { SUBAGENT_DEFAULTS, type AgentChoice, type SubagentSettings, type WorkerInfo, type WorkerStatus, type WorkerTask } from '../src/shared/protocol.js';
@@ -405,6 +406,26 @@ test('the Orchestrator keeps to the models leads can pick, as any lead does, and
   // The Orchestrator still has no team size limit.
   r.settings.maxPerLead = 1;
   assert.equal((await r.call('orchestrator', { action: 'hire', task: 'h', model: 'glm-5.3-flash' })).status, 200);
+});
+
+test('a spawn through office_worker_spawn is held to the same list as a hire: the Orchestrator is, an external bot is not', async (t) => {
+  const OPUS = 'custom:droidproxy:opus-5-5';
+  const availability: Record<string, ModelAvailability> = { [OPUS]: { state: 'signed-out', provider: 'claude' } };
+  const r = rig(t, { models: () => Promise.resolve(CATALOGUE), availability: (m) => availability[m] });
+  const orchestrator = r.fake.add(worker({ id: 'orchestrator', deskId: '', name: 'Orchestrator' }));
+  const bot = r.fake.add(worker({ id: 'remote-bot', deskId: '', name: 'Bot', remote: true }));
+  const spawn = (caller: WorkerInfo, model: string) => r.team.refuseSpawnModel(caller, model);
+
+  assert.equal(await spawn(orchestrator, 'old'), undefined, 'an empty list allows any model');
+  r.settings.models = [{ id: 'glm-5.3-flash' }, { id: OPUS }];
+  assert.equal(await spawn(orchestrator, 'glm-5.3-flash'), undefined, 'a listed model');
+  assert.equal(await spawn(orchestrator, 'claude-opus-5-5'), undefined, 'droid’s default, as for a hire');
+  assert.match((await spawn(orchestrator, 'old'))!, /old isn't one of the models this office lets subagents use[\s\S]*team_models/);
+  assert.match((await spawn(orchestrator, OPUS))!, /Can't hire on .*no Claude account is connected\. Pick one that can: glm-5\.3-flash\./, 'availability is checked, and it is pointed to the list');
+  r.fake.officeDefault = { model: 'glm-5.3-flash' };
+  assert.match((await spawn(orchestrator, 'claude-opus-5-5'))!, /isn't one of the models/, 'with an office default, droid’s own is no exception');
+  assert.equal(await spawn(bot, 'old'), undefined, 'an external bot is not limited');
+  assert.match((await spawn(bot, OPUS))!, /no Claude account is connected/, 'but a model that cannot run is refused for it too');
 });
 
 test("hire checks droid's own default against a fresh model list, not one a lead had to ask for first", async (t) => {
@@ -845,4 +866,17 @@ test("a turn about to end hears what it's missing: a subagent that hasn't report
   r.settings.wakeLead = false;
   await r.call('sub1', { action: 'report', text: 'Done' });
   assert.equal(r.team.beforeStop(lead()), undefined, 'with waking off, the lead checks for itself');
+});
+
+test('the model list limits the Orchestrator and leads, and not an external bot, an empty list or a listed or default model', () => {
+  const list = [{ id: 'a' }, { id: 'b', note: 'cheap' }];
+  assert.deepEqual(modelList({ id: 'orchestrator' }, { models: list }), list);
+  assert.deepEqual(modelList({ id: 'lead' }, { models: list }), list);
+  assert.equal(modelList({ id: 'remote-bot', remote: true }, { models: list }), undefined);
+  assert.equal(modelList({ id: 'orchestrator' }, { models: [] }), undefined);
+  assert.equal(modelList({ id: 'orchestrator' }, {}), undefined);
+  assert.equal(outsideModelList(list, 'b', 'd'), false);
+  assert.equal(outsideModelList(list, 'd', 'd'), false, 'the default model is always allowed');
+  assert.equal(outsideModelList(list, 'c', 'd'), true);
+  assert.equal(outsideModelList(undefined, 'c', 'd'), false);
 });

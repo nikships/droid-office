@@ -12,7 +12,8 @@ export function isBuildingAgent(w: Pick<WorkerInfo, 'id' | 'remote'> | undefined
 
 /**
  * A building agent that may hire any model, whatever ⚙️ Settings → Subagents & visits lists: an external bot. The
- * Orchestrator follows the list like any lead. Letting bots follow it too is this one function returning false.
+ * Orchestrator follows the list like any lead, in team_hire and office_worker_spawn alike (model-policy.ts applies it).
+ * Letting bots follow it too is this one function returning false.
  */
 export function ignoresModelList(w: Pick<WorkerInfo, 'id' | 'remote'> | undefined): boolean {
   return isBuildingAgent(w) && w?.id !== ORCHESTRATOR_ID;

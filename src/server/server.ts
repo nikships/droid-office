@@ -2823,8 +2823,13 @@ export async function startServer(cfg: Config) {
       return [...(agent ? [agent] : []), ...state.bots];
     },
     tail: (id, lines, floorId) => (id === OFFICE_SHELL_ID ? floors.get(floorId ?? '')?.shell.tail(lines) : workersOf(id)?.tail(id, lines)),
-    act: (by: WorkerInfo, msg, opts = {}) =>
-      new Promise<OwnerReply>((resolve) => {
+    act: async (by: WorkerInfo, msg, opts = {}) => {
+      // A building agent's hire gets the model list its team_hire gets: here is the one way in for its owner-level actions.
+      const model = msg.t === 'worker.spawn' && msg.kind !== 'shell' && typeof msg.model === 'string' && msg.model.trim() ? msg.model.trim() : undefined;
+      const at = floors.get(opts.floor ?? (typeof msg.floor === 'string' ? msg.floor : ''));
+      const refused = model && at ? await at.team.refuseSpawnModel(by, model) : undefined;
+      if (refused) return { error: refused, notes: [] };
+      return new Promise<OwnerReply>((resolve) => {
         const notes: string[] = [];
         const expects = OWNER_REPLIES[msg.t];
         const requestId = randomBytes(8).toString('hex');
@@ -2905,7 +2910,8 @@ export async function startServer(cfg: Config) {
           },
           () => handleMessage(client, { ...msg, requestId } as unknown as ClientMsg),
         );
-      }),
+      });
+    },
   };
 
   const resync = setInterval(() => {
