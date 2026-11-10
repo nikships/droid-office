@@ -181,6 +181,9 @@ object MissionControl {
     /** ORCHESTRATOR_PITCH in src/client/mission.ts. */
     const val PITCH = "Tell it what you want done anywhere in the building. It plans, hires workers on any floor, answers their questions, checks their work and reports back. It leaves code changes to the workers it hires."
 
+    /** ORCHESTRATOR_MODEL_CHANGE: when a new model or reasoning level takes over. */
+    const val MODEL_CHANGE = "A change takes over when its current turn ends, in the same conversation."
+
     /** ORCHESTRATOR_EXAMPLES. */
     val examples = listOf(
         "Get CI green on every floor",

@@ -390,7 +390,7 @@ fun OrchestratorSheet(state: OrchestratorState, onDismiss: () -> Unit) {
                 ModelPicker(catalogue, loading && connected, s.model, availability) { m ->
                     set(s.copy(model = m.id, effort = s.effort?.takeIf { e -> m.supportedReasoningEfforts?.contains(e) == true }))
                 }
-                Text("A new model takes over from its next session.", style = MaterialTheme.typography.bodySmall, color = Palette.TextTertiary)
+                Text(MissionControl.MODEL_CHANGE, style = MaterialTheme.typography.bodySmall, color = Palette.TextTertiary)
             }
             if (efforts.isNotEmpty()) Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Eyebrow("Reasoning")

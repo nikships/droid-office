@@ -23,7 +23,7 @@ import type { PairingState } from '../../shared/devices';
 import type { PairedDevice } from '../../shared/devices';
 import { INCLUDE_FILE, SETUP_FILE, describeSetup, parsePatterns } from '../../shared/worktree-setup';
 import { DEFAULT_ORCHESTRATOR_SETTINGS, type OrchestratorSettings } from '../../shared/mission-control';
-import { orchestratorStarted } from '../mission';
+import { ORCHESTRATOR_MODEL_CHANGE, orchestratorStarted } from '../mission';
 import { newOrchestratorConversation } from './orchestrator';
 import {
   FPS_CAPS,
@@ -979,7 +979,7 @@ export function openSettings(net: Net, opts: SettingsOptions) {
   const orcOptions = nest(
     card('Orchestrator model', { desc: orcAgentNote, below: [orcAgent.element, h('div.row', {}, orcSave, orcBack)] }),
     card('New conversation', { desc: orcResetNote, control: orcReset }),
-    card('Orchestrator brief', { desc: desc('What the office tells the Orchestrator about its job and its tools. It reads a change when its next conversation starts.'), control: orcBrief }),
+    card('Orchestrator brief', { desc: desc('What the office tells the Orchestrator about its job and its tools. It reads a change the next time its session starts or resumes.'), control: orcBrief }),
   );
   const paintOrchestrator = () => {
     const s = orcSettings();
@@ -1000,9 +1000,7 @@ export function openSettings(net: Net, opts: SettingsOptions) {
     const picked = orcPicked();
     if (!orcTouched) orcAgent.set(picked ?? officeChoice());
     orcBack.classList.toggle('hidden', !picked);
-    orcAgentNote.textContent = picked
-      ? `It runs on ${choiceLabel(picked)}. A change takes effect when its next conversation starts.`
-      : `It runs on the default worker (${choiceLabel(officeChoice())}, Models → Default worker). A change takes effect when its next conversation starts.`;
+    orcAgentNote.textContent = `${picked ? `It runs on ${choiceLabel(picked)}.` : `It runs on the default worker (${choiceLabel(officeChoice())}, Models → Default worker).`} ${ORCHESTRATOR_MODEL_CHANGE}`;
     const started = orchestratorStarted(store.missionControl);
     orcReset.toggleAttribute('disabled', !started);
     orcResetNote.textContent = started ? 'It forgets this conversation and starts fresh on your next prompt. Workers it hired keep working and stay on its team.' : 'No conversation yet. Its first prompt starts one.';

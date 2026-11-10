@@ -10,6 +10,9 @@ import { doingLine } from './worker-words';
 /** What the Orchestrator is for, in its empty state and on its Settings card. */
 export const ORCHESTRATOR_PITCH = 'Tell it what you want done anywhere in the building. It plans, hires workers on any floor, answers their questions, checks their work and reports back. It leaves code changes to the workers it hires.';
 
+/** When a new model or effort takes over, on its Settings card. Android says the same. */
+export const ORCHESTRATOR_MODEL_CHANGE = 'A change takes over when its current turn ends, in the same conversation.';
+
 /** Prompts its empty state offers; a click puts one in the composer. Android offers the same three. */
 export const ORCHESTRATOR_EXAMPLES: readonly string[] = ['Get CI green on every floor', 'Triage the open issues across my projects and put workers on the top three', 'What is everyone doing?'];
 
