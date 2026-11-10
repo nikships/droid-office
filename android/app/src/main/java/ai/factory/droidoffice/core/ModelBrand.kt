@@ -8,7 +8,7 @@ object ModelBrand {
     val monochrome = setOf("openai", "grok", "copilot")
 
     private val families = listOf(
-        "claude" to """\b(?:claude|opus|sonnet|haiku)\b""",
+        "claude" to """\b(?:claude|opus|sonnet|haiku|fable)\b""",
         "codex" to """\bcodex\b""",
         "gemini" to """\bgemini\b""",
         "gemma" to """\bgemma\b""",

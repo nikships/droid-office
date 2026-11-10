@@ -15,6 +15,14 @@ test('model families beat API transports and subscription gateways', () => {
   assert.equal(modelBrand({ id: 'custom:zen:space-bunny-free', name: 'Space Alpha Bunny', provider: 'generic-chat-completion-api' }), undefined);
 });
 
+test('Fable is a Claude model with or without the catalogue provider', () => {
+  const fable = { id: 'custom:droidproxy:fable-5-2', name: 'DroidProxy: Fable 5.2' };
+  assert.equal(modelBrand({ ...fable, provider: 'anthropic' }), 'claude');
+  assert.equal(modelBrand(fable), 'claude');
+  assert.equal(modelBrand({ id: fable.id }), 'claude');
+  assert.equal(modelBrand({ id: 'claude-fable-5.1', name: 'Fable 5.1', provider: 'anthropic' }), 'claude');
+});
+
 test('canonical model IDs win, with display names as the fallback for opaque ids', () => {
   assert.equal(modelBrand({ id: 'gpt-6.1-sol', name: 'Claude gateway' }), 'openai');
   assert.equal(modelBrand({ id: 'custom:anthropic:gpt-6.1-sol' }), 'openai');
@@ -25,7 +33,7 @@ test('canonical model IDs win, with display names as the fallback for opaque ids
 
 test('family aliases, case and separators keep their own mark', () => {
   const aliases = {
-    claude: ['claude-opus-5-5', 'OPUS 5.5', 'sonnet', 'haiku'],
+    claude: ['claude-opus-5-5', 'OPUS 5.5', 'sonnet', 'haiku', 'Fable 5.2', 'claude-fable-5.1', 'custom:droidproxy:fable-5-2'],
     codex: ['gpt-5-codex', 'Codex'],
     gemini: ['gemini-3-pro', 'Antigravity: Gemini'],
     gemma: ['gemma-3'],
