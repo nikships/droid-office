@@ -37,20 +37,33 @@ export interface MissionStand {
 
 /** Keeps a standing spot this far inside Mission Control's glass. */
 const WALL_GAP = 0.4;
+/** Where you stand from the Orchestrator's feet: ahead of it (+x) and to its left (-z), past the table's near corner and inside its 1.8 m reach. */
+const ORCHESTRATOR_STAND = { x: 0.7, z: -1.45 };
+/** The Orchestrator's face above its plinth's top, where you look. */
+const ORCHESTRATOR_FACE = 1.1;
+/** How far behind a bot's chair and to its side you stand: clear of the chair back, inside its 0.9 m reach. */
+const BOT_STAND = 0.6;
+/** A seated bot's face above the floor, where you look. */
+const BOT_FACE = 1.05;
 
 /**
  * Where to stand at a building agent at (x, z): in front of the Orchestrator and to its left, by the
  * table's corner on the doorway's side, looking up at it on its plinth; behind a bot's chair and to one side, looking down at it.
  */
 export function missionStand(it: { kind: 'orchestrator' | 'bot'; x: number; z: number }): MissionStand {
-  if (it.kind === 'orchestrator') return { at: { x: ORCHESTRATOR_SPOT.x + 0.7, y: 0, z: ORCHESTRATOR_SPOT.z - 1.45 }, face: { x: ORCHESTRATOR_SPOT.x, y: MISSION_HEAD.height + 1.1, z: ORCHESTRATOR_SPOT.z } };
+  if (it.kind === 'orchestrator') {
+    return {
+      at: { x: ORCHESTRATOR_SPOT.x + ORCHESTRATOR_STAND.x, y: 0, z: ORCHESTRATOR_SPOT.z + ORCHESTRATOR_STAND.z },
+      face: { x: ORCHESTRATOR_SPOT.x, y: MISSION_HEAD.height + ORCHESTRATOR_FACE, z: ORCHESTRATOR_SPOT.z },
+    };
+  }
   const spot = GLASS_ROOM_CHAIRS.map((_, i) => chairSpot(i)!).reduce((a, b) => (Math.hypot(b.x - it.x, b.z - it.z) < Math.hypot(a.x - it.x, a.z - it.z) ? b : a));
   const back = { x: -Math.sin(spot.rotY), z: -Math.cos(spot.rotY) };
   const side = { x: Math.cos(spot.rotY), z: -Math.sin(spot.rotY) };
   const clamp = (v: number, lo: number, hi: number) => Math.max(lo + WALL_GAP, Math.min(hi - WALL_GAP, v));
-  const x = clamp(it.x + back.x * 0.6 + side.x * 0.6, GLASS_ROOM.minX, GLASS_ROOM.maxX);
-  const z = clamp(it.z + back.z * 0.6 + side.z * 0.6, GLASS_ROOM.minZ, GLASS_ROOM.maxZ);
-  return { at: { x, y: 0, z }, face: { x: it.x, y: 1.05, z: it.z } };
+  const x = clamp(it.x + (back.x + side.x) * BOT_STAND, GLASS_ROOM.minX, GLASS_ROOM.maxX);
+  const z = clamp(it.z + (back.z + side.z) * BOT_STAND, GLASS_ROOM.minZ, GLASS_ROOM.maxZ);
+  return { at: { x, y: 0, z }, face: { x: it.x, y: BOT_FACE, z: it.z } };
 }
 
 /** What the Orchestrator is up to, as the room shows it: off, can't start, never prompted, or its session's status. */

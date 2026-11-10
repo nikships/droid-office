@@ -989,11 +989,12 @@ export function openSettings(net: Net, opts: SettingsOptions) {
     orcOn.paint();
     orcOn.el.classList.toggle('hidden', missing);
     orcOptions.classList.toggle('hidden', missing || !s.on);
-    orcNote.textContent = missing
-      ? 'This office has no Orchestrator yet: restart it to get one.'
-      : s.on
-        ? 'One agent for the whole building, at the top of Mission Control on every floor. Tell it what you want done; it hires workers on any floor, answers their questions and reports back.'
-        : 'Off: it’s hidden on every floor and its session stops. Workers it hired keep working and report to nobody.';
+    const note = () => {
+      if (missing) return 'This office has no Orchestrator yet: restart it to get one.';
+      if (s.on) return 'One agent for the whole building, at the top of Mission Control on every floor. Tell it what you want done; it hires workers on any floor, answers their questions and reports back.';
+      return 'Off: it’s hidden on every floor and its session stops. Workers it hired keep working and report to nobody.';
+    };
+    orcNote.textContent = note();
     orcBlocked.textContent = s.on && blocked ? `It can’t start now: ${blocked}` : '';
     orcBlocked.classList.toggle('hidden', !(s.on && blocked));
     const picked = orcPicked();
