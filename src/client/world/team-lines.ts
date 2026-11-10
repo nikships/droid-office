@@ -121,10 +121,11 @@ export class TeamLines {
         const len = Math.hypot(dx, dz);
         if (len < 0.01) continue;
         // Overlapping a little at each corner, so a turn reads as one line.
-        const geo = new THREE.PlaneGeometry(len + (points.length > 2 ? WIDTH : 0), WIDTH).rotateX(-Math.PI / 2);
+        const span = len + (points.length > 2 ? WIDTH : 0);
+        const geo = new THREE.PlaneGeometry(span, WIDTH).rotateX(-Math.PI / 2);
         // Dashes a fixed length apart whatever the line's length: the texture repeats along u.
         const uv = geo.getAttribute('uv') as THREE.BufferAttribute;
-        for (let j = 0; j < uv.count; j++) uv.setX(j, uv.getX(j) * (len / PERIOD));
+        for (let j = 0; j < uv.count; j++) uv.setX(j, uv.getX(j) * (span / PERIOD));
         const m = new THREE.Mesh(geo, this.material(l.color, l.moving ? 'moving' : 'still'));
         m.position.set((a.x + b.x) / 2, Math.min(a.y, b.y) + LINK_LIFT, (a.z + b.z) / 2);
         m.rotation.y = Math.atan2(-dz, dx);

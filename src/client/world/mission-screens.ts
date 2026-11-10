@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { GLASS_ROOM_CHAIRS } from '../../shared/layout';
 import { PHASE_WORD, type MissionView, type OrchestratorPhase, type RosterAgent } from '../mission-office';
 import { MONO, SANS, loadFonts } from '../fonts';
 import { STATUS_BULB } from './character';
@@ -122,9 +123,6 @@ class Screen {
   }
 }
 
-const statusColor = (status: OrchestratorPhase) => phaseColor(status);
-const word = (status: OrchestratorPhase) => PHASE_WORD[status] ?? status;
-
 export class MissionScreens {
   private boardScreen = new Screen(1500, 500);
   private rosterScreen = new Screen(1400, 800);
@@ -153,11 +151,12 @@ export class MissionScreens {
   /** Paints each screen whose part of `view` changed, or all of them with `force` (the fonts came in). */
   render(view: MissionView, force = false) {
     this.view = view;
-    const bots = view.agents.filter((a) => a.kind === 'bot').length;
+    // Bots past the last chair are on the roster only.
+    const seated = Math.min(view.agents.filter((a) => a.kind === 'bot').length, GLASS_ROOM_CHAIRS.length);
     const keys: [Screen, string, () => void][] = [
       [this.boardScreen, JSON.stringify([view.phase, view.title, view.activity, view.todos, view.model, view.blocked, view.teamLine]), () => this.paintBoard(view)],
       [this.rosterScreen, JSON.stringify(view.agents), () => this.paintRoster(view.agents)],
-      [this.signScreen, JSON.stringify([view.phase, view.title, view.blocked, bots]), () => this.paintSign(view, bots)],
+      [this.signScreen, JSON.stringify([view.phase, view.title, view.blocked, seated]), () => this.paintSign(view, seated)],
     ];
     for (const [screen, key, paint] of keys) {
       if (!force && key === screen.drawn) continue;
@@ -173,7 +172,7 @@ export class MissionScreens {
     s.clear();
     s.title(60, 92, 26);
     const color = phaseColor(v.phase);
-    s.pill(word(v.phase).toUpperCase(), color, s.W - 60, 92, 24);
+    s.pill(PHASE_WORD[v.phase].toUpperCase(), color, s.W - 60, 92, 24);
     g.fillStyle = HAIR;
     g.fillRect(60, 122, s.W - 120, 2);
     const { headline, sub } = orchestratorWords(v);
@@ -229,10 +228,12 @@ export class MissionScreens {
     }
     const bottom = s.H - 36;
     const MEMBER = 46;
+    // Every line stays a line above the footer, which counts the agents and subagents that didn't fit.
+    const last = bottom - MEMBER;
     let y = 172;
     let hidden = 0;
     for (const a of agents) {
-      if (y > bottom - MEMBER) {
+      if (hidden || y > last) {
         hidden += 1 + a.team.length;
         continue;
       }
@@ -244,14 +245,14 @@ export class MissionScreens {
       g.font = `500 26px ${MONO}`;
       g.fillText(a.kind === 'bot' ? 'BOT' : 'ORCHESTRATOR', 760, y);
       g.textAlign = 'right';
-      g.fillStyle = statusColor(a.status);
+      g.fillStyle = phaseColor(a.status);
       g.font = `600 26px ${MONO}`;
       track(g, 3);
-      g.fillText(word(a.status).toUpperCase(), s.W - 60, y);
+      g.fillText(PHASE_WORD[a.status].toUpperCase(), s.W - 60, y);
       track(g, 0);
       g.textAlign = 'left';
       y += 54;
-      if (!a.team.length) {
+      if (!a.team.length && y - 6 <= last) {
         g.fillStyle = DIM;
         g.font = `500 26px ${MONO}`;
         g.fillText('no team', 128, y - 6);
@@ -259,15 +260,11 @@ export class MissionScreens {
       }
       for (let i = 0; i < a.team.length; i++) {
         const m = a.team[i];
-        const left = a.team.length - i;
-        if (y > bottom - MEMBER && left > 1) {
-          g.fillStyle = DIM;
-          g.font = `500 26px ${MONO}`;
-          g.fillText(`+ ${left} more`, 128, y);
-          y += MEMBER;
+        if (y > last) {
+          hidden += a.team.length - i;
           break;
         }
-        s.dot(136, y - 9, 8, statusColor(m.status));
+        s.dot(136, y - 9, 8, phaseColor(m.status));
         g.fillStyle = INK;
         g.font = `500 30px ${SANS}`;
         g.fillText(fit(g, m.name, 560), 160, y);
@@ -275,8 +272,8 @@ export class MissionScreens {
         g.font = `500 26px ${MONO}`;
         g.fillText(fit(g, m.floor, 360), 760, y);
         g.textAlign = 'right';
-        g.fillStyle = statusColor(m.status);
-        g.fillText(word(m.status), s.W - 60, y);
+        g.fillStyle = phaseColor(m.status);
+        g.fillText(PHASE_WORD[m.status], s.W - 60, y);
         g.textAlign = 'left';
         y += MEMBER;
       }
@@ -289,7 +286,7 @@ export class MissionScreens {
     }
   }
 
-  private paintSign(v: MissionView, bots: number) {
+  private paintSign(v: MissionView, seated: number) {
     const s = this.signScreen;
     const g = s.g;
     s.clear();
@@ -300,7 +297,7 @@ export class MissionScreens {
     g.fillRect(28, 34, 18, 18);
     g.font = `600 30px ${MONO}`;
     track(g, 4);
-    g.fillText(word(v.phase).toUpperCase(), 62, 54);
+    g.fillText(PHASE_WORD[v.phase].toUpperCase(), 62, 54);
     track(g, 0);
     g.fillStyle = HAIR;
     g.fillRect(0, 84, s.W, 2);
@@ -315,6 +312,6 @@ export class MissionScreens {
     g.fillRect(28, s.H - 110, s.W - 56, 2);
     g.fillStyle = MUTED;
     g.font = `500 26px ${MONO}`;
-    g.fillText(bots ? `${bots} bot${bots === 1 ? '' : 's'} at the table` : 'No bots at the table', 28, s.H - 60);
+    g.fillText(seated ? `${seated} bot${seated === 1 ? '' : 's'} at the table` : 'No bots at the table', 28, s.H - 60);
   }
 }

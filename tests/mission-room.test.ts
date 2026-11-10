@@ -2,10 +2,10 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { existsSync, readFileSync } from 'node:fs';
 import * as THREE from 'three';
-import { ORCHESTRATOR_ID, type MissionControlState } from '../src/shared/mission-control.js';
+import { ORCHESTRATOR_COLOR, ORCHESTRATOR_ID, type MissionControlState } from '../src/shared/mission-control.js';
 import type { WorkerInfo } from '../src/shared/protocol.js';
-import { ORCHESTRATOR_COLOR } from '../src/client/mission.js';
-import { missionView } from '../src/client/mission-office.js';
+import { missionLinks, missionView, type RosterAgent } from '../src/client/mission-office.js';
+import { TeamLines } from '../src/client/world/team-lines.js';
 import { Worker } from '../src/client/world/character.js';
 import { MissionRoom } from '../src/client/world/mission-control.js';
 import { DESK_BY_ID, FLOOR, GLASS_ROOM, GLASS_ROOM_BOARD, GLASS_ROOM_CHAIRS, GLASS_ROOM_TABLE, LOFT, MISSION_HEAD, MISSION_ROSTER } from '../src/shared/layout.js';
@@ -53,8 +53,8 @@ test('meeting runtime, commands, menus, state, prompts and styles stay removed, 
   assert.match(room, /MISSION CONTROL/);
 });
 
-/** Stands a canvas in for `document`, keeping what each screen paints. */
-function fakeCanvas(t: { after(fn: () => void): void }): string[] {
+/** Stands a canvas in for `document`, keeping what each screen paints, and in `at` where each line's baseline is. */
+function fakeCanvas(t: { after(fn: () => void): void }, at: { s: string; y: number }[] = []): string[] {
   const previous = Object.getOwnPropertyDescriptor(globalThis, 'document');
   const text: string[] = [];
   Object.defineProperty(globalThis, 'document', {
@@ -62,7 +62,17 @@ function fakeCanvas(t: { after(fn: () => void): void }): string[] {
     value: {
       createElement: () => {
         const canvas = { width: 0, height: 0, getContext: () => context };
-        const context = new Proxy({ canvas, fillText: (s: string) => text.push(s), measureText: (s: string) => ({ width: s.length * 10 }) }, { get: (target, key) => Reflect.get(target, key) ?? (() => {}) });
+        const context = new Proxy(
+          {
+            canvas,
+            fillText: (s: string, _x: number, y: number) => {
+              text.push(s);
+              at.push({ s, y });
+            },
+            measureText: (s: string) => ({ width: s.length * 10 }),
+          },
+          { get: (target, key) => Reflect.get(target, key) ?? (() => {}) },
+        );
         return canvas;
       },
     },
@@ -74,7 +84,7 @@ function fakeCanvas(t: { after(fn: () => void): void }): string[] {
   return text;
 }
 
-test('Mission Control pins the Orchestrator’s body colour and keeps compact, fading nameplates through redraws', (t) => {
+test('Mission Control pins the Orchestrator’s body colour and keeps compact nameplates through redraws', (t) => {
   fakeCanvas(t);
   const mount = () => new THREE.Mesh(new THREE.PlaneGeometry(), new THREE.MeshBasicMaterial());
   const room = new MissionRoom({ board: mount(), roster: mount(), sign: mount() }, []);
@@ -95,12 +105,6 @@ test('Mission Control pins the Orchestrator’s body colour and keeps compact, f
   assert.equal(nameplate(original.model).scale.x, ordinaryWidth * 0.5);
   original.model.setTeam({ id: ORCHESTRATOR_ID, role: 'lead', accent: ORCHESTRATOR_COLOR, emblem: 'star', leadName: 'Orchestrator' });
   assert.equal(nameplate(original.model).scale.x, ordinaryWidth * 0.5, 'a team redraw preserves the compact scale');
-  original.model.seenFrom(1);
-  original.model.update(0, 0);
-  assert.equal(nameplate(original.model).material.opacity, 0, 'names disappear close up, just like desk-worker names');
-  original.model.seenFrom(7);
-  original.model.update(0, 0);
-  assert.equal(nameplate(original.model).material.opacity, 1);
   state.orchestrator.agent!.worker.color = '#ff00ff';
   state.bots[0].worker.color = '#4455ff';
   sync();
@@ -146,4 +150,57 @@ test('the screens say what the Orchestrator is doing and who is on each building
   assert.ok(text.includes("The Orchestrator can't start"));
   assert.ok(text.some((x) => x.includes('Droid is signed out')));
   assert.ok(text.includes('Nobody here yet'));
+});
+
+test('the roster never draws past its footer, which counts every agent and subagent that did not fit', async (t) => {
+  const at: { s: string; y: number }[] = [];
+  fakeCanvas(t, at);
+  const { MissionScreens } = await import('../src/client/world/mission-screens.js');
+  const screens = new MissionScreens();
+  screens.render({ phase: 'fresh', agents: [] });
+  // The roster is 800 px tall: its footer sits 36 px off the bottom, and every other line a line (46 px) above it.
+  const footerY = 800 - 36;
+  for (const sizes of [[6, 6, 6], [2, 9], [1, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0], [3]]) {
+    at.length = 0;
+    // No bots, so the sign by the door stays as it is and only the roster repaints.
+    const agents: RosterAgent[] = sizes.map((n, i) => ({
+      id: `a${i}`,
+      name: `Agent ${i}`,
+      kind: 'orchestrator',
+      status: 'working',
+      accent: '#ee6018',
+      team: Array.from({ length: n }, (_, j) => ({ name: `m${i}-${j}`, floor: 'web-app', status: 'working' as const })),
+    }));
+    screens.render({ phase: 'fresh', agents });
+    const footer = at.filter((c) => /^\+ \d+ more$/.test(c.s));
+    assert.ok(footer.length <= 1, `${sizes}: one footer at most`);
+    for (const c of footer) assert.equal(c.y, footerY, `${sizes}: the footer sits at the bottom`);
+    for (const c of at) if (!footer.includes(c)) assert.ok(c.y <= footerY - 46, `${sizes}: "${c.s}" at ${c.y} clears the footer`);
+    const shown = at.filter((c) => /^(Agent \d+|m\d+-\d+)$/.test(c.s)).length;
+    const total = agents.length + sizes.reduce((n, s) => n + s, 0);
+    assert.equal(footer.length ? Number(/\d+/.exec(footer[0].s)![0]) : 0, total - shown, `${sizes}: the footer counts what was left out`);
+  }
+});
+
+test('the sign counts only the bots that have a chair', async (t) => {
+  const text = fakeCanvas(t);
+  const { MissionScreens } = await import('../src/client/world/mission-screens.js');
+  const bot = (i: number): RosterAgent => ({ id: `b${i}`, name: `Bot ${i}`, kind: 'bot', status: 'idle', accent: '#33aaff', team: [] });
+  new MissionScreens().render({ phase: 'fresh', agents: Array.from({ length: GLASS_ROOM_CHAIRS.length + 2 }, (_, i) => bot(i)) });
+  assert.ok(text.includes(`${GLASS_ROOM_CHAIRS.length} bots at the table`));
+});
+
+test('dashes keep their spacing on every leg of a team line routed out through the doorway', (t) => {
+  fakeCanvas(t);
+  const desk = (id: string) => ({ 'desk-1': { x: 2, y: 0, z: 2 } })[id];
+  const sub = { id: 'w-1', name: 'Byte', kind: 'agent', deskId: 'desk-1', lead: ORCHESTRATOR_ID, status: 'idle', acked: true, color: '#33aaff', createdBy: '', createdAt: 0, cols: 0, rows: 0, open: false } as WorkerInfo;
+  const state: MissionControlState = { orchestrator: { settings: { on: true } }, bots: [] };
+  const lines = new TeamLines();
+  lines.set([...missionLinks(state, [sub], desk), { from: { x: -8, y: 0, z: -4 }, to: { x: -2, y: 0, z: -4 }, color: '#ff0000', team: 'straight', moving: false }]);
+  const legs = lines.group.children.filter((c): c is THREE.Mesh<THREE.PlaneGeometry> => c instanceof THREE.Mesh && c.geometry instanceof THREE.PlaneGeometry);
+  assert.ok(legs.length >= 4, 'the trunk turns at least twice, then branches');
+  // Repeats of the dash texture per metre along each leg: the same on a corner leg as on a straight link.
+  const density = (m: THREE.Mesh<THREE.PlaneGeometry>) => Math.max(...(m.geometry.getAttribute('uv').array as Float32Array).filter((_, i) => i % 2 === 0)) / m.geometry.parameters.width;
+  const straight = density(legs.find((m) => m.userData.team === 'straight')!);
+  for (const m of legs) assert.ok(Math.abs(density(m) - straight) < 1e-6, `${m.userData.team}: ${density(m)} vs ${straight}`);
 });
