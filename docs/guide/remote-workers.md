@@ -66,17 +66,17 @@ Tailscale at all; Settings then says so. CI and office clones run that way.
 
 ## What the bot can do
 
-- See open floors with `office_floors`. It has no current floor, and `office_move`
-  is removed. Its teams remain on their own floors and report to the same lead.
+- See open floors with `office_floors`. It has no current floor. Its teams are on
+  their own floors and report to it.
 - Hire using `team_models` and `team_hire` on any open floor named with `floor`
-  or a structured task's `repo`. For read-only checkout work, use `worktree: false`
+  or a structured task's `repo`, by id, name or checkout path. For read-only checkout work, use `worktree: false`
   and omit the optional base and branch. It has the owner's access: the Subagents
   permission, the allowed-model list and the per-lead team size do not limit it.
   Office capacity still applies, and a model that cannot run is still refused.
 - Use `team_status`, `team_message` and `team_dismiss` to read, message, or
   dismiss its subagents across floors, and `worker_log` and `worker_diff` to
   inspect one. Status defaults to all its teams. Use a worker id or the optional
-  `floor` argument when names repeat. Use `team_report_get` for a full report.
+  `floor` argument (id, name or checkout path) when names repeat. Use `team_report_get` for a full report.
 - Direct independent floor workers with `office_worker_prompt`. Building agents
   have no visit tools and are not on floor workers' visit rosters.
 - Read messages and team updates from every floor with `office_inbox`.

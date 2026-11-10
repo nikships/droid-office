@@ -144,11 +144,11 @@ Read your office identity, desk, lead if you are a subagent, permission to hire 
 
 No arguments.
 
-For an external worker, the subagent count covers every open floor, and Mission Control has no floor to move to.
+For a building agent, the subagent count covers every open floor.
 
 ### `office_floors`
 
-List open floors, your current workspace, and your teams and unread team updates on each floor.
+List open floors, with your teams and unread team updates on each floor.
 
 No arguments.
 
@@ -172,7 +172,7 @@ Set your self-reported office status and optional short activity. This does not 
 
 ### `office_roster`
 
-List every worker in the building, or on one floor: id, name, floor id and number (1-based, the elevator's order), desk, status, task, model, lead, and whether it is you or your own subagent. Includes owner-hired workers, subagents, shells, cloud and external workers. A separate Mission Control section lists the Orchestrator and every building agent, which have no floor or desk; the floor filter covers only floor workers.
+List every worker in the building, or on one floor: id, name, floor id and number (1-based, the elevator's order), desk, status, task, model, lead, and whether it is you or your own subagent. Includes owner-hired workers, subagents, shells and cloud workers. Mission Control's building agents are a separate section: they have no floor or desk and MCP tools never control them.
 
 | Argument | Type | Required | Description |
 | --- | --- | --- | --- |
@@ -190,7 +190,7 @@ Read the end of any worker's terminal, on any floor, without typing anything. na
 
 ### `office_send_home`
 
-Send a floor worker home, on any floor, exactly as the owner's SEND HOME does: owner-hired workers, other leads' subagents, external workers, you or your lead. Building agents in Mission Control cannot be sent home through this tool, including yourself. cleanup keep (the default) leaves its worktree and branch; worktree deletes the worktree and keeps the branch; all deletes both, including commits no remote has. deleteSession true also deletes a cloud worker's Factory session, only when the owner asked. The reply preserves the target and pre-dismissal worktree report even when the outcome is uncertain. Its subagents stay, without a lead.
+Send any floor worker home, exactly as the owner's SEND HOME does: an owner-hired worker or any lead's subagent, yours included. Building agents in Mission Control cannot be sent home through the Office MCP, including yourself. cleanup keep (the default) leaves its worktree and branch; worktree deletes the worktree and keeps the branch; all deletes both, including commits no remote has. deleteSession true also deletes a cloud worker's Factory session, only when the owner asked. The reply preserves the target and pre-dismissal worktree report even when the outcome is uncertain. Its subagents stay, without a lead.
 
 | Argument | Type | Required | Description |
 | --- | --- | --- | --- |
@@ -262,7 +262,7 @@ Interrupt any worker’s current turn without dismissing it. Sends Escape locall
 
 ### `office_worker_thread`
 
-Read one page of any local or cloud agent’s conversation. Does not attach or type into its terminal. Returns a bounded snapshot and pagination information.
+Read one page of any local or cloud agent’s conversation, including the Orchestrator in Mission Control. Does not attach or type into its terminal. Returns a bounded snapshot and pagination information.
 
 | Argument | Type | Required | Description |
 | --- | --- | --- | --- |
@@ -300,7 +300,7 @@ For an external worker, status news follows a cursor kept for that bot across re
 | Argument | Type | Required | Description |
 | --- | --- | --- | --- |
 | `worker` | string | no | Your subagent’s name or id, case-insensitive. Omit for all. |
-| `floor` | string | no | External workers only: restrict to an open floor id. |
+| `floor` | string | no | Building agents only: just this open floor, by id, name or checkout path. Omit for all your teams across the building. |
 | `lines` | integer | no | Include this many recent terminal lines per selected subagent, at most 400. Omit to leave terminals out. |
 | `verbose` | boolean | no | false for one compact line per subagent and per event, with summaries instead of whole reports. Omit or true for the full text. |
 | `since` | string | no | A cursor from an earlier status (cursor field) or one event id. News is everything after it, heard or not, instead of only unread news. |
@@ -314,7 +314,7 @@ Send an answer or follow-up to one of your subagents. Cannot answer a permission
 | --- | --- | --- | --- |
 | `worker` | string | yes | Your subagent’s name or id, case-insensitive. |
 | `text` | string | yes | The answer or follow-up, typed into the subagent's session. |
-| `floor` | string | no | External workers only: restrict to an open floor id. |
+| `floor` | string | no | Building agents only: just this open floor, by id, name or checkout path. Omit for all your teams across the building. |
 
 ### `team_dismiss`
 
@@ -323,7 +323,7 @@ Dismiss a reviewed subagent. Defaults to keeping its worktree and branch. pruneW
 | Argument | Type | Required | Description |
 | --- | --- | --- | --- |
 | `worker` | string | yes | Your subagent’s name or id, case-insensitive. |
-| `floor` | string | no | External workers only: restrict to an open floor id. |
+| `floor` | string | no | Building agents only: just this open floor, by id, name or checkout path. Omit for all your teams across the building. |
 | `pruneWorktree` | boolean | no | Remove the subagent's worktree if it is clean and owned by the office. Default false. |
 | `keepBranch` | boolean | no | Default true. False also deletes the local branch safely; needs `pruneWorktree: true`. |
 
@@ -334,7 +334,7 @@ Read a size-capped Git diff and stat for your subagent. Defaults to its recorded
 | Argument | Type | Required | Description |
 | --- | --- | --- | --- |
 | `worker` | string | yes | Your subagent’s name or id, case-insensitive. |
-| `floor` | string | no | External workers only: restrict to an open floor id. |
+| `floor` | string | no | Building agents only: just this open floor, by id, name or checkout path. Omit for all your teams across the building. |
 | `base` | string | no | Revision to diff against instead of the recorded base. Not with `commits`. |
 | `commits` | integer | no | Diff only the last N commits through HEAD, 1 to 1000. Not with `base`. |
 
@@ -345,7 +345,7 @@ Read recent terminal output and current tool activity for your subagent without 
 | Argument | Type | Required | Description |
 | --- | --- | --- | --- |
 | `worker` | string | yes | Your subagent’s name or id, case-insensitive. |
-| `floor` | string | no | External workers only: restrict to an open floor id. |
+| `floor` | string | no | Building agents only: just this open floor, by id, name or checkout path. Omit for all your teams across the building. |
 | `tail` | integer | yes | Latest terminal lines to read, 1 to 400. |
 
 ### `team_wait`
@@ -360,7 +360,7 @@ Without `since`, an external worker's wait starts from the news as it stands whe
 | `workers` | string[] | no | Subagent names or ids to watch. Omit for your whole team. |
 | `timeoutSec` | integer | no | Longest wait in seconds, default 30, at most 600. |
 | `since` | string | no | A cursor from an earlier response (cursor field), or one event id: only events after it are considered, whether or not you have heard them. |
-| `floor` | string | no | External workers only: just this floor. Omit for all your teams across the building. |
+| `floor` | string | no | Building agents only: just this open floor, by id, name or checkout path. Omit for all your teams across the building. |
 | `verbose` | boolean | no | Include each event full text, not just its summary. |
 
 ### `team_report_get`
@@ -371,7 +371,7 @@ Read one full report or question from your subagents, by its event id (lastRepor
 | --- | --- | --- | --- |
 | `worker` | string | no | Subagent name or id: its latest report or question. |
 | `id` | string | no | An event id such as team:<floor>:<seq>. |
-| `floor` | string | no | External workers only: just this floor. Omit for all your teams across the building. |
+| `floor` | string | no | Building agents only: just this open floor, by id, name or checkout path. Omit for all your teams across the building. |
 
 ### `questions_list`
 
@@ -380,7 +380,7 @@ List questions waiting on you from your subagents, like the owner's Asks inbox: 
 | Argument | Type | Required | Description |
 | --- | --- | --- | --- |
 | `workers` | string[] | no | Subagent names or ids. Omit for your whole team. |
-| `floor` | string | no | External workers only: just this floor. Omit for all your teams across the building. |
+| `floor` | string | no | Building agents only: just this open floor, by id, name or checkout path. Omit for all your teams across the building. |
 
 ### `question_answer`
 

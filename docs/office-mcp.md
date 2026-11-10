@@ -60,12 +60,12 @@ Floor workers retain their team, visit and Whiteboard contracts. External bots l
 | `office_worker_thread` | `thread.read` | `workerId`, `floor?`, `before?`; [full schema reference](guide/remote-mcp.md#office_worker_thread) | building agents; may read Orchestrator |
 | `team_models` | `office-workers models` | none | may hire |
 | `models_list` | full model discovery | none; includes `enabled: false` for switched-off/disallowed models | internal workers only, with existing permissions |
-| `team_hire` | `office-workers hire` | `title`, `brief`, `floor?` (building agents), or `task: {title, brief, repo, baseBranch?, branch?, prNumber?, acceptanceCriteria?}`; `model?`, `effort?`, `from?`, `worktree?`. Returns `worktree` and `branch` immediately | may hire |
-| `team_status` | team snapshot | `worker?`, `floor?` (external only), `lines?` (1–400), `verbose?` (boolean), `since?` (cursor), `kinds?` (event kinds, `blocked`). Includes observed `idleSince` and `idleForMs` | has or may have subagents |
-| `team_message` | team follow-up | `worker`, `text`, `floor?` (external only) | same |
-| `team_dismiss` | safe lifecycle cleanup | `worker`, `floor?` (external only), `pruneWorktree?` (default false), `keepBranch?` (default true; false requires pruning) | same |
-| `worker_diff` | read-only work inspection on Git floors only | `worker`, `floor?` (external only), `base?` or `commits?` (1–1000); diff cap 48,000 bytes plus 8,000-byte stat | same |
-| `worker_log` | read-only activity inspection | `worker`, `tail` (1–400), `floor?` (external only); cap 48,000 characters | same |
+| `team_hire` | `office-workers hire` | `title`, `brief`, `floor?` (building agents: id, name or checkout path), or `task: {title, brief, repo, baseBranch?, branch?, prNumber?, acceptanceCriteria?}`; `model?`, `effort?`, `from?`, `worktree?`. Returns `worktree` and `branch` immediately | may hire |
+| `team_status` | team snapshot | `worker?`, `floor?` (building agents), `lines?` (1–400), `verbose?` (boolean), `since?` (cursor), `kinds?` (event kinds, `blocked`). Includes observed `idleSince` and `idleForMs` | has or may have subagents |
+| `team_message` | team follow-up | `worker`, `text`, `floor?` (building agents) | same |
+| `team_dismiss` | safe lifecycle cleanup | `worker`, `floor?` (building agents), `pruneWorktree?` (default false), `keepBranch?` (default true; false requires pruning) | same |
+| `worker_diff` | read-only work inspection on Git floors only | `worker`, `floor?` (building agents), `base?` or `commits?` (1–1000); diff cap 48,000 bytes plus 8,000-byte stat | same |
+| `worker_log` | read-only activity inspection | `worker`, `tail` (1–400), `floor?` (building agents); cap 48,000 characters | same |
 | `team` | deprecated alias for `list`, `read`, `send`, `dismiss` | `action`: `status` \| `message` \| `dismiss`; `name?` (status: one subagent, else all); `lines?` (number, status: include that many terminal lines, max 400); `text?` (message); status only: `verbose?`, `since?`, `kinds?` as for `team_status`. Legacy dismissal retains its existing cleanup policy | internal workers only, with existing permissions |
 | `team_wait` | new | `until?` (event kinds, `blocked`, `idle`), `workers?` (names or ids), `timeoutSec?` (1–600), `since?` (cursor), `floor?`, `verbose?` | has or may have subagents; external workers, or local ones with "Wake the lead" off |
 | `team_report_get` | new | `worker?`, `id?` (event id), `floor?` | has or may have subagents |
@@ -86,11 +86,15 @@ Each tool returns readable `content` text and, where useful, `structuredContent`
 
 Structured hires default to a fresh worktree; explicit `worktree: false` permits read-only checkout work without a base or branch. Floor workers select their own repository by absolute path; building agents must name an open repository by path, floor id or floor name. A requested branch must be new. Pruning checks ownership and dirty state, then stops the worker and asks Git to remove the worktree without force. A race that makes it dirty leaves it on disk and returns an error. Detached worktrees stay until their commits are on a branch. Safe branch deletion may leave a pre-existing or unmerged branch; it never deletes a remote branch.
 
-For external workers, team-management tools accept `floor?`; without it, status
-includes teams across all open floors. Names must be unambiguous, or use a worker
-id. Remote status reads do not consume reports: acknowledge them through
-`office_inbox`. Building agents have no current floor: hiring always names one.
-Local workers keep their existing floor scope and terminal delivery semantics.
+For building agents, team-management tools accept `floor?`, an open floor's id,
+name or checkout path; without it, status includes teams across all open floors.
+A name two open floors share is refused with their ids, and so is a hire whose
+`floor` and `task.repo` name different floors. Worker names must be unambiguous,
+or use a worker id. A `since` cursor names its floor (`team:<floor>:<seq>`); a
+bare sequence number is only for a floor worker, whose floor is known. A bot's
+status reads do not consume reports: acknowledge them through `office_inbox`.
+Building agents have no current floor: hiring always names one. Local workers
+keep their own floor's scope and terminal delivery.
 
 ## Code layout
 
