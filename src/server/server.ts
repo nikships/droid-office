@@ -391,7 +391,10 @@ export async function startServer(cfg: Config) {
   // Whether a fresh worker starts from the latest of the default branch, on every floor (⚙️ Settings).
   const freshMain = new FreshMain(cfg.dataDir, (state) => broadcast({ t: 'freshMain', state }));
   // The prompts the office writes for workers by itself, and the worker a new one starts on when nobody picks (Settings).
-  const prompts = new OfficePrompts(cfg.dataDir, (state) => broadcast({ t: 'prompts', state }));
+  const prompts = new OfficePrompts(cfg.dataDir, (state) => {
+    broadcast({ t: 'prompts', state });
+    missionChanged();
+  });
   // Office tools and how workers hire subagents, on every floor (Settings).
   for (const problem of removeBundledSkills(cfg.skillsDir)) console.warn(problem);
   const hookUrl = `http://127.0.0.1:${hookPort}`;
@@ -405,6 +408,7 @@ export async function startServer(cfg: Config) {
   const subagents = new Subagents(cfg.dataDir, (state) => {
     syncOfficeMcp(state.officeMcp);
     broadcast({ t: 'subagents', state });
+    missionChanged();
   });
   syncOfficeMcp(subagents.settings.officeMcp);
   // Another office that held the shared profile entry may stop: take it over then.
@@ -573,21 +577,32 @@ export async function startServer(cfg: Config) {
   const setup = mountSetup({
     dataDir: cfg.dataDir,
     agentCmd: cfg.agentCmd,
-    broadcast: (state) => broadcast({ t: 'setup', state }),
+    broadcast: (state) => {
+      broadcast({ t: 'setup', state });
+      missionChanged();
+    },
     toast: (text, level) => toastAll(text, level),
     agentChanged: (file) => {
       agentPath = file;
       droidModels.forget();
       droidCommands.forget();
       for (const f of floors.values()) f.workers.setAgentPath(file);
+      orchestrator.workers.setAgentPath(file);
+      missionChanged();
     },
   });
   // DroidProxy, and the Claude, ChatGPT and other subscriptions workers run on through it.
   const subscriptions = mountSubscriptions({
     dataDir: cfg.dataDir,
-    broadcast: (state) => broadcast({ t: 'subscriptions', state }),
+    broadcast: (state) => {
+      broadcast({ t: 'subscriptions', state });
+      missionChanged();
+    },
     toast: (text, level) => toastAll(text, level),
-    modelsChanged: () => droidModels.forget(),
+    modelsChanged: () => {
+      droidModels.forget();
+      missionChanged();
+    },
   });
 
   // The machine's CPU and memory, for the monitor on the wall and a warning before hiring, and the
@@ -1835,7 +1850,7 @@ export async function startServer(cfg: Config) {
           return done(err, ORCHESTRATOR_ID);
         }
         case 'worker.interrupt':
-          return done(orch.write(ORCHESTRATOR_ID, '\u001b') ? undefined : 'The Orchestrator is not running. Nothing was stopped.');
+          return done(orchestrator.interrupt() ? undefined : 'The Orchestrator isn’t in the middle of a turn. Nothing was stopped.');
         case 'worker.answer': {
           const hasChoice = typeof msg.choice === 'number';
           const hasChoices = Array.isArray(msg.choices);
@@ -2795,6 +2810,11 @@ export async function startServer(cfg: Config) {
    */
   const ownerOffice: OwnerOffice = {
     floors: () => [...floors.values()].map((f) => ({ id: f.id, name: f.def.name, workers: f.everyone() })),
+    mission: () => {
+      const state = missionState();
+      const agent = orchestrator.rosterAgent();
+      return [...(agent ? [agent] : []), ...state.bots];
+    },
     tail: (id, lines, floorId) => (id === OFFICE_SHELL_ID ? floors.get(floorId ?? '')?.shell.tail(lines) : workersOf(id)?.tail(id, lines)),
     act: (by: WorkerInfo, msg, opts = {}) =>
       new Promise<OwnerReply>((resolve) => {

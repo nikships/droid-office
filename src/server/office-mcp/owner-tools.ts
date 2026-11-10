@@ -1,10 +1,11 @@
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
+import { ORCHESTRATOR_ID } from '../../shared/mission-control.js';
 import type { ClientMsg } from '../../shared/protocol.js';
 import { AUTO_DESK } from '../../shared/protocol.js';
 import type { OfficeMcpServer } from './index.js';
 import { officeError } from './index.js';
-import { buildingOnly, findWorker, pickFloor, ownerResult, type OwnerAction, type OwnerOffice } from './owner.js';
+import { buildingOnly, findMissionAgent, findWorker, missionControlRefusal, pickFloor, ownerResult, type OwnerAction, type OwnerOffice } from './owner.js';
 import { cloud, effort, floorRef, id, images, menu, model, text, workerRef } from './owner-schemas.js';
 
 type Input<A extends OwnerAction> = Omit<Extract<ClientMsg, { t: A }>, 't' | 'request' | 'requestId' | 'requestFloor' | 'floor'> & { floor?: string };
@@ -82,7 +83,7 @@ export const OWNER_TOOLS = [
   tool(
     'thread.read',
     'office_worker_thread',
-    'Read one page of any local or cloud agent’s conversation. Does not attach or type into its terminal. Returns a bounded snapshot and pagination information.',
+    'Read one page of any local or cloud agent’s conversation, including the Orchestrator in Mission Control. Does not attach or type into its terminal. Returns a bounded snapshot and pagination information.',
     z.strictObject({ ...worker, before: z.number().int().nonnegative().optional().describe('Exclusive entry sequence for older history; omit for the newest page.') }),
     'worker',
     'read',
@@ -99,9 +100,16 @@ export function registerOwnerTools(server: OfficeMcpServer, owner: OwnerOffice):
       let floor: string | undefined;
       if (entry.scope === 'worker') {
         const found = findWorker(owner.floors(), String(args.workerId), ref);
-        if (typeof found === 'string') return officeError(found);
-        args.workerId = found.worker.id;
-        floor = found.floor.id;
+        if (typeof found === 'string') {
+          const building = findMissionAgent(owner, String(args.workerId));
+          if (!building) return officeError(found);
+          // Reading the Orchestrator's own thread is the one control-shaped action allowed on a building agent.
+          if (entry.action !== 'thread.read' || building.worker.id !== ORCHESTRATOR_ID) return officeError(missionControlRefusal(building, entry.action === 'thread.read' ? 'read' : entry.name));
+          args.workerId = building.worker.id;
+        } else {
+          args.workerId = found.worker.id;
+          floor = found.floor.id;
+        }
       } else {
         const at = ref ?? caller.floor?.id;
         if (!at) return officeError('Name the floor: office_floors lists them.');
