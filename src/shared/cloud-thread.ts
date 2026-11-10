@@ -14,7 +14,7 @@ import type { ThreadEntry } from './worker-thread.js';
  */
 export const SEQ_STRIDE = 256;
 
-const clean = (text: string) => hideOfficeText(text).trim();
+const clean = (text: string, byOwner = false) => hideOfficeText(text, byOwner).trim();
 
 /** A TodoWrite's list in the "1. [completed] Step" form threadPlan reads, from either input shape Droid sends. */
 export function todoText(input: Record<string, unknown>): string | undefined {
@@ -62,7 +62,7 @@ export function cloudEntries(messages: readonly FactoryMessage[]): ThreadEntry[]
       }
       switch (b.type) {
         case 'text': {
-          const text = clean(b.text);
+          const text = clean(b.text, role === 'user');
           if (!text) return;
           if (m.isError && role === 'assistant') out.push({ id, seq, role: 'system', kind: 'notice', text, error: true });
           else out.push({ id, seq, role, kind: 'text', text });

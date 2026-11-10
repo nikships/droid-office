@@ -172,18 +172,27 @@ export function officeSays(text: string): string {
   return text.startsWith(OFFICE_SAYS) ? text : `${OFFICE_SAYS} notice:\n${text}`;
 }
 
-// Droid escapes a reserved tag typed into its prompt (`&lt;system-reminder&gt;`) and keeps the harness's own raw, so both forms are hidden.
-const REMINDER_BLOCK = /(?:<|&lt;)(system-(?:reminder|notification))\b[^>]*?(?:>|&gt;)[\s\S]*?(?:(?:<|&lt;)\/\1\s*(?:>|&gt;)|$)/gi;
+const REMINDER_BLOCK = /<(system-(?:reminder|notification))\b[^>]*>[\s\S]*?(?:<\/\1\s*>|$)/gi;
+// Droid escapes both tags of a reserved block typed into a prompt (`&lt;system-reminder&gt;…&lt;/system-reminder&gt;`). An assistant can quote a lone escaped tag, so only a closed block goes.
+const ESCAPED_BLOCK = /&lt;(system-(?:reminder|notification))\b(?:(?!&gt;)[^\n])*&gt;[\s\S]*?&lt;\/\1\s*&gt;/gi;
 const FLOOR_LINE = /^[ \t]*Droid Office notice: The owner sent this from the .+ floor \(.+\)\.[ \t]*$/gm;
+const CUT = '\uE000';
 
-/** Text without what the office or Droid added around it: reminder and notification blocks, raw or escaped, and the floor line. */
-export function hideOfficeText(text: string): string {
-  return text.replace(REMINDER_BLOCK, '').replace(FLOOR_LINE, '');
+/**
+ * Text without what the office or Droid added around it: raw reminder and notification blocks always,
+ * and for the owner's own messages (`byOwner`) also the escaped form and the floor line. What was cut
+ * leaves at most one blank line behind.
+ */
+export function hideOfficeText(text: string, byOwner = false): string {
+  let out = text.replace(REMINDER_BLOCK, CUT);
+  if (byOwner) out = out.replace(ESCAPED_BLOCK, CUT).replace(FLOOR_LINE, CUT);
+  if (!out.includes(CUT)) return text;
+  return out.replace(/(\n*)\uE000+(\n*)/g, (_, before: string, after: string) => '\n'.repeat(Math.min(2, before.length + after.length)));
 }
 
 /** What the owner typed: their message without what the office added after it. */
 export function withoutReminders(text: string): string {
-  return hideOfficeText(text).trim();
+  return hideOfficeText(text, true).trim();
 }
 
 /**

@@ -3,7 +3,23 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { PROMPTS, PROMPT_IDS, PROMPT_MAX, WORKER_VISITS, fillPrompt, floorHint, issuePromptVars, mergeCommand, placeholders, promptText, pullPromptVars, shipPromptVars, withoutReminders, workerMessageVars } from '../src/shared/prompts.js';
+import {
+  PROMPTS,
+  PROMPT_IDS,
+  PROMPT_MAX,
+  WORKER_VISITS,
+  fillPrompt,
+  floorHint,
+  hideOfficeText,
+  issuePromptVars,
+  mergeCommand,
+  placeholders,
+  promptText,
+  pullPromptVars,
+  shipPromptVars,
+  withoutReminders,
+  workerMessageVars,
+} from '../src/shared/prompts.js';
 import { buildingInstructions } from '../src/server/office-mcp/remote.js';
 import { ownerInstructions } from '../src/server/office-mcp/owner.js';
 import { INSTRUCTIONS } from '../src/server/office-mcp/index.js';
@@ -289,18 +305,37 @@ test('a floor hint is one plain notice line with no tag for Droid to escape, and
   assert.equal(/[<>&]/.test(hint), false);
   assert.equal(floorHint({ name: 'a\nb', dir: '/p\r\nq' }), 'Droid Office notice: The owner sent this from the a b floor (/p q).', 'a name cannot start a second line');
   assert.equal(withoutReminders(`Merge the PRs\n\n${hint}`), 'Merge the PRs');
-  assert.equal(withoutReminders(`Merge the PRs\n\n${hint}\n\nPictures:\n/tmp/a.png`), 'Merge the PRs\n\n\n\nPictures:\n/tmp/a.png', 'a picture list after it stays');
+  assert.equal(withoutReminders(`Merge the PRs\n\n${hint}\n\nPictures:\n/tmp/a.png`), 'Merge the PRs\n\nPictures:\n/tmp/a.png', 'a picture list after it stays, with no gap where the line was');
   assert.equal(withoutReminders('Merge the PRs'), 'Merge the PRs');
   assert.equal(withoutReminders(hint), '');
   assert.equal(withoutReminders('Droid Office notice: the owner sent this from somewhere'), 'Droid Office notice: the owner sent this from somewhere', 'only the exact line goes');
 });
 
-test('reminder and notification blocks are hidden whether Droid left them raw or escaped them', () => {
+test('reminder and notification blocks are hidden from the owner’s messages whether Droid left them raw or escaped', () => {
   assert.equal(withoutReminders('Merge the PRs\n\n&lt;system-reminder&gt;\nThe owner sent this from the droid-office floor (/p).\n&lt;/system-reminder&gt;'), 'Merge the PRs');
   assert.equal(withoutReminders('A &lt;system-notification kind="x"&gt;secret&lt;/system-notification&gt;B'), 'A B');
   assert.equal(withoutReminders('A <system-reminder>secret</system-reminder>B &lt;SYSTEM-REMINDER&gt;more&lt;/SYSTEM-REMINDER&gt;'), 'A B');
-  assert.equal(withoutReminders('Keep\n&lt;system-reminder&gt;unclosed'), 'Keep');
+  assert.equal(withoutReminders('Keep\n<system-reminder>unclosed'), 'Keep', 'a raw block with no closer still runs to the end');
+  assert.equal(withoutReminders('Keep &lt;system-reminder&gt; and &lt;system-notification&gt; alone'), 'Keep &lt;system-reminder&gt; and &lt;system-notification&gt; alone', 'escaped tags with no matching closer stay');
+  assert.equal(withoutReminders('Keep\n&lt;system-reminder&gt;unclosed'), 'Keep\n&lt;system-reminder&gt;unclosed');
   assert.equal(withoutReminders('a &lt;b&gt; c'), 'a &lt;b&gt; c', 'other escaped text stays');
+});
+
+test('only raw blocks are hidden from text that is not the owner’s, so an assistant can quote an escaped tag', () => {
+  const quoted = 'It arrived as escaped text, `&lt;system-reminder&gt;`, and then more words.';
+  assert.equal(hideOfficeText(quoted), quoted);
+  assert.equal(hideOfficeText('See &lt;system-reminder&gt;x&lt;/system-reminder&gt; here'), 'See &lt;system-reminder&gt;x&lt;/system-reminder&gt; here');
+  assert.equal(hideOfficeText('Hi <system-reminder>x</system-reminder>there'), 'Hi there');
+  const line = 'Droid Office notice: The owner sent this from the a floor (/p).';
+  assert.equal(hideOfficeText(`Words\n\n${line}`), `Words\n\n${line}`, 'the floor line is the owner’s message only');
+});
+
+test('what is cut from a message leaves at most one blank line', () => {
+  const line = 'Droid Office notice: The owner sent this from the a floor (/p).';
+  assert.equal(withoutReminders(`Words\n\n${line}\n\nPictures:\n/tmp/a.png`), 'Words\n\nPictures:\n/tmp/a.png');
+  assert.equal(withoutReminders(`Words\n\n\n${line}\n\n\nMore`), 'Words\n\nMore');
+  assert.equal(withoutReminders('One\n<system-reminder>x</system-reminder>\nTwo'), 'One\n\nTwo');
+  assert.equal(withoutReminders('One\n\n\n\nTwo'), 'One\n\n\n\nTwo', 'untouched text keeps its own spacing');
 });
 
 test("each audience is told once to send workers home and to weigh a subscription's quota, and the standing rules are not repeated across surfaces", () => {
