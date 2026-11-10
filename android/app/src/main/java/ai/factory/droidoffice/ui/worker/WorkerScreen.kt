@@ -237,7 +237,7 @@ fun WorkerScreen(workerId: String, onBack: () -> Unit, embedded: Boolean = false
         }
         var sendingHome by remember { mutableStateOf(false) }
         var orchestratorMenu by remember { mutableStateOf(false) }
-        val blocked = if (mission) orchestrator?.blocked else null
+        val blocked = if (mission) MissionControl.orchestratorBlocked(orchestrator) else null
         Header(worker, embedded, link.phase == Phase.Connected, onBack, onSendHome = { if (mission) orchestratorMenu = true else sendingHome = true }, mission = mission, blocked = blocked != null)
         val live = !worker.state.asleep
         // Its next prompt starts or wakes the Orchestrator's session, so it always takes one.

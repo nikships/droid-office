@@ -72,7 +72,7 @@ fun MissionControlSection(mission: MissionControlState?, now: Long, selected: St
         }
         val o = mission.orchestrator
         val openOrchestrator = { onOpen(ORCHESTRATOR_ID) }
-        if (o.settings.on) OrchestratorCard(o.agent, o.blocked, now, selected == ORCHESTRATOR_ID, openOrchestrator) else OrchestratorOffRow(openOrchestrator)
+        if (o.settings.on) OrchestratorCard(o.agent, MissionControl.orchestratorBlocked(o), now, selected == ORCHESTRATOR_ID, openOrchestrator) else OrchestratorOffRow(openOrchestrator)
         if (mission.bots.isNotEmpty()) {
             Column(Modifier.fillMaxWidth().panel(RoundedCornerShape(12.dp))) {
                 mission.bots.forEachIndexed { i, bot ->

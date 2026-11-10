@@ -184,10 +184,21 @@ object MissionControl {
     /** What a row says in place of a model while the Orchestrator has none of its own. */
     const val OFFICE_DEFAULT = "Office default"
 
+    /**
+     * Why the Orchestrator can't start, while no session of it is running (none yet, or asleep). The office
+     * sets `blocked` whenever a new start couldn't happen, which a live session doesn't care about: it keeps
+     * its status, its composer and its Stop (orchestratorBlocked in src/client/mission.ts).
+     */
+    fun orchestratorBlocked(state: OrchestratorState?): String? {
+        if (state?.settings?.on != true) return null
+        val w = state.agent?.worker
+        return state.blocked?.takeIf { w == null || w.state.asleep }
+    }
+
     /** orchestratorLine in src/client/mission.ts. */
     fun orchestratorLine(state: OrchestratorState?): String {
         if (state?.settings?.on != true) return "Off. Turn it on in Settings → Orchestrator."
-        state.blocked?.let { return it }
+        orchestratorBlocked(state)?.let { return it }
         val w = state.agent?.worker
         if (w == null || (w.state == WorkerStatus.Idle && w.task == null && w.title.isNullOrBlank() && w.activity.isNullOrBlank())) return READY
         return Workers.detail(w) ?: Workers.title(w) ?: READY

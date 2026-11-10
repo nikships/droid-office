@@ -220,11 +220,12 @@ internal fun OrchestratorIdle(state: OrchestratorState?, synced: Boolean, embedd
     var fill by remember { mutableStateOf<String?>(null) }
     val connected = link.phase == Phase.Connected
     val on = state?.settings?.on == true
+    val blocked = MissionControl.orchestratorBlocked(state)
     Column(
         Modifier.fillMaxSize().tagged(Tags.Screen.WORKER).background(Palette.Bg).windowInsetsPadding(paneInsets(embedded))
             .windowInsetsPadding(WindowInsets.ime.union(WindowInsets.navigationBars).only(WindowInsetsSides.Bottom)),
     ) {
-        IdleHeader(embedded, onBack, if (state == null) "Mission Control" else if (!on) "Mission Control · off" else if (state.blocked != null) "Mission Control · blocked" else "Mission Control · ready", onMenu = if (state == null) null else ({ menu = true }))
+        IdleHeader(embedded, onBack, if (state == null) "Mission Control" else if (!on) "Mission Control · off" else if (blocked != null) "Mission Control · blocked" else "Mission Control · ready", onMenu = if (state == null) null else ({ menu = true }))
         Box(Modifier.fillMaxWidth().height(1.dp).background(Palette.Border))
         Column(
             Modifier.weight(1f).fillMaxWidth().verticalScroll(rememberScrollState()).padding(horizontal = 24.dp, vertical = 28.dp),
@@ -252,11 +253,10 @@ internal fun OrchestratorIdle(state: OrchestratorState?, synced: Boolean, embedd
                         if (!connection.send(ClientMsg.orchestratorSet(state.settings.copy(on = true)))) scope.launch { snackbar.showSnackbar("Couldn't reach the office. Nothing changed.") }
                     }, Modifier.tagged(Tags.Orchestrator.TURN_ON), enabled = connected, icon = OfficeIcons.Bolt)
                 }
-                else -> Intro(enabled = connected && state.blocked == null, onExample = { fill = it })
+                else -> Intro(enabled = connected && blocked == null, onExample = { fill = it })
             }
         }
         if (on) {
-            val blocked = state.blocked
             if (blocked != null) OrchestratorBlocked(blocked)
             else Composer(IdleOrchestrator, connected = connected, thread = true, fill = fill, onFilled = { fill = null })
         }
