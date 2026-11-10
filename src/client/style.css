@@ -230,6 +230,7 @@ img.glyph { display: inline-block; width: 1em; height: 1em; vertical-align: -0.1
 .pill.needs_input::before { animation: blink 1.2s steps(2, jump-none) infinite; }
 .pill.done { color: var(--success); border-color: rgba(60, 207, 145, .35); }
 .pill.exited, .pill.offline { color: var(--text-secondary); }
+.pill.blocked { color: var(--warning); border-color: rgba(242, 184, 75, .45); background: var(--warning-muted); }
 .pill.merged { color: #b689ef; border-color: rgba(182, 137, 239, .4); }
 .pill.lost { color: #b45309; border-color: rgba(255, 183, 3, .5); background: rgba(255, 183, 3, .15); }
 .empty { color: var(--text-secondary); font-size: 12.5px; font-weight: 500; }
@@ -2707,8 +2708,9 @@ summary:hover > .wt-chevron { color: var(--text-secondary); }
 .orc-example { display: flex; align-items: center; gap: var(--space-3); width: 100%; padding: var(--space-3) var(--space-4); border: 1px solid var(--border-strong); border-radius: var(--radius-lg); background: var(--surface); color: var(--text); font: 400 var(--text-body)/var(--leading-body) var(--font-sans); text-align: left; cursor: pointer; transition: border-color var(--duration) var(--ease), background var(--duration) var(--ease); }
 .orc-example > span { flex: 1; min-width: 0; }
 .orc-example > svg { flex: none; color: var(--text-tertiary); transition: color var(--duration) var(--ease), transform var(--duration) var(--ease); }
-.orc-example:hover { border-color: rgba(238, 96, 24, .5); background: var(--surface-raised); }
-.orc-example:hover > svg { color: var(--accent); transform: translateX(2px); }
+.orc-example:hover:not(:disabled) { border-color: rgba(238, 96, 24, .5); background: var(--surface-raised); }
+.orc-example:hover:not(:disabled) > svg { color: var(--accent); transform: translateX(2px); }
+.orc-example:disabled { cursor: default; color: var(--text-secondary); }
 .orc-example:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
 .orc-intro .orc-intro-foot { font-size: var(--text-small); color: var(--text-tertiary); }
 /* Why the Orchestrator can't start, in place of its composer. */

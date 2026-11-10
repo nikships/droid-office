@@ -518,7 +518,8 @@ export function createPane(host: PaneHost, index: number): Pane {
 
   /** What the header says it's doing: building agents say it as their Mission Control row does. */
   function headLine(w: WorkerInfo) {
-    if (w.id === ORCHESTRATOR_ID) return orchestratorLine(host.mission());
+    // The pane says why it's blocked in place of its composer.
+    if (w.id === ORCHESTRATOR_ID) return host.mission()?.orchestrator.blocked ? 'Can’t start yet' : orchestratorLine(host.mission());
     const bot = w.remote ? missionAgent(host.mission(), w.id) : undefined;
     if (bot) return botLine(bot);
     return w.task?.name ?? w.title ?? doingLine(w);
@@ -558,8 +559,9 @@ export function createPane(host: PaneHost, index: number): Pane {
     const engine = w.kind === 'agent' ? modelBadgeNode(w.activeModel ?? w.model, w.activeEffort ?? w.effort) : kind(w);
     model.replaceChildren(...(engine ? [engine] : []));
     pill.hidden = false;
-    pill.className = `pill ${w.status}`;
-    pill.textContent = STATUS_LABEL[w.status] ?? w.status;
+    const blocked = w.id === ORCHESTRATOR_ID && !!host.mission()?.orchestrator.blocked;
+    pill.className = blocked ? 'pill blocked' : `pill ${w.status}`;
+    pill.textContent = blocked ? 'blocked' : (STATUS_LABEL[w.status] ?? w.status);
     views.hidden = flip.hidden = !toggles;
     views.setAttribute('aria-label', `${w.name} view`);
     views.replaceChildren(
@@ -676,6 +678,8 @@ export function createPane(host: PaneHost, index: number): Pane {
     info.who.replaceChildren(workerDot(w), h('div', {}, h('div.dash-info-name', {}, info.name), h('div.dash-info-kind', {}, kind(w))));
     info.name.textContent = w.name;
     info.activity.textContent = bot ? botLine(bot) : (w.activity ?? 'Hasn’t reported yet');
+    // Offline, that line is what the Status row already says.
+    info.activity.hidden = w.status === 'offline';
     const rows: [string, string | undefined][] = [
       ['Status', w.status === 'offline' ? 'Hasn’t reported since the office started' : (STATUS_LABEL[w.status] ?? w.status)],
       ['Doing', w.title],
@@ -717,6 +721,7 @@ export function createPane(host: PaneHost, index: number): Pane {
     info.who.replaceChildren(workerDot(w), h('div', {}, h('div.dash-info-name', {}, info.name), h('div.dash-info-kind', {}, kind(w))));
     info.name.textContent = w.name;
     info.activity.textContent = workerActivity(w) ?? w.prompt ?? 'Waiting for a task.';
+    info.activity.hidden = false;
     const lead = w.lead && store.workers.get(w.lead);
     const team = store.teamOf(w.id);
     const rows: [string, string | undefined][] = [
@@ -926,8 +931,12 @@ export function createPane(host: PaneHost, index: number): Pane {
       paintActions(w);
       if (!w) return paintEmpty(s);
       if (mode === 'terminal') void openTerm(w.id, s.takeFocus);
-      else if (mode === 'thread') thread?.update(w, host.live());
-      else paintInfo(w);
+      else if (mode === 'thread') {
+        thread?.update(w, host.live());
+        // An example can only fill a composer that's there to take it.
+        const open = host.live() && !host.mission()?.orchestrator.blocked;
+        for (const b of intro?.querySelectorAll<HTMLButtonElement>('.orc-example') ?? []) b.disabled = !open;
+      } else paintInfo(w);
       paintQuestion();
     },
     paintQuestion,

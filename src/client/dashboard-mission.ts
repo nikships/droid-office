@@ -173,19 +173,12 @@ export function createMissionRoster(el: HTMLElement, host: MissionRosterHost) {
             h('span.dash-row-name', {}, w.name),
             orchestrator ? null : h('span.dash-row-role', {}, 'Bot'),
             s.pane(w.id) >= 0 ? h('span.dash-row-pane', { title: `In pane ${s.pane(w.id) + 1}` }, `P${s.pane(w.id) + 1}`) : null,
-            orchestrator && s.shortcut && s.pane(w.id) < 0 && !waits && !isBusy(w.status) ? h('span.key.dash-mission-key', { title: `Open the Orchestrator (${s.shortcut})` }, s.shortcut) : null,
+            orchestrator && s.shortcut && s.pane(w.id) < 0 && !waits && !blocked && !isBusy(w.status) ? h('span.key.dash-mission-key', { title: `Open the Orchestrator (${s.shortcut})` }, s.shortcut) : null,
             h(
               'span.dash-row-state',
               {},
-              blocked
-                ? h('span.pill.warn', {}, 'blocked')
-                : waits
-                  ? h('span.pill', { class: w.status }, status)
-                  : isBusy(w.status) && w.status !== 'needs_input'
-                    ? workingBars(status)
-                    : !orchestrator && w.status === 'offline'
-                      ? h('span.pill', { class: w.status }, status)
-                      : null,
+              // Blocked and an offline bot say so in their line; a pill as well would squeeze the name.
+              blocked ? null : waits ? h('span.pill', { class: w.status }, status) : isBusy(w.status) && w.status !== 'needs_input' ? workingBars(status) : null,
             ),
           ),
           h('span.dash-row-doing', {}, line),

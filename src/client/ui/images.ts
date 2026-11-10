@@ -38,13 +38,14 @@ interface Item {
   removed?: boolean;
 }
 
-export function promptImages(textarea: HTMLTextAreaElement): PromptImages {
+/** `worker` is who the prompt is for: the Orchestrator's pictures are kept where its session reads them, on no floor. */
+export function promptImages(textarea: HTMLTextAreaElement, worker?: string): PromptImages {
   const floor = store.floor ?? '';
   const items: Item[] = [];
   const waiting: (() => void)[] = [];
   const element = h('div.pimgs', { role: 'list', 'aria-label': 'Attached pictures' });
 
-  const query = (extra: Record<string, string>) => new URLSearchParams({ floor, ...extra });
+  const query = (extra: Record<string, string>) => new URLSearchParams({ floor, ...(worker ? { worker } : {}), ...extra });
   const upload = async (f: File): Promise<string> => {
     const name = f.name || 'That picture';
     const res = await fetch(withToken(`/api/prompt/image?${query({ name: f.name })}`), { method: 'POST', headers: { 'content-type': f.type }, body: f });
