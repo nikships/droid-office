@@ -8,6 +8,7 @@ import { DEFAULT_ORCHESTRATOR_SETTINGS, ORCHESTRATOR_COLOR, ORCHESTRATOR_ID, ORC
 import { AGENT_EFFORTS, type AgentChoice, type WorkerInfo } from '../shared/protocol.js';
 import type { ScreenFrame } from './screen-frame.js';
 import { missionTeam } from './building-agent.js';
+import { BUILDING_TOOLS } from './office-mcp/index.js';
 import { officePrompt, type PromptSource } from './prompts.js';
 import type { Team } from './team.js';
 import { WorkerManager, type HookEnv } from './workers.js';
@@ -19,6 +20,13 @@ export const ORCHESTRATOR_DIR = 'orchestrator';
 /** Droid's file-editing tools: the Orchestrator plans and hires, and never edits. */
 export const ORCHESTRATOR_DENIED_TOOLS = '^(Edit|MultiEdit|Create|ApplyPatch)$';
 const DENIED = 'The Orchestrator never edits files. Hire a worker with team_hire and give it the change.';
+/**
+ * The building agents' Office MCP tools, by the two names Droid gives a tool of the `droid-office` server
+ * (`droid-office___team_hire`, `mcp__droid-office__team_hire`). The Orchestrator calls these without Droid's
+ * permission prompt: nobody sits at its terminal to approve a hire. Every other tool keeps its prompt.
+ */
+export const ORCHESTRATOR_ALLOWED_TOOLS = `^(droid-office___|mcp__droid-office__)(${[...BUILDING_TOOLS].join('|')})$`;
+const ALLOWED = 'The Orchestrator works through the Office MCP: its own tools there need no approval.';
 
 /** One open floor, as the Orchestrator's team spans them. */
 export interface OrchestratorFloor {
@@ -101,6 +109,7 @@ export class Orchestrator {
     );
     this.workers.systemPrompt = (info) => officePrompt(opts.prompts, 'orchestrator.system', { name: info.name, folder: this.cwd });
     this.workers.denyTools = { matcher: ORCHESTRATOR_DENIED_TOOLS, reason: DENIED };
+    this.workers.allowTools = { matcher: ORCHESTRATOR_ALLOWED_TOOLS, reason: ALLOWED };
     this.workers.asleep = () => !this.settings.on;
     this.workers.modelGate = (model) => opts.modelGate?.(model);
     // Its team's news it hasn't been woken for, on every floor, instead of stopping.

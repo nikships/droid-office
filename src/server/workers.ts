@@ -3,6 +3,7 @@ import { existsSync, readFileSync, writeFileSync, accessSync, readdirSync, renam
 import { execFile, execFileSync } from 'node:child_process';
 import { homedir } from 'node:os';
 import path from 'node:path';
+import { isDeepStrictEqual } from 'node:util';
 import headless from '@xterm/headless';
 import serialize from '@xterm/addon-serialize';
 import unicode11 from '@xterm/addon-unicode11';
@@ -126,36 +127,16 @@ const NOTICE_TYPING_MS = 5000;
 const CANCEL_MS = 3000;
 /** A worker's activity while Droid compacts its conversation (PreCompact, until the compact SessionStart). */
 const COMPACTING = 'Compacting its conversation';
-/** What Droid's built-in Task tool is refused with (see hookEntries). */
-/** What a PreToolUse hook prints to refuse a tool call, and why. */
-function denial(reason: string): string {
-  return JSON.stringify({ hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'deny', permissionDecisionReason: reason } });
+/**
+ * What a PreToolUse hook prints to decide a tool call, and why: `deny` blocks it, `allow` lets it run without
+ * Droid's permission prompt (https://docs.factory.ai/reference/hooks-reference#pretooluse-control).
+ */
+function toolDecision(permissionDecision: 'allow' | 'deny', permissionDecisionReason: string): string {
+  return JSON.stringify({ hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision, permissionDecisionReason } });
 }
 
-const TASK_DENY = JSON.stringify({
-  hookSpecificOutput: {
-    hookEventName: 'PreToolUse',
-    permissionDecision: 'deny',
-    permissionDecisionReason: "Droid Office refuses Droid's built-in Task tool. To delegate, hire a subagent with team_hire (Office MCP): it gets its own desk, terminal and worktree the owner can watch.",
-  },
-});
-/**
- * The names Droid gives Office MCP tools in PreToolUse (`droid-office___team_hire`, and the older
- * `mcp__droid-office__team_hire`), and the answer that keeps the Orchestrator's autonomous delegation
- * from waiting on a person at a terminal nobody sits at. Only the Orchestrator gets it. Droid's hook
- * reference defines `permissionDecision: "allow"` as allowing the call and bypassing its prompt:
- * https://docs.factory.ai/reference/hooks-reference#pretooluse-control
- * The match is only the Office MCP server: shell, edit, native and every other MCP tool keep their
- * normal permission prompt, and the Orchestrator's Edit deny remains a separate matcher.
- */
-const OFFICE_MCP_TOOLS = '^(droid-office___|mcp__droid-office__)';
-const OFFICE_MCP_ALLOW = JSON.stringify({
-  hookSpecificOutput: {
-    hookEventName: 'PreToolUse',
-    permissionDecision: 'allow',
-    permissionDecisionReason: "The Orchestrator delegates through Droid Office's own Office MCP: its tools are approved for this session.",
-  },
-});
+/** What Droid's built-in Task tool is refused with (see hookEntries). */
+const TASK_DENY = toolDecision('deny', "Droid Office refuses Droid's built-in Task tool. To delegate, hire a subagent with team_hire (Office MCP): it gets its own desk, terminal and worktree the owner can watch.");
 /** How often every worker's folder is checked for having been deleted. */
 const WATCH_MS = 10_000;
 /** How often each agent's screen is checked against its status (see reconcile). */
@@ -167,6 +148,8 @@ const SCREEN_CHECK_MS = 1000;
 const LAUNCH_PROMPT_FALLBACK_MS = 15_000;
 /** How long a new terminal waits for SessionStart (after its worktree setup, if any) before it looks stuck on a login. */
 const BOOT_BLOCKED_MS = 12_000;
+/** A worker's activity while its terminal looks stuck before SessionStart, with no menu on its screen to answer. */
+const BOOT_BLOCKED = 'Waiting on Droid setup or hooks — open the terminal';
 /** The most of a failed worktree setup's output its worker is told. */
 const SETUP_OUTPUT_MAX = 3000;
 /** Tools that ask the person a question: droid's is AskUser. */
@@ -335,6 +318,8 @@ export class WorkerManager {
   systemPrompt?: (info: WorkerInfo) => string | undefined;
   /** Tools its agents' droid is refused, by a PreToolUse matcher (a case-sensitive regex), and why. */
   denyTools?: { matcher: string; reason: string };
+  /** Tools its agents' droid calls without Droid's permission prompt, by a PreToolUse matcher, and why. */
+  allowTools?: { matcher: string; reason: string };
   /** A worker that stays asleep when the floor wakes everyone (the Orchestrator while it is off). */
   asleep?: (info: WorkerInfo) => boolean;
   private settling = false;
@@ -2537,7 +2522,7 @@ export class WorkerManager {
       if (left > 0) return void setTimeout(check, Math.min(left, 3000)).unref();
       if (info.kind === 'agent') {
         w.bootBlocked = true;
-        info.activity = 'Waiting on Droid setup or hooks — open the terminal';
+        info.activity = BOOT_BLOCKED;
         this.setStatus(w, 'needs_input');
         this.bootAsk(w);
       } else this.setStatus(w, 'idle');
@@ -2555,13 +2540,13 @@ export class WorkerManager {
     const question = menu?.question?.trim();
     const ask: WorkerAsk | undefined =
       menu?.choices.length && !menu.multiSelect ? { kind: 'question', questions: [{ question: question || 'Droid asks before it starts', options: menu.choices.map((c) => c.label), multiSelect: false }] } : undefined;
-    if (JSON.stringify(ask) === JSON.stringify(w.info.ask)) return;
+    if (isDeepStrictEqual(ask, w.info.ask)) return;
     if (ask) {
       w.info.ask = ask;
       w.info.activity = question ? `Droid asks: ${truncate(question, 60)}` : 'Droid asks something before it starts';
     } else {
       delete w.info.ask;
-      w.info.activity = 'Waiting on Droid setup or hooks — open the terminal';
+      w.info.activity = BOOT_BLOCKED;
     }
     this.emitUpdate(w);
   }
@@ -2707,10 +2692,8 @@ export class WorkerManager {
     const hooks: Record<string, unknown[]> = {};
     for (const event of HOOK_EVENTS) hooks[event] = [{ hooks: [{ type: 'command', command: this.hookCommand(event) }] }];
     if (this.denyTask?.() ?? true) hooks.PreToolUse.unshift({ matcher: 'Task', hooks: [{ type: 'command', command: `printf '%s' ${shq(TASK_DENY)}` }] });
-    if (this.denyTools) hooks.PreToolUse.unshift({ matcher: this.denyTools.matcher, hooks: [{ type: 'command', command: `printf '%s' ${shq(denial(this.denyTools.reason))}` }] });
-    // Only the Orchestrator, and only the Office MCP names (see OFFICE_MCP_TOOLS): a floor worker,
-    // a shell command, an edit or any other MCP server still reaches Droid's own permission prompt.
-    if (this.deskless) hooks.PreToolUse.unshift({ matcher: OFFICE_MCP_TOOLS, hooks: [{ type: 'command', command: `printf '%s' ${shq(OFFICE_MCP_ALLOW)}` }] });
+    if (this.denyTools) hooks.PreToolUse.unshift({ matcher: this.denyTools.matcher, hooks: [{ type: 'command', command: `printf '%s' ${shq(toolDecision('deny', this.denyTools.reason))}` }] });
+    if (this.allowTools) hooks.PreToolUse.unshift({ matcher: this.allowTools.matcher, hooks: [{ type: 'command', command: `printf '%s' ${shq(toolDecision('allow', this.allowTools.reason))}` }] });
     return hooks;
   }
 

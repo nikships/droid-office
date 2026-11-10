@@ -7,6 +7,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { CARRY_ON_PROMPT, HOOK_VERSION, NAMES, SPOOL_MAX_BYTES, STOP_GRACE_MS, WorkerManager, setupFailedNote, type WorkerEvents } from '../src/server/workers.js';
 import { Orchestrator } from '../src/server/orchestrator.js';
+import { BUILDING_TOOLS } from '../src/server/office-mcp/index.js';
 import type { ToolRefresh } from '../src/server/hook-refresh.js';
 import { Worktrees } from '../src/server/worktrees.js';
 import type { PromptSource } from '../src/server/prompts.js';
@@ -98,8 +99,15 @@ const record = (extra = {}) => fs.appendFileSync(log, JSON.stringify({
 record();
 
 process.stdout.write('fake-agent-ready\\r\\n');
+// FAKE_AGENT_SCREENS: screens to draw in turn, the first at once and the next on each key.
+const screens = JSON.parse(process.env.FAKE_AGENT_SCREENS || '[]');
+const draw = () => screens.length && process.stdout.write('\\x1b[2J\\x1b[H' + screens.shift().join('\\r\\n'));
+draw();
 process.stdin.setEncoding('utf8');
-process.stdin.on('data', (chunk) => record({ stdin: chunk }));
+process.stdin.on('data', (chunk) => {
+  record({ stdin: chunk });
+  draw();
+});
 process.stdin.resume();
 const delay = Number(process.env.FAKE_AGENT_EXIT_MS || 0);
 if (delay > 0) setTimeout(() => process.exit(0), delay).unref();
@@ -180,6 +188,67 @@ test('a plain shell gets its hook identity for worktree setup reporting; Office 
   assert.equal(launch.env.workerId, (shell as WorkerInfo).id);
   assert.match(launch.env.hookToken ?? '', /^[0-9a-f]{32}$/);
   assert.equal(launch.env.hookUrl, 'http://127.0.0.1:1');
+});
+
+test('a menu Droid shows before its session starts is the worker’s question until it is answered or Droid starts', async (t) => {
+  const f = fixture();
+  isolateAgentEnvironment(f, t);
+  const TRUST = ['Do you trust the files in this folder?', '/tmp/project', '', '> 1. Yes, proceed', '  2. No, exit', '', 'Enter to confirm · Esc to exit'];
+  const CHECKBOXES = ['Which tools may Droid use here?', '', '> 1. [ ] Shell', '  2. [x] Edits', '', 'Space to toggle · Enter to confirm'];
+  const SIGN_IN = ['How do you want to sign in?', '', '> 1. Browser', '  2. API key'];
+  const BROWSER = ['Finish signing in at https://app.factory.ai/device'];
+  const PLAN = ['Proceed with the plan?', '', '> 1. Proceed', '  2. Keep planning'];
+  const previous = { FAKE_AGENT_LOG: process.env.FAKE_AGENT_LOG, FAKE_AGENT_SCREENS: process.env.FAKE_AGENT_SCREENS };
+  process.env.FAKE_AGENT_LOG = f.log;
+  process.env.FAKE_AGENT_SCREENS = JSON.stringify([TRUST, CHECKBOXES, SIGN_IN, BROWSER, PLAN]);
+  t.after(() => {
+    f.close();
+    for (const [key, value] of Object.entries(previous)) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+  });
+  const frames: string[] = [];
+  const workers = managed(f, f.root, f.data, f.droid, [], { url: 'http://127.0.0.1:1', token: '' }, { ...events([]), screen: (_id, frame) => frames.push(JSON.stringify(frame)) });
+  const WAITING = 'Waiting on Droid setup or hooks — open the terminal';
+  const question = (text: string, options: string[]) => ({ kind: 'question', questions: [{ question: text, options, multiSelect: false }] });
+  const shown = () => {
+    const { status, activity, ask } = workers.get(id)!;
+    return { status, activity, ask };
+  };
+  // The boot wait runs on a mocked clock, which the terminal emulator's own timers need kept moving.
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const until = async (ok: () => boolean, what: string) => {
+    for (const end = Date.now() + 15_000; !ok() && Date.now() < end; ) {
+      t.mock.timers.tick(20);
+      await new Promise((resolve) => setImmediate(resolve));
+    }
+    assert.ok(ok(), what);
+  };
+  /** Presses a key and waits for the screen it brings to go out: the pass that sent it has read its menu. */
+  const key = async (next: string) => {
+    frames.length = 0;
+    workers.write(id, '\r');
+    await until(() => frames.some((frame) => frame.includes(next)), `the screen never showed ${next}`);
+  };
+
+  const { id } = workers.spawn('desk-1', 'test') as WorkerInfo;
+  assert.equal(shown().status, 'starting');
+  await until(() => !!shown().ask, 'the menu never became a question');
+  assert.deepEqual(shown(), { status: 'needs_input', activity: `Droid asks: ${TRUST[0]}`, ask: question(TRUST[0], ['Yes, proceed', 'No, exit']) });
+
+  await key(CHECKBOXES[0]);
+  assert.deepEqual(shown(), { status: 'needs_input', activity: WAITING, ask: undefined }, 'answered: the question is gone, and checkboxes are for the terminal');
+  await key(SIGN_IN[0]);
+  assert.deepEqual(shown(), { status: 'needs_input', activity: `Droid asks: ${SIGN_IN[0]}`, ask: question(SIGN_IN[0], ['Browser', 'API key']) });
+  await key(BROWSER[0]);
+  assert.deepEqual(shown(), { status: 'needs_input', activity: WAITING, ask: undefined }, 'a screen with nothing to choose leaves no question');
+
+  const launch = f.read().find((record) => record.env.workerId === id)!;
+  workers.hookReply(id, launch.env.hookToken!, 'SessionStart', { session_id: 'session-1', hook_event_name: 'SessionStart' });
+  assert.deepEqual(shown(), { status: 'idle', activity: undefined, ask: undefined });
+  await key(PLAN[0]);
+  assert.deepEqual(shown(), { status: 'idle', activity: undefined, ask: undefined }, 'once its session started, its hooks say what it asks, not its screen');
 });
 
 async function waitFor<T>(read: () => T, predicate: (value: T) => boolean, timeout = 4000): Promise<T> {
@@ -422,12 +491,34 @@ test('the Orchestrator approves only Office MCP tools; its edits, shell and othe
     hooks: { PreToolUse: { matcher: string; hooks: { command: string }[] }[] };
   };
   const entries = hooks.hooks.PreToolUse;
-  const allow = entries.find((entry) => entry.hooks[0]?.command.includes('"permissionDecision":"allow"'));
-  assert.ok(allow, 'the Orchestrator gets a scoped Office MCP approval hook');
-  assert.match('droid-office___team_hire', new RegExp(allow.matcher), 'the name Droid sends today');
-  assert.match('mcp__droid-office__office_look', new RegExp(allow.matcher), 'and the mcp__ spelling');
-  for (const gated of ['Execute', 'Edit', 'MultiEdit', 'Create', 'ApplyPatch', 'Task', 'mcp__github__create_issue', 'droidproxy___run']) {
-    assert.doesNotMatch(gated, new RegExp(allow.matcher), `${gated} keeps its own permission prompt`);
+  const allows = entries.filter((entry) => entry.hooks[0]?.command.includes('"permissionDecision":"allow"'));
+  assert.equal(allows.length, 1, 'one hook approves anything');
+  const [allow] = allows;
+  const said = JSON.parse(execFileSync('sh', ['-c', allow.hooks[0].command], { encoding: 'utf8' })) as { hookSpecificOutput: Record<string, string> };
+  assert.deepEqual(Object.keys(said.hookSpecificOutput), ['hookEventName', 'permissionDecision', 'permissionDecisionReason']);
+  assert.equal(said.hookSpecificOutput.hookEventName, 'PreToolUse');
+  const approved = new RegExp(allow.matcher);
+  for (const tool of BUILDING_TOOLS) {
+    assert.match(`droid-office___${tool}`, approved, 'the name Droid sends today');
+    assert.match(`mcp__droid-office__${tool}`, approved, 'and the one its hooks reference documents');
+  }
+  for (const gated of [
+    'Execute',
+    'Edit',
+    'MultiEdit',
+    'Create',
+    'ApplyPatch',
+    'Task',
+    'mcp__github__create_issue',
+    'droidproxy___run',
+    // The office's own tools a building agent has no use of, and names that only start or end like one of its own.
+    'droid-office___whiteboard_apply',
+    'droid-office___team_hire_anything',
+    'droid-office___other___team_hire',
+    'mcp__droid-office__other__team_hire',
+    'x-droid-office___team_hire',
+  ]) {
+    assert.doesNotMatch(gated, approved, `${gated} keeps its own permission prompt`);
   }
   const edits = entries.find((entry) => entry.matcher === '^(Edit|MultiEdit|Create|ApplyPatch)$');
   assert.ok(edits, 'the Orchestrator still never edits files');
