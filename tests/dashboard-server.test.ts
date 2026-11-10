@@ -9,14 +9,17 @@ import os from 'node:os';
 import path from 'node:path';
 import { WebSocket } from 'ws';
 import { build } from 'vite';
+import { Client, StreamableHTTPClientTransport } from '@modelcontextprotocol/client';
 import { loadConfig } from '../src/server/config.js';
 import { startServer } from '../src/server/server.js';
 import { DevicesStore } from '../src/server/devices.js';
+import { OFFICE_MCP_PATH, OFFICE_MCP_WORKER_HEADER } from '../src/server/office-mcp/index.js';
+import { ORCHESTRATOR_ID } from '../src/shared/mission-control.js';
 import type { ClientMsg, ServerMsg } from '../src/shared/protocol.js';
 import type { PairingState } from '../src/shared/devices.js';
 import { reachableLan } from './lan-probe.js';
 
-async function office(t: TestContext, home?: string, agent?: string) {
+async function office(t: TestContext, home?: string, agent?: string, keep = false) {
   const dir = home ?? mkdtempSync(path.join(os.tmpdir(), 'dashboard-'));
   if (!home) {
     t.after(() => rmSync(dir, { recursive: true, force: true }));
@@ -31,7 +34,7 @@ async function office(t: TestContext, home?: string, agent?: string) {
     if (stopped) return;
     stopped = true;
     const closing = once(server.server, 'close');
-    server.shutdown();
+    server.shutdown(keep);
     await closing;
   };
   t.after(stop);
@@ -113,6 +116,97 @@ exit 0
   await client.wait('missionControl', (m) => !!m.state.orchestrator.blocked?.includes('Droid isn’t ready'));
   assert.equal(client.ws.readyState, WebSocket.OPEN);
   assert.equal(welcome.missionControl?.orchestrator.agent, undefined, 'readiness changes need no first prompt or PTY');
+});
+
+/** A signed-in Droid that records each launch's Office MCP credential and stays open like a session. */
+const signedInDroid = `#!/usr/bin/env node
+const fs = require('node:fs');
+const args = process.argv.slice(2);
+if (args[0] === '--version') { console.log('0.249.0'); process.exit(0); }
+// Trimmed auth.verify body from tests/setup-droid-state.test.ts's real Droid doctor output.
+if (args[0] === 'doctor') { process.stdout.write('{"ok":true,"results":[{"id":"auth.verify","status":"pass","detail":"authenticated as o***@example.com via stored login session"}]}'); process.exit(0); }
+if (args.includes('--output-format')) process.exit(0);
+fs.appendFileSync(process.env.FAKE_AGENT_LOG, JSON.stringify({ workerId: process.env.DROID_OFFICE_WORKER_ID, hookToken: process.env.DROID_OFFICE_HOOK_TOKEN, hookUrl: process.env.DROID_OFFICE_HOOK_URL }) + '\\n');
+process.stdin.resume();
+`;
+
+type Launch = { workerId: string; hookToken: string; hookUrl: string };
+
+/** An office whose Droid is `signedInDroid`, so the Orchestrator can start, with each launch it made. */
+async function missionOffice(t: TestContext) {
+  const dir = mkdtempSync(path.join(os.tmpdir(), 'mission-office-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  execFileSync('git', ['init', '-q'], { cwd: dir });
+  const agent = path.join(dir, 'droid');
+  writeFileSync(agent, signedInDroid, { mode: 0o700 });
+  const log = path.join(dir, 'launches.jsonl');
+  writeFileSync(log, '');
+  const before = process.env.FAKE_AGENT_LOG;
+  process.env.FAKE_AGENT_LOG = log;
+  t.after(() => {
+    if (before === undefined) delete process.env.FAKE_AGENT_LOG;
+    else process.env.FAKE_AGENT_LOG = before;
+  });
+  const launches = (): Launch[] =>
+    readFileSync(log, 'utf8')
+      .split('\n')
+      // A poll can land mid-append; a finished record ends with a newline.
+      .slice(0, -1)
+      .map((line) => JSON.parse(line) as Launch);
+  const launched = async (workerId: string, count = 1): Promise<Launch> => {
+    const end = Date.now() + 8000;
+    for (;;) {
+      const mine = launches().filter((l) => l.workerId === workerId);
+      if (mine.length >= count) return mine[count - 1];
+      if (Date.now() > end) assert.fail(`timed out waiting for launch ${count} of ${workerId}`);
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    }
+  };
+  /** The Office MCP as one launched session reaches it: the loopback listener, with its hook credential. */
+  const mcp = async (launch: Launch) => {
+    const client = new Client({ name: 'mission-office', version: '1' });
+    t.after(() => client.close());
+    await client.connect(new StreamableHTTPClientTransport(new URL(OFFICE_MCP_PATH, launch.hookUrl), { requestInit: { headers: { [OFFICE_MCP_WORKER_HEADER]: launch.workerId, Authorization: `Bearer ${launch.hookToken}` } } }));
+    return async (name: string, args: Record<string, unknown> = {}) => {
+      const r = await client.callTool({ name, arguments: args });
+      return { error: r.isError === true, text: (r.content as { text?: string }[]).map((c) => c.text ?? '').join('\n'), data: r.structuredContent };
+    };
+  };
+  const start = () => office(t, dir, agent, true);
+  return { ...(await start()), restart: start, launched, mcp };
+}
+
+/** The owner's window, once the office knows Droid is signed in and the Orchestrator may start. */
+async function ownerWindow(t: TestContext, base: string) {
+  const owner = socket(t, base, 'name=Owner');
+  const welcome = await owner.wait('welcome');
+  if (welcome.missionControl?.orchestrator.blocked) {
+    owner.send({ t: 'setup.check' });
+    await owner.wait('missionControl', (m) => !m.state.orchestrator.blocked);
+  }
+  return owner;
+}
+
+test('the Orchestrator finds Mission Control in office_roster and may read only its own terminal there', async (t) => {
+  const o = await missionOffice(t);
+  const owner = await ownerWindow(t, o.base);
+  owner.send({ t: 'orchestrator.prompt', prompt: 'Plan the release', requestId: 'first' });
+  assert.equal((await owner.wait('action.result', (m) => m.requestId === 'first')).ok, true);
+  const call = await o.mcp(await o.launched(ORCHESTRATOR_ID));
+  const roster = await call('office_roster');
+  assert.equal(roster.error, false, roster.text);
+  assert.match(roster.text, /\n\nMission Control\n {2}Orchestrator \(orchestrator\) \[you, orchestrator\], Mission Control, /);
+  const mission = roster.data?.mission as { worker: { id: string } }[];
+  assert.deepEqual(
+    mission.map((a) => a.worker.id),
+    [ORCHESTRATOR_ID],
+  );
+  const look = await call('office_look', { name: ORCHESTRATOR_ID });
+  assert.equal(look.error, false, look.text);
+  assert.equal(look.data?.missionControl, true);
+  const home = await call('office_send_home', { name: ORCHESTRATOR_ID });
+  assert.equal(home.error, true);
+  assert.match(home.text, /building agent in Mission Control/);
 });
 
 test('hidden models sync to every device and new connections, with invalid changes refused', async (t) => {

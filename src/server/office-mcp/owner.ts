@@ -42,7 +42,7 @@ export interface OwnerFloor {
 export interface OwnerOffice {
   floors(): OwnerFloor[];
   /** Mission Control's building agents: no floor, no desk, and never controllable through the Office MCP. */
-  mission?(): MissionAgent[];
+  mission(): MissionAgent[];
   /** The end of a worker's terminal, or of a floor's boss shell (OFFICE_SHELL_ID with its floor). */
   tail(workerId: string, lines: number, floor?: string): string | undefined;
   act(by: WorkerInfo, msg: { t: OwnerAction } & Record<string, unknown>, opts?: { floor?: string; signal?: AbortSignal }): Promise<OwnerReply>;
@@ -51,7 +51,7 @@ export interface OwnerOffice {
 /** A building agent named exactly by id or name; a name shared with a floor worker needs the id. */
 export function findMissionAgent(owner: OwnerOffice, ref: string): MissionAgent | undefined {
   const want = ref.trim().toLowerCase();
-  const all = owner.mission?.() ?? [];
+  const all = owner.mission();
   return all.find((a) => a.worker.id.toLowerCase() === want) ?? all.find((a) => a.worker.name.toLowerCase() === want);
 }
 
@@ -258,7 +258,7 @@ export function register(server: OfficeMcpServer, deps: OfficeMcpDeps): void {
       }
       const workers = roster(floors, caller.worker.id, only);
       const shown = floors.map((f, i) => ({ id: f.id, name: f.name, number: i + 1 })).filter((f) => !only || f.id === only);
-      const mission = only ? [] : (owner.mission?.() ?? []);
+      const mission = only ? [] : owner.mission();
       const floorText =
         shown
           .map((f) => {

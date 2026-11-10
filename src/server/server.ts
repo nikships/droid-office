@@ -480,14 +480,15 @@ export async function startServer(cfg: Config) {
     const floor = workerFloor(id);
     return floor ? { id: floor.id, name: floor.def.name, dir: floor.dir, workers: floor.workers, team: floor.team, visits: floor.visits, whiteboard: floor.whiteboard } : undefined;
   };
+  // ownerOffice is declared with the message handler below; nothing calls it before the office is serving.
+  const ownerBridge: OwnerOffice = { floors: () => ownerOffice.floors(), mission: () => ownerOffice.mission(), tail: (...a) => ownerOffice.tail(...a), act: (...a) => ownerOffice.act(...a) };
   officeMcp = createOfficeMcp({
     hookUrl,
     answers,
     settings: () => subagents.settings,
     floor: officeMcpFloor,
     remote: remoteOffice,
-    // Declared with the message handler below; nothing calls it before the office is serving.
-    owner: { floors: () => ownerOffice.floors(), tail: (...a) => ownerOffice.tail(...a), act: (...a) => ownerOffice.act(...a) },
+    owner: ownerBridge,
     orchestrator: { authenticate: (id, token) => orchestrator.authenticate(id, token), cwd: orchestrator.cwd },
   });
   // Every floor's Whiteboard renders with one headless Chromium, downloaded on the first render if it's missing.
@@ -696,8 +697,7 @@ export async function startServer(cfg: Config) {
       floors: () => [...floors.values()].map((f) => ({ id: f.id, name: f.def.name })),
       mcp: {
         answers,
-        // Declared with the message handler below; nothing calls it before the listener is serving.
-        owner: { floors: () => ownerOffice.floors(), tail: (...a) => ownerOffice.tail(...a), act: (...a) => ownerOffice.act(...a) },
+        owner: ownerBridge,
         settings: () => subagents.settings,
         floor: officeMcpFloor,
       },

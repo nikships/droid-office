@@ -451,7 +451,7 @@ test('local workers never get owner access', async (t) => {
   t.after(() => whiteboard.stop());
   const me = worker('local', 'Ada');
   const acted: string[] = [];
-  const owner: OwnerOffice = { floors: building, tail: () => 'x', act: async (_by, msg) => (acted.push(msg.t), { notes: [] }) };
+  const owner: OwnerOffice = { floors: building, mission: () => [], tail: () => 'x', act: async (_by, msg) => (acted.push(msg.t), { notes: [] }) };
   const floor = {
     id: 'f-app',
     name: 'app',
