@@ -1616,9 +1616,14 @@ function syncWorkers() {
   }
   arrangeSeats();
   visitors.sync(store.visits);
+  renderWorkers((id) => openWorkerTerminal(id));
+  syncMissionControl();
+}
+
+/** Everything that also reads Mission Control: the room, the team dashes, and the waiting counts and notifications the Orchestrator is in. */
+function syncMissionControl() {
   syncMission();
   syncTeamLines();
-  renderWorkers((id) => openWorkerTerminal(id));
   renderWaiting();
   notifier.sync(store.workers, (id) => missionWorker(store.missionControl, id));
   renderTitle();
@@ -1714,7 +1719,7 @@ function liftOnto(appeared: Collider[]) {
   for (const c of appeared) if (p.y > -0.1 && p.y < c.top && p.x > c.minX - 0.3 && p.x < c.maxX + 0.3 && p.z > c.minZ - 0.3 && p.z < c.maxZ + 0.3) p.y = c.top;
 }
 store.on('workers', syncWorkers);
-store.on('missionControl', syncWorkers);
+store.on('missionControl', syncMissionControl);
 store.on('visits', () => {
   visitors.sync(store.visits);
   renderWake();
