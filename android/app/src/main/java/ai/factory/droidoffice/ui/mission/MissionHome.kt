@@ -40,6 +40,7 @@ import ai.factory.droidoffice.core.MissionControlState
 import ai.factory.droidoffice.core.ORCHESTRATOR_ID
 import ai.factory.droidoffice.core.ORCHESTRATOR_NAME
 import ai.factory.droidoffice.core.Tags
+import ai.factory.droidoffice.core.WorkerInfo
 import ai.factory.droidoffice.core.WorkerStatus
 import ai.factory.droidoffice.core.Workers
 import ai.factory.droidoffice.net.nameOf
@@ -48,6 +49,7 @@ import ai.factory.droidoffice.ui.components.EffortDialMark
 import ai.factory.droidoffice.ui.components.Eyebrow
 import ai.factory.droidoffice.ui.components.StatusPill
 import ai.factory.droidoffice.ui.components.panel
+import ai.factory.droidoffice.ui.components.parseColor
 import ai.factory.droidoffice.ui.components.statusLook
 import ai.factory.droidoffice.ui.components.tagged
 import ai.factory.droidoffice.ui.theme.LocalOfficeType
@@ -86,10 +88,11 @@ private fun OrchestratorCard(agent: MissionAgent?, blocked: String?, now: Long, 
     val w = agent?.worker
     val state = w?.state ?: WorkerStatus.Idle
     val loud = state == WorkerStatus.NeedsInput
+    val tint = orchestratorTint(w)
     val border = when {
-        selected -> Palette.Accent
+        selected -> tint
         loud -> Palette.Danger.copy(alpha = 0.5f)
-        else -> Palette.Accent.copy(alpha = 0.28f)
+        else -> tint.copy(alpha = 0.28f)
     }
     Column(
         Modifier.fillMaxWidth()
@@ -99,12 +102,12 @@ private fun OrchestratorCard(agent: MissionAgent?, blocked: String?, now: Long, 
             .padding(start = 12.dp, end = 12.dp, top = 12.dp, bottom = 12.dp),
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            AgentTile(OfficeIcons.Orbit, if (loud) Palette.Danger else Palette.Accent)
+            AgentTile(OfficeIcons.Orbit, if (loud) Palette.Danger else tint)
             Column(Modifier.weight(1f).padding(start = 10.dp)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text(ORCHESTRATOR_NAME, style = MaterialTheme.typography.titleMedium, maxLines = 1, modifier = Modifier.weight(1f))
                     val team = agent?.team.orEmpty()
-                    if (team.isNotEmpty()) MissionTag("TEAM ${team.size}")
+                    if (team.isNotEmpty()) MissionTag("TEAM ${team.size}", tint)
                     Spacer(Modifier.width(6.dp))
                     // Blocked says why in its line, in the warning colour, so the row needs no pill as well.
                     if (blocked == null) StatusPill(state, acked = w?.acked ?: true, tag = Tags.Mission.ORCHESTRATOR_STATUS, compact = true)
@@ -202,10 +205,13 @@ internal fun AgentTile(icon: ImageVector, tint: Color, small: Boolean = false) {
 }
 
 @Composable
-internal fun MissionTag(text: String) {
+internal fun MissionTag(text: String, color: Color? = null) {
     Text(
         text,
-        style = LocalOfficeType.current.eyebrow.copy(fontSize = 9.sp, color = Palette.TextSecondary),
-        modifier = Modifier.clip(RoundedCornerShape(3.dp)).background(Palette.SurfaceHigh).padding(horizontal = 5.dp, vertical = 1.dp),
+        style = LocalOfficeType.current.eyebrow.copy(fontSize = 9.sp, color = color ?: Palette.TextSecondary),
+        modifier = Modifier.clip(RoundedCornerShape(3.dp)).background(color?.copy(alpha = 0.12f) ?: Palette.SurfaceHigh).padding(horizontal = 5.dp, vertical = 1.dp),
     )
 }
+
+/** The Orchestrator's colour as its tile, card and team draw it. */
+internal fun orchestratorTint(w: WorkerInfo?): Color = parseColor(MissionControl.orchestratorColor(w), Palette.Accent)

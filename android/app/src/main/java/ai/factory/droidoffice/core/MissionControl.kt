@@ -14,6 +14,9 @@ import kotlinx.serialization.json.decodeFromJsonElement
 const val ORCHESTRATOR_ID = "orchestrator"
 const val ORCHESTRATOR_NAME = "Orchestrator"
 
+/** The Orchestrator's colour (ORCHESTRATOR_COLOR): the office accent, before its first prompt too. */
+const val ORCHESTRATOR_COLOR = "#ee6018"
+
 @Serializable
 data class OrchestratorSettings(
     val on: Boolean = true,
@@ -62,6 +65,9 @@ data class MissionControlState(
 )
 
 object MissionControl {
+    /** Its worker's colour once there is one (the same accent), else [ORCHESTRATOR_COLOR]. */
+    fun orchestratorColor(w: WorkerInfo?): String = w?.color?.takeIf { it.isNotBlank() } ?: ORCHESTRATOR_COLOR
+
     /** The state an office sends, or null when it sends none (it predates Mission Control). A bot that can't be read is skipped. */
     fun parse(e: JsonElement?): MissionControlState? {
         val o = e as? JsonObject ?: return null
