@@ -76,7 +76,19 @@ test('Mission Control pins the building’s agents in the sidebar and opens the 
     ['open', 'orchestrator'],
     ['open', 'bot-claw'],
   ]);
-  assert.deepEqual(await page.evaluate(() => (window as any).roster.visible()), ['orchestrator', 'bot-claw']);
+  assert.deepEqual(await page.evaluate(() => (window as any).roster.visible()), ['orchestrator', 'w-byte', 'w-dot', 'bot-claw', 'w-nib']);
+  await roster.locator('.dash-team-toggle').first().click();
+  assert.deepEqual(await page.evaluate(() => (window as any).roster.visible()), ['orchestrator', 'bot-claw', 'w-nib']);
+  await roster.locator('.dash-team-toggle').first().click();
+  await page.evaluate(() => {
+    const w = window as any;
+    w.calls = [];
+    w.mission.orchestrator.agent.team[1].activity = 'Still waiting';
+    w.paintRoster();
+  });
+  assert.deepEqual(await page.evaluate(() => (window as any).calls), [], 'status updates never replay member navigation');
+  await page.evaluate(() => (window as any).roster.button('w-dot').click());
+  assert.deepEqual(await page.evaluate(() => (window as any).calls), [['member', 'w-dot', 'f-api']], 'keyboard activation uses the member’s own floor');
 
   // Off: one row that points to Settings, and its team is nobody's.
   await page.evaluate(() => {

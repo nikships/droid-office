@@ -228,6 +228,7 @@ export function createMissionRoster(el: HTMLElement, host: MissionRosterHost) {
       h('span.dash-team-activity', { class: counts.attention ? 'dash-team-attention' : '' }, counts.attention ? `${counts.attention} need you` : `${counts.working} working`),
     );
     const children = team.map((m) => memberRow(m, agent!, s));
+    if (expanded) for (const m of team) visible.push(m.id);
     reconcileChildren(block.children, children);
     reconcileChildren(block.el, [r.wrap, block.toggle, block.children]);
     return block.el;
@@ -280,8 +281,12 @@ export function createMissionRoster(el: HTMLElement, host: MissionRosterHost) {
 
   return {
     update,
-    /** The rows the arrow keys walk, in order: the building agents. Their subagents are walked in their floor's list. */
+    /** Each building agent, followed by its expanded team, in display order. */
     visible: () => visible,
+    member(id: string) {
+      const mc = state?.mission;
+      return [mc?.orchestrator.agent, ...(mc?.bots ?? [])].flatMap((agent) => agent?.team ?? []).find((m) => m.id === id);
+    },
     button(id: string) {
       return rows.get(id)?.open ?? rows.get(`member:${id}`)?.open;
     },

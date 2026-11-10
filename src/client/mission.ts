@@ -2,12 +2,11 @@
 // session, what each building agent is doing in a line, and whose team a worker is on. No DOM, so the
 // office, the companion and their tests share it.
 
-import { missionAgent, ORCHESTRATOR_ID, ORCHESTRATOR_NAME, orchestratorNeedsOwner, type MissionAgent, type MissionControlState } from '../shared/mission-control';
+import { missionAgent, ORCHESTRATOR_COLOR, ORCHESTRATOR_ID, ORCHESTRATOR_NAME, orchestratorNeedsOwner, type MissionAgent, type MissionControlState } from '../shared/mission-control';
 import type { ClientMsg, WorkerInfo } from '../shared/protocol';
 import { doingLine } from './worker-words';
 
-/** The Orchestrator's colour until its session reports one: the office's accent. */
-export const ORCHESTRATOR_COLOR = '#ee6018';
+export { ORCHESTRATOR_COLOR } from '../shared/mission-control';
 
 /** What the Orchestrator is for, in its empty state and on its Settings card. */
 export const ORCHESTRATOR_PITCH = 'Tell it what you want done anywhere in the building. It plans, hires workers on any floor, answers their questions, checks their work and reports back. It never edits code itself.';
