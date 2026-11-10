@@ -22,7 +22,8 @@ test('an office clone keeps Orchestrator settings but never copies its live sess
   for (const file of ['workers.json', 'droid-hooks.json', 'hook.cjs', 'pty.sock']) writeFileSync(path.join(session, file), 'session must not copy');
   writeFileSync(path.join(state, 'remote-workers.json'), 'remote credentials must not copy');
   const script = fileURLToPath(new URL('../.agents/skills/office-clone/scripts/clone-office.sh', import.meta.url));
-  execFileSync('bash', [script, '--office', office, '--dest', dest, '--port', '4699'], { env: { ...process.env, HOME: home }, timeout: 30_000, stdio: 'pipe' });
+  // The script runs the built CLI from dist/, whose original source is covered by the source-level suites.
+  execFileSync('bash', [script, '--office', office, '--dest', dest, '--port', '4699'], { env: { ...process.env, HOME: home, NODE_V8_COVERAGE: '' }, timeout: 30_000, stdio: 'pipe' });
   const copied = path.join(dest, 'office', '.droid-office');
   assert.deepEqual(JSON.parse(readFileSync(path.join(copied, 'orchestrator.json'), 'utf8')), settings);
   assert.equal(existsSync(path.join(copied, 'orchestrator')), false);
