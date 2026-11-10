@@ -1,9 +1,11 @@
+import type { MissionControlState } from '../shared/mission-control';
 import type { TodoProgress, WorkerInfo } from '../shared/protocol';
 import { isAsleep, isBusy, needsOwnerAttention, needsOwnerInput } from '../shared/status';
 import { shortDuration, workedFor } from './dashboard-workspace';
 import { workerDot, workingBars, WORKER_MIME } from './dashboard-pane';
 import { teamCounts, workerTeams } from '../shared/team';
 import { todoCount, todoLine } from '../shared/todos';
+import { missionLead } from './mission';
 import { doingLine, workerKind } from './worker-words';
 import { h, STATUS_LABEL } from './ui/dom';
 import { icon } from './ui/icons';
@@ -41,6 +43,8 @@ interface RosterState {
   focused: string;
   live: boolean;
   pane(id: string): number;
+  /** Mission Control, for subworkers whose lead is a building agent rather than a worker on this floor. */
+  mission?: MissionControlState;
 }
 interface Row {
   wrap: HTMLElement;
@@ -129,7 +133,8 @@ export function createWorkerRoster(el: HTMLElement, open: (id: string) => void, 
       const effort = w.activeEffort ?? w.effort;
       const duration = worked >= 1000 ? shortDuration(worked) : '';
       const meta = [w.kind === 'agent' ? modelBadgeLabel(model, effort) : workerKind(w), duration].filter(Boolean).join(' · ');
-      const relationship = parent ? `Subworker of ${parent.name}` : w.lead ? 'Lead unavailable' : hasChildren ? 'Main worker' : '';
+      const leader = parent ?? missionLead(next.mission, w.lead)?.worker;
+      const relationship = leader ? `Subworker of ${leader.name}` : w.lead ? 'Lead unavailable' : hasChildren ? 'Main worker' : '';
       const todos = w.kind === 'shell' ? undefined : w.todos;
       const key = JSON.stringify([w.name, w.color, w.status, w.acked, w.lead, doingLine(w), meta, relationship, next.pane(w.id), todos]);
       if (key !== r.key) {
@@ -153,7 +158,7 @@ export function createWorkerRoster(el: HTMLElement, open: (id: string) => void, 
             ),
             h('span.dash-row-doing', {}, doingLine(w)),
             todos ? todoMeter(todos) : null,
-            h('span.dash-row-meta', {}, ...(w.lead && !parent ? ['Lead unavailable'] : metaLine(w.kind === 'agent' ? modelBadgeNode(model, effort) : workerKind(w), duration))),
+            h('span.dash-row-meta', {}, ...(w.lead && !leader ? ['Lead unavailable'] : metaLine(w.kind === 'agent' ? modelBadgeNode(model, effort) : workerKind(w), duration))),
           ),
         );
       }

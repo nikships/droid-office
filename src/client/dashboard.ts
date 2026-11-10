@@ -972,7 +972,7 @@ function paintSide() {
   const where = here ? [here.repo ?? 'Not a git repository', here.branch].filter(Boolean).join(' · ') : store.floors.length ? 'Choose a floor above.' : 'No floors yet. Add a project from the office itself.';
   // The floor name above already says which repository this is, so the line under it is the branch.
   sideSub.replaceChildren(icon('branch', 12), h('span', { title: where }, here?.repo && here.branch ? here.branch : where));
-  roster.update({ floor, workers: [...store.workers.values()], focused: focusedWorker(ws) ?? '', live: live(), pane: (id) => paneOf(ws, id) });
+  roster.update({ floor, workers: [...store.workers.values()], focused: focusedWorker(ws) ?? '', live: live(), pane: (id) => paneOf(ws, id), mission: store.missionControl });
   missionRoster.update({ mission: store.missionControl, floor, focused: focusedWorker(ws) ?? '', live: live(), pane: (id) => paneOf(ws, id), here: (id) => store.workers.get(id), shortcut: '⌘ O' });
 }
 
