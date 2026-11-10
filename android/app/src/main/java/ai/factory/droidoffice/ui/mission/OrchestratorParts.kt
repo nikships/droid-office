@@ -203,7 +203,7 @@ internal fun OrchestratorIdle(state: OrchestratorState?, synced: Boolean, embedd
         Modifier.fillMaxSize().tagged(Tags.Screen.WORKER).background(Palette.Bg).windowInsetsPadding(insets)
             .windowInsetsPadding(WindowInsets.ime.union(WindowInsets.navigationBars).only(WindowInsetsSides.Bottom)),
     ) {
-        IdleHeader(embedded, onBack, if (state == null) "Mission Control" else if (on) "Mission Control · ready" else "Mission Control · off", onMenu = { menu = true })
+        IdleHeader(embedded, onBack, if (state == null) "Mission Control" else if (!on) "Mission Control · off" else if (state.blocked != null) "Mission Control · blocked" else "Mission Control · ready", onMenu = { menu = true })
         Box(Modifier.fillMaxWidth().height(1.dp).background(Palette.Border))
         Column(
             Modifier.weight(1f).fillMaxWidth().verticalScroll(rememberScrollState()).padding(horizontal = 24.dp, vertical = 28.dp),

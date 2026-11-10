@@ -83,6 +83,7 @@ import ai.factory.droidoffice.core.Asks
 import ai.factory.droidoffice.core.ClientMsg
 import ai.factory.droidoffice.core.DroidQueue
 import ai.factory.droidoffice.core.NoticeTone
+import ai.factory.droidoffice.core.ORCHESTRATOR_ID
 import ai.factory.droidoffice.core.PendingAsk
 import ai.factory.droidoffice.core.PlanStep
 import ai.factory.droidoffice.core.ScreenState
@@ -684,7 +685,10 @@ private fun Empty(w: WorkerInfo, state: ThreadState, connected: Boolean, rawTty:
         state.phase == ThreadPhase.Ready && state.support != ThreadSupport.Supported ->
             Look(state.support.title.orEmpty(), state.support.message.orEmpty(), Palette.Warning, retry = false, tty = true)
         state.phase == ThreadPhase.Loading -> Look("Loading the conversation", "Loading the thread…", Palette.TextSecondary, retry = false, tty = false)
-        state.phase == ThreadPhase.Error -> Look("Couldn't read the thread", "The office couldn't read the thread: ${state.error ?: "no reason given"}.", Palette.Danger, retry = true, tty = true)
+        // Its first prompt starts the session, and only then is there a conversation to read.
+        w.id == ORCHESTRATOR_ID && w.sessionId == null && state.entries.isEmpty() ->
+            Look("Starting its conversation", "The Orchestrator's conversation shows here once its session starts.", Palette.TextSecondary, retry = false, tty = true)
+        state.phase == ThreadPhase.Error -> Look("Couldn't read the thread", "The office couldn't read the thread: ${state.error?.trimEnd('.') ?: "no reason given"}.", Palette.Danger, retry = true, tty = true)
         state.phase == ThreadPhase.Unavailable && !rawTty -> Look("No thread to show", "This office can't read this worker's Factory session yet. Update Droid Office on your computer, or try again.", Palette.Warning, retry = true, tty = false)
         state.phase == ThreadPhase.Unavailable -> Look("No thread to show", "This office doesn't send threads, or can't read this worker's session. Raw TTY shows everything.", Palette.Warning, retry = true, tty = true)
         else -> Look("Start a conversation", "Your messages and the worker’s replies will appear here.", Palette.TextTertiary, retry = false, tty = false)

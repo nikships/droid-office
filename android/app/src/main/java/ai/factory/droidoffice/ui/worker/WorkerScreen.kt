@@ -232,11 +232,11 @@ fun WorkerScreen(workerId: String, onBack: () -> Unit, embedded: Boolean = false
         }
         var sendingHome by remember { mutableStateOf(false) }
         var orchestratorMenu by remember { mutableStateOf(false) }
-        Header(worker, embedded, link.phase == Phase.Connected, onBack, onSendHome = { if (mission) orchestratorMenu = true else sendingHome = true }, mission = mission)
+        val blocked = if (mission) orchestrator?.blocked else null
+        Header(worker, embedded, link.phase == Phase.Connected, onBack, onSendHome = { if (mission) orchestratorMenu = true else sendingHome = true }, mission = mission, blocked = blocked != null)
         val live = !worker.state.asleep
         // Its next prompt starts or wakes the Orchestrator's session, so it always takes one.
         val composing = live || mission
-        val blocked = if (mission) orchestrator?.blocked else null
         val followScope = rememberCoroutineScope()
         val screen = screens[workerId]
         // Default to Raw TTY unless the owner last picked Thread or the thread has an answerable
@@ -404,7 +404,7 @@ fun WorkerScreen(workerId: String, onBack: () -> Unit, embedded: Boolean = false
 }
 
 @Composable
-private fun Header(w: WorkerInfo, embedded: Boolean, connected: Boolean, onBack: () -> Unit, onSendHome: () -> Unit, mission: Boolean = false) {
+private fun Header(w: WorkerInfo, embedded: Boolean, connected: Boolean, onBack: () -> Unit, onSendHome: () -> Unit, mission: Boolean = false, blocked: Boolean = false) {
     val now = rememberNow()
     val graph = LocalGraph.current
     val catalogue by graph.connection.catalogue.collectAsStateWithLifecycle()
@@ -430,7 +430,7 @@ private fun Header(w: WorkerInfo, embedded: Boolean, connected: Boolean, onBack:
             }
         }
         // Out of reach, the last status the office sent may be long gone: the offline notice says so instead.
-        if (connected) StatusPill(w.state, acked = w.acked, tag = Tags.Worker.STATUS)
+        if (connected) StatusPill(w.state, acked = w.acked, tag = Tags.Worker.STATUS, blocked = blocked)
         if (mission) IconButton(onClick = onSendHome, modifier = Modifier.tagged(Tags.Orchestrator.MENU)) {
             Icon(Icons.Default.MoreVert, "Orchestrator settings", tint = Palette.TextSecondary)
         } else IconButton(onClick = onSendHome, modifier = Modifier.tagged(Tags.Worker.SEND_HOME)) {
