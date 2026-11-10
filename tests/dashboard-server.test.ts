@@ -298,9 +298,14 @@ test('a prompt from a floor reaches the Orchestrator with that floor named once,
       await new Promise((resolve) => setTimeout(resolve, 25));
     }
   };
-  const hint = `\n\n<system-reminder>\nThe owner sent this from the ${floor.def.name} floor (${floor.dir}).\n</system-reminder>`;
-  assert.equal(await until(() => o.typed(ORCHESTRATOR_ID)[0]), `Get all open PRs merged${hint}`);
-  await o.hook(session, 'UserPromptSubmit', { prompt: `Get all open PRs merged${hint}` });
+  const hint = `\n\nDroid Office notice: The owner sent this from the ${floor.def.name} floor (${floor.dir}).`;
+  const typed = await until(() => o.typed(ORCHESTRATOR_ID)[0]);
+  assert.equal(typed, `Get all open PRs merged${hint}`);
+  // Droid escapes a reserved tag in typed input (`<system-reminder>` arrives as `&lt;system-reminder&gt;`): this line has none, so the model reads it as sent.
+  assert.equal(typed.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'), typed.replace(/&/g, '&amp;'));
+  assert.equal(/[<>]/.test(typed), false);
+  await o.hook(session, 'UserPromptSubmit', { prompt: typed });
+  assert.equal(o.server.owner.mission()[0].worker.activity, 'Get all open PRs merged', 'the card shows what the owner typed');
   await o.hook(session, 'Stop');
   // A worker sent the same way takes the same path: the companion's worker.prompt for the Orchestrator.
   owner.send({ t: 'worker.prompt', workerId: ORCHESTRATOR_ID, prompt: 'And the issues', requestId: 'second' });

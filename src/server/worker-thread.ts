@@ -3,7 +3,7 @@ import path from 'node:path';
 import { IMAGE_PLACEHOLDER, pageRows, presentThread, THREAD_MODEL_VERSION, type ThreadPresentation, type ThreadRow } from '../shared/thread-presentation.js';
 import type { ThreadEntry, ThreadImage } from '../shared/worker-thread.js';
 import { LABEL_TEXT_CHARS } from '../shared/worker-labels.js';
-import { OFFICE_SAYS } from '../shared/prompts.js';
+import { hideOfficeText, OFFICE_SAYS } from '../shared/prompts.js';
 import { DROID_SESSIONS_DIR } from './droid-session.js';
 import { imageAddress, imageAt, imageRef, IMAGES_PER_ENTRY, promptPictures } from './thread-images.js';
 
@@ -73,10 +73,9 @@ interface CachedSession {
 const object = (value: unknown): Record<string, unknown> => (value && typeof value === 'object' && !Array.isArray(value) ? (value as Record<string, unknown>) : {});
 
 /** Only printable content is projected; transport metadata is never serialized. */
-function clean(value: unknown, limit = FIELD_CHARS): string {
+function clean(value: unknown, limit = FIELD_CHARS, byOwner = false): string {
   if (typeof value !== 'string') return '';
-  const text = value
-    .replace(/<(system-(?:reminder|notification))\b[^>]*>[\s\S]*?(?:<\/\1\s*>|$)/gi, '')
+  const text = hideOfficeText(value, byOwner)
     .replace(/data:[^\s"'<>]*;base64,[a-zA-Z0-9+/=\s]+/gi, '[attachment omitted]')
     .replace(/[a-zA-Z0-9+/]{256,}={0,2}/g, '[binary data omitted]')
     .trim();
@@ -390,13 +389,13 @@ export class WorkerThreadReader {
                 .map((part) => object(part).text)
             : [];
       for (const part of parts) {
-        const text = clean(part, Infinity).slice(-LABEL_TEXT_CHARS);
+        const text = clean(part, Infinity, role === 'user').slice(-LABEL_TEXT_CHARS);
         if (text) state.text = `${state.text}\n\n${role}: ${text}`.slice(-LABEL_TEXT_CHARS);
       }
     }
     if (this.textOnly) return;
     if (typeof message.content === 'string') {
-      await this.text(state, `${id}:text`, role, clean(message.content));
+      await this.text(state, `${id}:text`, role, clean(message.content, FIELD_CHARS, role === 'user'));
       return;
     }
     if (!Array.isArray(message.content)) return;
@@ -431,7 +430,7 @@ export class WorkerThreadReader {
         const image = imageRef(part, `${offset}.${index}.x`);
         this.add(state, { id: partId, role, kind: 'notice', text: IMAGE_PLACEHOLDER, ...(image ? { images: [image] } : {}) });
       } else if (part.type === 'text') {
-        await this.text(state, partId, role, clean(part.text));
+        await this.text(state, partId, role, clean(part.text, FIELD_CHARS, role === 'user'));
       } else if (part.type === 'thinking') {
         const text = clean(part.thinking);
         if (text) this.add(state, { id: partId, role, kind: 'thinking', text });

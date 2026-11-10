@@ -173,19 +173,36 @@ export function officeSays(text: string): string {
 }
 
 const REMINDER_BLOCK = /<(system-(?:reminder|notification))\b[^>]*>[\s\S]*?(?:<\/\1\s*>|$)/gi;
+// Droid escapes both tags of a reserved block typed into a prompt (`&lt;system-reminder&gt;…&lt;/system-reminder&gt;`). An assistant can quote a lone escaped tag, so only a closed block goes.
+const ESCAPED_BLOCK = /&lt;(system-(?:reminder|notification))\b(?:(?!&gt;)[^\n])*&gt;[\s\S]*?&lt;\/\1\s*&gt;/gi;
+const FLOOR_LINE = /^[ \t]*Droid Office notice: The owner sent this from the .+ floor \(.+\)\.[ \t]*$/gm;
+const CUT = '\uE000';
 
-/** What the owner typed: their message without the `<system-reminder>` blocks the office added after it. */
+/**
+ * Text without what the office or Droid added around it: raw reminder and notification blocks always,
+ * and for the owner's own messages (`byOwner`) also the escaped form and the floor line. What was cut
+ * leaves at most one blank line behind.
+ */
+export function hideOfficeText(text: string, byOwner = false): string {
+  let out = text.replace(REMINDER_BLOCK, CUT);
+  if (byOwner) out = out.replace(ESCAPED_BLOCK, CUT).replace(FLOOR_LINE, CUT);
+  if (!out.includes(CUT)) return text;
+  return out.replace(/(\n*)\uE000+(\n*)/g, (_, before: string, after: string) => '\n'.repeat(Math.min(2, before.length + after.length)));
+}
+
+/** What the owner typed: their message without what the office added after it. */
 export function withoutReminders(text: string): string {
-  return text.replace(REMINDER_BLOCK, '').trim();
+  return hideOfficeText(text, true).trim();
 }
 
 /**
- * Which floor the owner sent a prompt to the Orchestrator from, as a reminder to go after their words.
- * The Thread and the office's own labels leave reminders out, so the message stays what they typed.
+ * Which floor the owner sent a prompt to the Orchestrator from, as a line to go after their words.
+ * It is plain text because Droid escapes a reserved tag typed into a prompt, which would reach the
+ * model as literal characters. The Thread and the office's own labels leave this line out.
  */
 export function floorHint(floor: { name: string; dir: string }): string {
-  const plain = (s: string) => s.replace(/[\r\n<>]+/g, ' ').trim();
-  return `<system-reminder>\nThe owner sent this from the ${plain(floor.name)} floor (${plain(floor.dir)}).\n</system-reminder>`;
+  const plain = (s: string) => s.replace(/[\r\n]+/g, ' ').trim();
+  return `${OFFICE_SAYS} notice: The owner sent this from the ${plain(floor.name)} floor (${plain(floor.dir)}).`;
 }
 
 /** Preserve worker text inside a fence longer than any backtick run in it. */
@@ -588,7 +605,7 @@ const DEFS = {
       '',
       "Your folder ({{folder}}) is scratch space, not a checkout. Read code wherever you need context. Write and run short scripts and shell commands from here to coordinate: check on workers, poll CI or a pull request, start or stop a server, open a pull request or merge request for a worker's branch. Say what you ran. Workers you hire make the changes to a repository's code: hand them the change. Delegate through the droid-office MCP server; its team tools replace built-in Task and hidden agents.",
       '',
-      'Look first. `office_floors` lists open repositories and `office_roster` shows who is already working. Read an existing worker with `office_look` and message it before hiring someone for overlapping work. Answer building-status questions yourself from those facts. For implementation, split only genuinely independent scopes with non-overlapping files. One capable worker is enough for a small request. A prompt may end with a reminder naming the floor the owner is on: a default for a request that names no repository, never a restriction. A floor or repository the request names wins.',
+      'Look first. `office_floors` lists open repositories and `office_roster` shows who is already working. Read an existing worker with `office_look` and message it before hiring someone for overlapping work. Answer building-status questions yourself from those facts. For implementation, split only genuinely independent scopes with non-overlapping files. One capable worker is enough for a small request. A prompt may end with a Droid Office notice naming the floor the owner is on: a default for a request that names no repository, never a restriction. A floor or repository the request names wins.',
       '',
       "Read `team_models` before each hire: it lists the models the owner lets you pick. Follow the owner's model notes and pick the cheapest capable model for routine work, reserving a strong model for difficult design or debugging. Consider credit multipliers and image support, and the quota a subscription model has left in `team_models`: prefer one with plenty, and keep a nearly spent one off long tasks. Tell the owner which model actually ran if the runtime changes it.",
       '',

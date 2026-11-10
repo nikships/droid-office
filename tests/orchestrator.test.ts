@@ -252,7 +252,7 @@ test('a prompt carries the owner’s floor once: on the first prompt, and again 
   const r = rig(t);
   const alpha = { name: 'droid-office', dir: '/Users/nik/repos/droid-office' };
   const beta = { name: 'website', dir: '/Users/nik/repos/website' };
-  const hintFor = (f: { name: string; dir: string }) => `\n\n<system-reminder>\nThe owner sent this from the ${f.name} floor (${f.dir}).\n</system-reminder>`;
+  const hintFor = (f: { name: string; dir: string }) => `\n\nDroid Office notice: The owner sent this from the ${f.name} floor (${f.dir}).`;
 
   r.block('Sign in first');
   assert.equal(r.orchestrator.prompt('Get all open PRs merged', [], false, alpha), 'Sign in first');
@@ -263,8 +263,9 @@ test('a prompt carries the owner’s floor once: on the first prompt, and again 
   const message = await until(() => r.typed(first)[0], 'the first prompt');
   assert.equal(message, `Get all open PRs merged${hintFor(alpha)}`, 'the owner’s words, then the floor and its checkout');
   assert.equal(r.orchestrator.info?.prompt, 'Get all open PRs merged', 'its card shows what the owner typed');
+  assert.equal(message.includes('<'), false, 'no tag for Droid to escape');
   r.hook(first, 'UserPromptSubmit', { prompt: message });
-  assert.equal(r.orchestrator.info?.activity, 'Get all open PRs merged', 'a hook carrying the reminder does not put it on the card');
+  assert.equal(r.orchestrator.info?.activity, 'Get all open PRs merged', 'a hook carrying the floor line does not put it on the card');
   assert.deepEqual([r.orchestrator.info?.task?.name, r.orchestrator.info?.task?.summary], ['Get all open PRs', 'Get all open PRs merged'], 'nor does it end up in its task label');
   r.hook(first, 'Stop');
 

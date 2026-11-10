@@ -302,6 +302,37 @@ test('filters system, hooks, hidden/source bookkeeping and system-reminder block
   assert.doesNotMatch(JSON.stringify(page), /PRIVATE_|system-reminder|base64|x{100}|a{100}/);
 });
 
+test('the Thread and the labels hide the floor line and a reminder Droid escaped', async (t) => {
+  const floor = 'Droid Office notice: The owner sent this from the droid-office floor (/Users/nik/repos/droid-office).';
+  const { reader, root, source } = await rig(t, [
+    text('floor', `What's untracked?\n\n${floor}`, 'user'),
+    text('escaped', "What's untracked?\n\n&lt;system-reminder&gt;\nThe owner sent this from the droid-office floor (/p).\n&lt;/system-reminder&gt;", 'user'),
+    text('answer', 'Two files.'),
+    text('lone', 'It arrived as escaped text: &lt;system-reminder&gt; and the rest of my sentence.'),
+    text('code', 'The tag was `&lt;system-reminder&gt;` in the file, then `&lt;/system-reminder&gt;`.'),
+    text('quoted-pair', 'Droid wrote &lt;system-reminder&gt;x&lt;/system-reminder&gt; there.'),
+    text('lone-user', 'Why did you show &lt;system-reminder&gt; to me?', 'user'),
+    text('with-pictures', `Look\n\n${floor}\n\nPictures:\n/tmp/a.png`, 'user'),
+  ]);
+  assert.deepEqual(
+    (await reader.read(source)).entries.map((entry) => entry.text),
+    [
+      "What's untracked?",
+      "What's untracked?",
+      'Two files.',
+      'It arrived as escaped text: &lt;system-reminder&gt; and the rest of my sentence.',
+      'The tag was `&lt;system-reminder&gt;` in the file, then `&lt;/system-reminder&gt;`.',
+      'Droid wrote &lt;system-reminder&gt;x&lt;/system-reminder&gt; there.',
+      'Why did you show &lt;system-reminder&gt; to me?',
+      'Look\n\nPictures:\n/tmp/a.png',
+    ],
+  );
+  const labels = new WorkerThreadReader(root, { sessions: 8, entries: 0, bytes: 0 }, true);
+  const seen = (await labels.readText(source))!;
+  assert.doesNotMatch(seen, /Droid Office notice|owner sent/);
+  assert.match(seen, /assistant: It arrived as escaped text: &lt;system-reminder&gt; and the rest/, 'an assistant quoting a lone tag keeps its sentence');
+});
+
 test('slash skills keep only the submitted prompt in threads and worker labels', async (t) => {
   // Trimmed from the owner's /office-thermals invocation and following CLI acknowledgement.
   const notification =
