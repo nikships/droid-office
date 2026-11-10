@@ -38,11 +38,10 @@ import {
   openInSplit,
   openWorker,
   paneOf,
-  parseWorkspace,
   type Rect,
   rectsFor,
   reconcilePanes,
-  seedWorkspace,
+  restoreWorkspace,
   serializeWorkspace,
   setLayout,
   SLOT_COUNT,
@@ -382,10 +381,7 @@ const staff = () => ordered().map((w) => w.id);
 function loadWorkspace(f: string) {
   disposePanes();
   wsFloor = f;
-  ws = parseWorkspace(read(`${WS_KEY}:${f}`)) ?? seedWorkspace(staff());
-  onFloor.clear();
-  syncWorkspace(ws, ordered(), onFloor);
-  if (ws.auto && !onFloor.size) autoLayout(ws, []);
+  ws = restoreWorkspace(read(`${WS_KEY}:${f}`), ordered(), onFloor, inMission);
   saveWorkspace();
 }
 function saveWorkspace() {

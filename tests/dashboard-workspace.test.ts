@@ -19,6 +19,7 @@ import {
   prune,
   rectsFor,
   reconcilePanes,
+  restoreWorkspace,
   seedWorkspace,
   serializeWorkspace,
   setLayout,
@@ -177,6 +178,21 @@ test('a building agent open in a pane stays there on every floor until Mission C
   mission = false;
   assert.deepEqual(syncWorkspace(ws, workers(['a']), previous, (id) => mission && id === 'orchestrator').gone, ['orchestrator']);
   assert.deepEqual(visibleSlots(ws), ['a', null]);
+});
+
+test('a saved pane on a building agent survives reloading the floor while Mission Control has it', () => {
+  const saved = emptyWorkspace('split');
+  saved.auto = false;
+  saved.slots[0] = 'a';
+  saved.slots[1] = 'orchestrator';
+  saved.views.orchestrator = 'thread';
+  const previous = new Map<string, number>();
+  const ws = restoreWorkspace(serializeWorkspace(saved), workers(['a']), previous, (id) => id === 'orchestrator');
+  assert.deepEqual(visibleSlots(ws), ['a', 'orchestrator']);
+  assert.equal(ws.views.orchestrator, 'thread');
+  assert.deepEqual([...previous.keys()], ['a']);
+  assert.deepEqual(visibleSlots(restoreWorkspace(serializeWorkspace(saved), workers(['a']), new Map(), () => false)), ['a', null], 'gone once Mission Control loses it');
+  assert.deepEqual(visibleSlots(restoreWorkspace('', workers(['a', 'b']), new Map(), () => false)), ['a', 'b'], 'a floor with nothing saved seeds its workers');
 });
 
 test('hire confirmation keeps automatic placement when its target is occupied or hidden', () => {

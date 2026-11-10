@@ -231,6 +231,15 @@ export function syncWorkspace(ws: Workspace, workers: readonly LayoutWorker[], p
   return { gone, filled: ws.auto ? changed && autoLayout(ws, workers) : fillPanes(ws, arrivals) };
 }
 
+/** A floor's saved workspace, or a first one from its workers, less the panes on whoever has gone since. */
+export function restoreWorkspace(saved: string, workers: readonly LayoutWorker[], previous: Map<string, number>, keep: (id: string) => boolean): Workspace {
+  const ws = parseWorkspace(saved) ?? seedWorkspace(workers.map((w) => w.id));
+  previous.clear();
+  syncWorkspace(ws, workers, previous, keep);
+  if (ws.auto && !previous.size) autoLayout(ws, []);
+  return ws;
+}
+
 /** Puts a worker in a pane. If it was open in another one, the two panes trade places. */
 export function assign(ws: Workspace, slot: number, id: string) {
   ws.auto = false;
