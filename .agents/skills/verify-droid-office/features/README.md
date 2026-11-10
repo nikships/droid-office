@@ -40,6 +40,6 @@ Each feature file starts with an H1 title and one paragraph describing the user-
 | [Hire a worker](./hire-worker.md) | Office page, web companion | All but `hire-droid-dialog` (`hire-shell.mjs`), Mac Mini, fresh office, 2026-11-02 |
 | [Whiteboard](./whiteboard.md) | Office page, Android | Not yet driven |
 | [Office MCP tool call](./office-mcp.md) | Office MCP over HTTP | `mcp-refuse-anon` and `mcp-refuse-shell` (`mcp-shell-refusal.mjs`), Mac Mini, fresh office, 2026-11-02 |
-| [Mission Control](./mission-control.md) | Office page, web/Mac companion, Android, Office MCP | `mission-entry`, `mission-companion` (blocked), `mission-shared` (`mission-control.mjs`), owner clone, Metal browser, 2026-11-10; live team proof pending |
+| [Mission Control](./mission-control.md) | Office page, web/Mac companion, Android, Office MCP | Entry, blocked companion, shared settings and floor continuity; browser and Electron scene/settings, owner clone, 2026-11-09; live team proof pending |
 | [Android Workers list](./android-workers.md) | Android app (adb) | Pixel 9 Pro XL emulator, cloned owner office: Shell from Asks and past a pending Droid snackbar |
 | [Website sections](./website.md) | Marketing site | `website-sections.mjs`, Mac Mini, 2026-11-02 |

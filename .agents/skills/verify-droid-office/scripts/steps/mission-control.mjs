@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { writeFileSync } from 'node:fs';
 import path from 'node:path';
 
-export default async ({ page, js, shot, waitFor, out, url, log }) => {
+export default async ({ page, js, shot, waitFor, out, url, log }, { withCompanion = true } = {}) => {
   const proof = { feature: 'mission-control', steps: [], skipped: [] };
   const record = (id, result) => proof.steps.push({ id, ...result });
   const state = () => js(() => window.office.state());
@@ -41,38 +41,42 @@ export default async ({ page, js, shot, waitFor, out, url, log }) => {
   const settings = page.getByRole('dialog', { name: 'Settings', exact: true });
   const toggle = settings.getByRole('checkbox', { name: 'Orchestrator', exact: true });
   const wasOn = await toggle.isChecked();
-  const companion = await page.context().newPage();
+  let companion;
   try {
+    if (withCompanion) companion = await page.context().newPage();
+    else proof.skipped.push('mission-companion: native scene/settings run; use the browser drive for companion proof');
     await setToggle(toggle, true);
     await waitFor(() => window.office.state().agents?.some((a) => a.id === 'orchestrator'), undefined, 10_000);
     await shot('03-orchestrator-settings');
-    await companion.goto(new URL('/dashboard', url).href);
-    const row = companion.locator('button.dash-row-open[data-worker="orchestrator"]');
-    await row.waitFor({ state: 'visible', timeout: 30_000 });
-    await row.click();
-    const pane = companion.locator('.dash-pane[aria-label$=": Orchestrator"]');
-    await pane.locator('.dash-pane-name').getByText('Orchestrator', { exact: true }).waitFor();
-    await pane.locator('.worker-thread[aria-label="Orchestrator thread"]').waitFor();
-    await pane.locator('.orc-intro').waitFor();
-    await pane.evaluate(async (el) => {
-      await Promise.all(
-        el
-          .getAnimations({ subtree: true })
-          .filter((a) => a.effect?.getComputedTiming().iterations !== Infinity)
-          .map((a) => a.finished),
-      );
-    });
-    await companion.screenshot({ path: path.join(out, '04-companion.png') });
-    record('mission-companion', { row: await row.getAttribute('aria-label'), intro: await pane.locator('.orc-intro h3').textContent(), blocked: await pane.locator('.wt-blocked').isVisible() });
+    const row = companion?.locator('button.dash-row-open[data-worker="orchestrator"]');
+    if (companion && row) {
+      await companion.goto(new URL('/dashboard', url).href);
+      await row.waitFor({ state: 'visible', timeout: 30_000 });
+      await row.click();
+      const pane = companion.locator('.dash-pane[aria-label$=": Orchestrator"]');
+      await pane.locator('.dash-pane-name').getByText('Orchestrator', { exact: true }).waitFor();
+      await pane.locator('.worker-thread[aria-label="Orchestrator thread"]').waitFor();
+      await pane.locator('.orc-intro').waitFor();
+      await pane.evaluate(async (el) => {
+        await Promise.all(
+          el
+            .getAnimations({ subtree: true })
+            .filter((a) => a.effect?.getComputedTiming().iterations !== Infinity)
+            .map((a) => a.finished),
+        );
+      });
+      await companion.screenshot({ path: path.join(out, '04-companion.png') });
+      record('mission-companion', { row: await row.getAttribute('aria-label'), intro: await pane.locator('.orc-intro h3').textContent(), blocked: await pane.locator('.wt-blocked').isVisible() });
+    }
 
     await setToggle(toggle, false);
     await waitFor(() => !window.office.state().agents?.some((a) => a.id === 'orchestrator'), undefined, 10_000);
-    await companion.locator('.dash-mission-off').waitFor({ state: 'visible' });
+    await companion?.locator('.dash-mission-off').waitFor({ state: 'visible' });
     await shot('05-orchestrator-off');
-    record('mission-shared', { on: false, companion: 'off' });
+    record('mission-shared', { on: false, ...(companion ? { companion: 'off' } : {}) });
     await setToggle(toggle, true);
     await waitFor(() => window.office.state().agents?.some((a) => a.id === 'orchestrator'), undefined, 10_000);
-    await row.waitFor({ state: 'visible' });
+    await row?.waitFor({ state: 'visible' });
     await js(() => window.office.closeAll());
 
     const other = before.floors.find((f) => !f.here);
@@ -89,13 +93,17 @@ export default async ({ page, js, shot, waitFor, out, url, log }) => {
     if (!bots.length) proof.skipped.push('mission-bots: the cloned office has no external bots');
     for (const bot of bots) {
       assert.ok(!(await state()).workers.some((w) => w.id === bot.id));
+      if (!companion) {
+        proof.skipped.push(`mission-bots companion card ${bot.id}: browser drive only`);
+        continue;
+      }
       const botRow = companion.locator(`button.dash-row-open[data-worker="${bot.id}"]`);
       await botRow.click();
       await companion.getByText('Runs externally', { exact: true }).last().waitFor();
       record('mission-bots', { id: bot.id, floorDesk: false, companion: await botRow.getAttribute('aria-label') });
     }
   } finally {
-    await companion.close();
+    await companion?.close();
     await js(() => window.office.closeAll());
     await js(() => window.office.open('settings'));
     await page.getByRole('tab', { name: /Orchestrator/ }).click();
