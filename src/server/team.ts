@@ -115,6 +115,8 @@ export interface TeamMember {
   report?: { text: string; question: boolean; at: number; seq: number; pushedSha?: string; prUrl?: string; progress?: true };
   /** The event seq of a team_report question nobody has answered yet. */
   openQuestion?: number;
+  /** At rest after a progress report, with nothing since: not finished, waiting on its own background work to wake it. */
+  awaitingJob?: true;
   idleSince?: number;
   idleForMs?: number;
 }
@@ -596,6 +598,8 @@ export class Team {
     const effort = w.activeEffort ?? w.effort;
     const open = [...this.log].reverse().find((e) => e.worker === w.id && e.kind === 'question' && !e.answered && e.lead === w.lead);
     const asking = w.status === 'needs_input' && w.ask?.kind === 'question';
+    // A later event (a turn that ended without a report, a stop) means the job already woke it.
+    const awaitingJob = (w.status === 'idle' || w.status === 'done') && last?.progress && !this.log.some((e) => e.worker === w.id && e.seq > last.seq);
     return {
       id: w.id,
       name: w.name,
@@ -623,6 +627,7 @@ export class Team {
           }
         : {}),
       ...(open ? { openQuestion: open.seq } : {}),
+      ...(awaitingJob ? { awaitingJob: true as const } : {}),
       ...((w.status === 'idle' || w.status === 'done') && this.idleSince.has(w.id) ? { idleSince: this.idleSince.get(w.id), idleForMs: Math.max(0, this.now() - this.idleSince.get(w.id)!) } : {}),
     };
   }

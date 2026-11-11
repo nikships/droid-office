@@ -90,6 +90,7 @@ export function compactWorker(m: TeamMember, floor: string) {
     ...(m.pr ? { pr: m.pr } : {}),
     ...(m.report ? { lastReportId: eventId(floor, m.report.seq), lastReportKind: m.report.question ? 'question' : m.report.progress ? 'progress' : 'report', lastReportAt: iso(m.report.at), lastReportSummary: summary(m.report.text) } : {}),
     ...(m.openQuestion !== undefined ? { openQuestionId: eventId(floor, m.openQuestion) } : {}),
+    ...(m.awaitingJob ? { awaitingJob: true as const } : {}),
   };
 }
 
@@ -113,7 +114,7 @@ export type CompactEvent = ReturnType<typeof compactEvent>;
 
 export function compactWorkerText(w: CompactWorker): string {
   return [
-    `${w.name} (${w.id}) ${w.state}${w.lastReportKind === 'progress' && (w.state === 'done' || w.state === 'idle') ? ' (not finished: its progress report says it waits on its own background work)' : ''}, ${w.desk}${w.task ? `: ${w.task}` : ''}.`,
+    `${w.name} (${w.id}) ${w.state}${w.awaitingJob ? ' (not finished: its progress report says it waits on its own background work)' : ''}, ${w.desk}${w.task ? `: ${w.task}` : ''}.`,
     ...(w.doing ? [`Doing: ${w.doing}.`] : []),
     ...(w.branch ? [`Branch ${w.branch}.`] : []),
     ...(w.pr ? [`PR ${w.pr.url}.`] : []),

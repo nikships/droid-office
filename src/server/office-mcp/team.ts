@@ -28,14 +28,14 @@ function reply(result: TeamReply, describe: (body: Record<string, unknown>) => s
   return officeResult(describe(result.body), result.body);
 }
 
-/** Its turn ended after a progress report: done in status only. */
+/** At rest after a progress report: done in status only. */
 const PROGRESS_REST = 'Not finished: its turn ended after a progress report, and it waits on its own background work (such as a long job) to wake it. If that has run far longer than the report expects, check it with worker_log.';
 
 function memberText(member: TeamMember & { terminal?: string; terminalUnavailable?: string }): string {
   return [
     `${member.name} (${member.id}), ${member.status}, ${member.desk}${member.model ? `, ${member.model}${member.effort ? ` ${member.effort}` : ''}` : ''}.`,
     ...(member.idleForMs !== undefined ? [`Idle for ${Math.floor(member.idleForMs / 60_000)} minutes.`] : []),
-    ...(member.idleForMs !== undefined && member.report?.progress ? [PROGRESS_REST] : []),
+    ...(member.awaitingJob ? [PROGRESS_REST] : []),
     ...(member.task ? [`Task: ${member.task}`] : []),
     ...(member.activity ? [`Doing: ${member.activity}`] : []),
     member.worktree ? `Worktree: ${member.worktree.path} on ${member.worktree.branch}${member.worktree.from ? ` from ${member.worktree.from}` : ''}.` : 'Working in the main checkout.',

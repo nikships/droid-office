@@ -349,14 +349,27 @@ test('a progress report ends the turn as done, but tells the lead the subagent i
     [['report', true]],
   );
 
+  assert.equal(member.awaitingJob, true);
   const compact = await r.call(r.lead, 'team_status', { verbose: false });
   assert.equal(compact.body.workers[0].lastReportKind, 'progress');
+  assert.equal(compact.body.workers[0].awaitingJob, true);
   assert.match(compact.output, /Pixel \(sub1\) done \(not finished: its progress report says it waits on its own background work\)/);
   const got = await r.call(r.lead, 'team_report_get', { worker: 'Pixel' });
   assert.equal(got.body.report.progress, true);
   assert.match(got.output, /Progress report \(not finished\) team:floor:\d+ from Pixel/);
 
-  // Woken by its job, it finishes with a final report: done again, and nothing says unfinished.
+  // Woken by its job, a turn that ends without a report is no longer waiting on it.
+  r.set('sub1', 'working');
+  r.set('sub1', 'done');
+  const woken = await r.status({ name: 'Pixel' });
+  assert.equal(woken.body.team[0].report.progress, true, 'its last report is still the progress report');
+  assert.equal(woken.body.team[0].awaitingJob, undefined);
+  assert.doesNotMatch(woken.output, /Not finished/);
+  const wokenCompact = await r.call(r.lead, 'team_status', { verbose: false });
+  assert.equal(wokenCompact.body.workers[0].awaitingJob, undefined);
+  assert.doesNotMatch(wokenCompact.output, /not finished: its progress report/);
+
+  // It finishes with a final report: done again, and nothing says unfinished.
   r.set('sub1', 'working');
   const final = await r.call(sub, 'team_report', { text: 'Rebuild passed; all four items done.' });
   assert.match(final.output, /Reported to Nibble\. End your turn now/);
