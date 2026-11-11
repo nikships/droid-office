@@ -4,7 +4,6 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
-import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -28,22 +27,14 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.selection.selectable
-import androidx.compose.foundation.selection.selectableGroup
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.text.BasicTextField
-import androidx.compose.foundation.text.KeyboardActions
-import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.Add
-import androidx.compose.material.icons.filled.Close
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExtendedFloatingActionButton
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -59,21 +50,14 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.vector.ImageVector
-import androidx.compose.ui.hapticfeedback.HapticFeedbackType
-import androidx.compose.ui.platform.LocalFocusManager
-import androidx.compose.ui.platform.LocalHapticFeedback
-import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.text
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -94,10 +78,8 @@ import ai.factory.droidoffice.core.ORCHESTRATOR_ID
 import ai.factory.droidoffice.core.ORCHESTRATOR_NAME
 import ai.factory.droidoffice.core.PendingAsk
 import ai.factory.droidoffice.core.RosterKind
-import ai.factory.droidoffice.core.RosterStatusFilter
 import ai.factory.droidoffice.core.RosterSummary
 import ai.factory.droidoffice.core.Tags
-import ai.factory.droidoffice.core.WorkerInfo
 import ai.factory.droidoffice.core.WorkerStatus
 import ai.factory.droidoffice.core.Workers
 import ai.factory.droidoffice.data.AuthMode
@@ -114,7 +96,6 @@ import ai.factory.droidoffice.ui.components.Eyebrow
 import ai.factory.droidoffice.ui.components.GlyphMark
 import ai.factory.droidoffice.ui.components.PrimaryButton
 import ai.factory.droidoffice.ui.components.RouteBadge
-import ai.factory.droidoffice.ui.components.SecondaryButton
 import ai.factory.droidoffice.ui.components.Spinner
 import ai.factory.droidoffice.ui.components.StatusPill
 import ai.factory.droidoffice.ui.components.WorkerDot
@@ -147,8 +128,7 @@ private data class AnsweredAsk(
 
 /**
  * Building-wide Workers tab: every worker across every floor and Mission Control in one live roster,
- * with pinned "Needs you" questionnaires, instant search, status & floor chips, Floor/Repo clarity,
- * and cross-floor Fork / Dismiss actions.
+ * with pinned "Needs you" questionnaires, Floor/Repo clarity, and cross-floor Fork / Dismiss actions.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -170,35 +150,18 @@ fun WorkersScreen(
     val office = store.active
 
     var actionWorker by remember(data.officeId) { mutableStateOf<String?>(null) }
-    var query by rememberSaveable(data.officeId) { mutableStateOf("") }
-    var statusKey by rememberSaveable(data.officeId) { mutableStateOf(RosterStatusFilter.All.key) }
-    var floorFilter by rememberSaveable(data.officeId) { mutableStateOf(BuildingRoster.ALL_FLOORS) }
-    val statusFilter = RosterStatusFilter.of(statusKey)
 
     LaunchedEffect(link.phase, link.officeId) {
         if (link.phase == Phase.Connected) connection.models()
     }
 
-    // Reset floor filter if that floor was removed from the building.
-    LaunchedEffect(data.floors, data.mission, floorFilter) {
-        if (floorFilter != BuildingRoster.ALL_FLOORS && floorFilter != BuildingRoster.MISSION_FLOOR && data.floors.isNotEmpty() && data.floors.none { it.id == floorFilter }) {
-            floorFilter = BuildingRoster.ALL_FLOORS
-        } else if (floorFilter == BuildingRoster.MISSION_FLOOR && !MissionControl.shown(data.mission)) {
-            floorFilter = BuildingRoster.ALL_FLOORS
-        }
-    }
-
-    val view = remember(data.floors, data.workers, data.buildingWorkers, data.pulls, data.buildingPulls, data.mission, screens, statusFilter, floorFilter, query, catalogue) {
+    val view = remember(data.floors, data.workers, data.buildingWorkers, data.pulls, data.buildingPulls, data.mission, screens) {
         BuildingRoster.build(
             floors = data.floors,
             workersByFloor = data.workersByFloor,
             pullsByFloor = data.pullsByFloor,
             mission = data.mission,
             screens = screens,
-            statusFilter = statusFilter,
-            floorFilter = floorFilter,
-            query = query,
-            modelName = { id -> catalogue?.models?.firstOrNull { it.id == id }?.displayName ?: Models.displayName(id) },
         )
     }
 
@@ -213,17 +176,6 @@ fun WorkersScreen(
                     data = data,
                     catalogue = catalogue,
                     view = view,
-                    query = query,
-                    onQueryChange = { query = it },
-                    statusFilter = statusFilter,
-                    onStatusFilter = { statusKey = it.key },
-                    floorFilter = floorFilter,
-                    onFloorFilter = { floorFilter = it },
-                    onClearFilters = {
-                        query = ""
-                        statusKey = RosterStatusFilter.All.key
-                        floorFilter = BuildingRoster.ALL_FLOORS
-                    },
                     selected = if (wide) selected else null,
                     onOpen = onOpenWorker,
                     onOpenRawTty = { id -> if (wide) onOpenWorker(id) else onOpenRawTty(id) },
@@ -287,13 +239,6 @@ private fun WorkersRosterPane(
     data: OfficeData,
     catalogue: ModelCatalogue?,
     view: BuildingRosterView,
-    query: String,
-    onQueryChange: (String) -> Unit,
-    statusFilter: RosterStatusFilter,
-    onStatusFilter: (RosterStatusFilter) -> Unit,
-    floorFilter: String,
-    onFloorFilter: (String) -> Unit,
-    onClearFilters: () -> Unit,
     selected: String?,
     onOpen: (String) -> Unit,
     onOpenRawTty: (String) -> Unit,
@@ -327,44 +272,17 @@ private fun WorkersRosterPane(
     val queuedAsks = waitingAsks.filter { it !== primaryAsk }
     val connected = link.phase == Phase.Connected
     val floorOrder = remember(data.floors) { data.floors.mapIndexed { idx, f -> f.id to (idx + 1) }.toMap() }
-    val hasActiveFilter = query.isNotBlank() || statusFilter != RosterStatusFilter.All || floorFilter != BuildingRoster.ALL_FLOORS
 
     Column(Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.statusBars)) {
         WorkersHeader(
             summary = view.totalSummary,
             floorCount = data.floors.size,
             link = link,
-            statusFilter = statusFilter,
-            onWaitingTap = {
-                if (statusFilter == RosterStatusFilter.NeedsInput && floorFilter == BuildingRoster.ALL_FLOORS && query.isBlank()) {
-                    onStatusFilter(RosterStatusFilter.All)
-                } else {
-                    onQueryChange("")
-                    onFloorFilter(BuildingRoster.ALL_FLOORS)
-                    onStatusFilter(RosterStatusFilter.NeedsInput)
-                }
-            },
         )
         ConnectionBanner(link, legacy, data.synced, onRetry, onScan)
         if (link.phase == Phase.Unauthorized) {
             Repair(officeName, legacy, onScan)
             return@Column
-        }
-
-        if (data.synced && (view.totalSummary.total > 0 || hasActiveFilter)) {
-            SearchAndFilters(
-                query = query,
-                onQueryChange = onQueryChange,
-                statusFilter = statusFilter,
-                statusCounts = view.statusCounts,
-                onStatusFilter = onStatusFilter,
-                floors = data.floors,
-                showMission = MissionControl.shown(data.mission) && view.floorCounts.containsKey(BuildingRoster.MISSION_FLOOR),
-                floorFilter = floorFilter,
-                floorCounts = view.floorCounts,
-                floorWaiting = view.floorWaiting,
-                onFloorFilter = onFloorFilter,
-            )
         }
 
         PullToRefreshBox(
@@ -387,19 +305,6 @@ private fun WorkersRosterPane(
                 }
                 view.totalSummary.total == 0 -> {
                     EmptyBuilding(onHire, data.floors.size, Modifier.fillMaxSize().padding(28.dp))
-                }
-                view.rows.isEmpty() && waitingAsks.isEmpty() -> {
-                    EmptyFilterResults(
-                        query = query,
-                        statusFilter = statusFilter,
-                        floorName = when (floorFilter) {
-                            BuildingRoster.ALL_FLOORS -> null
-                            BuildingRoster.MISSION_FLOOR -> "Mission Control"
-                            else -> data.floors.firstOrNull { it.id == floorFilter }?.name ?: floorFilter
-                        },
-                        onClear = onClearFilters,
-                        modifier = Modifier.fillMaxSize().padding(28.dp),
-                    )
                 }
                 else -> {
                     LazyColumn(
@@ -456,28 +361,13 @@ private fun WorkersRosterPane(
                             }
                         }
 
-                        if (view.rows.isNotEmpty() && statusFilter != RosterStatusFilter.NeedsInput) {
+                        if (view.rows.isNotEmpty()) {
                             item(key = "roster-header") {
-                                val heading = when {
-                                    hasActiveFilter -> "Matching workers · ${view.rows.size}"
-                                    data.floors.size > 1 -> "All floors · ${view.rows.size}"
-                                    else -> "Roster · ${view.rows.size}"
-                                }
-                                Row(
+                                val heading = if (data.floors.size > 1) "All floors · ${view.rows.size}" else "Roster · ${view.rows.size}"
+                                Eyebrow(
+                                    heading,
                                     Modifier.fillMaxWidth().padding(start = 4.dp, end = 4.dp, top = if (primaryAsk != null || sent.isNotEmpty()) 8.dp else 2.dp, bottom = 2.dp),
-                                    verticalAlignment = Alignment.CenterVertically,
-                                ) {
-                                    Eyebrow(heading, Modifier.weight(1f))
-                                    if (hasActiveFilter) {
-                                        Text(
-                                            "Reset",
-                                            style = LocalOfficeType.current.eyebrow.copy(color = Palette.Accent),
-                                            modifier = Modifier.clip(RoundedCornerShape(4.dp))
-                                                .clickable(onClick = onClearFilters)
-                                                .padding(horizontal = 6.dp, vertical = 2.dp),
-                                        )
-                                    }
-                                }
+                                )
                             }
                         }
 
@@ -508,30 +398,26 @@ private fun WorkersHeader(
     summary: RosterSummary,
     floorCount: Int,
     link: Link,
-    statusFilter: RosterStatusFilter,
-    onWaitingTap: () -> Unit,
 ) {
     Column(Modifier.fillMaxWidth().padding(start = 16.dp, end = 12.dp, top = 12.dp, bottom = 8.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             Text("Workers", style = MaterialTheme.typography.headlineMedium, modifier = Modifier.weight(1f))
             if (summary.waiting > 0) {
-                val active = statusFilter == RosterStatusFilter.NeedsInput
                 Row(
                     Modifier.height(28.dp)
                         .clip(RoundedCornerShape(50))
-                        .background(if (active) Palette.Danger else Palette.Danger.copy(alpha = 0.14f))
-                        .border(1.dp, if (active) Palette.Danger else Palette.Danger.copy(alpha = 0.45f), RoundedCornerShape(50))
-                        .clickable(onClickLabel = "Filter waiting workers", onClick = onWaitingTap)
+                        .background(Palette.Danger.copy(alpha = 0.14f))
+                        .border(1.dp, Palette.Danger.copy(alpha = 0.45f), RoundedCornerShape(50))
                         .tagged(Tags.Workers.WAITING_COUNT)
                         .padding(horizontal = 11.dp),
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(6.dp),
                 ) {
-                    Box(Modifier.size(6.dp).background(if (active) Palette.Bg else Palette.Danger, RoundedCornerShape(1.5.dp)))
+                    Box(Modifier.size(6.dp).background(Palette.Danger, RoundedCornerShape(1.5.dp)))
                     Text(
                         "${summary.waiting} waiting",
                         style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.SemiBold),
-                        color = if (active) Palette.Bg else Palette.Text,
+                        color = Palette.Text,
                     )
                 }
             }
@@ -558,260 +444,6 @@ private fun WorkersHeader(
             overflow = TextOverflow.Ellipsis,
             modifier = Modifier.padding(top = 2.dp).tagged(Tags.Workers.SUMMARY),
         )
-    }
-}
-
-@Composable
-private fun SearchAndFilters(
-    query: String,
-    onQueryChange: (String) -> Unit,
-    statusFilter: RosterStatusFilter,
-    statusCounts: Map<RosterStatusFilter, Int>,
-    onStatusFilter: (RosterStatusFilter) -> Unit,
-    floors: List<FloorInfo>,
-    showMission: Boolean,
-    floorFilter: String,
-    floorCounts: Map<String, Int>,
-    floorWaiting: Map<String, Int>,
-    onFloorFilter: (String) -> Unit,
-) {
-    val focusManager = LocalFocusManager.current
-    var focused by remember { mutableStateOf(false) }
-
-    Column(Modifier.fillMaxWidth().padding(bottom = 4.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        // Search bar
-        Row(
-            Modifier.fillMaxWidth()
-                .padding(horizontal = 14.dp)
-                .height(40.dp)
-                .clip(RoundedCornerShape(8.dp))
-                .background(Palette.Surface)
-                .border(1.dp, if (focused) Palette.Accent.copy(alpha = 0.65f) else Palette.BorderStrong, RoundedCornerShape(8.dp))
-                .padding(start = 11.dp, end = 4.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Icon(OfficeIcons.Search, null, Modifier.size(16.dp), tint = if (focused) Palette.Accent else Palette.TextSecondary)
-            Spacer(Modifier.width(8.dp))
-            Box(Modifier.weight(1f), contentAlignment = Alignment.CenterStart) {
-                if (query.isEmpty()) {
-                    Text(
-                        "Search worker, task, floor, repo, branch, #PR…",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = Palette.TextTertiary,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                    )
-                }
-                BasicTextField(
-                    value = query,
-                    onValueChange = { if (it.length <= 200) onQueryChange(it) },
-                    singleLine = true,
-                    textStyle = MaterialTheme.typography.bodyMedium.copy(color = Palette.Text),
-                    cursorBrush = SolidColor(Palette.Accent),
-                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
-                    keyboardActions = KeyboardActions(onSearch = { focusManager.clearFocus() }),
-                    modifier = Modifier.fillMaxWidth()
-                        .onFocusChanged { focused = it.isFocused }
-                        .tagged(Tags.Workers.SEARCH),
-                )
-            }
-            if (query.isNotEmpty()) {
-                IconButton(
-                    onClick = { onQueryChange("") },
-                    modifier = Modifier.size(32.dp).tagged(Tags.Workers.SEARCH_CLEAR),
-                ) {
-                    Icon(Icons.Default.Close, "Clear search", Modifier.size(15.dp), tint = Palette.TextSecondary)
-                }
-            }
-        }
-
-        // Status filter strip
-        Row(
-            Modifier.fillMaxWidth()
-                .horizontalScroll(rememberScrollState())
-                .selectableGroup()
-                .tagged(Tags.Workers.STATUS_FILTERS)
-                .padding(horizontal = 14.dp),
-            horizontalArrangement = Arrangement.spacedBy(6.dp),
-        ) {
-            RosterStatusFilter.entries.forEach { filter ->
-                val count = statusCounts[filter] ?: 0
-                val dotColor = when (filter) {
-                    RosterStatusFilter.All -> null
-                    RosterStatusFilter.NeedsInput -> Palette.Danger
-                    RosterStatusFilter.Working -> Palette.Warning
-                    RosterStatusFilter.Done -> Palette.Success
-                    RosterStatusFilter.Ready -> Palette.Info
-                    RosterStatusFilter.Asleep -> Palette.TextSecondary
-                }
-                FilterChipPill(
-                    label = filter.label,
-                    count = count,
-                    selected = statusFilter == filter,
-                    dotColor = dotColor,
-                    urgent = filter == RosterStatusFilter.NeedsInput && count > 0,
-                    onClick = { onStatusFilter(if (statusFilter == filter && filter != RosterStatusFilter.All) RosterStatusFilter.All else filter) },
-                    modifier = Modifier.tagged(Tags.Workers.statusFilter(filter.key)),
-                )
-            }
-        }
-
-        // Floor scope strip (shown when there are multiple floors or Mission Control)
-        if (floors.size > 1 || showMission) {
-            Row(
-                Modifier.fillMaxWidth()
-                    .horizontalScroll(rememberScrollState())
-                    .selectableGroup()
-                    .tagged(Tags.Workers.FLOOR_FILTERS)
-                    .padding(horizontal = 14.dp),
-                horizontalArrangement = Arrangement.spacedBy(6.dp),
-            ) {
-                FloorScopePill(
-                    label = "All floors",
-                    count = floorCounts[BuildingRoster.ALL_FLOORS] ?: 0,
-                    waiting = 0,
-                    selected = floorFilter == BuildingRoster.ALL_FLOORS,
-                    icon = OfficeIcons.Building,
-                    onClick = { onFloorFilter(BuildingRoster.ALL_FLOORS) },
-                    modifier = Modifier.tagged(Tags.Workers.floorFilter(BuildingRoster.ALL_FLOORS)),
-                )
-                floors.forEachIndexed { index, f ->
-                    val name = f.name.ifBlank { f.id }
-                    FloorScopePill(
-                        label = "${index + 1} · $name",
-                        count = floorCounts[f.id] ?: 0,
-                        waiting = floorWaiting[f.id] ?: 0,
-                        selected = floorFilter == f.id,
-                        icon = OfficeIcons.Layers,
-                        onClick = { onFloorFilter(if (floorFilter == f.id) BuildingRoster.ALL_FLOORS else f.id) },
-                        modifier = Modifier.tagged(Tags.Workers.floorFilter(f.id)),
-                    )
-                }
-                if (showMission) {
-                    FloorScopePill(
-                        label = "Mission Control",
-                        count = floorCounts[BuildingRoster.MISSION_FLOOR] ?: 0,
-                        waiting = floorWaiting[BuildingRoster.MISSION_FLOOR] ?: 0,
-                        selected = floorFilter == BuildingRoster.MISSION_FLOOR,
-                        icon = OfficeIcons.Orbit,
-                        onClick = {
-                            onFloorFilter(if (floorFilter == BuildingRoster.MISSION_FLOOR) BuildingRoster.ALL_FLOORS else BuildingRoster.MISSION_FLOOR)
-                        },
-                        modifier = Modifier.tagged(Tags.Workers.floorFilter(BuildingRoster.MISSION_FLOOR)),
-                    )
-                }
-            }
-        }
-    }
-}
-
-@Composable
-private fun FilterChipPill(
-    label: String,
-    count: Int,
-    selected: Boolean,
-    dotColor: Color?,
-    urgent: Boolean,
-    onClick: () -> Unit,
-    modifier: Modifier = Modifier,
-) {
-    val haptics = LocalHapticFeedback.current
-    val shape = RoundedCornerShape(6.dp)
-    val bg = when {
-        selected -> Palette.Text
-        urgent -> Palette.Danger.copy(alpha = 0.1f)
-        else -> Palette.Surface
-    }
-    val border = when {
-        selected -> Palette.Text
-        urgent -> Palette.Danger.copy(alpha = 0.45f)
-        else -> Palette.Border
-    }
-    Row(
-        modifier.height(32.dp)
-            .clip(shape)
-            .background(bg)
-            .border(1.dp, border, shape)
-            .selectable(selected, role = Role.Tab) {
-                haptics.performHapticFeedback(HapticFeedbackType.SegmentTick)
-                onClick()
-            }
-            .padding(horizontal = 10.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(6.dp),
-    ) {
-        if (dotColor != null) {
-            Box(
-                Modifier.size(6.dp)
-                    .clip(CircleShape)
-                    .background(if (selected) Palette.Bg else dotColor),
-            )
-        }
-        Text(
-            label,
-            style = MaterialTheme.typography.labelMedium,
-            color = if (selected) Palette.Bg else Palette.Text,
-            maxLines = 1,
-        )
-        Text(
-            "$count",
-            style = LocalOfficeType.current.eyebrow.copy(
-                fontSize = 10.sp,
-                color = when {
-                    selected -> Palette.Bg.copy(alpha = 0.72f)
-                    urgent -> Palette.Danger
-                    else -> Palette.TextSecondary
-                },
-            ),
-        )
-    }
-}
-
-@Composable
-private fun FloorScopePill(
-    label: String,
-    count: Int,
-    waiting: Int,
-    selected: Boolean,
-    icon: ImageVector,
-    onClick: () -> Unit,
-    modifier: Modifier = Modifier,
-) {
-    val haptics = LocalHapticFeedback.current
-    val shape = RoundedCornerShape(6.dp)
-    Row(
-        modifier.height(30.dp)
-            .clip(shape)
-            .background(if (selected) Palette.AccentMuted else Palette.Surface)
-            .border(1.dp, if (selected) Palette.Accent else Palette.Border, shape)
-            .selectable(selected, role = Role.Tab) {
-                haptics.performHapticFeedback(HapticFeedbackType.SegmentTick)
-                onClick()
-            }
-            .padding(horizontal = 9.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(5.dp),
-    ) {
-        Icon(icon, null, Modifier.size(13.dp), tint = if (selected) Palette.Accent else Palette.TextSecondary)
-        Text(
-            label,
-            style = MaterialTheme.typography.labelSmall,
-            color = if (selected) Palette.Text else Palette.TextSecondary,
-            maxLines = 1,
-        )
-        if (waiting > 0 && !selected) {
-            Box(Modifier.clip(RoundedCornerShape(3.dp)).background(Palette.Danger).padding(horizontal = 4.dp, vertical = 1.dp)) {
-                Text("$waiting", style = LocalOfficeType.current.eyebrow.copy(color = Color.White, fontSize = 9.sp, fontWeight = FontWeight.SemiBold))
-            }
-        } else {
-            Text(
-                "$count",
-                style = LocalOfficeType.current.eyebrow.copy(
-                    fontSize = 9.5.sp,
-                    color = if (selected) Palette.Accent else Palette.TextTertiary,
-                ),
-            )
-        }
     }
 }
 
@@ -1351,41 +983,5 @@ private fun EmptyBuilding(onHire: () -> Unit, floorCount: Int, modifier: Modifie
         )
         Spacer(Modifier.height(18.dp))
         PrimaryButton("Hire a worker", onHire, Modifier.tagged(Tags.Workers.EMPTY_HIRE), icon = Icons.Default.Add)
-    }
-}
-
-@Composable
-private fun EmptyFilterResults(
-    query: String,
-    statusFilter: RosterStatusFilter,
-    floorName: String?,
-    onClear: () -> Unit,
-    modifier: Modifier = Modifier,
-) {
-    Column(
-        modifier.tagged(Tags.Workers.FILTER_EMPTY),
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.Center,
-    ) {
-        Icon(OfficeIcons.Search, null, Modifier.size(32.dp), tint = Palette.TextSecondary)
-        Spacer(Modifier.height(12.dp))
-        val title = when {
-            query.isNotBlank() -> "No workers match “${query.trim()}”"
-            statusFilter != RosterStatusFilter.All && floorName != null -> "No ${statusFilter.label.lowercase()} workers on $floorName"
-            statusFilter != RosterStatusFilter.All -> "No ${statusFilter.label.lowercase()} workers right now"
-            floorName != null -> "No workers on $floorName"
-            else -> "No matching workers"
-        }
-        Text(title, style = MaterialTheme.typography.titleLarge, textAlign = TextAlign.Center)
-        Spacer(Modifier.height(6.dp))
-        Text(
-            "Clear your search or filters to see everyone across the building again.",
-            style = MaterialTheme.typography.bodyMedium,
-            color = Palette.TextSecondary,
-            textAlign = TextAlign.Center,
-            modifier = Modifier.widthIn(max = 340.dp),
-        )
-        Spacer(Modifier.height(18.dp))
-        SecondaryButton("Reset filters", onClear, Modifier.tagged(Tags.Workers.CLEAR_FILTERS), color = Palette.Accent)
     }
 }

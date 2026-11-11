@@ -27,8 +27,6 @@ class TagsTest {
         assertEquals("home.worker/w-1a2b", Tags.Home.worker("w-1a2b"))
         assertEquals("workers.card/w-1a2b", Tags.Workers.card("w-1a2b"))
         assertEquals("workers.ask/w-1a2b", Tags.Workers.ask("w-1a2b"))
-        assertEquals("workers.filter.status/needs_input", Tags.Workers.statusFilter("needs_input"))
-        assertEquals("workers.filter.floor/home", Tags.Workers.floorFilter("home"))
         assertEquals("hire.model/custom:droidproxy:opus-5-5", Tags.Hire.model("custom:droidproxy:opus-5-5"))
         assertEquals("hire.repo/atlas", Tags.Hire.repo("atlas"))
         assertEquals("worker.choice/2", Tags.Worker.choice(2))

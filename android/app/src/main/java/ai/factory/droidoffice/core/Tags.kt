@@ -130,22 +130,16 @@ object Tags {
         fun next(id: String) = "asks.next/$id"
     }
 
-    /** The cross-floor Workers tab: live search, status/floor filters, Needs you cards and the building roster. */
+    /** The cross-floor Workers tab: Needs you cards and the building roster. */
     object Workers {
         const val LIST = "workers.list"
         const val LOADING = "workers.loading"
         const val EMPTY = "workers.empty"
         const val EMPTY_HIRE = "workers.empty.hire"
-        const val FILTER_EMPTY = "workers.filter_empty"
-        const val CLEAR_FILTERS = "workers.clear_filters"
         const val HIRE = "workers.hire"
         const val PICK_WORKER = "workers.pick_worker"
         const val WAITING_COUNT = "workers.waiting_count"
         const val SUMMARY = "workers.summary"
-        const val SEARCH = "workers.search"
-        const val SEARCH_CLEAR = "workers.search.clear"
-        const val STATUS_FILTERS = "workers.filters.status"
-        const val FLOOR_FILTERS = "workers.filters.floor"
         const val NEEDS_YOU = "workers.needs_you"
         const val ANSWERED = "workers.answered"
         const val CARD_NAME = "workers.card.name"
@@ -159,8 +153,6 @@ object Tags {
 
         fun card(id: String) = "workers.card/$id"
         fun ask(id: String) = "workers.ask/$id"
-        fun statusFilter(key: String) = "workers.filter.status/$key"
-        fun floorFilter(id: String) = "workers.filter.floor/$id"
     }
 
     object Update {
