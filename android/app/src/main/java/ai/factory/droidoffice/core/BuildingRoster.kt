@@ -1,19 +1,5 @@
 package ai.factory.droidoffice.core
 
-/** Filter keys and pure arrangement/search logic for the cross-floor Workers tab. */
-enum class RosterStatusFilter(val key: String, val label: String) {
-    All("all", "All"),
-    NeedsInput("needs_input", "Needs you"),
-    Working("working", "Working"),
-    Done("done", "Done"),
-    Ready("ready", "Ready"),
-    Asleep("asleep", "Asleep");
-
-    companion object {
-        fun of(key: String?): RosterStatusFilter = entries.firstOrNull { it.key == key } ?: All
-    }
-}
-
 enum class RosterKind { Desk, Orchestrator, Bot }
 
 data class BuildingWorkerRow(
@@ -42,34 +28,16 @@ data class RosterSummary(
 )
 
 data class BuildingRosterView(
-    /** Building-wide totals before search/chip filtering, for the header summary and badge. */
+    /** Building-wide totals for the header summary and badge. */
     val totalSummary: RosterSummary,
-    /** Counts for each status chip under the current floor + search filter. */
-    val statusCounts: Map<RosterStatusFilter, Int>,
-    /** Counts for each floor chip (and [MISSION_FLOOR]) under the current status + search filter. */
-    val floorCounts: Map<String, Int>,
-    /** Waiting counts per floor (and [MISSION_FLOOR]), unfiltered, so floor chips still flag urgent asks. */
-    val floorWaiting: Map<String, Int>,
-    /** Waiting asks to pin at the top of the Workers tab under the active filters. */
+    /** Waiting asks to pin at the top of the Workers tab. */
     val asks: List<PendingAsk>,
-    /** Arranged worker rows across the selected scope. */
+    /** Arranged worker rows across every floor and Mission Control. */
     val rows: List<BuildingWorkerRow>,
 )
 
 object BuildingRoster {
-    const val ALL_FLOORS = "__all__"
     const val MISSION_FLOOR = "__mission__"
-
-    private val QUERY_SPLIT = Regex("""\s+""")
-
-    fun matchesStatus(status: WorkerStatus, filter: RosterStatusFilter): Boolean = when (filter) {
-        RosterStatusFilter.All -> true
-        RosterStatusFilter.NeedsInput -> status == WorkerStatus.NeedsInput
-        RosterStatusFilter.Working -> status == WorkerStatus.Working || status == WorkerStatus.Starting
-        RosterStatusFilter.Done -> status == WorkerStatus.Done
-        RosterStatusFilter.Ready -> status == WorkerStatus.Idle
-        RosterStatusFilter.Asleep -> status.asleep
-    }
 
     /** Repository or folder label for a floor: `owner/repo` on GitHub/GitLab, `Home`, `Folder`, or its checkout folder when distinct from the floor name. */
     fun repoLabel(floor: FloorInfo?): String? {
@@ -94,105 +62,8 @@ object BuildingRoster {
         return listOfNotNull(floorName, repo, branch).joinToString(" · ").ifBlank { null }
     }
 
-    private fun seatWords(deskId: String): String = when {
-        deskId.startsWith("desk-") -> "desk ${deskId.removePrefix("desk-")}"
-        deskId.startsWith("beanbag-") -> "beanbag ${deskId.removePrefix("beanbag-")}"
-        else -> deskId
-    }
-
-    fun matchesQuery(
-        row: BuildingWorkerRow,
-        tokens: List<String>,
-        modelName: ((String) -> String?)? = null,
-    ): Boolean {
-        if (tokens.isEmpty()) return true
-        val w = row.worker
-        val floor = row.floor
-        val modelId = Workers.modelId(w)
-        val resolvedModel = modelId?.let { modelName?.invoke(it) ?: Models.displayName(it) }
-        val pr = Workers.pr(w, row.pulls)
-        val fields = buildList {
-            add(w.name)
-            add(w.id)
-            if (w.deskId.isNotBlank()) {
-                add(w.deskId)
-                add(seatWords(w.deskId))
-            }
-            Workers.title(w)?.let(::add)
-            Workers.detail(w)?.let(::add)
-            w.activity?.let(::add)
-            w.prompt?.let(::add)
-            w.todos?.current?.let(::add)
-            w.ask?.let { ask ->
-                if (ask.isPermission) add(Asks.permissionLine(ask))
-                ask.tool?.let(::add)
-                ask.command?.let(::add)
-                ask.file?.let(::add)
-                ask.summary?.let(::add)
-                for (q in ask.questions) {
-                    add(q.question)
-                    q.topic?.let(::add)
-                    addAll(q.options)
-                }
-            }
-            if (row.kind == RosterKind.Orchestrator) {
-                add("orchestrator")
-                add("mission control")
-                row.blocked?.let(::add)
-            } else if (row.kind == RosterKind.Bot || w.remote) {
-                add("external")
-                add("bot")
-                add("mission control")
-            }
-            floor?.let {
-                add(it.name)
-                add(it.id)
-                it.branch?.let(::add)
-                repoLabel(it)?.let(::add)
-            }
-            w.worktree?.branch?.let(::add)
-            for (r in w.repos) {
-                add(r.name)
-                r.repo?.let(::add)
-                add(r.branch)
-            }
-            w.cloud?.let { c ->
-                c.where?.let(::add)
-                add(c.computerName)
-                c.environmentName?.let(::add)
-            }
-            modelId?.let(::add)
-            resolvedModel?.let(::add)
-            Workers.effort(w)?.let { add(EffortDial.label(it)) }
-            if (w.createdBy.isNotBlank()) add(w.createdBy)
-            row.leadName?.let(::add)
-            w.team?.leadName?.takeIf { it.isNotBlank() }?.let(::add)
-            pr?.let { (_, ref) ->
-                if (ref.number > 0) {
-                    add("#${ref.number}")
-                    add("pr #${ref.number}")
-                    add("pr#${ref.number}")
-                    add(ref.number.toString())
-                }
-            }
-            add(Workers.statusWord(w.state, w.acked))
-            add(w.status)
-            if (w.isShell) add("shell")
-            if (w.isCloud) add("cloud")
-            if (w.isSubagent) {
-                add("subagent")
-                add("team")
-            }
-        }
-
-        return tokens.all { token -> fields.any { it.contains(token, ignoreCase = true) } }
-    }
-
-    fun queryTokens(query: String): List<String> =
-        query.trim().lowercase().split(QUERY_SPLIT).filter { it.isNotEmpty() }
-
     /**
-     * Builds the complete cross-floor roster, status/floor counts, and waiting queue in one pass.
+     * Builds the complete cross-floor roster, summary, and waiting queue in one pass.
      */
     fun build(
         floors: List<FloorInfo>,
@@ -200,10 +71,6 @@ object BuildingRoster {
         pullsByFloor: Map<String, List<GhPull>>,
         mission: MissionControlState?,
         screens: Map<String, ScreenState>,
-        statusFilter: RosterStatusFilter = RosterStatusFilter.All,
-        floorFilter: String = ALL_FLOORS,
-        query: String = "",
-        modelName: ((String) -> String?)? = null,
     ): BuildingRosterView {
         val floorMap = floors.associateBy { it.id }
         val floorRank = floors.mapIndexed { index, f -> f.id to index }.toMap()
@@ -273,54 +140,15 @@ object BuildingRoster {
 
         val totalSummary = summarize(enriched)
 
-        val floorWaiting = HashMap<String, Int>()
-        for (row in enriched) {
-            if (row.kind != RosterKind.Bot && !row.worker.remote && row.worker.state == WorkerStatus.NeedsInput) {
-                val key = row.floorId ?: continue
-                floorWaiting[key] = (floorWaiting[key] ?: 0) + 1
-            }
-        }
+        val arranged = arrangeRows(enriched, floorRank)
 
-        val tokens = queryTokens(query)
-        val queryMatched = if (tokens.isEmpty()) enriched else enriched.filter { matchesQuery(it, tokens, modelName) }
-
-        val effectiveFloorFilter = when {
-            floorFilter == ALL_FLOORS -> ALL_FLOORS
-            floorFilter == MISSION_FLOOR && enriched.any { it.floorId == MISSION_FLOOR } -> MISSION_FLOOR
-            orderedFloorIds.contains(floorFilter) -> floorFilter
-            else -> ALL_FLOORS
-        }
-
-        val floorScoped = if (effectiveFloorFilter == ALL_FLOORS) queryMatched else queryMatched.filter { it.floorId == effectiveFloorFilter }
-        val statusCounts = RosterStatusFilter.entries.associateWith { filter ->
-            floorScoped.count { matchesStatus(it.worker.state, filter) }
-        }
-
-        val statusScoped = queryMatched.filter { matchesStatus(it.worker.state, statusFilter) }
-        val floorCounts = buildMap {
-            put(ALL_FLOORS, statusScoped.size)
-            for (fId in orderedFloorIds) {
-                put(fId, statusScoped.count { it.floorId == fId })
-            }
-            if (enriched.any { it.floorId == MISSION_FLOOR }) {
-                put(MISSION_FLOOR, statusScoped.count { it.floorId == MISSION_FLOOR })
-            }
-        }
-
-        val visible = floorScoped.filter { matchesStatus(it.worker.state, statusFilter) }
-        val arranged = arrangeRows(visible, floorRank)
-
-        val showAsks = statusFilter == RosterStatusFilter.All || statusFilter == RosterStatusFilter.NeedsInput
-        val askCandidates = if (!showAsks) emptyList() else floorScoped
+        val askCandidates = enriched
             .filter { it.kind != RosterKind.Bot && !it.worker.remote && it.worker.state == WorkerStatus.NeedsInput }
             .map { it.worker }
         val asks = Asks.queue(askCandidates, screens)
 
         return BuildingRosterView(
             totalSummary = totalSummary,
-            statusCounts = statusCounts,
-            floorCounts = floorCounts,
-            floorWaiting = floorWaiting,
             asks = asks,
             rows = arranged,
         )
