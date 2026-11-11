@@ -600,6 +600,7 @@ export function mountWikiTab(root: HTMLElement, deps: WikiTabDeps): WikiTab {
   };
 
   const off = store.on('factory', () => paint());
+  const offSetup = store.on('setup', () => paint(true));
   // The job's clock, and the "written 3h ago"s, while the tab is open.
   const clock = setInterval(() => {
     const job = floorState().job;
@@ -630,6 +631,7 @@ export function mountWikiTab(root: HTMLElement, deps: WikiTabDeps): WikiTab {
       disposed = true;
       watching?.();
       off();
+      offSetup();
       clearInterval(clock);
       clearInterval(ages);
       if (searchTimer) clearTimeout(searchTimer);

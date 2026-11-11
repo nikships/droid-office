@@ -12,7 +12,7 @@ import { computerOf, metricOf } from '../src/shared/factory-computers.js';
 import { ciRunOf, workflowOf } from '../src/shared/factory-ci.js';
 import { SESSION_TITLE_MAX, sessionOf } from '../src/shared/factory-sessions.js';
 import { wikiRunOf } from '../src/shared/factory-wiki.js';
-import { isFactoryFeature, type FactoryState } from '../src/shared/factory.js';
+import { emptyFactoryState, isFactoryFeature, type FactoryState } from '../src/shared/factory.js';
 import type { ServerMsg } from '../src/shared/protocol.js';
 
 const KEY = 'fk-test-features-1234';
@@ -202,6 +202,24 @@ test('mounted: connecting answers its sender, the state carries every slice, and
   factoryMount.message('tab', 'Olive', { t: 'factory.refresh' }, reply);
   await new Promise((r) => setTimeout(r, 20));
   assert.ok(f.seen.length > asked);
+
+  // A settled registry deduplicates its unmasked cache. Mode changes must still reach open tabs.
+  factoryMount.registry.flush();
+  const broadcasts = sent.length;
+  factoryMount.message('tab', 'Olive', { t: 'factory.watch', feature: 'computers', on: true }, reply);
+  factoryMount.setPaused(true);
+  assert.equal(sent.length, broadcasts + 1, 'pausing immediately broadcasts even when the cached state is unchanged');
+  assert.deepEqual(sent.at(-1), emptyFactoryState());
+  const pausedRequests = f.seen.length;
+  factoryMount.message('tab', 'Olive', { t: 'factory.watch', feature: 'computers', on: false }, reply);
+  factoryMount.message('tab', 'Olive', { t: 'factory.watch', feature: 'wiki', on: true }, reply);
+  assert.equal(factoryMount.registry.watched('computers'), false);
+  assert.equal(factoryMount.registry.watched('wiki'), true);
+  await factoryMount.registry.tick();
+  assert.equal(f.seen.length, pausedRequests, 'watch changes never issue Factory requests while paused');
+  factoryMount.setPaused(false);
+  assert.equal(sent.at(-1)?.connection.connected, true, 'switching back immediately restores the saved connection');
+  assert.equal(sent.at(-1)?.computers.items.length, 2, 'switching modes preserves the cached slices');
 
   factoryMount.message('tab', 'Olive', { t: 'factory.disconnect' }, reply);
   assert.equal(factoryMount.state().connection.connected, false);

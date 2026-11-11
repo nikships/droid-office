@@ -444,6 +444,7 @@ export function openCiWindow(opts: { floorRepo?: string; add?: boolean } = {}): 
   });
 
   const offState = store.on('factory', paint);
+  const offSetup = store.on('setup', paint);
   const stopWatch = watchFactory('ci');
   // The "5m ago"s age while it stays open.
   const timer = setInterval(paint, 30_000);
@@ -459,6 +460,7 @@ export function openCiWindow(opts: { floorRepo?: string; add?: boolean } = {}): 
     },
     onClose: () => {
       offState();
+      offSetup();
       stopWatch();
       clearInterval(timer);
       open = undefined;

@@ -207,12 +207,14 @@ export function openComputers(opts: { settings: () => void; id?: string; tab?: T
   const stopWatching = watchFactory('computers');
   const stopWatchingEnvs = watchFactory('environments');
   const off = store.on('factory', paint);
+  const offSetup = store.on('setup', paint);
   // The ages, and asleep-ness, move on by themselves.
   const tick = setInterval(paint, 30_000);
   const modal = openModal(el, {
     doing: '🖥️ at the compute wall',
     onClose: () => {
       off();
+      offSetup();
       clearInterval(tick);
       stopWatching();
       stopWatchingEnvs();

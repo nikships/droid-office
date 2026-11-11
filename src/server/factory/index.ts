@@ -57,6 +57,7 @@ export function mountFactory(opts: MountOptions) {
   const message = (client: string, who: string, msg: FactoryMsg, reply: (msg: ServerMsg) => void) => {
     if (paused) {
       if (msg.t === 'factory.connect') reply({ t: 'factory.setup', ok: false, error: AIRGAPPED_REASON });
+      else if (msg.t === 'factory.watch' && isFactoryFeature(msg.feature)) registry.watch(client, msg.feature, msg.on === true);
       return;
     }
     switch (msg.t) {
@@ -98,7 +99,8 @@ export function mountFactory(opts: MountOptions) {
     setPaused: (on: boolean) => {
       paused = on;
       office.setPaused(on);
-      registry.flush();
+      // The registry deduplicates the unmasked cache, which does not change when pausing.
+      opts.broadcast(on ? emptyFactoryState() : registry.state());
       if (!on) void office.check();
     },
     message,
