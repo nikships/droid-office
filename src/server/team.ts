@@ -880,8 +880,9 @@ export class Team {
         : [];
     const sha = typeof b.pushedSha === 'string' ? b.pushedSha : await pushedSha(this.opts.dir, w);
     const prUrl = typeof b.prUrl === 'string' ? b.prUrl : (parsedResult?.artifacts?.prUrl ?? w.pr?.url ?? /https:\/\/(?:github\.com|gitlab\.com)\/[^\s)<>]+\/(?:pull|merge_requests)\/\d+/.exec(text)?.[0]);
-    const prNumber = parsedResult?.artifacts?.prNumber ?? w.pr?.number ?? prNumberFromUrl(prUrl);
-    const result = buildWorkerResult(parsedResult, { status: question ? 'blocked' : progress ? 'partial' : 'ok', summary: clip(text, 240), prUrl, prNumber, sha });
+    const resultPrUrl = parsedResult?.artifacts?.prUrl ?? prUrl;
+    const prNumber = parsedResult?.artifacts?.prNumber ?? prNumberFromUrl(resultPrUrl) ?? (!resultPrUrl || resultPrUrl === w.pr?.url ? w.pr?.number : undefined);
+    const result = buildWorkerResult(parsedResult, { status: question ? 'blocked' : progress ? 'partial' : 'ok', summary: clip(text, 240), prUrl: resultPrUrl, prNumber, sha });
     const provenance = { ...(sha ? { pushedSha: sha } : {}), ...(prUrl ? { prUrl } : {}) };
     this.push({ lead: lead.id, worker: w.id, name: w.name, kind: question ? 'question' : 'report', text, ...(options.length ? { options } : {}), ...provenance, ...(progress ? { progress: true as const } : {}), result });
     if (!question) this.reported.add(w.id);

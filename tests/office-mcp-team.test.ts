@@ -546,4 +546,17 @@ test('MCP team_report and team_review surface structured results and review verd
   assert.equal(fullStatus.body.workers[0].result.status, 'ok');
   assert.equal(fullStatus.body.workers[0].review.verdict, 'approve');
   assert.match(fullStatus.output, /Review \(approve by Nibble\): Verified diff and tests\./);
+
+  // Regression: linked w.pr (#409) never overrides prNumber for a newly reported PR URL (#413 / #414) on MCP surfaces.
+  r.set('sub1', 'working', { pr: { number: 409, url: 'https://github.com/nikships/droid-office/pull/409' } });
+  const mcpTopUrl = await r.call(sub, 'team_report', { text: 'New PR', prUrl: 'https://github.com/nikships/droid-office/pull/413' });
+  assert.equal(mcpTopUrl.body.result.artifacts.prNumber, 413);
+  assert.equal((await r.call(r.lead, 'team_status', { verbose: false })).body.workers[0].result.artifacts.prNumber, 413);
+
+  const mcpArtifactUrl = await r.call(sub, 'team_report', {
+    text: 'New PR via artifacts',
+    result: { status: 'ok', summary: 'Artifacts URL', artifacts: { prUrl: 'https://github.com/nikships/droid-office/pull/414' } },
+  });
+  assert.equal(mcpArtifactUrl.body.result.artifacts.prNumber, 414);
+  assert.equal((await r.call(r.lead, 'team_report_get', { worker: 'Pixel' })).body.report.result.artifacts.prNumber, 414);
 });

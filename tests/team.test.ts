@@ -995,6 +995,25 @@ test('structured WorkerResult inference, explicit fields, persistence and team_r
   const prog = await r.call(sub, { action: 'report', text: 'Running CI suite', progress: true });
   assert.deepEqual(prog.body.result, { status: 'partial', summary: 'Running CI suite' });
 
+  // Regression: when w.pr is linked to an older PR (#409), reporting a newer PR URL (#410 / #411)
+  // via top-level prUrl or result.artifacts.prUrl without explicit prNumber must infer from the
+  // reported URL, never copy the stale w.pr.number.
+  r.set(sub, 'working', { pr: { number: 409, url: 'https://github.com/nikships/droid-office/pull/409' } });
+  const fromTopPrUrl = await r.call(sub, { action: 'report', text: 'Opened replacement PR', prUrl: 'https://github.com/nikships/droid-office/pull/410' });
+  assert.deepEqual(fromTopPrUrl.body.result.artifacts, { prUrl: 'https://github.com/nikships/droid-office/pull/410', prNumber: 410 });
+  assert.equal((await r.call('lead', { action: 'status' })).body.team[0].report.result.artifacts.prNumber, 410);
+
+  const fromArtifactPrUrl = await r.call(sub, {
+    action: 'report',
+    text: 'Opened follow-up PR',
+    result: { status: 'ok', summary: 'Follow-up ready', artifacts: { prUrl: 'https://github.com/nikships/droid-office/pull/411' } },
+  });
+  assert.deepEqual(fromArtifactPrUrl.body.result.artifacts, { prUrl: 'https://github.com/nikships/droid-office/pull/411', prNumber: 411 });
+
+  const fromOpaqueUrl = await r.call(sub, { action: 'report', text: 'Custom review link', prUrl: 'https://reviews.example.com/change/abc' });
+  assert.deepEqual(fromOpaqueUrl.body.result.artifacts, { prUrl: 'https://reviews.example.com/change/abc' });
+  r.set(sub, 'working', { pr: undefined });
+
   const sha = 'b'.repeat(40);
   const prUrl = 'https://github.com/nikships/droid-office/pull/412';
   const inferred = await r.call(sub, { action: 'report', text: `Shipped ${prUrl}`, pushedSha: sha });
