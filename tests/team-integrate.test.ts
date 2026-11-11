@@ -13,6 +13,8 @@ function fixture(t: { after(fn: () => void): void }) {
   t.after(() => rmSync(dir, { recursive: true, force: true }));
   const git = (cwd: string, ...args: string[]) => execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
   git(dir, 'init', '-q', '-b', 'main');
+  git(dir, 'config', '--local', 'user.name', 'droid-office-tests');
+  git(dir, 'config', '--local', 'user.email', 'tests@droid-office.local');
   const commit = (cwd: string, file: string, body: string) => {
     writeFileSync(path.join(cwd, file), body);
     git(cwd, 'add', file);

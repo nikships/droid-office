@@ -112,6 +112,8 @@ test('real MCP integrates and hands off committed worker work, then returns stru
     return git(cwd, 'rev-parse', 'HEAD');
   };
   git(r.dir, 'init', '-q', '-b', 'main');
+  git(r.dir, 'config', '--local', 'user.name', 'droid-office-tests');
+  git(r.dir, 'config', '--local', 'user.email', 'tests@droid-office.local');
   writeFileSync(path.join(r.dir, '.git', 'info', 'exclude'), '*\n!shared.txt\n!feature.txt\n');
   const base = commit(r.dir, 'shared.txt', 'base\n');
   const sub = r.people.get('sub')!;
