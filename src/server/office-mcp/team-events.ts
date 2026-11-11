@@ -4,7 +4,7 @@ import { canAnswer, menuTakesText, type Menu } from '../../shared/asks.js';
 import { permissionLine, questionPresentation } from '../../shared/ask-question.js';
 import { DESK_BY_ID } from '../../shared/layout.js';
 import type { WorkerInfo } from '../../shared/protocol.js';
-import { settled, TEAM_EVENT_KINDS, type Team, type TeamEvent, type TeamEventKind, type TeamMember, type TeamViews } from '../team.js';
+import { settled, TEAM_EVENT_KINDS, type Team, type TeamEvent, type TeamEventKind, type TeamMember, type TeamViews, type WorkerResult, type WorkerReview } from '../team.js';
 import type { WorkerManager } from '../workers.js';
 import { officeAccess, officeError, officeResult, ownFloor, type OfficeMcpAccess, type OfficeMcpCaller, type OfficeMcpDeps, type OfficeMcpServer, type OfficeProgress } from './index.js';
 import { floorNamed } from '../remote-office.js';
@@ -88,14 +88,23 @@ export function compactWorker(m: TeamMember, floor: string) {
     ...(m.effort ? { effort: m.effort } : {}),
     ...(m.worktree ? { branch: m.worktree.branch, worktree: m.worktree.path, ...(m.worktree.from ? { from: m.worktree.from } : {}) } : {}),
     ...(m.pr ? { pr: m.pr } : {}),
-    ...(m.report ? { lastReportId: eventId(floor, m.report.seq), lastReportKind: m.report.question ? 'question' : m.report.progress ? 'progress' : 'report', lastReportAt: iso(m.report.at), lastReportSummary: summary(m.report.text) } : {}),
+    ...(m.report
+      ? {
+          lastReportId: eventId(floor, m.report.seq),
+          lastReportKind: m.report.question ? 'question' : m.report.progress ? 'progress' : 'report',
+          lastReportAt: iso(m.report.at),
+          lastReportSummary: summary(m.report.result?.summary ?? m.report.text),
+          ...(m.report.result ? { result: m.report.result } : {}),
+          ...(m.report.review ? { review: m.report.review } : {}),
+        }
+      : {}),
     ...(m.openQuestion !== undefined ? { openQuestionId: eventId(floor, m.openQuestion) } : {}),
     ...(m.awaitingJob ? { awaitingJob: true as const } : {}),
   };
 }
 
 /** An event with its id and time; the full text only when asked for. */
-export function compactEvent(e: Pick<TeamEvent, 'seq' | 'kind' | 'worker' | 'name' | 'at' | 'text' | 'options' | 'progress'>, floor: string, verbose = false) {
+export function compactEvent(e: Pick<TeamEvent, 'seq' | 'kind' | 'worker' | 'name' | 'at' | 'text' | 'options' | 'progress' | 'result' | 'review'>, floor: string, verbose = false) {
   return {
     id: eventId(floor, e.seq),
     kind: e.kind,
@@ -106,11 +115,31 @@ export function compactEvent(e: Pick<TeamEvent, 'seq' | 'kind' | 'worker' | 'nam
     ...(e.text ? { summary: summary(e.text), ...(verbose ? { text: e.text } : {}) } : {}),
     ...(e.options?.length ? { options: e.options } : {}),
     ...(e.progress ? { progress: true as const } : {}),
+    ...(e.result ? { result: e.result } : {}),
+    ...(e.review ? { review: e.review } : {}),
   };
 }
 
 export type CompactWorker = ReturnType<typeof compactWorker>;
 export type CompactEvent = ReturnType<typeof compactEvent>;
+
+export function resultDetailLines(result: WorkerResult | undefined, review?: WorkerReview): string[] {
+  const lines: string[] = [];
+  if (result) {
+    const a = result.artifacts;
+    const parts = [
+      ...(a?.prUrl ? [`PR ${a.prUrl}`] : a?.prNumber !== undefined ? [`PR #${a.prNumber}`] : []),
+      ...(a?.mergeCommit ? [`merge ${a.mergeCommit.slice(0, 12)}`] : []),
+      ...(a?.commits?.length ? [`commits: ${a.commits.map((c) => c.slice(0, 12)).join(', ')}`] : []),
+      ...(a?.files?.length ? [`files (${a.files.length}): ${a.files.slice(0, 8).join(', ')}${a.files.length > 8 ? '…' : ''}`] : []),
+    ];
+    lines.push(`Result (${result.status}): ${result.summary}${parts.length ? ` [${parts.join('; ')}]` : ''}`);
+    if (result.remaining?.length) lines.push(`Remaining: ${result.remaining.join('; ')}`);
+    if (result.conflicts?.length) lines.push(`Conflicts (${result.conflicts.length}): ${result.conflicts.map((c) => c.path).join(', ')}`);
+  }
+  if (review) lines.push(`Review (${review.verdict} by ${review.by}): ${review.notes}`);
+  return lines;
+}
 
 export function compactWorkerText(w: CompactWorker): string {
   return [
@@ -118,12 +147,15 @@ export function compactWorkerText(w: CompactWorker): string {
     ...(w.doing ? [`Doing: ${w.doing}.`] : []),
     ...(w.branch ? [`Branch ${w.branch}.`] : []),
     ...(w.pr ? [`PR ${w.pr.url}.`] : []),
-    ...(w.lastReportId ? [`Last ${w.lastReportKind} ${w.lastReportAt} [${w.lastReportId}]: ${w.lastReportSummary}`] : []),
+    ...(w.lastReportId ? [`Last ${w.lastReportKind}${w.result ? ` (${w.result.status})` : ''} ${w.lastReportAt} [${w.lastReportId}]: ${w.lastReportSummary}`] : []),
+    ...(w.review ? [`Review: ${w.review.verdict} by ${w.review.by} (${summary(w.review.notes)}).`] : []),
   ].join(' ');
 }
 
 export function compactEventText(e: CompactEvent): string {
-  return `[${e.id} ${e.at}] ${e.progress ? 'progress report (not finished)' : e.kind} ${e.name}${e.summary ? `: ${e.summary}` : ''}`;
+  const statusTag = e.result && e.result.status !== 'ok' && !e.progress && e.kind !== 'question' ? ` [${e.result.status}]` : '';
+  const reviewTag = e.review ? ` [review: ${e.review.verdict}]` : '';
+  return `[${e.id} ${e.at}] ${e.progress ? 'progress report (not finished)' : e.kind} ${e.name}${e.summary ? `: ${e.summary}` : ''}${statusTag}${reviewTag}`;
 }
 
 /** The floors whose teams a caller's team tools cover: its own, or for a building agent every open floor (or the one named). */
@@ -445,6 +477,7 @@ export function register(server: OfficeMcpServer, deps: OfficeMcpDeps): void {
         [
           `${report.kind === 'question' ? 'Question' : report.progress ? 'Progress report (not finished)' : 'Report'} ${report.id} from ${report.name} at ${report.at}:`,
           pick.e.text ?? '',
+          ...resultDetailLines(pick.e.result, pick.e.review),
           ...(history.length > 1 ? [`History:\n${history.map(compactEventText).join('\n')}`] : []),
         ].join('\n'),
         { report, history },

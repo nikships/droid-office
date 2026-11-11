@@ -482,3 +482,81 @@ test('team tool schemas reject missing text and unsupported values before hiring
   assert.equal((await r.call(r.lead, 'team', { action: 'wait' })).isError, true);
   assert.deepEqual((await r.status()).body.events, []);
 });
+
+test('MCP team_report and team_review surface structured results and review verdicts across status and report_get', async (t) => {
+  const r = await rig(t);
+  await r.hire();
+  const sub = await r.connect('sub1');
+  r.set('sub1', 'working');
+
+  // Subagents cannot review; leads cannot review before a report exists.
+  assert.equal((await r.call(sub, 'team_review', { worker: 'Pixel', verdict: 'approve', notes: 'self' })).isError, true);
+  assert.equal((await r.call(r.lead, 'team_review', { worker: 'Pixel', verdict: 'approve', notes: 'early' })).isError, true);
+
+  const reported = await r.call(sub, 'team_report', {
+    text: 'Implemented WorkerResult and ran tests.',
+    result: {
+      status: 'partial',
+      summary: 'Core done; one edge case left',
+      artifacts: { prUrl: 'https://github.com/nikships/droid-office/pull/410', prNumber: 410, files: ['src/server/team.ts'] },
+      remaining: ['Add edge-case test'],
+      conflicts: [{ path: 'src/shared/prompts.ts', hunks: [{ header: '@@ -1,3 +1,3 @@', ours: 'a', theirs: 'b' }] }],
+    },
+  });
+  assert.equal(reported.isError, undefined);
+  assert.equal(reported.body.result.status, 'partial');
+  r.set('sub1', 'done');
+
+  const reqChanges = await r.call(r.lead, 'team_review', {
+    worker: 'Pixel',
+    verdict: 'request_changes',
+    notes: 'Finish the edge-case test and resolve prompts.ts.',
+  });
+  assert.equal(reqChanges.isError, undefined);
+  assert.match(reqChanges.output, /Recorded request_changes review on Pixel's report\. Sent findings to Pixel to address\./);
+  assert.equal(r.prompts.length, 1);
+  assert.match(r.prompts[0][1], /Review verdict: request_changes/);
+
+  const compact = await r.call(r.lead, 'team_status', { verbose: false });
+  assert.equal(compact.body.workers[0].result.status, 'partial');
+  assert.equal(compact.body.workers[0].review.verdict, 'request_changes');
+  assert.match(compact.output, /Last report \(partial\)/);
+  assert.match(compact.output, /Review: request_changes by Nibble/);
+
+  const got = await r.call(r.lead, 'team_report_get', { worker: 'Pixel' });
+  assert.equal(got.body.report.result.status, 'partial');
+  assert.equal(got.body.report.review.verdict, 'request_changes');
+  assert.match(got.output, /Result \(partial\): Core done; one edge case left/);
+  assert.match(got.output, /Remaining: Add edge-case test/);
+  assert.match(got.output, /Conflicts \(1\): src\/shared\/prompts\.ts/);
+  assert.match(got.output, /Review \(request_changes by Nibble\): Finish the edge-case test/);
+
+  // Fix round -> approve without waking subagent.
+  r.set('sub1', 'working');
+  await r.call(sub, 'team_report', {
+    text: 'All tests passing and conflict resolved.',
+    result: { status: 'ok', summary: 'All checks green', artifacts: { prUrl: 'https://github.com/nikships/droid-office/pull/410', prNumber: 410, files: ['src/server/team.ts', 'tests/team.test.ts'] } },
+  });
+  r.set('sub1', 'done');
+  const approved = await r.call(r.lead, 'team_review', { worker: 'Pixel', verdict: 'approve', notes: 'Verified diff and tests.' });
+  assert.equal(approved.isError, undefined);
+  assert.match(approved.output, /Recorded approve review on Pixel's report\."/);
+  assert.equal(r.prompts.length, 1, 'approve does not send a follow-up message');
+  const fullStatus = await r.call(r.lead, 'team_status');
+  assert.equal(fullStatus.body.workers[0].result.status, 'ok');
+  assert.equal(fullStatus.body.workers[0].review.verdict, 'approve');
+  assert.match(fullStatus.output, /Review \(approve by Nibble\): Verified diff and tests\./);
+
+  // Regression: linked w.pr (#409) never overrides prNumber for a newly reported PR URL (#413 / #414) on MCP surfaces.
+  r.set('sub1', 'working', { pr: { number: 409, url: 'https://github.com/nikships/droid-office/pull/409' } });
+  const mcpTopUrl = await r.call(sub, 'team_report', { text: 'New PR', prUrl: 'https://github.com/nikships/droid-office/pull/413' });
+  assert.equal(mcpTopUrl.body.result.artifacts.prNumber, 413);
+  assert.equal((await r.call(r.lead, 'team_status', { verbose: false })).body.workers[0].result.artifacts.prNumber, 413);
+
+  const mcpArtifactUrl = await r.call(sub, 'team_report', {
+    text: 'New PR via artifacts',
+    result: { status: 'ok', summary: 'Artifacts URL', artifacts: { prUrl: 'https://github.com/nikships/droid-office/pull/414' } },
+  });
+  assert.equal(mcpArtifactUrl.body.result.artifacts.prNumber, 414);
+  assert.equal((await r.call(r.lead, 'team_report_get', { worker: 'Pixel' })).body.report.result.artifacts.prNumber, 414);
+});

@@ -142,7 +142,16 @@ test('status keeps its prose and adds compact workers, typed news with ids and t
   assert.equal(pixel.lastReportId, 'team:floor:1');
   assert.equal(pixel.lastReportAt, '2026-11-03T12:00:00.000Z');
   assert.ok(pixel.lastReportSummary.length <= 240 && pixel.lastReportSummary.startsWith('Done: fixed the redirect.'));
-  assert.deepEqual(legacy.body.news[0], { id: 'team:floor:1', kind: 'report', worker: 'sub1', name: 'Pixel', floor: 'floor', at: '2026-11-03T12:00:00.000Z', summary: pixel.lastReportSummary });
+  assert.deepEqual(legacy.body.news[0], {
+    id: 'team:floor:1',
+    kind: 'report',
+    worker: 'sub1',
+    name: 'Pixel',
+    floor: 'floor',
+    at: '2026-11-03T12:00:00.000Z',
+    summary: pixel.lastReportSummary,
+    result: { status: 'ok', summary: pixel.lastReportSummary },
+  });
   assert.equal(legacy.body.cursor, 'team:floor:1');
 
   r.tick(1000);

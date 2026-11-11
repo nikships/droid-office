@@ -978,3 +978,124 @@ test('the model list limits the Orchestrator and leads, and not an external bot,
   assert.equal(outsideModelList(list, 'c', 'd'), true);
   assert.equal(outsideModelList(undefined, 'c', 'd'), false);
 });
+
+test('structured WorkerResult inference, explicit fields, persistence and team_review round-trip cleanly', async (t) => {
+  let now = 10_000;
+  const r = rig(t, { now: () => now, nudgeDelayMs: 60_000 });
+  const sub = (await r.call('lead', { action: 'hire', task: 'Implement feature' })).body.worker.id;
+  r.set(sub, 'working');
+
+  // Cannot review before any report exists.
+  assert.equal((await r.call('lead', { action: 'review', worker: sub, verdict: 'approve', notes: 'LGTM' })).status, 409);
+
+  // Question infers blocked, progress infers partial, plain report infers ok + provenance artifacts.
+  const asked = await r.call(sub, { action: 'report', text: 'Which schema?', question: true });
+  assert.deepEqual(asked.body.result, { status: 'blocked', summary: 'Which schema?' });
+
+  const prog = await r.call(sub, { action: 'report', text: 'Running CI suite', progress: true });
+  assert.deepEqual(prog.body.result, { status: 'partial', summary: 'Running CI suite' });
+
+  // Regression: when w.pr is linked to an older PR (#409), reporting a newer PR URL (#410 / #411)
+  // via top-level prUrl or result.artifacts.prUrl without explicit prNumber must infer from the
+  // reported URL, never copy the stale w.pr.number.
+  r.set(sub, 'working', { pr: { number: 409, url: 'https://github.com/nikships/droid-office/pull/409' } });
+  const fromTopPrUrl = await r.call(sub, { action: 'report', text: 'Opened replacement PR', prUrl: 'https://github.com/nikships/droid-office/pull/410' });
+  assert.deepEqual(fromTopPrUrl.body.result.artifacts, { prUrl: 'https://github.com/nikships/droid-office/pull/410', prNumber: 410 });
+  assert.equal((await r.call('lead', { action: 'status' })).body.team[0].report.result.artifacts.prNumber, 410);
+
+  const fromArtifactPrUrl = await r.call(sub, {
+    action: 'report',
+    text: 'Opened follow-up PR',
+    result: { status: 'ok', summary: 'Follow-up ready', artifacts: { prUrl: 'https://github.com/nikships/droid-office/pull/411' } },
+  });
+  assert.deepEqual(fromArtifactPrUrl.body.result.artifacts, { prUrl: 'https://github.com/nikships/droid-office/pull/411', prNumber: 411 });
+
+  const fromOpaqueUrl = await r.call(sub, { action: 'report', text: 'Custom review link', prUrl: 'https://reviews.example.com/change/abc' });
+  assert.deepEqual(fromOpaqueUrl.body.result.artifacts, { prUrl: 'https://reviews.example.com/change/abc' });
+  r.set(sub, 'working', { pr: undefined });
+
+  const sha = 'b'.repeat(40);
+  const prUrl = 'https://github.com/nikships/droid-office/pull/412';
+  const inferred = await r.call(sub, { action: 'report', text: `Shipped ${prUrl}`, pushedSha: sha });
+  assert.deepEqual(inferred.body.result, {
+    status: 'ok',
+    summary: `Shipped ${prUrl}`,
+    artifacts: { prUrl, prNumber: 412, commits: [sha] },
+  });
+
+  // Invalid explicit result shapes are rejected before mutating state.
+  for (const bad of [
+    null,
+    'ok',
+    { status: 'great', summary: 'x' },
+    { status: 'ok', summary: '   ' },
+    { status: 'ok', summary: 'x', artifacts: { prNumber: 0 } },
+    { status: 'ok', summary: 'x', artifacts: { mergeCommit: 'xyz' } },
+    { status: 'ok', summary: 'x', remaining: [''] },
+    { status: 'ok', summary: 'x', conflicts: [{}] },
+  ]) {
+    assert.equal((await r.call(sub, { action: 'report', text: 'bad', result: bad })).status, 400);
+  }
+
+  // Explicit structured result with conflicts and remaining items.
+  const explicitResult = {
+    status: 'partial' as const,
+    summary: 'Implemented handlers; rebase conflict remains',
+    artifacts: { prUrl, prNumber: 412, mergeCommit: 'abcdef1234567', commits: [sha], files: ['src/server/team.ts', 'tests/team.test.ts'] },
+    remaining: ['Resolve conflict in prompts.ts'],
+    conflicts: [{ path: 'src/shared/prompts.ts', hunks: [{ header: '@@ -600,4 +600,4 @@', ours: 'inspect diff', theirs: 'team_review' }] }],
+  };
+  now = 20_000;
+  const reported = await r.call(sub, { action: 'report', text: 'Needs conflict resolution', result: explicitResult });
+  assert.equal(reported.status, 200);
+  assert.deepEqual(reported.body.result, explicitResult);
+  r.set(sub, 'done');
+
+  // Review validation.
+  for (const bad of [
+    { worker: sub, verdict: 'lgtm', notes: 'ok' },
+    { worker: sub, verdict: 'approve', notes: '   ' },
+    { worker: sub, verdict: 'approve', notes: 'ok', notify: 'yes' },
+    { worker: 'missing', verdict: 'approve', notes: 'ok' },
+  ]) {
+    assert.ok((await r.call('lead', { action: 'review', ...bad })).status >= 400);
+  }
+
+  // request_changes records review on latest report AND sends notes to subagent by default.
+  now = 30_000;
+  const changes = await r.call('lead', { action: 'review', worker: 'Pixel', verdict: 'request_changes', notes: 'Resolve prompts.ts hunk and add test.' });
+  assert.equal(changes.status, 200);
+  assert.equal(changes.body.notified, true);
+  assert.deepEqual(changes.body.review, { verdict: 'request_changes', notes: 'Resolve prompts.ts hunk and add test.', by: 'Nibble', at: 30_000 });
+  assert.equal(changes.body.worker.report.review.verdict, 'request_changes');
+  assert.match(r.fake.prompts.at(-1)![1], /Review verdict: request_changes\n\nResolve prompts\.ts hunk and add test\./);
+
+  // Worker fixes and sends a fresh report: the new latest report is unreviewed until approved.
+  r.set(sub, 'working');
+  now = 40_000;
+  await r.call(sub, {
+    action: 'report',
+    text: 'Resolved conflict and verified tests.',
+    result: { status: 'ok', summary: 'Conflict resolved and tests green', artifacts: { prUrl, prNumber: 412, files: ['src/server/team.ts'] } },
+  });
+  r.set(sub, 'done');
+  const beforeApprove = (await r.call('lead', { action: 'status' })).body.team[0];
+  assert.equal(beforeApprove.report.result.status, 'ok');
+  assert.equal(beforeApprove.report.review, undefined);
+
+  const promptCount = r.fake.prompts.length;
+  now = 50_000;
+  const approved = await r.call('lead', { action: 'review', worker: 'Pixel', verdict: 'approve', notes: 'Diff verified, ready to merge.' });
+  assert.equal(approved.status, 200);
+  assert.equal(approved.body.notified, false, 'approve does not wake a resting worker');
+  assert.equal(r.fake.prompts.length, promptCount);
+  assert.equal(approved.body.worker.report.review.verdict, 'approve');
+
+  // Survives restart via team.json.
+  r.team.stop();
+  const restarted = new Team(r.fake, { dataDir: r.dir, dir: '/proj', git: true, settings: () => r.settings, toast() {}, now: () => now });
+  t.after(() => restarted.stop());
+  const restored = (await restarted.handle(r.fake.get('lead')!, { action: 'status' })).body.team[0];
+  assert.equal(restored.report.result.summary, 'Conflict resolved and tests green');
+  assert.deepEqual(restored.report.review, { verdict: 'approve', notes: 'Diff verified, ready to merge.', by: 'Nibble', at: 50_000 });
+});

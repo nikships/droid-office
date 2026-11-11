@@ -728,7 +728,7 @@ function docEntry(tool: { name: string; description?: string; inputSchema: Schem
   return `### \`${tool.name}\`\n\n${tool.description ?? ''}\n\n${table}`;
 }
 
-test('external-bot tools/list returns exactly the 23 supported tools and their documented arguments', async (t) => {
+test('external-bot tools/list returns exactly the 24 supported tools and their documented arguments', async (t) => {
   const r = rig(t);
   const hostname = 'office.example.ts.net';
   // The office always gives external workers its owner bridge, so their tool list includes the owner tools.
@@ -749,6 +749,7 @@ test('external-bot tools/list returns exactly the 23 supported tools and their d
     'team_status',
     'team_wait',
     'team_message',
+    'team_review',
     'team_report_get',
     'questions_list',
     'question_answer',
@@ -764,7 +765,7 @@ test('external-bot tools/list returns exactly the 23 supported tools and their d
     'office_worker_answer',
     'office_worker_thread',
   ];
-  assert.equal(listed.length, 23);
+  assert.equal(listed.length, 24);
   assert.deepEqual(new Set(listed.map((tool) => tool.name)), new Set(expected));
   t.diagnostic(
     `external-bot tools/list: ${listed.length} tools, exact set equality passed: ${listed
