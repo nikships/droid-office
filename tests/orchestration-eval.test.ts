@@ -3,6 +3,7 @@ import { test } from 'node:test';
 import { EVAL_CASES } from '../tools/orchestration-eval/cases.js';
 import { called, computeSampleGrade, firstStepOf, noShellAntiPatterns, okCalls } from '../tools/orchestration-eval/grader.js';
 import { createEvalRig, estimateTokens, type EvalRole, type RecordedCall } from '../tools/orchestration-eval/rig.js';
+import { parseFlags, runSingleSample } from '../tools/orchestration-eval/run.js';
 
 test('orchestration-eval grader computes pass, rubric, MCP argument correctness, and shell anti-patterns', () => {
   const calls: RecordedCall[] = [
@@ -45,12 +46,84 @@ test('orchestration-eval grader computes pass, rubric, MCP argument correctness,
     statusReports: [],
     shellCommands: ['git status --short'],
     dirtyFiles: new Set<string>(),
+    stagedFiles: new Set<string>(),
     commits: [],
     mergedBranches: [],
   };
   assert.equal(noShellAntiPatterns(emptyState).ok, true);
   assert.equal(noShellAntiPatterns({ ...emptyState, shellCommands: ['sleep 30 && git status'] }).ok, false);
   assert.equal(noShellAntiPatterns({ ...emptyState, shellCommands: ['droid exec "fix bug"'] }).ok, false);
+});
+
+test('eval requires actual approval and landing, not just diff reads and a rebase message', async (t) => {
+  const scenario = EVAL_CASES.find((c) => c.id === 'sequence-merges-and-rebase-siblings')!;
+  const rig = await createEvalRig(scenario.world);
+  t.after(() => rig.close());
+  const grade = () => scenario.grade({ calls: rig.calls, state: rig.state, finalText: '' });
+  await rig.executeTool(1, 'worker_diff', { worker: 'Pixel', floor: 'droid-office' });
+  await rig.executeTool(1, 'worker_diff', { worker: 'Byte', floor: 'droid-office' });
+  await rig.executeTool(2, 'team_message', { worker: 'Byte', text: 'Rebase onto main and align with badgeCount.', floor: 'droid-office' });
+  assert.equal(grade().passed, false, 'the old false-positive transcript must fail');
+  await rig.executeTool(2, 'team_review', { worker: 'Pixel', verdict: 'approve', notes: 'Inspected server contract and tests.', floor: 'droid-office' });
+  await rig.executeTool(3, 'team_merge', { worker: 'sub-1', target: 'main', floor: 'droid-office' });
+  assert.equal(grade().passed, true, JSON.stringify(grade().checks));
+  const withoutReview = rig.calls.filter((c) => c.name !== 'team_review');
+  assert.equal(scenario.grade({ calls: withoutReview, state: rig.state, finalText: '' }).passed, false);
+  await rig.executeTool(4, 'team_merge', { worker: 'Byte', target: 'main', floor: 'droid-office' });
+  assert.equal(grade().passed, false, 'attempting the known-conflicting dependent merge must fail');
+});
+
+test('eval shell only commits staged task files and fails closed on unsupported commands', async (t) => {
+  const scenario = EVAL_CASES.find((c) => c.id === 'floor-lead-hire-prereq-and-ownership')!;
+  const rig = await createEvalRig({ ...scenario.world, initialDirtyFiles: ['src/shared/webhooks.ts', 'unrelated.txt'] });
+  t.after(() => rig.close());
+  await rig.executeTool(1, 'shell', { command: 'git commit -m "not staged"' });
+  assert.equal(rig.calls.at(-1)?.isError, true);
+  await rig.executeTool(2, 'shell', { command: 'git add src/shared/webhooks.ts && git commit -m "feat: shared contract"' });
+  assert.equal(rig.calls.at(-1)?.isError, false);
+  assert.deepEqual([...rig.state.dirtyFiles], ['unrelated.txt'], 'unrelated edits survive');
+  await rig.executeTool(3, 'shell', { command: 'gh pr merge 1' });
+  assert.equal(rig.calls.at(-1)?.isError, true);
+  assert.equal(rig.state.mergedBranches.length, 0);
+  assert.equal(computeSampleGrade([], rig.calls).passed, false, 'host-tool failures cannot be silently passed');
+});
+
+test('eval CLI rejects malformed counts and a tool loop cannot pass at the step limit', async (t) => {
+  for (const value of ['NaN', '0', '-1', '1.5', 'Infinity']) assert.throws(() => parseFlags(['--samples', value]), /positive integer/);
+  assert.throws(() => parseFlags(['--unknown']), /Unknown option/);
+  const originalFetch = globalThis.fetch;
+  t.mock.method(globalThis, 'fetch', (input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
+    if (String(input).endsWith('/chat/completions')) {
+      return Promise.resolve(Response.json({ choices: [{ message: { content: null, tool_calls: [{ id: 'call-1', type: 'function', function: { name: 'team_models', arguments: '{}' } }] } }] }));
+    }
+    return originalFetch(input, init);
+  });
+  const scenario = EVAL_CASES[0];
+  const sample = await runSingleSample({ ...scenario, maxSteps: 1, grade: ({ calls }) => computeSampleGrade([], calls) }, 'test-model', 1, parseFlags([]));
+  assert.equal(sample.grade.passed, false);
+  assert.ok(sample.grade.checks.some((c) => c.name === 'finished-within-step-budget' && !c.ok));
+  assert.equal(sample.calls[0].name, 'team_models');
+  assert.ok(sample.calls[0].resultText.length > 0, 'saved reports preserve tool results');
+  assert.ok(sample.messages.some((m) => m.role === 'tool'));
+});
+
+test('eval rejects premature or invented inbox acknowledgments', async (t) => {
+  const scenario = EVAL_CASES.find((c) => c.id === 'external-bot-active-lead-without-orchestrator-brief')!;
+  const rig = await createEvalRig(scenario.world);
+  t.after(() => rig.close());
+  const grade = () => scenario.grade({ calls: rig.calls, state: rig.state, finalText: '' });
+  await rig.executeTool(1, 'office_inbox', {});
+  const messages = rig.calls.at(-1)?.structured?.messages as { id: string }[];
+  await rig.executeTool(2, 'worker_diff', { worker: 'Byte', floor: 'alpha' });
+  await rig.executeTool(3, 'team_message', { worker: 'Nova', floor: 'alpha', text: 'Cap at 5s and switch to PUT /api/v2/sync returning entries and nextCursor.' });
+  await rig.executeTool(4, 'office_inbox', { ack: messages.map((m) => m.id) });
+  assert.equal(grade().passed, true, JSON.stringify(grade().checks));
+  const ack = rig.calls.at(-1)!;
+  ack.step = 1;
+  assert.equal(grade().passed, false, 'ack must follow successfully handled updates');
+  ack.step = 4;
+  rig.state.ackedInboxIds.push('invented-id');
+  assert.equal(grade().passed, false);
 });
 
 test('orchestration-eval rig serves live Office MCP roles, measures context, and codifies active-lead guidance across every lead surface', async (t) => {

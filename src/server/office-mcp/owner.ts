@@ -90,7 +90,7 @@ export interface RosterWorker {
   pr?: { number: number; url: string };
 }
 
-export const ownerInstructions = `You have owner-level access across floors via office_* tools. Use team_hire and team_* for delegated work; use office_worker_spawn only when explicitly asked for a standalone, shell, or cloud worker. Inspect floor workers with office_roster, office_look (only when active workers exist), and office_worker_thread; steer independent workers with office_worker_prompt; interrupt or answer AskUser menus with office_worker_interrupt and office_worker_answer (leave terminal permission prompts untouched and tell the owner). Keep worktrees, branches and cloud sessions unless asked to delete them, and check state before retrying pending/unconfirmed actions.`;
+export const ownerInstructions = `You have owner-level access across floors via office_* tools. Act only within the owner's request. Use team_hire and team_* for delegated work; use office_worker_spawn only when explicitly asked for a standalone, shell, or cloud worker. Inspect workers with office_roster, office_look and office_worker_thread before steering with office_worker_prompt; interrupt or answer AskUser menus with office_worker_interrupt and office_worker_answer (leave terminal permission prompts untouched and tell the owner). Keep worktrees, branches and cloud sessions unless asked to delete them, and check state before retrying pending/unconfirmed actions.`;
 
 const readOnly = { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false };
 /** Building agents have the owner's access whenever the office provides its owner bridge. */
@@ -270,7 +270,7 @@ export function register(server: OfficeMcpServer, deps: OfficeMcpDeps): void {
   server.tool(
     {
       name: 'office_look',
-      description: `Read a bounded terminal snapshot (<=48 KB) of an active local worker, "${OFFICE_SHELL_ID}" shell, or Orchestrator, read-only (skip when floor has no workers; use office_worker_thread for cloud/history).`,
+      description: `Read a bounded terminal snapshot (<=48,000 characters) of a local worker, "${OFFICE_SHELL_ID}" shell, or Orchestrator, read-only. Use office_worker_thread for cloud/history.`,
       inputSchema: z.strictObject({ name: workerRef, floor: floorRef.optional(), lines: z.number().int().min(1).max(400).default(80).describe('Latest lines (default 80, max 400).') }),
       annotations: readOnly,
     },

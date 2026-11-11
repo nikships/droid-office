@@ -513,7 +513,7 @@ export function register(server: OfficeMcpServer, deps: OfficeMcpDeps): void {
     {
       name: 'question_answer',
       description:
-        'Answer a question from questions_list by id: optionId, optionIds (multi-select), or text (combinable with optionId on team questions—do not also call team_message on that subagent in the same turn). Refuses terminal permission prompts.',
+        'Answer a questions_list id. Team questions accept optionId and/or text as one message. Terminal menus accept optionId OR text, or optionIds with optional text for multi-select, only while the same menu remains. Refuses permission prompts. Combine related updates in the answer rather than sending duplicate messages.',
       inputSchema: z.object({
         questionId: z.string().trim().min(1).max(400).describe('Question id from questions_list.'),
         optionId: z.string().trim().min(1).max(8).optional().describe('Single option id.'),

@@ -35,6 +35,7 @@ test('CI checks only the affected platforms and builds every client change into 
   assert.deepEqual(checksFor(['tools/props/verify.mjs']), { ...none, node: true });
   for (const file of [
     'tools/frame-bench/thermal.mjs',
+    'tools/orchestration-eval/rig.ts',
     '.agents/skills/office-clone/scripts/office-run.mjs',
     '.agents/skills/office-3d-testing/SKILL.md',
     '.agents/skills/office-thermals/SKILL.md',
@@ -164,6 +165,7 @@ test('each job is path-gated and the filter script and its tests trigger the wor
     'tools/android-terminal.mjs',
     'tests/**',
     'tools/frame-bench/**',
+    'tools/orchestration-eval/**',
     '.agents/skills/office-clone/**',
     '.agents/skills/office-3d-testing/**',
     '.agents/skills/office-thermals/**',

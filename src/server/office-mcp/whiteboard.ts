@@ -99,7 +99,8 @@ export function register(server: OfficeMcpServer, _deps: OfficeMcpDeps): void {
   server.tool(
     {
       name: 'whiteboard_read',
-      description: 'Read the board or selected cards (HTML, state, marks, CHANGED pieces) and advance read points for returned cards; png: true includes rendered PNG tiles.',
+      description:
+        'Read board/cards (HTML, state, marks, CHANGED pieces). Returned cards advance read points; failed reads do not. With png: true, current-snapshot tiles advance reads, cards without images stay unread; older images carry their actual revision and age.',
       inputSchema: z.object({
         cards: z.array(z.string()).optional().describe('Card ids; omit for whole board.'),
         json: z.boolean().optional().describe('Format text output as JSON.'),
@@ -144,7 +145,8 @@ export function register(server: OfficeMcpServer, _deps: OfficeMcpDeps): void {
   server.tool(
     {
       name: 'whiteboard_card',
-      description: 'Create, update, link/unlink, remove, or show a Whiteboard card (updates preserve marks and state; show with grid: true selects the grid).',
+      description:
+        'Create, update, link/unlink, remove, or show a Whiteboard card. Create needs title/source; update needs title and/or non-canvas source and preserves marks/state. Unlink linked content before replacing it. show with grid: true selects the grid.',
       inputSchema: z.object({
         action: z.enum(['create', 'update', 'link', 'unlink', 'remove', 'show']),
         card: z.string().optional().describe('Card id (optional on create).'),
@@ -194,7 +196,8 @@ export function register(server: OfficeMcpServer, _deps: OfficeMcpDeps): void {
   server.tool(
     {
       name: 'whiteboard_state',
-      description: 'Get, set, merge, or delete a dotted path (e.g. fields.email, pinged.accept) in a card’s JSON state (omitted path targets root).',
+      description:
+        'Get, set, merge, or delete a dotted state path (e.g. fields.email, pinged.accept; omit for root). Merge recursively writes leaves and replaces arrays; same-leaf writes are last-writer-wins. Reading state does not mark feedback read.',
       inputSchema: z.object({ card: z.string(), op: z.enum(['get', 'set', 'merge', 'del']), path: z.string().optional(), value: z.json().optional().describe('JSON value for set/merge (root set and merge require an object).') }),
       annotations: { openWorldHint: false },
     },
@@ -261,8 +264,14 @@ export function register(server: OfficeMcpServer, _deps: OfficeMcpDeps): void {
   server.tool(
     {
       name: 'whiteboard_apply',
-      description:
-        'Apply an atomic Whiteboard op batch (prefer focused whiteboard_* tools unless batching). Ops: card.create|title|content|rm|linkTo|unlink|view, state.set|merge|del|action, comment.add|reply|edit|resolve|reopen|reattach|rm, sticky.add|edit|move|reattach|rm, picture.add|file|move|reattach|rm, show, read. Batch anchors use stored {kind:"point",point:{x,y}} or {kind:"element",wbId?|selector?,quote?,offset?,point:{x,y}}.',
+      description: `Apply an atomic batch, all or nothing; errors name the failed operation. New ids are yours to choose (1–64 letters/digits/_/-).
+Operations: card.create {card,kind:html|canvas,title,content?}; card.title {card,title}; card.content {card,content}; card.rm {card}; card.linkTo {card,path,dir?,entry?}; card.unlink {card}; card.view {card,view:{x,y,w,h}|null}.
+state.set|merge {card,path:[keys],value}; state.del {card,path}; state.action {card,name,data?}.
+comment.add {card,thread,message,anchor,text}; comment.reply|edit {card,thread,message,text}; comment.resolve|reopen {card,thread}; comment.reattach {card,thread,anchor}; comment.rm {card,thread,message?}.
+sticky.add {card,id,anchor,box?,text?,color?}; sticky.edit {card,id,text?,color?}; sticky.move {card,id,box}; sticky.reattach {card,id,anchor}; sticky.rm {card,id}.
+picture.add {card,id,file,anchor,box?}; picture.file {card,id,file}; picture.move {card,id,box}; picture.reattach {card,id,anchor}; picture.rm {card,id}.
+show {selection:{kind:"grid"}|{kind:"card",id}}; read {cards:[ids],rev}.
+Content: {load:{html}|{file}|{dir,entry?}|{image}|{link,entry?}}. Picture file: {load:"path"}. Disk inputs resolve against your working folder, package entries stay inside their folder. Batch anchors use the stored form {kind:"point",point:{x,y}} or {kind:"element",wbId?,selector?,quote?,offset?:{x,y},point:{x,y}}, not whiteboard_marks shorthand. Use the focused tools for ordinary work.`,
       inputSchema: z.object({ ops: z.array(z.record(z.string(), z.unknown())).describe('Ordered operations; any invalid op rejects the whole batch.') }),
       annotations: { openWorldHint: false },
     },

@@ -8,9 +8,9 @@ import { officeAccess, officeError, officeResult, ownFloor, type OfficeMcpCaller
 import { compactEvent, compactEventText, compactWorker, compactWorkerText, cursorOf, EVENT_FILTERS, eventKinds, floorArg, parseCursor, resultDetailLines } from './team-events.js';
 
 export const instructions = `Subagents are real workers with their own terminals and (by default) git worktrees reporting to you, their lead. Subagents cannot hire.
-If you have uncommitted shared prerequisites, commit them BEFORE hiring (worktrees see committed state only) in the same turn you call team_models once, then hire one fresh subagent per task in parallel (or continue committed work via from / task.baseBranch set to worker:<name/id> or a worktree path). Split work into pieces that touch separate files: in each brief name ONLY the exact files that subagent owns (omit sibling task files; subagents also share edit areas via team_board and team_note), plus goal, context, checks, and delivery.
+Have task-authored prerequisites committed BEFORE hiring (worktrees see committed state only; leave unrelated changes untouched). Read team_models once per hiring batch, then hire one fresh subagent per task, only as many as independent scopes need. Independent scopes touch separate files: assign single-writer edit ownership in each brief, plus goal, dependency context, boundaries, checks and delivery; sibling files can be referenced as read-only context. Subagents share areas/findings via team_board and team_note. Continue a subagent's committed work via from / task.baseBranch set to worker:<name/id> or its absolute worktree path; floor leads omit from for their own current HEAD.
 Owner notes take priority when picking an exact model id from team_models. Multipliers show relative cost (custom/subscription models use no Factory credits; prefer subscriptions with ample quota and keep a nearly spent one off long tasks). Pick <=x0.5 for mechanical work, ~x1 for standard tasks, and top models for hard design, security, or concurrency; never give visual tasks to a no-images model.
-Hiring and waiting is not enough—run the team as its connective tissue: batch team_status with worker_diff/worker_log on wakes and check-ins to steer weak approaches early via team_message (default queue: true steers at the next step without interrupting; pass workers or all: true to broadcast contract updates), unblock technical questions right away via questions_list and question_answer (leave workers at terminal permission prompts untouched and tell the owner), review completed diffs and record team_review (approve, request_changes, or comment—never merge until approve), and integrate reviewed branches via team_merge (building agents must name target; land foundational branches first and instruct siblings touching shared contracts to rebase and re-verify before landing; call team_pr only when authorized). Dismiss with team_dismiss after review and integration.`;
+Hiring and waiting is not enough: run the team as its connective tissue. On wakes/check-ins read team_status and questions_list, inspect relevant worker_diff/worker_log and full reports with team_report_get. Steer drift and relay contract changes via team_message (queue: true steers at the next step; workers/all: true broadcasts; inspect per-recipient errors). Answer technical questions within the owner's intent; escalate unclear decisions and leave workers at permission prompts untouched for the owner. Record team_review approve before merging (a lead workflow gate, not a server-enforced lock; request_changes routes fixes back). Integrate via team_merge (building agents name target), land foundations first, then have dependent siblings rebase/align and re-verify. Resolve returned conflict hunks in the reported worktree and run combined target checks after review and integration, before team_dismiss. team_pr requires authorization and a pushed branch. With Wake the lead on, end your turn when nothing else remains; otherwise use team_wait.`;
 
 const readOnly = { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false };
 const changesState = { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false };
@@ -139,7 +139,7 @@ export function register(server: OfficeMcpServer, deps: OfficeMcpDeps): void {
   server.tool(
     {
       name: 'team_note',
-      description: 'Subagents only: post a short finding for siblings and optionally update your edit areas ([] clears). Never replaces team_report.',
+      description: 'Subagents only: post a short finding and optionally update edit areas ([] clears). Active siblings receive notes at tool steps when possible; others read team_board. Never replaces team_report.',
       inputSchema: z.strictObject({
         text: z.string().trim().min(1).max(1000).describe('Short finding (1–1000 chars).'),
         areas: z.array(z.string().trim().min(1).max(200)).max(20).optional().describe('Files or edit areas ([] clears).'),
@@ -206,7 +206,7 @@ export function register(server: OfficeMcpServer, deps: OfficeMcpDeps): void {
     {
       name: 'team_message',
       description:
-        'Steer or message one subagent (worker), several (workers), or all (all: true) with answers, mid-turn course corrections, sibling contract updates, or rebase instructions. queue: true (default) delivers at the next step without interrupting (or resumes idle workers). Never message a worker at a terminal permission prompt.',
+        'Choose exactly one target: worker, workers, or all: true. Send course corrections, contract updates or rebase instructions. queue: true (default) delivers at the next step without interrupting (or resumes idle workers). Inspect per-recipient errors, even on partial success. Never message workers at permission prompts.',
       inputSchema: z.strictObject({
         worker: worker.optional(),
         workers: z.array(worker).min(1).max(100).optional(),
@@ -368,7 +368,7 @@ export function register(server: OfficeMcpServer, deps: OfficeMcpDeps): void {
     {
       name: 'team_hire',
       description:
-        'Hire a fresh subagent in its own terminal and (by default) worktree. Call team_models once first, commit shared prerequisites BEFORE hiring, and hire independent scopes in parallel naming ONLY each subagent’s own files (never sibling files; building agents must set floor or task.repo). Act as an active lead after hiring: check in, relay contract changes, unblock questions, and review worker_diff before merging.',
+        'Hire a fresh subagent in its own terminal and usually a worktree. Read team_models once per batch and commit task-authored prerequisites first. Give each independent scope single-writer edit ownership, dependency context and checks (building agents set floor or task.repo). Actively check in, relay changes, unblock questions and review before integration.',
       inputSchema: z.strictObject({
         title: z.string().trim().min(1).max(80).optional().describe('Short task title.'),
         brief: text.optional().describe('Ticket: goal, context, exact owned files, checks, and delivery.'),
@@ -378,7 +378,7 @@ export function register(server: OfficeMcpServer, deps: OfficeMcpDeps): void {
             title: z.string().trim().min(1).max(80),
             brief: text,
             repo: z.string().trim().min(1).max(4096).describe('Exact floor checkout path (never "."), or floor id/name/path for building agents.'),
-            baseBranch: z.string().trim().min(1).max(4096).optional().describe('Worktree base: ref, worker:<name/id>, or worktree path (committed state). The same setting as from.'),
+            baseBranch: z.string().trim().min(1).max(4096).optional().describe('The same setting as from: ref, your subagent as worker:<name/id>, or its absolute worktree path; committed state only. Omit for lead HEAD/floor base.'),
             branch: z.string().trim().min(1).max(200).optional().describe('New local branch name.'),
             prNumber: z.number().int().positive().optional(),
             acceptanceCriteria: z.array(z.string().trim().min(1).max(2000)).max(30).optional(),
@@ -387,8 +387,14 @@ export function register(server: OfficeMcpServer, deps: OfficeMcpDeps): void {
           .describe('Structured ticket (overrides title/brief).'),
         model: z.string().trim().min(1).optional().describe('Exact model id from team_models (match owner notes, difficulty, images, quota).'),
         effort: z.enum(['low', 'medium', 'high', 'xhigh', 'max']).optional().describe('Effort from team_models.'),
-        from: z.string().trim().min(1).max(4096).optional().describe('Worktree base: ref, worker:<name/id>, or worktree path (committed state; requires worktree: true). The same setting as task.baseBranch.'),
-        worktree: z.boolean().optional().describe('True (default for task): isolated worktree; false: shared checkout for read-only/non-git (omit baseBranch/branch/from).'),
+        from: z
+          .string()
+          .trim()
+          .min(1)
+          .max(4096)
+          .optional()
+          .describe('The same setting as task.baseBranch: ref, your subagent as worker:<name/id>, or its absolute worktree path. Pins committed HEAD without moving the source; requires a worktree. Omit for lead HEAD/floor base.'),
+        worktree: z.boolean().optional().describe('Structured task defaults true; otherwise follows owner settings. True: isolated worktree; false: shared checkout for read-only/non-git (omit baseBranch/branch/from).'),
       }),
       annotations: changesState,
     },
@@ -492,7 +498,7 @@ export function register(server: OfficeMcpServer, deps: OfficeMcpDeps): void {
     {
       name: 'team_review',
       description:
-        'Record a review verdict (approve, request_changes, or comment) and concrete notes on a subagent’s latest report after checking worker_diff. request_changes notifies the subagent by default to fix and re-report; never merge until approve.',
+        'Record approve, request_changes or comment on a subagent’s latest report after checking worker_diff. request_changes notifies it by default to fix and re-report; approve/comment do not wake it by default. Approval is the lead’s workflow gate, not a server-enforced merge lock. Re-review changed work.',
       inputSchema: z.strictObject({
         worker,
         verdict: z.enum(['approve', 'request_changes', 'comment']).describe('approve: verified ready; request_changes: fixes needed; comment: notes.'),

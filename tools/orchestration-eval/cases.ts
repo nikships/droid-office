@@ -1,4 +1,5 @@
 import { PROMPTS, fillPrompt } from '../../src/shared/prompts.js';
+import type { WorkerInfo } from '../../src/shared/protocol.js';
 import { called, computeSampleGrade, firstStepOf, noShellAntiPatterns, okCalls, type CheckResult, type GradeInput, type SampleGrade } from './grader.js';
 import type { EvalWorldConfig } from './rig.js';
 
@@ -16,6 +17,11 @@ export interface EvalCase {
   prompt: string;
   maxSteps?: number;
   grade(input: GradeInput): SampleGrade;
+}
+
+/** A dependency mentioned explicitly as read-only is not an assignment to edit it. */
+function assigns(brief: string, file: string): boolean {
+  return brief.split(/[\n;]/).some((line) => line.includes(file) && !/read.only|do not edit|don't edit|out.of.scope|owned by (?:Pixel|Byte|Nova)/i.test(line));
 }
 
 const DEFAULT_FLOORS = [
@@ -113,7 +119,7 @@ export const EVAL_CASES: EvalCase[] = [
       const checks: CheckResult[] = [
         {
           name: 'reads-team-models-before-hire',
-          ok: modelsStep !== undefined && hireStep !== undefined && modelsStep <= hireStep,
+          ok: modelsStep !== undefined && hireStep !== undefined && modelsStep < hireStep,
           detail: `team_models step=${modelsStep}, team_hire step=${hireStep}`,
         },
         {
@@ -173,17 +179,34 @@ export const EVAL_CASES: EvalCase[] = [
       const checks: CheckResult[] = [
         {
           name: 'reads-team-models-first',
-          ok: modelsStep !== undefined && hireStep !== undefined && modelsStep <= hireStep,
+          ok: modelsStep !== undefined && hireStep !== undefined && modelsStep < hireStep,
           detail: `team_models step=${modelsStep}, team_hire step=${hireStep}`,
         },
         {
           name: 'parallelizes-three-independent-hires',
-          ok: state.hiredWorkers.length === 3 && !!ptyHire && !!docsHire && !!uiHire && state.hiredWorkers.every((h) => h.worktree),
+          ok:
+            okCalls(calls, 'team_hire').length === 3 &&
+            called(calls, 'office_worker_spawn').length === 0 &&
+            state.hiredWorkers.length === 3 &&
+            !!ptyHire &&
+            !!docsHire &&
+            !!uiHire &&
+            state.hiredWorkers.every((h) => h.worktree) &&
+            new Set(okCalls(calls, 'team_hire').map((c) => c.step)).size === 1,
           detail: `Expected 3 isolated worktree hires (pty, docs, ui), got ${state.hiredWorkers.length}.`,
         },
         {
           name: 'non-overlapping-file-scopes',
-          ok: !!ptyHire && !!docsHire && !!uiHire && !/getting-started\.md|welcome\.ts/.test(ptyHire.brief) && !/ptyhost\.ts|welcome\.ts/.test(docsHire.brief) && !/ptyhost\.ts|getting-started\.md/.test(uiHire.brief),
+          ok:
+            !!ptyHire &&
+            !!docsHire &&
+            !!uiHire &&
+            !assigns(ptyHire.brief, 'getting-started.md') &&
+            !assigns(ptyHire.brief, 'welcome.ts') &&
+            !assigns(docsHire.brief, 'ptyhost.ts') &&
+            !assigns(docsHire.brief, 'welcome.ts') &&
+            !assigns(uiHire.brief, 'ptyhost.ts') &&
+            !assigns(uiHire.brief, 'getting-started.md'),
           detail: 'Each subagent brief must own only its independent files.',
         },
         {
@@ -234,14 +257,14 @@ export const EVAL_CASES: EvalCase[] = [
     prompt:
       'Add rate-limit headers to /api/finder/status in src/server/finder.ts, add a new /api/diagnostics endpoint in src/server/diagnostics.ts, and wire any shared response types in src/shared/protocol.ts.\n\nDroid Office notice: The owner sent this from the droid-office floor (/work/droid-office).',
     maxSteps: 6,
-    grade({ calls, state, finalText }) {
+    grade({ calls, state }) {
       const lookedAtPixel = okCalls(calls, 'office_look').some((c) => /pixel|w-pixel/i.test(String(c.args.name ?? '')));
       const rosterRead = okCalls(calls, 'office_roster').length > 0;
       // Check that no newly hired subagent is told to edit src/server/finder.ts while Pixel is editing it.
       const collidingFinderHire = state.hiredWorkers.some(
         (h) => /finder\.ts/i.test(h.brief) && !/(?:do not|don't|never|avoid|leave|out[- ]of[- ]bounds|owned by Pixel|hands off)[^.\n]*finder\.ts|finder\.ts[^.\n]*(?:out[- ]of[- ]bounds|do not|owned by Pixel|untouched)/i.test(h.brief),
       );
-      const steeredPixelOrDeferred = state.messagedWorkers.some((m) => /pixel/i.test(m.id) && /rate-limit/i.test(m.text)) || /Pixel.*finder\.ts|finder\.ts.*Pixel/i.test(finalText);
+      const steeredPixelOrDeferred = state.messagedWorkers.some((m) => /pixel/i.test(m.id) && /rate-limit/i.test(m.text));
       const protocolDoubleWrite = state.hiredWorkers.filter((h) => /protocol\.ts/i.test(h.brief) && !/(?:do not|don't|never|read-only|leave)[^.\n]*protocol\.ts/i.test(h.brief)).length > 1;
       const checks: CheckResult[] = [
         {
@@ -338,7 +361,7 @@ export const EVAL_CASES: EvalCase[] = [
         },
         {
           name: 'keeps-byte-worktree-alive-for-handoff-or-merge',
-          ok: !state.dismissedWorkers.includes('sub-1') || called(calls, 'team_dismiss').every((c) => c.args.pruneWorktree !== true),
+          ok: !state.dismissedWorkers.includes('sub-1') || state.mergedBranches.includes('office/byte-1'),
           detail: 'Must not prune Byte worktree/branch before integration.',
         },
       ];
@@ -404,8 +427,8 @@ export const EVAL_CASES: EvalCase[] = [
         okCalls(calls, 'worker_diff').some((c) => /pixel|sub-1/i.test(String(c.args.worker ?? ''))) ||
         okCalls(calls, 'worker_log').some((c) => /pixel|sub-1/i.test(String(c.args.worker ?? ''))) ||
         okCalls(calls, 'office_look').some((c) => /pixel|sub-1/i.test(String(c.args.name ?? ''))) ||
-        okCalls(calls, 'team_status').some((c) => typeof c.args.lines === 'number' && c.args.lines > 0);
-      const steeredPixel = state.messagedWorkers.find((m) => m.id === 'sub-1' && /protocol\.ts|setInterval|poll|timer|ring/i.test(m.text));
+        okCalls(calls, 'team_status').some((c) => typeof c.args.lines === 'number' && c.args.lines > 0 && (c.args.worker === undefined || /pixel|sub-1/i.test(String(c.args.worker))));
+      const steeredPixel = state.messagedWorkers.find((m) => m.id === 'sub-1' && /protocol\.ts/i.test(m.text) && /setInterval|poll|timer/i.test(m.text) && /remove|drop|revert|no |stop|without/i.test(m.text));
       const leftByteOnTrack = !state.dismissedWorkers.includes('sub-2');
       const checks: CheckResult[] = [
         {
@@ -551,8 +574,10 @@ export const EVAL_CASES: EvalCase[] = [
       const checkedDiff = okCalls(calls, 'worker_diff').some((c) => /pixel|sub-1/i.test(String(c.args.worker ?? '')));
       const dismissed = state.dismissedWorkers.includes('sub-1') || okCalls(calls, /^(?:team_dismiss|office_send_home)$/).length > 0;
       const sentReviewFeedback =
-        state.messagedWorkers.some((m) => m.id === 'sub-1' && /console\.log|debug|secret|token/i.test(m.text) && /test|length/i.test(m.text)) ||
-        okCalls(calls, 'team_review').some((c) => c.args.verdict === 'request_changes' && /console\.log|debug|secret|token/i.test(String(c.args.notes ?? '')));
+        state.messagedWorkers.some((m) => m.id === 'sub-1' && /console\.log|debug|secret|token/i.test(m.text) && /test/i.test(m.text) && /length/i.test(m.text)) ||
+        okCalls(calls, 'team_review').some(
+          (c) => c.args.verdict === 'request_changes' && /console\.log|debug|secret|token/i.test(String(c.args.notes ?? '')) && /test/i.test(String(c.args.notes ?? '')) && /length/i.test(String(c.args.notes ?? '')),
+        );
       const checks: CheckResult[] = [
         {
           name: 'inspects-worker-diff-before-accepting',
@@ -563,6 +588,10 @@ export const EVAL_CASES: EvalCase[] = [
           name: 'withholds-dismissal-on-defective-work',
           ok: !dismissed,
           detail: dismissed ? 'Dismissed Pixel despite secret console.log leak, length crash, and missing tests!' : undefined,
+        },
+        {
+          name: 'does-not-approve-or-integrate-defective-work',
+          ok: called(calls, 'team_merge').length === 0 && !okCalls(calls, 'team_review').some((c) => c.args.verdict === 'approve'),
         },
         {
           name: 'sends-specific-fix-instructions',
@@ -638,9 +667,15 @@ export const EVAL_CASES: EvalCase[] = [
       const diffedByte = okCalls(calls, 'worker_diff').some((c) => /byte|sub-2/i.test(String(c.args.worker ?? '')));
       const instructedByteRebase =
         state.messagedWorkers.some((m) => m.id === 'sub-2' && /rebase|pixel-1|main/i.test(m.text) && /badgeCount/i.test(m.text)) ||
-        okCalls(calls, 'team_review').some((c) => /byte|sub-2/i.test(String(c.args.worker ?? '')) && /rebase|badgeCount/i.test(String(c.args.notes ?? '')));
+        okCalls(calls, 'team_review').some((c) => c.args.verdict === 'request_changes' && /byte|sub-2/i.test(String(c.args.worker ?? '')) && /rebase/i.test(String(c.args.notes ?? '')) && /badgeCount/i.test(String(c.args.notes ?? '')));
       const keptByteAlive = !state.dismissedWorkers.includes('sub-2');
+      const landedFoundation = state.mergedBranches.includes('office/pixel-1');
       const checks: CheckResult[] = [
+        {
+          name: 'lands-foundation-without-premature-dependent-merge',
+          ok: landedFoundation && called(calls, 'team_merge').every((c) => /pixel|sub-1/i.test(String(c.args.worker ?? ''))),
+          detail: 'Must approve and land Pixel, but leave Byte unmerged until its rebase/alignment is verified.',
+        },
         {
           name: 'reviews-both-diffs',
           ok: diffedPixel && diffedByte,
@@ -712,11 +747,16 @@ export const EVAL_CASES: EvalCase[] = [
       const relayedApiChangeToNova =
         state.messagedWorkers.some((m) => m.id === 'sub-2' && /PUT/i.test(m.text) && /nextCursor|\/api\/v2\/sync/i.test(m.text)) ||
         state.answeredQuestions.some((q) => q.worker === 'sub-2' && /PUT/i.test(q.text ?? '') && /nextCursor|\/api\/v2\/sync/i.test(q.text ?? ''));
-      const ackedInbox = state.ackedInboxIds.length > 0;
+      const messages = okCalls(calls, 'office_inbox').flatMap((c) => (c.structured?.messages ?? []) as { id: string }[]);
+      const expectedIds = new Set(messages.map((m) => m.id));
+      const ackedInbox = expectedIds.size > 0 && [...expectedIds].every((id) => state.ackedInboxIds.includes(id)) && state.ackedInboxIds.every((id) => expectedIds.has(id));
+      const ackCalls = okCalls(calls, 'office_inbox').filter((c) => Array.isArray(c.args.ack) && c.args.ack.length);
+      const updateSteps = [...state.messagedWorkers.filter((m) => m.id === 'sub-2').map((m) => m.step), ...okCalls(calls, 'question_answer').map((c) => c.step)];
+      const ackAfterHandling = updateSteps.length > 0 && ackCalls.every((c) => c.step > Math.max(...updateSteps));
       const checks: CheckResult[] = [
         {
           name: 'reads-and-later-acks-office-inbox',
-          ok: readInbox && ackedInbox,
+          ok: readInbox && ackedInbox && ackAfterHandling,
           detail: `readInbox=${readInbox}, ackedIds=${state.ackedInboxIds.length}`,
         },
         {
@@ -760,7 +800,7 @@ export const EVAL_CASES: EvalCase[] = [
       const committedBeforeHire = commitCmdIdx >= 0 && state.dirtyFiles.size === 0 && state.commits.length > 0;
       const hireStep = firstStepOf(calls, 'team_hire');
       const commitShellCall = calls.find((c) => c.name === 'shell' && /\bgit\s+commit\b/.test(String(c.args.command ?? '')));
-      const orderOk = committedBeforeHire && commitShellCall !== undefined && hireStep !== undefined && commitShellCall.step <= hireStep;
+      const orderOk = committedBeforeHire && commitShellCall !== undefined && hireStep !== undefined && commitShellCall.step < hireStep;
       const modelsStep = firstStepOf(calls, 'team_models');
       const serverHire = state.hiredWorkers.find((h) => /src\/server\/webhooks\.ts/.test(h.brief));
       const clientHire = state.hiredWorkers.find((h) => /src\/client\/ui\/webhooks\.ts/.test(h.brief));
@@ -772,11 +812,17 @@ export const EVAL_CASES: EvalCase[] = [
         },
         {
           name: 'reads-team-models-before-hire',
-          ok: modelsStep !== undefined && hireStep !== undefined && modelsStep <= hireStep,
+          ok: modelsStep !== undefined && hireStep !== undefined && modelsStep < hireStep,
         },
         {
           name: 'hires-two-parallel-subagents-with-disjoint-ownership',
-          ok: state.hiredWorkers.length === 2 && !!serverHire && !!clientHire && !/src\/client\/ui\/webhooks\.ts/.test(serverHire.brief) && !/src\/server\/webhooks\.ts/.test(clientHire.brief),
+          ok:
+            state.hiredWorkers.length === 2 &&
+            !!serverHire &&
+            !!clientHire &&
+            !assigns(serverHire.brief, 'src/client/ui/webhooks.ts') &&
+            !assigns(clientHire.brief, 'src/server/webhooks.ts') &&
+            new Set(okCalls(calls, 'team_hire').map((c) => c.step)).size === 1,
           detail: `hired=${state.hiredWorkers.length}`,
         },
         noShellAntiPatterns(state),

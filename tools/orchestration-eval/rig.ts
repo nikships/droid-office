@@ -91,6 +91,7 @@ export interface RecordedCall {
 
 export interface EvalWorldState {
   dirtyFiles: Set<string>;
+  stagedFiles: Set<string>;
   commits: string[];
   mergedBranches: string[];
   shellCommands: string[];
@@ -200,6 +201,7 @@ const DEFAULT_CATALOGUE: DroidModelCatalogue = {
 };
 
 export async function createEvalRig(config: EvalWorldConfig) {
+  for (const worker of config.workers ?? []) if (!config.floors.some((f) => f.id === worker.floor)) throw new Error(`Unknown seed floor ${worker.floor}`);
   const rootDir = mkdtempSync(path.join(os.tmpdir(), 'office-eval-'));
   const now = Date.parse('2026-11-11T12:00:00Z');
   const settings: SubagentSettings = {
@@ -240,6 +242,7 @@ export async function createEvalRig(config: EvalWorldConfig) {
 
   const state: EvalWorldState = {
     dirtyFiles: new Set(config.initialDirtyFiles ?? []),
+    stagedFiles: new Set(),
     commits: [],
     mergedBranches: [],
     shellCommands: [],
@@ -441,6 +444,7 @@ export async function createEvalRig(config: EvalWorldConfig) {
       screenMenu: (id) => (screens.has(id) ? readMenu(screens.get(id)!) : undefined),
       write: (id, data) => {
         state.messagedWorkers.push({ id, text: data, via: 'terminal-write', step: currentStep });
+        return true;
       },
     };
 
@@ -554,7 +558,7 @@ export async function createEvalRig(config: EvalWorldConfig) {
       ...(leadId ? { lead: leadId } : {}),
       ...(sw.model ? { model: sw.model, activeModel: sw.model } : {}),
       ...(sw.effort ? { effort: sw.effort, activeEffort: sw.effort } : {}),
-      ...(sw.task ? { task: sw.task } : {}),
+      ...(sw.task ? { task: { ...sw.task, summary: sw.task.summary ?? '' } } : {}),
       ...(sw.activity ? { activity: sw.activity } : {}),
       ...(sw.worktree ? { worktree: sw.worktree } : {}),
       ...(sw.pr ? { pr: sw.pr } : {}),
@@ -787,7 +791,7 @@ export async function createEvalRig(config: EvalWorldConfig) {
             type: 'function',
             function: {
               name: 'shell',
-              description: 'Execute a POSIX shell command in your working directory.',
+              description: 'Simulated shell, not a real checkout: supports git status, git add <explicit files>, and staged git commit, joined with &&. Other commands are unsupported. Use worker_diff/worker_log for worker inspection.',
               parameters: {
                 type: 'object',
                 properties: { command: { type: 'string', description: 'Shell command to run.' } },
@@ -800,7 +804,7 @@ export async function createEvalRig(config: EvalWorldConfig) {
             type: 'function',
             function: {
               name: 'read_file',
-              description: 'Read a UTF-8 text file by absolute path.',
+              description: `Read a scenario fixture by absolute path. Available files: ${Object.keys(config.files ?? {}).join(', ') || '(none)'}. Other paths return ENOENT; this is not a complete checkout.`,
               parameters: {
                 type: 'object',
                 properties: { path: { type: 'string', description: 'Absolute file path.' } },
@@ -833,24 +837,6 @@ export async function createEvalRig(config: EvalWorldConfig) {
 
   function runShell(command: string): { output: string; isError: boolean } {
     state.shellCommands.push(command);
-    if (/\bgit\s+commit\b/.test(command)) {
-      if (state.dirtyFiles.size === 0 && !/--allow-empty/.test(command)) {
-        return { output: 'nothing to commit, working tree clean', isError: false };
-      }
-      state.dirtyFiles.clear();
-      state.commits.push(command);
-      return { output: '[feat/webhooks-lead 9e8d7c6] Commit shared prerequisite\n 1 file changed, 14 insertions(+)', isError: false };
-    }
-    if (/\bgit\s+status\b/.test(command)) {
-      if (state.dirtyFiles.size > 0) {
-        return { output: [...state.dirtyFiles].map((f) => ` M ${f}`).join('\n'), isError: false };
-      }
-      return { output: 'On branch main\nnothing to commit, working tree clean', isError: false };
-    }
-    if (/\bgit\s+merge\b/.test(command) || /\bgh\s+pr\s+merge\b/.test(command)) {
-      const m = /(?:merge\s+)(?:--[^\s]+\s+)*([^\s;&|]+)/.exec(command);
-      if (m?.[1]) state.mergedBranches.push(m[1]);
-    }
     for (const mock of config.shellMocks ?? []) {
       if (mock.match.test(command)) {
         if (typeof mock.output === 'function') {
@@ -860,18 +846,54 @@ export async function createEvalRig(config: EvalWorldConfig) {
         return { output: mock.output, isError: (mock.exitCode ?? 0) !== 0 };
       }
     }
-    return { output: '(ok)', isError: false };
+    // Deliberately bounded simulation, not a POSIX shell. Unknown commands must never look successful.
+    const outputs: string[] = [];
+    for (const part of command.split(/\s+&&\s+/)) {
+      if (/^cd\s+\/[^;&|]+$/.test(part)) continue;
+      const git = /^git(?:\s+-C\s+\S+)?\s+(.*)$/.exec(part);
+      const args = git?.[1] ?? '';
+      if (/^status(?:\s|$)/.test(args)) {
+        outputs.push(state.dirtyFiles.size ? [...state.dirtyFiles].map((f) => `${state.stagedFiles.has(f) ? 'M ' : ' M'} ${f}`).join('\n') : 'nothing to commit, working tree clean');
+      } else if (/^add\s+/.test(args)) {
+        const files = args
+          .slice(4)
+          .trim()
+          .split(/\s+/)
+          .filter((f) => f !== '--');
+        if (files.some((f) => !state.dirtyFiles.has(f))) return { output: 'Simulation requires explicit dirty file paths for git add', isError: true };
+        for (const file of files) state.stagedFiles.add(file);
+      } else if (/^commit(?:\s|$)/.test(args)) {
+        if (!state.stagedFiles.size) return { output: 'nothing staged to commit', isError: true };
+        for (const file of state.stagedFiles) state.dirtyFiles.delete(file);
+        state.stagedFiles.clear();
+        state.commits.push(command);
+        outputs.push('[feat/webhooks-lead 9e8d7c6] Committed staged prerequisites');
+      } else {
+        return { output: `Unsupported simulated shell command: ${part}`, isError: true };
+      }
+    }
+    return { output: outputs.join('\n'), isError: false };
   }
 
   async function executeTool(step: number, name: string, rawArgs: Record<string, unknown>): Promise<string> {
     currentStep = step;
     if (name === 'shell') {
+      if (!hostToolDefs.some((t) => t.function.name === name) || typeof rawArgs.command !== 'string') {
+        const output = 'Shell tool unavailable or invalid command arguments';
+        calls.push({ step, name, args: rawArgs, isError: true, resultText: output });
+        return output;
+      }
       const cmd = typeof rawArgs.command === 'string' ? rawArgs.command : '';
       const res = runShell(cmd);
       calls.push({ step, name, args: rawArgs, isError: res.isError, resultText: res.output });
       return res.output;
     }
     if (name === 'read_file') {
+      if (!hostToolDefs.some((t) => t.function.name === name)) {
+        const output = 'Read tool unavailable';
+        calls.push({ step, name, args: rawArgs, isError: true, resultText: output });
+        return output;
+      }
       const p = typeof rawArgs.path === 'string' ? rawArgs.path : '';
       const content = config.files?.[p];
       const isError = content === undefined;

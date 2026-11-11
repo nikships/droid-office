@@ -39,7 +39,8 @@ interface SampleRunResult {
   reasoningTokens: number;
   firstTurnPromptTokens: number;
   grade: SampleGrade;
-  calls: { step: number; name: string; args: Record<string, unknown>; isError: boolean }[];
+  calls: RecordedCall[];
+  messages: ChatMessage[];
   finalText: string;
   error?: string;
 }
@@ -80,7 +81,7 @@ interface EvalReport {
   samples: SampleRunResult[];
 }
 
-function parseFlags(argv: string[]): CliFlags {
+export function parseFlags(argv: string[]): CliFlags {
   const flags: CliFlags = {
     contextOnly: false,
     models: ['custom:droidproxy:gpt-6.1-sol'],
@@ -102,9 +103,9 @@ function parseFlags(argv: string[]): CliFlags {
           .map((s) => s.trim())
           .filter(Boolean),
       );
-    else if (arg === '--samples' && argv[i + 1]) flags.samples = Math.max(1, Number(argv[++i]));
-    else if (arg === '--concurrency' && argv[i + 1]) flags.concurrency = Math.max(1, Number(argv[++i]));
-    else if (arg === '--max-steps' && argv[i + 1]) flags.maxSteps = Math.max(1, Number(argv[++i]));
+    else if (arg === '--samples' && argv[i + 1]) flags.samples = Number(argv[++i]);
+    else if (arg === '--concurrency' && argv[i + 1]) flags.concurrency = Number(argv[++i]);
+    else if (arg === '--max-steps' && argv[i + 1]) flags.maxSteps = Number(argv[++i]);
     else if (arg === '--effort' && argv[i + 1]) flags.effort = argv[++i];
     else if (arg === '--base-url' && argv[i + 1]) flags.baseUrl = argv[++i];
     else if (arg === '--case' && argv[i + 1])
@@ -116,8 +117,12 @@ function parseFlags(argv: string[]): CliFlags {
       );
     else if (arg === '--out' && argv[i + 1]) flags.outDir = argv[++i];
     else if (arg === '--compare' && argv[i + 1]) flags.compareFile = argv[++i];
+    else throw new Error(`Unknown option or missing value: ${arg}`);
   }
   if (explicitModels.length) flags.models = explicitModels;
+  for (const key of ['samples', 'concurrency', 'maxSteps'] as const) {
+    if (!Number.isSafeInteger(flags[key]) || flags[key] < 1) throw new Error(`${key} must be a positive integer.`);
+  }
   return flags;
 }
 
@@ -127,7 +132,10 @@ function wireModelId(model: string): string {
 
 function currentCommit(): string {
   try {
-    return execFileSync('git', ['rev-parse', '--short', 'HEAD'], { encoding: 'utf8' }).trim();
+    const repo = path.resolve(import.meta.dirname, '../..');
+    const sha = execFileSync('git', ['-C', repo, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
+    const dirty = execFileSync('git', ['-C', repo, 'status', '--porcelain'], { encoding: 'utf8' }).trim();
+    return `${sha}${dirty ? '-dirty' : ''}`;
   } catch {
     return 'unknown';
   }
@@ -202,7 +210,7 @@ async function callChatCompletion(opts: { baseUrl: string; apiKey: string; model
   throw new Error('Unreachable');
 }
 
-async function runSingleSample(evalCase: EvalCase, model: string, sample: number, flags: CliFlags): Promise<SampleRunResult> {
+export async function runSingleSample(evalCase: EvalCase, model: string, sample: number, flags: CliFlags): Promise<SampleRunResult> {
   const started = Date.now();
   const rig = await createEvalRig(evalCase.world);
   const messages: ChatMessage[] = [{ role: 'system', content: rig.fullSystemPrompt }];
@@ -218,6 +226,7 @@ async function runSingleSample(evalCase: EvalCase, model: string, sample: number
   let firstTurnPromptTokens = 0;
   let finalText = '';
   let steps = 0;
+  let finished = false;
   const maxSteps = evalCase.maxSteps ?? flags.maxSteps;
 
   try {
@@ -238,11 +247,16 @@ async function runSingleSample(evalCase: EvalCase, model: string, sample: number
       reasoningTokens += reply.usage?.completion_tokens_details?.reasoning_tokens ?? 0;
 
       const msg = reply.choices?.[0]?.message;
+      if (!msg) throw new Error('Model returned no assistant message.');
       const content = msg?.content ?? null;
       const toolCalls = msg?.tool_calls ?? [];
       if (content) finalText = content;
 
-      if (!toolCalls.length) break;
+      if (!toolCalls.length) {
+        messages.push({ role: 'assistant', content });
+        finished = true;
+        break;
+      }
 
       messages.push({ role: 'assistant', content, tool_calls: toolCalls });
       for (const tc of toolCalls) {
@@ -265,6 +279,11 @@ async function runSingleSample(evalCase: EvalCase, model: string, sample: number
     }
 
     const grade = evalCase.grade({ calls: rig.calls, state: rig.state, finalText });
+    if (!finished) {
+      grade.passed = false;
+      grade.checks.push({ name: 'finished-within-step-budget', ok: false, detail: `Still calling tools at step ${maxSteps}.` });
+      grade.rubricScore = grade.checks.filter((c) => c.ok).length / grade.checks.length;
+    }
     return {
       caseId: evalCase.id,
       category: evalCase.category,
@@ -277,7 +296,8 @@ async function runSingleSample(evalCase: EvalCase, model: string, sample: number
       reasoningTokens,
       firstTurnPromptTokens,
       grade,
-      calls: rig.calls.map((c: RecordedCall) => ({ step: c.step, name: c.name, args: c.args, isError: c.isError })),
+      calls: rig.calls,
+      messages,
       finalText,
     };
   } catch (err) {
@@ -301,7 +321,8 @@ async function runSingleSample(evalCase: EvalCase, model: string, sample: number
         totalCallCount: 0,
         checks: [{ name: 'sample-ran-without-error', ok: false, detail: message }],
       },
-      calls: [],
+      calls: rig.calls,
+      messages,
       finalText,
       error: message,
     };
@@ -425,6 +446,9 @@ async function main() {
     return;
   }
 
+  if (flags.caseFilter) {
+    for (const id of flags.caseFilter) if (!EVAL_CASES.some((c) => c.id === id)) throw new Error(`Unknown eval case: ${id}`);
+  }
   const cases = flags.caseFilter ? EVAL_CASES.filter((c) => flags.caseFilter!.has(c.id)) : EVAL_CASES;
   if (!cases.length) throw new Error('No eval cases matched --case filter.');
 

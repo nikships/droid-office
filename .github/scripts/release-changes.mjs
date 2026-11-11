@@ -15,6 +15,7 @@ export function checksFor(files, { manual = false, androidVersionChanged = false
       all ||
       touches(packages) ||
       touches(config) ||
+      touches(/^tools\/orchestration-eval\//) ||
       touches(
         /^(?:src\/|bin\/|tests\/|native\/|\.husky\/|android\/app\/src\/main\/assets\/|android\/app\/src\/test\/resources\/thread-presentation-golden\.json$|tools\/(?:props|frame-bench)\/|tools\/(?:android-terminal|android-model-icons|thread-fixture)\.mjs$|README\.md$|docs\/guide\/|biome\.jsonc$|\.oxlintrc\.json$|\.env\.example$|\.gitignore$|\.agents\/skills\/(?:office-clone|office-3d-testing|office-thermals|performance-proof|verify-droid-office)\/|\.agents\/skills\/office-video-capture\/references\/example-launch\/example-composition\.html$)/,
       ),
