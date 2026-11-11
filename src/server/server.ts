@@ -17,7 +17,7 @@ import { COMPANION_OFF, pairingLink, type PairedDevice, type PairingState } from
 import { MAX_REPOS, childEnv, resolveAgent, type RepoSource } from './workers.js';
 import { DROID_MODEL_MAX } from './agents.js';
 import { createDroidCommandCatalogue } from './droid-commands.js';
-import { createDroidModelCatalogue } from './droid-models.js';
+import { airgappedModelError, createDroidModelCatalogue, customModelCatalogue, readDroidModels } from './droid-models.js';
 import { HiddenModels } from './hidden-models.js';
 import { Upgrader } from './upgrade.js';
 import { officeStatus } from './office-status.js';
@@ -27,7 +27,7 @@ import { UPLOAD_MAX_BYTES } from '../shared/decor.js';
 import { ImageProxy } from './decor.js';
 import { JiraOffice } from './jira.js';
 import { mountFactory, sendDownload } from './factory/index.js';
-import { mountSetup } from './setup/index.js';
+import { mountSetup, readSetupFile } from './setup/index.js';
 import { mountSubscriptions } from './subscriptions/index.js';
 import { MAX_WORKER_LIMIT, Machine, parseWorkerLimit } from './machine.js';
 import { Building, type FloorDef } from './building.js';
@@ -46,7 +46,8 @@ import { OFFICE_SHELL_ID } from '../shared/office-shell.js';
 import type { Arrival, ClientMsg, FloorInfo, FloorView, SearchResults, ServerMsg, WorkerInfo } from '../shared/protocol.js';
 import { AUTO_DESK, GH_COMMENT_MAX, GH_LABEL_MAX, isAgentEffort } from '../shared/protocol.js';
 import { ORCHESTRATOR_ID, orchestratorNeedsOwner, type MissionControlState, type OrchestratorSettings } from '../shared/mission-control.js';
-import { droidReady } from '../shared/setup.js';
+import { AIRGAPPED_REASON, droidReady } from '../shared/setup.js';
+import { cannotRun } from '../shared/subscriptions.js';
 import { elevatorSpot, nextFreeSeat, streetBelow } from '../shared/layout.js';
 import { STREAM } from '../shared/jukebox.js';
 import { Jukebox } from './jukebox.js';
@@ -261,6 +262,11 @@ export async function startServer(cfg: Config) {
   let agentPath = resolveAgent(cfg.agentCmd);
   // Droid lists its own models (built-in and custom); its settings file is the fallback.
   const droidModels = createDroidModelCatalogue({ command: () => agentPath ?? cfg.agentCmd, cwd: cfg.dir });
+  const availableDroidModels = async () => {
+    const catalogue = await droidModels.get();
+    return setup.state().airgapped ? customModelCatalogue(catalogue) : catalogue;
+  };
+  const modelGate = (model: string | undefined) => airgappedModelError(setup.state().airgapped, model, readDroidModels()) ?? subscriptions.gate(model || readDroidModels().defaultModel);
   // And the skills and custom commands it offers as slash commands, in each worker's own folder.
   const droidCommands = createDroidCommandCatalogue({ command: () => agentPath ?? cfg.agentCmd });
   const hiddenModels = new HiddenModels(cfg.dataDir);
@@ -336,7 +342,7 @@ export async function startServer(cfg: Config) {
   // --- Loopback-only endpoint for authenticated agent events -------------------------------
   let finder: FinderDispatch | undefined;
   let finderToken: string | undefined;
-  const finderModels = async () => finderCatalogue(await droidModels.get(), hiddenModels.state(), prompts.agent()?.model);
+  const finderModels = async () => finderCatalogue(await availableDroidModels(), hiddenModels.state(), prompts.agent()?.model);
   let officeMcp: OfficeMcpServer | undefined;
   const hookServer = http.createServer(async (req, res) => {
     let url: URL;
@@ -443,11 +449,11 @@ export async function startServer(cfg: Config) {
     prompts,
     floors: () => [...floors.values()],
     unready: () => {
-      if (!droidReady(setup.state())) return { why: 'Droid isn’t ready on this computer. Install it and sign in from ⚙️ Settings → Connections → Droid.', pane: 'connections' };
+      if (!droidReady(setup.state())) return { why: 'Droid isn’t ready on this computer. Install it, then sign in or add a custom model in airgapped mode from ⚙️ Settings → Connections → Droid.', pane: 'connections' };
       if (subagents.settings.officeMcp === false) return { why: 'Office tools (the Office MCP) are off. Turn them on in ⚙️ Settings → Subagents & visits → Office MCP.', pane: 'subagents' };
       return undefined;
     },
-    modelGate: (model) => subscriptions.gate(model),
+    modelGate,
     changed: () => {
       answers.changed(ORCHESTRATOR_ID, orchestrator.info?.status);
       missionChanged();
@@ -523,6 +529,7 @@ export async function startServer(cfg: Config) {
   // The office's Factory API key and every Factory feature read with it (⚙️ Settings → Connections, docs/factory.md).
   // AutoWiki's /wiki runs on a floor's default branch with the office's Droid command (factory/wiki-run.ts).
   const factory = mountFactory({
+    paused: readSetupFile(cfg.dataDir)?.airgapped,
     dataDir: cfg.dataDir,
     broadcast: (state) => broadcast({ t: 'factory', state }),
     toast: (text, level) => toastAll(text, level),
@@ -580,7 +587,10 @@ export async function startServer(cfg: Config) {
         }),
       ),
     read: (source) => labelThreads.readText(source),
-    generate: (input, settings, signal) => labelModel.generate(input, settings, signal),
+    generate: (input, settings, signal) => {
+      if (setup.state().airgapped && settings.implementation !== 'custom') return Promise.reject(new Error(AIRGAPPED_REASON));
+      return labelModel.generate(input, settings, signal);
+    },
     changed: (state) => broadcast({ t: 'workerLabels', state }),
   });
 
@@ -588,6 +598,15 @@ export async function startServer(cfg: Config) {
   const setup = mountSetup({
     dataDir: cfg.dataDir,
     agentCmd: cfg.agentCmd,
+    customModels: () =>
+      readDroidModels()
+        .models.filter((m) => m.custom && !cannotRun(subscriptions.availability(m.id)))
+        .map((m) => m.id),
+    modeChanged: (on) => {
+      factory.setPaused(on);
+      droidModels.forget();
+      workerLabels.settingsChanged();
+    },
     broadcast: (state) => {
       broadcast({ t: 'setup', state });
       missionChanged();
@@ -612,6 +631,7 @@ export async function startServer(cfg: Config) {
     toast: (text, level) => toastAll(text, level),
     modelsChanged: () => {
       droidModels.forget();
+      setup.message('office', { t: 'setup.check' });
       missionChanged();
     },
   });
@@ -710,8 +730,8 @@ export async function startServer(cfg: Config) {
     leaveOnMerge: () => leaveOnMerge.on,
     freshMain: () => freshMain.on,
     subagents: () => subagents.settings,
-    droidModels: () => droidModels.get(),
-    modelGate: (model) => subscriptions.gate(model),
+    droidModels: availableDroidModels,
+    modelGate,
     modelAvailability: (model) => subscriptions.availability(model),
     modelUsage: (model, now) => subscriptions.usage(model, now),
     floor: (id) => floors.get(id),
@@ -1279,8 +1299,8 @@ export async function startServer(cfg: Config) {
       }
       if (p === '/api/agents/droid/models' && req.method === 'GET') {
         try {
-          const catalogue = await droidModels.get();
-          return send(res, 200, { models: catalogue.models, defaultModel: catalogue.defaultModel, defaultReasoningEffort: catalogue.defaultReasoningEffort });
+          const catalogue = await availableDroidModels();
+          return send(res, 200, { models: catalogue.models, customOnly: catalogue.customOnly, defaultModel: catalogue.defaultModel, defaultReasoningEffort: catalogue.defaultReasoningEffort });
         } catch {
           return send(res, 502, { error: 'Could not load Droid models' });
         }
@@ -1438,6 +1458,7 @@ export async function startServer(cfg: Config) {
       }
       if (p.startsWith('/api/factory/')) {
         // A Factory feature's actions and on-demand reads (see factory/registry.ts); anything but a GET only from the office's own page.
+        if (setup.state().airgapped) return send(res, 403, { error: AIRGAPPED_REASON });
         const r = await factory.registry.http(req.method ?? 'GET', p.slice('/api/factory'.length), url.searchParams, (limit) => readBody(req, limit), { trusted: ownRequest(), by: str(req.headers['x-droid-office-name'], 24) });
         if (r.download) return sendDownload(res, r.download);
         return send(res, r.status, r.body);
@@ -1998,6 +2019,7 @@ export async function startServer(cfg: Config) {
     // A cloud worker's session runs on a Factory computer: factory/cloud.ts answers for it.
     const cloudie = typeof asked === 'string' && /^(worker|term|changes)\./.test(msg.t) ? cloud.find(asked) : undefined;
     if (cloudie) {
+      if (setup.state().airgapped) return done(AIRGAPPED_REASON);
       const floor = floors.get(cloudie.floor.id);
       cloud.message(msg as Parameters<typeof cloud.message>[0], { who, client: c.id, warn: (text) => warn(c, text), done, takeIssue: (n) => floor && takeIssue(c, floor, n) });
       return;
@@ -2108,6 +2130,7 @@ export async function startServer(cfg: Config) {
         // On a Factory computer (factory/cloud.ts). A hire that fails leaves its pictures staged, as the hire route does.
         const where = msg.cloud && typeof msg.cloud === 'object' ? msg.cloud : undefined;
         if (where) {
+          if (setup.state().airgapped) return refuse(AIRGAPPED_REASON);
           if (kind === 'shell') return refuse('A shell runs on this machine: only a Droid can work on a Factory computer');
           const wanted = str(msg.deskId, 32);
           const deskId = wanted === AUTO_DESK ? nextFreeSeat((id) => floor.workers.deskOccupied(id))?.id : wanted;
@@ -2586,6 +2609,7 @@ export async function startServer(cfg: Config) {
       case 'workerLabels.set': {
         const next = labelSettings(msg.settings);
         if (!next) return stop('Choose valid worker label settings.');
+        if (setup.state().airgapped && next.on && next.implementation !== 'custom') return stop(AIRGAPPED_REASON);
         const revision = ++labelSettingsRevision;
         const save = () => {
           if (revision !== labelSettingsRevision) return stop('Worker label settings changed while verifying this selection. Try again.');
@@ -2738,6 +2762,7 @@ export async function startServer(cfg: Config) {
         subscriptions.message(who, { t: 'subscriptions.refresh' });
         break;
       case 'setup.droid.install':
+      case 'setup.airgapped':
       case 'setup.droid.signIn':
       case 'setup.droid.signInCancel':
       case 'setup.onboarded':

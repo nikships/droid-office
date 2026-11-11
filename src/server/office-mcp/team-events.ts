@@ -88,13 +88,14 @@ export function compactWorker(m: TeamMember, floor: string) {
     ...(m.effort ? { effort: m.effort } : {}),
     ...(m.worktree ? { branch: m.worktree.branch, worktree: m.worktree.path, ...(m.worktree.from ? { from: m.worktree.from } : {}) } : {}),
     ...(m.pr ? { pr: m.pr } : {}),
-    ...(m.report ? { lastReportId: eventId(floor, m.report.seq), lastReportKind: m.report.question ? 'question' : 'report', lastReportAt: iso(m.report.at), lastReportSummary: summary(m.report.text) } : {}),
+    ...(m.report ? { lastReportId: eventId(floor, m.report.seq), lastReportKind: m.report.question ? 'question' : m.report.progress ? 'progress' : 'report', lastReportAt: iso(m.report.at), lastReportSummary: summary(m.report.text) } : {}),
     ...(m.openQuestion !== undefined ? { openQuestionId: eventId(floor, m.openQuestion) } : {}),
+    ...(m.awaitingJob ? { awaitingJob: true as const } : {}),
   };
 }
 
 /** An event with its id and time; the full text only when asked for. */
-export function compactEvent(e: Pick<TeamEvent, 'seq' | 'kind' | 'worker' | 'name' | 'at' | 'text' | 'options'>, floor: string, verbose = false) {
+export function compactEvent(e: Pick<TeamEvent, 'seq' | 'kind' | 'worker' | 'name' | 'at' | 'text' | 'options' | 'progress'>, floor: string, verbose = false) {
   return {
     id: eventId(floor, e.seq),
     kind: e.kind,
@@ -104,6 +105,7 @@ export function compactEvent(e: Pick<TeamEvent, 'seq' | 'kind' | 'worker' | 'nam
     at: iso(e.at),
     ...(e.text ? { summary: summary(e.text), ...(verbose ? { text: e.text } : {}) } : {}),
     ...(e.options?.length ? { options: e.options } : {}),
+    ...(e.progress ? { progress: true as const } : {}),
   };
 }
 
@@ -112,7 +114,7 @@ export type CompactEvent = ReturnType<typeof compactEvent>;
 
 export function compactWorkerText(w: CompactWorker): string {
   return [
-    `${w.name} (${w.id}) ${w.state}, ${w.desk}${w.task ? `: ${w.task}` : ''}.`,
+    `${w.name} (${w.id}) ${w.state}${w.awaitingJob ? ' (not finished: its progress report says it waits on its own background work)' : ''}, ${w.desk}${w.task ? `: ${w.task}` : ''}.`,
     ...(w.doing ? [`Doing: ${w.doing}.`] : []),
     ...(w.branch ? [`Branch ${w.branch}.`] : []),
     ...(w.pr ? [`PR ${w.pr.url}.`] : []),
@@ -121,7 +123,7 @@ export function compactWorkerText(w: CompactWorker): string {
 }
 
 export function compactEventText(e: CompactEvent): string {
-  return `[${e.id} ${e.at}] ${e.kind} ${e.name}${e.summary ? `: ${e.summary}` : ''}`;
+  return `[${e.id} ${e.at}] ${e.progress ? 'progress report (not finished)' : e.kind} ${e.name}${e.summary ? `: ${e.summary}` : ''}`;
 }
 
 /** The floors whose teams a caller's team tools cover: its own, or for a building agent every open floor (or the one named). */
@@ -440,7 +442,11 @@ export function register(server: OfficeMcpServer, deps: OfficeMcpDeps): void {
       const history = scopes.flatMap((s) => s.team.reports(lead, pick.e.worker).map((e) => compactEvent(e, s.id))).slice(-HISTORY_MAX);
       const report = compactEvent(pick.e, pick.floor, true);
       return officeResult(
-        [`${report.kind === 'question' ? 'Question' : 'Report'} ${report.id} from ${report.name} at ${report.at}:`, pick.e.text ?? '', ...(history.length > 1 ? [`History:\n${history.map(compactEventText).join('\n')}`] : [])].join('\n'),
+        [
+          `${report.kind === 'question' ? 'Question' : report.progress ? 'Progress report (not finished)' : 'Report'} ${report.id} from ${report.name} at ${report.at}:`,
+          pick.e.text ?? '',
+          ...(history.length > 1 ? [`History:\n${history.map(compactEventText).join('\n')}`] : []),
+        ].join('\n'),
         { report, history },
       );
     },

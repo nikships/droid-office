@@ -1,4 +1,5 @@
 import { LABEL_EFFORTS, type LabelEffort, type WorkerLabelSettings } from '../../shared/worker-labels';
+import { AIRGAPPED_REASON } from '../../shared/setup';
 import type { Net } from '../net';
 import { store } from '../state';
 import { h } from './dom';
@@ -14,6 +15,7 @@ export function workerLabelSettings(net: Net): { element: HTMLElement; dispose: 
   let saved = JSON.stringify(store.workerLabels.settings);
   const error = h('p.field-error', { role: 'alert', hidden: true });
   const status = h('p.field-hint', { role: 'status' });
+  const modeNote = h('p.note.info', {}, AIRGAPPED_REASON, ' Use a custom script for worker labels.');
   const on = toggle({ label: 'Generate worker labels', checked: store.workerLabels.settings.on, onChange: () => changed() });
   const implementation = h(
     'select.select',
@@ -83,6 +85,7 @@ export function workerLabelSettings(net: Net): { element: HTMLElement; dispose: 
     dirty = true;
     save.disabled = saving;
     error.hidden = true;
+    paint();
   }
   function mode() {
     const custom = implementation.value === 'custom';
@@ -112,6 +115,13 @@ export function workerLabelSettings(net: Net): { element: HTMLElement; dispose: 
   }
   function paint() {
     if (disposed) return;
+    modeNote.classList.toggle('hidden', !store.setup.airgapped);
+    const hosted = !!store.setup.airgapped && implementation.value !== 'custom';
+    const hostedOption = implementation.querySelector<HTMLOptionElement>('option[value=droid]');
+    if (hostedOption) hostedOption.disabled = !!store.setup.airgapped;
+    on.input.disabled = saving || hosted;
+    picker.setDisabled(saving || !!store.setup.airgapped);
+    save.disabled = saving || !dirty || (hosted && on.input.checked);
     const state = store.workerLabels;
     const next = JSON.stringify(state.settings);
     if (saved !== next) {
@@ -197,12 +207,14 @@ export function workerLabelSettings(net: Net): { element: HTMLElement; dispose: 
   sync();
   paint();
   const off = store.on('workerLabels', paint);
+  const offMode = store.on('setup', paint);
   void load();
   return {
     element: h(
       'div.stack.tight',
       {},
       on,
+      modeNote,
       field('Implementation', implementation),
       droidField,
       customFields,
@@ -222,6 +234,7 @@ export function workerLabelSettings(net: Net): { element: HTMLElement; dispose: 
       picker.close();
       customPicker.close();
       off();
+      offMode();
     },
   };
 }

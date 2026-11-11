@@ -719,6 +719,8 @@ export class WorkerManager {
     if (this.closing || this.selectingBranch) return 'Wait for the office to finish restarting or switching branches';
     const source = this.workers.get(id);
     if (!source) return 'No such worker';
+    const modelError = this.modelGate?.(source.info.activeModel ?? source.info.model);
+    if (modelError) return modelError;
     const why = forkRefusal(source.info);
     if (why) return why;
     const screen = source.term && readDroidScreen(screenRows(source.term));
@@ -1023,6 +1025,8 @@ export class WorkerManager {
     const w = this.workers.get(id);
     if (!w) return 'No such worker';
     if (w.pty) return 'Worker is already running';
+    const modelError = w.info.kind === 'agent' ? this.modelGate?.(w.info.activeModel ?? w.info.model) : undefined;
+    if (modelError) return modelError;
     if (this.checkLost(w, true)) return lostMessage(w.info);
     clockWork(w.info, 'starting');
     w.info.status = 'starting';

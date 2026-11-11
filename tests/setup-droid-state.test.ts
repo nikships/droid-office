@@ -4,7 +4,7 @@ import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, wr
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
-import { needsWelcome, type SetupState } from '../src/shared/setup.js';
+import { droidReady, needsWelcome, type SetupState } from '../src/shared/setup.js';
 import type { Runner } from '../src/server/setup/droid-install.js';
 import { parseDoctor } from '../src/server/setup/droid-signin.js';
 import { agentFinder, mountSetup, readSetupFile, type SetupOptions } from '../src/server/setup/index.js';
@@ -308,4 +308,66 @@ test('agentFinder takes a path as it is and looks in ~/.local/bin for droid', as
   assert.equal(await find(file), file);
   assert.equal(await find(path.join(home, 'nope')), null);
   assert.equal(await find('definitely-not-a-command-droid-office'), null);
+});
+
+test('airgapped survives restart, skips auth probes and returns to existing account credentials', async (t) => {
+  let doctorCalls = 0;
+  const o = office(t, {
+    setupJson: { onboarded: false, airgapped: true },
+    extra: {
+      customModels: () => ['custom:droidproxy:gpt-6-sol'],
+      run: async (_cmd, args) => {
+        if (args[0] === 'doctor') doctorCalls++;
+        return { code: 0, stdout: args[0] === 'doctor' ? DOCTOR_IN : '1.7.1\n', stderr: '' };
+      },
+    },
+  });
+  await until(() => o.last().droid.busy === null);
+  assert.equal(o.last().airgapped, true);
+  assert.equal(o.last().droid.signedIn, null);
+  assert.equal(droidReady(o.last()), true);
+  assert.equal(doctorCalls, 0);
+  o.setup.message('owner', { t: 'setup.droid.signIn' });
+  assert.equal(o.last().droid.busy, null);
+  assert.equal(doctorCalls, 0);
+  o.setup.message('owner', { t: 'setup.onboarded', done: true });
+  await until(() => readSetupFile(o.dataDir)?.onboarded === true);
+  assert.equal(readSetupFile(o.dataDir)?.airgapped, true);
+  o.setup.message('owner', { t: 'setup.airgapped', on: false });
+  await until(() => o.last().droid.busy === null && o.last().droid.signedIn === true);
+  assert.equal(doctorCalls, 1);
+  assert.equal(o.last().droid.account, 'o***@example.com');
+  await until(() => readSetupFile(o.dataDir)?.airgapped === false);
+  o.setup.message('owner', { t: 'setup.airgapped', on: true });
+  o.setup.message('owner', { t: 'setup.onboarded', done: false });
+  o.setup.message('owner', { t: 'setup.airgapped', on: false });
+  await until(() => readSetupFile(o.dataDir)?.airgapped === false && readSetupFile(o.dataDir)?.onboarded === false && o.last().droid.busy === null);
+  assert.deepEqual(o.toasts, []);
+});
+
+test('switching to airgapped cancels a sign-in before its auth probe returns', async (t) => {
+  let release: (() => void) | undefined;
+  let hold = false;
+  const o = office(t, {
+    signedIn: () => false,
+    extra: {
+      run: async (_cmd, args) => {
+        if (args[0] !== 'doctor') return { code: 0, stdout: '1.7.1\n', stderr: '' };
+        if (hold) await new Promise<void>((resolve) => (release = resolve));
+        return { code: 0, stdout: DOCTOR_OUT, stderr: '' };
+      },
+    },
+  });
+  await until(() => o.last().droid.busy === null);
+  hold = true;
+  o.setup.message('owner', { t: 'setup.droid.signIn' });
+  await until(() => !!release);
+  o.setup.message('owner', { t: 'setup.airgapped', on: true });
+  release!();
+  await until(() => o.last().droid.busy === null);
+  assert.equal(o.last().droid.signIn, undefined);
+  assert.equal(o.last().airgapped, true);
+  assert.equal(droidReady(o.last()), false, 'no custom model: setup is not ready yet');
+  assert.equal(needsWelcome(o.last()), true);
+  assert.deepEqual(o.toasts, []);
 });

@@ -1,7 +1,7 @@
 import type { Net } from '../net';
 import { store } from '../state';
-import { droidReady } from '../../shared/setup';
-import { providerName, type SubscriptionProvider, type SubscriptionProviderKey } from '../../shared/subscriptions';
+import { AIRGAPPED_FEATURES, AIRGAPPED_NETWORK_NOTE, droidReady } from '../../shared/setup';
+import { cannotRun, providerName, type SubscriptionProvider, type SubscriptionProviderKey } from '../../shared/subscriptions';
 import { copyButton } from './clipboard';
 import { h, openModal, toast, type Modal } from './dom';
 import { field, windowHeader } from './kit';
@@ -38,7 +38,7 @@ const STEP_ICON: Record<WelcomeStepId, string> = { droid: '🤖', factory: '🏭
 
 const LEDE: Record<WelcomeStepId, string> = {
   droid: 'Droid is the coding agent your workers are. The office installs it for you.',
-  factory: 'Droid runs on a Factory account. Sign in, or create an account, in your browser.',
+  factory: 'Sign in, or create a Factory account, in your browser. Or use your own models without an account.',
   subscriptions: 'Use the Claude or ChatGPT plan you already pay for. DroidProxy, a small menu-bar app, connects them.',
   ready: 'Pick the model new workers start on. You can change it any time in Settings → Models.',
 };
@@ -111,21 +111,26 @@ export function openWelcome(net: Net, first?: WelcomeStepId) {
   // Ready: the model picker stays put across repaints, so a pick isn't lost when the state moves.
   const picker = modelPicker({ id: 'welcome-model', label: 'Model for new workers', models: [], value: officeChoice().model, none: { label: 'Default', note: 'Droid’s own default' } });
   let picked = false;
+  let airgapped = !!store.setup.airgapped;
   let modelIds: string[] = [];
   picker.element.addEventListener('change', () => (picked = true));
+  picker.element.addEventListener('change', () => paintFooter(shown()));
   const preselect = () => {
     if (picked) return;
-    picker.set(readyModel(store.subscriptions, modelIds, officeChoice().model, justConnected(store.subscriptions, pressed)));
+    picker.set(readyModel(store.subscriptions, modelIds, officeChoice().model, justConnected(store.subscriptions, pressed), !!store.setup.airgapped));
   };
   let loading = false;
   const loadModels = () => {
     if (loading) return;
     loading = true;
+    const mode = airgapped;
     void droidCatalogue()
       .then((c) => {
+        if (mode !== !!store.setup.airgapped) return;
         modelIds = c.models.map((m) => m.id);
-        picker.setModels(c.models.map(pickerModel), { label: 'Default', note: 'Droid’s own default' });
+        picker.setModels(c.models.map(pickerModel), store.setup.airgapped ? undefined : { label: 'Default', note: 'Droid’s own default' });
         preselect();
+        paintFooter(shown());
       })
       .catch(() => {})
       .finally(() => (loading = false));
@@ -217,6 +222,8 @@ export function openWelcome(net: Net, first?: WelcomeStepId) {
     if (phase === 'checking') parts.push(waitLine('Checking Droid’s sign-in…'));
     if (phase === 'unknown') parts.push(h('p.field-hint', {}, 'The office couldn’t tell whether Droid is signed in.'));
     if (phase === 'signed-in') parts.push(done(d.account ? `Signed in as ${d.account}.` : 'Signed in to Factory.'));
+    if (phase === 'airgapped') parts.push(done('Airgapped · no Factory account. Existing credentials are kept.'));
+    parts.push(h('p.note.info', {}, AIRGAPPED_FEATURES), h('p.field-hint', {}, AIRGAPPED_NETWORK_NOTE));
     if (d.error && phase !== 'code' && phase !== 'starting') parts.push(h('p.note.bad', { role: 'alert' }, d.error));
     content.replaceChildren(...parts);
     signIn.paint();
@@ -308,11 +315,19 @@ export function openWelcome(net: Net, first?: WelcomeStepId) {
     content.replaceChildren(
       droidReady(store.setup)
         ? h('p.welcome-next', {}, 'Then walk up to an empty desk and press ', h('span.key', {}, 'E'), ' to hire your first worker.')
-        : h('p.note.info', {}, 'Droid needs to be installed and signed in first. The steps above do both.'),
+        : h(
+            'p.note.info',
+            {},
+            store.setup.airgapped
+              ? 'Install Droid and add a usable custom model first. Connect DroidProxy in Subscriptions, or add a customModels entry to ~/.factory/settings.json, then Check again below.'
+              : 'Droid needs to be installed and signed in first. The steps above do both.',
+          ),
+      ...(store.setup.airgapped ? [h('p.field-hint', {}, AIRGAPPED_NETWORK_NOTE), h('button.btn.sm', { type: 'button', onclick: () => net.send({ t: 'setup.check' }) }, 'Check again')] : []),
     );
   };
 
   const start = () => {
+    if (!droidReady(store.setup) || (store.setup.airgapped && (!modelIds.includes(picker.value()) || cannotRun(store.subscriptions.availability[picker.value()])))) return;
     const change = defaultWorkerChange(picker.value(), officeChoice());
     if (change !== undefined) net.send({ t: 'prompts.agent', choice: change });
     modal.close();
@@ -343,7 +358,10 @@ export function openWelcome(net: Net, first?: WelcomeStepId) {
         skipped.add(at);
         view(null);
       } else if (plan.secondary?.kind === 'cancelSignIn') net.send({ t: 'setup.droid.signInCancel' });
+      else if (plan.secondary?.kind === 'airgapped') net.send({ t: 'setup.airgapped', on: true });
     };
+    if (at === 'ready' && store.setup.airgapped && (!modelIds.includes(picker.value()) || cannotRun(store.subscriptions.availability[picker.value()])))
+      plan.primary = { kind: 'blocked', label: 'Start', why: 'Choose a usable custom model first' };
     const a = plan.primary;
     const next = JSON.stringify(a);
     if (next === primaryKey) return;
@@ -356,6 +374,13 @@ export function openWelcome(net: Net, first?: WelcomeStepId) {
   };
 
   const paint = () => {
+    if (airgapped !== !!store.setup.airgapped) {
+      airgapped = !!store.setup.airgapped;
+      picked = false;
+      modelIds = [];
+      picker.setModels([], airgapped ? undefined : { label: 'Default', note: 'Droid’s own default' });
+      picker.set('');
+    }
     if (viewing && !viewingWasDone && stepDone(viewing, store.setup, store.subscriptions)) viewing = null;
     const at = shown();
     paintNav(at);
@@ -381,7 +406,7 @@ export function openWelcome(net: Net, first?: WelcomeStepId) {
       current = null;
       closedHere = true;
       // Closed once Droid can run, with Start or not, the welcome is done: the steps left are optional.
-      if (droidReady(store.setup) && !store.setup.onboarded) net.send({ t: 'setup.onboarded', done: true });
+      if (droidReady(store.setup) && !store.setup.onboarded && (!store.setup.airgapped || modelIds.includes(picker.value()))) net.send({ t: 'setup.onboarded', done: true });
       picker.close();
       clearInterval(timer);
       for (const off of offs) off();

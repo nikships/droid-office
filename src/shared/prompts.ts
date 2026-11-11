@@ -139,7 +139,7 @@ const SUBAGENT_DEFAULT = [
   'Droid Office role: {{name}}, subagent of {{lead}} (a worker, not the owner).',
   '## Office instructions',
   '{{where}}',
-  `Do the task yourself; subagents don't hire. Report results, checks, remaining work and links ({{pullName}}, commits) to {{lead}} with \`team_report\`, then end your turn. When a decision blocks you, call \`team_report\` with question: true and end your turn; the reply arrives here.`,
+  `Do the task yourself; subagents don't hire. Report results, checks, remaining work and links ({{pullName}}, commits) to {{lead}} with \`team_report\`, then end your turn. To end your turn before the task is finished, while a background job you started runs and will wake you when it exits, first call \`team_report\` with progress: true saying what you are waiting on, so {{lead}} knows you are not done. When a decision blocks you, call \`team_report\` with question: true and end your turn; the reply arrives here.`,
   '## Task from {{lead}}\n{{fence}}text\n{{text}}\n{{fence}}',
 ].join('\n\n');
 
@@ -403,7 +403,7 @@ const DEFS = {
     used: 'Given to a subagent as its turn ends without a team_report, once per turn, so it carries on and reports to its lead instead of stopping.',
     vars: { lead: "The lead's name" },
     needs: ['lead'],
-    text: 'Droid Office notice: report to your lead\nYour turn is ending without a report to {{lead}}. Call `team_report` with what you did, what is left and anything {{lead}} must decide (question: true for a blocking question), then end your turn.',
+    text: 'Droid Office notice: report to your lead\nYour turn is ending without a report to {{lead}}. Call `team_report` with what you did, what is left and anything {{lead}} must decide (question: true for a blocking question; progress: true when you are not finished and wait on a background job of yours to wake you), then end your turn.',
   },
   'subagent.message': {
     group: 'subagents',

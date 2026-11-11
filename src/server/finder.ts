@@ -122,7 +122,8 @@ function finderModel(m: DroidModelOption): FinderModel {
 
 /** The models hidden in Settings stay out of Finder, as they do in every other picker, and cannot be dispatched. */
 export function finderCatalogue(catalogue: DroidModelCatalogue, hidden: readonly string[], defaultModel?: string): { models: FinderModel[]; defaultModel?: string } {
-  const model = defaultModel ?? catalogue.defaultModel;
+  const preferred = defaultModel ?? catalogue.defaultModel;
+  const model = catalogue.customOnly && !catalogue.models.some((m) => m.custom && m.id === preferred) ? undefined : preferred;
   return { models: visibleModels(catalogue.models, hidden).map(finderModel), ...(model ? { defaultModel: model } : {}) };
 }
 

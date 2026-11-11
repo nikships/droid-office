@@ -321,6 +321,66 @@ test('status snapshots include work, last report and bounded optional terminals;
   assert.match(wrong.output, /isn't one of your subagents/);
 });
 
+test('a progress report ends the turn as done, but tells the lead the subagent is not finished and waits on its background work', async (t) => {
+  const r = await rig(t);
+  await r.hire();
+  r.set('sub1', 'working');
+  const sub = await r.connect('sub1');
+  const both = await r.call(sub, 'team_report', { text: 'Waiting', progress: true, question: true });
+  assert.equal(both.isError, true);
+  assert.match(both.output, /leave progress out/);
+  const sent = await r.call(sub, 'team_report', { text: 'Items 1-3 committed. The from-zero rebuild runs in the background (30 to 45 minutes); verification follows.', progress: true });
+  assert.equal(sent.isError, undefined);
+  assert.equal(sent.body.progress, true);
+  assert.match(sent.output, /Sent Nibble a progress report: Nibble sees you are not finished\. End your turn now; your background job wakes you when it exits\./);
+  assert.match(sent.output, /final report \(progress left out\)/);
+  r.set('sub1', 'done');
+
+  const full = await r.status({ name: 'Pixel' });
+  const member = full.body.team[0];
+  assert.equal(member.status, 'done', 'its turn really ended');
+  assert.equal(member.state, 'done');
+  assert.equal(member.report.progress, true);
+  assert.match(full.output, /Idle for 0 minutes\.\\nNot finished: its turn ended after a progress report, and it waits on its own background work/);
+  assert.match(full.output, /Last progress report:\\nItems 1-3 committed/);
+  assert.match(full.output, /Worker progress report from Pixel \(not finished; its turn ended waiting on its own background work, which wakes it\)/);
+  assert.deepEqual(
+    full.body.events.map((e: Record<string, unknown>) => [e.kind, e.progress]),
+    [['report', true]],
+  );
+
+  assert.equal(member.awaitingJob, true);
+  const compact = await r.call(r.lead, 'team_status', { verbose: false });
+  assert.equal(compact.body.workers[0].lastReportKind, 'progress');
+  assert.equal(compact.body.workers[0].awaitingJob, true);
+  assert.match(compact.output, /Pixel \(sub1\) done \(not finished: its progress report says it waits on its own background work\)/);
+  const got = await r.call(r.lead, 'team_report_get', { worker: 'Pixel' });
+  assert.equal(got.body.report.progress, true);
+  assert.match(got.output, /Progress report \(not finished\) team:floor:\d+ from Pixel/);
+
+  // Woken by its job, a turn that ends without a report is no longer waiting on it.
+  r.set('sub1', 'working');
+  r.set('sub1', 'done');
+  const woken = await r.status({ name: 'Pixel' });
+  assert.equal(woken.body.team[0].report.progress, true, 'its last report is still the progress report');
+  assert.equal(woken.body.team[0].awaitingJob, undefined);
+  assert.doesNotMatch(woken.output, /Not finished/);
+  const wokenCompact = await r.call(r.lead, 'team_status', { verbose: false });
+  assert.equal(wokenCompact.body.workers[0].awaitingJob, undefined);
+  assert.doesNotMatch(wokenCompact.output, /not finished: its progress report/);
+
+  // It finishes with a final report: done again, and nothing says unfinished.
+  r.set('sub1', 'working');
+  const final = await r.call(sub, 'team_report', { text: 'Rebuild passed; all four items done.' });
+  assert.match(final.output, /Reported to Nibble\. End your turn now/);
+  assert.equal(final.body.progress, undefined);
+  r.set('sub1', 'done');
+  const after = await r.status({ name: 'Pixel' });
+  assert.equal(after.body.team[0].report.progress, undefined);
+  assert.doesNotMatch(after.output, /Not finished/);
+  assert.match(after.output, /Last report:\\nRebuild passed/);
+});
+
 test('status delivers questions, finished turns, stops and departures without waiting or duplicating news', async (t) => {
   const r = await rig(t);
   await r.hire();

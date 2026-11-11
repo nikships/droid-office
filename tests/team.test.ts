@@ -126,6 +126,20 @@ function rig(t: { after(fn: () => void): void }, over: Partial<TeamOptions> = {}
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
+test('airgapped team catalogues do not reintroduce hosted defaults or remembered allowlists', async (t) => {
+  const id = 'custom:droidproxy:gpt-6-sol';
+  const r = rig(t, { models: async () => ({ customOnly: true, models: [{ id, displayName: 'GPT 6 Sol', custom: true }], defaultModel: id }) }, { models: [{ id: 'auto' }, { id }] });
+  r.fake.officeDefault = { model: 'auto' };
+  for (const action of ['models', 'models_list']) {
+    const result = await r.call('lead', { action });
+    assert.deepEqual(
+      result.body.models.map((m: { id: string }) => m.id),
+      [id],
+    );
+    assert.equal(result.body.defaultModel, undefined, 'a hosted office override is not falsely described as running a custom model');
+  }
+});
+
 test('a lead hires a subagent at the free desk nearest it, in its own worktree, on the Subagents setting', async (t) => {
   const r = rig(t, {}, { agent: { model: 'custom:droidproxy:gpt-6-sol', effort: 'high' } });
   const res = await r.call('lead', { action: 'hire', task: '  Fix the login redirect\r\nand test it  ', title: 'Fix login' });
@@ -764,6 +778,31 @@ test('a subagent the owner sends home is news to its lead, saying who sent it', 
     (await r.call('lead', { action: 'status' })).body.events.map((e: any) => [e.kind, e.name]),
     [['sent_home', 'Pixel']],
   );
+});
+
+test('a progress report wakes the lead with news that the subagent is not finished, and its turn ending is no news', async (t) => {
+  const r = rig(t);
+  await r.call('lead', { action: 'hire', task: 'a' });
+  r.set('sub1', 'working');
+  r.set('lead', 'done');
+  const sent = await r.call('sub1', { action: 'report', text: 'Rebuild running in the background', progress: true });
+  assert.equal(sent.status, 200);
+  assert.equal(sent.body.progress, true);
+  r.set('sub1', 'done');
+  await sleep(40);
+  assert.equal(r.fake.prompts.length, 1);
+  assert.match(r.fake.prompts[0][1], /^Droid Office notice: team update\nPixel sent a progress report: it is not finished, and waits on its own background work to wake it\.\n/);
+  const events = (await r.call('lead', { action: 'status' })).body.events;
+  assert.deepEqual(
+    events.map((e: any) => [e.kind, e.progress]),
+    [['report', true]],
+  );
+  assert.equal((await r.call('sub1', { action: 'report', text: 'x', progress: 'yes' })).status, 400);
+  r.team.stop();
+  const again = new Team(r.fake, { dataDir: r.dir, dir: '/proj', git: true, settings: () => r.settings, toast() {} });
+  t.after(() => again.stop());
+  const restored = (await again.handle(r.fake.get('lead')!, { action: 'status' })).body.team as any[];
+  assert.equal(restored[0].report.progress, true, 'a restart keeps the report marked as progress');
 });
 
 test('a lead at rest is woken once per batch of news, and a busy one when it comes to rest', async (t) => {

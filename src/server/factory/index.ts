@@ -1,4 +1,5 @@
-import type { FactoryState } from '../../shared/factory.js';
+import { emptyFactoryState, type FactoryState } from '../../shared/factory.js';
+import { AIRGAPPED_REASON } from '../../shared/setup.js';
 import { isFactoryFeature } from '../../shared/factory.js';
 import type { ClientMsg, ServerMsg } from '../../shared/protocol.js';
 import { CiFeature } from './ci.js';
@@ -15,6 +16,7 @@ export { sendDownload } from './feature.js';
 export type FactoryMsg = Extract<ClientMsg, { t: `factory.${string}` }>;
 
 export interface MountOptions {
+  paused?: boolean;
   dataDir: string;
   broadcast(state: FactoryState): void;
   toast(text: string, level?: 'info' | 'warn' | 'error'): void;
@@ -34,8 +36,9 @@ export interface MountOptions {
  * connection closes. A new feature registers here.
  */
 export function mountFactory(opts: MountOptions) {
-  const office = new FactoryOffice(opts.dataDir, { fetchImpl: opts.fetchImpl, base: opts.base });
-  const registry = new FactoryRegistry({ link: office, broadcast: opts.broadcast, toast: opts.toast });
+  let paused = !!opts.paused;
+  const office = new FactoryOffice(opts.dataDir, { fetchImpl: opts.fetchImpl, base: opts.base, paused });
+  const registry = new FactoryRegistry({ link: office, broadcast: (state) => opts.broadcast(paused ? emptyFactoryState() : state), toast: opts.toast });
   registry.register((host) => new ComputersFeature(host));
   registry.register((host) => new EnvironmentsFeature(host));
   registry.register((host) => new SessionsFeature(host, { dataDir: opts.dataDir, officeSessions: opts.officeSessions }));
@@ -52,6 +55,11 @@ export function mountFactory(opts: MountOptions) {
 
   /** Handles a factory.* message from connection `client` (named `who`); `reply` answers only them. */
   const message = (client: string, who: string, msg: FactoryMsg, reply: (msg: ServerMsg) => void) => {
+    if (paused) {
+      if (msg.t === 'factory.connect') reply({ t: 'factory.setup', ok: false, error: AIRGAPPED_REASON });
+      else if (msg.t === 'factory.watch' && isFactoryFeature(msg.feature)) registry.watch(client, msg.feature, msg.on === true);
+      return;
+    }
     switch (msg.t) {
       case 'factory.connect': {
         const was = office.connection().fingerprint;
@@ -87,7 +95,14 @@ export function mountFactory(opts: MountOptions) {
     office,
     registry,
     cloud,
-    state: () => registry.state(),
+    state: () => (paused ? emptyFactoryState() : registry.state()),
+    setPaused: (on: boolean) => {
+      paused = on;
+      office.setPaused(on);
+      // The registry deduplicates the unmasked cache, which does not change when pausing.
+      opts.broadcast(on ? emptyFactoryState() : registry.state());
+      if (!on) void office.check();
+    },
     message,
     drop: (client: string) => registry.drop(client),
     stop: () => {

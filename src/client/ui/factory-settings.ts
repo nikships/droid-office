@@ -1,4 +1,5 @@
 import { FACTORY_GROUPS, FACTORY_KEYS_URL, type FactoryCapability } from '../../shared/factory';
+import { AIRGAPPED_REASON } from '../../shared/setup';
 import { onFactorySetup, refreshFactory } from '../factory';
 import type { Net } from '../net';
 import { store } from '../state';
@@ -48,11 +49,17 @@ export function factoryKeySettings(net: Net): { key: { desc: Node; below: Node[]
   const error = h('p.note.bad', { role: 'alert' });
   const caps = h('ul.group.factory-caps', { 'aria-label': 'What the key can reach' });
   const reach = disclosure('What the key reaches', caps);
+  const modeNote = h('p.note.info', {}, AIRGAPPED_REASON, ' Existing credentials are kept.');
 
   let busy = false;
   let replacing = false;
   let failure = '';
   const paint = () => {
+    modeNote.classList.toggle('hidden', !store.setup.airgapped);
+    if (store.setup.airgapped) {
+      for (const el of [intro, summary, form, error, rejected, actions, reach]) el.classList.add('hidden');
+      return;
+    }
     const c = store.factory.connection;
     const editing = !c.connected || replacing;
     for (const el of [summary, rejected, actions, reach]) el.classList.toggle('hidden', !c.connected || replacing);
@@ -118,14 +125,16 @@ export function factoryKeySettings(net: Net): { key: { desc: Node; below: Node[]
     paint();
   });
   const offState = store.on('factory', paint);
+  const offMode = store.on('setup', paint);
   // The "5m ago"s age while Settings stays open.
   const timer = setInterval(paint, 30_000);
   paint();
   return {
-    key: { desc: h('span.stack.tight', {}, intro, summary), below: [form, error, rejected, actions, reach] },
+    key: { desc: h('span.stack.tight', {}, intro, summary), below: [modeNote, form, error, rejected, actions, reach] },
     dispose: () => {
       offSetup();
       offState();
+      offMode();
       clearInterval(timer);
     },
   };

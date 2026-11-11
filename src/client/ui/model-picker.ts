@@ -17,6 +17,8 @@ export interface NoneOption {
 }
 
 export interface ModelPickerOptions {
+  /** Account-free worker pickers never offer hosted or arbitrary remembered ids. */
+  customOnly?: () => boolean;
   /** The control's accessible name, and the popover's. */
   label: string;
   id?: string;
@@ -124,10 +126,18 @@ export function modelPicker(opts: ModelPickerOptions): ModelPicker {
   });
 
   /** The models as they can run right now: read when drawn, so a quota that runs out shows up in an open list. */
-  const listed = (): PickerModel[] => withAvailability(visibleModels(source, store.hiddenModels), store.subscriptions, Date.now());
+  const listed = (): PickerModel[] =>
+    withAvailability(
+      visibleModels(
+        source.filter((m) => !opts.customOnly?.() || m.custom),
+        store.hiddenModels,
+      ),
+      store.subscriptions,
+      Date.now(),
+    );
   const known = (id: string) => withAvailability(source, store.subscriptions, Date.now()).find((m) => m.id === id);
   /** Why the `none` row's model can't run now, if it can't. */
-  const noneReason = () => availabilityOf(none?.model, store.subscriptions, Date.now()).reason;
+  const noneReason = () => (opts.customOnly?.() && !source.some((m) => m.custom && m.id === none?.model) ? 'Choose a configured custom model in airgapped mode.' : availabilityOf(none?.model, store.subscriptions, Date.now()).reason);
 
   /** The default model's logo, label and note, as the trigger and its row both draw them. */
   const noneParts = (option: NoneOption): Child[] => [modelLogo({ id: option.model, name: option.note }), h('span.mp-name', {}, option.label), option.note ? h('span.mp-note', {}, option.note) : null];
@@ -296,7 +306,7 @@ export function modelPicker(opts: ModelPickerOptions): ModelPicker {
       nodes.push(h('div.mp-head', { role: 'presentation' }, s.key.startsWith('g:') ? (s.models[0]?.glyph ? pinwheel() : providerLogo(s.label)) : null, s.label, h('small', {}, s.flat ? '' : String(s.models.length))));
       for (const m of s.models) nodes.push(row(m.id, m, !!s.flat));
     }
-    if (opts.allowCustom && isCustomId(typed) && !known(typed) && !store.hiddenModels.includes(typed)) {
+    if (opts.allowCustom && !opts.customOnly?.() && isCustomId(typed) && !known(typed) && !store.hiddenModels.includes(typed)) {
       customValue = typed;
       nodes.push(row(CUSTOM, undefined, false));
     }
@@ -465,9 +475,11 @@ export function modelPicker(opts: ModelPickerOptions): ModelPicker {
     window.addEventListener('scroll', onScroll, true);
     const offSubscriptions = store.on('subscriptions', onSubscriptions);
     const offHidden = store.on('hiddenModels', onSubscriptions);
+    const offSetup = store.on('setup', onSubscriptions);
     stopWatching = () => {
       offSubscriptions();
       offHidden();
+      offSetup();
     };
     watchTrigger = setInterval(() => {
       if (!trigger.isConnected) close();
