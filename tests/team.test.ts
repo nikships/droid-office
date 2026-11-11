@@ -766,6 +766,31 @@ test('a subagent the owner sends home is news to its lead, saying who sent it', 
   );
 });
 
+test('a progress report wakes the lead with news that the subagent is not finished, and its turn ending is no news', async (t) => {
+  const r = rig(t);
+  await r.call('lead', { action: 'hire', task: 'a' });
+  r.set('sub1', 'working');
+  r.set('lead', 'done');
+  const sent = await r.call('sub1', { action: 'report', text: 'Rebuild running in the background', progress: true });
+  assert.equal(sent.status, 200);
+  assert.equal(sent.body.progress, true);
+  r.set('sub1', 'done');
+  await sleep(40);
+  assert.equal(r.fake.prompts.length, 1);
+  assert.match(r.fake.prompts[0][1], /^Droid Office notice: team update\nPixel sent a progress report: it is not finished, and waits on its own background work to wake it\.\n/);
+  const events = (await r.call('lead', { action: 'status' })).body.events;
+  assert.deepEqual(
+    events.map((e: any) => [e.kind, e.progress]),
+    [['report', true]],
+  );
+  assert.equal((await r.call('sub1', { action: 'report', text: 'x', progress: 'yes' })).status, 400);
+  r.team.stop();
+  const again = new Team(r.fake, { dataDir: r.dir, dir: '/proj', git: true, settings: () => r.settings, toast() {} });
+  t.after(() => again.stop());
+  const restored = (await again.handle(r.fake.get('lead')!, { action: 'status' })).body.team as any[];
+  assert.equal(restored[0].report.progress, true, 'a restart keeps the report marked as progress');
+});
+
 test('a lead at rest is woken once per batch of news, and a busy one when it comes to rest', async (t) => {
   const r = rig(t);
   await r.call('lead', { action: 'hire', task: 'a' });
