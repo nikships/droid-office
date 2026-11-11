@@ -205,7 +205,11 @@ test('subagents read sibling context and publish areas, while leads can steer a 
     assert.match(status.output, /Areas: src\/shared\/api.ts/);
     assert.match(status.output, /Note: Shared API changed/);
   }
-  await r.call(sub, 'team_report', { text: 'Reported with a note.' });
+  await r.call(sub, 'team_report', { text: 'Reported with a note.', result: { status: 'partial', summary: 'API is ready; callers remain.' } });
+  const resultBoard = await r.call(sub, 'team_board');
+  assert.deepEqual(resultBoard.body.members[0].result, { status: 'partial', summary: 'API is ready; callers remain.' });
+  assert.equal(resultBoard.body.members[0].report.summary, 'API is ready; callers remain.');
+  assert.match(resultBoard.output, /Latest report \(partial\): API is ready; callers remain/);
   const waited = await r.call(r.lead, 'team_wait', { timeoutSec: 1 });
   assert.deepEqual(waited.body.workers[0].areas, ['src/shared/api.ts']);
   assert.match(waited.output, /Note: Shared API changed/);

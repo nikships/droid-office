@@ -153,7 +153,7 @@ test('sibling board, notes and hire snapshots share concise live context without
   const r = rig(t);
   await r.call('lead', { action: 'hire', title: 'Shared API', task: 'Change src/shared/api.ts' });
   r.set('sub1', 'working', { activity: 'Updating shared API' });
-  await r.call('sub1', { action: 'report', text: `Use the new API. ${'detail '.repeat(200)}` });
+  await r.call('sub1', { action: 'report', text: 'Use the new API.', result: { status: 'ok', summary: `Use the new API. ${'detail '.repeat(200)}` } });
   await r.call('sub1', { action: 'note', text: 'API now takes an options object.', areas: ['src/shared/api.ts'] });
   await r.call('lead', { action: 'hire', title: 'Client', task: 'Update callers' });
   assert.equal(r.fake.hired[1].prompt, 'Update callers');
@@ -189,6 +189,33 @@ test('sibling board, notes and hire snapshots share concise live context without
   await r.call('sub1', { action: 'note', text: 'Finished API edits.', areas: [] });
   assert.deepEqual(r.team.board('lead')[0].areas, []);
   assert.equal((await r.call('lead', { action: 'note', text: 'No' })).status, 403);
+});
+
+test('sibling board uses the existing structured result status and summary, with legacy report fallback', async (t) => {
+  const r = rig(t);
+  await r.call('lead', { action: 'hire', task: 'Shared API' });
+  await r.call('lead', { action: 'hire', task: 'Client' });
+  for (const status of ['ok', 'blocked', 'failed', 'partial'] as const) {
+    const summary = `Canonical ${status} summary.`;
+    await r.call('sub1', { action: 'report', text: 'Different legacy prose.', result: { status, summary } });
+    const board = (await r.call('sub2', { action: 'board' })).body.members;
+    assert.deepEqual(board[0].result, { status, summary });
+    assert.equal(board[0].report.summary, summary);
+    assert.match(r.team.siblingSnapshot('lead', 'sub2')!, new RegExp(`Latest report \\(${status}\\): Canonical ${status} summary`));
+    assert.doesNotMatch(r.team.siblingSnapshot('lead', 'sub2')!, /Different legacy prose/);
+  }
+  await r.call('sub1', { action: 'report', text: 'Legacy report only.' });
+  const latest = r.team.board('lead')[0];
+  assert.deepEqual(latest.result, { status: 'ok', summary: 'Legacy report only.' }, 'new prose reports use the upstream normalization');
+  assert.equal(latest.report?.summary, 'Legacy report only.');
+  const statePath = path.join(r.dir, 'team.json');
+  const saved = JSON.parse(readFileSync(statePath, 'utf8'));
+  for (const event of saved.events) delete event.result;
+  writeFileSync(statePath, JSON.stringify(saved));
+  const restored = new Team(r.fake, { dataDir: r.dir, dir: '/proj', git: true, settings: () => r.settings, toast() {} });
+  t.after(() => restored.stop());
+  assert.equal(restored.board('lead')[0].result, undefined, 'historical reports need no invented result');
+  assert.equal(restored.board('lead')[0].report?.summary, 'Legacy report only.');
 });
 
 test('sibling notes never type, queue behind a turn, revive resting sessions or prolong reported work', async (t) => {

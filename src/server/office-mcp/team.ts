@@ -127,7 +127,8 @@ export function register(server: OfficeMcpServer, deps: OfficeMcpDeps): void {
   server.tool(
     {
       name: 'team_board',
-      description: 'Read your same-team sibling context cheaply: task titles, status, branches, declared edit areas, latest notes and short report summaries. Includes you. Does not read terminals, run Git, or consume your lead’s news.',
+      description:
+        'Read your same-team sibling context cheaply: task titles, status, branches, declared edit areas, latest notes, existing result status and short result/report summaries. Includes you. Does not read terminals, run Git, or consume your lead’s news.',
       inputSchema: z.strictObject({}),
       annotations: readOnly,
     },

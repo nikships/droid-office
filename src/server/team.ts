@@ -186,6 +186,7 @@ export interface TeamBoardMember {
   areas: string[];
   note?: { text: string; at: number };
   report?: { summary: string; kind: 'report' | 'question' | 'progress'; at: number };
+  result?: Pick<WorkerResult, 'status' | 'summary'>;
 }
 
 export function teamBoardText(members: TeamBoardMember[]): string {
@@ -196,7 +197,7 @@ export function teamBoardText(members: TeamBoardMember[]): string {
         ...(w.areas.length ? [`Areas: ${w.areas.join(', ')}.`] : []),
         ...(w.activity ? [`Doing: ${w.activity}.`] : []),
         ...(w.note ? [`Note: ${w.note.text}`] : []),
-        ...(w.report ? [`Latest ${w.report.kind}: ${w.report.summary}`] : []),
+        ...(w.report ? [`Latest ${w.report.kind}${w.result ? ` (${w.result.status})` : ''}: ${w.report.summary}`] : []),
       ].join(' '),
     )
     .join('\n');
@@ -705,7 +706,8 @@ export class Team {
         ...(w.worktree ? { branch: w.worktree.branch } : {}),
         areas: [...(note?.areas ?? [])],
         ...(note?.text ? { note: { text: note.text, at: note.at } } : {}),
-        ...(w.report ? { report: { summary: clip(w.report.text, 300), kind: w.report.question ? 'question' : w.report.progress ? 'progress' : 'report', at: w.report.at } } : {}),
+        ...(w.report ? { report: { summary: clip(w.report.result?.summary ?? w.report.text, 300), kind: w.report.question ? 'question' : w.report.progress ? 'progress' : 'report', at: w.report.at } } : {}),
+        ...(w.report?.result ? { result: { status: w.report.result.status, summary: clip(w.report.result.summary, 300) } } : {}),
       };
     });
   }
