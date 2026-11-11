@@ -1,74 +1,58 @@
 ---
 name: office-demo-staging
-description: Stage a real, busy Droid Office for a demo and tear it down afterwards. Opens demo GitHub issues, hires real droid workers in their own worktrees on chosen models, cues the states worth showing (working, acting out a tool, the needs-you jump, done confetti, a pull request on the boards), then closes exactly the issues, PRs, branches, worktrees and workers it made. Use before a live demo, a recording or screenshots that need a busy office, or to clean up demo workers and issues.
+description: Stage a busy Droid Office with real GitHub issues, worktree-isolated workers, and cued states (`working`, `needs_input`, confetti, PRs), then tear down every staged resource. Use only for owner-requested demos or demo cleanup.
 ---
 
 # Staging a demo office
 
-A demo looks best with real work in it: issues on the wall, workers at desks on different models, terminals scrolling, pull requests and CI on the boards. These scripts set that up from the [`office-choreography`](../office-choreography/SKILL.md) session (run its `boot.sh` first). They work the same for a live demo and for one you record with [`office-video-capture`](../office-video-capture/SKILL.md). They log everything they create to `$CAPTURE_DIR/stage.log`, so `cleanup.sh` can undo exactly that and nothing else.
+Populates an office from an active [`office-choreography`](../office-choreography/SKILL.md) session (`boot.sh` first) for live demos or [`office-video-capture`](../office-video-capture/SKILL.md) shoots, logging every created issue and worker to `$CAPTURE_DIR/stage.log` so `cleanup.sh` removes only staged items.
 
 ## Ground rules
 
-- **Only for a demo the owner asked for.** Tests, bug repros and pull-request proof run on a clone of the owner's real office ([`office-clone`](../office-clone/SKILL.md)) and show what is really there.
-- **Ask before you write to GitHub or the owner's office.** Opening issues and hiring workers are outside-world writes. Agree on the repository and how many issues, and agree to clean up afterwards.
-- **Every hire gets a worktree.** `boot.sh` sets the tab's `droid-office.worktree` pref, and `hire.sh` ticks the dialog's worktree box. Handing a carried issue card to a desk hires at once with **only** the tab's pref, so a hire without it edits and branches in the owner's checkout. To recover, stop the worker and save its diff (`git diff > patch`), restore only the files it touched, switch back to the branch the checkout was on, and delete the branch it made. Changes that were there before stay exactly as they were.
-- **Touch only the workers you staged.** Prompt, send home or film the owner's own workers only when they say so; every script takes explicit names or desks.
-- **Workers run real tools.** A worker may start servers, run tests or push. Tell workers to stay inside their worktree. Afterwards, check that nothing is left listening that a worker started (`lsof -nP -iTCP -sTCP:LISTEN`), and tell the owner about any surprises.
+- **Owner-requested demos only:** run tests, bug repros and PR proof on an unpopulated [`office-clone`](../office-clone/SKILL.md) instead. Confirm the target repository, issue count and cleanup plan with the owner before opening GitHub issues or hiring workers.
+- **Worktree isolation:** `boot.sh` sets `droid-office.worktree=1` and `hire.sh` checks the worktree box (`hire.sh` aborts when a floor's checkout is detached unless `ALLOW_NO_WORKTREE=1` is set). Handing a carried issue card to a desk uses only the tab pref; if a worker ever starts in the owner's checkout by mistake, stop it, save `git diff > patch`, restore only the files it touched, switch back to the prior branch, and delete its branch.
+- **Staged-worker scope:** prompt, film or dismiss only workers you staged (unless the owner approves touching theirs), and instruct staged workers to stay inside their worktree.
 
-## 1. Issues on the wall
+## 1. Open demo issues
 
 ```bash
 D=.agents/skills/office-demo-staging/scripts
 $D/demo-issues.sh nikships/droid-office .agents/skills/office-demo-staging/references/demo-issues.tsv
 ```
 
-The TSV has one issue per row: `title<TAB>labels<TAB>body`, and the labels must already exist. The example file holds ten small, plausible Droid Office issues (jukebox shuffle, coffee meter pulse, ladder help, and so on). Mix in `bug`, `enhancement`, `documentation` and `good first issue` labels so the cards vary. Assigning one or two to the owner (`gh issue edit N --add-assignee <owner>`) puts avatars on the cards.
+Each TSV row is `title<TAB>labels<TAB>body` using existing repo labels (`bug`, `enhancement`, `documentation`, `good first issue`); assign one or two (`gh issue edit N --add-assignee <owner>`) to render card avatars.
 
-## 2. Workers at desks
+## 2. Hire workers at desks
 
 ```bash
-$D/hire.sh desk-4 "Haiku 4.5"  "Work on GitHub issue #160 in nikships/droid-office (read it with gh issue view 160). Implement it, run lint and the relevant tests, then commit and open a pull request that closes #160."
-$D/hire.sh desk-1 "Opus 5.5"   "Work on GitHub issue #157 …"
+$D/hire.sh desk-4 "Haiku 4.5" "Work on GitHub issue #160 in nikships/droid-office (read it with gh issue view 160). Implement it inside this worktree, run lint and relevant tests, then commit and open a pull request closing #160."
+$D/hire.sh desk-1 "Opus 5.5"  "Work on GitHub issue #157 …"
 ```
 
-- `hire.sh` refuses to hire when the dialog offers no worktree, which happens on a floor whose checkout isn't on a git branch. Set `ALLOW_NO_WORKTREE=1` only when it's fine for the worker to work in that folder itself.
-- Pick free desks next to each other (`office.list()`, `office.state().workers`) so one side view shows several workers. Give each worker a different model; the desk labels show the model.
-- Space hires about 20 s apart, because each new worktree runs the floor's setup (`npm ci` here).
-- If a hire fails or the model list differs, read the dialog with `agent-browser snapshot -i`.
+Pick adjacent free desks (`office.list()`, `office.state().workers`) with distinct models so one camera angle shows varied desk badges. Space hires ~20s apart so worktree setup (`npm ci`) does not thrash; inspect dialog mismatches with `agent-browser snapshot -i`.
 
-## 3. Cue a state for the camera
+## 3. Cue states on camera
 
-| Want on camera | How |
+| Camera state | Trigger |
 | --- | --- |
-| Working, terminal scrolling | Any fresh hire. The first minutes are the busiest |
-| Acting out a tool | A read-only review prompt ("read README, guide, X.ts, run the X test…"). The worker acts out each tool call |
-| Needs-you jump | End the prompt with "then ask me which option I prefer with AskUser". The worker jumps when its status turns `needs_input` |
-| Confetti | Send a worker that is `done` a one-line prompt (`send.sh Widget "Reply with one short sentence confirming PR #164 is ready."`). It goes working → done again |
-| PR and CI on the boards | Workers that open PRs. The Pull requests and Pipelines boards fill in as checks run |
+| Working, terminal scrolling | Fresh hire during its first minutes |
+| Acting out tools | Read-only review prompt naming files and a test to run |
+| `needs_input` jump | Append `"then ask me which option I prefer with AskUser"` |
+| Done confetti | Send a `done` worker a one-line follow-up via `send.sh` (`working` → `done`) |
+| PRs and CI on boards | Workers opening PRs populate Pull requests and Pipelines boards |
 
 ```bash
-$D/send.sh Widget "…"                                  # prompt a worker (P dialog, SEND)
-$D/wait-status.sh Widget done 180 --via working        # block in the shell until the flip
+$D/send.sh Widget "Reply in one short sentence confirming PR #164 is ready."
+$D/wait-status.sh Widget done 180 --via working        # short-eval shell poll; start recording before the flip
 ```
 
-When you record, start before the state flips. Wait from the shell with `wait-status.sh`, which polls with short evals: one long page eval drops the browser connection.
-
-## 4. Tear it down
+## 4. Tear down and verify
 
 ```bash
-$D/cleanup.sh nikships/droid-office          # dry run: lists workers, PRs, issues it will close
-$D/cleanup.sh nikships/droid-office --yes
+$D/cleanup.sh nikships/droid-office          # dry run: lists staged workers, PRs and issues
+$D/cleanup.sh nikships/droid-office --yes    # kills workers (cleanup: 'all'), closes PRs (--delete-branch) and issues
 ```
 
-The script does three things:
-- It sends the staged workers home over the office WebSocket (`worker.kill` with `cleanup: 'all'`), which removes their worktree folders and local branches.
-- It closes their PRs with `--delete-branch`. A PR counts only when its head branch is `office/<name>-*` and it was opened after the log started.
-- It closes the staged issues as "not planned" with a comment.
+(`send-home.sh <name>...` dismisses individual workers, including `needs_input`.)
 
-`send-home.sh <name>...` dismisses single workers, including one waiting on a question.
-
-Afterwards:
-- Run `git worktree list` and `git branch --list 'office/*'` to confirm that only branches older than the log remain.
-- Run `git status` in the main checkout and confirm that the owner's changes are untouched.
-- Close the capture tab (`agent-browser close`).
-- Keep `stage.log` and your scripts.
+Teardown is complete when `cleanup.sh --yes` finishes, `git worktree list` and `git branch --list 'office/*'` contain nothing newer than `stage.log`, `lsof -nP -iTCP -sTCP:LISTEN` shows no stray worker servers, `git status` in the main checkout is untouched, and `agent-browser close` has closed the capture tab (keep `stage.log` and move scripts).

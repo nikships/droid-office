@@ -1,75 +1,54 @@
 ---
 name: office-choreography
-description: Script smooth first-person movement in the Droid Office 3D office on top of `window.office`: eased pans and turns, walks that steer to a point, held and tapped keys, crosshair aiming, and reusable moves (aisle walk, board pan, terminal, elevator, rooftop, wand). Use to move, look or press keys beyond what `goTo`/`interact` give: a live demo, a camera move for a recording, an input bug repro, or testing walking, climbing or the sidearm.
+description: Choreograph first-person movement in the Droid Office 3D scene (`office-rig.js` eased pans/turns, steered walks, key holds/taps, crosshair aiming) between `window.office` targets. Use for camera moves, live demos, or testing walking, climbing, collisions and the sidearm.
 ---
 
 # Scripting movement in the office
 
-`window.office` jumps you to places and presses desk keys. For everything between those jumps, `scripts/office-rig.js` adds a movement rig to the office tab: eased turns and pans, walks that steer themselves, key holds and taps, and crosshair aiming. It works through the office's own drag-to-look and key handlers with synthetic events, so what you script is exactly what a player could do. The full `window.office` command list is in [`office-3d-testing`](../office-3d-testing/SKILL.md).
+`scripts/office-rig.js` layers smooth first-person motion onto [`window.office`](../office-3d-testing/SKILL.md) via synthetic drag-to-look and key events on the office's own handlers. Pair with [`office-video-capture`](../office-video-capture/SKILL.md) to record takes and [`office-demo-staging`](../office-demo-staging/SKILL.md) to populate desks.
 
-Related skills: [`office-video-capture`](../office-video-capture/SKILL.md) records these moves. [`office-demo-staging`](../office-demo-staging/SKILL.md) fills the office with demo work.
+**Input scope:** Synthetic rig events test scene handlers and choreograph camera moves. Use [`office-clone`'s `desktop` helper](../office-clone/references/native-desktop.md) for native macOS AX checks, and request explicit owner permission with `agent-desktop-macos` for physical OS input (`agent-desktop key-down`/`key-up` are reserved no-ops, so key holds stay on the rig).
 
-**Input layers.** The rig's synthetic events exercise the office's own handlers and choreograph scene motion; they prove nothing about OS input delivery, pointer lock or native menus. Native accessibility checks use the clone runner's optional [`desktop` helper](../office-clone/references/native-desktop.md). A real keyboard or pointer test needs the owner's explicit permission for physical input and the installed `agent-desktop-macos` contract. Key holds stay on the rig: `agent-desktop key-down`/`key-up` are reserved and deliver no input.
+## 1. Boot the rig session
 
-## 1. Open a session with the rig
+Target an [`office-clone`](../office-clone/SKILL.md) (`$T`, default) or `:4600` (where desk keys act on the owner's live workers):
 
 ```bash
 R=.agents/skills/office-choreography/scripts
 OFFICE_URL=http://127.0.0.1:4677 OFFICE_SETTINGS=$T/load-settings.js OFFICE_FLOOR=droid-office $R/boot.sh
 ```
 
-`boot.sh` does the following:
-- Opens the office headed at 1920×1080 in agent-browser session `office-rig`, at `?pace=full`. That flag keeps this one tab drawing every frame. Without it, the office drops to about 5 FPS after 30 s of stillness and stops while its window is covered, which makes moves stutter.
-- Loads the owner's profile and browser settings from `OFFICE_SETTINGS` (a clone's `load-settings.js`), which also skips the character picker.
-- Sets the tab's worktree pref, so a hire from this tab never works in the owner's checkout.
-- Waits until you are in, loads the rig, and rides to `OFFICE_FLOOR`.
+`boot.sh` (with `env.sh` forcing headed mode and disabling idle daemon shutdown) opens a 1920×1080 headed `office-rig` session at `?pace=full` (preventing the 5 FPS idle drop after 30s or while covered), applies `OFFICE_SETTINGS` (skipping the character picker), sets `droid-office.worktree=1`, injects `office-rig.js`, and rides to `OFFICE_FLOOR`. Rerun `boot.sh` if an eval reports `office is not defined` or `document.getElementById('fps').textContent` drops to ~5 FPS.
 
-Choose the office first:
-- A **clone of the owner's office** ([`office-clone`](../office-clone/SKILL.md), `$T` is the folder it printed) is the default: their real floors, boards, Factory data and settings, with nobody at the desks.
-- The **owner's office** (:4600) has their real workers and boards. Your tab has its own camera, but desk keys act on their real workers (see "E means the real thing" below).
+## 2. Script moves
 
-`env.sh` (sourced by every script) forces headed mode and turns off agent-browser's idle shutdown. A headless relaunch drops the page to `about:blank`. **If an eval says `office is not defined`, rerun `boot.sh`.**
-
-## 2. Move
-
-Run moves with `run.sh`. It takes files or inline code, reloads the rig if a page reload cleared it, and sets `window.__arg` from `MOVE_ARG`:
+`run.sh` runs inline JS or move files, reloading the rig if the page refreshed and binding `MOVE_ARG` to `window.__arg`:
 
 ```bash
 $R/run.sh "(async()=>{ await office.goTo('desk-12'); await __walkTo(-6,9.6,{run:true}); return __look(Math.PI,-0.1,800) })()"
 MOVE_ARG=gemdex $R/run.sh $R/moves/elevator-ride.setup.js $R/moves/elevator-ride.js
 ```
 
-| Rig helper | Does |
+| Helper | Behavior |
 | --- | --- |
-| `__look(yaw, pitch, ms)` | Eased turn to an absolute yaw/pitch in radians (`null` keeps one) |
-| `__pan(dx, dy, ms)` | Eased drag-look by pixels (0.005 rad per px) |
-| `__yawTo(x, z)` | The yaw that faces a floor point |
-| `__walkTo(x, z, {run, tol, pitch, maxMs})` | Holds W (and Shift), steering every frame, until within `tol` of the point or `maxMs` runs out |
-| `__hold(['KeyW','ShiftLeft'], ms)` | Holds keys by `code` |
-| `__tap('KeyE', 'e')` | One key press (`'Digit7'`, `'ArrowLeft'`, `'Space'`, `'Enter'` …) |
-| `__aim('#153')` | Nudges the crosshair in a spiral until the `#hint` line contains the text. Resolves true or false |
-| `__hint()` | What the crosshair is on, with the keys it offers |
-| `__clean(on)` | Hide or show the side panels |
-| `__sleep(ms)` / `__unlock()` | Wait. Release pointer lock (the camera helpers do it themselves) |
+| `__look(yaw, pitch, ms)` | Eased turn to absolute radians (`null` preserves an axis) |
+| `__pan(dx, dy, ms)` | Eased touch drag-look (`0.005` rad/px) |
+| `__yawTo(x, z)` | Yaw facing floor coordinates `(x, z)` |
+| `__walkTo(x, z, {run, tol, pitch, maxMs})` | Holds `KeyW` (+ `ShiftLeft` when `run`), steering per frame until within `tol` or `maxMs` |
+| `__hold(codes, ms)` / `__tap(code, key)` | Hold `KeyboardEvent.code` array for `ms`, or tap once (`'KeyE'`, `'Digit7'`, `'Space'`) |
+| `__aim(needle)` / `__hint()` | Spiral-nudge crosshair until `#hint` matches `needle` (`true`/`false`); read current `#hint` |
+| `__clean(on)` | Hide (`true`) or restore (`false`) `aside.side` panels |
+| `__sleep(ms)` / `__unlock()` | Pause `ms`; exit pointer lock (camera helpers call `__unlock()` automatically) |
 
-Write a move as one async IIFE that resolves with `JSON.stringify(office.state().player)` or similar, so every step reports where it ended up. Split a move into a **setup** (get into position) and an **action** (the motion itself), as `scripts/moves/*.js` do. Then the same action can be run live, recorded, or asserted on. `references/places-and-keys.md` has positions, facings and what every key does.
-
-Rough to fine:
-1. `office.goTo(target)` teleports, and `office.goTo(target, {walk: true})` walks the office paths.
-2. `__walkTo` and `__look` frame the exact spot.
-3. Read the position with `office.state().player` and copy the numbers into the move script.
+Split reusable moves (`scripts/moves/*.js`) into **setup** (teleport via `office.goTo`, frame pose) and **action** (motion returning `JSON.stringify(office.state().player)`). Consult [`references/places-and-keys.md`](references/places-and-keys.md) for coordinates, facings and key bindings.
 
 ## 3. Pitfalls
 
-- **Low frame rate.** Read `document.getElementById('fps').textContent` (the rig hides the counter, but it still updates). It should say about 60 FPS. If it shows ~5, the tab was opened without `?pace=full`; rerun `boot.sh`.
-- **Collisions are real.** `__walkTo` heads straight for the point, so a chair or plant in the way stops it until `maxMs` runs out. Route round obstacles with several short `__walkTo` calls.
-- **Long evals drop the connection.** Keep each eval under ~30 s. To wait for something slow (a worker finishing), poll `office.state()` from the shell with short evals, as `office-demo-staging/scripts/wait-status.sh` does.
-- **Pointer lock stops drag-to-look.** A real click (for example `agent-browser click` on a dialog button) can grab pointer lock. The rig's camera helpers release it first. To avoid it, click buttons from script (`button.click()` in an eval).
-- **Keys do nothing while a window is open** (or while you type in a field). Run `await office.closeAll()` first; Esc closes the top window.
-- **The sidearm can't come out on the roof or while climbing.** With nothing drawn, digits 1–6 play emotes instead of spells. Demos and recordings use the wand, never the .44 Magnum.
-- **Walking out of the elevator car can stick** ("Stuck on the way to …"). Teleport with `goTo` first, then walk.
-- **E means the real thing.** E with a carried card at a free desk hires a worker, and X → SEND HOME fires one. Script those only on workers you staged.
+- **Obstacles & elevator cars**: `__walkTo` steers straight-line against real colliders; chain short waypoints around furniture, and teleport out of the elevator (`goTo` without `walk`) before walking.
+- **Eval timeouts (~30s)**: poll `office.state()` from the shell with short evals (`office-demo-staging/scripts/wait-status.sh`) instead of blocking inside one long eval.
+- **Pointer lock & open modals**: click UI buttons via JS (`btn.click()`) rather than `agent-browser click` so pointer lock stays clear, and call `await office.closeAll()` before sending scene keys.
+- **Sidearm & live desks**: digits `1`–`6` fire emotes when unarmed (rooftop and ladders stow the sidearm); use the wand rather than the .44 Magnum in demos and recordings. Trigger `E` (hire) and `X` (dismiss) only on workers you staged.
 
-## 4. Done
+## 4. Close
 
-Run `agent-browser close`. The session never idles out on its own.
+Run `agent-browser close` when finished (the session disables idle timeout). Done when the `office-rig` browser session is closed and any staged workers are cleaned up.

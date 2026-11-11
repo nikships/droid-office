@@ -1,108 +1,74 @@
 ---
 name: verify-droid-office
-description: Launch an isolated Droid Office, check it is healthy, drive one user-facing feature the way the owner does, and keep screenshots, transcripts and side-effect proof for a pull request. Covers the office page (primary), the web companion, the Office MCP, the Android app and the marketing website. Use before calling a droid-office change done, when a PR needs real evidence, or to reproduce a visual bug.
+description: Verify user-facing Droid Office changes end-to-end in an isolated run (`launch.sh`, `doctor.sh`, `drive.sh`, `cleanup.sh`) across the 3D office, web companion, Office MCP, Android app and website, retaining PR screenshots, transcripts and `proof.json`.
 ---
 
 # Verify Droid Office
 
-Proof that a change works comes from the running app, not from `npm test`. This skill starts an isolated office, drives a mapped feature through `window.office` and Playwright, and files the evidence where cleanup cannot remove it. Read the feature index, [features/README.md](features/README.md), then the feature's own file, before you drive.
+Wraps [`office-clone`](../office-clone/SKILL.md) and [`office-3d-testing`](../office-3d-testing/SKILL.md) in an isolated launch, health-check, evidence and cleanup lifecycle, storing PR proof outside the scratch folder. Read [`features/README.md`](features/README.md) and the target feature file before driving.
 
-It builds on [office-clone](../office-clone/SKILL.md) (the clone, `start.sh` and `office-run.mjs`) and [office-3d-testing](../office-3d-testing/SKILL.md) (the `window.office` commands). It adds the launch, doctor, evidence and cleanup lifecycle around them.
+## 1. Launch
 
-## Isolation
-
-- Each run gets its own scratch folder `RUN=/tmp/verify-droid-office-XXXX`, with its own `HOME`, office data, floors and port (4677 or the next free one), so two runs can go side by side. The helpers drive only the office their run launched: they refuse :4600, and `doctor.sh` fails when the port belongs to another process. Checking against the owner's own office is a separate path (root `AGENTS.md`, "Testing the running office").
-- Default mode clones the owner's installed office. A clone carries the owner's Factory key and real forge sign-in, so writes to Factory or GitHub from it are real ([office-clone](../office-clone/SKILL.md) section 4).
-- `--fresh` is for a machine with no installed office, such as the Mac Mini CI runner. It starts a new office whose floor is a `git clone --local` of this checkout with its real `origin`, plus a test browser profile so the character picker is skipped. Say in the PR that the evidence came from a fresh office.
-- When a run cannot be isolated (no free port, the clone fails, `doctor.sh` fails on ownership), stop and report it.
-
-## Launch
-
-From the repository root, after `npm ci` (which builds) or `npm run build`:
+Build first (`npm ci` or `npm run build`), then launch from the repository root:
 
 ```bash
-.agents/skills/verify-droid-office/scripts/launch.sh            # clone of the owner's office
-.agents/skills/verify-droid-office/scripts/launch.sh --fresh    # no installed office on this machine
+.agents/skills/verify-droid-office/scripts/launch.sh            # default: clone of owner's office
+.agents/skills/verify-droid-office/scripts/launch.sh --fresh    # machine with no installed office (note in PR)
 # RUN=/tmp/verify-droid-office-RXe6
 # EVIDENCE=/tmp/verify-droid-office-evidence/verify-droid-office-RXe6
 # PORT=4677 PID=64358 MODE=fresh
 ```
 
-`launch.sh` starts `$RUN/start.sh` in its own process group, waits until `/` and `/dashboard` answer 200, then runs one headless render check. Ready means that check reached `window.office` with the loading screen gone, and saved `$EVIDENCE/launch/office.png`. It prints `RUN` and `EVIDENCE`. Keep both for the later commands. A launch that fails removes what it started and keeps its log in `$EVIDENCE`.
+- **Isolation:** each run allocates its own `RUN`, `HOME`, floors, process group and port (`>=4677`; helpers refuse `:4600`, and `VERIFY_EVIDENCE_ROOT` overrides `$EVIDENCE`, which cannot resolve inside `$RUN`). Owner clones carry live Factory and GitHub credentials—follow [`office-clone`](../office-clone/SKILL.md) section 4. Stop and report if isolation or port ownership fails; check against `:4600` directly only when following root `AGENTS.md` ("Testing the running office").
+- **Rebuilds:** `start.sh` serves `dist/`; after any source edit, run `npm run build`, `cleanup.sh "$RUN"`, and a fresh `launch.sh`.
 
-Rebuild (`npm run build`) after every source change, then clean up and launch again. The office serves `dist/`, not `src/`.
+Ready when `launch.sh` prints `RUN` and `EVIDENCE` and writes `$EVIDENCE/launch/office.png`.
 
-## Doctor
+## 2. Doctor
 
-Read-only. Run it after launch, before the first drive, and after any drive that failed or surprised you:
+Run read-only health checks after launch, before the first drive, and after any failed or unexpected drive:
 
 ```bash
 .agents/skills/verify-droid-office/scripts/doctor.sh "$RUN"
 ```
 
-It checks the port is not :4600, the office process is alive, the listener belongs to this run's process group, `/` and `/dashboard` answer 200, and the Office MCP on the hook port refuses an anonymous call. It also checks that `dist/` is newer than `src/` at the served commit, and whether the native Mac app can run on this Mac. It reports whether the owner's :4600 office is up, so you know to leave it alone, and how many Android devices `adb` sees. Any `fail` line exits 1: fix it or relaunch, and drive only once doctor passes.
+Verifies port != `4600`, process-group listener ownership, HTTP `200` on `/` and `/dashboard`, anonymous Office MCP `401` refusal, `dist/` freshness vs `src/`, Mac chip eligibility, `:4600` status, and connected `adb` devices. Proceed to `drive.sh` only when `doctor.sh` exits `0` with zero `fail` lines.
 
-## Drive
+## 3. Drive
 
 ```bash
 .agents/skills/verify-droid-office/scripts/drive.sh "$RUN" <steps.mjs|-> <name> [--native]
 .agents/skills/verify-droid-office/scripts/drive.sh "$RUN" .agents/skills/verify-droid-office/scripts/steps/hire-shell.mjs hire-shell
 ```
 
-`drive.sh` wraps `office-run.mjs`. One browser run per drive opens the office as the owner, waits for it to be ready, runs the steps file, saves screenshots, and closes. A steps file exports one async function that gets `page`, `js`, `open`, `click`, `shot`, `waitFor`, `sleep`, `rig`, `reload`, `log`, `out` and `url` (see office-clone section 3). Inside steps, `process.env.VERIFY_OUT` is the drive's evidence folder.
+`drive.sh` runs `office-run.mjs` (`{ page, js, open, click, shot, waitFor, sleep, rig, reload, log, out, url }`, with `process.env.VERIFY_OUT` pointing to `$EVIDENCE/<name>`; see [`office-clone`](../office-clone/SKILL.md) section 3). Built-in drivers include `scripts/steps/{hire-shell,mcp-shell-refusal,mission-control,mission-control-native}.mjs` and `node .agents/skills/verify-droid-office/scripts/website-sections.mjs <url> <out-dir>`.
 
-- **Office page (primary).** This is the page the Mac app shows. Headless by default (Playwright's headless shell, Metal WebGL through ANGLE).
-- **Native Mac app.** `--native` launches this checkout's Electron app on a fresh profile against the run's office. The app refuses base M-series chips, so `doctor.sh` warns on the Mac Mini (Apple M4); `DROID_OFFICE_ALLOW_ANY_CHIP` is for CI only, so report the limit instead. For native menus and sheets, see office-clone's [native desktop checks](../office-clone/references/native-desktop.md).
-- **Web companion.** Open `new URL('/dashboard', url)` in a second page from the same steps file (`page.context().newPage()`), as `hire-shell.mjs` does.
-- **Office MCP, Android, website.** These have their own drivers. See their feature files.
+- **Office page (default):** headless GPU WebGL; pass `--native` for isolated Electron (base M-series Macs warn in `doctor.sh`—report the hardware limit rather than setting CI-only `DROID_OFFICE_ALLOW_ANY_CHIP`; use [`native-desktop.md`](../office-clone/references/native-desktop.md) for macOS menus/sheets).
+- **Web companion:** open `new URL('/dashboard', url)` via `page.context().newPage()` inside the same steps file (`hire-shell.mjs`).
+- **Office MCP, Android, website:** follow each surface's recipe in `features/*.md`.
 
-Handles to use, from the source:
-
-| Surface | Handle |
+| Surface | Canonical selectors |
 | --- | --- |
-| Scene | `window.office.goTo(desk)`, `.interact('B' \| 'P' \| 'E' \| 'X')`, `.state().workers`, `.state().terminal`, `.state().modals` |
-| Office windows | `[role=dialog][aria-label="<title>"]`, `[role=alertdialog][aria-label="Send <name> home?"]`, `textarea[aria-label=Prompt]`, `button[type=submit]` |
-| Terminal text | `.xterm-rows` |
-| Web companion | `button.dash-row-open[data-worker="<worker id>"]` (its `aria-label` carries name, status and task) |
-| Android | `resource-id` names from `android/app/src/main/java/ai/factory/droidoffice/core/Tags.kt`, read with `uiautomator dump` |
-| Website | `section#top`, `#play`, `#tour`, `#agents`, `#pocket`, `#why`, `#workers`, `#install`, each with `#<id>-title` |
+| 3D scene | `window.office.goTo(desk)`, `.interact('B' \| 'P' \| 'E' \| 'X')`, `.state().workers`, `.state().terminal`, `.state().modals` |
+| Office modals & terminal | `[role=dialog][aria-label="<title>"]`, `[role=alertdialog][aria-label="Send <name> home?"]`, `textarea[aria-label=Prompt]`, `button[type=submit]`, `.xterm-rows` |
+| Web companion | `button.dash-row-open[data-worker="<worker id>"]` (`aria-label` carries name, status and task) |
+| Android (`uiautomator dump`) | `resource-id` tags from `android/app/src/main/java/ai/factory/droidoffice/core/Tags.kt` |
+| Marketing website | `section#top`, `#play`, `#tour`, `#agents`, `#pocket`, `#why`, `#workers`, `#install` + `#<id>-title` |
 
-## Evidence
+## 4. Audit evidence
 
-Everything goes under `$EVIDENCE` (default `/tmp/verify-droid-office-evidence/<run id>`, outside `$RUN`; set `VERIFY_EVIDENCE_ROOT` to move it). Launch and cleanup reject evidence paths that resolve to `$RUN` or a directory beneath it, including symlink aliases. Each drive writes `$EVIDENCE/<name>/`, with its screenshots, `transcript.txt` (all runner output, including the page's console errors), `exit-code`, and whatever the steps file writes. Cleanup adds `office.log` with tokens removed.
+Each drive writes `$EVIDENCE/<name>/` (`*.png`, `transcript.txt`, `exit-code`, `proof.json`):
 
-Proof standards:
+- **User-path actions & assertions:** drive real keys, dialogs and buttons (never internal setters, raw WebSocket frames or test-only endpoints), and throw in code on failed checks so `drive.sh` exits `1` with `failure.png`.
+- **Action + side-effect proof:** save ordered screenshots (`01-free-desk`, `02-shell-hired`, …) alongside read-only side-effect checks in `proof.json` (files written, companion rows, `state()` after dismissal).
+- **Secret & git hygiene:** keep Factory keys, hook/device tokens and pairing links out of logs and screenshots (reference `$DROID_OFFICE_HOOK_TOKEN` unexpanded in shell probes), and keep `$EVIDENCE` uncommitted (attach shots and `proof.json` excerpts to the PR).
 
-- Drive the user's path: the keys, windows and buttons the owner uses, never internal setters, raw WebSocket messages or test-only endpoints.
-- Capture the action and the result, not only the final screen. Number the shots in order (`01-free-desk`, `02-shell-hired`, and so on).
-- Check side effects next to the pixels: a file the worker wrote, the row in the web companion, the worker gone from `state()` after send-home. Write them to `proof.json` in the drive folder.
-- Assert in code. A steps file throws when a check fails; `drive.sh` then exits 1 and saves `failure.png`.
-- Use the owner's real data (a clone) or a fresh office on this checkout, never invented or seeded board data.
-- Keep secrets out of evidence: the Factory key, hook tokens, `DROID_OFFICE_HOOK_TOKEN`, the pairing link and device tokens never appear in a log or screenshot. In a worker shell, refer to them as `$VARIABLES`.
-- Evidence stays out of git. Upload the screenshots to the PR or its comments, and quote `proof.json` lines in the body.
-
-## Cleanup
+## 5. Clean up and update map
 
 ```bash
 .agents/skills/verify-droid-office/scripts/cleanup.sh "$RUN"
 ```
 
-It stops the office's process group (SIGINT, then SIGKILL after 10 s), stops PTY hosts whose sockets are inside `$RUN`, saves a redacted `office.log`, and deletes `$RUN`. Then it checks that the port is free and lists the evidence it kept. It kills by process group and socket, never by name. Run it after every failed iteration too, and remove anything the drive made outside the office (a Factory session, a GitHub comment) yourself.
+Stops `$RUN`'s process group and socket-matched PTY hosts, writes redacted `$EVIDENCE/office.log`, deletes `$RUN`, and confirms the port is free (run after failed iterations too, and remove any external Factory or GitHub test items). Update `features/*.md` and the "Last live proof" table in [`features/README.md`](features/README.md) whenever selectors or verified coverage changed.
 
-## Helpers
-
-All are executable and run from the repository root.
-
-| Helper | Invocation |
-| --- | --- |
-| `scripts/launch.sh` | `launch.sh [--fresh] [--office DIR] [--port N]` |
-| `scripts/doctor.sh` | `doctor.sh "$RUN"` |
-| `scripts/drive.sh` | `drive.sh "$RUN" <steps.mjs\|-> <name> [--native]` |
-| `scripts/cleanup.sh` | `cleanup.sh "$RUN"` |
-| `scripts/steps/hire-shell.mjs` | `drive.sh "$RUN" .agents/skills/verify-droid-office/scripts/steps/hire-shell.mjs hire-shell` |
-| `scripts/steps/mcp-shell-refusal.mjs` | `drive.sh "$RUN" .agents/skills/verify-droid-office/scripts/steps/mcp-shell-refusal.mjs mcp-shell` |
-| `scripts/website-sections.mjs` | `node .agents/skills/verify-droid-office/scripts/website-sections.mjs <url> <out-dir>` |
-
-## Keeping it current
-
-The map in `features/` goes stale as the app changes. After a drive, update any handle, assertion or evidence step that no longer matched the source or the live app, and the feature's "Last live proof" row in the index.
+Verification is complete when `doctor.sh` and `drive.sh` exited `0`, `$EVIDENCE/<name>/` holds ordered screenshots, clean `transcript.txt` and `proof.json`, `cleanup.sh "$RUN"` freed the port and removed `$RUN`, and `features/` matches the live app.

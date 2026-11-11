@@ -1,68 +1,66 @@
 ---
 name: office-clone
-description: Run this checkout's build of Droid Office against a copy of the owner's real installed office (floors and repositories, Factory and Jira connections, decor, Whiteboards, prompts, browser settings) without touching the office they use. Use for any check of the running office, screenshots or video for a pull request, and bug repros.
+description: Clone the owner's installed Droid Office and drive this checkout's build against it (`office-run.mjs`, headless WebGL or isolated native Electron/AX) without touching `:4600`. Use for running-office checks, bug repros, and PR screenshots.
 ---
 
 # Testing on a clone of the owner's office
 
-The owner judges a change by how it looks and works in **their** office: their floors, their repositories on the boards, their Factory computers, Environments and sessions, their decor and profile. A clone is a copy of that install, run from this checkout's build, with nobody at the desks. It is the default target for every check of the running office and every screenshot or video for a pull request.
-
-Show what is really there. When the thing to show isn't in the owner's account yet (no Environment, no failed build), make it for real through the product or its API, with the owner's go-ahead for anything that costs money or writes to the outside world, and clean it up afterwards. Invented data, mocked APIs, seeded demo content and empty `git init` folders prove nothing about the owner's office. Unit-test stubs follow [tests/AGENTS.md](../../../tests/AGENTS.md).
+A clone copies the owner's installed office (floors, repositories, Factory and Jira connections, decor, Whiteboards and browser settings) into a scratch directory with empty desks, served by this checkout's `dist/`. Use it as the default target for running-office checks, bug repros, and PR screenshots or video.
 
 ## 1. Clone
 
-Build this checkout first with `npm ci` (which builds) or `npm run build`; the helper uses its `droid-office browser path` command to find the app's browser cache.
+Build this checkout first (`npm ci` or `npm run build`); `clone-office.sh` invokes `droid-office browser path` from `dist/`.
 
 ```bash
-.agents/skills/office-clone/scripts/clone-office.sh          # prints the folder, e.g. /tmp/office-clone-Kk3x
+.agents/skills/office-clone/scripts/clone-office.sh          # prints $T, e.g. /tmp/office-clone-Kk3x
 ```
 
-It finds the owner's office (`--office DIR`, else `$DROID_OFFICE_HOME`, else the Mac app's `officeDir` in `~/Library/Application Support/com.nikships.droid-office/settings.json`, else `~/droid-office`) and copies, in about 15 seconds:
+Source resolution order: `--office DIR`, `$DROID_OFFICE_HOME`, `officeDir` in `~/Library/Application Support/com.nikships.droid-office/settings.json`, then `~/droid-office`.
 
-| Copied | From |
+| Copied | Source |
 | --- | --- |
-| The office folder: `factory.json` (the Factory key), `jira.json`, `floors.json`, prompts, subagent settings, theme, the credits ledger, paired devices | `<office>/.droid-office/` |
-| Every project floor, as a local `git clone` with the real `origin` (so boards, CI, AutoWiki and Environments match the real repository) | each floor's checkout |
-| Each floor's own state: decor, jukebox, Whiteboard, team | `<floor>/.droid-office/` |
-| The Home floor's state | `~/.droid-office/` |
-| The Mac app's browser settings: profile, graphics, per-desk models, the floor it was on | its `localStorage` (LevelDB, read with `uv`) |
+| Office config (`factory.json`, `jira.json`, `floors.json`, `orchestrator.json` settings, prompts, subagent settings, theme, credits ledger, paired devices) | `<office>/.droid-office/` |
+| Project floors as local `git clone`s keeping the real `origin` | each floor's checkout |
+| Per-floor state (decor, jukebox, Whiteboard, team) and Home floor state | `<floor>/.droid-office/`, `~/.droid-office/` |
+| Mac app browser settings (profile, graphics, per-desk models, active floor) | `localStorage` LevelDB (`uv`) |
 
-It leaves out everything a started office would **act on**: `workers.json`, `cloud-workers.json` and `guests.json` (an office resumes every saved worker, so a copy would run the owner's real Droid sessions a second time), the terminals and hooks (`pty.sock`, `pty-host.*`, `hook-port`, `shell.*`), scrollback, worktrees, drops and AutoWiki runs. It keeps `orchestrator.json` settings but excludes the entire `orchestrator/` session folder, including its nested `.droid-office/` tokens, workers, hooks, terminal socket and conversation references. A clone never resumes the owner's Orchestrator. External bot identities, keys and Serve settings are excluded too.
+**Excluded so starting the clone cannot resume live sessions:** `workers.json`, `cloud-workers.json`, `guests.json`, the entire `/orchestrator/` session directory, `remote-workers.json`, `remote-mcp.json`, PTY/hook sockets (`pty.sock`, `pty-host.*`, `hook-port`, `shell.*`), `scrollback/`, `worktrees/`, `drops/` and `wiki-run*`.
 
-On a machine with no installed office, `--fresh` prepares a new office with a local clone of this checkout and a test browser profile instead, with the same port selection, startup script and browser cache (`DROID_OFFICE_BROWSERS_PATH` overrides it). `--fresh` and `--office` exclude each other. Use the owner's clone for app screenshots whenever one is available.
+**No installed office (`--fresh`):** mutually exclusive with `--office`; creates a local clone of this checkout plus a test `Verifier` profile (`DROID_OFFICE_BROWSERS_PATH` overrides the browser cache). Prefer a real owner clone whenever one exists.
 
-## 2. Start it
+Done when `clone-office.sh` exits `0` and prints `$T` containing `start.sh` and `local-storage.json`.
 
-```bash
-T=/tmp/office-clone-Kk3x     # what clone-office.sh printed
-npm run build                # start.sh runs this checkout's dist/
-$T/start.sh                  # fireAndForget; prints the URL (port 4677, or the next free one)
-```
-
-- Start `start.sh` as a background job (fireAndForget). A process backgrounded with `&` inside a one-off shell dies with that shell.
-- `start.sh` runs `node bin/droid-office.js --home $T/office --projects $T/floors` on `127.0.0.1` with `HOME=$T/home`, so the Home floor and every PTY host belong to the clone, never to the owner's folders.
-- `gh` and `git` keep the owner's sign-in (`GH_CONFIG_DIR`, `GIT_CONFIG_GLOBAL`), so the boards read the real forge. The Whiteboard renders with the owner's Chromium, and the Factory features use the owner's real key from `factory.json`.
-- After every source change, run `npm run build` again and restart `start.sh`. The clone's data stays as it is.
-
-## 3. Drive it as the owner: `office-run.mjs`
-
-Every check and screenshot goes through one command that owns its browser from start to finish:
+## 2. Start
 
 ```bash
-node .agents/skills/office-clone/scripts/office-run.mjs $T steps.mjs --out /tmp/shots
+T=/tmp/office-clone-Kk3x     # path printed by clone-office.sh
+npm run build                # start.sh serves this checkout's dist/
+$T/start.sh                  # run with fireAndForget; prints URL (port 4677 or next free)
 ```
 
-It launches Playwright's headless shell (the one `node bin/droid-office.js browser install` puts in the office's browser cache) with GPU WebGL (Metal through ANGLE on macOS; SwiftShader on Linux). It writes the owner's `localStorage` from `$T/local-storage.json` before the first load, so their profile, settings and floor are there with no character picker. It waits until `window.office` is in, the loading screen is gone and the warm-up line (shaders, the light bake) is done, runs your steps, saves the screenshots, prints what the page logged as errors, and closes the browser. It reads the clone's port from `start.sh` and refuses :4600.
+- Launch `$T/start.sh` with `fireAndForget` (a `&` job inside a one-off shell dies when that shell exits).
+- `start.sh` binds `127.0.0.1` with `--home $T/office --projects $T/floors` and `HOME=$T/home`, isolating Home-floor state and PTY hosts inside `$T` while preserving `GH_CONFIG_DIR`, `GIT_CONFIG_GLOBAL`, `factory.json` and Whiteboard Chromium.
+- After any source edit, rerun `npm run build` and restart `$T/start.sh`; clone state persists across restarts.
 
-A steps file is one async function. The helpers wrap `window.office` (the commands are in [`office-3d-testing`](../office-3d-testing/SKILL.md)) and Playwright's `page`:
+## 3. Drive: `office-run.mjs`
+
+Run one self-contained browser session per check (holding an `agent-browser` daemon across office restarts drops to a 30s-closing headless Chrome; video capture uses [`office-video-capture`](../office-video-capture/SKILL.md) instead):
+
+```bash
+node .agents/skills/office-clone/scripts/office-run.mjs "$T" steps.mjs --out /tmp/shots
+```
+
+`office-run.mjs` reads the port from `$T/start.sh` (refusing `:4600`), launches Playwright's cached headless shell with GPU WebGL (ANGLE Metal on macOS, SwiftShader on Linux), seeds `localStorage` from `$T/local-storage.json`, waits for `window.office` and shader/light-bake warm-up to finish, runs `steps.mjs` (or saves `<out>/office.png` if omitted), auto-accepts native `alert()`/`confirm()`, prints page errors, and closes the browser. Exit `1` writes `failure.png`. Server state persists across runs.
+
+Steps export one default async function using [`office-3d-testing`](../office-3d-testing/SKILL.md) commands and Playwright's `page` (`rig()` loads [`office-choreography`](../office-choreography/SKILL.md) helpers):
 
 ```js
 // steps.mjs
 export default async ({ page, js, open, click, shot, sleep, waitFor, rig, reload, log }) => {
-  await open('computers');                                   // office.open(id), from the ☰ menu
-  await click('.cmp-tabs button', /Environments/);           // first match whose text fits
+  await open('computers');
+  await click('.cmp-tabs button', /Environments/);
   await shot('environments');                                // <out>/environments.png
-  await js(() => window.office.goTo('desk-1'));              // anything in the page
+  await js(() => window.office.goTo('desk-1'));
   await js(() => window.office.interact('E'));
   await page.selectOption('#runs-on', { label: '⧉ droid-office-default (default)' });
   await page.fill('.modal textarea', 'Say hi');
@@ -70,30 +68,22 @@ export default async ({ page, js, open, click, shot, sleep, waitFor, rig, reload
 };
 ```
 
-- Without a steps file it saves `office.png`: a quick check that the clone renders.
-- Exit code 1, with a `failure.png`, means the office never got ready, the page crashed or a step threw. Read the error and fix the step before running again.
-- A native `confirm()` or `alert()` is accepted and printed, so it can't stall the run.
-- `rig()` loads [`office-choreography`](../office-choreography/SKILL.md)'s movement rig (`__walkTo`, `__look`, `__hold`, `__tap`) for input `window.office` doesn't cover.
-- One run per check, each about 15 to 40 seconds. State lives in the clone's server, not the browser, so the next run picks up where the last left off (a worker you hired is still at its desk).
-
-**Why one run per check.** A browser session held open across commands (an `agent-browser` daemon, a headed window) dies when an office restart takes the processes of the terminal that started it. The next `agent-browser` command then quietly launches a headless Chrome for Testing, which under Playwright closes its pages about 30 seconds in: the `about:blank` page that looks like a WebGL failure. The headless shell has neither problem. Video capture still needs a headed session ([`office-video-capture`](../office-video-capture/SKILL.md)).
-
 ### Native Electron runs
 
-- `--source /absolute/path/to/built-checkout` runs that checkout's Electron app on a fresh profile inside the output folder instead of the headless shell, for native-presenter checks and actual 120 FPS. The runner attaches to the app's clone page, uses the same steps and helpers, removes only that page's leave guard for controlled reloads, and kills only the app it launched. The clone server must already serve that checkout's build. Native output uses the real display size, not `--size`. A requested frame cap is not proof of drawn or presented FPS; measure those, and use [`office-thermals`](../office-thermals/SKILL.md) for before/after sensor measurements.
-- `--desktop` with `--source` adds a `desktop` helper for **native** menus, sheets, alerts and OS window evidence. It needs `agent-desktop` on macOS with Accessibility granted, is scoped to the launched clone's PID and its own session, and seals and exports its trace during cleanup, including after a failed step. It never targets the owner's app by name, steals focus or falls back to physical input. Read [native desktop checks](references/native-desktop.md) before using it. Scene and DOM checks stay on `window.office` and Playwright.
+- **`--source /absolute/path/to/built-checkout`**: launches that checkout's Electron app on an isolated profile inside `--out` (the clone server must serve the matching build) for Metal presenter and 120 FPS checks. Attaches only to the clone page, uses native display geometry instead of `--size`, and kills only the app it launched. Verify actual drawn and presented FPS rather than trusting a requested cap; use [`office-thermals`](../office-thermals/SKILL.md) for sensor comparisons.
+- **`--desktop` (with `--source`)**: adds the PID-scoped `desktop` AX helper (`agent-desktop` on macOS with Accessibility granted) for native menus, sheets, alerts and window stills, exporting its trace on cleanup without touching the owner's app or stealing focus. Read [`references/native-desktop.md`](references/native-desktop.md) first; keep scene and DOM checks on `window.office` and Playwright.
 
-## 4. What is real
+## 4. Real-account boundaries
 
-- **Factory is the owner's real account.** Reads are free. A write (create or delete a computer or Environment, start a cloud session, rebuild, open a CI pull request, start a wiki run) changes their account and may cost credits: ask first unless they already said yes, note what you made, and delete it when you're done.
-- **The boards are the owner's real repositories.** Opening, closing or commenting on an issue or a pull request from the clone does it on GitHub.
-- **A local worker hired in the clone** runs Droid under the scratch `HOME`, without the owner's Droid sign-in. Test hire dialogs freely; finish a real local hire only when the owner asks.
-- **An approved signed-in local-worker or Orchestrator check** may supply `FACTORY_API_KEY` from the clone's own `office/.droid-office/factory.json` when starting the clone. Read the key into the process environment without printing it. Keep `HOME=$T/home`; never point a clone at the real HOME, copy the whole real `.factory/` or edit the owner's Droid settings. Record the actual model (including quota fallback), and keep any no-push/no-PR limits in the brief.
-- **A cloud worker hired in the clone** is a real Factory session on a real computer. Send it home, and delete what it made, when the check is done.
+Use real account state (unit-test stubs follow [tests/AGENTS.md](../../../tests/AGENTS.md)). When an item to verify is absent from the owner's account, create it through the product or API after getting owner approval for paid or external writes, and delete it during cleanup; never substitute mocked APIs, seeded data or empty `git init` repos.
+
+- **Factory & GitHub**: reads are free; creating/deleting computers or Environments, starting cloud sessions, rebuilding, starting wiki runs, or opening/commenting on issues and PRs mutates the real account or repository. Ask first unless already authorized, track every created resource, and delete it afterwards.
+- **Local workers & Orchestrator**: scratch `HOME=$T/home` has no Droid sign-in, so hire dialogs are safe to exercise, while completing a live hire requires owner approval. For an approved signed-in check, pass `FACTORY_API_KEY` read silently from `$T/office/.droid-office/factory.json` into the process env while keeping `HOME=$T/home` (never point a clone at the real `HOME`, copy `~/.factory/`, or edit owner Droid settings). Record the actual model used and honor any no-push/no-PR limits.
+- **Cloud workers**: launch real Factory sessions; send them home and delete their artifacts when finished.
 
 ## 5. Clean up
 
-Stop what you started, and only that. A floor's PTY host keeps running after the office stops while it still has live terminals, so stop the hosts whose sockets are inside `$T`:
+Stop the clone server and only the detached `droid-office-ptys` hosts whose sockets live inside `$T` (sockets outside `$T` belong to the owner's live office):
 
 ```bash
 kill <start.sh pid>
@@ -101,4 +91,4 @@ lsof -t "$T"/office/.droid-office/orchestrator/.droid-office/pty.sock "$T"/home/
 rm -rf "$T"
 ```
 
-A `droid-office-ptys` process whose socket is outside `$T` serves the owner's own office and its workers; leave it running. Delete anything the check made in the owner's Factory account or on GitHub. The clone is clean when its port is free, `$T` is gone and nothing you made remains in their accounts.
+Cleanup is complete when the clone's port is free, no socket under `$T` remains open, `$T` is deleted, and every Factory or GitHub resource created for the check is removed.

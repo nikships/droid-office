@@ -1,21 +1,18 @@
 ---
 name: office-thermals
-description: Compare CPU/GPU sensor temperatures of two Droid Office builds on macOS with counterbalanced ABBA trials, on a clone of the owner's office in native Electron at verified 120 FPS. Use when a rendering change needs before/after thermal evidence.
+description: Measure before/after macOS CPU/GPU sensor temperatures across two Droid Office builds using counterbalanced ABBA trials on an isolated clone in native Electron at verified 120 FPS.
 ---
 
 # Office thermal measurements
 
-Read `tools/frame-bench/README.md` and the [`office-clone`](../office-clone/SKILL.md) skill first. Every trial runs on a clone with its own server and app; the owner's running app, profile and :4600 stay out of it.
+Read [`tools/frame-bench/README.md`](../../../tools/frame-bench/README.md) and [`office-clone`](../office-clone/SKILL.md) first. Every trial launches its own clone server and isolated Electron app, leaving the owner's running app, profile and `:4600` untouched.
 
-1. **Build both revisions** in separate worktrees. Hold everything else fixed: app settings, floor, weather, camera and output size, and resolution, MSAA, GI, power mode and fan control.
-2. **Use a real clone and an existing, verified `macmon` executable.** The harness downloads nothing; bring the binary you already have, without global installs, unverified downloads or sudo.
-3. **Run `node tools/frame-bench/thermal.mjs --help`**, then supply `--clone`, `--before`, `--after`, `--macmon` and a fresh `--out`. The default is four ABBA trials at native 120 FPS, each with a paused cooldown, a three-minute load warmup and a two-minute measurement.
-4. **Measure 120 FPS on the native Electron backend.** The tool checks actual drawn FPS, frame-window coverage and native presented FPS, because a cap alone is no evidence of the workload. Headless Chromium usually runs at 60 Hz, and an unthrottled-headless experiment reached only 45 FPS on the M5 Pro and was rejected.
-5. **Keep the machine quiet during sensor windows:** no builds, test suites, other benchmarks or screen recordings, and background apps left as they are (the owner's processes keep running). Record AC or battery, power mode, thermal warnings, room conditions if available, and background load.
-6. **Inspect every `result.json`, raw `sensors.jsonl` and `summary.json`:** starting temperatures, per-trial means and ranges, first-to-last drift, fan readings and pacing. Missing fan or power data is unknown, not zero.
-7. **Read trials as the independent replications**, not the one-second sensor readings. ABBA cancels linear time drift but not room or background variation, and five minutes is not automatically thermal equilibrium. A difference smaller than the repeat variation is inconclusive.
-8. **State what the numbers are.** CPU/GPU readings are sensor averages, not the hottest core, the chassis or ambient. Power counters are system-wide estimates, not app-specific or wall power. Frame and presenter counters say nothing about panel scan-out or battery life.
-9. **Keep failed and calibration runs** with the reason each was excluded. A corrected full series goes in a new output folder, so every failed trial stays visible.
-10. **Finish clean.** The tool closes the app and server it started and stops only the clone PTY hosts it created; after a cancellation or crash, check that yourself. Keep raw data local, publish the report on the existing Whiteboard card, and keep clone data, profiles, downloaded binaries and machine-specific logs out of git.
+1. **Build both revisions** in separate worktrees with identical controls: app settings, floor, weather, camera, output size, resolution, MSAA, GI, power mode and fan control.
+2. **Prepare inputs:** create a real [`office-clone`](../office-clone/SKILL.md) and pass an existing local `macmon` binary (never install globally, download unverified binaries or use `sudo`).
+3. **Run ABBA trials:** inspect `node tools/frame-bench/thermal.mjs --help`, then pass `--clone`, `--before`, `--after`, `--macmon` and a fresh `--out` (default: four native 120 FPS ABBA trials, each with paused cooldown, 3-minute load warmup and 2-minute measurement). Headless Chromium caps near 60 Hz, so 120 FPS requires native Electron with verified drawn FPS, window coverage and native `presenterStats` FPS.
+4. **Keep sensor windows quiet:** defer builds, test suites, other benchmarks and screen recordings until the series finishes, while leaving the owner's existing background processes as-is. Record AC/battery state, power mode, thermal warnings, ambient conditions (if known) and background load.
+5. **Audit every trial (`result.json`, `sensors.jsonl`, `summary.json`):** check starting temperatures, per-trial means/ranges, first-to-last drift, fan speed and frame pacing. Treat missing fan or power fields as unknown (`null`), never zero. Preserve failed or calibration runs with explicit exclusion reasons, and write any corrected full series to a new `--out` directory.
+6. **Interpret and report:** treat trials (never 1-second samples) as the unit of replication; ABBA cancels linear drift only, 5 minutes does not guarantee thermal equilibrium, and differences within repeat variation are **inconclusive**. State sensor scope limits (CPU/GPU sensor averages rather than hottest core, chassis or ambient; system-wide power estimates rather than app-only or wall power; presenter counters rather than panel scan-out or battery life).
+7. **Clean up:** verify after completion, cancellation or crash that the harness's server, Electron app and clone PTY hosts are stopped; publish the summary to the existing Whiteboard card, and keep clone data, profiles, binaries and raw sensor logs uncommitted.
 
-The comparison is done when every trial of the complete ABBA blocks (four by default) has passed the FPS checks, every exclusion has a reason, and the report states the result (cooler, warmer or inconclusive) with its limits.
+Done when every trial in complete ABBA blocks (four by default) passes drawn and native-presented 120 FPS checks, every excluded run carries its reason, and the Whiteboard report states the verdict (`cooler`, `warmer` or `inconclusive`) alongside its measurement limits.

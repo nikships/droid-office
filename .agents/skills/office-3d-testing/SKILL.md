@@ -1,63 +1,59 @@
 ---
 name: office-3d-testing
-description: Drive and assert on the Droid Office 3D scene through its `window.office` automation API (goTo, interact, open, ride, camera, state) in place of WASD, E and mouse drags. Use to check a change to `src/client/` (world, ui, main.ts, automation.ts), the WebSocket protocol or anything the office page shows; to reproduce a bug or test acceptance criteria in the 3D office; or to screenshot it.
+description: Drive and assert on the Droid Office 3D scene via `window.office` (`goTo`, `interact`, `open`, `ride`, `camera`, `state`) and `/api/automation`. Use when verifying `src/client/` or protocol changes, reproducing scene bugs, or capturing deterministic 3D screenshots.
 ---
 
 # Testing the 3D office
 
-Every office tab exposes `window.office`. It walks or teleports you to desks, boards and places, presses keys at them, opens ☰ menu windows, rides the elevator, sets the camera, and returns JSON state for assertions. Use it for scene navigation and state, and Playwright for HTML controls; both are deterministic where steering by hand is not.
-
-The full command reference is [docs/guide/development.md, "Automation API"](../../../docs/guide/development.md#automation-api-windowoffice), and the code is `src/client/automation.ts`.
+Every office tab exposes `window.office` (`src/client/automation.ts`; full spec in [docs/guide/development.md](../../../docs/guide/development.md#automation-api-windowoffice)). Use `window.office` for deterministic scene navigation and state assertions, and Playwright for HTML controls.
 
 ## 1. Pick the office
 
-- **A clone of the owner's office** is the default. Build, clone and start it with [`office-clone`](../office-clone/SKILL.md) (sections 1 and 2), and run each check with its `office-run.mjs` (section 3), which also covers the native Electron (`--source`) and native desktop (`--desktop`) variants.
-- **The owner's own office** on :4600 is fine to drive too, through the HTTP API below or their open tab. It acts on their screen: commands move their player and open windows there. `office-run.mjs` refuses :4600, so it never gets there by accident.
+- **Clone (default)**: build, clone and start via [`office-clone`](../office-clone/SKILL.md) (sections 1–2), then drive with `office-run.mjs` (section 3, including `--source` and `--desktop` for native Electron/AX).
+- **Owner's live office (`:4600`)**: drive via `/api/automation` or their open tab when asked (`office-run.mjs` refuses `:4600`; commands move the owner's live camera and modals).
 
-## 2. Drive it
+## 2. Drive and assert
 
-Every command except `state()`, `list()` and `commands()` returns a promise that resolves with a `state()` snapshot once the action has finished, or rejects with an `Error` that says why. `await` every command, `closeAll()` included. A steps file gets `js` (runs a function in the page), `open`, `click`, `shot`, `waitFor`, `sleep`, `rig`, `reload`, `log` and Playwright's `page`:
+Action methods (`goTo`, `interact`, `open`, `closeAll`, `ride`, `teleport`, `camera`, `height`) and `presenterStats()` return promises; `await` every one (`closeAll()` included). Inspection methods (`state()`, `list()`, `commands()`, `visits()`, `frameStats()`) are synchronous. Assert on `state()` JSON, and pair visual checks with `await js(() => window.office.camera('first'))` before `shot()`:
 
 ```js
 // steps.mjs
 export default async ({ js, shot, log }) => {
-  await js(() => window.office.goTo('issues'));          // teleport in front of the Issues board, facing it
-  const s = await js(() => window.office.interact());    // E: the board opens
+  await js(() => window.office.goTo('issues'));
+  const s = await js(() => window.office.interact());    // E opens the Issues board
   if (s.modals[0]?.label !== 'Issues board') throw new Error(JSON.stringify(s.modals));
   await shot('issues');
   await js(() => window.office.closeAll());
-  await js(() => window.office.ride('Home'));            // resolves when the doors open on Home
+  await js(() => window.office.ride('Home'));            // resolves once doors open on Home
   log(JSON.stringify(await js(() => window.office.state().floor)));
 };
 ```
 
-| Command | Use |
+| Command | Behavior |
 | --- | --- |
-| `office.list()` | Every target `goTo` accepts here: `{id, kind, label, worker?}` |
-| `office.goTo(target, {walk?, timeout?})` | Desk id (`desk-3`), worker id or name, desk label, board or place kind (`issues`, `pulls`, `actions`, `coffee`, `elevator`, `gong`, `jukebox`, `bookshelf`, `tv`, `ladder`, `bar`, `dj`), floor id or name, `roof`, `orchestrator`, or a Mission Control bot's worker id or name. `{walk: true}` walks the office paths instead of teleporting |
-| `office.interact(key = 'E')` | Presses E, P, R, X, B, C or O at the `goTo` target, or else at the nearest thing in reach. E at a worker opens its terminal; at the Orchestrator its prompt box (O its terminal, X Stop); at a bot its card |
-| `office.open(id)` | Runs a ☰ menu command (`issues`, `pulls`, `pipelines`, `search`, `elevator`, `roof`, `decor`, `settings`, `phone`, `help`, `upgrade`, `waiting`, `orchestrator`) |
-| `office.commands()` | Those commands, with whether each is offered here and why one is blocked |
-| `office.closeAll()` | Closes every open window |
-| `office.ride(floor)` | Elevator to a floor id or name, or `roof` |
-| `office.camera(preset)` | `first`, a fixed level pose looking straight ahead, so screenshots compare between runs |
-| `office.state()` | Floor, position, facing, seat, `using` (what E would use), `modals` (open windows by label), `terminal`, `workers`, `floors`, and `agents` (Mission Control's Orchestrator and bots) when the office has Mission Control |
-
-Assert on `state()` JSON. Screenshots are for what JSON cannot show (a mesh, a layout, a colour): `await js(() => window.office.camera('first'))`, then `await shot('first')`.
+| `office.list()` | Live `goTo` targets on the current floor: `{id, kind, label, deskId?, worker?, here?}` |
+| `office.goTo(target, {walk?, timeout?})` | Moves to a `list()` id (`desk-3`, `issues`, `pulls`, `actions`, `ci`, `whiteboard`, `computers`, `elevator`, `gong`, `jukebox`, `bookshelf`, `ladder`, `orchestrator`, or a bot id), worker id/name, desk label, floor id/name, or `roof` (`{walk: true}` pathfinds instead of teleporting) |
+| `office.interact(key = 'E')` | Presses `E`, `P`, `R`, `X`, `B`, `C` or `O` at the `goTo` target or nearest spot (`E`: worker terminal, board, Orchestrator prompt, bot card, ladder dismount; `O`: Orchestrator terminal; `X`: Stop/dismiss) |
+| `office.open(id)` / `office.commands()` | Runs or lists ☰ menu commands (`issues`, `pulls`, `pipelines`, `ci`, `whiteboard`, `computers`, `environments`, `search`, `autowiki`, `elevator`, `roof`, `decor`, `settings`, `welcome`, `phone`, `companion`, `help`, `upgrade`, `orchestrator`, `waiting`) with availability reasons |
+| `office.closeAll()` | Closes all open windows |
+| `office.ride(floor)` / `office.teleport(floor)` | Elevator ride (including `roof`) vs instant floor switch keeping pose (numbered floors only) |
+| `office.camera('first')` / `office.height(scale)` | Level straight-ahead camera preset for repeatable shots; smooth eye-height scale (`1`–`3`) |
+| `office.state()` / `office.visits()` | Scene snapshot (`floor`, `player`, `using`, `modals`, `terminal`, `workers`, `floors`, `agents`) and active worker visit steps/poses |
+| `office.frameStats({reset?})` / `office.presenterStats({reset?, samples?})` | Drawn pacing and CPU/GPU pass times; Mac Metal presenter counters (`null` in browser) |
 
 ### Over HTTP
 
-The server runs the same commands in the office tab opened last (a phone never counts). A tab must be open (a run of `office-run.mjs` in progress, or the owner's own tab), so this complements the runner:
+Relay commands to the most recently opened non-phone office tab:
 
 ```bash
 curl -s -X POST http://127.0.0.1:4677/api/automation -H 'content-type: application/json' \
   -d '{"cmd":"goTo","args":["desk-3"],"timeout":30000}'
-# 200 {"ok":true,"value":{…state…}} · 422 {"ok":false,"error":"…"} · 409 no tab open · 504 no answer in time
+# 200 {"ok":true,"value":{…}} · 422 {"ok":false,"error":"…"} · 409 no tab · 504 timeout
 ```
 
 ### Input between targets
 
-Walking into furniture, turning, jumping, climbing, the sidearm and its spells all happen between `goTo` targets. Call `rig()` in the steps file to load the movement rig from [`office-choreography`](../office-choreography/SKILL.md), script the input with `__walkTo`, `__look`, `__hold` and `__tap`, and assert on `state()` afterwards:
+For collisions, turns, jumping, climbing or sidearm/wand input between `goTo` spots, load [`office-choreography`](../office-choreography/SKILL.md) via `await rig()`, drive with `__walkTo`, `__look`, `__hold` and `__tap`, then assert on `state()` (record video proof with [`office-video-capture`](../office-video-capture/SKILL.md)'s `rec.sh`):
 
 ```js
 export default async ({ rig, js, sleep, log }) => {
@@ -68,16 +64,14 @@ export default async ({ rig, js, sleep, log }) => {
 };
 ```
 
-For video proof of a fix (a PR, a bug repro), record the same steps with [`office-video-capture`](../office-video-capture/SKILL.md)'s `rec.sh`.
-
 ## 3. Pitfalls
 
-- **A step waits on something slow** (a cloud worker's turn, a build). Use `waitFor(fn, arg, timeoutMs)` on `state()` with a long enough command timeout, and wait for the change you caused (`working`, then `done`): the end state may already hold before your action starts.
-- **Walking from inside the elevator car gets stuck** ("Stuck on the way to …"). Teleport first (`goTo` without `walk`), then walk from there.
-- **The player faces the wrong way, or the page looks stale after a rebuild.** Restart the office and reload the tab before debugging the client.
-- **The character picker is up.** The clone has no `local-storage.json` (clone-office.sh couldn't read the Mac app's storage). Re-clone, or pick a character in the steps.
-- **A new feature does not show up.** A new ☰ menu entry or interactable kind appears in `commands()` or `list()` by itself; a new way to move the player needs a method on `AutomationHost` in `src/client/main.ts`.
+- **Slow async transitions** (cloud turns, builds): use `waitFor(fn, arg, timeoutMs)` on `state()` and observe the transition (`working` then `done`) rather than asserting only the end state, which may already hold beforehand.
+- **Elevator exits**: teleport out of the car (`goTo` without `walk`) before calling `{walk: true}` to avoid `"Stuck on the way to …"`.
+- **Stale pose or bundle**: rebuild, restart `start.sh`, and reload the tab before debugging client state.
+- **Character picker blocking load**: `$T/local-storage.json` was missing; re-clone or submit the picker in steps.
+- **Extensibility**: new ☰ menu items and interactables surface in `commands()` and `list()` automatically; wire new player movement modes onto `AutomationHost` in `src/client/main.ts`.
 
 ## 4. Clean up
 
-Follow [`office-clone`](../office-clone/SKILL.md) section 5: stop `start.sh` and the clone's PTY hosts, remove `$T`, and delete anything the check made in the owner's Factory account or on GitHub.
+Run [`office-clone`](../office-clone/SKILL.md) section 5 cleanup. The check is complete when `state()` assertions pass, `camera('first')` screenshots match any visual change, the clone and its PTY hosts are stopped, `$T` is removed, and any external test artifacts are deleted.
