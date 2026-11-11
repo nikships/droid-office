@@ -87,6 +87,11 @@ export interface TeamEvent {
   answered?: boolean;
   pushedSha?: string;
   prUrl?: string;
+  /**
+   * A report a subagent sent as it ends its turn before its task is finished, saying what it waits
+   * on (a background job it started, which wakes it when it exits). Its status still goes to done.
+   */
+  progress?: true;
 }
 
 /** A subagent as the team tools show it. */
@@ -107,9 +112,11 @@ export interface TeamMember {
   /** It has been given its task and isn't in the middle of a turn now. */
   settled: boolean;
   /** What it last reported or asked. */
-  report?: { text: string; question: boolean; at: number; seq: number; pushedSha?: string; prUrl?: string };
+  report?: { text: string; question: boolean; at: number; seq: number; pushedSha?: string; prUrl?: string; progress?: true };
   /** The event seq of a team_report question nobody has answered yet. */
   openQuestion?: number;
+  /** At rest after a progress report, with nothing since: not finished, waiting on its own background work to wake it. */
+  awaitingJob?: true;
   idleSince?: number;
   idleForMs?: number;
 }
@@ -168,6 +175,7 @@ const NEWS: Record<TeamEventKind, string> = {
   sent_home: 'was sent home by the owner',
   done: 'finished its turn without reporting',
 };
+const PROGRESS_NEWS = 'sent a progress report: it is not finished, and waits on its own background work to wake it';
 
 const ok = (body: Record<string, unknown>): TeamReply => ({ status: 200, body });
 const no = (status: number, error: string): TeamReply => ({ status, body: { error } });
@@ -184,7 +192,7 @@ function newsWords(news: TeamEvent[]): string {
     const had = latest.get(e.worker);
     if (!had || WEIGHT[e.kind] >= WEIGHT[had.kind]) latest.set(e.worker, e);
   }
-  return [...latest.values()].map((e) => `${e.name} ${NEWS[e.kind]}.`).join(' ');
+  return [...latest.values()].map((e) => `${e.name} ${e.progress ? PROGRESS_NEWS : NEWS[e.kind]}.`).join(' ');
 }
 
 export const TEAM_EVENT_KINDS = Object.keys(WEIGHT) as TeamEventKind[];
@@ -590,6 +598,8 @@ export class Team {
     const effort = w.activeEffort ?? w.effort;
     const open = [...this.log].reverse().find((e) => e.worker === w.id && e.kind === 'question' && !e.answered && e.lead === w.lead);
     const asking = w.status === 'needs_input' && w.ask?.kind === 'question';
+    // A later event (a turn that ended without a report, a stop) means the job already woke it.
+    const awaitingJob = (w.status === 'idle' || w.status === 'done') && last?.progress && !this.log.some((e) => e.worker === w.id && e.seq > last.seq);
     return {
       id: w.id,
       name: w.name,
@@ -603,8 +613,21 @@ export class Team {
       ...(w.task ? { task: w.task.name } : {}),
       ...(w.pr ? { pr: w.pr } : {}),
       settled: settled(w),
-      ...(last?.text ? { report: { text: last.text, question: last.kind === 'question', at: last.at, seq: last.seq, ...(last.pushedSha ? { pushedSha: last.pushedSha } : {}), ...(last.prUrl ? { prUrl: last.prUrl } : {}) } } : {}),
+      ...(last?.text
+        ? {
+            report: {
+              text: last.text,
+              question: last.kind === 'question',
+              at: last.at,
+              seq: last.seq,
+              ...(last.pushedSha ? { pushedSha: last.pushedSha } : {}),
+              ...(last.prUrl ? { prUrl: last.prUrl } : {}),
+              ...(last.progress ? { progress: true as const } : {}),
+            },
+          }
+        : {}),
       ...(open ? { openQuestion: open.seq } : {}),
+      ...(awaitingJob ? { awaitingJob: true as const } : {}),
       ...((w.status === 'idle' || w.status === 'done') && this.idleSince.has(w.id) ? { idleSince: this.idleSince.get(w.id), idleForMs: Math.max(0, this.now() - this.idleSince.get(w.id)!) } : {}),
     };
   }
@@ -747,6 +770,7 @@ export class Team {
       ...(e.options ? { options: e.options } : {}),
       ...(e.pushedSha ? { pushedSha: e.pushedSha } : {}),
       ...(e.prUrl ? { prUrl: e.prUrl } : {}),
+      ...(e.progress ? { progress: true as const } : {}),
     }));
   }
 
@@ -798,6 +822,9 @@ export class Team {
     if (b.prUrl !== undefined && (typeof b.prUrl !== 'string' || b.prUrl.length > 2000 || !URL.canParse(b.prUrl))) return no(400, 'prUrl takes a valid URL of at most 2000 characters.');
     const question = b.question === true;
     if (b.options !== undefined && !question) return no(400, 'options are only for a question: add question: true, or leave options out of a report.');
+    if (b.progress !== undefined && typeof b.progress !== 'boolean') return no(400, 'progress takes true or false.');
+    const progress = b.progress === true;
+    if (progress && question) return no(400, 'A question already ends your turn waiting on an answer: leave progress out, or send the progress report separately.');
     const options =
       question && Array.isArray(b.options)
         ? b.options
@@ -808,11 +835,11 @@ export class Team {
     const sha = typeof b.pushedSha === 'string' ? b.pushedSha : await pushedSha(this.opts.dir, w);
     const prUrl = typeof b.prUrl === 'string' ? b.prUrl : (w.pr?.url ?? /https:\/\/(?:github\.com|gitlab\.com)\/[^\s)<>]+\/(?:pull|merge_requests)\/\d+/.exec(text)?.[0]);
     const provenance = { ...(sha ? { pushedSha: sha } : {}), ...(prUrl ? { prUrl } : {}) };
-    this.push({ lead: lead.id, worker: w.id, name: w.name, kind: question ? 'question' : 'report', text, ...(options.length ? { options } : {}), ...provenance });
+    this.push({ lead: lead.id, worker: w.id, name: w.name, kind: question ? 'question' : 'report', text, ...(options.length ? { options } : {}), ...provenance, ...(progress ? { progress: true as const } : {}) });
     if (!question) this.reported.add(w.id);
     this.spoke.add(w.id);
-    this.opts.toast(`${question ? `❓ ${w.name} asked ${lead.name}` : `📨 ${w.name} reported to ${lead.name}`}: “${clip(text, 90)}”`, 'info', w.id);
-    return ok({ lead: lead.name, ...provenance });
+    this.opts.toast(`${question ? `❓ ${w.name} asked ${lead.name}` : progress ? `⏳ ${w.name} reported progress to ${lead.name}` : `📨 ${w.name} reported to ${lead.name}`}: “${clip(text, 90)}”`, 'info', w.id);
+    return ok({ lead: lead.name, ...provenance, ...(progress ? { progress: true } : {}) });
   }
 
   private push(e: Omit<TeamEvent, 'seq' | 'at'>) {
@@ -918,6 +945,7 @@ export class Team {
           ...(x.answered === true ? { answered: true } : {}),
           ...(typeof x.pushedSha === 'string' && /^[0-9a-f]{40,64}$/.test(x.pushedSha) ? { pushedSha: x.pushedSha } : {}),
           ...(typeof x.prUrl === 'string' ? { prUrl: x.prUrl.slice(0, 2000) } : {}),
+          ...(x.progress === true ? { progress: true as const } : {}),
         });
       }
       this.log = this.log.slice(-LOG_MAX);

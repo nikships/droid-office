@@ -28,15 +28,19 @@ function reply(result: TeamReply, describe: (body: Record<string, unknown>) => s
   return officeResult(describe(result.body), result.body);
 }
 
+/** At rest after a progress report: done in status only. */
+const PROGRESS_REST = 'Not finished: its turn ended after a progress report, and it waits on its own background work (such as a long job) to wake it. If that has run far longer than the report expects, check it with worker_log.';
+
 function memberText(member: TeamMember & { terminal?: string; terminalUnavailable?: string }): string {
   return [
     `${member.name} (${member.id}), ${member.status}, ${member.desk}${member.model ? `, ${member.model}${member.effort ? ` ${member.effort}` : ''}` : ''}.`,
     ...(member.idleForMs !== undefined ? [`Idle for ${Math.floor(member.idleForMs / 60_000)} minutes.`] : []),
+    ...(member.awaitingJob ? [PROGRESS_REST] : []),
     ...(member.task ? [`Task: ${member.task}`] : []),
     ...(member.activity ? [`Doing: ${member.activity}`] : []),
     member.worktree ? `Worktree: ${member.worktree.path} on ${member.worktree.branch}${member.worktree.from ? ` from ${member.worktree.from}` : ''}.` : 'Working in the main checkout.',
     ...(member.pr ? [`Pull request: ${member.pr.url}`] : []),
-    ...(member.report ? [`Last ${member.report.question ? 'question' : 'report'}:\n${member.report.text}`] : []),
+    ...(member.report ? [`Last ${member.report.question ? 'question' : member.report.progress ? 'progress report' : 'report'}:\n${member.report.text}`] : []),
     ...(member.terminal !== undefined ? [`Terminal:\n${member.terminal || '(empty)'}`] : []),
     ...(member.terminalUnavailable ? [member.terminalUnavailable] : []),
   ].join('\n');
@@ -44,6 +48,7 @@ function memberText(member: TeamMember & { terminal?: string; terminalUnavailabl
 
 function eventText(event: TeamEvent): string {
   const at = `[${new Date(event.at).toISOString()}]`;
+  if (event.progress) return `${at} Worker progress report from ${event.name} (not finished; its turn ended waiting on its own background work, which wakes it):\n${event.text ?? ''}`;
   if (event.kind === 'report' || event.kind === 'question') return `${at} Worker ${event.kind} from ${event.name}:\n${event.text ?? ''}`;
   const status = { done: 'finished its turn without reporting', needs_input: 'needs someone to answer in its own terminal', stopped: 'stopped', left: 'left the floor', sent_home: 'was sent home by the owner' };
   return `${at} Office status: ${event.name} ${status[event.kind]}${event.text ? `: ${event.text}` : ''}.${event.kind === 'needs_input' ? ' Tell whoever asked you; someone must answer at its desk.' : ''}`;
@@ -391,11 +396,16 @@ export function register(server: OfficeMcpServer, deps: OfficeMcpDeps): void {
   server.tool(
     {
       name: 'team_report',
-      description: 'For a subagent: send your lead your results, checks, remaining work and commit or PR links, or ask a blocking question with question: true. Then end your turn: the lead replies as a later message.',
+      description:
+        'For a subagent: send your lead your results, checks, remaining work and commit or PR links, or ask a blocking question with question: true. Before ending your turn with the task unfinished, because a background job you started will wake you when it exits, send a progress report with progress: true saying what you wait on and when to expect it. Then end your turn: a reply from the lead, or your job finishing, arrives as a later message.',
       inputSchema: z.object({
         text: text.describe('Results, checks, remaining work and links, or the blocking question with relevant context.'),
         question: z.boolean().optional().describe('True for a question to your lead; omit or false for a report.'),
         options: z.array(z.string().trim().min(1).max(200)).min(2).max(9).optional().describe('Questions only: the answers your lead may pick from, in order.'),
+        progress: z
+          .boolean()
+          .optional()
+          .describe('True when you end your turn before the task is finished, waiting on a background job of yours that wakes you when it exits: your lead sees you are not done. Omit for your final report, and for a question.'),
         pushedSha: z
           .string()
           .regex(/^[0-9a-f]{40,64}$/)
@@ -407,6 +417,12 @@ export function register(server: OfficeMcpServer, deps: OfficeMcpDeps): void {
     },
     officeAccess.subagent,
     async (args, caller) =>
-      reply(await ownFloor(caller).team.handle(caller.worker, { action: 'report', ...args }), (body) => `${args.question ? 'Asked' : 'Reported to'} ${body.lead}. End your turn now; the answer arrives as a later message.`),
+      reply(await ownFloor(caller).team.handle(caller.worker, { action: 'report', ...args }), (body) =>
+        args.question
+          ? `Asked ${body.lead}. End your turn now; the answer arrives as a later message.`
+          : args.progress
+            ? `Sent ${body.lead} a progress report: ${body.lead} sees you are not finished. End your turn now; your background job wakes you when it exits. Then check its result, carry on, and finish with a final report (progress left out).`
+            : `Reported to ${body.lead}. End your turn now; any reply arrives as a later message.`,
+      ),
   );
 }
