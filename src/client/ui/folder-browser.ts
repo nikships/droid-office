@@ -24,7 +24,7 @@ export function openFolderBrowser(net: Net, onPick: (dir: string) => void): void
   let listing: Listing | null = null;
   let request = '';
 
-  const pathInput = h('input', { type: 'text', 'aria-label': 'Folder', placeholder: '~/Documents/notes', spellcheck: 'false', autocomplete: 'off' }) as HTMLInputElement;
+  const pathInput = h('input.input', { type: 'text', maxlength: 1024, 'aria-label': 'Folder', placeholder: '~/Documents/notes', spellcheck: 'false', autocomplete: 'off' }) as HTMLInputElement;
   const upBtn = h('button.btn.icon', { type: 'button', title: 'The folder this one is in', 'aria-label': 'Up one folder' }, '↑');
   const listEl = h('div.list.boxed.folder-list', { role: 'listbox', 'aria-label': 'Folders' });
   const noteEl = h('div.stack.tight');
@@ -110,10 +110,23 @@ export function openFolderBrowser(net: Net, onPick: (dir: string) => void): void
   const el = h(
     'div.modal.folder-browser',
     { role: 'dialog', 'aria-label': 'Pick a folder' },
-    windowHeader('Pick a folder', 'Any folder on the office’s machine can be a floor. Open folders to find yours, then add it.'),
+    windowHeader('Pick a folder', 'Any folder on the office’s machine can be a floor.'),
     h('div.body', {}, h('div.stack.tight', {}, h('div.input-group', {}, upBtn, pathInput), listEl, noteEl)),
     h('footer', {}, h('span.grow', {}, h('span.key', {}, 'Enter'), 'go to the path typed'), cancelBtn, pickBtn),
   );
-  const modal = openModal(el, { doing: '🛗 at the elevator', onClose: () => waiters.delete(onListing) });
+  const offFloors = store.on('floors', render);
+  const offStatus = net.onStatus((up) => {
+    if (!up && !listing) offline = true;
+    else if (up && offline) return go(pathInput.value.trim() || undefined);
+    render();
+  });
+  const modal = openModal(el, {
+    doing: '🛗 at the elevator',
+    onClose: () => {
+      waiters.delete(onListing);
+      offFloors();
+      offStatus();
+    },
+  });
   go();
 }

@@ -157,6 +157,8 @@ export class PtyHost {
   private unclaimed = new Set<string>();
   /** Leaving on purpose: the connection closing is not the host dying. */
   private leaving = false;
+  private stopping = false;
+  private spawnedPid: number | undefined;
   private socketPath: string;
   private infoPath: string;
 
@@ -180,7 +182,7 @@ export class PtyHost {
    * host to be had: terminals then run in-process.
    */
   async connect(): Promise<boolean> {
-    if (process.platform === 'win32') return false;
+    if (process.platform === 'win32' || this.leaving) return false;
     try {
       let found = await this.hello();
       if (found && found.version !== PTY_PROTOCOL) {
@@ -192,15 +194,21 @@ export class PtyHost {
         });
         found = undefined;
       }
-      if (!found) {
+      if (!found && !this.leaving) {
         this.startHost();
         const deadline = Date.now() + 10_000;
-        while (!found && Date.now() < deadline) {
+        while (!found && !this.leaving && Date.now() < deadline) {
           await new Promise((r) => setTimeout(r, 100));
-          found = await this.hello();
+          if (!this.leaving) found = await this.hello();
         }
       }
       if (!found) return false;
+      if (this.leaving) {
+        if (this.stopping) found.sock.end(frame({ t: 'stop' }));
+        else found.sock.end();
+        return false;
+      }
+      this.spawnedPid = undefined;
       const { sock, sessions } = found;
       this.sock = sock;
       this.unclaimed = new Set(sessions);
@@ -264,7 +272,19 @@ export class PtyHost {
   /** The office is closing for good: the host ends every terminal and exits. */
   stop() {
     this.leaving = true;
-    this.sock?.end(frame({ t: 'stop' }));
+    this.stopping = true;
+    if (this.sock) {
+      this.sock.end(frame({ t: 'stop' }));
+      return;
+    }
+    if (this.spawnedPid) {
+      try {
+        process.kill(this.spawnedPid, 'SIGTERM');
+      } catch {
+        // already exited
+      }
+      this.spawnedPid = undefined;
+    }
   }
 
   private send(msg: ToHost) {
@@ -353,6 +373,7 @@ export class PtyHost {
         // node_modules and not from whichever project this floor is.
         cwd: path.dirname(here),
       });
+      this.spawnedPid = child.pid;
       child.unref();
     } finally {
       closeSync(log);
