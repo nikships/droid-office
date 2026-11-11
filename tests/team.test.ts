@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import type { DroidModelCatalogue } from '../src/server/droid-models.js';
@@ -21,7 +21,6 @@ class Fake implements TeamWorkers {
   prompts: [string, string][] = [];
   queued: string[] = [];
   notices: [string, string][] = [];
-  held: [string, string][] = [];
   hookDelivery = false;
   resumed: [string, string | undefined][] = [];
   killed: string[] = [];
@@ -69,10 +68,6 @@ class Fake implements TeamWorkers {
     if (!this.hookDelivery) return false;
     this.notices.push([id, text]);
     return true;
-  }
-  hold(id: string, text: string) {
-    this.held.push([id, text]);
-    return undefined;
   }
   resume(id: string, text?: string) {
     this.resumed.push([id, text]);
@@ -161,15 +156,19 @@ test('sibling board, notes and hire snapshots share concise live context without
   await r.call('sub1', { action: 'report', text: `Use the new API. ${'detail '.repeat(200)}` });
   await r.call('sub1', { action: 'note', text: 'API now takes an options object.', areas: ['src/shared/api.ts'] });
   await r.call('lead', { action: 'hire', title: 'Client', task: 'Update callers' });
-  assert.match(r.fake.hired[1].prompt, /Siblings at hire time/);
-  assert.match(r.fake.hired[1].prompt, /Shared API/);
-  assert.match(r.fake.hired[1].prompt, /office\/sub1/);
-  assert.match(r.fake.hired[1].prompt, /src\/shared\/api.ts/);
-  assert.match(r.fake.hired[1].prompt, /API now takes an options object/);
+  assert.equal(r.fake.hired[1].prompt, 'Update callers');
+  const snapshot = r.team.siblingSnapshot('lead', 'sub2')!;
+  assert.match(snapshot, /Siblings at hire time/);
+  assert.match(snapshot, /Shared API/);
+  assert.match(snapshot, /office\/sub1/);
+  assert.match(snapshot, /src\/shared\/api.ts/);
+  assert.match(snapshot, /API now takes an options object/);
   r.fake.add(worker({ id: 'outsider', deskId: 'desk-12', lead: 'another' }));
+  r.set('sub2', 'working');
+  r.fake.hookDelivery = true;
   await r.call('sub1', { action: 'note', text: 'Migration is ready.' });
   assert.deepEqual(
-    r.fake.held.map(([id]) => id),
+    r.fake.notices.map(([id]) => id),
     ['sub2'],
   );
   const board = (await r.call('sub2', { action: 'board' })).body.members;
@@ -190,6 +189,141 @@ test('sibling board, notes and hire snapshots share concise live context without
   await r.call('sub1', { action: 'note', text: 'Finished API edits.', areas: [] });
   assert.deepEqual(r.team.board('lead')[0].areas, []);
   assert.equal((await r.call('lead', { action: 'note', text: 'No' })).status, 403);
+});
+
+test('sibling notes never type, queue behind a turn, revive resting sessions or prolong reported work', async (t) => {
+  const r = rig(t);
+  await r.call('lead', { action: 'hire', task: 'Author' });
+  await r.call('lead', { action: 'hire', task: 'Receiver' });
+  const text = 'Shared API\n```text\nnot an assignment\n```';
+  for (const state of ['starting', 'working', 'needs_input', 'done', 'idle', 'exited'] as const) {
+    for (const currentHooks of [true, false]) {
+      r.set('sub2', state);
+      r.fake.hookDelivery = currentHooks;
+      r.fake.notices = [];
+      const reply = await r.call('sub1', { action: 'note', text, areas: ['src/shared/api.ts'] });
+      assert.equal(reply.status, 200);
+      assert.equal(r.fake.notices.length, state === 'working' && currentHooks ? 1 : 0, `${state}, hooks=${currentHooks}`);
+      assert.deepEqual(reply.body.notified, state === 'working' && currentHooks ? ['sub2'] : []);
+      assert.equal(r.fake.prompts.length, 0);
+      assert.equal(r.fake.resumed.length, 0);
+    }
+  }
+  r.set('sub2', 'working');
+  r.fake.hookDelivery = true;
+  r.fake.notices = [];
+  await r.call('sub1', { action: 'note', text });
+  assert.match(r.fake.notices[0][1], /a worker, not the lead or owner/);
+  assert.match(r.fake.notices[0][1], /````text\nShared API/);
+  r.fake.notices = [];
+  await r.call('sub2', { action: 'report', text: 'Finished.' });
+  await r.call('sub1', { action: 'note', text: 'Do not wake the finished worker.' });
+  assert.equal(r.fake.notices.length, 0);
+  assert.equal(r.team.beforeStop(r.fake.get('sub2')!), undefined);
+});
+
+test('steering covers startup, current and legacy working hooks, reported work, menus, rest and exit', async (t) => {
+  const r = rig(t);
+  await r.call('lead', { action: 'hire', task: 'Worker' });
+  for (const [state, hooks, expected] of [
+    ['starting', true, 'error'],
+    ['working', true, 'next_step'],
+    ['working', false, 'queued_turn'],
+    ['needs_input', true, 'error'],
+    ['done', true, 'sent'],
+    ['idle', true, 'sent'],
+    ['exited', true, 'resumed'],
+  ] as const) {
+    r.set('sub1', state);
+    r.fake.hookDelivery = hooks;
+    const result = await r.call('lead', { action: 'send', worker: 'Pixel', text: 'Course correction.' });
+    assert.equal(result.body.delivery ?? 'error', expected, state);
+    assert.equal(result.status, expected === 'error' ? 409 : 200);
+  }
+  r.set('sub1', 'working');
+  await r.call('sub1', { action: 'report', text: 'Ready for follow-up.' });
+  assert.equal((await r.call('lead', { action: 'send', worker: 'sub1', text: 'Revise this.' })).body.delivery, 'next_step');
+});
+
+test('broadcast deduplicates canonical ids and reports empty and entirely failed deliveries as errors', async (t) => {
+  const r = rig(t);
+  assert.match((await r.call('lead', { action: 'send', all: true, text: ' ' })).body.error, /Provide text/);
+  assert.match((await r.call('lead', { action: 'send', all: true, text: 'Hello' })).body.error, /No subagents/);
+  await r.call('lead', { action: 'hire', task: 'One' });
+  r.set('sub1', 'working');
+  r.fake.hookDelivery = true;
+  const duplicate = await r.call('lead', { action: 'send', workers: ['Pixel', 'pixel', 'sub1', 'SUB1'], text: 'Once.' });
+  assert.equal(duplicate.status, 200);
+  assert.equal(duplicate.body.results.length, 1);
+  assert.equal(duplicate.body.results[0].id, 'sub1');
+  assert.equal(duplicate.body.results[0].name, 'Pixel');
+  assert.equal(r.fake.notices.length, 1);
+  r.set('sub1', 'starting');
+  for (const targets of [{ all: true }, { workers: ['Pixel', 'missing'] }]) {
+    const failed = await r.call('lead', { action: 'send', ...targets, text: 'Cannot deliver.' });
+    assert.equal(failed.status, 409);
+    assert.match(failed.body.error, /every recipient failed/);
+    assert.ok(failed.body.results.every((r: { error?: string }) => r.error));
+  }
+});
+
+test('note cleanup is persisted on lead dismissal and malformed notes never erase restored team news', async (t) => {
+  const r = rig(t);
+  await r.call('lead', { action: 'hire', task: 'One' });
+  await r.call('sub1', { action: 'note', text: 'Original.', areas: ['src/shared/api.ts'] });
+  r.fake.gone = (id) => r.team.onWorkerGone(id);
+  await r.call('lead', { action: 'dismiss', worker: 'sub1' });
+  const saved = JSON.parse(readFileSync(path.join(r.dir, 'team.json'), 'utf8'));
+  assert.deepEqual(saved.notes, {});
+  r.fake.add(worker({ id: 'sub1', deskId: 'desk-3', lead: 'lead' }));
+  for (const notes of [null, [], 'invalid', { bad: null, worse: 1, sub1: null }, { bad: null, sub1: { text: '  Preserved.  ', at: 10, areas: [null, '', '  ', 3, ' src/api.ts ', ...Array.from({ length: 30 }, (_, i) => ` file${i} `)] } }]) {
+    writeFileSync(
+      path.join(r.dir, 'team.json'),
+      JSON.stringify({
+        seq: 77,
+        statusCursors: { lead: 70 },
+        notes,
+        events: [
+          { seq: 20, lead: 'lead', worker: 'sub1', name: 'Pixel', kind: 'report', at: 10, text: 'Kept news.' },
+          { seq: 72, lead: 'lead', worker: 'sub1', name: 'Pixel', kind: 'report', at: 11, text: 'Newer news.' },
+        ],
+      }),
+    );
+    const restored = new Team(r.fake, { dataDir: r.dir, dir: '/proj', git: true, settings: () => r.settings, toast() {} });
+    t.after(() => restored.stop());
+    assert.equal(restored.latest(), 77);
+    assert.equal(restored.news('lead')[0].text, 'Kept news.');
+    const status = await restored.handle({ ...r.fake.get('lead')!, remote: true }, { action: 'status' });
+    assert.deepEqual(
+      (status.body.events as { seq: number }[]).map((event) => event.seq),
+      [72],
+      'the saved remote cursor survives malformed notes too',
+    );
+    const note = restored.board('lead')[0].note;
+    if (note) {
+      assert.equal(note.text, 'Preserved.');
+      const areas = restored.board('lead')[0].areas;
+      assert.equal(areas.length, 20);
+      assert.equal(areas[0], 'src/api.ts');
+      assert.equal(areas[1], 'file0');
+    }
+  }
+});
+
+test('hire snapshots cap multiline notes and the full context without changing literal tasks', async (t) => {
+  const r = rig(t);
+  r.settings.maxPerLead = 8;
+  for (let i = 0; i < 7; i++) {
+    const task = `Literal task ${i}\nwith newlines`;
+    await r.call('lead', { action: 'hire', title: `Task ${i}`, task });
+    assert.equal(r.fake.hired[i].prompt, task);
+    await r.call(`sub${i + 1}`, { action: 'note', text: 'details\n'.repeat(120), areas: Array.from({ length: 20 }, (_, n) => `src/area-${n}`) });
+  }
+  const snapshot = r.team.siblingSnapshot('lead', 'not-hired-yet')!;
+  assert.ok(snapshot.length < 2600);
+  assert.match(snapshot, /Current context: team_board/);
+  assert.doesNotMatch(snapshot, /team_note/);
+  assert.doesNotMatch(snapshot, /details\ndetails/);
 });
 
 test('mid-turn steering uses existing hook notices and queued-turn fallback; broadcasts report each outcome', async (t) => {

@@ -312,6 +312,8 @@ export class WorkerManager {
    * team's news, or a subagent's reminder to report (see Team.beforeStop). Only asked when its Stop can be blocked.
    */
   beforeStop?: (info: WorkerInfo) => string | undefined;
+  /** Current sibling metadata for a fresh subagent brief, separate from its literal task. */
+  subagentContext?: (info: WorkerInfo) => string | undefined;
   /** A turn ended and the message queued behind it starts the next one, with no rest between (see stopped). */
   nextTurn?: (info: WorkerInfo) => void;
   /** The system prompt its agents start with, in place of worker.system (the Orchestrator's brief). */
@@ -925,7 +927,9 @@ export class WorkerManager {
         : "You work in the project's main checkout, which other people and workers use too: don't switch branches, stash, reset or commit in it unless your task says to.";
     const template = this.prompts?.text('subagent.brief') ?? PROMPTS['subagent.brief'].text;
     const brief = officePrompt(this.prompts, 'subagent.brief', { name: w.info.name, lead: lead.name, where, ...forgeVars(this.forge), ...workerMessageVars(prompt) });
-    return placeholders(template).includes('text') ? brief : `${brief}\n\n${prompt}`;
+    const taskBrief = placeholders(template).includes('text') ? brief : `${brief}\n\n${prompt}`;
+    const context = this.subagentContext?.(w.info);
+    return context ? `${taskBrief}\n\n${context}` : taskBrief;
   }
 
   /** The end of a worker's terminal as plain text, its scrollback included: what a lead reads of its subagent. */

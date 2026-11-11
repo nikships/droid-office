@@ -21,11 +21,13 @@ const text = z.string().trim().min(1).max(20_000);
 const sameBase = (a: string, b: string) => a.replace(/^origin\//, '') === b.replace(/^origin\//, '');
 
 function reply(result: TeamReply, describe: (body: Record<string, unknown>) => string) {
-  if (result.status >= 400)
-    return officeError(
+  if (result.status >= 400) {
+    const error = officeError(
       typeof result.body.error === 'string' ? result.body.error : 'The team could not finish this action. Read team status before retrying.',
       result.status === 404 || result.status === 410 ? 'unknown_worker' : result.status === 403 ? 'permission_denied' : result.status === 409 ? 'conflict' : 'bad_argument',
     );
+    return { ...error, structuredContent: { ...(error.structuredContent as Record<string, unknown>), ...result.body } };
+  }
   return officeResult(describe(result.body), result.body);
 }
 
@@ -39,6 +41,8 @@ function memberText(member: TeamMember & { terminal?: string; terminalUnavailabl
     ...(member.awaitingJob ? [PROGRESS_REST] : []),
     ...(member.task ? [`Task: ${member.task}`] : []),
     ...(member.activity ? [`Doing: ${member.activity}`] : []),
+    ...(member.areas?.length ? [`Areas: ${member.areas.join(', ')}`] : []),
+    ...(member.note ? [`Note: ${member.note.text}`] : []),
     member.worktree ? `Worktree: ${member.worktree.path} on ${member.worktree.branch}${member.worktree.from ? ` from ${member.worktree.from}` : ''}.` : 'Working in the main checkout.',
     ...(member.pr ? [`Pull request: ${member.pr.url}`] : []),
     ...(member.report ? [`Last ${member.report.question ? 'question' : member.report.progress ? 'progress report' : 'report'}:\n${member.report.text}`, ...resultDetailLines(member.report.result, member.report.review)] : []),
@@ -134,7 +138,7 @@ export function register(server: OfficeMcpServer, deps: OfficeMcpDeps): void {
     {
       name: 'team_note',
       description:
-        'Post a short finding for your siblings, optionally replacing your declared files or edit areas (use [] to clear). Kept on team_board and queued through existing worker hooks for running siblings without interrupting them. Does not count as a report to your lead or assign anyone a task.',
+        'Post a short finding for your siblings, optionally replacing your declared files or edit areas (use [] to clear). Kept on team_board and lead status. Active siblings that have not reported this turn receive it through current tool hooks; other sessions read the board, without being woken. Does not count as a report to your lead or assign anyone a task.',
       inputSchema: z.strictObject({ text: z.string().trim().min(1).max(1000), areas: z.array(z.string().trim().min(1).max(200)).max(20).optional() }),
       annotations: changesState,
     },
@@ -175,7 +179,7 @@ export function register(server: OfficeMcpServer, deps: OfficeMcpDeps): void {
       if (args.floor && !caller.building) return officeError('Floor workers manage only their own floor');
       if ([args.worker !== undefined, args.workers !== undefined, args.all === true].filter(Boolean).length !== 1) return officeError('Choose exactly one of worker, workers, or all: true.');
       return reply(await command(caller, { action: 'send', ...args }), (body) =>
-        body.results ? (body.results as Record<string, unknown>[]).map((r) => `${r.id}: ${r.error ?? r.delivery}.`).join('\n') : `${(body.worker as TeamMember).name}: ${body.delivery}.`,
+        body.results ? (body.results as Record<string, unknown>[]).map((r) => `${r.name ?? r.id}${r.floor ? ` (${r.floor})` : ''}: ${r.error ?? r.delivery}`).join('\n') : `${(body.worker as TeamMember).name}: ${body.delivery}`,
       );
     },
   );

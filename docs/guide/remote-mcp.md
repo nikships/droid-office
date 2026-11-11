@@ -308,7 +308,7 @@ For an external worker, status news follows a cursor kept for that bot across re
 
 ### `team_message`
 
-Steer one subagent, a subset or all your teams without interrupting a running turn. Guidance arrives at the next tool step through existing hooks, or queues behind the turn on older sessions. Select exactly one of `worker`, `workers` or `all: true`. Responses give per-recipient delivery (`next_step`, `queued_turn`, `sent`, `resumed`) or errors. A permission prompt still needs the person at its desk.
+Steer one subagent, a subset or all your teams without interrupting a running turn. Guidance arrives at the next tool step through existing hooks, or queues behind the turn on older sessions. Select exactly one of `worker`, `workers` or `all: true`. Responses give canonical worker ids, readable names, floors and per-recipient delivery (`next_step`, `queued_turn`, `sent`, `resumed`) or errors. Names and ids resolving to the same worker deliver once. Empty teams and entirely failed broadcasts return tool errors; partial delivery keeps all recipient outcomes. A permission prompt still needs the person at its desk.
 
 | Argument | Type | Required | Description |
 | --- | --- | --- | --- |

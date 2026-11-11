@@ -1,6 +1,6 @@
 import path from 'node:path';
 import type { WorkerInfo } from '../shared/protocol.js';
-import type { Team, TeamReply, TeamViews } from './team.js';
+import { teamDeliveryReply, type Team, type TeamDelivery, type TeamReply, type TeamViews } from './team.js';
 import type { Visits } from './visits.js';
 import type { RemoteWorkers } from './remote-workers.js';
 import type { WorkerManager } from './workers.js';
@@ -79,6 +79,7 @@ export class RemoteOffice {
 
   /** `since` holds a status cursor per floor; a floor it leaves out reports everything it keeps. */
   async team(worker: WorkerInfo, args: { action: string; worker?: string; lines?: number; text?: string; floor?: string; since?: Record<string, number>; kinds?: string[]; [key: string]: unknown }): Promise<TeamReply> {
+    if (args.action === 'send' && !args.text?.trim()) return { status: 400, body: { error: 'Provide text for team_message.' } };
     const all = this.floors();
     const named = args.floor === undefined ? undefined : floorNamed(all, args.floor);
     if (typeof named === 'string') return { status: 404, body: { error: named } };
@@ -92,6 +93,15 @@ export class RemoteOffice {
     }
     const floors = named ? [named] : all;
     if (!floors.length) return { status: 404, body: { error: 'No floor is open.' } };
+    const matchesFor = (ref: string) => {
+      const wanted = ref.trim().toLowerCase();
+      return floors.flatMap((f) =>
+        f.workers
+          .list()
+          .filter((w) => w.lead === worker.id && (w.id === wanted || w.name.toLowerCase() === wanted || w.name.replace(/ 🐚$/, '').toLowerCase() === wanted))
+          .map((w) => ({ f, w })),
+      );
+    };
     if (args.action === 'send' && (args.all === true || Array.isArray(args.workers))) {
       const refs =
         args.all === true
@@ -102,21 +112,25 @@ export class RemoteOffice {
                 .map((w) => w.id),
             )
           : (args.workers as string[]);
-      const results = [];
-      for (const ref of new Set(refs)) {
-        const result = await this.team(worker, { action: 'send', worker: ref, text: args.text, queue: args.queue, floor: args.floor });
-        results.push({ id: ref, ...result.body });
+      if (!refs.length) return { status: 400, body: { error: 'No subagents selected for this broadcast.' } };
+      const results: TeamDelivery[] = [];
+      const seen = new Set<string>();
+      for (const ref of refs) {
+        const matches = matchesFor(ref);
+        if (matches.length !== 1) {
+          results.push({ id: ref, error: matches.length ? 'That name occurs on several floors; use the worker id or specify floor' : 'No such subagent in your teams' });
+          continue;
+        }
+        const { f, w } = matches[0];
+        if (seen.has(w.id)) continue;
+        seen.add(w.id);
+        const result = await f.team.handle(worker, { action: 'send', worker: w.id, text: args.text, queue: args.queue });
+        results.push({ id: w.id, name: w.name, floor: f.id, ...result.body });
       }
-      return { status: 200, body: { results } };
+      return teamDeliveryReply(results);
     }
     if (args.worker) {
-      const wanted = args.worker.toLowerCase();
-      const matches = floors.flatMap((f) =>
-        f.workers
-          .list()
-          .filter((w) => w.lead === worker.id && (w.id === wanted || w.name.toLowerCase() === wanted))
-          .map((w) => ({ f, w })),
-      );
+      const matches = matchesFor(args.worker);
       if (matches.length !== 1) return { status: matches.length ? 409 : 404, body: { error: matches.length ? 'That name occurs on several floors; use the worker id or specify floor' : 'No such subagent in your teams' } };
       const { f, w } = matches[0];
       const result = await f.team.handle(worker, { ...args, worker: w.id, since: args.since ? (args.since[f.id] ?? 0) : undefined });

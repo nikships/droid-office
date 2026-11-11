@@ -258,6 +258,7 @@ test('a building lead leads teams on every floor from no desk, with the owner’
   assert.equal((await r.office.team(worker, { action: 'send', worker: 'Byte', text: 'Ambiguous' })).status, 409);
   const broadcast = await r.office.team(worker, { action: 'send', all: true, text: 'Shared API changed.' });
   assert.equal((broadcast.body.results as unknown[]).length, 5);
+  assert.equal((broadcast.body.results as { floor: string }[])[0].floor, 'alpha');
   const subset = await r.office.team(worker, { action: 'send', workers: [sub.id], text: 'Update your caller.' });
   assert.equal((subset.body.results as { id: string }[])[0].id, sub.id);
   assert.equal((subset.body.results as unknown[]).length, 1);
@@ -269,6 +270,28 @@ test('a building lead leads teams on every floor from no desk, with the owner’
   assert.equal(r.maps[0].get(sub.id)?.lead, undefined, 'its subagents carry on as independent workers');
   assert.ok([...r.maps[1].values()].every((w) => w.lead !== id));
   assert.equal(r.store.identity(id), undefined);
+});
+
+test('building broadcasts validate empty teams and text, canonicalize aliases, and fail if nobody receives', async (t) => {
+  const r = rig(t);
+  const lead = r.remote.worker;
+  assert.match((await r.office.team(lead, { action: 'send', all: true, text: '' })).body.error as string, /Provide text/);
+  assert.match((await r.office.team(lead, { action: 'send', all: true, text: 'Nobody.' })).body.error as string, /No subagents/);
+  const hire = await r.office.team(lead, { action: 'hire', repo: 'alpha', task: 'One', worktree: false });
+  const sub = hire.body.worker as WorkerInfo;
+  const once = await r.office.team(lead, { action: 'send', workers: ['Byte', 'byte', sub.id, sub.id.toUpperCase()], text: 'Only once.' });
+  const results = once.body.results as { id: string; name: string; floor: string }[];
+  assert.equal(once.status, 200);
+  assert.equal(results.length, 1);
+  assert.equal(results[0].id, sub.id);
+  assert.equal(results[0].name, 'Byte');
+  assert.equal(results[0].floor, 'alpha');
+  r.maps[0].get(sub.id)!.status = 'starting';
+  for (const targets of [{ all: true }, { workers: ['Byte', 'missing'] }]) {
+    const failed = await r.office.team(lead, { action: 'send', ...targets, text: 'Cannot deliver.' });
+    assert.equal(failed.status, 409);
+    assert.match(failed.body.error as string, /every recipient failed/);
+  }
 });
 
 test('remote hires select an open task repository and inspection resolves across floors', async (t) => {
