@@ -121,7 +121,7 @@ The office never turns on [Tailscale Funnel](https://tailscale.com/kb/1223/funne
 
 ## Tools
 
-Remote-bot `tools/list` returns the tools below. The list is stable when local hiring or visit permissions change. Hiring and the worker-control tools do not depend on the Subagents permission, model allowlist or team-size limit; office capacity, model availability and the owner's normal action checks still apply. Turning off **Office MCP** or revoking a bot's key cuts off access.
+Remote-bot `tools/list` returns the tools below; Linear tools appear only while the office is connected to Linear. The list is otherwise stable when local hiring or visit permissions change. Hiring and the worker-control tools do not depend on the Subagents permission, model allowlist or team-size limit; office capacity, model availability and the owner's normal action checks still apply. Turning off **Office MCP** or revoking a bot's key cuts off access.
 
 **Choosing a tool:**
 - Manage your own subagents with `team_*`, `worker_log`, `worker_diff`, `questions_list` and `question_answer`.
@@ -269,6 +269,10 @@ Read one page of any local or cloud agent’s conversation, including the Orches
 | `workerId` | string | yes | Worker id or unambiguous name from office_roster. May target any worker, not only your subagents. |
 | `floor` | string | no | Floor id, elevator number or name. Required when the name exists on more than one floor; a building agent has no current floor. |
 | `before` | integer | no | Exclusive entry sequence for older history; omit for the newest page. |
+
+**Linear tools.**
+
+When the office is connected to [Linear](../linear.md), building agents can use `linear_issues`, `linear_issue`, `linear_create_issue`, `linear_update_issue`, `linear_comment`, `linear_workspace` and `linear_graphql`. They have no current floor or linked ticket, so name a team or issue when the operation needs one. `linear_start` is available only to floor workers. The [Office MCP tool table](../office-mcp.md#tools) lists their inputs. `linear_graphql` permits arbitrary queries and mutations with the connected account's access.
 
 ### `team_models`
 
