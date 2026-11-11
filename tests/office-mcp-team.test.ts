@@ -184,6 +184,51 @@ test('team models describes costs, notes, efforts, images, default and unavailab
   assert.doesNotMatch(fallback.output, /private error/);
 });
 
+test('subagents read sibling context and publish areas, while leads can steer a subset or broadcast', async (t) => {
+  const r = await rig(t);
+  await r.hire();
+  await r.hire({ title: 'Client API', brief: 'Update client callers.' });
+  const sub = await r.connect('sub1');
+  const listed = await sub.listTools();
+  assert.ok(listed.tools.some((tool) => tool.name === 'team_board'));
+  assert.ok(listed.tools.some((tool) => tool.name === 'team_note'));
+  const note = await r.call(sub, 'team_note', { text: 'Shared API changed.', areas: ['src/shared/api.ts'] });
+  assert.equal(note.isError, undefined);
+  const board = await r.call(sub, 'team_board');
+  assert.equal(board.body.members.length, 2);
+  assert.deepEqual(board.body.members[0].areas, ['src/shared/api.ts']);
+  assert.match(board.output, /Shared API changed/);
+  for (const verbose of [false, true]) {
+    const status = await r.call(r.lead, 'team_status', { verbose });
+    assert.deepEqual(status.body.workers[0].areas, ['src/shared/api.ts']);
+    assert.equal(status.body.workers[0].note.text, 'Shared API changed.');
+    assert.match(status.output, /Areas: src\/shared\/api.ts/);
+    assert.match(status.output, /Note: Shared API changed/);
+  }
+  await r.call(sub, 'team_report', { text: 'Reported with a note.', result: { status: 'partial', summary: 'API is ready; callers remain.' } });
+  const resultBoard = await r.call(sub, 'team_board');
+  assert.deepEqual(resultBoard.body.members[0].result, { status: 'partial', summary: 'API is ready; callers remain.' });
+  assert.equal(resultBoard.body.members[0].report.summary, 'API is ready; callers remain.');
+  assert.match(resultBoard.output, /Latest report \(partial\): API is ready; callers remain/);
+  const waited = await r.call(r.lead, 'team_wait', { timeoutSec: 1 });
+  assert.deepEqual(waited.body.workers[0].areas, ['src/shared/api.ts']);
+  assert.match(waited.output, /Note: Shared API changed/);
+  const subset = await r.call(r.lead, 'team_message', { workers: ['Pixel'], text: 'Use options.' });
+  assert.equal(subset.body.results.length, 1);
+  assert.equal(subset.body.results[0].delivery, 'queued_turn');
+  const broadcast = await r.call(r.lead, 'team_message', { all: true, text: 'Rebase before delivery.' });
+  assert.equal(broadcast.body.results.length, 2);
+  const ambiguous = await r.call(r.lead, 'team_message', { worker: 'Pixel', all: true, text: 'No.' });
+  assert.equal(ambiguous.isError, true);
+  assert.equal((await r.call(r.lead, 'team_message', { text: 'No targets.' })).isError, true);
+  r.set('sub1', 'starting');
+  r.set('sub2', 'needs_input');
+  const failed = await r.call(r.lead, 'team_message', { all: true, text: 'No deliveries.' });
+  assert.equal(failed.isError, true);
+  assert.equal(failed.body.results.length, 2);
+  assert.match(failed.output, /every recipient failed/);
+});
+
 test('team_models and models_list print the plan a subscription model runs on, and leave other models alone', async (t) => {
   const SOL = 'custom:droidproxy:gpt-6.1-sol';
   const GROK = 'custom:droidproxy:grok-4.7';
@@ -269,7 +314,7 @@ test('hire refusals are actionable errors and do not take a desk', async (t) => 
   assert.equal(r.hired.length, 1);
   const sub = await r.connect('sub1');
   const tools = (await sub.listTools()).tools.map((tool) => tool.name).filter((name) => !name.startsWith('whiteboard_'));
-  assert.deepEqual(tools, ['office_whoami', 'team_report']);
+  assert.deepEqual(tools, ['team_board', 'team_note', 'office_whoami', 'team_report']);
   assert.equal((await r.call(sub, 'team_hire', { title: 'No', brief: 'No' })).isError, true);
   assert.equal((await r.call(sub, 'team_models')).isError, true);
   assert.equal((await r.call(sub, 'team', { action: 'status' })).isError, true);

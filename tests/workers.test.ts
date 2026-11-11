@@ -7,13 +7,14 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { CARRY_ON_PROMPT, HOOK_VERSION, NAMES, SPOOL_MAX_BYTES, STOP_GRACE_MS, WorkerManager, setupFailedNote, type WorkerEvents } from '../src/server/workers.js';
 import { Orchestrator } from '../src/server/orchestrator.js';
+import { Team } from '../src/server/team.js';
 import { BUILDING_TOOLS } from '../src/server/office-mcp/index.js';
 import type { ToolRefresh } from '../src/server/hook-refresh.js';
 import { Worktrees } from '../src/server/worktrees.js';
 import type { PromptSource } from '../src/server/prompts.js';
 import { CLEAR_DROID_QUEUE } from '../src/shared/droid-queue.js';
 import { PROMPTS } from '../src/shared/prompts.js';
-import type { AgentChoice, AgentEffort, GhPull, WorkerInfo } from '../src/shared/protocol.js';
+import { SUBAGENT_DEFAULTS, type AgentChoice, type AgentEffort, type GhPull, type WorkerInfo } from '../src/shared/protocol.js';
 import { SCREEN_SETTLE_MS } from '../src/server/droid-screen.js';
 import { airgappedModelError } from '../src/server/droid-models.js';
 
@@ -2451,6 +2452,8 @@ test('a subagent sits down told who hired it and where it works; its lead goes o
   assert.match(workers.spawn('desk-3', lead.name, 'x', false, 'shell', undefined, undefined, [], lead.id) as string, /an agent at a desk/);
   assert.match(workers.spawn('station-lead', lead.name, 'x', false, 'agent', undefined, undefined, [], lead.id) as string, /Unknown desk/);
 
+  const context = '## Siblings at hire time\nByte: working, branch office/api.\nCurrent context: team_board.';
+  workers.subagentContext = () => context;
   const sub = workers.spawn('desk-3', lead.name, 'Fix the redirect', false, 'agent', undefined, undefined, [], lead.id);
   assert.ok(typeof sub === 'object');
   if (typeof sub !== 'object') return;
@@ -2471,7 +2474,8 @@ test('a subagent sits down told who hired it and where it works; its lead goes o
   assert.match(brief, new RegExp(`^Droid Office role: ${sub.name}, subagent of ${lead.name} \\(a worker, not the owner\\)`));
   assert.match(brief, /the project's main checkout/);
   assert.match(brief, /`team_report`/);
-  assert.ok(brief.endsWith(`## Task from ${lead.name}\n\`\`\`text\nFix the redirect\n\`\`\``));
+  assert.ok(brief.endsWith(`## Task from ${lead.name}\n\`\`\`text\nFix the redirect\n\`\`\`\n\n${context}`));
+  assert.equal(workers.get(sub.id)?.prompt, 'Fix the redirect');
   for (const r of [leadLaunch, subLaunch]) assert.equal((r.env.path ?? '').split(path.delimiter).includes(bin), false, 'no office command folder is on the agent PATH');
   assert.equal((leadLaunch.env.path ?? '').split(path.delimiter).includes(path.join(f.data, 'bin')), false, 'nothing else is put in the data directory’s bin');
 
@@ -3163,6 +3167,55 @@ test('notices promised to a working droid outlive an office restart that keeps i
   assert.equal(after.get(worker.id)?.status, 'working');
   assert.deepEqual(JSON.parse(live(after, 'PostToolUse', { tool_name: 'Read' })!), { hookSpecificOutput: { hookEventName: 'PostToolUse', additionalContext: 'Droid Office notice: from Ada' } });
 });
+test('sibling notes use real worker hooks without contaminating launch, permission, legacy or reported sessions', async (t) => {
+  const { workers, worker, token, f } = await liveWorker(t, 'sibling-note');
+  const lead: WorkerInfo = { ...worker, id: 'team-lead', name: 'Lead' };
+  const author: WorkerInfo = { ...worker, id: 'author', name: 'Author', lead: lead.id };
+  const member = (): WorkerInfo => ({ ...workers.get(worker.id)!, lead: lead.id });
+  const reply = (event: string, extra: Record<string, unknown> = {}, version = HOOK_VERSION) => workers.hookReply(worker.id, token, event, { session_id: 'sibling-note', hook_event_name: event, ...extra }, version);
+  const team = new Team(
+    {
+      list: () => [lead, author, member()],
+      get: (id) => (id === lead.id ? lead : id === author.id ? author : id === worker.id ? member() : undefined),
+      officeDefault: undefined,
+      deskOccupied: () => false,
+      hire: () => 'Unused',
+      prompt: (id, text, queue) => workers.prompt(id, text, [], queue),
+      notice: (id, text) => workers.notice(id, text),
+      resume: (id, text) => workers.resume(id, text),
+      kill: (id) => workers.kill(id),
+      tail: (id, lines) => workers.tail(id, lines),
+      setTask: (id, task) => workers.setTask(id, task),
+    },
+    { dataDir: f.data, dir: f.root, git: false, settings: () => ({ ...SUBAGENT_DEFAULTS, wakeLead: false }), toast() {} },
+  );
+  t.after(() => team.stop());
+  workers.beforeStop = () => team.beforeStop(member());
+  const note = () => team.handle(author, { action: 'note', text: 'Sibling finding, not a new task.' });
+  assert.equal(member().status, 'starting');
+  await note();
+  assert.doesNotMatch(readFileSync(path.join(f.data, 'workers.json'), 'utf8'), /Sibling finding/);
+  assert.equal(reply('SessionStart', { source: 'startup' }), '');
+  reply('UserPromptSubmit', { prompt: 'Continue.' });
+  await note();
+  assert.match(JSON.parse(reply('PostToolUse', { tool_name: 'Read' })!).hookSpecificOutput.additionalContext, /sibling note from Author/);
+  reply('Notification', { notification_type: 'permission_prompt', message: 'Approve command?' });
+  await note();
+  assert.equal(reply('PostToolUse', { tool_name: 'Read' }), '', 'a permission menu did not gain queued input');
+  reply('UserPromptSubmit', { prompt: 'Legacy turn.' }, 0);
+  await note();
+  assert.equal(reply('PostToolUse', { tool_name: 'Read' }, 0), '', 'legacy hooks leave the note on the board only');
+  assert.doesNotMatch(readFileSync(path.join(f.data, 'workers.json'), 'utf8'), /Sibling finding/);
+  reply('UserPromptSubmit', { prompt: 'Finish.' });
+  await team.handle(member(), { action: 'report', text: 'Finished.' });
+  await note();
+  assert.equal(reply('Stop', { stop_hook_active: false }), '', 'a sibling cannot prolong reported work');
+  await settleIdle(workers, worker.id);
+  await note();
+  assert.doesNotMatch(readFileSync(path.join(f.data, 'workers.json'), 'utf8'), /Sibling finding/);
+  assert.equal(workers.get(worker.id)?.prompt, 'fix the login');
+});
+
 test('office notices reach a working droid with its next tool call or as its Stop is blocked, once', async (t) => {
   const { workers, worker, status, token, f } = await liveWorker(t, 'noticed');
   const reply = (event: string, extra: Record<string, unknown> = {}, version = HOOK_VERSION) => workers.hookReply(worker.id, token, event, { session_id: 'noticed', hook_event_name: event, ...extra }, version);
