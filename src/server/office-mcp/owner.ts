@@ -90,8 +90,7 @@ export interface RosterWorker {
   pr?: { number: number; url: string };
 }
 
-export const ownerInstructions = `You have owner-level access to workers on every floor through the office_* tools; your own subagents go through team_*. Inspect any worker with office_roster, office_look and office_worker_thread; hire an independent worker with office_worker_spawn, direct one with office_worker_prompt, and control its current turn with office_worker_interrupt or office_worker_answer.
-Each action has the owner's effects and is attributed to you, so act on the owner's instructions alone. Keep worktrees, branches and cloud sessions unless the owner asked to delete them. A pending or unconfirmed outcome calls for inspection before any retry of a non-idempotent action.`;
+export const ownerInstructions = `You have owner-level access across floors via office_* tools. Use team_hire and team_* for delegated work; use office_worker_spawn only when explicitly asked for a standalone, shell, or cloud worker. Inspect floor workers with office_roster, office_look (only when active workers exist), and office_worker_thread; steer independent workers with office_worker_prompt; interrupt or answer AskUser menus with office_worker_interrupt and office_worker_answer (leave terminal permission prompts untouched and tell the owner). Keep worktrees, branches and cloud sessions unless asked to delete them, and check state before retrying pending/unconfirmed actions.`;
 
 const readOnly = { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false };
 /** Building agents have the owner's access whenever the office provides its owner bridge. */
@@ -242,8 +241,7 @@ export function register(server: OfficeMcpServer, deps: OfficeMcpDeps): void {
   server.tool(
     {
       name: 'office_roster',
-      description:
-        "List every worker in the building, or on one floor: id, name, floor id and number (1-based, the elevator's order), desk, status, task, model, lead, and whether it is you or your own subagent. Includes owner-hired workers, subagents, shells and cloud workers. Mission Control's building agents have their own section, with no floor or desk: tools read them and never control them.",
+      description: 'List workers across the building (or one floor) with id, desk, status, task, branch/PR, model, and lead, plus Mission Control agents (read-only).',
       inputSchema: z.strictObject({ floor: floorRef.optional() }),
       annotations: readOnly,
     },
@@ -272,8 +270,8 @@ export function register(server: OfficeMcpServer, deps: OfficeMcpDeps): void {
   server.tool(
     {
       name: 'office_look',
-      description: `Read the end of any worker's terminal, on any floor, without typing anything, including the Orchestrator in Mission Control. name "${OFFICE_SHELL_ID}" reads the floor's boss shell. At most 48,000 characters, with a truncation marker if older text was omitted. A snapshot, not a transcript; for conversation history or a cloud worker use office_worker_thread.`,
-      inputSchema: z.strictObject({ name: workerRef, floor: floorRef.optional(), lines: z.number().int().min(1).max(400).default(80).describe('Latest terminal lines, default 80, at most 400.') }),
+      description: `Read a bounded terminal snapshot (<=48 KB) of an active local worker, "${OFFICE_SHELL_ID}" shell, or Orchestrator, read-only (skip when floor has no workers; use office_worker_thread for cloud/history).`,
+      inputSchema: z.strictObject({ name: workerRef, floor: floorRef.optional(), lines: z.number().int().min(1).max(400).default(80).describe('Latest lines (default 80, max 400).') }),
       annotations: readOnly,
     },
     buildingOnly,
@@ -320,13 +318,12 @@ export function register(server: OfficeMcpServer, deps: OfficeMcpDeps): void {
   server.tool(
     {
       name: 'office_send_home',
-      description:
-        "Send any floor worker home, exactly as the owner's SEND HOME does: an owner-hired worker or any lead's subagent, yours included. Building agents in Mission Control, you included, stay. cleanup keep (the default) leaves its worktree and branch; worktree deletes the worktree and keeps the branch; all deletes both, including commits no remote has. deleteSession true also deletes a cloud worker's Factory session, only when the owner asked. The reply preserves the target and pre-dismissal worktree report even when the outcome is uncertain. Its subagents stay, without a lead.",
+      description: 'Send a floor worker home (prefer team_dismiss for subagents). cleanup defaults to keep; pass worktree/all or deleteSession: true only when the owner asked.',
       inputSchema: z.strictObject({
         name: workerRef,
         floor: floorRef.optional(),
-        cleanup: z.enum(['keep', 'worktree', 'all']).default('keep').describe('What becomes of its worktree. Default keep. Use worktree or all only when the owner asked to delete it.'),
-        deleteSession: z.boolean().default(false).describe('For a cloud worker, also delete its Factory session, only when the owner asked. Default false keeps the session.'),
+        cleanup: z.enum(['keep', 'worktree', 'all']).default('keep').describe('Default keep; worktree/all only when asked.'),
+        deleteSession: z.boolean().default(false).describe('Cloud only: delete Factory session when asked.'),
       }),
       annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true },
     },

@@ -6,12 +6,9 @@ import { readBoard, workerAuthor } from '../whiteboard-agent.js';
 import { formatRead, printable } from './whiteboard-format.js';
 import { officeAccess, officeError, officeResult, ownFloor, record, type OfficeMcpCaller, type OfficeMcpDeps, type OfficeMcpServer } from './index.js';
 
-export const instructions = `The Whiteboard is the floor's shared wall of HTML artifacts and canvases. Use it for reviewable screenshots, mockups, diagrams, reports, plans, decisions, options and forms. Plain progress and short answers stay in your terminal. After creating a card, name its title and id in your terminal so the owner can find it. Read feedback with whiteboard_read before changing an existing card, and answer the owner's comments, stickies, form answers and button presses. CHANGED means someone else changed that piece since your last read of that card.
-Good artifacts have stable data-wb-id anchors on sections, options and steps, and a layout 1280 pixels wide (any height). Never put secrets in an artifact: its sandbox has network access. Pages run on an opaque origin without shared cookies or localStorage; keep persistent data in the card's JSON state.
-The injected window.whiteboard API: state.get(path?) returns a copy; state.set(value) replaces the object, set(path,value) sets a leaf; state.merge(obj) or merge(path,obj) recursively merges leaves and replaces arrays; state.del(path) removes it. Paths are dotted strings or key arrays. on('state',fn) observes own and remote changes; on('ready',fn) and ready indicate state arrival; on('mode',fn) and mode are 'use' or 'markup'. action(name,data?) records state.actions[name] = {name,data,at}; card is {id,title,author}. rendering is true during image capture: writes are dropped, so skip external side effects then. Without JavaScript, fields with a name or id save/restore state.fields, buttons with data-wb-action and optional JSON data-wb-data record actions, and form submission records 'submit'. A field keeps what is being typed into it.
-Buttons that tell you: a plain data-wb-action press is only recorded for your next read, so any button that asks you to do something (Accept and build, Approve, Deny, Pick this one) must also have data-wb-ping="message", for example <button data-wb-action="accept" data-wb-ping="The owner accepted the proposal. Build it.">Accept and build</button>. When the owner presses it, the office types that message, with the button's words and the card, into the terminal of the worker who last edited the card's HTML: you, while you keep the card up to date yourself. It steers a running turn and wakes you if you're asleep. Give each choice its own action name. A press records state.actions[name] and state.pinged[name] = {text,label,at}, and that button then stays disabled until you re-arm it with whiteboard_state op del path pinged.<name>. The office also disables data-wb-ping buttons while the card's last HTML editor isn't on the floor. Each such button carries data-wb-ping-state="ready", "sent" or "unavailable" (and is disabled unless ready), so style those states.
-File sources resolve against your working folder, never the office server's. A file collects its markup/CSS assets inside its folder; a dir includes runtime-loaded files (modules, fetch), except hidden files and node_modules. Outside references, missing files and limits are reported, never silently included; folder entries and symlink assets cannot escape the folder. Remote URLs stay remote. Linked cards follow their source file/folder: edit that source, or unlink before replacing content. A missing linked source keeps its last good content and reports a broken link until it recovers.
-The floor stores board.json, its key and content-addressed blobs under .droid-office/whiteboard/. File paths returned by reads are read-only blob paths; change a card through these tools. Use whiteboard_state for answers and application data, whiteboard_marks for feedback, and whiteboard_apply for atomic batches.`;
+export const instructions = `The Whiteboard holds reviewable screenshots, mockups, diagrams, plans, decisions, and forms (keep short answers in your terminal). After creating a card, name its title and id in your terminal. Read feedback with whiteboard_read before editing a card (CHANGED marks updates since your last read). Use stable data-wb-id anchors and a 1280px-wide layout. Never put secrets in cards (opaque-origin sandbox has network access; persist data in card JSON state).
+window.whiteboard API: state.get(path?), state.set([path,]val), state.merge([path,]obj), state.del(path), on('state'|'ready'|'mode',fn), action(name,data?), card {id,title,author}, rendering (skip side effects when true). Plain inputs save to state.fields; data-wb-action buttons record state.actions[name]. Decision buttons that notify you need data-wb-ping="message" (e.g. <button data-wb-action="accept" data-wb-ping="Approved">Approve</button>): pressing types into the last HTML editor's terminal, sets state.pinged[name], and disables the button (data-wb-ping-state="ready"|"sent"|"unavailable") until re-armed via whiteboard_state del pinged.<name>.
+Disk paths resolve against your working folder. Linked cards follow their local file/folder until unlinked. Board state lives in .droid-office/whiteboard/board.json with read-only blob paths; mutate only via whiteboard_* tools.`;
 
 // Each argument is one flat, closed object checked by the handler, never a union of closed objects: Droid validates
 // Script tool calls with Ajv removeAdditional, which strips keys while trying each anyOf branch and empties the value.
@@ -102,12 +99,11 @@ export function register(server: OfficeMcpServer, _deps: OfficeMcpDeps): void {
   server.tool(
     {
       name: 'whiteboard_read',
-      description:
-        "Read the board or selected cards, including HTML, read-only asset paths, state, comments, stickies, pictures, removals and CHANGED pieces. Only returned cards move their read points, to this snapshot revision. A failed read moves nothing. With png, each card returns current-snapshot PNG image tiles or the reason it has none and its last image's age; cards without images stay unread. An older image shows an older revision, never the current snapshot.",
+      description: 'Read the board or selected cards (HTML, state, marks, CHANGED pieces) and advance read points for returned cards; png: true includes rendered PNG tiles.',
       inputSchema: z.object({
-        cards: z.array(z.string()).optional().describe('Card ids; omit for the whole board.'),
-        json: z.boolean().optional().describe('Return exact JSON text instead of readable text; structuredContent is always available.'),
-        png: z.boolean().optional().describe('Include MCP PNG image content, labeled by card and tile, with marks drawn on top.'),
+        cards: z.array(z.string()).optional().describe('Card ids; omit for whole board.'),
+        json: z.boolean().optional().describe('Format text output as JSON.'),
+        png: z.boolean().optional().describe('Include rendered PNG tiles with marks.'),
       }),
       annotations: { destructiveHint: false, openWorldHint: false },
     },
@@ -148,18 +144,13 @@ export function register(server: OfficeMcpServer, _deps: OfficeMcpDeps): void {
   server.tool(
     {
       name: 'whiteboard_card',
-      description:
-        'Create an HTML artifact or canvas, update its title/content in place, link/unlink a local file or folder, remove a card, or choose what the wall shows. Updates keep marks and state. Create needs title and source; update needs title and/or non-canvas source. Link needs source {link,entry?}. A linked card takes content updates once unlinked. show with grid:true shows the grid, not a card.',
+      description: 'Create, update, link/unlink, remove, or show a Whiteboard card (updates preserve marks and state; show with grid: true selects the grid).',
       inputSchema: z.object({
         action: z.enum(['create', 'update', 'link', 'unlink', 'remove', 'show']),
-        card: z.string().optional().describe('Existing card id, or optional chosen id when creating (1–64 letters, digits, _ or -).'),
+        card: z.string().optional().describe('Card id (optional on create).'),
         title: z.string().optional(),
-        source: source
-          .optional()
-          .describe(
-            'One object with exactly one of html, file, dir, image, link or canvas, plus entry only with dir or link, e.g. {"dir": "artifacts/report", "entry": "index.html"}. Relative disk paths use your working folder; entry stays relative to its folder. Canvas is only for create.',
-          ),
-        grid: z.boolean().optional().describe('For show: true selects the card grid; do not combine with card.'),
+        source: source.optional().describe('Object with one of html, file, dir, image, link, or canvas (create only), plus optional entry with dir/link.'),
+        grid: z.boolean().optional().describe('Show only: true selects the card grid (omit card).'),
       }),
       annotations: { openWorldHint: false },
     },
@@ -203,9 +194,8 @@ export function register(server: OfficeMcpServer, _deps: OfficeMcpDeps): void {
   server.tool(
     {
       name: 'whiteboard_state',
-      description:
-        'Get, set, merge or delete a card state path. Omitted path is the root object. Paths are dotted (fields.email, actions.approve, pinged.accept). Merge recursively writes given leaves, replacing arrays whole. Independent leaf writes do not collide; the same leaf is last-writer-wins. Reading state alone does not mark the card feedback read.',
-      inputSchema: z.object({ card: z.string(), op: z.enum(['get', 'set', 'merge', 'del']), path: z.string().optional(), value: z.json().optional().describe('JSON value for set/merge. Root set and any merge require an object.') }),
+      description: 'Get, set, merge, or delete a dotted path (e.g. fields.email, pinged.accept) in a card’s JSON state (omitted path targets root).',
+      inputSchema: z.object({ card: z.string(), op: z.enum(['get', 'set', 'merge', 'del']), path: z.string().optional(), value: z.json().optional().describe('JSON value for set/merge (root set and merge require an object).') }),
       annotations: { openWorldHint: false },
     },
     officeAccess.worker,
@@ -226,19 +216,18 @@ export function register(server: OfficeMcpServer, _deps: OfficeMcpDeps): void {
   server.tool(
     {
       name: 'whiteboard_marks',
-      description:
-        'Add or change a comment thread, sticky or picture. Comments support add/reply/edit/resolve/reopen/reattach/remove; sticky supports add/edit/move/reattach/remove; picture supports add/file/move/reattach/remove. Add generates and returns an id; other operations need id. Comment text uses text, and edit needs message (message id); remove with message removes just that message. Anchors prefer stable data-wb-id (on), else selector/quote, else at. Coordinates and box sizes are canonical pixels at 1280px wide. Missing elements detach marks until reattached.',
+      description: 'Add or modify a comment thread (add/reply/edit/resolve/reopen/reattach/remove), sticky (add/edit/move/reattach/remove), or picture (add/file/move/reattach/remove) on a card.',
       inputSchema: z.object({
         card: z.string(),
         kind: z.enum(['comment', 'sticky', 'picture']),
         op: z.enum(['add', 'reply', 'edit', 'resolve', 'reopen', 'move', 'file', 'reattach', 'remove']),
-        id: z.string().optional().describe('Thread, sticky or picture id; returned by add.'),
-        message: z.string().optional().describe('Comment message id for edit, or for removing one message rather than its thread.'),
-        text: z.string().optional().describe('Comment/reply/new message text, or sticky text.'),
-        anchor: anchor.optional().describe('on is a data-wb-id; selector may include a text quote; at is fallback page position (default 40,40); offset is from element top-left.'),
-        box: box.optional().describe('Position x,y and/or size w,h for move; optional size for add.'),
+        id: z.string().optional().describe('Existing mark id (generated on add).'),
+        message: z.string().optional().describe('Comment message id for edit or single-message remove.'),
+        text: z.string().optional().describe('Comment or sticky text.'),
+        anchor: anchor.optional().describe('on (data-wb-id), selector (+ optional quote), or at {x,y} at 1280px width.'),
+        box: box.optional().describe('Position x,y and/or size w,h.'),
         color: z.enum(['yellow', 'pink', 'blue', 'green', 'purple', 'orange']).optional(),
-        file: z.string().optional().describe('Local picture path for picture add/file, relative to your working folder; PNG/JPEG/GIF/WebP.'),
+        file: z.string().optional().describe('Local image path for picture add/file.'),
       }),
       annotations: { openWorldHint: false },
     },
@@ -272,15 +261,9 @@ export function register(server: OfficeMcpServer, _deps: OfficeMcpDeps): void {
   server.tool(
     {
       name: 'whiteboard_apply',
-      description: `Apply an atomic batch, all or nothing; errors name the failed operation. New ids are yours to choose (1–64 letters/digits/_/-).
-Operations: card.create {card,kind:html|canvas,title,content?}; card.title {card,title}; card.content {card,content}; card.rm {card}; card.linkTo {card,path,dir?,entry?}; card.unlink {card}; card.view {card,view:{x,y,w,h}|null}.
-state.set|merge {card,path:[keys],value}; state.del {card,path}; state.action {card,name,data?}.
-comment.add {card,thread,message,anchor,text}; comment.reply|edit {card,thread,message,text}; comment.resolve|reopen {card,thread}; comment.reattach {card,thread,anchor}; comment.rm {card,thread,message?}.
-sticky.add {card,id,anchor,box?,text?,color?}; sticky.edit {card,id,text?,color?}; sticky.move {card,id,box}; sticky.reattach {card,id,anchor}; sticky.rm {card,id}.
-picture.add {card,id,file,anchor,box?}; picture.file {card,id,file}; picture.move {card,id,box}; picture.reattach {card,id,anchor}; picture.rm {card,id}.
-show {selection:{kind:"grid"}|{kind:"card",id}}; read {cards:[ids],rev}.
-Content: {load:{html}|{file}|{dir,entry?}|{image}|{link,entry?}}. Picture file: {load:"path"}. Disk inputs resolve against your working folder, package entries stay inside their folder. Batch anchors use the stored form {kind:"point",point:{x,y}} or {kind:"element",wbId?,selector?,quote?,offset?:{x,y},point:{x,y}}, not whiteboard_marks shorthand. Use the focused tools for ordinary work.`,
-      inputSchema: z.object({ ops: z.array(z.record(z.string(), z.unknown())).describe('Operations in order. Any invalid operation or file load rejects the whole batch, leaving the board unchanged.') }),
+      description:
+        'Apply an atomic Whiteboard op batch (prefer focused whiteboard_* tools unless batching). Ops: card.create|title|content|rm|linkTo|unlink|view, state.set|merge|del|action, comment.add|reply|edit|resolve|reopen|reattach|rm, sticky.add|edit|move|reattach|rm, picture.add|file|move|reattach|rm, show, read. Batch anchors use stored {kind:"point",point:{x,y}} or {kind:"element",wbId?|selector?,quote?,offset?,point:{x,y}}.',
+      inputSchema: z.object({ ops: z.array(z.record(z.string(), z.unknown())).describe('Ordered operations; any invalid op rejects the whole batch.') }),
       annotations: { openWorldHint: false },
     },
     officeAccess.worker,
