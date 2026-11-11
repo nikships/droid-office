@@ -320,7 +320,7 @@ test('Droid workers launch with their own hook overlay and resume the correct se
   isolateAgentEnvironment(f, t);
   const previousExit = process.env.FAKE_AGENT_EXIT_MS;
   const previousLog = process.env.FAKE_AGENT_LOG;
-  process.env.FAKE_AGENT_EXIT_MS = '1500';
+  delete process.env.FAKE_AGENT_EXIT_MS;
   process.env.FAKE_AGENT_LOG = f.log;
   t.after(() => {
     if (previousExit === undefined) delete process.env.FAKE_AGENT_EXIT_MS;
@@ -385,12 +385,16 @@ test('Droid workers launch with their own hook overlay and resume the correct se
   assert.equal(workers.get(worker.id)?.status, 'working', 'the tool it asked about ran: the prompt was answered');
   assert.equal(hook('UserPromptSubmit', { prompt: 'continue' }), true);
   assert.equal(hook('Stop', {}), true);
+  // Simulate a loaded runner taking longer than the fake agent's former 1.5s lifetime.
+  await new Promise((resolve) => setTimeout(resolve, 1600));
   await settleIdle(workers, worker.id);
   assert.equal(workers.get(worker.id)?.status, 'done');
   // A hook payload without its event name, or one from another session, is turned away.
   assert.equal(workers.hookReply(worker.id, first.env.hookToken!, 'Stop', { session_id: 'droid-1' }) !== undefined, false);
   assert.equal(workers.hookReply(worker.id, first.env.hookToken!, 'Stop', { session_id: 'other', hook_event_name: 'Stop' }) !== undefined, false);
 
+  // Exit only after the hook/terminal assertions, not on a wall-clock deadline.
+  process.kill(first.pid, 'SIGTERM');
   await waitFor(
     () => workers.get(worker.id)?.status,
     (status) => status === 'exited',
