@@ -309,9 +309,28 @@ test('PR checks run on GitHub runners while main builds and releases on the Mac 
     }
   }
 
-  // PR runs on Ubuntu use the Chromium system libraries, cache, and AppArmor profile.
-  assert.match(workflow, /sudo node node_modules\/playwright-core\/cli\.js install-deps chromium/);
+  // GitHub's Ubuntu image supplies the libraries; cached-browser checks must not need apt mirrors.
+  assert.doesNotMatch(workflow, /sudo node node_modules\/playwright-core\/cli\.js install-deps chromium/);
   assert.match(workflow, /apparmor_parser -r \/etc\/apparmor\.d\/droid-office-chromium/);
+});
+
+test('CI proves the real sandboxed Chromium can render before the full suite, without apt', () => {
+  const steps = jobSteps('release');
+  const install = steps.find((step) => step.includes('name: Install Chromium and its sandbox profile'))!;
+  assert.ok(install);
+  assert.match(install, /node bin\/droid-office\.js browser install/);
+  assert.match(install, /apparmor_parser -r/);
+  assert.doesNotMatch(steps.join('\n'), /^\s*(?:sudo\s+)?(?:apt|apt-get)\s|cli\.js install-deps|--no-sandbox/m);
+  const smoke = steps.find((step) => step.includes('name: Check sandboxed Chromium rendering'))!;
+  assert.ok(smoke);
+  assert.match(smoke, /timeout-minutes: 1/);
+  assert.match(smoke, /import \{ launchBrowser, closeBrowser \} from '\.\/dist\/server\/server\/whiteboard-browser\.js'/);
+  assert.match(smoke, /await launchBrowser\(\)/);
+  assert.match(smoke, /await page\.screenshot\(\)/);
+  assert.match(smoke, /finally \{[\s\S]*?await closeBrowser\(\)/);
+  assert.doesNotMatch(smoke, /if:|continue-on-error|\|\| true/);
+  assert.ok(steps.indexOf(smoke) > steps.findIndex((step) => /name: Install Chromium\n/.test(step)));
+  assert.ok(steps.indexOf(smoke) < steps.findIndex((step) => step.includes('name: Test with coverage')));
 });
 
 test('the toolchain check reports every kind of drift instead of dying on it', () => {

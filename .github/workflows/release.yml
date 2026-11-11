@@ -174,7 +174,9 @@ jobs:
 
       - run: npm run typecheck
 
-      # On Ubuntu (PR checks), Chromium runs in a temp folder and needs its OS libraries and AppArmor profile.
+      # GitHub's Ubuntu image already has Chromium's shared libraries. Do not run install-deps:
+      # it refreshes apt and downloads extra fonts, making cached-browser checks depend on apt mirrors.
+      # Keep the sandbox profile and prove the actual browser can render before running the suite.
       - name: Choose the shared Chromium folder
         if: github.event_name == 'pull_request'
         run: echo "DROID_OFFICE_BROWSERS_PATH=$RUNNER_TEMP/browsers" >> "$GITHUB_ENV"
@@ -186,11 +188,10 @@ jobs:
           path: ${{ runner.temp }}/browsers
           key: chromium-${{ runner.os }}-${{ hashFiles('node_modules/playwright-core/package.json') }}
 
-      - name: Install Chromium and its libraries
+      - name: Install Chromium and its sandbox profile
         if: github.event_name == 'pull_request'
         run: |
           node bin/droid-office.js browser install
-          sudo node node_modules/playwright-core/cli.js install-deps chromium
           if [ -e /etc/apparmor.d/abi/4.0 ]; then
             node bin/droid-office.js browser apparmor-profile | sudo tee /etc/apparmor.d/droid-office-chromium > /dev/null
             sudo apparmor_parser -r /etc/apparmor.d/droid-office-chromium
@@ -200,6 +201,24 @@ jobs:
       - name: Install Chromium
         if: github.event_name != 'pull_request'
         run: node bin/droid-office.js browser install
+
+      - name: Check sandboxed Chromium rendering
+        timeout-minutes: 1
+        run: |
+          node --input-type=module <<'JS'
+          import assert from 'node:assert/strict';
+          import { launchBrowser, closeBrowser } from './dist/server/server/whiteboard-browser.js';
+          try {
+            const browser = await launchBrowser();
+            const page = await browser.newPage();
+            await page.setContent('<h1>Chromium rendering check</h1>');
+            assert.equal(await page.locator('h1').textContent(), 'Chromium rendering check');
+            assert.ok((await page.screenshot()).length > 0);
+            console.log('Sandboxed Chromium launched and rendered successfully.');
+          } finally {
+            await closeBrowser();
+          }
+          JS
 
       - name: Test with coverage
         run: npm run test:coverage # fails below the line and function thresholds in package.json
