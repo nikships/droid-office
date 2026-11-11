@@ -66,11 +66,11 @@ class ThreadViewTest {
     }
 
     @Test
-    fun theRunningLineIsShownOnlyWhileLiveWithNoFailureAndNotRepeatingTheLabel() {
+    fun theRunningLineIsShownWhileLiveEvenAfterFailureWithoutRepeatingTheLabel() {
         assertEquals("Ran the tests", ThreadView.running(activity(listOf("a"), live = true, running = "Ran the tests")))
         assertNull(ThreadView.running(activity(listOf("a"), live = false, running = "Ran the tests")))
         assertNull(ThreadView.running(activity(listOf("a"), live = true, running = "Read 2 files")))
-        assertNull(ThreadView.running(activity(listOf("a"), live = true, running = "Ran the tests", failed = listOf(ThreadFailure("x", "Read a.ts", "ENOENT")))))
+        assertEquals("Ran the tests", ThreadView.running(activity(listOf("a"), live = true, running = "Ran the tests", failed = listOf(ThreadFailure("x", "Read a.ts", "ENOENT")))))
     }
 
     @Test

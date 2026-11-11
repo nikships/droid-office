@@ -102,6 +102,27 @@ test('standalone script results remain available without showing source as their
   assert.equal(actionsOf(rows[0])[0].result, 'Result');
 });
 
+test('a turn with repeated command and script failures has the same quiet summary as other commands', () => {
+  const entries = [
+    tool('e1', 'Execute', { command: 'test -f missing', summary: 'Check for optional file' }, { error: true, output: 'Command failed (exit code: 1)' }),
+    tool('e2', 'Execute', { command: 'rg optional', summary: 'Find optional setting' }, { error: true, output: 'exit 1' }),
+    tool('s3', 'Script', { code: 'throw new Error("diagnostic")' }, { error: true, output: 'diagnostic' }),
+  ];
+  const row = presentThread(entries, false)[0];
+  assert.ok(row.kind === 'activity');
+  assert.equal(row.label, 'Ran 2 commands · Ran a script');
+  assert.equal(row.status, undefined);
+  assert.deepEqual(
+    actionsOf(row).map((action) => action.status),
+    ['', '', ''],
+  );
+  assert.equal(actionsOf(row)[2].title, 'Ran a script');
+  assert.ok(actionsOf(row).every((action) => !action.open && action.result === 'Error' && action.arguments));
+  assert.equal(entries[0].output, 'Command failed (exit code: 1)');
+  const stopped = presentThread([...entries, { id: 'turn:t:error', seq: 4, role: 'system', kind: 'notice', text: 'Turn ended · error' }], false);
+  assert.ok(stopped.some((item) => item.kind === 'notice' && item.tone === 'danger'));
+});
+
 test('failed wrappers and bookkeeping cannot be silently hidden', () => {
   const rows = presentThread([tool('s1', 'Script', {}, { error: true }), tool('t2', 'TodoWrite', {}, { error: true }), tool('r3', 'Read')], false);
   assert.equal(rows[0].kind, 'activity');
@@ -235,7 +256,7 @@ test('a real cancellation stays quiet without concealing an earlier genuine fail
   assert.equal(rows[0].kind, 'activity');
   if (rows[0].kind !== 'activity') return;
   assert.equal(cancelledOf(rows[0]), 1);
-  assert.equal(rows[0].status, '1 failed · 1 cancelled');
+  assert.equal(rows[0].status, '1 cancelled');
   assert.equal(rows[0].failed.length, 1);
   assert.equal(actionsOf(rows[0])[1].state, 'cancelled');
   assert.equal(actionsOf(rows[0])[1].result, 'Cancelled');
@@ -268,7 +289,7 @@ test('unit: a crash wrapper flushed by a later Stop stays one failure, counted o
     ['failed', 'failed'],
   );
   assert.equal(actionsOf(row)[0].causedBy, child.id);
-  assert.equal(actionsOf(row)[0].title, 'Script stopped after a tool failed');
+  assert.equal(actionsOf(row)[0].title, 'Ran a script');
   assert.equal(row.label, 'Ran a command');
   assert.equal(JSON.stringify(entries), original);
   const stop = rows.find((item) => item.kind === 'activity' && item.id !== row.id);
@@ -469,7 +490,7 @@ test('task controls have meaningful summaries without claiming missing or failed
   if (cancelled.kind === 'activity') assert.equal(cancelled.label, 'Background task stop cancelled');
 });
 
-test('an Activity rolls up its runs: status words, the running title and failure previews', () => {
+test('tool failures stay inspectable without failure counts, status badges or hiding current work', () => {
   const thought: ThreadEntry = { id: 'th', seq: 3, kind: 'thinking', role: 'assistant', text: 'Checking the build' };
   const rows = presentThread(
     [
@@ -483,13 +504,13 @@ test('an Activity rolls up its runs: status words, the running title and failure
   const row = rows[0];
   assert.ok(row.kind === 'activity');
   assert.equal(row.state, 'failed');
-  assert.equal(row.status, '1 failed · 1 no result');
+  assert.equal(row.status, '1 no result');
   assert.equal(row.running, 'Run the tests');
   assert.deepEqual(row.failed, [{ id: 'r1', title: 'Read missing', preview: 'File not found' }]);
   assert.deepEqual(
     actionsOf(row).map((action) => [action.state, action.status, action.result]),
     [
-      ['failed', 'Failed', 'Error'],
+      ['failed', '', 'Error'],
       ['incomplete', 'No result', 'Result'],
       ['working', 'Running', 'Result'],
     ],
