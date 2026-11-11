@@ -124,6 +124,7 @@ export const BUILDING_TOOLS = new Set([
   'team_status',
   'team_wait',
   'team_message',
+  'team_review',
   'team_report_get',
   'questions_list',
   'question_answer',

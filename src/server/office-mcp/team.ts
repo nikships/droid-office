@@ -1,10 +1,10 @@
 import path from 'node:path';
 import { z } from 'zod';
-import type { TeamEvent, TeamMember, TeamModel, TeamReply } from '../team.js';
+import type { TeamEvent, TeamMember, TeamModel, TeamReply, WorkerReview } from '../team.js';
 import { modelUsageWords } from '../../shared/subscriptions.js';
 import { hasOwnerAccess } from './owner.js';
 import { officeAccess, officeError, officeResult, ownFloor, type OfficeMcpCaller, type OfficeMcpDeps, type OfficeMcpServer } from './index.js';
-import { compactEvent, compactEventText, compactWorker, compactWorkerText, cursorOf, EVENT_FILTERS, eventKinds, floorArg, parseCursor } from './team-events.js';
+import { compactEvent, compactEventText, compactWorker, compactWorkerText, cursorOf, EVENT_FILTERS, eventKinds, floorArg, parseCursor, resultDetailLines } from './team-events.js';
 
 export const instructions = `Your team is real workers at nearby desks on this floor. Each subagent has its own terminal and normally its own git worktree, and reports to the worker who hired it, its lead. The owner sets hiring permission, team size, allowed models and wake notes. Subagents cannot hire.
 Split work into independent pieces that touch separate files, and hire one fresh subagent per task, only as many as the work needs. Write each brief as a ticket: goal, relevant context and files, boundaries, checks, and how to finish (commit in its worktree and report, or another deliverable you name). A new worktree sees only committed work, so commit what it needs first.
@@ -40,7 +40,7 @@ function memberText(member: TeamMember & { terminal?: string; terminalUnavailabl
     ...(member.activity ? [`Doing: ${member.activity}`] : []),
     member.worktree ? `Worktree: ${member.worktree.path} on ${member.worktree.branch}${member.worktree.from ? ` from ${member.worktree.from}` : ''}.` : 'Working in the main checkout.',
     ...(member.pr ? [`Pull request: ${member.pr.url}`] : []),
-    ...(member.report ? [`Last ${member.report.question ? 'question' : member.report.progress ? 'progress report' : 'report'}:\n${member.report.text}`] : []),
+    ...(member.report ? [`Last ${member.report.question ? 'question' : member.report.progress ? 'progress report' : 'report'}:\n${member.report.text}`, ...resultDetailLines(member.report.result, member.report.review)] : []),
     ...(member.terminal !== undefined ? [`Terminal:\n${member.terminal || '(empty)'}`] : []),
     ...(member.terminalUnavailable ? [member.terminalUnavailable] : []),
   ].join('\n');
@@ -393,11 +393,77 @@ export function register(server: OfficeMcpServer, deps: OfficeMcpDeps): void {
       );
     },
   );
+  const resultSchema = z
+    .strictObject({
+      status: z
+        .enum(['ok', 'blocked', 'failed', 'partial'])
+        .describe('Outcome of your work: ok when finished and verified, partial when incomplete or mid-progress, blocked when waiting on a decision or blocker, failed when checks or execution failed.'),
+      summary: z.string().trim().min(1).max(2000).describe('Short summary of what changed, checks run, and outcome.'),
+      artifacts: z
+        .strictObject({
+          prUrl: z.url().max(2000).optional(),
+          prNumber: z.number().int().positive().optional(),
+          mergeCommit: z
+            .string()
+            .regex(/^[0-9a-f]{7,64}$/i)
+            .optional(),
+          commits: z.array(z.string().trim().min(1).max(200)).max(200).optional(),
+          files: z.array(z.string().trim().min(1).max(1024)).max(500).optional(),
+        })
+        .optional()
+        .describe('Produced PR, commits and changed files.'),
+      remaining: z.array(z.string().trim().min(1).max(1000)).max(100).optional().describe('Remaining work items or open risks, if any.'),
+      conflicts: z
+        .array(
+          z.strictObject({
+            path: z.string().trim().min(1).max(1024),
+            hunks: z
+              .array(
+                z.strictObject({
+                  header: z.string().max(400).optional(),
+                  ours: z.string().max(4000).optional(),
+                  theirs: z.string().max(4000).optional(),
+                }),
+              )
+              .max(50)
+              .optional(),
+          }),
+        )
+        .max(200)
+        .optional()
+        .describe('Unresolved merge or rebase conflicts, if any.'),
+    })
+    .describe('Structured outcome of your task. When omitted, status is inferred (question -> blocked, progress -> partial, else ok) with summary and provenance artifacts.');
+  server.tool(
+    {
+      name: 'team_review',
+      description:
+        "Record a review verdict (approve, request_changes or comment) and concrete notes on your subagent's latest reported result, surfaced in team_status and team_report_get. By default, request_changes also sends the notes to the subagent to fix and re-report; approve and comment record the verdict without waking it.",
+      inputSchema: z.strictObject({
+        worker,
+        verdict: z.enum(['approve', 'request_changes', 'comment']).describe('approve when verified and ready to merge, request_changes when fixes are required before merging, or comment for non-blocking notes.'),
+        notes: text.describe('Concrete review findings, verified checks, or approval rationale.'),
+        notify: z.boolean().optional().describe('Send the review notes to the subagent as a follow-up message. Defaults to true for request_changes and false for approve or comment.'),
+        floor: floorArg,
+      }),
+      annotations: changesState,
+    },
+    officeAccess.team,
+    async (args, caller) => {
+      if (args.floor && !caller.building) return officeError('Floor workers manage only their own floor');
+      return reply(await command(caller, { action: 'review', ...args }), (body) => {
+        const member = body.worker as TeamMember;
+        const review = body.review as WorkerReview;
+        const delivery = body.notified ? ` Sent findings to ${member.name} to address.` : typeof body.notifyNote === 'string' ? ` Not sent to ${member.name} (${body.notifyNote}).` : '';
+        return `Recorded ${review.verdict} review on ${member.name}'s report.${delivery}`;
+      });
+    },
+  );
   server.tool(
     {
       name: 'team_report',
       description:
-        'For a subagent: send your lead your results, checks, remaining work and commit or PR links, or ask a blocking question with question: true. Before ending your turn with the task unfinished, because a background job you started will wake you when it exits, send a progress report with progress: true saying what you wait on and when to expect it. Then end your turn: a reply from the lead, or your job finishing, arrives as a later message.',
+        'For a subagent: send your lead your results, checks, remaining work and commit or PR links, with structured result (status, summary, artifacts, remaining, conflicts), or ask a blocking question with question: true. Before ending your turn with the task unfinished, because a background job you started will wake you when it exits, send a progress report with progress: true saying what you wait on and when to expect it. Then end your turn: a reply from the lead, or your job finishing, arrives as a later message.',
       inputSchema: z.object({
         text: text.describe('Results, checks, remaining work and links, or the blocking question with relevant context.'),
         question: z.boolean().optional().describe('True for a question to your lead; omit or false for a report.'),
@@ -412,6 +478,7 @@ export function register(server: OfficeMcpServer, deps: OfficeMcpDeps): void {
           .optional()
           .describe('Full pushed commit SHA. Otherwise read from the locally known upstream ref when available, without fetching.'),
         prUrl: z.url().max(2000).optional().describe('Pull request URL. Otherwise use the worker’s linked PR or a GitHub/GitLab PR URL in the report.'),
+        result: resultSchema.optional(),
       }),
       annotations: changesState,
     },

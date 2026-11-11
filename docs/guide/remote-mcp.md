@@ -121,7 +121,7 @@ The office never turns on [Tailscale Funnel](https://tailscale.com/kb/1223/funne
 
 ## Tools
 
-Remote-bot `tools/list` returns exactly the 23 tools below. The list is stable when local hiring or visit permissions change. Hiring and the worker-control tools do not depend on the Subagents permission, model allowlist or team-size limit; office capacity, model availability and the owner's normal action checks still apply. Turning off **Office MCP** or revoking a bot's key cuts off access.
+Remote-bot `tools/list` returns exactly the 24 tools below. The list is stable when local hiring or visit permissions change. Hiring and the worker-control tools do not depend on the Subagents permission, model allowlist or team-size limit; office capacity, model availability and the owner's normal action checks still apply. Turning off **Office MCP** or revoking a bot's key cuts off access.
 
 **Choosing a tool:**
 - Manage your own subagents with `team_*`, `worker_log`, `worker_diff`, `questions_list` and `question_answer`.
@@ -314,6 +314,18 @@ Send one of your subagents an answer or follow-up, as a message in its session. 
 | --- | --- | --- | --- |
 | `worker` | string | yes | Your subagent’s name or id, case-insensitive. |
 | `text` | string | yes | The answer or follow-up, typed into the subagent's session. |
+| `floor` | string | no | Building agents only: just this open floor, by id, name or checkout path. Omit for all your teams across the building. |
+
+### `team_review`
+
+Record a review verdict (approve, request_changes or comment) and concrete notes on your subagent's latest reported result, surfaced in team_status and team_report_get. By default, request_changes also sends the notes to the subagent to fix and re-report; approve and comment record the verdict without waking it.
+
+| Argument | Type | Required | Description |
+| --- | --- | --- | --- |
+| `worker` | string | yes | Your subagent’s name or id, case-insensitive. |
+| `verdict` | "approve" \| "request_changes" \| "comment" | yes | approve when verified and ready to merge, request_changes when fixes are required before merging, or comment for non-blocking notes. |
+| `notes` | string | yes | Concrete review findings, verified checks, or approval rationale. |
+| `notify` | boolean | no | Send the review notes to the subagent as a follow-up message. Defaults to true for request_changes and false for approve or comment. |
 | `floor` | string | no | Building agents only: just this open floor, by id, name or checkout path. Omit for all your teams across the building. |
 
 ### `team_dismiss`

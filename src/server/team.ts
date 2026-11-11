@@ -63,6 +63,28 @@ export interface TeamOptions {
 
 export type TeamEventKind = 'report' | 'question' | 'done' | 'needs_input' | 'stopped' | 'left' | 'sent_home';
 
+export type ResultStatus = 'ok' | 'blocked' | 'failed' | 'partial';
+
+export interface WorkerResult {
+  status: ResultStatus;
+  summary: string;
+  artifacts?: { prUrl?: string; prNumber?: number; mergeCommit?: string; commits?: string[]; files?: string[] };
+  remaining?: string[];
+  conflicts?: Array<{ path: string; hunks?: Array<{ header?: string; ours?: string; theirs?: string }> }>;
+}
+
+export type ReviewVerdict = 'approve' | 'request_changes' | 'comment';
+
+export interface WorkerReview {
+  verdict: ReviewVerdict;
+  notes: string;
+  by: string;
+  at: number;
+}
+
+export const RESULT_STATUSES: readonly ResultStatus[] = ['ok', 'blocked', 'failed', 'partial'];
+export const REVIEW_VERDICTS: readonly ReviewVerdict[] = ['approve', 'request_changes', 'comment'];
+
 /** What a subagent is doing, as team tools show it: its own status, or that it waits on an answer from its lead or the person. */
 export type TeamState = WorkerStatus | 'blocked_on_question';
 
@@ -92,6 +114,8 @@ export interface TeamEvent {
    * on (a background job it started, which wakes it when it exits). Its status still goes to done.
    */
   progress?: true;
+  result?: WorkerResult;
+  review?: WorkerReview;
 }
 
 /** A subagent as the team tools show it. */
@@ -112,7 +136,7 @@ export interface TeamMember {
   /** It has been given its task and isn't in the middle of a turn now. */
   settled: boolean;
   /** What it last reported or asked. */
-  report?: { text: string; question: boolean; at: number; seq: number; pushedSha?: string; prUrl?: string; progress?: true };
+  report?: { text: string; question: boolean; at: number; seq: number; pushedSha?: string; prUrl?: string; progress?: true; result?: WorkerResult; review?: WorkerReview };
   /** The event seq of a team_report question nobody has answered yet. */
   openQuestion?: number;
   /** At rest after a progress report, with nothing since: not finished, waiting on its own background work to wake it. */
@@ -323,7 +347,12 @@ export class Team {
   news(lead: string, filter: { after?: number; kinds?: ReadonlySet<TeamEventKind>; workers?: ReadonlySet<string>; unread?: boolean } = {}): TeamEvent[] {
     return this.log
       .filter((e) => e.lead === lead && e.seq > (filter.after ?? 0) && (!filter.unread || !e.seen) && (!filter.kinds || filter.kinds.has(e.kind)) && (!filter.workers || filter.workers.has(e.worker)))
-      .map((e) => ({ ...e, ...(e.options ? { options: [...e.options] } : {}) }));
+      .map((e) => ({
+        ...e,
+        ...(e.options ? { options: [...e.options] } : {}),
+        ...(e.result ? { result: cloneWorkerResult(e.result) } : {}),
+        ...(e.review ? { review: { ...e.review } } : {}),
+      }));
   }
 
   /** Marks these of `lead`'s events heard, as a status read does. */
@@ -426,12 +455,14 @@ export class Team {
       }
       case 'send':
         return this.send(caller, b);
+      case 'review':
+        return this.review(caller, b);
       case 'dismiss':
         return this.dismiss(caller, b);
       case 'report':
         return this.report(caller, b);
       default:
-        return no(400, 'Unknown action: use whoami, status, hire, models, send, dismiss or report');
+        return no(400, 'Unknown action: use whoami, status, hire, models, send, review, dismiss or report');
     }
   }
 
@@ -625,6 +656,8 @@ export class Team {
               ...(last.pushedSha ? { pushedSha: last.pushedSha } : {}),
               ...(last.prUrl ? { prUrl: last.prUrl } : {}),
               ...(last.progress ? { progress: true as const } : {}),
+              ...(last.result ? { result: cloneWorkerResult(last.result) } : {}),
+              ...(last.review ? { review: { ...last.review } } : {}),
             },
           }
         : {}),
@@ -747,7 +780,14 @@ export class Team {
       this.statusCursors.set(lead, next);
       this.persist();
     }
-    return news.filter((e) => !kinds || kinds.has(e.kind)).map((e) => ({ ...e }));
+    return news
+      .filter((e) => !kinds || kinds.has(e.kind))
+      .map((e) => ({
+        ...e,
+        ...(e.options ? { options: [...e.options] } : {}),
+        ...(e.result ? { result: cloneWorkerResult(e.result) } : {}),
+        ...(e.review ? { review: { ...e.review } } : {}),
+      }));
   }
 
   /**
@@ -773,6 +813,8 @@ export class Team {
       ...(e.pushedSha ? { pushedSha: e.pushedSha } : {}),
       ...(e.prUrl ? { prUrl: e.prUrl } : {}),
       ...(e.progress ? { progress: true as const } : {}),
+      ...(e.result ? { result: cloneWorkerResult(e.result) } : {}),
+      ...(e.review ? { review: { ...e.review } } : {}),
     }));
   }
 
@@ -827,6 +869,8 @@ export class Team {
     if (b.progress !== undefined && typeof b.progress !== 'boolean') return no(400, 'progress takes true or false.');
     const progress = b.progress === true;
     if (progress && question) return no(400, 'A question already ends your turn waiting on an answer: leave progress out, or send the progress report separately.');
+    const parsedResult = b.result === undefined ? undefined : parseWorkerResult(b.result);
+    if (typeof parsedResult === 'string') return no(400, parsedResult);
     const options =
       question && Array.isArray(b.options)
         ? b.options
@@ -835,13 +879,52 @@ export class Team {
             .slice(0, OPTIONS_MAX)
         : [];
     const sha = typeof b.pushedSha === 'string' ? b.pushedSha : await pushedSha(this.opts.dir, w);
-    const prUrl = typeof b.prUrl === 'string' ? b.prUrl : (w.pr?.url ?? /https:\/\/(?:github\.com|gitlab\.com)\/[^\s)<>]+\/(?:pull|merge_requests)\/\d+/.exec(text)?.[0]);
+    const prUrl = typeof b.prUrl === 'string' ? b.prUrl : (parsedResult?.artifacts?.prUrl ?? w.pr?.url ?? /https:\/\/(?:github\.com|gitlab\.com)\/[^\s)<>]+\/(?:pull|merge_requests)\/\d+/.exec(text)?.[0]);
+    const prNumber = parsedResult?.artifacts?.prNumber ?? w.pr?.number ?? prNumberFromUrl(prUrl);
+    const result = buildWorkerResult(parsedResult, { status: question ? 'blocked' : progress ? 'partial' : 'ok', summary: clip(text, 240), prUrl, prNumber, sha });
     const provenance = { ...(sha ? { pushedSha: sha } : {}), ...(prUrl ? { prUrl } : {}) };
-    this.push({ lead: lead.id, worker: w.id, name: w.name, kind: question ? 'question' : 'report', text, ...(options.length ? { options } : {}), ...provenance, ...(progress ? { progress: true as const } : {}) });
+    this.push({ lead: lead.id, worker: w.id, name: w.name, kind: question ? 'question' : 'report', text, ...(options.length ? { options } : {}), ...provenance, ...(progress ? { progress: true as const } : {}), result });
     if (!question) this.reported.add(w.id);
     this.spoke.add(w.id);
     this.opts.toast(`${question ? `❓ ${w.name} asked ${lead.name}` : progress ? `⏳ ${w.name} reported progress to ${lead.name}` : `📨 ${w.name} reported to ${lead.name}`}: “${clip(text, 90)}”`, 'info', w.id);
-    return ok({ lead: lead.name, ...provenance, ...(progress ? { progress: true } : {}) });
+    return ok({ lead: lead.name, ...provenance, ...(progress ? { progress: true } : {}), result: cloneWorkerResult(result) });
+  }
+
+  private review(lead: WorkerInfo, b: Record<string, unknown>): TeamReply {
+    const w = this.resolve(lead, b.worker);
+    if (typeof w === 'string') return no(404, w);
+    if (typeof b.verdict !== 'string' || !(REVIEW_VERDICTS as readonly string[]).includes(b.verdict)) return no(400, `verdict must be one of ${REVIEW_VERDICTS.join(', ')}.`);
+    const verdict = b.verdict as ReviewVerdict;
+    const notes = str(b.notes, TASK_MAX).trim();
+    if (!notes) return no(400, 'Provide notes for team_review.');
+    if (b.notify !== undefined && typeof b.notify !== 'boolean') return no(400, 'notify takes true or false.');
+    const last = [...this.log].reverse().find((e) => e.worker === w.id && e.lead === lead.id && (e.kind === 'report' || e.kind === 'question'));
+    if (!last) return no(409, `${w.name} has not reported a result to review yet.`);
+    const review: WorkerReview = { verdict, notes, by: lead.name, at: this.now() };
+    last.review = review;
+    this.persist();
+    this.emit({ type: 'worker', worker: w });
+    const icon = verdict === 'approve' ? '✅' : verdict === 'request_changes' ? '🔁' : '💬';
+    this.opts.toast(`${icon} ${lead.name} reviewed ${w.name} (${verdict}): “${clip(notes, 90)}”`, 'info', w.id);
+    const shouldNotify = typeof b.notify === 'boolean' ? b.notify : verdict === 'request_changes';
+    let notified = false;
+    let notifyNote: string | undefined;
+    if (shouldNotify) {
+      if (w.status === 'starting') notifyNote = `${w.name} is still starting up; send follow-up with team_message once ready.`;
+      else if (w.status === 'needs_input') notifyNote = `${w.name} is waiting on an answer in its own terminal (${w.activity ?? 'a prompt'}).`;
+      else {
+        const message = officePrompt(this.opts.prompts, 'subagent.message', { from: lead.name, ...workerMessageVars(`Review verdict: ${verdict}\n\n${notes}`) });
+        const err = isAsleep(w.status) ? this.workers.resume(w.id, message) : this.workers.prompt(w.id, message);
+        if (err) notifyNote = `${w.name}: ${err}`;
+        else {
+          notified = true;
+          this.reported.delete(w.id);
+          this.spoke.delete(w.id);
+          this.settleQuestions(w.id);
+        }
+      }
+    }
+    return ok({ worker: this.member(this.workers.get(w.id) ?? w), review: { ...review }, reportSeq: last.seq, notified, ...(notifyNote ? { notifyNote } : {}) });
   }
 
   private push(e: Omit<TeamEvent, 'seq' | 'at'>) {
@@ -948,6 +1031,8 @@ export class Team {
           ...(typeof x.pushedSha === 'string' && /^[0-9a-f]{40,64}$/.test(x.pushedSha) ? { pushedSha: x.pushedSha } : {}),
           ...(typeof x.prUrl === 'string' ? { prUrl: x.prUrl.slice(0, 2000) } : {}),
           ...(x.progress === true ? { progress: true as const } : {}),
+          ...(restoreWorkerResult(x.result) ? { result: restoreWorkerResult(x.result) } : {}),
+          ...(restoreWorkerReview(x.review) ? { review: restoreWorkerReview(x.review) } : {}),
         });
       }
       this.log = this.log.slice(-LOG_MAX);
@@ -973,6 +1058,135 @@ export class Team {
       // disk issues shouldn't take the office down
     }
   }
+}
+
+const RESULT_SUMMARY_MAX = 2000;
+const RESULT_ITEM_MAX = 1000;
+const HUNK_TEXT_MAX = 4000;
+
+function isPlainObject(v: unknown): v is Record<string, unknown> {
+  return v !== null && typeof v === 'object' && !Array.isArray(v);
+}
+
+function prNumberFromUrl(url: string | undefined): number | undefined {
+  if (!url) return undefined;
+  const n = Number(/\/(?:pull|merge_requests)\/(\d+)(?:$|[/?#])/.exec(url)?.[1]);
+  return Number.isSafeInteger(n) && n > 0 ? n : undefined;
+}
+
+function parseStringList(value: unknown, label: string, maxItems: number, maxLen: number): string[] | string {
+  if (!Array.isArray(value) || value.length > maxItems) return `${label} takes an array of at most ${maxItems} strings.`;
+  const out: string[] = [];
+  for (const item of value) {
+    if (typeof item !== 'string') return `${label} takes strings only.`;
+    const trimmed = str(item, maxLen).trim();
+    if (!trimmed) return `${label} entries cannot be empty.`;
+    out.push(trimmed);
+  }
+  return out;
+}
+
+function parseWorkerResult(raw: unknown): WorkerResult | string {
+  if (!isPlainObject(raw)) return 'result must be an object with status and summary.';
+  if (typeof raw.status !== 'string' || !(RESULT_STATUSES as readonly string[]).includes(raw.status)) return `result.status must be one of ${RESULT_STATUSES.join(', ')}.`;
+  const summary = str(raw.summary, RESULT_SUMMARY_MAX).trim();
+  if (!summary) return 'result.summary requires a non-empty string.';
+  let artifacts: WorkerResult['artifacts'];
+  if (raw.artifacts !== undefined) {
+    if (!isPlainObject(raw.artifacts)) return 'result.artifacts must be an object.';
+    const a = raw.artifacts;
+    if (a.prUrl !== undefined && (typeof a.prUrl !== 'string' || a.prUrl.length > 2000 || !URL.canParse(a.prUrl))) return 'result.artifacts.prUrl takes a valid URL of at most 2000 characters.';
+    if (a.prNumber !== undefined && (typeof a.prNumber !== 'number' || !Number.isSafeInteger(a.prNumber) || a.prNumber < 1)) return 'result.artifacts.prNumber takes a positive integer.';
+    if (a.mergeCommit !== undefined && (typeof a.mergeCommit !== 'string' || !/^[0-9a-f]{7,64}$/i.test(a.mergeCommit))) return 'result.artifacts.mergeCommit takes a hexadecimal commit SHA.';
+    const commits = a.commits === undefined ? undefined : parseStringList(a.commits, 'result.artifacts.commits', 200, 200);
+    if (typeof commits === 'string') return commits;
+    const files = a.files === undefined ? undefined : parseStringList(a.files, 'result.artifacts.files', 500, 1024);
+    if (typeof files === 'string') return files;
+    const built: NonNullable<WorkerResult['artifacts']> = {
+      ...(typeof a.prUrl === 'string' ? { prUrl: a.prUrl } : {}),
+      ...(typeof a.prNumber === 'number' ? { prNumber: a.prNumber } : {}),
+      ...(typeof a.mergeCommit === 'string' ? { mergeCommit: a.mergeCommit.toLowerCase() } : {}),
+      ...(commits?.length ? { commits } : {}),
+      ...(files?.length ? { files } : {}),
+    };
+    if (Object.keys(built).length) artifacts = built;
+  }
+  const remaining = raw.remaining === undefined ? undefined : parseStringList(raw.remaining, 'result.remaining', 100, RESULT_ITEM_MAX);
+  if (typeof remaining === 'string') return remaining;
+  let conflicts: WorkerResult['conflicts'];
+  if (raw.conflicts !== undefined) {
+    if (!Array.isArray(raw.conflicts) || raw.conflicts.length > 200) return 'result.conflicts takes an array of at most 200 conflict entries.';
+    const parsedConflicts: NonNullable<WorkerResult['conflicts']> = [];
+    for (const entry of raw.conflicts) {
+      if (!isPlainObject(entry)) return 'Each result.conflicts entry must be an object with path.';
+      const filePath = str(entry.path, 1024).trim();
+      if (!filePath) return 'Each result.conflicts entry requires a non-empty path.';
+      let hunks: NonNullable<WorkerResult['conflicts']>[number]['hunks'];
+      if (entry.hunks !== undefined) {
+        if (!Array.isArray(entry.hunks) || entry.hunks.length > 50) return 'result.conflicts[].hunks takes at most 50 hunks.';
+        hunks = [];
+        for (const h of entry.hunks) {
+          if (!isPlainObject(h)) return 'Each conflict hunk must be an object.';
+          if ((h.header !== undefined && typeof h.header !== 'string') || (h.ours !== undefined && typeof h.ours !== 'string') || (h.theirs !== undefined && typeof h.theirs !== 'string'))
+            return 'Conflict hunk fields header, ours and theirs must be strings.';
+          hunks.push({
+            ...(typeof h.header === 'string' ? { header: str(h.header, 400) } : {}),
+            ...(typeof h.ours === 'string' ? { ours: str(h.ours, HUNK_TEXT_MAX) } : {}),
+            ...(typeof h.theirs === 'string' ? { theirs: str(h.theirs, HUNK_TEXT_MAX) } : {}),
+          });
+        }
+      }
+      parsedConflicts.push({ path: filePath, ...(hunks?.length ? { hunks } : {}) });
+    }
+    if (parsedConflicts.length) conflicts = parsedConflicts;
+  }
+  return {
+    status: raw.status as ResultStatus,
+    summary,
+    ...(artifacts ? { artifacts } : {}),
+    ...(remaining?.length ? { remaining } : {}),
+    ...(conflicts ? { conflicts } : {}),
+  };
+}
+
+function buildWorkerResult(explicit: WorkerResult | undefined, fallback: { status: ResultStatus; summary: string; prUrl?: string; prNumber?: number; sha?: string }): WorkerResult {
+  const base = explicit ?? { status: fallback.status, summary: fallback.summary };
+  const prev = base.artifacts;
+  const prUrl = prev?.prUrl ?? fallback.prUrl;
+  const prNumber = prev?.prNumber ?? fallback.prNumber;
+  const commits = prev?.commits ?? (fallback.sha ? [fallback.sha] : undefined);
+  const artifacts: NonNullable<WorkerResult['artifacts']> = {
+    ...(prUrl ? { prUrl } : {}),
+    ...(prNumber !== undefined ? { prNumber } : {}),
+    ...(prev?.mergeCommit ? { mergeCommit: prev.mergeCommit } : {}),
+    ...(commits?.length ? { commits: [...commits] } : {}),
+    ...(prev?.files?.length ? { files: [...prev.files] } : {}),
+  };
+  return {
+    status: base.status,
+    summary: base.summary,
+    ...(Object.keys(artifacts).length ? { artifacts } : {}),
+    ...(base.remaining?.length ? { remaining: [...base.remaining] } : {}),
+    ...(base.conflicts?.length ? { conflicts: base.conflicts.map((c) => ({ path: c.path, ...(c.hunks ? { hunks: c.hunks.map((h) => ({ ...h })) } : {}) })) } : {}),
+  };
+}
+
+function cloneWorkerResult(r: WorkerResult): WorkerResult {
+  return buildWorkerResult(r, { status: r.status, summary: r.summary });
+}
+
+function restoreWorkerResult(raw: unknown): WorkerResult | undefined {
+  const parsed = parseWorkerResult(raw);
+  return typeof parsed === 'string' ? undefined : parsed;
+}
+
+function restoreWorkerReview(raw: unknown): WorkerReview | undefined {
+  if (!isPlainObject(raw)) return undefined;
+  if (typeof raw.verdict !== 'string' || !(REVIEW_VERDICTS as readonly string[]).includes(raw.verdict)) return undefined;
+  const notes = str(raw.notes, TASK_MAX).trim();
+  const by = str(raw.by, 200).trim();
+  if (!notes || !by || typeof raw.at !== 'number' || !Number.isFinite(raw.at)) return undefined;
+  return { verdict: raw.verdict as ReviewVerdict, notes, by, at: raw.at };
 }
 
 /** It has been given its task and isn't in the middle of a turn: done, waiting on input, or asleep. */
