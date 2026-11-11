@@ -32,7 +32,9 @@ export interface TeamWorkers {
    * branch, tag or commit), else where its lead is.
    */
   hire(deskId: string, by: string, prompt: string, worktree: boolean, choice: Partial<AgentChoice>, lead: string, from?: string, branch?: string): WorkerInfo | string;
-  prompt(id: string, text: string): string | undefined;
+  prompt(id: string, text: string, queue?: boolean): string | undefined;
+  notice?(id: string, text: string): boolean;
+  hold?(id: string, text: string): string | undefined;
   resume(id: string, prompt?: string): string | undefined;
   kill(id: string): Promise<{ note?: string; error?: string }>;
   dismiss?(id: string, pruneWorktree: boolean, keepBranch: boolean): Promise<{ note?: string; error?: string }>;
@@ -150,6 +152,39 @@ export interface TeamReply {
   body: Record<string, unknown>;
 }
 
+export interface TeamNote {
+  areas: string[];
+  text: string;
+  at: number;
+}
+
+export interface TeamBoardMember {
+  id: string;
+  name: string;
+  status: WorkerStatus;
+  state: TeamState;
+  task?: string;
+  activity?: string;
+  branch?: string;
+  areas: string[];
+  note?: { text: string; at: number };
+  report?: { summary: string; at: number };
+}
+
+export function teamBoardText(members: TeamBoardMember[]): string {
+  return members
+    .map((w) =>
+      [
+        `${w.name} (${w.id}): ${w.state}${w.task ? `, ${w.task}` : ''}${w.branch ? `, branch ${w.branch}` : ''}.`,
+        ...(w.areas.length ? [`Areas: ${w.areas.join(', ')}.`] : []),
+        ...(w.activity ? [`Doing: ${w.activity}.`] : []),
+        ...(w.note ? [`Note: ${w.note.text}`] : []),
+        ...(w.report ? [`Latest report: ${w.report.summary}`] : []),
+      ].join(' '),
+    )
+    .join('\n');
+}
+
 /** A model as team_models shows it to a lead choosing one. */
 export interface TeamModel {
   id: string;
@@ -244,6 +279,7 @@ export class Team {
   private path: string;
   private now: () => number;
   private idleSince = new Map<string, number>();
+  private notes = new Map<string, TeamNote>();
 
   constructor(
     private workers: TeamWorkers,
@@ -300,6 +336,7 @@ export class Team {
     if (previous?.lead && by !== 'lead' && this.workers.get(previous.lead)) this.push({ lead: previous.lead, worker: id, name: previous.name, kind: by === 'owner' ? 'sent_home' : 'left' });
     this.known.delete(id);
     this.idleSince.delete(id);
+    this.notes.delete(id);
     this.reported.delete(id);
     this.spoke.delete(id);
     const before = this.log.length;
@@ -427,6 +464,10 @@ export class Team {
         return ok(this.whoami(caller));
       case 'status':
         return this.status(caller, b);
+      case 'board':
+        return ok({ members: this.board(caller.lead ?? caller.id), you: caller.id });
+      case 'note':
+        return this.note(caller, b);
       case 'hire':
         return this.hire(caller, b);
       case 'models':
@@ -625,6 +666,47 @@ export class Team {
       .sort((a, b) => a.createdAt - b.createdAt);
   }
 
+  /** Metadata only: no terminal reads, Git commands, or lead inbox acknowledgments. */
+  board(lead: string): TeamBoardMember[] {
+    return this.roster(lead).map((w) => {
+      const note = this.notes.get(w.id);
+      return {
+        id: w.id,
+        name: w.name,
+        status: w.status,
+        state: w.state,
+        ...(w.task ? { task: w.task } : {}),
+        ...(w.activity ? { activity: clip(w.activity, 200) } : {}),
+        ...(w.worktree ? { branch: w.worktree.branch } : {}),
+        areas: [...(note?.areas ?? [])],
+        ...(note?.text ? { note: { text: note.text, at: note.at } } : {}),
+        ...(w.report ? { report: { summary: clip(w.report.text, 300), at: w.report.at } } : {}),
+      };
+    });
+  }
+
+  private note(w: WorkerInfo, b: Record<string, unknown>): TeamReply {
+    if (!w.lead) return no(403, 'Only subagents post sibling notes; leads use team_message.');
+    const text = str(b.text, 1000).trim();
+    if (!text) return no(400, 'Provide a short text for team_note.');
+    const previous = this.notes.get(w.id);
+    const areas = Array.isArray(b.areas)
+      ? b.areas
+          .filter((a): a is string => typeof a === 'string')
+          .map((a) => str(a, 200).trim())
+          .filter(Boolean)
+          .slice(0, 20)
+      : (previous?.areas ?? []);
+    this.notes.set(w.id, { text, areas, at: this.now() });
+    this.persist();
+    const message = `Droid Office sibling note from ${w.name} (${w.id}). Shared findings, not a new assignment.\n${text}${areas.length ? `\nAreas: ${areas.join(', ')}` : ''}`;
+    const notified: string[] = [];
+    for (const sibling of this.teamOf(w.lead)) {
+      if (sibling.id !== w.id && this.workers.hold && !this.workers.hold(sibling.id, message)) notified.push(sibling.id);
+    }
+    return ok({ note: this.notes.get(w.id), notified });
+  }
+
   private member(w: WorkerInfo): TeamMember {
     const last = [...this.log].reverse().find((e) => e.worker === w.id && (e.kind === 'report' || e.kind === 'question'));
     const model = w.activeModel ?? w.model;
@@ -739,7 +821,11 @@ export class Team {
     const at = DESK_BY_ID.get(still.deskId) ?? (building ? MISSION_CONTROL_DOOR : undefined);
     const seat = at && nearestFreeSeat(at.x, at.z, (id) => this.workers.deskOccupied(id));
     if (!seat) return no(409, 'Every desk and bean bag on this floor is taken: dismiss a subagent you are done with, or ask the person to send someone home');
-    const info = branch === undefined ? this.workers.hire(seat.id, still.name, task, worktree, choice, still.id, from) : this.workers.hire(seat.id, still.name, task, worktree, choice, still.id, from, branch);
+    const siblings = this.board(still.id);
+    const brief = siblings.length
+      ? `${task}\n\n## Siblings at hire time\n${teamBoardText(siblings)}\nUse team_board for current context and team_note to share findings and files or areas you are changing. Coordinate overlapping edits with your lead.`
+      : task;
+    const info = branch === undefined ? this.workers.hire(seat.id, still.name, brief, worktree, choice, still.id, from) : this.workers.hire(seat.id, still.name, brief, worktree, choice, still.id, from, branch);
     if (typeof info === 'string') return no(409, info);
     const title = str(b.title, TITLE_MAX).trim();
     if (title) this.workers.setTask(info.id, { name: title, summary: clip(task, 120) });
@@ -819,6 +905,15 @@ export class Team {
   }
 
   private send(lead: WorkerInfo, b: Record<string, unknown>): TeamReply {
+    if (b.workers !== undefined || b.all === true) {
+      const refs = b.all === true ? this.teamOf(lead.id).map((w) => w.id) : b.workers;
+      if (!Array.isArray(refs) || !refs.length) return no(400, 'Select workers or all: true for a broadcast.');
+      const results = [...new Set(refs)].map((worker) => {
+        const result = this.send(lead, { worker, text: b.text, queue: b.queue });
+        return { id: (result.body.worker as TeamMember | undefined)?.id ?? worker, ...result.body };
+      });
+      return ok({ results });
+    }
     const w = this.resolve(lead, b.worker);
     if (typeof w === 'string') return no(404, w);
     const text = str(b.text, TASK_MAX).trim();
@@ -826,12 +921,15 @@ export class Team {
     if (w.status === 'starting') return no(409, `${w.name} is still starting up: try again in a few seconds`);
     if (w.status === 'needs_input') return no(409, `${w.name} is waiting on an answer in its own terminal (${w.activity ?? 'a prompt'}): someone has to answer it there, so tell the person`);
     const message = officePrompt(this.opts.prompts, 'subagent.message', { from: lead.name, ...workerMessageVars(text) });
-    const err = isAsleep(w.status) ? this.workers.resume(w.id, message) : this.workers.prompt(w.id, message);
+    const asleep = isAsleep(w.status);
+    const busy = w.status === 'working' && b.queue !== false;
+    const noticed = busy && this.workers.notice?.(w.id, message);
+    const err = noticed ? undefined : asleep ? this.workers.resume(w.id, message) : this.workers.prompt(w.id, message, busy);
     if (err) return no(409, `${w.name}: ${err}`);
     this.reported.delete(w.id);
     this.spoke.delete(w.id);
     this.settleQuestions(w.id);
-    return ok({ worker: this.member(this.workers.get(w.id) ?? w) });
+    return ok({ worker: this.member(this.workers.get(w.id) ?? w), delivery: noticed ? 'next_step' : busy ? 'queued_turn' : asleep ? 'resumed' : 'sent' });
   }
 
   private async dismiss(lead: WorkerInfo, b: Record<string, unknown>): Promise<TeamReply> {
@@ -998,7 +1096,18 @@ export class Team {
 
   private restore() {
     try {
-      const raw = JSON.parse(readFileSync(this.path, 'utf8')) as { events?: unknown; nudged?: unknown; seq?: unknown; idleSince?: unknown; statusCursors?: unknown };
+      const raw = JSON.parse(readFileSync(this.path, 'utf8')) as { events?: unknown; nudged?: unknown; seq?: unknown; idleSince?: unknown; statusCursors?: unknown; notes?: Record<string, TeamNote> };
+      for (const [id, note] of Object.entries(raw.notes ?? {})) {
+        if (this.workers.get(id) && typeof note.text === 'string' && Array.isArray(note.areas) && typeof note.at === 'number')
+          this.notes.set(id, {
+            text: str(note.text, 1000),
+            areas: note.areas
+              .filter((a) => typeof a === 'string')
+              .slice(0, 20)
+              .map((a) => str(a, 200)),
+            at: note.at,
+          });
+      }
       if (Number.isSafeInteger(raw.seq)) this.seq = raw.seq as number;
       if (raw.idleSince && typeof raw.idleSince === 'object')
         for (const [id, at] of Object.entries(raw.idleSince)) {
@@ -1052,9 +1161,20 @@ export class Team {
 
   private persist() {
     try {
-      writeFileSync(this.path, JSON.stringify({ seq: this.seq, events: this.log, nudged: Object.fromEntries(this.nudged), idleSince: Object.fromEntries(this.idleSince), statusCursors: Object.fromEntries(this.statusCursors) }), {
-        mode: 0o600,
-      });
+      writeFileSync(
+        this.path,
+        JSON.stringify({
+          seq: this.seq,
+          events: this.log,
+          nudged: Object.fromEntries(this.nudged),
+          idleSince: Object.fromEntries(this.idleSince),
+          statusCursors: Object.fromEntries(this.statusCursors),
+          notes: Object.fromEntries(this.notes),
+        }),
+        {
+          mode: 0o600,
+        },
+      );
     } catch {
       // disk issues shouldn't take the office down
     }

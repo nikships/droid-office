@@ -337,7 +337,9 @@ export class Floor {
           return workers.officeDefault;
         },
         hire: (deskId, by, prompt, worktree, c, lead, from, branch) => workers.spawn(deskId, by, prompt, worktree, 'agent', c.model, c.effort, [], lead, undefined, from, branch),
-        prompt: (id, text) => workers.tell(id, text),
+        prompt: (id, text, queue) => (queue === undefined ? workers.tell(id, text) : workers.prompt(id, text, [], queue)),
+        notice: (id, text) => workers.notice(id, text),
+        hold: (id, text) => workers.hold(id, text),
         resume: (id, text) => workers.resume(id, text),
         kill: (id) => workers.kill(id),
         dismiss: (id, pruneWorktree, keepBranch) => workers.dismissTeam(id, pruneWorktree, keepBranch),

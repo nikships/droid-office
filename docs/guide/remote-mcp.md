@@ -308,12 +308,15 @@ For an external worker, status news follows a cursor kept for that bot across re
 
 ### `team_message`
 
-Send one of your subagents an answer or follow-up, as a message in its session. A permission prompt in its terminal needs the person at its desk.
+Steer one subagent, a subset or all your teams without interrupting a running turn. Guidance arrives at the next tool step through existing hooks, or queues behind the turn on older sessions. Select exactly one of `worker`, `workers` or `all: true`. Responses give per-recipient delivery (`next_step`, `queued_turn`, `sent`, `resumed`) or errors. A permission prompt still needs the person at its desk.
 
 | Argument | Type | Required | Description |
 | --- | --- | --- | --- |
-| `worker` | string | yes | Your subagent’s name or id, case-insensitive. |
-| `text` | string | yes | The answer or follow-up, typed into the subagent's session. |
+| `worker` | string | one selector | Your subagent’s name or id, case-insensitive. |
+| `workers` | string[] | one selector | Subset of subagent names or ids (1–100). |
+| `all` | true | one selector | Broadcast to all your subagents on the selected floor, or across all floors. |
+| `text` | string | yes | Guidance or follow-up for the selected subagents. |
+| `queue` | boolean | no, default `true` | Next-step hook delivery with Ctrl+Enter fallback. False uses normal session submission. |
 | `floor` | string | no | Building agents only: just this open floor, by id, name or checkout path. Omit for all your teams across the building. |
 
 ### `team_review`

@@ -19,6 +19,10 @@ class Fake implements TeamWorkers {
   officeDefault: AgentChoice | undefined = undefined;
   hired: { deskId: string; by: string; prompt: string; worktree: boolean; choice: Partial<AgentChoice>; lead: string; from?: string }[] = [];
   prompts: [string, string][] = [];
+  queued: string[] = [];
+  notices: [string, string][] = [];
+  held: [string, string][] = [];
+  hookDelivery = false;
   resumed: [string, string | undefined][] = [];
   killed: string[] = [];
   gone?: (id: string) => void;
@@ -56,8 +60,18 @@ class Fake implements TeamWorkers {
       }),
     );
   }
-  prompt(id: string, text: string) {
+  prompt(id: string, text: string, queue = false) {
     this.prompts.push([id, text]);
+    if (queue) this.queued.push(id);
+    return undefined;
+  }
+  notice(id: string, text: string) {
+    if (!this.hookDelivery) return false;
+    this.notices.push([id, text]);
+    return true;
+  }
+  hold(id: string, text: string) {
+    this.held.push([id, text]);
     return undefined;
   }
   resume(id: string, text?: string) {
@@ -138,6 +152,74 @@ test('airgapped team catalogues do not reintroduce hosted defaults or remembered
     );
     assert.equal(result.body.defaultModel, undefined, 'a hosted office override is not falsely described as running a custom model');
   }
+});
+
+test('sibling board, notes and hire snapshots share concise live context without consuming lead news', async (t) => {
+  const r = rig(t);
+  await r.call('lead', { action: 'hire', title: 'Shared API', task: 'Change src/shared/api.ts' });
+  r.set('sub1', 'working', { activity: 'Updating shared API' });
+  await r.call('sub1', { action: 'report', text: `Use the new API. ${'detail '.repeat(200)}` });
+  await r.call('sub1', { action: 'note', text: 'API now takes an options object.', areas: ['src/shared/api.ts'] });
+  await r.call('lead', { action: 'hire', title: 'Client', task: 'Update callers' });
+  assert.match(r.fake.hired[1].prompt, /Siblings at hire time/);
+  assert.match(r.fake.hired[1].prompt, /Shared API/);
+  assert.match(r.fake.hired[1].prompt, /office\/sub1/);
+  assert.match(r.fake.hired[1].prompt, /src\/shared\/api.ts/);
+  assert.match(r.fake.hired[1].prompt, /API now takes an options object/);
+  r.fake.add(worker({ id: 'outsider', deskId: 'desk-12', lead: 'another' }));
+  await r.call('sub1', { action: 'note', text: 'Migration is ready.' });
+  assert.deepEqual(
+    r.fake.held.map(([id]) => id),
+    ['sub2'],
+  );
+  const board = (await r.call('sub2', { action: 'board' })).body.members;
+  assert.deepEqual(
+    board.map((w: { id: string }) => w.id),
+    ['sub1', 'sub2'],
+  );
+  assert.equal(board[0].task, 'Shared API');
+  assert.equal(board[0].status, 'working');
+  assert.deepEqual(board[0].areas, ['src/shared/api.ts']);
+  assert.equal(board[0].note.text, 'Migration is ready.');
+  assert.equal(board[0].report.summary.length, 300);
+  assert.equal(r.team.news('lead', { unread: true }).length, 1);
+  const restored = new Team(r.fake, { dataDir: r.dir, dir: '/proj', git: true, settings: () => r.settings, toast() {} });
+  t.after(() => restored.stop());
+  assert.deepEqual(restored.board('lead')[0].areas, ['src/shared/api.ts']);
+  assert.equal(restored.board('lead')[0].note?.text, 'Migration is ready.');
+  await r.call('sub1', { action: 'note', text: 'Finished API edits.', areas: [] });
+  assert.deepEqual(r.team.board('lead')[0].areas, []);
+  assert.equal((await r.call('lead', { action: 'note', text: 'No' })).status, 403);
+});
+
+test('mid-turn steering uses existing hook notices and queued-turn fallback; broadcasts report each outcome', async (t) => {
+  const r = rig(t);
+  await r.call('lead', { action: 'hire', task: 'one' });
+  await r.call('lead', { action: 'hire', task: 'two' });
+  r.set('sub1', 'working');
+  r.set('sub2', 'working');
+  r.fake.hookDelivery = true;
+  const message = await r.call('lead', { action: 'send', worker: 'sub1', text: 'Use the new API.' });
+  assert.equal(message.body.delivery, 'next_step');
+  assert.equal(r.fake.prompts.length, 0);
+  assert.match(r.fake.notices[0][1], /Use the new API/);
+  r.fake.hookDelivery = false;
+  assert.equal((await r.call('lead', { action: 'send', worker: 'sub1', text: 'Keep going.' })).body.delivery, 'queued_turn');
+  assert.deepEqual(r.fake.queued, ['sub1']);
+  assert.equal((await r.call('lead', { action: 'send', worker: 'sub1', text: 'Normal submission.', queue: false })).body.delivery, 'sent');
+  assert.deepEqual(r.fake.queued, ['sub1']);
+  r.set('sub2', 'needs_input');
+  const all = await r.call('lead', { action: 'send', all: true, text: 'Shared constraint.' });
+  assert.equal(all.body.results[0].delivery, 'queued_turn');
+  assert.match(all.body.results[1].error, /waiting on an answer/);
+  assert.equal((await r.call('lead', { action: 'send', workers: ['Pixel'], text: 'One only.' })).body.results.length, 1);
+  const mixed = await r.call('lead', { action: 'send', workers: ['sub1', 'outsider'], text: 'Partial delivery.' });
+  assert.equal(mixed.body.results[0].delivery, 'queued_turn');
+  assert.match(mixed.body.results[1].error, /No subagent called outsider/);
+  r.set('sub2', 'exited');
+  assert.equal((await r.call('lead', { action: 'send', worker: 'sub2', text: 'Continue.' })).body.delivery, 'resumed');
+  r.set('sub1', 'done');
+  assert.equal((await r.call('lead', { action: 'send', worker: 'sub1', text: 'Next.' })).body.delivery, 'sent');
 });
 
 test('a lead hires a subagent at the free desk nearest it, in its own worktree, on the Subagents setting', async (t) => {

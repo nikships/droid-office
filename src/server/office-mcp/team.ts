@@ -1,6 +1,7 @@
 import path from 'node:path';
 import { z } from 'zod';
 import type { TeamEvent, TeamMember, TeamModel, TeamReply, WorkerReview } from '../team.js';
+import { teamBoardText, type TeamBoardMember } from '../team.js';
 import { modelUsageWords } from '../../shared/subscriptions.js';
 import { hasOwnerAccess } from './owner.js';
 import { officeAccess, officeError, officeResult, ownFloor, type OfficeMcpCaller, type OfficeMcpDeps, type OfficeMcpServer } from './index.js';
@@ -121,6 +122,27 @@ export function register(server: OfficeMcpServer, deps: OfficeMcpDeps): void {
   const worker = z.string().trim().min(1).max(200).describe('Your subagent’s name or id, case-insensitive.');
   server.tool(
     {
+      name: 'team_board',
+      description: 'Read your same-team sibling context cheaply: task titles, status, branches, declared edit areas, latest notes and short report summaries. Includes you. Does not read terminals, run Git, or consume your lead’s news.',
+      inputSchema: z.strictObject({}),
+      annotations: readOnly,
+    },
+    officeAccess.subagent,
+    async (_args, caller) => reply(await ownFloor(caller).team.handle(caller.worker, { action: 'board' }), (body) => teamBoardText(body.members as TeamBoardMember[]) || 'No teammates yet.'),
+  );
+  server.tool(
+    {
+      name: 'team_note',
+      description:
+        'Post a short finding for your siblings, optionally replacing your declared files or edit areas (use [] to clear). Kept on team_board and queued through existing worker hooks for running siblings without interrupting them. Does not count as a report to your lead or assign anyone a task.',
+      inputSchema: z.strictObject({ text: z.string().trim().min(1).max(1000), areas: z.array(z.string().trim().min(1).max(200)).max(20).optional() }),
+      annotations: changesState,
+    },
+    officeAccess.subagent,
+    async (args, caller) => reply(await ownFloor(caller).team.handle(caller.worker, { action: 'note', ...args }), () => 'Shared with your siblings. Continue your task; report results to your lead with team_report.'),
+  );
+  server.tool(
+    {
       name: 'team_status',
       description:
         'Read your subagents and unread team news at once, without waiting; optionally one worker, with recent terminal lines. structuredContent has workers (one compact object each; state blocked_on_question while a question waits for an answer), news (typed events with ids and times) and a cursor to pass as since. verbose: false makes the text compact too. team_report_get reads a full report.',
@@ -136,14 +158,25 @@ export function register(server: OfficeMcpServer, deps: OfficeMcpDeps): void {
   server.tool(
     {
       name: 'team_message',
-      description: 'Send one of your subagents an answer or follow-up, as a message in its session. A permission prompt in its terminal needs the person at its desk.',
-      inputSchema: z.strictObject({ worker, text, floor: floorArg }),
+      description:
+        'Steer a running subagent without interrupting: guidance arrives with its next tool step through existing hooks, or queues behind the turn on older sessions. Select worker, workers (subset), or all: true (broadcast). Idle workers receive a message; stopped sessions resume. Reports per-recipient delivery or error. A permission prompt still needs the person.',
+      inputSchema: z.strictObject({
+        worker: worker.optional(),
+        workers: z.array(worker).min(1).max(100).optional(),
+        all: z.literal(true).optional(),
+        text,
+        floor: floorArg,
+        queue: z.boolean().default(true).describe('Keep the current turn running. Omit or true for next-step hook delivery, with Ctrl+Enter fallback; false uses normal session submission.'),
+      }),
       annotations: changesState,
     },
     officeAccess.team,
     async (args, caller) => {
       if (args.floor && !caller.building) return officeError('Floor workers manage only their own floor');
-      return reply(await command(caller, { action: 'send', ...args }), (body) => `Sent to ${(body.worker as TeamMember).name}.`);
+      if ([args.worker !== undefined, args.workers !== undefined, args.all === true].filter(Boolean).length !== 1) return officeError('Choose exactly one of worker, workers, or all: true.');
+      return reply(await command(caller, { action: 'send', ...args }), (body) =>
+        body.results ? (body.results as Record<string, unknown>[]).map((r) => `${r.id}: ${r.error ?? r.delivery}.`).join('\n') : `${(body.worker as TeamMember).name}: ${body.delivery}.`,
+      );
     },
   );
   server.tool(

@@ -256,6 +256,13 @@ test('a building lead leads teams on every floor from no desk, with the owner’
   assert.equal(r.office.inbox(id).messages.length, 1, 'status does not consume a remote report');
   assert.equal((await r.office.team(worker, { action: 'send', worker: sub.id, text: 'Please continue' })).status, 200);
   assert.equal((await r.office.team(worker, { action: 'send', worker: 'Byte', text: 'Ambiguous' })).status, 409);
+  const broadcast = await r.office.team(worker, { action: 'send', all: true, text: 'Shared API changed.' });
+  assert.equal((broadcast.body.results as unknown[]).length, 5);
+  const subset = await r.office.team(worker, { action: 'send', workers: [sub.id], text: 'Update your caller.' });
+  assert.equal((subset.body.results as { id: string }[])[0].id, sub.id);
+  assert.equal((subset.body.results as unknown[]).length, 1);
+  const singleFloor = await r.office.team(worker, { action: 'send', all: true, floor: 'alpha', text: 'Alpha only.' });
+  assert.equal((singleFloor.body.results as unknown[]).length, 1);
   r.office.inbox(id, [inbox.messages[0].id]);
   assert.equal(r.office.inbox(id).messages.length, 0);
   r.office.revoke(id);

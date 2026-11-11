@@ -92,6 +92,23 @@ export class RemoteOffice {
     }
     const floors = named ? [named] : all;
     if (!floors.length) return { status: 404, body: { error: 'No floor is open.' } };
+    if (args.action === 'send' && (args.all === true || Array.isArray(args.workers))) {
+      const refs =
+        args.all === true
+          ? floors.flatMap((f) =>
+              f.workers
+                .list()
+                .filter((w) => w.lead === worker.id)
+                .map((w) => w.id),
+            )
+          : (args.workers as string[]);
+      const results = [];
+      for (const ref of new Set(refs)) {
+        const result = await this.team(worker, { action: 'send', worker: ref, text: args.text, queue: args.queue, floor: args.floor });
+        results.push({ id: ref, ...result.body });
+      }
+      return { status: 200, body: { results } };
+    }
     if (args.worker) {
       const wanted = args.worker.toLowerCase();
       const matches = floors.flatMap((f) =>
