@@ -156,6 +156,7 @@ export class MissionRoom {
   private place(v: MissionAgentView, spot: MissionSpot, chair: number | undefined) {
     const orchestrator = v.id === ORCHESTRATOR_ID;
     const root = v.model.root;
+    v.model.setSeat(orchestrator ? 'plinth' : 'chair');
     root.position.set(spot.x, orchestrator ? MISSION_HEAD.height : SEATED.y, spot.z);
     root.rotation.y = spot.rotY;
     root.scale.setScalar(orchestrator ? ORCHESTRATOR_SCALE : SEATED.scale);

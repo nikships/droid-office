@@ -2630,52 +2630,154 @@ def build_pr_crate():
 # The Droid worker's articulated pivots in worker space (+Z forward, +Y up). Must match
 # WORKER_PIVOTS in src/client/world/character.ts.
 DROID_WORKER = {
-    "rotor": (0.045, 0.465, 0.169),
-    "arm_l": (-0.30, 0.55, 0.05),
-    "arm_r": (0.30, 0.55, 0.05),
-    "foot_l": (-0.12, 0.20, 0.05),
-    "foot_r": (0.12, 0.20, 0.05),
-    "eye_l": (-0.098, 0.785, 0.192),
-    "eye_r": (0.098, 0.785, 0.192),
-    "pupil_l": (-0.098, 0.785, 0.200),
-    "pupil_r": (0.098, 0.785, 0.200),
-    "bulb": (0.0, 1.195, 0.0),
+    "neck": (0.0, 0.980, 0.005),
+    "rotor": (0.048, 0.842, 0.156),
+    "arm_l": (-0.232, 0.912, 0.005),
+    "arm_r": (0.232, 0.912, 0.005),
+    "forearm_l": (-0.240, 0.708, 0.005),
+    "forearm_r": (0.240, 0.708, 0.005),
+    "thigh_l": (-0.118, 0.678, 0.032),
+    "thigh_r": (0.118, 0.678, 0.032),
+    "shin_l": (-0.118, 0.378, 0.024),
+    "shin_r": (0.118, 0.378, 0.024),
+    "foot_l": (-0.118, 0.165, 0.015),
+    "foot_r": (0.118, 0.165, 0.015),
+    "eye_l": (-0.084, 1.106, 0.168),
+    "eye_r": (0.084, 1.106, 0.168),
+    "pupil_l": (-0.079, 1.102, 0.174),
+    "pupil_r": (0.079, 1.102, 0.174),
+    "brow_l": (-0.088, 1.168, 0.169),
+    "brow_r": (0.088, 1.168, 0.169),
+    "mouth": (0.0, 1.057, 0.170),
+    "bulb": (0.0, 1.356, -0.005),
 }
+
+
+def _super_ring(cx, cy, cz, rx, rz, n_exp=2.6, segs=14):
+    pts = []
+    for i in range(segs):
+        a = (i / segs) * math.tau
+        ca, sa = math.cos(a), math.sin(a)
+        x = cx + rx * (abs(ca) ** (2.0 / n_exp)) * (1 if ca >= 0 else -1)
+        z = cz + rz * (abs(sa) ** (2.0 / n_exp)) * (1 if sa >= 0 else -1)
+        pts.append((x, cy, z))
+    return pts
+
+
+def _z_super_ring(cx, cy, cz, rx, ry, n_exp=2.5, segs=16, z_arch=0.0):
+    pts = []
+    for i in range(segs):
+        a = (i / segs) * math.tau
+        ca, sa = math.cos(a), math.sin(a)
+        x = cx + rx * (abs(ca) ** (2.0 / n_exp)) * (1 if ca >= 0 else -1)
+        y = cy + ry * (abs(sa) ** (2.0 / n_exp)) * (1 if sa >= 0 else -1)
+        z = cz - z_arch * (x / max(rx, 1e-5)) ** 2
+        pts.append((x, y, z))
+    return pts
+
+
+def _arc_shell(name, rings_inner, rings_outer, smooth_shade=True):
+    rows = len(rings_inner)
+    cols = len(rings_inner[0])
+    verts = []
+    for r in range(rows):
+        verts.extend(rings_outer[r])
+    for r in range(rows):
+        verts.extend(rings_inner[r])
+    layer = rows * cols
+    faces = []
+    for r in range(rows - 1):
+        for c in range(cols - 1):
+            a = r * cols + c
+            faces.append((a, a + 1, a + cols + 1, a + cols))
+            b = layer + a
+            faces.append((b, b + cols, b + cols + 1, b + 1))
+    for r in range(rows - 1):
+        a0, a1 = r * cols, (r + 1) * cols
+        faces.append((layer + a0, a0, a1, layer + a1))
+        c0, c1 = r * cols + (cols - 1), (r + 1) * cols + (cols - 1)
+        faces.append((c0, layer + c0, layer + c1, c1))
+    for c in range(cols - 1):
+        faces.append((c, layer + c, layer + c + 1, c + 1))
+        t = (rows - 1) * cols + c
+        faces.append((t, t + 1, layer + t + 1, layer + t))
+    obj = solid_mesh(name, verts, faces)
+    return smooth_obj(obj) if smooth_shade else obj
+
+
+def _super_arc_panel(name, cx, cz, y_rows, n_exp=2.5, a0=-0.7, a1=0.7, cols=6, thick=0.008):
+    inner, outer = [], []
+    for cy, rx, rz, dz in y_rows:
+        ri, ro = [], []
+        for j in range(cols):
+            a = a0 + (a1 - a0) * (j / (cols - 1))
+            ca, sa = math.cos(a), math.sin(a)
+            ux = (abs(ca) ** (2.0 / n_exp)) * (1 if ca >= 0 else -1)
+            uz = (abs(sa) ** (2.0 / n_exp)) * (1 if sa >= 0 else -1)
+            ri.append((cx + rx * ux, cy, cz + dz + rz * uz))
+            ro.append((cx + (rx + thick) * ux, cy, cz + dz + (rz + thick) * uz))
+        inner.append(ri)
+        outer.append(ro)
+    return _arc_shell(name, inner, outer)
+
+
+def _loft_closed(name, rings):
+    return smooth_obj(loft(name, rings, bottom=True, top=True, smooth_sides=True, recalc=True))
+
+
+def _ring_tube(name, cx, cy, r_outer, r_inner, z_back, z_front, segs=12):
+    ri, ro = [], []
+    for z in (z_back, z_front):
+        row_i, row_o = [], []
+        for j in range(segs + 1):
+            a = (j / segs) * math.tau
+            ca, sa = math.cos(a), math.sin(a)
+            row_i.append((cx + r_inner * ca, cy + r_inner * sa, z))
+            row_o.append((cx + r_outer * ca, cy + r_outer * sa, z))
+        ri.append(row_i)
+        ro.append(row_o)
+    return _arc_shell(name, ri, ro)
 
 
 @prop("droid-worker", "factory", "hero", "part", recenter=False, multipart=True, draco=False)
 def build_droid_worker():
-    """Factory's autonomous Droid worker: a chamfered space-black and graphite industrial robot
-    with an oscilloscope-style sensor visor, expressive LED optics, side comms pods with a boom
-    mic, a roof-mounted status beacon, a V-tapered hydraulic torso with a ducted chest pinwheel
-    turbine and crew ID badge, a twin-cell rear reactor pack with the Factory pinwheel, two-jaw
-    servo gripper arms, and heavy stabilizer boots.
+    """Factory's autonomous Droid worker: a sculpted ceramic-and-graphite articulated humanoid droid
+    with a two-tone pod helmet, curved wrap-around OLED visor, soulful vertical-oval optics with dual
+    catchlight sparkles, arched brows, rosy cheek dimples and an animated smile arc, flush acoustic
+    ear-pods with a gooseneck boom mic, a crown status beacon dome, an athletic torso with a ducted
+    3D Factory pinwheel turbine, crew ID lanyard badge and contoured lumbar reactor pack, two-segment
+    articulated arms (shoulder -> elbow -> rounded droid hands), and three-segment articulated legs
+    (hip -> knee -> ankle sneaker-boots) built to sit naturally in task chairs and walk upright.
 
-    Every loose node is authored at its rest pose in worker space so the GLB stands whole, and
-    the client shifts each articulated node (`DroidRotor`, `DroidArmL`, `DroidArmR`, `DroidFootL`,
-    `DroidFootR`, `EyeL`, `EyeR`, `PupilL`, `PupilR`, `Bulb`) to its joint pivot in `DROID_WORKER`.
+    Every loose node is authored at its standing rest pose in worker space (+Z forward, +Y up), and
+    the client centers each articulated joint around its pivot in `DROID_WORKER`.
     """
-    m_black = material("DroidBlack", "#161618", roughness=0.42, metallic=0.30)
-    m_graphite = material("DroidGraphite", "#2a2b30", roughness=0.38, metallic=0.40)
-    m_steel = material("DroidSteel", "#52545c", roughness=0.32, metallic=0.55)
-    m_light = material("DroidLight", "#eceeef", roughness=0.28, metallic=0.20)
-    m_orange = material("DroidOrange", "#ee6018", roughness=0.45, metallic=0.0, emission="#ee6018", emission_strength=0.40)
-    m_visor = material("DroidVisor", "#070709", roughness=0.10, metallic=0.0)
-    m_rubber = material("DroidRubber", "#101012", roughness=0.80, metallic=0.0)
-    m_skin = material("DroidSkin", "#3a86ff", roughness=0.36, metallic=0.18)
-    m_eye = material("DroidEye", "#f4f7fa", roughness=0.15, metallic=0.0, emission="#f4f7fa", emission_strength=0.45)
-    m_pupil = material("DroidPupil", "#0d0e11", roughness=0.20, metallic=0.10)
-    m_bulb = material("DroidBulb", "#3ccf91", roughness=0.20, metallic=0.0, emission="#3ccf91", emission_strength=0.75)
+    m_black = material("DroidBlack", "#16171b", roughness=0.40, metallic=0.28)
+    m_graphite = material("DroidGraphite", "#2a2d35", roughness=0.36, metallic=0.42)
+    m_steel = material("DroidSteel", "#6a707d", roughness=0.30, metallic=0.60)
+    m_light = material("DroidLight", "#f1f4f9", roughness=0.22, metallic=0.14)
+    m_orange = material("DroidOrange", "#ee6018", roughness=0.38, metallic=0.0, emission="#ee6018", emission_strength=0.55)
+    m_visor = material("DroidVisor", "#050609", roughness=0.05, metallic=0.05)
+    m_rubber = material("DroidRubber", "#101114", roughness=0.82, metallic=0.0)
+    m_skin = material("DroidSkin", "#3a86ff", roughness=0.28, metallic=0.10)
+    m_eye = material("DroidEye", "#eaf5ff", roughness=0.10, metallic=0.0, emission="#dff0ff", emission_strength=0.90)
+    m_pupil = material("DroidPupil", "#0a0e18", roughness=0.12, metallic=0.08)
+    m_blush = material("DroidBlush", "#ff6e8e", roughness=0.20, metallic=0.0, emission="#ff6e8e", emission_strength=0.75)
+    m_bulb = material("DroidBulb", "#3ccf91", roughness=0.16, metallic=0.0, emission="#3ccf91", emission_strength=0.90)
 
     swatches = {
-        "base": m_rubber,
-        "body": m_black,
+        "rubber": m_rubber,
+        "black": m_black,
         "graphite": m_graphite,
         "steel": m_steel,
         "light": m_light,
         "orange": m_orange,
-        "glass": m_visor,
+        "visor": m_visor,
         "skin": m_skin,
+        "eye": m_eye,
+        "pupil": m_pupil,
+        "blush": m_blush,
+        "bulb": m_bulb,
     }
 
     body_parts = []
@@ -2687,144 +2789,284 @@ def build_droid_worker():
     def add_skin(obj, into=None):
         (skin_parts if into is None else into).append((obj, m_skin))
 
-    def z_cyl(name, radius, depth, loc, verts=16, bevel_w=0.0):
-        return smooth_obj(cyl(name, radius, depth, loc=loc, rot=(math.radians(90), 0, 0), verts=verts, bevel_w=bevel_w))
+    def z_cyl(name, radius, depth, loc, verts=10):
+        return smooth_obj(cyl(name, radius, depth, loc=loc, rot=(math.pi / 2, 0, 0), verts=verts))
 
-    # 1. Head unit: chamfered oscilloscope / tactical sensor pod (y = 0.63 .. 0.96)
-    add_part(box("DroidBody", (0.46, 0.295, 0.34), loc=(0, 0.785, -0.005), bevel_w=0.048, bevel_seg=1), "body")
-    add_part(box("RearCowl", (0.38, 0.23, 0.06), loc=(0, 0.785, -0.175), bevel_w=0.025, bevel_seg=1), "graphite")
-    for i in range(4):
-        add_part(box(f"HeadFin{i}", (0.28, 0.012, 0.022), loc=(0, 0.725 + i * 0.04, -0.202)), "steel")
-    add_part(box("HeadDeck", (0.34, 0.032, 0.26), loc=(0, 0.935, 0.0), bevel_w=0.01, bevel_seg=1), "graphite")
-
-    for sx in (-1, 1):
-        add_skin(box(f"HeadBrowSkin{sx}", (0.085, 0.038, 0.28), loc=(sx * 0.145, 0.928, 0.005), rot=(0, 0, sx * math.radians(-10)), bevel_w=0.01, bevel_seg=1))
-        add_skin(box(f"HeadCheekSkin{sx}", (0.036, 0.19, 0.22), loc=(sx * 0.222, 0.785, 0.015), bevel_w=0.012, bevel_seg=1))
-        add_part(box(f"RoofFin{sx}", (0.018, 0.062, 0.115), loc=(sx * 0.16, 0.962, -0.03), rot=(math.radians(-18), 0, sx * math.radians(-8)), bevel_w=0.004, bevel_seg=1), "steel")
-        add_part(box(f"RoofFinTip{sx}", (0.020, 0.012, 0.05), loc=(sx * 0.165, 0.988, -0.045), rot=(math.radians(-18), 0, sx * math.radians(-8))), "orange")
-
-    add_part(box("VisorBezel", (0.425, 0.22, 0.065), loc=(0, 0.785, 0.152), bevel_w=0.026, bevel_seg=1), "graphite")
-    add_part(box("VisorInnerRim", (0.395, 0.188, 0.025), loc=(0, 0.785, 0.176), bevel_w=0.018, bevel_seg=1), "steel")
-    add_part(box("VisorGlass", (0.37, 0.162, 0.018), loc=(0, 0.785, 0.184), bevel_w=0.014, bevel_seg=1), "glass")
-    add_part(box("VisorHood", (0.43, 0.024, 0.062), loc=(0, 0.892, 0.174), rot=(math.radians(8), 0, 0), bevel_w=0.006, bevel_seg=1), "steel")
-
-    add_part(box("JawGuard", (0.34, 0.036, 0.052), loc=(0, 0.660, 0.164), bevel_w=0.008, bevel_seg=1), "steel")
-    for i in range(-3, 4):
-        add_part(box(f"JawSlot{i}", (0.010, 0.020, 0.014), loc=(i * 0.026, 0.660, 0.186)), "base")
+    # 1. Sculpted ergonomic torso, waist bellows & cushioned pelvis (y = 0.620 .. 0.980)
+    chest_rings = [
+        _super_ring(0, 0.755, 0.002, 0.136, 0.104, n_exp=2.4, segs=14),
+        _super_ring(0, 0.798, 0.006, 0.166, 0.120, n_exp=2.5, segs=14),
+        _super_ring(0, 0.858, 0.010, 0.186, 0.134, n_exp=2.6, segs=14),
+        _super_ring(0, 0.915, 0.008, 0.188, 0.130, n_exp=2.6, segs=14),
+        _super_ring(0, 0.955, 0.004, 0.162, 0.114, n_exp=2.5, segs=14),
+        _super_ring(0, 0.972, 0.003, 0.114, 0.088, n_exp=2.2, segs=14),
+    ]
+    add_part(_loft_closed("ChestCore", chest_rings), "black")
 
     for sx in (-1, 1):
-        add_part(box(f"VisorTick{sx}", (0.042, 0.010, 0.012), loc=(sx * 0.165, 0.892, 0.200)), "orange")
-        add_part(box(f"JawTick{sx}", (0.028, 0.010, 0.012), loc=(sx * 0.135, 0.660, 0.186)), "orange")
-        add_part(x_cyl(f"EarBase{sx}", 0.088, 0.042, loc=(sx * 0.242, 0.785, 0.0), verts=14), "graphite")
-        add_part(x_cyl(f"EarRing{sx}", 0.091, 0.012, loc=(sx * 0.258, 0.785, 0.0), verts=14), "orange")
-        add_part(x_cyl(f"EarCap{sx}", 0.068, 0.024, loc=(sx * 0.270, 0.785, 0.0), verts=14), "steel")
-        add_part(x_cyl(f"EarHub{sx}", 0.026, 0.014, loc=(sx * 0.283, 0.785, 0.0), verts=10), "light")
+        a_mid = 0.0 if sx > 0 else math.pi
+        side_rows = [
+            (0.775, 0.160, 0.116, 0.005),
+            (0.848, 0.186, 0.134, 0.010),
+            (0.918, 0.188, 0.130, 0.008),
+            (0.958, 0.158, 0.112, 0.004),
+        ]
+        add_skin(_super_arc_panel(f"TorsoJacket{sx}", 0, 0, side_rows, n_exp=2.6, a0=a_mid - 1.05, a1=a_mid + 1.05, cols=6, thick=0.010))
+        add_part(x_cyl(f"ShoulderBoss{sx}", 0.052, 0.046, loc=(sx * 0.196, 0.912, 0.005), verts=10), "steel")
+        add_part(x_cyl(f"ShoulderRing{sx}", 0.055, 0.009, loc=(sx * 0.208, 0.912, 0.005), verts=10), "orange")
 
-    boom_pts = [(0.270, 0.745, 0.03), (0.288, 0.68, 0.14), (0.215, 0.645, 0.218), (0.145, 0.645, 0.238)]
-    add_part(tube_path("MicBoom", boom_pts, 0.011, sides=6), "graphite")
-    add_part(sphere("MicCollar", 0.016, loc=(0.165, 0.645, 0.232), segs=8, rings=6), "steel")
-    add_part(sphere("MicLed", 0.022, loc=(0.142, 0.645, 0.240), segs=10, rings=6), "orange")
-
-    add_part(y_cyl("AntBase", 0.072, 0.034, loc=(0, 0.960, 0), verts=14, bevel_w=0.005), "steel")
-    add_part(y_cyl("AntRing", 0.058, 0.014, loc=(0, 0.984, 0), verts=14), "orange")
-    add_part(y_cyl("AntMast", 0.022, 0.135, loc=(0, 1.052, 0), verts=10), "graphite")
-    for h_y in (1.025, 1.080):
-        add_part(y_cyl(f"MastCollar{h_y}", 0.028, 0.010, loc=(0, h_y, 0), verts=10), "steel")
-    add_part(y_cyl("AntCup", 0.056, 0.028, loc=(0, 1.132, 0), verts=14, bevel_w=0.004), "steel")
-    add_part(y_cyl("AntCollar", 0.058, 0.010, loc=(0, 1.148, 0), verts=14), "orange")
-
-    # 2. Neck & V-tapered industrial torso chassis (y = 0.21 .. 0.63)
-    add_part(y_cyl("NeckCol", 0.108, 0.062, loc=(0, 0.618, 0), verts=14), "graphite")
-    add_part(y_cyl("NeckRing", 0.120, 0.016, loc=(0, 0.618, 0), verts=14), "orange")
-    add_part(box("UpperChest", (0.39, 0.21, 0.28), loc=(0, 0.495, 0), bevel_w=0.032, bevel_seg=1), "body")
-    add_part(box("LowerTorso", (0.28, 0.13, 0.23), loc=(0, 0.35, 0), bevel_w=0.024, bevel_seg=1), "graphite")
-
-    for sx in (-1, 1):
-        add_part(smooth_obj(cyl(f"WaistPiston{sx}", 0.025, 0.14, loc=(sx * 0.158, 0.355, 0.0), rot=(0, 0, sx * math.radians(-14)), verts=10)), "steel")
-        add_part(cyl(f"WaistPistonRing{sx}", 0.029, 0.016, loc=(sx * 0.161, 0.37, 0.0), rot=(0, 0, sx * math.radians(-14)), verts=10), "orange")
-        add_skin(box(f"Pauldron{sx}", (0.105, 0.185, 0.30), loc=(sx * 0.178, 0.515, 0.0), rot=(0, 0, sx * math.radians(-8)), bevel_w=0.024, bevel_seg=1))
-        add_part(x_cyl(f"TorsoArmBoss{sx}", 0.068, 0.055, loc=(sx * 0.238, 0.55, 0.05), verts=14), "steel")
-        # Its outer face sits 7.5 mm inside the boss's end: closer, the two discs shimmered against each other.
-        add_part(x_cyl(f"TorsoArmRing{sx}", 0.072, 0.012, loc=(sx * 0.252, 0.55, 0.05), verts=14), "orange")
-
-    add_part(box("ChestArmor", (0.31, 0.22, 0.036), loc=(0, 0.47, 0.136), bevel_w=0.014, bevel_seg=1), "graphite")
+    add_part(smooth_obj(box("SternumPlate", (0.232, 0.162, 0.026), loc=(0, 0.850, 0.132), bevel_w=0.012, bevel_seg=1)), "graphite")
 
     rx, ry, rz = DROID_WORKER["rotor"]
-    add_part(z_cyl("TurbineHousing", 0.084, 0.022, loc=(rx, ry, 0.150), verts=18), "steel")
-    add_part(z_cyl("TurbineRing", 0.074, 0.024, loc=(rx, ry, 0.151), verts=18), "orange")
-    add_part(z_cyl("TurbineWell", 0.063, 0.026, loc=(rx, ry, 0.152), verts=18), "base")
+    add_part(z_cyl("TurbineBack", 0.052, 0.008, loc=(rx, ry, 0.144), verts=12), "rubber")
+    add_part(_ring_tube("TurbineHousing", rx, ry, 0.064, 0.050, 0.140, 0.158, segs=12), "steel")
+    add_part(_ring_tube("TurbineOrange", rx, ry, 0.052, 0.046, 0.142, 0.160, segs=12), "orange")
 
-    add_part(box("HarnessStrapFront", (0.028, 0.078, 0.016), loc=(-0.095, 0.542, 0.150)), "orange")
-    add_part(box("HarnessStrapTop", (0.028, 0.016, 0.12), loc=(-0.095, 0.596, 0.095), bevel_w=0.004, bevel_seg=1), "orange")
-    add_part(box("BadgePlate", (0.070, 0.098, 0.016), loc=(-0.095, 0.455, 0.156), bevel_w=0.004, bevel_seg=1), "light")
-    add_part(box("BadgeHeader", (0.066, 0.022, 0.018), loc=(-0.095, 0.490, 0.159)), "orange")
-    add_part(box("BadgeClip", (0.026, 0.016, 0.020), loc=(-0.095, 0.508, 0.159)), "steel")
-    add_part(box("BadgePhoto", (0.022, 0.024, 0.018), loc=(-0.112, 0.455, 0.159)), "body")
+    add_part(box("StrapFront", (0.020, 0.066, 0.012), loc=(-0.075, 0.914, 0.140)), "orange")
+    add_part(box("BadgeCard", (0.055, 0.076, 0.012), loc=(-0.075, 0.842, 0.146), bevel_w=0.004, bevel_seg=1), "light")
+    add_part(box("BadgeTop", (0.051, 0.016, 0.014), loc=(-0.075, 0.868, 0.148)), "orange")
+    add_part(box("BadgeClip", (0.020, 0.012, 0.016), loc=(-0.075, 0.881, 0.148)), "steel")
+    add_part(box("BadgePic", (0.016, 0.018, 0.014), loc=(-0.088, 0.838, 0.148)), "black")
     for i in range(2):
-        add_part(box(f"BadgeLine{i}", (0.032, 0.008, 0.018), loc=(-0.080, 0.462 - i * 0.018, 0.159)), "graphite")
+        add_part(box(f"BadgeTxt{i}", (0.022, 0.006, 0.014), loc=(-0.063, 0.844 - i * 0.013, 0.148)), "graphite")
 
-    add_part(box("Backpack", (0.29, 0.23, 0.085), loc=(0, 0.47, -0.155), bevel_w=0.022, bevel_seg=1), "graphite")
-    add_part(box("BackPlate", (0.19, 0.19, 0.018), loc=(0, 0.47, -0.195), bevel_w=0.008, bevel_seg=1), "body")
-    back_emblem = glyph_solid("BackGlyph", 132.0, 12.0, curve=2)
-    back_emblem.data.transform(Matrix.Rotation(math.pi, 4, "Y"))
-    back_emblem.location = Vector((0, 0.47, -0.205))
-    add_part(back_emblem, "orange")
+    add_part(smooth_obj(box("DorsalPack", (0.228, 0.172, 0.068), loc=(0, 0.852, -0.132), bevel_w=0.018, bevel_seg=1)), "graphite")
+    add_part(box("DorsalInset", (0.138, 0.130, 0.014), loc=(0, 0.852, -0.164), bevel_w=0.005, bevel_seg=1), "black")
+    back_glyph = glyph_solid("DorsalGlyph", 86.0, 7.0, curve=1)
+    back_glyph.data.transform(Matrix.Rotation(math.pi, 4, "Y"))
+    back_glyph.location = Vector((0, 0.852, -0.170))
+    add_part(back_glyph, "orange")
     for sx in (-1, 1):
-        add_part(y_cyl(f"BackCell{sx}", 0.034, 0.18, loc=(sx * 0.122, 0.47, -0.165), verts=12, bevel_w=0.005), "steel")
-        add_part(y_cyl(f"BackCellRing{sx}", 0.036, 0.016, loc=(sx * 0.122, 0.525, -0.165), verts=12), "orange")
+        add_part(y_cyl(f"DorsalCell{sx}", 0.024, 0.130, loc=(sx * 0.094, 0.852, -0.142), verts=8), "steel")
+        add_part(y_cyl(f"DorsalRing{sx}", 0.026, 0.010, loc=(sx * 0.094, 0.892, -0.142), verts=8), "orange")
 
-    add_part(box("WaistBelt", (0.30, 0.024, 0.24), loc=(0, 0.285, 0), bevel_w=0.006, bevel_seg=1), "steel")
-    add_part(box("BeltBuckle", (0.075, 0.030, 0.020), loc=(0, 0.285, 0.122), bevel_w=0.004, bevel_seg=1), "orange")
-    add_part(box("Pelvis", (0.28, 0.075, 0.21), loc=(0, 0.242, 0), bevel_w=0.018, bevel_seg=1), "body")
+    for i, wy in enumerate((0.722, 0.744)):
+        add_part(y_cyl(f"WaistBellow{i}", 0.112 - i * 0.004, 0.020, loc=(0, wy, 0.006), verts=12), "rubber")
     for sx in (-1, 1):
-        add_part(y_cyl(f"HipJoint{sx}", 0.048, 0.05, loc=(sx * 0.12, 0.205, 0.02), verts=10), "steel")
+        add_part(smooth_obj(cyl(f"WaistStrut{sx}", 0.016, 0.072, loc=(sx * 0.120, 0.735, 0.008), rot=(0, 0, sx * math.radians(-10)), verts=8)), "steel")
 
-    # 3. Chest rotor
+    pelvis_rings = [
+        _super_ring(0, 0.620, 0.010, 0.118, 0.098, n_exp=2.2, segs=14),
+        _super_ring(0, 0.648, 0.015, 0.164, 0.124, n_exp=2.4, segs=14),
+        _super_ring(0, 0.692, 0.014, 0.170, 0.128, n_exp=2.5, segs=14),
+        _super_ring(0, 0.716, 0.008, 0.138, 0.106, n_exp=2.4, segs=14),
+    ]
+    add_part(_loft_closed("PelvisShell", pelvis_rings), "graphite")
+    belt_rows = [
+        (0.688, 0.168, 0.126, 0.014),
+        (0.714, 0.156, 0.116, 0.010),
+    ]
+    add_skin(_super_arc_panel("PelvisBelt", 0, 0, belt_rows, n_exp=2.5, a0=-math.pi * 0.92, a1=math.pi * 0.92, cols=11, thick=0.009))
+    add_part(box("BeltBuckle", (0.066, 0.028, 0.020), loc=(0, 0.701, 0.142), bevel_w=0.005, bevel_seg=1), "orange")
+
+    nx, ny, nz = DROID_WORKER["neck"]
+    add_part(y_cyl("NeckCollar", 0.078, 0.026, loc=(nx, ny - 0.010, nz), verts=12), "graphite")
+    add_part(y_cyl("NeckRing", 0.082, 0.009, loc=(nx, ny - 0.006, nz), verts=12), "orange")
+    add_part(smooth_obj(sphere("NeckBall", 0.050, loc=(nx, ny + 0.006, nz), segs=10, rings=6)), "steel")
+
+    # 2. Chest rotor
     rotor_parts = []
-    rotor_glyph = glyph_solid("ChestRotorGlyph", 108.0, 10.0, curve=2)
+    rotor_glyph = glyph_solid("ChestPinwheel", 82.0, 9.0, curve=1)
     rotor_glyph.location = Vector((rx, ry, rz))
     add_part(rotor_glyph, "light", rotor_parts)
-    add_part(z_cyl("ChestRotorHub", 0.017, 0.014, loc=(rx, ry, rz + 0.003), verts=12), "orange", rotor_parts)
+    add_part(z_cyl("RotorCap", 0.014, 0.012, loc=(rx, ry, rz + 0.004), verts=8), "orange", rotor_parts)
 
-    # 4. Articulated servo arms
-    def build_arm(side: int):
-        px, py, pz = DROID_WORKER["arm_l" if side < 0 else "arm_r"]
+    # 3. Articulated sculpted pod head (pivoted at neck)
+    head_parts = []
+    hy = 1.114
+    head_core_rings = [
+        _z_super_ring(0, hy, -0.148, 0.160, 0.096, n_exp=2.3, segs=16),
+        _z_super_ring(0, hy, -0.112, 0.200, 0.124, n_exp=2.5, segs=16),
+        _z_super_ring(0, hy, -0.035, 0.218, 0.136, n_exp=2.6, segs=16),
+        _z_super_ring(0, hy, 0.048, 0.218, 0.136, n_exp=2.6, segs=16),
+        _z_super_ring(0, hy, 0.118, 0.208, 0.130, n_exp=2.6, segs=16),
+        _z_super_ring(0, hy, 0.148, 0.188, 0.116, n_exp=2.6, segs=16),
+    ]
+    add_part(_loft_closed("HelmetCore", head_core_rings), "black", head_parts)
+
+    cowl_z_slices = [
+        (-0.110, 0.200, 0.124),
+        (-0.035, 0.219, 0.137),
+        (0.048, 0.219, 0.137),
+        (0.115, 0.209, 0.131),
+    ]
+    cowl_in, cowl_out = [], []
+    cowl_cols = 13
+    a_start, a_end = -0.36, math.pi + 0.36
+    for cz_s, rx_s, ry_s in cowl_z_slices:
+        ri, ro = [], []
+        for j in range(cowl_cols):
+            a = a_start + (a_end - a_start) * (j / (cowl_cols - 1))
+            ca, sa = math.cos(a), math.sin(a)
+            ux = (abs(ca) ** (2.0 / 2.6)) * (1 if ca >= 0 else -1)
+            uy = (abs(sa) ** (2.0 / 2.6)) * (1 if sa >= 0 else -1)
+            ri.append((rx_s * ux, hy + ry_s * uy, cz_s))
+            ro.append(((rx_s + 0.011) * ux, hy + (ry_s + 0.011) * uy, cz_s))
+        cowl_in.append(ri)
+        cowl_out.append(ro)
+    add_part(_arc_shell("HelmetSkinCowl", cowl_in, cowl_out), "skin", head_parts)
+
+    for sx in (-1, 1):
+        add_part(box(f"AeroFin{sx}", (0.018, 0.040, 0.088), loc=(sx * 0.154, hy + 0.138, -0.020), rot=(math.radians(-14), 0, sx * math.radians(-14)), bevel_w=0.004, bevel_seg=1), "steel", head_parts)
+        add_part(box(f"AeroFinTip{sx}", (0.020, 0.009, 0.038), loc=(sx * 0.159, hy + 0.154, -0.030), rot=(math.radians(-14), 0, sx * math.radians(-14))), "orange", head_parts)
+
+    add_part(box("RearHeadPanel", (0.232, 0.122, 0.020), loc=(0, hy - 0.002, -0.146), bevel_w=0.008, bevel_seg=1), "graphite", head_parts)
+    for i in range(3):
+        add_part(box(f"HeadLouvre{i}", (0.176, 0.009, 0.012), loc=(0, hy - 0.032 + i * 0.030, -0.155)), "steel", head_parts)
+
+    bezel_rings = [
+        _z_super_ring(0, hy - 0.006, 0.134, 0.188, 0.114, n_exp=2.7, segs=16, z_arch=0.016),
+        _z_super_ring(0, hy - 0.006, 0.162, 0.178, 0.106, n_exp=2.7, segs=16, z_arch=0.020),
+    ]
+    add_part(_loft_closed("VisorBezel", bezel_rings), "graphite", head_parts)
+    glass_rings = [
+        _z_super_ring(0, hy - 0.006, 0.154, 0.166, 0.094, n_exp=2.8, segs=16, z_arch=0.018),
+        _z_super_ring(0, hy - 0.006, 0.168, 0.162, 0.091, n_exp=2.8, segs=16, z_arch=0.020),
+    ]
+    add_part(_loft_closed("VisorGlass", glass_rings), "visor", head_parts)
+
+    for sx in (-1, 1):
+        add_part(smooth_obj(box(f"CheekBlush{sx}", (0.034, 0.013, 0.006), loc=(sx * 0.128, hy - 0.058, 0.162), bevel_w=0.005, bevel_seg=1)), "blush", head_parts)
+        add_part(x_cyl(f"EarPod{sx}", 0.072, 0.030, loc=(sx * 0.234, hy - 0.002, 0.005), verts=12), "graphite", head_parts)
+        add_part(x_cyl(f"EarRing{sx}", 0.075, 0.009, loc=(sx * 0.244, hy - 0.002, 0.005), verts=12), "orange", head_parts)
+        add_part(x_cyl(f"EarCap{sx}", 0.053, 0.016, loc=(sx * 0.253, hy - 0.002, 0.005), verts=12), "steel", head_parts)
+        add_part(x_cyl(f"EarDot{sx}", 0.020, 0.008, loc=(sx * 0.262, hy - 0.002, 0.005), verts=8), "light", head_parts)
+
+    boom_pts = [(0.250, hy - 0.034, 0.024), (0.258, hy - 0.080, 0.112), (0.190, hy - 0.102, 0.172), (0.126, hy - 0.102, 0.186)]
+    add_part(tube_path("BoomMic", boom_pts, 0.008, sides=5), "graphite", head_parts)
+    add_part(smooth_obj(sphere("BoomTip", 0.015, loc=(0.122, hy - 0.102, 0.188), segs=8, rings=6)), "orange", head_parts)
+
+    bx, by, bz = DROID_WORKER["bulb"]
+    add_part(y_cyl("BeaconBase", 0.048, 0.022, loc=(bx, hy + 0.152, bz), verts=12), "steel", head_parts)
+    add_part(y_cyl("BeaconStem", 0.018, 0.046, loc=(bx, hy + 0.184, bz), verts=10), "graphite", head_parts)
+    add_part(y_cyl("BeaconCollar", 0.038, 0.012, loc=(bx, by - 0.036, bz), verts=12), "orange", head_parts)
+
+    # 4. Two-segment articulated arms (Shoulder -> Elbow -> Cute Rounded Hand)
+    def build_upper_arm(side: int):
+        ax, ay, az = DROID_WORKER["arm_l" if side < 0 else "arm_r"]
         parts = []
-        add_part(x_cyl(f"ArmDrum{side}", 0.058, 0.076, loc=(px, py, pz), verts=14), "graphite", parts)
-        add_part(x_cyl(f"ArmRing{side}", 0.061, 0.014, loc=(px + side * 0.028, py, pz), verts=14), "orange", parts)
-        add_part(x_cyl(f"ArmCap{side}", 0.038, 0.016, loc=(px + side * 0.041, py, pz), verts=10), "steel", parts)
-        add_part(box(f"UpperArm{side}", (0.068, 0.11, 0.072), loc=(px, py - 0.065, pz), bevel_w=0.014, bevel_seg=1), "body", parts)
-        add_part(box(f"UpperArmSkin{side}", (0.022, 0.088, 0.058), loc=(px + side * 0.032, py - 0.065, pz), bevel_w=0.006, bevel_seg=1), "skin", parts)
-        add_part(x_cyl(f"Elbow{side}", 0.044, 0.078, loc=(px, py - 0.125, pz), verts=12), "steel", parts)
-        # Ends 4 mm inside the elbow's end face, not flush with it (coplanar faces shimmered orange on the arm's side).
-        add_part(x_cyl(f"ElbowRing{side}", 0.047, 0.010, loc=(px + side * 0.030, py - 0.125, pz), verts=12), "orange", parts)
-        add_part(box(f"Forearm{side}", (0.066, 0.095, 0.076), loc=(px, py - 0.175, pz + 0.012), bevel_w=0.014, bevel_seg=1), "graphite", parts)
-        add_part(box(f"WristCuff{side}", (0.070, 0.016, 0.080), loc=(px, py - 0.218, pz + 0.014), bevel_w=0.004, bevel_seg=1), "orange", parts)
-        add_part(box(f"Palm{side}", (0.060, 0.022, 0.064), loc=(px, py - 0.232, pz + 0.016), bevel_w=0.005, bevel_seg=1), "steel", parts)
-        for fz in (-1, 1):
-            add_part(box(f"Jaw{side}_{fz}", (0.044, 0.044, 0.015), loc=(px, py - 0.258, pz + 0.016 + fz * 0.022), bevel_w=0.004, bevel_seg=1), "light", parts)
+        add_part(smooth_obj(sphere(f"ShoulderBall{side}", 0.044, loc=(ax, ay, az), segs=10, rings=6)), "graphite", parts)
+        p_mid = 0.0 if side > 0 else math.pi
+        pauldron_rows = [
+            (ay - 0.075, 0.038, 0.040, 0.0),
+            (ay - 0.024, 0.049, 0.051, 0.0),
+            (ay + 0.018, 0.042, 0.044, 0.0),
+        ]
+        add_part(_super_arc_panel(f"Pauldron{side}", ax + side * 0.006, az, pauldron_rows, n_exp=2.4, a0=p_mid - 1.25, a1=p_mid + 1.25, cols=5, thick=0.012), "skin", parts)
+        add_part(y_cyl(f"Bicep{side}", 0.034, 0.165, loc=(ax + side * 0.006, ay - 0.112, az), verts=10), "black", parts)
+        add_part(x_cyl(f"ElbowDrum{side}", 0.036, 0.062, loc=(ax + side * 0.008, ay - 0.204, az), verts=10), "steel", parts)
+        add_part(x_cyl(f"ElbowRing{side}", 0.038, 0.009, loc=(ax + side * 0.028, ay - 0.204, az), verts=10), "orange", parts)
         return parts
 
-    # 5. Heavy mech stabilizer boots
+    def build_forearm(side: int):
+        fx, fy, fz = DROID_WORKER["forearm_l" if side < 0 else "forearm_r"]
+        p_mid = 0.0 if side > 0 else math.pi
+        parts = []
+        fore_rings = [
+            _super_ring(fx, fy - 0.016, fz, 0.036, 0.036, n_exp=2.3, segs=10),
+            _super_ring(fx, fy - 0.092, fz + 0.005, 0.043, 0.043, n_exp=2.4, segs=10),
+            _super_ring(fx, fy - 0.175, fz + 0.010, 0.036, 0.036, n_exp=2.4, segs=10),
+        ]
+        add_part(_loft_closed(f"Forearm{side}", fore_rings), "graphite", parts)
+        fore_plate_rows = [
+            (fy - 0.160, 0.038, 0.038, 0.009),
+            (fy - 0.092, 0.044, 0.044, 0.005),
+            (fy - 0.032, 0.038, 0.038, 0.001),
+        ]
+        add_part(_super_arc_panel(f"ForearmGuard{side}", fx, fz, fore_plate_rows, n_exp=2.4, a0=p_mid - 0.95, a1=p_mid + 0.95, cols=5, thick=0.008), "skin", parts)
+        add_part(y_cyl(f"WristGlow{side}", 0.035, 0.012, loc=(fx, fy - 0.184, fz + 0.010), verts=10), "orange", parts)
+        add_part(smooth_obj(box(f"Palm{side}", (0.056, 0.058, 0.066), loc=(fx, fy - 0.218, fz + 0.014), bevel_w=0.015, bevel_seg=1)), "light", parts)
+        add_part(box(f"Thumb{side}", (0.022, 0.040, 0.024), loc=(fx - side * 0.028, fy - 0.216, fz + 0.036), rot=(math.radians(-22), 0, side * math.radians(18)), bevel_w=0.006, bevel_seg=1), "steel", parts)
+        for fi, fz_off in enumerate((-0.015, 0.014)):
+            add_part(box(f"Finger{side}_{fi}", (0.046, 0.036, 0.022), loc=(fx, fy - 0.250, fz + 0.015 + fz_off), bevel_w=0.006, bevel_seg=1), "steel", parts)
+        return parts
+
+    # 5. Three-segment articulated legs (Hip -> Knee -> Sneaker-Boot)
+    def build_thigh(side: int):
+        tx, ty, tz = DROID_WORKER["thigh_l" if side < 0 else "thigh_r"]
+        parts = []
+        add_part(smooth_obj(sphere(f"HipBall{side}", 0.048, loc=(tx, ty, tz), segs=10, rings=6)), "steel", parts)
+        thigh_rings = [
+            _super_ring(tx, ty - 0.022, tz, 0.054, 0.056, n_exp=2.3, segs=12),
+            _super_ring(tx, ty - 0.150, tz - 0.002, 0.058, 0.062, n_exp=2.4, segs=12),
+            _super_ring(tx, ty - 0.272, tz - 0.006, 0.046, 0.050, n_exp=2.3, segs=12),
+        ]
+        add_part(_loft_closed(f"ThighCore{side}", thigh_rings), "black", parts)
+        t_mid = math.pi / 2 - side * 0.45
+        thigh_plate_rows = [
+            (ty - 0.248, 0.048, 0.052, -0.005),
+            (ty - 0.150, 0.059, 0.063, -0.002),
+            (ty - 0.048, 0.055, 0.057, -0.001),
+        ]
+        add_part(_super_arc_panel(f"ThighArmor{side}", tx, tz, thigh_plate_rows, n_exp=2.4, a0=t_mid - 0.95, a1=t_mid + 0.95, cols=5, thick=0.008), "skin", parts)
+        add_part(x_cyl(f"KneeJoint{side}", 0.043, 0.074, loc=(tx, ty - 0.300, tz - 0.008), verts=10), "steel", parts)
+        add_part(x_cyl(f"KneeRing{side}", 0.045, 0.009, loc=(tx + side * 0.031, ty - 0.300, tz - 0.008), verts=10), "orange", parts)
+        return parts
+
+    def build_shin(side: int):
+        sx_p, sy_p, sz_p = DROID_WORKER["shin_l" if side < 0 else "shin_r"]
+        parts = []
+        add_part(box(f"KneeCap{side}", (0.070, 0.054, 0.032), loc=(sx_p, sy_p - 0.004, sz_p + 0.040), bevel_w=0.010, bevel_seg=1), "graphite", parts)
+        shin_rings = [
+            _super_ring(sx_p, sy_p - 0.020, sz_p, 0.044, 0.046, n_exp=2.3, segs=10),
+            _super_ring(sx_p, sy_p - 0.108, sz_p - 0.005, 0.048, 0.050, n_exp=2.4, segs=10),
+            _super_ring(sx_p, sy_p - 0.192, sz_p - 0.008, 0.037, 0.039, n_exp=2.3, segs=10),
+        ]
+        add_part(_loft_closed(f"Shin{side}", shin_rings), "graphite", parts)
+        add_part(smooth_obj(sphere(f"AnkleBall{side}", 0.034, loc=(sx_p, sy_p - 0.213, sz_p - 0.009), segs=8, rings=6)), "steel", parts)
+        return parts
+
     def build_foot(side: int):
-        px, py, pz = DROID_WORKER["foot_l" if side < 0 else "foot_r"]
+        bx_p, by_p, bz_p = DROID_WORKER["foot_l" if side < 0 else "foot_r"]
         parts = []
-        add_part(y_cyl(f"AnkleStrut{side}", 0.038, 0.07, loc=(px, py - 0.015, pz - 0.015), verts=10), "steel", parts)
-        add_part(y_cyl(f"AnkleCollar{side}", 0.045, 0.016, loc=(px, py - 0.035, pz - 0.015), verts=10), "orange", parts)
-        add_part(box(f"BootUpper{side}", (0.12, 0.065, 0.165), loc=(px, py - 0.072, pz + 0.01), bevel_w=0.016, bevel_seg=1), "body", parts)
-        add_part(box(f"BootSkin{side}", (0.076, 0.026, 0.065), loc=(px, py - 0.052, pz + 0.045), rot=(math.radians(16), 0, 0), bevel_w=0.006, bevel_seg=1), "skin", parts)
-        add_part(box(f"BootToe{side}", (0.114, 0.048, 0.088), loc=(px, py - 0.082, pz + 0.068), bevel_w=0.014, bevel_seg=1), "graphite", parts)
-        add_part(box(f"ToeBumper{side}", (0.088, 0.026, 0.022), loc=(px, py - 0.088, pz + 0.11), bevel_w=0.005, bevel_seg=1), "steel", parts)
-        add_part(box(f"BootSole{side}", (0.128, 0.022, 0.208), loc=(px, py - 0.109, pz + 0.012), bevel_w=0.006, bevel_seg=1), "base", parts)
-        add_part(box(f"BootWelt{side}", (0.130, 0.008, 0.210), loc=(px, py - 0.096, pz + 0.012)), "orange", parts)
+        add_part(box(f"BootCuff{side}", (0.094, 0.036, 0.104), loc=(bx_p, by_p - 0.018, bz_p - 0.002), bevel_w=0.010, bevel_seg=1), "black", parts)
+        add_part(box(f"BootUpper{side}", (0.112, 0.046, 0.174), loc=(bx_p, by_p - 0.042, bz_p + 0.026), bevel_w=0.014, bevel_seg=1), "graphite", parts)
+        add_part(box(f"BootTongue{side}", (0.080, 0.030, 0.086), loc=(bx_p, by_p - 0.026, bz_p + 0.042), rot=(math.radians(16), 0, 0), bevel_w=0.007, bevel_seg=1), "skin", parts)
+        add_part(box(f"BootToe{side}", (0.106, 0.034, 0.068), loc=(bx_p, by_p - 0.048, bz_p + 0.088), bevel_w=0.011, bevel_seg=1), "light", parts)
+        add_part(box(f"BootWelt{side}", (0.118, 0.009, 0.194), loc=(bx_p, by_p - 0.060, bz_p + 0.030), bevel_w=0.003, bevel_seg=1), "orange", parts)
+        add_part(box(f"BootSole{side}", (0.120, 0.018, 0.198), loc=(bx_p, by_p - 0.071, bz_p + 0.030), bevel_w=0.005, bevel_seg=1), "rubber", parts)
         return parts
 
-    # 6. Eyes, pupils & status beacon bulb
-    eye_l = box("EyeL", (0.098, 0.082, 0.014), loc=DROID_WORKER["eye_l"], bevel_w=0.018, bevel_seg=1)
-    eye_r = box("EyeR", (0.098, 0.082, 0.014), loc=DROID_WORKER["eye_r"], bevel_w=0.018, bevel_seg=1)
-    pupil_l = box("PupilL", (0.046, 0.048, 0.012), loc=DROID_WORKER["pupil_l"], bevel_w=0.010, bevel_seg=1)
-    pupil_r = box("PupilR", (0.046, 0.048, 0.012), loc=DROID_WORKER["pupil_r"], bevel_w=0.010, bevel_seg=1)
-    bulb_obj = y_cyl("Bulb", 0.056, 0.095, loc=DROID_WORKER["bulb"], verts=8, bevel_w=0.016)
+    # 6. Expressive eyes, pupils with anime catchlights, arched brows, smile arc & status beacon
+    def build_eye(side: int):
+        ex, ey, ez = DROID_WORKER["eye_l" if side < 0 else "eye_r"]
+        rings = [
+            _z_super_ring(ex, ey, ez - 0.005, 0.045, 0.051, n_exp=2.5, segs=16),
+            _z_super_ring(ex, ey, ez + 0.004, 0.043, 0.049, n_exp=2.5, segs=16),
+        ]
+        return [(_loft_closed(f"Eye{side}", rings), m_eye)]
+
+    def build_pupil(side: int):
+        px, py, pz = DROID_WORKER["pupil_l" if side < 0 else "pupil_r"]
+        parts = []
+        pup_rings = [
+            _z_super_ring(px, py, pz - 0.004, 0.035, 0.040, n_exp=2.4, segs=14),
+            _z_super_ring(px, py, pz + 0.003, 0.034, 0.039, n_exp=2.4, segs=14),
+        ]
+        add_part(_loft_closed(f"Pupil{side}", pup_rings), "pupil", parts)
+        add_part(z_cyl(f"SparkleBig{side}", 0.0125, 0.005, loc=(px + 0.012, py + 0.015, pz + 0.003), verts=8), "light", parts)
+        add_part(z_cyl(f"SparkleSml{side}", 0.0058, 0.005, loc=(px - 0.011, py - 0.014, pz + 0.003), verts=6), "light", parts)
+        return parts
+
+    def build_brow(side: int):
+        brx, bry, brz = DROID_WORKER["brow_l" if side < 0 else "brow_r"]
+        pts = [
+            (brx - 0.032, bry - (0.004 if side > 0 else 0.008), brz - 0.001),
+            (brx, bry + 0.003, brz + 0.001),
+            (brx + 0.032, bry - (0.008 if side > 0 else 0.004), brz - 0.001),
+        ]
+        return [(tube_path(f"Brow{side}", pts, 0.0055, sides=5), m_skin)]
+
+    mx, my, mz = DROID_WORKER["mouth"]
+    smile_pts = [
+        (mx - 0.024, my + 0.005, mz - 0.001),
+        (mx - 0.012, my - 0.003, mz),
+        (mx, my - 0.006, mz),
+        (mx + 0.012, my - 0.003, mz),
+        (mx + 0.024, my + 0.005, mz - 0.001),
+    ]
+    mouth_parts = [(tube_path("CuteSmile", smile_pts, 0.0038, sides=5), m_eye)]
+    bulb_parts = [(smooth_obj(cyl("BeaconBulb", 0.036, 0.064, loc=DROID_WORKER["bulb"], verts=12, bevel_w=0.015)), m_bulb)]
 
     def loose_multi(parts):
         obj = assemble(parts, recenter=False, keep_uvs=False)
@@ -2834,15 +3076,25 @@ def build_droid_worker():
     return body_parts, [
         ("DroidSkin", loose_multi(skin_parts), None),
         ("DroidRotor", loose_multi(rotor_parts), None),
-        ("DroidArmL", loose_multi(build_arm(-1)), None),
-        ("DroidArmR", loose_multi(build_arm(1)), None),
+        ("DroidHead", loose_multi(head_parts), None),
+        ("DroidArmL", loose_multi(build_upper_arm(-1)), None),
+        ("DroidArmR", loose_multi(build_upper_arm(1)), None),
+        ("DroidForearmL", loose_multi(build_forearm(-1)), None),
+        ("DroidForearmR", loose_multi(build_forearm(1)), None),
+        ("DroidThighL", loose_multi(build_thigh(-1)), None),
+        ("DroidThighR", loose_multi(build_thigh(1)), None),
+        ("DroidShinL", loose_multi(build_shin(-1)), None),
+        ("DroidShinR", loose_multi(build_shin(1)), None),
         ("DroidFootL", loose_multi(build_foot(-1)), None),
         ("DroidFootR", loose_multi(build_foot(1)), None),
-        ("EyeL", raw(eye_l), m_eye),
-        ("EyeR", raw(eye_r), m_eye),
-        ("PupilL", raw(pupil_l), m_pupil),
-        ("PupilR", raw(pupil_r), m_pupil),
-        ("Bulb", raw(bulb_obj), m_bulb),
+        ("EyeL", loose_multi(build_eye(-1)), m_eye),
+        ("EyeR", loose_multi(build_eye(1)), m_eye),
+        ("PupilL", loose_multi(build_pupil(-1)), None),
+        ("PupilR", loose_multi(build_pupil(1)), None),
+        ("BrowL", loose_multi(build_brow(-1)), m_skin),
+        ("BrowR", loose_multi(build_brow(1)), m_skin),
+        ("Mouth", loose_multi(mouth_parts), m_eye),
+        ("Bulb", loose_multi(bulb_parts), m_bulb),
     ]
 
 
@@ -2851,11 +3103,11 @@ def build_droid_worker():
 # 0..1, and every other face of the kit sits on the single point KIT_BLANK_UV.
 KIT_BLANK_UV = (0.04, 0.04)
 DROID_TEAM_KIT = {
-    # Centreline of the crown's rounded-rectangle wall round the top of the head.
-    "crown_loop": {"half_w": 0.24, "front": 0.185, "rear": -0.195, "corner": 0.05},
-    "crown_valley": 0.982,
-    "ear": {"x": 0.268, "y": 0.785, "radius": 0.104, "length": 0.050},
-    "shoulder_top_y": 0.628,
+    # Centreline of the crown's rounded-rectangle wall hugging the top dome of the pod helmet.
+    "crown_loop": {"half_w": 0.168, "front": 0.120, "rear": -0.114, "corner": 0.048},
+    "crown_valley": 1.250,
+    "ear": {"x": 0.256, "y": 1.112, "z": 0.005, "radius": 0.086, "length": 0.048},
+    "shoulder_top_y": 0.966,
 }
 
 
@@ -3359,13 +3611,13 @@ def build_droid_team_kit():
     """Team hardware worn over `droid-worker.glb`, authored in the same worker space so every node
     drops onto the droid with no offset. Three loose nodes and no body:
 
-    - `TeamCrown`, the lead's command crown: a team-coloured wall on a graphite base round the
-      top of the head, rising to three points (front centre and the two rear corners) and a low
-      rear tab. It stays below y 1.12 and outside a 0.09 m radius round the beacon mast.
+    - `TeamCrown`, the lead's command crown: a team-coloured wall on a graphite base hugging the
+      top dome of the pod helmet, rising to three points (front centre and the two rear corners)
+      and a low rear tab, staying cleanly below the crown beacon bulb.
     - `TeamComms`, a follower's comms: team-coloured caps sleeving both ear pods (the boom mic
-      still leaves the left cap) and a headband over the back of the head, behind the antenna.
-    - `TeamShoulders`, worn by both: a top, front and rear plate saddling each pauldron, within
-      |x| 0.25 so the arms swing clear, and clear of the crew badge, turbine and backpack.
+      still leaves the right-hand pod) and a headband over the back of the helmet.
+    - `TeamShoulders`, worn by both: a top, front and rear epaulette over each outer torso jacket
+      shoulder, clear of the articulated arms, lanyard badge, chest turbine and dorsal pack.
 
     `TeamAccent` is the team colour and `TeamEmblem` the emblem plates, the only faces with real
     UVs (crown front and rear, each ear cap, each shoulder's front and rear plate).
@@ -3395,7 +3647,7 @@ def build_droid_team_kit():
         raw(obj).rotation_euler = (0.0, math.atan2(nx, nz), 0.0)
         return obj
 
-    # 1. Command crown
+    # 1. Command crown around the sculpted pod helmet (stays cleanly under the crown beacon)
     crown = []
     loop = DROID_TEAM_KIT["crown_loop"]
     valley = DROID_TEAM_KIT["crown_valley"]
@@ -3405,12 +3657,12 @@ def build_droid_team_kit():
     s_rear_right = straight_x + arc + (loop["front"] - loop["rear"] - 2 * loop["corner"]) + arc / 2
     s_rear_centre = s_rear_right + arc / 2 + straight_x
     s_rear_left = s_rear_centre + straight_x + arc / 2
-    # (centre, half base, half tip, peak): the three points, then the low rear emblem tab.
+    # (centre, half base, half tip, peak): three regal points (< bulb.y - 0.0475), then low rear emblem tab.
     peaks = [
-        (0.0, 0.095, 0.012, 1.098),
-        (s_rear_right, 0.080, 0.012, 1.078),
-        (s_rear_left, 0.080, 0.012, 1.078),
-        (s_rear_centre, 0.075, 0.045, 1.018),
+        (0.0, 0.072, 0.010, 1.296),
+        (s_rear_right, 0.060, 0.010, 1.284),
+        (s_rear_left, 0.060, 0.010, 1.284),
+        (s_rear_centre, 0.056, 0.034, 1.264),
     ]
 
     def wrap(d):
@@ -3428,58 +3680,65 @@ def build_droid_team_kit():
 
     kinks = [c + k for c, base, tip, _ in peaks for k in (-base, -tip, tip, base)]
     total, samples = rounded_loop_samples(loop["half_w"], loop["front"], loop["rear"], loop["corner"], extra_s=kinks)
-    base_ring = loop_wall("CrownBase", base_samples, -0.035, 0.014, lambda s, x, z: 0.909 if z > 0.12 else 0.898, lambda s, x, z: 0.932)
-    bevel(base_ring, 0.004, 1)
+    base_ring = loop_wall("CrownBase", base_samples, -0.028, 0.010, lambda s, x, z: 1.224 if z > 0.08 else 1.216, lambda s, x, z: 1.242)
+    bevel(base_ring, 0.003, 1)
     part(smooth_obj(base_ring), m_graphite, crown)
-    wall = loop_wall("CrownWall", samples, -0.008, 0.008, lambda s, x, z: 0.928, crown_top)
+    wall = loop_wall("CrownWall", samples, -0.007, 0.007, lambda s, x, z: 1.238, crown_top)
     bevel(wall, 0.003, 1)
     part(smooth_obj(wall), m_accent, crown)
 
     by_s = {round(s, 6): (x, z, nx, nz) for s, x, z, nx, nz in samples}
     for i, (c, _, _, peak) in enumerate(peaks[:3]):
         x, z, nx, nz = by_s[round(c % total, 6)]
-        part(facing(box(f"CrownTipCap{i}", (0.036, 0.014, 0.026), loc=(x, peak + 0.003, z), bevel_w=0.003, bevel_seg=1), nx, nz), m_graphite, crown)
-    bolt_s = [0.13, -0.13, s_rear_centre + 0.11, s_rear_centre - 0.11, s_rear_right - arc / 2 - 0.14, s_rear_left + arc / 2 + 0.14]
+        part(facing(box(f"CrownTipCap{i}", (0.028, 0.010, 0.018), loc=(x, peak + 0.002, z), bevel_w=0.002, bevel_seg=1), nx, nz), m_graphite, crown)
+    bolt_s = [0.09, -0.09, s_rear_centre + 0.08, s_rear_centre - 0.08, s_rear_right - arc / 2 - 0.08, s_rear_left + arc / 2 + 0.08]
     _, bolt_samples = rounded_loop_samples(loop["half_w"], loop["front"], loop["rear"], loop["corner"], extra_s=bolt_s)
     bolt_at = {round(s, 6): (x, z, nx, nz) for s, x, z, nx, nz in bolt_samples}
     for i, s in enumerate(bolt_s):
         x, z, nx, nz = bolt_at[round(s % total, 6)]
-        part(facing(box(f"CrownBolt{i}", (0.016, 0.012, 0.006), loc=(x + nx * 0.015, 0.920, z + nz * 0.015)), nx, nz), m_steel, crown)
+        part(facing(box(f"CrownBolt{i}", (0.014, 0.010, 0.006), loc=(x + nx * 0.012, 1.230, z + nz * 0.012)), nx, nz), m_steel, crown)
 
-    crown.append((emblem_plate("CrownEmblemFront", (0.0, 0.979, loop["front"] + 0.0105), (0, 0, 1), (0, 1, 0), 0.082), m_emblem))
-    crown.append((emblem_plate("CrownEmblemRear", (0.0, 0.974, loop["rear"] - 0.0105), (0, 0, -1), (0, 1, 0), 0.070), m_emblem))
+    crown.append((emblem_plate("CrownEmblemFront", (0.0, 1.262, loop["front"] + 0.0095), (0, 0, 1), (0, 1, 0), 0.056), m_emblem))
+    crown.append((emblem_plate("CrownEmblemRear", (0.0, 1.250, loop["rear"] - 0.0095), (0, 0, -1), (0, 1, 0), 0.048), m_emblem))
 
-    # 2. Team comms: ear-pod sleeves and a headband behind the antenna
+    # 2. Team comms: ear-pod sleeves and a headband behind the crown beacon
     comms = []
     ear = DROID_TEAM_KIT["ear"]
+    ez = ear["z"]
     for sx in (-1, 1):
-        shell = x_cyl(f"EarShell{sx}", ear["radius"], ear["length"], loc=(sx * ear["x"], ear["y"], 0.0), verts=16)
-        bevel(raw(shell), 0.007, 1)
+        shell = x_cyl(f"EarShell{sx}", ear["radius"], ear["length"], loc=(sx * ear["x"], ear["y"], ez), verts=16)
+        bevel(raw(shell), 0.006, 1)
         part(shell, m_accent, comms)
         face_x = ear["x"] + ear["length"] / 2
-        part(box(f"EarFrame{sx}", (0.008, 0.106, 0.106), loc=(sx * (face_x + 0.003), ear["y"], 0.0), bevel_w=0.003, bevel_seg=1), m_graphite, comms)
-        part(x_cyl(f"EarHinge{sx}", 0.017, 0.044, loc=(sx * 0.270, 0.858, -0.072), verts=10), m_graphite, comms)
-        part(box(f"EarSlider{sx}", (0.024, 0.040, 0.040), loc=(sx * 0.271, 0.902, -0.100), rot=(math.radians(-38), 0, 0), bevel_w=0.004, bevel_seg=1), m_black, comms)
-        comms.append((emblem_plate(f"EarEmblem{sx}", (sx * (face_x + 0.0095), ear["y"], 0.0), (sx, 0, 0), (0, 1, 0), 0.094), m_emblem))
-    band_right = [(0.268, 0.850, -0.066), (0.270, 0.905, -0.100), (0.258, 0.948, -0.120), (0.228, 0.970, -0.126), (0.170, 0.978, -0.126), (0.0, 0.982, -0.126)]
+        part(box(f"EarFrame{sx}", (0.008, 0.092, 0.092), loc=(sx * (face_x + 0.003), ear["y"], ez), bevel_w=0.003, bevel_seg=1), m_graphite, comms)
+        part(x_cyl(f"EarHinge{sx}", 0.015, 0.038, loc=(sx * 0.256, ear["y"] + 0.058, -0.056), verts=10), m_graphite, comms)
+        part(box(f"EarSlider{sx}", (0.022, 0.034, 0.034), loc=(sx * 0.257, ear["y"] + 0.094, -0.084), rot=(math.radians(-38), 0, 0), bevel_w=0.003, bevel_seg=1), m_black, comms)
+        comms.append((emblem_plate(f"EarEmblem{sx}", (sx * (face_x + 0.013), ear["y"], ez), (sx, 0, 0), (0, 1, 0), 0.080), m_emblem))
+    band_right = [
+        (0.256, ear["y"] + 0.052, -0.050),
+        (0.256, ear["y"] + 0.094, -0.084),
+        (0.236, ear["y"] + 0.124, -0.112),
+        (0.172, ear["y"] + 0.136, -0.120),
+        (0.0, ear["y"] + 0.138, -0.122),
+    ]
     band_path = catmull_rom([(-x, y, z) for x, y, z in band_right] + [(x, y, z) for x, y, z in reversed(band_right[:-1])], steps=2)
-    headband = strap("Headband", band_path, 0.040, 0.018)
+    headband = strap("Headband", band_path, 0.036, 0.016)
     bevel(headband, 0.003, 1)
     part(headband, m_accent, comms)
-    part(box("HeadbandBlock", (0.074, 0.012, 0.040), loc=(0.0, 0.992, -0.126), bevel_w=0.003, bevel_seg=1), m_graphite, comms)
+    part(box("HeadbandBlock", (0.068, 0.012, 0.034), loc=(0.0, ear["y"] + 0.146, -0.122), bevel_w=0.003, bevel_seg=1), m_graphite, comms)
 
-    # 3. Shoulder saddles over the pauldrons
+    # 3. Shoulder epaulettes over the sculpted torso jacket (clear of arms, badge, turbine & dorsal pack)
     shoulders = []
     top_y = DROID_TEAM_KIT["shoulder_top_y"]
     for sx in (-1, 1):
-        part(box(f"ShoulderTop{sx}", (0.096, 0.014, 0.330), loc=(sx * 0.200, top_y, 0.0), bevel_w=0.004, bevel_seg=1), m_accent, shoulders)
-        part(box(f"ShoulderRail{sx}", (0.050, 0.016, 0.300), loc=(sx * 0.180, top_y - 0.015, 0.0), bevel_w=0.003, bevel_seg=1), m_graphite, shoulders)
-        part(box(f"ShoulderFrontBack{sx}", (0.104, 0.132, 0.008), loc=(sx * 0.197, 0.568, 0.156), bevel_w=0.003, bevel_seg=1), m_graphite, shoulders)
-        part(box(f"ShoulderFront{sx}", (0.092, 0.126, 0.010), loc=(sx * 0.197, 0.569, 0.164), bevel_w=0.003, bevel_seg=1), m_accent, shoulders)
-        part(box(f"ShoulderRearBack{sx}", (0.088, 0.132, 0.008), loc=(sx * 0.2045, 0.568, -0.156), bevel_w=0.003, bevel_seg=1), m_graphite, shoulders)
-        part(box(f"ShoulderRear{sx}", (0.078, 0.126, 0.010), loc=(sx * 0.2045, 0.569, -0.164), bevel_w=0.003, bevel_seg=1), m_accent, shoulders)
-        shoulders.append((emblem_plate(f"ShoulderEmblemFront{sx}", (sx * 0.197, 0.566, 0.1715), (0, 0, 1), (0, 1, 0), 0.078), m_emblem))
-        shoulders.append((emblem_plate(f"ShoulderEmblemRear{sx}", (sx * 0.2045, 0.566, -0.1715), (0, 0, -1), (0, 1, 0), 0.070), m_emblem))
+        part(box(f"ShoulderTop{sx}", (0.072, 0.014, 0.210), loc=(sx * 0.168, top_y, 0.006), rot=(0, 0, sx * math.radians(-8)), bevel_w=0.004, bevel_seg=1), m_accent, shoulders)
+        part(box(f"ShoulderRail{sx}", (0.042, 0.014, 0.190), loc=(sx * 0.156, top_y - 0.012, 0.006), rot=(0, 0, sx * math.radians(-8)), bevel_w=0.003, bevel_seg=1), m_graphite, shoulders)
+        part(box(f"ShoulderFrontBack{sx}", (0.068, 0.082, 0.008), loc=(sx * 0.166, 0.916, 0.124), bevel_w=0.003, bevel_seg=1), m_graphite, shoulders)
+        part(box(f"ShoulderFront{sx}", (0.060, 0.076, 0.009), loc=(sx * 0.166, 0.916, 0.130), bevel_w=0.003, bevel_seg=1), m_accent, shoulders)
+        part(box(f"ShoulderRearBack{sx}", (0.064, 0.082, 0.008), loc=(sx * 0.168, 0.916, -0.114), bevel_w=0.003, bevel_seg=1), m_graphite, shoulders)
+        part(box(f"ShoulderRear{sx}", (0.056, 0.076, 0.009), loc=(sx * 0.168, 0.916, -0.120), bevel_w=0.003, bevel_seg=1), m_accent, shoulders)
+        shoulders.append((emblem_plate(f"ShoulderEmblemFront{sx}", (sx * 0.166, 0.916, 0.1365), (0, 0, 1), (0, 1, 0), 0.052), m_emblem))
+        shoulders.append((emblem_plate(f"ShoulderEmblemRear{sx}", (sx * 0.168, 0.916, -0.1265), (0, 0, -1), (0, 1, 0), 0.048), m_emblem))
 
     return [], [
         ("TeamCrown", kit_loose(crown), None),

@@ -1548,6 +1548,7 @@ function syncWorkers() {
     if (!v) {
       departures.vacate(w.deskId);
       const model = new Worker(w.name, w.color);
+      model.setSeat(desk.def.beanbag ? 'beanbag' : 'chair');
       desk.seatAnchor.add(model.root);
       model.setPropSpot(model.root.worldToLocal(desk.group.localToWorld(desk.propSpot.clone())));
       const original = w.forkedFrom && workerViews.get(w.forkedFrom.workerId);
