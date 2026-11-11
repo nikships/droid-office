@@ -825,9 +825,8 @@ private fun Notice(w: WorkerInfo, n: ThreadRow.Notice, entry: ThreadEntry?) {
 }
 
 /**
- * Everything the worker did between two messages: one quiet line saying what it did, what didn't
- * simply finish beside it, what failed under it while it is closed and what is running while it is
- * live. It opens to its thoughts and tool runs in order, each with its own disclosure.
+ * Everything the worker did between two messages: one quiet line saying what it did and what is
+ * running while it is live. Tool errors stay inside their ordinary action disclosures.
  */
 @Composable
 private fun Activity(
@@ -862,21 +861,11 @@ private fun Activity(
             )
             a.status?.let {
                 Text(
-                    it.uppercase(), style = LocalOfficeType.current.eyebrow.copy(color = if (a.failed.isNotEmpty()) Palette.Danger else Palette.TextSecondary),
+                    it.uppercase(), style = LocalOfficeType.current.eyebrow.copy(color = Palette.TextSecondary),
                     maxLines = 1, modifier = Modifier.padding(start = 10.dp).tagged(Tags.Worker.threadGroupStatus(first)),
                 )
             }
             Icon(OfficeIcons.Chevron, null, Modifier.padding(start = 8.dp).size(14.dp).rotate(if (isOpen) 90f else 0f), tint = Palette.TextSecondary)
-        }
-        if (!isOpen && a.failed.isNotEmpty()) {
-            Column(Modifier.fillMaxWidth().padding(start = 24.dp, bottom = 4.dp).tagged(Tags.Worker.threadGroupError(first)), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                for (f in a.failed) {
-                    Column {
-                        Text(f.title, style = MaterialTheme.typography.bodySmall.copy(fontSize = 13.sp), color = Palette.Danger, maxLines = 2, overflow = TextOverflow.Ellipsis)
-                        Text(f.preview, style = LocalOfficeType.current.monoBody.copy(fontSize = 11.5.sp, lineHeight = 16.sp, color = Palette.TextSecondary), maxLines = 2, overflow = TextOverflow.Ellipsis)
-                    }
-                }
-            }
         }
         ThreadView.running(a)?.let {
             Text(
@@ -928,7 +917,7 @@ private fun RunRow(
             }
             Text(
                 b.label,
-                style = MaterialTheme.typography.bodySmall.copy(fontSize = 13.sp, lineHeight = 18.sp, color = if (b.state == ActivityState.Failed) Palette.Danger else Palette.TextSecondary),
+                style = MaterialTheme.typography.bodySmall.copy(fontSize = 13.sp, lineHeight = 18.sp, color = Palette.TextSecondary),
                 maxLines = 2, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f),
             )
             Icon(OfficeIcons.Chevron, null, Modifier.padding(start = 8.dp).size(13.dp).rotate(if (isOpen) 90f else 0f), tint = Palette.TextSecondary)
@@ -966,7 +955,6 @@ private fun ActionRow(a: ThreadModelAction, entry: ThreadEntry?, open: Boolean, 
                     style = MaterialTheme.typography.bodySmall.copy(
                         fontSize = 13.sp, lineHeight = 18.sp,
                         color = when (a.state) {
-                            ActivityState.Failed -> Palette.Danger
                             ActivityState.Working -> Palette.Text
                             else -> Palette.TextSecondary
                         },
@@ -979,7 +967,7 @@ private fun ActionRow(a: ThreadModelAction, entry: ThreadEntry?, open: Boolean, 
             }
             if (a.status.isNotEmpty()) {
                 Text(
-                    a.status.uppercase(), style = LocalOfficeType.current.eyebrow.copy(color = if (a.state == ActivityState.Failed) Palette.Danger else Palette.TextSecondary),
+                    a.status.uppercase(), style = LocalOfficeType.current.eyebrow.copy(color = Palette.TextSecondary),
                     modifier = Modifier.padding(start = 8.dp),
                 )
             }
@@ -995,7 +983,7 @@ private fun ActionRow(a: ThreadModelAction, entry: ThreadEntry?, open: Boolean, 
                         val pictures = d.images.isNotEmpty()
                         if (d.recorded) {
                             if (d.output.isNotEmpty() || !pictures) {
-                                Mono(d.result, d.output.ifEmpty { "(empty)" }, if (a.state == ActivityState.Cancelled) Palette.TextSecondary else if (d.result == "Error") Palette.Danger else Palette.Text)
+                                Mono(d.result, d.output.ifEmpty { "(empty)" }, if (a.state == ActivityState.Cancelled) Palette.TextSecondary else Palette.Text)
                             }
                             if (pictures) ThreadPictures(d.images, a.title, a.detail, end = false)
                         } else {

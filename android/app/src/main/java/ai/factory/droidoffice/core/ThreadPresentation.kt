@@ -120,7 +120,7 @@ sealed interface ThreadRow {
         val state: ActivityState,
         val live: Boolean,
         val open: Boolean = false,
-        /** "2 failed · 1 no result", when anything didn't simply finish. */
+        /** Cancellation and missing-result counts, never tool-failure counts. */
         val status: String? = null,
         /** The newest working action's title while live. */
         val running: String? = null,

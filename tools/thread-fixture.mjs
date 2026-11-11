@@ -21,7 +21,7 @@ const SCHEMA = {
   message: "{ kind: 'message', id: entry id, from, to: its seq, role: 'user' | 'assistant', startsTurn: boolean (first assistant message after the owner's, or the first one: the only one that carries the worker's name) }",
   notice: "{ kind: 'notice', id: entry id, from, to: its seq, role, text: string (the copy shown), tone: 'quiet' | 'danger' | 'attachment' }",
   activity:
-    "{ kind: 'activity', id: 'activity:' + first entry id, from, to: seqs of its first and last entry (hidden ones included), sourceIds: every entry it stands for, label: the closed line, state, live: newest while busy, open: false (the default disclosure), status?: '2 failed · 1 no result', running?: newest working action's title while live, failed: { id, title, preview }[] (shown even closed), blocks: Block[] }",
+    "{ kind: 'activity', id: 'activity:' + first entry id, from, to: seqs of its first and last entry (hidden ones included), sourceIds: every entry it stands for, label: the closed line, state, live: newest while busy, open: false (the default disclosure), status?: cancellation and missing-result counts only, running?: newest working action's title while live, failed: { id, title, preview }[] (diagnostic metadata, never a callout), blocks: Block[] }",
   thought: "{ kind: 'thought', id: entry id, preview: first non-blank line, asterisks stripped, clipped to 120, live: busy and the last entry, open: false }",
   tools: "{ kind: 'tools', id: 'tools:' + first entry id of the run, label, state, live, open: false, actions: Action[], plan?: { done, active, text }[] (the run's plan, only when it changed since the last one shown) }",
   action:
@@ -30,7 +30,8 @@ const SCHEMA = {
     '{ name, busy, steps: { snapshot: thread.snapshot fields (before?, entries, hasMore, presentation), expected: { entries: ids loaded, rows: ThreadRow[] held } }[] }. A latest page replaces the rows from its first row on; an earlier page adds only rows that end before the first row already held.',
   rules: [
     'Messages and shown notices are top-level rows. Everything between them is one Activity row holding, in order, its thoughts and its tool runs; a thought splits tool runs but not the Activity. An Activity with nothing to show leaves no row.',
-    'Hidden when they succeed: TodoWrite, TodoRead, ToolSearch, Skill, WaitForScript, TaskOutput, and a Script followed by any tool call before the next Script or the end of the run. A failed one is always shown, with its exact failure title.',
+    'Hidden when they succeed: TodoWrite, TodoRead, ToolSearch, Skill, WaitForScript, TaskOutput, and a Script followed by any tool call before the next Script or the end of the run. A failed one stays available in its ordinary disclosure.',
+    'Tool failures have no summary count, preview callout or Failed status badge. Error output remains available inside the action; turn-level error notices stay visible.',
     "A failed Script with the CLI's exact error envelope repeating an enclosed child's full failure stays available (causedBy) but is excluded from labels and failed counts. Independent, unmatched, truncated or incomplete wrapper failures remain counted.",
     "Turn ended · completed is hidden; Turn cancelled is a quiet notice. Only an exact CLI by-user result proves owner cancellation; a bare 'Tool execution was interrupted' stays failed.",
     "A call with no output is 'working' only in the live run; otherwise 'incomplete'. Never 'complete' without output.",

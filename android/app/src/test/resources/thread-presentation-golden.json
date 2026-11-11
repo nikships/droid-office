@@ -6,14 +6,15 @@
     "presentation": "{ version: 1, rows: ThreadRow[] } on thread.snapshot. A client that gets a version it doesn't know, or none, says so and offers Raw TTY instead of guessing.",
     "message": "{ kind: 'message', id: entry id, from, to: its seq, role: 'user' | 'assistant', startsTurn: boolean (first assistant message after the owner's, or the first one: the only one that carries the worker's name) }",
     "notice": "{ kind: 'notice', id: entry id, from, to: its seq, role, text: string (the copy shown), tone: 'quiet' | 'danger' | 'attachment' }",
-    "activity": "{ kind: 'activity', id: 'activity:' + first entry id, from, to: seqs of its first and last entry (hidden ones included), sourceIds: every entry it stands for, label: the closed line, state, live: newest while busy, open: false (the default disclosure), status?: '2 failed · 1 no result', running?: newest working action's title while live, failed: { id, title, preview }[] (shown even closed), blocks: Block[] }",
+    "activity": "{ kind: 'activity', id: 'activity:' + first entry id, from, to: seqs of its first and last entry (hidden ones included), sourceIds: every entry it stands for, label: the closed line, state, live: newest while busy, open: false (the default disclosure), status?: cancellation and missing-result counts only, running?: newest working action's title while live, failed: { id, title, preview }[] (diagnostic metadata, never a callout), blocks: Block[] }",
     "thought": "{ kind: 'thought', id: entry id, preview: first non-blank line, asterisks stripped, clipped to 120, live: busy and the last entry, open: false }",
     "tools": "{ kind: 'tools', id: 'tools:' + first entry id of the run, label, state, live, open: false, actions: Action[], plan?: { done, active, text }[] (the run's plan, only when it changed since the last one shown) }",
     "action": "{ id: tool entry id, title: human, never a raw command, JSON or home path, detail?: short path, pattern or subagent type, category, state: 'complete' | 'working' | 'failed' | 'incomplete' | 'cancelled', status: the state in words or '', causedBy?: the child entry whose failure this wrapper repeats, arguments?: { label, field? } (field: key of the input JSON, '.' for a JSON string, absent for the whole input), result: 'Result' | 'Error' | 'Cancelled', open: false }",
     "paging": "{ name, busy, steps: { snapshot: thread.snapshot fields (before?, entries, hasMore, presentation), expected: { entries: ids loaded, rows: ThreadRow[] held } }[] }. A latest page replaces the rows from its first row on; an earlier page adds only rows that end before the first row already held.",
     "rules": [
       "Messages and shown notices are top-level rows. Everything between them is one Activity row holding, in order, its thoughts and its tool runs; a thought splits tool runs but not the Activity. An Activity with nothing to show leaves no row.",
-      "Hidden when they succeed: TodoWrite, TodoRead, ToolSearch, Skill, WaitForScript, TaskOutput, and a Script followed by any tool call before the next Script or the end of the run. A failed one is always shown, with its exact failure title.",
+      "Hidden when they succeed: TodoWrite, TodoRead, ToolSearch, Skill, WaitForScript, TaskOutput, and a Script followed by any tool call before the next Script or the end of the run. A failed one stays available in its ordinary disclosure.",
+      "Tool failures have no summary count, preview callout or Failed status badge. Error output remains available inside the action; turn-level error notices stay visible.",
       "A failed Script with the CLI's exact error envelope repeating an enclosed child's full failure stays available (causedBy) but is excluded from labels and failed counts. Independent, unmatched, truncated or incomplete wrapper failures remain counted.",
       "Turn ended · completed is hidden; Turn cancelled is a quiet notice. Only an exact CLI by-user result proves owner cancellation; a bare 'Tool execution was interrupted' stays failed.",
       "A call with no output is 'working' only in the live run; otherwise 'incomplete'. Never 'complete' without output.",
@@ -447,7 +448,6 @@
           "state": "failed",
           "live": false,
           "open": false,
-          "status": "3 failed",
           "failed": [
             {
               "id": "tool:toolu_2",
@@ -461,7 +461,7 @@
             },
             {
               "id": "tool:toolu_4",
-              "title": "A script failed",
+              "title": "Ran a script",
               "preview": "SyntaxError: Unexpected token"
             }
           ],
@@ -479,7 +479,7 @@
                   "title": "Couldn't update the plan",
                   "category": "plan",
                   "state": "failed",
-                  "status": "Failed",
+                  "status": "",
                   "arguments": {
                     "label": "Arguments"
                   },
@@ -491,7 +491,7 @@
                   "title": "Couldn't load the factory-design skill",
                   "category": "skill",
                   "state": "failed",
-                  "status": "Failed",
+                  "status": "",
                   "arguments": {
                     "label": "Arguments"
                   },
@@ -500,10 +500,10 @@
                 },
                 {
                   "id": "tool:toolu_4",
-                  "title": "A script failed",
+                  "title": "Ran a script",
                   "category": "script",
                   "state": "failed",
-                  "status": "Failed",
+                  "status": "",
                   "arguments": {
                     "label": "Script",
                     "field": "script"
@@ -2357,7 +2357,6 @@
           "state": "failed",
           "live": false,
           "open": false,
-          "status": "4 failed",
           "failed": [
             {
               "id": "tool:toolu_5",
@@ -2394,7 +2393,7 @@
                   "title": "Couldn't read script results",
                   "category": "plan",
                   "state": "failed",
-                  "status": "Failed",
+                  "status": "",
                   "arguments": {
                     "label": "Arguments"
                   },
@@ -2406,7 +2405,7 @@
                   "title": "Couldn't read task output",
                   "category": "plan",
                   "state": "failed",
-                  "status": "Failed",
+                  "status": "",
                   "arguments": {
                     "label": "Arguments"
                   },
@@ -2430,7 +2429,7 @@
                   "title": "Couldn't stop the background task",
                   "category": "taskStop",
                   "state": "failed",
-                  "status": "Failed",
+                  "status": "",
                   "arguments": {
                     "label": "Arguments"
                   },
@@ -2454,7 +2453,7 @@
                   "title": "Couldn't schedule the loop",
                   "category": "loopCreate",
                   "state": "failed",
-                  "status": "Failed",
+                  "status": "",
                   "arguments": {
                     "label": "Arguments"
                   },
@@ -2594,7 +2593,7 @@
           "state": "failed",
           "live": false,
           "open": false,
-          "status": "1 failed · 1 cancelled",
+          "status": "1 cancelled",
           "failed": [
             {
               "id": "read-error",
@@ -2617,7 +2616,7 @@
                   "detail": "README.md",
                   "category": "read",
                   "state": "failed",
-                  "status": "Failed",
+                  "status": "",
                   "arguments": {
                     "label": "Arguments"
                   },
@@ -2690,7 +2689,6 @@
           "state": "failed",
           "live": false,
           "open": false,
-          "status": "1 failed",
           "failed": [
             {
               "id": "tool:7d7fdb70-0682-46b9-8a9a-fc9e2ca18575-1",
@@ -2709,10 +2707,10 @@
               "actions": [
                 {
                   "id": "tool:call_VQcFUTlfVZhozstnKccatcj3",
-                  "title": "Script stopped after a tool failed",
+                  "title": "Ran a script",
                   "category": "script",
                   "state": "failed",
-                  "status": "Failed",
+                  "status": "",
                   "causedBy": "tool:7d7fdb70-0682-46b9-8a9a-fc9e2ca18575-1",
                   "arguments": {
                     "label": "Script",
@@ -2727,7 +2725,7 @@
                   "detail": "…/droid-office/.droid-office/thread-cancelled-check-missing.txt",
                   "category": "read",
                   "state": "failed",
-                  "status": "Failed",
+                  "status": "",
                   "arguments": {
                     "label": "Arguments"
                   },
@@ -2768,7 +2766,6 @@
           "state": "failed",
           "live": false,
           "open": false,
-          "status": "1 failed",
           "failed": [
             {
               "id": "tool:call_RjMKNJ5YECZzR8v7nL8qIF8b",
@@ -2790,7 +2787,7 @@
                   "title": "Couldn't stop the background task",
                   "category": "taskStop",
                   "state": "failed",
-                  "status": "Failed",
+                  "status": "",
                   "arguments": {
                     "label": "Arguments"
                   },
@@ -2993,7 +2990,6 @@
           "state": "failed",
           "live": false,
           "open": false,
-          "status": "1 failed",
           "failed": [
             {
               "id": "tool:17df3d74-4d35-4185-b98c-c6b1cf2d1154-1",
@@ -3012,10 +3008,10 @@
               "actions": [
                 {
                   "id": "tool:call_R5hLkXpPVQuUKNbqvGnjqA5V",
-                  "title": "Script stopped after a tool failed",
+                  "title": "Ran a script",
                   "category": "script",
                   "state": "failed",
-                  "status": "Failed",
+                  "status": "",
                   "causedBy": "tool:17df3d74-4d35-4185-b98c-c6b1cf2d1154-1",
                   "arguments": {
                     "label": "Script",
@@ -3029,7 +3025,7 @@
                   "title": "Wait for crash check",
                   "category": "command",
                   "state": "failed",
-                  "status": "Failed",
+                  "status": "",
                   "arguments": {
                     "label": "Command",
                     "field": "command"
@@ -3153,7 +3149,6 @@
           "state": "failed",
           "live": false,
           "open": false,
-          "status": "1 failed",
           "failed": [
             {
               "id": "tool:7fdacbd3-892b-458a-a5e0-940b7fcdbee3-1",
@@ -3175,7 +3170,7 @@
                   "title": "Wait for c965 crash",
                   "category": "command",
                   "state": "failed",
-                  "status": "Failed",
+                  "status": "",
                   "arguments": {
                     "label": "Command",
                     "field": "command"
@@ -5013,7 +5008,6 @@
                   "state": "failed",
                   "live": false,
                   "open": false,
-                  "status": "1 failed",
                   "failed": [
                     {
                       "id": "tool:17df3d74-4d35-4185-b98c-c6b1cf2d1154-1",
@@ -5032,10 +5026,10 @@
                       "actions": [
                         {
                           "id": "tool:call_R5hLkXpPVQuUKNbqvGnjqA5V",
-                          "title": "Script stopped after a tool failed",
+                          "title": "Ran a script",
                           "category": "script",
                           "state": "failed",
-                          "status": "Failed",
+                          "status": "",
                           "causedBy": "tool:17df3d74-4d35-4185-b98c-c6b1cf2d1154-1",
                           "arguments": {
                             "label": "Script",
@@ -5049,7 +5043,7 @@
                           "title": "Wait for crash check",
                           "category": "command",
                           "state": "failed",
-                          "status": "Failed",
+                          "status": "",
                           "arguments": {
                             "label": "Command",
                             "field": "command"
@@ -5089,7 +5083,6 @@
                 "state": "failed",
                 "live": false,
                 "open": false,
-                "status": "1 failed",
                 "failed": [
                   {
                     "id": "tool:17df3d74-4d35-4185-b98c-c6b1cf2d1154-1",
@@ -5108,10 +5101,10 @@
                     "actions": [
                       {
                         "id": "tool:call_R5hLkXpPVQuUKNbqvGnjqA5V",
-                        "title": "Script stopped after a tool failed",
+                        "title": "Ran a script",
                         "category": "script",
                         "state": "failed",
-                        "status": "Failed",
+                        "status": "",
                         "causedBy": "tool:17df3d74-4d35-4185-b98c-c6b1cf2d1154-1",
                         "arguments": {
                           "label": "Script",
@@ -5125,7 +5118,7 @@
                         "title": "Wait for crash check",
                         "category": "command",
                         "state": "failed",
-                        "status": "Failed",
+                        "status": "",
                         "arguments": {
                           "label": "Command",
                           "field": "command"

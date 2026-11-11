@@ -55,6 +55,11 @@ for (const example of fixture.cases) {
       assert.equal(row.open, false, 'every disclosure starts closed');
       for (const block of row.blocks) assert.equal(block.open, false);
       const actions = actionsIn(row);
+      assert.doesNotMatch(row.status ?? '', /failed/i, 'tool failures never add a summary count');
+      for (const action of actions.filter((item) => item.state === 'failed')) {
+        assert.equal(action.status, '', 'failed actions have no special status badge');
+        assert.equal(action.result, 'Error', 'errors remain available inside the action');
+      }
       assert.deepEqual(
         row.failed.map((failure) => failure.id),
         actions.filter((action) => action.state === 'failed' && !action.causedBy).map((action) => action.id),

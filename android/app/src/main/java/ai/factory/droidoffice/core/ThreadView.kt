@@ -32,8 +32,8 @@ object ThreadView {
     /** An Activity's closed line. While the worker waits on the owner its run isn't working: the question card says what it's on. */
     fun line(a: ThreadRow.Activity, asking: Boolean): String = if (a.live && !asking) WORKING + a.label else a.label
 
-    /** What is running now, under a live Activity, unless a failure or its own line already says it. */
-    fun running(a: ThreadRow.Activity): String? = a.running?.takeIf { a.live && a.failed.isEmpty() && it != a.label }
+    /** What is running now, under a live Activity, unless its own line already says it. */
+    fun running(a: ThreadRow.Activity): String? = a.running?.takeIf { a.live && it != a.label }
 
     /** A call's open details, read from its entry. */
     sealed interface Detail {

@@ -467,7 +467,7 @@ export function mountWorkerThread(net: Net, opts: ThreadOptions): WorkerThread {
     return disclosure(
       h(
         'details.wt-tool',
-        { class: item.state === 'failed' ? 'error' : item.state === 'complete' ? 'done' : 'pending', 'data-disclosure': item.id },
+        { class: item.state === 'complete' || item.state === 'failed' ? 'done' : 'pending', 'data-disclosure': item.id },
         h('summary', {}, h('span.wt-tool-main', {}, h('span.wt-tool-title', {}, item.title), item.detail ? h('span.wt-tool-detail', {}, item.detail) : null), h('span.wt-tool-state', {}, item.status), chevron()),
         ...(entry
           ? [
@@ -518,8 +518,7 @@ export function mountWorkerThread(net: Net, opts: ThreadOptions): WorkerThread {
         row.open,
       );
       node.append(details);
-      if (row.live && !row.failed.length && row.running && row.running !== row.label) node.append(h('p.wt-running', { role: 'status' }, row.running));
-      if (row.failed.length) node.append(h('div.wt-failures', {}, ...row.failed.map((failure) => h('div.wt-failure-preview', {}, h('span', {}, failure.title), h('p', {}, failure.preview)))));
+      if (row.live && row.running && row.running !== row.label) node.append(h('p.wt-running', { role: 'status' }, row.running));
       return node;
     }
     node.classList.add(row.role, row.kind === 'message' ? 'text' : 'notice');

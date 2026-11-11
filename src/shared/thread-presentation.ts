@@ -74,7 +74,7 @@ export interface ThreadModelAction {
 export interface ThreadFailure {
   id: string;
   title: string;
-  /** The first line of the error, shown while the Activity is closed. */
+  /** Diagnostic metadata retained for wire compatibility, not a collapsed-row callout. */
   preview: string;
 }
 export type ThreadBlock =
@@ -94,7 +94,7 @@ export type ThreadRow =
       state: ActivityState;
       live: boolean;
       open: boolean;
-      /** "2 failed · 1 no result", when anything didn't simply finish. */
+      /** Cancellation and missing-result counts, never tool-failure counts. */
       status?: string;
       /** The newest working action's title while live. */
       running?: string;
@@ -243,7 +243,7 @@ export function threadAction(entry: ThreadEntry, live = false, cancelled = false
     case 'askuser':
       return action('ask', 'Asked you a question');
     case 'script':
-      return action('script', failed ? 'A script failed' : 'Ran a script');
+      return action('script', 'Ran a script');
     case 'toolsearch':
       return action('plan', failed ? "Couldn't load tools" : 'Loaded tools');
     case 'waitforscript':
@@ -430,7 +430,7 @@ function notice(entry: ThreadEntry): Extract<ThreadRow, { kind: 'notice' }> | un
   return text ? row(text, entry.error ? 'danger' : 'quiet') : undefined;
 }
 
-const STATUS: Record<ActivityState, string> = { complete: '', working: 'Running', failed: 'Failed', incomplete: 'No result', cancelled: 'Cancelled' };
+const STATUS: Record<ActivityState, string> = { complete: '', working: 'Running', failed: '', incomplete: 'No result', cancelled: 'Cancelled' };
 
 function modelAction(action: ThreadAction): ThreadModelAction {
   // A Read that returned a picture shows just the picture: its path is already in the title.
@@ -491,7 +491,7 @@ export function presentThread(entries: readonly ThreadEntry[], busy: boolean): T
       const action = threadAction(entry, live, cancellations.ids.has(entry.id));
       if (causedBy) {
         action.causedBy = causedBy;
-        action.title = action.state === 'cancelled' ? 'Script stopped after a tool was cancelled' : 'Script stopped after a tool failed';
+        action.title = action.state === 'cancelled' ? 'Script stopped after a tool was cancelled' : 'Ran a script';
       }
       items.push(action);
     }
@@ -524,7 +524,7 @@ export function presentThread(entries: readonly ThreadEntry[], busy: boolean): T
     const failed = all.filter((a) => a.state === 'failed' && !a.causedBy);
     const cancelled = all.filter((a) => a.state === 'cancelled' && !a.causedBy).length;
     const noResult = all.filter((a) => a.state === 'incomplete').length;
-    const status = [failed.length ? `${failed.length} failed` : '', cancelled ? `${cancelled} cancelled` : '', noResult ? `${noResult} no result` : ''].filter(Boolean).join(' · ');
+    const status = [cancelled ? `${cancelled} cancelled` : '', noResult ? `${noResult} no result` : ''].filter(Boolean).join(' · ');
     const running = live ? all.filter((a) => a.state === 'working').at(-1)?.title : undefined;
     rows.push({
       kind: 'activity',
