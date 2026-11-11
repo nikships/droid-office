@@ -218,7 +218,7 @@ fun AppRoot(graph: AppGraph, incoming: MutableStateFlow<Incoming?>) {
     // How a Whiteboard ping went, from whichever screen sent it.
     LaunchedEffect(Unit) {
         graph.connection.pinged.collect { p ->
-            val name = graph.connection.data.value.workers[p.worker]?.name?.ifBlank { null } ?: "The worker"
+            val name = graph.connection.data.value.deskWorker(p.worker)?.name?.ifBlank { null } ?: "The worker"
             launch { snackbar.showSnackbar(if (p.ok) WhiteboardPing.outcome(name, p.how) else p.error ?: "Couldn't ping $name", withDismissAction = !p.ok) }
         }
     }

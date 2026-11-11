@@ -551,6 +551,13 @@ export interface FloorView {
   jiraBoard: JiraBoardState | null;
 }
 
+/** Every desk and cloud worker on one floor, with its pull requests, for building-wide views. */
+export interface FloorRoster {
+  floor: string;
+  workers: WorkerInfo[];
+  pulls: GhPull[];
+}
+
 export type ChangeStatus = 'M' | 'A' | 'D' | 'R' | 'T' | '?';
 
 /** One file a worker changed, against the base of its branch. */
@@ -779,7 +786,7 @@ export type GongWhy = 'hit' | 'merged';
 export type ClientMsg = ClientMessage & {
   /** Optional business-action receipt. Never replay non-idempotent actions after an uncertain result. */
   requestId?: string;
-  /** Refuse a delayed action if its intended floor is no longer this connection's floor. */
+  /** Refuse a delayed action if its intended floor is no longer valid (this connection's floor, or the worker's floor for cross-floor worker actions). */
   requestFloor?: string;
 };
 
@@ -1026,12 +1033,20 @@ export type ServerMsg =
       subscriptions: SubscriptionsState;
       /** The building's agents: the Orchestrator and external bots. Absent from an office that predates Mission Control. */
       missionControl?: MissionControlState;
+      /** Every floor's workers and pull requests, so companions can show the whole building at once. */
+      building?: FloorRoster[];
     } & FloorView)
   /** You arrived on another floor: everything on it, replacing the last one's. */
   | ({ t: 'floor.enter'; arrival: Arrival } & FloorView)
   | { t: 'floors'; floors: FloorInfo[] }
   /** A building agent changed: sent to every connection, whatever floor it is on. */
   | { t: 'missionControl'; state: MissionControlState }
+  /** A worker on `floor` changed, sent to every connection so building-wide views stay live. */
+  | { t: 'building.worker'; floor: string; worker: WorkerInfo }
+  /** A worker left `floor`, sent to every connection. */
+  | { t: 'building.remove'; floor: string; workerId: string }
+  /** A floor's pull requests refreshed, sent to every connection so cross-floor PR badges stay current. */
+  | { t: 'building.pulls'; floor: string; pulls: GhPull[] }
   /** Branch choices and switch result, sent only to whoever asked. */
   | { t: 'floor.branches'; floor: string; request: string; branches: string[]; defaultBranch?: string; selectedBranch?: string; error?: string }
   /** Sent to whoever asked. */

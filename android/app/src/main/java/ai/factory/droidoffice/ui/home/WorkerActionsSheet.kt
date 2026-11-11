@@ -56,7 +56,9 @@ fun WorkerActionsSheet(worker: WorkerInfo, onDismiss: () -> Unit) {
     val data by connection.data.collectAsStateWithLifecycle()
     var action by remember(worker.id) { mutableStateOf<String?>(null) }
     val live = link.phase == Phase.Connected && data.synced
-    val current = data.workers[worker.id]
+    val current = data.deskWorker(worker.id)
+    val floorName = data.floorOfWorker(worker.id)?.name?.ifBlank { null }
+    val showFloor = floorName != null && (data.floors.size > 1 || data.workerFloorId(worker.id) != data.floorId)
     val refusal = when {
         !live -> "Disconnected. Reconnect to use worker actions."
         current == null -> "The worker has left."
@@ -80,17 +82,19 @@ fun WorkerActionsSheet(worker: WorkerInfo, onDismiss: () -> Unit) {
                 verticalArrangement = Arrangement.spacedBy(16.dp),
             ) {
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    val display = current ?: worker
                     Box(Modifier.size(44.dp).clip(RoundedCornerShape(12.dp)).background(Palette.SurfaceHigh).border(1.dp, Palette.Border, RoundedCornerShape(12.dp)), contentAlignment = Alignment.Center) {
-                        Icon(if (worker.isShell) OfficeIcons.Shell else OfficeIcons.Agent, null, Modifier.size(24.dp), tint = Palette.TextSecondary)
+                        Icon(if (display.isShell) OfficeIcons.Shell else OfficeIcons.Agent, null, Modifier.size(24.dp), tint = Palette.TextSecondary)
                     }
                     Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                        Text(worker.name.ifBlank { worker.id }, style = MaterialTheme.typography.headlineSmall, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.tagged(Tags.WorkerActions.NAME))
+                        Text(display.name.ifBlank { display.id }, style = MaterialTheme.typography.headlineSmall, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.tagged(Tags.WorkerActions.NAME))
                         val kind = when {
-                            worker.isShell -> "Shell"
-                            worker.isCloud -> "Cloud Droid"
+                            display.isShell -> "Shell"
+                            display.isCloud -> "Cloud Droid"
                             else -> "Local Droid"
                         }
-                        Text("$kind · ${statusLook(worker.state, worker.acked).label}", style = MaterialTheme.typography.bodySmall)
+                        val sub = listOfNotNull(kind, floorName.takeIf { showFloor }, statusLook(display.state, display.acked).label).joinToString(" · ")
+                        Text(sub, style = MaterialTheme.typography.bodySmall)
                     }
                 }
                 Column(Modifier.clip(RoundedCornerShape(12.dp)).background(Palette.SurfaceHover).border(1.dp, Palette.Border, RoundedCornerShape(12.dp))) {
@@ -102,19 +106,19 @@ fun WorkerActionsSheet(worker: WorkerInfo, onDismiss: () -> Unit) {
                         tag = Tags.WorkerActions.FORK,
                         descriptionTag = if (refusal != null) Tags.WorkerActions.FORK_REASON else null,
                         onClick = {
-                            val latest = connection.data.value.workers[worker.id]
+                            val latest = connection.data.value.deskWorker(worker.id)
                             if (connection.connected && latest != null && WorkerActions.forkRefusal(latest) == null) action = "fork"
                         },
                     )
                     HorizontalDivider(Modifier.padding(horizontal = 16.dp), color = Palette.Border)
                     WorkerActionRow(
                         label = "Dismiss",
-                        description = "Remove from this floor",
+                        description = if (showFloor) "Remove from $floorName" else "Remove from this floor",
                         icon = OfficeIcons.Trash,
-                        enabled = live,
+                        enabled = live && current != null,
                         tag = Tags.WorkerActions.DISMISS,
                         color = Palette.Danger,
-                        onClick = { if (connection.connected && connection.data.value.workers.containsKey(worker.id)) action = "dismiss" },
+                        onClick = { if (connection.connected && connection.data.value.deskWorker(worker.id) != null) action = "dismiss" },
                     )
                 }
             }

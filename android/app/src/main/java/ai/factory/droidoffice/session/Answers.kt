@@ -4,6 +4,7 @@ import ai.factory.droidoffice.core.Asks
 import ai.factory.droidoffice.core.Choices
 import ai.factory.droidoffice.core.ClientMsg
 import ai.factory.droidoffice.core.Menu
+import ai.factory.droidoffice.core.ORCHESTRATOR_ID
 import ai.factory.droidoffice.core.QuestionAnswers
 import ai.factory.droidoffice.core.WorkerStatus
 import java.util.UUID
@@ -29,10 +30,12 @@ class Answers(private val connection: OfficeConnection) {
         if (!connection.connected) return Answered.Unreachable
         val now = current(workerId)
         if (!Choices.same(shown, now) || now == null) return Answered.Changed
-        if (now.multiSelect && !connection.data.value.workerAnswerMultiSelect) return Answered.NeedsThread
+        val data = connection.data.value
+        if (now.multiSelect && !data.workerAnswerMultiSelect) return Answered.NeedsThread
         if (!QuestionAnswers.valid(now, choice, choices, text)) return Answered.NeedsThread
+        val floor = if (workerId == ORCHESTRATOR_ID) data.floorId else (data.workerFloorId(workerId) ?: data.floorId.takeIf { !data.hasBuildingRoster } ?: return Answered.Changed)
         val request = UUID.randomUUID().toString()
-        val receipt = connection.answerConfirmed(request, ClientMsg.workerAnswer(workerId, shown, request, connection.data.value.floorId, choice, choices, text))
+        val receipt = connection.answerConfirmed(request, ClientMsg.workerAnswer(workerId, shown, request, floor, choice, choices, text))
             ?: return Answered.Unconfirmed
         return if (receipt.ok) Answered.Sent else Answered.Refused
     }

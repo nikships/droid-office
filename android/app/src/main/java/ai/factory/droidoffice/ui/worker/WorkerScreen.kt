@@ -155,7 +155,7 @@ fun WorkerScreen(workerId: String, onBack: () -> Unit, embedded: Boolean = false
     // Building agents aren't on any floor: the Orchestrator and the bots come from Mission Control.
     val mission = workerId == ORCHESTRATOR_ID
     // An office that predates Mission Control lists its external bots as ordinary floor workers.
-    val bot = data.mission?.bots?.firstOrNull { it.worker.id == workerId } ?: data.workers[workerId]?.takeIf { it.remote }?.let { MissionAgent(it) }
+    val bot = data.mission?.bots?.firstOrNull { it.worker.id == workerId } ?: data.deskWorker(workerId)?.takeIf { it.remote }?.let { MissionAgent(it) }
     if (bot != null) {
         BotScreen(bot, embedded, onBack, onOpenWorker)
         return
@@ -166,10 +166,22 @@ fun WorkerScreen(workerId: String, onBack: () -> Unit, embedded: Boolean = false
         return
     }
     val worker = data.worker(workerId)
+    val ownerFloor = if (mission) null else data.workerFloorId(workerId)
+    val effectiveFloor = ownerFloor ?: data.floorId
+    var switchedFloor by remember(workerId) { mutableStateOf(false) }
+    LaunchedEffect(workerId, ownerFloor, data.floorId, link.phase) {
+        if (link.phase != Phase.Connected || mission || ownerFloor == null) return@LaunchedEffect
+        if (data.floorId != ownerFloor) {
+            if (connection.goFloor(ownerFloor)) switchedFloor = true
+        } else if (switchedFloor) {
+            switchedFloor = false
+            connection.resnapshot(workerId)
+        }
+    }
     // Receipts for messages sent to Droid's queue: one per office, floor and worker, shared by both
     // views for this process, and kept on disk while any is unconfirmed so a restart, rotation or
     // force-stop brings them back with their session, sequence and matched ids.
-    val floorScope = MissionControl.floorScope(data.floorId, workerId)
+    val floorScope = MissionControl.floorScope(effectiveFloor, workerId)
     val queueKey = "${data.officeId}/$floorScope/$workerId"
     val keepable = !data.officeId.isNullOrBlank() && !floorScope.isNullOrBlank()
     // Until the disk answers for this worker (or its office and floor are known), receipts go into a
@@ -410,26 +422,36 @@ fun WorkerScreen(workerId: String, onBack: () -> Unit, embedded: Boolean = false
 private fun Header(w: WorkerInfo, embedded: Boolean, connected: Boolean, onBack: () -> Unit, onSendHome: () -> Unit, mission: Boolean = false, blocked: Boolean = false) {
     val now = rememberNow()
     val graph = LocalGraph.current
+    val data by graph.connection.data.collectAsStateWithLifecycle()
     val catalogue by graph.connection.catalogue.collectAsStateWithLifecycle()
+    val floorName = if (mission || data.floors.size <= 1) null else data.floorOfWorker(w.id)?.name?.ifBlank { null }
     Row(Modifier.fillMaxWidth().padding(start = 4.dp, end = 4.dp, top = 6.dp, bottom = 4.dp), verticalAlignment = Alignment.CenterVertically) {
         IconButton(onClick = onBack, modifier = Modifier.tagged(Tags.Worker.BACK)) { Icon(if (embedded) Icons.Default.Close else Icons.AutoMirrored.Filled.ArrowBack, "Back") }
         if (mission) Box(Modifier.padding(end = 8.dp)) { AgentTile(OfficeIcons.Orbit, if (w.state == WorkerStatus.NeedsInput) Palette.Danger else OrchestratorTint, small = true) }
         else WorkerDot(parseColor(w.color), w.state, 10.dp)
         Column(Modifier.weight(1f).padding(start = 2.dp)) {
             Text(w.name.ifBlank { w.id }, style = MaterialTheme.typography.titleLarge, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.tagged(Tags.Worker.NAME))
+            var modelAt = -1
             val parts = buildList {
+                if (mission) add("Mission Control")
                 w.cloud?.where?.let { add("☁ $it") }
-                if (w.isShell) add("Shell") else Workers.modelId(w)?.let { add(Models.plainName(catalogue.nameOf(it))) }
-                if (mission) add(0, "Mission Control") else add(deskLabel(w.deskId).replaceFirstChar { it.uppercaseChar() })
+                if (w.isShell) add("Shell") else Workers.modelId(w)?.let {
+                    modelAt = size
+                    add(Models.plainName(catalogue.nameOf(it)))
+                }
+                if (!mission) {
+                    floorName?.let(::add)
+                    add(deskLabel(w.deskId).replaceFirstChar { it.uppercaseChar() })
+                }
                 Workers.workedMs(w, now).takeIf { it >= 1000 }?.let { add(Workers.duration(it)) }
             }
             // Model names as they're written ("GPT 6.1 Sol", "Sonnet 5.5"), and all of it: a narrow
             // screen or a large font wraps between the parts rather than cutting the desk off.
             Row(verticalAlignment = Alignment.Top, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 WorkerModelLogo(w, catalogue, modifier = Modifier.padding(top = 1.dp).size(14.dp), behind = Palette.Bg)
-                val effort = Workers.effort(w)?.takeIf { !w.isShell && Workers.modelId(w) != null }
-                val spoken = parts.toMutableList().apply { if (effort != null) add(if (w.cloud != null) 2 else 1, EffortDial.label(effort)) }.joinToString(" · ")
-                MetaLine(parts, Modifier.weight(1f).tagged(Tags.Worker.META), spoken, effort?.let { e -> { EffortDialMark(e, Modifier.padding(start = 6.dp)) } }, if (w.cloud != null) 1 else 0)
+                val effort = Workers.effort(w)?.takeIf { modelAt >= 0 }
+                val spoken = parts.toMutableList().apply { if (effort != null) add(modelAt + 1, EffortDial.label(effort)) }.joinToString(" · ")
+                MetaLine(parts, Modifier.weight(1f).tagged(Tags.Worker.META), spoken, effort?.let { e -> { EffortDialMark(e, Modifier.padding(start = 6.dp)) } }, modelAt.coerceAtLeast(0))
             }
         }
         // Out of reach, the last status the office sent may be long gone: the offline notice says so instead.
@@ -447,7 +469,7 @@ private fun Actions(w: WorkerInfo, lead: (@Composable () -> Unit)? = null, resum
     val graph = LocalGraph.current
     val data by graph.connection.data.collectAsStateWithLifecycle()
     val uri = LocalUriHandler.current
-    val pr = Workers.pr(w, data.pulls)
+    val pr = Workers.pr(w, data.pullsForWorker(w.id))
     val branch = w.worktree?.branch?.takeIf { it.isNotBlank() }
     val square = lead != null
     Row(

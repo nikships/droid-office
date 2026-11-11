@@ -77,7 +77,7 @@ fun SendHomeDialog(w: WorkerInfo, onDismiss: () -> Unit, onSent: () -> Unit) {
     val graph = LocalGraph.current
     val data by graph.connection.data.collectAsStateWithLifecycle()
     val link by graph.connection.link.collectAsStateWithLifecycle()
-    val floor = remember(w.id) { data.floorId }
+    val floor = remember(w.id) { data.workerFloorId(w.id) ?: data.floorId }
     val office = remember(w.id) { data.officeId }
     val scope = rememberCoroutineScope()
     var pending by remember { mutableStateOf(false) }
@@ -100,10 +100,12 @@ fun SendHomeDialog(w: WorkerInfo, onDismiss: () -> Unit, onSent: () -> Unit) {
     }
 
     val labels = mapOf("keep" to "Send home", "worktree" to "Send home, delete worktree", "all" to "Send home, delete both")
+    val currentFloor = data.workerFloorId(w.id)
+    val floorGone = floor == null || (data.floors.isNotEmpty() && data.floors.none { it.id == floor }) || (currentFloor != null && currentFloor != floor)
     val refusal = when {
         link.phase != Phase.Connected -> "Disconnected. Nothing can be sent."
-        data.floorId != floor || data.officeId != office -> "The active floor changed. Nothing was sent."
-        !data.workers.containsKey(w.id) -> "The worker has left."
+        data.officeId != office || floorGone -> "The active floor changed. Nothing was sent."
+        data.deskWorker(w.id) == null -> "The worker has left."
         else -> null
     }
     AlertDialog(
@@ -173,7 +175,8 @@ fun SendHomeDialog(w: WorkerInfo, onDismiss: () -> Unit, onSent: () -> Unit) {
         confirmButton = {
             TextButton(enabled = !pending && refusal == null && (cleanup == "keep" || status != null), onClick = {
                 val latest = graph.connection.data.value
-                if (!graph.connection.connected || latest.floorId != floor || latest.officeId != office || !latest.workers.containsKey(w.id)) return@TextButton
+                val latestFloor = latest.workerFloorId(w.id) ?: latest.floorId
+                if (!graph.connection.connected || latestFloor != floor || latest.officeId != office || latest.deskWorker(w.id) == null) return@TextButton
                 pending = true
                 error = null
                 scope.launch {

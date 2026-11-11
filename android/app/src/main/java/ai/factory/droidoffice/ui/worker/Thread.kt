@@ -186,8 +186,9 @@ internal fun Thread(
     val snackbar = LocalSnackbar.current
     val scope = rememberCoroutineScope()
     val data by connection.data.collectAsStateWithLifecycle()
+    val effectiveFloor = data.workerFloorId(w.id) ?: data.floorId
     // A new feed per office, floor and worker (the Orchestrator's is the building's): its request ids are its own, so no other's answers land here.
-    val floorScope = MissionControl.floorScope(data.floorId, w.id)
+    val floorScope = MissionControl.floorScope(effectiveFloor, w.id)
     val feed = remember(data.officeId, floorScope, w.id) { ThreadFeed(w.id) }
     var state by remember(feed) { mutableStateOf(feed.state) }
     var polls by remember(feed) { mutableIntStateOf(0) }
@@ -402,7 +403,7 @@ internal fun Thread(
         if (!isOpen) inspect()
     }
 
-    val pictures = remember(data.floorId, w.id) { data.floorId?.let { PictureSource(it, w.id) } }
+    val pictures = remember(effectiveFloor, w.id) { effectiveFloor?.let { PictureSource(it, w.id) } }
     Column(modifier.tagged(Tags.Worker.THREAD)) {
         BoxWithConstraints(Modifier.weight(1f).fillMaxWidth().clipToBounds()) {
             // On a wide screen the conversation keeps a reading width, centred, rather than lines across the whole window.

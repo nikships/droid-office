@@ -43,9 +43,7 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import ai.factory.droidoffice.core.Tags
-import ai.factory.droidoffice.core.WorkerStatus
 import ai.factory.droidoffice.core.collectHires
-import ai.factory.droidoffice.ui.asks.AsksScreen
 import ai.factory.droidoffice.ui.board.WhiteboardScreen
 import ai.factory.droidoffice.ui.components.tagged
 import ai.factory.droidoffice.ui.home.HireSheet
@@ -55,18 +53,20 @@ import ai.factory.droidoffice.ui.home.deskLabel
 import ai.factory.droidoffice.ui.theme.LocalOfficeType
 import ai.factory.droidoffice.ui.theme.OfficeIcons
 import ai.factory.droidoffice.ui.theme.Palette
+import ai.factory.droidoffice.ui.workers.WorkersScreen
 
 enum class MainTab(val label: String, val icon: ImageVector, val tag: String) {
-    Asks("Asks", OfficeIcons.Bell, Tags.Tab.ASKS),
+    Workers("Workers", OfficeIcons.Workers, Tags.Tab.WORKERS),
     Office("Office", OfficeIcons.Building, Tags.Tab.OFFICE),
     Board("Board", OfficeIcons.Whiteboard, Tags.Tab.BOARD),
     Me("Me", OfficeIcons.Agent, Tags.Tab.ME),
 }
 
 /**
- * The app once paired: Asks (questions waiting on you), Office (every worker, hiring), Board (the
- * floor's Whiteboard) and Me (this phone's offices and settings). A bar along the bottom on a phone, a rail down the side on a
- * tablet. On wide screens, Office keeps the worker list and terminal side by side.
+ * The app once paired: Workers (every worker across every floor, with questions waiting on you pinned first),
+ * Office (the active floor, floor ordering and hiring), Board (the floor's Whiteboard) and Me (this phone's
+ * offices and settings). A bar along the bottom on a phone, a rail down the side on a tablet. On wide screens,
+ * Workers and Office keep the worker list and terminal side by side.
  */
 @Composable
 fun MainTabs(onOpenWorker: (id: String, draft: String?) -> Unit, onOpenCard: (floor: String, card: String) -> Unit, onScan: () -> Unit) {
@@ -74,16 +74,17 @@ fun MainTabs(onOpenWorker: (id: String, draft: String?) -> Unit, onOpenCard: (fl
     val store by graph.store.snapshot.collectAsStateWithLifecycle()
     val officeId = store.active?.id
     val data by graph.connection.data.collectAsStateWithLifecycle()
-    val waiting = data.askable.count { it.state == WorkerStatus.NeedsInput }
+    val waiting = data.totalWaitingCount
     val boards by graph.connection.boards.collectAsStateWithLifecycle()
     val changed = data.floorId?.let { boards[it]?.board?.changedCards() } ?: 0
-    val badge = { t: MainTab -> if (t == MainTab.Asks) waiting else if (t == MainTab.Board) changed else 0 }
+    val badge = { t: MainTab -> if (t == MainTab.Workers) waiting else if (t == MainTab.Board) changed else 0 }
     var tab by rememberSaveable { mutableStateOf<MainTab?>(null) }
     var hiring by rememberSaveable { mutableStateOf(false) }
-    var selected by rememberSaveable(officeId) { mutableStateOf<String?>(null) }
+    var workersSelected by rememberSaveable(officeId) { mutableStateOf<String?>(null) }
+    var officeSelected by rememberSaveable(officeId, data.floorId) { mutableStateOf<String?>(null) }
     val snackbar = LocalSnackbar.current
-    // Opens on Asks when something is waiting the first time the office is in, else on Office.
-    LaunchedEffect(data.synced) { if (tab == null && data.synced) tab = if (waiting > 0) MainTab.Asks else MainTab.Office }
+    // Opens on Workers when something is waiting the first time the office is in, else on Office.
+    LaunchedEffect(data.synced) { if (tab == null && data.synced) tab = if (waiting > 0) MainTab.Workers else MainTab.Office }
     val shown = tab ?: MainTab.Office
 
     BoxWithConstraints(Modifier.fillMaxSize().background(Palette.Bg)) {
@@ -92,9 +93,13 @@ fun MainTabs(onOpenWorker: (id: String, draft: String?) -> Unit, onOpenCard: (fl
             BoxWithConstraints(m) {
                 val split = maxWidth >= 840.dp
                 val open by rememberUpdatedState<(String) -> Unit> { id ->
-                    if (split && shown == MainTab.Office) selected = id else onOpenWorker(id, null)
+                    when {
+                        split && shown == MainTab.Workers -> workersSelected = id
+                        split && shown == MainTab.Office -> officeSelected = id
+                        else -> onOpenWorker(id, null)
+                    }
                 }
-                // Both Asks and Office can hire. A snackbar must never hold up the next shell result.
+                // Both Workers and Office can hire. A snackbar must never hold up the next shell result.
                 LaunchedEffect(graph.connection, officeId) {
                     graph.connection.hired.collectHires(
                         onShell = { open(it.id) },
@@ -106,8 +111,15 @@ fun MainTabs(onOpenWorker: (id: String, draft: String?) -> Unit, onOpenCard: (fl
                 }
                 Crossfade(shown, animationSpec = tween(160), label = "tab") { t ->
                     when (t) {
-                        MainTab.Asks -> AsksScreen(onOpenWorker = onOpenWorker, onHire = { hiring = true })
-                        MainTab.Office -> HomeScreen(onOpenWorker = open, selected = selected, onCloseWorker = { selected = null }, onOffices = { tab = MainTab.Me }, onScan = onScan)
+                        MainTab.Workers -> WorkersScreen(
+                            onOpenWorker = open,
+                            onOpenRawTty = { id -> onOpenWorker(id, "") },
+                            selected = workersSelected,
+                            onCloseWorker = { workersSelected = null },
+                            onHire = { hiring = true },
+                            onScan = onScan,
+                        )
+                        MainTab.Office -> HomeScreen(onOpenWorker = open, selected = officeSelected, onCloseWorker = { officeSelected = null }, onOffices = { tab = MainTab.Me }, onScan = onScan)
                         MainTab.Board -> WhiteboardScreen(onOpenCard = onOpenCard)
                         MainTab.Me -> OfficesScreen(onBack = { tab = MainTab.Office }, onPairNew = onScan, onSwitched = { tab = MainTab.Office }, embedded = true)
                     }

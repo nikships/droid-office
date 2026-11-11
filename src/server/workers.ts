@@ -2624,6 +2624,12 @@ export class WorkerManager {
     return frame ? readScreenMenu(Array.from({ length: frame.rows }, (_, row) => frame.lines[row] ?? [])) : undefined;
   }
 
+  /** Full screen for one running worker, e.g. when a cross-floor worker needs input. */
+  fullScreen(id: string): ScreenFrame | undefined {
+    const term = this.workers.get(id)?.term;
+    return (term && snapshotScreen(term, [])) || undefined;
+  }
+
   /** Full screens for every running worker — sent to people as they walk in. */
   fullScreens() {
     const out: { workerId: string; frame: ScreenFrame }[] = [];

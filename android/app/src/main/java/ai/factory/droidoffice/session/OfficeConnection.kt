@@ -34,6 +34,7 @@ import ai.factory.droidoffice.core.WbRenderStatus
 import ai.factory.droidoffice.core.WbResult
 import ai.factory.droidoffice.core.WhiteboardSync
 import ai.factory.droidoffice.core.WorkerInfo
+import ai.factory.droidoffice.core.WorkerStatus
 import ai.factory.droidoffice.core.Workers
 import ai.factory.droidoffice.data.AuthMode
 import ai.factory.droidoffice.data.OfficeStore
@@ -85,7 +86,7 @@ data class Link(
     val detail: String? = null,
 )
 
-/** The floor the phone is on, as the office last described it. */
+/** The floor the phone is on, and the building's cross-floor roster, as the office last described them. */
 data class OfficeData(
     val officeId: String? = null,
     val floors: List<FloorInfo> = emptyList(),
@@ -93,6 +94,9 @@ data class OfficeData(
     val project: ProjectInfo? = null,
     val workers: Map<String, WorkerInfo> = emptyMap(),
     val pulls: List<GhPull> = emptyList(),
+    val buildingWorkers: Map<String, Map<String, WorkerInfo>> = emptyMap(),
+    val buildingPulls: Map<String, List<GhPull>> = emptyMap(),
+    val hasBuildingRoster: Boolean = false,
     val version: String? = null,
     /** A welcome has arrived since this office became the active one. */
     val synced: Boolean = false,
@@ -103,14 +107,79 @@ data class OfficeData(
 ) {
     val floor: FloorInfo? get() = floors.firstOrNull { it.id == floorId }
 
-    /** A worker on this floor, or a building agent in Mission Control (the Orchestrator while it is on, or a bot). */
-    fun worker(id: String): WorkerInfo? = workers[id] ?: MissionControl.agent(mission, id)?.worker
+    /** Desk and cloud workers on each floor, falling back to the active floor when connected to an older office. */
+    val workersByFloor: Map<String, Collection<WorkerInfo>>
+        get() = if (hasBuildingRoster || buildingWorkers.isNotEmpty()) {
+            buildMap {
+                buildingWorkers.forEach { (f, map) -> put(f, map.values) }
+                floorId?.let { put(it, workers.values) }
+            }
+        } else {
+            floorId?.let { mapOf(it to workers.values) }.orEmpty()
+        }
+
+    /** Pull requests on each floor, falling back to the active floor when connected to an older office. */
+    val pullsByFloor: Map<String, List<GhPull>>
+        get() = buildMap {
+            buildingPulls.forEach { (f, list) -> put(f, list) }
+            floorId?.let { put(it, pulls) }
+        }
+
+    /** The floor id of a desk/cloud worker anywhere in the building, or null for building agents / unknown workers. */
+    fun workerFloorId(id: String): String? {
+        if (id == ORCHESTRATOR_ID || mission?.bots?.any { it.worker.id == id } == true) return null
+        if (workers.containsKey(id)) return floorId
+        buildingWorkers.entries.firstOrNull { (_, map) -> map.containsKey(id) }?.key?.let { return it }
+        MissionControl.team(mission?.orchestrator).firstOrNull { it.id == id }?.floor?.takeIf { it.isNotBlank() }?.let { return it }
+        return mission?.bots?.asSequence()?.flatMap { it.team.asSequence() }?.firstOrNull { it.id == id }?.floor?.takeIf { it.isNotBlank() }
+    }
+
+    fun floorOfWorker(id: String): FloorInfo? {
+        val fId = workerFloorId(id) ?: return null
+        return floors.firstOrNull { it.id == fId }
+    }
+
+    /** A desk or cloud worker on the active floor or any other floor in the building. */
+    fun deskWorker(id: String): WorkerInfo? = workers[id] ?: buildingWorkers.values.firstNotNullOfOrNull { it[id] }
+
+    /** A worker anywhere in the building, or a building agent in Mission Control (the Orchestrator while it is on, or a bot). */
+    fun worker(id: String): WorkerInfo? = deskWorker(id) ?: MissionControl.agent(mission, id)?.worker
+
+    /** Pull requests for [id]'s floor, so cross-floor cards and screens resolve the right PR badge. */
+    fun pullsForWorker(id: String): List<GhPull> {
+        val fId = workerFloorId(id)
+        return if (fId == null || fId == floorId) pulls else buildingPulls[fId].orEmpty()
+    }
+
+    /** Every desk and cloud worker across the building, ordered by floor. */
+    val allDeskWorkers: List<WorkerInfo>
+        get() {
+            if (!hasBuildingRoster && buildingWorkers.isEmpty()) return workers.values.toList()
+            val byFloor = workersByFloor
+            val seen = HashSet<String>()
+            val out = ArrayList<WorkerInfo>()
+            val orderedFloors = floors.map { it.id } + byFloor.keys.filter { k -> floors.none { it.id == k } }.sorted()
+            for (f in orderedFloors) {
+                for (w in byFloor[f].orEmpty()) {
+                    if (MissionControl.isDeskWorker(w, mission) && seen.add(w.id)) out += w
+                }
+            }
+            return out
+        }
 
     /** The Orchestrator's session while it is on and has one. */
     val orchestrator: WorkerInfo? get() = MissionControl.orchestrator(mission)
 
-    /** Everyone whose questions and finished turns are the owner's: this floor's workers and the Orchestrator. */
-    val askable: Collection<WorkerInfo> get() = orchestrator?.let { workers.values + it } ?: workers.values
+    /** Everyone whose questions and finished turns are the owner's: every floor's workers and the Orchestrator. */
+    val askable: Collection<WorkerInfo> get() = orchestrator?.let { allDeskWorkers + it } ?: allDeskWorkers
+
+    /** How many workers across the whole building are waiting on an answer right now. */
+    val totalWaitingCount: Int
+        get() {
+            val known = askable.count { !it.remote && it.state == WorkerStatus.NeedsInput }
+            if (hasBuildingRoster || buildingWorkers.isNotEmpty()) return known
+            return known + floors.filter { it.id != floorId }.sumOf { it.waiting }
+        }
 }
 
 private data class Desire(val office: PairedOffice?, val wanted: Boolean, val online: Boolean, val networkKey: String?, val nonce: Int)
@@ -351,7 +420,9 @@ class OfficeConnection(
     suspend fun stageImage(name: String, type: String, bytes: ByteArray, workerId: String? = null): Result<String> {
         val (base, auth) = current ?: return Result.failure(IllegalStateException("Not connected to the office"))
         if (workerId == ORCHESTRATOR_ID) return api.stageImage(base, auth, null, name, type, bytes, worker = ORCHESTRATOR_ID)
-        val floor = _data.value.floorId ?: return Result.failure(IllegalStateException("Not on a floor yet"))
+        val snap = _data.value
+        val floor = (if (workerId != null) snap.workerFloorId(workerId) ?: snap.floorId.takeIf { !snap.hasBuildingRoster } else snap.floorId)
+            ?: return Result.failure(IllegalStateException("Not on a floor yet"))
         return api.stageImage(base, auth, floor, name, type, bytes)
     }
 
@@ -361,7 +432,8 @@ class OfficeConnection(
             scope.launch { api.unstageImage(base, auth, null, id, worker = ORCHESTRATOR_ID) }
             return
         }
-        val floor = _data.value.floorId ?: return
+        val snap = _data.value
+        val floor = (if (workerId != null) snap.workerFloorId(workerId) ?: snap.floorId.takeIf { !snap.hasBuildingRoster } else snap.floorId) ?: return
         scope.launch { api.unstageImage(base, auth, floor, id) }
     }
 
@@ -603,31 +675,102 @@ class OfficeConnection(
     private fun handle(officeId: String, msg: ServerMsg) {
         when (msg) {
             is ServerMsg.Welcome -> {
-                _data.update { it.copy(workerAnswerMultiSelect = msg.workerAnswerMultiSelect) }
+                val missionState = msg.missionControl
+                val bWorkers = msg.building?.associate { r ->
+                    r.floor to r.workers.filter { w -> MissionControl.isDeskWorker(w, missionState) }.associateBy(WorkerInfo::id)
+                }?.toMutableMap()
+                val bPulls = msg.building?.associate { r -> r.floor to r.pulls }?.toMutableMap()
+                if (bWorkers != null && msg.view.floor != null) {
+                    bWorkers[msg.view.floor] = msg.view.workers.filter { w -> MissionControl.isDeskWorker(w, missionState) }.associateBy(WorkerInfo::id)
+                }
+                if (bPulls != null && msg.view.floor != null) {
+                    bPulls[msg.view.floor] = msg.view.pulls.items
+                }
+                _data.update {
+                    it.copy(
+                        workerAnswerMultiSelect = msg.workerAnswerMultiSelect,
+                        buildingWorkers = bWorkers ?: emptyMap(),
+                        buildingPulls = bPulls ?: emptyMap(),
+                        hasBuildingRoster = msg.building != null,
+                    )
+                }
                 // An office that predates Mission Control sends none; one that sends it goes through the same path as a broadcast.
-                if (msg.missionControl != null) mission(msg.missionControl) else _data.update { it.copy(mission = null) }
+                if (missionState != null) mission(missionState) else _data.update { it.copy(mission = null) }
                 whiteboard.status(true)
                 whiteboard.welcome(msg.view.floor)
                 _availability.value = msg.availability
                 _hiddenModels.value = msg.hiddenModels
                 _subscriptions.value = msg.subscriptions
                 _factory.value = msg.factory
-                enter(officeId, msg.view, msg.floors, msg.version, keepOrchestrator = false)
+                enter(officeId, msg.view, msg.floors, msg.version, keepOffFloorScreens = false)
                 msg.view.project?.name?.ifBlank { null }?.let { p -> scope.launch { store.update(officeId) { it.copy(project = p) } } }
             }
             is ServerMsg.FloorEnter -> {
                 whiteboard.enter(msg.view.floor)
-                enter(officeId, msg.view, null, null, keepOrchestrator = true)
+                enter(officeId, msg.view, null, null, keepOffFloorScreens = true)
                 msg.view.floor?.let { f -> scope.launch { store.update(officeId) { it.copy(lastFloor = f, project = msg.view.project?.name?.ifBlank { null } ?: it.project) } } }
             }
             is ServerMsg.HiddenModels -> _hiddenModels.value = msg.ids
             is ServerMsg.Factory -> _factory.value = msg.state
-            is ServerMsg.Floors -> _data.update { it.copy(floors = msg.floors) }
+            is ServerMsg.Floors -> _data.update {
+                val valid = msg.floors.map(FloorInfo::id).toSet()
+                it.copy(
+                    floors = msg.floors,
+                    buildingWorkers = it.buildingWorkers.filterKeys(valid::contains),
+                    buildingPulls = it.buildingPulls.filterKeys(valid::contains),
+                )
+            }
             is ServerMsg.Subscriptions -> {
                 _availability.value = msg.availability
                 _subscriptions.value = msg.state
             }
             is ServerMsg.MissionControl -> mission(msg.state)
+            is ServerMsg.BuildingWorker -> {
+                val w = msg.worker
+                if (w.id == ORCHESTRATOR_ID || !MissionControl.isDeskWorker(w, _data.value.mission)) return
+                val knownBefore = _data.value.deskWorker(w.id)
+                if (knownBefore == null && w.createdBy == officeName && System.currentTimeMillis() - hireAskedAt < HIRE_WINDOW_MS) {
+                    hireAskedAt = 0
+                    _hired.tryEmit(w)
+                }
+                val activeFloor = _data.value.floorId
+                _data.update { d ->
+                    val floorMap = d.buildingWorkers[msg.floor].orEmpty() + (w.id to w)
+                    d.copy(
+                        buildingWorkers = d.buildingWorkers + (msg.floor to floorMap),
+                        workers = if (msg.floor == d.floorId) d.workers + (w.id to w) else d.workers,
+                        hasBuildingRoster = true,
+                    )
+                }
+                if (msg.floor != activeFloor && knownBefore != null && (knownBefore.cols != w.cols || knownBefore.rows != w.rows)) {
+                    feeds[w.id]?.push(TermEvent.Resize(TermSize(w.cols, w.rows)))
+                }
+                if (msg.floor != activeFloor && w.state != WorkerStatus.NeedsInput && w.id !in attached) {
+                    _screens.update { it - w.id }
+                }
+            }
+            is ServerMsg.BuildingRemove -> {
+                _data.update { d ->
+                    val nextFloorMap = d.buildingWorkers[msg.floor]?.minus(msg.workerId)
+                    val nextBuilding = if (nextFloorMap == null) d.buildingWorkers else d.buildingWorkers + (msg.floor to nextFloorMap)
+                    d.copy(
+                        buildingWorkers = nextBuilding,
+                        workers = if (msg.floor == d.floorId) d.workers - msg.workerId else d.workers,
+                    )
+                }
+                _screens.update { it - msg.workerId }
+                attached -= msg.workerId
+                synchronized(holds) { holds.remove(msg.workerId) }
+                feeds.remove(msg.workerId)
+            }
+            is ServerMsg.BuildingPulls -> {
+                _data.update { d ->
+                    d.copy(
+                        buildingPulls = d.buildingPulls + (msg.floor to msg.pulls),
+                        pulls = if (msg.floor == d.floorId) msg.pulls else d.pulls,
+                    )
+                }
+            }
             is ServerMsg.WorkerUpdate -> {
                 val w = msg.worker
                 if (w.id == ORCHESTRATOR_ID) {
@@ -640,16 +783,26 @@ class OfficeConnection(
                 }
                 if (!MissionControl.isDeskWorker(w, _data.value.mission)) return
                 val before = _data.value.workers
-                if (!before.containsKey(w.id) && w.createdBy == officeName && System.currentTimeMillis() - hireAskedAt < HIRE_WINDOW_MS) {
+                if (_data.value.deskWorker(w.id) == null && w.createdBy == officeName && System.currentTimeMillis() - hireAskedAt < HIRE_WINDOW_MS) {
                     hireAskedAt = 0
                     _hired.tryEmit(w)
                 }
-                _data.update { it.copy(workers = it.workers + (w.id to w)) }
+                _data.update { d ->
+                    val nextBuilding = if (d.hasBuildingRoster && d.floorId != null) {
+                        d.buildingWorkers + (d.floorId to (d.buildingWorkers[d.floorId].orEmpty() + (w.id to w)))
+                    } else d.buildingWorkers
+                    d.copy(workers = d.workers + (w.id to w), buildingWorkers = nextBuilding)
+                }
                 val was = before[w.id]
                 if (was != null && (was.cols != w.cols || was.rows != w.rows)) feeds[w.id]?.push(TermEvent.Resize(TermSize(w.cols, w.rows)))
             }
             is ServerMsg.WorkerRemove -> {
-                _data.update { it.copy(workers = it.workers - msg.workerId) }
+                _data.update { d ->
+                    val nextBuilding = if (d.floorId != null && d.buildingWorkers.containsKey(d.floorId)) {
+                        d.buildingWorkers + (d.floorId to (d.buildingWorkers[d.floorId].orEmpty() - msg.workerId))
+                    } else d.buildingWorkers
+                    d.copy(workers = d.workers - msg.workerId, buildingWorkers = nextBuilding)
+                }
                 _screens.update { it - msg.workerId }
                 attached -= msg.workerId
                 synchronized(holds) { holds.remove(msg.workerId) }
@@ -659,7 +812,10 @@ class OfficeConnection(
             is ServerMsg.TermSnapshot -> feeds[msg.workerId]?.push(msg.event)
             is ServerMsg.TermData -> feeds[msg.workerId]?.push(msg.event)
             is ServerMsg.Toast -> _toasts.tryEmit(msg)
-            is ServerMsg.Pulls -> _data.update { it.copy(pulls = msg.state.items) }
+            is ServerMsg.Pulls -> _data.update { d ->
+                val nextPulls = if (d.hasBuildingRoster && d.floorId != null) d.buildingPulls + (d.floorId to msg.state.items) else d.buildingPulls
+                d.copy(pulls = msg.state.items, buildingPulls = nextPulls)
+            }
             is ServerMsg.Worktree -> _worktrees.tryEmit(msg)
             is ServerMsg.Whiteboard -> whiteboard.handle(msg.t, msg.obj)
             is ServerMsg.Pinged -> _pinged.tryEmit(msg.result)
@@ -671,7 +827,10 @@ class OfficeConnection(
 
     private fun mission(state: MissionControlState) {
         val was = _data.value.orchestrator
-        _data.update { it.copy(mission = state) }
+        _data.update { d ->
+            val filteredBuilding = d.buildingWorkers.mapValues { (_, map) -> map.filterValues { w -> MissionControl.isDeskWorker(w, state) } }
+            d.copy(mission = state, workers = d.workers.filterValues { w -> MissionControl.isDeskWorker(w, state) }, buildingWorkers = filteredBuilding)
+        }
         val now = MissionControl.orchestrator(state)
         when (MissionControl.sessionChange(was, now)) {
             MissionControl.Session.Ended -> {
@@ -684,19 +843,31 @@ class OfficeConnection(
         }
     }
 
-    /** [keepOrchestrator]: the Orchestrator's screen is the building's, so a change of floor leaves it be. */
-    private fun enter(officeId: String, view: FloorView, floors: List<FloorInfo>?, version: String?, keepOrchestrator: Boolean) {
-        _screens.update { screens -> if (keepOrchestrator) screens.filterKeys { it == ORCHESTRATOR_ID } else emptyMap() }
-        val mission = _data.value.mission
-        _data.update {
-            it.copy(
+    /** [keepOffFloorScreens]: the Orchestrator's screen and off-floor NeedsInput menus belong to the building, so a change of floor leaves them be. */
+    private fun enter(officeId: String, view: FloorView, floors: List<FloorInfo>?, version: String?, keepOffFloorScreens: Boolean) {
+        val currentData = _data.value
+        val activeIds = view.workers.mapTo(HashSet(), WorkerInfo::id)
+        _screens.update { screens ->
+            if (!keepOffFloorScreens) emptyMap()
+            else screens.filterKeys { id ->
+                id == ORCHESTRATOR_ID || (id !in activeIds && currentData.deskWorker(id)?.state == WorkerStatus.NeedsInput)
+            }
+        }
+        val mission = currentData.mission
+        val floorWorkers = view.workers.filter { w -> MissionControl.isDeskWorker(w, mission) }.associateBy(WorkerInfo::id)
+        _data.update { d ->
+            val nextBuildingWorkers = if (d.hasBuildingRoster && view.floor != null) d.buildingWorkers + (view.floor to floorWorkers) else d.buildingWorkers
+            val nextBuildingPulls = if (d.hasBuildingRoster && view.floor != null) d.buildingPulls + (view.floor to view.pulls.items) else d.buildingPulls
+            d.copy(
                 officeId = officeId,
-                floors = floors ?: it.floors,
+                floors = floors ?: d.floors,
                 floorId = view.floor,
                 project = view.project,
-                workers = view.workers.filter { w -> MissionControl.isDeskWorker(w, mission) }.associateBy(WorkerInfo::id),
+                workers = floorWorkers,
                 pulls = view.pulls.items,
-                version = version ?: it.version,
+                buildingWorkers = nextBuildingWorkers,
+                buildingPulls = nextBuildingPulls,
+                version = version ?: d.version,
                 synced = true,
             )
         }

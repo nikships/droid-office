@@ -125,4 +125,13 @@ object OfficeIcons {
     /** An external bot, reaching the office from elsewhere. */
     val Antenna = icon("Antenna", "M12 12.5v8", "M8.5 20.5h7", "M9.2 9.2a4 4 0 0 1 5.6 0", "M6.4 6.4a8 8 0 0 1 11.2 0", fills = listOf(dot(12f, 12f, 1.4f) to 1f))
     val Agent = icon("Agent", "M7 7.5a5 5 0 0 1 10 0V12a5 5 0 0 1-10 0z", "M9.8 9.6h.01", "M14.2 9.6h.01", "M9.8 13a3 3 0 0 0 4.4 0", "M4.5 20.5a8.5 8.5 0 0 1 15 0", "M12 2.5v0")
+    val Workers = icon(
+        "Workers",
+        "M9 4.8a3.2 3.2 0 1 0 0 6.4a3.2 3.2 0 1 0 0-6.4z",
+        "M3.2 19.5a5.8 5.8 0 0 1 11.6 0",
+        "M15.2 5.1a3 3 0 0 1 0 5.8",
+        "M16.5 14.1a5.2 5.2 0 0 1 4.3 5.4",
+    )
+    val Search = icon("Search", "M11 4a7 7 0 1 0 0 14a7 7 0 1 0 0-14z", "M16.2 16.2L20.5 20.5")
+    val Repo = icon("Repo", "M5 4.5A2 2 0 0 1 7 2.5h12v17H7a2 2 0 0 0-2 2V4.5z", "M5 19.5h14", "M9 6.5h6", "M9 10h4")
 }

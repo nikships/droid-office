@@ -1,6 +1,7 @@
 import type {
   Arrival,
   FloorInfo,
+  FloorRoster,
   FloorView,
   GhIssue,
   GhPull,
@@ -41,6 +42,7 @@ import { GRAPHICS_DEFAULTS, normalizeGraphics, type GraphicsSettings } from './g
 
 export type Topic =
   | 'workers'
+  | 'building'
   | 'issues'
   | 'pulls'
   | 'project'
@@ -232,7 +234,7 @@ export function connectWhiteboard(send: (msg: ClientMsg) => boolean) {
   whiteboardSend = send;
 }
 
-class Store {
+export class Store {
   /** This connection's transport id; never shown, never a player. */
   connection = '';
   /** Where the server last put this connection (see welcome, floor.enter). */
@@ -243,6 +245,8 @@ class Store {
   project: ProjectInfo | null = null;
   /** Every floor of the building, and the one you're on (null while there are none). */
   floors: FloorInfo[] = [];
+  /** Every floor's workers and pull requests across the building, once received. */
+  building = new Map<string, FloorRoster>();
   floor: string | null = null;
   /** Where the office looks for existing checkouts to add as floors. */
   projectsDir: ProjectsDirState = { dir: '', custom: false };
@@ -338,6 +342,7 @@ class Store {
     rememberFloor(v.floor);
     this.project = v.project;
     this.workers = new Map(v.workers.map((w) => [w.id, w]));
+    if (v.floor) this.building.set(v.floor, { floor: v.floor, workers: [...v.workers], pulls: [...v.pulls.items] });
     this.screens.clear(); // fresh full frames follow
     this.issues = v.issues;
     this.pulls = v.pulls;
@@ -388,21 +393,49 @@ class Store {
         this.setup = msg.setup ?? emptySetupState();
         this.subscriptions = msg.subscriptions ?? emptySubscriptionsState();
         this.missionControl = msg.missionControl;
+        this.building = new Map((msg.building ?? []).map((r) => [r.floor, { floor: r.floor, workers: [...r.workers], pulls: [...r.pulls] }]));
         this.enter(msg);
-        for (const t of ['upgrade', 'machine', 'floors', 'projectsDir', 'sky', 'jukebox', 'leaveOnMerge', 'freshMain', 'subagents', 'prompts', 'factory', 'setup', 'subscriptions', 'missionControl'] as Topic[]) this.emit(t);
+        for (const t of ['upgrade', 'machine', 'floors', 'building', 'projectsDir', 'sky', 'jukebox', 'leaveOnMerge', 'freshMain', 'subagents', 'prompts', 'factory', 'setup', 'subscriptions', 'missionControl'] as Topic[]) this.emit(t);
         break;
       case 'floor.enter':
         this.arrival = msg.arrival;
         this.enter(msg);
+        this.emit('building');
         break;
       case 'floors':
         this.floors = msg.floors;
+        for (const id of this.building.keys()) if (!msg.floors.some((f) => f.id === id)) this.building.delete(id);
+        for (const f of msg.floors) if (!this.building.has(f.id)) this.building.set(f.id, { floor: f.id, workers: [], pulls: [] });
         if (this.project) {
           const floor = this.currentFloor();
           if (floor) this.project.branch = floor.branch;
         }
         this.emit('floors');
+        this.emit('building');
         break;
+      case 'building.worker': {
+        let r = this.building.get(msg.floor);
+        if (!r) this.building.set(msg.floor, (r = { floor: msg.floor, workers: [], pulls: [] }));
+        const idx = r.workers.findIndex((w) => w.id === msg.worker.id);
+        if (idx >= 0) r.workers[idx] = msg.worker;
+        else r.workers.push(msg.worker);
+        this.emit('building');
+        break;
+      }
+      case 'building.remove': {
+        const r = this.building.get(msg.floor);
+        if (r) r.workers = r.workers.filter((w) => w.id !== msg.workerId);
+        if (msg.floor !== this.floor && this.screens.delete(msg.workerId)) this.emit('screens');
+        this.emit('building');
+        break;
+      }
+      case 'building.pulls': {
+        const r = this.building.get(msg.floor);
+        if (r) r.pulls = msg.pulls;
+        else this.building.set(msg.floor, { floor: msg.floor, workers: [], pulls: msg.pulls });
+        this.emit('building');
+        break;
+      }
       case 'projectsDir':
         this.projectsDir = msg.state;
         this.emit('projectsDir');
