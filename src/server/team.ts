@@ -916,7 +916,7 @@ export class Team {
       return { status: result.status === 'ok' ? 200 : 409, body: { worker: w.id, ...result } };
     } catch (err) {
       const summary = (err as Error).message;
-      return { status: 400, body: { status: 'failed', summary, error: summary, remaining: ['Correct the repository or revision error before retrying.'] } };
+      return { status: 400, body: { status: 'failed', summary, error: summary, remaining: ['Correct the repository or revision error before retrying.'] } satisfies WorkerResult & Record<string, unknown> };
     }
   }
 
@@ -941,16 +941,16 @@ export class Team {
             summary: `Cannot open a PR from ${branch}: ${(err as Error).message}`,
             remaining: [`Push the committed branch ${branch} to origin and confirm its remote HEAD matches.`],
             worktree: workerCwd(this.opts.dir, w),
-          },
+          } satisfies WorkerResult & Record<string, unknown>,
         };
       }
       const pr = await this.opts.pulls.createPull(workerCwd(this.opts.dir, w), branch, base, title, str(b.body, TASK_MAX));
       w.pr = pr;
       this.opts.onPull?.(w.id, pr);
-      return ok({ status: 'ok', worker: w.id, branch, pr, artifacts: { prUrl: pr.url, prNumber: pr.number }, summary: `Opened ${pr.url} from ${branch}.` });
+      return ok({ status: 'ok', worker: w.id, branch, pr, artifacts: { prUrl: pr.url, prNumber: pr.number }, summary: `Opened ${pr.url} from ${branch}.` } satisfies WorkerResult & Record<string, unknown>);
     } catch (err) {
       const summary = (err as Error).message;
-      return { status: 400, body: { status: 'failed', summary, error: summary, remaining: ['Read the forge error before retrying PR creation.'] } };
+      return { status: 400, body: { status: 'failed', summary, error: summary, remaining: ['Read the forge error before retrying PR creation.'] } satisfies WorkerResult & Record<string, unknown> };
     }
   }
 

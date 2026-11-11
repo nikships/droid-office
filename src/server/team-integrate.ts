@@ -5,6 +5,7 @@ import path from 'node:path';
 import { promisify } from 'node:util';
 import type { WorkerInfo } from '../shared/protocol.js';
 import { inspectGit } from './team-inspect.js';
+import type { WorkerResult } from './team.js';
 
 const run = promisify(execFile);
 
@@ -131,18 +132,19 @@ export async function integrateWorker(dir: string, worker: WorkerInfo, options: 
   await git(dir, ['check-ref-format', '--branch', target]);
   const before = await commitAt(dir, `refs/heads/${target}`);
   let cwd = (await registeredWorktrees(dir)).find((tree) => tree.branch === target)?.path;
-  const blocked = (summary: string, remaining: string) => ({
-    status: 'blocked' as const,
-    summary,
-    remaining: [remaining],
-    worktree: cwd ?? dir,
-    source,
-    sourceSha,
-    target,
-    before,
-    head: before,
-    mode: options.mode,
-  });
+  const blocked = (summary: string, remaining: string) =>
+    ({
+      status: 'blocked' as const,
+      summary,
+      remaining: [remaining],
+      worktree: cwd ?? dir,
+      source,
+      sourceSha,
+      target,
+      before,
+      head: before,
+      mode: options.mode,
+    }) satisfies WorkerResult & Record<string, unknown>;
   if (source === target) return blocked(`Cannot integrate ${source} into itself.`, 'Choose a different target branch.');
   if (cwd) {
     const owner = options.workers?.find(
@@ -208,7 +210,7 @@ export async function integrateWorker(dir: string, worker: WorkerInfo, options: 
         mode: options.mode,
         ...(retain || !temporary ? { worktree: cwd } : {}),
         temporaryWorktree: temporary,
-      };
+      } satisfies WorkerResult & Record<string, unknown>;
     }
     const head = await commitAt(cwd, 'HEAD');
     const stat = (await git(cwd, ['diff', '--shortstat', before, head, '--'])).trim();
@@ -234,7 +236,7 @@ export async function integrateWorker(dir: string, worker: WorkerInfo, options: 
       mode: options.mode,
       commits,
       stat,
-    };
+    } satisfies WorkerResult & Record<string, unknown>;
   } finally {
     if (temporary && !retain) await git(dir, ['worktree', 'remove', '--force', cwd]);
   }
