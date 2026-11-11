@@ -1,4 +1,5 @@
 import { capabilityOf } from '../../shared/factory';
+import { AIRGAPPED_REASON } from '../../shared/setup';
 import {
   CI_EVENTS,
   CI_KIND_LABEL,
@@ -87,6 +88,7 @@ const READING = 'Reading Factory…';
 
 /** What the window says instead of the workflows when it can't show them, or undefined. */
 function blocked(): string | undefined {
+  if (store.setup.airgapped) return AIRGAPPED_REASON;
   const c = store.factory.connection;
   const ci = store.factory.ci;
   if (!c.connected) return 'Connect Factory in ⚙️ Settings → Connections to see the Droid workflows in your repositories.';

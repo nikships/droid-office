@@ -126,6 +126,20 @@ function rig(t: { after(fn: () => void): void }, over: Partial<TeamOptions> = {}
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
+test('airgapped team catalogues do not reintroduce hosted defaults or remembered allowlists', async (t) => {
+  const id = 'custom:droidproxy:gpt-6-sol';
+  const r = rig(t, { models: async () => ({ customOnly: true, models: [{ id, displayName: 'GPT 6 Sol', custom: true }], defaultModel: id }) }, { models: [{ id: 'auto' }, { id }] });
+  r.fake.officeDefault = { model: 'auto' };
+  for (const action of ['models', 'models_list']) {
+    const result = await r.call('lead', { action });
+    assert.deepEqual(
+      result.body.models.map((m: { id: string }) => m.id),
+      [id],
+    );
+    assert.equal(result.body.defaultModel, undefined, 'a hosted office override is not falsely described as running a custom model');
+  }
+});
+
 test('a lead hires a subagent at the free desk nearest it, in its own worktree, on the Subagents setting', async (t) => {
   const r = rig(t, {}, { agent: { model: 'custom:droidproxy:gpt-6-sol', effort: 'high' } });
   const res = await r.call('lead', { action: 'hire', task: '  Fix the login redirect\r\nand test it  ', title: 'Fix login' });

@@ -1,5 +1,6 @@
 import type { FactoryFeatureId } from '../shared/factory';
 import type { ServerMsg } from '../shared/protocol';
+import { AIRGAPPED_REASON } from '../shared/setup';
 import type { Net } from './net';
 import { store } from './state';
 import { withToken } from './token';
@@ -54,6 +55,7 @@ export function watchFactory(feature: FactoryFeatureId): () => void {
 
 /** Asks for one feature (or, without one, the key and all of them) to be read again now. */
 export function refreshFactory(feature?: FactoryFeatureId) {
+  if (store.setup.airgapped) return;
   net?.send(feature ? { t: 'factory.refresh', feature } : { t: 'factory.refresh' });
 }
 
@@ -79,6 +81,7 @@ export class FactoryFetchError extends Error {
  * the server's message when it doesn't answer 2xx.
  */
 export async function factoryFetch<T = unknown>(feature: FactoryFeatureId, path = '', init: FactoryFetchInit = {}): Promise<T> {
+  if (store.setup.airgapped) throw new FactoryFetchError(AIRGAPPED_REASON, 403);
   const q = new URLSearchParams();
   for (const [k, v] of Object.entries(init.query ?? {})) if (v !== undefined) q.set(k, String(v));
   const qs = q.toString();

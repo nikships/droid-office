@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { createDroidModelCatalogue, listDroidModels, parseDroidModelList, readDroidModels } from '../src/server/droid-models.js';
+import { airgappedModelError, createDroidModelCatalogue, customModelCatalogue, listDroidModels, parseDroidModelList, readDroidModels } from '../src/server/droid-models.js';
 
 function scratch(t: { after(fn: () => void): void }): string {
   const dir = mkdtempSync(path.join(tmpdir(), 'droid-office-droid-models-'));
@@ -18,6 +18,32 @@ function settingsFile(t: { after(fn: () => void): void }, body: unknown): string
 }
 
 const noLister = () => Promise.reject(new Error('no droid'));
+
+test('airgapped discovery drops hosted models, Router, legacy models and unsafe defaults', () => {
+  const source = {
+    models: [
+      { id: 'custom:droidproxy:gpt-6-sol', displayName: 'GPT 6 Sol', custom: true as const },
+      { id: 'auto', displayName: 'Router' },
+      { id: 'claude-fable-5', displayName: 'Fable 5', legacy: true as const },
+    ],
+    disabledModels: [{ id: 'disabled', displayName: 'Disabled', disabled: true as const }],
+    defaultModel: 'auto',
+    defaultReasoningEffort: 'high' as const,
+  };
+  const result = customModelCatalogue(source);
+  assert.deepEqual(result.models, source.models.slice(0, 1));
+  assert.equal(result.defaultModel, undefined);
+  assert.equal(result.defaultReasoningEffort, undefined);
+  assert.deepEqual(result.disabledModels, []);
+  assert.equal(result.customOnly, true);
+  assert.equal(customModelCatalogue({ ...source, defaultModel: source.models[0].id }).defaultModel, source.models[0].id);
+  assert.equal(airgappedModelError(false, 'auto', source), undefined);
+  assert.match(airgappedModelError(true, 'auto', source)!, /requires a configured custom model/);
+  assert.match(airgappedModelError(true, 'custom:made-up:id', source)!, /requires a configured custom model/);
+  assert.match(airgappedModelError(true, undefined, source)!, /requires a configured custom model/);
+  assert.equal(airgappedModelError(true, source.models[0].id, source), undefined);
+  assert.equal(airgappedModelError(true, undefined, { ...source, defaultModel: source.models[0].id }), undefined);
+});
 
 test('Droid catalogue lists custom models with their display names and efforts', (t) => {
   const file = settingsFile(t, {

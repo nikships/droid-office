@@ -115,6 +115,7 @@ internal fun ModelPicker(catalogue: ModelCatalogue?, loading: Boolean, selected:
     val now = rememberNow(30_000)
     LaunchedEffect(query, scope) { listState.scrollToItem(0) }
     fun choose(option: ModelOption) {
+        if (catalogue.customOnly && catalogue.models.none { it.custom && it.id == option.id }) return
         if (option.id in hidden) return
         if (Availability.cannotRun(availability[option.id])) return
         open = false
@@ -175,7 +176,7 @@ internal fun ModelPicker(catalogue: ModelCatalogue?, loading: Boolean, selected:
                     }
                 }
                 val typed = query.trim()
-                if (ModelSearch.customId(typed) && typed !in hidden && models.none { it.id == typed }) {
+                if (!catalogue.customOnly && ModelSearch.customId(typed) && typed !in hidden && models.none { it.id == typed }) {
                     item(key = "custom") {
                         TextButton(onClick = { choose(ModelOption(typed, typed, custom = true)) }, modifier = Modifier.fillMaxWidth().tagged(Tags.Hire.MODEL_CUSTOM)) {
                             ModelLogo(typed, modifier = Modifier.size(20.dp))

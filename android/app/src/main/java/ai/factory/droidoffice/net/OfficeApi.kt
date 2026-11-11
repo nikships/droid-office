@@ -64,7 +64,7 @@ data class ModelOption(
 )
 
 @Serializable
-data class ModelCatalogue(val models: List<ModelOption> = emptyList(), val defaultModel: String? = null, val defaultReasoningEffort: String? = null)
+data class ModelCatalogue(val models: List<ModelOption> = emptyList(), val defaultModel: String? = null, val defaultReasoningEffort: String? = null, val customOnly: Boolean = false)
 
 /** What to call model [id]: the catalogue's name for it, else its id tidied up. */
 fun ModelCatalogue?.nameOf(id: String): String = Models.displayName(id, this?.models?.firstOrNull { it.id == id }?.displayName)

@@ -4,6 +4,7 @@ import { availabilityWords, cannotRun, modelAvailability, type SubscriptionsStat
 
 /** One model in a picker, whatever list it came from. */
 export interface PickerModel {
+  custom?: boolean;
   id: string;
   /** Shown as is. A BYOK gateway prefix ("DroidProxy: ") is already dropped; a "Family: " prefix stays and is drawn muted. */
   name: string;

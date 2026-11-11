@@ -15,6 +15,7 @@ import { CLEAR_DROID_QUEUE } from '../src/shared/droid-queue.js';
 import { PROMPTS } from '../src/shared/prompts.js';
 import type { AgentChoice, AgentEffort, GhPull, WorkerInfo } from '../src/shared/protocol.js';
 import { SCREEN_SETTLE_MS } from '../src/server/droid-screen.js';
+import { airgappedModelError } from '../src/server/droid-models.js';
 
 type Invocation = {
   pid: number;
@@ -166,6 +167,35 @@ function managed(f: Fixture, ...args: ConstructorParameters<typeof WorkerManager
 function manager(f: Fixture, updates: WorkerInfo[], args = ['--from-test']) {
   return managed(f, f.root, f.data, f.droid, args, { url: 'http://127.0.0.1:1', token: '' }, events(updates));
 }
+
+test('airgapped worker launches pin a configured custom model and reject hosted defaults before taking a seat', async (t) => {
+  const f = fixture();
+  isolateAgentEnvironment(f, t);
+  const previous = process.env.FAKE_AGENT_LOG;
+  process.env.FAKE_AGENT_LOG = f.log;
+  t.after(() => {
+    f.close();
+    if (previous === undefined) delete process.env.FAKE_AGENT_LOG;
+    else process.env.FAKE_AGENT_LOG = previous;
+  });
+  const id = 'custom:droidproxy:gpt-6-sol';
+  const workers = manager(f, []);
+  workers.modelGate = (model) => airgappedModelError(true, model, { models: [{ id, displayName: id, custom: true }], defaultModel: 'auto' });
+  assert.match(workers.spawn('desk-1', 'owner') as string, /configured custom model/);
+  assert.match(workers.spawn('desk-1', 'owner', undefined, false, 'agent', 'auto') as string, /configured custom model/);
+  assert.equal(workers.list().length, 0);
+  const result = workers.spawn('desk-1', 'owner', undefined, false, 'agent', id);
+  assert.notEqual(typeof result, 'string');
+  const invocation = (await waitFor(f.read, (records) => records.some((r) => r.kind === 'droid' && r.args.includes('--settings')))).find((r) => r.kind === 'droid' && r.args.includes('--settings'))!;
+  const settingsPath = invocation.args[invocation.args.indexOf('--settings') + 1];
+  assert.equal(JSON.parse(readFileSync(settingsPath, 'utf8')).sessionDefaultSettings.model, id, 'the real worker entry point receives the custom-model overlay');
+  if (typeof result === 'string') return;
+  // A worker created before the switch must not restart or fork on a now-ineligible model.
+  workers.halt(result.id);
+  result.model = 'auto';
+  assert.match(workers.resume(result.id)!, /configured custom model/);
+  assert.match((await workers.fork(result.id, 'owner')) as string, /configured custom model/);
+});
 
 test('a plain shell gets its hook identity for worktree setup reporting; Office MCP refuses non-agents itself', async (t) => {
   const f = fixture();

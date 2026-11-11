@@ -106,7 +106,7 @@ export function subagentModelPicker(save: (models: SubagentModel[] | undefined) 
     const rank = (m: DroidModelOption) => (m.custom ? -1 : (m.tokenMultiplier ?? Number.POSITIVE_INFINITY));
     const sorted = [...offered].sort((a, b) => Number(picked.has(b.id)) - Number(picked.has(a.id)) || Number(!!a.legacy) - Number(!!b.legacy) || rank(a) - rank(b));
     const rows: [string, DroidModelOption | undefined][] = [...[...picked.keys()].filter((id) => !known.has(id)).map((id): [string, undefined] => [id, undefined]), ...sorted.map((m): [string, DroidModelOption] => [m.id, m])];
-    const shown = rows.filter(([id, m]) => !want || [id, m?.displayName, m?.provider].some((s) => s?.toLowerCase().includes(want)));
+    const shown = rows.filter(([id, m]) => (!store.setup.airgapped || m?.custom) && (!want || [id, m?.displayName, m?.provider].some((s) => s?.toLowerCase().includes(want))));
     list.replaceChildren(...(shown.length ? shown.map(([id, m]) => row(id, m)) : [h('li.list-row.sub-model', {}, h('span.list-meta', {}, loaded === 'loading' ? 'Loading Droid models…' : 'No model matches.'))]));
     drawn = availabilityStamp();
     paintButtons();

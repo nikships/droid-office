@@ -77,6 +77,7 @@ export function pickerModel(m: DroidModelOption): PickerModel {
   const isDroidProxy = gateway === 'DroidProxy';
   return {
     id: m.id,
+    ...(m.custom ? { custom: true } : {}),
     name: isDroidProxy ? withoutGlyph(stripped) : stripped,
     ...groupAndScope(m, gateway, provider),
     ...(provider ? { provider } : {}),
@@ -122,7 +123,8 @@ export interface Catalogue {
 
 let catalogue: Catalogue | null = null;
 let catalogueAt = 0;
-let request: Promise<Catalogue> | null = null;
+let catalogueAirgapped = false;
+let request: { airgapped: boolean; promise: Promise<Catalogue> } | null = null;
 
 function asEffort(value: unknown): AgentEffort | undefined {
   return AGENT_EFFORTS.includes(value as AgentEffort) ? (value as AgentEffort) : undefined;
@@ -134,9 +136,10 @@ function asEfforts(value: unknown): AgentEffort[] | undefined {
 }
 
 function fetchCatalogue(): Promise<Catalogue> {
-  if (catalogue && Date.now() - catalogueAt < 60_000) return Promise.resolve(catalogue);
-  if (request) return request;
-  request = fetch(withToken('/api/agents/droid/models'), { credentials: 'same-origin', cache: 'no-store' })
+  const airgapped = !!store.setup.airgapped;
+  if (catalogue && catalogueAirgapped === airgapped && Date.now() - catalogueAt < 60_000) return Promise.resolve(catalogue);
+  if (request?.airgapped === airgapped) return request.promise;
+  const pending = fetch(withToken('/api/agents/droid/models'), { credentials: 'same-origin', cache: 'no-store' })
     .then(async (res) => {
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const body = (await res.json()) as { models?: unknown; defaultModel?: unknown; defaultReasoningEffort?: unknown };
@@ -168,12 +171,14 @@ function fetchCatalogue(): Promise<Catalogue> {
         ...(body.defaultReasoningEffort ? { defaultReasoningEffort: asEffort(body.defaultReasoningEffort) } : {}),
       };
       catalogueAt = Date.now();
+      catalogueAirgapped = airgapped;
       return catalogue;
     })
     .finally(() => {
-      request = null;
+      if (request?.promise === pending) request = null;
     });
-  return request;
+  request = { airgapped, promise: pending };
+  return pending;
 }
 
 /** Every model droid lists, with its default, cached for a minute. */
@@ -328,7 +333,7 @@ export function agentFields(id: string, initial: AgentChoice): AgentFields {
  * the office's default worker from the server, so its picker has to name that one, not Droid's.
  */
 function buildFields(id: string, key: string | undefined, initialModel: string | undefined, initialEffort: AgentEffort | undefined, fallback: () => AgentChoice): AgentFields {
-  const picker = modelPicker({ id, label: 'Droid model', models: initialModel ? [unlisted(initialModel)] : [], value: initialModel, none: SETTINGS_DEFAULT });
+  const picker = modelPicker({ id, label: 'Droid model', models: initialModel ? [unlisted(initialModel)] : [], value: initialModel, none: SETTINGS_DEFAULT, customOnly: () => !!store.setup.airgapped });
   const effortSelect = h('select.select.effort-select', { id: `${id}-effort`, 'aria-label': 'Reasoning effort' }) as HTMLSelectElement;
   const hint = h('small.model-hint', {}, LOADING_HINT);
   const selectedEffort = () => (effortSelect.value ? (effortSelect.value as AgentEffort) : undefined);
@@ -372,7 +377,7 @@ function buildFields(id: string, key: string | undefined, initialModel: string |
       .then(({ models }) => {
         // A remembered id the catalogue no longer lists is still offered, so the choice isn't silently dropped.
         const listed = models.map(pickerModel);
-        picker.setModels(selected && !models.some((m) => m.id === selected) ? [unlisted(selected), ...listed] : listed, defaultOption(defaultModel(), models));
+        picker.setModels(selected && !store.setup.airgapped && !models.some((m) => m.id === selected) ? [unlisted(selected), ...listed] : listed, defaultOption(defaultModel(), models));
         picker.set(selected ?? '');
         hint.textContent = models.length ? OVERRIDE_HINT : 'No Droid models found in the office settings — the worker runs the global default.';
         applyEfforts();
@@ -389,6 +394,7 @@ function buildFields(id: string, key: string | undefined, initialModel: string |
     remember('model', picker.value());
     applyEfforts();
   });
+  picker.element.addEventListener('click', fill);
   effortSelect.addEventListener('change', () => {
     wantedEffort = selectedEffort();
     remember('effort', effortSelect.value);
@@ -404,6 +410,10 @@ function buildFields(id: string, key: string | undefined, initialModel: string |
       fill();
     },
     choice: () => ({ ...(picker.value() ? { model: picker.value() } : {}), ...(effortSelect.value ? { effort: effortSelect.value as AgentEffort } : {}) }),
-    cannotRun: () => availabilityOf(picker.value() || defaultModel(), store.subscriptions, Date.now()).reason,
+    cannotRun: () => {
+      const id = picker.value() || defaultModel();
+      if (store.setup.airgapped && !catalogue?.models.some((m) => m.custom && m.id === id)) return 'Choose a configured custom model in airgapped mode.';
+      return availabilityOf(id, store.subscriptions, Date.now()).reason;
+    },
   };
 }

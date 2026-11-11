@@ -79,7 +79,7 @@ test('installed Droid moves on to the Factory account, and shows its version', (
   assert.equal(stepDone('droid', s, p), true);
   assert.equal(stepMeta('droid', s, p), 'Droid 0.249.0');
   assert.equal(currentStep(s, p), 'factory');
-  assert.deepEqual(stepPlan('factory', s, p), { primary: { kind: 'signIn', label: 'Sign in' }, secondary: null });
+  assert.deepEqual(stepPlan('factory', s, p), { primary: { kind: 'signIn', label: 'Sign in' }, secondary: { kind: 'airgapped', label: 'Use without an account (airgapped)' } });
 });
 
 test('the Factory account waits for Droid, and for a doctor that could not tell', () => {
@@ -190,6 +190,22 @@ test('Start saves the default worker only when the pick changed it', () => {
   assert.equal(defaultWorkerChange('claude-opus-5-5', { model: 'claude-opus-5-5', effort: 'high' }), undefined);
   assert.deepEqual(defaultWorkerChange('custom:droidproxy:gpt-6.1-sol', { model: 'claude-opus-5-5', effort: 'high' }), { model: 'custom:droidproxy:gpt-6.1-sol' });
   assert.equal(defaultWorkerChange('', { model: 'claude-opus-5-5' }), null);
+});
+
+test('airgapped setup completes the account step without auth, but Start requires a custom model', () => {
+  const s = { ...setup({ ...installed, signedIn: null }), airgapped: true, customModels: [] };
+  const p = subs({}, 'unsupported');
+  assert.equal(factoryPhase(s), 'airgapped');
+  assert.equal(stepDone('factory', s, p), true);
+  assert.equal(stepMeta('factory', s, p), 'Airgapped · no Factory account');
+  assert.equal(currentStep(s, p), 'ready');
+  assert.equal(stepPlan('ready', s, p).primary?.kind, 'blocked');
+  assert.equal(shouldAutoOpen(s, false, false), true);
+  s.customModels.push('custom:local:llama');
+  assert.equal(stepPlan('ready', s, p).primary?.kind, 'start');
+  assert.equal(readyModel(p, s.customModels, 'claude-opus-5-5', undefined, true), 'custom:local:llama');
+  assert.equal(stepPlan('factory', setup({ ...installed, signedIn: null }), p).secondary?.kind, 'airgapped', 'unknown auth must not trap no-account users');
+  assert.equal(stepPlan('ready', { ...s, airgapped: false }, p).primary?.kind, 'blocked');
 });
 
 test('usage windows: what is left, its tone and when it resets', () => {

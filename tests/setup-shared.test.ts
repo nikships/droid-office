@@ -32,6 +32,15 @@ test('an update is available only when the newest release is newer', () => {
   assert.equal(droidUpdateAvailable(ready({ latest: null }).droid), false);
 });
 
+test('airgapped readiness requires Droid and a custom model, never Factory auth', () => {
+  const state = { ...ready({ signedIn: null }), airgapped: true, customModels: ['custom:local:llama'] };
+  assert.equal(droidReady(state), true);
+  assert.equal(needsWelcome(state), true);
+  assert.equal(droidReady({ ...state, customModels: [] }), false);
+  assert.equal(droidReady({ ...state, droid: { ...state.droid, path: null } }), false);
+  assert.equal(droidReady({ ...state, airgapped: false }), false);
+});
+
 test('only models that would fail at once are refused', () => {
   assert.equal(cannotRun(undefined), false);
   assert.equal(cannotRun({ state: 'ok' }), false);

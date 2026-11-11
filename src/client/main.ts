@@ -3560,7 +3560,7 @@ window.addEventListener(OPEN_SETTINGS_EVENT, (e) => {
 });
 function droidMissing(): boolean {
   const d = store.setup.droid;
-  return d.busy !== 'checking' && (!d.path || d.signedIn === false);
+  return d.busy !== 'checking' && (!d.path || (store.setup.airgapped ? !store.setup.customModels?.length : d.signedIn === false));
 }
 /** F: hang a picture on a wall of this floor. There are no walls for them up on the roof. */
 function startHanging() {

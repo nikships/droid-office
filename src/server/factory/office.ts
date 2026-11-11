@@ -3,6 +3,7 @@ import path from 'node:path';
 import { FACTORY_GROUPS, FACTORY_KEYS_URL, type FactoryAccount, type FactoryCapability, type FactoryConnection, type FactoryGroup } from '../../shared/factory.js';
 import { redact } from '../jira.js';
 import { FACTORY_API, FactoryApi, FactoryError, fingerprint } from './api.js';
+import { AIRGAPPED_REASON } from '../../shared/setup.js';
 
 type Fetch = typeof fetch;
 
@@ -108,6 +109,7 @@ const checking = (group: FactoryGroup): FactoryCapability => ({ group, status: '
 const withCapability = (caps: FactoryCapability[], cap: FactoryCapability) => [...caps.filter((c) => c.group !== cap.group), cap];
 
 export interface FactoryOfficeOptions {
+  paused?: boolean;
   fetchImpl?: Fetch;
   base?: string;
   /** The connection changed: who it is, what it can reach, rejected, gone. */
@@ -170,7 +172,7 @@ export class FactoryOffice {
 
   /** The API as the key, while connected and not rejected. */
   client(): FactoryApi | undefined {
-    return this.saved && !this.saved.rejected ? this.api : undefined;
+    return !this.opts.paused && this.saved && !this.saved.rejected ? this.api : undefined;
   }
 
   /**
@@ -178,7 +180,18 @@ export class FactoryOffice {
    * writer, so their model calls land in this account.
    */
   key(): string | undefined {
-    return this.saved && !this.saved.rejected ? this.saved.key : undefined;
+    return !this.opts.paused && this.saved && !this.saved.rejected ? this.saved.key : undefined;
+  }
+
+  /** Suspend account work without changing the saved connection or credentials. */
+  setPaused(paused: boolean) {
+    if (!!this.opts.paused === paused) return;
+    this.opts.paused = paused;
+    this.generation++;
+    this.attempts++;
+    this.checkRun = undefined;
+    this.pending.clear();
+    this.changed();
   }
 
   private makeApi(key: string) {
@@ -190,6 +203,7 @@ export class FactoryOffice {
    * not. It answers once the quick probes are back; the slow sessions probe carries on and lands later.
    */
   async connect(raw: string, by: string): Promise<string | undefined> {
+    if (this.opts.paused) return AIRGAPPED_REASON;
     const key = raw.trim();
     if (key.length < 8 || key.length > 500 || /\s/.test(key)) return `That doesn’t look like a Factory API key. Make one at ${FACTORY_KEYS_URL}`;
     const api = this.makeApi(key);
@@ -220,7 +234,7 @@ export class FactoryOffice {
    * whether it still works. Every group reads as checking until its own probe answers.
    */
   check(): Promise<void> {
-    if (!this.saved || !this.api) return Promise.resolve();
+    if (this.opts.paused || !this.saved || !this.api) return Promise.resolve();
     if (this.checkRun) return this.checkRun;
     const gen = ++this.generation;
     const api = this.api;
