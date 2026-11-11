@@ -56,6 +56,8 @@ import {
 } from './dashboard-workspace';
 import { createPane, type Pane, type PaneHost, VIEW_KEY } from './dashboard-pane';
 import { createWorkerRoster } from './dashboard-roster';
+import { buildingRoster } from './dashboard-building';
+import { createBuildingView } from './dashboard-building-view';
 import { createWorkerMenu } from './dashboard-worker-menu';
 import { openForkWorker } from './ui/fork-worker';
 import { copy } from './ui/clipboard';
@@ -148,10 +150,13 @@ const addFloorBtn = h('button.btn.icon.sm.ghost.dash-floor-add', { type: 'button
 const reorderFloors = h('button.btn.icon.sm.ghost', { type: 'button', 'aria-label': 'Reorder floors', title: 'Reorder floors', onclick: () => openFloorOrder(net) }, icon('grip', 14));
 const floorPicker = h('div.dash-floor', {}, floors, addFloorBtn, reorderFloors);
 const boardCount = h('span.dash-count.hidden');
+let showingWorkers = false;
+const allWorkersCount = h('span.dash-building-nav-count');
+const allWorkersBtn = h('button.btn.ghost.dash-all-workers', { type: 'button', 'aria-controls': 'all-workers', 'aria-pressed': 'false', onclick: () => showWorkers(!showingWorkers) }, icon('bot', 14), 'All workers', allWorkersCount);
 const board = h('button.btn.ghost.dash-top-btn.dash-board', { type: 'button', title: 'The floor’s Whiteboard (⌘ B)', onclick: () => void openBoard() }, icon('board', 14), h('span.dash-top-label', {}, 'Whiteboard'), boardCount);
 const subscriptions = h('button.btn.ghost.dash-top-btn', { type: 'button', title: 'Subscriptions and account usage', onclick: () => openSubscriptionsStatus() }, icon('key', 14), h('span.dash-top-label', {}, 'Subscriptions'));
 const settingsBtn = h('button.btn.ghost.dash-top-btn', { type: 'button', title: 'Settings (⌘ ,)', onclick: () => void showSettings() }, icon('settings', 14), h('span.dash-top-label', {}, 'Settings'));
-const top = h('header.dash-top', {}, brand, floorPicker, h('div.dash-top-end', {}, settingsBtn, subscriptions, board));
+const top = h('header.dash-top', {}, brand, allWorkersBtn, floorPicker, h('div.dash-top-end', {}, settingsBtn, subscriptions, board));
 
 const bannerIcon = h('span.dash-banner-icon');
 const bannerText = h('p.dash-banner-text');
@@ -338,8 +343,26 @@ const rowHandle = h('div.dash-handle.row', { role: 'separator', 'aria-orientatio
 const workspaceEl = h('div.dash-workspace', {}, colHandle, rowHandle);
 const mainEl = h('main.dash-main', { id: 'worker-detail', tabindex: '-1', 'aria-label': 'Workspace' }, toolbar, workspaceEl);
 const content = h('div.dash-body', { hidden: true }, side, mainEl);
+const buildingView = createBuildingView({
+  open: (row) => {
+    if (!live()) return;
+    if (row.kind !== 'desk' || row.floorId === floor) openHere(row.worker.id, true);
+    else openAcross(row.worker.id, row.floorId);
+  },
+  workspace: () => showWorkers(false),
+  hire: () => hire(),
+});
 
-$('dashboard').replaceChildren(h('a.dash-skip', { href: '#worker-detail' }, 'Skip to the work'), top, banner, authPanel, content, live$);
+$('dashboard').replaceChildren(h('a.dash-skip', { href: '#worker-detail' }, 'Skip to the work'), top, banner, authPanel, content, buildingView.el, live$);
+
+function showWorkers(show: boolean) {
+  showingWorkers = show;
+  showLayouts(false);
+  workerMenu.close();
+  paint();
+  if (show) buildingView.focus();
+  else allWorkersBtn.focus({ preventScroll: true });
+}
 
 function keyHints(pairs: [string, string][]) {
   return pairs.map(([k, label]) => h('span', {}, h('span.key', {}, k), label));
@@ -420,6 +443,7 @@ const inMission = (id: string) => !store.workers.has(id) && !!missionWorker(stor
 /** Opens a worker in the workspace; `focusIt` puts the keyboard in it as well. */
 function openHere(id: string, focusIt = false, targetPane?: number) {
   if (!workerOf(id)) return;
+  showingWorkers = false;
   roster.reveal(id);
   openWorker(ws, id, targetPane);
   takeFocus = focusIt;
@@ -660,7 +684,7 @@ net.onMessage((msg) => {
   }
   if (entering || msg.t === 'floors' || msg.t === 'worker.update') followWorkerLink();
 });
-for (const topic of ['floors', 'workers', 'whiteboard', 'project', 'missionControl'] as const) store.on(topic, paint);
+for (const topic of ['floors', 'workers', 'building', 'whiteboard', 'project', 'missionControl'] as const) store.on(topic, paint);
 store.on('screens', () => {
   for (const p of panes) p?.paintQuestion();
   schedulePreviews();
@@ -670,7 +694,9 @@ function addFloor() {
   openAddFloor(net, (id) => goFloor(id));
 }
 function goFloor(id: string) {
-  if (!live() || id === store.floor) return;
+  if (!live()) return;
+  if (showingWorkers) showWorkers(false);
+  if (id === store.floor) return;
   closeAllModals();
   switching = true;
   if (!net.send({ t: 'floor.go', floor: id })) {
@@ -833,7 +859,14 @@ function paint() {
   linkDot.title = link;
   content.classList.toggle('dash-stale', !up);
   content.classList.toggle('side-closed', !sideOpen);
-  content.hidden = !authorized;
+  content.hidden = !authorized || showingWorkers;
+  buildingView.el.hidden = !authorized || !showingWorkers;
+  allWorkersBtn.hidden = !authorized;
+  allWorkersBtn.disabled = !authorized;
+  allWorkersBtn.setAttribute('aria-pressed', String(showingWorkers));
+  $('dashboard')
+    .querySelector('.dash-skip')
+    ?.setAttribute('href', showingWorkers ? '#all-workers-heading' : '#worker-detail');
   authPanel.hidden = authorized;
   floorPicker.hidden = !authorized;
   board.hidden = settingsBtn.hidden = !authorized;
@@ -843,6 +876,10 @@ function paint() {
     return paintGate();
   }
   paintFloors(up);
+  const buildingRows = buildingRoster({ floors: store.floors, building: store.building, currentFloor: store.floor, workers: store.workers.values(), mission: store.missionControl });
+  allWorkersCount.textContent = String(buildingRows.length);
+  allWorkersBtn.setAttribute('aria-label', `All workers, ${buildingRows.length}`);
+  if (showingWorkers) buildingView.update({ rows: buildingRows, floors: store.floors, live: up, mission: store.missionControl });
   const b = store.floor && store.whiteboard.board(store.floor);
   const unread = b ? cardsNewestFirst(b).filter((c) => cardChanged(b, OWNER, c.id)).length : 0;
   boardCount.textContent = String(unread);
@@ -1015,7 +1052,7 @@ function paintWorkspace() {
       covered: ws.maximized !== null && !max,
       candidates,
       anyone: store.workers.size > 0,
-      takeFocus: takeFocus && ws.focused === i,
+      takeFocus: !showingWorkers && takeFocus && ws.focused === i,
     });
   }
   workspaceEl.dataset.layout = ws.layout;
