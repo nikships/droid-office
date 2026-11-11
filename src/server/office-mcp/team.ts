@@ -32,6 +32,14 @@ function reply(result: TeamReply, describe: (body: Record<string, unknown>) => s
   return officeResult(describe(result.body), result.body);
 }
 
+function integrationReply(result: TeamReply) {
+  if (result.status < 400 || !result.body.status) return reply(result, (body) => String(body.summary));
+  const body = result.body;
+  const hint = (body.remaining as string[] | undefined)?.join('\n') ?? String(body.summary);
+  const code = (body.conflicts as unknown[] | undefined)?.length ? 'merge_conflict' : body.status === 'blocked' ? 'integration_blocked' : 'integration_failed';
+  return { ...officeResult(`${body.summary}\n${hint}`, { ...body, code, hint }), isError: true };
+}
+
 /** At rest after a progress report: done in status only. */
 const PROGRESS_REST = 'Not finished: its turn ended after a progress report, and it waits on its own background work (such as a long job) to wake it. If that has run far longer than the report expects, check it with worker_log.';
 
@@ -164,13 +172,7 @@ export function register(server: OfficeMcpServer, deps: OfficeMcpDeps): void {
     officeAccess.team,
     async (args, caller) => {
       if (args.floor && !caller.building) return officeError('Floor workers manage only their own floor');
-      const result = await command(caller, { action: 'merge', ...args });
-      if (result.status >= 400 && result.body.status) {
-        const body = result.body;
-        const hint = (body.remaining as string[]).join('\n');
-        return { ...officeResult(`${body.summary}\n${hint}`, { ...body, code: body.status === 'blocked' ? 'merge_conflict' : 'integration_failed', hint }), isError: true };
-      }
-      return reply(result, (body) => String(body.summary));
+      return integrationReply(await command(caller, { action: 'merge', ...args }));
     },
   );
   server.tool(
@@ -183,14 +185,14 @@ export function register(server: OfficeMcpServer, deps: OfficeMcpDeps): void {
         floor: floorArg,
         title: z.string().trim().min(1).max(200),
         body: z.string().max(20_000).optional().describe('PR description, including the complete change and checks.'),
-        base: z.string().trim().min(1).max(200).optional().describe('Target branch on the forge; omit for its default branch.'),
+        base: z.string().trim().min(1).max(200).optional().describe('Target branch on the forge; omit for the worker’s recorded starting branch, then the floor branch. No leading dash.'),
       }),
       annotations: { ...changesState, openWorldHint: true },
     },
     officeAccess.team,
     async (args, caller) => {
       if (args.floor && !caller.building) return officeError('Floor workers manage only their own floor');
-      return reply(await command(caller, { action: 'pr', ...args }), (body) => String(body.summary));
+      return integrationReply(await command(caller, { action: 'pr', ...args }));
     },
   );
   server.tool(

@@ -351,6 +351,11 @@ export class Floor {
         dir: def.dir,
         git: !this.plain && !!this.project.branch,
         pulls: this.board,
+        baseBranch: () => workers.selectedBranch ?? workers.baseBranch ?? this.project.branch,
+        onPull: (id, pr) => {
+          workers.recordPull(id, pr);
+          void this.board.refresh();
+        },
         settings: () => ctx.subagents(),
         ...(ctx.droidModels ? { models: ctx.droidModels.bind(ctx) } : {}),
         availability: (model) => ctx.modelAvailability?.(model),

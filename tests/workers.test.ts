@@ -417,6 +417,9 @@ test('Droid workers launch with their own hook overlay and resume the correct se
   workers.setTask(worker.id, { name: 'Worker Hooks', summary: 'Verified resume handling', generated: true, textHash: 'a'.repeat(64) });
   hook('UserPromptSubmit', { prompt: 'continue with another check' }, second.env.hookToken!);
   assert.equal(workers.get(worker.id)?.task?.summary, 'Verified resume handling', 'a prompt preview cannot overwrite generated labels');
+  const pull = { number: 42, url: 'https://github.com/example/project/pull/42' };
+  workers.recordPull(worker.id, pull);
+  assert.deepEqual(updates.at(-1)?.pr, pull, 'an MCP-created PR updates the live worker card');
   workers.shutdown();
   const restored = manager(f, []);
   t.after(() => restored.shutdown());
@@ -424,6 +427,7 @@ test('Droid workers launch with their own hook overlay and resume the correct se
   assert.equal(restored.get(worker.id)?.sessionId, 'droid-1');
   assert.equal(restored.get(worker.id)?.task?.generated, true);
   assert.equal(restored.get(worker.id)?.task?.textHash, 'a'.repeat(64));
+  assert.deepEqual(restored.get(worker.id)?.pr, pull, 'an MCP-created PR survives a restart');
   const third = (
     await waitFor(
       () => launchesOf(f),

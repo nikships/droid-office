@@ -28,7 +28,7 @@ import { fallbackTask } from './tasks.js';
 import { todoProgress, todosFinished, validTodoProgress } from '../shared/todos.js';
 import { forkRefusal, nearestForkSeat } from '../shared/worker-fork.js';
 import { githubPulls } from './github.js';
-import type { PullHost } from './forge.js';
+import type { PullHost, PullRef } from './forge.js';
 import { forgeWords, type Forge } from '../shared/floors.js';
 import { PtyHost, SCROLLBACK, type Adopted, type Pty } from './ptys.js';
 import { DroidSessionReader } from './droid-session.js';
@@ -938,6 +938,15 @@ export class WorkerManager {
     if (info?.remote) return `${info.name} is an external worker. No local terminal is available.\nStatus: ${info.status}\n${info.activity ?? ''}`;
     const term = this.workers.get(id)?.term;
     return term ? plainTail(term, lines) : undefined;
+  }
+
+  /** Keep a PR opened through Office MCP on the worker card and across restarts. */
+  recordPull(id: string, pr: PullRef) {
+    const w = this.workers.get(id);
+    if (!w || this.closing) return;
+    w.info.pr = pr;
+    this.emitUpdate(w);
+    this.persist();
   }
 
   /** The card over a worker's head, until its own sign writer has something better (a subagent's title from its lead). */

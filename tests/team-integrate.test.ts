@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { integrateWorker, type ConflictFile } from '../src/server/team-integrate.js';
@@ -72,7 +72,15 @@ function fixture(t: { after(fn: () => void): void }) {
     t.after(() => instance.stop());
     return instance;
   };
-  return { dir, cwd, git, commit, base, worker, lead, people, team, hired: () => hired };
+  const push = () => {
+    const origin = path.join(dir, '.droid-office', 'origin.git');
+    if (!existsSync(origin)) {
+      git(dir, 'init', '-q', '--bare', origin);
+      git(dir, 'remote', 'add', 'origin', origin);
+    }
+    git(cwd, 'push', '-q', 'origin', 'HEAD');
+  };
+  return { dir, cwd, git, commit, push, base, worker, lead, people, team, hired: () => hired };
 }
 
 test('team merge lands a worker on the lead branch and returns a one-line summary', async (t) => {
@@ -86,6 +94,9 @@ test('team merge lands a worker on the lead branch and returns a one-line summar
   assert.equal(String(result.body.summary).includes('\n'), false);
   assert.equal(readFileSync(path.join(r.dir, 'feature.txt'), 'utf8'), 'implemented\n');
   assert.equal(r.git(r.cwd, 'branch', '--show-current'), 'office/sub');
+  const unchanged = await r.team().handle(r.lead, { action: 'merge', worker: 'Pixel' });
+  assert.equal(unchanged.status, 200);
+  assert.equal((unchanged.body.artifacts as { mergeCommit?: string }).mergeCommit, undefined);
 });
 
 test('another unchecked-out target uses a temporary worktree without switching the floor', async (t) => {
@@ -230,7 +241,9 @@ test('worker and path handoffs pin committed HEAD and preserve original dirty fi
 test('team PR uses the current worker branch and the floor forge without pushing', async (t) => {
   const r = fixture(t);
   r.git(r.cwd, 'switch', '-c', 'reviewed');
+  r.push();
   const calls: unknown[][] = [];
+  const recorded: unknown[][] = [];
   const result = await r
     .team({
       pulls: {
@@ -239,11 +252,16 @@ test('team PR uses the current worker branch and the floor forge without pushing
           return { number: 7, url: 'https://github.com/example/repo/pull/7' };
         },
       },
+      onPull: (...args) => {
+        recorded.push(args);
+      },
     })
     .handle(r.lead, { action: 'pr', worker: 'Pixel', title: 'Feature', body: 'Checks passed', base: 'release' });
   assert.equal(result.status, 200);
   assert.deepEqual(calls, [[r.cwd, 'reviewed', 'release', 'Feature', 'Checks passed']]);
   assert.equal(result.body.branch, 'reviewed');
+  assert.deepEqual(recorded, [['sub', { number: 7, url: 'https://github.com/example/repo/pull/7' }]]);
+  assert.equal(r.worker.pr?.number, 7);
 });
 
 test('plain floors, dirty targets and invalid cherry-pick arguments explain why integration cannot run', async (t) => {
@@ -253,6 +271,183 @@ test('plain floors, dirty targets and invalid cherry-pick arguments explain why 
   assert.equal((await r.team().handle(r.lead, { ...args, commits: ['HEAD'] })).status, 400);
   writeFileSync(path.join(r.dir, 'shared.txt'), 'owner work\n');
   const result = await r.team().handle(r.lead, args);
-  assert.match(String(result.body.error), /uncommitted changes/);
+  assert.equal(result.status, 409);
+  assert.equal(result.body.status, 'blocked');
+  assert.match(String(result.body.summary), /uncommitted changes/);
+  assert.equal(result.body.worktree, r.dir);
   assert.equal(readFileSync(path.join(r.dir, 'shared.txt'), 'utf8'), 'owner work\n');
+});
+
+test('follow-up cherry-pick excludes equivalent landed patches and resolves HEAD in the worker', async (t) => {
+  const r = fixture(t);
+  r.commit(r.dir, 'lead.txt', 'lead\n');
+  r.commit(r.cwd, 'one.txt', 'one\n');
+  const first = await integrateWorker(r.dir, r.worker, { target: 'main', mode: 'cherry-pick' });
+  assert.equal(first.status, 'ok');
+  assert.equal(first.artifacts?.mergeCommit, undefined);
+  r.commit(r.cwd, 'two.txt', 'two\n');
+  const next = await integrateWorker(r.dir, r.worker, { target: 'main', mode: 'cherry-pick' });
+  assert.equal(next.status, 'ok');
+  assert.equal(next.artifacts?.commits.length, 1);
+  assert.equal(r.git(r.dir, 'show', 'HEAD:two.txt'), 'two');
+  r.git(r.dir, 'branch', 'selected', r.base);
+  const explicit = await integrateWorker(r.dir, r.worker, { target: 'selected', mode: 'cherry-pick', commits: ['HEAD'] });
+  assert.equal(explicit.status, 'ok');
+  assert.equal(r.git(r.dir, 'show', 'selected:two.txt'), 'two');
+  assert.throws(() => r.git(r.dir, 'show', 'selected:lead.txt'));
+});
+
+test('self-targets and another worker checkout are blocked before Git changes', async (t) => {
+  const r = fixture(t);
+  const team = r.team();
+  const self = await team.handle(r.lead, { action: 'merge', worker: 'sub', target: 'office/sub' });
+  assert.equal(self.status, 409);
+  assert.match(String(self.body.summary), /itself/);
+  for (const status of ['working', 'needs_input'] as const) {
+    r.people.set('busy', { ...r.lead, id: 'busy', name: 'Busy', status });
+    const result = await team.handle(r.lead, { action: 'merge', worker: 'sub' });
+    assert.equal(result.status, 409);
+    assert.equal(result.body.status, 'blocked');
+    assert.match(String(result.body.summary), /Busy/);
+  }
+  r.people.delete('busy');
+  const other = path.join(r.dir, '.droid-office', 'worktrees', 'other');
+  r.git(r.dir, 'worktree', 'add', '-b', 'other', other);
+  r.people.set('other', { ...r.worker, id: 'other', name: 'Other', status: 'done', worktree: { path: other, branch: 'other' } });
+  const result = await team.handle(r.lead, { action: 'merge', worker: 'sub', target: 'other' });
+  assert.equal(result.status, 409);
+  assert.match(String(result.body.summary), /Other/);
+  assert.equal(r.git(other, 'rev-parse', 'HEAD'), r.base);
+});
+
+for (const marker of ['MERGE_HEAD', 'CHERRY_PICK_HEAD', 'REVERT_HEAD', 'rebase-merge', 'rebase-apply', 'BISECT_LOG']) {
+  test(`pre-existing ${marker} is blocked and left untouched`, async (t) => {
+    const r = fixture(t);
+    const file = path.join(r.dir, '.git', marker);
+    if (marker.startsWith('rebase-')) mkdirSync(file);
+    else writeFileSync(file, `${r.base}\n`);
+    const result = await r.team().handle(r.lead, { action: 'merge', worker: 'sub' });
+    assert.equal(result.status, 409);
+    assert.equal(result.body.status, 'blocked');
+    assert.match(String(result.body.summary), new RegExp(marker));
+    assert.equal(existsSync(file), true);
+  });
+}
+
+test('non-conflict merge/cherry-pick failures abort Git state and remove temporary targets', async (t) => {
+  const r = fixture(t);
+  r.commit(r.cwd, 'feature.txt', 'feature\n');
+  r.commit(r.dir, 'lead.txt', 'lead\n');
+  const hook = path.join(r.dir, '.git', 'hooks', 'commit-msg');
+  writeFileSync(hook, '#!/bin/sh\nexit 1\n');
+  chmodSync(hook, 0o755);
+  const before = r.git(r.dir, 'rev-parse', 'HEAD');
+  const result = await integrateWorker(r.dir, r.worker, { target: 'main', mode: 'merge' });
+  assert.equal(result.status, 'failed');
+  assert.equal(existsSync(path.join(r.dir, '.git', 'MERGE_HEAD')), false);
+  assert.equal(r.git(r.dir, 'status', '--porcelain'), '');
+  assert.equal(r.git(r.dir, 'rev-parse', 'HEAD'), before);
+  r.git(r.dir, 'branch', 'temporary-target');
+  const temp = await integrateWorker(r.dir, r.worker, { target: 'temporary-target', mode: 'merge' });
+  assert.equal(temp.status, 'failed');
+  assert.ok(!readdirSync(path.join(r.dir, '.droid-office', 'worktrees')).some((name) => name.startsWith('integration-')));
+  rmSync(hook);
+  // An explicitly repeated patch is empty, not a conflict; it must not leave CHERRY_PICK_HEAD.
+  const empty = await integrateWorker(r.dir, r.worker, { target: 'main', mode: 'cherry-pick', commits: [r.base] });
+  assert.equal(empty.status, 'failed');
+  assert.equal(existsSync(path.join(r.dir, '.git', 'CHERRY_PICK_HEAD')), false);
+  assert.equal(r.git(r.dir, 'status', '--porcelain'), '');
+  assert.ok(!String(empty.remaining).includes('--continue'));
+});
+
+test('worktree-add failure removes the newly allocated integration directory', async (t) => {
+  const r = fixture(t);
+  r.git(r.dir, 'branch', 'target');
+  const hook = path.join(r.dir, '.git', 'hooks', 'post-checkout');
+  writeFileSync(hook, '#!/bin/sh\nexit 1\n');
+  chmodSync(hook, 0o755);
+  await assert.rejects(() => integrateWorker(r.dir, r.worker, { target: 'target', mode: 'merge' }));
+  assert.ok(!readdirSync(path.join(r.dir, '.droid-office', 'worktrees')).some((name) => name.startsWith('integration-')));
+  assert.equal(
+    r
+      .git(r.dir, 'worktree', 'list', '--porcelain')
+      .split('\n')
+      .filter((line) => line.startsWith('worktree ')).length,
+    2,
+  );
+});
+
+test('handoff accepts canonical aliases, detached workers and dismissed registered worktrees', async (t) => {
+  const r = fixture(t);
+  const sha = r.commit(r.cwd, 'feature.txt', 'feature\n');
+  const alias = path.join(r.dir, '.droid-office', 'alias');
+  symlinkSync(r.cwd, alias);
+  const team = r.team();
+  const linked = await team.handle(r.lead, { action: 'hire', task: 'Continue', from: alias, worktree: true });
+  assert.equal(linked.status, 200);
+  assert.equal((linked.body.handoff as { commit: string }).commit, sha);
+  r.people.delete('next');
+  r.git(r.cwd, 'switch', '--detach');
+  const detached = await team.handle(r.lead, { action: 'hire', task: 'Continue', from: 'worker:Pixel', worktree: true });
+  assert.equal(detached.status, 200);
+  assert.equal((detached.body.handoff as { branch: string }).branch, 'office/sub');
+  r.people.delete('sub');
+  r.people.delete('next');
+  const kept = await team.handle(r.lead, { action: 'hire', task: 'Continue', from: r.cwd, worktree: true });
+  assert.equal(kept.status, 200);
+  assert.equal((kept.body.handoff as { branch: string }).branch, sha.slice(0, 8));
+});
+
+test('a retained conflicted integration worktree can start a fresh follow-up at committed HEAD', async (t) => {
+  const r = fixture(t);
+  r.commit(r.cwd, 'shared.txt', 'worker\n');
+  const before = r.commit(r.dir, 'shared.txt', 'lead\n');
+  r.git(r.dir, 'branch', 'target');
+  const conflict = await integrateWorker(r.dir, r.worker, { target: 'target', mode: 'merge' });
+  assert.equal(conflict.status, 'blocked');
+  const result = await r.team().handle(r.lead, { action: 'hire', task: 'Follow up', from: conflict.worktree, worktree: true });
+  assert.equal(result.status, 200);
+  assert.equal((result.body.handoff as { commit: string }).commit, before);
+});
+
+test('PR creation blocks unpublished or stale remote heads and defaults to worker then floor base', async (t) => {
+  const r = fixture(t);
+  const bases: (string | undefined)[] = [];
+  const team = r.team({
+    baseBranch: () => 'release',
+    pulls: {
+      createPull: async (_cwd, _branch, base) => {
+        bases.push(base);
+        return { number: 8, url: 'https://github.com/example/repo/pull/8' };
+      },
+    },
+  });
+  const args = { action: 'pr', worker: 'sub', title: 'Feature' };
+  assert.equal((await team.handle(r.lead, args)).body.status, 'blocked');
+  r.push();
+  r.commit(r.cwd, 'feature.txt', 'feature\n');
+  assert.equal((await team.handle(r.lead, args)).body.status, 'blocked');
+  assert.deepEqual(bases, []);
+  r.push();
+  assert.equal((await team.handle(r.lead, args)).status, 200);
+  r.worker.worktree!.from = 'origin/develop';
+  assert.equal((await team.handle(r.lead, args)).status, 200);
+  assert.deepEqual(bases, ['release', 'develop']);
+  assert.equal((await team.handle(r.lead, { ...args, base: '--draft' })).status, 400);
+});
+
+test('adjacent conflict markers produce separate hunks without no-newline annotations', async (t) => {
+  const r = fixture(t);
+  r.commit(r.dir, 'shared.txt', 'one\nbetween-a\nbetween-b\nbetween-c\nbetween-d\nbetween-e\nlast');
+  r.git(r.cwd, 'merge', '--ff-only', 'main');
+  r.commit(r.cwd, 'shared.txt', 'worker one\nbetween-a\nbetween-b\nbetween-c\nbetween-d\nbetween-e\nworker last');
+  r.commit(r.dir, 'shared.txt', 'lead one\nbetween-a\nbetween-b\nbetween-c\nbetween-d\nbetween-e\nlead last');
+  const result = await integrateWorker(r.dir, r.worker, { target: 'main', mode: 'merge' });
+  assert.equal(result.status, 'blocked');
+  const hunks = result.conflicts![0].hunks;
+  assert.equal(hunks.length, 2);
+  assert.equal(hunks[0].header, hunks[1].header, 'both conflict blocks are inside the same combined diff hunk');
+  assert.equal(hunks[0].ours, 'lead one\n');
+  assert.equal(hunks[1].theirs, 'worker last\n');
+  assert.ok(!JSON.stringify(hunks).includes('No newline at end of file'));
 });

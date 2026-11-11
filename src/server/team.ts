@@ -5,7 +5,7 @@
 // turn, needs input in its terminal, stops or leaves. A lead at rest is told when there's news
 // (SubagentSettings.wakeLead), or polls its team's status without blocking.
 
-import { readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { DESK_BY_ID, nearestFreeSeat } from '../shared/layout.js';
 import { AGENT_EFFORTS, isAgentEffort, type AgentChoice, type SubagentModel, type SubagentSettings, type WorkerInfo, type WorkerStatus, type WorkerTask } from '../shared/protocol.js';
@@ -18,8 +18,8 @@ import { hireRefusal } from './subscriptions/map.js';
 import { isBuildingAgent, MISSION_CONTROL_DOOR } from './building-agent.js';
 import { modelList, outsideModelList, outsideModelListMessage } from './model-policy.js';
 import { pushedSha, workerDiff } from './team-inspect.js';
-import { commitAt, currentBranch, integrateWorker, workerBranch, workerCwd } from './team-integrate.js';
-import type { PullHost } from './forge.js';
+import { canonicalPath, currentBranch, handoffStart, integrateWorker, verifyPushed, workerBranch, workerCwd } from './team-integrate.js';
+import type { PullHost, PullRef } from './forge.js';
 
 /** What the team needs from the floor's workers. Narrow on purpose, so a test can fake it. */
 export interface TeamWorkers {
@@ -51,6 +51,8 @@ export interface TeamOptions {
   /** It's a git checkout, so subagents can have worktrees. */
   git: boolean;
   pulls?: Pick<PullHost, 'createPull'>;
+  baseBranch?(): string | undefined;
+  onPull?(worker: string, pr: PullRef): void;
   settings(): SubagentSettings;
   /** Droid's model list, for team_models. None: only what the settings name. */
   models?: () => Promise<DroidModelCatalogue>;
@@ -856,16 +858,15 @@ export class Team {
     if (b.worktree === true && !this.opts.git) return no(400, "This floor's project isn't a git checkout, so subagents can't have worktrees: set worktree: false in team_hire");
     const worktree = (typeof b.worktree === 'boolean' ? b.worktree : s.worktree) && this.opts.git;
     let from = typeof b.from === 'string' && b.from.trim() ? b.from.trim() : undefined;
-    let handoff: { worker: string; name: string; branch: string; commit: string } | undefined;
+    let handoff: Awaited<ReturnType<typeof handoffStart>> | undefined;
     if (from && worktree && (from.startsWith('worker:') || path.isAbsolute(from))) {
-      const location = from;
-      const source = from.startsWith('worker:') ? this.resolve(lead, from.slice(7)) : this.teamOf(lead.id).find((w) => w.worktree && workerCwd(this.opts.dir, w) === path.resolve(location));
-      if (!source || typeof source === 'string') return no(404, typeof source === 'string' ? source : 'No subagent worktree at that path. Use worker:<name or id>, or a branch.');
       try {
-        const branch = await workerBranch(this.opts.dir, source);
-        const commit = await commitAt(workerCwd(this.opts.dir, source), 'HEAD');
-        handoff = { worker: source.id, name: source.name, branch, commit };
-        from = commit;
+        const source = from.startsWith('worker:')
+          ? this.resolve(lead, from.slice(7))
+          : this.workers.list().find((w) => w.worktree && existsSync(workerCwd(this.opts.dir, w)) && canonicalPath(workerCwd(this.opts.dir, w)) === canonicalPath(from!));
+        if (typeof source === 'string') return no(404, source);
+        handoff = await handoffStart(this.opts.dir, source ? workerCwd(this.opts.dir, source) : from, source);
+        from = handoff.commit;
       } catch (err) {
         return no(400, (err as Error).message);
       }
@@ -911,10 +912,11 @@ export class Team {
     if (isBuildingAgent(lead) && !b.target) return no(400, 'Building agents have no branch: name the target local branch to integrate into.');
     try {
       const target = typeof b.target === 'string' ? b.target.trim() : await currentBranch(workerCwd(this.opts.dir, lead));
-      const result = await integrateWorker(this.opts.dir, w, { target, mode: b.mode === 'cherry-pick' ? 'cherry-pick' : 'merge', commits: b.commits as string[] | undefined });
+      const result = await integrateWorker(this.opts.dir, w, { target, mode: b.mode === 'cherry-pick' ? 'cherry-pick' : 'merge', commits: b.commits as string[] | undefined, lead: lead.id, workers: this.workers.list() });
       return { status: result.status === 'ok' ? 200 : 409, body: { worker: w.id, ...result } };
     } catch (err) {
-      return no(400, (err as Error).message);
+      const summary = (err as Error).message;
+      return { status: 400, body: { status: 'failed', summary, error: summary, remaining: ['Correct the repository or revision error before retrying.'] } };
     }
   }
 
@@ -924,13 +926,31 @@ export class Team {
     if (!this.opts.git || !this.opts.pulls) return no(400, 'This floor cannot open pull requests.');
     const title = str(b.title, 200).trim();
     if (!title) return no(400, 'Provide the pull request title.');
-    if (b.base !== undefined && (typeof b.base !== 'string' || !b.base.trim())) return no(400, 'base takes the pull request target branch.');
+    if (b.base !== undefined && (typeof b.base !== 'string' || !b.base.trim() || b.base.trim().startsWith('-'))) return no(400, 'base takes a target branch without a leading dash.');
     try {
       const branch = await workerBranch(this.opts.dir, w);
-      const pr = await this.opts.pulls.createPull(workerCwd(this.opts.dir, w), branch, typeof b.base === 'string' ? b.base.trim() : undefined, title, str(b.body, TASK_MAX));
+      const base = (typeof b.base === 'string' ? b.base.trim() : (w.worktree?.from ?? this.opts.baseBranch?.()))?.replace(/^origin\//, '');
+      if (base?.startsWith('-')) return no(400, 'base takes a target branch without a leading dash.');
+      try {
+        await verifyPushed(this.opts.dir, w, branch);
+      } catch (err) {
+        return {
+          status: 409,
+          body: {
+            status: 'blocked',
+            summary: `Cannot open a PR from ${branch}: ${(err as Error).message}`,
+            remaining: [`Push the committed branch ${branch} to origin and confirm its remote HEAD matches.`],
+            worktree: workerCwd(this.opts.dir, w),
+          },
+        };
+      }
+      const pr = await this.opts.pulls.createPull(workerCwd(this.opts.dir, w), branch, base, title, str(b.body, TASK_MAX));
+      w.pr = pr;
+      this.opts.onPull?.(w.id, pr);
       return ok({ status: 'ok', worker: w.id, branch, pr, artifacts: { prUrl: pr.url, prNumber: pr.number }, summary: `Opened ${pr.url} from ${branch}.` });
     } catch (err) {
-      return no(400, (err as Error).message);
+      const summary = (err as Error).message;
+      return { status: 400, body: { status: 'failed', summary, error: summary, remaining: ['Read the forge error before retrying PR creation.'] } };
     }
   }
 

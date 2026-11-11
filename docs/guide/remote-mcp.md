@@ -288,7 +288,7 @@ Hire one fresh subagent at the nearest free desk for an independent task. It get
 | `task` | object | no | Structured task ticket. Its title/brief take precedence; an optional baseBranch controls the fresh worktree base. Fields: `title`, `brief`, `repo` (an open floor's id or name, or its repository path), optional `baseBranch`, and optional `branch`, `prNumber` and `acceptanceCriteria`. A structured task uses a fresh worktree unless `worktree: false`; then it has no baseBranch or branch. |
 | `model` | string | no | Id from team_models. Omit for the Subagents setting, else the office default, else Droid default. Pick by owner notes, task difficulty and credit multiplier. |
 | `effort` | "low" \| "medium" \| "high" \| "xhigh" \| "max" | no | Reasoning effort; choose a value this model supports according to team_models. Omit to inherit its configured effort. |
-| `from` | string | no | Branch, tag or commit for the fresh worktree, without spaces or a leading dash. Origin is fetched first. Omit to start on your branch at HEAD, refreshed if behind origin. Only committed work follows. Requires worktree: true. |
+| `from` | string | no | Branch/tag/commit, worker:<name or id>, or a registered worktree's absolute path for the fresh worktree, without spaces or a leading dash. Origin is fetched first. Omit to start on your branch at HEAD, refreshed if behind origin. Only committed work follows. Requires worktree: true. |
 | `worktree` | boolean | no | Omit to follow the owner's Subagents setting (office_whoami shows it). True: isolated git worktree. False: use the project main checkout without switching its branch, only for read-only work or when your uncommitted changes must be visible. Non-git floors require false. |
 
 ### `team_status`
@@ -364,7 +364,7 @@ Open an authorized PR/MR from an already-pushed worker branch through its floor'
 | `floor` | string | no | Open floor id, name or checkout path, when needed to resolve the worker. |
 | `title` | string | yes | Pull request title. |
 | `body` | string | no | Description and checks. |
-| `base` | string | no | Target branch on the forge; omit for its default. |
+| `base` | string | no | Target branch on the forge; omit for the worker's recorded starting branch, then the floor branch. No leading dash. |
 
 ### `worker_diff`
 
