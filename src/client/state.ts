@@ -29,6 +29,7 @@ import type { Decoration } from '../shared/decor';
 import { JUKEBOX_TUNES, type JukeboxState } from '../shared/jukebox';
 import { forgeWords, type ForgeWords } from '../shared/floors';
 import type { JiraBoardState, JiraFloorState } from '../shared/jira';
+import { DEFAULT_AUTOPILOT, type LinearBoardState, type LinearFloorState } from '../shared/linear';
 import { emptyFactoryState, type FactoryState } from '../shared/factory';
 import { emptySetupState, type SetupState } from '../shared/setup';
 import { emptySubscriptionsState, type SubscriptionsState } from '../shared/subscriptions';
@@ -65,6 +66,8 @@ export type Topic =
   | 'prompts'
   | 'jira'
   | 'jiraBoard'
+  | 'linear'
+  | 'linearBoard'
   | 'factory'
   | 'setup'
   | 'subscriptions'
@@ -267,6 +270,10 @@ export class Store {
   jira: JiraFloorState = {};
   /** The Jira tab of the issue board; null on a floor without an epic. */
   jiraBoard: JiraBoardState | null = null;
+  /** The office's Linear workspace, this floor's team and its autopilot. */
+  linear: LinearFloorState = { autopilot: { ...DEFAULT_AUTOPILOT }, working: 0 };
+  /** The Linear tab of the issue board; null on a floor without a Linear team. */
+  linearBoard: LinearBoardState | null = null;
   /** How busy the office's machine is, and its worker limit. */
   machine: MachineState = { cpu: 0, cores: 0, memUsed: 0, memTotal: 0, history: [], workers: 0 };
   /** Outside the windows; null until the server says. */
@@ -349,11 +356,13 @@ export class Store {
     this.pipelines = v.pipelines ?? NO_PIPELINES;
     this.jira = v.jira ?? {};
     this.jiraBoard = v.jiraBoard ?? null;
+    this.linear = v.linear ?? { autopilot: { ...DEFAULT_AUTOPILOT }, working: 0 };
+    this.linearBoard = v.linearBoard ?? null;
     this.decor = v.decor;
     this.worktreeSetup = null;
     // The new floor's visits follow in their own message.
     this.visits = [];
-    for (const t of ['floor', 'project', 'workers', 'issues', 'pulls', 'pipelines', 'decor', 'jira', 'jiraBoard', 'worktreeSetup', 'visits'] as Topic[]) this.emit(t);
+    for (const t of ['floor', 'project', 'workers', 'issues', 'pulls', 'pipelines', 'decor', 'jira', 'jiraBoard', 'linear', 'linearBoard', 'worktreeSetup', 'visits'] as Topic[]) this.emit(t);
   }
 
   /** When the track started on this page's clock: from the office's clock once it's known, else from `elapsed`. */
@@ -507,6 +516,14 @@ export class Store {
       case 'jira.board':
         this.jiraBoard = msg.state;
         this.emit('jiraBoard');
+        break;
+      case 'linear':
+        this.linear = msg.state;
+        this.emit('linear');
+        break;
+      case 'linear.board':
+        this.linearBoard = msg.state;
+        this.emit('linearBoard');
         break;
       case 'machine':
         this.machine = msg.state;

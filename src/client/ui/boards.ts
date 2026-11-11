@@ -7,12 +7,13 @@ import { h, openModal, timeAgo } from './dom';
 import { emptyState } from './kit';
 import { labelChip, openIssue, openLabels, openPull } from './pull';
 import { renderJiraBoard } from './jira';
+import { autopilotSummary, openNewLinearTicket, renderLinearBoard } from './linear';
 import { officePrompt } from './prompts';
 import { issuePromptVars } from '../../shared/prompts';
 
 export interface BoardActions {
-  /** Start a worker on a ready-made prompt (shown for editing first). With `issue`, the worker takes that issue, which moves it to In progress. */
-  assign(prompt: string, title: string, issue?: number): void;
+  /** Start a worker on a ready-made prompt (shown for editing first). With `issue`, the worker takes that issue, which moves it to In progress; with `linear`, that Linear ticket. */
+  assign(prompt: string, title: string, issue?: number, linear?: string): void;
   /** Your own prompt about an issue or PR; `context` goes first so the worker knows which. */
   ask(context: string, title: string): void;
   /** Walks you to the desk a pull request came from. */
@@ -106,7 +107,7 @@ function labelChips(labels: GhLabel[]) {
 const CHECK_WORD: Record<GhPull['checks'], string> = { pass: 'Checks passed', fail: 'Checks failing', pending: 'Checks running', none: '' };
 
 /** A chip naming a worker and desk, color-coded to match the worker back on the floor. */
-function workerChip(w: WorkerInfo, title: string) {
+export function workerChip(w: WorkerInfo, title: string) {
   const chip = h('span.desk-link', { title }, `${w.name} · ${DESK_BY_ID.get(w.deskId)?.label ?? 'a desk'}`);
   chip.style.setProperty('--dot', w.color);
   return chip;
@@ -161,22 +162,26 @@ function checksDot(state: GhPull['checks']): Piece {
 }
 
 /** `startTab` is the tab the issues board opens on: the one the wall board is showing. */
-export function openBoard(kind: 'issues' | 'pulls', net: Net, actions: BoardActions, startTab: 'issues' | 'jira' = 'issues') {
+export function openBoard(kind: 'issues' | 'pulls', net: Net, actions: BoardActions, startTab: 'issues' | 'jira' | 'linear' = 'issues') {
   const body = h('div.body.board-body');
   const status = h('p.sub.board-status');
-  /** On the issues board of a floor with a Jira epic: which tab is showing. */
-  let tab: 'issues' | 'jira' = kind === 'issues' ? startTab : 'issues';
+  /** On the issues board of a floor with a Jira epic or a Linear team: which tab is showing. */
+  let tab: 'issues' | 'jira' | 'linear' = kind === 'issues' ? startTab : 'issues';
   const onJira = () => kind === 'issues' && tab === 'jira' && !!store.jiraBoard;
-  const refresh = h('button.btn', { type: 'button', onclick: () => net.send(onJira() ? { t: 'jira.refresh' } : { t: 'gh.refresh' }) }, 'Refresh');
+  const onLinear = () => kind === 'issues' && tab === 'linear' && !!store.linearBoard;
+  const refresh = h('button.btn', { type: 'button', onclick: () => net.send(onLinear() ? { t: 'linear.refresh' } : onJira() ? { t: 'jira.refresh' } : { t: 'gh.refresh' }) }, 'Refresh');
+  const newTicket = h('button.btn.primary', { type: 'button', title: 'Write a ticket in Linear', onclick: () => openNewLinearTicket(net) }, 'New ticket');
+  const pilot = h('button.btn.linear-pilot', { type: 'button', onclick: () => net.send({ t: 'linear.autopilot', on: !store.linear.autopilot.on }) }) as HTMLButtonElement;
   const close = h('button.btn.icon.close', { type: 'button', 'aria-label': 'Close', title: 'Close (Esc)' }, '✕');
   const pulls = words().cli === 'glab' ? 'Merge requests' : 'Pull requests';
   const tabIssues = h('button.tab', { type: 'button', role: 'tab' }, 'Issues');
   const tabJira = h('button.tab', { type: 'button', role: 'tab' });
-  const tabs = h('nav.tabs.board-tabs', { role: 'tablist' }, tabIssues, tabJira);
+  const tabLinear = h('button.tab', { type: 'button', role: 'tab' });
+  const tabs = h('nav.tabs.board-tabs', { role: 'tablist' }, tabIssues, tabJira, tabLinear);
   const el = h(
     'div.modal.full.board',
     { role: 'dialog', 'aria-label': kind === 'issues' ? 'Issues board' : `${pulls} board` },
-    h('header', {}, h('div.titles', {}, h('h2', {}, kind === 'issues' ? 'Issues' : pulls), status), h('div.actions', {}, refresh), close),
+    h('header', {}, h('div.titles', {}, h('h2', {}, kind === 'issues' ? 'Issues' : pulls), status), h('div.actions', {}, pilot, newTicket, refresh), close),
     tabs,
     body,
   );
@@ -188,6 +193,7 @@ export function openBoard(kind: 'issues' | 'pulls', net: Net, actions: BoardActi
   };
   tabIssues.addEventListener('click', () => setTab('issues'));
   tabJira.addEventListener('click', () => setTab('jira'));
+  tabLinear.addEventListener('click', () => setTab('linear'));
 
   const filters = loadFilters(kind);
   /** What each column's title box holds (column key → text), for as long as the board is open. */
@@ -292,22 +298,43 @@ export function openBoard(kind: 'issues' | 'pulls', net: Net, actions: BoardActi
   };
 
   const statusText = () => {
-    const st = onJira() ? store.jiraBoard! : kind === 'issues' ? store.issues : store.pulls;
+    const st = onLinear() ? store.linearBoard! : onJira() ? store.jiraBoard! : kind === 'issues' ? store.issues : store.pulls;
     status.textContent = st.loading ? 'Refreshing…' : st.fetchedAt ? `Updated ${timeAgo(st.fetchedAt)}` : '';
   };
   const render = () => {
-    // Floors without a Jira epic have no tabs at all, just as before.
+    // Floors without a Jira epic or a Linear team have no tabs at all, just as before.
     const jira = kind === 'issues' ? store.jiraBoard : null;
+    const linear = kind === 'issues' ? store.linearBoard : null;
     if (!jira && tab === 'jira') tab = 'issues';
-    tabs.classList.toggle('hidden', !jira);
-    tabIssues.classList.toggle('on', tab === 'issues');
-    tabJira.classList.toggle('on', tab === 'jira');
-    tabIssues.setAttribute('aria-selected', String(tab === 'issues'));
-    tabJira.setAttribute('aria-selected', String(tab === 'jira'));
+    if (!linear && tab === 'linear') tab = 'issues';
+    tabs.classList.toggle('hidden', !jira && !linear);
+    tabJira.classList.toggle('hidden', !jira);
+    tabLinear.classList.toggle('hidden', !linear);
+    for (const [b, t] of [
+      [tabIssues, 'issues'],
+      [tabJira, 'jira'],
+      [tabLinear, 'linear'],
+    ] as const) {
+      b.classList.toggle('on', tab === t);
+      b.setAttribute('aria-selected', String(tab === t));
+    }
     tabIssues.textContent = `${words().site} issues`;
     tabJira.textContent = jira ? `Jira · ${jira.epic}` : 'Jira';
-    refresh.title = onJira() ? 'Refresh from Jira' : `Refresh from ${words().site}`;
+    tabLinear.textContent = linear ? `Linear · ${linear.team}${linear.project ? ` · ${linear.project}` : ''}` : 'Linear';
+    refresh.title = onLinear() ? 'Refresh from Linear' : onJira() ? 'Refresh from Jira' : `Refresh from ${words().site}`;
+    newTicket.classList.toggle('hidden', !onLinear());
+    pilot.classList.toggle('hidden', !onLinear());
+    pilot.classList.toggle('on', store.linear.autopilot.on);
+    pilot.setAttribute('aria-pressed', String(store.linear.autopilot.on));
+    pilot.textContent = `🛰️ ${autopilotSummary()}`;
+    pilot.title = store.linear.autopilot.on ? 'Turn off autopilot: new tickets wait for you to hand them out' : 'Turn on autopilot: every new ticket gets a worker of its own (more in Settings → Connections)';
     statusText();
+    if (onLinear()) {
+      const { scrollLeft } = body;
+      renderLinearBoard(body, actions, net);
+      body.scrollLeft = scrollLeft;
+      return;
+    }
     if (onJira()) {
       const { scrollLeft } = body;
       renderJiraBoard(body, actions);
@@ -378,7 +405,7 @@ export function openBoard(kind: 'issues' | 'pulls', net: Net, actions: BoardActi
   };
 
   const unsubs = [store.on(kind, render)];
-  if (kind === 'issues') unsubs.push(store.on('jiraBoard', render));
+  if (kind === 'issues') unsubs.push(store.on('jiraBoard', render), store.on('linearBoard', render), store.on('linear', render));
   // Which desk a PR came from can change (a worker sent home, a PR opened from a desk).
   if (kind === 'pulls') unsubs.push(store.on('workers', render));
   const timer = setInterval(statusText, 15000);

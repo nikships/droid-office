@@ -43,7 +43,7 @@ export const SETTINGS_PANES: PaneDef[] = [
     label: 'Connections',
     section: 'Office',
     scope: 'Office-wide',
-    blurb: 'Droid and Factory, the Claude or ChatGPT plans you already pay for, and Jira. Connect once; every floor uses them.',
+    blurb: 'Droid and Factory, the Claude or ChatGPT plans you already pay for, Linear and Jira. Connect once; every floor uses them.',
     companionBlurb: 'Droid and Factory, and the Claude or ChatGPT plans you already pay for. Connect once; every floor uses them.',
   },
   {
@@ -67,7 +67,7 @@ export function resolveSettingsPane(want: string | undefined): SettingsPane | un
   return SETTINGS_PANES.find((p) => p.id === want)?.id ?? SETTINGS_PANE_ALIASES[want];
 }
 
-/** Settings only the 3D office has: your character and controls, its sound, how it draws, Jira (shown on its issue board) and the sky. */
+/** Settings only the 3D office has: your character and controls, its sound, how it draws, Linear and Jira (shown on its issue board) and the sky. */
 const OFFICE = ['office'] as const;
 /** Pairing devices and the Tailscale MCP: the office takes them only from its own page on its own computer (`ownPage` in server.ts), so the Mac app's companion has them and a browser's doesn't. */
 const OWN_COMPUTER = ['office', 'mac-companion'] as const;
@@ -124,6 +124,9 @@ export const SETTINGS_CARDS = [
   { pane: 'connections', title: 'DroidProxy', keywords: 'droidproxy subscriptions claude chatgpt plan menu bar install start' },
   { pane: 'connections', title: 'Accounts', keywords: 'subscription accounts claude chatgpt plans usage connect remove' },
   { pane: 'connections', title: 'Models in Droid', keywords: 'subscription models droidproxy droid list update' },
+  { pane: 'connections', title: 'Linear', keywords: 'linear connect api key workspace tickets issues issue board', on: OFFICE },
+  { pane: 'connections', title: "This floor's Linear team", keywords: 'linear team project floor issue board tickets', on: OFFICE },
+  { pane: 'connections', title: 'Linear autopilot', keywords: 'linear autopilot automatic hire workers tickets todo backlog triage', on: OFFICE },
   { pane: 'connections', title: 'Jira', keywords: 'jira connect atlassian account tickets issue board', on: OFFICE },
   { pane: 'connections', title: "This floor's Jira epic", keywords: 'jira epic floor issue board tickets', on: OFFICE },
   { pane: 'office', title: 'Workspace folder', keywords: 'workspace folder projects elevator floors git look for' },

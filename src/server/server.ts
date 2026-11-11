@@ -26,6 +26,8 @@ import { PhoneSizes } from './phone-sizes.js';
 import { UPLOAD_MAX_BYTES } from '../shared/decor.js';
 import { ImageProxy } from './decor.js';
 import { JiraOffice } from './jira.js';
+import { AUTOPILOT_NAME, LinearOffice } from './linear.js';
+import { DEFAULT_AUTOPILOT, linearIssueRef, linearPriority } from '../shared/linear.js';
 import { mountFactory, sendDownload } from './factory/index.js';
 import { mountSetup, readSetupFile } from './setup/index.js';
 import { mountSubscriptions } from './subscriptions/index.js';
@@ -226,6 +228,8 @@ function spotFrom(q: URLSearchParams): ReturnType<typeof arrivalSpot> {
 /** The ids of the pictures a prompt carries, in the order they were added: well-formed, no repeats, no more than a prompt can take. */
 const imageIds = (v: unknown): string[] => (Array.isArray(v) ? [...new Set(v.map((x) => str(x, 16)).filter((x) => PROMPT_IMAGE_ID.test(x)))].slice(0, PROMPT_IMAGES_MAX) : []);
 const issueNumber = (v: unknown) => (Number.isInteger(v) && (v as number) > 0 ? (v as number) : undefined);
+/** Who a floor's Linear autopilot hires as, through the owner's own handler (see FloorContext.linearHire). */
+const LINEAR_AUTOPILOT: WorkerInfo = { id: 'linear-autopilot', kind: 'agent', deskId: '', name: AUTOPILOT_NAME, color: '#5e6ad2', status: 'idle', acked: true, createdBy: AUTOPILOT_NAME, createdAt: 0, cols: 80, rows: 24, open: false };
 const COLOR_RE = /^#[0-9a-fA-F]{6}$/;
 /** The most lines per worker's terminal a search answers with. */
 const SEARCH_TERMINAL_HITS = 25;
@@ -496,9 +500,11 @@ export async function startServer(cfg: Config) {
       broadcast({ t: 'missionControl', state });
     }, 150);
   };
+  // The office's one Linear workspace, which every floor's team, autopilot and the workers' linear_* tools go through (docs/linear.md).
+  const linear = new LinearOffice(cfg.dataDir, fetch, () => linearConnectionChanged());
   const officeMcpFloor = (id: string) => {
     const floor = workerFloor(id);
-    return floor ? { id: floor.id, name: floor.def.name, dir: floor.dir, workers: floor.workers, team: floor.team, visits: floor.visits, whiteboard: floor.whiteboard } : undefined;
+    return floor ? { id: floor.id, name: floor.def.name, dir: floor.dir, workers: floor.workers, team: floor.team, visits: floor.visits, whiteboard: floor.whiteboard, linear: floor.linear } : undefined;
   };
   // ownerOffice is declared with the message handler below; nothing calls it before the office is serving.
   const ownerBridge: OwnerOffice = { floors: () => ownerOffice.floors(), mission: () => ownerOffice.mission(), tail: (...a) => ownerOffice.tail(...a), act: (...a) => ownerOffice.act(...a) };
@@ -509,6 +515,7 @@ export async function startServer(cfg: Config) {
     floor: officeMcpFloor,
     remote: remoteOffice,
     owner: ownerBridge,
+    linear,
     orchestrator: { authenticate: (id, token) => orchestrator.authenticate(id, token), cwd: orchestrator.cwd },
   });
   // Every floor's Whiteboard renders with one headless Chromium, downloaded on the first render if it's missing.
@@ -701,6 +708,12 @@ export async function startServer(cfg: Config) {
     hook: { url: `http://127.0.0.1:${hookPort}`, token: '' },
     capacity: machine,
     jira,
+    linear,
+    linearHire: async (floor, prompt, identifier, model) => {
+      // Through the owner's own handler, as the Linear tab's Hand to a worker would hire, named for autopilot.
+      const r = await ownerOffice.act(LINEAR_AUTOPILOT, { t: 'worker.spawn', deskId: AUTO_DESK, prompt, worktree: !floor.plain, linear: identifier, ...(model ? { model } : {}) }, { floor: floor.id, owner: true });
+      return r.error ? { error: r.error } : { workerId: r.workerId };
+    },
     prompts,
     emit: toFloor,
     toast: toastFloor,
@@ -806,6 +819,8 @@ export async function startServer(cfg: Config) {
     decor: floor?.decor.list() ?? [],
     jira: floor?.jira.state() ?? { connection: jira.connection() },
     jiraBoard: floor?.jira.board ?? null,
+    linear: floor?.linear.state() ?? { connection: linear.connection(), autopilot: DEFAULT_AUTOPILOT, working: 0 },
+    linearBoard: floor?.linear.board ?? null,
   });
   /** The roof: nobody works up there, so it has none of a floor's things. */
   const roofView = (): FloorView => ({ ...floorView(undefined), floor: ROOF });
@@ -1467,6 +1482,16 @@ export async function startServer(cfg: Config) {
         if (r.download) return sendDownload(res, r.download);
         return send(res, r.status, r.body);
       }
+      if (p === '/api/linear/issue' && req.method === 'GET') {
+        // What a Linear ticket's window shows beyond its card (see linear.ts). Only the floor's team's tickets.
+        if (!floor) return send(res, 404, { error: 'No such floor' });
+        try {
+          return send(res, 200, await floor.linear.detail(url.searchParams.get('id') ?? ''));
+        } catch (err) {
+          const status = (err as { status?: number }).status;
+          return send(res, status === 400 || status === 403 || status === 404 || status === 409 ? status : 502, { error: (err as Error).message });
+        }
+      }
       if (p === '/api/jira/ticket' && req.method === 'GET') {
         // What a Jira ticket's window shows beyond its card (see jira.ts). Only the floor's epic's tickets.
         if (!floor) return send(res, 404, { error: 'No such floor' });
@@ -1844,6 +1869,22 @@ export async function startServer(cfg: Config) {
     void floor.board.claim(n).then((err) => warn(c, err && `Couldn't assign issue #${n} on ${forgeWords(floor.board.forge).site}: ${err}`));
   };
 
+  /**
+   * A worker took on a Linear ticket (Hand to a worker on the Linear tab, or autopilot's hire): it's
+   * linked to the worker and moved to In Progress (see FloorLinear.take).
+   */
+  const takeLinear = (c: Client, floor: Floor, ref: string, w: { id: string; name: string }, auto: boolean) => {
+    void floor.linear.take(ref, w, { auto }).then(({ ticket, error }) => {
+      if (error) return warn(c, `Couldn't hand ${ref} to ${w.name} in Linear: ${error}`);
+      if (ticket) toastFloor(floor, `◆ ${w.name} took ${ticket.identifier} in Linear: ${ticket.title}`);
+    });
+  };
+
+  /** Every floor's Linear tab starts over with the office's new connection (or none), or its new list of teams. */
+  function linearConnectionChanged() {
+    for (const f of floors.values()) void f.linear.connectionChanged();
+  }
+
   /** Every floor's Jira tab starts over with the office's new connection (or none). */
   const jiraConnectionChanged = () => {
     for (const f of floors.values()) void f.jira.connectionChanged();
@@ -2184,11 +2225,14 @@ export async function startServer(cfg: Config) {
           const r = floor.workers.spawn(deskId, who, str(msg.prompt, 20000) || undefined, msg.worktree === true, kind, model, effort, repos, undefined, images);
           floor.workers.unstage(images);
           const issue = kind === 'agent' ? issueNumber(msg.issue) : undefined;
+          const ticket = kind === 'agent' ? linearIssueRef(msg.linear) : undefined;
           const across = repos.length ? ` across ${[floor.def.name, ...repos.map((x) => x.name)].join(' + ')}` : '';
           if (typeof r === 'string') refuse(r);
-          else toastFloor(floor, kind === 'shell' ? `${who} opened a shell at a desk` : `${who} hired ${r.name}${issue ? ` for issue #${issue}` : r.prompt ? ' with a task' : ''}${kind === 'agent' ? across : ''}`);
+          else
+            toastFloor(floor, kind === 'shell' ? `${who} opened a shell at a desk` : `${who} hired ${r.name}${issue ? ` for issue #${issue}` : ticket ? ` for ${ticket}` : r.prompt ? ' with a task' : ''}${kind === 'agent' ? across : ''}`);
           if (typeof r !== 'string') done(undefined, r.id);
           if (typeof r !== 'string' && issue) takeIssue(c, floor, issue);
+          if (typeof r !== 'string' && ticket) takeLinear(c, floor, ticket, r, who === AUTOPILOT_NAME);
         };
         // Every project it gets a worktree of starts from what's on the forge now, and so does an
         // agent in the checkout (see WorkerManager.fetchBase).
@@ -2344,6 +2388,8 @@ export async function startServer(cfg: Config) {
           toastFloor(w.floor, `${who} handed issue #${issue} to ${w.info.name}`);
           takeIssue(c, w.floor, issue);
         }
+        const ticket = w?.info.kind === 'agent' ? linearIssueRef(msg.linear) : undefined;
+        if (w && !err && ticket) takeLinear(c, w.floor, ticket, w.info, false);
         break;
       }
       case 'worker.answer': {
@@ -2766,6 +2812,70 @@ export async function startServer(cfg: Config) {
       case 'jira.refresh':
         void floorOf(c)?.jira.refresh(true);
         break;
+      case 'linear.connect': {
+        void linear.connect(str(msg.key, 300), who).then((error) => {
+          sendTo(c, { t: 'linear.setup', step: 'connect', ok: !error, error });
+          if (error) return;
+          console.log(`  ${who} connected the office to Linear (${linear.connection()?.workspace})`);
+          toastAll(`◆ ${who} connected the office to Linear: ${linear.connection()?.workspace}`);
+          linearConnectionChanged();
+        });
+        break;
+      }
+      case 'linear.disconnect': {
+        if (!linear.connection()) break;
+        linear.disconnect();
+        console.log(`  ${who} disconnected the office from Linear`);
+        toastAll(`${who} disconnected the office from Linear`);
+        linearConnectionChanged();
+        break;
+      }
+      case 'linear.team': {
+        const floor = here();
+        if (!floor) break;
+        const team = str(msg.team, 100).trim();
+        const error = floor.linear.setTeam(team, str(msg.project, 100).trim() || undefined, who);
+        sendTo(c, { t: 'linear.setup', step: 'team', ok: !error, error });
+        if (error) break;
+        const setup = floor.linear.setup;
+        toastFloor(floor, setup ? `◆ ${who} put Linear team ${setup.team.name}${setup.project ? ` (${setup.project.name})` : ''} on this floor` : `${who} took Linear off this floor`);
+        break;
+      }
+      case 'linear.autopilot': {
+        const floor = here();
+        if (!floor) break;
+        const was = floor.linear.autopilot.on;
+        const change = {
+          ...(typeof msg.on === 'boolean' ? { on: msg.on } : {}),
+          ...(Array.isArray(msg.pickup) ? { pickup: msg.pickup.slice(0, 8) } : {}),
+          ...(typeof msg.max === 'number' ? { max: msg.max } : {}),
+          ...(typeof msg.existing === 'boolean' ? { existing: msg.existing } : {}),
+          ...(msg.model !== undefined ? { model: str(msg.model, MODEL_MAX) } : {}),
+        };
+        const error = floor.linear.setAutopilot(change, who);
+        sendTo(c, { t: 'linear.setup', step: 'autopilot', ok: !error, error });
+        if (!error && was !== floor.linear.autopilot.on)
+          toastFloor(floor, floor.linear.autopilot.on ? `🛰️ ${who} turned on Linear autopilot: new ${floor.linear.setup?.team.key} tickets get a worker of their own` : `${who} turned off Linear autopilot`);
+        break;
+      }
+      case 'linear.create': {
+        const floor = here();
+        if (!floor) break;
+        const priority = linearPriority(msg.priority);
+        void floor.linear
+          .create({ title: str(msg.title, 250), description: str(msg.description, 20_000), ...(priority !== undefined ? { priority } : {}), state: msg.state === 'backlog' ? 'backlog' : 'unstarted' })
+          .then((t) => {
+            sendTo(c, { t: 'linear.setup', step: 'create', ok: true, identifier: t.identifier });
+            console.log(`  ${who} wrote ${t.identifier} in Linear: ${t.title}`);
+          })
+          .catch((err) => sendTo(c, { t: 'linear.setup', step: 'create', ok: false, error: (err as Error).message }));
+        break;
+      }
+      case 'linear.refresh': {
+        void linear.refreshTeams(true);
+        void floorOf(c)?.linear.refresh(true);
+        break;
+      }
       case 'factory.connect':
       case 'factory.disconnect':
       case 'factory.refresh':
@@ -2946,7 +3056,7 @@ export async function startServer(cfg: Config) {
       // A building agent's hire gets the model list its team_hire gets: here is the one way in for its owner-level actions.
       const model = msg.t === 'worker.spawn' && msg.kind !== 'shell' && typeof msg.model === 'string' && msg.model.trim() ? msg.model.trim() : undefined;
       const at = floors.get(opts.floor ?? (typeof msg.floor === 'string' ? msg.floor : ''));
-      const refused = model && at ? await at.team.refuseSpawnModel(by, model) : undefined;
+      const refused = model && at && !opts.owner ? await at.team.refuseSpawnModel(by, model) : undefined;
       if (refused) return { error: refused, notes: [] };
       return new Promise<OwnerReply>((resolve) => {
         const notes: string[] = [];

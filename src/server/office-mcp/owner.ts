@@ -45,7 +45,8 @@ export interface OwnerOffice {
   mission(): MissionAgent[];
   /** The end of a worker's terminal, or of a floor's boss shell (OFFICE_SHELL_ID with its floor). */
   tail(workerId: string, lines: number, floor?: string): string | undefined;
-  act(by: WorkerInfo, msg: { t: OwnerAction } & Record<string, unknown>, opts?: { floor?: string; signal?: AbortSignal }): Promise<OwnerReply>;
+  /** `owner`: the owner's own choice (a Settings pick), so the model list for building agents doesn't apply. */
+  act(by: WorkerInfo, msg: { t: OwnerAction } & Record<string, unknown>, opts?: { floor?: string; signal?: AbortSignal; owner?: boolean }): Promise<OwnerReply>;
 }
 
 /** A building agent named exactly by id or name; a name shared with a floor worker needs the id. */

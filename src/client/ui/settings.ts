@@ -5,8 +5,11 @@ import { SUBAGENT_MAX_PER_LEAD, type AgentChoice, type SubagentSettings } from '
 import { SETTINGS_PANES, searchSettings, settingsCards, settingsPaneAfter, settingsPanes, type SettingsCardTitle, type SettingsPane, type SettingsSurface } from '../../shared/settings-nav';
 import { claimEscape, h, openModal, timeAgo } from './dom';
 import { onJiraSetup } from './jira';
+import { onLinearSetup } from './linear';
+import { modelPicker } from './model-picker';
+import { AUTOPILOT_MAX, LINEAR_PICKUPS, type LinearPickup } from '../../shared/linear';
 import { disclosure, field, toggle as kitToggle } from './kit';
-import { agentFields, modelBadge, officeChoice } from './models';
+import { agentFields, droidCatalogue, modelBadge, officeChoice, pickerModel } from './models';
 import { subagentModelPicker } from './subagent-models';
 import { openPromptEditor, rewrittenPrompts } from './prompts';
 import { hotReloadSettings } from './hot-reload';
@@ -130,7 +133,7 @@ function subagentSettings(): SubagentSettings {
   return { officeMcp: officeMcp ?? true, on, worktree, maxPerLead, wakeLead, visits: visits ?? true, denyTask: denyTask ?? true, ...(agent ? { agent } : {}), ...(models?.length ? { models } : {}) };
 }
 
-/** What only the 3D office's Settings has: you, your sound, how it draws, Jira, the sky and source hot reload. */
+/** What only the 3D office's Settings has: you, your sound, how it draws, Linear and Jira, the sky and source hot reload. */
 export interface OfficeSettings {
   /** This browser's own settings; `onChange` saves and applies them. */
   settings: Settings;
@@ -508,6 +511,171 @@ function officeRows(net: Net, office: OfficeSettings) {
 
   const offJira = store.on('jira', paintJira);
 
+  // ---- Connections: Linear ------------------------------------------------------------------------
+  // Linear: the office's one workspace (a personal API key; workers move and write tickets with it), the
+  // team this floor's issue board shows and its workers take tickets from, and the floor's autopilot.
+  const linearKeyIn = h('input.input', { type: 'password', placeholder: 'lin_api_…', 'aria-label': 'Linear API key', spellcheck: 'false', autocomplete: 'new-password' }) as HTMLInputElement;
+  const linearConnect = h('button.btn.primary', { type: 'button' }, 'Connect') as HTMLButtonElement;
+  const linearCancel = h('button.btn.ghost', { type: 'button' }, 'Cancel');
+  const linearForm = h(
+    'div.stack.tight.jira-form',
+    {},
+    field('Personal API key', linearKeyIn, 'In Linear: Settings → Account → Security & access → Personal API keys. Full access lets workers move, write and comment on tickets.'),
+    h('div.row', {}, linearConnect, linearCancel),
+  );
+  const linearChange = h('button.btn.sm', { type: 'button' }, 'Change key');
+  const linearRemove = h('button.btn.sm.danger', { type: 'button' }, 'Remove');
+  const linearActions = h('div.row', {}, linearChange, linearRemove);
+  const linearNote = desc();
+  const linearFail = h('p.note.bad', { role: 'alert' });
+  const teamSelect = h('select.select', { 'aria-label': 'Linear team for this floor' }) as HTMLSelectElement;
+  const projectSelect = h('select.select', { 'aria-label': 'Linear project for this floor' }) as HTMLSelectElement;
+  const teamNote = desc();
+  const teamFail = h('p.note.bad', { role: 'alert' });
+  const teamCard = card("This floor's Linear team", { desc: teamNote, below: [h('div.row.wrap', {}, teamSelect, projectSelect), teamFail] });
+  const pilotNote = desc();
+  const pilotFail = h('p.note.bad', { role: 'alert' });
+  const pilotOn = toggle(
+    'Linear autopilot',
+    () => store.linear.autopilot.on,
+    (on) => net.send({ t: 'linear.autopilot', on }),
+  );
+  const PICKUP_LABEL: Record<LinearPickup, string> = { triage: 'Triage', backlog: 'Backlog', unstarted: 'Todo' };
+  const pickupRow = h('div.chips', { role: 'group', 'aria-label': 'States autopilot takes tickets from' });
+  const maxSelect = h('select.select', { 'aria-label': 'Most autopilot workers at once' }, ...Array.from({ length: AUTOPILOT_MAX }, (_, i) => h('option', { value: String(i + 1) }, String(i + 1)))) as HTMLSelectElement;
+  const existingOn = toggle(
+    'Older tickets too',
+    () => store.linear.autopilot.existing,
+    (existing) => net.send({ t: 'linear.autopilot', existing }),
+  );
+  const pilotModel = modelPicker({ label: 'Autopilot model', small: true, models: [], value: store.linear.autopilot.model ?? '', none: { label: 'Office default', note: 'What new workers start on' } });
+  let pilotModels = false;
+  const pilotCard = card('Linear autopilot', { desc: pilotNote, control: pilotOn.el });
+  const pilotOptions = nest(
+    setting('Takes tickets from', { desc: desc('Tickets waiting in these states get a worker. Todo is where a ticket you write lands.'), control: pickupRow }),
+    setting('At most', { desc: desc('Autopilot workers on this floor at once. The next ticket waits for one to finish.'), control: maxSelect }),
+    setting('Older tickets too', { desc: desc('Off: only tickets written after autopilot was turned on. On: everything already waiting, too.'), control: existingOn.el }),
+    setting('Model', { desc: desc('What autopilot workers run on.'), control: pilotModel.element }),
+    pilotFail,
+  );
+  let editingLinear = false;
+  let linearBusy = false;
+  let linearError = '';
+  let teamError = '';
+  let pilotError = '';
+  const paintLinear = () => {
+    const { connection, setup, autopilot, working } = store.linear;
+    linearForm.classList.toggle('hidden', !!connection && !editingLinear);
+    linearCancel.classList.toggle('hidden', !connection);
+    linearActions.classList.toggle('hidden', !connection || editingLinear);
+    linearConnect.disabled = linearBusy;
+    linearConnect.textContent = linearBusy ? 'Checking…' : 'Connect';
+    linearFail.classList.toggle('hidden', !linearError);
+    linearFail.textContent = linearError;
+    linearNote.textContent = connection
+      ? `Working ${connection.workspace} as ${connection.name} (${connection.email}). Workers on every floor can read, move, write and comment on its tickets.`
+      : 'Connect a Linear workspace and each floor’s issue board gets a Linear tab. Workers take tickets, move them through In Progress, In Review and Done, and write new ones.';
+    const floored = !!connection && !!store.floor;
+    teamCard.classList.toggle('hidden', !floored);
+    const teams = connection?.teams ?? [];
+    teamSelect.replaceChildren(h('option', { value: '' }, 'No team'), ...teams.map((t) => h('option', { value: t.id }, `${t.name} (${t.key})`)));
+    teamSelect.value = setup?.team.id ?? '';
+    const team = teams.find((t) => t.id === setup?.team.id);
+    projectSelect.replaceChildren(h('option', { value: '' }, 'Every project'), ...(team?.projects ?? []).map((p) => h('option', { value: p.id }, p.name)));
+    projectSelect.value = setup?.project?.id ?? '';
+    projectSelect.classList.toggle('hidden', !team?.projects.length);
+    teamFail.classList.toggle('hidden', !teamError);
+    teamFail.textContent = teamError;
+    teamNote.textContent = setup
+      ? `The issue board’s Linear tab shows ${setup.team.name}${setup.project ? `’s ${setup.project.name} project` : ''}. Tickets workers write land here too.`
+      : 'Pick the team whose tickets this floor’s workers take.';
+    pilotCard.classList.toggle('hidden', !floored || !setup);
+    pilotOptions.classList.toggle('hidden', !floored || !setup || !autopilot.on);
+    pilotOn.paint();
+    existingOn.paint();
+    pilotNote.textContent = autopilot.on
+      ? `On: every new ${setup?.team.key ?? ''} ticket in ${autopilot.pickup.map((p) => PICKUP_LABEL[p]).join(' or ')} gets a worker of its own, which takes it to a merged pull request. ${working} working now.`
+      : 'Every ticket you write gets a worker of its own, who moves it along and opens a pull request. Your only job is writing tickets.';
+    pickupRow.replaceChildren(
+      ...LINEAR_PICKUPS.map((p) => {
+        const on = autopilot.pickup.includes(p);
+        return h(
+          'button.chip',
+          {
+            type: 'button',
+            'aria-pressed': String(on),
+            class: on ? 'on' : '',
+            onclick: () => {
+              const next = on ? autopilot.pickup.filter((x) => x !== p) : [...autopilot.pickup, p];
+              pilotError = '';
+              net.send({ t: 'linear.autopilot', pickup: next });
+            },
+          },
+          PICKUP_LABEL[p],
+        );
+      }),
+    );
+    maxSelect.value = String(autopilot.max);
+    if (pilotModel.value() !== (autopilot.model ?? '')) pilotModel.set(autopilot.model ?? '');
+    pilotFail.classList.toggle('hidden', !pilotError);
+    pilotFail.textContent = pilotError;
+    if (autopilot.on && !pilotModels) {
+      pilotModels = true;
+      void droidCatalogue()
+        .then((c) => pilotModel.setModels(c.models.map(pickerModel), { label: 'Office default', note: 'What new workers start on' }))
+        .catch(() => (pilotModels = false));
+    }
+  };
+  const offLinearSetup = onLinearSetup((msg) => {
+    if (msg.step === 'connect') {
+      linearBusy = false;
+      linearError = msg.error ?? '';
+      if (msg.ok) {
+        editingLinear = false;
+        linearKeyIn.value = '';
+      }
+    } else if (msg.step === 'team') teamError = msg.error ?? '';
+    else if (msg.step === 'autopilot') pilotError = msg.error ?? '';
+    paintLinear();
+  });
+  const connectLinear = () => {
+    if (!linearKeyIn.value.trim()) return linearKeyIn.focus();
+    linearBusy = true;
+    linearError = '';
+    net.send({ t: 'linear.connect', key: linearKeyIn.value.trim() });
+    paintLinear();
+  };
+  linearConnect.addEventListener('click', connectLinear);
+  linearKeyIn.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') connectLinear();
+  });
+  linearChange.addEventListener('click', () => {
+    editingLinear = true;
+    paintLinear();
+    linearKeyIn.focus();
+  });
+  linearCancel.addEventListener('click', () => {
+    editingLinear = false;
+    linearError = '';
+    linearKeyIn.value = '';
+    paintLinear();
+  });
+  linearRemove.addEventListener('click', () => {
+    if (confirm('Disconnect the office from Linear? Every floor’s Linear tab and autopilot stop until someone connects it again.')) net.send({ t: 'linear.disconnect' });
+  });
+  teamSelect.addEventListener('change', () => {
+    teamError = '';
+    net.send({ t: 'linear.team', team: teamSelect.value });
+  });
+  projectSelect.addEventListener('change', () => {
+    teamError = '';
+    net.send({ t: 'linear.team', team: teamSelect.value, project: projectSelect.value });
+  });
+  maxSelect.addEventListener('change', () => net.send({ t: 'linear.autopilot', max: Number(maxSelect.value) }));
+  pilotModel.element.addEventListener('change', () => net.send({ t: 'linear.autopilot', model: pilotModel.value() }));
+  paintLinear();
+  const offLinear = store.on('linear', paintLinear);
+
   // ---- Office & floors: the sky and source hot reload ---------------------------------------------
   const sourceReload = hotReloadSettings();
 
@@ -546,6 +714,7 @@ function officeRows(net: Net, office: OfficeSettings) {
       group('Lighting', card('Overhead lights', { desc: desc('How bright the ceiling lights are. At 0% the moon, the screens and the bounce light are all that light the room.'), control: overhead.row })),
     ],
     jira: group('Jira', card('Jira', { desc: jiraNote, below: [jiraForm, jiraFail, jiraActions] }), epicCard),
+    linear: group('Linear', card('Linear', { desc: linearNote, below: [linearForm, linearFail, linearActions] }), teamCard, pilotCard, pilotOptions),
     outside: outside
       ? card('Outside', {
           desc: desc(outside.live ? 'The office’s clock, and the live weather where it is.' : 'The office’s clock, and made-up weather. Start the office with --city for a real forecast.'),
@@ -556,6 +725,9 @@ function officeRows(net: Net, office: OfficeSettings) {
     dispose: () => {
       offJira();
       offSetup();
+      offLinear();
+      offLinearSetup();
+      pilotModel.close();
       sourceReload.dispose();
       window.removeEventListener('office:hdr', onHdrStatus);
     },
@@ -1069,7 +1241,7 @@ export function openSettings(net: Net, opts: SettingsOptions) {
       group('Visits', card('Visits between workers', { desc: visitsNote, control: visitsOn.el })),
     ],
     orchestrator: [orcBlocked, group(null, card('Orchestrator', { desc: orcNote, control: orcOn.el }), orcOptions)],
-    connections: [group('Factory', card('Droid', droid.parts), card('Factory API key', factoryKey.key)), subscriptions.unsupported, subscriptionGroup, ...(only ? [only.jira] : [])],
+    connections: [group('Factory', card('Droid', droid.parts), card('Factory API key', factoryKey.key)), subscriptions.unsupported, subscriptionGroup, ...(only ? [only.linear, only.jira] : [])],
     office: [
       group(null, card('Workspace folder', { desc: dirNote, below: [dirRow] }), ...(only?.outside ? [only.outside] : [])),
       group(

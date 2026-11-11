@@ -121,6 +121,7 @@ import { openRepoPulls, workerRepos } from './ui/repos';
 import { openPrompt, confirmDialog, sendHomeDialog, lostWorktreeDialog, routeWorktreeMessage, worktreePref } from './ui/prompt';
 import { issuePrompt, openBoard } from './ui/boards';
 import { openTicket, routeJiraMessage } from './ui/jira';
+import { openLinearTicket, routeLinearMessage } from './ui/linear';
 import { bindFactory, watchFactory } from './factory';
 import { FactoryTvTexture } from './world/factory-tv';
 import { creditsNote } from '../shared/factory-sessions';
@@ -333,9 +334,10 @@ const renderIssuesBoard = () => {
   // The card in your hands is missing from the board until you put it back.
   const held = carrying?.issue;
   issuesTex.setJira(store.jiraBoard);
+  issuesTex.setLinear(store.linearBoard);
   issuesTex.render(held === undefined ? store.issues : { ...store.issues, items: store.issues.items.filter((i) => i.number !== held) });
 };
-mountBoard(office.boardMeshes.issues, issuesTex.texture, renderIssuesBoard, ['issues', 'jiraBoard']);
+mountBoard(office.boardMeshes.issues, issuesTex.texture, renderIssuesBoard, ['issues', 'jiraBoard', 'linearBoard']);
 const pullsTex = new BoardTexture('pulls');
 const renderPullsBoard = () => pullsTex.render(store.pulls, store.workers);
 mountBoard(office.boardMeshes.pulls, pullsTex.texture, renderPullsBoard, ['pulls']);
@@ -1050,6 +1052,7 @@ net.onMessage((msg) => {
   routePullMessage(msg);
   routePipelinesMessage(msg);
   routeJiraMessage(msg);
+  routeLinearMessage(msg);
   routeElevatorMessage(msg);
   routeFolderMessage(msg);
   routeFloorMenuMessage(msg);
@@ -1787,8 +1790,8 @@ function officeIsFull(): boolean {
   return true;
 }
 
-function hire(deskId: string, prompt?: string, worktree = false, model?: string, effort?: AgentEffort, issue?: number, repos?: string[], images?: string[]) {
-  const sent = net.send({ t: 'worker.spawn', deskId, prompt, worktree, model, effort, issue, repos: repos?.length ? repos : undefined, images: images?.length ? images : undefined });
+function hire(deskId: string, prompt?: string, worktree = false, model?: string, effort?: AgentEffort, issue?: number, repos?: string[], images?: string[], linear?: string) {
+  const sent = net.send({ t: 'worker.spawn', deskId, prompt, worktree, model, effort, issue, linear, repos: repos?.length ? repos : undefined, images: images?.length ? images : undefined });
   // The moment notifications start to matter: ask once (it has to come from a key press or click).
   if (settings.notify && notifyPermission() === 'default' && !askedToNotify) {
     askedToNotify = true;
@@ -2392,6 +2395,18 @@ function paletteEntries(): PaletteEntry[] {
       }),
     );
   }
+  for (const t of store.linearBoard?.items ?? []) {
+    out.push(
+      atSpot('issues', 'the Issues board', {
+        icon: '◆',
+        kind: 'Linear ticket',
+        title: `${t.identifier} ${t.title}`,
+        detail: [t.state.name, t.worker ? `with ${t.worker.name}` : (t.assignee ?? 'unassigned'), ...t.labels.map((l) => l.name)].join(' · '),
+        keywords: ['linear'],
+        open: () => openLinearTicket(t, boardActions()),
+      }),
+    );
+  }
   return out;
 }
 
@@ -2442,8 +2457,8 @@ function turnPage() {
   hands.turnPage();
 }
 
-/** A prompt from the boards goes to a new worker at a free desk, or to one already at a desk. With `issue`, that worker takes the issue, as with a carried card. */
-function sendToWorker(title: string, text: { context?: string; initial?: string }, issue?: number) {
+/** A prompt from the boards goes to a new worker at a free desk, or to one already at a desk. With `issue`, that worker takes the issue, as with a carried card; with `linear`, that Linear ticket. */
+function sendToWorker(title: string, text: { context?: string; initial?: string }, issue?: number, linear?: string) {
   const desk = freeDesk();
   const awake = [...store.workers.values()].filter((w) => (w.kind === 'agent' || (w.kind === 'cloud' && !w.cloud?.error)) && !isAsleep(w.status));
   if (!desk && !awake.length) {
@@ -2459,15 +2474,15 @@ function sendToWorker(title: string, text: { context?: string; initial?: string 
     modelOption: true,
     repoOptions: repoChoices(),
     onSubmit: (prompt, to, worktree, model, effort, repos, images) => {
-      if (to) net.send({ t: 'worker.prompt', workerId: to, prompt, issue, images: images?.length ? images : undefined });
-      else if (desk) hire(desk, prompt, worktree, model, effort, issue, repos, images);
+      if (to) net.send({ t: 'worker.prompt', workerId: to, prompt, issue, linear, images: images?.length ? images : undefined });
+      else if (desk) hire(desk, prompt, worktree, model, effort, issue, repos, images, linear);
     },
   });
 }
 
 function boardActions() {
   return {
-    assign: (prompt: string, title: string, issue?: number) => sendToWorker(`🤖 ${title}`, { initial: prompt }, issue),
+    assign: (prompt: string, title: string, issue?: number, linear?: string) => sendToWorker(`🤖 ${title}`, { initial: prompt }, issue, linear),
     ask: (context: string, title: string) => sendToWorker(`✍️ ${title}`, { context }),
     goToDesk,
     pickUp,
@@ -2800,15 +2815,20 @@ function hintFor(it: Interactable): Hint {
       return it.deskId ? deskHint(it.deskId) : { k: '', parts: [] };
     case 'issues':
       if (aimedSpot?.kind === 'tab') {
-        const label = aimedSpot.tab === 'jira' ? `🎫 Jira · ${store.jiraBoard?.epic ?? 'epic'}` : `📌 ${words().site} issues`;
+        const label = aimedSpot.tab === 'jira' ? `🎫 Jira · ${store.jiraBoard?.epic ?? 'epic'}` : aimedSpot.tab === 'linear' ? `◆ Linear · ${store.linearBoard?.team ?? 'team'}` : `📌 ${words().site} issues`;
         return { k: `tab:${aimedSpot.tab}:${issuesTex.tab}`, parts: issuesTex.tab === aimedSpot.tab ? [title(label), aside('showing')] : [title(label), key('E', 'Show it')] };
       }
       if (aimedSpot?.kind === 'ticket') {
         const ticketKey = aimedSpot.key;
+        if (issuesTex.tab === 'linear') {
+          const t = store.linearBoard?.items.find((x) => x.identifier === ticketKey);
+          return { k: `ticket:${ticketKey}`, parts: [title(clip(`◆ ${ticketKey} ${t?.title ?? ''}`, 60)), key('E', 'Read it'), ...(t?.worker ? [aside(`with ${t.worker.name}`)] : [])] };
+        }
         const t = store.jiraBoard?.items.find((x) => x.key === ticketKey);
         return { k: `ticket:${ticketKey}`, parts: [title(clip(`🎫 ${ticketKey} ${t?.summary ?? ''}`, 60)), key('E', 'Read it')] };
       }
       if (issuesTex.tab === 'jira') return board(`🎫 Jira · ${store.jiraBoard?.epic ?? 'epic'}`);
+      if (issuesTex.tab === 'linear') return board(`◆ Linear · ${store.linearBoard?.team ?? 'team'}`);
       if (aimedNote) return { k: String(aimedNote.number), parts: [title(clip(`📌 #${aimedNote.number} ${aimedNote.title}`, 60)), key('E', 'Take it'), key('O', 'Read it')] };
       return issuesTex.hasNotes ? { k: 'notes', parts: [title('📌 Issues board'), key('E', 'Open'), aside('or point at a note to take it')] } : board('📌 Issues board');
     case 'pulls':
@@ -3369,6 +3389,12 @@ function useSpot(spot: BoardSpot | null, key: DeskKey): boolean {
       renderIssuesBoard();
       sound.paper();
     }
+    return true;
+  }
+  if (issuesTex.tab === 'linear') {
+    const lt = store.linearBoard?.items.find((x) => x.identifier === spot.key);
+    if (!lt) return false;
+    openLinearTicket(lt, boardActions());
     return true;
   }
   const t = store.jiraBoard?.items.find((x) => x.key === spot.key);

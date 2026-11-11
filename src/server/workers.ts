@@ -24,6 +24,7 @@ import { DESK_BY_ID, nextFreeSeat } from '../shared/layout.js';
 import { officePrompt, type PromptSource } from './prompts.js';
 import { forgeVars, officeSays, placeholders, PROMPTS, WORKER_VISITS, withoutReminders, workerBranchPolicy, workerMessageVars } from '../shared/prompts.js';
 import { isBusy } from '../shared/status.js';
+import { linearTaskOf } from '../shared/linear.js';
 import { fallbackTask } from './tasks.js';
 import { todoProgress, todosFinished, validTodoProgress } from '../shared/todos.js';
 import { forkRefusal, nearestForkSeat } from '../shared/worker-fork.js';
@@ -3321,13 +3322,17 @@ function draftPr(info: WorkerInfo, commits: string[], by: string, other?: { home
       .find(Boolean) ?? '';
   // The issues board hands work over as: Work on GitHub issue #12: "Title" (or GitLab issue).
   const issue = /\bissue #(\d+):\s*["“](.+?)["”]\.?\s*$/i.exec(firstLine);
-  const title = truncate(issue?.[2] || firstLine.replace(/[.:;,]+$/, '') || commits[0]?.replace(/^\S+\s+/, '') || info.worktree?.branch || info.name, PR_TITLE_MAX);
+  // …and a Linear ticket as: Work on Linear issue DOFF-12: "Title".
+  const ticket = linearTaskOf(firstLine);
+  const title = truncate(issue?.[2] || ticket?.title || firstLine.replace(/[.:;,]+$/, '') || commits[0]?.replace(/^\S+\s+/, '') || info.worktree?.branch || info.name, PR_TITLE_MAX);
   const closes = /\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\b[^\n]{0,40}?#(\d+)/i.exec(task)?.[1] ?? issue?.[1];
   const parts: string[] = [];
   if (task) parts.push(`## Task\n\n${task.length > PR_TASK_MAX ? `${task.slice(0, PR_TASK_MAX)}…` : task}`);
   parts.push(`## Commits\n\n${commits.map((c) => `- \`${c.slice(0, c.indexOf(' '))}\` ${c.slice(c.indexOf(' ') + 1)}`).join('\n')}`);
   if (closes && !other) parts.push(`Closes #${closes}`);
   else if (closes && other?.home) parts.push(`Part of ${other.home}#${closes}`);
+  // Linear's GitHub and GitLab integrations link the pull request to the ticket on this magic word.
+  if (ticket) parts.push(other ? `Part of ${ticket.identifier}` : `Fixes ${ticket.identifier}`);
   parts.push(`_Opened from Droid Office by ${by} · ${info.name} at ${DESK_BY_ID.get(info.deskId)?.label ?? info.deskId}_`);
   return { title, body: parts.join('\n\n') };
 }
