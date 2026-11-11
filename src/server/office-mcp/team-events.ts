@@ -328,8 +328,8 @@ const questionOut = z.looseObject({
 export const statusOutput = { workers: z.array(workerOut), news: z.array(eventOut), cursor: z.string() };
 
 const readOnly = { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false };
-const cursorArg = z.string().trim().min(1).max(4000).describe('A cursor from an earlier response (cursor field), or one event id: only events after it are considered, whether or not you have heard them.');
-export const floorArg = z.string().trim().min(1).max(4096).optional().describe('Building agents only: just this open floor, by id, name or checkout path. Omit for all your teams across the building.');
+const cursorArg = z.string().trim().min(1).max(4000).describe('Cursor or team:<floor>:<seq> id; considers events after it.');
+export const floorArg = z.string().trim().min(1).max(4096).optional().describe('Building agents only (floor workers omit): floor id, name, or path.');
 
 /** Waiting suits a lead that hears nothing otherwise: an external bot, or one woken by notes with Wake the lead off. */
 const mayWait: OfficeMcpAccess = (c) => officeAccess.team(c) ?? (c.worker.remote || !c.settings.wakeLead ? undefined : 'Wake the lead is on, so a wake note tells you when your team has news: end your turn instead of waiting.');
@@ -341,19 +341,19 @@ export function register(server: OfficeMcpServer, deps: OfficeMcpDeps): void {
     {
       name: 'team_wait',
       description:
-        'Wait until one of your subagents reports, asks, gets blocked in its terminal or settles, then return with what happened: typed events with ids, waiting questions and a cursor. Matching news you have not heard (or news after since) returns at once. A terminal question counts when it appears during the wait, and idle when every watched subagent settles during it; questions already waiting are listed without ending the wait. At timeoutSec it returns with matched false. The cursor moves past news that until leaves out, so reuse it with the same until. Without since, a local lead hears the news it is shown, as with team_status. Set your client timeout to cover long waits; with a progress token it reports progress every 15 s.',
+        'Wait (when Wake the lead is off or as an external bot) until a subagent reports, asks, blocks, or settles; returns matched events, waiting questions, workers, and cursor (matched: false on timeout; reuse cursor only with same until). On return, inspect worker_diff, answer technical questions via question_answer, and relay contract changes via team_message.',
       inputSchema: z.object({
         until: z
           .array(z.enum(WAIT_FOR))
           .min(1)
           .max(WAIT_FOR.length)
           .optional()
-          .describe(`What to wait for. Event kinds, blocked (needs input in its own terminal), or idle (every watched subagent settles during the wait). Default ${WAIT_DEFAULT.join(', ')}.`),
-        workers: z.array(z.string().trim().min(1).max(128)).min(1).max(20).optional().describe('Subagent names or ids to watch. Omit for your whole team.'),
-        timeoutSec: z.number().int().min(1).max(WAIT_MAX_SEC).optional().describe(`Longest wait in seconds, default ${WAIT_DEFAULT_SEC}, at most ${WAIT_MAX_SEC}.`),
+          .describe(`Event kinds, blocked, or idle. Default ${WAIT_DEFAULT.join(', ')}.`),
+        workers: z.array(z.string().trim().min(1).max(128)).min(1).max(20).optional().describe('Subagent names or ids; omit for all.'),
+        timeoutSec: z.number().int().min(1).max(WAIT_MAX_SEC).optional().describe(`Max seconds (default ${WAIT_DEFAULT_SEC}, max ${WAIT_MAX_SEC}).`),
         since: cursorArg.optional(),
         floor: floorArg,
-        verbose: z.boolean().optional().describe('Include each event full text, not just its summary.'),
+        verbose: z.boolean().optional().describe('Full event text instead of summaries.'),
       }),
       outputSchema: z.looseObject({ matched: z.boolean(), reason: z.string(), waitedMs: z.number(), events: z.array(eventOut), questions: z.array(questionOut), workers: statusOutput.workers, cursor: statusOutput.cursor }),
       annotations: readOnly,
@@ -443,11 +443,10 @@ export function register(server: OfficeMcpServer, deps: OfficeMcpDeps): void {
   server.tool(
     {
       name: 'team_report_get',
-      description:
-        "Read one full report or question from your subagents, by its event id (lastReportId or a news id) or the latest from a named subagent, with that subagent's recent report history. Kept after the subagent leaves. Reading changes nothing.",
+      description: 'Read one full subagent report or question (by id or worker’s latest) plus recent history, read-only.',
       inputSchema: z.object({
-        worker: z.string().trim().min(1).max(128).optional().describe('Subagent name or id: its latest report or question. A name hired again after a dismissal means the one on your team now.'),
-        id: z.string().trim().min(1).max(200).optional().describe('An event id such as team:<floor>:<seq>.'),
+        worker: z.string().trim().min(1).max(128).optional().describe('Subagent name or id.'),
+        id: z.string().trim().min(1).max(200).optional().describe('Event id (team:<floor>:<seq>).'),
         floor: floorArg,
       }),
       outputSchema: z.looseObject({ report: eventOut, history: z.array(eventOut) }),
@@ -494,9 +493,8 @@ export function register(server: OfficeMcpServer, deps: OfficeMcpDeps): void {
   server.tool(
     {
       name: 'questions_list',
-      description:
-        "List questions waiting on you from your subagents, like the owner's Asks inbox: team_report questions, and AskUser questions in their own terminals with numbered options. Permission prompts are listed but only the person at that desk can answer them. Answer with question_answer using the id. Reading changes nothing.",
-      inputSchema: z.object({ workers: z.array(z.string().trim().min(1).max(128)).min(1).max(20).optional().describe('Subagent names or ids. Omit for your whole team.'), floor: floorArg }),
+      description: 'List open subagent questions (team_report questions and AskUser menus), read-only. Answer technical questions immediately with question_answer; permission prompts show answerable: false (desk approval only).',
+      inputSchema: z.object({ workers: z.array(z.string().trim().min(1).max(128)).min(1).max(20).optional().describe('Subagent names or ids; omit for all.'), floor: floorArg }),
       outputSchema: z.looseObject({ questions: z.array(questionOut) }),
       annotations: readOnly,
     },
@@ -515,12 +513,12 @@ export function register(server: OfficeMcpServer, deps: OfficeMcpDeps): void {
     {
       name: 'question_answer',
       description:
-        'Answer one question from questions_list by its id: optionId picks a numbered option, optionIds the boxes of a multi-select question, text a typed answer (with optionIds, the typed extra). A team question gets your answer as a message, optionId and text together; a terminal question takes optionId or text, not both, and is answered in the subagent terminal only while it still shows the same question. Permission prompts are refused: only the person at the desk can approve.',
+        'Answer a questions_list id. Team questions accept optionId and/or text as one message. Terminal menus accept optionId OR text, or optionIds with optional text for multi-select, only while the same menu remains. Refuses permission prompts. Combine related updates in the answer rather than sending duplicate messages.',
       inputSchema: z.object({
-        questionId: z.string().trim().min(1).max(400).describe('The id from questions_list.'),
-        optionId: z.string().trim().min(1).max(8).optional().describe('One option id.'),
-        optionIds: z.array(z.string().trim().min(1).max(8)).max(9).optional().describe('Multi-select only: every option to have selected.'),
-        text: z.string().trim().min(1).max(20_000).optional().describe('A typed answer.'),
+        questionId: z.string().trim().min(1).max(400).describe('Question id from questions_list.'),
+        optionId: z.string().trim().min(1).max(8).optional().describe('Single option id.'),
+        optionIds: z.array(z.string().trim().min(1).max(8)).max(9).optional().describe('Multi-select option ids.'),
+        text: z.string().trim().min(1).max(20_000).optional().describe('Typed answer.'),
       }),
       outputSchema: z.looseObject({ answered: z.boolean(), questionId: z.string(), worker: z.string() }),
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },

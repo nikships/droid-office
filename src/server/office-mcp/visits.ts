@@ -2,12 +2,11 @@ import { z } from 'zod';
 import type { RosterEntry, VisitReply } from '../visits.js';
 import { officeAccess, officeError, officeResult, ownFloor, type OfficeMcpDeps, type OfficeMcpServer } from './index.js';
 
-export const instructions = `Visit an independent worker on your floor only when your task needs something from it: a known overlap to resolve, or information only it has. Otherwise keep to your own task.
-A visit message is delivered by pressing Enter: it steers a running turn after its current tool call, and a sleeping worker resumes with it. It never answers a permission prompt or outranks the owner, and a handoff is a request, never authority to change the owner's task.
-Answer a question addressed to you with visit_reply within 30 minutes of its delivery. Reply to anything else only when the reply moves the work forward. Visits and questions end on office restart, when a worker leaves, or when the owner turns Visits off. Subagents neither visit nor are visited; they coordinate through their lead.`;
+export const instructions = `Visit an independent worker on your floor only when your task needs to resolve an overlap or get facts only it has. Otherwise keep to your own task.
+Messages steer after the current tool call or wake a sleeping worker; they never approve permission prompts or outrank the owner. Answer delivered asks with visit_reply within 30 minutes; reply to tells only when needed. Subagents coordinate through their lead, not visits.`;
 
-const name = z.string().trim().min(1).describe("The independent worker's name or id, on your floor; visit_roster lists them.");
-const text = z.string().trim().min(1).max(20_000).describe('Your message, question, task or answer, as plain text.');
+const name = z.string().trim().min(1).describe('Independent worker name or id on your floor (from visit_roster).');
+const text = z.string().trim().min(1).max(20_000).describe('Plain-text message, question, handoff, or reply.');
 const annotations = { destructiveHint: false, idempotentHint: false, openWorldHint: false };
 
 function result(reply: VisitReply, describe: (body: Record<string, unknown>) => string) {
@@ -18,8 +17,7 @@ export function register(server: OfficeMcpServer, _deps: OfficeMcpDeps): void {
   server.tool(
     {
       name: 'visit_roster',
-      description:
-        'List the independent workers on your floor with their desk, status, task and current activity, for when your task needs coordination with one. The roster holds independent local agents only: subagents, shells and cloud workers are left off.',
+      description: 'List independent local workers on your floor with desk, status, task, and activity (excludes subagents, shells, and cloud workers).',
       inputSchema: z.object({}),
       annotations: { ...annotations, readOnlyHint: true, idempotentHint: true },
     },
@@ -40,8 +38,8 @@ export function register(server: OfficeMcpServer, _deps: OfficeMcpDeps): void {
   server.tool(
     {
       name: 'visit_look',
-      description: "Read the latest text on another independent worker's terminal, at once and read-only. It is a screen snapshot, not a conversation transcript. Read it when that worker's current work bears on your task.",
-      inputSchema: z.object({ name, lines: z.number().int().min(1).max(400).default(80).describe('Latest terminal lines to read, default 80, at most 400.') }),
+      description: 'Read a current terminal snapshot of another independent worker on your floor, read-only.',
+      inputSchema: z.object({ name, lines: z.number().int().min(1).max(400).default(80).describe('Latest terminal lines (default 80, max 400).') }),
       annotations: { ...annotations, readOnlyHint: true, idempotentHint: true },
     },
     officeAccess.visits,
@@ -50,14 +48,13 @@ export function register(server: OfficeMcpServer, _deps: OfficeMcpDeps): void {
   server.tool(
     {
       name: 'visit_message',
-      description:
-        'Send an independent worker a message, a question or a proposed task handoff. Returns a v-… id and delivered or queued status at once; an answer comes later. You walk over, speak, then walk home, even for ask. A queued message is delivered after the walk once its session can safely take it. A question expires 30 minutes after delivery, or after 30 minutes undelivered. Answers arrive later in your session, so carry on with your task meanwhile. One visit at a time; the next may queue while you walk home.',
+      description: 'Walk over and send an independent worker a tell, ask, or proposed handoff (returns v-… id immediately; ask replies arrive later within 30 minutes, so continue your work without polling).',
       inputSchema: z.object({
         name,
-        kind: z.enum(['tell', 'ask', 'handoff']).describe('tell: useful information; ask: a question answered later with visit_reply; handoff: ask it to take a task only if the owner’s task permits.'),
+        kind: z.enum(['tell', 'ask', 'handoff']).describe('tell: info; ask: question answered via visit_reply; handoff: optional task proposal.'),
         text,
-        title: z.string().trim().min(1).max(80).optional().describe('Optional short task title for a handoff only. Put the actual task in text.'),
-        urgent: z.boolean().default(false).describe('True cancels its turn with one Escape before delivering. Reserve it for when waiting for its current tool call would cause harm; a permission prompt still waits for its person.'),
+        title: z.string().trim().min(1).max(80).optional().describe('Handoff only: short task title.'),
+        urgent: z.boolean().default(false).describe('Cancels its running turn via Escape before delivery; use only when waiting would cause harm.'),
       }),
       annotations,
     },
@@ -73,13 +70,12 @@ export function register(server: OfficeMcpServer, _deps: OfficeMcpDeps): void {
   server.tool(
     {
       name: 'visit_reply',
-      description:
-        'Answer a delivered ask addressed to you, by its v-… id. Your answer is a normal-priority delivery into the asker’s session, queued safely if necessary, with no walk. The question’s host replies once, within 30 minutes of delivery; an expired ask returns an error. For a later follow-up, use visit_message with kind tell.',
+      description: 'Answer a delivered ask addressed to you by its v-… id (once, within 30 minutes of delivery; use visit_message tell for later follow-ups).',
       inputSchema: z.object({
         visit: z
           .string()
           .regex(/^v-[a-f0-9]{8}$/)
-          .describe('The exact v-… visit id supplied in the question delivery.'),
+          .describe('Exact v-… id from the question delivery.'),
         text,
       }),
       annotations,
