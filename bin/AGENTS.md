@@ -1,6 +1,4 @@
 # bin
 
-The checkout and packaged app entry. It stays a plain file on disk: the Mac app packs with `asar: false` and runs it on Electron's Node.
-
-- `droid-office.js` is the `package.json` `bin`. It loads `dist/server/server/cli.js` and nothing else.
-- Workers reach the office through the Office MCP (`src/server/office-mcp/`, [docs/office-mcp.md](../docs/office-mcp.md)). A new worker-facing capability is an Office MCP tool, not a command in this folder.
+- `droid-office.js` is the `package.json` `bin` entry for source checkouts and the Mac app (`asar: false`, Electron Node). Keep it a plain file on disk that loads `dist/server/server/cli.js` and nothing else.
+- Expose worker-facing capabilities as Office MCP tools (`src/server/office-mcp/`, [docs/office-mcp.md](../docs/office-mcp.md)) rather than CLI commands here.

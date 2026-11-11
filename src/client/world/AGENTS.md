@@ -1,14 +1,9 @@
 # Client world
 
-The three.js scene. DOM windows are `../ui`.
+The three.js scene (`../ui` owns DOM windows; `../AGENTS.md` covers Node importability and `shader-warmup.ts`).
 
-- Units are metres, +y is up. The floor is y = 0 and its XZ box is `FLOOR` in `src/shared/layout.ts`. A desk at `rotY` 0 seats the worker on the desk's +z side, facing −z. Change a wall, desk, seat or storey in `layout.ts` and render from that record.
-- Three.js object forward is −z. `Object3D.lookAt` aims +z at the target, so it turns a −z-fronted mesh around. `player.ts` looks along `(-sin(camYaw), 0, -cos(camYaw))`. Take a new heading from that code. The magnum in `gun.ts` is built pointing +z; holders rotate the whole prop.
-- A loaded GLB's front is whatever the generator exported. Measure it (the manifest bounds, or a test like `tests/gun.test.ts`) before mounting. A movement, camera or facing change gets a test that asserts a concrete direction.
-- The mesh and the collider for one solid come from the same record in `layout.ts` or the prop manifest.
-- Lit solids use `toon()` or `toonUnique()` from `toon.ts`. Screens, sprites, glass and decals use `MeshBasicMaterial`. Convert a loaded GLB's `MeshStandardMaterial` at load, the way `factory-props.ts` and `laptop.ts` do.
-- GLBs in `public/props/` come from `tools/props/generate.py`. Regenerate there, then run `node tools/props/verify.mjs`.
-- The droid wand (`wand.glb`, `wand.ts`) points +z from its grip at the origin. Its moves and spells are `wand-motion.ts`, separate from the magnum's `gun-motion.ts`. A change to its grip, `SHAPES.wand`, `WAND_GRIP_AT`/`WAND_GRIP_AXIS` in `glove.ts` or `WAND_HOLD` in `hands.ts` keeps `tests/wand.test.ts` passing (fingers on the grip, none through it, aimed under the crosshair).
-- The first-person glove must not pass through `magnum.glb` in any gun move. A change to the magnum's grip, the glove's `SHAPES` or the gun mount in `hands.ts` keeps `tests/gun-grip.test.ts` passing; move the hand, not the tolerance.
-- This tree stays importable from `node --import tsx` with no `window`, `document` or WebGL context created at import time. `gun.ts` says so at the top; keep it true for anything `tests/` loads.
-- A material that is not already in the scene when the page loads (a spell, a muzzle flash, a heavenly beam, a book page, smoke, a prop that swaps in later) is covered by `src/client/shader-warmup.ts` in the same change. Drawing it otherwise compiles its shader mid-session.
+- **Coordinates & layout**: Units are metres, `+y` up, floor at `y = 0` inside `FLOOR` (`src/shared/layout.ts`). A desk at `rotY = 0` seats its worker on `+z` facing `-z`. Define walls, desks, seats, storeys and solid bounds once in `layout.ts` (or the prop manifest) and build both meshes and colliders from that single record.
+- **Facing & GLB orientation**: Three.js forward is `-z` (`Object3D.lookAt` aims `+z` at the target, flipping `-z`-fronted meshes); `player.ts` looks along `(-sin(camYaw), 0, -cos(camYaw))`. Measure a loaded GLB's exported forward axis from manifest bounds or a geometry test (`tests/gun.test.ts`) before mounting (`gun.ts` and `wand.ts` point `+z` from their origin while holders rotate the prop). Cover every movement, camera or facing change with a directional assertion test.
+- **Materials & props**: Use `toon()` / `toonUnique()` (`toon.ts`) for lit solids and `MeshBasicMaterial` for screens, sprites, glass and decals; convert loaded GLB `MeshStandardMaterial`s at load (`factory-props.ts`, `laptop.ts`). Regenerate `public/props/*.glb` and `manifest.json` via `tools/props/generate.py` followed by `node tools/props/verify.mjs` (see [tools/AGENTS.md](../../../tools/AGENTS.md)).
+- **Hands & weapons**: Keep `tests/gun-grip.test.ts` and `tests/wand.test.ts` passing whenever changing `magnum.glb` or `wand.glb` grips, `SHAPES` / `WAND_GRIP_*` in `glove.ts`, `WAND_HOLD` or gun mounts in `hands.ts`, `gun-motion.ts` or `wand-motion.ts` (adjust hand poses rather than loosening intersection tolerances).
+- **Dismissal ascent**: Charged gunshot and wand departure sequences in `casualties.ts` follow [docs/heavenly-ascent.md](../../../docs/heavenly-ascent.md).

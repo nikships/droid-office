@@ -1,12 +1,7 @@
 # Website
 
-The public marketing site, separate from the 3D office client in `src/client/`.
-React, Vite and Tailwind; an npm workspace using the root `package-lock.json`.
+Public React, Vite and Tailwind marketing site (`https://droid-office.web.app`), managed as an npm workspace under the root `package-lock.json` and separate from `src/client/`.
 
-- From the repository root: `npm run dev:website`, `npm run build:website`.
-- `npm run typecheck` and `npm run lint` include the website.
-- `npm run deploy:website` uses Firebase CLI to deploy only Hosting to project `droid-office`.
-  The root `firebase.json` typechecks and builds first, then publishes `website/dist`.
-- The public site is https://droid-office.web.app.
-- Preserve the supplied design and content.
-- The videos and their posters are in `public/videos/` (1920×1080 H.264, `+faststart`; only the reel has audio, a Lyria music bed in AAC, and only it plays unmuted with controls). They are captured from a clone of the owner's office with the `office-video-capture` skill; replace a clip by re-recording it, not with mocked footage.
+- Run from the repository root: `npm run dev:website`, `npm run build:website`, and `npm run deploy:website` (Firebase Hosting project `droid-office`; `firebase.json` runs typecheck and build before publishing `website/dist`). Root `npm run lint` and `npm run typecheck` cover this workspace.
+- Preserve the supplied design and copy unless asked to change them.
+- `public/videos/` holds 1920×1080 H.264 (`+faststart`) captures and posters from a clone of the owner's office recorded with the `office-video-capture` skill (only the reel carries an AAC Lyria bed and plays unmuted with controls); replace clips by re-recording from a real-office clone rather than mocking footage.

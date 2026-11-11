@@ -1,42 +1,29 @@
 # Android app
 
-Droid Office for Android: Kotlin, Jetpack Compose and Material 3, one `app` module. [`README.md`](README.md) describes what it does, how it connects and how to build it; keep it current when a behaviour it describes changes.
+Droid Office for Android: Kotlin, Jetpack Compose and Material 3 (`app` module). Update [README.md](README.md) whenever user-visible behavior or adb tags change.
 
 ## Commands
 
-Run from `android/` with JDK 17+ (CI uses 21). The SDK path comes from `ANDROID_HOME` or the ignored `local.properties` (`sdk.dir=...`).
+Run from `android/` with JDK 17+ (CI uses 21; SDK from `ANDROID_HOME` or `local.properties`). Before a PR touching Android, run `./gradlew testDebugUnitTest lintDebug assembleRelease` (`assembleRelease` exercises R8, which CI runs only on `main`; root `npm test` covers the WebView JS assets):
 
 | Task | Command |
 | --- | --- |
-| Unit tests | `./gradlew testDebugUnitTest` |
-| Lint; any error fails | `./gradlew lintDebug` |
-| Build and install a debug APK on the connected device | `./gradlew installDebug` |
-| Release APK (R8) | `./gradlew assembleRelease` |
+| Unit tests (JVM) | `./gradlew testDebugUnitTest` |
+| Android Lint (warnings as errors) | `./gradlew lintDebug` |
+| Install debug APK on connected device | `./gradlew installDebug` |
+| Release APK with R8 | `./gradlew assembleRelease` |
 
-CI's `android` job in `.github/workflows/release.yml` runs `testDebugUnitTest lintDebug` and then `assembleRelease`; run the same before a PR. On a pull request it runs only when the PR touches `android/` or the workflow. `npm` checks don't cover the Kotlin code; they do cover the terminal and Whiteboard pages' JavaScript (below).
+## Office contract
 
-## The office is the contract
+- Mirror messages and fields read by the app in `core/Protocol.kt` (`src/shared/protocol.ts`, `src/server/server.ts`) and cover changes in `ProtocolTest`. Keep `ignoreUnknownKeys` enabled so older APKs tolerate newer servers.
+- Pairing (`droidoffice://pair`, `/api/mobile/pair`, `/api/mobile/hello`, device tokens, close code `4401`) follows [docs/guide/android.md](../docs/guide/android.md). Keep `core/Pairing.kt` parsing every link the office prints, including `?t=` join URLs, and keep the LAN-token fallback for servers without `/api/mobile/*`.
 
-- The app speaks the office's WebSocket protocol (`src/shared/protocol.ts`) and HTTP routes (`src/server/server.ts`). `core/Protocol.kt` mirrors the messages the app uses; when the server adds or renames a field the app reads, update it and `ProtocolTest`. Unknown fields and messages are ignored (`ignoreUnknownKeys`), so an older app keeps working against a newer office.
-- Pairing (`droidoffice://pair` links, `/api/mobile/pair`, `/api/mobile/hello`, device tokens, close code `4401`) is described in [docs/guide/android.md "Droid Office for Android"](../docs/guide/android.md). `core/Pairing.kt` must keep parsing every link the office can print, including the plain join URL with `?t=`.
-- An office from before phone pairing has no `/api/mobile/*`: the app falls back to the LAN token. Keep that path working.
+## Architecture and code
 
-## Code
-
-- `core/` is pure Kotlin with no Android imports, so its JUnit tests run on the JVM. Put logic there (parsing, ordering, labels, the terminal model) and keep `ui/` to layout and state wiring.
-- The terminal is xterm.js in a WebView: the page is `app/src/main/assets/terminal/`, talking to `ui/worker/TerminalPage.kt` through the messages in `core/TermPage.kt`. Its DOM-free logic lives in `input.js` and is tested by `tests/android-terminal.test.ts` in the root `npm test`, which also checks `theme.js` against the office's terminal colours. `terminal/vendor/` is written by `node tools/android-terminal.mjs`; regenerate it rather than editing it. The page loads nothing from the network and never forwards xterm's own `onData`: the PTY's answers to queries already come from the office's terminal.
-- A Whiteboard card opens live in a WebView: the page is `app/src/main/assets/whiteboard/`, talking to `ui/board/CardPage.kt` through the routes and messages in `core/WbPage.kt`. It frames the card with the office's `CARD_SANDBOX` and `CARD_ALLOW` and speaks the window's bridge (`src/shared/whiteboard-bridge.ts`); the app listens to that page's origin only, never to the card's frame. Its DOM-free logic lives in `marks.js` and is checked against the office's reducer and marks code by `tests/android-whiteboard.test.ts`. When the window's surface or bridge changes, change the page with it.
-- The Office tab uses the worker list on every screen size; wide screens show the selected worker beside it.
-- One `OfficeConnection` owns the socket for the current office. Screens and services `hold(tag)` and `release(tag)` it rather than opening their own.
-- Tokens only ever go through `TokenVault`. Never log a token, a pairing link or a request URL that carries `t=` or `d=`.
-- Plain HTTP and `ws://` are allowed only to private addresses, enforced by `net/CleartextGuard.kt` on the address actually connected. Every OkHttp client gets it as a network interceptor.
-- Colours, type and shapes come from `ui/theme/` (the office's dark palette and Factory orange, Geist and Geist Mono). Icons are vector paths in `ui/theme/OfficeIcons.kt`; add one there instead of pulling in a larger icon library.
-- Strings a user sees are plain sentences in the office's voice, matching the web client.
-- Agents drive the app over adb by the names in `core/Tags.kt` (README "Drive it with adb"). Give every new screen root, control and readable state a name there and set it with `Modifier.tagged(...)`; never rename or reuse one, and add it to the README. A toggle row is `toggleable` with its `Switch` given `onCheckedChange = null`, and a choice is `selectable`, so a dump reports it as `checked`.
-- Animate anything that loops forever in the draw phase. Moving a node's bounds every frame (a rotating `graphicsLayer`, an animated offset or size) sends accessibility events that keep `uiautomator dump` from idling.
-- Fix what lint reports in the code, without `@SuppressLint` or a wider `lint { disable }`; the checks disabled there only flag that newer library versions exist.
-- Bump a library in `gradle/libs.versions.toml`. Updating Gradle itself also updates `distributionSha256Sum` in `gradle/wrapper/gradle-wrapper.properties`.
-
-## Pictures
-
-`docs/*.jpg` are the screenshots `README.md` shows, 540 px wide, taken on a real phone paired with the owner's office. Replacing one is its own change.
+- **Pure `core/` vs `ui/`**: Keep `core/` free of Android imports (parsing, ordering, labels, terminal model) so its JUnit suite runs on the JVM; keep `ui/` to Compose layout and state wiring. Share the single `OfficeConnection` via `hold(tag)` and `release(tag)`. Show the worker list on every screen size, with a side-by-side detail pane on wide screens.
+- **WebViews**:
+  - Terminal (`app/src/main/assets/terminal/` ↔ `ui/worker/TerminalPage.kt` via `core/TermPage.kt`): put DOM-free logic in `input.js` (`tests/android-terminal.test.ts` checks `input.js` and `theme.js`). Regenerate `terminal/vendor/` with `node tools/android-terminal.mjs` (see [tools/AGENTS.md](../tools/AGENTS.md)). Keep the page offline and suppress xterm's `onData` (the office's terminal already answers PTY queries).
+  - Whiteboard (`app/src/main/assets/whiteboard/` ↔ `ui/board/CardPage.kt` via `core/WbPage.kt`): frame cards with `CARD_SANDBOX` and `CARD_ALLOW` over `src/shared/whiteboard-bridge.ts`, accepting messages only from the wrapper page's origin. Keep DOM-free logic in `marks.js` (`tests/android-whiteboard.test.ts`) and update the wrapper whenever the web Whiteboard bridge changes.
+- **Security**: Route all tokens exclusively through `TokenVault`, and scrub tokens, pairing links and `t=` / `d=` query params from logs. Attach `net/CleartextGuard.kt` as a network interceptor on every `OkHttpClient` so cleartext `http://` and `ws://` connect only to private IPs.
+- **Theme, copy & adb tags**: Use `ui/theme/` tokens (dark palette, Factory orange, Geist / Geist Mono), add vector paths to `ui/theme/OfficeIcons.kt` rather than importing an icon pack, and match the web client's plain sentence-case voice. Register every new screen root, control and readable state in `core/Tags.kt` (`Modifier.tagged(...)`, documented in `README.md`), keeping existing tag names stable. Wire toggle rows with `toggleable` (`Switch(..., onCheckedChange = null)`) and choices with `selectable` so `uiautomator dump` reports `checked`. Run infinite animations in the draw phase so layout bounds stay still and `uiautomator dump` idles.
+- **Lint, dependencies & screenshots**: Fix lint findings in code rather than adding `@SuppressLint` or widening `lint { disable }`. Manage dependencies in `gradle/libs.versions.toml` (update `distributionSha256Sum` in `gradle/wrapper/gradle-wrapper.properties` when bumping Gradle). Capture `docs/*.jpg` (540px wide) on a real paired phone and replace screenshots in a dedicated change.

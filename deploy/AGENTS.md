@@ -1,7 +1,6 @@
 # Deploy
 
-- `aws.sh` is the supported AWS path. The office listens on the box's loopback, the security group opens SSH, and you reach it through the tunnel. Leave the office port closed.
-- `provision.sh` is what `aws.sh` runs on the machine. A package, user or unit change goes in the script and in the matching section of [docs/guide/deployment.md](../docs/guide/deployment.md) in the same change.
-- Factory cloud machines for working on this repository are set up by the Factory Environment `droid-office-default` (its global setup script and its repository script, edited in Factory or through the Environments API), not by a script in this directory.
-- AWS CLI and bash only. A second deploy tool (Terraform, Docker, a compose file) is a new design, not a tweak to these scripts.
-- An EC2 box stays on UTC. A deployed office picks its sky with `DROID_OFFICE_CITY` in `/etc/droid-office/env`, which the guide already tells the operator to set. The scripts do not hard-code a city.
+- `aws.sh` is the supported AWS deployment path: bind the office to loopback, open only SSH in the security group, and reach the office over an SSH tunnel.
+- `provision.sh` sets up the EC2 host (`aws.sh` runs it). Update the matching section of [docs/guide/deployment.md](../docs/guide/deployment.md) whenever packages, users or systemd units change. Keep the host on UTC; operators set `DROID_OFFICE_CITY` in `/etc/droid-office/env` for sky time.
+- Stick to bash and AWS CLI (Terraform, Docker or Compose require a new design).
+- Factory cloud machines for this repository are configured by the `droid-office-default` Factory Environment (in Factory or via the Environments API), separate from `deploy/`.

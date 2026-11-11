@@ -1,6 +1,6 @@
 # Docs
 
-- `guide/` is the user-facing description of how the office behaves, split into chapters. A change to a subsystem updates the matching bullet in `guide/how-it-works.md` in the same change. A rule that only an agent editing the repo needs goes in the nearest `AGENTS.md`.
-- Command blocks in the guide match the `package.json` scripts and the CLI help.
-- `single-owner.md` is implemented. The office has one owner: no multiplayer, accounts, voice, chat or presence. `tests/no-media.test.ts` guards that boundary.
-- Pictures in this directory are what the README shows. Replacing one is its own change.
+- `guide/` holds user-facing chapters; update the matching bullet in `guide/how-it-works.md` whenever subsystem behavior or `.droid-office/` state changes, and put repo-editing rules in the nearest `AGENTS.md` instead.
+- Top-level `docs/*.md` files are implemented design specs (indexed in the root `AGENTS.md` and local `AGENTS.md` pointers); keep a spec current when changing its area.
+- Keep command blocks in `guide/` aligned with `package.json` scripts and CLI `--help`.
+- Replace README media (`*.jpg`, `*.gif`, `assets/readme/`) in a dedicated change.
