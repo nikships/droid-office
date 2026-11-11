@@ -42,18 +42,21 @@ fun ForkWorkerDialog(worker: WorkerInfo, onDismiss: () -> Unit) {
     val connection = graph.connection
     val data by connection.data.collectAsStateWithLifecycle()
     val link by connection.link.collectAsStateWithLifecycle()
-    val floor = remember(worker.id) { data.floorId }
+    val floor = remember(worker.id) { data.workerFloorId(worker.id) ?: data.floorId }
     val office = remember(worker.id) { data.officeId }
-    val plain = data.floor?.plain == true || data.floor?.home == true
+    val floorInfo = data.floors.firstOrNull { it.id == floor } ?: data.floor
+    val plain = floorInfo?.plain == true || floorInfo?.home == true
     var prompt by rememberSaveable(worker.id) { mutableStateOf("") }
     var pending by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
     val scope = rememberCoroutineScope()
     val snackbar = LocalSnackbar.current
-    val current = data.workers[worker.id]
+    val current = data.deskWorker(worker.id)
+    val currentFloor = data.workerFloorId(worker.id)
+    val floorGone = floor == null || (data.floors.isNotEmpty() && data.floors.none { it.id == floor }) || (currentFloor != null && currentFloor != floor)
     val refusal = when {
         link.phase != Phase.Connected -> "Disconnected. Nothing can be sent."
-        data.floorId != floor || data.officeId != office -> "The active floor changed. Nothing was sent."
+        data.officeId != office || floorGone -> "The active floor changed. Nothing was sent."
         current == null -> "The source worker has left"
         else -> WorkerActions.forkRefusal(current)
     }
@@ -90,8 +93,9 @@ fun ForkWorkerDialog(worker: WorkerInfo, onDismiss: () -> Unit) {
                 enabled = !pending && refusal == null,
                 onClick = {
                     val latest = connection.data.value
-                    val source = latest.workers[worker.id]
-                    if (!connection.connected || latest.floorId != floor || latest.officeId != office || source == null || WorkerActions.forkRefusal(source) != null) return@TextButton
+                    val source = latest.deskWorker(worker.id)
+                    val latestFloor = latest.workerFloorId(worker.id) ?: latest.floorId
+                    if (!connection.connected || latestFloor != floor || latest.officeId != office || source == null || WorkerActions.forkRefusal(source) != null) return@TextButton
                     pending = true
                     error = null
                     scope.launch {

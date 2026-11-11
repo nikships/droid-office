@@ -349,4 +349,34 @@ class ProtocolTest {
         val m = Protocol.decode("""{"t":"worker.update","worker":{"id":"w1","status":"idle","lost":{"branch":"droid/atlas"}}}""") as ServerMsg.WorkerUpdate
         assertEquals("droid/atlas", m.worker.lost!!["branch"]!!.jsonPrimitive.content)
     }
+
+    @Test
+    fun readsBuildingRosterAndCrossFloorMessages() {
+        assertNull((Protocol.decode(welcome) as ServerMsg.Welcome).building)
+        val withBuilding = welcome.replace(
+            """"pulls":""",
+            """"building":[{"floor":"home","workers":[{"id":"w1","name":"Atlas","repos":[{"floor":"api","name":"api","repo":"nikships/api","branch":"feat/x"}]}],"pulls":[{"number":7,"title":"t","state":"OPEN","url":"https://x/7","headRefName":"feat/x"}]}],"pulls":""",
+        )
+        val m = Protocol.decode(withBuilding) as ServerMsg.Welcome
+        val roster = m.building!!.single()
+        assertEquals("home", roster.floor)
+        assertEquals("Atlas", roster.workers.single().name)
+        assertEquals("nikships/api", roster.workers.single().repos.single().repo)
+        assertEquals(7, roster.pulls.single().number)
+
+        val bw = Protocol.decode("""{"t":"building.worker","floor":"api","worker":{"id":"w9","name":"Nova","status":"working"}}""") as ServerMsg.BuildingWorker
+        assertEquals("api", bw.floor)
+        assertEquals("Nova", bw.worker.name)
+
+        val br = Protocol.decode("""{"t":"building.remove","floor":"api","workerId":"w9"}""") as ServerMsg.BuildingRemove
+        assertEquals("api", br.floor)
+        assertEquals("w9", br.workerId)
+
+        val bp = Protocol.decode("""{"t":"building.pulls","floor":"api","pulls":[{"number":12,"title":"PR","state":"MERGED","url":"https://x/12","headRefName":"feat/y"}]}""") as ServerMsg.BuildingPulls
+        assertEquals("api", bp.floor)
+        assertEquals(12, bp.pulls.single().number)
+
+        assertTrue(Protocol.decode("""{"t":"building.worker","floor":"","worker":{"id":"w9"}}""") is ServerMsg.Ignored)
+        assertTrue(Protocol.decode("""{"t":"building.remove","floor":"api","workerId":""}""") is ServerMsg.Ignored)
+    }
 }

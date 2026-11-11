@@ -78,9 +78,9 @@ class Alerts(
 
     private fun diff(d: OfficeData) {
         if (!d.synced) return
-        val key = d.officeId to d.floorId
+        val key = d.officeId to (if (d.hasBuildingRoster) "__building__" else d.floorId)
         if (baseline != key) {
-            // A new office or floor: what's already waiting there isn't news.
+            // A new office (or floor on an older office without a building roster): what's already waiting there isn't news.
             baseline = key
             last.clear()
             acked.clear()
@@ -114,9 +114,11 @@ class Alerts(
             acked.remove(id)
             cancel(id)
         }
-        for (f in d.floors) {
-            val before = floorWaiting.put(f.id, f.waiting) ?: continue
-            if (f.id != d.floorId && f.waiting > before && settings.notifyNeedsInput) floorAlert(f.id, f.name, f.waiting)
+        if (!d.hasBuildingRoster) {
+            for (f in d.floors) {
+                val before = floorWaiting.put(f.id, f.waiting) ?: continue
+                if (f.id != d.floorId && f.waiting > before && settings.notifyNeedsInput) floorAlert(f.id, f.name, f.waiting)
+            }
         }
     }
 
@@ -154,7 +156,7 @@ class Alerts(
             .setContentTitle(title)
             .setContentText(detail)
             .setStyle(NotificationCompat.BigTextStyle().bigText(big))
-            .setSubText(listOfNotNull(officeName, if (w.id == ORCHESTRATOR_ID) "Mission Control" else d.floor?.name).joinToString(" · "))
+            .setSubText(listOfNotNull(officeName, if (w.id == ORCHESTRATOR_ID) "Mission Control" else (d.floorOfWorker(w.id)?.name ?: d.floor?.name?.takeIf { !d.hasBuildingRoster })).joinToString(" · "))
             .setCategory(if (needs) NotificationCompat.CATEGORY_MESSAGE else NotificationCompat.CATEGORY_STATUS)
             .setPriority(if (needs) NotificationCompat.PRIORITY_HIGH else NotificationCompat.PRIORITY_DEFAULT)
             .setAutoCancel(true)

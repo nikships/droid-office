@@ -15,6 +15,7 @@ object Tags {
         const val SCAN = "screen.scan"
         const val PAIR = "screen.pair"
         const val HOME = "screen.home"
+        const val WORKERS = "screen.workers"
         const val WORKER = "screen.worker"
         const val OFFICES = "screen.offices"
         const val ASKS = "screen.asks"
@@ -32,6 +33,7 @@ object Tags {
     /** The bottom tabs. */
     object Tab {
         const val BAR = "tab.bar"
+        const val WORKERS = "tab.workers"
         const val ASKS = "tab.asks"
         const val OFFICE = "tab.office"
         const val BOARD = "tab.board"
@@ -126,6 +128,39 @@ object Tags {
         const val EMPTY_HIRE = "asks.empty.hire"
         fun option(number: Int) = "asks.card.option/$number"
         fun next(id: String) = "asks.next/$id"
+    }
+
+    /** The cross-floor Workers tab: live search, status/floor filters, Needs you cards and the building roster. */
+    object Workers {
+        const val LIST = "workers.list"
+        const val LOADING = "workers.loading"
+        const val EMPTY = "workers.empty"
+        const val EMPTY_HIRE = "workers.empty.hire"
+        const val FILTER_EMPTY = "workers.filter_empty"
+        const val CLEAR_FILTERS = "workers.clear_filters"
+        const val HIRE = "workers.hire"
+        const val PICK_WORKER = "workers.pick_worker"
+        const val WAITING_COUNT = "workers.waiting_count"
+        const val SUMMARY = "workers.summary"
+        const val SEARCH = "workers.search"
+        const val SEARCH_CLEAR = "workers.search.clear"
+        const val STATUS_FILTERS = "workers.filters.status"
+        const val FLOOR_FILTERS = "workers.filters.floor"
+        const val NEEDS_YOU = "workers.needs_you"
+        const val ANSWERED = "workers.answered"
+        const val CARD_NAME = "workers.card.name"
+        const val CARD_STATUS = "workers.card.status"
+        const val CARD_FLOOR = "workers.card.floor"
+        const val CARD_REPO = "workers.card.repo"
+        const val CARD_META = "workers.card.meta"
+        const val CARD_TITLE = "workers.card.title"
+        const val CARD_DETAIL = "workers.card.detail"
+        const val CARD_TODOS = "workers.card.todos"
+
+        fun card(id: String) = "workers.card/$id"
+        fun ask(id: String) = "workers.ask/$id"
+        fun statusFilter(key: String) = "workers.filter.status/$key"
+        fun floorFilter(id: String) = "workers.filter.floor/$id"
     }
 
     object Update {

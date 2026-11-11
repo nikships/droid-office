@@ -74,6 +74,20 @@ data class WorktreeRef(val path: String = "", val branch: String = "", val base:
 @Serializable
 data class PrRef(val number: Int = 0, val url: String = "")
 
+/** One other floor's repository a worker works in too (src/shared/protocol.ts WorkerRepo). */
+@Serializable
+data class WorkerRepo(
+    val floor: String = "",
+    val name: String = "",
+    val repo: String? = null,
+    val dir: String = "",
+    val path: String = "",
+    val branch: String = "",
+    val base: String = "",
+    val from: String? = null,
+    val pr: PrRef? = null,
+)
+
 /** A cloud worker's Factory computer (src/shared/factory-cloud.ts): its Droid session runs there, not in a terminal of the office's. */
 @Serializable
 data class CloudRef(
@@ -132,6 +146,7 @@ data class WorkerInfo(
     val createdAt: Long = 0,
     val prompt: String? = null,
     val worktree: WorktreeRef? = null,
+    val repos: List<WorkerRepo> = emptyList(),
     val pr: PrRef? = null,
     val prOpening: Boolean = false,
     val title: String? = null,
@@ -220,8 +235,16 @@ data class FloorView(
     val pulls: GhPulls,
 )
 
+/** Every desk and cloud worker on one floor, with its pull requests, for building-wide views. */
+@Serializable
+data class FloorRoster(
+    val floor: String = "",
+    val workers: List<WorkerInfo> = emptyList(),
+    val pulls: List<GhPull> = emptyList(),
+)
+
 sealed interface ServerMsg {
-    data class Welcome(val connection: String, val arrival: Arrival, val floors: List<FloorInfo>, val version: String, val view: FloorView, val availability: Map<String, ModelAvailability> = emptyMap(), val subscriptions: SubscriptionState? = null, val hiddenModels: Set<String> = emptySet(), val workerAnswerMultiSelect: Boolean = false, val factory: FactoryState? = null, val missionControl: MissionControlState? = null) : ServerMsg
+    data class Welcome(val connection: String, val arrival: Arrival, val floors: List<FloorInfo>, val version: String, val view: FloorView, val availability: Map<String, ModelAvailability> = emptyMap(), val subscriptions: SubscriptionState? = null, val hiddenModels: Set<String> = emptySet(), val workerAnswerMultiSelect: Boolean = false, val factory: FactoryState? = null, val missionControl: MissionControlState? = null, val building: List<FloorRoster>? = null) : ServerMsg
     data class ActionResult(val requestId: String, val ok: Boolean, val error: String?) : ServerMsg
     data class HiddenModels(val ids: Set<String>) : ServerMsg
     /** The office's Factory state replaced: its connection, computers and Environments. */
@@ -231,6 +254,12 @@ sealed interface ServerMsg {
     data class FloorEnter(val arrival: Arrival, val view: FloorView) : ServerMsg
     /** A building agent or its team changed: sent to every connection, whatever floor it is on. */
     data class MissionControl(val state: MissionControlState) : ServerMsg
+    /** A worker on [floor] changed, sent to every connection so building-wide views stay live. */
+    data class BuildingWorker(val floor: String, val worker: WorkerInfo) : ServerMsg
+    /** A worker left [floor], sent to every connection. */
+    data class BuildingRemove(val floor: String, val workerId: String) : ServerMsg
+    /** A floor's pull requests refreshed, sent to every connection so cross-floor PR badges stay current. */
+    data class BuildingPulls(val floor: String, val pulls: List<GhPull>) : ServerMsg
     data class Floors(val floors: List<FloorInfo>) : ServerMsg
     data class WorkerUpdate(val worker: WorkerInfo) : ServerMsg
     data class WorkerRemove(val workerId: String) : ServerMsg
@@ -290,6 +319,7 @@ object Protocol {
             workerAnswerMultiSelect = o.bool("workerAnswerMultiSelect") == true,
             factory = FactoryCloud.parse(o["factory"]),
             missionControl = MissionControl.parse(o["missionControl"]),
+            building = building(o["building"]),
         )
         "floor.enter" -> ServerMsg.FloorEnter(
             arrival = o.obj("arrival")?.let { OfficeJson.decodeFromJsonElement<Arrival>(it) } ?: Arrival(),
@@ -297,6 +327,19 @@ object Protocol {
         )
         "floors" -> ServerMsg.Floors(floors(o["floors"]))
         "missionControl" -> MissionControl.parse(o["state"])?.let { ServerMsg.MissionControl(it) } ?: ServerMsg.Ignored(t)
+        "building.worker" -> {
+            val floor = o.str("floor")?.takeIf { it.isNotBlank() } ?: return ServerMsg.Ignored(t)
+            ServerMsg.BuildingWorker(floor, OfficeJson.decodeFromJsonElement(o.getValue("worker")))
+        }
+        "building.remove" -> {
+            val floor = o.str("floor")?.takeIf { it.isNotBlank() } ?: return ServerMsg.Ignored(t)
+            val id = o.str("workerId")?.takeIf { it.isNotBlank() } ?: return ServerMsg.Ignored(t)
+            ServerMsg.BuildingRemove(floor, id)
+        }
+        "building.pulls" -> {
+            val floor = o.str("floor")?.takeIf { it.isNotBlank() } ?: return ServerMsg.Ignored(t)
+            ServerMsg.BuildingPulls(floor, pulls(o["pulls"]))
+        }
         "models.hidden" -> ServerMsg.HiddenModels(strings(o["ids"]))
         "factory" -> FactoryCloud.parse(o["state"])?.let { ServerMsg.Factory(it) } ?: ServerMsg.Ignored(t)
         "subscriptions" -> ServerMsg.Subscriptions(Availability.parse(o["state"]), Subscriptions.parse(o["state"]))
@@ -324,6 +367,16 @@ object Protocol {
 
     private fun workers(e: JsonElement?): List<WorkerInfo> =
         (e as? JsonArray)?.mapNotNull { runCatching { OfficeJson.decodeFromJsonElement<WorkerInfo>(it) }.getOrNull() }.orEmpty()
+
+    private fun pulls(e: JsonElement?): List<GhPull> =
+        (e as? JsonArray)?.mapNotNull { runCatching { OfficeJson.decodeFromJsonElement<GhPull>(it) }.getOrNull() }.orEmpty()
+
+    private fun building(e: JsonElement?): List<FloorRoster>? =
+        (e as? JsonArray)?.mapNotNull { entry ->
+            val o = entry as? JsonObject ?: return@mapNotNull null
+            val floor = o.str("floor")?.takeIf { it.isNotBlank() } ?: return@mapNotNull null
+            FloorRoster(floor = floor, workers = workers(o["workers"]), pulls = pulls(o["pulls"]))
+        }
 
     private fun floorView(o: JsonObject) = FloorView(
         floor = o.str("floor"),

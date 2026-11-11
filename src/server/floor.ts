@@ -70,6 +70,8 @@ export interface FloorContext {
   changes(state: ChangesState, clients: string[]): void;
   /** A worker on this floor changed, or left (then just its id). */
   workerChanged(floor: Floor, w: WorkerInfo | string): void;
+  /** A worker needing input updated its terminal screen, so off-floor companions keep its menu live. */
+  offFloorScreen?(floor: Floor, workerId: string): void;
   /** How many owner connections are on this floor right now. */
   connections(floor: Floor): number;
   /** ⚙️ Settings: a worker whose pull request merged goes home by itself. */
@@ -248,7 +250,10 @@ export class Floor {
           ctx.workerChanged(this, workerId);
         },
         data: (workerId, data, connectionIds) => ctx.termData(workerId, data, connectionIds),
-        screen: (workerId, frame) => ctx.emit(this, { t: 'screen', workerId, ...frame }, true),
+        screen: (workerId, frame) => {
+          ctx.emit(this, { t: 'screen', workerId, ...frame }, true);
+          if (this.workers.get(workerId)?.status === 'needs_input') ctx.offFloorScreen?.(this, workerId);
+        },
         toast: (text, level, workerId) => ctx.toast(this, text, level, workerId),
         checkout: (branch) => {
           this.project.branch = branch;

@@ -306,7 +306,7 @@ private fun TopBar(officeName: String, data: OfficeData, link: Link, onOffices: 
 }
 
 @Composable
-private fun ConnectionBanner(link: Link, legacy: Boolean, synced: Boolean, onRetry: () -> Unit, onScan: () -> Unit) {
+internal fun ConnectionBanner(link: Link, legacy: Boolean, synced: Boolean, onRetry: () -> Unit, onScan: () -> Unit) {
     val now = rememberNow(500)
     val show = link.phase != Phase.Connected && !(link.phase == Phase.Connecting && !synced) && link.phase != Phase.Idle && link.phase != Phase.Unauthorized
     AnimatedVisibility(show, enter = expandVertically() + fadeIn(), exit = shrinkVertically() + fadeOut()) {
@@ -620,7 +620,7 @@ private fun EmptyFloor(onHire: () -> Unit, modifier: Modifier) {
 
 /** The office no longer knows this phone: unpaired in its Settings, or (for a LAN-token office) restarted. */
 @Composable
-private fun Repair(officeName: String, legacy: Boolean, onScan: () -> Unit) {
+internal fun Repair(officeName: String, legacy: Boolean, onScan: () -> Unit) {
     val graph = LocalGraph.current
     val scope = androidx.compose.runtime.rememberCoroutineScope()
     Column(

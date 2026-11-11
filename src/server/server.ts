@@ -650,6 +650,46 @@ export async function startServer(cfg: Config) {
   );
   machine.start();
 
+  const offFloorThrottle = new Map<string, { lastAt: number; timer?: ReturnType<typeof setTimeout> }>();
+  const clearOffFloorThrottle = (workerId: string) => {
+    const entry = offFloorThrottle.get(workerId);
+    if (entry?.timer) clearTimeout(entry.timer);
+    offFloorThrottle.delete(workerId);
+  };
+  const flushOffFloorScreen = (floor: Floor, workerId: string) => {
+    if (floors.get(floor.id) !== floor) return;
+    if (floor.workers.get(workerId)?.status !== 'needs_input') return;
+    const frame = floor.workers.fullScreen(workerId);
+    if (!frame) return;
+    const json = JSON.stringify({ t: 'screen', workerId, ...frame, full: true } satisfies ServerMsg);
+    for (const c of clients.values()) {
+      if (c.floor === floor.id || c.ws.readyState !== WebSocket.OPEN) continue;
+      if (c.ws.bufferedAmount > 4 * 1024 * 1024) continue;
+      c.ws.send(json);
+    }
+  };
+  /** Sends a worker's full screen to connections not on `floor`, coalescing rapid TUI redraws. */
+  const broadcastOffFloorScreen = (floor: Floor, workerId: string) => {
+    const now = Date.now();
+    const entry = offFloorThrottle.get(workerId);
+    const elapsed = entry ? now - entry.lastAt : Infinity;
+    if (elapsed >= 50) {
+      if (entry?.timer) clearTimeout(entry.timer);
+      offFloorThrottle.set(workerId, { lastAt: now });
+      flushOffFloorScreen(floor, workerId);
+      return;
+    }
+    if (entry?.timer) return;
+    const timer = setTimeout(() => {
+      const cur = offFloorThrottle.get(workerId);
+      if (cur) cur.timer = undefined;
+      if (cur) cur.lastAt = Date.now();
+      flushOffFloorScreen(floor, workerId);
+    }, 50 - elapsed);
+    timer.unref();
+    offFloorThrottle.set(workerId, { lastAt: entry?.lastAt ?? now, timer });
+  };
+
   const floorContext: FloorContext = {
     building: buildingAgents,
     agentCmd: cfg.agentCmd,
@@ -667,12 +707,21 @@ export async function startServer(cfg: Config) {
         if (c) sendTo(c, { t: 'changes', state });
       }
     },
-    workerChanged: (_floor, w) => {
+    workerChanged: (floor, w) => {
       answers.changed(typeof w === 'string' ? w : w.id, typeof w === 'string' ? undefined : w.status);
+      if (typeof w === 'string' || w.status !== 'needs_input') clearOffFloorThrottle(typeof w === 'string' ? w : w.id);
+      if (floors.get(floor.id) === floor) {
+        if (typeof w === 'string') broadcast({ t: 'building.remove', floor: floor.id, workerId: w });
+        else {
+          broadcast({ t: 'building.worker', floor: floor.id, worker: w });
+          if (w.status === 'needs_input') broadcastOffFloorScreen(floor, w.id);
+        }
+      }
       machine.workersChanged();
       floorsChanged();
       missionChanged();
     },
+    offFloorScreen: broadcastOffFloorScreen,
     connections: (floor) => {
       let n = 0;
       for (const c of clients.values()) if (c.floor === floor.id) n++;
@@ -687,6 +736,7 @@ export async function startServer(cfg: Config) {
     modelUsage: (model, now) => subscriptions.usage(model, now),
     floor: (id) => floors.get(id),
     pullsChanged: (floor) => {
+      if (floors.get(floor.id) === floor) broadcast({ t: 'building.pulls', floor: floor.id, pulls: floor.board.pulls.items });
       for (const f of floors.values()) if (f !== floor && worksIn(f, floor)) f.sendLandedHome();
     },
     lent: (floor) => [...floors.values()].some((f) => f !== floor && worksIn(f, floor)),
@@ -702,6 +752,11 @@ export async function startServer(cfg: Config) {
     try {
       const floor = new Floor(def, floorContext);
       floors.set(def.id, floor);
+      for (const worker of floor.everyone()) {
+        broadcast({ t: 'building.worker', floor: floor.id, worker });
+        if (worker.status === 'needs_input') broadcastOffFloorScreen(floor, worker.id);
+      }
+      if (floor.board.pulls.items.length) broadcast({ t: 'building.pulls', floor: floor.id, pulls: floor.board.pulls.items });
       return floor;
     } catch (err) {
       console.error(`droid-office: couldn't open the ${def.name} floor: ${(err as Error).message}`);
@@ -750,10 +805,19 @@ export async function startServer(cfg: Config) {
   });
   /** The roof: nobody works up there, so it has none of a floor's things. */
   const roofView = (): FloorView => ({ ...floorView(undefined), floor: ROOF });
+  const buildingRoster = () => [...floors.values()].map((f) => ({ floor: f.id, workers: f.everyone(), pulls: f.board.pulls.items }));
   const screensOf = (c: Client, floor: Floor | undefined) => {
-    const frames = [...(floor?.workers.fullScreens() ?? []), ...(floor?.cloud.fullScreens() ?? [])];
+    const frames = [...(floor?.workers.fullScreens() ?? []), ...(floor?.cloud.fullScreens() ?? []), ...orchestrator.workers.fullScreens()];
     const shell = floor?.shell.fullScreen();
     if (shell) frames.push({ workerId: OFFICE_SHELL_ID, frame: shell });
+    for (const f of floors.values()) {
+      if (f === floor) continue;
+      for (const w of f.workers.list()) {
+        if (w.status !== 'needs_input') continue;
+        const frame = f.workers.fullScreen(w.id);
+        if (frame) frames.push({ workerId: w.id, frame });
+      }
+    }
     for (const { workerId, frame } of frames) sendTo(c, { t: 'screen', workerId, ...frame, full: true });
   };
   const images = new ImageProxy();
@@ -1275,8 +1339,8 @@ export async function startServer(cfg: Config) {
         // A picture a worker read or was sent, shown in its Thread (worker-thread.ts reads it from the session).
         const workerId = str(url.searchParams.get('worker'), 32);
         const id = str(url.searchParams.get('image'), 160);
-        // The Orchestrator's thread is the same from every floor.
-        const owner = workerId === ORCHESTRATOR_ID ? orchestrator.workers : floor?.workers;
+        // The Orchestrator's thread is the same from every floor; cross-floor thread views fall back to the worker's floor.
+        const owner = workerId === ORCHESTRATOR_ID ? orchestrator.workers : (floor?.workers ?? workerFloor(workerId)?.workers);
         const source = owner?.threadSession(workerId);
         // A picture sent with a prompt is served from that worker's own drops, never from the path the message names.
         const drop = DROP_IMAGE_ID.exec(id)?.[1];
@@ -1573,6 +1637,7 @@ export async function startServer(cfg: Config) {
       setup: setup.state(),
       subscriptions: subscriptions.state(),
       missionControl: missionState(),
+      building: buildingRoster(),
       ...(onRoof ? roofView() : floorView(floor)),
     });
     screensOf(client, floor);
@@ -1843,7 +1908,22 @@ export async function startServer(cfg: Config) {
         return c.ws.close(1012, 'Reconnect to continue');
       }
     }
-    if (msg.requestFloor && msg.requestFloor !== c.floor) return done('The active floor changed. Nothing was sent.');
+    const asked = (msg as { workerId?: unknown }).workerId;
+    const crossFloorWorkerAction = (msg.t === 'worker.answer' || msg.t === 'worker.fork' || msg.t === 'worker.kill') && typeof asked === 'string' && asked !== ORCHESTRATOR_ID;
+    const targetFloor = typeof asked === 'string' && asked !== ORCHESTRATOR_ID ? (workerFloor(asked) ?? floors.get(cloud.find(asked)?.floor.id ?? '')) : undefined;
+    if (crossFloorWorkerAction) {
+      if (msg.requestFloor) {
+        if (!floors.has(msg.requestFloor)) return done('The active floor changed. Nothing was sent.');
+        if (targetFloor && msg.requestFloor !== targetFloor.id) return done('That worker is not on that floor. Nothing was sent.');
+      } else if (requestId && targetFloor && targetFloor.id !== c.floor) {
+        return done('That worker is not on the active floor. Nothing was sent.');
+      }
+    } else {
+      if (msg.requestFloor && msg.requestFloor !== c.floor) return done('The active floor changed. Nothing was sent.');
+      if (requestId && targetFloor && targetFloor.id !== c.floor) {
+        return done('That worker is not on the active floor. Nothing was sent.');
+      }
+    }
     /** The floor `c` is on, or a note to them that they have to be on one. */
     const here = (): Floor | undefined => {
       const f = floorOf(c);
@@ -1856,11 +1936,6 @@ export async function startServer(cfg: Config) {
       const floor = workerFloor(wid);
       return floor ? { wid, floor, info: floor.workers.get(wid)! } : undefined;
     };
-    const asked = (msg as { workerId?: unknown }).workerId;
-    if (requestId && typeof asked === 'string') {
-      const floor = workerFloor(asked) ?? floors.get(cloud.find(asked)?.floor.id ?? '');
-      if (floor && floor.id !== c.floor) return done('That worker is not on the active floor. Nothing was sent.');
-    }
     const promptOrchestrator = (m: { prompt: string; images?: string[]; queue?: boolean }) => {
       const images = imageIds(m.images);
       const at = floorOf(c);
@@ -2119,7 +2194,7 @@ export async function startServer(cfg: Config) {
       case 'worker.fork': {
         const w = worker(msg.workerId);
         if (!w) return done('No such worker');
-        if (w.floor.id !== c.floor) return refuse('Take the elevator to that worker’s floor before forking');
+        if ((msg.requestFloor ?? c.floor) !== w.floor.id) return refuse('Take the elevator to that worker’s floor before forking');
         defer();
         void w.floor.workers.fork(w.wid, who, str(msg.prompt, 20000) || undefined).then(
           (result) => {
@@ -2150,6 +2225,7 @@ export async function startServer(cfg: Config) {
       case 'worker.kill': {
         const w = worker(msg.workerId);
         if (!w) return done('No such worker');
+        if ((msg.requestFloor ?? c.floor) !== w.floor.id) return refuse('Take the elevator to that worker’s floor before sending it home');
         const { floor, info } = w;
         // The worker leaves right away; its worktree is dealt with after that, and the outcome follows.
         const cleanup = floor.team.sendingHome(info.id, 'owner', () => floor.workers.kill(info.id, CLEANUPS.has(String(msg.cleanup)) ? msg.cleanup : undefined));
@@ -2257,7 +2333,8 @@ export async function startServer(cfg: Config) {
       }
       case 'worker.answer': {
         const w = worker(msg.workerId);
-        if (!w || c.floor !== w.floor.id) return done('That worker is no longer on this floor.');
+        const expectedFloor = msg.requestFloor ?? c.floor;
+        if (!w || expectedFloor !== w.floor.id) return done('That worker is no longer on this floor.');
         const hasChoice = typeof msg.choice === 'number';
         const hasChoices = Array.isArray(msg.choices);
         const hasText = typeof msg.text === 'string';
@@ -2271,7 +2348,7 @@ export async function startServer(cfg: Config) {
             lines,
             menu: () => w.floor.workers.screenMenu(w.wid),
             write: (data) => w.floor.workers.write(w.wid, data),
-            live: () => c.ws.readyState === WebSocket.OPEN && c.floor === w.floor.id,
+            live: () => c.ws.readyState === WebSocket.OPEN && floors.get(w.floor.id) === w.floor && (msg.requestFloor ? msg.requestFloor === w.floor.id : c.floor === w.floor.id),
           })
           .then(
             (error) => done(error, w.wid),
@@ -2317,7 +2394,8 @@ export async function startServer(cfg: Config) {
         const workerId = str(msg.workerId, 32);
         const request = str(msg.request, 128);
         const before = typeof msg.before === 'number' ? msg.before : undefined;
-        const floor = floorOf(c);
+        const cloudOwner = cloud.find(workerId);
+        const floor = workerFloor(workerId) ?? (cloudOwner ? floors.get(cloudOwner.floor.id) : undefined) ?? floorOf(c);
         const source = floor?.workers.threadSession(workerId);
         const reply = { t: 'thread.snapshot' as const, workerId, request, ...(before !== undefined ? { before } : {}) };
         if (msg.before !== undefined && (before === undefined || !Number.isSafeInteger(before) || before < 0)) {
@@ -2325,12 +2403,12 @@ export async function startServer(cfg: Config) {
           break;
         }
         // A cloud worker's thread is its Factory session's messages (factory/cloud-thread.ts).
-        const remote = floor && cloud.find(workerId)?.floor.id === floor.id ? cloud.thread(workerId, before) : undefined;
-        if (remote) {
-          const sessionId = cloud.find(workerId)?.info.sessionId;
+        const remote = floor && cloudOwner?.floor.id === floor.id ? cloud.thread(workerId, before) : undefined;
+        if (remote && floor) {
+          const sessionId = cloudOwner?.info.sessionId;
           void remote.then((page) => {
             const still = cloud.find(workerId);
-            if (floorOf(c) !== floor || still?.info.sessionId !== sessionId) {
+            if (floors.get(floor.id) !== floor || still?.info.sessionId !== sessionId) {
               sendTo(c, { ...reply, entries: [], hasMore: false, error: 'The active floor or worker session changed. Read the thread again.' });
               return;
             }
@@ -2344,7 +2422,7 @@ export async function startServer(cfg: Config) {
         }
         void workerThreads.read(source, before, floor.workers.threadBusy(workerId)).then((page) => {
           const current = floor.workers.threadSession(workerId);
-          if (floorOf(c) !== floor || current?.sessionId !== source.sessionId || current.cwd !== source.cwd) {
+          if (floors.get(floor.id) !== floor || current?.sessionId !== source.sessionId || current.cwd !== source.cwd) {
             sendTo(c, { ...reply, entries: [], hasMore: false, error: 'The active floor or worker session changed. Read the thread again.' });
             return;
           }
@@ -2981,6 +3059,8 @@ export async function startServer(cfg: Config) {
     clearInterval(heartbeat);
     clearInterval(resync);
     clearTimeout(floorsTimer);
+    for (const e of offFloorThrottle.values()) if (e.timer) clearTimeout(e.timer);
+    offFloorThrottle.clear();
     upgrader.stop();
     void hotReload.stop().catch((err) => console.error('droid-office: source reload cleanup:', err));
     machine.stop();

@@ -59,6 +59,7 @@ import ai.factory.droidoffice.core.ThreadEntry
 import ai.factory.droidoffice.core.ThreadFeed
 import ai.factory.droidoffice.core.WorkerInfo
 import ai.factory.droidoffice.session.Answered
+import ai.factory.droidoffice.session.OfficeData
 import ai.factory.droidoffice.session.Phase
 import ai.factory.droidoffice.ui.LocalGraph
 import ai.factory.droidoffice.ui.components.Eyebrow
@@ -70,7 +71,14 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.isActive
 
-/** The same compact entry in Thread, Asks and Raw TTY. No option tap sends terminal input. */
+private const val ANSWER_DELAY_MS = 3_000L
+
+private fun OfficeData.askIdentity(workerId: String, sessionId: String?): String {
+    val ownerFloor = workerFloorId(workerId) ?: floorId
+    return "$officeId/${MissionControl.floorScope(ownerFloor, workerId)}/$workerId/$sessionId"
+}
+
+/** The same compact entry in Thread, Workers and Raw TTY. No option tap sends terminal input. */
 @Composable
 fun AskCard(
     worker: WorkerInfo,
@@ -85,11 +93,12 @@ fun AskCard(
     connected: Boolean = enabled,
     entries: List<ThreadEntry> = emptyList(),
     questionTag: String = Tags.Asks.QUESTION,
+    openLabel: String = "Raw TTY",
     onAnswered: ((String) -> Unit)? = null,
 ) {
     val graph = LocalGraph.current
     val data by graph.connection.data.collectAsStateWithLifecycle()
-    val identity = "${data.officeId}/${MissionControl.floorScope(data.floorId, worker.id)}/${worker.id}/${worker.sessionId}"
+    val identity = data.askIdentity(worker.id, worker.sessionId)
     var opened by rememberSaveable(identity) { mutableStateOf<String?>(null) }
     Column(
         modifier.fillMaxWidth().tagged(Tags.Asks.CARD)
@@ -111,7 +120,7 @@ fun AskCard(
         } else {
             Text("This question needs Raw TTY.", style = MaterialTheme.typography.bodySmall, modifier = Modifier.tagged(Tags.Asks.WAITING))
         }
-        onOpenThread?.let { SecondaryButton("Raw TTY", it, Modifier.tagged(Tags.Asks.OPEN_THREAD)) }
+        onOpenThread?.let { SecondaryButton(openLabel, it, Modifier.tagged(Tags.Asks.OPEN_THREAD)) }
     }
     opened?.let { encoded ->
         val shown = remember(encoded) { OfficeJson.decodeFromString(Menu.serializer(), encoded) }
@@ -175,7 +184,7 @@ private fun AnswerWorkspace(worker: WorkerInfo, shown: Menu, entries: List<Threa
     val connected = link.phase == Phase.Connected
     LaunchedEffect(connected) { if (!connected) interrupted = true }
     val now = data.worker(worker.id)
-    val currentIdentity = "${data.officeId}/${MissionControl.floorScope(data.floorId, worker.id)}/${worker.id}/${now?.sessionId}"
+    val currentIdentity = data.askIdentity(worker.id, now?.sessionId)
     val currentMenu = now?.let { Asks.menu(it, screens[worker.id]) }
     val same = currentIdentity == identity && now?.state == ai.factory.droidoffice.core.WorkerStatus.NeedsInput && Choices.same(shown, currentMenu)
     val supported = !shown.multiSelect || data.workerAnswerMultiSelect
@@ -281,7 +290,7 @@ private fun AnswerWorkspace(worker: WorkerInfo, shown: Menu, entries: List<Threa
                                 if (store.settings.answerDelay) delay(ANSWER_DELAY_MS)
                                 val fresh = connection.data.value
                                 val freshWorker = fresh.worker(worker.id)
-                                val freshIdentity = "${fresh.officeId}/${MissionControl.floorScope(fresh.floorId, worker.id)}/${worker.id}/${freshWorker?.sessionId}"
+                                val freshIdentity = fresh.askIdentity(worker.id, freshWorker?.sessionId)
                                 if (!connection.connected || connection.answerEpoch != epoch || freshIdentity != identity) {
                                     error = "The connection or session changed. Reopen this question before submitting. Your draft is kept."
                                     interrupted = true
