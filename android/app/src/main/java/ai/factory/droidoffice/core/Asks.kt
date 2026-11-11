@@ -161,6 +161,7 @@ object Asks {
 
     /** Full pending-call metadata is for display only. Send the original screen menu, never this copy. */
     fun display(menu: Menu, entries: List<ThreadEntry>, ask: WorkerAsk? = null): Menu {
+        if (menu.review != null) return menu
         if (ask?.isPermission == true) return menu.copy(question = permissionLine(ask))
         val asked = matching(known(ask, entries), menu) ?: return menu
         return menu.copy(

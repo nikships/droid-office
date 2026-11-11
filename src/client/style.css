@@ -2842,6 +2842,7 @@ summary:hover > .wt-chevron { color: var(--text-secondary); }
 .qw-question-meta { display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); color: var(--accent); }
 .qw-question { margin: var(--space-5) 0 var(--space-3); color: var(--text); font: 500 clamp(20px, 2vw, 28px)/1.4 var(--font-sans); white-space: pre-wrap; overflow-wrap: anywhere; }
 .qw-instructions { margin: 0 0 var(--space-5); color: var(--text-secondary); line-height: 1.6; }
+.qw-review { white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.8; }
 .qw-choices { display: flex; flex-direction: column; gap: var(--space-3); }
 .qw-choice { display: flex; align-items: flex-start; gap: var(--space-4); padding: var(--space-4); margin: 0; border: 1px solid var(--border-strong); border-radius: var(--radius); background: var(--surface); cursor: pointer; text-transform: none; letter-spacing: normal; }
 .qw-choice:hover { border-color: var(--text-tertiary); }

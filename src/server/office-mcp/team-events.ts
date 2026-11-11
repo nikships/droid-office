@@ -154,7 +154,7 @@ const deskLabel = (w: WorkerInfo) => DESK_BY_ID.get(w.deskId)?.label ?? w.deskId
 const desk = (w: WorkerInfo | undefined) => (w ? { desk: deskLabel(w) } : {});
 
 function menuHash(menu: Menu): string {
-  const shape = { q: menu.question ?? '', m: !!menu.multiSelect, f: menu.freeText, c: menu.choices.map((c) => [c.number, c.label, c.description ?? '']) };
+  const shape = { q: menu.question ?? '', m: !!menu.multiSelect, f: menu.freeText, c: menu.choices.map((c) => [c.number, c.label, c.description ?? '']), ...(menu.review ? { review: menu.review } : {}) };
   return createHash('sha256').update(JSON.stringify(shape)).digest('hex').slice(0, 12);
 }
 
@@ -209,7 +209,7 @@ function terminalQuestion(scope: TeamScope, w: WorkerInfo): OpenQuestion | undef
     ...base,
     id: `ask:${scope.id}:${w.id}:${menuHash(menu)}`,
     kind: 'terminal',
-    question: shown.question,
+    question: menu.review ? `${shown.question}\n${menu.review.join('\n')}` : shown.question,
     options: shown.choices.map((c) => ({ id: String(c.number), label: c.label, ...(c.description ? { description: c.description } : {}), ...(c.selected !== undefined ? { selected: c.selected } : {}) })),
     multiSelect: !!menu.multiSelect,
     takesText: menuTakesText(menu),

@@ -8,6 +8,30 @@ import org.junit.Test
 
 class ChoicesTest {
     @Test
+    fun capturedDroid171ReviewSubmitsWithEnterAndBindsEveryAnswer() {
+        val lines = javaClass.getResource("/askuser-1.7.1-review.txt")!!.readText().lines()
+        val menu = Choices.read(lines)!!
+        assertEquals("Review your answers", menu.question)
+        assertEquals(listOf(Choice(1, "Submit answers")), menu.choices)
+        assertEquals(listOf("Which hypervisor should we use?", "→ UTM", "Which Windows licence should we use?", "→ Evaluation", "How should agents connect?", "→ SSH"), menu.review)
+        assertEquals(Keys.ENTER, Choices.keys(menu, menu.choices.single()))
+        assertFalse(Choices.takesText(menu))
+        assertTrue(QuestionAnswers.valid(menu, 1, null, null))
+        assertFalse(QuestionAnswers.valid(menu, null, null, "Submit"))
+        assertFalse(Choices.same(menu, Choices.read(lines.map { it.replace("→ SSH", "→ RDP") })))
+        assertEquals(menu, OfficeJson.decodeFromString(Menu.serializer(), OfficeJson.encodeToString(Menu.serializer(), menu)))
+        assertEquals(menu, Asks.display(menu, emptyList()))
+        assertEquals(menu, Choices.read(javaClass.getResource("/askuser-1.7.1-review-phone.txt")!!.readText().lines()))
+        for (invalid in listOf(
+            lines.filterNot { it.contains("Submit answers") },
+            lines.filterNot { it.contains("→ ") },
+            lines.map { it.replace("❯ Submit answers", "Submit answers") },
+            lines + "The worker continued.",
+            lines.filterNot { it.contains("Enter Submit") },
+        )) assertNull(Choices.read(invalid))
+    }
+
+    @Test
     fun preservesTheQuestionAndExplanationWithoutThreadHistory() {
         val header = listOf("  Ask User", "  ● Memories → ● Sessions → ○ Analytics → ○ CI-and-Appwrite", "")
         val answers = listOf("", "  1. Yes, install it", "  2. No, skip", "  Or type your own answer...", "", "  Space/Enter/1-9 Select")
