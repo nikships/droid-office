@@ -156,31 +156,31 @@
     "width": 0.71
   },
   "droid-team-kit": {
-    "bytes": 170476,
-    "depth": 0.416,
-    "height": 0.606,
+    "bytes": 164232,
+    "depth": 0.2765,
+    "height": 0.428,
     "materials": 5,
     "tags": [
       "factory",
       "part"
     ],
-    "triangles": 2956,
+    "triangles": 2836,
     "url": "/props/droid-team-kit.glb",
-    "width": 0.605
+    "width": 0.586
   },
   "droid-worker": {
-    "bytes": 340644,
-    "depth": 0.475,
-    "height": 1.1625,
-    "materials": 11,
+    "bytes": 288036,
+    "depth": 0.3765,
+    "height": 1.303,
+    "materials": 12,
     "tags": [
       "factory",
       "hero",
       "part"
     ],
-    "triangles": 7540,
+    "triangles": 7238,
     "url": "/props/droid-worker.glb",
-    "width": 0.698
+    "width": 0.598
   },
   "elevator-panels": {
     "bytes": 40944,

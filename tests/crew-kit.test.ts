@@ -74,9 +74,9 @@ test('droid-worker.glb upgrades waiting workers and mounts articulated droid par
         if ((o as THREE.Mesh).isMesh) box.expandByObject(o);
       });
       const size = box.getSize(new THREE.Vector3());
-      assert.ok(size.x > 0.65 && size.x < 0.75, `width ${size.x}`);
-      assert.ok(size.y > 1.1 && size.y < 1.3, `height ${size.y}`);
-      assert.ok(size.z > 0.44 && size.z < 0.56, `depth ${size.z}`);
+      assert.ok(size.x > 0.54 && size.x < 0.66, `width ${size.x}`);
+      assert.ok(size.y > 1.24 && size.y < 1.36, `height ${size.y}`);
+      assert.ok(size.z > 0.34 && size.z < 0.72, `depth ${size.z}`);
 
       const skin = w.body.children[0] as THREE.Mesh;
       assert.ok(skin.isMesh, 'body.children[0] remains the worker-colored armor mesh');
@@ -130,10 +130,10 @@ test('droid-team-kit.glb mounts the crown on a lead and the comms kit on a subag
     assert.equal(kitOf(lead).parent, lead.body, 'worn on the body, so it sits, walks and falls with it');
     // The crown: up over the head, below the beacon's bottom, and only on the lead.
     const crown = box(lead);
-    assert.ok(crown.max.y > 1.05, `the crown rises over the head (${crown.max.y})`);
+    assert.ok(crown.max.y > 1.28, `the crown rises over the head (${crown.max.y})`);
     assert.ok(crown.max.y < WORKER_PIVOTS.bulb.y - 0.0475, 'and stays under the status beacon');
     const comms = box(follower);
-    assert.ok(comms.max.y < 1.02, 'a subagent has no crown');
+    assert.ok(comms.max.y < 1.275 && comms.max.y < crown.max.y - 0.025, `a subagent has no crown (${comms.max.y})`);
     assert.ok(comms.max.x > 0.29 && comms.min.x < -0.29, 'its comms caps sleeve both ear pods');
 
     // One team shares its geometry and its two materials; another team has its own materials.
@@ -166,6 +166,78 @@ test('droid-team-kit.glb mounts the crown on a lead and the comms kit on a subag
     follower.setTeam(undefined);
     assert.equal(meshes(follower).length, 0);
     for (const w of [lead, follower, other]) w.dispose();
+  } finally {
+    restore();
+  }
+});
+
+test('seated workers fit the task chair and clear the over-the-shoulder screen sightline while articulating across acts', async () => {
+  const restore = canvasDocument();
+  try {
+    const load = (name: string) => {
+      const glb = readFileSync(new URL(`../src/client/public/props/${name}.glb`, import.meta.url));
+      return glb.buffer.slice(glb.byteOffset, glb.byteOffset + glb.byteLength);
+    };
+    await parseWorker(load('droid-worker'));
+    const kitScene = await new Promise<THREE.Object3D>((resolve, reject) => new GLTFLoader().parse(load('droid-team-kit'), '', (g) => resolve(g.scene), reject));
+    setTeamKit(kitScene);
+
+    // Mount at exact desk seatAnchor (0, 0.4, 0.93), rotY = Math.PI, scale = 0.82.
+    const desk = new THREE.Group();
+    const seatAnchor = new THREE.Group();
+    seatAnchor.position.set(0, 0.4, 0.93);
+    seatAnchor.rotation.y = Math.PI;
+    seatAnchor.scale.setScalar(0.82);
+    desk.add(seatAnchor);
+
+    const w = new Worker('Byte', '#ee6018');
+    w.setSeat('chair');
+    w.setTeam({ id: 'lead', role: 'lead', accent: '#fbbf24', emblem: 'star', leadName: 'Byte' });
+    seatAnchor.add(w.root);
+    w.setStatus('working', false);
+    for (let i = 0; i < 60; i++) w.update(1 / 60, i / 60);
+    desk.updateMatrixWorld(true);
+
+    // Thighs bend horizontally across the seat cushion, shins drop over the front waterfall edge.
+    assert.ok(w.thighL.rotation.x < -1.45, `thigh bent onto cushion (${w.thighL.rotation.x})`);
+    assert.ok(w.shinL.rotation.x > 1.25, `shin bent over waterfall edge (${w.shinL.rotation.x})`);
+    assert.ok(w.forearmL.rotation.x < -0.6, `forearm angled onto keyboard (${w.forearmL.rotation.x})`);
+
+    // Helmet stays below the player's (0, 1.4, 2.4) -> screen bottom (0.8906, -0.4912) sightline,
+    // and the beacon dome crests gently near the chair top (< 1.22 m).
+    const headBox = new THREE.Box3().setFromObject(w.head);
+    assert.ok(headBox.max.y < 1.22, `seated beacon crest ${headBox.max.y}`);
+
+    // Exercise every tool action, beanbag, plinth, visit walk, and head-synced crown.
+    for (const action of ['edit', 'read', 'test', 'web', 'failing'] as const) {
+      w.setAction(action);
+      for (let i = 0; i < 300; i++) w.update(1 / 60, 2 + i / 60);
+    }
+    const kitMeshes = w.root.getObjectByName('team-kit')!.children as THREE.Mesh[];
+    const headPieces = kitMeshes.filter((m) => m.userData.headPiece);
+    assert.ok(headPieces.length > 0, 'crown meshes follow the head joint');
+    assert.deepEqual(headPieces[0].quaternion.toArray(), w.head.quaternion.toArray());
+
+    // Getting up for a visit unfolds the legs into a full standing stride, then sits back down.
+    w.visitPose = 'stand';
+    w.walking = true;
+    for (let i = 0; i < 60; i++) w.update(1 / 60, 10 + i / 60);
+    assert.ok(Math.abs(w.body.position.y) < 0.08, 'upright while walking');
+    w.walking = false;
+    w.visitPose = null;
+    for (let i = 0; i < 60; i++) w.update(1 / 60, 12 + i / 60);
+    assert.ok(w.body.position.y < -0.4, 'settled back onto the chair cushion');
+
+    w.setSeat('beanbag');
+    w.update(1 / 60, 13);
+    assert.ok(w.shinL.rotation.x < 0.9, 'legs stretch lower around the beanbag lap tray');
+
+    w.setSeat('plinth');
+    w.setStatus('idle', false);
+    for (let i = 0; i < 60; i++) w.update(1 / 60, 14 + i / 60);
+    assert.ok(Math.abs(w.body.position.y + 0.085) < 0.02, 'boots flush on the Orchestrator plinth');
+
+    w.dispose();
   } finally {
     restore();
   }

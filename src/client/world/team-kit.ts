@@ -16,9 +16,11 @@ const NODES: Record<string, Piece> = { TeamCrown: 'crown', TeamComms: 'comms', T
 interface Part {
   geo: THREE.BufferGeometry;
   slot: 'accent' | 'emblem' | THREE.Material;
+  head: boolean;
 }
 
 let pieces: Record<Piece, Part[]> | null = null;
+let neckOrigin = new THREE.Vector3(0, 0.98, 0.005);
 const shared = new WeakSet<THREE.BufferGeometry>();
 const kits = new Set<TeamKit>();
 
@@ -30,8 +32,10 @@ export function isTeamKitGeometry(geo: THREE.BufferGeometry): boolean {
 /**
  * Takes `droid-team-kit.glb`'s scene as the kit every team wears. `structural` are the droid's own
  * materials by GLB name (DroidGraphite, DroidSteel, DroidBlack), so the kit's frames match the body.
+ * `headPivot` centers the crown and comms geometries on the neck joint so they follow head turns.
  */
-export function setTeamKitModel(scene: THREE.Object3D, structural: Record<string, THREE.Material>) {
+export function setTeamKitModel(scene: THREE.Object3D, structural: Record<string, THREE.Material>, headPivot?: THREE.Vector3) {
+  if (headPivot) neckOrigin = headPivot.clone();
   const next: Record<Piece, Part[]> = { crown: [], comms: [], shoulders: [] };
   scene.updateMatrixWorld(true);
   scene.traverse((o) => {
@@ -40,9 +44,11 @@ export function setTeamKitModel(scene: THREE.Object3D, structural: Record<string
     const piece = NODES[m.name] ?? NODES[m.parent?.name ?? ''];
     if (!piece) return;
     const name = (m.material as THREE.Material)?.name ?? '';
+    const head = piece === 'crown' || piece === 'comms';
     const geo = m.geometry.clone().applyMatrix4(m.matrixWorld);
+    if (head) geo.translate(-neckOrigin.x, -neckOrigin.y, -neckOrigin.z);
     shared.add(geo);
-    next[piece].push({ geo, slot: name === 'TeamAccent' ? 'accent' : name === 'TeamEmblem' ? 'emblem' : (structural[name] ?? structural.DroidGraphite) });
+    next[piece].push({ geo, slot: name === 'TeamAccent' ? 'accent' : name === 'TeamEmblem' ? 'emblem' : (structural[name] ?? structural.DroidGraphite), head });
   });
   if (!next.crown.length || !next.comms.length || !next.shoulders.length) return;
   pieces = next;
@@ -131,7 +137,22 @@ export class TeamKit {
       const m = new THREE.Mesh(p.geo, p.slot === 'accent' ? mats.accent : p.slot === 'emblem' ? mats.emblem : p.slot);
       m.castShadow = true;
       m.name = `team-${p.slot === 'accent' || p.slot === 'emblem' ? p.slot : 'frame'}`;
+      if (p.head) {
+        m.position.copy(neckOrigin);
+        m.userData.headPiece = true;
+      }
       this.group.add(m);
+    }
+  }
+
+  /** Keeps head-worn crown/comms meshes aligned with the articulated head joint. */
+  syncHead(head: THREE.Object3D) {
+    for (const child of this.group.children) {
+      if (child.userData.headPiece) {
+        child.position.copy(head.position);
+        child.quaternion.copy(head.quaternion);
+        child.scale.copy(head.scale);
+      }
     }
   }
 
