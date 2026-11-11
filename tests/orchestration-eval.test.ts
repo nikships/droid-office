@@ -77,6 +77,11 @@ test('eval shell only commits staged task files and fails closed on unsupported 
   const scenario = EVAL_CASES.find((c) => c.id === 'floor-lead-hire-prereq-and-ownership')!;
   const rig = await createEvalRig({ ...scenario.world, initialDirtyFiles: ['src/shared/webhooks.ts', 'unrelated.txt'] });
   t.after(() => rig.close());
+  const branchPath = `${scenario.world.floors[0].dir}/.droid-office/floor-branch.json`;
+  assert.match(rig.allTools.find((tool) => tool.function.name === 'read_file')!.function.description, /floor-branch\.json/);
+  await rig.executeTool(0, 'read_file', { path: branchPath });
+  assert.equal(rig.calls.at(-1)?.isError, false, 'production floor-branch prerequisite must be executable in the fixture');
+  assert.deepEqual(JSON.parse(rig.calls.at(-1)!.resultText), { branch: 'main' });
   await rig.executeTool(1, 'shell', { command: 'git commit -m "not staged"' });
   assert.equal(rig.calls.at(-1)?.isError, true);
   await rig.executeTool(2, 'shell', { command: 'git add src/shared/webhooks.ts && git commit -m "feat: shared contract"' });

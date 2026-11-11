@@ -274,6 +274,10 @@ export async function createEvalRig(config: EvalWorldConfig) {
 
   const callerFloorId = config.callerFloor ?? config.floors[0]?.id ?? 'droid-office';
   const callerId = config.role === 'orchestrator' ? ORCHESTRATOR_ID : config.role === 'external-bot' ? remoteBot.worker.id : config.role === 'floor-lead' ? 'lead-1' : 'sub-caller';
+  const files: Record<string, string> = {
+    ...Object.fromEntries(config.floors.map((f) => [path.join(f.dir, '.droid-office/floor-branch.json'), JSON.stringify({ branch: 'main' })])),
+    ...config.files,
+  };
 
   const floorMaps = new Map<string, Map<string, WorkerInfo>>();
   const floorTails = new Map<string, Map<string, string>>();
@@ -804,7 +808,7 @@ export async function createEvalRig(config: EvalWorldConfig) {
             type: 'function',
             function: {
               name: 'read_file',
-              description: `Read a scenario fixture by absolute path. Available files: ${Object.keys(config.files ?? {}).join(', ') || '(none)'}. Other paths return ENOENT; this is not a complete checkout.`,
+              description: `Read a scenario fixture by absolute path. Available files: ${Object.keys(files).join(', ') || '(none)'}. Other paths return ENOENT; this is not a complete checkout.`,
               parameters: {
                 type: 'object',
                 properties: { path: { type: 'string', description: 'Absolute file path.' } },
@@ -895,7 +899,7 @@ export async function createEvalRig(config: EvalWorldConfig) {
         return output;
       }
       const p = typeof rawArgs.path === 'string' ? rawArgs.path : '';
-      const content = config.files?.[p];
+      const content = files[p];
       const isError = content === undefined;
       const text = content ?? `ENOENT: no such file ${p}`;
       calls.push({ step, name, args: rawArgs, isError, resultText: text });
