@@ -105,6 +105,7 @@ export function startSignIn(o: SignInOptions): SignIn {
     timers.add(t);
   };
   let proc: pty.IPty | null = null;
+  let exited = false;
   let ended = false;
   let pressed = false;
   let code: string | null = null;
@@ -115,10 +116,14 @@ export function startSignIn(o: SignInOptions): SignIn {
     ended = true;
     for (const t of timers) clearTimeout(t);
     clearInterval(tick);
-    if (proc) kill(proc);
     term.dispose();
-    rmSync(dir, { recursive: true, force: true });
-    finish(r);
+    const cleanup = () => {
+      rmSync(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
+      finish(r);
+    };
+    // SIGTERM is asynchronous: Droid or its open shim may still be writing into this folder.
+    if (proc && !exited) void kill(proc).then(cleanup);
+    else cleanup();
   };
   const fail = (error: string) => end({ ok: false, cancelled: false, error });
   const cancel = () => end({ ok: false, cancelled: true, error: 'Cancelled' });
@@ -168,6 +173,7 @@ export function startSignIn(o: SignInOptions): SignIn {
     if (!ended) term.write(d, look);
   });
   proc.onExit(() => {
+    exited = true;
     if (ended) return;
     // Droid may exit by itself once it's signed in; doctor has the last word.
     void o
@@ -181,21 +187,29 @@ export function startSignIn(o: SignInOptions): SignIn {
   return { cancel, done };
 }
 
-function kill(p: pty.IPty) {
-  try {
-    p.kill('SIGTERM');
-  } catch {
-    return;
-  }
-  const hard = setTimeout(() => {
+function kill(p: pty.IPty): Promise<void> {
+  return new Promise((resolve) => {
+    let hard: NodeJS.Timeout | undefined;
+    const listener = p.onExit(() => {
+      clearTimeout(hard);
+      resolve();
+    });
     try {
-      p.kill('SIGKILL');
+      p.kill('SIGTERM');
     } catch {
-      // already gone
+      listener.dispose();
+      resolve();
+      return;
     }
-  }, 2000);
-  hard.unref();
-  p.onExit(() => clearTimeout(hard));
+    hard = setTimeout(() => {
+      try {
+        p.kill('SIGKILL');
+      } catch {
+        // already gone
+      }
+    }, 2000);
+    hard.unref();
+  });
 }
 
 /** The whole screen and scrollback as text, wrapped lines joined back up. */

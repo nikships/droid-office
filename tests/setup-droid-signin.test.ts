@@ -14,6 +14,7 @@ const FAKE = `
 const fs = require('node:fs');
 const { spawnSync } = require('node:child_process');
 const dir = process.env.FAKE_DIR;
+const workdir = process.cwd();
 fs.writeFileSync(dir + '/pid', String(process.pid));
 process.stdin.setRawMode(true);
 process.stdout.write('\\x1b[?2004h\\x1b]0;\\u26ec Droid\\x07\\x1b[?25l\\r\\n');
@@ -39,6 +40,16 @@ process.stdin.on('data', (d) => {
   if (process.env.FAKE_MODE === 'exit') process.exit(0);
 });
 process.on('SIGTERM', () => {
+  if (process.env.FAKE_MODE === 'ignore-term') return;
+  if (process.env.FAKE_MODE === 'late-write') {
+    setTimeout(() => {
+      fs.mkdirSync(workdir + '/late', { recursive: true });
+      fs.writeFileSync(workdir + '/late/output', 'finishing');
+      fs.writeFileSync(dir + '/killed', 'TERM');
+      process.exit(0);
+    }, 150);
+    return;
+  }
   fs.writeFileSync(dir + '/killed', 'TERM');
   process.exit(0);
 });
@@ -148,6 +159,20 @@ test('cancel stops Droid', async (t) => {
   assert.equal(!r.ok && r.cancelled, true);
   await until(f.stopped);
 });
+
+for (const mode of ['late-write', 'ignore-term'])
+  test(`cancel waits for the exiting Droid before deleting its working folder (${mode})`, async (t) => {
+    const f = fakeDroid(t, mode);
+    let code = '';
+    const s = startSignIn({ droid: f.droid, env: f.env, tmpRoot: f.dir, signedIn: async () => false, onCode: (c) => (code = c) });
+    await until(() => !!code);
+    const folder = path.join(f.dir, readdirSync(f.dir).find((name) => name.startsWith('droid-office-signin-'))!);
+    s.cancel();
+    s.cancel();
+    assert.deepEqual(await s.done, { ok: false, cancelled: true, error: 'Cancelled' });
+    await until(f.stopped);
+    assert.equal(existsSync(folder), false, 'the exiting process must not recreate a cleaned-up folder');
+  });
 
 test('a sign-in nobody finishes times out', async (t) => {
   const f = fakeDroid(t);
