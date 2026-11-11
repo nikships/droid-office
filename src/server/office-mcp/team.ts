@@ -11,6 +11,7 @@ export const instructions = `Your team is real workers at nearby desks on this f
 Split work into independent pieces that touch separate files, and hire one fresh subagent per task, only as many as the work needs. Write each brief as a ticket: goal, relevant context and files, boundaries, checks, and how to finish (commit in its worktree and report, or another deliverable you name). A new worktree sees only committed work, so commit what it needs first.
 Read team_models before hiring and choose per task. A credit multiplier is relative token cost: x0.2 is a fifth, x4 four times; a model on the owner's own API key or subscription costs no Factory credits, and team_models shows how much quota a subscription has left: prefer one with plenty for fitting work, and keep a nearly spent one off long tasks. Owner notes take priority. Then pick the cheapest capable model: around x0.5 or less for mechanical work, around x1 for ordinary features and fixes, the strongest suitable model for hard design, security, concurrency or subtle debugging. Try higher effort on a mid-priced model before a pricier one. Give visual work to a model that reads images; a no-images model cannot see them. Report which model each subagent ran.
 With Wake the lead off, call team_status for a snapshot, or team_wait when nothing else is left until your team has news. Read full reports with team_report_get, answer questions with questions_list and question_answer, and send corrections or follow-ups with team_message. Review the actual commits and diff with worker_diff, then integrate. Pass a question only a person can answer to whoever asked you. A subagent stopped at a permission prompt in its own terminal needs that person at its desk: a message saying yes cannot approve it.
+Use team_merge after review to land a worker's committed branch into your branch, or name a target local branch. Building agents always name target. It can cherry-pick instead, and returns a one-line landed summary or structured conflict files and hunks with the worktree to resolve in. Run combined checks on the target after integration. To continue another worker's work, hire with from (or task.baseBranch) set to worker:<name or id>, its worktree path, or its branch: a fresh worktree inherits committed work without moving the original. team_pr opens a PR/MR for an already-pushed worker branch only when authorized.
 Dismiss a subagent with team_dismiss after review and integration, once neither it nor its worktree is still needed.`;
 
 const readOnly = { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false };
@@ -29,6 +30,14 @@ function reply(result: TeamReply, describe: (body: Record<string, unknown>) => s
     return { ...error, structuredContent: { ...(error.structuredContent as Record<string, unknown>), ...result.body } };
   }
   return officeResult(describe(result.body), result.body);
+}
+
+function integrationReply(result: TeamReply) {
+  if (result.status < 400 || !result.body.status) return reply(result, (body) => String(body.summary));
+  const body = result.body;
+  const hint = (body.remaining as string[] | undefined)?.join('\n') ?? String(body.summary);
+  const code = (body.conflicts as unknown[] | undefined)?.length ? 'merge_conflict' : body.status === 'blocked' ? 'integration_blocked' : 'integration_failed';
+  return { ...officeResult(`${body.summary}\n${hint}`, { ...body, code, hint }), isError: true };
 }
 
 /** At rest after a progress report: done in status only. */
@@ -145,6 +154,46 @@ export function register(server: OfficeMcpServer, deps: OfficeMcpDeps): void {
     },
     officeAccess.subagent,
     async (args, caller) => reply(await ownFloor(caller).team.handle(caller.worker, { action: 'note', ...args }), () => 'Shared with your siblings. Continue your task; report results to your lead with team_report.'),
+  );
+  server.tool(
+    {
+      name: 'team_merge',
+      description:
+        'Integrate a reviewed subagent’s committed work into your current branch, or target (an existing local branch). Building agents must name target. Never switches an existing checkout. Uses its target worktree or creates a temporary one for an unchecked-out branch. Returns a one-line landed summary. Conflicts return isError plus structured files, index stages and combined-diff hunks, and retain the worktree and Git merge/cherry-pick state for resolution. Uncommitted source work is not included.',
+      inputSchema: z.strictObject({
+        worker,
+        floor: floorArg,
+        target: z.string().trim().min(1).max(200).optional().describe('Existing local target branch. Omit for the floor lead’s current branch; required for building agents.'),
+        mode: z.enum(['merge', 'cherry-pick']).optional().describe('Default merge. cherry-pick applies non-merge commits after the worker’s recorded base, oldest first, excluding commits already on target.'),
+        commits: z.array(z.string().trim().min(1).max(200)).min(1).max(1000).optional().describe('With cherry-pick only: explicit commit revisions, in application order, instead of the worker’s default range.'),
+      }),
+      annotations: changesState,
+    },
+    officeAccess.team,
+    async (args, caller) => {
+      if (args.floor && !caller.building) return officeError('Floor workers manage only their own floor');
+      return integrationReply(await command(caller, { action: 'merge', ...args }));
+    },
+  );
+  server.tool(
+    {
+      name: 'team_pr',
+      description:
+        'Open a PR (GitHub) or MR (GitLab) from a subagent’s already-pushed branch on this floor’s forge. This publishes externally: call only when the owner authorized it. Does not push, merge or change local branches. Returns the PR number and URL.',
+      inputSchema: z.strictObject({
+        worker,
+        floor: floorArg,
+        title: z.string().trim().min(1).max(200),
+        body: z.string().max(20_000).optional().describe('PR description, including the complete change and checks.'),
+        base: z.string().trim().min(1).max(200).optional().describe('Target branch on the forge; omit for the worker’s recorded starting branch, then the floor branch. No leading dash.'),
+      }),
+      annotations: { ...changesState, openWorldHint: true },
+    },
+    officeAccess.team,
+    async (args, caller) => {
+      if (args.floor && !caller.building) return officeError('Floor workers manage only their own floor');
+      return integrationReply(await command(caller, { action: 'pr', ...args }));
+    },
   );
   server.tool(
     {
@@ -341,7 +390,15 @@ export function register(server: OfficeMcpServer, deps: OfficeMcpDeps): void {
             title: z.string().trim().min(1).max(80),
             brief: text,
             repo: z.string().trim().min(1).max(4096).describe('Your floor repository path. A building agent names any open floor: its path, id or name.'),
-            baseBranch: z.string().trim().min(1).max(200).optional().describe('Base for the fresh worktree; omit for where its lead is now. The same setting as from: use this one with a structured task.'),
+            baseBranch: z
+              .string()
+              .trim()
+              .min(1)
+              .max(4096)
+              .optional()
+              .describe(
+                'Base for the fresh worktree: branch/tag/commit, worker:<name or id>, or an existing subagent’s worktree path. Handoffs pin its current commit, not uncommitted files. Omit for where its lead is now. The same setting as from.',
+              ),
             branch: z.string().trim().min(1).max(200).optional().describe('Name for the new local branch; must not already exist.'),
             prNumber: z.number().int().positive().optional(),
             acceptanceCriteria: z.array(z.string().trim().min(1).max(2000)).max(30).optional(),
@@ -354,10 +411,10 @@ export function register(server: OfficeMcpServer, deps: OfficeMcpDeps): void {
           .string()
           .trim()
           .min(1)
-          .max(200)
+          .max(4096)
           .optional()
           .describe(
-            'Branch, tag or commit for the fresh worktree, without spaces or a leading dash. Origin is fetched first. Omit to start on your branch at HEAD, refreshed if behind origin. Only committed work follows. Requires worktree: true. The same setting as task.baseBranch: with a structured task, use that instead.',
+            'Starting point: branch/tag/commit, worker:<name or id>, or an existing subagent’s absolute worktree path. A worker/path handoff pins its HEAD into a fresh worktree; it never moves the original worker or copies uncommitted files. Branch refs are fetched first. Omit for your current branch, refreshed if behind origin. Requires a worktree. The same setting as task.baseBranch.',
           ),
         worktree: z
           .boolean()

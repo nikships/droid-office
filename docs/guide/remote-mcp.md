@@ -121,7 +121,7 @@ The office never turns on [Tailscale Funnel](https://tailscale.com/kb/1223/funne
 
 ## Tools
 
-Remote-bot `tools/list` returns exactly the 24 tools below. The list is stable when local hiring or visit permissions change. Hiring and the worker-control tools do not depend on the Subagents permission, model allowlist or team-size limit; office capacity, model availability and the owner's normal action checks still apply. Turning off **Office MCP** or revoking a bot's key cuts off access.
+Remote-bot `tools/list` returns the tools below. The list is stable when local hiring or visit permissions change. Hiring and the worker-control tools do not depend on the Subagents permission, model allowlist or team-size limit; office capacity, model availability and the owner's normal action checks still apply. Turning off **Office MCP** or revoking a bot's key cuts off access.
 
 **Choosing a tool:**
 - Manage your own subagents with `team_*`, `worker_log`, `worker_diff`, `questions_list` and `question_answer`.
@@ -288,7 +288,7 @@ Hire one fresh subagent at the nearest free desk for an independent task. It get
 | `task` | object | no | Structured task ticket. Its title/brief take precedence; an optional baseBranch controls the fresh worktree base. Fields: `title`, `brief`, `repo` (an open floor's id or name, or its repository path), optional `baseBranch`, and optional `branch`, `prNumber` and `acceptanceCriteria`. A structured task uses a fresh worktree unless `worktree: false`; then it has no baseBranch or branch. |
 | `model` | string | no | Id from team_models. Omit for the Subagents setting, else the office default, else Droid default. Pick by owner notes, task difficulty and credit multiplier. |
 | `effort` | "low" \| "medium" \| "high" \| "xhigh" \| "max" | no | Reasoning effort; choose a value this model supports according to team_models. Omit to inherit its configured effort. |
-| `from` | string | no | Branch, tag or commit for the fresh worktree, without spaces or a leading dash. Origin is fetched first. Omit to start on your branch at HEAD, refreshed if behind origin. Only committed work follows. Requires worktree: true. |
+| `from` | string | no | Branch/tag/commit, worker:<name or id>, or a registered worktree's absolute path for the fresh worktree, without spaces or a leading dash. Origin is fetched first. Omit to start on your branch at HEAD, refreshed if behind origin. Only committed work follows. Requires worktree: true. |
 | `worktree` | boolean | no | Omit to follow the owner's Subagents setting (office_whoami shows it). True: isolated git worktree. False: use the project main checkout without switching its branch, only for read-only work or when your uncommitted changes must be visible. Non-git floors require false. |
 
 ### `team_status`
@@ -341,6 +341,30 @@ Dismiss a reviewed subagent, keeping its worktree and branch by default. pruneWo
 | `floor` | string | no | Building agents only: just this open floor, by id, name or checkout path. Omit for all your teams across the building. |
 | `pruneWorktree` | boolean | no | Remove the subagent's worktree if it is clean and owned by the office. Default false. |
 | `keepBranch` | boolean | no | Default true. False also deletes the local branch safely; needs `pruneWorktree: true`. |
+
+### `team_merge`
+
+Integrate a reviewed worker's committed branch into an existing local target, without switching another checkout. Default `merge` merges the whole branch. `cherry-pick` applies non-merge commits after its recorded base, oldest first, excluding commits on target; `commits` selects explicit ordered revisions instead. Returns a one-line summary, `status: ok` and artifact commits/files. Conflicts return `isError`, `status: blocked`, structured `conflicts` with paths and ours/theirs hunks, and `remaining` with the retained worktree and Git continue/abort commands. Run combined checks after landing.
+
+| Argument | Type | Required | Description |
+| --- | --- | --- | --- |
+| `worker` | string | yes | Your subagent's name or id. |
+| `floor` | string | no | Open floor id, name or checkout path, when needed to resolve the worker. |
+| `target` | string | yes for building agents | Existing local target branch. |
+| `mode` | "merge" \| "cherry-pick" | no | Default merge. |
+| `commits` | string[] | no | With cherry-pick, explicit revisions in application order, at most 1000. |
+
+### `team_pr`
+
+Open an authorized PR/MR from an already-pushed worker branch through its floor's forge. Does not push or merge. Returns `status: ok`, summary and `artifacts.prUrl`/`prNumber`.
+
+| Argument | Type | Required | Description |
+| --- | --- | --- | --- |
+| `worker` | string | yes | Your subagent's name or id. |
+| `floor` | string | no | Open floor id, name or checkout path, when needed to resolve the worker. |
+| `title` | string | yes | Pull request title. |
+| `body` | string | no | Description and checks. |
+| `base` | string | no | Target branch on the forge; omit for the worker's recorded starting branch, then the floor branch. No leading dash. |
 
 ### `worker_diff`
 

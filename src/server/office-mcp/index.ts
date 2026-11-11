@@ -131,6 +131,8 @@ export const BUILDING_TOOLS = new Set([
   'worker_diff',
   'worker_log',
   'team_dismiss',
+  'team_merge',
+  'team_pr',
   'office_roster',
   'office_look',
   'office_send_home',

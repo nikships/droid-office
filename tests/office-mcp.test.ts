@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { execFileSync } from 'node:child_process';
 import { once } from 'node:events';
 import { createServer, request } from 'node:http';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
@@ -100,6 +101,58 @@ async function rig(t: { after(fn: () => void | Promise<void>): void }, probes = 
   };
   return { dir, settings, people, tokens, connect, url, origin, office, workers, team };
 }
+
+test('real MCP integrates and hands off committed worker work, then returns structured conflicts', async (t) => {
+  const r = await rig(t, false);
+  const git = (cwd: string, ...args: string[]) => execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
+  const commit = (cwd: string, file: string, value: string) => {
+    writeFileSync(path.join(cwd, file), value);
+    git(cwd, 'add', file);
+    git(cwd, 'commit', '-qm', `Change ${file}`);
+    return git(cwd, 'rev-parse', 'HEAD');
+  };
+  git(r.dir, 'init', '-q', '-b', 'main');
+  git(r.dir, 'config', '--local', 'user.name', 'droid-office-tests');
+  git(r.dir, 'config', '--local', 'user.email', 'tests@droid-office.local');
+  writeFileSync(path.join(r.dir, '.git', 'info', 'exclude'), '*\n!shared.txt\n!feature.txt\n');
+  const base = commit(r.dir, 'shared.txt', 'base\n');
+  const sub = r.people.get('sub')!;
+  const cwd = path.join(r.dir, sub.worktree!.path);
+  git(r.dir, 'worktree', 'add', '-b', 'office/sub', cwd);
+  sub.worktree!.base = base;
+  const sha = commit(cwd, 'feature.txt', 'worker feature\n');
+  const client = await r.connect('lead');
+  const landed = await client.callTool({ name: 'team_merge', arguments: { worker: 'sub' } });
+  assert.notEqual(landed.isError, true);
+  assert.ok(landed.structuredContent);
+  assert.equal(landed.structuredContent?.status, 'ok');
+  assert.equal((landed.structuredContent.artifacts as { mergeCommit: string }).mergeCommit, sha);
+  assert.match(JSON.stringify(landed.content), /Landed office\/sub on main/);
+  let hiredFrom: string | undefined;
+  r.workers.hire = (deskId, _by, _brief, _worktree, _choice, lead, from) => {
+    hiredFrom = from;
+    return worker('fixer', { deskId, lead, worktree: { path: '.droid-office/worktrees/fixer', branch: 'office/fixer', base: from } });
+  };
+  const handoff = await client.callTool({ name: 'team_hire', arguments: { task: { title: 'Follow up', brief: 'Continue the feature', repo: r.dir, baseBranch: 'worker:sub' } } });
+  assert.notEqual(handoff.isError, true);
+  assert.ok(handoff.structuredContent);
+  assert.equal(hiredFrom, sha);
+  assert.equal((handoff.structuredContent.handoff as { commit: string }).commit, sha);
+  commit(cwd, 'shared.txt', 'worker edit\n');
+  const before = commit(r.dir, 'shared.txt', 'lead edit\n');
+  const blocked = await client.callTool({ name: 'team_merge', arguments: { worker: 'sub' } });
+  assert.equal(blocked.isError, true);
+  assert.ok(blocked.structuredContent);
+  assert.equal(blocked.structuredContent?.status, 'blocked');
+  assert.equal(blocked.structuredContent?.code, 'merge_conflict');
+  const [conflict] = blocked.structuredContent.conflicts as { path: string; hunks: { ours: string; theirs: string }[] }[];
+  assert.equal(conflict.path, 'shared.txt');
+  assert.equal(conflict.hunks[0].ours, 'lead edit\n');
+  assert.equal(conflict.hunks[0].theirs, 'worker edit\n');
+  assert.match(String(blocked.structuredContent?.remaining), /merge --continue.*merge --abort/);
+  assert.equal(git(r.dir, 'rev-parse', 'HEAD'), before);
+  git(r.dir, 'merge', '--abort');
+});
 
 test('the HTTP MCP refuses missing, mismatched and non-agent identities', async (t) => {
   const r = await rig(t);
