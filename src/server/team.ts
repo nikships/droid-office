@@ -18,6 +18,8 @@ import { hireRefusal } from './subscriptions/map.js';
 import { isBuildingAgent, MISSION_CONTROL_DOOR } from './building-agent.js';
 import { modelList, outsideModelList, outsideModelListMessage } from './model-policy.js';
 import { pushedSha, workerDiff } from './team-inspect.js';
+import { commitAt, currentBranch, integrateWorker, workerBranch, workerCwd } from './team-integrate.js';
+import type { PullHost } from './forge.js';
 
 /** What the team needs from the floor's workers. Narrow on purpose, so a test can fake it. */
 export interface TeamWorkers {
@@ -48,6 +50,7 @@ export interface TeamOptions {
   dir: string;
   /** It's a git checkout, so subagents can have worktrees. */
   git: boolean;
+  pulls?: Pick<PullHost, 'createPull'>;
   settings(): SubagentSettings;
   /** Droid's model list, for team_models. None: only what the settings name. */
   models?: () => Promise<DroidModelCatalogue>;
@@ -500,6 +503,10 @@ export class Team {
         return this.models(caller);
       case 'models_list':
         return this.models(caller, true);
+      case 'merge':
+        return this.merge(caller, b);
+      case 'pr':
+        return this.openPull(caller, b);
       case 'diff': {
         const w = this.resolve(caller, b.worker);
         if (typeof w === 'string') return no(404, w);
@@ -848,7 +855,21 @@ export class Team {
     if (tooMany) return no(409, tooMany);
     if (b.worktree === true && !this.opts.git) return no(400, "This floor's project isn't a git checkout, so subagents can't have worktrees: set worktree: false in team_hire");
     const worktree = (typeof b.worktree === 'boolean' ? b.worktree : s.worktree) && this.opts.git;
-    const from = typeof b.from === 'string' && b.from.trim() ? b.from.trim() : undefined;
+    let from = typeof b.from === 'string' && b.from.trim() ? b.from.trim() : undefined;
+    let handoff: { worker: string; name: string; branch: string; commit: string } | undefined;
+    if (from && worktree && (from.startsWith('worker:') || path.isAbsolute(from))) {
+      const location = from;
+      const source = from.startsWith('worker:') ? this.resolve(lead, from.slice(7)) : this.teamOf(lead.id).find((w) => w.worktree && workerCwd(this.opts.dir, w) === path.resolve(location));
+      if (!source || typeof source === 'string') return no(404, typeof source === 'string' ? source : 'No subagent worktree at that path. Use worker:<name or id>, or a branch.');
+      try {
+        const branch = await workerBranch(this.opts.dir, source);
+        const commit = await commitAt(workerCwd(this.opts.dir, source), 'HEAD');
+        handoff = { worker: source.id, name: source.name, branch, commit };
+        from = commit;
+      } catch (err) {
+        return no(400, (err as Error).message);
+      }
+    }
     const branch = typeof b.branch === 'string' ? b.branch.trim() : undefined;
     if (branch !== undefined && (!worktree || branch.length > 200 || !/^[^-\s][^\s]*$/.test(branch))) return no(400, 'branch requires a fresh worktree and a valid local branch name');
     if (from !== undefined) {
@@ -866,13 +887,51 @@ export class Team {
     const at = DESK_BY_ID.get(still.deskId) ?? (building ? MISSION_CONTROL_DOOR : undefined);
     const seat = at && nearestFreeSeat(at.x, at.z, (id) => this.workers.deskOccupied(id));
     if (!seat) return no(409, 'Every desk and bean bag on this floor is taken: dismiss a subagent you are done with, or ask the person to send someone home');
-    const info = branch === undefined ? this.workers.hire(seat.id, still.name, task, worktree, choice, still.id, from) : this.workers.hire(seat.id, still.name, task, worktree, choice, still.id, from, branch);
+    const brief = handoff
+      ? `${task}\n\nHandoff: continue from ${handoff.name}'s branch ${handoff.branch} at ${handoff.commit}. Your fresh worktree includes committed work only; the original worker and its uncommitted files stay where they are.`
+      : task;
+    const info = branch === undefined ? this.workers.hire(seat.id, still.name, brief, worktree, choice, still.id, from) : this.workers.hire(seat.id, still.name, brief, worktree, choice, still.id, from, branch);
     if (typeof info === 'string') return no(409, info);
     const title = str(b.title, TITLE_MAX).trim();
     if (title) this.workers.setTask(info.id, { name: title, summary: clip(task, 120) });
     this.known.set(info.id, { name: info.name, lead: still.id, status: info.status });
     this.opts.toast(`🧭 ${still.name} hired ${info.name} at ${seat.label}${title ? `: ${title}` : ''}`, 'info', info.id);
-    return ok({ worker: this.member(this.workers.get(info.id) ?? info), worktree: info.worktree ? path.resolve(this.opts.dir, info.worktree.path) : this.opts.dir, branch: info.worktree?.branch ?? null });
+    return ok({ worker: this.member(this.workers.get(info.id) ?? info), worktree: info.worktree ? path.resolve(this.opts.dir, info.worktree.path) : this.opts.dir, branch: info.worktree?.branch ?? null, ...(handoff ? { handoff } : {}) });
+  }
+
+  private async merge(lead: WorkerInfo, b: Record<string, unknown>): Promise<TeamReply> {
+    const w = this.resolve(lead, b.worker);
+    if (typeof w === 'string') return no(404, w);
+    if (!this.opts.git) return no(400, 'Integration requires a Git floor.');
+    if (b.mode !== undefined && b.mode !== 'merge' && b.mode !== 'cherry-pick') return no(400, 'mode takes merge or cherry-pick.');
+    if (b.target !== undefined && (typeof b.target !== 'string' || !b.target.trim())) return no(400, 'target takes an existing local branch.');
+    if (b.commits !== undefined && (!Array.isArray(b.commits) || !b.commits.length || b.commits.length > 1000 || b.commits.some((c) => typeof c !== 'string' || !c || c.length > 200)))
+      return no(400, 'commits takes 1–1000 commit revisions in application order.');
+    if (b.commits !== undefined && b.mode !== 'cherry-pick') return no(400, 'commits requires mode: cherry-pick.');
+    if (isBuildingAgent(lead) && !b.target) return no(400, 'Building agents have no branch: name the target local branch to integrate into.');
+    try {
+      const target = typeof b.target === 'string' ? b.target.trim() : await currentBranch(workerCwd(this.opts.dir, lead));
+      const result = await integrateWorker(this.opts.dir, w, { target, mode: b.mode === 'cherry-pick' ? 'cherry-pick' : 'merge', commits: b.commits as string[] | undefined });
+      return { status: result.status === 'ok' ? 200 : 409, body: { worker: w.id, ...result } };
+    } catch (err) {
+      return no(400, (err as Error).message);
+    }
+  }
+
+  private async openPull(lead: WorkerInfo, b: Record<string, unknown>): Promise<TeamReply> {
+    const w = this.resolve(lead, b.worker);
+    if (typeof w === 'string') return no(404, w);
+    if (!this.opts.git || !this.opts.pulls) return no(400, 'This floor cannot open pull requests.');
+    const title = str(b.title, 200).trim();
+    if (!title) return no(400, 'Provide the pull request title.');
+    if (b.base !== undefined && (typeof b.base !== 'string' || !b.base.trim())) return no(400, 'base takes the pull request target branch.');
+    try {
+      const branch = await workerBranch(this.opts.dir, w);
+      const pr = await this.opts.pulls.createPull(workerCwd(this.opts.dir, w), branch, typeof b.base === 'string' ? b.base.trim() : undefined, title, str(b.body, TASK_MAX));
+      return ok({ status: 'ok', worker: w.id, branch, pr, artifacts: { prUrl: pr.url, prNumber: pr.number }, summary: `Opened ${pr.url} from ${branch}.` });
+    } catch (err) {
+      return no(400, (err as Error).message);
+    }
   }
 
   /** Snapshot and all unread news for this caller, without waiting for new events. */

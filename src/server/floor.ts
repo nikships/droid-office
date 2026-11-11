@@ -350,6 +350,7 @@ export class Floor {
         dataDir,
         dir: def.dir,
         git: !this.plain && !!this.project.branch,
+        pulls: this.board,
         settings: () => ctx.subagents(),
         ...(ctx.droidModels ? { models: ctx.droidModels.bind(ctx) } : {}),
         availability: (model) => ctx.modelAvailability?.(model),

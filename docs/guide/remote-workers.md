@@ -91,8 +91,11 @@ Tailscale at all; Settings then says so. CI and office clones run that way.
   whether the worktree had uncommitted or unpushed work. `office_worker_spawn`
   hires an independent worker; `office_worker_prompt`, `office_worker_interrupt`,
   `office_worker_answer` and `office_worker_thread` direct or inspect one.
-  The external MCP exposes exactly 23 tools, with no Whiteboard, visits, raw terminal
-  input, settings, floor-management, forge, pipeline, connection, picture or music
+  Integrate reviewed branches with `team_merge`, naming a target local branch, or use
+  `team_hire` from `worker:<name or id>` or a worktree path for a follow-up.
+  Open authorized PRs from pushed worker branches with `team_pr`.
+  The external MCP has no Whiteboard, visits, raw terminal
+  input, settings, floor-management, general forge, pipeline, connection, picture or music
   controls. Those features remain in the app. Internal workers keep their existing
   tools and permissions. Worker-control actions name the bot in their toasts.
   The [tool reference](remote-mcp.md#tools) explains the scope and arguments of
