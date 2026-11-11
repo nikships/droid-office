@@ -1,3 +1,4 @@
+import { AIRGAPPED_REASON } from '../../shared/setup';
 import { capabilityOf } from '../../shared/factory';
 import {
   WIKI_DEFAULT_MODEL,
@@ -358,9 +359,11 @@ export function mountWikiTab(root: HTMLElement, deps: WikiTabDeps): WikiTab {
         h(
           'p',
           {},
-          conn.rejected
-            ? `Factory rejected the office’s API key (${conn.rejected}). Check it again or replace it in Settings → Connections.`
-            : 'Connect the office to Factory with an API key in Settings → Connections, and the wiki Factory keeps for this repository shows up here, next to its docs.',
+          store.setup.airgapped
+            ? AIRGAPPED_REASON
+            : conn.rejected
+              ? `Factory rejected the office’s API key (${conn.rejected}). Check it again or replace it in Settings → Connections.`
+              : 'Connect the office to Factory with an API key in Settings → Connections, and the wiki Factory keeps for this repository shows up here, next to its docs.',
         ),
         deps.openSettings ? h('div.row', {}, h('button.btn.primary', { type: 'button', onclick: deps.openSettings }, 'Open Settings → Connections')) : '',
       ];
@@ -597,6 +600,7 @@ export function mountWikiTab(root: HTMLElement, deps: WikiTabDeps): WikiTab {
   };
 
   const off = store.on('factory', () => paint());
+  const offSetup = store.on('setup', () => paint(true));
   // The job's clock, and the "written 3h ago"s, while the tab is open.
   const clock = setInterval(() => {
     const job = floorState().job;
@@ -627,6 +631,7 @@ export function mountWikiTab(root: HTMLElement, deps: WikiTabDeps): WikiTab {
       disposed = true;
       watching?.();
       off();
+      offSetup();
       clearInterval(clock);
       clearInterval(ages);
       if (searchTimer) clearTimeout(searchTimer);

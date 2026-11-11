@@ -9,6 +9,31 @@ import { capabilityOf, factoryCan, emptyFactoryState } from '../src/shared/facto
 
 const KEY = 'fk-test-office-key-9z8y';
 
+test('airgapped suspends account work and resumes without changing the saved key', async (t) => {
+  const dir = tmp(t);
+  const fake = factory();
+  const office = new FactoryOffice(dir, { fetchImpl: fake.fn });
+  assert.equal(await office.connect(KEY, 'owner'), undefined);
+  await office.check();
+  const saved = readFileSync(office.file, 'utf8');
+  const count = fake.seen.length;
+  office.setPaused(true);
+  assert.equal(office.client(), undefined);
+  assert.equal(office.key(), undefined);
+  assert.match((await office.connect(KEY, 'owner'))!, /airgapped mode/);
+  await office.check();
+  assert.equal(fake.seen.length, count);
+  assert.equal(readFileSync(office.file, 'utf8'), saved);
+  const restarted = new FactoryOffice(dir, { fetchImpl: fake.fn, paused: true });
+  await restarted.check();
+  assert.equal(fake.seen.length, count);
+  assert.equal(restarted.key(), undefined);
+  restarted.setPaused(false);
+  assert.equal(restarted.key(), KEY);
+  await restarted.check();
+  assert.ok(fake.seen.length > count);
+});
+
 const json = (status: number, body: unknown) => new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
 
 const USERS = {

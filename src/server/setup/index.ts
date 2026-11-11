@@ -6,11 +6,12 @@ import path from 'node:path';
 import type { ClientMsg } from '../../shared/protocol.js';
 import { droidReady, emptySetupState, type SetupState } from '../../shared/setup.js';
 import { childEnv, defaultShell } from '../workers.js';
+import { readDroidModels } from '../droid-models.js';
 import { canInstall, droidVersion, installDroid, latestDroid, type Runner, runCommand } from './droid-install.js';
 import { type DoctorAuth, doctorAuth, type SignIn, startSignIn } from './droid-signin.js';
 
 /** The setup.* messages a client sends (see protocol.ts). */
-export type SetupMsg = Extract<ClientMsg, { t: 'setup.check' | 'setup.droid.install' | 'setup.droid.signIn' | 'setup.droid.signInCancel' | 'setup.onboarded' }>;
+export type SetupMsg = Extract<ClientMsg, { t: 'setup.check' | 'setup.airgapped' | 'setup.droid.install' | 'setup.droid.signIn' | 'setup.droid.signInCancel' | 'setup.onboarded' }>;
 
 export interface SetupOptions {
   /** The office's .droid-office, where setup.json keeps whether the welcome is done. */
@@ -22,6 +23,8 @@ export interface SetupOptions {
   toast(text: string, level?: 'info' | 'warn' | 'error'): void;
   /** Droid was installed (or found somewhere new): every floor runs it from `path` from now on. */
   agentChanged(path: string): void;
+  modeChanged?(on: boolean): void;
+  customModels?: () => string[];
   fetchImpl?: typeof fetch;
   /** Where ~/.local/bin/droid goes. */
   home?: string;
@@ -60,20 +63,20 @@ export interface Setup {
 }
 
 /** setup.json: whether the owner has been through the welcome. Null when there's none (or it's unreadable). */
-export function readSetupFile(dataDir: string): { onboarded: boolean; at?: number } | null {
+export function readSetupFile(dataDir: string): { onboarded: boolean; airgapped?: boolean; at?: number } | null {
   try {
     const v = JSON.parse(readFileSync(path.join(dataDir, 'setup.json'), 'utf8'));
-    return typeof v?.onboarded === 'boolean' ? { onboarded: v.onboarded, at: typeof v.at === 'number' ? v.at : undefined } : null;
+    return typeof v?.onboarded === 'boolean' ? { onboarded: v.onboarded, ...(typeof v.airgapped === 'boolean' ? { airgapped: v.airgapped } : {}), at: typeof v.at === 'number' ? v.at : undefined } : null;
   } catch {
     return null;
   }
 }
 
-async function writeSetupFile(dataDir: string, onboarded: boolean): Promise<void> {
+async function writeSetupFile(dataDir: string, onboarded: boolean, airgapped: boolean): Promise<void> {
   await mkdir(dataDir, { recursive: true });
   const file = path.join(dataDir, 'setup.json');
   const tmp = `${file}.${process.pid}.tmp`;
-  await writeFile(tmp, `${JSON.stringify({ onboarded, at: Date.now() })}\n`);
+  await writeFile(tmp, `${JSON.stringify({ onboarded, airgapped, at: Date.now() })}\n`);
   await rename(tmp, file);
 }
 
@@ -122,6 +125,7 @@ export function mountSetup(opts: SetupOptions): Setup {
   const state: SetupState = {
     ...emptySetupState(),
     onboarded: file?.onboarded ?? false,
+    airgapped: file?.airgapped ?? false,
     // An owner who named another agent command (--agent) runs that one: the office doesn't install a droid beside it.
     droid: { ...emptySetupState().droid, busy: 'checking', canInstall: opts.agentCmd === 'droid' && canInstall(platform, arch) },
   };
@@ -135,6 +139,20 @@ export function mountSetup(opts: SetupOptions): Setup {
   let signIn: SignIn | null = null;
   let install: AbortController | null = null;
   const timers: NodeJS.Timeout[] = [];
+  // Serialize atomic writes: mode switches and finishing the welcome can arrive together.
+  let saving = Promise.resolve();
+  const save = () => {
+    const { onboarded, airgapped } = state;
+    saving = saving.then(() => writeSetupFile(opts.dataDir, onboarded, !!airgapped)).catch((err) => opts.toast(`Couldn't save setup.json: ${(err as Error).message}`, 'error'));
+    return saving;
+  };
+  const customModels =
+    opts.customModels ??
+    (() =>
+      readDroidModels(path.join(home, '.factory', 'settings.json'))
+        .models.filter((m) => m.custom)
+        .map((m) => m.id));
+  let signInGeneration = 0;
 
   const send = () => {
     if (!stopped) opts.broadcast(structuredClone(state));
@@ -151,14 +169,15 @@ export function mountSetup(opts: SetupOptions): Setup {
    * reloads and restarts until the owner finishes it.
    */
   const settleOnboarded = async () => {
-    if (decided || (state.droid.path && state.droid.signedIn === null)) return;
+    if (decided || (!state.airgapped && state.droid.path && state.droid.signedIn === null)) return;
     decided = true;
     state.onboarded = droidReady(state);
-    await writeSetupFile(opts.dataDir, state.onboarded).catch(() => {});
+    await save();
   };
 
   const look = async (first: boolean) => {
     const found = (installed && (await find(installed))) || (await find(opts.agentCmd));
+    state.customModels = customModels();
     if (found !== state.droid.path) {
       state.droid.path = found;
       if (found && !first) opts.agentChanged(found);
@@ -168,9 +187,9 @@ export function mountSetup(opts: SetupOptions): Setup {
       state.droid.signedIn = null;
       state.droid.account = null;
     } else {
-      const [version, auth] = await Promise.all([droidVersion(found, run, env()), doctorAuth(found, run, env())]);
+      const [version, auth] = await Promise.all([droidVersion(found, run, env()), state.airgapped ? null : doctorAuth(found, run, env())]);
       state.droid.version = version;
-      if (state.droid.busy !== 'signing-in') applyAuth(auth);
+      if (auth && !state.airgapped && state.droid.busy !== 'signing-in') applyAuth(auth);
     }
     await settleOnboarded();
   };
@@ -252,7 +271,11 @@ export function mountSetup(opts: SetupOptions): Setup {
       state.droid.version = (await droidVersion(file, run, env())) ?? version;
       opts.agentChanged(file);
       opts.toast(`Droid ${state.droid.version} installed.`);
-      applyAuth(await doctorAuth(file, run, env()));
+      if (!state.airgapped) {
+        const auth = await doctorAuth(file, run, env());
+        if (!state.airgapped) applyAuth(auth);
+      }
+      state.customModels = customModels();
       await settleOnboarded();
       if (checking) void check();
     } catch (err) {
@@ -267,7 +290,8 @@ export function mountSetup(opts: SetupOptions): Setup {
   };
 
   const doSignIn = async () => {
-    if (state.droid.busy === 'installing' || signIn) return;
+    if (state.airgapped || state.droid.busy === 'installing' || state.droid.busy === 'signing-in' || signIn) return;
+    const generation = ++signInGeneration;
     const droid = state.droid.path;
     if (!droid) {
       state.droid.error = 'Install Droid first.';
@@ -279,7 +303,7 @@ export function mountSetup(opts: SetupOptions): Setup {
     state.droid.signIn = { code: null, url: null, since: Date.now() };
     send();
     const auth = await doctorAuth(droid, run, env());
-    if (stopped) return;
+    if (stopped || generation !== signInGeneration) return;
     if (auth.signedIn) {
       applyAuth(auth);
       state.droid.busy = null;
@@ -300,12 +324,14 @@ export function mountSetup(opts: SetupOptions): Setup {
         return last.signedIn;
       },
       onCode: (code, url) => {
+        if (generation !== signInGeneration) return;
         state.droid.signIn = { code, url, since: state.droid.signIn?.since ?? Date.now() };
         send();
       },
     });
     signIn = s;
     const result = await s.done;
+    if (generation !== signInGeneration) return;
     signIn = null;
     if (stopped) return;
     state.droid.busy = null;
@@ -331,6 +357,21 @@ export function mountSetup(opts: SetupOptions): Setup {
     state: () => state,
     message: (_who, msg) => {
       switch (msg.t) {
+        case 'setup.airgapped':
+          if (typeof msg.on !== 'boolean' || msg.on === !!state.airgapped) break;
+          signInGeneration++;
+          signIn?.cancel();
+          signIn = null;
+          delete state.droid.signIn;
+          if (state.droid.busy === 'signing-in') state.droid.busy = null;
+          state.airgapped = msg.on;
+          state.droid.error = null;
+          state.customModels = customModels();
+          opts.modeChanged?.(msg.on);
+          send();
+          void save();
+          void check({ busy: true });
+          break;
         case 'setup.check':
           state.droid.error = null;
           void check({ busy: true });
@@ -349,7 +390,7 @@ export function mountSetup(opts: SetupOptions): Setup {
           state.onboarded = msg.done;
           decided = true;
           send();
-          void writeSetupFile(opts.dataDir, msg.done).catch((err) => opts.toast(`Couldn't save setup.json: ${(err as Error).message}`, 'error'));
+          void save();
           break;
       }
     },

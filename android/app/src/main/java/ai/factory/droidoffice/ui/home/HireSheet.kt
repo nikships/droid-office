@@ -127,7 +127,7 @@ fun HireSheet(onDismiss: () -> Unit, deskId: String? = null) {
         val c = catalogue ?: return@LaunchedEffect
         // Start on what the last Droid was hired with, when this office still offers it.
         val last = graph.store.snapshot.value.settings
-        val remembered = last.hireModel?.takeIf(ModelSearch::customId)
+        val remembered = last.hireModel?.takeIf { ModelSearch.customId(it) && (!c.customOnly || c.models.any { m -> m.custom && m.id == it }) }
         if (modelId == null) modelId = remembered ?: c.defaultModel ?: c.models.firstOrNull { !it.legacy }?.id
         if (effort == null) effort = last.hireEffort.takeIf { remembered != null && modelId == remembered }
             ?: c.models.firstOrNull { it.id == modelId }?.defaultReasoningEffort ?: c.defaultReasoningEffort

@@ -34,6 +34,10 @@ export interface DroidCliState {
 
 export interface SetupState {
   droid: DroidCliState;
+  /** No Factory account required. This is not a network sandbox. Absent on older servers. */
+  airgapped?: boolean;
+  /** Configured custom models that can start, by id only (never their keys or endpoints). */
+  customModels?: string[];
   /**
    * The owner finished the welcome, or the office found Droid ready the first time it looked (an
    * office that already worked never shows it). The welcome only opens by itself while this is false.
@@ -45,12 +49,14 @@ export function emptySetupState(): SetupState {
   return {
     droid: { path: null, version: null, latest: null, signedIn: null, account: null, busy: 'checking', error: null, canInstall: false },
     onboarded: true,
+    airgapped: false,
+    customModels: [],
   };
 }
 
 /** Droid is installed and signed in: workers can start. */
 export function droidReady(s: SetupState): boolean {
-  return !!s.droid.path && s.droid.signedIn === true;
+  return !!s.droid.path && (s.airgapped ? !!s.customModels?.length : s.droid.signedIn === true);
 }
 
 /**
@@ -59,8 +65,14 @@ export function droidReady(s: SetupState): boolean {
  * lose its last two steps.
  */
 export function needsWelcome(s: SetupState): boolean {
-  return !s.onboarded && s.droid.busy !== 'checking' && (!s.droid.path || s.droid.signedIn !== null);
+  return !s.onboarded && s.droid.busy !== 'checking' && (s.airgapped || !s.droid.path || s.droid.signedIn !== null);
 }
+
+export const AIRGAPPED_REASON = 'Unavailable in airgapped mode. Switch to Factory account mode in Settings → Connections → Droid.';
+export const AIRGAPPED_NETWORK_NOTE =
+  'Airgapped here means no Factory account, not no outbound traffic. Public Droid can still contact Factory for telemetry, feature flags, billing checks and usage recording. Office still checks for updates. Use an external network policy for isolation; changing HOME alone is not isolation.';
+export const AIRGAPPED_FEATURES =
+  'Local/BYOK models, the agent loop, workers, MCP, skills and hooks work. Factory-hosted models and Router, billing/usage, session sync/sharing, Slack, built-in web search and URL fetch, and readiness reports are unavailable.';
 
 /** A newer Droid than the one installed is out. Versions are dotted numbers (0.249.0). */
 export function droidUpdateAvailable(d: DroidCliState): boolean {

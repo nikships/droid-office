@@ -495,7 +495,9 @@ export class Team {
     const s = this.opts.settings();
     const catalogue = await this.catalogue();
     const known = new Map([...(catalogue?.models ?? []), ...(includeDisabled ? (catalogue?.disabledModels ?? []) : [])].map((m) => [m.id, m]));
-    const fallback = this.defaultModel(catalogue?.defaultModel);
+    const preferred = this.defaultModel(catalogue?.defaultModel);
+    const eligible = (id: string) => !catalogue?.customOnly || known.get(id)?.custom === true;
+    const fallback = preferred && eligible(preferred) ? preferred : undefined;
     const describe = (id: string, m: DroidModelOption | undefined, note?: string): TeamModel => {
       const stuck = m?.disabled ? 'Switched off in Droid.' : this.whyNot(id);
       const usage = this.opts.usage?.(id, this.now());
@@ -519,12 +521,12 @@ export class Team {
     };
     const allowed = modelList(caller, s);
     const models = includeDisabled
-      ? [...new Set([...known.keys(), ...(allowed ?? []).map((m) => m.id)])].map((id) => {
+      ? [...new Set([...known.keys(), ...(allowed ?? []).map((m) => m.id)])].filter(eligible).map((id) => {
           const model = describe(id, known.get(id), allowed?.find((m) => m.id === id)?.note);
           return { ...model, enabled: !model.cannotRun && (!allowed || allowed.some((m) => m.id === id) || id === fallback) };
         })
       : allowed
-        ? allowed.map((a) => describe(a.id, known.get(a.id), a.note))
+        ? allowed.filter((a) => eligible(a.id)).map((a) => describe(a.id, known.get(a.id), a.note))
         : (catalogue?.models ?? []).filter((m) => !m.legacy).map((m) => describe(m.id, m));
     // The default is what a hire without --model runs, so the lead sees it even when the list leaves it out.
     if (fallback && !models.some((m) => m.id === fallback)) {

@@ -4,6 +4,8 @@ The office can be connected to [Factory](https://factory.ai) with a Factory API 
 
 This is the plan for that work and the contract every Factory feature follows. Status: **implemented**. The foundation (the connection, the API client, the feature registry, the Settings pane) and every feature on it are built.
 
+In [Airgapped (no-account) mode](subscriptions.md#airgapped-no-account-mode), Office pauses Factory key checks and polling, immediately publishes empty Factory account/usage state to open clients, and refuses Factory HTTP/cloud actions with an explanation. The key, cached data and Droid credentials are kept. Window watches still register and unregister without issuing requests while paused. Switching back immediately restores the cached state, resumes the connection and checks the saved key. Already-issued network requests and existing Droid turns are not a network-isolation guarantee.
+
 ## The owner's decisions
 
 - Build all of it: the compute wall and the Computers window, the Sessions & credits board with credits per office worker, the CI automations board, AutoWiki on the bookshelf, and cloud workers.

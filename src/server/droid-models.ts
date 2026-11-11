@@ -35,6 +35,8 @@ export interface DroidModelOption {
 }
 
 export interface DroidModelCatalogue {
+  /** Account-free operation: remembered Factory defaults and allowlists must not reintroduce hosted models. */
+  customOnly?: true;
   /** Every selectable model: custom models first, then Factory's current models, then legacy ones. */
   models: DroidModelOption[];
   /** Droid-disabled entries retained for read-only discovery, never offered in hire pickers. */
@@ -42,6 +44,25 @@ export interface DroidModelCatalogue {
   /** The global default model droid runs without an override, when settings names a valid one. */
   defaultModel?: string;
   defaultReasoningEffort?: AgentEffort;
+}
+
+/** Account-free discovery and execution use configured custom entries, never an id-prefix guess. */
+export function customModelCatalogue(catalogue: DroidModelCatalogue): DroidModelCatalogue {
+  const models = catalogue.models.filter((m) => m.custom);
+  const validDefault = models.some((m) => m.id === catalogue.defaultModel);
+  return {
+    customOnly: true,
+    models,
+    ...(catalogue.disabledModels ? { disabledModels: catalogue.disabledModels.filter((m) => m.custom) } : {}),
+    ...(validDefault ? { defaultModel: catalogue.defaultModel, defaultReasoningEffort: catalogue.defaultReasoningEffort } : {}),
+  };
+}
+
+export function airgappedModelError(airgapped: boolean | undefined, model: string | undefined, catalogue: DroidModelCatalogue): string | undefined {
+  if (!airgapped) return undefined;
+  const id = model || catalogue.defaultModel;
+  if (id && catalogue.models.some((m) => m.custom && m.id === id)) return undefined;
+  return 'Airgapped mode requires a configured custom model. Add one to ~/.factory/settings.json (customModels), or connect DroidProxy, then choose it in Settings → Models.';
 }
 
 function effort(value: unknown): AgentEffort | undefined {

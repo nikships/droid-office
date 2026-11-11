@@ -867,6 +867,7 @@ type ClientMessage =
   | { t: 'factory.watch'; feature: FactoryFeatureId; on: boolean }
   /** Look at Droid (installed, signed in, newest release) and DroidProxy again now (docs/subscriptions.md). */
   | { t: 'setup.check' }
+  | { t: 'setup.airgapped'; on: boolean }
   /** Install Droid, or update it to the newest release. */
   | { t: 'setup.droid.install' }
   /** Sign Droid in to Factory: the office runs Droid's own sign-in and shows its code in SetupState.droid.signIn. */

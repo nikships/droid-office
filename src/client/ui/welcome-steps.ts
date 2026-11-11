@@ -15,7 +15,7 @@ export const PROVIDER_PLAN: Partial<Record<SubscriptionProviderKey, string>> = {
 
 export type DroidPhase = 'checking' | 'installing' | 'missing' | 'manual' | 'installed';
 
-export type FactoryPhase = 'needs-droid' | 'checking' | 'starting' | 'code' | 'signed-out' | 'unknown' | 'signed-in';
+export type FactoryPhase = 'needs-droid' | 'checking' | 'starting' | 'code' | 'signed-out' | 'unknown' | 'signed-in' | 'airgapped';
 
 export type SubscriptionsPhase = 'idle' | 'setting-up' | 'connecting' | 'connected';
 
@@ -30,7 +30,7 @@ export type WelcomeAction =
   | { kind: 'start'; label: string };
 
 export interface WelcomeSecondary {
-  kind: 'cancelSignIn' | 'skip';
+  kind: 'cancelSignIn' | 'skip' | 'airgapped';
   label: string;
 }
 
@@ -67,6 +67,7 @@ export function droidPhase(d: DroidCliState): DroidPhase {
 }
 
 export function factoryPhase(s: SetupState): FactoryPhase {
+  if (s.airgapped) return 'airgapped';
   const d = s.droid;
   if (d.signedIn === true) return 'signed-in';
   if (!d.path) return 'needs-droid';
@@ -88,7 +89,7 @@ export function stepDone(id: WelcomeStepId, setup: SetupState, subs: Subscriptio
     case 'droid':
       return !!setup.droid.path;
     case 'factory':
-      return setup.droid.signedIn === true;
+      return !!setup.airgapped || setup.droid.signedIn === true;
     case 'subscriptions':
       return subscriptionsPhase(subs) === 'connected';
     case 'ready':
@@ -117,6 +118,7 @@ export function stepMeta(id: WelcomeStepId, setup: SetupState, subs: Subscriptio
     }
     case 'factory': {
       const phase = factoryPhase(setup);
+      if (phase === 'airgapped') return 'Airgapped · no Factory account';
       if (phase === 'signed-in') return d.account ?? 'Signed in';
       if (phase === 'code' || phase === 'starting') return 'Signing in…';
       return 'The account Droid runs on';
@@ -146,22 +148,26 @@ export function stepPlan(id: WelcomeStepId, setup: SetupState, subs: Subscriptio
     }
     case 'factory': {
       const phase = factoryPhase(setup);
-      if (phase === 'signed-in') return { primary: { kind: 'next', label: 'Continue' }, secondary: null };
+      const noAccount: WelcomeSecondary = { kind: 'airgapped', label: 'Use without an account (airgapped)' };
+      if (phase === 'airgapped') return { primary: { kind: 'next', label: 'Continue' }, secondary: null };
+      if (phase === 'signed-in') return { primary: { kind: 'next', label: 'Continue' }, secondary: noAccount };
       if (phase === 'needs-droid') return { primary: { kind: 'blocked', label: 'Sign in', why: 'Install Droid first' }, secondary: null };
-      if (phase === 'checking') return { primary: { kind: 'busy', label: 'Checking…' }, secondary: null };
-      if (phase === 'unknown') return { primary: { kind: 'check', label: 'Check again' }, secondary: null };
+      if (phase === 'checking') return { primary: { kind: 'busy', label: 'Checking…' }, secondary: noAccount };
+      if (phase === 'unknown') return { primary: { kind: 'check', label: 'Check again' }, secondary: noAccount };
       const cancel: WelcomeSecondary = { kind: 'cancelSignIn', label: 'Cancel' };
       if (phase === 'starting') return { primary: { kind: 'busy', label: 'Starting…' }, secondary: cancel };
       if (phase === 'code') {
         const url = d.signIn?.url;
         return { primary: url ? { kind: 'openSignIn', label: 'Open sign-in page', url } : { kind: 'busy', label: 'Waiting…' }, secondary: cancel };
       }
-      return { primary: { kind: 'signIn', label: d.error ? 'Try again' : 'Sign in' }, secondary: null };
+      return { primary: { kind: 'signIn', label: d.error ? 'Try again' : 'Sign in' }, secondary: noAccount };
     }
     case 'subscriptions':
       return subscriptionsPhase(subs) === 'connected' ? { primary: { kind: 'next', label: 'Continue' }, secondary: null } : { primary: null, secondary: { kind: 'skip', label: 'Skip' } };
     case 'ready':
-      return droidReady(setup) ? { primary: { kind: 'start', label: 'Start' }, secondary: null } : { primary: { kind: 'blocked', label: 'Start', why: 'Droid needs to be installed and signed in first' }, secondary: null };
+      return droidReady(setup)
+        ? { primary: { kind: 'start', label: 'Start' }, secondary: null }
+        : { primary: { kind: 'blocked', label: 'Start', why: setup.airgapped ? 'Install Droid and add a usable custom model first' : 'Droid needs to be installed and signed in first' }, secondary: null };
   }
 }
 
@@ -185,15 +191,15 @@ export function justConnected(subs: SubscriptionsState, pressed: readonly Subscr
  * or ChatGPT's, then any subscription model that can. '' is Droid's own default. `models` is Droid's
  * model list, by id.
  */
-export function readyModel(subs: SubscriptionsState, models: readonly string[], officeDefault: string | undefined, connected?: SubscriptionProviderKey): string {
+export function readyModel(subs: SubscriptionsState, models: readonly string[], officeDefault: string | undefined, connected?: SubscriptionProviderKey, airgapped = false): string {
   const fresh = models.filter((id) => isSubscriptionModel(id) && subs.availability[id]?.state === 'ok');
   const of = (key: SubscriptionProviderKey) => fresh.find((id) => subs.modelProviders?.[id] === key);
   if (connected) {
     const own = subs.modelProviders ? of(connected) : fresh[0];
     if (own) return own;
   }
-  if (officeDefault && !cannotRun(subs.availability[officeDefault])) return officeDefault;
-  return FEATURED_PROVIDERS.map(of).find((id) => id !== undefined) ?? fresh[0] ?? '';
+  if (officeDefault && (!airgapped || models.includes(officeDefault)) && !cannotRun(subs.availability[officeDefault])) return officeDefault;
+  return FEATURED_PROVIDERS.map(of).find((id) => id !== undefined) ?? fresh[0] ?? (airgapped ? models.find((id) => !cannotRun(subs.availability[id])) : undefined) ?? '';
 }
 
 /** What Start saves as the office's default worker: undefined leaves it as it is, null goes back to the agent the office started with. */

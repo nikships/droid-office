@@ -1240,6 +1240,8 @@ export function openSettings(net: Net, opts: SettingsOptions) {
     store.on('machine', paintLimit),
     store.on('projectsDir', paintDir),
     store.on('prompts', paintAgent),
+    store.on('setup', paintAgent),
+    store.on('setup', paintSubagents),
     store.on('prompts', paintPrompts),
     store.on('prompts', paintSubagents),
     store.on('subagents', paintSubagents),

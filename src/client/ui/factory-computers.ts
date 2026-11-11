@@ -1,3 +1,4 @@
+import { AIRGAPPED_REASON } from '../../shared/setup';
 import { factoryCan } from '../../shared/factory';
 import { BULK_MAX, computerPhase, currentStep, DEFAULT_REMOTE_USER, diskPct, memPct, NAME_MAX, NAME_PREFIX, SECRET_NAME, type ComputerPhase, type FactoryComputer, type FactoryMetricSample } from '../../shared/factory-computers';
 import { canStartFrom } from '../../shared/factory-environments';
@@ -184,7 +185,11 @@ export function openComputers(opts: { settings: () => void; id?: string; tab?: T
       section = undefined;
       footActions.replaceChildren();
       const what = tab === 'environments' ? 'Environments' : 'Droid Computers';
-      const why = !conn.connected ? 'Connect the office to Factory to see your Droid Computers and Environments here, make new ones and run workers on them.' : `This Factory key can’t reach ${what}.`;
+      const why = store.setup.airgapped
+        ? AIRGAPPED_REASON
+        : !conn.connected
+          ? 'Connect the office to Factory to see your Droid Computers and Environments here, make new ones and run workers on them.'
+          : `This Factory key can’t reach ${what}.`;
       body.replaceChildren(emptyState('🖥️', !conn.connected ? 'Not connected to Factory' : `No access to ${what}`, why, h('button.btn.primary', { type: 'button', onclick: () => opts.settings() }, 'Settings → Connections')));
       return;
     }
@@ -202,12 +207,14 @@ export function openComputers(opts: { settings: () => void; id?: string; tab?: T
   const stopWatching = watchFactory('computers');
   const stopWatchingEnvs = watchFactory('environments');
   const off = store.on('factory', paint);
+  const offSetup = store.on('setup', paint);
   // The ages, and asleep-ness, move on by themselves.
   const tick = setInterval(paint, 30_000);
   const modal = openModal(el, {
     doing: '🖥️ at the compute wall',
     onClose: () => {
       off();
+      offSetup();
       clearInterval(tick);
       stopWatching();
       stopWatchingEnvs();

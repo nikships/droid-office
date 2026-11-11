@@ -43,11 +43,11 @@ export function signInPanel(net: Net, opts: { actions?: boolean } = {}): { eleme
   let key = '';
   const paint = () => {
     const d = store.setup.droid;
-    const s = d.busy === 'signing-in' ? d.signIn : undefined;
-    const next = JSON.stringify([d.busy, s?.code, s?.url]);
+    const s = !store.setup.airgapped && d.busy === 'signing-in' ? d.signIn : undefined;
+    const next = JSON.stringify([store.setup.airgapped, d.busy, s?.code, s?.url]);
     if (next === key) return;
     key = next;
-    if (d.busy !== 'signing-in') return element.replaceChildren();
+    if (store.setup.airgapped || d.busy !== 'signing-in') return element.replaceChildren();
     if (!s?.code && !s?.url) return element.replaceChildren(waitLine('Starting Droid’s sign-in…'));
     element.replaceChildren(
       deviceCode({
