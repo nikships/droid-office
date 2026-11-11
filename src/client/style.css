@@ -1735,25 +1735,15 @@ a.when:hover { text-decoration: underline; }
 .elevator .floor-sub { font: 400 11px var(--font-mono); color: var(--text-secondary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .elevator .floor-stats { font-size: var(--text-small); }
 .elevator .add { margin-top: 16px; }
-.elevator .add h3 { margin: 0 0 8px; font-size: 14px; font-weight: 600; text-transform: none; letter-spacing: 0; color: var(--text); }
-.elevator .repo-search { display: flex; gap: 8px; }
-.elevator .repo-search input { flex: 1; }
-.elevator .repo-list { margin-top: 8px; max-height: 280px; overflow: auto; border: 1px solid var(--border-strong); border-radius: var(--radius); background: var(--surface-raised); }
-.elevator .repo { display: flex; gap: 8px; align-items: baseline; padding: 7px 10px; border-bottom: 1px solid var(--border); cursor: pointer; }
-.elevator .repo:last-child { border-bottom: 0; }
-.elevator .repo:hover { background: var(--surface-hover); }
-.elevator .repo.sel { background: var(--accent-muted); }
-.elevator .repo .nm { font-weight: 600; white-space: nowrap; }
-.elevator .repo .forge { flex: none; font-size: 12px; }
-.elevator .repo .desc { flex: 1; min-width: 0; font-size: 12px; color: var(--text-secondary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.elevator .repo .when { font-size: 11px; color: var(--text-secondary); white-space: nowrap; }
-.elevator .note { margin: 8px 0 0; font-size: 12px; color: var(--text-secondary); overflow-wrap: anywhere; }
-.elevator .note.busy { color: var(--text); }
-.elevator .dir-change { margin-left: 8px; padding: 3px 8px; font-size: 10px; vertical-align: baseline; }
-.elevator .dir-pick { margin-top: 8px; }
+.modal.add-floor-modal { width: min(620px, 100%); }
+.add-floor .repo-list { max-height: 280px; overflow: auto; }
+.add-floor .repo-empty { margin: 0; padding: var(--space-4) var(--space-3); color: var(--text-secondary); font-size: var(--text-small); text-align: center; }
+.add-floor .repo-empty.more { padding: var(--space-2) var(--space-3); }
+.add-floor .dir-line { align-items: flex-start; gap: var(--space-3); }
+.add-floor .dir-change { flex: none; }
+.pill.floor-here { border-color: rgba(238, 96, 24, .45); background: var(--accent-muted); color: var(--accent); }
 .folder-browser .folder-list { max-height: 360px; overflow: auto; }
 .folder-browser .input-group input { flex: 1; min-width: 0; }
-.elevator .err { margin: 8px 0 0; font-size: 13px; font-weight: 600; color: var(--danger); overflow-wrap: anywhere; }
 
 /* ---------- The ☰ menu (ui/menu.ts): it hangs under its button, and the office stays in view ---------- */
 .backdrop.menu-backdrop { background: none; display: block; padding: 0; animation: none; }

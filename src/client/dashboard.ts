@@ -16,6 +16,8 @@ import { icon, type IconName } from './ui/icons';
 import { confirmDialog, openPrompt, routeWorktreeMessage, sendHomeDialog } from './ui/prompt';
 import { CLOUD_HIRE_CONFIRM_MS } from '../shared/factory-cloud';
 import { cloudSpawn, runsOnPicker } from './ui/factory-cloud';
+import { openAddFloor, routeAddFloorMessage } from './ui/add-floor';
+import { routeFolderMessage } from './ui/folder-browser';
 import { openFloorOrder } from './ui/floor-reorder';
 import { openSubscriptionsStatus } from './ui/subscriptions-status';
 import { onTermFontSize, setTermFontSize, stepTermFont, termFontSize, TERM_FONT_MAX, TERM_FONT_MIN } from './ui/term-font';
@@ -141,8 +143,10 @@ const title = h('h1.dash-office', {}, officeName);
 const linkDot = h('span.dash-link', { role: 'img', 'aria-label': 'Connecting' });
 const brand = h('div.dash-brand', {}, h('img', { src: '/factory-glyph.svg', alt: '', width: 18, height: 18 }), h('span.dash-brand-text', {}, h('span.eyebrow', {}, 'Web companion'), h('span.dash-brand-name', {}, title, linkDot)));
 const floors = h('nav.dash-floor-strip', { 'aria-label': 'Floors' });
+const addFloorLabel = h('span.dash-floor-add-label', { hidden: true }, 'Add floor');
+const addFloorBtn = h('button.btn.icon.sm.ghost.dash-floor-add', { type: 'button', 'aria-label': 'Add floor', title: 'Add floor', onclick: () => addFloor() }, icon('plus', 14), addFloorLabel);
 const reorderFloors = h('button.btn.icon.sm.ghost', { type: 'button', 'aria-label': 'Reorder floors', title: 'Reorder floors', onclick: () => openFloorOrder(net) }, icon('grip', 14));
-const floorPicker = h('div.dash-floor', {}, floors, reorderFloors);
+const floorPicker = h('div.dash-floor', {}, floors, addFloorBtn, reorderFloors);
 const boardCount = h('span.dash-count.hidden');
 const board = h('button.btn.ghost.dash-top-btn.dash-board', { type: 'button', title: 'The floor’s Whiteboard (⌘ B)', onclick: () => void openBoard() }, icon('board', 14), h('span.dash-top-label', {}, 'Whiteboard'), boardCount);
 const subscriptions = h('button.btn.ghost.dash-top-btn', { type: 'button', title: 'Subscriptions and account usage', onclick: () => openSubscriptionsStatus() }, icon('key', 14), h('span.dash-top-label', {}, 'Subscriptions'));
@@ -638,6 +642,8 @@ net.onMessage((msg) => {
   terminal?.routeTerminalMessage(msg);
   whiteboard?.routeWhiteboardMessage(msg);
   routeWorktreeMessage(msg);
+  routeAddFloorMessage(msg);
+  routeFolderMessage(msg);
   if (entering) {
     if (wsFloor !== floor) loadWorkspace(floor);
     else for (const p of panes) p?.reattach();
@@ -659,6 +665,10 @@ store.on('screens', () => {
   for (const p of panes) p?.paintQuestion();
   schedulePreviews();
 });
+function addFloor() {
+  if (!live()) return;
+  openAddFloor(net, (id) => goFloor(id));
+}
 function goFloor(id: string) {
   if (!live() || id === store.floor) return;
   closeAllModals();
@@ -807,6 +817,10 @@ function paint() {
   title.textContent = officeName;
   const up = live();
   const here = store.currentFloor();
+  const hasFloors = store.floors.length > 0;
+  addFloorBtn.disabled = !up;
+  addFloorBtn.classList.toggle('icon', hasFloors);
+  addFloorLabel.hidden = hasFloors;
   reorderFloors.disabled = !up || store.floors.length < 2;
   agentBtn.disabled = shellBtn.disabled = !up || !here || busy.has('hire');
   // An empty floor's pane carries the orange Hire; once someone works here the sidebar's does.
@@ -969,7 +983,7 @@ function paintSide() {
   const here = store.currentFloor();
   sideTitle.textContent = store.floor === ROOF ? 'Rooftop' : (here?.name ?? 'No floor');
   sideTitle.title = sideTitle.textContent;
-  const where = here ? [here.repo ?? 'Not a git repository', here.branch].filter(Boolean).join(' · ') : store.floors.length ? 'Choose a floor above.' : 'No floors yet. Add a project from the office itself.';
+  const where = here ? [here.repo ?? 'Not a git repository', here.branch].filter(Boolean).join(' · ') : store.floors.length ? 'Choose a floor above.' : 'No floors yet. Add a floor above.';
   // The floor name above already says which repository this is, so the line under it is the branch.
   sideSub.replaceChildren(icon('branch', 12), h('span', { title: where }, here?.repo && here.branch ? here.branch : where));
   roster.update({ floor, workers: [...store.workers.values()], focused: focusedWorker(ws) ?? '', live: live(), pane: (id) => paneOf(ws, id), mission: store.missionControl });

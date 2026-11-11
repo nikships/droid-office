@@ -323,15 +323,19 @@ export async function startServer(cfg: Config) {
   // The elevator's counts change with every worker update; tell everyone at most a few times a second.
   let floorsSent = '';
   let floorsTimer: NodeJS.Timeout | undefined;
-  const floorsChanged = () => {
-    floorsTimer ??= setTimeout(() => {
+  const publishFloors = () => {
+    if (floorsTimer) {
+      clearTimeout(floorsTimer);
       floorsTimer = undefined;
-      const list = floorInfos();
-      const json = JSON.stringify(list);
-      if (json === floorsSent) return;
-      floorsSent = json;
-      broadcast({ t: 'floors', floors: list });
-    }, 250);
+    }
+    const list = floorInfos();
+    const json = JSON.stringify(list);
+    if (json === floorsSent) return;
+    floorsSent = json;
+    broadcast({ t: 'floors', floors: list });
+  };
+  const floorsChanged = () => {
+    floorsTimer ??= setTimeout(publishFloors, 250);
   };
   /** Tells just this person why their request didn't happen; nothing when there's no error. */
   const warn = (c: Client, error: string | undefined) => {
@@ -2092,13 +2096,23 @@ export async function startServer(cfg: Config) {
       case 'floor.add': {
         const dir = str(msg.dir, 1024);
         const r = building.add(dir, who);
-        if (typeof r === 'string') return sendTo(c, { t: 'floor.added', dir, error: r });
-        floorsChanged();
+        if (typeof r === 'string') {
+          sendTo(c, { t: 'floor.added', dir, error: r });
+          return done(r);
+        }
         const floor = openFloor(r);
-        if (!floor) return sendTo(c, { t: 'floor.added', dir, error: `Added ${r.name}, but couldn't open its floor — see the office's log` });
+        if (!floor) {
+          const error = `Added ${r.name}, but couldn't open its floor — see the office's log`;
+          floorsChanged();
+          sendTo(c, { t: 'floor.added', dir, error });
+          return done(error);
+        }
+        // Publish the updated floor list before floor.added, so switching to the new floor sees it in store.floors immediately.
+        publishFloors();
         console.log(`  ${who} added a floor for ${r.repo ?? r.name} (${r.dir})`);
         toastAll(`🛗 New floor: ${r.name}, added by ${who}`);
         sendTo(c, { t: 'floor.added', dir, floor: floor.id });
+        done();
         break;
       }
       case 'floor.remove': {
@@ -2108,16 +2122,17 @@ export async function startServer(cfg: Config) {
         console.log(`  ${who} took the ${r.name} floor off the building (${r.dir} stays where it is)`);
         const floor = floors.get(id);
         if (floor) closeFloor(floor, who);
-        else floorsChanged();
+        else publishFloors();
+        done();
         break;
       }
       case 'floor.projectsDir': {
         const err = building.setProjectsDir(str(msg.dir, 1024), who);
-        warn(c, err);
-        if (err) break;
+        if (err) return stop(err);
         const state = building.projectsDirState();
         broadcast({ t: 'projectsDir', state });
         toastAll(state.custom ? `📁 ${who} moved the workspace folder to ${state.dir}` : `📁 ${who} put the workspace folder back to ${state.dir}`);
+        done();
         break;
       }
       case 'worker.spawn': {

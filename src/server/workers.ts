@@ -419,7 +419,9 @@ export class WorkerManager {
    * Call once, before anyone can walk in.
    */
   async start() {
+    if (this.closing) return;
     await this.host.connect();
+    if (this.closing) return;
     await Promise.all(
       [...this.workers.values()].map(async (w) => {
         if (w.info.remote) return;

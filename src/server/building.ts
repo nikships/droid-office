@@ -266,7 +266,7 @@ export class Building {
     const shown = tildify(dir);
     if (!existsSync(dir)) return `${shown} doesn't exist`;
     const git = isCheckout(dir);
-    const why = git ? this.outsideWorkspace(dir) : plainProblem(dir);
+    const why = plainProblem(dir) ?? (git ? this.outsideWorkspace(dir) : undefined);
     if (why) return why;
     const known = this.knownCheckout(dir);
     if (known) return `${shown} already has a floor (${known.name})`;
@@ -349,7 +349,7 @@ export class Building {
     const dir = path.resolve(typed);
     const up = path.dirname(dir);
     const git = isCheckout(dir);
-    const blocked = git ? this.outsideWorkspace(dir) : undefined;
+    const blocked = (existsSync(dir) ? plainProblem(dir) : undefined) ?? (git ? this.outsideWorkspace(dir) : undefined);
     const base = { dir, shown: tildify(dir), git, ...(blocked ? { blocked } : {}), ...(up !== dir ? { parent: up } : {}) };
     let entries: Dirent[];
     try {
