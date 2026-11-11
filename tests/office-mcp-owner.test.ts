@@ -5,7 +5,7 @@ import { execFileSync } from 'node:child_process';
 import { createServer, request } from 'node:http';
 import { Readable } from 'node:stream';
 import type { AddressInfo } from 'node:net';
-import { mkdirSync, mkdtempSync, rmSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { WebSocket } from 'ws';
@@ -24,6 +24,7 @@ import { loadConfig } from '../src/server/config.js';
 import { startServer } from '../src/server/server.js';
 import { SUBAGENT_DEFAULTS, type ServerMsg, type WorkerInfo } from '../src/shared/protocol.js';
 import { DESKS } from '../src/shared/layout.js';
+import { readMenu } from '../src/shared/asks.js';
 
 const proxyFetch: typeof fetch = async (input, init) => {
   const req = new Request(input, init);
@@ -380,6 +381,14 @@ test('every retained owner tool has a strict self-contained schema', async (t) =
   assert.equal(r.calls.length, OWNER_TOOLS.length);
   // Ensure zod conversion used by MCP includes nested fields rather than unconstrained dictionaries.
   for (const entry of OWNER_TOOLS) assert.doesNotThrow(() => z.toJSONSchema(entry.inputSchema, { io: 'input' }));
+});
+
+test('office_worker_answer forwards the exact captured review snapshot', async (t) => {
+  const r = await remoteRig(t);
+  const menu = readMenu(readFileSync(new URL('../android/app/src/test/resources/askuser-1.7.1-review.txt', import.meta.url), 'utf8').split('\n'))!;
+  const result = await r.call('office_worker_answer', { workerId: 'pixel', menu, choice: 1 });
+  assert.equal(result.error, false);
+  assert.deepEqual(r.calls.at(-1), { by: 'Grok', floor: 'f-api', msg: { t: 'worker.answer', workerId: 'pixel', menu, choice: 1 } });
 });
 
 test('focused tools resolve names, bind target floors and generate internal request ids', async (t) => {

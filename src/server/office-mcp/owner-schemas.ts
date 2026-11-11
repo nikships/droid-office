@@ -28,6 +28,7 @@ export const menu = z
     pointer: z.number().int().nonnegative().optional().describe('Currently focused zero-based option.'),
     freeText: z.boolean().describe('Whether the displayed menu accepts a typed answer.'),
     multiSelect: z.boolean().optional().describe('Whether the displayed menu has checkboxes.'),
+    review: z.array(text).optional().describe('Exact summary lines for the final review. Its option 1 submits all answers.'),
   })
   .describe('Exact menu snapshot from the worker’s screen. The server refuses an answer if the menu changed.');
 

@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { once } from 'node:events';
 import { createServer } from 'node:http';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import type { AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -356,6 +356,28 @@ test('terminal questions are listed like the Asks inbox and answered only while 
   assert.match(refused.text, /desk/);
   assert.equal(r.writes.length, 1);
   assert.equal((await r.call(r.lead, 'question_answer', { questionId: 'ask:floor:lead:permission', optionId: '1' })).isError, true, 'only the caller’s own subagents');
+});
+
+test('MCP lists captured AskUser review answers and submits only the unchanged review', async (t) => {
+  const r = await rig(t);
+  await r.hire();
+  const lines = readFileSync(new URL('../android/app/src/test/resources/askuser-1.7.1-review.txt', import.meta.url), 'utf8').split('\n');
+  r.screens.set('sub1', lines);
+  r.set('sub1', 'needs_input', { ask: { kind: 'question', questions: [] } });
+  const [review] = (await r.call(r.lead, 'questions_list')).body.questions;
+  assert.equal(review.answerable, true);
+  assert.match(review.question, /Review your answers\nWhich hypervisor should we use\?\n→ UTM/);
+  assert.deepEqual(review.options, [{ id: '1', label: 'Submit answers' }]);
+  r.screens.set(
+    'sub1',
+    lines.map((line) => line.replace('→ SSH', '→ RDP')),
+  );
+  assert.equal((await r.call(r.lead, 'question_answer', { questionId: review.id, optionId: '1' })).isError, true);
+  assert.deepEqual(r.writes, []);
+  const [updated] = (await r.call(r.lead, 'questions_list')).body.questions;
+  assert.notEqual(updated.id, review.id);
+  assert.equal((await r.call(r.lead, 'question_answer', { questionId: updated.id, optionId: '1' })).isError, undefined);
+  assert.deepEqual(r.writes, [['sub1', '\r']]);
 });
 
 test('team_wait returns as soon as news arrives, times out, cancels and never leaks listeners or blocks other calls', async (t) => {

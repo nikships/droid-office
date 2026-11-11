@@ -1,8 +1,48 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import { ASK_KEYS, canAnswer, menuKeys, menuOnTextRow, menuTakesText, menuTextKeys, menuTextRowEmpty, readMenu, readScreenMenu, replyKeys, sameMenu, workerMenu, type Menu } from '../src/shared/asks.js';
 import { FLAG_BOLD, type Run } from '../src/shared/protocol.js';
 import { Answers, type AnswerHost } from '../src/server/answers.js';
+
+// Real installed Droid 1.7.1, three-question AskUser, captured via tuistory at 110×45.
+const REVIEW = readFileSync(new URL('../android/app/src/test/resources/askuser-1.7.1-review.txt', import.meta.url), 'utf8').split('\n');
+
+test('Droid 1.7.1 review is an explicit Enter submission bound to every answer', async () => {
+  const menu = readMenu(REVIEW)!;
+  assert.equal(menu.question, 'Review your answers');
+  assert.deepEqual(menu.choices, [{ number: 1, label: 'Submit answers' }]);
+  assert.deepEqual(menu.review, ['Which hypervisor should we use?', '→ UTM', 'Which Windows licence should we use?', '→ Evaluation', 'How should agents connect?', '→ SSH']);
+  assert.equal(menuTakesText(menu), false);
+  assert.equal(replyKeys(menu, '1'), '\r');
+  assert.equal(replyKeys(menu, 'submit'), undefined);
+  assert.equal(canAnswer({ kind: 'agent', status: 'needs_input' }, REVIEW), true);
+  assert.deepEqual(readScreenMenu(REVIEW.map((line) => [[line, -1, -1, 0]])), menu);
+  const phone = readFileSync(new URL('../android/app/src/test/resources/askuser-1.7.1-review-phone.txt', import.meta.url), 'utf8').split('\n');
+  assert.deepEqual(readMenu(phone), menu, 'real 50×29 phone capture wraps the footer and drops its separator');
+  const lines = REVIEW.map((line) => line.replace('→ SSH', '→ RDP'));
+  assert.equal(sameMenu(menu, readMenu(lines)), false, 'changed summaries invalidate a review even when Submit is unchanged');
+  const writes: string[] = [];
+  const host: AnswerHost = { worker: () => ({ kind: 'agent', status: 'needs_input' }), lines: () => lines, live: () => true, write: (s) => writes.push(s) };
+  const answers = new Answers();
+  assert.match((await answers.answer('review', menu, { choice: 1 }, host))!, /changed/);
+  assert.deepEqual(writes, []);
+  const current = readMenu(lines)!;
+  assert.equal(await answers.answer('review', current, { choice: 1 }, host), undefined);
+  assert.deepEqual(writes, ['\r'], 'never send the synthetic option digit to an unnumbered action');
+  assert.match((await answers.answer('review', current, { choice: 1 }, host))!, /already/);
+});
+
+test('review parsing refuses incomplete, unfocused or historical review text', () => {
+  for (const lines of [
+    REVIEW.filter((line) => !line.includes('Submit answers')),
+    REVIEW.filter((line) => !line.includes('→ ')),
+    REVIEW.map((line) => line.replace('❯ Submit answers', 'Submit answers')),
+    [...REVIEW, 'The worker continued.'],
+    REVIEW.filter((line) => !line.includes('Enter Submit')),
+  ])
+    assert.equal(readMenu(lines), undefined);
+});
 
 // These screens are the same Droid fixtures used by Android's ChoicesTest/AsksTest.
 const BOX = [

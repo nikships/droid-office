@@ -99,6 +99,7 @@ object Tags {
         const val CLOSE = "answer.close"
         const val RAW_TTY = "answer.raw_tty"
         const val QUESTION = "answer.question"
+        const val REVIEW = "answer.review"
         const val INSTRUCTION = "answer.instruction"
         const val TYPE = "answer.type"
         const val TEXT = "answer.text"

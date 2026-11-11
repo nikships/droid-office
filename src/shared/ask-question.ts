@@ -91,6 +91,7 @@ export interface QuestionDisplay {
  * option is matched in order: ambiguous or mismatching questions cannot relabel an answer.
  */
 export function questionPresentation(menu: Menu, entries: readonly ThreadEntry[], ask?: WorkerAsk): QuestionDisplay {
+  if (menu.review) return { question: 'Review your answers', choices: menu.choices, complete: true };
   if (ask?.kind === 'permission') return { question: permissionLine(ask), choices: menu.choices, complete: true };
   const all = ask?.kind === 'question' && ask.questions.length ? ask.questions : askedQuestions(entries);
   const matches = all.filter(

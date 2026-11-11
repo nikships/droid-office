@@ -67,14 +67,14 @@ export function openQuestionWorkspace(opts: { name: string; state: QuestionState
       input.checked = selected.has(Number(input.value));
       input.closest('label')?.classList.toggle('on', input.checked);
     }
-    count.textContent = state.menu.multiSelect ? `${selected.size} selected` : selected.size ? '1 answer selected' : 'Choose an answer';
+    count.textContent = state.menu.review ? 'Final review' : state.menu.multiSelect ? `${selected.size} selected` : selected.size ? '1 answer selected' : 'Choose an answer';
     const hasText = !!opts.draft.text.trim();
-    submit.disabled = submitting || !state.enabled || state.supported === false || (!selected.size && !hasText);
+    submit.disabled = submitting || !state.enabled || state.supported === false || (!state.menu.review && !selected.size && !hasText);
   };
   const update = (next: QuestionState) => {
     state = next;
     const display = questionPresentation(state.menu, state.entries, state.ask);
-    const nextKey = JSON.stringify([state.menu.question, state.menu.choices.map((c) => [c.number, c.label, c.description]), state.menu.multiSelect, display]);
+    const nextKey = JSON.stringify([state.menu.question, state.menu.choices.map((c) => [c.number, c.label, c.description]), state.menu.multiSelect, state.menu.review, display]);
     if (key !== nextKey) {
       const first = !key;
       key = nextKey;
@@ -93,29 +93,36 @@ export function openQuestionWorkspace(opts: { name: string; state: QuestionState
         h(
           'div.qw-content',
           {},
-          h('div.qw-question-meta', {}, h('span.eyebrow', {}, display.position ? `Question ${display.position} of ${display.total}` : 'Current question'), h('span.pill', {}, state.menu.multiSelect ? 'Multiple answers' : 'One answer')),
-          h('h3.qw-question', { id: 'qw-question' }, display.question),
-          h('p.qw-instructions', { id: 'qw-instructions' }, `${instructions}. Nothing is sent until you submit.`),
           h(
-            'div.qw-choices',
-            { role: state.menu.multiSelect ? 'group' : 'radiogroup', 'aria-labelledby': 'qw-question', 'aria-describedby': 'qw-instructions' },
-            ...display.choices.map((choice) => {
-              const input = h('input', { type: state.menu.multiSelect ? 'checkbox' : 'radio', name: 'answer-choice', value: choice.number });
-              input.addEventListener('change', () => {
-                if (!state.menu.multiSelect) {
-                  selected.clear();
-                  text.value = '';
-                  opts.draft.text = '';
-                }
-                if (input.checked) selected.add(choice.number);
-                else selected.delete(choice.number);
-                opts.draft.choices = [...selected];
-                opts.onDraft();
-                updateSelection();
-              });
-              return h('label.qw-choice', {}, input, h('span.qw-choice-copy', {}, h('span', {}, choice.label), choice.description ? h('small', {}, choice.description) : null));
-            }),
+            'div.qw-question-meta',
+            {},
+            h('span.eyebrow', {}, state.menu.review ? 'Final review' : display.position ? `Question ${display.position} of ${display.total}` : 'Current question'),
+            h('span.pill', {}, state.menu.review ? 'Ready to submit' : state.menu.multiSelect ? 'Multiple answers' : 'One answer'),
           ),
+          h('h3.qw-question', { id: 'qw-question' }, display.question),
+          h('p.qw-instructions', { id: 'qw-instructions' }, state.menu.review ? 'Check your answers, then submit them to the worker. To edit them, open Raw TTY.' : `${instructions}. Nothing is sent until you submit.`),
+          state.menu.review
+            ? h('div.qw-review', {}, state.menu.review.join('\n'))
+            : h(
+                'div.qw-choices',
+                { role: state.menu.multiSelect ? 'group' : 'radiogroup', 'aria-labelledby': 'qw-question', 'aria-describedby': 'qw-instructions' },
+                ...display.choices.map((choice) => {
+                  const input = h('input', { type: state.menu.multiSelect ? 'checkbox' : 'radio', name: 'answer-choice', value: choice.number });
+                  input.addEventListener('change', () => {
+                    if (!state.menu.multiSelect) {
+                      selected.clear();
+                      text.value = '';
+                      opts.draft.text = '';
+                    }
+                    if (input.checked) selected.add(choice.number);
+                    else selected.delete(choice.number);
+                    opts.draft.choices = [...selected];
+                    opts.onDraft();
+                    updateSelection();
+                  });
+                  return h('label.qw-choice', {}, input, h('span.qw-choice-copy', {}, h('span', {}, choice.label), choice.description ? h('small', {}, choice.description) : null));
+                }),
+              ),
           menuTakesText(state.menu) ? h('div.field.qw-own-answer', {}, h('label', {}, state.menu.multiSelect ? 'Add an answer' : 'Your own answer'), text) : null,
           !display.complete ? h('p.qw-source-note', {}, 'Showing the terminal’s readable text. If anything is missing, open Raw TTY.') : null,
         ),
@@ -135,7 +142,7 @@ export function openQuestionWorkspace(opts: { name: string; state: QuestionState
               ? 'This question changed or was answered elsewhere. Review the current question before sending.'
               : 'Your draft stays here if you go back to the thread.';
     review.hidden = state.current || state.sending || state.answered || !state.connected;
-    submit.textContent = state.sending ? 'Sending…' : 'Submit answer';
+    submit.textContent = state.sending ? 'Sending…' : state.menu.review ? 'Submit answers' : 'Submit answer';
     updateSelection();
   };
   form.addEventListener('submit', (event) => {
@@ -144,7 +151,7 @@ export function openQuestionWorkspace(opts: { name: string; state: QuestionState
     const text = opts.draft.text.trim();
     submitting = true;
     updateSelection();
-    void opts.reply(state.menu.multiSelect ? { choices: [...selected], ...(text ? { text } : {}) } : text ? { text } : { choice: [...selected][0] }, state.menu).finally(() => {
+    void opts.reply(state.menu.review ? { choice: 1 } : state.menu.multiSelect ? { choices: [...selected], ...(text ? { text } : {}) } : text ? { text } : { choice: [...selected][0] }, state.menu).finally(() => {
       submitting = false;
       updateSelection();
     });

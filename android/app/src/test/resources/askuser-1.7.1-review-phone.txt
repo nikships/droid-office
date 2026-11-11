@@ -1,0 +1,17 @@
+   ● Hypervisor● Windows-licenc● Agent-accessSubmi
+   →            →              →             t
+
+
+   Review your answers
+
+   Which hypervisor should we use?
+   → UTM
+   Which Windows licence should we use?
+   → Evaluation
+   How should agents connect?
+   → SSH
+
+   ❯ Submit answers
+
+   ←/⇧Tab Edit answers • Enter Submit
+   ESC stop agent

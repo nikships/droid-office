@@ -12,7 +12,7 @@ data class Choice(val number: Int, val label: String, val description: String? =
  * pointer rather than taking a digit, and whether it offers a row to type your own answer.
  */
 @Serializable
-data class Menu(val question: String?, val choices: List<Choice>, val pointer: Int?, val freeText: Boolean = false, val multiSelect: Boolean = false)
+data class Menu(val question: String?, val choices: List<Choice>, val pointer: Int?, val freeText: Boolean = false, val multiSelect: Boolean = false, val review: List<String>? = null)
 
 object Choices {
     private val OPTION = Regex("""^([>❯›▸▶→●◉]\s*)?([1-9])[.)]\s+(\S.*)$""")
@@ -28,6 +28,8 @@ object Choices {
     private const val QUESTION_REACH = 48
     private val QUESTION_BOUNDARY = Regex("""Ask User|[→●○]|\[question]|^(?:[~/]|https?://)""", RegexOption.IGNORE_CASE)
     private val QUESTION_MARK = Regex("""\?(\s|$)""")
+    private val REVIEW_FOOTER = Regex("""^←/⇧Tab Edit answers\s*[•·]\s*Enter Submit\s*(?:[•·]\s*)?ESC stop agent$""", RegexOption.IGNORE_CASE)
+    private val REVIEW_SUBMIT = Regex("""^❯\s+Submit answers$""")
 
     private fun questionBoundary(line: String): Boolean =
         line.isBlank() || OPTION.matches(line) || QUESTION_BOUNDARY.containsMatchIn(line) || line.none(Char::isLetter)
@@ -50,6 +52,16 @@ object Choices {
         val clean = lines.map { it.trim(*BORDERS) }
         val lastContent = clean.indexOfLast { it.isNotBlank() }
         if (lastContent < 0) return null
+        val review = clean.indexOfLast { it == "Review your answers" }
+        if (review >= 0) {
+            val submit = clean.indexOfLast { REVIEW_SUBMIT.matches(it) }
+            if (submit > review) {
+                val summary = clean.subList(review + 1, submit).filter { it.isNotBlank() }
+                val footer = clean.subList(submit + 1, lastContent + 1).filter { it.isNotBlank() }.joinToString(" ")
+                if (summary.any { it.startsWith("→ ") && it.removePrefix("→ ").isNotBlank() } && REVIEW_FOOTER.matches(footer))
+                    return Menu("Review your answers", listOf(Choice(1, "Submit answers")), 0, review = summary)
+            }
+        }
         val last = clean.indexOfLast(OPTION::matches)
         if (last < 0) return null
         if ((last + 1..lastContent).count { clean[it].isNotBlank() && indent(lines[it]) <= indent(lines[last]) } > MAX_TRAILING) return null
@@ -154,6 +166,6 @@ object Choices {
 
     /** The same question with the same choices: what was shown is still what an answer would pick from. */
     fun same(a: Menu?, b: Menu?): Boolean =
-        a != null && b != null && a.question == b.question && a.multiSelect == b.multiSelect && a.freeText == b.freeText &&
+        a != null && b != null && a.question == b.question && a.multiSelect == b.multiSelect && a.freeText == b.freeText && a.review == b.review &&
             a.choices.map { Triple(it.number, it.label, it.description) } == b.choices.map { Triple(it.number, it.label, it.description) }
 }

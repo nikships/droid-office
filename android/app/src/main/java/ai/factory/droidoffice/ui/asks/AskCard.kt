@@ -27,6 +27,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -104,7 +105,7 @@ fun AskCard(
         Text(question, style = MaterialTheme.typography.bodyMedium, maxLines = 2, overflow = TextOverflow.Ellipsis, modifier = Modifier.tagged(questionTag))
         if (menu != null) {
             SecondaryButton(
-                "Answer questions", { opened = OfficeJson.encodeToString(Menu.serializer(), menu) },
+                if (menu.review != null) "Review answers" else "Answer questions", { opened = OfficeJson.encodeToString(Menu.serializer(), menu) },
                 Modifier.tagged(Tags.Answer.OPEN), enabled = enabled && connected && !worker.isShell && !worker.isCloud, color = Palette.Accent,
             )
         } else {
@@ -114,10 +115,14 @@ fun AskCard(
     }
     opened?.let { encoded ->
         val shown = remember(encoded) { OfficeJson.decodeFromString(Menu.serializer(), encoded) }
-        AnswerWorkspace(worker, shown, entries, identity, onAnswered, onDismiss = { opened = null }, onRaw = {
-            opened = null
-            onOpenThread?.invoke()
-        })
+        // Lazy Asks items save and restore their subtree between questionnaire steps. Scope the
+        // registry itself, not only rememberSaveable inputs, to avoid restoring the last answer.
+        key(identity, encoded) {
+            AnswerWorkspace(worker, shown, entries, identity, onAnswered, onDismiss = { opened = null }, onRaw = {
+                opened = null
+                onOpenThread?.invoke()
+            })
+        }
     }
 }
 
@@ -206,9 +211,12 @@ private fun AnswerWorkspace(worker: WorkerInfo, shown: Menu, entries: List<Threa
                     Text(display.question ?: "Choose your answer", style = MaterialTheme.typography.titleLarge, modifier = Modifier.tagged(Tags.Answer.QUESTION))
                 }
                 item {
-                    Text(if (shown.multiSelect) "Select all that apply, then submit." else "Select one answer, then submit.", style = MaterialTheme.typography.bodyMedium, color = Palette.Accent, modifier = Modifier.tagged(Tags.Answer.INSTRUCTION))
+                    Text(if (shown.review != null) "Check your answers, then submit them to the worker. To edit them, open Raw TTY." else if (shown.multiSelect) "Select all that apply, then submit." else "Select one answer, then submit.", style = MaterialTheme.typography.bodyMedium, color = Palette.Accent, modifier = Modifier.tagged(Tags.Answer.INSTRUCTION))
                 }
-                items(display.choices, key = { it.number }) { choice ->
+                shown.review?.let { summary ->
+                    item { Text(summary.joinToString("\n"), style = MaterialTheme.typography.bodyLarge, modifier = Modifier.tagged(Tags.Answer.REVIEW)) }
+                }
+                items(if (shown.review != null) emptyList() else display.choices, key = { it.number }) { choice ->
                     val checked = (shown.multiSelect || !typed) && choice.number in selected
                     val change = {
                         if (!shown.multiSelect) typed = false
@@ -263,7 +271,7 @@ private fun AnswerWorkspace(worker: WorkerInfo, shown: Menu, entries: List<Threa
                 status?.let { Text(it, color = Palette.Warning, style = MaterialTheme.typography.bodySmall, modifier = Modifier.tagged(Tags.Answer.STATUS).semantics { liveRegion = LiveRegionMode.Polite }) }
                 if (pending && !delivering) SecondaryButton("Cancel", { job?.cancel(); pending = false }, Modifier.fillMaxWidth().tagged(Tags.Answer.CANCEL))
                 else SecondaryButton(
-                    if (delivering) "Submitting…" else "Submit answer",
+                    if (delivering) "Submitting…" else if (shown.review != null) "Submit answers" else "Submit answer",
                     {
                         keep()
                         pending = true
@@ -284,7 +292,7 @@ private fun AnswerWorkspace(worker: WorkerInfo, shown: Menu, entries: List<Threa
                                 error = "An answer was submitted. Check Raw TTY for its result before trying again."
                                 val result = graph.answers.submit(
                                     worker.id, shown,
-                                    choice = if (!typed && !shown.multiSelect) selected.singleOrNull() else null,
+                                    choice = if (shown.review != null) 1 else if (!typed && !shown.multiSelect) selected.singleOrNull() else null,
                                     choices = if (shown.multiSelect) selected.toList() else null,
                                     text = if (typed) text else null,
                                 )
@@ -292,7 +300,7 @@ private fun AnswerWorkspace(worker: WorkerInfo, shown: Menu, entries: List<Threa
                                     answerDrafts.remove(identity to draftKey)
                                     graph.alerts.cancel(worker.id)
                                     onAnswered?.invoke(
-                                        if (typed) text else if (shown.multiSelect) "${selected.size} choices selected"
+                                        if (shown.review != null) "Answers submitted" else if (typed) text else if (shown.multiSelect) "${selected.size} choices selected"
                                         else display.choices.firstOrNull { it.number in selected }?.label.orEmpty(),
                                     )
                                     onDismiss()
@@ -313,7 +321,7 @@ private fun AnswerWorkspace(worker: WorkerInfo, shown: Menu, entries: List<Threa
                         }
                     },
                     Modifier.fillMaxWidth().tagged(Tags.Answer.SUBMIT),
-                    enabled = active && !pending && if (typed) text.isNotBlank() else if (shown.multiSelect) selected.isNotEmpty() else selected.size == 1,
+                    enabled = active && !pending && if (shown.review != null) true else if (typed) text.isNotBlank() else if (shown.multiSelect) selected.isNotEmpty() else selected.size == 1,
                     color = Palette.Accent,
                 )
             }

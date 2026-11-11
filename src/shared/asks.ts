@@ -18,6 +18,8 @@ export interface Menu {
   pointer?: number;
   freeText: boolean;
   multiSelect?: boolean;
+  /** AskUser's final review, bound to these exact summary lines before Enter submits. */
+  review?: string[];
 }
 
 export const ASK_KEYS = { UP: '\x1b[A', DOWN: '\x1b[B', ENTER: '\r' } as const;
@@ -69,6 +71,18 @@ export function readMenu(lines: readonly string[]): Menu | undefined {
       break;
     }
   if (lastContent < 0) return undefined;
+  const review = clean.lastIndexOf('Review your answers');
+  if (review >= 0) {
+    const submit = clean.map((line) => /^❯\s+Submit answers$/.test(line)).lastIndexOf(true);
+    const summary = clean.slice(review + 1, submit).filter((line) => line.trim());
+    // Droid wraps the footer at phone widths and drops the separator at the line break.
+    const footer = clean
+      .slice(submit + 1, lastContent + 1)
+      .filter((line) => line.trim())
+      .join(' ');
+    if (submit > review && summary.some((line) => /^→\s+\S/.test(line)) && /^←\/⇧Tab Edit answers\s*[•·]\s*Enter Submit\s*(?:[•·]\s*)?ESC stop agent$/i.test(footer))
+      return { question: 'Review your answers', choices: [{ number: 1, label: 'Submit answers' }], pointer: 0, freeText: false, review: summary };
+  }
   let last = -1;
   for (let i = lastContent; i >= 0; i--) {
     if (OPTION.test(clean[i]!)) {
@@ -215,6 +229,7 @@ export function sameMenu(a: Menu | undefined, b: Menu | undefined): boolean {
     a.question === b.question &&
     !!a.multiSelect === !!b.multiSelect &&
     a.freeText === b.freeText &&
+    JSON.stringify(a.review) === JSON.stringify(b.review) &&
     a.choices.length === b.choices.length &&
     a.choices.every((c, i) => !!c && c.number === b.choices[i]?.number && c.label === b.choices[i]?.label && c.description === b.choices[i]?.description)
   );

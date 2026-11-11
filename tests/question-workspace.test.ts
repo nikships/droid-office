@@ -203,4 +203,28 @@ test('answer workspace: full text, explicit selection, responsive scrolling and 
   await page.getByRole('button', { name: 'Submit answer', exact: true }).click();
   assert.equal(await page.evaluate(() => (window as any).replies.at(-1).menu.question), single.question);
   assert.deepEqual(await page.evaluate(() => (window as any).replies.at(-1).value), { choice: 3 });
+  const review = readMenu(readFileSync(new URL('../android/app/src/test/resources/askuser-1.7.1-review.txt', import.meta.url), 'utf8').split('\n'))!;
+  for (const [width, height] of [
+    [1440, 900],
+    [1024, 700],
+    [390, 844],
+  ]) {
+    const final = await pageFor(review, width, height);
+    assert.equal(await final.locator('.qw-review').innerText(), review.review!.join('\n'));
+    assert.equal(await final.locator('input, textarea').count(), 0);
+    assert.equal(await final.evaluate(() => (window as any).replies.length), 0, 'opening review never submits');
+    const submit = final.getByRole('button', { name: 'Submit answers', exact: true });
+    assert.equal(await submit.isEnabled(), true);
+    await final.evaluate(() => {
+      const w = window as any;
+      w.dialog.update({ ...w.state, enabled: false, current: false });
+    });
+    assert.equal(await submit.isDisabled(), true, 'changed review blocks submission');
+    await final.evaluate(() => {
+      const w = window as any;
+      w.dialog.update(w.state);
+    });
+    await submit.click();
+    assert.deepEqual(await final.evaluate(() => (window as any).replies.map((reply: any) => reply.value)), [{ choice: 1 }]);
+  }
 });

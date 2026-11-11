@@ -824,7 +824,13 @@ export function createPane(host: PaneHost, index: number): Pane {
         {},
         h('div.dash-question-top', {}, h('span.eyebrow', {}, `${w.name} needs your answer`), answered ? h('span.pill.done', {}, 'Sent') : null),
         h('h3.dash-question-preview', {}, display?.question ?? menu.question ?? 'Choose an answer'),
-        h('div.dash-question-summary', {}, `${display?.position ? `Question ${display.position} of ${display.total} · ` : ''}${menu.multiSelect ? 'Select all that apply' : 'Select one answer'} · ${menu.choices.length} options`),
+        h(
+          'div.dash-question-summary',
+          {},
+          menu.review
+            ? 'Review and submit your answers to continue'
+            : `${display?.position ? `Question ${display.position} of ${display.total} · ` : ''}${menu.multiSelect ? 'Select all that apply' : 'Select one answer'} · ${menu.choices.length} options`,
+        ),
         h(
           'button.btn.accent',
           {
@@ -849,7 +855,7 @@ export function createPane(host: PaneHost, index: number): Pane {
               });
             },
           },
-          answered ? 'View answer status' : 'Answer questions',
+          answered ? 'View answer status' : menu.review ? 'Review answers' : 'Answer questions',
         ),
         questionReplying
           ? h('p.note.info', {}, 'Sending your answer…')
