@@ -9,12 +9,12 @@ import { Readable } from 'node:stream';
 import test from 'node:test';
 import { Client, StreamableHTTPClientTransport } from '@modelcontextprotocol/client';
 import { Answers } from '../src/server/answers.js';
-import { redactWebhookSecret, sendGrokWebhook, type GrokWebhookPayload } from '../src/server/grok-webhook.js';
+import { buildGrokWebhookPayload, buildTeamWebhookItem, redactWebhookSecret, sendGrokWebhook, type GrokWebhookPayload } from '../src/server/grok-webhook.js';
 import { createOfficeMcp } from '../src/server/office-mcp/index.js';
 import { RemoteMcp, remoteMcpListener } from '../src/server/remote-mcp-http.js';
 import { RemoteOffice, type RemoteFloor } from '../src/server/remote-office.js';
 import { GROK_BOTS_FILE, RemoteWorkers } from '../src/server/remote-workers.js';
-import { Team, type TeamWorkers } from '../src/server/team.js';
+import { Team, type TeamEvent, type TeamWorkers } from '../src/server/team.js';
 import { Visits } from '../src/server/visits.js';
 import { WhiteboardStore } from '../src/server/whiteboard.js';
 import { readMenu } from '../src/shared/asks.js';
@@ -155,6 +155,63 @@ test('sendGrokWebhook redacts bearer tokens from upstream error bodies, thrown e
   assert.equal(thrown.ok, false);
   assert.equal(thrown.error?.includes(DUMMY_TOKEN), false);
   assert.equal(redactWebhookSecret(`key=${DUMMY_TOKEN}`, DUMMY_TOKEN), 'key=[redacted]');
+
+  receiver.setResponder(() => ({ status: 200, body: '{}' }));
+  await sendGrokWebhook(
+    { webhookUrl: receiver.url, webhookToken: DUMMY_TOKEN },
+    { ...samplePayload, summary: `Token ${DUMMY_TOKEN}`, items: [{ ...samplePayload.items[0], text: `Bearer another-secret ${receiver.url}`, result: { status: 'ok', summary: encodeURIComponent(DUMMY_TOKEN) } }] },
+  );
+  const safe = JSON.stringify(receiver.received.at(-1)!.body);
+  assert.equal(safe.includes(DUMMY_TOKEN), false);
+  assert.equal(safe.includes('another-secret'), false);
+  assert.equal(safe.includes(receiver.url), false);
+  assert.equal(receiver.received.at(-1)!.headers.authorization, `Bearer ${DUMMY_TOKEN}`);
+});
+
+test('worker webhook payloads distinguish reported completion from live runtime status without repeating report prose', () => {
+  const event: TeamEvent = {
+    seq: 1,
+    lead: 'remote-1',
+    worker: 'byte',
+    name: 'Byte',
+    kind: 'report',
+    at: 1000,
+    text: 'All checks green. PR: https://github.com/nikships/droid-office/pull/1000 Commit: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+    prUrl: 'https://github.com/nikships/droid-office/pull/1000',
+    pushedSha: 'a'.repeat(40),
+    result: { status: 'ok', summary: 'All checks green.', artifacts: { prUrl: 'https://github.com/nikships/droid-office/pull/1000', commits: ['a'.repeat(40)] } },
+  };
+  const floor = { id: 'alpha', name: 'Droid Office', cwd: '/project' };
+  const item = buildTeamWebhookItem({ event, floor });
+  const payload = buildGrokWebhookPayload({ id: event.lead, name: 'grokbot' }, [item], 1000);
+  assert.equal(payload.summary, 'Byte (Droid Office) sent a final report to grokbot.');
+  assert.equal(item.text, undefined, 'result holds summary, CI status and artifact aliases, not repeated raw report prose');
+  assert.equal(item.result?.summary, 'All checks green.');
+  assert.equal(item.prUrl, event.prUrl, 'keep v1 artifact aliases');
+  assert.equal(item.pushedSha, event.pushedSha);
+  assert.equal(item.reportId, 'team:alpha:1');
+  assert.equal(item.reportPhase, 'final');
+  assert.equal(item.taskComplete, true);
+  assert.doesNotMatch(item.actionHint, /\w+\(\{/);
+  for (const status of ['partial', 'blocked', 'failed'] as const) {
+    const next = buildTeamWebhookItem({ event: { ...event, result: { status, summary: 'Still needs work.' } }, floor });
+    assert.equal(next.kind, status === 'partial' ? 'progress' : 'blocker');
+    assert.equal(next.reportPhase, status === 'partial' ? 'progress' : 'blocked');
+    assert.equal(next.taskComplete, false);
+    assert.doesNotMatch(next.actionHint, /\w+\(\{/);
+  }
+  const question = buildTeamWebhookItem({ event: { ...event, kind: 'question', text: 'Which policy?' }, floor });
+  assert.equal(question.text, 'Which policy?');
+  assert.equal(question.reportPhase, 'question');
+  assert.equal(question.taskComplete, false);
+  assert.equal(question.questionId, question.ackId);
+  const legacy = buildTeamWebhookItem({ event: { ...event, result: undefined }, floor });
+  assert.equal(legacy.text, event.text, 'legacy reports retain text');
+  const long = buildTeamWebhookItem({ event: { ...event, result: { status: 'ok', summary: 'A complete sentence. '.repeat(100) } }, floor });
+  assert.equal(buildGrokWebhookPayload(payload.lead, [long]).summary, payload.summary, 'headline never truncates report content');
+  const batch = buildGrokWebhookPayload(payload.lead, [item, question]);
+  assert.equal(batch.event, 'question');
+  assert.equal(batch.items.length, 2);
 });
 
 test('RemoteWorkers persists Grok Bot credentials in mode-0600 storage while stripping tokens from every client view', (t) => {
@@ -395,17 +452,24 @@ test('Grok Bot leads receive immediate team_report, lead_notify, floor hook, inb
   const invalidOpts = await grokSubClient.callTool({ name: 'lead_notify', arguments: { kind: 'update', text: 'Bad options', options: ['A', 'B'] } });
   assert.equal(invalidOpts.isError, true);
 
-  // 4. Progress team_report does NOT wake the Grok Bot prematurely while a background job runs.
+  // 4. Progress team_report pushes immediately, but is not a completed task or a duplicate done event.
   now += 1000;
   const progressReport = await grokSubClient.callTool({
     name: 'team_report',
     arguments: { text: 'CI suite running in background', progress: true },
   });
   assert.equal(progressReport.isError, undefined);
+  assert.equal(receiver.received.length, 3, 'progress pushes before the MCP call returns');
+  assert.equal(receiver.received[2].body.event, 'progress');
+  assert.equal(receiver.received[2].body.items[0].reportPhase, 'progress');
+  assert.equal(receiver.received[2].body.items[0].taskComplete, false);
+  assert.equal(receiver.received[2].body.items[0].result?.status, 'partial');
+  assert.equal(receiver.received[2].body.items[0].worker?.settled, false);
+  assert.equal((progressReport.structuredContent as { webhook: { pushed: boolean } }).webhook.pushed, true);
   grokSub.status = 'done';
   team.onWorker(grokSub);
   await new Promise((r) => setTimeout(r, 60));
-  assert.equal(receiver.received.length, 2, 'progress report and its turn-end done must not wake lead early');
+  assert.equal(receiver.received.length, 3, 'turn-end after progress must not duplicate the report');
 
   // 5. Blocking team_report question pushes immediately once and does not duplicate on turn-end done.
   grokSub.status = 'working';
@@ -416,14 +480,14 @@ test('Grok Bot leads receive immediate team_report, lead_notify, floor hook, inb
     arguments: { text: 'Which webhook retry policy should we use?', question: true, options: ['Immediate once + inbox', 'Exponential backoff'] },
   });
   assert.equal(questionReport.isError, undefined);
-  assert.equal(receiver.received.length, 3, 'team_report question flushes immediately');
-  assert.equal(receiver.received[2].body.event, 'question');
-  assert.deepEqual(receiver.received[2].body.items[0].options, ['Immediate once + inbox', 'Exponential backoff']);
-  assert.match(receiver.received[2].body.items[0].questionId ?? '', /^team:alpha:/);
+  assert.equal(receiver.received.length, 4, 'team_report question flushes immediately');
+  assert.equal(receiver.received[3].body.event, 'question');
+  assert.deepEqual(receiver.received[3].body.items[0].options, ['Immediate once + inbox', 'Exponential backoff']);
+  assert.match(receiver.received[3].body.items[0].questionId ?? '', /^team:alpha:/);
   grokSub.status = 'done';
   team.onWorker(grokSub);
   await new Promise((r) => setTimeout(r, 60));
-  assert.equal(receiver.received.length, 3, 'no duplicate push when turn ends after team_report');
+  assert.equal(receiver.received.length, 4, 'no duplicate push when turn ends after team_report');
 
   // 6. Final team_report pushes structured result immediately; non-Grok bot claw stays polling-only.
   grokSub.status = 'working';
@@ -438,16 +502,23 @@ test('Grok Bot leads receive immediate team_report, lead_notify, floor hook, inb
     },
   });
   assert.equal(finalReport.isError, undefined);
-  assert.equal(receiver.received.length, 4);
-  assert.equal(receiver.received[3].body.event, 'report');
-  assert.equal(receiver.received[3].body.items[0].result?.status, 'ok');
-  assert.equal(receiver.received[3].body.items[0].ackId, `team:alpha:${receiver.received[3].body.items[0].id.split(':').at(-1)}`);
+  assert.equal(receiver.received.length, 5);
+  assert.equal(receiver.received[4].body.event, 'report');
+  assert.equal(receiver.received[4].body.items[0].result?.status, 'ok');
+  assert.equal(receiver.received[4].body.items[0].reportPhase, 'final');
+  assert.equal(receiver.received[4].body.items[0].taskComplete, true);
+  assert.equal(receiver.received[4].body.items[0].worker?.status, 'working', 'runtime status stays accurate during MCP call');
+  assert.equal(receiver.received[4].body.items[0].worker?.settled, false);
+  assert.equal(receiver.received[4].body.items[0].ackId, `team:alpha:${receiver.received[4].body.items[0].id.split(':').at(-1)}`);
+  const full = await grokClient.callTool({ name: 'team_report_get', arguments: { id: receiver.received[4].body.items[0].reportId } });
+  assert.equal(full.isError, undefined);
+  assert.equal((full.structuredContent as { report: { text: string } }).report.text, 'All checks green and PR opened.', 'original prose remains readable through the payload reportId');
 
   // Subagent of polling-only claw reports -> 0 new webhook calls, inbox still populated.
   const clawReport = await clawSubClient.callTool({ name: 'team_report', arguments: { text: 'Claw subagent finished.' } });
   assert.equal(clawReport.isError, undefined);
   await new Promise((r) => setTimeout(r, 60));
-  assert.equal(receiver.received.length, 4, 'non-Grok bot never triggers webhook');
+  assert.equal(receiver.received.length, 5, 'non-Grok bot never triggers webhook');
   assert.equal(office.inbox(claw.worker.id).messages.length, 1);
 
   // 7. Server-side floor hooks: terminal needs_input AskUser prompt and stopped push automatically.
@@ -456,26 +527,26 @@ test('Grok Bot leads receive immediate team_report, lead_notify, floor hook, inb
   grokSub.status = 'needs_input';
   grokSub.ask = { kind: 'question', questions: [{ question: 'Which file should I create?', options: ['hello.txt', 'bye.txt', 'Other (type your answer)'], multiSelect: false }] };
   team.onWorker(grokSub);
-  await receiver.waitForCount(5);
-  assert.equal(receiver.received[4].body.event, 'needs_input');
-  assert.equal(receiver.received[4].body.items[0].terminalAsk?.kind, 'terminal');
-  assert.equal(receiver.received[4].body.items[0].terminalAsk?.options?.length, 3);
-  assert.equal(receiver.received[4].body.items[0].terminalAsk?.answerable, true);
-  assert.match(receiver.received[4].body.items[0].questionId ?? '', /^ask:alpha:/);
+  await receiver.waitForCount(6);
+  assert.equal(receiver.received[5].body.event, 'needs_input');
+  assert.equal(receiver.received[5].body.items[0].terminalAsk?.kind, 'terminal');
+  assert.equal(receiver.received[5].body.items[0].terminalAsk?.options?.length, 3);
+  assert.equal(receiver.received[5].body.items[0].terminalAsk?.answerable, true);
+  assert.match(receiver.received[5].body.items[0].questionId ?? '', /^ask:alpha:/);
 
   now += 1000;
   delete grokSub.ask;
   grokSub.status = 'exited';
   grokSub.exitCode = 1;
   team.onWorker(grokSub);
-  await receiver.waitForCount(6);
-  assert.equal(receiver.received[5].body.event, 'stopped');
+  await receiver.waitForCount(7);
+  assert.equal(receiver.received[6].body.event, 'stopped');
 
   // 8. Inbox tell to Grok Bot pushes message event; Settings RemoteMcp.testWebhook records lastDelivery without exposing token.
   now += 1000;
   assert.equal(office.tell(grok.worker.id, 'Direct inbox note', 'alpha'), undefined);
-  await receiver.waitForCount(7);
-  assert.equal(receiver.received[6].body.event, 'message');
+  await receiver.waitForCount(8);
+  assert.equal(receiver.received[7].body.event, 'message');
 
   const rmcp = new RemoteMcp({ dataDir: dir, office, mcp: mcpDeps, backendPort: 0, log() {} });
   rig.after(() => rmcp.stop());
@@ -483,9 +554,9 @@ test('Grok Bot leads receive immediate team_report, lead_notify, floor hook, inb
   const tested = await rmcp.testWebhook(grok.worker.id);
   const testFinishedAt = Date.now();
   assert.equal(tested.result.ok, true);
-  assert.equal(receiver.received.length, 8);
-  assert.equal(receiver.received[7].body.test, true);
-  const settingsPing = receiver.received[7].body;
+  assert.equal(receiver.received.length, 9);
+  assert.equal(receiver.received[8].body.test, true);
+  const settingsPing = receiver.received[8].body;
   assert.equal(settingsPing.event, 'test');
   assert.equal(settingsPing.source, 'droid-office');
   assert.equal(settingsPing.version, 1);
@@ -514,4 +585,31 @@ test('Grok Bot leads receive immediate team_report, lead_notify, floor hook, inb
   assert.equal(grokState.grokBot?.hasToken, true);
   assert.equal(grokState.grokBot?.lastDelivery?.ok, true);
   assert.equal(grokState.grokBot?.lastDelivery?.event, 'test');
+
+  // Reports emitted without the MCP convenience flush still push via floor subscriptions.
+  grokSub.status = 'working';
+  team.onWorker(grokSub);
+  await team.handle(grokSub, { action: 'report', progress: true, text: 'Another background check is running.' });
+  await receiver.waitForCount(10);
+  assert.equal(receiver.received[9].body.event, 'progress');
+
+  for (const status of ['blocked', 'failed'] as const) {
+    const reported = await grokSubClient.callTool({ name: 'team_report', arguments: { text: 'Checks need attention.', result: { status, summary: 'Cannot finish until checks pass.' } } });
+    assert.equal(reported.isError, undefined);
+    const item = receiver.received.at(-1)!.body.items[0];
+    assert.equal(item.kind, 'blocker');
+    assert.equal(item.reportPhase, 'blocked');
+    assert.equal(item.taskComplete, false);
+    assert.equal(item.result?.status, status);
+  }
+
+  const before = receiver.received.length;
+  await clawSubClient.callTool({ name: 'team_report', arguments: { text: 'Polling-only progress.', progress: true } });
+  await office.flushLeadPush(claw.worker.id);
+  assert.equal(receiver.received.length, before, 'non-Grok progress reports remain polling-only');
+  assert.ok(office.inbox(claw.worker.id).messages.some((m) => m.text.includes('Polling-only progress.')));
+  for (const received of receiver.received) {
+    assert.equal(JSON.stringify(received.body).includes(DUMMY_TOKEN), false);
+    for (const item of received.body.items) assert.doesNotMatch(item.actionHint, /\w+\(\{/);
+  }
 });

@@ -28,7 +28,53 @@ The building's agents live in Mission Control, the glass room under the boss off
 
 ## External bots
 
-They have a Tailscale endpoint, keys and inbox polling (`office_inbox`, `team_wait`). **Add bot** asks for a name, and optionally marks the bot as a **Grok Bot** with its HTTPS JSON webhook URL and `Authorization: Bearer` token (stored only in mode-`0600` `remote-workers.json`, never returned to clients). Each bot's main key and named keys share that bot's identity and webhook, so each Grok Bot connection wakes only its own bot, while non-Grok bots stay polling-only. For a Grok Bot lead, subagent final `team_report` results and questions, mid-turn `lead_notify` pings, terminal `needs_input` asks, unexpected `stopped` / `done` / departure events, and inbox messages push immediately over HTTP `POST` as structured JSON alongside durable `office_inbox` delivery. Their status is what they last reported with `office_status`, `offline` until they report after an office restart. Opening one says it runs externally (marking Grok Bots with webhook push) and shows its team, its last activity and when its key was last used.
+They have a Tailscale endpoint, keys and inbox polling (`office_inbox`, `team_wait`). **Add bot** asks for a name, and optionally marks the bot as a **Grok Bot** with its HTTPS JSON webhook URL and `Authorization: Bearer` token (stored only in mode-`0600` `remote-workers.json`, never returned to clients). Each bot's main key and named keys share that bot's identity and webhook, so each Grok Bot connection wakes only its own bot, while non-Grok bots stay polling-only. For a Grok Bot lead, subagent progress and final `team_report` results, questions and blocked reports, mid-turn `lead_notify` pings, terminal `needs_input` asks, unexpected `stopped` / `done` / departure events, and inbox messages push immediately over HTTP `POST` as structured JSON alongside durable `office_inbox` delivery. Their status is what they last reported with `office_status`, `offline` until they report after an office restart. Opening one says it runs externally (marking Grok Bots with webhook push) and shows its team, its last activity and when its key was last used.
+
+### Grok Bot webhook contract
+
+Only Grok Bot connections receive pushes. Every accepted `team_report`, including `progress: true`, questions, and blocked/failed results, flushes immediately and returns a webhook receipt. Automatic terminal/status events and inbox messages share a 1.5-second coalescing window per lead. All items remain in the inbox until explicitly acknowledged; a failed push does not discard the report. A turn ending after a report does not produce a second `done` push.
+
+The version-1 envelope and existing `report`, `question`, `blocker`, and `test` kinds remain. `progress` identifies incomplete reports (either `progress: true` or `result.status: "partial"`). Blocked and failed results use `blocker`. Other existing kinds are `needs_input`, `stopped`, `done`, `left`, `sent_home`, `update`, and `message`. In a batch, `event` names the highest-priority item; process every entry in `items`.
+
+`summary` is a complete event headline, not a cut-off report excerpt. Report items expose `reportPhase` (`progress`, `final`, `question`, or `blocked`) and `taskComplete`. Only a successful final report has `taskComplete: true`. This is a reported outcome, not independent verification or permission to merge. `worker.status` and `worker.state` keep their actual runtime values; `worker.settled` tells whether its terminal turn has settled. A successful report can therefore have `taskComplete: true` while its MCP call is still returning and `worker.settled: false`.
+
+Structured reports carry content in `result.summary`, `result.artifacts`, `result.remaining`, and `result.conflicts`, without repeating the original prose in `text`. `reportId` retrieves that original report through `team_report_get`; the inbox also retains it. Questions keep `text` and `options`. Legacy reports without a structured result retain `text`. The existing `prUrl`, `pushedSha`, and artifact aliases remain for compatibility. `actionHint` describes intent in plain words; use the structured worker id, floor id, question id, and acknowledgment id rather than parsing tool syntax out of prose. Permission prompts remain owner-only.
+
+Bearer credentials and the destination webhook URL are scrubbed from all outgoing string values, including nested results. Credentials are only sent in the HTTP authorization header, never in payload examples.
+
+#### Example event payloads
+
+Illustrative ids and paths below contain no connection credentials. Optional worker/artifact details are omitted.
+
+Progress:
+
+```json
+{"source":"droid-office","version":1,"event":"progress","summary":"Byte (Droid Office) reported progress to grokbot; the task is not finished.","sentAt":"2026-11-11T12:00:00.000Z","lead":{"id":"remote-example","name":"grokbot"},"items":[{"id":"team:alpha:1","ackId":"team:alpha:1","kind":"progress","at":"2026-11-11T12:00:00.000Z","floor":{"id":"alpha","name":"Droid Office","cwd":"/project"},"worker":{"id":"byte","name":"Byte","status":"working","state":"working","settled":false},"reportId":"team:alpha:1","reportPhase":"progress","taskComplete":false,"result":{"status":"partial","summary":"CI checks are running."},"actionHint":"The task is not finished. Follow its progress and step in if help is needed; do not merge or dismiss it yet. Acknowledge the ackId after handling this item."}]}
+```
+
+Final report:
+
+```json
+{"source":"droid-office","version":1,"event":"report","summary":"Byte (Droid Office) sent a final report to grokbot.","sentAt":"2026-11-11T12:01:00.000Z","lead":{"id":"remote-example","name":"grokbot"},"items":[{"id":"team:alpha:2","ackId":"team:alpha:2","kind":"report","at":"2026-11-11T12:01:00.000Z","floor":{"id":"alpha","name":"Droid Office","cwd":"/project"},"worker":{"id":"byte","name":"Byte","status":"working","state":"working","settled":false},"reportId":"team:alpha:2","reportPhase":"final","taskComplete":true,"result":{"status":"ok","summary":"Webhook changes verified; all checks passed."},"actionHint":"Review this worker's changes and checks, and record a review before merging or dismissing it. Acknowledge the ackId after handling this item."}]}
+```
+
+Question:
+
+```json
+{"source":"droid-office","version":1,"event":"question","summary":"Byte (Droid Office) asked grokbot a question.","sentAt":"2026-11-11T12:02:00.000Z","lead":{"id":"remote-example","name":"grokbot"},"items":[{"id":"team:alpha:3","ackId":"team:alpha:3","kind":"question","at":"2026-11-11T12:02:00.000Z","floor":{"id":"alpha","name":"Droid Office","cwd":"/project"},"worker":{"id":"byte","name":"Byte","status":"working","state":"blocked_on_question","settled":false},"reportId":"team:alpha:3","reportPhase":"question","taskComplete":false,"text":"Which retry policy should we use?","options":["Single attempt","Backoff"],"questionId":"team:alpha:3","result":{"status":"blocked","summary":"Which retry policy should we use?"},"actionHint":"Answer the question identified by questionId, or send guidance to this worker on this floor. Acknowledge the ackId after handling this item."}]}
+```
+
+Blocked (a failed result also uses `blocker`, with `result.status: "failed"`):
+
+```json
+{"source":"droid-office","version":1,"event":"blocker","summary":"Byte (Droid Office) reported a blocker to grokbot.","sentAt":"2026-11-11T12:03:00.000Z","lead":{"id":"remote-example","name":"grokbot"},"items":[{"id":"team:alpha:4","ackId":"team:alpha:4","kind":"blocker","at":"2026-11-11T12:03:00.000Z","floor":{"id":"alpha","name":"Droid Office","cwd":"/project"},"worker":{"id":"byte","name":"Byte","status":"working","state":"working","settled":false},"reportId":"team:alpha:4","reportPhase":"blocked","taskComplete":false,"result":{"status":"blocked","summary":"Checks require owner approval.","remaining":["Ask the owner to approve the terminal prompt."]},"actionHint":"Inspect this worker's recent activity and blocker, then help it resume or send guidance. Acknowledge the ackId after handling this item."}]}
+```
+
+Subagent connectivity test (no inbox entry or acknowledgment id):
+
+```json
+{"source":"droid-office","version":1,"event":"test","test":true,"summary":"[TEST] Droid Office webhook verification for grokbot.","sentAt":"2026-11-11T12:04:00.000Z","lead":{"id":"remote-example","name":"grokbot"},"items":[{"id":"test-example","kind":"test","at":"2026-11-11T12:04:00.000Z","floor":{"id":"alpha","name":"Droid Office","cwd":"/project"},"worker":{"id":"byte","name":"Byte","status":"working","state":"working","settled":false},"text":"Connectivity verification","actionHint":"Connectivity verification ping from Droid Office; no action or acknowledgment required."}]}
+```
 
 **Send test** sends a test-only ping asking the receiving bot to reply to the owner with confirmation and all non-secret payload details, including event, source/version, lead, item ids and timestamps, plus any request id received (or its absence). The bot must omit authorization headers, keys, tokens and other secrets. Test pings require no `office_inbox` acknowledgment and do not start worker tasks; ordinary worker events retain their existing instructions.
 

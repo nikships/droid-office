@@ -610,7 +610,7 @@ export function register(server: OfficeMcpServer, deps: OfficeMcpDeps): void {
       if (result.status >= 400) return reply(result, () => '');
       const leadId = caller.worker.lead;
       let webhookNote = '';
-      if (leadId && !args.progress && deps.remote?.store.isGrokBot(leadId)) {
+      if (leadId && deps.remote?.store.isGrokBot(leadId)) {
         const latest = floor.team.reports(leadId, caller.worker.id).at(-1);
         const receipt = await deps.remote.pushTeamReport(floor.id, leadId, latest);
         if (receipt) {
@@ -626,7 +626,7 @@ export function register(server: OfficeMcpServer, deps: OfficeMcpDeps): void {
         args.question
           ? `Asked ${body.lead}.${webhookNote} End your turn now; the answer arrives as a later message.`
           : args.progress
-            ? `Sent ${body.lead} a progress report: ${body.lead} sees you are not finished. End your turn now; your background job wakes you when it exits. Then check its result, carry on, and finish with a final report (progress left out).`
+            ? `Sent ${body.lead} a progress report: ${body.lead} sees you are not finished.${webhookNote} End your turn now; your background job wakes you when it exits. Then check its result, carry on, and finish with a final report (progress left out).`
             : `Reported to ${body.lead}.${webhookNote} End your turn now; any reply arrives as a later message.`,
       );
     },
