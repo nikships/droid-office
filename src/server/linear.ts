@@ -214,16 +214,19 @@ export class LinearApi {
   }
 
   async teams(): Promise<LinearTeamRef[]> {
-    const r = await this.graphql<{ teams: { nodes: { id: string; key: string; name: string; defaultIssueState?: { type: string } | null; projects: { nodes: { id: string; name: string; state: string }[] } }[] } }>(
-      'query Teams { teams(first: 100) { nodes { id key name defaultIssueState { type } projects(first: 100) { nodes { id name state } } } } }',
-    );
+    // Projects nested under teams multiply Linear's query complexity past its 10,000 limit, so they're one flat list, matched to teams here.
+    const r = await this.graphql<{
+      teams: { nodes: { id: string; key: string; name: string; defaultIssueState?: { type: string } | null }[] };
+      projects: { nodes: { id: string; name: string; state: string; teams: { nodes: { id: string }[] } }[] };
+    }>('query Teams { teams(first: 100) { nodes { id key name defaultIssueState { type } } } projects(first: 100) { nodes { id name state teams(first: 10) { nodes { id } } } } }');
+    const open = r.projects.nodes.filter((p) => p.state !== 'canceled' && p.state !== 'completed');
     return r.teams.nodes
       .map((t) => ({
         id: t.id,
         key: t.key,
         name: t.name,
         ...(t.defaultIssueState?.type ? { defaultState: stateType(t.defaultIssueState.type) } : {}),
-        projects: t.projects.nodes.filter((p) => p.state !== 'canceled' && p.state !== 'completed').map((p) => ({ id: p.id, name: p.name })),
+        projects: open.filter((p) => p.teams.nodes.some((x) => x.id === t.id)).map((p) => ({ id: p.id, name: p.name })),
       }))
       .sort((a, b) => a.name.localeCompare(b.name));
   }

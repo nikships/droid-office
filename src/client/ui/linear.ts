@@ -75,6 +75,9 @@ function ticketCard(t: LinearTicket, onclick: () => void) {
   );
 }
 
+/** The newest done tickets the Done column shows. */
+const DONE_SHOWN = 40;
+
 /** Draws the Linear tab into `body`: Backlog, Todo, In Progress and Done, left to right. */
 export function renderLinearBoard(body: HTMLElement, actions: LinearActions, net: Net) {
   const st = store.linearBoard;
@@ -91,7 +94,10 @@ export function renderLinearBoard(body: HTMLElement, actions: LinearActions, net
   }
   for (const col of linearColumns(st.items)) {
     const ul = h('ul');
-    for (const t of col.items) ul.append(ticketCard(t, () => openLinearTicket(t, actions)));
+    // A busy team finishes hundreds of tickets in the two weeks Done covers; the newest are what matter here.
+    const shown = col.name === 'Done' ? col.items.slice(0, DONE_SHOWN) : col.items;
+    for (const t of shown) ul.append(ticketCard(t, () => openLinearTicket(t, actions)));
+    if (shown.length < col.items.length) ul.append(h('li.col-empty', {}, `And ${col.items.length - shown.length} more done in the last two weeks, in Linear`));
     if (!col.items.length) ul.append(h('li.col-empty', {}, col.name === 'Todo' ? 'Nothing waiting. Write a ticket and a worker can take it.' : 'Nothing here'));
     body.append(h('section.column', {}, h('h4', {}, h('span.col-title', {}, col.name), h('span.col-count', {}, h('span.col-n', {}, String(col.items.length)))), ul));
   }

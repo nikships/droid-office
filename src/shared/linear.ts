@@ -278,11 +278,11 @@ function squash(s: string): string {
 }
 
 /**
- * The team a floor goes with when nobody picked one: the workspace's only team, else the one whose
- * name or key matches the floor's name or its repository's.
+ * The team a floor goes with when nobody picked one: the one whose name or key matches the floor's
+ * name or its repository's. Never just the workspace's only team, which would put the same tickets
+ * (and autopilot's pickings) on every floor of the building.
  */
 export function guessTeam(teams: LinearTeamRef[], names: (string | undefined)[]): LinearTeamRef | undefined {
-  if (teams.length === 1) return teams[0];
   const wanted = names.filter((n): n is string => !!n).flatMap((n) => [squash(n), squash(n.split('/').pop() ?? '')]);
   const hits = teams.filter((t) => wanted.includes(squash(t.name)) || wanted.includes(squash(t.key)));
   return hits.length === 1 ? hits[0] : undefined;
