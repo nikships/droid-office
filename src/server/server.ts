@@ -475,7 +475,7 @@ export async function startServer(cfg: Config) {
   const buildingAgents: BuildingAgents = {
     identity: (id) => (id === ORCHESTRATOR_ID ? orchestrator.identity() : remoteWorkers.identity(id)),
     known: (id) => id === ORCHESTRATOR_ID || !!remoteWorkers.identity(id),
-    tell: (id, text, floor) => (id === ORCHESTRATOR_ID ? orchestrator.tell(text) : remoteWorkers.enqueue(id, text, floor)),
+    tell: (id, text, floor) => (id === ORCHESTRATOR_ID ? orchestrator.tell(text) : remoteOffice.tell(id, text, floor)),
   };
   const missionState = (): MissionControlState => {
     const open = [...floors.values()];
@@ -483,7 +483,8 @@ export async function startServer(cfg: Config) {
       orchestrator: orchestrator.state(),
       bots: remoteWorkers.workers().map((worker) => {
         const lastUsedAt = remoteWorkers.lastUsedAt(worker.id);
-        return { worker, team: missionTeam(open, worker.id), ...(lastUsedAt ? { lastUsedAt } : {}) };
+        const grokBot = remoteWorkers.isGrokBot(worker.id);
+        return { worker, team: missionTeam(open, worker.id), ...(lastUsedAt ? { lastUsedAt } : {}), ...(grokBot ? { grokBot: true } : {}) };
       }),
     };
   };
@@ -769,6 +770,7 @@ export async function startServer(cfg: Config) {
     try {
       const floor = new Floor(def, floorContext);
       floors.set(def.id, floor);
+      remoteOffice.syncWatches();
       for (const worker of floor.everyone()) {
         broadcast({ t: 'building.worker', floor: floor.id, worker });
         if (worker.status === 'needs_input') broadcastOffFloorScreen(floor, worker.id);
@@ -1244,7 +1246,7 @@ export async function startServer(cfg: Config) {
         if (req.method !== 'PUT' && req.method !== 'POST') return send(res, 405, { error: 'Use GET, PUT or POST' });
         let body: Record<string, unknown>;
         try {
-          const raw: unknown = JSON.parse(await readBody(req, 1024));
+          const raw: unknown = JSON.parse(await readBody(req, 8192));
           body = raw && typeof raw === 'object' ? (raw as Record<string, unknown>) : {};
         } catch {
           return send(res, 400, { error: 'Send JSON' });
@@ -1252,8 +1254,30 @@ export async function startServer(cfg: Config) {
         if (req.method === 'PUT') return typeof body.on === 'boolean' ? send(res, 200, await remoteMcp.set(body.on)) : send(res, 400, { error: 'Send JSON: {"on": true}' });
         const name = typeof body.name === 'string' ? body.name.trim() : '';
         const id = typeof body.id === 'string' ? body.id : '';
+        const parseGrokArg = (raw: unknown): { webhookUrl: string; webhookToken?: string } | null | undefined => {
+          if (raw === undefined) return undefined;
+          if (raw === null) return null;
+          if (!raw || typeof raw !== 'object' || Array.isArray(raw)) throw new Error('grokBot takes null or {webhookUrl, webhookToken}');
+          const g = raw as Record<string, unknown>;
+          return {
+            webhookUrl: typeof g.webhookUrl === 'string' ? g.webhookUrl : '',
+            ...(typeof g.webhookToken === 'string' ? { webhookToken: g.webhookToken } : {}),
+          };
+        };
         try {
-          if (body.action === 'add' && name && name.length <= 60) return send(res, 200, remoteMcp.add(name));
+          if (body.action === 'add' && name && name.length <= 60) {
+            const grokBot = parseGrokArg(body.grokBot);
+            if (grokBot === null) return send(res, 400, { error: 'Omit grokBot or pass {webhookUrl, webhookToken} when adding a bot' });
+            return send(res, 200, remoteMcp.add(name, grokBot));
+          }
+          if (body.action === 'set-grok-bot' && id && 'grokBot' in body) {
+            const grokBot = parseGrokArg(body.grokBot);
+            if (grokBot !== undefined) return send(res, 200, remoteMcp.setGrokBot(id, grokBot));
+          }
+          if (body.action === 'test-webhook' && id) {
+            const { state, result } = await remoteMcp.testWebhook(id);
+            return result.ok ? send(res, 200, state) : send(res, 502, { error: result.error ?? 'Webhook test failed', state });
+          }
           if (body.action === 'rotate' && id) return send(res, 200, remoteMcp.rotate(id));
           if (body.action === 'revoke' && id) return send(res, 200, remoteMcp.revoke(id));
           if (body.action === 'add-key' && id && name && name.length <= 60) return send(res, 200, remoteMcp.addKey(id, name));
@@ -1261,7 +1285,10 @@ export async function startServer(cfg: Config) {
         } catch (err) {
           return send(res, 409, { error: (err as Error).message });
         }
-        return send(res, 400, { error: 'Send {"action": "add", "name"}, {"action": "rotate" | "revoke", "id"}, {"action": "add-key", "id", "name"} or {"action": "revoke-key", "id", "key"}' });
+        return send(res, 400, {
+          error:
+            'Send {"action": "add", "name", "grokBot"?}, {"action": "set-grok-bot", "id", "grokBot"}, {"action": "test-webhook", "id"}, {"action": "rotate" | "revoke", "id"}, {"action": "add-key", "id", "name"} or {"action": "revoke-key", "id", "key"}',
+        });
       }
       // The Mac app's menu bar icon: busy workers, who is waiting and connected devices. Only the app itself gets them:
       // a request from this Mac, to a loopback host name, with no device token and no Origin.
@@ -1842,6 +1869,7 @@ export async function startServer(cfg: Config) {
       } else sendTo(c, { t: 'toast', text: `🛗 ${who} took ${name} off the building`, level: 'info' });
     }
     floors.delete(floor.id);
+    remoteOffice.syncWatches();
     floor.shutdown();
     floorsChanged();
     missionChanged();
@@ -3200,6 +3228,7 @@ export async function startServer(cfg: Config) {
     for (const c of clients.values()) c.ws.close();
     server.close();
     hookServer.close();
+    remoteOffice.stop();
     remoteMcp?.stop();
     return labelsStopped;
   };

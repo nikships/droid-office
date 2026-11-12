@@ -135,7 +135,7 @@ export const SETTINGS_CARDS = [
   { pane: 'office', title: 'Source hot reload', keywords: 'source hot reload development build reload local vite developer', on: OFFICE },
   { pane: 'phone', title: 'Droid Office for Android', keywords: 'android phone pair pairing qr app mobile', on: OWN_COMPUTER },
   { pane: 'phone', title: 'Web companion', keywords: 'web companion dashboard browser pair desktop link', on: OWN_COMPUTER },
-  { pane: 'phone', title: 'Tailscale MCP', keywords: 'tailscale mcp external remote bot openclaw agent serve url key connection', on: OWN_COMPUTER },
+  { pane: 'phone', title: 'Tailscale MCP', keywords: 'tailscale mcp external remote bot openclaw grok grokbot agent serve url key connection', on: OWN_COMPUTER },
 ] as const satisfies readonly CardDef[];
 
 export type SettingsCardTitle = (typeof SETTINGS_CARDS)[number]['title'];

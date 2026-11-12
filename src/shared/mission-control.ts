@@ -47,6 +47,8 @@ export interface MissionAgent {
   team: MissionTeamMember[];
   /** External bots: when any of its keys last authenticated. */
   lastUsedAt?: number;
+  /** External bots: true when marked as a Grok Bot with webhook push enabled. */
+  grokBot?: boolean;
 }
 
 export interface OrchestratorState {

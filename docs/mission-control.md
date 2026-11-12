@@ -28,7 +28,7 @@ The building's agents live in Mission Control, the glass room under the boss off
 
 ## External bots
 
-They have a Tailscale endpoint, keys and polling (`office_inbox`, `team_wait`). **Add bot** asks only for a name. Their status is what they last reported with `office_status`, `offline` until they report after an office restart. Opening one says it runs externally and shows its team, its last activity and when its key was last used.
+They have a Tailscale endpoint, keys and inbox polling (`office_inbox`, `team_wait`). **Add bot** asks for a name, and optionally marks the bot as a **Grok Bot** with its HTTPS JSON webhook URL and `Authorization: Bearer` token (stored only in mode-`0600` `remote-workers.json`, never returned to clients). Each bot's main key and named keys share that bot's identity and webhook, so each Grok Bot connection wakes only its own bot, while non-Grok bots stay polling-only. For a Grok Bot lead, subagent final `team_report` results and questions, mid-turn `lead_notify` pings, terminal `needs_input` asks, unexpected `stopped` / `done` / departure events, and inbox messages push immediately over HTTP `POST` as structured JSON alongside durable `office_inbox` delivery. Their status is what they last reported with `office_status`, `offline` until they report after an office restart. Opening one says it runs externally (marking Grok Bots with webhook push) and shows its team, its last activity and when its key was last used.
 
 ## Protocol
 

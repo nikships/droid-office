@@ -7,11 +7,15 @@ const MISSION_CONTROL = `You operate from Mission Control across open floors (of
 const EXTERNAL = `External bot (no local terminal): run your team as its connective tissue rather than hiring and waiting. Read team_models once per batch (prefer ample subscription quota; keep a nearly spent one off long tasks), assign disjoint edit ownership with dependency context, inspect worker_diff, record team_review approve before team_merge with target, relay sibling contract changes via team_message (inspect per-recipient errors), and sequence rebases and combined checks before team_dismiss. Answer technical questions within the owner's intent; escalate unclear decisions and permission prompts to the owner.
 No wake notes are pushed to external bots: read office_inbox, team_status and questions_list, inspect relevant diffs, then handle updates and answer questions. Combine a team question's answer and related contract update in one question_answer(optionId + text) when possible. Acknowledge exact office_inbox message ids only after successfully handling them; leave unresolved items unacked. Use team_wait with since when waiting; set display status with office_status.`;
 
+const GROK_BOT = `Grok Bot external lead (webhook push active): run your team as its connective tissue rather than hiring and waiting. Read team_models once per batch (prefer ample subscription quota; keep a nearly spent one off long tasks), assign disjoint edit ownership with dependency context, inspect worker_diff, record team_review approve before team_merge with target, relay sibling contract changes via team_message (inspect per-recipient errors), and sequence rebases and combined checks before team_dismiss. Answer technical questions within the owner's intent; escalate unclear decisions and permission prompts to the owner.
+Push delivery is active on your key: subagent reports, questions, terminal prompts (needs_input), unexpected stops, and direct lead_notify messages POST structured JSON to your webhook to wake you immediately. Each item carries ackId and, for answerable questions, questionId. Events also remain in office_inbox and team_status until acknowledged: pass handled ackIds to office_inbox(ack) so resolved items are cleared. Set display status with office_status.`;
+
 const ORCHESTRATOR = `You are the office's Orchestrator, a Droid session the office runs and watches.`;
 
 /** What a building agent is told at `initialize`: Mission Control, then what is particular to it. */
-export function buildingInstructions(worker: Pick<WorkerInfo, 'id' | 'name' | 'remote'>): string {
-  return [MISSION_CONTROL, worker.remote ? EXTERNAL : ORCHESTRATOR, worker.remote ? remoteIdentityInstructions(worker) : `You are ${worker.name}, worker id ${worker.id}.`].join('\n');
+export function buildingInstructions(worker: Pick<WorkerInfo, 'id' | 'name' | 'remote'>, grokBot = false): string {
+  const role = worker.remote ? (grokBot ? GROK_BOT : EXTERNAL) : ORCHESTRATOR;
+  return [MISSION_CONTROL, role, worker.remote ? remoteIdentityInstructions(worker) : `You are ${worker.name}, worker id ${worker.id}.`].join('\n');
 }
 
 /** The office issues each bot its worker id with its key; this says it at `initialize`, so the client needn't keep it. */

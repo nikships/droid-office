@@ -324,7 +324,7 @@ export class OfficeMcpServer {
   }
 
   private serverFor(caller: OfficeMcpCaller | undefined, disconnected: AbortSignal | undefined): Server {
-    const building = caller?.building ? buildingInstructions(caller.worker) : undefined;
+    const building = caller?.building ? buildingInstructions(caller.worker, Boolean(this.deps.remote?.store.isGrokBot(caller.worker.id))) : undefined;
     const owner = building && caller && hasOwnerAccess(caller, this.deps.owner);
     const base = owner ? `${building}\n\n${ownerInstructions}` : (building ?? INSTRUCTIONS);
     const instructions = this.deps.linear?.connection() ? `${base}\n\n${linearInstructions}` : base;

@@ -435,3 +435,17 @@ Answer one question from questions_list by its id: optionId picks a numbered opt
 | `optionId` | string | no | One option id. |
 | `optionIds` | string[] | no | Multi-select only: every option to have selected. |
 | `text` | string | no | A typed answer. |
+
+## Grok Bot webhook push
+
+When a bot is marked as a **Grok Bot** in Settings → **Phone & web** → **Tailscale MCP**, the office attaches a per-bot HTTPS JSON webhook URL and `Authorization: Bearer` token to that bot in mode-`0600` `.droid-office/remote-workers.json` (the token is never returned over `/api/remote-mcp` or WebSocket state). Named keys on that bot share its identity and webhook; other bots stay polling-only.
+
+The office sends an HTTP `POST` (`Content-Type: application/json`, `Authorization: Bearer <token>`, redirects refused, 15 s timeout) whenever:
+
+- A subagent finishes or asks via `team_report` (flushed immediately; `progress: true` reports do not wake the lead while a background job is still running).
+- A subagent calls `lead_notify` (available only to subagents of a Grok Bot) for a mid-turn `update`, `question`, `blocker` or `test` ping without ending its turn.
+- Floor hooks report that a subagent entered `needs_input` (including terminal `AskUser` choices and `questionId`, or a desk permission prompt), `stopped`, `done` (when not already covered by a report), `left`, or `sent_home` (coalesced across bursts).
+- A message is queued to the bot's inbox, or the owner clicks **Send test** in Settings (`test: true`).
+
+Each payload has `{ source: "droid-office", version: 1, event, test?, summary, sentAt, lead: { id, name }, items: [...] }`. Durable items carry an `ackId` (`team:<floor>:<seq>` or `msg-...`) that stays in `office_inbox` until acknowledged via `office_inbox({ ack: [ackId] })`, so a failed or retried webhook wake never loses work.
+
