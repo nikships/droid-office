@@ -155,7 +155,20 @@ export function register(server: OfficeMcpServer, deps: OfficeMcpDeps): void {
       if (args.action === 'clear') {
         if (!workers.clearQueue) return officeError(`Queue controls are unavailable on floor ${floorId}.`);
         const res = await workers.clearQueue(worker.id, args.index);
-        if (res.error) return officeError(res.error, 'queue_error');
+        if (res.error) {
+          const stillPending = res.remaining.count > 0;
+          return {
+            isError: true,
+            content: [{ type: 'text', text: res.error }],
+            structuredContent: {
+              code: 'queue_error',
+              hint: res.error,
+              worker: { id: worker.id, name: worker.name, floor: floorId, status: worker.status },
+              stillPending,
+              remaining: res.remaining,
+            },
+          };
+        }
         const msg = res.cleared.length ? `Cleared ${res.cleared.length} pending message${res.cleared.length === 1 ? '' : 's'} on ${worker.name}. Remaining: ${res.remaining.count}.` : `${worker.name} had no pending messages to clear.`;
         return officeResult(msg, {
           worker: { id: worker.id, name: worker.name, floor: floorId, status: worker.status },
@@ -166,17 +179,35 @@ export function register(server: OfficeMcpServer, deps: OfficeMcpDeps): void {
 
       if (!workers.promoteQueue) return officeError(`Queue controls are unavailable on floor ${floorId}.`);
       const res = await workers.promoteQueue(worker.id, { index: args.index, all: args.all, urgent: args.urgent });
-      if (res.error) return officeError(res.error, 'queue_error');
-      const blocking = !args.urgent ? workers.blockingTool?.(worker.id) : undefined;
+      if (res.error) {
+        const stillPending = res.stillPending ?? res.remaining.count > 0;
+        return {
+          isError: true,
+          content: [{ type: 'text', text: res.error }],
+          structuredContent: {
+            code: 'queue_error',
+            hint: res.error,
+            worker: { id: worker.id, name: worker.name, floor: floorId, status: worker.status },
+            stillPending,
+            remaining: res.remaining,
+          },
+        };
+      }
+      const blocking = !args.urgent && res.delivery !== 'already_delivered' ? workers.blockingTool?.(worker.id) : undefined;
       const warning = blocking ? formatBlockingSteerWarning(worker.name, blocking) : undefined;
-      const outcome =
-        res.delivery === 'interrupted'
-          ? `Interrupted ${worker.name}'s running turn and delivered ${res.promoted.length} promoted message${res.promoted.length === 1 ? '' : 's'} immediately.`
-          : `Promoted ${res.promoted.length} message${res.promoted.length === 1 ? '' : 's'} on ${worker.name} (${res.delivery ?? 'steering'}). Remaining queued: ${res.remaining.count}.`;
+      let outcome: string;
+      if (res.delivery === 'interrupted') {
+        outcome = `Interrupted ${worker.name}'s running turn and delivered ${res.promoted.length} promoted message${res.promoted.length === 1 ? '' : 's'} immediately.`;
+      } else if (res.delivery === 'already_delivered') {
+        outcome = `Queued message${res.promoted.length === 1 ? '' : 's'} on ${worker.name} had already been delivered as the previous turn ended (no longer pending in queue). Remaining queued: ${res.remaining.count}.`;
+      } else {
+        outcome = `Promoted ${res.promoted.length} message${res.promoted.length === 1 ? '' : 's'} on ${worker.name} (${res.delivery ?? 'steering'}). Remaining queued: ${res.remaining.count}.`;
+      }
       return officeResult(warning ? `${outcome}\nWarning: ${warning}` : outcome, {
         worker: { id: worker.id, name: worker.name, floor: floorId, status: worker.status },
         promoted: res.promoted,
         delivery: res.delivery,
+        stillPending: false,
         remaining: res.remaining,
         ...(blocking ? { blockingTool: blocking, warning } : {}),
       });

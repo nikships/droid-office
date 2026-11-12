@@ -16,7 +16,7 @@ import { isAgentEffort } from '../shared/protocol.js';
 import { OFFICE_SHELL_ID } from '../shared/office-shell.js';
 import { withImages } from '../shared/drops.js';
 import { CTRL_ENTER, wantsCsiEnter } from '../shared/csi-enter.js';
-import { readDroidQueue } from '../shared/droid-queue.js';
+import { readDroidPending, readDroidQueue, showsAs } from '../shared/droid-queue.js';
 import {
   clearDroidPendingAll,
   detectBlockingTool,
@@ -1915,7 +1915,10 @@ export class WorkerManager {
       return undefined;
     }
     if (item.droidIndex !== undefined && w.pty && w.term) {
-      const ok = await driveDroidQueueItem({ write: (d) => w.pty?.write(d), rows: () => (w.term ? screenRows(w.term) : undefined) }, item.droidIndex, droidTotal, 'delete');
+      const ok = await driveDroidQueueItem({ write: (d) => w.pty?.write(d), rows: () => (w.term ? screenRows(w.term) : undefined) }, item.droidIndex, droidTotal, 'delete', {
+        group: item.delivery === 'after_turn' ? 'queued' : 'steering',
+        text: item.text,
+      });
       if (!ok) return `Droid queue review did not open on ${w.info.name}; check its terminal before retrying`;
     }
     if (item.delivery === 'after_turn' && w.queued > 0) w.queued--;
@@ -1936,25 +1939,54 @@ export class WorkerManager {
   async promoteQueue(
     id: string,
     opts: { index?: number; all?: boolean; urgent?: boolean } = {},
-  ): Promise<{ error?: string; promoted: QueuedMessageItem[]; delivery?: 'steering' | 'next_step' | 'interrupted' | 'sent'; remaining: WorkerQueueState }> {
+  ): Promise<{
+    error?: string;
+    promoted: QueuedMessageItem[];
+    delivery?: 'steering' | 'next_step' | 'interrupted' | 'sent' | 'already_delivered';
+    stillPending?: boolean;
+    remaining: WorkerQueueState;
+  }> {
     const empty: WorkerQueueState = { count: 0, items: [], moreSteering: 0, moreQueued: 0 };
     const w = this.workers.get(id);
-    if (!w) return { error: 'No such worker', promoted: [], remaining: empty };
-    if (w.info.kind === 'shell') return { error: `${w.info.name} is a shell: shells have no Droid message queue`, promoted: [], remaining: empty };
-    if (w.info.cloud || w.info.remote) return { error: `${w.info.name} runs remotely and has no local message queue`, promoted: [], remaining: empty };
+    if (!w) return { error: 'No such worker', promoted: [], stillPending: false, remaining: empty };
+    if (w.info.kind === 'shell') return { error: `${w.info.name} is a shell: shells have no Droid message queue`, promoted: [], stillPending: false, remaining: empty };
+    if (w.info.cloud || w.info.remote) return { error: `${w.info.name} runs remotely and has no local message queue`, promoted: [], stillPending: false, remaining: empty };
+
+    const slotLabel = (d: QueuedMessageItem['delivery']) => (d === 'after_turn' ? 'after turn' : d === 'steering' ? 'mid-turn steer' : 'next step');
+    const failWithPending = (baseError: string, targetTexts?: readonly string[]) => {
+      const remaining = this.queueState(id) ?? empty;
+      const matched = targetTexts?.length ? remaining.items.filter((it) => targetTexts.some((t) => it.text === t || showsAs({ text: it.text, cut: it.preview, more: it.moreLines }, t))) : remaining.items;
+      const stillPending = targetTexts?.length ? matched.length > 0 || (remaining.moreQueued + remaining.moreSteering > 0 && w.queued > 0) : remaining.count > 0;
+      let suffix: string;
+      if (stillPending) {
+        if (matched.length === 1) {
+          suffix = `Message is still pending in queue (#${matched[0].index} [${slotLabel(matched[0].delivery)}]; ${remaining.count} pending).`;
+        } else if (matched.length > 1) {
+          suffix = `${matched.length} targeted messages are still pending in queue (${remaining.count} pending).`;
+        } else {
+          suffix = `Queue still has ${remaining.count} pending message${remaining.count === 1 ? '' : 's'}.`;
+        }
+      } else if (remaining.count > 0) {
+        suffix = `Targeted message is no longer pending in queue (${remaining.count} other message${remaining.count === 1 ? '' : 's'} pending).`;
+      } else {
+        suffix = 'No messages are pending in the queue.';
+      }
+      return { error: `${baseError.replace(/\.$/, '')}. ${suffix}`, promoted: [], stillPending, remaining };
+    };
+
     if (w.info.status === 'starting') {
-      return { error: `${w.info.name} is still starting up: try again in a few seconds`, promoted: [], remaining: this.queueState(id) ?? empty };
+      return failWithPending(`${w.info.name} is still starting up: try again in a few seconds`);
     }
     if (w.info.status === 'needs_input') {
-      return { error: `${w.info.name} is waiting on an answer in its own terminal (${w.info.activity ?? 'a prompt'}): someone has to answer it there`, promoted: [], remaining: this.queueState(id) ?? empty };
+      return failWithPending(`${w.info.name} is waiting on an answer in its own terminal (${w.info.activity ?? 'a prompt'}): someone has to answer it there`);
     }
     const current = this.resolvedQueue(w);
-    if (!current.resolved.length) return { error: `${w.info.name} has no queued messages to promote`, promoted: [], remaining: this.queueState(id) ?? empty };
+    if (!current.resolved.length) return failWithPending(`${w.info.name} has no queued messages to promote`, []);
 
     let targets: ResolvedQueueItem[];
     if (opts.index !== undefined) {
       const picked = current.resolved[opts.index - 1];
-      if (!picked) return { error: `No queued message #${opts.index} on ${w.info.name} (queue has ${current.resolved.length})`, promoted: [], remaining: this.queueState(id) ?? empty };
+      if (!picked) return failWithPending(`No queued message #${opts.index} on ${w.info.name} (queue has ${current.resolved.length})`, []);
       targets = [picked];
     } else if (opts.all) {
       targets = opts.urgent ? [...current.resolved] : current.resolved.filter((it) => it.delivery === 'after_turn' || (it.source === 'outbox' && w.info.status !== 'working'));
@@ -1965,17 +1997,15 @@ export class WorkerManager {
     }
 
     const plainItems = targets.map(({ index: i, text, preview, moreLines, source, delivery }) => ({ index: i, text, preview, moreLines, source, delivery }));
+    const targetTexts = targets.map((t) => t.text);
 
     if (opts.urgent) {
-      if (targets.some((t) => t.preview)) {
-        return {
-          error: `Queued message #${targets.find((t) => t.preview)!.index} was typed directly in the terminal and only its truncated preview is visible; promote without urgent first or re-send full text with urgent: true`,
-          promoted: [],
-          remaining: this.queueState(id) ?? empty,
-        };
+      const previewTarget = targets.find((t) => t.preview);
+      if (previewTarget) {
+        return failWithPending(`Queued message #${previewTarget.index} was typed directly in the terminal and only its truncated preview is visible; promote without urgent first or re-send full text with urgent: true`, targetTexts);
       }
-      const joined = targets.map((t) => t.text).join('\n\n');
-      if (!joined.trim()) return { error: 'Empty prompt', promoted: [], remaining: this.queueState(id) ?? empty };
+      const joined = targetTexts.join('\n\n');
+      if (!joined.trim()) return failWithPending('Empty prompt', targetTexts);
       // Delete in reverse order before Escape so Droid does not auto-fire queued items on turn stop;
       // if urgent delivery fails afterwards, restore removed texts to the worker's outbox.
       let droidCount = current.droid?.items.length ?? 0;
@@ -1987,26 +2017,26 @@ export class WorkerManager {
             w.outbox.push(...removedTexts.reverse());
             this.persist();
           }
-          return { error: delErr, promoted: [], remaining: this.queueState(id) ?? empty };
+          return failWithPending(delErr, targetTexts);
         }
         removedTexts.push(item.text);
         if (item.droidIndex !== undefined) droidCount = Math.max(0, droidCount - 1);
       }
       const sent = await this.urgentPrompt(id, joined);
       if (sent.error) {
-        w.outbox.push(...targets.map((t) => t.text));
+        w.outbox.push(...targetTexts);
         this.persist();
-        return { error: sent.error, promoted: [], remaining: this.queueState(id) ?? empty };
+        return failWithPending(sent.error, targetTexts);
       }
-      return { promoted: plainItems, delivery: sent.interrupted ? 'interrupted' : 'sent', remaining: this.queueState(id) ?? empty };
+      return { promoted: plainItems, delivery: sent.interrupted ? 'interrupted' : 'sent', stillPending: false, remaining: this.queueState(id) ?? empty };
     }
 
     const initialInFlight = [...w.inFlight].filter((f) => f.queued);
-    let delivery: 'steering' | 'next_step' | 'sent' = 'steering';
+    let delivery: 'steering' | 'next_step' | 'sent' | 'already_delivered' = 'steering';
     for (const item of targets) {
       if (item.source === 'outbox') {
         if (w.info.status === 'done' || w.info.status === 'idle') {
-          const outIdx = w.outbox.indexOf(item.text);
+          const outIdx = item.outboxIndex !== undefined && item.outboxIndex >= 0 && item.outboxIndex < w.outbox.length && w.outbox[item.outboxIndex] === item.text ? item.outboxIndex : w.outbox.indexOf(item.text);
           if (outIdx >= 0) w.outbox.splice(outIdx, 1);
           if (!w.outbox.length) {
             clearTimeout(w.outboxTimer);
@@ -2014,7 +2044,12 @@ export class WorkerManager {
           }
           this.persist();
           const err = this.prompt(id, item.text, undefined, false);
-          if (err) return { error: err, promoted: [], remaining: this.queueState(id) ?? empty };
+          if (err) {
+            const restoreIdx = outIdx >= 0 && outIdx <= w.outbox.length ? outIdx : w.outbox.length;
+            w.outbox.splice(restoreIdx, 0, item.text);
+            this.persist();
+            return failWithPending(err, targetTexts);
+          }
           delivery = 'sent';
         } else {
           delivery = 'next_step';
@@ -2034,14 +2069,49 @@ export class WorkerManager {
       }
       if (item.delivery === 'after_turn') {
         if (item.droidIndex !== undefined && w.pty && w.term) {
-          const ok = await driveDroidQueueItem({ write: (d) => w.pty?.write(d), rows: () => (w.term ? screenRows(w.term) : undefined) }, item.droidIndex, current.droid?.items.length ?? 1, 'promote');
-          if (!ok) return { error: `Droid queue review did not open on ${w.info.name}; check its terminal before retrying`, promoted: [], remaining: this.queueState(id) ?? empty };
+          const queuedBefore = w.queued;
+          const statusBefore = w.info.status;
+          const ok = await driveDroidQueueItem({ write: (d) => w.pty?.write(d), rows: () => (w.term ? screenRows(w.term) : undefined) }, item.droidIndex, current.droid?.items.length ?? 1, 'promote', { group: 'queued', text: item.text });
+          if (!ok) {
+            const drainedByHook = w.queued < queuedBefore;
+            const afterRows = w.term ? screenRows(w.term) : undefined;
+            const afterPending = afterRows ? readDroidPending(afterRows) : undefined;
+            const afterScreen = afterRows ? readDroidScreen(afterRows) : undefined;
+            const turnEndedCleanly = statusBefore === 'working' && (w.info.status === 'done' || w.info.status === 'idle' || afterScreen === 'idle');
+            const goneFromScreen = afterPending !== undefined && !afterPending.reviewActive && !afterPending.items.some((r) => showsAs(r, item.text)) && afterPending.moreQueued === 0;
+            if ((drainedByHook || turnEndedCleanly) && goneFromScreen && !w.outbox.includes(item.text)) {
+              if (turnEndedCleanly && !drainedByHook && w.queued > 0) w.queued--;
+              if (item.sentId !== undefined) {
+                const pos = w.sentQueue.findIndex((s) => s.id === item.sentId);
+                if (pos >= 0) w.sentQueue.splice(pos, 1);
+              }
+              delivery = 'already_delivered';
+              continue;
+            }
+            if (item.sentId !== undefined) {
+              const sentEntry = w.sentQueue.find((s) => s.id === item.sentId);
+              if (sentEntry && w.info.status === 'working' && w.queued >= queuedBefore) {
+                sentEntry.seen = undefined;
+                sentEntry.at = Date.now();
+              }
+            } else if (!item.preview && afterPending === undefined && w.info.status === 'working') {
+              w.sentQueue.push({ id: ++w.sentQueueSeq, text: item.text, group: 'queued', at: Date.now() });
+            }
+            return failWithPending(`Droid queue review did not open on ${w.info.name}; check its terminal before retrying`, targetTexts);
+          }
           if (w.queued > 0) w.queued--;
           if (item.sentId !== undefined) {
             const sentEntry = w.sentQueue.find((s) => s.id === item.sentId);
             if (sentEntry) sentEntry.group = 'steering';
           }
         } else {
+          if (this.notice(id, item.text)) {
+            delivery = 'next_step';
+          } else {
+            const err = this.prompt(id, item.text, undefined, false);
+            if (err) return failWithPending(err, targetTexts);
+            delivery = w.info.status === 'working' ? 'steering' : 'sent';
+          }
           if (w.queued > 0) w.queued--;
           if (item.sentId !== undefined) {
             const pos = w.sentQueue.findIndex((s) => s.id === item.sentId);
@@ -2050,16 +2120,10 @@ export class WorkerManager {
               await clearDroidPendingAll({ write: (d) => w.pty?.write(d), rows: () => (w.term ? screenRows(w.term) : undefined) });
             }
           }
-          if (this.notice(id, item.text)) delivery = 'next_step';
-          else {
-            const err = this.prompt(id, item.text, undefined, false);
-            if (err) return { error: err, promoted: [], remaining: this.queueState(id) ?? empty };
-            delivery = w.info.status === 'working' ? 'steering' : 'sent';
-          }
         }
       }
     }
-    return { promoted: plainItems, delivery, remaining: this.queueState(id) ?? empty };
+    return { promoted: plainItems, delivery, stillPending: false, remaining: this.queueState(id) ?? empty };
   }
 
   /** Types in the message this run of its droid was started for, if it hasn't been yet. */

@@ -7,7 +7,7 @@ import { chmodSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { Client, StreamableHTTPClientTransport } from '@modelcontextprotocol/client';
-import { CLEAR_DROID_QUEUE, DELETE_DROID_QUEUE_ITEM, DROID_QUEUE_DOWN, REVIEW_DROID_QUEUE, readDroidPending, readDroidQueue } from '../src/shared/droid-queue.js';
+import { CLEAR_DROID_QUEUE, DELETE_DROID_QUEUE_ITEM, DROID_QUEUE_DOWN, DROID_QUEUE_UP, REVIEW_DROID_QUEUE, readDroidPending, readDroidQueue } from '../src/shared/droid-queue.js';
 import { BLOCKING_TOOL_MS, clearDroidPendingAll, detectBlockingTool, driveDroidQueueItem, resolveWorkerQueue, type ActiveToolCall, type SentPendingMessage } from '../src/server/worker-queue.js';
 import { HOOK_VERSION, WorkerManager } from '../src/server/workers.js';
 import { Team } from '../src/server/team.js';
@@ -58,6 +58,27 @@ test('readDroidPending parses Steering and Queued groups, review mode, overflow 
   assert.ok(reviewSnap);
   assert.equal(reviewSnap.reviewActive, true);
   assert.deepEqual(reviewSnap.items, [{ group: 'queued', text: 'Check coverage', cut: false, more: 0 }]);
+
+  // Real Droid HintSegments renders three spaces ("   ") rather than " · " between segments.
+  const realReviewRows = droidBoxRows(['   Queued messages:', '   Check coverage', '   ↑↓ scroll   Enter send now   Ctrl+D delete   Esc/Ctrl+R exit']);
+  const realReviewSnap = readDroidPending(realReviewRows);
+  assert.ok(realReviewSnap);
+  assert.equal(realReviewSnap.reviewActive, true);
+  assert.deepEqual(realReviewSnap.items, [{ group: 'queued', text: 'Check coverage', cut: false, more: 0 }]);
+  assert.deepEqual(readDroidQueue(realReviewRows), [{ text: 'Check coverage', cut: false, more: 0 }]);
+
+  // Narrow terminal widths wrap hint footers across two rows without turning the upper hint row into a queued item.
+  const wrappedReviewRows = droidBoxRows(['   Queued messages:', '   Narrow item', '   ↑↓ scroll   Enter send now   Ctrl+D delete', '   Esc/Ctrl+R exit']);
+  const wrappedSnap = readDroidPending(wrappedReviewRows);
+  assert.ok(wrappedSnap);
+  assert.equal(wrappedSnap.reviewActive, true);
+  assert.deepEqual(wrappedSnap.items, [{ group: 'queued', text: 'Narrow item', cut: false, more: 0 }]);
+  assert.deepEqual(readDroidQueue(wrappedReviewRows), [{ text: 'Narrow item', cut: false, more: 0 }]);
+
+  // A busy screen with a queue heading but a torn/unrecognized footer returns undefined rather than falsely claiming an empty queue.
+  const tornBusyRows = droidBoxRows(['   Queued messages:', '   Still waiting in Droid']);
+  assert.equal(readDroidPending(tornBusyRows), undefined);
+  assert.equal(readDroidQueue(tornBusyRows), undefined);
 
   // Quoted labels without a busy turn spinner are ignored.
   const idleQuoted = droidBoxRows(['   Queued messages:', '   Quoted in assistant prose', '   Ctrl+R to modify queue · Ctrl+G to pull top · Ctrl+X to clear queue'], false);
@@ -115,20 +136,63 @@ test('driveDroidQueueItem and clearDroidPendingAll send review/promote/delete/cl
         '   Already steering',
         '   Queued messages:',
         '   Queued second',
-        reviewOpen ? '   ↑↓ scroll · Enter send now · Ctrl+D delete · Esc/Ctrl+R exit' : '   Ctrl+R to modify queue · Ctrl+G to pull top · Ctrl+X to clear queue',
+        reviewOpen ? '   ↑↓ scroll   Enter send now   Ctrl+D delete   Esc/Ctrl+R exit' : '   Ctrl+R to modify queue   Ctrl+G to pull top   Ctrl+X to clear queue',
       ]),
   };
 
-  const okPromote = await driveDroidQueueItem(io, 1, 2, 'promote');
+  const okPromote = await driveDroidQueueItem(io, 1, 2, 'promote', { group: 'queued', text: 'Queued second' });
   assert.equal(okPromote, true);
   assert.deepEqual(written, [REVIEW_DROID_QUEUE, DROID_QUEUE_DOWN, '\r']);
   assert.equal(written.includes('\x1b'), false, 'never sends bare Escape');
 
   written.length = 0;
-  const okDelete = await driveDroidQueueItem(io, 1, 2, 'delete');
+  const okDelete = await driveDroidQueueItem(io, 1, 2, 'delete', { group: 'queued', text: 'Queued second' });
   assert.equal(okDelete, true);
   assert.deepEqual(written, [REVIEW_DROID_QUEUE, DROID_QUEUE_DOWN, DELETE_DROID_QUEUE_ITEM, REVIEW_DROID_QUEUE]);
   assert.equal(written.includes('\x1b'), false, 'closes review mode with Ctrl+R rather than Escape');
+
+  // When "+1 more steering item" expands inside Ctrl+R review mode, target matching navigates to the shifted index (2 instead of 1).
+  written.length = 0;
+  reviewOpen = false;
+  const overflowIo = {
+    write: (data: string) => {
+      written.push(data);
+      if (data === REVIEW_DROID_QUEUE) reviewOpen = !reviewOpen;
+      if (data === '\r') reviewOpen = false;
+    },
+    rows: () =>
+      reviewOpen
+        ? droidBoxRows(['   Steering messages:', '   First steer', '   Hidden second steer', '   Queued messages:', '   Target queued item', '   ↑↓ scroll   Enter send now   Ctrl+D delete   Esc/Ctrl+R exit'])
+        : droidBoxRows(['   Steering messages:', '   First steer', '   +1 more steering item', '   Queued messages:', '   Target queued item', '   Ctrl+R to modify queue   Ctrl+G to pull top   Ctrl+X to clear queue']),
+  };
+  assert.equal(await driveDroidQueueItem(overflowIo, 1, 2, 'promote', { group: 'queued', text: 'Target queued item' }), true);
+  assert.deepEqual(written, [REVIEW_DROID_QUEUE, DROID_QUEUE_DOWN, DROID_QUEUE_DOWN, '\r']);
+
+  // If review mode was already open beforehand, rewinds selection to index 0 before stepping down.
+  written.length = 0;
+  reviewOpen = true;
+  assert.equal(await driveDroidQueueItem(io, 1, 2, 'promote', { group: 'queued', text: 'Queued second' }), true);
+  assert.deepEqual(written, [DROID_QUEUE_UP, DROID_QUEUE_DOWN, '\r']);
+
+  // If Enter fails to close review mode (e.g. daemon update_queue rejected), closes review mode with Ctrl+R and returns false.
+  const failedEnterWritten: string[] = [];
+  let stuckReview = false;
+  const okFailedEnter = await driveDroidQueueItem(
+    {
+      write: (d) => {
+        failedEnterWritten.push(d);
+        if (d === REVIEW_DROID_QUEUE) stuckReview = !stuckReview;
+      },
+      rows: () => droidBoxRows(['   Queued messages:', '   Queued only', stuckReview ? '   ↑↓ scroll   Enter send now   Ctrl+D delete   Esc/Ctrl+R exit' : '   Ctrl+R to modify queue   Ctrl+G to pull top   Ctrl+X to clear queue']),
+    },
+    0,
+    1,
+    'promote',
+    { group: 'queued', text: 'Queued only' },
+  );
+  assert.equal(okFailedEnter, false);
+  assert.equal(stuckReview, false, 'leaves review mode closed on failure');
+  assert.deepEqual(failedEnterWritten, [REVIEW_DROID_QUEUE, '\r', REVIEW_DROID_QUEUE]);
 
   // If Ctrl+R review mode never opens (e.g. queue drained or another program is up), fail closed without sending Enter or Ctrl+D.
   const stuckWritten: string[] = [];
@@ -506,4 +570,299 @@ test('MCP end-to-end: default steer vs queue: true, worker_queue list/clear/prom
   const peerRefused = await localClient.callTool({ name: 'worker_queue', arguments: { worker: standalone.id } });
   assert.equal(peerRefused.isError, true);
   assert.match((peerRefused.content[0] as { text: string }).text, /isn't one of your subagents/);
+});
+
+test('MCP worker_queue promote: real 3-space review footer, failed promote keeps seen item visible with stillPending, and drained turn reports already_delivered', async (t) => {
+  const dir = mkdtempSync(path.join(os.tmpdir(), 'office-mcp-promote-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+
+  const stateFile = path.join(dir, 'tui-mode.txt');
+  writeFileSync(stateFile, 'normal');
+
+  // Simulates Droid 1.9.0's real 3-space HintSegments queue and review footers over a real PTY.
+  const fakeDroid = path.join(dir, 'fake-droid-tui.cjs');
+  writeFileSync(
+    fakeDroid,
+    `#!/usr/bin/env node
+      const fs = require('node:fs');
+      const stateFile = ${JSON.stringify(stateFile)};
+      let steering = [];
+      let queued = [];
+      let review = false;
+      let buf = '';
+      let started = false;
+
+      function render() {
+        const mode = fs.readFileSync(stateFile, 'utf8').trim();
+        if (mode === 'dialog') {
+          process.stdout.write('\\x1b[2J\\x1b[H╭──────────────────────────╮\\r\\n│ DROID STATUS             │\\r\\n╰──────────────────────────╯\\r\\n');
+          return;
+        }
+        const lines = ['\\x1b[2J\\x1b[H  ● Running command...'];
+        if (steering.length) {
+          lines.push('   Steering messages:');
+          for (const s of steering) lines.push('   ' + s);
+        }
+        if (queued.length) {
+          lines.push('   Queued messages:');
+          for (const q of queued) lines.push('   ' + q);
+        }
+        if (steering.length || queued.length) {
+          lines.push(
+            review
+              ? '   ↑↓ scroll   Enter send now   Ctrl+D delete   Esc/Ctrl+R exit'
+              : '   Ctrl+R to modify queue   Ctrl+G to pull top   Ctrl+X to clear queue'
+          );
+        }
+        if (mode === 'idle') {
+          lines.push('  Ready');
+        } else {
+          lines.push(' ⠋ Executing...  (Press ESC to stop)');
+        }
+        lines.push('╭──────────────────────────────────────────────────────────────────────╮');
+        lines.push(
+          mode === 'idle'
+            ? '│ >                                                                    │'
+            : '│ > Enter to steer · Ctrl+Enter to queue                               │',
+        );
+        lines.push('╰──────────────────────────────────────────────────────────────────────╯');
+        lines.push('[⏱ 12s, context: 2%] ? for help');
+        process.stdout.write(lines.join('\\r\\n') + '\\r\\n');
+      }
+
+      render();
+      let draft = '';
+      if (process.stdin.isTTY) process.stdin.setRawMode(true);
+      process.stdin.setEncoding('utf8');
+      process.stdin.on('data', (chunk) => {
+        buf += chunk;
+        while (buf.length) {
+          const pStart = buf.indexOf('\\x1b[200~');
+          if (pStart === 0) {
+            const pEnd = buf.indexOf('\\x1b[201~');
+            if (pEnd < 0) return;
+            draft = buf.slice(6, pEnd);
+            buf = buf.slice(pEnd + 6);
+            continue;
+          }
+          const mode = fs.readFileSync(stateFile, 'utf8').trim();
+          if (buf.startsWith('\\x1b[13;5u')) {
+            buf = buf.slice(7);
+            if (draft) {
+              const lines = draft.split('\\n').filter((l) => l.trim());
+              const preview = lines[0].length > 48 ? lines[0].slice(0, 48).trimEnd() + '…' : lines[0];
+              const more = Math.max(0, draft.split('\\n').length - 1);
+              queued.push(more > 0 ? preview + ' (' + more + ' more lines)' : preview);
+              draft = '';
+              render();
+            }
+            continue;
+          }
+          if (buf.startsWith('\\x1b[B') || buf.startsWith('\\x1b[A')) {
+            buf = buf.slice(3);
+            continue;
+          }
+          const ch = buf[0];
+          buf = buf.slice(1);
+          if (ch === '\\x15') {
+            draft = '';
+            continue;
+          }
+          if (ch === '\\x18') {
+            steering = [];
+            queued = [];
+            review = false;
+            render();
+            continue;
+          }
+          if (ch === '\\x12') {
+            if (mode === 'drain_on_review') {
+              queued = [];
+              fs.writeFileSync(stateFile, 'idle');
+              render();
+              continue;
+            }
+            if (mode === 'block_review') continue;
+            if (queued.length || steering.length) {
+              review = !review;
+              render();
+            }
+            continue;
+          }
+          if (ch === '\\r') {
+            if (review && queued.length) {
+              steering.push(queued.shift());
+              review = false;
+              render();
+            } else if (draft) {
+              if (!started) {
+                started = true;
+              } else {
+                const lines = draft.split('\\n').filter((l) => l.trim());
+                const preview = lines[0].length > 48 ? lines[0].slice(0, 48).trimEnd() + '…' : lines[0];
+                steering.push(preview);
+              }
+              draft = '';
+              render();
+            }
+          }
+        }
+      });
+      process.stdin.resume();
+      setInterval(() => {}, 1000);
+    `,
+  );
+  chmodSync(fakeDroid, 0o755);
+
+  const wm = new WorkerManager(dir, path.join(dir, '.droid-office'), fakeDroid, [], { url: 'http://127.0.0.1:0', token: '' }, { update: () => {}, remove: () => {}, data: () => {}, screen: () => {}, toast: () => {} });
+  await wm.start();
+  t.after(() => wm.shutdown(false));
+
+  const remoteStore = new RemoteWorkers(dir, () => {});
+  let floorObj!: OfficeMcpFloor & RemoteFloor;
+  const remote = new RemoteOffice(remoteStore, () => [floorObj]);
+  t.after(() => remote.stop());
+  const botCreated = remote.add('GrokLead');
+  const botWorker = botCreated.worker;
+  wm.buildingIdentity = (id: string) => (id === botWorker.id ? botWorker : undefined);
+  wm.buildingAgent = (id: string) => id === botWorker.id;
+
+  const team = new Team(
+    {
+      list: () => wm.list(),
+      get: (id) => wm.get(id) ?? (id === botWorker.id ? botWorker : undefined),
+      buildingAgent: (id) => id === botWorker.id,
+      deskOccupied: (id) => wm.deskOccupied(id),
+      officeDefault: undefined,
+      hire: (deskId, by, prompt, worktree, c, lead, from, branch) => wm.spawn(deskId, by, prompt, worktree, 'agent', c.model, c.effort, [], lead, undefined, from, branch),
+      prompt: (id, text, queue) => (queue === undefined ? wm.tell(id, text) : wm.prompt(id, text, [], queue)),
+      urgentPrompt: (id, text) => wm.urgentPrompt(id, text),
+      notice: (id, text) => wm.notice(id, text),
+      queueState: (id, now) => wm.queueState(id, now),
+      blockingTool: (id, now) => wm.blockingTool(id, now),
+      resume: (id, text) => wm.resume(id, text),
+      kill: (id) => wm.kill(id),
+      dismiss: (id, prune, keep) => wm.dismissTeam(id, prune, keep),
+      tail: (id, lines) => wm.tail(id, lines),
+      setTask: (id, task) => wm.setTask(id, task),
+    },
+    { dataDir: path.join(dir, '.droid-office'), dir, git: false, settings: () => ({ ...SUBAGENT_DEFAULTS, worktree: false }), toast: () => {} },
+  );
+  t.after(() => team.stop());
+
+  floorObj = {
+    id: 'f-main',
+    name: 'main-repo',
+    def: { name: 'main-repo' },
+    dir,
+    workers: wm,
+    team,
+    visits: { handle: () => ({ status: 400, body: { error: 'off' } }), cannotVisit: () => 'off' },
+    whiteboard: new WhiteboardStore(path.join(dir, '.droid-office', 'wb'), () => {}),
+  };
+
+  const owner: OwnerOffice = {
+    floors: () => [{ id: 'f-main', name: 'main-repo', workers: wm.list() }],
+    mission: () => [{ worker: botWorker, team: [] }],
+    tail: (id, lines) => wm.tail(id, lines),
+    act: async () => ({ notes: [] }),
+  };
+
+  const mcp = createOfficeMcp({
+    settings: () => ({ ...SUBAGENT_DEFAULTS, worktree: false }),
+    floor: (workerId) => (wm.get(workerId) ? floorObj : undefined),
+    remote,
+    owner,
+    remoteTransport: { hostname: () => 'mac.tail.ts.net', owner: () => 'nik@example.com' },
+    answers: { answer: async () => undefined },
+  });
+
+  const httpServer = createServer((req, res) => {
+    req.headers.host = 'mac.tail.ts.net';
+    req.headers['tailscale-user-login'] = 'nik@example.com';
+    void mcp.handle(req, res);
+  });
+  httpServer.listen(0, '127.0.0.1');
+  await once(httpServer, 'listening');
+  t.after(() => httpServer.close());
+  const port = (httpServer.address() as AddressInfo).port;
+
+  const botClient = new Client({ name: 'bot-promote-test', version: '1.0.0' });
+  t.after(() => botClient.close());
+  await botClient.connect(
+    new StreamableHTTPClientTransport(new URL(`http://127.0.0.1:${port}${OFFICE_MCP_PATH}`), {
+      requestInit: { headers: { Authorization: `Bearer ${botCreated.token}` } },
+    }),
+  );
+
+  const hired = await botClient.callTool({
+    name: 'team_hire',
+    arguments: { floor: 'f-main', title: 'Promote Test', brief: 'Run task', worktree: false },
+  });
+  const subId = (hired.structuredContent!.worker as { id: string }).id;
+  const subToken = (wm as unknown as { workers: Map<string, { hookToken: string }> }).workers.get(subId)!.hookToken;
+  wm.hookReply(subId, subToken, 'SessionStart', { hook_event_name: 'SessionStart', session_id: 's1' }, HOOK_VERSION);
+  wm.hookReply(subId, subToken, 'UserPromptSubmit', { hook_event_name: 'UserPromptSubmit', session_id: 's1', prompt: 'Run task' }, HOOK_VERSION);
+
+  // Wait for initial launch prompt paste + 120ms Enter timer to complete.
+  await new Promise((r) => setTimeout(r, 220));
+
+  // 1. Queue a message via Ctrl+Enter (`queue: true`) and wait for it to render on the fake Droid TUI.
+  await botClient.callTool({
+    name: 'team_message',
+    arguments: { worker: subId, text: 'Switch to PR 1 first', queue: true },
+  });
+  await new Promise((r) => setTimeout(r, 220));
+
+  const listBefore = await botClient.callTool({ name: 'worker_queue', arguments: { worker: subId, action: 'list' } });
+  assert.equal(listBefore.structuredContent?.count, 1);
+  assert.equal((listBefore.structuredContent!.items as Array<{ delivery: string }>)[0].delivery, 'after_turn');
+
+  // Promote via real 3-space review mode (`↑↓ scroll   Enter send now   Ctrl+D delete   Esc/Ctrl+R exit`).
+  const promoted = await botClient.callTool({ name: 'worker_queue', arguments: { worker: subId, action: 'promote' } });
+  assert.equal(promoted.isError, undefined, (promoted.content[0] as { text: string })?.text);
+  assert.equal(promoted.structuredContent?.delivery, 'steering');
+  assert.equal(promoted.structuredContent?.stillPending, false);
+  const remAfterPromote = promoted.structuredContent?.remaining as { count: number; items: Array<{ delivery: string }> };
+  assert.equal(remAfterPromote.count, 1);
+  assert.equal(remAfterPromote.items[0].delivery, 'steering');
+
+  // 2. Queue a second message, mark it seen via `list`, block Ctrl+R, and verify failed promote keeps it visible AND reports stillPending: true.
+  writeFileSync(stateFile, 'block_review');
+  await botClient.callTool({
+    name: 'team_message',
+    arguments: { worker: subId, text: 'Keep me visible on failed promote', queue: true },
+  });
+  await new Promise((r) => setTimeout(r, 220));
+
+  const seenList = await botClient.callTool({ name: 'worker_queue', arguments: { worker: subId, action: 'list' } });
+  assert.equal(seenList.structuredContent?.count, 2);
+
+  const failedPromote = await botClient.callTool({ name: 'worker_queue', arguments: { worker: subId, action: 'promote' } });
+  assert.equal(failedPromote.isError, true);
+  assert.equal(failedPromote.structuredContent?.code, 'queue_error');
+  assert.equal(failedPromote.structuredContent?.stillPending, true);
+  assert.match((failedPromote.content[0] as { text: string }).text, /Message is still pending in queue \(#2 \[after turn\]; 2 pending\)/);
+
+  const listAfterFail = await botClient.callTool({ name: 'worker_queue', arguments: { worker: subId, action: 'list' } });
+  assert.equal(listAfterFail.structuredContent?.count, 2);
+  assert.ok((listAfterFail.structuredContent!.items as Array<{ text: string }>).some((it) => it.text.includes('Keep me visible on failed promote')));
+
+  // 3. When the worker's turn drains the queued message right as promote runs, report delivery: 'already_delivered' and stillPending: false.
+  writeFileSync(stateFile, 'normal');
+  await botClient.callTool({ name: 'worker_queue', arguments: { worker: subId, action: 'clear' } });
+  // Reset fake TUI to clean busy state and queue one fresh message.
+  wm.hookReply(subId, subToken, 'UserPromptSubmit', { hook_event_name: 'UserPromptSubmit', session_id: 's1', prompt: 'Next turn' }, HOOK_VERSION);
+  await botClient.callTool({
+    name: 'team_message',
+    arguments: { worker: subId, text: 'Delivered right as turn ended', queue: true },
+  });
+  await new Promise((r) => setTimeout(r, 220));
+  writeFileSync(stateFile, 'drain_on_review');
+
+  const drainedPromote = await botClient.callTool({ name: 'worker_queue', arguments: { worker: subId, action: 'promote' } });
+  assert.equal(drainedPromote.isError, undefined, (drainedPromote.content[0] as { text: string })?.text);
+  assert.equal(drainedPromote.structuredContent?.delivery, 'already_delivered');
+  assert.equal(drainedPromote.structuredContent?.stillPending, false);
+  assert.match((drainedPromote.content[0] as { text: string }).text, /already been delivered/);
 });
