@@ -228,6 +228,20 @@ test('error response URL redaction happens before clipping even across the old 2
   assert.ok((sent.error?.length ?? 0) <= 250);
 });
 
+test('outcome headlines redact raw and encoded credentials before whitespace normalization and clipping', async (t) => {
+  const receiver = await startWebhookReceiver(t);
+  const token = 'custom+private?credential-0123456789';
+  for (const secret of [token, encodeURIComponent(token), receiver.url, encodeURIComponent(receiver.url)]) {
+    const result = { status: 'ok' as const, summary: `${'x'.repeat(154)}${secret} result` };
+    const item = buildTeamWebhookItem({ event: { seq: 1, lead: 'remote-1', worker: 'byte', name: 'Byte', kind: 'report', at: 1000, result }, floor: { id: 'alpha', name: 'Office', cwd: '/project' } });
+    const payload = buildGrokWebhookPayload({ id: 'remote-1', name: 'grokbot' }, [item]);
+    assert.equal((await sendGrokWebhook({ webhookUrl: receiver.url, webhookToken: token }, payload)).ok, true);
+    const summary = receiver.received.at(-1)!.body.summary;
+    assert.match(summary, /\[redacted\]/);
+    assert.equal(summary.includes(secret.slice(0, 8)), false);
+  }
+});
+
 test('worker webhook payloads distinguish reported completion from live runtime status without repeating report prose', () => {
   const event: TeamEvent = {
     seq: 1,
@@ -342,12 +356,16 @@ test('no-artifact reports avoid merge advice even when a worker has a branch; di
   assert.equal(item.worker?.settled, true);
   assert.doesNotMatch(item.actionHint, /review|merg/i);
   assert.match(buildGrokWebhookPayload({ id: event.lead, name: 'grokbot' }, [item]).summary, /^Completed: Read-only audit complete/);
-  for (const artifacts of [{ files: ['src/example.ts'] }, { commits: ['a'.repeat(40)] }]) {
+  for (const artifacts of [{ files: ['src/example.ts'] }, { commits: ['a'.repeat(40)] }, { prNumber: 423 }]) {
     const changed = buildTeamWebhookItem({ event: { ...event, result: { ...event.result!, artifacts } }, floor });
     assert.match(changed.actionHint, /record a review before merging/);
   }
   const question = buildTeamWebhookItem({ event: { ...event, kind: 'question', text: 'Which policy?', result: { status: 'blocked', summary: 'Which policy?', remaining: ['Owner decision needed.'] } }, floor });
   assert.deepEqual(question.result?.remaining, ['Owner decision needed.']);
+  for (const status of ['failed', 'partial', 'ok'] as const) {
+    const explicit = buildTeamWebhookItem({ event: { ...event, kind: 'question', text: 'Which policy?', result: { status, summary: 'Which policy?' } }, floor });
+    assert.equal(explicit.result?.status, status);
+  }
 });
 
 test('Grok Bot leads receive immediate team_report, lead_notify, floor hook, inbox, and Settings test pushes while non-Grok bots stay polling-only', async (t) => {

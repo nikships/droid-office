@@ -212,9 +212,9 @@ export function buildTeamWebhookItem(args: { event: TeamEvent; floor: GrokWebhoo
     delete snapshot.state;
   }
   // Questions already carry their answerable text. Keep only distinct structured results.
-  const duplicateQuestion = kind === 'question' && event.result?.summary.trim() === event.text?.trim() && Object.keys(event.result ?? {}).every((key) => key === 'summary' || key === 'status');
+  const duplicateQuestion = kind === 'question' && event.result?.status === 'blocked' && event.result.summary.trim() === event.text?.trim() && Object.keys(event.result).every((key) => key === 'summary' || key === 'status');
   const result = duplicateQuestion ? undefined : event.result;
-  const hasChanges = Boolean(prUrl || event.pushedSha || event.result?.artifacts?.commits?.length || event.result?.artifacts?.files?.length);
+  const hasChanges = Boolean(prUrl || event.result?.artifacts?.prNumber || event.pushedSha || event.result?.artifacts?.commits?.length || event.result?.artifacts?.files?.length);
   return {
     id,
     ackId: id,
@@ -294,6 +294,9 @@ export async function sendGrokWebhook(target: GrokBotCredentials, payload: GrokW
   const fetchImpl = opts.fetchImpl ?? fetch;
   const timeoutMs = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   try {
+    const safe = scrubWebhookPayload(payload, [target.webhookToken, target.webhookUrl]) as GrokWebhookPayload;
+    // Rebuild from redacted content: clipping a credential before redaction leaks a partial secret.
+    safe.summary = buildGrokWebhookPayload(safe.lead, safe.items, Date.parse(safe.sentAt)).summary;
     const res = await fetchImpl(target.webhookUrl, {
       method: 'POST',
       headers: {
@@ -302,7 +305,7 @@ export async function sendGrokWebhook(target: GrokBotCredentials, payload: GrokW
         Accept: 'application/json',
         'User-Agent': 'droid-office/1.0',
       },
-      body: JSON.stringify(scrubWebhookPayload(payload, [target.webhookToken, target.webhookUrl])),
+      body: JSON.stringify(safe),
       redirect: 'error',
       signal: AbortSignal.timeout(timeoutMs),
     });
