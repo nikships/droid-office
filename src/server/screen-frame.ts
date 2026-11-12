@@ -30,11 +30,21 @@ interface RowSpan {
   srcRow: number;
 }
 
+interface RawCell {
+  x: number;
+  width: number;
+  ch: string;
+  fg: number;
+  bg: number;
+  flags: number;
+  phBg?: number;
+}
+
 function extractRow(line: BufferLine | undefined, cols: number, cell: BufferCell): { runs: Run[]; spans: RowSpan[] } {
   const runs: Run[] = [];
   const spans: RowSpan[] = [];
   if (line) {
-    let cur: Run | null = null;
+    const cells: RawCell[] = [];
     let prevPh: DecodedPlaceholder | undefined;
     let curSpan: RowSpan | null = null;
     for (let x = 0; x < cols; x++) {
@@ -44,15 +54,19 @@ function extractRow(line: BufferLine | undefined, cols: number, cell: BufferCell
       const raw = cell.getChars() || ' ';
       let ch = raw;
       let fg = cell.isFgDefault() ? -1 : cell.isFgRGB() ? RGB_FLAG | cell.getFgColor() : cell.getFgColor();
-      const bg = cell.isBgDefault() ? -1 : cell.isBgRGB() ? RGB_FLAG | cell.getBgColor() : cell.getBgColor();
-      const flags = (cell.isBold() ? FLAG_BOLD : 0) | (cell.isInverse() ? FLAG_INVERSE : 0) | (cell.isDim() ? FLAG_DIM : 0);
+      let bg = cell.isBgDefault() ? -1 : cell.isBgRGB() ? RGB_FLAG | cell.getBgColor() : cell.getBgColor();
+      let flags = (cell.isBold() ? FLAG_BOLD : 0) | (cell.isInverse() ? FLAG_INVERSE : 0) | (cell.isDim() ? FLAG_DIM : 0);
+      let phBg: number | undefined;
 
       if (isKittyPlaceholderCell(raw)) {
         const fgLow24 = cell.isFgDefault() ? 0 : cell.getFgColor();
         const ph = decodePlaceholderCell(raw, fgLow24, cellUnderlineId(cell), prevPh);
         prevPh = ph;
+        if (bg !== -1 && !(flags & FLAG_INVERSE)) phBg = bg;
         ch = ' ';
         fg = -1;
+        bg = -1;
+        flags &= ~FLAG_INVERSE;
         if (ph) {
           if (curSpan && curSpan.id === ph.imageId && curSpan.placementId === ph.placementId && curSpan.srcRow === ph.row && curSpan.x + curSpan.cols === x && curSpan.srcCol + curSpan.cols === ph.col) {
             curSpan.cols++;
@@ -68,6 +82,34 @@ function extractRow(line: BufferLine | undefined, cols: number, cell: BufferCell
         curSpan = null;
       }
 
+      cells.push({ x, width, ch, fg, bg, flags, phBg });
+    }
+
+    // Drop container background fill from empty space around inline images so it blends into OLED black,
+    // while keeping distinct accent bars (such as a 1-col prompt border) and real text backgrounds.
+    if (spans.length) {
+      const imgStart = Math.min(...spans.map((s) => s.x));
+      let lastVisibleCol = 0;
+      for (const c of cells) {
+        if (c.ch.trim() || c.flags & FLAG_INVERSE) lastVisibleCol = c.x + c.width;
+      }
+      const blankFrom = Math.max(imgStart, lastVisibleCol);
+      for (let i = 0; i < cells.length; i++) {
+        const phBg = cells[i].phBg;
+        if (phBg === undefined) continue;
+        for (let j = i - 1; j >= 0; j--) {
+          const left = cells[j];
+          if (left.ch.trim() || left.flags & FLAG_INVERSE || left.bg !== phBg) break;
+          left.bg = -1;
+        }
+      }
+      for (const c of cells) {
+        if (c.x >= blankFrom && !c.ch.trim() && !(c.flags & FLAG_INVERSE)) c.bg = -1;
+      }
+    }
+
+    let cur: Run | null = null;
+    for (const { ch, fg, bg, flags } of cells) {
       if (cur && cur[1] === fg && cur[2] === bg && cur[3] === flags) cur[0] += ch;
       else {
         cur = [ch, fg, bg, flags];

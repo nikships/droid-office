@@ -28,6 +28,8 @@ type Op = { kind: 'fillRect' | 'fillText'; args: unknown[] };
 
 function canvasSpy() {
   const ops: Op[] = [];
+  const rectStyles: { style: string; args: unknown[] }[] = [];
+  let drawnImages = 0;
   const ctx = {
     fillStyle: '',
     font: '',
@@ -36,12 +38,16 @@ function canvasSpy() {
     globalAlpha: 1,
     fillRect(...args: unknown[]) {
       ops.push({ kind: 'fillRect', args });
+      rectStyles.push({ style: String(this.fillStyle), args });
     },
     fillText(...args: unknown[]) {
       ops.push({ kind: 'fillText', args });
     },
+    drawImage() {
+      drawnImages++;
+    },
   } as unknown as CanvasRenderingContext2D;
-  return { ctx, ops };
+  return { ctx, ops, rectStyles, drawnImages: () => drawnImages };
 }
 
 function screen(cols: number, rows: number, activeRows: number, width = cols, bg = -1): ScreenState {
@@ -619,4 +625,45 @@ test('an idle laptop repaints when all fonts settle, including a failed unrelate
   const repainted = ops.length;
   laptop.update(0.1, state, 3);
   assert.equal(ops.length, repainted, 'it does not redraw continuously');
+});
+
+test('paintScreen leaves empty space beside and behind inline images black instead of grey', () => {
+  const { ctx, rectStyles, drawnImages } = canvasSpy();
+  const lines: ScreenState['lines'] = Array.from({ length: 30 }, () => []);
+  lines[0] = [
+    [' ', -1, 0x1d75f00, 0],
+    [' '.repeat(135), -1, 0x1262626, 0],
+  ];
+  lines[1] = [
+    [' ', -1, 0x1d75f00, 0],
+    [`${' '.repeat(45)}caption${' '.repeat(83)}`, 0x1eeeeee, 0x1262626, 0],
+  ];
+  lines[28] = [['─'.repeat(136), -1, -1, 0]];
+  const s: ScreenState = {
+    cols: 136,
+    rows: 30,
+    lines,
+    placements: [{ id: 1, x: 3, y: 0, cols: 42, rows: 2, srcCol: 0, srcRow: 0, totalCols: 42, totalRows: 2 }],
+    bitmaps: new Map([[1, { source: {} as CanvasImageSource, width: 420, height: 120 }]]),
+    cursor: [0, 29],
+    version: 1,
+  };
+  paintScreen(ctx, SCREEN_CANVAS.width, SCREEN_CANVAS.height, s, undefined, 22);
+
+  assert.equal(rectStyles[0]?.style, '#000000', 'canvas clears to pure OLED black');
+  const pad = SCREEN_CANVAS.width * 0.01;
+  const charW = Math.min((SCREEN_CANVAS.width - pad * 2) / 136 / 0.6, (SCREEN_CANVAS.height - pad * 2) / 30 / 1.25) * 0.6;
+  const lineH = (charW / 0.6) * 1.25;
+  const greyRects = rectStyles.filter((op) => op.style === 'rgb(38,38,38)');
+  assert.equal(greyRects.filter((r) => Number(r.args[1]) < pad + lineH * 0.5).length, 0, 'pure image row paints zero grey rects');
+  const imgLeft = pad + 3 * charW;
+  const imgRight = pad + 45 * charW;
+  const captionRight = pad + 53 * charW;
+  for (const r of greyRects) {
+    const x0 = Number(r.args[0]);
+    const x1 = x0 + Number(r.args[2]);
+    assert.ok(x1 <= imgLeft + 1 || x0 >= imgRight - 1, 'no grey rect paints behind the inline image');
+    assert.ok(x1 <= captionRight + 1, 'no grey rect paints into the empty space to the right of the image or caption');
+  }
+  assert.equal(drawnImages(), 1, 'inline image bitmap still draws');
 });

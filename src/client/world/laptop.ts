@@ -147,6 +147,21 @@ export function paintScreen(ctx: CanvasRenderingContext2D, w: number, h: number,
     const row = win.top + y;
     const runs = row < win.above ? s.above?.[row] : s.lines[row - win.above];
     if (!runs) continue;
+    const rowPlacements = s.placements?.filter((p) => p.cols > 0 && p.rows > 0 && win.above + p.y <= row && row < win.above + p.y + p.rows);
+    let blankFrom = Infinity;
+    if (rowPlacements?.length) {
+      const imgStart = Math.min(...rowPlacements.map((p) => Math.max(0, p.x)));
+      let lastVisibleCol = 0;
+      let col = 0;
+      for (const [text, , , flags] of runs) {
+        const chars = [...text];
+        for (let i = 0; i < chars.length; i++) {
+          if (chars[i].trim() || flags & FLAG_INVERSE) lastVisibleCol = col + i + 1;
+        }
+        col += chars.length;
+      }
+      blankFrom = Math.max(imgStart, lastVisibleCol);
+    }
     let x = 0;
     const py = pad + y * lineH;
     for (const [text, fgc, bgc, flags] of runs) {
@@ -161,7 +176,20 @@ export function paintScreen(ctx: CanvasRenderingContext2D, w: number, h: number,
       const px = pad + x * charW;
       if (bg) {
         ctx.fillStyle = bg;
-        ctx.fillRect(px, py, len * charW + 0.5, lineH + 0.5);
+        if (!rowPlacements?.length || flags & FLAG_INVERSE) {
+          ctx.fillRect(px, py, len * charW + 0.5, lineH + 0.5);
+        } else if (text.trim() || !rowPlacements.some((p) => x < p.x + p.cols && x + len > p.x)) {
+          let spanStart = -1;
+          const end = Math.min(x + len, blankFrom);
+          for (let c = x; c <= end; c++) {
+            const keep = c < end && !rowPlacements.some((p) => c >= p.x && c < p.x + p.cols);
+            if (keep && spanStart < 0) spanStart = c;
+            else if (!keep && spanStart >= 0) {
+              ctx.fillRect(pad + spanStart * charW, py, (c - spanStart) * charW + 0.5, lineH + 0.5);
+              spanStart = -1;
+            }
+          }
+        }
       }
       if (text.trim()) {
         ctx.font = `${flags & FLAG_BOLD ? 700 : 400} ${fontSize}px ${TERM_FONT}`;

@@ -108,3 +108,38 @@ test('snapshotScreen coalesces Kitty U=1 placeholders, strips U+10EEEE from text
   assert.equal(search.hits[0].text, 'caption');
   term.dispose();
 });
+
+test('snapshotScreen clears grey container background beside and behind inline Kitty images while keeping prompt accent bars', async () => {
+  const term = new headless.Terminal({ cols: 30, rows: 4, scrollback: 20, allowProposedApi: true });
+  const ser = new serialize.SerializeAddon();
+  term.loadAddon(ser as any);
+  term.loadAddon(new unicode11.Unicode11Addon() as any);
+  term.unicode.activeVersion = '11';
+  screenSnapshot(term, ser);
+  const write = (data: string) => new Promise<void>((resolve) => term.write(data, resolve));
+
+  const d0 = String.fromCodePoint(KITTY_DIACRITICS[0]);
+  const d1 = String.fromCodePoint(KITTY_DIACRITICS[1]);
+  // Row 0: 1-col orange prompt border (#d75f00) + 2-col grey margin (#262626) + 2-col Kitty U=1 image + 25-col grey padding.
+  // Row 1: same border + 2-col image + caption on #262626 + trailing grey padding.
+  await write(
+    `\x1b_Ga=T,U=1,q=2,f=32,s=18,v=36,i=9,c=2,r=2;AAAAAAAAAAAAAAAA\x1b\\` +
+      `\x1b[48;2;215;95;0m \x1b[48;2;38;38;38m  \x1b[38;2;0;0;9m${KITTY_PLACEHOLDER_CHAR}${d0}${d0}${KITTY_PLACEHOLDER_CHAR}${d0}${d1}\x1b[39m${' '.repeat(25)}\x1b[0m\r\n` +
+      `\x1b[48;2;215;95;0m \x1b[48;2;38;38;38m  \x1b[38;2;0;0;9m${KITTY_PLACEHOLDER_CHAR}${d1}${d0}${KITTY_PLACEHOLDER_CHAR}${d1}${d1}\x1b[38;2;220;220;220m tag${' '.repeat(21)}\x1b[0m`,
+  );
+
+  const frame = snapshotScreen(term, []);
+  assert.ok(frame);
+  assert.deepEqual(frame.placements, [{ id: 9, x: 3, y: 0, cols: 2, rows: 2, srcCol: 0, srcRow: 0, totalCols: 2, totalRows: 2 }]);
+  assert.deepEqual(frame.lines[0], [[' ', -1, 0x1d75f00, 0]], 'orange prompt border stays while grey padding next to image clears to black');
+  assert.deepEqual(
+    frame.lines[1],
+    [
+      [' ', -1, 0x1d75f00, 0],
+      ['    ', -1, -1, 0],
+      [' tag', 0x1dcdcdc, 0x1262626, 0],
+    ],
+    'visible caption text keeps its background while trailing grey spaces to the right clear to black',
+  );
+  term.dispose();
+});
