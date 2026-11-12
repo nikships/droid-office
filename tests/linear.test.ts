@@ -673,6 +673,20 @@ test('floor guesses only a matching team, validates project and autopilot config
   assert.equal(statSync(path.join(r.dir, 'linear-floor.json')).mode & 0o777, 0o600);
 });
 
+test('taking Linear off a floor stays off across reconnects and restarts until a team is set again', async (t) => {
+  const r = await connectedFloor(t);
+  assert.equal(r.floor.setup?.team.id, 'team');
+  assert.equal(r.floor.setTeam('', undefined, 'Owner'), undefined);
+  assert.equal(r.floor.setup, undefined);
+  await r.floor.connectionChanged();
+  assert.equal(r.floor.setup, undefined);
+  assert.equal(r.floor.on, false);
+  assert.equal(new FloorLinear(r.dir, r.office, undefined, events(), ['droid-office']).setup, undefined);
+  assert.equal(r.floor.setTeam('DOFF', undefined, 'Owner'), undefined);
+  assert.equal(r.floor.setup?.team.id, 'team');
+  assert.equal(JSON.parse(readFileSync(path.join(r.dir, 'linear-floor.json'), 'utf8')).off, undefined);
+});
+
 test('floor refresh publishes loading and fetched boards and applies exponential 429 backoff with force override', async (t) => {
   const r = await connectedFloor(t);
   const now = Date.now();

@@ -523,6 +523,8 @@ interface SavedFloor {
   links?: LinearLink[];
   /** Tickets autopilot couldn't hand out, and when it tried. */
   skipped?: Record<string, number>;
+  /** The owner took Linear off the floor, so no team is matched to it again. */
+  off?: boolean;
 }
 
 export interface FloorLinearEvents {
@@ -553,6 +555,7 @@ export class FloorLinear {
   board: LinearBoardState | null = null;
   private links: LinearLink[] = [];
   private skipped: Record<string, number> = {};
+  private off = false;
   private file: string;
   private backoffUntil = 0;
   private strikes = 0;
@@ -603,7 +606,7 @@ export class FloorLinear {
 
   /** The office's only team, or the one named like the floor, when the floor has none yet. */
   private guess(): boolean {
-    if (this.setup) return false;
+    if (this.setup || this.off) return false;
     const team = guessTeam(this.office.connection()?.teams ?? [], this.names);
     if (!team) return false;
     this.setup = { team: { id: team.id, key: team.key, name: team.name }, by: 'the office', at: Date.now() };
@@ -632,6 +635,7 @@ export class FloorLinear {
     if (!this.office.client()) return 'Connect the office to Linear first';
     if (!teamRef) {
       this.setup = undefined;
+      this.off = true;
       this.autopilot = { ...this.autopilot, on: false };
       this.persist();
       void this.connectionChanged();
@@ -642,6 +646,7 @@ export class FloorLinear {
     const project = projectRef ? team.projects.find((p) => p.id === projectRef || p.name.toLowerCase() === projectRef.toLowerCase()) : undefined;
     if (projectRef && !project) return `${team.name} has no project ${projectRef}`;
     this.setup = { team: { id: team.id, key: team.key, name: team.name }, ...(project ? { project } : {}), by, at: Date.now() };
+    this.off = false;
     this.persist();
     void this.connectionChanged();
     return undefined;
@@ -933,7 +938,7 @@ export class FloorLinear {
 
   private persist() {
     try {
-      const data: SavedFloor = { setup: this.setup, autopilot: this.autopilot, links: this.links, skipped: this.skipped };
+      const data: SavedFloor = { setup: this.setup, autopilot: this.autopilot, links: this.links, skipped: this.skipped, ...(this.off ? { off: true } : {}) };
       writePrivate(this.file, data);
     } catch (err) {
       console.error(`droid-office: couldn't save the floor's Linear setup: ${(err as Error).message}`);
@@ -943,6 +948,7 @@ export class FloorLinear {
   private restore() {
     const s = readJson(this.file) as SavedFloor | undefined;
     if (!s || typeof s !== 'object') return;
+    this.off = s.off === true;
     const t = s.setup?.team;
     if (t && typeof t.id === 'string' && typeof t.key === 'string') {
       this.setup = {
