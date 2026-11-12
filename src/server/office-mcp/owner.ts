@@ -3,6 +3,7 @@ import { DESK_BY_ID } from '../../shared/layout.js';
 import { ORCHESTRATOR_ID, type MissionAgent } from '../../shared/mission-control.js';
 import { OFFICE_SHELL_ID } from '../../shared/office-shell.js';
 import type { ClientMsg, ServerMsg, WorkerInfo, WorktreeState } from '../../shared/protocol.js';
+import { analyzeCheckoutSafety, workerLocation } from '../floor-watch.js';
 import { buildWorkerInspection, describeTaskLabel, formatTaskTag, formatWorkerInspection, type WorkerInspection, type WorkerTaskLabel } from '../worker-status.js';
 import { formatBlockingSummary, formatQueueBrief, type BlockingToolState, type WorkerQueueState } from '../worker-queue.js';
 import { officeError, officeResult, type OfficeMcpAccess, type OfficeMcpCaller, type OfficeMcpDeps, type OfficeMcpServer } from './index.js';
@@ -37,6 +38,11 @@ export interface OwnerReply {
 export interface OwnerFloor {
   id: string;
   name: string;
+  dir?: string;
+  branch?: string;
+  baseBranch?: string;
+  plain?: boolean;
+  watchedBy?(leadId: string, workerId: string): boolean;
   workers: WorkerInfo[];
 }
 
@@ -93,9 +99,15 @@ export interface RosterWorker {
   lead?: { id: string; name: string };
   /** One of the caller's own subagents. */
   yours: boolean;
+  /** An independent (or other lead's) floor worker the caller follows via team_watch. */
+  watching?: true;
   you: boolean;
   remote?: true;
   cloud?: true;
+  cwd?: string;
+  branch?: string;
+  sharedCheckout?: true;
+  warnings?: string[];
   worktree?: { branch: string };
   pr?: { number: number; url: string };
   queuedMessages?: WorkerQueueState;
@@ -130,8 +142,16 @@ export function pickFloor(floors: OwnerFloor[], ref: string): { floor: OwnerFloo
   return { floor: floors[at], number: at + 1 };
 }
 
-export function roster(floors: OwnerFloor[], caller: string, only?: string, labelsOn = true, metaFor?: (workerId: string) => { queuedMessages?: WorkerQueueState; blockingTool?: BlockingToolState } | undefined): RosterWorker[] {
+export function roster(
+  floors: OwnerFloor[],
+  caller: string,
+  only?: string,
+  labelsOn = true,
+  metaFor?: (workerId: string) => { queuedMessages?: WorkerQueueState; blockingTool?: BlockingToolState } | undefined,
+  precomputedSafety?: ReturnType<typeof analyzeCheckoutSafety>,
+): RosterWorker[] {
   const names = new Map(floors.flatMap((f) => f.workers.map((w) => [w.id, w.name] as const)));
+  const { perWorker } = precomputedSafety ?? analyzeCheckoutSafety(floors.filter((f) => !only || f.id === only));
   return floors.flatMap((f, i) =>
     f.id !== only && only !== undefined
       ? []
@@ -142,6 +162,9 @@ export function roster(floors: OwnerFloor[], caller: string, only?: string, labe
             const effort = w.activeEffort ?? w.effort;
             const taskLabel = describeTaskLabel(w, labelsOn);
             const meta = metaFor?.(w.id);
+            const loc = workerLocation(w, f);
+            const warnings = perWorker.get(w.id);
+            const watching = f.watchedBy?.(caller, w.id) && w.lead !== caller ? (true as const) : undefined;
             return {
               id: w.id,
               name: w.name,
@@ -159,9 +182,14 @@ export function roster(floors: OwnerFloor[], caller: string, only?: string, labe
               ...(effort ? { effort } : {}),
               ...(w.lead ? { lead: { id: w.lead, name: names.get(w.lead) ?? w.lead } } : {}),
               yours: w.lead === caller,
+              ...(watching ? { watching } : {}),
               you: w.id === caller,
               ...(w.remote ? { remote: true as const } : {}),
               ...(w.cloud ? { cloud: true as const } : {}),
+              ...(loc.cwd ? { cwd: loc.cwd } : {}),
+              ...(loc.branch ? { branch: loc.branch } : {}),
+              ...(loc.sharedCheckout ? { sharedCheckout: true as const } : {}),
+              ...(warnings?.length ? { warnings } : {}),
               ...(w.worktree ? { worktree: { branch: w.worktree.branch } } : {}),
               ...(w.pr ? { pr: w.pr } : {}),
               ...(meta?.queuedMessages?.count ? { queuedMessages: meta.queuedMessages } : {}),
@@ -188,15 +216,26 @@ export function findWorker(floors: OwnerFloor[], ref: string, floor?: string): {
 }
 
 function rosterLine(w: RosterWorker): string {
-  const tags = [w.you ? 'you' : '', w.yours ? 'your subagent' : '', w.lead && !w.yours ? `subagent of ${w.lead.name}` : '', w.remote ? 'external' : '', w.cloud ? 'cloud' : '', w.kind === 'shell' ? 'shell' : ''].filter(Boolean);
+  const tags = [
+    w.you ? 'you' : '',
+    w.yours ? 'your subagent' : '',
+    w.watching ? 'watching' : '',
+    w.lead && !w.yours ? `subagent of ${w.lead.name}` : '',
+    w.remote ? 'external' : '',
+    w.cloud ? 'cloud' : '',
+    w.kind === 'shell' ? 'shell' : '',
+  ].filter(Boolean);
   const queueBrief = w.queuedMessages ? formatQueueBrief(w.queuedMessages) : undefined;
+  const shownBranch = w.branch ?? w.worktree?.branch;
   return [
     `  ${w.name} (${w.id})${tags.length ? ` [${tags.join(', ')}]` : ''}, ${w.desk}, ${w.status}${w.model ? `, ${w.model}${w.effort ? ` ${w.effort}` : ''}` : ''}`,
     ...(w.task || w.title ? [`    Task: ${w.task ?? w.title}${formatTaskTag(w.taskLabel)}`] : []),
     ...(w.activity ? [`    Doing: ${w.activity}`] : []),
     ...(w.blockingTool ? [`    Blocking command: ${formatBlockingSummary(w.blockingTool)}`] : []),
     ...(queueBrief ? [`    ${queueBrief}`] : []),
-    ...(w.worktree ? [`    Branch: ${w.worktree.branch}${w.pr ? `, PR ${w.pr.url}` : ''}`] : []),
+    ...(w.cwd ? [`    Directory: ${w.cwd}${w.sharedCheckout ? ' (shared checkout, no worktree)' : ''}`] : []),
+    ...(shownBranch ? [`    Branch: ${shownBranch}${w.pr ? `, PR ${w.pr.url}` : ''}`] : w.pr ? [`    PR: ${w.pr.url}`] : []),
+    ...(w.warnings?.length ? [`    Warning: ${w.warnings.join('; ')}`] : []),
   ].join('\n');
 }
 
@@ -283,7 +322,7 @@ export function register(server: OfficeMcpServer, deps: OfficeMcpDeps): void {
   server.tool(
     {
       name: 'office_roster',
-      description: 'List workers across the building (or one floor) with id, desk, status, task, queued messages, blocking commands, branch/PR, model, and lead, plus Mission Control agents (read-only).',
+      description: 'List workers across the building (or one floor) with id, desk, status, task, queued messages, blocking commands, directory, branch/PR, checkout warnings, model, and lead, plus Mission Control agents (read-only).',
       inputSchema: z.strictObject({ floor: floorRef.optional() }),
       annotations: readOnly,
     },
@@ -297,8 +336,20 @@ export function register(server: OfficeMcpServer, deps: OfficeMcpDeps): void {
         if (typeof picked === 'string') return officeError(picked);
         only = picked.floor.id;
       }
-      const workers = roster(floors, caller.worker.id, only, labelsOn, metaFor);
-      const shown = floors.map((f, i) => ({ id: f.id, name: f.name, number: i + 1 })).filter((f) => !only || f.id === only);
+      const selectedFloors = floors.filter((f) => !only || f.id === only);
+      const safety = analyzeCheckoutSafety(selectedFloors);
+      const { warnings } = safety;
+      const workers = roster(floors, caller.worker.id, only, labelsOn, metaFor, safety);
+      const shown = floors
+        .map((f, i) => ({
+          id: f.id,
+          name: f.name,
+          number: i + 1,
+          ...(f.dir ? { dir: f.dir } : {}),
+          ...(f.branch ? { branch: f.branch } : {}),
+          ...(f.baseBranch ? { baseBranch: f.baseBranch } : {}),
+        }))
+        .filter((f) => !only || f.id === only);
       const mission = only ? [] : owner.mission();
       const floorText =
         shown
@@ -307,9 +358,11 @@ export function register(server: OfficeMcpServer, deps: OfficeMcpDeps): void {
             return [`Floor ${f.number}: ${f.name} (${f.id}), ${here.length} worker${here.length === 1 ? '' : 's'}`, ...here.map(rosterLine)].join('\n');
           })
           .join('\n\n') || 'No floors are open.';
-      return officeResult([floorText, ...(mission.length ? [`Mission Control\n${mission.map((a) => missionLine(a, caller.worker.id, labelsOn)).join('\n')}`] : [])].join('\n\n'), {
+      const warningText = warnings.length ? [`Checkout warnings\n${warnings.map((x) => `  Warning (${x.floorName}): ${x.message}`).join('\n')}`] : [];
+      return officeResult([floorText, ...warningText, ...(mission.length ? [`Mission Control\n${mission.map((a) => missionLine(a, caller.worker.id, labelsOn)).join('\n')}`] : [])].join('\n\n'), {
         floors: shown,
         workers,
+        ...(warnings.length ? { warnings } : {}),
         mission,
         workerLabelsEnabled: labelsOn,
       });

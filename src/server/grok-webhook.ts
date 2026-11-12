@@ -8,7 +8,7 @@ export interface GrokBotCredentials {
   webhookToken: string;
 }
 
-export type GrokWebhookItemKind = 'report' | 'progress' | 'question' | 'blocker' | 'needs_input' | 'stopped' | 'done' | 'left' | 'sent_home' | 'update' | 'message' | 'test';
+export type GrokWebhookItemKind = 'report' | 'progress' | 'question' | 'blocker' | 'pr' | 'needs_input' | 'stopped' | 'done' | 'left' | 'sent_home' | 'update' | 'message' | 'test';
 
 export interface GrokWebhookFloor {
   id: string;
@@ -21,10 +21,13 @@ export interface GrokWebhookWorker {
   name: string;
   status: string;
   state?: string;
+  /** True when the lead follows this floor worker via team_watch rather than having hired it as a subagent. */
+  watched?: true;
   /** Successful final reports expose a done/settled task snapshot, not the returning MCP call. */
   settled?: boolean;
   desk?: string;
   task?: string;
+  cwd?: string;
   branch?: string;
   worktree?: string;
   prUrl?: string;
@@ -95,6 +98,7 @@ const PRIORITY: Record<GrokWebhookItemKind, number> = {
   needs_input: 5,
   stopped: 4,
   report: 4,
+  pr: 4,
   progress: 3,
   update: 3,
   message: 3,
@@ -142,10 +146,12 @@ export function webhookWorkerFromMember(m: TeamMember | undefined, w?: WorkerInf
       name: m.name,
       status: m.status,
       ...(m.state !== m.status ? { state: m.state } : {}),
+      ...(m.watched ? { watched: true as const } : {}),
       settled: m.settled,
       desk: m.desk,
       ...(m.task ? { task: m.task } : {}),
-      ...(m.worktree ? { branch: m.worktree.branch, worktree: m.worktree.path } : {}),
+      ...(!m.worktree && m.cwd ? { cwd: m.cwd } : {}),
+      ...(m.worktree ? { branch: m.worktree.branch, worktree: m.worktree.path } : m.branch ? { branch: m.branch } : {}),
       ...(m.pr ? { prUrl: m.pr.url } : {}),
     };
   }
@@ -164,7 +170,7 @@ export function webhookWorkerFromMember(m: TeamMember | undefined, w?: WorkerInf
   return fallback ? { id: fallback.id, name: fallback.name, status: 'exited', settled: true } : undefined;
 }
 
-function teamActionHint(item: { kind: GrokWebhookItemKind; questionId?: string; terminalAsk?: GrokWebhookTerminalAsk; hasChanges?: boolean }): string {
+function teamActionHint(item: { kind: GrokWebhookItemKind; questionId?: string; terminalAsk?: GrokWebhookTerminalAsk; hasChanges?: boolean; watched?: boolean; prUrl?: string }): string {
   const ack = "Acknowledge only this item's ackId after handling it, never other runs' inbox items.";
   if (item.kind === 'question' && item.questionId) {
     return `Answer the question identified by questionId, or send guidance to this worker on this floor. ${ack}`;
@@ -178,9 +184,15 @@ function teamActionHint(item: { kind: GrokWebhookItemKind; questionId?: string; 
   if (item.kind === 'report') {
     return item.hasChanges ? `Review the reported changes and checks; record a review before merging. ${ack}` : `Read the outcome and checks, then follow up or dismiss the worker if no further work is needed. ${ack}`;
   }
+  if (item.kind === 'pr') {
+    return `Pull request update on this floor${item.prUrl ? ` (${item.prUrl})` : ''}: inspect checks or merge status as needed. ${ack}`;
+  }
   if (item.kind === 'progress') return `The task is not finished. Follow its progress and step in if help is needed; do not merge or dismiss it yet. ${ack}`;
   if (item.kind === 'stopped' || item.kind === 'blocker') {
     return `Inspect this worker's recent activity and blocker, then help it resume or send guidance. ${ack}`;
+  }
+  if (item.kind === 'done' && item.watched) {
+    return `Watched floor worker finished its turn: inspect worker_log or worker_diff if follow-up is needed. ${ack}`;
   }
   return `Check this worker's status on this floor if action is needed. ${ack}`;
 }
@@ -235,7 +247,7 @@ export function buildTeamWebhookItem(args: { event: TeamEvent; floor: GrokWebhoo
     ...(event.pushedSha ? { pushedSha: event.pushedSha } : {}),
     ...(prUrl ? { prUrl } : {}),
     ...(result ? { result } : {}),
-    actionHint: teamActionHint({ kind, questionId, terminalAsk, hasChanges }),
+    actionHint: teamActionHint({ kind, questionId, terminalAsk, hasChanges, watched: event.watched, prUrl }),
   };
 }
 
@@ -243,7 +255,7 @@ function itemHeadline(item: GrokWebhookItem, leadName: string): string {
   const who = item.worker ? `${item.worker.name}${item.floor ? ` (${item.floor.name})` : ''}` : item.floor ? item.floor.name : 'Droid Office';
   const outcome = (item.kind === 'question' ? item.text : (item.result?.summary ?? item.text ?? item.terminalAsk?.question))?.replace(/\s+/g, ' ').trim();
   if (outcome && item.kind !== 'test') {
-    const label = item.kind === 'report' ? 'Completed' : item.kind === 'progress' ? 'Progress' : item.kind === 'question' ? 'Question' : item.kind;
+    const label = item.kind === 'report' ? 'Completed' : item.kind === 'progress' ? 'Progress' : item.kind === 'question' ? 'Question' : item.kind === 'pr' ? 'PR' : item.kind;
     // Put useful content before floor/worker context so wake truncation keeps the outcome.
     const headline = `${label}: ${outcome}`;
     const clipped = headline.length > 180 ? `${headline.slice(0, 179).trimEnd()}…` : headline;
@@ -256,6 +268,8 @@ function itemHeadline(item: GrokWebhookItem, leadName: string): string {
       return `${who} reported a blocker to ${leadName}.`;
     case 'report':
       return `${who} sent a final report to ${leadName}.`;
+    case 'pr':
+      return `${who} updated a pull request${item.prUrl ? ` (${item.prUrl})` : ''}.`;
     case 'progress':
       return `${who} reported progress to ${leadName}; the task is not finished.`;
     case 'needs_input':
@@ -263,7 +277,7 @@ function itemHeadline(item: GrokWebhookItem, leadName: string): string {
     case 'stopped':
       return `${who} stopped.`;
     case 'done':
-      return `${who} finished its turn without reporting.`;
+      return item.worker?.watched ? `${who} finished its turn.` : `${who} finished its turn without reporting.`;
     case 'sent_home':
       return `${who} was sent home by the owner.`;
     case 'left':

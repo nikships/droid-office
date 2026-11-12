@@ -5,8 +5,9 @@ import type { CloudScreenFrame } from '../shared/cloud-screen.js';
 import type { CloudTurn, CloudWorker } from '../shared/factory-cloud.js';
 import type { AgentEffort, WorkerInfo, WorkerStatus } from '../shared/protocol.js';
 import { isAgentEffort } from '../shared/protocol.js';
-import { DESK_BY_ID } from '../shared/layout.js';
+import { DESK_BY_ID, DESKS } from '../shared/layout.js';
 import { DropStore } from './drops.js';
+import { pickUniqueWorkerName } from './floor-watch.js';
 import { clockWork } from './workers.js';
 
 // A floor's cloud workers (see factory/cloud.ts, which drives their sessions on Factory): who sits
@@ -19,10 +20,13 @@ const FILE = 'cloud-workers.json';
 /** Fields of a WorkerInfo that only mean something while the office runs. */
 const LIVE: readonly (keyof WorkerInfo)[] = ['open'];
 
-/** What else on the floor takes desks and names: its own workers. */
+/** What else on the floor (or across open floors) takes desks and names. */
 export interface CloudSeating {
   deskTaken(deskId: string): boolean;
+  liveDeskElsewhere?(deskId: string): { worker: WorkerInfo; floorName: string } | undefined;
   names(): Iterable<string>;
+  liveNamesElsewhere?(): Iterable<string>;
+  allNamesElsewhere?(): Iterable<string>;
   pool: { names: readonly string[]; colors: readonly string[] };
 }
 
@@ -108,6 +112,10 @@ export class CloudWorkers {
     const seat = DESK_BY_ID.get(deskId);
     if (!seat) return 'Unknown desk';
     if (this.deskTaken(deskId) || this.seating.deskTaken(deskId)) return `That ${seat.beanbag ? 'bean bag' : 'desk'} is taken`;
+    const other = this.seating.liveDeskElsewhere?.(deskId);
+    if (other && DESKS.some((d) => !this.deskTaken(d.id) && !this.seating.deskTaken(d.id) && !this.seating.liveDeskElsewhere?.(d.id))) {
+      return `That ${seat.beanbag ? 'bean bag' : 'desk'} is taken by ${other.worker.name} on ${other.floorName}`;
+    }
     return undefined;
   }
 
@@ -126,9 +134,8 @@ export class CloudWorkers {
   /** Seats a cloud worker whose session was just made (at a desk `hold` kept for it). */
   add(n: NewCloudWorker): WorkerInfo {
     this.held.delete(n.deskId);
-    const used = new Set([...this.seating.names(), ...this.names()].map((x) => x.replace(/ 🐚$/, '')));
     const { names, colors } = this.seating.pool;
-    const name = names.find((x) => !used.has(x)) ?? `Worker ${used.size + 1}`;
+    const name = pickUniqueWorkerName(names, [...this.seating.names(), ...this.names()], this.seating.liveNamesElsewhere?.() ?? [], this.seating.allNamesElsewhere?.() ?? []);
     const prompt = n.prompt?.trim() || undefined;
     const info: WorkerInfo = {
       id: randomBytes(6).toString('hex'),

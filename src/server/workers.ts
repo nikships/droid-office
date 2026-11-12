@@ -33,7 +33,7 @@ import { countCtrlEnterInputs, isCancelInput, isClearQueueInput, stripKittyPlace
 import { WORKSPACE_FILES, WORKTREES_DIR, Worktrees, describeWork, workspaceOf, type WorktreeCleanup, type WorktreeOwnership, type WorktreeRef, type WorktreeStart, type WorktreeState } from './worktrees.js';
 import { checkoutDirty, choosePullBase, pushBranch } from './open-pull.js';
 import { normalizeRepo } from '../shared/floors.js';
-import { DESK_BY_ID, nextFreeSeat } from '../shared/layout.js';
+import { DESK_BY_ID, DESKS, nextFreeSeat, type DeskDef } from '../shared/layout.js';
 import { officePrompt, type PromptSource } from './prompts.js';
 import { forgeVars, officeSays, placeholders, PROMPTS, WORKER_VISITS, withoutReminders, workerBranchPolicy, workerMessageVars } from '../shared/prompts.js';
 import { isBusy } from '../shared/status.js';
@@ -57,6 +57,7 @@ import { SCREEN_SETTLE_MS, readDroidScreen, screenStatus, type DroidScreen } fro
 import type { Capacity } from './machine.js';
 import { setupStep, writePlan, writeSetupScript, type SetupStep } from './worktree-setup.js';
 import type { BuildingAgents } from './building-agent.js';
+import { pickUniqueForkName, pickUniqueSeat, pickUniqueWorkerName, readHeadBranch } from './floor-watch.js';
 
 type HeadlessTerminal = InstanceType<typeof headless.Terminal>;
 type Worktree = NonNullable<WorkerInfo['worktree']>;
@@ -318,8 +319,14 @@ export class WorkerManager {
   private droidSessions = new DroidSessionReader();
   private agentPath: string | null = null;
 
-  /** Desks and names taken by other workers (e.g. cloud workers), which the office's hires leave alone. */
-  holds?: { desk(deskId: string): boolean; names(): Iterable<string> };
+  /** Desks and names taken by other workers (cloud workers on this floor, or live workers on other floors). */
+  holds?: {
+    desk(deskId: string): boolean;
+    names(): Iterable<string>;
+    liveDeskElsewhere?(deskId: string): { worker: WorkerInfo; floorName: string } | undefined;
+    liveNamesElsewhere?(): Iterable<string>;
+    allNamesElsewhere?(): Iterable<string>;
+  };
   /**
    * ⚙️ Settings → Workers: a fresh worker starts from the latest of the default branch, its worktree
    * cut from origin's and the checkout brought there for one without (see freshen). Off, or unset:
@@ -624,9 +631,16 @@ export class WorkerManager {
     if (w && session) return { ...session, epoch: w.taskEpoch, since: w.info.taskSince };
   }
 
+  localDeskOccupied(deskId: string): boolean {
+    return this.ownDesk(deskId) || !!this.holds?.desk(deskId);
+  }
+
   deskOccupied(deskId: string): boolean {
-    for (const w of this.workers.values()) if (w.info.deskId === deskId) return true;
-    return !!this.holds?.desk(deskId);
+    return this.localDeskOccupied(deskId) || !!this.holds?.liveDeskElsewhere?.(deskId);
+  }
+
+  pickSeat(choose: (taken: (id: string) => boolean) => DeskDef | undefined): DeskDef | undefined {
+    return pickUniqueSeat(choose, (id) => this.localDeskOccupied(id), this.holds?.liveDeskElsewhere ? (id) => !!this.holds?.liveDeskElsewhere?.(id) : undefined);
   }
 
   /** Whether one of the office's own workers sits there. */
@@ -669,7 +683,11 @@ export class WorkerManager {
     if (gated) return gated;
     const seat = DESK_BY_ID.get(deskId);
     if (!seat) return 'Unknown desk';
-    if (this.deskOccupied(deskId)) return `That ${seat.beanbag ? 'bean bag' : 'desk'} is taken`;
+    if (this.localDeskOccupied(deskId)) return `That ${seat.beanbag ? 'bean bag' : 'desk'} is taken`;
+    const otherDesk = this.holds?.liveDeskElsewhere?.(deskId);
+    if (otherDesk && DESKS.some((d) => !this.localDeskOccupied(d.id) && !this.holds?.liveDeskElsewhere?.(d.id))) {
+      return `That ${seat.beanbag ? 'bean bag' : 'desk'} is taken by ${otherDesk.worker.name} on ${otherDesk.floorName}`;
+    }
     if (this.plain && worktree) return `${PLAIN_FLOOR}, so workers can't have worktrees`;
     if (repos.length && (kind !== 'agent' || !worktree)) return 'Only a worker in its own worktree can work in other repositories too';
     if (repos.length > MAX_REPOS) return `A worker can take on at most ${MAX_REPOS} other repositories`;
@@ -690,8 +708,8 @@ export class WorkerManager {
     }
     const full = this.capacity?.full();
     if (full) return full;
-    const used = new Set([...this.workers.values()].map((w) => w.info.name.replace(/ 🐚$/, '')).concat([...(this.holds?.names() ?? [])]));
-    const name = NAMES.find((n) => !used.has(n)) ?? `Worker ${this.workers.size + 1}`;
+    const sameFloorNames = [...this.workers.values()].map((w) => w.info.name).concat([...(this.holds?.names() ?? [])]);
+    const name = pickUniqueWorkerName(NAMES, sameFloorNames, this.holds?.liveNamesElsewhere?.() ?? [], this.holds?.allNamesElsewhere?.() ?? []);
     const id = randomBytes(6).toString('hex');
     let wt: WorkerInfo['worktree'];
     let others: WorkerRepo[] | undefined;
@@ -761,12 +779,10 @@ export class WorkerManager {
     if (full) return full;
     const sourceDesk = DESK_BY_ID.get(source.info.deskId);
     if (!sourceDesk) return 'The source desk is no longer on this floor';
-    const seat = nearestForkSeat(sourceDesk, (desk) => this.deskOccupied(desk));
+    const seat = this.pickSeat((desk) => nearestForkSeat(sourceDesk, desk));
     if (!seat) return 'Every desk and bean bag on this floor is taken';
-    const used = new Set([...this.workers.values()].map((w) => w.info.name).concat([...(this.holds?.names() ?? [])]));
-    const stem = `${source.info.name} ⑂`;
-    let name = stem;
-    for (let n = 2; used.has(name); n++) name = `${stem} ${n}`;
+    const sameFloorNames = [...this.workers.values()].map((w) => w.info.name).concat([...(this.holds?.names() ?? [])]);
+    const name = pickUniqueForkName(source.info.name, sameFloorNames, this.holds?.liveNamesElsewhere?.() ?? [], this.holds?.allNamesElsewhere?.() ?? []);
     const twinId = randomBytes(6).toString('hex');
     const slug = `fork-${twinId}`;
     const many = !!source.info.repos?.length;
@@ -1234,7 +1250,7 @@ export class WorkerManager {
       const error = w.pty ? this.prompt(w.info.id, text) : this.resume(w.info.id, text);
       return error ?? { info: w.info, hired: false };
     }
-    const seat = nextFreeSeat((id) => this.deskOccupied(id));
+    const seat = this.pickSeat(nextFreeSeat);
     if (!seat) return 'No free desks or bean bags for Finder dispatch';
     const info = this.spawn(seat.id, 'Finder', text, false, 'agent', model);
     if (typeof info === 'string') return info;
@@ -1465,6 +1481,10 @@ export class WorkerManager {
 
   /** Every worker's worktree branch, looked at again (see syncBranch): for when new pull requests may have come in. */
   async syncBranches(): Promise<void> {
+    if (!this.plain) {
+      const live = readHeadBranch(this.dir);
+      if (live.found && live.branch) this.events.checkout?.(live.branch);
+    }
     await Promise.all([...this.workers.values()].map((w) => this.syncBranch(w)));
   }
 
@@ -3270,7 +3290,7 @@ export class WorkerManager {
         // A building agent's id is its own: no floor seats a record that claims one.
         const seated = (this.deskless ? s.deskId === '' : !!s.deskId && DESK_BY_ID.has(s.deskId)) && !(s.id && this.building?.agents.known(s.id));
         if (s.id && typeof s.deskId === 'string' && !seated) this.retired.push(s);
-        if (!s.id || typeof s.deskId !== 'string' || !seated || (!this.deskless && this.deskOccupied(s.deskId))) continue;
+        if (!s.id || typeof s.deskId !== 'string' || !seated || (!this.deskless && this.localDeskOccupied(s.deskId))) continue;
         const shell = s.kind === 'shell';
         const info: WorkerInfo = {
           id: s.id,

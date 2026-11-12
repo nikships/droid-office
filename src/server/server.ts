@@ -48,6 +48,8 @@ import { TrackpadHaptics } from './haptics.js';
 import { OFFICE_SHELL_ID } from '../shared/office-shell.js';
 import type { Arrival, ClientMsg, FloorInfo, FloorView, SearchResults, ServerMsg, WorkerInfo } from '../shared/protocol.js';
 import { AUTO_DESK, GH_COMMENT_MAX, GH_LABEL_MAX, isAgentEffort } from '../shared/protocol.js';
+import { isAsleep } from '../shared/status.js';
+import { readHeadBranch } from './floor-watch.js';
 import { ORCHESTRATOR_ID, orchestratorNeedsOwner, type MissionControlState, type OrchestratorSettings } from '../shared/mission-control.js';
 import { AIRGAPPED_REASON, droidReady } from '../shared/setup.js';
 import { cannotRun, isSubscriptionModel } from '../shared/subscriptions.js';
@@ -765,6 +767,36 @@ export async function startServer(cfg: Config) {
     recheckModels: () => subscriptions.recheck(),
     workerLabelsOn: () => labelPreferences.get().on,
     floor: (id) => floors.get(id),
+    liveDeskElsewhere: (floor, deskId) => {
+      for (const other of floors.values()) {
+        if (other === floor) continue;
+        const holder = other.everyone().find((w) => w.deskId === deskId && !w.remote && !isAsleep(w.status));
+        if (holder) return { worker: holder, floorName: other.def.name };
+      }
+      return undefined;
+    },
+    liveNamesElsewhere: (floor) => {
+      const names: string[] = [];
+      for (const other of floors.values()) {
+        if (other === floor) continue;
+        for (const w of other.everyone()) if (!isAsleep(w.status)) names.push(w.name);
+      }
+      const orch = orchestrator.rosterAgent()?.worker;
+      if (orch) names.push(orch.name);
+      for (const bot of remoteWorkers.list()) names.push(bot.name);
+      return names;
+    },
+    allNamesElsewhere: (floor) => {
+      const names: string[] = [];
+      for (const other of floors.values()) {
+        if (other === floor) continue;
+        for (const w of other.everyone()) names.push(w.name);
+      }
+      const orch = orchestrator.rosterAgent()?.worker;
+      if (orch) names.push(orch.name);
+      for (const bot of remoteWorkers.list()) names.push(bot.name);
+      return names;
+    },
     pullsChanged: (floor) => {
       if (floors.get(floor.id) === floor) broadcast({ t: 'building.pulls', floor: floor.id, pulls: floor.board.pulls.items });
       for (const f of floors.values()) if (f !== floor && worksIn(f, floor)) f.sendLandedHome();
@@ -2229,7 +2261,7 @@ export async function startServer(cfg: Config) {
           if (setup.state().airgapped) return refuse(AIRGAPPED_REASON);
           if (kind === 'shell') return refuse('A shell runs on this machine: only a Droid can work on a Factory computer');
           const wanted = str(msg.deskId, 32);
-          const deskId = wanted === AUTO_DESK ? nextFreeSeat((id) => floor.workers.deskOccupied(id))?.id : wanted;
+          const deskId = wanted === AUTO_DESK ? floor.workers.pickSeat(nextFreeSeat)?.id : wanted;
           if (!deskId) return refuse('Every desk and bean bag on this floor is taken');
           defer();
           const body = { floor: floor.id, deskId, computerId: where.computerId, environmentId: where.environmentId, cwd: where.cwd, prompt: msg.prompt, model, effort, images };
@@ -2257,7 +2289,7 @@ export async function startServer(cfg: Config) {
           }
           // AUTO_DESK is picked here, after any fetch, so two quick hires never get the same desk.
           const wanted = str(msg.deskId, 32);
-          const deskId = wanted === AUTO_DESK ? nextFreeSeat((id) => floor.workers.deskOccupied(id))?.id : wanted;
+          const deskId = wanted === AUTO_DESK ? floor.workers.pickSeat(nextFreeSeat)?.id : wanted;
           if (!deskId) {
             floor.workers.unstage(images);
             return refuse('Every desk and bean bag on this floor is taken');
@@ -3114,7 +3146,20 @@ export async function startServer(cfg: Config) {
    * of its own, named for the worker, so it has the owner's checks, effects and toasts exactly.
    */
   const ownerOffice: OwnerOffice = {
-    floors: () => [...floors.values()].map((f) => ({ id: f.id, name: f.def.name, workers: f.everyone() })),
+    floors: () =>
+      [...floors.values()].map((f) => {
+        const live = !f.plain ? readHeadBranch(f.dir) : { found: false as const };
+        return {
+          id: f.id,
+          name: f.def.name,
+          dir: f.dir,
+          plain: f.plain,
+          branch: f.plain ? undefined : live.found ? live.branch : f.project.branch,
+          baseBranch: f.plain ? undefined : (f.workers.selectedBranch ?? f.workers.baseBranch ?? f.project.branch),
+          watchedBy: (leadId, workerId) => f.team.isWatching(leadId, workerId),
+          workers: f.everyone(),
+        };
+      }),
     mission: () => {
       const state = missionState();
       const agent = orchestrator.rosterAgent();

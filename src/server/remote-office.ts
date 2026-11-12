@@ -452,12 +452,70 @@ export class RemoteOffice {
     }
     const floors = named ? [named] : all;
     if (!floors.length) return { status: 404, body: { error: 'No floor is open.' } };
+    if (args.action === 'watch') {
+      const enable = args.watch !== false;
+      if (args.all === true) {
+        if (args.worker !== undefined || args.workers !== undefined) return { status: 400, body: { error: 'Choose exactly one of worker, workers, or all: true.' } };
+        const replies = await Promise.all(floors.map(async (f) => ({ floor: f.id, reply: await f.team.handle(worker, { action: 'watch', all: true, watch: enable }) })));
+        const watching = replies.flatMap(({ floor, reply }) => ((reply.body.watching as Record<string, unknown>[] | undefined) ?? []).map((w) => ({ ...w, floor })));
+        const results = replies.flatMap(({ floor, reply }) => ((reply.body.results as Record<string, unknown>[] | undefined) ?? []).map((r) => ({ ...r, floor })));
+        return {
+          status: 200,
+          body: {
+            watch: enable,
+            results,
+            watching,
+            ...(!results.length ? { note: enable ? 'No independent workers on the selected floor(s) to watch.' : 'You were not watching any workers on the selected floor(s).' } : {}),
+          },
+        };
+      }
+      const refs = Array.isArray(args.workers) ? (args.workers as string[]) : args.worker ? [args.worker] : [];
+      if (!refs.length || (args.worker !== undefined && args.workers !== undefined)) {
+        return { status: 400, body: { error: 'Choose exactly one of worker, workers, or all: true.' } };
+      }
+      const results: Record<string, unknown>[] = [];
+      const seen = new Set<string>();
+      for (const ref of refs) {
+        const want = String(ref).trim().toLowerCase();
+        const found = floors.flatMap((f) =>
+          f.workers
+            .list()
+            .filter((w) => w.id !== worker.id && !w.remote && (w.id.toLowerCase() === want || w.name.toLowerCase() === want || w.name.replace(/ 🐚$/, '').toLowerCase() === want))
+            .map((w) => ({ f, w })),
+        );
+        if (found.length !== 1) {
+          results.push({ id: String(ref), error: found.length ? 'That name occurs on several floors; use the worker id or specify floor' : `No worker called ${String(ref)}${named ? ` on ${named.def.name}` : ' in the building'}` });
+          continue;
+        }
+        const { f, w } = found[0];
+        if (seen.has(w.id)) continue;
+        seen.add(w.id);
+        const reply = await f.team.handle(worker, { action: 'watch', worker: w.id, watch: enable });
+        const entry = ((reply.body.results as Record<string, unknown>[] | undefined) ?? [])[0];
+        results.push(reply.status < 400 && entry ? { ...entry, floor: f.id } : { id: w.id, name: w.name, floor: f.id, error: String(reply.body.error ?? 'Could not update watch') });
+      }
+      const okAny = results.some((r) => !r.error);
+      if (!okAny && results.length === 1) {
+        const err = String(results[0].error);
+        return { status: err.startsWith('No worker called') ? 404 : 409, body: { error: err, results } };
+      }
+      if (!okAny) {
+        return { status: 409, body: { error: results.map((r) => `${r.name ?? r.id}: ${r.error}`).join('\n'), results } };
+      }
+      const watching = floors.flatMap((f) =>
+        f.team
+          .roster(worker.id)
+          .filter((m) => m.watched)
+          .map((m) => ({ ...m, floor: f.id })),
+      );
+      return { status: 200, body: { watch: enable, results, watching } };
+    }
     const matchesFor = (ref: string) => {
       const wanted = ref.trim().toLowerCase();
       return floors.flatMap((f) =>
         f.workers
           .list()
-          .filter((w) => w.lead === worker.id && (w.id === wanted || w.name.toLowerCase() === wanted || w.name.replace(/ 🐚$/, '').toLowerCase() === wanted))
+          .filter((w) => (w.lead === worker.id || f.team.isWatching?.(worker.id, w.id)) && (w.id === wanted || w.name.toLowerCase() === wanted || w.name.replace(/ 🐚$/, '').toLowerCase() === wanted))
           .map((w) => ({ f, w })),
       );
     };
@@ -500,22 +558,24 @@ export class RemoteOffice {
       }
       if (matches.length !== 1) return { status: matches.length ? 409 : 404, body: { error: matches.length ? 'That name occurs on several floors; use the worker id or specify floor' : 'No such subagent in your teams' } };
       const { f, w } = matches[0];
-      const result = await f.team.handle(worker, { ...args, worker: w.id, since: args.since ? (args.since[f.id] ?? 0) : undefined });
+      const result = await f.team.handle(worker, { ...args, worker: w.id, since: args.since ? args.since[f.id] : undefined });
       if (args.action !== 'status' || result.status >= 400) return result;
       // Every floor's position, so this cursor also serves a later status of the whole building.
       const latest = Object.fromEntries(floors.map((x) => [x.id, x === f ? result.body.latest : x.team.latest()]));
       return { status: 200, body: { ...result.body, ...merged([{ floor: f.id, result }]), latest } };
     }
     if (args.action !== 'status') return { status: 400, body: { error: 'Name a subagent' } };
-    const snapshots = await Promise.all(floors.map(async (f) => ({ floor: f.id, result: await f.team.handle(worker, { ...args, since: args.since ? (args.since[f.id] ?? 0) : undefined }) })));
+    const snapshots = await Promise.all(floors.map(async (f) => ({ floor: f.id, result: await f.team.handle(worker, { ...args, since: args.since ? args.since[f.id] : undefined }) })));
     return { status: 200, body: merged(snapshots) };
   }
 }
 
 /** Floor snapshots as one status, each subagent and event tagged with its floor, and each floor's latest event seq. */
 function merged(snapshots: { floor: string; result: TeamReply }[]): Record<string, unknown> {
+  const otherWorkers = snapshots.flatMap(({ floor, result }) => ((result.body.otherWorkers as Record<string, unknown>[] | undefined) ?? []).map((w) => ({ ...w, floor })));
   return {
     team: snapshots.flatMap(({ floor, result }) => ((result.body.team as Record<string, unknown>[] | undefined) ?? []).map((w) => ({ ...w, floor }))),
+    ...(otherWorkers.length ? { otherWorkers } : {}),
     events: snapshots.flatMap(({ floor, result }) => ((result.body.events as Record<string, unknown>[] | undefined) ?? []).map((e) => ({ ...e, floor }))),
     latest: Object.fromEntries(snapshots.map(({ floor, result }) => [floor, result.body.latest])),
   };

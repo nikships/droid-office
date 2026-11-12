@@ -17,14 +17,14 @@ import { floorNamed } from '../remote-office.js';
 /** One floor a lead's team is on: its own floor, or every open floor for a building agent. */
 export interface TeamScope {
   id: string;
-  team: Pick<Team, 'handle' | TeamViews>;
+  team: Pick<Team, 'handle' | Exclude<TeamViews, 'isWatching'>> & Partial<Pick<Team, 'isWatching'>>;
   workers: Pick<WorkerManager, 'get' | 'list'> & Partial<Pick<WorkerManager, 'screenLines' | 'screenMenu' | 'write'>>;
 }
 
 /** What a filter or wait may name: every event kind, plus blocked (a subagent needs input in its own terminal). */
 export const EVENT_FILTERS = [...TEAM_EVENT_KINDS, 'blocked'] as const;
 const WAIT_FOR = [...EVENT_FILTERS, 'idle'] as const;
-const WAIT_DEFAULT: (typeof WAIT_FOR)[number][] = ['report', 'question', 'blocked', 'idle'];
+const WAIT_DEFAULT: (typeof WAIT_FOR)[number][] = ['report', 'question', 'pr', 'blocked', 'idle'];
 const WAIT_DEFAULT_SEC = 30;
 const WAIT_MAX_SEC = 600;
 /** Single-call hold cap so long waits return cleanly with a cursor before ~120–240s HTTP/MCP client timeouts (-32001). */
@@ -77,7 +77,7 @@ export function cursorOf(latest: Record<string, number>): string {
     .join(',');
 }
 
-/** A subagent as compact structured status shows it. */
+/** A subagent (or watched floor worker) as compact structured status shows it. */
 export function compactWorker(m: TeamMember, floor: string) {
   return {
     id: m.id,
@@ -86,6 +86,7 @@ export function compactWorker(m: TeamMember, floor: string) {
     desk: m.desk,
     state: m.state,
     status: m.status,
+    ...(m.watched ? { watched: true as const } : {}),
     ...(m.task ? { task: m.task } : {}),
     ...(m.taskLabel ? { taskLabel: m.taskLabel } : {}),
     ...(m.activity ? { doing: m.activity } : {}),
@@ -101,7 +102,11 @@ export function compactWorker(m: TeamMember, floor: string) {
     ...(m.note ? { note: { text: summary(m.note.text), at: m.note.at } } : {}),
     ...(m.model ? { model: m.model } : {}),
     ...(m.effort ? { effort: m.effort } : {}),
+    ...(m.cwd ? { cwd: m.cwd } : {}),
     ...(m.worktree ? { branch: m.worktree.branch, worktree: m.worktree.path, ...(m.worktree.from ? { from: m.worktree.from } : {}) } : {}),
+    ...(!m.worktree && m.branch ? { branch: m.branch } : {}),
+    ...(m.sharedCheckout ? { sharedCheckout: true as const } : {}),
+    ...(m.warnings?.length ? { warnings: [...m.warnings] } : {}),
     ...(m.pr ? { pr: m.pr } : {}),
     ...(m.prStatus ? { prStatus: m.prStatus } : {}),
     ...(m.ci ? { ci: m.ci } : {}),
@@ -124,7 +129,7 @@ export function compactWorker(m: TeamMember, floor: string) {
 }
 
 /** An event with its id and time; the full text only when asked for. */
-export function compactEvent(e: Pick<TeamEvent, 'seq' | 'kind' | 'worker' | 'name' | 'at' | 'text' | 'options' | 'progress' | 'result' | 'review'>, floor: string, verbose = false) {
+export function compactEvent(e: Pick<TeamEvent, 'seq' | 'kind' | 'worker' | 'name' | 'at' | 'text' | 'options' | 'progress' | 'watched' | 'result' | 'review'>, floor: string, verbose = false) {
   return {
     id: eventId(floor, e.seq),
     kind: e.kind,
@@ -135,6 +140,7 @@ export function compactEvent(e: Pick<TeamEvent, 'seq' | 'kind' | 'worker' | 'nam
     ...(e.text ? { summary: summary(e.text), ...(verbose ? { text: e.text } : {}) } : {}),
     ...(e.options?.length ? { options: e.options } : {}),
     ...(e.progress ? { progress: true as const } : {}),
+    ...(e.watched ? { watched: true as const } : {}),
     ...(e.result ? { result: e.result } : {}),
     ...(e.review ? { review: e.review } : {}),
   };
@@ -165,7 +171,7 @@ export function compactWorkerText(w: CompactWorker): string {
   const forgeLines = formatForgeLines({ pr: w.prStatus, ci: w.ci, releaseRun: w.releaseRun });
   const queueBrief = w.queuedMessages ? formatQueueBrief(w.queuedMessages) : undefined;
   return [
-    `${w.name} (${w.id}) ${w.state}${w.awaitingJob ? ' (not finished: its progress report says it waits on its own background work)' : ''}, ${w.desk}${w.task ? `: ${w.task}${formatTaskTag(w.taskLabel)}` : ''}.`,
+    `${w.name} (${w.id})${w.watched ? ' [watching]' : ''} ${w.state}${w.awaitingJob ? ' (not finished: its progress report says it waits on its own background work)' : ''}, ${w.desk}${w.task ? `: ${w.task}${formatTaskTag(w.taskLabel)}` : ''}.`,
     ...(w.modelStatus && w.modelStatus.state !== 'ok' ? [`${w.modelStatus.state === 'cooldown' ? 'Model cooldown' : 'Model alert'}: ${w.modelStatus.summary}.`] : []),
     ...(w.retryingModel && w.modelStatus?.state !== 'retrying' ? [`Retrying: ${w.retryingModel.detail}.`] : []),
     ...(w.modelError && w.modelStatus?.state !== 'rate_limited' ? [`Model error: ${w.modelError}.`] : []),
@@ -177,8 +183,10 @@ export function compactWorkerText(w: CompactWorker): string {
     ...(queueBrief ? [`${queueBrief}.`] : w.queued ? [`Queued: ${w.queued.terminal} terminal message${w.queued.terminal === 1 ? '' : 's'}, ${w.queued.notices} next-step notice${w.queued.notices === 1 ? '' : 's'}.`] : []),
     ...(w.areas?.length ? [`Areas: ${w.areas.join(', ')}.`] : []),
     ...(w.note ? [`Note: ${w.note.text}`] : []),
+    ...(w.cwd && !w.worktree ? [`Directory ${w.cwd}${w.sharedCheckout ? ' (no worktree)' : ''}.`] : []),
     ...(w.branch ? [`Branch ${w.branch}.`] : []),
     ...(forgeLines.length ? forgeLines.map((l) => `${l}.`) : w.pr ? [`PR ${w.pr.url}.`] : []),
+    ...(w.warnings?.length ? [`Warning: ${w.warnings.join('; ')}.`] : []),
     ...(w.lastReportId ? [`Last ${w.lastReportKind}${w.result ? ` (${w.result.status})` : ''} ${w.lastReportAt} [${w.lastReportId}]: ${w.lastReportSummary}`] : []),
     ...(w.review ? [`Review: ${w.review.verdict} by ${w.review.by} (${summary(w.review.notes)}).`] : []),
   ].join(' ');
@@ -203,13 +211,13 @@ export function teamScopes(caller: OfficeMcpCaller, deps: OfficeMcpDeps, floor?:
   return [own];
 }
 
-/** Subagent ids by name or id across scopes; a name on more than one floor, or none, is an error. */
+/** Subagent or watched-worker ids by name or id across scopes; a name on more than one floor, or none, is an error. */
 function watchedWorkers(scopes: TeamScope[], lead: string, names: readonly string[] | undefined): Set<string> | string | undefined {
   if (!names?.length) return undefined;
   const ids = new Set<string>();
   for (const name of names) {
     const want = name.trim().toLowerCase();
-    const found = scopes.flatMap((s) => s.workers.list().filter((w) => w.lead === lead && (w.id === want || w.name.toLowerCase() === want || w.name.replace(/ 🐚$/, '').toLowerCase() === want)));
+    const found = scopes.flatMap((s) => s.workers.list().filter((w) => (w.lead === lead || s.team.isWatching?.(lead, w.id)) && (w.id === want || w.name.toLowerCase() === want || w.name.replace(/ 🐚$/, '').toLowerCase() === want)));
     if (found.length !== 1) return found.length ? `${name} names subagents on several floors: use the worker id` : `No subagent called ${name} in your team: team status lists them`;
     ids.add(found[0].id);
   }
@@ -307,7 +315,7 @@ export function openQuestions(scopes: TeamScope[], lead: string, watched?: Reado
       );
     const terminal = s.workers
       .list()
-      .filter((w) => w.lead === lead && (!watched || watched.has(w.id)))
+      .filter((w) => (w.lead === lead || s.team.isWatching?.(lead, w.id)) && (!watched || watched.has(w.id)))
       .flatMap((w) => terminalQuestion(s, w) ?? []);
     return [...asked, ...terminal];
   });
@@ -416,11 +424,11 @@ export function register(server: OfficeMcpServer, deps: OfficeMcpDeps): void {
       try {
         const until = new Set(args.until ?? WAIT_DEFAULT);
         const kinds = eventKinds([...until]);
-        // A remote lead's unheard news stays in office_inbox; without a cursor it waits for what's new from now.
-        const after = new Map(scopes.map((s) => [s.id, since ? (since.get(s.id) ?? 0) : caller.worker.remote ? s.team.latest() : undefined]));
+        // A remote lead's unheard news stays in office_inbox; without a cursor for that floor it waits for what's new from now.
+        const after = new Map(scopes.map((s) => [s.id, since?.has(s.id) ? since.get(s.id)! : caller.worker.remote ? s.team.latest() : undefined]));
         const news = () => scopes.flatMap((s) => s.team.news(lead, { after: after.get(s.id), unread: after.get(s.id) === undefined, kinds, workers: watched }).map((e) => ({ e, floor: s.id })));
         const reasonOf = (events: Matched['events']) => (events[0].e.kind === 'needs_input' && !until.has('needs_input') ? 'blocked' : events[0].e.kind);
-        const team = () => scopes.flatMap((s) => s.workers.list().filter((w) => w.lead === lead && (!watched || watched.has(w.id))));
+        const team = () => scopes.flatMap((s) => s.workers.list().filter((w) => (w.lead === lead || s.team.isWatching?.(lead, w.id)) && (!watched || watched.has(w.id))));
         // From the hooks' account of the question, not the screen: its menu may draw after the last signal a wait hears.
         const asks = () => team().flatMap((w) => (w.status === 'needs_input' && w.kind === 'agent' && !w.cloud && w.ask?.kind === 'question' ? [`${w.id}:${w.waitingSince ?? 0}:${JSON.stringify(w.ask.questions)}`] : []));
         // A terminal question or a settled team counts only when it comes about during the wait: one that was
@@ -521,7 +529,7 @@ export function register(server: OfficeMcpServer, deps: OfficeMcpDeps): void {
       );
       if (!args.id && new Set(found.map((x) => x.e.worker)).size > 1) {
         // Reports outlive their subagent, so a name hired again after a dismissal means the one on the team now.
-        const onTeam = new Set(scopes.flatMap((s) => s.workers.list().flatMap((w) => (w.lead === lead ? [w.id] : []))));
+        const onTeam = new Set(scopes.flatMap((s) => s.workers.list().flatMap((w) => (w.lead === lead || s.team.isWatching?.(lead, w.id) ? [w.id] : []))));
         const current = found.filter((x) => onTeam.has(x.e.worker));
         if (new Set(current.map((x) => x.e.worker)).size !== 1) return officeError(`${args.worker} names more than one subagent: use the worker id${scopes.length > 1 ? ' or floor' : ''}.`);
         found = current;
@@ -600,7 +608,7 @@ export function register(server: OfficeMcpServer, deps: OfficeMcpDeps): void {
       const ask = ASK_ID.exec(args.questionId);
       const scope = ask ? scopes.find((s) => s.id === ask[1]) : undefined;
       const w = ask && scope?.workers.get(ask[2]);
-      if (!ask || !scope || !w || w.lead !== lead) return officeError('No question with that id is waiting on you. questions_list shows the open ones.');
+      if (!ask || !scope || !w || (w.lead !== lead && !(caller.building && scope.team.isWatching?.(lead, w.id)))) return officeError('No question with that id is waiting on you. questions_list shows the open ones.');
       const now = terminalQuestion(scope, w);
       if (now?.kind === 'permission') return officeError(now.why ?? 'Only the person at its desk can answer a permission prompt.');
       if (!now?.answerable || now.id !== args.questionId) return officeError('The question changed or was already answered, so nothing was sent. questions_list shows the current one.');

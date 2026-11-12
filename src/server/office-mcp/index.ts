@@ -113,7 +113,7 @@ export const officeAccess = {
     if (c.worker.lead) return 'Subagents report to their lead with team_report; they cannot manage a team.';
     if (c.building) return undefined;
     const floor = ownFloor(c);
-    return floor.workers.list().some((w) => w.lead === c.worker.id) || floor.team.hasNews(c.worker.id) ? undefined : floor.team.cannotHire(c.worker);
+    return floor.workers.list().some((w) => w.lead === c.worker.id || floor.team.isWatching?.(c.worker.id, w.id)) || floor.team.hasNews(c.worker.id) ? undefined : floor.team.cannotHire(c.worker);
   }) satisfies OfficeMcpAccess,
   subagent: ((c) => (c.worker.lead ? undefined : 'Only a subagent reports to a lead. Independent workers answer the owner in their terminal.')) satisfies OfficeMcpAccess,
   visits: ((c) => (c.building ? 'Building agents visit nobody: reach any worker with office_worker_prompt.' : ownFloor(c).visits.cannotVisit(c.worker))) satisfies OfficeMcpAccess,
@@ -130,6 +130,7 @@ export const BUILDING_TOOLS = new Set([
   'office_status',
   'team_models',
   'team_hire',
+  'team_watch',
   'team_status',
   'team_wait',
   'team_message',
