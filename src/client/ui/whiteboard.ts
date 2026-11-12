@@ -303,7 +303,7 @@ export function openWhiteboard(net: Net, opts: { card?: string; queueOffline?: b
             emptyState(
               '🧑‍🎨',
               'Nothing on the board yet',
-              'Ask a worker to put something on it ("put your plan on the Whiteboard"), drop a Markdown/video/image/HTML file here, or create a card.',
+              'Ask a worker to put something on it ("put your plan on the Whiteboard"), drop or paste a Markdown/video/image/HTML file here, or create a card.',
               h('div.row', {}, h('button.btn.accent', { type: 'button', onclick: addCard }, 'Add card'), h('button.btn', { type: 'button', onclick: newCanvas }, 'New canvas')),
             ),
           ),
@@ -476,6 +476,12 @@ export function openWhiteboard(net: Net, opts: { card?: string; queueOffline?: b
         },
         changedMarks: () => new Set(changes().flatMap((x) => (x.mark ? [x.mark.id] : []))),
         render: () => sync.floor(floor).renders[c.id],
+        navigate: (dir) => {
+          const b = board();
+          const nav = b && card ? currentNeighbors(b, card) : undefined;
+          const target = dir < 0 ? nav?.prev : nav?.next;
+          if (target) go(target);
+        },
       },
       c,
     );
@@ -922,15 +928,31 @@ export function openWhiteboard(net: Net, opts: { card?: string; queueOffline?: b
     e.stopPropagation();
   };
   window.addEventListener('keydown', onKey, true);
-  // A picture pasted anywhere in the window goes on the open card.
+  // A picture pasted on an open card becomes a picture mark; files pasted on the grid create artifact cards.
   const onPaste = (e: ClipboardEvent) => {
-    if (!surface || !el.isConnected) return;
+    if (!el.isConnected || modal.backdrop.nextElementSibling) return;
     const t = e.target as HTMLElement | null;
     if (t?.closest('input, textarea, [contenteditable]')) return;
-    const files = [...(e.clipboardData?.files ?? [])].filter((f) => f.type.startsWith('image/'));
-    if (!files.length) return;
+    if (surface) {
+      const files = [...(e.clipboardData?.files ?? [])].filter((f) => f.type.startsWith('image/'));
+      if (!files.length) return;
+      e.preventDefault();
+      void surface.addPictures(files);
+      return;
+    }
+    if (selecting) return;
+    const rawFiles = [...(e.clipboardData?.files ?? [])];
+    if (!rawFiles.length) return;
+    const files = rawFiles.map((f) => {
+      if (f.name === 'image.png' || f.name === 'blob') {
+        const stamp = new Date().toTimeString().slice(0, 8).replace(/:/g, '-');
+        const ext = f.type.split('/')[1]?.split('+')[0] || 'png';
+        return new File([f], `Pasted image ${stamp}.${ext}`, { type: f.type });
+      }
+      return f;
+    });
     e.preventDefault();
-    void surface.addPictures(files);
+    void handleDroppedFiles(files);
   };
   window.addEventListener('paste', onPaste);
 

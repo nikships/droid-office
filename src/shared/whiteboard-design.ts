@@ -263,6 +263,7 @@ a:hover { color: var(--accent); border-bottom-color: var(--accent); }
   font: 600 11px/1 var(--font-mono);
   text-transform: uppercase;
   letter-spacing: 0.09em;
+  text-decoration: none;
   cursor: pointer;
   transition: border-color var(--dur) var(--ease), color var(--dur) var(--ease), background-color var(--dur) var(--ease), opacity var(--dur) var(--ease);
 }
@@ -270,7 +271,8 @@ a:hover { color: var(--accent); border-bottom-color: var(--accent); }
 .wb-btn:focus-visible { outline: 1px solid var(--accent); outline-offset: 2px; }
 .wb-btn.primary { background: var(--cta-fill); border-color: var(--cta-fill); color: var(--cta-ink); }
 .wb-btn.primary:hover:not(:disabled) { background: var(--accent-bright); border-color: var(--accent-bright); color: #020202; }
-.wb-btn.sm { height: 26px; padding: 0 9px; font-size: 10px; }
+.wb-btn.sm { height: 26px; padding: 0 9px; font-size: 10px; gap: 6px; }
+.wb-btn.active, .wb-btn[aria-pressed="true"] { border-color: var(--accent); color: var(--accent); }
 .wb-btn:disabled, .wb-btn[aria-disabled="true"] { opacity: 0.48; cursor: not-allowed; }
 .wb-btn[data-wb-ping-state="sent"] { border-color: var(--accent); color: var(--accent); opacity: 0.85; }
 .wb-btn[data-wb-ping-state="sent"]::after { content: " · SENT"; font-weight: 600; }
@@ -392,9 +394,9 @@ Core rules, in priority order:
 const ARTIFACTS_SECTION = `## Choosing the Right Whiteboard Artifact Type
 
 Prefer dedicated artifact sources in \`whiteboard_card\` before hand-writing boilerplate HTML:
-- **Markdown (\`source: { markdown: "# ..." }\` or \`source: { markdownFile: "plan.md" }\`):** Rendered automatically in Factory dark (or \`theme: "light"\`) industrial typography at 1280px, with numbered \`01\` eyebrows on \`##\` headings, stable \`data-wb-id\` anchors on every section and table row, copyable code blocks, GitHub \`[!NOTE]\`/\`[!WARNING]\` callouts, interactive task-list checkboxes (\`- [ ]\` saved to \`state.fields\`), relative local images collected automatically, and optional \`actions\` buttons (\`[{ action, label, ping, primary }]\`) or a \`\`\`wb-actions\`\`\` JSON block!
-- **Video (\`source: { video: "demo.mp4", poster?: "poster.jpg", caption?: "..." }\`):** Dedicated 1280px Factory cinema player with play/pause, scrub timeline, frame-step (\`-1F\` / \`+1F\`), speed (\`0.5×–2×\`), loop, \`PIN @TIME\` timecode helper, clickable timestamp seek from comments, and safe headless PNG rendering without decoding huge video streams.
-- **Image (\`source: { image: "proof.png", caption?: "..." }\`):** Supports PNG, JPEG, WebP, GIF, and SVG on a clean Factory frame with pixel dimensions and transparency grid toggle, anchored at \`data-wb-id="image"\`.
+- **Markdown (\`source: { markdown: "# ..." }\` or \`source: { markdownFile: "plan.md" }\`):** Rendered automatically in Factory dark (or \`theme: "light"\`) industrial typography at 1280px, with numbered \`01\` eyebrows on \`##\` headings, a sticky section index rail, stable \`data-wb-id\` anchors on every section and table row, copyable code blocks, \`COPY MD\`, GitHub \`[!NOTE]\`/\`[!WARNING]\` callouts, interactive task-list checkboxes (\`- [ ]\` saved to \`state.fields\` with a live completion badge), click-to-zoom embedded images, relative local images collected automatically, and optional \`actions\` buttons (\`[{ action, label, ping, primary }]\`) or a \`\`\`wb-actions\`\`\` JSON block!
+- **Video (\`source: { video: "demo.mp4", poster?: "poster.jpg", caption?: "..." }\`):** Dedicated 1280px Factory cinema player with play/pause, hover-preview scrub timeline, frame-step (\`-1F\` / \`+1F\`, \`,\` / \`.\`), speed (\`0.5×–2×\`), loop, mute, \`PIN @TIME\` timecode helper, direct download, built-in full-screen player mode (\`FULL\` button or double-click), clickable timestamp seek from comments, and safe headless PNG rendering without decoding huge video streams.
+- **Image (\`source: { image: "proof.png", caption?: "..." }\`):** Supports PNG, JPEG, WebP, GIF, and SVG on a clean Factory frame with pixel dimensions, \`GRID BG\` and \`LIGHT BG\` backdrop toggles for transparent assets, direct download, and full-screen inspection, anchored at \`data-wb-id="image"\`.
 - **Live links (\`source: { link: "path" }\`):** Works with \`.html\`, \`.md\`, images (\`.png\`/\`.jpg\`/\`.webp\`/\`.gif\`/\`.svg\`), videos (\`.mp4\`/\`.webm\`/\`.mov\`), or a folder package (\`entry?: "index.html"\`). Editing the file on disk updates the card live.
 - **Custom HTML (\`source: { html }\`, \`{ file }\`, or \`{ dir }\`):** Use when building bespoke interactive tools, charts, side-by-side diffs, configurators, or multi-step forms. Start from \`FACTORY_ARTIFACT_CSS\` (fetch with \`topic: "css"\`). Pass \`show: true\` on \`create\` or \`update\` to put the card on the 3D office wall in the same call.`;
 

@@ -823,6 +823,7 @@ label.choice:has(> input:disabled) { opacity: .5; cursor: default; }
 .modal.term header { background: var(--surface); }
 .modal.term .term-host { position: relative; flex: 1; min-height: 0; padding: 8px 4px 4px 10px; background: #000000; }
 .modal.term .term-host .xterm { height: 100%; }
+.xterm .xterm-screen canvas.term-kitty-layer { pointer-events: none; z-index: 2; }
 .modal.term .term-team { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; padding: 6px 14px; background: var(--surface); border-bottom: 1px solid var(--border); }
 /* A cloud worker's window (ui/factory-cloud.ts): the terminal window's frame around its Factory session */
 .modal.term.cloud-win { width: min(900px, 100%); height: min(640px, calc(100vh - 32px)); background: var(--surface); }
@@ -2203,8 +2204,9 @@ li.cmp-muted:hover { background: none; }
 .wb-picture-img { display: block; width: 100%; height: 100%; object-fit: contain; cursor: move; user-select: none; }
 .wb-picture .wb-mark-x { position: absolute; top: var(--space-1); right: var(--space-1); background: rgba(255, 255, 255, .85); }
 .wb-ghost { position: absolute; border: 2px dashed var(--accent); background: rgba(255, 216, 102, .35); pointer-events: none !important; }
-.wb-composer { position: absolute; z-index: 3; width: 300px; display: flex; flex-direction: column; gap: var(--space-2); padding: var(--space-3); transform: scale(var(--wb-unzoom, 1)); transform-origin: 0 0; border: 1px solid var(--border-strong); border-radius: var(--radius-lg); background: var(--surface-raised); box-shadow: var(--shadow-pop); color: var(--text); }
+.wb-composer { position: absolute; z-index: 3; width: 336px; display: flex; flex-direction: column; gap: var(--space-2); padding: var(--space-3); transform: scale(var(--wb-unzoom, 1)); transform-origin: 0 0; border: 1px solid var(--border-strong); border-radius: var(--radius-lg); background: var(--surface-raised); box-shadow: var(--shadow-pop); color: var(--text); }
 .wb-composer .grow { flex: 1; color: var(--text-secondary); font-size: var(--text-small); }
+.wb-composer-time:empty { display: none; }
 
 /* The side panel. */
 .wb-panel { display: flex; flex-direction: column; gap: var(--space-5); min-width: 0; min-height: 0; overflow: auto; padding: var(--space-4); border-left: 1px solid var(--border); background: var(--surface); }
