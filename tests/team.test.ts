@@ -255,7 +255,7 @@ test('steering covers startup, current and legacy working hooks, reported work, 
   for (const [state, hooks, expected] of [
     ['starting', true, 'error'],
     ['working', true, 'next_step'],
-    ['working', false, 'queued_turn'],
+    ['working', false, 'sent'],
     ['needs_input', true, 'error'],
     ['done', true, 'sent'],
     ['idle', true, 'sent'],
@@ -268,7 +268,10 @@ test('steering covers startup, current and legacy working hooks, reported work, 
     assert.equal(result.status, expected === 'error' ? 409 : 200);
   }
   r.set('sub1', 'working');
+  r.fake.hookDelivery = false;
+  assert.equal((await r.call('lead', { action: 'send', worker: 'Pixel', text: 'After turn.', queue: true })).body.delivery, 'queued_turn');
   await r.call('sub1', { action: 'report', text: 'Ready for follow-up.' });
+  r.fake.hookDelivery = true;
   assert.equal((await r.call('lead', { action: 'send', worker: 'sub1', text: 'Revise this.' })).body.delivery, 'next_step');
 });
 
@@ -365,16 +368,18 @@ test('mid-turn steering uses existing hook notices and queued-turn fallback; bro
   assert.equal(r.fake.prompts.length, 0);
   assert.match(r.fake.notices[0][1], /Use the new API/);
   r.fake.hookDelivery = false;
-  assert.equal((await r.call('lead', { action: 'send', worker: 'sub1', text: 'Keep going.' })).body.delivery, 'queued_turn');
+  assert.equal((await r.call('lead', { action: 'send', worker: 'sub1', text: 'Steer immediately.' })).body.delivery, 'sent');
+  assert.deepEqual(r.fake.queued, []);
+  assert.equal((await r.call('lead', { action: 'send', worker: 'sub1', text: 'Keep going.', queue: true })).body.delivery, 'queued_turn');
   assert.deepEqual(r.fake.queued, ['sub1']);
   assert.equal((await r.call('lead', { action: 'send', worker: 'sub1', text: 'Normal submission.', queue: false })).body.delivery, 'sent');
   assert.deepEqual(r.fake.queued, ['sub1']);
   r.set('sub2', 'needs_input');
   const all = await r.call('lead', { action: 'send', all: true, text: 'Shared constraint.' });
-  assert.equal(all.body.results[0].delivery, 'queued_turn');
+  assert.equal(all.body.results[0].delivery, 'sent');
   assert.match(all.body.results[1].error, /waiting on an answer/);
   assert.equal((await r.call('lead', { action: 'send', workers: ['Pixel'], text: 'One only.' })).body.results.length, 1);
-  const mixed = await r.call('lead', { action: 'send', workers: ['sub1', 'outsider'], text: 'Partial delivery.' });
+  const mixed = await r.call('lead', { action: 'send', workers: ['sub1', 'outsider'], text: 'Partial delivery.', queue: true });
   assert.equal(mixed.body.results[0].delivery, 'queued_turn');
   assert.match(mixed.body.results[1].error, /No subagent called outsider/);
   r.set('sub2', 'exited');

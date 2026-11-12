@@ -31,6 +31,7 @@ import { instructions as linearInstructions, register as registerLinear } from '
 import type { FloorLinear, LinearOffice } from '../linear.js';
 import { buildingInstructions, register as registerRemote } from './remote.js';
 import { register as registerTeamEvents } from './team-events.js';
+import { register as registerQueue } from './queue.js';
 import { hasOwnerAccess, ownerInstructions, register as registerOwner, type OwnerOffice } from './owner.js';
 import type { RemoteOffice } from '../remote-office.js';
 import type { RemoteKeyId } from '../remote-workers.js';
@@ -50,7 +51,7 @@ export interface OfficeMcpFloor {
   name: string;
   dir: string;
   /** Without the screen methods, questions_list shows no terminal questions. */
-  workers: Pick<WorkerManager, 'authenticate' | 'get' | 'list'> & Partial<Pick<WorkerManager, 'screenLines' | 'screenMenu' | 'write'>>;
+  workers: Pick<WorkerManager, 'authenticate' | 'get' | 'list'> & Partial<Pick<WorkerManager, 'screenLines' | 'screenMenu' | 'write' | 'queueState' | 'clearQueue' | 'promoteQueue' | 'blockingTool'>>;
   team: Pick<Team, 'handle' | 'cannotHire' | 'hasNews' | TeamViews>;
   visits: Pick<Visits, 'handle' | 'cannotVisit'>;
   whiteboard: WhiteboardStore;
@@ -138,6 +139,7 @@ export const BUILDING_TOOLS = new Set([
   'question_answer',
   'worker_diff',
   'worker_log',
+  'worker_queue',
   'team_dismiss',
   'team_merge',
   'team_pr',
@@ -399,6 +401,7 @@ export function createOfficeMcp(deps: OfficeMcpDeps): OfficeMcpServer {
   const server = new OfficeMcpServer(deps);
   registerTeam(server, deps);
   registerTeamEvents(server, deps);
+  registerQueue(server, deps);
   registerWhiteboard(server, deps);
   registerVisits(server, deps);
   registerRemote(server, deps);

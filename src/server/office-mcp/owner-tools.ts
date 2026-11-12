@@ -63,7 +63,7 @@ export const OWNER_TOOLS = [
   tool(
     'worker.prompt',
     'office_worker_prompt',
-    'Prompt an independent floor worker (check office_look first; for subagents use team_message; never prompt a worker at a permission prompt). Accepts worker (or workerId/name) and prompt (or text).',
+    'Prompt or steer an independent floor worker (check office_look first; for subagents use team_message; never prompt a worker at a permission prompt). Accepts worker (or workerId/name) and prompt (or text). Default queue: false steers during a running turn; queue: true waits for turn end; urgent: true interrupts via Escape and delivers immediately.',
     z
       .strictObject({
         ...worker,
@@ -71,10 +71,12 @@ export const OWNER_TOOLS = [
         text: text.min(1).optional().describe('Alias for prompt.'),
         issue: number.optional(),
         images: images.optional(),
-        queue: z.boolean().default(false).describe('Queue behind running turn.'),
+        queue: z.boolean().default(false).describe('Default false: steer during the running turn; true queues via Ctrl+Enter for after the turn ends.'),
+        urgent: z.boolean().optional().describe('True: interrupt a running turn or blocking command via Escape and deliver immediately (not with queue: true).'),
       })
       .refine(hasWorker, WORKER_TARGET_ERROR)
-      .refine((a) => resolvePromptText(a) !== undefined, PROMPT_TEXT_ERROR),
+      .refine((a) => resolvePromptText(a) !== undefined, PROMPT_TEXT_ERROR)
+      .refine((a) => !(a.queue && a.urgent), 'Choose either queue: true (after turn) or urgent: true (interrupt and steer now), not both.'),
     'worker',
     'write',
     true,
@@ -128,6 +130,9 @@ export function registerOwnerTools(server: OfficeMcpServer, owner: OwnerOffice):
           if (building.worker.id !== ORCHESTRATOR_ID) return officeError(outsideOffice(building, 'conversation'));
           args.workerId = building.worker.id;
         } else {
+          if (entry.action === 'worker.prompt' && found.worker.cloud && args.urgent === true) {
+            return officeError(`${found.worker.name} is a cloud worker: call office_worker_interrupt first, then office_worker_prompt.`);
+          }
           args.workerId = found.worker.id;
           floor = found.floor.id;
         }
@@ -143,6 +148,7 @@ export function registerOwnerTools(server: OfficeMcpServer, owner: OwnerOffice):
         floor = picked.floor.id;
       }
       if (entry.action === 'thread.read') args.request = randomUUID();
+      if (args.urgent === undefined) delete args.urgent;
       if (signal.aborted) return officeError('Cancelled before taking the action.');
       const result = await owner.act(caller.worker, { ...args, t: entry.action }, { floor, signal });
       return ownerResult(entry.name, result);
