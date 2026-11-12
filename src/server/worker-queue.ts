@@ -1,4 +1,4 @@
-import { CLEAR_DROID_QUEUE, DELETE_DROID_QUEUE_ITEM, DROID_QUEUE_DOWN, REVIEW_DROID_QUEUE, readDroidPending, showsAs, type DroidPendingGroup, type DroidPendingSnapshot } from '../shared/droid-queue.js';
+import { CLEAR_DROID_QUEUE, DELETE_DROID_QUEUE_ITEM, DROID_QUEUE_DOWN, DROID_QUEUE_UP, REVIEW_DROID_QUEUE, readDroidPending, showsAs, type DroidPendingGroup, type DroidPendingSnapshot } from '../shared/droid-queue.js';
 import { QUEUE_GRACE_MS } from '../shared/thread-queue.js';
 import type { WorkerStatus } from '../shared/protocol.js';
 
@@ -258,38 +258,83 @@ export function resolveWorkerQueue(input: BuildQueueInput): ResolvedWorkerQueue 
 
 const pause = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 
+export interface QueueDriveTarget {
+  group: DroidPendingGroup;
+  text: string;
+}
+
 /**
  * Drives Droid's Ctrl+R review mode to promote (`action === 'promote'`) or delete (`action === 'delete'`)
  * the item at `droidIndex` in Droid's reviewable pending list, using Ctrl+R (never Esc) to exit.
- * Returns `false` without sending navigation/action keys if Droid's queue review never became active.
+ * Returns `false` without sending navigation/action keys if Droid's queue review never became active,
+ * and closes review mode before returning `false` if the item disappeared or failed to promote.
  */
-export async function driveDroidQueueItem(io: { write(data: string): void; rows(): readonly string[] | undefined }, droidIndex: number, totalOnScreen: number, action: 'promote' | 'delete'): Promise<boolean> {
+export async function driveDroidQueueItem(io: { write(data: string): void; rows(): readonly string[] | undefined }, droidIndex: number, totalOnScreen: number, action: 'promote' | 'delete', target?: QueueDriveTarget): Promise<boolean> {
   const before = io.rows();
   const snap = before ? readDroidPending(before) : undefined;
-  let active = snap?.reviewActive === true;
-  if (!active) {
+  const wasActive = snap?.reviewActive === true;
+  let reviewSnap = wasActive ? snap : undefined;
+  if (!reviewSnap) {
     io.write(REVIEW_DROID_QUEUE);
-    for (let attempt = 0; attempt < 6 && !active; attempt++) {
+    for (let attempt = 0; attempt < 20 && !reviewSnap; attempt++) {
       await pause(20);
       const cur = io.rows();
-      if (cur && readDroidPending(cur)?.reviewActive) active = true;
+      const parsed = cur ? readDroidPending(cur) : undefined;
+      if (parsed?.reviewActive) reviewSnap = parsed;
     }
-    if (!active) return false;
+    if (!reviewSnap) return false;
   }
-  for (let step = 0; step < droidIndex; step++) {
+
+  // Droid resets selection to index 0 only when opening review mode; rewind first if it was already open.
+  if (wasActive) {
+    const rewind = Math.max(reviewSnap.items.length, totalOnScreen) - 1;
+    for (let step = 0; step < rewind; step++) {
+      io.write(DROID_QUEUE_UP);
+      await pause(10);
+    }
+  }
+
+  // Review mode expands "+N more steering/queued items" rows, which can shift the target item's index.
+  let navIndex = droidIndex;
+  if (target) {
+    const atIndex = reviewSnap.items[navIndex];
+    if (!atIndex || atIndex.group !== target.group || !showsAs(atIndex, target.text)) {
+      const found = reviewSnap.items.findIndex((it) => it.group === target.group && showsAs(it, target.text));
+      if (found < 0) {
+        io.write(REVIEW_DROID_QUEUE);
+        await pause(20);
+        return false;
+      }
+      navIndex = found;
+    }
+  } else if (navIndex >= reviewSnap.items.length) {
+    io.write(REVIEW_DROID_QUEUE);
+    await pause(20);
+    return false;
+  }
+
+  for (let step = 0; step < navIndex; step++) {
     io.write(DROID_QUEUE_DOWN);
     await pause(15);
   }
   if (action === 'promote') {
-    // Enter in Ctrl+R review mode calls update_queue -> end_of_turn (steering) and closes review mode.
+    // Enter in Ctrl+R review mode calls update_queue -> end_of_turn (steering) and closes review mode asynchronously.
     io.write('\r');
-    await pause(25);
-    return true;
+    for (let attempt = 0; attempt < 15; attempt++) {
+      await pause(20);
+      const cur = io.rows();
+      const after = cur ? readDroidPending(cur) : undefined;
+      if (!after?.reviewActive) return true;
+    }
+    io.write(REVIEW_DROID_QUEUE);
+    await pause(20);
+    return false;
   }
+  const effectiveTotal = Math.max(totalOnScreen, reviewSnap.items.length);
   io.write(DELETE_DROID_QUEUE_ITEM);
   await pause(25);
   // Deleting one item when >1 existed leaves review mode open; Ctrl+R toggles it closed without risking Esc.
-  if (totalOnScreen > 1) {
+  if (effectiveTotal > 1) {
     const after = io.rows();
     if (!after || readDroidPending(after)?.reviewActive !== false) {
       io.write(REVIEW_DROID_QUEUE);

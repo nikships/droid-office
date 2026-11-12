@@ -40,6 +40,7 @@ export const CLEAR_DROID_QUEUE = '\x18';
 export const PULL_TOP_DROID_QUEUE = '\x07';
 export const REVIEW_DROID_QUEUE = '\x12';
 export const DELETE_DROID_QUEUE_ITEM = '\x04';
+export const DROID_QUEUE_UP = '\x1b[A';
 export const DROID_QUEUE_DOWN = '\x1b[B';
 
 const BOX_BOTTOM = /^\s*╰─+╯\s*$/;
@@ -48,7 +49,10 @@ const INPUT_ROW = /^\s*│\s?[>!]/;
 const STEERING_HEADING = /^\s*Steering messages:\s*$/;
 const HEADING = /^\s*Queued messages:\s*$/;
 const HINT = /Ctrl\+X to clear queue/;
-const REVIEW_HINT = /Enter send now\s*·\s*Ctrl\+D delete/;
+// Droid's HintSegments renders three spaces ("   ") between " · "-delimited segments, and may wrap on narrow widths.
+const REVIEW_HINT = /Enter send now(?:\s*·)?\s+Ctrl\+D delete|Esc\/Ctrl\+R exit/;
+const HINT_WRAP = /^\s*(?:Ctrl\+R to modify queue|Ctrl\+G to pull top|↑↓ scroll|Enter send now|Ctrl\+D delete)(?:\s*(?:·|\s{2,})\s*(?:Ctrl\+G to pull top|Ctrl\+X to clear queue|Enter send now|Ctrl\+D delete|Esc\/Ctrl\+R exit))*\s*$/;
+const BUSY_TURN = /Press ESC to stop|Ctrl\+Enter to queue/;
 const MORE = /^(.*?)\s*\((\d+) more lines?\)$/;
 const MORE_STEERING = /^\+(\d+) more steering items?$/;
 const MORE_QUEUED = /^\+(\d+) more queued items?$/;
@@ -93,17 +97,24 @@ export function readDroidQueue(rows: readonly string[]): DroidQueued[] | undefin
     }
   }
   if (heading < 0) return [];
-  let hint = -1;
-  for (let i = heading + 1; i < top; i++) {
-    if (HINT.test(rows[i])) {
-      hint = i;
+  let hintEnd = -1;
+  for (let i = top - 1; i > heading; i--) {
+    if (HINT.test(rows[i]) || REVIEW_HINT.test(rows[i])) {
+      hintEnd = i;
       break;
     }
   }
-  if (hint < 0) return [];
+  if (hintEnd < 0) {
+    // A reply at rest can quote "Queued messages:" without a hint; during a live turn with no recognized footer, treat as unreadable.
+    return rows.slice(heading + 1, bottom).some((row) => BUSY_TURN.test(row)) ? undefined : [];
+  }
   // A reply can quote both queue labels. Require a live turn indicator, not just those words.
-  const busy = rows.slice(hint + 1, bottom).some((row) => /Press ESC to stop|Ctrl\+Enter to queue/.test(row));
+  const busy = rows.slice(hintEnd + 1, bottom).some((row) => BUSY_TURN.test(row));
   if (!busy) return [];
+  let hint = hintEnd;
+  while (hint > heading + 1 && (HINT.test(rows[hint - 1]) || REVIEW_HINT.test(rows[hint - 1]) || HINT_WRAP.test(rows[hint - 1]))) {
+    hint--;
+  }
   const items: DroidQueued[] = [];
   for (let i = heading + 1; i < hint; i++) {
     let text = rows[i].trim();
@@ -130,22 +141,38 @@ export function readDroidPending(rows: readonly string[]): DroidPendingSnapshot 
   const box = findInputBox(rows);
   if (!box) return undefined;
   const { top, bottom } = box;
-  let hint = -1;
+  let hintEnd = -1;
   let reviewActive = false;
   for (let i = top - 1; i >= 0 && i >= top - REACH; i--) {
     if (HINT.test(rows[i])) {
-      hint = i;
+      hintEnd = i;
       break;
     }
     if (REVIEW_HINT.test(rows[i])) {
-      hint = i;
+      hintEnd = i;
       reviewActive = true;
       break;
     }
   }
-  if (hint < 0) return { items: [], moreSteering: 0, moreQueued: 0, reviewActive: false };
-  const busy = rows.slice(hint + 1, bottom).some((row) => /Press ESC to stop|Ctrl\+Enter to queue/.test(row));
+  if (hintEnd < 0) {
+    let heading = -1;
+    for (let i = top - 1; i >= 0 && i >= top - REACH; i--) {
+      if (STEERING_HEADING.test(rows[i]) || HEADING.test(rows[i])) {
+        heading = i;
+        break;
+      }
+    }
+    if (heading >= 0 && rows.slice(heading + 1, bottom).some((row) => BUSY_TURN.test(row))) {
+      return undefined;
+    }
+    return { items: [], moreSteering: 0, moreQueued: 0, reviewActive: false };
+  }
+  const busy = rows.slice(hintEnd + 1, bottom).some((row) => BUSY_TURN.test(row));
   if (!busy) return { items: [], moreSteering: 0, moreQueued: 0, reviewActive: false };
+  let hint = hintEnd;
+  while (hint > 0 && hint - 1 >= top - REACH && (HINT.test(rows[hint - 1]) || REVIEW_HINT.test(rows[hint - 1]) || HINT_WRAP.test(rows[hint - 1]))) {
+    hint--;
+  }
   let start = -1;
   for (let i = hint - 1; i >= 0 && i >= top - REACH; i--) {
     if (STEERING_HEADING.test(rows[i]) || HEADING.test(rows[i])) start = i;

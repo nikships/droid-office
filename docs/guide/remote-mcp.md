@@ -424,7 +424,7 @@ Read your subagent's structured runtime state (plan steps, current/last tool, ho
 
 ### `worker_queue`
 
-Inspect, clear or promote pending messages on a worker (both office hook outbox notices and Droid's TUI queue), and see any active blocking command. Building agents with owner access may target any local floor worker; floor leads target their own subagents.
+Inspect, clear or promote pending messages on a worker (both office hook outbox notices and Droid's TUI queue), and see any active blocking command. When `promote` fails, the message stays visible in the queue with `stillPending` and `remaining` reported on `queue_error` (or `delivery: "already_delivered"` when the turn drained it first). Building agents with owner access may target any local floor worker; floor leads target their own subagents.
 
 | Argument | Type | Required | Description |
 | --- | --- | --- | --- |
