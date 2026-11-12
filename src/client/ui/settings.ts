@@ -563,6 +563,9 @@ function officeRows(net: Net, office: OfficeSettings) {
   let linearError = '';
   let teamError = '';
   let pilotError = '';
+  // Rebuilding a select's options closes it while open, so they're rebuilt only when they change.
+  let teamOptions = '';
+  let projectOptions = '';
   const paintLinear = () => {
     const { connection, setup, autopilot, working } = store.linear;
     linearForm.classList.toggle('hidden', !!connection && !editingLinear);
@@ -578,10 +581,18 @@ function officeRows(net: Net, office: OfficeSettings) {
     const floored = !!connection && !!store.floor;
     teamCard.classList.toggle('hidden', !floored);
     const teams = connection?.teams ?? [];
-    teamSelect.replaceChildren(h('option', { value: '' }, 'No team'), ...teams.map((t) => h('option', { value: t.id }, `${t.name} (${t.key})`)));
+    const teamKey = JSON.stringify(teams.map((t) => [t.id, t.name, t.key]));
+    if (teamKey !== teamOptions) {
+      teamOptions = teamKey;
+      teamSelect.replaceChildren(h('option', { value: '' }, 'No team'), ...teams.map((t) => h('option', { value: t.id }, `${t.name} (${t.key})`)));
+    }
     teamSelect.value = setup?.team.id ?? '';
     const team = teams.find((t) => t.id === setup?.team.id);
-    projectSelect.replaceChildren(h('option', { value: '' }, 'Every project'), ...(team?.projects ?? []).map((p) => h('option', { value: p.id }, p.name)));
+    const projectKey = JSON.stringify((team?.projects ?? []).map((p) => [p.id, p.name]));
+    if (projectKey !== projectOptions) {
+      projectOptions = projectKey;
+      projectSelect.replaceChildren(h('option', { value: '' }, 'Every project'), ...(team?.projects ?? []).map((p) => h('option', { value: p.id }, p.name)));
+    }
     projectSelect.value = setup?.project?.id ?? '';
     projectSelect.classList.toggle('hidden', !team?.projects.length);
     teamFail.classList.toggle('hidden', !teamError);
@@ -639,6 +650,7 @@ function officeRows(net: Net, office: OfficeSettings) {
     paintLinear();
   });
   const connectLinear = () => {
+    if (linearBusy) return;
     if (!linearKeyIn.value.trim()) return linearKeyIn.focus();
     linearBusy = true;
     linearError = '';
@@ -665,14 +677,21 @@ function officeRows(net: Net, office: OfficeSettings) {
   });
   teamSelect.addEventListener('change', () => {
     teamError = '';
+    teamFail.classList.add('hidden');
     net.send({ t: 'linear.team', team: teamSelect.value });
   });
   projectSelect.addEventListener('change', () => {
     teamError = '';
+    teamFail.classList.add('hidden');
     net.send({ t: 'linear.team', team: teamSelect.value, project: projectSelect.value });
   });
-  maxSelect.addEventListener('change', () => net.send({ t: 'linear.autopilot', max: Number(maxSelect.value) }));
-  pilotModel.element.addEventListener('change', () => net.send({ t: 'linear.autopilot', model: pilotModel.value() }));
+  const sendAutopilot = (change: { max?: number; model?: string }) => {
+    pilotError = '';
+    pilotFail.classList.add('hidden');
+    net.send({ t: 'linear.autopilot', ...change });
+  };
+  maxSelect.addEventListener('change', () => sendAutopilot({ max: Number(maxSelect.value) }));
+  pilotModel.element.addEventListener('change', () => sendAutopilot({ model: pilotModel.value() }));
   paintLinear();
   const offLinear = store.on('linear', paintLinear);
 

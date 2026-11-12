@@ -300,6 +300,11 @@ export function openBoard(kind: 'issues' | 'pulls', net: Net, actions: BoardActi
   const statusText = () => {
     const st = onLinear() ? store.linearBoard! : onJira() ? store.jiraBoard! : kind === 'issues' ? store.issues : store.pulls;
     status.textContent = st.loading ? 'Refreshing…' : st.fetchedAt ? `Updated ${timeAgo(st.fetchedAt)}` : '';
+    // The Linear tab keeps its last tickets when a refresh fails (and autopilot pauses), so say so.
+    const failed = onLinear() && !st.loading && st.fetchedAt && st.error;
+    if (failed) status.textContent = `Couldn't refresh · updated ${timeAgo(st.fetchedAt)}`;
+    status.title = failed ? st.error! : '';
+    status.classList.toggle('bad', !!failed);
   };
   const render = () => {
     // Floors without a Jira epic or a Linear team have no tabs at all, just as before.

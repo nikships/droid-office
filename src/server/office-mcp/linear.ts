@@ -330,11 +330,15 @@ export function register(server: OfficeMcpServer, deps: OfficeMcpDeps): void {
         const input = await inputOf(api, office, ctx, args);
         if ('error' in input) return officeError(input.error as string);
         let d = changed(caller, await api.createIssue({ ...input, teamId: t.id }));
-        if (args.start && caller.floor?.linear) {
+        // The ticket exists either way, so a failed start is a note rather than an error the worker might retry into a duplicate.
+        let note = '';
+        if (args.start && !caller.floor?.linear) note = `\nNot taken: only a worker at a floor desk takes a ticket; hand ${d.identifier} out with office_worker_spawn.`;
+        else if (args.start && caller.floor?.linear) {
           const r = await caller.floor.linear.take(d.id, caller.worker);
           if (r.ticket) d = r.ticket;
+          else note = `\nNot taken: ${r.error ?? 'Linear did not answer'}. Try linear_start with ${d.identifier}.`;
         }
-        return officeResult(`Filed ${d.identifier}: ${d.title} (${d.state.name})\n${d.url}`, { issue: d });
+        return officeResult(`Filed ${d.identifier}: ${d.title} (${d.state.name})\n${d.url}${note}`, { issue: d, ...(note ? { taken: false } : {}) });
       } catch (err) {
         return fail(err);
       }

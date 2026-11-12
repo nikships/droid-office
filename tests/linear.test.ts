@@ -22,6 +22,7 @@ import {
   linearPromptVars,
   linearTaskLine,
   linearTaskOf,
+  linkUrl,
   priorityOrder,
   stateForStage,
   type LinearState,
@@ -332,6 +333,12 @@ test('autopilot filters state, links, worker chips, assignments and creation cut
   assert.deepEqual(autopilotPicks(items, pilot, linked, 0), []);
   assert.deepEqual(autopilotPicks(items, pilot, linked, -1), []);
   assert.deepEqual(items, copy);
+});
+
+test('only http and https links from Linear are opened', () => {
+  assert.equal(linkUrl(' https://github.com/o/r/pull/1 '), 'https://github.com/o/r/pull/1');
+  assert.equal(linkUrl('HTTP://example.com'), 'HTTP://example.com');
+  for (const bad of ['javascript:alert(1)', 'data:text/html,x', 'vbscript:x', '//example.com', '']) assert.equal(linkUrl(bad), undefined);
 });
 
 test('team guessing requires a matching normalized floor/repository name or key even for one team', () => {
@@ -734,6 +741,7 @@ test('taking a ticket moves to started, assigns only when unassigned, and keeps 
     assert.equal(result.ticket?.state.id, state);
     assert.equal(r.api.calls.filter((c) => c.query.startsWith('mutation Update')).length, before);
   }
+  assert.equal(r.floor.state().working, 0, 'a hand-picked ticket does not count against autopilot');
   const restored = new FloorLinear(r.dir, r.office, undefined, r.event);
   assert.deepEqual(restored.linkOf(worker.id), r.floor.linkOf(worker.id));
   assert.match((await r.floor.take('bad', worker)).error!, /DOFF-12/);

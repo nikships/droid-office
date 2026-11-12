@@ -311,6 +311,11 @@ test('linear_create_issue defaults to the floor team, resolves fields, and optio
   assert.notEqual(reply.isError, true);
   assert.deepEqual(r.api.calls.find((c) => c.query.startsWith('mutation Create'))?.variables.input, { title: 'Follow up', teamId: 'team', stateId: 'todo', assigneeId: 'viewer', labelIds: ['bug'] });
   assert.equal(r.floorLinear.linkOf(r.worker.id)?.identifier, 'DOFF-900');
+  const building = await r.connect(true);
+  const unowned = await building.callTool({ name: 'linear_create_issue', arguments: { title: 'For someone', team: 'DOFF', start: true } });
+  assert.notEqual(unowned.isError, true);
+  assert.match(JSON.stringify(unowned.content), /Filed DOFF-900.*Not taken: only a worker at a floor desk/);
+  assert.equal(unowned.structuredContent?.taken, false);
   const unknown = await r.client.callTool({ name: 'linear_create_issue', arguments: { title: 'No team', team: 'unknown' } });
   assert.equal(unknown.isError, true);
   assert.match(JSON.stringify(unknown.content), /no team unknown/);

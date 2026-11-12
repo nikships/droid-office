@@ -151,8 +151,13 @@ export interface LinearFloorState {
   connection?: LinearConnection;
   setup?: LinearFloorSetup;
   autopilot: LinearAutopilot;
-  /** Tickets this floor's workers hold right now. */
+  /** Autopilot workers on this floor now, counted against its max. */
   working: number;
+}
+
+/** A link from Linear that is safe to open (http or https), else undefined. */
+export function linkUrl(url: string): string | undefined {
+  return /^https?:\/\//i.test(url.trim()) ? url.trim() : undefined;
 }
 
 // ---- Keys --------------------------------------------------------------------------------------------

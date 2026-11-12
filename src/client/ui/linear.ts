@@ -1,4 +1,4 @@
-import { linearColumns, linearPromptVars, PRIORITY_NAMES, type LinearComment, type LinearTicket, type LinearTicketDetail } from '../../shared/linear';
+import { linearColumns, linearPromptVars, linkUrl, PRIORITY_NAMES, type LinearComment, type LinearTicket, type LinearTicketDetail } from '../../shared/linear';
 import type { ClientMsg, ServerMsg } from '../../shared/protocol';
 import type { Net } from '../net';
 import { store } from '../state';
@@ -179,7 +179,10 @@ export function openLinearTicket(first: LinearTicket, actions: LinearActions) {
       thread.append(
         section(
           'Links',
-          detail.attachments.map((a) => h('li', {}, h('a', { href: a.url, target: '_blank', rel: 'noopener noreferrer' }, a.title || a.url))),
+          detail.attachments.map((a) => {
+            const href = linkUrl(a.url);
+            return h('li', {}, href ? h('a', { href, target: '_blank', rel: 'noopener noreferrer' }, a.title || a.url) : a.title || a.url);
+          }),
         ),
       );
     if (!detail.comments.length) thread.append(h('p.gh-quiet', {}, 'No comments.'));

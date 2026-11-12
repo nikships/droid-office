@@ -583,7 +583,12 @@ export class FloorLinear {
 
   state(): LinearFloorState {
     const workers = new Set(this.events.workers().map((w) => w.id));
-    return { connection: this.office.connection(), setup: this.setup, autopilot: this.autopilot, working: this.links.filter((l) => l.stage !== 'completed' && workers.has(l.workerId)).length };
+    return { connection: this.office.connection(), setup: this.setup, autopilot: this.autopilot, working: this.autoBusy(workers) };
+  }
+
+  /** Autopilot workers still on their tickets, and hires it started that haven't come back: what counts against its max. */
+  private autoBusy(workers: Set<string>): number {
+    return this.links.filter((l) => l.auto && l.stage !== 'completed' && workers.has(l.workerId)).length + this.hiring.size;
   }
 
   /** Connected, with a team: the Linear tab is up. */
@@ -903,7 +908,7 @@ export class FloorLinear {
     this.piloting = true;
     try {
       const workers = new Set(this.events.workers().map((w) => w.id));
-      const busy = this.links.filter((l) => l.auto && l.stage !== 'completed' && workers.has(l.workerId)).length + this.hiring.size;
+      const busy = this.autoBusy(workers);
       const linked = new Set([...this.links.filter((l) => l.stage !== 'completed' && (workers.has(l.workerId) || l.pr)).map((l) => l.issueId), ...this.hiring]);
       const now = Date.now();
       for (const [id, at] of Object.entries(this.skipped)) if (now - at > RETRY_MS) delete this.skipped[id];
