@@ -503,3 +503,26 @@ test('loadPage and loadPackage refuse what they cannot take', (t) => {
   assert.throws(() => loadPackage(path.join(work, 'pkg')), /index\.html/);
   assert.equal(loadPackage(path.join(work, 'pkg'), 'other.html').content.entry, 'other.html');
 });
+
+test('live-linked Markdown updates reliably across the watcher debounce boundary even before start() is called', async (t) => {
+  await Promise.all(
+    [0, 150, 165, 175, 180, 195].map(async (delayMs, idx) => {
+      const { checkout, work } = dirs(t);
+      // Deliberately omit store.start() to verify newly linked cards still watch and poll without blind spots.
+      const store = new WhiteboardStore(checkout, { linkPollMs: 300, linkDebounceMs: 150 });
+      t.after(() => store.stop());
+      const md = path.join(work, `live-${idx}.md`);
+      writeFileSync(md, '# Draft v1\n\nInitial copy.\n');
+      const epoch = store.issueEpoch();
+      const created = store.apply({ epoch, seq: 1, ops: [{ op: 'card.create', card: 'c1', kind: 'html', title: 'Live Spec', content: { load: { link: md } } } as unknown as Op] }, PIXEL, 'agent');
+      assert.equal(created.kind, 'ack');
+      if (delayMs > 0) await new Promise((r) => setTimeout(r, delayMs));
+      writeFileSync(md, '# Draft v2\n\nUpdated live copy.\n');
+      await waitFor(() => {
+        const cur = findCard(store.board, 'c1')?.content;
+        const raw = cur?.files['document.md'] ? store.readBlob(cur.files['document.md'].hash)?.toString() : '';
+        return raw?.includes('Draft v2') ?? false;
+      }, 2000);
+    }),
+  );
+});

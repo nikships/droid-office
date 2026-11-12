@@ -410,14 +410,21 @@ interface Lease {
   until?: number;
 }
 
+interface PathWatch {
+  watcher: FSWatcher;
+  ino: bigint;
+  recursive: boolean;
+}
+
 /** The files a link watches and what they looked like, so a poll can tell when they changed. */
 interface LinkWatch {
   card: string;
   link: CardLink;
   files: string[];
   sig: string;
-  watchers: FSWatcher[];
+  watchers: Map<string, PathWatch>;
   timer?: NodeJS.Timeout;
+  verifyTimer?: NodeJS.Timeout;
 }
 
 /** A source for a card's content in an agent's batch (`content: { load }`), read by the office from this machine. */
@@ -474,9 +481,6 @@ export class WhiteboardStore {
   start() {
     if (this.stopped) return;
     this.syncLinks(true);
-    const ms = this.opts.linkPollMs ?? LINK_POLL_MS;
-    this.poll = setInterval(() => this.pollLinks(), ms);
-    this.poll.unref?.();
     this.prune();
     // Images live in memory only: every card is rendered again after a restart.
     for (const card of this.current.cards) this.renderer.changed(card.id, renderKey(card), () => this.pin(card.id));
@@ -486,6 +490,7 @@ export class WhiteboardStore {
   stop() {
     this.stopped = true;
     clearInterval(this.poll);
+    this.poll = undefined;
     for (const w of this.links.values()) this.unwatch(w);
     this.links.clear();
     this.renderer.stop();
@@ -638,7 +643,7 @@ export class WhiteboardStore {
       if (e instanceof ExpandError) return invalid(e.index, e.op, e.message);
       throw e;
     }
-    const out = this.commitBatch(expanded.ops, actor, expanded.blobs, { epoch: env.epoch, seq: env.seq, issued });
+    const out = this.commitBatch(expanded.ops, actor, expanded.blobs, { epoch: env.epoch, seq: env.seq, issued }, expanded.linked);
     // An expanded batch can be longer than the one sent: name the operation the agent wrote.
     if (out.kind === 'rejected' && out.reason === 'invalid' && out.error.index >= 0) {
       const i = expanded.from[out.error.index] ?? out.error.index;
@@ -660,7 +665,7 @@ export class WhiteboardStore {
     this.applyOffice([{ op: 'reader.forget', reader }]);
   }
 
-  private commitBatch(ops: Op[], actor: Author, blobs: Map<string, Buffer>, origin?: { epoch: string; seq: number; issued: number }): ApplyOutcome {
+  private commitBatch(ops: Op[], actor: Author, blobs: Map<string, Buffer>, origin?: { epoch: string; seq: number; issued: number }, linked?: ReadonlyMap<string, { files: string[]; sig: string }>): ApplyOutcome {
     const bad = this.checkFiles(ops, blobs);
     if (bad) return { kind: 'rejected', reason: 'invalid', error: bad };
     const now = this.now();
@@ -675,7 +680,7 @@ export class WhiteboardStore {
     const fresh = result.board.cards.filter((c) => !findCard(before, c.id)).map((c) => c.id);
     if (fresh.length || result.board.cards.length !== before.cards.length) this.indexCaps();
     this.opts.onPatch?.({ rev, at: now, actor, ops }, { ...(origin ? { origin: { epoch: origin.epoch, seq: origin.seq } } : {}), caps: Object.fromEntries(fresh.map((id) => [id, this.cardCap(id)])) });
-    this.afterCommit(before, ops);
+    this.afterCommit(before, ops, linked);
     return { kind: 'ack', rev };
   }
 
@@ -697,8 +702,8 @@ export class WhiteboardStore {
   }
 
   /** After a commit: links follow the board, renders hear about changed cards, and what nobody needs goes. */
-  private afterCommit(before: Board, ops: Op[]) {
-    if (ops.some((o) => o.op === 'card.link' || o.op === 'card.rm' || o.op === 'card.create')) this.syncLinks(false);
+  private afterCommit(before: Board, ops: Op[], linked?: ReadonlyMap<string, { files: string[]; sig: string }>) {
+    if (ops.some((o) => o.op === 'card.link' || o.op === 'card.rm' || o.op === 'card.create')) this.syncLinks(false, linked);
     for (const card of this.current.cards) {
       const was = findCard(before, card.id);
       if (was && was.revs.content === card.revs.content && was.revs.state === card.revs.state && was.revs.marks === card.revs.marks) continue;
@@ -756,23 +761,24 @@ export class WhiteboardStore {
    * (`card.linkTo`, `card.unlink`) made into the office's own: the content the link has now, and the
    * link itself. Every file read goes into the batch's blobs.
    */
-  private expand(raw: unknown[], actor: Author): { ops: Op[]; blobs: Map<string, Buffer>; from: number[] } {
+  private expand(raw: unknown[], actor: Author): { ops: Op[]; blobs: Map<string, Buffer>; from: number[]; linked: Map<string, { files: string[]; sig: string }> } {
     const blobs = new Map<string, Buffer>();
     const ops: Op[] = [];
     const from: number[] = [];
+    const linked = new Map<string, { files: string[]; sig: string }>();
     const take = (l: Loaded) => {
       for (const [h, b] of l.blobs) blobs.set(h, b);
       return l.content;
     };
     raw.forEach((value, i) => {
       const before = ops.length;
-      this.expandOne(value, i, actor, ops, blobs, take);
+      this.expandOne(value, i, actor, ops, blobs, linked, take);
       for (let k = before; k < ops.length; k++) from.push(i);
     });
-    return { ops, blobs, from };
+    return { ops, blobs, from, linked };
   }
 
-  private expandOne(value: unknown, i: number, actor: Author, ops: Op[], blobs: Map<string, Buffer>, take: (l: Loaded) => CardContent) {
+  private expandOne(value: unknown, i: number, actor: Author, ops: Op[], blobs: Map<string, Buffer>, linked: Map<string, { files: string[]; sig: string }>, take: (l: Loaded) => CardContent) {
     if (!value || typeof value !== 'object' || Array.isArray(value)) {
       ops.push(value as Op);
       return;
@@ -782,7 +788,8 @@ export class WhiteboardStore {
     try {
       // A new card linked from the start: `content: { load: { link, entry? } }`.
       if (o.op === 'card.create' && o.content?.load && typeof o.content.load === 'object' && 'link' in o.content.load) {
-        const { content, link } = this.linked(o.content.load.link, o.content.load.entry, actor, take, o.content.load.dir === true, typeof o.title === 'string' ? o.title : undefined);
+        const { content, link, files, sig } = this.linked(o.content.load.link, o.content.load.entry, actor, take, o.content.load.dir === true, typeof o.title === 'string' ? o.title : undefined);
+        if (typeof o.card === 'string') linked.set(o.card, { files, sig });
         ops.push({ ...(o as Op & { op: 'card.create' }), content }, { op: 'card.link', card: o.card, link });
         return;
       }
@@ -799,7 +806,8 @@ export class WhiteboardStore {
       }
       if (o.op === 'card.linkTo') {
         const existingTitle = typeof o.card === 'string' ? findCard(this.current, o.card)?.title : undefined;
-        const { content, link } = this.linked(o.path, o.entry, actor, take, o.dir === true, existingTitle);
+        const { content, link, files, sig } = this.linked(o.path, o.entry, actor, take, o.dir === true, existingTitle);
+        if (typeof o.card === 'string') linked.set(o.card, { files, sig });
         ops.push({ op: 'card.content', card: o.card, content, viaLink: true }, { op: 'card.link', card: o.card, link });
         return;
       }
@@ -815,20 +823,21 @@ export class WhiteboardStore {
   }
 
   /** A link's first content and the link itself: a file (HTML, Markdown, video or image) and its assets, or a whole folder. */
-  private linked(target: unknown, entry: unknown, actor: Author, take: (l: Loaded) => CardContent, dir = false, title?: string): { content: CardContent; link: CardLink } {
+  private linked(target: unknown, entry: unknown, actor: Author, take: (l: Loaded) => CardContent, dir = false, title?: string): { content: CardContent; link: CardLink; files: string[]; sig: string } {
     if (typeof target !== 'string' || !target) throw new LoadError('A link needs the path of the file or folder to link');
     const abs = path.resolve(target);
     const isDir = dir || (existsSync(abs) && statSync(abs).isDirectory());
     const fallbackTitle = title?.trim() || path.basename(abs, path.extname(abs)) || 'Linked artifact';
     // A folder's page is the content's entry from then on, which the watcher reads it by.
-    const content = take(isDir ? loadPackage(abs, typeof entry === 'string' ? entry : undefined) : loadLinkedFile(abs, fallbackTitle));
-    return { content, link: { path: abs, status: 'ok', author: actor, ...(isDir ? { dir: true } : {}) } };
+    const loaded = isDir ? loadPackage(abs, typeof entry === 'string' ? entry : undefined) : loadLinkedFile(abs, fallbackTitle);
+    const link: CardLink = { path: abs, status: 'ok', author: actor, ...(isDir ? { dir: true } : {}) };
+    return { content: take(loaded), link, files: loaded.files, sig: this.signatureFor(link, loaded.files) };
   }
 
   // ---- Links ----
 
   /** Watchers for every linked card on the board, and none for the rest. `check`: look at each file now. */
-  private syncLinks(check: boolean) {
+  private syncLinks(check: boolean, initial?: ReadonlyMap<string, { files: string[]; sig: string }>) {
     if (this.stopped) return;
     const linked = new Map(this.current.cards.filter((c) => c.link).map((c) => [c.id, c]));
     for (const [id, w] of this.links) {
@@ -836,18 +845,49 @@ export class WhiteboardStore {
       if (!card || card.link!.path !== w.link.path || !!card.link!.dir !== !!w.link.dir) {
         this.unwatch(w);
         this.links.delete(id);
-      } else w.link = card.link!;
+      } else {
+        w.link = card.link!;
+        const fresh = initial?.get(id);
+        if (fresh) {
+          w.files = fresh.files;
+          w.sig = fresh.sig;
+          this.rewatch(w);
+          if (this.signature(w) !== w.sig) this.schedule(w);
+        }
+      }
     }
     for (const [id, card] of linked) {
-      if (this.links.has(id)) continue;
-      const w: LinkWatch = { card: id, link: card.link!, files: [], sig: '', watchers: [] };
-      this.links.set(id, w);
-      if (check) this.checkLink(w);
-      else {
-        w.files = this.linkFiles(w);
-        w.sig = this.signature(w);
-        this.rewatch(w);
+      let w = this.links.get(id);
+      if (!w) {
+        w = { card: id, link: card.link!, files: [], sig: '', watchers: new Map() };
+        this.links.set(id, w);
+        if (check) this.checkLink(w);
+        else {
+          const fresh = initial?.get(id);
+          w.files = fresh?.files ?? this.linkFiles(w);
+          w.sig = fresh?.sig ?? this.signature(w);
+          this.rewatch(w);
+          if (this.signature(w) !== w.sig) this.schedule(w);
+        }
+      } else if (check) {
+        this.checkLink(w);
       }
+    }
+    this.syncPoll();
+  }
+
+  private syncPoll() {
+    if (this.stopped || !this.links.size) {
+      if (this.poll) {
+        clearInterval(this.poll);
+        this.poll = undefined;
+      }
+      return;
+    }
+    if (!this.poll) {
+      const ms = this.opts.linkPollMs ?? LINK_POLL_MS;
+      this.poll = setInterval(() => this.pollLinks(), ms);
+      this.poll.unref?.();
     }
   }
 
@@ -865,16 +905,20 @@ export class WhiteboardStore {
 
   /** What the linked files look like now, cheaply: sizes, times and inodes (a folder link walks the folder). */
   private signature(w: LinkWatch): string {
+    return this.signatureFor(w.link, w.files);
+  }
+
+  private signatureFor(link: CardLink, files: string[]): string {
     const parts: string[] = [];
     const stat = (f: string) => {
       try {
-        const s = statSync(f);
-        return `${s.size}:${s.mtimeMs}:${s.ino}`;
+        const s = statSync(f, { bigint: true });
+        return `${s.size}:${s.mtimeNs}:${s.ctimeNs}:${s.ino}`;
       } catch {
         return '-';
       }
     };
-    if (w.link.dir) {
+    if (link.dir) {
       const walk = (d: string, depth: number) => {
         let names: string[];
         try {
@@ -896,8 +940,8 @@ export class WhiteboardStore {
           }
         }
       };
-      walk(w.link.path, 0);
-    } else for (const f of w.files) parts.push(`${f}:${stat(f)}`);
+      walk(link.path, 0);
+    } else for (const f of files) parts.push(`${f}:${stat(f)}`);
     return parts.join('|');
   }
 
@@ -928,6 +972,8 @@ export class WhiteboardStore {
     } catch (e) {
       why = e instanceof LoadError ? e.message : `${link.path} can't be read: ${(e as Error).message}`;
     }
+    const files = loaded ? loaded.files : this.linkFiles(w);
+    const readSig = this.signatureFor(link, files);
     if (loaded) {
       const ops: Op[] = [];
       if (!card.content || !jsonEqual(card.content, loaded.content)) ops.push({ op: 'card.content', card: card.id, content: loaded.content, viaLink: true });
@@ -941,30 +987,79 @@ export class WhiteboardStore {
     const now = this.links.get(card.id);
     if (now !== w) return;
     w.link = findCard(this.current, card.id)?.link ?? link;
-    w.files = loaded ? loaded.files : this.linkFiles(w);
-    w.sig = this.signature(w);
+    w.files = files;
+    w.sig = readSig;
     this.rewatch(w);
+    if (this.signature(w) !== w.sig) this.schedule(w);
   }
 
-  /** fs watchers on the folders a link's files are in, so a save (or an atomic rename) is seen at once. */
+  /**
+   * fs watchers on both the linked files (for file-level in-place edits) and their folders (for atomic
+   * renames, deletions and new files). Existing watchers on unchanged inodes stay open so checkLink
+   * never opens a blind spot while FSEvents re-registers.
+   */
   private rewatch(w: LinkWatch) {
-    this.unwatch(w);
-    const dirs = w.link.dir ? [w.link.path] : [...new Set(w.files.map((f) => path.dirname(f)))];
-    for (const d of dirs) {
-      try {
-        const watcher = watch(d, { persistent: false, recursive: !!w.link.dir }, () => this.schedule(w));
-        watcher.on('error', () => watcher.close());
-        w.watchers.push(watcher);
-      } catch {
-        // the folder is gone: the poll notices when it's back
+    const want = new Map<string, boolean>();
+    if (w.link.dir) {
+      want.set(w.link.path, true);
+      for (const f of w.files.slice(0, 32)) if (f !== w.link.path) want.set(f, false);
+    } else {
+      for (const f of w.files) want.set(path.dirname(f), false);
+      for (const f of w.files.slice(0, 32)) want.set(f, false);
+    }
+    for (const [target, cur] of w.watchers) {
+      if (want.get(target) !== cur.recursive) {
+        cur.watcher.close();
+        w.watchers.delete(target);
       }
+    }
+    let added = false;
+    for (const [target, recursive] of want) {
+      let ino: bigint;
+      try {
+        ino = statSync(target, { bigint: true }).ino;
+      } catch {
+        const old = w.watchers.get(target);
+        if (old) {
+          old.watcher.close();
+          w.watchers.delete(target);
+        }
+        continue;
+      }
+      const existing = w.watchers.get(target);
+      if (existing && existing.ino === ino) continue;
+      existing?.watcher.close();
+      w.watchers.delete(target);
+      try {
+        const watcher = watch(target, { persistent: false, recursive }, () => this.schedule(w));
+        const entry: PathWatch = { watcher, ino, recursive };
+        watcher.on('error', () => {
+          watcher.close();
+          if (w.watchers.get(target) === entry) w.watchers.delete(target);
+        });
+        w.watchers.set(target, entry);
+        added = true;
+      } catch {
+        // gone meanwhile: the folder watcher or poll notices when it's back
+      }
+    }
+    if (added) {
+      // On macOS, libuv registers FSEventStreams asynchronously with SinceNow on a background thread;
+      // re-check the stat signature once after startup so an immediate in-place edit never waits for poll.
+      clearTimeout(w.verifyTimer);
+      w.verifyTimer = setTimeout(() => {
+        w.verifyTimer = undefined;
+        if (this.links.get(w.card) === w && !w.timer && this.signature(w) !== w.sig) this.checkLink(w);
+      }, this.opts.linkDebounceMs ?? LINK_DEBOUNCE_MS);
+      w.verifyTimer.unref?.();
     }
   }
 
   private unwatch(w: LinkWatch) {
     clearTimeout(w.timer);
-    for (const x of w.watchers) x.close();
-    w.watchers = [];
+    clearTimeout(w.verifyTimer);
+    for (const x of w.watchers.values()) x.watcher.close();
+    w.watchers.clear();
   }
 
   // ---- Disk ----

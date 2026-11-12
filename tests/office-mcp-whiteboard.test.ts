@@ -89,6 +89,7 @@ async function rig(t: { after(fn: () => void | Promise<void>): void }) {
   const visits = new Visits({ ...workers, cancelTurn: () => false, turnScreen: () => undefined }, { on: () => settings.visits, emit() {} });
   const renderer = new Renderer();
   const store = new WhiteboardStore(dir, { renderer, readers: () => [OWNER, ...people.map((person) => person.id)] });
+  store.start();
   const floor: OfficeMcpFloor = { id: 'floor', name: 'Main', dir, workers, team, visits, whiteboard: store };
   const mcp = createOfficeMcp({ answers: new Answers(), settings: () => settings, floor: (id) => (workers.get(id) ? floor : undefined) });
   let disconnected: (() => void) | undefined;
