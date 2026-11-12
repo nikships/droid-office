@@ -6,7 +6,7 @@ import { FLAG_BOLD, FLAG_DIM, RGB_FLAG, type Run } from './protocol.js';
 // (the prompt, its replies, each tool call with the first lines of its result) on a terminal-sized
 // grid, and sent as the same `screen` frame a local worker's PTY sends.
 
-export const CLOUD_SCREEN_COLS = 80;
+export const CLOUD_SCREEN_COLS = 136;
 export const CLOUD_SCREEN_ROWS = 30;
 /** Lines of a tool's result shown under its call. */
 const RESULT_LINES = 3;

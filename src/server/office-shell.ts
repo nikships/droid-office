@@ -9,13 +9,13 @@ import { plainTail, terminalTail } from './history.js';
 import { type PtyHost, SCROLLBACK, type Pty } from './ptys.js';
 import { screenSnapshot, setTerminalResponder } from './screen.js';
 import { snapshotScreen, type ScreenFrame } from './screen-frame.js';
-import { childEnv, defaultShell } from './workers.js';
+import { childEnv, DEFAULT_COLS, DEFAULT_ROWS, defaultShell } from './workers.js';
 
 type HeadlessTerminal = InstanceType<typeof headless.Terminal>;
 type Serializer = InstanceType<typeof serialize.SerializeAddon>;
 
-const COLS = 100;
-const ROWS = 30;
+const COLS = DEFAULT_COLS;
+const ROWS = DEFAULT_ROWS;
 const SCREEN_INTERVAL_MS = 250;
 const KEYFRAME_MS = 8000;
 const SAVE_SCROLLBACK_MS = 15_000;
