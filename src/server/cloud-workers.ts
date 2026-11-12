@@ -5,7 +5,7 @@ import { CLOUD_SCREEN_COLS, CLOUD_SCREEN_ROWS, type CloudScreenFrame } from '../
 import type { CloudTurn, CloudWorker } from '../shared/factory-cloud.js';
 import type { AgentEffort, WorkerInfo, WorkerStatus } from '../shared/protocol.js';
 import { isAgentEffort } from '../shared/protocol.js';
-import { DESK_BY_ID, DESKS } from '../shared/layout.js';
+import { DESK_BY_ID } from '../shared/layout.js';
 import { DropStore } from './drops.js';
 import { pickUniqueWorkerName } from './floor-watch.js';
 import { clockWork } from './workers.js';
@@ -20,10 +20,9 @@ const FILE = 'cloud-workers.json';
 /** Fields of a WorkerInfo that only mean something while the office runs. */
 const LIVE: readonly (keyof WorkerInfo)[] = ['open'];
 
-/** What else on the floor (or across open floors) takes desks and names. */
+/** What else on the floor takes desks, and what else across open floors takes names. */
 export interface CloudSeating {
   deskTaken(deskId: string): boolean;
-  liveDeskElsewhere?(deskId: string): { worker: WorkerInfo; floorName: string } | undefined;
   names(): Iterable<string>;
   liveNamesElsewhere?(): Iterable<string>;
   allNamesElsewhere?(): Iterable<string>;
@@ -107,15 +106,14 @@ export class CloudWorkers {
     return [...this.workers.values()].map((w) => w.info.name);
   }
 
-  /** Why nobody can be hired at `deskId` now, or undefined when they can. */
+  /**
+   * Why nobody can be hired at `deskId` now, or undefined when they can. Only this floor's occupants
+   * count: an automatic seat already avoided other floors' live workers (WorkerManager.pickSeat).
+   */
   seatRefusal(deskId: string): string | undefined {
     const seat = DESK_BY_ID.get(deskId);
     if (!seat) return 'Unknown desk';
     if (this.deskTaken(deskId) || this.seating.deskTaken(deskId)) return `That ${seat.beanbag ? 'bean bag' : 'desk'} is taken`;
-    const other = this.seating.liveDeskElsewhere?.(deskId);
-    if (other && DESKS.some((d) => !this.deskTaken(d.id) && !this.seating.deskTaken(d.id) && !this.seating.liveDeskElsewhere?.(d.id))) {
-      return `That ${seat.beanbag ? 'bean bag' : 'desk'} is taken by ${other.worker.name} on ${other.floorName}`;
-    }
     return undefined;
   }
 

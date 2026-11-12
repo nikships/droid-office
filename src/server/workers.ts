@@ -33,7 +33,7 @@ import { countCtrlEnterInputs, isCancelInput, isClearQueueInput, stripKittyPlace
 import { WORKSPACE_FILES, WORKTREES_DIR, Worktrees, describeWork, workspaceOf, type WorktreeCleanup, type WorktreeOwnership, type WorktreeRef, type WorktreeStart, type WorktreeState } from './worktrees.js';
 import { checkoutDirty, choosePullBase, pushBranch } from './open-pull.js';
 import { normalizeRepo } from '../shared/floors.js';
-import { DESK_BY_ID, DESKS, nextFreeSeat, type DeskDef } from '../shared/layout.js';
+import { DESK_BY_ID, nextFreeSeat, type DeskDef } from '../shared/layout.js';
 import { officePrompt, type PromptSource } from './prompts.js';
 import { forgeVars, officeSays, placeholders, PROMPTS, WORKER_VISITS, withoutReminders, workerBranchPolicy, workerMessageVars } from '../shared/prompts.js';
 import { isBusy } from '../shared/status.js';
@@ -643,6 +643,7 @@ export class WorkerManager {
     return this.localDeskOccupied(deskId) || !!this.holds?.liveDeskElsewhere?.(deskId);
   }
 
+  /** The seat `choose` picks for an automatic hire, avoiding desks live workers hold on other floors while another is free. */
   pickSeat(choose: (taken: (id: string) => boolean) => DeskDef | undefined): DeskDef | undefined {
     return pickUniqueSeat(choose, (id) => this.localDeskOccupied(id), this.holds?.liveDeskElsewhere ? (id) => !!this.holds?.liveDeskElsewhere?.(id) : undefined);
   }
@@ -687,11 +688,9 @@ export class WorkerManager {
     if (gated) return gated;
     const seat = DESK_BY_ID.get(deskId);
     if (!seat) return 'Unknown desk';
+    // Only this floor's occupants count: a seat the office picks avoids other floors' live workers
+    // before it gets here (pickSeat), while a seat someone names is theirs whatever other floors hold.
     if (this.localDeskOccupied(deskId)) return `That ${seat.beanbag ? 'bean bag' : 'desk'} is taken`;
-    const otherDesk = this.holds?.liveDeskElsewhere?.(deskId);
-    if (otherDesk && DESKS.some((d) => !this.localDeskOccupied(d.id) && !this.holds?.liveDeskElsewhere?.(d.id))) {
-      return `That ${seat.beanbag ? 'bean bag' : 'desk'} is taken by ${otherDesk.worker.name} on ${otherDesk.floorName}`;
-    }
     if (this.plain && worktree) return `${PLAIN_FLOOR}, so workers can't have worktrees`;
     if (repos.length && (kind !== 'agent' || !worktree)) return 'Only a worker in its own worktree can work in other repositories too';
     if (repos.length > MAX_REPOS) return `A worker can take on at most ${MAX_REPOS} other repositories`;

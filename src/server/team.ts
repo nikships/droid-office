@@ -7,7 +7,7 @@
 
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
-import { DESK_BY_ID, nearestFreeSeat } from '../shared/layout.js';
+import { DESK_BY_ID, nearestFreeSeat, type DeskDef } from '../shared/layout.js';
 import { AGENT_EFFORTS, isAgentEffort, type AgentChoice, type GhPull, type SubagentModel, type SubagentSettings, type WorkerInfo, type WorkerStatus, type WorkerTask } from '../shared/protocol.js';
 import type { PipelinesState } from '../shared/pipelines.js';
 import { isAsleep } from '../shared/status.js';
@@ -44,6 +44,8 @@ export interface TeamWorkers {
   /** `id` is a building agent, leading now or not: the news kept for it outlives a restart while it is away. */
   buildingAgent?(id: string): boolean;
   deskOccupied(deskId: string): boolean;
+  /** The seat `choose` picks for an automatic hire (WorkerManager.pickSeat); unset, `choose` skips every deskOccupied seat. */
+  pickSeat?(choose: (taken: (id: string) => boolean) => DeskDef | undefined): DeskDef | undefined;
   readonly officeDefault: AgentChoice | undefined;
   /**
    * Hires `lead`'s subagent at `deskId`; returns it, or why not. Its worktree starts from `from` (a
@@ -1469,7 +1471,8 @@ export class Team {
     if (after) return no(409, after);
     // A building agent has no desk: its subagent sits nearest Mission Control.
     const at = DESK_BY_ID.get(still.deskId) ?? (building ? MISSION_CONTROL_DOOR : undefined);
-    const seat = at && nearestFreeSeat(at.x, at.z, (id) => this.workers.deskOccupied(id));
+    const nearest = (taken: (id: string) => boolean) => (at ? nearestFreeSeat(at.x, at.z, taken) : undefined);
+    const seat = this.workers.pickSeat ? this.workers.pickSeat(nearest) : nearest((id) => this.workers.deskOccupied(id));
     if (!seat) return no(409, 'Every desk and bean bag on this floor is taken: dismiss a subagent you are done with, or ask the person to send someone home');
     const brief = handoff
       ? `${task}\n\nHandoff: continue from ${handoff.name}'s branch ${handoff.branch} at ${handoff.commit}. Your fresh worktree includes committed work only; the original worker and its uncommitted files stay where they are.`

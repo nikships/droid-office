@@ -7,6 +7,8 @@ import type { DroidModelCatalogue } from '../src/server/droid-models.js';
 import { emptySubscriptionsState, modelUsage, type ModelAvailability } from '../src/shared/subscriptions.js';
 import { modelList, outsideModelList, outsideModelListMessage } from '../src/server/model-policy.js';
 import { Team, settled, type TeamOptions, type TeamWorkers } from '../src/server/team.js';
+import { pickUniqueSeat } from '../src/server/floor-watch.js';
+import type { DeskDef } from '../src/shared/layout.js';
 import { teamOf, teamSummary, workersByTeam } from '../src/shared/team.js';
 import { SUBAGENT_DEFAULTS, type AgentChoice, type SubagentSettings, type WorkerInfo, type WorkerStatus, type WorkerTask } from '../src/shared/protocol.js';
 
@@ -29,6 +31,7 @@ class Fake implements TeamWorkers {
   fetched = 0;
   starts: [string, string | undefined][] = [];
   refuse?: string;
+  pickSeat?: (choose: (taken: (id: string) => boolean) => DeskDef | undefined) => DeskDef | undefined;
   private n = 0;
   add(w: WorkerInfo) {
     this.ws.set(w.id, w);
@@ -386,6 +389,23 @@ test('mid-turn steering uses existing hook notices and queued-turn fallback; bro
   assert.equal((await r.call('lead', { action: 'send', worker: 'sub2', text: 'Continue.' })).body.delivery, 'resumed');
   r.set('sub1', 'done');
   assert.equal((await r.call('lead', { action: 'send', worker: 'sub1', text: 'Next.' })).body.delivery, 'sent');
+});
+
+test('a subagent’s automatic seat prefers desks no other floor’s live worker holds, else the nearest free one', async (t) => {
+  const r = rig(t);
+  let everySeatElsewhere = false;
+  r.fake.pickSeat = (choose) =>
+    pickUniqueSeat(
+      choose,
+      (id) => r.fake.deskOccupied(id),
+      (id) => everySeatElsewhere || id === 'desk-3',
+    );
+  assert.equal((await r.call('lead', { action: 'hire', task: 'a' })).status, 200);
+  const first = r.fake.hired[0].deskId;
+  assert.ok(first !== 'desk-3' && first !== 'desk-1', first);
+  everySeatElsewhere = true;
+  assert.equal((await r.call('lead', { action: 'hire', task: 'b' })).status, 200, 'every free desk held elsewhere still seats it here');
+  assert.equal(r.fake.hired[1].deskId, 'desk-3');
 });
 
 test('a lead hires a subagent at the free desk nearest it, in its own worktree, on the Subagents setting', async (t) => {

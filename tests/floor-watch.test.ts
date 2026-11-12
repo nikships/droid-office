@@ -156,6 +156,13 @@ test('pickUniqueWorkerName, pickUniqueForkName and pickUniqueSeat avoid live nam
     (id) => id === 'desk-2',
   );
   assert.equal(seat?.id, 'desk-3');
+  // With every other seat taken here, an automatic pick falls back to one live elsewhere.
+  const fallback = pickUniqueSeat(
+    (taken) => nextFreeSeat(taken),
+    (id) => id !== 'desk-2',
+    (id) => id === 'desk-2',
+  );
+  assert.equal(fallback?.id, 'desk-2');
 });
 
 test('team_watch wakes Grok Bot on independent floor worker turns, terminal asks, stops, departures and PR transitions', async (t) => {
@@ -664,15 +671,27 @@ test('real multi-floor office assigns globally unique names and desks across liv
   assert.ok(fullRoster[0].warnings?.some((msg) => msg.includes('On main')));
   assert.ok(!fullRoster[0].warnings?.some((msg) => msg.includes('Shares working tree')));
 
-  // Explicitly requesting alpha's live worker's desk on beta refuses naming the floor and holder!
-  const collide = await office.owner.act(grok, { t: 'worker.spawn', deskId: wAlpha.deskId, kind: 'shell' }, { floor: betaFloor.id, owner: true });
-  assert.match(collide.error ?? '', /taken by .* on alpha/);
+  // A desk picked by hand on beta is beta's, even while alpha's live worker sits at the same desk id.
+  const picked = await office.owner.act(grok, { t: 'worker.spawn', deskId: wAlpha.deskId, kind: 'agent' }, { floor: betaFloor.id, owner: true });
+  assert.equal(picked.error, undefined, JSON.stringify(picked));
+  const betaWorkers = () => office!.owner.floors().find((f) => f.id === betaFloor.id)!.workers;
+  const wPicked = betaWorkers().find((w) => w.id === picked.workerId)!;
+  assert.equal(wPicked.deskId, wAlpha.deskId, 'the hand-picked desk is honored');
+  assert.ok(!['Pixel', 'Byte'].includes(wPicked.name), 'names stay unique across floors');
 
-  // Once alpha's worker is sent home, beta can use that desk.
-  const killed = await office.owner.act(grok, { t: 'worker.kill', workerId: wAlpha.id, cleanup: 'keep' }, { floor: alphaFloor.id, owner: true });
-  assert.equal(killed.error, undefined);
-  const freed = await office.owner.act(grok, { t: 'worker.spawn', deskId: wAlpha.deskId, kind: 'shell' }, { floor: betaFloor.id, owner: true });
-  assert.equal(freed.error, undefined, JSON.stringify(freed));
+  // Picking it again on the same floor is still refused: it is taken there now.
+  const again = await office.owner.act(grok, { t: 'worker.spawn', deskId: wAlpha.deskId, kind: 'shell' }, { floor: betaFloor.id, owner: true });
+  assert.equal(again.error, 'That desk is taken');
+
+  // An automatic seat on alpha still skips desks live on beta (desk-1 Pixel here, desk-2 Byte there) and takes desk-3.
+  const auto = await office.owner.act(grok, { t: 'worker.spawn', deskId: 'auto', kind: 'agent' }, { floor: alphaFloor.id, owner: true });
+  assert.equal(auto.error, undefined, JSON.stringify(auto));
+  const wAuto = office.owner
+    .floors()
+    .find((f) => f.id === alphaFloor.id)!
+    .workers.find((w) => w.id === auto.workerId)!;
+  assert.equal(wAuto.deskId, DESKS.find((d) => ![wAlpha.deskId, wBeta.deskId].includes(d.id))!.id);
+  assert.equal(new Set([wAlpha.name, wBeta.name, wPicked.name, wAuto.name]).size, 4, 'every live name is unique across floors');
 });
 
 test('roster helper preserves backwards-compatible worktree shape while adding cwd, branch and warnings', () => {
