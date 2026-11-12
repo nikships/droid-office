@@ -2,8 +2,17 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { test } from 'node:test';
 import { coast, fitGrid, fitScale, MAX_STEPS, nextEncoding, RowAccumulator, SGR, swipeGoesToProgram, swipeInput, URXVT, UTF8 } from '../android/app/src/main/assets/terminal/input.js';
+import {
+  decodeBase64 as androidDecodeBase64,
+  decodePlaceholderCell as androidDecodePlaceholder,
+  KITTY_DIACRITICS as ANDROID_DIACRITICS,
+  KittyApcSplitter as AndroidSplitter,
+  KittyGraphicsStore as AndroidStore,
+  KittyKeyboardState as AndroidKeyboard,
+} from '../android/app/src/main/assets/terminal/kitty.js';
 import { THEME } from '../android/app/src/main/assets/terminal/theme.js';
 import { TERM_THEME } from '../src/client/world/laptop.js';
+import { decodeBase64, decodePlaceholderCell, KITTY_DIACRITICS, KITTY_PLACEHOLDER_CHAR } from '../src/shared/kitty.js';
 import { vendoredPaths } from '../tools/android-terminal.mjs';
 
 test("the phone's vendored xterm.js matches the installed packages (node tools/android-terminal.mjs)", () => {
@@ -86,4 +95,29 @@ test('coast slows a flick until it stops', () => {
   assert.ok(later > 0 && later < 2);
   assert.equal(coast(2, 5000), 0);
   assert.ok(coast(-2, 100) < 0);
+});
+
+test("the phone's Kitty graphics and keyboard helpers match src/shared/kitty.ts", () => {
+  assert.deepEqual(ANDROID_DIACRITICS, KITTY_DIACRITICS);
+  const d2 = String.fromCodePoint(KITTY_DIACRITICS[2]);
+  const d4 = String.fromCodePoint(KITTY_DIACRITICS[4]);
+  const cell = `${KITTY_PLACEHOLDER_CHAR}${d2}${d4}`;
+  assert.deepEqual(androidDecodePlaceholder(cell, 0x010203), decodePlaceholderCell(cell, 0x010203));
+  assert.deepEqual([...androidDecodeBase64('//8AAP//')], [...decodeBase64('//8AAP//')]);
+
+  const kb = new AndroidKeyboard();
+  kb.push(1);
+  kb.setAlternate(true);
+  assert.equal(kb.flags, 0);
+  kb.setAlternate(false);
+  assert.equal(kb.flags, 1);
+  kb.pop(1);
+  assert.equal(kb.flags, 0);
+
+  const splitter = new AndroidSplitter();
+  const store = new AndroidStore();
+  for (const seg of splitter.feed('x\x1b_Ga=T,U=1,f=32,s=1,v=1,i=9,m=1;//\x1b\\\x1b_Gm=0;8A\x1b\\y')) {
+    if (seg.type === 'apc') store.processApc(seg.body);
+  }
+  assert.equal(store.get(9)?.data, '//8A');
 });

@@ -16,6 +16,8 @@ class TermPageTest {
         assertEquals(PageMsg.Input("\u001b[<64;5;7M"), TermPage.decode("""{"t":"input","data":"\u001b[<64;5;7M"}"""))
         assertEquals(PageMsg.Fit(TermSize(45, 36)), TermPage.decode("""{"t":"fit","cols":45,"rows":36}"""))
         assertEquals(PageMsg.Bottom(false), TermPage.decode("""{"t":"bottom","at":false}"""))
+        assertEquals(PageMsg.Kitty(1), TermPage.decode("""{"t":"kitty","flags":1}"""))
+        assertEquals(PageMsg.Kitty(31), TermPage.decode("""{"t":"kitty","flags":63}"""))
     }
 
     @Test

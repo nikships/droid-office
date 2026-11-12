@@ -6,6 +6,7 @@ import { isAsleep } from '../../shared/status';
 import { loadFonts, TERM_FONT } from '../fonts';
 import type { Net } from '../net';
 import { store, words } from '../state';
+import { attachKittyTerminal } from '../term-kitty';
 import { withToken } from '../token';
 import { TERM_THEME } from '../term-theme';
 import { h, openModal, toast, type Modal } from './dom';
@@ -194,6 +195,7 @@ export function openChanges(net: Net, workerId: string, onTerminal?: () => void,
     const unicode = new Unicode11Addon();
     t.loadAddon(unicode);
     t.unicode.activeVersion = '11';
+    attachKittyTerminal(t);
     // Keys belong to the window (T, Esc), never to the program in the terminal.
     t.attachCustomKeyEventHandler(() => false);
     term = t;

@@ -20,7 +20,8 @@ import { creditsNote } from '../../shared/factory-sessions';
 import { findLine } from '../../shared/search';
 import { DROP_MAX_BYTES, droppedPaths } from '../../shared/drops';
 import { loadFonts, TERM_FONT } from '../fonts';
-import { enterKeyAction, wantsCsiEnter } from '../term-keys';
+import { attachKittyTerminal } from '../term-kitty';
+import { wantsCsiEnter } from '../term-keys';
 import { onTermFontSize, setTermFontSize, stepTermFont, termFontSize, TERM_FONT_MAX, TERM_FONT_MIN } from './term-font';
 
 /** A line to scroll to once the terminal has loaded: a search hit (see search.ts). */
@@ -254,6 +255,7 @@ export function openTerminal(net: Net, workerId: string, onChanges?: () => void,
   const unicode = new Unicode11Addon();
   term.loadAddon(unicode);
   term.unicode.activeVersion = '11';
+  const kitty = attachKittyTerminal(term);
 
   const offQueries = suppressMirrorQueries(term);
   let opened = false;
@@ -461,16 +463,19 @@ export function openTerminal(net: Net, workerId: string, onChanges?: () => void,
   });
 
   term.attachCustomKeyEventHandler((e) => {
-    if (e.type === 'keydown' && e.ctrlKey && e.key === ']' && (!inline || inline.onLeave)) {
-      if (inline) inline.onLeave?.();
-      else modal.close();
+    if (e.ctrlKey && e.key === ']' && (!inline || inline.onLeave)) {
+      if (e.type === 'keydown') {
+        if (inline) inline.onLeave?.();
+        else modal.close();
+      }
       return false;
     }
-    const enter = enterKeyAction(csiEnter(), e);
-    if (enter.do === 'default') return true;
-    if (enter.do === 'send') {
+    if (!inline && e.key === 'Escape' && e.shiftKey) return false;
+    const action = kitty.keyAction(e, csiEnter());
+    if (action.do === 'default') return true;
+    if (action.do === 'send') {
       e.preventDefault();
-      term.input(enter.data);
+      term.input(action.data);
     }
     return false;
   });
@@ -606,6 +611,7 @@ export function openOfficeShell(net: Net) {
   const unicode = new Unicode11Addon();
   term.loadAddon(unicode);
   term.unicode.activeVersion = '11';
+  const kitty = attachKittyTerminal(term);
 
   let opened = false;
   let shared = false;
@@ -713,15 +719,16 @@ export function openOfficeShell(net: Net) {
   closeBtn.addEventListener('click', () => modal.close());
 
   term.attachCustomKeyEventHandler((e) => {
-    if (e.type === 'keydown' && e.ctrlKey && e.key === ']') {
-      modal.close();
+    if (e.ctrlKey && e.key === ']') {
+      if (e.type === 'keydown') modal.close();
       return false;
     }
-    const enter = enterKeyAction(false, e);
-    if (enter.do === 'default') return true;
-    if (enter.do === 'send') {
+    if (e.key === 'Escape' && e.shiftKey) return false;
+    const action = kitty.keyAction(e, false);
+    if (action.do === 'default') return true;
+    if (action.do === 'send') {
       e.preventDefault();
-      term.input(enter.data);
+      term.input(action.data);
     }
     return false;
   });

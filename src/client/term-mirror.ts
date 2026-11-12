@@ -76,6 +76,8 @@ export class TerminalMirror {
 export function suppressMirrorQueries(term: Pick<Terminal, 'parser'>) {
   const handlers = [
     ...['', '?', '>'].flatMap((prefix) => ['n', 'c'].map((final) => term.parser.registerCsiHandler({ ...(prefix ? { prefix } : {}), final }, () => true))),
+    term.parser.registerCsiHandler({ prefix: '?', final: 'u' }, () => true),
+    term.parser.registerCsiHandler({ prefix: '>', final: 'q' }, () => true),
     term.parser.registerCsiHandler({ intermediates: '$', final: 'p' }, () => true),
     term.parser.registerCsiHandler({ prefix: '?', intermediates: '$', final: 'p' }, () => true),
     term.parser.registerCsiHandler({ final: 't' }, (params) => typeof params[0] === 'number' && params[0] >= 14),

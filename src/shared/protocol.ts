@@ -275,6 +275,30 @@ export const FLAG_BOLD = 1;
 export const FLAG_INVERSE = 2;
 export const FLAG_DIM = 4;
 
+/** An inline Kitty terminal image carried to 3D laptop and monitor screens when visible. */
+export interface ScreenImage {
+  format: 24 | 32 | 100;
+  compression?: 'z';
+  width: number;
+  height: number;
+  cols?: number;
+  rows?: number;
+  data: string;
+}
+
+/** A rectangular Kitty image placement on a 3D screen (`y >= 0` on screen, `y < 0` in `above` rows). */
+export interface ScreenPlacement {
+  id: number;
+  x: number;
+  y: number;
+  cols: number;
+  rows: number;
+  srcCol: number;
+  srcRow: number;
+  totalCols: number;
+  totalRows: number;
+}
+
 /**
  * How many scrollback rows a `screen` frame carries above the screen. Laptops paint a terminal at
  * its cells' natural shape, so one wider than the laptop's screen would leave black bands above and
@@ -1080,7 +1104,18 @@ export type ServerMsg =
   | { t: 'worker.open'; workerId: string }
   | { t: 'worker.worktree'; workerId: string; state: WorktreeState }
   /** `above`: the scrollback rows just above the screen, oldest first, when they changed (see screenHistoryRows). */
-  | { t: 'screen'; workerId: string; cols: number; rows: number; lines: Record<number, Run[]>; full: boolean; cursor: [number, number]; above?: Run[][] }
+  | {
+      t: 'screen';
+      workerId: string;
+      cols: number;
+      rows: number;
+      lines: Record<number, Run[]>;
+      full: boolean;
+      cursor: [number, number];
+      above?: Run[][];
+      placements?: ScreenPlacement[];
+      images?: Record<number, ScreenImage>;
+    }
   /** `shared`: someone already had this terminal open, so the new window takes its size instead of changing it. */
   | { t: 'term.snapshot'; workerId: string; data: string; cols: number; rows: number; shared?: boolean }
   | { t: 'term.data'; workerId: string; data: string }

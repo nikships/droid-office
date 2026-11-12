@@ -59,6 +59,7 @@ test('OLED cover glass is a rim gloss without a ceiling-light streak or a room e
 function painter() {
   const fills: { color: unknown; args: number[] }[] = [];
   const text: { color: unknown; label: string }[] = [];
+  const images: { src: unknown; args: number[] }[] = [];
   const ctx = new Proxy(
     {
       fillStyle: '',
@@ -68,11 +69,14 @@ function painter() {
       fillText(label: string) {
         text.push({ color: this.fillStyle, label });
       },
+      drawImage(src: unknown, ...args: number[]) {
+        images.push({ src, args });
+      },
       measureText: () => ({ width: 10 }),
     },
     { get: (target, key) => Reflect.get(target, key) ?? (() => {}) },
   ) as unknown as CanvasRenderingContext2D;
-  return { ctx, fills, text };
+  return { ctx, fills, text, images };
 }
 
 test('laptop standby, terminal backgrounds and the opened terminal theme are true black', () => {
@@ -105,4 +109,30 @@ test('OLED terminals preserve explicit ANSI backgrounds and use black for invers
     { color: TERM_THEME.foreground, label: 'styled' },
     { color: SCREEN_BLACK, label: 'inverse' },
   ]);
+});
+
+test('3D laptop and monitor paintScreen renders inline Kitty image placements onto the OLED canvas', () => {
+  const { ctx, images } = painter();
+  const fakeBmp = { tag: 'kitty-bitmap' } as unknown as CanvasImageSource;
+  paintScreen(
+    ctx,
+    1000,
+    600,
+    {
+      cols: 80,
+      rows: 24,
+      lines: [[['prompt', -1, -1, 0]]],
+      placements: [{ id: 9, x: 2, y: 3, cols: 20, rows: 8, srcCol: 0, srcRow: 0, totalCols: 20, totalRows: 8 }],
+      bitmaps: new Map([[9, { source: fakeBmp, width: 200, height: 160 }]]),
+      cursor: [0, 11],
+      version: 2,
+    },
+    undefined,
+    16,
+  );
+  assert.equal(images.length, 1);
+  assert.equal(images[0].src, fakeBmp);
+  const [sx, sy, sw, sh, dx, dy, dw, dh] = images[0].args;
+  assert.deepEqual([sx, sy, sw, sh], [0, 0, 200, 160]);
+  assert.ok(dx > 0 && dy > 0 && dw > 0 && dh > 0);
 });

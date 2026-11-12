@@ -2,6 +2,9 @@ package ai.factory.droidoffice.ui.worker
 
 import ai.factory.droidoffice.core.DirectInput
 import ai.factory.droidoffice.core.Keys
+import ai.factory.droidoffice.core.KittyEventType
+import ai.factory.droidoffice.core.KittyKeyKind
+import ai.factory.droidoffice.core.KittyKeys
 import android.content.Context
 import android.graphics.Rect
 import android.text.InputType
@@ -26,6 +29,9 @@ internal class TerminalKeyboard(context: Context, private val onInput: (String) 
     private var downY = 0f
     private var dragged = false
     private val slop = ViewConfiguration.get(context).scaledTouchSlop
+
+    @Volatile var kittyFlags: Int = 0
+    @Volatile var csiEnter: Boolean = false
 
     fun typeDirectly(enabled: Boolean) {
         if (typing == enabled) return
@@ -86,12 +92,89 @@ internal class TerminalKeyboard(context: Context, private val onInput: (String) 
 
     override fun dispatchKeyEvent(event: KeyEvent): Boolean {
         if (!typing || !hasFocus()) return super.dispatchKeyEvent(event)
+        // Let Meta/Cmd shortcuts pass to Android / system.
+        if (event.isMetaPressed) return super.dispatchKeyEvent(event)
+        val kitty = kittyKeyBytes(event)
+        if (kitty != null) {
+            if (kitty.isNotEmpty()) {
+                connection?.input?.finish()
+                onInput(kitty)
+            }
+            return true
+        }
         val bytes = keyBytes(event) ?: return super.dispatchKeyEvent(event)
         if (event.action == KeyEvent.ACTION_DOWN) {
             connection?.input?.finish()
             onInput(bytes)
         }
         return true
+    }
+
+    private fun kittyKeyBytes(event: KeyEvent): String? {
+        if (event.action != KeyEvent.ACTION_DOWN && event.action != KeyEvent.ACTION_UP) return null
+        val evType = when {
+            event.action == KeyEvent.ACTION_UP -> KittyEventType.Release
+            event.repeatCount > 0 -> KittyEventType.Repeat
+            else -> KittyEventType.Press
+        }
+        val kind = when (event.keyCode) {
+            KeyEvent.KEYCODE_ENTER -> KittyKeyKind.Enter
+            KeyEvent.KEYCODE_NUMPAD_ENTER -> KittyKeyKind.NumpadEnter
+            KeyEvent.KEYCODE_TAB -> KittyKeyKind.Tab
+            KeyEvent.KEYCODE_DEL -> KittyKeyKind.Backspace
+            KeyEvent.KEYCODE_FORWARD_DEL -> KittyKeyKind.Delete
+            KeyEvent.KEYCODE_INSERT -> KittyKeyKind.Insert
+            KeyEvent.KEYCODE_ESCAPE -> KittyKeyKind.Escape
+            KeyEvent.KEYCODE_DPAD_UP -> KittyKeyKind.Up
+            KeyEvent.KEYCODE_DPAD_DOWN -> KittyKeyKind.Down
+            KeyEvent.KEYCODE_DPAD_LEFT -> KittyKeyKind.Left
+            KeyEvent.KEYCODE_DPAD_RIGHT -> KittyKeyKind.Right
+            KeyEvent.KEYCODE_MOVE_HOME -> KittyKeyKind.Home
+            KeyEvent.KEYCODE_MOVE_END -> KittyKeyKind.End
+            KeyEvent.KEYCODE_PAGE_UP -> KittyKeyKind.PageUp
+            KeyEvent.KEYCODE_PAGE_DOWN -> KittyKeyKind.PageDown
+            KeyEvent.KEYCODE_F1 -> KittyKeyKind.F1
+            KeyEvent.KEYCODE_F2 -> KittyKeyKind.F2
+            KeyEvent.KEYCODE_F3 -> KittyKeyKind.F3
+            KeyEvent.KEYCODE_F4 -> KittyKeyKind.F4
+            KeyEvent.KEYCODE_F5 -> KittyKeyKind.F5
+            KeyEvent.KEYCODE_F6 -> KittyKeyKind.F6
+            KeyEvent.KEYCODE_F7 -> KittyKeyKind.F7
+            KeyEvent.KEYCODE_F8 -> KittyKeyKind.F8
+            KeyEvent.KEYCODE_F9 -> KittyKeyKind.F9
+            KeyEvent.KEYCODE_F10 -> KittyKeyKind.F10
+            KeyEvent.KEYCODE_F11 -> KittyKeyKind.F11
+            KeyEvent.KEYCODE_F12 -> KittyKeyKind.F12
+            else -> null
+        }
+        if (kind != null) {
+            return KittyKeys.encodeKey(
+                kind = kind,
+                flags = kittyFlags,
+                shift = event.isShiftPressed,
+                alt = event.isAltPressed,
+                ctrl = event.isCtrlPressed,
+                eventType = evType,
+                csiEnter = csiEnter,
+            )
+        }
+        if (kittyFlags == 0) return null
+        val baseMask = event.metaState and KeyEvent.META_CTRL_MASK.inv() and KeyEvent.META_ALT_MASK.inv() and KeyEvent.META_SHIFT_MASK.inv()
+        val shiftMask = event.metaState and KeyEvent.META_CTRL_MASK.inv() and KeyEvent.META_ALT_MASK.inv()
+        val baseCp = event.getUnicodeChar(baseMask)
+        val shiftedCp = event.getUnicodeChar(shiftMask)
+        val cp = if (baseCp > 0 && (baseCp and Int.MIN_VALUE) == 0) baseCp else shiftedCp
+        if (cp <= 0 || (cp and Int.MIN_VALUE) != 0) return null
+        return KittyKeys.encodeKey(
+            kind = KittyKeyKind.Character,
+            flags = kittyFlags,
+            shift = event.isShiftPressed,
+            alt = event.isAltPressed,
+            ctrl = event.isCtrlPressed,
+            eventType = evType,
+            baseCodePoint = cp,
+            shiftedCodePoint = if (shiftedCp > 0 && (shiftedCp and Int.MIN_VALUE) == 0) shiftedCp else cp,
+        )
     }
 
     private fun keyBytes(event: KeyEvent): String? {
@@ -130,7 +213,15 @@ internal class TerminalKeyboard(context: Context, private val onInput: (String) 
             return true
         }
 
-        override fun commitText(text: CharSequence?, newCursorPosition: Int): Boolean = send { input.commit(text?.toString().orEmpty()) }
+        override fun commitText(text: CharSequence?, newCursorPosition: Int): Boolean = send {
+            val raw = text?.toString().orEmpty()
+            if ((kittyFlags and KittyKeys.REPORT_ALL) != 0 && input.composing.isEmpty()) {
+                KittyKeys.encodeCommittedText(raw, kittyFlags)
+            } else {
+                input.commit(raw)
+            }
+        }
+
         override fun setComposingText(text: CharSequence?, newCursorPosition: Int): Boolean = send { input.compose(text?.toString().orEmpty()) }
         override fun finishComposingText(): Boolean {
             input.finish()
@@ -142,7 +233,10 @@ internal class TerminalKeyboard(context: Context, private val onInput: (String) 
         override fun getTextAfterCursor(n: Int, flags: Int): CharSequence = ""
         override fun getSelectedText(flags: Int): CharSequence = ""
         override fun getCursorCapsMode(reqModes: Int): Int = 0
-        override fun performEditorAction(actionCode: Int): Boolean = send { input.finish(); Keys.ENTER }
+        override fun performEditorAction(actionCode: Int): Boolean = send {
+            input.finish()
+            KittyKeys.encodeQuickKey(Keys.ENTER, kittyFlags)
+        }
         override fun sendKeyEvent(event: KeyEvent): Boolean = active && dispatchKeyEvent(event)
         override fun closeConnection() {
             if (connection === this) connection = null

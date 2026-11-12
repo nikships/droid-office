@@ -1,3 +1,5 @@
+import { stripKittyPlaceholders } from './kitty.js';
+
 // Searching the terminals. The server finds the lines; the browser uses the same
 // rules to find a hit again in its own copy of a terminal and scroll to it.
 
@@ -24,7 +26,7 @@ export function logicalLines(buf: BufferLike): { row: number; text: string }[] {
     if (!line) continue;
     const wrapsOn = buf.getLine(y + 1)?.isWrapped === true;
     // A row that wraps onto the next keeps its trailing spaces; they are part of the line.
-    const text = line.translateToString(!wrapsOn);
+    const text = stripKittyPlaceholders(line.translateToString(!wrapsOn));
     const last = out[out.length - 1];
     if (line.isWrapped && last) last.text += text;
     else out.push({ row: y, text });

@@ -80,4 +80,7 @@ object QuickKeys {
     fun encode(order: List<String>): String = order.joinToString(",")
 
     fun decode(saved: String?): List<String>? = saved?.split(',')?.map { it.trim() }?.filter { it.isNotEmpty() }
+
+    /** Bytes [key] sends given active Kitty keyboard [flags] (`0` when legacy mode is active). */
+    fun bytes(key: QuickKey, flags: Int = 0): String = KittyKeys.encodeQuickKey(key.bytes, flags)
 }

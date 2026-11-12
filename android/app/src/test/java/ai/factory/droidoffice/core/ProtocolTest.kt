@@ -141,6 +141,8 @@ class ProtocolTest {
     fun readsScreenFrames() {
         val m = Protocol.decode(
             """{"t":"screen","workerId":"w1","cols":10,"rows":3,"full":false,"cursor":[4,2],
+               "placements":[{"imageId":7,"col":0,"row":0,"cols":4,"rows":2,"srcCol":0,"srcRow":0,"totalCols":4,"totalRows":2,"z":0}],
+               "images":[{"id":7,"format":100,"width":2,"height":2,"data":"AAAA"}],
                "lines":{"0":[["hi ",-1,-1,0],["there",1,-1,1]],"2":[["${'$'} ",16777215,-1,2]]}}""",
         ) as ServerMsg.Screen
         assertEquals(10, m.cols)

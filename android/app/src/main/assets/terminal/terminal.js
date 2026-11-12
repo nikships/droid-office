@@ -6,6 +6,7 @@
 import { Unicode11Addon } from './vendor/addon-unicode11.mjs';
 import { Terminal } from './vendor/xterm.mjs';
 import { coast, fitGrid, fitScale, nextEncoding, RowAccumulator, swipeGoesToProgram, swipeInput } from './input.js';
+import { ALT_BUFFER_MODES, cellUnderlineId, decodeBase64, decodePlaceholderCell, isKittyPlaceholderCell, KITTY_PLACEHOLDER_CHAR, KittyApcSplitter, KittyGraphicsStore, kittyImageSignature, KittyKeyboardState } from './kitty.js';
 import { THEME } from './theme.js';
 
 /** Readable text, in CSS pixels before the phone's font scale (the native app's 12.5 sp). */
@@ -14,6 +15,10 @@ const READABLE_PX = 12.5;
 const MAX_SCALE = 24 / READABLE_PX;
 const PAD = 8;
 const FONT = "'Geist Mono', 'Droid Office Terminal Symbols', monospace";
+const MAX_DIRECT_PLACEMENTS = 128;
+const XTERM_SPACE_CONTENT = 0x20 | (1 << 22);
+const XTERM_FG_INVISIBLE = 0x40000000;
+const linePlaceholders = new WeakMap();
 
 const post = (msg) => window.OfficeBridge?.post(JSON.stringify(msg));
 const host = document.getElementById('term');
@@ -39,15 +44,54 @@ const unicode = new Unicode11Addon();
 term.loadAddon(unicode);
 term.unicode.activeVersion = '11';
 
+const kittyKb = new KittyKeyboardState();
+const kittyGraphics = new KittyGraphicsStore();
+const kittySplitter = new KittyApcSplitter();
+const kittyDecoded = new Map();
+const directPlacements = [];
+let lastKittyFlags = -1;
+let scannedLength = 0;
+
+function reportKittyFlags() {
+  const f = kittyKb.flags;
+  if (f === lastKittyFlags) return;
+  lastKittyFlags = f;
+  post({ t: 'kitty', flags: f });
+}
+
 // The serialize addon leaves the mouse encoding out, so the office appends it to each snapshot
 // (src/server/screen.ts); follow it here to answer a swipe in the encoding the program reads.
 let encoding = 0;
 term.parser.registerCsiHandler({ prefix: '?', final: 'h' }, (params) => {
   encoding = nextEncoding(encoding, params, true);
+  for (const p of params) if (typeof p === 'number' && ALT_BUFFER_MODES.includes(p)) kittyKb.setAlternate(true);
+  reportKittyFlags();
   return false;
 });
 term.parser.registerCsiHandler({ prefix: '?', final: 'l' }, (params) => {
   encoding = nextEncoding(encoding, params, false);
+  for (const p of params) if (typeof p === 'number' && ALT_BUFFER_MODES.includes(p)) kittyKb.setAlternate(false);
+  reportKittyFlags();
+  return false;
+});
+term.parser.registerCsiHandler({ prefix: '=', final: 'u' }, (params) => {
+  kittyKb.set(typeof params[0] === 'number' ? params[0] : 0, typeof params[1] === 'number' ? params[1] : 1);
+  reportKittyFlags();
+  return true;
+});
+term.parser.registerCsiHandler({ prefix: '>', final: 'u' }, (params) => {
+  kittyKb.push(typeof params[0] === 'number' ? params[0] : 0);
+  reportKittyFlags();
+  return true;
+});
+term.parser.registerCsiHandler({ prefix: '<', final: 'u' }, (params) => {
+  kittyKb.pop(typeof params[0] === 'number' ? params[0] : 1);
+  reportKittyFlags();
+  return true;
+});
+term.parser.registerEscHandler({ final: 'c' }, () => {
+  encoding = 0;
+  resetKitty();
   return false;
 });
 
@@ -57,14 +101,464 @@ term.textarea.readOnly = true;
 term.textarea.tabIndex = -1;
 term.textarea.setAttribute('inputmode', 'none');
 
+const screenEl = host.querySelector('.xterm-screen') ?? host;
+const kittyCanvas = document.createElement('canvas');
+kittyCanvas.className = 'term-kitty-layer';
+kittyCanvas.setAttribute('aria-hidden', 'true');
+screenEl.appendChild(kittyCanvas);
+const kittyCtx = kittyCanvas.getContext('2d');
+
 let view = 'desktop';
 let scale = 1;
 let lastFit = '';
+let paintRaf = 0;
+
+function closeDecodedEntry(entry) {
+  if (entry.timer !== undefined) clearTimeout(entry.timer);
+  entry.root?.close?.();
+  for (const f of entry.frames) f?.close?.();
+}
+
+function clearDirectPlacements(match) {
+  for (let i = directPlacements.length - 1; i >= 0; i--) {
+    if (!match || match(directPlacements[i])) {
+      directPlacements[i].marker.dispose();
+      directPlacements.splice(i, 1);
+    }
+  }
+}
+
+function resetKitty() {
+  kittyKb.reset();
+  kittyGraphics.reset();
+  kittySplitter.reset();
+  clearDirectPlacements();
+  for (const e of kittyDecoded.values()) closeDecodedEntry(e);
+  kittyDecoded.clear();
+  scannedLength = 0;
+  reportKittyFlags();
+  scheduleKittyPaint();
+}
+
+async function inflateBytes(compressed) {
+  for (const fmt of ['deflate', 'deflate-raw']) {
+    try {
+      const ds = new DecompressionStream(fmt);
+      const writer = ds.writable.getWriter();
+      const done = writer.write(compressed).then(() => writer.close());
+      const buf = await new Response(ds.readable).arrayBuffer();
+      await done;
+      return new Uint8Array(buf);
+    } catch {
+      // try fallback
+    }
+  }
+  throw new Error('Inflate failed');
+}
+
+async function decodeBitmap(format, compression, width, height, b64) {
+  if (!b64 || typeof createImageBitmap === 'undefined') return null;
+  try {
+    let bytes = decodeBase64(b64);
+    if (compression === 'z') bytes = await inflateBytes(bytes);
+    if (format === 100) return await createImageBitmap(new Blob([bytes], { type: 'image/png' }));
+    if (width <= 0 || height <= 0) return null;
+    const pixelCount = width * height;
+    const rgba = new Uint8ClampedArray(pixelCount * 4);
+    if (format === 32) rgba.set(bytes.subarray(0, Math.min(bytes.length, rgba.length)));
+    else {
+      const limit = Math.min(pixelCount, Math.floor(bytes.length / 3));
+      for (let i = 0, s = 0, d = 0; i < limit; i++, s += 3, d += 4) {
+        rgba[d] = bytes[s];
+        rgba[d + 1] = bytes[s + 1];
+        rgba[d + 2] = bytes[s + 2];
+        rgba[d + 3] = 255;
+      }
+    }
+    return await createImageBitmap(new ImageData(rgba, width, height));
+  } catch {
+    return null;
+  }
+}
+
+function syncAnimation(img, entry) {
+  if (entry.timer !== undefined) {
+    clearTimeout(entry.timer);
+    entry.timer = undefined;
+  }
+  const total = 1 + entry.frames.length;
+  if (total <= 1 || img.animState === 1) return;
+  const stepAnim = () => {
+    entry.timer = undefined;
+    if (kittyDecoded.get(img.id) !== entry) return;
+    const count = 1 + entry.frames.length;
+    if (count <= 1 || img.animState === 1) return;
+    entry.frameIdx = (entry.frameIdx + 1) % count;
+    scheduleKittyPaint();
+    const delay = entry.frameIdx === 0 ? (img.rootDelayMs ?? 100) : (img.frames[entry.frameIdx - 1]?.delayMs ?? 100);
+    entry.timer = setTimeout(stepAnim, Math.max(16, delay));
+  };
+  const firstDelay = entry.frameIdx === 0 ? (img.rootDelayMs ?? 100) : (img.frames[entry.frameIdx - 1]?.delayMs ?? 100);
+  entry.timer = setTimeout(stepAnim, Math.max(16, firstDelay));
+}
+
+function pruneDecoded() {
+  for (const [id, entry] of kittyDecoded) {
+    if (!kittyGraphics.get(id)) {
+      closeDecodedEntry(entry);
+      kittyDecoded.delete(id);
+    }
+  }
+}
+
+function decodeImageRecord(img) {
+  pruneDecoded();
+  const sig = kittyImageSignature(img);
+  if (kittyDecoded.get(img.id)?.sig === sig) return;
+  void (async () => {
+    const root = await decodeBitmap(img.format, img.compression, img.width, img.height, img.data);
+    if (kittyGraphics.get(img.id) !== img) {
+      root?.close?.();
+      return;
+    }
+    const frames = [];
+    for (const f of img.frames) {
+      const bmp = await decodeBitmap(f.format, f.compression, f.width, f.height, f.data);
+      if (kittyGraphics.get(img.id) !== img) {
+        root?.close?.();
+        for (const prev of frames) prev.close?.();
+        bmp?.close?.();
+        return;
+      }
+      if (bmp) frames.push(bmp);
+    }
+    const prev = kittyDecoded.get(img.id);
+    if (prev) closeDecodedEntry(prev);
+    const entry = { sig, root, frames, frameIdx: 0 };
+    kittyDecoded.set(img.id, entry);
+    if (frames.length > 0 && img.animState !== 1) syncAnimation(img, entry);
+    scheduleKittyPaint();
+  })();
+}
+
+function extractLinePlaceholders(y) {
+  const buf = term.buffer.active;
+  const line = buf.getLine(y);
+  if (!line) return { mutated: false, map: undefined };
+  const fallbackLines = term._core?.buffers?.active?.lines ?? term._core?.buffer?.lines;
+  const rawLine = line._line ?? fallbackLines?.get(y);
+  const raw = rawLine?._data;
+  if (!rawLine || !raw) return { mutated: false, map: undefined };
+
+  let map = linePlaceholders.get(rawLine);
+  const hasNew = line.translateToString(true).includes(KITTY_PLACEHOLDER_CHAR);
+  if (!hasNew && !map?.size) return { mutated: false, map: undefined };
+
+  let mutated = false;
+  if (hasNew) {
+    const cell = buf.getNullCell();
+    let prevPh;
+    for (let x = 0; x < term.cols; x++) {
+      line.getCell(x, cell);
+      if (cell.getWidth() === 0) continue;
+      const chars = cell.getChars();
+      if (isKittyPlaceholderCell(chars)) {
+        const fgLow24 = cell.isFgDefault() ? 0 : cell.getFgColor();
+        const ph = decodePlaceholderCell(chars, fgLow24, cellUnderlineId(cell), prevPh);
+        prevPh = ph;
+        if (ph) {
+          if (!map) {
+            map = new Map();
+            linePlaceholders.set(rawLine, map);
+          }
+          map.set(x, ph);
+        }
+        const base = x * 3;
+        if (base + 1 < raw.length) {
+          raw[base] = XTERM_SPACE_CONTENT;
+          raw[base + 1] |= XTERM_FG_INVISIBLE;
+        }
+        if (rawLine._combined) delete rawLine._combined[x];
+        mutated = true;
+      } else if (map?.has(x)) {
+        const fgIdx = x * 3 + 1;
+        if (fgIdx < raw.length && (raw[fgIdx] & XTERM_FG_INVISIBLE) !== 0) {
+          prevPh = map.get(x);
+        } else {
+          map.delete(x);
+          prevPh = undefined;
+        }
+      } else {
+        prevPh = undefined;
+      }
+    }
+  } else if (map) {
+    for (const x of [...map.keys()]) {
+      const fgIdx = x * 3 + 1;
+      if (fgIdx >= raw.length || (raw[fgIdx] & XTERM_FG_INVISIBLE) === 0) {
+        map.delete(x);
+      }
+    }
+  }
+  return { mutated, map: map?.size ? map : undefined };
+}
+
+function hidePlaceholders(fromY, toY) {
+  const buf = term.buffer.active;
+  const start = Math.max(0, fromY);
+  const end = Math.min(buf.length - 1, toY);
+  let mutated = false;
+  for (let y = start; y <= end; y++) {
+    if (extractLinePlaceholders(y).mutated) mutated = true;
+  }
+  return mutated;
+}
 
 /** The grid's size in CSS pixels before scaling, as xterm's renderer laid it out. */
 function gridSize() {
-  const el = host.querySelector('.xterm-screen');
-  return { w: Number.parseFloat(el?.style.width) || el?.offsetWidth || 0, h: Number.parseFloat(el?.style.height) || el?.offsetHeight || 0 };
+  const dims = term._core?._renderService?.dimensions?.css;
+  const w = dims?.canvas?.width || Number.parseFloat(screenEl?.style.width) || screenEl?.offsetWidth || 0;
+  const h = dims?.canvas?.height || Number.parseFloat(screenEl?.style.height) || screenEl?.offsetHeight || 0;
+  return { w, h, cellW: dims?.cell?.width || (term.cols ? w / term.cols : 0), cellH: dims?.cell?.height || (term.rows ? h / term.rows : 0) };
+}
+
+function placeDirect(img, req) {
+  if (req.unicode) return undefined;
+  const { cellW, cellH } = gridSize();
+  const cw = cellW || 9;
+  const ch = cellH || 18;
+  const cols = Math.max(1, req.cols ?? (img.width > 0 ? Math.ceil(img.width / cw) : 10));
+  const rows = Math.max(1, req.rows ?? (img.height > 0 ? Math.ceil(img.height / ch) : 5));
+  if (req.placementId > 0) clearDirectPlacements((p) => p.imageId === req.imageId && p.placementId === req.placementId);
+  const startCol = term.buffer.active.cursorX;
+  const marker = term.registerMarker(0);
+  if (!marker) return undefined;
+  directPlacements.push({ imageId: req.imageId, placementId: req.placementId, marker, col: startCol, cols, rows, z: req.z });
+  while (directPlacements.length > MAX_DIRECT_PLACEMENTS) {
+    directPlacements.shift()?.marker.dispose();
+  }
+  if (!req.noCursorMove) {
+    const down = rows > 1 ? '\n'.repeat(rows - 1) : '';
+    const targetCol = Math.min(term.cols, startCol + cols + 1);
+    return `${down}\x1b[${targetCol}G`;
+  }
+  return undefined;
+}
+
+function collectViewportRects() {
+  const buf = term.buffer.active;
+  const rects = [];
+  const active = new Map();
+  let mutated = false;
+  for (let y = 0; y < term.rows; y++) {
+    const { mutated: lineMut, map } = extractLinePlaceholders(buf.viewportY + y);
+    if (lineMut) mutated = true;
+    const nextActive = new Map();
+    if (map) {
+      let rowSpan = null;
+      const rowSpans = [];
+      for (let x = 0; x < term.cols; x++) {
+        const ph = map.get(x);
+        if (ph) {
+          if (rowSpan && rowSpan.imageId === ph.imageId && rowSpan.placementId === ph.placementId && rowSpan.srcRow === ph.row && rowSpan.x + rowSpan.cols === x && rowSpan.srcCol + rowSpan.cols === ph.col) {
+            rowSpan.cols++;
+          } else {
+            rowSpan = { imageId: ph.imageId, placementId: ph.placementId, x, y, cols: 1, rows: 1, srcCol: ph.col, srcRow: ph.row, z: 0 };
+            rowSpans.push(rowSpan);
+          }
+        } else {
+          rowSpan = null;
+        }
+      }
+      for (const s of rowSpans) {
+        const key = `${s.imageId}:${s.placementId}:${s.x}:${s.cols}:${s.srcCol}`;
+        const above = active.get(key);
+        if (above && above.y + above.rows === y && above.srcRow + above.rows === s.srcRow) {
+          above.rows++;
+          nextActive.set(key, above);
+        } else {
+          rects.push(s);
+          nextActive.set(key, s);
+        }
+      }
+    }
+    active.clear();
+    for (const [k, v] of nextActive) active.set(k, v);
+  }
+  if (directPlacements.length && buf.type === 'normal') {
+    for (let i = directPlacements.length - 1; i >= 0; i--) {
+      const p = directPlacements[i];
+      if (p.marker.isDisposed || p.marker.line < 0) {
+        p.marker.dispose();
+        directPlacements.splice(i, 1);
+        continue;
+      }
+      const yRel = p.marker.line - buf.viewportY;
+      if (yRel + p.rows <= 0 || yRel >= term.rows) continue;
+      const visY0 = Math.max(0, yRel);
+      const visY1 = Math.min(term.rows, yRel + p.rows);
+      rects.push({ imageId: p.imageId, placementId: p.placementId, x: p.col, y: visY0, cols: p.cols, rows: visY1 - visY0, srcCol: 0, srcRow: visY0 - yRel, z: p.z });
+    }
+  }
+  return { rects, mutated };
+}
+
+function paintKittyOverlay() {
+  if (!kittyCtx) return;
+  const { w, h, cellW, cellH } = gridSize();
+  if (w <= 0 || h <= 0 || cellW <= 0 || cellH <= 0) return;
+  const { rects, mutated } = collectViewportRects();
+  if (mutated) term.refresh(0, term.rows - 1);
+  pruneDecoded();
+  const visibleRects = kittyGraphics.size > 0 ? rects : [];
+  const dpr = (window.devicePixelRatio || 1) * Math.max(1, scale);
+  const devW = Math.max(1, Math.round(w * dpr));
+  const devH = Math.max(1, Math.round(h * dpr));
+  if (kittyCanvas.width !== devW || kittyCanvas.height !== devH) {
+    kittyCanvas.width = devW;
+    kittyCanvas.height = devH;
+    kittyCanvas.style.width = `${w}px`;
+    kittyCanvas.style.height = `${h}px`;
+  }
+  kittyCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  kittyCtx.clearRect(0, 0, w, h);
+  if (!visibleRects.length) return;
+
+  const observed = new Map();
+  for (const r of visibleRects) {
+    const mc = r.srcCol + r.cols;
+    const mr = r.srcRow + r.rows;
+    const prev = observed.get(r.imageId);
+    if (!prev) observed.set(r.imageId, { cols: mc, rows: mr });
+    else {
+      if (mc > prev.cols) prev.cols = mc;
+      if (mr > prev.rows) prev.rows = mr;
+    }
+  }
+  for (const r of visibleRects) {
+    const rec = kittyGraphics.get(r.imageId);
+    if (!rec) continue;
+    const entry = kittyDecoded.get(r.imageId);
+    if (!entry) {
+      decodeImageRecord(rec);
+      continue;
+    }
+    const bmp = entry.frameIdx === 0 || !entry.frames.length ? entry.root : (entry.frames[entry.frameIdx - 1] ?? entry.root);
+    if (!bmp) continue;
+    const obs = observed.get(r.imageId);
+    const totalCols = Math.max(obs?.cols ?? r.cols, rec.cols ?? Math.ceil(bmp.width / cellW));
+    const totalRows = Math.max(obs?.rows ?? r.rows, rec.rows ?? Math.ceil(bmp.height / cellH));
+    const sx = (r.srcCol / totalCols) * bmp.width;
+    const sy = (r.srcRow / totalRows) * bmp.height;
+    const sw = (r.cols / totalCols) * bmp.width;
+    const sh = (r.rows / totalRows) * bmp.height;
+    const dw = r.cols * cellW;
+    const dh = r.rows * cellH;
+    if (sw > 0 && sh > 0 && dw > 0 && dh > 0) {
+      kittyCtx.drawImage(bmp, sx, sy, sw, sh, r.x * cellW, r.y * cellH, dw, dh);
+    }
+  }
+}
+
+function scheduleKittyPaint() {
+  if (paintRaf) return;
+  paintRaf = requestAnimationFrame(() => {
+    paintRaf = 0;
+    paintKittyOverlay();
+  });
+}
+
+const kittyWriteQueue = [];
+let kittyWriting = false;
+
+function handleKittyApc(body) {
+  const { effect } = kittyGraphics.processApc(body);
+  let cursorMove;
+  if (effect.type === 'image') {
+    decodeImageRecord(effect.image);
+    if (effect.display) cursorMove = placeDirect(effect.image, effect.display);
+    scheduleKittyPaint();
+  } else if (effect.type === 'place') {
+    decodeImageRecord(effect.image);
+    cursorMove = placeDirect(effect.image, effect.display);
+    scheduleKittyPaint();
+  } else if (effect.type === 'animate') {
+    decodeImageRecord(effect.image);
+    scheduleKittyPaint();
+  } else if (effect.type === 'delete') {
+    if (effect.selector.toLowerCase() === 'a') {
+      clearDirectPlacements();
+      if (effect.free) {
+        for (const e of kittyDecoded.values()) closeDecodedEntry(e);
+        kittyDecoded.clear();
+      }
+    } else if (effect.imageId !== undefined) {
+      clearDirectPlacements((p) => p.imageId === effect.imageId && (!effect.placementId || p.placementId === effect.placementId));
+    }
+    pruneDecoded();
+    scheduleKittyPaint();
+  }
+  return cursorMove;
+}
+
+function pumpKittyWrites() {
+  if (kittyWriting) return;
+  const job = kittyWriteQueue[0];
+  if (!job) return;
+  if (job.idx >= job.segs.length) {
+    kittyWriteQueue.shift();
+    if (job.cb) {
+      kittyWriting = true;
+      term.write('', () => {
+        kittyWriting = false;
+        job.cb?.();
+        pumpKittyWrites();
+      });
+    } else {
+      pumpKittyWrites();
+    }
+    return;
+  }
+  const seg = job.segs[job.idx++];
+  const isLast = job.idx >= job.segs.length;
+  kittyWriting = true;
+  if (seg.type === 'text') {
+    term.write(seg.data, () => {
+      kittyWriting = false;
+      if (isLast) {
+        kittyWriteQueue.shift();
+        job.cb?.();
+      }
+      pumpKittyWrites();
+    });
+  } else {
+    term.write('', () => {
+      const cursorMove = handleKittyApc(seg.body);
+      if (cursorMove) {
+        term.write(cursorMove, () => {
+          kittyWriting = false;
+          if (isLast) {
+            kittyWriteQueue.shift();
+            job.cb?.();
+          }
+          pumpKittyWrites();
+        });
+      } else {
+        kittyWriting = false;
+        if (isLast) {
+          kittyWriteQueue.shift();
+          job.cb?.();
+        }
+        pumpKittyWrites();
+      }
+    });
+  }
+}
+
+function writeKittyStream(data, cb) {
+  const segs = kittySplitter.feed(data);
+  kittyWriteQueue.push({ segs, idx: 0, cb });
+  pumpKittyWrites();
 }
 
 function layout() {
@@ -82,6 +576,7 @@ function layout() {
     lastFit = key;
     post({ t: 'fit', cols: fit.cols, rows: fit.rows });
   }
+  scheduleKittyPaint();
 }
 
 let queued = false;
@@ -104,8 +599,21 @@ function checkBottom() {
   atBottom = at;
   post({ t: 'bottom', at });
 }
-term.onScroll(checkBottom);
-term.onWriteParsed(checkBottom);
+term.onScroll(() => {
+  checkBottom();
+  scheduleKittyPaint();
+});
+term.onRender(scheduleKittyPaint);
+term.onWriteParsed(() => {
+  const buf = term.buffer.active;
+  const from = Math.max(0, Math.min(scannedLength - term.rows, buf.baseY));
+  if (hidePlaceholders(from, buf.length - 1)) {
+    term.refresh(0, term.rows - 1);
+  }
+  scannedLength = buf.length;
+  checkBottom();
+  scheduleKittyPaint();
+});
 
 const programState = () => ({
   alternate: term.buffer.active.type === 'alternate',
@@ -219,9 +727,10 @@ window.office = {
       case 'snapshot':
         stopFlick();
         encoding = 0;
+        resetKitty();
         term.reset();
         if (msg.cols !== term.cols || msg.rows !== term.rows) term.resize(msg.cols, msg.rows);
-        term.write(msg.data, () => {
+        writeKittyStream(msg.data, () => {
           term.scrollToBottom();
           checkBottom();
           relayout();
@@ -229,7 +738,7 @@ window.office = {
         });
         break;
       case 'data':
-        term.write(msg.data);
+        writeKittyStream(msg.data);
         break;
       case 'size':
         if (msg.cols !== term.cols || msg.rows !== term.rows) term.resize(msg.cols, msg.rows);
@@ -244,4 +753,5 @@ window.office = {
 };
 
 relayout();
+reportKittyFlags();
 post({ t: 'ready' });

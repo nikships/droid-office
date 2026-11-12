@@ -13,10 +13,12 @@ data class ScreenState(
     val cursorY: Int,
     val version: Long,
 ) {
-    fun text(): String = lines.joinToString("\n") { row -> row.joinToString("") { it.text }.trimEnd() }.trimEnd()
+    fun text(): String = lines.joinToString("\n") { row -> KittyKeys.stripPlaceholders(row.joinToString("") { it.text }).trimEnd() }.trimEnd()
 
     /** The last row with something on it: a one-line glimpse of what the terminal is showing. */
-    fun lastLine(): String? = lines.asReversed().map { row -> row.joinToString("") { it.text }.trim() }.firstOrNull { it.isNotEmpty() }
+    fun lastLine(): String? = lines.asReversed().firstNotNullOfOrNull { row ->
+        KittyKeys.stripPlaceholders(row.joinToString("") { it.text }).trim().takeIf { it.isNotEmpty() }
+    }
 
     companion object {
         fun apply(prev: ScreenState?, frame: ServerMsg.Screen): ScreenState {

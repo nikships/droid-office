@@ -823,7 +823,7 @@ label.choice:has(> input:disabled) { opacity: .5; cursor: default; }
 .modal.term header { background: var(--surface); }
 .modal.term .term-host { position: relative; flex: 1; min-height: 0; padding: 8px 4px 4px 10px; background: #000000; }
 .modal.term .term-host .xterm { height: 100%; }
-.xterm .xterm-screen canvas.term-kitty-layer { pointer-events: none; z-index: 2; }
+.xterm .xterm-screen canvas.term-kitty-layer { position: absolute; inset: 0; pointer-events: none; z-index: 2; }
 .modal.term .term-team { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; padding: 6px 14px; background: var(--surface); border-bottom: 1px solid var(--border); }
 /* A cloud worker's window (ui/factory-cloud.ts): the terminal window's frame around its Factory session */
 .modal.term.cloud-win { width: min(900px, 100%); height: min(640px, calc(100vh - 32px)); background: var(--surface); }

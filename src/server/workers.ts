@@ -16,7 +16,8 @@ import { isAgentEffort } from '../shared/protocol.js';
 import { OFFICE_SHELL_ID } from '../shared/office-shell.js';
 import { withImages } from '../shared/drops.js';
 import { CTRL_ENTER, wantsCsiEnter } from '../shared/csi-enter.js';
-import { CLEAR_DROID_QUEUE, readDroidQueue } from '../shared/droid-queue.js';
+import { readDroidQueue } from '../shared/droid-queue.js';
+import { countCtrlEnterInputs, isCancelInput, isClearQueueInput, stripKittyPlaceholders } from '../shared/kitty.js';
 import { WORKSPACE_FILES, WORKTREES_DIR, Worktrees, describeWork, workspaceOf, type WorktreeCleanup, type WorktreeOwnership, type WorktreeRef, type WorktreeStart, type WorktreeState } from './worktrees.js';
 import { checkoutDirty, choosePullBase, pushBranch } from './open-pull.js';
 import { normalizeRepo } from '../shared/floors.js';
@@ -36,7 +37,7 @@ import { DroidSessionReader } from './droid-session.js';
 import { isValidDroidModel, validateWorkerEffort, validateWorkerModel } from './agents.js';
 import { ScrollbackStore, plainTail, searchTerminal, terminalTail } from './history.js';
 import { DropStore } from './drops.js';
-import { screenSnapshot } from './screen.js';
+import { screenSnapshot, setTerminalResponder } from './screen.js';
 import { snapshotScreen, type ScreenFrame } from './screen-frame.js';
 import { readScreenMenu } from '../shared/asks.js';
 import { SCREEN_SETTLE_MS, readDroidScreen, screenStatus, type DroidScreen } from './droid-screen.js';
@@ -1627,9 +1628,9 @@ export class WorkerManager {
     const w = this.workers.get(id);
     if (!w?.pty) return false;
     w.pty.write(data);
-    if (w.info.kind === 'agent' && w.info.status === 'working') w.queued += data.split(CTRL_ENTER).length - 1;
-    if (data === CLEAR_DROID_QUEUE) w.queued = 0;
-    if (data === '\x1b' || data === '\x03') w.cancelAt = Date.now();
+    if (w.info.kind === 'agent' && w.info.status === 'working') w.queued += countCtrlEnterInputs(data);
+    if (isClearQueueInput(data)) w.queued = 0;
+    if (isCancelInput(data)) w.cancelAt = Date.now();
     let changed = this.typed(w);
     if (w.info.status === 'needs_input' && w.info.acked === false) {
       w.info.acked = true;
@@ -2491,6 +2492,11 @@ export class WorkerManager {
   private follow(w: Worker, proc: Pty, term: HeadlessTerminal) {
     const { info } = w;
     w.pty = proc;
+    if (!proc.id) {
+      setTerminalResponder(term, (reply) => {
+        if (w.pty === proc) proc.write(reply);
+      });
+    }
     proc.onData((data) => {
       term.write(data);
       w.outputAt = Date.now();
@@ -2926,7 +2932,7 @@ function midTurn({ info, bootBlocked, stopAt }: Pick<Worker, 'info' | 'bootBlock
 function screenRows(term: HeadlessTerminal): string[] {
   const buf = term.buffer.active;
   const rows: string[] = [];
-  for (let y = buf.baseY; y < buf.baseY + term.rows; y++) rows.push(buf.getLine(y)?.translateToString(true) ?? '');
+  for (let y = buf.baseY; y < buf.baseY + term.rows; y++) rows.push(stripKittyPlaceholders(buf.getLine(y)?.translateToString(true) ?? '').trimEnd());
   return rows;
 }
 

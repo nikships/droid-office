@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { ANISOTROPY } from './texture-quality';
-import { FLAG_BOLD, FLAG_DIM, FLAG_INVERSE, RGB_FLAG, type Run } from '../../shared/protocol';
+import { FLAG_BOLD, FLAG_DIM, FLAG_INVERSE, RGB_FLAG, type Run, type ScreenPlacement } from '../../shared/protocol';
 import { mesh, roundedBox, toon } from './toon';
 import { propReady, useProp } from './props';
 import { fontRevision, TERM_FONT } from '../fonts';
@@ -49,12 +49,21 @@ function color(c: number, fallback: string): string {
   return PALETTE[c] ?? fallback;
 }
 
+export interface ScreenBitmap {
+  source: CanvasImageSource;
+  width: number;
+  height: number;
+  sig?: string;
+}
+
 export interface ScreenState {
   cols: number;
   rows: number;
   lines: Run[][];
   /** Scrollback rows just above the screen, oldest first, for a terminal wider than the laptop. */
   above?: Run[][];
+  placements?: ScreenPlacement[];
+  bitmaps?: Map<number, ScreenBitmap>;
   cursor: [number, number];
   version: number;
 }
@@ -87,6 +96,13 @@ function activeWindow(s: ScreenState, width: number, height: number, preferredRo
     if (!filled(runs)) continue;
     last = y;
     cols = Math.max(cols, runLen(runs));
+  }
+  if (s.placements) {
+    for (const p of s.placements) {
+      if (p.y + p.rows <= 0 || p.y >= s.rows) continue;
+      last = Math.max(last, Math.min(s.rows - 1, p.y + p.rows - 1));
+      cols = Math.max(cols, p.x + p.cols);
+    }
   }
   cols = Math.min(s.cols, cols);
   // A natural terminal cell is about .6 characters wide by 1.25 characters high. Add enough
@@ -155,6 +171,29 @@ export function paintScreen(ctx: CanvasRenderingContext2D, w: number, h: number,
         ctx.globalAlpha = 1;
       }
       x += len;
+    }
+  }
+  if (s.placements?.length && s.bitmaps?.size) {
+    for (const p of s.placements) {
+      const bmp = s.bitmaps.get(p.id);
+      if (!bmp || bmp.width <= 0 || bmp.height <= 0) continue;
+      if (p.totalCols <= 0 || p.totalRows <= 0) continue;
+      const r0 = win.above + p.y;
+      const vr0 = Math.max(win.top, r0);
+      const vr1 = Math.min(win.top + win.rows, r0 + p.rows);
+      const vc0 = Math.max(0, p.x);
+      const vc1 = Math.min(win.cols, p.x + p.cols);
+      if (vr1 <= vr0 || vc1 <= vc0) continue;
+      const sx = ((p.srcCol + (vc0 - p.x)) / p.totalCols) * bmp.width;
+      const sy = ((p.srcRow + (vr0 - r0)) / p.totalRows) * bmp.height;
+      const sw = ((vc1 - vc0) / p.totalCols) * bmp.width;
+      const sh = ((vr1 - vr0) / p.totalRows) * bmp.height;
+      if (!(sw > 0 && sh > 0)) continue;
+      const dx = pad + vc0 * charW;
+      const dy = pad + (vr0 - win.top) * lineH;
+      const dw = (vc1 - vc0) * charW;
+      const dh = (vr1 - vr0) * lineH;
+      ctx.drawImage(bmp.source, sx, sy, sw, sh, dx, dy, dw, dh);
     }
   }
 }
