@@ -272,7 +272,9 @@ test('web companion UI drives the full Add floor flow live against the real serv
 
     await page.goto(`${fx.base}/dashboard`);
     await page.locator('.dash-floor-chip.on').waitFor();
-    assert.deepEqual(await page.locator('.dash-floor-chip .dash-floor-name').allInnerTexts(), ['api', 'Home']);
+    assert.deepEqual(await page.locator('.dash-floor-chip .dash-floor-name').allInnerTexts(), ['api']);
+    assert.match((await page.locator('.dash-quiet-bay .dash-quiet-label').textContent()) ?? '', /\+1 quiet/i);
+    assert.equal(await page.locator('.dash-git-pill').textContent(), 'api/main');
 
     // Open the Add floor dialog from the top bar.
     await page.getByRole('button', { name: 'Add floor' }).click();
@@ -313,10 +315,11 @@ test('web companion UI drives the full Add floor flow live against the real serv
     assert.equal(await dialog.locator('.list-row.repo.on').count(), 1);
     await submit.click();
 
-    // Dialog closes, new floor chip appears live and becomes active without reload.
+    // Dialog closes, new floor bay becomes active without reload while quiet floors tuck into +N QUIET.
     await dialog.waitFor({ state: 'detached' });
     await page.waitForFunction(() => document.querySelector('.dash-floor-chip.on .dash-floor-name')?.textContent === 'web');
-    assert.deepEqual(await page.locator('.dash-floor-chip .dash-floor-name').allInnerTexts(), ['api', 'Home', 'web']);
+    assert.deepEqual(await page.locator('.dash-floor-chip .dash-floor-name').allInnerTexts(), ['web']);
+    assert.match(await page.locator('.dash-quiet-bay .dash-quiet-label').innerText(), /\+2 quiet/i);
     assert.equal(await page.locator('.dash-side-title').innerText(), 'web');
     assert.equal(await page.locator('.dash-side-sub').innerText(), 'main');
 
@@ -334,15 +337,40 @@ test('web companion UI drives the full Add floor flow live against the real serv
 
     await dialog.waitFor({ state: 'detached' });
     await page.waitForFunction(() => document.querySelector('.dash-floor-chip.on .dash-floor-name')?.textContent === 'runbooks');
-    assert.deepEqual(await page.locator('.dash-floor-chip .dash-floor-name').allInnerTexts(), ['api', 'Home', 'web', 'runbooks']);
+    assert.deepEqual(await page.locator('.dash-floor-chip .dash-floor-name').allInnerTexts(), ['runbooks']);
+    assert.match((await page.locator('.dash-quiet-bay .dash-quiet-label').textContent()) ?? '', /\+3 quiet/i);
+    assert.equal(await page.locator('.dash-git-pill').textContent(), 'runbooks· plain');
     assert.match(await page.locator('.dash-side-sub').innerText(), /Not a git repository/);
+
+    // +N QUIET menu lists tucked floors, searches across all floors, clears search on first Escape, and closes on second Escape.
+    await page.locator('.dash-quiet-bay').click();
+    const quietPop = page.getByRole('dialog', { name: 'Switch floor' });
+    await quietPop.waitFor();
+    assert.deepEqual(await quietPop.locator('.dash-quiet-repo').allInnerTexts(), ['api', 'Home', 'web']);
+    const quietSearch = quietPop.getByRole('searchbox', { name: 'Search floors' });
+    await quietSearch.fill('runbooks');
+    assert.deepEqual(await quietPop.locator('.dash-quiet-repo').allInnerTexts(), ['runbooks']);
+    await page.keyboard.press('Escape');
+    assert.equal(await quietPop.isVisible(), true, 'first Escape clears query');
+    assert.deepEqual(await quietPop.locator('.dash-quiet-repo').allInnerTexts(), ['api', 'Home', 'web']);
+    await page.keyboard.press('Escape');
+    assert.equal(await quietPop.isHidden(), true, 'second Escape closes switcher');
+
+    // ⌘K opens the floor switcher from the workspace and Enter switches to the selected quiet floor (`web`), then ⇧⌘1 jumps to floor 1 (`api`).
+    await page.keyboard.press('Meta+k');
+    await quietPop.waitFor();
+    await quietSearch.fill('web');
+    await quietSearch.press('Enter');
+    await page.waitForFunction(() => document.querySelector('.dash-floor-chip.on .dash-floor-name')?.textContent === 'web');
+    await page.keyboard.press('Shift+Meta+Digit1');
+    await page.waitForFunction(() => document.querySelector('.dash-floor-chip.on .dash-floor-name')?.textContent === 'api');
 
     // Clicking an already-open floor row inside Add floor switches directly to that floor and closes the modal.
     await page.getByRole('button', { name: 'Add floor' }).click();
     await dialog.waitFor();
-    await dialog.locator(`.list-row.repo[data-repo-dir="${fx.apiRepo}"]`).click();
+    await dialog.locator(`.list-row.repo[data-repo-dir="${fx.webRepo}"]`).click();
     await dialog.waitFor({ state: 'detached' });
-    await page.waitForFunction(() => document.querySelector('.dash-floor-chip.on .dash-floor-name')?.textContent === 'api');
+    await page.waitForFunction(() => document.querySelector('.dash-floor-chip.on .dash-floor-name')?.textContent === 'web');
 
     assert.equal(MAX_FLOORS, 16);
     assert.deepEqual(pageErrors, []);
