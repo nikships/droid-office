@@ -199,7 +199,11 @@ export class LinearApi {
     if (res.status === 401 || code === 'AUTHENTICATION_ERROR') throw new LinearError(`Linear didn't accept the API key${said ? `: ${said}` : ''}. Check that it hasn't been revoked.`, 401, code);
     if (res.status === 429 || code === 'RATELIMITED') {
       const reset = Number(res.headers.get('x-ratelimit-requests-reset'));
-      const after = Number.isFinite(reset) && reset > Date.now() ? Math.ceil((reset - Date.now()) / 1000) : undefined;
+      const retry = res.headers.get('retry-after');
+      const seconds = retry ? Number(retry) : NaN;
+      const retryAt = retry && !Number.isFinite(seconds) ? Date.parse(retry) : NaN;
+      const waits = [Number.isFinite(reset) && reset > Date.now() ? Math.ceil((reset - Date.now()) / 1000) : 0, Number.isFinite(seconds) ? Math.ceil(seconds) : Number.isFinite(retryAt) ? Math.ceil((retryAt - Date.now()) / 1000) : 0];
+      const after = Math.max(...waits) > 0 ? Math.max(...waits) : undefined;
       throw new LinearError('Linear is rate limiting the office. It tries again in a while.', 429, code, after);
     }
     if (code === 'FORBIDDEN') throw new LinearError(`The office's Linear key may not do that${said ? `: ${said}` : ''}`, 403, code);
