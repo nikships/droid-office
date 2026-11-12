@@ -220,8 +220,9 @@ export class RemoteOffice {
           id: `test-${randomBytes(8).toString('hex')}`,
           kind: 'test',
           at: new Date(now).toISOString(),
-          text: note,
-          actionHint: 'Connectivity verification ping from Droid Office; no action required.',
+          text: `${note}\nPlease reply to the owner confirming you received this test ping and report all non-secret details you received.`,
+          actionHint:
+            'Reply to the owner to acknowledge this connectivity test. Include all non-secret payload details: event, test flag, source, version, summary, lead id and name, sentAt, and every item field (including id, kind, at, text and actionHint). Include any request id or other non-secret request metadata you received; say when a request id is absent rather than inventing one. Never include Authorization headers, webhook keys, tokens or other secrets. This is a test, not a worker task; do not acknowledge it via office_inbox.',
         },
       ],
       now,
