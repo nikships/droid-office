@@ -1,5 +1,6 @@
 import { DESK_BY_ID } from '../shared/layout.js';
 import type { WorkerInfo } from '../shared/protocol.js';
+import { withImageOrigin, type OfficeImageRef } from './office-images.js';
 import type { OpenQuestion } from './office-mcp/team-events.js';
 import type { TeamEvent, TeamMember, WorkerResult } from './team.js';
 
@@ -59,6 +60,7 @@ export interface GrokWebhookItem {
   pushedSha?: string;
   prUrl?: string;
   result?: WorkerResult;
+  images?: OfficeImageRef[];
   /** Full original report is available using this durable report id. */
   reportId?: string;
   reportPhase?: 'progress' | 'final' | 'question' | 'blocked';
@@ -119,7 +121,7 @@ function scrubWebhookText(text: string, secrets: (string | undefined)[]): string
 }
 
 /** Fixed protocol values and opaque references are not credential-bearing prose. */
-const PROTOCOL_FIELDS = new Set(['source', 'event', 'kind', 'status', 'state', 'reportPhase', 'id', 'ackId', 'ackIds', 'deliveryId', 'reportId', 'questionId', 'at', 'sentAt', 'pushedSha', 'mergeCommit']);
+const PROTOCOL_FIELDS = new Set(['source', 'event', 'kind', 'status', 'state', 'reportPhase', 'id', 'ackId', 'ackIds', 'deliveryId', 'reportId', 'questionId', 'at', 'sentAt', 'pushedSha', 'mergeCommit', 'mimeType']);
 
 function scrubWebhookPayload(value: unknown, secrets: string[], field = ''): unknown {
   if (typeof value === 'string') return PROTOCOL_FIELDS.has(field) || (field === 'commits' && /^[0-9a-f]{7,64}$/i.test(value)) ? value : scrubWebhookText(value, secrets);
@@ -197,8 +199,9 @@ function teamActionHint(item: { kind: GrokWebhookItemKind; questionId?: string; 
   return `Check this worker's status on this floor if action is needed. ${ack}`;
 }
 
-export function buildTeamWebhookItem(args: { event: TeamEvent; floor: GrokWebhookFloor; member?: TeamMember; worker?: WorkerInfo; openQuestion?: OpenQuestion }): GrokWebhookItem {
-  const { event, floor, member, worker, openQuestion } = args;
+export function buildTeamWebhookItem(args: { event: TeamEvent; floor: GrokWebhookFloor; member?: TeamMember; worker?: WorkerInfo; openQuestion?: OpenQuestion; imageOrigin?: string }): GrokWebhookItem {
+  const { event, floor, member, worker, openQuestion, imageOrigin } = args;
+  const images = withImageOrigin(event.images, imageOrigin);
   const id = `team:${floor.id}:${event.seq}`;
   let kind: GrokWebhookItemKind = event.kind;
   if (event.kind === 'report') {
@@ -247,6 +250,7 @@ export function buildTeamWebhookItem(args: { event: TeamEvent; floor: GrokWebhoo
     ...(event.pushedSha ? { pushedSha: event.pushedSha } : {}),
     ...(prUrl ? { prUrl } : {}),
     ...(result ? { result } : {}),
+    ...(images ? { images } : {}),
     actionHint: teamActionHint({ kind, questionId, terminalAsk, hasChanges, watched: event.watched, prUrl }),
   };
 }

@@ -49,7 +49,7 @@ import { PtyHost, SCROLLBACK, type Adopted, type Pty } from './ptys.js';
 import { DroidSessionReader } from './droid-session.js';
 import { isValidDroidModel, validateWorkerEffort, validateWorkerModel } from './agents.js';
 import { ScrollbackStore, plainTail, searchTerminal, terminalTail } from './history.js';
-import { DropStore } from './drops.js';
+import { DropStore, type SharedDropImages } from './drops.js';
 import { screenSnapshot, setTerminalResponder } from './screen.js';
 import { snapshotScreen, type ScreenFrame } from './screen-frame.js';
 import { readScreenMenu } from '../shared/asks.js';
@@ -1271,6 +1271,21 @@ export class WorkerManager {
     this.drops.unstage(ids);
   }
 
+  /** Connects the office-wide image store so prompts and team messages can adopt Tailnet-uploaded image ids. */
+  setSharedImages(shared: SharedDropImages | undefined) {
+    this.drops.setShared(shared);
+  }
+
+  /** Whether `id` names a staged or office-uploaded image this worker can adopt. */
+  hasImage(id: string): boolean {
+    return this.drops.hasImage(id);
+  }
+
+  /** Reads a staged or office-uploaded image's raw bytes. */
+  stagedPicture(id: string): { body: Buffer; ext: string } | undefined {
+    return this.drops.stagedPicture(id);
+  }
+
   /** Whether its process is running. */
   running(id: string): boolean {
     return !!this.workers.get(id)?.pty;
@@ -2399,10 +2414,12 @@ export class WorkerManager {
    * started before this office) is typed into by the caller instead, as before. One still waiting
    * when the worker comes to rest is typed in then.
    */
-  notice(id: string, text: string): boolean {
+  notice(id: string, text: string, images?: readonly string[]): boolean {
     const w = this.workers.get(id);
-    const clean = text.replace(/\r\n?/g, '\n').trim();
-    if (!w?.pty || !clean || w.info.kind !== 'agent' || w.info.status !== 'working' || w.bootBlocked || w.hookVersion < HOOK_VERSION) return false;
+    const typed = text.replace(/\r\n?/g, '\n').trim();
+    if (!w?.pty || (!typed && !images?.length) || w.info.kind !== 'agent' || w.info.status !== 'working' || w.bootBlocked || w.hookVersion < HOOK_VERSION) return false;
+    const clean = images?.length ? withImages(typed, this.drops.adopt(id, images)) : typed;
+    if (!clean) return false;
     w.outbox.push(clean);
     // Promised to whoever sent it: it outlives an office restart that keeps the terminal.
     this.persist();

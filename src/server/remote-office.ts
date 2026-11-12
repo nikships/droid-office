@@ -2,6 +2,7 @@ import { randomBytes } from 'node:crypto';
 import path from 'node:path';
 import type { WorkerInfo } from '../shared/protocol.js';
 import { buildGrokWebhookPayload, buildTeamWebhookItem, sendGrokWebhook, webhookWorkerFromMember, type GrokWebhookItem, type GrokWebhookResult } from './grok-webhook.js';
+import { formatImageLines, OfficeImageStore, type OfficeImageRef, type StoredImageMeta } from './office-images.js';
 import { terminalQuestion } from './office-mcp/team-events.js';
 import { pushedSha } from './team-inspect.js';
 import { teamDeliveryReply, type Team, type TeamDelivery, type TeamEvent, type TeamReply, type TeamViews } from './team.js';
@@ -37,6 +38,8 @@ export interface RemoteOfficeOptions {
   webhookDelayMs?: number;
   webhookTimeoutMs?: number;
   now?: () => number;
+  images?: OfficeImageStore;
+  imageOrigin?: () => string | undefined;
 }
 
 type PendingPush = { type: 'team'; id: string; floor: RemoteFloor; event: TeamEvent } | { type: 'inbox'; id: string; message: RemoteMessage } | { type: 'direct'; id: string; item: GrokWebhookItem };
@@ -55,6 +58,7 @@ export class RemoteOffice {
   private readonly inFlight = new Map<string, Promise<GrokWebhookResult | undefined>>();
   private readonly pushedIds = new Set<string>();
   private readonly webhookDeliveries = new Map<string, { leadId: string; ackIds: string[] }>();
+  readonly images: OfficeImageStore;
   private stopped = false;
 
   constructor(
@@ -63,7 +67,12 @@ export class RemoteOffice {
     readonly floors: () => RemoteFloor[],
     private readonly opts: RemoteOfficeOptions = {},
   ) {
+    this.images = opts.images ?? new OfficeImageStore(store.dataDir, { origin: opts.imageOrigin });
     if (this.store.hasGrokBots()) this.syncWatches();
+  }
+
+  setImageOrigin(origin: (() => string | undefined) | undefined): void {
+    this.images.setOrigin(origin);
   }
 
   /** Keeps floor team subscriptions aligned with open floors whenever at least one Grok Bot is configured. */
@@ -152,8 +161,8 @@ export class RemoteOffice {
   /** Sends a direct mid-turn update, question, blocker or connectivity test from a subagent to its Grok Bot lead. */
   async notifyLead(
     caller: { worker: WorkerInfo; floor: { id: string; name: string; dir: string } },
-    input: { kind: 'update' | 'question' | 'blocker' | 'test'; text: string; options?: string[]; prUrl?: string; pushedSha?: string },
-  ): Promise<{ ok: boolean; status?: number; error?: string; ackId?: string; lead: string }> {
+    input: { kind: 'update' | 'question' | 'blocker' | 'test'; text: string; options?: string[]; prUrl?: string; pushedSha?: string; images?: readonly StoredImageMeta[] },
+  ): Promise<{ ok: boolean; status?: number; error?: string; ackId?: string; lead: string; images?: OfficeImageRef[] }> {
     const leadId = caller.worker.lead;
     const lead = leadId ? this.store.identity(leadId) : undefined;
     if (!leadId || !lead || !this.store.isGrokBot(leadId)) {
@@ -165,6 +174,7 @@ export class RemoteOffice {
     const member = floor?.team.roster(leadId).find((m) => m.id === caller.worker.id);
     const sha = input.pushedSha ?? (input.kind === 'test' ? undefined : await pushedSha(caller.floor.dir, caller.worker));
     const prUrl = input.prUrl ?? caller.worker.pr?.url ?? /https:\/\/(?:github\.com|gitlab\.com)\/[^\s)<>]+\/(?:pull|merge_requests)\/\d+/.exec(input.text)?.[0];
+    const imageRefs = this.images.withUrls(input.images);
     let ackId: string | undefined;
     if (input.kind !== 'test') {
       const formatted = [
@@ -173,8 +183,9 @@ export class RemoteOffice {
         ...(input.options?.length ? [`Options: ${input.options.map((o, i) => `${i + 1}. ${o}`).join(' | ')}`] : []),
         ...(prUrl ? [`PR: ${prUrl}`] : []),
         ...(sha ? [`Commit: ${sha}`] : []),
+        ...formatImageLines(imageRefs),
       ].join('\n');
-      const enqueued = this.store.enqueueMessage(leadId, formatted.slice(0, 24_000), caller.floor.id);
+      const enqueued = this.store.enqueueMessage(leadId, formatted.slice(0, 24_000), caller.floor.id, input.images);
       if (enqueued.message) ackId = enqueued.message.id;
     }
     const id = ackId ?? `test-${randomBytes(8).toString('hex')}`;
@@ -190,6 +201,7 @@ export class RemoteOffice {
       ...(input.options?.length ? { options: [...input.options] } : {}),
       ...(prUrl ? { prUrl } : {}),
       ...(sha ? { pushedSha: sha } : {}),
+      ...(imageRefs ? { images: imageRefs } : {}),
       actionHint:
         input.kind === 'test'
           ? 'Connectivity verification ping from Droid Office; no action or acknowledgment required.'
@@ -204,6 +216,7 @@ export class RemoteOffice {
       ...(receipt?.status !== undefined ? { status: receipt.status } : {}),
       ...(receipt?.error ? { error: receipt.error } : {}),
       ...(ackId ? { ackId } : {}),
+      ...(imageRefs ? { images: imageRefs } : {}),
       lead: lead.name,
     };
   }
@@ -335,10 +348,14 @@ export class RemoteOffice {
   }
 
   private materializeItem(leadId: string, entry: PendingPush): GrokWebhookItem {
-    if (entry.type === 'direct') return entry.item;
+    if (entry.type === 'direct') {
+      const refreshed = entry.item.images?.length ? this.images.withUrls(entry.item.images) : undefined;
+      return refreshed ? { ...entry.item, images: refreshed } : entry.item;
+    }
     if (entry.type === 'inbox') {
       const m = entry.message;
       const f = m.floor ? this.floors().find((x) => x.id === m.floor) : undefined;
+      const images = this.images.withUrls(m.images);
       return {
         id: m.id,
         ackId: m.id,
@@ -346,6 +363,7 @@ export class RemoteOffice {
         at: new Date(m.at).toISOString(),
         ...(f ? { floor: { id: f.id, name: f.def.name, cwd: f.dir } } : {}),
         text: m.text,
+        ...(images ? { images } : {}),
         actionHint: "Acknowledge only this item's ackId after handling this message.",
       };
     }
@@ -359,6 +377,7 @@ export class RemoteOffice {
       member,
       worker,
       openQuestion,
+      imageOrigin: this.images.origin(),
     });
   }
 
@@ -372,7 +391,7 @@ export class RemoteOffice {
     }));
   }
 
-  inbox(id: string, ack: readonly string[] = [], limit = 50, own = true, filter?: { ids?: readonly string[]; deliveryId?: string }) {
+  inbox(id: string, ack: readonly string[] = [], limit = 50, own = true, filter?: { ids?: readonly string[]; deliveryId?: string; origin?: string }) {
     const deliveryIds = filter?.deliveryId !== undefined ? (this.deliveryAckIds(id, filter.deliveryId) ?? []) : undefined;
     const scopedList = filter?.ids !== undefined || filter?.deliveryId !== undefined ? [...(deliveryIds ?? []), ...(filter?.ids ?? [])] : undefined;
     const onlyIds = scopedList ? new Set(scopedList) : undefined;
@@ -386,7 +405,17 @@ export class RemoteOffice {
     const ignoredAck = onlyIds ? expandedAck.filter((a) => !onlyIds.has(a)) : [];
     const effectiveAck = onlyIds ? expandedAck.filter((a) => onlyIds.has(a)) : expandedAck;
     const storeLimit = onlyIds ? Math.max(500, onlyIds.size) : 500;
-    const messages: Array<{ id: string; floor?: string; at: number; kind: string; text: string; acked?: boolean }> = own ? this.store.inbox(id, effectiveAck, storeLimit, onlyIds).messages.map((m) => ({ ...m, kind: 'message' })) : [];
+    const messages: Array<{ id: string; floor?: string; at: number; kind: string; text: string; acked?: boolean; images?: OfficeImageRef[] }> = own
+      ? this.store.inbox(id, effectiveAck, storeLimit, onlyIds).messages.map((m) => {
+          const { images: _raw, ...rest } = m;
+          const images = this.images.withUrls(m.images, filter?.origin);
+          return {
+            ...rest,
+            kind: 'message',
+            ...(images ? { images } : {}),
+          };
+        })
+      : [];
     for (const floor of this.floors()) {
       const prefix = `team:${floor.id}:`;
       const heard = effectiveAck
@@ -394,8 +423,21 @@ export class RemoteOffice {
         .map((s) => Number(s.slice(prefix.length)))
         .filter(Number.isSafeInteger);
       const unacked = floor.team.inbox(id, heard);
+      const formatTeamInboxEvent = (e: TeamEvent, acked?: boolean) => {
+        const images = this.images.withUrls(e.images, filter?.origin);
+        const imgLines = formatImageLines(images);
+        return {
+          id: `${prefix}${e.seq}`,
+          floor: floor.id,
+          at: e.at,
+          kind: e.kind,
+          text: [`${e.name}: ${e.kind}${e.text ? `\n${e.text}` : ''}`, ...imgLines].join('\n'),
+          ...(acked !== undefined ? { acked } : {}),
+          ...(images ? { images } : {}),
+        };
+      };
       if (!onlyIds) {
-        for (const e of unacked) messages.push({ id: `${prefix}${e.seq}`, floor: floor.id, at: e.at, kind: e.kind, text: `${e.name}: ${e.kind}${e.text ? `\n${e.text}` : ''}` });
+        for (const e of unacked) messages.push(formatTeamInboxEvent(e));
       } else {
         const wantedSeqs = new Set(
           [...onlyIds]
@@ -408,14 +450,7 @@ export class RemoteOffice {
         const allEvents = typeof floor.team.news === 'function' ? floor.team.news(id) : unacked;
         for (const e of allEvents) {
           if (!wantedSeqs.has(e.seq)) continue;
-          messages.push({
-            id: `${prefix}${e.seq}`,
-            floor: floor.id,
-            at: e.at,
-            kind: e.kind,
-            text: `${e.name}: ${e.kind}${e.text ? `\n${e.text}` : ''}`,
-            acked: !unackedSeqs.has(e.seq),
-          });
+          messages.push(formatTeamInboxEvent(e, !unackedSeqs.has(e.seq)));
         }
       }
     }
@@ -541,7 +576,7 @@ export class RemoteOffice {
         const { f, w } = matches[0];
         if (seen.has(w.id)) continue;
         seen.add(w.id);
-        const result = await f.team.handle(worker, { action: 'send', worker: w.id, text: args.text, queue: args.queue, urgent: args.urgent });
+        const result = await f.team.handle(worker, { action: 'send', worker: w.id, text: args.text, images: args.images, queue: args.queue, urgent: args.urgent });
         results.push({ id: w.id, name: w.name, floor: f.id, ...result.body });
       }
       return teamDeliveryReply(results);

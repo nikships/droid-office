@@ -4,6 +4,7 @@ import { canAnswer, menuTakesText, type Menu } from '../../shared/asks.js';
 import { permissionLine, questionPresentation } from '../../shared/ask-question.js';
 import { DESK_BY_ID } from '../../shared/layout.js';
 import type { WorkerInfo } from '../../shared/protocol.js';
+import { formatImageLines, withImageOrigin } from '../office-images.js';
 import { settled, TEAM_EVENT_KINDS, type Team, type TeamEvent, type TeamEventKind, type TeamMember, type TeamViews, type WorkerResult, type WorkerReview } from '../team.js';
 import { briefAge, formatForgeLines, formatTaskTag } from '../worker-status.js';
 import type { WorkerManager } from '../workers.js';
@@ -77,8 +78,11 @@ export function cursorOf(latest: Record<string, number>): string {
     .join(',');
 }
 
+export { withImageOrigin };
+
 /** A subagent (or watched floor worker) as compact structured status shows it. */
-export function compactWorker(m: TeamMember, floor: string) {
+export function compactWorker(m: TeamMember, floor: string, imageOrigin?: string) {
+  const reportImages = withImageOrigin(m.report?.images, imageOrigin);
   return {
     id: m.id,
     name: m.name,
@@ -117,6 +121,7 @@ export function compactWorker(m: TeamMember, floor: string) {
           lastReportKind: m.report.question ? 'question' : m.report.progress ? 'progress' : 'report',
           lastReportAt: iso(m.report.at),
           lastReportSummary: summary(m.report.result?.summary ?? m.report.text),
+          ...(reportImages ? { images: reportImages } : {}),
           ...(m.report.result ? { result: m.report.result } : {}),
           ...(m.report.review ? { review: m.report.review } : {}),
         }
@@ -129,7 +134,8 @@ export function compactWorker(m: TeamMember, floor: string) {
 }
 
 /** An event with its id and time; the full text only when asked for. */
-export function compactEvent(e: Pick<TeamEvent, 'seq' | 'kind' | 'worker' | 'name' | 'at' | 'text' | 'options' | 'progress' | 'watched' | 'result' | 'review'>, floor: string, verbose = false) {
+export function compactEvent(e: Pick<TeamEvent, 'seq' | 'kind' | 'worker' | 'name' | 'at' | 'text' | 'options' | 'progress' | 'watched' | 'images' | 'result' | 'review'>, floor: string, verbose = false, imageOrigin?: string) {
+  const images = withImageOrigin(e.images, imageOrigin);
   return {
     id: eventId(floor, e.seq),
     kind: e.kind,
@@ -141,6 +147,7 @@ export function compactEvent(e: Pick<TeamEvent, 'seq' | 'kind' | 'worker' | 'nam
     ...(e.options?.length ? { options: e.options } : {}),
     ...(e.progress ? { progress: true as const } : {}),
     ...(e.watched ? { watched: true as const } : {}),
+    ...(images ? { images } : {}),
     ...(e.result ? { result: e.result } : {}),
     ...(e.review ? { review: e.review } : {}),
   };
@@ -188,6 +195,7 @@ export function compactWorkerText(w: CompactWorker): string {
     ...(forgeLines.length ? forgeLines.map((l) => `${l}.`) : w.pr ? [`PR ${w.pr.url}.`] : []),
     ...(w.warnings?.length ? [`Warning: ${w.warnings.join('; ')}.`] : []),
     ...(w.lastReportId ? [`Last ${w.lastReportKind}${w.result ? ` (${w.result.status})` : ''} ${w.lastReportAt} [${w.lastReportId}]: ${w.lastReportSummary}`] : []),
+    ...(w.images?.length ? [`Images: ${w.images.map((img) => `${img.id}${img.url ? ` (${img.url})` : ''}`).join(', ')}.`] : []),
     ...(w.review ? [`Review: ${w.review.verdict} by ${w.review.by} (${summary(w.review.notes)}).`] : []),
   ].join(' ');
 }
@@ -195,7 +203,8 @@ export function compactWorkerText(w: CompactWorker): string {
 export function compactEventText(e: CompactEvent): string {
   const statusTag = e.result && e.result.status !== 'ok' && !e.progress && e.kind !== 'question' ? ` [${e.result.status}]` : '';
   const reviewTag = e.review ? ` [review: ${e.review.verdict}]` : '';
-  return `[${e.id} ${e.at}] ${e.progress ? 'progress report (not finished)' : e.kind} ${e.name}${e.summary ? `: ${e.summary}` : ''}${statusTag}${reviewTag}`;
+  const imagesTag = e.images?.length ? ` [images: ${e.images.map((img) => `${img.id}${img.url ? ` ${img.url}` : ''}`).join(', ')}]` : '';
+  return `[${e.id} ${e.at}] ${e.progress ? 'progress report (not finished)' : e.kind} ${e.name}${e.summary ? `: ${e.summary}` : ''}${statusTag}${reviewTag}${imagesTag}`;
 }
 
 /** The floors whose teams a caller's team tools cover: its own, or for a building agent every open floor (or the one named). */
@@ -470,13 +479,14 @@ export function register(server: OfficeMcpServer, deps: OfficeMcpDeps): void {
               lead,
               found.filter((x) => x.floor === s.id).map((x) => x.e.seq),
             );
-        const events = found.map(({ e, floor }) => compactEvent(e, floor, args.verbose));
+        const imageOrigin = caller.remoteOrigin ?? (deps.images ?? deps.remote?.images)?.origin();
+        const events = found.map(({ e, floor }) => compactEvent(e, floor, args.verbose, imageOrigin));
         const questions = openQuestions(scopes, lead, watched);
         const workers = scopes.flatMap((s) =>
           s.team
             .roster(lead)
             .filter((m) => !watched || watched.has(m.id))
-            .map((m) => compactWorker(m, s.id)),
+            .map((m) => compactWorker(m, s.id, imageOrigin)),
         );
         const body = { matched, reason, waitedMs: Date.now() - started, ...(capped && !matched ? { capped: true } : {}), events, questions, workers, cursor };
         let headline = `Nothing matched within ${requestedSec} s.`;
@@ -536,13 +546,15 @@ export function register(server: OfficeMcpServer, deps: OfficeMcpDeps): void {
       }
       const pick = found.at(-1);
       if (!pick) return officeError(args.id ? `No report or question ${args.id} from your subagents.` : `${args.worker} has not reported or asked anything you can still read.`);
-      const history = scopes.flatMap((s) => s.team.reports(lead, pick.e.worker).map((e) => compactEvent(e, s.id))).slice(-HISTORY_MAX);
-      const report = compactEvent(pick.e, pick.floor, true);
+      const imageOrigin = caller.remoteOrigin ?? (deps.images ?? deps.remote?.images)?.origin();
+      const history = scopes.flatMap((s) => s.team.reports(lead, pick.e.worker).map((e) => compactEvent(e, s.id, false, imageOrigin))).slice(-HISTORY_MAX);
+      const report = compactEvent(pick.e, pick.floor, true, imageOrigin);
       return officeResult(
         [
           `${report.kind === 'question' ? 'Question' : report.progress ? 'Progress report (not finished)' : 'Report'} ${report.id} from ${report.name} at ${report.at}:`,
           pick.e.text ?? '',
           ...resultDetailLines(pick.e.result, pick.e.review),
+          ...formatImageLines(report.images),
           ...(history.length > 1 ? [`History:\n${history.map(compactEventText).join('\n')}`] : []),
         ].join('\n'),
         { report, history },

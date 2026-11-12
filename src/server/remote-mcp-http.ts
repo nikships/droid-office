@@ -3,6 +3,7 @@ import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import path from 'node:path';
 import { isLoopback } from './lan.js';
+import { handleOfficeImages, OFFICE_IMAGES_PATH, parseImageRoute } from './office-images.js';
 import { createOfficeMcp, OFFICE_MCP_PATH, OFFICE_MCP_WORKER_HEADER, type OfficeMcpDeps } from './office-mcp/index.js';
 import type { RemoteOffice } from './remote-office.js';
 import type { GrokBotInput } from './remote-workers.js';
@@ -15,11 +16,35 @@ export const REMOTE_MCP_FILE = 'remote-mcp.json';
 const BACKEND_PORT = 4611;
 const RETRY_MS = 30_000;
 
-/** This listener has exactly one route. It must NEVER be attached to the main or hook server. */
+/** Dedicated Tailnet loopback listener serving `/office/mcp` and `/office/images`. Never attach to the main or hook server. */
 export function remoteMcpListener(deps: OfficeMcpDeps & { remote: RemoteOffice; remoteTransport: NonNullable<OfficeMcpDeps['remoteTransport']> }) {
-  const mcp = createOfficeMcp(deps);
+  const images = deps.images ?? deps.remote.images;
+  const mcp = createOfficeMcp({ ...deps, images });
   const server = createServer(async (req, res) => {
-    if (!isLoopback(req.socket.remoteAddress) || req.url?.split('?')[0] !== OFFICE_MCP_PATH) {
+    if (!isLoopback(req.socket.remoteAddress)) {
+      res.writeHead(404).end();
+      return;
+    }
+    const pathname = req.url?.split('?')[0] ?? '/';
+    const imageRoute = parseImageRoute(pathname);
+    if (imageRoute) {
+      try {
+        await handleOfficeImages(req, res, {
+          route: imageRoute,
+          images,
+          authorize: (request) => {
+            const auth = mcp.authorizeRemote(request);
+            return auth instanceof Response ? auth : { workerId: auth.caller.worker.id, remoteOrigin: auth.remoteOrigin };
+          },
+        });
+      } catch (err) {
+        console.error('Office images route:', err);
+        if (!res.headersSent) res.writeHead(500);
+        res.end();
+      }
+      return;
+    }
+    if (pathname !== OFFICE_MCP_PATH) {
       res.writeHead(404).end();
       return;
     }
@@ -35,7 +60,7 @@ export function remoteMcpListener(deps: OfficeMcpDeps & { remote: RemoteOffice; 
       res.end();
     }
   });
-  server.requestTimeout = 30_000;
+  server.requestTimeout = 60_000;
   server.headersTimeout = 10_000;
   return server;
 }
@@ -59,6 +84,10 @@ function readSaved(file: string): Saved {
 
 export function remoteMcpUrl(hostname: string, httpsPort: number): string {
   return `https://${hostname}${httpsPort === 443 ? '' : `:${httpsPort}`}${OFFICE_MCP_PATH}`;
+}
+
+export function remoteImagesUrl(hostname: string, httpsPort: number): string {
+  return `https://${hostname}${httpsPort === 443 ? '' : `:${httpsPort}`}${OFFICE_IMAGES_PATH}`;
 }
 
 export interface RemoteMcpOptions {
@@ -97,6 +126,13 @@ export class RemoteMcp {
     this.file = path.join(opts.dataDir, REMOTE_MCP_FILE);
     this.cli = opts.cli ?? new TailscaleCli();
     this.saved = readSaved(this.file);
+    this.opts.office.setImageOrigin(() => this.origin());
+  }
+
+  /** Active Tailnet HTTPS origin (`https://<hostname>[:<port>]`) while serving, or undefined otherwise. */
+  origin(): string | undefined {
+    if (this.status !== 'serving' || !this.hostname || !this.httpsPort) return undefined;
+    return `https://${this.hostname}${this.httpsPort === 443 ? '' : `:${this.httpsPort}`}`;
   }
 
   start(): Promise<RemoteMcpState> {
@@ -256,7 +292,12 @@ export class RemoteMcp {
 
   private async listen(): Promise<number> {
     if (this.server?.listening) return (this.server.address() as AddressInfo).port;
-    const server = remoteMcpListener({ ...this.opts.mcp, remote: this.opts.office, remoteTransport: { hostname: () => this.hostname, owner: () => this.owner } });
+    const server = remoteMcpListener({
+      ...this.opts.mcp,
+      remote: this.opts.office,
+      images: this.opts.mcp.images ?? this.opts.office.images,
+      remoteTransport: { hostname: () => this.hostname, httpsPort: () => this.httpsPort, owner: () => this.owner },
+    });
     const first = this.saved.backendPort ?? this.opts.backendPort ?? BACKEND_PORT;
     for (const p of first ? [first, 0] : [0]) {
       try {

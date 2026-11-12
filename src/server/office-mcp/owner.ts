@@ -3,7 +3,9 @@ import { DESK_BY_ID } from '../../shared/layout.js';
 import { ORCHESTRATOR_ID, type MissionAgent } from '../../shared/mission-control.js';
 import { OFFICE_SHELL_ID } from '../../shared/office-shell.js';
 import type { ClientMsg, ServerMsg, WorkerInfo, WorktreeState } from '../../shared/protocol.js';
+import type { ThreadEntry } from '../../shared/worker-thread.js';
 import { analyzeCheckoutSafety, workerLocation } from '../floor-watch.js';
+import type { StoredImageMeta } from '../office-images.js';
 import { buildWorkerInspection, describeTaskLabel, formatTaskTag, formatWorkerInspection, type WorkerInspection, type WorkerTaskLabel } from '../worker-status.js';
 import { formatBlockingSummary, formatQueueBrief, type BlockingToolState, type WorkerQueueState } from '../worker-queue.js';
 import { officeError, officeResult, type OfficeMcpAccess, type OfficeMcpCaller, type OfficeMcpDeps, type OfficeMcpServer } from './index.js';
@@ -59,6 +61,8 @@ export interface OwnerOffice {
   labelsOn?(): boolean;
   /** Live pending-message queue and active blocking command on a local floor worker, when present. */
   workerMeta?(workerId: string): { queuedMessages?: WorkerQueueState; blockingTool?: BlockingToolState } | undefined;
+  /** Registers images from a `thread.snapshot` page into the shared office image store so leads can download them by URL/id. */
+  threadImages?(workerId: string, entries: readonly ThreadEntry[], floor?: string): Promise<StoredImageMeta[]>;
   /** `owner`: the owner's own choice (a Settings pick), so the model list for building agents doesn't apply. */
   act(by: WorkerInfo, msg: { t: OwnerAction } & Record<string, unknown>, opts?: { floor?: string; signal?: AbortSignal; owner?: boolean }): Promise<OwnerReply>;
 }
@@ -503,5 +507,5 @@ export function register(server: OfficeMcpServer, deps: OfficeMcpDeps): void {
       );
     },
   );
-  registerOwnerTools(server, owner);
+  registerOwnerTools(server, owner, deps);
 }

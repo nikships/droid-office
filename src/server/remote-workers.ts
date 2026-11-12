@@ -2,16 +2,35 @@ import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 import { mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { z } from 'zod';
+import { PROMPT_IMAGE_ID, PROMPT_IMAGES_MAX } from '../shared/drops.js';
 import type { WorkerInfo } from '../shared/protocol.js';
 import { validateGrokWebhookUrl, type RemoteMcpGrokBot, type RemoteMcpKey, type RemoteMcpWebhookDelivery } from '../shared/remote-mcp.js';
 import type { GrokBotCredentials } from './grok-webhook.js';
+import { restoreStoredImages, type StoredImageMeta } from './office-images.js';
 
 /** Named keys a bot may hold besides its main key. */
 export const MAX_KEYS = 10;
 export const GROK_BOTS_FILE = 'remote-grok-bots.json';
 const TOUCH_MS = 60_000;
 
-const messageSchema = z.object({ id: z.string(), at: z.number(), text: z.string().max(24_000), floor: z.string().optional() });
+const storedImageSchema = z.object({
+  id: z.string().regex(PROMPT_IMAGE_ID),
+  name: z.string().min(1).max(256),
+  mimeType: z.enum(['image/png', 'image/jpeg', 'image/gif', 'image/webp']),
+  bytes: z.number().int().positive(),
+  width: z.number().int().positive().optional(),
+  height: z.number().int().positive().optional(),
+  cardId: z.string().max(64).optional(),
+  ref: z.string().max(256).optional(),
+  kind: z.enum(['attachment', 'content', 'picture', 'render', 'thread']).optional(),
+});
+const messageSchema = z.object({
+  id: z.string(),
+  at: z.number(),
+  text: z.string().max(24_000),
+  floor: z.string().optional(),
+  images: z.array(storedImageSchema).max(PROMPT_IMAGES_MAX).optional(),
+});
 const tokenSchema = z.string().regex(/^[a-f0-9]{64}$/);
 const keySchema = z.object({ id: z.string(), name: z.string().min(1).max(60), token: tokenSchema, createdAt: z.number(), lastUsedAt: z.number().optional() });
 const grokBotSchema = z.object({
@@ -76,7 +95,7 @@ export class RemoteWorkers {
   private ackedHistory = new Map<string, Map<string, RemoteMessage>>();
 
   constructor(
-    dataDir: string,
+    readonly dataDir: string,
     /** A bot was added, removed, reported its status, or a key of it was used. */
     private readonly changed: () => void = () => {},
   ) {
@@ -265,13 +284,20 @@ export class RemoteWorkers {
     this.commit(this.records.filter((r) => r.id !== id));
   }
 
-  enqueueMessage(id: string, text: string, floor?: string): { message?: RemoteMessage; error?: string } {
+  enqueueMessage(id: string, text: string, floor?: string, images?: readonly StoredImageMeta[]): { message?: RemoteMessage; error?: string } {
     const row = this.records.find((r) => r.id === id);
     if (!row) return { error: 'Remote worker was revoked' };
     if (!text.trim()) return { error: 'Empty message' };
     if (text.length > 24_000) return { error: 'Remote message is too long' };
     if (row.inbox.length >= 500) return { error: 'Remote inbox is full; the worker must acknowledge messages first' };
-    const message: RemoteMessage = { id: randomBytes(12).toString('hex'), at: Date.now(), text, ...(floor ? { floor } : {}) };
+    const safeImages = restoreStoredImages(images);
+    const message: RemoteMessage = {
+      id: randomBytes(12).toString('hex'),
+      at: Date.now(),
+      text,
+      ...(floor ? { floor } : {}),
+      ...(safeImages ? { images: safeImages } : {}),
+    };
     try {
       this.change(id, (r) => ({ ...r, inbox: [...r.inbox, message] }));
       return { message };

@@ -1,20 +1,22 @@
 import path from 'node:path';
 import { z } from 'zod';
+import { PROMPT_IMAGE_ID, PROMPT_IMAGES_MAX } from '../../shared/drops.js';
 import { floorNamed } from '../remote-office.js';
 import type { TeamEvent, TeamMember, TeamModel, TeamReply, WorkerReview } from '../team.js';
 import { teamBoardText, type TeamBoardMember } from '../team.js';
 import { formatOtherFloorWorkers, type OtherFloorWorker } from '../floor-watch.js';
+import { formatImageLines, OfficeImageStore, type StoredImageMeta } from '../office-images.js';
 import { isSubscriptionModel, modelUsageWords } from '../../shared/subscriptions.js';
 import { briefAge, formatForgeLines, formatProviderQuotas, formatTaskTag, formatWorkerInspection, type ProviderQuotaSummary, type WorkerInspection } from '../worker-status.js';
 import { hasOwnerAccess } from './owner.js';
 import { formatBlockingSummary, formatQueueBrief } from '../worker-queue.js';
 import { officeAccess, officeError, officeResult, ownFloor, type OfficeMcpCaller, type OfficeMcpDeps, type OfficeMcpServer } from './index.js';
-import { compactEvent, compactEventText, compactWorker, compactWorkerText, cursorOf, EVENT_FILTERS, eventKinds, floorArg, parseCursor, resultDetailLines } from './team-events.js';
+import { compactEvent, compactEventText, compactWorker, compactWorkerText, cursorOf, EVENT_FILTERS, eventKinds, floorArg, parseCursor, resultDetailLines, withImageOrigin } from './team-events.js';
 
 export const instructions = `Subagents are real workers with their own terminals and (by default) git worktrees reporting to you, their lead. Subagents cannot hire.
 Have task-authored prerequisites committed BEFORE hiring (worktrees see committed state only; leave unrelated changes untouched). Read team_models once per hiring batch, then hire one fresh subagent per task, only as many as independent scopes need. Independent scopes touch separate files: assign single-writer edit ownership in each brief, plus goal, dependency context, boundaries, checks and delivery; sibling files can be referenced as read-only context. Subagents share areas/findings via team_board and team_note. Continue a subagent's committed work via from / task.baseBranch set to worker:<name/id> or its absolute worktree path; floor leads omit from for their own current HEAD.
 Owner notes take priority when picking an exact model id from team_models. Multipliers show relative cost (custom/subscription models use no Factory credits; prefer subscriptions with ample quota and keep a nearly spent one off long tasks). Pick <=x0.5 for mechanical work, ~x1 for standard tasks, and top models for hard design, security, or concurrency; never give visual tasks to a no-images model.
-Hiring and waiting is not enough: run the team as its connective tissue. On wakes/check-ins read team_status and questions_list, inspect relevant worker_diff/worker_log and full reports with team_report_get. Steer drift and relay contract changes via team_message (default queue: false steers at the next step; queue: true queues behind the turn; urgent: true interrupts blocking commands; worker_queue lists/clears/promotes queued items; workers/all: true broadcasts; inspect per-recipient errors). Answer technical questions within the owner's intent; escalate unclear decisions and leave workers at permission prompts untouched for the owner. Record team_review approve before merging (a lead workflow gate, not a server-enforced lock; request_changes routes fixes back). Integrate via team_merge (building agents name target), land foundations first, then have dependent siblings rebase/align and re-verify. Resolve returned conflict hunks in the reported worktree and run combined target checks after review and integration, before team_dismiss. team_pr requires authorization and a pushed branch. With Wake the lead on, end your turn when nothing else remains; otherwise use team_wait. When your lead is a Grok Bot (office_whoami shows leadPush: true), team_report pushes straight to its webhook on turn end and lead_notify sends immediate mid-turn updates, questions, blockers, or test pings without ending your turn.`;
+Hiring and waiting is not enough: run the team as its connective tissue. On wakes/check-ins read team_status and questions_list, inspect relevant worker_diff/worker_log and full reports with team_report_get. Steer drift and relay contract changes via team_message (default queue: false steers at the next step; queue: true queues behind the turn; urgent: true interrupts blocking commands; images attaches uploaded image ids; worker_queue lists/clears/promotes queued items; workers/all: true broadcasts; inspect per-recipient errors). Answer technical questions within the owner's intent; escalate unclear decisions and leave workers at permission prompts untouched for the owner. Record team_review approve before merging (a lead workflow gate, not a server-enforced lock; request_changes routes fixes back). Integrate via team_merge (building agents name target), land foundations first, then have dependent siblings rebase/align and re-verify. Resolve returned conflict hunks in the reported worktree and run combined target checks after review and integration, before team_dismiss. team_pr requires authorization and a pushed branch. With Wake the lead on, end your turn when nothing else remains; otherwise use team_wait. Subagents attach produced screenshots/images (or Whiteboard card ids) via images on team_report and lead_notify so leads receive downloadable image ids and Tailnet URLs. When your lead is a Grok Bot (office_whoami shows leadPush: true), team_report pushes straight to its webhook on turn end and lead_notify sends immediate mid-turn updates, questions, blockers, or test pings without ending your turn.`;
 
 const readOnly = { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false };
 const changesState = { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false };
@@ -45,7 +47,7 @@ function integrationReply(result: TeamReply) {
 /** At rest after a progress report: done in status only. */
 const PROGRESS_REST = 'Not finished: its turn ended after a progress report, and it waits on its own background work (such as a long job) to wake it. If that has run far longer than the report expects, check it with worker_log.';
 
-function memberText(member: TeamMember & { terminal?: string; terminalUnavailable?: string }): string {
+function memberText(member: TeamMember & { terminal?: string; terminalUnavailable?: string }, imageOrigin?: string): string {
   const forgeLines = formatForgeLines({ pr: member.prStatus, ci: member.ci, releaseRun: member.releaseRun });
   const queueBrief = member.queuedMessages ? formatQueueBrief(member.queuedMessages) : undefined;
   return [
@@ -72,16 +74,23 @@ function memberText(member: TeamMember & { terminal?: string; terminalUnavailabl
       : `Working in the main checkout${member.cwd ? ` (${member.cwd})` : ''}${member.branch ? ` on ${member.branch}` : ''}.`,
     ...(member.warnings?.length ? [`Warning: ${member.warnings.join('; ')}`] : []),
     ...(forgeLines.length ? forgeLines : member.pr ? [`Pull request: ${member.pr.url}`] : []),
-    ...(member.report ? [`Last ${member.report.question ? 'question' : member.report.progress ? 'progress report' : 'report'}:\n${member.report.text}`, ...resultDetailLines(member.report.result, member.report.review)] : []),
+    ...(member.report
+      ? [
+          `Last ${member.report.question ? 'question' : member.report.progress ? 'progress report' : 'report'}:\n${member.report.text}`,
+          ...resultDetailLines(member.report.result, member.report.review),
+          ...formatImageLines(withImageOrigin(member.report.images, imageOrigin)),
+        ]
+      : []),
     ...(member.terminal !== undefined ? [`Terminal:\n${member.terminal || '(empty)'}`] : []),
     ...(member.terminalUnavailable ? [member.terminalUnavailable] : []),
   ].join('\n');
 }
 
-function eventText(event: TeamEvent): string {
+function eventText(event: TeamEvent, imageOrigin?: string): string {
   const at = `[${new Date(event.at).toISOString()}]`;
-  if (event.progress) return `${at} Worker progress report from ${event.name} (not finished; its turn ended waiting on its own background work, which wakes it):\n${event.text ?? ''}`;
-  if (event.kind === 'report' || event.kind === 'question') return `${at} Worker ${event.kind} from ${event.name}:\n${event.text ?? ''}`;
+  const imgSuffix = event.images?.length ? `\n${formatImageLines(withImageOrigin(event.images, imageOrigin)).join('\n')}` : '';
+  if (event.progress) return `${at} Worker progress report from ${event.name} (not finished; its turn ended waiting on its own background work, which wakes it):\n${event.text ?? ''}${imgSuffix}`;
+  if (event.kind === 'report' || event.kind === 'question') return `${at} Worker ${event.kind} from ${event.name}:\n${event.text ?? ''}${imgSuffix}`;
   if (event.kind === 'pr') return `${at} Pull request update from ${event.name}:\n${event.text ?? ''}`;
   const status = {
     done: event.watched ? 'finished its turn' : 'finished its turn without reporting',
@@ -119,12 +128,16 @@ export function register(server: OfficeMcpServer, deps: OfficeMcpDeps): void {
     caller.building && deps.remote ? deps.remote.team(caller.worker, args) : ownFloor(caller).team.handle(caller.worker, args);
   /** The team that answers for the office's models: the caller's floor, or for a building agent the first open one. */
   const modelsTeam = (caller: OfficeMcpCaller) => caller.floor?.team ?? deps.remote?.floors()[0]?.team;
-  const statusText = (body: Record<string, unknown>) => {
+  const statusText = (body: Record<string, unknown>, imageOrigin?: string) => {
     const members = body.team as TeamMember[];
     const otherWorkers = body.otherWorkers as OtherFloorWorker[] | undefined;
     const news = body.events as TeamEvent[];
     const otherBlock = otherWorkers?.length ? [formatOtherFloorWorkers(otherWorkers, true).join('\n')] : [];
-    return [...(members.length ? members.map(memberText) : ['You have no subagents.']), ...otherBlock, news.length ? `News since your last status call:\n${news.map(eventText).join('\n\n')}` : 'No unread team news.'].join('\n\n');
+    return [
+      ...(members.length ? members.map((m) => memberText(m, imageOrigin)) : ['You have no subagents.']),
+      ...otherBlock,
+      news.length ? `News since your last status call:\n${news.map((e) => eventText(e, imageOrigin)).join('\n\n')}` : 'No unread team news.',
+    ].join('\n\n');
   };
   const statusOptions = {
     verbose: z.boolean().optional().describe('false for compact summaries; omit/true for full text.'),
@@ -138,18 +151,21 @@ export function register(server: OfficeMcpServer, deps: OfficeMcpDeps): void {
     const kinds = eventKinds(args.kinds);
     const request = { action: 'status', worker: args.worker, lines: args.lines, floor: args.floor, ...(kinds ? { kinds: [...kinds] } : {}) };
     const remote = caller.building ? deps.remote : undefined;
+    const imageOrigin = caller.remoteOrigin ?? (deps.images ?? deps.remote?.images)?.origin();
     const result = remote
       ? await remote.team(caller.worker, { ...request, ...(cursor ? { since: Object.fromEntries(cursor) } : {}) })
       : await ownFloor(caller).team.handle(caller.worker, { ...request, ...(cursor ? { since: cursor.get(own) } : {}) });
-    if (result.status >= 400) return reply(result, statusText);
+    if (result.status >= 400) return reply(result, (b) => statusText(b, imageOrigin));
     const { team, events, latest, otherWorkers, ...rest } = result.body as {
       team: (TeamMember & { floor?: string })[];
       otherWorkers?: OtherFloorWorker[];
       events: (TeamEvent & { floor?: string })[];
       latest: number | Record<string, number>;
     };
-    const workers = team.map((m) => compactWorker(m, m.floor ?? own));
-    const news = events.map((e) => compactEvent(e, e.floor ?? own, args.verbose === true));
+    const enrichedTeam = team.map((m) => (m.report?.images?.length ? { ...m, report: { ...m.report, images: withImageOrigin(m.report.images, imageOrigin) } } : m));
+    const enrichedEvents = events.map((e) => (e.images?.length ? { ...e, images: withImageOrigin(e.images, imageOrigin) } : e));
+    const workers = team.map((m) => compactWorker(m, m.floor ?? own, imageOrigin));
+    const news = events.map((e) => compactEvent(e, e.floor ?? own, args.verbose === true, imageOrigin));
     const position = cursorOf(typeof latest === 'number' ? { [own]: latest } : latest);
     if (args.verbose === false)
       return officeResult(
@@ -167,7 +183,8 @@ export function register(server: OfficeMcpServer, deps: OfficeMcpDeps): void {
           cursor: position,
         },
       );
-    return officeResult(statusText(result.body), { ...result.body, workers, ...(otherWorkers?.length ? { floorWorkers: otherWorkers } : {}), news, cursor: position });
+    const enrichedBody = { ...result.body, team: enrichedTeam, events: enrichedEvents };
+    return officeResult(statusText(enrichedBody, imageOrigin), { ...enrichedBody, workers, ...(otherWorkers?.length ? { floorWorkers: otherWorkers } : {}), news, cursor: position });
   };
   const worker = z.string().trim().min(1).max(200).describe('Subagent name or id.');
   server.tool(
@@ -281,17 +298,19 @@ export function register(server: OfficeMcpServer, deps: OfficeMcpDeps): void {
       return status(caller, args);
     },
   );
+  const attachImagesSchema = z.array(z.string().regex(PROMPT_IMAGE_ID)).max(PROMPT_IMAGES_MAX).optional().describe('Uploaded image ids from POST /office/images to attach for the subagent.');
   server.tool(
     {
       name: 'team_message',
       description:
-        'Choose exactly one target: worker, workers, or all: true. Send course corrections, contract updates or rebase instructions. Default queue: false steers during the running turn (next step via hook or Enter); queue: true queues via Ctrl+Enter for after the turn ends; urgent: true interrupts a running turn or blocking command via Escape and delivers immediately. Inspect per-recipient errors and blocking warnings. Never message workers at permission prompts.',
+        'Choose exactly one target: worker, workers, or all: true. Send course corrections, contract updates or rebase instructions (plus optional uploaded image ids in images). Default queue: false steers during the running turn (next step via hook or Enter); queue: true queues via Ctrl+Enter for after the turn ends; urgent: true interrupts a running turn or blocking command via Escape and delivers immediately. Inspect per-recipient errors and blocking warnings. Never message workers at permission prompts.',
       inputSchema: z
         .strictObject({
           worker: worker.optional(),
           workers: z.array(worker).min(1).max(100).optional(),
           all: z.literal(true).optional(),
           text,
+          images: attachImagesSchema,
           floor: floorArg,
           queue: z.boolean().default(false).describe('Default false: steer now during the running turn; true queues via Ctrl+Enter for after the turn ends.'),
           urgent: z.boolean().optional().describe('True: interrupt a running turn or blocking command via Escape and deliver immediately (not with queue: true).'),
@@ -533,6 +552,7 @@ export function register(server: OfficeMcpServer, deps: OfficeMcpDeps): void {
           .max(4096)
           .optional()
           .describe('The same setting as task.baseBranch: ref, your subagent as worker:<name/id>, or its absolute worktree path. Pins committed HEAD without moving the source; requires a worktree. Omit for lead HEAD/floor base.'),
+        images: attachImagesSchema,
         worktree: z.boolean().optional().describe('Structured task defaults true on Git floors (false on non-Git floors); otherwise follows owner settings. True: isolated worktree; false: shared checkout (omit baseBranch/branch/from).'),
       }),
       annotations: changesState,
@@ -673,11 +693,36 @@ export function register(server: OfficeMcpServer, deps: OfficeMcpDeps): void {
     }
     return undefined;
   };
+  const reportImagesSchema = z
+    .array(z.string().trim().min(1).max(1024))
+    .max(PROMPT_IMAGES_MAX)
+    .optional()
+    .describe('Optional produced image file paths, uploaded image ids, or Whiteboard card ids to return as downloadable Tailnet URLs and ids.');
+  const fallbackStores = new WeakMap<object, OfficeImageStore>();
+  const resolveSubagentImages = (caller: OfficeMcpCaller, explicit: readonly string[] | undefined, reportText: string | undefined): { ok: true; images: StoredImageMeta[]; store: OfficeImageStore } | { ok: false; error: string } => {
+    const floor = ownFloor(caller);
+    let store = deps.images ?? deps.remote?.images ?? fallbackStores.get(floor);
+    if (!store) {
+      store = new OfficeImageStore(path.join(floor.dir, '.droid-office'));
+      fallbackStores.set(floor, store);
+    }
+    const drops = floor.workers.stagedPicture ? { stagedPicture: (id: string) => floor.workers.stagedPicture!(id) } : undefined;
+    const res = store.ingestWorkerReportImages({
+      explicit,
+      text: reportText,
+      cwd: caller.cwd ?? floor.dir,
+      floorDir: floor.dir,
+      workerId: caller.worker.id,
+      drops,
+      whiteboard: floor.whiteboard,
+    });
+    return res.ok ? { ok: true, images: res.images, store } : res;
+  };
   server.tool(
     {
       name: 'lead_notify',
       description:
-        'Grok Bot subagents only: push a direct JSON notification to your Grok Bot lead’s webhook immediately without ending your turn (mid-turn checkpoints, early artifact links, blockers, questions, or a clearly marked test ping). Use team_report for your turn-ending final report or blocking question.',
+        'Grok Bot subagents only: push a direct JSON notification to your Grok Bot lead’s webhook immediately without ending your turn (mid-turn checkpoints, early artifact links, screenshots/images, blockers, questions, or a clearly marked test ping). Use team_report for your turn-ending final report or blocking question.',
       inputSchema: z.strictObject({
         text: text.describe('Message, blocker details, question, or test note pushed directly to your Grok Bot lead.'),
         kind: z
@@ -691,14 +736,20 @@ export function register(server: OfficeMcpServer, deps: OfficeMcpDeps): void {
           .optional()
           .describe('Optional full pushed commit SHA.'),
         prUrl: z.url().max(2000).optional().describe('Optional pull request URL.'),
+        images: reportImagesSchema,
       }),
       annotations: changesState,
     },
     grokSubagent,
     async (args, caller) => {
       if (args.options !== undefined && args.kind !== 'question') return officeError('options are only for kind "question": set kind: "question" or omit options.');
+      const { images: rawImages, ...notifyArgs } = args;
+      if (rawImages?.length && notifyArgs.kind === 'test') return officeError('images are not attached to kind "test" connectivity pings.');
+      if (!deps.remote) return officeError('Remote office is not available for lead_notify.');
       const floor = ownFloor(caller);
-      const sent = await deps.remote!.notifyLead({ worker: caller.worker, floor: { id: floor.id, name: floor.name, dir: floor.dir } }, args);
+      const ingested = notifyArgs.kind === 'test' ? { ok: true as const, images: [] as StoredImageMeta[], store: deps.remote.images } : resolveSubagentImages(caller, rawImages, notifyArgs.text);
+      if (!ingested.ok) return officeError(ingested.error);
+      const sent = await deps.remote.notifyLead({ worker: caller.worker, floor: { id: floor.id, name: floor.name, dir: floor.dir } }, { ...notifyArgs, ...(ingested.images.length ? { images: ingested.images } : {}) });
       if (!sent.ok) {
         const saved = sent.ackId ? ` Saved in ${sent.lead}'s office_inbox (${sent.ackId}), so nothing was lost.` : '';
         return officeError(`Webhook push to ${sent.lead} failed (${sent.error ?? 'delivery failed'}).${saved}`, 'webhook_failed');
@@ -710,6 +761,7 @@ export function register(server: OfficeMcpServer, deps: OfficeMcpDeps): void {
         pushed: true,
         ...(sent.status !== undefined ? { status: sent.status } : {}),
         ...(sent.ackId ? { ackId: sent.ackId } : {}),
+        ...(sent.images?.length ? { images: sent.images } : {}),
       });
     },
   );
@@ -717,7 +769,7 @@ export function register(server: OfficeMcpServer, deps: OfficeMcpDeps): void {
     {
       name: 'team_report',
       description:
-        'Subagents only: send your lead results, checks, remaining work, links, structured result, and any schema/contract changes siblings need (or set question: true for a blocking question, or progress: true before ending your turn while a background job runs), then end your turn.',
+        'Subagents only: send your lead results, checks, remaining work, links, screenshots/images, structured result, and any schema/contract changes siblings need (or set question: true for a blocking question, or progress: true before ending your turn while a background job runs), then end your turn.',
       inputSchema: z.object({
         text: text.describe('Results, checks, contract changes, remaining work and links, or the blocking question.'),
         question: z.boolean().optional().describe('True for a blocking question to your lead; omit or false for a report.'),
@@ -729,6 +781,7 @@ export function register(server: OfficeMcpServer, deps: OfficeMcpDeps): void {
           .optional()
           .describe('Full pushed commit SHA (inferred from upstream ref when omitted).'),
         prUrl: z.url().max(2000).optional().describe('Pull request URL (inferred when omitted).'),
+        images: reportImagesSchema,
         result: resultSchema.optional(),
       }),
       annotations: changesState,
@@ -736,8 +789,14 @@ export function register(server: OfficeMcpServer, deps: OfficeMcpDeps): void {
     officeAccess.subagent,
     async (args, caller) => {
       const floor = ownFloor(caller);
-      const result = await floor.team.handle(caller.worker, { action: 'report', ...args });
+      const { images: rawImages, ...reportArgs } = args;
+      const ingested = resolveSubagentImages(caller, rawImages, reportArgs.text);
+      if (!ingested.ok) return officeError(ingested.error);
+      const result = await floor.team.handle(caller.worker, { action: 'report', ...reportArgs, ...(ingested.images.length ? { images: ingested.images } : {}) });
       if (result.status >= 400) return reply(result, () => '');
+      if (ingested.images.length) {
+        result.body.images = ingested.store.withUrls(ingested.images, caller.remoteOrigin);
+      }
       const leadId = caller.worker.lead;
       let webhookNote = '';
       if (leadId && deps.remote?.store.isGrokBot(leadId)) {

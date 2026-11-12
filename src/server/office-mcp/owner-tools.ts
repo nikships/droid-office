@@ -3,10 +3,12 @@ import { z } from 'zod';
 import { ORCHESTRATOR_ID } from '../../shared/mission-control.js';
 import type { ClientMsg } from '../../shared/protocol.js';
 import { AUTO_DESK } from '../../shared/protocol.js';
-import type { OfficeMcpServer } from './index.js';
+import { formatImageLines, type StoredImageMeta } from '../office-images.js';
+import type { OfficeMcpDeps, OfficeMcpServer } from './index.js';
 import { officeError } from './index.js';
 import { buildingOnly, findMissionAgent, findWorker, missionControlRefusal, outsideOffice, pickFloor, ownerResult, type OwnerAction, type OwnerOffice } from './owner.js';
 import { cloud, effort, floorRef, id, images, menu, model, PROMPT_TEXT_ERROR, resolvePromptText, resolveWorkerTarget, text, WORKER_TARGET_ERROR, workerTarget } from './owner-schemas.js';
+import { withImageOrigin } from './team-events.js';
 
 type WireInput<A extends OwnerAction> = Omit<Extract<ClientMsg, { t: A }>, 't' | 'request' | 'requestId' | 'requestFloor' | 'floor'>;
 type Input<A extends OwnerAction> = (A extends 'worker.prompt'
@@ -110,7 +112,7 @@ export const OWNER_TOOLS = [
   ),
 ] as const;
 
-export function registerOwnerTools(server: OfficeMcpServer, owner: OwnerOffice): void {
+export function registerOwnerTools(server: OfficeMcpServer, owner: OwnerOffice, deps?: OfficeMcpDeps): void {
   for (const entry of OWNER_TOOLS) {
     server.tool(entry, buildingOnly, async (input, caller, signal) => {
       const args: Record<string, unknown> = { ...input };
@@ -151,7 +153,22 @@ export function registerOwnerTools(server: OfficeMcpServer, owner: OwnerOffice):
       if (args.urgent === undefined) delete args.urgent;
       if (signal.aborted) return officeError('Cancelled before taking the action.');
       const result = await owner.act(caller.worker, { ...args, t: entry.action }, { floor, signal });
-      return ownerResult(entry.name, result);
+      const out = ownerResult(entry.name, result);
+      if (!out.isError && entry.action === 'thread.read' && result.reply?.t === 'thread.snapshot' && owner.threadImages) {
+        let metas: StoredImageMeta[] = [];
+        try {
+          metas = await owner.threadImages(String(args.workerId), result.reply.entries, floor);
+        } catch (err) {
+          console.error(`${entry.name} threadImages failed:`, err);
+        }
+        const imageOrigin = caller.remoteOrigin ?? (deps?.images ?? deps?.remote?.images)?.origin();
+        const refs = withImageOrigin(metas, imageOrigin);
+        if (refs?.length) {
+          out.structuredContent = { ...(out.structuredContent as Record<string, unknown>), images: refs };
+          out.content.push({ type: 'text', text: formatImageLines(refs).join('\n') });
+        }
+      }
+      return out;
     });
   }
 }

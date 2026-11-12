@@ -35,6 +35,9 @@ import { register as registerQueue } from './queue.js';
 import { hasOwnerAccess, ownerInstructions, register as registerOwner, type OwnerOffice } from './owner.js';
 import type { RemoteOffice } from '../remote-office.js';
 import type { RemoteKeyId } from '../remote-workers.js';
+import type { OfficeImageStore } from '../office-images.js';
+
+export { sendResponse } from './node-http.js';
 
 export const OFFICE_MCP_PATH = '/office/mcp';
 export const OFFICE_MCP_WORKER_HEADER = 'x-droid-office-worker-id';
@@ -51,7 +54,7 @@ export interface OfficeMcpFloor {
   name: string;
   dir: string;
   /** Without the screen methods, questions_list shows no terminal questions. */
-  workers: Pick<WorkerManager, 'authenticate' | 'get' | 'list'> & Partial<Pick<WorkerManager, 'screenLines' | 'screenMenu' | 'write' | 'queueState' | 'clearQueue' | 'promoteQueue' | 'blockingTool'>>;
+  workers: Pick<WorkerManager, 'authenticate' | 'get' | 'list'> & Partial<Pick<WorkerManager, 'screenLines' | 'screenMenu' | 'write' | 'queueState' | 'clearQueue' | 'promoteQueue' | 'blockingTool' | 'stagedPicture'>>;
   team: Pick<Team, 'handle' | 'cannotHire' | 'hasNews' | TeamViews>;
   visits: Pick<Visits, 'handle' | 'cannotVisit'>;
   whiteboard: WhiteboardStore;
@@ -73,7 +76,9 @@ export interface OfficeMcpDeps {
    * Dedicated loopback listener behind Tailscale Serve; never enabled on the hook listener. `hostname` is
    * this machine's MagicDNS name once it serves, `owner` the login it is signed in as.
    */
-  remoteTransport?: { hostname(): string | undefined; owner(): string | undefined };
+  remoteTransport?: { hostname(): string | undefined; httpsPort?(): number | undefined; owner(): string | undefined };
+  /** Shared content-addressed image store for Tailnet uploads/downloads, worker reports, and Whiteboard reads. */
+  images?: OfficeImageStore;
   /** This office's own hook server origin; requests for workers of another local office go there. */
   hookUrl?: string;
   settings(): SubagentSettings;
@@ -95,6 +100,8 @@ export interface OfficeMcpCaller {
   settings: SubagentSettings;
   /** The worker's worktree, multi-repository workspace, or floor checkout; the Orchestrator's folder. An external bot has none here. */
   cwd?: string;
+  /** Validated `https://<host>` origin when this call arrived over the Tailnet listener. */
+  remoteOrigin?: string;
 }
 
 /** The caller's own floor, for the tools only floor workers are given. */
@@ -152,6 +159,7 @@ export const BUILDING_TOOLS = new Set([
   'office_worker_prompt',
   'office_worker_answer',
   'office_worker_thread',
+  'whiteboard_read',
   'linear_issues',
   'linear_issue',
   'linear_create_issue',
@@ -241,20 +249,39 @@ export class OfficeMcpServer {
     await sendResponse(res, await this.fetch(webRequest(req, controller.signal)));
   };
 
-  private async fetch(request: Request): Promise<Response> {
-    // Loopback only: a page on another site can't reach this server by rebinding its own name.
+  /** Validates Tailscale Serve host, tailnet device identity, no browser Origin/Funnel, and active remote bot key. */
+  authorizeRemote(request: Request): Response | { caller: OfficeMcpCaller; remoteOrigin: string } {
     const remote = this.deps.remoteTransport;
     const hostname = remote?.hostname();
-    if (remote && !hostname) return Response.json({ error: 'The office is not serving external workers on its tailnet yet' }, { status: 503 });
-    const badHost = hostHeaderValidationResponse(request, hostname ? [hostname] : localhostAllowedHostnames());
+    if (!remote || !hostname) return Response.json({ error: 'The office is not serving external workers on its tailnet yet' }, { status: 503 });
+    const badHost = hostHeaderValidationResponse(request, [hostname]);
     if (badHost) return badHost;
-    if (remote) {
-      if (request.headers.has('origin') || !tailnetIdentity(request.headers, remote.owner())) return Response.json({ error: 'Only the owner’s own Tailscale devices may connect; browser and Funnel requests are refused' }, { status: 403 });
-      const who = this.caller(request);
-      if (!who) return this.unauthorized(request, 'Active remote worker id and bearer credential required');
-      if (who.key) this.deps.remote?.store.touch(who.caller.worker.id, who.key);
-      return withHeader(await this.serve(request, who.caller), OFFICE_MCP_WORKER_HEADER, who.caller.worker.id);
+    if (request.headers.has('origin') || !tailnetIdentity(request.headers, remote.owner())) {
+      return Response.json({ error: 'Only the owner’s own Tailscale devices may connect; browser and Funnel requests are refused' }, { status: 403 });
     }
+    const who = this.caller(request);
+    if (!who) return this.unauthorized(request, 'Active remote worker id and bearer credential required');
+    if (who.key) this.deps.remote?.store.touch(who.caller.worker.id, who.key);
+    const httpsPort = remote.httpsPort?.();
+    const hostHeader = request.headers.get('host')?.trim() ?? '';
+    let resolvedPort = httpsPort;
+    if (resolvedPort === undefined && hostHeader.toLowerCase().startsWith(`${hostname.toLowerCase()}:`)) {
+      const parsed = Number(hostHeader.slice(hostname.length + 1));
+      if (Number.isSafeInteger(parsed) && parsed >= 1 && parsed <= 65535) resolvedPort = parsed;
+    }
+    const remoteOrigin = `https://${hostname}${resolvedPort && resolvedPort !== 443 ? `:${resolvedPort}` : ''}`;
+    return { caller: { ...who.caller, remoteOrigin }, remoteOrigin };
+  }
+
+  private async fetch(request: Request): Promise<Response> {
+    // Loopback only: a page on another site can't reach this server by rebinding its own name.
+    if (this.deps.remoteTransport) {
+      const auth = this.authorizeRemote(request);
+      if (auth instanceof Response) return auth;
+      return withHeader(await this.serve(request, auth.caller), OFFICE_MCP_WORKER_HEADER, auth.caller.worker.id);
+    }
+    const badHost = hostHeaderValidationResponse(request, localhostAllowedHostnames());
+    if (badHost) return badHost;
     if (request.method === 'OPTIONS') return new Response(null, { status: 204, headers: { Allow: 'POST, GET, DELETE, OPTIONS', [PROBE_HEADER]: '1' } });
     const peer = this.peer(request);
     if (peer) return relay(request, peer);
