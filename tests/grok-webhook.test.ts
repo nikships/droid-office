@@ -45,7 +45,10 @@ const proxyFetch: typeof fetch = async (input, init) => {
 async function listening(t: Cleanup, server: Server): Promise<string> {
   server.listen(0, '127.0.0.1');
   await once(server, 'listening');
-  t.after(() => new Promise<void>((resolve) => server.close(() => resolve())));
+  t.after(async () => {
+    server.closeAllConnections();
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+  });
   return `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
 }
 
@@ -210,15 +213,23 @@ test('RemoteWorkers persists Grok Bot credentials in mode-0600 storage while str
 
 test('Grok Bot leads receive immediate team_report, lead_notify, floor hook, inbox, and Settings test pushes while non-Grok bots stay polling-only', async (t) => {
   const dir = mkdtempSync(path.join(os.tmpdir(), 'grok-e2e-'));
-  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const cleanups: (() => void | Promise<void>)[] = [];
+  const rig: Cleanup = { after: (fn) => cleanups.push(fn) };
+  t.after(async () => {
+    try {
+      for (const fn of cleanups.reverse()) await fn();
+    } finally {
+      rmSync(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
+    }
+  });
 
-  const receiver = await startWebhookReceiver(t);
+  const receiver = await startWebhookReceiver(rig);
   const store = new RemoteWorkers(dir);
   const settings = { ...SUBAGENT_DEFAULTS, visits: true, maxPerLead: 4 };
   let now = 10_000;
   const floors: RemoteFloor[] = [];
   const office = new RemoteOffice(store, () => floors, { webhookDelayMs: 25 });
-  t.after(() => office.stop());
+  rig.after(() => office.stop());
 
   const people = new Map<string, WorkerInfo>();
   const tokens = new Map<string, string>();
@@ -273,11 +284,11 @@ test('Grok Bot leads receive immediate team_report, lead_notify, floor hook, inb
   };
 
   const team = new Team({ ...workers, get }, { dataDir: alphaDir, dir: alphaDir, git: false, settings: () => settings, toast() {}, now: () => now });
-  t.after(() => team.stop());
+  rig.after(() => team.stop());
   const visits = new Visits({ ...workers, get, tell: workers.prompt, cancelTurn: () => false, turnScreen: () => undefined }, { on: () => settings.visits, emit() {}, now: () => now });
-  t.after(() => visits.stop());
+  rig.after(() => visits.stop());
   const whiteboard = new WhiteboardStore(alphaDir);
-  t.after(() => whiteboard.stop());
+  rig.after(() => whiteboard.stop());
   floors.push({ id: 'alpha', dir: alphaDir, def: { name: 'Droid Office' }, workers, team, visits, whiteboard });
 
   // Add one Grok Bot and one regular polling bot.
@@ -295,15 +306,15 @@ test('Grok Bot leads receive immediate team_report, lead_notify, floor hook, inb
   const localServer = createServer((req, res) => {
     void localMcp.handle(req, res);
   });
-  const localUrl = new URL('/office/mcp', await listening(t, localServer));
+  const localUrl = new URL('/office/mcp', await listening(rig, localServer));
 
   const hostname = 'office.example.ts.net';
   const remoteServer = remoteMcpListener({ ...mcpDeps, remoteTransport: { hostname: () => hostname, owner: () => undefined } });
-  const remoteUrl = new URL('/office/mcp', await listening(t, remoteServer));
+  const remoteUrl = new URL('/office/mcp', await listening(rig, remoteServer));
 
   const connectRemote = async (bot: { worker: WorkerInfo; token: string }) => {
     const c = new Client({ name: `test-${bot.worker.name}`, version: '1' });
-    t.after(() => c.close());
+    rig.after(() => c.close());
     await c.connect(
       new StreamableHTTPClientTransport(remoteUrl, {
         fetch: proxyFetch,
@@ -315,7 +326,7 @@ test('Grok Bot leads receive immediate team_report, lead_notify, floor hook, inb
 
   const connectLocal = async (w: WorkerInfo) => {
     const c = new Client({ name: `test-${w.name}`, version: '1' });
-    t.after(() => c.close());
+    rig.after(() => c.close());
     await c.connect(
       new StreamableHTTPClientTransport(localUrl, {
         requestInit: { headers: { Authorization: `Bearer ${tokens.get(w.id)!}`, 'x-droid-office-worker-id': w.id } },
@@ -467,7 +478,7 @@ test('Grok Bot leads receive immediate team_report, lead_notify, floor hook, inb
   assert.equal(receiver.received[6].body.event, 'message');
 
   const rmcp = new RemoteMcp({ dataDir: dir, office, mcp: mcpDeps, backendPort: 0, log() {} });
-  t.after(() => rmcp.stop());
+  rig.after(() => rmcp.stop());
   const tested = await rmcp.testWebhook(grok.worker.id);
   assert.equal(tested.result.ok, true);
   assert.equal(receiver.received.length, 8);

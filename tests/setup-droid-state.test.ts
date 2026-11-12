@@ -371,3 +371,49 @@ test('switching to airgapped cancels a sign-in before its auth probe returns', a
   assert.equal(needsWelcome(o.last()), true);
   assert.deepEqual(o.toasts, []);
 });
+
+test('stopping setup while its initial Droid probe is in flight does not recreate dataDir or write setup.json', async (t) => {
+  const root = mkdtempSync(path.join(tmpdir(), 'setup-stop-'));
+  const dataDir = path.join(root, '.droid-office');
+  const home = path.join(root, 'home');
+  mkdirSync(home);
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+
+  let releaseDoctor: (() => void) | undefined;
+  let doctorDone: (() => void) | undefined;
+  const finished = new Promise<void>((resolve) => {
+    doctorDone = resolve;
+  });
+  const toasts: string[] = [];
+  const setup = mountSetup({
+    dataDir,
+    agentCmd: 'droid',
+    broadcast: () => {},
+    toast: (text) => toasts.push(text),
+    agentChanged: () => {},
+    home,
+    platform: 'linux',
+    arch: 'arm64',
+    findAgent: async () => '/opt/fake/droid',
+    fetchImpl: (async () => new Response('0.249.0\n')) as unknown as typeof fetch,
+    env: () => ({ PATH: process.env.PATH ?? '' }),
+    run: async (_cmd, args) => {
+      if (args[0] === '--version') return { code: 0, stdout: '0.249.0\n', stderr: '' };
+      await new Promise<void>((resolve) => {
+        releaseDoctor = resolve;
+      });
+      queueMicrotask(() => doctorDone?.());
+      return { code: 0, stdout: DOCTOR_IN, stderr: '' };
+    },
+  });
+
+  await until(() => !!releaseDoctor);
+  setup.stop();
+  rmSync(root, { recursive: true, force: true });
+  releaseDoctor!();
+  await finished;
+  await new Promise((resolve) => setImmediate(resolve));
+
+  assert.equal(existsSync(dataDir), false, 'stopped setup never recreates dataDir');
+  assert.deepEqual(toasts, []);
+});

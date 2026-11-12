@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { once } from 'node:events';
 import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import http, { type IncomingMessage } from 'node:http';
 import { tmpdir } from 'node:os';
@@ -8,9 +9,18 @@ import { Building } from '../src/server/building.js';
 import { startServer } from '../src/server/server.js';
 import { FinderDispatch, finderAuthorized, finderCatalogue, finderPathAllowed, finderTargets, handleFinder, publishFinder } from '../src/server/finder.js';
 
-function fixture(t: { after(fn: () => void): void }) {
+function fixture(t: { after(fn: () => void | Promise<void>): void }) {
   const root = realpathSync(mkdtempSync(path.join(tmpdir(), 'office-finder-')));
-  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const cleanups: (() => void | Promise<void>)[] = [];
+  let finder: FinderDispatch | undefined;
+  t.after(async () => {
+    try {
+      for (const fn of cleanups.reverse()) await fn();
+      finder?.stop();
+    } finally {
+      rmSync(root, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
+    }
+  });
   const dataDir = path.join(root, 'state');
   const home = path.join(root, 'home');
   mkdirSync(dataDir);
@@ -37,8 +47,8 @@ function fixture(t: { after(fn: () => void): void }) {
     },
     changed: () => {},
   };
-  const finder = new FinderDispatch(options);
-  return { root, home, homeDef, dataDir, building, repo, calls, options, finder, fail: (value?: string) => (failure = value) };
+  finder = new FinderDispatch(options);
+  return { root, home, homeDef, dataDir, building, repo, calls, options, finder, after: (fn: () => void | Promise<void>) => void cleanups.push(fn), fail: (value?: string) => (failure = value) };
 }
 
 test('Finder canonicalizes files and symlinks and finds directory and worktree git roots', async (t) => {
@@ -265,7 +275,10 @@ test('HTTP resolve and dispatch authenticate independently, reject malformed inp
   const token = 'b'.repeat(64);
   const server = http.createServer((req, res) => void handleFinder(req, res, new URL(req.url!, 'http://127.0.0.1').pathname, token, f.finder, f.options.models));
   await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
-  t.after(() => new Promise<void>((resolve) => server.close(() => resolve())));
+  f.after(async () => {
+    server.closeAllConnections();
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+  });
   const address = server.address() as { port: number };
   const base = `http://127.0.0.1:${address.port}`;
   const headers = { 'x-droid-office-token': token, 'content-type': 'application/json' };
@@ -301,7 +314,12 @@ test('the office mounts Finder exclusively on its IPv4 loopback listener and sha
     weather: 'clear',
     finderBridge: bridge,
   });
-  t.after(() => office.shutdown());
+  f.after(async () => {
+    const closed = once(office.server, 'close');
+    office.shutdown();
+    office.server.closeAllConnections();
+    await closed;
+  });
   const address = office.server.address() as { port: number };
   const headers = { 'x-droid-office-token': token, 'content-type': 'application/json' };
   const hook = `http://127.0.0.1:${office.hookPort}`;

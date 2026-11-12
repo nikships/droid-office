@@ -80,15 +80,23 @@ test("a card's video plays from a click on it, and its full-screen control works
   const project = path.join(root, 'project');
   const home = path.join(root, 'home');
   for (const d of [project, home]) mkdirSync(d, { recursive: true });
-  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const cleanups: (() => void | Promise<void>)[] = [];
+  t.after(async () => {
+    try {
+      for (const fn of cleanups.reverse()) await fn();
+    } finally {
+      rmSync(root, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
+    }
+  });
 
   const cfg = loadConfig([project, '--home', home, '--weather', 'clear', '--host', '127.0.0.1']);
   cfg.port = 0;
   cfg.renders = false;
   const office = await startServer(cfg);
-  t.after(async () => {
+  cleanups.push(async () => {
     const closed = once(office.server, 'close');
     office.shutdown();
+    office.server.closeAllConnections();
     await closed;
     await closeBrowser();
   });
@@ -96,7 +104,7 @@ test("a card's video plays from a click on it, and its full-screen control works
 
   const browser = await launchBrowser();
   const context = await newIsolatedContext(browser, { viewport: { width: 1100, height: 700 } });
-  t.after(() => context.close().catch(() => {}));
+  cleanups.push(() => context.close().catch(() => {}));
   const scratch = await context.newPage();
   await scratch.goto(`${base}/whiteboard/c/none/`);
   const clip = await recordClip(scratch);
@@ -105,7 +113,7 @@ test("a card's video plays from a click on it, and its full-screen control works
 
   const msgs: ServerMsg[] = [];
   const ws = new WebSocket(`${base.replace('http:', 'ws:')}/ws?name=Owner`, { headers: { origin: base } });
-  t.after(() => ws.terminate());
+  cleanups.push(() => ws.terminate());
   ws.on('message', (raw) => msgs.push(JSON.parse(String(raw))));
   const welcome = await waitFor(() => msgs.find((m) => m.t === 'welcome') as Extract<ServerMsg, { t: 'welcome' }> | undefined, 'welcome');
   const floor = welcome.floor!;
